@@ -421,7 +421,14 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       }
 
       if (s.phase === "processing") {
-        // Cancel mid-infer
+        // Continuous local: stop gracefully so prior segment finals are kept
+        // (USER_TOGGLE_STOP from processing marks committed and drops merge).
+        if (modeRef.current === "continuous" && eng === "local") {
+          clearTimer()
+          stopEngine("stop")
+          return
+        }
+        // Classic: cancel mid-infer
         dispatchEv({ type: "USER_TOGGLE_STOP" })
         stopEngine("abort")
         return
@@ -562,15 +569,10 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         }
         timerRef.current = setTimeout(() => {
           const cont = modeRef.current === "continuous"
+          clearTimer()
           if (engineRef.current === "local") {
-            // Stop capture → segment finalize / processing (do not TIMEOUT→stopping).
-            clearTimer()
-            if (cont) {
-              // Adapter enforces hardCapMs; soft force-stop via stop().
-              stopEngine("stop")
-            } else {
-              stopEngine("stop")
-            }
+            // Stop capture → segment finalize (do not TIMEOUT→stopping).
+            stopEngine("stop")
           } else {
             dispatchEv({
               type: "TIMEOUT",

@@ -38,6 +38,8 @@ export type SpeechAdapterStartArg =
       mode?: VoiceDictationMode
       /** continuous hard cap ms (local D1c) */
       hardCapMs?: number
+      /** continuous per-segment window ms (tests / clamp ≤45s) */
+      segmentMs?: number
     }
 
 export type SpeechAdapter = {

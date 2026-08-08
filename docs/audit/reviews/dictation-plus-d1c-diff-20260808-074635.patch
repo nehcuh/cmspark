@@ -1,0 +1,1159 @@
+# Dual external review context
+batch: dictation-plus-d1c
+base: 36f5f52f9f7989910a3e5c6368157bfbe882c447
+time: 20260808-074635
+
+d5355cd
+
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
+?? docs/audit/reviews/dictation-plus-d1c-diff-20260808-074635.patch
+?? docs/audit/reviews/dictation-plus-d1c-dual-review-prompt.md
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
+?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
+?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
+?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
+?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
+?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
+?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
+?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
+?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
+?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
+?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff (git diff + staged)
+ chrome-extension/src/sidepanel/App.tsx             |  31 +-
+ .../src/sidepanel/components/SettingsSlideout.tsx  |   5 +-
+ .../src/sidepanel/hooks/useVoiceInput.ts           |  61 ++--
+ chrome-extension/src/sidepanel/voice/detect.ts     |   8 +-
+ .../src/sidepanel/voice/local-stt-adapter.ts       | 405 ++++++++++++++++-----
+ .../src/sidepanel/voice/session-reducer.ts         |  12 +
+ chrome-extension/src/sidepanel/voice/types.ts      |   2 +
+ .../src/sidepanel/voice/web-speech-adapter.ts      |   8 +-
+ .../tests/voice-local-continuous.test.ts           | 171 +++++++++
+ .../tests/voice-web-speech-continuous.test.ts      |   7 +-
+ 10 files changed, 569 insertions(+), 141 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index c0c7760..625ff5e 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -497,33 +497,38 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+     !voice.processing &&
+     voice.listenRemainingMs != null
+   const localCapturing = sttEngine === "local" && capturing
+-  const continuousCapturing =
+-    sttEngine === "browser" &&
+-    state.voiceDictationMode === "continuous" &&
+-    capturing
++  const continuousMode = state.voiceDictationMode === "continuous"
++  const continuousCapturing = continuousMode && capturing
++  const continuousProcessing =
++    continuousMode && voice.processing && voice.listenRemainingMs != null
+   const voiceMicTimerLabel =
+-    localCapturing || continuousCapturing
++    localCapturing || continuousCapturing || continuousProcessing
+       ? formatListenRemaining(voice.listenRemainingMs!)
+       : null
+   const voiceMicLiveStatus = voice.refining
+     ? "纠错中…点击取消"
+-    : voice.processing
+-      ? "本机识别中…点击取消"
+-      : localCapturing
+-        ? localListeningStatusLabel(voice.listenRemainingMs!)
++    : continuousProcessing
++      ? `本机分段识别中… · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
++      : voice.processing
++        ? "本机识别中…点击取消"
+         : continuousCapturing
+           ? `连续听写 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
+-          : null
++          : localCapturing
++            ? localListeningStatusLabel(voice.listenRemainingMs!)
++            : null
+   const voiceMicTitle = (() => {
+     if (threadBusy) return "处理中无法听写"
+     if (voice.refining) return "纠错中…点击取消"
+-    if (voice.processing) return "本机识别中…点击取消"
+-    if (localCapturing) {
+-      return localListeningStatusLabel(voice.listenRemainingMs!)
++    if (continuousProcessing) {
++      return `本机分段识别中… · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
+     }
++    if (voice.processing) return "本机识别中…点击取消"
+     if (continuousCapturing) {
+       return `连续听写中 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)} · 再点结束`
+     }
++    if (localCapturing) {
++      return localListeningStatusLabel(voice.listenRemainingMs!)
++    }
+     if (voice.listening) return "结束语音输入"
+     if (sttEngine === "local") {
+       if (!companionConnected) return mapLocalSttError("companion_disconnected").message
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index 1c86254..c8ed41b 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -1003,10 +1003,11 @@ export function SettingsSlideout() {
+                     dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: "continuous" })
+                   }
+                 />
+-                连续听写（可选 · 最长默认 15 分钟；浏览器引擎会自动续听）
++                连续听写（可选 · 最长默认 15 分钟）
+               </label>
+               <div style={{ marginTop: 4, fontSize: 11, color: "#888", lineHeight: 1.4 }}>
+-                连续听写仅增强 Agent 草稿输入，不会自动发送，也不是系统听写。首次使用需确认隐私说明。
++                浏览器：自动续听；本机：约 45 秒一段串行转写（间隙显示「识别中」）。仅进草稿、不自动发送。首次需隐私
++                v3。
+               </div>
+               <label
+                 style={{
+diff --git a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+index 70a71ec..d0d0dbf 100644
+--- a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
++++ b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+@@ -150,15 +150,20 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+     }
+   }
+ 
+-  // Drive remaining-time badge while capturing (local or browser).
++  // Drive remaining-time badge while capturing (or continuous local segment processing).
+   useEffect(() => {
+     const ph = session.phase
+-    if (ph === "starting" || ph === "listening") {
++    const contProcessing =
++      modeRef.current === "continuous" && ph === "processing"
++    if (ph === "starting" || ph === "listening" || contProcessing) {
+       if (listenStartRef.current == null) listenStartRef.current = Date.now()
+       const id = setInterval(() => setListenTick((n) => n + 1), 250)
+       return () => clearInterval(id)
+     }
+-    listenStartRef.current = null
++    // Keep wall clock through continuous segment gaps (processing) only when continuous.
++    if (ph !== "processing") {
++      listenStartRef.current = null
++    }
+     return undefined
+   }, [session.phase])
+ 
+@@ -305,6 +310,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+       onCaptureStopped: () => {
+         dispatchEv({ type: "CAPTURE_STOPPED" })
+       },
++      onSegmentContinue: () => {
++        dispatchEv({ type: "SEGMENT_CONTINUE" })
++      },
+     }
+ 
+     const modelId =
+@@ -430,9 +438,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+       if (!o.allowStart) return
+ 
+       const mode = modeRef.current
+-      // Continuous browser requires privacy ack v3 (long cloud STT residual).
+-      const continuousBrowser = mode === "continuous" && eng === "browser"
+-      // ASR Refiner also requires v3 (text → LLM residual).
++      // Continuous (browser or local long session) and/or ASR Refiner → privacy v3.
++      const continuousMode = mode === "continuous"
+       const wantsRefine = o.asrRefinerEnabled === true
+ 
+       if (eng === "local") {
+@@ -451,13 +458,20 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+           else o.onNeedPrivacyAck()
+           return
+         }
++        if (continuousMode || wantsRefine) {
++          const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
++          if (!v3) {
++            if (o.onNeedPrivacyAckV3) o.onNeedPrivacyAckV3()
++            return
++          }
++        }
+       } else {
+         const privacyOk = extra?.privacyAck === true || o.privacyAck
+         if (!privacyOk) {
+           o.onNeedPrivacyAck()
+           return
+         }
+-        if (continuousBrowser || wantsRefine) {
++        if (continuousMode || wantsRefine) {
+           const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
+           if (!v3) {
+             // Do not fall back to v1 sheet — that cannot satisfy the v3 gate (dual-review N1).
+@@ -471,15 +485,6 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+         }
+       }
+ 
+-      // Local + refine: still need v3 for text→LLM (local already has v2 for STT)
+-      if (eng === "local" && wantsRefine) {
+-        const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
+-        if (!v3) {
+-          if (o.onNeedPrivacyAckV3) o.onNeedPrivacyAckV3()
+-          return
+-        }
+-      }
+-
+       // SoT §7.1: if not granted → bootstrap tab (Side Panel often cannot show mic prompt).
+       const perms = (navigator as any).permissions
+       if (perms?.query) {
+@@ -528,6 +533,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+               lang: VOICE_DEFAULT_LANG,
+               sessionId: sid,
+               modelId: o.modelId || "medium",
++              mode: modeNow,
++              hardCapMs: maxMs,
+             })
+           } else {
+             adapterRef.current.start({
+@@ -540,12 +547,12 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+           return
+         }
+         clearTimer()
+-        // Soft cap hint only for continuous browser (still listening).
+-        if (modeNow === "continuous" && eng === "browser") {
++        // Soft cap hint for continuous (browser or local).
++        if (modeNow === "continuous") {
+           softTimerRef.current = setTimeout(() => {
+             softTimerRef.current = null
+             const ph = sessionRef.current.phase
+-            if (ph === "listening" || ph === "starting") {
++            if (ph === "listening" || ph === "starting" || ph === "processing") {
+               dispatchEv({
+                 type: "SOFT_CAP_HINT",
+                 message: "仍在连续听写，可点麦克风结束",
+@@ -554,13 +561,17 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+           }, VOICE_CONTINUOUS_SOFT_CAP_MS)
+         }
+         timerRef.current = setTimeout(() => {
++          const cont = modeRef.current === "continuous"
+           if (engineRef.current === "local") {
+-            // Stop capture → CAPTURE_STOPPED → processing (do not TIMEOUT→stopping).
++            // Stop capture → segment finalize / processing (do not TIMEOUT→stopping).
+             clearTimer()
+-            stopEngine("stop")
++            if (cont) {
++              // Adapter enforces hardCapMs; soft force-stop via stop().
++              stopEngine("stop")
++            } else {
++              stopEngine("stop")
++            }
+           } else {
+-            const cont =
+-              modeRef.current === "continuous" && engineRef.current === "browser"
+             dispatchEv({
+               type: "TIMEOUT",
+               code: cont ? "continuous-timeout" : "timeout",
+@@ -640,7 +651,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+   void listenTick
+   const listenRemainingMs =
+     listenStartRef.current != null &&
+-    (session.phase === "listening" || session.phase === "starting")
++    (session.phase === "listening" ||
++      session.phase === "starting" ||
++      (session.phase === "processing" && modeRef.current === "continuous"))
+       ? Math.max(
+           0,
+           maxListenMsRef.current - (Date.now() - listenStartRef.current),
+diff --git a/chrome-extension/src/sidepanel/voice/detect.ts b/chrome-extension/src/sidepanel/voice/detect.ts
+index 995ff11..bcd6762 100644
+--- a/chrome-extension/src/sidepanel/voice/detect.ts
++++ b/chrome-extension/src/sidepanel/voice/detect.ts
+@@ -109,13 +109,17 @@ export function maxListenMsForSession(
+   engine: "browser" | "local",
+   hardCapMs: number = VOICE_CONTINUOUS_HARD_CAP_MS,
+ ): number {
+-  // D1a: continuous applies only to browser; local stays classic 45s until D1c segments.
+-  if (mode === "continuous" && engine === "browser") {
++  // D1a/D1c: continuous (browser restart or local serial segments) uses hard cap.
++  if (mode === "continuous") {
+     const cap = Math.min(
+       Math.max(hardCapMs, VOICE_MAX_LISTEN_MS),
+       VOICE_CONTINUOUS_HARD_CAP_MAX_MS,
+     )
+     return cap
+   }
++  void engine
+   return VOICE_MAX_LISTEN_MS
+ }
++
++/** Per-segment local STT window (must stay ≤ companion STT_MAX_RECORD_MS). */
++export const LOCAL_CONTINUOUS_SEGMENT_MS = 45_000
+diff --git a/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts b/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+index ca9573b..71eaccf 100644
+--- a/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
++++ b/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+@@ -1,6 +1,7 @@
+ /**
+- * Path B M1 — local STT adapter (gUM → WAV chunks → voice.stt.* WS).
+- * Same surface as SpeechAdapter; deps inject send/subscribe (no circular imports).
++ * Path B — local STT adapter (gUM → WAV chunks → voice.stt.* WS).
++ * classic: one shot ≤45s then onEnd.
++ * continuous (D1c): serial segments ≤45s until hard cap or user stop; no fake interim.
+  */
+ 
+ import {
+@@ -20,7 +21,11 @@ import type {
+   SpeechAdapterHandlers,
+   SpeechAdapterStartArg,
+ } from "./web-speech-adapter"
+-import { VOICE_DEFAULT_LANG } from "./detect"
++import {
++  VOICE_CONTINUOUS_HARD_CAP_MS,
++  VOICE_DEFAULT_LANG,
++  type VoiceDictationMode,
++} from "./detect"
+ 
+ export type LocalSttSend = (msg: Record<string, unknown>) => void
+ 
+@@ -30,26 +35,12 @@ export type LocalSttOnMessage = (handler: (msg: any) => void) => () => void
+ export type LocalSttAdapterDeps = {
+   send: LocalSttSend
+   onMessage: LocalSttOnMessage
+-  /** Default model when start() omits modelId. */
+   modelId: string
+-  /**
+-   * Capture factory (default: real gUM MediaRecorder).
+-   * Unit tests inject a fake that returns fixed WAV bytes.
+-   */
+   startCapture?: (opts?: StartCaptureOpts) => Promise<CaptureHandle>
+ }
+ 
+-export type LocalSttStartOpts = {
+-  lang?: string
+-  /** Required for local STT; missing → session_busy at runtime. */
+-  sessionId?: string
+-  modelId?: string
+-}
+-
+ /** uint8 → base64 without Node Buffer (Side Panel / tests). */
+ export function uint8ToBase64(data: Uint8Array): string {
+-  // Chunk to avoid call-stack / argument limits on large audio.
+-  // Pure browser-safe path only (no Node Buffer — extension tsc has no @types/node).
+   const chunkSize = 0x8000
+   let binary = ""
+   for (let i = 0; i < data.length; i += chunkSize) {
+@@ -59,7 +50,6 @@ export function uint8ToBase64(data: Uint8Array): string {
+   if (typeof btoa === "function") {
+     return btoa(binary)
+   }
+-  // Node test / non-DOM: manual base64
+   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+   let out = ""
+   for (let i = 0; i < data.length; i += 3) {
+@@ -75,6 +65,11 @@ export function uint8ToBase64(data: Uint8Array): string {
+   return out
+ }
+ 
++type PendingWait = {
++  sessionId: string
++  resolve: (r: { ok: true; text: string } | { ok: false; code: string }) => void
++}
++
+ export function createLocalSttAdapter(
+   handlers: SpeechAdapterHandlers,
+   deps: LocalSttAdapterDeps,
+@@ -86,8 +81,27 @@ export function createLocalSttAdapter(
+   let unsub: (() => void) | null = null
+   let phase: "idle" | "recording" | "uploading" | "waiting" = "idle"
+   let aborted = false
++  let wantListening = false
++  let mode: VoiceDictationMode = "classic"
++  let parentSessionId = ""
++  let lang = VOICE_DEFAULT_LANG
++  let hardCapMs = VOICE_CONTINUOUS_HARD_CAP_MS
++  let wallStart = 0
++  let segmentIndex = 0
++  let pending: PendingWait | null = null
++  let loopGen = 0
++  /** Continuous: resolve when current segment should stop recording. */
++  let segmentStopTrigger: (() => void) | null = null
++  let segmentTimer: ReturnType<typeof setTimeout> | null = null
+   const beginCapture = deps.startCapture ?? defaultStartCapture
+ 
++  const clearSegmentTimer = () => {
++    if (segmentTimer) {
++      clearTimeout(segmentTimer)
++      segmentTimer = null
++    }
++  }
++
+   const clearSub = () => {
+     if (unsub) {
+       try {
+@@ -100,11 +114,24 @@ export function createLocalSttAdapter(
+   }
+ 
+   const reset = () => {
++    clearSegmentTimer()
++    segmentStopTrigger = null
+     clearSub()
+     capture = null
+     sessionId = null
+     phase = "idle"
+     aborted = false
++    wantListening = false
++    mode = "classic"
++    parentSessionId = ""
++    segmentIndex = 0
++    pending = null
++  }
++
++  const finishPending = (r: { ok: true; text: string } | { ok: false; code: string }) => {
++    const p = pending
++    pending = null
++    p?.resolve(r)
+   }
+ 
+   const onWs = (msg: any) => {
+@@ -112,18 +139,19 @@ export function createLocalSttAdapter(
+     const sid = typeof msg.sessionId === "string" ? msg.sessionId : ""
+     if (!sessionId || sid !== sessionId) return
+ 
+-    if (msg.type === "voice.stt.partial") {
+-      // Status only; no interim transcript in M1.
+-      return
+-    }
++    if (msg.type === "voice.stt.partial") return
+ 
+     if (msg.type === "voice.stt.result") {
++      const text = typeof msg.text === "string" ? msg.text : ""
++      if (pending && pending.sessionId === sid) {
++        finishPending({ ok: true, text })
++        return
++      }
+       if (aborted) {
+         handlers.onEnd()
+         reset()
+         return
+       }
+-      const text = typeof msg.text === "string" ? msg.text : ""
+       if (text.trim()) {
+         handlers.onResult({ interim: "", finalChunk: text })
+       }
+@@ -134,6 +162,13 @@ export function createLocalSttAdapter(
+ 
+     if (msg.type === "voice.stt.error") {
+       const code = typeof msg.code === "string" && msg.code ? msg.code : "unknown"
++      if (pending && pending.sessionId === sid) {
++        finishPending({
++          ok: false,
++          code: code === "aborted" || aborted ? "aborted" : code,
++        })
++        return
++      }
+       if (code === "aborted" || aborted) {
+         handlers.onError("aborted")
+         handlers.onEnd()
+@@ -151,42 +186,212 @@ export function createLocalSttAdapter(
+     unsub = deps.onMessage(onWs)
+   }
+ 
+-  const uploadAndEnd = async (wav: Uint8Array) => {
+-    const sid = sessionId
+-    if (!sid || dead || aborted) return
++  const uploadAndWait = (
++    sid: string,
++    wav: Uint8Array,
++  ): Promise<{ ok: true; text: string } | { ok: false; code: string }> => {
++    return new Promise((resolve) => {
++      if (!sid || dead) {
++        resolve({ ok: false, code: "aborted" })
++        return
++      }
++      phase = "uploading"
++      handlers.onCaptureStopped?.()
+ 
+-    phase = "uploading"
+-    handlers.onCaptureStopped?.()
++      if (wav.length === 0) {
++        resolve({ ok: false, code: "empty_result" })
++        return
++      }
+ 
+-    if (wav.length === 0) {
+-      handlers.onError("empty_result")
+-      handlers.onEnd()
+-      reset()
+-      return
+-    }
++      pending = { sessionId: sid, resolve }
++      sessionId = sid
+ 
+-    const chunks = splitIntoChunks(wav, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
+-    for (let seq = 0; seq < chunks.length; seq++) {
+-      if (dead || aborted || sessionId !== sid) return
+-      const data = uint8ToBase64(chunks[seq]!)
++      const chunks = splitIntoChunks(wav, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
++      for (let seq = 0; seq < chunks.length; seq++) {
++        if (dead || aborted || sessionId !== sid) {
++          finishPending({ ok: false, code: "aborted" })
++          return
++        }
++        deps.send({
++          type: "voice.stt.chunk",
++          v: 1,
++          sessionId: sid,
++          seq,
++          data: uint8ToBase64(chunks[seq]!),
++        })
++      }
++
++      if (dead || aborted || sessionId !== sid) {
++        finishPending({ ok: false, code: "aborted" })
++        return
++      }
++      phase = "waiting"
+       deps.send({
+-        type: "voice.stt.chunk",
++        type: "voice.stt.end",
+         v: 1,
+         sessionId: sid,
+-        seq,
+-        data,
++        totalSeq: chunks.length,
+       })
+-    }
++    })
++  }
+ 
+-    if (dead || aborted || sessionId !== sid) return
+-    phase = "waiting"
++  const sendStart = (sid: string, maxMs: number) => {
+     deps.send({
+-      type: "voice.stt.end",
++      type: "voice.stt.start",
+       v: 1,
+       sessionId: sid,
+-      totalSeq: chunks.length,
++      modelId,
++      format: "wav",
++      sampleRate: LOCAL_STT_SAMPLE_RATE,
++      channels: LOCAL_STT_CHANNELS,
++      lang: lang.startsWith("zh") ? "zh" : lang,
++      maxMs,
++    })
++  }
++
++  /**
++   * Record one segment: wait segmentMs or user stop(), then return WAV.
++   */
++  const recordSegment = async (segmentMs: number): Promise<Uint8Array | null> => {
++    const handle = await beginCapture({ maxMs: segmentMs })
++    if (dead || aborted || !wantListening) {
++      try {
++        handle.abort()
++      } catch {
++        /* */
++      }
++      return null
++    }
++    capture = handle
++
++    await new Promise<void>((resolve) => {
++      let settled = false
++      const done = () => {
++        if (settled) return
++        settled = true
++        clearSegmentTimer()
++        segmentStopTrigger = null
++        resolve()
++      }
++      segmentStopTrigger = done
++      segmentTimer = setTimeout(done, segmentMs)
+     })
+-    // Result / error arrives via onMessage
++
++    capture = null
++    if (dead || aborted) {
++      try {
++        handle.abort()
++      } catch {
++        /* */
++      }
++      return null
++    }
++    try {
++      return await handle.stop()
++    } catch (e: any) {
++      if (e?.code === "aborted" || aborted) return null
++      throw e
++    }
++  }
++
++  const runClassic = async (sid: string) => {
++    try {
++      const handle = await beginCapture({ maxMs: LOCAL_STT_MAX_RECORD_MS })
++      if (dead || aborted || sessionId !== sid) {
++        handle.abort()
++        return
++      }
++      capture = handle
++      sendStart(sid, LOCAL_STT_MAX_RECORD_MS)
++      if (dead || aborted) {
++        handle.abort()
++        return
++      }
++      handlers.onStart()
++    } catch (e: any) {
++      if (dead || aborted) return
++      const code =
++        e?.code === "aborted"
++          ? "aborted"
++          : e?.name === "NotAllowedError" || e?.name === "PermissionDeniedError"
++            ? "not-allowed"
++            : "audio-capture"
++      handlers.onError(code)
++      handlers.onEnd()
++      reset()
++    }
++  }
++
++  const runContinuous = async (gen: number) => {
++    try {
++      handlers.onStart()
++      while (!dead && wantListening && gen === loopGen) {
++        const remaining = hardCapMs - (Date.now() - wallStart)
++        if (remaining < 800) break
++
++        const segmentMs = Math.min(LOCAL_STT_MAX_RECORD_MS, remaining)
++        segmentIndex += 1
++        const segSid = `${parentSessionId}-s${segmentIndex}`
++        sessionId = segSid
++        phase = "recording"
++
++        sendStart(segSid, segmentMs)
++
++        let wav: Uint8Array | null
++        try {
++          wav = await recordSegment(segmentMs)
++        } catch (e: any) {
++          if (dead || gen !== loopGen) return
++          handlers.onError(e?.code === "aborted" ? "aborted" : "audio-capture")
++          handlers.onEnd()
++          reset()
++          return
++        }
++
++        if (dead || gen !== loopGen) return
++        if (aborted || wav == null) {
++          // User abort or cancelled before audio
++          if (aborted) {
++            handlers.onError("aborted")
++          }
++          handlers.onEnd()
++          reset()
++          return
++        }
++
++        const result = await uploadAndWait(segSid, wav)
++        if (dead || gen !== loopGen) return
++
++        if (!result.ok) {
++          if (result.code === "aborted" || aborted) {
++            handlers.onError("aborted")
++          } else {
++            handlers.onError(result.code)
++          }
++          handlers.onEnd()
++          reset()
++          return
++        }
++
++        if (result.text.trim()) {
++          handlers.onResult({ interim: "", finalChunk: result.text })
++        }
++
++        if (!wantListening || aborted) break
++
++        // Resume listening chrome between segments
++        handlers.onSegmentContinue?.()
++      }
++
++      if (!dead) handlers.onEnd()
++      reset()
++    } catch {
++      if (!dead) {
++        handlers.onError("unknown")
++        handlers.onEnd()
++      }
++      reset()
++    }
+   }
+ 
+   return {
+@@ -195,9 +400,12 @@ export function createLocalSttAdapter(
+       if (phase !== "idle") return
+ 
+       aborted = false
+-      let lang = VOICE_DEFAULT_LANG
++      wantListening = true
++      lang = VOICE_DEFAULT_LANG
+       let sid = ""
+       let mid = deps.modelId
++      mode = "classic"
++      hardCapMs = VOICE_CONTINUOUS_HARD_CAP_MS
+ 
+       if (typeof langOrOpts === "string") {
+         lang = langOrOpts || VOICE_DEFAULT_LANG
+@@ -205,6 +413,10 @@ export function createLocalSttAdapter(
+         if (langOrOpts.lang) lang = langOrOpts.lang
+         if (langOrOpts.sessionId) sid = langOrOpts.sessionId
+         if (langOrOpts.modelId) mid = langOrOpts.modelId
++        if (langOrOpts.mode === "continuous") mode = "continuous"
++        if (typeof (langOrOpts as { hardCapMs?: number }).hardCapMs === "number") {
++          hardCapMs = (langOrOpts as { hardCapMs: number }).hardCapMs
++        }
+       }
+ 
+       if (!sid) {
+@@ -213,60 +425,39 @@ export function createLocalSttAdapter(
+         return
+       }
+ 
++      parentSessionId = sid
+       sessionId = sid
+       modelId = mid || deps.modelId
+       ensureSub()
+       phase = "recording"
+-
+-      // Fire start async so callers stay sync-compatible with Web Speech.
+-      void (async () => {
+-        try {
+-          const handle = await beginCapture({ maxMs: LOCAL_STT_MAX_RECORD_MS })
+-          if (dead || aborted || sessionId !== sid) {
+-            handle.abort()
+-            return
+-          }
+-          capture = handle
+-
+-          deps.send({
+-            type: "voice.stt.start",
+-            v: 1,
+-            sessionId: sid,
+-            modelId,
+-            format: "wav",
+-            sampleRate: LOCAL_STT_SAMPLE_RATE,
+-            channels: LOCAL_STT_CHANNELS,
+-            lang: lang.startsWith("zh") ? "zh" : lang,
+-            maxMs: LOCAL_STT_MAX_RECORD_MS,
+-          })
+-
+-          if (dead || aborted) {
+-            handle.abort()
+-            return
+-          }
+-          handlers.onStart()
+-        } catch (e: any) {
+-          if (dead || aborted) return
+-          const code =
+-            e?.code === "aborted"
+-              ? "aborted"
+-              : e?.name === "NotAllowedError" || e?.name === "PermissionDeniedError"
+-                ? "not-allowed"
+-                : e?.code === "audio-capture" || e?.name === "NotFoundError"
+-                  ? "audio-capture"
+-                  : "audio-capture"
+-          handlers.onError(code)
+-          handlers.onEnd()
+-          reset()
+-        }
+-      })()
++      wallStart = Date.now()
++      segmentIndex = 0
++      loopGen += 1
++      const gen = loopGen
++
++      if (mode === "continuous") {
++        void runContinuous(gen)
++      } else {
++        void runClassic(sid)
++      }
+     },
+ 
+     stop() {
+       if (dead) return
+       if (phase === "idle") return
+ 
+-      // Mid-upload / waiting: treat as graceful wait (do not abort server).
++      wantListening = false
++
++      // Continuous: finish current segment early, then exit after upload
++      if (mode === "continuous") {
++        if (phase === "recording") {
++          segmentStopTrigger?.()
++        }
++        // uploading/waiting: let segment complete, loop exits
++        return
++      }
++
++      // classic
+       if (phase === "uploading" || phase === "waiting") {
+         return
+       }
+@@ -274,7 +465,6 @@ export function createLocalSttAdapter(
+       const handle = capture
+       capture = null
+       if (!handle) {
+-        // Still starting gUM — mark aborted-ish
+         aborted = true
+         handlers.onError("aborted")
+         handlers.onEnd()
+@@ -284,11 +474,22 @@ export function createLocalSttAdapter(
+ 
+       void handle
+         .stop()
+-        .then((wav) => uploadAndEnd(wav))
++        .then(async (wav) => {
++          const sid = sessionId
++          if (!sid) return
++          const result = await uploadAndWait(sid, wav)
++          if (dead) return
++          if (!result.ok) {
++            handlers.onError(result.code === "aborted" ? "aborted" : result.code)
++          } else if (result.text.trim()) {
++            handlers.onResult({ interim: "", finalChunk: result.text })
++          }
++          handlers.onEnd()
++          reset()
++        })
+         .catch((e: any) => {
+           if (aborted || dead) return
+-          const code = e?.code === "aborted" ? "aborted" : "audio-capture"
+-          handlers.onError(code)
++          handlers.onError(e?.code === "aborted" ? "aborted" : "audio-capture")
+           handlers.onEnd()
+           reset()
+         })
+@@ -297,6 +498,11 @@ export function createLocalSttAdapter(
+     abort() {
+       if (dead) return
+       aborted = true
++      wantListening = false
++      loopGen += 1
++      clearSegmentTimer()
++      segmentStopTrigger?.()
++      segmentStopTrigger = null
+       const sid = sessionId
+       const handle = capture
+       capture = null
+@@ -312,7 +518,7 @@ export function createLocalSttAdapter(
+           /* */
+         }
+       }
+-      // Server may reply voice.stt.error aborted; also end locally so SM recovers.
++      finishPending({ ok: false, code: "aborted" })
+       handlers.onError("aborted")
+       handlers.onEnd()
+       reset()
+@@ -321,6 +527,10 @@ export function createLocalSttAdapter(
+     destroy() {
+       dead = true
+       aborted = true
++      wantListening = false
++      loopGen += 1
++      clearSegmentTimer()
++      segmentStopTrigger = null
+       const sid = sessionId
+       const handle = capture
+       capture = null
+@@ -336,6 +546,7 @@ export function createLocalSttAdapter(
+           /* */
+         }
+       }
++      finishPending({ ok: false, code: "aborted" })
+       reset()
+     },
+   }
+diff --git a/chrome-extension/src/sidepanel/voice/session-reducer.ts b/chrome-extension/src/sidepanel/voice/session-reducer.ts
+index fe70b74..620888c 100644
+--- a/chrome-extension/src/sidepanel/voice/session-reducer.ts
++++ b/chrome-extension/src/sidepanel/voice/session-reducer.ts
+@@ -136,6 +136,18 @@ export function reduceVoiceSession(
+         ...state,
+         phase: "processing",
+         interim: "",
++        banner: "本机识别中…",
++      }
++    }
++
++    case "SEGMENT_CONTINUE": {
++      // After a continuous local segment result: back to listening for next window
++      if (state.phase !== "processing" && state.phase !== "listening") return state
++      return {
++        ...state,
++        phase: "listening",
++        interim: "",
++        banner: null,
+       }
+     }
+ 
+diff --git a/chrome-extension/src/sidepanel/voice/types.ts b/chrome-extension/src/sidepanel/voice/types.ts
+index 4288537..cb72765 100644
+--- a/chrome-extension/src/sidepanel/voice/types.ts
++++ b/chrome-extension/src/sidepanel/voice/types.ts
+@@ -58,6 +58,8 @@ export type VoiceEvent =
+   | { type: "REFINE_OK"; refineGen: number; text: string; unchanged?: boolean }
+   | { type: "REFINE_FAIL"; refineGen: number; code?: string; message?: string }
+   | { type: "CANCEL_REFINE" }
++  /** Local continuous D1c: segment done; resume listening chrome. */
++  | { type: "SEGMENT_CONTINUE" }
+   | { type: "DISMISS_BANNER" }
+   | { type: "UNMOUNT" }
+ 
+diff --git a/chrome-extension/src/sidepanel/voice/web-speech-adapter.ts b/chrome-extension/src/sidepanel/voice/web-speech-adapter.ts
+index 9dad7c7..26b5222 100644
+--- a/chrome-extension/src/sidepanel/voice/web-speech-adapter.ts
++++ b/chrome-extension/src/sidepanel/voice/web-speech-adapter.ts
+@@ -21,6 +21,10 @@ export type SpeechAdapterHandlers = {
+    * before waiting for voice.stt.result (enter processing phase).
+    */
+   onCaptureStopped?: () => void
++  /**
++   * Local continuous D1c: segment transcribed; resume listening chrome for next window.
++   */
++  onSegmentContinue?: () => void
+ }
+ 
+ /** Browser: lang string. Local: sessionId + modelId required. Dictation+ mode optional. */
+@@ -30,8 +34,10 @@ export type SpeechAdapterStartArg =
+       lang?: string
+       sessionId?: string
+       modelId?: string
+-      /** browser only; default classic */
++      /** classic | continuous (browser restart / local segments) */
+       mode?: VoiceDictationMode
++      /** continuous hard cap ms (local D1c) */
++      hardCapMs?: number
+     }
+ 
+ export type SpeechAdapter = {
+diff --git a/chrome-extension/tests/voice-local-continuous.test.ts b/chrome-extension/tests/voice-local-continuous.test.ts
+new file mode 100644
+index 0000000..4044c50
+--- /dev/null
++++ b/chrome-extension/tests/voice-local-continuous.test.ts
+@@ -0,0 +1,171 @@
++/**
++ * Dictation+ D1c — local continuous serial segments.
++ */
++import test from "node:test"
++import assert from "node:assert/strict"
++import { createLocalSttAdapter } from "../src/sidepanel/voice/local-stt-adapter"
++import {
++  maxListenMsForSession,
++  VOICE_CONTINUOUS_HARD_CAP_MS,
++  VOICE_MAX_LISTEN_MS,
++} from "../src/sidepanel/voice/detect"
++import { reduceVoiceSession } from "../src/sidepanel/voice/session-reducer"
++import { initialVoiceSession } from "../src/sidepanel/voice/types"
++
++test("maxListenMsForSession continuous local uses hard cap (D1c)", () => {
++  assert.equal(
++    maxListenMsForSession("continuous", "local"),
++    VOICE_CONTINUOUS_HARD_CAP_MS,
++  )
++  assert.equal(maxListenMsForSession("classic", "local"), VOICE_MAX_LISTEN_MS)
++})
++
++test("SEGMENT_CONTINUE resumes listening from processing", () => {
++  let s = initialVoiceSession(true)
++  s = reduceVoiceSession(s, {
++    type: "USER_TOGGLE_START",
++    sessionId: "s1",
++    baseText: "",
++  })
++  s = reduceVoiceSession(s, { type: "ENGINE_START" })
++  s = reduceVoiceSession(s, { type: "CAPTURE_STOPPED" })
++  assert.equal(s.phase, "processing")
++  s = reduceVoiceSession(s, { type: "ENGINE_RESULT", finalChunk: "段一" })
++  s = reduceVoiceSession(s, { type: "SEGMENT_CONTINUE" })
++  assert.equal(s.phase, "listening")
++  assert.deepEqual(s.finals, ["段一"])
++})
++
++test("local continuous: two segments → two finals then onEnd", async () => {
++  const sent: any[] = []
++  let captures = 0
++  const inbox: { emit?: (m: any) => void } = {}
++  const finals: string[] = []
++  let starts = 0
++  let ends = 0
++  let continues = 0
++  let captureStops = 0
++
++  const adapter = createLocalSttAdapter(
++    {
++      onStart: () => {
++        starts++
++      },
++      onResult: ({ finalChunk }) => {
++        if (finalChunk) finals.push(finalChunk)
++      },
++      onError: () => {},
++      onEnd: () => {
++        ends++
++      },
++      onCaptureStopped: () => {
++        captureStops++
++      },
++      onSegmentContinue: () => {
++        continues++
++      },
++    },
++    {
++      send: (msg) => {
++        sent.push(msg)
++        // Auto-reply result when end arrives
++        if (msg.type === "voice.stt.end") {
++          queueMicrotask(() => {
++            inbox.emit?.({
++              type: "voice.stt.result",
++              sessionId: msg.sessionId,
++              text: `seg-${msg.sessionId}`,
++            })
++          })
++        }
++      },
++      onMessage: (h) => {
++        inbox.emit = h
++        return () => {
++          inbox.emit = undefined
++        }
++      },
++      modelId: "medium",
++      startCapture: async () => {
++        captures++
++        return {
++          stop: async () => new Uint8Array([1, 2, 3, 4]),
++          abort: () => {},
++        }
++      },
++    },
++  )
++
++  // Short hard cap so only ~2 segments if we force-stop after second continue
++  adapter.start({
++    sessionId: "parent",
++    modelId: "small",
++    mode: "continuous",
++    hardCapMs: 2000,
++  })
++
++  // Allow a few segment cycles (record is instant with mock)
++  await new Promise((r) => setTimeout(r, 80))
++  adapter.stop()
++  await new Promise((r) => setTimeout(r, 80))
++
++  assert.ok(starts >= 1)
++  assert.ok(captures >= 1, `expected ≥1 capture, got ${captures}`)
++  assert.ok(finals.length >= 1, `expected finals, got ${JSON.stringify(finals)}`)
++  assert.ok(
++    sent.some((m) => m.type === "voice.stt.start" && String(m.sessionId).includes("-s")),
++    "segment session ids should be parent-sN",
++  )
++  assert.equal(ends, 1)
++  // If more than one segment completed before stop, continue should fire
++  if (finals.length >= 2) {
++    assert.ok(continues >= 1)
++    assert.ok(captureStops >= 2)
++  }
++
++  adapter.destroy()
++})
++
++test("local continuous: abort mid-session ends once", async () => {
++  const inbox: { emit?: (m: any) => void } = {}
++  let ends = 0
++  let errors = 0
++  const adapter = createLocalSttAdapter(
++    {
++      onStart: () => {},
++      onResult: () => {},
++      onError: (c) => {
++        if (c === "aborted") errors++
++      },
++      onEnd: () => {
++        ends++
++      },
++    },
++    {
++      send: () => {},
++      onMessage: (h) => {
++        inbox.emit = h
++        return () => {
++          inbox.emit = undefined
++        }
++      },
++      modelId: "medium",
++      startCapture: async () => ({
++        stop: async () => new Uint8Array([1]),
++        abort: () => {},
++      }),
++    },
++  )
++
++  adapter.start({
++    sessionId: "p-abort",
++    mode: "continuous",
++    hardCapMs: 60_000,
++  })
++  await new Promise((r) => setTimeout(r, 20))
++  adapter.abort()
++  await new Promise((r) => setTimeout(r, 20))
++  assert.equal(errors, 1)
++  assert.equal(ends, 1)
++  adapter.destroy()
++})
+diff --git a/chrome-extension/tests/voice-web-speech-continuous.test.ts b/chrome-extension/tests/voice-web-speech-continuous.test.ts
+index 03fddf5..ba27277 100644
+--- a/chrome-extension/tests/voice-web-speech-continuous.test.ts
++++ b/chrome-extension/tests/voice-web-speech-continuous.test.ts
+@@ -29,12 +29,15 @@ test("maxListenMsForSession classic always 45s", () => {
+   assert.equal(maxListenMsForSession("classic", "local"), VOICE_MAX_LISTEN_MS)
+ })
+ 
+-test("maxListenMsForSession continuous browser uses hard cap; local stays 45s (D1a)", () => {
++test("maxListenMsForSession continuous uses hard cap (browser + local D1c)", () => {
+   assert.equal(
+     maxListenMsForSession("continuous", "browser"),
+     VOICE_CONTINUOUS_HARD_CAP_MS,
+   )
+-  assert.equal(maxListenMsForSession("continuous", "local"), VOICE_MAX_LISTEN_MS)
++  assert.equal(
++    maxListenMsForSession("continuous", "local"),
++    VOICE_CONTINUOUS_HARD_CAP_MS,
++  )
+ })
+ 
+ test("classic mode: onend does not restart (single start)", async () => {

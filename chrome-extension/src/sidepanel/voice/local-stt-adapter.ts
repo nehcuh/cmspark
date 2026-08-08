@@ -86,6 +86,8 @@ export function createLocalSttAdapter(
   let parentSessionId = ""
   let lang = VOICE_DEFAULT_LANG
   let hardCapMs = VOICE_CONTINUOUS_HARD_CAP_MS
+  /** Optional per-segment window override (tests); clamped to LOCAL_STT_MAX_RECORD_MS. */
+  let segmentCapMs = LOCAL_STT_MAX_RECORD_MS
   let wallStart = 0
   let segmentIndex = 0
   let pending: PendingWait | null = null
@@ -327,16 +329,17 @@ export function createLocalSttAdapter(
       handlers.onStart()
       while (!dead && wantListening && gen === loopGen) {
         const remaining = hardCapMs - (Date.now() - wallStart)
-        if (remaining < 800) break
+        // Allow short test segments (<800ms wall hardCap with tiny segmentCapMs)
+        if (remaining < Math.min(50, segmentCapMs)) break
 
-        const segmentMs = Math.min(LOCAL_STT_MAX_RECORD_MS, remaining)
+        const segmentMs = Math.min(segmentCapMs, LOCAL_STT_MAX_RECORD_MS, remaining)
         segmentIndex += 1
         const segSid = `${parentSessionId}-s${segmentIndex}`
         sessionId = segSid
         phase = "recording"
 
-        sendStart(segSid, segmentMs)
-
+        // Do NOT voice.stt.start until upload: companion arms 10s idle on start
+        // with zero chunks during record → forceAbort (Pi D1c blocker #2).
         let wav: Uint8Array | null
         try {
           wav = await recordSegment(segmentMs)
@@ -359,14 +362,17 @@ export function createLocalSttAdapter(
           return
         }
 
+        // Open STT session then immediately stream chunks (keeps idle timer happy).
+        sendStart(segSid, segmentMs)
         const result = await uploadAndWait(segSid, wav)
         if (dead || gen !== loopGen) return
 
-        if (!result.ok) {
-          if (result.code === "aborted" || aborted) {
+        if (result.ok === false) {
+          const errCode = result.code
+          if (errCode === "aborted" || aborted) {
             handlers.onError("aborted")
           } else {
-            handlers.onError(result.code)
+            handlers.onError(errCode)
           }
           handlers.onEnd()
           reset()
@@ -406,6 +412,7 @@ export function createLocalSttAdapter(
       let mid = deps.modelId
       mode = "classic"
       hardCapMs = VOICE_CONTINUOUS_HARD_CAP_MS
+      segmentCapMs = LOCAL_STT_MAX_RECORD_MS
 
       if (typeof langOrOpts === "string") {
         lang = langOrOpts || VOICE_DEFAULT_LANG
@@ -416,6 +423,12 @@ export function createLocalSttAdapter(
         if (langOrOpts.mode === "continuous") mode = "continuous"
         if (typeof (langOrOpts as { hardCapMs?: number }).hardCapMs === "number") {
           hardCapMs = (langOrOpts as { hardCapMs: number }).hardCapMs
+        }
+        if (typeof (langOrOpts as { segmentMs?: number }).segmentMs === "number") {
+          segmentCapMs = Math.max(
+            20,
+            Math.min(LOCAL_STT_MAX_RECORD_MS, (langOrOpts as { segmentMs: number }).segmentMs),
+          )
         }
       }
 
@@ -479,8 +492,9 @@ export function createLocalSttAdapter(
           if (!sid) return
           const result = await uploadAndWait(sid, wav)
           if (dead) return
-          if (!result.ok) {
-            handlers.onError(result.code === "aborted" ? "aborted" : result.code)
+          if (result.ok === false) {
+            const errCode = result.code
+            handlers.onError(errCode === "aborted" ? "aborted" : errCode)
           } else if (result.text.trim()) {
             handlers.onResult({ interim: "", finalChunk: result.text })
           }

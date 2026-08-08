@@ -120,6 +120,3 @@ export function maxListenMsForSession(
   void engine
   return VOICE_MAX_LISTEN_MS
 }
-
-/** Per-segment local STT window (must stay ≤ companion STT_MAX_RECORD_MS). */
-export const LOCAL_CONTINUOUS_SEGMENT_MS = 45_000
