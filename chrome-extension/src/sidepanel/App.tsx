@@ -493,7 +493,27 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     dispatch({ type: "SET_DICTATION_CAPTURE_ACTIVE", active })
   }, [voice.listening, voice.processing, voice.refining, dispatch])
 
-  // Dictation+ D2: hold hotkey (Side Panel open; key capture when panel focused).
+  // D2 hold: keep stable refs so effect is NOT torn down every listenTick (REJECT #1).
+  const holdStartRef = useRef(voice.holdStart)
+  const holdStopRef = useRef(voice.holdStop)
+  holdStartRef.current = voice.holdStart
+  holdStopRef.current = voice.holdStop
+  const meetingCaptureRef = useRef(state.meetingCaptureActive)
+  meetingCaptureRef.current = state.meetingCaptureActive
+  const voiceAllowStartRef = useRef(voiceAllowStart)
+  voiceAllowStartRef.current = voiceAllowStart
+  const privacyRef = useRef({
+    v1: state.voicePrivacyAckV1 === true,
+    v2: state.voicePrivacyAckV2 === true,
+    v3: state.voicePrivacyAckV3 === true,
+  })
+  privacyRef.current = {
+    v1: state.voicePrivacyAckV1 === true,
+    v2: state.voicePrivacyAckV2 === true,
+    v3: state.voicePrivacyAckV3 === true,
+  }
+
+  // Dictation+ D2: hold hotkey (Side Panel window key capture).
   // SoT §5.2 — default off; ban fn/Win+V; xor meeting capture.
   useEffect(() => {
     if (!state.dictationHotkeyEnabled) return
@@ -520,51 +540,42 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       e.preventDefault()
       e.stopPropagation()
       if (down) return
-      if (state.meetingCaptureActive) {
-        // soft fail — do not start
-        return
-      }
-      if (!voiceAllowStart && !voice.listening) return
+      if (meetingCaptureRef.current) return
+      if (!voiceAllowStartRef.current) return
       down = true
-      const ok = voice.holdStart({
-        privacyAck: state.voicePrivacyAckV1 === true,
-        privacyAckV2: state.voicePrivacyAckV2 === true,
-        privacyAckV3: state.voicePrivacyAckV3 === true,
+      const ok = holdStartRef.current({
+        privacyAck: privacyRef.current.v1,
+        privacyAckV2: privacyRef.current.v2,
+        privacyAckV3: privacyRef.current.v3,
       })
       if (ok) notifyHold(true)
       else down = false
     }
 
     const onKeyUp = (e: KeyboardEvent) => {
-      // Stop when main key or any chord modifier is released while holding
-      const mainUp = eventMatchesChord(
-        {
-          key: e.key,
-          code: e.code,
-          ctrlKey: chord.ctrl ? true : e.ctrlKey,
-          altKey: chord.alt ? true : e.altKey,
-          shiftKey: chord.shift ? true : e.shiftKey,
-          metaKey: chord.meta ? true : e.metaKey,
-        },
-        chord,
-      )
+      if (!down) return
       const modUp =
         (chord.ctrl && e.key === "Control") ||
         (chord.alt && (e.key === "Alt" || e.key === "AltGraph")) ||
         (chord.shift && e.key === "Shift") ||
         (chord.meta && (e.key === "Meta" || e.key === "OS"))
-      if (!down) return
-      if (!mainUp && !modUp && !eventMatchesChord(e, chord)) return
+      const mainUp = eventMatchesChord(e, chord)
+      // Also treat keyup of the main key even if modifiers already released
+      const keyIsMain =
+        chord.key === "space"
+          ? e.key === " " || e.key === "Spacebar" || e.code === "Space"
+          : e.key.toLowerCase() === chord.key
+      if (!mainUp && !modUp && !keyIsMain) return
       e.preventDefault()
       down = false
-      voice.holdStop()
+      holdStopRef.current()
       notifyHold(false)
     }
 
     const onBlur = () => {
       if (!down) return
       down = false
-      voice.holdStop()
+      holdStopRef.current()
       notifyHold(false)
     }
 
@@ -576,20 +587,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       window.removeEventListener("keyup", onKeyUp, true)
       window.removeEventListener("blur", onBlur)
       if (down) {
-        voice.holdStop()
+        holdStopRef.current()
         notifyHold(false)
       }
     }
-  }, [
-    state.dictationHotkeyEnabled,
-    state.dictationHotkeyChord,
-    state.meetingCaptureActive,
-    state.voicePrivacyAckV1,
-    state.voicePrivacyAckV2,
-    state.voicePrivacyAckV3,
-    voiceAllowStart,
-    voice,
-  ])
+  }, [state.dictationHotkeyEnabled, state.dictationHotkeyChord])
 
   // Hide: feature off | unsupported for selected engine | worker | no thread.
   // Local + no gUM → voice.supported false → hide.

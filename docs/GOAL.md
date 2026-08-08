@@ -282,7 +282,7 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 | 线 | 波次 | 内容 |
 |----|------|------|
 | 听写+ | D1a–c | classic 默认；continuous；ASR Refiner（correct_only）；本机分段 |
-| 听写+ | **D2** | 按住热键 hold（默认关；禁 fn/Win+V 默认） |
+| 听写+ | **D2** | 按住热键 hold（默认关；Side Panel 焦点捕获；禁 fn/Win+V 默认） |
 | 会议 | Mtg0 | Pack「会议记录」+ 粘贴 → 纪要 job |
 | 会议 | Mtg1 | 工作台 live 本机录 + ack + 默认删音频 + 听写互斥 |
 | 会议 | Mtg2 | 手动 speaker / 静音切 / 文件上传；系统混音 [parking](superpowers/specs/2026-08-08-meeting-system-audio-parking.md) |

@@ -664,10 +664,27 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
 
   /**
    * Dictation+ D2 hold-to-talk: force continuous for this session, start if idle.
-   * Returns false if blocked (busy gates / already listening from non-hold).
+   * Do NOT use queueMicrotask to "detect" start failure — toggle() may async-query
+   * mic permission and only then leave idle (dual-review REJECT #2).
    */
   const holdSessionRef = useRef(false)
   const savedModeRef = useRef<VoiceDictationMode | null>(null)
+
+  const restoreModeAfterHold = useCallback(() => {
+    holdSessionRef.current = false
+    if (savedModeRef.current) {
+      modeRef.current = savedModeRef.current
+      savedModeRef.current = null
+    }
+  }, [])
+
+  // If hold session ends (hard cap / error) without holdStop, restore classic/continuous pref.
+  useEffect(() => {
+    if (!holdSessionRef.current) return
+    if (session.phase === "idle" || session.phase === "error") {
+      restoreModeAfterHold()
+    }
+  }, [session.phase, restoreModeAfterHold])
 
   const holdStart = useCallback(
     (extra?: { privacyAck?: boolean; privacyAckV2?: boolean; privacyAckV3?: boolean }) => {
@@ -675,18 +692,11 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       if (s.phase !== "idle" && s.phase !== "error") return false
       if (!optsRef.current.allowStart) return false
       if (holdSessionRef.current) return false
+      // Mode must stay continuous until holdStop / natural idle — begin() reads modeRef later.
       savedModeRef.current = modeRef.current
       modeRef.current = "continuous"
       holdSessionRef.current = true
       toggle(extra)
-      // If still idle after toggle (gate failed), restore
-      queueMicrotask(() => {
-        if (sessionRef.current.phase === "idle" || sessionRef.current.phase === "error") {
-          holdSessionRef.current = false
-          if (savedModeRef.current) modeRef.current = savedModeRef.current
-          savedModeRef.current = null
-        }
-      })
       return true
     },
     [toggle],
@@ -699,17 +709,14 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       s.phase === "listening" ||
       s.phase === "starting" ||
       s.phase === "processing" ||
-      s.phase === "stopping"
+      s.phase === "stopping" ||
+      s.phase === "refining"
     ) {
       toggle()
     }
-    holdSessionRef.current = false
-    if (savedModeRef.current) {
-      modeRef.current = savedModeRef.current
-      savedModeRef.current = null
-    }
+    restoreModeAfterHold()
     return true
-  }, [toggle])
+  }, [toggle, restoreModeAfterHold])
 
   return {
     supported,
@@ -732,10 +739,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     /** Map a local gate code for external CTA (optional). */
     mapLocalError: mapLocalSttError,
     toggle,
-    /** D2 hold-to-talk */
+    /** D2 hold-to-talk — stable callbacks; App must not depend on whole `voice` object. */
     holdStart,
     holdStop,
-    holdActive: holdSessionRef.current,
     abortForChatStop,
     dismissBanner,
     restoreRaw,
