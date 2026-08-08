@@ -150,7 +150,7 @@ MeetingSession
 |------|------|
 | Mtg1 | 单轨；可选标签「我」；**无**自动 diarize |
 | Mtg2 | 静音切 + 手动标 speaker；上传文件 |
-| Mtg3 | 自动 diarize — **另开对抗** |
+| Mtg3 | 自动 diarize — 见 [Mtg3 SoT](./2026-08-08-meeting-mtg3-diarize-design.md)（匿名聚类，非身份） |
 
 ---
 
@@ -246,7 +246,7 @@ Origin / 鉴权与现有 WS 一致；tray 不发起会议音频。
 | **Mtg0** | Pack + 粘贴纪要 | 无 mic |
 | **Mtg1** | 工作台 + 分段 local + 删音频 + ack | Dictation+ **D1c** 分段能力 |
 | **Mtg2** | 手动 speaker / 上传 / 系统音频调研 | 另评 |
-| **Mtg3** | 自动 diarize | 另对抗 |
+| **Mtg3** | 自动 diarize（本地特征 k-means · 发言人N） | [Mtg3 SoT](./2026-08-08-meeting-mtg3-diarize-design.md) |
 
 可与 Dictation+ **D1 并行做 Mtg0**（推荐先验证纪要价值）。
 

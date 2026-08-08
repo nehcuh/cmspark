@@ -22,11 +22,45 @@ export const MEETING_AUDIO_IMPORT_MAX_FILE_BYTES = 25 * 1024 * 1024
 /** Per-segment wall for Path B STT (matches classic max). */
 export const MEETING_AUDIO_SEGMENT_MS = LOCAL_STT_MAX_RECORD_MS
 
+/** [logEnergy, zcr, spectralCentroidNorm] — aligned with companion auto-diarize. */
+export type DiarizeFeature = [number, number, number]
+
 export type AudioSegmentWav = {
   index: number
   wav: Uint8Array
   t0Sec: number
   t1Sec: number
+  /** Mtg3 acoustic features for this segment (anonymous cluster). */
+  features: DiarizeFeature
+}
+
+/**
+ * Lightweight segment features for local k-means diarize (Mtg3).
+ * Same formula as companion/src/meeting/auto-diarize extractSegmentFeatures.
+ */
+export function extractSegmentFeatures(
+  samples: Float32Array | number[],
+  _sampleRate: number,
+): DiarizeFeature {
+  const n = samples.length
+  if (n === 0) return [0, 0, 0]
+  let energy = 0
+  let zc = 0
+  let prev = samples[0] ?? 0
+  let diffSum = 0
+  for (let i = 0; i < n; i++) {
+    const x = samples[i] ?? 0
+    energy += x * x
+    if (i > 0) {
+      if ((prev >= 0 && x < 0) || (prev < 0 && x >= 0)) zc++
+      diffSum += Math.abs(x - prev)
+    }
+    prev = x
+  }
+  const logEnergy = Math.log1p(energy / n)
+  const zcr = zc / n
+  const centroidNorm = Math.min(1, diffSum / (n * 0.5 + 1e-9))
+  return [logEnergy, zcr, centroidNorm]
 }
 
 /**
@@ -150,7 +184,8 @@ export async function fileToWavSegments(
     const wav = wrapPcmS16leAsWav(pcm, LOCAL_STT_SAMPLE_RATE, LOCAL_STT_CHANNELS)
     const t0Sec = off / LOCAL_STT_SAMPLE_RATE
     const t1Sec = end / LOCAL_STT_SAMPLE_RATE
-    segments.push({ index, wav, t0Sec, t1Sec })
+    const features = extractSegmentFeatures(slice, LOCAL_STT_SAMPLE_RATE)
+    segments.push({ index, wav, t0Sec, t1Sec, features })
     index += 1
   }
 

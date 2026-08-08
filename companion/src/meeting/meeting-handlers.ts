@@ -15,6 +15,7 @@ import {
   loadMeeting,
   listMeetings,
   replaceTranscript,
+  setDiarizeResult,
   setMeetingStatus,
   setMinutes,
   setTranscript,
@@ -29,6 +30,12 @@ import {
   bulkSetSpeaker,
   silenceCutText,
 } from "./silence-cut"
+import {
+  applyDiarizeToLines,
+  clampDiarizeK,
+  diarizeByAudioFeatures,
+  diarizeByTextGap,
+} from "./auto-diarize"
 
 export interface MeetingHandlerContext {
   origin?: string
@@ -257,6 +264,71 @@ export async function handleMeetingMessage(
     const updated = replaceTranscript(id, next)
     if (!updated) return err("not_found", "meeting not found", { id })
     return { type: "meeting.updated", v: 1, meeting: updated, cut: true }
+  }
+
+  /**
+   * Mtg3: auto-tag speakers (anonymous 发言人N).
+   * mode=audio_cluster requires features[][] aligned with transcript lines.
+   * mode=text_gap is weak alternating labels (explicit; not acoustic).
+   */
+  if (type === "meeting.auto_diarize") {
+    if (msg.privacy_ack_v1 !== true) {
+      return err("need_privacy_ack", "meeting_privacy_ack_v1 required for auto_diarize")
+    }
+    const id = typeof msg.id === "string" ? msg.id : ""
+    let m = loadMeeting(id)
+    if (!m) return err("not_found", "meeting not found", { id })
+    // Optional text: silence-cut set before diarize (text_gap path)
+    if (typeof msg.text === "string" && msg.text.trim()) {
+      m = setTranscript(id, silenceCutText(msg.text, "user_edit")) || m
+    }
+    if (!m.transcript.length) {
+      return err("empty_transcript", "empty transcript", { id })
+    }
+    const mode = msg.mode === "text_gap" ? "text_gap" : "audio_cluster"
+    const k = clampDiarizeK(msg.k)
+    let result
+    if (mode === "text_gap") {
+      result = diarizeByTextGap(m.transcript, k)
+    } else {
+      const features = Array.isArray(msg.features) ? msg.features : null
+      if (!features || features.length === 0) {
+        return err(
+          "features_required",
+          "audio_cluster requires features aligned with transcript lines",
+          { id },
+        )
+      }
+      if (features.length !== m.transcript.length) {
+        return err(
+          "features_mismatch",
+          `features length ${features.length} != transcript ${m.transcript.length}`,
+          { id },
+        )
+      }
+      result = diarizeByAudioFeatures(m.transcript, features, k)
+    }
+    const lines = applyDiarizeToLines(m.transcript, result)
+    const updated = setDiarizeResult(id, lines, {
+      method: result.method,
+      k: result.k,
+      at: new Date().toISOString(),
+      experimental: true,
+    })
+    if (!updated) return err("not_found", "meeting not found", { id })
+    logger.info("meeting.auto_diarize.ok", {
+      id,
+      method: result.method,
+      k: result.k,
+      lines: lines.length,
+    })
+    return {
+      type: "meeting.diarized",
+      v: 1,
+      meeting: updated,
+      diarize: updated.diarize,
+      cut: true,
+    }
   }
 
   /**

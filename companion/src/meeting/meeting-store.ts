@@ -36,6 +36,13 @@ export type MeetingStatus =
   | "done"
   | "error"
 
+export type MeetingDiarizeMeta = {
+  method: "audio_cluster" | "text_gap"
+  k: number
+  at: string
+  experimental: true
+}
+
 export type MeetingMeta = {
   id: string
   thread_id?: string | null
@@ -48,6 +55,8 @@ export type MeetingMeta = {
     audio_retained: boolean
     retain_until?: string | null
   }
+  /** Mtg3: last auto-diarize run (anonymous labels only). */
+  diarize?: MeetingDiarizeMeta | null
   error?: string | null
 }
 
@@ -130,6 +139,7 @@ export function createMeeting(opts: {
       audio_retained: false,
       retain_until: null,
     },
+    diarize: null,
     transcript: [],
     minutes: null,
     error: null,
@@ -150,6 +160,7 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
     ended_at: session.ended_at,
     status: session.status,
     privacy: session.privacy,
+    diarize: session.diarize ?? null,
     error: session.error ?? null,
   }
   writeJsonAtomic(path.join(dir, "meta.json"), meta)
@@ -227,6 +238,22 @@ export function replaceTranscript(
   if (s.transcript.length > 0 && (s.status === "draft" || s.status === "error")) {
     s.status = "ready"
   }
+  saveMeeting(s, dataDir)
+  return s
+}
+
+/** Persist diarize meta + optional new transcript lines. */
+export function setDiarizeResult(
+  id: string,
+  lines: TranscriptLine[],
+  diarize: MeetingDiarizeMeta,
+  dataDir = DATA_DIR,
+): MeetingSession | null {
+  const s = loadMeeting(id, dataDir)
+  if (!s) return null
+  s.transcript = lines
+  s.diarize = diarize
+  if (s.status === "draft" || s.status === "error") s.status = "ready"
   saveMeeting(s, dataDir)
   return s
 }

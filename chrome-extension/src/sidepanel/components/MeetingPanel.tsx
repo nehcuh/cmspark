@@ -1,9 +1,8 @@
 /**
- * Meeting workbench — Mtg0 paste + Mtg1 live capture + Mtg2 speaker/upload.
- * SoT: docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
- * Does NOT auto-start mic on pack apply. Forces local STT for long capture.
- * Mtg2: manual speaker labels, silence-cut heuristic, text/audio file import.
- * NOT auto-diarize; system audio mix still parking-lot.
+ * Meeting workbench — Mtg0–Mtg3.
+ * SoT: meeting-minutes-design + Mtg3 diarize design.
+ * Mtg3: experimental anonymous 发言人N via local feature k-means (NOT identity).
+ * Does NOT auto-start mic on pack apply. System audio mix still parking-lot.
  */
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
@@ -111,6 +110,10 @@ export function MeetingPanel(props: {
   const importAbortRef = useRef(false)
   /** Skip server→textarea sync while user is typing (dual-review dirty-guard). */
   const transcriptDirtyRef = useRef(false)
+  /** Mtg3: per-line acoustic features from last audio import (aligned with append order). */
+  const lineFeaturesRef = useRef<number[][]>([])
+  const [diarizeK, setDiarizeK] = useState(2)
+  const [autoDiarizeAfterImport, setAutoDiarizeAfterImport] = useState(false)
 
   const adapterRef = useRef<SpeechAdapter | null>(null)
   const captureStartRef = useRef<number | null>(null)
@@ -409,8 +412,26 @@ export function MeetingPanel(props: {
           transcriptRef.current = formatted
           transcriptDirtyRef.current = false
         }
+        lineFeaturesRef.current = []
         setBusy(false)
         setImportStatus("已导入转写文件")
+      }
+      if (msg.type === "meeting.diarized" && msg.meeting) {
+        setMeetingId(msg.meeting.id)
+        setStatus(msg.meeting.status || "ready")
+        if (Array.isArray(msg.meeting.transcript)) {
+          const formatted = formatLinesFromMeeting(msg.meeting.transcript)
+          setTranscript(formatted)
+          transcriptRef.current = formatted
+          transcriptDirtyRef.current = false
+        }
+        setBusy(false)
+        const method = msg.diarize?.method || msg.meeting.diarize?.method
+        setImportStatus(
+          method === "text_gap"
+            ? "已弱标说话人（按行交替 · 非声学）"
+            : "已自动标匿名发言人（实验 · 非身份识别）",
+        )
       }
       if (msg.type === "meeting.minutes_result") {
         if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)
@@ -716,6 +737,8 @@ export function MeetingPanel(props: {
     const total = decoded.segments.length
     let failedAt: number | null = null
     let done = 0
+    const feats: number[][] = []
+    const texts: string[] = []
     setImportStatus(`本机转写 0/${total} 段…`)
     for (let i = 0; i < total; i++) {
       if (importAbortRef.current) break
@@ -735,9 +758,29 @@ export function MeetingPanel(props: {
         break
       }
       if (r.text.trim()) {
-        appendLocalAndRemote(r.text, id)
+        texts.push(r.text.trim())
+        feats.push(seg.features)
+        // local preview (speaker optional)
+        appendLocalAndRemote(r.text, null)
       }
       done = i + 1
+    }
+    lineFeaturesRef.current = feats
+
+    // Single set_transcript so line count == features (avoid append race before diarize)
+    if (texts.length > 0 && id) {
+      const sp = defaultSpeakerRef.current.trim()
+      const body = texts.join("\n")
+      sendViaRuntime({
+        type: "meeting.set_transcript",
+        v: 1,
+        id,
+        text: body,
+        source: "stt",
+        silence_cut: false,
+      })
+      // If default speaker set, bulk after — optional; diarize overwrites speakers
+      void sp
     }
 
     setBusy(false)
@@ -746,9 +789,69 @@ export function MeetingPanel(props: {
     } else if (failedAt != null) {
       setImportStatus(`导入部分失败（成功 ${done}/${total} 段，失败于第 ${failedAt} 段）`)
     } else {
-      setImportStatus(`音频导入完成 ${done}/${total} 段（暂不分说话人）`)
+      setImportStatus(`音频导入完成 ${done}/${total} 段`)
+      if (autoDiarizeAfterImport && feats.length >= 2 && id && texts.length === feats.length) {
+        setBusy(true)
+        setTimeout(() => {
+          sendViaRuntime({
+            type: "meeting.auto_diarize",
+            v: 1,
+            id,
+            privacy_ack_v1: true,
+            mode: "audio_cluster",
+            k: diarizeK,
+            features: feats,
+          })
+        }, 120)
+      }
     }
     dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
+  }
+
+  const runAutoDiarize = (mode: "audio_cluster" | "text_gap") => {
+    if (!ensureAck()) return
+    if (!meetingId && !transcript.trim()) {
+      setError("请先创建会议或导入/录制转写")
+      return
+    }
+    if (!transcript.trim()) {
+      setError("转写为空，无法标说话人")
+      return
+    }
+    if (mode === "audio_cluster") {
+      const feats = lineFeaturesRef.current
+      if (!feats.length) {
+        setError("暂无声学特征：请先「上传音频转写」以启用实验性自动分离（纯粘贴请用弱标）")
+        return
+      }
+      setBusy(true)
+      setError(null)
+      ensureMeetingIdThen((id) => {
+        sendViaRuntime({
+          type: "meeting.auto_diarize",
+          v: 1,
+          id,
+          privacy_ack_v1: true,
+          mode: "audio_cluster",
+          k: diarizeK,
+          features: feats,
+        })
+      })
+      return
+    }
+    setBusy(true)
+    setError(null)
+    ensureMeetingIdThen((id) => {
+      sendViaRuntime({
+        type: "meeting.auto_diarize",
+        v: 1,
+        id,
+        privacy_ack_v1: true,
+        mode: "text_gap",
+        k: diarizeK,
+        text: transcriptRef.current.trim() || undefined,
+      })
+    })
   }
 
   const generate = () => {
@@ -814,7 +917,9 @@ export function MeetingPanel(props: {
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <strong style={{ flex: 1 }}>会议记录</strong>
-        <span style={{ fontSize: 11, color: tokens.textSecondary }}>暂不分说话人</span>
+        <span style={{ fontSize: 11, color: tokens.textSecondary }}>
+          实验可标发言人N · 非身份识别
+        </span>
         <button
           type="button"
           onClick={() => {
@@ -842,7 +947,7 @@ export function MeetingPanel(props: {
       <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
         粘贴 / 上传转写，或显式「开始录制」本机分段转写（最长约{" "}
         {Math.round(VOICE_CONTINUOUS_HARD_CAP_MS / 60_000)} 分钟）。应用场景不会自动开麦。
-        录音与听写互斥。暂不分说话人（可手动标）；系统混音未支持。
+        录音与听写互斥。说话人：手动标或实验性自动「发言人N」（非真名识别）；系统混音未支持。
       </div>
 
       {!ack && (
@@ -985,7 +1090,7 @@ export function MeetingPanel(props: {
           background: tokens.bg,
         }}
       >
-        <div style={{ fontSize: 12, fontWeight: 500 }}>说话人 / 导入（Mtg2 · 手动）</div>
+        <div style={{ fontSize: 12, fontWeight: 500 }}>说话人 / 导入（Mtg2+3）</div>
         <label style={{ fontSize: 11, color: tokens.textSecondary }}>
           默认说话人标签（录制/导入 STT 追加时使用；可整表批量）
           <input
@@ -1008,6 +1113,31 @@ export function MeetingPanel(props: {
             }}
           />
         </label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          <label style={{ fontSize: 11, color: tokens.textSecondary }}>
+            聚类 K
+            <select
+              data-testid="meeting-diarize-k"
+              value={diarizeK}
+              disabled={busy || capturing}
+              onChange={(e) => setDiarizeK(Math.min(4, Math.max(2, Number(e.target.value) || 2)))}
+              style={{ marginLeft: 4, fontSize: 12 }}
+            >
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+              <option value={4}>4</option>
+            </select>
+          </label>
+          <label style={{ fontSize: 11, color: tokens.textSecondary, display: "flex", gap: 4, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={autoDiarizeAfterImport}
+              disabled={busy || capturing}
+              onChange={(e) => setAutoDiarizeAfterImport(e.target.checked)}
+            />
+            音频导入后自动标（实验）
+          </label>
+        </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           <button
             type="button"
@@ -1026,6 +1156,26 @@ export function MeetingPanel(props: {
             style={btnStyle(false)}
           >
             全部标为默认
+          </button>
+          <button
+            type="button"
+            data-testid="meeting-auto-diarize-audio"
+            disabled={busy || capturing || !ack}
+            onClick={() => runAutoDiarize("audio_cluster")}
+            style={btnStyle(true)}
+            title="基于上传音频段的声学特征 k-means；匿名发言人N"
+          >
+            自动标说话人
+          </button>
+          <button
+            type="button"
+            data-testid="meeting-auto-diarize-text"
+            disabled={busy || capturing || !ack}
+            onClick={() => runAutoDiarize("text_gap")}
+            style={btnStyle(false)}
+            title="弱：按行交替发言人N，非声学"
+          >
+            弱标（交替）
           </button>
           <button
             type="button"
@@ -1087,8 +1237,9 @@ export function MeetingPanel(props: {
           </div>
         )}
         <div style={{ fontSize: 10, color: tokens.textSecondary, lineHeight: 1.4 }}>
-          可在转写框用「姓名: 内容」格式手标说话人。静音切为启发式分段，
-          <strong>不是</strong>自动说话人分离。系统/会议软件混音见调研文档（停车场）。
+          「自动标说话人」= 本机段特征 k-means → 匿名「发言人N」，
+          <strong>不是</strong>身份识别，也非 Otter 级 SLA。可手改标签。
+          弱标仅按行交替。系统混音见 parking 调研。
         </div>
       </div>
 

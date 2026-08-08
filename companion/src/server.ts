@@ -5924,6 +5924,25 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.text.length > 80_000) return { valid: false, error: "meeting.import_text text too long" }
       return { valid: true }
     },
+    "meeting.auto_diarize": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.auto_diarize requires v:1" }
+      if (m.privacy_ack_v1 !== true) {
+        return { valid: false, error: "meeting.auto_diarize requires privacy_ack_v1:true" }
+      }
+      if (typeof m.id !== "string" || !m.id) {
+        return { valid: false, error: "meeting.auto_diarize requires id" }
+      }
+      if (m.mode != null && m.mode !== "audio_cluster" && m.mode !== "text_gap") {
+        return { valid: false, error: "meeting.auto_diarize mode must be audio_cluster|text_gap" }
+      }
+      if (m.features != null && !Array.isArray(m.features)) {
+        return { valid: false, error: "meeting.auto_diarize features must be array" }
+      }
+      if (Array.isArray(m.features) && m.features.length > 2000) {
+        return { valid: false, error: "meeting.auto_diarize features too long" }
+      }
+      return { valid: true }
+    },
     "meeting.generate_minutes": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.generate_minutes requires v:1" }
       const hasId = typeof m.id === "string" && m.id
