@@ -178,14 +178,15 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       const next = reduceVoiceSession(prev, event)
       const o = optsRef.current
 
-      // Continuous local STT: flush each final into draft immediately so
-      // processing-gap UI does not fall back to a stale `text` (flash/disappear).
+      // Continuous local STT: flush each *new* final into draft so processing-gap
+      // UI does not fall back to stale `text`. Only when reducer accepted the chunk
+      // (hard aborts leave finals unchanged — dual-review nit).
       if (
         event.type === "ENGINE_RESULT" &&
         event.finalChunk &&
         event.finalChunk.length > 0 &&
         !next.committed &&
-        next.finals.length > 0
+        next.finals.length > prev.finals.length
       ) {
         const partial = mergeFinalTranscript(next.baseText, next.finals)
         queueMicrotask(() => o.onDraft(partial))

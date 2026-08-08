@@ -1097,7 +1097,7 @@ export function SettingsSlideout() {
                     <option value="Alt+Space" />
                     <option value="Control+Alt+Space" />
                     <option value="Control+Shift+D" />
-                    <option value="Control+Shift+KeyM" />
+                    <option value="Control+Shift+M" />
                   </datalist>
                   <span style={{ display: "block", marginTop: 4, fontSize: 10, color: "#999", lineHeight: 1.4 }}>
                     格式：修饰键用 + 连接，如 <code>Control+Alt+K</code>。禁止 bare Fn / 单独 Meta+V。
