@@ -10,6 +10,7 @@ import { atomicWriteJSON } from "./io"
 import type { McpConfig } from "./mcp/types"
 import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
+import { resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
 
 export const configEvents = new EventEmitter()
 export const CONFIG_CHANGE_EVENT = "config.change"
@@ -1056,6 +1057,20 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
     if (resolvedVisionKey !== undefined) {
       updated.vision.api_key = resolvedVisionKey
     }
+    // Multi-adversarial P0 (2026-08-08): when vision endpoint matches main LLM and
+    // vision key is still empty/placeholder, inherit llm.api_key (no new schema field).
+    const inherited = resolveInheritedVisionApiKey({
+      llmBaseUrl: updated.llm.base_url,
+      llmModelName: updated.llm.model_name,
+      llmApiKey: updated.llm.api_key,
+      llmProtocol: updated.llm.protocol,
+      visionBaseUrl: updated.vision.base_url,
+      visionModelName: updated.vision.model_name,
+      visionApiKey: updated.vision.api_key,
+    })
+    if (inherited !== undefined) {
+      updated.vision.api_key = inherited
+    }
   }
 
   const configPath = path.join(DATA_DIR, "config.json")
@@ -1065,6 +1080,11 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // If the user provided a different key, persist it
   if (envKey && toSave.llm?.api_key === envKey) {
     toSave.llm.api_key = ""  // Don't write env var to disk
+  }
+  // Vision may inherit llm.api_key when endpoints match; if that value is the
+  // env-sourced key, blank it on disk the same way (runtime cache still has it).
+  if (envKey && toSave.vision?.api_key === envKey) {
+    toSave.vision.api_key = ""
   }
   // H3 (audit): atomic write (tmp + rename) so a crash mid-save can't leave a truncated
   // config.json (which the H4 load path would then treat as corrupt). mode 0o600 — holds api_key.

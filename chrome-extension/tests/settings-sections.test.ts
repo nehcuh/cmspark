@@ -23,7 +23,7 @@ test("isElevatedTrust covers F-S3 set", () => {
   assert.equal(isElevatedTrust({ unattendedArmed: true }), true)
 })
 
-test("isSectionEffectivelyOpen: force beats LS", () => {
+test("isSectionEffectivelyOpen: unpaired forces connection; elevated does not force security", () => {
   const empty = new Set([]) as Set<"connection" | "model" | "secrets" | "security" | "integrations" | "export" | "experimental">
   // unpaired forces connection even if user closed it
   assert.equal(
@@ -43,10 +43,18 @@ test("isSectionEffectivelyOpen: force beats LS", () => {
     }),
     false,
   )
-  // elevated trust forces security
+  // elevated trust no longer force-opens security (collapsible; badge is separate)
   assert.equal(
     isSectionEffectivelyOpen("security", {
       userOpen: empty,
+      wsPaired: true,
+      elevatedTrust: true,
+    }),
+    false,
+  )
+  assert.equal(
+    isSectionEffectivelyOpen("security", {
+      userOpen: new Set(["security"]),
       wsPaired: true,
       elevatedTrust: true,
     }),

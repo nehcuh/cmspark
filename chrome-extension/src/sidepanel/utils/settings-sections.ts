@@ -53,7 +53,7 @@ export function serializeSettingsExpand(open: Set<SettingsSectionId>): string {
   return JSON.stringify([...open])
 }
 
-/** Elevated trust that must force-open security (F-S3). */
+/** Elevated trust flags (F-S3 set) — used for armed header badge, not force-open. */
 export function isElevatedTrust(flags: {
   auto_approve_dangerous?: boolean
   auto_approve_enterprise_tools?: boolean
@@ -69,17 +69,20 @@ export function isElevatedTrust(flags: {
 }
 
 /**
- * Effective open map: force rules beat LS (F-S1 / F-UX3).
+ * Effective open map: force rules beat LS (F-UX3 unpaired connection only).
  * - unpaired → force connection open
- * - elevatedTrust → force security open
- * - model always default-open on first load via defaultUserOpenSections
+ * - elevatedTrust no longer force-opens security (2026-08-08 UX): section stays
+ *   collapsible; SettingsSlideout still shows armed badge on the header (F-S2).
+ * - model default-open on first load via defaultUserOpenSections
+ *
+ * `elevatedTrust` remains on the input for callers / future soft-open policies.
  */
 export function isSectionEffectivelyOpen(
   id: SettingsSectionId,
   input: SettingsExpandInput,
 ): boolean {
   if (id === "connection" && input.wsPaired !== true) return true
-  if (id === "security" && input.elevatedTrust) return true
+  // elevatedTrust: badge only (SettingsSlideout); do not force-open security
   return input.userOpen.has(id)
 }
 

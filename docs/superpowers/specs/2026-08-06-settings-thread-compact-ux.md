@@ -54,14 +54,14 @@ Channel:      community | enterprise 不变
 |----|------|
 | **D-S1** | 一级 accordion；无三级嵌套 |
 | **D-S2** | **未配对**: 默认展开「连接与配对」+「模型与推理」。**已配对**: 默认仅「模型与推理」（F-UX3） |
-| **D-S3** | Elevated trust → **强制**展开「安全与信任」且 **> LS**（F-S1）；折叠时 header **仍显示 armed badge**（F-S2） |
+| **D-S3** | Elevated trust → header **仍显示 armed badge**（F-S2）；**不**强制展开（2026-08-08：允许折叠，避免高权限时版面过长） |
 | **D-S4** | LS: `cmspark.settings.expandSections: string[]`；force 规则覆盖 |
 | **D-S5** | 分类树见 §4.1（含 **密钥与环境** 独立行 — F-UX1） |
 | **D-S6** | 本批无设置搜索；deep-link 合同 F-UX7 |
 | **D-S7** | **W1 无 config schema 变更**；arm/secrets/配对路径语义不变 |
 | **D-S8** | 折叠时 **不 unmount** arm 短语面板（hide CSS 或保持 section mounted） |
 
-**Armed set 强制展开（F-S3）**:  
+**Armed set（F-S3 检测 + F-S2 badge；不再 force-open）**:  
 `auto_approve_dangerous` · `auto_approve_enterprise_tools` · `allow_all_schemes` · `unattended.armed`（session）
 
 ### 3.2 时间线折叠（S2）— **SoT = History IA**
@@ -104,7 +104,7 @@ Channel:      community | enterprise 不变
 │     LLM / 视觉 / 文件上传
 │     长对话上下文预算（D-C6）+ context_window 诚实提示（F-UX6）
 ├── 密钥与环境           默认折叠；独立一级（F-UX1）— UserEnv Secrets
-├── 安全与信任           默认折叠；armed 强制展开 + badge（F-S1–3）
+├── 安全与信任           默认折叠；armed 时 header badge，可折叠（F-S2/S3）
 │     信任域 / 自动批准域
 │     自主度 / Autopilot / 无人值守
 │     高级闸门（二级）

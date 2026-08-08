@@ -176,6 +176,14 @@
 - **影响**：venv/pip 失败后配置卡在 isolated，preflight/download 按 isolated 判未就绪，原 system 路径被弃用
 - **修法**：仅 `result.ok` 后持久化，或失败回滚旧 mode
 
+### Vision 复用主 LLM（多模态 UX P0 · 2026-08-08）
+- **问题**：默认 vision=Ollama llava；主模型已是 Claude/GPT-4o/Kimi 多模态时用户仍被引导另配 VLM
+- **解法**：Side Panel 勾选视觉时若 `likelyMultimodal` 且 `protocol≠anthropic` → 提示「使用主模型」；`vision-reuse-logic.ts` 纯逻辑；`saveConfig` 在 url+model 匹配且 vision key 占位时继承 `llm.api_key`；非 loopback+占位 key **拒绝 POST 图**（`shouldBlockVisionRequest`）
+- **诚实边界**：仍是 pre-analyze→文字，不是主对话原生看图；Anthropic Messages 主协议不提供一键复用（vision 轨仅 OpenAI 兼容）
+- **与 CU Qwen 分轨**：设置文案明确「看图描述 ≠ 实验层 Qwen3-VL 定位」
+- **锚点**：`vision-reuse-logic.ts` · `vision-reuse-inherit.ts` · SettingsSlideout · settings-web · brief/adversary synthesis under `docs/decisions` + `docs/audit/reviews/vision-reuse-*`
+- **闸门**：三路对抗 + dual Claude/Pi APPROVE_WITH_NITS
+
 ### Vision 405 ≠ 本地 Qwen；智谱 base_url 必须带 `/api`（2026-08-02）
 - **用户误判**：已下载 Qwen3-VL 并开启实验层，仍报 `vision.analysis_failed` / `405 Not Allowed (nginx)`（截图 + `analyze_image` 同错）
 - **两层能力**：

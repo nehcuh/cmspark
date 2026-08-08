@@ -1,0 +1,481 @@
+# Dual external review context
+batch: vision-reuse-main-llm-p0
+base: HEAD
+time: 20260808-144622
+
+201e6c2
+
+ M chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+ M companion/src/config.ts
+ M companion/src/llm/vision-pipeline.ts
+ M companion/src/settings-web.ts
+ M companion/tests/config.test.ts
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? chrome-extension/src/sidepanel/components/vision-reuse-logic.ts
+?? chrome-extension/tests/vision-reuse-logic.test.ts
+?? companion/src/llm/vision-reuse-inherit.ts
+?? companion/tests/vision-reuse-inherit.test.ts
+?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
+?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
+?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
+?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
+?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
+?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
+?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/audit/reviews/vision-reuse-main-llm-adversary-synthesis-20260808.md
+?? docs/audit/reviews/vision-reuse-main-llm-p0-diff-20260808-144622.patch
+?? docs/audit/reviews/vision-reuse-main-llm-p0-dual-review-prompt.md
+?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
+?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
+?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
+?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
+?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
+?? docs/decisions/vision-reuse-main-llm-brief-2026-08-08.md
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff (git diff + staged)
+ .../src/sidepanel/components/SettingsSlideout.tsx  | 186 +++++++++++++++++++--
+ companion/src/config.ts                            |  14 ++
+ companion/src/llm/vision-pipeline.ts               |  14 +-
+ companion/src/settings-web.ts                      |   2 +-
+ companion/tests/config.test.ts                     |  50 ++++++
+ 5 files changed, 247 insertions(+), 19 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index 60118b1..ff5bf56 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -70,6 +70,15 @@ import {
+   progressPercent,
+   type WhisperSettingsModelId,
+ } from "../voice/whisper-settings-copy"
++import {
++  VISION_COPY,
++  applyVisionReuseFromMain,
++  bannerBodyForHost,
++  extractHostname,
++  isCustomVisionConfig,
++  isVisionReusingMain,
++  shouldOfferVisionReuse,
++} from "./vision-reuse-logic"
+ 
+ // P1-1 / PR-B: typed-confirmation phrase for arming dangerous security flags.
+ // Lock-step with companion/src/security-arm.ts SECURITY_ARM_CONFIRM_PHRASE —
+@@ -116,6 +125,11 @@ export function SettingsSlideout() {
+   const [autopilotMsg, setAutopilotMsg] = useState<string | null>(null)
+   const [autopilotBusy, setAutopilotBusy] = useState(false)
+   const [advancedGatesOpen, setAdvancedGatesOpen] = useState(false)
++  // Vision reuse UX (multi-adversarial P0): banner session + advanced collapse when reused
++  const [visionReuseBanner, setVisionReuseBanner] = useState(false)
++  const [visionReuseBannerDismissed, setVisionReuseBannerDismissed] = useState(false)
++  const [visionReuseHint, setVisionReuseHint] = useState<string | null>(null)
++  const [visionAdvancedOpen, setVisionAdvancedOpen] = useState(false)
+   const [unattendedAckDesktop, setUnattendedAckDesktop] = useState(false)
+   const [unattendedAckSession, setUnattendedAckSession] = useState(false)
+   const [unattendedIncludeProtocol, setUnattendedIncludeProtocol] = useState(false)
+@@ -1556,24 +1570,155 @@ export function SettingsSlideout() {
+           </div>
+ 
+                     {/* --- Vision Model Settings --- */}
+-          <div style={styles.sectionTitle}>视觉模型</div>
++          <div style={styles.sectionTitle}>视觉模型（看图描述）</div>
+ 
+           <div style={styles.field}>
+             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+               <input
+                 type="checkbox"
+                 checked={config.vision_enabled || false}
+-                onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_enabled: e.target.checked } })}
++                onChange={e => {
++                  const on = e.target.checked
++                  dispatch({ type: "SET_CONFIG", config: { vision_enabled: on } })
++                  setVisionReuseHint(null)
++                  if (!on) {
++                    setVisionReuseBanner(false)
++                    return
++                  }
++                  // Banner only on false→true; never auto-copy credentials (S-V5)
++                  if (
++                    !visionReuseBannerDismissed &&
++                    shouldOfferVisionReuse({
++                      model_name: config.model_name,
++                      base_url: config.base_url,
++                      api_key: config.api_key,
++                      protocol: config.protocol,
++                    })
++                  ) {
++                    setVisionReuseBanner(true)
++                  } else {
++                    setVisionReuseBanner(false)
++                  }
++                }}
+               />
+               启用截图视觉分析
+             </label>
+-            <div style={styles.helpText}>
+-              通过本地视觉模型分析截图和图片内容，需要 Ollama 等本地推理服务
+-            </div>
++            <div style={styles.helpText}>{VISION_COPY.sectionHelp}</div>
++            <div style={{ ...styles.helpText, marginTop: 4 }}>{VISION_COPY.railDifferentiator}</div>
+           </div>
+ 
+-          {config.vision_enabled && (
+-            <>
++          {config.vision_enabled && (config.protocol === "anthropic") && (
++            <div style={{
++              ...styles.field,
++              padding: "8px 10px",
++              borderRadius: 8,
++              background: tokens.warningSoft,
++              border: `1px solid ${tokens.warning}`,
++              fontSize: 12,
++              color: tokens.text,
++            }}>
++              {VISION_COPY.anthropicBlocked}
++            </div>
++          )}
++
++          {config.vision_enabled && visionReuseBanner && (
++            <div style={{
++              ...styles.field,
++              padding: "10px 12px",
++              borderRadius: 8,
++              background: tokens.accentSoft,
++              border: `1px solid ${tokens.border}`,
++            }}>
++              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{VISION_COPY.bannerTitle}</div>
++              <div style={{ fontSize: 12, color: tokens.textSecondary, marginBottom: 8, lineHeight: 1.45 }}>
++                {bannerBodyForHost(extractHostname(config.base_url))}
++              </div>
++              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
++                <button
++                  type="button"
++                  style={styles.testBtn}
++                  onClick={() => {
++                    const main = {
++                      model_name: config.model_name,
++                      base_url: config.base_url,
++                      api_key: config.api_key,
++                      protocol: config.protocol,
++                    }
++                    if (isCustomVisionConfig(main, config)) {
++                      if (!window.confirm(VISION_COPY.overwriteConfirm)) return
++                    }
++                    const result = applyVisionReuseFromMain(main)
++                    dispatch({ type: "SET_CONFIG", config: result.patch })
++                    setVisionReuseBanner(false)
++                    setVisionReuseBannerDismissed(true)
++                    setVisionAdvancedOpen(false)
++                    setVisionReuseHint(
++                      (result.needsKeyPaste ? VISION_COPY.needsKeyPaste + " " : "") +
++                        VISION_COPY.postReuseTestHint,
++                    )
++                  }}
++                >
++                  {VISION_COPY.useMain}
++                </button>
++                <button
++                  type="button"
++                  style={styles.toggleBtn}
++                  onClick={() => {
++                    setVisionReuseBanner(false)
++                    setVisionReuseBannerDismissed(true)
++                    setVisionAdvancedOpen(true)
++                  }}
++                >
++                  {VISION_COPY.keepSeparate}
++                </button>
++              </div>
++            </div>
++          )}
++
++          {config.vision_enabled && visionReuseHint && (
++            <div style={{ ...styles.helpText, color: tokens.success, marginBottom: 8 }}>
++              {visionReuseHint}
++            </div>
++          )}
++
++          {config.vision_enabled && (() => {
++            const reusing = isVisionReusingMain(
++              { model_name: config.model_name, base_url: config.base_url },
++              config,
++            )
++            const showFields = !reusing || visionAdvancedOpen
++            return (
++              <>
++                {reusing && (
++                  <div style={{
++                    display: "flex",
++                    alignItems: "center",
++                    gap: 8,
++                    flexWrap: "wrap",
++                    marginBottom: 8,
++                    fontSize: 12,
++                  }}>
++                    <span style={{
++                      padding: "2px 8px",
++                      borderRadius: 8,
++                      background: tokens.successSoft,
++                      color: tokens.success,
++                      fontWeight: 500,
++                    }}>
++                      {VISION_COPY.reusedChip} · {extractHostname(config.vision_base_url || config.base_url)}
++                    </span>
++                    <button
++                      type="button"
++                      style={styles.toggleBtn}
++                      onClick={() => setVisionAdvancedOpen(v => !v)}
++                    >
++                      {visionAdvancedOpen ? VISION_COPY.collapseAdvanced : VISION_COPY.expandAdvanced}
++                    </button>
++                  </div>
++                )}
++
++                {showFields && (
++                  <>
+               <div style={styles.field}>
+                 <label style={styles.label}>
+                   API Key{" "}
+@@ -1596,12 +1741,12 @@ export function SettingsSlideout() {
+                     placeholder={
+                       state.companionConfig?.vision_api_key_set
+                         ? "（已配置，留空保持不变；输入新值覆盖）"
+-                        : "留空则使用 Ollama（无需 API Key）"
++                        : "本地 Ollama 可留空；云端需填写（或与主模型相同后保存继承）"
+                     }
+                   />
+                 </div>
+                 <div style={styles.helpText}>
+-                  本地模型（Ollama）可留空；使用云服务视觉 API 时需填写
++                  本地 loopback 可留空；非本机端点需真实 Key。与主模型 URL/Model 相同时，保存会继承主 Key。
+                 </div>
+               </div>
+ 
+@@ -1612,7 +1757,7 @@ export function SettingsSlideout() {
+                   type="text"
+                   value={config.vision_base_url || "http://localhost:11434/v1"}
+                   onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_base_url: e.target.value } })}
+-                  placeholder="http://localhost:11434/v1"
++                  placeholder="http://localhost:11434/v1 或云端 OpenAI 兼容端点"
+                 />
+               </div>
+ 
+@@ -1632,11 +1777,15 @@ export function SettingsSlideout() {
+                   <option value="minicpm-v" />
+                   <option value="qwen2.5vl:3b" />
+                   <option value="moondream2" />
++                  <option value="gpt-4o" />
++                  <option value="glm-4.6v" />
+                 </datalist>
+               </div>
+ 
+               <div style={styles.field}>
+-                <label style={styles.label}>超时时间: {config.vision_timeout_ms || 30000} / 1000s</label>
++                <label style={styles.label}>
++                  超时时间: {Math.round((config.vision_timeout_ms || 30000) / 1000)}s
++                </label>
+                 <input
+                   style={{ width: "100%" }}
+                   type="range"
+@@ -1655,25 +1804,28 @@ export function SettingsSlideout() {
+                   value={config.vision_fallback || "metadata"}
+                   onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_fallback: e.target.value as "metadata" | "passthrough" | "error" } })}
+                 >
+-                  <option value="metadata">仅元数据（推荐）</option>
+-                  <option value="passthrough">透传原始图片</option>
+-                  <option value="error">报错</option>
++                  <option value="metadata">{VISION_COPY.fallbackMetadata}</option>
++                  <option value="passthrough">{VISION_COPY.fallbackPassthrough}</option>
++                  <option value="error">{VISION_COPY.fallbackError}</option>
+                 </select>
+                 <div style={styles.helpText}>
+                   视觉模型不可用时的处理方式：仅元数据 = 发送页面标题和尺寸信息
+                 </div>
+               </div>
++                  </>
++                )}
+ 
+               <div style={styles.field}>
+                 <button style={styles.testBtn} onClick={() => {
+-                  dispatch({ type: "SET_TEST_RESULT", result: "测试视觉模型连接中..." })
++                  dispatch({ type: "SET_TEST_RESULT", result: "测试视觉模型连接中...（请先保存配置）" })
+                   chrome.runtime.sendMessage({ type: "config.testVision" })
+                 }}>
+                   测试视觉模型连接
+                 </button>
+               </div>
+-            </>
+-          )}
++              </>
++            )
++          })()}
+ 
+                     {/* --- File Upload Settings --- */}
+           <div style={styles.sectionTitle}>文件上传</div>
+diff --git a/companion/src/config.ts b/companion/src/config.ts
+index 3e0cd7c..663791d 100644
+--- a/companion/src/config.ts
++++ b/companion/src/config.ts
+@@ -10,6 +10,7 @@ import { atomicWriteJSON } from "./io"
+ import type { McpConfig } from "./mcp/types"
+ import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
+ import type { ObsidianExportConfig } from "./threads/markdown-export"
++import { resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
+ 
+ export const configEvents = new EventEmitter()
+ export const CONFIG_CHANGE_EVENT = "config.change"
+@@ -1056,6 +1057,19 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
+     if (resolvedVisionKey !== undefined) {
+       updated.vision.api_key = resolvedVisionKey
+     }
++    // Multi-adversarial P0 (2026-08-08): when vision endpoint matches main LLM and
++    // vision key is still empty/placeholder, inherit llm.api_key (no new schema field).
++    const inherited = resolveInheritedVisionApiKey({
++      llmBaseUrl: updated.llm.base_url,
++      llmModelName: updated.llm.model_name,
++      llmApiKey: updated.llm.api_key,
++      visionBaseUrl: updated.vision.base_url,
++      visionModelName: updated.vision.model_name,
++      visionApiKey: updated.vision.api_key,
++    })
++    if (inherited !== undefined) {
++      updated.vision.api_key = inherited
++    }
+   }
+ 
+   const configPath = path.join(DATA_DIR, "config.json")
+diff --git a/companion/src/llm/vision-pipeline.ts b/companion/src/llm/vision-pipeline.ts
+index 20d78c2..b2fe85e 100644
+--- a/companion/src/llm/vision-pipeline.ts
++++ b/companion/src/llm/vision-pipeline.ts
+@@ -4,6 +4,7 @@ import OpenAI from "openai"
+ import * as crypto from "crypto"
+ import type { VisionConfig } from "../config"
+ import { logger } from "../logger"
++import { shouldBlockVisionRequest } from "./vision-reuse-inherit"
+ 
+ const DEFAULT_VISION_PROMPT =
+   "You are a browser screenshot analyzer. Describe what you see in this image in detail. Include: " +
+@@ -115,9 +116,20 @@ async function doAnalyze(
+   const startTime = Date.now()
+ 
+   try {
++    const apiKey = config.api_key || "ollama"
++    // Multi-adversarial S-V2/S-V9: never POST image bytes to non-loopback with placeholder key
++    const gate = shouldBlockVisionRequest({ baseUrl: config.base_url, apiKey })
++    if (gate.block) {
++      logger.warn("vision.blocked_placeholder_key", {
++        base_url: config.base_url,
++        reason: gate.reason,
++      })
++      return buildFallback(image, config, gate.reason || "Vision key missing for remote endpoint")
++    }
++
+     const client = new OpenAI({
+       baseURL: config.base_url,
+-      apiKey: config.api_key || "ollama",
++      apiKey,
+       timeout: config.timeout_ms,
+       maxRetries: 0,
+     })
+diff --git a/companion/src/settings-web.ts b/companion/src/settings-web.ts
+index bbaf914..65efdf1 100644
+--- a/companion/src/settings-web.ts
++++ b/companion/src/settings-web.ts
+@@ -665,7 +665,7 @@ input:focus{border-color:#4A90D9}
+         <input type="checkbox" id="visionEnabled" style="width:auto">
+         Enable Vision Analysis
+       </label>
+-      <div class="hint">Analyze screenshots and images via a local or remote vision model</div>
++      <div class="hint">When enabled, screenshots / analyze_image are pre-analyzed by a vision model into text before the main chat (main loop does not receive image bytes). Use a local VLM (e.g. Ollama llava) or any OpenAI-compatible cloud multimodal endpoint — may match your main LLM. Not the same as experimental Qwen3-VL locate.</div>
+     </div>
+ 
+     <div id="visionFields" style="opacity:0.4;pointer-events:none">
+diff --git a/companion/tests/config.test.ts b/companion/tests/config.test.ts
+index 7c50a7f..f4a7b19 100644
+--- a/companion/tests/config.test.ts
++++ b/companion/tests/config.test.ts
+@@ -705,3 +705,53 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
+     assert.equal(c?.modelVariant, "8b")
+   })
+ })
++
++describe("saveConfig vision key inherit when endpoints match main LLM", { concurrency: 1 }, () => {
++  before(async () => {
++    delete process.env.DEEPSEEK_API_KEY
++    await resetConfigFile()
++    saveConfig({
++      llm: {
++        base_url: "https://api.openai.com/v1",
++        api_key: "sk-main-real",
++        model_name: "gpt-4o",
++        temperature: 0.7,
++        context_window: 128000,
++      } as any,
++      vision: {
++        enabled: true,
++        base_url: "http://localhost:11434/v1",
++        api_key: "ollama",
++        model_name: "llava:7b",
++        timeout_ms: 30000,
++        max_tokens: 1024,
++        fallback: "metadata",
++        cache_ttl_seconds: 300,
++      },
++    })
++  })
++
++  test("inherits llm.api_key when vision url+model match and vision key is placeholder", () => {
++    saveConfig({
++      vision: {
++        enabled: true,
++        base_url: "https://api.openai.com/v1",
++        model_name: "gpt-4o",
++        api_key: "ollama",
++      } as any,
++    })
++    assert.equal(getConfig().vision?.api_key, "sk-main-real")
++  })
++
++  test("does not overwrite a real dedicated vision key", () => {
++    saveConfig({
++      vision: {
++        enabled: true,
++        base_url: "https://api.openai.com/v1",
++        model_name: "gpt-4o",
++        api_key: "sk-vision-dedicated",
++      } as any,
++    })
++    assert.equal(getConfig().vision?.api_key, "sk-vision-dedicated")
++  })
++})

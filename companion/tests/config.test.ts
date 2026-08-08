@@ -705,3 +705,101 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
     assert.equal(c?.modelVariant, "8b")
   })
 })
+
+describe("saveConfig vision key inherit when endpoints match main LLM", { concurrency: 1 }, () => {
+  before(async () => {
+    delete process.env.DEEPSEEK_API_KEY
+    await resetConfigFile()
+    saveConfig({
+      llm: {
+        base_url: "https://api.openai.com/v1",
+        api_key: "sk-main-real",
+        model_name: "gpt-4o",
+        temperature: 0.7,
+        context_window: 128000,
+      } as any,
+      vision: {
+        enabled: true,
+        base_url: "http://localhost:11434/v1",
+        api_key: "ollama",
+        model_name: "llava:7b",
+        timeout_ms: 30000,
+        max_tokens: 1024,
+        fallback: "metadata",
+        cache_ttl_seconds: 300,
+      },
+    })
+  })
+
+  test("inherits llm.api_key when vision url+model match and vision key is placeholder", () => {
+    saveConfig({
+      vision: {
+        enabled: true,
+        base_url: "https://api.openai.com/v1",
+        model_name: "gpt-4o",
+        api_key: "ollama",
+      } as any,
+    })
+    assert.equal(getConfig().vision?.api_key, "sk-main-real")
+  })
+
+  test("does not overwrite a real dedicated vision key", () => {
+    saveConfig({
+      vision: {
+        enabled: true,
+        base_url: "https://api.openai.com/v1",
+        model_name: "gpt-4o",
+        api_key: "sk-vision-dedicated",
+      } as any,
+    })
+    assert.equal(getConfig().vision?.api_key, "sk-vision-dedicated")
+  })
+})
+
+describe("saveConfig vision inherit does not persist env-sourced keys", { concurrency: 1 }, () => {
+  before(async () => {
+    delete process.env.DEEPSEEK_API_KEY
+    await resetConfigFile()
+    process.env.DEEPSEEK_API_KEY = "sk-env-vision-inherit"
+    saveConfig({
+      llm: {
+        base_url: "https://api.openai.com/v1",
+        api_key: "",
+        model_name: "gpt-4o",
+        temperature: 0.7,
+        context_window: 128000,
+      } as any,
+      vision: {
+        enabled: true,
+        base_url: "http://localhost:11434/v1",
+        api_key: "ollama",
+        model_name: "llava:7b",
+        timeout_ms: 30000,
+        max_tokens: 1024,
+        fallback: "metadata",
+        cache_ttl_seconds: 300,
+      },
+    })
+  })
+
+  after(() => {
+    delete process.env.DEEPSEEK_API_KEY
+  })
+
+  test("runtime inherits env key into vision; disk stays blank for vision api_key", () => {
+    assert.equal(getConfig().llm.api_key, "sk-env-vision-inherit")
+    saveConfig({
+      vision: {
+        enabled: true,
+        base_url: "https://api.openai.com/v1",
+        model_name: "gpt-4o",
+        api_key: "ollama",
+      } as any,
+    })
+    // In-memory runtime may use the env-sourced key after inherit
+    assert.equal(getConfig().vision?.api_key, "sk-env-vision-inherit")
+    // Disk must not store the environment secret under vision either
+    assert.equal(readSavedConfig().vision?.api_key, "")
+    assert.equal(readSavedConfig().llm?.api_key, "")
+  })
+})
