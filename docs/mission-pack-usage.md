@@ -354,5 +354,6 @@
 | [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) | Multi-agent orchestrator、tab lease、spawn HITL |
 | [ADR-016](adr/016-mission-board.md) | Mission Board 工具与 UI |
 | [architecture.md §7](architecture.md) | 模块 / 工具 / 代码落点 |
-| [GOAL.md](GOAL.md) | 产品阶段与 G19 一带目标 |
+| [GOAL.md](GOAL.md) | 产品阶段与 G19 / G22 一带目标 |
+| [meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) | 内置 Pack「会议记录」与听写+（**不会**因 apply Pack 自动开麦） |
 )

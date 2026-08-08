@@ -1,7 +1,7 @@
 # 听写+（Dictation+）— 产品设计 SoT
 
 > **日期**: 2026-08-07  
-> **状态**: **LOCKED for D1 planning / spike** — R1+R2 四路对抗 floors 已吸收  
+> **状态**: **LOCKED** — D1a–c 已合 main；**D2 hold 热键** 实现中/合入见用户指南；R1+R2 floors 仍有效 
 > **对抗合成**:  
 > - R1：[continuous-dictation-meeting-adversary-synthesis-20260807.md](../../audit/reviews/continuous-dictation-meeting-adversary-synthesis-20260807.md)  
 > - R2（yetone）：[voice-dictation-r2-yetone-adversary-synthesis-20260807.md](../../audit/reviews/voice-dictation-r2-yetone-adversary-synthesis-20260807.md)  
@@ -310,7 +310,7 @@ Output ONLY the corrected transcript text, no quotes, no explanation.
 | **D1a** | continuous Mode A + caps + REC + Panel 波形 | §11.1 |
 | **D1b** | ASR Refiner + v3 + 同字测 | §11.2 |
 | **D1c** | local 串行分段 | §11.3 |
-| **D2** | hold hotkey + 分档 indicator | §11.4 |
+| **D2** | hold hotkey + 分档 indicator（Side Panel 捕获；系统通知「CMspark · 草稿」） | §11.4 · 用户指南 |
 | **D3** | incremental LLM | **CANCELLED** |
 
 **Spikes 门禁**（实现前/宣称前）：S-WS1、S-LOC1、S-GUM-LONG、S-HK-*、S-HUD-MAC-VOICE、S-HUD-WIN-TRAY、S-REF1（见 R2 合成 §8）。

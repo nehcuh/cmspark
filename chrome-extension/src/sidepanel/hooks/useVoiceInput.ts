@@ -662,6 +662,55 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         )
       : null
 
+  /**
+   * Dictation+ D2 hold-to-talk: force continuous for this session, start if idle.
+   * Returns false if blocked (busy gates / already listening from non-hold).
+   */
+  const holdSessionRef = useRef(false)
+  const savedModeRef = useRef<VoiceDictationMode | null>(null)
+
+  const holdStart = useCallback(
+    (extra?: { privacyAck?: boolean; privacyAckV2?: boolean; privacyAckV3?: boolean }) => {
+      const s = sessionRef.current
+      if (s.phase !== "idle" && s.phase !== "error") return false
+      if (!optsRef.current.allowStart) return false
+      if (holdSessionRef.current) return false
+      savedModeRef.current = modeRef.current
+      modeRef.current = "continuous"
+      holdSessionRef.current = true
+      toggle(extra)
+      // If still idle after toggle (gate failed), restore
+      queueMicrotask(() => {
+        if (sessionRef.current.phase === "idle" || sessionRef.current.phase === "error") {
+          holdSessionRef.current = false
+          if (savedModeRef.current) modeRef.current = savedModeRef.current
+          savedModeRef.current = null
+        }
+      })
+      return true
+    },
+    [toggle],
+  )
+
+  const holdStop = useCallback(() => {
+    if (!holdSessionRef.current) return false
+    const s = sessionRef.current
+    if (
+      s.phase === "listening" ||
+      s.phase === "starting" ||
+      s.phase === "processing" ||
+      s.phase === "stopping"
+    ) {
+      toggle()
+    }
+    holdSessionRef.current = false
+    if (savedModeRef.current) {
+      modeRef.current = savedModeRef.current
+      savedModeRef.current = null
+    }
+    return true
+  }, [toggle])
+
   return {
     supported,
     phase: session.phase,
@@ -683,6 +732,10 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     /** Map a local gate code for external CTA (optional). */
     mapLocalError: mapLocalSttError,
     toggle,
+    /** D2 hold-to-talk */
+    holdStart,
+    holdStop,
+    holdActive: holdSessionRef.current,
     abortForChatStop,
     dismissBanner,
     restoreRaw,

@@ -1039,6 +1039,61 @@ export function SettingsSlideout() {
                   </span>
                 </span>
               </label>
+
+              <div style={{ marginTop: 12, fontSize: 12, color: "#555" }}>
+                <div style={{ marginBottom: 4, fontWeight: 500 }}>按住热键听写（D2 · 默认关）</div>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    cursor: "pointer",
+                    fontSize: 12,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    style={{ marginTop: 2 }}
+                    checked={state.dictationHotkeyEnabled === true}
+                    onChange={(e) =>
+                      dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: e.target.checked })
+                    }
+                  />
+                  <span>
+                    启用按住说话
+                    <br />
+                    <span style={{ color: "#888", fontSize: 11 }}>
+                      按住组合键开始连续听写，松手结束；仅进草稿、不自动发送。需 Side Panel
+                      打开；禁止 bare Fn / Win+V。会议录音中不可用。
+                    </span>
+                  </span>
+                </label>
+                <label style={{ display: "block", marginTop: 8, fontSize: 11, color: "#666" }}>
+                  组合键
+                  <select
+                    value={state.dictationHotkeyChord || "Control+Shift+Space"}
+                    disabled={!state.dictationHotkeyEnabled}
+                    onChange={(e) =>
+                      dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: e.target.value })
+                    }
+                    style={{
+                      display: "block",
+                      marginTop: 4,
+                      width: "100%",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "1px solid #ddd",
+                      fontSize: 12,
+                    }}
+                  >
+                    <option value="Control+Shift+Space">Ctrl+Shift+Space</option>
+                    <option value="Alt+Space">Alt+Space / ⌥Space</option>
+                    <option value="Control+Alt+Space">Ctrl+Alt+Space</option>
+                    <option value="Control+Shift+D">Ctrl+Shift+D</option>
+                  </select>
+                </label>
+              </div>
             </div>
 
             {/* Path B M0: 听写方式 progressive disclosure (UI draft until ready + enable) */}

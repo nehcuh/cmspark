@@ -228,6 +228,8 @@ export function useWebSocket() {
         "voice_privacy_ack_v3",
         "voiceDictationMode",
         "asrRefinerEnabled",
+        "dictationHotkeyEnabled",
+        "dictationHotkeyChord",
         "cmspark.ui.show_reasoning",
         "cmspark.ui.export_include_reasoning",
       ],
@@ -262,6 +264,12 @@ export function useWebSocket() {
         }
         if (typeof result.asrRefinerEnabled === "boolean") {
           dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: result.asrRefinerEnabled })
+        }
+        if (typeof result.dictationHotkeyEnabled === "boolean") {
+          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: result.dictationHotkeyEnabled })
+        }
+        if (typeof result.dictationHotkeyChord === "string" && result.dictationHotkeyChord.trim()) {
+          dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: result.dictationHotkeyChord.trim() })
         }
       },
     )

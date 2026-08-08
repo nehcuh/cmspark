@@ -5849,6 +5849,14 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // Dictation+ D2 hold indicator (control plane; no audio)
+    "voice.dictation.hold_state": (m) => {
+      if (m.v !== 1) return { valid: false, error: "voice.dictation.hold_state requires v:1" }
+      if (typeof m.active !== "boolean") {
+        return { valid: false, error: "voice.dictation.hold_state requires active boolean" }
+      }
+      return { valid: true }
+    },
     // Meeting minutes scene (Mtg0/Mtg1)
     "meeting.create": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.create requires v:1" }

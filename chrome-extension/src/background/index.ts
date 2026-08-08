@@ -1152,6 +1152,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       // Dictation+ D1b ASR Refiner (text-only)
       case "voice.refine.request":
       case "voice.refine.abort":
+      // Dictation+ D2 hold state → companion tray indicator (control plane, no audio)
+      case "voice.dictation.hold_state":
       // Meeting minutes scene (Mtg0 paste + Mtg1 live capture)
       case "meeting.create":
       case "meeting.start":

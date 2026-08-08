@@ -38,6 +38,7 @@ import {
   IconAlert,
 } from "./ui/icons"
 import { VoiceMicButton } from "./components/VoiceMicButton"
+import { parseHotkeyChord, eventMatchesChord } from "./voice/hotkey-chord"
 import { useVoiceInput } from "./hooks/useVoiceInput"
 import {
   VOICE_PRIVACY_ACK_V2_BODY,
@@ -491,6 +492,104 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       voice.refining === true
     dispatch({ type: "SET_DICTATION_CAPTURE_ACTIVE", active })
   }, [voice.listening, voice.processing, voice.refining, dispatch])
+
+  // Dictation+ D2: hold hotkey (Side Panel open; key capture when panel focused).
+  // SoT §5.2 — default off; ban fn/Win+V; xor meeting capture.
+  useEffect(() => {
+    if (!state.dictationHotkeyEnabled) return
+    const chord = parseHotkeyChord(state.dictationHotkeyChord)
+    if (!chord) return
+
+    let down = false
+    const notifyHold = (active: boolean) => {
+      try {
+        chrome.runtime.sendMessage({
+          type: "voice.dictation.hold_state",
+          v: 1,
+          active,
+          chord: chord.label,
+        })
+      } catch {
+        /* */
+      }
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!eventMatchesChord(e, chord)) return
+      if (e.repeat) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (down) return
+      if (state.meetingCaptureActive) {
+        // soft fail — do not start
+        return
+      }
+      if (!voiceAllowStart && !voice.listening) return
+      down = true
+      const ok = voice.holdStart({
+        privacyAck: state.voicePrivacyAckV1 === true,
+        privacyAckV2: state.voicePrivacyAckV2 === true,
+        privacyAckV3: state.voicePrivacyAckV3 === true,
+      })
+      if (ok) notifyHold(true)
+      else down = false
+    }
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      // Stop when main key or any chord modifier is released while holding
+      const mainUp = eventMatchesChord(
+        {
+          key: e.key,
+          code: e.code,
+          ctrlKey: chord.ctrl ? true : e.ctrlKey,
+          altKey: chord.alt ? true : e.altKey,
+          shiftKey: chord.shift ? true : e.shiftKey,
+          metaKey: chord.meta ? true : e.metaKey,
+        },
+        chord,
+      )
+      const modUp =
+        (chord.ctrl && e.key === "Control") ||
+        (chord.alt && (e.key === "Alt" || e.key === "AltGraph")) ||
+        (chord.shift && e.key === "Shift") ||
+        (chord.meta && (e.key === "Meta" || e.key === "OS"))
+      if (!down) return
+      if (!mainUp && !modUp && !eventMatchesChord(e, chord)) return
+      e.preventDefault()
+      down = false
+      voice.holdStop()
+      notifyHold(false)
+    }
+
+    const onBlur = () => {
+      if (!down) return
+      down = false
+      voice.holdStop()
+      notifyHold(false)
+    }
+
+    window.addEventListener("keydown", onKeyDown, true)
+    window.addEventListener("keyup", onKeyUp, true)
+    window.addEventListener("blur", onBlur)
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true)
+      window.removeEventListener("keyup", onKeyUp, true)
+      window.removeEventListener("blur", onBlur)
+      if (down) {
+        voice.holdStop()
+        notifyHold(false)
+      }
+    }
+  }, [
+    state.dictationHotkeyEnabled,
+    state.dictationHotkeyChord,
+    state.meetingCaptureActive,
+    state.voicePrivacyAckV1,
+    state.voicePrivacyAckV2,
+    state.voicePrivacyAckV3,
+    voiceAllowStart,
+    voice,
+  ])
 
   // Hide: feature off | unsupported for selected engine | worker | no thread.
   // Local + no gUM → voice.supported false → hide.
