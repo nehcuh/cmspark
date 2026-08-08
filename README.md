@@ -40,6 +40,7 @@ CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome �
 |------|------|------|------|
 | **L0 · 主体** | 自然语言 · 多线程 · 历史 | Side Panel 驱动；线程隔离；SQLite 操作史 | 本页 [使用指南](#使用指南) |
 | **L0 产品特性** | Obsidian 导出 · Mermaid · NotebookLM | 导出/渲染/导入（**非**组合原语） | [ADR-008](docs/adr/008-obsidian-export.md) · [009](docs/adr/009-mermaid-rendering.md) · [notebooklm-user-guide](docs/notebooklm-user-guide.md) |
+| **L0 输入** | 听写+ · 本机 STT · 会议记录 | classic/连续/按住热键；Whisper 渐进假设；场景「会议」工作台 | [meeting-and-dictation-user-guide](docs/meeting-and-dictation-user-guide.md) · [ADR-023](docs/adr/023-voice-local-stt-path-b.md) · [ADR-024](docs/adr/024-dictation-plus-asr-refiner-meeting.md) |
 | **L1 · 浅层** | 浏览器 CDP 操控 | 标签页、页面读写、点击/填表、截图、导航等 | 本页 [浏览器操作示例](#浏览器操作示例) |
 | **L1** | Cookie 信任域 | `trusted_domains` 门控 cookie；SSO 场景基础 | [Cookie 信任域](#cookie-信任域) · [ADR-005](docs/adr/005-cookie-trust-domain-security.md) |
 | **组合面** | Skills · Knowledge | Markdown+YAML Skills；知识注入 System Prompt | [Skills](#技能系统skills) · [Knowledge](#知识库knowledge) |
@@ -732,8 +733,8 @@ make package
 ```bash
 make package-macos
 # 产出：
-#   dist-package/CMspark-v0.4.0-macOS.dmg   ← 安装包
-#   dist-package/cmspark-v0.4.0-macos-arm64.zip  ← 原始压缩包
+#   dist-package/CMspark-v0.5.0-macOS.dmg   ← 安装包
+#   dist-package/cmspark-v0.5.0-macos-arm64.zip  ← 原始压缩包
 ```
 
 Windows 打包流程：
@@ -855,11 +856,11 @@ cmspark/
 |------|------|
 | **用户** | [confirm-center](docs/confirm-center-user-guide.md) · [mcp.md](docs/mcp.md) · [mission-pack-usage](docs/mission-pack-usage.md) · [computer-use](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) · [notebooklm](docs/notebooklm-user-guide.md) · [multi-agent](docs/multi-agent-user-guide.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) |
 | **架构 / 目标** | [architecture.md](docs/architecture.md) · [GOAL.md](docs/GOAL.md) · [DESIGN.md](docs/DESIGN.md) · **[ADR-020 能力三轴](docs/adr/020-capability-model-three-axes.md)** |
-| **ADR** | [docs/adr/](docs/adr/)（001–018；安全 005–007/010，导出 008/009，NLM 011–013，Pack 014，Multi-agent 015，Board 016，CU 017，Host 018） |
+| **ADR** | [docs/adr/](docs/adr/)（至 **024**；语音 023–024，能力三轴 020，Outbound MCP 022） |
 | **工程** | [TESTING.md](docs/TESTING.md) · [supply-chain.md](docs/supply-chain.md) · [CONTRIBUTING.md](CONTRIBUTING.md) |
 | **过程稿（非规范）** | [decisions/](docs/decisions/)（CU/host 长文等；现行见用户指南 + ADR-017/018） |
 | **Agent 上下文** | [CLAUDE.md](CLAUDE.md) · [Agents.md](Agents.md) |
 
 ---
 
-> **当前阶段（0.4.0）**：安全稳定化 **MVP 已稳定**并扩展（Side Panel ↔ Companion ↔ 浏览器闭环、线程持久化、确认台；Multi-agent / Pack / Qwen 实验定位 / Outbound MCP 等）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织：**L0 聊 / L1 网页 / 组合面（Skill·MCP·Pack…）/ L2 宿主 opt-in / 编排 Autonomy**。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（0.5.0 稳定切点）**：MVP 与组合面已稳；**听写+ / 会议 / 本机 Whisper M2** 已交付；CU 实验定位仅 **Qwen3-VL**（TinyClick 残留已清）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织：**L0 聊 / L1 网页 / 组合面 / L2 宿主 opt-in / 编排 Autonomy**。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
