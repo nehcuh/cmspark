@@ -521,6 +521,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     if (!chord) return
 
     let down = false
+    let notified = false
+    let notifyTimer: ReturnType<typeof setTimeout> | null = null
     const notifyHold = (active: boolean) => {
       try {
         chrome.runtime.sendMessage({
@@ -543,13 +545,24 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       if (meetingCaptureRef.current) return
       if (!voiceAllowStartRef.current) return
       down = true
+      notified = false
       const ok = holdStartRef.current({
         privacyAck: privacyRef.current.v1,
         privacyAckV2: privacyRef.current.v2,
         privacyAckV3: privacyRef.current.v3,
       })
-      if (ok) notifyHold(true)
-      else down = false
+      if (!ok) {
+        down = false
+        return
+      }
+      // Defer notify ~400ms so privacy-sheet / failed start does not flash tray
+      if (notifyTimer) clearTimeout(notifyTimer)
+      notifyTimer = setTimeout(() => {
+        if (down && !notified) {
+          notified = true
+          notifyHold(true)
+        }
+      }, 400)
     }
 
     const onKeyUp = (e: KeyboardEvent) => {
@@ -568,15 +581,25 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       if (!mainUp && !modUp && !keyIsMain) return
       e.preventDefault()
       down = false
+      if (notifyTimer) {
+        clearTimeout(notifyTimer)
+        notifyTimer = null
+      }
       holdStopRef.current()
-      notifyHold(false)
+      if (notified) notifyHold(false)
+      notified = false
     }
 
     const onBlur = () => {
       if (!down) return
       down = false
+      if (notifyTimer) {
+        clearTimeout(notifyTimer)
+        notifyTimer = null
+      }
       holdStopRef.current()
-      notifyHold(false)
+      if (notified) notifyHold(false)
+      notified = false
     }
 
     window.addEventListener("keydown", onKeyDown, true)
@@ -586,9 +609,10 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       window.removeEventListener("keydown", onKeyDown, true)
       window.removeEventListener("keyup", onKeyUp, true)
       window.removeEventListener("blur", onBlur)
+      if (notifyTimer) clearTimeout(notifyTimer)
       if (down) {
         holdStopRef.current()
-        notifyHold(false)
+        if (notified) notifyHold(false)
       }
     }
   }, [state.dictationHotkeyEnabled, state.dictationHotkeyChord])

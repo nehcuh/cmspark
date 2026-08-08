@@ -513,6 +513,14 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       }
 
       function begin() {
+        // D2: user released before async permission → do not start orphan classic session
+        if (
+          holdSessionRef.current &&
+          holdStartEpochRef.current !== holdEpochRef.current
+        ) {
+          restoreModeAfterHold()
+          return
+        }
         // Re-check local gates at start time (connection may have dropped).
         if (eng === "local") {
           const gate = localGateError()
@@ -664,11 +672,12 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
 
   /**
    * Dictation+ D2 hold-to-talk: force continuous for this session, start if idle.
-   * Do NOT use queueMicrotask to "detect" start failure — toggle() may async-query
-   * mic permission and only then leave idle (dual-review REJECT #2).
+   * holdEpoch invalidates async begin() if user releases before mic starts (fast-tap nit).
    */
   const holdSessionRef = useRef(false)
   const savedModeRef = useRef<VoiceDictationMode | null>(null)
+  const holdEpochRef = useRef(0)
+  const holdStartEpochRef = useRef(0)
 
   const restoreModeAfterHold = useCallback(() => {
     holdSessionRef.current = false
@@ -692,6 +701,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       if (s.phase !== "idle" && s.phase !== "error") return false
       if (!optsRef.current.allowStart) return false
       if (holdSessionRef.current) return false
+      holdEpochRef.current += 1
+      holdStartEpochRef.current = holdEpochRef.current
       // Mode must stay continuous until holdStop / natural idle — begin() reads modeRef later.
       savedModeRef.current = modeRef.current
       modeRef.current = "continuous"
@@ -704,6 +715,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
 
   const holdStop = useCallback(() => {
     if (!holdSessionRef.current) return false
+    // Invalidate any in-flight async begin() from this hold
+    holdEpochRef.current += 1
     const s = sessionRef.current
     if (
       s.phase === "listening" ||
