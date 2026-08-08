@@ -1,7 +1,7 @@
 # 会议纪要（Meeting Minutes）— 产品设计 SoT
 
 > **日期**: 2026-08-07  
-> **状态**: **LOCKED for Mtg0/Mtg1 planning** — R1 四路对抗 floors 已吸收；R2 确认与听写+ 硬拆  
+> **状态**: **LOCKED** — Mtg0 粘贴纪要已合并；Mtg1 live capture（本机分段 STT + 删音频 + ack + 听写互斥）按本 SoT 实现；R1 四路对抗 floors 已吸收；R2 确认与听写+ 硬拆 
 > **对抗合成**:  
 > - R1：[continuous-dictation-meeting-adversary-synthesis-20260807.md](../../audit/reviews/continuous-dictation-meeting-adversary-synthesis-20260807.md)  
 > - R2（听写交叉）：[voice-dictation-r2-yetone-adversary-synthesis-20260807.md](../../audit/reviews/voice-dictation-r2-yetone-adversary-synthesis-20260807.md)  

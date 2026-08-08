@@ -11,11 +11,13 @@ import { generateMeetingMinutes } from "./meeting-minutes"
 import {
   appendTranscript,
   createMeeting,
+  endMeetingRecording,
   loadMeeting,
   listMeetings,
   setMeetingStatus,
   setMinutes,
   setTranscript,
+  startMeetingRecording,
   transcriptToText,
   type TranscriptLine,
   type TranscriptSource,
@@ -81,6 +83,60 @@ export async function handleMeetingMessage(
       thread_id: typeof msg.thread_id === "string" ? msg.thread_id : null,
     })
     return { type: "meeting.created", v: 1, meeting: session }
+  }
+
+  /**
+   * Mtg1 live capture start.
+   * Requires privacy_ack_v1 === true (meeting_privacy_ack_v1; voice v3 cannot substitute).
+   * Does not open mic on server — extension owns gUM + voice.stt.* segments.
+   */
+  if (type === "meeting.start") {
+    if (msg.privacy_ack_v1 !== true) {
+      return err("need_privacy_ack", "meeting_privacy_ack_v1 required before start")
+    }
+    let id = typeof msg.id === "string" ? msg.id : ""
+    if (!id) {
+      const session = createMeeting({
+        title: typeof msg.title === "string" ? msg.title : undefined,
+        thread_id: typeof msg.thread_id === "string" ? msg.thread_id : null,
+      })
+      id = session.id
+    } else {
+      const existing = loadMeeting(id)
+      if (!existing) return err("not_found", "meeting not found", { id })
+      if (existing.status === "recording") {
+        return err("already_recording", "meeting already recording", { id })
+      }
+    }
+    const started = startMeetingRecording(id, {
+      audio_retained: msg.audio_retained === true,
+      retain_days: typeof msg.retain_days === "number" ? msg.retain_days : undefined,
+    })
+    if (!started) return err("not_found", "meeting not found", { id })
+    logger.info("meeting.start.ok", {
+      id: started.id,
+      audio_retained: started.privacy.audio_retained,
+    })
+    return { type: "meeting.started", v: 1, meeting: started }
+  }
+
+  /** End live capture; default delete meetings/<id>/audio when not retained. */
+  if (type === "meeting.end") {
+    const id = typeof msg.id === "string" ? msg.id : ""
+    if (!id) return err("invalid_id", "meeting.end requires id")
+    const result = endMeetingRecording(id)
+    if (!result) return err("not_found", "meeting not found", { id })
+    logger.info("meeting.end.ok", {
+      id,
+      audioDeleted: result.audioDeleted,
+      retained: result.session.privacy.audio_retained,
+    })
+    return {
+      type: "meeting.ended",
+      v: 1,
+      meeting: result.session,
+      audio_deleted: result.audioDeleted,
+    }
   }
 
   if (type === "meeting.list") {

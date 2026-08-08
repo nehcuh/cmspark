@@ -429,10 +429,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
   // threadBusy / no thread still block; local readiness is gated inside useVoiceInput
   // so a click can surface mapLocalSttError banners.
+  // Mtg1: meeting live capture holds global max-1 STT — block dictation start.
   const voiceAllowStart =
     !threadBusy &&
     !needsThread &&
-    state.voiceInputEnabled !== false
+    state.voiceInputEnabled !== false &&
+    !state.meetingCaptureActive
 
   const voice = useVoiceInput({
     getBaseText: () => textRef.current,
@@ -481,6 +483,15 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     getCurrentDraft: () => textRef.current,
   })
 
+  // Mirror dictation activity for MeetingPanel mutual-exclusion (SoT Mtg1).
+  useEffect(() => {
+    const active =
+      voice.listening === true ||
+      voice.processing === true ||
+      voice.refining === true
+    dispatch({ type: "SET_DICTATION_CAPTURE_ACTIVE", active })
+  }, [voice.listening, voice.processing, voice.refining, dispatch])
+
   // Hide: feature off | unsupported for selected engine | worker | no thread.
   // Local + no gUM → voice.supported false → hide.
   // Browser + no SpeechRecognition → hide.
@@ -517,6 +528,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             ? localListeningStatusLabel(voice.listenRemainingMs!)
             : null
   const voiceMicTitle = (() => {
+    if (state.meetingCaptureActive) return "会议录音进行中，请先结束会议再听写"
     if (threadBusy) return "处理中无法听写"
     if (voice.refining) return "纠错中…点击取消"
     if (continuousProcessing) {

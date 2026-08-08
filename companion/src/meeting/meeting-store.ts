@@ -247,21 +247,93 @@ export function setMeetingStatus(
   return s
 }
 
-/** Best-effort delete audio/ after successful STT (default policy). */
-export function deleteMeetingAudio(id: string, dataDir = DATA_DIR): void {
+/**
+ * Mark meeting as live capture (Mtg1).
+ * Sets status=recording, stt_engine=local, optional audio retain.
+ */
+export function startMeetingRecording(
+  id: string,
+  opts: { audio_retained?: boolean; retain_days?: number } = {},
+  dataDir = DATA_DIR,
+): MeetingSession | null {
+  const s = loadMeeting(id, dataDir)
+  if (!s) return null
+  if (s.status === "recording") return s
+  s.status = "recording"
+  s.error = null
+  s.ended_at = null
+  s.privacy = {
+    ...s.privacy,
+    stt_engine: "local",
+    audio_retained: opts.audio_retained === true,
+    retain_until: null,
+  }
+  if (s.privacy.audio_retained) {
+    const days = Math.min(7, Math.max(1, Math.floor(opts.retain_days ?? 7)))
+    const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+    s.privacy.retain_until = until.toISOString()
+  }
+  // Ensure audio/ exists only when retain requested (optional durable bucket).
+  if (s.privacy.audio_retained) {
+    const dir = resolveContained(id, dataDir)
+    if (dir) {
+      try {
+        fs.mkdirSync(path.join(dir, "audio"), { recursive: true, mode: 0o700 })
+      } catch {
+        /* */
+      }
+    }
+  }
+  saveMeeting(s, dataDir)
+  return s
+}
+
+/**
+ * End live capture: status=ready, default delete audio/ when not retained.
+ */
+export function endMeetingRecording(
+  id: string,
+  dataDir = DATA_DIR,
+): { session: MeetingSession; audioDeleted: boolean } | null {
+  const s = loadMeeting(id, dataDir)
+  if (!s) return null
+  s.status = "ready"
+  s.ended_at = new Date().toISOString()
+  s.error = null
+  saveMeeting(s, dataDir)
+  let audioDeleted = false
+  if (!s.privacy.audio_retained) {
+    audioDeleted = deleteMeetingAudio(id, dataDir)
+  }
+  const again = loadMeeting(id, dataDir)
+  return { session: again || s, audioDeleted }
+}
+
+/** Best-effort delete audio/ after successful STT (default policy). Returns true if removed or absent. */
+export function deleteMeetingAudio(id: string, dataDir = DATA_DIR): boolean {
   const dir = resolveContained(id, dataDir)
-  if (!dir) return
+  if (!dir) return false
   const audio = path.join(dir, "audio")
   try {
     if (fs.existsSync(audio)) {
       fs.rmSync(audio, { recursive: true, force: true })
+      return true
     }
+    return true // already absent = policy satisfied
   } catch (e) {
     logger.warn("meeting.audio_delete_failed", {
       id,
       err: e instanceof Error ? e.message : String(e),
     })
+    return false
   }
+}
+
+/** Test / diagnostics: path to meeting audio dir (contained). */
+export function meetingAudioDir(id: string, dataDir = DATA_DIR): string | null {
+  const dir = resolveContained(id, dataDir)
+  if (!dir) return null
+  return path.join(dir, "audio")
 }
 
 export function transcriptToText(lines: TranscriptLine[]): string {

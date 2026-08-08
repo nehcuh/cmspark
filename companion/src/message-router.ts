@@ -1922,6 +1922,8 @@ export async function handleMessage(
         send: session?.sendToExtension,
       })
     case "meeting.create":
+    case "meeting.start":
+    case "meeting.end":
     case "meeting.list":
     case "meeting.get":
     case "meeting.set_transcript":
