@@ -887,6 +887,17 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
         return
       }
 
+      // Mid-loop: tools will run next. Echo the saved assistant (incl. reasoning)
+      // so Side Panel can pin thinking into history before tool.start clears the
+      // live bubble. Without this, live UI only keeps shell cards (#h1yi2w).
+      sendToExtension({
+        type: "chat.assistant",
+        thread_id: threadId,
+        message_id: savedAssistant.id,
+        content: assistantContent,
+        ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+      })
+
       // Execute tool calls via extension (async — wait for results)
       const toolResults: CanonicalChatMessage[] = []
       let shouldStop = false
