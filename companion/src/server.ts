@@ -5876,6 +5876,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.text !== "string" || !m.text.trim()) {
         return { valid: false, error: "meeting.append_transcript requires text" }
       }
+      if (m.text.length > 16_000) {
+        return { valid: false, error: "meeting.append_transcript text too long" }
+      }
       return { valid: true }
     },
     "meeting.generate_minutes": (m) => {

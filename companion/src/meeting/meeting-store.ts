@@ -153,7 +153,7 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
     error: session.error ?? null,
   }
   writeJsonAtomic(path.join(dir, "meta.json"), meta)
-  writeJsonAtomic(path.join(dir, "transcript.jsonl"), session.transcript)
+  writeJsonAtomic(path.join(dir, "transcript.json"), session.transcript)
   if (session.minutes) {
     writeJsonAtomic(path.join(dir, "minutes.json"), session.minutes)
     const mdPath = path.join(dir, "minutes.md")
@@ -167,7 +167,9 @@ export function loadMeeting(id: string, dataDir = DATA_DIR): MeetingSession | nu
   const meta = readJson<MeetingMeta>(path.join(dir, "meta.json"))
   if (!meta) return null
   const transcript =
-    readJson<TranscriptLine[]>(path.join(dir, "transcript.jsonl")) || []
+    readJson<TranscriptLine[]>(path.join(dir, "transcript.json")) ||
+    readJson<TranscriptLine[]>(path.join(dir, "transcript.jsonl")) ||
+    []
   const minutes = readJson<MeetingMinutes>(path.join(dir, "minutes.json"))
   return {
     ...meta,

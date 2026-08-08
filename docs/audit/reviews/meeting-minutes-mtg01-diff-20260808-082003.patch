@@ -1,0 +1,1548 @@
+# Dual external review context
+batch: meeting-minutes-mtg01
+base: 84700542886042c1f116edfb9977644c40259b37
+time: 20260808-082003
+
+dcee9a6
+
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/meeting-minutes-mtg01-diff-20260808-082003.patch
+?? docs/audit/reviews/meeting-minutes-mtg01-dual-review-prompt.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
+?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
+?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
+?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
+?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
+?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
+?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
+?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
+?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
+?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
+?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/index.ts           |  10 +-
+ .../src/sidepanel/components/ContextPanelHost.tsx  |  14 +
+ .../src/sidepanel/components/MeetingPanel.tsx      | 370 +++++++++++++++++++++
+ .../src/sidepanel/composer/meta-slash.ts           |  10 +
+ .../src/sidepanel/mode/mode-controller.ts          |   2 +
+ chrome-extension/tests/context-panel-host.test.ts  |   8 +-
+ companion/src/meeting/meeting-handlers.ts          | 201 +++++++++++
+ companion/src/meeting/meeting-minutes.ts           | 102 ++++++
+ companion/src/meeting/meeting-store.ts             | 273 +++++++++++++++
+ companion/src/meeting/minutes-prompt.ts            |  31 ++
+ companion/src/message-router.ts                    |  13 +
+ .../src/packs/builtin/meeting-minutes/pack.yaml    |  59 ++++
+ .../skills/meeting-minutes-structure.md            |  14 +
+ companion/src/server.ts                            |  43 +++
+ companion/tests/meeting-minutes.test.ts            | 165 +++++++++
+ 15 files changed, 1311 insertions(+), 4 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 91e84bf..652356f 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -1151,7 +1151,15 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+       case "voice.stt.abort":
+       // Dictation+ D1b ASR Refiner (text-only)
+       case "voice.refine.request":
+-      case "voice.refine.abort": {
++      case "voice.refine.abort":
++      // Meeting minutes scene
++      case "meeting.create":
++      case "meeting.list":
++      case "meeting.get":
++      case "meeting.set_transcript":
++      case "meeting.append_transcript":
++      case "meeting.generate_minutes":
++      case "meeting.set_status": {
+         // Forward to companion. Always call sendResponse so Side Panel callbacks
+         // never see "The message port closed before a response was received"
+         // (that lastError fires when no listener answers — default used to return
+diff --git a/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx b/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
+index 5b37ba4..abed86b 100644
+--- a/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
++++ b/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
+@@ -24,6 +24,7 @@ import { McpPanel } from "./McpPanel"
+ import { AppsPanel } from "./AppsPanel"
+ import { PacksPanel } from "./PacksPanel"
+ import { BoardPanel } from "./BoardPanel"
++import { MeetingPanel } from "./MeetingPanel"
+ import { tokens } from "../ui/tokens"
+ import {
+   IconTabs,
+@@ -45,6 +46,7 @@ export type ContextPanelId =
+   | "board"
+   | "mcp"
+   | "apps"
++  | "meeting"
+ 
+ export type ContextPanelTabDef = {
+   id: ContextPanelId
+@@ -59,6 +61,7 @@ export const CONTEXT_PANEL_TABS: ContextPanelTabDef[] = [
+   { id: "skills", label: "技能", Icon: IconSkills },
+   { id: "knowledge", label: "知识", Icon: IconKnowledge },
+   { id: "packs", label: "场景", Icon: IconSkills },
++  { id: "meeting", label: "会议", Icon: IconSkills },
+   { id: "board", label: "任务板", Icon: IconSkills },
+   { id: "mcp", label: "MCP", Icon: IconMcp },
+   { id: "apps", label: "应用", Icon: IconApps },
+@@ -258,6 +261,17 @@ export function ContextPanelHost() {
+       {activePanel === "skills" && <SkillsPanel />}
+       {activePanel === "knowledge" && <KnowledgeSubPanel />}
+       {activePanel === "packs" && <PacksPanel />}
++      {activePanel === "meeting" && (
++        <MeetingPanel
++          onClose={closePanel}
++          onSendToDraft={(text) => {
++            window.dispatchEvent(
++              new CustomEvent("cmspark:fill-composer", { detail: { text } }),
++            )
++            closePanel()
++          }}
++        />
++      )}
+       {activePanel === "board" && <BoardPanel />}
+       {activePanel === "mcp" && <McpPanel />}
+       {activePanel === "apps" && <AppsPanel />}
+diff --git a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+new file mode 100644
+index 0000000..5f54006
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+@@ -0,0 +1,370 @@
++/**
++ * Meeting workbench (Mtg0 paste + generate; Mtg1 status shell).
++ * SoT: docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
++ * Does NOT auto-start mic on pack apply.
++ */
++
++import { useCallback, useEffect, useState, type CSSProperties } from "react"
++import { useAgentStore } from "../store/agentStore"
++import { tokens } from "../ui/tokens"
++
++type Minutes = {
++  raw_md: string
++  tldr?: string
++  generated_at?: string
++}
++
++type Meeting = {
++  id: string
++  title: string
++  status: string
++  transcript?: Array<{ text: string }>
++  minutes?: Minutes | null
++}
++
++/**
++ * Companion replies arrive via WS → SW → chrome.runtime.sendMessage.
++ */
++function useMeetingMessages(onMsg: (m: any) => void) {
++  useEffect(() => {
++    const listener = (msg: any) => {
++      if (msg && typeof msg.type === "string" && msg.type.startsWith("meeting.")) {
++        onMsg(msg)
++      }
++      return false
++    }
++    chrome.runtime.onMessage.addListener(listener)
++    return () => chrome.runtime.onMessage.removeListener(listener)
++  }, [onMsg])
++}
++
++export function MeetingPanel(props: {
++  onClose: () => void
++  onSendToDraft: (text: string) => void
++}) {
++  const { state } = useAgentStore()
++  const [title, setTitle] = useState("")
++  const [transcript, setTranscript] = useState("")
++  const [minutesMd, setMinutesMd] = useState("")
++  const [meetingId, setMeetingId] = useState<string | null>(null)
++  const [status, setStatus] = useState<string>("")
++  const [busy, setBusy] = useState(false)
++  const [error, setError] = useState<string | null>(null)
++  const [ack, setAck] = useState(false)
++
++  useEffect(() => {
++    try {
++      chrome.storage.local.get("meeting_privacy_ack_v1", (r) => {
++        if (r.meeting_privacy_ack_v1 === true) setAck(true)
++      })
++    } catch {
++      /* */
++    }
++  }, [])
++
++  const onMsg = useCallback((msg: any) => {
++    if (msg.type === "meeting.created" && msg.meeting) {
++      setMeetingId(msg.meeting.id)
++      setTitle(msg.meeting.title || "")
++      setStatus(msg.meeting.status || "draft")
++      setBusy(false)
++    }
++    if (msg.type === "meeting.updated" && msg.meeting) {
++      setMeetingId(msg.meeting.id)
++      setStatus(msg.meeting.status)
++      if (msg.meeting.minutes?.raw_md) setMinutesMd(msg.meeting.minutes.raw_md)
++      setBusy(false)
++    }
++    if (msg.type === "meeting.minutes_result") {
++      if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)
++      if (msg.meeting?.id) {
++        setMeetingId(msg.meeting.id)
++        setStatus(msg.meeting.status || "done")
++      }
++      setBusy(false)
++      setError(null)
++    }
++    if (msg.type === "meeting.error") {
++      setError(msg.message || msg.code || "error")
++      setBusy(false)
++    }
++  }, [])
++
++  useMeetingMessages(onMsg)
++
++  const ensureAck = () => {
++    if (ack) return true
++    setError("请先确认会议隐私说明（生成纪要会将转写文本发给已配置的 LLM）")
++    return false
++  }
++
++  const acceptAck = () => {
++    setAck(true)
++    try {
++      chrome.storage.local.set({ meeting_privacy_ack_v1: true })
++    } catch {
++      /* */
++    }
++    setError(null)
++  }
++
++  const createMeeting = () => {
++    setBusy(true)
++    setError(null)
++    chrome.runtime.sendMessage({
++      type: "meeting.create",
++      v: 1,
++      title: title || undefined,
++      thread_id: state.activeThreadId || undefined,
++    })
++  }
++
++  const generate = async () => {
++    if (!ensureAck()) return
++    if (!transcript.trim() && !meetingId) {
++      setError("请先粘贴转写文本")
++      return
++    }
++    setBusy(true)
++    setError(null)
++    if (meetingId && transcript.trim()) {
++      chrome.runtime.sendMessage({
++        type: "meeting.set_transcript",
++        v: 1,
++        id: meetingId,
++        text: transcript,
++        source: "paste",
++      })
++    }
++    chrome.runtime.sendMessage({
++      type: "meeting.generate_minutes",
++      v: 1,
++      id: meetingId || undefined,
++      text: transcript.trim() || undefined,
++    })
++  }
++
++  const copyMinutes = async () => {
++    if (!minutesMd) return
++    try {
++      await navigator.clipboard.writeText(minutesMd)
++      setStatus("已复制纪要")
++    } catch {
++      setError("复制失败")
++    }
++  }
++
++  return (
++    <div
++      data-testid="meeting-panel"
++      style={{
++        display: "flex",
++        flexDirection: "column",
++        gap: 10,
++        padding: 12,
++        height: "100%",
++        overflow: "auto",
++        background: tokens.bgElevated,
++        color: tokens.text,
++        fontSize: 13,
++      }}
++    >
++      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
++        <strong style={{ flex: 1 }}>会议记录</strong>
++        <span style={{ fontSize: 11, color: tokens.textSecondary }}>暂不分说话人</span>
++        <button
++          type="button"
++          onClick={props.onClose}
++          style={{
++            border: `1px solid ${tokens.border}`,
++            background: "transparent",
++            borderRadius: 6,
++            padding: "2px 8px",
++            cursor: "pointer",
++            color: tokens.textSecondary,
++            fontSize: 12,
++          }}
++        >
++          关闭
++        </button>
++      </div>
++
++      <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
++        粘贴转写后生成结构化纪要（TL;DR / 决议 / 待办 / 风险）。应用「会议记录」场景不会自动开麦。
++        长会录音请用本机转写引擎（后续可在此工作台显式开始）。
++      </div>
++
++      {!ack && (
++        <div
++          style={{
++            border: `1px solid ${tokens.border}`,
++            borderRadius: 8,
++            padding: 10,
++            fontSize: 11,
++            lineHeight: 1.45,
++            color: tokens.textSecondary,
++          }}
++        >
++          <div style={{ marginBottom: 6, color: tokens.text, fontWeight: 500 }}>隐私说明（meeting_privacy_ack_v1）</div>
++          <ul style={{ margin: 0, paddingLeft: 18 }}>
++            <li>会创建本地会话产物（转写 ± 可选音频）。</li>
++            <li>默认转写成功后删除音频（若启用录音）。</li>
++            <li>生成纪要将把转写文本发给你已配置的 LLM。</li>
++            <li>长会 STT 仅本机；不会自动开始录音。</li>
++            <li>多方录音法律合规由你负责。</li>
++          </ul>
++          <button
++            type="button"
++            onClick={acceptAck}
++            style={{
++              marginTop: 8,
++              border: "none",
++              background: tokens.accent,
++              color: "#fff",
++              borderRadius: 6,
++              padding: "4px 10px",
++              cursor: "pointer",
++              fontSize: 12,
++            }}
++          >
++            我已了解
++          </button>
++        </div>
++      )}
++
++      <label style={{ fontSize: 12 }}>
++        标题
++        <input
++          value={title}
++          onChange={(e) => setTitle(e.target.value)}
++          placeholder="可选"
++          style={{
++            display: "block",
++            width: "100%",
++            marginTop: 4,
++            padding: "6px 8px",
++            borderRadius: 6,
++            border: `1px solid ${tokens.border}`,
++            background: tokens.bg,
++            color: tokens.text,
++            boxSizing: "border-box",
++          }}
++        />
++      </label>
++
++      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
++        <button
++          type="button"
++          disabled={busy}
++          onClick={createMeeting}
++          style={btnStyle(false)}
++        >
++          新建会议会话
++        </button>
++        {meetingId && (
++          <span style={{ fontSize: 11, color: tokens.textSecondary, alignSelf: "center" }}>
++            id: {meetingId.slice(0, 12)}… · {status}
++          </span>
++        )}
++      </div>
++
++      <label style={{ fontSize: 12, flex: 1, display: "flex", flexDirection: "column" }}>
++        转写 / 口述文字
++        <textarea
++          value={transcript}
++          onChange={(e) => setTranscript(e.target.value)}
++          placeholder="粘贴会议转写或要点…"
++          rows={8}
++          style={{
++            marginTop: 4,
++            width: "100%",
++            flex: 1,
++            minHeight: 120,
++            padding: 8,
++            borderRadius: 6,
++            border: `1px solid ${tokens.border}`,
++            background: tokens.bg,
++            color: tokens.text,
++            resize: "vertical",
++            boxSizing: "border-box",
++            fontFamily: "inherit",
++            fontSize: 12,
++            lineHeight: 1.45,
++          }}
++        />
++      </label>
++
++      <button
++        type="button"
++        disabled={busy || !ack}
++        onClick={generate}
++        style={btnStyle(true)}
++      >
++        {busy ? "生成中…" : "生成会议纪要"}
++      </button>
++
++      {error && (
++        <div style={{ color: "#c44", fontSize: 12 }} role="alert">
++          {error}
++        </div>
++      )}
++
++      {minutesMd && (
++        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
++          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
++            <strong style={{ flex: 1, fontSize: 12 }}>纪要</strong>
++            <button type="button" onClick={copyMinutes} style={linkBtn}>
++              复制
++            </button>
++            <button
++              type="button"
++              onClick={() => props.onSendToDraft(minutesMd)}
++              style={linkBtn}
++            >
++              发送到对话草稿
++            </button>
++          </div>
++          <pre
++            style={{
++              margin: 0,
++              padding: 10,
++              borderRadius: 8,
++              border: `1px solid ${tokens.border}`,
++              background: tokens.bg,
++              fontSize: 11,
++              lineHeight: 1.45,
++              whiteSpace: "pre-wrap",
++              maxHeight: 280,
++              overflow: "auto",
++            }}
++          >
++            {minutesMd}
++          </pre>
++        </div>
++      )}
++    </div>
++  )
++}
++
++function btnStyle(primary: boolean): CSSProperties {
++  return {
++    border: primary ? "none" : `1px solid ${tokens.border}`,
++    background: primary ? tokens.accent : "transparent",
++    color: primary ? "#fff" : tokens.text,
++    borderRadius: 8,
++    padding: "8px 12px",
++    cursor: "pointer",
++    fontSize: 13,
++    fontWeight: 500,
++  }
++}
++
++const linkBtn: CSSProperties = {
++  border: "none",
++  background: "transparent",
++  color: tokens.accent,
++  cursor: "pointer",
++  fontSize: 11,
++  textDecoration: "underline",
++  padding: 0,
++}
+diff --git a/chrome-extension/src/sidepanel/composer/meta-slash.ts b/chrome-extension/src/sidepanel/composer/meta-slash.ts
+index 883e18a..f672e46 100644
+--- a/chrome-extension/src/sidepanel/composer/meta-slash.ts
++++ b/chrome-extension/src/sidepanel/composer/meta-slash.ts
+@@ -100,6 +100,16 @@ export const META_PANEL_SLASH: MetaSlashEntry[] = [
+     metaKind: "panel",
+     panelId: "board",
+   },
++  {
++    name: "meeting",
++    description: "打开会议记录工作台（粘贴转写 → 纪要）",
++    type: "prompt_template",
++    builtin: true,
++    tags: ["meta-panel", "meta-slash", "meeting"],
++    site: "meeting",
++    metaKind: "panel",
++    panelId: "meeting",
++  },
+   {
+     name: "settings",
+     description: "打开设置",
+diff --git a/chrome-extension/src/sidepanel/mode/mode-controller.ts b/chrome-extension/src/sidepanel/mode/mode-controller.ts
+index 234a062..bec48b6 100644
+--- a/chrome-extension/src/sidepanel/mode/mode-controller.ts
++++ b/chrome-extension/src/sidepanel/mode/mode-controller.ts
+@@ -119,6 +119,7 @@ export type ContextBarTabId =
+   | "skills"
+   | "knowledge"
+   | "packs"
++  | "meeting"
+   | "board"
+   | "mcp"
+   | "apps"
+@@ -151,6 +152,7 @@ export function contextBarOverflowTabsForLevel(
+   // Prefer product-useful demotions; keep stable order
+   const candidates: ContextBarTabId[] = [
+     "packs",
++    "meeting",
+     "board",
+     "knowledge",
+     "history",
+diff --git a/chrome-extension/tests/context-panel-host.test.ts b/chrome-extension/tests/context-panel-host.test.ts
+index 649d155..d6e9ea6 100644
+--- a/chrome-extension/tests/context-panel-host.test.ts
++++ b/chrome-extension/tests/context-panel-host.test.ts
+@@ -41,10 +41,12 @@ test("M1: contextPanelLabel returns Chinese labels for strip/host header", () =>
+   assert.equal(contextPanelLabel("board"), "任务板")
+ })
+ 
+-test("M1: registry has stable 8 panels (tabs/history/skills/knowledge/packs/board/mcp/apps)", () => {
+-  assert.equal(CONTEXT_PANEL_TABS.length, 8)
++test("M1: registry includes meeting panel (meeting-minutes scene)", () => {
++  assert.equal(CONTEXT_PANEL_TABS.length, 9)
+   assert.deepEqual(
+     CONTEXT_PANEL_TABS.map((t) => t.id),
+-    ["tabs", "history", "skills", "knowledge", "packs", "board", "mcp", "apps"],
++    ["tabs", "history", "skills", "knowledge", "packs", "meeting", "board", "mcp", "apps"],
+   )
++  assert.equal(isContextPanelId("meeting"), true)
++  assert.equal(contextPanelLabel("meeting"), "会议")
+ })
+diff --git a/companion/src/meeting/meeting-handlers.ts b/companion/src/meeting/meeting-handlers.ts
+new file mode 100644
+index 0000000..8dc8705
+--- /dev/null
++++ b/companion/src/meeting/meeting-handlers.ts
+@@ -0,0 +1,201 @@
++/**
++ * meeting.* WS handlers (SoT meeting-minutes).
++ * chrome-extension origin preferred for capture-related; generate allows extension.
++ */
++
++import { getConfig } from "../config"
++import { logger } from "../logger"
++import { isChromeExtensionOrigin } from "../voice/stt-handlers"
++import type { LlmExtractConfig } from "../llm/llm-extract"
++import { generateMeetingMinutes } from "./meeting-minutes"
++import {
++  appendTranscript,
++  createMeeting,
++  loadMeeting,
++  listMeetings,
++  setMeetingStatus,
++  setMinutes,
++  setTranscript,
++  transcriptToText,
++  type TranscriptLine,
++  type TranscriptSource,
++} from "./meeting-store"
++
++export interface MeetingHandlerContext {
++  origin?: string
++  peerId?: string
++  send?: (data: any) => void
++}
++
++export interface MeetingHandlerDeps {
++  isExtensionOrigin?: (origin: string | undefined) => boolean
++  getLlmConfig?: () => LlmExtractConfig | null
++  generate?: typeof generateMeetingMinutes
++}
++
++function llmConfigFromCompanion(): LlmExtractConfig | null {
++  try {
++    const cfg = getConfig()
++    const llm = cfg?.llm
++    if (!llm?.base_url || !llm?.api_key || !llm?.model_name) return null
++    return {
++      base_url: llm.base_url,
++      api_key: llm.api_key,
++      model_name: llm.model_name,
++      temperature: typeof llm.temperature === "number" ? llm.temperature : 0.3,
++      protocol: llm.protocol,
++      auth_style: llm.auth_style,
++      client_header_profile: llm.client_header_profile,
++      claude_code_compat_version: llm.claude_code_compat_version,
++      extra_headers: llm.extra_headers,
++      anthropic_version: llm.anthropic_version,
++      context_window: llm.context_window,
++    }
++  } catch {
++    return null
++  }
++}
++
++function err(code: string, message: string, extra?: Record<string, unknown>) {
++  return { type: "meeting.error", v: 1, code, message, ...extra }
++}
++
++export async function handleMeetingMessage(
++  msg: any,
++  ctx: MeetingHandlerContext = {},
++  deps: MeetingHandlerDeps = {},
++): Promise<any> {
++  const type = msg?.type
++  const originOk = (deps.isExtensionOrigin ?? isChromeExtensionOrigin)(ctx.origin)
++  if (!originOk) {
++    logger.warn("meeting.refused", {
++      type: typeof type === "string" ? type : undefined,
++      origin: ctx.origin ? "present" : "missing",
++    })
++    return err("origin_denied", "chrome-extension origin required")
++  }
++
++  if (type === "meeting.create") {
++    const session = createMeeting({
++      title: typeof msg.title === "string" ? msg.title : undefined,
++      thread_id: typeof msg.thread_id === "string" ? msg.thread_id : null,
++    })
++    return { type: "meeting.created", v: 1, meeting: session }
++  }
++
++  if (type === "meeting.list") {
++    return { type: "meeting.list_result", v: 1, meetings: listMeetings() }
++  }
++
++  if (type === "meeting.get") {
++    const id = typeof msg.id === "string" ? msg.id : ""
++    const m = loadMeeting(id)
++    if (!m) return err("not_found", "meeting not found", { id })
++    return { type: "meeting.get_result", v: 1, meeting: m }
++  }
++
++  if (type === "meeting.set_transcript") {
++    const id = typeof msg.id === "string" ? msg.id : ""
++    const text = typeof msg.text === "string" ? msg.text : ""
++    const source: TranscriptSource =
++      msg.source === "stt" || msg.source === "paste" || msg.source === "user_edit"
++        ? msg.source
++        : "paste"
++    if (!text.trim()) return err("empty_transcript", "empty transcript", { id })
++    // Split by blank lines or newlines into lines
++    const lines: TranscriptLine[] = text
++      .split(/\n+/)
++      .map((t: string) => t.trim())
++      .filter(Boolean)
++      .map((t: string) => ({ text: t, source }))
++    const m = setTranscript(id, lines)
++    if (!m) return err("not_found", "meeting not found", { id })
++    return { type: "meeting.updated", v: 1, meeting: m }
++  }
++
++  if (type === "meeting.append_transcript") {
++    const id = typeof msg.id === "string" ? msg.id : ""
++    const text = typeof msg.text === "string" ? msg.text : ""
++    if (!text.trim()) return err("empty_transcript", "empty text", { id })
++    const line: TranscriptLine = {
++      text: text.trim(),
++      source: msg.source === "stt" ? "stt" : "user_edit",
++      speaker: typeof msg.speaker === "string" ? msg.speaker : undefined,
++    }
++    const m = appendTranscript(id, line)
++    if (!m) return err("not_found", "meeting not found", { id })
++    return { type: "meeting.updated", v: 1, meeting: m }
++  }
++
++  if (type === "meeting.generate_minutes") {
++    const id = typeof msg.id === "string" ? msg.id : ""
++    // Optional one-shot: text without persisted meeting
++    const inlineText = typeof msg.text === "string" ? msg.text : ""
++    let transcriptText = inlineText.trim()
++    let meetingId = id
++
++    if (id) {
++      const m = loadMeeting(id)
++      if (!m) return err("not_found", "meeting not found", { id })
++      transcriptText = transcriptToText(m.transcript) || inlineText.trim()
++      setMeetingStatus(id, "generating")
++    }
++
++    if (!transcriptText) {
++      if (id) setMeetingStatus(id, "error", "empty transcript")
++      return err("empty_transcript", "empty transcript", { id })
++    }
++
++    const getLlm = deps.getLlmConfig ?? llmConfigFromCompanion
++    const llm = getLlm()
++    if (!llm) {
++      if (id) setMeetingStatus(id, "error", "llm not configured")
++      return err("llm_not_configured", "Companion LLM not configured")
++    }
++
++    const generate = deps.generate ?? generateMeetingMinutes
++    const result = await generate({ transcriptText, config: llm })
++    if (!result.ok) {
++      if (id) setMeetingStatus(id, "error", result.message)
++      return err(result.code, result.message, { id })
++    }
++
++    if (meetingId) {
++      const updated = setMinutes(meetingId, result.minutes)
++      return {
++        type: "meeting.minutes_result",
++        v: 1,
++        meeting: updated,
++        minutes: result.minutes,
++      }
++    }
++
++    // Ephemeral generate (no id) — Mtg0 paste-only
++    return {
++      type: "meeting.minutes_result",
++      v: 1,
++      meeting: null,
++      minutes: result.minutes,
++    }
++  }
++
++  if (type === "meeting.set_status") {
++    const id = typeof msg.id === "string" ? msg.id : ""
++    const status = msg.status
++    if (
++      status !== "draft" &&
++      status !== "recording" &&
++      status !== "ready" &&
++      status !== "generating" &&
++      status !== "done" &&
++      status !== "error"
++    ) {
++      return err("invalid_status", "invalid status")
++    }
++    const m = setMeetingStatus(id, status)
++    if (!m) return err("not_found", "meeting not found", { id })
++    return { type: "meeting.updated", v: 1, meeting: m }
++  }
++
++  return err("unknown_type", `unknown type ${String(type)}`)
++}
+diff --git a/companion/src/meeting/meeting-minutes.ts b/companion/src/meeting/meeting-minutes.ts
+new file mode 100644
+index 0000000..4064037
+--- /dev/null
++++ b/companion/src/meeting/meeting-minutes.ts
+@@ -0,0 +1,102 @@
++/**
++ * Generate structured meeting minutes via llmExtract (text-only job).
++ */
++
++import { llmExtract, type LlmExtractConfig } from "../llm/llm-extract"
++import { logger } from "../logger"
++import {
++  MEETING_MINUTES_MAX_INPUT_CHARS,
++  MEETING_MINUTES_SYSTEM_PROMPT,
++  MEETING_MINUTES_TEMP_CAP,
++  MEETING_MINUTES_TIMEOUT_MS,
++} from "./minutes-prompt"
++import type { MeetingMinutes } from "./meeting-store"
++
++export type GenerateMinutesResult =
++  | { ok: true; minutes: MeetingMinutes }
++  | { ok: false; code: string; message: string }
++
++function parseLooseSections(md: string): Partial<MeetingMinutes> {
++  const tldr = md.match(/###\s*TL;DR\s*\n([\s\S]*?)(?=\n###\s|$)/i)?.[1]?.trim()
++  const decisionsBlock = md.match(/###\s*决议\s*\n([\s\S]*?)(?=\n###\s|$)/i)?.[1]
++  const actionsBlock = md.match(/###\s*待办\s*\n([\s\S]*?)(?=\n###\s|$)/i)?.[1]
++  const risksBlock = md.match(/###\s*风险[^\n]*\n([\s\S]*?)(?=\n###\s|$)/i)?.[1]
++  const bullets = (block?: string) =>
++    (block || "")
++      .split("\n")
++      .map((l) => l.replace(/^\s*[-*]\s*(\[[ xX]\]\s*)?/, "").trim())
++      .filter(Boolean)
++  return {
++    tldr,
++    decisions: bullets(decisionsBlock),
++    actions: bullets(actionsBlock),
++    risks: bullets(risksBlock),
++  }
++}
++
++export async function generateMeetingMinutes(params: {
++  transcriptText: string
++  config: LlmExtractConfig
++  extract?: typeof llmExtract
++  signal?: AbortSignal
++}): Promise<GenerateMinutesResult> {
++  const raw = (params.transcriptText || "").trim()
++  if (!raw) {
++    return { ok: false, code: "empty_transcript", message: "empty transcript" }
++  }
++  if (raw.length > MEETING_MINUTES_MAX_INPUT_CHARS) {
++    return { ok: false, code: "transcript_too_long", message: "transcript too long" }
++  }
++  if (params.signal?.aborted) {
++    return { ok: false, code: "aborted", message: "aborted" }
++  }
++
++  const extract = params.extract ?? llmExtract
++  let out: string
++  try {
++    out = await extract({
++      systemPrompt: MEETING_MINUTES_SYSTEM_PROMPT,
++      userContent: raw,
++      config: params.config,
++      temperatureCap: MEETING_MINUTES_TEMP_CAP,
++      timeout: MEETING_MINUTES_TIMEOUT_MS,
++    })
++  } catch (e: any) {
++    if (params.signal?.aborted || e?.name === "AbortError") {
++      return { ok: false, code: "aborted", message: "aborted" }
++    }
++    logger.warn("meeting.minutes.llm_failed", {
++      err: e instanceof Error ? e.message : String(e),
++      input_len: raw.length,
++    })
++    return {
++      ok: false,
++      code: "llm_error",
++      message: e instanceof Error ? e.message : "llm failed",
++    }
++  }
++
++  const md = (out || "").trim()
++  if (!md) {
++    return { ok: false, code: "empty_output", message: "empty minutes" }
++  }
++  // Soft structure check — require at least TL;DR heading
++  if (!/###\s*TL;DR/i.test(md)) {
++    logger.info("meeting.minutes.missing_tldr", { output_len: md.length })
++  }
++
++  const partial = parseLooseSections(md)
++  const minutes: MeetingMinutes = {
++    tldr: partial.tldr,
++    decisions: partial.decisions,
++    actions: partial.actions,
++    risks: partial.risks,
++    raw_md: md,
++    generated_at: new Date().toISOString(),
++  }
++  logger.info("meeting.minutes.ok", {
++    input_len: raw.length,
++    output_len: md.length,
++  })
++  return { ok: true, minutes }
++}
+diff --git a/companion/src/meeting/meeting-store.ts b/companion/src/meeting/meeting-store.ts
+new file mode 100644
+index 0000000..6a7c514
+--- /dev/null
++++ b/companion/src/meeting/meeting-store.ts
+@@ -0,0 +1,273 @@
++/**
++ * MeetingSession disk store — ~/.cmspark-agent/meetings/<id>/
++ * SoT: 2026-08-07-meeting-minutes-design.md
++ */
++
++import * as fs from "fs"
++import * as path from "path"
++import * as crypto from "crypto"
++import { DATA_DIR } from "../config"
++import { logger } from "../logger"
++
++export type TranscriptSource = "stt" | "user_edit" | "paste" | "asr_refiner"
++
++export type TranscriptLine = {
++  t0?: number
++  t1?: number
++  speaker?: string
++  text: string
++  source: TranscriptSource
++}
++
++export type MeetingMinutes = {
++  tldr?: string
++  decisions?: string[]
++  actions?: string[]
++  risks?: string[]
++  raw_md: string
++  generated_at: string
++}
++
++export type MeetingStatus =
++  | "draft"
++  | "recording"
++  | "ready"
++  | "generating"
++  | "done"
++  | "error"
++
++export type MeetingMeta = {
++  id: string
++  thread_id?: string | null
++  title: string
++  started_at: string
++  ended_at?: string | null
++  status: MeetingStatus
++  privacy: {
++    stt_engine: "local" | "none"
++    audio_retained: boolean
++    retain_until?: string | null
++  }
++  error?: string | null
++}
++
++export type MeetingSession = MeetingMeta & {
++  transcript: TranscriptLine[]
++  minutes?: MeetingMinutes | null
++}
++
++function meetingsRoot(dataDir = DATA_DIR): string {
++  return path.join(dataDir, "meetings")
++}
++
++function meetingDir(id: string, dataDir = DATA_DIR): string {
++  return path.join(meetingsRoot(dataDir), id)
++}
++
++/** Ensure id is a safe single path segment. */
++export function isSafeMeetingId(id: string): boolean {
++  return typeof id === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,63}$/.test(id)
++}
++
++export function ensureMeetingsRoot(dataDir = DATA_DIR): string {
++  const root = meetingsRoot(dataDir)
++  fs.mkdirSync(root, { recursive: true, mode: 0o700 })
++  try {
++    fs.chmodSync(root, 0o700)
++  } catch {
++    /* windows */
++  }
++  return root
++}
++
++function resolveContained(id: string, dataDir = DATA_DIR): string | null {
++  if (!isSafeMeetingId(id)) return null
++  const root = path.resolve(ensureMeetingsRoot(dataDir))
++  const dir = path.resolve(meetingDir(id, dataDir))
++  if (dir !== root && !dir.startsWith(root + path.sep)) return null
++  return dir
++}
++
++function writeJsonAtomic(filePath: string, data: unknown): void {
++  const dir = path.dirname(filePath)
++  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
++  const tmp = `${filePath}.${process.pid}.tmp`
++  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { encoding: "utf8", mode: 0o600 })
++  fs.renameSync(tmp, filePath)
++  try {
++    fs.chmodSync(filePath, 0o600)
++  } catch {
++    /* */
++  }
++}
++
++function readJson<T>(filePath: string): T | null {
++  try {
++    if (!fs.existsSync(filePath)) return null
++    return JSON.parse(fs.readFileSync(filePath, "utf8")) as T
++  } catch {
++    return null
++  }
++}
++
++export function createMeeting(opts: {
++  title?: string
++  thread_id?: string | null
++  dataDir?: string
++}): MeetingSession {
++  const dataDir = opts.dataDir ?? DATA_DIR
++  const id = `mtg_${crypto.randomBytes(8).toString("hex")}`
++  const now = new Date().toISOString()
++  const session: MeetingSession = {
++    id,
++    thread_id: opts.thread_id ?? null,
++    title: (opts.title && opts.title.trim()) || `会议 ${now.slice(0, 16).replace("T", " ")}`,
++    started_at: now,
++    ended_at: null,
++    status: "draft",
++    privacy: {
++      stt_engine: "none",
++      audio_retained: false,
++      retain_until: null,
++    },
++    transcript: [],
++    minutes: null,
++    error: null,
++  }
++  saveMeeting(session, dataDir)
++  return session
++}
++
++export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
++  const dir = resolveContained(session.id, dataDir)
++  if (!dir) throw new Error("invalid meeting id")
++  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
++  const meta: MeetingMeta = {
++    id: session.id,
++    thread_id: session.thread_id,
++    title: session.title,
++    started_at: session.started_at,
++    ended_at: session.ended_at,
++    status: session.status,
++    privacy: session.privacy,
++    error: session.error ?? null,
++  }
++  writeJsonAtomic(path.join(dir, "meta.json"), meta)
++  writeJsonAtomic(path.join(dir, "transcript.jsonl"), session.transcript)
++  if (session.minutes) {
++    writeJsonAtomic(path.join(dir, "minutes.json"), session.minutes)
++    const mdPath = path.join(dir, "minutes.md")
++    fs.writeFileSync(mdPath, session.minutes.raw_md || "", { encoding: "utf8", mode: 0o600 })
++  }
++}
++
++export function loadMeeting(id: string, dataDir = DATA_DIR): MeetingSession | null {
++  const dir = resolveContained(id, dataDir)
++  if (!dir || !fs.existsSync(path.join(dir, "meta.json"))) return null
++  const meta = readJson<MeetingMeta>(path.join(dir, "meta.json"))
++  if (!meta) return null
++  const transcript =
++    readJson<TranscriptLine[]>(path.join(dir, "transcript.jsonl")) || []
++  const minutes = readJson<MeetingMinutes>(path.join(dir, "minutes.json"))
++  return {
++    ...meta,
++    transcript: Array.isArray(transcript) ? transcript : [],
++    minutes: minutes || null,
++  }
++}
++
++export function listMeetings(dataDir = DATA_DIR): MeetingMeta[] {
++  const root = ensureMeetingsRoot(dataDir)
++  const out: MeetingMeta[] = []
++  for (const name of fs.readdirSync(root)) {
++    const meta = readJson<MeetingMeta>(path.join(root, name, "meta.json"))
++    if (meta?.id) out.push(meta)
++  }
++  out.sort((a, b) => (a.started_at < b.started_at ? 1 : -1))
++  return out
++}
++
++export function setTranscript(
++  id: string,
++  lines: TranscriptLine[],
++  dataDir = DATA_DIR,
++): MeetingSession | null {
++  const s = loadMeeting(id, dataDir)
++  if (!s) return null
++  s.transcript = lines
++  if (s.status === "draft" || s.status === "error") s.status = "ready"
++  saveMeeting(s, dataDir)
++  return s
++}
++
++export function appendTranscript(
++  id: string,
++  line: TranscriptLine,
++  dataDir = DATA_DIR,
++): MeetingSession | null {
++  const s = loadMeeting(id, dataDir)
++  if (!s) return null
++  s.transcript = [...s.transcript, line]
++  if (s.status === "draft") s.status = "recording"
++  saveMeeting(s, dataDir)
++  return s
++}
++
++export function setMinutes(
++  id: string,
++  minutes: MeetingMinutes,
++  dataDir = DATA_DIR,
++): MeetingSession | null {
++  const s = loadMeeting(id, dataDir)
++  if (!s) return null
++  s.minutes = minutes
++  s.status = "done"
++  s.ended_at = s.ended_at || new Date().toISOString()
++  s.error = null
++  saveMeeting(s, dataDir)
++  return s
++}
++
++export function setMeetingStatus(
++  id: string,
++  status: MeetingStatus,
++  error?: string | null,
++  dataDir = DATA_DIR,
++): MeetingSession | null {
++  const s = loadMeeting(id, dataDir)
++  if (!s) return null
++  s.status = status
++  if (error !== undefined) s.error = error
++  if (status === "done" || status === "ready") {
++    s.ended_at = s.ended_at || new Date().toISOString()
++  }
++  saveMeeting(s, dataDir)
++  return s
++}
++
++/** Best-effort delete audio/ after successful STT (default policy). */
++export function deleteMeetingAudio(id: string, dataDir = DATA_DIR): void {
++  const dir = resolveContained(id, dataDir)
++  if (!dir) return
++  const audio = path.join(dir, "audio")
++  try {
++    if (fs.existsSync(audio)) {
++      fs.rmSync(audio, { recursive: true, force: true })
++    }
++  } catch (e) {
++    logger.warn("meeting.audio_delete_failed", {
++      id,
++      err: e instanceof Error ? e.message : String(e),
++    })
++  }
++}
++
++export function transcriptToText(lines: TranscriptLine[]): string {
++  return lines
++    .map((l) => {
++      const sp = l.speaker ? `${l.speaker}: ` : ""
++      return `${sp}${l.text}`
++    })
++    .join("\n")
++    .trim()
++}
+diff --git a/companion/src/meeting/minutes-prompt.ts b/companion/src/meeting/minutes-prompt.ts
+new file mode 100644
+index 0000000..6bd31f3
+--- /dev/null
++++ b/companion/src/meeting/minutes-prompt.ts
+@@ -0,0 +1,31 @@
++/**
++ * Meeting minutes LLM job — fixed system prompt (job=meeting_minutes).
++ * Distinct from ASR_REFINER_SYSTEM_PROMPT (ADR-024 / SoT §8).
++ */
++
++export const MEETING_MINUTES_SYSTEM_PROMPT = `You are a meeting-minutes writer. Job id: meeting_minutes.
++
++INPUT: a meeting transcript or notes supplied by the user (possibly incomplete, single-speaker).
++
++RULES:
++1. Use ONLY information present in the transcript. Do NOT invent attendees, decisions, action owners, dates, or quotes.
++2. If information is missing, say so under Risks / Open questions — never fabricate.
++3. Do NOT invent speaker labels (no fake "Alice:" / "Bob:"). Single-speaker or unlabeled is OK.
++4. Do NOT call tools. Do NOT output tool_call / function_call markup.
++5. Prefer Chinese for section headers and prose; keep proper nouns as in the transcript.
++6. Output Markdown only, no preamble.
++
++REQUIRED SECTIONS (use these exact headings):
++### TL;DR
++### 决议
++### 待办
++### 风险 / 开放问题
++
++Optional:
++### 附录：转写要点
++
++Under 待办, use "- [ ] " checklist items. Owner only if explicit in transcript; else "未指定".`
++
++export const MEETING_MINUTES_TEMP_CAP = 0.3
++export const MEETING_MINUTES_TIMEOUT_MS = 90_000
++export const MEETING_MINUTES_MAX_INPUT_CHARS = 80_000
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index b4ea7b3..e43c59c 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -48,6 +48,7 @@ import { handleComputerModelMessage } from "./computer/model-handlers"
+ import { handleVoiceModelMessage } from "./voice/whisper-handlers"
+ import { handleVoiceSttMessage } from "./voice/stt-handlers"
+ import { handleVoiceRefineMessage } from "./voice/refine-handlers"
++import { handleMeetingMessage } from "./meeting/meeting-handlers"
+ import {
+   buildUserEnvPublic,
+   deleteUserEnvKeys,
+@@ -1920,6 +1921,18 @@ export async function handleMessage(
+         peerId: session?.panelId,
+         send: session?.sendToExtension,
+       })
++    case "meeting.create":
++    case "meeting.list":
++    case "meeting.get":
++    case "meeting.set_transcript":
++    case "meeting.append_transcript":
++    case "meeting.generate_minutes":
++    case "meeting.set_status":
++      return handleMeetingMessage(msg, {
++        origin: session?.origin,
++        peerId: session?.panelId,
++        send: session?.sendToExtension,
++      })
+     case "skill.activate": {
+       skillEngine.activate(rest.thread_id, rest.skill_name)
+       const thread = threadManager.get(rest.thread_id)
+diff --git a/companion/src/packs/builtin/meeting-minutes/pack.yaml b/companion/src/packs/builtin/meeting-minutes/pack.yaml
+new file mode 100644
+index 0000000..caa4eb3
+--- /dev/null
++++ b/companion/src/packs/builtin/meeting-minutes/pack.yaml
+@@ -0,0 +1,59 @@
++schema_version: 1
++id: meeting-minutes
++name: 会议记录
++description: 基于转写文本生成结构化会议纪要（TL;DR / 决议 / 待办 / 风险）；暂不分说话人；应用本场景不会自动开麦
++version: 0.1.0
++channel: community
++min_capability: L0
++requires_modules: []
++board_mode: false
++skills:
++  - ./skills/meeting-minutes-structure.md
++mcp_servers: []
++tools:
++  mode: unchanged
++  allow: []
++  deny: []
++system_prompt_append: |
++  你是会议纪要助手。用户会提供**会议转写或口述文字**（可能来自粘贴或本机转写）。
++
++  ## 硬规则
++  1. **仅基于用户提供的转写**：不得臆造出席人、时间、决议、待办或未出现的事实。
++  2. 转写不完整时：在风险/备注中写明「转写不完整 / 信息不足」，不要补全故事。
++  3. **暂无说话人分离**：不要伪造「张三说 / 李四说」；可用「发言摘要」按时间或主题组织。
++  4. 本场景**不会**、也**不得**要求用户开启麦克风或自动录音；录音由用户在会议工作台显式操作。
++  5. 输出中文为主；专有名词可保留原文。
++  6. **不要**调用工具去扫页或执行命令来「验证」会议内容；工具与会议转写无关。
++
++  ## 输出结构（Markdown）
++  ### TL;DR
++  （2–5 句）
++
++  ### 决议
++  - …
++
++  ### 待办
++  - [ ] 事项（负责人若转写中有则写；否则写「未指定」）
++
++  ### 风险 / 开放问题
++  - …
++
++  ### 附录：转写要点
++  （可选：压缩要点，非全文复述）
++
++  若用户只要某一节，可只输出该节；默认输出完整结构。
++thread_defaults:
++  skill_selection_mode: manual
++  knowledge_selection_mode: auto
++  mcp_selection_mode: manual
++workspace:
++  type: none
++ui:
++  suitable_for: 会后把转写整理成 TL;DR、决议、待办；单人备忘口述纪要（暂不分说话人）。
++  unsuitable_for: 多方实时说话人分离、系统混音录会、自动开麦后台偷录。
++  tools_summary_zh: 不额外限制工具；以对话与转写文本为主生成纪要
++author: cmspark
++tags:
++  - meeting
++  - minutes
++  - productivity
+diff --git a/companion/src/packs/builtin/meeting-minutes/skills/meeting-minutes-structure.md b/companion/src/packs/builtin/meeting-minutes/skills/meeting-minutes-structure.md
+new file mode 100644
+index 0000000..c317d54
+--- /dev/null
++++ b/companion/src/packs/builtin/meeting-minutes/skills/meeting-minutes-structure.md
+@@ -0,0 +1,14 @@
++---
++name: meeting-minutes-structure
++description: 将会议转写整理为 TL;DR / 决议 / 待办 / 风险结构（不臆造）
++---
++
++# 会议纪要结构
++
++当用户粘贴或提供会议转写时：
++
++1. 只使用转写中的信息。
++2. 输出固定四块：**TL;DR**、**决议**、**待办**、**风险/开放问题**。
++3. 待办中负责人仅当转写明确出现时填写，否则「未指定」。
++4. 不要编造出席名单或未讨论的结论。
++5. 标注转写明显缺失处（如「后半段缺失」）。
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 0e5bd11..e1ffe29 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -5849,6 +5849,49 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       }
+       return { valid: true }
+     },
++    // Meeting minutes scene (Mtg0/Mtg1)
++    "meeting.create": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.create requires v:1" }
++      return { valid: true }
++    },
++    "meeting.list": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.list requires v:1" }
++      return { valid: true }
++    },
++    "meeting.get": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.get requires v:1" }
++      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.get requires id" }
++      return { valid: true }
++    },
++    "meeting.set_transcript": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.set_transcript requires v:1" }
++      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.set_transcript requires id" }
++      if (typeof m.text !== "string") return { valid: false, error: "meeting.set_transcript requires text" }
++      if (m.text.length > 80_000) return { valid: false, error: "meeting.set_transcript text too long" }
++      return { valid: true }
++    },
++    "meeting.append_transcript": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.append_transcript requires v:1" }
++      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.append_transcript requires id" }
++      if (typeof m.text !== "string" || !m.text.trim()) {
++        return { valid: false, error: "meeting.append_transcript requires text" }
++      }
++      return { valid: true }
++    },
++    "meeting.generate_minutes": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.generate_minutes requires v:1" }
++      const hasId = typeof m.id === "string" && m.id
++      const hasText = typeof m.text === "string" && m.text.trim()
++      if (!hasId && !hasText) {
++        return { valid: false, error: "meeting.generate_minutes requires id and/or text" }
++      }
++      return { valid: true }
++    },
++    "meeting.set_status": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.set_status requires v:1" }
++      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.set_status requires id" }
++      return { valid: true }
++    },
+     "tool.result": (m) => {
+       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
+       return { valid: true }
+diff --git a/companion/tests/meeting-minutes.test.ts b/companion/tests/meeting-minutes.test.ts
+new file mode 100644
+index 0000000..8200ee4
+--- /dev/null
++++ b/companion/tests/meeting-minutes.test.ts
+@@ -0,0 +1,165 @@
++/**
++ * Meeting minutes Mtg0/Mtg1 store + generate + handlers.
++ */
++import test from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "fs"
++import * as os from "os"
++import * as path from "path"
++
++process.env.CMSPARK_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-meeting-"))
++
++import {
++  createMeeting,
++  loadMeeting,
++  setTranscript,
++  setMinutes,
++  listMeetings,
++  transcriptToText,
++} from "../src/meeting/meeting-store"
++import { generateMeetingMinutes } from "../src/meeting/meeting-minutes"
++import { MEETING_MINUTES_SYSTEM_PROMPT } from "../src/meeting/minutes-prompt"
++import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
++
++const DATA = process.env.CMSPARK_DATA_DIR!
++const EXT = "chrome-extension://abcdefghijklmnopqrstuvwxyz"
++
++test("MEETING_MINUTES_SYSTEM_PROMPT is distinct job and forbids invention", () => {
++  assert.match(MEETING_MINUTES_SYSTEM_PROMPT, /meeting_minutes/)
++  assert.match(MEETING_MINUTES_SYSTEM_PROMPT, /Do NOT invent/)
++  assert.doesNotMatch(MEETING_MINUTES_SYSTEM_PROMPT, /ASR post-editor/)
++})
++
++test("create/load/list meeting on disk", () => {
++  const m = createMeeting({ title: "周会", thread_id: "t1", dataDir: DATA })
++  assert.ok(m.id.startsWith("mtg_"))
++  const loaded = loadMeeting(m.id, DATA)
++  assert.equal(loaded?.title, "周会")
++  assert.equal(loaded?.thread_id, "t1")
++  const list = listMeetings(DATA)
++  assert.ok(list.some((x) => x.id === m.id))
++})
++
++test("setTranscript + generateMeetingMinutes mock", async () => {
++  const m = createMeeting({ title: "测", dataDir: DATA })
++  setTranscript(
++    m.id,
++    [{ text: "今天决定下周发布，张三负责写文档。", source: "paste" }],
++    DATA,
++  )
++  const text = transcriptToText(loadMeeting(m.id, DATA)!.transcript)
++  const r = await generateMeetingMinutes({
++    transcriptText: text,
++    config: {
++      base_url: "https://x.invalid",
++      api_key: "k",
++      model_name: "m",
++      temperature: 0.5,
++    },
++    extract: async () => `### TL;DR
++下周发布。
++
++### 决议
++- 下周发布
++
++### 待办
++- [ ] 写文档（张三）
++
++### 风险 / 开放问题
++- 无
++`,
++  })
++  assert.equal(r.ok, true)
++  if (r.ok) {
++    assert.match(r.minutes.raw_md, /TL;DR/)
++    assert.ok((r.minutes.actions || []).length >= 1)
++    setMinutes(m.id, r.minutes, DATA)
++    const again = loadMeeting(m.id, DATA)
++    assert.equal(again?.status, "done")
++    assert.ok(fs.existsSync(path.join(DATA, "meetings", m.id, "minutes.md")))
++  }
++})
++
++test("handler origin denied", async () => {
++  const res = await handleMeetingMessage(
++    { type: "meeting.create", v: 1 },
++    { origin: "cmspark-tray://local" },
++  )
++  assert.equal(res.code, "origin_denied")
++})
++
++test("handler generate ephemeral paste", async () => {
++  const res = await handleMeetingMessage(
++    {
++      type: "meeting.generate_minutes",
++      v: 1,
++      text: "会议决定采用方案 A，李四跟进。",
++    },
++    { origin: EXT },
++    {
++      getLlmConfig: () => ({
++        base_url: "https://x",
++        api_key: "k",
++        model_name: "m",
++        temperature: 0.2,
++      }),
++      generate: async () => ({
++        ok: true as const,
++        minutes: {
++          raw_md: "### TL;DR\nok\n\n### 决议\n- A\n\n### 待办\n- [ ] 跟进\n\n### 风险 / 开放问题\n- 无",
++          generated_at: new Date().toISOString(),
++          tldr: "ok",
++          decisions: ["A"],
++          actions: ["跟进"],
++          risks: ["无"],
++        },
++      }),
++    },
++  )
++  assert.equal(res.type, "meeting.minutes_result")
++  assert.equal(res.meeting, null)
++  assert.match(res.minutes.raw_md, /TL;DR/)
++})
++
++test("handler create + set_transcript + generate", async () => {
++  const created = await handleMeetingMessage(
++    { type: "meeting.create", v: 1, title: "产品会" },
++    { origin: EXT },
++  )
++  assert.equal(created.type, "meeting.created")
++  const id = created.meeting.id
++  await handleMeetingMessage(
++    {
++      type: "meeting.set_transcript",
++      v: 1,
++      id,
++      text: "决定延期两周。\n无负责人。",
++      source: "paste",
++    },
++    { origin: EXT },
++  )
++  const gen = await handleMeetingMessage(
++    { type: "meeting.generate_minutes", v: 1, id },
++    { origin: EXT },
++    {
++      getLlmConfig: () => ({
++        base_url: "https://x",
++        api_key: "k",
++        model_name: "m",
++        temperature: 0.2,
++      }),
++      generate: async ({ transcriptText }) => {
++        assert.match(transcriptText, /延期/)
++        return {
++          ok: true as const,
++          minutes: {
++            raw_md: "### TL;DR\n延期\n\n### 决议\n- 延期两周\n\n### 待办\n- [ ] 未指定\n\n### 风险 / 开放问题\n- 无",
++            generated_at: new Date().toISOString(),
++          },
++        }
++      },
++    },
++  )
++  assert.equal(gen.type, "meeting.minutes_result")
++  assert.equal(gen.meeting.status, "done")
++})
