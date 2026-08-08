@@ -1,0 +1,327 @@
+# Dual external review context
+batch: voice-draft-hotkey-fix
+base: 36d5168af7e97e28b51a1a85ed43c7e18fe52865
+time: 20260808-115442
+
+e9521ca
+
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
+?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
+?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
+?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
+?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
+?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
+?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/audit/reviews/voice-draft-hotkey-fix-diff-20260808-115442.patch
+?? docs/audit/reviews/voice-draft-hotkey-fix-dual-review-prompt.md
+?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
+?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
+?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
+?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
+?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff (git diff + staged)
+ chrome-extension/src/sidepanel/App.tsx             |  9 ++++-
+ .../src/sidepanel/components/SettingsSlideout.tsx  | 27 ++++++++++-----
+ .../src/sidepanel/hooks/useVoiceInput.ts           | 39 ++++++++++++++++------
+ .../src/sidepanel/voice/hotkey-chord.ts            | 13 ++++++--
+ chrome-extension/src/sidepanel/voice/text-merge.ts | 25 ++++++++++++++
+ .../tests/voice-session-reducer.test.ts            | 36 +++++++++++++++++++-
+ 6 files changed, 126 insertions(+), 23 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index 114c710..fddae37 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -1313,7 +1313,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+             placeholder={getPlaceholder()}
+             rows={2}
+             value={voice.liveOverlay !== null ? voice.liveOverlay : text}
+-            disabled={needsThread || needsConnection || threadBusy || voice.listening}
++            // Keep editable when not actively capturing mic (processing still shows live overlay).
++            // Block only while mic is open so interim/finals are not clobbered by typing races.
++            disabled={
++              needsThread ||
++              needsConnection ||
++              threadBusy ||
++              (voice.listening && !voice.processing)
++            }
+             onChange={handleChange}
+             onKeyDown={handleKeyDown}
+           />
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index 5333a91..a8c97bc 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -1070,10 +1070,13 @@ export function SettingsSlideout() {
+                   </span>
+                 </label>
+                 <label style={{ display: "block", marginTop: 8, fontSize: 11, color: "#666" }}>
+-                  组合键
+-                  <select
++                  组合键（可手输，如 Control+Shift+Space）
++                  <input
++                    type="text"
++                    list="cmspark-dictation-hotkey-presets"
+                     value={state.dictationHotkeyChord || "Control+Shift+Space"}
+                     disabled={!state.dictationHotkeyEnabled}
++                    placeholder="Control+Shift+Space"
+                     onChange={(e) =>
+                       dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: e.target.value })
+                     }
+@@ -1081,17 +1084,25 @@ export function SettingsSlideout() {
+                       display: "block",
+                       marginTop: 4,
+                       width: "100%",
++                      boxSizing: "border-box",
+                       padding: "6px 8px",
+                       borderRadius: 6,
+                       border: "1px solid #ddd",
+                       fontSize: 12,
++                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                     }}
+-                  >
+-                    <option value="Control+Shift+Space">Ctrl+Shift+Space</option>
+-                    <option value="Alt+Space">Alt+Space / ⌥Space</option>
+-                    <option value="Control+Alt+Space">Ctrl+Alt+Space</option>
+-                    <option value="Control+Shift+D">Ctrl+Shift+D</option>
+-                  </select>
++                  />
++                  <datalist id="cmspark-dictation-hotkey-presets">
++                    <option value="Control+Shift+Space" />
++                    <option value="Alt+Space" />
++                    <option value="Control+Alt+Space" />
++                    <option value="Control+Shift+D" />
++                    <option value="Control+Shift+KeyM" />
++                  </datalist>
++                  <span style={{ display: "block", marginTop: 4, fontSize: 10, color: "#999", lineHeight: 1.4 }}>
++                    格式：修饰键用 + 连接，如 <code>Control+Alt+K</code>。禁止 bare Fn / 单独 Meta+V。
++                    需 Side Panel 有键盘焦点。无效组合不会触发听写。
++                  </span>
+                 </label>
+               </div>
+             </div>
+diff --git a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+index a3b9dd4..33ef5dc 100644
+--- a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
++++ b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+@@ -14,7 +14,11 @@ import {
+ } from "../voice/detect"
+ import { detectLocalMediaCapture } from "../voice/local-stt-detect"
+ import { reduceVoiceSession } from "../voice/session-reducer"
+-import { mergeFinalTranscript, isEmptyFinals } from "../voice/text-merge"
++import {
++  mergeFinalTranscript,
++  isEmptyFinals,
++  voiceLiveComposerText,
++} from "../voice/text-merge"
+ import { initialVoiceSession, type VoiceSessionState } from "../voice/types"
+ import { mapLocalSttError } from "../voice/error-map"
+ import { createSttAdapter, type SttEngineKind } from "../voice/stt-engine"
+@@ -172,6 +176,21 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+   const dispatchEv = useCallback((event: Parameters<typeof reduceVoiceSession>[1]) => {
+     setSession((prev) => {
+       const next = reduceVoiceSession(prev, event)
++      const o = optsRef.current
++
++      // Continuous local STT: flush each final into draft immediately so
++      // processing-gap UI does not fall back to a stale `text` (flash/disappear).
++      if (
++        event.type === "ENGINE_RESULT" &&
++        event.finalChunk &&
++        event.finalChunk.length > 0 &&
++        !next.committed &&
++        next.finals.length > 0
++      ) {
++        const partial = mergeFinalTranscript(next.baseText, next.finals)
++        queueMicrotask(() => o.onDraft(partial))
++      }
++
+       // Side effects after ENGINE_END commit — raw-first, then optional refine
+       if (
+         event.type === "ENGINE_END" &&
+@@ -180,7 +199,6 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+         !isEmptyFinals(next.finals)
+       ) {
+         const merged = mergeFinalTranscript(next.baseText, next.finals)
+-        const o = optsRef.current
+         queueMicrotask(() => {
+           o.onDraft(merged)
+           const wantRefine =
+@@ -647,15 +665,14 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+     session.phase === "processing" ||
+     session.phase === "refining"
+ 
+-  /** Display value: base + finals + interim overlay while live */
+-  const liveOverlay =
+-    (session.phase === "listening" ||
+-      session.phase === "starting" ||
+-      session.phase === "stopping") &&
+-    !session.abortReason
+-      ? mergeFinalTranscript(session.baseText, session.finals) +
+-        (session.interim || "")
+-      : null
++  /** Display value: base + finals + interim while live (incl. local segment processing). */
++  const liveOverlay = voiceLiveComposerText({
++    phase: session.phase,
++    abortReason: session.abortReason,
++    baseText: session.baseText,
++    finals: session.finals,
++    interim: session.interim || "",
++  })
+ 
+   // Remaining listen budget for mic chrome (Task 7). listenTick forces re-render.
+   void listenTick
+diff --git a/chrome-extension/src/sidepanel/voice/hotkey-chord.ts b/chrome-extension/src/sidepanel/voice/hotkey-chord.ts
+index c8a2ce2..e4d8a39 100644
+--- a/chrome-extension/src/sidepanel/voice/hotkey-chord.ts
++++ b/chrome-extension/src/sidepanel/voice/hotkey-chord.ts
+@@ -61,7 +61,11 @@ export function parseHotkeyChord(raw: string | null | undefined): HotkeyChord |
+     } else if (FORBIDDEN.has(low)) {
+       return null
+     } else {
+-      key = low === " " ? "space" : low
++      // Normalize "KeyM" / "Digit1" style codes users may type
++      let k = low === " " ? "space" : low
++      if (/^key[a-z]$/.test(k)) k = k.slice(3)
++      if (/^digit[0-9]$/.test(k)) k = k.slice(5)
++      key = k
+     }
+   }
+ 
+@@ -104,10 +108,15 @@ export function eventMatchesChord(
+   if (chord.key === "space") {
+     return k === " " || k === "spacebar" || k === "space" || code === "space"
+   }
++  // Allow "KeyM" / "keym" style from user input
++  const normKey = chord.key.replace(/^key/, "")
++  if (normKey.length === 1) {
++    return k === normKey || code === `key${normKey}` || code === chord.key
++  }
+   if (chord.key.length === 1) {
+     return k === chord.key || code === `key${chord.key}`
+   }
+-  return k === chord.key || code === chord.key
++  return k === chord.key || code === chord.key || code === `key${chord.key}`
+ }
+ 
+ /** Serialize for storage. */
+diff --git a/chrome-extension/src/sidepanel/voice/text-merge.ts b/chrome-extension/src/sidepanel/voice/text-merge.ts
+index 9d4a639..774725c 100644
+--- a/chrome-extension/src/sidepanel/voice/text-merge.ts
++++ b/chrome-extension/src/sidepanel/voice/text-merge.ts
+@@ -40,3 +40,28 @@ export function mergeFinalTranscript(baseText: string, finals: string[]): string
+ export function isEmptyFinals(finals: string[]): boolean {
+   return finals.every((f) => !(f || "").trim())
+ }
++
++/**
++ * Composer display while voice session is active.
++ * Must include `processing` (local continuous segment gaps) — otherwise
++ * live overlay drops and the textarea falls back to stale draft (flash/disappear).
++ */
++export function voiceLiveComposerText(opts: {
++  phase: string
++  abortReason: string | null | undefined
++  baseText: string
++  finals: string[]
++  interim: string
++}): string | null {
++  const ph = opts.phase
++  const live =
++    (ph === "listening" ||
++      ph === "starting" ||
++      ph === "stopping" ||
++      ph === "processing") &&
++    !opts.abortReason
++  if (!live) return null
++  return (
++    mergeFinalTranscript(opts.baseText, opts.finals) + (opts.interim || "")
++  )
++}
+diff --git a/chrome-extension/tests/voice-session-reducer.test.ts b/chrome-extension/tests/voice-session-reducer.test.ts
+index 7c0daee..dbf2ea5 100644
+--- a/chrome-extension/tests/voice-session-reducer.test.ts
++++ b/chrome-extension/tests/voice-session-reducer.test.ts
+@@ -2,7 +2,11 @@ import test from "node:test"
+ import assert from "node:assert/strict"
+ import { reduceVoiceSession, shouldApplyDraft } from "../src/sidepanel/voice/session-reducer"
+ import { initialVoiceSession } from "../src/sidepanel/voice/types"
+-import { mergeFinalTranscript, isEmptyFinals } from "../src/sidepanel/voice/text-merge"
++import {
++  mergeFinalTranscript,
++  isEmptyFinals,
++  voiceLiveComposerText,
++} from "../src/sidepanel/voice/text-merge"
+ 
+ test("happy path: start → result → stop → end commits finals", () => {
+   let s = initialVoiceSession(true)
+@@ -24,6 +28,36 @@ test("happy path: start → result → stop → end commits finals", () => {
+   assert.equal(mergeFinalTranscript(s.baseText, s.finals), "前缀你好")
+ })
+ 
++test("voiceLiveComposerText keeps finals during processing (no flash disappear)", () => {
++  // Local continuous gap: after segment final, phase=processing — must still show text
++  const listening = voiceLiveComposerText({
++    phase: "listening",
++    abortReason: null,
++    baseText: "",
++    finals: ["第一段"],
++    interim: "临",
++  })
++  assert.equal(listening, "第一段临")
++
++  const processing = voiceLiveComposerText({
++    phase: "processing",
++    abortReason: null,
++    baseText: "",
++    finals: ["第一段", "第二段"],
++    interim: "",
++  })
++  assert.equal(processing, "第一段第二段")
++
++  const idle = voiceLiveComposerText({
++    phase: "idle",
++    abortReason: null,
++    baseText: "",
++    finals: ["应隐藏"],
++    interim: "",
++  })
++  assert.equal(idle, null)
++})
++
+ test("empty final → banner, no meaningful merge", () => {
+   let s = initialVoiceSession(true)
+   s = reduceVoiceSession(s, {

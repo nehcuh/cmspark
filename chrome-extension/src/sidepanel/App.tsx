@@ -1313,7 +1313,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             placeholder={getPlaceholder()}
             rows={2}
             value={voice.liveOverlay !== null ? voice.liveOverlay : text}
-            disabled={needsThread || needsConnection || threadBusy || voice.listening}
+            // Disable whenever live overlay owns the value (listening + processing gaps).
+            // Otherwise keystrokes are invisible and next final flush overwrites them.
+            disabled={
+              needsThread ||
+              needsConnection ||
+              threadBusy ||
+              voice.liveOverlay !== null
+            }
             onChange={handleChange}
             onKeyDown={handleKeyDown}
           />

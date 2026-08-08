@@ -44,3 +44,19 @@ test("formatChord round-trip label", () => {
   assert.match(formatChord(c), /Alt/)
   assert.match(formatChord(c), /Space/i)
 })
+
+test("parseHotkeyChord normalizes KeyM and Digit1", () => {
+  const m = parseHotkeyChord("Control+Shift+KeyM")
+  assert.ok(m)
+  assert.equal(m!.key, "m")
+  assert.equal(
+    eventMatchesChord(
+      { key: "m", code: "KeyM", ctrlKey: true, altKey: false, shiftKey: true, metaKey: false },
+      m!,
+    ),
+    true,
+  )
+  const d = parseHotkeyChord("Control+Digit1")
+  assert.ok(d)
+  assert.equal(d!.key, "1")
+})

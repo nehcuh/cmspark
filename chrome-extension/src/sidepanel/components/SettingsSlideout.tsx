@@ -1070,10 +1070,13 @@ export function SettingsSlideout() {
                   </span>
                 </label>
                 <label style={{ display: "block", marginTop: 8, fontSize: 11, color: "#666" }}>
-                  组合键
-                  <select
+                  组合键（可手输，如 Control+Shift+Space）
+                  <input
+                    type="text"
+                    list="cmspark-dictation-hotkey-presets"
                     value={state.dictationHotkeyChord || "Control+Shift+Space"}
                     disabled={!state.dictationHotkeyEnabled}
+                    placeholder="Control+Shift+Space"
                     onChange={(e) =>
                       dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: e.target.value })
                     }
@@ -1081,17 +1084,25 @@ export function SettingsSlideout() {
                       display: "block",
                       marginTop: 4,
                       width: "100%",
+                      boxSizing: "border-box",
                       padding: "6px 8px",
                       borderRadius: 6,
                       border: "1px solid #ddd",
                       fontSize: 12,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                     }}
-                  >
-                    <option value="Control+Shift+Space">Ctrl+Shift+Space</option>
-                    <option value="Alt+Space">Alt+Space / ⌥Space</option>
-                    <option value="Control+Alt+Space">Ctrl+Alt+Space</option>
-                    <option value="Control+Shift+D">Ctrl+Shift+D</option>
-                  </select>
+                  />
+                  <datalist id="cmspark-dictation-hotkey-presets">
+                    <option value="Control+Shift+Space" />
+                    <option value="Alt+Space" />
+                    <option value="Control+Alt+Space" />
+                    <option value="Control+Shift+D" />
+                    <option value="Control+Shift+M" />
+                  </datalist>
+                  <span style={{ display: "block", marginTop: 4, fontSize: 10, color: "#999", lineHeight: 1.4 }}>
+                    格式：修饰键用 + 连接，如 <code>Control+Alt+K</code>。禁止 bare Fn / 单独 Meta+V。
+                    需 Side Panel 有键盘焦点。无效组合不会触发听写。
+                  </span>
                 </label>
               </div>
             </div>

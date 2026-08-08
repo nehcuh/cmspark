@@ -61,7 +61,11 @@ export function parseHotkeyChord(raw: string | null | undefined): HotkeyChord | 
     } else if (FORBIDDEN.has(low)) {
       return null
     } else {
-      key = low === " " ? "space" : low
+      // Normalize "KeyM" / "Digit1" style codes users may type
+      let k = low === " " ? "space" : low
+      if (/^key[a-z]$/.test(k)) k = k.slice(3)
+      if (/^digit[0-9]$/.test(k)) k = k.slice(5)
+      key = k
     }
   }
 
@@ -104,10 +108,15 @@ export function eventMatchesChord(
   if (chord.key === "space") {
     return k === " " || k === "spacebar" || k === "space" || code === "space"
   }
+  // Allow "KeyM" / "keym" style from user input
+  const normKey = chord.key.replace(/^key/, "")
+  if (normKey.length === 1) {
+    return k === normKey || code === `key${normKey}` || code === chord.key
+  }
   if (chord.key.length === 1) {
     return k === chord.key || code === `key${chord.key}`
   }
-  return k === chord.key || code === chord.key
+  return k === chord.key || code === chord.key || code === `key${chord.key}`
 }
 
 /** Serialize for storage. */

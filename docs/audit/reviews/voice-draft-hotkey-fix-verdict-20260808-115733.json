@@ -1,0 +1,8 @@
+{
+  "batch": "voice-draft-hotkey-fix",
+  "timestamp": "20260808-115733",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/voice-draft-hotkey-fix-claude-20260808-115733.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/voice-draft-hotkey-fix-pi-20260808-115733.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/voice-draft-hotkey-fix-diff-20260808-115733.patch"
+}

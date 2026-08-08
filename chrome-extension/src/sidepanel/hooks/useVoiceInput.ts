@@ -14,7 +14,11 @@ import {
 } from "../voice/detect"
 import { detectLocalMediaCapture } from "../voice/local-stt-detect"
 import { reduceVoiceSession } from "../voice/session-reducer"
-import { mergeFinalTranscript, isEmptyFinals } from "../voice/text-merge"
+import {
+  mergeFinalTranscript,
+  isEmptyFinals,
+  voiceLiveComposerText,
+} from "../voice/text-merge"
 import { initialVoiceSession, type VoiceSessionState } from "../voice/types"
 import { mapLocalSttError } from "../voice/error-map"
 import { createSttAdapter, type SttEngineKind } from "../voice/stt-engine"
@@ -172,6 +176,22 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   const dispatchEv = useCallback((event: Parameters<typeof reduceVoiceSession>[1]) => {
     setSession((prev) => {
       const next = reduceVoiceSession(prev, event)
+      const o = optsRef.current
+
+      // Continuous local STT: flush each *new* final into draft so processing-gap
+      // UI does not fall back to stale `text`. Only when reducer accepted the chunk
+      // (hard aborts leave finals unchanged — dual-review nit).
+      if (
+        event.type === "ENGINE_RESULT" &&
+        event.finalChunk &&
+        event.finalChunk.length > 0 &&
+        !next.committed &&
+        next.finals.length > prev.finals.length
+      ) {
+        const partial = mergeFinalTranscript(next.baseText, next.finals)
+        queueMicrotask(() => o.onDraft(partial))
+      }
+
       // Side effects after ENGINE_END commit — raw-first, then optional refine
       if (
         event.type === "ENGINE_END" &&
@@ -180,7 +200,6 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         !isEmptyFinals(next.finals)
       ) {
         const merged = mergeFinalTranscript(next.baseText, next.finals)
-        const o = optsRef.current
         queueMicrotask(() => {
           o.onDraft(merged)
           const wantRefine =
@@ -647,15 +666,14 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     session.phase === "processing" ||
     session.phase === "refining"
 
-  /** Display value: base + finals + interim overlay while live */
-  const liveOverlay =
-    (session.phase === "listening" ||
-      session.phase === "starting" ||
-      session.phase === "stopping") &&
-    !session.abortReason
-      ? mergeFinalTranscript(session.baseText, session.finals) +
-        (session.interim || "")
-      : null
+  /** Display value: base + finals + interim while live (incl. local segment processing). */
+  const liveOverlay = voiceLiveComposerText({
+    phase: session.phase,
+    abortReason: session.abortReason,
+    baseText: session.baseText,
+    finals: session.finals,
+    interim: session.interim || "",
+  })
 
   // Remaining listen budget for mic chrome (Task 7). listenTick forces re-render.
   void listenTick

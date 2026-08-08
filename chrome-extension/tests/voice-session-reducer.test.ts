@@ -2,7 +2,11 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { reduceVoiceSession, shouldApplyDraft } from "../src/sidepanel/voice/session-reducer"
 import { initialVoiceSession } from "../src/sidepanel/voice/types"
-import { mergeFinalTranscript, isEmptyFinals } from "../src/sidepanel/voice/text-merge"
+import {
+  mergeFinalTranscript,
+  isEmptyFinals,
+  voiceLiveComposerText,
+} from "../src/sidepanel/voice/text-merge"
 
 test("happy path: start → result → stop → end commits finals", () => {
   let s = initialVoiceSession(true)
@@ -22,6 +26,36 @@ test("happy path: start → result → stop → end commits finals", () => {
   assert.equal(s.committed, true)
   assert.deepEqual(s.finals, ["你好"])
   assert.equal(mergeFinalTranscript(s.baseText, s.finals), "前缀你好")
+})
+
+test("voiceLiveComposerText keeps finals during processing (no flash disappear)", () => {
+  // Local continuous gap: after segment final, phase=processing — must still show text
+  const listening = voiceLiveComposerText({
+    phase: "listening",
+    abortReason: null,
+    baseText: "",
+    finals: ["第一段"],
+    interim: "临",
+  })
+  assert.equal(listening, "第一段临")
+
+  const processing = voiceLiveComposerText({
+    phase: "processing",
+    abortReason: null,
+    baseText: "",
+    finals: ["第一段", "第二段"],
+    interim: "",
+  })
+  assert.equal(processing, "第一段第二段")
+
+  const idle = voiceLiveComposerText({
+    phase: "idle",
+    abortReason: null,
+    baseText: "",
+    finals: ["应隐藏"],
+    interim: "",
+  })
+  assert.equal(idle, null)
 })
 
 test("empty final → banner, no meaningful merge", () => {
