@@ -167,8 +167,8 @@ export function SettingsSlideout() {
   )
 
   const handleToggleSection = useCallback((id: SettingsSectionId) => {
-    // When force-open (unpaired connection / elevated security), still allow user
-    // to toggle LS preference — but effective open stays forced until force clears.
+    // Unpaired connection stays force-open via isSectionEffectivelyOpen; security
+    // is freely collapsible even under elevated trust (armed badge remains on header).
     setUserOpenSections((prev) => {
       const next = toggleSectionOpen(id, prev)
       try {
@@ -247,7 +247,7 @@ export function SettingsSlideout() {
   }, [state.voiceModel?.sttEngine])
 
   // Auto-expand advanced gates when any arm flag is on (user can still collapse).
-  // Parent「安全与信任」is force-opened via isSectionEffectivelyOpen (F-S1).
+  // Parent「安全与信任」is collapsible; elevated trust only shows header badge.
   useEffect(() => {
     if (!state.settingsOpen) return
     const c = state.config
