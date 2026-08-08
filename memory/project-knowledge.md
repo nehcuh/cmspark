@@ -105,6 +105,24 @@
 - **反直觉**：`restoreSnapshot` 会 null cookie 却不 restore 全局——必须先读 cookie 再清；switch 后须 `getConfig()` 再 blocked 判断
 - **Ship**：`7b71eef` · merge `b338498` · dual Claude+Pi APPROVE_WITH_NITS · DMG v0.4.0 装 `/Applications`
 
+### Trust 单 holder 冲突必须 UX 一键接管（2026-08-08 S53 · #148）
+- **现象**：用户以为「对话结束」就释放 Trust；历史线程 cookie 仍 held → 新对话 apply 报 `trust_holder_conflict`（只见 raw id）
+- **纪律**：对话结束 / 切走 ≠ unapply；仅 退出场景 / 删除 / force_takeover
+- **修法（#148）**：错误带 `holders`（alias）；Side Panel 弹窗 **解锁并用于本对话** → `force_takeover` unapply 占用方再 apply；Pi APPROVE_WITH_NITS → residual cookie clear + audit
+- **Ship**：`fa501d7` · merge `2460565`
+
+### 工具轮会「吃掉」直播思考条（2026-08-08 S53 · #149 · #h1yi2w）
+- **现象**：流式能见「模型思考中」，tool 跑完只剩 shell 小窗；磁盘 assistant 其实有 `reasoning_content`
+- **根因**：`tool.start` 清 `streamingReasoning` 只 ADD tool 卡；中间轮无 `chat.done`（done 仅无 tool 终轮）
+- **修法**：adapter 在 tool 前发 `chat.assistant`（message_id+reasoning）；UI 落历史行；`tool.start` 兜底 commit 流
+- **反直觉**：磁盘有 ≠ 侧栏直播 transcript 有；重开线程从 messages 能看见，当次会话看不见
+
+### Digest/标签被多 tray 冲掉（2026-08-08 S53 · #149）
+- **现象**：AI 抽标签当次可见，重开全无；`index.json` digest 计数为 0
+- **根因**：设计已持久化 `thread.digest` 到 index；**多进程**（daemon + 残留 tray）各持旧内存 `saveIndex` 整文件覆盖 → 抹掉 digest
+- **修法**：`saveIndex` 写前 merge 磁盘 peer digests（memory `undefined` 才补）；`@` 抽完 broadcast；extract complete 再 list
+- **运维**：安装/调试只留 **一个** Companion；清多余 tray
+
 ### skill_install Downloads 不得靠路径段名（2026-08-06）
 - **坑**：`segments.includes("downloads")` 会把 `/usr/local/Downloads/...` 当 default 区
 - **修**：仅 `~/Downloads` · `~/下载`（realpath under home）+ tmp + data dir；其余主目录为 `user_home`

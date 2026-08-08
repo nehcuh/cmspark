@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S53 (2026-08-08 ~12:00–13:00) [Trust 占用 UX · 思考保留 · digest 多进程 · #148/#149 · DMG]
+- **Trust**：历史线程 held cookie 挡新对话；产品补 **holders 弹窗 + force_takeover 一键解锁** → **#148 MERGED** `2460565`；Pi APPROVE_WITH_NITS nits 合入
+- **思考 UI**：#h1yi2w 流式有思考、tool 后只剩 shell → `chat.assistant` + tool.start commit → **#149** 前半
+- **Digest/标签**：设计持久化 index；本机 0 digest + 多 tray 冲写 → saveIndex merge peer digests + broadcast/list → **#149 MERGED** `1f1776b`
+- **门禁**：#149 首轮 settings-web flaky deserialize → 重跑绿；Pi 仅 Trust takeover 批
+- **打包**：`make package-macos` → `CMspark-v0.4.0-macOS.dmg`；替换 `/Applications`（备份 `~/CMspark.app.bak-20260808-125047`）；单 daemon+tray
+- **下次**：真机：Trust 弹窗接管；tool 轮后思考折叠；重抽 digest 验证 index 有 tags；可选清残留 tray
+- Recorded: yes — force_takeover / chat.assistant mid-tool / multi-process digest wipe
+
 ### S52 (2026-08-08) [听写+/会议 Mtg0–3 · D2 hold · 语音草稿闪烁 · DMG · dual 闸门]
 - **产品**：会议线 **Mtg0→Mtg3 全合 main**（#142–#145）：粘贴纪要 / live 本机录 / 手动 speaker+上传 / 实验匿名「发言人N」k-means；听写 **D1 已在 main** + **D2 按住热键**（#146）；用户指南 + GOAL G22
 - **门禁**：各波 Pi+Claude dual；D2 首轮 **双 REJECT**（`voice` 对象 effect 依赖每 250ms teardown + `queueMicrotask` 竞态 async mic）→ 修后 r2 **APPROVE_WITH_NITS** → merge
@@ -514,26 +523,33 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+### Trust / 思考 / digest 真机验收（S53 后）
+- status: **active**
+- context: #148 force_takeover + #149 chat.assistant + digest merge；DMG 已装 `1f1776b` 栈 `/Applications` · bak `~/CMspark.app.bak-20260808-125047`
+- next_action: (1) Trust 占用弹窗一键解锁 (2) shell 轮后仍见思考折叠 (3) 抽 digest 后查 index 有 tags 再重启
+- resume_doc: PR #148 · #149 · `memory/project-knowledge.md` S53 坑
+- updated: 2026-08-08
+
 ### 听写+/会议真机验收（S52 后）
 - status: **active**
-- context: Mtg0–3 + D1/D2 + 草稿闪烁修 均在 main `e6ffeea`；DMG 0.4.0 已装 `/Applications/CMspark.app`
-- next_action: 重载扩展（或用打包内扩展）按 `docs/meeting-and-dictation-user-guide.md` §4 smoke；报 continuous 不闪 / hold 焦点 / 会议端到端
+- context: Mtg0–3 + D1/D2 + 草稿闪烁修 均在 main；DMG 再换为含 #148/#149 的 0.4.0
+- next_action: 按 `docs/meeting-and-dictation-user-guide.md` §4 smoke（可与 S53 真机一并）
 - resume_doc: `docs/meeting-and-dictation-user-guide.md` · ADR-024
 - updated: 2026-08-08
 
 ### Wave C thread_recall → **#135 MERGED**
 - status: **done** (PR #135 → main `90db018`; CI build pass ~3m)
 - context: same-thread keyword+CJK bigram; F-S5 + synthetic assistant for orphan tools; compact notice hint if allowlisted
-- next_action: 可选真机 compact 后 `thread_recall` smoke；Wave D 按需
+- next_action: 可选真机 compact 后 `thread_recall` smoke
 - resume_doc: PR #135 · `docs/superpowers/plans/2026-08-07-wave-c-thread-recall.md`
 - updated: 2026-08-07
 
-### Wave D 思考 UI/导出 polish（可选）
-- status: **pending**
-- context: show_reasoning setting; export exclude reasoning by default; rebuild docs
-- next_action: 产品确认后再开 plan dual
-- resume_doc: `docs/superpowers/specs/2026-08-07-context-memory-thinking-knowledge-adversarial-analysis.md` Wave D
-- updated: 2026-08-07
+### Wave D 思考 UI/导出 polish
+- status: **mostly done** (modes+export 在 main；S53 修 mid-tool 直播思考丢失 #149)
+- context: show_reasoning setting; export default omit; mid-loop 现 chat.assistant
+- next_action: 真机确认折叠条；可选 always_open 默认产品再议
+- resume_doc: PR #149 · plan `2026-08-07-wave-d-reasoning-ui-export.md`
+- updated: 2026-08-08
 
 ### analyze_image data: Security Block → PR #130
 - status: **likely done** (S50 ship; 以 main 为准)
