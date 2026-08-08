@@ -4,7 +4,7 @@
 import * as path from "node:path"
 
 import {
-  defaultWhisperSearchRoots,
+  allWhisperSearchRoots,
   resolveWhisperArch,
   resolveWhisperBinary,
   resolveWhisperCliOnPath,
@@ -502,9 +502,9 @@ export class SttSessionService {
 
   private resolveBinary(): ResolveWhisperBinaryResult {
     if (this.deps.resolveBinary) return this.deps.resolveBinary()
-    const roots = defaultWhisperSearchRoots(
-      this.deps.companionRoot ?? path.join(__dirname, "..", ".."),
-    )
+    // Prefer explicit companionRoot; always also search SEA <exeDir>/bin (package.sh).
+    const moduleRoot = this.deps.companionRoot ?? path.join(__dirname, "..", "..")
+    const roots = allWhisperSearchRoots({ companionRoots: [moduleRoot] })
     const warch = resolveWhisperArch()
     const pinOpts = whisperPinResolveOpts(warch)
     if (pinOpts.forceUnpinned) {

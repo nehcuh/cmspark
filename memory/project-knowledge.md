@@ -22,6 +22,18 @@
 
 ## Technical Pitfalls
 
+### 本机听写三层：模型 / cmspark-whisper / 麦克风 勿混（2026-08-08 S56）
+- **现象**：点下载「没反应」；`binary_missing`「请更新 Companion」；`Requested device not found`
+- **分层**：
+  1. **权重** `voice.model.download` → `~/.cmspark-agent/models/whisper/`（HTTPS+sha256；**不依赖** binary）
+  2. **运行时** `cmspark-whisper-win-x64.exe` 或 PATH `whisper-cli`（**不进 SEA 内部**；旁路 `bin/`）
+  3. **麦** `getUserMedia`（NotFoundError = 无输入设备/隐私关，非 Companion）
+- **下载无反馈**：设置页 fire-and-forget `sendMessage` 且 store 纯镜像 → 未连接时零 UI；须读 `ok/error` + 本地 pending + 超时
+- **Windows 打包**：`build-package.bat` 只做 SEA；stage 条件是事先有 `companion/dist/bin/cmspark-whisper-win-x64.exe`；缺则 soft-warn、运行时 binary_missing
+- **SEA 解析**：须搜 `<exeDir>/bin`（`allWhisperSearchRoots`）；仅靠 `__dirname` 会找不到安装目录旁路
+- **dev 回落**：PATH 上 `whisper-cli(.exe)` 可当本机组件；分发包仍应 stage bin/
+- **纪律**：用户报「听写坏」先分三层再改；`binary_missing` 文案勿只写「更新 Companion」
+
 ### React #310：early-return 之后的 `useCallback`（2026-08-08 S55）
 - **现象**：生产 Side Panel 开设置崩溃 `Minified React error #310`（Rendered more hooks than previous render）
 - **根因**：`SettingsSlideout` 在 `if (!settingsOpen) return null` **之后**新增 `useCallback(applySettingsIntent)`；关→开时 hooks 数量 +1

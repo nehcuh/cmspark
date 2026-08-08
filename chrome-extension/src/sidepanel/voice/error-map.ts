@@ -104,7 +104,11 @@ export function mapLocalSttError(code: string): LocalSttUserFacing {
     case "model_missing":
       return { severity: "banner", message: "本机模型未就绪，请先在设置下载" }
     case "binary_missing":
-      return { severity: "banner", message: "本机听写组件不可用，请更新 Companion" }
+      return {
+        severity: "banner",
+        message:
+          "本机听写组件（cmspark-whisper）未找到。当前安装包可能未包含该二进制；请安装/放置 win-x64 组件后重启 Companion，或暂时改用浏览器听写",
+      }
     case "hash_fail":
       return { severity: "banner", message: "本机听写组件校验失败，请重装 Companion" }
     case "companion_disconnected":
