@@ -1,7 +1,7 @@
 // WP3 — four-layer locate orchestrator (plan §B.1/§B.2).
 //
 //   L0 UIA (admission via the task-start probe verdict) → L1 OCR (WP1)
-//   → L2 TinyClick (WP5 I3 — experimental layer: hits are re-L2 gated,
+//   → L2 Qwen3-VL (WP5 experimental — experimental layer: hits are re-L2 gated,
 //   never auto-injected) → L3 cloud (WP6 — honest stub).
 //
 // Degradation is ONE-WAY down the chain; every attempt is recorded with a
@@ -46,7 +46,7 @@ import {
   type ScreenCapturer,
   type UiaLocator,
 } from "./types"
-/** L2 experimental locator surface (Qwen3-VL; historical dep name tinyclick). */
+/** L2 experimental locator surface (Qwen3-VL; Qwen3-VL experimental locator). */
 export type ExperimentalLocateOutcome =
   | { kind: "hit"; point: { x: number; y: number }; ms?: number; raw?: string }
   | { kind: "skipped"; reason: string }
@@ -74,17 +74,17 @@ export interface LocateChainDeps {
   /**
    * WP5 I3：L2 实验层。EXECUTOR 决定 admission——开关开 + 模型 ready + 无熔断
    * 才传非 null（ready 语义：modelStatus:"ready" = 文件在盘且校验过，session
-   * 懒建，P3-c/M7）。null/缺省 = 层未启用 → skipped（reason 见 tinyclickSkipReason）。
+   * 懒建，P3-c/M7）。null/缺省 = 层未启用 → skipped（reason 见 experimentalSkipReason）。
    * Pick 结构型以便测试注入 fake。
    */
   /** Experimental L2 locator (Qwen3-VL). Name kept for historical deps wiring. */
-  tinyclick?: ExperimentalLocator | null
+  experimental?: ExperimentalLocator | null
   /**
-   * When tinyclick is null, surface the real admission/skip reason in the
+   * When experimental is null, surface the real admission/skip reason in the
    * attempt log (e.g. model-switch-off, model-build-failed, worker-missing).
    * Default "model-not-admitted" — do not mislabel as model-disabled.
    */
-  tinyclickSkipReason?: string
+  experimentalSkipReason?: string
   log?: (event: string, data: Record<string, unknown>) => void
   now?: () => number
 }
@@ -604,11 +604,11 @@ export async function locateTargetWithChain(args: {
     log("computeruse.locate", { layer: "ocr", hit: false, reason: "ocr-not-found", ms: now() - t0 })
   }
 
-  // ---- L2: Qwen3-VL 实验层（deps.tinyclick 槽位名历史保留） -----------------
-  // admission 由 executor 决定（deps.tinyclick 非 null = 开关开 + 模型 ready）。
-  if (deps.tinyclick) {
+  // ---- L2: Qwen3-VL 实验层（deps.experimental 槽位名历史保留） -----------------
+  // admission 由 executor 决定（deps.experimental 非 null = 开关开 + 模型 ready）。
+  if (deps.experimental) {
     const t0 = now()
-    const outcome = await deps.tinyclick.locate({ command: target, shot })
+    const outcome = await deps.experimental.locate({ command: target, shot })
     if (outcome.kind === "hit") {
       attempts.push({ layer: "qwen-vl", outcome: "hit", ms: now() - t0 })
       log("computeruse.locate", { layer: "qwen-vl", hit: true, ms: now() - t0 })
@@ -633,7 +633,7 @@ export async function locateTargetWithChain(args: {
     attempts.push({ layer: "qwen-vl", outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
     log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: outcome.reason, ms: now() - t0 })
   } else {
-    const skipReason = deps.tinyclickSkipReason || "model-not-admitted"
+    const skipReason = deps.experimentalSkipReason || "model-not-admitted"
     attempts.push({ layer: "qwen-vl", outcome: "skipped", reason: skipReason, ms: 0 })
     log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: skipReason })
   }

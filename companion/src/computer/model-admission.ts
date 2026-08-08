@@ -1,4 +1,4 @@
-// Experimental locate-layer admission — Qwen3-VL (replaces TinyClick ONNX path).
+// Experimental locate-layer admission — Qwen3-VL.
 // Per-task evaluation before runComputerTask; fail-closed → locator null.
 
 import type { ComputerConfig } from "../config"
@@ -37,11 +37,6 @@ export interface ModelAdmission {
   locator: Pick<QwenVlLocator, "locate"> | null
   reason?: string
 }
-
-/** @deprecated use ModelAdmission — kept for smoke scripts */
-export type TinyClickAdmission = ModelAdmission
-/** @deprecated use ModelAdmissionDeps */
-export type TinyClickAdmissionDeps = ModelAdmissionDeps
 
 const inflight = new WeakMap<object, Promise<ModelAdmission>>()
 
@@ -137,8 +132,3 @@ export async function resolveModelAdmissionSafe(args: {
     return { locator: null, reason: ADMISSION_REASON.ADMISSION_ERROR }
   }
 }
-
-/** @deprecated alias */
-export const resolveTinyClickAdmission = resolveModelAdmission
-/** @deprecated alias */
-export const resolveTinyClickAdmissionSafe = resolveModelAdmissionSafe

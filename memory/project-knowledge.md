@@ -176,6 +176,11 @@
 - **影响**：venv/pip 失败后配置卡在 isolated，preflight/download 按 isolated 判未就绪，原 system 路径被弃用
 - **修法**：仅 `result.ok` 后持久化，或失败回滚旧 mode
 
+### TinyClick 残留清理（2026-08-08）
+- **产品早已切 Qwen3-VL**；仓库仍留 Florence-2 ONNX 全栈 + CI `verify-tinyclick-vendor` + `onnxruntime-node`
+- **清理**：删除 `tinyclick-*.ts` / 单测 / spike / scripts/verify-tinyclick* / `models.manifest.json` / s1 spike；`tinyclickLocator` → `experimentalLocator`；去掉 `onnxruntime-node` 与 postinstall vendor 校验
+- 实验层 admission 仅 `resolveModelAdmission*` + `qwen-vl-*`
+
 ### Vision 复用主 LLM（多模态 UX P0 · 2026-08-08）
 - **问题**：默认 vision=Ollama llava；主模型已是 Claude/GPT-4o/Kimi 多模态时用户仍被引导另配 VLM
 - **解法**：Side Panel 勾选视觉时若 `likelyMultimodal` 且 `protocol≠anthropic` → 提示「使用主模型」；`vision-reuse-logic.ts` 纯逻辑；`saveConfig` 在 url+model 匹配且 vision key 占位时继承 `llm.api_key`；非 loopback+占位 key **拒绝 POST 图**（`shouldBlockVisionRequest`）

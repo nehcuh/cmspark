@@ -8,7 +8,7 @@ import assert from "node:assert/strict"
 
 import { locateTargetWithChain, type LocateChainDeps } from "../src/computer/locate-chain"
 import { runComputerTask, type ComputerExecutorDeps } from "../src/computer/executor"
-import type { TinyClickLocateOutcome } from "../src/computer/tinyclick-locator"
+import type { ExperimentalLocateOutcome } from "../src/computer/locate-chain"
 import {
   ComputerError,
   type CaptureMeta,
@@ -261,7 +261,7 @@ test("chain: L0 skipped + L1 language-missing -> honest stubs -> ELEMENT_NOT_FOU
   }
   assert.match(captured.message, /uia:skipped\(uia-incapable-or-unprobed\)/)
   assert.match(captured.message, /ocr:skipped\(ocr-language-missing\)/)
-  // WP5 I3：admission 关闭（deps.tinyclick 缺省）→ model-not-admitted
+  // WP5 I3：admission 关闭（deps.experimental 缺省）→ model-not-admitted
   // （勿再误标为 model-disabled，开关可能是开着的但 worker/admission 失败）
   assert.match(captured.message, /qwen-vl:skipped\(model-not-admitted\)/)
   assert.match(captured.message, /cloud:skipped\(wp6-not-implemented\)/)
@@ -507,26 +507,25 @@ test("X1: candidates>1 (tree-order first pick) is forced uncrossverified — nev
 // 时 L2 零调用）、降级日志/locateAttempts 格式回归（G3：命中日志/attempt 均
 // 无 confidence 键）、L2 命中不重捕获（A1 新鲜度检查留给 re-L2 批准通道）。
 
-class FakeTinyClick {
+class FakeExperimentalLocator {
   calls: Array<{ command: string; shot: CaptureMeta }> = []
-  constructor(private outcome: TinyClickLocateOutcome) {}
-  async locate(args: { command: string; shot: CaptureMeta }): Promise<TinyClickLocateOutcome> {
+  constructor(private outcome: ExperimentalLocateOutcome) {}
+  async locate(args: { command: string; shot: CaptureMeta }): Promise<ExperimentalLocateOutcome> {
     this.calls.push(args)
     return this.outcome
   }
 }
 
-function tcHit(point = { x: 150, y: 180 }): TinyClickLocateOutcome {
+function tcHit(point = { x: 150, y: 180 }): ExperimentalLocateOutcome {
   return {
     kind: "hit",
     point,
-    tokenIds: [50551, 50552],
-    prompt: "what to do to execute the command? 确定",
-    timings: { preprocessMs: 1, visionMs: 2, embedMs: 3, encoderMs: 4, decoderMs: 5, totalMs: 15 },
+    ms: 15,
+    raw: "ok",
   }
 }
 
-test("L2: admission 关闭（tinyclick 缺省）→ skipped model-not-admitted，链落 L3 stub", async () => {
+test("L2: admission 关闭（experimental 缺省）→ skipped model-not-admitted，链落 L3 stub", async () => {
   const locator = new FakeLocator([]) // L1：语言包在、锚文本不在
   await assert.rejects(
     runChain(chainDeps({ locator })),
@@ -540,16 +539,16 @@ test("L2: admission 关闭（tinyclick 缺省）→ skipped model-not-admitted�
 
 test("L2 skipped 原因矩阵：包线/坍缩/busy/not-ready/disabled 全直通 attempts 与日志，链继续降级", async () => {
   const reasons = [
-    "tinyclick-envelope:non-ascii",
-    "tinyclick-envelope:too-long",
-    "tinyclick-envelope:frame-too-wide",
-    "tinyclick-collapse-detected",
-    "tinyclick-busy",
+    "qwen-vl-skip",
+    "qwen-vl-skip",
+    "qwen-vl-skip",
+    "qwen-vl-collapse",
+    "experimental-busy",
     "model-not-ready",
     "model-disabled",
   ]
   for (const reason of reasons) {
-    const tc = new FakeTinyClick({ kind: "skipped", reason })
+    const tc = new FakeExperimentalLocator({ kind: "skipped", reason })
     const logs: Array<Record<string, unknown>> = []
     let captured: any
     try {
@@ -557,7 +556,7 @@ test("L2 skipped 原因矩阵：包线/坍缩/busy/not-ready/disabled 全直通 
         target: "确定",
         hwnd: HWND,
         shot: shotAt("cap-0.png"),
-        deps: chainDeps({ locator: new FakeLocator([]), tinyclick: tc, log: (_e, d) => logs.push(d) }),
+        deps: chainDeps({ locator: new FakeLocator([]), experimental: tc, log: (_e, d) => logs.push(d) }),
         trackCapture: async () => shotAt("cap-1.png"),
         releaseRaw: async () => {},
       })
@@ -577,23 +576,23 @@ test("L2 skipped 原因矩阵：包线/坍缩/busy/not-ready/disabled 全直通 
   }
 })
 
-test("L2 error：tinyclick-error → outcome error + 链继续降级（错误类型不变）", async () => {
-  const tc = new FakeTinyClick({ kind: "error", reason: "tinyclick-error" })
+test("L2 error：qwen-vl-error → outcome error + 链继续降级（错误类型不变）", async () => {
+  const tc = new FakeExperimentalLocator({ kind: "error", reason: "qwen-vl-error" })
   await assert.rejects(
-    runChain(chainDeps({ locator: new FakeLocator([]), tinyclick: tc })),
+    runChain(chainDeps({ locator: new FakeLocator([]), experimental: tc })),
     (err: any) =>
       err instanceof ComputerError &&
       err.code === "ELEMENT_NOT_FOUND" &&
-      /qwen-vl:error\(tinyclick-error\)/.test(err.message) &&
+      /qwen-vl:error\(qwen-vl-error\)/.test(err.message) &&
       /cloud:skipped\(wp6-not-implemented\)/.test(err.message),
   )
 })
 
 test("L2 命中 → experimental:true 透传 + uncrossverified（吃 A1.3 子预算）+ confidence 缺省 + 不重捕获", async () => {
-  const tc = new FakeTinyClick(tcHit())
+  const tc = new FakeExperimentalLocator(tcHit())
   const logs: Array<Record<string, unknown>> = []
   const { result, released } = await runChain(
-    chainDeps({ locator: new FakeLocator([]), tinyclick: tc, log: (_e, d) => logs.push(d) }),
+    chainDeps({ locator: new FakeLocator([]), experimental: tc, log: (_e, d) => logs.push(d) }),
   )
   // 链排序：L0 skipped（缺省 uia:null）→ L1 not-found → L2 hit，L3 stub 不出现
   assert.deepEqual(
@@ -620,31 +619,31 @@ test("L2 命中 → experimental:true 透传 + uncrossverified（吃 A1.3 子预
 })
 
 test("L2 日志格式回归：命中日志无 confidence 键，字段与既有层同形（layer/hit/ms）", async () => {
-  const tc = new FakeTinyClick(tcHit())
+  const tc = new FakeExperimentalLocator(tcHit())
   const logs: Array<Record<string, unknown>> = []
-  await runChain(chainDeps({ locator: new FakeLocator([]), tinyclick: tc, log: (_e, d) => logs.push(d) }))
+  await runChain(chainDeps({ locator: new FakeLocator([]), experimental: tc, log: (_e, d) => logs.push(d) }))
   const hitLog = logs.find((d) => d.layer === "qwen-vl" && d.hit === true)
   assert.ok(hitLog, "命中应有 computeruse.locate 日志")
   assert.equal("confidence" in hitLog!, false, "G3：命中日志无上屏置信度")
   assert.deepEqual(Object.keys(hitLog!).sort(), ["hit", "layer", "ms"])
 })
 
-test("L2 排序：L0 命中时 tinyclick 零调用；L1 命中时 tinyclick 零调用", async () => {
+test("L2 排序：L0 命中时 experimental 零调用；L1 命中时 experimental 零调用", async () => {
   // L0 命中
-  const tc1 = new FakeTinyClick(tcHit())
-  const r0 = await runChain(chainDeps({ uia: new FakeUia([uiaHit()]), tinyclick: tc1 }))
+  const tc1 = new FakeExperimentalLocator(tcHit())
+  const r0 = await runChain(chainDeps({ uia: new FakeUia([uiaHit()]), experimental: tc1 }))
   assert.equal(r0.result.hit.layer, "uia")
   assert.equal(tc1.calls.length, 0, "L0 命中后链短路，实验层不被触碰")
   // L1 命中（uia 缺省，默认 locator 词表含「确定」）
-  const tc2 = new FakeTinyClick(tcHit())
-  const r1 = await runChain(chainDeps({ tinyclick: tc2 }))
+  const tc2 = new FakeExperimentalLocator(tcHit())
+  const r1 = await runChain(chainDeps({ experimental: tc2 }))
   assert.equal(r1.result.hit.layer, "ocr")
   assert.equal(tc2.calls.length, 0, "L1 命中后链短路，实验层不被触碰")
 })
 
 test("L2 命令透传：click target 原样作为实验层 command（官方配方在 locator 内）", async () => {
-  const tc = new FakeTinyClick(tcHit())
-  await runChain(chainDeps({ locator: new FakeLocator([]), tinyclick: tc }))
+  const tc = new FakeExperimentalLocator(tcHit())
+  await runChain(chainDeps({ locator: new FakeLocator([]), experimental: tc }))
   assert.equal(tc.calls.length, 1)
   assert.equal(tc.calls[0].command, "确定")
   assert.equal(tc.calls[0].shot.path, "cap-0.png")
@@ -806,11 +805,11 @@ test("P4 L1 OCR on retina: image-pixel hit → logical pointClient (no false OOB
   assert.equal(r.pointClient.y, 467, "image-y 1014/2 - client.y 40 = 467 (NOT 974)")
 })
 
-test("P4 L2 TinyClick on retina: image-pixel point → logical pointClient", async () => {
-  // TinyClick's outcome.point is image-pixel space (the model is conditioned
+test("P4 L2 experimental on retina: image-pixel point → logical pointClient", async () => {
+  // Experimental locator outcome.point is image-pixel space (the model is conditioned
   // on the retina PNG). P4 wiring must route it through imageToClient too.
   const tcHitImage = { x: 800, y: 600 } // image-pixel; /2 = (400, 300) logical
-  const tc = new FakeTinyClick({ kind: "hit", point: tcHitImage, tokenIds: [], prompt: "", timings: {} as any })
+  const tc = new FakeExperimentalLocator({ kind: "hit", point: tcHitImage, ms: 1 })
   const r = await locateTargetWithChain({
     target: "anything",
     hwnd: HWND,
@@ -818,12 +817,12 @@ test("P4 L2 TinyClick on retina: image-pixel point → logical pointClient", asy
     deps: chainDeps({
       uia: null,
       locator: new FakeLocator([]), // L1 misses so chain falls to L2
-      tinyclick: tc,
+      experimental: tc,
     }),
     trackCapture: async () => shotAtRetina("cap-tc-fresh.png"),
     releaseRaw: async () => {},
   })
-  assert.ok(r.hit, "TinyClick layer hits")
+  assert.ok(r.hit, "experimental layer hits")
   assert.equal(r.hit.layer, "qwen-vl")
   // image (800, 600) / scale 2 = (400, 300) logical; client (10, 40).
   // pointClient = (400 - 10, 300 - 40) = (390, 260). Pre-P4 would yield (790, 560).

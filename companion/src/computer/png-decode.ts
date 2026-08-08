@@ -7,7 +7,7 @@
 //   - 输入形态收敛：decodeFrame 唯一生产来源是 computer-capture.ps1
 //     （System.Drawing ImageFormat::Png → 8-bit、非隔行、color type 6/2）。
 //     本解码器覆盖 color type 0/2/4/6 + 过滤类型 0-4；16-bit / 调色板 /
-//     Adam7 隔行一律抛错——locator 折叠为 tinyclick-error 诚实失败，
+//     Adam7 隔行一律抛错——locator 折叠为诚实 error，
 //     不静默降级、不编造帧。
 //   - 不校验 CRC：源流是本地采集进程的可信输出，且 shot.sha256 已在证据链
 //     锁定字节；解码本身失败即诚实信号。畸形（签名错/截断/未知过滤类型）

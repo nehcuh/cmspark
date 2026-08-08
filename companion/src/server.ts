@@ -4605,15 +4605,15 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
                     },
                   })
                   return {
-                    tinyclickLocator: adm.locator,
+                    experimentalLocator: adm.locator,
                     ...(adm.locator
                       ? {}
-                      : { tinyclickSkipReason: adm.reason || "model-not-admitted" }),
+                      : { experimentalSkipReason: adm.reason || "model-not-admitted" }),
                   }
                 } catch (e) {
                   return {
-                    tinyclickLocator: null,
-                    tinyclickSkipReason:
+                    experimentalLocator: null,
+                    experimentalSkipReason:
                       e instanceof Error ? `admission-error:${e.message.slice(0, 80)}` : "model-admission-error",
                   }
                 }
@@ -4662,10 +4662,10 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
             }
           } catch { /* best-effort */ }
           const sealer = new PsEvidenceSealer()
-          // WP5-I4 TinyClick admission
-          const { resolveTinyClickAdmissionSafe } = await import("./computer/model-admission")
+          // WP5-I4 experimental (Qwen3-VL) admission
+          const { resolveModelAdmissionSafe } = await import("./computer/model-admission")
           const { computerModelSession } = await import("./computer/model-handlers")
-          const tinyclickAdmission = await resolveTinyClickAdmissionSafe({
+          const experimentalAdmission = await resolveModelAdmissionSafe({
             config: getConfig().computer,
             holder: computerModelSession,
             deps: {
@@ -4712,10 +4712,10 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               },
               uiaProber: new PsUiaProber(),
               uiaWatcherFactory: (t, opts) => startUiaWindowWatcher(t, opts),
-              tinyclickLocator: tinyclickAdmission.locator,
-              ...(tinyclickAdmission.locator
+              experimentalLocator: experimentalAdmission.locator,
+              ...(experimentalAdmission.locator
                 ? {}
-                : { tinyclickSkipReason: tinyclickAdmission.reason || "model-not-admitted" }),
+                : { experimentalSkipReason: experimentalAdmission.reason || "model-not-admitted" }),
               onUiaVerdict: (token, verdict, probedAt) => {
                 const wb = writeBackUiaVerdict(token, verdict, probedAt)
                 logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
