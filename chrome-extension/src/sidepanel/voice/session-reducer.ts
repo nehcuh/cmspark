@@ -136,6 +136,18 @@ export function reduceVoiceSession(
         ...state,
         phase: "processing",
         interim: "",
+        banner: "本机识别中…",
+      }
+    }
+
+    case "SEGMENT_CONTINUE": {
+      // After a continuous local segment result: back to listening for next window
+      if (state.phase !== "processing" && state.phase !== "listening") return state
+      return {
+        ...state,
+        phase: "listening",
+        interim: "",
+        banner: null,
       }
     }
 

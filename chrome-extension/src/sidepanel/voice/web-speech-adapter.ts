@@ -21,6 +21,10 @@ export type SpeechAdapterHandlers = {
    * before waiting for voice.stt.result (enter processing phase).
    */
   onCaptureStopped?: () => void
+  /**
+   * Local continuous D1c: segment transcribed; resume listening chrome for next window.
+   */
+  onSegmentContinue?: () => void
 }
 
 /** Browser: lang string. Local: sessionId + modelId required. Dictation+ mode optional. */
@@ -30,8 +34,12 @@ export type SpeechAdapterStartArg =
       lang?: string
       sessionId?: string
       modelId?: string
-      /** browser only; default classic */
+      /** classic | continuous (browser restart / local segments) */
       mode?: VoiceDictationMode
+      /** continuous hard cap ms (local D1c) */
+      hardCapMs?: number
+      /** continuous per-segment window ms (tests / clamp ≤45s) */
+      segmentMs?: number
     }
 
 export type SpeechAdapter = {

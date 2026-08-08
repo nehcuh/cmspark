@@ -29,12 +29,15 @@ test("maxListenMsForSession classic always 45s", () => {
   assert.equal(maxListenMsForSession("classic", "local"), VOICE_MAX_LISTEN_MS)
 })
 
-test("maxListenMsForSession continuous browser uses hard cap; local stays 45s (D1a)", () => {
+test("maxListenMsForSession continuous uses hard cap (browser + local D1c)", () => {
   assert.equal(
     maxListenMsForSession("continuous", "browser"),
     VOICE_CONTINUOUS_HARD_CAP_MS,
   )
-  assert.equal(maxListenMsForSession("continuous", "local"), VOICE_MAX_LISTEN_MS)
+  assert.equal(
+    maxListenMsForSession("continuous", "local"),
+    VOICE_CONTINUOUS_HARD_CAP_MS,
+  )
 })
 
 test("classic mode: onend does not restart (single start)", async () => {

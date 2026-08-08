@@ -150,15 +150,20 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     }
   }
 
-  // Drive remaining-time badge while capturing (local or browser).
+  // Drive remaining-time badge while capturing (or continuous local segment processing).
   useEffect(() => {
     const ph = session.phase
-    if (ph === "starting" || ph === "listening") {
+    const contProcessing =
+      modeRef.current === "continuous" && ph === "processing"
+    if (ph === "starting" || ph === "listening" || contProcessing) {
       if (listenStartRef.current == null) listenStartRef.current = Date.now()
       const id = setInterval(() => setListenTick((n) => n + 1), 250)
       return () => clearInterval(id)
     }
-    listenStartRef.current = null
+    // Keep wall clock through continuous segment gaps (processing) only when continuous.
+    if (ph !== "processing") {
+      listenStartRef.current = null
+    }
     return undefined
   }, [session.phase])
 
@@ -305,6 +310,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       onCaptureStopped: () => {
         dispatchEv({ type: "CAPTURE_STOPPED" })
       },
+      onSegmentContinue: () => {
+        dispatchEv({ type: "SEGMENT_CONTINUE" })
+      },
     }
 
     const modelId =
@@ -413,7 +421,14 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       }
 
       if (s.phase === "processing") {
-        // Cancel mid-infer
+        // Continuous local: stop gracefully so prior segment finals are kept
+        // (USER_TOGGLE_STOP from processing marks committed and drops merge).
+        if (modeRef.current === "continuous" && eng === "local") {
+          clearTimer()
+          stopEngine("stop")
+          return
+        }
+        // Classic: cancel mid-infer
         dispatchEv({ type: "USER_TOGGLE_STOP" })
         stopEngine("abort")
         return
@@ -430,9 +445,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       if (!o.allowStart) return
 
       const mode = modeRef.current
-      // Continuous browser requires privacy ack v3 (long cloud STT residual).
-      const continuousBrowser = mode === "continuous" && eng === "browser"
-      // ASR Refiner also requires v3 (text → LLM residual).
+      // Continuous (browser or local long session) and/or ASR Refiner → privacy v3.
+      const continuousMode = mode === "continuous"
       const wantsRefine = o.asrRefinerEnabled === true
 
       if (eng === "local") {
@@ -451,13 +465,20 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
           else o.onNeedPrivacyAck()
           return
         }
+        if (continuousMode || wantsRefine) {
+          const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
+          if (!v3) {
+            if (o.onNeedPrivacyAckV3) o.onNeedPrivacyAckV3()
+            return
+          }
+        }
       } else {
         const privacyOk = extra?.privacyAck === true || o.privacyAck
         if (!privacyOk) {
           o.onNeedPrivacyAck()
           return
         }
-        if (continuousBrowser || wantsRefine) {
+        if (continuousMode || wantsRefine) {
           const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
           if (!v3) {
             // Do not fall back to v1 sheet — that cannot satisfy the v3 gate (dual-review N1).
@@ -467,15 +488,6 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         }
         if (typeof navigator !== "undefined" && navigator.onLine === false) {
           dispatchEv({ type: "ENGINE_ERROR", code: "offline" })
-          return
-        }
-      }
-
-      // Local + refine: still need v3 for text→LLM (local already has v2 for STT)
-      if (eng === "local" && wantsRefine) {
-        const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
-        if (!v3) {
-          if (o.onNeedPrivacyAckV3) o.onNeedPrivacyAckV3()
           return
         }
       }
@@ -528,6 +540,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
               lang: VOICE_DEFAULT_LANG,
               sessionId: sid,
               modelId: o.modelId || "medium",
+              mode: modeNow,
+              hardCapMs: maxMs,
             })
           } else {
             adapterRef.current.start({
@@ -540,12 +554,12 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
           return
         }
         clearTimer()
-        // Soft cap hint only for continuous browser (still listening).
-        if (modeNow === "continuous" && eng === "browser") {
+        // Soft cap hint for continuous (browser or local).
+        if (modeNow === "continuous") {
           softTimerRef.current = setTimeout(() => {
             softTimerRef.current = null
             const ph = sessionRef.current.phase
-            if (ph === "listening" || ph === "starting") {
+            if (ph === "listening" || ph === "starting" || ph === "processing") {
               dispatchEv({
                 type: "SOFT_CAP_HINT",
                 message: "仍在连续听写，可点麦克风结束",
@@ -554,13 +568,12 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
           }, VOICE_CONTINUOUS_SOFT_CAP_MS)
         }
         timerRef.current = setTimeout(() => {
+          const cont = modeRef.current === "continuous"
+          clearTimer()
           if (engineRef.current === "local") {
-            // Stop capture → CAPTURE_STOPPED → processing (do not TIMEOUT→stopping).
-            clearTimer()
+            // Stop capture → segment finalize (do not TIMEOUT→stopping).
             stopEngine("stop")
           } else {
-            const cont =
-              modeRef.current === "continuous" && engineRef.current === "browser"
             dispatchEv({
               type: "TIMEOUT",
               code: cont ? "continuous-timeout" : "timeout",
@@ -640,7 +653,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   void listenTick
   const listenRemainingMs =
     listenStartRef.current != null &&
-    (session.phase === "listening" || session.phase === "starting")
+    (session.phase === "listening" ||
+      session.phase === "starting" ||
+      (session.phase === "processing" && modeRef.current === "continuous"))
       ? Math.max(
           0,
           maxListenMsRef.current - (Date.now() - listenStartRef.current),

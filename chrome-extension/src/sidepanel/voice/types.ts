@@ -58,6 +58,8 @@ export type VoiceEvent =
   | { type: "REFINE_OK"; refineGen: number; text: string; unchanged?: boolean }
   | { type: "REFINE_FAIL"; refineGen: number; code?: string; message?: string }
   | { type: "CANCEL_REFINE" }
+  /** Local continuous D1c: segment done; resume listening chrome. */
+  | { type: "SEGMENT_CONTINUE" }
   | { type: "DISMISS_BANNER" }
   | { type: "UNMOUNT" }
 
