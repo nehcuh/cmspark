@@ -300,19 +300,75 @@ export function clearTrustJournal(): void {
   }
 }
 
+/** One active thread that still owns a Trust restore cookie (single-holder policy). */
+export type TrustHolderInfo = {
+  id: string
+  pack_id: string | null
+  /** Human label for UI (alias when set). */
+  alias: string | null
+}
+
 /** Other threads that currently hold a Trust restore cookie (single-holder policy). */
 export function findOtherTrustHolders(
   threadManager: ThreadManager,
   excludeThreadId: string,
-): Array<{ id: string; pack_id: string | null }> {
-  const out: Array<{ id: string; pack_id: string | null }> = []
+): TrustHolderInfo[] {
+  const out: TrustHolderInfo[] = []
   for (const t of threadManager.list()) {
     if (t.id === excludeThreadId) continue
     if (isPackTrustSnapshot(t.mission_pack_trust_snapshot)) {
-      out.push({ id: t.id, pack_id: t.mission_pack_id ?? null })
+      const alias =
+        typeof t.alias === "string" && t.alias.trim().length > 0 ? t.alias.trim() : null
+      out.push({
+        id: t.id,
+        pack_id: t.mission_pack_id ?? null,
+        alias,
+      })
     }
   }
   return out
+}
+
+function formatTrustHolderLabel(h: TrustHolderInfo): string {
+  const name = h.alias || h.id
+  return h.pack_id ? `「${name}」（场景 ${h.pack_id}）` : `「${name}」`
+}
+
+/**
+ * Residual Trust cookie with no mission_pack_id (partial lifecycle / migration).
+ * Restores globals, clears journal match, nulls cookie. Idempotent.
+ */
+export function releaseOrphanTrustCookie(
+  threadId: string,
+  threadManager: ThreadManager,
+  by: string = "pack.unapply:orphan_cookie",
+): boolean {
+  const thread = threadManager.get(threadId)
+  if (!thread || !isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) return false
+  const snap = thread.mission_pack_trust_snapshot
+  try {
+    restoreTrustFromThreadCookie(snap, by)
+  } catch {
+    /* best-effort */
+  }
+  releaseTrustJournalIfMatch(threadId, thread.mission_pack_id)
+  try {
+    threadManager.update(threadId, { mission_pack_trust_snapshot: null })
+  } catch {
+    try {
+      ;(thread as { mission_pack_trust_snapshot?: unknown }).mission_pack_trust_snapshot = null
+    } catch {
+      /* best-effort */
+    }
+  }
+  appendCapabilityAudit({
+    type: "pack.trust_orphan_cookie_cleared",
+    at: new Date().toISOString(),
+    by,
+    thread_id: threadId,
+    pack_id: thread.mission_pack_id || null,
+  })
+  return true
 }
 
 /**
@@ -1356,14 +1412,24 @@ function configuredMcpServerIds(config: CompanionConfig): Set<string> {
  *
  * @param opts.allowTrust - When true (UI pack.apply / save+apply only), origin=user trust may
  *   write global config. Default **false** so spawn_worker / non-gesture paths cannot elevate Trust B.
+ * @param opts.forceTakeoverTrust - When true (UI after conflict confirm only), unapply other
+ *   holders' scenes first so Trust can move to this thread. Requires allowTrust.
  */
 export function applyPack(
   packId: string,
   threadId: string,
   threadManager: ThreadManager,
   skillEngine: SkillEngine,
-  opts?: { workspace_path?: string; allowTrust?: boolean },
-): { ok: true; thread: any } | { ok: false; error: string; code?: string } {
+  opts?: { workspace_path?: string; allowTrust?: boolean; forceTakeoverTrust?: boolean },
+): {
+  ok: true
+  thread: any
+} | {
+  ok: false
+  error: string
+  code?: string
+  holders?: TrustHolderInfo[]
+} {
   let config = getConfig()
   const { dir, result } = readInstalledManifest(packId)
   if (!result.ok) return { ok: false, error: result.error }
@@ -1395,18 +1461,80 @@ export function applyPack(
   const packTrust = result.manifest.trust
   const originUser = resolvePackOrigin(result.manifest) === "user"
   if (packTrust && originUser && allowTrust) {
-    // Single-holder: another thread already owns Trust B → refuse (clear UI error).
+    // Single-holder: another thread already owns Trust B → refuse or force-takeover (UI confirm).
     const others = findOtherTrustHolders(threadManager, threadId)
     if (others.length > 0) {
-      const o = others[0]
-      return {
-        ok: false,
-        error:
-          `Trust 已被其他对话占用（thread=${o.id}` +
-          (o.pack_id ? `, pack=${o.pack_id}` : "") +
-          `）。请先在该对话「退出场景」后再对本对话应用 Trust 场景。` +
-          ` Trust is held by another thread; unapply there first.`,
-        code: "trust_holder_conflict",
+      if (opts?.forceTakeoverTrust === true) {
+        // Explicit user confirm: exit holder scene(s) so Trust can move here.
+        const releasedIds: string[] = []
+        for (const o of others) {
+          const released = unapplyPack(o.id, threadManager)
+          // Belt: residual cookie if unapply no-op'd (pack id already null).
+          const thrAfter = threadManager.get(o.id)
+          if (thrAfter && isPackTrustSnapshot(thrAfter.mission_pack_trust_snapshot)) {
+            releaseOrphanTrustCookie(o.id, threadManager, "pack.apply:force_takeover:residual")
+          }
+          appendCapabilityAudit({
+            type: "pack.trust_takeover",
+            at: new Date().toISOString(),
+            from_thread_id: o.id,
+            from_pack_id: o.pack_id,
+            to_thread_id: threadId,
+            to_pack_id: packId,
+            unapply_ok: released.ok,
+            cookie_cleared: !isPackTrustSnapshot(
+              threadManager.get(o.id)?.mission_pack_trust_snapshot,
+            ),
+            by: "pack.apply:force_takeover",
+          })
+          if (!released.ok) {
+            const remaining = findOtherTrustHolders(threadManager, threadId)
+            const partial =
+              releasedIds.length > 0
+                ? ` 已释放：${releasedIds.map((id) => `「${id}」`).join("、")}。请重试一键解锁。`
+                : ""
+            return {
+              ok: false,
+              error:
+                `无法释放占用对话 ${formatTrustHolderLabel(o)} 的 Trust：${released.error}。` +
+                partial +
+                ` Could not release Trust holder.`,
+              code: "trust_takeover_failed",
+              holders: remaining.length > 0 ? remaining : others,
+            }
+          }
+          releasedIds.push(o.id)
+        }
+        // Final sanity: no dual-cookie leftovers before elevating target.
+        const stillHolders = findOtherTrustHolders(threadManager, threadId)
+        for (const o of stillHolders) {
+          releaseOrphanTrustCookie(o.id, threadManager, "pack.apply:force_takeover:sweep")
+        }
+        const stillAfterSweep = findOtherTrustHolders(threadManager, threadId)
+        if (stillAfterSweep.length > 0) {
+          return {
+            ok: false,
+            error:
+              `一键解锁后仍有 Trust 占用：${stillAfterSweep.map(formatTrustHolderLabel).join("、")}。` +
+              `请到该对话退出场景后重试。 Trust still held after force_takeover.`,
+            code: "trust_takeover_failed",
+            holders: stillAfterSweep,
+          }
+        }
+        // After unapply restore, re-read config so captureTrustSnapshot sees true baseline.
+        config = getConfig()
+      } else {
+        const o = others[0]
+        const labels = others.map(formatTrustHolderLabel).join("、")
+        return {
+          ok: false,
+          error:
+            `Trust 已被其他对话占用：${labels}。` +
+            `请先在该对话「退出场景」，或确认后一键解锁并用于本对话。` +
+            ` Trust is held by another thread; unapply there first or force_takeover.`,
+          code: "trust_holder_conflict",
+          holders: others,
+        }
       }
     }
 
@@ -1616,6 +1744,19 @@ export function unapplyPack(
   const thread = threadManager.get(threadId)
   if (!thread) return { ok: false, error: `thread not found: ${threadId}`, code: "thread_not_found" }
   if (!thread.mission_pack_id) {
+    // Idempotent pack exit — but residual Trust cookie must still be released (Pi nit).
+    if (isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) {
+      releaseOrphanTrustCookie(threadId, threadManager, "pack.unapply:orphan_cookie")
+      appendCapabilityAudit({
+        type: "pack.unapply",
+        pack_id: null,
+        thread_id: threadId,
+        at: new Date().toISOString(),
+        trust_restored: true,
+        orphan_cookie: true,
+      })
+      return { ok: true, thread: threadManager.get(threadId) }
+    }
     return { ok: true, thread } // idempotent
   }
   const packId = thread.mission_pack_id
@@ -1647,6 +1788,11 @@ export function unapplyPack(
         /* best-effort */
       }
       releaseTrustJournalIfMatch(threadId, packId)
+    }
+    // restoreSnapshot nulls cookie via pack_id=null; belt-clear if anything left.
+    const after = threadManager.get(threadId)
+    if (after && isPackTrustSnapshot(after.mission_pack_trust_snapshot)) {
+      releaseOrphanTrustCookie(threadId, threadManager, "pack.unapply:residual")
     }
     const updated = threadManager.get(threadId)
     appendCapabilityAudit({

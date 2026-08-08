@@ -614,9 +614,9 @@ UI「应用到当前线程」→ pack.apply { pack_id, thread_id }
 
 - **内置 / installed Pack 禁止**写入 `auto_approve_dangerous` / god-mode 等放宽键。
 - **Trust B（用户场景）**：仅 `origin=user` 可带顶层 `trust`；`pack.apply` / save+apply 需 `user_gesture` 且 `allowTrust:true`；`spawn_worker` 与 zip/dir **install** 不得抬升 Trust（install 剥离 `origin:user`+`trust`）。
-- **Trust 生命周期**：`unapply` / `uninstall` / 切换场景 / apply 失败路径恢复快照；进程级 **单 holder**（他对话占用则 `trust_holder_conflict`）；崩溃用 `mission-pack-trust-journal.json` + 启动 `reconcilePackTrustOnBoot`。
+- **Trust 生命周期**：`unapply` / `uninstall` / 切换场景 / apply 失败路径恢复快照；进程级 **单 holder**（他对话占用则 `trust_holder_conflict` + `holders`；Side Panel 可 `force_takeover` 一键 unapply 占用方再 apply）；崩溃用 `mission-pack-trust-journal.json` + 启动 `reconcilePackTrustOnBoot`。
 - `workspace_root not set` / `module_disabled` 为 **recoverable** 错误，引导用户 UI 操作。
-- 审计日志：`logs/capability-audit.jsonl`（0o600、append、轮转）。
+- 审计日志：`logs/capability-audit.jsonl`（0o600、append、轮转）。Trust 相关事件含 `pack.trust_apply` / `pack.trust_restore` / `pack.trust_takeover`（一键解锁）/ `pack.trust_orphan_cookie_cleared` / `pack.trust_reconcile` / `pack.trust_release_on_thread_gone`。
 - **L2 确认 / 确认台（Cockpit）**用户说明见 [confirm-center-user-guide.md](confirm-center-user-guide.md)（与 NetSec 任务授权分层；实现见 `security-confirmation.ts` + 扩展 `MinimalConfirm` / `CockpitApp`）。
 
 ---
