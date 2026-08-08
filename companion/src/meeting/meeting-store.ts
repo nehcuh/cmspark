@@ -309,7 +309,12 @@ export function endMeetingRecording(
   return { session: again || s, audioDeleted }
 }
 
-/** Best-effort delete audio/ after successful STT (default policy). Returns true if removed or absent. */
+/**
+ * Best-effort delete audio/ after end (default policy).
+ * Returns true when policy is satisfied: dir removed **or already absent**.
+ * Does not distinguish "bytes deleted" vs "never existed" — callers should not
+ * treat true as proof of residual content removal.
+ */
 export function deleteMeetingAudio(id: string, dataDir = DATA_DIR): boolean {
   const dir = resolveContained(id, dataDir)
   if (!dir) return false
@@ -319,7 +324,7 @@ export function deleteMeetingAudio(id: string, dataDir = DATA_DIR): boolean {
       fs.rmSync(audio, { recursive: true, force: true })
       return true
     }
-    return true // already absent = policy satisfied
+    return true
   } catch (e) {
     logger.warn("meeting.audio_delete_failed", {
       id,

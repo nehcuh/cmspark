@@ -1,0 +1,8 @@
+{
+  "batch": "meeting-mtg1-live-capture",
+  "timestamp": "20260808-090128",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/meeting-mtg1-live-capture-claude-20260808-090128.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/meeting-mtg1-live-capture-pi-20260808-090128.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/meeting-mtg1-live-capture-diff-20260808-090128.patch"
+}

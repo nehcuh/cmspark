@@ -186,9 +186,13 @@ export function MeetingPanel(props: {
     }
   }, [])
 
+  /**
+   * End server session + tear down adapter. Idempotent via finalizedRef.
+   * Always send meeting.end when we have an id so close/unmount cannot leave status=recording.
+   */
   const finalizeCapture = useCallback(
     (opts: { generate: boolean; id: string | null }) => {
-      if (finalizedRef.current && phaseRef.current === "idle") return
+      if (finalizedRef.current) return
       finalizedRef.current = true
       captureStartRef.current = null
       setPhase("idle")
@@ -306,8 +310,16 @@ export function MeetingPanel(props: {
   const startLocalSegmentsRef = useRef(startLocalSegments)
   startLocalSegmentsRef.current = startLocalSegments
 
+  // Unmount / ContextPanelHost 收起: always end server session if still capturing
+  // (destroy() is silent and would otherwise leave status=recording — dual-review nit).
   useEffect(() => {
     return () => {
+      const id = meetingIdRef.current
+      const stillLive = phaseRef.current !== "idle" && !finalizedRef.current
+      if (stillLive && id) {
+        finalizedRef.current = true
+        sendViaRuntime({ type: "meeting.end", v: 1, id })
+      }
       destroyAdapter()
       dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
     }
@@ -527,7 +539,11 @@ export function MeetingPanel(props: {
         <button
           type="button"
           onClick={() => {
-            if (capturing) stopLiveCapture(false)
+            // Sync end before unmount so meeting.end is not raced by destroy()
+            if (phaseRef.current !== "idle") {
+              wantGenerateRef.current = false
+              finalizeCapture({ generate: false, id: meetingIdRef.current })
+            }
             props.onClose()
           }}
           style={{
@@ -566,7 +582,7 @@ export function MeetingPanel(props: {
           </div>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             <li>会创建本地会话产物（转写 ± 可选音频）。</li>
-            <li>默认转写成功后删除音频（若启用录音）。</li>
+            <li>默认结束录制后删除会议目录下音频（当前 UI 不提供保留选项）。</li>
             <li>生成纪要将把转写文本发给你已配置的 LLM。</li>
             <li>长会 STT 仅本机；不会自动开始录音。</li>
             <li>多方录音法律合规由你负责。</li>
