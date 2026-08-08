@@ -234,7 +234,7 @@ export function SettingsSlideout() {
           ? chrome.runtime.lastError.message
           : null
       const parsed = parseVoiceSettingsSendResponse(resp, lastErr)
-      if (!parsed.ok) {
+      if (parsed.ok === false) {
         dispatch({ type: "SET_VOICE_MODEL_ERROR", error: parsed.error })
       }
     })
@@ -1301,7 +1301,7 @@ export function SettingsSlideout() {
                         ? chrome.runtime.lastError.message
                         : null
                     const parsed = parseVoiceSettingsSendResponse(resp, lastErr)
-                    if (!parsed.ok) {
+                    if (parsed.ok === false) {
                       opts?.onFail?.()
                       dispatch({ type: "SET_VOICE_MODEL_ERROR", error: parsed.error })
                       return
