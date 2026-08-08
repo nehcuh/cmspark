@@ -127,12 +127,16 @@ export function diarizeByAudioFeatures(
   for (let i = 0; i < n; i++) {
     const f = features[i]
     if (Array.isArray(f) && f.length >= 3) {
-      feats.push([
-        Number(f[0]) || 0,
-        Number(f[1]) || 0,
-        Number(f[2]) || 0,
-      ])
+      const a = Number(f[0])
+      const b = Number(f[1])
+      const c = Number(f[2])
+      if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(c)) {
+        feats.push([0, 0, 0])
+      } else {
+        feats.push([a, b, c])
+      }
     } else {
+      // Malformed row → zero vector (caller should keep alignment; observability only)
       feats.push([0, 0, 0])
     }
   }
@@ -165,19 +169,27 @@ export function diarizeByTextGap(lines: TranscriptLine[], kIn?: number): Diarize
   }
 }
 
-/** Apply diarize speakers onto lines (preserves text/source/timing). */
+/**
+ * Apply diarize speakers onto lines (preserves text/source/timing).
+ * preserveManual: keep existing non-auto labels (not matching 发言人N).
+ */
 export function applyDiarizeToLines(
   lines: TranscriptLine[],
   result: DiarizeResult,
+  opts: { preserveManual?: boolean } = {},
 ): TranscriptLine[] {
+  const autoRe = /^发言人\d+$/
   return lines.map((line, i) => {
-    const sp = result.speakers[i]
     const next = { ...line }
-    if (sp) {
-      next.speaker = sp
-      // mark source provenance without inventing new TranscriptSource union break:
-      // keep original source; meta.diarize records method
+    if (
+      opts.preserveManual &&
+      line.speaker &&
+      !autoRe.test(line.speaker.trim())
+    ) {
+      return next
     }
+    const sp = result.speakers[i]
+    if (sp) next.speaker = sp
     return next
   })
 }

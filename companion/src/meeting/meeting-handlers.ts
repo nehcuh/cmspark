@@ -308,7 +308,10 @@ export async function handleMeetingMessage(
       }
       result = diarizeByAudioFeatures(m.transcript, features, k)
     }
-    const lines = applyDiarizeToLines(m.transcript, result)
+    const lines = applyDiarizeToLines(m.transcript, result, {
+      // Default: full auto overwrite. preserve_manual keeps hand labels (Mtg2).
+      preserveManual: msg.preserve_manual === true,
+    })
     const updated = setDiarizeResult(id, lines, {
       method: result.method,
       k: result.k,

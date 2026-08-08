@@ -758,10 +758,12 @@ export function MeetingPanel(props: {
         break
       }
       if (r.text.trim()) {
-        texts.push(r.text.trim())
+        // One physical line per segment so features stay aligned (dual-review nit)
+        const oneLine = r.text.trim().replace(/\s*\n+\s*/g, " ")
+        texts.push(oneLine)
         feats.push(seg.features)
         // local preview (speaker optional)
-        appendLocalAndRemote(r.text, null)
+        appendLocalAndRemote(oneLine, null)
       }
       done = i + 1
     }
@@ -769,7 +771,7 @@ export function MeetingPanel(props: {
 
     // Single set_transcript so line count == features (avoid append race before diarize)
     if (texts.length > 0 && id) {
-      const sp = defaultSpeakerRef.current.trim()
+      const sp = defaultSpeakerRef.current.trim().slice(0, 32)
       const body = texts.join("\n")
       sendViaRuntime({
         type: "meeting.set_transcript",
@@ -779,8 +781,17 @@ export function MeetingPanel(props: {
         source: "stt",
         silence_cut: false,
       })
-      // If default speaker set, bulk after — optional; diarize overwrites speakers
-      void sp
+      // Restore default-speaker when not auto-diarizing (Mtg2 contract)
+      if (sp && !autoDiarizeAfterImport) {
+        setTimeout(() => {
+          sendViaRuntime({
+            type: "meeting.bulk_speaker",
+            v: 1,
+            id,
+            speaker: sp,
+          })
+        }, 100)
+      }
     }
 
     setBusy(false)
@@ -802,7 +813,7 @@ export function MeetingPanel(props: {
             k: diarizeK,
             features: feats,
           })
-        }, 120)
+        }, 150)
       }
     }
     dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
@@ -1238,7 +1249,7 @@ export function MeetingPanel(props: {
         )}
         <div style={{ fontSize: 10, color: tokens.textSecondary, lineHeight: 1.4 }}>
           「自动标说话人」= 本机段特征 k-means → 匿名「发言人N」，
-          <strong>不是</strong>身份识别，也非 Otter 级 SLA。可手改标签。
+          <strong>不是</strong>身份识别，也非 Otter 级 SLA。默认覆盖已有标签（可再手改）。
           弱标仅按行交替。系统混音见 parking 调研。
         </div>
       </div>

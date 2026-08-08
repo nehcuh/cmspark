@@ -150,3 +150,56 @@ test("createMeeting has diarize null", () => {
   const m = createMeeting({ title: "x", dataDir: DATA })
   assert.equal(m.diarize, null)
 })
+
+test("handler features_mismatch and features_required", async () => {
+  const created = await handleMeetingMessage(
+    { type: "meeting.create", v: 1, title: "mm" },
+    { origin: EXT },
+  )
+  const id = created.meeting.id as string
+  await handleMeetingMessage(
+    {
+      type: "meeting.set_transcript",
+      v: 1,
+      id,
+      text: "a\nb",
+      silence_cut: false,
+    },
+    { origin: EXT },
+  )
+  const req = await handleMeetingMessage(
+    {
+      type: "meeting.auto_diarize",
+      v: 1,
+      id,
+      privacy_ack_v1: true,
+      mode: "audio_cluster",
+    },
+    { origin: EXT },
+  )
+  assert.equal(req.code, "features_required")
+
+  const mis = await handleMeetingMessage(
+    {
+      type: "meeting.auto_diarize",
+      v: 1,
+      id,
+      privacy_ack_v1: true,
+      mode: "audio_cluster",
+      features: [[0, 0, 0]],
+    },
+    { origin: EXT },
+  )
+  assert.equal(mis.code, "features_mismatch")
+})
+
+test("applyDiarizeToLines preserveManual keeps hand labels", () => {
+  const lines = [
+    { text: "a", source: "paste" as const, speaker: "张三" },
+    { text: "b", source: "paste" as const },
+  ]
+  const r = diarizeByTextGap(lines, 2)
+  const kept = applyDiarizeToLines(lines, r, { preserveManual: true })
+  assert.equal(kept[0]!.speaker, "张三")
+  assert.equal(kept[1]!.speaker, r.speakers[1])
+})

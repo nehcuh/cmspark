@@ -5941,6 +5941,14 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (Array.isArray(m.features) && m.features.length > 2000) {
         return { valid: false, error: "meeting.auto_diarize features too long" }
       }
+      if (m.text != null) {
+        if (typeof m.text !== "string") {
+          return { valid: false, error: "meeting.auto_diarize text must be string" }
+        }
+        if (m.text.length > 80_000) {
+          return { valid: false, error: "meeting.auto_diarize text too long" }
+        }
+      }
       return { valid: true }
     },
     "meeting.generate_minutes": (m) => {

@@ -49,7 +49,7 @@ thread_defaults:
 workspace:
   type: none
 ui:
-  suitable_for: 会后把转写整理成 TL;DR、决议、待办；单人备忘口述纪要（暂不分说话人）。
+  suitable_for: 会后把转写整理成 TL;DR、决议、待办；可手标或实验性匿名「发言人N」后出纪要。
   unsuitable_for: 身份级说话人识别 SLA、系统/会议软件混音、自动开麦后台偷录。
   tools_summary_zh: 不额外限制工具；以对话与转写文本为主生成纪要
 author: cmspark
