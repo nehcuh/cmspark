@@ -40,6 +40,21 @@ type McpOption = { name: string; status?: string; enabled?: boolean }
 
 type ToolsModeUi = "unchanged" | "allowlist"
 
+/** Trust single-holder conflict — offer one-click unlock + apply. */
+type TrustHolderInfo = {
+  id: string
+  pack_id: string | null
+  alias: string | null
+}
+
+type TrustConflictState = {
+  packId: string
+  packName: string
+  threadId: string
+  holders: TrustHolderInfo[]
+  error: string
+}
+
 /** Curated native tools for scene allowlist UI (P0 static groups). */
 const SCENE_TOOL_GROUPS: Array<{ title: string; highRisk?: boolean; tools: string[] }> = [
   {
@@ -140,11 +155,16 @@ export function PacksPanel() {
   const [status, setStatus] = useState("")
   const [busy, setBusy] = useState<string | null>(null)
   const [confirmPack, setConfirmPack] = useState<PackListItem | null>(null)
+  const [trustConflict, setTrustConflict] = useState<TrustConflictState | null>(null)
   const [editor, setEditor] = useState<SceneEditorState | null>(null)
   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([])
   const [mcpOptions, setMcpOptions] = useState<McpOption[]>([])
   /** After pack.saved_user, apply to this thread (also sent as apply_thread_id). */
   const pendingApplyThreadRef = useRef<string | null>(null)
+  /** Last pack.apply target — used to open Trust conflict dialog with names. */
+  const pendingApplyRef = useRef<{ packId: string; packName: string; threadId: string } | null>(
+    null,
+  )
   /** pack.get mode: edit existing user pack vs clone builtin into new user scene. */
   const packGetModeRef = useRef<"edit" | "clone">("edit")
   /** Source tools when cloning (for「保留原场景工具限制」). */
@@ -152,6 +172,18 @@ export function PacksPanel() {
   const [suggestNote, setSuggestNote] = useState<string>("")
   const activeThreadRef = useRef(state.activeThreadId)
   activeThreadRef.current = state.activeThreadId
+
+  const openTrustConflict = (
+    packId: string,
+    packName: string,
+    threadId: string,
+    holders: TrustHolderInfo[],
+    error: string,
+  ) => {
+    setTrustConflict({ packId, packName, threadId, holders, error })
+    setBusy(null)
+    setConfirmPack(null)
+  }
 
   const activeThread = (state.threads || []).find((t: any) => t.id === state.activeThreadId)
   const workspaceRoot = (activeThread as any)?.workspace_root as string | undefined
@@ -185,13 +217,39 @@ export function PacksPanel() {
             dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
             flash(msg.id ? `已保存并用于本对话：${msg.id}` : "已保存并用于本对话", 3000)
             pendingApplyThreadRef.current = null
+            pendingApplyRef.current = null
           } else if (msg.apply_error) {
-            flash(`场景已保存，但应用失败：${msg.apply_error}`, 5000)
             pendingApplyThreadRef.current = null
+            const holders = Array.isArray(msg.holders) ? (msg.holders as TrustHolderInfo[]) : []
+            if (
+              msg.apply_code === "trust_holder_conflict" &&
+              holders.length > 0 &&
+              msg.id &&
+              pendingApplyRef.current
+            ) {
+              const pend = pendingApplyRef.current
+              pendingApplyRef.current = null
+              openTrustConflict(
+                msg.id,
+                pend.packName || msg.id,
+                pend.threadId,
+                holders,
+                String(msg.apply_error),
+              )
+            } else {
+              pendingApplyRef.current = null
+              flash(`场景已保存，但应用失败：${msg.apply_error}`, 5000)
+            }
           } else if (pendingApplyThreadRef.current && msg.id) {
             // Fallback if server ignored apply_thread_id
             const tid = pendingApplyThreadRef.current
             pendingApplyThreadRef.current = null
+            const pend = pendingApplyRef.current
+            pendingApplyRef.current = {
+              packId: msg.id,
+              packName: pend?.packName || msg.id,
+              threadId: tid,
+            }
             chrome.runtime.sendMessage({
               type: "pack.apply",
               pack_id: msg.id,
@@ -200,6 +258,7 @@ export function PacksPanel() {
             })
             flash(msg.id ? `场景已保存，正在用于本对话…` : "场景已保存", 2500)
           } else {
+            pendingApplyRef.current = null
             flash(msg.id ? `场景已保存：${msg.id}` : "场景已保存", 2500)
           }
         }
@@ -325,7 +384,11 @@ export function PacksPanel() {
         flash("已用于本对话", 2500)
         setBusy(null)
         setConfirmPack(null)
+        setTrustConflict(null)
+        pendingApplyRef.current = null
         if (msg.thread?.id) dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+        // Holder thread may have been unapplied on force_takeover — refresh list meta.
+        chrome.runtime.sendMessage({ type: "thread.list" })
       }
       if (msg?.type === "pack.unapplied") {
         flash("已退出场景，回到通用助手", 2500)
@@ -361,8 +424,16 @@ export function PacksPanel() {
         flash("已清除工作区绑定", 2500)
       }
       if (msg?.type === "error") {
-        flash(msg.error || "操作失败", 5000)
-        setBusy(null)
+        const holders = Array.isArray(msg.holders) ? (msg.holders as TrustHolderInfo[]) : []
+        if (msg.code === "trust_holder_conflict" && holders.length > 0 && pendingApplyRef.current) {
+          const pend = pendingApplyRef.current
+          pendingApplyRef.current = null
+          openTrustConflict(pend.packId, pend.packName, pend.threadId, holders, msg.error || "")
+        } else {
+          flash(msg.error || "操作失败", 5000)
+          setBusy(null)
+          pendingApplyRef.current = null
+        }
       }
     }
     chrome.runtime.onMessage.addListener(handler)
@@ -398,12 +469,36 @@ export function PacksPanel() {
   const confirmApply = () => {
     if (!confirmPack || !state.activeThreadId) return
     setBusy(confirmPack.id)
+    pendingApplyRef.current = {
+      packId: confirmPack.id,
+      packName: confirmPack.name,
+      threadId: state.activeThreadId,
+    }
     chrome.runtime.sendMessage({
       type: "pack.apply",
       pack_id: confirmPack.id,
       thread_id: state.activeThreadId,
       user_gesture: true,
     })
+  }
+
+  /** After Trust conflict: release other holders' scenes and apply here. */
+  const confirmTrustTakeover = () => {
+    if (!trustConflict) return
+    setBusy(trustConflict.packId)
+    pendingApplyRef.current = {
+      packId: trustConflict.packId,
+      packName: trustConflict.packName,
+      threadId: trustConflict.threadId,
+    }
+    chrome.runtime.sendMessage({
+      type: "pack.apply",
+      pack_id: trustConflict.packId,
+      thread_id: trustConflict.threadId,
+      user_gesture: true,
+      force_takeover: true,
+    })
+    setTrustConflict(null)
   }
 
   const unapply = () => {
@@ -649,6 +744,15 @@ export function PacksPanel() {
 
     setBusy(andApply ? "save-apply" : "save")
     pendingApplyThreadRef.current = andApply ? state.activeThreadId || null : null
+    if (andApply && state.activeThreadId) {
+      pendingApplyRef.current = {
+        packId: editor.id || "",
+        packName: editor.name.trim(),
+        threadId: state.activeThreadId,
+      }
+    } else {
+      pendingApplyRef.current = null
+    }
     chrome.runtime.sendMessage({
       type: "pack.save_user",
       user_gesture: true,
@@ -871,6 +975,58 @@ export function PacksPanel() {
           网络扫描目标 / 本对话授权 → 设置
         </button>
       </section>
+
+      {/* Trust single-holder conflict: one-click unlock + apply */}
+      {trustConflict && (
+        <div
+          style={styles.modalOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Trust 已被其他对话占用"
+        >
+          <div style={styles.modal}>
+            <div style={styles.modalTitle}>Trust 已被其他对话占用</div>
+            <p style={styles.modalP}>
+              全局 Trust 同时只能由一个对话持有。下列对话仍挂着 Trust 场景（对话结束不会自动释放）：
+            </p>
+            <ul style={{ ...styles.modalP, margin: "8px 0", paddingLeft: 18 }}>
+              {trustConflict.holders.map((h) => (
+                <li key={h.id}>
+                  <strong>{h.alias || h.id}</strong>
+                  {h.pack_id ? (
+                    <span style={{ color: tokens.textMuted, fontSize: 11 }}> · {h.pack_id}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+            <p style={styles.modalP}>
+              选择「解锁并用于本对话」将<strong>退出占用方场景</strong>（尽量恢复其应用前配置），再将「
+              {trustConflict.packName}」应用到当前对话。
+            </p>
+            <p style={{ ...styles.modalP, color: "#b45309", fontWeight: 600 }}>
+              ⚠️ 这会移动全局安全配置的占用权；请确认占用方对话可以退出场景。
+            </p>
+            <div style={styles.modalActions}>
+              <button
+                type="button"
+                style={styles.secondaryBtn}
+                onClick={() => setTrustConflict(null)}
+                disabled={!!busy}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                onClick={confirmTrustTakeover}
+                disabled={!!busy}
+              >
+                {busy === trustConflict.packId ? "处理中…" : "解锁并用于本对话"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Apply confirm modal */}
       {confirmPack && (

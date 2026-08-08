@@ -1,0 +1,7 @@
+{
+  "batch": "trust-holder-force-takeover",
+  "timestamp": "20260808-121834",
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/trust-holder-force-takeover-pi-20260808-121834.md" },
+  "approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/trust-holder-force-takeover-diff-20260808-121834.patch"
+}

@@ -87,7 +87,7 @@
 | **高危工具** | 可勾选进工具面；**Trust 区**可声明「跳过 L2 / 自动开模块 / 写 auto_approve」 |
 | **Trust（选项 B）** | **仅「我的」场景**。保存并**用于本对话**时写入 **全局** Companion 配置 |
 | **Trust 恢复** | **退出场景** / **切换到其他场景** / **删除场景** / apply 失败路径会恢复应用前的 profile · auto_approve · 模块开关；Companion 启动会清理崩溃残留（journal reconcile） |
-| **Trust 单 holder** | 同时只能有一个对话占用 Trust；其他对话应用会提示先退出占用方 |
+| **Trust 单 holder** | 同时只能有一个对话占用 Trust；其他对话应用会弹窗展示占用方，并支持 **一键解锁并用于本对话**（`force_takeover`：先 unapply 占用方再 apply） |
 | **Trust 不会** | 经 zip/目录 **安装** 的包不能自带 `origin:user`+`trust`（安装时剥离）；`spawn_worker` 应用场景 **不写** 全局 Trust |
 | **另存** | 可勾「保留原场景工具限制」（默认关） |
 | **AI** | 「AI 生成场景」/「推荐技能·MCP」/「优化 Prompt」— 只预填，需保存 |
@@ -312,7 +312,7 @@
 - Worker 默认 **硬禁** `shell_exec` / `netsec_port_scan` / `osascript_eval` / `host_*`（见 ADR-015 `WORKER_HARD_DENY`）。
 - Spawn **不得** 改 `capability_profile`、偷偷启用 modules，或写入全局 Trust B（`applyPack({ allowTrust: false })`）。
 - 需要 shell/netsec 时仍走本文 [§4](#4-切换到-enterprise并开启-shell) / [§5](#5-开启-netsec端口探测) 的本机 opt-in，且通常在 **非 worker / 升权另确认** 路径；多 agent 下 shell/netsec 另有 process **single-flight**。
-- **Trust 单 holder**：同一时间只有一个对话可占用 Trust 场景；他对话再应用会 `trust_holder_conflict`，须先退出占用方。
+- **Trust 单 holder**：同一时间只有一个对话可占用 Trust 场景；他对话再应用会 `trust_holder_conflict`（带 `holders` 别名）。Side Panel 弹窗可 **一键解锁并用于本对话**（`pack.apply` + `force_takeover:true`，先 unapply 占用方）。
 
 ### 10.5 Side Panel 操作提示
 

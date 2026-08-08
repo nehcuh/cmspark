@@ -1,0 +1,593 @@
+# Pi external review context
+batch: trust-holder-force-takeover
+base: HEAD
+time: 20260808-121834
+
+8dec043
+
+ M chrome-extension/src/sidepanel/components/PacksPanel.tsx
+ M companion/src/message-router.ts
+ M companion/src/packs/pack-engine.ts
+ M companion/src/server.ts
+ M companion/tests/packs-engine.test.ts
+ M docs/architecture.md
+ M docs/mission-pack-usage.md
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
+?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
+?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
+?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
+?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
+?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
+?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
+?? docs/audit/reviews/trust-holder-force-takeover-diff-20260808-121834.patch
+?? docs/audit/reviews/trust-holder-force-takeover-pi-review-prompt-20260808.md
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
+?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
+?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
+?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
+?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff
+ .../src/sidepanel/components/PacksPanel.tsx        | 162 ++++++++++++++++++++-
+ companion/src/message-router.ts                    |  18 ++-
+ companion/src/packs/pack-engine.ts                 |  89 +++++++++--
+ companion/src/server.ts                            |   4 +
+ companion/tests/packs-engine.test.ts               |  20 ++-
+ docs/architecture.md                               |   2 +-
+ docs/mission-pack-usage.md                         |   4 +-
+ 7 files changed, 270 insertions(+), 29 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/components/PacksPanel.tsx b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+index ba2ae36..a75c571 100644
+--- a/chrome-extension/src/sidepanel/components/PacksPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+@@ -40,6 +40,21 @@ type McpOption = { name: string; status?: string; enabled?: boolean }
+ 
+ type ToolsModeUi = "unchanged" | "allowlist"
+ 
++/** Trust single-holder conflict — offer one-click unlock + apply. */
++type TrustHolderInfo = {
++  id: string
++  pack_id: string | null
++  alias: string | null
++}
++
++type TrustConflictState = {
++  packId: string
++  packName: string
++  threadId: string
++  holders: TrustHolderInfo[]
++  error: string
++}
++
+ /** Curated native tools for scene allowlist UI (P0 static groups). */
+ const SCENE_TOOL_GROUPS: Array<{ title: string; highRisk?: boolean; tools: string[] }> = [
+   {
+@@ -140,11 +155,16 @@ export function PacksPanel() {
+   const [status, setStatus] = useState("")
+   const [busy, setBusy] = useState<string | null>(null)
+   const [confirmPack, setConfirmPack] = useState<PackListItem | null>(null)
++  const [trustConflict, setTrustConflict] = useState<TrustConflictState | null>(null)
+   const [editor, setEditor] = useState<SceneEditorState | null>(null)
+   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([])
+   const [mcpOptions, setMcpOptions] = useState<McpOption[]>([])
+   /** After pack.saved_user, apply to this thread (also sent as apply_thread_id). */
+   const pendingApplyThreadRef = useRef<string | null>(null)
++  /** Last pack.apply target — used to open Trust conflict dialog with names. */
++  const pendingApplyRef = useRef<{ packId: string; packName: string; threadId: string } | null>(
++    null,
++  )
+   /** pack.get mode: edit existing user pack vs clone builtin into new user scene. */
+   const packGetModeRef = useRef<"edit" | "clone">("edit")
+   /** Source tools when cloning (for「保留原场景工具限制」). */
+@@ -153,6 +173,18 @@ export function PacksPanel() {
+   const activeThreadRef = useRef(state.activeThreadId)
+   activeThreadRef.current = state.activeThreadId
+ 
++  const openTrustConflict = (
++    packId: string,
++    packName: string,
++    threadId: string,
++    holders: TrustHolderInfo[],
++    error: string,
++  ) => {
++    setTrustConflict({ packId, packName, threadId, holders, error })
++    setBusy(null)
++    setConfirmPack(null)
++  }
++
+   const activeThread = (state.threads || []).find((t: any) => t.id === state.activeThreadId)
+   const workspaceRoot = (activeThread as any)?.workspace_root as string | undefined
+ 
+@@ -185,13 +217,39 @@ export function PacksPanel() {
+             dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+             flash(msg.id ? `已保存并用于本对话：${msg.id}` : "已保存并用于本对话", 3000)
+             pendingApplyThreadRef.current = null
++            pendingApplyRef.current = null
+           } else if (msg.apply_error) {
+-            flash(`场景已保存，但应用失败：${msg.apply_error}`, 5000)
+             pendingApplyThreadRef.current = null
++            const holders = Array.isArray(msg.holders) ? (msg.holders as TrustHolderInfo[]) : []
++            if (
++              msg.apply_code === "trust_holder_conflict" &&
++              holders.length > 0 &&
++              msg.id &&
++              pendingApplyRef.current
++            ) {
++              const pend = pendingApplyRef.current
++              pendingApplyRef.current = null
++              openTrustConflict(
++                msg.id,
++                pend.packName || msg.id,
++                pend.threadId,
++                holders,
++                String(msg.apply_error),
++              )
++            } else {
++              pendingApplyRef.current = null
++              flash(`场景已保存，但应用失败：${msg.apply_error}`, 5000)
++            }
+           } else if (pendingApplyThreadRef.current && msg.id) {
+             // Fallback if server ignored apply_thread_id
+             const tid = pendingApplyThreadRef.current
+             pendingApplyThreadRef.current = null
++            const pend = pendingApplyRef.current
++            pendingApplyRef.current = {
++              packId: msg.id,
++              packName: pend?.packName || msg.id,
++              threadId: tid,
++            }
+             chrome.runtime.sendMessage({
+               type: "pack.apply",
+               pack_id: msg.id,
+@@ -200,6 +258,7 @@ export function PacksPanel() {
+             })
+             flash(msg.id ? `场景已保存，正在用于本对话…` : "场景已保存", 2500)
+           } else {
++            pendingApplyRef.current = null
+             flash(msg.id ? `场景已保存：${msg.id}` : "场景已保存", 2500)
+           }
+         }
+@@ -325,7 +384,11 @@ export function PacksPanel() {
+         flash("已用于本对话", 2500)
+         setBusy(null)
+         setConfirmPack(null)
++        setTrustConflict(null)
++        pendingApplyRef.current = null
+         if (msg.thread?.id) dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
++        // Holder thread may have been unapplied on force_takeover — refresh list meta.
++        chrome.runtime.sendMessage({ type: "thread.list" })
+       }
+       if (msg?.type === "pack.unapplied") {
+         flash("已退出场景，回到通用助手", 2500)
+@@ -361,8 +424,16 @@ export function PacksPanel() {
+         flash("已清除工作区绑定", 2500)
+       }
+       if (msg?.type === "error") {
+-        flash(msg.error || "操作失败", 5000)
+-        setBusy(null)
++        const holders = Array.isArray(msg.holders) ? (msg.holders as TrustHolderInfo[]) : []
++        if (msg.code === "trust_holder_conflict" && holders.length > 0 && pendingApplyRef.current) {
++          const pend = pendingApplyRef.current
++          pendingApplyRef.current = null
++          openTrustConflict(pend.packId, pend.packName, pend.threadId, holders, msg.error || "")
++        } else {
++          flash(msg.error || "操作失败", 5000)
++          setBusy(null)
++          pendingApplyRef.current = null
++        }
+       }
+     }
+     chrome.runtime.onMessage.addListener(handler)
+@@ -398,6 +469,11 @@ export function PacksPanel() {
+   const confirmApply = () => {
+     if (!confirmPack || !state.activeThreadId) return
+     setBusy(confirmPack.id)
++    pendingApplyRef.current = {
++      packId: confirmPack.id,
++      packName: confirmPack.name,
++      threadId: state.activeThreadId,
++    }
+     chrome.runtime.sendMessage({
+       type: "pack.apply",
+       pack_id: confirmPack.id,
+@@ -406,6 +482,25 @@ export function PacksPanel() {
+     })
+   }
+ 
++  /** After Trust conflict: release other holders' scenes and apply here. */
++  const confirmTrustTakeover = () => {
++    if (!trustConflict) return
++    setBusy(trustConflict.packId)
++    pendingApplyRef.current = {
++      packId: trustConflict.packId,
++      packName: trustConflict.packName,
++      threadId: trustConflict.threadId,
++    }
++    chrome.runtime.sendMessage({
++      type: "pack.apply",
++      pack_id: trustConflict.packId,
++      thread_id: trustConflict.threadId,
++      user_gesture: true,
++      force_takeover: true,
++    })
++    setTrustConflict(null)
++  }
++
+   const unapply = () => {
+     if (!state.activeThreadId) {
+       flash("请先选择对话")
+@@ -649,6 +744,15 @@ export function PacksPanel() {
+ 
+     setBusy(andApply ? "save-apply" : "save")
+     pendingApplyThreadRef.current = andApply ? state.activeThreadId || null : null
++    if (andApply && state.activeThreadId) {
++      pendingApplyRef.current = {
++        packId: editor.id || "",
++        packName: editor.name.trim(),
++        threadId: state.activeThreadId,
++      }
++    } else {
++      pendingApplyRef.current = null
++    }
+     chrome.runtime.sendMessage({
+       type: "pack.save_user",
+       user_gesture: true,
+@@ -872,6 +976,58 @@ export function PacksPanel() {
+         </button>
+       </section>
+ 
++      {/* Trust single-holder conflict: one-click unlock + apply */}
++      {trustConflict && (
++        <div
++          style={styles.modalOverlay}
++          role="dialog"
++          aria-modal="true"
++          aria-label="Trust 已被其他对话占用"
++        >
++          <div style={styles.modal}>
++            <div style={styles.modalTitle}>Trust 已被其他对话占用</div>
++            <p style={styles.modalP}>
++              全局 Trust 同时只能由一个对话持有。下列对话仍挂着 Trust 场景（对话结束不会自动释放）：
++            </p>
++            <ul style={{ ...styles.modalP, margin: "8px 0", paddingLeft: 18 }}>
++              {trustConflict.holders.map((h) => (
++                <li key={h.id}>
++                  <strong>{h.alias || h.id}</strong>
++                  {h.pack_id ? (
++                    <span style={{ color: tokens.textMuted, fontSize: 11 }}> · {h.pack_id}</span>
++                  ) : null}
++                </li>
++              ))}
++            </ul>
++            <p style={styles.modalP}>
++              选择「解锁并用于本对话」将<strong>退出占用方场景</strong>（尽量恢复其应用前配置），再将「
++              {trustConflict.packName}」应用到当前对话。
++            </p>
++            <p style={{ ...styles.modalP, color: "#b45309", fontWeight: 600 }}>
++              ⚠️ 这会移动全局安全配置的占用权；请确认占用方对话可以退出场景。
++            </p>
++            <div style={styles.modalActions}>
++              <button
++                type="button"
++                style={styles.secondaryBtn}
++                onClick={() => setTrustConflict(null)}
++                disabled={!!busy}
++              >
++                取消
++              </button>
++              <button
++                type="button"
++                style={styles.primaryBtn}
++                onClick={confirmTrustTakeover}
++                disabled={!!busy}
++              >
++                {busy === trustConflict.packId ? "处理中…" : "解锁并用于本对话"}
++              </button>
++            </div>
++          </div>
++        </div>
++      )}
++
+       {/* Apply confirm modal */}
+       {confirmPack && (
+         <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="确认用于本对话">
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 8a7605c..5ad0a0c 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -2549,13 +2549,21 @@ export async function handleMessage(
+       if (!rest.pack_id || !rest.thread_id) {
+         return { type: "error", error: "pack_id and thread_id required" }
+       }
+-      // allowTrust: only Side Panel user_gesture may write global Trust B
++      // allowTrust: only Side Panel user_gesture may write global Trust B.
++      // force_takeover: only after UI conflict confirm (still requires user_gesture).
++      const forceTakeover = rest.force_takeover === true
+       const r = applyPack(rest.pack_id, rest.thread_id, threadManager, skillEngine, {
+         workspace_path: rest.workspace_path,
+         allowTrust: true,
++        forceTakeoverTrust: forceTakeover,
+       })
+       if (!r.ok) {
+-        return { type: "error", error: r.error, code: (r as any).code }
++        return {
++          type: "error",
++          error: r.error,
++          code: (r as any).code,
++          holders: Array.isArray((r as any).holders) ? (r as any).holders : undefined,
++        }
+       }
+       return { type: "pack.applied", thread: r.thread }
+     }
+@@ -2659,9 +2667,12 @@ export async function handleMessage(
+           ? rest.apply_thread_id.trim()
+           : null
+       if (applyThreadId) {
+-        // Same gesture as save — allow Trust B write for user scenes
++        // Same gesture as save — allow Trust B write for user scenes.
++        // force_takeover only after UI conflict confirm on re-apply path.
++        const forceTakeover = rest.force_takeover === true
+         const ar = applyPack(r.id, applyThreadId, threadManager, skillEngine, {
+           allowTrust: true,
++          forceTakeoverTrust: forceTakeover,
+         })
+         if (!ar.ok) {
+           return {
+@@ -2670,6 +2681,7 @@ export async function handleMessage(
+             packs: r.packs,
+             apply_error: ar.error,
+             apply_code: (ar as any).code,
++            holders: Array.isArray((ar as any).holders) ? (ar as any).holders : undefined,
+           }
+         }
+         return {
+diff --git a/companion/src/packs/pack-engine.ts b/companion/src/packs/pack-engine.ts
+index fc08050..2d6417a 100644
+--- a/companion/src/packs/pack-engine.ts
++++ b/companion/src/packs/pack-engine.ts
+@@ -300,21 +300,40 @@ export function clearTrustJournal(): void {
+   }
+ }
+ 
++/** One active thread that still owns a Trust restore cookie (single-holder policy). */
++export type TrustHolderInfo = {
++  id: string
++  pack_id: string | null
++  /** Human label for UI (alias when set). */
++  alias: string | null
++}
++
+ /** Other threads that currently hold a Trust restore cookie (single-holder policy). */
+ export function findOtherTrustHolders(
+   threadManager: ThreadManager,
+   excludeThreadId: string,
+-): Array<{ id: string; pack_id: string | null }> {
+-  const out: Array<{ id: string; pack_id: string | null }> = []
++): TrustHolderInfo[] {
++  const out: TrustHolderInfo[] = []
+   for (const t of threadManager.list()) {
+     if (t.id === excludeThreadId) continue
+     if (isPackTrustSnapshot(t.mission_pack_trust_snapshot)) {
+-      out.push({ id: t.id, pack_id: t.mission_pack_id ?? null })
++      const alias =
++        typeof t.alias === "string" && t.alias.trim().length > 0 ? t.alias.trim() : null
++      out.push({
++        id: t.id,
++        pack_id: t.mission_pack_id ?? null,
++        alias,
++      })
+     }
+   }
+   return out
+ }
+ 
++function formatTrustHolderLabel(h: TrustHolderInfo): string {
++  const name = h.alias || h.id
++  return h.pack_id ? `「${name}」（场景 ${h.pack_id}）` : `「${name}」`
++}
++
+ /**
+  * Boot / reconnect: heal crash mid-apply and orphan held Trust with no thread cookie.
+  * Call after ThreadManager is constructed (server initServices).
+@@ -1356,14 +1375,24 @@ function configuredMcpServerIds(config: CompanionConfig): Set<string> {
+  *
+  * @param opts.allowTrust - When true (UI pack.apply / save+apply only), origin=user trust may
+  *   write global config. Default **false** so spawn_worker / non-gesture paths cannot elevate Trust B.
++ * @param opts.forceTakeoverTrust - When true (UI after conflict confirm only), unapply other
++ *   holders' scenes first so Trust can move to this thread. Requires allowTrust.
+  */
+ export function applyPack(
+   packId: string,
+   threadId: string,
+   threadManager: ThreadManager,
+   skillEngine: SkillEngine,
+-  opts?: { workspace_path?: string; allowTrust?: boolean },
+-): { ok: true; thread: any } | { ok: false; error: string; code?: string } {
++  opts?: { workspace_path?: string; allowTrust?: boolean; forceTakeoverTrust?: boolean },
++): {
++  ok: true
++  thread: any
++} | {
++  ok: false
++  error: string
++  code?: string
++  holders?: TrustHolderInfo[]
++} {
+   let config = getConfig()
+   const { dir, result } = readInstalledManifest(packId)
+   if (!result.ok) return { ok: false, error: result.error }
+@@ -1395,18 +1424,48 @@ export function applyPack(
+   const packTrust = result.manifest.trust
+   const originUser = resolvePackOrigin(result.manifest) === "user"
+   if (packTrust && originUser && allowTrust) {
+-    // Single-holder: another thread already owns Trust B → refuse (clear UI error).
++    // Single-holder: another thread already owns Trust B → refuse or force-takeover (UI confirm).
+     const others = findOtherTrustHolders(threadManager, threadId)
+     if (others.length > 0) {
+-      const o = others[0]
+-      return {
+-        ok: false,
+-        error:
+-          `Trust 已被其他对话占用（thread=${o.id}` +
+-          (o.pack_id ? `, pack=${o.pack_id}` : "") +
+-          `）。请先在该对话「退出场景」后再对本对话应用 Trust 场景。` +
+-          ` Trust is held by another thread; unapply there first.`,
+-        code: "trust_holder_conflict",
++      if (opts?.forceTakeoverTrust === true) {
++        // Explicit user confirm: exit holder scene(s) so Trust can move here.
++        for (const o of others) {
++          const released = unapplyPack(o.id, threadManager)
++          appendCapabilityAudit({
++            type: "pack.trust_takeover",
++            at: new Date().toISOString(),
++            from_thread_id: o.id,
++            from_pack_id: o.pack_id,
++            to_thread_id: threadId,
++            to_pack_id: packId,
++            unapply_ok: released.ok,
++            by: "pack.apply:force_takeover",
++          })
++          if (!released.ok) {
++            return {
++              ok: false,
++              error:
++                `无法释放占用对话 ${formatTrustHolderLabel(o)} 的 Trust：${released.error}` +
++                ` Could not release Trust holder.`,
++              code: "trust_takeover_failed",
++              holders: others,
++            }
++          }
++        }
++        // After unapply restore, re-read config so captureTrustSnapshot sees true baseline.
++        config = getConfig()
++      } else {
++        const o = others[0]
++        const labels = others.map(formatTrustHolderLabel).join("、")
++        return {
++          ok: false,
++          error:
++            `Trust 已被其他对话占用：${labels}。` +
++            `请先在该对话「退出场景」，或确认后一键解锁并用于本对话。` +
++            ` Trust is held by another thread; unapply there first or force_takeover.`,
++          code: "trust_holder_conflict",
++          holders: others,
++        }
+       }
+     }
+ 
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index e3a7ed2..0e3cd3b 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -6053,6 +6053,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       if (m.user_gesture !== true) {
+         return { valid: false, error: "pack.apply requires user_gesture:true (Side Panel only)" }
+       }
++      // force_takeover is optional boolean (UI one-click Trust unlock); only with user_gesture above.
++      if (m.force_takeover !== undefined && m.force_takeover !== true && m.force_takeover !== false) {
++        return { valid: false, error: "pack.apply force_takeover must be boolean when set" }
++      }
+       return { valid: true }
+     },
+     "pack.unapply": (m) => {
+diff --git a/companion/tests/packs-engine.test.ts b/companion/tests/packs-engine.test.ts
+index bd51fc8..241972e 100644
+--- a/companion/tests/packs-engine.test.ts
++++ b/companion/tests/packs-engine.test.ts
+@@ -425,13 +425,23 @@ test("S46 residual: second thread trust apply blocked while first holds", () =>
+   const r2 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true })
+   assert.equal(r2.ok, false)
+   assert.equal((r2 as any).code, "trust_holder_conflict")
++  assert.ok(Array.isArray((r2 as any).holders) && (r2 as any).holders.length === 1)
++  assert.equal((r2 as any).holders[0].id, t1.id)
++  assert.equal((r2 as any).holders[0].pack_id, saved.id)
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++
++  // One-click takeover: unapply holder + apply on t2 without manual unapply first
++  const r3 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, {
++    allowTrust: true,
++    forceTakeoverTrust: true,
++  })
++  assert.equal(r3.ok, true, (r3 as any).error)
++  assert.equal(tm.get(t1.id)!.mission_pack_id, null)
++  assert.equal(tm.get(t1.id)!.mission_pack_trust_snapshot, null)
++  assert.equal(tm.get(t2.id)!.mission_pack_id, saved.id)
++  assert.ok(tm.get(t2.id)!.mission_pack_trust_snapshot)
+   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+ 
+-  assert.equal(packEngine.unapplyPack(t1.id, tm).ok, true)
+-  assert.equal(
+-    packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true }).ok,
+-    true,
+-  )
+   packEngine.unapplyPack(t2.id, tm)
+   packEngine.deleteUserPack(saved.id, tm, skillEngine)
+   saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 62cc421..e626a82 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -614,7 +614,7 @@ UI「应用到当前线程」→ pack.apply { pack_id, thread_id }
+ 
+ - **内置 / installed Pack 禁止**写入 `auto_approve_dangerous` / god-mode 等放宽键。
+ - **Trust B（用户场景）**：仅 `origin=user` 可带顶层 `trust`；`pack.apply` / save+apply 需 `user_gesture` 且 `allowTrust:true`；`spawn_worker` 与 zip/dir **install** 不得抬升 Trust（install 剥离 `origin:user`+`trust`）。
+-- **Trust 生命周期**：`unapply` / `uninstall` / 切换场景 / apply 失败路径恢复快照；进程级 **单 holder**（他对话占用则 `trust_holder_conflict`）；崩溃用 `mission-pack-trust-journal.json` + 启动 `reconcilePackTrustOnBoot`。
++- **Trust 生命周期**：`unapply` / `uninstall` / 切换场景 / apply 失败路径恢复快照；进程级 **单 holder**（他对话占用则 `trust_holder_conflict` + `holders`；Side Panel 可 `force_takeover` 一键 unapply 占用方再 apply）；崩溃用 `mission-pack-trust-journal.json` + 启动 `reconcilePackTrustOnBoot`。
+ - `workspace_root not set` / `module_disabled` 为 **recoverable** 错误，引导用户 UI 操作。
+ - 审计日志：`logs/capability-audit.jsonl`（0o600、append、轮转）。
+ - **L2 确认 / 确认台（Cockpit）**用户说明见 [confirm-center-user-guide.md](confirm-center-user-guide.md)（与 NetSec 任务授权分层；实现见 `security-confirmation.ts` + 扩展 `MinimalConfirm` / `CockpitApp`）。
+diff --git a/docs/mission-pack-usage.md b/docs/mission-pack-usage.md
+index c06a899..3b1ca4a 100644
+--- a/docs/mission-pack-usage.md
++++ b/docs/mission-pack-usage.md
+@@ -87,7 +87,7 @@
+ | **高危工具** | 可勾选进工具面；**Trust 区**可声明「跳过 L2 / 自动开模块 / 写 auto_approve」 |
+ | **Trust（选项 B）** | **仅「我的」场景**。保存并**用于本对话**时写入 **全局** Companion 配置 |
+ | **Trust 恢复** | **退出场景** / **切换到其他场景** / **删除场景** / apply 失败路径会恢复应用前的 profile · auto_approve · 模块开关；Companion 启动会清理崩溃残留（journal reconcile） |
+-| **Trust 单 holder** | 同时只能有一个对话占用 Trust；其他对话应用会提示先退出占用方 |
++| **Trust 单 holder** | 同时只能有一个对话占用 Trust；其他对话应用会弹窗展示占用方，并支持 **一键解锁并用于本对话**（`force_takeover`：先 unapply 占用方再 apply） |
+ | **Trust 不会** | 经 zip/目录 **安装** 的包不能自带 `origin:user`+`trust`（安装时剥离）；`spawn_worker` 应用场景 **不写** 全局 Trust |
+ | **另存** | 可勾「保留原场景工具限制」（默认关） |
+ | **AI** | 「AI 生成场景」/「推荐技能·MCP」/「优化 Prompt」— 只预填，需保存 |
+@@ -312,7 +312,7 @@
+ - Worker 默认 **硬禁** `shell_exec` / `netsec_port_scan` / `osascript_eval` / `host_*`（见 ADR-015 `WORKER_HARD_DENY`）。
+ - Spawn **不得** 改 `capability_profile`、偷偷启用 modules，或写入全局 Trust B（`applyPack({ allowTrust: false })`）。
+ - 需要 shell/netsec 时仍走本文 [§4](#4-切换到-enterprise并开启-shell) / [§5](#5-开启-netsec端口探测) 的本机 opt-in，且通常在 **非 worker / 升权另确认** 路径；多 agent 下 shell/netsec 另有 process **single-flight**。
+-- **Trust 单 holder**：同一时间只有一个对话可占用 Trust 场景；他对话再应用会 `trust_holder_conflict`，须先退出占用方。
++- **Trust 单 holder**：同一时间只有一个对话可占用 Trust 场景；他对话再应用会 `trust_holder_conflict`（带 `holders` 别名）。Side Panel 弹窗可 **一键解锁并用于本对话**（`pack.apply` + `force_takeover:true`，先 unapply 占用方）。
+ 
+ ### 10.5 Side Panel 操作提示
+ 

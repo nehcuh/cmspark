@@ -425,13 +425,102 @@ test("S46 residual: second thread trust apply blocked while first holds", () => 
   const r2 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true })
   assert.equal(r2.ok, false)
   assert.equal((r2 as any).code, "trust_holder_conflict")
+  assert.ok(Array.isArray((r2 as any).holders) && (r2 as any).holders.length === 1)
+  assert.equal((r2 as any).holders[0].id, t1.id)
+  assert.equal((r2 as any).holders[0].pack_id, saved.id)
+  assert.equal((r2 as any).holders[0].alias, "holder-1")
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
 
-  assert.equal(packEngine.unapplyPack(t1.id, tm).ok, true)
+  // One-click takeover: unapply holder + apply on t2 without manual unapply first
+  const r3 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, {
+    allowTrust: true,
+    forceTakeoverTrust: true,
+  })
+  assert.equal(r3.ok, true, (r3 as any).error)
+  assert.equal(tm.get(t1.id)!.mission_pack_id, null)
+  assert.equal(tm.get(t1.id)!.mission_pack_trust_snapshot, null)
+  assert.equal(tm.get(t2.id)!.mission_pack_id, saved.id)
+  assert.ok(tm.get(t2.id)!.mission_pack_trust_snapshot)
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+
+  // Audit: pack.trust_takeover recorded for the released holder
+  const auditPath = path.join(getConfigDir(), "logs", "capability-audit.jsonl")
+  assert.ok(fs.existsSync(auditPath), "capability-audit.jsonl exists")
+  const auditLines = fs.readFileSync(auditPath, "utf-8").split("\n").filter(Boolean)
+  const takeover = auditLines
+    .map((l) => {
+      try {
+        return JSON.parse(l)
+      } catch {
+        return null
+      }
+    })
+    .filter((e) => e && e.type === "pack.trust_takeover" && e.from_thread_id === t1.id)
+  assert.ok(takeover.length >= 1, "expected pack.trust_takeover audit")
+  assert.equal(takeover[takeover.length - 1].to_thread_id, t2.id)
+  assert.equal(takeover[takeover.length - 1].unapply_ok, true)
+
+  packEngine.unapplyPack(t2.id, tm)
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("Pi nit: orphan trust cookie without pack id is released by unapply and force_takeover", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  resetTrustBaseline(cfg0)
+
+  const saved = packEngine.saveUserPack(
+    {
+      name: "orphan-cookie",
+      system_prompt_append: "orphan cookie pack",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
+      trust: { auto_approve_dangerous: true },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+
+  const tm = new ThreadManager()
+  const t1 = tm.create("orphan-holder")
+  const t2 = tm.create("orphan-target")
   assert.equal(
-    packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true }).ok,
     true,
   )
+  // Simulate partial lifecycle: pack id cleared but cookie left (Pi residual path)
+  const cookie = tm.get(t1.id)!.mission_pack_trust_snapshot
+  assert.ok(cookie)
+  tm.update(t1.id, { mission_pack_id: null as any })
+  // Keep cookie via direct patch (update may not re-set cookie after pack null)
+  tm.update(t1.id, { mission_pack_trust_snapshot: cookie as any })
+  assert.equal(tm.get(t1.id)!.mission_pack_id, null)
+  assert.ok(tm.get(t1.id)!.mission_pack_trust_snapshot)
+
+  // unapply alone clears orphan cookie
+  assert.equal(packEngine.unapplyPack(t1.id, tm).ok, true)
+  assert.equal(tm.get(t1.id)!.mission_pack_trust_snapshot, null)
+
+  // Re-seed orphan cookie + elevate, then force_takeover from t2
+  assert.equal(
+    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  const cookie2 = tm.get(t1.id)!.mission_pack_trust_snapshot
+  tm.update(t1.id, { mission_pack_id: null as any })
+  tm.update(t1.id, { mission_pack_trust_snapshot: cookie2 as any })
+
+  const r = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, {
+    allowTrust: true,
+    forceTakeoverTrust: true,
+  })
+  assert.equal(r.ok, true, (r as any).error)
+  assert.equal(tm.get(t1.id)!.mission_pack_trust_snapshot, null)
+  assert.equal(tm.get(t2.id)!.mission_pack_id, saved.id)
+
   packEngine.unapplyPack(t2.id, tm)
   packEngine.deleteUserPack(saved.id, tm, skillEngine)
   saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)

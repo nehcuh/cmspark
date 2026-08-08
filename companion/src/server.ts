@@ -6053,6 +6053,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.user_gesture !== true) {
         return { valid: false, error: "pack.apply requires user_gesture:true (Side Panel only)" }
       }
+      // force_takeover is optional boolean (UI one-click Trust unlock); only with user_gesture above.
+      if (m.force_takeover !== undefined && m.force_takeover !== true && m.force_takeover !== false) {
+        return { valid: false, error: "pack.apply force_takeover must be boolean when set" }
+      }
       return { valid: true }
     },
     "pack.unapply": (m) => {

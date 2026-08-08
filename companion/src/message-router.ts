@@ -2549,13 +2549,21 @@ export async function handleMessage(
       if (!rest.pack_id || !rest.thread_id) {
         return { type: "error", error: "pack_id and thread_id required" }
       }
-      // allowTrust: only Side Panel user_gesture may write global Trust B
+      // allowTrust: only Side Panel user_gesture may write global Trust B.
+      // force_takeover: only after UI conflict confirm (still requires user_gesture).
+      const forceTakeover = rest.force_takeover === true
       const r = applyPack(rest.pack_id, rest.thread_id, threadManager, skillEngine, {
         workspace_path: rest.workspace_path,
         allowTrust: true,
+        forceTakeoverTrust: forceTakeover,
       })
       if (!r.ok) {
-        return { type: "error", error: r.error, code: (r as any).code }
+        return {
+          type: "error",
+          error: r.error,
+          code: (r as any).code,
+          holders: Array.isArray((r as any).holders) ? (r as any).holders : undefined,
+        }
       }
       return { type: "pack.applied", thread: r.thread }
     }
@@ -2659,9 +2667,12 @@ export async function handleMessage(
           ? rest.apply_thread_id.trim()
           : null
       if (applyThreadId) {
-        // Same gesture as save — allow Trust B write for user scenes
+        // Same gesture as save — allow Trust B write for user scenes.
+        // force_takeover only after UI conflict confirm on re-apply path.
+        const forceTakeover = rest.force_takeover === true
         const ar = applyPack(r.id, applyThreadId, threadManager, skillEngine, {
           allowTrust: true,
+          forceTakeoverTrust: forceTakeover,
         })
         if (!ar.ok) {
           return {
@@ -2670,6 +2681,7 @@ export async function handleMessage(
             packs: r.packs,
             apply_error: ar.error,
             apply_code: (ar as any).code,
+            holders: Array.isArray((ar as any).holders) ? (ar as any).holders : undefined,
           }
         }
         return {
