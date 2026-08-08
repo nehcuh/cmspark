@@ -11,7 +11,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\build-windows-exe.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\build-windows-exe.ps1 -SkipInstall
 #
-# Output (version from package.json, example 0.4.0):
+# Output (version from package.json, example 0.5.0):
 #   dist-package\cmspark-windows-x64\cmspark-agent.exe   <- standalone SEA exe
 #   dist-package\CMspark-v{version}-windows-x64.zip     <- portable package
 #   dist-package\CMspark-Setup-v{version}.exe             <- NSIS installer (if makensis found)
