@@ -1,0 +1,7 @@
+{
+  "batch": "ui-tars-path-c-impl-r2",
+  "timestamp": "20260808-234630",
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/ui-tars-path-c-impl-r2-pi-20260808-234630.md" },
+  "approve": true,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/ui-tars-path-c-impl-r2-diff-20260808-234630.patch"
+}

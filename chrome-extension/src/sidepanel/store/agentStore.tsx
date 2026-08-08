@@ -272,7 +272,7 @@ export type AgentAction =
   | { type: "SET_COMPUTER_MODEL_LICENSE_DOOR"; door: ComputerModelLicenseDoor | null }
   | { type: "SET_COMPUTER_MODEL_ERROR"; error: string | null }
   | { type: "SET_VOICE_MODEL_STATE"; modelState: VoiceModelState }
-  | { type: "SET_VOICE_MODEL_PROGRESS"; progress: VoiceModelProgress }
+  | { type: "SET_VOICE_MODEL_PROGRESS"; progress: VoiceModelProgress | null }
   | { type: "SET_VOICE_MODEL_ERROR"; error: string | null }
   | { type: "NOTE_BROWSER_TOOL"; at?: number }
   | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }

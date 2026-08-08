@@ -13,8 +13,14 @@
 #
 # Output (version from package.json, example 0.5.0):
 #   dist-package\cmspark-windows-x64\cmspark-agent.exe   <- standalone SEA exe
+#   dist-package\cmspark-windows-x64\bin\cmspark-whisper-win-x64.exe  <- local STT (if prepared)
 #   dist-package\CMspark-v{version}-windows-x64.zip     <- portable package
 #   dist-package\CMspark-Setup-v{version}.exe             <- NSIS installer (if makensis found)
+#
+# Local STT (Path B): whisper is NOT embedded inside the SEA blob. Stage a native
+# binary before packaging:
+#   companion\dist\bin\cmspark-whisper-win-x64.exe
+# If missing, build still succeeds; local STT is disabled at runtime (binary_missing).
 # =============================================================================
 
 [CmdletBinding()]
@@ -412,6 +418,36 @@ else { Warn "systray2 not installed — tray icon will not work" }
 
 # onnxruntime-node is intentionally NOT staged. Experimental locate is Qwen3-VL
 # (Python + on-demand HF/ModelScope weights). TinyClick/ORT packaging removed.
+
+# Path B local STT: cmspark-whisper is a *sidecar* next to the SEA exe
+# (NOT injected into the Node SEA blob). Runtime resolve looks under:
+#   <exeDir>\bin\cmspark-whisper-win-x64.exe
+#   <exeDir>\cmspark-whisper-win-x64.exe
+#   PATH whisper-cli.exe (dev fallback)
+# Prepare before build-package:
+#   companion\dist\bin\cmspark-whisper-win-x64.exe
+# (copy from a built whisper-cli, or: bash companion/scripts/build-cmspark-whisper.sh
+#  with CMSPARK_WHISPER_SRC set on Git Bash / WSL)
+$WhisperCandidates = @(
+    "$CompanionDir\dist\bin\cmspark-whisper-win-x64.exe",
+    "$CompanionDir\dist\bin\cmspark-whisper-win-x64",
+    "$CompanionDir\bin\cmspark-whisper-win-x64.exe"
+)
+$WhisperSrc = $null
+foreach ($c in $WhisperCandidates) {
+    if (Test-Path $c) { $WhisperSrc = $c; break }
+}
+if ($WhisperSrc) {
+    $WhisperBinDir = Join-Path $StagingDir "bin"
+    New-Item -ItemType Directory -Force $WhisperBinDir | Out-Null
+    $WhisperDest = Join-Path $WhisperBinDir "cmspark-whisper-win-x64.exe"
+    Copy-Item $WhisperSrc $WhisperDest -Force
+    $WhisperSize = (Get-Item $WhisperDest).Length
+    Ok "bin/cmspark-whisper-win-x64.exe (local STT, $WhisperSize bytes)"
+} else {
+    Warn "companion/dist/bin/cmspark-whisper-win-x64.exe missing — local STT disabled in this package"
+    Write-Host "  To enable: place whisper-cli as companion\dist\bin\cmspark-whisper-win-x64.exe then re-run build-package.bat" -ForegroundColor DarkYellow
+}
 
 # THIRD_PARTY_NOTICES must ship with the package (W3 §5.5 MIT notice obligation;
 # generated from companion/src/computer/model-license.ts single source of truth).

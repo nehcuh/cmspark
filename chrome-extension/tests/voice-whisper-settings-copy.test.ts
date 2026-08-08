@@ -11,9 +11,12 @@ import {
   LOCAL_PRIVACY_COPY,
   OTHER_WHISPER_MODEL_IDS,
   RECOMMENDED_WHISPER_MODEL_ID,
+  VOICE_ERR_COMPANION_DISCONNECTED,
   WHISPER_SETTINGS_MODEL_IDS,
   binaryStatusLine,
   formatDiskUsage,
+  mapVoiceTransportError,
+  parseVoiceSettingsSendResponse,
   privacyCopyForEngine,
   progressPercent,
 } from "../src/sidepanel/voice/whisper-settings-copy"
@@ -66,4 +69,26 @@ test("formatDiskUsage and binaryStatusLine (not_found OK for M0)", () => {
   assert.match(nf, /未找到/)
   assert.match(nf, /M0/)
   assert.match(binaryStatusLine({ status: "ready", path: "/opt/w" }), /已就绪/)
+})
+
+test("parseVoiceSettingsSendResponse surfaces SW / disconnect failures", () => {
+  assert.equal(parseVoiceSettingsSendResponse({ ok: true }).ok, true)
+  const disc = parseVoiceSettingsSendResponse({
+    ok: false,
+    error: "Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接",
+  })
+  assert.equal(disc.ok, false)
+  if (!disc.ok) assert.match(disc.error, /Companion|未连接/)
+
+  const lastErr = parseVoiceSettingsSendResponse(undefined, "Receiving end does not exist.")
+  assert.equal(lastErr.ok, false)
+  if (!lastErr.ok) assert.match(lastErr.error, /重载|未响应|扩展/)
+
+  const noResp = parseVoiceSettingsSendResponse(null)
+  assert.equal(noResp.ok, false)
+  if (!noResp.ok) assert.equal(noResp.error, VOICE_ERR_COMPANION_DISCONNECTED)
+})
+
+test("mapVoiceTransportError maps unknown message type to reload hint", () => {
+  assert.match(mapVoiceTransportError("Unknown message type: voice.model.download"), /重载|版本/)
 })

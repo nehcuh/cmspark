@@ -20,10 +20,9 @@ test("mapLocalSttError §6.5 known codes", () => {
     severity: "banner",
     message: "本机模型未就绪，请先在设置下载",
   })
-  assert.deepEqual(mapLocalSttError("binary_missing"), {
-    severity: "banner",
-    message: "本机听写组件不可用，请更新 Companion",
-  })
+  const binMiss = mapLocalSttError("binary_missing")
+  assert.equal(binMiss.severity, "banner")
+  assert.match(binMiss.message, /cmspark-whisper|未找到/)
   assert.deepEqual(mapLocalSttError("hash_fail"), {
     severity: "banner",
     message: "本机听写组件校验失败，请重装 Companion",

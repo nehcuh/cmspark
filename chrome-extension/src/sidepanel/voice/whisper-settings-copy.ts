@@ -60,6 +60,71 @@ export const BTN_SET_ACTIVE = "设为活动"
 
 export const MEMORY_NOTE = "与电脑控制实验模型同时使用可能占用大量内存"
 
+// --- Transport / optimistic feedback (settings sendMessage path) -------------
+
+/** Shown while voiceModel store mirror is still null. */
+export const VOICE_STATUS_QUERYING = "正在查询本机模型状态…"
+
+/** Local-only label after user clicks download, before companion state/progress. */
+export const VOICE_STATUS_STARTING_DOWNLOAD = "正在开始下载…"
+
+/** get_state / mutators: background refused because WS not up. */
+export const VOICE_ERR_COMPANION_DISCONNECTED =
+  "Companion 未连接。请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接。"
+
+/** get_state never filled voiceModel within the settings-open timeout. */
+export const VOICE_ERR_STATE_TIMEOUT =
+  "未能获取本机模型状态。请确认 Companion 已连接，然后关闭并重新打开设置；若仍无效请在 chrome://extensions 重载扩展。"
+
+/** download accepted by SW but no companion progress/state within timeout. */
+export const VOICE_ERR_DOWNLOAD_NO_PROGRESS =
+  "下载指令已发出，但未收到 Companion 进度。请确认 Companion 在运行，或重载扩展后重试。"
+
+export type VoiceSettingsSendResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * Parse chrome.runtime.sendMessage response for voice.model.* (settings → SW → WS).
+ * Background always sendResponse({ ok, error? }) for these types when the SW is alive.
+ */
+export function parseVoiceSettingsSendResponse(
+  resp: unknown,
+  runtimeLastError?: string | null,
+): VoiceSettingsSendResult {
+  if (typeof runtimeLastError === "string" && runtimeLastError.trim()) {
+    return { ok: false, error: mapVoiceTransportError(runtimeLastError.trim()) }
+  }
+  if (resp == null || typeof resp !== "object") {
+    // Undefined can mean no listener (SW dead) without lastError in some edge paths.
+    return { ok: false, error: VOICE_ERR_COMPANION_DISCONNECTED }
+  }
+  const r = resp as { ok?: unknown; error?: unknown }
+  if (r.ok === false) {
+    const raw = typeof r.error === "string" && r.error.trim() ? r.error.trim() : "请求失败"
+    return { ok: false, error: mapVoiceTransportError(raw) }
+  }
+  return { ok: true }
+}
+
+/** Map SW / transport English or technical strings to settings-facing Chinese. */
+export function mapVoiceTransportError(error: string): string {
+  if (!error) return VOICE_ERR_COMPANION_DISCONNECTED
+  if (/Companion 未连接|未连接/.test(error)) {
+    return /Companion/.test(error) ? error : VOICE_ERR_COMPANION_DISCONNECTED
+  }
+  if (/Service worker|未初始化|重载扩展/i.test(error)) {
+    return error.includes("重载")
+      ? error
+      : "扩展 Service Worker 未就绪，请在 chrome://extensions 重载 CMspark 后重试。"
+  }
+  if (/Unknown message type/i.test(error)) {
+    return "扩展版本过旧或不匹配，请在 chrome://extensions 重新加载 CMspark。"
+  }
+  if (/message port closed|Receiving end does not exist/i.test(error)) {
+    return "扩展后台未响应，请在 chrome://extensions 重载 CMspark 后重试。"
+  }
+  return error
+}
+
 export function formatDiskUsage(usedMB: number, budgetMB: number): string {
   const used = Number.isFinite(usedMB) ? usedMB : 0
   const budget = Number.isFinite(budgetMB) ? budgetMB : 0

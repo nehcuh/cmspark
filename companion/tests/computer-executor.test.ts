@@ -1904,7 +1904,10 @@ test("executor X1/Y4: paused 事件的 reason 过 P3 清洗(应用可控文本�
 // （稳定注入/不稳定 STALE）；拒绝 → 诚实降级 ELEMENT_NOT_FOUND 且零注入（拒绝
 // 不消耗注入预算）；证据链 layer=qwen-vl、confidence 缺省、uncrossverified。
 
-function fakeExperimentalLocator(point = { x: 160, y: 208 }) {
+function fakeExperimentalLocator(
+  point = { x: 160, y: 208 },
+  opts: { raw?: string } = {},
+) {
   const calls: Array<{ command: string; shot: CaptureMeta }> = []
   return {
     calls,
@@ -1914,6 +1917,7 @@ function fakeExperimentalLocator(point = { x: 160, y: 208 }) {
         return {
           kind: "hit",
           point,
+          ...(opts.raw !== undefined ? { raw: opts.raw } : {}),
           tokenIds: [50551, 50552],
           prompt: "what to do to execute the command? 确定",
           timings: { preprocessMs: 1, visionMs: 2, embedMs: 3, encoderMs: 4, decoderMs: 5, totalMs: 15 },
@@ -1972,6 +1976,28 @@ test("executor G4: experimental 命中 → re-L2 批准 → 注入建议点（ca
   assert.ok(rec.locateAttempts!.some((a) => a.layer === "qwen-vl" && a.outcome === "hit"))
   assert.equal(r.steps[0].layer, "qwen-vl")
   assert.equal(r.steps[0].confidence, undefined)
+})
+
+test("executor G4 Path C: experimental raw Thought → re-L2 caption 模型思考 (e2e)", async () => {
+  const tc = fakeExperimentalLocator(
+    { x: 160, y: 208 },
+    { raw: "Thought: 工具栏右侧的保存按钮\nAction: click(point='160 208')" },
+  )
+  const confirm = scriptedConfirm([true])
+  const injector = new RecordingInjector()
+  const deps = makeDeps({
+    injector,
+    locator: new FakeLocator([]),
+    confirm: confirm.fn,
+    experimentalLocator: tc.locator,
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, true, r.error)
+  assert.equal(confirm.captured.length, 1)
+  const code = confirm.captured[0].details.code
+  assert.ok(code.includes("模型思考：工具栏右侧的保存按钮"), "Path C Thought must surface in re-L2 caption")
+  assert.ok(code.includes("实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）"))
+  assert.deepEqual(injector.clicks.map((c) => [c.x, c.y]), [[150, 168]])
 })
 
 test("executor G4: experimental 建议被拒绝 → 诚实降级 ELEMENT_NOT_FOUND，零注入（拒绝不消耗注入预算）", async () => {

@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S56 (2026-08-08 ~17:30–18:10) [Windows 本机听写：下载静默 · binary_missing · 打包 sidecar]
+- **诊断**：点 large-v3-turbo/下载无反应 ≠ 缺 whisper-cpp；`voiceModel===null` 时 UI 默认「未下载」；`sendMessage` 不读 ok；Companion 侧 download 实测可用
+- **binary_missing**：当前 `dist-package\cmspark-windows-x64` **无** `bin\cmspark-whisper-*.exe`；SEA **不能**嵌 whisper；须旁路或 PATH `whisper-cli`
+- **实现**：设置页下载反馈/错误/超时；`allWhisperSearchRoots` 含 exeDir/bin；`build-windows-exe.ps1` stage whisper；README/build-package.bat 说明
+- **下次**：用户放 `companion\dist\bin\cmspark-whisper-win-x64.exe` 后重跑 `build-package.bat` 或装 PATH whisper-cli 并重启 Companion；重载扩展验下载 UI
+- Recorded: yes — 三层（权重/binary/麦）· SEA sidecar · 下载 fire-and-forget
+
 ### S55 (2026-08-08 ~16:00–16:40) [听写 UX 缺口 · Whisper M2 · 0.5.0 · DMG · React #310]
 - **产品缺口诊断**：会议入口只靠 `/meeting`；本机无字级流；热键手输；设置不能语音改 → 实现装配›场景›会议 + 按键录制 + 设置 NL/语音 + 实时出字偏好
 - **本机 Whisper M2**：`partial_request` 累计重解码 + PCM 流；**非** decoder-token；Pi **REJECT**（F1–F4：窗长/取消重启/定稿重复/partial 杀会话）→ 吸收；r3 nits（gUM soft-stop、AudioWorklet、自适应 poll、destroy）

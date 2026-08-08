@@ -7,6 +7,8 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import {
+  allWhisperSearchRoots,
+  defaultWhisperSearchRoots,
   resolveWhisperArch,
   resolveWhisperBinary,
   sha256FileSync,
@@ -145,4 +147,37 @@ test("whisperPinResolveOpts: pin present enforces digest", () => {
   assert.equal(o.expectedSha256, pin)
   assert.equal(o.allowUnpinned, false)
   assert.equal(o.forceUnpinned, false)
+})
+
+test("defaultWhisperSearchRoots includes bin/ and package root", () => {
+  const roots = defaultWhisperSearchRoots("/opt/cmspark")
+  assert.ok(roots.some((r) => r.replace(/\\/g, "/").endsWith("/opt/cmspark/bin")))
+  assert.ok(roots.some((r) => r.replace(/\\/g, "/") === "/opt/cmspark" || r.endsWith(`${path.sep}cmspark`)))
+})
+
+test("allWhisperSearchRoots includes SEA exeDir/bin layout", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-sea-"))
+  try {
+    const binDir = path.join(dir, "bin")
+    fs.mkdirSync(binDir)
+    const fakeExe = path.join(dir, "cmspark-agent.exe")
+    fs.writeFileSync(fakeExe, "x")
+    const whisper = path.join(binDir, "cmspark-whisper-win-x64.exe")
+    fs.writeFileSync(whisper, "fake-win-whisper")
+    const roots = allWhisperSearchRoots({
+      companionRoots: [path.join(dir, "never-exists-module")],
+      execPath: fakeExe,
+    })
+    assert.ok(roots.some((r) => path.resolve(r) === path.resolve(binDir)))
+    const r = resolveWhisperBinary({
+      searchRoots: roots,
+      platform: "win32",
+      arch: "x64",
+      allowUnpinned: true,
+    })
+    assert.equal(r.ok, true)
+    if (r.ok) assert.equal(path.resolve(r.path), path.resolve(whisper))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

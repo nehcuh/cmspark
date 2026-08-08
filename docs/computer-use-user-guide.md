@@ -149,7 +149,35 @@ Computer Use 截图与键鼠需要系统权限。请 **只** 为 **CMspark** 打
 - **用户路径**：设置 → 看「就绪」预检 → 选下载源（大陆推荐自动/魔搭）→ 选 2B/4B/8B → 下载 → 开启。  
 - **依赖**：本机 Python3 +（下载）`huggingface_hub` 或 `modelscope` +（推理）`transformers torch pillow`。  
 - **中国大陆**：默认 `auto` 会探测 HF/魔搭；显式可选 ModelScope / HF 镜像。  
+- **确认文案**：实验层命中时确认台会展示建议坐标；若模型输出中含可解析的 Thought/思考片段，会以「模型思考」短句附在确认文案中（已清洗控制字符，**不**作为自动注入依据）。  
 - 完整说明：[qwen-vl-experimental-layer.md](qwen-vl-experimental-layer.md)
+
+## 6.2 与「纯视觉 GUI Agent」（如 UI-TARS）的差异
+
+业界有一类 **截图 → 视觉模型 → 键鼠** 的原生 GUI Agent（例如 ByteDance [UI-TARS](https://github.com/bytedance/UI-TARS) / Desktop）。CMspark **吸收其纪律与解析经验**，但 **产品身份不同**：
+
+| | 纯视觉 GUI Agent（典型） | CMspark Computer Use |
+|--|--------------------------|----------------------|
+| 默认感知 | 几乎只靠截图 | **UIA/OCR 优先**，可选 Qwen3-VL 建议点 |
+| 控制环 | 模型驱动多轮截图循环 | 主对话 **tool-loop** 批量 `host_computer` + 确认台 |
+| 信任模型 | 多为本机/演示向 | **双开关 + 任务级 L2 + 硬拒 + 急停**（god-mode 不跳过任务 L2） |
+| 人类接管 | pause / Take control | **急停**、拒绝确认、re-L2；关确认台 **不停**任务（见 §4） |
+
+研究与路径决策（工程吸收清单）：[research/ui-tars-absorption-2026-08-08.md](research/ui-tars-absorption-2026-08-08.md) · [decisions/ui-tars-absorption-multipath-2026-08-08.md](decisions/ui-tars-absorption-multipath-2026-08-08.md)。
+
+## 6.3 `host_computer` 动作空间（速查）
+
+| action | 含义 | 备注 |
+|--------|------|------|
+| `click` / `double_click` / `right_click` | 点击 | 可用 `target` 锚文本定位，或显式 `x,y` |
+| `type` | 键入文本 | 必须进 L2 语料逐字枚举 |
+| `key` | 命名键和弦 | 白名单键名，非任意 VK |
+| `scroll` | 滚轮 | 需客户端坐标 + 非零 delta |
+| `drag` | 拖拽 | 起点/终点客户端坐标 |
+| `wait` | 等待 | 上限约 5s |
+| `screenshot` / `describe` | 观测 | describe = 宿主 OCR 空间行 |
+
+预算默认约 15、上限 30 次注入动作。完整 schema 见 Companion `tool-schemas` / ADR-017。
 
 ## 7. 硬限制（请勿指望绕过）
 
@@ -177,4 +205,4 @@ Computer Use 截图与键鼠需要系统权限。请 **只** 为 **CMspark** 打
 
 ---
 
-*文档版本：2026-07-29 · 对齐 ADR-020 · 与 companion `computer/*` + 扩展 Cockpit/AppsPanel 行为一致。*
+*文档版本：2026-08-08 · 对齐 ADR-020 · Path C UI-TARS 吸收 · 与 companion `computer/*` + 扩展 Cockpit/AppsPanel 行为一致。*

@@ -149,7 +149,45 @@ export function defaultWhisperSearchRoots(companionRoot: string): string[] {
     path.join(companionRoot, "dist", "bin"),
     path.join(companionRoot, "bin"),
     path.join(companionRoot, "dist"),
+    // Allow binary placed next to package root / SEA exe (not only under bin/).
+    companionRoot,
   ]
+}
+
+/**
+ * Full search list for production: companion module roots + packaged SEA layout.
+ * package.sh stages → `<exeDir>/bin/cmspark-whisper-<arch>[.exe]`.
+ * Without execPath roots, Windows SEA never finds the staged binary (__dirname is
+ * not the install directory).
+ */
+export function allWhisperSearchRoots(opts?: {
+  /** Module roots (same as defaultCompanionRoots / tests). */
+  companionRoots?: string[]
+  /** Override process.execPath (tests). */
+  execPath?: string
+}): string[] {
+  const companionRoots = opts?.companionRoots ?? []
+  const seen = new Set<string>()
+  const out: string[] = []
+  const pushRoots = (packageRoot: string) => {
+    for (const r of defaultWhisperSearchRoots(packageRoot)) {
+      const abs = path.resolve(r)
+      if (!seen.has(abs)) {
+        seen.add(abs)
+        out.push(abs)
+      }
+    }
+  }
+  for (const root of companionRoots) pushRoots(root)
+  const execPath = opts?.execPath ?? process.execPath
+  if (typeof execPath === "string" && execPath) {
+    try {
+      pushRoots(path.dirname(execPath))
+    } catch {
+      /* ignore */
+    }
+  }
+  return out
 }
 
 /** Home-cache path for spike-downloaded CLI (not production ship path). */

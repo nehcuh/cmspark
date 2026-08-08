@@ -5,7 +5,7 @@ import * as path from "node:path"
 
 import { getConfig, DATA_DIR } from "../config"
 import {
-  defaultWhisperSearchRoots,
+  allWhisperSearchRoots,
   resolveWhisperArch,
   resolveWhisperBinary,
   resolveWhisperCliOnPath,
@@ -81,19 +81,15 @@ export function mapBinaryResult(r: ResolveWhisperBinaryResult): VoiceModelStateP
 export function resolveBinaryForState(opts?: {
   companionRoots?: string[]
   searchRoots?: string[]
+  /** Override process.execPath for packaged SEA root (tests). */
+  execPath?: string
 }): VoiceModelStatePayload["binary"] {
-  const roots =
+  const searchRoots =
     opts?.searchRoots ??
-    (opts?.companionRoots ?? defaultCompanionRoots()).flatMap((r) => defaultWhisperSearchRoots(r))
-  // de-dupe while preserving order
-  const seen = new Set<string>()
-  const searchRoots: string[] = []
-  for (const r of roots) {
-    if (!seen.has(r)) {
-      seen.add(r)
-      searchRoots.push(r)
-    }
-  }
+    allWhisperSearchRoots({
+      companionRoots: opts?.companionRoots ?? defaultCompanionRoots(),
+      ...(opts?.execPath ? { execPath: opts.execPath } : {}),
+    })
   const warch = resolveWhisperArch()
   const pinOpts = whisperPinResolveOpts(warch)
   if (pinOpts.forceUnpinned) {

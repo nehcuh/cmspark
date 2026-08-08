@@ -67,10 +67,15 @@ import {
   OTHER_WHISPER_MODEL_IDS,
   RECOMMENDED_ROW_PREFIX,
   RECOMMENDED_WHISPER_MODEL_ID,
+  VOICE_ERR_DOWNLOAD_NO_PROGRESS,
+  VOICE_ERR_STATE_TIMEOUT,
+  VOICE_STATUS_QUERYING,
+  VOICE_STATUS_STARTING_DOWNLOAD,
   binaryStatusLine,
   formatDiskUsage,
   modelProbeErrorLabel,
   modelStatusLabel,
+  parseVoiceSettingsSendResponse,
   privacyCopyForEngine,
   progressPercent,
   type WhisperSettingsModelId,
@@ -144,6 +149,10 @@ export function SettingsSlideout() {
   // Path B M0: engine radio is UI draft until ready model + explicit "启用本机转写".
   const [engineDraft, setEngineDraft] = useState<"browser" | "local">("browser")
   const [otherWhisperOpen, setOtherWhisperOpen] = useState(false)
+  /** Local-only: modelId user clicked download on, until companion state/progress arrives. */
+  const [voicePendingDownload, setVoicePendingDownload] = useState<string | null>(null)
+  const voicePendingDownloadRef = useRef<string | null>(null)
+  voicePendingDownloadRef.current = voicePendingDownload
   // W1 accordion: user open preferences (force rules applied in isSectionOpen).
   const [userOpenSections, setUserOpenSections] = useState<Set<SettingsSectionId>>(() => {
     try {
@@ -218,7 +227,17 @@ export function SettingsSlideout() {
     chrome.runtime.sendMessage({ type: "computer.model.get_state" })
     // Path B M0: mirror voice.model state on settings open (UI Task 7).
     dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
-    chrome.runtime.sendMessage({ type: "voice.model.get_state" })
+    setVoicePendingDownload(null)
+    chrome.runtime.sendMessage({ type: "voice.model.get_state" }, (resp: unknown) => {
+      const lastErr =
+        typeof chrome.runtime.lastError?.message === "string"
+          ? chrome.runtime.lastError.message
+          : null
+      const parsed = parseVoiceSettingsSendResponse(resp, lastErr)
+      if (parsed.ok === false) {
+        dispatch({ type: "SET_VOICE_MODEL_ERROR", error: parsed.error })
+      }
+    })
     chrome.runtime.sendMessage({ type: "ws.getPairingStatus" }, (resp: { paired?: boolean } | undefined) => {
       const paired = !!resp?.paired
       setWsPaired(paired)
@@ -251,6 +270,43 @@ export function SettingsSlideout() {
     }
     prevVoiceEngineRef.current = eng
   }, [state.voiceModel?.sttEngine])
+
+  // Clear local pending-download once companion reports downloading/ready or progress.
+  useEffect(() => {
+    const pending = voicePendingDownload
+    if (!pending) return
+    const st = state.voiceModel?.models?.[pending]?.status
+    if (st === "downloading" || st === "ready") {
+      setVoicePendingDownload(null)
+      return
+    }
+    if (state.voiceModelProgress?.modelId === pending) {
+      setVoicePendingDownload(null)
+    }
+  }, [state.voiceModel, state.voiceModelProgress, voicePendingDownload])
+
+  // Settings open but voice.model.state never arrives → surface timeout (was silent forever).
+  useEffect(() => {
+    if (!state.settingsOpen) return
+    if (state.voiceModel !== null) return
+    const t = window.setTimeout(() => {
+      dispatch({ type: "SET_VOICE_MODEL_ERROR", error: VOICE_ERR_STATE_TIMEOUT })
+    }, 6000)
+    return () => window.clearTimeout(t)
+  }, [state.settingsOpen, state.voiceModel, dispatch])
+
+  // Download click accepted by SW but no companion progress → surface (was silent).
+  useEffect(() => {
+    if (!voicePendingDownload) return
+    const modelId = voicePendingDownload
+    const t = window.setTimeout(() => {
+      if (voicePendingDownloadRef.current !== modelId) return
+      setVoicePendingDownload(null)
+      dispatch({ type: "SET_VOICE_MODEL_ERROR", error: VOICE_ERR_DOWNLOAD_NO_PROGRESS })
+      dispatch({ type: "SET_VOICE_MODEL_PROGRESS", progress: null })
+    }, 8000)
+    return () => window.clearTimeout(t)
+  }, [voicePendingDownload, dispatch])
 
   // Auto-expand advanced gates when any arm flag is on (user can still collapse).
   // Parent「安全与信任」is collapsible; elevated trust only shows header badge.
@@ -1231,10 +1287,36 @@ export function SettingsSlideout() {
               const progress = state.voiceModelProgress
               const committedLocal = voiceModel?.sttEngine === "local"
               const showLocalPanel = engineDraft === "local"
-              const sendVoice = (msg: Record<string, unknown>) =>
-                chrome.runtime.sendMessage({ ...msg, source: "settings" })
               const clearVoiceErr = () =>
                 dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
+              /** settings → SW → WS; always surface SW refusals into voiceModelError. */
+              const sendVoice = (
+                msg: Record<string, unknown>,
+                opts?: { onOk?: () => void; onFail?: () => void },
+              ) => {
+                try {
+                  chrome.runtime.sendMessage({ ...msg, source: "settings" }, (resp: unknown) => {
+                    const lastErr =
+                      typeof chrome.runtime.lastError?.message === "string"
+                        ? chrome.runtime.lastError.message
+                        : null
+                    const parsed = parseVoiceSettingsSendResponse(resp, lastErr)
+                    if (parsed.ok === false) {
+                      opts?.onFail?.()
+                      dispatch({ type: "SET_VOICE_MODEL_ERROR", error: parsed.error })
+                      return
+                    }
+                    opts?.onOk?.()
+                  })
+                } catch (e: unknown) {
+                  opts?.onFail?.()
+                  const msgText = e instanceof Error ? e.message : String(e)
+                  dispatch({
+                    type: "SET_VOICE_MODEL_ERROR",
+                    error: msgText || VOICE_ERR_STATE_TIMEOUT,
+                  })
+                }
+              }
               const recommendedId = RECOMMENDED_WHISPER_MODEL_ID
               const activeId = voiceModel?.localModelId || recommendedId
               const recEntry = voiceModel?.models?.[recommendedId]
@@ -1247,11 +1329,14 @@ export function SettingsSlideout() {
               const renderModelRow = (modelId: WhisperSettingsModelId, isRecommended: boolean) => {
                 const entry = voiceModel?.models?.[modelId]
                 const status = entry?.status || "absent"
+                const pendingStart = voicePendingDownload === modelId
                 const downloading =
                   status === "downloading" ||
+                  pendingStart ||
                   (progress?.modelId === modelId && status !== "ready")
-                const pct =
-                  downloading && progress?.modelId === modelId
+                const pct = pendingStart
+                  ? 0
+                  : downloading && progress?.modelId === modelId
                     ? progressPercent(progress.receivedBytes, progress.totalBytes)
                     : null
                 const isActive = committedLocal && activeId === modelId
@@ -1280,7 +1365,9 @@ export function SettingsSlideout() {
                         {isActive ? " · 活动" : ""}
                       </span>
                       <span style={{ color: "#888", fontSize: 11 }}>
-                        {modelStatusLabel(status)}
+                        {pendingStart
+                          ? VOICE_STATUS_STARTING_DOWNLOAD
+                          : modelStatusLabel(status)}
                         {typeof entry?.bytesOnDisk === "number" && entry.bytesOnDisk > 0
                           ? ` · ${(entry.bytesOnDisk / (1024 * 1024)).toFixed(0)} MB`
                           : ""}
@@ -1290,8 +1377,10 @@ export function SettingsSlideout() {
                         <button
                           type="button"
                           style={styles.secondaryBtn}
+                          disabled={pendingStart}
                           onClick={() => {
                             clearVoiceErr()
+                            setVoicePendingDownload(null)
                             sendVoice({ type: "voice.model.cancel", modelId })
                           }}
                         >
@@ -1328,14 +1417,33 @@ export function SettingsSlideout() {
                           style={styles.secondaryBtn}
                           onClick={() => {
                             clearVoiceErr()
-                            sendVoice({ type: "voice.model.download", modelId })
+                            setVoicePendingDownload(modelId)
+                            // Indeterminate bar until companion progress arrives.
+                            dispatch({
+                              type: "SET_VOICE_MODEL_PROGRESS",
+                              progress: {
+                                modelId,
+                                file: "",
+                                receivedBytes: 0,
+                                totalBytes: 0,
+                              },
+                            })
+                            sendVoice(
+                              { type: "voice.model.download", modelId },
+                              {
+                                onFail: () => {
+                                  setVoicePendingDownload(null)
+                                  dispatch({ type: "SET_VOICE_MODEL_PROGRESS", progress: null })
+                                },
+                              },
+                            )
                           }}
                         >
                           {BTN_DOWNLOAD}
                         </button>
                       )}
                     </div>
-                    {pct !== null && (
+                    {(pct !== null || pendingStart) && (
                       <div style={{ marginTop: 6 }}>
                         <div
                           style={{
@@ -1348,15 +1456,20 @@ export function SettingsSlideout() {
                           <div
                             style={{
                               height: "100%",
-                              width: `${pct}%`,
+                              width: pendingStart
+                                ? "18%"
+                                : `${pct ?? 0}%`,
                               background: tokens.accent,
                               transition: "width 0.2s ease",
+                              // Soft pulse while waiting for first progress bytes.
+                              opacity: pendingStart ? 0.65 : 1,
                             }}
                           />
                         </div>
                         <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
-                          {progress?.file ? `${progress.file} · ` : ""}
-                          {pct}%
+                          {pendingStart
+                            ? VOICE_STATUS_STARTING_DOWNLOAD
+                            : `${progress?.file ? `${progress.file} · ` : ""}${pct ?? 0}%`}
                         </div>
                       </div>
                     )}
@@ -1439,7 +1552,7 @@ export function SettingsSlideout() {
                     >
                       {voiceModel === null && (
                         <div style={{ ...styles.helpText, marginTop: 0 }}>
-                          正在查询本机模型状态…
+                          {VOICE_STATUS_QUERYING}
                         </div>
                       )}
 
