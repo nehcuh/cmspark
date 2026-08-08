@@ -946,6 +946,9 @@ export function useWebSocket() {
               },
             },
           })
+          // Belt: re-pull list so tags survive if a digest_updated was missed
+          // (multi-peer / race). Disk is source of truth after extract.
+          chrome.runtime.sendMessage({ type: "thread.list" })
           break
         }
         case "thread.cleanup_empty.completed": {
