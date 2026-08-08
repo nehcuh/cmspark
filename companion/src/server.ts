@@ -5818,6 +5818,19 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // Path B M2 — progressive hypothesis (re-decode cumulative audio; no fake tokens)
+    "voice.stt.partial_request": (m) => {
+      if (m.v !== 1) {
+        return { valid: false, error: "voice.stt.partial_request requires v:1" }
+      }
+      if (typeof m.sessionId !== "string" || !m.sessionId || m.sessionId.length > 128) {
+        return {
+          valid: false,
+          error: "voice.stt.partial_request requires sessionId string (1–128)",
+        }
+      }
+      return { valid: true }
+    },
     // Dictation+ D1b — ASR Refiner (text-only; origin fence in handler)
     "voice.refine.request": (m) => {
       if (m.v !== 1) {

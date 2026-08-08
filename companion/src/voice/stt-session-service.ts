@@ -14,10 +14,14 @@ import { whisperPinResolveOpts } from "./whisper-binary-pins"
 import {
   STT_INFER_MAX_MS,
   STT_MAX_RECORD_MS,
+  STT_PARTIAL_INFER_MAX_MS,
+  STT_PARTIAL_MIN_AUDIO_BYTES,
+  STT_PARTIAL_MIN_INTERVAL_MS,
   STT_UPLOAD_IDLE_MS,
   isSttModelId,
   type SttModelId,
 } from "./session-caps"
+import { audioBodyForWhisper } from "./pcm-wav"
 import {
   SttSessionCore,
   type SttSessionErrorCode,
@@ -58,6 +62,8 @@ export type SttServiceErrorCode =
   | "peer_mismatch"
   | "resource_conflict"
   | "invalid_session_id"
+  | "partial_skipped"
+  | "partial_busy"
 
 export type SttServiceResult =
   | { ok: true; text?: string; ms?: number; modelId?: string }
@@ -112,8 +118,13 @@ type BoundSession = {
   recordTimer?: ReturnType<typeof setTimeout>
   idleTimer?: ReturnType<typeof setTimeout>
   sessionDir?: string
-  /** True while whisper child is running. */
+  /** True while final whisper child is running (end). */
   inferring: boolean
+  /** M2: last partial hypothesis start (rate limit). */
+  lastPartialAt?: number
+  /** M2: in-flight partial abort (cancelled when a newer partial or end starts). */
+  partialAbort?: AbortController
+  partialInferring?: boolean
 }
 
 // --- service ------------------------------------------------------------------
@@ -159,6 +170,15 @@ export class SttSessionService {
       return { ok: false, code: "invalid_model", message: `unknown modelId: ${req.modelId}` }
     }
 
+    // Claude N2: refuse start while prior final/partial still inferring
+    if (this.bound?.inferring || this.bound?.partialInferring) {
+      return {
+        ok: false,
+        code: "resource_conflict",
+        message: "previous STT infer still in progress",
+      }
+    }
+
     const root = this.whisperRoot()
     const probe = this.deps.probeModel ?? ((id, r) => probeWhisperModelDir(id, r, this.deps.manifest))
     const p = probe(req.modelId, root)
@@ -194,6 +214,124 @@ export class SttSessionService {
   }
 
   /**
+   * M2 progressive hypothesis: snapshot receiving audio → whisper → text, session stays open.
+   * Rate-limited; skips when too little audio / final inferring / too soon.
+   * Not decoder-token streaming — offline re-decode of cumulative audio so far.
+   */
+  async partial(sessionId: string, peerId: string): Promise<SttServiceResult> {
+    const peer = this.requirePeer(peerId, sessionId)
+    if (!peer.ok) return peer
+    const bound = this.bound!
+    if (bound.inferring) {
+      return { ok: false, code: "partial_busy", message: "final infer in progress" }
+    }
+    // F2 fix: do NOT cancel in-flight partial — return busy so client keeps waiting.
+    // Cancelling every poll starved medium-model hypotheses (infer > poll gap).
+    if (bound.partialInferring) {
+      return { ok: false, code: "partial_busy", message: "partial already running" }
+    }
+
+    const now = (this.deps.now ?? Date.now)()
+    if (
+      bound.lastPartialAt != null &&
+      now - bound.lastPartialAt < STT_PARTIAL_MIN_INTERVAL_MS
+    ) {
+      return { ok: false, code: "partial_skipped", message: "partial rate limited" }
+    }
+
+    const snap = this.core.snapshotAudio(sessionId)
+    if (!snap.ok) return snap
+    if (!("audio" in snap) || !snap.audio || snap.bytes < STT_PARTIAL_MIN_AUDIO_BYTES) {
+      return { ok: false, code: "partial_skipped", message: "insufficient audio for partial" }
+    }
+
+    const pac = new AbortController()
+    bound.partialAbort = pac
+    bound.partialInferring = true
+    bound.lastPartialAt = now
+
+    let sessionDir: string | undefined
+    try {
+      const binRes = this.resolveBinary()
+      if (!binRes.ok) {
+        bound.partialInferring = false
+        const code =
+          binRes.reason === "hash_mismatch" ? "hash_fail" : "binary_missing"
+        return { ok: false, code, message: binRes.message }
+      }
+      const modelPath = this.resolveModelPath(bound.modelId)
+      if (!modelPath) {
+        bound.partialInferring = false
+        return { ok: false, code: "model_missing", message: "model path not resolved" }
+      }
+
+      const { body, fileName } = audioBodyForWhisper(snap.audio, bound.format)
+      // Short partial dir id — avoid sanitizeSessionId 128-char cap on long parent ids
+      const partialDirId = `p${(now % 1e10).toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`
+      sessionDir = await createSessionDir(partialDirId, this.deps.dataDir)
+      const audioPath = await writeSessionFile(sessionDir, fileName, body)
+      const run = this.deps.runWhisper ?? runWhisperTranscribe
+      // F5: re-check final infer after IO gap
+      if (this.bound?.inferring || this.bound?.sessionId !== sessionId) {
+        try {
+          pac.abort()
+        } catch {
+          /* */
+        }
+        await removeSessionDir(sessionDir).catch(() => {})
+        sessionDir = undefined
+        bound.partialInferring = false
+        return { ok: false, code: "partial_skipped", message: "session advanced before run" }
+      }
+      const result = await run({
+        binaryPath: binRes.path,
+        modelPath,
+        audioPath,
+        lang: this.deps.lang ?? "zh",
+        timeoutMs: STT_PARTIAL_INFER_MAX_MS,
+        signal: pac.signal,
+      })
+      await removeSessionDir(sessionDir)
+      sessionDir = undefined
+      if (this.bound === bound) bound.partialInferring = false
+      // Drop if session already ended/aborted or superseded
+      if (this.bound?.sessionId !== sessionId || this.bound.inferring) {
+        return { ok: false, code: "partial_skipped", message: "session advanced" }
+      }
+      return {
+        ok: true,
+        text: result.text ?? "",
+        ms: result.ms,
+        modelId: bound.modelId,
+      }
+    } catch (e) {
+      if (sessionDir) {
+        try {
+          await removeSessionDir(sessionDir)
+        } catch {
+          /* */
+        }
+      }
+      if (this.bound === bound) bound.partialInferring = false
+      if (
+        pac.signal.aborted ||
+        (e instanceof WhisperRunnerError && e.code === "aborted")
+      ) {
+        return { ok: false, code: "partial_skipped", message: "partial aborted" }
+      }
+      // Soft: partial timeouts/errors must not tear down the live session (F4)
+      if (e instanceof WhisperRunnerError && e.code === "timeout") {
+        return { ok: false, code: "partial_skipped", message: "partial timeout" }
+      }
+      return {
+        ok: false,
+        code: "partial_skipped",
+        message: e instanceof Error ? e.message : String(e),
+      }
+    }
+  }
+
+  /**
    * End session: reassemble audio → tmp file → whisper → unlink → text.
    */
   async end(sessionId: string, totalSeq: number, peerId: string): Promise<SttServiceResult> {
@@ -202,6 +340,15 @@ export class SttSessionService {
 
     // Stop upload timers; keep abortController for infer cancel
     this.clearTimersOnly()
+
+    // Cancel in-flight partial before final
+    if (this.bound?.partialAbort) {
+      try {
+        this.bound.partialAbort.abort()
+      } catch {
+        /* */
+      }
+    }
 
     const end = this.core.end(sessionId, totalSeq)
     if (!end.ok) {
@@ -242,8 +389,8 @@ export class SttSessionService {
 
       sessionDir = await createSessionDir(sessionId, this.deps.dataDir)
       bound.sessionDir = sessionDir
-      const fileName = format === "wav" ? "audio.wav" : "audio.pcm"
-      const audioPath = await writeSessionFile(sessionDir, fileName, audio)
+      const { body, fileName } = audioBodyForWhisper(audio, format)
+      const audioPath = await writeSessionFile(sessionDir, fileName, body)
 
       const run = this.deps.runWhisper ?? runWhisperTranscribe
       const result = await run({
@@ -308,6 +455,12 @@ export class SttSessionService {
       } catch {
         /* ignore */
       }
+      // F6 / Claude N1: also kill in-flight progressive partial whisper
+      try {
+        this.bound.partialAbort?.abort()
+      } catch {
+        /* ignore */
+      }
       if (this.bound.sessionDir) {
         void removeSessionDir(this.bound.sessionDir).catch(() => {})
       }
@@ -323,6 +476,11 @@ export class SttSessionService {
     if (this.bound) {
       try {
         this.bound.abortController.abort()
+      } catch {
+        /* ignore */
+      }
+      try {
+        this.bound.partialAbort?.abort()
       } catch {
         /* ignore */
       }

@@ -53,6 +53,13 @@ export interface AgentState {
   /** e.g. Control+Shift+Space */
   dictationHotkeyChord: string
   /**
+   * Prefer live word/char interim in composer (browser Web Speech).
+   * When on + browser engine: continuous recommended; interim → live overlay.
+   * When on + local: shorter (~8s) segments for near-real-time finals (no fake interim).
+   * chrome.storage.local `voiceRealtimeStreaming`.
+   */
+  voiceRealtimeStreaming: boolean
+  /**
    * Mtg1: meeting workbench is live-capturing (local segmented STT).
    * Mutual exclusion with composer dictation (global max-1 STT).
    */
@@ -221,6 +228,12 @@ export type AgentAction =
   | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
   | { type: "SET_DICTATION_HOTKEY_ENABLED"; enabled: boolean }
   | { type: "SET_DICTATION_HOTKEY_CHORD"; chord: string }
+  | {
+      type: "SET_VOICE_REALTIME_STREAMING"
+      enabled: boolean
+      /** When true and enabling, also switch dictation mode to continuous (user toggle only). */
+      preferContinuous?: boolean
+    }
   | { type: "SET_MEETING_CAPTURE_ACTIVE"; active: boolean }
   | { type: "SET_DICTATION_CAPTURE_ACTIVE"; active: boolean }
   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
@@ -350,6 +363,7 @@ export const initialState: AgentState = {
   asrRefinerEnabled: false,
   dictationHotkeyEnabled: false,
   dictationHotkeyChord: "Control+Shift+Space",
+  voiceRealtimeStreaming: true,
   meetingCaptureActive: false,
   dictationCaptureActive: false,
   pendingSecurityConfirmations: [],
@@ -714,6 +728,20 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           : "Control+Shift+Space"
       chrome.storage.local.set({ dictationHotkeyChord: chord })
       return { ...state, dictationHotkeyChord: chord }
+    }
+    case "SET_VOICE_REALTIME_STREAMING": {
+      const enabled = action.enabled === true
+      chrome.storage.local.set({ voiceRealtimeStreaming: enabled })
+      // User toggle only: pair with continuous (do not force on storage hydrate).
+      if (enabled && action.preferContinuous === true) {
+        chrome.storage.local.set({ voiceDictationMode: "continuous" })
+        return {
+          ...state,
+          voiceRealtimeStreaming: true,
+          voiceDictationMode: "continuous",
+        }
+      }
+      return { ...state, voiceRealtimeStreaming: enabled }
     }
     case "ADD_SECURITY_CONFIRMATION":
       return {

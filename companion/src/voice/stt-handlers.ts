@@ -65,12 +65,21 @@ function sttError(
   }
 }
 
-function sttPartial(sessionId: string, status: "receiving" | "transcribing") {
+function sttPartial(
+  sessionId: string,
+  status: "receiving" | "transcribing" | "hypothesis",
+  text?: string,
+  ms?: number,
+) {
   return {
     type: "voice.stt.partial" as const,
     v: 1 as const,
     sessionId,
     status,
+    // M2: hypothesis text only when status === "hypothesis" (progressive re-decode)
+    ...(typeof text === "string" ? { text } : {}),
+    // Infer wall time so client can adapt poll cadence (medium models)
+    ...(typeof ms === "number" && Number.isFinite(ms) ? { ms } : {}),
   }
 }
 
@@ -217,6 +226,40 @@ export async function handleVoiceSttMessage(
       }
       // No per-chunk ack in protocol (fire-and-forget success)
       return undefined
+    }
+
+    case "voice.stt.partial_request": {
+      // M2: progressive hypothesis re-decode (not decoder token stream)
+      if (typeof sessionId !== "string" || !sessionId) {
+        return sttError(undefined, "invalid_session_id", "sessionId required")
+      }
+      const r = await service.partial(sessionId, peerId)
+      if (!r.ok) {
+        // F4: progressive path is best-effort — never surface hard errors that kill the live mic session
+        if (
+          r.code === "partial_skipped" ||
+          r.code === "partial_busy" ||
+          r.code === "infer_timeout" ||
+          r.code === "resource_conflict" ||
+          r.code === "model_missing" ||
+          r.code === "binary_missing" ||
+          r.code === "hash_fail"
+        ) {
+          return undefined
+        }
+        logger.info("voice.stt.partial.rejected", { sessionId, code: r.code })
+        return sttError(sessionId, r.code, r.message)
+      }
+      const text = typeof r.text === "string" ? r.text : ""
+      // Empty hypothesis is still a partial (UI can keep previous interim)
+      const partial = sttPartial(
+        sessionId,
+        "hypothesis",
+        text,
+        typeof r.ms === "number" ? r.ms : undefined,
+      )
+      ctx.send?.(partial)
+      return partial
     }
 
     case "voice.stt.end": {

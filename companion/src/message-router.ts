@@ -1918,6 +1918,7 @@ export async function handleMessage(
     // Path B M1 — voice.stt.* (origin chrome-extension:// fence; NOT source:settings)
     case "voice.stt.start":
     case "voice.stt.chunk":
+    case "voice.stt.partial_request":
     case "voice.stt.end":
     case "voice.stt.abort":
       return handleVoiceSttMessage(msg, {

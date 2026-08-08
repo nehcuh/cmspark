@@ -172,7 +172,8 @@ Channel:      community; default engine=browser; local = explicit opt-in after p
 | `voice.stt.chunk` | E→C | `{ v:1, sessionId, seq, data:base64 }` |
 | `voice.stt.end` | E→C | `{ v:1, sessionId, totalSeq }` |
 | `voice.stt.abort` | E→C | `{ v:1, sessionId }` |
-| `voice.stt.partial` | C→E | status only：`receiving` \| `transcribing`（**无**假 token 字） |
+| `voice.stt.partial` | C→E | status：`receiving` \| `transcribing` \| **`hypothesis`**；**M2** 在 `hypothesis` 时可选 `text`（累计音频 re-decode，**非** decoder token 假流） |
+| `voice.stt.partial_request` | E→C | `{ v:1, sessionId }` — 请求一次渐进假设（服务端限流；不足音频 / 忙则静默跳过） |
 | `voice.stt.result` | C→E | `{ v:1, sessionId, text, ms, modelId }` |
 | `voice.stt.error` | C→E | `{ v:1, sessionId, code, message }` |
 | `voice.model.get_state` | E→C | 镜像状态 |

@@ -150,6 +150,8 @@ function sceneCopy(p: PackListItem): { suitable: string; unsuitable: string; too
 export function PacksPanel() {
   const { state, dispatch } = useAgentStore()
   const host = useContextPanelHostOptional()
+  const hostRef = useRef(host)
+  hostRef.current = host
   const [packs, setPacks] = useState<PackListItem[]>([])
   const [modules, setModules] = useState<Record<string, ModuleStateView>>({})
   const [status, setStatus] = useState("")
@@ -381,7 +383,20 @@ export function PacksPanel() {
         )
       }
       if (msg?.type === "pack.applied") {
-        flash("已用于本对话", 2500)
+        const appliedId =
+          typeof msg.pack_id === "string"
+            ? msg.pack_id
+            : typeof msg.packId === "string"
+              ? msg.packId
+              : typeof msg.thread?.mission_pack_id === "string"
+                ? msg.thread.mission_pack_id
+                : pendingApplyRef.current?.packId || null
+        flash(
+          appliedId === "meeting-minutes"
+            ? "已应用会议场景，正在打开会议工作台…"
+            : "已用于本对话",
+          2500,
+        )
         setBusy(null)
         setConfirmPack(null)
         setTrustConflict(null)
@@ -389,6 +404,10 @@ export function PacksPanel() {
         if (msg.thread?.id) dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
         // Holder thread may have been unapplied on force_takeover — refresh list meta.
         chrome.runtime.sendMessage({ type: "thread.list" })
+        // Hierarchy: 装配 › 场景 › 会议 — surface workbench after apply.
+        if (appliedId === "meeting-minutes") {
+          queueMicrotask(() => hostRef.current?.openPanelForce("meeting"))
+        }
       }
       if (msg?.type === "pack.unapplied") {
         flash("已退出场景，回到通用助手", 2500)
@@ -535,9 +554,16 @@ export function PacksPanel() {
     host?.openPanelForce("skills")
   }
 
+  /** 装配 › 场景 › 会议 — open dedicated meeting workbench (not only /meeting). */
+  const openMeetingWorkbench = () => {
+    host?.openPanelForce("meeting")
+  }
+
   const openSettings = () => {
     dispatch({ type: "SET_SETTINGS_OPEN", open: true })
   }
+
+  const meetingPack = packs.find((p) => p.id === "meeting-minutes") || null
 
   const openCreateEditor = () => {
     chrome.runtime.sendMessage({ type: "skill.list" })
@@ -795,8 +821,9 @@ export function PacksPanel() {
     <div style={styles.wrap}>
       <div style={styles.header}>
         <div>
+          <div style={styles.breadcrumb}>装配 › 场景</div>
           <div style={styles.title}>场景</div>
-          <div style={styles.subtitle}>为本对话选用模板（可限制可用工具）</div>
+          <div style={styles.subtitle}>为本对话选用模板（可限制可用工具）；会议工作台见下方</div>
         </div>
         <button type="button" style={styles.linkBtn} onClick={refresh}>
           刷新
@@ -808,6 +835,35 @@ export function PacksPanel() {
       </button>
 
       {status && <div style={styles.status}>{status}</div>}
+
+      {/* Zone: 会议 — 装配 › 场景 › 会议（独立工作台，非仅 /meeting） */}
+      <section style={styles.zone} data-testid="scene-meeting-zone">
+        <div style={styles.zoneTitle}>会议</div>
+        <div style={styles.meetingCard}>
+          <div style={styles.meetingTitle}>会议记录工作台</div>
+          <div style={styles.desc}>
+            粘贴转写或本机录制 → 可编辑转写 → 结构化纪要（TL;DR / 决议 / 待办）。应用场景不会自动开麦。
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+            <button type="button" style={styles.primaryBtn} onClick={openMeetingWorkbench}>
+              打开会议工作台
+            </button>
+            {meetingPack && activePackId !== "meeting-minutes" ? (
+              <button
+                type="button"
+                style={styles.secondaryBtn}
+                disabled={!!busy || !!meetingPack.apply_blocked}
+                onClick={() => requestApply(meetingPack)}
+                title="写入会议纪要 system prompt 与技能；录音仍须在工作台手动开始"
+              >
+                {busy === "meeting-minutes" ? "应用中…" : "应用「会议记录」场景"}
+              </button>
+            ) : activePackId === "meeting-minutes" ? (
+              <span style={styles.modOn}>✓ 本对话已用会议场景</span>
+            ) : null}
+          </div>
+        </div>
+      </section>
 
       {/* Zone: 本对话状态 */}
       <section style={styles.zone}>
@@ -926,6 +982,16 @@ export function PacksPanel() {
                       {busy === p.id ? "应用中…" : "用于本对话"}
                     </button>
                   )}
+                  {p.id === "meeting-minutes" ? (
+                    <button
+                      type="button"
+                      style={styles.secondaryBtn}
+                      onClick={openMeetingWorkbench}
+                      title="装配 › 场景 › 会议工作台"
+                    >
+                      打开会议工作台
+                    </button>
+                  ) : null}
                   {isUser ? (
                     <>
                       <button type="button" style={styles.secondaryBtn} onClick={() => openEditEditor(p)} disabled={!!busy}>
@@ -1370,8 +1436,21 @@ export function PacksPanel() {
 const styles: Record<string, import("react").CSSProperties> = {
   wrap: { padding: "8px 10px", fontSize: 12, color: tokens.text, position: "relative" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 },
+  breadcrumb: {
+    fontSize: 10,
+    color: tokens.textMuted,
+    letterSpacing: "0.02em",
+    marginBottom: 2,
+  },
   title: { fontWeight: 650, fontSize: 14, letterSpacing: "-0.02em" },
   subtitle: { fontSize: 10, color: tokens.textMuted, marginTop: 2, lineHeight: 1.35 },
+  meetingCard: {
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusMd,
+    padding: 10,
+    background: tokens.accentSoft || "#f0f7ff",
+  },
+  meetingTitle: { fontWeight: 650, fontSize: 12, marginBottom: 4 },
   linkBtn: {
     border: "none",
     background: "transparent",

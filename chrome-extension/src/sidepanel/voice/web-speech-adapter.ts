@@ -40,6 +40,11 @@ export type SpeechAdapterStartArg =
       hardCapMs?: number
       /** continuous per-segment window ms (tests / clamp ≤45s) */
       segmentMs?: number
+      /**
+       * M2: local progressive hypothesis streaming (PCM stream + partial_request).
+       * Only meaningful for continuous local; not decoder-token Whisper.
+       */
+      streamPartial?: boolean
     }
 
 export type SpeechAdapter = {

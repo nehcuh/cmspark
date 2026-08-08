@@ -439,6 +439,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
   const voice = useVoiceInput({
     getBaseText: () => textRef.current,
+    realtimeStreaming: state.voiceRealtimeStreaming !== false,
     onDraft: (merged) => {
       setText(merged)
       requestAnimationFrame(() => {
