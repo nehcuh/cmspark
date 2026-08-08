@@ -663,7 +663,18 @@ export async function handleMessage(
                 source: "on_at_ref",
               })
                 .then((dig) => {
-                  if (dig) services.threadManager.update(thr.id, { digest: dig })
+                  if (!dig) return
+                  const next = services.threadManager.update(thr.id, { digest: dig })
+                  if (!next) return
+                  // Push so Side Panel tags view / row pills update without full reload
+                  const payload = {
+                    type: "thread.digest_updated",
+                    thread_id: thr.id,
+                    digest: next.digest,
+                    thread: next,
+                  }
+                  session?.broadcast?.(payload)
+                  session?.sendToExtension?.(payload)
                 })
                 .catch(() => {
                   /* ignore */

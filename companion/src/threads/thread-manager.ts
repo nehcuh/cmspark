@@ -298,7 +298,36 @@ export class ThreadManager {
     }
   }
 
+  /**
+   * Persist index.json. Before write, merge peer-written digests from disk so a
+   * second process (tray + daemon, or two companions) that loaded the index
+   * *before* digests existed cannot wipe tags/tldr on its next addMessage/update.
+   * Only fills `digest` when memory has `undefined` (not intentional `null` clear).
+   */
   private saveIndex(): void {
+    try {
+      if (fs.existsSync(this.indexPath)) {
+        const raw = fs.readFileSync(this.indexPath, "utf-8")
+        const disk = JSON.parse(raw) as ThreadIndex
+        if (disk && Array.isArray(disk.threads)) {
+          const diskById = new Map(
+            disk.threads
+              .filter((t) => t && typeof t.id === "string")
+              .map((t) => [t.id, t] as const),
+          )
+          for (const t of this.index.threads) {
+            if (t.digest !== undefined) continue
+            const d = diskById.get(t.id)
+            if (d?.digest && typeof d.digest === "object") {
+              const sanitized = sanitizeDigest(d.digest)
+              if (sanitized) t.digest = sanitized
+            }
+          }
+        }
+      }
+    } catch {
+      /* best-effort merge; still write our memory snapshot */
+    }
     atomicWriteJSON(this.indexPath, this.index)
   }
 

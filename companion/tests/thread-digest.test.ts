@@ -154,6 +154,41 @@ test("thread update persists digest on index", () => {
   assert.equal(reloaded?.digest?.tldr, "摘要")
 })
 
+test("saveIndex merges peer digests so stale process cannot wipe tags", () => {
+  // Process A: write digest
+  const a = new ThreadManager()
+  const t = a.create("peer", "peer1")
+  a.update(t.id, {
+    digest: {
+      extracted_at: "2026-08-08T00:00:00.000Z",
+      content_fingerprint: "0:empty",
+      tldr: "peer-tldr",
+      tags: ["标签甲", "标签乙"],
+      source: "manual",
+    },
+  })
+  assert.ok(a.get("peer1")?.digest?.tags?.length)
+
+  // Process B: loaded before digests existed — only has alias/messages, then saveIndex
+  // Simulate by constructing a manager that shares the same data dir but drops digest in memory.
+  const b = new ThreadManager()
+  const row = b.get("peer1")
+  assert.ok(row)
+  // Stale in-memory wipe: clear digest on the object without going through update(null)
+  delete (row as { digest?: unknown }).digest
+  assert.equal(b.get("peer1")?.digest, undefined)
+  // Any index write (e.g. addMessage / alias bump) must not erase disk digests
+  b.update("peer1", { alias: "peer-renamed" })
+  const after = b.get("peer1")
+  assert.equal(after?.alias, "peer-renamed")
+  assert.ok(after?.digest, "digest restored from disk on save")
+  assert.deepEqual(after!.digest!.tags, ["标签甲", "标签乙"])
+
+  // Fresh process still sees tags
+  const c = new ThreadManager()
+  assert.deepEqual(c.get("peer1")?.digest?.tags, ["标签甲", "标签乙"])
+})
+
 test("listWithPreviews single-pass marks digest stale without second API", () => {
   const tm = new ThreadManager()
   const t = tm.create("S", "stale1")

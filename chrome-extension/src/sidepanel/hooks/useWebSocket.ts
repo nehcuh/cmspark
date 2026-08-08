@@ -477,6 +477,43 @@ export function useWebSocket() {
           break
         }
 
+        case "chat.assistant": {
+          // Mid-loop assistant committed by companion (before tools run). Must land
+          // reasoning/content into the transcript — tool.start alone only adds shell cards.
+          const asstTid =
+            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
+          if (asstTid) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId: asstTid, busy: true })
+          }
+          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
+          const asstContent = typeof msg.content === "string" ? msg.content : ""
+          const asstReasoning =
+            typeof msg.reasoning_content === "string" ? msg.reasoning_content : ""
+          // Prefer companion payload; fall back to live stream if echo omitted fields.
+          const content = asstContent || streamingRef.current || ""
+          const reasoning = asstReasoning || reasoningRef.current || ""
+          streamingRef.current = ""
+          reasoningRef.current = ""
+          dispatch({ type: "SET_STREAMING", content: "" })
+          dispatch({ type: "SET_STREAMING_REASONING", content: "" })
+          if (asstTid && (content || reasoning)) {
+            dispatch({
+              type: "ADD_MESSAGE",
+              message: {
+                id:
+                  (typeof msg.message_id === "string" && msg.message_id) ||
+                  `${asstTid}_assistant_mid_${Date.now()}`,
+                thread_id: asstTid,
+                role: "assistant",
+                content,
+                ...(reasoning ? { reasoning_content: reasoning } : {}),
+                created_at: new Date().toISOString(),
+              },
+            })
+          }
+          break
+        }
+
         case "tool.start": {
           const toolTid =
             typeof msg.thread_id === "string" && msg.thread_id
@@ -488,13 +525,32 @@ export function useWebSocket() {
           // With stamped thread_id: only mutate active transcript (no cross-thread pollution).
           // Missing thread_id: legacy apply to active (compat).
           if (toolTid && !shouldApplyStreamEvent(toolTid, activeThreadRef.current)) break
-          // Intermediate assistant stream ends when tools begin — free the live
-          // reasoning bubble so the next LLM round can start clean.
+          // Intermediate assistant stream ends when tools begin. Commit live
+          // reasoning/content into a historical row first — otherwise only the
+          // shell/tool card remains after the turn (user report on #h1yi2w).
+          // Prefer chat.assistant from companion when present; this is a fallback
+          // for older companions or races where tools start before the echo.
           if (streamingRef.current || reasoningRef.current) {
+            const midContent = streamingRef.current || ""
+            const midReasoning = reasoningRef.current || ""
+            const midTid = toolTid || activeThreadRef.current || ""
             streamingRef.current = ""
             reasoningRef.current = ""
             dispatch({ type: "SET_STREAMING", content: "" })
             dispatch({ type: "SET_STREAMING_REASONING", content: "" })
+            if (midTid && (midContent || midReasoning)) {
+              dispatch({
+                type: "ADD_MESSAGE",
+                message: {
+                  id: `${midTid}_assistant_mid_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                  thread_id: midTid,
+                  role: "assistant",
+                  content: midContent,
+                  ...(midReasoning ? { reasoning_content: midReasoning } : {}),
+                  created_at: new Date().toISOString(),
+                },
+              })
+            }
           }
           dispatch({
             type: "ADD_MESSAGE",
@@ -890,6 +946,9 @@ export function useWebSocket() {
               },
             },
           })
+          // Belt: re-pull list so tags survive if a digest_updated was missed
+          // (multi-peer / race). Disk is source of truth after extract.
+          chrome.runtime.sendMessage({ type: "thread.list" })
           break
         }
         case "thread.cleanup_empty.completed": {
