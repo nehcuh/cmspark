@@ -1,0 +1,8 @@
+{
+  "batch": "meeting-minutes-mtg01",
+  "timestamp": "20260808-082003",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/meeting-minutes-mtg01-claude-20260808-082003.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/meeting-minutes-mtg01-pi-20260808-082003.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/meeting-minutes-mtg01-diff-20260808-082003.patch"
+}

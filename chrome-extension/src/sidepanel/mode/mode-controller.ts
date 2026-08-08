@@ -119,6 +119,7 @@ export type ContextBarTabId =
   | "skills"
   | "knowledge"
   | "packs"
+  | "meeting"
   | "board"
   | "mcp"
   | "apps"
@@ -151,6 +152,7 @@ export function contextBarOverflowTabsForLevel(
   // Prefer product-useful demotions; keep stable order
   const candidates: ContextBarTabId[] = [
     "packs",
+    "meeting",
     "board",
     "knowledge",
     "history",

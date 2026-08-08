@@ -101,6 +101,16 @@ export const META_PANEL_SLASH: MetaSlashEntry[] = [
     panelId: "board",
   },
   {
+    name: "meeting",
+    description: "打开会议记录工作台（粘贴转写 → 纪要）",
+    type: "prompt_template",
+    builtin: true,
+    tags: ["meta-panel", "meta-slash", "meeting"],
+    site: "meeting",
+    metaKind: "panel",
+    panelId: "meeting",
+  },
+  {
     name: "settings",
     description: "打开设置",
     type: "prompt_template",

@@ -1151,7 +1151,15 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "voice.stt.abort":
       // Dictation+ D1b ASR Refiner (text-only)
       case "voice.refine.request":
-      case "voice.refine.abort": {
+      case "voice.refine.abort":
+      // Meeting minutes scene
+      case "meeting.create":
+      case "meeting.list":
+      case "meeting.get":
+      case "meeting.set_transcript":
+      case "meeting.append_transcript":
+      case "meeting.generate_minutes":
+      case "meeting.set_status": {
         // Forward to companion. Always call sendResponse so Side Panel callbacks
         // never see "The message port closed before a response was received"
         // (that lastError fires when no listener answers — default used to return

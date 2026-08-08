@@ -5849,6 +5849,52 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // Meeting minutes scene (Mtg0/Mtg1)
+    "meeting.create": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.create requires v:1" }
+      return { valid: true }
+    },
+    "meeting.list": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.list requires v:1" }
+      return { valid: true }
+    },
+    "meeting.get": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.get requires v:1" }
+      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.get requires id" }
+      return { valid: true }
+    },
+    "meeting.set_transcript": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.set_transcript requires v:1" }
+      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.set_transcript requires id" }
+      if (typeof m.text !== "string") return { valid: false, error: "meeting.set_transcript requires text" }
+      if (m.text.length > 80_000) return { valid: false, error: "meeting.set_transcript text too long" }
+      return { valid: true }
+    },
+    "meeting.append_transcript": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.append_transcript requires v:1" }
+      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.append_transcript requires id" }
+      if (typeof m.text !== "string" || !m.text.trim()) {
+        return { valid: false, error: "meeting.append_transcript requires text" }
+      }
+      if (m.text.length > 16_000) {
+        return { valid: false, error: "meeting.append_transcript text too long" }
+      }
+      return { valid: true }
+    },
+    "meeting.generate_minutes": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.generate_minutes requires v:1" }
+      const hasId = typeof m.id === "string" && m.id
+      const hasText = typeof m.text === "string" && m.text.trim()
+      if (!hasId && !hasText) {
+        return { valid: false, error: "meeting.generate_minutes requires id and/or text" }
+      }
+      return { valid: true }
+    },
+    "meeting.set_status": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.set_status requires v:1" }
+      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.set_status requires id" }
+      return { valid: true }
+    },
     "tool.result": (m) => {
       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
       return { valid: true }
