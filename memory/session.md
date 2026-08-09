@@ -710,3 +710,13 @@
 - **核心**: `findPythonBase` config→isolated→well-known→managers→PATH/py；Store+3.10；absolute pin；`pythonInstallHint`；`basePythonAvailable`
 - **下次**: 重启 Companion 侧栏冒烟；可选 PR
 - Recorded: yes
+
+### S57 END (2026-08-09 ~11:00) [冒烟 · 重打包 · PR · 合 main · 同步]
+- **本机冒烟**: 无全局 Python / Store stub 拒绝 / isolated 3.12 + uv WinGet 绝对；preflight 就绪非「请先安装 Python」
+- **重打包**: `build-windows-exe.ps1 -SkipInstall` → SEA；WS `computer.model.state` 侧栏字段 PASS（Origin 须 chrome-extension）
+- **PR**: **#157** Python discovery → MERGED `41bf2d3`；**#156** MCP filesystem@home → MERGED `2c84a5e`
+- **本地**: `main` = `origin/main` @ `2c84a5e`；工作区干净；stash@{0} 含 Whisper 打包等 WIP（未合 PR）
+- **开放 PR**: 无
+- **下次**: 可选恢复 stash 里 Whisper DLL stage / README；或收工仅用 main
+- Recorded: yes — pitfalls → project-knowledge
+

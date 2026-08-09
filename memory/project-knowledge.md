@@ -22,6 +22,18 @@
 
 ## Technical Pitfalls
 
+### Windows base Python 发现：勿停在 findUv / bare PATH（2026-08-09 S57）
+- **现象**：S35 修好 uv 后，仍无全局 Python 时 system 假阴性；Store `WindowsApps\python.exe` 别名可冒充可用；缺 Python 文案 brew/python.org 不对称 winget
+- **锁（Scheme D）**：`findPythonBase` 序 config → isolated → well-known 绝对 → manager **seed only** → enriched PATH/`py` → Store 拒绝 + ≥3.10 + **绝对 pin**；managers 不 activate、不当 Qwen 一等 runtime
+- **CTA**：`basePythonAvailable` 区分「创建独立环境」vs「安装 Python」；`pythonInstallHint` win32 必含 winget
+- **纪律**：isolated missing 禁止把 system 写进 `pythonPath`（B3）；执行 argv0 永不 bare `python`/`py`；测注入勿过粗 short-circuit 挡死 ensure 单测
+- **门控**：host `pi -p` 可偏题（bridge/架构 backlog）；设计复审用 **协议只读 agent** 钉文件清单；误输出勿作 verdict
+
+### PR 合 main 后工作区易混：功能分支脏改 ≠ 未合 PR（2026-08-09 S57）
+- **现象**：#157 已合而 #156 仍 OPEN；本地 `main` 上仍挂 Python 改与 Whisper 打包脏文件
+- **做法**：跨功能 PR 用 **worktree 从 origin/main 切干净分支** 只拷相关文件；合入后 `stash` 再 `pull --ff-only`；状态汇报必须 `gh pr list --state open` + `git rev-parse HEAD origin/main`
+- **纪律**：勿在 `feat/A` 脏树上直接堆 `feat/B` 再开 PR
+
 ### 本机听写三层：模型 / cmspark-whisper / 麦克风 勿混（2026-08-08 S56）
 - **现象**：点下载「没反应」；`binary_missing`「请更新 Companion」；`Requested device not found`
 - **分层**：

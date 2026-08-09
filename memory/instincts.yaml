@@ -2,6 +2,20 @@
 # Confidence: 0-1 (higher = more validated)
 
 instincts:
+  - id: design-gate-worktree-then-pr
+    pattern: "跨功能交付: 对抗 workflow → SoT/plan → Pi 协议复审（勿盲信 host pi 偏题输出）→ worktree 从 origin/main 只拷相关文件开 PR → CI 绿再 merge；勿在脏 feat/A 上堆 feat/B。合入后 stash 脏区再 pull --ff-only main。"
+    confidence: 0.8
+    source_session: "2026-08-09 S57 windows-python-discovery #157 + mcp #156"
+    tags: [workflow, pr, worktree, design-gate, git]
+    applications: 1
+
+  - id: windows-python-discovery-cascade
+    pattern: "Windows Companion Python: findUv 正交后用 findPythonBase 级联 config→isolated→well-known→manager seed-only→PATH/py；Store WindowsApps fail-closed；版本≥min；执行绝对 pin；pythonInstallHint 含 winget；basePythonAvailable 区分 create-env vs install。"
+    confidence: 0.85
+    source_session: "2026-08-09 S57 Scheme D"
+    tags: [windows, python, uv, discovery, qwen-vl]
+    applications: 1
+
   - id: broadcast-delegation
     pattern: "When server needs to trigger action in a different client, broadcast a start message to all clients and let the target client initiate its own request. This avoids modifying shared pipelines for cross-client routing."
     confidence: 0.7
