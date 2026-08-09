@@ -488,6 +488,8 @@ export function createLocalSttAdapter(
           channels: LOCAL_STT_CHANNELS,
           lang: lang.startsWith("zh") ? "zh" : lang,
           maxMs: windowMs,
+          // P1: same wire gate as classic WAV start — continuous/hold path must not omit
+          privacy_ack_v2: true,
         })
         sessionStarted = true
 
