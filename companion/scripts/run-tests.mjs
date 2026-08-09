@@ -1,9 +1,9 @@
 /**
  * Cross-platform companion test runner (MAINT-7 / P2).
- * Replaces Unix `find` in package.json so Windows CI/dev works.
+ * Replaces Unix find in package.json so Windows CI/dev works.
  *
- * Runs all .test-dist/tests/**/*.test.js except:
- *  - files starting with `_`
+ * Runs all compiled tests under .test-dist/tests matching *.test.js except:
+ *  - files starting with underscore
  *  - settings-web.test.js (run last, serial — port contention)
  */
 import fs from "node:fs"
