@@ -1,5 +1,6 @@
 // Expand MCP filesystem allow-dirs after user L2 confirm (P2).
-// Only paths under the user home directory may be added.
+// Paths under home or outside home may be offered; volume roots and sensitive
+// system / credential trees are hard-refused (never prompted).
 
 import * as fs from "fs"
 import * as path from "path"
@@ -76,15 +77,119 @@ export const SENSITIVE_HOME_PREFIXES = [
   ".config/gcloud",
   ".config/gh",
   ".kube",
+  // Windows profile secrets often live under AppData
+  "appdata/roaming/gnupg",
+  "appdata/roaming/openssh",
 ]
 
 /**
+ * Path-segment basenames that never become allow-dirs (anywhere on disk).
+ * Case-insensitive match on any path component.
+ */
+export const SENSITIVE_PATH_SEGMENTS = [
+  ".ssh",
+  ".gnupg",
+  ".aws",
+  ".kube",
+  "keychains",
+]
+
+/** True when dir is a filesystem / volume root (/, C:\). */
+export function isVolumeOrFsRoot(dir: string): boolean {
+  const resolved = path.resolve(dir)
+  return path.dirname(resolved) === resolved
+}
+
+/**
+ * Multi-user profile parents (one L2 click must not open every local account).
+ * Exact match only — `C:/Users/alice` and `/home/bob` remain offerable.
+ */
+export function isMultiUserProfilesRoot(
+  dirReal: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const n = dirReal.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+  if (platform === "win32") {
+    return /^[a-z]:\/users$/.test(n)
+  }
+  return n === "/users" || n === "/home" || n === "/export/home"
+}
+
+/**
+ * Hard-refuse OS / firmware trees. Does not cover ordinary project mounts
+ * (D:/work, /opt/apps, /data). Matched after realpath + forward-slash normalize.
+ */
+export function isSensitiveSystemDir(
+  dirReal: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const n = dirReal.replace(/\\/g, "/").toLowerCase()
+
+  if (platform === "win32") {
+    const patterns = [
+      /^[a-z]:\/windows(\/|$)/,
+      /^[a-z]:\/program files(\/|$)/,
+      /^[a-z]:\/program files \(x86\)(\/|$)/,
+      /^[a-z]:\/programdata(\/|$)/,
+      /^[a-z]:\/\$recycle\.bin(\/|$)/,
+      /^[a-z]:\/system volume information(\/|$)/,
+      /^[a-z]:\/recovery(\/|$)/,
+      /^[a-z]:\/perflogs(\/|$)/,
+      /^[a-z]:\/boot(\/|$)/,
+      /^[a-z]:\/efi(\/|$)/,
+    ]
+    return patterns.some((re) => re.test(n))
+  }
+
+  // POSIX / macOS system trees
+  const prefixes = [
+    "/etc",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/boot",
+    "/proc",
+    "/sys",
+    "/dev",
+    "/root",
+    "/system",
+    "/library/keychains",
+    "/library/mail",
+    "/private/etc",
+    "/private/var/db",
+    "/var/root",
+    "/var/run",
+    "/cores",
+  ]
+  return prefixes.some((p) => n === p || n.startsWith(p + "/"))
+}
+
+/** Normalize for allow-dir equality (win32 case + slash insensitive). */
+export function normalizeAllowDirKey(p: string): string {
+  const resolved = path.resolve(p)
+  const slashed = resolved.replace(/\\/g, "/")
+  return process.platform === "win32" ? slashed.toLowerCase() : slashed
+}
+
+function hasSensitivePathSegment(dirReal: string): string | null {
+  const parts = dirReal.replace(/\\/g, "/").toLowerCase().split("/").filter(Boolean)
+  for (const seg of parts) {
+    for (const blocked of SENSITIVE_PATH_SEGMENTS) {
+      if (seg === blocked.toLowerCase()) return blocked
+    }
+  }
+  return null
+}
+
+/**
  * Directory we would add to allowlist (parent of file, or path itself if dir).
- * Must resolve under home, not equal to home itself, not under sensitive prefixes.
+ * Allowed: absolute paths under home OR outside home (after L2).
+ * Refused: volume roots, home root, sensitive system trees, credential segments.
  */
 export function resolveAllowDirToOffer(
   candidatePath: string,
   home = os.homedir(),
+  platform: NodeJS.Platform = process.platform,
 ): { ok: true; dir: string } | { ok: false; error: string } {
   if (!candidatePath || typeof candidatePath !== "string") {
     return { ok: false, error: "empty path" }
@@ -105,22 +210,43 @@ export function resolveAllowDirToOffer(
     return { ok: false, error: "cannot resolve home" }
   }
 
-  // Prefer existing parent for allow-dir (server requires allow roots to exist)
+  // Classify under-home early so walk-up policy can differ.
+  // (homeReal is used before dirReal; relative() works with unresolved abs too.)
+  const relEarly = path.relative(homeReal, abs)
+  const underHomeEarly = !(relEarly.startsWith("..") || path.isAbsolute(relEarly))
+
+  // Prefer existing parent for allow-dir (server requires allow roots to exist).
+  // Outside home: only the path itself or its *immediate* parent — never 8-level
+  // walk-up (would over-grant D:/data for D:/data/a/b/c/d/e/f).
   let dir = abs
   try {
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
       dir = path.dirname(abs)
     } else if (!fs.existsSync(abs)) {
-      // walk up until existing directory — stop before promoting whole home
-      let cur = abs
-      for (let i = 0; i < 8; i++) {
-        const parent = path.dirname(cur)
-        if (parent === cur) break
-        if (fs.existsSync(parent) && fs.statSync(parent).isDirectory()) {
-          dir = parent
-          break
+      if (underHomeEarly) {
+        let cur = abs
+        for (let i = 0; i < 8; i++) {
+          const parent = path.dirname(cur)
+          if (parent === cur || isVolumeOrFsRoot(parent)) break
+          // Stop before promoting whole home
+          const relParent = path.relative(homeReal, parent)
+          if (relParent === "" || relParent === ".") break
+          if (fs.existsSync(parent) && fs.statSync(parent).isDirectory()) {
+            dir = parent
+            break
+          }
+          cur = parent
         }
-        cur = parent
+      } else {
+        const parent = path.dirname(abs)
+        if (
+          !isVolumeOrFsRoot(parent) &&
+          fs.existsSync(parent) &&
+          fs.statSync(parent).isDirectory()
+        ) {
+          dir = parent
+        }
+        // else leave dir=abs; existence check below will fail outside home
       }
     }
   } catch {
@@ -134,28 +260,70 @@ export function resolveAllowDirToOffer(
     return { ok: false, error: `cannot resolve directory: ${dir}` }
   }
 
-  const rel = path.relative(homeReal, dirReal)
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    return {
-      ok: false,
-      error: "for safety, only directories under your home folder can be added dynamically",
-    }
-  }
-  // Refuse adding home itself (would look like "open whole disk" under home)
-  if (rel === "" || rel === ".") {
+  // Never allow entire volume / filesystem root
+  if (isVolumeOrFsRoot(dirReal)) {
     return {
       ok: false,
       error:
-        "refusing to add the entire home directory as an allow-dir; create a project folder first (ensure_project_dir) or pick a specific subdirectory",
+        "refusing to add a drive or filesystem root as an allow-dir; pick a specific project folder",
     }
   }
 
-  // Block sensitive home subtrees (case-insensitive for APFS)
-  const norm = rel.replace(/\\/g, "/").toLowerCase()
-  for (const b of SENSITIVE_HOME_PREFIXES) {
-    const bl = b.toLowerCase()
-    if (norm === bl || norm.startsWith(bl + "/")) {
-      return { ok: false, error: `refusing to allow sensitive path under ~/${b}` }
+  // Multi-user parents (C:\Users, /Users, /home) — one click must not open all profiles
+  if (isMultiUserProfilesRoot(dirReal, platform)) {
+    return {
+      ok: false,
+      error: "refusing to allow multi-user profiles root; pick a specific user or project folder",
+    }
+  }
+
+  // Sensitive OS trees (Windows / POSIX) — anywhere on disk
+  if (isSensitiveSystemDir(dirReal, platform)) {
+    return { ok: false, error: "refusing to allow sensitive system path" }
+  }
+
+  // Credential-style path segments anywhere
+  const badSeg = hasSensitivePathSegment(dirReal)
+  if (badSeg) {
+    return { ok: false, error: `refusing to allow sensitive path segment ${badSeg}` }
+  }
+
+  const rel = path.relative(homeReal, dirReal)
+  const underHome = !(rel.startsWith("..") || path.isAbsolute(rel))
+
+  if (underHome) {
+    // Refuse adding home itself (would look like "open whole home" again)
+    if (rel === "" || rel === ".") {
+      return {
+        ok: false,
+        error:
+          "refusing to add the entire home directory as an allow-dir; create a project folder first (ensure_project_dir) or pick a specific subdirectory",
+      }
+    }
+
+    // Block sensitive home subtrees (case-insensitive for APFS)
+    const norm = rel.replace(/\\/g, "/").toLowerCase()
+    for (const b of SENSITIVE_HOME_PREFIXES) {
+      const bl = b.toLowerCase()
+      if (norm === bl || norm.startsWith(bl + "/")) {
+        return { ok: false, error: `refusing to allow sensitive path under ~/${b}` }
+      }
+    }
+  }
+
+  // Outside home: require the offered directory to exist (MCP server needs a real root)
+  if (!underHome && !fs.existsSync(dirReal)) {
+    return {
+      ok: false,
+      error: "directory must exist before it can be added as an allow-dir outside home",
+    }
+  }
+
+  // Under home: also require offered dir exists (server-filesystem rejects missing roots)
+  if (underHome && !fs.existsSync(dirReal)) {
+    return {
+      ok: false,
+      error: "directory must exist before it can be added as an allow-dir",
     }
   }
 
@@ -213,6 +381,7 @@ export function canOfferAllowDirExpand(opts: {
 
 /**
  * Persist new allow-dir on the named filesystem MCP server and hot-reload.
+ * Normalizes win32 paths to forward slashes for stable stdio args.
  */
 export async function addFilesystemAllowDir(
   serverName: string,
@@ -231,17 +400,22 @@ export async function addFilesystemAllowDir(
   const offered = resolveAllowDirToOffer(dir)
   if (!offered.ok) return offered
 
+  const dirForArgs =
+    process.platform === "win32" ? offered.dir.replace(/\\/g, "/") : offered.dir
+  const offerKey = normalizeAllowDirKey(offered.dir)
+
   const args = existing.args ? [...existing.args] : []
   const already = args.some((a) => {
     if (!isFilesystemAllowPathArg(a)) return false
     try {
-      return fs.realpathSync(a) === offered.dir || path.resolve(a) === offered.dir
+      const ra = fs.existsSync(a) ? fs.realpathSync(a) : path.resolve(a)
+      return normalizeAllowDirKey(ra) === offerKey
     } catch {
-      return path.resolve(a) === offered.dir
+      return normalizeAllowDirKey(a) === offerKey
     }
   })
   if (!already) {
-    args.push(offered.dir)
+    args.push(dirForArgs)
   }
 
   const rootUri = pathToFileUri(offered.dir)

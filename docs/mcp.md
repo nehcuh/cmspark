@@ -39,12 +39,27 @@ CMspark 通过本地 Companion 接入 [Model Context Protocol (MCP)](https://mod
 
 ### filesystem（官方文件系统 server）
 
-**默认策略**：若 `args` 只有 package 名、没有允许目录，且未配置 `roots`，companion 会在启动时自动注入**当前用户主目录**（`os.homedir()`）：
+**开箱默认**（`companion/src/config.ts` `defaultConfig`）：新安装 / 无 `mcp` 块时，companion **默认启用**官方 filesystem，且 **allow-dir = 用户主目录**：
+
+| 项 | 默认值 |
+|----|--------|
+| `mcp.enabled` | `true` |
+| `mcp.servers.filesystem` | `npx -y @modelcontextprotocol/server-filesystem <home>` |
+| `trust_level` | `trusted` |
+| allow-dir / `roots` / `cwd` | 当前用户主目录（`os.homedir()`，Windows 正斜杠） |
 
 | 平台 | 主目录示例（写入 args） | roots URI 示例 |
 |------|-------------------------|----------------|
 | Windows | `C:/Users/HuChen`（正斜杠） | `file:///C:/Users/HuChen` |
 | macOS / Linux | `/Users/you` | `file:///Users/you` |
+
+**手改补全**：若你只写了 package 名、没有允许目录且未配 `roots`，`ensureFilesystemAllowlist` 仍会在启动时注入主目录。
+
+**已有 `~/.cmspark-agent/config.json`**：磁盘上的 `mcp.servers` 整图优先。  
+- 删掉 filesystem 但保留其它 server → **不会**被默认配置复活。  
+- 显式 `servers: {}`（清空全部 MCP）→ **保持空**，不会每次启动再塞回 filesystem。  
+- 仅**新装**（`initDataDir` 写 defaultConfig）或磁盘**完全没有 `mcp` 块**时，才带上默认 filesystem@home。  
+- 旧配置若仍是 `enabled: false` + 空 servers，可在 Side Panel → MCP 添加 filesystem，或把下面示例写入 config 后重启。
 
 推荐完整配置（可多目录）：
 
@@ -82,7 +97,17 @@ macOS 示例：`args` 末尾用 `"/Users/you"`，`cwd` 同理。
   - 默认：`file-write` / `exec` / `network-egress` 等 critical 能力会 **强制 L2 确认**（即使 `trust_level=trusted`；`write_file` 等破坏性名称还会按次确认）。
   - **单独** god-mode、`auto_approve_dangerous`、或 **仅** `auto_approve_enterprise_tools` **都不会**免 MCP critical 确认。
   - **全自动巡航（三旗全开）**：`auto_approve_dangerous` + `auto_approve_enterprise_tools` + `allow_all_schemes` 时，与 `shell_exec` 一致，**免 MCP 写/critical 确认**（含 `mcp_read_resource` 等 meta force 路径；审计日志 `mcp.confirm.waived` / `mcp.meta.confirm.waived` · `reason=full_autonomy_cruise`）。未开三旗时行为不变。
-- **动态加目录（P2）**：当 `mcp__filesystem__*` 因路径不在 allowlist 失败，且路径在用户 **home 下** 时，会弹 L2 确认「是否允许该目录」；批准后写入 config 并热重载，自动重试一次。敏感路径（`.ssh` / Keychains 等）拒绝扩展。
+- **动态加目录（P2）**：当 `mcp__filesystem__*` 因 **Access denied / outside allowed directories** 失败时：
+  - **会弹 L2**：路径（**home 内或之外**）当前 allowlist **尚未覆盖** → 确认「是否允许该目录」→ 写入 config、热重载、**自动重试一次**。典型场景：默认只开了 home，LLM 要读 `D:/data/report` 或 `/opt/apps/x`。
+  - **不会弹窗 / 不能动态加**（硬拒绝，无确认窗）：
+    - **整盘 / 卷根**（`C:\`、`/`）— 必须指定具体项目目录；
+    - **多用户配置根**（`C:\Users`、`/Users`、`/home`）— 必须指定具体用户/项目目录；
+    - **系统敏感树**（Windows：`Windows` / `Program Files` / `ProgramData` 等；POSIX：`/etc` `/usr` `/bin` `/System` 等）；
+    - **凭据类路径名**（任意位置的 `.ssh` / `.gnupg` / `.aws` / `.kube` / Keychains 等路径分量）— 阻止「再单独加宽」到这些目录；
+    - **整个 home** 再加一遍（默认已覆盖时无意义）；
+    - 目录尚不存在（须先存在再扩展；home 内仅上溯有限层，home 外只接受路径本身或其**直接父目录**）。
+  - **默认 allow = 整个 home 的残余风险**：`server-filesystem` 一旦以 home 为 root，**home 下的 `.ssh` / 浏览器配置等已在 allow 范围内**；上面「凭据硬拒绝」只拦 **动态扩展** 再加一层，**不能**从默认 home root 里抠掉这些子树。收紧请改 `args` 为更窄目录（如 `~/Projects`）。
+  - 默认 allow 已是 **整个 home** 时：home 内路径通常直接可用，**不会**为每个子目录再弹窗。
 - **会话项目目录（P1）**：工具 `ensure_project_dir` 在工作区或 `~/CMspark-projects/<name>/` 下创建文件夹，供写报告前使用。
 
 ### brave-search
