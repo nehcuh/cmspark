@@ -43,16 +43,16 @@ describe("unattendedInitialSkipEligible (pure)", () => {
     assert.equal(unattendedInitialSkipEligible({ ...base, coordinateAllowed: false }), false)
   })
 
-  it("T1-3 experimental → false", () => {
-    assert.equal(unattendedInitialSkipEligible({ ...base, experimental: true }), false)
+  it("T1-3 experimental does NOT block unattended (owner 2026-08 risk-accepted)", () => {
+    assert.equal(unattendedInitialSkipEligible({ ...base, experimental: true }), true)
   })
 
-  it("T1-4 modelEnabled → false", () => {
-    assert.equal(unattendedInitialSkipEligible({ ...base, modelEnabled: true }), false)
+  it("T1-4 modelEnabled does NOT block unattended (owner 2026-08 risk-accepted)", () => {
+    assert.equal(unattendedInitialSkipEligible({ ...base, modelEnabled: true }), true)
   })
 
-  it("T1-5 credential latch → false", () => {
-    assert.equal(unattendedInitialSkipEligible({ ...base, credentialLatched: true }), false)
+  it("T1-5 credential latch does NOT block unattended initial skip", () => {
+    assert.equal(unattendedInitialSkipEligible({ ...base, credentialLatched: true }), true)
   })
 
   it("T1-6 armed+coord+caps → true", () => {
@@ -183,7 +183,7 @@ describe("evaluateUnattendedHostComputerSkip live grant", () => {
     )
   })
 
-  it("armed but modelEnabled → false", () => {
+  it("armed + modelEnabled still skips (owner 2026-08 risk-accepted)", () => {
     armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE })
     assert.equal(
       evaluateUnattendedHostComputerSkip({
@@ -194,7 +194,8 @@ describe("evaluateUnattendedHostComputerSkip live grant", () => {
         budget: 10,
         actionCount: 1,
       }),
-      false,
+      true,
+      "modelEnabled must not force confirm under armed unattended",
     )
   })
 
@@ -254,14 +255,13 @@ describe("evaluateUnattendedHostComputerSkip live grant", () => {
   })
 })
 
-describe("PROMPT_ALWAYS / re-L2 floors still force prompt (T3-3..5 spirit)", () => {
-  // Unattended must not weaken mid-task force-interactive tags.
-  it("reL2ShouldPrompt still forces danger / experimental / foreground", async () => {
+describe("PROMPT_ALWAYS / re-L2 floors (G1 session-trust spirit)", () => {
+  // reL2ShouldPrompt is for G1/cruise — unattended bypasses reL2 entirely in executor.
+  it("reL2ShouldPrompt still marks danger / experimental / foreground as must-prompt for G1", async () => {
     const { reL2ShouldPrompt } = await import("../src/computer/session-trust")
     assert.equal(reL2ShouldPrompt(["computer.danger_detected"]), true)
     assert.equal(reL2ShouldPrompt(["computer.experimental_suggestion"]), true)
     assert.equal(reL2ShouldPrompt(["computer.foreground_yielded"]), true)
-    // Known non-PROMPT_ALWAYS can silent when trusted by reL2 path
     assert.equal(reL2ShouldPrompt(["computer.budget_exhausted"]), false)
   })
 })

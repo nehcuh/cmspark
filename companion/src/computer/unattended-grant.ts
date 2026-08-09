@@ -2,8 +2,10 @@
  * Unattended desktop session grant (ADR-021).
  *
  * Process-memory only — companion restart clears. After phrase arm, host_computer
- * may skip *initial* task L2 for coordinateAllowed apps when
- * unattendedInitialSkipEligible holds. Does NOT silence PROMPT_ALWAYS re-L2.
+ * skips *initial* task L2 for coordinateAllowed apps when unattendedInitialSkipEligible
+ * holds, AND mid-task re-L2 (including PROMPT_ALWAYS tags) is silent while armed
+ * (executor reL2 short-circuit). Hard denials (payment final, captcha, …) still throw
+ * without a confirm dialog.
  *
  * open_within_app: no type corpus ⊆ check (blast radius higher than G1 — UI must disclose).
  * Global auto_approve / allow_all_schemes alone NEVER set this grant.
@@ -138,8 +140,13 @@ function clampCap(v: unknown, fallback: number): number {
 }
 
 /**
- * Pure G1-sibling gate for unattended initial L2 skip.
+ * Pure gate for unattended initial L2 skip.
  * coordinateAllowed must already be true at call site (assertCoordinateAllowed passed).
+ *
+ * Product (owner 2026-08): 武装 = 风险自担。值守 grant 有效期内 **不再** 因
+ * modelEnabled / experimental / credential latch 退回弹窗——否则「无人值守」
+ * 名不副实。硬拒绝（支付终确等）仍在 executor 以 throw 无对话框路径处理。
+ * experimental / modelEnabled / credentialLatched 参数保留签名兼容，**不再 gate**。
  */
 export function unattendedInitialSkipEligible(args: {
   armed: boolean
@@ -157,9 +164,10 @@ export function unattendedInitialSkipEligible(args: {
   if (!args.armed) return false
   if (!(args.expiresAt > args.now)) return false
   if (args.coordinateAllowed !== true) return false
-  if (args.experimental === true) return false
-  if (args.modelEnabled === true) return false
-  if (args.credentialLatched === true) return false
+  // modelEnabled / experimental / credentialLatched intentionally ignored under unattended
+  void args.experimental
+  void args.modelEnabled
+  void args.credentialLatched
   if (!(args.budget > 0 && args.budget <= args.maxBudgetCap)) return false
   if (!(args.actionCount >= 0 && args.actionCount <= args.maxActionsCap)) return false
   return true
@@ -201,17 +209,11 @@ export function evaluateUnattendedHostComputerSkipDetail(args: {
   if (args.coordinateAllowed !== true) {
     return { ok: false, block_reason: "coordinate_not_allowed" }
   }
-  if (args.experimental === true) {
-    return { ok: false, block_reason: "action_experimental_flag" }
-  }
-  // ADR-021 / product: experimental Qwen layer ON blocks unattended initial skip
-  // (hits still force re-L2; silent initial skip would hide that risk).
-  if (args.modelEnabled === true) {
-    return { ok: false, block_reason: "modelEnabled_blocks_unattended_skip" }
-  }
-  if (args.credentialLatched === true) {
-    return { ok: false, block_reason: "credential_latch" }
-  }
+  // Owner 2026-08: unattended = full residual risk on host_computer confirms.
+  // modelEnabled / experimental / credential latch no longer block initial skip.
+  void args.experimental
+  void args.modelEnabled
+  void args.credentialLatched
   if (!(args.budget > 0 && args.budget <= st.maxBudgetCap)) {
     return { ok: false, block_reason: "budget_over_cap" }
   }
