@@ -18,9 +18,9 @@ export type WhisperPinnedArch = "darwin-arm64" | "darwin-x64" | "win-x64" | "lin
 export const WHISPER_BINARY_SHA256: Partial<Record<WhisperPinnedArch, string>> = {
   "darwin-arm64": "40bca494d49af736058eb3f33cbcebaa020eacf6d0087b623f334946e1ab2128",
   // "darwin-x64": "<sha256 from --write-pins>",
-  // whisper.cpp official win-x64 Release whisper-cli → cmspark-whisper-win-x64.exe
-  // (2026-08-04 stage under companion/dist/bin; re-pin if you replace the binary)
-  "win-x64": "95e3c0b0e778ad9499eb0125f97c1dcf437dd9eb4ea77050b043574f93c2631d",
+  // whisper.cpp v1.7.6 official whisper-bin-x64.zip → cmspark-whisper-win-x64.exe
+  // Keep in lock-step with assets/whisper-binary.manifest.json (win-x64 extract primary).
+  "win-x64": "b7c6dc2e999a80bc2d23cd4c76701211f392ae55d5cabdf0d45eb2ca4faf09af",
   // "linux-x64": "<sha256 from --write-pins>",
 }
 

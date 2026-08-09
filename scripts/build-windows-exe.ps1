@@ -426,6 +426,22 @@ $WhisperSrc = $null
 foreach ($c in $WhisperCandidates) {
     if (Test-Path $c) { $WhisperSrc = $c; break }
 }
+# Auto-fetch when missing (CMSPARK_WHISPER_AUTO_FETCH=0 to skip). Needs tsc dist already.
+if (-not $WhisperSrc -and $env:CMSPARK_WHISPER_AUTO_FETCH -ne "0") {
+    Write-Host "  Fetching cmspark-whisper-win-x64 (manifest-pinned)..." -ForegroundColor DarkGray
+    Push-Location $CompanionDir
+    try {
+        node scripts/fetch-whisper-binary.mjs --arch win-x64 --dest (Join-Path $CompanionDir "dist\bin")
+        if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $CompanionDir "dist\bin\cmspark-whisper-win-x64.exe"))) {
+            $WhisperSrc = Join-Path $CompanionDir "dist\bin\cmspark-whisper-win-x64.exe"
+            Ok "auto-fetched cmspark-whisper-win-x64.exe"
+        } elseif ($LASTEXITCODE -eq 2) {
+            Warn "whisper auto-fetch skipped (CMSPARK_WHISPER_AUTO_FETCH=0)"
+        } else {
+            Warn "whisper auto-fetch failed (exit $LASTEXITCODE) — package will ship without local STT binary"
+        }
+    } finally { Pop-Location }
+}
 if ($WhisperSrc) {
     $WhisperBinDir = Join-Path $StagingDir "bin"
     New-Item -ItemType Directory -Force $WhisperBinDir | Out-Null

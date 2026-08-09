@@ -602,29 +602,23 @@ dist-package\CMspark-Setup-v*.exe        ← 安装向导（安装 NSIS 时生�
 | `bin\cmspark-whisper-win-x64.exe` | whisper.cpp CLI，子进程推理 |
 | `~/.cmspark-agent/models/whisper/` | 用户下载的 ggml 权重（不进 zip） |
 
-打包前准备二进制（缺则包仍成功，运行时 `binary_missing`）：
+**自动拉取（推荐）**：`build-package.bat` / `build-windows-exe.ps1` 若未找到本地二进制，会按  
+`companion/assets/whisper-binary.manifest.json`（HTTPS + sha256）自动下载 whisper.cpp 官方 zip，解压并命名为 `cmspark-whisper-win-x64.exe` + DLL。  
+- 关闭：`set CMSPARK_WHISPER_AUTO_FETCH=0`  
+- 手动：`node companion/scripts/fetch-whisper-binary.mjs --arch win-x64 --dest companion/dist/bin`
+
+仍可手工放置：
 
 ```bat
-:: 1) 准备 whisper-cli.exe（自行编译 whisper.cpp，或从预编译拷贝）
-:: 2) 复制并命名到 companion 约定路径：
 mkdir companion\dist\bin 2>nul
 copy /Y path\to\whisper-cli.exe companion\dist\bin\cmspark-whisper-win-x64.exe
-
-:: 3) 再打包（会 stage 到 dist-package\...\bin\）
+:: 以及 whisper.dll / ggml*.dll 同目录
 build-package.bat
 ```
 
-Git Bash / WSL 下也可用（需本机已有 `whisper-cli`）：
+运行时：设置页「本机组件：未找到」→ **下载本机听写组件**（写入 `%USERPROFILE%\.cmspark-agent\bin\whisper\win-x64\`）。
 
-```bash
-# Windows Git Bash 示例
-export CMSPARK_WHISPER_SRC="/c/path/to/whisper-cli.exe"
-bash companion/scripts/build-cmspark-whisper.sh --write-pins
-# 产出 companion/dist/bin/cmspark-whisper-win-x64.exe + 可选更新 pin
-build-package.bat
-```
-
-验证：包内应有 `dist-package\cmspark-windows-x64\bin\cmspark-whisper-win-x64.exe`；设置页「本机组件：已就绪」。
+验证：包内 `dist-package\cmspark-windows-x64\bin\cmspark-whisper-win-x64.exe` 或设置页「本机组件：已就绪」。
 
 > Windows 构建仅要求本机有 Node.js ≥ 20。安装 [NSIS](https://nsis.sourceforge.io/) 后，构建脚本会额外生成安装向导 `.exe`。
 

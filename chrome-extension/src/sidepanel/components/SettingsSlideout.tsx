@@ -72,6 +72,7 @@ import {
   VOICE_STATUS_QUERYING,
   VOICE_STATUS_STARTING_DOWNLOAD,
   binaryStatusLine,
+  canDownloadWhisperBinary,
   formatDiskUsage,
   modelProbeErrorLabel,
   modelStatusLabel,
@@ -1586,6 +1587,48 @@ export function SettingsSlideout() {
                           <div style={{ ...styles.helpText, marginTop: 2 }}>
                             {binaryStatusLine(voiceModel.binary)}
                           </div>
+                          {canDownloadWhisperBinary(voiceModel.binary) && (
+                            <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+                              <button
+                                type="button"
+                                style={styles.secondaryBtn}
+                                onClick={() => {
+                                  clearVoiceErr()
+                                  sendVoice({ type: "voice.binary.download" })
+                                }}
+                              >
+                                下载本机听写组件
+                              </button>
+                              <button
+                                type="button"
+                                style={styles.secondaryBtn}
+                                onClick={() => {
+                                  clearVoiceErr()
+                                  sendVoice({ type: "voice.binary.cancel" })
+                                }}
+                              >
+                                取消组件下载
+                              </button>
+                            </div>
+                          )}
+                          {state.voiceBinaryProgress && (
+                            <div style={{ ...styles.helpText, marginTop: 4 }}>
+                              组件下载：{state.voiceBinaryProgress.phase}
+                              {typeof state.voiceBinaryProgress.totalBytes === "number" &&
+                              state.voiceBinaryProgress.totalBytes > 0
+                                ? ` ${Math.min(
+                                    100,
+                                    Math.floor(
+                                      (100 * (state.voiceBinaryProgress.receivedBytes || 0)) /
+                                        state.voiceBinaryProgress.totalBytes,
+                                    ),
+                                  )}%`
+                                : ""}
+                              {state.voiceBinaryProgress.file
+                                ? ` · ${state.voiceBinaryProgress.file}`
+                                : ""}
+                            </div>
+                          )}
                         </>
                       )}
 

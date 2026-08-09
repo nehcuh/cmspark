@@ -191,7 +191,8 @@ export function modelProbeErrorLabel(error: string | undefined | null): string |
 }
 
 /**
- * Binary probe line for settings. not_found is OK for M0 (no packaged binary yet).
+ * Binary probe line for settings.
+ * not_found / hash_mismatch → user can auto-download (voice.binary.download).
  */
 export function binaryStatusLine(
   binary: { status?: string; path?: string; message?: string } | null | undefined,
@@ -203,15 +204,22 @@ export function binaryStatusLine(
       : "本机组件：已就绪"
   }
   if (status === "hash_mismatch") {
-    return "本机组件：校验失败（请更新 Companion）"
+    return "本机组件：校验失败（可重新下载本机组件）"
   }
-  if (status === "unsupported") {
+  if (status === "unsupported" || status === "unsupported_arch") {
     return binary?.message
-      ? `本机组件：当前平台不支持（${binary.message}）`
-      : "本机组件：当前平台不支持"
+      ? `本机组件：当前平台不支持自动下载（${binary.message}）`
+      : "本机组件：当前平台不支持自动下载"
   }
-  // not_found / unknown — M0-acceptable
   return binary?.message
-    ? `本机组件：未找到（${binary.message}；M0 可先下载模型）`
-    : "本机组件：未找到（M0 可先下载模型，转写能力在后续版本）"
+    ? `本机组件：未找到（${binary.message}）— 可一键下载`
+    : "本机组件：未找到 — 可一键下载 cmspark-whisper"
+}
+
+/** Whether Settings should show the binary download button. */
+export function canDownloadWhisperBinary(
+  binary: { status?: string } | null | undefined,
+): boolean {
+  const status = binary?.status || "not_found"
+  return status === "not_found" || status === "hash_mismatch"
 }

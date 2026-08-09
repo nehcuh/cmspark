@@ -5786,6 +5786,18 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "voice.binary.download": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.binary.download requires source:"settings" (settings-page only)' }
+      }
+      return { valid: true }
+    },
+    "voice.binary.cancel": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.binary.cancel requires source:"settings" (settings-page only)' }
+      }
+      return { valid: true }
+    },
     // Path B M1 — voice.stt.* (runtime Side Panel; NOT source:settings; origin fence in handler)
     "voice.stt.start": (m) => {
       if (m.v !== 1) {

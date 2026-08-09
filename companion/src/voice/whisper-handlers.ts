@@ -25,6 +25,10 @@ import {
   WhisperDownloadError,
 } from "./whisper-download"
 import {
+  downloadWhisperBinary,
+  WhisperBinaryDownloadError,
+} from "./whisper-binary-download"
+import {
   buildVoiceModelState,
   listReadyWhisperModels,
   type BuildVoiceModelStateOpts,
@@ -55,9 +59,11 @@ export interface VoiceModelHandlerDeps {
 
 type ActiveDownload = { modelId: WhisperModelId; controller: AbortController }
 type ActiveDelete = { modelId: WhisperModelId }
+type ActiveBinaryDownload = { controller: AbortController }
 
 let activeDownload: ActiveDownload | null = null
 let activeDelete: ActiveDelete | null = null
+let activeBinaryDownload: ActiveBinaryDownload | null = null
 
 /** Test seam: clear download/delete mutex + abort any in-flight controller. */
 export function _resetVoiceModelHandlersForTests(): void {
@@ -68,8 +74,16 @@ export function _resetVoiceModelHandlersForTests(): void {
       /* ignore */
     }
   }
+  if (activeBinaryDownload) {
+    try {
+      activeBinaryDownload.controller.abort()
+    } catch {
+      /* ignore */
+    }
+  }
   activeDownload = null
   activeDelete = null
+  activeBinaryDownload = null
 }
 
 // --- errors -------------------------------------------------------------------
@@ -84,6 +98,8 @@ const SETTINGS_SOURCE_TYPES = new Set([
   "voice.model.delete",
   "voice.model.set_active",
   "voice.model.set_engine",
+  "voice.binary.download",
+  "voice.binary.cancel",
 ])
 
 // --- state helper -------------------------------------------------------------
@@ -480,6 +496,89 @@ export async function handleVoiceModelMessage(
       const state = await statePayload(deps)
       ctx.broadcast?.(state)
       return state
+    }
+
+    case "voice.binary.download": {
+      if (activeBinaryDownload) {
+        return {
+          type: "voice.binary.download.result" as const,
+          ok: true,
+          status: "already-running",
+        }
+      }
+      if (activeDownload) {
+        return modelError("模型下载进行中——请完成或取消后再下载本机组件。", {
+          code: "DOWNLOAD_IN_PROGRESS",
+        })
+      }
+      const controller = new AbortController()
+      activeBinaryDownload = { controller }
+      void statePayload(deps).then((s) => ctx.broadcast?.(s))
+      void (async () => {
+        try {
+          const result = await downloadWhisperBinary({
+            signal: controller.signal,
+            onProgress: (p) => {
+              ctx.broadcast?.({
+                type: "voice.binary.progress",
+                phase: p.phase,
+                receivedBytes: p.receivedBytes,
+                totalBytes: p.totalBytes,
+                file: p.file,
+              })
+            },
+          })
+          logger.info("voice.binary.download.completed", {
+            primary: result.primaryPath,
+            version: result.version,
+          })
+        } catch (err) {
+          if (err instanceof WhisperBinaryDownloadError && err.reason === "aborted") {
+            logger.info("voice.binary.download.cancelled", {})
+          } else if (err instanceof WhisperBinaryDownloadError && err.reason === "already-ready") {
+            /* n/a */
+          } else {
+            const msg = err instanceof Error ? err.message : String(err)
+            logger.warn("voice.binary.download.failed", { error: msg })
+            ctx.broadcast?.(
+              modelError(`本机组件下载失败：${msg}`, {
+                code: "BINARY_DOWNLOAD_FAILED",
+              }),
+            )
+          }
+        } finally {
+          activeBinaryDownload = null
+          try {
+            const state = await statePayload(deps)
+            ctx.broadcast?.(state)
+          } catch {
+            /* ignore */
+          }
+        }
+      })()
+      logger.info("voice.binary.download.started", {})
+      return {
+        type: "voice.binary.download.result" as const,
+        ok: true,
+        status: "started",
+      }
+    }
+
+    case "voice.binary.cancel": {
+      if (!activeBinaryDownload) {
+        return {
+          type: "voice.binary.cancel.result" as const,
+          ok: true,
+          status: "not-running",
+        }
+      }
+      activeBinaryDownload.controller.abort()
+      logger.info("voice.binary.download.cancel_requested", {})
+      return {
+        type: "voice.binary.cancel.result" as const,
+        ok: true,
+        status: "cancelling",
+      }
     }
 
     default:

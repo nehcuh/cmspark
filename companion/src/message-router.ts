@@ -2035,13 +2035,15 @@ export async function handleMessage(
         requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,
       })
-    // Path B M0 — voice.model.* (settings dual fence; ADR-023 L7)
+    // Path B M0 — voice.model.* / voice.binary.* (settings dual fence; ADR-023 L7)
     case "voice.model.get_state":
     case "voice.model.download":
     case "voice.model.cancel":
     case "voice.model.delete":
     case "voice.model.set_active":
     case "voice.model.set_engine":
+    case "voice.binary.download":
+    case "voice.binary.cancel":
       return handleVoiceModelMessage(msg, {
         broadcast: session?.broadcast,
         origin: session?.origin,

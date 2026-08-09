@@ -6,10 +6,9 @@ echo ============================================
 echo   CMspark Windows EXE Builder
 echo ============================================
 echo.
-echo Local STT (optional): place whisper-cli as
-echo   companion\dist\bin\cmspark-whisper-win-x64.exe
-echo before this script so the package includes bin\cmspark-whisper-*.exe
-echo (NOT inside the SEA blob — sidecar next to cmspark-agent.exe).
+echo Local STT: if companion\dist\bin\cmspark-whisper-win-x64.exe is missing,
+echo   the build will AUTO-DOWNLOAD a pinned whisper.cpp zip (HTTPS+sha256)
+echo   unless CMSPARK_WHISPER_AUTO_FETCH=0. Sidecar + DLLs stage next to the SEA exe.
 echo.
 
 cd /d "%~dp0"

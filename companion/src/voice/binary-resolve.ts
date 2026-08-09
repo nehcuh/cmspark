@@ -165,19 +165,28 @@ export function allWhisperSearchRoots(opts?: {
   companionRoots?: string[]
   /** Override process.execPath (tests). */
   execPath?: string
+  /** User-cache install dir (auto-download). Default: ~/.cmspark-agent/bin/whisper/<arch> */
+  userInstallDir?: string | null
+  /** Override arch for user-cache path. */
+  arch?: string
+  dataDir?: string
 }): string[] {
   const companionRoots = opts?.companionRoots ?? []
   const seen = new Set<string>()
   const out: string[] = []
-  const pushRoots = (packageRoot: string) => {
-    for (const r of defaultWhisperSearchRoots(packageRoot)) {
-      const abs = path.resolve(r)
-      if (!seen.has(abs)) {
-        seen.add(abs)
-        out.push(abs)
-      }
+  const push = (dir: string) => {
+    const abs = path.resolve(dir)
+    if (!seen.has(abs)) {
+      seen.add(abs)
+      out.push(abs)
     }
   }
+  const pushRoots = (packageRoot: string) => {
+    for (const r of defaultWhisperSearchRoots(packageRoot)) {
+      push(r)
+    }
+  }
+  // Packaged SEA / companion first
   for (const root of companionRoots) pushRoots(root)
   const execPath = opts?.execPath ?? process.execPath
   if (typeof execPath === "string" && execPath) {
@@ -187,6 +196,13 @@ export function allWhisperSearchRoots(opts?: {
       /* ignore */
     }
   }
+  // User auto-download cache (after packaged so ship-with-app wins)
+  if (opts?.userInstallDir !== null) {
+    const arch = opts?.arch ?? resolveWhisperArch()
+    const userDir =
+      opts?.userInstallDir || defaultWhisperBinaryInstallDir(arch, opts?.dataDir)
+    if (userDir) push(userDir)
+  }
   return out
 }
 
@@ -194,6 +210,18 @@ export function allWhisperSearchRoots(opts?: {
 export function spikeWhisperCacheDir(dataDir?: string): string {
   const base = dataDir || path.join(os.homedir(), ".cmspark-agent")
   return path.join(base, "spike", "whisper")
+}
+
+/**
+ * User auto-download install dir: ~/.cmspark-agent/bin/whisper/<arch>
+ * (same contract as whisper-binary-download.defaultWhisperBinaryInstallDir)
+ */
+export function defaultWhisperBinaryInstallDir(
+  arch: string = resolveWhisperArch(),
+  dataDir?: string,
+): string {
+  const base = dataDir || path.join(os.homedir(), ".cmspark-agent")
+  return path.join(base, "bin", "whisper", arch)
 }
 
 /**

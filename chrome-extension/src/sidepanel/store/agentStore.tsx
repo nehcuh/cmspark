@@ -132,6 +132,13 @@ export interface AgentState {
   voiceModel: VoiceModelState | null
   /** 最后一条 voice.model.progress(无 model 仍 downloading 时由 reducer 清除)。 */
   voiceModelProgress: VoiceModelProgress | null
+  /** voice.binary.progress — cmspark-whisper runtime download. */
+  voiceBinaryProgress: {
+    phase?: string
+    receivedBytes?: number
+    totalBytes?: number
+    file?: string
+  } | null
   /** 最后一条 voice.model.* 错误(family:"voice.model" 路由)。 */
   voiceModelError: string | null
   /** UI Mode P0: last browser CDP tool activity timestamp (ms) for L1 quiescence. */
@@ -273,6 +280,15 @@ export type AgentAction =
   | { type: "SET_COMPUTER_MODEL_ERROR"; error: string | null }
   | { type: "SET_VOICE_MODEL_STATE"; modelState: VoiceModelState }
   | { type: "SET_VOICE_MODEL_PROGRESS"; progress: VoiceModelProgress | null }
+  | {
+      type: "SET_VOICE_BINARY_PROGRESS"
+      progress: {
+        phase?: string
+        receivedBytes?: number
+        totalBytes?: number
+        file?: string
+      } | null
+    }
   | { type: "SET_VOICE_MODEL_ERROR"; error: string | null }
   | { type: "NOTE_BROWSER_TOOL"; at?: number }
   | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }
@@ -400,6 +416,7 @@ export const initialState: AgentState = {
   computerModelError: null,
   voiceModel: null,
   voiceModelProgress: null,
+  voiceBinaryProgress: null,
   voiceModelError: null,
   lastBrowserToolAt: null,
   modePin: null,
@@ -871,14 +888,18 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const anyDownloading = Object.values(action.modelState.models).some(
         (m) => m.status === "downloading",
       )
+      const binaryReady = action.modelState.binary?.status === "ready"
       return {
         ...state,
         voiceModel: action.modelState,
         voiceModelProgress: anyDownloading ? state.voiceModelProgress : null,
+        voiceBinaryProgress: binaryReady ? null : state.voiceBinaryProgress,
       }
     }
     case "SET_VOICE_MODEL_PROGRESS":
       return { ...state, voiceModelProgress: action.progress }
+    case "SET_VOICE_BINARY_PROGRESS":
+      return { ...state, voiceBinaryProgress: action.progress }
     case "SET_VOICE_MODEL_ERROR":
       return { ...state, voiceModelError: action.error }
     case "NOTE_BROWSER_TOOL":

@@ -62,13 +62,14 @@ test("progressPercent clamps 0–100", () => {
   assert.equal(progressPercent(NaN, 100), 0)
 })
 
-test("formatDiskUsage and binaryStatusLine (not_found OK for M0)", () => {
+test("formatDiskUsage and binaryStatusLine (not_found prompts download)", () => {
   assert.match(formatDiskUsage(100, 4096), /100 MB/)
   assert.match(formatDiskUsage(100, 4096), /预算/)
   const nf = binaryStatusLine({ status: "not_found" })
   assert.match(nf, /未找到/)
-  assert.match(nf, /M0/)
+  assert.match(nf, /下载/)
   assert.match(binaryStatusLine({ status: "ready", path: "/opt/w" }), /已就绪/)
+  assert.match(binaryStatusLine({ status: "hash_mismatch" }), /校验失败|重新下载/)
 })
 
 test("parseVoiceSettingsSendResponse surfaces SW / disconnect failures", () => {

@@ -61,7 +61,19 @@ OS 级全局热键（失焦仍按住）属后续增强。
 | v2 | 本机 STT |
 | v3 | 连续听写 / ASR 纠错 / 按住热键长听 / 实时出字长听 |
 
-### 2.5 本机 Whisper 渐进假设（M2）
+### 2.5 本机组件（cmspark-whisper）与模型
+
+本机听写分两层，都可在 **设置 → 听写** 完成：
+
+| 层 | 内容 | 如何就绪 |
+|----|------|----------|
+| **本机组件** | `cmspark-whisper` + DLL（Windows） | 安装包可内置；若提示「未找到」→ 点 **「下载本机听写组件」**（HTTPS + sha256 pin；约数 MB） |
+| **模型权重** | ggml-small / medium / large-v3-turbo | 设置页下载到 `~/.cmspark-agent/models/whisper/` |
+
+打包：`build-package.bat` 在缺少 `companion/dist/bin/cmspark-whisper-win-x64.exe` 时会按 `assets/whisper-binary.manifest.json` **自动拉取**（`CMSPARK_WHISPER_AUTO_FETCH=0` 可关）。  
+Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.7.6) `whisper-bin-x64.zip` 对齐。
+
+### 2.6 本机 Whisper 渐进假设（M2）
 
 开启 **本机听写** + **连续听写** + **实时出字** 时：
 
@@ -75,7 +87,7 @@ OS 级全局热键（失焦仍按住）属后续增强。
 
 浏览器听写路径：Web Speech 字级 interim（厂商云 STT 残留，见 v1 ack）。
 
-### 2.6 文字 / 语音改设置
+### 2.7 文字 / 语音改设置
 
 设置页顶部支持短命令，例如：`开启连续听写` · `开启实时出字` · `浏览器听写` · `打开会议` · `打开场景`。可键盘输入或点「语音」口述（不进聊天、不 auto-send）。
 

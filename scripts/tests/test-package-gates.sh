@@ -79,6 +79,17 @@ assert_file_has "${PACKAGE_SH}" 'run-esbuild-bundle\.mjs' \
   "package.sh uses shared esbuild SoT runner"
 assert_file_has "${ESBUILD_RUNNER}" 'esbuild-bundle-args\.json' \
   "run-esbuild-bundle.mjs loads esbuild-bundle-args.json"
+
+# --- Whisper binary auto-fetch SoT -------------------------------------------
+echo "[static] whisper-binary auto-fetch SoT"
+assert_file_exists "${ROOT}/companion/assets/whisper-binary.manifest.json" \
+  "whisper-binary.manifest.json present"
+assert_file_exists "${ROOT}/companion/scripts/fetch-whisper-binary.mjs" \
+  "fetch-whisper-binary.mjs present"
+assert_file_has "${ROOT}/scripts/build-windows-exe.ps1" 'fetch-whisper-binary' \
+  "build-windows-exe.ps1 auto-fetches whisper when missing"
+assert_file_has "${ROOT}/companion/src/voice/whisper-binary-pins.ts" 'b7c6dc2e999a80bc2d23cd4c76701211f392ae55d5cabdf0d45eb2ca4faf09af' \
+  "win-x64 pin matches whisper.cpp v1.7.6 primary (lock-step with manifest)"
 assert_file_has "${PACKAGE_SH}" 'host-scripts-win' \
   "package.sh stages host-scripts-win"
 assert_file_has "${PACKAGE_SH}" 'qwen-vl-worker\.py' \

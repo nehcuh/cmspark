@@ -107,7 +107,7 @@ export function mapLocalSttError(code: string): LocalSttUserFacing {
       return {
         severity: "banner",
         message:
-          "本机听写组件（cmspark-whisper）未找到。当前安装包可能未包含该二进制；请安装/放置 win-x64 组件后重启 Companion，或暂时改用浏览器听写",
+          "本机听写组件（cmspark-whisper）未找到。请在设置页点「下载本机听写组件」，或重新打包（会自动拉取 pin 过的 whisper），或暂时改用浏览器听写",
       }
     case "hash_fail":
       return { severity: "banner", message: "本机听写组件校验失败，请重装 Companion" }

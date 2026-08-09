@@ -1384,6 +1384,18 @@ export function useWebSocket() {
           })
           break
 
+        case "voice.binary.progress":
+          dispatch({
+            type: "SET_VOICE_BINARY_PROGRESS",
+            progress: {
+              phase: typeof msg.phase === "string" ? msg.phase : undefined,
+              receivedBytes: typeof msg.receivedBytes === "number" ? msg.receivedBytes : 0,
+              totalBytes: typeof msg.totalBytes === "number" ? msg.totalBytes : 0,
+              file: typeof msg.file === "string" ? msg.file : undefined,
+            },
+          })
+          break
+
         case "mcp.server.status_changed": {
           const server = msg.server
           if (server && server.name) {

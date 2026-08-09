@@ -313,7 +313,14 @@ case "${PLATFORM}" in
     fi
     echo "  host-scripts-win/: ${win_ps1_count} ps1 scripts"
     # No ORT/tinyclick hard-gate — Qwen3-VL worker staged above for all platforms.
-    # Path B: optional cmspark-whisper (win-x64) + ggml/whisper DLLs. Soft-warn if missing.
+    # Path B: cmspark-whisper (win-x64) + DLLs. Auto-fetch when missing unless AUTO_FETCH=0.
+    if [ ! -f "companion/dist/bin/cmspark-whisper-win-x64.exe" ] && [ ! -f "companion/dist/bin/cmspark-whisper-win-x64" ]; then
+      if [ "${CMSPARK_WHISPER_AUTO_FETCH:-1}" != "0" ]; then
+        echo "  auto-fetching cmspark-whisper-win-x64 via manifest..."
+        (cd companion && node scripts/fetch-whisper-binary.mjs --arch win-x64 --dest dist/bin) || \
+          echo "WARNING: whisper auto-fetch failed — local STT may be disabled" >&2
+      fi
+    fi
     if [ -f "companion/dist/bin/cmspark-whisper-win-x64.exe" ]; then
       mkdir -p "${STAGING}/bin"
       cp "companion/dist/bin/cmspark-whisper-win-x64.exe" "${STAGING}/bin/"
