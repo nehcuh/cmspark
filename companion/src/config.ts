@@ -7,7 +7,8 @@ import { EventEmitter } from "events"
 import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
 import { atomicWriteJSON } from "./io"
-import type { McpConfig } from "./mcp/types"
+import type { McpConfig, McpServerConfig } from "./mcp/types"
+import { defaultFilesystemServerConfig } from "./mcp/filesystem-home"
 import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
 import { resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
@@ -396,9 +397,15 @@ const defaultConfig: CompanionConfig = {
     enable_vision_analysis: true,
     max_file_tokens: 50000,
   },
+  // Ship official filesystem MCP with home as the default allow-dir.
+  // ensureFilesystemAllowlist still injects home if a hand-edited entry omits dirs.
+  // Dynamic allow-dir expand (L2) can add home *or outside-home* dirs after user confirm
+  // (volume roots / system / credential paths stay hard-refused).
   mcp: {
-    enabled: false,
-    servers: {},
+    enabled: true,
+    servers: {
+      filesystem: defaultFilesystemServerConfig(),
+    },
   },
   apps: {
     enabled: true,
@@ -518,7 +525,30 @@ function loadConfigFile(configPath: string): CompanionConfig {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error("config root is not a JSON object")
   }
-  return deepMerge(defaultConfig, parsed) as CompanionConfig
+  const merged = deepMerge(defaultConfig, parsed) as CompanionConfig
+  // mcp.servers is a named map (same idea as replaceMcpServers): if the key exists on disk,
+  // the file is the full map — deepMerge must NOT resurrect default "filesystem" after the
+  // user deletes it or clears the map. Product default FS@home only applies when:
+  //   - brand-new config (initDataDir writes defaultConfig), or
+  //   - the entire `mcp` block is missing (deepMerge fills defaultConfig.mcp).
+  // Explicit `servers: {}` means intentional empty — keep it (do not re-seed on every load).
+  if (parsed.mcp && Object.prototype.hasOwnProperty.call(parsed.mcp, "servers")) {
+    const diskServers = parsed.mcp.servers
+    const productDefaultMcp: McpConfig = defaultConfig.mcp ?? {
+      enabled: true,
+      servers: { filesystem: defaultFilesystemServerConfig() },
+    }
+    const diskEnabled = parsed.mcp.enabled
+    const serversObj =
+      diskServers && typeof diskServers === "object" && !Array.isArray(diskServers)
+        ? (diskServers as Record<string, McpServerConfig>)
+        : {}
+    merged.mcp = {
+      enabled: typeof diskEnabled === "boolean" ? diskEnabled : productDefaultMcp.enabled,
+      servers: { ...serversObj },
+    }
+  }
+  return merged
 }
 
 export function getConfig(): CompanionConfig {
@@ -560,7 +590,7 @@ export function getConfig(): CompanionConfig {
   }
   // Ensure mcp config exists with sane defaults (older config.json may not have it)
   if (!cachedConfig.mcp) {
-    cachedConfig.mcp = { enabled: false, servers: {} }
+    cachedConfig.mcp = structuredClone(defaultConfig.mcp)
   }
   // Mission Pack / capability modules (older config may lack these)
   if (cachedConfig.capability_profile !== "community" && cachedConfig.capability_profile !== "enterprise") {

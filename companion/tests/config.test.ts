@@ -756,6 +756,68 @@ describe("saveConfig vision key inherit when endpoints match main LLM", { concur
   })
 })
 
+describe("default MCP filesystem @ home", { concurrency: 1 }, () => {
+  before(async () => {
+    delete process.env.DEEPSEEK_API_KEY
+    await resetConfigFile()
+  })
+
+  test("fresh initDataDir ships mcp.enabled + filesystem allow-dir = home", async () => {
+    await resetConfigFile()
+    const cfg = getConfig()
+    assert.equal(cfg.mcp?.enabled, true)
+    const fsServer = cfg.mcp?.servers?.filesystem as any
+    assert.ok(fsServer, "default filesystem server must exist")
+    assert.equal(fsServer.transport, "stdio")
+    assert.equal(fsServer.command, "npx")
+    assert.ok(
+      (fsServer.args || []).includes("@modelcontextprotocol/server-filesystem"),
+      "must pin official server-filesystem package",
+    )
+    const home = os.homedir().replace(/\\/g, "/")
+    assert.ok(
+      (fsServer.args || []).some((a: string) => a.replace(/\\/g, "/") === home || a.includes(path.basename(os.homedir()))),
+      "args must include user home as allow-dir",
+    )
+    assert.equal(fsServer.trust_level, "trusted")
+  })
+
+  test("explicit empty servers:{} is respected (no re-seed on load)", async () => {
+    await resetConfigFile()
+    const configPath = path.join(tempHome, "config.json")
+    const onDisk = readSavedConfig()
+    onDisk.mcp = { enabled: false, servers: {} }
+    fs.writeFileSync(configPath, JSON.stringify(onDisk, null, 2), { mode: 0o600 })
+    clearConfigCache()
+    const cfg = getConfig()
+    assert.equal(cfg.mcp?.enabled, false)
+    assert.deepEqual(cfg.mcp?.servers || {}, {})
+  })
+
+  test("user-deleted filesystem is not resurrected when other servers remain", async () => {
+    await resetConfigFile()
+    const configPath = path.join(tempHome, "config.json")
+    const onDisk = readSavedConfig()
+    onDisk.mcp = {
+      enabled: true,
+      servers: {
+        "brave-search": {
+          transport: "stdio",
+          command: "npx",
+          args: ["-y", "@brave/brave-search-mcp-server"],
+          enabled: true,
+          trust_level: "first-use",
+        },
+      },
+    }
+    fs.writeFileSync(configPath, JSON.stringify(onDisk, null, 2), { mode: 0o600 })
+    clearConfigCache()
+    const cfg = getConfig()
+    assert.equal(cfg.mcp?.servers?.filesystem, undefined, "must not re-add filesystem after user removed it")
+    assert.ok(cfg.mcp?.servers?.["brave-search"], "custom servers must be preserved")
+  })
+})
+
 describe("saveConfig vision inherit does not persist env-sourced keys", { concurrency: 1 }, () => {
   before(async () => {
     delete process.env.DEEPSEEK_API_KEY

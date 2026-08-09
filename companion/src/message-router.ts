@@ -1800,9 +1800,10 @@ export async function handleMessage(
       const wasEmpty = Object.keys(config.mcp?.servers || {}).length === 0
       const newServers = { ...(config.mcp?.servers || {}), [name]: serverCfg }
       replaceMcpServers(newServers)
-      // Auto-enable the global kill-switch when the user adds their first server.
-      // Without this, the default `mcp.enabled: false` leaves the new server
-      // disconnected with no UI surface to flip it (see mcp.toggle_enabled UI gap).
+      // Auto-enable the global kill-switch when the user adds their first server
+      // after clearing all servers (or on older configs that still had mcp.enabled=false).
+      // Without this, a user-disabled kill-switch leaves the new server disconnected
+      // with no UI surface to recover (see mcp.toggle_enabled UI gap).
       if (wasEmpty && !config.mcp?.enabled) {
         setMcpEnabled(true)
       }

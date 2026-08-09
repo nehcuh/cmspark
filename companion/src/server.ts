@@ -5043,7 +5043,7 @@ async function tryExpandFilesystemAllowDirOnDenial(opts: {
       dangerousApis: ["mcp-allow-dir-expand"],
       code:
         `允许 MCP filesystem 访问目录：\n${pre.dir}\n\n` +
-        `仅把该子目录加入 allowlist（须在你的主目录下，不是整盘）。拒绝则保持当前配置。`,
+        `仅把该目录加入 allowlist（可在主目录内或之外；不会放开整盘/系统目录）。拒绝则保持当前配置。`,
       riskLevel: "medium",
       autoConfirmEligible: false,
       criticalApis: ["mcp-allow-dir-expand"],
