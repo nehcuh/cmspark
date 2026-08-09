@@ -689,7 +689,7 @@ export function SettingsSlideout() {
               risk_score: 100,
               source: "ui_phrase_confirmed",
               message:
-                "已请求武装无人值守 — 值守 grant 生效；并写入全自动+协议巡航。三旗全开时 evaluate/shell/spawn/cookie/桌面 re-L2 等不再二次确认（自担风险）",
+                "已请求武装无人值守 — 进程内桌面 grant 生效（重启失效）。host_computer 任务级 initial L2 可跳过（须 App 已允许坐标）。注意：设置→实验功能 Qwen3-VL 若开启会阻断值守免确认；危险/实验定位/前台让出 re-L2 仍会弹窗。",
             },
           })
           setAutopilotConfirm(false)

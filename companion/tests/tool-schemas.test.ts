@@ -99,15 +99,29 @@ test("create_tab: rejects missing URL", () => {
 // `domain` being a string)
 // =============================================================================
 
-test("set_cookie: rejects domain as number", () => {
+test("set_cookie: requires url (catalog / chrome.cookies.set contract)", () => {
   assert.throws(
-    () => parseToolArgs("set_cookie", { domain: 42, name: "x", value: "y" }),
+    () => parseToolArgs("set_cookie", { domain: "example.com", name: "x", value: "y" }),
+    /url/i,
+  )
+})
+
+test("set_cookie: rejects domain as number when provided", () => {
+  assert.throws(
+    () =>
+      parseToolArgs("set_cookie", {
+        url: "https://example.com/",
+        domain: 42,
+        name: "x",
+        value: "y",
+      }),
     /domain/i,
   )
 })
 
 test("set_cookie: accepts full cookie spec", () => {
   const out = parseToolArgs("set_cookie", {
+    url: "https://example.com/",
     domain: "example.com",
     name: "session",
     value: "abc",
@@ -115,6 +129,7 @@ test("set_cookie: accepts full cookie spec", () => {
     secure: true,
     httpOnly: true,
   })
+  assert.equal(out.url, "https://example.com/")
   assert.equal(out.domain, "example.com")
   assert.equal(out.secure, true)
 })

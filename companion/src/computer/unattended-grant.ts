@@ -177,22 +177,48 @@ export function evaluateUnattendedHostComputerSkip(args: {
   actionCount: number
   now?: number
 }): boolean {
+  return evaluateUnattendedHostComputerSkipDetail(args).ok
+}
+
+/**
+ * Same gate as evaluateUnattendedHostComputerSkip but with a stable block_reason
+ * for audit logs and Confirm Center copy (why 值守中 still prompted).
+ */
+export function evaluateUnattendedHostComputerSkipDetail(args: {
+  coordinateAllowed: boolean
+  experimental: boolean
+  modelEnabled: boolean
+  credentialLatched: boolean
+  budget: number
+  actionCount: number
+  now?: number
+}): { ok: boolean; block_reason?: string } {
   const now = args.now ?? Date.now()
   const st = getUnattendedStatus(now)
-  if (!st.armed || st.expiresAt == null) return false
-  return unattendedInitialSkipEligible({
-    armed: true,
-    coordinateAllowed: args.coordinateAllowed,
-    experimental: args.experimental,
-    modelEnabled: args.modelEnabled,
-    credentialLatched: args.credentialLatched,
-    budget: args.budget,
-    actionCount: args.actionCount,
-    maxBudgetCap: st.maxBudgetCap,
-    maxActionsCap: st.maxActionsCap,
-    now,
-    expiresAt: st.expiresAt,
-  })
+  if (!st.armed || st.expiresAt == null) {
+    return { ok: false, block_reason: "not_armed_or_expired" }
+  }
+  if (args.coordinateAllowed !== true) {
+    return { ok: false, block_reason: "coordinate_not_allowed" }
+  }
+  if (args.experimental === true) {
+    return { ok: false, block_reason: "action_experimental_flag" }
+  }
+  // ADR-021 / product: experimental Qwen layer ON blocks unattended initial skip
+  // (hits still force re-L2; silent initial skip would hide that risk).
+  if (args.modelEnabled === true) {
+    return { ok: false, block_reason: "modelEnabled_blocks_unattended_skip" }
+  }
+  if (args.credentialLatched === true) {
+    return { ok: false, block_reason: "credential_latch" }
+  }
+  if (!(args.budget > 0 && args.budget <= st.maxBudgetCap)) {
+    return { ok: false, block_reason: "budget_over_cap" }
+  }
+  if (!(args.actionCount >= 0 && args.actionCount <= st.maxActionsCap)) {
+    return { ok: false, block_reason: "actions_over_cap" }
+  }
+  return { ok: true }
 }
 
 /** Re-export phrase constant for handlers that want a single import. */

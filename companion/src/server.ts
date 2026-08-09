@@ -1351,10 +1351,11 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
             } else {
               // ADR-021: process-memory unattended grant (sibling of G1, not god/auto_approve).
               // assertCoordinateAllowed already passed → coordinateAllowed true for this app.
-              const { evaluateUnattendedHostComputerSkip, isUnattendedArmed } = await import(
-                "./computer/unattended-grant"
-              )
-              const unattendedSkip = evaluateUnattendedHostComputerSkip({
+              const {
+                evaluateUnattendedHostComputerSkipDetail,
+                isUnattendedArmed,
+              } = await import("./computer/unattended-grant")
+              const unattendedDetail = evaluateUnattendedHostComputerSkipDetail({
                 coordinateAllowed: true,
                 experimental: experimentalFlag,
                 modelEnabled,
@@ -1362,7 +1363,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
                 budget: budgetN,
                 actionCount,
               })
-              if (unattendedSkip) {
+              if (unattendedDetail.ok) {
                 hostComputerTrustSkip = true
                 hostComputerTrustSkipReason = "unattended_session_grant"
                 logger.info("computer.unattended.task_auto_approved", {
@@ -1375,7 +1376,9 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
                   reason: "unattended_session_grant",
                 })
               } else {
-                logger.info("computer.session_trust.skip_missed", {
+                // Loud when 值守中 but still prompting — product FAQ #1 is modelEnabled.
+                const unattendedArmed = isUnattendedArmed()
+                logger.warn("computer.session_trust.skip_missed", {
                   tool_call_id: toolCallId,
                   trust_key: trustKey,
                   chat_thread_id: chatThreadId ?? null,
@@ -1387,32 +1390,35 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
                   budget_eligible: maxBudget > 0 && budgetN <= maxBudget,
                   actions_eligible: maxActions > 0 && actionCount <= maxActions,
                   experimental: experimentalFlag,
+                  model_enabled: modelEnabled,
                   max_budget_seen: maxBudget,
                   max_actions_seen: maxActions,
-                  unattended_armed: isUnattendedArmed(),
+                  unattended_armed: unattendedArmed,
+                  unattended_block_reason: unattendedDetail.block_reason || null,
                 })
               }
             }
           } else if (finalParams.app) {
             // No sessionId — G1 needs session; unattended is process-global (ADR-021).
-            const { evaluateUnattendedHostComputerSkip, isUnattendedArmed } = await import(
-              "./computer/unattended-grant"
-            )
+            const {
+              evaluateUnattendedHostComputerSkipDetail,
+              isUnattendedArmed,
+            } = await import("./computer/unattended-grant")
             const actionsArr = Array.isArray(finalParams.actions) ? finalParams.actions : []
             let experimentalFlag = false
             for (const a of actionsArr) {
               if (a && typeof a === "object" && (a as any).experimental === true) experimentalFlag = true
             }
-            if (
-              evaluateUnattendedHostComputerSkip({
-                coordinateAllowed: true,
-                experimental: experimentalFlag,
-                modelEnabled: getConfig().computer?.modelEnabled === true,
-                credentialLatched: false,
-                budget: budgetN,
-                actionCount: actionsArr.length,
-              })
-            ) {
+            const modelEn = getConfig().computer?.modelEnabled === true
+            const unattendedDetail = evaluateUnattendedHostComputerSkipDetail({
+              coordinateAllowed: true,
+              experimental: experimentalFlag,
+              modelEnabled: modelEn,
+              credentialLatched: false,
+              budget: budgetN,
+              actionCount: actionsArr.length,
+            })
+            if (unattendedDetail.ok) {
               hostComputerTrustSkip = true
               hostComputerTrustSkipReason = "unattended_session_grant"
               logger.info("computer.unattended.task_auto_approved", {
@@ -1424,9 +1430,11 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
                 no_session_id: true,
               })
             } else if (isUnattendedArmed()) {
-              logger.info("computer.unattended.skip_missed", {
+              logger.warn("computer.unattended.skip_missed", {
                 tool_call_id: toolCallId,
                 experimental: experimentalFlag,
+                model_enabled: modelEn,
+                unattended_block_reason: unattendedDetail.block_reason || null,
               })
             }
           }
