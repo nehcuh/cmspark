@@ -217,6 +217,17 @@
 - P0 用 `fetch`+SSE 而非 `@anthropic-ai/sdk`，才能控 Coding Plan 兼容头
 - 官方 `api.anthropic.com` / `claude.ai` **禁止** Claude Code 兼容头；system 首行「You are Claude Code」v1 不做
 
+### 无人值守 = 风险自担全程静默，不是「只免 initial L2」（2026-08-09 S61 · #160）
+- **产品 JTBD**：短语+双勾选武装后，用户已自担桌面键鼠/注入风险；若 mid-task re-L2（含 danger/experimental/foreground）仍弹窗，则「无人值守」名不副实
+- **实现（ADR-021 2026-08-09 修订）**：
+  - initial：`evaluateUnattendedHostComputerSkipDetail` 仅 armed + `coordinateAllowed` + budget/actions caps（**不再** gate modelEnabled/experimental/credential latch）
+  - mid-task：`executor.reL2` **最先** `isUnattendedArmed()` → 全 tag 静默（含原 PROMPT_ALWAYS）
+  - 硬拒绝（支付/验证码/凭证 type·key）仍 **throw**，不经 confirm
+- **G1 / 巡航边界**：无 grant 时 PROMPT_ALWAYS 仍 force；alone 1–2 旗永不 arm grant；三旗巡航可 waive host **initial** forceConfirm，但不能静默 PROMPT_ALWAYS re-L2
+- **文档纪律**：ADR-017/020、confirm-center、矩阵/双勾选必须与 ADR-021 同步；历史 design SoT「re-L2 仍确认」已过时
+- **测试缺口**：纯 grant 测够用；executor 级「armed + danger_detected 零 confirm」仍缺（对抗 nits）
+- **急停 ≠ 解除**：急停只停任务，grant 可续至 8h/重启
+
 ### 无人值守 packaging：进程 grant vs 持久 cruise dual-write（2026-08-03 S36）
 - **现象**：UI 勾选「重启后自动失效，不会写入长期配置」；`security.unattended.arm` 却 `saveConfig` 写 `auto_approve_dangerous` + `auto_approve_enterprise_tools`（可选 `allow_all_schemes`）
 - **影响**：用户以为「会话值守」；重启后桌面 grant 没了，**网页/企业巡航仍开**；enterprise 模块开启时 shell/netsec 可跟跳 L2

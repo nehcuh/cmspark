@@ -2,12 +2,26 @@
 # Confidence: 0-1 (higher = more validated)
 
 instincts:
+  - id: unattended-means-full-silence-not-initial-only
+    pattern: "无人值守武装（短语+双勾选）= 用户风险自担：host_computer 任务级 initial L2 与 mid-task reL2（含 PROMPT_ALWAYS danger/experimental/foreground）均应静默；硬拒绝仍 throw 无对话框。modelEnabled/experimental/credential latch 不得把值守打回弹窗。G1/巡航无 grant 时 PROMPT_ALWAYS 仍 force。文档/ADR/矩阵必须同步，禁止写「只免 initial / re-L2 仍确认」。"
+    confidence: 0.95
+    source_session: "2026-08-09 S61 #160 owner JTBD + adversarial×3 + dual both Merge YES"
+    tags: [unattended, computer-use, trust, product-jtbd, adr-021]
+    applications: 1
+
+  - id: multi-adversarial-then-dual-then-ci-merge
+    pattern: "安全/产品敏感合入：先多路独立对抗 agent（security/correctness/product）→ 无 P0 后双路复审 → 全 APPROVE* 再合；CI green 后 merge。GraphQL merge 失败时可用 gh api REST PUT pulls/{n}/merge。对抗 nits 中用户可见谎言（文档/矩阵）优先修再合。"
+    confidence: 0.85
+    source_session: "2026-08-09 S61 #160"
+    tags: [review, adversarial, dual-review, ci, merge]
+    applications: 1
+
   - id: dual-review-official-entrypoint-and-narrow-r2
     pattern: "dual-external-review 机核必须跑产品入口（companion npm test），不能只 node --test 单文件。JSDoc/块注释禁止写入 */ 序列（如 **/glob）。大 PR 全量 patch 易打爆 Claude context → r1 以能产出 VERDICT 的审阅方为准，r2 base 收窄到 blocker 修复 commit。Windows 用 Git Bash + PATH=/c/nvm4w/nodejs 跑 scripts/dual-external-review.sh。"
     confidence: 0.9
     source_session: "2026-08-09 S59–S60 health-fanout #159 dual r1 REJECT / r2 both_ok"
     tags: [dual-review, npm-test, windows, git-bash, ci]
-    applications: 1
+    applications: 2
 
   - id: handlemessage-session-is-third-arg
     pattern: "companion handleMessage(msg, services, session?)：L2 requestConfirmation / origin 必须作为第 3 参 session；第 2 参是 services。改 require_grant 默认 true 后 e2e 须用 cmg_ grant，不能假设 ws_secret 仍是默认 happy path。"

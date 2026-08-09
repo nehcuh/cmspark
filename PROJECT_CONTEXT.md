@@ -3,15 +3,15 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-09 (S60 END · Health Fanout P0–P2 · #159 MERGED)
-- **Main tip**: `e4316bb` = `origin/main`（Merge #159）
-- **Ship**: health-fanout P0 安全 Highs + P1（privacy/origin/pin/GC/CU UI/release）+ 部分 P2（CI22/run-tests/version lock/WS strict）
-- **Dual**: r1 Pi REJECT `run-tests.mjs` JSDoc → r2 both_ok（Claude APPROVE / Pi APPROVE_WITH_NITS）
-- **Closeouts**: `docs/audit/health-fanout-p0-optimization-closeout-2026-08-09.md` · `…-p1-p2-closeout-…` · reviews `p1-p2-pr159-*`
-- **Next**: Whisper multi-arch pins + win-x64 sidecar；god-file 拆分；codesign；真机听写/会议；Pi nits（multi-agent cap）
-- **Pitfalls**: run-tests JSDoc `*/`；dual 大 patch Claude context；handleMessage session 第 3 参；require_grant 测用 grant
+### 2026-08-09 (S61 END · deep-diagnosis + 值守静默 · #160 MERGED)
+- **Main tip**: `56da82f` = `origin/main`（Merge #160）
+- **Ship**: deep-diagnosis fanout P0–P2 hardening + unattended true silence（ADR-021 2026-08-09）
+- **Unattended**: armed grant → host_computer initial L2 **and** mid-task re-L2 silent（incl. PROMPT_ALWAYS）；hard deny still throw；alone flags never arm
+- **Review**: adversarial ×3 + dual A/B → all APPROVE_WITH_NITS · Merge YES · CI green then merge
+- **Next**: Mac smoke 值守；executor reL2 unattended regression test（nit）；estop≠disarm toast；Whisper multi-arch pins + win-x64 sidecar；god-file split
+- **Pitfalls**: 值守≠只免 initial L2；文档/矩阵必须跟 ADR-021；dual-write cruise 仍可在 grant 死后残留
 
-### 2026-08-09 (S57 · Windows Python · #157+#156 main)
-- **Then tip**: `c11a7e9`；Scheme D Python；MCP filesystem@home
-- **Local only**: Whisper 打包 stash（旁路 bin）— 未随 #159
+### 2026-08-09 (S60 END · Health Fanout P0–P2 · #159 MERGED)
+- **Then tip**: `e4316bb`；health-fanout P0+P1/P2；dual r2 both_ok
+- **Superseded tip**: main now `56da82f` via #160
 <!-- handoff:end -->

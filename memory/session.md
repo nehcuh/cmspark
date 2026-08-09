@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S61 END (2026-08-09) [deep-diagnosis P0–P2 + 值守全程静默 · #160 MERGED]
+- **Ship**：**#160 MERGED** `56da82f` → `origin/main`（deep-diagnosis fanout P0–P2 hardening + unattended true silence）
+- **产品纠正**：无人值守武装 = 风险自担 → `host_computer` **initial L2 + mid-task re-L2 全静默**（含 PROMPT_ALWAYS）；硬拒绝仍 throw；modelEnabled 等不再退回弹窗
+- **门禁**：三路独立对抗 + 双路复审 **全部 APPROVE_WITH_NITS / Merge YES**；CI green（build+tests+audits）后 REST merge
+- **诚实 nits 合入**：confirm-center / ADR-017/020/021 / 矩阵 + 双勾选
+- **本地**：`main` = `origin/main` @ `56da82f`；勿 commit `.tmp-ci-*` / diagnosis-report
+- **下次**：Mac 真机武装值守验收 L2/re-L2 静默；可选 executor unattended reL2 回归测；急停≠解除 UI toast；Whisper multi-arch / god-file 拆分
+- Recorded: yes — 值守全程静默 JTBD · 文档与 ADR 同步纪律
+
 ### S60 END (2026-08-09) [session-end · Health Fanout P0–P2 已合 main]
 - **Ship**：**#159 MERGED** `e4316bb`（P0 `d1f69ef` + P1/P2 `5ba41f0` + run-tests fix `22688b2` + dual r2 `3a84803`）
 - **Dual**：r1 Pi **REJECT**（`run-tests.mjs` JSDoc `*/`）→ 修 → r2 Claude **APPROVE** / Pi **APPROVE_WITH_NITS** both_ok；CI green 后 merge
