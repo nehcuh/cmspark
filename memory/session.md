@@ -7,9 +7,10 @@
 - **根因**：`shell_exec` L2 issue 绑 `command|cwd`，旧 validate 只验 command → enterprise_auto 下恒「Invalid or expired security token」
 - **打包**：`build-windows-exe.ps1 -SkipInstall -SkipNsis` 成功；产物 `dist-package\cmspark-windows-x64\` + zip v0.5.0；含 whisper sidecar；已停旧进程并 stage 新 SEA
 - **门禁**：closeout dual APPROVE_WITH_NITS；CI build green 后 merge commit
-- **本地**：`main` = `origin/main` @ `57bad96`；勿 commit `.tmp-ci-*` / diagnosis-report
+- **经验+总结**：`docs/audit/voice-pack-windows-closeout-s62-2026-08-09.md`（E1–E4 + 状态表）；project-knowledge Reusable Patterns 两条
+- **本地**：`main` 跟远程；勿 commit `.tmp-ci-*` / diagnosis-report
 - **下次**：真机再验 shell_exec（enterprise/全自动）；听写 hold/continuous；可选 Mac 值守 smoke；multi-arch whisper pins
-- Recorded: yes — issue/validateTokenFor 同形 · SEA 文件锁
+- Recorded: yes — issue/validateTokenFor 同形 · SEA 文件锁 · S62 正式总结文档
 
 ### S61 END (2026-08-09) [deep-diagnosis P0–P2 + 值守全程静默 · #160 MERGED]
 - **Ship**：**#160 MERGED** `56da82f` → `origin/main`（deep-diagnosis fanout P0–P2 hardening + unattended true silence）

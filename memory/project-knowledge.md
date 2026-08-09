@@ -502,6 +502,20 @@
 
 ## Reusable Patterns
 
+### Windows 真机「修了不生效」排障序（2026-08-09 S62）
+1. **进程路径**：`Get-Process cmspark-agent | Path` 是否 `dist-package\...\cmspark-agent.exe`
+2. **二进制时间戳**：`companion\dist` vs `dist-package` 是否一致；不一致则停进程 + 重编/拷贝
+3. **源码绑定**：L2 类错误查 `issueTokenFor`/`validateTokenFor` 是否同 `bindingPayloadFor`
+4. **扩展加载路径**：用户是否加载 `dist-package\...\chrome-extension` 而非 monorepo `build/`
+5. **再验功能**：shell / 听写分层（权重 / binary / 麦）
+
+### L2 危险工具 token 改动检查清单（2026-08-09 S62）
+- [ ] `SecurityPolicy.bindingPayloadFor` 覆盖全部敏感字段（含 cwd、targets、ports…）
+- [ ] L2 签发只用 `issueTokenFor`
+- [ ] `executeCompanionTool` / 各 case 只用 `validateTokenFor(params)`（禁止 bare string）
+- [ ] 单测：非默认 params（cwd 非空）issue → validate true；篡改字段 validate false
+- [ ] 打包路径：SEA 含修复 + 文档/用户须重启 companion
+
 ### 多波次能力：分析 dual → 计划 dual → 实现 dual → nits → PR/CI merge（2026-08-07 S51）
 - **场景**：长对话压缩 / 场景知识 / 冷检索等跨 Surface·Compose 的串联交付
 - **闸门**：`docs/superpowers/specs/*adversarial*` → plan dual（可 REJECT 修 SoT）→ impl dual → 折 nits → commit → PR → CI 绿 merge

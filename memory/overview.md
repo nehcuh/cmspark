@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-09 (S62 session-end · #161 merged)
+**Updated**: 2026-08-09 (S62 experience + project summary committed)
 
 ## CMspark — 产品 0.5.0 稳定切点
 
@@ -45,5 +45,6 @@
 - User / arch: `docs/README.md`
 - Meeting/dictation: `docs/meeting-and-dictation-user-guide.md`
 - Unattended: `docs/adr/021-unattended-desktop-session.md` · `docs/computer-use-user-guide.md` §5.1
+- **S62 项目总结+经验**: `docs/audit/voice-pack-windows-closeout-s62-2026-08-09.md`
 - Closeout audits: `docs/audit/reviews/voice-pack-windows-closeout-*`
 - MCP: `docs/mcp.md`
