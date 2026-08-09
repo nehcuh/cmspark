@@ -1600,8 +1600,13 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
             : codeCriticalApis
       // Waive forceConfirm only under three-flag full autonomy cruise.
       // evaluate/osascript always force L2 (domain whitelist / god-mode alone insufficient).
-      const forceConfirm = capabilityForceConfirm && !userFullAutonomy
-      if (capabilityForceConfirm && userFullAutonomy) {
+      // host_computer is critical-class BY DESIGN (ADR-017): god-mode / auto_approve alone
+      // must NOT skip task L2 — only three-flag cruise, G1 session-trust, or ADR-021 unattended
+      // (hostComputerTrustSkip) may skip. Restore forceConfirm for hostComputerGated after P0
+      // when capabilityForceConfirm no longer implied criticalApis.length for this tool.
+      const forceConfirm =
+        (capabilityForceConfirm || hostComputerGated) && !userFullAutonomy
+      if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy) {
         logger.info("security.critical_api_waived", {
           tool_call_id: toolCallId,
           tool_name: toolName,
