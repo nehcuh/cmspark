@@ -137,7 +137,19 @@ test("forceReleaseTab: instant free when no pending", () => {
 })
 
 test("bindingPayloadFor: shell/spawn/ask_user non-empty", () => {
-  assert.equal(SecurityPolicy.bindingPayloadFor("shell_exec", { command: "ls" }), "ls")
+  // P1: shell binds command + cwd so L2 token cannot expand working dir after approve
+  assert.equal(
+    SecurityPolicy.bindingPayloadFor("shell_exec", { command: "ls" }),
+    "shell|ls|cwd=",
+  )
+  assert.equal(
+    SecurityPolicy.bindingPayloadFor("shell_exec", { command: "ls", cwd: "/tmp" }),
+    "shell|ls|cwd=/tmp",
+  )
+  assert.match(
+    SecurityPolicy.bindingPayloadFor("netsec_port_scan", { targets: ["10.0.0.1"], ports: [80, 443] }),
+    /netsec\|targets=.*ports=/,
+  )
   assert.match(
     SecurityPolicy.bindingPayloadFor("spawn_worker", { role_label: "reviewer", pack_id: "p1" }),
     /spawn\|reviewer\|p1/,
