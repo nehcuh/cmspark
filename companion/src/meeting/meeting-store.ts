@@ -119,12 +119,56 @@ function readJson<T>(filePath: string): T | null {
   }
 }
 
+/** Hard cap on retained meeting sessions (P2 disk bound). */
+export const MAX_MEETINGS = 100
+
+/**
+ * Delete an entire meeting directory (meta + transcript + minutes + audio).
+ * Returns false if id invalid or dir missing.
+ */
+export function deleteMeeting(id: string, dataDir = DATA_DIR): boolean {
+  const dir = resolveContained(id, dataDir)
+  if (!dir || !fs.existsSync(dir)) return false
+  try {
+    fs.rmSync(dir, { recursive: true, force: true })
+    logger.info("meeting.deleted", { id })
+    return true
+  } catch (e: any) {
+    logger.warn("meeting.delete_failed", { id, error: e?.message || String(e) })
+    return false
+  }
+}
+
+/**
+ * If meeting count exceeds MAX_MEETINGS, delete oldest non-recording sessions first.
+ * Never deletes status=recording (active capture).
+ */
+export function enforceMeetingCap(dataDir = DATA_DIR): { deleted: string[] } {
+  const all = listMeetings(dataDir)
+  if (all.length < MAX_MEETINGS) return { deleted: [] }
+  const over = all.length - MAX_MEETINGS + 1 // make room for one more create
+  // listMeetings sorts newest first — drop from the end (oldest)
+  const candidates = [...all]
+    .reverse()
+    .filter((m) => m.status !== "recording")
+  const deleted: string[] = []
+  for (const m of candidates) {
+    if (deleted.length >= over) break
+    if (deleteMeeting(m.id, dataDir)) deleted.push(m.id)
+  }
+  if (deleted.length) {
+    logger.info("meeting.cap_enforced", { deleted: deleted.length, max: MAX_MEETINGS })
+  }
+  return { deleted }
+}
+
 export function createMeeting(opts: {
   title?: string
   thread_id?: string | null
   dataDir?: string
 }): MeetingSession {
   const dataDir = opts.dataDir ?? DATA_DIR
+  enforceMeetingCap(dataDir)
   const id = `mtg_${crypto.randomBytes(8).toString("hex")}`
   const now = new Date().toISOString()
   const session: MeetingSession = {

@@ -70,10 +70,22 @@ export class SecurityPolicy {
         const { computerBindingPayload } = require("./computer/types") as typeof import("./computer/types")
         return computerBindingPayload(params ?? {})
       }
-      case "shell_exec":
-        return String(params?.command || "")
-      case "netsec_port_scan":
-        return JSON.stringify(params?.targets || [])
+      case "shell_exec": {
+        // Bind command + cwd so L2 token cannot be replayed with a different working dir
+        const cmd = String(params?.command || "")
+        const cwd = String(params?.cwd || params?.working_directory || "")
+        return `shell|${cmd}|cwd=${cwd}`
+      }
+      case "netsec_port_scan": {
+        // Bind targets + ports so L2 token cannot expand scan radius after approve
+        const targets = Array.isArray(params?.targets) ? [...params.targets].map(String).sort() : []
+        const ports = Array.isArray(params?.ports)
+          ? [...params.ports].map(String).sort()
+          : params?.ports != null
+            ? [String(params.ports)]
+            : []
+        return `netsec|targets=${JSON.stringify(targets)}|ports=${JSON.stringify(ports)}`
+      }
       // ADR-015: multi-agent HITL tools — bind role/question so token is not free-floating
       case "spawn_worker":
         return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}`

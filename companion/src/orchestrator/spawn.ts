@@ -85,16 +85,30 @@ export function spawnWorkerThread(
   const parent = tm.get(opts.parentThreadId) as any
   if (!parent) return { ok: false, error: `parent thread not found: ${opts.parentThreadId}` }
 
+  // Workers must not nest: only normal/orchestrator threads may spawn.
+  if (parent.agent_role === "worker") {
+    return {
+      ok: false,
+      error: "spawn_worker denied: worker threads cannot spawn nested workers",
+    }
+  }
+
   // Capture capability whitelist BEFORE orchestrator promotion.
   // Promotion writes ORCHESTRATOR_TOOL_ALLOWLIST onto null-parent threads; workers must
   // still be computed from the pre-promotion surface (null → roleAllow fully minus HARD_DENY).
   // ADR-015: effective = (parent ∩ role.allow) \ HARD_DENY with parent null → role.allow.
+  //
+  // After the parent is already an orchestrator, parent.tool_whitelist is the control
+  // surface — do NOT inherit that onto workers. Treat orchestrator parent as null parent
+  // capability so roleAllow (or the safe browser default) is the base, then HARD_DENY.
   const parentCapabilityWhitelist: string[] | null =
-    parent.tool_whitelist === null
+    parent.agent_role === "orchestrator"
       ? null
-      : Array.isArray(parent.tool_whitelist)
-        ? [...parent.tool_whitelist]
-        : null
+      : parent.tool_whitelist === null
+        ? null
+        : Array.isArray(parent.tool_whitelist)
+          ? [...parent.tool_whitelist]
+          : null
 
   const runId = ensureOrchestratorRunId(parent)
   // Promote parent to orchestrator if needed (orchestrator surface only — not worker input)

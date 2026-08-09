@@ -579,10 +579,15 @@
         "type": "object",
         "properties": {
           "url": {
-            "type": "string"
+            "type": "string",
+            "description": "Cookie URL (required by chrome.cookies.remove)"
           },
           "name": {
             "type": "string"
+          },
+          "domain": {
+            "type": "string",
+            "description": "Optional domain (trusted-domain gate; not required by Chrome API)"
           }
         },
         "required": [

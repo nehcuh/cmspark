@@ -149,12 +149,8 @@ echo "[3/9] Bundling with esbuild..."
 cd "${ROOT_DIR}/companion"
 # Keep onnxruntime-node external if any residual import remains in the graph;
 # we do NOT stage ORT into the zip (Qwen3-VL is the experimental locate layer).
-npx --yes esbuild dist/index.js \
-  --bundle --platform=node --target=node22 \
-  --external:node-notifier --external:systray2 \
-  --external:canvas --external:pdfjs-dist \
-  --external:onnxruntime-node \
-  --outfile=dist/cmspark-agent.js 2>&1 | tail -1
+# SoT: companion/scripts/esbuild-bundle-args.json via run-esbuild-bundle.mjs
+node scripts/run-esbuild-bundle.mjs 2>&1 | tail -3
 
 # --- Step 3: Stage files ---
 echo "[4/9] Staging distribution files..."

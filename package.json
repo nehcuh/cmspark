@@ -1,6 +1,9 @@
 {
   "name": "cmspark",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@types/js-yaml": "^4.0.9",
     "js-yaml": "^4.2.0",

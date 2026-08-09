@@ -1,5 +1,12 @@
 // Tab resolver — finds the best matching tab for a user query
 // Priority: pinned tabs → active tab → semantic match (reverse open order)
+//
+// P2 note (deep-diagnosis 2026-08): this pure helper is intentionally **not**
+// auto-wired into createToolExecutor. Production path uses LLM-supplied tabId
+// + ADR-015 tab lease (TAB_ID_REQUIRED when multi-agent forbids active fallback).
+// Call resolveTargetTab only from explicit higher-level orchestration that
+// already has a tab list snapshot — silent resolver injection would reintroduce
+// wrong-tab races. Covered by companion/tests/bridge.test.ts.
 
 import { logger } from "../logger"
 

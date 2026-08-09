@@ -760,9 +760,19 @@ make package
 | 平台 | 命令 | 产物 | 说明 |
 |------|------|------|------|
 | **macOS (ARM64)** | `make package-macos` | `dist-package/CMspark-v*-macOS.dmg` | 含 Swift 托盘 + 嵌入 Node 运行时 |
-| **Windows (x64)** | `build-package.bat` 或 `make package-windows` | `dist-package/CMspark-v*-windows-x64.zip` + `cmspark-agent.exe` | Node.js SEA 独立 exe |
+| **Windows (x64)** | `build-package.bat` / `make package-windows` / CI `package.sh` | `dist-package/CMspark-v*-windows-x64.zip` | **官方发布 SoT**：`scripts/package.sh` 打 zip（`node.exe` + 编译后 JS + 扩展），**非**强制 SEA |
+| **Windows SEA（可选）** | `scripts/build-windows-exe.ps1` | 同目录下 `cmspark-agent.exe` | 可选单文件 Node SEA；与官方 zip 形态不同，见下表 |
 | **Linux (x64)** | `make package-linux` | `dist-package/cmspark-v*-linux-x64.zip` | 嵌入 Node 运行时的压缩包 |
 | **当前平台** | `make package` | `dist-package/cmspark-v*-<platform>.zip` | 自动检测平台 |
+
+**Windows 产物 Source of Truth（2026-08 诊断对齐）**
+
+| 路径 | 谁生产 | 是否 GitHub Release 默认 |
+|------|--------|--------------------------|
+| `scripts/package.sh windows-x64`（`make package-windows` / CI release） | zip：`node.exe` + `cmspark-agent.js`（esbuild）+ 扩展 + 脚本 | **是** — 官方发布物 |
+| `scripts/build-windows-exe.ps1` / `build-package.bat`（可选 SEA 步骤） | 额外 `cmspark-agent.exe`（Node SEA） | **否** — 本地/进阶单 exe 形态 |
+
+文档与脚本不得再暗示「Release 只发 SEA exe」；CI 以 `package.sh` 为准。SEA 适合本机免解压试用，但 Whisper 等 sidecar 仍须旁路放置。
 
 **macOS DMG 示例**：
 
@@ -773,12 +783,15 @@ make package-macos
 #   dist-package/cmspark-v0.5.0-macos-arm64.zip  ← 原始压缩包
 ```
 
-Windows 打包流程：
+Windows 打包流程（**官方 zip / package.sh**）：
 1. TypeScript 编译 → `esbuild` bundle 为 `cmspark-agent.js`（`systray2` 等运行时依赖保持 external）
-2. **Node.js SEA**：将 bundle 注入 `node.exe` 副本，生成真正的 `cmspark-agent.exe`
-3. 修改 PE 子系统（CONSOLE → WINDOWS GUI），避免双击时弹出 CMD 窗口
-4. 复制 Chrome 扩展、内置技能、`sql-wasm.wasm`、systray2 及其依赖树
-5. 压缩为 zip；若安装了 [NSIS](https://nsis.sourceforge.io/) 则额外生成安装向导 `.exe`
+2. 暂存 `node.exe` + bundle + Chrome 扩展 + 内置技能 + `sql-wasm.wasm` + 平台脚本
+3. 压缩为 `CMspark-v*-windows-x64.zip`（CI / `make package-windows`）
+
+Windows **可选 SEA**（`build-windows-exe.ps1`）：
+1. 将 bundle 注入 `node.exe` 副本 → `cmspark-agent.exe`
+2. 修改 PE 子系统（CONSOLE → WINDOWS GUI），避免双击时弹出 CMD 窗口
+3. 可与 zip 并存；**不**替代官方 `package.sh` 产物
 
 macOS 打包流程：
 1. TypeScript 编译 + Swift 托盘编译

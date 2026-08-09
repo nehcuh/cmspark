@@ -741,3 +741,61 @@
 - Recorded: yes — pitfalls → project-knowledge → remote
 
 
+
+### S61 START (2026-08-09 17:22) [Deep Diagnosis Fanout]
+- **Intent**: 使用 fanout 对 CMspark 做彻底深入诊断（Phase 1 only: Map+Diagnose → Cross-cut → Synthesize）
+- **Workflow**: .grok/workflows/deep-diagnosis-fanout.rhai — 10 subsystem + 6 cross-cut + 1 synthesizer
+- **Baseline**: main @ post-#159 Health Fanout (e4316bb); 工作区干净
+- **Status**: validating → launching
+
+### S61 DONE (2026-08-09) [Deep Diagnosis Fanout complete]
+- **Workflow:** deep-diagnosis-fanout (~25m) · 10 subsystem + 6 cross-cut + synthesizer
+- **Grade:** C · Critical 5 · High 28 · Medium 42 (deduped synthesizer counts)
+- **Report:** docs/audit/deep-diagnosis-fanout-2026-08-09.md + summary.json
+- **Lead spot-check CONFIRMED:** config.get MCP leak dual-SoT; trusted_domains URL skip; host_cli COMPANION_TOOLS gap; board.get SW ok-only
+- **Next:** P0 batch (10) if user wants optimize phase
+- Recorded: yes
+
+### S62 START (2026-08-09 18:24) [Phase 2 P0 batch optimization]
+- Branch: fix/deep-diagnosis-p0
+- Source: docs/audit/deep-diagnosis-fanout-2026-08-09.md P0 x10
+- Status: implementing
+
+
+### S62 DONE (2026-08-09 18:35) [Phase 2 P0 batch implemented]
+- **Branch:** fix/deep-diagnosis-p0
+- **P0 10/10 done:** redact SoT · Cookie-only URL/image · evaluate always L2 · host_cli route · MCP selection dispatch · spawn HARD_DENY+no nest · LLM gate upload/regen+paused · BoardPanel onMessage · WS maxPayload+unauth cap · Windows SoT docs
+- **Tests:** security-gates 63 pass · redact/spawn/files/apps-cli green · tsc companion+extension clean
+- **Closeout:** docs/audit/deep-diagnosis-p0-optimization-closeout-2026-08-09.md
+- **Not done:** commit/PR/dual review (await user)
+
+### S63 START (2026-08-09 18:35) [Phase 2 P1 batch]
+- Branch: fix/deep-diagnosis-p0
+- Source: deep-diagnosis-fanout P1 x8
+- Status: implementing
+
+
+### S63 DONE (2026-08-09 18:42) [Phase 2 P1 batch]
+- **Branch:** fix/deep-diagnosis-p0 (same as P0)
+- **P1 8/8:** skill map sync · cookie contract · screenshot/selector · truncate+AbortSignal · Cockpit stop + blank SW single-flight · stream fail-closed · SSRF SoT · vault+shell/netsec bind
+- **Tests:** security-gates 63 · packs 27 · extension npm test 597 pass · tsc clean
+- **Closeout:** docs/audit/deep-diagnosis-p1-optimization-closeout-2026-08-09.md
+- **Not done:** commit/PR
+
+### S64 START (2026-08-09 18:45) [Phase 2 P2 batch]
+- Branch: fix/deep-diagnosis-p0
+- Source: deep-diagnosis-fanout P2
+- Status: implementing
+
+
+### S64 DONE (2026-08-09 18:49) [Phase 2 P2 batch]
+- **protocol.ts** 协商 + extension/tray handshake protocol_version:1
+- **WS strict** 生产默认 fail-closed；dev/test/STRICT=0 放行
+- **esbuild SoT** esbuild-bundle-args.json + run-esbuild-bundle.mjs
+- **engines** node>=20（root/companion/extension）
+- **meeting.delete** + MAX_MEETINGS=100 cap
+- **Whisper** 不伪造 pin；文档 fail-closed
+- **tab-resolver** 文档化故意不接线
+- **Deferred:** server.ts 神文件拆分
+- **Tests:** 27 targeted pass · tsc clean
+- **Closeout:** docs/audit/deep-diagnosis-p2-optimization-closeout-2026-08-09.md

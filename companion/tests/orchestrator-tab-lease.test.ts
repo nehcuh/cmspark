@@ -115,13 +115,118 @@ test("releaseAllLeasesForThread frees all", () => {
 test("computeWorkerWhitelist strips HARD_DENY but keeps evaluate", () => {
   const wl = computeWorkerWhitelist({
     parentWhitelist: null,
-    roleAllow: ["evaluate", "click", "shell_exec", "host_computer", "list_tabs"],
+    roleAllow: ["evaluate", "click", "shell_exec", "host_computer", "list_tabs", "spawn_worker", "board_read"],
   })
   assert.ok(wl.includes("evaluate"))
   assert.ok(wl.includes("click"))
   assert.ok(!wl.includes("shell_exec"))
   assert.ok(!wl.includes("host_computer"))
+  assert.ok(!wl.includes("spawn_worker"), "control-plane tools hard-denied")
+  assert.ok(!wl.includes("board_read"))
   assert.equal(WORKER_HARD_DENY.has("evaluate"), false)
+  assert.ok(WORKER_HARD_DENY.has("spawn_worker"))
+})
+
+test("second spawn from orchestrator parent does not inherit orch control tools", () => {
+  const store = new Map<string, any>()
+  let seq = 0
+  const tm = {
+    get(id: string) {
+      return store.get(id) || null
+    },
+    list() {
+      return [...store.values()]
+    },
+    create(alias?: string) {
+      const id = `t${++seq}`
+      const t = {
+        id,
+        alias: alias || id,
+        tool_whitelist: null,
+        agent_role: "normal",
+        config_override: {},
+      }
+      store.set(id, t)
+      return t
+    },
+    update(id: string, patch: any) {
+      const cur = store.get(id)
+      if (!cur) return null
+      const next = { ...cur, ...patch }
+      store.set(id, next)
+      return next
+    },
+  }
+  const parent = tm.create("orch")
+  const r1 = spawnWorkerThread(tm as any, {
+    parentThreadId: parent.id,
+    roleAllow: ["click", "navigate", "list_tabs"],
+    userConfirmed: true,
+  })
+  assert.equal(r1.ok, true)
+  // Parent is now orchestrator with control allowlist
+  const p = tm.get(parent.id) as any
+  assert.equal(p.agent_role, "orchestrator")
+  // Second spawn without roleAllow must not get spawn_worker / board_*
+  const r2 = spawnWorkerThread(tm as any, {
+    parentThreadId: parent.id,
+    userConfirmed: true,
+  })
+  assert.equal(r2.ok, true)
+  if (!r2.ok) return
+  const wl = r2.worker.tool_whitelist as string[]
+  assert.ok(!wl.includes("spawn_worker"))
+  assert.ok(!wl.includes("board_read"))
+  assert.ok(!wl.includes("wait_workers"))
+  assert.ok(wl.includes("list_tabs") || wl.includes("click") || wl.includes("navigate"))
+})
+
+test("worker parent cannot spawn nested workers", () => {
+  const store = new Map<string, any>()
+  let seq = 0
+  const tm = {
+    get(id: string) {
+      return store.get(id) || null
+    },
+    list() {
+      return [...store.values()]
+    },
+    create(alias?: string) {
+      const id = `t${++seq}`
+      const t = {
+        id,
+        alias: alias || id,
+        tool_whitelist: null,
+        agent_role: "normal",
+        config_override: {},
+      }
+      store.set(id, t)
+      return t
+    },
+    update(id: string, patch: any) {
+      const cur = store.get(id)
+      if (!cur) return null
+      const next = { ...cur, ...patch }
+      store.set(id, next)
+      return next
+    },
+  }
+  const parent = tm.create("orch")
+  const r1 = spawnWorkerThread(tm as any, {
+    parentThreadId: parent.id,
+    roleAllow: ["click"],
+    userConfirmed: true,
+  })
+  assert.equal(r1.ok, true)
+  if (!r1.ok) return
+  const rNest = spawnWorkerThread(tm as any, {
+    parentThreadId: r1.worker.id,
+    roleAllow: ["click"],
+    userConfirmed: true,
+  })
+  assert.equal(rNest.ok, false)
+  if (rNest.ok) return
+  assert.match(rNest.error, /nested|worker/i)
 })
 
 test("GATE2: first spawn from null-parent retains browser tools (not orch-only)", () => {

@@ -5,6 +5,9 @@
   "bin": {
     "cmspark-agent": "./dist/index.js"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "prebuild": "node scripts/generate-tray-icons.mjs",
     "build": "tsc && node -e \"const fs=require('fs'),p=require('path');fs.mkdirSync('dist/computer',{recursive:true});fs.copyFileSync('src/computer/qwen-vl-worker.py','dist/computer/qwen-vl-worker.py');process.platform!=='win32'&&fs.chmodSync('dist/index.js',0o755)\"",
@@ -21,7 +24,7 @@
     "build:host": "bash src/host-use/darwin/build-host.sh",
     "stage:win-scripts": "node -e \"const fs=require('fs'),path=require('path');const src=path.join('src','host-use','win','scripts');const dst=path.join('dist','host-scripts-win');fs.mkdirSync(dst,{recursive:true});for(const f of fs.readdirSync(src)){if(f.endsWith('.ps1'))fs.copyFileSync(path.join(src,f),path.join(dst,f))}console.log('staged win scripts -> '+dst)\"",
     "postinstall": "node ../scripts/verify-systray2.js && node ../scripts/build-swift-tray.js",
-    "bundle:exe": "npx esbuild dist/index.js --bundle --platform=node --target=node22 --external:systray2 --external:canvas --external:pdfjs-dist --external:@modelcontextprotocol/sdk --outfile=dist/cmspark-agent.js",
+    "bundle:exe": "node scripts/run-esbuild-bundle.mjs",
     "build:exe": "npm run build && npm run stage:win-scripts && npm run bundle:exe"
   },
   "dependencies": {

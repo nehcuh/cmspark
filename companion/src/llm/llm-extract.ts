@@ -52,13 +52,29 @@ export async function llmExtract(params: {
   temperatureCap?: number
   /** Request timeout ms (default 60s). */
   timeout?: number
+  /** Optional parent abort (chat.stop) — combined with timeout when available. */
+  signal?: AbortSignal
 }): Promise<string> {
-  const { systemPrompt, userContent, config, temperatureCap = 0.3, timeout = 60000 } = params
+  const {
+    systemPrompt,
+    userContent,
+    config,
+    temperatureCap = 0.3,
+    timeout = 60000,
+    signal: parentSignal,
+  } = params
   const provider = createProvider(toLlmConfig(config))
+  const timeoutSignal = AbortSignal.timeout(timeout)
+  const signal =
+    parentSignal && typeof (AbortSignal as any).any === "function"
+      ? (AbortSignal as any).any([parentSignal, timeoutSignal])
+      : parentSignal?.aborted
+        ? parentSignal
+        : timeoutSignal
   const result = await provider.complete({
     temperature: Math.min(config.temperature, temperatureCap),
     model: config.model_name,
-    signal: AbortSignal.timeout(timeout),
+    signal,
     messages: [
       { role: "system", content: systemPrompt },
       // Strip lone surrogates from user content — vault notes / thread text can contain them

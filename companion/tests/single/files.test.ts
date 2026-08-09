@@ -92,6 +92,36 @@ test("message-router: config.get returns config with masked API key", async () =
   assert.equal(response.config.llm.api_key, "***")
 })
 
+test("message-router: config.get redacts MCP env/headers (wire SoT)", async () => {
+  saveConfig({
+    llm: { base_url: "https://api.test.com", api_key: "sk-real-key", model_name: "gpt-4", temperature: 0.5, context_window: 4000 },
+    trusted_domains: [],
+    mcp: {
+      enabled: true,
+      servers: {
+        local: {
+          transport: "stdio",
+          command: "npx",
+          args: [],
+          env: { API_TOKEN: "super-secret" },
+          enabled: true,
+          trust_level: "manual",
+        },
+      },
+    },
+  } as any)
+
+  const response = await handleMessage(
+    { type: "config.get" },
+    { threadManager: new ThreadManager(), skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+
+  assert.equal(response.type, "config.updated")
+  assert.equal(response.config.mcp.servers.local.env.API_TOKEN, "***")
+  // Unredacted source of truth on disk still has the secret
+  assert.equal(getConfig().mcp.servers.local.env.API_TOKEN, "super-secret")
+})
+
 test("message-router: config.set saves trusted domains", async () => {
   const response = await handleMessage(
     {

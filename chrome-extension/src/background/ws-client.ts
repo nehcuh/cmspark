@@ -156,7 +156,10 @@ export class WSClient {
     try {
       const proof = await hmacSha256Hex(secret, nonce)
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: "auth.handshake", proof }))
+        // protocol_version: keep in lock-step with companion/src/protocol.ts PROTOCOL_VERSION
+        this.ws.send(
+          JSON.stringify({ type: "auth.handshake", proof, protocol_version: 1 }),
+        )
       }
     } catch (err) {
       // Web Crypto failure — treat as failed auth; companion will timeout/terminate.

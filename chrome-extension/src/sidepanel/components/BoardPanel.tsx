@@ -31,32 +31,48 @@ export function BoardPanel() {
   const [hint, setHint] = useState("")
   const threadId = state.activeThreadId
 
+  // PacksPanel pattern: SW fire-and-forgets to Companion; response arrives as a
+  // chrome.runtime.onMessage push (handleCompanionMessage forwards board.get).
+  // Do not expect sendMessage callback to carry raw_board — SW only returns {ok:true}.
   const refresh = useCallback(() => {
     if (!threadId) {
       setBoard(null)
       return
     }
-    chrome.runtime.sendMessage({ type: "board.get", thread_id: threadId }, (resp) => {
-      if (chrome.runtime.lastError) {
-        setErr(chrome.runtime.lastError.message || "board.get failed")
-        return
-      }
-      if (resp?.error) {
-        setErr(String(resp.error))
-        setBoard(null)
-        return
-      }
-      setErr("")
-      const raw = resp?.raw_board || resp?.board || resp?.data?.raw_board || resp?.data?.board
-      setBoard(raw || null)
-    })
+    setErr("")
+    try {
+      chrome.runtime.sendMessage({ type: "board.get", thread_id: threadId }, () => {
+        if (chrome.runtime.lastError) {
+          setErr(chrome.runtime.lastError.message || "board.get failed")
+        }
+      })
+    } catch (e: any) {
+      setErr(e?.message || String(e))
+    }
   }, [threadId])
 
   useEffect(() => {
     refresh()
     const id = setInterval(refresh, 5000)
-    return () => clearInterval(id)
-  }, [refresh])
+    const onMsg = (msg: any) => {
+      if (msg?.type !== "board.get") return
+      // Ignore pushes for other threads
+      if (threadId && msg.thread_id && msg.thread_id !== threadId) return
+      if (msg.error) {
+        setErr(String(msg.error))
+        setBoard(null)
+        return
+      }
+      setErr("")
+      const raw = msg?.raw_board || msg?.board || msg?.data?.raw_board || msg?.data?.board
+      setBoard(raw || null)
+    }
+    chrome.runtime.onMessage.addListener(onMsg)
+    return () => {
+      clearInterval(id)
+      chrome.runtime.onMessage.removeListener(onMsg)
+    }
+  }, [refresh, threadId])
 
   if (!threadId) {
     return <div style={s.empty}>选择线程以查看任务板</div>

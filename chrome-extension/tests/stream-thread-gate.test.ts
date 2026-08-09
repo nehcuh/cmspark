@@ -1,14 +1,11 @@
-// P0-B: pure helper tests for stream event thread gating.
-// chat.token/done/error/aborted for non-active thread_id must not mutate active UI.
-
 import test from "node:test"
 import assert from "node:assert/strict"
 import { shouldApplyStreamEvent } from "../src/sidepanel/hooks/useWebSocket"
 
-test("shouldApplyStreamEvent: missing thread_id applies (legacy/compat)", () => {
-  assert.equal(shouldApplyStreamEvent(undefined, "thread-a"), true)
-  assert.equal(shouldApplyStreamEvent(null, "thread-a"), true)
-  assert.equal(shouldApplyStreamEvent("", "thread-a"), true)
+test("shouldApplyStreamEvent: missing thread_id fail-closed (P1)", () => {
+  assert.equal(shouldApplyStreamEvent(undefined, "thread-a"), false)
+  assert.equal(shouldApplyStreamEvent(null, "thread-a"), false)
+  assert.equal(shouldApplyStreamEvent("", "thread-a"), false)
 })
 
 test("shouldApplyStreamEvent: matching thread_id applies", () => {
@@ -25,12 +22,10 @@ test("shouldApplyStreamEvent: activeThread null rejects set thread_id", () => {
   assert.equal(shouldApplyStreamEvent("thread-a", undefined), false)
 })
 
-test("shouldApplyStreamEvent: missing thread_id applies even when active is null", () => {
-  // Legacy events without thread_id still apply so pre-thread_id wire stays usable.
-  assert.equal(shouldApplyStreamEvent(undefined, null), true)
+test("shouldApplyStreamEvent: missing thread_id rejected when active is null", () => {
+  assert.equal(shouldApplyStreamEvent(undefined, null), false)
 })
 
-// S45 multi-lane P0: file.upload_error / SW-fail panel chrome uses the same gate.
 test("shouldApplyStreamEvent: upload-error style foreign thread is rejected", () => {
   assert.equal(shouldApplyStreamEvent("upload-thread-a", "active-thread-b"), false)
   assert.equal(shouldApplyStreamEvent("upload-thread-a", "upload-thread-a"), true)

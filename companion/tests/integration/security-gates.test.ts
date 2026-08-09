@@ -241,12 +241,44 @@ test("item 2: new bypass patterns detect comma-eval, globalThis indexing, dynami
 // Item 12: navigate / create_tab / set_tab_url trust gate
 // =============================================================================
 
-test("item 12: navigate to trusted domain proceeds WITHOUT confirmation", async () => {
+test("item 12: cookie trusted_domains alone does NOT skip navigate (ADR-007 Cookie-only)", async () => {
+  // beforeEach sets trusted_domains but empty auto_approved_domains
+  const executeTool = createToolExecutor(serverSideWs)
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_nav_cookie_only", "navigate", {
+    tabId: 1,
+    url: "https://trusted.example.com/page",
+  })
+
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "navigate")
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+  }))
+  const executeMsg = await expectClientMessage("tool.execute")
+  assert.equal(executeMsg.tool_name, "navigate")
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_nav_cookie_only",
+    result: { success: true },
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, true)
+})
+
+test("item 12: auto_approved_domains skips navigate confirmation", async () => {
+  saveConfig({
+    trusted_domains: [],
+    auto_approved_domains: ["trusted.example.com", "*.company.com"],
+  })
   const executeTool = createToolExecutor(serverSideWs)
   const executePromise = expectClientMessage("tool.execute")
   const noConfirmation = expectNoClientMessage("security.confirmation.request")
 
-  const resultPromise = executeTool("tc_nav_trusted", "navigate", {
+  const resultPromise = executeTool("tc_nav_auto", "navigate", {
     tabId: 1,
     url: "https://trusted.example.com/page",
   })
@@ -258,14 +290,18 @@ test("item 12: navigate to trusted domain proceeds WITHOUT confirmation", async 
 
   clientSideWs.send(JSON.stringify({
     type: "tool.result",
-    tool_call_id: "tc_nav_trusted",
+    tool_call_id: "tc_nav_auto",
     result: { success: true },
   }))
   const result = await resultPromise
   assert.equal(result.success, true)
 })
 
-test("item 12: navigate to wildcard-trusted subdomain proceeds without confirmation", async () => {
+test("item 12: auto_approved wildcard subdomain skips navigate confirmation", async () => {
+  saveConfig({
+    trusted_domains: [],
+    auto_approved_domains: ["*.company.com"],
+  })
   const executeTool = createToolExecutor(serverSideWs)
   const executePromise = expectClientMessage("tool.execute")
 
@@ -515,21 +551,27 @@ test("whitelist: out-of-scope add_to_whitelist patterns are rejected (anti-injec
 // calls on a "tab.navigated" push — so these tests exercise the real cache path.
 // =============================================================================
 
-test("M1: evaluate auto-approves when the cached tab is on a whitelisted domain", async () => {
+test("M1: evaluate on auto_approved domain still forceConfirms (domain ≠ content trust)", async () => {
+  // P0: evaluate always L2 unless three-flag autonomy. Domain whitelist only
+  // affects skipConfirmation for non-forceConfirm tools / URL gate — not evaluate.
   saveConfig({ trusted_domains: [], auto_approved_domains: ["trusted.example.com"] })
-  // Seed the cache: tab 1 is currently on the whitelisted domain.
   applyTabNavigated(1, "https://trusted.example.com/page")
 
   const executeTool = createToolExecutor(serverSideWs)
-  const executePromise = expectClientMessage("tool.execute")
-  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
 
   const resultPromise = executeTool("tc_m1_trusted", "evaluate", { tabId: 1, code: "document.title" })
 
-  const executeMsg = await executePromise
-  assert.equal(executeMsg.tool_name, "evaluate", "trusted-domain tab → auto-approve forwards tool.execute")
-  await noConfirmation
-
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "evaluate")
+  assert.deepEqual(confirmation.relevant_domains, ["trusted.example.com"])
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+  }))
+  const executeMsg = await expectClientMessage("tool.execute")
+  assert.equal(executeMsg.tool_name, "evaluate")
   clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_m1_trusted", result: { success: true } }))
   const result = await resultPromise
   assert.equal(result.success, true)
@@ -713,25 +755,30 @@ test("god-mode ON: navigate to an UNTRUSTED http domain skips confirmation (L2 b
   assert.ok(line!.includes('"reason":"god_mode"'), "bypass reason attributed to god_mode")
 })
 
-test("god-mode ⊇ auto-approve: evaluate with NON-critical dangerous code skips confirmation", async () => {
-  // With ONLY auto_approve_dangerous the existing gate skips confirmation; god-mode
-  // must do the same (it is strictly stronger) — proves god-mode ⊇ auto-approve for L2.
-  // window.open is dangerous-but-NON-critical. Critical payloads under god-mode alone
-  // still forceConfirm (M3' domain≠content); only three-flag cruise waives — see M3' tests.
+test("god-mode alone still forceConfirms evaluate (even non-critical) — only three-flag waives", async () => {
+  // ADR deep-diagnosis P0: evaluate always L2 unless full autonomy cruise.
+  // god-mode (allow_all_schemes) alone is insufficient — forceConfirm holds.
   enableGodMode()
   const executeTool = createToolExecutor(serverSideWs)
-  const executePromise = expectClientMessage("tool.execute")
-  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
 
   const resultPromise = executeTool("tc_god_eval", "evaluate", {
     tabId: 1,
     code: "window.open('https://example.com')",
   })
-  await executePromise
-  await noConfirmation
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "evaluate")
+  assert.equal(confirmation.force_confirm === true || Array.isArray(confirmation.critical_apis), true)
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+  }))
+  const executeMsg = await expectClientMessage("tool.execute")
+  assert.equal(executeMsg.tool_name, "evaluate")
   clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_god_eval", result: { success: true } }))
   const result = await resultPromise
-  assert.equal(result.success, true, "god-mode lets non-critical evaluate proceed without confirmation (⊇ auto-approve)")
+  assert.equal(result.success, true)
 })
 
 // =============================================================================
@@ -830,25 +877,29 @@ test("M3' unit: non-critical dangerous APIs are NOT in the critical set (no fals
   }
 })
 
-test("M3' §6.2.9: god-mode + non-critical dangerous (innerHTML) → auto_approved, no confirmation", async () => {
+test("M3' §6.2.9: god-mode + non-critical evaluate still forceConfirms (P0 evaluate always L2)", async () => {
   enableGodMode()
   const executeTool = createToolExecutor(serverSideWs)
-  const executePromise = expectClientMessage("tool.execute")
-  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
 
   const resultPromise = executeTool("tc_m3_innerhtml", "evaluate", {
     tabId: 1,
     code: "document.body.innerHTML = '<b>x</b>'",
   })
-  await executePromise
-  await noConfirmation
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "evaluate")
+  assert.ok(
+    Array.isArray(confirmation.dangerous_apis) && confirmation.dangerous_apis.includes("innerHTML"),
+  )
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+  }))
+  await expectClientMessage("tool.execute")
   clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_m3_innerhtml", result: { success: true } }))
   const result = await resultPromise
-  assert.equal(result.success, true, "non-critical dangerous under god-mode skips confirmation (auto_approved)")
-
-  const line = readTodayLog().split("\n").find((l) => l.includes("tc_m3_innerhtml") && l.includes("auto_approved"))
-  assert.ok(line, "auto_approved audit must exist for non-critical under god-mode")
-  assert.ok(line!.includes('"reason":"god_mode"'))
+  assert.equal(result.success, true)
 })
 
 test("M3' §6.2.9: god-mode alone + critical exfil (fetch) still forceConfirms", async () => {
@@ -957,20 +1008,27 @@ test("M3' §6.2.9: god-mode alone + window['eval'] still forceConfirms (bracket-
   assert.equal(result.success, false)
 })
 
-test("M3' §6.2.9: god-mode + globalThis['myApp'] → auto_approved (globalThis-index NON-critical, no false positive)", async () => {
+test("M3' §6.2.9: god-mode + globalThis['myApp'] still forceConfirms evaluate (always L2)", async () => {
   enableGodMode()
   const executeTool = createToolExecutor(serverSideWs)
-  const executePromise = expectClientMessage("tool.execute")
-  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
   const resultPromise = executeTool("tc_m3_gthis", "evaluate", {
     tabId: 1,
     code: 'globalThis["myApp"].render()',
   })
-  await executePromise
-  await noConfirmation
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "evaluate")
+  // globalThis-index remains non-critical for risk preview classification
+  assert.ok(!Array.isArray(confirmation.critical_apis) || !confirmation.critical_apis.includes("globalThis-index"))
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+  }))
+  await expectClientMessage("tool.execute")
   clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_m3_gthis", result: { success: true } }))
   const result = await resultPromise
-  assert.equal(result.success, true, "globalThis-index is dangerous but NON-critical → god-mode skips (no false positive)")
+  assert.equal(result.success, true)
 })
 
 test("M3' §6.2.9: auto_approve_dangerous alone + critical eval still forceConfirms", async () => {
@@ -1327,43 +1385,80 @@ test("M4 path A (same-origin canvas): ungated, returns image_base64, no phase-2 
   assert.equal(pendingToolCalls.size, 0, "path A must not leave a pending phase-2 fetch")
 })
 
-test("M4 path B trusted domain: auto-approved, phase-2 fetch dispatched", async () => {
+test("M4 path B cookie-trusted domain still requires image-fetch confirmation (ADR-007)", async () => {
+  // Cookie trusted_domains must not auto-approve image fetch.
   const executeTool = createToolExecutor(serverSideWs)
   const phase1Promise = expectClientMessage("tool.execute")
-  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
 
-  const resultPromise = executeTool("tc_ai_trusted", "analyze_image", { selector: "img.x" })
+  const resultPromise = executeTool("tc_ai_cookie", "analyze_image", { selector: "img.x" })
   const phase1 = await phase1Promise
   assert.equal(phase1.tool_name, "analyze_image")
 
-  // Register the phase-2 listener BEFORE replying to phase-1: the trusted-domain
-  // gate has no confirmation await, so phase-2 fires within microseconds of our
-  // reply and would be lost if the listener were registered after.
-  const phase2Promise = expectClientMessage("tool.execute")
   clientSideWs.send(JSON.stringify({
     type: "tool.result",
-    tool_call_id: "tc_ai_trusted",
+    tool_call_id: "tc_ai_cookie",
     result: { success: true, data: { type: "fetch_required", candidate_url: "https://trusted.example.com/a.png", width: 8, height: 8 } },
   }))
-  await noConfirmation
 
-  // Trusted domain → no confirmation → phase-2 analyze_image_fetch dispatched.
-  const phase2 = await phase2Promise
-  assert.equal(phase2.tool_name, "analyze_image_fetch", "phase-2 must dispatch analyze_image_fetch")
-  assert.equal(phase2.tool_call_id, "tc_ai_trusted__image_fetch")
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "analyze_image_fetch")
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+  }))
+
+  const phase2 = await expectClientMessage("tool.execute")
+  assert.equal(phase2.tool_name, "analyze_image_fetch")
   assert.equal(phase2.params.candidate_url, "https://trusted.example.com/a.png")
 
   clientSideWs.send(JSON.stringify({
     type: "tool.result",
-    tool_call_id: "tc_ai_trusted__image_fetch",
+    tool_call_id: phase2.tool_call_id,
     result: { success: true, data: { type: "canvas", image_base64: "BBB", width: 8, height: 8 } },
   }))
   const result = await resultPromise
   assert.equal(result.success, true)
   assert.equal(result.data.image_base64, "BBB")
+})
 
-  const line = readTodayLog().split("\n").find((l) => l.includes("tc_ai_trusted") && l.includes("image_fetch_auto_approved"))
-  assert.ok(line, "trusted-domain fetch must log image_fetch_auto_approved")
+test("M4 path B auto_approved domain: phase-2 fetch without confirmation", async () => {
+  saveConfig({
+    trusted_domains: [],
+    auto_approved_domains: ["trusted.example.com"],
+  })
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_auto", "analyze_image", { selector: "img.x" })
+  const phase1 = await phase1Promise
+  assert.equal(phase1.tool_name, "analyze_image")
+
+  const phase2Promise = expectClientMessage("tool.execute")
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_auto",
+    result: { success: true, data: { type: "fetch_required", candidate_url: "https://trusted.example.com/a.png", width: 8, height: 8 } },
+  }))
+  await noConfirmation
+
+  const phase2 = await phase2Promise
+  assert.equal(phase2.tool_name, "analyze_image_fetch")
+  assert.equal(phase2.params.candidate_url, "https://trusted.example.com/a.png")
+
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: phase2.tool_call_id,
+    result: { success: true, data: { type: "canvas", image_base64: "CCC", width: 8, height: 8 } },
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, true)
+  assert.equal(result.data.image_base64, "CCC")
+
+  const line = readTodayLog().split("\n").find((l) => l.includes("tc_ai_auto") && l.includes("image_fetch_auto_approved"))
+  assert.ok(line, "auto_approved-domain fetch must log image_fetch_auto_approved")
 })
 
 test("M4 path B untrusted public: confirmation requested, deny → blocked, NO phase-2 fetch", async () => {

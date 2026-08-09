@@ -1,0 +1,13 @@
+{
+  "description": "Single SoT for companion esbuild --external flags (package.json, package.sh, build-windows-exe.ps1).",
+  "platform": "node",
+  "target": "node22",
+  "externals": [
+    "systray2",
+    "node-notifier",
+    "canvas",
+    "pdfjs-dist",
+    "onnxruntime-node",
+    "@modelcontextprotocol/sdk"
+  ]
+}
