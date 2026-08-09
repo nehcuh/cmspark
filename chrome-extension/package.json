@@ -4,9 +4,6 @@
   "version": "0.5.0",
   "description": "AI-powered browser agent — read, operate tabs, use cookies, configure LLM, support skills",
   "author": "cmspark",
-  "engines": {
-    "node": ">=20"
-  },
   "scripts": {
     "dev": "plasmo dev",
     "postinstall": "node scripts/patch-vfile.mjs",
