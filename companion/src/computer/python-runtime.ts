@@ -66,6 +66,42 @@ export interface PythonRuntimeInfo {
   isolatedExists: boolean
   /** How python was chosen (for UI) */
   resolution: string
+  /**
+   * N1 / PY14: seed base Python available even when `pythonPath` is omitted
+   * (isolated mode, venv not yet created). Distinguishes create-env vs install CTA.
+   */
+  basePythonAvailable?: boolean
+}
+
+/** P0 default min version (PY7); open Q may raise for torch later. */
+export const MIN_PYTHON_VERSION = { major: 3, minor: 10 } as const
+
+export type PythonDiscoverySource =
+  | "config"
+  | "isolated"
+  | "well-known"
+  | "manager"
+  | "path"
+  | "py-launcher"
+  | "none"
+
+export interface PythonBaseHit {
+  /** Always absolute after success (PY1). */
+  path: string
+  version?: { major: number; minor: number; patch?: number }
+  source: Exclude<PythonDiscoverySource, "none">
+  /** Optional manager label for resolution string, e.g. pyenv-win / conda */
+  manager?: string
+}
+
+export interface FindPythonBaseOpts {
+  /** Include DATA_DIR isolated bin as a candidate (isolated run path). */
+  includeIsolated?: boolean
+  /** Prefer this absolute config pin first (computer.pythonPath). */
+  configPath?: string
+  /** Minimum version gate (default MIN_PYTHON_VERSION). */
+  minVersion?: { major: number; minor: number }
+  deps?: UvDiscoveryDeps
 }
 
 /** Injectable hooks for unit tests (production defaults stay thin). */
@@ -426,10 +462,438 @@ export function isolatedPipBin(): string {
     : path.join(isolatedPythonRoot(), "bin", "pip")
 }
 
-async function probePythonBin(bin: string): Promise<string | null> {
-  const r = await runCapture(bin, ["-c", "import sys; print(sys.executable)"], 8_000)
-  if (r.code === 0 && r.out.trim()) return r.out.trim().split(/\r?\n/)[0]!.trim()
-  return null
+// ── Base Python discovery (Scheme D / PY1–PY16) ──────────────────────────────
+
+/** Parse "3.10.11" / "Python 3.10.11" style text → version or null. */
+export function parsePythonVersion(
+  text: string,
+): { major: number; minor: number; patch?: number } | null {
+  const m = String(text || "").match(/(\d+)\.(\d+)(?:\.(\d+))?/)
+  if (!m) return null
+  const major = Number(m[1])
+  const minor = Number(m[2])
+  if (!Number.isFinite(major) || !Number.isFinite(minor)) return null
+  const patch = m[3] != null ? Number(m[3]) : undefined
+  return {
+    major,
+    minor,
+    ...(patch != null && Number.isFinite(patch) ? { patch } : {}),
+  }
+}
+
+export function versionMeetsMin(
+  v: { major: number; minor: number },
+  min: { major: number; minor: number } = MIN_PYTHON_VERSION,
+): boolean {
+  if (v.major > min.major) return true
+  if (v.major < min.major) return false
+  return v.minor >= min.minor
+}
+
+/** Basename allowlist for final interpreter pins (not py launcher). */
+export function isPythonExecutableName(basename: string): boolean {
+  const b = String(basename || "").toLowerCase()
+  return b === "python" || b === "python3" || b === "python.exe" || b === "python3.exe"
+}
+
+/** PY6: Windows Store alias stub under Microsoft\\WindowsApps. */
+export function isWindowsStorePythonStub(
+  absPath: string,
+  deps?: UvDiscoveryDeps,
+): boolean {
+  if (!absPath) return false
+  const d = resolveDeps(deps)
+  const norm = d.path.normalize(absPath).replace(/\//g, "\\").toLowerCase()
+  if (norm.includes("\\microsoft\\windowsapps\\") || norm.includes("microsoft\\windowsapps\\")) {
+    return true
+  }
+  // Optional realpath second check (N6)
+  try {
+    const rp = d.realpathSync(absPath)
+    const rn = d.path.normalize(rp).replace(/\//g, "\\").toLowerCase()
+    if (rn.includes("\\microsoft\\windowsapps\\") || rn.includes("microsoft\\windowsapps\\")) {
+      return true
+    }
+  } catch {
+    /* best-effort */
+  }
+  return false
+}
+
+/**
+ * Platform-aware install hint for Settings / preflight (PY13).
+ * win32 never brew-only.
+ */
+export function pythonInstallHint(platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32") {
+    return (
+      "winget install -e --id Python.Python.3.12" +
+      " 或从 https://www.python.org/downloads/ 安装并勾选 “Add python.exe to PATH”；" +
+      "完成后重启 CMspark Companion"
+    )
+  }
+  if (platform === "darwin") return "brew install python3；完成后重启 CMspark Companion"
+  return "使用发行版包管理器安装 python3 / python3-venv；完成后重启 CMspark Companion"
+}
+
+/**
+ * Well-known absolute base Python locations (PY5).
+ * WinGet: package-id prefix Python.Python.3.* only; never WindowsApps.
+ */
+export function listWellKnownPythonCandidates(deps?: UvDiscoveryDeps): string[] {
+  const d = resolveDeps(deps)
+  const home = d.homedir()
+  const env = d.env
+  const P = d.path
+  const out: string[] = []
+  const seen = new Set<string>()
+  const push = (p: string | undefined | null) => {
+    if (!p) return
+    const n = P.normalize(p)
+    if (seen.has(n)) return
+    // Never list Store stubs (PY6 / G2)
+    if (isWindowsStorePythonStub(n, deps)) return
+    seen.add(n)
+    out.push(n)
+  }
+
+  if (d.platform === "win32") {
+    const localAppData = env.LOCALAPPDATA || P.join(home, "AppData", "Local")
+    const programFiles = env.ProgramFiles || "C:\\Program Files"
+
+    // python.org: %LocalAppData%\Programs\Python\Python3*\python.exe
+    const pyOrgRoot = P.join(localAppData, "Programs", "Python")
+    try {
+      if (d.existsSync(pyOrgRoot)) {
+        for (const entry of d.readdirSync(pyOrgRoot)) {
+          if (!/^Python3\d+/i.test(entry)) continue
+          push(P.join(pyOrgRoot, entry, "python.exe"))
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+
+    // %ProgramFiles%\Python3*\python.exe (bounded readdir + prefix filter)
+    try {
+      if (d.existsSync(programFiles)) {
+        for (const entry of d.readdirSync(programFiles)) {
+          if (!/^Python3\d+/i.test(entry)) continue
+          push(P.join(programFiles, entry, "python.exe"))
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+
+    // WinGet Packages: Python.Python.3.* only
+    const packagesDir = P.join(localAppData, "Microsoft", "WinGet", "Packages")
+    try {
+      if (d.existsSync(packagesDir)) {
+        for (const entry of d.readdirSync(packagesDir)) {
+          if (!/^Python\.Python\.3\./i.test(entry)) continue
+          const pkg = P.join(packagesDir, entry)
+          push(P.join(pkg, "python.exe"))
+          // one extra layout level (bounded)
+          try {
+            for (const sub of d.readdirSync(pkg)) {
+              if (!/python|tools|install/i.test(sub) && !/^python/i.test(sub)) {
+                // still allow one level: any subdir/python.exe under filtered package
+              }
+              push(P.join(pkg, sub, "python.exe"))
+            }
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+
+    // Scoop
+    push(P.join(home, "scoop", "apps", "python", "current", "python.exe"))
+
+    // Anaconda / Miniconda / forge roots (fixed allowlist, N4)
+    push(P.join(home, "anaconda3", "python.exe"))
+    push(P.join(home, "miniconda3", "python.exe"))
+    push(P.join(localAppData, "Continuum", "anaconda3", "python.exe"))
+    push(P.join(home, "mambaforge", "python.exe"))
+    push(P.join(home, "miniforge3", "python.exe"))
+  } else {
+    // unix well-known
+    push("/opt/homebrew/bin/python3")
+    push("/usr/local/bin/python3")
+    push("/usr/bin/python3")
+    push(P.join(home, ".local", "bin", "python3"))
+  }
+
+  return out
+}
+
+/**
+ * Manager base roots readonly seed only (PY8).
+ * pyenv-win versions/* + CONDA_PREFIX root; no activate.
+ */
+export function listManagerPythonCandidates(deps?: UvDiscoveryDeps): string[] {
+  const d = resolveDeps(deps)
+  const home = d.homedir()
+  const env = d.env
+  const P = d.path
+  const out: string[] = []
+  const seen = new Set<string>()
+  const push = (p: string | undefined | null) => {
+    if (!p) return
+    const n = P.normalize(p)
+    if (seen.has(n)) return
+    if (isWindowsStorePythonStub(n, deps)) return
+    seen.add(n)
+    out.push(n)
+  }
+
+  // pyenv-win
+  if (d.platform === "win32") {
+    const pyenvRoot =
+      env.PYENV_ROOT ||
+      env.PYENV ||
+      P.join(home, ".pyenv", "pyenv-win")
+    const versionsDir = P.join(pyenvRoot, "versions")
+    try {
+      if (d.existsSync(versionsDir)) {
+        for (const entry of d.readdirSync(versionsDir)) {
+          push(P.join(versionsDir, entry, "python.exe"))
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+  } else {
+    // pyenv unix (optional seed)
+    const pyenvRoot = env.PYENV_ROOT || P.join(home, ".pyenv")
+    const versionsDir = P.join(pyenvRoot, "versions")
+    try {
+      if (d.existsSync(versionsDir)) {
+        for (const entry of d.readdirSync(versionsDir)) {
+          push(P.join(versionsDir, entry, "bin", "python3"))
+          push(P.join(versionsDir, entry, "bin", "python"))
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // CONDA_PREFIX seed only (N4: installer roots live in well-known)
+  const condaPrefix = env.CONDA_PREFIX
+  if (condaPrefix && P.isAbsolute(condaPrefix)) {
+    if (d.platform === "win32") {
+      push(P.join(condaPrefix, "python.exe"))
+    } else {
+      push(P.join(condaPrefix, "bin", "python3"))
+      push(P.join(condaPrefix, "bin", "python"))
+    }
+  }
+
+  return out
+}
+
+const PROBE_SCRIPT =
+  'import sys; print(sys.executable); print("%d.%d.%d" % sys.version_info[:3])'
+
+/**
+ * Probe a Python binary: absolute pin + Store denylist + version gate (PY6/PY7).
+ * Returns realpath pin or null.
+ */
+export async function probePythonBin(
+  bin: string,
+  deps?: UvDiscoveryDeps,
+  minVersion: { major: number; minor: number } = MIN_PYTHON_VERSION,
+): Promise<string | null> {
+  if (!bin || typeof bin !== "string") return null
+  const d = resolveDeps(deps)
+  // Candidate path Store check (N6 dual)
+  if (d.path.isAbsolute(bin) && isWindowsStorePythonStub(bin, deps)) return null
+
+  const r = await d.runCapture(bin, ["-c", PROBE_SCRIPT], 8_000)
+  if (r.code !== 0 || !r.out.trim()) return null
+  const lines = r.out
+    .trim()
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const exeLine = lines[0] || ""
+  if (!exeLine || !d.path.isAbsolute(exeLine)) return null
+  if (isWindowsStorePythonStub(exeLine, deps)) return null
+
+  // Version from second line or combined
+  let ver = lines[1] ? parsePythonVersion(lines[1]) : null
+  if (!ver) ver = parsePythonVersion(r.out)
+  if (!ver || !versionMeetsMin(ver, minVersion)) return null
+
+  // Basename allowlist on pin (reject bare py launcher as final)
+  const base = d.path.basename(exeLine)
+  if (!isPythonExecutableName(base)) {
+    // sys.executable should still be python.exe; if weird, reject
+    return null
+  }
+
+  try {
+    const rp = d.realpathSync(exeLine)
+    if (!d.path.isAbsolute(rp)) return d.path.normalize(exeLine)
+    if (isWindowsStorePythonStub(rp, deps)) return null
+    return rp
+  } catch {
+    return d.path.normalize(exeLine)
+  }
+}
+
+/**
+ * Cascade (PY4): config → isolated → well-known → managers → PATH/py.
+ * Success always absolute; never bare python/py (G1).
+ */
+export async function findPythonBase(
+  opts: FindPythonBaseOpts = {},
+): Promise<({ ok: true } & PythonBaseHit) | { ok: false }> {
+  const deps = opts.deps
+  const d = resolveDeps(deps)
+  const minVersion = opts.minVersion ?? MIN_PYTHON_VERSION
+  const P = d.path
+
+  const tryProbe = async (
+    cand: string,
+    source: Exclude<PythonDiscoverySource, "none">,
+    manager?: string,
+  ): Promise<({ ok: true } & PythonBaseHit) | null> => {
+    if (!cand) return null
+    // Bare names only allowed as spawn argv0 inside cascade step 5 (path/py)
+    if (!P.isAbsolute(cand) && source !== "path" && source !== "py-launcher") {
+      return null
+    }
+    if (P.isAbsolute(cand) && isWindowsStorePythonStub(cand, deps)) return null
+    const pin = await probePythonBin(cand, deps, minVersion)
+    if (!pin || !P.isAbsolute(pin)) return null
+    // G1: never bare
+    const base = P.basename(pin).toLowerCase()
+    if (base === "py" || base === "py.exe") return null
+    if (!isPythonExecutableName(P.basename(pin))) return null
+    return {
+      ok: true,
+      path: pin,
+      source,
+      ...(manager ? { manager } : {}),
+    }
+  }
+
+  // 1. Config pin
+  if (opts.configPath) {
+    const v = await validatePythonExecutable(opts.configPath, deps, minVersion)
+    if (v.ok) {
+      return { ok: true, path: v.path, source: "config" }
+    }
+  }
+
+  // 2. Isolated run bin
+  if (opts.includeIsolated) {
+    const iso = isolatedPythonBin()
+    if (d.existsSync(iso)) {
+      const hit = await tryProbe(iso, "isolated")
+      if (hit) return hit
+    }
+  }
+
+  // 3. Well-known
+  for (const cand of listWellKnownPythonCandidates(deps)) {
+    if (!P.isAbsolute(cand)) continue
+    if (!d.existsSync(cand)) continue
+    const hit = await tryProbe(cand, "well-known")
+    if (hit) return hit
+  }
+
+  // 4. Managers
+  for (const cand of listManagerPythonCandidates(deps)) {
+    if (!P.isAbsolute(cand)) continue
+    if (!d.existsSync(cand)) continue
+    const manager = cand.toLowerCase().includes("pyenv")
+      ? "pyenv"
+      : cand.toLowerCase().includes("conda") || (d.env.CONDA_PREFIX && cand.includes(d.env.CONDA_PREFIX))
+        ? "conda"
+        : "manager"
+    const hit = await tryProbe(cand, "manager", manager)
+    if (hit) return hit
+  }
+
+  // 5. Enriched PATH where/which + win32 py launcher
+  const lookupPath = processLocalLookupPath(deps)
+  const pathKey = d.platform === "win32" && d.env.Path && !d.env.PATH ? "Path" : "PATH"
+  const lookupEnv: NodeJS.ProcessEnv = { ...d.env, [pathKey]: lookupPath, PATH: lookupPath }
+  const whichBin = d.platform === "win32" ? "where" : "which"
+  const names =
+    d.platform === "win32" ? ["python", "python3"] : ["python3", "python"]
+  for (const name of names) {
+    const r = await d.runCapture(whichBin, [name], 5_000, lookupEnv)
+    if (r.code !== 0) continue
+    const lines = r.out
+      .trim()
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+    for (const hit of lines) {
+      if (!P.isAbsolute(hit)) continue
+      if (!isPythonExecutableName(P.basename(hit))) continue
+      const pinned = await tryProbe(hit, "path")
+      if (pinned) return pinned
+    }
+  }
+
+  if (d.platform === "win32") {
+    // py -0p: list installed interpreters
+    const listR = await d.runCapture("py", ["-0p"], 5_000, lookupEnv)
+    if (listR.code === 0 && listR.out.trim()) {
+      for (const line of listR.out.split(/\r?\n/)) {
+        // Loose parse: last absolute-looking token ending in python.exe
+        const m = line.match(/([A-Za-z]:\\[^\s*]+python\.exe)/i) || line.match(/(\/[^\s]+python3?)/)
+        const pth = m?.[1]?.trim()
+        if (!pth || !P.isAbsolute(pth)) continue
+        const pinned = await tryProbe(pth, "py-launcher")
+        if (pinned) return pinned
+      }
+    }
+    // py -3 -c → sys.executable
+    const pyHit = await tryProbe("py", "py-launcher")
+    // tryProbe with bare "py" — probePythonBin accepts bare for cascade; pin must be absolute
+    if (pyHit) return pyHit
+    // Direct: spawn py -3 with probe script via runCapture
+    const py3 = await d.runCapture(
+      "py",
+      ["-3", "-c", PROBE_SCRIPT],
+      8_000,
+      lookupEnv,
+    )
+    if (py3.code === 0 && py3.out.trim()) {
+      const lines = py3.out
+        .trim()
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+      const exe = lines[0]
+      if (exe && P.isAbsolute(exe) && !isWindowsStorePythonStub(exe, deps)) {
+        let ver = lines[1] ? parsePythonVersion(lines[1]) : parsePythonVersion(py3.out)
+        if (ver && versionMeetsMin(ver, minVersion) && isPythonExecutableName(P.basename(exe))) {
+          try {
+            return {
+              ok: true,
+              path: d.realpathSync(exe),
+              source: "py-launcher",
+            }
+          } catch {
+            return { ok: true, path: P.normalize(exe), source: "py-launcher" }
+          }
+        }
+      }
+    }
+  }
+
+  return { ok: false }
 }
 
 /**
@@ -440,34 +904,35 @@ export async function resolvePythonRuntime(opts: {
   /** Explicit system python path when mode=system */
   systemPythonPath?: string
   preferUv?: boolean
+  deps?: UvDiscoveryDeps
 }): Promise<PythonRuntimeInfo> {
   const mode: PythonMode = opts.mode === "system" ? "system" : "isolated"
   const root = isolatedPythonRoot()
   const isoBin = isolatedPythonBin()
-  const isolatedExists = fs.existsSync(isoBin)
-  const uv = await findUv()
+  const d = resolveDeps(opts.deps)
+  const isolatedExists = d.existsSync(isoBin)
+  const uv = await findUv(opts.deps)
   // W2: only surface absolute uvPath
   const uvPath =
     uv.ok && uv.path && path.isAbsolute(uv.path) ? uv.path : undefined
   const uvAvailable = Boolean(uvPath)
 
   if (mode === "system") {
-    const cands = [
-      ...(opts.systemPythonPath ? [opts.systemPythonPath] : []),
-      ...(process.platform === "win32" ? ["python", "py"] : ["python3", "python"]),
-    ]
-    for (const c of cands) {
-      const exe = await probePythonBin(c)
-      if (exe) {
-        return {
-          mode: "system",
-          pythonPath: exe,
-          uvAvailable,
-          ...(uvPath ? { uvPath } : {}),
-          isolatedRoot: root,
-          isolatedExists,
-          resolution: "使用本机全局 Python",
-        }
+    const base = await findPythonBase({
+      configPath: opts.systemPythonPath,
+      includeIsolated: false,
+      deps: opts.deps,
+    })
+    if (base.ok) {
+      return {
+        mode: "system",
+        pythonPath: base.path,
+        uvAvailable,
+        ...(uvPath ? { uvPath } : {}),
+        isolatedRoot: root,
+        isolatedExists,
+        resolution: "使用本机全局 Python",
+        basePythonAvailable: true,
       }
     }
     return {
@@ -476,13 +941,14 @@ export async function resolvePythonRuntime(opts: {
       ...(uvPath ? { uvPath } : {}),
       isolatedRoot: root,
       isolatedExists,
-      resolution: "已选全局 Python，但未在 PATH 中找到可用的 python3",
+      resolution: "已选全局 Python，但未找到可用的 Python 3 解释器（可安装或选择路径）",
+      basePythonAvailable: false,
     }
   }
 
-  // isolated
+  // isolated + exists: only probe isolated bin (no system overwrite of run path)
   if (isolatedExists) {
-    const exe = await probePythonBin(isoBin)
+    const exe = await probePythonBin(isoBin, opts.deps)
     if (exe) {
       return {
         mode: "isolated",
@@ -494,15 +960,28 @@ export async function resolvePythonRuntime(opts: {
         resolution: uvAvailable
           ? "使用 CMspark 独立环境（推荐；本机已检测到 uv，安装依赖时可优先用 uv）"
           : "使用 CMspark 独立环境（推荐）",
+        basePythonAvailable: true,
       }
+    }
+    // Bad isolated env — report honestly, no PATH fallback for run
+    return {
+      mode: "isolated",
+      uvAvailable,
+      ...(uvPath ? { uvPath } : {}),
+      isolatedRoot: root,
+      isolatedExists: true,
+      resolution: "独立环境存在但无法启动，可尝试「修复/更新独立环境」",
+      basePythonAvailable: false,
     }
   }
 
-  // Isolated missing: do NOT return system python as pythonPath (would pollute dep probes).
-  const basePy =
-    (await probePythonBin("python3")) ||
-    (await probePythonBin("python")) ||
-    (process.platform === "win32" ? await probePythonBin("py") : null)
+  // Isolated missing: OMIT pythonPath (B3 / PY2). Seed only for CTA.
+  const seed = await findPythonBase({
+    includeIsolated: false,
+    configPath: opts.systemPythonPath,
+    deps: opts.deps,
+  })
+  const baseOk = seed.ok
 
   return {
     mode: "isolated",
@@ -511,11 +990,12 @@ export async function resolvePythonRuntime(opts: {
     ...(uvPath ? { uvPath } : {}),
     isolatedRoot: root,
     isolatedExists: false,
-    resolution: basePy
-      ? "独立环境尚未创建；本机有 Python，可一键创建独立环境"
+    basePythonAvailable: baseOk,
+    resolution: baseOk
+      ? `独立环境尚未创建；本机已检测到 Python${seed.ok && seed.source ? `（${seed.source}）` : ""}，可一键创建独立环境`
       : uvAvailable
-        ? "独立环境尚未创建；可用 uv 创建（需本机有可被 uv 使用的 Python）"
-        : "独立环境尚未创建，且未找到 Python 3",
+        ? "独立环境尚未创建；可用 uv 创建（需本机有可被 uv 使用的 Python ≥ 3.10）"
+        : "独立环境尚未创建，且未找到可用的 Python 3（≥ 3.10）",
   }
 }
 
@@ -550,7 +1030,7 @@ export function longPathFailureHint(
 /**
  * Create/repair isolated venv and install packages.
  * Prefer: uv venv + uv pip install when uv available (absolute path only — T2).
- * Optional deps: inject findUv/runCapture for unit tests.
+ * No-uv path: findPythonBase absolute base (PY15 / N3). Optional deps for unit tests.
  */
 export async function ensureIsolatedPythonEnv(
   packages: string[],
@@ -568,6 +1048,7 @@ export async function ensureIsolatedPythonEnv(
   const uvBin =
     uv.ok && uv.path && path.isAbsolute(uv.path) ? uv.path : null
   const usedUv = Boolean(uvBin)
+  let venvReady = exists(isolatedPythonBin())
 
   const fail = (error: string, extra?: Partial<EnsureEnvResult>): EnsureEnvResult => ({
     ok: false,
@@ -585,7 +1066,7 @@ export async function ensureIsolatedPythonEnv(
 
   if (uvBin) {
     logs.push(`检测到 uv，使用 uv 创建/维护独立环境（${uvBin}）`)
-    if (!exists(isolatedPythonBin())) {
+    if (!venvReady) {
       const cr = await capture(uvBin, ["venv", root], 120_000)
       logs.push(`uv venv → exit ${cr.code}`)
       if (cr.out) logs.push(cr.out.trim().slice(0, 500))
@@ -593,6 +1074,7 @@ export async function ensureIsolatedPythonEnv(
       if (cr.code !== 0) {
         return fail("uv venv 创建失败", { usedUv: true })
       }
+      venvReady = true
     }
     if (packages.length > 0) {
       const args = ["pip", "install", "--python", isolatedPythonBin(), ...packages]
@@ -609,28 +1091,31 @@ export async function ensureIsolatedPythonEnv(
     }
   } else {
     logs.push("未检测到 uv，使用 python -m venv + pip")
-    // When deps injected for unit tests without real python, short-circuit
-    if (deps?.findUv || deps?.runCapture) {
-      return fail("本机没有可用的 Python，无法创建独立环境", { usedUv: false })
+    // N3: always discover absolute base via cascade (injectable deps); no bare-only probe
+    const base = await findPythonBase({ includeIsolated: false, deps })
+    if (!base.ok || !path.isAbsolute(base.path)) {
+      return fail(
+        `本机没有可用的 Python（≥ ${MIN_PYTHON_VERSION.major}.${MIN_PYTHON_VERSION.minor}），无法创建独立环境。${pythonInstallHint()}`,
+        { usedUv: false },
+      )
     }
-    const basePy =
-      (await probePythonBin("python3")) ||
-      (await probePythonBin("python")) ||
-      (process.platform === "win32" ? await probePythonBin("py") : null)
-    if (!basePy) {
-      return fail("本机没有可用的 Python，无法创建独立环境", { usedUv: false })
-    }
-    if (!exists(isolatedPythonBin())) {
-      const cr = await capture(basePy, ["-m", "venv", root], 120_000)
+    logs.push(`使用 base Python：${base.path}（${base.source}）`)
+    if (!venvReady) {
+      const cr = await capture(base.path, ["-m", "venv", root], 120_000)
       logs.push(`python -m venv → exit ${cr.code}`)
+      if (cr.out) logs.push(cr.out.trim().slice(0, 500))
+      if (cr.err) logs.push(cr.err.trim().slice(0, 500))
       if (cr.code !== 0) {
         return fail("venv 创建失败", { usedUv: false })
       }
+      venvReady = true
     }
     if (packages.length > 0) {
       const pip = isolatedPipBin()
       const ir = await capture(pip, ["install", ...packages], 600_000)
       logs.push(`pip install ${packages.join(" ")} → exit ${ir.code}`)
+      if (ir.out) logs.push(ir.out.trim().slice(-800))
+      if (ir.err) logs.push(ir.err.trim().slice(-800))
       if (ir.code !== 0) {
         return fail("pip install 失败（见日志）", {
           usedUv: false,
@@ -640,7 +1125,7 @@ export async function ensureIsolatedPythonEnv(
     }
   }
 
-  // After uv path: if test injects and isolated bin "exists", skip real python probe
+  // Injectable test short-circuit (N3): allow mock success without real isolated probe
   if (deps?.findUv || deps?.runCapture) {
     if (usedUv && uvBin) {
       return {
@@ -650,9 +1135,17 @@ export async function ensureIsolatedPythonEnv(
         log: logs.join("\n"),
       }
     }
+    if (!usedUv && venvReady) {
+      return {
+        ok: true,
+        pythonPath: isolatedPythonBin(),
+        usedUv: false,
+        log: logs.join("\n"),
+      }
+    }
   }
 
-  const exe = await probePythonBin(isolatedPythonBin())
+  const exe = await probePythonBin(isolatedPythonBin(), deps)
   if (!exe) {
     return fail("独立环境创建后仍无法启动 Python")
   }
@@ -745,33 +1238,56 @@ export function buildInstallCommands(opts: {
 }
 
 
-/** Ensure path looks like a usable Python binary (absolute + runs -c). */
+/**
+ * Ensure path looks like a usable Python binary (PY12):
+ * absolute + exists + basename allowlist + Store denylist + version gate + probe.
+ */
 export async function validatePythonExecutable(
   raw: string,
+  deps?: UvDiscoveryDeps,
+  minVersion: { major: number; minor: number } = MIN_PYTHON_VERSION,
 ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  const d = resolveDeps(deps)
   const p = String(raw || "").trim()
   if (!p) return { ok: false, error: "路径不能为空" }
-  if (!path.isAbsolute(p)) return { ok: false, error: "请选择绝对路径的 Python 可执行文件" }
-  if (!fs.existsSync(p)) return { ok: false, error: "文件不存在" }
+  if (!d.path.isAbsolute(p)) {
+    return { ok: false, error: "请选择绝对路径的 Python 可执行文件" }
+  }
+  if (isWindowsStorePythonStub(p, deps)) {
+    return {
+      ok: false,
+      error:
+        "检测到 Microsoft Store 占位 python（WindowsApps），不可用。请安装 python.org / winget 真 Python，或在「应用执行别名」中关闭 python.exe。",
+    }
+  }
+  if (!d.existsSync(p)) return { ok: false, error: "文件不存在" }
+  const base = d.path.basename(p)
+  if (!isPythonExecutableName(base)) {
+    return {
+      ok: false,
+      error: "请选择 python / python3 可执行文件（不要选择 py 启动器本身）",
+    }
+  }
   try {
-    const st = fs.statSync(p)
-    if (!st.isFile() && !st.isSymbolicLink()) {
-      // on unix python can be symlink to file — isFile follows links usually
+    const st = d.statSync(p)
+    if (!st.isFile() && !(typeof st.isSymbolicLink === "function" && st.isSymbolicLink())) {
+      // still allow probe — some hosts report oddly for reparse points
     }
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) }
   }
-  const exe = await probePythonBin(p)
+  const exe = await probePythonBin(p, deps, minVersion)
   if (!exe) {
     return {
       ok: false,
-      error: "无法作为 Python 启动（请选择 python / python3 可执行文件，而不是目录）",
+      error: `无法作为可用 Python 启动（需要 ≥ ${minVersion.major}.${minVersion.minor}，且不能是 Store 占位；请选择真实 python / python3 可执行文件）`,
     }
   }
-  // Prefer realpath for stability
-  try {
-    return { ok: true, path: fs.realpathSync(p) }
-  } catch {
-    return { ok: true, path: p }
+  if (isWindowsStorePythonStub(exe, deps)) {
+    return {
+      ok: false,
+      error: "探测结果仍指向 Microsoft Store 占位 python，已拒绝",
+    }
   }
+  return { ok: true, path: exe }
 }

@@ -1,0 +1,32 @@
+{
+  "batch": "windows-python-discovery",
+  "date": "2026-08-09",
+  "stage": "design+plan",
+  "pi": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/windows-python-discovery-pi-protocol-20260809.md",
+    "channel": "pi-protocol-readonly-agent",
+    "note": "Host pi CLI drifted off-topic twice; protocol agent used for gate"
+  },
+  "adversary": {
+    "workflow": "windows-python-discovery-adversarial",
+    "scheme": "D Full hybrid cascade",
+    "pi_ready": true,
+    "raw": "docs/audit/reviews/windows-python-discovery-adversary-raw-20260809.md",
+    "synthesis": "docs/audit/reviews/windows-python-discovery-adversary-synthesis-20260809.md"
+  },
+  "design": "docs/superpowers/specs/2026-08-09-windows-python-discovery-design.md",
+  "plan": "docs/superpowers/plans/2026-08-09-windows-python-discovery-impl.md",
+  "nits_summary": [
+    "basePythonAvailable / progressive CTA (N1)",
+    "tests: config priority, manager seed, py-launcher, download absolute (N2)",
+    "rewrite ensureIsolated injectable short-circuit (N3)",
+    "anaconda well-known vs manager ownership (N4)",
+    "Store denylist path + probe pin (N6)",
+    "delete dead findPython (N8)",
+    "findUv regression suite green (N10)"
+  ],
+  "gate": "IMPLEMENTATION_ALLOWED",
+  "approve": true,
+  "both_ok": true
+}

@@ -129,8 +129,10 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
   "python-missing": {
     title: "需要先安装 Python 3",
     detail:
-      "实验层在本机 Companion 中下载与运行，需要 Python 3。" +
-      "Mac：终端执行 brew install python3；Windows：从 python.org 安装并勾选 PATH。完成后重启 CMspark。" +
+      "实验层在本机 Companion 中下载与运行，需要 Python 3（≥ 3.10）。" +
+      "Windows：winget install -e --id Python.Python.3.12，或从 python.org 安装并勾选 PATH；" +
+      "Mac：brew install python3；Linux：用发行版包管理器安装 python3。" +
+      "完成后重启 CMspark。也可在设置 → 实验功能按环境检查中的安装命令操作。" +
       "UIA / OCR / 用户框选定位不受影响。",
     action: null,
   },

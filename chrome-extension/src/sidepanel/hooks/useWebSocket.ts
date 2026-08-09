@@ -1276,6 +1276,12 @@ export function useWebSocket() {
               ...(typeof msg.uvInstallHint === "string"
                 ? { uvInstallHint: msg.uvInstallHint }
                 : {}),
+              ...(typeof msg.pythonInstallHint === "string"
+                ? { pythonInstallHint: msg.pythonInstallHint }
+                : {}),
+              ...(typeof msg.basePythonAvailable === "boolean"
+                ? { basePythonAvailable: msg.basePythonAvailable }
+                : {}),
               ...(typeof msg.pythonResolution === "string"
                 ? { pythonResolution: msg.pythonResolution }
                 : {}),

@@ -652,6 +652,10 @@ export interface ComputerModelState {
   uvPath?: string
   /** Server-driven platform install hint (e.g. winget / brew / curl) */
   uvInstallHint?: string
+  /** Server-driven Python install hint (winget + python.org on win32) */
+  pythonInstallHint?: string
+  /** Base Python available even when isolated venv missing (progressive CTA) */
+  basePythonAvailable?: boolean
   pythonResolution?: string
   isolatedEnvExists?: boolean
   preflight?: {
@@ -660,6 +664,8 @@ export interface ComputerModelState {
     uvAvailable?: boolean
     uvPath?: string
     uvInstallHint?: string
+    pythonInstallHint?: string
+    basePythonAvailable?: boolean
     pythonResolution?: string
     isolatedEnvExists?: boolean
     readinessSummary?: string

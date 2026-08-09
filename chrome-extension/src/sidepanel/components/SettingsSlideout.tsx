@@ -3160,6 +3160,21 @@ export function SettingsSlideout() {
                   {(model?.pythonResolution || model?.preflight?.pythonResolution) ??
                     "检测中…"}
                   {(() => {
+                    const pyPath =
+                      model?.pythonPath ||
+                      (typeof model?.preflight?.deps?.pythonPath === "string"
+                        ? model.preflight.deps.pythonPath
+                        : "")
+                    if (pyPath && pyPath.length > 0) {
+                      const shown =
+                        pyPath.length > 48
+                          ? `${pyPath.slice(0, 20)}…${pyPath.slice(-24)}`
+                          : pyPath
+                      return ` · ${shown}`
+                    }
+                    return ""
+                  })()}
+                  {(() => {
                     const uvOk = model?.uvAvailable ?? model?.preflight?.uvAvailable
                     const uvPath = model?.uvPath || model?.preflight?.uvPath
                     // Prefer server-driven platform hint (W7/N4); never hardcode brew here
@@ -3180,6 +3195,35 @@ export function SettingsSlideout() {
                       : " · 未检测到 uv（可选安装以加速）"
                   })()}
                 </div>
+                {(() => {
+                  // Progressive CTA (PY14): fully missing → install hint; base ok → create-env
+                  const mode = model?.pythonMode || model?.preflight?.pythonMode || "isolated"
+                  const isoOk =
+                    model?.isolatedEnvExists ?? model?.preflight?.isolatedEnvExists
+                  const baseOk =
+                    model?.basePythonAvailable ?? model?.preflight?.basePythonAvailable
+                  const pyHint =
+                    model?.pythonInstallHint ||
+                    model?.preflight?.pythonInstallHint ||
+                    ""
+                  if (mode === "isolated" && !isoOk && baseOk !== true && pyHint) {
+                    return (
+                      <div
+                        style={{
+                          ...styles.helpText,
+                          marginTop: 6,
+                          fontSize: 10,
+                          color: "#8a5a00",
+                          fontFamily: "ui-monospace, monospace",
+                          wordBreak: "break-all",
+                        }}
+                      >
+                        安装 Python：{pyHint}
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
                   {(
                     [
@@ -3254,24 +3298,43 @@ export function SettingsSlideout() {
                   </div>
                 )}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                  <button
-                    type="button"
-                    style={styles.secondaryBtn}
-                    disabled={
-                      model === null ||
-                      model.modelStatus === "downloading" ||
-                      (model?.pythonMode || model?.preflight?.pythonMode) === "system"
-                    }
-                    title="创建或修复 Companion 数据目录下的独立 python-env；优先 uv"
-                    onClick={() => {
-                      dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
-                      send({ type: "computer.model.ensure_python_env", source: "settings" })
-                    }}
-                  >
-                    {(model?.isolatedEnvExists ?? model?.preflight?.isolatedEnvExists)
-                      ? "修复/更新独立环境"
-                      : "创建独立环境"}
-                  </button>
+                  {(() => {
+                    const mode =
+                      model?.pythonMode || model?.preflight?.pythonMode || "isolated"
+                    const isoOk =
+                      model?.isolatedEnvExists ?? model?.preflight?.isolatedEnvExists
+                    const baseOk =
+                      model?.basePythonAvailable ?? model?.preflight?.basePythonAvailable
+                    // Primary CTA: create-env when base available; still show when missing so user can retry after install
+                    const createPrimary = mode === "isolated" && !isoOk && baseOk === true
+                    return (
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.secondaryBtn,
+                          ...(createPrimary
+                            ? {
+                                borderColor: tokens.accent,
+                                background: tokens.accentSoft || "#eef3ff",
+                                fontWeight: 700,
+                              }
+                            : {}),
+                        }}
+                        disabled={
+                          model === null ||
+                          model.modelStatus === "downloading" ||
+                          mode === "system"
+                        }
+                        title="创建或修复 Companion 数据目录下的独立 python-env；优先 uv"
+                        onClick={() => {
+                          dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                          send({ type: "computer.model.ensure_python_env", source: "settings" })
+                        }}
+                      >
+                        {isoOk ? "修复/更新独立环境" : "创建独立环境"}
+                      </button>
+                    )
+                  })()}
                   <button
                     type="button"
                     style={styles.secondaryBtn}

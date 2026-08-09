@@ -11,7 +11,7 @@ import {
   qwenVlMeta,
   type QwenVlVariant,
 } from "./qwen-vl-catalog"
-import { isolatedPythonBin } from "./python-runtime"
+import { findPythonBase, isolatedPythonBin } from "./python-runtime"
 
 /** Default models root: ~/.cmspark-agent/models (overridable via computer.modelRootDir). */
 export function resolveModelRootDir(override?: string | null): string {
@@ -221,29 +221,36 @@ export async function downloadQwenVlVariant(args: DownloadQwenArgs): Promise<{ d
 
   const run = args.runPython ?? defaultRunPython
   // Adversary B3: isolated mode MUST NOT fall back to PATH/system python.
+  // PY1 / C7: final argv0 must be absolute — never bare python/py.
   const cfg = getConfig().computer
   const mode = cfg?.pythonMode === "system" ? "system" : "isolated"
   const iso = isolatedPythonBin()
   const sysPath = typeof cfg?.pythonPath === "string" ? cfg.pythonPath.trim() : ""
-  const pyCandidates: string[] =
-    mode === "system"
-      ? [
-          ...(sysPath ? [sysPath] : []),
-          ...(process.platform === "win32" ? ["python", "py"] : ["python3", "python"]),
-        ]
-      : fs.existsSync(iso)
-        ? [iso]
-        : []
-  if (pyCandidates.length === 0) {
+  const pyCandidates: string[] = []
+  if (mode === "system") {
+    if (sysPath && path.isAbsolute(sysPath)) pyCandidates.push(sysPath)
+    const base = await findPythonBase({
+      configPath: sysPath && path.isAbsolute(sysPath) ? sysPath : undefined,
+      includeIsolated: false,
+    })
+    if (base.ok && path.isAbsolute(base.path) && !pyCandidates.includes(base.path)) {
+      pyCandidates.push(base.path)
+    }
+  } else if (fs.existsSync(iso) && path.isAbsolute(iso)) {
+    pyCandidates.push(iso)
+  }
+  // Absolute-only filter (G1)
+  const absoluteCandidates = pyCandidates.filter((p) => path.isAbsolute(p))
+  if (absoluteCandidates.length === 0) {
     throw new QwenDownloadError(
       "python-missing",
       mode === "isolated"
         ? "独立环境尚未创建。请在设置页点「创建独立环境」后再下载。"
-        : "未找到可用的全局 Python。",
+        : "未找到可用的全局 Python（绝对路径）。请安装 Python 3 或选择解释器路径。",
     )
   }
   let lastErr = ""
-  for (const py of pyCandidates) {
+  for (const py of absoluteCandidates) {
     const result = await run([py, "-c", DOWNLOAD_SCRIPT, source, modelId, dir], env)
     for (const line of result.stderr.split("\n")) {
       const t = line.trim()
