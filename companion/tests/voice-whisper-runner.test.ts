@@ -25,10 +25,20 @@ if (!FIXTURE) {
 }
 
 test("buildWhisperArgs matches whisper-cli schema", () => {
-  assert.deepEqual(
-    buildWhisperArgs({ modelPath: "/m.bin", audioPath: "/a.wav", lang: "zh" }),
-    ["-m", "/m.bin", "-f", "/a.wav", "-l", "zh", "-nt"],
-  )
+  const args = buildWhisperArgs({ modelPath: "/m.bin", audioPath: "/a.wav", lang: "zh", threads: 4 })
+  assert.deepEqual(args, [
+    "-m",
+    "/m.bin",
+    "-f",
+    "/a.wav",
+    "-l",
+    "zh",
+    "-nt",
+    "-ng",
+    "-np",
+    "-t",
+    "4",
+  ])
 })
 
 test("parseWhisperStdout strips logs and handles BLANK_AUDIO", () => {
@@ -76,7 +86,17 @@ test("runWhisperTranscribe injects execFile and checks argv", async () => {
     execFileImpl: fakeExec,
   })
   assert.equal(r.text, "injected text")
-  assert.deepEqual(seenArgs, ["-m", "/models/small.bin", "-f", "/tmp/a.pcm", "-l", "en", "-nt"])
+  assert.ok(seenArgs)
+  assert.equal(seenArgs![0], "-m")
+  assert.equal(seenArgs![1], "/models/small.bin")
+  assert.equal(seenArgs![2], "-f")
+  assert.equal(seenArgs![3], "/tmp/a.pcm")
+  assert.equal(seenArgs![4], "-l")
+  assert.equal(seenArgs![5], "en")
+  assert.ok(seenArgs!.includes("-nt"))
+  assert.ok(seenArgs!.includes("-ng"))
+  assert.ok(seenArgs!.includes("-np"))
+  assert.ok(seenArgs!.includes("-t"))
 })
 
 test("runWhisperTranscribe timeout via killed child", async () => {

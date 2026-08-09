@@ -7209,48 +7209,62 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           return
         }
 
-        const response = await handleMessage(
-          msg,
-          { threadManager, skillEngine, historyStore },
-          {
-            sendToExtension: (data: any) => {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(data))
-              }
+        let response: any
+        try {
+          response = await handleMessage(
+            msg,
+            { threadManager, skillEngine, historyStore },
+            {
+              sendToExtension: (data: any) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify(data))
+                }
+              },
+              executeTool,
+              // App tab D2 biometric gates (apps.add/set_policy →auto): same
+              // origin-bound confirmation channel as executeTool's
+              // sendConfirmation above — nonce-carrying confirmations resolve
+              // only on the socket that requested them (amendment A1).
+              requestConfirmation: (details) =>
+                securityConfirmations.request(
+                  (data) => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                      ws.send(JSON.stringify(data))
+                    }
+                  },
+                  details,
+                  { originWs: ws },
+                ),
+              broadcast: (data: any) => {
+                const message = JSON.stringify(data)
+                for (const client of clients) {
+                  try {
+                    // Y-e: mirror broadcastToClients (X3) — never fan out to
+                    // unauthenticated connections inside the handshake window.
+                    if (client.readyState === WebSocket.OPEN && wsAuth.get(client)?.authenticated === true) {
+                      client.send(message)
+                    }
+                  } catch { /* ignore disconnected */ }
+                }
+              },
+              // WP4: 每连接面板标识(computer.evidence.open P6 频率上限计数)。
+              panelId,
+              // Path B M1: origin class for voice.stt.* (chrome-extension vs tray).
+              origin: peerOrigin,
             },
-            executeTool,
-            // App tab D2 biometric gates (apps.add/set_policy →auto): same
-            // origin-bound confirmation channel as executeTool's
-            // sendConfirmation above — nonce-carrying confirmations resolve
-            // only on the socket that requested them (amendment A1).
-            requestConfirmation: (details) =>
-              securityConfirmations.request(
-                (data) => {
-                  if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify(data))
-                  }
-                },
-                details,
-                { originWs: ws },
-              ),
-            broadcast: (data: any) => {
-              const message = JSON.stringify(data)
-              for (const client of clients) {
-                try {
-                  // Y-e: mirror broadcastToClients (X3) — never fan out to
-                  // unauthenticated connections inside the handshake window.
-                  if (client.readyState === WebSocket.OPEN && wsAuth.get(client)?.authenticated === true) {
-                    client.send(message)
-                  }
-                } catch { /* ignore disconnected */ }
-              }
-            },
-            // WP4: 每连接面板标识(computer.evidence.open P6 频率上限计数)。
-            panelId,
-            // Path B M1: origin class for voice.stt.* (chrome-extension vs tray).
-            origin: peerOrigin,
-          },
-        )
+          )
+        } catch (handlerErr: any) {
+          // Keep Companion alive on STT/tool handler throws (was process-killing via unhandledRejection).
+          logger.error("ws.handleMessage.threw", {
+            type: typeof msg?.type === "string" ? msg.type : undefined,
+            error: handlerErr?.message || String(handlerErr),
+          })
+          response = {
+            type: "error",
+            error: handlerErr?.message || "handler failed",
+            family: typeof msg?.type === "string" ? String(msg.type).split(".")[0] : "ws",
+          }
+        }
 
         if (response && ws.readyState === WebSocket.OPEN) {
           // Echo the request id so clients can match this response to a pending

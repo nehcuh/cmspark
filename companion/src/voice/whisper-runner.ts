@@ -7,6 +7,8 @@ import {
   type ExecFileException,
   type ExecFileOptions,
 } from "node:child_process"
+import * as path from "node:path"
+import * as os from "node:os"
 
 import { STT_INFER_MAX_MS } from "./session-caps"
 
@@ -49,13 +51,39 @@ export class WhisperRunnerError extends Error {
   }
 }
 
-/** whisper-cli / cmspark-whisper argv (spike-proven). */
+/** Cap threads — large models + OpenMP can thrash / look like a hang on Windows. */
+export function defaultWhisperThreadCount(): number {
+  const n = typeof os.cpus === "function" ? os.cpus().length : 4
+  return Math.max(2, Math.min(6, Math.floor(n / 2) || 4))
+}
+
+/**
+ * whisper-cli / cmspark-whisper argv.
+ * -ng: force CPU (avoids broken GPU init paths on some Windows builds)
+ * -np: quieter stderr (still enough for errors; reduces maxBuffer pressure)
+ * -nt: no timestamps (product expects plain text)
+ * -t N: bounded threads
+ */
 export function buildWhisperArgs(opts: {
   modelPath: string
   audioPath: string
   lang: string
+  threads?: number
 }): string[] {
-  return ["-m", opts.modelPath, "-f", opts.audioPath, "-l", opts.lang, "-nt"]
+  const threads = opts.threads ?? defaultWhisperThreadCount()
+  return [
+    "-m",
+    opts.modelPath,
+    "-f",
+    opts.audioPath,
+    "-l",
+    opts.lang,
+    "-nt",
+    "-ng",
+    "-np",
+    "-t",
+    String(threads),
+  ]
 }
 
 /**
@@ -107,6 +135,9 @@ export async function runWhisperTranscribe(
     lang,
   })
   const started = Date.now()
+  // Windows loads whisper/ggml DLLs from the directory of the *executable*.
+  // Explicit cwd keeps sibling DLLs resolvable even if process.cwd is elsewhere.
+  const binaryDir = path.dirname(path.resolve(opts.binaryPath))
 
   if (opts.signal?.aborted) {
     throw new WhisperRunnerError("aborted", "whisper aborted before start")
@@ -116,6 +147,7 @@ export async function runWhisperTranscribe(
     let settled = false
     let abortedBySignal = false
     let killEscalation: ReturnType<typeof setTimeout> | undefined
+    let child: ChildProcess
 
     const finishReject = (err: WhisperRunnerError) => {
       if (settled) return
@@ -133,13 +165,13 @@ export async function runWhisperTranscribe(
     const onAbort = () => {
       abortedBySignal = true
       try {
-        child.kill("SIGTERM")
+        child?.kill("SIGTERM")
       } catch {
         /* ignore */
       }
       killEscalation = setTimeout(() => {
         try {
-          child.kill("SIGKILL")
+          child?.kill("SIGKILL")
         } catch {
           /* ignore */
         }
@@ -156,63 +188,89 @@ export async function runWhisperTranscribe(
       }
     }
 
-    const child = execFile(
-      opts.binaryPath,
-      args,
-      {
-        timeout: timeoutMs,
-        killSignal: "SIGTERM",
-        maxBuffer: 4 * 1024 * 1024,
-        windowsHide: true,
-        shell: false,
-        env: {
-          PATH: process.env.PATH,
-          LANG: process.env.LANG,
-          LC_ALL: process.env.LC_ALL,
-          HOME: process.env.HOME,
-          TMPDIR: process.env.TMPDIR,
-          TEMP: process.env.TEMP,
-          TMP: process.env.TMP,
-          // Avoid leaking secrets into child env
+    try {
+      child = execFile(
+        opts.binaryPath,
+        args,
+        {
+          timeout: timeoutMs,
+          killSignal: "SIGTERM",
+          // whisper.cpp logs can be chatty before -np; keep headroom
+          maxBuffer: 16 * 1024 * 1024,
+          windowsHide: true,
+          shell: false,
+          cwd: binaryDir,
+          env: {
+            // Prefer binary dir first so LoadLibrary finds ggml*.dll (Windows)
+            PATH:
+              process.platform === "win32"
+                ? `${binaryDir}${path.delimiter}${process.env.PATH || ""}`
+                : process.env.PATH,
+            LANG: process.env.LANG,
+            LC_ALL: process.env.LC_ALL,
+            HOME: process.env.HOME,
+            TMPDIR: process.env.TMPDIR,
+            TEMP: process.env.TEMP,
+            TMP: process.env.TMP,
+            // Avoid leaking secrets into child env
+          },
         },
-      },
-      (err, stdout, _stderr) => {
-        const ms = Date.now() - started
-        const out = String(stdout ?? "")
-        if (!err) {
-          finishResolve({ text: parseWhisperStdout(out), ms })
-          return
-        }
-        if (abortedBySignal || opts.signal?.aborted) {
-          finishReject(new WhisperRunnerError("aborted", "whisper aborted"))
-          return
-        }
-        const e = err as ExecFileException & { killed?: boolean }
-        // Node marks timeout kills with killed=true
-        if (e.killed || e.signal === "SIGTERM" || e.signal === "SIGKILL") {
+        (err, stdout, _stderr) => {
+          const ms = Date.now() - started
+          const out = String(stdout ?? "")
+          if (!err) {
+            finishResolve({ text: parseWhisperStdout(out), ms })
+            return
+          }
+          if (abortedBySignal || opts.signal?.aborted) {
+            finishReject(new WhisperRunnerError("aborted", "whisper aborted"))
+            return
+          }
+          const e = err as ExecFileException & { killed?: boolean; code?: string | number }
+          // maxBuffer / spawn failures
+          if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+            finishReject(
+              new WhisperRunnerError(
+                "nonzero_exit",
+                "whisper produced excessive output (stdio maxBuffer)",
+              ),
+            )
+            return
+          }
+          // Node marks timeout kills with killed=true
+          if (e.killed || e.signal === "SIGTERM" || e.signal === "SIGKILL") {
+            finishReject(
+              new WhisperRunnerError(
+                "timeout",
+                `whisper timed out after ${timeoutMs}ms`,
+              ),
+            )
+            return
+          }
+          if (typeof e.code === "number") {
+            finishReject(
+              new WhisperRunnerError(
+                "nonzero_exit",
+                e.message || `whisper exit ${e.code}`,
+              ),
+            )
+            return
+          }
+          // ENOENT etc.
           finishReject(
-            new WhisperRunnerError(
-              "timeout",
-              `whisper timed out after ${timeoutMs}ms`,
-            ),
+            new WhisperRunnerError("spawn_error", e.message || "whisper spawn failed"),
           )
-          return
-        }
-        if (typeof e.code === "number") {
-          finishReject(
-            new WhisperRunnerError(
-              "nonzero_exit",
-              e.message || `whisper exit ${e.code}`,
-            ),
-          )
-          return
-        }
-        // ENOENT etc.
-        finishReject(
-          new WhisperRunnerError("spawn_error", e.message || "whisper spawn failed"),
-        )
-      },
-    )
+        },
+      )
+    } catch (e) {
+      finishReject(
+        new WhisperRunnerError(
+          "spawn_error",
+          e instanceof Error ? e.message : "whisper spawn threw",
+        ),
+      )
+      return
+    }
 
     if (opts.signal) {
       opts.signal.addEventListener("abort", onAbort, { once: true })

@@ -222,6 +222,16 @@ export class SttSessionService {
     const peer = this.requirePeer(peerId, sessionId)
     if (!peer.ok) return peer
     const bound = this.bound!
+    // large-v3-turbo full load ~1.6GB and 30–90s even for short audio — progressive
+    // re-decode would stack with final end() and freeze/kill the host on Windows SEA.
+    // Hold-to-talk continuous still works; interim hypothesis is medium/small only.
+    if (bound.modelId === "large-v3-turbo") {
+      return {
+        ok: false,
+        code: "partial_skipped",
+        message: "partial disabled for large-v3-turbo (final-only)",
+      }
+    }
     if (bound.inferring) {
       return { ok: false, code: "partial_busy", message: "final infer in progress" }
     }
@@ -393,14 +403,39 @@ export class SttSessionService {
       const audioPath = await writeSessionFile(sessionDir, fileName, body)
 
       const run = this.deps.runWhisper ?? runWhisperTranscribe
+      // large models need more wall time (CPU encode of long utterances)
+      const baseTimeout = this.deps.inferMaxMs ?? STT_INFER_MAX_MS
+      const timeoutMs =
+        modelId === "large-v3-turbo" ? Math.max(baseTimeout, 180_000) : baseTimeout
+      try {
+        const { logger } = await import("../logger")
+        logger.info("voice.stt.infer.start", {
+          modelId,
+          binary: path.basename(binRes.path),
+          audioBytes: body.length,
+          timeoutMs,
+        })
+      } catch {
+        /* logger optional in tests */
+      }
       const result = await run({
         binaryPath: binRes.path,
         modelPath,
         audioPath,
         lang: this.deps.lang ?? "zh",
-        timeoutMs: this.deps.inferMaxMs ?? STT_INFER_MAX_MS,
+        timeoutMs,
         signal: ac.signal,
       })
+      try {
+        const { logger } = await import("../logger")
+        logger.info("voice.stt.infer.ok", {
+          modelId,
+          ms: result.ms,
+          textLen: (result.text ?? "").length,
+        })
+      } catch {
+        /* */
+      }
 
       await removeSessionDir(sessionDir)
       sessionDir = undefined
