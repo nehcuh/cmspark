@@ -715,8 +715,10 @@
 - **本机冒烟**: 无全局 Python / Store stub 拒绝 / isolated 3.12 + uv WinGet 绝对；preflight 就绪非「请先安装 Python」
 - **重打包**: `build-windows-exe.ps1 -SkipInstall` → SEA；WS `computer.model.state` 侧栏字段 PASS（Origin 须 chrome-extension）
 - **PR**: **#157** Python discovery → MERGED `41bf2d3`；**#156** MCP filesystem@home → MERGED `2c84a5e`
-- **本地**: `main` = `origin/main` @ `2c84a5e`；工作区干净；stash@{0} 含 Whisper 打包等 WIP（未合 PR）
+- **远程同步**: session-end `c11a7e9` 已 push；`memory/overview.md` 项目现状快照上远程；`main` = `origin/main`
+- **本地 stash**: `stash@{0}` Whisper 打包等 WIP（**故意不推**，非已交付）
 - **开放 PR**: 无
-- **下次**: 可选恢复 stash 里 Whisper DLL stage / README；或收工仅用 main
-- Recorded: yes — pitfalls → project-knowledge
+- **下次**: 可选 pop stash → Whisper DLL stage PR
+- Recorded: yes — pitfalls → project-knowledge → remote
+
 
