@@ -2333,7 +2333,7 @@ export function SettingsSlideout() {
                               checked={unattendedAckDesktop}
                               onChange={(e) => setUnattendedAckDesktop(e.target.checked)}
                             />
-                            允许已白名单且已开坐标的 App 在本会话静默桌面 L2 与 re-L2（风险自担）
+                            允许已白名单且已开坐标的 App 在本会话静默桌面 L2 与 re-L2（含危险/实验/前台让出；风险自担）
                           </label>
                           <label style={{ display: "flex", gap: 6, marginBottom: 4, cursor: "pointer" }}>
                             <input

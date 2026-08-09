@@ -99,12 +99,12 @@ Companion 在下列工具**真正执行前**会排队确认（列表以代码 `L
 | **能力 opt-in** | `capability_profile=enterprise`、启用 `netsec` / `shell` | 本机**允许这类能力** | 配置 / 任务包面板 |
 | **范围 / 归属** | NetSec `target_allowlist`、**任务授权**（按线程） | **允许扫谁** + **本线程声明有权测** | 任务包 · NetSec 卡片（或 config） |
 | **本次执行 L2** | 确认台 / 侧栏红条 | **这一枪真的执行** | 确认台 / 精简条 |
-| **L2 如何跳过（可选）** | **Plan A** 本线程企业信任；**Plan B** `auto_approve_enterprise_tools`；**无人值守**（桌面 initial L2） | 企业：范围内 shell/netsec；桌面：坐标白名单 App 的 host_computer initial | 红条 / 设置→运行自主度 |
+| **L2 如何跳过（可选）** | **Plan A** 本线程企业信任；**Plan B** `auto_approve_enterprise_tools`；**无人值守**（桌面 L2 + re-L2 静默） | 企业：范围内 shell/netsec；桌面：坐标白名单 App 的 host_computer 任务级与 mid-task re-L2 | 红条 / 设置→运行自主度 |
 
 - 配置与任务授权：**偏「我允许这类事 / 这些目标」**。  
 - 确认台 L2：**偏「这一次我同意 Agent 现在就做」**（防 prompt 注入静默扩权）。  
 - **A/B 不是** allowlist 的替代；空名单仍全拒。**协议解锁** /「自动批准危险操作」**单独**仍不会跳过 shell/netsec，也**不会**跳过 `host_computer` 任务 L2。  
-- **长程桌面**（如微信键入少确认）：设置 → **运行自主度 → 无人值守**（[ADR-021](adr/021-unattended-desktop-session.md)；危险 re-L2 / 急停仍有效）。网页/企业少确认：同区「网页巡航 / 全自动巡航」。
+- **长程桌面**（如微信键入少确认）：设置 → **运行自主度 → 无人值守**（[ADR-021](adr/021-unattended-desktop-session.md)；武装=风险自担，任务级 L2 与 mid-task re-L2（含危险/实验/前台）均静默；支付/验证码硬拒绝仍直接失败；急停停任务**不等于**解除值守）。网页/企业少确认：同区「网页巡航 / 全自动巡航」。
 
 NetSec 完整路径示例见 [mission-pack-usage.md §5](mission-pack-usage.md#5-开启-netsec端口探测)。
 
