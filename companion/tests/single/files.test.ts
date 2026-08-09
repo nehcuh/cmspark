@@ -117,9 +117,11 @@ test("message-router: config.get redacts MCP env/headers (wire SoT)", async () =
   )
 
   assert.equal(response.type, "config.updated")
-  assert.equal(response.config.mcp.servers.local.env.API_TOKEN, "***")
+  const redactedEnv = (response.config as any)?.mcp?.servers?.local?.env
+  assert.equal(redactedEnv?.API_TOKEN, "***")
   // Unredacted source of truth on disk still has the secret
-  assert.equal(getConfig().mcp.servers.local.env.API_TOKEN, "super-secret")
+  const liveEnv = (getConfig().mcp as any)?.servers?.local?.env
+  assert.equal(liveEnv?.API_TOKEN, "super-secret")
 })
 
 test("message-router: config.set saves trusted domains", async () => {
