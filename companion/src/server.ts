@@ -51,7 +51,8 @@ import { URL } from "url"
 import { getConfig, saveConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT, migrateLegacyModelName, DATA_DIR } from "./config"
 import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "./voice/session-caps"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
-import { handleMessage } from "./message-router"
+import { gcExpiredMeetingAudio } from "./meeting/meeting-store"
+import { handleMessage, redactMcpServersForBroadcast } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
@@ -288,6 +289,11 @@ export const pendingToolCalls = new Map<string, {
   thread_id?: string
   tabId?: number
   tool_name?: string
+  /**
+   * SEC-E: socket that received tool.execute. Close grace and tool.result
+   * acceptance are scoped to this peer so tray reconnect cannot kill extension tools.
+   */
+  originWs?: WebSocket
 }>()
 
 /** Reject in-flight extension tools owned by a thread (worker-cancel / lease drain). */
@@ -566,6 +572,27 @@ async function initServices() {
   } catch (e: any) {
     logger.warn("voice.stt.tmp.boot_gc_failed", { error: e?.message || String(e) })
   }
+  // P1 Meeting: retain_until audio GC at boot + every 6h
+  try {
+    const meetingGc = gcExpiredMeetingAudio(DATA_DIR)
+    if (meetingGc.purged > 0 || meetingGc.scanned > 0) {
+      logger.info("meeting.audio_gc.boot", meetingGc)
+    }
+  } catch (e) {
+    logger.warn("meeting.audio_gc.boot_failed", {
+      err: e instanceof Error ? e.message : String(e),
+    })
+  }
+  setInterval(() => {
+    try {
+      const r = gcExpiredMeetingAudio(DATA_DIR)
+      if (r.purged > 0) logger.info("meeting.audio_gc.periodic", r)
+    } catch (e) {
+      logger.warn("meeting.audio_gc.periodic_failed", {
+        err: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }, 6 * 60 * 60 * 1000).unref?.()
   // Mission Pack P0: install shipped packs (appsec-prd-review) into DATA_DIR
   try {
     const { ensureBuiltinPacksInstalled, reconcilePackTrustOnBoot } = await import(
@@ -2825,6 +2852,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         thread_id: actingThreadId,
         tabId: typeof finalParams.tabId === "number" ? finalParams.tabId : undefined,
         tool_name: toolName,
+        originWs: ws,
       })
 
       if (ws.readyState === WebSocket.OPEN) {
@@ -2854,17 +2882,24 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
 }
 
 // Exported for integration tests (audit item 6).
-export function handleToolResult(msg: any) {
+export function handleToolResult(msg: any, fromWs?: WebSocket) {
   const { tool_call_id, result, error } = msg
   const pending = pendingToolCalls.get(tool_call_id)
-  if (pending) {
-    clearTimeout(pending.timer)
-    pendingToolCalls.delete(tool_call_id)
-    if (error) {
-      pending.resolve({ success: false, error: error.message || String(error) })
-    } else {
-      pending.resolve(result)
-    }
+  if (!pending) return
+  // SEC-E: only the dispatch peer may resolve (prevents other loopback peers spoofing results)
+  if (fromWs && pending.originWs && pending.originWs !== fromWs) {
+    logger.warn("tool.result_origin_mismatch", {
+      tool_call_id,
+      tool_name: pending.tool_name,
+    })
+    return
+  }
+  clearTimeout(pending.timer)
+  pendingToolCalls.delete(tool_call_id)
+  if (error) {
+    pending.resolve({ success: false, error: error.message || String(error) })
+  } else {
+    pending.resolve(result)
   }
 }
 
@@ -2897,7 +2932,13 @@ function dispatchToExtension(
       logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: TOOL_EXECUTION_TIMEOUT_MS })
       finish(result)
     }, TOOL_EXECUTION_TIMEOUT_MS)
-    pendingToolCalls.set(toolCallId, { resolve: finish as any, reject: finish as any, timer })
+    pendingToolCalls.set(toolCallId, {
+      resolve: finish as any,
+      reject: finish as any,
+      timer,
+      tool_name: toolName,
+      originWs: ws,
+    })
     if (ws.readyState !== WebSocket.OPEN) {
       const result = { success: false, error: "WebSocket not connected" }
       logger.warn("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: result.error })
@@ -3206,10 +3247,25 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
  * exercise the cleanup path (audit item 6) without spinning up the full server.
  */
 const WS_DISCONNECT_GRACE_MS = 5000
-export function applyConnectionCloseGracePeriod(): void {
+/**
+ * SEC-E: when `closedWs` is set, only grace-kill pending tools owned by that
+ * socket. Global (no arg) still drains all — reserved for process shutdown.
+ */
+export function applyConnectionCloseGracePeriod(closedWs?: WebSocket): void {
   for (const [id, pending] of pendingToolCalls) {
+    if (closedWs && pending.originWs && pending.originWs !== closedWs) {
+      continue
+    }
+    // Legacy entries without originWs: only kill on global drain, or if no other clients
+    if (closedWs && !pending.originWs) {
+      // Prefer not to kill unscoped entries on a single peer close (safe default)
+      continue
+    }
     clearTimeout(pending.timer)
-    logger.warn("tool.connection_closed", { tool_call_id: id })
+    logger.warn("tool.connection_closed", {
+      tool_call_id: id,
+      scoped: !!closedWs,
+    })
     pending.timer = setTimeout(() => {
       if (pendingToolCalls.has(id)) {
         pendingToolCalls.delete(id)
@@ -5767,6 +5823,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
           return { valid: false, error: `voice.stt.start maxMs must be 1..${STT_MAX_RECORD_MS}` }
         }
       }
+      // P1: privacy_ack_v2 required on the wire (handler also enforces)
+      if (m.privacy_ack_v2 !== true) {
+        return { valid: false, error: "voice.stt.start requires privacy_ack_v2:true" }
+      }
       return { valid: true }
     },
     "voice.stt.chunk": (m) => {
@@ -6247,6 +6307,18 @@ export function validateWsMessage(msg: any): WsValidationResult {
     return validator(msg)
   }
 
+  // P2 ARCH-PROTO-2: fail-closed for unknown types in production.
+  // Dev/tests keep allow-through so experimental message types are not blocked mid-iteration.
+  // Message-router still returns Unknown message type if a known-validated type slips past.
+  const strictWs =
+    process.env.CMSPARK_WS_STRICT === "1" ||
+    (process.env.NODE_ENV === "production" && process.env.CMSPARK_WS_STRICT !== "0")
+  if (strictWs) {
+    return {
+      valid: false,
+      error: `Unknown message type: ${msg.type}`,
+    }
+  }
   // Unknown types are allowed through (handled by message-router default case)
   return { valid: true }
 }
@@ -6446,13 +6518,20 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   // that window; registering listeners afterwards means we miss the first wave.
   const mcpManager = getMcpManager()
   mcpManager.on("servers_updated", (metas) => {
-    broadcastToClients({ type: "mcp.servers.updated", servers: metas })
+    broadcastToClients({
+      type: "mcp.servers.updated",
+      servers: redactMcpServersForBroadcast(metas || []),
+    })
   })
   mcpManager.on("status_changed", (meta) => {
-    broadcastToClients({ type: "mcp.server.status_changed", server: meta })
+    const [redacted] = redactMcpServersForBroadcast(meta ? [meta] : [])
+    broadcastToClients({ type: "mcp.server.status_changed", server: redacted ?? meta })
   })
   mcpManager.on("tools_changed", () => {
-    broadcastToClients({ type: "mcp.servers.updated", servers: mcpManager.listServers() })
+    broadcastToClients({
+      type: "mcp.servers.updated",
+      servers: redactMcpServersForBroadcast(mcpManager.listServers()),
+    })
   })
   try {
     await mcpManager.start(config.mcp)
@@ -6731,7 +6810,14 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               logger.warn("outbound_mcp.wire_failed", { error: wireErr?.message || String(wireErr) })
             }
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "auth.ok" }))
+              // ARCH-PROTO-1 (P2): advertise negotiated protocol version after auth
+              ws.send(
+                JSON.stringify({
+                  type: "auth.ok",
+                  protocol_version: 1,
+                  protocol_min: 1,
+                }),
+              )
               ws.send(JSON.stringify({ type: "connected" }))
               // Push current coordinate state immediately so the extension always
               // has fresh data after connect/reconnect — without this, the extension
@@ -6763,7 +6849,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
 
         // Intercept tool.result — these resolve pending promises
         if (msg.type === "tool.result") {
-          handleToolResult(msg)
+          handleToolResult(msg, ws)
           return
         }
 
@@ -7054,7 +7140,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       } catch {
         /* best-effort */
       }
-      applyConnectionCloseGracePeriod()
+      applyConnectionCloseGracePeriod(ws)
       securityConfirmations.rejectAll("disconnect", ws)
       // C-P0-6: cancel any tray dialogs that were racing this WS. Without this,
       // the Swift dialog stays modal until its own timeout. cancelConfirm is

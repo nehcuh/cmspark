@@ -1,7 +1,7 @@
 # Host Use 与 Apps 使用说明
 
 > **面向使用者**：本机宿主读写、应用白名单启动、与 Computer Use 的边界。  
-> **产品版本**：0.4.0 · **决策摘要**：[ADR-018](adr/018-host-use.md)  
+> **产品版本**：0.5.0 · **决策摘要**：[ADR-018](adr/018-host-use.md)  
 > **接口史（非唯一规范）**：[decisions/host-adapter-interface.md](decisions/host-adapter-interface.md)  
 > **坐标桌面**：[computer-use-user-guide.md](computer-use-user-guide.md) · **确认台**：[confirm-center-user-guide.md](confirm-center-user-guide.md)
 

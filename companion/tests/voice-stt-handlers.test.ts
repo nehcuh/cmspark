@@ -1,10 +1,10 @@
-// Path B M1 Task 4 â€” voice.stt.* handlers + WS validation + origin fence
+// Path B M1 Task 4 â€?voice.stt.* handlers + WS validation + origin fence
 
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 
-// DATA_DIR fixed at config load â€” set before any src import.
+// DATA_DIR fixed at config load â€?set before any src import.
 process.env.CMSPARK_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-voice-stt-handlers-"))
 delete process.env.DEEPSEEK_API_KEY
 delete process.env.CMSPARK_API_KEY
@@ -15,6 +15,7 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 
 import { validateWsMessage } from "../src/server"
+import { setVoiceFields } from "../src/config"
 import {
   handleVoiceSttMessage,
   isChromeExtensionOrigin,
@@ -133,12 +134,17 @@ test("validateWsMessage: voice.stt.start shape", () => {
     format: "pcm_s16le",
     sampleRate: 16000,
     channels: 1,
+      privacy_ack_v2: true,
   }
   assert.equal(validateWsMessage(ok).valid, true)
   assert.equal(validateWsMessage({ ...ok, lang: "zh", maxMs: 45000 }).valid, true)
 
-  // NOT source:settings â€” must still be valid without it
+  // NOT source:settings â€?must still be valid without it
   assert.equal(validateWsMessage(ok).valid, true)
+
+  // P1: privacy_ack_v2 required
+  const { privacy_ack_v2: _drop, ...noAck } = ok
+  assert.equal(validateWsMessage(noAck).valid, false)
 
   assert.equal(validateWsMessage({ ...ok, v: 2 }).valid, false)
   assert.equal(validateWsMessage({ ...ok, format: "mp3" }).valid, false)
@@ -216,6 +222,11 @@ test("validateWsMessage: voice.stt.end / abort", () => {
 
 // --- handlers -----------------------------------------------------------------
 
+test.beforeEach(() => {
+  setVoiceFields({ sttEngine: "local", localModelId: "small" })
+})
+
+
 test("handler rejects non-extension origin (tray)", async () => {
   const svc = makeService()
   const r = await handleVoiceSttMessage(
@@ -227,6 +238,7 @@ test("handler rejects non-extension origin (tray)", async () => {
       format: "wav",
       sampleRate: 16000,
       channels: 1,
+      privacy_ack_v2: true,
     },
     { origin: TRAY_ORIGIN, peerId: "tray-1" },
     { service: svc },
@@ -247,6 +259,7 @@ test("handler rejects missing origin", async () => {
       format: "wav",
       sampleRate: 16000,
       channels: 1,
+      privacy_ack_v2: true,
     },
     { peerId: "p1" },
     { service: svc },
@@ -255,7 +268,7 @@ test("handler rejects missing origin", async () => {
   assert.equal(r.code, "origin_denied")
 })
 
-test("happy path: start â†’ chunk â†’ end with injected service", async () => {
+test("happy path: start â†?chunk â†?end with injected service", async () => {
   const sent: any[] = []
   const svc = makeService({
     runWhisper: async () => ({ text: "fixture å¬å†™", ms: 12 }),
@@ -270,6 +283,7 @@ test("happy path: start â†’ chunk â†’ end with injected service", async () => {
       format: "pcm_s16le",
       sampleRate: 16000,
       channels: 1,
+      privacy_ack_v2: true,
       lang: "zh",
     },
     { ...extCtx("peer-A"), send: (m) => sent.push(m) },
@@ -323,6 +337,7 @@ test("abort ends session", async () => {
       format: "wav",
       sampleRate: 16000,
       channels: 1,
+      privacy_ack_v2: true,
     },
     extCtx("p"),
     { service: svc },
@@ -351,6 +366,7 @@ test("session_busy on second start", async () => {
       format: "wav",
       sampleRate: 16000,
       channels: 1,
+      privacy_ack_v2: true,
     },
     ctx,
     { service: svc },
@@ -366,6 +382,7 @@ test("session_busy on second start", async () => {
       format: "wav",
       sampleRate: 16000,
       channels: 1,
+      privacy_ack_v2: true,
     },
     ctx,
     { service: svc },
@@ -391,6 +408,7 @@ test("peer mismatch rejects chunk from other panel", async () => {
       format: "wav",
       sampleRate: 16000,
       channels: 1,
+      privacy_ack_v2: true,
     },
     extCtx("owner"),
     { service: svc },
@@ -429,6 +447,7 @@ test("empty transcription maps to empty_result", async () => {
       format: "pcm_s16le",
       sampleRate: 16000,
       channels: 1,
+      privacy_ack_v2: true,
     },
     extCtx("p"),
     { service: svc },

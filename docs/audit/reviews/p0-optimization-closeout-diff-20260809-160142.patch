@@ -1,0 +1,1015 @@
+# Dual external review context
+batch: p0-optimization-closeout
+base: HEAD
+time: 20260809-160142
+
+0de1760
+
+ M companion/src/config.ts
+ M companion/src/host-use/darwin/host-skylight.swift
+ M companion/src/host-use/darwin/host.swift
+ M companion/src/llm/adapter.ts
+ M companion/src/message-router.ts
+ M companion/src/outbound-mcp/companion-http.ts
+ M companion/src/server.ts
+ M companion/src/threads/thread-manager.ts
+ M companion/src/voice/stt-session-service.ts
+ M companion/src/voice/whisper-state.ts
+ M companion/tests/outbound-mcp-grants.test.ts
+ M docs/TESTING.md
+?? .grok/workflows/project-health-fanout.rhai
+?? companion/src/security/
+?? companion/tests/llm-supersede-generation.test.ts
+?? companion/tests/mcp-stdio-l2-gate.test.ts
+?? companion/tests/pending-tool-origin-ws.test.ts
+?? companion/tests/thread-path-sanitize.test.ts
+?? companion/tests/tool-persistence-redact.test.ts
+?? docs/audit/health-fanout-2026-08-09-dimensions.json
+?? docs/audit/health-fanout-2026-08-09-summary.json
+?? docs/audit/health-fanout-2026-08-09.md
+?? docs/audit/health-fanout-p0-optimization-closeout-2026-08-09.md
+?? docs/audit/reviews/p0-lifecycle-surfaces-claude-20260809-154708.md
+?? docs/audit/reviews/p0-lifecycle-surfaces-diff-20260809-154708.patch
+?? docs/audit/reviews/p0-lifecycle-surfaces-dual-review-prompt.md
+?? docs/audit/reviews/p0-lifecycle-surfaces-pi-20260809-154708.md
+?? docs/audit/reviews/p0-lifecycle-surfaces-r2-claude-20260809-155354.md
+?? docs/audit/reviews/p0-lifecycle-surfaces-r2-diff-20260809-155354.patch
+?? docs/audit/reviews/p0-lifecycle-surfaces-r2-dual-review-prompt.md
+?? docs/audit/reviews/p0-lifecycle-surfaces-r2-pi-20260809-155354.md
+?? docs/audit/reviews/p0-lifecycle-surfaces-r2-verdict-20260809-155354.json
+?? docs/audit/reviews/p0-lifecycle-surfaces-verdict-20260809-154708.json
+?? docs/audit/reviews/p0-mcp-stdio-l2-claude-20260809-153609.md
+?? docs/audit/reviews/p0-mcp-stdio-l2-diff-20260809-153609.patch
+?? docs/audit/reviews/p0-mcp-stdio-l2-dual-review-prompt.md
+?? docs/audit/reviews/p0-mcp-stdio-l2-pi-20260809-153609.md
+?? docs/audit/reviews/p0-mcp-stdio-l2-r2-claude-20260809-154209.md
+?? docs/audit/reviews/p0-mcp-stdio-l2-r2-diff-20260809-154209.patch
+?? docs/audit/reviews/p0-mcp-stdio-l2-r2-dual-review-prompt.md
+?? docs/audit/reviews/p0-mcp-stdio-l2-r2-pi-20260809-154209.md
+?? docs/audit/reviews/p0-mcp-stdio-l2-r2-verdict-20260809-154209.json
+?? docs/audit/reviews/p0-mcp-stdio-l2-verdict-20260809-153609.json
+?? docs/audit/reviews/p0-optimization-closeout-diff-20260809-160142.patch
+?? docs/audit/reviews/p0-optimization-closeout-dual-review-prompt.md
+?? docs/audit/reviews/p0-persistence-sec-ac-claude-20260809-153105.md
+?? docs/audit/reviews/p0-persistence-sec-ac-diff-20260809-153105.patch
+?? docs/audit/reviews/p0-persistence-sec-ac-dual-review-prompt.md
+?? docs/audit/reviews/p0-persistence-sec-ac-pi-20260809-153105.md
+?? docs/audit/reviews/p0-persistence-sec-ac-verdict-20260809-153105.json
+
+## Diff (git diff + staged)
+ companion/src/config.ts                           |   8 +-
+ companion/src/host-use/darwin/host-skylight.swift |  33 ++-
+ companion/src/host-use/darwin/host.swift          |  11 +-
+ companion/src/llm/adapter.ts                      |  17 +-
+ companion/src/message-router.ts                   | 277 +++++++++++++++++++---
+ companion/src/outbound-mcp/companion-http.ts      |   7 +-
+ companion/src/server.ts                           |  77 ++++--
+ companion/src/threads/thread-manager.ts           |  34 ++-
+ companion/src/voice/stt-session-service.ts        |  22 +-
+ companion/src/voice/whisper-state.ts              |  14 +-
+ companion/tests/outbound-mcp-grants.test.ts       |  20 +-
+ docs/TESTING.md                                   |   6 +-
+ 12 files changed, 441 insertions(+), 85 deletions(-)
+
+diff --git a/companion/src/config.ts b/companion/src/config.ts
+index a74aac7..4e3a668 100644
+--- a/companion/src/config.ts
++++ b/companion/src/config.ts
+@@ -261,7 +261,11 @@ export interface CompanionConfig {
+    * never Extension ws_secret (L4+ dual-review lock).
+    */
+   outbound_mcp?: {
+-    /** Default false until P1 GA / product ship claim. */
++    /**
++     * When true, loopback invoke/disclosure accept only CMSPARK_OUTBOUND_GRANT.
++     * Default true (MCPO-01 / ADR-022 L4) — Extension ws_secret is not a deputy.
++     * Set false only for local dual-entry debugging.
++     */
+     require_grant?: boolean
+   }
+   /**
+@@ -328,7 +332,7 @@ const defaultConfig: CompanionConfig = {
+   log_max_file_mb: 10,
+   capability_profile: "community",
+   outbound_mcp: {
+-    require_grant: false,
++    require_grant: true,
+   },
+   modules: {
+     appsec: {
+diff --git a/companion/src/host-use/darwin/host-skylight.swift b/companion/src/host-use/darwin/host-skylight.swift
+index 6817e83..a00effe 100644
+--- a/companion/src/host-use/darwin/host-skylight.swift
++++ b/companion/src/host-use/darwin/host-skylight.swift
+@@ -643,11 +643,36 @@ func cuJson(_ dict: [String: Any]) -> String {
+ 
+ // MARK: - helpers
+ 
++func cuWindowNumber(_ w: [String: Any]) -> UInt32 {
++    if let u = w[kCGWindowNumber as String] as? UInt32 { return u }
++    if let i = w[kCGWindowNumber as String] as? Int { return UInt32(truncatingIfNeeded: i) }
++    if let n = w[kCGWindowNumber as String] as? NSNumber { return n.uint32Value }
++    return 0
++}
++
++func cuWindowInfoDict(windowId: UInt32) -> [String: Any]? {
++    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
++        if let hit = raw.first(where: { cuWindowNumber($0) == windowId }) { return hit }
++        if raw.count == 1, cuWindowNumber(raw[0]) == 0 || cuWindowNumber(raw[0]) == windowId {
++            return raw[0]
++        }
++    }
++    for opts: CGWindowListOption in [[.optionOnScreenOnly], [.optionAll]] {
++        if let rawAll = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]],
++           let hit = rawAll.first(where: { cuWindowNumber($0) == windowId }) {
++            return hit
++        }
++    }
++    return nil
++}
++
+ func cuPidForWindow(_ windowId: UInt32) -> pid_t {
+-    guard let windows = CGWindowListCopyWindowInfo([.optionAll], windowId) as? [[String: Any]],
+-          let first = windows.first,
+-          let pid = first[kCGWindowOwnerPID as String] as? pid_t else { return 0 }
+-    return pid
++    // SEC-F: match by window number (same as host.swift) — never take windows.first under optionAll.
++    if let info = cuWindowInfoDict(windowId: windowId),
++       let pid = info[kCGWindowOwnerPID as String] as? pid_t {
++        return pid
++    }
++    return 0
+ }
+ 
+ func cuAppElementForPid(_ pid: pid_t) -> AXUIElement? {
+diff --git a/companion/src/host-use/darwin/host.swift b/companion/src/host-use/darwin/host.swift
+index 3d55856..bbe035a 100644
+--- a/companion/src/host-use/darwin/host.swift
++++ b/companion/src/host-use/darwin/host.swift
+@@ -795,10 +795,13 @@ func cuWindowInfoDict(windowId: UInt32) -> [String: Any]? {
+ }
+ 
+ func cuPidForWindow(_ windowId: UInt32) -> pid_t {
+-    guard let windows = CGWindowListCopyWindowInfo([.optionAll], windowId) as? [[String: Any]],
+-          let first = windows.first,
+-          let pid = first[kCGWindowOwnerPID as String] as? pid_t else { return 0 }
+-    return pid
++    // SEC-F: match kCGWindowNumber — CGWindowListCopyWindowInfo(.optionAll, relativeTo)
++    // does NOT filter to windowId; windows.first was often frontmost (Chrome), not target.
++    if let info = cuWindowInfoDict(windowId: windowId),
++       let pid = info[kCGWindowOwnerPID as String] as? pid_t {
++        return pid
++    }
++    return 0
+ }
+ 
+ func cuAppElementForPid(_ pid: pid_t) -> AXUIElement? {
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index 3d9b89b..9f409b6 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -32,6 +32,7 @@ import {
+   shouldRunH1,
+   type ThreadHandoff,
+ } from "./context-handoff"
++import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
+ 
+ // Jailbreak patterns to detect in LLM output
+ const JAILBREAK_OUTPUT_PATTERNS = [
+@@ -135,15 +136,23 @@ interface ToolExecutionResult {
+ }
+ 
+ export function createToolResultMessage(threadId: string, toolCall: any, result: ToolExecutionResult, params: any = {}) {
++  // SEC-C: redact before durable thread JSON (history.db already redacts separately).
++  // In-flight LLM tool rows use the raw `result` from the tool loop, not this helper.
++  const toolName = String(toolCall.function?.name || toolCall.name || "")
++  const { params: safeParams, result: safeResult } = redactToolPayloadForPersistence(
++    toolName,
++    params,
++    result,
++  )
+   return {
+     thread_id: threadId,
+     role: "tool" as const,
+-    content: JSON.stringify(result),
++    content: JSON.stringify(safeResult),
+     tool_calls: [{
+       id: toolCall.id,
+-      tool_name: toolCall.function?.name || toolCall.name,
+-      params,
+-      result,
++      tool_name: toolName,
++      params: safeParams,
++      result: safeResult,
+     }],
+   }
+ }
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index f732d4b..caf03e7 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -65,6 +65,7 @@ import type {
+   McpServerConfig,
+   McpServerMeta,
+ } from "./mcp/types"
++import { releaseMultiAgentLlmLoop } from "./orchestrator/llm-loop-gate"
+ 
+ /**
+  * Chat-path hostname for site_knowledge selection only.
+@@ -100,6 +101,11 @@ function redactExtraHeaders(
+ 
+ // Per-thread abort controllers for cancelling in-flight LLM requests
+ const abortControllers = new Map<string, AbortController>()
++/**
++ * SEC-D: generation token per thread so a superseded run's `finally` cannot
++ * delete the successor AbortController or release the multi-agent LLM gate.
++ */
++const llmLoopGeneration = new Map<string, number>()
+ 
+ /** Run-state: threads with an in-flight LLM abort controller. */
+ export function listLlmActiveThreadIds(): string[] {
+@@ -113,8 +119,10 @@ export function listLlmActiveThreadIds(): string[] {
+ export function __testSetLlmActiveForTests(threadId: string, active: boolean): void {
+   if (active) {
+     abortControllers.set(threadId, new AbortController())
++    llmLoopGeneration.set(threadId, (llmLoopGeneration.get(threadId) || 0) + 1)
+   } else {
+     abortControllers.delete(threadId)
++    llmLoopGeneration.delete(threadId)
+   }
+ }
+ 
+@@ -125,11 +133,34 @@ export function abortThreadChat(threadId: string): boolean {
+   if (controller) {
+     controller.abort()
+     abortControllers.delete(threadId)
++    // Bump generation so any late finally from this run cannot reclaim the slot
++    // or clobber a successor. Because finally will CAS-skip release, we must
++    // free the multi-agent gate here (Pi REJECT: abort leaked MULTI_AGENT_LLM_CAP).
++    llmLoopGeneration.set(threadId, (llmLoopGeneration.get(threadId) || 0) + 1)
++    // Free gate here: finally will CAS-skip release after generation bump.
++    releaseMultiAgentLlmLoop(threadId)
+     return true
+   }
+   return false
+ }
+ 
++function nextLlmGeneration(threadId: string): number {
++  const gen = (llmLoopGeneration.get(threadId) || 0) + 1
++  llmLoopGeneration.set(threadId, gen)
++  return gen
++}
++
++/** Drain extension tools + L2 for a thread when superseding (mirror chat.abort core). */
++async function drainThreadOnSupersede(threadId: string, reason: string): Promise<void> {
++  try {
++    const { rejectPendingForThread, securityConfirmations } = await import("./server")
++    securityConfirmations.rejectForWorker(threadId, "denied")
++    rejectPendingForThread(threadId, reason)
++  } catch {
++    /* best-effort */
++  }
++}
++
+ /**
+  * Inject (or override) the `name:` field in a knowledge doc's YAML frontmatter.
+  * Used by directory import to guarantee each file lands at a unique filename —
+@@ -571,12 +602,13 @@ export async function handleMessage(
+         }
+       }
+ 
+-      // Cancel any existing request for this thread
++      // Cancel any existing request for this thread (SEC-D: do not delete map yet —
++      // predecessor finally uses generation CAS so it cannot clobber successor).
+       const existing = abortControllers.get(rest.thread_id)
+       if (existing) {
+         logger.info("llm.thread_request_superseded", { thread_id: rest.thread_id })
+         existing.abort()
+-        abortControllers.delete(rest.thread_id)
++        await drainThreadOnSupersede(rest.thread_id, `chat.supersede:${rest.thread_id}`)
+       }
+ 
+       // ADR-015: cap concurrent multi-agent LLM loops (workers + orchestrators)
+@@ -592,6 +624,7 @@ export async function handleMessage(
+         }
+       }
+ 
++      const myGeneration = nextLlmGeneration(rest.thread_id)
+       const controller = new AbortController()
+       abortControllers.set(rest.thread_id, controller)
+ 
+@@ -699,14 +732,22 @@ export async function handleMessage(
+           contextRefsSegment,
+         })
+       } catch (e: any) {
+-        if (e.name === "AbortError" || controller.signal.aborted) {
+-          session.sendToExtension({ type: "chat.aborted", thread_id: rest.thread_id })
+-        } else {
+-          session.sendToExtension({ type: "chat.error", thread_id: rest.thread_id, error: e.message })
++        // Only emit aborted UI if this generation is still current (SEC-D)
++        if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
++          if (e.name === "AbortError" || controller.signal.aborted) {
++            session.sendToExtension({ type: "chat.aborted", thread_id: rest.thread_id })
++          } else {
++            session.sendToExtension({ type: "chat.error", thread_id: rest.thread_id, error: e.message })
++          }
+         }
+       } finally {
+-        abortControllers.delete(rest.thread_id)
+-        releaseMultiAgentLlmLoop(rest.thread_id)
++        // SEC-D generation CAS: predecessor must not free successor controller/gate
++        if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
++          if (abortControllers.get(rest.thread_id) === controller) {
++            abortControllers.delete(rest.thread_id)
++          }
++          releaseMultiAgentLlmLoop(rest.thread_id)
++        }
+       }
+       return null // chatCreate handles streaming internally
+     }
+@@ -890,13 +931,14 @@ export async function handleMessage(
+ 
+       pushUploadStatus("chat", "文档已解析，模型思考中…")
+ 
+-      // Cancel any existing request for this thread
++      // Cancel any existing request for this thread (SEC-D generation CAS — same as chat.create)
+       const existingUpload = abortControllers.get(thread_id)
+       if (existingUpload) {
+         logger.info("llm.thread_request_superseded", { thread_id })
+         existingUpload.abort()
+-        abortControllers.delete(thread_id)
++        await drainThreadOnSupersede(thread_id, `file.upload.supersede:${thread_id}`)
+       }
++      const uploadGeneration = nextLlmGeneration(thread_id)
+       const uploadController = new AbortController()
+       abortControllers.set(thread_id, uploadController)
+ 
+@@ -961,13 +1003,19 @@ export async function handleMessage(
+           error: e?.message || String(e),
+           aborted: e?.name === "AbortError" || uploadController.signal.aborted,
+         })
+-        if (e.name === "AbortError" || uploadController.signal.aborted) {
+-          session.sendToExtension({ type: "chat.aborted", thread_id })
+-        } else {
+-          session.sendToExtension({ type: "chat.error", thread_id, error: e.message })
++        if (llmLoopGeneration.get(thread_id) === uploadGeneration) {
++          if (e.name === "AbortError" || uploadController.signal.aborted) {
++            session.sendToExtension({ type: "chat.aborted", thread_id })
++          } else {
++            session.sendToExtension({ type: "chat.error", thread_id, error: e.message })
++          }
+         }
+       } finally {
+-        abortControllers.delete(thread_id)
++        if (llmLoopGeneration.get(thread_id) === uploadGeneration) {
++          if (abortControllers.get(thread_id) === uploadController) {
++            abortControllers.delete(thread_id)
++          }
++        }
+       }
+ 
+       logger.info("file.upload.complete", {
+@@ -1116,13 +1164,14 @@ export async function handleMessage(
+         messages: threadManager.getMessages(thread_id),
+       })
+ 
+-      // Cancel any existing request for this thread
++      // Cancel any existing request for this thread (SEC-D generation CAS)
+       const existing = abortControllers.get(thread_id)
+       if (existing) {
+         logger.info("llm.thread_request_superseded", { thread_id })
+         existing.abort()
+-        abortControllers.delete(thread_id)
++        await drainThreadOnSupersede(thread_id, `chat.regenerate.supersede:${thread_id}`)
+       }
++      const myGeneration = nextLlmGeneration(thread_id)
+       const controller = new AbortController()
+       abortControllers.set(thread_id, controller)
+ 
+@@ -1175,13 +1224,19 @@ export async function handleMessage(
+           skipUserMessage: true,
+         })
+       } catch (e: any) {
+-        if (e.name === "AbortError" || controller.signal.aborted) {
+-          session.sendToExtension({ type: "chat.aborted", thread_id })
+-        } else {
+-          session.sendToExtension({ type: "chat.error", thread_id, error: e.message })
++        if (llmLoopGeneration.get(thread_id) === myGeneration) {
++          if (e.name === "AbortError" || controller.signal.aborted) {
++            session.sendToExtension({ type: "chat.aborted", thread_id })
++          } else {
++            session.sendToExtension({ type: "chat.error", thread_id, error: e.message })
++          }
+         }
+       } finally {
+-        abortControllers.delete(thread_id)
++        if (llmLoopGeneration.get(thread_id) === myGeneration) {
++          if (abortControllers.get(thread_id) === controller) {
++            abortControllers.delete(thread_id)
++          }
++        }
+       }
+       return null
+     }
+@@ -1780,13 +1835,14 @@ export async function handleMessage(
+ 
+     // --- MCP servers ---
+     case "mcp.list": {
+-      return { type: "mcp.list", servers: getMcpManager().listServers() }
++      // SEC: never ship env/headers secrets on the wire (config.updated already redacts)
++      return { type: "mcp.list", servers: redactMcpServersForBroadcast(getMcpManager().listServers()) }
+     }
+     case "mcp.toggle_enabled": {
+       const enabled = !!rest.enabled
+       setMcpEnabled(enabled)
+       // applyConfig is fired via configEvents listener in server.ts
+-      return { type: "mcp.list", servers: getMcpManager().listServers() }
++      return { type: "mcp.list", servers: redactMcpServersForBroadcast(getMcpManager().listServers()) }
+     }
+     case "mcp.add": {
+       const name = String(rest.name || "").trim()
+@@ -1797,6 +1853,10 @@ export async function handleMessage(
+       if (config.mcp?.servers?.[name]) {
+         return { type: "error", error: `MCP server "${name}" already exists. Use mcp.update to modify.` }
+       }
++      // SEC-B: stdio = arbitrary local spawn; require origin-bound L2 (force high)
++      // before replaceMcpServers → applyConfig → StdioClientTransport.
++      const stdioGate = await requireMcpStdioSpawnConfirm(session, name, serverCfg, "add")
++      if (stdioGate) return stdioGate
+       const wasEmpty = Object.keys(config.mcp?.servers || {}).length === 0
+       const newServers = { ...(config.mcp?.servers || {}), [name]: serverCfg }
+       replaceMcpServers(newServers)
+@@ -1807,7 +1867,10 @@ export async function handleMessage(
+       if (wasEmpty && !config.mcp?.enabled) {
+         setMcpEnabled(true)
+       }
+-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
++      return {
++        type: "mcp.servers.updated",
++        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
++      }
+     }
+     case "mcp.update": {
+       const name = String(rest.name || "").trim()
+@@ -1818,13 +1881,22 @@ export async function handleMessage(
+       if (hasPrototypePollutionKey(patch)) {
+         return { type: "error", error: "Invalid config keys detected" }
+       }
+-      const merged = { ...existing, ...patch } as McpServerConfig
++      // Pi REJECT #2: UI re-sends "***" for redacted env/headers — restore disk secrets
++      const merged = mergeMcpServerPreservingSecrets(existing, patch)
+       // Re-validate after merge
+       const validation = validateMcpServerConfig(name, merged)
+       if (validation) return { type: "error", error: validation }
++      // SEC-B: re-confirm when stdio spawn surface changes (incl. enable false→true)
++      if (mcpStdioSpawnSurfaceChanged(existing, merged)) {
++        const stdioGate = await requireMcpStdioSpawnConfirm(session, name, merged, "update")
++        if (stdioGate) return stdioGate
++      }
+       const newServers = { ...(config.mcp?.servers || {}), [name]: merged }
+       replaceMcpServers(newServers)
+-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
++      return {
++        type: "mcp.servers.updated",
++        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
++      }
+     }
+     case "mcp.delete": {
+       const name = String(rest.name || "").trim()
+@@ -1835,7 +1907,10 @@ export async function handleMessage(
+       const newServers = { ...config.mcp.servers }
+       delete newServers[name]
+       replaceMcpServers(newServers)
+-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
++      return {
++        type: "mcp.servers.updated",
++        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
++      }
+     }
+     case "mcp.toggle_server": {
+       const name = String(rest.name || "").trim()
+@@ -1844,8 +1919,21 @@ export async function handleMessage(
+       const existing = config.mcp?.servers?.[name]
+       if (!existing) return { type: "error", error: `MCP server "${name}" not found` }
+       const newServers = { ...(config.mcp?.servers || {}), [name]: { ...existing, enabled } }
++      // Enabling a previously disabled stdio server spawns the process — same trust as add.
++      if (enabled && existing.enabled === false && existing.transport === "stdio") {
++        const stdioGate = await requireMcpStdioSpawnConfirm(
++          session,
++          name,
++          { ...existing, enabled: true },
++          "update",
++        )
++        if (stdioGate) return stdioGate
++      }
+       replaceMcpServers(newServers)
+-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
++      return {
++        type: "mcp.servers.updated",
++        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
++      }
+     }
+     case "mcp.set_selection": {
+       // Per-thread MCP tool selection mode + active server ids (mirrors skill activation).
+@@ -3411,6 +3499,137 @@ const MCP_VALID_TRUST_LEVELS = new Set(["manual", "first-use", "trusted"])
+ const MCP_VALID_TRANSPORTS = new Set(["stdio", "http"])
+ const MCP_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/
+ 
++/**
++ * SEC-B: authenticated mcp.add/update stdio must not spawn without L2.
++ * Fail closed when no origin-bound confirmation channel (tests without session
++ * cannot silently register spawners).
++ */
++async function requireMcpStdioSpawnConfirm(
++  session: SessionCallbacks | undefined,
++  name: string,
++  cfg: McpServerConfig,
++  action: "add" | "update",
++): Promise<{ type: "error"; error: string } | null> {
++  if (cfg.transport !== "stdio") return null
++  if (!session?.requestConfirmation) {
++    return {
++      type: "error",
++      error:
++        "MCP stdio server requires interactive L2 confirmation (requestConfirmation channel missing)",
++    }
++  }
++  const cmd = typeof cfg.command === "string" ? cfg.command : ""
++  const args = Array.isArray(cfg.args) ? cfg.args.map(String).join(" ") : ""
++  const cwd = typeof cfg.cwd === "string" ? cfg.cwd : "(default)"
++  const decision = await session.requestConfirmation({
++    toolName: `mcp.${action}_stdio`,
++    dangerousApis: ["child_process.spawn", "mcp.stdio"],
++    code: [
++      `MCP ${action} stdio server "${name}"`,
++      `command: ${cmd}`,
++      `args: ${args}`,
++      `cwd: ${cwd}`,
++      `enabled: ${cfg.enabled !== false}`,
++    ].join("\n"),
++    riskLevel: "high",
++    autoConfirmEligible: false,
++    criticalApis: ["mcp.stdio.spawn"],
++  })
++  if (!decision.approved) {
++    return {
++      type: "error",
++      error: `MCP stdio server ${action} denied (${decision.reason})`,
++    }
++  }
++  return null
++}
++
++/** True when update changes the spawn surface (not mere trust_level / display). */
++function mcpStdioSpawnSurfaceChanged(
++  existing: McpServerConfig,
++  merged: McpServerConfig,
++): boolean {
++  if (merged.transport === "stdio" && existing.transport !== "stdio") return true
++  if (merged.transport !== "stdio") return false
++  // Pi REJECT #1: enabling a disabled stdio server spawns the process
++  const wasEnabled = existing.enabled !== false
++  const willEnable = merged.enabled !== false
++  if (!wasEnabled && willEnable) return true
++  // Narrow after transport check — union members differ by transport.
++  const ex = existing as Extract<McpServerConfig, { transport: "stdio" }> | McpServerConfig
++  const mg = merged as Extract<McpServerConfig, { transport: "stdio" }>
++  const exCmd = "command" in ex ? ex.command : undefined
++  const mgCmd = mg.command
++  if (exCmd !== mgCmd) return true
++  const exArgs = "args" in ex ? ex.args : undefined
++  const mgArgs = mg.args
++  if (JSON.stringify(exArgs || []) !== JSON.stringify(mgArgs || [])) return true
++  const exCwd = "cwd" in ex ? ex.cwd : undefined
++  const mgCwd = mg.cwd
++  if ((exCwd || "") !== (mgCwd || "")) return true
++  const exEnv = "env" in ex ? ex.env : undefined
++  const mgEnv = mg.env
++  if (JSON.stringify(exEnv || {}) !== JSON.stringify(mgEnv || {})) return true
++  return false
++}
++
++/** Restore env/headers when client echoes redacted `***` placeholders (list→edit→save). */
++function restoreMaskedRecord(
++  existing: Record<string, string> | undefined,
++  incoming: Record<string, string> | undefined,
++): Record<string, string> | undefined {
++  if (incoming === undefined) return existing
++  const out: Record<string, string> = {}
++  for (const [k, v] of Object.entries(incoming)) {
++    if (v === "***" && existing && typeof existing[k] === "string") {
++      out[k] = existing[k]
++    } else if (v !== "***") {
++      out[k] = v
++    }
++    // v === "***" with no existing key → drop (never persist mask literal)
++  }
++  return out
++}
++
++function mergeMcpServerPreservingSecrets(
++  existing: McpServerConfig,
++  patch: Partial<McpServerConfig>,
++): McpServerConfig {
++  const merged = { ...existing, ...patch } as any
++  const exAny = existing as any
++  if (patch && typeof (patch as any).env === "object") {
++    merged.env = restoreMaskedRecord(exAny.env, (patch as any).env)
++  }
++  if (patch && typeof (patch as any).headers === "object") {
++    merged.headers = restoreMaskedRecord(exAny.headers, (patch as any).headers)
++  }
++  return merged as McpServerConfig
++}
++
++/** Mask env/headers on MCP metas for WS list/update broadcasts. */
++export function redactMcpServersForBroadcast(
++  servers: McpServerMeta[] | Array<Record<string, any>>,
++): any[] {
++  return (servers || []).map((s) => {
++    const copy: any = { ...s }
++    if (copy.config && typeof copy.config === "object") {
++      const cfg = { ...copy.config }
++      if (cfg.env && typeof cfg.env === "object") {
++        const env: Record<string, string> = {}
++        for (const k of Object.keys(cfg.env)) env[k] = "***"
++        cfg.env = env
++      }
++      if (cfg.headers && typeof cfg.headers === "object") {
++        const headers: Record<string, string> = {}
++        for (const k of Object.keys(cfg.headers)) headers[k] = "***"
++        cfg.headers = headers
++      }
++      copy.config = cfg
++    }
++    return copy
++  })
++}
++
+ /** Returns an error string if invalid, or null if OK. */
+ function validateMcpServerConfig(name: string, cfg: McpServerConfig | undefined): string | null {
+   if (!name) return "MCP server name is required"
+diff --git a/companion/src/outbound-mcp/companion-http.ts b/companion/src/outbound-mcp/companion-http.ts
+index 04a6245..bfe6aa2 100644
+--- a/companion/src/outbound-mcp/companion-http.ts
++++ b/companion/src/outbound-mcp/companion-http.ts
+@@ -131,9 +131,12 @@ export function authorizeOutboundRequest(
+   expectedWsSecret: string,
+   opts?: { requireGrant?: boolean; bodyCallerId?: string | null },
+ ): OutboundHttpAuthResult {
++  // Explicit opts.requireGrant wins (false must force legacy mode for tests / debug).
++  // When omitted, default from config (now true per MCPO-01).
+   const requireGrant =
+-    opts?.requireGrant === true ||
+-    getConfig().outbound_mcp?.require_grant === true
++    opts?.requireGrant !== undefined
++      ? opts.requireGrant === true
++      : getConfig().outbound_mcp?.require_grant === true
+   const token = extractBearerToken(req)
+   if (!token) {
+     return {
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index eaa263b..42dc208 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -51,7 +51,7 @@ import { URL } from "url"
+ import { getConfig, saveConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT, migrateLegacyModelName, DATA_DIR } from "./config"
+ import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "./voice/session-caps"
+ import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
+-import { handleMessage } from "./message-router"
++import { handleMessage, redactMcpServersForBroadcast } from "./message-router"
+ import { ThreadManager } from "./threads/thread-manager"
+ import { SkillEngine } from "./skills/skill-engine"
+ import { HistoryStore } from "./history/store"
+@@ -288,6 +288,11 @@ export const pendingToolCalls = new Map<string, {
+   thread_id?: string
+   tabId?: number
+   tool_name?: string
++  /**
++   * SEC-E: socket that received tool.execute. Close grace and tool.result
++   * acceptance are scoped to this peer so tray reconnect cannot kill extension tools.
++   */
++  originWs?: WebSocket
+ }>()
+ 
+ /** Reject in-flight extension tools owned by a thread (worker-cancel / lease drain). */
+@@ -2825,6 +2830,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+         thread_id: actingThreadId,
+         tabId: typeof finalParams.tabId === "number" ? finalParams.tabId : undefined,
+         tool_name: toolName,
++        originWs: ws,
+       })
+ 
+       if (ws.readyState === WebSocket.OPEN) {
+@@ -2854,17 +2860,24 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+ }
+ 
+ // Exported for integration tests (audit item 6).
+-export function handleToolResult(msg: any) {
++export function handleToolResult(msg: any, fromWs?: WebSocket) {
+   const { tool_call_id, result, error } = msg
+   const pending = pendingToolCalls.get(tool_call_id)
+-  if (pending) {
+-    clearTimeout(pending.timer)
+-    pendingToolCalls.delete(tool_call_id)
+-    if (error) {
+-      pending.resolve({ success: false, error: error.message || String(error) })
+-    } else {
+-      pending.resolve(result)
+-    }
++  if (!pending) return
++  // SEC-E: only the dispatch peer may resolve (prevents other loopback peers spoofing results)
++  if (fromWs && pending.originWs && pending.originWs !== fromWs) {
++    logger.warn("tool.result_origin_mismatch", {
++      tool_call_id,
++      tool_name: pending.tool_name,
++    })
++    return
++  }
++  clearTimeout(pending.timer)
++  pendingToolCalls.delete(tool_call_id)
++  if (error) {
++    pending.resolve({ success: false, error: error.message || String(error) })
++  } else {
++    pending.resolve(result)
+   }
+ }
+ 
+@@ -2897,7 +2910,13 @@ function dispatchToExtension(
+       logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: TOOL_EXECUTION_TIMEOUT_MS })
+       finish(result)
+     }, TOOL_EXECUTION_TIMEOUT_MS)
+-    pendingToolCalls.set(toolCallId, { resolve: finish as any, reject: finish as any, timer })
++    pendingToolCalls.set(toolCallId, {
++      resolve: finish as any,
++      reject: finish as any,
++      timer,
++      tool_name: toolName,
++      originWs: ws,
++    })
+     if (ws.readyState !== WebSocket.OPEN) {
+       const result = { success: false, error: "WebSocket not connected" }
+       logger.warn("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: result.error })
+@@ -3206,10 +3225,25 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
+  * exercise the cleanup path (audit item 6) without spinning up the full server.
+  */
+ const WS_DISCONNECT_GRACE_MS = 5000
+-export function applyConnectionCloseGracePeriod(): void {
++/**
++ * SEC-E: when `closedWs` is set, only grace-kill pending tools owned by that
++ * socket. Global (no arg) still drains all — reserved for process shutdown.
++ */
++export function applyConnectionCloseGracePeriod(closedWs?: WebSocket): void {
+   for (const [id, pending] of pendingToolCalls) {
++    if (closedWs && pending.originWs && pending.originWs !== closedWs) {
++      continue
++    }
++    // Legacy entries without originWs: only kill on global drain, or if no other clients
++    if (closedWs && !pending.originWs) {
++      // Prefer not to kill unscoped entries on a single peer close (safe default)
++      continue
++    }
+     clearTimeout(pending.timer)
+-    logger.warn("tool.connection_closed", { tool_call_id: id })
++    logger.warn("tool.connection_closed", {
++      tool_call_id: id,
++      scoped: !!closedWs,
++    })
+     pending.timer = setTimeout(() => {
+       if (pendingToolCalls.has(id)) {
+         pendingToolCalls.delete(id)
+@@ -6446,13 +6480,20 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+   // that window; registering listeners afterwards means we miss the first wave.
+   const mcpManager = getMcpManager()
+   mcpManager.on("servers_updated", (metas) => {
+-    broadcastToClients({ type: "mcp.servers.updated", servers: metas })
++    broadcastToClients({
++      type: "mcp.servers.updated",
++      servers: redactMcpServersForBroadcast(metas || []),
++    })
+   })
+   mcpManager.on("status_changed", (meta) => {
+-    broadcastToClients({ type: "mcp.server.status_changed", server: meta })
++    const [redacted] = redactMcpServersForBroadcast(meta ? [meta] : [])
++    broadcastToClients({ type: "mcp.server.status_changed", server: redacted ?? meta })
+   })
+   mcpManager.on("tools_changed", () => {
+-    broadcastToClients({ type: "mcp.servers.updated", servers: mcpManager.listServers() })
++    broadcastToClients({
++      type: "mcp.servers.updated",
++      servers: redactMcpServersForBroadcast(mcpManager.listServers()),
++    })
+   })
+   try {
+     await mcpManager.start(config.mcp)
+@@ -6763,7 +6804,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+ 
+         // Intercept tool.result — these resolve pending promises
+         if (msg.type === "tool.result") {
+-          handleToolResult(msg)
++          handleToolResult(msg, ws)
+           return
+         }
+ 
+@@ -7054,7 +7095,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+       } catch {
+         /* best-effort */
+       }
+-      applyConnectionCloseGracePeriod()
++      applyConnectionCloseGracePeriod(ws)
+       securityConfirmations.rejectAll("disconnect", ws)
+       // C-P0-6: cancel any tray dialogs that were racing this WS. Without this,
+       // the Swift dialog stays modal until its own timeout. cancelConfirm is
+diff --git a/companion/src/threads/thread-manager.ts b/companion/src/threads/thread-manager.ts
+index f3afd25..a57dfdb 100644
+--- a/companion/src/threads/thread-manager.ts
++++ b/companion/src/threads/thread-manager.ts
+@@ -331,8 +331,33 @@ export class ThreadManager {
+     atomicWriteJSON(this.indexPath, this.index)
+   }
+ 
++  /**
++   * SEC-A: only safe ids may touch the filesystem. Reject path seps / `..` so
++   * thread_id cannot escape threads/ (e.g. `../config` → config.json overwrite).
++   * create() still uses sanitizeId (strip + regenerate); path ops fail closed.
++   */
++  static isSafeThreadId(threadId: string): boolean {
++    return typeof threadId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(threadId)
++  }
++
++  private assertSafeThreadId(threadId: string): string {
++    if (!ThreadManager.isSafeThreadId(threadId)) {
++      throw new Error(
++        `Invalid thread id for filesystem path: ${String(threadId).slice(0, 48)}`,
++      )
++    }
++    return threadId
++  }
++
+   private threadFilePath(threadId: string): string {
+-    return path.join(getConfigDir(), "threads", `${threadId}.json`)
++    const safeId = this.assertSafeThreadId(threadId)
++    const threadsDir = path.resolve(getConfigDir(), "threads")
++    const filePath = path.resolve(threadsDir, `${safeId}.json`)
++    const rel = path.relative(threadsDir, filePath)
++    if (rel.startsWith("..") || path.isAbsolute(rel)) {
++      throw new Error("Thread path escape rejected")
++    }
++    return filePath
+   }
+ 
+   private generateId(): string {
+@@ -403,8 +428,10 @@ export class ThreadManager {
+   }
+ 
+   delete(threadId: string): void {
++    // Still drop from index even if id is malicious (no FS if unsafe).
+     this.index.threads = this.index.threads.filter(t => t.id !== threadId)
+     this.saveIndex()
++    if (!ThreadManager.isSafeThreadId(threadId)) return
+     try { fs.unlinkSync(this.threadFilePath(threadId)) } catch { /* ignore */ }
+   }
+ 
+@@ -756,6 +783,7 @@ export class ThreadManager {
+   // --- Messages ---
+ 
+   getMessages(threadId: string): Message[] {
++    if (!ThreadManager.isSafeThreadId(threadId)) return []
+     try {
+       const raw = fs.readFileSync(this.threadFilePath(threadId), "utf-8")
+       const data = JSON.parse(raw)
+@@ -766,6 +794,8 @@ export class ThreadManager {
+   }
+ 
+   addMessage(threadId: string, message: Omit<Message, "id" | "created_at">): Message {
++    // Fail closed: never create files outside threads/ via crafted thread_id
++    this.assertSafeThreadId(threadId)
+     const msg: Message = {
+       ...message,
+       id: `${threadId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+@@ -805,6 +835,7 @@ export class ThreadManager {
+   }
+ 
+   updateMessage(threadId: string, messageId: string, updates: Partial<Message>): void {
++    if (!ThreadManager.isSafeThreadId(threadId)) return
+     const filePath = this.threadFilePath(threadId)
+     try {
+       const raw = fs.readFileSync(filePath, "utf-8")
+@@ -836,6 +867,7 @@ export class ThreadManager {
+ 
+   /** Delete messages from a given message onwards (inclusive). */
+   deleteMessagesFrom(threadId: string, messageId: string): boolean {
++    if (!ThreadManager.isSafeThreadId(threadId)) return false
+     const filePath = this.threadFilePath(threadId)
+     try {
+       const raw = fs.readFileSync(filePath, "utf-8")
+diff --git a/companion/src/voice/stt-session-service.ts b/companion/src/voice/stt-session-service.ts
+index fb4b308..906be6a 100644
+--- a/companion/src/voice/stt-session-service.ts
++++ b/companion/src/voice/stt-session-service.ts
+@@ -518,14 +518,20 @@ export class SttSessionService {
+       allowUnpinned: pinOpts.allowUnpinned,
+     })
+     if (packaged.ok) return packaged
+-    const pathCli = resolveWhisperCliOnPath()
+-    if (pathCli) {
+-      return {
+-        ok: true,
+-        path: pathCli,
+-        arch: warch === "unsupported" ? "darwin-arm64" : warch,
+-        sha256: "path-fallback",
+-        pinned: false,
++    // VOICE-01: no silent PATH fallback in production (ADR-023 L5).
++    if (process.env.CMSPARK_WHISPER_PATH_FALLBACK === "1") {
++      const pathCli = resolveWhisperCliOnPath()
++      if (pathCli) {
++        console.warn(
++          "[voice] CMSPARK_WHISPER_PATH_FALLBACK=1 — using PATH whisper-cli (unpinned, dev only)",
++        )
++        return {
++          ok: true,
++          path: pathCli,
++          arch: warch === "unsupported" ? "darwin-arm64" : warch,
++          sha256: "path-fallback",
++          pinned: false,
++        }
+       }
+     }
+     return packaged
+diff --git a/companion/src/voice/whisper-state.ts b/companion/src/voice/whisper-state.ts
+index 74b817b..fbb96ee 100644
+--- a/companion/src/voice/whisper-state.ts
++++ b/companion/src/voice/whisper-state.ts
+@@ -103,10 +103,16 @@ export function resolveBinaryForState(opts?: {
+     allowUnpinned: pinOpts.allowUnpinned,
+   })
+   if (packaged.ok) return mapBinaryResult(packaged)
+-  // Dev fallback: Homebrew/PATH whisper-cli (packaged copy may miss dylibs)
+-  const pathCli = resolveWhisperCliOnPath()
+-  if (pathCli) {
+-    return { status: "ready", path: pathCli }
++  // VOICE-01 / ADR-023 L5: production never silently uses PATH whisper-cli
++  // (unpinned supply chain). Opt-in only: CMSPARK_WHISPER_PATH_FALLBACK=1 (dev).
++  if (process.env.CMSPARK_WHISPER_PATH_FALLBACK === "1") {
++    const pathCli = resolveWhisperCliOnPath()
++    if (pathCli) {
++      console.warn(
++        "[voice] CMSPARK_WHISPER_PATH_FALLBACK=1 — using PATH whisper-cli (unpinned, dev only)",
++      )
++      return { status: "ready", path: pathCli }
++    }
+   }
+   return mapBinaryResult(packaged)
+ }
+diff --git a/companion/tests/outbound-mcp-grants.test.ts b/companion/tests/outbound-mcp-grants.test.ts
+index 69ca702..a5c9ddd 100644
+--- a/companion/tests/outbound-mcp-grants.test.ts
++++ b/companion/tests/outbound-mcp-grants.test.ts
+@@ -131,12 +131,20 @@ test("authorizeOutboundRequest: grant caller mismatch", () => {
+ })
+ 
+ test("resolveOutboundHttpBearer: grant env preferred; else ws_secret", () => {
+-  process.env[GRANT_ENV] = OUTBOUND_GRANT_TOKEN_PREFIX + "a".repeat(64)
+-  const r = resolveOutboundHttpBearer()
+-  assert.equal(r.mode, "grant")
+-  delete process.env[GRANT_ENV]
+-  const r2 = resolveOutboundHttpBearer()
+-  assert.equal(r2.mode, "ws_secret")
++  const { getConfig, saveConfig } = require("../src/config") as typeof import("../src/config")
++  // Default require_grant is true (MCPO-01); exercise legacy ws_secret path under false.
++  saveConfig({ outbound_mcp: { require_grant: false } })
++  try {
++    process.env[GRANT_ENV] = OUTBOUND_GRANT_TOKEN_PREFIX + "a".repeat(64)
++    const r = resolveOutboundHttpBearer()
++    assert.equal(r.mode, "grant")
++    delete process.env[GRANT_ENV]
++    const r2 = resolveOutboundHttpBearer()
++    assert.equal(r2.mode, "ws_secret")
++  } finally {
++    saveConfig({ outbound_mcp: { require_grant: true } })
++    void getConfig
++  }
+ })
+ 
+ test("revokeAllOutboundGrants", () => {
+diff --git a/docs/TESTING.md b/docs/TESTING.md
+index 0750ea2..41c2c63 100644
+--- a/docs/TESTING.md
++++ b/docs/TESTING.md
+@@ -1,13 +1,13 @@
+ # TESTING
+ 
+-> 与产品 **0.3.0** 对齐。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
++> 与产品 **0.5.0** 对齐（2026-08-09 体检后刷新）。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
+ 
+ ## 测试架构
+ 
+ | 端 | 测试框架 | 测试目录 | 规模（约） | 运行命令 |
+ |----|---------|---------|-----------|---------|
+-| Companion | `node:test` | `companion/tests/`（含 `security/`、`integration/` 子目录） | **120+** `*.test.ts` | `npm --prefix companion test` |
+-| Extension | `node:test` | `chrome-extension/tests/` | **~25** 纯逻辑测试 | `npm --prefix chrome-extension test` |
++| Companion | `node:test` | `companion/tests/`（含 `security/`、`integration/` 子目录） | **~186** `*.test.ts` | `npm --prefix companion test` |
++| Extension | `node:test` | `chrome-extension/tests/` | **~66** 纯逻辑测试 | `npm --prefix chrome-extension test` |
+ 
+ - Companion 编译：`companion/tsconfig.test.json`（`outDir: .test-dist`）
+ - Extension 编译：`chrome-extension/tsconfig.test.json`

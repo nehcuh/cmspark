@@ -280,31 +280,55 @@ test("config.set: __proto__ key is still rejected as prototype pollution", async
   assert.equal(r.error, "Invalid config keys detected")
 })
 
+/** SEC-B: stdio mcp.add/update require L2 — tests that seed servers must approve. */
+const emptyServices = {} as any
+const l2ApproveSession = {
+  sendToExtension: () => {},
+  executeTool: async () => ({ success: false as const }),
+  requestConfirmation: async () => ({
+    confirmationId: "test",
+    approved: true,
+    reason: "approved" as const,
+  }),
+}
+
 test("mcp.update: command value 'prototype' is allowed (key-level guard remains)", async () => {
   // Seed an MCP server so mcp.update has a target.
-  const add: any = await handleMessage({
-    type: "mcp.add",
-    name: "proto-value-test",
-    server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
-  } as any, {} as any)
+  const add: any = await handleMessage(
+    {
+      type: "mcp.add",
+      name: "proto-value-test",
+      server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
+    } as any,
+    emptyServices,
+    l2ApproveSession as any,
+  )
   assert.equal(add.type, "mcp.servers.updated", `expected add to succeed, got: ${add.error || JSON.stringify(add)}`)
 
-  const r: any = await handleMessage({
-    type: "mcp.update",
-    name: "proto-value-test",
-    patch: { command: "prototype" },
-  } as any, {} as any)
+  const r: any = await handleMessage(
+    {
+      type: "mcp.update",
+      name: "proto-value-test",
+      patch: { command: "prototype" },
+    } as any,
+    emptyServices,
+    l2ApproveSession as any,
+  )
   assert.equal(r.type, "mcp.servers.updated", `expected update to succeed, got: ${r.error || JSON.stringify(r)}`)
   const updatedServer = getConfig().mcp?.servers?.["proto-value-test"] as import("../src/mcp/types").McpStdioServerConfig
   assert.equal(updatedServer?.command, "prototype")
 })
 
 test("mcp.update: __proto__ key is still rejected as prototype pollution", async () => {
-  const r: any = await handleMessage({
-    type: "mcp.update",
-    name: "proto-value-test",
-    patch: JSON.parse('{ "__proto__": { "polluted": true } }'),
-  } as any, {} as any)
+  const r: any = await handleMessage(
+    {
+      type: "mcp.update",
+      name: "proto-value-test",
+      patch: JSON.parse('{ "__proto__": { "polluted": true } }'),
+    } as any,
+    emptyServices,
+    l2ApproveSession as any,
+  )
   assert.equal(r.type, "error")
   assert.equal(r.error, "Invalid config keys detected")
 })
@@ -325,11 +349,15 @@ test("mcp.add: first server auto-flips mcp.enabled false → true", async () => 
   assert.equal(getConfig().mcp?.enabled, false)
   assert.equal(Object.keys(getConfig().mcp?.servers || {}).length, 0)
 
-  const r: any = await handleMessage({
-    type: "mcp.add",
-    name: "auto-enable-fixture",
-    server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
-  } as any, {} as any)
+  const r: any = await handleMessage(
+    {
+      type: "mcp.add",
+      name: "auto-enable-fixture",
+      server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
+    } as any,
+    emptyServices,
+    l2ApproveSession as any,
+  )
   assert.equal(r.type, "mcp.servers.updated")
   assert.equal(getConfig().mcp?.enabled, true, "first server add must auto-enable the global kill-switch")
 })
@@ -338,11 +366,15 @@ test("mcp.add: adding a second server does not re-trigger auto-enable (already e
   replaceMcpServers({ "seed-server": { transport: "stdio", command: "node", args: [], enabled: true, trust_level: "manual" } as any })
   saveConfig({ mcp: { enabled: true, servers: getConfig().mcp?.servers ?? {} } })
   const before = getConfig().mcp?.enabled
-  await handleMessage({
-    type: "mcp.add",
-    name: "second-server-fixture",
-    server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
-  } as any, {} as any)
+  await handleMessage(
+    {
+      type: "mcp.add",
+      name: "second-server-fixture",
+      server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
+    } as any,
+    emptyServices,
+    l2ApproveSession as any,
+  )
   assert.equal(getConfig().mcp?.enabled, before, "auto-enable must only fire on the 0→1 server transition")
 })
 
@@ -352,10 +384,14 @@ test("mcp.add: adding to non-empty server map does NOT silently re-enable a user
   replaceMcpServers({ "kept-server": { transport: "stdio", command: "node", args: [], enabled: true, trust_level: "manual" } as any })
   saveConfig({ mcp: { enabled: false, servers: getConfig().mcp?.servers ?? {} } })
   assert.equal(Object.keys(getConfig().mcp?.servers || {}).length, 1)
-  await handleMessage({
-    type: "mcp.add",
-    name: "extra-server-fixture",
-    server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
-  } as any, {} as any)
+  await handleMessage(
+    {
+      type: "mcp.add",
+      name: "extra-server-fixture",
+      server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
+    } as any,
+    emptyServices,
+    l2ApproveSession as any,
+  )
   assert.equal(getConfig().mcp?.enabled, false, "explicit user disable must survive a non-first server add")
 })

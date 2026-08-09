@@ -1,0 +1,68 @@
+{
+  "executive_summary": "CMspark 0.5.0 产品主面（Side Panel↔Companion 闭环、Pack/入站 MCP/Confirm、Multi-agent Board、听写+/会议、Obsidian/Mermaid）与代码大体对齐，产品维约 7.6、文档 hub/用户指南可用，可作为内测/自用稳定切点。安全仍是主拖累：鉴权后 mcp.add stdio 无 L2、线程路径未净化、thread JSON 全量 tool 磁带、tool.result 未绑 origin、chat supersede 无 generation CAS、macOS CU 错绑 PID，以及 Whisper 静默 PATH 回退/缺 pin、Outbound require_grant=false，合计 0 Critical / 9 High。架构与可维护性被 server.ts/message-router 双神文件与无共享协议类型拖累；测试体量大但 startServer 仅副本测、release 不重跑测试。相对 07-28 文档向 ~6.9/B- 略降、相对 07-25 安全向 5.8/C+ 整体抬升；在 P0 安全与 Whisper/Outbound 门禁落地前，不宜宣称分发级安全闭环 GA。",
+  "overall_score": 6.6,
+  "grade": "B-",
+  "score_dashboard": "CMspark 0.5.0 Health  |  overall 6.6 / B-  |  2026-08-09\n========================================================\nArchitecture                 6.7  B-\nDocumentation                7.2  B\nDesign and UX                6.5  B-\nProduct features             7.6  B\nSecurity residual            6.0  C+\nTesting / CI / Release       6.7  B-\nMaintainability              6.1  C+\n0.5.0 product surfaces       6.7  B-\n--------------------------------------------------------\nCritical (recalibrated)      0\nHigh (auth RCE/integrity/\n  durable secret tape)       9\nPrior: 6.9/B- (07-28 docs) | 5.8/C+ (07-25 sec)",
+  "confirmed_critical": 0,
+  "confirmed_high": 9,
+  "top_risks": [
+    "SEC-B: mcp.add stdio spawns arbitrary local processes without critical L2 (post-auth RCE-equivalent)",
+    "SEC-A: threadFilePath joins unsanitized client threadId — path traversal under ~/.cmspark-agent",
+    "SEC-C: threads/*.json persists full unredacted tool results/params (durable secret tape)",
+    "SEC-E: pendingToolCalls global on any peer close; tool.result unbound to origin socket",
+    "SEC-D: chat.create supersede finally clears successor AbortController / multi-agent gate (no generation CAS)",
+    "SEC-F: macOS cuPidForWindow returns first listed window PID — wrong-app CU inject/activate",
+    "VOICE-01/02: silent PATH whisper-cli fallback + incomplete Tier-1 SHA256 pins (ADR-023 L5)",
+    "MCPO-01: outbound_mcp.require_grant defaults false; ws_secret can authorize loopback L1 tools",
+    "ARCH/MAINT: server.ts ~7k + message-router ~3.5k god modules — security review blast radius",
+    "REL: release.yml packages without re-test/audit; ad-hoc codesign only; no SBOM/SHA256SUMS"
+  ],
+  "action_plan": "P0: (1) assertSafeThreadId+contained resolve on all thread FS ops; (2) L2/originWs forceConfirm before mcp.add/update stdio spawn; (3) redact tool tape before thread disk write; (4) bind originWs on pendingToolCalls; accept tool.result only from that peer; (5) per-thread generation CAS for chat.create supersede; (6) fix cuPidForWindow via kCGWindowNumber in host.swift+host-skylight.swift; (7) remove production PATH whisper fallback; complete Tier-1 pins or fail closed; (8) default require_grant=true / dedicated outbound grant, no silent ws_secret deputy.\nP1: redact mcp.list env/headers; enforce sttEngine+privacy_ack server-side+origin on voice.model; meeting retain_until GC; CU enable UI toggle; real startServer integration; release needs test+audit+SHA256SUMS; sync DESIGN↔tokens, TESTING 0.5.0, README model default, guide badges, GOAL G21/ADR-023 status, fix broken nav.\nP2: extract tool-runtime+domain routers; shared protocol package+protocol_version; fail-closed unknown WS types; Surface L0 hard-gate decision; CI Node 22; package.sh version lock; Developer ID/Authenticode; spike/TinyClick cleanup; cross-platform test runner; archive audit/reviews noise.",
+  "delta_vs_prior": "vs 2026-07-28 docs-focused ~6.9/B-: overall 6.6/B- slightly lower as product/docs stayed B-range while security High residuals plus new 0.5.0 surface issues (Whisper PATH/pins, outbound require_grant) re-weighted the blend. vs 2026-07-25 security fanout 5.8/C+: security dimension 6.0/C+ with measurable hardening (origin-scoped confirm rejectAll, config.updated redaction, history.db redaction, voice/meeting path+origin fences) but most prior Highs remain open/partial (thread path, mcp.add, tool tape, supersede CAS, pendingToolCalls, cuPidForWindow); new Highs VOICE-01/02 and MCPO-01. All 8 dimension agents reported successfully (no failed dimension).",
+  "dimension_scores": [
+    {
+      "dimension": "Architecture",
+      "score": 6.7,
+      "grade": "B-"
+    },
+    {
+      "dimension": "Documentation",
+      "score": 7.2,
+      "grade": "B"
+    },
+    {
+      "dimension": "Design and UX product surface",
+      "score": 6.5,
+      "grade": "B-"
+    },
+    {
+      "dimension": "Product features — claimed vs delivered",
+      "score": 7.6,
+      "grade": "B"
+    },
+    {
+      "dimension": "Security residual recheck (known Highs + 0.5.0 surfaces)",
+      "score": 6,
+      "grade": "C+"
+    },
+    {
+      "dimension": "Testing, CI, and Release",
+      "score": 6.7,
+      "grade": "B-"
+    },
+    {
+      "dimension": "Maintainability and code health",
+      "score": 6.1,
+      "grade": "C+"
+    },
+    {
+      "dimension": "0.5.0 product surfaces (voice/meeting/dictation/outbound-MCP/Windows-Python)",
+      "score": 6.7,
+      "grade": "B-"
+    }
+  ],
+  "product_coverage": "At 0.5.0 the delivered surface largely matches code: Side Panel↔Companion↔CDP tool loop, multi-thread chat, skills/knowledge, inbound MCP, Mission Pack/enterprise modules, Confirm Center/Cockpit, multi-agent P0+Board/Fleet, Obsidian export, CSP-safe Mermaid, dictation+/local STT/meeting workbench, tray/pairing/daemon. Gaps: L2 partial (CU enable only via config, Linux host_read stub), Outbound MCP usable opt-in but dual-narrated as Phase-0 skeleton vs real bridge and Win/Linux tray confirm incomplete, Path B packaging/pin residual, NotebookLM DOM/login fragility, secondary guide version labels lagging. Non-goals (system audio mix, identity diarize) are correctly excluded if marketing stays in-bounds.",
+  "docs_health": "Post-2026-07-28 reorg fixed the worst underclaim: docs hub, README capability matrix, user guides, ADR-016 Implemented, TROUBLESHOOTING, and CHANGELOG 0.5.0 align with package versions (score 7.2/B). Remaining maintenance debt: TESTING.md frozen at 0.3.0 with TinyClick and missing voice/meeting/outbound maps; multi-agent/NotebookLM/CU/host guide badges still 0.3.0/0.4.0; README default model_name deepseek-chat vs runtime deepseek-v4-flash; ADR-023/GOAL G21 lag shipped voice M2 and outbound-mcp depth; process noise (decisions~193, audit/reviews~781, root audits); one broken nav to missing optimization-plan-document-parse-vision.md; architecture §1.3/§4.1 under-document live WS families and voice/meeting trees.",
+  "architecture_health": "ADR-001 dual-layer (Extension CDP vs Companion LLM/security/L2 host) holds; domain folders (packs, capability, orchestrator, board, mcp, computer, host-use, voice, meeting) match the map; Pack Trust is well disciplined (FORBIDDEN keys, user_gesture+allowTrust, spawn allowTrust:false). Primary debt is control-plane concentration (server.ts ~7160 LOC, message-router ~3528 LOC with 100+ cases), no shared protocol/types package or protocol_version negotiation, validateWsMessage allow-unknown, dual Thread models across processes, and ADR-020 Surface L0/L1/L2 remaining UX-derived rather than companion hard gates. architecture.md v2.4.0 is useful but §1.3 baseline catalog and §4.1 tree lag live families.",
+  "design_health": "Surface ModeBadge (聊/网页/计算机·LIVE), FocusBand priority, L2 SafetyStrip+急停, Cockpit StatusRail, and SVG ComposeDrawer are coherent and mostly code-true. DESIGN.md token tables diverge from tokens.ts (Gemini-breath indigo, larger hero radii, motion); composer chip/slash docs lag code including /meeting; quiet-professional broken by emoji chrome in ThreadList/slash/MCP; SettingsSlideout ~3.4k-line sprawl with residual raw hex; 0.5.0 voice/meeting under-signposted on L0 empty state. Design debt is consistency/discoverability, not missing core chrome patterns."
+}

@@ -1,0 +1,985 @@
+[
+  {
+    "dimension": "Architecture",
+    "score_0_to_10": 6.7,
+    "grade": "B-",
+    "summary": "Dual-layer topology (ADR-001) and domain modules (packs/capability/orchestrator/board/mcp/computer/host-use) match architecture.md and ADR-020 at the folder level. Pack Trust is well disciplined (FORBIDDEN keys, user_gesture+allowTrust, spawn allowTrust:false). Main architectural debt is control-plane concentration (server.ts ~7160 LOC, message-router ~3528 LOC switch), no shared wire protocol package or protocol_version negotiation, dual Thread/message types across processes, and Surface L0/L1/L2 remaining primarily UX derivation rather than companion hard gates. architecture.md §1.3 still presents a baseline message catalog that under-represents the live WS surface.",
+    "strengths": [
+      "ADR-001 dual-layer held: Extension browser/CDP vs Companion LLM/security/state/L2 host",
+      "Domain folders align with architecture.md §4.1 (packs, capability, orchestrator, board, mcp, outbound-mcp, computer, host-use, apps, netsec)",
+      "Pack cannot silently raise god-mode: FORBIDDEN_PACK_KEYS + scanForbidden; UI pack.apply allowTrust only; spawn_worker forces allowTrust:false",
+      "Composition/Autonomy modules separated (skills/mcp/packs vs orchestrator/board); single tool-loop runtime retained",
+      "Pure UI Surface derivation in mode-controller.ts (chat|browser|computer) with documented pin semantics",
+      "Capability modules enterprise gate (shell/netsec need capability_profile=enterprise) in capability/modules.ts",
+      "WS auth challenge-response exists (ws-auth.ts) even without protocol version field",
+      "architecture.md v2.4.0 (2026-08-08) leads with ADR-020 axes and remains useful module map"
+    ],
+    "findings": [
+      {
+        "id": "ARCH-GOD-1",
+        "severity": "high",
+        "title": "server.ts remains a multi-concern god-file (~7160 LOC)",
+        "evidence": "File ends at line 7160. Exports/structure include createToolExecutor (~619), executeCompanionTool (~3261), validateWsMessage (~5437), broadcastToClients (~5328), startServer (~6311), pending tool maps, security confirmation wiring, MCP executors, computer abort — single compilation unit for WS control plane + tool security + companion tool switch.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\server.ts",
+        "impact": "High regression risk and origin/abort/security drift (prior XC-Architecture notes); hard to review, test, or enforce module boundaries as Surface/Composition grow.",
+        "fix_hint": "Extract validateWsMessage + tool-executor + companion-tool switch + broadcast into companion/src/ws/ and companion/src/tool-runtime/; keep startServer as thin composition root.",
+        "prior_status": "open"
+      },
+      {
+        "id": "ARCH-GOD-2",
+        "severity": "high",
+        "title": "message-router.ts is a monolithic message switch (~3528 LOC, 100+ cases)",
+        "evidence": "handleMessage switch starts ~202 with cases from config.get through system.ping (~3386); helpers continue to ~3527. Cases include chat/file/thread/skill/mcp/apps/computer/voice/meeting/pack/modules/workspace/netsec/fleet/board/outbound_mcp/obsidian/history.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\message-router.ts",
+        "impact": "Protocol surface growth without modular handlers; security helpers (prototype pollution, MCP validation, isInternalIp) co-located at bottom of router.",
+        "fix_hint": "Split into domain routers (chatRouter, packRouter, voiceRouter, …) registered by type prefix; keep handleMessage as dispatch table only.",
+        "prior_status": "open"
+      },
+      {
+        "id": "ARCH-PROTO-1",
+        "severity": "medium",
+        "title": "No WS protocol_version negotiation on connect",
+        "evidence": "Repo-wide search shows protocol_version flagged in audits (e.g. docs/audit/diagnosis-2026-06-23.md C-PROTO-1, deep-diagnosis-fanout-2026-08-02 P2) but no SERVER_PROTOCOL_VERSION hello exchange in companion. Auth is secret HMAC only (ws-auth.ts lines 18–22: auth.challenge/handshake/ok).",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\ws-auth.ts",
+        "impact": "Version-skewed extension/companion pairs degrade silently when message shapes diverge (voice/pack/computer families added without version bumps).",
+        "fix_hint": "Add mandatory {type:hello, protocolVersion:N, clientVersion} after auth.ok; reject mismatch with PROTOCOL_MISMATCH; bump on breaking wire changes.",
+        "prior_status": "open"
+      },
+      {
+        "id": "ARCH-TYPES-1",
+        "severity": "medium",
+        "title": "No shared protocol/types package; dual Thread and wire models",
+        "evidence": "Root package.json has no workspace packages. Extension Thread at chrome-extension/src/sidepanel/types.ts:32–97; companion private interface Thread at companion/src/threads/thread-manager.ts:27–48 (mission_pack_snapshot, trust cookies, etc. not mirrored 1:1). validateWsMessage uses msg:any.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\chrome-extension\\src\\sidepanel\\types.ts",
+        "impact": "Field drift and silent optional-field bugs across dual-layer boundary; no compile-time contract for WS messages.",
+        "fix_hint": "Introduce packages/protocol (or companion/src/protocol exported) with discriminated unions + zod; both sides import; replace validateWsMessage any map gradually.",
+        "prior_status": "open"
+      },
+      {
+        "id": "ARCH-SURFACE-1",
+        "severity": "medium",
+        "title": "ADR-020 Surface L0/L1/L2 is UX-derived, not companion hard-gated",
+        "evidence": "mode-controller.ts deriveCapabilityLevel (lines 75–114) computes chat|browser|computer from recent tools/confirms/task; companion server tool path gates via isToolAllowed whitelist (server.ts:770–797) and security/modules, not CapabilityLevel. Grep of companion for CapabilityLevel/mode_pin finds no Surface enforcement in server tool path (only voice engine string match).",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\chrome-extension\\src\\sidepanel\\mode\\mode-controller.ts",
+        "impact": "ADR-020 narrative 'L0: no CDP tool calls' is not a runtime invariant; LLM may invoke browser tools while UI still shows 聊 until first tool elevates.",
+        "fix_hint": "Document honestly that L0 is default UX label, not a deny-list; or add optional thread/user surface pin enforced in createToolExecutor for BROWSER_TOOL_NAMES when pin=chat.",
+        "prior_status": "partial"
+      },
+      {
+        "id": "ARCH-PROTO-2",
+        "severity": "medium",
+        "title": "validateWsMessage allows unknown message types",
+        "evidence": "server.ts:6245-6251 — if no validator for msg.type, returns { valid: true } with comment 'Unknown types are allowed through'.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\server.ts",
+        "impact": "Protocol boundary is open-ended; typos and future peers can inject unvalidated shapes into handleMessage default paths.",
+        "fix_hint": "Fail closed on unknown types in production; keep allowlist of known types; optional debug flag for experimental types.",
+        "prior_status": "open"
+      },
+      {
+        "id": "ARCH-EXT-1",
+        "severity": "medium",
+        "title": "Side Panel protocol fan-in concentrated in fat App + useWebSocket",
+        "evidence": "App.tsx ends ~1894 lines; useWebSocket.ts ends ~1707 lines with large switch cases (e.g. thread/mcp/user_env/apps/obsidian around 900–1480+). agentStore.tsx ~921 lines of global state.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\chrome-extension\\src\\sidepanel\\hooks\\useWebSocket.ts",
+        "impact": "Client-side god-handlers mirror companion router bloat; harder to keep dual-layer message handling consistent and testable.",
+        "fix_hint": "Split inbound handlers by domain modules (handleThreadMessages, handleVoiceMessages, …); thin useWebSocket subscription only.",
+        "prior_status": "partial"
+      },
+      {
+        "id": "ARCH-PACK-TRUST",
+        "severity": "info",
+        "title": "Pack Trust discipline matches ADR-020 exception model (positive)",
+        "evidence": "FORBIDDEN_PACK_KEYS packs/types.ts:250-261; scanForbidden validator.ts:63-89; pack.apply user_gesture+allowTrust message-router.ts:2553-2571; spawn applyPack allowTrust:false server.ts:3294-3305.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\packs\\types.ts",
+        "impact": "Reduces risk of Composition axis silently widening global god-mode; good architectural control relative to prior High themes.",
+        "fix_hint": "Keep install path stripping origin=user+trust (already sanitizeManifestForInstall); continue testing unapply/soft-trash restoreTrust lifecycle.",
+        "prior_status": "fixed"
+      },
+      {
+        "id": "ARCH-DOC-1",
+        "severity": "low",
+        "title": "architecture.md §1.3 message catalog under-documents live WS families",
+        "evidence": "architecture.md lines 93-111 list chat/config/skill/thread/history/security/system only. Live router also handles pack.*, fleet.*, board.*, computer.*, voice.*, meeting.*, mcp.*, apps.*, modules.*, outbound_mcp.*, workspace.*, netsec.*, user_env.*, obsidian.* (message-router cases 1782-3198+).",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\architecture.md",
+        "impact": "Contributors treat §1.3 as complete protocol SoT; ADR-020 §7 expects catalog as baseline — presentation still looks exhaustive.",
+        "fix_hint": "Label §1.3 as baseline core families; add 'extended families' pointer or generate catalog from validators/router tests.",
+        "prior_status": "partial"
+      },
+      {
+        "id": "ARCH-MINCAP-1",
+        "severity": "low",
+        "title": "Pack min_capability is metadata, not an apply-time Surface gate",
+        "evidence": "validator requires min_capability L0|L1|L2 (validator.ts:160-161). computeApplyBlocked (pack-engine.ts:1178-1189) only checks enterprise channel + requires_modules enabled; no comparison to UI CapabilityLevel.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\packs\\pack-engine.ts",
+        "impact": "Axis A min_capability does not constrain apply; UI may show L2 packs without Surface escalation semantics.",
+        "fix_hint": "Either document min_capability as advisory UI badge only, or enforce against declared tools (e.g. host_* ⇒ L2) at apply.",
+        "prior_status": "new"
+      },
+      {
+        "id": "ARCH-DOC-2",
+        "severity": "low",
+        "title": "architecture.md §4.1 companion tree omits voice/ and meeting/",
+        "evidence": "§4.1 listing (architecture.md ~433-462) ends packs/capability/netsec/obsidian/hud/tray without voice/ or meeting/; §9.2 line 682 mentions companion/src/voice/ and meeting workbench. On-disk companion/src has voice/ (17 ts) and meeting/ (6 ts).",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\architecture.md",
+        "impact": "Directory SoT drift for 0.5.0 voice/meeting delivery (ADR-023/024).",
+        "fix_hint": "Add voice/ and meeting/ to §4.1 tree next to other domain modules.",
+        "prior_status": "new"
+      },
+      {
+        "id": "ARCH-BOUND-1",
+        "severity": "info",
+        "title": "Dual-layer responsibility for browser tools remains correct",
+        "evidence": "browser-bridge.ts class BrowserBridge executes CDP/tabs tools; companion createToolExecutor dispatches extension tools via pendingToolCalls/dispatchToExtension and runs host/computer/MCP locally (executeCompanionTool). ADR-001 consequence of split still holds.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\chrome-extension\\src\\background\\browser-bridge.ts",
+        "impact": "Positive: no LLM-in-SW topology regression; L2 host path stays companion-side as architecture §9.1 states.",
+        "fix_hint": "Preserve: never move CU host adapters into extension; keep outbound MCP runner wired to extension peer only.",
+        "prior_status": "fixed"
+      }
+    ],
+    "open_questions": [
+      "Should Surface L0 become a hard deny of BROWSER_TOOL_NAMES at createToolExecutor, or remain UX-only with docs updated?",
+      "Target decomposition of server.ts: by security gates vs by tool family vs by WS lifecycle?",
+      "Is fail-closed unknown WS type acceptable given tray/HUD experimental peers (hud/protocol.ts)?",
+      "Will packages/protocol be monorepo-feasible under Plasmo+companion dual package roots without build pain?",
+      "Does Pack min_capability need UI escalation UX before apply for L2 packs?"
+    ]
+  },
+  {
+    "dimension": "Documentation",
+    "score_0_to_10": 7.2,
+    "grade": "B",
+    "summary": "Post-2026-07-28 reorg fixed the worst underclaim and fact errors: README/docs hub, user guides, ADR-016 Implemented, and TROUBLESHOOTING now match a 0.5.0-shaped product. Remaining debt is maintenance: TESTING.md still 0.3.0 with TinyClick and missing voice/meeting/outbound maps; several user-guide version badges lag at 0.3.0/0.4.0; README still lists default model deepseek-chat against code default deepseek-v4-flash; process trees (decisions ~193, audit/reviews ~781, root audits) dominate volume; ADR-023/G21 status lines lag shipped voice M2 and outbound-mcp code depth; one nav backlog link is broken.",
+    "strengths": [
+      "docs/README.md layered navigation with ADR-020 coordinates for user/arch/ADR/eng/working/archive",
+      "Root README 0.5.0 capability matrix covers L0–L2, Composition, Autonomy, dictation/meeting",
+      "User guides exist for confirm, MCP (inbound+outbound), packs, CU, host/apps, multi-agent, NotebookLM, meeting/dictation",
+      "TROUBLESHOOTING covers model migration, inbound MCP, outbound MCP, confirm center",
+      "ADR-016 correctly Implemented (P0); live docs no longer present risk-engine as runtime",
+      "Phase 4 archive/2026-07 + CONTRIBUTING documentation checklist established",
+      "CHANGELOG 0.5.0 aligned with companion/extension package.json and TinyClick removal",
+      "meeting-and-dictation-user-guide.md stamped 0.5.0 and matches shipped D2/M2/Mtg narrative"
+    ],
+    "findings": [
+      {
+        "id": "DOC-01",
+        "severity": "medium",
+        "title": "TESTING.md frozen at 0.3.0 with TinyClick and missing domains",
+        "evidence": "docs/TESTING.md L3/L163 banner 0.3.0; L9–10 claims ~120 companion / ~25 extension tests vs ~190+ companion and ~65 extension test files; L72 still lists TinyClick suites as live though TinyClick removed (CHANGELOG L20; only negative asserts remain); no voice/meeting/outbound-mcp test map despite companion/tests/voice-*, meeting-*, outbound-mcp-* and extension voice/meeting tests",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\TESTING.md",
+        "impact": "Engineering onboarding and CONTRIBUTING 'update TESTING map' checklist point at dead/stale paths; regression owners miss 0.5.0 domains",
+        "fix_hint": "Retarget to 0.5.0; recount; remove TinyClick; add voice/meeting/outbound/qwen-vl sections",
+        "prior_status": "partial"
+      },
+      {
+        "id": "DOC-02",
+        "severity": "medium",
+        "title": "User-guide product version badges lag 0.5.0",
+        "evidence": "multi-agent-user-guide.md L4 0.3.0; notebooklm-user-guide.md L4 0.3.0; computer-use-user-guide.md L4 0.4.0 and body L44/L120 still say 0.3.0 paths/status; host-and-apps.md L4 0.4.0; only meeting-and-dictation-user-guide.md L3 is 0.5.0 while companion+extension package.json are 0.5.0",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\multi-agent-user-guide.md",
+        "impact": "Readers infer multi-agent/CU/host are pre-ship or abandoned despite being core 0.5.0 surfaces",
+        "fix_hint": "Stamp live guides 0.5.0 (or last-verified date); scrub body 0.3.0 path language",
+        "prior_status": "open"
+      },
+      {
+        "id": "DOC-03",
+        "severity": "medium",
+        "title": "README default model_name is deepseek-chat (wrong vs code)",
+        "evidence": "README.md L181 default model_name deepseek-chat; companion/src/config.ts L300 default deepseek-v4-flash and L1141–1142 migrate deepseek-chat/reasoner → flash; docs/TROUBLESHOOTING.md L37–39 documents flash as default and chat as deprecated",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\README.md",
+        "impact": "Install/config instructions contradict runtime defaults and provider deprecation guidance",
+        "fix_hint": "Change README table default to deepseek-v4-flash; note pro as optional stronger model",
+        "prior_status": "new"
+      },
+      {
+        "id": "DOC-04",
+        "severity": "medium",
+        "title": "Process noise still dominates docs volume",
+        "evidence": "docs/decisions/ ~193 files; docs/audit/reviews/ ~781 files (md/json/patch); root AUDIT_REPORT_2026-06-16.md + audit-report-cmspark-2026-07-09.md + audit-report-cmspark-2026-07-25.md; docs/superpowers ~65 plans/specs. docs/README.md L114–152 correctly marks non-normative but volume remains after archive/2026-07 Phase 4",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\audit\\reviews",
+        "impact": "Hub navigation is usable; repo-wide search/RAG for contributors still floods with process drafts",
+        "fix_hint": "Archive closed review batches by month; move root audits under docs/audit or archive; protect only code-referenced lock paths",
+        "prior_status": "partial"
+      },
+      {
+        "id": "DOC-05",
+        "severity": "medium",
+        "title": "Broken nav link to missing optimization-plan-document-parse-vision.md",
+        "evidence": "docs/README.md L101 links optimization-plan-document-parse-vision.md; file absent from docs/ listing (sibling optimization plans exist); also referenced optimization-plan-post-adr-020.md L112; only appears as untracked in audit/reviews patches",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\README.md",
+        "impact": "Active backlog entry 404s for contributors following the hub",
+        "fix_hint": "Add the plan file or remove/relabel the nav and plan table rows",
+        "prior_status": "new"
+      },
+      {
+        "id": "DOC-06",
+        "severity": "medium",
+        "title": "ADR-023 and GOAL G21 status lag shipped voice/outbound code",
+        "evidence": "ADR-023 L3 still M0+M1 on feat/voice-local-stt-m1 while CHANGELOG 0.5.0 and meeting guide claim M2 and companion/src/voice has full stack; GOAL.md L276 says outbound is 门禁骨架 with bridge/grant phased while companion/src/outbound-mcp/ has bridge, dual-entry, outbound-grants, stdio-server, companion-http and mcp.md+TROUBLESHOOTING document opt-in usage",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\adr\\023-voice-local-stt-path-b.md",
+        "impact": "Mis-calibrates readiness of Path B STT and Outbound MCP for planning and audits",
+        "fix_hint": "Update ADR-023 status for main/0.5.0 + residual e2e/binary; rewrite G21 current state to opt-in facade shipped with open bake-off/require_grant gates",
+        "prior_status": "open"
+      },
+      {
+        "id": "DOC-07",
+        "severity": "low",
+        "title": "GOAL G1 still claims fixed 26 tools",
+        "evidence": "GOAL.md L106 '全部 26 种工具（22 浏览器 + 4 Companion）'; companion/src/bridge/tool-definitions-catalog.json has ~54 named tools including host_*, board_*, shell_exec, netsec_port_scan, spawn_worker; README/architecture say not to fix-count tools",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\GOAL.md",
+        "impact": "MVP tool count understates current blast radius and confuses security scope reviews",
+        "fix_hint": "Label G1 as historical MVP core; point to dynamic catalog / architecture tool chapter",
+        "prior_status": "open"
+      },
+      {
+        "id": "DOC-08",
+        "severity": "low",
+        "title": "CONTRIBUTING tree and version narrative behind 0.5.0",
+        "evidence": "CONTRIBUTING.md tree L61–78 omits voice/, meeting/, outbound-mcp/; L86 adr 001–018+ while ADRs go to 024; L108 still '文档写 0.4.0'; optimization-plan-post-adr-020.md L18 product version 0.4.0",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\CONTRIBUTING.md",
+        "impact": "Onboarding misses 0.5.0 modules and version authority",
+        "fix_hint": "Extend tree; ADR span to 024; state current product 0.5.0 in CONTRIBUTING and active plan header",
+        "prior_status": "open"
+      },
+      {
+        "id": "DOC-09",
+        "severity": "low",
+        "title": "README related-docs omits meeting/dictation and user-env",
+        "evidence": "README.md L43 matrix includes 听写/会议 and L49 user-env; related-docs table L893 lists confirm/mcp/pack/cu/host/notebooklm/multi-agent/TROUBLESHOOTING but not meeting-and-dictation-user-guide.md or user-env.md (both in docs/README.md user table)",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\README.md",
+        "impact": "0.5.0 headline features harder to find from root related-docs than from docs hub",
+        "fix_hint": "Add meeting-and-dictation and user-env to README related-docs user row",
+        "prior_status": "new"
+      },
+      {
+        "id": "DOC-10",
+        "severity": "low",
+        "title": "architecture §11 still labeled 0.3.0",
+        "evidence": "architecture.md L3 header syncs 0.5.0; L741 '工具分类速查（0.3.0）'; L653 inbound MCP '0.3.0 已交付' without last-verified 0.5.0 note",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\architecture.md",
+        "impact": "Contributors may treat tool chapter as obsolete or skip 0.5.0 module expansions",
+        "fix_hint": "Relabel as core-since-0.3.0 with module expansions, or last-verified 0.5.0",
+        "prior_status": "open"
+      }
+    ],
+    "open_questions": [
+      "Is Outbound MCP product-positioned as opt-in shipped (mcp.md/TROUBLESHOOTING) or still Phase-0 bake-off only (GOAL G21 / ADR-022 wording)?",
+      "Should unchanged user guides auto-bump version stamps to 0.5.0 or only after content re-verification?",
+      "Was optimization-plan-document-parse-vision.md intended to land and never committed?",
+      "What archive policy/size target for docs/audit/reviews (~781 files) and root historical audit reports?",
+      "Should ADR-023 residual (self-contained whisper binary / manual e2e) be called out in TROUBLESHOOTING for packaged installs?"
+    ]
+  },
+  {
+    "dimension": "Design and UX product surface",
+    "score_0_to_10": 6.5,
+    "grade": "B-",
+    "summary": "Surface L0/L1/L2, FocusBand, SafetyStrip/Cockpit dark chrome, and SVG StatusRail/ComposeDrawer are coherent and mostly code-true. DESIGN.md is badly out of date vs Quiet Premium/Gemini-breath tokens.ts; composer-chip and slash docs lag code. Quiet-professional is broken by emoji in ThreadList/slash/MCP chrome; SettingsSlideout sprawl and weak empty-state cues hurt 0.5.0 voice/meeting discoverability in the 320px panel.",
+    "strengths": [
+      "ModeBadge + levelBadgeLabel implement ADR-020 Surface (聊/网页/计算机·LIVE) with SVG icons",
+      "FocusBand priority (Confirm > L2 Safety+急停 > Fleet > L1 Context) with hard height budget",
+      "L2 SafetyStrip dark strip + 急停 + 确认台 open; Cockpit dual-track StatusRail grammar",
+      "tokens.ts helpers (connectionColor*, statusColor, riskColor*) ban Material status dots in StatusRail",
+      "ComposeDrawer and StatusRail ⋯ use stroke SVG set (icons.tsx)",
+      "VoiceMicButton is accessible SVG control; meeting reachable via /meeting and Packs zone",
+      "BottomBar permanent strip correctly gated off (ui.bottomBarStrip=false); Host is panel SoT"
+    ],
+    "findings": [
+      {
+        "id": "DES-01",
+        "severity": "medium",
+        "title": "DESIGN.md token tables diverge from tokens.ts (Gemini-breath)",
+        "evidence": "DESIGN.md documents bg #fafbfc, accent #2563eb, modeBrowserBg #dbeafe, darkBg #0f1115, transition ≤200ms, radii 6/8/12 only; tokens.ts has bg #f5f6fa, accent #4f46e5, modeBrowserBg #eef2ff, modeComputerText #6ee7b7, darkBg #0b0d12, transition 220ms, radiusComposer 18 / radiusSheet 20 / radiusMenu 14",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\DESIGN.md:14-75; chrome-extension\\src\\sidepanel\\ui\\tokens.ts:10-82",
+        "impact": "Design contract and implementer prompts no longer match runtime chrome; secondary panels keep legacy hex while core UI moved indigo",
+        "fix_hint": "Regenerate DESIGN color/radius/motion tables from tokens.ts; document G1 hero radii as allowed exceptions",
+        "prior_status": "new"
+      },
+      {
+        "id": "DES-02",
+        "severity": "medium",
+        "title": "Composer chip and slash matrix in DESIGN ≠ code",
+        "evidence": "DESIGN L0 chips 装配·Skills·Know; code composerChipsForLevel L0 only 装配, L1 装配·Tabs·工作区, L2 确认台·装配. DESIGN slash list omits /meeting; META_PANEL_SLASH includes meeting",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\DESIGN.md:105-107; chrome-extension\\src\\sidepanel\\composer\\meta-slash.ts:104-112,289-309",
+        "impact": "Docs mis-teach IA; reviewers cannot trust DESIGN for PR checks",
+        "fix_hint": "Sync DESIGN Mode badge / ComposerDock / slash parity to G2 chips and /meeting",
+        "prior_status": "partial"
+      },
+      {
+        "id": "DES-03",
+        "severity": "low",
+        "title": "Panel vs Cockpit mode chip copy dialects",
+        "evidence": "Panel levelBadgeLabel returns 聊/网页/计算机·LIVE; cockpitModeBadgeLabel returns L2 · LIVE / L2 / 确认 / 工作区 while DESIGN claims same Surface grammar",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\chrome-extension\\src\\sidepanel\\mode\\mode-controller.ts:168-178; chrome-extension\\src\\cockpit\\cockpit-status.ts:4-13; docs\\DESIGN.md:95-96",
+        "impact": "Users map Panel 计算机 to Cockpit L2 poorly; dual dialect increases support load",
+        "fix_hint": "Unify labels (e.g. 计算机 · LIVE alongside L2) or document dual dialect as intentional product rule",
+        "prior_status": "open"
+      },
+      {
+        "id": "DES-04",
+        "severity": "medium",
+        "title": "Emoji/glyph chrome violates quiet-professional rule",
+        "evidence": "DESIGN: emoji only in message content. ThreadList toolbar uses 🏷/🧠/⏳/🗑️; SlashCommandPopover 🔧/📋; McpPanel 🛠/📦/💬/🔒; App auto-skill toast 🤖; tool card statusGlyph ✓/!/… contrary to Tool Call Card no emoji chrome",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\DESIGN.md:3,127-128; chrome-extension\\src\\sidepanel\\components\\ThreadList.tsx:434-458; SlashCommandPopover.tsx:247; McpPanel.tsx:245-251; App.tsx:145; ChatView.tsx:922-923",
+        "impact": "Chrome looks chatty/inconsistent vs SVG StatusRail and ComposeDrawer",
+        "fix_hint": "Replace toolbar emoji with icons.tsx; tool status via statusColor + short text",
+        "prior_status": "open"
+      },
+      {
+        "id": "DES-05",
+        "severity": "medium",
+        "title": "Settings slideout sprawl in 320px panel",
+        "evidence": "SETTINGS_SECTION_IDS has 7 top-level sections but SettingsSlideout is a ~3.4k-line monolith embedding LLM, secrets, security, integrations, export, experimental Whisper/CU with residual raw hex (#B26B00, #e65100)",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\chrome-extension\\src\\sidepanel\\utils\\settings-sections.ts:7-16; chrome-extension\\src\\sidepanel\\components\\SettingsSlideout.tsx:108-820,3060,3390",
+        "impact": "Hard to find voice/security/CU controls; scroll fatigue and incomplete token migration",
+        "fix_hint": "Split experimental/voice/CU subviews; deepen progressive disclosure; migrate remaining hex to tokens",
+        "prior_status": "open"
+      },
+      {
+        "id": "DES-06",
+        "severity": "medium",
+        "title": "0.5.0 voice/meeting under-signposted on primary surface",
+        "evidence": "L0 chips only 装配; EmptyState chips 总结本页/装配/场景 (no 听写/会议). Meeting via /meeting, Packs zone, or settings intent. packs/meeting/board share IconSkills in CONTEXT_PANEL_TABS",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\chrome-extension\\src\\sidepanel\\composer\\meta-slash.ts:291-294; ChatView.tsx:1491-1496; PacksPanel.tsx:839-859; SettingsSlideout.tsx:404-406; ContextPanelHost.tsx:58-68",
+        "impact": "Shipped meeting/dictation easy to miss for new users of the 320px Side Panel",
+        "fix_hint": "Add meeting entry under 装配 or EmptyState; unique icons; first-run cue when mic enabled",
+        "prior_status": "new"
+      },
+      {
+        "id": "DES-07",
+        "severity": "low",
+        "title": "Hardcoded hex and ad-hoc radii outside token system",
+        "evidence": "ModeBadge borders #14532d/#bfdbfe/#e5e7eb; FleetStrip status #f59e0b/#60a5fa/#34d399 and many #fff/#e5e7eb fallbacks; designer radii 6/8/12 vs runtime radiusComposer 18 / radiusSheet 20",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\chrome-extension\\src\\sidepanel\\ui\\ModeBadge.tsx:22-36; components\\FleetStrip.tsx:12-14,297-393; ui\\tokens.ts:72-82; docs\\DESIGN.md:67-75",
+        "impact": "Visual inconsistency and harder future theming",
+        "fix_hint": "Tokenize mode borders and fleet status colors; update DESIGN radius scale for G1 heroes",
+        "prior_status": "open"
+      },
+      {
+        "id": "DES-08",
+        "severity": "low",
+        "title": "Type scale drift: composer uses 14px outside 11/12/13/15 rule",
+        "evidence": "DESIGN chrome scale 11/12/13/15 only; App composer textarea fontSize 14; ChatView markdown h2 font-size 14px",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\DESIGN.md:51; chrome-extension\\src\\sidepanel\\App.tsx:1722; components\\ChatView.tsx:1508-1509",
+        "impact": "Minor system inconsistency; content vs chrome scale ambiguous",
+        "fix_hint": "Allow 14 for content/input in DESIGN or clamp composer to 13",
+        "prior_status": "new"
+      },
+      {
+        "id": "DES-09",
+        "severity": "info",
+        "title": "L2 SafetyStrip dark island on light panel (K6 by design)",
+        "evidence": "Panel container light gradient tokens.bg→#eef0f6; SafetyStrip wrap dark linear-gradient #141820→#0f1115; DESIGN states dark only for L2 SafetyStrip/Cockpit",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\chrome-extension\\src\\sidepanel\\App.tsx:1686-1692; components\\SafetyStrip.tsx:247-250; docs\\DESIGN.md:36-37",
+        "impact": "Intentional risk signaling; abrupt band can feel harsh when FocusBand is stacked",
+        "fix_hint": "Keep rule; optional softer edge or stricter max-height when compact",
+        "prior_status": "open"
+      }
+    ],
+    "open_questions": [
+      "Is DESIGN.md intentionally frozen as UIUX v2 PR7, or should it track Gemini-breath tokens as SoT?",
+      "Should Panel and Cockpit converge on one mode chip language (计算机 vs L2)?",
+      "Is meeting considered Composition (装配) or a top-level Scene entry for IA?",
+      "Should L0 EmptyState promote 听写/会议 for 0.5.0 marketing of voice features?",
+      "Is full-panel dark mode still out of scope (K6), or planned post-0.5.0?"
+    ]
+  },
+  {
+    "dimension": "Product features — claimed vs delivered",
+    "score_0_to_10": 7.6,
+    "grade": "B",
+    "summary": "At product 0.5.0, the README/GOAL delivered surface largely matches code: L0/L1 chat+CDP, skills/knowledge, inbound MCP, Mission Pack/enterprise modules, Confirm Center, multi-agent P0+Board, Obsidian/Mermaid, dictation+/local STT/meeting workbench, tray/pairing, and daemon. Gaps are concentrated in partial L2 (Linux host stub, CU enable-via-config), Outbound MCP (usable opt-in but not default-on; GOAL still says Phase-0 skeleton while mcp.md documents a real bridge and Win/Linux L8 tray confirm gap), Path B packaging/e2e residual, NotebookLM DOM/login fragility, and secondary user-guide version labels lagging 0.5.0.",
+    "strengths": [
+      "Core Side Panel ↔ Companion ↔ CDP tool loop with multi-thread chat is implemented (message-router + thread-manager + browser bridge + catalog).",
+      "Composition primitives shipped: skills/knowledge UI, inbound MCP panel, Mission Pack engine + builtin packs, enterprise workspace/shell/netsec tools.",
+      "Confirm Center / Cockpit path exists for L1/L2 gates (security-confirmation + MinimalConfirm/SafetyStrip + CockpitApp).",
+      "Autonomy P0 shipped: spawn_worker/orchestrator, tab lease tools, board_* + BoardPanel/FleetStrip.",
+      "0.5.0 input/product lines present: voice.stt.*, dictation hold, meeting handlers/MeetingPanel, meeting-minutes pack.",
+      "Product extras shipped: Obsidian export_obsidian path, CSP-safe Mermaid renderer, NotebookLM importer panel.",
+      "Ops surface shipped: daemon.ts, tray adapters, pairing secret/.paired helpers."
+    ],
+    "findings": [
+      {
+        "id": "FEAT-001",
+        "severity": "medium",
+        "title": "Outbound MCP dual narrative (Phase-0 skeleton vs documented real bridge)",
+        "evidence": "GOAL G21 still labels Outbound MCP as Phase 0 non-default ship and says companion/src/outbound-mcp is a gate skeleton with bridge/L8/L9/grant staged; docs/mcp.md §Outbound documents cmspark-agent mcp-outbound true bridge POST /outbound-mcp/v1/invoke, and index.ts has mcp-outbound CLI case wiring runOutboundMcpStdioServer.",
+        "file": "docs/GOAL.md:271-276; docs/mcp.md:345-349; companion/src/index.ts (mcp-outbound); companion/src/outbound-mcp/index.ts",
+        "impact": "Users and auditors cannot tell whether Outbound MCP is GA product, opt-in beta, or design-only—risk of overclaim in marketing and under-use of a working export path.",
+        "fix_hint": "Single status banner in GOAL/README/mcp.md: 'opt-in shipped / not default-on / bake-off residual'; rewrite G21 skeleton wording to match code.",
+        "prior_status": "open"
+      },
+      {
+        "id": "FEAT-002",
+        "severity": "medium",
+        "title": "Computer Use global enable not available in Side Panel UI",
+        "evidence": "computer-use-user-guide §3 states coordinateEnabled must be set in config.json; computer.set_enabled RPC exists but Side Panel/Cockpit/tray have no entry; Apps panel coordinate row is read-only mirror of computer.get_state.",
+        "file": "docs/computer-use-user-guide.md:42-45",
+        "impact": "Claimed L2 CU is harder to enable than other shipped panels; increases misconfiguration and 'feature missing' support load despite code present.",
+        "fix_hint": "Wire computer.set_enabled (with existing L2/biometric gate) into Settings or AppsPanel toggle; keep fail-closed default.",
+        "prior_status": "open"
+      },
+      {
+        "id": "FEAT-003",
+        "severity": "medium",
+        "title": "Linux Host Use not implemented",
+        "evidence": "host-use/linux/index.ts hostRead throws NotImplementedOnPlatform; RUNBOOK-phase0.md states stub until Phase 1; GOAL/README claim Host on macOS/Windows with Linux partial.",
+        "file": "companion/src/host-use/linux/index.ts:1-6; companion/src/host-use/linux/RUNBOOK-phase0.md:9-12",
+        "impact": "Any 'cross-platform Host/Apps' reading that omits the Linux stub overclaims; Linux users get hard errors for host_read.",
+        "fix_hint": "Keep explicit platform matrix in README L2 row; or implement AT-SPI path after Phase 0 evidence.",
+        "prior_status": "open"
+      },
+      {
+        "id": "FEAT-004",
+        "severity": "medium",
+        "title": "Outbound MCP L8 confirm incomplete on Windows/Linux tray",
+        "evidence": "mcp.md documents Outbound L2/URL-gate fan-out to Side Panel; macOS Swift tray can show native confirm; Windows/Linux have no native tray confirm (Side Panel + notification only) → OUTBOUND_CONFIRM_REQUIRED if panel unattended.",
+        "file": "docs/mcp.md:349",
+        "impact": "IDE-driven outbound workflows on Win/Linux fail closed without Side Panel focus—undercuts 'programming Agent L1 export' product story outside macOS.",
+        "fix_hint": "Ship tray/native or always-on-top confirm for Win/Linux outbound path before calling outbound product-complete.",
+        "prior_status": "open"
+      },
+      {
+        "id": "FEAT-005",
+        "severity": "medium",
+        "title": "Local STT Path B residual packaging / non-default",
+        "evidence": "ADR-023 status: M0+M1 code, not default-on local; human e2e and self-contained binary still residual. Code path voice.stt.* is routed in message-router; GOAL G22 claims 0.5.0 delivered including M2 progressive hypothesis.",
+        "file": "docs/adr/023-voice-local-stt-path-b.md:3; companion/src/message-router.ts:1920-1924; docs/GOAL.md:278-286",
+        "impact": "Marketing '本机 Whisper 已交付' is true for protocol/UI but weak on install/binary self-containment; quality/ops residual remains.",
+        "fix_hint": "Document install matrix + pin bundled whisper path completion criteria next to G22 shipped claim.",
+        "prior_status": "open"
+      },
+      {
+        "id": "FEAT-006",
+        "severity": "low",
+        "title": "Secondary user guides product-version labels lag 0.5.0",
+        "evidence": "companion package.json version 0.5.0; notebooklm-user-guide and multi-agent-user-guide headers still 0.3.0; computer-use-user-guide 0.4.0; meeting-and-dictation guide correctly 0.5.0.",
+        "file": "companion/package.json:3; docs/notebooklm-user-guide.md:4; docs/multi-agent-user-guide.md:4; docs/computer-use-user-guide.md:4; docs/meeting-and-dictation-user-guide.md:3",
+        "impact": "Docs consumers may think features are frozen at older releases or ignore 0.5.0 voice/meeting cut.",
+        "fix_hint": "Bump guide headers to 0.5.0 with changelog note; automate version badge from package.json.",
+        "prior_status": "open"
+      },
+      {
+        "id": "FEAT-007",
+        "severity": "low",
+        "title": "NotebookLM import reliability depends on live DOM/login",
+        "evidence": "User guide: online import is extension DOM automation on logged-in NotebookLM; failures include not logged in, UI redesign/selector drift, limits, timeouts.",
+        "file": "docs/notebooklm-user-guide.md:25-26,72",
+        "impact": "Feature is shipped as UI/code but operationally partial vs Obsidian/Mermaid local paths.",
+        "fix_hint": "Keep 'partial reliability' explicit in README L0 product row; selector smoke tests against current NotebookLM.",
+        "prior_status": "open"
+      },
+      {
+        "id": "FEAT-008",
+        "severity": "low",
+        "title": "Dictation+ hold hotkey requires Side Panel focus",
+        "evidence": "meeting-and-dictation guide: hold requires Companion connected + Side Panel open and keyboard focus; OS-level global hotkey deferred.",
+        "file": "docs/meeting-and-dictation-user-guide.md:49-54",
+        "impact": "Hold UX under-delivers vs system dictation apps; not an overclaim if docs followed, but easy to oversell as 'push-to-talk'.",
+        "fix_hint": "Keep non-goal explicit in README voice bullet; optional future native global chord with new ADR.",
+        "prior_status": "open"
+      },
+      {
+        "id": "FEAT-009",
+        "severity": "low",
+        "title": "GOAL G1 still claims fixed 26 tools while catalog is multi-surface",
+        "evidence": "GOAL G1: '全部 26 种工具操作（22 浏览器 + 4 Companion）'; tool-definitions-catalog.json also defines shell_exec, netsec_port_scan, spawn_worker, board_*, host_*, workspace_*, etc.",
+        "file": "docs/GOAL.md:107-115; companion/src/bridge/tool-definitions-catalog.json (e.g. shell_exec ~711, spawn_worker ~769, host_computer ~1171)",
+        "impact": "Stale under-claim confuses capability model (README already says do not count fixed N tools).",
+        "fix_hint": "Rewrite G1 as baseline browser set + pointer to dynamic catalog / ADR-020 axes.",
+        "prior_status": "open"
+      },
+      {
+        "id": "FEAT-010",
+        "severity": "info",
+        "title": "Meeting system-audio mix and identity diarize correctly excluded",
+        "evidence": "Guide non-goals: system/meeting-app mix not productized; Mtg3 is experimental anonymous 发言人N not identity recognition; GOAL G22 non-goals align.",
+        "file": "docs/meeting-and-dictation-user-guide.md:17,100-106; docs/GOAL.md:290",
+        "impact": "No overclaim if marketing stays within guide; residual only if sales language promises Zoom system audio.",
+        "fix_hint": "Retain non-goals in any 0.5.0 release notes; do not list system mix as shipped.",
+        "prior_status": "open"
+      }
+    ],
+    "open_questions": [
+      "Has P0d Outbound bake-off T1 (logged-in/SSO irreplaceability vs Playwright) been executed and recorded for this HEAD?",
+      "Is Windows packaging of whisper.cpp binary considered done for 0.5.0, or still the ADR-023 residual?",
+      "Is Computer Use coordinateEnabled UI wiring intentionally deferred past 0.5.0 stable cut?",
+      "Should README L2 row split Computer Use / Host / Apps by platform matrix (darwin|win|linux) to prevent cross-platform overclaim?",
+      "Is Qwen3-VL experimental layer meant to appear in the main README delivered table, or only docs/README experimental nav?"
+    ]
+  },
+  {
+    "dimension": "Security residual recheck (known Highs + 0.5.0 surfaces)",
+    "score_0_to_10": 6,
+    "grade": "C+",
+    "summary": "Companion 0.5.0 hardens L2 origin binding, config.updated secret masking, history.db redaction, and voice/meeting path/origin fences, but most prior High residuals remain open or only partial: thread path I/O still unsanitized outside create, mcp.add stdio has no L2, thread JSON still stores full tool tape, chat.create supersede has no generation CAS and finally can clobber the successor, pendingToolCalls still global-kill on any peer close without origin bind, macOS cuPidForWindow still returns the first window’s PID, and mcp.list/servers.updated still broadcast raw MCP env/headers.",
+    "strengths": [
+      "Unauthenticated WS messages are terminated after handshake gate (server.ts ~6751–6758)",
+      "redactConfigForBroadcast masks llm/vision api_key and mcp.servers env/headers on config.updated",
+      "SecurityConfirmationManager.rejectAll(ws) is originWs-scoped; many L2 call sites pass { originWs: ws }",
+      "HistoryStore.redactForStorage covers cookies, evaluate/osascript, host_computer, MCP secret-shaped keys",
+      "Voice STT: sanitizeSessionId + assertWithin, https-only Whisper pins/hash, chrome-extension origin fence",
+      "Meeting store: isSafeMeetingId + resolveContained before all disk ops; default audio_retained false"
+    ],
+    "findings": [
+      {
+        "id": "SEC-A",
+        "severity": "high",
+        "title": "threadFilePath joins unsanitized threadId on all readers/writers",
+        "prior_status": "partial",
+        "evidence": "sanitizeId only in create() (thread-manager.ts:357–367, 400). threadFilePath is path.join(getConfigDir(), \"threads\", `${threadId}.json`) with no re-sanitize/realpath containment (334–336). getMessages/addMessage/updateMessage/deleteMessagesFrom/delete use that path raw (408, 455–456, 758–760, 775–795, 808–814, 839–847). file.upload error path calls addMessage(thread_id, …) with client thread_id (message-router.ts:723–730).",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\threads\\thread-manager.ts",
+        "impact": "Authenticated peer can pass thread_id with path segments (e.g. ../) to read/write/delete outside ~/.cmspark-agent/threads via path.join normalization — local file integrity/confidentiality break.",
+        "fix_hint": "Centralize assertSafeThreadId (same charset as sanitizeId) + resolveContained under threads/; reject before any fs op; never call addMessage/getMessages with unsanitized client ids."
+      },
+      {
+        "id": "SEC-B",
+        "severity": "high",
+        "title": "mcp.add stdio still has no L2 / forceConfirm gate",
+        "prior_status": "open",
+        "evidence": "mcp.add validates then replaceMcpServers with no requestConfirmation (message-router.ts:1791–1810). validateMcpServerConfig only shape-checks stdio command/args/env (3415–3433). Config apply spawns via MCP manager/transport; auth is required (server.ts:6751–6753 comments mcp.add) but no interactive L2.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\message-router.ts",
+        "impact": "Any authenticated WS peer can register and spawn arbitrary local processes (stdio MCP) without a critical-class confirmation — post-auth local RCE equivalent.",
+        "fix_hint": "Require critical-class L2 (originWs-bound) before persisting/spawning new or changed stdio servers; optionally restrict command basenames or require settings-origin only."
+      },
+      {
+        "id": "SEC-C",
+        "severity": "high",
+        "title": "Thread JSON persists full unredacted tool results and params",
+        "prior_status": "open",
+        "evidence": "createToolResultMessage stores content: JSON.stringify(result) and tool_calls[{params, result}] (adapter.ts:137–148). chatCreate addMessage at 1131/1268 persists that shape. history/store.ts redacts for history.db only; no equivalent redaction on thread-manager atomicWriteJSON of messages.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\llm\\adapter.ts",
+        "impact": "Secrets from get_cookies, shell_exec, evaluate, MCP file reads, etc. remain in ~/.cmspark-agent/threads/*.json (exports, backups, shared machines) even when history.db is redacted.",
+        "fix_hint": "Apply the same redactForStorage / key-based redaction before addMessage for sensitive tools, or store a redacted tape for disk and keep ephemeral full results only in-memory for the current LLM turn."
+      },
+      {
+        "id": "SEC-D",
+        "severity": "high",
+        "title": "chat.create supersede has no generation CAS; finally clears successor state",
+        "prior_status": "open",
+        "evidence": "Supersede aborts and replaces AbortController (message-router.ts:574–596) but finally always abortControllers.delete(rest.thread_id) and releaseMultiAgentLlmLoop(rest.thread_id) (707–710). Multi-agent gate is re-entrant per threadId (llm-loop-gate.ts:23–25, 40–44), so superseded request’s finally drops the holder while successor still runs. No generation/token CAS around addMessage or stream emit.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\message-router.ts",
+        "impact": "Concurrent chat.create races can interleave/rollback wrong messages, drop abort control for the live run, and under-count multi-agent LLM slots — integrity/availability of agent runs.",
+        "fix_hint": "Monotonic per-thread generation; finally deletes controller only if map.get(id)===thisController; release loop gate only for the generation that acquired; gate all disk writes with gen check."
+      },
+      {
+        "id": "SEC-E",
+        "severity": "high",
+        "title": "pendingToolCalls still global on peer close; tool.result unbound to origin socket",
+        "prior_status": "partial",
+        "evidence": "pendingToolCalls type has resolve/reject/timer/thread_id/tabId/tool_name only — no originWs (server.ts:283–291). applyConnectionCloseGracePeriod iterates ALL pending (3209–3218). ws.on(\"close\") always calls it (7042–7057) while securityConfirmations.rejectAll(\"disconnect\", ws) is per-socket (7058; security-confirmation.ts:509–544). handleToolResult resolves by tool_call_id only (2857–2868).",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\server.ts",
+        "impact": "Any peer disconnect aborts in-flight tools for other peers; any authenticated peer can spoof tool.result for another session’s tool_call_id — cross-session tool integrity failure.",
+        "fix_hint": "Store originWs (or dispatch peer id) on pending entries; grace-reject only matching socket; accept tool.result only from that peer."
+      },
+      {
+        "id": "SEC-F",
+        "severity": "high",
+        "title": "macOS cuPidForWindow still returns first listed window’s PID",
+        "prior_status": "open",
+        "evidence": "host.swift:797–801 and host-skylight.swift:646–650: CGWindowListCopyWindowInfo([.optionAll], windowId) then windows.first owner PID. cuWindowInfoDict correctly matches kCGWindowNumber (host.swift:779–795) but cuPidForWindow does not use it. Used for activate/inject (e.g. host.swift:843+).",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\host-use\\darwin\\host.swift",
+        "impact": "Computer Use may activate/inject into the wrong process (often frontmost unrelated app), causing cross-app input and safety-gate bypass of intended window binding.",
+        "fix_hint": "Implement cuPidForWindow via cuWindowInfoDict(windowId)?[kCGWindowOwnerPID]; keep host.swift and host-skylight.swift lockstep; add unit/fixture tests for multi-window lists."
+      },
+      {
+        "id": "SEC-G",
+        "severity": "medium",
+        "title": "mcp.list / mcp.servers.updated still expose raw MCP env and headers",
+        "prior_status": "partial",
+        "evidence": "getMeta returns config: { ...this._config } (mcp/client.ts:69–82). McpServerMeta documents sensitive env/headers intentionally included (mcp/types.ts:109–112). listServers includes full config for connected and disconnected servers (manager.ts:369–396). message-router mcp.list/add/update return listServers(); server broadcasts mcp.servers.updated with metas (6448–6456). Only config.updated uses redactConfigForBroadcast (6528–6534).",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\mcp\\client.ts",
+        "impact": "API tokens in MCP env/headers fan out to every authenticated client on list/status — residual secret broadcast after config.updated was fixed.",
+        "fix_hint": "Redact env/headers values to *** in listServers/getMeta for wire; keep a privileged settings-only unmask if edit form needs names only (keys without values)."
+      },
+      {
+        "id": "SEC-H",
+        "severity": "info",
+        "title": "Voice/meeting STT trust surface largely hardened (no High residual on recheck)",
+        "prior_status": "fixed",
+        "evidence": "sanitizeSessionId rejects .. / seps (stt-tmp.ts:22–33); writeSessionFile basename + assertWithin (72–81). Meeting isSafeMeetingId + resolveContained (meeting-store.ts:76–97, 151–153, 175–177). Whisper download https-only + sha256 (whisper-download.ts:1–10, 392–393). voice.stt.* requires chrome-extension origin (stt-handlers.ts:126–142).",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\voice\\stt-tmp.ts",
+        "impact": "No confirmed High-class path escape or unauthenticated model/audio abuse in current code; residual risk is product privacy (audio files under DATA_DIR) not traversal RCE.",
+        "fix_hint": "Keep origin fence + id containment as regression tests; document audio retention UX; no urgent code change for prior High class."
+      }
+    ],
+    "open_questions": [
+      "Is shipping full MCP env in mcp.list intentional product policy for single-user local UX, or should wire format match config.updated redaction?",
+      "Should mcp.add stdio require L2 always, or only when source is not the settings UI / chrome-extension origin?",
+      "Are multi-client authenticated peers (extension + tray + settings) in-scope threat model for tool.result spoofing and secret fanout?",
+      "Does production macOS CU ship host.swift, host-skylight.swift, or both binaries — is the cuPidForWindow fix needed in both always?",
+      "Should thread tool-tape redaction preserve enough structure for regenerate/export UX, or is summary-only on disk acceptable?"
+    ]
+  },
+  {
+    "dimension": "Testing, CI, and Release",
+    "score_0_to_10": 6.7,
+    "grade": "B-",
+    "summary": "CMspark 0.5.0 has a large honest test corpus (~186 companion + ~66 extension *.test.ts) hard-gated on Ubuntu CI with production npm audit and packaging gate self-tests. Residual gaps: startServer never boots in tests (WS auth is a replica), platform-gated CU/host paths skip on Linux CI, evaluate-token remains a weak/slow integration, release.yml packages three platforms without re-running tests/audit, and distribution still lacks SBOM/checksums plus Developer ID/Authenticode (ad-hoc codesign only). Version lock-step is correct at HEAD (both 0.5.0) but package.sh itself does not enforce it; docs/TESTING.md still describes 0.3.0/120+/~25.",
+    "strengths": [
+      "Companion ~186 and extension 66 node:test files covering security, WS, MCP, packs, board, CU units, voice, and Obsidian [inspected list_dir]",
+      "ci.yml hard-gates companion/extension npm test and prod npm audit (extension full-tree audit is the only continue-on-error soft-fail)",
+      "package.sh verifies Node archives against nodejs.org SHASUMS256.txt; scripts/tests/test-verify-node.sh + test-package-gates.sh run in CI",
+      "Fail-closed packaging for cmspark-host/tray/scpt, host-scripts-win, qwen-vl-worker.py with release.yml unzip asserts",
+      "companion and chrome-extension package.json both 0.5.0; test-package-gates + build-windows-exe.ps1 enforce lock-step",
+      "Multi-platform release matrix (macos-arm64/linux-x64/windows-x64) with fail-fast:false and artifact upload"
+    ],
+    "findings": [
+      {
+        "id": "TEST-1",
+        "severity": "medium",
+        "title": "startServer() never called; production WS auth gate only replica-tested",
+        "evidence": "ws-auth-handshake.test.ts:7-12 states production gate lives in startServer connection handler and NO test calls it; startAuthedServer reimplements challenge/handshake. server.ts:6709-6710 comment: keep in sync with replica because no test calls startServer(). Grep of companion/tests shows zero startServer() call sites; only extracted helpers (createToolExecutor, isAllowedWsOrigin, handleHealthzRequest, etc.) are imported.",
+        "file": "companion/tests/integration/ws-auth-handshake.test.ts:7-12; companion/src/server.ts:6709-6711; companion/src/server.ts:6311",
+        "impact": "Drift in startServer wiring (markPaired, computer.state push, validateWsMessage order, pre-auth harvest, ping) can ship while replica tests stay green — highest remaining trust-root coverage hole.",
+        "fix_hint": "Add one ephemeral-port integration that boots real startServer (temp DATA_DIR + free port), exercise auth happy/fail paths against the production handler, then retire the replica over time.",
+        "prior_status": "partial"
+      },
+      {
+        "id": "TEST-3",
+        "severity": "medium",
+        "title": "host_computer task-mutex integration fully skipped on Linux CI",
+        "evidence": "computer-task-mutex.test.ts:41 WIN=process.platform===\"win32\"; tests at :196,:210,:229 use { skip: !WIN }. Header :17-19: all tests win32-only. ci.yml:10-11 runs-on ubuntu-latest; :52-54 companion npm test only. Related: computer-uia-watch win32 smoke skip; computer-darwin-estop-owner t.skip when not darwin.",
+        "file": "companion/tests/integration/computer-task-mutex.test.ts:41,196-229; .github/workflows/ci.yml:10-11,52-54",
+        "impact": "COMPUTER_TASK_BUSY pre-dialog and check-and-set race regressions can land without CI red; only Windows developers exercise admission properties. Darwin CU integrity paths also never run in CI.",
+        "fix_hint": "Factor platform-independent registry busy/mutex pure logic tests for all OS; keep real-ps1/Swift smoke as platform-only. Optionally add windows-latest job for CU integration subset.",
+        "prior_status": "open"
+      },
+      {
+        "id": "TEST-2",
+        "severity": "medium",
+        "title": "evaluate-token integration uses mock WS, weak assertion, 45s confirmation risk",
+        "evidence": "evaluate-token.test.ts:3-12 imports createToolExecutor with no DATA_DIR setup; mockWs readyState:1 send:noop. :15-34 only assert.equal(result.success,false); comments admit 45s confirmation gate timeout. Contrast security-gates harness with isolated DATA_DIR + real WS.",
+        "file": "companion/tests/integration/evaluate-token.test.ts:3-38",
+        "impact": "CI tax and flaky environment coupling (host auto_approve_dangerous can divert path); assertion cannot pin strip-vs-invalid-token contract beyond \"did not succeed\".",
+        "fix_hint": "Reuse _security-gates-setup; assert confirmation.request; inject short timeoutMs; never rely on default 45s.",
+        "prior_status": "open"
+      },
+      {
+        "id": "REL-3",
+        "severity": "medium",
+        "title": "release.yml packages artifacts without re-running tests or npm audit",
+        "evidence": "release.yml package job: checkout, Node 22, npm ci companion+extension, bash scripts/package.sh, content asserts, upload-artifact. No npm test, no npm audit, no needs: on a CI workflow. Tag push can release a commit that never passed CI (force-push/tag-only) or that broke after last green main CI.",
+        "file": ".github/workflows/release.yml:18-106",
+        "impact": "Broken tests or new high prod advisories can ship in a GitHub Release zip if packaging succeeds.",
+        "fix_hint": "Add release needs: a test/audit job (or re-run companion+extension test + audit --omit=dev) before package; optionally require green CI status on the tagged SHA.",
+        "prior_status": "open"
+      },
+      {
+        "id": "REL-1",
+        "severity": "medium",
+        "title": "Ship artifacts lack Developer ID / notarization / Authenticode (ad-hoc only)",
+        "evidence": "create-dmg.sh:107-111 codesign --force --deep --sign - (ad-hoc). release.yml body :165-169 documents no Developer ID/notarize/Authenticode. build-windows-exe.ps1:174-183 only signtool remove, never sign.",
+        "file": "scripts/create-dmg.sh:100-111; .github/workflows/release.yml:165-169; scripts/build-windows-exe.ps1:174-183",
+        "impact": "Gatekeeper/SmartScreen friction; ad-hoc reinstall can churn TCC CDHash; cannot claim distribution-grade binary provenance.",
+        "fix_hint": "Procure Apple Developer ID + notarytool in release; Windows Authenticode on SEA/NSIS path; keep ad-hoc only for local TCC smoke.",
+        "prior_status": "partial"
+      },
+      {
+        "id": "REL-2",
+        "severity": "medium",
+        "title": "No SBOM or release checksums attached to GitHub Releases",
+        "evidence": "Grep of .github/workflows finds no SBOM/CycloneDX/spdx/SHA256SUMS/provenance/attestation. release.yml Create release only uploads artifacts/**/*.zip. Prior audit H8/P1 and fanout action plan still list SBOM+SHA256SUMS as open.",
+        "file": ".github/workflows/release.yml:123-128; docs/audit/deep-diagnosis-fanout-2026-08-02.md:108,228",
+        "impact": "Consumers cannot verify zip integrity or inspect shipped dependency inventory independent of GitHub UI; supply-chain review harder post-download.",
+        "fix_hint": "Emit SHA256SUMS for each platform zip; generate cyclonedx-npm (or equivalent) for companion production graph and attach to release.",
+        "prior_status": "open"
+      },
+      {
+        "id": "REL-5",
+        "severity": "low",
+        "title": "CI tests on Node 20 while release/package ship Node 22",
+        "evidence": "ci.yml:19 node-version '20'. release.yml:37-40 node-version '22'. package.sh:16 NODE_VERSION=v22.16.0 and esbuild --target=node22. CONTRIBUTING/TESTING claim Node ≥ 20.",
+        "file": ".github/workflows/ci.yml:19; .github/workflows/release.yml:37-40; scripts/package.sh:16,146",
+        "impact": "Node-version-specific regressions (test runner, fs, native addons) may only appear in packaged runtime, not CI.",
+        "fix_hint": "Align CI to Node 22 (or matrix 20+22) to match shipped runtime.",
+        "prior_status": "open"
+      },
+      {
+        "id": "REL-4",
+        "severity": "low",
+        "title": "package.sh documents but does not enforce extension/companion version lock-step",
+        "evidence": "package.sh:3-5 comment only; VERSION from companion/package.json:43. No ExtVer compare in package.sh. Enforcement lives in build-windows-exe.ps1:54-67 and test-package-gates.sh:166-169 (CI static). At HEAD both versions are 0.5.0.",
+        "file": "scripts/package.sh:3-5,43-46; scripts/build-windows-exe.ps1:54-67; scripts/tests/test-package-gates.sh:166-169",
+        "impact": "Primary zip packaging path can ship mismatched Side Panel vs companion product versions if package-gates are skipped or only Windows EXE path is gated.",
+        "fix_hint": "Fail package.sh when chrome-extension/package.json version !== companion (with optional CMSPARK_ALLOW_VERSION_DRIFT).",
+        "prior_status": "open"
+      },
+      {
+        "id": "TEST-4",
+        "severity": "low",
+        "title": "docs/TESTING.md scale and product version lag the tree",
+        "evidence": "TESTING.md:3 aligns to product 0.3.0; table :9-10 claims companion 120+ and extension ~25. Actual tree: companion/tests ~186 *.test.ts; chrome-extension/tests 66 *.test.ts. Doc footer :163 Phase 1 2026-07-28 rewrite for 0.3.0.",
+        "file": "docs/TESTING.md:1-10,163",
+        "impact": "Contributors and auditors under-estimate coverage and miss new domains (voice, outbound-mcp, meeting) when planning regressions.",
+        "fix_hint": "Refresh counts to ~186 / ~66 and product line to 0.5.0; regenerate domain map from current filenames.",
+        "prior_status": "open"
+      }
+    ],
+    "open_questions": [
+      "Will 0.5.x release process procure Developer ID + Authenticode, or remain ad-hoc indefinitely?",
+      "Should tag releases hard-require a green CI SHA and re-run npm test/audit in release.yml?",
+      "Is booting real startServer on ephemeral port accepted as a CI integration, or must the auth gate stay extracted first?",
+      "Should Windows/macOS CI jobs run platform-only CU/host suites, or only pure-logic extractions on Ubuntu?",
+      "Is SBOM generation (cyclonedx-npm) planned for companion production deps only or full monorepo?"
+    ]
+  },
+  {
+    "dimension": "Maintainability and code health",
+    "score_0_to_10": 6.1,
+    "grade": "C+",
+    "summary": "CMspark 0.5.0 has modular subdomains and a large test suite, and TinyClick is largely gone from source, but maintainability remains C+ because companion routing/security still concentrates in two multi-kLOC god modules (server.ts ~7.1k, message-router.ts ~3.4k+), experimental HUD/voice spikes and a large scripts/spike tree remain in-tree, CMSPARK_DATA_DIR fixture isolation is tribal per-file knowledge, and originWs binding is still path-dependent rather than a single disciplined helper.",
+    "strengths": [
+      "Subdomain folders (computer/, mcp/, packs/, voice/, host-use/) exist beyond pure monolith layout",
+      "Large regression suite (~195 companion + ~70 extension tests) with intentional isolation setup modules for high-risk paths",
+      "Extension pure-function extraction + co-located unit tests for sanitizer/voice/settings logic",
+      "TinyClick ONNX product path largely removed from companion/src/computer and packaging gates",
+      "Companion and extension package versions aligned at 0.5.0",
+      "SecurityConfirmationManager documents and enforces originWs when callers pass it",
+      "Supply-chain posture for extension prod deps documented (docs/supply-chain.md)"
+    ],
+    "findings": [
+      {
+        "id": "MAINT-1",
+        "severity": "high",
+        "title": "server.ts is a ~7k-line god module for WS, tools, and security",
+        "evidence": "companion/src/server.ts spans tool execution, L2/MCP/navigate gates, companion tools switch (~3263+), WS auth/handlers including history.export/log.event/hud.spike/tab.navigated (~6711–6979), and graceful shutdown (~7111–7159). Any security or lifecycle change has extreme review blast radius.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\server.ts",
+        "impact": "High merge conflict rate, incomplete reviews, and accidental coupling of unrelated capabilities (HUD spike next to tab.navigated security path).",
+        "fix_hint": "Extract tool-executor, confirmation-gate helper, and WS control-plane handlers into separate modules; keep server.ts as composition root only.",
+        "prior_status": "open"
+      },
+      {
+        "id": "MAINT-2",
+        "severity": "high",
+        "title": "message-router.ts mega-switch plus circular dependency on server",
+        "evidence": "companion/src/message-router.ts is a multi-thousand-line switch (config/chat/thread/mcp/apps/computer/voice/packs/… cases from ~204 through ~3300+). Dynamic import('./server') for abort/fleet/tab release at ~1044–1052 and ~2429 couples router ↔ server.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\message-router.ts",
+        "impact": "Hard to navigate, hard to unit-test message families in isolation, risk of circular-import footguns and implicit shared process state.",
+        "fix_hint": "Split handlers by domain (config-handlers, thread-handlers, voice-handlers) registered into a table; inject abort/pending deps instead of importing server.",
+        "prior_status": "open"
+      },
+      {
+        "id": "MAINT-3",
+        "severity": "medium",
+        "title": "originWs binding remains inconsistent across L2 request sites",
+        "evidence": "security-confirmation.ts:131-139 makes originWs optional. server.ts:1944-1949 binds originWs only when winL2NonceChallenge||hostComputerGated (evaluate default unbound). analyze_image_fetch request at 2571-2580 omits options. MCP paths ~4889/~5224 and sendConfirmation ~2653 do bind. HUD spike uses respond() at 6962.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\server.ts",
+        "impact": "Maintainers must rediscover multi-peer rules per call site; regressions reappear when new confirms copy the wrong template.",
+        "fix_hint": "Introduce requestL2(ws, details, opts) defaulting originWs=ws; document outbound fan-out and tray respond() as named exceptions with lint/grep gates.",
+        "prior_status": "partial"
+      },
+      {
+        "id": "MAINT-4",
+        "severity": "medium",
+        "title": "Experimental spikes still live in product source and repo tree",
+        "evidence": "HUD: companion/src/hud/spike.ts + server.ts hud.spike.* ~6908-6972 + menu-bar-agent CMSPARK_HUD_SPIKE wiring. Voice: chrome-extension/src/tabs/voice-spike.tsx (line 12: safe to remove after M1) and voice-pathb-spike.tsx. scripts/spike/ still holds ~2112 files including node_modules and ONNX SEA artifacts.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\hud\\spike.ts",
+        "impact": "Inflates security surface, binary/repo size, and cognitive load; env-gated code still ships and must be reviewed forever.",
+        "fix_hint": "Delete or quarantine spikes under scripts/dev-only with no production WS types; strip voice spike tabs from plasmo build entries when product path is shipped.",
+        "prior_status": "open"
+      },
+      {
+        "id": "MAINT-5",
+        "severity": "medium",
+        "title": "TinyClick remnants after source cleanup (dist + docs + comments)",
+        "evidence": "companion/src/computer has no tinyclick-*.ts (Qwen-VL replaces). But companion/dist/tinyclick-worker.js exists; dist/computer/model-manifest.* still builds tinyclick-${variant} paths. docs/TESTING.md:72 still documents TinyClick tokenizer/runtime tests; companion/tests has zero tinyclick matches.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\dist\\tinyclick-worker.js",
+        "impact": "False confidence that legacy model path still exists; stale test map misleads contributors; dirty dist confuses packaging audits.",
+        "fix_hint": "Clean rebuild/drop tinyclick dist artifacts; update TESTING.md Computer Use section to Qwen3-VL-only; grep-gate residual tinyclick product paths in CI.",
+        "prior_status": "partial"
+      },
+      {
+        "id": "MAINT-6",
+        "severity": "medium",
+        "title": "CMSPARK_DATA_DIR fixture isolation is fragile and non-uniform",
+        "evidence": "config.ts:19 freezes DATA_DIR at module load. Isolation relies on first-import setup files (e.g. tests/integration/_security-gates-setup.ts:1-24, tests/_config-router-setup.ts) or top-of-file env pins (meeting-*.test.ts). Multiple patterns coexist; dual-review notes document tsx hoisting polluting real ~/.cmspark-agent.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\tests\\integration\\_security-gates-setup.ts",
+        "impact": "Flaky/false-green security tests on developer machines; real user config/history can be touched by misordered imports.",
+        "fix_hint": "Add a single node --import preload or global test setup that always sets CMSPARK_DATA_DIR; ban static server imports without setup in a lint rule.",
+        "prior_status": "open"
+      },
+      {
+        "id": "MAINT-7",
+        "severity": "medium",
+        "title": "Companion test script depends on Unix find in shell expansion",
+        "evidence": "companion/package.json scripts.test uses: node --test $(find .test-dist/tests -name '*.test.js' -not -name '_*' -not -name 'settings-web.test.js'). Native Windows PowerShell/cmd lacks find semantics used here.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\package.json",
+        "impact": "Developers on Windows (primary package target) cannot run the official test script without Git Bash/WSL; undermines local verification.",
+        "fix_hint": "Replace with a small node script that globs tests cross-platform (or use node --test with recursive directory args).",
+        "prior_status": "new"
+      },
+      {
+        "id": "MAINT-8",
+        "severity": "low",
+        "title": "engines missing; TypeScript major and Node target drift",
+        "evidence": "No engines field in companion/package.json, chrome-extension/package.json, or root package.json. CONTRIBUTING/README claim Node ≥20. companion bundle:exe targets node22. Root package.json depends on typescript ^6.0.3 while companion/extension pin typescript ^5.4.5.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\package.json",
+        "impact": "Ambiguous runtime baseline; accidental root tooling may confuse editors/CI; harder onboarding.",
+        "fix_hint": "Add engines.node to both packages; align root typescript with workspaces or remove root deps; document SEA node major explicitly.",
+        "prior_status": "open"
+      },
+      {
+        "id": "MAINT-9",
+        "severity": "low",
+        "title": "Extension UI still concentrates routing in App.tsx and useWebSocket",
+        "evidence": "App.tsx ~1894 lines root shell; useWebSocket.ts is a large inbound message switch (cases through ~1580+). Some pure logic extracted to tests/, but message handling remains centralized.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\chrome-extension\\src\\sidepanel\\hooks\\useWebSocket.ts",
+        "impact": "UI features continue to bloat a single hook; harder incremental testing of message families.",
+        "fix_hint": "Continue extracting message-family reducers/handlers (pattern already used for voice/settings) and keep useWebSocket as a thin dispatcher.",
+        "prior_status": "open"
+      },
+      {
+        "id": "MAINT-10",
+        "severity": "info",
+        "title": "Process-doc and spike volume dominates repository surface area",
+        "evidence": "docs/audit/reviews lists hundreds of dual-review patches/md/json (directory listing notes 781+ files under reviews). scripts/spike vendors full node_modules+onnx trees. .gitignore ignores companion/dist but not scripts/spike/node_modules contents if committed.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\audit\\reviews",
+        "impact": "Search/clone noise; AI and humans spend tokens on process artifacts instead of product code.",
+        "fix_hint": "Keep reviews under archive policy; exclude spike node_modules/binaries from main tree; prefer links to LFS or external artifacts.",
+        "prior_status": "open"
+      }
+    ],
+    "open_questions": [
+      "Delete HUD spike from production WS after P3a-full, or keep env-gated indefinitely?",
+      "Are tinyclick-worker.js / model-manifest dist files local-only cruft or still produced by any build path?",
+      "Preferred first extraction slice for server.ts (tool executor vs L2 gate vs WS control plane)?",
+      "Should originWs become type-required for interactive L2 with explicit outbound exceptions?",
+      "Archive/delete policy for scripts/spike ONNX and nested node_modules?"
+    ]
+  },
+  {
+    "dimension": "0.5.0 product surfaces (voice/meeting/dictation/outbound-MCP/Windows-Python)",
+    "score_0_to_10": 6.7,
+    "grade": "B-",
+    "summary": "Voice/meeting architecture is largely ADR-shaped (extension origin fences, STT caps, tmp sandbox, Pack strip, honest M2 progressive re-decode, solid ASR-refiner guards). Outbound MCP implements curated L1 profile, server-side disclosure, and L9 tab lease but still defaults to Extension ws_secret auth. High residuals: silent PATH whisper-cli fallback and missing per-arch SHA256 pins (ADR-023 L5), plus require_grant=false for outbound loopback. Medium: no server privacy-ack on STT/refine, STT ignores sttEngine, meeting retain_until without GC.",
+    "strengths": [
+      "chrome-extension origin fence on voice.stt / voice.refine / meeting.* (stt-handlers.ts:45-48,126-142)",
+      "STT max-1, peer bind, byte/time caps, tmp containment + boot GC (session-caps.ts, stt-tmp.ts)",
+      "Pack strip/reject of voice/hotkey/refiner/ack keys (packs/types.ts:270, pack-engine.ts)",
+      "Outbound curated cmspark__* allowlist + PROFILE_FORBIDDEN + server disclosure (profile.ts, facade.ts:63-96)",
+      "L9 dual-entry tab lease with Side Panel wins (outbound-mcp/dual-entry.ts)",
+      "ASR Refiner fixed system prompt + length/URL/toolish/secretish guards (asr-refiner.ts)",
+      "User guide documents M2 as progressive re-decode not token streaming (meeting-and-dictation-user-guide.md §2.5)",
+      "Windows Python/uv discovery rejects WindowsApps stubs and prefers absolute well-known paths (python-runtime.ts)"
+    ],
+    "findings": [
+      {
+        "id": "VOICE-01",
+        "severity": "high",
+        "title": "Silent PATH whisper-cli fallback violates ADR-023 L5",
+        "evidence": "resolveBinary/resolveBinaryForState: if packaged cmspark-whisper fails, resolveWhisperCliOnPath() returns PATH/Homebrew whisper-cli as status ready with sha256 'path-fallback' / pinned:false — ADR L5 forbids silent PATH fallback after pin/package failure.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\voice\\stt-session-service.ts:520-529; whisper-state.ts:106-110; binary-resolve.ts:203-222",
+        "impact": "PATH-planted whisper-cli can process live mic audio under local STT without integrity pin; supply-chain residual for opt-in local engine.",
+        "fix_hint": "Gate resolveWhisperCliOnPath behind explicit CMSPARK_WHISPER_DEV_PATH=1 (or remove from production paths); on packaged miss/hash_mismatch report not_found/hash_mismatch only.",
+        "prior_status": "new"
+      },
+      {
+        "id": "VOICE-02",
+        "severity": "high",
+        "title": "Whisper binary SHA256 pins incomplete for Tier-1 Windows",
+        "evidence": "WHISPER_BINARY_SHA256 only sets darwin-arm64; win-x64/darwin-x64/linux-x64 absent so whisperPinResolveOpts sets allowUnpinned:true when pin null — conflicts ADR-023 L5/L16 Tier-1 pin requirement.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\voice\\whisper-binary-pins.ts:11-45",
+        "impact": "Windows/Linux packages accept unpinned cmspark-whisper bytes; combined with VOICE-01 weakens integrity story for 0.5.0 local STT.",
+        "fix_hint": "Run build-cmspark-whisper.sh --write-pins on each Tier-1 host; refuse local engine when pin missing in production builds.",
+        "prior_status": "new"
+      },
+      {
+        "id": "MCPO-01",
+        "severity": "high",
+        "title": "Outbound MCP defaults to Extension ws_secret (require_grant=false)",
+        "evidence": "defaultConfig.outbound_mcp.require_grant=false; resolveOutboundHttpBearer falls back to getOrCreateSharedSecret(); authorizeOutboundRequest accepts looksWs when requireGrant false. ADR-022 L4+ requires caller grant as P1 ship gate; mcp.md documents dual-mode.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\config.ts:330-332; outbound-mcp/stdio-server.ts:73-90; companion-http.ts:129-202",
+        "impact": "Any local process holding ~/.cmspark-agent ws_secret can invoke curated L1 browser tools on loopback without dedicated outbound grant — residual confused-deputy for IDE/stdio callers.",
+        "fix_hint": "Default require_grant=true for 0.5.x product claims, or force grant issue UX before first mcp-outbound wire; never fall back to ws_secret once any grant exists.",
+        "prior_status": "partial"
+      },
+      {
+        "id": "VOICE-03",
+        "severity": "medium",
+        "title": "voice.stt.start ignores config.voice.sttEngine=browser",
+        "evidence": "stt-handlers and stt-session-service never read getConfig().voice.sttEngine; start proceeds if model ready and origin/peer ok. ADR-023 L1: local only after opt-in engine=local.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\voice\\stt-handlers.ts:156-195; stt-session-service.ts:155-206",
+        "impact": "Authenticated extension-origin client can force local audio path despite UI/engine set to browser (privacy residual).",
+        "fix_hint": "Refuse voice.stt.* when config.voice.sttEngine !== 'local' with engine_disabled error code.",
+        "prior_status": "new"
+      },
+      {
+        "id": "VOICE-04",
+        "severity": "medium",
+        "title": "Privacy acks not server-enforced for STT/refine",
+        "evidence": "ADR-023 L14 forbids voice.stt.start without voice_privacy_ack_v2; companion stt/refine handlers have no ack check (acks live only in extension chrome.storage). meeting.start does require privacy_ack_v1 server-side — inconsistent.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\voice\\stt-handlers.ts:118-195; refine-handlers.ts:86-165; meeting/meeting-handlers.ts:107-110; docs/adr/023-voice-local-stt-path-b.md:139",
+        "impact": "Non-UI or modified clients can stream audio / call refine without versioned privacy acceptance.",
+        "fix_hint": "Mirror meeting pattern: require privacy_ack_v2 on stt.start and privacy_ack_v3 on refine.request (or store ack mirror on Companion).",
+        "prior_status": "new"
+      },
+      {
+        "id": "VOICE-05",
+        "severity": "medium",
+        "title": "voice.model mutators rely on self-attested source:settings without origin fence",
+        "evidence": "whisper-handlers only check rest.source==='settings'; message-router does not pass origin to handleVoiceModelMessage. Unlike voice.stt.*, tray/other auth peers could download/delete/set_engine if they forge source.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\voice\\whisper-handlers.ts:79-85,205-214; message-router.ts:1910-1918",
+        "impact": "Weaker dual-fence than STT; model/engine mutation available to any authenticated WS peer claiming settings source.",
+        "fix_hint": "Require chrome-extension origin (and optionally settings-panel peer class) on all voice.model mutators.",
+        "prior_status": "new"
+      },
+      {
+        "id": "MEET-01",
+        "severity": "medium",
+        "title": "Meeting audio retain_until has no GC implementation",
+        "evidence": "startMeetingRecording sets retain_until ≤7d when audio_retained; grep shows retain_until only in meeting-store.ts writes — no sweeper. ADR-024 §7 requires GC. end deletes only when not retained.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\meeting\\meeting-store.ts:314-350; docs/adr/024-dictation-plus-asr-refiner-meeting.md:109-117",
+        "impact": "Opt-in retained meeting audio can remain on disk past claimed TTL.",
+        "fix_hint": "Add boot + periodic GC: delete meetings/*/audio when retain_until < now; audit log deletions.",
+        "prior_status": "new"
+      },
+      {
+        "id": "MCPO-02",
+        "severity": "medium",
+        "title": "Outbound L3+ disclosure is coding-agent self-service",
+        "evidence": "cmspark__accept_data_disclosure with acknowledge:true calls companionPostDisclosure/acceptOutboundDisclosure; no human HITL. mcp.md L333 documents agent self-confirm. Exfil tools then pass hasOutboundDisclosure(caller_id).",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\outbound-mcp\\stdio-server.ts:137-197; disclosure-session.ts:28-55; docs/mcp.md:321-337",
+        "impact": "External LLM can unlock page text/screenshots for itself without end-user confirm of cloud residual.",
+        "fix_hint": "For product ship, bind disclosure to Side Panel/tray L2 confirm per caller_id session; keep self-accept only under explicit experimental flag.",
+        "prior_status": "open"
+      },
+      {
+        "id": "MCPO-03",
+        "severity": "low",
+        "title": "Outbound MCP tools use open additionalProperties args schema",
+        "evidence": "openArgsSchema returns type object additionalProperties:true for all tools including navigate/click/exfil; validation deferred to internal executor.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\outbound-mcp\\stdio-server.ts:57-67,124-129",
+        "impact": "Weak schema hygiene; increases unexpected-arg / confused-deputy residual if internal validators lag.",
+        "fix_hint": "Per-tool JSON Schema for required fields (tabId, url, etc.) matching internal tool schemas.",
+        "prior_status": "new"
+      },
+      {
+        "id": "MEET-02",
+        "severity": "low",
+        "title": "ADR-024 lists auto diarize as non-goal but Mtg3 ships experimental diarize",
+        "evidence": "ADR-024 §8 non-goals include 自动 diarize; user guide §3.2 claims Mtg3 delivered; code has auto-diarize.ts and meeting.auto_diarize handler.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\docs\\adr\\024-dictation-plus-asr-refiner-meeting.md:129; docs/meeting-and-dictation-user-guide.md:93-100; companion/src/meeting/auto-diarize.ts:1-25; message-router.ts:1974",
+        "impact": "SoT drift; risk of over-claiming identity diarization if ADR not updated.",
+        "fix_hint": "Amend ADR-024 to allow experimental anonymous 发言人N clustering under explicit non-SLA language matching guide.",
+        "prior_status": "new"
+      },
+      {
+        "id": "PY-01",
+        "severity": "info",
+        "title": "Windows Python discovery is thorough; residual is CU runtime not voice",
+        "evidence": "listWellKnownPythonCandidates covers LocalAppData Programs/Python, ProgramFiles, WinGet Python.Python.3.*, Scoop/conda; isWindowsStorePythonStub rejects WindowsApps; findUv prefers absolute pins.",
+        "file": "C:\\Users\\HuChen\\Projects\\cmspark\\companion\\src\\computer\\python-runtime.ts:499-631,407-446",
+        "impact": "Low direct voice/meeting risk; supports Qwen-VL experimental path completeness on Windows 0.5.0.",
+        "fix_hint": "Keep Store-stub rejection and absolute-path-only pins in future discovery changes; document winget install hints already present.",
+        "prior_status": "new"
+      }
+    ],
+    "open_questions": [
+      "Is PATH whisper-cli fallback intentionally left for dev SEA dyld breakage on shipping 0.5.0 Windows/mac packages, or accidental production leak?",
+      "Will outbound require_grant default flip true before any non-experimental product claim for mcp-outbound?",
+      "Should privacy acks be mirrored into Companion config/session state, or only extension storage by design?",
+      "Is meeting audio ever written to meetings/<id>/audio/ on live capture, or is retain dir currently unused skeleton?",
+      "Are win-x64 cmspark-whisper pins blocked only by missing CI host, or not built for 0.5.0 ship?"
+    ]
+  }
+]

@@ -65,6 +65,7 @@ import type {
   McpServerConfig,
   McpServerMeta,
 } from "./mcp/types"
+import { releaseMultiAgentLlmLoop } from "./orchestrator/llm-loop-gate"
 
 /**
  * Chat-path hostname for site_knowledge selection only.
@@ -100,6 +101,11 @@ function redactExtraHeaders(
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
+/**
+ * SEC-D: generation token per thread so a superseded run's `finally` cannot
+ * delete the successor AbortController or release the multi-agent LLM gate.
+ */
+const llmLoopGeneration = new Map<string, number>()
 
 /** Run-state: threads with an in-flight LLM abort controller. */
 export function listLlmActiveThreadIds(): string[] {
@@ -113,8 +119,10 @@ export function listLlmActiveThreadIds(): string[] {
 export function __testSetLlmActiveForTests(threadId: string, active: boolean): void {
   if (active) {
     abortControllers.set(threadId, new AbortController())
+    llmLoopGeneration.set(threadId, (llmLoopGeneration.get(threadId) || 0) + 1)
   } else {
     abortControllers.delete(threadId)
+    llmLoopGeneration.delete(threadId)
   }
 }
 
@@ -125,9 +133,32 @@ export function abortThreadChat(threadId: string): boolean {
   if (controller) {
     controller.abort()
     abortControllers.delete(threadId)
+    // Bump generation so any late finally from this run cannot reclaim the slot
+    // or clobber a successor. Because finally will CAS-skip release, we must
+    // free the multi-agent gate here (Pi REJECT: abort leaked MULTI_AGENT_LLM_CAP).
+    llmLoopGeneration.set(threadId, (llmLoopGeneration.get(threadId) || 0) + 1)
+    // Free gate here: finally will CAS-skip release after generation bump.
+    releaseMultiAgentLlmLoop(threadId)
     return true
   }
   return false
+}
+
+function nextLlmGeneration(threadId: string): number {
+  const gen = (llmLoopGeneration.get(threadId) || 0) + 1
+  llmLoopGeneration.set(threadId, gen)
+  return gen
+}
+
+/** Drain extension tools + L2 for a thread when superseding (mirror chat.abort core). */
+async function drainThreadOnSupersede(threadId: string, reason: string): Promise<void> {
+  try {
+    const { rejectPendingForThread, securityConfirmations } = await import("./server")
+    securityConfirmations.rejectForWorker(threadId, "denied")
+    rejectPendingForThread(threadId, reason)
+  } catch {
+    /* best-effort */
+  }
 }
 
 /**
@@ -571,12 +602,13 @@ export async function handleMessage(
         }
       }
 
-      // Cancel any existing request for this thread
+      // Cancel any existing request for this thread (SEC-D: do not delete map yet —
+      // predecessor finally uses generation CAS so it cannot clobber successor).
       const existing = abortControllers.get(rest.thread_id)
       if (existing) {
         logger.info("llm.thread_request_superseded", { thread_id: rest.thread_id })
         existing.abort()
-        abortControllers.delete(rest.thread_id)
+        await drainThreadOnSupersede(rest.thread_id, `chat.supersede:${rest.thread_id}`)
       }
 
       // ADR-015: cap concurrent multi-agent LLM loops (workers + orchestrators)
@@ -592,6 +624,7 @@ export async function handleMessage(
         }
       }
 
+      const myGeneration = nextLlmGeneration(rest.thread_id)
       const controller = new AbortController()
       abortControllers.set(rest.thread_id, controller)
 
@@ -699,14 +732,22 @@ export async function handleMessage(
           contextRefsSegment,
         })
       } catch (e: any) {
-        if (e.name === "AbortError" || controller.signal.aborted) {
-          session.sendToExtension({ type: "chat.aborted", thread_id: rest.thread_id })
-        } else {
-          session.sendToExtension({ type: "chat.error", thread_id: rest.thread_id, error: e.message })
+        // Only emit aborted UI if this generation is still current (SEC-D)
+        if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
+          if (e.name === "AbortError" || controller.signal.aborted) {
+            session.sendToExtension({ type: "chat.aborted", thread_id: rest.thread_id })
+          } else {
+            session.sendToExtension({ type: "chat.error", thread_id: rest.thread_id, error: e.message })
+          }
         }
       } finally {
-        abortControllers.delete(rest.thread_id)
-        releaseMultiAgentLlmLoop(rest.thread_id)
+        // SEC-D generation CAS: predecessor must not free successor controller/gate
+        if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
+          if (abortControllers.get(rest.thread_id) === controller) {
+            abortControllers.delete(rest.thread_id)
+          }
+          releaseMultiAgentLlmLoop(rest.thread_id)
+        }
       }
       return null // chatCreate handles streaming internally
     }
@@ -890,13 +931,14 @@ export async function handleMessage(
 
       pushUploadStatus("chat", "文档已解析，模型思考中…")
 
-      // Cancel any existing request for this thread
+      // Cancel any existing request for this thread (SEC-D generation CAS — same as chat.create)
       const existingUpload = abortControllers.get(thread_id)
       if (existingUpload) {
         logger.info("llm.thread_request_superseded", { thread_id })
         existingUpload.abort()
-        abortControllers.delete(thread_id)
+        await drainThreadOnSupersede(thread_id, `file.upload.supersede:${thread_id}`)
       }
+      const uploadGeneration = nextLlmGeneration(thread_id)
       const uploadController = new AbortController()
       abortControllers.set(thread_id, uploadController)
 
@@ -961,13 +1003,19 @@ export async function handleMessage(
           error: e?.message || String(e),
           aborted: e?.name === "AbortError" || uploadController.signal.aborted,
         })
-        if (e.name === "AbortError" || uploadController.signal.aborted) {
-          session.sendToExtension({ type: "chat.aborted", thread_id })
-        } else {
-          session.sendToExtension({ type: "chat.error", thread_id, error: e.message })
+        if (llmLoopGeneration.get(thread_id) === uploadGeneration) {
+          if (e.name === "AbortError" || uploadController.signal.aborted) {
+            session.sendToExtension({ type: "chat.aborted", thread_id })
+          } else {
+            session.sendToExtension({ type: "chat.error", thread_id, error: e.message })
+          }
         }
       } finally {
-        abortControllers.delete(thread_id)
+        if (llmLoopGeneration.get(thread_id) === uploadGeneration) {
+          if (abortControllers.get(thread_id) === uploadController) {
+            abortControllers.delete(thread_id)
+          }
+        }
       }
 
       logger.info("file.upload.complete", {
@@ -1116,13 +1164,14 @@ export async function handleMessage(
         messages: threadManager.getMessages(thread_id),
       })
 
-      // Cancel any existing request for this thread
+      // Cancel any existing request for this thread (SEC-D generation CAS)
       const existing = abortControllers.get(thread_id)
       if (existing) {
         logger.info("llm.thread_request_superseded", { thread_id })
         existing.abort()
-        abortControllers.delete(thread_id)
+        await drainThreadOnSupersede(thread_id, `chat.regenerate.supersede:${thread_id}`)
       }
+      const myGeneration = nextLlmGeneration(thread_id)
       const controller = new AbortController()
       abortControllers.set(thread_id, controller)
 
@@ -1175,13 +1224,19 @@ export async function handleMessage(
           skipUserMessage: true,
         })
       } catch (e: any) {
-        if (e.name === "AbortError" || controller.signal.aborted) {
-          session.sendToExtension({ type: "chat.aborted", thread_id })
-        } else {
-          session.sendToExtension({ type: "chat.error", thread_id, error: e.message })
+        if (llmLoopGeneration.get(thread_id) === myGeneration) {
+          if (e.name === "AbortError" || controller.signal.aborted) {
+            session.sendToExtension({ type: "chat.aborted", thread_id })
+          } else {
+            session.sendToExtension({ type: "chat.error", thread_id, error: e.message })
+          }
         }
       } finally {
-        abortControllers.delete(thread_id)
+        if (llmLoopGeneration.get(thread_id) === myGeneration) {
+          if (abortControllers.get(thread_id) === controller) {
+            abortControllers.delete(thread_id)
+          }
+        }
       }
       return null
     }
@@ -1780,13 +1835,14 @@ export async function handleMessage(
 
     // --- MCP servers ---
     case "mcp.list": {
-      return { type: "mcp.list", servers: getMcpManager().listServers() }
+      // SEC: never ship env/headers secrets on the wire (config.updated already redacts)
+      return { type: "mcp.list", servers: redactMcpServersForBroadcast(getMcpManager().listServers()) }
     }
     case "mcp.toggle_enabled": {
       const enabled = !!rest.enabled
       setMcpEnabled(enabled)
       // applyConfig is fired via configEvents listener in server.ts
-      return { type: "mcp.list", servers: getMcpManager().listServers() }
+      return { type: "mcp.list", servers: redactMcpServersForBroadcast(getMcpManager().listServers()) }
     }
     case "mcp.add": {
       const name = String(rest.name || "").trim()
@@ -1797,6 +1853,10 @@ export async function handleMessage(
       if (config.mcp?.servers?.[name]) {
         return { type: "error", error: `MCP server "${name}" already exists. Use mcp.update to modify.` }
       }
+      // SEC-B: stdio = arbitrary local spawn; require origin-bound L2 (force high)
+      // before replaceMcpServers → applyConfig → StdioClientTransport.
+      const stdioGate = await requireMcpStdioSpawnConfirm(session, name, serverCfg, "add")
+      if (stdioGate) return stdioGate
       const wasEmpty = Object.keys(config.mcp?.servers || {}).length === 0
       const newServers = { ...(config.mcp?.servers || {}), [name]: serverCfg }
       replaceMcpServers(newServers)
@@ -1807,7 +1867,10 @@ export async function handleMessage(
       if (wasEmpty && !config.mcp?.enabled) {
         setMcpEnabled(true)
       }
-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
+      return {
+        type: "mcp.servers.updated",
+        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
+      }
     }
     case "mcp.update": {
       const name = String(rest.name || "").trim()
@@ -1818,13 +1881,22 @@ export async function handleMessage(
       if (hasPrototypePollutionKey(patch)) {
         return { type: "error", error: "Invalid config keys detected" }
       }
-      const merged = { ...existing, ...patch } as McpServerConfig
+      // Pi REJECT #2: UI re-sends "***" for redacted env/headers — restore disk secrets
+      const merged = mergeMcpServerPreservingSecrets(existing, patch)
       // Re-validate after merge
       const validation = validateMcpServerConfig(name, merged)
       if (validation) return { type: "error", error: validation }
+      // SEC-B: re-confirm when stdio spawn surface changes (incl. enable false→true)
+      if (mcpStdioSpawnSurfaceChanged(existing, merged)) {
+        const stdioGate = await requireMcpStdioSpawnConfirm(session, name, merged, "update")
+        if (stdioGate) return stdioGate
+      }
       const newServers = { ...(config.mcp?.servers || {}), [name]: merged }
       replaceMcpServers(newServers)
-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
+      return {
+        type: "mcp.servers.updated",
+        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
+      }
     }
     case "mcp.delete": {
       const name = String(rest.name || "").trim()
@@ -1835,7 +1907,10 @@ export async function handleMessage(
       const newServers = { ...config.mcp.servers }
       delete newServers[name]
       replaceMcpServers(newServers)
-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
+      return {
+        type: "mcp.servers.updated",
+        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
+      }
     }
     case "mcp.toggle_server": {
       const name = String(rest.name || "").trim()
@@ -1844,8 +1919,21 @@ export async function handleMessage(
       const existing = config.mcp?.servers?.[name]
       if (!existing) return { type: "error", error: `MCP server "${name}" not found` }
       const newServers = { ...(config.mcp?.servers || {}), [name]: { ...existing, enabled } }
+      // Enabling a previously disabled stdio server spawns the process — same trust as add.
+      if (enabled && existing.enabled === false && existing.transport === "stdio") {
+        const stdioGate = await requireMcpStdioSpawnConfirm(
+          session,
+          name,
+          { ...existing, enabled: true },
+          "update",
+        )
+        if (stdioGate) return stdioGate
+      }
       replaceMcpServers(newServers)
-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
+      return {
+        type: "mcp.servers.updated",
+        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
+      }
     }
     case "mcp.set_selection": {
       // Per-thread MCP tool selection mode + active server ids (mirrors skill activation).
@@ -1915,6 +2003,7 @@ export async function handleMessage(
     case "voice.model.set_engine":
       return handleVoiceModelMessage(msg, {
         broadcast: session?.broadcast,
+        origin: session?.origin,
       })
     // Path B M1 — voice.stt.* (origin chrome-extension:// fence; NOT source:settings)
     case "voice.stt.start":
@@ -3410,6 +3499,137 @@ function hasPrototypePollutionKey(obj: any): boolean {
 const MCP_VALID_TRUST_LEVELS = new Set(["manual", "first-use", "trusted"])
 const MCP_VALID_TRANSPORTS = new Set(["stdio", "http"])
 const MCP_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/
+
+/**
+ * SEC-B: authenticated mcp.add/update stdio must not spawn without L2.
+ * Fail closed when no origin-bound confirmation channel (tests without session
+ * cannot silently register spawners).
+ */
+async function requireMcpStdioSpawnConfirm(
+  session: SessionCallbacks | undefined,
+  name: string,
+  cfg: McpServerConfig,
+  action: "add" | "update",
+): Promise<{ type: "error"; error: string } | null> {
+  if (cfg.transport !== "stdio") return null
+  if (!session?.requestConfirmation) {
+    return {
+      type: "error",
+      error:
+        "MCP stdio server requires interactive L2 confirmation (requestConfirmation channel missing)",
+    }
+  }
+  const cmd = typeof cfg.command === "string" ? cfg.command : ""
+  const args = Array.isArray(cfg.args) ? cfg.args.map(String).join(" ") : ""
+  const cwd = typeof cfg.cwd === "string" ? cfg.cwd : "(default)"
+  const decision = await session.requestConfirmation({
+    toolName: `mcp.${action}_stdio`,
+    dangerousApis: ["child_process.spawn", "mcp.stdio"],
+    code: [
+      `MCP ${action} stdio server "${name}"`,
+      `command: ${cmd}`,
+      `args: ${args}`,
+      `cwd: ${cwd}`,
+      `enabled: ${cfg.enabled !== false}`,
+    ].join("\n"),
+    riskLevel: "high",
+    autoConfirmEligible: false,
+    criticalApis: ["mcp.stdio.spawn"],
+  })
+  if (!decision.approved) {
+    return {
+      type: "error",
+      error: `MCP stdio server ${action} denied (${decision.reason})`,
+    }
+  }
+  return null
+}
+
+/** True when update changes the spawn surface (not mere trust_level / display). */
+function mcpStdioSpawnSurfaceChanged(
+  existing: McpServerConfig,
+  merged: McpServerConfig,
+): boolean {
+  if (merged.transport === "stdio" && existing.transport !== "stdio") return true
+  if (merged.transport !== "stdio") return false
+  // Pi REJECT #1: enabling a disabled stdio server spawns the process
+  const wasEnabled = existing.enabled !== false
+  const willEnable = merged.enabled !== false
+  if (!wasEnabled && willEnable) return true
+  // Narrow after transport check — union members differ by transport.
+  const ex = existing as Extract<McpServerConfig, { transport: "stdio" }> | McpServerConfig
+  const mg = merged as Extract<McpServerConfig, { transport: "stdio" }>
+  const exCmd = "command" in ex ? ex.command : undefined
+  const mgCmd = mg.command
+  if (exCmd !== mgCmd) return true
+  const exArgs = "args" in ex ? ex.args : undefined
+  const mgArgs = mg.args
+  if (JSON.stringify(exArgs || []) !== JSON.stringify(mgArgs || [])) return true
+  const exCwd = "cwd" in ex ? ex.cwd : undefined
+  const mgCwd = mg.cwd
+  if ((exCwd || "") !== (mgCwd || "")) return true
+  const exEnv = "env" in ex ? ex.env : undefined
+  const mgEnv = mg.env
+  if (JSON.stringify(exEnv || {}) !== JSON.stringify(mgEnv || {})) return true
+  return false
+}
+
+/** Restore env/headers when client echoes redacted `***` placeholders (list→edit→save). */
+function restoreMaskedRecord(
+  existing: Record<string, string> | undefined,
+  incoming: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (incoming === undefined) return existing
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(incoming)) {
+    if (v === "***" && existing && typeof existing[k] === "string") {
+      out[k] = existing[k]
+    } else if (v !== "***") {
+      out[k] = v
+    }
+    // v === "***" with no existing key → drop (never persist mask literal)
+  }
+  return out
+}
+
+function mergeMcpServerPreservingSecrets(
+  existing: McpServerConfig,
+  patch: Partial<McpServerConfig>,
+): McpServerConfig {
+  const merged = { ...existing, ...patch } as any
+  const exAny = existing as any
+  if (patch && typeof (patch as any).env === "object") {
+    merged.env = restoreMaskedRecord(exAny.env, (patch as any).env)
+  }
+  if (patch && typeof (patch as any).headers === "object") {
+    merged.headers = restoreMaskedRecord(exAny.headers, (patch as any).headers)
+  }
+  return merged as McpServerConfig
+}
+
+/** Mask env/headers on MCP metas for WS list/update broadcasts. */
+export function redactMcpServersForBroadcast(
+  servers: McpServerMeta[] | Array<Record<string, any>>,
+): any[] {
+  return (servers || []).map((s) => {
+    const copy: any = { ...s }
+    if (copy.config && typeof copy.config === "object") {
+      const cfg = { ...copy.config }
+      if (cfg.env && typeof cfg.env === "object") {
+        const env: Record<string, string> = {}
+        for (const k of Object.keys(cfg.env)) env[k] = "***"
+        cfg.env = env
+      }
+      if (cfg.headers && typeof cfg.headers === "object") {
+        const headers: Record<string, string> = {}
+        for (const k of Object.keys(cfg.headers)) headers[k] = "***"
+        cfg.headers = headers
+      }
+      copy.config = cfg
+    }
+    return copy
+  })
+}
 
 /** Returns an error string if invalid, or null if OK. */
 function validateMcpServerConfig(name: string, cfg: McpServerConfig | undefined): string | null {

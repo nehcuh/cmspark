@@ -131,9 +131,12 @@ export function authorizeOutboundRequest(
   expectedWsSecret: string,
   opts?: { requireGrant?: boolean; bodyCallerId?: string | null },
 ): OutboundHttpAuthResult {
+  // Explicit opts.requireGrant wins (false must force legacy mode for tests / debug).
+  // When omitted, default from config (now true per MCPO-01).
   const requireGrant =
-    opts?.requireGrant === true ||
-    getConfig().outbound_mcp?.require_grant === true
+    opts?.requireGrant !== undefined
+      ? opts.requireGrant === true
+      : getConfig().outbound_mcp?.require_grant === true
   const token = extractBearerToken(req)
   if (!token) {
     return {

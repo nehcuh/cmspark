@@ -795,10 +795,13 @@ func cuWindowInfoDict(windowId: UInt32) -> [String: Any]? {
 }
 
 func cuPidForWindow(_ windowId: UInt32) -> pid_t {
-    guard let windows = CGWindowListCopyWindowInfo([.optionAll], windowId) as? [[String: Any]],
-          let first = windows.first,
-          let pid = first[kCGWindowOwnerPID as String] as? pid_t else { return 0 }
-    return pid
+    // SEC-F: match kCGWindowNumber — CGWindowListCopyWindowInfo(.optionAll, relativeTo)
+    // does NOT filter to windowId; windows.first was often frontmost (Chrome), not target.
+    if let info = cuWindowInfoDict(windowId: windowId),
+       let pid = info[kCGWindowOwnerPID as String] as? pid_t {
+        return pid
+    }
+    return 0
 }
 
 func cuAppElementForPid(_ pid: pid_t) -> AXUIElement? {

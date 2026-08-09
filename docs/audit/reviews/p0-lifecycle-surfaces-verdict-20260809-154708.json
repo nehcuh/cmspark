@@ -1,0 +1,8 @@
+{
+  "batch": "p0-lifecycle-surfaces",
+  "timestamp": "20260809-154708",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/p0-lifecycle-surfaces-claude-20260809-154708.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/p0-lifecycle-surfaces-pi-20260809-154708.md" },
+  "both_approve": false,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/p0-lifecycle-surfaces-diff-20260809-154708.patch"
+}

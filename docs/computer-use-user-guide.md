@@ -1,7 +1,7 @@
 # Computer Use 使用说明
 
 > **面向使用者**：如何开启桌面坐标操控、确认台里怎么批/急停、session-trust 是什么、平台与限制。  
-> **产品版本**：0.4.0 · **决策摘要**：[ADR-017](adr/017-computer-use.md)  
+> **产品版本**：0.5.0 · **决策摘要**：[ADR-017](adr/017-computer-use.md)  
 > **确认台 UI**：[confirm-center-user-guide.md](confirm-center-user-guide.md) · **Host / Apps**：[host-and-apps.md](host-and-apps.md)  
 > **过程史（非规范）**：[decisions/coordinate-computer-use-plan.md](decisions/coordinate-computer-use-plan.md)
 

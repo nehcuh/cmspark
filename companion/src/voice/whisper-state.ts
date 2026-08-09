@@ -103,10 +103,16 @@ export function resolveBinaryForState(opts?: {
     allowUnpinned: pinOpts.allowUnpinned,
   })
   if (packaged.ok) return mapBinaryResult(packaged)
-  // Dev fallback: Homebrew/PATH whisper-cli (packaged copy may miss dylibs)
-  const pathCli = resolveWhisperCliOnPath()
-  if (pathCli) {
-    return { status: "ready", path: pathCli }
+  // VOICE-01 / ADR-023 L5: production never silently uses PATH whisper-cli
+  // (unpinned supply chain). Opt-in only: CMSPARK_WHISPER_PATH_FALLBACK=1 (dev).
+  if (process.env.CMSPARK_WHISPER_PATH_FALLBACK === "1") {
+    const pathCli = resolveWhisperCliOnPath()
+    if (pathCli) {
+      console.warn(
+        "[voice] CMSPARK_WHISPER_PATH_FALLBACK=1 — using PATH whisper-cli (unpinned, dev only)",
+      )
+      return { status: "ready", path: pathCli }
+    }
   }
   return mapBinaryResult(packaged)
 }

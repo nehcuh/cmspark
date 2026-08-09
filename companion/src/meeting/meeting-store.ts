@@ -384,6 +384,43 @@ export function meetingAudioDir(id: string, dataDir = DATA_DIR): string | null {
   return path.join(dir, "audio")
 }
 
+/**
+ * P1 Meeting: purge audio/ when retain_until is past wall clock.
+ * Clears audio_retained + retain_until after successful delete.
+ * Returns count of meetings whose audio was GC'd.
+ */
+export function gcExpiredMeetingAudio(
+  dataDir = DATA_DIR,
+  now: Date = new Date(),
+): { purged: number; scanned: number } {
+  const metas = listMeetings(dataDir)
+  let purged = 0
+  let scanned = 0
+  const nowMs = now.getTime()
+  for (const m of metas) {
+    if (!m.privacy?.audio_retained) continue
+    const until = m.privacy.retain_until
+    if (!until || typeof until !== "string") continue
+    scanned++
+    const t = Date.parse(until)
+    if (!Number.isFinite(t) || t > nowMs) continue
+    const ok = deleteMeetingAudio(m.id, dataDir)
+    if (!ok) continue
+    const full = loadMeeting(m.id, dataDir)
+    if (full) {
+      full.privacy = {
+        ...full.privacy,
+        audio_retained: false,
+        retain_until: null,
+      }
+      saveMeeting(full, dataDir)
+    }
+    purged++
+    logger.info("meeting.audio_gc", { id: m.id, retain_until: until })
+  }
+  return { purged, scanned }
+}
+
 export function transcriptToText(lines: TranscriptLine[]): string {
   return lines
     .map((l) => {

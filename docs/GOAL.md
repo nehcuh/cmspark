@@ -268,12 +268,12 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 
 - 见上文对应「已交付功能扩展」节；用户文档已入 `docs/*-user-guide.md` 与 `docs/README.md` 导航。
 
-### G21. Outbound MCP Server（编程 Agent 对接）— *Phase 0 门控* · **C 导出 L1**
+### G21. Outbound MCP Server（编程 Agent 对接）— *Phase 0+ opt-in shipped* · **C 导出 L1**
 
 - **决策 SoT**：[ADR-022](adr/022-outbound-mcp-server.md)（Accepted；**非** default-on 产品 ship）。
 - 目标：把 **curated L1** 浏览器面（`cmspark__*`）以 stdio MCP 导出给 Claude Code / Cursor 等；默认禁 L2 / cookies / shell；Skill 仅 adoption。
 - 成功门：Phase 0 bake-off 证明已登录/SSO 会话相对 Playwright 不可替代（T1），否则 pivot 只读或垂直 API。
-- 当前：`companion/src/outbound-mcp/` 门禁骨架；真桥 / L8 托盘确认 / L9 tab lease / grant 模型按 ADR 分阶段。
+- **2026-08-09**：loopback HTTP 桥 + disclosure + L1 profile + **`require_grant` default true**（MCPO-01）已落地；grant 签发见 `outbound-mcp/`。仍 **opt-in**。L8 托盘确认 / 更广 profile 按 ADR 分阶段。
 
 ### G22. 听写+（Dictation+）与 会议记录 ✅ 已实现（**0.5.0** · 2026-08）· **S:L0 + C(Pack)**
 

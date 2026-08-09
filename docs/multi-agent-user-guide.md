@@ -1,7 +1,7 @@
 # Multi-Agent 与 Mission Board 使用说明
 
 > **面向使用者**：编排者如何拉起 Worker、tab 锁是什么、任务板怎么用、上限与禁区。  
-> **产品版本**：0.3.0  
+> **产品版本**：0.5.0  
 > **决策**：[ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) · [ADR-016](adr/016-mission-board.md)  
 > **任务包交叉**：[mission-pack-usage.md §10](mission-pack-usage.md#10-multi-agent编排-worker与任务包) · **确认台**：[confirm-center-user-guide.md](confirm-center-user-guide.md)
 

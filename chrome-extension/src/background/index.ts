@@ -1118,6 +1118,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "apps.set_coordinate_allowed":
       case "computer.task.abort":
       case "computer.get_state":
+      case "computer.set_enabled":
       case "computer.evidence.open":
       // WP5-I4 实验层开关族:设置页六路由透传。开启由 companion 生物识别门
       // 承担(D2,同 :727-728 坐标开关先例);license/download/delete/reset 由

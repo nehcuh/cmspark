@@ -1,0 +1,8 @@
+{
+  "batch": "p0-mcp-stdio-l2",
+  "timestamp": "20260809-153609",
+  "claude": { "verdict": "APPROVE", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/p0-mcp-stdio-l2-claude-20260809-153609.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/p0-mcp-stdio-l2-pi-20260809-153609.md" },
+  "both_approve": false,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/p0-mcp-stdio-l2-diff-20260809-153609.patch"
+}

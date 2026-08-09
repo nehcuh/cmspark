@@ -1,6 +1,6 @@
 # ADR-023: 本机语音识别 Path B（Local STT / whisper.cpp）
 
-**日期**: 2026-08-07 | **状态**: **Accepted**（**M0+M1 代码** on `feat/voice-local-stt-m1` — 下载 + `voice.stt.*` 闭环；**非** default-on local；人工 e2e / 自包含二进制仍为残余）  
+**日期**: 2026-08-07 | **状态**: **Accepted**（**M0+M1+M2 shipped in 0.5.0** — 下载 + `voice.stt.*` 闭环 + progressive partial；**非** default-on local。2026-08-09：PATH fallback 仅 `CMSPARK_WHISPER_PATH_FALLBACK=1`；Tier-1 pin **fail-closed** 未 pin 架构；privacy_ack_v2 服务端强制。Win/Linux pin 哈希与自包含二进制仍为残余）  
 
 **相关**:  
 - [ADR-001](001-extension-companion双层拓扑.md) 双层拓扑  

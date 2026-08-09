@@ -1635,7 +1635,11 @@ export function SettingsSlideout() {
                             }
                             onClick={() => {
                               clearVoiceErr()
-                              sendVoice({ type: "voice.model.set_engine", engine: "local" })
+                              sendVoice({
+                                type: "voice.model.set_engine",
+                                engine: "local",
+                                privacy_ack_v2: true,
+                              })
                             }}
                           >
                             {BTN_ENABLE_LOCAL}

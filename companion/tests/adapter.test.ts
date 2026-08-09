@@ -91,7 +91,8 @@ test("createToolResultMessage handles empty result object", () => {
   const msg = createToolResultMessage("thread-04", toolCall, result)
 
   assert.equal(msg.content, JSON.stringify({ success: false }))
-  assert.equal(msg.tool_calls[0].result, result)
+  // SEC-C: persistence path may deep-clone via redact; compare structure not identity
+  assert.deepEqual(msg.tool_calls[0].result, result)
   assert.equal(msg.tool_calls[0].id, "call_test_4")
 })
 

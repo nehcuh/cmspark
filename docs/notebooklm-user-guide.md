@@ -1,7 +1,7 @@
 # NotebookLM 导入使用说明
 
 > **面向使用者**：如何从 Side Panel 把网页 / 链接 / 对话等导入 Google NotebookLM。  
-> **产品版本**：0.3.0  
+> **产品版本**：0.5.0  
 > **决策（工程向）**：[ADR-011](adr/011-notebooklm-import.md) · [ADR-012](adr/012-notebooklm-importer-online.md) · [ADR-013](adr/013-notebooklm-importer-v12.md)
 
 ### 能力坐标

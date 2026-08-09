@@ -1,0 +1,393 @@
+# Dual external review context
+batch: p0-mcp-stdio-l2
+base: HEAD
+time: 20260809-153609
+
+0de1760
+
+ M companion/src/llm/adapter.ts
+ M companion/src/message-router.ts
+ M companion/src/server.ts
+ M companion/src/threads/thread-manager.ts
+?? .grok/workflows/project-health-fanout.rhai
+?? companion/src/security/
+?? companion/tests/mcp-stdio-l2-gate.test.ts
+?? companion/tests/thread-path-sanitize.test.ts
+?? companion/tests/tool-persistence-redact.test.ts
+?? docs/audit/health-fanout-2026-08-09-dimensions.json
+?? docs/audit/health-fanout-2026-08-09-summary.json
+?? docs/audit/health-fanout-2026-08-09.md
+?? docs/audit/reviews/p0-mcp-stdio-l2-diff-20260809-153609.patch
+?? docs/audit/reviews/p0-mcp-stdio-l2-dual-review-prompt.md
+?? docs/audit/reviews/p0-persistence-sec-ac-claude-20260809-153105.md
+?? docs/audit/reviews/p0-persistence-sec-ac-diff-20260809-153105.patch
+?? docs/audit/reviews/p0-persistence-sec-ac-dual-review-prompt.md
+?? docs/audit/reviews/p0-persistence-sec-ac-pi-20260809-153105.md
+?? docs/audit/reviews/p0-persistence-sec-ac-verdict-20260809-153105.json
+
+## Diff (git diff + staged)
+ companion/src/llm/adapter.ts            |  17 +++-
+ companion/src/message-router.ts         | 138 ++++++++++++++++++++++++++++++--
+ companion/src/server.ts                 |  15 +++-
+ companion/src/threads/thread-manager.ts |  34 +++++++-
+ 4 files changed, 189 insertions(+), 15 deletions(-)
+
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index 3d9b89b..9f409b6 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -32,6 +32,7 @@ import {
+   shouldRunH1,
+   type ThreadHandoff,
+ } from "./context-handoff"
++import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
+ 
+ // Jailbreak patterns to detect in LLM output
+ const JAILBREAK_OUTPUT_PATTERNS = [
+@@ -135,15 +136,23 @@ interface ToolExecutionResult {
+ }
+ 
+ export function createToolResultMessage(threadId: string, toolCall: any, result: ToolExecutionResult, params: any = {}) {
++  // SEC-C: redact before durable thread JSON (history.db already redacts separately).
++  // In-flight LLM tool rows use the raw `result` from the tool loop, not this helper.
++  const toolName = String(toolCall.function?.name || toolCall.name || "")
++  const { params: safeParams, result: safeResult } = redactToolPayloadForPersistence(
++    toolName,
++    params,
++    result,
++  )
+   return {
+     thread_id: threadId,
+     role: "tool" as const,
+-    content: JSON.stringify(result),
++    content: JSON.stringify(safeResult),
+     tool_calls: [{
+       id: toolCall.id,
+-      tool_name: toolCall.function?.name || toolCall.name,
+-      params,
+-      result,
++      tool_name: toolName,
++      params: safeParams,
++      result: safeResult,
+     }],
+   }
+ }
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index f732d4b..9bbd2e0 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -1780,13 +1780,14 @@ export async function handleMessage(
+ 
+     // --- MCP servers ---
+     case "mcp.list": {
+-      return { type: "mcp.list", servers: getMcpManager().listServers() }
++      // SEC: never ship env/headers secrets on the wire (config.updated already redacts)
++      return { type: "mcp.list", servers: redactMcpServersForBroadcast(getMcpManager().listServers()) }
+     }
+     case "mcp.toggle_enabled": {
+       const enabled = !!rest.enabled
+       setMcpEnabled(enabled)
+       // applyConfig is fired via configEvents listener in server.ts
+-      return { type: "mcp.list", servers: getMcpManager().listServers() }
++      return { type: "mcp.list", servers: redactMcpServersForBroadcast(getMcpManager().listServers()) }
+     }
+     case "mcp.add": {
+       const name = String(rest.name || "").trim()
+@@ -1797,6 +1798,10 @@ export async function handleMessage(
+       if (config.mcp?.servers?.[name]) {
+         return { type: "error", error: `MCP server "${name}" already exists. Use mcp.update to modify.` }
+       }
++      // SEC-B: stdio = arbitrary local spawn; require origin-bound L2 (force high)
++      // before replaceMcpServers → applyConfig → StdioClientTransport.
++      const stdioGate = await requireMcpStdioSpawnConfirm(session, name, serverCfg, "add")
++      if (stdioGate) return stdioGate
+       const wasEmpty = Object.keys(config.mcp?.servers || {}).length === 0
+       const newServers = { ...(config.mcp?.servers || {}), [name]: serverCfg }
+       replaceMcpServers(newServers)
+@@ -1807,7 +1812,10 @@ export async function handleMessage(
+       if (wasEmpty && !config.mcp?.enabled) {
+         setMcpEnabled(true)
+       }
+-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
++      return {
++        type: "mcp.servers.updated",
++        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
++      }
+     }
+     case "mcp.update": {
+       const name = String(rest.name || "").trim()
+@@ -1822,9 +1830,17 @@ export async function handleMessage(
+       // Re-validate after merge
+       const validation = validateMcpServerConfig(name, merged)
+       if (validation) return { type: "error", error: validation }
++      // SEC-B: re-confirm when stdio spawn surface changes (command/args/cwd/env/transport)
++      if (mcpStdioSpawnSurfaceChanged(existing, merged)) {
++        const stdioGate = await requireMcpStdioSpawnConfirm(session, name, merged, "update")
++        if (stdioGate) return stdioGate
++      }
+       const newServers = { ...(config.mcp?.servers || {}), [name]: merged }
+       replaceMcpServers(newServers)
+-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
++      return {
++        type: "mcp.servers.updated",
++        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
++      }
+     }
+     case "mcp.delete": {
+       const name = String(rest.name || "").trim()
+@@ -1835,7 +1851,10 @@ export async function handleMessage(
+       const newServers = { ...config.mcp.servers }
+       delete newServers[name]
+       replaceMcpServers(newServers)
+-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
++      return {
++        type: "mcp.servers.updated",
++        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
++      }
+     }
+     case "mcp.toggle_server": {
+       const name = String(rest.name || "").trim()
+@@ -1844,8 +1863,21 @@ export async function handleMessage(
+       const existing = config.mcp?.servers?.[name]
+       if (!existing) return { type: "error", error: `MCP server "${name}" not found` }
+       const newServers = { ...(config.mcp?.servers || {}), [name]: { ...existing, enabled } }
++      // Enabling a previously disabled stdio server spawns the process — same trust as add.
++      if (enabled && existing.enabled === false && existing.transport === "stdio") {
++        const stdioGate = await requireMcpStdioSpawnConfirm(
++          session,
++          name,
++          { ...existing, enabled: true },
++          "update",
++        )
++        if (stdioGate) return stdioGate
++      }
+       replaceMcpServers(newServers)
+-      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
++      return {
++        type: "mcp.servers.updated",
++        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
++      }
+     }
+     case "mcp.set_selection": {
+       // Per-thread MCP tool selection mode + active server ids (mirrors skill activation).
+@@ -3411,6 +3443,100 @@ const MCP_VALID_TRUST_LEVELS = new Set(["manual", "first-use", "trusted"])
+ const MCP_VALID_TRANSPORTS = new Set(["stdio", "http"])
+ const MCP_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/
+ 
++/**
++ * SEC-B: authenticated mcp.add/update stdio must not spawn without L2.
++ * Fail closed when no origin-bound confirmation channel (tests without session
++ * cannot silently register spawners).
++ */
++async function requireMcpStdioSpawnConfirm(
++  session: SessionCallbacks | undefined,
++  name: string,
++  cfg: McpServerConfig,
++  action: "add" | "update",
++): Promise<{ type: "error"; error: string } | null> {
++  if (cfg.transport !== "stdio") return null
++  if (!session?.requestConfirmation) {
++    return {
++      type: "error",
++      error:
++        "MCP stdio server requires interactive L2 confirmation (requestConfirmation channel missing)",
++    }
++  }
++  const cmd = typeof cfg.command === "string" ? cfg.command : ""
++  const args = Array.isArray(cfg.args) ? cfg.args.map(String).join(" ") : ""
++  const cwd = typeof cfg.cwd === "string" ? cfg.cwd : "(default)"
++  const decision = await session.requestConfirmation({
++    toolName: `mcp.${action}_stdio`,
++    dangerousApis: ["child_process.spawn", "mcp.stdio"],
++    code: [
++      `MCP ${action} stdio server "${name}"`,
++      `command: ${cmd}`,
++      `args: ${args}`,
++      `cwd: ${cwd}`,
++      `enabled: ${cfg.enabled !== false}`,
++    ].join("\n"),
++    riskLevel: "high",
++    autoConfirmEligible: false,
++    criticalApis: ["mcp.stdio.spawn"],
++  })
++  if (!decision.approved) {
++    return {
++      type: "error",
++      error: `MCP stdio server ${action} denied (${decision.reason})`,
++    }
++  }
++  return null
++}
++
++/** True when update changes the spawn surface (not mere trust_level / display). */
++function mcpStdioSpawnSurfaceChanged(
++  existing: McpServerConfig,
++  merged: McpServerConfig,
++): boolean {
++  if (merged.transport === "stdio" && existing.transport !== "stdio") return true
++  if (merged.transport !== "stdio") return false
++  // Narrow after transport check — union members differ by transport.
++  const ex = existing as Extract<McpServerConfig, { transport: "stdio" }> | McpServerConfig
++  const mg = merged as Extract<McpServerConfig, { transport: "stdio" }>
++  const exCmd = "command" in ex ? ex.command : undefined
++  const mgCmd = mg.command
++  if (exCmd !== mgCmd) return true
++  const exArgs = "args" in ex ? ex.args : undefined
++  const mgArgs = mg.args
++  if (JSON.stringify(exArgs || []) !== JSON.stringify(mgArgs || [])) return true
++  const exCwd = "cwd" in ex ? ex.cwd : undefined
++  const mgCwd = mg.cwd
++  if ((exCwd || "") !== (mgCwd || "")) return true
++  const exEnv = "env" in ex ? ex.env : undefined
++  const mgEnv = mg.env
++  if (JSON.stringify(exEnv || {}) !== JSON.stringify(mgEnv || {})) return true
++  return false
++}
++
++/** Mask env/headers on MCP metas for WS list/update broadcasts. */
++export function redactMcpServersForBroadcast(
++  servers: McpServerMeta[] | Array<Record<string, any>>,
++): any[] {
++  return (servers || []).map((s) => {
++    const copy: any = { ...s }
++    if (copy.config && typeof copy.config === "object") {
++      const cfg = { ...copy.config }
++      if (cfg.env && typeof cfg.env === "object") {
++        const env: Record<string, string> = {}
++        for (const k of Object.keys(cfg.env)) env[k] = "***"
++        cfg.env = env
++      }
++      if (cfg.headers && typeof cfg.headers === "object") {
++        const headers: Record<string, string> = {}
++        for (const k of Object.keys(cfg.headers)) headers[k] = "***"
++        cfg.headers = headers
++      }
++      copy.config = cfg
++    }
++    return copy
++  })
++}
++
+ /** Returns an error string if invalid, or null if OK. */
+ function validateMcpServerConfig(name: string, cfg: McpServerConfig | undefined): string | null {
+   if (!name) return "MCP server name is required"
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index eaa263b..00e0a27 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -51,7 +51,7 @@ import { URL } from "url"
+ import { getConfig, saveConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT, migrateLegacyModelName, DATA_DIR } from "./config"
+ import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "./voice/session-caps"
+ import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
+-import { handleMessage } from "./message-router"
++import { handleMessage, redactMcpServersForBroadcast } from "./message-router"
+ import { ThreadManager } from "./threads/thread-manager"
+ import { SkillEngine } from "./skills/skill-engine"
+ import { HistoryStore } from "./history/store"
+@@ -6446,13 +6446,20 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+   // that window; registering listeners afterwards means we miss the first wave.
+   const mcpManager = getMcpManager()
+   mcpManager.on("servers_updated", (metas) => {
+-    broadcastToClients({ type: "mcp.servers.updated", servers: metas })
++    broadcastToClients({
++      type: "mcp.servers.updated",
++      servers: redactMcpServersForBroadcast(metas || []),
++    })
+   })
+   mcpManager.on("status_changed", (meta) => {
+-    broadcastToClients({ type: "mcp.server.status_changed", server: meta })
++    const [redacted] = redactMcpServersForBroadcast(meta ? [meta] : [])
++    broadcastToClients({ type: "mcp.server.status_changed", server: redacted ?? meta })
+   })
+   mcpManager.on("tools_changed", () => {
+-    broadcastToClients({ type: "mcp.servers.updated", servers: mcpManager.listServers() })
++    broadcastToClients({
++      type: "mcp.servers.updated",
++      servers: redactMcpServersForBroadcast(mcpManager.listServers()),
++    })
+   })
+   try {
+     await mcpManager.start(config.mcp)
+diff --git a/companion/src/threads/thread-manager.ts b/companion/src/threads/thread-manager.ts
+index f3afd25..a57dfdb 100644
+--- a/companion/src/threads/thread-manager.ts
++++ b/companion/src/threads/thread-manager.ts
+@@ -331,8 +331,33 @@ export class ThreadManager {
+     atomicWriteJSON(this.indexPath, this.index)
+   }
+ 
++  /**
++   * SEC-A: only safe ids may touch the filesystem. Reject path seps / `..` so
++   * thread_id cannot escape threads/ (e.g. `../config` → config.json overwrite).
++   * create() still uses sanitizeId (strip + regenerate); path ops fail closed.
++   */
++  static isSafeThreadId(threadId: string): boolean {
++    return typeof threadId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(threadId)
++  }
++
++  private assertSafeThreadId(threadId: string): string {
++    if (!ThreadManager.isSafeThreadId(threadId)) {
++      throw new Error(
++        `Invalid thread id for filesystem path: ${String(threadId).slice(0, 48)}`,
++      )
++    }
++    return threadId
++  }
++
+   private threadFilePath(threadId: string): string {
+-    return path.join(getConfigDir(), "threads", `${threadId}.json`)
++    const safeId = this.assertSafeThreadId(threadId)
++    const threadsDir = path.resolve(getConfigDir(), "threads")
++    const filePath = path.resolve(threadsDir, `${safeId}.json`)
++    const rel = path.relative(threadsDir, filePath)
++    if (rel.startsWith("..") || path.isAbsolute(rel)) {
++      throw new Error("Thread path escape rejected")
++    }
++    return filePath
+   }
+ 
+   private generateId(): string {
+@@ -403,8 +428,10 @@ export class ThreadManager {
+   }
+ 
+   delete(threadId: string): void {
++    // Still drop from index even if id is malicious (no FS if unsafe).
+     this.index.threads = this.index.threads.filter(t => t.id !== threadId)
+     this.saveIndex()
++    if (!ThreadManager.isSafeThreadId(threadId)) return
+     try { fs.unlinkSync(this.threadFilePath(threadId)) } catch { /* ignore */ }
+   }
+ 
+@@ -756,6 +783,7 @@ export class ThreadManager {
+   // --- Messages ---
+ 
+   getMessages(threadId: string): Message[] {
++    if (!ThreadManager.isSafeThreadId(threadId)) return []
+     try {
+       const raw = fs.readFileSync(this.threadFilePath(threadId), "utf-8")
+       const data = JSON.parse(raw)
+@@ -766,6 +794,8 @@ export class ThreadManager {
+   }
+ 
+   addMessage(threadId: string, message: Omit<Message, "id" | "created_at">): Message {
++    // Fail closed: never create files outside threads/ via crafted thread_id
++    this.assertSafeThreadId(threadId)
+     const msg: Message = {
+       ...message,
+       id: `${threadId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+@@ -805,6 +835,7 @@ export class ThreadManager {
+   }
+ 
+   updateMessage(threadId: string, messageId: string, updates: Partial<Message>): void {
++    if (!ThreadManager.isSafeThreadId(threadId)) return
+     const filePath = this.threadFilePath(threadId)
+     try {
+       const raw = fs.readFileSync(filePath, "utf-8")
+@@ -836,6 +867,7 @@ export class ThreadManager {
+ 
+   /** Delete messages from a given message onwards (inclusive). */
+   deleteMessagesFrom(threadId: string, messageId: string): boolean {
++    if (!ThreadManager.isSafeThreadId(threadId)) return false
+     const filePath = this.threadFilePath(threadId)
+     try {
+       const raw = fs.readFileSync(filePath, "utf-8")

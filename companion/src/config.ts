@@ -261,7 +261,11 @@ export interface CompanionConfig {
    * never Extension ws_secret (L4+ dual-review lock).
    */
   outbound_mcp?: {
-    /** Default false until P1 GA / product ship claim. */
+    /**
+     * When true, loopback invoke/disclosure accept only CMSPARK_OUTBOUND_GRANT.
+     * Default true (MCPO-01 / ADR-022 L4) — Extension ws_secret is not a deputy.
+     * Set false only for local dual-entry debugging.
+     */
     require_grant?: boolean
   }
   /**
@@ -328,7 +332,7 @@ const defaultConfig: CompanionConfig = {
   log_max_file_mb: 10,
   capability_profile: "community",
   outbound_mcp: {
-    require_grant: false,
+    require_grant: true,
   },
   modules: {
     appsec: {

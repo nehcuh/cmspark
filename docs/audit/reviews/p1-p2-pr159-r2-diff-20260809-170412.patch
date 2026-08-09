@@ -1,0 +1,11 @@
+# Dual external review context
+batch: p1-p2-pr159-r2
+base: 5ba41f0908eef83bb0f485a490b7736947f8b9e5
+time: 20260809-170412
+
+22688b2
+
+?? docs/audit/reviews/p1-p2-pr159-r2-diff-20260809-170412.patch
+
+## Diff (git diff + staged)
+

@@ -643,11 +643,36 @@ func cuJson(_ dict: [String: Any]) -> String {
 
 // MARK: - helpers
 
+func cuWindowNumber(_ w: [String: Any]) -> UInt32 {
+    if let u = w[kCGWindowNumber as String] as? UInt32 { return u }
+    if let i = w[kCGWindowNumber as String] as? Int { return UInt32(truncatingIfNeeded: i) }
+    if let n = w[kCGWindowNumber as String] as? NSNumber { return n.uint32Value }
+    return 0
+}
+
+func cuWindowInfoDict(windowId: UInt32) -> [String: Any]? {
+    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
+        if let hit = raw.first(where: { cuWindowNumber($0) == windowId }) { return hit }
+        if raw.count == 1, cuWindowNumber(raw[0]) == 0 || cuWindowNumber(raw[0]) == windowId {
+            return raw[0]
+        }
+    }
+    for opts: CGWindowListOption in [[.optionOnScreenOnly], [.optionAll]] {
+        if let rawAll = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]],
+           let hit = rawAll.first(where: { cuWindowNumber($0) == windowId }) {
+            return hit
+        }
+    }
+    return nil
+}
+
 func cuPidForWindow(_ windowId: UInt32) -> pid_t {
-    guard let windows = CGWindowListCopyWindowInfo([.optionAll], windowId) as? [[String: Any]],
-          let first = windows.first,
-          let pid = first[kCGWindowOwnerPID as String] as? pid_t else { return 0 }
-    return pid
+    // SEC-F: match by window number (same as host.swift) — never take windows.first under optionAll.
+    if let info = cuWindowInfoDict(windowId: windowId),
+       let pid = info[kCGWindowOwnerPID as String] as? pid_t {
+        return pid
+    }
+    return 0
 }
 
 func cuAppElementForPid(_ pid: pid_t) -> AXUIElement? {

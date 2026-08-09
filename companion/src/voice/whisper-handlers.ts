@@ -35,6 +35,8 @@ import {
 
 export interface VoiceModelHandlerContext {
   broadcast?: (data: any) => void
+  /** WS Origin header (chrome-extension://… required for all voice.model.*). */
+  origin?: string
 }
 
 /** Injectable deps for unit tests (download/delete/state seams). */
@@ -195,12 +197,29 @@ function startBackgroundDownload(
 
 // --- handler ------------------------------------------------------------------
 
+/** ADR-023 / P1: voice.model.* only from chrome-extension:// peers (not tray). */
+export function isChromeExtensionOrigin(origin: string | undefined | null): boolean {
+  if (typeof origin !== "string") return false
+  return /^chrome-extension:\/\/[A-Za-z0-9_-]+$/i.test(origin)
+}
+
 export async function handleVoiceModelMessage(
   msg: any,
   ctx: VoiceModelHandlerContext = {},
   deps: VoiceModelHandlerDeps = {},
 ): Promise<any> {
   const { type, ...rest } = msg ?? {}
+
+  // P1 origin fence (settings dual fence still required for mutators below)
+  if (!isChromeExtensionOrigin(ctx.origin)) {
+    logger.warn("voice.model.refused", {
+      type: typeof type === "string" ? type : undefined,
+      reason: "origin_not_extension",
+    })
+    return modelError("voice.model.* requires chrome-extension:// origin", {
+      code: "ORIGIN_DENIED",
+    })
+  }
 
   // Belt: mutators require source:"settings" even if validateWsMessage was bypassed.
   if (SETTINGS_SOURCE_TYPES.has(type) && rest.source !== "settings") {
@@ -412,6 +431,14 @@ export async function handleVoiceModelMessage(
         const state = await statePayload(deps)
         ctx.broadcast?.(state)
         return state
+      }
+
+      // engine === "local" — require privacy_ack_v2 on the wire (server-side; client storage alone is not enough)
+      if (rest.privacy_ack_v2 !== true) {
+        logger.warn("voice.model.set_engine.refused", { reason: "need_privacy_ack_v2" })
+        return modelError("切换本机转写前须确认隐私说明（privacy_ack_v2）。", {
+          code: "NEED_PRIVACY_ACK",
+        })
       }
 
       // engine === "local" — ZERO config write if no ready model

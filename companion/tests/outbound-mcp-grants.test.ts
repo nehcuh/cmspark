@@ -131,12 +131,20 @@ test("authorizeOutboundRequest: grant caller mismatch", () => {
 })
 
 test("resolveOutboundHttpBearer: grant env preferred; else ws_secret", () => {
-  process.env[GRANT_ENV] = OUTBOUND_GRANT_TOKEN_PREFIX + "a".repeat(64)
-  const r = resolveOutboundHttpBearer()
-  assert.equal(r.mode, "grant")
-  delete process.env[GRANT_ENV]
-  const r2 = resolveOutboundHttpBearer()
-  assert.equal(r2.mode, "ws_secret")
+  const { getConfig, saveConfig } = require("../src/config") as typeof import("../src/config")
+  // Default require_grant is true (MCPO-01); exercise legacy ws_secret path under false.
+  saveConfig({ outbound_mcp: { require_grant: false } })
+  try {
+    process.env[GRANT_ENV] = OUTBOUND_GRANT_TOKEN_PREFIX + "a".repeat(64)
+    const r = resolveOutboundHttpBearer()
+    assert.equal(r.mode, "grant")
+    delete process.env[GRANT_ENV]
+    const r2 = resolveOutboundHttpBearer()
+    assert.equal(r2.mode, "ws_secret")
+  } finally {
+    saveConfig({ outbound_mcp: { require_grant: true } })
+    void getConfig
+  }
 })
 
 test("revokeAllOutboundGrants", () => {

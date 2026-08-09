@@ -189,19 +189,31 @@ export function AppsPanel() {
         </button>
       </div>
 
-      {/* WP4 (WI-6): 全局坐标开关只读行(镜像「全局 App」先例)——WP4 不做
-          面板内全局切换,开启路径 = companion 确认门或 config.json。 */}
+      {/* P1: 全局坐标开关可切换 — computer.set_enabled + companion L2/biometric gate */}
       <div style={styles.globalToggleRow}>
         <label
-          style={{ ...styles.globalToggleLabel, cursor: "default" }}
-          title="全局坐标操作：关闭后 host_computer 一律拒绝执行。开启需经确认门验证，或在 config.json 修改 computer.coordinateEnabled"
+          style={{ ...styles.globalToggleLabel, cursor: computerCoordinateEnabled === null ? "default" : "pointer" }}
+          title="全局坐标操作：关闭后 host_computer 一律拒绝。开启经确认门（生物识别/确认台）。"
         >
-          <input type="checkbox" checked={computerCoordinateEnabled === true} disabled style={{ marginRight: 6 }} />
+          <input
+            type="checkbox"
+            checked={computerCoordinateEnabled === true}
+            disabled={computerCoordinateEnabled === null}
+            style={{ marginRight: 6 }}
+            onChange={() => {
+              if (computerCoordinateEnabled === null) return
+              clearFeedback()
+              chrome.runtime.sendMessage({
+                type: "computer.set_enabled",
+                enabled: computerCoordinateEnabled !== true,
+              })
+            }}
+          />
           <span style={{ fontWeight: 500 }}>坐标操作</span>
         </label>
         {computerCoordinateEnabled === null && <span style={styles.globalOffHint}>状态查询中…</span>}
         {computerCoordinateEnabled === false && (
-          <span style={styles.globalOffHint}>已关闭 · 坐标任务不会执行</span>
+          <span style={styles.globalOffHint}>已关闭 · 点击开启（需确认）</span>
         )}
         {computerCoordinateEnabled === true && (
           <span style={styles.globalOffHint}>已开启 · 仍需逐应用授权</span>
