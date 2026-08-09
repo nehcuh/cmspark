@@ -22,6 +22,23 @@
 
 ## Technical Pitfalls
 
+### `run-tests.mjs` JSDoc 禁写 `*/` 序列（2026-08-09 S59–S60 · Pi REJECT）
+- **现象**：P2 换 Unix `find` 为 `scripts/run-tests.mjs` 后 `npm test` 秒崩 `SyntaxError: Unexpected token '*'`
+- **根因**：块注释里写了 `**/*.test.js` 类文本 → `*/` 提前结束注释
+- **修法**：注释只写「matching *.test.js」；合并前 `node --check scripts/run-tests.mjs` + 官方入口 `npm test` 冒烟
+- **纪律**：dual-review 机核必须跑 **产品入口**（`npm test`），不能只 `node --test` 单文件宣称绿灯
+
+### dual-review 全量 patch 超 context → Claude UNKNOWN（2026-08-09 S59）
+- **现象**：PR #159 对 `0de1760..HEAD` 生成 ~548KB patch；Claude Code `context window limit` → verdict UNKNOWN
+- **做法**：r1 以 Pi 正文为准；**r2 base 收窄到 blocker 修复 commit**（小 diff）让双端都能出 VERDICT
+- **纪律**：P0+P1 大 PR dual 可分批或 r2 只审 delta；Windows 用 **Git Bash** + `PATH=/c/nvm4w/nodejs` 跑 `dual-external-review.sh`
+
+### `handleMessage` 第 3 参才是 session（2026-08-09 S59 · P0 CI）
+- **现象**：SEC-B 后 stdio `mcp.add` 测仍报 `requestConfirmation channel missing`
+- **根因**：`handleMessage(msg, services, session?)` 测里把 L2 mock 塞进第 2 参（被当成 services）
+- **修法**：`handleMessage(msg, emptyServices, { sendToExtension, executeTool, requestConfirmation })`
+- **纪律**：改 `require_grant` / L2 默认值后，**全仓** e2e/config 测必须同步（outbound 用 `cmg_` grant，不能只靠 ws_secret）
+
 ### Windows base Python 发现：勿停在 findUv / bare PATH（2026-08-09 S57）
 - **现象**：S35 修好 uv 后，仍无全局 Python 时 system 假阴性；Store `WindowsApps\python.exe` 别名可冒充可用；缺 Python 文案 brew/python.org 不对称 winget
 - **锁（Scheme D）**：`findPythonBase` 序 config → isolated → well-known 绝对 → manager **seed only** → enriched PATH/`py` → Store 拒绝 + ≥3.10 + **绝对 pin**；managers 不 activate、不当 Qwen 一等 runtime

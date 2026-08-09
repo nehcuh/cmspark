@@ -2,6 +2,20 @@
 # Confidence: 0-1 (higher = more validated)
 
 instincts:
+  - id: dual-review-official-entrypoint-and-narrow-r2
+    pattern: "dual-external-review 机核必须跑产品入口（companion npm test），不能只 node --test 单文件。JSDoc/块注释禁止写入 */ 序列（如 **/glob）。大 PR 全量 patch 易打爆 Claude context → r1 以能产出 VERDICT 的审阅方为准，r2 base 收窄到 blocker 修复 commit。Windows 用 Git Bash + PATH=/c/nvm4w/nodejs 跑 scripts/dual-external-review.sh。"
+    confidence: 0.9
+    source_session: "2026-08-09 S59–S60 health-fanout #159 dual r1 REJECT / r2 both_ok"
+    tags: [dual-review, npm-test, windows, git-bash, ci]
+    applications: 1
+
+  - id: handlemessage-session-is-third-arg
+    pattern: "companion handleMessage(msg, services, session?)：L2 requestConfirmation / origin 必须作为第 3 参 session；第 2 参是 services。改 require_grant 默认 true 后 e2e 须用 cmg_ grant，不能假设 ws_secret 仍是默认 happy path。"
+    confidence: 0.9
+    source_session: "2026-08-09 S59 P0 CI 13 fails → #159"
+    tags: [testing, mcp, outbound, l2, security]
+    applications: 1
+
   - id: design-gate-worktree-then-pr
     pattern: "跨功能交付: 对抗 workflow → SoT/plan → Pi 协议复审（勿盲信 host pi 偏题输出）→ worktree 从 origin/main 只拷相关文件开 PR → CI 绿再 merge；勿在脏 feat/A 上堆 feat/B。合入后 stash 脏区再 pull --ff-only main。"
     confidence: 0.8
@@ -45,11 +59,11 @@ instincts:
     applications: 1
 
   - id: windows-dual-review-without-wsl
-    pattern: "Windows 无 WSL 时勿依赖 bash dual-external-review.sh。用 claude -p + pi -p 并行 Job；PowerShell 重定向默认 UTF-16 需转 UTF-8；pi 偶发 DSML 半输出则 -t read 重跑。commit message 用临时文件 -F，避免 PS HEREDOC。Git Bash + PATH=/c/nvm4w/nodejs 可直接跑 dual-external-review.sh。"
-    confidence: 0.85
-    source_session: "2026-08-05 S45 dual-review on Windows; 2026-08-06 S46 Git Bash dual-review"
-    tags: [windows, powershell, dual-review, tooling]
-    applications: 2
+    pattern: "Windows 无 WSL 时勿依赖 WSL bash；用 Git Bash (`Program Files/Git/bin/bash.exe`) + PATH=/c/nvm4w/nodejs 跑 dual-external-review.sh，或 claude -p + pi -p 并行 Job。PowerShell 重定向默认 UTF-16 需 UTF-8；commit message 用 -F 文件。勿用 system32 bash 当 WSL 未装时会空转。"
+    confidence: 0.9
+    source_session: "2026-08-05 S45; 2026-08-06 S46; 2026-08-09 S59 Git Bash dual #159"
+    tags: [windows, powershell, dual-review, tooling, git-bash]
+    applications: 3
 
   - id: autonomy-must-cover-all-l2-dialects
     pattern: "用户开『全自动巡航/全授权』后仍弹确认：先查日志是哪条门（shell enterprise_auto_approved vs mcp.confirm.requested）。Autonomy 三旗必须覆盖 Companion critical 与 MCP forceMcpConfirm/meta 等所有 L2 方言，否则产品撒谎。不要用模型话术『每次 shell 都要确认』当真相。"

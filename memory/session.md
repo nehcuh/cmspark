@@ -2,25 +2,24 @@
 
 ## Current Session
 
-### S59 (2026-08-09) [Health Fanout P1/P2 落地 · CI 回归修 · PR]
-- **P0**：`d1f69ef` · **PR #158**（CI 曾 13 fail：require_grant + MCP L2 测未更 → 本批修）
-- **P1 落地**（`fix/health-fanout-p1-p2`）：
-  - voice.model **origin fence**；`sttEngine=local` + **privacy_ack_v2** 服务端强制
-  - VOICE-02 **pin missing fail-closed**（`CMSPARK_WHISPER_UNPINNED=1` opt-in）
-  - Meeting **retain_until GC** boot+6h；CU **computer.set_enabled** AppsPanel 开关
-  - release **preflight test+audit** + SHA256SUMS；docs badges/G21/ADR-023/README model/断链 stub
-- **P2 落地**：CI Node 22；`run-tests.mjs` 跨平台；package.sh version lock；WS strict unknown；auth.ok `protocol_version:1`
-- **刻意未关**：god-file 拆分；完整 multi-arch pin 哈希；Developer ID/Authenticode；full startServer 集成；DESIGN↔tokens 全同步；reviews 归档
-- **验证**：[executed] tsc clean；**132/132** targeted pass
-- **Closeout**：`docs/audit/health-fanout-p1-p2-closeout-2026-08-09.md`
-- **下次**：合 PR（#158 或本批 p1-p2）；可选 dual-review 安全 diff；真机 whisper pin 写入
-- Recorded: yes — require_grant 测必须用 grant · handleMessage session 是第 3 参
+### S60 END (2026-08-09) [session-end · Health Fanout P0–P2 已合 main]
+- **Ship**：**#159 MERGED** `e4316bb`（P0 `d1f69ef` + P1/P2 `5ba41f0` + run-tests fix `22688b2` + dual r2 `3a84803`）
+- **Dual**：r1 Pi **REJECT**（`run-tests.mjs` JSDoc `*/`）→ 修 → r2 Claude **APPROVE** / Pi **APPROVE_WITH_NITS** both_ok；CI green 后 merge
+- **main tip**：`e4316bb` = `origin/main`；工作区干净
+- **下次（backlog）**：Whisper 多架构 pin 哈希 / win-x64 sidecar；god-file 拆分；codesign；真机听写会议；Pi nits（multi-agent cap 泄漏等）
+- Recorded: yes — npm test 入口 JSDoc 陷阱 · dual 全量 patch 超 context · handleMessage 第 3 参 session
 
-### S58 (2026-08-09) [Health Fanout P0 安全收口 · dual-review · local commit]
-- **审计**：`docs/audit/health-fanout-2026-08-09.md` overall 6.6/B-；0 Critical / **9 High**（SEC-A–F · VOICE-01/02 · MCPO-01）
-- **P0 落地**：见 `d1f69ef` / PR #158；dual closeout both_ok
-- **验证**：[executed] 31/31 P0 targeted；CI 后续因测试未跟 default require_grant 失败 → S59 修
-- Recorded: yes — dual-approve 后才 claim FIXED
+### S59 (2026-08-09) [Health Fanout P1/P2 落地 · CI 回归 · dual · **#159 MERGED**]
+- **P0+P1+P2** 全栈进 main（见 S60 / `e4316bb`）
+- **P1**：origin / privacy_ack_v2 / pin fail-closed / meeting GC / CU UI / release preflight+SHA256SUMS / docs
+- **P2**：CI Node 22 · run-tests.mjs · version lock · WS strict · protocol_version
+- **验证**：132 targeted pass；r2 dual both_ok
+- **Closeout**：`docs/audit/health-fanout-p0-optimization-closeout-2026-08-09.md` · `…-p1-p2-closeout-…`
+- Recorded: yes
+
+### S58 (2026-08-09) [Health Fanout P0 · dual closeout · 后并入 #159]
+- **审计** 9 High → P0 dual-approved；与 S59 同栈合 main
+- Recorded: yes
 
 ### S56 (2026-08-08 ~17:30–18:10) [Windows 本机听写：下载静默 · binary_missing · 打包 sidecar]
 - **诊断**：点 large-v3-turbo/下载无反应 ≠ 缺 whisper-cpp；`voiceModel===null` 时 UI 默认「未下载」；`sendMessage` 不读 ok；Companion 侧 download 实测可用

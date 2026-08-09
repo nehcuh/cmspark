@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-09 (S58 P0 commit local)
+**Updated**: 2026-08-09 (S60 session-end · #159 merged)
 
 ## CMspark — 产品 0.5.0 稳定切点
 
@@ -12,31 +12,35 @@
 | Trust / Confirm / Pack / MCP / Multi-agent | 交付 |
 | CU 实验定位 | **仅 Qwen3-VL**（TinyClick 已清） |
 | 听写+ / 本机 Whisper / 会议 | 交付（ADR-023/024；Windows 旁路 bin） |
-| Outbound MCP | 已有（ADR-022；**require_grant default true** 见 S58） |
-| Health P0 安全 | **local commit**（SEC-A–F / VOICE-01 / MCPO-01 dual-approved；待 push） |
+| Outbound MCP | 交付 opt-in（**require_grant default true**） |
+| Health security P0–P1 | **on main**（#159 / `e4316bb` dual r2） |
 
-## Main tip
+## Main tip (remote)
 
-- **`origin/main`**: still pre-S58 until push（S57 memory at `0de1760` / prior tip）
-- **Local S58**: health-fanout P0 security closeout + dual-review ledger（not on remote yet）
-- **#157** Windows Python discovery cascade (Scheme D) — MERGED
-- **#156** MCP filesystem@home + L2 allow-dir expand — MERGED
+- **`origin/main`**: **`e4316bb`** — Merge #159 health-fanout P0+P1/P2
+- **#159** MERGED（含 P0 安全 8 High + VOICE/MCPO + P1/P2）
+- **#158** also MERGED historically；权威栈以 #159 为准
+- **#157** Windows Python discovery · **#156** MCP filesystem@home — MERGED earlier
 
-## Recent product locks (S57–S58)
+## Recent locks (S57–S60)
 
-- **Python**: `findPythonBase` config → isolated → well-known → manager seed-only → PATH/py；Store fail-closed；≥3.10；absolute pin；winget `pythonInstallHint`；`basePythonAvailable` CTA
-- **MCP FS**: default allow home；L2 expand outside home（见 #156 / docs/mcp.md）
-- **P0 security (S58)**: thread path · mcp stdio L2 · tool-tape redact · generation CAS · originWs pending · cuPidForWindow · PATH whisper opt-in · outbound require_grant true
+- **Python**: Scheme D `findPythonBase` cascade（#157）
+- **MCP FS**: default allow home + L2 expand（#156）
+- **P0 security**: thread path · mcp stdio L2 · tool-tape redact · generation CAS · originWs · cuPidForWindow · PATH whisper opt-in · require_grant true
+- **P1**: voice origin + privacy_ack_v2 · pin fail-closed · meeting retain_until GC · CU set_enabled UI · release preflight+SHA256SUMS
+- **P2 partial**: CI Node 22 · run-tests.mjs · package version lock · WS strict · auth protocol_version
 
 ## Next (optional backlog)
 
-- **Push / PR** S58 P0 security batch to main
-- VOICE-02 Tier-1 multi-arch pin matrix；startServer 集成测；god-file 拆分；release SBOM/codesign
-- Whisper win-x64：stage `cmspark-whisper-win-x64.exe` + ggml/whisper DLL 旁路打包（可能仍在 local stash）
-- 真机听写/会议验收；host-integrity 打包纪律
+- Whisper multi-arch **real** SHA256 pins + win-x64 sidecar packaging（S56）
+- God-file split (`server.ts` / `message-router.ts`)
+- Developer ID / Authenticode；full startServer integration
+- 真机听写/会议验收；Pi nits（multi-agent cap leak on file.upload/regenerate supersede）
+- DESIGN↔tokens；audit/reviews archive
 
 ## Docs SoT
 
 - User / arch: `docs/README.md`
+- Health: `docs/audit/health-fanout-2026-08-09.md` + p0/p1-p2 closeouts
 - Python discovery: `docs/superpowers/specs/2026-08-09-windows-python-discovery-design.md`
 - MCP: `docs/mcp.md`
