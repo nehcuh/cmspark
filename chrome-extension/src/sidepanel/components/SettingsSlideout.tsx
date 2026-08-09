@@ -1363,6 +1363,11 @@ export function SettingsSlideout() {
                     >
                       <span style={{ fontWeight: isRecommended ? 600 : 500, color: "#333" }}>
                         {isRecommended ? `${RECOMMENDED_ROW_PREFIX}: ${modelId}` : modelId}
+                        {modelId === "large-v3-turbo" ? (
+                          <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
+                            仅终稿识别（无实时出字）；可能较慢，推荐先用 medium
+                          </div>
+                        ) : null}
                         {isActive ? " · 活动" : ""}
                       </span>
                       <span style={{ color: "#888", fontSize: 11 }}>

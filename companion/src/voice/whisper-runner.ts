@@ -201,18 +201,12 @@ export async function runWhisperTranscribe(
           shell: false,
           cwd: binaryDir,
           env: {
-            // Prefer binary dir first so LoadLibrary finds ggml*.dll (Windows)
+            // Inherit OS env (SystemRoot etc. required on Windows CRT) then override PATH
+            ...process.env,
             PATH:
               process.platform === "win32"
                 ? `${binaryDir}${path.delimiter}${process.env.PATH || ""}`
                 : process.env.PATH,
-            LANG: process.env.LANG,
-            LC_ALL: process.env.LC_ALL,
-            HOME: process.env.HOME,
-            TMPDIR: process.env.TMPDIR,
-            TEMP: process.env.TEMP,
-            TMP: process.env.TMP,
-            // Avoid leaking secrets into child env
           },
         },
         (err, stdout, _stderr) => {

@@ -36,13 +36,25 @@ CMspark Browser Agent v0.5.0
 - history.db  操作历史
 - logs/  运行日志
 
+## 本机听写（可选）
+
+- 组件：包内 `bin\cmspark-whisper-win-x64.exe` + DLL（或设置 → 听写 →「下载本机听写组件」）
+- 模型：设置 → 听写 下载 small / medium（推荐）/ large-v3-turbo
+- large-v3-turbo：终稿识别可能需数十秒～数分钟，无实时出字（仅 medium/small 有渐进假设）
+- 数据目录：%USERPROFILE%\.cmspark-agent\models\whisper\ 与 bin\whisper\
+
 ## 常见问题
 
 Q: Side Panel 显示"未连接到 Companion"
-A: Companion 进程未启动。双击 launch.bat 手动启动
+A: Companion 未起来。双击 launch.bat；若报错看
+   %USERPROFILE%\.cmspark-agent\logs\crash.log
+
+Q: launch.bat 提示 port 23401 not listening
+A: 进程启动失败（SEA/依赖）。在包目录运行: cmspark-agent.exe tray
+   查看控制台错误与 logs\crash.log
 
 Q: 端口 23401 被占用
-A: 打开任务管理器，结束 node.exe 或 cmspark-agent.exe 进程后重试
+A: 任务管理器结束 cmspark-agent.exe 后重试
 
 Q: 如何更新？
 A: 下载新版本 zip，解压覆盖所有文件，重启 CMspark 即可
@@ -50,3 +62,4 @@ A: 下载新版本 zip，解压覆盖所有文件，重启 CMspark 即可
 Q: 需要安装 Node.js 吗？
 A: 不需要。本分发包已内置 Node.js 运行时，开箱即用。
    （精简版用户如需使用系统 Node.js，请确保版本 v20+）
+

@@ -6343,6 +6343,19 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "skill.list": () => ({ valid: true }),
     "skill.refresh": () => ({ valid: true }),
+    "skill.import-folder": () => ({ valid: true }),
+    "skill.import-path": (m) => {
+      if (typeof m.dir_path !== "string" || !m.dir_path) {
+        return { valid: false, error: "skill.import-path requires dir_path string" }
+      }
+      return { valid: true }
+    },
+    "skill.import-files": (m) => {
+      if (!Array.isArray(m.files) || m.files.length === 0) {
+        return { valid: false, error: "skill.import-files requires non-empty files array" }
+      }
+      return { valid: true }
+    },
     "knowledge.list": () => ({ valid: true }),
     "knowledge.import": (m) => {
       if (!m.url && !m.content && !m.path) {

@@ -1,0 +1,691 @@
+# Dual external review context
+batch: voice-pack-windows-closeout
+base: HEAD~1
+time: 20260809-223738
+
+f6291ba
+
+ M chrome-extension/package-lock.json
+ M chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+ M companion/README.txt
+ M companion/launch.bat
+ M companion/package-lock.json
+ M companion/src/server.ts
+ M companion/src/voice/whisper-catalog.ts
+ M companion/src/voice/whisper-runner.ts
+ M companion/tests/voice-whisper-runner.test.ts
+ M companion/tests/ws-validate-strict.test.ts
+ M docs/meeting-and-dictation-user-guide.md
+?? .tmp-ci-jobs.json
+?? .tmp-ci-jobs2.json
+?? .tmp-ci-log.txt
+?? .tmp-diagnosis-report.json
+?? docs/audit/reviews/voice-pack-windows-closeout-adversary-20260809.md
+?? docs/audit/reviews/voice-pack-windows-closeout-diff-20260809-223738.patch
+?? docs/audit/reviews/voice-pack-windows-closeout-dual-prompt.md
+
+## Diff (git diff + staged)
+ .../src/sidepanel/components/SettingsSlideout.tsx  |   5 +
+ companion/README.txt                               |  17 ++-
+ companion/launch.bat                               |  37 +++--
+ companion/package-lock.json                        |   3 +
+ companion/src/server.ts                            | 109 ++++++++-----
+ companion/src/voice/stt-session-service.ts         |  37 ++++-
+ companion/src/voice/whisper-catalog.ts             |   3 +-
+ companion/src/voice/whisper-runner.ts              | 168 ++++++++++++++-------
+ companion/tests/voice-whisper-runner.test.ts       |  30 +++-
+ companion/tests/ws-validate-strict.test.ts         |   8 +-
+ docs/meeting-and-dictation-user-guide.md           |   3 +-
+ 11 files changed, 291 insertions(+), 129 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index 8b21daa..ce4de7f 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -1363,6 +1363,11 @@ export function SettingsSlideout() {
+                     >
+                       <span style={{ fontWeight: isRecommended ? 600 : 500, color: "#333" }}>
+                         {isRecommended ? `${RECOMMENDED_ROW_PREFIX}: ${modelId}` : modelId}
++                        {modelId === "large-v3-turbo" ? (
++                          <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
++                            仅终稿识别（无实时出字）；可能较慢，推荐先用 medium
++                          </div>
++                        ) : null}
+                         {isActive ? " · 活动" : ""}
+                       </span>
+                       <span style={{ color: "#888", fontSize: 11 }}>
+diff --git a/companion/README.txt b/companion/README.txt
+index 94c102c..10f6a55 100644
+--- a/companion/README.txt
++++ b/companion/README.txt
+@@ -36,13 +36,25 @@ CMspark Browser Agent v0.5.0
+ - history.db  操作历史
+ - logs/  运行日志
+ 
++## 本机听写（可选）
++
++- 组件：包内 `bin\cmspark-whisper-win-x64.exe` + DLL（或设置 → 听写 →「下载本机听写组件」）
++- 模型：设置 → 听写 下载 small / medium（推荐）/ large-v3-turbo
++- large-v3-turbo：终稿识别可能需数十秒～数分钟，无实时出字（仅 medium/small 有渐进假设）
++- 数据目录：%USERPROFILE%\.cmspark-agent\models\whisper\ 与 bin\whisper\
++
+ ## 常见问题
+ 
+ Q: Side Panel 显示"未连接到 Companion"
+-A: Companion 进程未启动。双击 launch.bat 手动启动
++A: Companion 未起来。双击 launch.bat；若报错看
++   %USERPROFILE%\.cmspark-agent\logs\crash.log
++
++Q: launch.bat 提示 port 23401 not listening
++A: 进程启动失败（SEA/依赖）。在包目录运行: cmspark-agent.exe tray
++   查看控制台错误与 logs\crash.log
+ 
+ Q: 端口 23401 被占用
+-A: 打开任务管理器，结束 node.exe 或 cmspark-agent.exe 进程后重试
++A: 任务管理器结束 cmspark-agent.exe 后重试
+ 
+ Q: 如何更新？
+ A: 下载新版本 zip，解压覆盖所有文件，重启 CMspark 即可
+@@ -50,3 +62,4 @@ A: 下载新版本 zip，解压覆盖所有文件，重启 CMspark 即可
+ Q: 需要安装 Node.js 吗？
+ A: 不需要。本分发包已内置 Node.js 运行时，开箱即用。
+    （精简版用户如需使用系统 Node.js，请确保版本 v20+）
++
+diff --git a/companion/launch.bat b/companion/launch.bat
+index e2e55ed..e25f8d5 100644
+--- a/companion/launch.bat
++++ b/companion/launch.bat
+@@ -39,11 +39,11 @@ set "LAUNCH_ARGS=cmspark-agent.js tray"
+ echo [launch] NODE_CMD=!NODE_CMD!
+ 
+ :do_launch
+-:: Check if already running
+-netstat -an 2>nul | find.exe "*********:23401" 2>nul | find.exe "LISTENING" >nul 2>nul
++:: Already listening on Companion port?
++netstat -an 2>nul | find.exe "127.0.0.1:23401" 2>nul | find.exe "LISTENING" >nul 2>nul
+ if !errorlevel! equ 0 (
+     echo [launch] Already running on port 23401
+-    goto :done
++    goto :success
+ )
+ 
+ :: Launch via hidden VBS launcher (delegates to cmspark-agent.exe or node fallback)
+@@ -51,32 +51,31 @@ if exist "%~dp0launch-hidden.vbs" (
+     echo [launch] Launching via launch-hidden.vbs...
+     wscript.exe "%~dp0launch-hidden.vbs"
+ ) else (
+-    :: Fallback: launch directly without VBS (console window visible)
+     echo [launch] VBS not found, fallback: !LAUNCH_EXE! !LAUNCH_ARGS!
+     start /MIN cmd /c "!LAUNCH_EXE! !LAUNCH_ARGS!"
+ )
+ echo [launch] Launcher issued, waiting...
+ 
+-ping -n 5 127.0.0.1 >nul
+-
+-:: Check if log was created
+-echo [launch] Checking for cmspark-agent.log...
+-if exist "cmspark-agent.log" (
+-    echo [launch] LOG FILE EXISTS
+-    type "cmspark-agent.log" 2>nul
+-) else (
+-    echo [launch] LOG FILE MISSING
+-)
++ping -n 6 127.0.0.1 >nul
+ 
+-:: Check port
++:: Probe 127.0.0.1:23401 LISTENING (server binds loopback only)
+ netstat -an 2>nul | find.exe "127.0.0.1:23401" 2>nul | find.exe "LISTENING" >nul 2>nul
+ if !errorlevel! equ 0 (
+-    echo [launch] Port 23401 is LISTENING
+-) else (
+-    echo [launch] Port 23401 NOT listening
++    goto :success
+ )
+ 
+-:done
++echo.
++echo [ERROR] Companion did not start (port 23401 not listening).
++echo   Crash / diagnostics (if any):
++echo     %USERPROFILE%\.cmspark-agent\logs\crash.log
++echo     %USERPROFILE%\.cmspark-agent\logs\vbs-launcher.log
++echo     %USERPROFILE%\.cmspark-agent\logs\companion-*.log
++echo   Try: cmspark-agent.exe tray   (visible console)
++echo   Or reinstall / re-run after fixing SEA/binaries.
++pause
++exit /b 1
++
++:success
+ echo.
+ echo CMspark started (port 23401)
+ echo Open Chrome side panel: click CMspark icon on toolbar
+diff --git a/companion/package-lock.json b/companion/package-lock.json
+index 27b66a2..de5de8d 100644
+--- a/companion/package-lock.json
++++ b/companion/package-lock.json
+@@ -33,6 +33,9 @@
+         "@types/ws": "^8.5.10",
+         "tsx": "^4.11.0",
+         "typescript": "^5.4.5"
++      },
++      "engines": {
++        "node": ">=20"
+       }
+     },
+     "node_modules/@borewit/text-codec": {
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index f3a852d..da7942d 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -6343,6 +6343,19 @@ export function validateWsMessage(msg: any): WsValidationResult {
+     },
+     "skill.list": () => ({ valid: true }),
+     "skill.refresh": () => ({ valid: true }),
++    "skill.import-folder": () => ({ valid: true }),
++    "skill.import-path": (m) => {
++      if (typeof m.dir_path !== "string" || !m.dir_path) {
++        return { valid: false, error: "skill.import-path requires dir_path string" }
++      }
++      return { valid: true }
++    },
++    "skill.import-files": (m) => {
++      if (!Array.isArray(m.files) || m.files.length === 0) {
++        return { valid: false, error: "skill.import-files requires non-empty files array" }
++      }
++      return { valid: true }
++    },
+     "knowledge.list": () => ({ valid: true }),
+     "knowledge.import": (m) => {
+       if (!m.url && !m.content && !m.path) {
+@@ -7209,48 +7222,62 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+           return
+         }
+ 
+-        const response = await handleMessage(
+-          msg,
+-          { threadManager, skillEngine, historyStore },
+-          {
+-            sendToExtension: (data: any) => {
+-              if (ws.readyState === WebSocket.OPEN) {
+-                ws.send(JSON.stringify(data))
+-              }
+-            },
+-            executeTool,
+-            // App tab D2 biometric gates (apps.add/set_policy →auto): same
+-            // origin-bound confirmation channel as executeTool's
+-            // sendConfirmation above — nonce-carrying confirmations resolve
+-            // only on the socket that requested them (amendment A1).
+-            requestConfirmation: (details) =>
+-              securityConfirmations.request(
+-                (data) => {
+-                  if (ws.readyState === WebSocket.OPEN) {
+-                    ws.send(JSON.stringify(data))
+-                  }
+-                },
+-                details,
+-                { originWs: ws },
+-              ),
+-            broadcast: (data: any) => {
+-              const message = JSON.stringify(data)
+-              for (const client of clients) {
+-                try {
+-                  // Y-e: mirror broadcastToClients (X3) — never fan out to
+-                  // unauthenticated connections inside the handshake window.
+-                  if (client.readyState === WebSocket.OPEN && wsAuth.get(client)?.authenticated === true) {
+-                    client.send(message)
+-                  }
+-                } catch { /* ignore disconnected */ }
+-              }
++        let response: any
++        try {
++          response = await handleMessage(
++            msg,
++            { threadManager, skillEngine, historyStore },
++            {
++              sendToExtension: (data: any) => {
++                if (ws.readyState === WebSocket.OPEN) {
++                  ws.send(JSON.stringify(data))
++                }
++              },
++              executeTool,
++              // App tab D2 biometric gates (apps.add/set_policy →auto): same
++              // origin-bound confirmation channel as executeTool's
++              // sendConfirmation above — nonce-carrying confirmations resolve
++              // only on the socket that requested them (amendment A1).
++              requestConfirmation: (details) =>
++                securityConfirmations.request(
++                  (data) => {
++                    if (ws.readyState === WebSocket.OPEN) {
++                      ws.send(JSON.stringify(data))
++                    }
++                  },
++                  details,
++                  { originWs: ws },
++                ),
++              broadcast: (data: any) => {
++                const message = JSON.stringify(data)
++                for (const client of clients) {
++                  try {
++                    // Y-e: mirror broadcastToClients (X3) — never fan out to
++                    // unauthenticated connections inside the handshake window.
++                    if (client.readyState === WebSocket.OPEN && wsAuth.get(client)?.authenticated === true) {
++                      client.send(message)
++                    }
++                  } catch { /* ignore disconnected */ }
++                }
++              },
++              // WP4: 每连接面板标识(computer.evidence.open P6 频率上限计数)。
++              panelId,
++              // Path B M1: origin class for voice.stt.* (chrome-extension vs tray).
++              origin: peerOrigin,
+             },
+-            // WP4: 每连接面板标识(computer.evidence.open P6 频率上限计数)。
+-            panelId,
+-            // Path B M1: origin class for voice.stt.* (chrome-extension vs tray).
+-            origin: peerOrigin,
+-          },
+-        )
++          )
++        } catch (handlerErr: any) {
++          // Keep Companion alive on STT/tool handler throws (was process-killing via unhandledRejection).
++          logger.error("ws.handleMessage.threw", {
++            type: typeof msg?.type === "string" ? msg.type : undefined,
++            error: handlerErr?.message || String(handlerErr),
++          })
++          response = {
++            type: "error",
++            error: handlerErr?.message || "handler failed",
++            family: typeof msg?.type === "string" ? String(msg.type).split(".")[0] : "ws",
++          }
++        }
+ 
+         if (response && ws.readyState === WebSocket.OPEN) {
+           // Echo the request id so clients can match this response to a pending
+diff --git a/companion/src/voice/stt-session-service.ts b/companion/src/voice/stt-session-service.ts
+index 906be6a..a2a143f 100644
+--- a/companion/src/voice/stt-session-service.ts
++++ b/companion/src/voice/stt-session-service.ts
+@@ -222,6 +222,16 @@ export class SttSessionService {
+     const peer = this.requirePeer(peerId, sessionId)
+     if (!peer.ok) return peer
+     const bound = this.bound!
++    // large-v3-turbo full load ~1.6GB and 30–90s even for short audio — progressive
++    // re-decode would stack with final end() and freeze/kill the host on Windows SEA.
++    // Hold-to-talk continuous still works; interim hypothesis is medium/small only.
++    if (bound.modelId === "large-v3-turbo") {
++      return {
++        ok: false,
++        code: "partial_skipped",
++        message: "partial disabled for large-v3-turbo (final-only)",
++      }
++    }
+     if (bound.inferring) {
+       return { ok: false, code: "partial_busy", message: "final infer in progress" }
+     }
+@@ -393,14 +403,39 @@ export class SttSessionService {
+       const audioPath = await writeSessionFile(sessionDir, fileName, body)
+ 
+       const run = this.deps.runWhisper ?? runWhisperTranscribe
++      // large models need more wall time (CPU encode of long utterances)
++      const baseTimeout = this.deps.inferMaxMs ?? STT_INFER_MAX_MS
++      const timeoutMs =
++        modelId === "large-v3-turbo" ? Math.max(baseTimeout, 180_000) : baseTimeout
++      try {
++        const { logger } = await import("../logger")
++        logger.info("voice.stt.infer.start", {
++          modelId,
++          binary: path.basename(binRes.path),
++          audioBytes: body.length,
++          timeoutMs,
++        })
++      } catch {
++        /* logger optional in tests */
++      }
+       const result = await run({
+         binaryPath: binRes.path,
+         modelPath,
+         audioPath,
+         lang: this.deps.lang ?? "zh",
+-        timeoutMs: this.deps.inferMaxMs ?? STT_INFER_MAX_MS,
++        timeoutMs,
+         signal: ac.signal,
+       })
++      try {
++        const { logger } = await import("../logger")
++        logger.info("voice.stt.infer.ok", {
++          modelId,
++          ms: result.ms,
++          textLen: (result.text ?? "").length,
++        })
++      } catch {
++        /* */
++      }
+ 
+       await removeSessionDir(sessionDir)
+       sessionDir = undefined
+diff --git a/companion/src/voice/whisper-catalog.ts b/companion/src/voice/whisper-catalog.ts
+index 6a85a27..9df47c7 100644
+--- a/companion/src/voice/whisper-catalog.ts
++++ b/companion/src/voice/whisper-catalog.ts
+@@ -32,7 +32,8 @@ export const WHISPER_MODEL_UI: Record<
+     // Full f16 ggml-large-v3-turbo.bin ≈ 1.62 GiB (not a Q5 quant).
+     approxDiskGB: 1.6,
+     approxRamGB: 2,
+-    notes: "更快大模型蒸馏档",
++    // Final-only progressive path; may take tens of seconds–minutes on CPU
++    notes: "大模型蒸馏档 · 仅终稿（无实时出字）· 可能较慢/占内存",
+   },
+ }
+ 
+diff --git a/companion/src/voice/whisper-runner.ts b/companion/src/voice/whisper-runner.ts
+index 361a5c4..944e3d6 100644
+--- a/companion/src/voice/whisper-runner.ts
++++ b/companion/src/voice/whisper-runner.ts
+@@ -7,6 +7,8 @@ import {
+   type ExecFileException,
+   type ExecFileOptions,
+ } from "node:child_process"
++import * as path from "node:path"
++import * as os from "node:os"
+ 
+ import { STT_INFER_MAX_MS } from "./session-caps"
+ 
+@@ -49,13 +51,39 @@ export class WhisperRunnerError extends Error {
+   }
+ }
+ 
+-/** whisper-cli / cmspark-whisper argv (spike-proven). */
++/** Cap threads — large models + OpenMP can thrash / look like a hang on Windows. */
++export function defaultWhisperThreadCount(): number {
++  const n = typeof os.cpus === "function" ? os.cpus().length : 4
++  return Math.max(2, Math.min(6, Math.floor(n / 2) || 4))
++}
++
++/**
++ * whisper-cli / cmspark-whisper argv.
++ * -ng: force CPU (avoids broken GPU init paths on some Windows builds)
++ * -np: quieter stderr (still enough for errors; reduces maxBuffer pressure)
++ * -nt: no timestamps (product expects plain text)
++ * -t N: bounded threads
++ */
+ export function buildWhisperArgs(opts: {
+   modelPath: string
+   audioPath: string
+   lang: string
++  threads?: number
+ }): string[] {
+-  return ["-m", opts.modelPath, "-f", opts.audioPath, "-l", opts.lang, "-nt"]
++  const threads = opts.threads ?? defaultWhisperThreadCount()
++  return [
++    "-m",
++    opts.modelPath,
++    "-f",
++    opts.audioPath,
++    "-l",
++    opts.lang,
++    "-nt",
++    "-ng",
++    "-np",
++    "-t",
++    String(threads),
++  ]
+ }
+ 
+ /**
+@@ -107,6 +135,9 @@ export async function runWhisperTranscribe(
+     lang,
+   })
+   const started = Date.now()
++  // Windows loads whisper/ggml DLLs from the directory of the *executable*.
++  // Explicit cwd keeps sibling DLLs resolvable even if process.cwd is elsewhere.
++  const binaryDir = path.dirname(path.resolve(opts.binaryPath))
+ 
+   if (opts.signal?.aborted) {
+     throw new WhisperRunnerError("aborted", "whisper aborted before start")
+@@ -116,6 +147,7 @@ export async function runWhisperTranscribe(
+     let settled = false
+     let abortedBySignal = false
+     let killEscalation: ReturnType<typeof setTimeout> | undefined
++    let child: ChildProcess
+ 
+     const finishReject = (err: WhisperRunnerError) => {
+       if (settled) return
+@@ -133,13 +165,13 @@ export async function runWhisperTranscribe(
+     const onAbort = () => {
+       abortedBySignal = true
+       try {
+-        child.kill("SIGTERM")
++        child?.kill("SIGTERM")
+       } catch {
+         /* ignore */
+       }
+       killEscalation = setTimeout(() => {
+         try {
+-          child.kill("SIGKILL")
++          child?.kill("SIGKILL")
+         } catch {
+           /* ignore */
+         }
+@@ -156,63 +188,83 @@ export async function runWhisperTranscribe(
+       }
+     }
+ 
+-    const child = execFile(
+-      opts.binaryPath,
+-      args,
+-      {
+-        timeout: timeoutMs,
+-        killSignal: "SIGTERM",
+-        maxBuffer: 4 * 1024 * 1024,
+-        windowsHide: true,
+-        shell: false,
+-        env: {
+-          PATH: process.env.PATH,
+-          LANG: process.env.LANG,
+-          LC_ALL: process.env.LC_ALL,
+-          HOME: process.env.HOME,
+-          TMPDIR: process.env.TMPDIR,
+-          TEMP: process.env.TEMP,
+-          TMP: process.env.TMP,
+-          // Avoid leaking secrets into child env
++    try {
++      child = execFile(
++        opts.binaryPath,
++        args,
++        {
++          timeout: timeoutMs,
++          killSignal: "SIGTERM",
++          // whisper.cpp logs can be chatty before -np; keep headroom
++          maxBuffer: 16 * 1024 * 1024,
++          windowsHide: true,
++          shell: false,
++          cwd: binaryDir,
++          env: {
++            // Inherit OS env (SystemRoot etc. required on Windows CRT) then override PATH
++            ...process.env,
++            PATH:
++              process.platform === "win32"
++                ? `${binaryDir}${path.delimiter}${process.env.PATH || ""}`
++                : process.env.PATH,
++          },
+         },
+-      },
+-      (err, stdout, _stderr) => {
+-        const ms = Date.now() - started
+-        const out = String(stdout ?? "")
+-        if (!err) {
+-          finishResolve({ text: parseWhisperStdout(out), ms })
+-          return
+-        }
+-        if (abortedBySignal || opts.signal?.aborted) {
+-          finishReject(new WhisperRunnerError("aborted", "whisper aborted"))
+-          return
+-        }
+-        const e = err as ExecFileException & { killed?: boolean }
+-        // Node marks timeout kills with killed=true
+-        if (e.killed || e.signal === "SIGTERM" || e.signal === "SIGKILL") {
++        (err, stdout, _stderr) => {
++          const ms = Date.now() - started
++          const out = String(stdout ?? "")
++          if (!err) {
++            finishResolve({ text: parseWhisperStdout(out), ms })
++            return
++          }
++          if (abortedBySignal || opts.signal?.aborted) {
++            finishReject(new WhisperRunnerError("aborted", "whisper aborted"))
++            return
++          }
++          const e = err as ExecFileException & { killed?: boolean; code?: string | number }
++          // maxBuffer / spawn failures
++          if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
++            finishReject(
++              new WhisperRunnerError(
++                "nonzero_exit",
++                "whisper produced excessive output (stdio maxBuffer)",
++              ),
++            )
++            return
++          }
++          // Node marks timeout kills with killed=true
++          if (e.killed || e.signal === "SIGTERM" || e.signal === "SIGKILL") {
++            finishReject(
++              new WhisperRunnerError(
++                "timeout",
++                `whisper timed out after ${timeoutMs}ms`,
++              ),
++            )
++            return
++          }
++          if (typeof e.code === "number") {
++            finishReject(
++              new WhisperRunnerError(
++                "nonzero_exit",
++                e.message || `whisper exit ${e.code}`,
++              ),
++            )
++            return
++          }
++          // ENOENT etc.
+           finishReject(
+-            new WhisperRunnerError(
+-              "timeout",
+-              `whisper timed out after ${timeoutMs}ms`,
+-            ),
++            new WhisperRunnerError("spawn_error", e.message || "whisper spawn failed"),
+           )
+-          return
+-        }
+-        if (typeof e.code === "number") {
+-          finishReject(
+-            new WhisperRunnerError(
+-              "nonzero_exit",
+-              e.message || `whisper exit ${e.code}`,
+-            ),
+-          )
+-          return
+-        }
+-        // ENOENT etc.
+-        finishReject(
+-          new WhisperRunnerError("spawn_error", e.message || "whisper spawn failed"),
+-        )
+-      },
+-    )
++        },
++      )
++    } catch (e) {
++      finishReject(
++        new WhisperRunnerError(
++          "spawn_error",
++          e instanceof Error ? e.message : "whisper spawn threw",
++        ),
++      )
++      return
++    }
+ 
+     if (opts.signal) {
+       opts.signal.addEventListener("abort", onAbort, { once: true })
+diff --git a/companion/tests/voice-whisper-runner.test.ts b/companion/tests/voice-whisper-runner.test.ts
+index 6df59b2..a31168f 100644
+--- a/companion/tests/voice-whisper-runner.test.ts
++++ b/companion/tests/voice-whisper-runner.test.ts
+@@ -25,10 +25,20 @@ if (!FIXTURE) {
+ }
+ 
+ test("buildWhisperArgs matches whisper-cli schema", () => {
+-  assert.deepEqual(
+-    buildWhisperArgs({ modelPath: "/m.bin", audioPath: "/a.wav", lang: "zh" }),
+-    ["-m", "/m.bin", "-f", "/a.wav", "-l", "zh", "-nt"],
+-  )
++  const args = buildWhisperArgs({ modelPath: "/m.bin", audioPath: "/a.wav", lang: "zh", threads: 4 })
++  assert.deepEqual(args, [
++    "-m",
++    "/m.bin",
++    "-f",
++    "/a.wav",
++    "-l",
++    "zh",
++    "-nt",
++    "-ng",
++    "-np",
++    "-t",
++    "4",
++  ])
+ })
+ 
+ test("parseWhisperStdout strips logs and handles BLANK_AUDIO", () => {
+@@ -76,7 +86,17 @@ test("runWhisperTranscribe injects execFile and checks argv", async () => {
+     execFileImpl: fakeExec,
+   })
+   assert.equal(r.text, "injected text")
+-  assert.deepEqual(seenArgs, ["-m", "/models/small.bin", "-f", "/tmp/a.pcm", "-l", "en", "-nt"])
++  const args = seenArgs as string[]
++  assert.equal(args[0], "-m")
++  assert.equal(args[1], "/models/small.bin")
++  assert.equal(args[2], "-f")
++  assert.equal(args[3], "/tmp/a.pcm")
++  assert.equal(args[4], "-l")
++  assert.equal(args[5], "en")
++  assert.ok(args.includes("-nt"))
++  assert.ok(args.includes("-ng"))
++  assert.ok(args.includes("-np"))
++  assert.ok(args.includes("-t"))
+ })
+ 
+ test("runWhisperTranscribe timeout via killed child", async () => {
+diff --git a/companion/tests/ws-validate-strict.test.ts b/companion/tests/ws-validate-strict.test.ts
+index 8e4f6b4..1f915c5 100644
+--- a/companion/tests/ws-validate-strict.test.ts
++++ b/companion/tests/ws-validate-strict.test.ts
+@@ -79,12 +79,18 @@ test("core router types are registered (production fail-closed must not drop con
+       "config.get",
+       "thread.list",
+       "skill.list",
++      "skill.import-folder",
++      "skill.import-path",
++      "skill.import-files",
+       "knowledge.list",
+       "user_env.list",
+       "security.unattended.status",
+       "computer.get_state",
+     ]) {
+-      const r = validateWsMessage({ type })
++      const payload: Record<string, unknown> = { type }
++      if (type === "skill.import-path") payload.dir_path = "/tmp/skills"
++      if (type === "skill.import-files") payload.files = [{ name: "x.md", content: "y" }]
++      const r = validateWsMessage(payload)
+       assert.equal(r.valid, true, `${type} must be known under production WS strict`)
+     }
+   } finally {
+diff --git a/docs/meeting-and-dictation-user-guide.md b/docs/meeting-and-dictation-user-guide.md
+index a0af4ac..78bf4aa 100644
+--- a/docs/meeting-and-dictation-user-guide.md
++++ b/docs/meeting-and-dictation-user-guide.md
+@@ -83,7 +83,8 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
+ | 临时字 | 会话内 snapshot → Whisper **重解码** → 草稿 interim |
+ | 定稿 | 约 **8s** 窗口结束一次 final（非整段等停） |
+ | poll | 按上次推断耗时自适应（约 1.4–6s） |
+-| **诚实边界** | **不是** decoder-token 真流式；medium 模型下临时字会偏慢 |
++| **诚实边界** | **不是** decoder-token 真流式；medium 临时字会偏慢 |
++| **large-v3-turbo** | **无**渐进临时字（仅终稿）；CPU 上短音频也可能数十秒～数分钟；设置默认推荐 **medium** |
+ 
+ 浏览器听写路径：Web Speech 字级 interim（厂商云 STT 残留，见 v1 ack）。
+ 

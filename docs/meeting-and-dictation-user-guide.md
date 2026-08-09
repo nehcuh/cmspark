@@ -83,7 +83,8 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
 | 临时字 | 会话内 snapshot → Whisper **重解码** → 草稿 interim |
 | 定稿 | 约 **8s** 窗口结束一次 final（非整段等停） |
 | poll | 按上次推断耗时自适应（约 1.4–6s） |
-| **诚实边界** | **不是** decoder-token 真流式；medium 模型下临时字会偏慢 |
+| **诚实边界** | **不是** decoder-token 真流式；medium 临时字会偏慢 |
+| **large-v3-turbo** | **无**渐进临时字（仅终稿）；CPU 上短音频也可能数十秒～数分钟；设置默认推荐 **medium** |
 
 浏览器听写路径：Web Speech 字级 interim（厂商云 STT 残留，见 v1 ack）。
 
