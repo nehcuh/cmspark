@@ -22,6 +22,18 @@
 
 ## Technical Pitfalls
 
+### shell_exec / netsec：issueTokenFor 与 validate 绑定必须同形（2026-08-09 S62 · #161）
+- **现象**：企业 auto / full-autonomy cruise 下 `Invalid or expired security token for shell_exec`（日志显示刚 issue 即 fail）
+- **根因**：`issueTokenFor` 经 `bindingPayloadFor` 绑定 `shell|cmd|cwd=...`（netsec 绑 targets+ports），`executeCompanionTool` 却 `validateToken(token, tool, bareCommand)` — 绑定字符串永远对不上
+- **修法**：issue 与 validate **成对**用 `issueTokenFor` / `validateTokenFor(token, toolName, params)`；禁止手拼 code 字符串
+- **部署**：修在源码/SEA 后，若用户仍跑旧 `dist-package\cmspark-agent.exe` 会继续报错 → 先停进程再 stage/重编（exe 被锁则 Copy-Item 失败）
+- **纪律**：任何 L2 token 工具改 `bindingPayloadFor` 时，**全仓** `validateToken` 调用点必须同步；单测覆盖 cwd 非空时 issue→validate 成功路径
+
+### 打包 SEA 被运行中 exe 锁死（2026-08-09 S62）
+- **现象**：`build-windows-exe.ps1` 或手工 `Copy-Item` 失败「正由另一进程使用」
+- **做法**：`Stop-Process -Name cmspark-agent -Force`（或脚本内 `Stop-ProcessesUsingPath`）后再 stage；验证 `Get-Item ...\cmspark-agent.exe | LastWriteTime` 与 `companion\dist` 一致
+- **纪律**：Windows 验收「修了不生效」先查是否仍在跑旧包路径的 exe
+
 ### `run-tests.mjs` JSDoc 禁写 `*/` 序列（2026-08-09 S59–S60 · Pi REJECT）
 - **现象**：P2 换 Unix `find` 为 `scripts/run-tests.mjs` 后 `npm test` 秒崩 `SyntaxError: Unexpected token '*'`
 - **根因**：块注释里写了 `**/*.test.js` 类文本 → `*/` 提前结束注释

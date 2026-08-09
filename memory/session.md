@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S62 END (2026-08-09 ~22:50–23:35) [Windows voice-pack closeout · shell_exec token · #161 MERGED]
+- **Ship**：**#161 MERGED** `57bad96` → `origin/main`（Windows closeout + shell/netsec `validateTokenFor` + lockfile engines）
+- **根因**：`shell_exec` L2 issue 绑 `command|cwd`，旧 validate 只验 command → enterprise_auto 下恒「Invalid or expired security token」
+- **打包**：`build-windows-exe.ps1 -SkipInstall -SkipNsis` 成功；产物 `dist-package\cmspark-windows-x64\` + zip v0.5.0；含 whisper sidecar；已停旧进程并 stage 新 SEA
+- **门禁**：closeout dual APPROVE_WITH_NITS；CI build green 后 merge commit
+- **本地**：`main` = `origin/main` @ `57bad96`；勿 commit `.tmp-ci-*` / diagnosis-report
+- **下次**：真机再验 shell_exec（enterprise/全自动）；听写 hold/continuous；可选 Mac 值守 smoke；multi-arch whisper pins
+- Recorded: yes — issue/validateTokenFor 同形 · SEA 文件锁
+
 ### S61 END (2026-08-09) [deep-diagnosis P0–P2 + 值守全程静默 · #160 MERGED]
 - **Ship**：**#160 MERGED** `56da82f` → `origin/main`（deep-diagnosis fanout P0–P2 hardening + unattended true silence）
 - **产品纠正**：无人值守武装 = 风险自担 → `host_computer` **initial L2 + mid-task re-L2 全静默**（含 PROMPT_ALWAYS）；硬拒绝仍 throw；modelEnabled 等不再退回弹窗
@@ -566,6 +575,13 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+### Windows 包真机验收（S62 后 · #161）
+- status: **active**
+- context: #161 已合 main；本地已重编 SEA + whisper bin；shell_exec token 修在 `32ab576`
+- next_action: (1) 确认跑的是 `dist-package\...\cmspark-agent.exe` 新时间戳 (2) enterprise/全自动下 shell_exec (3) 听写 continuous/hold
+- resume_doc: PR #161 · `memory/project-knowledge.md` shell token 坑
+- updated: 2026-08-09
+
 ### Trust / 思考 / digest 真机验收（S53 后）
 - status: **active**
 - context: #148 force_takeover + #149 chat.assistant + digest merge；DMG 已装 `1f1776b` 栈 `/Applications` · bak `~/CMspark.app.bak-20260808-125047`
@@ -575,10 +591,10 @@
 
 ### 听写+/会议真机验收（S52 后）
 - status: **active**
-- context: Mtg0–3 + D1/D2 + 草稿闪烁修 均在 main；DMG 再换为含 #148/#149 的 0.4.0
-- next_action: 按 `docs/meeting-and-dictation-user-guide.md` §4 smoke（可与 S53 真机一并）
+- context: Mtg0–3 + D1/D2 + 草稿闪烁修 均在 main；Windows 0.5.0 SEA 已含 whisper sidecar（S62）
+- next_action: 按 `docs/meeting-and-dictation-user-guide.md` §4 smoke（可与 Windows 包验收一并）
 - resume_doc: `docs/meeting-and-dictation-user-guide.md` · ADR-024
-- updated: 2026-08-08
+- updated: 2026-08-09
 
 ### Wave C thread_recall → **#135 MERGED**
 - status: **done** (PR #135 → main `90db018`; CI build pass ~3m)

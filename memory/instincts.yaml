@@ -2,6 +2,20 @@
 # Confidence: 0-1 (higher = more validated)
 
 instincts:
+  - id: l2-token-issue-validate-same-binding
+    pattern: "危险工具 L2 token：issue 与 validate 必须同一 binding（issueTokenFor/validateTokenFor + bindingPayloadFor）。shell_exec 绑 command+cwd，netsec 绑 targets+ports。executeCompanionTool 里 validateToken(token, tool, bareCommand) 会在 enterprise_auto 下恒失败。改 binding 时全仓同步 + 单测 issue→validate。"
+    confidence: 0.95
+    source_session: "2026-08-09 S62 #161 shell_exec Invalid or expired security token"
+    tags: [security, l2, shell_exec, netsec, token, enterprise]
+    applications: 1
+
+  - id: windows-sea-stop-before-restage
+    pattern: "Windows 改 companion 后验收：先 Stop-Process cmspark-agent，再 build-windows-exe.ps1 或 Copy-Item 到 dist-package；否则 exe 锁导致 stage 失败或用户仍跑旧二进制。用 LastWriteTime 对照 companion/dist 与 dist-package。"
+    confidence: 0.9
+    source_session: "2026-08-09 S62 SEA restage file-in-use"
+    tags: [windows, packaging, sea, deploy]
+    applications: 1
+
   - id: unattended-means-full-silence-not-initial-only
     pattern: "无人值守武装（短语+双勾选）= 用户风险自担：host_computer 任务级 initial L2 与 mid-task reL2（含 PROMPT_ALWAYS danger/experimental/foreground）均应静默；硬拒绝仍 throw 无对话框。modelEnabled/experimental/credential latch 不得把值守打回弹窗。G1/巡航无 grant 时 PROMPT_ALWAYS 仍 force。文档/ADR/矩阵必须同步，禁止写「只免 initial / re-L2 仍确认」。"
     confidence: 0.95
@@ -11,10 +25,10 @@ instincts:
 
   - id: multi-adversarial-then-dual-then-ci-merge
     pattern: "安全/产品敏感合入：先多路独立对抗 agent（security/correctness/product）→ 无 P0 后双路复审 → 全 APPROVE* 再合；CI green 后 merge。GraphQL merge 失败时可用 gh api REST PUT pulls/{n}/merge。对抗 nits 中用户可见谎言（文档/矩阵）优先修再合。"
-    confidence: 0.85
-    source_session: "2026-08-09 S61 #160"
+    confidence: 0.88
+    source_session: "2026-08-09 S61 #160 · S62 #161"
     tags: [review, adversarial, dual-review, ci, merge]
-    applications: 1
+    applications: 2
 
   - id: dual-review-official-entrypoint-and-narrow-r2
     pattern: "dual-external-review 机核必须跑产品入口（companion npm test），不能只 node --test 单文件。JSDoc/块注释禁止写入 */ 序列（如 **/glob）。大 PR 全量 patch 易打爆 Claude context → r1 以能产出 VERDICT 的审阅方为准，r2 base 收窄到 blocker 修复 commit。Windows 用 Git Bash + PATH=/c/nvm4w/nodejs 跑 scripts/dual-external-review.sh。"

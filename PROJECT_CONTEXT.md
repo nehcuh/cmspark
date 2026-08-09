@@ -3,15 +3,15 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-09 (S61 END · deep-diagnosis + 值守静默 · #160 MERGED)
-- **Main tip**: `56da82f` = `origin/main`（Merge #160）
-- **Ship**: deep-diagnosis fanout P0–P2 hardening + unattended true silence（ADR-021 2026-08-09）
-- **Unattended**: armed grant → host_computer initial L2 **and** mid-task re-L2 silent（incl. PROMPT_ALWAYS）；hard deny still throw；alone flags never arm
-- **Review**: adversarial ×3 + dual A/B → all APPROVE_WITH_NITS · Merge YES · CI green then merge
-- **Next**: Mac smoke 值守；executor reL2 unattended regression test（nit）；estop≠disarm toast；Whisper multi-arch pins + win-x64 sidecar；god-file split
-- **Pitfalls**: 值守≠只免 initial L2；文档/矩阵必须跟 ADR-021；dual-write cruise 仍可在 grant 死后残留
+### 2026-08-09 (S62 END · Windows closeout + shell token · #161 MERGED)
+- **Main tip**: `57bad96` = `origin/main`（Merge #161）
+- **Ship**: Windows voice-pack closeout (launch fail-closed, WS validators, whisper harden) + **shell_exec/netsec `validateTokenFor`** matches `issueTokenFor` binding (cwd/targets)
+- **Local package**: rebuilt SEA via `build-windows-exe.ps1 -SkipInstall -SkipNsis` → `dist-package\cmspark-windows-x64\` + `CMspark-v0.5.0-windows-x64.zip`; whisper sidecar staged
+- **Pitfall**: L2 issue binds `shell|cmd|cwd=`; bare `validateToken(cmd)` always fails under enterprise_auto — use pair helpers only; kill running exe before restage
+- **Next**: true-machine shell_exec under enterprise/full-auto; dictation hold/continuous; Mac unattended smoke; multi-arch whisper pins
+- **Do not commit**: `.tmp-ci-*` / `.tmp-diagnosis-report.json`
 
-### 2026-08-09 (S60 END · Health Fanout P0–P2 · #159 MERGED)
-- **Then tip**: `e4316bb`；health-fanout P0+P1/P2；dual r2 both_ok
-- **Superseded tip**: main now `56da82f` via #160
+### 2026-08-09 (S61 END · deep-diagnosis + 值守静默 · #160 MERGED)
+- **Then tip**: `56da82f`; unattended L2+re-L2 silence; adversarial×3 + dual · #160
+- **Superseded tip**: main now `57bad96` via #161
 <!-- handoff:end -->
