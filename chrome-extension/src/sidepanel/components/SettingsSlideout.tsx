@@ -639,7 +639,7 @@ export function SettingsSlideout() {
     }
     if (autopilotTierPick === "unattended") {
       if (!unattendedAckDesktop || !unattendedAckSession) {
-        setAutopilotMsg("请勾选两项确认（桌面免初始确认 + 会话失效）")
+        setAutopilotMsg("请勾选两项确认（桌面值守静默 + 会话失效）")
         return
       }
     }
@@ -689,7 +689,7 @@ export function SettingsSlideout() {
               risk_score: 100,
               source: "ui_phrase_confirmed",
               message:
-                "已请求武装无人值守 — 进程内桌面 grant 生效（重启失效）。host_computer 任务级 initial L2 可跳过（须 App 已允许坐标）。注意：设置→实验功能 Qwen3-VL 若开启会阻断值守免确认；危险/实验定位/前台让出 re-L2 仍会弹窗。",
+                "已请求武装无人值守 — 进程内桌面 grant 生效（重启失效）。host_computer 的任务级 L2 与 mid-task re-L2 均静默通过（须 App 已允许坐标）。支付/验证码等硬拒绝仍直接失败、无确认窗。自担 prompt 注入与桌面键鼠风险。",
             },
           })
           setAutopilotConfirm(false)
@@ -2168,7 +2168,7 @@ export function SettingsSlideout() {
                 <div style={styles.field}>
                   <div style={styles.helpText}>
                     长程无人值守的<strong>主入口</strong>。默认关闭。急停与硬性拒绝仍然有效。
-                    选「无人值守」后，已白名单坐标 App 的桌面操控可免初始确认（进程会话 8h/重启失效）；同时会写入长期配置开启网页/企业巡航，解除武装时关闭。
+                    选「无人值守」后，已白名单坐标 App 的桌面操控在值守期内<strong>任务级 L2 与 mid-task re-L2 均静默</strong>（风险自担；进程会话 8h/重启失效）；同时会写入长期配置开启网页/企业巡航，解除武装时关闭。
                   </div>
                   <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                     {(
@@ -2187,7 +2187,7 @@ export function SettingsSlideout() {
                         {
                           id: "unattended" as const,
                           label: "无人值守",
-                          hint: "本会话：全自动 + 白名单 App 桌面免初始确认（含微信键入）",
+                          hint: "本会话：全自动 + 白名单 App 桌面 L2/re-L2 静默（风险自担，含微信键入）",
                         },
                       ] as const
                     ).map((opt) => (
@@ -2333,7 +2333,7 @@ export function SettingsSlideout() {
                               checked={unattendedAckDesktop}
                               onChange={(e) => setUnattendedAckDesktop(e.target.checked)}
                             />
-                            允许已白名单且已开坐标的 App 在本会话免初始确认
+                            允许已白名单且已开坐标的 App 在本会话静默桌面 L2 与 re-L2（风险自担）
                           </label>
                           <label style={{ display: "flex", gap: 6, marginBottom: 4, cursor: "pointer" }}>
                             <input

@@ -640,13 +640,33 @@ export async function runComputerTask(
 
   /** Re-L2 with an explicit reason; returns true when approved. */
   const reL2 = async (reason: string, dangerous: string[], seqNum?: number, previewImage?: string): Promise<boolean> => {
+    // Owner 2026-08: 无人值守 armed = 用户已短语+双勾选风险自担。
+    // Mid-task re-L2 (含 danger/experimental/foreground) 全部静默通过；
+    // 否则「值守中仍逐步弹窗」与 JTBD 矛盾。硬拒绝仍走 throw，不经 reL2。
+    try {
+      const { isUnattendedArmed } = require("./unattended-grant") as typeof import("./unattended-grant")
+      if (isUnattendedArmed()) {
+        log("computer.task.reconfirm.auto_approved", {
+          taskId,
+          reason,
+          tags: dangerous,
+          app: params.app,
+          reason_skip: "unattended_session_grant",
+        })
+        return true
+      }
+    } catch {
+      /* fall through */
+    }
     // P0-C / experimental G4 carve-out (also applies under full-autonomy cruise):
     // computer.danger_detected / computer.experimental_suggestion always need
     // fresh human eyes — content-sensitive / uncalibrated gates. Cruise may
     // silence routine re-asks (budget / uncross / dialog) only.
+    // (Unattended path already returned above — this carve-out is for non-unattended.)
     const forceInteractive = dangerous.some((d) => FORCE_INTERACTIVE_DANGEROUS.has(d))
     // Full autonomy cruise (网页+企业+协议三旗全开): skip mid-task re-L2 for
-    // non-force tags only (product 2026-08). Never short-circuit PROMPT_ALWAYS.
+    // non-force tags only (product 2026-08). Never short-circuit PROMPT_ALWAYS
+    // unless unattended (handled above).
     if (!forceInteractive && !reL2ShouldPrompt(dangerous)) {
       try {
         const { getConfig } = require("../config") as typeof import("../config")
@@ -669,20 +689,11 @@ export async function runComputerTask(
         /* config unavailable — fall through */
       }
     }
-    // UX-spike 2026-07-23: per-session re-L2 suppression. After the initial
-    // task L2 gated the whole task (every type literal + budget + target app),
-    // mid-task re-asks are usually the same human repeatedly approving
-    // "continue". When this session has already approved a task for the same
-    // app token, auto-approve the re-L2 (audit logged) and return true WITHOUT
-    // surfacing the dialog. The initial L2 is never affected — only this path.
-    // Budget / uncross / task_induced_dialog still auto-approve under trust;
-    // foreground_yielded / danger / experimental fail reL2ShouldPrompt.
+    // UX-spike 2026-07-23: per-session re-L2 suppression (G1 session-trust).
+    // Budget / uncross / task_induced_dialog auto-approve under trust;
+    // foreground_yielded / danger / experimental still prompt without unattended.
     if (deps.sessionId && params.app && !forceInteractive) {
       const trust = deps.sessionTrust ?? getComputerSessionTrust()
-      // v4.1 (Grok v4.1 §D3.1 / Pi v4.1 RESOLVED): split re-L2 tags into
-      // silent-eligible vs always-prompt. Previously auto-approved ALL reasons
-      // when trusted — too permissive for danger/experimental. Unknown tags
-      // fail-closed to prompt (reL2ShouldPrompt returns true for unknown).
       if (trust.isTrusted(deps.sessionId, params.app) && !reL2ShouldPrompt(dangerous)) {
         log("computer.task.reconfirm.auto_approved", { taskId, reason, tags: dangerous, app: params.app })
         return true
