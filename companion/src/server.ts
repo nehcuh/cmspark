@@ -3832,7 +3832,13 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
     }
     case "shell_exec": {
       if (params.security_token) {
-        const valid = securityPolicy.validateToken(params.security_token, "shell_exec", params.command || "")
+        // Must match issueTokenFor (bindingPayloadFor includes command + cwd).
+        // validateToken(token, "shell_exec", command) alone always fails after cwd binding.
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
+          "shell_exec",
+          params as Record<string, any>,
+        )
         if (!valid) return { success: false, error: "Invalid or expired security token for shell_exec" }
       } else {
         return { success: false, error: "shell_exec requires L2 security_token confirmation" }
@@ -3879,10 +3885,11 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
     }
     case "netsec_port_scan": {
       if (params.security_token) {
-        const valid = securityPolicy.validateToken(
-          params.security_token,
+        // Match issueTokenFor (targets + ports binding), not raw targets JSON alone.
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
           "netsec_port_scan",
-          JSON.stringify(params.targets || []),
+          params as Record<string, any>,
         )
         if (!valid) return { success: false, error: "Invalid or expired security token for netsec_port_scan" }
       } else {
@@ -6343,6 +6350,19 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "skill.list": () => ({ valid: true }),
     "skill.refresh": () => ({ valid: true }),
+    "skill.import-folder": () => ({ valid: true }),
+    "skill.import-path": (m) => {
+      if (typeof m.dir_path !== "string" || !m.dir_path) {
+        return { valid: false, error: "skill.import-path requires dir_path string" }
+      }
+      return { valid: true }
+    },
+    "skill.import-files": (m) => {
+      if (!Array.isArray(m.files) || m.files.length === 0) {
+        return { valid: false, error: "skill.import-files requires non-empty files array" }
+      }
+      return { valid: true }
+    },
     "knowledge.list": () => ({ valid: true }),
     "knowledge.import": (m) => {
       if (!m.url && !m.content && !m.path) {

@@ -39,11 +39,11 @@ set "LAUNCH_ARGS=cmspark-agent.js tray"
 echo [launch] NODE_CMD=!NODE_CMD!
 
 :do_launch
-:: Check if already running
-netstat -an 2>nul | find.exe "*********:23401" 2>nul | find.exe "LISTENING" >nul 2>nul
+:: Already listening on Companion port?
+netstat -an 2>nul | find.exe "127.0.0.1:23401" 2>nul | find.exe "LISTENING" >nul 2>nul
 if !errorlevel! equ 0 (
     echo [launch] Already running on port 23401
-    goto :done
+    goto :success
 )
 
 :: Launch via hidden VBS launcher (delegates to cmspark-agent.exe or node fallback)
@@ -51,32 +51,31 @@ if exist "%~dp0launch-hidden.vbs" (
     echo [launch] Launching via launch-hidden.vbs...
     wscript.exe "%~dp0launch-hidden.vbs"
 ) else (
-    :: Fallback: launch directly without VBS (console window visible)
     echo [launch] VBS not found, fallback: !LAUNCH_EXE! !LAUNCH_ARGS!
     start /MIN cmd /c "!LAUNCH_EXE! !LAUNCH_ARGS!"
 )
 echo [launch] Launcher issued, waiting...
 
-ping -n 5 127.0.0.1 >nul
+ping -n 6 127.0.0.1 >nul
 
-:: Check if log was created
-echo [launch] Checking for cmspark-agent.log...
-if exist "cmspark-agent.log" (
-    echo [launch] LOG FILE EXISTS
-    type "cmspark-agent.log" 2>nul
-) else (
-    echo [launch] LOG FILE MISSING
-)
-
-:: Check port
+:: Probe 127.0.0.1:23401 LISTENING (server binds loopback only)
 netstat -an 2>nul | find.exe "127.0.0.1:23401" 2>nul | find.exe "LISTENING" >nul 2>nul
 if !errorlevel! equ 0 (
-    echo [launch] Port 23401 is LISTENING
-) else (
-    echo [launch] Port 23401 NOT listening
+    goto :success
 )
 
-:done
+echo.
+echo [ERROR] Companion did not start (port 23401 not listening).
+echo   Crash / diagnostics (if any):
+echo     %USERPROFILE%\.cmspark-agent\logs\crash.log
+echo     %USERPROFILE%\.cmspark-agent\logs\vbs-launcher.log
+echo     %USERPROFILE%\.cmspark-agent\logs\companion-*.log
+echo   Try: cmspark-agent.exe tray   (visible console)
+echo   Or reinstall / re-run after fixing SEA/binaries.
+pause
+exit /b 1
+
+:success
 echo.
 echo CMspark started (port 23401)
 echo Open Chrome side panel: click CMspark icon on toolbar

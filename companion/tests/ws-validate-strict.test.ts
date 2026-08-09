@@ -79,12 +79,18 @@ test("core router types are registered (production fail-closed must not drop con
       "config.get",
       "thread.list",
       "skill.list",
+      "skill.import-folder",
+      "skill.import-path",
+      "skill.import-files",
       "knowledge.list",
       "user_env.list",
       "security.unattended.status",
       "computer.get_state",
     ]) {
-      const r = validateWsMessage({ type })
+      const payload: Record<string, unknown> = { type }
+      if (type === "skill.import-path") payload.dir_path = "/tmp/skills"
+      if (type === "skill.import-files") payload.files = [{ name: "x.md", content: "y" }]
+      const r = validateWsMessage(payload)
       assert.equal(r.valid, true, `${type} must be known under production WS strict`)
     }
   } finally {

@@ -1,0 +1,8 @@
+{
+  "batch": "voice-pack-windows-closeout",
+  "timestamp": "20260809-223738",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/voice-pack-windows-closeout-claude-20260809-223738.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/voice-pack-windows-closeout-pi-20260809-223738.md" },
+  "both_approve": true,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/voice-pack-windows-closeout-diff-20260809-223738.patch"
+}

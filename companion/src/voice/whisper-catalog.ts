@@ -32,7 +32,8 @@ export const WHISPER_MODEL_UI: Record<
     // Full f16 ggml-large-v3-turbo.bin ≈ 1.62 GiB (not a Q5 quant).
     approxDiskGB: 1.6,
     approxRamGB: 2,
-    notes: "更快大模型蒸馏档",
+    // Final-only progressive path; may take tens of seconds–minutes on CPU
+    notes: "大模型蒸馏档 · 仅终稿（无实时出字）· 可能较慢/占内存",
   },
 }
 
