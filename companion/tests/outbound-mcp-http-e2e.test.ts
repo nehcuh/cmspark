@@ -3,8 +3,12 @@
  *
  * Spins a real 127.0.0.1 server → handleOutboundMcpHttp → mock tool runner.
  * Also exercises createHttpOutboundDispatcher client against that server.
+ *
+ * MCPO-01: default require_grant=true — authenticated paths use cmg_ grants
+ * (ws_secret alone is rejected).
  */
 
+import "./_outbound-grants-setup.js"
 import test from "node:test"
 import assert from "node:assert/strict"
 import http from "node:http"
@@ -25,8 +29,17 @@ import {
 } from "../src/outbound-mcp/http-client"
 import { setOutboundDispatcher, invokeOutboundTool } from "../src/outbound-mcp/bridge"
 import { acceptOutboundDisclosure } from "../src/outbound-mcp/disclosure-session"
+import {
+  issueOutboundGrant,
+  resetOutboundGrantsForTests,
+} from "../src/outbound-mcp/outbound-grants"
 
+/** Legacy secret still accepted only when require_grant=false (not default). */
 const SECRET = "e2e-test-ws-secret-not-for-prod"
+
+function grantToken(caller_id: string): string {
+  return issueOutboundGrant({ label: `e2e-${caller_id}`, caller_id }).token
+}
 
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
@@ -99,6 +112,7 @@ function requestJson(
 test.beforeEach(() => {
   resetOutboundCompanionHttpForTests()
   clearAllOutboundDisclosureSessions()
+  resetOutboundGrantsForTests()
   setOutboundDispatcher(null)
 })
 
@@ -111,6 +125,7 @@ test("e2e: health is unauthenticated and reports runner none|wired", async () =>
     assert.equal(none.json.status, "ok")
     assert.equal(none.json.runner, "none")
     assert.equal(none.json.service, "outbound-mcp")
+    assert.equal(none.json.require_grant, true)
 
     setOutboundToolRunner(async () => ({ success: true, data: {} }))
     const wired = await requestJson(port, "GET", OUTBOUND_HEALTH_PATH)
@@ -120,7 +135,7 @@ test("e2e: health is unauthenticated and reports runner none|wired", async () =>
   }
 })
 
-test("e2e: invoke without bearer → 401 UNAUTHORIZED", async () => {
+test("e2e: invoke without bearer → 401 GRANT_REQUIRED (require_grant default)", async () => {
   const server = createOutboundTestServer()
   const port = await listen(server)
   try {
@@ -128,7 +143,7 @@ test("e2e: invoke without bearer → 401 UNAUTHORIZED", async () => {
       body: { caller_id: "x", tool: "cmspark__list_tabs" },
     })
     assert.equal(r.status, 401)
-    assert.equal(r.json.error_code, "UNAUTHORIZED")
+    assert.equal(r.json.error_code, "GRANT_REQUIRED")
   } finally {
     await close(server)
   }
@@ -148,6 +163,21 @@ test("e2e: invoke with wrong bearer → 401", async () => {
   }
 })
 
+test("e2e: ws_secret alone rejected when require_grant true", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  try {
+    const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: SECRET,
+      body: { caller_id: "x", tool: "cmspark__list_tabs" },
+    })
+    assert.equal(r.status, 401)
+    assert.equal(r.json.error_code, "GRANT_REQUIRED")
+  } finally {
+    await close(server)
+  }
+})
+
 test("e2e: forbidden tool over HTTP never hits runner", async () => {
   const server = createOutboundTestServer()
   const port = await listen(server)
@@ -158,7 +188,7 @@ test("e2e: forbidden tool over HTTP never hits runner", async () => {
   })
   try {
     const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
-      token: SECRET,
+      token: grantToken("x"),
       body: { caller_id: "x", tool: "cmspark__shell_exec" },
     })
     assert.equal(r.status, 422)
@@ -174,7 +204,7 @@ test("e2e: EXTENSION_UNAVAILABLE when no runner (auth ok)", async () => {
   const port = await listen(server)
   try {
     const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
-      token: SECRET,
+      token: grantToken("agent"),
       body: { caller_id: "agent", tool: "cmspark__list_tabs" },
     })
     assert.equal(r.status, 422)
@@ -187,6 +217,7 @@ test("e2e: EXTENSION_UNAVAILABLE when no runner (auth ok)", async () => {
 test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
   const server = createOutboundTestServer()
   const port = await listen(server)
+  const token = grantToken("e2e-agent")
   const calls: string[] = []
   setOutboundToolRunner(async (_id, tool, params) => {
     calls.push(tool)
@@ -201,7 +232,7 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
   try {
     // Exfil without disclosure
     const denied = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
-      token: SECRET,
+      token,
       body: { caller_id: "e2e-agent", tool: "cmspark__get_page_text", args: { tabId: 7 } },
     })
     assert.equal(denied.status, 422)
@@ -210,7 +241,7 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
 
     // Disclosure without acknowledge
     const badAck = await requestJson(port, "POST", OUTBOUND_DISCLOSURE_PATH, {
-      token: SECRET,
+      token,
       body: { caller_id: "e2e-agent", acknowledge: false },
     })
     assert.equal(badAck.status, 400)
@@ -218,7 +249,7 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
 
     // Accept disclosure
     const disc = await requestJson(port, "POST", OUTBOUND_DISCLOSURE_PATH, {
-      token: SECRET,
+      token,
       body: { caller_id: "e2e-agent", acknowledge: true },
     })
     assert.equal(disc.status, 200)
@@ -227,7 +258,7 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
 
     // list_tabs
     const tabs = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
-      token: SECRET,
+      token,
       body: { caller_id: "e2e-agent", tool: "cmspark__list_tabs" },
     })
     assert.equal(tabs.status, 200)
@@ -238,7 +269,7 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
 
     // get_page_text after disclosure (L9 tabId required)
     const text = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
-      token: SECRET,
+      token,
       body: {
         caller_id: "e2e-agent",
         tool: "cmspark__get_page_text",
@@ -265,7 +296,7 @@ test("e2e: refresh hook runs before HTTP invoke", async () => {
   })
   try {
     const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
-      token: SECRET,
+      token: grantToken("r1"),
       body: { caller_id: "r1", tool: "cmspark__list_tabs" },
     })
     assert.equal(r.status, 200)
@@ -280,25 +311,26 @@ test("e2e: refresh hook runs before HTTP invoke", async () => {
 test("e2e: http-client dispatcher + companionPostDisclosure end-to-end", async () => {
   const server = createOutboundTestServer()
   const port = await listen(server)
+  const token = grantToken("client-agent")
   setOutboundToolRunner(async (_id, tool) => {
     assert.equal(tool, "screenshot")
     return { success: true, data: { png: "base64" } }
   })
   try {
-    const health = await companionOutboundHealth({ port, token: SECRET })
+    const health = await companionOutboundHealth({ port, token })
     assert.equal(health.ok, true)
     assert.equal(health.runner, "wired")
 
     // Local gate also needs disclosure for invokeOutboundTool path
     acceptOutboundDisclosure("client-agent")
     const remote = await companionPostDisclosure(
-      { port, token: SECRET },
+      { port, token },
       "client-agent",
     )
     assert.equal(remote.ok, true)
 
     setOutboundDispatcher(
-      createHttpOutboundDispatcher({ port, token: SECRET, timeout_ms: 10_000 }),
+      createHttpOutboundDispatcher({ port, token, timeout_ms: 10_000 }),
     )
     const r = await invokeOutboundTool({
       caller_id: "client-agent",
@@ -318,7 +350,7 @@ test("e2e: L9 click without tabId over HTTP → TAB_ID_REQUIRED", async () => {
   setOutboundToolRunner(async () => ({ success: true }))
   try {
     const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
-      token: SECRET,
+      token: grantToken("x"),
       body: { caller_id: "x", tool: "cmspark__click", args: {} },
     })
     assert.equal(r.status, 422)
@@ -334,7 +366,7 @@ test("e2e: unknown outbound path under prefix → 404 JSON", async () => {
   const port = await listen(server)
   try {
     const r = await requestJson(port, "GET", "/outbound-mcp/v1/nope", {
-      token: SECRET,
+      token: grantToken("x"),
     })
     assert.equal(r.status, 404)
     assert.equal(r.json.error_code, "NOT_FOUND")
@@ -349,7 +381,7 @@ test("e2e: runner DISPATCH_FAILED surfaces 422 over HTTP (CDP timeout not remapp
   setOutboundToolRunner(async () => ({ success: false, error: "cdp timeout" }))
   try {
     const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
-      token: SECRET,
+      token: grantToken("c"),
       body: {
         caller_id: "c",
         tool: "cmspark__wait_for",
@@ -374,7 +406,7 @@ test("e2e: security confirmation timeout maps to OUTBOUND_CONFIRM_REQUIRED", asy
   }))
   try {
     const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
-      token: SECRET,
+      token: grantToken("c"),
       body: {
         caller_id: "c",
         tool: "cmspark__navigate",

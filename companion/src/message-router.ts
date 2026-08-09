@@ -2003,6 +2003,7 @@ export async function handleMessage(
     case "voice.model.set_engine":
       return handleVoiceModelMessage(msg, {
         broadcast: session?.broadcast,
+        origin: session?.origin,
       })
     // Path B M1 — voice.stt.* (origin chrome-extension:// fence; NOT source:settings)
     case "voice.stt.start":

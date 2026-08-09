@@ -310,6 +310,8 @@ export function createLocalSttAdapter(
       channels: LOCAL_STT_CHANNELS,
       lang: lang.startsWith("zh") ? "zh" : lang,
       maxMs,
+      // P1: server-enforced privacy ack (chrome.storage alone is not enough)
+      privacy_ack_v2: true,
     })
   }
 

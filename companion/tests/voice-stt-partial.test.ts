@@ -174,6 +174,9 @@ test("handler partial_request emits hypothesis", async () => {
     send: (m: any) => sent.push(m),
   }
 
+  // P1: local engine + privacy ack required for start
+  const { setVoiceFields } = await import("../src/config")
+  setVoiceFields({ sttEngine: "local", localModelId: "small" })
   await handleVoiceSttMessage(
     {
       type: "voice.stt.start",
@@ -183,6 +186,7 @@ test("handler partial_request emits hypothesis", async () => {
       format: "pcm_s16le",
       sampleRate: 16000,
       channels: 1,
+      privacy_ack_v2: true,
     },
     ctx,
     { service: svc },

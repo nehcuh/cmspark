@@ -278,6 +278,7 @@ export function transcribeWavViaStt(opts: {
         channels: LOCAL_STT_CHANNELS,
         lang: lang.startsWith("zh") ? "zh" : lang,
         maxMs,
+        privacy_ack_v2: true,
       })
       const chunks = splitIntoChunks(wav, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
       for (let seq = 0; seq < chunks.length; seq++) {

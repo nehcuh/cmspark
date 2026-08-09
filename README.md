@@ -178,7 +178,7 @@ Companion 默认在 `ws://127.0.0.1:23401` 启动 WebSocket 服务。
 |--------|------|--------|
 | `api_key` | LLM API Key | 读取 `DEEPSEEK_API_KEY` 环境变量 |
 | `base_url` | API 基础地址 | `https://api.deepseek.com/v1` |
-| `model_name` | 模型名称 | `deepseek-chat` |
+| `model_name` | 模型名称 | `deepseek-v4-flash` |
 | `temperature` | 温度参数 | `0.7` |
 | `context_window` | 上下文窗口大小 | `64000` |
 

@@ -16,8 +16,37 @@ permissions:
   contents: write   # softprops/action-gh-release creates the release + uploads assets
 
 jobs:
+  # REL-3 / P1: re-test + audit before packaging (do not ship untested artifacts)
+  preflight:
+    name: Test + audit (preflight)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            companion/package-lock.json
+            chrome-extension/package-lock.json
+      - name: Install companion deps
+        run: cd companion && npm ci
+      - name: Build companion
+        run: cd companion && npm run build
+      - name: Run companion tests
+        run: cd companion && npm test
+      - name: Supply-chain audit — companion (high+)
+        run: cd companion && npm audit --omit=dev --audit-level=high
+      - name: Build + test chrome-extension
+        run: |
+          cd chrome-extension && npm ci && npm run build && npm test
+
   package:
     name: Build (${{ matrix.platform }})
+    needs: preflight
     permissions:
       contents: read   # least-privilege: builders only checkout + upload artifacts
     strategy:
@@ -120,10 +149,38 @@ jobs:
         with:
           path: artifacts
 
+      - name: Emit SHA256SUMS (+ minimal SBOM notes)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-release
+          # Flatten zips into dist-release/
+          find artifacts -type f -name 'cmspark-*.zip' -exec cp -v {} dist-release/ \;
+          cd dist-release
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum cmspark-*.zip > SHA256SUMS
+          else
+            shasum -a 256 cmspark-*.zip > SHA256SUMS
+          fi
+          # REL-2: lightweight SBOM pointer (full CycloneDX deferred until signed tooling)
+          {
+            echo "# CMspark release checksums + SBOM notes"
+            echo "# Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "# Full npm SBOM: run \`npm sbom --omit=dev\` in companion/ at this tag."
+            echo "# Signing: Developer ID / Authenticode not yet applied (REL-1)."
+            echo ""
+            cat SHA256SUMS
+          } > SHA256SUMS.txt
+          cp SHA256SUMS.txt ../SHA256SUMS.txt
+          ls -la
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*.zip
+          files: |
+            dist-release/*.zip
+            dist-release/SHA256SUMS
+            dist-release/SHA256SUMS.txt
           draft: false
           prerelease: false
           body: |

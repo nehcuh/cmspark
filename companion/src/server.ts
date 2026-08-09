@@ -51,6 +51,7 @@ import { URL } from "url"
 import { getConfig, saveConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT, migrateLegacyModelName, DATA_DIR } from "./config"
 import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "./voice/session-caps"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
+import { gcExpiredMeetingAudio } from "./meeting/meeting-store"
 import { handleMessage, redactMcpServersForBroadcast } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
@@ -571,6 +572,27 @@ async function initServices() {
   } catch (e: any) {
     logger.warn("voice.stt.tmp.boot_gc_failed", { error: e?.message || String(e) })
   }
+  // P1 Meeting: retain_until audio GC at boot + every 6h
+  try {
+    const meetingGc = gcExpiredMeetingAudio(DATA_DIR)
+    if (meetingGc.purged > 0 || meetingGc.scanned > 0) {
+      logger.info("meeting.audio_gc.boot", meetingGc)
+    }
+  } catch (e) {
+    logger.warn("meeting.audio_gc.boot_failed", {
+      err: e instanceof Error ? e.message : String(e),
+    })
+  }
+  setInterval(() => {
+    try {
+      const r = gcExpiredMeetingAudio(DATA_DIR)
+      if (r.purged > 0) logger.info("meeting.audio_gc.periodic", r)
+    } catch (e) {
+      logger.warn("meeting.audio_gc.periodic_failed", {
+        err: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }, 6 * 60 * 60 * 1000).unref?.()
   // Mission Pack P0: install shipped packs (appsec-prd-review) into DATA_DIR
   try {
     const { ensureBuiltinPacksInstalled, reconcilePackTrustOnBoot } = await import(
@@ -5801,6 +5823,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
           return { valid: false, error: `voice.stt.start maxMs must be 1..${STT_MAX_RECORD_MS}` }
         }
       }
+      // P1: privacy_ack_v2 required on the wire (handler also enforces)
+      if (m.privacy_ack_v2 !== true) {
+        return { valid: false, error: "voice.stt.start requires privacy_ack_v2:true" }
+      }
       return { valid: true }
     },
     "voice.stt.chunk": (m) => {
@@ -6281,6 +6307,18 @@ export function validateWsMessage(msg: any): WsValidationResult {
     return validator(msg)
   }
 
+  // P2 ARCH-PROTO-2: fail-closed for unknown types in production.
+  // Dev/tests keep allow-through so experimental message types are not blocked mid-iteration.
+  // Message-router still returns Unknown message type if a known-validated type slips past.
+  const strictWs =
+    process.env.CMSPARK_WS_STRICT === "1" ||
+    (process.env.NODE_ENV === "production" && process.env.CMSPARK_WS_STRICT !== "0")
+  if (strictWs) {
+    return {
+      valid: false,
+      error: `Unknown message type: ${msg.type}`,
+    }
+  }
   // Unknown types are allowed through (handled by message-router default case)
   return { valid: true }
 }
@@ -6772,7 +6810,14 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               logger.warn("outbound_mcp.wire_failed", { error: wireErr?.message || String(wireErr) })
             }
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "auth.ok" }))
+              // ARCH-PROTO-1 (P2): advertise negotiated protocol version after auth
+              ws.send(
+                JSON.stringify({
+                  type: "auth.ok",
+                  protocol_version: 1,
+                  protocol_min: 1,
+                }),
+              )
               ws.send(JSON.stringify({ type: "connected" }))
               // Push current coordinate state immediately so the extension always
               // has fresh data after connect/reconnect — without this, the extension

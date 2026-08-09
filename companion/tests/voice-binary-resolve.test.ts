@@ -118,11 +118,11 @@ test("expectedWhisperSha256 rejects invalid / missing pins", () => {
   assert.equal(expectedWhisperSha256("freebsd-x64"), null)
 })
 
-test("whisperPinResolveOpts: missing pin → allowUnpinned", () => {
+test("whisperPinResolveOpts: missing pin → fail-closed (VOICE-02)", () => {
   const o = whisperPinResolveOpts("linux-x64", {})
-  // linux-x64 may be unpinned on this machine; when pin is null:
+  // linux-x64 may be unpinned on this machine; production refuses unpinned
   if (expectedWhisperSha256("linux-x64") == null) {
-    assert.equal(o.allowUnpinned, true)
+    assert.equal(o.allowUnpinned, false)
     assert.equal(o.expectedSha256, null)
     assert.equal(o.forceUnpinned, false)
   }

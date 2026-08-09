@@ -25,9 +25,11 @@ export function expectedWhisperSha256(arch: string): string | null {
 
 /**
  * Resolve options for resolveWhisperBinary from pins + env.
- * - Pin present → enforce digest (unless CMSPARK_WHISPER_UNPINNED=1).
- * - Pin missing → allowUnpinned (dev / incomplete package).
- * - CMSPARK_WHISPER_UNPINNED=1 → skip pin, allow unpinned (loud log at call site).
+ * VOICE-02 (health-fanout P1): missing Tier-1 pin is **fail-closed** in production —
+ * no silent unpinned accept. Opt-in only:
+ * - CMSPARK_WHISPER_UNPINNED=1 → skip pin, allow unpinned (loud log at call site)
+ * - Pin present → enforce digest
+ * - Pin missing → allowUnpinned=false (binary_missing / hash path refuses)
  */
 export function whisperPinResolveOpts(
   arch: string,
@@ -40,7 +42,8 @@ export function whisperPinResolveOpts(
   const pin = expectedWhisperSha256(arch)
   return {
     expectedSha256: pin,
-    allowUnpinned: pin == null,
+    // Fail closed when pin matrix incomplete (darwin-x64 / win-x64 / linux-x64 until pinned)
+    allowUnpinned: false,
     forceUnpinned: false,
   }
 }

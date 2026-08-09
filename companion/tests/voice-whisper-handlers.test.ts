@@ -14,13 +14,39 @@ import assert from "node:assert/strict"
 
 import { validateWsMessage } from "../src/server"
 import {
-  handleVoiceModelMessage,
+  handleVoiceModelMessage as handleVoiceModelMessageRaw,
   _resetVoiceModelHandlersForTests,
 } from "../src/voice/whisper-handlers"
 import { clearConfigCache, getConfig, saveConfig, setVoiceFields } from "../src/config"
 import type { WhisperModelId } from "../src/voice/whisper-catalog"
 
 const TEST_DATA_DIR = process.env.CMSPARK_DATA_DIR!
+const EXT_CTX = { origin: "chrome-extension://abcdefghijklmnopqrstuvwxyz" }
+
+/** P1 origin fence: unit tests inject chrome-extension origin by default. */
+function handleVoiceModelMessage(
+  msg: any,
+  ctxOrDeps?: any,
+  maybeDeps?: any,
+): ReturnType<typeof handleVoiceModelMessageRaw> {
+  // Call shapes in this file: (msg) | (msg, deps) | (msg, ctx, deps)
+  if (maybeDeps !== undefined) {
+    return handleVoiceModelMessageRaw(msg, { ...EXT_CTX, ...ctxOrDeps }, maybeDeps)
+  }
+  // Heuristic: deps have downloadImpl/listReady/probe/buildState — not broadcast-only
+  if (
+    ctxOrDeps &&
+    (ctxOrDeps.downloadImpl ||
+      ctxOrDeps.listReady ||
+      ctxOrDeps.probe ||
+      ctxOrDeps.buildState ||
+      ctxOrDeps.deleteImpl ||
+      ctxOrDeps.rootDir)
+  ) {
+    return handleVoiceModelMessageRaw(msg, EXT_CTX, ctxOrDeps)
+  }
+  return handleVoiceModelMessageRaw(msg, { ...EXT_CTX, ...(ctxOrDeps || {}) })
+}
 
 function resetVoiceConfig(voice: Record<string, unknown> = {}) {
   _resetVoiceModelHandlersForTests()
@@ -150,7 +176,7 @@ test("set_engine local with no ready model → NO_READY_MODEL, zero config write
   assert.equal(before, "browser")
 
   const r = await handleVoiceModelMessage(
-    { type: "voice.model.set_engine", engine: "local", source: "settings" },
+    { type: "voice.model.set_engine", engine: "local", source: "settings", privacy_ack_v2: true },
     {},
     {
       listReady: () => [],
@@ -179,11 +205,11 @@ test("set_engine browser always allowed", async () => {
 test("set_engine local with ready model → writes local", async () => {
   resetVoiceConfig({ sttEngine: "browser", localModelId: "medium" })
   const r = await handleVoiceModelMessage(
-    { type: "voice.model.set_engine", engine: "local", source: "settings" },
+    { type: "voice.model.set_engine", engine: "local", source: "settings", privacy_ack_v2: true },
     {},
     {
       listReady: () => ["medium"] as WhisperModelId[],
-      probe: (id) => (id === "medium" ? { status: "ready" } : { status: "absent" }),
+      probe: (id: string) => (id === "medium" ? { status: "ready" } : { status: "absent" }),
       buildState: async () =>
         ({
           type: "voice.model.state",
@@ -225,7 +251,7 @@ test("set_active ready → writes localModelId", async () => {
     { type: "voice.model.set_active", modelId: "small", source: "settings" },
     {},
     {
-      probe: (id) => (id === "small" ? { status: "ready" } : { status: "absent" }),
+      probe: (id: string) => (id === "small" ? { status: "ready" } : { status: "absent" }),
       buildState: async () =>
         ({
           type: "voice.model.state",
@@ -256,10 +282,10 @@ test("download: started + progress broadcast with mock downloadImpl", async () =
 
   const r = await handleVoiceModelMessage(
     { type: "voice.model.download", modelId: "medium", source: "settings" },
-    { broadcast: (d) => broadcasts.push(d) },
+    { broadcast: (d: any) => broadcasts.push(d) },
     {
       probe: () => ({ status: "absent" }),
-      downloadImpl: async (_id, opts) => {
+      downloadImpl: async (_id: string, opts: any) => {
         opts?.onProgress?.({
           modelId: "medium",
           file: "ggml-medium.bin",
@@ -268,7 +294,7 @@ test("download: started + progress broadcast with mock downloadImpl", async () =
         })
         await pending
       },
-      buildState: async (opts) =>
+      buildState: async (opts: any) =>
         ({
           type: "voice.model.state",
           sttEngine: "browser",

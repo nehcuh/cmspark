@@ -6,7 +6,7 @@
 //   - peerId = connection identity (panelId); session bound in SttSessionService
 //   - Never log audio base64 or full transcript
 
-import { DATA_DIR } from "../config"
+import { DATA_DIR, getConfig } from "../config"
 import { logger } from "../logger"
 import {
   getSttSessionService,
@@ -163,6 +163,21 @@ export async function handleVoiceSttMessage(
 
       if (typeof sessionId !== "string" || !sessionId) {
         return sttError(undefined, "invalid_session_id", "sessionId required")
+      }
+
+      // P1: server-enforce engine=local + privacy_ack_v2 (client chrome.storage alone is not a gate)
+      const sttEngine = getConfig().voice?.sttEngine
+      if (sttEngine !== "local") {
+        logger.warn("voice.stt.start.refused", { reason: "engine_not_local", sttEngine })
+        return sttError(sessionId, "engine_not_local", "local STT requires voice.sttEngine=local", {
+          family: "voice.stt",
+        })
+      }
+      if (rest.privacy_ack_v2 !== true) {
+        logger.warn("voice.stt.start.refused", { reason: "need_privacy_ack_v2" })
+        return sttError(sessionId, "need_privacy_ack", "privacy_ack_v2 required before local STT", {
+          family: "voice.stt",
+        })
       }
 
       const startReq = {

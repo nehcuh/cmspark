@@ -41,6 +41,13 @@ else
 fi
 
 VERSION="$(node -p "require('${ROOT_DIR}/companion/package.json').version")"
+EXT_VERSION="$(node -p "require('${ROOT_DIR}/chrome-extension/package.json').version")"
+# REL-4 / P2: fail-closed version lock-step (companion SoT must match extension)
+if [ "${VERSION}" != "${EXT_VERSION}" ]; then
+  echo "ERROR: version mismatch — companion=${VERSION} chrome-extension=${EXT_VERSION}" >&2
+  echo "       Align package.json versions before packaging (REL-4)." >&2
+  exit 1
+fi
 STAGING="${ROOT_DIR}/dist-package/cmspark-${PLATFORM}"
 CACHE_DIR="${ROOT_DIR}/dist-package/.cache"
 ZIP_NAME="cmspark-v${VERSION}-${PLATFORM}.zip"
