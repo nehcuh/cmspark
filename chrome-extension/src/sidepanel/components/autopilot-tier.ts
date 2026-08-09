@@ -190,7 +190,7 @@ export const AUTOPILOT_CONSEQUENCE_ROWS: Array<{
     family: "host_computer 初始 L2",
     browser: "仍确认",
     full: "仍确认",
-    protocol: "仍确认",
+    protocol: "可跳过§",
     unattended: "静默‡",
   },
   {
