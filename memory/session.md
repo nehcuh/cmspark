@@ -2,6 +2,23 @@
 
 ## Current Session
 
+### S58 (2026-08-09) [Health Fanout P0 安全收口 · dual-review · local commit]
+- **审计**：`docs/audit/health-fanout-2026-08-09.md` overall 6.6/B-；0 Critical / **9 High**（SEC-A–F · VOICE-01/02 · MCPO-01）
+- **P0 落地（代码已 commit，未 push）**：
+  - SEC-A thread id 净化 + path containment
+  - SEC-B mcp.add/update stdio **L2 forceConfirm**（含 enable 旁路 + `***` secret 保留）
+  - SEC-C tool tape 持久化 redact（`security/tool-persistence-redact.ts`）
+  - SEC-D chat.create / regenerate / file.upload **generation CAS** + abort 释放 multi-agent gate
+  - SEC-E pendingToolCalls **originWs** 绑定 + close grace 按 socket
+  - SEC-F macOS `cuPidForWindow` 按 `kCGWindowNumber` 匹配
+  - VOICE-01 PATH whisper 仅 `CMSPARK_WHISPER_PATH_FALLBACK=1` opt-in
+  - MCPO-01 `outbound_mcp.require_grant` **default true**
+- **门禁**：batch dual（Claude+Pi）→ closeout **both_ok**（Claude APPROVE / Pi APPROVE_WITH_NITS）；ledger 见 `docs/audit/health-fanout-p0-optimization-closeout-2026-08-09.md`
+- **验证**：[executed] tsc clean；6 文件 **31/31** pass（path / redact / mcp L2 / originWs / supersede / outbound grants）
+- **刻意未关（P1）**：VOICE-02 全量 Tier-1 pin matrix；startServer 真集成测；server/message-router 拆分；release SBOM/codesign；旧 thread JSON backfill scrub
+- **下次**：push / 开 PR 合 main；可选吸收 closeout nits；Windows whisper sidecar 仍见 S56
+- Recorded: yes — dual-approve 后才 claim FIXED · VOICE-02 不 overclaim · originWs 全链路
+
 ### S56 (2026-08-08 ~17:30–18:10) [Windows 本机听写：下载静默 · binary_missing · 打包 sidecar]
 - **诊断**：点 large-v3-turbo/下载无反应 ≠ 缺 whisper-cpp；`voiceModel===null` 时 UI 默认「未下载」；`sendMessage` 不读 ok；Companion 侧 download 实测可用
 - **binary_missing**：当前 `dist-package\cmspark-windows-x64` **无** `bin\cmspark-whisper-*.exe`；SEA **不能**嵌 whisper；须旁路或 PATH `whisper-cli`

@@ -1,0 +1,8 @@
+{
+  "batch": "p0-persistence-sec-ac",
+  "timestamp": "20260809-153105",
+  "claude": { "verdict": "APPROVE", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/p0-persistence-sec-ac-claude-20260809-153105.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/p0-persistence-sec-ac-pi-20260809-153105.md" },
+  "both_approve": true,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/p0-persistence-sec-ac-diff-20260809-153105.patch"
+}

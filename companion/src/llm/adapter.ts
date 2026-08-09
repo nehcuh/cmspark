@@ -32,6 +32,7 @@ import {
   shouldRunH1,
   type ThreadHandoff,
 } from "./context-handoff"
+import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -135,15 +136,23 @@ interface ToolExecutionResult {
 }
 
 export function createToolResultMessage(threadId: string, toolCall: any, result: ToolExecutionResult, params: any = {}) {
+  // SEC-C: redact before durable thread JSON (history.db already redacts separately).
+  // In-flight LLM tool rows use the raw `result` from the tool loop, not this helper.
+  const toolName = String(toolCall.function?.name || toolCall.name || "")
+  const { params: safeParams, result: safeResult } = redactToolPayloadForPersistence(
+    toolName,
+    params,
+    result,
+  )
   return {
     thread_id: threadId,
     role: "tool" as const,
-    content: JSON.stringify(result),
+    content: JSON.stringify(safeResult),
     tool_calls: [{
       id: toolCall.id,
-      tool_name: toolCall.function?.name || toolCall.name,
-      params,
-      result,
+      tool_name: toolName,
+      params: safeParams,
+      result: safeResult,
     }],
   }
 }

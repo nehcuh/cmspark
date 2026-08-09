@@ -1,13 +1,13 @@
 # TESTING
 
-> 与产品 **0.3.0** 对齐。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
+> 与产品 **0.5.0** 对齐（2026-08-09 体检后刷新）。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
 
 ## 测试架构
 
 | 端 | 测试框架 | 测试目录 | 规模（约） | 运行命令 |
 |----|---------|---------|-----------|---------|
-| Companion | `node:test` | `companion/tests/`（含 `security/`、`integration/` 子目录） | **120+** `*.test.ts` | `npm --prefix companion test` |
-| Extension | `node:test` | `chrome-extension/tests/` | **~25** 纯逻辑测试 | `npm --prefix chrome-extension test` |
+| Companion | `node:test` | `companion/tests/`（含 `security/`、`integration/` 子目录） | **~186** `*.test.ts` | `npm --prefix companion test` |
+| Extension | `node:test` | `chrome-extension/tests/` | **~66** 纯逻辑测试 | `npm --prefix chrome-extension test` |
 
 - Companion 编译：`companion/tsconfig.test.json`（`outDir: .test-dist`）
 - Extension 编译：`chrome-extension/tsconfig.test.json`

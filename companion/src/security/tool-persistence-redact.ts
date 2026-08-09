@@ -1,0 +1,234 @@
+/**
+ * Redact sensitive tool params/results before durable thread JSON persistence.
+ *
+ * Mirrors history/store.ts policy (audit SEC-C / item 3): cookies, evaluate/shell/
+ * host_*, MCP secrets must not land in ~/.cmspark-agent/threads/*.json even though
+ * history.db already redacts. In-flight LLM tool rows use the unredacted result
+ * from adapter.ts; only createToolResultMessage → addMessage goes through here.
+ */
+import * as crypto from "crypto"
+
+const SENSITIVE_COOKIE_TOOLS = new Set([
+  "get_cookies",
+  "list_all_cookies",
+  "set_cookie",
+  "delete_cookie",
+])
+
+const SENSITIVE_CODE_TOOLS = new Set([
+  "evaluate",
+  "osascript_eval",
+  "host_read",
+  "host_write",
+  "host_app",
+  "host_computer",
+  "shell_exec",
+  "netsec_port_scan",
+  "workspace_read_file",
+  "workspace_write_file",
+  "workspace_list_dir",
+  "workspace_glob",
+])
+
+const MCP_TOOL_PREFIX = "mcp__"
+const MCP_SENSITIVE_RESULT_RE = /(read|file|secret|token|key|env|credential|ssh|aws)/i
+const SENSITIVE_KEY_RE = /(secret|token|password|api[_-]?key|credential|private[_-]?key)/i
+
+function shortHash(input: string): string {
+  return crypto.createHash("sha256").update(input).digest("hex").slice(0, 12)
+}
+
+function redactSensitiveKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(redactSensitiveKeysDeep)
+  }
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    for (const k of Object.keys(obj)) {
+      const v = obj[k]
+      if (SENSITIVE_KEY_RE.test(k) && typeof v === "string") {
+        out[k] = `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
+      } else {
+        out[k] = redactSensitiveKeysDeep(v)
+      }
+    }
+    return out
+  }
+  return value
+}
+
+function redactCookieData(data: unknown): unknown {
+  if (Array.isArray(data)) {
+    return data.map((cookie) => redactOneCookie(cookie))
+  }
+  if (data && typeof data === "object") {
+    return redactOneCookie(data)
+  }
+  // Mirror history/store redactCookieSummary: blank non-object/array rather than
+  // passthrough (future tool shapes must not leak raw cookie strings).
+  return null
+}
+
+function redactOneCookie(cookie: unknown): unknown {
+  if (!cookie || typeof cookie !== "object") return cookie
+  const c = cookie as Record<string, unknown>
+  const { name, domain, path: cookiePath, hostOnly, secure, httpOnly, value, ...rest } = c
+  const valueStr = typeof value === "string" ? value : ""
+  return {
+    name,
+    domain,
+    path: cookiePath,
+    hostOnly,
+    secure,
+    httpOnly,
+    ...Object.fromEntries(
+      Object.entries(rest).filter(([k]) => k !== "value"),
+    ),
+    ...(valueStr
+      ? { value_hash: shortHash(valueStr), value_length: valueStr.length }
+      : {}),
+  }
+}
+
+function redactCodeishParams(params: Record<string, unknown>): Record<string, unknown> {
+  const redacted: Record<string, unknown> = { ...params }
+  for (const key of ["code", "expression", "security_token", "command", "body"]) {
+    if (key in redacted && typeof redacted[key] === "string") {
+      const val = redacted[key] as string
+      redacted[key] = `<redacted:hash=${shortHash(val)},len=${val.length}>`
+    }
+  }
+  return redacted
+}
+
+function redactComputerParams(params: Record<string, unknown>): Record<string, unknown> {
+  const redacted: Record<string, unknown> = { ...params }
+  if (typeof redacted.task === "string") {
+    redacted.task = `<redacted:hash=${shortHash(redacted.task)},len=${redacted.task.length}>`
+  }
+  if (typeof redacted.security_token === "string") {
+    redacted.security_token = `<redacted:hash=${shortHash(redacted.security_token)},len=${redacted.security_token.length}>`
+  }
+  if (Array.isArray(redacted.actions)) {
+    redacted.actions = redacted.actions.map((a: any) => {
+      if (!a || typeof a !== "object") return a
+      const copy = { ...a }
+      if (typeof copy.text === "string") {
+        copy.text = `<redacted:hash=${shortHash(copy.text)},len=${copy.text.length}>`
+      }
+      return copy
+    })
+  }
+  return redacted
+}
+
+function collapseResult(result: unknown): { success?: boolean; redacted: true; len: number; sha256: string } {
+  const raw = typeof result === "string" ? result : JSON.stringify(result ?? null)
+  return {
+    success: typeof result === "object" && result && "success" in (result as any)
+      ? Boolean((result as any).success)
+      : undefined,
+    redacted: true,
+    len: raw.length,
+    sha256: shortHash(raw),
+  }
+}
+
+/**
+ * Returns params + result safe for durable thread JSON (and content string).
+ * Non-sensitive tools pass through (params deep-key scan only for MCP).
+ */
+export function redactToolPayloadForPersistence(
+  toolName: string,
+  params: unknown,
+  result: unknown,
+): { params: unknown; result: unknown } {
+  const name = typeof toolName === "string" ? toolName : ""
+  let safeParams = params
+  let safeResult = result
+
+  if (name === "thread_recall") {
+    const p = params && typeof params === "object" ? (params as Record<string, unknown>) : {}
+    const q = typeof p.query === "string" ? p.query : ""
+    safeParams = {
+      query_len: q.length,
+      ...(typeof p.max_hits === "number" ? { max_hits: p.max_hits } : {}),
+      query: `<redacted:len=${q.length}:sha256=${shortHash(q)}>`,
+    }
+    safeResult = collapseResult(result)
+    return { params: safeParams, result: safeResult }
+  }
+
+  if (SENSITIVE_COOKIE_TOOLS.has(name)) {
+    if (params && typeof params === "object") {
+      const p = { ...(params as Record<string, unknown>) }
+      if (typeof p.value === "string") {
+        p.value = `<redacted:hash=${shortHash(p.value)}>`
+      }
+      safeParams = p
+    }
+    // ToolExecutionResult shape: { success, data?, error? }
+    if (result && typeof result === "object") {
+      const r = result as Record<string, unknown>
+      safeResult = {
+        ...r,
+        data: r.data !== undefined ? redactCookieData(r.data) : undefined,
+      }
+    } else {
+      safeResult = collapseResult(result)
+    }
+    return { params: safeParams, result: safeResult }
+  }
+
+  if (name === "host_computer") {
+    if (params && typeof params === "object") {
+      safeParams = redactComputerParams(params as Record<string, unknown>)
+    }
+    safeResult = collapseResult(result)
+    return { params: safeParams, result: safeResult }
+  }
+
+  if (SENSITIVE_CODE_TOOLS.has(name)) {
+    if (params && typeof params === "object") {
+      safeParams = redactCodeishParams(params as Record<string, unknown>)
+    }
+    // Keep success/error structure; collapse large data
+    if (result && typeof result === "object") {
+      const r = result as Record<string, unknown>
+      const dataStr = r.data !== undefined ? JSON.stringify(r.data) : ""
+      safeResult = {
+        success: r.success,
+        error: typeof r.error === "string" && r.error.length > 200
+          ? r.error.slice(0, 200) + "…"
+          : r.error,
+        data:
+          dataStr.length > 200
+            ? { redacted: true, len: dataStr.length, sha256: shortHash(dataStr) }
+            : r.data,
+      }
+    }
+    return { params: safeParams, result: safeResult }
+  }
+
+  if (name.startsWith(MCP_TOOL_PREFIX)) {
+    if (params !== undefined) {
+      safeParams = redactSensitiveKeysDeep(params)
+    }
+    if (MCP_SENSITIVE_RESULT_RE.test(name)) {
+      safeResult = collapseResult(result)
+    } else {
+      safeResult = redactSensitiveKeysDeep(result)
+    }
+    return { params: safeParams, result: safeResult }
+  }
+
+  // Generic: deep-key scan only
+  if (params !== undefined) {
+    safeParams = redactSensitiveKeysDeep(params)
+  }
+  if (result !== undefined) {
+    safeResult = redactSensitiveKeysDeep(result)
+  }
+  return { params: safeParams, result: safeResult }
+}

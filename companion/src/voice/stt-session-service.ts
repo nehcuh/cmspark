@@ -518,14 +518,20 @@ export class SttSessionService {
       allowUnpinned: pinOpts.allowUnpinned,
     })
     if (packaged.ok) return packaged
-    const pathCli = resolveWhisperCliOnPath()
-    if (pathCli) {
-      return {
-        ok: true,
-        path: pathCli,
-        arch: warch === "unsupported" ? "darwin-arm64" : warch,
-        sha256: "path-fallback",
-        pinned: false,
+    // VOICE-01: no silent PATH fallback in production (ADR-023 L5).
+    if (process.env.CMSPARK_WHISPER_PATH_FALLBACK === "1") {
+      const pathCli = resolveWhisperCliOnPath()
+      if (pathCli) {
+        console.warn(
+          "[voice] CMSPARK_WHISPER_PATH_FALLBACK=1 — using PATH whisper-cli (unpinned, dev only)",
+        )
+        return {
+          ok: true,
+          path: pathCli,
+          arch: warch === "unsupported" ? "darwin-arm64" : warch,
+          sha256: "path-fallback",
+          pinned: false,
+        }
       }
     }
     return packaged

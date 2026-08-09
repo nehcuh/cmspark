@@ -331,8 +331,33 @@ export class ThreadManager {
     atomicWriteJSON(this.indexPath, this.index)
   }
 
+  /**
+   * SEC-A: only safe ids may touch the filesystem. Reject path seps / `..` so
+   * thread_id cannot escape threads/ (e.g. `../config` → config.json overwrite).
+   * create() still uses sanitizeId (strip + regenerate); path ops fail closed.
+   */
+  static isSafeThreadId(threadId: string): boolean {
+    return typeof threadId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(threadId)
+  }
+
+  private assertSafeThreadId(threadId: string): string {
+    if (!ThreadManager.isSafeThreadId(threadId)) {
+      throw new Error(
+        `Invalid thread id for filesystem path: ${String(threadId).slice(0, 48)}`,
+      )
+    }
+    return threadId
+  }
+
   private threadFilePath(threadId: string): string {
-    return path.join(getConfigDir(), "threads", `${threadId}.json`)
+    const safeId = this.assertSafeThreadId(threadId)
+    const threadsDir = path.resolve(getConfigDir(), "threads")
+    const filePath = path.resolve(threadsDir, `${safeId}.json`)
+    const rel = path.relative(threadsDir, filePath)
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      throw new Error("Thread path escape rejected")
+    }
+    return filePath
   }
 
   private generateId(): string {
@@ -403,8 +428,10 @@ export class ThreadManager {
   }
 
   delete(threadId: string): void {
+    // Still drop from index even if id is malicious (no FS if unsafe).
     this.index.threads = this.index.threads.filter(t => t.id !== threadId)
     this.saveIndex()
+    if (!ThreadManager.isSafeThreadId(threadId)) return
     try { fs.unlinkSync(this.threadFilePath(threadId)) } catch { /* ignore */ }
   }
 
@@ -756,6 +783,7 @@ export class ThreadManager {
   // --- Messages ---
 
   getMessages(threadId: string): Message[] {
+    if (!ThreadManager.isSafeThreadId(threadId)) return []
     try {
       const raw = fs.readFileSync(this.threadFilePath(threadId), "utf-8")
       const data = JSON.parse(raw)
@@ -766,6 +794,8 @@ export class ThreadManager {
   }
 
   addMessage(threadId: string, message: Omit<Message, "id" | "created_at">): Message {
+    // Fail closed: never create files outside threads/ via crafted thread_id
+    this.assertSafeThreadId(threadId)
     const msg: Message = {
       ...message,
       id: `${threadId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -805,6 +835,7 @@ export class ThreadManager {
   }
 
   updateMessage(threadId: string, messageId: string, updates: Partial<Message>): void {
+    if (!ThreadManager.isSafeThreadId(threadId)) return
     const filePath = this.threadFilePath(threadId)
     try {
       const raw = fs.readFileSync(filePath, "utf-8")
@@ -836,6 +867,7 @@ export class ThreadManager {
 
   /** Delete messages from a given message onwards (inclusive). */
   deleteMessagesFrom(threadId: string, messageId: string): boolean {
+    if (!ThreadManager.isSafeThreadId(threadId)) return false
     const filePath = this.threadFilePath(threadId)
     try {
       const raw = fs.readFileSync(filePath, "utf-8")
