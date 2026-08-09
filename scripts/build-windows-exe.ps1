@@ -433,6 +433,19 @@ if ($WhisperSrc) {
     Copy-Item $WhisperSrc $WhisperDest -Force
     $WhisperSize = (Get-Item $WhisperDest).Length
     Ok "bin/cmspark-whisper-win-x64.exe (local STT, $WhisperSize bytes)"
+    # Official whisper.cpp Windows builds load whisper.dll + ggml*.dll from the
+    # exe directory (not the SEA blob). Stage sibling DLLs next to the sidecar.
+    $WhisperSrcDir = Split-Path -Parent $WhisperSrc
+    $DllCount = 0
+    Get-ChildItem -Path $WhisperSrcDir -Filter "*.dll" -File -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item $_.FullName (Join-Path $WhisperBinDir $_.Name) -Force
+        $DllCount++
+    }
+    if ($DllCount -gt 0) {
+        Ok "bin/*.dll ($DllCount whisper/ggml runtime DLLs next to cmspark-whisper)"
+    } else {
+        Warn "no *.dll next to $WhisperSrc — whisper-cli may fail at runtime (DLL not found)"
+    }
 } else {
     Warn "companion/dist/bin/cmspark-whisper-win-x64.exe missing — local STT disabled in this package"
     Write-Host "  To enable: place whisper-cli as companion\dist\bin\cmspark-whisper-win-x64.exe then re-run build-package.bat" -ForegroundColor DarkYellow

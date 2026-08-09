@@ -4,10 +4,13 @@
   "target": "node22",
   "externals": [
     "systray2",
-    "node-notifier",
     "canvas",
     "pdfjs-dist",
-    "onnxruntime-node",
-    "@modelcontextprotocol/sdk"
-  ]
+    "onnxruntime-node"
+  ],
+  "notes": {
+    "sea_rule": "Node SEA embedderRequire cannot load filesystem node_modules for bare package ids. Only keep truly native/heavy packages external AND stage them with createRequire(process.execPath) (systray2). Pure-JS deps (MCP SDK, node-notifier, …) MUST be bundled — externalizing them makes launch.bat look like a no-op (hidden VBS crash).",
+    "mcp_sdk": "Bundle @modelcontextprotocol/sdk (was external → ERR_UNKNOWN_BUILTIN_MODULE).",
+    "node_notifier": "Bundle node-notifier (same SEA failure mode as MCP)."
+  }
 }

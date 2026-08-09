@@ -313,11 +313,20 @@ case "${PLATFORM}" in
     fi
     echo "  host-scripts-win/: ${win_ps1_count} ps1 scripts"
     # No ORT/tinyclick hard-gate — Qwen3-VL worker staged above for all platforms.
-    # Path B: optional cmspark-whisper (win-x64). Soft-warn if missing.
+    # Path B: optional cmspark-whisper (win-x64) + ggml/whisper DLLs. Soft-warn if missing.
     if [ -f "companion/dist/bin/cmspark-whisper-win-x64.exe" ]; then
       mkdir -p "${STAGING}/bin"
       cp "companion/dist/bin/cmspark-whisper-win-x64.exe" "${STAGING}/bin/"
-      echo "  staged bin/cmspark-whisper-win-x64.exe (local STT)"
+      # Official whisper.cpp Windows builds need sibling DLLs next to the CLI.
+      shopt -s nullglob
+      _dlls=(companion/dist/bin/*.dll)
+      if [ "${#_dlls[@]}" -gt 0 ]; then
+        cp companion/dist/bin/*.dll "${STAGING}/bin/"
+        echo "  staged bin/cmspark-whisper-win-x64.exe + ${#_dlls[@]} dlls (local STT)"
+      else
+        echo "  staged bin/cmspark-whisper-win-x64.exe (local STT; no sibling *.dll found)"
+      fi
+      shopt -u nullglob
     elif [ -f "companion/dist/bin/cmspark-whisper-win-x64" ]; then
       mkdir -p "${STAGING}/bin"
       cp "companion/dist/bin/cmspark-whisper-win-x64" "${STAGING}/bin/cmspark-whisper-win-x64.exe"

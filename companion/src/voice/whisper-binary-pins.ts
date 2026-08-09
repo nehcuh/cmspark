@@ -9,16 +9,18 @@ export type WhisperPinnedArch = "darwin-arm64" | "darwin-x64" | "win-x64" | "lin
  * Missing key → resolve may allowUnpinned in dev; production packages should pin.
  */
 /**
- * Tier-1 pin matrix. Only darwin-arm64 is filled until CI builds other arches.
- * Missing keys: whisperPinResolveOpts → allowUnpinned=false (fail-closed production).
- * Fill via: bash companion/scripts/build-cmspark-whisper.sh --write-pins
+ * Tier-1 pin matrix. Missing keys: whisperPinResolveOpts → allowUnpinned=false
+ * (fail-closed production). Fill via: bash companion/scripts/build-cmspark-whisper.sh --write-pins
+ * or Get-FileHash on the staged cmspark-whisper-*.exe.
  *
  * P2 note: do **not** invent hashes — wrong pins break real installs silently.
  */
 export const WHISPER_BINARY_SHA256: Partial<Record<WhisperPinnedArch, string>> = {
   "darwin-arm64": "40bca494d49af736058eb3f33cbcebaa020eacf6d0087b623f334946e1ab2128",
   // "darwin-x64": "<sha256 from --write-pins>",
-  // "win-x64": "<sha256 from --write-pins>",
+  // whisper.cpp official win-x64 Release whisper-cli → cmspark-whisper-win-x64.exe
+  // (2026-08-04 stage under companion/dist/bin; re-pin if you replace the binary)
+  "win-x64": "95e3c0b0e778ad9499eb0125f97c1dcf437dd9eb4ea77050b043574f93c2631d",
   // "linux-x64": "<sha256 from --write-pins>",
 }
 
