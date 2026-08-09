@@ -167,6 +167,26 @@ test("host_app issueTokenFor/validateTokenFor round-trip binds app+action", () =
   assert.equal(policy.validateTokenFor(token, "host_app", params, "thread-1"), true)
 })
 
+test("shell_exec issueTokenFor/validateTokenFor binds command+cwd (not bare command)", () => {
+  const policy = new SecurityPolicy()
+  const params = { command: "echo hi", cwd: "/tmp" }
+  const payload = SecurityPolicy.bindingPayloadFor("shell_exec", params)
+  assert.match(payload, /^shell\|echo hi\|cwd=\/tmp$/)
+  const { token } = policy.issueTokenFor("shell_exec", params)
+  // Wrong: validate with bare command string (pre-fix executeCompanionTool bug)
+  assert.equal(policy.validateToken(token, "shell_exec", "echo hi"), false)
+  // Correct: validateTokenFor with same params
+  assert.equal(policy.validateTokenFor(token, "shell_exec", params), true)
+})
+
+test("netsec_port_scan issueTokenFor/validateTokenFor binds targets+ports", () => {
+  const policy = new SecurityPolicy()
+  const params = { targets: ["127.0.0.1"], ports: [80, 443] }
+  const { token } = policy.issueTokenFor("netsec_port_scan", params)
+  assert.equal(policy.validateToken(token, "netsec_port_scan", JSON.stringify(params.targets)), false)
+  assert.equal(policy.validateTokenFor(token, "netsec_port_scan", params), true)
+})
+
 test("host_app token is NOT replayable across apps or actions", () => {
   const policy = new SecurityPolicy()
   const { token } = policy.issueTokenFor("host_app", { app: "win.app.a", action: "launch" })

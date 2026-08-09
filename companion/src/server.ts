@@ -3832,7 +3832,13 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
     }
     case "shell_exec": {
       if (params.security_token) {
-        const valid = securityPolicy.validateToken(params.security_token, "shell_exec", params.command || "")
+        // Must match issueTokenFor (bindingPayloadFor includes command + cwd).
+        // validateToken(token, "shell_exec", command) alone always fails after cwd binding.
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
+          "shell_exec",
+          params as Record<string, any>,
+        )
         if (!valid) return { success: false, error: "Invalid or expired security token for shell_exec" }
       } else {
         return { success: false, error: "shell_exec requires L2 security_token confirmation" }
@@ -3879,10 +3885,11 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
     }
     case "netsec_port_scan": {
       if (params.security_token) {
-        const valid = securityPolicy.validateToken(
-          params.security_token,
+        // Match issueTokenFor (targets + ports binding), not raw targets JSON alone.
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
           "netsec_port_scan",
-          JSON.stringify(params.targets || []),
+          params as Record<string, any>,
         )
         if (!valid) return { success: false, error: "Invalid or expired security token for netsec_port_scan" }
       } else {
