@@ -69,8 +69,16 @@ assert_file_has "${PACKAGE_SH}" 'cmspark-tray missing' \
   "package.sh errors on missing cmspark-tray (macos-arm64)"
 assert_file_lacks "${PACKAGE_SH}" 'WARNING: companion/dist/cmspark-host not built' \
   "package.sh no longer soft-WARNINGs missing host"
-assert_file_has "${PACKAGE_SH}" 'external:onnxruntime-node' \
-  "package.sh esbuild externalizes onnxruntime-node (residual; not staged)"
+# P2 esbuild SoT: externals live in companion/scripts/esbuild-bundle-args.json;
+# package.sh invokes run-esbuild-bundle.mjs (must still keep ORT external / unstaged).
+ESBUILD_ARGS="${ROOT}/companion/scripts/esbuild-bundle-args.json"
+ESBUILD_RUNNER="${ROOT}/companion/scripts/run-esbuild-bundle.mjs"
+assert_file_has "${ESBUILD_ARGS}" 'onnxruntime-node' \
+  "esbuild-bundle-args.json externalizes onnxruntime-node (residual; not staged)"
+assert_file_has "${PACKAGE_SH}" 'run-esbuild-bundle\.mjs' \
+  "package.sh uses shared esbuild SoT runner"
+assert_file_has "${ESBUILD_RUNNER}" 'esbuild-bundle-args\.json' \
+  "run-esbuild-bundle.mjs loads esbuild-bundle-args.json"
 assert_file_has "${PACKAGE_SH}" 'host-scripts-win' \
   "package.sh stages host-scripts-win"
 assert_file_has "${PACKAGE_SH}" 'qwen-vl-worker\.py' \
