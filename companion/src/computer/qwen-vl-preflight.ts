@@ -4,8 +4,6 @@
 import { spawn } from "node:child_process"
 import * as fs from "node:fs"
 import * as os from "node:os"
-import { DATA_DIR } from "../config"
-import * as path from "node:path"
 import {
   migrateLegacyModelVariant,
   qwenVlMeta,
@@ -14,6 +12,7 @@ import {
 import { probeQwenModelDir, resolveModelRootDir } from "./qwen-vl-download"
 import {
   buildInstallCommands,
+  pythonInstallHint,
   resolvePythonRuntime,
   uvInstallHint,
   type PythonMode,
@@ -92,6 +91,13 @@ export interface QwenVlPreflight {
   uvPath?: string
   /** Server-driven platform install hint (W7 / N4) */
   uvInstallHint: string
+  /** Server-driven Python install hint (PY13); win32 = winget + python.org */
+  pythonInstallHint: string
+  /**
+   * N1 / PY14: base Python seed available even when isolated venv missing
+   * (pythonPath may be omitted). Distinguishes create-env vs install CTA.
+   */
+  basePythonAvailable: boolean
   /** How Python was resolved (user-facing) */
   pythonResolution: string
   isolatedEnvExists: boolean
@@ -128,22 +134,6 @@ function runCapture(bin: string, args: string[], timeoutMs = 12_000): Promise<{ 
       resolve({ code: code ?? 1, out })
     })
   })
-}
-
-async function findPython(): Promise<{ ok: boolean; path?: string }> {
-  const venvPy =
-    process.platform === "win32"
-      ? path.join(DATA_DIR, "python-env", "Scripts", "python.exe")
-      : path.join(DATA_DIR, "python-env", "bin", "python3")
-  const cands =
-    process.platform === "win32"
-      ? [venvPy, "python", "py"]
-      : [venvPy, "python3", "python"]
-  for (const c of cands) {
-    const r = await runCapture(c, ["-c", "import sys; print(sys.executable)"])
-    if (r.code === 0 && r.out.trim()) return { ok: true, path: r.out.trim().split("\n")[0]!.trim() }
-  }
-  return { ok: false }
 }
 
 async function probePythonDeps(pythonPath: string): Promise<Omit<QwenVlDepStatus, "python" | "pythonPath">> {
@@ -431,20 +421,36 @@ export async function runQwenVlPreflight(args: {
   let downloadBlockReason: string | undefined
   let enableBlockReason: string | undefined
 
+  const basePythonAvailable = runtime.basePythonAvailable === true
+  const pyHint = pythonInstallHint()
+
   // --- Software install commands (copy-paste; prefer uv when available) ---
-  if (!deps.python && runtime.mode === "system") {
+  // Progressive CTA (PY14 / N1): base ok + isolated missing → create-env;
+  // fully missing → install Python (one primary CTA).
+  if (runtime.mode === "system" && !deps.python) {
     nextSteps.push(
-      "本机未检测到可用的全局 Python。请安装 Python 3，或改选「CMspark 独立环境」并点「创建独立环境」。",
+      `本机未检测到可用的全局 Python（≥ 3.10）。安装：${pyHint}；或改选「CMspark 独立环境」并点「创建独立环境」。`,
     )
+    installCommands.push(pyHint)
     downloadBlockReason = "需要可用的 Python 环境才能下载本机视觉模型"
-  } else if (!deps.python || (runtime.mode === "isolated" && !runtime.isolatedExists)) {
-    const installUv = uvInstallHint()
-    nextSteps.push(
-      runtime.uvAvailable
-        ? "推荐：点下方「创建独立环境」——将优先使用本机 uv 创建专用虚拟环境（不污染全局 Python）。"
-        : `推荐：点下方「创建独立环境」创建专用虚拟环境；或安装 uv（${installUv}）后再创建，安装依赖更快。`,
-    )
-    downloadBlockReason = "请先创建 CMspark 独立 Python 环境，或切换为「使用全局 Python」"
+  } else if (runtime.mode === "isolated" && !runtime.isolatedExists) {
+    if (basePythonAvailable) {
+      const installUv = uvInstallHint()
+      nextSteps.push(
+        runtime.uvAvailable
+          ? "推荐：点下方「创建独立环境」——将优先使用本机 uv 创建专用虚拟环境（不污染全局 Python）。"
+          : `推荐：点下方「创建独立环境」创建专用虚拟环境；或安装 uv（${installUv}）后再创建，安装依赖更快。`,
+      )
+      downloadBlockReason = "请先创建 CMspark 独立 Python 环境，或切换为「使用全局 Python」"
+    } else {
+      nextSteps.push(`未找到可用的 Python 3（≥ 3.10）。请先安装：${pyHint}`)
+      installCommands.push(pyHint)
+      downloadBlockReason = "请先安装 Python 3，再创建独立环境或切换为「使用全局 Python」"
+    }
+  } else if (!deps.python) {
+    nextSteps.push(`未检测到可用 Python。安装：${pyHint}`)
+    installCommands.push(pyHint)
+    downloadBlockReason = "需要可用的 Python 环境才能下载本机视觉模型"
   } else {
     const downloadPkgs: string[] = []
     if (src.source === "modelscope" && !deps.modelscope) downloadPkgs.push("modelscope")
@@ -609,8 +615,13 @@ export async function runQwenVlPreflight(args: {
   ]
 
   let readinessSummary: string
-  if (!deps.python) readinessSummary = "未就绪：请先安装 Python 3"
-  else if (diskTight) readinessSummary = "未就绪：磁盘空间不足"
+  if (runtime.mode === "isolated" && !runtime.isolatedExists && basePythonAvailable) {
+    readinessSummary = "未就绪：请先创建独立环境"
+  } else if (!deps.python && !basePythonAvailable) {
+    readinessSummary = "未就绪：请先安装 Python 3"
+  } else if (!deps.python || (runtime.mode === "isolated" && !runtime.isolatedExists)) {
+    readinessSummary = "未就绪：请先创建独立环境"
+  } else if (diskTight) readinessSummary = "未就绪：磁盘空间不足"
   else if (!canDownload && !modelReady) readinessSummary = "未就绪：请先安装「模型下载组件」（见下方清单与命令）"
   else if (modelReady && !canEnable) readinessSummary = "模型已下载，但仍缺「本地推理组件」，暂不可开启"
   else if (canEnable) readinessSummary = "就绪：可启用实验层"
@@ -639,6 +650,8 @@ export async function runQwenVlPreflight(args: {
     uvAvailable: runtime.uvAvailable,
     ...(runtime.uvPath ? { uvPath: runtime.uvPath } : {}),
     uvInstallHint: uvInstallHint(),
+    pythonInstallHint: pyHint,
+    basePythonAvailable,
     pythonResolution: runtime.resolution,
     isolatedEnvExists: runtime.isolatedExists,
   }

@@ -685,3 +685,28 @@
 - Launching p0-batch-fix batch=P0-C (computer reL2 session-trust + Darwin client鈫抯creen)
 
 
+
+### S57 (2026-08-09 09:31) [Windows Python discovery cascade · 对抗设计]
+- **触发**: Windows 下 Python 发现链不完整（仅 PATH 裸名 + findUv S35）；需 uv→managers→global→well-known→install UX
+- **流程**: workflow windows-python-discovery-adversarial 四路 Platform/Security/Product/Compat → 合成 SoT → Pi 复审 → impl workflow
+- **状态**: 对抗 workflow 启动中
+- Recorded: yes — design gate before code
+
+### S57 COMPLETE-design (2026-08-09 10:08) [Windows Python discovery · 对抗→Pi→impl workflow]
+- **对抗**: workflow `windows-python-discovery-adversarial` 四路 Platform/Security/Product/Compat → Scheme **D** Full hybrid cascade
+- **SoT/plan**: `docs/superpowers/specs/2026-08-09-windows-python-discovery-design.md` · `.../plans/2026-08-09-windows-python-discovery-impl.md`
+- **合成**: `docs/audit/reviews/windows-python-discovery-adversary-synthesis-20260809.md`
+- **Pi**: **APPROVE_WITH_NITS** → `docs/audit/reviews/windows-python-discovery-verdict-20260809.json`（host pi CLI 偏题两次；协议只读 agent 门控）
+- **级联锁**: config → isolated → well-known → managers(seed) → PATH/py → Store+3.10 → absolute pin → ensure → install UX
+- **实现**: workflow `windows-python-discovery-impl` 已启动（T1–T13 + nits）
+- Recorded: yes — design gate passed; impl in flight
+
+### S57 COMPLETE (2026-08-09 10:21) [Windows Python discovery cascade · 对抗→Pi→实现]
+- **对抗**: Scheme **D** Full hybrid cascade 锁定
+- **SoT/plan**: `docs/superpowers/specs/2026-08-09-windows-python-discovery-design.md` · plans 同日
+- **Pi**: APPROVE_WITH_NITS → `windows-python-discovery-verdict-20260809.json`
+- **实现**: workflow `windows-python-discovery-impl` complete；G1–G12 all pass
+- **测试**: computer-python-runtime **45/45** 绿（findUv + PY-T1..T21）
+- **核心**: `findPythonBase` config→isolated→well-known→managers→PATH/py；Store+3.10；absolute pin；`pythonInstallHint`；`basePythonAvailable`
+- **下次**: 重启 Companion 侧栏冒烟；可选 PR
+- Recorded: yes

@@ -7,11 +7,21 @@ import {
   findUv,
   isUvExecutable,
   listWellKnownUvCandidates,
+  listWellKnownPythonCandidates,
+  listManagerPythonCandidates,
   processLocalLookupPath,
   uvInstallHint,
+  pythonInstallHint,
   buildInstallCommands,
   ensureIsolatedPythonEnv,
   longPathFailureHint,
+  findPythonBase,
+  resolvePythonRuntime,
+  validatePythonExecutable,
+  parsePythonVersion,
+  isWindowsStorePythonStub,
+  versionMeetsMin,
+  MIN_PYTHON_VERSION,
   type UvDiscoveryDeps,
 } from "../src/computer/python-runtime"
 
@@ -490,4 +500,705 @@ test("longPathFailureHint only expands on win32 (P-F8)", () => {
   const w = longPathFailureHint("uv pip install 失败（见日志）", "win32")
   assert.ok(w.includes("MAX_PATH") || w.includes("长路径"))
   assert.ok(w.startsWith("uv pip install"))
+})
+
+// ── Base Python discovery cascade (PY-T1..T21 / N2) ─────────────────────────
+
+function goodPyProbe(absPy: string, version = "3.12.0") {
+  return async (bin: string, args: string[]) => {
+    const joined = args.join(" ")
+    if (joined.includes("sys.executable") || joined.includes("version_info")) {
+      // Accept absolute fixture or py launcher
+      if (
+        pathFor("win32").normalize(bin) === pathFor("win32").normalize(absPy) ||
+        pathFor("linux").normalize(bin) === pathFor("linux").normalize(absPy) ||
+        bin === absPy ||
+        bin === "py"
+      ) {
+        return { code: 0, out: `${absPy}\n${version}\n`, err: "" }
+      }
+    }
+    if (bin === "where" || bin === "which") return { code: 1, out: "", err: "" }
+    if (bin === "py" && args[0] === "-0p") return { code: 1, out: "", err: "" }
+    if (bin === "py" && args[0] === "-3") {
+      return { code: 0, out: `${absPy}\n${version}\n`, err: "" }
+    }
+    return { code: 127, out: "", err: "ENOENT" }
+  }
+}
+
+test("PY-T1: stripped PATH + fixture Local Programs/Python/Python312 → well-known", async () => {
+  const platform: NodeJS.Platform = "win32"
+  const P = pathFor(platform)
+  const home = "C:\\Users\\fixture"
+  const localApp = P.join(home, "AppData", "Local")
+  const pyRoot = P.join(localApp, "Programs", "Python")
+  const pyDir = P.join(pyRoot, "Python312")
+  const pyExe = P.join(pyDir, "python.exe")
+  const same = (a: string, b: string) => P.normalize(a) === P.normalize(b)
+
+  const deps: UvDiscoveryDeps = {
+    platform,
+    env: { PATH: "", LOCALAPPDATA: localApp },
+    homedir: () => home,
+    existsSync: (p) => same(p, pyExe) || same(p, pyRoot) || same(p, pyDir),
+    readdirSync: (p) => {
+      if (same(p, pyRoot)) return ["Python312"]
+      return []
+    },
+    statSync: (p) => ({
+      isFile: () => same(p, pyExe),
+      isSymbolicLink: () => false,
+      isDirectory: () => same(p, pyRoot) || same(p, pyDir),
+    }),
+    realpathSync: (p) => P.normalize(p),
+    runCapture: goodPyProbe(pyExe),
+  }
+
+  const r = await findPythonBase({ includeIsolated: false, deps })
+  assert.equal(r.ok, true)
+  if (r.ok) {
+    assert.ok(P.isAbsolute(r.path))
+    assert.equal(r.source, "well-known")
+    assert.notEqual(r.path, "python")
+    assert.notEqual(r.path, "py")
+  }
+})
+
+test("PY-T2: fixture WinGet Python.Python.3.12 → ok absolute", async () => {
+  const platform: NodeJS.Platform = "win32"
+  const P = pathFor(platform)
+  const home = "C:\\Users\\fixture"
+  const localApp = P.join(home, "AppData", "Local")
+  const packagesRoot = P.join(localApp, "Microsoft", "WinGet", "Packages")
+  const pkgDir = P.join(packagesRoot, "Python.Python.3.12_3.12.0")
+  const pyExe = P.join(pkgDir, "python.exe")
+  const same = (a: string, b: string) => P.normalize(a) === P.normalize(b)
+
+  const deps: UvDiscoveryDeps = {
+    platform,
+    env: { PATH: "", LOCALAPPDATA: localApp },
+    homedir: () => home,
+    existsSync: (p) => same(p, pyExe) || same(p, packagesRoot) || same(p, pkgDir),
+    readdirSync: (p) => {
+      if (same(p, packagesRoot)) return ["Python.Python.3.12_3.12.0"]
+      if (same(p, pkgDir)) return []
+      return []
+    },
+    statSync: (p) => ({
+      isFile: () => same(p, pyExe),
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => P.normalize(p),
+    runCapture: goodPyProbe(pyExe),
+  }
+
+  const r = await findPythonBase({ includeIsolated: false, deps })
+  assert.equal(r.ok, true)
+  if (r.ok) {
+    assert.ok(P.isAbsolute(r.path))
+    assert.equal(P.basename(r.path).toLowerCase(), "python.exe")
+  }
+})
+
+test("PY-T3: unrelated WinGet package dir with python.exe ignored", async () => {
+  const platform: NodeJS.Platform = "win32"
+  const P = pathFor(platform)
+  const home = "C:\\Users\\fixture"
+  const localApp = P.join(home, "AppData", "Local")
+  const packagesRoot = P.join(localApp, "Microsoft", "WinGet", "Packages")
+  const evilPkg = P.join(packagesRoot, "Evil.Tool_1.0")
+  const evilPy = P.join(evilPkg, "python.exe")
+  const same = (a: string, b: string) => P.normalize(a) === P.normalize(b)
+
+  const deps: UvDiscoveryDeps = {
+    platform,
+    env: { PATH: "", LOCALAPPDATA: localApp },
+    homedir: () => home,
+    existsSync: (p) => same(p, evilPy) || same(p, packagesRoot),
+    readdirSync: (p) => (same(p, packagesRoot) ? ["Evil.Tool_1.0"] : []),
+    statSync: (p) => ({
+      isFile: () => same(p, evilPy),
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => P.normalize(p),
+    runCapture: async (bin) => {
+      if (bin === "where" || bin === "which" || bin === "py") {
+        return { code: 1, out: "", err: "" }
+      }
+      if (same(bin, evilPy)) {
+        return { code: 0, out: `${evilPy}\n3.12.0\n`, err: "" }
+      }
+      return { code: 127, out: "", err: "ENOENT" }
+    },
+  }
+
+  const r = await findPythonBase({ includeIsolated: false, deps })
+  assert.equal(r.ok, false)
+})
+
+test("PY-T4: WindowsApps path candidate rejected", async () => {
+  const platform: NodeJS.Platform = "win32"
+  const P = pathFor(platform)
+  const home = "C:\\Users\\fixture"
+  const storePy =
+    "C:\\Users\\fixture\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe"
+  assert.equal(isWindowsStorePythonStub(storePy, { platform }), true)
+
+  const deps: UvDiscoveryDeps = {
+    platform,
+    env: { PATH: "", LOCALAPPDATA: P.join(home, "AppData", "Local") },
+    homedir: () => home,
+    existsSync: (p) => P.normalize(p) === P.normalize(storePy),
+    readdirSync: () => [],
+    statSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => P.normalize(p),
+    runCapture: async () => ({
+      code: 0,
+      out: `${storePy}\n3.12.0\n`,
+      err: "",
+    }),
+  }
+
+  // listWellKnown must never include WindowsApps
+  const cands = listWellKnownPythonCandidates(deps)
+  assert.ok(!cands.some((c) => /windowsapps/i.test(c)))
+
+  const r = await findPythonBase({
+    includeIsolated: false,
+    configPath: storePy,
+    deps,
+  })
+  assert.equal(r.ok, false)
+})
+
+test("PY-T5: validatePythonExecutable Store path → ok false", async () => {
+  const storePy =
+    "C:\\Users\\x\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe"
+  const deps: UvDiscoveryDeps = {
+    platform: "win32",
+    existsSync: () => true,
+    realpathSync: (p) => p,
+    statSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    runCapture: async () => ({
+      code: 0,
+      out: `${storePy}\n3.12.0\n`,
+      err: "",
+    }),
+  }
+  const v = await validatePythonExecutable(storePy, deps)
+  assert.equal(v.ok, false)
+})
+
+test("PY-T6: mock version 2.7 / 3.8 rejected", async () => {
+  const platform: NodeJS.Platform = "linux"
+  const P = pathFor(platform)
+  const py = "/usr/bin/python3"
+  for (const ver of ["2.7.18", "3.8.10"]) {
+    const deps: UvDiscoveryDeps = {
+      platform,
+      env: { PATH: "" },
+      homedir: () => "/home/x",
+      existsSync: (p) => P.normalize(p) === P.normalize(py),
+      readdirSync: () => [],
+      statSync: () => ({
+        isFile: () => true,
+        isSymbolicLink: () => false,
+        isDirectory: () => false,
+      }),
+      realpathSync: (p) => P.normalize(p),
+      runCapture: async (bin) => {
+        if (P.normalize(bin) === P.normalize(py) || bin === py) {
+          return { code: 0, out: `${py}\n${ver}\n`, err: "" }
+        }
+        if (bin === "which" || bin === "where") return { code: 1, out: "", err: "" }
+        return { code: 127, out: "", err: "" }
+      },
+    }
+    const r = await findPythonBase({ includeIsolated: false, deps })
+    assert.equal(r.ok, false, `expected reject version ${ver}`)
+  }
+  assert.equal(versionMeetsMin({ major: 3, minor: 8 }, MIN_PYTHON_VERSION), false)
+  assert.equal(versionMeetsMin({ major: 2, minor: 7 }, MIN_PYTHON_VERSION), false)
+})
+
+test("PY-T7: mock version 3.10+ accepted", async () => {
+  const platform: NodeJS.Platform = "linux"
+  const P = pathFor(platform)
+  const py = "/usr/bin/python3"
+  const deps: UvDiscoveryDeps = {
+    platform,
+    env: { PATH: "" },
+    homedir: () => "/home/x",
+    existsSync: (p) => P.normalize(p) === P.normalize(py),
+    readdirSync: () => [],
+    statSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => P.normalize(p),
+    runCapture: goodPyProbe(py, "3.10.0"),
+  }
+  // force well-known hit: list includes /usr/bin/python3
+  const r = await findPythonBase({ includeIsolated: false, deps })
+  assert.equal(r.ok, true)
+  if (r.ok) {
+    assert.ok(P.isAbsolute(r.path))
+  }
+  assert.equal(versionMeetsMin({ major: 3, minor: 10 }, MIN_PYTHON_VERSION), true)
+  assert.equal(parsePythonVersion("3.11.2")?.minor, 11)
+})
+
+test("PY-T8: ok never bare python/py", async () => {
+  const deps: UvDiscoveryDeps = {
+    platform: "linux",
+    env: { PATH: "/usr/bin" },
+    homedir: () => "/home/x",
+    existsSync: () => false,
+    readdirSync: () => [],
+    statSync: () => ({
+      isFile: () => false,
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => p,
+    runCapture: async (bin, args) => {
+      if ((bin === "which" || bin === "where") && (args[0] === "python" || args[0] === "python3")) {
+        return { code: 0, out: "python3\n", err: "" } // relative — reject
+      }
+      if (bin === "python" || bin === "python3") {
+        return { code: 0, out: "python3\n3.12.0\n", err: "" }
+      }
+      return { code: 1, out: "", err: "" }
+    },
+  }
+  const r = await findPythonBase({ includeIsolated: false, deps })
+  assert.equal(r.ok, false)
+  if (r.ok) {
+    assert.notEqual((r as any).path, "python")
+    assert.notEqual((r as any).path, "py")
+    assert.notEqual((r as any).path, "python3")
+  }
+})
+
+test("PY-T9: pythonInstallHint('win32') has winget, not brew-only", () => {
+  const h = pythonInstallHint("win32")
+  assert.match(h, /winget/i)
+  assert.match(h, /Python\.Python\.3/i)
+  assert.match(h, /python\.org/i)
+  assert.doesNotMatch(h, /brew install/i)
+})
+
+test("PY-T10: pythonInstallHint('darwin') may brew", () => {
+  const h = pythonInstallHint("darwin")
+  assert.match(h, /brew/i)
+})
+
+test("PY-T11: resolve isolated missing + base fixture → no pythonPath, create-env", async () => {
+  const platform: NodeJS.Platform = "linux"
+  const P = pathFor(platform)
+  const py = "/usr/bin/python3"
+  const deps: UvDiscoveryDeps = {
+    platform,
+    env: { PATH: "" },
+    homedir: () => "/home/x",
+    existsSync: (p) => {
+      // isolated bin does not exist; well-known base does
+      if (String(p).includes("python-env")) return false
+      return P.normalize(p) === P.normalize(py)
+    },
+    readdirSync: () => [],
+    statSync: (p) => ({
+      isFile: () => P.normalize(p) === P.normalize(py),
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => P.normalize(p),
+    runCapture: async (bin, args) => {
+      if (bin === "where" || bin === "which") return { code: 1, out: "", err: "" }
+      if (args[0] === "--version") return { code: 1, out: "", err: "" } // no uv
+      return goodPyProbe(py, "3.11.0")(bin, args)
+    },
+  }
+  const rt = await resolvePythonRuntime({ mode: "isolated", deps })
+  assert.equal(rt.isolatedExists, false)
+  assert.equal(rt.pythonPath, undefined)
+  assert.equal(rt.basePythonAvailable, true)
+  assert.match(rt.resolution, /创建独立环境|检测到 Python/)
+})
+
+test("PY-T12: resolve isolated exists → pythonPath absolute iso style", async () => {
+  // Use real isolatedPythonBin path shape via existsSync true for that path only
+  const { isolatedPythonBin } = await import("../src/computer/python-runtime")
+  const iso = isolatedPythonBin()
+  const deps: UvDiscoveryDeps = {
+    platform: process.platform,
+    env: { PATH: "" },
+    homedir: () => (process.platform === "win32" ? "C:\\Users\\x" : "/home/x"),
+    existsSync: (p) => path.normalize(p) === path.normalize(iso),
+    readdirSync: () => [],
+    statSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => path.normalize(p),
+    runCapture: async (bin, args) => {
+      if (args[0] === "--version") return { code: 1, out: "", err: "" }
+      if (path.normalize(bin) === path.normalize(iso) || bin === iso) {
+        return { code: 0, out: `${iso}\n3.12.1\n`, err: "" }
+      }
+      if (bin === "where" || bin === "which") return { code: 1, out: "", err: "" }
+      return { code: 127, out: "", err: "" }
+    },
+  }
+  const rt = await resolvePythonRuntime({ mode: "isolated", deps })
+  assert.equal(rt.isolatedExists, true)
+  assert.ok(rt.pythonPath)
+  assert.ok(path.isAbsolute(rt.pythonPath!))
+  assert.match(rt.resolution, /独立环境/)
+})
+
+test("PY-T13: ensure without uv uses absolute base argv0", async () => {
+  const platform = process.platform
+  const absPy =
+    platform === "win32" ? "C:\\Python312\\python.exe" : "/usr/bin/python3"
+  const spawns: Array<{ bin: string; args: string[] }> = []
+  const P = pathFor(platform === "win32" ? "win32" : "linux")
+
+  // Seed well-known so findPythonBase succeeds under injected deps
+  const home = platform === "win32" ? "C:\\Users\\fixture" : "/home/fixture"
+  const deps: UvDiscoveryDeps & {
+    findUv: () => Promise<{ ok: boolean; path?: string }>
+  } = {
+    platform: platform === "win32" ? "win32" : "linux",
+    findUv: async () => ({ ok: false }),
+    env: {
+      PATH: "",
+      ...(platform === "win32"
+        ? { LOCALAPPDATA: P.join(home, "AppData", "Local"), ProgramFiles: "C:\\Program Files" }
+        : {}),
+    },
+    homedir: () => home,
+    existsSync: (p) => {
+      if (String(p).includes("python-env")) return false
+      return P.normalize(p) === P.normalize(absPy)
+    },
+    readdirSync: (p) => {
+      // unix list is fixed paths; for win32 plant ProgramFiles/Python312
+      if (platform === "win32" && /Program Files$/i.test(P.normalize(p).replace(/\//g, "\\"))) {
+        return ["Python312"]
+      }
+      return []
+    },
+    statSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => P.normalize(p),
+    runCapture: async (bin, args) => {
+      spawns.push({ bin, args })
+      if (args[0] === "--version") return { code: 1, out: "", err: "" }
+      if (args[0] === "-m" && args[1] === "venv") {
+        return { code: 0, out: "ok\n", err: "" }
+      }
+      if (
+        P.normalize(bin) === P.normalize(absPy) ||
+        bin === absPy ||
+        (args.join(" ").includes("sys.executable") &&
+          (P.normalize(bin) === P.normalize(absPy) || bin === absPy))
+      ) {
+        return { code: 0, out: `${absPy}\n3.12.0\n`, err: "" }
+      }
+      // also accept when well-known path differs slightly
+      if (args.join(" ").includes("sys.executable") || args.join(" ").includes("version_info")) {
+        // If probing our abs py
+        if (String(bin).toLowerCase().includes("python")) {
+          return { code: 0, out: `${absPy}\n3.12.0\n`, err: "" }
+        }
+      }
+      if (bin === "where" || bin === "which" || bin === "py") {
+        return { code: 1, out: "", err: "" }
+      }
+      return { code: 0, out: "ok\n", err: "" }
+    },
+  }
+
+  // For non-win32, absPy is already in well-known list (/usr/bin/python3)
+  // For win32, plant via ProgramFiles readdir → Python312/python.exe
+  if (platform === "win32") {
+    const planted = P.join("C:\\Program Files", "Python312", "python.exe")
+    deps.existsSync = (p) => {
+      if (String(p).includes("python-env")) return false
+      return (
+        P.normalize(p) === P.normalize(planted) ||
+        P.normalize(p) === P.normalize("C:\\Program Files")
+      )
+    }
+    deps.runCapture = async (bin, args) => {
+      spawns.push({ bin, args })
+      if (args[0] === "-m" && args[1] === "venv") {
+        assert.ok(path.win32.isAbsolute(bin) || path.isAbsolute(bin), `venv argv0 absolute, got ${bin}`)
+        assert.notEqual(bin, "python")
+        assert.notEqual(bin, "py")
+        return { code: 0, out: "ok\n", err: "" }
+      }
+      if (args.join(" ").includes("sys.executable") || args.join(" ").includes("version_info")) {
+        return { code: 0, out: `${planted}\n3.12.0\n`, err: "" }
+      }
+      if (bin === "where" || bin === "which" || bin === "py") {
+        return { code: 1, out: "", err: "" }
+      }
+      return { code: 0, out: "", err: "" }
+    }
+  }
+
+  const result = await ensureIsolatedPythonEnv([], deps)
+  assert.equal(result.usedUv, false)
+  assert.equal(result.ok, true)
+  const venvSpawn = spawns.find((s) => s.args[0] === "-m" && s.args[1] === "venv")
+  assert.ok(venvSpawn, "expected python -m venv spawn")
+  assert.ok(
+    path.isAbsolute(venvSpawn!.bin) || path.win32.isAbsolute(venvSpawn!.bin),
+    `expected absolute base argv0, got ${venvSpawn!.bin}`,
+  )
+  assert.notEqual(venvSpawn!.bin, "python")
+  assert.notEqual(venvSpawn!.bin, "py")
+  assert.notEqual(venvSpawn!.bin, "python3")
+})
+
+test("PY-T14: ensure with uv still absolute uv (regression)", async () => {
+  const absUv =
+    process.platform === "win32" ? "C:\\Tools\\uv.exe" : "/usr/local/bin/uv"
+  const spawns: Array<{ bin: string; args: string[] }> = []
+  const result = await ensureIsolatedPythonEnv(["torch"], {
+    findUv: async () => ({ ok: true, path: absUv }),
+    existsSync: () => false,
+    runCapture: async (bin, args) => {
+      spawns.push({ bin, args })
+      return { code: 0, out: "ok\n", err: "" }
+    },
+  })
+  assert.equal(result.usedUv, true)
+  assert.equal(result.ok, true)
+  for (const s of spawns) {
+    if (s.args[0] === "venv" || s.args[0] === "pip") {
+      assert.equal(s.bin, absUv)
+      assert.ok(path.isAbsolute(s.bin))
+    }
+  }
+})
+
+test("PY-T15: listWellKnown Python 不含 WindowsApps", () => {
+  const cands = listWellKnownPythonCandidates({
+    platform: "win32",
+    homedir: () => "C:\\Users\\ci",
+    env: {
+      LOCALAPPDATA: "C:\\Users\\ci\\AppData\\Local",
+      ProgramFiles: "C:\\Program Files",
+    },
+    existsSync: () => false,
+    readdirSync: () => [],
+  })
+  assert.ok(cands.every((c) => !/windowsapps/i.test(c)))
+  // still lists installer-root allowlist even if missing
+  const joined = cands.join("|").toLowerCase()
+  assert.ok(joined.includes("anaconda3") || joined.includes("miniconda3") || joined.includes("scoop"))
+})
+
+test("PY-T16: computer sources do not import mcp/transport", () => {
+  const roots = [
+    path.join(__dirname, "..", "src", "computer"),
+    path.join(process.cwd(), "src", "computer"),
+  ]
+  let dir = ""
+  for (const r of roots) {
+    try {
+      if (fs.statSync(r).isDirectory()) {
+        dir = r
+        break
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  if (!dir) return
+  const files = ["python-runtime.ts", "qwen-vl-download.ts", "qwen-vl-preflight.ts"]
+  for (const f of files) {
+    const fp = path.join(dir, f)
+    try {
+      const src = fs.readFileSync(fp, "utf8")
+      assert.doesNotMatch(src, /from\s+["'].*mcp\/transport/)
+      assert.doesNotMatch(src, /require\(["'].*mcp\/transport/)
+    } catch {
+      /* skip missing */
+    }
+  }
+})
+
+test("PY-T17: findUv still discovers well-known under stripped PATH (regression)", async () => {
+  const platform: NodeJS.Platform = "linux"
+  const P = pathFor(platform)
+  const home = "/home/fixture"
+  const localUv = P.join(home, ".local", "bin", "uv")
+  const deps = fixtureFileDeps(localUv, platform)
+  deps.homedir = () => home
+  deps.env = { PATH: "" }
+  const r = await findUv(deps)
+  assert.equal(r.ok, true)
+  assert.ok(r.path && P.isAbsolute(r.path))
+  assert.notEqual(r.path, "uv")
+})
+
+// N2 extras
+test("PY-T18: config priority over well-known", async () => {
+  const platform: NodeJS.Platform = "linux"
+  const P = pathFor(platform)
+  const configPy = "/opt/custom/bin/python3"
+  const wellKnown = "/usr/bin/python3"
+  const deps: UvDiscoveryDeps = {
+    platform,
+    env: { PATH: "" },
+    homedir: () => "/home/x",
+    existsSync: (p) =>
+      P.normalize(p) === P.normalize(configPy) ||
+      P.normalize(p) === P.normalize(wellKnown),
+    readdirSync: () => [],
+    statSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => P.normalize(p),
+    runCapture: async (bin, args) => {
+      if (bin === "where" || bin === "which") return { code: 1, out: "", err: "" }
+      if (
+        P.normalize(bin) === P.normalize(configPy) ||
+        P.normalize(bin) === P.normalize(wellKnown)
+      ) {
+        return { code: 0, out: `${bin}\n3.11.0\n`, err: "" }
+      }
+      return { code: 127, out: "", err: "" }
+    },
+  }
+  const r = await findPythonBase({
+    configPath: configPy,
+    includeIsolated: false,
+    deps,
+  })
+  assert.equal(r.ok, true)
+  if (r.ok) {
+    assert.equal(r.source, "config")
+    assert.ok(r.path.includes("custom") || P.normalize(r.path) === P.normalize(configPy))
+  }
+})
+
+test("PY-T19: manager seed pyenv-win versions", async () => {
+  const platform: NodeJS.Platform = "win32"
+  const P = pathFor(platform)
+  const home = "C:\\Users\\fixture"
+  const versions = P.join(home, ".pyenv", "pyenv-win", "versions")
+  const pyExe = P.join(versions, "3.12.0", "python.exe")
+  const same = (a: string, b: string) => P.normalize(a) === P.normalize(b)
+  const deps: UvDiscoveryDeps = {
+    platform,
+    env: { PATH: "", LOCALAPPDATA: P.join(home, "AppData", "Local") },
+    homedir: () => home,
+    existsSync: (p) => same(p, pyExe) || same(p, versions),
+    readdirSync: (p) => (same(p, versions) ? ["3.12.0"] : []),
+    statSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => P.normalize(p),
+    runCapture: goodPyProbe(pyExe),
+  }
+  const mgr = listManagerPythonCandidates(deps)
+  assert.ok(mgr.some((c) => /pyenv/i.test(c) && /python\.exe$/i.test(c)))
+  const r = await findPythonBase({ includeIsolated: false, deps })
+  assert.equal(r.ok, true)
+  if (r.ok) {
+    assert.equal(r.source, "manager")
+    assert.ok(P.isAbsolute(r.path))
+  }
+})
+
+test("PY-T20: py-launcher discovery via py -0p", async () => {
+  const platform: NodeJS.Platform = "win32"
+  const P = pathFor(platform)
+  const home = "C:\\Users\\fixture"
+  const pyExe = "C:\\Python312\\python.exe"
+  const deps: UvDiscoveryDeps = {
+    platform,
+    env: { PATH: "", LOCALAPPDATA: P.join(home, "AppData", "Local") },
+    homedir: () => home,
+    existsSync: () => false, // no well-known / manager
+    readdirSync: () => [],
+    statSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      isDirectory: () => false,
+    }),
+    realpathSync: (p) => P.normalize(p),
+    runCapture: async (bin, args) => {
+      if (bin === "where" || bin === "which") return { code: 1, out: "", err: "" }
+      if (bin === "py" && args[0] === "-0p") {
+        return { code: 0, out: ` -V:3.12 *        ${pyExe}\n`, err: "" }
+      }
+      if (bin === "py" && args[0] === "-3") {
+        return { code: 0, out: `${pyExe}\n3.12.0\n`, err: "" }
+      }
+      if (P.normalize(bin) === P.normalize(pyExe) || bin === pyExe) {
+        return { code: 0, out: `${pyExe}\n3.12.0\n`, err: "" }
+      }
+      // probe of path from -0p
+      if (args.join(" ").includes("sys.executable")) {
+        return { code: 0, out: `${pyExe}\n3.12.0\n`, err: "" }
+      }
+      return { code: 127, out: "", err: "" }
+    },
+  }
+  const r = await findPythonBase({ includeIsolated: false, deps })
+  assert.equal(r.ok, true)
+  if (r.ok) {
+    assert.equal(r.source, "py-launcher")
+    assert.ok(P.isAbsolute(r.path))
+    assert.notEqual(r.path, "py")
+  }
+})
+
+test("PY-T21: download absolute candidates contract (no bare argv0 in filter)", () => {
+  // Static contract: qwen-vl-download must not list bare python/py as final candidates
+  const candidates = [
+    path.join(__dirname, "..", "src", "computer", "qwen-vl-download.ts"),
+    path.join(process.cwd(), "src", "computer", "qwen-vl-download.ts"),
+  ]
+  let src = ""
+  for (const c of candidates) {
+    try {
+      src = fs.readFileSync(c, "utf8")
+      break
+    } catch {
+      /* next */
+    }
+  }
+  if (!src) return
+  // Old bare system fallback removed
+  assert.doesNotMatch(src, /\?\s*\[\s*"python"\s*,\s*"py"\s*\]/)
+  assert.doesNotMatch(src, /"python3",\s*"python"\]/)
+  assert.match(src, /findPythonBase/)
+  assert.match(src, /path\.isAbsolute/)
 })

@@ -253,6 +253,12 @@ async function statePayload(
           ...(typeof preflight.uvInstallHint === "string" && preflight.uvInstallHint
             ? { uvInstallHint: preflight.uvInstallHint }
             : {}),
+          ...(typeof preflight.pythonInstallHint === "string" && preflight.pythonInstallHint
+            ? { pythonInstallHint: preflight.pythonInstallHint }
+            : {}),
+          ...(typeof preflight.basePythonAvailable === "boolean"
+            ? { basePythonAvailable: preflight.basePythonAvailable }
+            : {}),
           pythonResolution: preflight.pythonResolution,
           isolatedEnvExists: preflight.isolatedEnvExists,
           pythonPath:
