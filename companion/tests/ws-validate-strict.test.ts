@@ -69,6 +69,32 @@ test("unknown type rejected in production by default (fail-closed)", () => {
   }
 })
 
+test("core router types are registered (production fail-closed must not drop config.get)", () => {
+  const prev = process.env.CMSPARK_WS_STRICT
+  const nodeEnv = process.env.NODE_ENV
+  delete process.env.CMSPARK_WS_STRICT
+  process.env.NODE_ENV = "production"
+  try {
+    for (const type of [
+      "config.get",
+      "thread.list",
+      "skill.list",
+      "knowledge.list",
+      "user_env.list",
+      "security.unattended.status",
+      "computer.get_state",
+    ]) {
+      const r = validateWsMessage({ type })
+      assert.equal(r.valid, true, `${type} must be known under production WS strict`)
+    }
+  } finally {
+    if (prev === undefined) delete process.env.CMSPARK_WS_STRICT
+    else process.env.CMSPARK_WS_STRICT = prev
+    if (nodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = nodeEnv
+  }
+})
+
 test("voice.stt.start requires privacy_ack_v2 at validate layer", () => {
   const r = validateWsMessage({
     type: "voice.stt.start",

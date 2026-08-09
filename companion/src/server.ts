@@ -6303,6 +6303,99 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.enabled !== "boolean") return { valid: false, error: "apps.set_enabled requires boolean enabled" }
       return { valid: true }
     },
+    "apps.set_coordinate_allowed": (m) => {
+      if (typeof m.token !== "string" || !m.token) {
+        return { valid: false, error: "apps.set_coordinate_allowed requires token" }
+      }
+      if (typeof m.allowed !== "boolean") {
+        return { valid: false, error: "apps.set_coordinate_allowed requires boolean allowed" }
+      }
+      return { valid: true }
+    },
+    // --- Core lists / config (must be registered under production WS fail-closed) ---
+    // P2 ARCH-PROTO-2 enabled strict unknown-type rejection but several high-traffic
+    // router cases were never added here → SEA/production treated config.get/thread.list
+    // as unknown (looks like Companion "crash"/dead connection). Keep in lock-step with
+    // message-router.ts case arms.
+    "config.get": () => ({ valid: true }),
+    "config.test": () => ({ valid: true }),
+    "config.testVision": () => ({ valid: true }),
+    "settings.get": () => ({ valid: true }),
+    "settings.set": (m) => {
+      if (m.settings !== undefined && (typeof m.settings !== "object" || m.settings === null || Array.isArray(m.settings))) {
+        return { valid: false, error: "settings.set settings must be an object" }
+      }
+      return { valid: true }
+    },
+    "settings.test": () => ({ valid: true }),
+    "thread.list": () => ({ valid: true }),
+    "thread.generate_title": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "thread.generate_title requires thread_id" }
+      }
+      return { valid: true }
+    },
+    "thread.export_obsidian": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "thread.export_obsidian requires thread_id" }
+      }
+      return { valid: true }
+    },
+    "skill.list": () => ({ valid: true }),
+    "skill.refresh": () => ({ valid: true }),
+    "knowledge.list": () => ({ valid: true }),
+    "knowledge.import": (m) => {
+      if (!m.url && !m.content && !m.path) {
+        return { valid: false, error: "knowledge.import requires url, content, or path" }
+      }
+      return { valid: true }
+    },
+    "knowledge.import_directory": (m) => {
+      if (typeof m.path !== "string" || !m.path) {
+        return { valid: false, error: "knowledge.import_directory requires path" }
+      }
+      return { valid: true }
+    },
+    "knowledge.delete": (m) => {
+      if (typeof m.id !== "string" || !m.id) {
+        return { valid: false, error: "knowledge.delete requires id" }
+      }
+      return { valid: true }
+    },
+    "user_env.list": () => ({ valid: true }),
+    "user_env.set": (m) => {
+      if (!m.entries || typeof m.entries !== "object" || Array.isArray(m.entries)) {
+        return { valid: false, error: "user_env.set requires entries object" }
+      }
+      return { valid: true }
+    },
+    "user_env.delete": (m) => {
+      if (!Array.isArray(m.keys) || m.keys.length === 0) {
+        return { valid: false, error: "user_env.delete requires non-empty keys array" }
+      }
+      return { valid: true }
+    },
+    "security.unattended.status": () => ({ valid: true }),
+    "security.unattended.arm": (m) => {
+      if (m.confirmation_phrase === undefined) {
+        return { valid: false, error: "security.unattended.arm requires confirmation_phrase" }
+      }
+      return { valid: true }
+    },
+    "security.unattended.disarm": () => ({ valid: true }),
+    "computer.get_state": () => ({ valid: true }),
+    "computer.set_enabled": (m) => {
+      if (typeof m.enabled !== "boolean") {
+        return { valid: false, error: "computer.set_enabled requires boolean enabled" }
+      }
+      return { valid: true }
+    },
+    "enterprise.session_trust.status": () => ({ valid: true }),
+    "enterprise.session_trust.revoke": () => ({ valid: true }),
+    "obsidian.pick_vault_folder": () => ({ valid: true }),
+    "obsidian.refresh_profile": () => ({ valid: true }),
+    // Host tool reply path (extension → companion); body validated in tool pipeline.
+    "osascript_eval": () => ({ valid: true }),
     "tab.navigated": (m) => {
       if (typeof m.tabId !== "number") return { valid: false, error: "tab.navigated requires tabId number" }
       if (typeof m.url !== "string" || !m.url) return { valid: false, error: "tab.navigated requires url string" }
