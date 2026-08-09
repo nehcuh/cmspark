@@ -262,23 +262,24 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     url: urlSchema,
   }),
 
-  // --- Cookies (high-risk: trusted-domain gate depends on `domain` shape) ---
+  // --- Cookies: aligned with catalog + browser-bridge (url+name for set/delete; domain for get) ---
   set_cookie: z.object({
-    domain: z.string().min(1),
+    url: urlSchema,
     name: z.string().min(1),
     value: z.string(),
+    domain: z.string().min(1).optional(),
     path: z.string().optional(),
     secure: z.boolean().optional(),
     httpOnly: z.boolean().optional(),
-    url: urlSchema.optional(),
+    expirationDate: z.number().optional(),
   }),
   get_cookies: z.object({
     domain: z.string().min(1),
   }),
   delete_cookie: z.object({
-    domain: z.string().min(1),
+    url: urlSchema,
     name: z.string().min(1),
-    url: urlSchema.optional(),
+    domain: z.string().min(1).optional(),
   }),
   list_all_cookies: z.object({}).passthrough(),
 }

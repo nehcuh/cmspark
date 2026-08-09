@@ -66,6 +66,7 @@ import type {
   McpServerMeta,
 } from "./mcp/types"
 import { releaseMultiAgentLlmLoop } from "./orchestrator/llm-loop-gate"
+import { redactConfigForWire } from "./config-redact"
 
 /**
  * Chat-path hostname for site_knowledge selection only.
@@ -85,18 +86,6 @@ function normalizeChatHostname(hostname?: unknown, url?: unknown): string | unde
     }
   }
   return undefined
-}
-
-/** Mask extra_headers values for WS broadcast (never send secrets to extension). */
-function redactExtraHeaders(
-  headers: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  if (!headers || typeof headers !== "object") return undefined
-  const out: Record<string, string> = {}
-  for (const k of Object.keys(headers)) {
-    out[k] = "***"
-  }
-  return out
 }
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
@@ -233,23 +222,10 @@ export async function handleMessage(
   switch (type) {
     // --- Config ---
     case "config.get": {
-      const config = getConfig()
+      // SoT: same redaction as config.updated broadcast (MCP env/headers + llm keys).
       return {
         type: "config.updated",
-        config: {
-          ...config,
-          // Preserve "is set" signal: "***" when an api_key exists, "" otherwise.
-          // The frontend normalizes "***" back to "" but uses it as a truthy signal
-          // for "已配置" indicators (UX fix: users had no way to tell their key was
-          // already saved because the input was always blank).
-          llm: {
-            ...config.llm,
-            api_key: config.llm.api_key ? "***" : "",
-            // Never broadcast extra_headers values (N3 nit / P1)
-            extra_headers: redactExtraHeaders(config.llm.extra_headers),
-          },
-          vision: config.vision ? { ...config.vision, api_key: config.vision.api_key ? "***" : "" } : undefined,
-        },
+        config: redactConfigForWire(getConfig()),
       }
     }
     case "config.set": {
@@ -396,16 +372,7 @@ export async function handleMessage(
       }
       return {
         type: "config.updated",
-        config: {
-          ...updated,
-          // Same "is set" signal preservation as config.get — see comment there.
-          llm: {
-            ...updated.llm,
-            api_key: updated.llm.api_key ? "***" : "",
-            extra_headers: redactExtraHeaders(updated.llm.extra_headers),
-          },
-          vision: updated.vision ? { ...updated.vision, api_key: updated.vision.api_key ? "***" : "" } : undefined,
-        },
+        config: redactConfigForWire(updated),
       }
     }
 
@@ -445,6 +412,14 @@ export async function handleMessage(
 
       if (!testConfig.api_key || testConfig.api_key === "sk-placeholder" || isMaskedApiKey(testConfig.api_key)) {
         return { type: "config.testResult", ok: false, error: "API Key 未配置" }
+      }
+      // SSRF: refuse config.test against private/loopback base_url (shared gate)
+      if (testConfig.base_url) {
+        const { assertOutboundFetchUrlAllowed } = await import("./security")
+        const ssrf = assertOutboundFetchUrlAllowed(String(testConfig.base_url))
+        if (ssrf) {
+          return { type: "config.testResult", ok: false, error: ssrf }
+        }
       }
       const probe = await probeLlmConnection(testConfig)
       if (probe.ok) {
@@ -561,7 +536,7 @@ export async function handleMessage(
     // --- Chat ---
     case "chat.create": {
       if (!session) return { type: "error", error: "No session" }
-      // Dual-review residual: do not run LLM against soft-deleted threads
+      // Dual-review residual: do not run LLM against soft-deleted / paused threads
       {
         const thrGate = services.threadManager.get(rest.thread_id)
         if (!thrGate) {
@@ -573,6 +548,14 @@ export async function handleMessage(
             thread_id: rest.thread_id,
             error: "thread_trashed",
             data: { error_code: "thread_trashed" },
+          }
+        }
+        if (thrGate.paused) {
+          return {
+            type: "chat.error",
+            thread_id: rest.thread_id,
+            error: "thread_paused",
+            data: { error_code: "thread_paused" },
           }
         }
       }
@@ -931,12 +914,31 @@ export async function handleMessage(
 
       pushUploadStatus("chat", "文档已解析，模型思考中…")
 
-      // Cancel any existing request for this thread (SEC-D generation CAS — same as chat.create)
+      // Same gates as chat.create: paused, multi-agent LLM cap, supersede CAS
+      {
+        const thrGate = services.threadManager.get(thread_id)
+        if (!thrGate) {
+          return uploadError("Thread not found")
+        }
+        if (thrGate.trashed_at) {
+          return uploadError("thread_trashed")
+        }
+        if (thrGate.paused) {
+          return uploadError("thread_paused")
+        }
+      }
       const existingUpload = abortControllers.get(thread_id)
       if (existingUpload) {
         logger.info("llm.thread_request_superseded", { thread_id })
         existingUpload.abort()
         await drainThreadOnSupersede(thread_id, `file.upload.supersede:${thread_id}`)
+      }
+      const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop: releaseUploadLlm } =
+        await import("./orchestrator/llm-loop-gate")
+      const threadForUploadCap = services.threadManager.get(thread_id)
+      const uploadLoopGate = tryAcquireMultiAgentLlmLoop(threadForUploadCap, thread_id)
+      if (!uploadLoopGate.ok) {
+        return uploadError(uploadLoopGate.error)
       }
       const uploadGeneration = nextLlmGeneration(thread_id)
       const uploadController = new AbortController()
@@ -1015,6 +1017,7 @@ export async function handleMessage(
           if (abortControllers.get(thread_id) === uploadController) {
             abortControllers.delete(thread_id)
           }
+          releaseUploadLlm(thread_id)
         }
       }
 
@@ -1109,6 +1112,27 @@ export async function handleMessage(
       const config = getConfig()
       const { thread_id, message_id, message: editedMessage } = rest
 
+      {
+        const thrGate = services.threadManager.get(thread_id)
+        if (!thrGate) return { type: "error", error: "Thread not found" }
+        if (thrGate.trashed_at) {
+          return {
+            type: "chat.error",
+            thread_id,
+            error: "thread_trashed",
+            data: { error_code: "thread_trashed" },
+          }
+        }
+        if (thrGate.paused) {
+          return {
+            type: "chat.error",
+            thread_id,
+            error: "thread_paused",
+            data: { error_code: "thread_paused" },
+          }
+        }
+      }
+
       // Merge thread-level config_override with global config
       const threadForRegenConfig = services.threadManager.get(thread_id)
       const regenLLMOverride = threadForRegenConfig?.config_override || {}
@@ -1170,6 +1194,22 @@ export async function handleMessage(
         logger.info("llm.thread_request_superseded", { thread_id })
         existing.abort()
         await drainThreadOnSupersede(thread_id, `chat.regenerate.supersede:${thread_id}`)
+      }
+      const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop: releaseRegenLlm } =
+        await import("./orchestrator/llm-loop-gate")
+      const threadForRegenCap = services.threadManager.get(thread_id)
+      const regenLoopGate = tryAcquireMultiAgentLlmLoop(threadForRegenCap, thread_id)
+      if (!regenLoopGate.ok) {
+        return {
+          type: "chat.error",
+          thread_id,
+          error: regenLoopGate.error,
+          data: {
+            error_code: "MULTI_AGENT_LLM_CAP",
+            active: regenLoopGate.active,
+            cap: regenLoopGate.cap,
+          },
+        }
       }
       const myGeneration = nextLlmGeneration(thread_id)
       const controller = new AbortController()
@@ -1236,6 +1276,7 @@ export async function handleMessage(
           if (abortControllers.get(thread_id) === controller) {
             abortControllers.delete(thread_id)
           }
+          releaseRegenLlm(thread_id)
         }
       }
       return null
@@ -2053,6 +2094,7 @@ export async function handleMessage(
     case "meeting.start":
     case "meeting.end":
     case "meeting.list":
+    case "meeting.delete":
     case "meeting.get":
     case "meeting.set_transcript":
     case "meeting.append_transcript":
@@ -2192,22 +2234,10 @@ export async function handleMessage(
     }
     case "skill.import": {
       if (rest.url) {
-        // SSRF protection: protocol whitelist, block internal IPs (P0)
         const urlStr = String(rest.url)
-        let parsed: URL
-        try {
-          parsed = new URL(urlStr)
-        } catch {
-          return { type: "error", error: "Invalid URL" }
-        }
-        const allowedProtocols = ["http:", "https:"]
-        if (!allowedProtocols.includes(parsed.protocol)) {
-          return { type: "error", error: `URL protocol not allowed: ${parsed.protocol}` }
-        }
-        const hostname = parsed.hostname
-        if (isInternalIp(hostname)) {
-          return { type: "error", error: "Internal IP addresses are not allowed" }
-        }
+        const { assertOutboundFetchUrlAllowed } = await import("./security")
+        const ssrf = assertOutboundFetchUrlAllowed(urlStr)
+        if (ssrf) return { type: "error", error: ssrf }
         // Fetch with timeout, redirect limit, and size cap (P1)
         const controller = new AbortController()
         const fetchTimeout = setTimeout(() => controller.abort(), 30000)
@@ -2284,21 +2314,15 @@ export async function handleMessage(
         // Pass parsed text + fallback name; importKnowledge auto-generates frontmatter
         skillEngine.importKnowledge(parsed.text, baseName)
       } else if (rest.url) {
-        // SSRF protection: reuse skill.import URL validation
         const urlStr = String(rest.url)
+        const { assertOutboundFetchUrlAllowed } = await import("./security")
+        const ssrf = assertOutboundFetchUrlAllowed(urlStr)
+        if (ssrf) return { type: "error", error: ssrf }
         let parsed: URL
         try {
           parsed = new URL(urlStr)
         } catch {
           return { type: "error", error: "Invalid URL" }
-        }
-        const allowedProtocols = ["http:", "https:"]
-        if (!allowedProtocols.includes(parsed.protocol)) {
-          return { type: "error", error: `URL protocol not allowed: ${parsed.protocol}` }
-        }
-        const hostname = parsed.hostname
-        if (isInternalIp(hostname)) {
-          return { type: "error", error: "Internal IP addresses are not allowed" }
         }
         const controller = new AbortController()
         const fetchTimeout = setTimeout(() => controller.abort(), 30000)
@@ -2682,7 +2706,7 @@ export async function handleMessage(
         return { type: "error", error: "pack.unapply requires thread_id" }
       }
       const { unapplyPack } = await import("./packs/pack-engine")
-      const r = unapplyPack(rest.thread_id, threadManager)
+      const r = unapplyPack(rest.thread_id, threadManager, skillEngine)
       if (!r.ok) return { type: "error", error: r.error, code: (r as any).code }
       return { type: "pack.unapplied", thread: r.thread }
     }

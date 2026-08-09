@@ -111,6 +111,20 @@ function untrustedSuffix(toolCallId: string): string {
  * present — truncation must never drop `</untrusted-…>` and let content escape. The
  * wrap-after-truncate ordering is a security property, covered by tests.
  */
+/** Live + history rebuild share this cap so rebuild cannot blow the context window. */
+export const MAX_TOOL_RESULT_CHARS = 8000
+
+/**
+ * Truncate tool-result JSON text before wrapUntrusted (closing tag must stay intact).
+ */
+export function truncateToolResultContent(
+  content: string,
+  maxChars: number = MAX_TOOL_RESULT_CHARS,
+): string {
+  if (content.length <= maxChars) return content
+  return content.substring(0, maxChars) + `...(truncated, original ${content.length} chars)`
+}
+
 export function wrapUntrusted(content: string, toolCallId: string, toolName?: string): string {
   const suffix = untrustedSuffix(toolCallId)
   const source = toolName && PAGE_CONTENT_TOOLS.has(toolName) ? "page" : "tool"

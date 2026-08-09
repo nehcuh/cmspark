@@ -411,7 +411,17 @@ export class BrowserBridge {
         data: { image_base64: result.data, width, height, url: tab.url, title: tab.title },
       }
     } catch {
-      // Fallback: captureVisibleTab (no debugger needed, viewport-only)
+      // Fallback: captureVisibleTab is viewport-only and always captures the
+      // *active* tab of a window — never use it when that would be a different tab.
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!activeTab?.id || activeTab.id !== tabId) {
+        return {
+          success: false,
+          error:
+            `SCREENSHOT_FALLBACK_TAB_MISMATCH: CDP failed for tab ${tabId} and active tab is ` +
+            `${activeTab?.id ?? "none"} — refusing captureVisibleTab of the wrong tab`,
+        }
+      }
       const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: "jpeg", quality: 80 })
       const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "")
       return {
@@ -1369,7 +1379,9 @@ export class BrowserBridge {
   }
 
   private async getElementCenter(tabId: number, selector?: string, scrollIntoView = true): Promise<{ x: number; y: number }> {
-    if (!selector) return { x: 300, y: 300 }
+    if (!selector) {
+      throw new Error("SELECTOR_REQUIRED: interactive tools need a CSS selector (no default 300,300 click)")
+    }
     const scrollExpr = scrollIntoView
       ? `if(r.bottom<0||r.top>window.innerHeight||r.right<0||r.left>window.innerWidth){el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});r=el.getBoundingClientRect();}`
       : ""

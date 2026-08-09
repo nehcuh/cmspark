@@ -53,6 +53,7 @@ import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "./voice/session-caps"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
 import { gcExpiredMeetingAudio } from "./meeting/meeting-store"
 import { handleMessage, redactMcpServersForBroadcast } from "./message-router"
+import { redactConfigForWire } from "./config-redact"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
@@ -106,6 +107,8 @@ import {
 } from "./computer/task-abort-registry"
 
 const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
+/** Cap concurrent unauthenticated sockets during handshake window (pre-auth DoS). */
+const MAX_UNAUTHENTICATED_WS = 8
 
 const PORT = 23401
 // Exported for integration tests (audit item 6). Production reads the const directly.
@@ -1577,20 +1580,28 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         toolName === "ask_user" ||
         toolName === "board_complete" ||
         toolName === "host_cli" || // L-CLI-9: god-mode never skips host_cli L2
-        toolName === "skill_install" // S41: durable skill write — god-mode never skips
+        toolName === "skill_install" || // S41: durable skill write — god-mode never skips
+        // evaluate / osascript: always L2 unless three-flag full autonomy (regex is risk preview only)
+        toolName === "evaluate" ||
+        toolName === "osascript_eval"
       const userFullAutonomy =
         securityConfig.auto_approve_dangerous === true &&
         securityConfig.auto_approve_enterprise_tools === true &&
         securityConfig.allow_all_schemes === true
+      const codeCriticalApis = detectCriticalApis(code)
+      // Risk-preview list for the confirm UI: for evaluate/osascript prefer regex hits;
+      // for other capability-forced tools use the tool name; host_computer stays special.
       const criticalApis = hostComputerGated
         ? ["computer.coordinate_injection"]
-        : capabilityForceConfirm
-          ? [toolName]
-          : detectCriticalApis(code)
+        : toolName === "evaluate" || toolName === "osascript_eval"
+          ? (codeCriticalApis.length > 0 ? codeCriticalApis : [toolName])
+          : capabilityForceConfirm
+            ? [toolName]
+            : codeCriticalApis
       // Waive forceConfirm only under three-flag full autonomy cruise.
-      // Browser scripts under domain whitelist / god-mode alone still forceConfirm.
-      const forceConfirm = criticalApis.length > 0 && !userFullAutonomy
-      if (criticalApis.length > 0 && userFullAutonomy) {
+      // evaluate/osascript always force L2 (domain whitelist / god-mode alone insufficient).
+      const forceConfirm = capabilityForceConfirm && !userFullAutonomy
+      if (capabilityForceConfirm && userFullAutonomy) {
         logger.info("security.critical_api_waived", {
           tool_call_id: toolCallId,
           tool_name: toolName,
@@ -2373,9 +2384,9 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         })
       }
       const host = parsedUrl.hostname
-      // skipL2 = trusted || autoApproved || auto_approve_dangerous || allow_all_schemes.
-      const skipUrlConfirmation = isTrustedDomain(host)
-        || isAutoApprovedDomain(host)
+      // ADR-007: trusted_domains is Cookie-only. URL gate uses auto_approved_domains
+      // + global toggles only — cookie trust must not skip navigate/create_tab/set_tab_url.
+      const skipUrlConfirmation = isAutoApprovedDomain(host)
         || securityConfig.auto_approve_dangerous === true
         || securityConfig.allow_all_schemes === true
       if (!skipUrlConfirmation) {
@@ -2447,10 +2458,8 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           return result
         }
         logger.info("security.url_confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName, url: rawUrl })
-      } else if (!isTrustedDomain(host)) {
-        // Skipped specifically because of auto_approved_domains, the global toggle,
-        // or god-mode (not because the host was already cookie-trusted). Log so
-        // audits can tell the bypass paths apart.
+      } else {
+        // Skipped via auto_approved_domains / global toggle / god-mode (not cookie trust).
         logger.info("security.url_auto_approved", {
           tool_call_id: toolCallId,
           tool_name: toolName,
@@ -2576,16 +2585,16 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
-      const trusted = isTrustedDomain(host)
+      // Cookie trusted_domains must not auto-approve image fetch (ADR-007 Cookie-only).
       const autoApproved = isAutoApprovedDomain(host)
-      if (trusted || autoApproved) {
+      if (autoApproved) {
         logger.info("security.image_fetch_auto_approved", {
           tool_call_id: toolCallId, tool_name: toolName,
           candidate_url: urlSum.summary, scheme, host, is_private_ip: isPriv,
-          reason: trusted ? "trusted_domain" : "auto_approved_domain",
+          reason: "auto_approved_domain",
         })
       } else {
-        // Non-trusted public URL or (non-metadata) private IP → confirm.
+        // Non-auto-approved public URL or (non-metadata) private IP → confirm.
         // god-mode + auto_approve_dangerous do NOT skip IMAGE_FETCH http(s) confirm.
         if (ws.readyState !== WebSocket.OPEN) {
           const result = {
@@ -2641,6 +2650,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       "host_read",
       "host_write",
       "host_app",
+      "host_cli",
       "host_computer",
       "use_skill",
       "thread_recall",
@@ -4840,6 +4850,27 @@ async function executeMcpTool(
     return { success: false, error: `MCP tool ${toolName} not found (server may be disconnected)` }
   }
 
+  // Manual MCP selection must gate dispatch (not only LLM catalog filtering).
+  try {
+    const actingTid =
+      typeof (params as any)?.__thread_id === "string"
+        ? String((params as any).__thread_id)
+        : sessionId
+    const thr = actingTid ? threadManager.get(actingTid) : null
+    const mode = thr?.mcp_selection_mode || "auto"
+    if (mode === "manual") {
+      const active = new Set(thr?.active_mcp_server_ids || [])
+      if (!active.has(route.serverName)) {
+        return {
+          success: false,
+          error: `MCP server "${route.serverName}" is not in this thread's active selection (mcp_selection_mode=manual)`,
+        }
+      }
+    }
+  } catch {
+    /* unexpected thread lookup — fail closed below only when mode is known */
+  }
+
   const configuredTrustLevel = manager.getTrustLevel(route.serverName) ?? "first-use"
   // Audit item 8: destructive-looking tool names ALWAYS require per-call confirmation,
   // regardless of the server's configured trust_level. A first-use approval for a
@@ -5404,61 +5435,8 @@ export function broadcastToClients(data: any): void {
  * SRV-1: callers must applyConfig / persist with the unredacted original.
  * Exported for pure unit tests (no startServer).
  */
-export function redactConfigForBroadcast(config: any): any {
-  if (!config || typeof config !== "object") return config
-
-  const redacted: any = { ...config }
-
-  if (config.llm && typeof config.llm === "object") {
-    redacted.llm = {
-      ...config.llm,
-      api_key: config.llm.api_key ? "***" : "",
-    }
-  }
-
-  if (config.vision && typeof config.vision === "object") {
-    redacted.vision = {
-      ...config.vision,
-      api_key: config.vision.api_key ? "***" : "",
-    }
-  }
-
-  if (config.mcp && typeof config.mcp === "object") {
-    const serversIn = config.mcp.servers
-    if (serversIn && typeof serversIn === "object") {
-      const serversOut: Record<string, any> = {}
-      for (const [name, raw] of Object.entries(serversIn as Record<string, any>)) {
-        if (!raw || typeof raw !== "object") {
-          serversOut[name] = raw
-          continue
-        }
-        const server: any = { ...raw }
-        if (server.env && typeof server.env === "object") {
-          const env: Record<string, string> = {}
-          for (const k of Object.keys(server.env)) {
-            env[k] = "***"
-          }
-          server.env = env
-        }
-        if (server.headers && typeof server.headers === "object") {
-          const headers: Record<string, string> = {}
-          for (const k of Object.keys(server.headers)) {
-            headers[k] = "***"
-          }
-          server.headers = headers
-        }
-        serversOut[name] = server
-      }
-      // Shallow-copy mcp so we do not mutate caller's servers map; top-level
-      // ...config already shared the mcp ref until we replace it here.
-      redacted.mcp = { ...config.mcp, servers: serversOut }
-    }
-    // When servers is absent, redacted.mcp already shares config.mcp from the
-    // top-level spread — no secrets to mask on that path.
-  }
-
-  return redacted
-}
+/** Wire-safe config redaction (config.updated / config.get SoT). Re-export for tests. */
+export { redactConfigForWire as redactConfigForBroadcast } from "./config-redact"
 
 /**
  * Exported for integration tests (X3): aim broadcastToClients at a test
@@ -5951,6 +5929,11 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.v !== 1) return { valid: false, error: "meeting.list requires v:1" }
       return { valid: true }
     },
+    "meeting.delete": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.delete requires v:1" }
+      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.delete requires id" }
+      return { valid: true }
+    },
     "meeting.get": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.get requires v:1" }
       if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.get requires id" }
@@ -6307,19 +6290,21 @@ export function validateWsMessage(msg: any): WsValidationResult {
     return validator(msg)
   }
 
-  // P2 ARCH-PROTO-2: fail-closed for unknown types in production.
-  // Dev/tests keep allow-through so experimental message types are not blocked mid-iteration.
-  // Message-router still returns Unknown message type if a known-validated type slips past.
+  // P2 ARCH-PROTO-2: fail-closed for unknown types by default.
+  // Opt out only with CMSPARK_WS_STRICT=0 (local experiments). NODE_ENV=test keeps
+  // allow-through unless STRICT=1 so unit suites can probe experimental types.
   const strictWs =
     process.env.CMSPARK_WS_STRICT === "1" ||
-    (process.env.NODE_ENV === "production" && process.env.CMSPARK_WS_STRICT !== "0")
+    (process.env.CMSPARK_WS_STRICT !== "0" &&
+      process.env.NODE_ENV !== "test" &&
+      process.env.NODE_ENV !== "development")
   if (strictWs) {
     return {
       valid: false,
       error: `Unknown message type: ${msg.type}`,
     }
   }
-  // Unknown types are allowed through (handled by message-router default case)
+  // Unknown types allowed only when explicitly non-strict (dev/test/STRICT=0)
   return { valid: true }
 }
 
@@ -6548,6 +6533,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
 
   wss = new WebSocketServer({
     server: httpServer,
+    // Reject frames above MAX_WS_MESSAGE_SIZE before full buffering (handler also checks).
+    maxPayload: MAX_WS_MESSAGE_SIZE,
     // P0-2 (audit C1): reject non-extension origins to close the web-page attack vector —
     // HTTP pages / file:// / other browser extensions can otherwise open a loopback WS and
     // drive the agent (config.set, list_all_cookies, evaluate, ...). Browsers set the WS Origin
@@ -6609,7 +6596,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   configEvents.on(CONFIG_CHANGE_EVENT, async (updatedConfig: any) => {
     broadcastToClients({
       type: "config.updated",
-      config: redactConfigForBroadcast(updatedConfig),
+      config: redactConfigForWire(updatedConfig),
       source: "companion",
     })
 
@@ -6629,6 +6616,22 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     // worst (replacing the module-level historyStore with a fresh instance whose
     // this.db was still null, silently dropping records during the init window).
     // Removed in audit item 14.
+    // WeakMap is not iterable — count via clients set (entries already in wsAuth).
+    let unauthCount = 0
+    for (const c of clients) {
+      const st = wsAuth.get(c)
+      if (st && !st.authenticated) unauthCount++
+    }
+    if (unauthCount >= MAX_UNAUTHENTICATED_WS) {
+      logger.warn("ws.unauth_cap_exceeded", { unauth: unauthCount, cap: MAX_UNAUTHENTICATED_WS })
+      try {
+        ws.close(1013, "Too many unauthenticated connections")
+      } catch { /* ignore */ }
+      try {
+        ws.terminate()
+      } catch { /* ignore */ }
+      return
+    }
     clients.add(ws)
     const peerOrigin =
       typeof req.headers.origin === "string" ? req.headers.origin : undefined
@@ -6797,9 +6800,31 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           // connection instead of re-emitting auth.ok + connected.
           if (st.authenticated) return
           if (verifyProof(sharedSecret, st.nonce, String(msg.proof))) {
+            // ARCH-PROTO-1: negotiate protocol_version from client (optional legacy omit → min)
+            const { negotiateProtocolVersion, authOkProtocolFields } = require("./protocol") as typeof import("./protocol")
+            const nego = negotiateProtocolVersion(msg.protocol_version)
+            if (!nego.ok) {
+              logger.warn("ws.protocol_rejected", {
+                error: nego.error,
+                client: (nego as any).client,
+              })
+              if (ws.readyState === WebSocket.OPEN) {
+                try {
+                  ws.send(
+                    JSON.stringify({
+                      type: "auth.failed",
+                      error: nego.error,
+                      ...authOkProtocolFields(),
+                    }),
+                  )
+                } catch { /* closing */ }
+              }
+              try { ws.terminate() } catch { /* closing */ }
+              return
+            }
             st.authenticated = true
             clearTimeout(st.timer)
-            logger.info("ws.authenticated", {})
+            logger.info("ws.authenticated", { protocol_version: nego.negotiated })
             // Record (idempotently) that some peer has paired, so the tray can stop
             // auto-surfacing the pairing secret. Best-effort; never blocks auth.
             markPaired()
@@ -6810,12 +6835,11 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               logger.warn("outbound_mcp.wire_failed", { error: wireErr?.message || String(wireErr) })
             }
             if (ws.readyState === WebSocket.OPEN) {
-              // ARCH-PROTO-1 (P2): advertise negotiated protocol version after auth
               ws.send(
                 JSON.stringify({
                   type: "auth.ok",
-                  protocol_version: 1,
-                  protocol_min: 1,
+                  ...authOkProtocolFields(),
+                  negotiated_protocol_version: nego.negotiated,
                 }),
               )
               ws.send(JSON.stringify({ type: "connected" }))

@@ -109,19 +109,8 @@ try {
     if ($LASTEXITCODE -ne 0) { Fail "TypeScript compilation failed" }
     Ok "TypeScript compiled to dist/"
 
-    # esbuild bundle: --external:systray2 so the Go binary is resolved at runtime
-    # from node_modules/systray2 placed alongside the exe in the package.
-    # onnxruntime-node stays external only for residual imports — experimental
-    # locate is Qwen3-VL (Python worker + on-demand weights), not TinyClick/ORT.
-    npx esbuild dist/index.js `
-        --bundle `
-        --platform=node `
-        --target=node22 `
-        --external:systray2 `
-        --external:canvas `
-        --external:pdfjs-dist `
-        --external:onnxruntime-node `
-        --outfile=dist/cmspark-agent.js
+    # SoT: companion/scripts/esbuild-bundle-args.json (shared with package.sh / package.json)
+    node scripts/run-esbuild-bundle.mjs
     if ($LASTEXITCODE -ne 0) { Fail "esbuild bundle failed" }
     Ok "Bundle: dist/cmspark-agent.js"
 } finally { Pop-Location }

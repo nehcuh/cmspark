@@ -185,6 +185,33 @@ export function isCloudMetadataIp(hostname: string): boolean {
 }
 
 /**
+ * Shared SSRF gate for outbound companion fetches (skill/knowledge import, config.test, …).
+ * Returns null when the URL is allowed; otherwise a short error string.
+ */
+export function assertOutboundFetchUrlAllowed(urlStr: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(String(urlStr || ""))
+  } catch {
+    return "Invalid URL"
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return `URL protocol not allowed: ${parsed.protocol}`
+  }
+  const hostname = parsed.hostname
+  if (!hostname) return "Invalid URL hostname"
+  if (isPrivateOrLoopbackIp(hostname) || isCloudMetadataIp(hostname)) {
+    return "Internal / private / cloud-metadata hosts are not allowed"
+  }
+  // DNS-rebinding-ish hostnames that embed dotted IPs (127.0.0.1.nip.io, …)
+  const h = hostname.toLowerCase()
+  if (/\b\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}\b/.test(h)) {
+    return "Internal / private / cloud-metadata hosts are not allowed"
+  }
+  return null
+}
+
+/**
  * Is `hostname` a private / loopback / link-local address? Such hosts are
  * reachable from the extension's `<all_urls>` service worker but not from the
  * public internet → IMAGE_FETCH_GATE requires user confirmation (not a hard

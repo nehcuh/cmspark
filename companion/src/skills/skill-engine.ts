@@ -329,6 +329,21 @@ export class SkillEngine {
     this.threadSkillMap.set(threadId, active.filter(s => s !== skillName))
   }
 
+  /**
+   * Replace the in-memory active skill list for a thread (pack apply / restore).
+   * Without this, pack writes ThreadManager.active_skill_ids but getActiveForThread
+   * keeps a stale threadSkillMap entry until process restart.
+   */
+  setActiveSkillsForThread(threadId: string, skillIds: string[]): void {
+    const ids = Array.isArray(skillIds) ? [...skillIds] : []
+    this.threadSkillMap.set(threadId, ids)
+  }
+
+  /** Drop cached map entry so next getActiveForThread reloads from ThreadManager. */
+  invalidateThreadSkills(threadId: string): void {
+    this.threadSkillMap.delete(threadId)
+  }
+
   getActiveForThread(threadId: string): Skill[] {
     let active = this.threadSkillMap.get(threadId)
     if (!active) {

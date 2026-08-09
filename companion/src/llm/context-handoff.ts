@@ -274,6 +274,7 @@ export async function generateThreadHandoff(opts: {
       config,
       temperatureCap: 0.2,
       timeout: 45_000,
+      signal: opts.signal,
     })
     const handoff = parseHandoffJson(raw)
     if (!handoff) {

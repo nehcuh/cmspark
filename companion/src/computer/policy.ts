@@ -22,15 +22,25 @@ import { ComputerError, type WindowInfo } from "./types"
  */
 const MAC_VAULT_BUNDLE_IDS = new Set([
   // 密码管理器
-  "com.agilebits.onepassword7", "com.bitwarden.desktop",
+  "com.agilebits.onepassword7",
+  "com.1password.1password", // 1Password 8
+  "com.bitwarden.desktop",
   "com.lastpass.lastpassmacdesktop",
+  "com.dashlane.dashlanephonefinal",
+  "com.keepassxc.keepassxc",
   // 浏览器
   "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox",
   "company.thebrowser.Browser",     // Arc
   "com.brave.Browser",              // Brave
   "com.microsoft.edgemac",          // Edge
+  "com.operasoftware.Opera",
+  "com.vivaldi.Vivaldi",
+  "org.chromium.Chromium",
   // 终端 + 编辑器
   "com.apple.Terminal", "com.googlecode.iterm2",
+  "dev.warp.Warp-Stable",
+  "com.github.wez.wezterm",
+  "net.kovidgoyal.kitty",
   // 系统安全
   "com.apple.keychainaccess", "com.apple.systempreferences",
   "com.apple.Passwords",            // macOS Sequoia Passwords.app
@@ -40,6 +50,7 @@ const MAC_VAULT_BUNDLE_IDS = new Set([
   "com.google.Authenticator", "com.authy.authy-mac",
   // 加密钱包
   "com.metamask.MetaMask", "com.ledger.live", "com.exodus.Exodus",
+  "com.coinbase.wallet",
   // SSH/密钥管理
   "com.maxgoedjen.secretive.Secretive",
 ])

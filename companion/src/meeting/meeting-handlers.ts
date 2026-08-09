@@ -14,6 +14,7 @@ import {
   endMeetingRecording,
   loadMeeting,
   listMeetings,
+  deleteMeeting,
   replaceTranscript,
   setDiarizeResult,
   setMeetingStatus,
@@ -155,6 +156,14 @@ export async function handleMeetingMessage(
 
   if (type === "meeting.list") {
     return { type: "meeting.list_result", v: 1, meetings: listMeetings() }
+  }
+
+  if (type === "meeting.delete") {
+    const id = typeof msg.id === "string" ? msg.id : ""
+    if (!id) return err("invalid_id", "meeting.delete requires id")
+    const ok = deleteMeeting(id)
+    if (!ok) return err("not_found", "meeting not found", { id })
+    return { type: "meeting.deleted", v: 1, id }
   }
 
   if (type === "meeting.get") {

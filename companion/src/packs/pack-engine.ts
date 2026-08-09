@@ -1379,7 +1379,12 @@ function snapshotFromThread(thread: any): ThreadPackSnapshot {
   }
 }
 
-function restoreSnapshot(threadManager: ThreadManager, threadId: string, snap: ThreadPackSnapshot): void {
+function restoreSnapshot(
+  threadManager: ThreadManager,
+  threadId: string,
+  snap: ThreadPackSnapshot,
+  skillEngine?: SkillEngine,
+): void {
   threadManager.applyPackPatch(threadId, {
     mission_pack_id: null,
     mission_pack_snapshot: null,
@@ -1395,6 +1400,7 @@ function restoreSnapshot(threadManager: ThreadManager, threadId: string, snap: T
     board_mode: false,
     mission_pack_trust_snapshot: null,
   })
+  skillEngine?.setActiveSkillsForThread(threadId, snap.active_skill_ids || [])
 }
 
 /** Configured MCP server ids (intersect pack list with these — §6.4). */
@@ -1468,7 +1474,7 @@ export function applyPack(
         // Explicit user confirm: exit holder scene(s) so Trust can move here.
         const releasedIds: string[] = []
         for (const o of others) {
-          const released = unapplyPack(o.id, threadManager)
+          const released = unapplyPack(o.id, threadManager, skillEngine)
           // Belt: residual cookie if unapply no-op'd (pack id already null).
           const thrAfter = threadManager.get(o.id)
           if (thrAfter && isPackTrustSnapshot(thrAfter.mission_pack_trust_snapshot)) {
@@ -1709,6 +1715,8 @@ export function applyPack(
         ? (JSON.parse(JSON.stringify(trustSnap)) as Record<string, unknown>)
         : null,
     })
+    // Keep SkillEngine in-memory map in lock-step with ThreadManager (P1)
+    skillEngine.setActiveSkillsForThread(threadId, activeSkillIds)
     // Promote journal applying → held; non-trust apply releases this thread's journal
     if (trustSnap && allowTrust) {
       markTrustHeld(threadId, packId, trustSnap)
@@ -1740,6 +1748,7 @@ export function applyPack(
 export function unapplyPack(
   threadId: string,
   threadManager: ThreadManager,
+  skillEngine?: SkillEngine,
 ): { ok: true; thread: any } | { ok: false; error: string; code?: string } {
   const thread = threadManager.get(threadId)
   if (!thread) return { ok: false, error: `thread not found: ${threadId}`, code: "thread_not_found" }
@@ -1763,15 +1772,21 @@ export function unapplyPack(
   const trustSnap = thread.mission_pack_trust_snapshot as PackTrustSnapshot | null | undefined
   try {
     if (thread.mission_pack_snapshot) {
-      restoreSnapshot(threadManager, threadId, thread.mission_pack_snapshot as ThreadPackSnapshot)
+      restoreSnapshot(
+        threadManager,
+        threadId,
+        thread.mission_pack_snapshot as ThreadPackSnapshot,
+        skillEngine,
+      )
     } else {
+      const restoredSkills = (thread.active_skill_ids || []).filter(
+        (s: string) => !s.startsWith(`pack--${packId}--`),
+      )
       threadManager.applyPackPatch(threadId, {
         mission_pack_id: null,
         mission_pack_snapshot: null,
         tool_whitelist: null,
-        active_skill_ids: (thread.active_skill_ids || []).filter(
-          (s: string) => !s.startsWith(`pack--${packId}--`),
-        ),
+        active_skill_ids: restoredSkills,
         active_knowledge_ids: (thread.active_knowledge_ids || []).filter(
           (s: string) => !s.startsWith(`pack--${packId}--`),
         ),
@@ -1779,6 +1794,7 @@ export function unapplyPack(
         board_mode: false,
         mission_pack_trust_snapshot: null,
       })
+      skillEngine?.setActiveSkillsForThread(threadId, restoredSkills)
     }
     // Product B: restore global Trust if this apply had written it
     if (isPackTrustSnapshot(trustSnap)) {
@@ -1823,13 +1839,21 @@ export function uninstallPack(
       // S46 P0-1: read trust cookie BEFORE restoreSnapshot nulls it
       const trustCookie = t.mission_pack_trust_snapshot
       if (t.mission_pack_snapshot) {
-        restoreSnapshot(threadManager, t.id, t.mission_pack_snapshot as ThreadPackSnapshot)
+        restoreSnapshot(
+          threadManager,
+          t.id,
+          t.mission_pack_snapshot as ThreadPackSnapshot,
+          skillEngine,
+        )
       } else {
+        const restoredSkills = (t.active_skill_ids || []).filter(
+          (s: string) => !s.startsWith(`pack--${packId}--`),
+        )
         threadManager.applyPackPatch(t.id, {
           mission_pack_id: null,
           mission_pack_snapshot: null,
           tool_whitelist: null,
-          active_skill_ids: (t.active_skill_ids || []).filter((s: string) => !s.startsWith(`pack--${packId}--`)),
+          active_skill_ids: restoredSkills,
           active_knowledge_ids: (t.active_knowledge_ids || []).filter(
             (s: string) => !s.startsWith(`pack--${packId}--`),
           ),
@@ -1837,6 +1861,7 @@ export function uninstallPack(
           board_mode: false,
           mission_pack_trust_snapshot: null,
         })
+        skillEngine.setActiveSkillsForThread(t.id, restoredSkills)
       }
       if (restoreTrustFromThreadCookie(trustCookie, `pack.uninstall:${packId}`)) {
         trustRestoredCount += 1

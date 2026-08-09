@@ -841,10 +841,24 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
       }
 
-      case "thread.create":
-        wsClient.send({ type: "thread.create", alias: message.alias || "", id: message.id })
+      case "thread.create": {
+        // P1: SW single-flight for blank auto-create (Panel + Cockpit each run useWebSocket).
+        // Empty alias + client id = auto blank; drop concurrent creates within 2s window.
+        const alias = message.alias || ""
+        const isBlankAuto = !alias && typeof message.id === "string" && message.id
+        if (isBlankAuto) {
+          const now = Date.now()
+          const g = globalThis as any
+          if (g.__cmsparkBlankCreateUntil && now < g.__cmsparkBlankCreateUntil) {
+            sendResponse({ ok: true, deduped: true })
+            return true
+          }
+          g.__cmsparkBlankCreateUntil = now + 2000
+        }
+        wsClient.send({ type: "thread.create", alias, id: message.id })
         sendResponse({ ok: true })
         return true
+      }
 
       case "page.import_notebooklm": {
         // v1: extension-only. Extracts current tab content via chrome.scripting,
@@ -1160,6 +1174,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "meeting.start":
       case "meeting.end":
       case "meeting.list":
+      case "meeting.delete":
       case "meeting.get":
       case "meeting.set_transcript":
       case "meeting.append_transcript":

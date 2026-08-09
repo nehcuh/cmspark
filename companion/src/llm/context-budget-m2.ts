@@ -47,6 +47,7 @@ export async function generateRollingSummary(opts: {
       config,
       temperatureCap: 0.2,
       timeout: 45_000,
+      signal: opts.signal,
     })
     const cleaned = summary
       .replace(/\r\n/g, "\n")

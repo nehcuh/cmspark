@@ -95,3 +95,13 @@ test("preserves server names and mcp without servers", () => {
   const emptyServers = redactConfigForBroadcast({ mcp: { enabled: true, servers: {} } })
   assert.deepEqual(emptyServers.mcp.servers, {})
 })
+
+test("masks llm.extra_headers values", () => {
+  const out = redactConfigForBroadcast({
+    llm: {
+      api_key: "k",
+      extra_headers: { Authorization: "Bearer secret", "X-Custom": "v" },
+    },
+  })
+  assert.deepEqual(out.llm.extra_headers, { Authorization: "***", "X-Custom": "***" })
+})

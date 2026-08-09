@@ -9,7 +9,7 @@ import { tryParseToolArgs } from "../bridge/tool-schemas"
 import { classifyError } from "../security"
 import { logger } from "../logger"
 import { analyzeImage } from "./vision-pipeline"
-import { wrapUntrusted } from "./text-sanitize"
+import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
 import { getConfig, type LlmConfig } from "../config"
 import { getMcpManager } from "../mcp"
 import type { AppsConfig } from "../apps/types"
@@ -235,7 +235,11 @@ export function rebuildMessagesFromHistory(
         messages.push({
           role: "tool",
           tool_call_id: tc.id,
-          content: wrapUntrusted(JSON.stringify(tc.result || {}), tc.id, tc.tool_name),
+          content: wrapUntrusted(
+            truncateToolResultContent(JSON.stringify(tc.result || {})),
+            tc.id,
+            tc.tool_name,
+          ),
         })
       }
     }
@@ -1070,6 +1074,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                   },
                   config.vision,
                   params.prompt, // custom prompt from analyze_image tool
+                  signal,
                 )
 
                 // Replace base64 image with text description
@@ -1246,18 +1251,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             }
           }
 
-          // Truncate huge tool results to protect context window
-          const MAX_RESULT_CHARS = 8000
-          let resultContent = JSON.stringify(toolResult)
-          const originalLen = resultContent.length
-          if (resultContent.length > MAX_RESULT_CHARS) {
-            resultContent = resultContent.substring(0, MAX_RESULT_CHARS)
-              + `...(truncated, original ${originalLen} chars)`
-          }
-          // M2 (§m2-untrusted-marker-rfc): wrap as <untrusted> AFTER truncation so
-          // the closing tag is always present — truncation can never drop
-          // </untrusted-…> and let page content escape the marked block.
-          resultContent = wrapUntrusted(resultContent, tc.id, toolName)
+          // Truncate huge tool results (same helper as history rebuild) then wrap.
+          let resultContent = wrapUntrusted(
+            truncateToolResultContent(JSON.stringify(toolResult)),
+            tc.id,
+            toolName,
+          )
           toolResults.push({
             role: "tool" as const,
             tool_call_id: tc.id,

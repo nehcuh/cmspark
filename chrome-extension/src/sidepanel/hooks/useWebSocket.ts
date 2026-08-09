@@ -94,8 +94,8 @@ export function scheduleUnattendedExpireClear(
 }
 
 /**
- * P0-B: whether a chat stream event should apply to the active UI thread.
- * - Missing/empty thread_id → apply (legacy broadcasts, same-thread compat).
+ * Stream/error gate for multi-agent UI isolation (P1 fail-closed).
+ * - Missing/empty thread_id → do NOT apply (legacy path polluted active thread).
  * - When set, only apply if it matches the currently active thread.
  * Pure helper for unit tests (stream-thread-gate).
  */
@@ -103,7 +103,8 @@ export function shouldApplyStreamEvent(
   msgThreadId: string | undefined | null,
   activeThreadId: string | null | undefined,
 ): boolean {
-  if (msgThreadId == null || msgThreadId === "") return true
+  if (msgThreadId == null || msgThreadId === "") return false
+  if (activeThreadId == null || activeThreadId === "") return false
   return msgThreadId === activeThreadId
 }
 

@@ -444,7 +444,8 @@ export class CompanionClient {
       // (UTF-8 bytes of the hex secret as the HMAC key, UTF-8 nonce as the message.)
       const proof = crypto.createHmac("sha256", secret).update(String(nonce)).digest("hex")
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: "auth.handshake", proof }))
+        // protocol_version lock-step with companion/src/protocol.ts
+        this.ws.send(JSON.stringify({ type: "auth.handshake", proof, protocol_version: 1 }))
       }
     } catch (err) {
       this.debug(`auth handshake failed: ${(err as Error).message}`)

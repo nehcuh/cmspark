@@ -22,6 +22,19 @@ export const WORKER_HARD_DENY = new Set([
   "host_read",
   "host_app",
   "host_cli",
+  // Control-plane / orchestrator surface — never inherit onto workers (incl. 2nd spawn)
+  "spawn_worker",
+  "wait_workers",
+  "list_workers",
+  "get_worker_status",
+  "worker_cancel",
+  "collect_handback",
+  "board_read",
+  "board_complete",
+  "board_claim_intent",
+  "board_heartbeat_intent",
+  "ask_user",
+  "list_tab_locks",
 ])
 
 /** Default narrow surface for orchestrator threads. */

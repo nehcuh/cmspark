@@ -7,7 +7,23 @@ import assert from "node:assert/strict"
 // Import after pinning env for data dir isolation is optional for pure validate
 import { validateWsMessage } from "../src/server"
 
-test("unknown type allowed when not strict", () => {
+test("unknown type allowed when CMSPARK_WS_STRICT=0", () => {
+  const prev = process.env.CMSPARK_WS_STRICT
+  const nodeEnv = process.env.NODE_ENV
+  process.env.CMSPARK_WS_STRICT = "0"
+  process.env.NODE_ENV = "production"
+  try {
+    const r = validateWsMessage({ type: "totally.unknown.experimental", foo: 1 })
+    assert.equal(r.valid, true)
+  } finally {
+    if (prev === undefined) delete process.env.CMSPARK_WS_STRICT
+    else process.env.CMSPARK_WS_STRICT = prev
+    if (nodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = nodeEnv
+  }
+})
+
+test("unknown type allowed in development without STRICT=1", () => {
   const prev = process.env.CMSPARK_WS_STRICT
   const nodeEnv = process.env.NODE_ENV
   delete process.env.CMSPARK_WS_STRICT
@@ -33,6 +49,23 @@ test("unknown type rejected when CMSPARK_WS_STRICT=1", () => {
   } finally {
     if (prev === undefined) delete process.env.CMSPARK_WS_STRICT
     else process.env.CMSPARK_WS_STRICT = prev
+  }
+})
+
+test("unknown type rejected in production by default (fail-closed)", () => {
+  const prev = process.env.CMSPARK_WS_STRICT
+  const nodeEnv = process.env.NODE_ENV
+  delete process.env.CMSPARK_WS_STRICT
+  process.env.NODE_ENV = "production"
+  try {
+    const r = validateWsMessage({ type: "totally.unknown.experimental", foo: 1 })
+    assert.equal(r.valid, false)
+    assert.match(r.error || "", /Unknown message type/)
+  } finally {
+    if (prev === undefined) delete process.env.CMSPARK_WS_STRICT
+    else process.env.CMSPARK_WS_STRICT = prev
+    if (nodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = nodeEnv
   }
 })
 

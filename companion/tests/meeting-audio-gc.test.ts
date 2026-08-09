@@ -13,6 +13,10 @@ import {
   loadMeeting,
   saveMeeting,
   meetingAudioDir,
+  deleteMeeting,
+  listMeetings,
+  MAX_MEETINGS,
+  enforceMeetingCap,
 } from "../src/meeting/meeting-store"
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mtg-gc-"))
@@ -50,4 +54,29 @@ test("gcExpiredMeetingAudio skips future retain_until", () => {
   gcExpiredMeetingAudio(dataDir, new Date())
   // This meeting's retain is in the future — file remains
   assert.equal(fs.existsSync(path.join(audio, "keep.wav")), true)
+})
+
+test("deleteMeeting removes session directory", () => {
+  const s = createMeeting({ title: "del-me", dataDir })
+  assert.ok(loadMeeting(s.id, dataDir))
+  assert.equal(deleteMeeting(s.id, dataDir), true)
+  assert.equal(loadMeeting(s.id, dataDir), null)
+  assert.equal(deleteMeeting(s.id, dataDir), false)
+})
+
+test("enforceMeetingCap deletes oldest when over MAX_MEETINGS", () => {
+  const capDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mtg-cap-"))
+  try {
+    // Create MAX_MEETINGS + 3 draft sessions
+    for (let i = 0; i < MAX_MEETINGS + 3; i++) {
+      createMeeting({ title: `cap-${i}`, dataDir: capDir })
+    }
+    // createMeeting already enforces — count should be <= MAX_MEETINGS
+    const n = listMeetings(capDir).length
+    assert.ok(n <= MAX_MEETINGS, `expected <= ${MAX_MEETINGS}, got ${n}`)
+    const r = enforceMeetingCap(capDir)
+    assert.ok(Array.isArray(r.deleted))
+  } finally {
+    fs.rmSync(capDir, { recursive: true, force: true })
+  }
 })
