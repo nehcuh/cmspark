@@ -4,7 +4,7 @@
 //
 // FREEZE: NEW companion tool cases go here (or a dedicated capability/* module called
 // from this switch). Do NOT add companion tool bodies back into server.ts.
-// L2 gates / extension forward remain in createToolExecutor (server.ts).
+// L2 gates live in tool/l2-admission.ts; extension forward remains in createToolExecutor (server.ts).
 
 import { execFile } from "child_process"
 import { randomUUID } from "crypto"
