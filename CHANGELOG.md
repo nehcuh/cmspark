@@ -2,6 +2,30 @@
 
 格式大致遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号与 `companion/package.json` / `chrome-extension/package.json` 对齐。
 
+## [Unreleased]
+
+### Security / Trust (multi-adv deep Wave0–2, 2026-08-10)
+
+- **C1** 无人值守 dual-write：武装前快照三旗；解除/TTL 过期**始终**恢复快照（不再仅 `clear_cruise`）
+- **C2/C3** 急停 ≠ 解除：值守仍开 banner；确认台空桌面常驻「值守中：桌面确认已静默」
+- **C4** 后果矩阵拆分 evaluate vs 导航；默认值守不 waive evaluate forceConfirm
+- **C5** Pack Trust `skip_l2`/三旗需 Settings 同款短语 step-up（服务端拒绝 + PacksPanel）
+- **C6** Worker `WORKER_HARD_DENY` 运行时 `isToolAllowed` 再强制；`thread.update` 不可开全表面
+- **C7/C8** shell cwd / netsec ports L2 bind 与 execute 预规范化一致
+- **C12** security-gates 去掉 `force_confirm` 假绿断言
+- **C9** CI lockstep：`ws-router-validator-lockstep` 测试
+- **C11** UI `SURFACE_BY_TOOL` 表（含 shell_exec / netsec / scroll_to / upload_file）
+- **C13–C16** SoT/文档诚实：SUPERSEDED Aug-02 设计；mcp.md `require_grant` 默认 true；CU Apps 坐标开关 0.5.0；ADR-021 residual windowLevel hard
+
+### Added (tip ships after 0.5.0 cut)
+
+- **#160** 无人值守 re-L2 静默（ADR-021 2026-08-09 修订）
+- **#161** Windows voice/shell closeout（shell/netsec token binding 对齐）
+
+### Packaging
+
+- `run-esbuild-bundle.mjs` 直接 spawn esbuild 原生二进制（避免 node 解析 Mach-O）
+
 ## [0.5.0] — 2026-08-08
 
 ### 稳定切点

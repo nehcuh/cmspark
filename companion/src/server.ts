@@ -645,6 +645,9 @@ export type ToolExecutorFn = (
   invokeOpts?: ToolExecuteInvokeOpts,
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
+// FREEZE (C10 multi-adv 2026-08-10): NEW business tool handlers must NOT grow this
+// function further — extract a module (capability/*, computer/*, packs/*, …) and
+// call it from a thin case. Full 7k LOC split is deferred; stop the bleeding first.
 // Exported for integration tests (audit item 6).
 export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   // Per-connection session id — used as the key for MCP first-use confirmation cache

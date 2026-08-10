@@ -218,16 +218,19 @@ test("C8 netsec binding equality: empty ports normalized before issue", () => {
   const pol = new SecurityPolicy()
   const ports = scan.normalizeNetsecPorts([])
   const params = { targets: ["127.0.0.1"], ports }
-  const tok = pol.issueTokenFor("netsec_port_scan", params)
-  assert.equal(pol.validateTokenFor(tok.token, "netsec_port_scan", params), true)
+  // Tokens are single-use — issue per assertion
+  const tokOk = pol.issueTokenFor("netsec_port_scan", params)
+  assert.equal(pol.validateTokenFor(tokOk.token, "netsec_port_scan", params), true)
+  const tokEmpty = pol.issueTokenFor("netsec_port_scan", params)
   // Empty ports on validate would bind differently if not normalized
   assert.equal(
-    pol.validateTokenFor(tok.token, "netsec_port_scan", { targets: ["127.0.0.1"], ports: [] }),
+    pol.validateTokenFor(tokEmpty.token, "netsec_port_scan", { targets: ["127.0.0.1"], ports: [] }),
     false,
   )
+  const tokNorm = pol.issueTokenFor("netsec_port_scan", params)
   // Same after normalize
   assert.equal(
-    pol.validateTokenFor(tok.token, "netsec_port_scan", {
+    pol.validateTokenFor(tokNorm.token, "netsec_port_scan", {
       targets: ["127.0.0.1"],
       ports: scan.normalizeNetsecPorts([]),
     }),

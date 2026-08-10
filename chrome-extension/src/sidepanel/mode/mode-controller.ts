@@ -1,45 +1,15 @@
 // Pure ModeController — no React, no chrome APIs.
 // Spec: docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md
+// C11: tool class tables derived from SURFACE_BY_TOOL (surface-by-tool.ts).
 
 import type { CapabilityLevel } from "../types"
+import { toolsAtSurface } from "./surface-by-tool"
 
 /** Browser CDP/extension tools that elevate to L1 (not host_*). */
-export const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "list_tabs",
-  "create_tab",
-  "close_tab",
-  "navigate",
-  "screenshot",
-  "get_page_text",
-  "get_page_html",
-  "get_element_info",
-  "click",
-  "dblclick",
-  "type",
-  "fill_form",
-  "scroll",
-  "press_key",
-  "hover",
-  "select_option",
-  "drag_and_drop",
-  "wait_for",
-  "evaluate",
-  "get_cookies",
-  "set_cookie",
-  "delete_cookie",
-  "list_all_cookies",
-  "set_tab_url",
-  "browser_download",
-  "downloads_find",
-])
+export const BROWSER_TOOL_NAMES: ReadonlySet<string> = toolsAtSurface("L1")
 
 /** Desktop-class tools that elevate to L2 via confirm queue even without live task. */
-export const COMPUTER_CLASS_TOOLS: ReadonlySet<string> = new Set([
-  "host_computer",
-  "host_app",
-  "host_read",
-  "host_write",
-])
+export const COMPUTER_CLASS_TOOLS: ReadonlySet<string> = toolsAtSurface("L2")
 
 export const DEFAULT_QUIESCENCE_MS = 30_000
 

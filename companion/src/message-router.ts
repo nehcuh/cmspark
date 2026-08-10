@@ -1,4 +1,7 @@
 // Message router — dispatches incoming WebSocket messages to handlers
+// FREEZE (C10 multi-adv 2026-08-10): NEW business handlers must not grow this file —
+// extract a module (family handler) and register a thin case. Prefer
+// handleXMessage(rest) over inlining multi-hundred-line cases.
 
 import os from "os"
 import * as fs from "fs"

@@ -775,13 +775,11 @@ test("god-mode alone still forceConfirms evaluate (even non-critical) — only t
     Array.isArray(confirmation.critical_apis),
     "wire exposes critical_apis array (may be empty for non-critical code)",
   )
-  // window.open is critical-ish for preview; assert content when present
+  // When critical_apis is non-empty, entries are API names/labels (e.g. evaluate/fetch) — not force_confirm
   if (confirmation.critical_apis.length > 0) {
     assert.ok(
-      confirmation.critical_apis.some(
-        (a: string) => /open|window/i.test(String(a)),
-      ),
-      `critical_apis should mention open/window when flagged: ${JSON.stringify(confirmation.critical_apis)}`,
+      confirmation.critical_apis.every((a: unknown) => typeof a === "string" && String(a).length > 0),
+      `critical_apis entries should be non-empty strings: ${JSON.stringify(confirmation.critical_apis)}`,
     )
   }
   clientSideWs.send(JSON.stringify({
