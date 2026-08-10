@@ -124,8 +124,10 @@ export function resetUnattendedGrantForTests(): void {
   grant = null
   cruiseSnapshot = null
   expireRestoreDone = false
-  cruiseSnapshotPathOverride = null
+  // Clear file while override still points at the test path (Pi r2 nit:
+  // never unlink real DATA_DIR snapshot when override is active).
   clearCruiseSnapshotFile()
+  cruiseSnapshotPathOverride = null
 }
 
 /** Test-only: redirect durable snapshot path. */
@@ -201,9 +203,23 @@ export function restoreCruiseFromSnapshot(opts?: {
 }
 
 /**
+ * Pure gate for message-router disarm path (Pi r2 nit — unit-testable).
+ * Restore dual-write cruise only when this process had a grant/snapshot, or
+ * the client explicitly asked clear_cruise (force wipe).
+ */
+export function shouldRestoreCruiseOnDisarm(opts: {
+  had_grant: boolean
+  had_snapshot: boolean
+  clear_cruise: boolean
+}): boolean {
+  return opts.had_grant === true || opts.had_snapshot === true || opts.clear_cruise === true
+}
+
+/**
  * Boot reconcile (Pi C1 nit): grant is always process-memory-null at cold start.
  * If a durable dual-write snapshot file exists, restore pre-arm flags and delete the file.
- * Call after registerCruiseRestoreHandler + initDataDir.
+ * Call after registerCruiseRestoreHandler. Safe before full initServices — file presence
+ * implies the snapshot dir already existed (persist does mkdir recursive).
  */
 export function reconcileUnattendedCruiseOnBoot(): {
   restored: boolean

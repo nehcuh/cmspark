@@ -3288,13 +3288,22 @@ export async function handleMessage(
       })
       const hadSnapshot = !!getCruiseSnapshot()
       const status = disarmUnattended()
+      const clearCruise = rest.clear_cruise === true
+      const { shouldRestoreCruiseOnDisarm } = await import("./computer/unattended-grant")
       let cruiseRestored = false
-      if (status.had_grant || hadSnapshot || rest.clear_cruise === true) {
+      if (
+        shouldRestoreCruiseOnDisarm({
+          had_grant: status.had_grant,
+          had_snapshot: hadSnapshot,
+          clear_cruise: clearCruise,
+        })
+      ) {
         // clear_cruise:true forces restore/clear even without snapshot (user intent to wipe cruise)
-        restoreCruiseFromSnapshot({ forceNull: rest.clear_cruise === true && !hadSnapshot && !status.had_grant })
+        restoreCruiseFromSnapshot({
+          forceNull: clearCruise && !hadSnapshot && !status.had_grant,
+        })
         cruiseRestored = true
       }
-      void rest.clear_cruise
       // S36 P0/F3: disarm stops in-flight host_computer injects
       const aborted = flipAllComputerTaskAborts()
       if (aborted > 0) {

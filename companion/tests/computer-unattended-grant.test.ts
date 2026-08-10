@@ -363,6 +363,14 @@ describe("C1 dual-write cruise snapshot lifecycle", () => {
     registerCruiseRestoreHandler(null)
   })
 
+  it("shouldRestoreCruiseOnDisarm mirrors message-router gate", () => {
+    const { shouldRestoreCruiseOnDisarm } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: false, had_snapshot: false, clear_cruise: false }), false)
+    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: true, had_snapshot: false, clear_cruise: false }), true)
+    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: false, had_snapshot: true, clear_cruise: false }), true)
+    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: false, had_snapshot: false, clear_cruise: true }), true)
+  })
+
   it("durable file + boot reconcile restores cruise after process restart", () => {
     const os = require("os") as typeof import("os")
     const path = require("path") as typeof import("path")
