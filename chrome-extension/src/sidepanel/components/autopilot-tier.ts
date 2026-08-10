@@ -166,11 +166,21 @@ export const AUTOPILOT_CONSEQUENCE_ROWS: Array<{
   unattended: string
 }> = [
   {
-    family: "网页 evaluate / 导航 L2",
+    // auto_approve_dangerous alone skips navigate / create_tab / set_tab_url L2.
+    family: "导航 L2（navigate / create_tab / set_tab_url）",
     browser: "跳过",
     full: "跳过",
     protocol: "跳过",
     unattended: "跳过",
+  },
+  {
+    // evaluate / osascript_eval keep forceConfirm unless three-flag (protocol) cruise.
+    // Default 值守 dual-writes dangerous+enterprise only — NOT allow_all_schemes.
+    family: "evaluate / osascript L2",
+    browser: "仍确认",
+    full: "仍确认",
+    protocol: "跳过§",
+    unattended: "仍确认††",
   },
   {
     family: "非 http(s) 协议 (L1)",
@@ -219,6 +229,7 @@ export const AUTOPILOT_CONSEQUENCE_ROWS: Array<{
 export const UNATTENDED_MATRIX_FOOTNOTES =
   "‡ 值守武装=风险自担：仅白名单且已开坐标的 App；任务级 L2 与 mid-task re-L2（含危险/实验/前台让出）均静默；键入不再逐字预览；支付/验证码等硬拒绝仍直接失败、不弹窗。" +
   "† 勾选「同时协议解锁」才放行非 http(s)（武装时精确写入 allow_all_schemes）。" +
+  "†† 默认无人值守 dual-write 仅网页+企业两旗（dangerous+enterprise），**不**写 allow_all_schemes，故 evaluate / osascript 仍 forceConfirm；仅三旗全开（协议勾选或「全自动+协议」）才 waive evaluate。值守本身不替代三旗。" +
   "* 须 enterprise 模块与范围。" +
   "§ 全自动+协议三旗全开（dangerous+enterprise+allow_all_schemes）时：用户已接受最大风险，L2/critical/ cookie 信任域门不再二次确认；解除武装或关掉任一旗即恢复。" +
   " 无人值守会 dual-write 持久巡航，解除武装才清；桌面 grant 进程内存 8h，重启失效。"

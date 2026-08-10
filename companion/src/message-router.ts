@@ -2684,6 +2684,8 @@ export async function handleMessage(
         workspace_path: rest.workspace_path,
         allowTrust: true,
         forceTakeoverTrust: forceTakeover,
+        // C5: phrase required when pack Trust writes cruise flags
+        confirmation_phrase: rest.confirmation_phrase,
       })
       if (!r.ok) {
         return {
@@ -2797,10 +2799,12 @@ export async function handleMessage(
       if (applyThreadId) {
         // Same gesture as save — allow Trust B write for user scenes.
         // force_takeover only after UI conflict confirm on re-apply path.
+        // C5: confirmation_phrase required when Trust writes cruise flags.
         const forceTakeover = rest.force_takeover === true
         const ar = applyPack(r.id, applyThreadId, threadManager, skillEngine, {
           allowTrust: true,
           forceTakeoverTrust: forceTakeover,
+          confirmation_phrase: rest.confirmation_phrase,
         })
         if (!ar.ok) {
           return {

@@ -246,8 +246,8 @@ stdio 进程会连本机 Companion：`POST http://127.0.0.1:<port>/outbound-mcp/
 
 | 模式 | Bearer | 说明 |
 |------|--------|------|
-| **P0 默认**（`outbound_mcp.require_grant=false`） | `ws_secret` 或 `CMSPARK_OUTBOUND_GRANT`（`cmg_…`） | 兼容 bake-off；仍建议最终迁到 grant |
-| **P1 require_grant** | **仅** `CMSPARK_OUTBOUND_GRANT` | 拒绝 Extension `ws_secret`（L4+）；见 [grant design](decisions/outbound-mcp-l4-grant-design-2026-08-04.md) |
+| **默认**（`outbound_mcp.require_grant=true`，`config.ts` SoT） | **仅** `CMSPARK_OUTBOUND_GRANT`（`cmg_…`） | **禁止**用 Extension `ws_secret` 作 Bearer；须 Side Panel 签发 grant |
+| **兼容关闭**（`require_grant=false`，非默认） | `ws_secret` 或 `cmg_…` | 仅 bake-off/迁移；生产保持 require_grant=true |
 
 签发 grant：
 
@@ -343,7 +343,7 @@ cmspark__accept_data_disclosure  arguments: { "acknowledge": true }
 ### 现状（P0c 进度）
 
 - 门禁 / disclosure / audit / synthetic origin：**已实现**  
-- **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <ws_secret>`）→ Companion `createToolExecutor` → Extension CDP  
+- **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <cmg_… grant>`；默认 `require_grant=true`，勿用 ws_secret）→ Companion `createToolExecutor` → Extension CDP  
 - 先 `cmspark-agent start`（或 tray/daemon）并打开扩展配对；再由编程 Agent **按需 spawn** `mcp-outbound`  
 - 无扩展连接时：`EXTENSION_UNAVAILABLE`（**仅** Chrome 扩展 peer 可做 CDP runner；tray 不会再被绑成 runner）  
 - **L8 确认**：Outbound L2 / URL-gate 确认 **fan-out** 到所有已鉴权 Side Panel；**macOS Swift tray** 可弹原生确认窗；**Windows/Linux** 无原生 tray 确认（仅 Side Panel + 通知），超时 `OUTBOUND_CONFIRM_REQUIRED`（勿只盯 IDE）  

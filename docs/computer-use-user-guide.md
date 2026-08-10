@@ -41,9 +41,9 @@
 
 1. **全局坐标开关** `computer.coordinateEnabled === true`  
    - 默认 **false**（fail-closed）。  
-   - **当前 0.3.0 用户可走路径（诚实版）**：编辑 `~/.cmspark-agent/config.json`（或等价配置写入）把 `computer.coordinateEnabled` 设为 `true` 后重启/重载 Companion。  
-   - Companion 侧另有 `computer.set_enabled` RPC（可走生物识别确认门，见 `computer/handlers.ts`），但 **Side Panel / Cockpit / 托盘目前没有入口调用它**——Apps 面板上的「坐标操作」只是 **只读镜像** `computer.get_state`，**不能**在面板里拨全局开关。  
-   - 设计意图（后续 WP）可把确认门接到 UI；**在接线之前不要把生物识别门说成「侧栏一键开启」**。
+   - **产品 0.5.0 用户路径**：Side Panel → 底栏 **应用（Apps）** → 顶部 **「坐标操作」** 勾选；走 Companion `computer.set_enabled`（可经生物识别/确认台门）。  
+   - 仍可直接编辑 `~/.cmspark-agent/config.json` 后重启 Companion。  
+   - Apps 面板显示的是 **可切换** 状态（非只读镜像）。
 
 2. **Apps 功能打开** 且目标 App 在白名单内（`apps.enabled` + 对应 `AppEntry`）。
 
@@ -59,7 +59,7 @@
 ### 快速检查清单
 
 - [ ] Companion 已启动，扩展已连接  
-- [ ] 已在 `config.json` 打开 `computer.coordinateEnabled`（或经已接线的 `computer.set_enabled` 调用方）；Apps 面板「坐标操作」显示「已开启」仅为状态镜像  
+- [ ] 已在 Apps 面板打开「坐标操作」（`computer.set_enabled`），或在 `config.json` 设 `computer.coordinateEnabled: true`  
 - [ ] 底栏 **应用** 面板：全局 App 已开  
 - [ ] 目标 App 已加白名单，且已开「允许坐标」  
 - [ ] 有确认时打开 **确认台**，看清预览后再批  
@@ -117,7 +117,7 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
 
 ## 6. 平台支持
 
-| 平台 | 状态（0.3.0） |
+| 平台 | 状态（0.5.0） |
 |------|----------------|
 | **macOS** | 主路径：原生适配 + 证据/急停；需本机权限（**只认 CMspark**，见下） |
 | **Windows** | 主路径：PowerShell/UIA 脚本族 + 窗口捕获；Hello 等与 host 写路径协同处见 host 指南 |
@@ -205,4 +205,4 @@ Computer Use 截图与键鼠需要系统权限。请 **只** 为 **CMspark** 打
 
 ---
 
-*文档版本：2026-08-08 · 对齐 ADR-020 · Path C UI-TARS 吸收 · 与 companion `computer/*` + 扩展 Cockpit/AppsPanel 行为一致。*
+*文档版本：2026-08-10 · 对齐 ADR-020 · Path C UI-TARS 吸收 · 与 companion `computer/*` + 扩展 Cockpit/AppsPanel 行为一致。*

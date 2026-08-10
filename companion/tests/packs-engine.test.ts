@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { SECURITY_ARM_CONFIRM_PHRASE } from "../src/security-arm"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-packs-eng-"))
 process.env.HOME = tempHome
@@ -155,6 +156,7 @@ test("saveUserPack trust skip_l2 + enable shell applies global Trust and unapply
   const thread = tm.create("trust-apply-th")
   const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine, {
     allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE,
   })
   assert.equal(applied.ok, true, (applied as any).error)
   const cfg1 = getConfig() as any
@@ -197,6 +199,57 @@ function resetTrustBaseline(cfg0: any) {
   clearConfigCache()
 }
 
+test("applyPack trust cruise flags without confirmation_phrase is rejected", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  saveConfig({
+    capability_profile: "community",
+    security: {
+      ...(cfg0.security || {}),
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    },
+  } as any)
+  clearConfigCache()
+
+  const saved = packEngine.saveUserPack(
+    {
+      name: "trust-phrase-gate",
+      system_prompt_append: "needs phrase",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
+      trust: { skip_l2: true },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+
+  const tm = new ThreadManager()
+  const thread = tm.create("trust-phrase-th")
+  const denied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine, {
+    allowTrust: true,
+  })
+  assert.equal(denied.ok, false)
+  assert.equal((denied as any).code, "trust_phrase_required")
+
+  const ok = packEngine.applyPack(saved.id, thread.id, tm, skillEngine, {
+    allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE,
+  })
+  assert.equal(ok.ok, true, (ok as any).error)
+
+  packEngine.unapplyPack(thread.id, tm)
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  saveConfig({
+    capability_profile: cfg0.capability_profile,
+    security: cfg0.security,
+  } as any)
+  clearConfigCache()
+})
+
+
 test("S46 P0: allowTrust false (spawn path) does not write global Trust", () => {
   const skillEngine = new SkillEngine()
   const cfg0 = getConfig() as any
@@ -232,7 +285,8 @@ test("S46 P0: allowTrust false (spawn path) does not write global Trust", () => 
   // Control: same pack with allowTrust DOES elevate
   const t2 = tm.create("spawn-trust-control")
   assert.equal(
-    packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
@@ -269,7 +323,8 @@ test("S46 P0: uninstall restores Trust (not only unapply)", () => {
   const tm = new ThreadManager()
   const thread = tm.create("uninstall-trust-th")
   assert.equal(
-    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
@@ -320,13 +375,15 @@ test("S46 P0: switch trust pack → non-trust pack restores cruise flags", () =>
   const tm = new ThreadManager()
   const thread = tm.create("switch-trust-th")
   assert.equal(
-    packEngine.applyPack(trustPack.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(trustPack.id, thread.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
 
   assert.equal(
-    packEngine.applyPack(plainPack.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(plainPack.id, thread.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   const cfg2 = getConfig() as any
@@ -372,14 +429,16 @@ test("S46 P0: switch trust A → trust B captures fresh snap; unapply B restores
   const tm = new ThreadManager()
   const thread = tm.create("switch-ab-trust")
   assert.equal(
-    packEngine.applyPack(packA.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(packA.id, thread.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
   assert.equal((getConfig() as any).security?.allow_all_schemes, false)
 
   assert.equal(
-    packEngine.applyPack(packB.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(packB.id, thread.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
@@ -419,10 +478,12 @@ test("S46 residual: second thread trust apply blocked while first holds", () => 
   const t1 = tm.create("holder-1")
   const t2 = tm.create("holder-2")
   assert.equal(
-    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
-  const r2 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true })
+  const r2 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE })
   assert.equal(r2.ok, false)
   assert.equal((r2 as any).code, "trust_holder_conflict")
   assert.ok(Array.isArray((r2 as any).holders) && (r2 as any).holders.length === 1)
@@ -434,6 +495,7 @@ test("S46 residual: second thread trust apply blocked while first holds", () => 
   // One-click takeover: unapply holder + apply on t2 without manual unapply first
   const r3 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, {
     allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE,
     forceTakeoverTrust: true,
   })
   assert.equal(r3.ok, true, (r3 as any).error)
@@ -488,7 +550,8 @@ test("Pi nit: orphan trust cookie without pack id is released by unapply and for
   const t1 = tm.create("orphan-holder")
   const t2 = tm.create("orphan-target")
   assert.equal(
-    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   // Simulate partial lifecycle: pack id cleared but cookie left (Pi residual path)
@@ -506,7 +569,8 @@ test("Pi nit: orphan trust cookie without pack id is released by unapply and for
 
   // Re-seed orphan cookie + elevate, then force_takeover from t2
   assert.equal(
-    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   const cookie2 = tm.get(t1.id)!.mission_pack_trust_snapshot
@@ -515,6 +579,7 @@ test("Pi nit: orphan trust cookie without pack id is released by unapply and for
 
   const r = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, {
     allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE,
     forceTakeoverTrust: true,
   })
   assert.equal(r.ok, true, (r as any).error)
@@ -548,7 +613,8 @@ test("S46 dual-nit: releaseTrustBeforeThreadGone restores cruise on thread delet
   const tm = new ThreadManager()
   const thread = tm.create("del-trust-th")
   assert.equal(
-    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
@@ -599,7 +665,8 @@ test("S51 P0: trash then Settings flip then hard-delete must not re-restore crui
   const tm = new ThreadManager()
   const thread = tm.create("trash-hard-trust")
   assert.equal(
-    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
@@ -668,7 +735,8 @@ test("S51 migration: pre-fix trash cookie on hard-delete clears without re-resto
   const tm = new ThreadManager()
   const thread = tm.create("legacy-trash-cookie")
   assert.equal(
-    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   // Simulate pre-S51: trash without clearing cookie (manual leave cookie + trashed_at)
@@ -741,7 +809,8 @@ test("S51 P0: trash A(trust) then apply B(trust) then hard-delete A does not clo
   const tA = tm.create("th-a")
   const tB = tm.create("th-b")
   assert.equal(
-    packEngine.applyPack(packA.id, tA.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(packA.id, tA.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   // Soft-release A (trash)
@@ -751,7 +820,8 @@ test("S51 P0: trash A(trust) then apply B(trust) then hard-delete A does not clo
 
   // Apply B while A is trashed (holder check excludes trash)
   assert.equal(
-    packEngine.applyPack(packB.id, tB.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(packB.id, tB.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
@@ -880,7 +950,8 @@ thread_defaults:
   const thread = tm.create("spoof-apply")
   // Even with allowTrust, stripped install has no trust block
   assert.equal(
-    packEngine.applyPack(inst.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    packEngine.applyPack(inst.id, thread.id, tm, skillEngine, { allowTrust: true,
+    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
     true,
   )
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)

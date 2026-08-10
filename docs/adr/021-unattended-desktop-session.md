@@ -84,6 +84,10 @@ G1 / 全自动巡航路径**不**继承本条：无值守时 PROMPT_ALWAYS 仍 f
 
 OCR 不可见的支付/图标 UI 可能漏检；值守下 re-L2 也不再二次人审 — **产品接受**（武装即自担）；文档诚实；不宣称值守=安全无人。
 
+**windowLevel=hard（2026-08-10 multi-adv honesty）**：部分 danger 扫描在 `windowLevel === "hard"` 时走 re-L2 路径，在值守武装下会 **静默通过**（与 region payment / credential 类 **hard deny throw** 不同）。硬拒绝仍覆盖支付终确区、凭据上下文 type·key 等；window-level hard 静默是 **产品接受残余**，不得宣传为零风险。
+
+**evaluate under 默认值守**：默认 dual-write 仅 dangerous+enterprise（非三旗），evaluate/osascript **仍 forceConfirm**；仅协议勾选/三旗才 waive。
+
 ---
 
 ## 后果

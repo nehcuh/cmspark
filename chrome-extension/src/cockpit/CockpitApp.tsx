@@ -25,6 +25,7 @@ import {
 } from "../sidepanel/ui/tokens"
 import { cockpitModeBadgeLabel } from "./cockpit-status"
 import { resolveStopTargetId } from "../sidepanel/utils/thread-busy"
+import { disarmAllFlags } from "../sidepanel/components/autopilot-tier"
 
 export function CockpitRoot() {
   return (
@@ -130,6 +131,14 @@ function CockpitApp() {
   const connLabel = connectionLabel(connState)
   const live = !!(task && !finished)
   const modeBadgeLabel = cockpitModeBadgeLabel({ live, hasTask: !!task, hasConfirm: !!confirm })
+  const unattendedArmed = state.unattended?.armed === true
+  // C2: 急停 ack while 值守 still on
+  const abortWhileArmed = !!(task?.abortAcked && !finished && unattendedArmed)
+
+  const disarmUnattended = () => {
+    chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: true })
+    chrome.runtime.sendMessage({ type: "config.set", config: disarmAllFlags() })
+  }
 
   return (
     <div style={s.root}>
@@ -200,6 +209,26 @@ function CockpitApp() {
         </div>
       </header>
 
+      {/* C3: permanent danger strip when 值守 armed and desk has no pending confirms */}
+      {unattendedArmed && !confirm && (
+        <div style={s.unattendedStrip} role="status">
+          值守中：桌面确认已静默 · 8h/重启/解除
+          <button type="button" style={s.unattendedDisarmBtn} onClick={disarmUnattended}>
+            解除
+          </button>
+        </div>
+      )}
+
+      {/* C2: abort acked while 值守 still armed */}
+      {abortWhileArmed && (
+        <div style={s.estopArmedBanner} role="alert">
+          <span>任务已停 · 值守仍开 · 点解除</span>
+          <button type="button" style={s.unattendedDisarmBtn} onClick={disarmUnattended}>
+            解除
+          </button>
+        </div>
+      )}
+
       {confirm && (
         <ConfirmElevated
           request={confirm}
@@ -213,7 +242,15 @@ function CockpitApp() {
       {/* Empty confirm desk: explain purpose so opening 「确认台」 is not confusing */}
       {!confirm && (!task || finished) && (
         <section style={s.emptyGuide} role="status">
-          <div style={s.emptyGuideTitle}>当前无待确认操作</div>
+          <div style={s.emptyGuideTitle}>
+            {unattendedArmed ? "值守中 · 桌面确认已静默" : "当前无待确认操作"}
+          </div>
+          {unattendedArmed ? (
+            <p style={{ ...s.emptyGuideBody, color: tokens.darkDanger, fontWeight: 600 }}>
+              无人值守已武装：桌面任务级 L2 与 re-L2 在确认台<strong>不会弹出</strong>
+              （静默通过）。空桌面 ≠ 安全空闲。Grant 约 8h / Companion 重启 / 点「解除」后恢复确认。
+            </p>
+          ) : null}
           <p style={s.emptyGuideBody}>
             这里是<strong>确认台</strong>（高危工具审批 + Computer Use 操控），不是日常聊天或配置页。
             出现 <code style={s.code}>evaluate</code> / <code style={s.code}>shell_exec</code> /{" "}
@@ -259,6 +296,11 @@ function CockpitApp() {
               <span>{task.status}</span>
               {abortSentAt && !task.abortAcked && (
                 <span style={{ color: tokens.darkWarning }}>急停已发送…</span>
+              )}
+              {abortWhileArmed && (
+                <span style={{ color: tokens.darkDanger, fontWeight: 700 }}>
+                  任务已停 · 值守仍开
+                </span>
               )}
             </div>
           </>
@@ -744,6 +786,46 @@ const s: Record<string, CSSProperties> = {
     border: "1px solid #7f1d1d",
     borderRadius: tokens.radiusLg,
     boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
+  },
+  unattendedStrip: {
+    margin: "10px 14px 0",
+    padding: "8px 12px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    background: tokens.darkDangerBg,
+    border: "1px solid #7f1d1d",
+    borderRadius: tokens.radiusMd,
+    color: tokens.darkDanger,
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  estopArmedBanner: {
+    margin: "8px 14px 0",
+    padding: "8px 12px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    background: tokens.darkDangerBg,
+    border: "1px solid #7f1d1d",
+    borderRadius: tokens.radiusMd,
+    color: tokens.darkDanger,
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  unattendedDisarmBtn: {
+    border: "1px solid #7f1d1d",
+    background: "transparent",
+    color: tokens.darkDanger,
+    borderRadius: tokens.radiusSm,
+    padding: "3px 10px",
+    fontSize: 11,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: tokens.font,
+    flexShrink: 0,
   },
   emptyGuide: {
     margin: "12px 14px 0",
