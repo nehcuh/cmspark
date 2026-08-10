@@ -330,7 +330,7 @@ describe("C1 dual-write cruise snapshot lifecycle", () => {
     registerCruiseRestoreHandler(null)
   })
 
-  it("no snapshot → restore handler gets null (clear flags)", () => {
+  it("no snapshot → restore without forceNull is no-op (Pi nit: bare disarm)", () => {
     let got: any = "unset"
     const {
       registerCruiseRestoreHandler,
@@ -341,9 +341,75 @@ describe("C1 dual-write cruise snapshot lifecycle", () => {
     registerCruiseRestoreHandler((snap) => {
       got = snap
     })
-    restoreCruiseFromSnapshot()
+    const snap = restoreCruiseFromSnapshot()
+    assert.equal(snap, null)
+    assert.equal(got, "unset", "handler must not run without snapshot unless forceNull")
+    registerCruiseRestoreHandler(null)
+  })
+
+  it("forceNull clears flags when user requests clear_cruise wipe", () => {
+    let got: any = "unset"
+    const {
+      registerCruiseRestoreHandler,
+      restoreCruiseFromSnapshot,
+      resetUnattendedGrantForTests,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    registerCruiseRestoreHandler((snap) => {
+      got = snap
+    })
+    restoreCruiseFromSnapshot({ forceNull: true })
     assert.equal(got, null)
     registerCruiseRestoreHandler(null)
+  })
+
+  it("durable file + boot reconcile restores cruise after process restart", () => {
+    const os = require("os") as typeof import("os")
+    const path = require("path") as typeof import("path")
+    const fs = require("fs") as typeof import("fs")
+    const {
+      captureCruiseSnapshot,
+      registerCruiseRestoreHandler,
+      setCruiseSnapshotPathForTests,
+      reconcileUnattendedCruiseOnBoot,
+      resetUnattendedGrantForTests,
+      getCruiseSnapshot,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    const tmp = path.join(os.tmpdir(), `cmspark-cruise-snap-test-${process.pid}.json`)
+    try {
+      if (fs.existsSync(tmp)) fs.unlinkSync(tmp)
+    } catch {
+      /* ignore */
+    }
+    setCruiseSnapshotPathForTests(tmp)
+    let restored: any = null
+    registerCruiseRestoreHandler((snap) => {
+      restored = snap
+    })
+    captureCruiseSnapshot({
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+      allow_all_schemes: false,
+    })
+    assert.ok(fs.existsSync(tmp), "durable snapshot file written")
+    // Simulate process restart: wipe memory, keep file contents
+    const raw = fs.readFileSync(tmp, "utf-8")
+    resetUnattendedGrantForTests()
+    setCruiseSnapshotPathForTests(tmp)
+    fs.writeFileSync(tmp, raw, { encoding: "utf-8", mode: 0o600 })
+    assert.equal(getCruiseSnapshot(), null)
+    restored = null
+    registerCruiseRestoreHandler((snap) => {
+      restored = snap
+    })
+    const r = reconcileUnattendedCruiseOnBoot()
+    assert.equal(r.restored, true)
+    assert.equal(restored?.auto_approve_dangerous, true)
+    assert.equal(restored?.auto_approve_enterprise_tools, true)
+    assert.equal(fs.existsSync(tmp), false, "file cleared after boot reconcile")
+    registerCruiseRestoreHandler(null)
+    setCruiseSnapshotPathForTests(null)
   })
 })
 

@@ -3269,11 +3269,12 @@ export async function handleMessage(
         disarmUnattended,
         restoreCruiseFromSnapshot,
         registerCruiseRestoreHandler,
+        getCruiseSnapshot,
       } = await import("./computer/unattended-grant")
       const { flipAllComputerTaskAborts } = await import("./computer/task-abort-registry")
       const { securityPolicy } = await import("./security-policy")
-      // C1: always restore pre-arm cruise snapshot on disarm (clear_cruise kept for API compat;
-      // default behavior is restore — no longer only when clear_cruise===true).
+      // C1: restore pre-arm cruise when grant or snapshot present (Pi nit: bare disarm
+      // without prior arm must not clobber intentionally-set cruise flags).
       registerCruiseRestoreHandler((snap) => {
         const current = getConfig()
         saveConfig({
@@ -3285,10 +3286,14 @@ export async function handleMessage(
           },
         })
       })
+      const hadSnapshot = !!getCruiseSnapshot()
       const status = disarmUnattended()
-      // Always restore dual-write cruise (C1 multi-adv)
-      restoreCruiseFromSnapshot()
-      // clear_cruise:true is now a no-op synonym for restore (API compat); false also restores.
+      let cruiseRestored = false
+      if (status.had_grant || hadSnapshot || rest.clear_cruise === true) {
+        // clear_cruise:true forces restore/clear even without snapshot (user intent to wipe cruise)
+        restoreCruiseFromSnapshot({ forceNull: rest.clear_cruise === true && !hadSnapshot && !status.had_grant })
+        cruiseRestored = true
+      }
       void rest.clear_cruise
       // S36 P0/F3: disarm stops in-flight host_computer injects
       const aborted = flipAllComputerTaskAborts()
@@ -3300,12 +3305,13 @@ export async function handleMessage(
       if (purged > 0) {
         logger.info("security.unattended.disarm_purged_tokens", { tool: "host_computer", purged })
       }
+      const { had_grant: _hg, ...statusPublic } = status
       return {
         type: "security.unattended.status",
-        ...status,
+        ...statusPublic,
         computer_tasks_aborted: aborted,
         tokens_purged: purged,
-        cruise_restored: true,
+        cruise_restored: cruiseRestored,
       }
     }
     case "security.unattended.status": {

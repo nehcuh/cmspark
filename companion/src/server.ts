@@ -6569,6 +6569,37 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     logger.warn("config.model_migrated", { from: migration.from, to: migration.to, note })
   }
   const config = getConfig()
+  // C1 multi-adv (Pi nit): grant is process-memory; dual-write cruise can stick across
+  // restart. If a durable pre-arm snapshot exists, restore cruise flags at boot.
+  try {
+    const {
+      registerCruiseRestoreHandler,
+      reconcileUnattendedCruiseOnBoot,
+    } = await import("./computer/unattended-grant")
+    registerCruiseRestoreHandler((snap) => {
+      const cur = getConfig()
+      saveConfig({
+        security: {
+          ...(cur.security || {}),
+          auto_approve_dangerous: snap ? snap.auto_approve_dangerous : false,
+          auto_approve_enterprise_tools: snap ? snap.auto_approve_enterprise_tools : false,
+          allow_all_schemes: snap ? snap.allow_all_schemes : false,
+        },
+      })
+    })
+    const bootCruise = reconcileUnattendedCruiseOnBoot()
+    if (bootCruise.restored) {
+      logger.info("security.unattended.cruise_boot_restored", {
+        auto_approve_dangerous: bootCruise.snap?.auto_approve_dangerous,
+        auto_approve_enterprise_tools: bootCruise.snap?.auto_approve_enterprise_tools,
+        allow_all_schemes: bootCruise.snap?.allow_all_schemes,
+      })
+    }
+  } catch (e: any) {
+    logger.warn("security.unattended.cruise_boot_reconcile_failed", {
+      error: e?.message || String(e),
+    })
+  }
   // Best-effort model-validity probe — fire-and-forget; never blocks or crashes startup.
   void probeChatModel(config)
 

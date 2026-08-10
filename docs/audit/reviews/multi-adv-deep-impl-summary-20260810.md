@@ -77,5 +77,14 @@ node --test integration/security-gates.test.js
 ## Residual product notes
 
 - Default 值守 still forceConfirms evaluate (honest matrix).
-- Dual-write restore depends on process-memory snapshot + registered handler; companion restart still clears grant; durable flags restored only if expire/disarm ran in-process.
+- Dual-write: process snapshot + **durable file** `unattended-cruise-snapshot.json` + boot reconcile closes restart residual (r2 nits).
+- Bare disarm without grant/snapshot no longer clobbers cruise; `clear_cruise:true` still force-wipes.
 - Pack Trust ≠ 无人值守 arm (documented + phrase).
+- C10 full god-file split remains DEFERRED (freeze comments only).
+
+## Dual-review
+
+| Round | Claude | Pi | both_ok |
+|-------|--------|-----|---------|
+| r1 wave012 | APPROVE_WITH_NITS | APPROVE_WITH_NITS | true |
+| r2 nits (boot reconcile + bare disarm) | *(pending)* | *(pending)* | |
