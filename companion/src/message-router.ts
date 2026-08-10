@@ -1,7 +1,10 @@
 // Message router — dispatches incoming WebSocket messages to handlers
-// FREEZE (C10 multi-adv 2026-08-10): NEW business handlers must not grow this file —
-// extract a module (family handler) and register a thin case. Prefer
+// FREEZE (C10 multi-adv 2026-08-10 / phase-A 2026-08-11):
+// NEW business handlers must not grow this file — extract a family module under
+// message-router/handlers/ (see handlers/config.ts) and keep a thin case arm here
+// so ws-router-validator-lockstep still sees the case labels. Prefer
 // handleXMessage(rest) over inlining multi-hundred-line cases.
+// Deferred: full family split for chat/thread/skill/pack/mcp/…
 
 import os from "os"
 import * as fs from "fs"

@@ -1,6 +1,10 @@
 // Companion-side tool dispatch (executeCompanionTool).
 // Extracted from server.ts (C10-B mechanical split) — zero behavior change.
 // Runtime deps (threadManager, skillEngine, …) are injected via bindCompanionDispatchRuntime.
+//
+// FREEZE: NEW companion tool cases go here (or a dedicated capability/* module called
+// from this switch). Do NOT add companion tool bodies back into server.ts.
+// L2 gates / extension forward remain in createToolExecutor (server.ts).
 
 import { execFile } from "child_process"
 import { randomUUID } from "crypto"

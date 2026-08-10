@@ -1,6 +1,9 @@
 // WS message shape validation (layer 1 fail-closed fence).
 // Extracted from server.ts (C10-A mechanical split) — zero behavior change.
 // Re-exported from server.ts for test/public API stability.
+//
+// FREEZE: NEW client→server message types MUST register a validator key here
+// (keep lockstep with message-router case arms — see ws-router-validator-lockstep.test).
 
 import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "../voice/session-caps"
 
