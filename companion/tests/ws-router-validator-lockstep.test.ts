@@ -21,6 +21,11 @@ const SERVER_CANDIDATES = [
   path.join(ROOT, "src", "server.ts"),
   path.join(__dirname, "..", "src", "server.ts"),
 ]
+// C10-A: validators live in ws/validate.ts (re-exported from server.ts)
+const VALIDATE_CANDIDATES = [
+  path.join(ROOT, "src", "ws", "validate.ts"),
+  path.join(__dirname, "..", "src", "ws", "validate.ts"),
+]
 function firstExisting(paths: string[]): string {
   for (const p of paths) {
     if (fs.existsSync(p)) return p
@@ -29,6 +34,7 @@ function firstExisting(paths: string[]): string {
 }
 const ROUTER = firstExisting(ROUTER_CANDIDATES)
 const SERVER = firstExisting(SERVER_CANDIDATES)
+const VALIDATE = firstExisting(VALIDATE_CANDIDATES)
 
 /**
  * Router-only / internal / delegated cases that need not be top-level validator keys
@@ -98,18 +104,22 @@ function extractValidatorKeys(src: string): Set<string> {
 
 test("C9 extract router cases and validator keys non-empty", () => {
   const routerSrc = fs.readFileSync(ROUTER, "utf8")
-  const serverSrc = fs.readFileSync(SERVER, "utf8")
+  const validatorSrc = fs.existsSync(VALIDATE)
+    ? fs.readFileSync(VALIDATE, "utf8")
+    : fs.readFileSync(SERVER, "utf8")
   const cases = extractRouterCases(routerSrc)
-  const keys = extractValidatorKeys(serverSrc)
+  const keys = extractValidatorKeys(validatorSrc)
   assert.ok(cases.size > 30, `expected many router cases, got ${cases.size}`)
   assert.ok(keys.size > 30, `expected many validator keys, got ${keys.size}`)
 })
 
 test("C9 core client→server types present in both router and validators", () => {
   const routerSrc = fs.readFileSync(ROUTER, "utf8")
-  const serverSrc = fs.readFileSync(SERVER, "utf8")
+  const validatorSrc = fs.existsSync(VALIDATE)
+    ? fs.readFileSync(VALIDATE, "utf8")
+    : fs.readFileSync(SERVER, "utf8")
   const cases = extractRouterCases(routerSrc)
-  const keys = extractValidatorKeys(serverSrc)
+  const keys = extractValidatorKeys(validatorSrc)
   for (const t of CORE_REQUIRED) {
     assert.ok(cases.has(t), `router missing case "${t}"`)
     assert.ok(keys.has(t), `validators missing key "${t}"`)
@@ -118,9 +128,11 @@ test("C9 core client→server types present in both router and validators", () =
 
 test("C9 router cases ⊆ validators ∪ ALLOWLIST (client→server lockstep)", () => {
   const routerSrc = fs.readFileSync(ROUTER, "utf8")
-  const serverSrc = fs.readFileSync(SERVER, "utf8")
+  const validatorSrc = fs.existsSync(VALIDATE)
+    ? fs.readFileSync(VALIDATE, "utf8")
+    : fs.readFileSync(SERVER, "utf8")
   const cases = extractRouterCases(routerSrc)
-  const keys = extractValidatorKeys(serverSrc)
+  const keys = extractValidatorKeys(validatorSrc)
 
   // Filter out non-WS case labels that appear in nested switches (rare) — keep dotted types
   const clientTypes = [...cases].filter(
