@@ -71,13 +71,15 @@ export class SecurityPolicy {
         return computerBindingPayload(params ?? {})
       }
       case "shell_exec": {
-        // Bind command + cwd so L2 token cannot be replayed with a different working dir
+        // Bind command + cwd so L2 token cannot be replayed with a different working dir.
+        // Callers must normalize cwd via normalizeShellCwd before issue/validate (C7).
         const cmd = String(params?.command || "")
         const cwd = String(params?.cwd || params?.working_directory || "")
         return `shell|${cmd}|cwd=${cwd}`
       }
       case "netsec_port_scan": {
-        // Bind targets + ports so L2 token cannot expand scan radius after approve
+        // Bind targets + ports so L2 token cannot expand scan radius after approve.
+        // Callers must normalize ports via normalizeNetsecPorts before issue/validate (C8).
         const targets = Array.isArray(params?.targets) ? [...params.targets].map(String).sort() : []
         const ports = Array.isArray(params?.ports)
           ? [...params.ports].map(String).sort()

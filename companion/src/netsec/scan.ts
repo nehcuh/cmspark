@@ -6,9 +6,28 @@ import { getModule, requireModule } from "../capability/modules"
 import { assertTargetsAllowed } from "./scope"
 import { appendCapabilityAudit } from "../packs/audit-log"
 
-const COMMON_PORTS = [21, 22, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 3389, 5432, 6379, 8080, 8443]
+/** Default ports when LLM omits ports[] — exported for L2 bind/preview parity (C8). */
+export const COMMON_PORTS = [
+  21, 22, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 3389, 5432, 6379, 8080, 8443,
+]
 const MAX_PORTS = 32
 const CONNECT_TIMEOUT_MS = 1500
+
+/**
+ * C8 multi-adv: normalize ports for L2 token bind + execute.
+ * Empty/missing → COMMON_PORTS copy (so approve cannot expand radius later).
+ */
+export function normalizeNetsecPorts(ports: unknown): number[] {
+  let list: number[]
+  if (Array.isArray(ports) && ports.length > 0) {
+    list = ports.map((p) => (typeof p === "number" ? p : Number(p)))
+  } else if (ports != null && !Array.isArray(ports)) {
+    list = [typeof ports === "number" ? ports : Number(ports)]
+  } else {
+    list = [...COMMON_PORTS]
+  }
+  return list.filter((p) => Number.isInteger(p) && p > 0 && p < 65536).slice(0, MAX_PORTS)
+}
 
 export type NetsecTaskAuth = {
   authorized: boolean
@@ -110,8 +129,7 @@ export async function netsecPortScan(opts: {
     }
   }
 
-  let ports = opts.ports && opts.ports.length ? opts.ports : COMMON_PORTS
-  ports = ports.filter((p) => Number.isInteger(p) && p > 0 && p < 65536).slice(0, MAX_PORTS)
+  const ports = normalizeNetsecPorts(opts.ports)
   if (ports.length === 0) return { success: false, error: "no valid ports" }
 
   const results: any[] = []

@@ -1781,6 +1781,27 @@ export async function handleMessage(
           allowedUpdates[key] = updates[key]
         }
       }
+      // C6 multi-adv: worker cannot open full surface or re-add HARD_DENY tools via update
+      if (Object.prototype.hasOwnProperty.call(allowedUpdates, "tool_whitelist")) {
+        const existing = threadManager.get(rest.thread_id)
+        if (existing?.agent_role === "worker") {
+          const { WORKER_HARD_DENY } = await import("./orchestrator/constants")
+          const wl = allowedUpdates.tool_whitelist
+          if (wl === null) {
+            return {
+              type: "error",
+              error:
+                "thread.update: worker cannot set tool_whitelist=null (full surface). HARD_DENY tools remain denied.",
+              code: "worker_whitelist_elevation",
+            }
+          }
+          if (Array.isArray(wl)) {
+            allowedUpdates.tool_whitelist = wl.filter(
+              (t: unknown) => typeof t === "string" && !WORKER_HARD_DENY.has(t),
+            )
+          }
+        }
+      }
       try {
         const thread = threadManager.update(rest.thread_id, allowedUpdates)
         if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
@@ -3173,7 +3194,27 @@ export async function handleMessage(
 
     // ADR-021: process-memory unattended desktop grant (not config SoT)
     case "security.unattended.arm": {
-      const { armUnattended } = await import("./computer/unattended-grant")
+      const {
+        armUnattended,
+        captureCruiseSnapshot,
+        registerCruiseRestoreHandler,
+      } = await import("./computer/unattended-grant")
+      // Ensure TTL expire path can restore dual-write (idempotent re-register)
+      registerCruiseRestoreHandler((snap) => {
+        const current = getConfig()
+        saveConfig({
+          security: {
+            ...(current.security || {}),
+            auto_approve_dangerous: snap ? snap.auto_approve_dangerous : false,
+            auto_approve_enterprise_tools: snap ? snap.auto_approve_enterprise_tools : false,
+            allow_all_schemes: snap ? snap.allow_all_schemes : false,
+          },
+        })
+        logger.info("security.unattended.cruise_restored", {
+          had_snapshot: !!snap,
+          via: "ttl_or_handler",
+        })
+      })
       // S36 P0: server-side dual-ack (UI checkboxes alone are not a trust boundary)
       const ackDesktop = rest.ack_desktop === true
       const ackSession = rest.ack_session === true
@@ -3185,6 +3226,13 @@ export async function handleMessage(
         }
       }
       const includeProtocol = rest.include_protocol === true
+      // C1: capture pre-arm cruise BEFORE dual-write so disarm/TTL can restore
+      const current = getConfig()
+      captureCruiseSnapshot({
+        auto_approve_dangerous: current.security?.auto_approve_dangerous === true,
+        auto_approve_enterprise_tools: current.security?.auto_approve_enterprise_tools === true,
+        allow_all_schemes: current.security?.allow_all_schemes === true,
+      })
       const result = armUnattended({
         confirmation_phrase: rest.confirmation_phrase,
         include_protocol: includeProtocol,
@@ -3192,12 +3240,13 @@ export async function handleMessage(
         max_actions_cap: rest.max_actions_cap,
       })
       if (!result.ok) {
+        const { discardCruiseSnapshot } = await import("./computer/unattended-grant")
+        discardCruiseSnapshot()
         return { type: "error", error: result.error }
       }
       // Packaging dual-write: exact cruise target vector (CU skip still only via grant).
       // Phrase + acks already validated — safe to persist flags.
       // allow_all_schemes is set exactly to include_protocol (clear sticky residual).
-      const current = getConfig()
       saveConfig({
         security: {
           ...(current.security || {}),
@@ -3213,11 +3262,31 @@ export async function handleMessage(
       return { type: "security.unattended.status", ...result.status }
     }
     case "security.unattended.disarm": {
-      const { disarmUnattended } = await import("./computer/unattended-grant")
+      const {
+        disarmUnattended,
+        restoreCruiseFromSnapshot,
+        registerCruiseRestoreHandler,
+      } = await import("./computer/unattended-grant")
       const { flipAllComputerTaskAborts } = await import("./computer/task-abort-registry")
       const { securityPolicy } = await import("./security-policy")
-      const clearCruise = rest.clear_cruise === true
+      // C1: always restore pre-arm cruise snapshot on disarm (clear_cruise kept for API compat;
+      // default behavior is restore — no longer only when clear_cruise===true).
+      registerCruiseRestoreHandler((snap) => {
+        const current = getConfig()
+        saveConfig({
+          security: {
+            ...(current.security || {}),
+            auto_approve_dangerous: snap ? snap.auto_approve_dangerous : false,
+            auto_approve_enterprise_tools: snap ? snap.auto_approve_enterprise_tools : false,
+            allow_all_schemes: snap ? snap.allow_all_schemes : false,
+          },
+        })
+      })
       const status = disarmUnattended()
+      // Always restore dual-write cruise (C1 multi-adv)
+      restoreCruiseFromSnapshot()
+      // clear_cruise:true is now a no-op synonym for restore (API compat); false also restores.
+      void rest.clear_cruise
       // S36 P0/F3: disarm stops in-flight host_computer injects
       const aborted = flipAllComputerTaskAborts()
       if (aborted > 0) {
@@ -3228,22 +3297,12 @@ export async function handleMessage(
       if (purged > 0) {
         logger.info("security.unattended.disarm_purged_tokens", { tool: "host_computer", purged })
       }
-      if (clearCruise) {
-        const current = getConfig()
-        saveConfig({
-          security: {
-            ...(current.security || {}),
-            auto_approve_dangerous: false,
-            auto_approve_enterprise_tools: false,
-            allow_all_schemes: false,
-          },
-        })
-      }
       return {
         type: "security.unattended.status",
         ...status,
         computer_tasks_aborted: aborted,
         tokens_purged: purged,
+        cruise_restored: true,
       }
     }
     case "security.unattended.status": {

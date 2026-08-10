@@ -38,25 +38,101 @@ interface InternalGrant {
   maxActionsCap: number
 }
 
-let grant: InternalGrant | null = null
+/** Pre-arm snapshot of durable cruise flags (C1 multi-adv dual-write lifecycle). */
+export interface CruiseFlagsSnapshot {
+  auto_approve_dangerous: boolean
+  auto_approve_enterprise_tools: boolean
+  allow_all_schemes: boolean
+}
 
-/** Test hook — wipe process grant. */
+let grant: InternalGrant | null = null
+/** Process-memory snapshot of cruise flags captured on arm; restored on disarm/TTL. */
+let cruiseSnapshot: CruiseFlagsSnapshot | null = null
+/** Optional restore handler registered by message-router (getConfig/saveConfig). */
+let cruiseRestoreHandler: ((snap: CruiseFlagsSnapshot | null) => void) | null = null
+let expireRestoreDone = false
+
+/** Test hook — wipe process grant + cruise snapshot. */
 export function resetUnattendedGrantForTests(): void {
   grant = null
+  cruiseSnapshot = null
+  expireRestoreDone = false
+}
+
+/**
+ * Register handler invoked when grant TTL expires or restoreCruiseFromSnapshot is called.
+ * message-router should register once at boot with getConfig/saveConfig wiring.
+ */
+export function registerCruiseRestoreHandler(
+  handler: ((snap: CruiseFlagsSnapshot | null) => void) | null,
+): void {
+  cruiseRestoreHandler = handler
+}
+
+/** Capture pre-arm cruise flags (call BEFORE dual-write). */
+export function captureCruiseSnapshot(flags: CruiseFlagsSnapshot): void {
+  cruiseSnapshot = {
+    auto_approve_dangerous: flags.auto_approve_dangerous === true,
+    auto_approve_enterprise_tools: flags.auto_approve_enterprise_tools === true,
+    allow_all_schemes: flags.allow_all_schemes === true,
+  }
+  expireRestoreDone = false
+}
+
+export function getCruiseSnapshot(): CruiseFlagsSnapshot | null {
+  return cruiseSnapshot
+    ? {
+        auto_approve_dangerous: cruiseSnapshot.auto_approve_dangerous,
+        auto_approve_enterprise_tools: cruiseSnapshot.auto_approve_enterprise_tools,
+        allow_all_schemes: cruiseSnapshot.allow_all_schemes,
+      }
+    : null
+}
+
+/** Drop snapshot without invoking restore handler (failed arm path). */
+export function discardCruiseSnapshot(): void {
+  cruiseSnapshot = null
+}
+
+/**
+ * Restore pre-arm cruise snapshot via registered handler.
+ * If no snapshot, handler receives null → should clear three flags to false.
+ * Clears process snapshot after invoke.
+ */
+export function restoreCruiseFromSnapshot(): CruiseFlagsSnapshot | null {
+  const snap = getCruiseSnapshot()
+  cruiseSnapshot = null
+  expireRestoreDone = true
+  if (cruiseRestoreHandler) {
+    try {
+      cruiseRestoreHandler(snap)
+    } catch (e: any) {
+      logger.warn("security.unattended_cruise_restore_failed", {
+        error: e?.message || String(e),
+      })
+    }
+  }
+  return snap
+}
+
+function expireGrantIfNeeded(now: number): void {
+  if (!grant) return
+  if (now < grant.expiresAt) return
+  grant = null
+  // C1: TTL expire must restore dual-written cruise (once)
+  if (!expireRestoreDone) {
+    restoreCruiseFromSnapshot()
+  }
 }
 
 export function isUnattendedArmed(now: number = Date.now()): boolean {
-  if (!grant) return false
-  if (now >= grant.expiresAt) {
-    grant = null
-    return false
-  }
-  return true
+  expireGrantIfNeeded(now)
+  return !!grant
 }
 
 export function getUnattendedStatus(now: number = Date.now()): UnattendedGrantState {
-  if (!grant || now >= grant.expiresAt) {
-    if (grant && now >= grant.expiresAt) grant = null
+  expireGrantIfNeeded(now)
+  if (!grant) {
     return {
       armed: false,
       armedAt: null,
@@ -122,6 +198,11 @@ export function armUnattended(opts: ArmUnattendedOpts): ArmUnattendedResult {
   return { ok: true, status: getUnattendedStatus(now) }
 }
 
+/**
+ * Disarm process grant. Does **not** restore cruise flags by itself —
+ * caller (message-router) must call restoreCruiseFromSnapshot after disarm
+ * so dual-write lifecycle is always reversed (C1 multi-adv).
+ */
 export function disarmUnattended(now: number = Date.now()): UnattendedGrantState {
   if (grant) {
     logger.info("security.unattended_disarmed", {
