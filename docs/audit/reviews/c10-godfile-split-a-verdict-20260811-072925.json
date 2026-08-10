@@ -1,0 +1,8 @@
+{
+  "batch": "c10-godfile-split-a",
+  "timestamp": "20260811-072925",
+  "claude": { "verdict": "APPROVE", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-c10-godfile/docs/audit/reviews/c10-godfile-split-a-claude-20260811-072925.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-c10-godfile/docs/audit/reviews/c10-godfile-split-a-pi-20260811-072925.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark-wt-c10-godfile/docs/audit/reviews/c10-godfile-split-a-diff-20260811-072925.patch"
+}
