@@ -84,7 +84,10 @@ node --test integration/security-gates.test.js
 
 ## Dual-review
 
-| Round | Claude | Pi | both_ok |
-|-------|--------|-----|---------|
-| r1 wave012 | APPROVE_WITH_NITS | APPROVE_WITH_NITS | true |
-| r2 nits (boot reconcile + bare disarm) | *(pending)* | *(pending)* | |
+| Round | Claude | Pi | both_ok | Artifact |
+|-------|--------|-----|---------|----------|
+| r1 wave012 | APPROVE_WITH_NITS | APPROVE_WITH_NITS | true | `…-verdict-20260810-233312.json` |
+| r2 nits | **APPROVE** | APPROVE_WITH_NITS | true | `…-r2-verdict-20260810-234902.json` |
+| r3 COMPLETE | **APPROVE** | **APPROVE** | **true** | `…-r3-verdict-20260810-235452.json` |
+
+**STOP condition met:** both Pi and Claude confirmed full Wave 0–2 optimization complete (r3 dual APPROVE).

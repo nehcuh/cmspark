@@ -1,0 +1,3477 @@
+# Dual external review context
+batch: multi-adv-deep-wave012-r2
+base: 4ea1758
+time: 20260810-234902
+
+304d33d
+
+?? docs/audit/reviews/multi-adv-deep-wave012-r2-diff-20260810-234902.patch
+?? docs/audit/reviews/multi-adv-deep-wave012-r2-dual-review-prompt.md
+
+## Diff (git diff + staged)
+ companion/src/computer/unattended-grant.ts         |  125 +-
+ companion/src/message-router.ts                    |   20 +-
+ companion/src/server.ts                            |   31 +
+ companion/tests/computer-unattended-grant.test.ts  |   70 +-
+ .../multi-adv-deep-impl-summary-20260810.md        |   11 +-
+ ...ulti-adv-deep-wave012-claude-20260810-233312.md |   40 +
+ ...lti-adv-deep-wave012-diff-20260810-233312.patch | 2872 ++++++++++++++++++++
+ .../multi-adv-deep-wave012-dual-review-prompt.md   |   46 +
+ .../multi-adv-deep-wave012-pi-20260810-233312.md   |   41 +
+ ...i-adv-deep-wave012-verdict-20260810-233312.json |    8 +
+ 10 files changed, 3246 insertions(+), 18 deletions(-)
+
+diff --git a/companion/src/computer/unattended-grant.ts b/companion/src/computer/unattended-grant.ts
+index f4f5ed5..ad044d9 100644
+--- a/companion/src/computer/unattended-grant.ts
++++ b/companion/src/computer/unattended-grant.ts
+@@ -11,8 +11,11 @@
+  * Global auto_approve / allow_all_schemes alone NEVER set this grant.
+  */
+ 
++import * as fs from "fs"
++import * as path from "path"
+ import { SECURITY_ARM_CONFIRM_PHRASE, isValidSecurityArmPhrase } from "../security-arm"
+ import { logger } from "../logger"
++import { DATA_DIR } from "../config"
+ 
+ /** Wall-clock hard TTL (design F14 / ADR-021). */
+ export const UNATTENDED_HARD_TTL_MS = 8 * 60 * 60 * 1000 // 8h
+@@ -21,6 +24,9 @@ export const UNATTENDED_HARD_TTL_MS = 8 * 60 * 60 * 1000 // 8h
+ export const UNATTENDED_DEFAULT_MAX_BUDGET = 30
+ export const UNATTENDED_DEFAULT_MAX_ACTIONS = 30
+ 
++/** Durable pre-arm cruise snapshot — closes dual-clock across companion restart (Pi C1 nit). */
++export const CRUISE_SNAPSHOT_FILENAME = "unattended-cruise-snapshot.json"
++
+ export interface UnattendedGrantState {
+   armed: boolean
+   armedAt: number | null
+@@ -51,17 +57,85 @@ let cruiseSnapshot: CruiseFlagsSnapshot | null = null
+ /** Optional restore handler registered by message-router (getConfig/saveConfig). */
+ let cruiseRestoreHandler: ((snap: CruiseFlagsSnapshot | null) => void) | null = null
+ let expireRestoreDone = false
++/** Test override for snapshot path (avoids touching real DATA_DIR). */
++let cruiseSnapshotPathOverride: string | null = null
++
++function cruiseSnapshotFilePath(): string {
++  if (cruiseSnapshotPathOverride) return cruiseSnapshotPathOverride
++  return path.join(DATA_DIR, CRUISE_SNAPSHOT_FILENAME)
++}
++
++function persistCruiseSnapshotFile(flags: CruiseFlagsSnapshot): void {
++  try {
++    const p = cruiseSnapshotFilePath()
++    fs.mkdirSync(path.dirname(p), { recursive: true })
++    const tmp = `${p}.${process.pid}.tmp`
++    fs.writeFileSync(
++      tmp,
++      JSON.stringify({
++        v: 1,
++        auto_approve_dangerous: flags.auto_approve_dangerous === true,
++        auto_approve_enterprise_tools: flags.auto_approve_enterprise_tools === true,
++        allow_all_schemes: flags.allow_all_schemes === true,
++        at: new Date().toISOString(),
++      }),
++      { encoding: "utf-8", mode: 0o600 },
++    )
++    fs.renameSync(tmp, p)
++    try {
++      fs.chmodSync(p, 0o600)
++    } catch {
++      /* best-effort */
++    }
++  } catch (e: any) {
++    logger.warn("security.unattended_cruise_snapshot_persist_failed", {
++      error: e?.message || String(e),
++    })
++  }
++}
++
++function clearCruiseSnapshotFile(): void {
++  try {
++    const p = cruiseSnapshotFilePath()
++    if (fs.existsSync(p)) fs.unlinkSync(p)
++  } catch {
++    /* best-effort */
++  }
++}
++
++function loadCruiseSnapshotFile(): CruiseFlagsSnapshot | null {
++  try {
++    const p = cruiseSnapshotFilePath()
++    if (!fs.existsSync(p)) return null
++    const raw = JSON.parse(fs.readFileSync(p, "utf-8"))
++    if (!raw || typeof raw !== "object") return null
++    return {
++      auto_approve_dangerous: raw.auto_approve_dangerous === true,
++      auto_approve_enterprise_tools: raw.auto_approve_enterprise_tools === true,
++      allow_all_schemes: raw.allow_all_schemes === true,
++    }
++  } catch {
++    return null
++  }
++}
+ 
+ /** Test hook — wipe process grant + cruise snapshot. */
+ export function resetUnattendedGrantForTests(): void {
+   grant = null
+   cruiseSnapshot = null
+   expireRestoreDone = false
++  cruiseSnapshotPathOverride = null
++  clearCruiseSnapshotFile()
++}
++
++/** Test-only: redirect durable snapshot path. */
++export function setCruiseSnapshotPathForTests(p: string | null): void {
++  cruiseSnapshotPathOverride = p
+ }
+ 
+ /**
+  * Register handler invoked when grant TTL expires or restoreCruiseFromSnapshot is called.
+- * message-router should register once at boot with getConfig/saveConfig wiring.
++ * message-router / startServer should register once at boot with getConfig/saveConfig wiring.
+  */
+ export function registerCruiseRestoreHandler(
+   handler: ((snap: CruiseFlagsSnapshot | null) => void) | null,
+@@ -69,7 +143,7 @@ export function registerCruiseRestoreHandler(
+   cruiseRestoreHandler = handler
+ }
+ 
+-/** Capture pre-arm cruise flags (call BEFORE dual-write). */
++/** Capture pre-arm cruise flags (call BEFORE dual-write). Also persists for restart reconcile. */
+ export function captureCruiseSnapshot(flags: CruiseFlagsSnapshot): void {
+   cruiseSnapshot = {
+     auto_approve_dangerous: flags.auto_approve_dangerous === true,
+@@ -77,6 +151,7 @@ export function captureCruiseSnapshot(flags: CruiseFlagsSnapshot): void {
+     allow_all_schemes: flags.allow_all_schemes === true,
+   }
+   expireRestoreDone = false
++  persistCruiseSnapshotFile(cruiseSnapshot)
+ }
+ 
+ export function getCruiseSnapshot(): CruiseFlagsSnapshot | null {
+@@ -92,17 +167,27 @@ export function getCruiseSnapshot(): CruiseFlagsSnapshot | null {
+ /** Drop snapshot without invoking restore handler (failed arm path). */
+ export function discardCruiseSnapshot(): void {
+   cruiseSnapshot = null
++  clearCruiseSnapshotFile()
+ }
+ 
+ /**
+  * Restore pre-arm cruise snapshot via registered handler.
+- * If no snapshot, handler receives null → should clear three flags to false.
+- * Clears process snapshot after invoke.
++ * Prefer in-memory snapshot; fall back to durable file (restart residual).
++ * Clears process + file snapshot after invoke.
++ * @returns snap applied, or null if no snap (handler still called only when forceNull).
+  */
+-export function restoreCruiseFromSnapshot(): CruiseFlagsSnapshot | null {
+-  const snap = getCruiseSnapshot()
++export function restoreCruiseFromSnapshot(opts?: {
++  /** When true, call handler(null) even with no snapshot (legacy clear-all). Default false. */
++  forceNull?: boolean
++}): CruiseFlagsSnapshot | null {
++  let snap = getCruiseSnapshot()
++  if (!snap) snap = loadCruiseSnapshotFile()
+   cruiseSnapshot = null
+   expireRestoreDone = true
++  clearCruiseSnapshotFile()
++  if (!snap && !opts?.forceNull) {
++    return null
++  }
+   if (cruiseRestoreHandler) {
+     try {
+       cruiseRestoreHandler(snap)
+@@ -115,6 +200,26 @@ export function restoreCruiseFromSnapshot(): CruiseFlagsSnapshot | null {
+   return snap
+ }
+ 
++/**
++ * Boot reconcile (Pi C1 nit): grant is always process-memory-null at cold start.
++ * If a durable dual-write snapshot file exists, restore pre-arm flags and delete the file.
++ * Call after registerCruiseRestoreHandler + initDataDir.
++ */
++export function reconcileUnattendedCruiseOnBoot(): {
++  restored: boolean
++  snap: CruiseFlagsSnapshot | null
++} {
++  if (grant) return { restored: false, snap: null }
++  const snap = loadCruiseSnapshotFile()
++  if (!snap) return { restored: false, snap: null }
++  cruiseSnapshot = snap
++  const applied = restoreCruiseFromSnapshot()
++  logger.info("security.unattended.cruise_boot_reconcile", {
++    restored: !!applied,
++  })
++  return { restored: !!applied, snap: applied }
++}
++
+ function expireGrantIfNeeded(now: number): void {
+   if (!grant) return
+   if (now < grant.expiresAt) return
+@@ -203,7 +308,11 @@ export function armUnattended(opts: ArmUnattendedOpts): ArmUnattendedResult {
+  * caller (message-router) must call restoreCruiseFromSnapshot after disarm
+  * so dual-write lifecycle is always reversed (C1 multi-adv).
+  */
+-export function disarmUnattended(now: number = Date.now()): UnattendedGrantState {
++export function disarmUnattended(now: number = Date.now()): UnattendedGrantState & {
++  /** True if a process grant existed before this call (for restore gating). */
++  had_grant: boolean
++} {
++  const hadGrant = !!grant
+   if (grant) {
+     logger.info("security.unattended_disarmed", {
+       was_armed_at: grant.armedAt,
+@@ -211,7 +320,7 @@ export function disarmUnattended(now: number = Date.now()): UnattendedGrantState
+     })
+   }
+   grant = null
+-  return getUnattendedStatus(now)
++  return { ...getUnattendedStatus(now), had_grant: hadGrant }
+ }
+ 
+ function clampCap(v: unknown, fallback: number): number {
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 557d6ae..04cd0cc 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -3269,11 +3269,12 @@ export async function handleMessage(
+         disarmUnattended,
+         restoreCruiseFromSnapshot,
+         registerCruiseRestoreHandler,
++        getCruiseSnapshot,
+       } = await import("./computer/unattended-grant")
+       const { flipAllComputerTaskAborts } = await import("./computer/task-abort-registry")
+       const { securityPolicy } = await import("./security-policy")
+-      // C1: always restore pre-arm cruise snapshot on disarm (clear_cruise kept for API compat;
+-      // default behavior is restore — no longer only when clear_cruise===true).
++      // C1: restore pre-arm cruise when grant or snapshot present (Pi nit: bare disarm
++      // without prior arm must not clobber intentionally-set cruise flags).
+       registerCruiseRestoreHandler((snap) => {
+         const current = getConfig()
+         saveConfig({
+@@ -3285,10 +3286,14 @@ export async function handleMessage(
+           },
+         })
+       })
++      const hadSnapshot = !!getCruiseSnapshot()
+       const status = disarmUnattended()
+-      // Always restore dual-write cruise (C1 multi-adv)
+-      restoreCruiseFromSnapshot()
+-      // clear_cruise:true is now a no-op synonym for restore (API compat); false also restores.
++      let cruiseRestored = false
++      if (status.had_grant || hadSnapshot || rest.clear_cruise === true) {
++        // clear_cruise:true forces restore/clear even without snapshot (user intent to wipe cruise)
++        restoreCruiseFromSnapshot({ forceNull: rest.clear_cruise === true && !hadSnapshot && !status.had_grant })
++        cruiseRestored = true
++      }
+       void rest.clear_cruise
+       // S36 P0/F3: disarm stops in-flight host_computer injects
+       const aborted = flipAllComputerTaskAborts()
+@@ -3300,12 +3305,13 @@ export async function handleMessage(
+       if (purged > 0) {
+         logger.info("security.unattended.disarm_purged_tokens", { tool: "host_computer", purged })
+       }
++      const { had_grant: _hg, ...statusPublic } = status
+       return {
+         type: "security.unattended.status",
+-        ...status,
++        ...statusPublic,
+         computer_tasks_aborted: aborted,
+         tokens_purged: purged,
+-        cruise_restored: true,
++        cruise_restored: cruiseRestored,
+       }
+     }
+     case "security.unattended.status": {
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 8317ee8..44ea675 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -6569,6 +6569,37 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+     logger.warn("config.model_migrated", { from: migration.from, to: migration.to, note })
+   }
+   const config = getConfig()
++  // C1 multi-adv (Pi nit): grant is process-memory; dual-write cruise can stick across
++  // restart. If a durable pre-arm snapshot exists, restore cruise flags at boot.
++  try {
++    const {
++      registerCruiseRestoreHandler,
++      reconcileUnattendedCruiseOnBoot,
++    } = await import("./computer/unattended-grant")
++    registerCruiseRestoreHandler((snap) => {
++      const cur = getConfig()
++      saveConfig({
++        security: {
++          ...(cur.security || {}),
++          auto_approve_dangerous: snap ? snap.auto_approve_dangerous : false,
++          auto_approve_enterprise_tools: snap ? snap.auto_approve_enterprise_tools : false,
++          allow_all_schemes: snap ? snap.allow_all_schemes : false,
++        },
++      })
++    })
++    const bootCruise = reconcileUnattendedCruiseOnBoot()
++    if (bootCruise.restored) {
++      logger.info("security.unattended.cruise_boot_restored", {
++        auto_approve_dangerous: bootCruise.snap?.auto_approve_dangerous,
++        auto_approve_enterprise_tools: bootCruise.snap?.auto_approve_enterprise_tools,
++        allow_all_schemes: bootCruise.snap?.allow_all_schemes,
++      })
++    }
++  } catch (e: any) {
++    logger.warn("security.unattended.cruise_boot_reconcile_failed", {
++      error: e?.message || String(e),
++    })
++  }
+   // Best-effort model-validity probe — fire-and-forget; never blocks or crashes startup.
+   void probeChatModel(config)
+ 
+diff --git a/companion/tests/computer-unattended-grant.test.ts b/companion/tests/computer-unattended-grant.test.ts
+index d7386e5..1da7f52 100644
+--- a/companion/tests/computer-unattended-grant.test.ts
++++ b/companion/tests/computer-unattended-grant.test.ts
+@@ -330,7 +330,7 @@ describe("C1 dual-write cruise snapshot lifecycle", () => {
+     registerCruiseRestoreHandler(null)
+   })
+ 
+-  it("no snapshot → restore handler gets null (clear flags)", () => {
++  it("no snapshot → restore without forceNull is no-op (Pi nit: bare disarm)", () => {
+     let got: any = "unset"
+     const {
+       registerCruiseRestoreHandler,
+@@ -341,10 +341,76 @@ describe("C1 dual-write cruise snapshot lifecycle", () => {
+     registerCruiseRestoreHandler((snap) => {
+       got = snap
+     })
+-    restoreCruiseFromSnapshot()
++    const snap = restoreCruiseFromSnapshot()
++    assert.equal(snap, null)
++    assert.equal(got, "unset", "handler must not run without snapshot unless forceNull")
++    registerCruiseRestoreHandler(null)
++  })
++
++  it("forceNull clears flags when user requests clear_cruise wipe", () => {
++    let got: any = "unset"
++    const {
++      registerCruiseRestoreHandler,
++      restoreCruiseFromSnapshot,
++      resetUnattendedGrantForTests,
++    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
++    resetUnattendedGrantForTests()
++    registerCruiseRestoreHandler((snap) => {
++      got = snap
++    })
++    restoreCruiseFromSnapshot({ forceNull: true })
+     assert.equal(got, null)
+     registerCruiseRestoreHandler(null)
+   })
++
++  it("durable file + boot reconcile restores cruise after process restart", () => {
++    const os = require("os") as typeof import("os")
++    const path = require("path") as typeof import("path")
++    const fs = require("fs") as typeof import("fs")
++    const {
++      captureCruiseSnapshot,
++      registerCruiseRestoreHandler,
++      setCruiseSnapshotPathForTests,
++      reconcileUnattendedCruiseOnBoot,
++      resetUnattendedGrantForTests,
++      getCruiseSnapshot,
++    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
++    resetUnattendedGrantForTests()
++    const tmp = path.join(os.tmpdir(), `cmspark-cruise-snap-test-${process.pid}.json`)
++    try {
++      if (fs.existsSync(tmp)) fs.unlinkSync(tmp)
++    } catch {
++      /* ignore */
++    }
++    setCruiseSnapshotPathForTests(tmp)
++    let restored: any = null
++    registerCruiseRestoreHandler((snap) => {
++      restored = snap
++    })
++    captureCruiseSnapshot({
++      auto_approve_dangerous: true,
++      auto_approve_enterprise_tools: true,
++      allow_all_schemes: false,
++    })
++    assert.ok(fs.existsSync(tmp), "durable snapshot file written")
++    // Simulate process restart: wipe memory, keep file contents
++    const raw = fs.readFileSync(tmp, "utf-8")
++    resetUnattendedGrantForTests()
++    setCruiseSnapshotPathForTests(tmp)
++    fs.writeFileSync(tmp, raw, { encoding: "utf-8", mode: 0o600 })
++    assert.equal(getCruiseSnapshot(), null)
++    restored = null
++    registerCruiseRestoreHandler((snap) => {
++      restored = snap
++    })
++    const r = reconcileUnattendedCruiseOnBoot()
++    assert.equal(r.restored, true)
++    assert.equal(restored?.auto_approve_dangerous, true)
++    assert.equal(restored?.auto_approve_enterprise_tools, true)
++    assert.equal(fs.existsSync(tmp), false, "file cleared after boot reconcile")
++    registerCruiseRestoreHandler(null)
++    setCruiseSnapshotPathForTests(null)
++  })
+ })
+ 
+ describe("C16 unattended re-L2 silence (grant armed)", () => {
+diff --git a/docs/audit/reviews/multi-adv-deep-impl-summary-20260810.md b/docs/audit/reviews/multi-adv-deep-impl-summary-20260810.md
+index 92f2902..6d7caae 100644
+--- a/docs/audit/reviews/multi-adv-deep-impl-summary-20260810.md
++++ b/docs/audit/reviews/multi-adv-deep-impl-summary-20260810.md
+@@ -77,5 +77,14 @@ node --test integration/security-gates.test.js
+ ## Residual product notes
+ 
+ - Default 值守 still forceConfirms evaluate (honest matrix).
+-- Dual-write restore depends on process-memory snapshot + registered handler; companion restart still clears grant; durable flags restored only if expire/disarm ran in-process.
++- Dual-write: process snapshot + **durable file** `unattended-cruise-snapshot.json` + boot reconcile closes restart residual (r2 nits).
++- Bare disarm without grant/snapshot no longer clobbers cruise; `clear_cruise:true` still force-wipes.
+ - Pack Trust ≠ 无人值守 arm (documented + phrase).
++- C10 full god-file split remains DEFERRED (freeze comments only).
++
++## Dual-review
++
++| Round | Claude | Pi | both_ok |
++|-------|--------|-----|---------|
++| r1 wave012 | APPROVE_WITH_NITS | APPROVE_WITH_NITS | true |
++| r2 nits (boot reconcile + bare disarm) | *(pending)* | *(pending)* | |
+diff --git a/docs/audit/reviews/multi-adv-deep-wave012-claude-20260810-233312.md b/docs/audit/reviews/multi-adv-deep-wave012-claude-20260810-233312.md
+new file mode 100644
+index 0000000..cc96807
+--- /dev/null
++++ b/docs/audit/reviews/multi-adv-deep-wave012-claude-20260810-233312.md
+@@ -0,0 +1,40 @@
++C4 matrix verified: evaluate is in `capabilityForceConfirm`, waived only under three-flag `userFullAutonomy`. Default 值守 dual-writes only `auto_approve_dangerous + auto_approve_enterprise_tools` (not `allow_all_schemes`), so evaluate still confirms — exactly what the matrix shows.
++
++I've now verified all 16 findings. Summary:
++
++| ID | Status | Verification |
++|----|--------|--------------|
++| C1 | ✅ | `captureCruiseSnapshot` pre-arm; `disarmUnattended` always calls `restoreCruiseFromSnapshot`; TTL `expireGrantIfNeeded` restores once |
++| C2 | ✅ | SafetyStrip.tsx:91-118,212-219; CockpitApp.tsx:222-228 show 「任务已停 · 值守仍开 · 点解除」 |
++| C3 | ✅ | CockpitApp.tsx:212-220 permanent strip when `unattended.armed && !confirm`; emptyGuide copy |
++| C4 | ✅ | autopilot-tier.ts: separate rows for navigate vs evaluate; evaluate = "仍确认††" under unattended |
++| C5 | ✅ | pack-engine.ts:47-55 + 1617-1628 server-side phrase gate; PacksPanel.tsx client-side guard |
++| C6 | ✅ | WORKER_HARD_DENY set; thread-manager.ts:854-889 isToolAllowed re-enforces; message-router.ts:1788-1807 thread.update rejects null + filters |
++| C7 | ✅ | normalizeShellCwd at shell.ts:201; server.ts:749-754 (pre-L2) + 3858-3867 (execute); preview shows cwd |
++| C8 | ✅ | normalizeNetsecPorts at scan.ts:20; server.ts:755-761 (pre-L2) + 3920-3925 (execute); COMMON_PORTS exported |
++| C9 | ✅ | ws-router-validator-lockstep.test.ts: router ⊆ validators ∪ ALLOWLIST; 3 tests pass |
++| C10 | ✅(PARTIAL/OK) | FREEZE comments on server.ts:648 + message-router.ts:2; full split DEFERRED with justification |
++| C11 | ✅ | surface-by-tool.ts single source; mode-controller.ts derives BROWSER_TOOL_NAMES + COMPUTER_CLASS_TOOLS |
++| C12 | ✅ | security-gates.test.ts:770-784 asserts confirmation arrived + critical_apis is array (no force_confirm \|\| false-green) |
++| C13 | ✅ | SUPERSEDED banners on both Aug-02 specs |
++| C14 | ✅ | mcp.md:249-250 require_grant=true default + cmg_… grant |
++| C15 | ✅ | ADR-017 D2/D9 + CU guide + architecture reference computer.set_enabled + AppsPanel |
++| C16 | ✅ | ADR-021 §7 documents windowLevel=hard + evaluate under default 值守 residuals |
++
++Tests run [executed]: 74/74 wave1/2 + 63/63 security-gates pass.
++
++ADR-020 capability checks:
++- Surface L2 declaration matches diff scope (no new L2 tools; just cwd/ports binding + worker re-enforce)
++- Composition Pack Trust phrase gate only (no new gate family)
++- Autonomy unattended dual-write lifecycle only
++- Trust monotonicity preserved (three-flag cruise remains sole waive path for evaluate; pack Trust requires phrase)
++- originWs: no new securityConfirmations.request calls introduced without originWs
++- No new runtime/agent framework
++
++Minor non-blocking nits:
++- `run-esbuild-bundle.mjs` packaging change is real (native esbuild spawn) — pre-existing local fix promoted to commit; fine
++- C9 lockstep test uses regex extraction (best-effort); could miss dynamically-constructed case labels, but covers CORE_REQUIRED + dotted types
++- Worker `thread.update` null check is only in message-router, not in `tm.update` itself — defense-in-depth via isToolAllowed covers this
++- C1 restore depends on process-memory snapshot; companion restart after arm still leaves durable cruise stuck (documented in impl summary residuals)
++
++VERDICT: APPROVE_WITH_NITS
+diff --git a/docs/audit/reviews/multi-adv-deep-wave012-diff-20260810-233312.patch b/docs/audit/reviews/multi-adv-deep-wave012-diff-20260810-233312.patch
+new file mode 100644
+index 0000000..38a056f
+--- /dev/null
++++ b/docs/audit/reviews/multi-adv-deep-wave012-diff-20260810-233312.patch
+@@ -0,0 +1,2872 @@
++# Dual external review context
++batch: multi-adv-deep-wave012
++base: origin/main
++time: 20260810-233312
++
++4ea1758
++
++A  docs/audit/reviews/multi-adv-deep-wave012-dual-review-prompt.md
++?? docs/audit/reviews/multi-adv-deep-wave012-diff-20260810-233312.patch
++
++## Diff (git diff + staged)
++ CHANGELOG.md                                       |  24 +++
++ chrome-extension/src/cockpit/CockpitApp.tsx        |  84 +++++++-
++ .../src/sidepanel/components/PacksPanel.tsx        | 141 ++++++++++++-
++ .../src/sidepanel/components/SafetyStrip.tsx       |  69 ++++++-
++ .../src/sidepanel/components/SettingsSlideout.tsx  |  16 +-
++ .../src/sidepanel/components/autopilot-tier.ts     |  13 +-
++ .../src/sidepanel/mode/mode-controller.ts          |  38 +---
++ .../src/sidepanel/mode/surface-by-tool.ts          |  73 +++++++
++ companion/scripts/run-esbuild-bundle.mjs           |   8 +-
++ companion/src/capability/shell.ts                  |  23 +++
++ companion/src/computer/unattended-grant.ts         |  99 +++++++++-
++ companion/src/message-router.ts                    |  96 +++++++--
++ companion/src/netsec/scan.ts                       |  24 ++-
++ companion/src/packs/pack-engine.ts                 |  60 +++++-
++ companion/src/security-policy.ts                   |   6 +-
++ companion/src/server.ts                            |  43 +++-
++ companion/src/threads/thread-manager.ts            |  25 ++-
++ companion/tests/capability-shell-netsec.test.ts    |  63 ++++++
++ companion/tests/computer-unattended-grant.test.ts  |  96 +++++++++
++ companion/tests/integration/security-gates.test.ts |  15 +-
++ companion/tests/packs-engine.test.ts               | 103 ++++++++--
++ companion/tests/worker-hard-deny-runtime.test.ts   |  62 ++++++
++ .../tests/ws-router-validator-lockstep.test.ts     | 146 ++++++++++++++
++ docs/adr/017-computer-use.md                       |  10 +-
++ docs/adr/021-unattended-desktop-session.md         |   4 +
++ docs/architecture.md                               |   4 +-
++ .../multi-adv-deep-impl-summary-20260810.md        |  81 ++++++++
++ .../multi-adv-deep-wave012-dual-review-prompt.md   |  46 +++++
++ .../reviews/multi-adversarial-main-tip-20260810.md | 130 ++++++++++++
++ .../multi-adversarial-project-deep-20260810.md     | 218 +++++++++++++++++++++
++ docs/computer-use-user-guide.md                    |  12 +-
++ docs/host-and-apps.md                              |   4 +-
++ docs/mcp.md                                        |   6 +-
++ .../specs/2026-08-02-trust-ia-autopilot-design.md  |   5 +
++ .../specs/2026-08-02-unattended-desktop-design.md  |   6 +
++ 35 files changed, 1729 insertions(+), 124 deletions(-)
++
++diff --git a/CHANGELOG.md b/CHANGELOG.md
++index 9578551..3eb5632 100644
++--- a/CHANGELOG.md
+++++ b/CHANGELOG.md
++@@ -2,6 +2,30 @@
++ 
++ 格式大致遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号与 `companion/package.json` / `chrome-extension/package.json` 对齐。
++ 
+++## [Unreleased]
+++
+++### Security / Trust (multi-adv deep Wave0–2, 2026-08-10)
+++
+++- **C1** 无人值守 dual-write：武装前快照三旗；解除/TTL 过期**始终**恢复快照（不再仅 `clear_cruise`）
+++- **C2/C3** 急停 ≠ 解除：值守仍开 banner；确认台空桌面常驻「值守中：桌面确认已静默」
+++- **C4** 后果矩阵拆分 evaluate vs 导航；默认值守不 waive evaluate forceConfirm
+++- **C5** Pack Trust `skip_l2`/三旗需 Settings 同款短语 step-up（服务端拒绝 + PacksPanel）
+++- **C6** Worker `WORKER_HARD_DENY` 运行时 `isToolAllowed` 再强制；`thread.update` 不可开全表面
+++- **C7/C8** shell cwd / netsec ports L2 bind 与 execute 预规范化一致
+++- **C12** security-gates 去掉 `force_confirm` 假绿断言
+++- **C9** CI lockstep：`ws-router-validator-lockstep` 测试
+++- **C11** UI `SURFACE_BY_TOOL` 表（含 shell_exec / netsec / scroll_to / upload_file）
+++- **C13–C16** SoT/文档诚实：SUPERSEDED Aug-02 设计；mcp.md `require_grant` 默认 true；CU Apps 坐标开关 0.5.0；ADR-021 residual windowLevel hard
+++
+++### Added (tip ships after 0.5.0 cut)
+++
+++- **#160** 无人值守 re-L2 静默（ADR-021 2026-08-09 修订）
+++- **#161** Windows voice/shell closeout（shell/netsec token binding 对齐）
+++
+++### Packaging
+++
+++- `run-esbuild-bundle.mjs` 直接 spawn esbuild 原生二进制（避免 node 解析 Mach-O）
+++
++ ## [0.5.0] — 2026-08-08
++ 
++ ### 稳定切点
++diff --git a/chrome-extension/src/cockpit/CockpitApp.tsx b/chrome-extension/src/cockpit/CockpitApp.tsx
++index 9edffb9..7de2a5b 100644
++--- a/chrome-extension/src/cockpit/CockpitApp.tsx
+++++ b/chrome-extension/src/cockpit/CockpitApp.tsx
++@@ -25,6 +25,7 @@ import {
++ } from "../sidepanel/ui/tokens"
++ import { cockpitModeBadgeLabel } from "./cockpit-status"
++ import { resolveStopTargetId } from "../sidepanel/utils/thread-busy"
+++import { disarmAllFlags } from "../sidepanel/components/autopilot-tier"
++ 
++ export function CockpitRoot() {
++   return (
++@@ -130,6 +131,14 @@ function CockpitApp() {
++   const connLabel = connectionLabel(connState)
++   const live = !!(task && !finished)
++   const modeBadgeLabel = cockpitModeBadgeLabel({ live, hasTask: !!task, hasConfirm: !!confirm })
+++  const unattendedArmed = state.unattended?.armed === true
+++  // C2: 急停 ack while 值守 still on
+++  const abortWhileArmed = !!(task?.abortAcked && !finished && unattendedArmed)
+++
+++  const disarmUnattended = () => {
+++    chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: true })
+++    chrome.runtime.sendMessage({ type: "config.set", config: disarmAllFlags() })
+++  }
++ 
++   return (
++     <div style={s.root}>
++@@ -200,6 +209,26 @@ function CockpitApp() {
++         </div>
++       </header>
++ 
+++      {/* C3: permanent danger strip when 值守 armed and desk has no pending confirms */}
+++      {unattendedArmed && !confirm && (
+++        <div style={s.unattendedStrip} role="status">
+++          值守中：桌面确认已静默 · 8h/重启/解除
+++          <button type="button" style={s.unattendedDisarmBtn} onClick={disarmUnattended}>
+++            解除
+++          </button>
+++        </div>
+++      )}
+++
+++      {/* C2: abort acked while 值守 still armed */}
+++      {abortWhileArmed && (
+++        <div style={s.estopArmedBanner} role="alert">
+++          <span>任务已停 · 值守仍开 · 点解除</span>
+++          <button type="button" style={s.unattendedDisarmBtn} onClick={disarmUnattended}>
+++            解除
+++          </button>
+++        </div>
+++      )}
+++
++       {confirm && (
++         <ConfirmElevated
++           request={confirm}
++@@ -213,7 +242,15 @@ function CockpitApp() {
++       {/* Empty confirm desk: explain purpose so opening 「确认台」 is not confusing */}
++       {!confirm && (!task || finished) && (
++         <section style={s.emptyGuide} role="status">
++-          <div style={s.emptyGuideTitle}>当前无待确认操作</div>
+++          <div style={s.emptyGuideTitle}>
+++            {unattendedArmed ? "值守中 · 桌面确认已静默" : "当前无待确认操作"}
+++          </div>
+++          {unattendedArmed ? (
+++            <p style={{ ...s.emptyGuideBody, color: tokens.darkDanger, fontWeight: 600 }}>
+++              无人值守已武装：桌面任务级 L2 与 re-L2 在确认台<strong>不会弹出</strong>
+++              （静默通过）。空桌面 ≠ 安全空闲。Grant 约 8h / Companion 重启 / 点「解除」后恢复确认。
+++            </p>
+++          ) : null}
++           <p style={s.emptyGuideBody}>
++             这里是<strong>确认台</strong>（高危工具审批 + Computer Use 操控），不是日常聊天或配置页。
++             出现 <code style={s.code}>evaluate</code> / <code style={s.code}>shell_exec</code> /{" "}
++@@ -260,6 +297,11 @@ function CockpitApp() {
++               {abortSentAt && !task.abortAcked && (
++                 <span style={{ color: tokens.darkWarning }}>急停已发送…</span>
++               )}
+++              {abortWhileArmed && (
+++                <span style={{ color: tokens.darkDanger, fontWeight: 700 }}>
+++                  任务已停 · 值守仍开
+++                </span>
+++              )}
++             </div>
++           </>
++         )}
++@@ -745,6 +787,46 @@ const s: Record<string, CSSProperties> = {
++     borderRadius: tokens.radiusLg,
++     boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
++   },
+++  unattendedStrip: {
+++    margin: "10px 14px 0",
+++    padding: "8px 12px",
+++    display: "flex",
+++    alignItems: "center",
+++    justifyContent: "space-between",
+++    gap: 10,
+++    background: tokens.darkDangerBg,
+++    border: "1px solid #7f1d1d",
+++    borderRadius: tokens.radiusMd,
+++    color: tokens.darkDanger,
+++    fontSize: 12,
+++    fontWeight: 700,
+++  },
+++  estopArmedBanner: {
+++    margin: "8px 14px 0",
+++    padding: "8px 12px",
+++    display: "flex",
+++    alignItems: "center",
+++    justifyContent: "space-between",
+++    gap: 10,
+++    background: tokens.darkDangerBg,
+++    border: "1px solid #7f1d1d",
+++    borderRadius: tokens.radiusMd,
+++    color: tokens.darkDanger,
+++    fontSize: 12,
+++    fontWeight: 700,
+++  },
+++  unattendedDisarmBtn: {
+++    border: "1px solid #7f1d1d",
+++    background: "transparent",
+++    color: tokens.darkDanger,
+++    borderRadius: tokens.radiusSm,
+++    padding: "3px 10px",
+++    fontSize: 11,
+++    fontWeight: 700,
+++    cursor: "pointer",
+++    fontFamily: tokens.font,
+++    flexShrink: 0,
+++  },
++   emptyGuide: {
++     margin: "12px 14px 0",
++     padding: "12px 14px",
++diff --git a/chrome-extension/src/sidepanel/components/PacksPanel.tsx b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
++index c338fc7..59af33a 100644
++--- a/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+++++ b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
++@@ -7,6 +7,11 @@ import { useAgentStore } from "../store/agentStore"
++ import { tokens } from "../ui/tokens"
++ import { useContextPanelHostOptional } from "./ContextPanelHost"
++ 
+++// Lock-step with companion/src/security-arm.ts SECURITY_ARM_CONFIRM_PHRASE (C5 multi-adv).
+++// Pack Trust skip_l2 / auto_approve writes durable cruise flags — NOT 无人值守 arm —
+++// but still requires the same phrase step-up as Settings.
+++const SECURITY_ARM_CONFIRM_PHRASE = "我了解风险"
+++
++ export type PackListItem = {
++   id: string
++   name: string
++@@ -28,6 +33,11 @@ export type PackListItem = {
++   trust_skip_l2?: boolean
++ }
++ 
+++/** C5: client-side gate — server also rejects missing phrase when cruise flags write. */
+++function packNeedsTrustPhrase(p: Pick<PackListItem, "has_trust" | "trust_skip_l2"> | null): boolean {
+++  return !!(p?.trust_skip_l2 || p?.has_trust)
+++}
+++
++ type ModuleStateView = {
++   available?: boolean
++   enabled?: boolean
++@@ -157,8 +167,11 @@ export function PacksPanel() {
++   const [status, setStatus] = useState("")
++   const [busy, setBusy] = useState<string | null>(null)
++   const [confirmPack, setConfirmPack] = useState<PackListItem | null>(null)
+++  const [trustPhrase, setTrustPhrase] = useState("")
++   const [trustConflict, setTrustConflict] = useState<TrustConflictState | null>(null)
++   const [editor, setEditor] = useState<SceneEditorState | null>(null)
+++  /** Phrase for save+apply path when editor Trust writes cruise flags. */
+++  const [editorTrustPhrase, setEditorTrustPhrase] = useState("")
++   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([])
++   const [mcpOptions, setMcpOptions] = useState<McpOption[]>([])
++   /** After pack.saved_user, apply to this thread (also sent as apply_thread_id). */
++@@ -482,11 +495,18 @@ export function PacksPanel() {
++       flash("请先选择或创建对话")
++       return
++     }
+++    setTrustPhrase("")
++     setConfirmPack(p)
++   }
++ 
++   const confirmApply = () => {
++     if (!confirmPack || !state.activeThreadId) return
+++    if (packNeedsTrustPhrase(confirmPack)) {
+++      if (trustPhrase.trim() !== SECURITY_ARM_CONFIRM_PHRASE) {
+++        flash(`Trust 写入巡航旗需输入「${SECURITY_ARM_CONFIRM_PHRASE}」（≠ 无人值守武装）`)
+++        return
+++      }
+++    }
++     setBusy(confirmPack.id)
++     pendingApplyRef.current = {
++       packId: confirmPack.id,
++@@ -498,12 +518,30 @@ export function PacksPanel() {
++       pack_id: confirmPack.id,
++       thread_id: state.activeThreadId,
++       user_gesture: true,
+++      ...(packNeedsTrustPhrase(confirmPack)
+++        ? { confirmation_phrase: trustPhrase.trim() }
+++        : {}),
++     })
+++    setConfirmPack(null)
+++    setTrustPhrase("")
++   }
++ 
++   /** After Trust conflict: release other holders' scenes and apply here. */
++   const confirmTrustTakeover = () => {
++     if (!trustConflict) return
+++    // Re-use apply confirm flow when phrase needed — force_takeover still requires phrase on server.
+++    const phrase =
+++      trustPhrase.trim() === SECURITY_ARM_CONFIRM_PHRASE
+++        ? trustPhrase.trim()
+++        : window.prompt(
+++            `Trust 写入全局巡航旗（≠ 无人值守）。请输入「${SECURITY_ARM_CONFIRM_PHRASE}」以确认：`,
+++            "",
+++          )
+++    if (phrase == null) return
+++    if (phrase.trim() !== SECURITY_ARM_CONFIRM_PHRASE) {
+++      flash(`需输入「${SECURITY_ARM_CONFIRM_PHRASE}」`)
+++      return
+++    }
++     setBusy(trustConflict.packId)
++     pendingApplyRef.current = {
++       packId: trustConflict.packId,
++@@ -516,8 +554,10 @@ export function PacksPanel() {
++       thread_id: trustConflict.threadId,
++       user_gesture: true,
++       force_takeover: true,
+++      confirmation_phrase: phrase.trim(),
++     })
++     setTrustConflict(null)
+++    setTrustPhrase("")
++   }
++ 
++   const unapply = () => {
++@@ -757,10 +797,18 @@ export function PacksPanel() {
++           }
++         : null
++ 
+++    const trustWritesCruise =
+++      !!trustPayload &&
+++      (trustPayload.skip_l2 ||
+++        trustPayload.auto_approve_dangerous ||
+++        trustPayload.auto_approve_enterprise_tools ||
+++        trustPayload.allow_all_schemes)
+++
++     if (trustPayload && andApply) {
++       if (
++         !window.confirm(
++           "此场景将在「用于本对话」时写入全局安全配置（可能跳过 L2 / 开启模块 / auto_approve）。\n" +
+++            "Trust ≠ 无人值守武装；会持久写入 auto_approve_*，不能替代「我了解风险」值守短语流程。\n" +
++             "退出场景会尽量恢复应用前的配置。确定继续？",
++         )
++       ) {
++@@ -768,6 +816,22 @@ export function PacksPanel() {
++       }
++     }
++ 
+++    let phraseForApply: string | undefined
+++    if (andApply && trustWritesCruise) {
+++      const p =
+++        editorTrustPhrase.trim() ||
+++        window.prompt(
+++          `Trust 写入巡航旗需输入「${SECURITY_ARM_CONFIRM_PHRASE}」（≠ 无人值守武装）：`,
+++          "",
+++        )
+++      if (p == null) return
+++      if (p.trim() !== SECURITY_ARM_CONFIRM_PHRASE) {
+++        flash(`需输入「${SECURITY_ARM_CONFIRM_PHRASE}」`)
+++        return
+++      }
+++      phraseForApply = p.trim()
+++    }
+++
++     setBusy(andApply ? "save-apply" : "save")
++     pendingApplyThreadRef.current = andApply ? state.activeThreadId || null : null
++     if (andApply && state.activeThreadId) {
++@@ -792,7 +856,9 @@ export function PacksPanel() {
++       tools: toolsPayload,
++       trust: trustPayload,
++       apply_thread_id: andApply ? state.activeThreadId || undefined : undefined,
+++      ...(phraseForApply ? { confirmation_phrase: phraseForApply } : {}),
++     })
+++    setEditorTrustPhrase("")
++   }
++ 
++   const deleteUserScene = (p: PackListItem) => {
++@@ -1121,15 +1187,48 @@ export function PacksPanel() {
++             )}
++             {confirmPack.has_trust ? (
++               <p style={{ ...styles.modalP, color: "#b45309", fontWeight: 600 }}>
++-                ⚠️ Trust：此场景应用后会写入全局安全配置
+++                ⚠️ Trust：此场景应用后会<strong>持久写入</strong>全局安全配置
++                 {confirmPack.trust_skip_l2
++-                  ? "（跳过 L2 / 开启三旗全自动巡航，shell·MCP 等高危调用可能不再弹确认）"
+++                  ? "（skip_l2 / 三旗 auto_approve_dangerous + enterprise + allow_all_schemes）"
++                   : "（可能开启模块或 auto_approve）"}
++-                。退出场景、切换到其他场景或删除场景时会尽量恢复；请确认你信任该场景。
+++                。
+++                <br />
+++                <strong>Trust ≠ 无人值守武装</strong>：不会开启桌面值守 grant；不能替代设置里「我了解风险」值守流程。
+++                退出场景会尽量恢复巡航旗。
++               </p>
++             ) : null}
+++            {packNeedsTrustPhrase(confirmPack) ? (
+++              <div style={{ marginTop: 10 }}>
+++                <label style={{ fontSize: 12, color: "#b45309", fontWeight: 600, display: "block" }}>
+++                  请输入「{SECURITY_ARM_CONFIRM_PHRASE}」以确认写入巡航旗：
+++                </label>
+++                <input
+++                  type="text"
+++                  value={trustPhrase}
+++                  onChange={(e) => setTrustPhrase(e.target.value)}
+++                  placeholder={SECURITY_ARM_CONFIRM_PHRASE}
+++                  style={{
+++                    width: "100%",
+++                    marginTop: 6,
+++                    padding: "6px 8px",
+++                    fontSize: 13,
+++                    borderRadius: tokens.radiusSm,
+++                    border: "1px solid #E0C090",
+++                    boxSizing: "border-box",
+++                  }}
+++                  autoComplete="off"
+++                />
+++              </div>
+++            ) : null}
++             <div style={styles.modalActions}>
++-              <button type="button" style={styles.secondaryBtn} onClick={() => setConfirmPack(null)}>
+++              <button
+++                type="button"
+++                style={styles.secondaryBtn}
+++                onClick={() => {
+++                  setConfirmPack(null)
+++                  setTrustPhrase("")
+++                }}
+++              >
++                 取消
++               </button>
++               <button type="button" style={styles.primaryBtn} onClick={confirmApply} disabled={!!busy}>
++@@ -1335,7 +1434,9 @@ export function PacksPanel() {
++             )}
++             <label style={{ ...styles.fieldLabel, color: "#b45309" }}>Trust（应用场景时写全局配置 · 选项 B）</label>
++             <div style={{ ...styles.hint, marginBottom: 4 }}>
++-              仅「我的」场景。应用时写入 Companion 配置；退出场景会尝试恢复应用前状态。
+++              仅「我的」场景。应用时<strong>持久写入</strong> Companion 配置（auto_approve_*）；
+++              退出场景会尝试恢复。
+++              <strong> Trust skip_l2 / 三旗 ≠ 无人值守武装</strong>——不能替代设置里的值守短语与双勾选。
++             </div>
++             <label style={styles.checkRow}>
++               <input
++@@ -1356,7 +1457,7 @@ export function PacksPanel() {
++               <span>
++                 <strong>跳过 L2</strong>
++                 <span style={{ display: "block", fontSize: 10, color: tokens.textMuted }}>
++-                  写入三旗（危险自动批 + 企业工具自动批 + 协议解锁）= 全自动巡航
+++                  写入三旗巡航（≠ 桌面值守）。应用时需输入「{SECURITY_ARM_CONFIRM_PHRASE}」
++                 </span>
++               </span>
++             </label>
++@@ -1402,8 +1503,34 @@ export function PacksPanel() {
++               <span>写 allow_all_schemes（协议解锁 / god-mode）</span>
++             </label>
++             {suggestNote ? <div style={{ ...styles.hint, marginTop: 8, color: tokens.accent }}>{suggestNote}</div> : null}
+++            {(editor.trust_skip_l2 ||
+++              editor.trust_auto_approve_dangerous ||
+++              editor.trust_auto_approve_enterprise ||
+++              editor.trust_allow_all_schemes) && (
+++              <div style={{ marginTop: 10 }}>
+++                <label style={{ fontSize: 12, color: "#b45309", fontWeight: 600, display: "block" }}>
+++                  「保存并用于本对话」时输入「{SECURITY_ARM_CONFIRM_PHRASE}」：
+++                </label>
+++                <input
+++                  type="text"
+++                  value={editorTrustPhrase}
+++                  onChange={(e) => setEditorTrustPhrase(e.target.value)}
+++                  placeholder={SECURITY_ARM_CONFIRM_PHRASE}
+++                  style={{
+++                    width: "100%",
+++                    marginTop: 6,
+++                    padding: "6px 8px",
+++                    fontSize: 13,
+++                    borderRadius: tokens.radiusSm,
+++                    border: "1px solid #E0C090",
+++                    boxSizing: "border-box",
+++                  }}
+++                  autoComplete="off"
+++                />
+++              </div>
+++            )}
++             <div style={{ ...styles.hint, marginTop: 8 }}>
++-              AI 只预填，不会自动保存。勾选 Trust 后「保存并用于本对话」会改全局安全配置。
+++              AI 只预填，不会自动保存。勾选 Trust 巡航旗后「保存并用于本对话」会改全局安全配置并要求短语确认。
++             </div>
++             <div style={{ ...styles.modalActions, flexWrap: "wrap" }}>
++               <button
++diff --git a/chrome-extension/src/sidepanel/components/SafetyStrip.tsx b/chrome-extension/src/sidepanel/components/SafetyStrip.tsx
++index 97fb7f7..d9a5770 100644
++--- a/chrome-extension/src/sidepanel/components/SafetyStrip.tsx
+++++ b/chrome-extension/src/sidepanel/components/SafetyStrip.tsx
++@@ -80,6 +80,7 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
++   if (!task && !hasConfirm && !entActive && !cruiseActive) return null
++ 
++   const disarmCruise = () => {
+++    // 急停 ≠ 解除：must clear process grant + restore cruise dual-write
++     chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: true })
++     chrome.runtime.sendMessage({ type: "config.set", config: disarmAllFlags() })
++   }
++@@ -87,6 +88,9 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
++   const finished = task?.status === "finished"
++   const live = task && !finished
++   const confirmOnly = !task && hasConfirm
+++  // C2: abort acked while 值守 still armed → prominent 「值守仍开」 (not bare「已急停…」)
+++  const abortWhileArmed =
+++    !!(task?.abortAcked && !finished && unattendedArmed)
++   const progressText =
++     task && typeof task.total === "number"
++       ? `${task.steps.length}/${task.total}`
++@@ -101,6 +105,18 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
++     setAbortUnconfirmed(false)
++   }
++ 
+++  const abortAckLabel =
+++    abortWhileArmed ? (
+++      <span style={styles.estopArmed} title="急停只停任务；桌面值守 grant 与巡航旗仍在">
+++        任务已停 · 值守仍开 · 点解除
+++        <button type="button" style={styles.estopDisarmBtn} onClick={disarmCruise}>
+++          解除
+++        </button>
+++      </span>
+++    ) : (
+++      <span style={styles.meta}>已急停…</span>
+++    )
+++
++   // FocusBand compact: single TaskChip + 急停 row (confirm path owned by FocusBand P0).
++   if (compact) {
++     return (
++@@ -133,9 +149,7 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
++               急停
++             </button>
++           )}
++-          {task?.abortAcked && !finished && (
++-            <span style={styles.meta}>已急停…</span>
++-          )}
+++          {task?.abortAcked && !finished && abortAckLabel}
++           <button
++             type="button"
++             style={styles.openBtnCompact}
++@@ -181,9 +195,7 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
++             急停
++           </button>
++         )}
++-        {task?.abortAcked && !finished && (
++-          <span style={styles.meta}>已急停…</span>
++-        )}
+++        {task?.abortAcked && !finished && abortAckLabel}
++         <button
++           type="button"
++           style={styles.openBtn}
++@@ -197,7 +209,15 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
++       {abortUnconfirmed && task && !task.abortAcked && !finished && (
++         <div style={styles.warn}>急停未确认 — 可用 Ctrl+Alt+End</div>
++       )}
++-      {cruiseActive && cruiseLabel && (
+++      {abortWhileArmed && (
+++        <div style={styles.estopBanner} role="status">
+++          <span>任务已停 · 值守仍开 · 点解除</span>
+++          <button type="button" style={styles.entRevoke} onClick={disarmCruise} title="解除桌面值守并关闭巡航旗">
+++            解除
+++          </button>
+++        </div>
+++      )}
+++      {cruiseActive && cruiseLabel && !abortWhileArmed && (
++         <div style={styles.entChip}>
++           <span title={"运行自主度已武装；解除将关闭网页/企业/协议三类自动批准"}>
++             {cruiseLabel}
++@@ -398,4 +418,39 @@ const styles: Record<string, React.CSSProperties> = {
++     color: "#fbbf24",
++     fontSize: 10,
++   },
+++  // C2: 急停 ack while 值守 still armed — non-dismiss-easy, action required
+++  estopArmed: {
+++    color: tokens.darkDanger,
+++    fontSize: 10,
+++    fontWeight: 700,
+++    flexShrink: 0,
+++    display: "inline-flex",
+++    alignItems: "center",
+++    gap: 4,
+++  },
+++  estopDisarmBtn: {
+++    border: "1px solid #7f1d1d",
+++    background: tokens.darkDangerBg,
+++    color: tokens.darkDanger,
+++    borderRadius: tokens.radiusSm,
+++    padding: "1px 6px",
+++    fontSize: 10,
+++    fontWeight: 700,
+++    cursor: "pointer",
+++    fontFamily: tokens.font,
+++  },
+++  estopBanner: {
+++    marginTop: 6,
+++    display: "flex",
+++    alignItems: "center",
+++    justifyContent: "space-between",
+++    gap: 8,
+++    padding: "6px 8px",
+++    borderRadius: tokens.radiusSm,
+++    background: tokens.darkDangerBg,
+++    color: tokens.darkDanger,
+++    fontSize: 11,
+++    fontWeight: 700,
+++    border: "1px solid #7f1d1d",
+++  },
++ }
++diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++index ce4de7f..a796b6d 100644
++--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++@@ -2221,21 +2221,25 @@ export function SettingsSlideout() {
++                   <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
++                     {(
++                       [
++-                        { id: "browser" as const, label: "网页巡航", hint: "跳过网页类 L2（evaluate / 导航）" },
+++                        {
+++                          id: "browser" as const,
+++                          label: "网页巡航",
+++                          hint: "跳过导航 L2；evaluate / osascript 仍确认（非三旗）",
+++                        },
++                         {
++                           id: "full" as const,
++                           label: "全自动巡航",
++-                          hint: "网页 L2 + 企业 shell/netsec（须 enterprise 模块与范围）",
+++                          hint: "导航 L2 + 企业 shell/netsec；evaluate 仍确认（须三旗才跳过）",
++                         },
++                         {
++                           id: "full_protocol" as const,
++                           label: "全自动巡航（含协议解锁）",
++-                          hint: "上者 + 非 http(s)；仍不含桌面",
+++                          hint: "三旗全开：evaluate/协议 L1 等可跳过；仍不含桌面值守",
++                         },
++                         {
++                           id: "unattended" as const,
++                           label: "无人值守",
++-                          hint: "本会话：全自动 + 白名单 App 桌面 L2/re-L2 静默（风险自担，含微信键入）",
+++                          hint: "本会话桌面 L2/re-L2 静默 + 默认 dual-write 网页/企业两旗（evaluate 仍确认，除非勾协议）",
++                         },
++                       ] as const
++                     ).map((opt) => (
++@@ -2578,7 +2582,9 @@ export function SettingsSlideout() {
++               <div>
++                 <div style={{ fontWeight: 500 }}>自动批准所有危险操作（网页 L2）</div>
++                 <div style={{ fontSize: 11, color: "#B26B00", marginTop: 2 }}>
++-                  ⚠ 跳过 evaluate / navigate 等网页类 L2。<b>不含</b> shell / netsec（请用企业开关或全自动巡航）。
+++                  ⚠ 跳过 <b>导航</b> 类 L2（navigate / create_tab / set_tab_url）。
+++                  <b>不</b>单独跳过 evaluate / osascript（须三旗全开或协议解锁一并武装）。
+++                  <b>不含</b> shell / netsec（请用企业开关或全自动巡航）。
++                 </div>
++               </div>
++             </label>
++diff --git a/chrome-extension/src/sidepanel/components/autopilot-tier.ts b/chrome-extension/src/sidepanel/components/autopilot-tier.ts
++index d24b533..1d06420 100644
++--- a/chrome-extension/src/sidepanel/components/autopilot-tier.ts
+++++ b/chrome-extension/src/sidepanel/components/autopilot-tier.ts
++@@ -166,12 +166,22 @@ export const AUTOPILOT_CONSEQUENCE_ROWS: Array<{
++   unattended: string
++ }> = [
++   {
++-    family: "网页 evaluate / 导航 L2",
+++    // auto_approve_dangerous alone skips navigate / create_tab / set_tab_url L2.
+++    family: "导航 L2（navigate / create_tab / set_tab_url）",
++     browser: "跳过",
++     full: "跳过",
++     protocol: "跳过",
++     unattended: "跳过",
++   },
+++  {
+++    // evaluate / osascript_eval keep forceConfirm unless three-flag (protocol) cruise.
+++    // Default 值守 dual-writes dangerous+enterprise only — NOT allow_all_schemes.
+++    family: "evaluate / osascript L2",
+++    browser: "仍确认",
+++    full: "仍确认",
+++    protocol: "跳过§",
+++    unattended: "仍确认††",
+++  },
++   {
++     family: "非 http(s) 协议 (L1)",
++     browser: "仍阻断",
++@@ -219,6 +229,7 @@ export const AUTOPILOT_CONSEQUENCE_ROWS: Array<{
++ export const UNATTENDED_MATRIX_FOOTNOTES =
++   "‡ 值守武装=风险自担：仅白名单且已开坐标的 App；任务级 L2 与 mid-task re-L2（含危险/实验/前台让出）均静默；键入不再逐字预览；支付/验证码等硬拒绝仍直接失败、不弹窗。" +
++   "† 勾选「同时协议解锁」才放行非 http(s)（武装时精确写入 allow_all_schemes）。" +
+++  "†† 默认无人值守 dual-write 仅网页+企业两旗（dangerous+enterprise），**不**写 allow_all_schemes，故 evaluate / osascript 仍 forceConfirm；仅三旗全开（协议勾选或「全自动+协议」）才 waive evaluate。值守本身不替代三旗。" +
++   "* 须 enterprise 模块与范围。" +
++   "§ 全自动+协议三旗全开（dangerous+enterprise+allow_all_schemes）时：用户已接受最大风险，L2/critical/ cookie 信任域门不再二次确认；解除武装或关掉任一旗即恢复。" +
++   " 无人值守会 dual-write 持久巡航，解除武装才清；桌面 grant 进程内存 8h，重启失效。"
++\ No newline at end of file
++diff --git a/chrome-extension/src/sidepanel/mode/mode-controller.ts b/chrome-extension/src/sidepanel/mode/mode-controller.ts
++index bec48b6..933c4e9 100644
++--- a/chrome-extension/src/sidepanel/mode/mode-controller.ts
+++++ b/chrome-extension/src/sidepanel/mode/mode-controller.ts
++@@ -1,45 +1,15 @@
++ // Pure ModeController — no React, no chrome APIs.
++ // Spec: docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md
+++// C11: tool class tables derived from SURFACE_BY_TOOL (surface-by-tool.ts).
++ 
++ import type { CapabilityLevel } from "../types"
+++import { toolsAtSurface } from "./surface-by-tool"
++ 
++ /** Browser CDP/extension tools that elevate to L1 (not host_*). */
++-export const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set([
++-  "list_tabs",
++-  "create_tab",
++-  "close_tab",
++-  "navigate",
++-  "screenshot",
++-  "get_page_text",
++-  "get_page_html",
++-  "get_element_info",
++-  "click",
++-  "dblclick",
++-  "type",
++-  "fill_form",
++-  "scroll",
++-  "press_key",
++-  "hover",
++-  "select_option",
++-  "drag_and_drop",
++-  "wait_for",
++-  "evaluate",
++-  "get_cookies",
++-  "set_cookie",
++-  "delete_cookie",
++-  "list_all_cookies",
++-  "set_tab_url",
++-  "browser_download",
++-  "downloads_find",
++-])
+++export const BROWSER_TOOL_NAMES: ReadonlySet<string> = toolsAtSurface("L1")
++ 
++ /** Desktop-class tools that elevate to L2 via confirm queue even without live task. */
++-export const COMPUTER_CLASS_TOOLS: ReadonlySet<string> = new Set([
++-  "host_computer",
++-  "host_app",
++-  "host_read",
++-  "host_write",
++-])
+++export const COMPUTER_CLASS_TOOLS: ReadonlySet<string> = toolsAtSurface("L2")
++ 
++ export const DEFAULT_QUIESCENCE_MS = 30_000
++ 
++diff --git a/chrome-extension/src/sidepanel/mode/surface-by-tool.ts b/chrome-extension/src/sidepanel/mode/surface-by-tool.ts
++new file mode 100644
++index 0000000..3eec7d7
++--- /dev/null
+++++ b/chrome-extension/src/sidepanel/mode/surface-by-tool.ts
++@@ -0,0 +1,73 @@
+++/**
+++ * SURFACE_BY_TOOL — single table for UI mode elevation (C11 multi-adv).
+++ *
+++ * L0 = chat-only (no browser/desktop elevation from this tool alone)
+++ * L1 = browser CDP / extension surface
+++ * L2 = host / CU / enterprise shell-netsec class (confirm desk / computer mode)
+++ *
+++ * mode-controller imports COMPUTER_CLASS_TOOLS / BROWSER_TOOL_NAMES derived from this table.
+++ * Keep in mind: this is UI mode elevation, not companion L2 forceConfirm algebra.
+++ */
+++
+++export type SurfaceLevel = "L0" | "L1" | "L2"
+++
+++/** Tool → surface level. Missing tools default to L0 for mode derivation. */
+++export const SURFACE_BY_TOOL: Readonly<Record<string, SurfaceLevel>> = {
+++  // --- L1 browser CDP ---
+++  list_tabs: "L1",
+++  create_tab: "L1",
+++  close_tab: "L1",
+++  navigate: "L1",
+++  screenshot: "L1",
+++  get_page_text: "L1",
+++  get_page_html: "L1",
+++  get_element_info: "L1",
+++  click: "L1",
+++  dblclick: "L1",
+++  type: "L1",
+++  fill_form: "L1",
+++  scroll: "L1",
+++  scroll_to: "L1",
+++  press_key: "L1",
+++  hover: "L1",
+++  select_option: "L1",
+++  drag_and_drop: "L1",
+++  wait_for: "L1",
+++  evaluate: "L1",
+++  get_cookies: "L1",
+++  set_cookie: "L1",
+++  delete_cookie: "L1",
+++  list_all_cookies: "L1",
+++  set_tab_url: "L1",
+++  browser_download: "L1",
+++  downloads_find: "L1",
+++  upload_file: "L1",
+++  analyze_image: "L1",
+++  analyze_image_url: "L1",
+++
+++  // --- L2 host / CU / enterprise ---
+++  host_computer: "L2",
+++  host_app: "L2",
+++  host_read: "L2",
+++  host_write: "L2",
+++  host_cli: "L2",
+++  shell_exec: "L2",
+++  netsec_port_scan: "L2",
+++  osascript_eval: "L2",
+++  spawn_worker: "L2",
+++  ask_user: "L2",
+++  board_complete: "L2",
+++  skill_install: "L2",
+++}
+++
+++export function surfaceLevelForTool(name: string): SurfaceLevel {
+++  return SURFACE_BY_TOOL[name] || "L0"
+++}
+++
+++export function toolsAtSurface(level: SurfaceLevel): ReadonlySet<string> {
+++  const out = new Set<string>()
+++  for (const [tool, lvl] of Object.entries(SURFACE_BY_TOOL)) {
+++    if (lvl === level) out.add(tool)
+++  }
+++  return out
+++}
++diff --git a/companion/scripts/run-esbuild-bundle.mjs b/companion/scripts/run-esbuild-bundle.mjs
++index a9df366..b92290f 100644
++--- a/companion/scripts/run-esbuild-bundle.mjs
+++++ b/companion/scripts/run-esbuild-bundle.mjs
++@@ -27,9 +27,15 @@ const argv = [
++   `--outfile=${path.join(companionRoot, "dist", "cmspark-agent.js")}`,
++ ]
++ 
+++// esbuild ≥0.25 ships a native binary at bin/esbuild (not a JS wrapper).
+++// Invoking via process.execPath (node) throws SyntaxError on the Mach-O/PE.
++ const esbuildBin = path.join(companionRoot, "node_modules", "esbuild", "bin", "esbuild")
++-const r = spawnSync(process.execPath, [esbuildBin, ...argv], {
+++const r = spawnSync(esbuildBin, argv, {
++   cwd: companionRoot,
++   stdio: "inherit",
++ })
+++if (r.error) {
+++  console.error("[run-esbuild-bundle] failed to spawn esbuild:", r.error.message)
+++  process.exit(1)
+++}
++ process.exit(r.status ?? 1)
++diff --git a/companion/src/capability/shell.ts b/companion/src/capability/shell.ts
++index 978671c..ee0b630 100644
++--- a/companion/src/capability/shell.ts
+++++ b/companion/src/capability/shell.ts
++@@ -193,6 +193,29 @@ export function checkShellScope(command: string): { ok: true } | { ok: false; er
++   return commandAllowedByPolicy(cmd)
++ }
++ 
+++/**
+++ * C7 multi-adv: absolute effective cwd for shell_exec — same value for L2 token
+++ * bind, preview, and execute. Prefer params.cwd, then working_directory, then
+++ * workspaceRoot, then process.cwd(); always path.resolve.
+++ */
+++export function normalizeShellCwd(
+++  params: { cwd?: unknown; working_directory?: unknown },
+++  workspaceRoot?: string | null,
+++): string {
+++  const raw =
+++    (typeof params?.cwd === "string" && params.cwd.trim()
+++      ? params.cwd.trim()
+++      : null) ||
+++    (typeof params?.working_directory === "string" && params.working_directory.trim()
+++      ? params.working_directory.trim()
+++      : null) ||
+++    (typeof workspaceRoot === "string" && workspaceRoot.trim()
+++      ? workspaceRoot.trim()
+++      : null) ||
+++    process.cwd()
+++  return path.resolve(String(raw))
+++}
+++
++ /** Last N characters of s (for progress tails). */
++ export function tailChars(s: string, n: number = PROGRESS_TAIL_CHARS): string {
++   if (!s) return ""
++diff --git a/companion/src/computer/unattended-grant.ts b/companion/src/computer/unattended-grant.ts
++index 3e0f789..f4f5ed5 100644
++--- a/companion/src/computer/unattended-grant.ts
+++++ b/companion/src/computer/unattended-grant.ts
++@@ -38,25 +38,101 @@ interface InternalGrant {
++   maxActionsCap: number
++ }
++ 
+++/** Pre-arm snapshot of durable cruise flags (C1 multi-adv dual-write lifecycle). */
+++export interface CruiseFlagsSnapshot {
+++  auto_approve_dangerous: boolean
+++  auto_approve_enterprise_tools: boolean
+++  allow_all_schemes: boolean
+++}
+++
++ let grant: InternalGrant | null = null
+++/** Process-memory snapshot of cruise flags captured on arm; restored on disarm/TTL. */
+++let cruiseSnapshot: CruiseFlagsSnapshot | null = null
+++/** Optional restore handler registered by message-router (getConfig/saveConfig). */
+++let cruiseRestoreHandler: ((snap: CruiseFlagsSnapshot | null) => void) | null = null
+++let expireRestoreDone = false
++ 
++-/** Test hook — wipe process grant. */
+++/** Test hook — wipe process grant + cruise snapshot. */
++ export function resetUnattendedGrantForTests(): void {
++   grant = null
+++  cruiseSnapshot = null
+++  expireRestoreDone = false
++ }
++ 
++-export function isUnattendedArmed(now: number = Date.now()): boolean {
++-  if (!grant) return false
++-  if (now >= grant.expiresAt) {
++-    grant = null
++-    return false
+++/**
+++ * Register handler invoked when grant TTL expires or restoreCruiseFromSnapshot is called.
+++ * message-router should register once at boot with getConfig/saveConfig wiring.
+++ */
+++export function registerCruiseRestoreHandler(
+++  handler: ((snap: CruiseFlagsSnapshot | null) => void) | null,
+++): void {
+++  cruiseRestoreHandler = handler
+++}
+++
+++/** Capture pre-arm cruise flags (call BEFORE dual-write). */
+++export function captureCruiseSnapshot(flags: CruiseFlagsSnapshot): void {
+++  cruiseSnapshot = {
+++    auto_approve_dangerous: flags.auto_approve_dangerous === true,
+++    auto_approve_enterprise_tools: flags.auto_approve_enterprise_tools === true,
+++    allow_all_schemes: flags.allow_all_schemes === true,
++   }
++-  return true
+++  expireRestoreDone = false
+++}
+++
+++export function getCruiseSnapshot(): CruiseFlagsSnapshot | null {
+++  return cruiseSnapshot
+++    ? {
+++        auto_approve_dangerous: cruiseSnapshot.auto_approve_dangerous,
+++        auto_approve_enterprise_tools: cruiseSnapshot.auto_approve_enterprise_tools,
+++        allow_all_schemes: cruiseSnapshot.allow_all_schemes,
+++      }
+++    : null
+++}
+++
+++/** Drop snapshot without invoking restore handler (failed arm path). */
+++export function discardCruiseSnapshot(): void {
+++  cruiseSnapshot = null
+++}
+++
+++/**
+++ * Restore pre-arm cruise snapshot via registered handler.
+++ * If no snapshot, handler receives null → should clear three flags to false.
+++ * Clears process snapshot after invoke.
+++ */
+++export function restoreCruiseFromSnapshot(): CruiseFlagsSnapshot | null {
+++  const snap = getCruiseSnapshot()
+++  cruiseSnapshot = null
+++  expireRestoreDone = true
+++  if (cruiseRestoreHandler) {
+++    try {
+++      cruiseRestoreHandler(snap)
+++    } catch (e: any) {
+++      logger.warn("security.unattended_cruise_restore_failed", {
+++        error: e?.message || String(e),
+++      })
+++    }
+++  }
+++  return snap
+++}
+++
+++function expireGrantIfNeeded(now: number): void {
+++  if (!grant) return
+++  if (now < grant.expiresAt) return
+++  grant = null
+++  // C1: TTL expire must restore dual-written cruise (once)
+++  if (!expireRestoreDone) {
+++    restoreCruiseFromSnapshot()
+++  }
+++}
+++
+++export function isUnattendedArmed(now: number = Date.now()): boolean {
+++  expireGrantIfNeeded(now)
+++  return !!grant
++ }
++ 
++ export function getUnattendedStatus(now: number = Date.now()): UnattendedGrantState {
++-  if (!grant || now >= grant.expiresAt) {
++-    if (grant && now >= grant.expiresAt) grant = null
+++  expireGrantIfNeeded(now)
+++  if (!grant) {
++     return {
++       armed: false,
++       armedAt: null,
++@@ -122,6 +198,11 @@ export function armUnattended(opts: ArmUnattendedOpts): ArmUnattendedResult {
++   return { ok: true, status: getUnattendedStatus(now) }
++ }
++ 
+++/**
+++ * Disarm process grant. Does **not** restore cruise flags by itself —
+++ * caller (message-router) must call restoreCruiseFromSnapshot after disarm
+++ * so dual-write lifecycle is always reversed (C1 multi-adv).
+++ */
++ export function disarmUnattended(now: number = Date.now()): UnattendedGrantState {
++   if (grant) {
++     logger.info("security.unattended_disarmed", {
++diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
++index 0a7cc73..557d6ae 100644
++--- a/companion/src/message-router.ts
+++++ b/companion/src/message-router.ts
++@@ -1,4 +1,7 @@
++ // Message router — dispatches incoming WebSocket messages to handlers
+++// FREEZE (C10 multi-adv 2026-08-10): NEW business handlers must not grow this file —
+++// extract a module (family handler) and register a thin case. Prefer
+++// handleXMessage(rest) over inlining multi-hundred-line cases.
++ 
++ import os from "os"
++ import * as fs from "fs"
++@@ -1781,6 +1784,27 @@ export async function handleMessage(
++           allowedUpdates[key] = updates[key]
++         }
++       }
+++      // C6 multi-adv: worker cannot open full surface or re-add HARD_DENY tools via update
+++      if (Object.prototype.hasOwnProperty.call(allowedUpdates, "tool_whitelist")) {
+++        const existing = threadManager.get(rest.thread_id)
+++        if (existing?.agent_role === "worker") {
+++          const { WORKER_HARD_DENY } = await import("./orchestrator/constants")
+++          const wl = allowedUpdates.tool_whitelist
+++          if (wl === null) {
+++            return {
+++              type: "error",
+++              error:
+++                "thread.update: worker cannot set tool_whitelist=null (full surface). HARD_DENY tools remain denied.",
+++              code: "worker_whitelist_elevation",
+++            }
+++          }
+++          if (Array.isArray(wl)) {
+++            allowedUpdates.tool_whitelist = wl.filter(
+++              (t: unknown) => typeof t === "string" && !WORKER_HARD_DENY.has(t),
+++            )
+++          }
+++        }
+++      }
++       try {
++         const thread = threadManager.update(rest.thread_id, allowedUpdates)
++         if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
++@@ -2684,6 +2708,8 @@ export async function handleMessage(
++         workspace_path: rest.workspace_path,
++         allowTrust: true,
++         forceTakeoverTrust: forceTakeover,
+++        // C5: phrase required when pack Trust writes cruise flags
+++        confirmation_phrase: rest.confirmation_phrase,
++       })
++       if (!r.ok) {
++         return {
++@@ -2797,10 +2823,12 @@ export async function handleMessage(
++       if (applyThreadId) {
++         // Same gesture as save — allow Trust B write for user scenes.
++         // force_takeover only after UI conflict confirm on re-apply path.
+++        // C5: confirmation_phrase required when Trust writes cruise flags.
++         const forceTakeover = rest.force_takeover === true
++         const ar = applyPack(r.id, applyThreadId, threadManager, skillEngine, {
++           allowTrust: true,
++           forceTakeoverTrust: forceTakeover,
+++          confirmation_phrase: rest.confirmation_phrase,
++         })
++         if (!ar.ok) {
++           return {
++@@ -3169,7 +3197,27 @@ export async function handleMessage(
++ 
++     // ADR-021: process-memory unattended desktop grant (not config SoT)
++     case "security.unattended.arm": {
++-      const { armUnattended } = await import("./computer/unattended-grant")
+++      const {
+++        armUnattended,
+++        captureCruiseSnapshot,
+++        registerCruiseRestoreHandler,
+++      } = await import("./computer/unattended-grant")
+++      // Ensure TTL expire path can restore dual-write (idempotent re-register)
+++      registerCruiseRestoreHandler((snap) => {
+++        const current = getConfig()
+++        saveConfig({
+++          security: {
+++            ...(current.security || {}),
+++            auto_approve_dangerous: snap ? snap.auto_approve_dangerous : false,
+++            auto_approve_enterprise_tools: snap ? snap.auto_approve_enterprise_tools : false,
+++            allow_all_schemes: snap ? snap.allow_all_schemes : false,
+++          },
+++        })
+++        logger.info("security.unattended.cruise_restored", {
+++          had_snapshot: !!snap,
+++          via: "ttl_or_handler",
+++        })
+++      })
++       // S36 P0: server-side dual-ack (UI checkboxes alone are not a trust boundary)
++       const ackDesktop = rest.ack_desktop === true
++       const ackSession = rest.ack_session === true
++@@ -3181,6 +3229,13 @@ export async function handleMessage(
++         }
++       }
++       const includeProtocol = rest.include_protocol === true
+++      // C1: capture pre-arm cruise BEFORE dual-write so disarm/TTL can restore
+++      const current = getConfig()
+++      captureCruiseSnapshot({
+++        auto_approve_dangerous: current.security?.auto_approve_dangerous === true,
+++        auto_approve_enterprise_tools: current.security?.auto_approve_enterprise_tools === true,
+++        allow_all_schemes: current.security?.allow_all_schemes === true,
+++      })
++       const result = armUnattended({
++         confirmation_phrase: rest.confirmation_phrase,
++         include_protocol: includeProtocol,
++@@ -3188,12 +3243,13 @@ export async function handleMessage(
++         max_actions_cap: rest.max_actions_cap,
++       })
++       if (!result.ok) {
+++        const { discardCruiseSnapshot } = await import("./computer/unattended-grant")
+++        discardCruiseSnapshot()
++         return { type: "error", error: result.error }
++       }
++       // Packaging dual-write: exact cruise target vector (CU skip still only via grant).
++       // Phrase + acks already validated — safe to persist flags.
++       // allow_all_schemes is set exactly to include_protocol (clear sticky residual).
++-      const current = getConfig()
++       saveConfig({
++         security: {
++           ...(current.security || {}),
++@@ -3209,11 +3265,31 @@ export async function handleMessage(
++       return { type: "security.unattended.status", ...result.status }
++     }
++     case "security.unattended.disarm": {
++-      const { disarmUnattended } = await import("./computer/unattended-grant")
+++      const {
+++        disarmUnattended,
+++        restoreCruiseFromSnapshot,
+++        registerCruiseRestoreHandler,
+++      } = await import("./computer/unattended-grant")
++       const { flipAllComputerTaskAborts } = await import("./computer/task-abort-registry")
++       const { securityPolicy } = await import("./security-policy")
++-      const clearCruise = rest.clear_cruise === true
+++      // C1: always restore pre-arm cruise snapshot on disarm (clear_cruise kept for API compat;
+++      // default behavior is restore — no longer only when clear_cruise===true).
+++      registerCruiseRestoreHandler((snap) => {
+++        const current = getConfig()
+++        saveConfig({
+++          security: {
+++            ...(current.security || {}),
+++            auto_approve_dangerous: snap ? snap.auto_approve_dangerous : false,
+++            auto_approve_enterprise_tools: snap ? snap.auto_approve_enterprise_tools : false,
+++            allow_all_schemes: snap ? snap.allow_all_schemes : false,
+++          },
+++        })
+++      })
++       const status = disarmUnattended()
+++      // Always restore dual-write cruise (C1 multi-adv)
+++      restoreCruiseFromSnapshot()
+++      // clear_cruise:true is now a no-op synonym for restore (API compat); false also restores.
+++      void rest.clear_cruise
++       // S36 P0/F3: disarm stops in-flight host_computer injects
++       const aborted = flipAllComputerTaskAborts()
++       if (aborted > 0) {
++@@ -3224,22 +3300,12 @@ export async function handleMessage(
++       if (purged > 0) {
++         logger.info("security.unattended.disarm_purged_tokens", { tool: "host_computer", purged })
++       }
++-      if (clearCruise) {
++-        const current = getConfig()
++-        saveConfig({
++-          security: {
++-            ...(current.security || {}),
++-            auto_approve_dangerous: false,
++-            auto_approve_enterprise_tools: false,
++-            allow_all_schemes: false,
++-          },
++-        })
++-      }
++       return {
++         type: "security.unattended.status",
++         ...status,
++         computer_tasks_aborted: aborted,
++         tokens_purged: purged,
+++        cruise_restored: true,
++       }
++     }
++     case "security.unattended.status": {
++diff --git a/companion/src/netsec/scan.ts b/companion/src/netsec/scan.ts
++index c3072cf..dae7232 100644
++--- a/companion/src/netsec/scan.ts
+++++ b/companion/src/netsec/scan.ts
++@@ -6,10 +6,29 @@ import { getModule, requireModule } from "../capability/modules"
++ import { assertTargetsAllowed } from "./scope"
++ import { appendCapabilityAudit } from "../packs/audit-log"
++ 
++-const COMMON_PORTS = [21, 22, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 3389, 5432, 6379, 8080, 8443]
+++/** Default ports when LLM omits ports[] — exported for L2 bind/preview parity (C8). */
+++export const COMMON_PORTS = [
+++  21, 22, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 3389, 5432, 6379, 8080, 8443,
+++]
++ const MAX_PORTS = 32
++ const CONNECT_TIMEOUT_MS = 1500
++ 
+++/**
+++ * C8 multi-adv: normalize ports for L2 token bind + execute.
+++ * Empty/missing → COMMON_PORTS copy (so approve cannot expand radius later).
+++ */
+++export function normalizeNetsecPorts(ports: unknown): number[] {
+++  let list: number[]
+++  if (Array.isArray(ports) && ports.length > 0) {
+++    list = ports.map((p) => (typeof p === "number" ? p : Number(p)))
+++  } else if (ports != null && !Array.isArray(ports)) {
+++    list = [typeof ports === "number" ? ports : Number(ports)]
+++  } else {
+++    list = [...COMMON_PORTS]
+++  }
+++  return list.filter((p) => Number.isInteger(p) && p > 0 && p < 65536).slice(0, MAX_PORTS)
+++}
+++
++ export type NetsecTaskAuth = {
++   authorized: boolean
++   targets: string[]
++@@ -110,8 +129,7 @@ export async function netsecPortScan(opts: {
++     }
++   }
++ 
++-  let ports = opts.ports && opts.ports.length ? opts.ports : COMMON_PORTS
++-  ports = ports.filter((p) => Number.isInteger(p) && p > 0 && p < 65536).slice(0, MAX_PORTS)
+++  const ports = normalizeNetsecPorts(opts.ports)
++   if (ports.length === 0) return { success: false, error: "no valid ports" }
++ 
++   const results: any[] = []
++diff --git a/companion/src/packs/pack-engine.ts b/companion/src/packs/pack-engine.ts
++index 80b0d63..cb082d4 100644
++--- a/companion/src/packs/pack-engine.ts
+++++ b/companion/src/packs/pack-engine.ts
++@@ -31,9 +31,47 @@ import {
++ } from "./types"
++ import { getAllToolDefinitions } from "../bridge/tool-definitions"
++ import { setModuleEnabled } from "../capability/modules"
+++import {
+++  isValidSecurityArmPhrase,
+++  securityArmRejectedError,
+++  type SecurityArmFlag,
+++} from "../security-arm"
++ 
++ const DEFAULT_USER_TOOLS: PackTools = { mode: "unchanged", allow: [], deny: [] }
++ 
+++/**
+++ * C5 multi-adv: Trust skip_l2 / auto_approve_* writes durable cruise flags.
+++ * Must require the same Settings phrase step-up as config.set / unattended arm.
+++ * Modules-only trust (enable_modules without cruise flags) does not need phrase.
+++ */
+++export function packTrustWritesCruiseFlags(trust: UserPackTrustPolicy | null | undefined): boolean {
+++  if (!trust) return false
+++  return (
+++    trust.skip_l2 === true ||
+++    trust.auto_approve_dangerous === true ||
+++    trust.auto_approve_enterprise_tools === true ||
+++    trust.allow_all_schemes === true
+++  )
+++}
+++
+++/** Which SECURITY_ARM_FLAGS would be set true by this trust policy (for error message). */
+++function packTrustArmFlagsList(trust: UserPackTrustPolicy): SecurityArmFlag[] {
+++  const flags: SecurityArmFlag[] = []
+++  const all =
+++    trust.skip_l2 === true ||
+++    trust.auto_approve_dangerous === true
+++  const ent =
+++    trust.skip_l2 === true ||
+++    trust.auto_approve_enterprise_tools === true
+++  const schemes =
+++    trust.skip_l2 === true ||
+++    trust.allow_all_schemes === true
+++  if (all) flags.push("auto_approve_dangerous")
+++  if (ent) flags.push("auto_approve_enterprise_tools")
+++  if (schemes) flags.push("allow_all_schemes")
+++  return flags
+++}
+++
++ /** Derive requires_modules from allow-list (replace, not merge — avoids stale requires). */
++ export function deriveRequiresModulesFromTools(tools: PackTools): string[] {
++   if (tools.mode === "unchanged") return []
++@@ -1420,13 +1458,20 @@ function configuredMcpServerIds(config: CompanionConfig): Set<string> {
++  *   write global config. Default **false** so spawn_worker / non-gesture paths cannot elevate Trust B.
++  * @param opts.forceTakeoverTrust - When true (UI after conflict confirm only), unapply other
++  *   holders' scenes first so Trust can move to this thread. Requires allowTrust.
+++ * @param opts.confirmation_phrase - Required when allowTrust + trust writes any cruise flag
+++ *   (skip_l2 / auto_approve_*). Same phrase as Settings / security-arm (C5 multi-adv).
++  */
++ export function applyPack(
++   packId: string,
++   threadId: string,
++   threadManager: ThreadManager,
++   skillEngine: SkillEngine,
++-  opts?: { workspace_path?: string; allowTrust?: boolean; forceTakeoverTrust?: boolean },
+++  opts?: {
+++    workspace_path?: string
+++    allowTrust?: boolean
+++    forceTakeoverTrust?: boolean
+++    confirmation_phrase?: unknown
+++  },
++ ): {
++   ok: true
++   thread: any
++@@ -1568,6 +1613,19 @@ export function applyPack(
++         (result.manifest.requires_modules || []).some((m) => m === "shell" || m === "netsec") ||
++         (packTrust.enable_modules || []).some((m) => m === "shell" || m === "netsec"),
++     }
+++    // C5: Trust cruise flags require Settings phrase step-up (≠ 无人值守 arm; still durable).
+++    if (packTrustWritesCruiseFlags(trustToApply)) {
+++      if (!isValidSecurityArmPhrase(opts?.confirmation_phrase)) {
+++        clearTrustJournal()
+++        return {
+++          ok: false,
+++          error:
+++            securityArmRejectedError(packTrustArmFlagsList(trustToApply)) +
+++            " Pack Trust skip_l2 / auto_approve is not unattended arming, but still writes durable cruise flags.",
+++          code: "trust_phrase_required",
+++        }
+++      }
+++    }
++     const tr = applyUserPackTrust(trustToApply, `pack.apply:${packId}`)
++     if (!tr.ok) {
++       // Always roll back to pre-attempt snap (new or reused) — applyUserPackTrust may
++diff --git a/companion/src/security-policy.ts b/companion/src/security-policy.ts
++index 17336a8..1d90f17 100644
++--- a/companion/src/security-policy.ts
+++++ b/companion/src/security-policy.ts
++@@ -71,13 +71,15 @@ export class SecurityPolicy {
++         return computerBindingPayload(params ?? {})
++       }
++       case "shell_exec": {
++-        // Bind command + cwd so L2 token cannot be replayed with a different working dir
+++        // Bind command + cwd so L2 token cannot be replayed with a different working dir.
+++        // Callers must normalize cwd via normalizeShellCwd before issue/validate (C7).
++         const cmd = String(params?.command || "")
++         const cwd = String(params?.cwd || params?.working_directory || "")
++         return `shell|${cmd}|cwd=${cwd}`
++       }
++       case "netsec_port_scan": {
++-        // Bind targets + ports so L2 token cannot expand scan radius after approve
+++        // Bind targets + ports so L2 token cannot expand scan radius after approve.
+++        // Callers must normalize ports via normalizeNetsecPorts before issue/validate (C8).
++         const targets = Array.isArray(params?.targets) ? [...params.targets].map(String).sort() : []
++         const ports = Array.isArray(params?.ports)
++           ? [...params.ports].map(String).sort()
++diff --git a/companion/src/server.ts b/companion/src/server.ts
++index 59368c9..8317ee8 100644
++--- a/companion/src/server.ts
+++++ b/companion/src/server.ts
++@@ -645,6 +645,9 @@ export type ToolExecutorFn = (
++   invokeOpts?: ToolExecuteInvokeOpts,
++ ) => Promise<{ success: boolean; data?: any; error?: string }>
++ 
+++// FREEZE (C10 multi-adv 2026-08-10): NEW business tool handlers must NOT grow this
+++// function further — extract a module (capability/*, computer/*, packs/*, …) and
+++// call it from a thin case. Full 7k LOC split is deferred; stop the bleeding first.
++ // Exported for integration tests (audit item 6).
++ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
++   // Per-connection session id — used as the key for MCP first-use confirmation cache
++@@ -741,6 +744,21 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
++         : typeof (finalParams as any)._thread_id === "string"
++           ? String((finalParams as any)._thread_id)
++           : undefined
+++    // C7/C8 multi-adv: normalize shell cwd / netsec ports BEFORE L2 bind + preview
+++    // so issueToken payload === execute payload (no post-approve expansion).
+++    if (toolName === "shell_exec") {
+++      const { normalizeShellCwd } = require("./capability/shell") as typeof import("./capability/shell")
+++      const thr = actingThreadId ? threadManager.get(actingThreadId) : null
+++      const cwd = normalizeShellCwd(finalParams, thr?.workspace_root)
+++      const { working_directory: _wd, ...restShell } = finalParams as Record<string, any>
+++      finalParams = { ...restShell, cwd }
+++    } else if (toolName === "netsec_port_scan") {
+++      const { normalizeNetsecPorts } = require("./netsec/scan") as typeof import("./netsec/scan")
+++      finalParams = {
+++        ...finalParams,
+++        ports: normalizeNetsecPorts((finalParams as any).ports),
+++      }
+++    }
++     // Notify extension: tool execution started (show in sidebar)
++     ws.send(JSON.stringify({
++       type: "tool.start",
++@@ -1069,7 +1087,14 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
++     if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostCliGated || hostComputerGated) && !finalParams.security_token) {
++       // shell_exec / netsec use command|targets for L2 preview text (not code/expression).
++       // spawn_worker / ask_user use role/question summaries for the Confirm Center.
+++      // C7/C8: shell preview includes cwd; netsec includes ports summary (post-normalize).
++       const code = String(
+++        (toolName === "shell_exec"
+++          ? `command=${finalParams.command || ""} cwd=${finalParams.cwd || ""}`
+++          : null) ||
+++          (toolName === "netsec_port_scan"
+++            ? `targets=${Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : ""} ports=${Array.isArray(finalParams.ports) ? finalParams.ports.join(",") : ""}`
+++            : null) ||
++         finalParams.code ||
++           finalParams.expression ||
++           finalParams.command ||
++@@ -3831,6 +3856,15 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?:
++       }
++     }
++     case "shell_exec": {
+++      // C7: re-normalize cwd so execute binding matches L2 issue (finalParams may already be normalized)
+++      {
+++        const { normalizeShellCwd } = await import("./capability/shell")
+++        const tid0 = params.__thread_id || params._thread_id
+++        const thr0 = tid0 ? threadManager.get(tid0) : null
+++        const cwdNorm = normalizeShellCwd(params as any, thr0?.workspace_root)
+++        delete (params as any).working_directory
+++        ;(params as any).cwd = cwdNorm
+++      }
++       if (params.security_token) {
++         // Must match issueTokenFor (bindingPayloadFor includes command + cwd).
++         // validateToken(token, "shell_exec", command) alone always fails after cwd binding.
++@@ -3851,8 +3885,8 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?:
++       if (!flight.ok) return { success: false, error: flight.error, data: { error_code: "SHELL_BUSY", holder: flight.holder } }
++       try {
++         const { shellExec, resolveShellTimeoutMs } = await import("./capability/shell")
++-        const thread = tid ? threadManager.get(tid) : null
++-        const cwd = params.cwd || thread?.workspace_root || undefined
+++        // Use only normalized params.cwd (token-bound); never re-expand from workspace alone
+++        const cwd = params.cwd as string
++         return await shellExec({
++           command: params.command,
++           cwd,
++@@ -3884,6 +3918,11 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?:
++       }
++     }
++     case "netsec_port_scan": {
+++      // C8: re-normalize ports so execute binding matches L2 issue
+++      {
+++        const { normalizeNetsecPorts } = await import("./netsec/scan")
+++        ;(params as any).ports = normalizeNetsecPorts((params as any).ports)
+++      }
++       if (params.security_token) {
++         // Match issueTokenFor (targets + ports binding), not raw targets JSON alone.
++         const valid = securityPolicy.validateTokenFor(
++diff --git a/companion/src/threads/thread-manager.ts b/companion/src/threads/thread-manager.ts
++index a57dfdb..bc5c7b1 100644
++--- a/companion/src/threads/thread-manager.ts
+++++ b/companion/src/threads/thread-manager.ts
++@@ -846,10 +846,33 @@ export class ThreadManager {
++     } catch { /* ignore */ }
++   }
++ 
++-  /** Check if a tool is in the thread's whitelist. Returns true if whitelist is null (no restriction) or tool is listed. */
+++  /**
+++   * Check if a tool is in the thread's whitelist.
+++   * Returns true if whitelist is null (no restriction) or tool is listed.
+++   * C6 multi-adv: workers re-enforce WORKER_HARD_DENY at runtime (not only spawn-time).
+++   */
++   isToolAllowed(threadId: string, toolName: string): boolean {
++     const thread = this.get(threadId)
++     if (!thread) return false
+++    // C6: worker hard-deny always applies, even if whitelist was elevated via thread.update
+++    if (thread.agent_role === "worker") {
+++      try {
+++        // Lazy require avoids circular import with orchestrator at module load
+++        const { WORKER_HARD_DENY } = require("../orchestrator/constants") as typeof import("../orchestrator/constants")
+++        if (WORKER_HARD_DENY.has(toolName)) return false
+++      } catch {
+++        /* if constants fail to load, fail closed for known host/shell names */
+++        if (
+++          toolName === "shell_exec" ||
+++          toolName === "netsec_port_scan" ||
+++          toolName === "host_computer" ||
+++          toolName === "host_write" ||
+++          toolName === "spawn_worker"
+++        ) {
+++          return false
+++        }
+++      }
+++    }
++     if (thread.tool_whitelist === null) return true
++     // Native pack allowlist is orthogonal to MCP: MCP visibility is controlled by
++     // mcp_selection_mode / active_mcp_server_ids (adapter + executeMcpTool).
++diff --git a/companion/tests/capability-shell-netsec.test.ts b/companion/tests/capability-shell-netsec.test.ts
++index 69e90bf..3bf0cfe 100644
++--- a/companion/tests/capability-shell-netsec.test.ts
+++++ b/companion/tests/capability-shell-netsec.test.ts
++@@ -174,3 +174,66 @@ test("netsec probes localhost when authorized", async () => {
++   assert.equal(r.success, true)
++   assert.ok(Array.isArray(r.data?.results))
++ })
+++
+++// --- C7 / C8 multi-adv: bind payload normalization ---
+++
+++test("C7 normalizeShellCwd: cwd > working_directory > workspace > process.cwd", () => {
+++  const a = shell.normalizeShellCwd({ cwd: "/tmp/foo" }, "/workspace")
+++  assert.equal(a, path.resolve("/tmp/foo"))
+++  const b = shell.normalizeShellCwd({ working_directory: "/tmp/bar" }, "/workspace")
+++  assert.equal(b, path.resolve("/tmp/bar"))
+++  const c = shell.normalizeShellCwd({}, "/workspace/proj")
+++  assert.equal(c, path.resolve("/workspace/proj"))
+++  const d = shell.normalizeShellCwd({})
+++  assert.equal(d, path.resolve(process.cwd()))
+++})
+++
+++test("C7 shell binding equality: issue/validate with normalized cwd", () => {
+++  const { SecurityPolicy } = require("../src/security-policy") as typeof import("../src/security-policy")
+++  const pol = new SecurityPolicy()
+++  const params = {
+++    command: "echo x",
+++    cwd: shell.normalizeShellCwd({ working_directory: "rel/dir" }, "/ws"),
+++  }
+++  const tok = pol.issueTokenFor("shell_exec", params)
+++  assert.equal(pol.validateTokenFor(tok.token, "shell_exec", params), true)
+++  // Different cwd must fail
+++  assert.equal(
+++    pol.validateTokenFor(tok.token, "shell_exec", { ...params, cwd: path.resolve("/other") }),
+++    false,
+++  )
+++})
+++
+++test("C8 normalizeNetsecPorts: empty → COMMON_PORTS copy", () => {
+++  const a = scan.normalizeNetsecPorts(undefined)
+++  assert.deepEqual(a, [...scan.COMMON_PORTS])
+++  const b = scan.normalizeNetsecPorts([])
+++  assert.deepEqual(b, [...scan.COMMON_PORTS])
+++  const c = scan.normalizeNetsecPorts([80, 443, 99999, -1])
+++  assert.deepEqual(c, [80, 443])
+++})
+++
+++test("C8 netsec binding equality: empty ports normalized before issue", () => {
+++  const { SecurityPolicy } = require("../src/security-policy") as typeof import("../src/security-policy")
+++  const pol = new SecurityPolicy()
+++  const ports = scan.normalizeNetsecPorts([])
+++  const params = { targets: ["127.0.0.1"], ports }
+++  // Tokens are single-use — issue per assertion
+++  const tokOk = pol.issueTokenFor("netsec_port_scan", params)
+++  assert.equal(pol.validateTokenFor(tokOk.token, "netsec_port_scan", params), true)
+++  const tokEmpty = pol.issueTokenFor("netsec_port_scan", params)
+++  // Empty ports on validate would bind differently if not normalized
+++  assert.equal(
+++    pol.validateTokenFor(tokEmpty.token, "netsec_port_scan", { targets: ["127.0.0.1"], ports: [] }),
+++    false,
+++  )
+++  const tokNorm = pol.issueTokenFor("netsec_port_scan", params)
+++  // Same after normalize
+++  assert.equal(
+++    pol.validateTokenFor(tokNorm.token, "netsec_port_scan", {
+++      targets: ["127.0.0.1"],
+++      ports: scan.normalizeNetsecPorts([]),
+++    }),
+++    true,
+++  )
+++})
++diff --git a/companion/tests/computer-unattended-grant.test.ts b/companion/tests/computer-unattended-grant.test.ts
++index c5dc62f..d7386e5 100644
++--- a/companion/tests/computer-unattended-grant.test.ts
+++++ b/companion/tests/computer-unattended-grant.test.ts
++@@ -265,3 +265,99 @@ describe("PROMPT_ALWAYS / re-L2 floors (G1 session-trust spirit)", () => {
++     assert.equal(reL2ShouldPrompt(["computer.budget_exhausted"]), false)
++   })
++ })
+++
+++describe("C1 dual-write cruise snapshot lifecycle", () => {
+++  it("arm capture → disarm restores snapshot via handler", () => {
+++    let restored: any = null
+++    const {
+++      captureCruiseSnapshot,
+++      registerCruiseRestoreHandler,
+++      restoreCruiseFromSnapshot,
+++      getCruiseSnapshot,
+++      armUnattended,
+++      disarmUnattended,
+++      resetUnattendedGrantForTests,
+++    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+++    resetUnattendedGrantForTests()
+++    registerCruiseRestoreHandler((snap) => {
+++      restored = snap
+++    })
+++    captureCruiseSnapshot({
+++      auto_approve_dangerous: true,
+++      auto_approve_enterprise_tools: false,
+++      allow_all_schemes: false,
+++    })
+++    armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE })
+++    assert.ok(getCruiseSnapshot())
+++    disarmUnattended()
+++    const snap = restoreCruiseFromSnapshot()
+++    assert.equal(snap?.auto_approve_dangerous, true)
+++    assert.equal(snap?.auto_approve_enterprise_tools, false)
+++    assert.equal(restored?.auto_approve_dangerous, true)
+++    assert.equal(getCruiseSnapshot(), null)
+++    registerCruiseRestoreHandler(null)
+++  })
+++
+++  it("TTL expire restores cruise once", () => {
+++    let restoreCount = 0
+++    const {
+++      captureCruiseSnapshot,
+++      registerCruiseRestoreHandler,
+++      armUnattended,
+++      isUnattendedArmed,
+++      getUnattendedStatus,
+++      resetUnattendedGrantForTests,
+++      UNATTENDED_HARD_TTL_MS,
+++    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+++    resetUnattendedGrantForTests()
+++    registerCruiseRestoreHandler(() => {
+++      restoreCount++
+++    })
+++    captureCruiseSnapshot({
+++      auto_approve_dangerous: false,
+++      auto_approve_enterprise_tools: true,
+++      allow_all_schemes: false,
+++    })
+++    const now = 10_000_000
+++    armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE, now })
+++    assert.equal(isUnattendedArmed(now), true)
+++    // Expire
+++    assert.equal(isUnattendedArmed(now + UNATTENDED_HARD_TTL_MS), false)
+++    assert.equal(restoreCount, 1)
+++    // Second status check does not re-fire
+++    getUnattendedStatus(now + UNATTENDED_HARD_TTL_MS + 1)
+++    assert.equal(restoreCount, 1)
+++    registerCruiseRestoreHandler(null)
+++  })
+++
+++  it("no snapshot → restore handler gets null (clear flags)", () => {
+++    let got: any = "unset"
+++    const {
+++      registerCruiseRestoreHandler,
+++      restoreCruiseFromSnapshot,
+++      resetUnattendedGrantForTests,
+++    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+++    resetUnattendedGrantForTests()
+++    registerCruiseRestoreHandler((snap) => {
+++      got = snap
+++    })
+++    restoreCruiseFromSnapshot()
+++    assert.equal(got, null)
+++    registerCruiseRestoreHandler(null)
+++  })
+++})
+++
+++describe("C16 unattended re-L2 silence (grant armed)", () => {
+++  it("isUnattendedArmed true while grant live (executor short-circuit condition)", () => {
+++    const {
+++      armUnattended,
+++      isUnattendedArmed,
+++      resetUnattendedGrantForTests,
+++    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+++    resetUnattendedGrantForTests()
+++    assert.equal(isUnattendedArmed(), false)
+++    armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE })
+++    assert.equal(isUnattendedArmed(), true)
+++    // executor.ts reL2: if (isUnattendedArmed()) return true without confirm
+++  })
+++})
++diff --git a/companion/tests/integration/security-gates.test.ts b/companion/tests/integration/security-gates.test.ts
++index ecacd35..1addab3 100644
++--- a/companion/tests/integration/security-gates.test.ts
+++++ b/companion/tests/integration/security-gates.test.ts
++@@ -767,8 +767,21 @@ test("god-mode alone still forceConfirms evaluate (even non-critical) — only t
++     code: "window.open('https://example.com')",
++   })
++   const confirmation = await confirmationPromise
+++  // C12 multi-adv: wire has critical_apis / risk fields — NOT force_confirm.
+++  // Confirmation arrived under god-mode alone is the forceConfirm proof.
++   assert.equal(confirmation.tool_name, "evaluate")
++-  assert.equal(confirmation.force_confirm === true || Array.isArray(confirmation.critical_apis), true)
+++  assert.ok(confirmation.confirmation_id, "evaluate under god-mode alone must still raise L2 confirm")
+++  assert.ok(
+++    Array.isArray(confirmation.critical_apis),
+++    "wire exposes critical_apis array (may be empty for non-critical code)",
+++  )
+++  // When critical_apis is non-empty, entries are API names/labels (e.g. evaluate/fetch) — not force_confirm
+++  if (confirmation.critical_apis.length > 0) {
+++    assert.ok(
+++      confirmation.critical_apis.every((a: unknown) => typeof a === "string" && String(a).length > 0),
+++      `critical_apis entries should be non-empty strings: ${JSON.stringify(confirmation.critical_apis)}`,
+++    )
+++  }
++   clientSideWs.send(JSON.stringify({
++     type: "security.confirmation.response",
++     confirmation_id: confirmation.confirmation_id,
++diff --git a/companion/tests/packs-engine.test.ts b/companion/tests/packs-engine.test.ts
++index 42b4efa..bb55b63 100644
++--- a/companion/tests/packs-engine.test.ts
+++++ b/companion/tests/packs-engine.test.ts
++@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
++ import * as fs from "node:fs"
++ import * as os from "node:os"
++ import * as path from "node:path"
+++import { SECURITY_ARM_CONFIRM_PHRASE } from "../src/security-arm"
++ 
++ const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-packs-eng-"))
++ process.env.HOME = tempHome
++@@ -155,6 +156,7 @@ test("saveUserPack trust skip_l2 + enable shell applies global Trust and unapply
++   const thread = tm.create("trust-apply-th")
++   const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine, {
++     allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE,
++   })
++   assert.equal(applied.ok, true, (applied as any).error)
++   const cfg1 = getConfig() as any
++@@ -197,6 +199,57 @@ function resetTrustBaseline(cfg0: any) {
++   clearConfigCache()
++ }
++ 
+++test("applyPack trust cruise flags without confirmation_phrase is rejected", () => {
+++  const skillEngine = new SkillEngine()
+++  const cfg0 = getConfig() as any
+++  saveConfig({
+++    capability_profile: "community",
+++    security: {
+++      ...(cfg0.security || {}),
+++      auto_approve_dangerous: false,
+++      auto_approve_enterprise_tools: false,
+++      allow_all_schemes: false,
+++    },
+++  } as any)
+++  clearConfigCache()
+++
+++  const saved = packEngine.saveUserPack(
+++    {
+++      name: "trust-phrase-gate",
+++      system_prompt_append: "needs phrase",
+++      skill_ids: [],
+++      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
+++      trust: { skip_l2: true },
+++    },
+++    skillEngine,
+++  )
+++  assert.equal(saved.ok, true)
+++  if (!saved.ok) return
+++
+++  const tm = new ThreadManager()
+++  const thread = tm.create("trust-phrase-th")
+++  const denied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine, {
+++    allowTrust: true,
+++  })
+++  assert.equal(denied.ok, false)
+++  assert.equal((denied as any).code, "trust_phrase_required")
+++
+++  const ok = packEngine.applyPack(saved.id, thread.id, tm, skillEngine, {
+++    allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE,
+++  })
+++  assert.equal(ok.ok, true, (ok as any).error)
+++
+++  packEngine.unapplyPack(thread.id, tm)
+++  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+++  saveConfig({
+++    capability_profile: cfg0.capability_profile,
+++    security: cfg0.security,
+++  } as any)
+++  clearConfigCache()
+++})
+++
+++
++ test("S46 P0: allowTrust false (spawn path) does not write global Trust", () => {
++   const skillEngine = new SkillEngine()
++   const cfg0 = getConfig() as any
++@@ -232,7 +285,8 @@ test("S46 P0: allowTrust false (spawn path) does not write global Trust", () =>
++   // Control: same pack with allowTrust DOES elevate
++   const t2 = tm.create("spawn-trust-control")
++   assert.equal(
++-    packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++@@ -269,7 +323,8 @@ test("S46 P0: uninstall restores Trust (not only unapply)", () => {
++   const tm = new ThreadManager()
++   const thread = tm.create("uninstall-trust-th")
++   assert.equal(
++-    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++@@ -320,13 +375,15 @@ test("S46 P0: switch trust pack → non-trust pack restores cruise flags", () =>
++   const tm = new ThreadManager()
++   const thread = tm.create("switch-trust-th")
++   assert.equal(
++-    packEngine.applyPack(trustPack.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(trustPack.id, thread.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++ 
++   assert.equal(
++-    packEngine.applyPack(plainPack.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(plainPack.id, thread.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   const cfg2 = getConfig() as any
++@@ -372,14 +429,16 @@ test("S46 P0: switch trust A → trust B captures fresh snap; unapply B restores
++   const tm = new ThreadManager()
++   const thread = tm.create("switch-ab-trust")
++   assert.equal(
++-    packEngine.applyPack(packA.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(packA.id, thread.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++   assert.equal((getConfig() as any).security?.allow_all_schemes, false)
++ 
++   assert.equal(
++-    packEngine.applyPack(packB.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(packB.id, thread.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++@@ -419,10 +478,12 @@ test("S46 residual: second thread trust apply blocked while first holds", () =>
++   const t1 = tm.create("holder-1")
++   const t2 = tm.create("holder-2")
++   assert.equal(
++-    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++-  const r2 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true })
+++  const r2 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE })
++   assert.equal(r2.ok, false)
++   assert.equal((r2 as any).code, "trust_holder_conflict")
++   assert.ok(Array.isArray((r2 as any).holders) && (r2 as any).holders.length === 1)
++@@ -434,6 +495,7 @@ test("S46 residual: second thread trust apply blocked while first holds", () =>
++   // One-click takeover: unapply holder + apply on t2 without manual unapply first
++   const r3 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, {
++     allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE,
++     forceTakeoverTrust: true,
++   })
++   assert.equal(r3.ok, true, (r3 as any).error)
++@@ -488,7 +550,8 @@ test("Pi nit: orphan trust cookie without pack id is released by unapply and for
++   const t1 = tm.create("orphan-holder")
++   const t2 = tm.create("orphan-target")
++   assert.equal(
++-    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   // Simulate partial lifecycle: pack id cleared but cookie left (Pi residual path)
++@@ -506,7 +569,8 @@ test("Pi nit: orphan trust cookie without pack id is released by unapply and for
++ 
++   // Re-seed orphan cookie + elevate, then force_takeover from t2
++   assert.equal(
++-    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   const cookie2 = tm.get(t1.id)!.mission_pack_trust_snapshot
++@@ -515,6 +579,7 @@ test("Pi nit: orphan trust cookie without pack id is released by unapply and for
++ 
++   const r = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, {
++     allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE,
++     forceTakeoverTrust: true,
++   })
++   assert.equal(r.ok, true, (r as any).error)
++@@ -548,7 +613,8 @@ test("S46 dual-nit: releaseTrustBeforeThreadGone restores cruise on thread delet
++   const tm = new ThreadManager()
++   const thread = tm.create("del-trust-th")
++   assert.equal(
++-    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++@@ -599,7 +665,8 @@ test("S51 P0: trash then Settings flip then hard-delete must not re-restore crui
++   const tm = new ThreadManager()
++   const thread = tm.create("trash-hard-trust")
++   assert.equal(
++-    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++@@ -668,7 +735,8 @@ test("S51 migration: pre-fix trash cookie on hard-delete clears without re-resto
++   const tm = new ThreadManager()
++   const thread = tm.create("legacy-trash-cookie")
++   assert.equal(
++-    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   // Simulate pre-S51: trash without clearing cookie (manual leave cookie + trashed_at)
++@@ -741,7 +809,8 @@ test("S51 P0: trash A(trust) then apply B(trust) then hard-delete A does not clo
++   const tA = tm.create("th-a")
++   const tB = tm.create("th-b")
++   assert.equal(
++-    packEngine.applyPack(packA.id, tA.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(packA.id, tA.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   // Soft-release A (trash)
++@@ -751,7 +820,8 @@ test("S51 P0: trash A(trust) then apply B(trust) then hard-delete A does not clo
++ 
++   // Apply B while A is trashed (holder check excludes trash)
++   assert.equal(
++-    packEngine.applyPack(packB.id, tB.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(packB.id, tB.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++@@ -880,7 +950,8 @@ thread_defaults:
++   const thread = tm.create("spoof-apply")
++   // Even with allowTrust, stripped install has no trust block
++   assert.equal(
++-    packEngine.applyPack(inst.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+++    packEngine.applyPack(inst.id, thread.id, tm, skillEngine, { allowTrust: true,
+++    confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE }).ok,
++     true,
++   )
++   assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
++diff --git a/companion/tests/worker-hard-deny-runtime.test.ts b/companion/tests/worker-hard-deny-runtime.test.ts
++new file mode 100644
++index 0000000..9cc648c
++--- /dev/null
+++++ b/companion/tests/worker-hard-deny-runtime.test.ts
++@@ -0,0 +1,62 @@
+++/**
+++ * C6 multi-adv: WORKER_HARD_DENY re-enforced at isToolAllowed + thread.update filter.
+++ */
+++import test, { before, after } from "node:test"
+++import assert from "node:assert/strict"
+++import * as fs from "node:fs"
+++import * as os from "node:os"
+++import * as path from "node:path"
+++
+++const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-whd-"))
+++process.env.HOME = tempHome
+++process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
+++
+++let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
+++let WORKER_HARD_DENY: typeof import("../src/orchestrator/constants").WORKER_HARD_DENY
+++let initDataDir: typeof import("../src/config").initDataDir
+++
+++before(async () => {
+++  const configMod = await import("../src/config")
+++  initDataDir = configMod.initDataDir
+++  await initDataDir()
+++  ThreadManager = (await import("../src/threads/thread-manager")).ThreadManager
+++  WORKER_HARD_DENY = (await import("../src/orchestrator/constants")).WORKER_HARD_DENY
+++})
+++
+++after(() => {
+++  fs.rmSync(tempHome, { recursive: true, force: true })
+++})
+++
+++test("C6 isToolAllowed: worker denies HARD_DENY even if whitelist includes them", () => {
+++  const tm = new ThreadManager()
+++  const t = tm.create("worker-hd-1")
+++  tm.update(t.id, {
+++    agent_role: "worker",
+++    tool_whitelist: ["list_tabs", "shell_exec", "host_computer", "evaluate"],
+++  } as any)
+++  assert.equal(tm.isToolAllowed(t.id, "list_tabs"), true)
+++  assert.equal(tm.isToolAllowed(t.id, "evaluate"), true)
+++  assert.equal(tm.isToolAllowed(t.id, "shell_exec"), false)
+++  assert.equal(tm.isToolAllowed(t.id, "host_computer"), false)
+++  assert.equal(tm.isToolAllowed(t.id, "spawn_worker"), false)
+++  for (const tool of WORKER_HARD_DENY) {
+++    assert.equal(tm.isToolAllowed(t.id, tool), false, `worker must deny ${tool}`)
+++  }
+++})
+++
+++test("C6 isToolAllowed: normal thread with null whitelist allows shell", () => {
+++  const tm = new ThreadManager()
+++  const t = tm.create("normal-hd-1")
+++  assert.equal(t.tool_whitelist, null)
+++  assert.equal(tm.isToolAllowed(t.id, "shell_exec"), true)
+++})
+++
+++test("C6 isToolAllowed: worker with null whitelist still denies HARD_DENY", () => {
+++  const tm = new ThreadManager()
+++  const t = tm.create("worker-hd-null")
+++  tm.update(t.id, { agent_role: "worker", tool_whitelist: null } as any)
+++  // null whitelist would mean full surface for normal; worker still hard-denies
+++  assert.equal(tm.isToolAllowed(t.id, "list_tabs"), true)
+++  assert.equal(tm.isToolAllowed(t.id, "shell_exec"), false)
+++  assert.equal(tm.isToolAllowed(t.id, "host_write"), false)
+++})
++diff --git a/companion/tests/ws-router-validator-lockstep.test.ts b/companion/tests/ws-router-validator-lockstep.test.ts
++new file mode 100644
++index 0000000..5f2eb8d
++--- /dev/null
+++++ b/companion/tests/ws-router-validator-lockstep.test.ts
++@@ -0,0 +1,146 @@
+++/**
+++ * C9 multi-adv: WS dual tables lockstep — router case arms ⊆ validators keys
+++ * (or explicit ALLOWLIST for intentional divergences).
+++ *
+++ * Prevents production fail-closed "Companion dead" when a router case is added
+++ * without a validateWsMessage entry.
+++ */
+++import test from "node:test"
+++import assert from "node:assert/strict"
+++import * as fs from "node:fs"
+++import * as path from "node:path"
+++
+++// Compiled under CommonJS (tsconfig.test); paths resolve from .test-dist/tests → companion/
+++const ROOT = path.resolve(__dirname, "..", "..")
+++// When run from source via node --experimental (rare): also try sibling
+++const ROUTER_CANDIDATES = [
+++  path.join(ROOT, "src", "message-router.ts"),
+++  path.join(__dirname, "..", "src", "message-router.ts"),
+++]
+++const SERVER_CANDIDATES = [
+++  path.join(ROOT, "src", "server.ts"),
+++  path.join(__dirname, "..", "src", "server.ts"),
+++]
+++function firstExisting(paths: string[]): string {
+++  for (const p of paths) {
+++    if (fs.existsSync(p)) return p
+++  }
+++  return paths[0]
+++}
+++const ROUTER = firstExisting(ROUTER_CANDIDATES)
+++const SERVER = firstExisting(SERVER_CANDIDATES)
+++
+++/**
+++ * Router-only / internal / delegated cases that need not be top-level validator keys
+++ * (e.g. fallthrough to handleAppsMessage with shared prefix, or alias).
+++ * Document each intentional divergence.
+++ */
+++const ROUTER_ONLY_ALLOWLIST = new Set<string>([
+++  // settings.test is an alias of config.test in router
+++  "settings.test",
+++  // Sub-handlers may share a generic path; apps.* / computer.* registered as families
+++  // Keep empty unless we discover pure fallthrough cases without validators.
+++])
+++
+++/** Core types that MUST appear in both tables (smoke lock). */
+++const CORE_REQUIRED = [
+++  "config.get",
+++  "config.set",
+++  "thread.list",
+++  "thread.update",
+++  "chat.create",
+++  "security.unattended.arm",
+++  "security.unattended.disarm",
+++  "pack.apply",
+++  "pack.list",
+++] as const
+++
+++function extractRouterCases(src: string): Set<string> {
+++  const out = new Set<string>()
+++  // case "foo.bar":
+++  const re = /case\s+"([a-zA-Z0-9_./-]+)":/g
+++  let m: RegExpExecArray | null
+++  while ((m = re.exec(src))) {
+++    out.add(m[1])
+++  }
+++  return out
+++}
+++
+++function extractValidatorKeys(src: string): Set<string> {
+++  const out = new Set<string>()
+++  // Inside validateWsMessage: "type.name": (m) => or "type.name": () =>
+++  // Also multi-line. Prefer keys in validators object — look for quoted keys followed by :
+++  // Scoped: after `const validators:` until closing of validateWsMessage is hard;
+++  // practical: all top-level `"x.y":` patterns near validators assignment.
+++  const start = src.indexOf("const validators:")
+++  const fnStart = src.indexOf("export function validateWsMessage")
+++  const sliceStart = start >= 0 ? start : fnStart >= 0 ? fnStart : 0
+++  // End at next export function after validators or 1500 lines later
+++  let sliceEnd = src.indexOf("\nexport function", sliceStart + 20)
+++  if (sliceEnd < 0) sliceEnd = Math.min(src.length, sliceStart + 80_000)
+++  const slice = src.slice(sliceStart, sliceEnd)
+++  const re = /"([a-zA-Z0-9_./-]+)"\s*:\s*(?:\(|async\s*\(|function)/g
+++  let m: RegExpExecArray | null
+++  while ((m = re.exec(slice))) {
+++    out.add(m[1])
+++  }
+++  // Also catch `"x.y": () =>` already covered; and `"x.y": (m) =>`
+++  // Fallback: any "a.b": at line start with indent inside validators
+++  const re2 = /^\s+"([a-zA-Z0-9_./-]+)"\s*:/gm
+++  while ((m = re2.exec(slice))) {
+++    // Skip non-message-looking keys
+++    if (m[1].includes(".") || m[1].includes("_") || /^[a-z]/.test(m[1])) {
+++      out.add(m[1])
+++    }
+++  }
+++  return out
+++}
+++
+++test("C9 extract router cases and validator keys non-empty", () => {
+++  const routerSrc = fs.readFileSync(ROUTER, "utf8")
+++  const serverSrc = fs.readFileSync(SERVER, "utf8")
+++  const cases = extractRouterCases(routerSrc)
+++  const keys = extractValidatorKeys(serverSrc)
+++  assert.ok(cases.size > 30, `expected many router cases, got ${cases.size}`)
+++  assert.ok(keys.size > 30, `expected many validator keys, got ${keys.size}`)
+++})
+++
+++test("C9 core client→server types present in both router and validators", () => {
+++  const routerSrc = fs.readFileSync(ROUTER, "utf8")
+++  const serverSrc = fs.readFileSync(SERVER, "utf8")
+++  const cases = extractRouterCases(routerSrc)
+++  const keys = extractValidatorKeys(serverSrc)
+++  for (const t of CORE_REQUIRED) {
+++    assert.ok(cases.has(t), `router missing case "${t}"`)
+++    assert.ok(keys.has(t), `validators missing key "${t}"`)
+++  }
+++})
+++
+++test("C9 router cases ⊆ validators ∪ ALLOWLIST (client→server lockstep)", () => {
+++  const routerSrc = fs.readFileSync(ROUTER, "utf8")
+++  const serverSrc = fs.readFileSync(SERVER, "utf8")
+++  const cases = extractRouterCases(routerSrc)
+++  const keys = extractValidatorKeys(serverSrc)
+++
+++  // Filter out non-WS case labels that appear in nested switches (rare) — keep dotted types
+++  const clientTypes = [...cases].filter(
+++    (c) => c.includes(".") || ["ping", "pong", "auth"].includes(c),
+++  )
+++
+++  const missing: string[] = []
+++  for (const c of clientTypes) {
+++    if (ROUTER_ONLY_ALLOWLIST.has(c)) continue
+++    if (!keys.has(c)) missing.push(c)
+++  }
+++
+++  if (missing.length > 0) {
+++    // Soft fail with actionable list — full lockstep may need ALLOWLIST growth
+++    // for computer.* family batch registration patterns.
+++    const sample = missing.slice(0, 40)
+++    assert.fail(
+++      `Router cases missing validators (${missing.length}): ${sample.join(", ")}${
+++        missing.length > 40 ? "…" : ""
+++      }. Add validators or document in ROUTER_ONLY_ALLOWLIST.`,
+++    )
+++  }
+++})
++diff --git a/docs/adr/017-computer-use.md b/docs/adr/017-computer-use.md
++index 805697f..ac2fe77 100644
++--- a/docs/adr/017-computer-use.md
+++++ b/docs/adr/017-computer-use.md
++@@ -1,7 +1,7 @@
++ # ADR-017: Computer Use（坐标桌面操控）
++ 
++ **日期**: 2026-07-28  
++-**状态**: **Implemented / Accepted**（产品 0.3.0；平台：macOS / Windows 主路径）  
+++**状态**: **Implemented / Accepted**（产品 0.5.0；平台：macOS / Windows 主路径）  
++ **用户指南**: [computer-use-user-guide.md](../computer-use-user-guide.md)  
++ **相关**: [confirm-center-user-guide.md](../confirm-center-user-guide.md) · [ADR-018](018-host-use.md) · [ADR-015](015-multi-agent-orchestrator-tab-lock.md)
++ 
++@@ -19,7 +19,7 @@
++ 
++ 1. **工具入口**：`host_computer`（任务描述 + app token + actions[] + budget）。  
++ 2. **双开关 fail-closed**：  
++-   - 全局 `computer.coordinateEnabled`（默认 false）。**0.3.0 用户实用路径**：写 `config.json`；Companion 有 `computer.set_enabled`（可走生物识别），但扩展/托盘 **尚未** 暴露拨开关 UI（Apps 面板只读镜像）。  
+++   - 全局 `computer.coordinateEnabled`（默认 false）。**0.5.0 用户路径**：Side Panel **Apps 面板**「坐标操作」调用 `computer.set_enabled`（可走生物识别/确认台）；亦可写 `config.json`。  
++    - 每应用 `AppEntry.coordinateAllowed`（vault/浏览器/终端/钱包/LOLBIN **结构排除**，永远不可开）。  
++ 3. **任务级 L2 强制**：枚举 task、app、全部 type 文本、预算。  
++    - **全局 bool**（`allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools`）**永不**单独跳过任务级 initial L2（1–2 旗）。三旗全开巡航可 waive `forceConfirm`（含 host initial）——与值守 grant 分列。  
++@@ -30,14 +30,14 @@
++ 6. **UI**：Confirm Center / Cockpit 步骤轨 + 急停；关窗不停任务。  
++ 7. **Multi-agent**：Worker `WORKER_HARD_DENY` 含 `host_computer`；存在 tab lease 时禁止对 Chrome 窗坐标注入。  
++ 8. **证据 / 模型**：evidence 目录与 TinyClick 等定位链路为实现细节；实验性 model 管线在设置中 opt-in。  
++-9. **全局开关 UI 债**：把 `computer.set_enabled` 接到 Side Panel/托盘是产品债，不是「已交付一键开启」。
+++9. **全局开关 UI（0.5.0）**：Apps 面板已暴露 `computer.set_enabled` 切换；托盘入口仍可选增强。
++ 
++ ---
++ 
++ ## Consequences
++ 
++ - **正向**：桌面 GUI 自动化成为一等能力且默认关；确认台成为操控面。  
++-- **负向**：权限与平台适配成本高；Linux 非一等；用户须理解「双开关 + 任务级 L2（全局 bool 不跳过；G1 / ADR-021 值守条件放宽）」；全局开启尚依赖配置文件；值守 open_within_app 放大注入键入面。  
+++- **负向**：权限与平台适配成本高；Linux 非一等；用户须理解「双开关 + 任务级 L2（全局 bool 不跳过；G1 / ADR-021 值守条件放宽）」；全局开启经 Apps 面板或 config；值守 open_within_app 放大注入键入面。  
++ - **维护**：改开关语义或硬拒列表须同步用户指南 + 本 ADR + ADR-021；过程稿路径仅作历史。
++ 
++ ---
++@@ -48,4 +48,4 @@
++ |------|------|
++ | `companion/src/computer/` | policy、executor、session-trust、estop、evidence、adapters、TinyClick… |
++ | `companion/src/bridge/tool-definitions.ts` | `host_computer` schema |
++-| `chrome-extension/.../CockpitApp.tsx` · `SafetyStrip` · `AppsPanel` | 确认台 / 急停 / 开关镜像 |
+++| `chrome-extension/.../CockpitApp.tsx` · `SafetyStrip` · `AppsPanel` | 确认台 / 急停 / 坐标开关（`computer.set_enabled`） |
++diff --git a/docs/adr/021-unattended-desktop-session.md b/docs/adr/021-unattended-desktop-session.md
++index b880589..1587054 100644
++--- a/docs/adr/021-unattended-desktop-session.md
+++++ b/docs/adr/021-unattended-desktop-session.md
++@@ -84,6 +84,10 @@ G1 / 全自动巡航路径**不**继承本条：无值守时 PROMPT_ALWAYS 仍 f
++ 
++ OCR 不可见的支付/图标 UI 可能漏检；值守下 re-L2 也不再二次人审 — **产品接受**（武装即自担）；文档诚实；不宣称值守=安全无人。
++ 
+++**windowLevel=hard（2026-08-10 multi-adv honesty）**：部分 danger 扫描在 `windowLevel === "hard"` 时走 re-L2 路径，在值守武装下会 **静默通过**（与 region payment / credential 类 **hard deny throw** 不同）。硬拒绝仍覆盖支付终确区、凭据上下文 type·key 等；window-level hard 静默是 **产品接受残余**，不得宣传为零风险。
+++
+++**evaluate under 默认值守**：默认 dual-write 仅 dangerous+enterprise（非三旗），evaluate/osascript **仍 forceConfirm**；仅协议勾选/三旗才 waive。
+++
++ ---
++ 
++ ## 后果
++diff --git a/docs/architecture.md b/docs/architecture.md
++index cb6c6ae..6f2b7b1 100644
++--- a/docs/architecture.md
+++++ b/docs/architecture.md
++@@ -668,7 +668,7 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及
++ 
++ | 层 | 工具 / 配置 | 门 |
++ |----|-------------|-----|
++-| Apps 白名单 | `host_app` · `apps.enabled` · AppEntry | 每应用 policy；面板只读全局开关 |
+++| Apps 白名单 | `host_app` · `apps.enabled` · AppEntry | 每应用 policy；Apps 面板可切换全局坐标开关 |
++ | Host 语义 API | `host_read` · `host_write` | L2；写操作生物识别/nonce；opaque TargetId |
++ | Computer 坐标 | `host_computer` · `computer.coordinateEnabled` · `coordinateAllowed` | 双开关 + 任务级 L2：**god-mode / auto_approve 永不跳过**；session-trust 可抑 mid-task re-L2，且（显式 opt-in + corpus/预算/actions/thread key）可跳过同线程同 App 后续任务的 **initial L2**；danger / experimental / foreground_yielded **始终 prompt** |
++ 
++@@ -682,7 +682,7 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及
++ | `companion/src/voice/` · `chrome-extension/.../voice/` | 本机 Whisper Path B（含 M2 渐进假设）· 听写+ / 会议工作台 |
++ | `companion/src/host-use/` | HostAdapter · 平台 adapter · blacklist · nonce |
++ | `companion/src/apps/` | 枚举 · 启动 · guards · biometric-gate |
++-| Extension Cockpit / AppsPanel / SafetyStrip | 确认台步骤轨 · 急停 · 开关镜像 |
+++| Extension Cockpit / AppsPanel / SafetyStrip | 确认台步骤轨 · 急停 · 坐标开关（`computer.set_enabled`） |
++ 
++ ### 9.3 关键不变量
++ 
++diff --git a/docs/audit/reviews/multi-adv-deep-impl-summary-20260810.md b/docs/audit/reviews/multi-adv-deep-impl-summary-20260810.md
++new file mode 100644
++index 0000000..92f2902
++--- /dev/null
+++++ b/docs/audit/reviews/multi-adv-deep-impl-summary-20260810.md
++@@ -0,0 +1,81 @@
+++# Multi-adv deep Wave 0–2 implementation summary
+++
+++**Date:** 2026-08-10  
+++**Worktree:** `/Users/huchen/Projects/cmspark-wt-multi-adv-deep`  
+++**Branch:** `fix/multi-adv-deep-wave012`  
+++**Base tip:** `5c64604`  
+++**Source findings:** [`multi-adversarial-project-deep-20260810.md`](./multi-adversarial-project-deep-20260810.md)
+++
+++## Commits
+++
+++| Wave | Commit | Message |
+++|------|--------|---------|
+++| 0 | `f8ce33a` | `fix(ux,docs): multi-adv Wave0 honesty (estop toast, matrix, pack phrase, SoT)` |
+++| 1 | `dbd3999` | `fix(security): multi-adv Wave1 dual-write, worker deny, shell/netsec bind` |
+++| 2 | *(this wave)* | `fix(structure): multi-adv Wave2 WS lockstep, surface map, changelog` |
+++
+++## Finding status
+++
+++| ID | Status | Evidence |
+++|----|--------|----------|
+++| **C1** | **DONE** | `unattended-grant.ts`: `captureCruiseSnapshot` / `restoreCruiseFromSnapshot` / TTL `expireGrantIfNeeded` + handler. `message-router` arm captures then dual-writes; disarm **always** restores. Tests: C1 suite in `computer-unattended-grant.test.ts` `[executed]` |
+++| **C2** | **DONE** | `SafetyStrip.tsx` + `CockpitApp.tsx`: abortAcked ∧ unattended →「任务已停 · 值守仍开 · 点解除」+ disarm `[inspected]` |
+++| **C3** | **DONE** | Cockpit permanent strip when `unattended.armed` && !confirm; emptyGuide copy `[inspected]` |
+++| **C4** | **DONE** | `autopilot-tier.ts` split navigate vs evaluate rows + footnotes; SettingsSlideout hints `[inspected]` |
+++| **C5** | **DONE** | `pack-engine.applyPack` requires phrase when cruise flags write; PacksPanel phrase UI/copy; tests phrase reject `[executed]` |
+++| **C6** | **DONE** | `isToolAllowed` re-HARD_DENY; `thread.update` rejects null + filters deny tools. `worker-hard-deny-runtime.test.ts` `[executed]` |
+++| **C7** | **DONE** | `normalizeShellCwd`; server pre-L2 + execute path; preview command+cwd; binding tests `[executed]` |
+++| **C8** | **DONE** | Export `COMMON_PORTS` + `normalizeNetsecPorts`; pre-L2 + execute; binding tests `[executed]` |
+++| **C9** | **DONE** | `tests/ws-router-validator-lockstep.test.ts` router ⊆ validators + core types `[executed]` |
+++| **C10** | **PARTIAL** | FREEZE comments on `createToolExecutor` / `message-router` only — full god-file split **DEFERRED** (explicit task scope) |
+++| **C11** | **DONE** | `surface-by-tool.ts` + `mode-controller` derives L1/L2 sets (shell/netsec/scroll_to/upload_file/…) `[inspected]` |
+++| **C12** | **DONE** | security-gates no `force_confirm \|\| Array.isArray` false-green; assert confirm arrived + critical_apis shape `[executed]` |
+++| **C13** | **DONE** | SUPERSEDED banners on Aug-02 unattended + Trust IA designs `[inspected]` |
+++| **C14** | **DONE** | `docs/mcp.md` default `require_grant=true`; Bearer `cmg_…` `[inspected]` |
+++| **C15** | **DONE** | CU guide §3 / ADR-017 D2·D9 / host-and-apps / architecture — AppsPanel `computer.set_enabled` 0.5.0 `[inspected]` |
+++| **C16** | **DONE** | ADR-021 residual windowLevel hard; unit isUnattendedArmed condition for reL2 silence `[executed]`/`[inspected]` |
+++
+++## DEFERRED (with justification)
+++
+++| Item | Why |
+++|------|-----|
+++| **C10 full split** | Task: pragmatic freeze only; 7k LOC rewrite out of wave |
+++| **WS full SW lockstep** | C9 covers router ⊆ validators; extension SW case table not fully mirrored in CI |
+++| **thread.update integration test via message-router** | Unit covers isToolAllowed + filter logic; full router integration optional |
+++| **Pack list `has_trust` vs modules-only phrase UX** | Client prompts on any `has_trust`; server only when cruise flags — conservative client OK |
+++| **Windows eTLD / page-sanitizer / whisper multi-arch** | P2 nits outside Wave 0–2 list |
+++
+++## Tests run `[executed]`
+++
+++```
+++companion: tsc -p tsconfig.test.json
+++node --test \
+++  computer-unattended-grant · worker-hard-deny-runtime · capability-shell-netsec \
+++  ws-router-validator-lockstep · packs-engine
+++→ 74 pass / 0 fail
+++
+++node --test integration/security-gates.test.js
+++→ 63 pass / 0 fail
+++```
+++
+++## Key files touched
+++
+++### Wave 0
+++- `chrome-extension/.../SafetyStrip.tsx`, `CockpitApp.tsx`, `autopilot-tier.ts`, `SettingsSlideout.tsx`, `PacksPanel.tsx`
+++- `companion/src/packs/pack-engine.ts`, `message-router.ts`
+++- Docs: mcp, CU guide, ADR-017/021, architecture, host-and-apps, Aug-02 SUPERSEDED banners
+++
+++### Wave 1
+++- `companion/src/computer/unattended-grant.ts`, `message-router.ts`, `threads/thread-manager.ts`, `server.ts`, `capability/shell.ts`, `netsec/scan.ts`, `security-policy.ts`
+++- Tests: unattended, worker, shell/netsec binding, security-gates
+++
+++### Wave 2
+++- `chrome-extension/.../mode/surface-by-tool.ts`, `mode-controller.ts`
+++- `companion/tests/ws-router-validator-lockstep.test.ts`
+++- FREEZE comments; `CHANGELOG.md` Unreleased; `run-esbuild-bundle.mjs` native esbuild spawn
+++
+++## Residual product notes
+++
+++- Default 值守 still forceConfirms evaluate (honest matrix).
+++- Dual-write restore depends on process-memory snapshot + registered handler; companion restart still clears grant; durable flags restored only if expire/disarm ran in-process.
+++- Pack Trust ≠ 无人值守 arm (documented + phrase).
++diff --git a/docs/audit/reviews/multi-adv-deep-wave012-dual-review-prompt.md b/docs/audit/reviews/multi-adv-deep-wave012-dual-review-prompt.md
++new file mode 100644
++index 0000000..b7cf3eb
++--- /dev/null
+++++ b/docs/audit/reviews/multi-adv-deep-wave012-dual-review-prompt.md
++@@ -0,0 +1,46 @@
+++# Dual external review — multi-adv deep Wave 0–2
+++
+++## Context
+++Independent multi-adversarial review (`multi-adversarial-project-deep-20260810.md`) found REQUEST_CHANGES on tip `5c64604`. This branch implements Wave 0 (honesty), Wave 1 (security residuals), Wave 2 (structure pragmatism).
+++
+++**Branch:** `fix/multi-adv-deep-wave012`  
+++**Base:** `origin/main` @ `5c64604`  
+++**Commits:** f8ce33a (W0), dbd3999 (W1), 4ea1758 (W2)  
+++**Impl summary:** `docs/audit/reviews/multi-adv-deep-impl-summary-20260810.md`
+++
+++## Must verify each finding (code, not rubber-stamp)
+++
+++| ID | Expected fix |
+++|----|----------------|
+++| C1 | Pre-arm cruise snapshot; disarm + TTL always restore dual-write flags |
+++| C2 | Estop while armed → 「任务已停 · 值守仍开 · 点解除」 |
+++| C3 | Cockpit empty desk permanent 值守 banner |
+++| C4 | Matrix: navigate may skip; evaluate still confirms under default 值守 |
+++| C5 | Pack Trust cruise write requires confirmation_phrase server-side |
+++| C6 | Worker HARD_DENY in isToolAllowed; thread.update cannot elevate |
+++| C7 | normalizeShellCwd before issueToken and execute; preview shows cwd |
+++| C8 | normalizeNetsecPorts before bind and execute |
+++| C9 | ws-router-validator-lockstep test router ⊆ validators |
+++| C10 | FREEZE comments only — full god split DEFERRED is OK if documented |
+++| C11 | surface-by-tool drives mode-controller |
+++| C12 | No force_confirm \|\| Array.isArray false-green |
+++| C13–C15 | SUPERSEDED banners; mcp require_grant true; CU AppsPanel path |
+++| C16 | Residual honesty in ADR-021 |
+++
+++## Review rules
+++1. Read real files under this repo worktree. Use tools.
+++2. Look for incomplete fixes, security regressions, missing tests, wrong algebra.
+++3. Apply ADR-020 checklist when relevant.
+++4. REJECT if any of C1,C5,C6,C7,C8 incomplete or bypassable.
+++5. APPROVE_WITH_NITS for non-blocking nits only.
+++6. Final line MUST be exactly one of:
+++VERDICT: APPROVE
+++VERDICT: APPROVE_WITH_NITS
+++VERDICT: REJECT
+++
+++## Capability declaration (implementer)
+++- Surface: L2 honesty + shell/netsec bind + worker isolation (no new L2 tools)
+++- Composition: Pack Trust phrase gate only
+++- Autonomy: unattended dual-write lifecycle only
+++- Trust: restore cruise on disarm/TTL; pack phrase step-up
+++- Channel: Side Panel + Companion only
++diff --git a/docs/audit/reviews/multi-adversarial-main-tip-20260810.md b/docs/audit/reviews/multi-adversarial-main-tip-20260810.md
++new file mode 100644
++index 0000000..9dee791
++--- /dev/null
+++++ b/docs/audit/reviews/multi-adversarial-main-tip-20260810.md
++@@ -0,0 +1,130 @@
+++# Multi-adversarial review — main tip after S61–S62 pull + Mac reinstall
+++
+++**Date:** 2026-08-10  
+++**Tip:** `5c64604` (`origin/main`)  
+++**Range:** `9a8b444..HEAD` (#160 unattended silence + deep-diagnosis P0–P2 + #161 Windows voice-pack closeout)  
+++**Method:** Four independent read-only agents — Architecture / Design / Implementation / Documentation  
+++**Install:** `make package-macos` → ditto `/Applications/CMspark.app` (bak `~/CMspark.app.bak-20260810-090705`); daemon **23401** up; whisper pin match `40bca494…`
+++
+++---
+++
+++## Part 0 — Pull / build / install
+++
+++| Step | Result |
+++|------|--------|
+++| `git fetch` + rebase | Local obsolete S61 memory commit skipped; main = `5c64604` |
+++| First `make package-macos` | **FAIL** at esbuild: `run-esbuild-bundle.mjs` invoked native `esbuild` via `node` → SyntaxError |
+++| Fix (local, uncommitted) | Spawn `esbuild` binary directly (not `process.execPath`) |
+++| Package + DMG | OK — `dist-package/CMspark-v0.5.0-macOS.dmg` ~53M; CDHash `c5e4613d…` |
+++| Replace app | OK — codesign valid; tray + daemon + estop; whisper staged |
+++| Dirty tree after install | `run-esbuild-bundle.mjs` (packaging fix) + `host-integrity.ts` (build-host SHA rewrite) |
+++
+++---
+++
+++## Executive synthesis
+++
+++Four lenses converge: **#160/#161 close real holes** (WS fail-closed registry, shell/netsec token binding, unattended true silence, Whisper SEA sidecar, evaluate always-L2 unless three-flag). No consensus **P0 remote compromise**. Ship for **macOS arm64 personal reinstall is YES**, with residuals.
+++
+++Highest cross-cutting risks:
+++
+++1. **Dual Trust clocks** — unattended grant is process-memory; arm dual-writes durable cruise flags → restart clears badge/grant but **not** web/enterprise auto-approve.
+++2. **Safety UX honesty gap** — 急停≠解除 documented but **no toast**; Confirm Center empty during true silence looks “safe idle.”
+++3. **shell_exec cwd** — token binds `params.cwd`; execute may use `workspace_root` when empty.
+++4. **WS dual tables** — validators vs router vs extension SW not mechanically synced; next missing type = “Companion dead.”
+++5. **Stale parallel SoTs** — Aug-02 design/plans still teach “danger re-L2 still confirms.”
+++
+++| Lens | Grade | Ship |
+++|------|-------|------|
+++| Architecture | **B−** | macOS arm64 YES + ops checklist |
+++| Design / honesty | **B−** | Soft-block marketing unattended until estop toast + cockpit banner |
+++| Implementation | **B+** | Conditional YES for reinstall |
+++| Documentation | **B−** | Fix SoT conflicts before agent-facing work |
+++
+++---
+++
+++## Consensus findings (deduped)
+++
+++### P1 — ship residuals / next hardening
+++
+++| ID | Title | Lenses | Evidence (abbrev) |
+++|----|-------|--------|-------------------|
+++| C1 | Unattended dual-write cruise sticks across restart; grant does not | Arch, Design | `message-router.ts` ~3197–3204 `saveConfig` auto_approve_*; grant process-memory |
+++| C2 | shell_exec token cwd ≠ effective cwd / L2 understates cwd | Arch, Impl | `security-policy.ts` bind cwd; `server.ts` exec uses workspace_root |
+++| C3 | Dual WS tables / god-file drift under production strict | Arch, Impl | `server.ts` validateWsMessage + message-router; partial sample tests |
+++| C4 | Unattended re-L2 full silence (incl. danger) — accepted residual | All | `executor.ts` ~642–657; ADR-021 |
+++| C5 | 急停≠解除 UX missing toast; cockpit no 值守 banner | Design | SafetyStrip abort only; docs claim toast |
+++| C6 | Stale SoT: danger re-L2 still confirms | Design, Docs | `docs/superpowers/specs/2026-08-02-unattended-desktop-design.md` vs ADR-021 |
+++| C7 | Whisper multi-arch pins incomplete; Mac auto-download limited | Arch, Design | pins: darwin-arm64 + win-x64 only; manifest win-first |
+++| C8 | Matrix unattended cell overstates spawn/skip | Design | autopilot-tier vs forceConfirm three-flag |
+++| C9 | CU enable path: AppsPanel has 坐标操作 UI; CU guide/ADR-017 still “config only” | Docs | `AppsPanel.tsx` computer.set_enabled |
+++| C10 | Tests weak / false-green on forceConfirm & unattended executor | Impl | security-gates OR; unattended tests skip executor silence |
+++
+++### P2 / nits (selected)
+++
+++- Token `threadId` default `"default"`; `bindingPayloadFor` empty default for unknown tools  
+++- Netsec omitted ports → COMMON_PORTS after bind `[]`  
+++- Package soft-warn on missing whisper/extension  
+++- privacy_ack_v2 is wire boolean, not durable storage-bound  
+++- mcp.md outbound default `require_grant` stale  
+++- CHANGELOG under-reports post-0.5.0-cut tip (#160/#161)  
+++- Memory tip lag (`57bad96` vs `5c64604`) — now tip is `5c64604`  
+++- Packaging bug this session: esbuild spawn via node (local fix)
+++
+++### No consensus P0
+++
+++No finding that is both (a) unintended vs current ADRs and (b) unauthenticated remote compromise. Design “P0” items are **mental-model / residual underestimation** under armed unattended.
+++
+++---
+++
+++## What landed well (keep)
+++
+++- Unattended algebra matches revised ADR-021 (initial + re-L2 silence; hard deny throws)
+++- Dual-ack + phrase gates on arm; pack cannot arm unattended
+++- shell/netsec `issueTokenFor` / `validateTokenFor` same `bindingPayloadFor` (S62 root cause closed)
+++- Production WS fail-closed + core types registered (config.get / thread.list class)
+++- Whisper: HTTPS + sha256 + execFile shell:false; darwin-arm64 pin matches staged binary
+++- Windows SEA MCP/notifier bundle SoT; launch.bat port probe fail-closed
+++- Cookie trust no longer skips URL gate; evaluate force L2 unless three-flag
+++- Config redaction SoT
+++
+++---
+++
+++## Recommended next work (priority)
+++
+++### Fix-before-promote (unattended marketing / enterprise claims)
+++
+++1. 急停 toast: “任务已停 · 值守仍开”  
+++2. Cockpit banner when `unattended.armed`  
+++3. SUPERSEDED banners on Aug-02 unattended/Trust-IA SoTs re: re-L2  
+++4. Matrix spawn cell honesty (default 值守 ≠ three-flag)
+++
+++### Hardening PR candidates
+++
+++5. F1 dual-SoT: restore cruise flags on grant TTL / boot if unattended not armed, **or** stop durable dual-write  
+++6. shell_exec: resolve effective absolute cwd at issue + bind + preview  
+++7. CI assert router cases ⊆ WS validators  
+++8. CU guide + ADR-017: Apps 坐标操作 primary path  
+++9. Commit packaging fix for `run-esbuild-bundle.mjs` (this session)  
+++10. Whisper multi-arch pins when ready
+++
+++### Backlog (deferred honestly)
+++
+++- God-file split (server.ts / message-router)  
+++- Surface L0/L1 as Companion tool filter  
+++- Full npm suite gate beyond dual partial tests
+++
+++---
+++
+++## Ship checklist (macOS arm64 reinstall — done today)
+++
+++- [x] main = `5c64604`  
+++- [x] DMG built; app replaced; codesign OK  
+++- [x] daemon listen 127.0.0.1:23401  
+++- [x] whisper pin match  
+++- [ ] Operator smoke: pair extension; arm 值守 with eyes open; estop; disarm clear_cruise  
+++- [ ] Operator smoke: god-mode alone still prompts host_computer / evaluate  
+++- [ ] Commit esbuild spawn fix + host-integrity if SHA intentional  
+++
+++---
+++
+++*Generated from four parallel adversarial explore agents + packaging install evidence. Code findings [inspected]; full e2e armed desktop not re-executed this session.*
++diff --git a/docs/audit/reviews/multi-adversarial-project-deep-20260810.md b/docs/audit/reviews/multi-adversarial-project-deep-20260810.md
++new file mode 100644
++index 0000000..2f71970
++--- /dev/null
+++++ b/docs/audit/reviews/multi-adversarial-project-deep-20260810.md
++@@ -0,0 +1,218 @@
+++# Multi-adversarial deep review — project health (multi-level × multi-dimension)
+++
+++**Date:** 2026-08-10  
+++**Tip:** `5c64604` (`origin/main`, product **0.5.0** cut + #160 unattended silence + #161 Windows voice/shell token)  
+++**Method:** Five **independent read-only** explore agents + orchestrator spot-check of HIGH findings  
+++**Lanes:** Security · Architecture · Correctness · Product-UX · Docs-Compat  
+++**Scope:** Full product surface (not only recent PR range). Local dirty tree (`run-esbuild-bundle.mjs`, `host-integrity.ts`) noted but not treated as main tip.  
+++**Prior same-day tip review:** [`multi-adversarial-main-tip-20260810.md`](./multi-adversarial-main-tip-20260810.md) (4-lens, packaging install focus) — this report **supersedes** for project-wide priority; tip-review residuals still apply.
+++
+++**Routing note:** `vibe route` suggested `omx/team` (tmux impl orchestration). **Override** → repo post-ship multi-lane pattern (`memory/project-knowledge.md` · multi-adversarial-then-dual-then-ci-merge).
+++
+++---
+++
+++## Executive synthesis
+++
+++| Lane | Verdict | Grade | Confidence |
+++|------|---------|-------|------------|
+++| Security | **REQUEST_CHANGES** | B− | 0.82 |
+++| Architecture | **REQUEST_CHANGES** | C+ | 0.82 |
+++| Correctness | **REQUEST_CHANGES** | C+ | 0.84 |
+++| Product-UX | **REQUEST_CHANGES** | D+ | 0.82 |
+++| Docs-Compat | **REQUEST_CHANGES** | D+ | 0.86 |
+++| **Orchestrator final** | **REQUEST_CHANGES** | **C+** | **0.84** |
+++
+++### One-line judgment
+++
+++**No consensus Security-P0 unauthenticated remote compromise.**  
+++Ship for **macOS arm64 personal / Windows zip personal** remains **conditional YES** — with eyes open on armed 值守 residuals.  
+++**Do not promote** unattended / enterprise / Pack-Trust as “safe autopilot” marketing until honesty + dual-clock + worker isolation residuals land.
+++
+++### Cross-cutting themes (deduped)
+++
+++1. **Dual Trust clocks** — process-memory unattended grant vs durable `auto_approve_*` dual-write; restart/TTL clear grant but not cruise.  
+++2. **Silence looks like safety** — Confirm Center empty + 急停 without “值守仍开” toast.  
+++3. **Token bind ≠ execute** — shell cwd / netsec ports expand after approve.  
+++4. **Multi-table lock-step** — WS validators ↔ router ↔ extension SW; tool catalog ↔ schemas ↔ bridge.  
+++5. **Stale SoT trains wrong security** — Aug-02 design (re-L2 still confirm) vs ADR-021 silence; mcp.md `require_grant=false`; CU “config only”.  
+++6. **NEW (this pass):** Worker `HARD_DENY` is spawn-time only; `thread.update` can rewrite `tool_whitelist`.  
+++7. **NEW (this pass):** Pack `trust.skip_l2` writes three-flag cruise **without** Settings phrase step-up → durable host_computer/evaluate forceConfirm waive path.
+++
+++---
+++
+++## Consensus findings (deduped)
+++
+++Severity legend:
+++
+++| Tag | Meaning |
+++|-----|---------|
+++| **Sec-P0** | Unauth / remote compromise or unintended privilege without user arming |
+++| **Prod-P0** | User will mis-arm or misread residual risk under intended features |
+++| **Struct-P0** | Structural collapse / evolvability blocker (not remote exploit) |
+++| **P1** | Real hole, residual bypass of user intent, or high-cost drift |
+++| **P2** | Nit / residual / deferred debt |
+++
+++### Prod-P0 / Sec-P1 — fix-before-promote (unattended & Trust marketing)
+++
+++| ID | Sev | Title | Lenses | Evidence [inspected] | Fix sketch |
+++|----|-----|-------|--------|----------------------|------------|
+++| **C1** | Prod-P0 / Sec-P1 | **Unattended dual-write cruise sticks across restart/TTL; grant does not** | Sec, Arch, Corr, UX | `message-router.ts` arm → `saveConfig` three flags; `unattended-grant.ts` process-memory; disarm cruise only if `clear_cruise===true`; TTL nulls grant only | (A) expire/disarm always restore pre-arm snapshot, or (B) stop dual-write; UI one-shot “桌面值守已失效，巡航仍开” |
+++| **C2** | Prod-P0 | **急停 ≠ 解除：docs require toast; UI missing** | UX, Docs | ADR-021 §5; design SoT; `SafetyStrip`/`CockpitApp` only `computer.task.abort` →「已急停…」 | Abort ack while armed → mandatory toast「任务已停 · **值守仍开** · 点解除」 |
+++| **C3** | Prod-P0 | **Confirm Center empty during 值守 = “safe idle”** | UX | Cockpit emptyGuide no unattended strings; reL2 silence in `executor.ts` | Permanent banner when `unattended.armed` |
+++| **C4** | Prod-P0 | **Matrix claims evaluate skip under default 值守; code still forceConfirms** | UX, Docs, Corr | `autopilot-tier.ts` row evaluate/导航 → unattended「跳过」; tests: evaluate forceConfirm unless **three-flag** | Split evaluate vs navigate in matrix; lock UI copy to three-flag algebra |
+++| **C5** | Sec-P1 / Prod-P0 | **Pack Trust `skip_l2` → three-flag cruise without Settings phrase** | UX, Sec, Docs | `pack-engine.ts` `applyUserPackTrust`; PacksPanel `window.confirm` only; unattended keys forbidden in YAML but Trust flags open | Phrase step-up on pack Trust; or forbid skip_l2 from writing allow_all_schemes; UI “≠ 无人值守武装” |
+++| **C6** | Sec-P1 | **Worker HARD_DENY spawn-only; `thread.update` can elevate whitelist** | Corr, Arch | `computeWorkerWhitelist` at spawn; `message-router` `thread.update` allows `tool_whitelist` with **no** agent_role re-filter; `isToolAllowed` no HARD_DENY re-check; `mcp__*` always allowed | Re-apply HARD_DENY in `isToolAllowed` for workers; reject elevating `thread.update` for `agent_role=worker` |
+++
+++### P1 — correctness / protocol / SoT
+++
+++| ID | Sev | Title | Lenses | Evidence | Fix sketch |
+++|----|-----|-------|--------|----------|------------|
+++| **C7** | P1 | shell_exec: bind cwd ≠ execute cwd; L2 preview is command-only | Sec, Corr | `bindingPayloadFor` cwd\|\|working_directory; execute `params.cwd \|\| workspace_root \|\| process.cwd()` | Normalize absolute effective cwd **before** issueToken + preview |
+++| **C8** | P1 | netsec: bind ports `[]` then execute expands COMMON_PORTS | Corr | `security-policy` ports=[]; execute fallback COMMON_PORTS | Normalize ports before bind; show in L2 preview |
+++| **C9** | P1 | WS dual tables + test fail-open default → production “Companion dead” class | Arch, Corr | validators in `server.ts` ~5.5k–6.4k; router switch; SW cases; `NODE_ENV=test` unknown types pass | Registry SoT + CI `router ⊆ validators`; test default fail-closed |
+++| **C10** | Struct-P0 | `server.ts` (~7.4k) + `message-router.ts` (~3.7k) god-files | Arch | Multi BC: auth, L2 algebra, tool dispatch, MCP, CU | Split ingress / admission / dispatch; freeze new cases |
+++| **C11** | P1 | Surface UI tool class tables miss shell/netsec/browser tools | Arch | `mode-controller.ts` COMPUTER_CLASS_TOOLS incomplete | Single `SURFACE_BY_TOOL` shared table |
+++| **C12** | P1 | security-gates false-green: `force_confirm \|\| Array.isArray(critical_apis)` | Corr | wire has `critical_apis` not `force_confirm` | Assert `risk_level` / `auto_confirm_eligible` / critical list only |
+++| **C13** | P1 | Stale SoT: Aug-02 unattended/Trust IA “re-L2 still confirm” vs ADR-021 silence | Docs, UX, Arch | design LOCKED for M1; ADR-021 2026-08-09 revision | SUPERSEDED banners; impl plan acceptance rewrite |
+++| **C14** | P1 | `docs/mcp.md` trains `require_grant=false` + ws_secret; code default **true** | Docs, Sec | `config.ts` default true; mcp.md ~249 | Fix user guide + GOAL already correct |
+++| **C15** | P1 | CU enable path docs “config only / 只读镜像”; AppsPanel toggles `computer.set_enabled` | Docs, UX | AppsPanel; ADR-017 D2/D9; CU guide §3 0.3.0 | Update ADR-017 + guides + architecture §9 |
+++| **C16** | P1 | Unattended re-L2 full silence incl. danger; windowLevel hard → silent approve | Sec, Corr | `executor.ts` armed short-circuit; hard-deny only region payment / credential type | Document residual; optional keep forceInteractive for danger_detected; tests |
+++
+++### P2 — selected nits
+++
+++- Token `threadId` default `"default"` at issue/validate  
+++- eTLD multi-tenant wildcards residual (`*.azurewebsites.net`)  
+++- page-sanitizer ~11 literal patterns (not a hard boundary)  
+++- Whisper pins: darwin-arm64 + win-x64 only; linux/darwin-x64 fail-closed  
+++- CHANGELOG frozen at 0.5.0-08-08; omits #160/#161 tip ships  
+++- Memory tip lag (`57bad96` vs `5c64604`)  
+++- AGENTS.md dead `session-lifecycle.md` / wrong skills path  
+++- Packaging: esbuild spawn via node (local uncommitted fix)  
+++- Outbound MCP skip pack whitelist intentional but cognitive load  
+++- privacy_ack_v2 wire-only (local trust model OK)
+++
+++### No Sec-P0
+++
+++Unauthenticated loopback control plane: WS handshake fail-closed, AUTH_TIMEOUT, pre-auth message gate, Origin + HMAC — **[inspected]** across Security lane + prior #159/#160 work.  
+++Armed unattended danger silence is **product-accepted residual** (ADR-021), not an accidental hole — honesty gap remains Prod-P0.
+++
+++---
+++
+++## What landed well (keep)
+++
+++| Area | Strength |
+++|------|----------|
+++| Topology | Extension = CDP/Surface; Companion = LLM/state/security (ADR-001) |
+++| L2 algebra core | evaluate/osascript forceConfirm unless three-flag; cookie ≠ cruise domain |
+++| Token SoT | `bindingPayloadFor` unified issue/validate; LLM-supplied tokens stripped |
+++| #160 | Unattended initial + re-L2 silence matches revised ADR-021; hard deny still throws |
+++| #161 | shell/netsec `validateTokenFor` matches issue binding shape |
+++| WS prod | Unknown types fail-closed outside test/dev |
+++| Outbound default | `require_grant: true` in code (docs lag only) |
+++| Pack | Unattended arm keys forbidden in pack YAML |
+++| Voice | privacy_ack_v2 on wire; whisper unpinned fail-closed; SEA sidecar discipline |
+++| Stream isolation | `shouldApplyStreamEvent` fail-closed; upload_error clears mapBusy |
+++
+++---
+++
+++## Lane digests (abbrev)
+++
+++### Security (B−, REQUEST_CHANGES)
+++- Strong: auth fail-closed, L2 forceConfirm core, token binding, confirm response injection guards, path sandboxes, outbound grant default.  
+++- Weak: dual-write cruise, re-L2 residual under arm, shell cwd preview, osascript no-token residual, thin page sanitizer.
+++
+++### Architecture (C+, REQUEST_CHANGES)
+++- ADR-020 model is A-grade on paper; implementation is multi-table mudball.  
+++- Highest leverage: WS registry+CI lockstep, unattended/cruise lifecycle contract, then split server admission.
+++
+++### Correctness (C+, REQUEST_CHANGES)
+++- Highest new: worker whitelist elevation via `thread.update`; shell/netsec pre-normalize; false-green forceConfirm OR; dual-write.
+++
+++### Product-UX (D+, REQUEST_CHANGES)
+++- Settings arm copy is among the **best** honesty surfaces.  
+++- Matrix/docs/empty-cockpit/estop actively **under-surface residual risk**.  
+++- Pack Trust is a silent alternate god-mode path.
+++
+++### Docs-Compat (D+, REQUEST_CHANGES)
+++- Highest ops harm: mcp.md inverted require_grant; CU config-only cluster; Aug-02 re-L2 still-confirm LOCKED design; architecture conflates auto_approve with 无人值守.
+++
+++---
+++
+++## Orchestrator spot-checks [executed reads]
+++
+++| Claim | Result |
+++|-------|--------|
+++| Dual-write on arm | **Confirmed** — `message-router` unattended.arm `saveConfig` flags |
+++| `thread.update` allows `tool_whitelist` without HARD_DENY | **Confirmed** — `message-router.ts` ~1763–1787; `isToolAllowed` no deny set |
+++| Pack `skip_l2` → three flags | **Confirmed** — `applyUserPackTrust` lines 164–182 |
+++| Matrix evaluate skip vs three-flag | **Confirmed** — `autopilot-tier.ts` + security-gates test |
+++| forceConfirm OR false-green | **Confirmed** — `security-gates.test.ts` ~771 |
+++| mcp.md require_grant=false | **Confirmed** — `docs/mcp.md` ~249 |
+++| Estop toast missing | **Confirmed** — SafetyStrip/Cockpit abort only |
+++| God-file sizes | **Confirmed** — server 7421 / router 3773 LOC |
+++
+++---
+++
+++## Recommended next work (priority)
+++
+++### Wave 0 — honesty (1–2 days, no algebra change)
+++
+++1. 急停 toast + Cockpit/emptyGuide 值守 banner  
+++2. Fix `autopilot-tier` evaluate vs navigate; Settings browser hint  
+++3. SUPERSEDED banners on Aug-02 unattended + Trust IA re-L2 rows  
+++4. Fix `docs/mcp.md` require_grant default; CU guide + ADR-017 Apps toggle  
+++5. PacksPanel Trust copy: phrase parity or explicit “≠ 无人值守 / 会写三旗”
+++
+++### Wave 1 — security residuals (3–5 days)
+++
+++6. Worker: re-HARD_DENY in `isToolAllowed` + block elevating `thread.update`  
+++7. Unattended: default clear_cruise on disarm **or** snapshot restore on TTL/restart  
+++8. shell_exec / netsec: normalize bind payload = execute payload before L2  
+++9. Kill security-gates `force_confirm \|\| Array.isArray` false-green  
+++10. Executor unattended reL2 silence unit tests
+++
+++### Wave 2 — structure (multi-PR)
+++
+++11. WS message registry + CI lockstep (router ⊆ validators ⊆ SW)  
+++12. Extract `decideToolAdmission` pure matrix from `createToolExecutor`  
+++13. Split server/message-router by family (freeze growth first)  
+++14. `SURFACE_BY_TOOL` single table for UI + catalog  
+++15. CHANGELOG Unreleased for #160/#161; whisper multi-arch pins when ready
+++
+++### Ship checklist (personal reinstall — residual)
+++
+++- [x] main tip `5c64604`  
+++- [ ] Operator: arm 值守 with eyes open; estop; confirm grant still on; disarm clear_cruise  
+++- [ ] Operator: god-mode alone still prompts evaluate / host_computer  
+++- [ ] Operator: pack Trust skip_l2 awareness  
+++- [ ] Commit packaging esbuild fix if intentional  
+++- [ ] Dual-review before any Wave 1 merge to main (instinct multi-adversarial-then-dual)
+++
+++---
+++
+++## Grades by product axis (orthogonal to lanes)
+++
+++| Axis | Grade | Note |
+++|------|-------|------|
+++| Surface L0–L1 browser agent | **B+** | Core loop mature; dual-table drift is main tax |
+++| Surface L2 host/CU/shell | **B−** | Algebra strong; honesty + dual-clock weak |
+++| Composition Pack/MCP/skills | **B** | Pack Trust step-up gap; outbound code > docs |
+++| Autonomy multi-agent/board | **C+** | Spawn HARD_DENY good; runtime re-enforce missing |
+++| Voice/meeting 0.5.0 | **B** | Pins incomplete multi-arch; privacy gates solid |
+++| Docs / agent-facing SoT | **D+** | Multiple live contradictions train wrong fixes |
+++| Test / CI as safety net | **C** | Partial coverage; known false-green; WS not lockstep |
+++| Packaging (Mac/Win) | **B−** | Ships; esbuild spawn bug local; Linux not first-class |
+++
+++---
+++
+++## Final verdict
+++
+++```
+++VERDICT: REQUEST_CHANGES
+++SHIP_PERSONAL_MAC_WIN: CONDITIONAL_YES
+++SHIP_UNATTENDED_MARKETING: NO
+++SHIP_ENTERPRISE_CLAIMS: NO until C1,C5,C6,C7,C8 closed or re-spec'd
+++SECURITY_P0_REMOTE: NONE
+++```
+++
+++*Generated from five parallel independent adversarial explore agents (Security / Architecture / Correctness / Product-UX / Docs-Compat) + orchestrator [inspected] spot-checks. No live armed-desktop e2e this pass. Evidence tags per lane digests above.*
++diff --git a/docs/computer-use-user-guide.md b/docs/computer-use-user-guide.md
++index 005a946..8686272 100644
++--- a/docs/computer-use-user-guide.md
+++++ b/docs/computer-use-user-guide.md
++@@ -41,9 +41,9 @@
++ 
++ 1. **全局坐标开关** `computer.coordinateEnabled === true`  
++    - 默认 **false**（fail-closed）。  
++-   - **当前 0.3.0 用户可走路径（诚实版）**：编辑 `~/.cmspark-agent/config.json`（或等价配置写入）把 `computer.coordinateEnabled` 设为 `true` 后重启/重载 Companion。  
++-   - Companion 侧另有 `computer.set_enabled` RPC（可走生物识别确认门，见 `computer/handlers.ts`），但 **Side Panel / Cockpit / 托盘目前没有入口调用它**——Apps 面板上的「坐标操作」只是 **只读镜像** `computer.get_state`，**不能**在面板里拨全局开关。  
++-   - 设计意图（后续 WP）可把确认门接到 UI；**在接线之前不要把生物识别门说成「侧栏一键开启」**。
+++   - **产品 0.5.0 用户路径**：Side Panel → 底栏 **应用（Apps）** → 顶部 **「坐标操作」** 勾选；走 Companion `computer.set_enabled`（可经生物识别/确认台门）。  
+++   - 仍可直接编辑 `~/.cmspark-agent/config.json` 后重启 Companion。  
+++   - Apps 面板显示的是 **可切换** 状态（非只读镜像）。
++ 
++ 2. **Apps 功能打开** 且目标 App 在白名单内（`apps.enabled` + 对应 `AppEntry`）。
++ 
++@@ -59,7 +59,7 @@
++ ### 快速检查清单
++ 
++ - [ ] Companion 已启动，扩展已连接  
++-- [ ] 已在 `config.json` 打开 `computer.coordinateEnabled`（或经已接线的 `computer.set_enabled` 调用方）；Apps 面板「坐标操作」显示「已开启」仅为状态镜像  
+++- [ ] 已在 Apps 面板打开「坐标操作」（`computer.set_enabled`），或在 `config.json` 设 `computer.coordinateEnabled: true`  
++ - [ ] 底栏 **应用** 面板：全局 App 已开  
++ - [ ] 目标 App 已加白名单，且已开「允许坐标」  
++ - [ ] 有确认时打开 **确认台**，看清预览后再批  
++@@ -117,7 +117,7 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
++ 
++ ## 6. 平台支持
++ 
++-| 平台 | 状态（0.3.0） |
+++| 平台 | 状态（0.5.0） |
++ |------|----------------|
++ | **macOS** | 主路径：原生适配 + 证据/急停；需本机权限（**只认 CMspark**，见下） |
++ | **Windows** | 主路径：PowerShell/UIA 脚本族 + 窗口捕获；Hello 等与 host 写路径协同处见 host 指南 |
++@@ -205,4 +205,4 @@ Computer Use 截图与键鼠需要系统权限。请 **只** 为 **CMspark** 打
++ 
++ ---
++ 
++-*文档版本：2026-08-08 · 对齐 ADR-020 · Path C UI-TARS 吸收 · 与 companion `computer/*` + 扩展 Cockpit/AppsPanel 行为一致。*
+++*文档版本：2026-08-10 · 对齐 ADR-020 · Path C UI-TARS 吸收 · 与 companion `computer/*` + 扩展 Cockpit/AppsPanel 行为一致。*
++diff --git a/docs/host-and-apps.md b/docs/host-and-apps.md
++index 26a39b3..ca3d998 100644
++--- a/docs/host-and-apps.md
+++++ b/docs/host-and-apps.md
++@@ -34,8 +34,8 @@
++ ## 2. 在 Side Panel 管理 Apps
++ 
++ 1. 打开 Side Panel 底栏 → **应用（Apps）**。  
++-2. **全局 App** 行：只读指示 `apps.enabled`；关闭后 **`host_app` 一律拒绝**。当前版本若显示关闭，需在 **`~/.cmspark-agent/config.json`** 中开启（面板不提供假开关）。  
++-3. **坐标操作** 行：只读镜像 `computer.coordinateEnabled`（见 Computer Use 指南）。  
+++2. **全局 App** 行：指示 `apps.enabled`；关闭后 **`host_app` 一律拒绝**。  
+++3. **坐标操作** 行：可切换 `computer.coordinateEnabled`（经 `computer.set_enabled`；见 Computer Use 指南 §3）。  
++ 4. 在 **应用** 分段中搜索本机候选、**加白名单**、设置每应用策略（见下）。  
++ 5. **CLI 工具**分段：添加结构化 CLI（绝对路径 + `cli_manifest` JSON）；LLM 通过 **`host_cli`** 调用声明的 subcommand（无 free-args）。策略最高「AI 判断」，每次执行经 L2；危险级可升生物识别。输出按不可信内容处理。
++ 
++diff --git a/docs/mcp.md b/docs/mcp.md
++index a36dc14..9736184 100644
++--- a/docs/mcp.md
+++++ b/docs/mcp.md
++@@ -246,8 +246,8 @@ stdio 进程会连本机 Companion：`POST http://127.0.0.1:<port>/outbound-mcp/
++ 
++ | 模式 | Bearer | 说明 |
++ |------|--------|------|
++-| **P0 默认**（`outbound_mcp.require_grant=false`） | `ws_secret` 或 `CMSPARK_OUTBOUND_GRANT`（`cmg_…`） | 兼容 bake-off；仍建议最终迁到 grant |
++-| **P1 require_grant** | **仅** `CMSPARK_OUTBOUND_GRANT` | 拒绝 Extension `ws_secret`（L4+）；见 [grant design](decisions/outbound-mcp-l4-grant-design-2026-08-04.md) |
+++| **默认**（`outbound_mcp.require_grant=true`，`config.ts` SoT） | **仅** `CMSPARK_OUTBOUND_GRANT`（`cmg_…`） | **禁止**用 Extension `ws_secret` 作 Bearer；须 Side Panel 签发 grant |
+++| **兼容关闭**（`require_grant=false`，非默认） | `ws_secret` 或 `cmg_…` | 仅 bake-off/迁移；生产保持 require_grant=true |
++ 
++ 签发 grant：
++ 
++@@ -343,7 +343,7 @@ cmspark__accept_data_disclosure  arguments: { "acknowledge": true }
++ ### 现状（P0c 进度）
++ 
++ - 门禁 / disclosure / audit / synthetic origin：**已实现**  
++-- **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <ws_secret>`）→ Companion `createToolExecutor` → Extension CDP  
+++- **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <cmg_… grant>`；默认 `require_grant=true`，勿用 ws_secret）→ Companion `createToolExecutor` → Extension CDP  
++ - 先 `cmspark-agent start`（或 tray/daemon）并打开扩展配对；再由编程 Agent **按需 spawn** `mcp-outbound`  
++ - 无扩展连接时：`EXTENSION_UNAVAILABLE`（**仅** Chrome 扩展 peer 可做 CDP runner；tray 不会再被绑成 runner）  
++ - **L8 确认**：Outbound L2 / URL-gate 确认 **fan-out** 到所有已鉴权 Side Panel；**macOS Swift tray** 可弹原生确认窗；**Windows/Linux** 无原生 tray 确认（仅 Side Panel + 通知），超时 `OUTBOUND_CONFIRM_REQUIRED`（勿只盯 IDE）  
++diff --git a/docs/superpowers/specs/2026-08-02-trust-ia-autopilot-design.md b/docs/superpowers/specs/2026-08-02-trust-ia-autopilot-design.md
++index 36dc769..2753ff9 100644
++--- a/docs/superpowers/specs/2026-08-02-trust-ia-autopilot-design.md
+++++ b/docs/superpowers/specs/2026-08-02-trust-ia-autopilot-design.md
++@@ -1,5 +1,10 @@
++ # 信任设置 IA + 长程自治 — 产品设计 SoT
++ 
+++> **⚠️ SUPERSEDED in part (2026-08-10 multi-adv deep)** — Desktop re-L2 silence under 无人值守 is governed by **[ADR-021](../../adr/021-unattended-desktop-session.md) 2026-08-09 revision**, not this doc's D4 footnote that said danger re-L2 still confirms.  
+++> Autopilot matrix UI SoT for evaluate vs navigate: `chrome-extension/.../autopilot-tier.ts` (post multi-adv Wave0).  
+++> Wire bools + Settings IA structure in this doc remain useful; **do not** treat "危险 re-L2 仍确认 under unattended" as current product.
+++
+++
++ > **日期**: 2026-08-02  
++ > **状态**: **IMPLEMENTING / P0+P1 landed in tree** — dual-review 2026-08-02 Claude+Pi **APPROVE_WITH_NITS**（nits 已折叠）；实现见 SettingsSlideout / StatusRail / autopilot-tier  
++ > **触发**: 权限入口过多；God-mode 名实不符；用户需要「长程自行运行」入口  
++diff --git a/docs/superpowers/specs/2026-08-02-unattended-desktop-design.md b/docs/superpowers/specs/2026-08-02-unattended-desktop-design.md
++index 5eb16df..8c87661 100644
++--- a/docs/superpowers/specs/2026-08-02-unattended-desktop-design.md
+++++ b/docs/superpowers/specs/2026-08-02-unattended-desktop-design.md
++@@ -1,5 +1,11 @@
++ # 无人值守 · 桌面值守 — 产品设计 SoT
++ 
+++> **⚠️ SUPERSEDED (2026-08-10 multi-adv deep)** — Behavior SoT is **[ADR-021](../../adr/021-unattended-desktop-session.md) 2026-08-09 revision**.  
+++> Under armed 值守, **re-L2 is intentionally silent** (including danger/experimental/foreground_yielded).  
+++> **Do not implement** this document's older "re-L2 still confirm" / PROMPT_ALWAYS non-silent rows.  
+++> Keep for historical product-lock context only; implement against ADR-021 + code.
+++
+++
++ > **日期**: 2026-08-02  
++ > **状态**: **LOCKED for M1** — 四路对抗 + Pi/Claude dual-review **APPROVE_WITH_NITS**（`unattended-desktop-verdict-20260802-153129`）；nits 已并入 ADR-021  
++ > **用户锁定**: 无人值守硬需求 · 武装后 `host_computer` **零 initial L2** · **会话(进程)作用域** · 仅 `coordinateAllowed` App · 不扩 `allow_all_schemes`  
++diff --git a/docs/audit/reviews/multi-adv-deep-wave012-dual-review-prompt.md b/docs/audit/reviews/multi-adv-deep-wave012-dual-review-prompt.md
++new file mode 100644
++index 0000000..b7cf3eb
++--- /dev/null
+++++ b/docs/audit/reviews/multi-adv-deep-wave012-dual-review-prompt.md
++@@ -0,0 +1,46 @@
+++# Dual external review — multi-adv deep Wave 0–2
+++
+++## Context
+++Independent multi-adversarial review (`multi-adversarial-project-deep-20260810.md`) found REQUEST_CHANGES on tip `5c64604`. This branch implements Wave 0 (honesty), Wave 1 (security residuals), Wave 2 (structure pragmatism).
+++
+++**Branch:** `fix/multi-adv-deep-wave012`  
+++**Base:** `origin/main` @ `5c64604`  
+++**Commits:** f8ce33a (W0), dbd3999 (W1), 4ea1758 (W2)  
+++**Impl summary:** `docs/audit/reviews/multi-adv-deep-impl-summary-20260810.md`
+++
+++## Must verify each finding (code, not rubber-stamp)
+++
+++| ID | Expected fix |
+++|----|----------------|
+++| C1 | Pre-arm cruise snapshot; disarm + TTL always restore dual-write flags |
+++| C2 | Estop while armed → 「任务已停 · 值守仍开 · 点解除」 |
+++| C3 | Cockpit empty desk permanent 值守 banner |
+++| C4 | Matrix: navigate may skip; evaluate still confirms under default 值守 |
+++| C5 | Pack Trust cruise write requires confirmation_phrase server-side |
+++| C6 | Worker HARD_DENY in isToolAllowed; thread.update cannot elevate |
+++| C7 | normalizeShellCwd before issueToken and execute; preview shows cwd |
+++| C8 | normalizeNetsecPorts before bind and execute |
+++| C9 | ws-router-validator-lockstep test router ⊆ validators |
+++| C10 | FREEZE comments only — full god split DEFERRED is OK if documented |
+++| C11 | surface-by-tool drives mode-controller |
+++| C12 | No force_confirm \|\| Array.isArray false-green |
+++| C13–C15 | SUPERSEDED banners; mcp require_grant true; CU AppsPanel path |
+++| C16 | Residual honesty in ADR-021 |
+++
+++## Review rules
+++1. Read real files under this repo worktree. Use tools.
+++2. Look for incomplete fixes, security regressions, missing tests, wrong algebra.
+++3. Apply ADR-020 checklist when relevant.
+++4. REJECT if any of C1,C5,C6,C7,C8 incomplete or bypassable.
+++5. APPROVE_WITH_NITS for non-blocking nits only.
+++6. Final line MUST be exactly one of:
+++VERDICT: APPROVE
+++VERDICT: APPROVE_WITH_NITS
+++VERDICT: REJECT
+++
+++## Capability declaration (implementer)
+++- Surface: L2 honesty + shell/netsec bind + worker isolation (no new L2 tools)
+++- Composition: Pack Trust phrase gate only
+++- Autonomy: unattended dual-write lifecycle only
+++- Trust: restore cruise on disarm/TTL; pack phrase step-up
+++- Channel: Side Panel + Companion only
+diff --git a/docs/audit/reviews/multi-adv-deep-wave012-dual-review-prompt.md b/docs/audit/reviews/multi-adv-deep-wave012-dual-review-prompt.md
+new file mode 100644
+index 0000000..b7cf3eb
+--- /dev/null
++++ b/docs/audit/reviews/multi-adv-deep-wave012-dual-review-prompt.md
+@@ -0,0 +1,46 @@
++# Dual external review — multi-adv deep Wave 0–2
++
++## Context
++Independent multi-adversarial review (`multi-adversarial-project-deep-20260810.md`) found REQUEST_CHANGES on tip `5c64604`. This branch implements Wave 0 (honesty), Wave 1 (security residuals), Wave 2 (structure pragmatism).
++
++**Branch:** `fix/multi-adv-deep-wave012`  
++**Base:** `origin/main` @ `5c64604`  
++**Commits:** f8ce33a (W0), dbd3999 (W1), 4ea1758 (W2)  
++**Impl summary:** `docs/audit/reviews/multi-adv-deep-impl-summary-20260810.md`
++
++## Must verify each finding (code, not rubber-stamp)
++
++| ID | Expected fix |
++|----|----------------|
++| C1 | Pre-arm cruise snapshot; disarm + TTL always restore dual-write flags |
++| C2 | Estop while armed → 「任务已停 · 值守仍开 · 点解除」 |
++| C3 | Cockpit empty desk permanent 值守 banner |
++| C4 | Matrix: navigate may skip; evaluate still confirms under default 值守 |
++| C5 | Pack Trust cruise write requires confirmation_phrase server-side |
++| C6 | Worker HARD_DENY in isToolAllowed; thread.update cannot elevate |
++| C7 | normalizeShellCwd before issueToken and execute; preview shows cwd |
++| C8 | normalizeNetsecPorts before bind and execute |
++| C9 | ws-router-validator-lockstep test router ⊆ validators |
++| C10 | FREEZE comments only — full god split DEFERRED is OK if documented |
++| C11 | surface-by-tool drives mode-controller |
++| C12 | No force_confirm \|\| Array.isArray false-green |
++| C13–C15 | SUPERSEDED banners; mcp require_grant true; CU AppsPanel path |
++| C16 | Residual honesty in ADR-021 |
++
++## Review rules
++1. Read real files under this repo worktree. Use tools.
++2. Look for incomplete fixes, security regressions, missing tests, wrong algebra.
++3. Apply ADR-020 checklist when relevant.
++4. REJECT if any of C1,C5,C6,C7,C8 incomplete or bypassable.
++5. APPROVE_WITH_NITS for non-blocking nits only.
++6. Final line MUST be exactly one of:
++VERDICT: APPROVE
++VERDICT: APPROVE_WITH_NITS
++VERDICT: REJECT
++
++## Capability declaration (implementer)
++- Surface: L2 honesty + shell/netsec bind + worker isolation (no new L2 tools)
++- Composition: Pack Trust phrase gate only
++- Autonomy: unattended dual-write lifecycle only
++- Trust: restore cruise on disarm/TTL; pack phrase step-up
++- Channel: Side Panel + Companion only
+diff --git a/docs/audit/reviews/multi-adv-deep-wave012-pi-20260810-233312.md b/docs/audit/reviews/multi-adv-deep-wave012-pi-20260810-233312.md
+new file mode 100644
+index 0000000..73b20ed
+--- /dev/null
++++ b/docs/audit/reviews/multi-adv-deep-wave012-pi-20260810-233312.md
+@@ -0,0 +1,41 @@
++# Dual Review — multi-adv deep Wave 0–2 (`fix/multi-adv-deep-wave012`)
++
++Verified against the live worktree (git log confirms commits f8ce33a → dbd3999 → 4ea1758 on top of `5c64604`; patch file matches current tree). Ran the relevant test suites and compared against base.
++
++## Finding-by-finding verification (code-level)
++
++**C1 — cruise snapshot lifecycle: DONE.** `captureCruiseSnapshot` runs in `message-router.ts:3234` *before* the dual-write `saveConfig`; failed arm discards the snapshot (3246–3247); disarm handler at 3267–3292 *always* calls `restoreCruiseFromSnapshot()` (clear_cruise now a no-op); TTL path `expireGrantIfNeeded` + `expireRestoreDone` restores exactly once. No other `disarmUnattended` callers bypass it. Tests pass (3 C1 cases + TTL-once). Restart residual (durable flags sticky after process restart) is honestly documented in the impl summary/ADR — outside the task's stated C1 scope.
++
++**C5 — pack Trust phrase gate: DONE.** `applyPack` (pack-engine.ts:1617–1627) checks `packTrustWritesCruiseFlags(trustToApply)` *before* `applyUserPackTrust`, returns `trust_phrase_required`, clears the journal. Both router paths (`pack.apply` 2712, save+apply 2831) pass `confirmation_phrase`; the spawn path uses `allowTrust:false` (server.ts:3407) so it cannot write Trust. Schema/config parity with `security-arm.ts` confirmed. Test rejects missing phrase, passes with phrase.
++
++**C6 — worker isolation: DONE.** `isToolAllowed` (thread-manager.ts:854–876) re-enforces `WORKER_HARD_DENY` for `agent_role==="worker"` at runtime — and the executor hard-gates every non-outbound tool through `isToolAllowed` (server.ts:820). `thread.update` rejects `tool_whitelist:null` and filters HARD_DENY tools; `agent_role` is not in the updatable key set. Tests cover elevated-whitelist, null-whitelist, and per-tool denial.
++
++**C7/C8 — shell cwd / netsec ports bind: DONE.** Pre-L2 normalization in `createToolExecutor` (server.ts:744–758) runs before the confirm preview (1087–1097, now shows `cwd=` / `ports=`) and before `issueTokenFor` (2348). Execute re-normalizes idempotently and uses only the token-bound value (`params.cwd`, server.ts:3888). `normalizeNetsecPorts([])` → COMMON_PORTS copy closes the empty-ports expansion. Binding-equality tests pass. Schema (`z.array(...)`) makes the scalar-ports corner unreachable. `originWs: ws` binding preserved on the pending-confirmation path (server.ts:2988).
++
++**C2/C3/C4 — honesty UX: DONE.** SafetyStrip + CockpitApp show 「任务已停 · 值守仍开 · 点解除」 on abortAcked∧armed with a 解除 action; Cockpit has a permanent 值守 strip when armed with no pending confirms and rewrites the empty-desk copy. The matrix splits 导航 L2 (跳过) from evaluate/osascript (仍确认††) with footnotes matching the three-flag algebra; SettingsSlideout hints aligned.
++
++**C9 — WS lockstep: DONE.** Test runs (146 router cases, 153 validator keys; core types individually asserted) and is auto-discovered by `scripts/run-tests.mjs` in CI. `settings.test` allowlist entry verified as a real alias case (message-router.ts:382–383).
++
++**C10–C16:** FREEZE comments on both god-files with DEFERRED documented; `SURFACE_BY_TOOL` drives mode-controller (incl. shell_exec/netsec/scroll_to/upload_file); security-gates false-green removed (only comments reference `force_confirm` now); SUPERSEDED banners on both Aug-02 design docs; `docs/mcp.md` require_grant=true default with `cmg_…` bearer; CU guide/ADR-017/architecture match the real AppsPanel `computer.set_enabled` toggle; ADR-021 documents windowLevel=hard re-L2 silence + evaluate-under-default-值守.
++
++## Tests
++
++- New/updated suites: 46 pass (C1/C16, C6, C7/C8, C9) + 91 pass (C5 + C12) — all green.
++- Full suite: 2629 pass / 14 fail / 20 skip. I re-ran the 14 failures on base `5c64604` in a worktree: **identical 14 failures in computer-executor/computer-uia-watch** — pre-existing, not branch regressions.
++- `tsc -p tsconfig.test.json` clean; esbuild 0.28.1 ships a native Mach-O at `bin/esbuild`, so the packaging spawn fix is correct.
++
++## ADR-020 checklist
++
++Declaration present and accurate (Surface: L2 honesty/bind/isolation, no new L2 tools; Composition: pack phrase gate; Autonomy: unattended lifecycle; Trust: restore+step-up; Channel: Side Panel+Companion). Axes fit; no "中层 Agent" framing; phrase reuses the existing Settings confirm dialect (no new family); trust monotonicity holds (gates strengthened, not loosened); originWs intact; no new runtime.
++
++## Nits (non-blocking)
++
++1. **C1 restart residual** — durable `auto_approve_*`/`allow_all_schemes` remain at dual-write values if the companion restarts while armed (grant is process-memory). Documented, but a boot-time "grant not armed → restore/sweep" check would fully close the original dual-clock class.
++2. **`security.unattended.disarm` with no snapshot clears all three flags** — handler(null) forces them false even when the grant was never armed this process. All current UI disarms intend this, and it's fail-closed, but a raw API disarm as a routine reset could clobber intentionally-set flags; guard on `grant existed || snapshot existed`.
++3. **C9 test is heuristic** (regex extraction can false-positive on validator keys); core types are asserted individually so it's a reasonable smoke — a registry SoT remains the eventual fix.
++4. **PacksPanel client phrase prompts on any `has_trust` pack** even when the server only requires it for cruise-flag writes (modules-only trust) — conservative, documented.
++5. **14 pre-existing failures** in computer-executor/computer-uia-watch (identical on base) are outside this branch but should be tracked as a separate debt item.
++
++All five REJECT-gate findings (C1, C5, C6, C7, C8) are complete, server-side enforced, and not bypassable on tested paths.
++
++VERDICT: APPROVE_WITH_NITS
+diff --git a/docs/audit/reviews/multi-adv-deep-wave012-verdict-20260810-233312.json b/docs/audit/reviews/multi-adv-deep-wave012-verdict-20260810-233312.json
+new file mode 100644
+index 0000000..87c58be
+--- /dev/null
++++ b/docs/audit/reviews/multi-adv-deep-wave012-verdict-20260810-233312.json
+@@ -0,0 +1,8 @@
++{
++  "batch": "multi-adv-deep-wave012",
++  "timestamp": "20260810-233312",
++  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-multi-adv-deep/docs/audit/reviews/multi-adv-deep-wave012-claude-20260810-233312.md" },
++  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-multi-adv-deep/docs/audit/reviews/multi-adv-deep-wave012-pi-20260810-233312.md" },
++  "both_approve": true,
++  "diff_path": "/Users/huchen/Projects/cmspark-wt-multi-adv-deep/docs/audit/reviews/multi-adv-deep-wave012-diff-20260810-233312.patch"
++}
