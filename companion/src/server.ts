@@ -36,7 +36,6 @@ import { redactConfigForWire } from "./config-redact"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
-import { classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
 import { SecurityConfirmationManager } from "./security-confirmation"
 import { getTrayInstance } from "./menu-bar-agent"
 import {
@@ -50,7 +49,17 @@ import { logger, type LogLevel } from "./logger"
 import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile, setupGracefulShutdown } from "./daemon"
 import { getLockFilePath, getPidFilePath } from "./config"
 import { getMcpManager, getMcpConfirmCache, isMcpNamespaced } from "./mcp"
-import { prepareBrowserDownloadParams } from "./path-sandbox"
+import {
+  bindMcpDispatchRuntime,
+  executeMcpTool,
+  executeMcpMetaTool,
+} from "./mcp/dispatch"
+export {
+  bindMcpDispatchRuntime,
+  executeMcpTool,
+  executeMcpMetaTool,
+  enhanceMcpError,
+} from "./mcp/dispatch"
 import { runL2ToolAdmission } from "./tool/l2-admission"
 export { runL2ToolAdmission, L2_GATE_TOOLS, isFullAutonomyCruise } from "./tool/l2-admission"
 import { runCookieTrustAdmission, runUrlNavigateAdmission } from "./tool/url-cookie-admission"
@@ -62,6 +71,8 @@ export {
 } from "./tool/url-cookie-admission"
 import { runImageFetchAdmission } from "./tool/image-fetch-admission"
 export { runImageFetchAdmission } from "./tool/image-fetch-admission"
+import { runBrowserDownloadAdmission } from "./tool/browser-download-admission"
+export { runBrowserDownloadAdmission } from "./tool/browser-download-admission"
 import { applyHardenedProcessPath } from "./process-path"
 import {
   getOrCreateSharedSecret,
@@ -385,14 +396,6 @@ securityConfirmations.setOnTerminal(({ confirmationId, reason }) => {
   }
 })
 
-// Audit item 8: tool-name patterns that signal destructive operations. Matching
-// tools bypass the server's trust_level and always require per-call confirmation
-// (manual mode). The patterns cover the common verbs across filesystem / shell /
-// git / database MCP servers; the regex is intentionally permissive on prefixes
-// (e.g. "write_file", "delete_record", "exec_query", "rm_path") to err on the
-// side of caution.
-const DESTRUCTIVE_MCP_TOOL_PATTERN = /\b(write|delete|exec|commit|rm|remove|shell|curl|wget|spawn|fork|kill|drop|truncate|wipe|destroy)\b/i
-
 // Per-connection MCP session IDs (randomUUID from createToolExecutor) keyed by
 // the WebSocket they belong to. Used by ws.on("close") to clear the
 // McpConfirmCache for that session — without this, stale first-use approvals
@@ -587,6 +590,7 @@ async function initServices() {
     logger.warn("packs.builtin_install_failed", { error: e?.message || String(e) })
   }
   bindCompanionDispatchFromServerLocals()
+  bindMcpDispatchFromServerLocals()
 }
 
 /**
@@ -597,8 +601,10 @@ export function seedThreadManagerForTests(): ThreadManager {
   if (!threadManager) {
     threadManager = new ThreadManager()
   }
-  // Re-bind so executeCompanionTool sees the seeded manager (tests may skip full initServices).
+  // Re-bind so executeCompanionTool / executeMcpTool see the seeded manager
+  // (tests may skip full initServices).
   bindCompanionDispatchFromServerLocals()
+  bindMcpDispatchFromServerLocals()
   return threadManager
 }
 
@@ -620,17 +626,22 @@ export type ToolExecutorFn = (
   invokeOpts?: ToolExecuteInvokeOpts,
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
-// FREEZE (C10 multi-adv 2026-08-10 / phase-A..D 2026-08-11):
+// FREEZE (C10 multi-adv 2026-08-10 / phase-A..E 2026-08-11):
 // - L2 security admission → tool/l2-admission.ts (runL2ToolAdmission).
 // - Cookie trust + URL navigate admission → tool/url-cookie-admission.ts
 //   (runCookieTrustAdmission / runUrlNavigateAdmission).
 // - analyze_image IMAGE_FETCH two-phase gate → tool/image-fetch-admission.ts
 //   (runImageFetchAdmission).
+// - browser_download path sandbox → tool/browser-download-admission.ts
+//   (runBrowserDownloadAdmission).
+// - MCP namespaced + meta dispatch → mcp/dispatch.ts
+//   (executeMcpTool / executeMcpMetaTool; bind via bindMcpDispatchRuntime).
 // - createToolExecutor is the orchestration shell: multi-agent / cookie / browser_download /
-//   L2 call / URL gate / image gate call / companion dispatch / extension forward.
+//   L2 call / URL gate / image gate call / companion dispatch / MCP / extension forward.
 // - NEW companion-side tool *cases* → tool/companion-dispatch.ts (or capability/*).
 // - NEW WS validators → ws/validate.ts.
-// Do not re-inflate server.ts with L2 algebra, cookie/URL/image gate bodies, or business tool bodies.
+// Do not re-inflate server.ts with L2 algebra, cookie/URL/image/browser_download/
+// MCP gate bodies, or business tool bodies.
 // Exported for integration tests (audit item 6).
 export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   // Per-connection session id — used as the key for MCP first-use confirmation cache
@@ -920,44 +931,18 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     })
     if (!cookieOutcome.ok) return cookieOutcome.result
 
-    // P1.0 browser_download: path sandbox + worker path policy BEFORE extension dispatch.
-    // auto_approve_dangerous must NOT relax this (roots stay Downloads-only). No L2 for default Downloads.
-    if (toolName === "browser_download") {
-      let isWorker = false
-      if (actingThreadId && threadManager) {
-        try {
-          const th = threadManager.get(actingThreadId) as any
-          isWorker = th?.agent_role === "worker"
-        } catch { /* ignore */ }
-      }
-      const prepared = prepareBrowserDownloadParams({ params: finalParams, isWorker })
-      if (!prepared.ok) {
-        const result = {
-          success: false,
-          error: prepared.error,
-          data: prepared.data || { error_code: prepared.error_code },
-        }
-        logger.warn(
-          prepared.error_code === "PATH_ESCAPE"
-            ? "browser_download.path_escape"
-            : prepared.error_code === "WORKER_PATH_DENIED"
-              ? "browser_download.worker_path_denied"
-              : "browser_download.rejected",
-          { tool_call_id: toolCallId, error_code: prepared.error_code, is_worker: isWorker },
-        )
-        logToolFinish(toolCallId, toolName, startedAt, result)
-        return result
-      }
-      finalParams = prepared.params
-      logger.info("browser_download.start", {
-        tool_call_id: toolCallId,
-        tabId: finalParams.tabId,
-        path_root: prepared.downloadPath,
-        has_text: !!finalParams.text,
-        has_selector: !!finalParams.selector,
-        is_worker: isWorker,
-      })
-    }
+    // browser_download path sandbox — extracted to tool/browser-download-admission.ts (C10-E1)
+    const bdOutcome = runBrowserDownloadAdmission({
+      toolName,
+      finalParams,
+      toolCallId,
+      startedAt,
+      actingThreadId,
+      logToolFinish,
+      getThreadManager: () => threadManager,
+    })
+    if (!bdOutcome.ok) return bdOutcome.result
+    finalParams = bdOutcome.finalParams
 
     // L2 confirmation gate — extracted to tool/l2-admission.ts (C10-B)
     const l2Outcome = await runL2ToolAdmission({
@@ -1689,577 +1674,18 @@ function bindCompanionDispatchFromServerLocals(): void {
 }
 
 
-// --- MCP tool executors ---
+// --- MCP tool dispatch (C10-E2: body in mcp/dispatch.ts) ---
+// FREEZE: NEW MCP capability-gate / trust_level / meta-tool policy lives in
+// mcp/dispatch.ts. Do not re-inflate executeMcpTool / executeMcpMetaTool here.
+// Imports + re-exports of executeMcpTool / executeMcpMetaTool / enhanceMcpError /
+// bindMcpDispatchRuntime are at the top of this file (with other tool extractions).
 
-/**
- * Execute an MCP namespaced tool (mcp__<server>__<tool>). Enforces the per-server
- * trust_level policy: manual = always prompt, first-use = prompt once per session,
- * trusted = never prompt for non-critical. Critical caps (file-write/exec/…) still
- * force L2 unless full-autonomy cruise (三旗). Approval cache is session-scoped.
- */
-async function executeMcpTool(
-  toolName: string,
-  params: any,
-  sessionId: string,
-  ws: WebSocket,
-  startedAt: number,
-  signal?: AbortSignal,
-): Promise<{ success: boolean; data?: any; error?: string }> {
-  const manager = getMcpManager()
-  const route = manager.resolveToolName(toolName)
-  if (!route) {
-    return { success: false, error: `MCP tool ${toolName} not found (server may be disconnected)` }
-  }
-
-  // Manual MCP selection must gate dispatch (not only LLM catalog filtering).
-  try {
-    const actingTid =
-      typeof (params as any)?.__thread_id === "string"
-        ? String((params as any).__thread_id)
-        : sessionId
-    const thr = actingTid ? threadManager.get(actingTid) : null
-    const mode = thr?.mcp_selection_mode || "auto"
-    if (mode === "manual") {
-      const active = new Set(thr?.active_mcp_server_ids || [])
-      if (!active.has(route.serverName)) {
-        return {
-          success: false,
-          error: `MCP server "${route.serverName}" is not in this thread's active selection (mcp_selection_mode=manual)`,
-        }
-      }
-    }
-  } catch {
-    /* unexpected thread lookup — fail closed below only when mode is known */
-  }
-
-  const configuredTrustLevel = manager.getTrustLevel(route.serverName) ?? "first-use"
-  // Audit item 8: destructive-looking tool names ALWAYS require per-call confirmation,
-  // regardless of the server's configured trust_level. A first-use approval for a
-  // filesystem-write tool shouldn't auto-apply to the next 10 write/delete calls —
-  // that's exactly the prompt-injection amplification path the audit flagged.
-  const isDestructiveName = DESTRUCTIVE_MCP_TOOL_PATTERN.test(route.toolName)
-  const trustLevel = isDestructiveName ? "manual" : configuredTrustLevel
-  if (isDestructiveName && configuredTrustLevel !== "manual") {
-    logger.warn("mcp.destructive_force_manual", {
-      server: route.serverName, tool: route.toolName,
-      configured: configuredTrustLevel, effective: "manual",
-    })
-  }
-
-  const cache = getMcpConfirmCache()
-  const cacheKey = { sessionId, serverName: route.serverName, toolName: route.toolName }
-
-  const needsConfirm =
-    trustLevel === "manual" ||
-    (trustLevel === "first-use" && !cache.isApproved(cacheKey))
-
-  // §6.3 MCP_CAPABILITY_GATE (follow-up C): capability classification that
-  // survives trusted/first-use-cache/god-mode — mirror of §6.2. Even a `trusted`
-  // server or a first-use-cached tool must confirm when the call touches a
-  // critical capability (file-write/exec/network-egress/db-mutate/unknown).
-  // god-mode / trust_level bypass the UI prompt, not this capability boundary
-  // (same invariant as §6.1.5/§6.2). Without this, a `trusted` filesystem
-  // server's `save_file` (name evades DESTRUCTIVE_MCP_TOOL_PATTERN) or a
-  // `fetch_data` tool called with an attacker URL would execute zero-confirmation.
-  //
-  // Phase 2-B: merge the server's user-declared `security_capabilities`
-  // (primary source) with classifyMcpCall inference (defense-in-depth) via
-  // mergeCapabilities. Fail-safe union (Option C, kimi-approved): a positively-
-  // inferred critical capability can NEVER be suppressed by a declaration; a
-  // declaration only escalates or resolves the "unknown" sentinel.
-  const declaredCaps = manager.getServerConfig(route.serverName)?.security_capabilities
-  const mcpMerged = mergeCapabilities(classifyMcpCall(route.toolName, params), declaredCaps)
-  const mcpCaps = mcpMerged.capabilities
-  const forceMcpConfirm = mcpCaps.some(c => CRITICAL_MCP_CAPABILITIES.has(c))
-  // Full autonomy cruise (三旗: auto_approve_dangerous + enterprise + allow_all_schemes)
-  // — same algebra as shell_exec / §6.2 forceConfirm waive. God-mode or enterprise
-  // alone still force critical MCP confirms (including file-write). Product: user
-  // opted into max residual risk; do not keep a second silent deny path for MCP writes.
-  const securityConfigEarly = getConfig().security
-  const userFullAutonomyCruise =
-    securityConfigEarly?.auto_approve_dangerous === true &&
-    securityConfigEarly?.auto_approve_enterprise_tools === true &&
-    securityConfigEarly?.allow_all_schemes === true
-  // kimi suggestion: make the trust grant auditable. When a declaration RESOLVED
-  // an "unknown" (inference found nothing, user vouched), warn so it's traceable.
-  if (mcpMerged.declaredResolvedUnknown) {
-    logger.warn("mcp.declared_resolved_unknown", {
-      server: route.serverName,
-      tool: route.toolName,
-      declared: declaredCaps,
-      trust_level: trustLevel,
-    })
-  }
-
-  if ((needsConfirm || forceMcpConfirm) && userFullAutonomyCruise) {
-    logger.info("mcp.confirm.waived", {
-      server: route.serverName,
-      tool: route.toolName,
-      trust_level: trustLevel,
-      session: sessionId,
-      capabilities: mcpCaps,
-      declared_capabilities: declaredCaps ?? [],
-      force_confirm_would_have: forceMcpConfirm,
-      needs_confirm_would_have: needsConfirm,
-      reason: "full_autonomy_cruise",
-    })
-  } else if (needsConfirm || forceMcpConfirm) {
-    if (ws.readyState !== WebSocket.OPEN) {
-      return {
-        success: false,
-        error: `Security Block: MCP tool ${route.serverName}/${route.toolName} cannot be confirmed (extension disconnected)`,
-      }
-    }
-    const securityConfig = getConfig().security
-    logger.info("mcp.confirm.requested", {
-      server: route.serverName,
-      tool: route.toolName,
-      trust_level: trustLevel,
-      session: sessionId,
-      capabilities: mcpCaps,
-      declared_capabilities: declaredCaps ?? [],
-      force_confirm: forceMcpConfirm,
-    })
-    const decision = await securityConfirmations.request(
-      (data) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(data))
-        }
-      },
-      {
-        toolName,
-        dangerousApis: mcpCaps,
-        code: safeJsonStringify(params, 1200),
-        riskLevel: "medium",
-        ...(forceMcpConfirm ? { criticalApis: mcpCaps, riskLevel: "high" as const, autoConfirmEligible: false } : {}),
-      },
-      // Trust multi-peer (P1-2): MCP tool confirm bound to requesting socket.
-      { originWs: ws },
-    )
-    if (!decision.approved) {
-      const reason = decision.reason === "approved" ? "unavailable" : decision.reason
-      if (forceMcpConfirm) {
-        logger.warn("security.mcp_critical_denied", {
-          server: route.serverName,
-          tool: route.toolName,
-          capabilities: mcpCaps,
-          declared_capabilities: declaredCaps ?? [],
-          god_mode_active: securityConfig.allow_all_schemes === true,
-          auto_approve_active: securityConfig.auto_approve_dangerous === true,
-          trust_level: trustLevel,
-          reason,
-        })
-      }
-      return {
-        success: false,
-        error: `Security Block: MCP tool ${route.serverName}/${route.toolName} ${reason} by user`,
-      }
-    }
-    // Only cache first-use approvals for NON-critical calls. Critical calls
-    // (forceMcpConfirm) confirm every time — args can change between calls, and
-    // a cached approval must not auto-apply to a later destructive invocation
-    // (mirror of DESTRUCTIVE_MCP_TOOL_PATTERN → manual at server.ts:1117).
-    if (trustLevel === "first-use" && !forceMcpConfirm) {
-      cache.approve(cacheKey)
-    }
-    logger.info("mcp.confirm.approved", { server: route.serverName, tool: route.toolName })
-    if (forceMcpConfirm) {
-      logger.warn("security.mcp_critical_confirmed", {
-        server: route.serverName,
-        tool: route.toolName,
-        capabilities: mcpCaps,
-        declared_capabilities: declaredCaps ?? [],
-        god_mode_active: securityConfig.allow_all_schemes === true,
-        auto_approve_active: securityConfig.auto_approve_dangerous === true,
-        trust_level: trustLevel,
-      })
-    }
-  } else if (trustLevel === "first-use") {
-    // Audit item 8: count this invocation against the per-tool approval's call cap.
-    // When the cap (default 10) is hit, the next isApproved() returns false and
-    // the user is re-prompted. recordCall is a no-op for bulk-trust / manual paths.
-    // (forceMcpConfirm is false here — critical calls never reach this branch.)
-    cache.recordCall(cacheKey)
-  }
-
-  const callStartedAt = Date.now()
-  const runOnce = async (): Promise<{ success: boolean; data?: any; error?: string; rawErr?: string }> => {
-    try {
-      const result = await manager.callTool(route, params || {}, signal)
-      if (result?.isError) {
-        const errMsg = extractMcpError(result)
-        return {
-          success: false,
-          rawErr: errMsg,
-          error: enhanceMcpError(
-            `MCP ${route.serverName}/${route.toolName} returned error: ${errMsg}`,
-            route,
-            params,
-          ),
-        }
-      }
-      return { success: true, data: result?.content ?? result }
-    } catch (err: any) {
-      const rawErr = err?.message || String(err)
-      return { success: false, rawErr, error: enhanceMcpError(rawErr, route, params) }
-    }
-  }
-
-  let outcome = await runOnce()
-  const durationMs = Date.now() - callStartedAt
-
-  // P2: access denied under home → L2 offer to add allow-dir, then one retry
-  if (!outcome.success && outcome.rawErr) {
-    const expanded = await tryExpandFilesystemAllowDirOnDenial({
-      route,
-      params,
-      rawErr: outcome.rawErr,
-      toolName,
-      ws,
-    })
-    if (expanded.retried) {
-      if (expanded.ok) {
-        outcome = await runOnce()
-      } else if (expanded.error) {
-        outcome = {
-          success: false,
-          error: enhanceMcpError(expanded.error, route, params),
-        }
-      }
-    }
-  }
-
-  broadcastToClients({
-    type: "mcp.tool_call_finished",
-    serverName: route.serverName,
-    toolName: route.toolName,
-    namespacedName: toolName,
-    durationMs: Date.now() - callStartedAt,
-    success: !!outcome.success,
-    ...(outcome.success ? {} : { error: outcome.error }),
+function bindMcpDispatchFromServerLocals(): void {
+  bindMcpDispatchRuntime({
+    getThreadManager: () => threadManager,
+    securityConfirmations,
+    broadcastToClients,
   })
-  if (outcome.success) return { success: true, data: outcome.data }
-  return { success: false, error: outcome.error || "MCP call failed" }
-}
-
-/**
- * When MCP filesystem denies a path under the user home, ask the user (L2) whether
- * to add that directory to the server's allowlist, then hot-reload + signal retry.
- */
-async function tryExpandFilesystemAllowDirOnDenial(opts: {
-  route: { serverName: string; toolName: string }
-  params: any
-  rawErr: string
-  toolName: string
-  ws: WebSocket
-}): Promise<{ retried: boolean; ok?: boolean; error?: string }> {
-  const { canOfferAllowDirExpand, addFilesystemAllowDir } = await import("./mcp/allow-dir-expand")
-
-  // Pre-check filesystem server + home path BEFORE L2 (Pi nit: no misleading prompt)
-  const pre = canOfferAllowDirExpand({
-    serverName: opts.route.serverName,
-    rawErr: opts.rawErr,
-    params: opts.params,
-  })
-  if (!pre.offer) {
-    // Not applicable — leave original error; do not claim we retried
-    return { retried: false }
-  }
-
-  if (opts.ws.readyState !== WebSocket.OPEN) {
-    return {
-      retried: true,
-      ok: false,
-      error:
-        `MCP path denied (${pre.dir}); extension disconnected — cannot ask to expand allowlist. ` +
-        `Open Side Panel → MCP to add the path manually. Underlying: ${opts.rawErr}`,
-    }
-  }
-
-  logger.info("mcp.allow_dir.propose", {
-    server: opts.route.serverName,
-    tool: opts.route.toolName,
-    dir: pre.dir,
-  })
-
-  const decision = await securityConfirmations.request(
-    (data) => {
-      if (opts.ws.readyState === WebSocket.OPEN) opts.ws.send(JSON.stringify(data))
-    },
-    {
-      toolName: opts.toolName,
-      dangerousApis: ["mcp-allow-dir-expand"],
-      code:
-        `允许 MCP filesystem 访问目录：\n${pre.dir}\n\n` +
-        `仅把该目录加入 allowlist（可在主目录内或之外；不会放开整盘/系统目录）。拒绝则保持当前配置。`,
-      riskLevel: "medium",
-      autoConfirmEligible: false,
-      criticalApis: ["mcp-allow-dir-expand"],
-    },
-    { originWs: opts.ws },
-  )
-
-  if (!decision.approved) {
-    logger.info("mcp.allow_dir.denied", { dir: pre.dir, reason: decision.reason })
-    return {
-      retried: true,
-      ok: false,
-      error:
-        `User declined adding MCP allow-dir ${pre.dir}. Access denied. Underlying: ${opts.rawErr}`,
-    }
-  }
-
-  const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir)
-  if (!added.ok) {
-    return {
-      retried: true,
-      ok: false,
-      error: `Failed to expand allow-dir: ${added.error}. Underlying: ${opts.rawErr}`,
-    }
-  }
-  logger.info("mcp.allow_dir.added", { server: opts.route.serverName, dir: pre.dir })
-  return { retried: true, ok: true }
-}
-
-/**
- * Wrap a raw MCP error message with an actionable hint for the LLM. The LLM
- * has no signal whether to retry (transient), narrow the request (too much
- * data), or skip the tool entirely without these hints — bare "MCP call failed:
- * MCP timeout" leaves it to guess, and the default guess is identical retry.
- *
- * Exported for unit tests (audit item 18).
- */
-export function enhanceMcpError(
-  rawErr: string,
-  route: { serverName: string; toolName: string },
-  params: any,
-): string {
-  const ctx = `MCP ${route.serverName}/${route.toolName}`
-  // Timeout — the server may be slow / busy / hung. Suggest retry + narrowing.
-  if (/MCP timeout/i.test(rawErr)) {
-    const argHint = params && typeof params === "object" && Object.keys(params).length > 0
-      ? " or try smaller/simpler arguments"
-      : ""
-    return `MCP call to ${ctx} timed out. The server may be slow, busy, or hung. You can retry once${argHint}, or skip this tool and continue. Underlying error: ${rawErr}`
-  }
-  // Abort (chat.abort fired or external cancellation)
-  if (/MCP call aborted/i.test(rawErr)) {
-    return `MCP call to ${ctx} was cancelled (likely because the user clicked stop or a new chat replaced this one). Do not retry automatically; wait for the user's next instruction.`
-  }
-  // Server not connected / disconnected mid-call — usually transient (restart
-  // in progress, or applyConfig diff triggered a stop+start).
-  if (/not connected|Connection Closed|disconnect|EPIPE|ECONNRESET/i.test(rawErr)) {
-    return `MCP server ${route.serverName} is unavailable right now (status: disconnected / restarting). Wait a moment and retry, or pick a different tool. Underlying error: ${rawErr}`
-  }
-  // Server-not-found — config issue, not transient.
-  if (/MCP server .* not found/i.test(rawErr)) {
-    return `${rawErr} This usually means the server was removed from the config or has not finished starting yet. Check the MCP panel and retry.`
-  }
-  // Capability-gating error — caller is asking for something the server doesn't support.
-  if (/does not advertise/i.test(rawErr)) {
-    return `${rawErr} Use a different tool that the server actually exposes.`
-  }
-  // Official filesystem server: create nested path without parents (thread 6zhrh6).
-  // Keep tokens "parent directory" / "does not exist" for classifyError recoverability.
-  // Write-like tools get mkdir guidance; read tools get "path missing / list parent" (Pi nit 5).
-  if (/parent directory does not exist/i.test(rawErr) || /ENOENT/i.test(rawErr)) {
-    const pathHint =
-      params && typeof params === "object"
-        ? String((params as any).path || (params as any).parent || "")
-        : ""
-    const pathPart = pathHint ? ` (path: ${pathHint})` : ""
-    const writeLike = /write|create|mkdir|move|copy|edit|append|delete|remove|unlink|rename|put|save/i.test(
-      route.toolName || "",
-    )
-    if (writeLike || /parent directory does not exist/i.test(rawErr)) {
-      return (
-        `MCP filesystem path missing parent${pathPart}. ` +
-        `parent directory does not exist — call ensure_project_dir first, or create_directory ` +
-        `on each missing segment under an allowed root, then retry the write. ` +
-        `Do not invent paths outside MCP allow-dirs. Underlying: ${rawErr}`
-      )
-    }
-    return (
-      `MCP filesystem path not found${pathPart}. ` +
-      `List the parent directory or correct the path, then retry. Underlying: ${rawErr}`
-    )
-  }
-  // Path outside allowlist — user may need MCP panel allow-dir (not god-mode).
-  if (
-    /access denied|not allowed|outside|allowed director/i.test(rawErr) ||
-    /path.*not.*within/i.test(rawErr)
-  ) {
-    return (
-      `MCP ${route.serverName} denied path access (not in allowlist or roots). ` +
-      `Ask the user to open Side Panel → MCP → edit filesystem server → add the parent directory ` +
-      `to allow paths (or use a path under already-allowed roots such as home). ` +
-      `God-mode does not expand MCP allow-dirs. Underlying: ${rawErr}`
-    )
-  }
-  // Fallback — keep the original but prefix with context so the LLM knows which
-  // server/tool produced it (multi-server setups would otherwise be ambiguous).
-  return `MCP call to ${ctx} failed: ${rawErr}`
-}
-
-/** Execute mcp_list_resources / mcp_read_resource / mcp_get_prompt.
- *
- *  §6.3 Phase 2-A (follow-up C): this is a SEPARATE MCP dispatch path from
- *  executeMcpTool — the meta-tools are not namespaced (`isMcpNamespaced` is
- *  false), so Phase 1's capability gate never saw them. Historically this
- *  function had NO gate at all, so `mcp_read_resource({server, uri})` read
- *  arbitrary URIs (file:///etc/passwd, data:, http://…) on a trusted server
- *  zero-confirmation. Now: mcp_read_resource / mcp_get_prompt force-confirm
- *  (CRITICAL_MCP_META_TOOLS, never cached, god-mode-unaware — mirror of Phase 1);
- *  mcp_list_resources is gated purely by trust_level (D8-consistent). */
-async function executeMcpMetaTool(
-  toolName: string,
-  params: any,
-  sessionId: string,
-  ws: WebSocket,
-): Promise<{ success: boolean; data?: any; error?: string }> {
-  const manager = getMcpManager()
-  const args = params || {}
-  const serverName = String(args.server || "").trim()
-  if (!serverName) return { success: false, error: "MCP server name is required" }
-
-  const forceMetaConfirm = CRITICAL_MCP_META_TOOLS.has(toolName)
-  const configuredTrustLevel = manager.getTrustLevel(serverName) ?? "first-use"
-  const cache = getMcpConfirmCache()
-  const cacheKey = { sessionId, serverName, toolName }
-  const needsConfirm =
-    forceMetaConfirm ||
-    configuredTrustLevel === "manual" ||
-    (configuredTrustLevel === "first-use" && !cache.isApproved(cacheKey))
-  const securityConfigMeta = getConfig().security
-  const userFullAutonomyCruiseMeta =
-    securityConfigMeta?.auto_approve_dangerous === true &&
-    securityConfigMeta?.auto_approve_enterprise_tools === true &&
-    securityConfigMeta?.allow_all_schemes === true
-
-  if (needsConfirm && userFullAutonomyCruiseMeta) {
-    logger.info("mcp.meta.confirm.waived", {
-      tool: toolName,
-      server: serverName,
-      trust_level: configuredTrustLevel,
-      session: sessionId,
-      force_confirm_would_have: forceMetaConfirm,
-      reason: "full_autonomy_cruise",
-    })
-  } else if (needsConfirm) {
-    if (ws.readyState !== WebSocket.OPEN) {
-      return {
-        success: false,
-        error: `Security Block: MCP meta-tool ${toolName} (${serverName}) cannot be confirmed (extension disconnected)`,
-      }
-    }
-    const securityConfig = securityConfigMeta
-    // Capability label for the audit/UI (the meta-tool's operation kind).
-    const metaCap = toolName === "mcp_read_resource" ? "resource-read" : "prompt-injection"
-    logger.info("mcp.meta.confirm.requested", {
-      tool: toolName, server: serverName, trust_level: configuredTrustLevel,
-      session: sessionId, force_confirm: forceMetaConfirm,
-    })
-    const decision = await securityConfirmations.request(
-      (data) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data)) },
-      {
-        toolName,
-        dangerousApis: forceMetaConfirm ? [metaCap] : [],
-        code: safeJsonStringify(params, 1200),
-        riskLevel: forceMetaConfirm ? "high" : "medium",
-        ...(forceMetaConfirm ? { criticalApis: [metaCap], autoConfirmEligible: false } : {}),
-      },
-      // Trust multi-peer (P1-2): MCP meta confirm bound to requesting socket.
-      { originWs: ws },
-    )
-    if (!decision.approved) {
-      const reason = decision.reason === "approved" ? "unavailable" : decision.reason
-      if (forceMetaConfirm) {
-        logger.warn("security.mcp_meta_critical_denied", {
-          tool: toolName, server: serverName,
-          god_mode_active: securityConfig.allow_all_schemes === true,
-          auto_approve_active: securityConfig.auto_approve_dangerous === true,
-          trust_level: configuredTrustLevel, reason,
-        })
-      }
-      return {
-        success: false,
-        error: `Security Block: MCP meta-tool ${toolName} (${serverName}) ${reason} by user`,
-      }
-    }
-    // Only cache first-use approvals for NON-critical meta-tools (mcp_list_resources).
-    // Critical meta-tools confirm every time (never cached).
-    if (configuredTrustLevel === "first-use" && !forceMetaConfirm) {
-      cache.approve(cacheKey)
-    }
-    if (forceMetaConfirm) {
-      logger.warn("security.mcp_meta_critical_confirmed", {
-        tool: toolName, server: serverName,
-        god_mode_active: securityConfig.allow_all_schemes === true,
-        auto_approve_active: securityConfig.auto_approve_dangerous === true,
-        trust_level: configuredTrustLevel,
-      })
-    }
-  } else if (configuredTrustLevel === "first-use") {
-    cache.recordCall(cacheKey)
-  }
-
-  try {
-    switch (toolName) {
-      case "mcp_list_resources": {
-        const resources = await manager.listResources(serverName)
-        return { success: true, data: { server: serverName, resources } }
-      }
-      case "mcp_read_resource": {
-        const uri = String(args.uri || "").trim()
-        if (!uri) return { success: false, error: "Resource uri is required" }
-        const result = await manager.readResource(serverName, uri)
-        return { success: true, data: result }
-      }
-      case "mcp_get_prompt": {
-        const name = String(args.name || "").trim()
-        if (!name) return { success: false, error: "Prompt name is required" }
-        const result = await manager.getPrompt(serverName, name, args.arguments)
-        return { success: true, data: result }
-      }
-      default:
-        return { success: false, error: `Unknown MCP meta tool: ${toolName}` }
-    }
-  } catch (err: any) {
-    const rawErr = err.message || String(err)
-    // Capability mismatch: give the LLM concrete guidance toward namespaced tools.
-    if (/does not advertise/i.test(rawErr)) {
-      const client = manager.listServers().find((s) => s.name === serverName)
-      const toolNames = client?.tools.map((t) => `mcp__${serverName}__${t.name}`) ?? []
-      const toolHint = toolNames.length > 0
-        ? ` Available namespaced tools on this server: ${toolNames.join(", ")}.`
-        : ""
-      return {
-        success: false,
-        error: `${rawErr}${toolHint} Do not retry mcp_list_resources / mcp_read_resource / mcp_get_prompt against this server; use the namespaced tools instead.`,
-      }
-    }
-    return { success: false, error: rawErr }
-  }
-}
-
-function safeJsonStringify(value: any, limit: number): string {
-  try {
-    const s = JSON.stringify(value ?? {})
-    return s.length > limit ? s.slice(0, limit) + "…" : s
-  } catch {
-    return String(value)
-  }
-}
-
-function extractMcpError(result: any): string {
-  if (!result) return "unknown error"
-  if (Array.isArray(result.content)) {
-    for (const item of result.content) {
-      if (item?.text) return String(item.text)
-      if (typeof item === "string") return item
-    }
-  }
-  return JSON.stringify(result).slice(0, 500)
 }
 
 /**
@@ -2286,6 +1712,11 @@ export function broadcastToClients(data: any): void {
     }
   }
 }
+
+// Eager bind so createToolExecutor MCP path works in integration tests that skip
+// full initServices (re-bound after initServices / seedThreadManagerForTests).
+// Placed after broadcastToClients so the reference is definitely initialized.
+bindMcpDispatchFromServerLocals()
 
 /**
  * Redact secrets from a CompanionConfig (or partial) before broadcasting
