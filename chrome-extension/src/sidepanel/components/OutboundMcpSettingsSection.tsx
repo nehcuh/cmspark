@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
+import { SectionHeader } from "../ui/SectionHeader"
 
 type GrantRow = {
   id: string
@@ -149,7 +150,7 @@ export function OutboundMcpSettingsSection() {
 
   return (
     <div>
-      <div style={styles.sectionTitle}>Outbound MCP 调用方授权</div>
+      <SectionHeader title="Outbound MCP 调用方授权" />
       <div style={styles.helpText}>
         把浏览器能力导出给 Grok / Claude Code 等时使用。Grant 与扩展配对密钥（ws_secret）分离（ADR-022 L4+）。
         Token 只在签发时显示一次；请写入 IDE 的 <code>CMSPARK_OUTBOUND_GRANT</code>。
@@ -324,14 +325,6 @@ export function OutboundMcpSettingsSection() {
 }
 
 const styles: Record<string, CSSProperties> = {
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: 700,
-    color: tokens.textSecondary,
-    marginBottom: 8,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
   field: { marginBottom: 8 },
   label: {
     display: "block",

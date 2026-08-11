@@ -156,9 +156,14 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 - Hierarchy: **stream first, status second, assembly third**
 
 ### Motion
-- Phase 1 freeze: `transitionFast` 150ms / `transition` 220ms (tighten in Phase 3)
+- Phase 3: `transitionFast` **120ms** / `transition` **180ms**
 - LIVE pulse on Cockpit L2 chip only; **`prefers-reduced-motion: reduce` disables animations** (Panel App + Cockpit shell)
+
+### Shared chrome (Phase 2b)
+- `SectionHeader` — secondary panel section titles (13/600)
+- `popupMenuStyles` — ⋯ menus (StatusRail / ThreadList / MCP / Apps)
+- `PanelBanner` — disconnected / warn / danger / info strips
 
 ---
 
-*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B; **Precision Instrument Desk Phase 1** shell (flat canvas, radius 14/16, no glass); **Phase 2a** Settings/MCP/Apps/Packs secondary panels token-only (no ad-hoc product hex).*
+*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B; **Precision Instrument Desk** Phase 1 shell + Phase 2a tokens + Phase 2b density + Phase 3 motion/banners.*

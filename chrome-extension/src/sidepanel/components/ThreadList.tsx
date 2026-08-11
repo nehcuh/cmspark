@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
+import { popupMenuStyles } from "../ui/popupMenuStyles"
 import type { Thread } from "../types"
 import {
   batchNeedsForceExtract,
@@ -1477,7 +1478,7 @@ export function ThreadList() {
                               alignItems: "flex-start",
                               fontSize: 11,
                               padding: "4px 0",
-                              borderBottom: "1px solid #f5f5f5",
+                              borderBottom: `1px solid ${tokens.border}`,
                             }}
                           >
                             <input
@@ -1571,8 +1572,8 @@ const styles: Record<string, React.CSSProperties> = {
     left: 0,
     width: 300,
     maxHeight: 360,
-    background: "#fff",
-    border: "1px solid #e0e0e0",
+    background: tokens.bgElevated,
+    border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 8,
     boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
     zIndex: 51,
@@ -1585,7 +1586,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     padding: "8px 10px",
-    borderBottom: "1px solid #eee",
+    borderBottom: `1px solid ${tokens.border}`,
     gap: 6,
   },
   viewToggle: {
@@ -1607,7 +1608,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   viewBtnActive: {
     border: "none",
-    background: "#fff",
+    background: tokens.bgElevated,
     fontSize: 11,
     padding: "3px 8px",
     borderRadius: 4,
@@ -1619,7 +1620,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   searchRow: {
     padding: "6px 10px",
-    borderBottom: "1px solid #f0f0f0",
+    borderBottom: `1px solid ${tokens.border}`,
   },
   searchInput: {
     width: "100%",
@@ -1633,7 +1634,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   newBtn: {
     background: tokens.accent,
-    color: "#fff",
+    color: tokens.userBubbleText,
     border: "none",
     borderRadius: 4,
     padding: "3px 10px",
@@ -1643,9 +1644,9 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   selectBtn: {
-    background: "#fff",
-    color: "#666",
-    border: "1px solid #ddd",
+    background: tokens.bgElevated,
+    color: tokens.textSecondary,
+    border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 4,
     padding: "3px 8px",
     fontSize: 11,
@@ -1664,40 +1665,15 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "nowrap",
     flexShrink: 0,
   },
-  menuBtn: {
-    background: "#fff",
-    color: "#666",
-    border: "1px solid #ddd",
-    borderRadius: 4,
-    padding: "2px 8px",
-    fontSize: 14,
-    cursor: "pointer",
-    lineHeight: 1.2,
-  },
+  // Phase 2b: same density as StatusRail ⋯ (popupMenuStyles)
+  menuBtn: popupMenuStyles.menuTrigger,
   /** A-4 portal menu — fixed to body, above panel(51) / backdrop(50). */
   menuPortal: {
-    position: "fixed",
-    background: "#fff",
-    border: "1px solid #e0e0e0",
-    borderRadius: 6,
-    boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
+    ...popupMenuStyles.menu,
+    position: "fixed" as const,
     zIndex: 10060,
-    minWidth: 168,
-    overflow: "hidden",
-    fontFamily: tokens.font,
   },
-  menuItem: {
-    display: "block",
-    width: "100%",
-    textAlign: "left",
-    background: "none",
-    border: "none",
-    padding: "8px 12px",
-    fontSize: 12,
-    cursor: "pointer",
-    fontFamily: tokens.font,
-    color: tokens.text,
-  },
+  menuItem: popupMenuStyles.menuItem,
   progressBar: {
     padding: "5px 10px",
     fontSize: 11,
@@ -1709,7 +1685,7 @@ const styles: Record<string, React.CSSProperties> = {
   relatedPanel: {
     padding: "6px 10px",
     borderBottom: `1px solid ${tokens.border}`,
-    background: "#f8fafc",
+    background: tokens.bgMuted,
   },
   relatedItem: {
     display: "block",
@@ -1724,7 +1700,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.accentText,
   },
   tagCloudSection: {
-    borderBottom: "1px solid #f0f0f0",
+    borderBottom: `1px solid ${tokens.border}`,
   },
   tagCloudFoldRow: {
     display: "flex",
@@ -1737,14 +1713,14 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column" as const,
     gap: 4,
     padding: "8px 10px",
-    borderBottom: "1px solid #f0f0f0",
+    borderBottom: `1px solid ${tokens.border}`,
     background: tokens.bgMuted,
   },
   primaryCta: {
     background: tokens.accent,
-    color: "#fff",
+    color: tokens.userBubbleText,
     border: "none",
-    borderRadius: 6,
+    borderRadius: tokens.radiusSm,
     padding: "7px 10px",
     fontSize: 12,
     fontWeight: 600,
@@ -1776,8 +1752,8 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 6,
     padding: "6px 10px",
-    background: "#fafafa",
-    borderBottom: "1px solid #f0f0f0",
+    background: tokens.bgMuted,
+    borderBottom: `1px solid ${tokens.border}`,
     cursor: "pointer",
     userSelect: "none",
   },
@@ -1794,7 +1770,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   threadItem: {
     padding: "8px 12px",
-    borderBottom: "1px solid #f5f5f5",
+    borderBottom: `1px solid ${tokens.border}`,
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
@@ -1893,7 +1869,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   threadId: {
     fontSize: 11,
-    color: "#999",
+    color: tokens.textMuted,
     fontFamily: "monospace",
     marginTop: 2,
   },
@@ -1907,13 +1883,13 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     padding: "8px 10px",
-    borderTop: "1px solid #eee",
-    background: "#fafafa",
+    borderTop: `1px solid ${tokens.border}`,
+    background: tokens.bgMuted,
     gap: 8,
   },
   dangerBtn: {
     background: tokens.danger,
-    color: "#fff",
+    color: tokens.userBubbleText,
     border: "none",
     borderRadius: 4,
     padding: "4px 10px",
@@ -1921,9 +1897,9 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   cleanupPanel: {
-    borderTop: "1px solid #eee",
+    borderTop: `1px solid ${tokens.border}`,
     padding: "10px",
-    background: "#fafafa",
+    background: tokens.bgMuted,
     maxHeight: 260,
     overflowY: "auto",
   },

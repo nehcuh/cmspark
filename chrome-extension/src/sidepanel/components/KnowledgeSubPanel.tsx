@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
+import { SectionHeader } from "../ui/SectionHeader"
 
 export function KnowledgeSubPanel() {
   const { state, dispatch } = useAgentStore()
@@ -444,10 +445,7 @@ export function KnowledgeSubPanel() {
       {/* Grouped knowledge list */}
       {groupedDocs.map(([groupName, docs]) => (
         <div key={groupName}>
-          <div style={styles.sectionHeader}>
-            <span>{groupName}</span>
-            <span style={styles.sectionCount}>{docs.length}</span>
-          </div>
+          <SectionHeader title={groupName} meta={docs.length} />
           {docs.map((doc) => {
             const active = state.activeKnowledgeIds.includes(doc.name)
             const rowBg = manageMode
@@ -682,25 +680,6 @@ const styles: Record<string, React.CSSProperties> = {
     outline: "none",
     background: tokens.bgElevated,
     color: tokens.text,
-  },
-  sectionHeader: {
-    fontSize: 11,
-    fontWeight: 600,
-    fontFamily: tokens.fontMono,
-    color: tokens.accentText,
-    marginTop: 8,
-    marginBottom: 4,
-    paddingBottom: 2,
-    borderBottom: `1px solid ${tokens.border}`,
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  sectionCount: {
-    fontSize: 10,
-    fontWeight: 500,
-    color: tokens.textMuted,
-    fontFamily: tokens.font,
   },
   emptyText: {
     color: tokens.textSecondary,
