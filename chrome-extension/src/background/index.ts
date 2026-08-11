@@ -22,6 +22,12 @@ import {
   openOrFocusCockpit,
 } from "./cockpit-window"
 import {
+  openOrFocusThreadGraph,
+  prepareThreadGraphSnapshot,
+  readThreadGraphSnapshot,
+  type ThreadGraphSlim,
+} from "./thread-graph"
+import {
   getHydrateSnapshot,
   noteComputerTaskEvent,
   noteSecurityConfirmationGone,
@@ -1216,6 +1222,60 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         } catch (e: any) {
           sendResponse({ ok: false, error: e?.message || String(e) })
         }
+        return true
+      }
+
+      // Thread graph (Obsidian-style full-page tab) — design TG-1…TG-5
+      case "thread_graph.prepare": {
+        const threads = (Array.isArray(message.threads) ? message.threads : []) as ThreadGraphSlim[]
+        const focusId = message.focus_id || message.focusId || null
+        prepareThreadGraphSnapshot(threads, focusId)
+          .then((snap) => sendResponse({ ok: true, count: snap.threads.length, ts: snap.ts }))
+          .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+      case "thread_graph.open": {
+        const threads = (Array.isArray(message.threads) ? message.threads : null) as ThreadGraphSlim[] | null
+        const focusId = message.focus_id || message.focusId || null
+        const run = async () => {
+          if (threads) await prepareThreadGraphSnapshot(threads, focusId)
+          const tabId = await openOrFocusThreadGraph(focusId)
+          return { ok: tabId != null, tabId }
+        }
+        run()
+          .then((r) => sendResponse(r))
+          .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+      case "thread_graph.bootstrap": {
+        // Dual-review nit: single contract — read session snapshot only
+        readThreadGraphSnapshot()
+          .then((snap) => sendResponse({ ok: true, snapshot: snap }))
+          .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+      case "thread_graph.open_thread": {
+        const threadId = message.thread_id || message.threadId
+        if (!threadId || typeof threadId !== "string") {
+          sendResponse({ ok: false, error: "thread_id required" })
+          return true
+        }
+        // Companion + side panel store
+        wsClient.send({ type: "thread.select", thread_id: threadId })
+        // Notify side panel pages (graph stays open — TG-3)
+        try {
+          chrome.runtime.sendMessage({ type: "thread_graph.thread_selected", thread_id: threadId })
+        } catch {
+          /* no listeners */
+        }
+        // Focus side panel if possible
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          const winId = tabs[0]?.windowId
+          if (winId != null && chrome.sidePanel?.open) {
+            chrome.sidePanel.open({ windowId: winId }).catch(() => {})
+          }
+        })
+        sendResponse({ ok: true })
         return true
       }
 

@@ -1,0 +1,8 @@
+{
+  "batch": "thread-graph-obsidian-view",
+  "timestamp": "20260811-174739",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-graph-obsidian-view-claude-20260811-174739.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-graph-obsidian-view-pi-20260811-174739.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-graph-obsidian-view-diff-20260811-174739.patch"
+}

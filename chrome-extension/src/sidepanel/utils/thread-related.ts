@@ -168,14 +168,30 @@ export function findRelatedThreads(
   return hits.slice(0, Math.max(0, Math.min(20, limit)))
 }
 
+export type RelatedEdgeKind = "hard" | "soft"
+
+export type RelatedEdge = {
+  a: string
+  b: string
+  score: number
+  shared_tags: string[]
+  /** hard = at least one shared tag; soft = TF/time only (dual-review nit). */
+  kind: RelatedEdgeKind
+}
+
+/**
+ * Build undirected relatedness edges for graph view.
+ * Full-page graph uses maxEdges=200 (canvas); side-panel related-3 stays on findRelatedThreads.
+ */
 export function buildRelatedEdges(
   threads: RelatedThreadInput[],
   opts?: { minScore?: number; maxEdges?: number },
-): Array<{ a: string; b: string; score: number; shared_tags: string[] }> {
+): RelatedEdge[] {
   const live = threads.filter((t) => t?.id && !t.trashed_at)
   const minScore = opts?.minScore ?? 0.15
+  // Full-page canvas can show more edges than the old side-panel list (80).
   const maxEdges = opts?.maxEdges ?? 200
-  const edges: Array<{ a: string; b: string; score: number; shared_tags: string[] }> = []
+  const edges: RelatedEdge[] = []
   for (let i = 0; i < live.length; i++) {
     for (let j = i + 1; j < live.length; j++) {
       const hit = scoreRelatedPair(live[i], live[j])
@@ -185,6 +201,7 @@ export function buildRelatedEdges(
         b: live[j].id,
         score: hit.score,
         shared_tags: hit.shared_tags,
+        kind: hit.shared_tags.length > 0 ? "hard" : "soft",
       })
     }
   }

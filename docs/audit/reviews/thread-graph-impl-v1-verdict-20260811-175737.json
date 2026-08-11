@@ -1,0 +1,8 @@
+{
+  "batch": "thread-graph-impl-v1",
+  "timestamp": "20260811-175737",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-graph-impl-v1-claude-20260811-175737.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-graph-impl-v1-pi-20260811-175737.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-graph-impl-v1-diff-20260811-175737.patch"
+}

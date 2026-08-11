@@ -49,6 +49,12 @@
     "src/notebooklm/rpc-client.ts",
     "src/sidepanel/hooks/useModalDialog.ts",
     "src/sidepanel/ui/tokens.ts",
+    "src/sidepanel/utils/thread-related.ts",
+    "src/sidepanel/utils/thread-timeline.ts",
+    "src/thread-graph/force-layout.ts",
+    "src/background/thread-graph.ts",
+    "src/background/cockpit-window.ts",
+    "src/sidepanel/mode/mode-controller.ts",
     "src/cockpit/cockpit-status.ts",
     "tests/**/*.ts"
   ],

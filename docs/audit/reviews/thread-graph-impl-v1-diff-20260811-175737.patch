@@ -1,0 +1,681 @@
+# Dual external review context
+batch: thread-graph-impl-v1
+base: HEAD
+time: 20260811-175737
+
+f6ed181
+
+ M chrome-extension/assets/CMspark.iconset/icon_128x128.png
+ M chrome-extension/assets/CMspark.iconset/icon_128x128@2x.png
+ M chrome-extension/assets/CMspark.iconset/icon_16x16.png
+ M chrome-extension/assets/CMspark.iconset/icon_16x16@2x.png
+ M chrome-extension/assets/CMspark.iconset/icon_256x256.png
+ M chrome-extension/assets/CMspark.iconset/icon_256x256@2x.png
+ M chrome-extension/assets/CMspark.iconset/icon_32x32.png
+ M chrome-extension/assets/CMspark.iconset/icon_32x32@2x.png
+ M chrome-extension/assets/CMspark.iconset/icon_512x512.png
+ M chrome-extension/assets/CMspark.iconset/icon_512x512@2x.png
+ M chrome-extension/assets/icon.png
+ M chrome-extension/assets/icon128.png
+ M chrome-extension/assets/icon16.png
+ M chrome-extension/assets/icon32.png
+ M chrome-extension/assets/icon48.png
+ M chrome-extension/assets/icon64.png
+ M chrome-extension/scripts/generate-icons.mjs
+ M chrome-extension/src/background/index.ts
+ M chrome-extension/src/sidepanel/components/ThreadList.tsx
+ M chrome-extension/src/sidepanel/utils/thread-related.ts
+ M chrome-extension/tests/thread-related.test.ts
+ M chrome-extension/tsconfig.test.json
+ M companion/src/host-use/darwin/host-integrity.ts
+?? chrome-extension/src/background/thread-graph.ts
+?? chrome-extension/src/tabs/thread-graph.tsx
+?? chrome-extension/src/thread-graph/
+?? chrome-extension/tests/force-layout.test.ts
+?? chrome-extension/tests/thread-graph-bg.test.ts
+?? docs/audit/reviews/thread-graph-impl-v1-diff-20260811-175737.patch
+?? docs/audit/reviews/thread-graph-impl-v1-dual-review-prompt-20260811.md
+?? docs/audit/reviews/thread-graph-obsidian-view-claude-20260811-174739.md
+?? docs/audit/reviews/thread-graph-obsidian-view-diff-20260811-174739.patch
+?? docs/audit/reviews/thread-graph-obsidian-view-dual-review-prompt-20260811.md
+?? docs/audit/reviews/thread-graph-obsidian-view-pi-20260811-174739.md
+?? docs/audit/reviews/thread-graph-obsidian-view-verdict-20260811-174739.json
+?? docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
+
+## Diff (git diff + staged)
+ .../assets/CMspark.iconset/icon_128x128.png        | Bin 36424 -> 36971 bytes
+ .../assets/CMspark.iconset/icon_128x128@2x.png     | Bin 116683 -> 117432 bytes
+ .../assets/CMspark.iconset/icon_16x16.png          | Bin 903 -> 220 bytes
+ .../assets/CMspark.iconset/icon_16x16@2x.png       | Bin 3032 -> 372 bytes
+ .../assets/CMspark.iconset/icon_256x256.png        | Bin 116683 -> 117432 bytes
+ .../assets/CMspark.iconset/icon_256x256@2x.png     | Bin 328574 -> 329197 bytes
+ .../assets/CMspark.iconset/icon_32x32.png          | Bin 3032 -> 372 bytes
+ .../assets/CMspark.iconset/icon_32x32@2x.png       | Bin 10596 -> 10991 bytes
+ .../assets/CMspark.iconset/icon_512x512.png        | Bin 328574 -> 329197 bytes
+ .../assets/CMspark.iconset/icon_512x512@2x.png     | Bin 788319 -> 790413 bytes
+ chrome-extension/assets/icon.png                   | Bin 36424 -> 36971 bytes
+ chrome-extension/assets/icon128.png                | Bin 36424 -> 36971 bytes
+ chrome-extension/assets/icon16.png                 | Bin 903 -> 220 bytes
+ chrome-extension/assets/icon32.png                 | Bin 3032 -> 372 bytes
+ chrome-extension/assets/icon48.png                 | Bin 6307 -> 6648 bytes
+ chrome-extension/assets/icon64.png                 | Bin 10596 -> 10991 bytes
+ chrome-extension/scripts/generate-icons.mjs        | 129 +++++++++++++++--
+ chrome-extension/src/background/index.ts           |  60 ++++++++
+ .../src/sidepanel/components/ThreadList.tsx        | 160 ++++++---------------
+ .../src/sidepanel/utils/thread-related.ts          |  21 ++-
+ chrome-extension/tests/thread-related.test.ts      |  22 +++
+ chrome-extension/tsconfig.test.json                |   6 +
+ companion/src/host-use/darwin/host-integrity.ts    |   2 +-
+ 23 files changed, 276 insertions(+), 124 deletions(-)
+
+diff --git a/chrome-extension/assets/CMspark.iconset/icon_128x128.png b/chrome-extension/assets/CMspark.iconset/icon_128x128.png
+index 68c77cd..f448fc4 100644
+Binary files a/chrome-extension/assets/CMspark.iconset/icon_128x128.png and b/chrome-extension/assets/CMspark.iconset/icon_128x128.png differ
+diff --git a/chrome-extension/assets/CMspark.iconset/icon_128x128@2x.png b/chrome-extension/assets/CMspark.iconset/icon_128x128@2x.png
+index 7fadc26..c1df9a6 100644
+Binary files a/chrome-extension/assets/CMspark.iconset/icon_128x128@2x.png and b/chrome-extension/assets/CMspark.iconset/icon_128x128@2x.png differ
+diff --git a/chrome-extension/assets/CMspark.iconset/icon_16x16.png b/chrome-extension/assets/CMspark.iconset/icon_16x16.png
+index a79dad2..8f339d1 100644
+Binary files a/chrome-extension/assets/CMspark.iconset/icon_16x16.png and b/chrome-extension/assets/CMspark.iconset/icon_16x16.png differ
+diff --git a/chrome-extension/assets/CMspark.iconset/icon_16x16@2x.png b/chrome-extension/assets/CMspark.iconset/icon_16x16@2x.png
+index e867c15..69b333c 100644
+Binary files a/chrome-extension/assets/CMspark.iconset/icon_16x16@2x.png and b/chrome-extension/assets/CMspark.iconset/icon_16x16@2x.png differ
+diff --git a/chrome-extension/assets/CMspark.iconset/icon_256x256.png b/chrome-extension/assets/CMspark.iconset/icon_256x256.png
+index 7fadc26..c1df9a6 100644
+Binary files a/chrome-extension/assets/CMspark.iconset/icon_256x256.png and b/chrome-extension/assets/CMspark.iconset/icon_256x256.png differ
+diff --git a/chrome-extension/assets/CMspark.iconset/icon_256x256@2x.png b/chrome-extension/assets/CMspark.iconset/icon_256x256@2x.png
+index 66774a3..4c7dcfd 100644
+Binary files a/chrome-extension/assets/CMspark.iconset/icon_256x256@2x.png and b/chrome-extension/assets/CMspark.iconset/icon_256x256@2x.png differ
+diff --git a/chrome-extension/assets/CMspark.iconset/icon_32x32.png b/chrome-extension/assets/CMspark.iconset/icon_32x32.png
+index e867c15..69b333c 100644
+Binary files a/chrome-extension/assets/CMspark.iconset/icon_32x32.png and b/chrome-extension/assets/CMspark.iconset/icon_32x32.png differ
+diff --git a/chrome-extension/assets/CMspark.iconset/icon_32x32@2x.png b/chrome-extension/assets/CMspark.iconset/icon_32x32@2x.png
+index 8ba4e2b..79bc12f 100644
+Binary files a/chrome-extension/assets/CMspark.iconset/icon_32x32@2x.png and b/chrome-extension/assets/CMspark.iconset/icon_32x32@2x.png differ
+diff --git a/chrome-extension/assets/CMspark.iconset/icon_512x512.png b/chrome-extension/assets/CMspark.iconset/icon_512x512.png
+index 66774a3..4c7dcfd 100644
+Binary files a/chrome-extension/assets/CMspark.iconset/icon_512x512.png and b/chrome-extension/assets/CMspark.iconset/icon_512x512.png differ
+diff --git a/chrome-extension/assets/CMspark.iconset/icon_512x512@2x.png b/chrome-extension/assets/CMspark.iconset/icon_512x512@2x.png
+index 59ed224..1d6ca00 100644
+Binary files a/chrome-extension/assets/CMspark.iconset/icon_512x512@2x.png and b/chrome-extension/assets/CMspark.iconset/icon_512x512@2x.png differ
+diff --git a/chrome-extension/assets/icon.png b/chrome-extension/assets/icon.png
+index 68c77cd..f448fc4 100644
+Binary files a/chrome-extension/assets/icon.png and b/chrome-extension/assets/icon.png differ
+diff --git a/chrome-extension/assets/icon128.png b/chrome-extension/assets/icon128.png
+index 68c77cd..f448fc4 100644
+Binary files a/chrome-extension/assets/icon128.png and b/chrome-extension/assets/icon128.png differ
+diff --git a/chrome-extension/assets/icon16.png b/chrome-extension/assets/icon16.png
+index a79dad2..8f339d1 100644
+Binary files a/chrome-extension/assets/icon16.png and b/chrome-extension/assets/icon16.png differ
+diff --git a/chrome-extension/assets/icon32.png b/chrome-extension/assets/icon32.png
+index e867c15..69b333c 100644
+Binary files a/chrome-extension/assets/icon32.png and b/chrome-extension/assets/icon32.png differ
+diff --git a/chrome-extension/assets/icon48.png b/chrome-extension/assets/icon48.png
+index 3024638..d328a47 100644
+Binary files a/chrome-extension/assets/icon48.png and b/chrome-extension/assets/icon48.png differ
+diff --git a/chrome-extension/assets/icon64.png b/chrome-extension/assets/icon64.png
+index 8ba4e2b..79bc12f 100644
+Binary files a/chrome-extension/assets/icon64.png and b/chrome-extension/assets/icon64.png differ
+diff --git a/chrome-extension/scripts/generate-icons.mjs b/chrome-extension/scripts/generate-icons.mjs
+index 48e3f47..ae67628 100644
+--- a/chrome-extension/scripts/generate-icons.mjs
++++ b/chrome-extension/scripts/generate-icons.mjs
+@@ -123,6 +123,116 @@ function renderPortal(size, colorScheme = "green") {
+   return buf
+ }
+ 
++/**
++ * Toolbar-scale mark (16 / 32): integer-aligned ring + spark.
++ * Portal noise looks muddy at ≤32px; Chrome uses these sizes on the toolbar
++ * (often 16 CSS px → 32 physical on Retina). Keep high contrast, hard edges.
++ */
++function renderCrispMark(size, colorScheme = "green") {
++  const buf = Buffer.alloc(size * size * 4)
++  const cx = (size - 1) / 2
++  const cy = (size - 1) / 2
++  // Outer radius leaves ~1px padding; stroke ~15–20% of size
++  const rOuter = size * 0.42
++  const stroke = Math.max(1.25, size * 0.16)
++  const rInner = rOuter - stroke
++
++  const palettes = {
++    // Neon green ring on deep void — matches portal brand at small size
++    green:  { ring: [57, 255, 80], core: [20, 40, 24], spark: [220, 255, 220], void: [8, 12, 10] },
++    // Quiet Premium indigo fallback
++    indigo: { ring: [99, 102, 241], core: [30, 27, 75], spark: [238, 242, 255], void: [15, 23, 42] },
++  }
++  const pal = palettes[colorScheme] || palettes.green
++
++  for (let py = 0; py < size; py++) {
++    for (let px = 0; px < size; px++) {
++      const idx = (py * size + px) * 4
++      const dx = px - cx
++      const dy = py - cy
++      const dist = Math.sqrt(dx * dx + dy * dy)
++
++      // Annular ring with ~1px AA (no multi-pixel glow)
++      const outerEdge = 1 - smoothstep(rOuter - 0.5, rOuter + 0.5, dist)
++      const innerEdge = smoothstep(rInner - 0.5, rInner + 0.5, dist)
++      const aRing = outerEdge * innerEdge
++
++      // Interior disc (portal hole)
++      const aCore = 1 - smoothstep(rInner - 0.55, rInner + 0.15, dist)
++
++      // Center spark: axis-aligned diamond (reads at 16px)
++      const ax = Math.abs(dx)
++      const ay = Math.abs(dy)
++      const sparkR = Math.max(1.2, size * 0.13)
++      const diamond = (ax + ay) / Math.SQRT2
++      const aSpark = (1 - smoothstep(sparkR - 0.45, sparkR + 0.35, diamond)) * aCore
++
++      let r = 0, g = 0, b = 0, a = 0
++
++      if (aCore > 0.01) {
++        r = pal.void[0]
++        g = pal.void[1]
++        b = pal.void[2]
++        a = aCore
++      }
++      if (aSpark > 0.02) {
++        const t = Math.min(1, aSpark)
++        r = Math.round(r * (1 - t) + pal.spark[0] * t)
++        g = Math.round(g * (1 - t) + pal.spark[1] * t)
++        b = Math.round(b * (1 - t) + pal.spark[2] * t)
++        a = Math.max(a, t)
++      }
++      if (aRing > 0.01) {
++        const t = aRing
++        r = Math.round(r * (1 - t) + pal.ring[0] * t)
++        g = Math.round(g * (1 - t) + pal.ring[1] * t)
++        b = Math.round(b * (1 - t) + pal.ring[2] * t)
++        a = Math.min(1, a * (1 - t) + t)
++      }
++
++      // Outside stays transparent — soft ambient glow is what made the toolbar icon look soft/blurry
++      buf[idx] = r
++      buf[idx + 1] = g
++      buf[idx + 2] = b
++      buf[idx + 3] = Math.min(255, Math.round(a * 255))
++    }
++  }
++  return buf
++}
++
++/** Render at 2× then box-downsample — sharper than drawing noise at native size. */
++function renderPortalSupersampled(size, colorScheme = "green") {
++  if (size <= 32) return renderCrispMark(size, colorScheme)
++  const hi = size * 2
++  const src = renderPortal(hi, colorScheme)
++  const out = Buffer.alloc(size * size * 4)
++  for (let y = 0; y < size; y++) {
++    for (let x = 0; x < size; x++) {
++      let r = 0, g = 0, b = 0, a = 0
++      for (let oy = 0; oy < 2; oy++) {
++        for (let ox = 0; ox < 2; ox++) {
++          const si = ((y * 2 + oy) * hi + (x * 2 + ox)) * 4
++          const sa = src[si + 3] / 255
++          r += src[si] * sa
++          g += src[si + 1] * sa
++          b += src[si + 2] * sa
++          a += sa
++        }
++      }
++      const di = (y * size + x) * 4
++      if (a < 1e-6) {
++        out[di] = out[di + 1] = out[di + 2] = out[di + 3] = 0
++      } else {
++        out[di] = Math.round(r / a)
++        out[di + 1] = Math.round(g / a)
++        out[di + 2] = Math.round(b / a)
++        out[di + 3] = Math.min(255, Math.round((a / 4) * 255))
++      }
++    }
++  }
++  return out
++}
++
+ // ---------------------------------------------------------------------------
+ // PNG encoder (RGBA)
+ // ---------------------------------------------------------------------------
+@@ -179,19 +289,22 @@ function crc32(buf) {
+ 
+ if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true })
+ 
+-// Chrome extension icons (portal green)
++// Chrome extension icons:
++//  ≤32 → crisp toolbar mark (no swirl noise)
++//  ≥48 → portal supersampled 2× then downscaled
+ for (const size of [16, 32, 48, 64, 128]) {
+-  const pixels = renderPortal(size, "green")
++  const pixels = renderPortalSupersampled(size, "green")
+   const png = encodePNG(size, size, pixels)
+   const out = join(assetsDir, `icon${size}.png`)
+   writeFileSync(out, png)
+-  console.log(`  icon${size}.png (${png.length} bytes)`)
++  const kind = size <= 32 ? "crisp" : "portal@2x"
++  console.log(`  icon${size}.png (${png.length} bytes, ${kind})`)
+ }
+ 
+-// Also write the base icon.png (128px master)
+-const master128 = encodePNG(128, 128, renderPortal(128, "green"))
++// Also write the base icon.png (128px master, supersampled portal)
++const master128 = encodePNG(128, 128, renderPortalSupersampled(128, "green"))
+ writeFileSync(join(assetsDir, "icon.png"), master128)
+-console.log(`  icon.png (${master128.length} bytes)`)
++console.log(`  icon.png (${master128.length} bytes, portal@2x)`)
+ 
+ // Larger icons for macOS .icns (.iconset folder)
+ const iconsetDir = join(assetsDir, "CMspark.iconset")
+@@ -210,9 +323,9 @@ const iconsetSizes = [
+   [1024, "icon_512x512@2x.png"],
+ ]
+ for (const [size, name] of iconsetSizes) {
+-  const png = encodePNG(size, size, renderPortal(size, "green"))
++  const png = encodePNG(size, size, renderPortalSupersampled(size, "green"))
+   writeFileSync(join(iconsetDir, name), png)
+   console.log(`  ${name} (${png.length} bytes)`)
+ }
+ 
+-console.log("\nPortal icon generation complete!")
++console.log("\nPortal icon generation complete (crisp toolbar + supersampled large)!")
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index a58d89c..d82db1b 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -21,6 +21,12 @@ import {
+   focusCockpit,
+   openOrFocusCockpit,
+ } from "./cockpit-window"
++import {
++  openOrFocusThreadGraph,
++  prepareThreadGraphSnapshot,
++  readThreadGraphSnapshot,
++  type ThreadGraphSlim,
++} from "./thread-graph"
+ import {
+   getHydrateSnapshot,
+   noteComputerTaskEvent,
+@@ -1219,6 +1225,60 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+         return true
+       }
+ 
++      // Thread graph (Obsidian-style full-page tab) — design TG-1…TG-5
++      case "thread_graph.prepare": {
++        const threads = (Array.isArray(message.threads) ? message.threads : []) as ThreadGraphSlim[]
++        const focusId = message.focus_id || message.focusId || null
++        prepareThreadGraphSnapshot(threads, focusId)
++          .then((snap) => sendResponse({ ok: true, count: snap.threads.length, ts: snap.ts }))
++          .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
++        return true
++      }
++      case "thread_graph.open": {
++        const threads = (Array.isArray(message.threads) ? message.threads : null) as ThreadGraphSlim[] | null
++        const focusId = message.focus_id || message.focusId || null
++        const run = async () => {
++          if (threads) await prepareThreadGraphSnapshot(threads, focusId)
++          const tabId = await openOrFocusThreadGraph(focusId)
++          return { ok: tabId != null, tabId }
++        }
++        run()
++          .then((r) => sendResponse(r))
++          .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
++        return true
++      }
++      case "thread_graph.bootstrap": {
++        // Dual-review nit: single contract — read session snapshot only
++        readThreadGraphSnapshot()
++          .then((snap) => sendResponse({ ok: true, snapshot: snap }))
++          .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
++        return true
++      }
++      case "thread_graph.open_thread": {
++        const threadId = message.thread_id || message.threadId
++        if (!threadId || typeof threadId !== "string") {
++          sendResponse({ ok: false, error: "thread_id required" })
++          return true
++        }
++        // Companion + side panel store
++        wsClient.send({ type: "thread.select", thread_id: threadId })
++        // Notify side panel pages (graph stays open — TG-3)
++        try {
++          chrome.runtime.sendMessage({ type: "thread_graph.thread_selected", thread_id: threadId })
++        } catch {
++          /* no listeners */
++        }
++        // Focus side panel if possible
++        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
++          const winId = tabs[0]?.windowId
++          if (winId != null && chrome.sidePanel?.open) {
++            chrome.sidePanel.open({ windowId: winId }).catch(() => {})
++          }
++        })
++        sendResponse({ ok: true })
++        return true
++      }
++
+       // UI Mode P1 — L2 Cockpit window lifecycle (does not stop computer tasks)
+       case "cockpit.open": {
+         openOrFocusCockpit()
+diff --git a/chrome-extension/src/sidepanel/components/ThreadList.tsx b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+index 1e9e325..45c46ff 100644
+--- a/chrome-extension/src/sidepanel/components/ThreadList.tsx
++++ b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+@@ -39,10 +39,10 @@ import {
+   type ThreadListExpandState,
+ } from "../utils/thread-timeline"
+ import {
+-  buildRelatedEdges,
+   digestLintStats,
+   findRelatedThreads,
+ } from "../utils/thread-related"
++import type { ThreadGraphSlim } from "../../background/thread-graph"
+ 
+ function generateShortId(): string {
+   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+@@ -125,14 +125,25 @@ export function ThreadList() {
+   >([])
+   const [cleanupSelected, setCleanupSelected] = useState<Set<string>>(() => new Set())
+   const [cleanupDays, setCleanupDays] = useState(30)
+-  /** Wave C: seed for related list; graph popup */
++  /** Wave C: seed for related list; graph focus */
+   const [relatedSeedId, setRelatedSeedId] = useState<string | null>(null)
+   /** Companion thread.related override (local mirror first; WS may refine). */
+   const [relatedFromServer, setRelatedFromServer] = useState<
+     Array<{ thread_id: string; score: number; shared_tags?: string[] }> | null
+   >(null)
+-  const [graphOpen, setGraphOpen] = useState(false)
++
+   const { threads, activeThreadId, threadBusyById, config } = state
++  /** Graph tab → open session (TG-3): keep graph open, switch active thread here. */
++  useEffect(() => {
++    const onMsg = (msg: { type?: string; thread_id?: string }) => {
++      if (msg?.type !== "thread_graph.thread_selected" || !msg.thread_id) return
++      const thr = threads.find((t) => t.id === msg.thread_id)
++      if (thr?.trashed_at) return
++      dispatch({ type: "SET_ACTIVE_THREAD", threadId: msg.thread_id })
++    }
++    chrome.runtime.onMessage.addListener(onMsg)
++    return () => chrome.runtime.onMessage.removeListener(onMsg)
++  }, [dispatch, threads])
+   /** One-shot lazy extract per panel open when settings enabled (B-2). */
+   const lazyDigestRanRef = useRef(false)
+ 
+@@ -376,11 +387,37 @@ export function ThreadList() {
+     return () => window.removeEventListener("cmspark:thread_related", onRel as EventListener)
+   }, [relatedSeedId])
+ 
+-  /** Wave C-3: graph edges (local). */
+-  const graphEdges = useMemo(() => {
+-    if (!graphOpen) return []
+-    return buildRelatedEdges(filtered as Thread[], { minScore: 0.2, maxEdges: 80 })
+-  }, [graphOpen, filtered])
++  /** Open Obsidian-style full-page graph (TG-1/TG-4 — replaces side-panel edge list). */
++  const openThreadGraph = useCallback(() => {
++    const slim: ThreadGraphSlim[] = (threads as Thread[]).map((t) => ({
++      id: t.id,
++      alias: t.alias,
++      updated_at: t.updated_at,
++      created_at: t.created_at,
++      agent_role: (t as { agent_role?: string }).agent_role,
++      trashed_at: (t as { trashed_at?: string | null }).trashed_at ?? null,
++      digest: t.digest
++        ? {
++            tldr: t.digest.tldr,
++            tags: t.digest.tags,
++            bullets: t.digest.bullets,
++            stale: t.digest.stale,
++          }
++        : null,
++    }))
++    chrome.runtime.sendMessage(
++      {
++        type: "thread_graph.open",
++        threads: slim,
++        focus_id: relatedSeedId || activeThreadId || null,
++      },
++      () => {
++        void chrome.runtime.lastError
++      },
++    )
++    setMenuOpen(false)
++    setOpen(false)
++  }, [threads, relatedSeedId, activeThreadId])
+ 
+   /** Wave C-4: lint stats for cleanup helper. */
+   const lintStats = useMemo(
+@@ -1204,10 +1241,8 @@ export function ThreadList() {
+                         <button
+                           type="button"
+                           style={styles.menuItem}
+-                          onClick={() => {
+-                            setGraphOpen(true)
+-                            setMenuOpen(false)
+-                          }}
++                          onClick={openThreadGraph}
++                          title="在新标签页打开力导向关联图（类 Obsidian）"
+                         >
+                           🕸 关联图谱
+                         </button>
+@@ -1500,73 +1535,6 @@ export function ThreadList() {
+             )}
+           </div>
+ 
+-          {graphOpen &&
+-            createPortal(
+-              <div style={styles.graphOverlay} role="dialog" aria-label="关联图谱">
+-                <div style={styles.graphCard}>
+-                  <div
+-                    style={{
+-                      display: "flex",
+-                      justifyContent: "space-between",
+-                      alignItems: "center",
+-                      marginBottom: 8,
+-                    }}
+-                  >
+-                    <strong style={{ fontSize: 13 }}>关联图谱（探索）</strong>
+-                    <button
+-                      type="button"
+-                      style={styles.selectBtn}
+-                      onClick={() => setGraphOpen(false)}
+-                    >
+-                      关闭
+-                    </button>
+-                  </div>
+-                  <div style={{ fontSize: 11, color: tokens.textMuted, marginBottom: 8 }}>
+-                    边 = 共标签 + 要点相似 + 时间邻近 · 不改默认时间轴导航
+-                  </div>
+-                  {graphEdges.length === 0 ? (
+-                    <div style={{ fontSize: 12, color: tokens.textSecondary, padding: 12 }}>
+-                      暂无足够 digest 边。请先为会话提取要点/标签。
+-                    </div>
+-                  ) : (
+-                    <div style={styles.graphList}>
+-                      {graphEdges.slice(0, 40).map((e) => {
+-                        const ta = threads.find((x) => x.id === e.a) as Thread | undefined
+-                        const tb = threads.find((x) => x.id === e.b) as Thread | undefined
+-                        return (
+-                          <div key={`${e.a}-${e.b}`} style={styles.graphEdgeRow}>
+-                            <button
+-                              type="button"
+-                              style={styles.relatedItem}
+-                              onClick={() => {
+-                                handleSelect(e.a)
+-                                setGraphOpen(false)
+-                              }}
+-                            >
+-                              {ta ? displayThreadTitle(ta) : e.a}
+-                            </button>
+-                            <span style={{ color: tokens.textMuted, fontSize: 11 }}>
+-                              ↔ {e.score.toFixed(2)}
+-                            </span>
+-                            <button
+-                              type="button"
+-                              style={styles.relatedItem}
+-                              onClick={() => {
+-                                handleSelect(e.b)
+-                                setGraphOpen(false)
+-                              }}
+-                            >
+-                              {tb ? displayThreadTitle(tb) : e.b}
+-                            </button>
+-                          </div>
+-                        )
+-                      })}
+-                    </div>
+-                  )}
+-                </div>
+-              </div>,
+-              document.body,
+-            )}
+         </>
+       )}
+     </div>
+@@ -1755,40 +1723,6 @@ const styles: Record<string, React.CSSProperties> = {
+     fontFamily: tokens.font,
+     color: tokens.accentText,
+   },
+-  graphOverlay: {
+-    position: "fixed" as const,
+-    inset: 0,
+-    zIndex: 10080,
+-    background: "rgba(0,0,0,0.35)",
+-    display: "flex",
+-    alignItems: "center",
+-    justifyContent: "center",
+-    padding: 12,
+-  },
+-  graphCard: {
+-    width: "min(360px, 100%)",
+-    maxHeight: "80vh",
+-    overflow: "hidden",
+-    display: "flex",
+-    flexDirection: "column" as const,
+-    background: "#fff",
+-    borderRadius: 10,
+-    boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
+-    padding: 12,
+-    fontFamily: tokens.font,
+-  },
+-  graphList: {
+-    overflowY: "auto" as const,
+-    flex: 1,
+-    maxHeight: "60vh",
+-  },
+-  graphEdgeRow: {
+-    display: "flex",
+-    flexDirection: "column" as const,
+-    gap: 2,
+-    padding: "6px 0",
+-    borderBottom: "1px solid #f0f0f0",
+-  },
+   tagCloudSection: {
+     borderBottom: "1px solid #f0f0f0",
+   },
+diff --git a/chrome-extension/src/sidepanel/utils/thread-related.ts b/chrome-extension/src/sidepanel/utils/thread-related.ts
+index 42d018f..52486f2 100644
+--- a/chrome-extension/src/sidepanel/utils/thread-related.ts
++++ b/chrome-extension/src/sidepanel/utils/thread-related.ts
+@@ -168,14 +168,30 @@ export function findRelatedThreads(
+   return hits.slice(0, Math.max(0, Math.min(20, limit)))
+ }
+ 
++export type RelatedEdgeKind = "hard" | "soft"
++
++export type RelatedEdge = {
++  a: string
++  b: string
++  score: number
++  shared_tags: string[]
++  /** hard = at least one shared tag; soft = TF/time only (dual-review nit). */
++  kind: RelatedEdgeKind
++}
++
++/**
++ * Build undirected relatedness edges for graph view.
++ * Full-page graph uses maxEdges=200 (canvas); side-panel related-3 stays on findRelatedThreads.
++ */
+ export function buildRelatedEdges(
+   threads: RelatedThreadInput[],
+   opts?: { minScore?: number; maxEdges?: number },
+-): Array<{ a: string; b: string; score: number; shared_tags: string[] }> {
++): RelatedEdge[] {
+   const live = threads.filter((t) => t?.id && !t.trashed_at)
+   const minScore = opts?.minScore ?? 0.15
++  // Full-page canvas can show more edges than the old side-panel list (80).
+   const maxEdges = opts?.maxEdges ?? 200
+-  const edges: Array<{ a: string; b: string; score: number; shared_tags: string[] }> = []
++  const edges: RelatedEdge[] = []
+   for (let i = 0; i < live.length; i++) {
+     for (let j = i + 1; j < live.length; j++) {
+       const hit = scoreRelatedPair(live[i], live[j])
+@@ -185,6 +201,7 @@ export function buildRelatedEdges(
+         b: live[j].id,
+         score: hit.score,
+         shared_tags: hit.shared_tags,
++        kind: hit.shared_tags.length > 0 ? "hard" : "soft",
+       })
+     }
+   }
+diff --git a/chrome-extension/tests/thread-related.test.ts b/chrome-extension/tests/thread-related.test.ts
+index 5eddfc0..2a9ae7d 100644
+--- a/chrome-extension/tests/thread-related.test.ts
++++ b/chrome-extension/tests/thread-related.test.ts
+@@ -41,6 +41,28 @@ test("buildRelatedEdges: undirected and capped", () => {
+   assert.ok(edges.some((e) => (e.a === "1" && e.b === "2") || (e.a === "2" && e.b === "1")))
+ })
+ 
++test("buildRelatedEdges: kind hard when shared tags, soft when TF-only", () => {
++  const threads = [
++    { id: "1", digest: { tags: ["shared"], tldr: "alpha beta gamma" } },
++    { id: "2", digest: { tags: ["shared"], tldr: "delta epsilon" } },
++    { id: "3", digest: { tags: ["only3"], tldr: "alpha beta gamma zeta" } },
++  ]
++  const edges = buildRelatedEdges(threads, { minScore: 0.01, maxEdges: 20 })
++  const hard = edges.find(
++    (e) =>
++      (e.a === "1" && e.b === "2") || (e.a === "2" && e.b === "1"),
++  )
++  assert.ok(hard, "expected co-tag edge 1-2")
++  assert.equal(hard!.kind, "hard")
++  assert.ok(hard!.shared_tags.includes("shared"))
++  const soft = edges.find(
++    (e) =>
++      ((e.a === "1" && e.b === "3") || (e.a === "3" && e.b === "1")) &&
++      e.shared_tags.length === 0,
++  )
++  if (soft) assert.equal(soft.kind, "soft")
++})
++
+ test("digestLintStats counts untagged/stale", () => {
+   const stats = digestLintStats([
+     { id: "1" },
+diff --git a/chrome-extension/tsconfig.test.json b/chrome-extension/tsconfig.test.json
+index be344cf..708d179 100644
+--- a/chrome-extension/tsconfig.test.json
++++ b/chrome-extension/tsconfig.test.json
+@@ -49,6 +49,12 @@
+     "src/notebooklm/rpc-client.ts",
+     "src/sidepanel/hooks/useModalDialog.ts",
+     "src/sidepanel/ui/tokens.ts",
++    "src/sidepanel/utils/thread-related.ts",
++    "src/sidepanel/utils/thread-timeline.ts",
++    "src/thread-graph/force-layout.ts",
++    "src/background/thread-graph.ts",
++    "src/background/cockpit-window.ts",
++    "src/sidepanel/mode/mode-controller.ts",
+     "src/cockpit/cockpit-status.ts",
+     "tests/**/*.ts"
+   ],
+diff --git a/companion/src/host-use/darwin/host-integrity.ts b/companion/src/host-use/darwin/host-integrity.ts
+index 4663929..564876f 100644
+--- a/companion/src/host-use/darwin/host-integrity.ts
++++ b/companion/src/host-use/darwin/host-integrity.ts
+@@ -51,7 +51,7 @@ export interface HostIntegrityCheck {
+  * MacOS/CMspark is deep-signed and will NOT match this pin; see
+  * codesignProductIdentityOk path in checkHostIntegrity.
+  */
+-export const CMSPARK_HOST_SHA256 = "1d9ac27e2854e329baff402c85271bb5aeecefc5994f440756be36fc49fc5dcd"
++export const CMSPARK_HOST_SHA256 = "bb1216a0fb65f07845cc98c4586a3a55bff2e6164d3f797a0dc7de5cd4c5d180"
+ 
+ /**
+  * True when realpath is inside a macOS .app Contents tree (packaged install).

@@ -39,10 +39,10 @@ import {
   type ThreadListExpandState,
 } from "../utils/thread-timeline"
 import {
-  buildRelatedEdges,
   digestLintStats,
   findRelatedThreads,
 } from "../utils/thread-related"
+import type { ThreadGraphSlim } from "../../background/thread-graph"
 
 function generateShortId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -125,14 +125,25 @@ export function ThreadList() {
   >([])
   const [cleanupSelected, setCleanupSelected] = useState<Set<string>>(() => new Set())
   const [cleanupDays, setCleanupDays] = useState(30)
-  /** Wave C: seed for related list; graph popup */
+  /** Wave C: seed for related list; graph focus */
   const [relatedSeedId, setRelatedSeedId] = useState<string | null>(null)
   /** Companion thread.related override (local mirror first; WS may refine). */
   const [relatedFromServer, setRelatedFromServer] = useState<
     Array<{ thread_id: string; score: number; shared_tags?: string[] }> | null
   >(null)
-  const [graphOpen, setGraphOpen] = useState(false)
+
   const { threads, activeThreadId, threadBusyById, config } = state
+  /** Graph tab → open session (TG-3): keep graph open, switch active thread here. */
+  useEffect(() => {
+    const onMsg = (msg: { type?: string; thread_id?: string }) => {
+      if (msg?.type !== "thread_graph.thread_selected" || !msg.thread_id) return
+      const thr = threads.find((t) => t.id === msg.thread_id)
+      if (thr?.trashed_at) return
+      dispatch({ type: "SET_ACTIVE_THREAD", threadId: msg.thread_id })
+    }
+    chrome.runtime.onMessage.addListener(onMsg)
+    return () => chrome.runtime.onMessage.removeListener(onMsg)
+  }, [dispatch, threads])
   /** One-shot lazy extract per panel open when settings enabled (B-2). */
   const lazyDigestRanRef = useRef(false)
 
@@ -376,11 +387,37 @@ export function ThreadList() {
     return () => window.removeEventListener("cmspark:thread_related", onRel as EventListener)
   }, [relatedSeedId])
 
-  /** Wave C-3: graph edges (local). */
-  const graphEdges = useMemo(() => {
-    if (!graphOpen) return []
-    return buildRelatedEdges(filtered as Thread[], { minScore: 0.2, maxEdges: 80 })
-  }, [graphOpen, filtered])
+  /** Open Obsidian-style full-page graph (TG-1/TG-4 — replaces side-panel edge list). */
+  const openThreadGraph = useCallback(() => {
+    const slim: ThreadGraphSlim[] = (threads as Thread[]).map((t) => ({
+      id: t.id,
+      alias: t.alias,
+      updated_at: t.updated_at,
+      created_at: t.created_at,
+      agent_role: t.agent_role,
+      trashed_at: t.trashed_at ?? null,
+      digest: t.digest
+        ? {
+            tldr: t.digest.tldr,
+            tags: t.digest.tags,
+            bullets: t.digest.bullets,
+            stale: t.digest.stale,
+          }
+        : null,
+    }))
+    chrome.runtime.sendMessage(
+      {
+        type: "thread_graph.open",
+        threads: slim,
+        focus_id: relatedSeedId || activeThreadId || null,
+      },
+      () => {
+        void chrome.runtime.lastError
+      },
+    )
+    setMenuOpen(false)
+    setOpen(false)
+  }, [threads, relatedSeedId, activeThreadId])
 
   /** Wave C-4: lint stats for cleanup helper. */
   const lintStats = useMemo(
@@ -1204,10 +1241,8 @@ export function ThreadList() {
                         <button
                           type="button"
                           style={styles.menuItem}
-                          onClick={() => {
-                            setGraphOpen(true)
-                            setMenuOpen(false)
-                          }}
+                          onClick={openThreadGraph}
+                          title="在新标签页打开力导向关联图（类 Obsidian）"
                         >
                           🕸 关联图谱
                         </button>
@@ -1500,73 +1535,6 @@ export function ThreadList() {
             )}
           </div>
 
-          {graphOpen &&
-            createPortal(
-              <div style={styles.graphOverlay} role="dialog" aria-label="关联图谱">
-                <div style={styles.graphCard}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginBottom: 8,
-                    }}
-                  >
-                    <strong style={{ fontSize: 13 }}>关联图谱（探索）</strong>
-                    <button
-                      type="button"
-                      style={styles.selectBtn}
-                      onClick={() => setGraphOpen(false)}
-                    >
-                      关闭
-                    </button>
-                  </div>
-                  <div style={{ fontSize: 11, color: tokens.textMuted, marginBottom: 8 }}>
-                    边 = 共标签 + 要点相似 + 时间邻近 · 不改默认时间轴导航
-                  </div>
-                  {graphEdges.length === 0 ? (
-                    <div style={{ fontSize: 12, color: tokens.textSecondary, padding: 12 }}>
-                      暂无足够 digest 边。请先为会话提取要点/标签。
-                    </div>
-                  ) : (
-                    <div style={styles.graphList}>
-                      {graphEdges.slice(0, 40).map((e) => {
-                        const ta = threads.find((x) => x.id === e.a) as Thread | undefined
-                        const tb = threads.find((x) => x.id === e.b) as Thread | undefined
-                        return (
-                          <div key={`${e.a}-${e.b}`} style={styles.graphEdgeRow}>
-                            <button
-                              type="button"
-                              style={styles.relatedItem}
-                              onClick={() => {
-                                handleSelect(e.a)
-                                setGraphOpen(false)
-                              }}
-                            >
-                              {ta ? displayThreadTitle(ta) : e.a}
-                            </button>
-                            <span style={{ color: tokens.textMuted, fontSize: 11 }}>
-                              ↔ {e.score.toFixed(2)}
-                            </span>
-                            <button
-                              type="button"
-                              style={styles.relatedItem}
-                              onClick={() => {
-                                handleSelect(e.b)
-                                setGraphOpen(false)
-                              }}
-                            >
-                              {tb ? displayThreadTitle(tb) : e.b}
-                            </button>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>,
-              document.body,
-            )}
         </>
       )}
     </div>
@@ -1754,40 +1722,6 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontFamily: tokens.font,
     color: tokens.accentText,
-  },
-  graphOverlay: {
-    position: "fixed" as const,
-    inset: 0,
-    zIndex: 10080,
-    background: "rgba(0,0,0,0.35)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 12,
-  },
-  graphCard: {
-    width: "min(360px, 100%)",
-    maxHeight: "80vh",
-    overflow: "hidden",
-    display: "flex",
-    flexDirection: "column" as const,
-    background: "#fff",
-    borderRadius: 10,
-    boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
-    padding: 12,
-    fontFamily: tokens.font,
-  },
-  graphList: {
-    overflowY: "auto" as const,
-    flex: 1,
-    maxHeight: "60vh",
-  },
-  graphEdgeRow: {
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 2,
-    padding: "6px 0",
-    borderBottom: "1px solid #f0f0f0",
   },
   tagCloudSection: {
     borderBottom: "1px solid #f0f0f0",
