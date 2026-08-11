@@ -3,7 +3,8 @@
 //
 // FREEZE: cookie trust domain gate + navigate/create_tab/set_tab_url scheme+domain
 // gate live HERE. Do NOT re-inflate createToolExecutor with these blocks.
-// Image fetch gate and browser_download path sandbox stay in server.ts.
+// Image fetch gate → tool/image-fetch-admission.ts (C10-D).
+// browser_download path sandbox stays in server.ts.
 
 import { WebSocket } from "ws"
 import { getConfig } from "../config"
