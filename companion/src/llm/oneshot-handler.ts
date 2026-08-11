@@ -23,6 +23,14 @@ export type LlmOneshotResult = {
 export async function handleLlmOneshot(rest: LlmOneshotRequest): Promise<LlmOneshotResult> {
   const reqId = typeof rest.id === "string" ? rest.id : null
   try {
+    // Validate payload before config so empty content fails deterministically
+    // even when companion LLM is not configured (CI / fresh install).
+    const systemPrompt =
+      typeof rest.system_prompt === "string" ? rest.system_prompt : "You are a helpful assistant."
+    const userContent = typeof rest.user_content === "string" ? rest.user_content : ""
+    if (!userContent.trim()) {
+      return { type: "llm.oneshot_result", id: reqId, ok: false, error: "user_content required" }
+    }
     const config = getConfig()
     const key = config.llm?.api_key
     if (!key || isMaskedApiKey(key)) {
@@ -32,12 +40,6 @@ export async function handleLlmOneshot(rest: LlmOneshotRequest): Promise<LlmOnes
         ok: false,
         error: "companion_llm_not_configured",
       }
-    }
-    const systemPrompt =
-      typeof rest.system_prompt === "string" ? rest.system_prompt : "You are a helpful assistant."
-    const userContent = typeof rest.user_content === "string" ? rest.user_content : ""
-    if (!userContent.trim()) {
-      return { type: "llm.oneshot_result", id: reqId, ok: false, error: "user_content required" }
     }
     const text = await llmExtract({
       systemPrompt,
