@@ -127,10 +127,13 @@ try {
     $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     npm run build 2>&1 | Out-Null
     $ErrorActionPreference = $prevEAP
+    # P0 OPS-01: fail-closed — SEA product without extension is not a valid ship
     if ($LASTEXITCODE -eq 0) { Ok "Chrome extension built" }
-    else { Warn "Chrome extension build failed — extension not included (re-run when network is available)" }
+    else {
+        Fail "Chrome extension build failed (exit=$LASTEXITCODE) — refuse SEA without extension"
+    }
 } catch {
-    Warn "Chrome extension build error: $($_.Exception.Message)"
+    Fail "Chrome extension build error: $($_.Exception.Message)"
 } finally { Pop-Location }
 
 # ---------------------------------------------------------------------------

@@ -712,6 +712,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
 
     // WP4: 每连接面板标识——computer.evidence.open 的 P6 频率上限按它计数。
     const panelId = randomUUID()
+    // P0 CORR-02: stamp for close-time LLM abort of this peer's loops
+    ;(ws as any).__cmsparkPanelId = panelId
 
     // Ping/pong keepalive — terminate clients that don't respond within 30s
     let pongReceived = true
@@ -1219,6 +1221,19 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       if (closedAuth) {
         clearTimeout(closedAuth.timer)
         wsAuth.delete(ws)
+      }
+      // P0 CORR-02: abort in-flight LLM/tool loops owned by this panel
+      try {
+        const panelId = (ws as any).__cmsparkPanelId as string | undefined
+        if (panelId) {
+          const { abortLlmLoopsForPanel } = require("../message-router") as typeof import("../message-router")
+          const n = abortLlmLoopsForPanel(panelId)
+          if (n > 0) {
+            logger.info("ws.close_aborted_llm", { panelId, count: n })
+          }
+        }
+      } catch {
+        /* best-effort — avoid circular init issues */
       }
       // Rebind or clear outbound MCP runner if this was the dispatch peer
       try {
