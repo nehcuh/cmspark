@@ -1,0 +1,1022 @@
+# Dual external review context
+batch: c10-godfile-split-c
+base: eeed933
+time: 20260811-081130
+
+078780a
+
+?? docs/audit/reviews/c10-godfile-split-c-diff-20260811-081130.patch
+?? docs/audit/reviews/c10-godfile-split-c-dual-review-prompt.md
+
+## Diff (git diff + staged)
+ companion/src/server.ts                            | 226 +++------------
+ companion/src/tool/l2-admission.ts                 |   3 +-
+ companion/src/tool/url-cookie-admission.ts         | 285 ++++++++++++++++++
+ companion/tests/url-cookie-admission.test.ts       | 318 +++++++++++++++++++++
+ ...10-godfile-split-phase-c-url-cookie-20260811.md | 101 +++++++
+ 5 files changed, 744 insertions(+), 189 deletions(-)
+
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index ea87870..cc3855b 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -36,7 +36,7 @@ import { redactConfigForWire } from "./config-redact"
+ import { ThreadManager } from "./threads/thread-manager"
+ import { SkillEngine } from "./skills/skill-engine"
+ import { HistoryStore } from "./history/store"
+-import { isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS, cookieTrustBlockedPayload } from "./security"
++import { isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
+ import { decodeDataUrlImage, summarizeCandidateUrl } from "./image-data-url"
+ import { SecurityConfirmationManager } from "./security-confirmation"
+ import { getTrayInstance } from "./menu-bar-agent"
+@@ -54,6 +54,13 @@ import { getMcpManager, getMcpConfirmCache, isMcpNamespaced } from "./mcp"
+ import { prepareBrowserDownloadParams } from "./path-sandbox"
+ import { runL2ToolAdmission } from "./tool/l2-admission"
+ export { runL2ToolAdmission, L2_GATE_TOOLS, isFullAutonomyCruise } from "./tool/l2-admission"
++import { runCookieTrustAdmission, runUrlNavigateAdmission } from "./tool/url-cookie-admission"
++export {
++  runCookieTrustAdmission,
++  runUrlNavigateAdmission,
++  COOKIE_TOOLS,
++  URL_GATE_TOOLS,
++} from "./tool/url-cookie-admission"
+ import { applyHardenedProcessPath } from "./process-path"
+ import {
+   getOrCreateSharedSecret,
+@@ -612,13 +619,15 @@ export type ToolExecutorFn = (
+   invokeOpts?: ToolExecuteInvokeOpts,
+ ) => Promise<{ success: boolean; data?: any; error?: string }>
+ 
+-// FREEZE (C10 multi-adv 2026-08-10 / phase-A 2026-08-11 / phase-B 2026-08-11):
++// FREEZE (C10 multi-adv 2026-08-10 / phase-A 2026-08-11 / phase-B 2026-08-11 / phase-C 2026-08-11):
+ // - L2 security admission → tool/l2-admission.ts (runL2ToolAdmission).
+-// - createToolExecutor is the orchestration shell: multi-agent / cookie / L2 call /
+-//   URL gate / companion dispatch / extension forward.
++// - Cookie trust + URL navigate admission → tool/url-cookie-admission.ts
++//   (runCookieTrustAdmission / runUrlNavigateAdmission).
++// - createToolExecutor is the orchestration shell: multi-agent / cookie / browser_download /
++//   L2 call / URL gate / image gate / companion dispatch / extension forward.
+ // - NEW companion-side tool *cases* → tool/companion-dispatch.ts (or capability/*).
+ // - NEW WS validators → ws/validate.ts.
+-// Do not re-inflate server.ts with L2 algebra or business tool bodies.
++// Do not re-inflate server.ts with L2 algebra, cookie/URL gate bodies, or business tool bodies.
+ // Exported for integration tests (audit item 6).
+ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+   // Per-connection session id — used as the key for MCP first-use confirmation cache
+@@ -897,63 +906,16 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+       return result
+     }
+ 
+-    // Security Pre-flight Checks (P0 - Cookie Trust Domains Gate)
+-    // Full autonomy cruise (网页+企业巡航+协议解锁三旗全开): user opted into max
+-    // residual risk — do not block cookie tools solely on trusted_domains.
+-    const securityCfgEarly = getConfig().security
+-    const userFullAutonomyCruise =
+-      securityCfgEarly?.auto_approve_dangerous === true &&
+-      securityCfgEarly?.auto_approve_enterprise_tools === true &&
+-      securityCfgEarly?.allow_all_schemes === true
+-    const COOKIE_TOOLS = ["get_cookies", "set_cookie", "delete_cookie", "list_all_cookies"]
+-    if (COOKIE_TOOLS.includes(toolName)) {
+-      let isSafe = false
+-      let targetDomain = ""
+-
+-      if (toolName === "get_cookies") {
+-        targetDomain = finalParams.domain || ""
+-        isSafe = isTrustedDomain(targetDomain)
+-      } else if (toolName === "set_cookie") {
+-        targetDomain = finalParams.domain || ""
+-        if (!targetDomain && finalParams.url) {
+-          targetDomain = getDomainFromUrl(finalParams.url)
+-        }
+-        isSafe = isTrustedDomain(targetDomain)
+-      } else if (toolName === "delete_cookie") {
+-        targetDomain = finalParams.domain || ""
+-        if (!targetDomain && finalParams.url) {
+-          targetDomain = getDomainFromUrl(finalParams.url)
+-        }
+-        isSafe = isTrustedDomain(targetDomain)
+-      } else if (toolName === "list_all_cookies") {
+-        // list_all_cookies is global; only safe if "*" is in trusted domains
+-        isSafe = isTrustedDomain("*")
+-        targetDomain = "Global / All Domains"
+-      }
+-
+-      if (!isSafe && userFullAutonomyCruise) {
+-        isSafe = true
+-        logger.warn("security.cookie_trust_waived", {
+-          tool_call_id: toolCallId,
+-          tool_name: toolName,
+-          target_domain: targetDomain || "unknown",
+-          reason: "full_autonomy_cruise",
+-        })
+-      }
+-
+-      if (!isSafe) {
+-        // Plain-language path: Cookie 信任域 ≠ 全自动巡航 / auto_approved_domains.
+-        const result = cookieTrustBlockedPayload(targetDomain || "unknown", toolName)
+-        logger.warn("security.cookie_blocked", {
+-          tool_call_id: toolCallId,
+-          tool_name: toolName,
+-          target_domain: targetDomain || "unknown",
+-          error_code: "COOKIE_TRUST_DENIED",
+-        })
+-        logToolFinish(toolCallId, toolName, startedAt, result)
+-        return result
+-      }
+-    }
++    // Cookie trust domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
++    const cookieOutcome = runCookieTrustAdmission({
++      toolName,
++      finalParams,
++      toolCallId,
++      startedAt,
++      logToolFinish,
++      getDomainFromUrl,
++    })
++    if (!cookieOutcome.ok) return cookieOutcome.result
+ 
+     // P1.0 browser_download: path sandbox + worker path policy BEFORE extension dispatch.
+     // auto_approve_dangerous must NOT relax this (roots stay Downloads-only). No L2 for default Downloads.
+@@ -1021,132 +983,20 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+     const winL2NonceChallenge = l2Outcome.winL2NonceChallenge
+     const hostAppTier = l2Outcome.hostAppTier
+ 
+-    // Audit item 12: navigate / create_tab trust-domain gate. Agents can otherwise
+-    // drive the browser to ANY URL (including chrome://, file://, data:, or attacker
+-    // domains) with no confirmation — a credential-phishing / internal-page-pivot
+-    // vector via prompt injection. Require confirmation for URLs whose host is not
+-    // in trusted_domains or auto_approved_domains; block non-http(s) schemes outright.
+-    const URL_GATE_TOOLS = ["navigate", "create_tab", "set_tab_url"]
+-    if (URL_GATE_TOOLS.includes(toolName)) {
+-      const rawUrl = String(finalParams.url || "")
+-      let parsedUrl: URL | null = null
+-      try { parsedUrl = new URL(rawUrl) } catch { /* invalid URL — handled below */ }
+-      if (!parsedUrl || !rawUrl) {
+-        const result = { success: false, error: `Invalid URL for ${toolName}: ${rawUrl}` }
+-        logToolFinish(toolCallId, toolName, startedAt, result)
+-        return result
+-      }
+-      const securityConfig = getConfig().security
+-      // Layer 1 — scheme hard-block. skipL1 = allow_all_schemes (GOD-MODE). When
+-      // bypassed, emit a prominent audit log (javascript: flagged) so god-mode
+-      // navigations stay traceable, then fall through to the Layer 2 domain gate.
+-      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+-        if (securityConfig.allow_all_schemes !== true) {
+-          const result = {
+-            success: false,
+-            error: `Security Block: ${toolName} to ${parsedUrl.protocol} scheme is not allowed. Only http/https URLs are permitted.`,
+-          }
+-          logger.warn("security.url_scheme_blocked", { tool_call_id: toolCallId, tool_name: toolName, scheme: parsedUrl.protocol })
+-          logToolFinish(toolCallId, toolName, startedAt, result)
+-          return result
+-        }
+-        // GOD-MODE bypass of Layer 1. javascript: is especially dangerous — it
+-        // runs arbitrary script in the target tab's origin — so flag it explicitly.
+-        logger.warn("security.godmode_bypassed", {
+-          tool_call_id: toolCallId,
+-          tool_name: toolName,
+-          layer: "scheme",
+-          scheme: parsedUrl.protocol,
+-          javascript: parsedUrl.protocol === "javascript:",
+-          url: rawUrl,
+-        })
+-      }
+-      const host = parsedUrl.hostname
+-      // ADR-007: trusted_domains is Cookie-only. URL gate uses auto_approved_domains
+-      // + global toggles only — cookie trust must not skip navigate/create_tab/set_tab_url.
+-      const skipUrlConfirmation = isAutoApprovedDomain(host)
+-        || securityConfig.auto_approve_dangerous === true
+-        || securityConfig.allow_all_schemes === true
+-      if (!skipUrlConfirmation) {
+-        if (ws.readyState !== WebSocket.OPEN) {
+-          const result = {
+-            success: false,
+-            error: `Security Block: ${toolName} to untrusted domain "${host}" requires user confirmation, but the WebSocket is not connected.`,
+-          }
+-          logToolFinish(toolCallId, toolName, startedAt, result)
+-          return result
+-        }
+-        logger.warn("security.url_confirmation.requested", {
+-          tool_call_id: toolCallId,
+-          tool_name: toolName,
+-          url: rawUrl,
+-          host,
+-          outbound: isOutboundMcpCall,
+-        })
+-        // S42 P1: outbound navigate must not depend on a single Side Panel focus
+-        // (L8). Fan-out + unbound origin for outbound; Side Panel path stays
+-        // origin-bound so another peer cannot cross-approve.
+-        const decision = await securityConfirmations.request(
+-          (data) => {
+-            const payload = JSON.stringify(data)
+-            if (isOutboundMcpCall) {
+-              for (const c of clients) {
+-                if (c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true) {
+-                  try {
+-                    c.send(payload)
+-                  } catch {
+-                    /* best-effort fan-out */
+-                  }
+-                }
+-              }
+-              // Always notify the executor-bound socket (extension peer / tests).
+-              // Fan-out alone misses peers not in `clients` (integration harness).
+-              if (ws.readyState === WebSocket.OPEN) {
+-                try {
+-                  ws.send(payload)
+-                } catch {
+-                  /* ignore */
+-                }
+-              }
+-            } else if (ws.readyState === WebSocket.OPEN) {
+-              ws.send(payload)
+-            }
+-          },
+-          {
+-            toolName: isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName,
+-            dangerousApis: [],
+-            code: `navigate(${rawUrl})`,
+-            relevantDomains: [host],
+-          },
+-          isOutboundMcpCall ? {} : { originWs: ws },
+-        )
+-        if (!decision.approved) {
+-          const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+-          const result = {
+-            success: false,
+-            error: `Security Block: ${toolName} to "${rawUrl}" was ${reason === "denied" ? "denied by user" : reason}.`,
+-          }
+-          logger.warn("security.url_confirmation.denied", {
+-            tool_call_id: toolCallId,
+-            tool_name: toolName,
+-            url: rawUrl,
+-            reason,
+-          })
+-          logToolFinish(toolCallId, toolName, startedAt, result)
+-          return result
+-        }
+-        logger.info("security.url_confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName, url: rawUrl })
+-      } else {
+-        // Skipped via auto_approved_domains / global toggle / god-mode (not cookie trust).
+-        logger.info("security.url_auto_approved", {
+-          tool_call_id: toolCallId,
+-          tool_name: toolName,
+-          host,
+-          reason: securityConfig.allow_all_schemes ? "god_mode"
+-            : securityConfig.auto_approve_dangerous ? "global_toggle" : "domain_whitelist",
+-        })
+-      }
+-    }
++    // URL scheme+domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
++    const urlOutcome = await runUrlNavigateAdmission({
++      toolName,
++      finalParams,
++      toolCallId,
++      startedAt,
++      ws,
++      isOutboundMcpCall,
++      logToolFinish,
++      securityConfirmations,
++      clients,
++      wsAuthGet: (w) => wsAuth.get(w),
++    })
++    if (!urlOutcome.ok) return urlOutcome.result
+ 
+     // analyze_image_fetch is an INTERNAL phase-2 tool, dispatched only by the
+     // analyze_image branch below via dispatchToExtension (which does NOT re-enter
+diff --git a/companion/src/tool/l2-admission.ts b/companion/src/tool/l2-admission.ts
+index 1dd445b..8ce1df6 100644
+--- a/companion/src/tool/l2-admission.ts
++++ b/companion/src/tool/l2-admission.ts
+@@ -2,7 +2,8 @@
+ // Extracted from server.ts (C10 Phase B mechanical split) — zero behavior change.
+ //
+ // FREEZE: L2 forceConfirm / three-flag / enterprise-skip / G1 algebra lives HERE.
+-// Do NOT re-inflate createToolExecutor with this block. URL gate + cookie gate stay in server.ts.
++// Do NOT re-inflate createToolExecutor with this block.
++// Cookie + URL gates → tool/url-cookie-admission.ts (C10-C).
+ 
+ import { randomUUID } from "crypto"
+ import os from "os"
+diff --git a/companion/src/tool/url-cookie-admission.ts b/companion/src/tool/url-cookie-admission.ts
+new file mode 100644
+index 0000000..b575681
+--- /dev/null
++++ b/companion/src/tool/url-cookie-admission.ts
+@@ -0,0 +1,285 @@
++// Cookie trust + URL navigate admission gates for createToolExecutor.
++// Extracted from server.ts (C10 Phase C mechanical split) — zero behavior change.
++//
++// FREEZE: cookie trust domain gate + navigate/create_tab/set_tab_url scheme+domain
++// gate live HERE. Do NOT re-inflate createToolExecutor with these blocks.
++// Image fetch gate and browser_download path sandbox stay in server.ts.
++
++import { WebSocket } from "ws"
++import { getConfig } from "../config"
++import { logger } from "../logger"
++import {
++  isTrustedDomain,
++  isAutoApprovedDomain,
++  cookieTrustBlockedPayload,
++} from "../security"
++import type { SecurityConfirmationManager } from "../security-confirmation"
++import { isFullAutonomyCruise } from "./l2-admission"
++
++export const COOKIE_TOOLS = [
++  "get_cookies",
++  "set_cookie",
++  "delete_cookie",
++  "list_all_cookies",
++] as const
++
++export const URL_GATE_TOOLS = ["navigate", "create_tab", "set_tab_url"] as const
++
++export type AdmissionEarlyResult =
++  | { ok: true }
++  | { ok: false; result: { success: false; error: string; data?: any } }
++
++export type CookieAdmissionCtx = {
++  toolName: string
++  finalParams: Record<string, any>
++  toolCallId: string
++  startedAt: number
++  logToolFinish: (id: string, name: string, startedAt: number, result: any) => void
++  getDomainFromUrl: (url: string) => string
++}
++
++/**
++ * Sync cookie trust check (P0 Cookie Trust Domains Gate).
++ * On ok:false, caller returns result (already logToolFinish'd).
++ */
++export function runCookieTrustAdmission(ctx: CookieAdmissionCtx): AdmissionEarlyResult {
++  const { toolName, finalParams, toolCallId, startedAt, logToolFinish, getDomainFromUrl } = ctx
++
++  // Full autonomy cruise (网页+企业巡航+协议解锁三旗全开): user opted into max
++  // residual risk — do not block cookie tools solely on trusted_domains.
++  // Reuse pure helper — do NOT re-inline the three-flag AND.
++  const userFullAutonomyCruise = isFullAutonomyCruise(getConfig().security)
++
++  if (!(COOKIE_TOOLS as readonly string[]).includes(toolName)) {
++    return { ok: true }
++  }
++
++  let isSafe = false
++  let targetDomain = ""
++
++  if (toolName === "get_cookies") {
++    targetDomain = finalParams.domain || ""
++    isSafe = isTrustedDomain(targetDomain)
++  } else if (toolName === "set_cookie") {
++    targetDomain = finalParams.domain || ""
++    if (!targetDomain && finalParams.url) {
++      targetDomain = getDomainFromUrl(finalParams.url)
++    }
++    isSafe = isTrustedDomain(targetDomain)
++  } else if (toolName === "delete_cookie") {
++    targetDomain = finalParams.domain || ""
++    if (!targetDomain && finalParams.url) {
++      targetDomain = getDomainFromUrl(finalParams.url)
++    }
++    isSafe = isTrustedDomain(targetDomain)
++  } else if (toolName === "list_all_cookies") {
++    // list_all_cookies is global; only safe if "*" is in trusted domains
++    isSafe = isTrustedDomain("*")
++    targetDomain = "Global / All Domains"
++  }
++
++  if (!isSafe && userFullAutonomyCruise) {
++    isSafe = true
++    logger.warn("security.cookie_trust_waived", {
++      tool_call_id: toolCallId,
++      tool_name: toolName,
++      target_domain: targetDomain || "unknown",
++      reason: "full_autonomy_cruise",
++    })
++  }
++
++  if (!isSafe) {
++    // Plain-language path: Cookie 信任域 ≠ 全自动巡航 / auto_approved_domains.
++    const result = cookieTrustBlockedPayload(targetDomain || "unknown", toolName)
++    logger.warn("security.cookie_blocked", {
++      tool_call_id: toolCallId,
++      tool_name: toolName,
++      target_domain: targetDomain || "unknown",
++      error_code: "COOKIE_TRUST_DENIED",
++    })
++    logToolFinish(toolCallId, toolName, startedAt, result)
++    return { ok: false, result }
++  }
++
++  return { ok: true }
++}
++
++export type UrlAdmissionCtx = {
++  toolName: string
++  finalParams: Record<string, any>
++  toolCallId: string
++  startedAt: number
++  ws: WebSocket
++  isOutboundMcpCall: boolean
++  logToolFinish: (id: string, name: string, startedAt: number, result: any) => void
++  securityConfirmations: SecurityConfirmationManager
++  clients: Iterable<WebSocket>
++  wsAuthGet: (ws: WebSocket) => { authenticated?: boolean } | undefined
++}
++
++/**
++ * Async URL scheme+domain gate for navigate / create_tab / set_tab_url.
++ * On ok:false, caller returns result (already logToolFinish'd).
++ */
++export async function runUrlNavigateAdmission(
++  ctx: UrlAdmissionCtx,
++): Promise<AdmissionEarlyResult> {
++  const {
++    toolName,
++    finalParams,
++    toolCallId,
++    startedAt,
++    ws,
++    isOutboundMcpCall,
++    logToolFinish,
++    securityConfirmations,
++    clients,
++    wsAuthGet,
++  } = ctx
++
++  if (!(URL_GATE_TOOLS as readonly string[]).includes(toolName)) {
++    return { ok: true }
++  }
++
++  // Audit item 12: navigate / create_tab trust-domain gate. Agents can otherwise
++  // drive the browser to ANY URL (including chrome://, file://, data:, or attacker
++  // domains) with no confirmation — a credential-phishing / internal-page-pivot
++  // vector via prompt injection. Require confirmation for URLs whose host is not
++  // in trusted_domains or auto_approved_domains; block non-http(s) schemes outright.
++  const rawUrl = String(finalParams.url || "")
++  let parsedUrl: URL | null = null
++  try {
++    parsedUrl = new URL(rawUrl)
++  } catch {
++    /* invalid URL — handled below */
++  }
++  if (!parsedUrl || !rawUrl) {
++    const result = { success: false as const, error: `Invalid URL for ${toolName}: ${rawUrl}` }
++    logToolFinish(toolCallId, toolName, startedAt, result)
++    return { ok: false, result }
++  }
++  const securityConfig = getConfig().security
++  // Layer 1 — scheme hard-block. skipL1 = allow_all_schemes (GOD-MODE). When
++  // bypassed, emit a prominent audit log (javascript: flagged) so god-mode
++  // navigations stay traceable, then fall through to the Layer 2 domain gate.
++  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
++    if (securityConfig.allow_all_schemes !== true) {
++      const result = {
++        success: false as const,
++        error: `Security Block: ${toolName} to ${parsedUrl.protocol} scheme is not allowed. Only http/https URLs are permitted.`,
++      }
++      logger.warn("security.url_scheme_blocked", {
++        tool_call_id: toolCallId,
++        tool_name: toolName,
++        scheme: parsedUrl.protocol,
++      })
++      logToolFinish(toolCallId, toolName, startedAt, result)
++      return { ok: false, result }
++    }
++    // GOD-MODE bypass of Layer 1. javascript: is especially dangerous — it
++    // runs arbitrary script in the target tab's origin — so flag it explicitly.
++    logger.warn("security.godmode_bypassed", {
++      tool_call_id: toolCallId,
++      tool_name: toolName,
++      layer: "scheme",
++      scheme: parsedUrl.protocol,
++      javascript: parsedUrl.protocol === "javascript:",
++      url: rawUrl,
++    })
++  }
++  const host = parsedUrl.hostname
++  // ADR-007: trusted_domains is Cookie-only. URL gate uses auto_approved_domains
++  // + global toggles only — cookie trust must not skip navigate/create_tab/set_tab_url.
++  const skipUrlConfirmation =
++    isAutoApprovedDomain(host) ||
++    securityConfig.auto_approve_dangerous === true ||
++    securityConfig.allow_all_schemes === true
++  if (!skipUrlConfirmation) {
++    if (ws.readyState !== WebSocket.OPEN) {
++      const result = {
++        success: false as const,
++        error: `Security Block: ${toolName} to untrusted domain "${host}" requires user confirmation, but the WebSocket is not connected.`,
++      }
++      logToolFinish(toolCallId, toolName, startedAt, result)
++      return { ok: false, result }
++    }
++    logger.warn("security.url_confirmation.requested", {
++      tool_call_id: toolCallId,
++      tool_name: toolName,
++      url: rawUrl,
++      host,
++      outbound: isOutboundMcpCall,
++    })
++    // S42 P1: outbound navigate must not depend on a single Side Panel focus
++    // (L8). Fan-out + unbound origin for outbound; Side Panel path stays
++    // origin-bound so another peer cannot cross-approve.
++    const decision = await securityConfirmations.request(
++      (data) => {
++        const payload = JSON.stringify(data)
++        if (isOutboundMcpCall) {
++          for (const c of clients) {
++            if (c.readyState === WebSocket.OPEN && wsAuthGet(c)?.authenticated === true) {
++              try {
++                c.send(payload)
++              } catch {
++                /* best-effort fan-out */
++              }
++            }
++          }
++          // Always notify the executor-bound socket (extension peer / tests).
++          // Fan-out alone misses peers not in `clients` (integration harness).
++          if (ws.readyState === WebSocket.OPEN) {
++            try {
++              ws.send(payload)
++            } catch {
++              /* ignore */
++            }
++          }
++        } else if (ws.readyState === WebSocket.OPEN) {
++          ws.send(payload)
++        }
++      },
++      {
++        toolName: isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName,
++        dangerousApis: [],
++        code: `navigate(${rawUrl})`,
++        relevantDomains: [host],
++      },
++      isOutboundMcpCall ? {} : { originWs: ws },
++    )
++    if (!decision.approved) {
++      const reason = decision.reason === "approved" ? "unavailable" : decision.reason
++      const result = {
++        success: false as const,
++        error: `Security Block: ${toolName} to "${rawUrl}" was ${reason === "denied" ? "denied by user" : reason}.`,
++      }
++      logger.warn("security.url_confirmation.denied", {
++        tool_call_id: toolCallId,
++        tool_name: toolName,
++        url: rawUrl,
++        reason,
++      })
++      logToolFinish(toolCallId, toolName, startedAt, result)
++      return { ok: false, result }
++    }
++    logger.info("security.url_confirmation.approved", {
++      tool_call_id: toolCallId,
++      tool_name: toolName,
++      url: rawUrl,
++    })
++  } else {
++    // Skipped via auto_approved_domains / global toggle / god-mode (not cookie trust).
++    logger.info("security.url_auto_approved", {
++      tool_call_id: toolCallId,
++      tool_name: toolName,
++      host,
++      reason: securityConfig.allow_all_schemes
++        ? "god_mode"
++        : securityConfig.auto_approve_dangerous
++          ? "global_toggle"
++          : "domain_whitelist",
++    })
++  }
++
++  return { ok: true }
++}
+diff --git a/companion/tests/url-cookie-admission.test.ts b/companion/tests/url-cookie-admission.test.ts
+new file mode 100644
+index 0000000..881d271
+--- /dev/null
++++ b/companion/tests/url-cookie-admission.test.ts
+@@ -0,0 +1,318 @@
++/**
++ * Cookie trust + URL navigate admission (C10 Phase C).
++ * Isolates DATA_DIR before config module load.
++ */
++import * as os from "node:os"
++import * as path from "node:path"
++import * as fs from "node:fs"
++
++const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-url-cookie-adm-"))
++process.env.CMSPARK_DATA_DIR = tmp
++process.env.HOME = tmp
++process.on("exit", () => {
++  try {
++    fs.rmSync(tmp, { recursive: true, force: true })
++  } catch {
++    /* best-effort */
++  }
++})
++
++import { describe, it, before } from "node:test"
++import assert from "node:assert/strict"
++import { WebSocket } from "ws"
++import {
++  COOKIE_TOOLS,
++  URL_GATE_TOOLS,
++  runCookieTrustAdmission,
++  runUrlNavigateAdmission,
++} from "../src/tool/url-cookie-admission"
++import { initDataDir, getConfig, saveConfig } from "../src/config"
++
++function noopLog() {
++  /* silence finish log */
++}
++
++function getDomainFromUrl(urlString: string): string {
++  try {
++    return new URL(urlString).hostname
++  } catch {
++    return ""
++  }
++}
++
++before(async () => {
++  await initDataDir()
++  // Clean security flags for isolation
++  saveConfig({
++    trusted_domains: [],
++    auto_approved_domains: [],
++    security: {
++      ...getConfig().security,
++      auto_approve_dangerous: false,
++      auto_approve_enterprise_tools: false,
++      allow_all_schemes: false,
++    },
++  })
++})
++
++describe("COOKIE_TOOLS / URL_GATE_TOOLS membership", () => {
++  it("COOKIE_TOOLS has the four cookie tools", () => {
++    assert.deepEqual([...COOKIE_TOOLS].sort(), [
++      "delete_cookie",
++      "get_cookies",
++      "list_all_cookies",
++      "set_cookie",
++    ])
++  })
++
++  it("URL_GATE_TOOLS has navigate / create_tab / set_tab_url", () => {
++    assert.deepEqual([...URL_GATE_TOOLS].sort(), [
++      "create_tab",
++      "navigate",
++      "set_tab_url",
++    ])
++  })
++
++  it("non-cookie tools pass cookie admission immediately", () => {
++    const r = runCookieTrustAdmission({
++      toolName: "navigate",
++      finalParams: {},
++      toolCallId: "t1",
++      startedAt: Date.now(),
++      logToolFinish: noopLog,
++      getDomainFromUrl,
++    })
++    assert.equal(r.ok, true)
++  })
++})
++
++describe("runCookieTrustAdmission", () => {
++  it("blocks get_cookies on untrusted domain", () => {
++    saveConfig({
++      trusted_domains: ["example.com"],
++      security: {
++        ...getConfig().security,
++        auto_approve_dangerous: false,
++        auto_approve_enterprise_tools: false,
++        allow_all_schemes: false,
++      },
++    })
++    const r = runCookieTrustAdmission({
++      toolName: "get_cookies",
++      finalParams: { domain: "evil.com" },
++      toolCallId: "c1",
++      startedAt: Date.now(),
++      logToolFinish: noopLog,
++      getDomainFromUrl,
++    })
++    assert.equal(r.ok, false)
++    if (!r.ok) {
++      assert.equal(r.result.success, false)
++      assert.match(r.result.error, /Security Block/)
++      assert.equal(r.result.data?.error_code, "COOKIE_TRUST_DENIED")
++    }
++  })
++
++  it("allows get_cookies on trusted domain", () => {
++    saveConfig({ trusted_domains: ["example.com"] })
++    const r = runCookieTrustAdmission({
++      toolName: "get_cookies",
++      finalParams: { domain: "example.com" },
++      toolCallId: "c2",
++      startedAt: Date.now(),
++      logToolFinish: noopLog,
++      getDomainFromUrl,
++    })
++    assert.equal(r.ok, true)
++  })
++
++  it("set_cookie resolves domain from url when domain omitted", () => {
++    saveConfig({ trusted_domains: ["good.example"] })
++    const r = runCookieTrustAdmission({
++      toolName: "set_cookie",
++      finalParams: { url: "https://good.example/path", name: "a", value: "b" },
++      toolCallId: "c3",
++      startedAt: Date.now(),
++      logToolFinish: noopLog,
++      getDomainFromUrl,
++    })
++    assert.equal(r.ok, true)
++  })
++
++  it("waives cookie trust under full autonomy cruise (three flags)", () => {
++    saveConfig({
++      trusted_domains: [],
++      security: {
++        ...getConfig().security,
++        auto_approve_dangerous: true,
++        auto_approve_enterprise_tools: true,
++        allow_all_schemes: true,
++      },
++    })
++    const r = runCookieTrustAdmission({
++      toolName: "get_cookies",
++      finalParams: { domain: "evil.com" },
++      toolCallId: "c4",
++      startedAt: Date.now(),
++      logToolFinish: noopLog,
++      getDomainFromUrl,
++    })
++    assert.equal(r.ok, true)
++
++    // partial flags still block
++    saveConfig({
++      trusted_domains: [],
++      security: {
++        ...getConfig().security,
++        auto_approve_dangerous: true,
++        auto_approve_enterprise_tools: true,
++        allow_all_schemes: false,
++      },
++    })
++    const r2 = runCookieTrustAdmission({
++      toolName: "get_cookies",
++      finalParams: { domain: "evil.com" },
++      toolCallId: "c5",
++      startedAt: Date.now(),
++      logToolFinish: noopLog,
++      getDomainFromUrl,
++    })
++    assert.equal(r2.ok, false)
++
++    // restore safe defaults for later suites
++    saveConfig({
++      trusted_domains: [],
++      security: {
++        ...getConfig().security,
++        auto_approve_dangerous: false,
++        auto_approve_enterprise_tools: false,
++        allow_all_schemes: false,
++      },
++    })
++  })
++})
++
++describe("runUrlNavigateAdmission", () => {
++  const fakeWs = { readyState: WebSocket.OPEN } as WebSocket
++
++  it("non-URL-gate tools pass immediately", async () => {
++    const r = await runUrlNavigateAdmission({
++      toolName: "get_cookies",
++      finalParams: {},
++      toolCallId: "u0",
++      startedAt: Date.now(),
++      ws: fakeWs,
++      isOutboundMcpCall: false,
++      logToolFinish: noopLog,
++      securityConfirmations: { request: async () => ({ approved: false, reason: "denied" }) } as any,
++      clients: [],
++      wsAuthGet: () => undefined,
++    })
++    assert.equal(r.ok, true)
++  })
++
++  it("rejects invalid URL", async () => {
++    const r = await runUrlNavigateAdmission({
++      toolName: "navigate",
++      finalParams: { url: "not a url" },
++      toolCallId: "u1",
++      startedAt: Date.now(),
++      ws: fakeWs,
++      isOutboundMcpCall: false,
++      logToolFinish: noopLog,
++      securityConfirmations: { request: async () => ({ approved: true, reason: "approved" }) } as any,
++      clients: [],
++      wsAuthGet: () => undefined,
++    })
++    assert.equal(r.ok, false)
++    if (!r.ok) {
++      assert.match(r.result.error, /Invalid URL/)
++    }
++  })
++
++  it("hard-blocks non-http(s) schemes when allow_all_schemes is false", async () => {
++    saveConfig({
++      security: {
++        ...getConfig().security,
++        allow_all_schemes: false,
++        auto_approve_dangerous: false,
++      },
++    })
++    const r = await runUrlNavigateAdmission({
++      toolName: "navigate",
++      finalParams: { url: "file:///etc/passwd" },
++      toolCallId: "u2",
++      startedAt: Date.now(),
++      ws: fakeWs,
++      isOutboundMcpCall: false,
++      logToolFinish: noopLog,
++      securityConfirmations: { request: async () => ({ approved: true, reason: "approved" }) } as any,
++      clients: [],
++      wsAuthGet: () => undefined,
++    })
++    assert.equal(r.ok, false)
++    if (!r.ok) {
++      assert.match(r.result.error, /scheme is not allowed/)
++    }
++  })
++
++  it("auto-approves host on auto_approved_domains without confirmation", async () => {
++    saveConfig({
++      auto_approved_domains: ["safe.example"],
++      security: {
++        ...getConfig().security,
++        auto_approve_dangerous: false,
++        allow_all_schemes: false,
++      },
++    })
++    let confirmCalled = false
++    const r = await runUrlNavigateAdmission({
++      toolName: "create_tab",
++      finalParams: { url: "https://safe.example/x" },
++      toolCallId: "u3",
++      startedAt: Date.now(),
++      ws: fakeWs,
++      isOutboundMcpCall: false,
++      logToolFinish: noopLog,
++      securityConfirmations: {
++        request: async () => {
++          confirmCalled = true
++          return { approved: false, reason: "denied" }
++        },
++      } as any,
++      clients: [],
++      wsAuthGet: () => undefined,
++    })
++    assert.equal(r.ok, true)
++    assert.equal(confirmCalled, false)
++  })
++
++  it("requests confirmation for untrusted host and fails on deny", async () => {
++    saveConfig({
++      auto_approved_domains: [],
++      security: {
++        ...getConfig().security,
++        auto_approve_dangerous: false,
++        allow_all_schemes: false,
++      },
++    })
++    const r = await runUrlNavigateAdmission({
++      toolName: "set_tab_url",
++      finalParams: { url: "https://evil.example/", tabId: 1 },
++      toolCallId: "u4",
++      startedAt: Date.now(),
++      ws: fakeWs,
++      isOutboundMcpCall: false,
++      logToolFinish: noopLog,
++      securityConfirmations: {
++        request: async () => ({ approved: false, reason: "denied" }),
++      } as any,
++      clients: [],
++      wsAuthGet: () => undefined,
++    })
++    assert.equal(r.ok, false)
++    if (!r.ok) {
++      assert.match(r.result.error, /denied by user/)
++    }
++  })
++})
+diff --git a/docs/audit/reviews/c10-godfile-split-phase-c-url-cookie-20260811.md b/docs/audit/reviews/c10-godfile-split-phase-c-url-cookie-20260811.md
+new file mode 100644
+index 0000000..f662543
+--- /dev/null
++++ b/docs/audit/reviews/c10-godfile-split-phase-c-url-cookie-20260811.md
+@@ -0,0 +1,101 @@
++# C10 God-file Split — Phase C (2026-08-11)
++
++Branch: `fix/c10-godfile-split-a` (continues Phase A/B on same worktree)
++
++## Goal
++
++Extract **cookie trust gate** + **URL navigate gate** from `createToolExecutor` into `companion/src/tool/url-cookie-admission.ts` with **zero intentional behavior change**.
++
++## LOC before / after
++
++| File | Before (post Phase B) | After | Δ |
++|------|----------------------|-------|---|
++| `companion/src/server.ts` | 3640 | 3490 | **−150** |
++| `companion/src/tool/url-cookie-admission.ts` | — | 285 | new |
++| `companion/tests/url-cookie-admission.test.ts` | — | 318 | new |
++
++## What moved
++
++### Block 1 — Cookie trust gate
++
++- **From** `server.ts` `createToolExecutor`: comment `// Security Pre-flight Checks (P0 - Cookie Trust Domains Gate)` through end of `COOKIE_TOOLS` block
++- **To** `runCookieTrustAdmission(ctx): AdmissionEarlyResult` (sync)
++- **Tools**: `get_cookies` / `set_cookie` / `delete_cookie` / `list_all_cookies` (`COOKIE_TOOLS`)
++- **Behavior preserved**:
++  - domain from params / URL (`getDomainFromUrl` injected)
++  - `isTrustedDomain` / `cookieTrustBlockedPayload`
++  - full-autonomy cruise waive via **`isFullAutonomyCruise(getConfig().security)`** (reuses pure helper from `l2-admission.ts`; no re-inlined three-flag AND)
++
++### Block 2 — URL navigate gate
++
++- **From** `server.ts`: comment `// Audit item 12: navigate...` through end of `URL_GATE_TOOLS` block
++- **To** `runUrlNavigateAdmission(ctx): Promise<AdmissionEarlyResult>` (async)
++- **Tools**: `navigate` / `create_tab` / `set_tab_url` (`URL_GATE_TOOLS`)
++- **Behavior preserved**:
++  - Layer 1 scheme hard-block + god-mode (`allow_all_schemes`) audit
++  - Layer 2 domain gate: `auto_approved_domains` ∪ `auto_approve_dangerous` ∪ `allow_all_schemes` (ADR-007: cookie trust does **not** skip URL)
++  - outbound MCP fan-out + unbound origin; Side Panel origin-bound
++  - `wsAuthGet` injection (no circular import of `wsAuth`)
++
++### Wiring in `createToolExecutor`
++
++Order unchanged:
++
++```
++multi-agent → cookie → browser_download → L2 → URL → image → dispatch
++```
++
++```ts
++const cookieOutcome = runCookieTrustAdmission({ ... })
++if (!cookieOutcome.ok) return cookieOutcome.result
++// browser_download path sandbox (still in server)
++const l2Outcome = await runL2ToolAdmission({ ... })
++// ...
++const urlOutcome = await runUrlNavigateAdmission({ ... })
++if (!urlOutcome.ok) return urlOutcome.result
++```
++
++### Re-exports from `server.ts`
++
++```ts
++export {
++  runCookieTrustAdmission,
++  runUrlNavigateAdmission,
++  COOKIE_TOOLS,
++  URL_GATE_TOOLS,
++} from "./tool/url-cookie-admission"
++```
++
++### FREEZE update
++
++- `createToolExecutor` shell documents cookie/URL living in `tool/url-cookie-admission.ts`
++- `l2-admission.ts` FREEZE no longer claims cookie/URL stay in server
++
++## Not moved (deferred)
++
++| Item | Why |
++|------|-----|
++| `browser_download` path sandbox | Explicit Phase C exclusion |
++| `runL2ToolAdmission` | Already Phase B |
++| `analyze_image` / `analyze_image_fetch` IMAGE_FETCH_GATE | Separate gate family; still in `server.ts` |
++| `COMPANION_TOOLS` dispatch | Phase A / companion-dispatch |
++| Dual-review of extracted module | Pending (this note flags it) |
++
++## Verification (executed)
++
++```bash
++cd companion
++npx tsc -p tsconfig.test.json
++node --test .test-dist/tests/url-cookie-admission.test.js   # 12 pass
++node --test .test-dist/tests/l2-admission-pure.test.js        # 5 pass
++node --test .test-dist/tests/integration/security-gates.test.js # 63 pass
++```
++
++All of the above **pass** (80 total when run together).
++
++## Constraints honored
++
++- No intentional behavior change
++- Cookie cruise uses shared `isFullAutonomyCruise` (same three-flag semantics)
++- Image gate + browser_download + L2 left untouched
++- Worktree only (`cmspark-wt-c10-godfile`); no push

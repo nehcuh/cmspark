@@ -316,3 +316,52 @@ describe("runUrlNavigateAdmission", () => {
     }
   })
 })
+
+it("outbound navigate fans out and leaves origin unbound", async () => {
+  saveConfig({
+    trusted_domains: [],
+    auto_approved_domains: [],
+    security: {
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    },
+  } as any)
+  const fanout: string[] = []
+  const peer = {
+    readyState: WebSocket.OPEN,
+    send: (s: string) => {
+      fanout.push(s)
+    },
+  }
+  let originOpt: any = "unset"
+  const decision = { approved: true, reason: "approved" as const }
+  const securityConfirmations = {
+    request: async (send: (data: any) => void, _d: any, opts?: any) => {
+      originOpt = opts
+      // Real manager invokes send() to deliver confirmation.request — drive fan-out path.
+      send({ type: "security.confirmation.request", tool_name: "navigate" })
+      return decision
+    },
+  }
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send: () => {},
+  }
+  const r = await runUrlNavigateAdmission({
+    toolName: "navigate",
+    finalParams: { url: "https://evil.example/x" },
+    toolCallId: "tc_ob",
+    startedAt: Date.now(),
+    ws: ws as any,
+    isOutboundMcpCall: true,
+    logToolFinish: () => {},
+    securityConfirmations: securityConfirmations as any,
+    clients: [peer as any],
+    wsAuthGet: () => ({ authenticated: true }),
+  })
+  assert.equal(r.ok, true)
+  assert.deepEqual(originOpt, {}, "outbound must not bind originWs")
+  assert.ok(fanout.length >= 1, "fan-out should send to authenticated peer")
+})
+
