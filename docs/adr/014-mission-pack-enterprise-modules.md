@@ -33,7 +33,7 @@ Pack **不是**新 LLM runtime：`pack.apply` = 写 Thread 字段（`mission_pac
 | 模块 | 工具 / 能力 | 安全合同 |
 |------|-------------|----------|
 | `appsec` | 内置 Pack `appsec-prd-review`（威胁建模 + 页面 checklist） | 偏浏览器只读 allowlist |
-| `devsec-workspace` | `workspace_list_dir` / `workspace_read_file` | 路径须在 `thread.workspace_root` 内；**root 仅能来自原生 folder-picker** |
+| `devsec-workspace` | `workspace_list_dir` / `workspace_read_file` | 路径须在**有效 root** 内：显式 `thread.workspace_root`（**仅原生 folder-picker 可绑定**）优先；未绑定时运行时回落 `~/CMspark-projects`（不写 thread；沙箱根不得为 symlink） |
 | `shell` | `shell_exec`（单次命令，非自由交互 PTY） | **强制 L2 确认**（god-mode 不可静默跳过）；审计默认不记完整命令正文 |
 | `netsec` | `netsec_port_scan`（TCP connect 探测） | 空 `target_allowlist` = 拒绝一切；任务级 `netsec.authorize_task`（`user_gesture` + allowlist 子集）；强制 L2 |
 
@@ -43,11 +43,11 @@ Pack **不是**新 LLM runtime：`pack.apply` = 写 Thread 字段（`mission_pac
 - **uninstall 回滚**：用 `mission_pack_snapshot` 恢复 whitelist / skills / append
 - **审计**：`~/.cmspark-agent/logs/capability-audit.jsonl`（0o600、append、轮转）
 - **数据布局**：`packs/installed/<id>/pack.yaml` + 命名空间 skill/knowledge 复制装载
-- **错误分级**：`workspace_root not set` / `module_disabled` 为 **recoverable**，引导用户去 Side Panel「任务包」操作
+- **错误分级**：`default_sandbox_unavailable` / 遗留 `workspace_root not set` / `module_disabled` 为 **recoverable**；未绑定时默认沙箱即可 list/read，创建失败或模块未开时引导 Side Panel「场景」
 
 ### 5. UI
 
-Side Panel 底部栏 **「任务包」**（L0/L1）：列 Pack、应用、启用模块、选择工作区、NetSec 任务授权；显示当前 `workspace_root`。
+Side Panel 底部栏 **「场景」/「任务包」**（L0/L1）：列 Pack、应用、启用模块、选择工作区、NetSec 任务授权；未绑定时显示默认沙箱 `~/CMspark-projects`，绑定时显示 `workspace_root`。
 
 ## 后果
 

@@ -139,3 +139,57 @@ test("escape ../ still rejected under sandbox fallback", () => {
   assert.equal(bad.ok, false)
   assert.match(bad.ok === false ? bad.error : "", /escapes workspace_root/)
 })
+
+test("default sandbox rejects in-home symlink root (N2)", () => {
+  const sandbox = path.join(tempHome, CMSPARK_PROJECTS_DIRNAME)
+  const target = fs.mkdtempSync(path.join(tempHome, "symlink-target-"))
+  fs.writeFileSync(path.join(target, "secret.txt"), "nope")
+  // Replace sandbox dir with symlink into another in-home folder
+  if (fs.existsSync(sandbox)) {
+    fs.rmSync(sandbox, { recursive: true, force: true })
+  }
+  fs.symlinkSync(target, sandbox, "dir")
+  try {
+    const ensured = workspace.ensureDefaultSandboxRoot(tempHome)
+    assert.equal(ensured.ok, false)
+    if (!ensured.ok) {
+      assert.match(ensured.error, /symbolic link|default_sandbox_unavailable/)
+    }
+    const list = workspace.workspaceListDir(null, ".")
+    assert.equal(list.success, false)
+    assert.match(list.error || "", /default_sandbox_unavailable|symbolic link/)
+  } finally {
+    fs.rmSync(sandbox, { force: true })
+    fs.rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test("ensureDefaultSandboxRoot best-effort chmod 0o700 on existing dir (N6)", () => {
+  const sandbox = path.join(tempHome, CMSPARK_PROJECTS_DIRNAME)
+  fs.mkdirSync(sandbox, { recursive: true, mode: 0o755 })
+  const ensured = workspace.ensureDefaultSandboxRoot(tempHome)
+  assert.equal(ensured.ok, true, ensured.ok ? "" : ensured.error)
+  if (!ensured.ok) return
+  const mode = fs.statSync(ensured.path).mode & 0o777
+  // On some FS chmod is ignored; accept 0o700 when platform applies it
+  if (process.platform !== "win32") {
+    assert.equal(mode, 0o700)
+  }
+})
+
+test("resolveEffectiveWorkspaceRoot wires explicit vs sandbox (M1)", () => {
+  const explicit = fs.mkdtempSync(path.join(os.tmpdir(), "ws-eff-"))
+  const r1 = workspace.resolveEffectiveWorkspaceRoot(explicit)
+  assert.equal(r1.ok, true)
+  if (r1.ok) {
+    assert.equal(r1.source, "explicit")
+    assert.equal(r1.path, explicit)
+  }
+  const r2 = workspace.resolveEffectiveWorkspaceRoot(null)
+  assert.equal(r2.ok, true)
+  if (r2.ok) {
+    assert.equal(r2.source, "sandbox")
+    assert.ok(r2.path.endsWith(CMSPARK_PROJECTS_DIRNAME))
+  }
+  fs.rmSync(explicit, { recursive: true, force: true })
+})

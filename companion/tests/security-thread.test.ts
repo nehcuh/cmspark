@@ -279,6 +279,22 @@ test("classifyError workspace_root not set is recoverable (Mission Pack DevSec)"
   assert.equal(classifyError("module_disabled:devsec-workspace"), "recoverable")
 })
 
+test("classifyError default_sandbox_unavailable is recoverable (Scheme 1 N4)", () => {
+  assert.equal(
+    classifyError(
+      "cannot create default sandbox ~/CMspark-projects: EACCES [default_sandbox_unavailable]",
+      { toolName: "workspace_list_dir" },
+    ),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError(
+      "cannot use default sandbox ~/CMspark-projects: path is a symbolic link (refusing in-home redirect) [default_sandbox_unavailable]",
+    ),
+    "recoverable",
+  )
+})
+
 test("classifyError MCP parent directory / allowlist path is recoverable", () => {
   assert.equal(
     classifyError(
