@@ -655,7 +655,7 @@
     "type": "function",
     "function": {
       "name": "workspace_list_dir",
-      "description": "List files under the thread's DevSec workspace_root (relative paths only). Requires modules.devsec-workspace enabled AND workspace_root already set. If error says workspace_root not set, stop and ask the user to click Side Panel → 任务包 → 「选择工作区」 first — never guess absolute paths.",
+      "description": "List files under the thread DevSec workspace (relative paths only). Requires modules.devsec-workspace enabled. If the thread has workspace_root set (folder-picker bind), list under that root; otherwise uses default sandbox ~/CMspark-projects (created if missing — does not auto-bind the thread). Prefer this for deliverables under the sandbox. For a real repo, ask the user to Side Panel → 场景 → 「选择工作区」. Never invent absolute paths outside the effective root. If error is default_sandbox_unavailable, sandbox create failed — ask user to fix ~/CMspark-projects or bind a folder.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -672,7 +672,7 @@
     "type": "function",
     "function": {
       "name": "workspace_read_file",
-      "description": "Read a text file under the thread's DevSec workspace_root (max ~512KB). Requires modules.devsec-workspace enabled.",
+      "description": "Read a text file under the thread DevSec workspace (max ~512KB, relative path only). Requires modules.devsec-workspace enabled. Uses thread workspace_root when bound; otherwise default sandbox ~/CMspark-projects (no auto-bind). For real project files outside the sandbox, user must bind via Side Panel → 场景 → 「选择工作区」. Never guess absolute paths.",
       "parameters": {
         "type": "object",
         "properties": {

@@ -837,8 +837,15 @@ function toolResultUserHint(result: any): string | null {
     typeof result.data?.user_hint_zh === "string" ? result.data.user_hint_zh : ""
   // Prefer structured companion hints (e.g. COOKIE_TRUST_DENIED) when present.
   if (dataHint) return dataHint
-  if (/workspace_root not set|需要先绑定工作区|pick a folder first/i.test(err)) {
-    return "需要先绑定工作区：侧栏「场景」→「选择工作区」。协议解锁 / 运行自主度不会跳过这一步。"
+  if (/default_sandbox_unavailable|cannot create default sandbox|默认工作区沙箱不可用/i.test(err)) {
+    return "默认沙箱 ~/CMspark-projects 不可用：检查本机权限，或侧栏「场景」→「选择工作区」绑定目录。协议解锁不会跳过。"
+  }
+  if (
+    /workspace_root not set|需要先绑定工作区|pick a folder first|默认使用沙箱|本机读写可用默认沙箱/i.test(
+      err,
+    )
+  ) {
+    return "本机读写可用默认沙箱 ~/CMspark-projects；真实项目请侧栏「场景」→「选择工作区」。协议解锁 / 运行自主度与场地绑定无关。"
   }
   if (/tool_not_allowed|当前场景不允许|可退出场景/i.test(err)) {
     return "当前场景限制了该工具：侧栏「场景」→「退出场景」后再试。协议解锁 / 运行自主度无效于此。"

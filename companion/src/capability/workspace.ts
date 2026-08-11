@@ -40,6 +40,9 @@ export function consumeNativePick(absPath: string): boolean {
 /**
  * Ensure ~/CMspark-projects exists (mode 0o700). Runtime fallback only —
  * does NOT write thread.workspace_root.
+ *
+ * Hardens against in-home symlink redirection: the sandbox path must be a
+ * real directory at ~/CMspark-projects (not a symlink to another folder).
  */
 export function ensureDefaultSandboxRoot(
   home = os.homedir(),
@@ -74,6 +77,29 @@ export function ensureDefaultSandboxRoot(
     }
   }
 
+  // Reject symlink at sandbox root (N2): would expand host_read to another
+  // in-home directory without folder-picker consent.
+  try {
+    if (fs.lstatSync(base).isSymbolicLink()) {
+      return {
+        ok: false,
+        error: `cannot use default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: path is a symbolic link (refusing in-home redirect) [default_sandbox_unavailable]`,
+      }
+    }
+  } catch (e: any) {
+    return {
+      ok: false,
+      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: ${e?.message || String(e)} [default_sandbox_unavailable]`,
+    }
+  }
+
+  // Best-effort tighten mode on pre-existing dirs (N6)
+  try {
+    fs.chmodSync(base, 0o700)
+  } catch {
+    /* ignore — some FS/mounts disallow chmod */
+  }
+
   let rootReal: string
   try {
     rootReal = fs.realpathSync(base)
@@ -84,12 +110,19 @@ export function ensureDefaultSandboxRoot(
     }
   }
 
-  // Post-create containment (symlink / TOCTOU)
+  // Post-create containment (symlink race / TOCTOU after lstat)
   const relAfter = path.relative(homeReal, rootReal)
   if (relAfter.startsWith("..") || path.isAbsolute(relAfter)) {
     return {
       ok: false,
       error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: path escapes home [default_sandbox_unavailable]`,
+    }
+  }
+  // Require resolved path is still the literal sandbox dir under home (not redirected)
+  if (path.normalize(rootReal) !== path.normalize(base)) {
+    return {
+      ok: false,
+      error: `cannot use default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: resolved path diverges from ~/${CMSPARK_PROJECTS_DIRNAME} [default_sandbox_unavailable]`,
     }
   }
   if (!fs.statSync(rootReal).isDirectory()) {
@@ -102,6 +135,23 @@ export function ensureDefaultSandboxRoot(
 }
 
 /**
+ * Resolve explicit bind or default sandbox into a root path.
+ * Shared by effectiveWorkspaceRoot + resolveUnderWorkspace (M1).
+ */
+export function resolveEffectiveWorkspaceRoot(
+  workspaceRoot: string | null | undefined,
+  home = os.homedir(),
+): { ok: true; path: string; source: "explicit" | "sandbox" } | { ok: false; error: string } {
+  if (typeof workspaceRoot === "string") {
+    const t = workspaceRoot.trim()
+    if (t) return { ok: true, path: t, source: "explicit" }
+  }
+  const ensured = ensureDefaultSandboxRoot(home)
+  if (!ensured.ok) return ensured
+  return { ok: true, path: ensured.path, source: "sandbox" }
+}
+
+/**
  * Effective root for list/read: explicit thread.workspace_root wins;
  * else default sandbox ~/CMspark-projects (created if missing).
  * Does NOT bind/write thread.workspace_root.
@@ -109,28 +159,19 @@ export function ensureDefaultSandboxRoot(
 export function effectiveWorkspaceRoot(
   workspaceRoot: string | null | undefined,
 ): string | null {
-  if (typeof workspaceRoot === "string") {
-    const t = workspaceRoot.trim()
-    if (t) return t
-  }
-  const ensured = ensureDefaultSandboxRoot()
-  return ensured.ok ? ensured.path : null
+  const r = resolveEffectiveWorkspaceRoot(workspaceRoot)
+  return r.ok ? r.path : null
 }
 
 export function resolveUnderWorkspace(
   workspaceRoot: string | null | undefined,
   relPath: string,
 ): { ok: true; abs: string } | { ok: false; error: string } {
-  let root: string
-  if (typeof workspaceRoot === "string" && workspaceRoot.trim()) {
-    root = workspaceRoot.trim()
-  } else {
-    const ensured = ensureDefaultSandboxRoot()
-    if (!ensured.ok) {
-      return { ok: false, error: ensured.error }
-    }
-    root = ensured.path
+  const rootRes = resolveEffectiveWorkspaceRoot(workspaceRoot)
+  if (!rootRes.ok) {
+    return { ok: false, error: rootRes.error }
   }
+  const root = rootRes.path
 
   let rootReal: string
   try {

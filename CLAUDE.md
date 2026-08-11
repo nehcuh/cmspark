@@ -106,7 +106,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - **A9. Mission Pack + 企业模块**（2026-07-26，详见 [ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)、[使用说明](docs/mission-pack-usage.md)，PR #77）— 场景任务包与企业 opt-in 能力：
   - **Pack**：`pack.yaml` → apply 到 Thread（skills/knowledge/tool_whitelist/`system_prompt_append`/snapshot）；非新 runtime。
   - **Modules**：`appsec` / `devsec-workspace` / `shell` / `netsec`；默认 enabled=false；shell/netsec 需 `capability_profile=enterprise`。
-  - **工具**：`workspace_*`（须先「选择工作区」）、`shell_exec`（单次 + L2 forceConfirm）、`netsec_port_scan`（allowlist + 任务授权 + L2）。
+  - **工具**：`workspace_*`（未绑定工作区时默认沙箱 `~/CMspark-projects`；真实仓库可「选择工作区」）、`shell_exec`（单次 + L2 forceConfirm）、`netsec_port_scan`（allowlist + 任务授权 + L2）。
   - **UI**：Side Panel 底栏「任务包」；审计 `logs/capability-audit.jsonl`。
 
 ## Common Issues
@@ -118,7 +118,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - Extension 加载失败: 确认 `chrome-extension/build/chrome-mv3-prod/` 存在（需先运行 `npm run build`）
 - Tray 不显示: 检查 Swift 编译产物（macOS）或 systray2 安装（Linux）
 - PDF 扫描件渲染不可用: `canvas` native 模块缺失时不影响文本 PDF 解析，扫描件会优雅降级输出提示。打包分发时需包含 `canvas` 二进制（macOS/Linux/Windows 均有预编译）
-- `workspace_root not set` / 任务包相关: Side Panel → **任务包** → **选择工作区** 绑定本机目录后再用 `workspace_*`；AppSec 审查不需要工作区。详见 [docs/mission-pack-usage.md](docs/mission-pack-usage.md)
+- `workspace_*` / 默认沙箱: 未绑定 `workspace_root` 时落到 `~/CMspark-projects`（不写线程）；沙箱创建失败见 `default_sandbox_unavailable`。真实仓库：Side Panel → **场景** → **选择工作区**。AppSec 审查不需要工作区。详见 [docs/mission-pack-usage.md](docs/mission-pack-usage.md)
 
 ## Related Docs
 

@@ -104,7 +104,7 @@
 2. 让 Agent 使用 `workspace_list_dir` / `workspace_read_file`。
 3. **（可选）** 需要真实仓库时：选中目标线程 → **「选择工作区」** → 系统文件夹对话框选根目录；面板显示绑定路径。**「清除工作区」** 仅在已显式绑定时出现。
 
-**默认沙箱（Scheme 1）**：线程未绑定 `workspace_root` 时，上述工具运行时落到 `~/CMspark-projects`（不存在则自动创建，权限 `0o700`），**不会**自动写入线程的 `workspace_root`；场景面板显示「默认沙箱 ~/CMspark-projects（可绑定真实项目）」。显式绑定后以绑定路径为准。路径 containment 始终生效。沙箱创建失败或模块未开启时才会拦截。
+**默认沙箱（Scheme 1）**：线程未绑定 `workspace_root` 时，上述工具运行时落到 `~/CMspark-projects`（不存在则自动创建，权限 `0o700`），**不会**自动写入线程的 `workspace_root`；场景面板显示「默认沙箱 ~/CMspark-projects（可绑定真实项目）」。显式绑定后以绑定路径为准。路径 containment 始终生效。沙箱根目录若为 **symlink**（指向其它目录）会被拒绝（`default_sandbox_unavailable`），防止无手势扩大可读面。沙箱创建失败或模块未开启时才会拦截。
 
 ---
 
