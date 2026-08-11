@@ -188,6 +188,13 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (config.mcp && typeof config.mcp.enabled === "boolean") {
     normalized.mcp_enabled = config.mcp.enabled
   }
+  // Wave B: thread_digest coverage (default off)
+  const td = config.thread_digest
+  if (td && typeof td === "object") {
+    if (typeof td.enabled === "boolean") normalized.thread_digest_enabled = td.enabled
+    if (typeof td.on_idle_hours === "number") normalized.thread_digest_on_idle_hours = td.on_idle_hours
+    if (typeof td.max_per_day === "number") normalized.thread_digest_max_per_day = td.max_per_day
+  }
   return Object.fromEntries(
     Object.entries(normalized).filter(([, value]) => value !== undefined)
   ) as Partial<LLMConfig>
@@ -931,11 +938,28 @@ export function useWebSocket() {
           break
         }
         case "thread.digest_updated": {
+          // Progress N/M advances via UPSERT_THREAD → ThreadList threads effect (no window event).
           if (msg.thread) {
             dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
           } else if (msg.thread_id) {
             // Fallback: full list refresh if companion omitted thread payload
             chrome.runtime.sendMessage({ type: "thread.list" })
+          }
+          break
+        }
+        case "thread.related": {
+          // Wave C: optional companion related ranking (UI also has local mirror for instant paint)
+          try {
+            window.dispatchEvent(
+              new CustomEvent("cmspark:thread_related", {
+                detail: {
+                  thread_id: msg.thread_id,
+                  related: Array.isArray(msg.related) ? msg.related : [],
+                },
+              }),
+            )
+          } catch {
+            /* ignore */
           }
           break
         }
@@ -954,6 +978,21 @@ export function useWebSocket() {
               },
             },
           })
+          // Wave A-7: clear batch spinners for ok+failed (S5 — not fixed 60s)
+          try {
+            window.dispatchEvent(
+              new CustomEvent("cmspark:extract_digest_completed", {
+                detail: {
+                  ok: msg.ok || [],
+                  failed: msg.failed || [],
+                  extracted_count: msg.extracted_count || 0,
+                  batch_id: typeof msg.batch_id === "string" ? msg.batch_id : undefined,
+                },
+              }),
+            )
+          } catch {
+            /* ignore */
+          }
           // Belt: re-pull list so tags survive if a digest_updated was missed
           // (multi-peer / race). Disk is source of truth after extract.
           chrome.runtime.sendMessage({ type: "thread.list" })

@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S64 (2026-08-11) [Thread History IA Wave A — UI only]
+- **Task**: Wave A A-1..A-7 (design dual-review APPROVED; impl dual-review later both_ok r2) — untagged batch extract, tldr row, portal menu, tag cloud fold, N/M progress
+- **Pins**: S1 force empty-tags; S2 exclude worker; S3 skip busy / disable 0; S4 portal z>51; S5 digest_updated progress no 60s clear
+- **Files**: `thread-timeline.ts` helpers · `ThreadList.tsx` · `thread-timeline.test.ts` · `useWebSocket.ts` custom events
+- **Out of scope**: Wave B/C, related, Graph, companion protocol, Knowledge dual-write
+- **Next**: run `npm --prefix chrome-extension test` for timeline helpers; manual smoke ☰→标签→CTA / ⋯ menu
+
 ### S63 END (2026-08-11 ~10:40) [multi-adv #162 · C10 #163 · stale remote 清仓]
 - **Ship 已在 main**：`#162` multi-adv Wave0–2 `50c9685` → `#163` C10 god-file A–H + nits `a32659e`（含 eager-bind `d028f2e`）
 - **本会话**：用户要「未合 remote 依次开 PR→CI→合」→ 盘点 11 支均为 **squash 假阳性**（PR 已 MERGED，merge-tree 会回灌旧 `server.ts`）→ **拒绝硬合** → 授权后 `git push origin --delete` 11 支；再清 12 支已是 main 祖先的 leftover remote

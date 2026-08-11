@@ -108,6 +108,15 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "thread.related": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "thread.related requires thread_id" }
+      }
+      if (m.limit !== undefined && (typeof m.limit !== "number" || m.limit < 1 || m.limit > 20)) {
+        return { valid: false, error: "thread.related limit must be 1–20" }
+      }
+      return { valid: true }
+    },
     "thread.cleanup_empty": () => ({ valid: true }),
     "thread.select": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "thread.select requires thread_id" }

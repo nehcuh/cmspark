@@ -1,0 +1,8 @@
+{
+  "batch": "thread-history-ia-gap-opt",
+  "timestamp": "20260811-105426",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-gap-opt-claude-20260811-105426.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-gap-opt-pi-20260811-105426.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-gap-opt-diff-20260811-105426.patch"
+}

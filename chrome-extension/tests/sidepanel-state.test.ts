@@ -122,6 +122,16 @@ test("normalizeConfig maps anthropic protocol and coding-plan profile", () => {
   assert.equal(n.base_url, "https://gateway.example/v1")
 })
 
+test("normalizeConfig flattens thread_digest (Wave B)", () => {
+  const n = normalizeConfig({
+    llm: { base_url: "x", model_name: "m", temperature: 0, context_window: 1, api_key: "" },
+    thread_digest: { enabled: true, on_idle_hours: 48, max_per_day: 10 },
+  })
+  assert.equal(n.thread_digest_enabled, true)
+  assert.equal(n.thread_digest_on_idle_hours, 48)
+  assert.equal(n.thread_digest_max_per_day, 10)
+})
+
 test("normalizeConfig flattens context_compaction modes", () => {
   assert.equal(
     normalizeConfig({ llm: { context_compaction: "prompt", base_url: "x", model_name: "m", temperature: 0, context_window: 1, api_key: "" } }).context_compaction,

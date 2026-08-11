@@ -188,6 +188,44 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         if (cfg.file_upload_max_tokens !== undefined) normalized.file_upload.max_file_tokens = cfg.file_upload_max_tokens
         if (cfg.file_upload_vision !== undefined) normalized.file_upload.enable_vision_analysis = !!cfg.file_upload_vision
       }
+      // Thread History IA Wave B: thread_digest coverage engine (default off)
+      if (cfg.thread_digest && typeof cfg.thread_digest === "object") {
+        const current = getConfig()
+        const cur = current.thread_digest || { enabled: false, on_idle_hours: 24, max_per_day: 20 }
+        const src = cfg.thread_digest as Record<string, unknown>
+        normalized.thread_digest = {
+          enabled: typeof src.enabled === "boolean" ? src.enabled : !!cur.enabled,
+          on_idle_hours:
+            typeof src.on_idle_hours === "number" && src.on_idle_hours >= 0
+              ? Math.min(720, Math.floor(src.on_idle_hours))
+              : (cur.on_idle_hours ?? 24),
+          max_per_day:
+            typeof src.max_per_day === "number" && src.max_per_day >= 0
+              ? Math.min(100, Math.floor(src.max_per_day))
+              : (cur.max_per_day ?? 20),
+        }
+      } else if (
+        cfg.thread_digest_enabled !== undefined ||
+        cfg.thread_digest_on_idle_hours !== undefined ||
+        cfg.thread_digest_max_per_day !== undefined
+      ) {
+        const current = getConfig()
+        const cur = current.thread_digest || { enabled: false, on_idle_hours: 24, max_per_day: 20 }
+        normalized.thread_digest = {
+          enabled:
+            cfg.thread_digest_enabled !== undefined
+              ? !!cfg.thread_digest_enabled
+              : !!cur.enabled,
+          on_idle_hours:
+            typeof cfg.thread_digest_on_idle_hours === "number" && cfg.thread_digest_on_idle_hours >= 0
+              ? Math.min(720, Math.floor(cfg.thread_digest_on_idle_hours))
+              : (cur.on_idle_hours ?? 24),
+          max_per_day:
+            typeof cfg.thread_digest_max_per_day === "number" && cfg.thread_digest_max_per_day >= 0
+              ? Math.min(100, Math.floor(cfg.thread_digest_max_per_day))
+              : (cur.max_per_day ?? 20),
+        }
+      }
       const updated = saveConfig(normalized)
       if (armingFlags.length > 0) {
         logger.warn("security.flag_armed", {

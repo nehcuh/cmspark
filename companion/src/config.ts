@@ -223,6 +223,19 @@ export interface LlmConfig {
   anthropic_version?: string
 }
 
+/**
+ * Thread digest coverage engine (Thread History IA Wave B).
+ * Default off — user must opt in. UI: Settings → 会话索引.
+ */
+export interface ThreadDigestConfig {
+  /** When true, opening the thread list may lazily extract digests (capped). */
+  enabled: boolean
+  /** Only consider threads whose updated_at is older than this many hours (default 24). */
+  on_idle_hours?: number
+  /** Max auto/lazy extracts per calendar day (default 20). */
+  max_per_day?: number
+}
+
 export interface CompanionConfig {
   port: number
   llm: LlmConfig
@@ -255,6 +268,8 @@ export interface CompanionConfig {
    */
   voice?: VoiceConfig
   obsidian?: ObsidianExportConfig
+  /** Session index / digest lazy extract (Wave B). Default enabled=false. */
+  thread_digest?: ThreadDigestConfig
   /**
    * Outbound MCP (ADR-022) packaging. When require_grant is true, loopback
    * HTTP invoke/disclosure accept only CMSPARK_OUTBOUND_GRANT (cmg_…) tokens —
@@ -330,6 +345,11 @@ const defaultConfig: CompanionConfig = {
   history_retention_days: 30,
   log_retention_days: 14,
   log_max_file_mb: 10,
+  thread_digest: {
+    enabled: false,
+    on_idle_hours: 24,
+    max_per_day: 20,
+  },
   capability_profile: "community",
   outbound_mcp: {
     require_grant: true,

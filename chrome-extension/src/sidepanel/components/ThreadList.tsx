@@ -1,22 +1,36 @@
 // Thread list — Timeline IA: today/yesterday + month→day, multi-select, tags view (P1).
+// Wave A: untagged batch extract, tldr row, portal menu, tag cloud fold, N/M progress.
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import type { Thread } from "../types"
 import {
+  batchNeedsForceExtract,
   buildTagIndex,
+  collapseTagKeys,
+  digestQuotaDayKey,
+  displayDigestTldr,
   displayThreadTitle,
+  EXTRACT_DIGEST_MAX,
   filterThreadsByQuery,
   formatRelativeTime,
   groupThreadsByCalendar,
   isMonthGroupOpen,
   isPinnedGroupOpen,
+  LS_DIGEST_QUOTA,
   LS_THREAD_LIST_EXPAND,
   LS_THREAD_LIST_EXPAND_MONTHS_LEGACY,
+  parseDigestQuota,
   parseThreadListExpand,
+  remainingDigestQuota,
   roleBadge,
+  selectLazyDigestCandidates,
+  selectUntaggedForExtract,
   selectionState,
+  showDigestStaleBadge,
+  TAG_CLOUD_MAX_VISIBLE,
   threadIdsInDay,
   threadIdsInMonth,
   toggleGroupSelection,
@@ -24,6 +38,11 @@ import {
   type DayGroup,
   type ThreadListExpandState,
 } from "../utils/thread-timeline"
+import {
+  buildRelatedEdges,
+  digestLintStats,
+  findRelatedThreads,
+} from "../utils/thread-related"
 
 function generateShortId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -76,8 +95,29 @@ export function ThreadList() {
   const [expandState, setExpandState] = useState<ThreadListExpandState>(loadExpandState)
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set())
   const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
+  const menuBtnRef = useRef<HTMLButtonElement | null>(null)
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [extractingIds, setExtractingIds] = useState<Set<string>>(() => new Set())
+  /** A-7 batch progress: done/total while untagged or multi extract runs. */
+  const [extractProgress, setExtractProgress] = useState<{
+    done: number
+    total: number
+  } | null>(null)
+  /** Fingerprint/extracted_at snapshot at batch start — progress via UPSERT (S5). */
+  const extractBatchRef = useRef<{
+    /** Monotonic id so a late completed event cannot corrupt a newer batch. */
+    batchId: number
+    remaining: Set<string>
+    total: number
+    startMark: Map<string, string>
+    /** Charge daily lazy quota only after successful ok[] (Wave B nit). */
+    countTowardQuota: boolean
+  } | null>(null)
+  const extractBatchSeqRef = useRef(0)
+  /** Clear N/M bar after complete; cancelled when a new batch starts (Claude N3). */
+  const extractProgressClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [tagCloudExpanded, setTagCloudExpanded] = useState(false)
   const [trashView, setTrashView] = useState(false)
   const [cleanupOpen, setCleanupOpen] = useState(false)
   const [cleanupSuggestions, setCleanupSuggestions] = useState<
@@ -85,7 +125,16 @@ export function ThreadList() {
   >([])
   const [cleanupSelected, setCleanupSelected] = useState<Set<string>>(() => new Set())
   const [cleanupDays, setCleanupDays] = useState(30)
-  const { threads, activeThreadId, threadBusyById } = state
+  /** Wave C: seed for related list; graph popup */
+  const [relatedSeedId, setRelatedSeedId] = useState<string | null>(null)
+  /** Companion thread.related override (local mirror first; WS may refine). */
+  const [relatedFromServer, setRelatedFromServer] = useState<
+    Array<{ thread_id: string; score: number; shared_tags?: string[] }> | null
+  >(null)
+  const [graphOpen, setGraphOpen] = useState(false)
+  const { threads, activeThreadId, threadBusyById, config } = state
+  /** One-shot lazy extract per panel open when settings enabled (B-2). */
+  const lazyDigestRanRef = useRef(false)
 
   const now = useMemo(() => new Date(), [open, threads.length])
 
@@ -101,6 +150,149 @@ export function ThreadList() {
     return () =>
       window.removeEventListener("cmspark:cleanup_suggestions", onSug as EventListener)
   }, [])
+
+  /** Position ⋯ menu for body portal (A-4 / GAP-14); clamp to viewport bottom. */
+  useEffect(() => {
+    if (!menuOpen) {
+      setMenuPos(null)
+      return
+    }
+    const MENU_EST_H = 280 // ~7 items
+    const update = () => {
+      const el = menuBtnRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      let top = r.bottom + 4
+      if (top + MENU_EST_H > window.innerHeight - 8) {
+        // Flip above the button when near bottom
+        top = Math.max(8, r.top - MENU_EST_H - 4)
+      }
+      setMenuPos({
+        top,
+        right: Math.max(8, window.innerWidth - r.right),
+      })
+    }
+    update()
+    window.addEventListener("resize", update)
+    window.addEventListener("scroll", update, true)
+    return () => {
+      window.removeEventListener("resize", update)
+      window.removeEventListener("scroll", update, true)
+    }
+  }, [menuOpen])
+
+  const scheduleProgressClear = useCallback(() => {
+    if (extractProgressClearTimerRef.current) {
+      clearTimeout(extractProgressClearTimerRef.current)
+      extractProgressClearTimerRef.current = null
+    }
+    extractProgressClearTimerRef.current = setTimeout(() => {
+      extractProgressClearTimerRef.current = null
+      setExtractProgress(null)
+    }, 1600)
+  }, [])
+
+  /** A-7 / S5: advance progress when thread digests change (digest_updated → UPSERT). */
+  useEffect(() => {
+    const batch = extractBatchRef.current
+    if (!batch || batch.remaining.size === 0) return
+    let changed = false
+    for (const id of [...batch.remaining]) {
+      const t = threads.find((x) => x.id === id) as Thread | undefined
+      if (!t) {
+        batch.remaining.delete(id)
+        changed = true
+        continue
+      }
+      const mark =
+        (t.digest?.extracted_at || "") +
+        "|" +
+        (t.digest?.content_fingerprint || "") +
+        "|" +
+        (t.digest?.tags || []).join(",")
+      const start = batch.startMark.get(id) || ""
+      // Only mark done when digest fingerprint actually changed (not mere hasTags).
+      if (mark !== start && (t.digest?.extracted_at || t.digest?.tags)) {
+        batch.remaining.delete(id)
+        changed = true
+      }
+    }
+    if (!changed) return
+    setExtractingIds(new Set(batch.remaining))
+    const done = batch.total - batch.remaining.size
+    setExtractProgress({ done, total: batch.total })
+    if (batch.remaining.size === 0) {
+      extractBatchRef.current = null
+      scheduleProgressClear()
+    }
+  }, [threads, scheduleProgressClear])
+
+  /** Clear remaining spinners when companion reports batch complete (ok + failed). */
+  useEffect(() => {
+    const onDone = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        ok?: string[]
+        failed?: Array<{ id?: string } | string>
+        batch_id?: string
+      } | null
+      const batch = extractBatchRef.current
+      if (!batch) return
+      // Ignore completions that belong to a superseded batch (no shared remaining mutation).
+      if (
+        detail?.batch_id != null &&
+        detail.batch_id !== "" &&
+        detail.batch_id !== String(batch.batchId)
+      ) {
+        return
+      }
+      // If another batch already replaced us, drop this late event.
+      if (extractBatchRef.current !== batch) return
+
+      const doneIds = new Set<string>()
+      for (const id of detail?.ok || []) if (typeof id === "string") doneIds.add(id)
+      for (const f of detail?.failed || []) {
+        if (typeof f === "string") doneIds.add(f)
+        else if (f && typeof f.id === "string") doneIds.add(f.id)
+      }
+      // Charge daily quota only for successful ok[] (Wave B nit — not at send time).
+      if (batch.countTowardQuota && Array.isArray(detail?.ok) && detail!.ok!.length > 0) {
+        const charge = detail!.ok!.filter((id) => typeof id === "string").length
+        if (charge > 0) {
+          try {
+            const day = digestQuotaDayKey(new Date())
+            const prev = parseDigestQuota(localStorage.getItem(LS_DIGEST_QUOTA), new Date())
+            const count = (prev.day === day ? prev.count : 0) + charge
+            localStorage.setItem(LS_DIGEST_QUOTA, JSON.stringify({ day, count }))
+          } catch {
+            /* ignore quota */
+          }
+        }
+        batch.countTowardQuota = false // once per batch completion
+      }
+      if (doneIds.size === 0) {
+        // Completed without lists — clear whole tracked batch
+        batch.remaining.clear()
+      } else {
+        for (const id of doneIds) batch.remaining.delete(id)
+      }
+      if (extractBatchRef.current !== batch) return
+      setExtractingIds(new Set(batch.remaining))
+      setExtractProgress({
+        done: batch.total - batch.remaining.size,
+        total: batch.total,
+      })
+      if (batch.remaining.size === 0) {
+        if (extractBatchRef.current === batch) extractBatchRef.current = null
+        scheduleProgressClear()
+      }
+    }
+    window.addEventListener("cmspark:extract_digest_completed", onDone as EventListener)
+    return () =>
+      window.removeEventListener(
+        "cmspark:extract_digest_completed",
+        onDone as EventListener,
+      )
+  }, [scheduleProgressClear])
 
   const filtered = useMemo(() => {
     const base = (threads as Thread[]).filter((t) =>
@@ -125,6 +317,76 @@ export function ThreadList() {
         return cb - ca || a.localeCompare(b)
       })
   }, [tagIndex])
+
+  const tagCloudCollapsed = useMemo(
+    () => collapseTagKeys(tagKeys, tagCloudExpanded, TAG_CLOUD_MAX_VISIBLE),
+    [tagKeys, tagCloudExpanded],
+  )
+
+  /** A-1/A-2: untagged batch targets (≤20, skip busy+worker, force empty-tags). Trash: no extract. */
+  const untaggedExtract = useMemo(() => {
+    if (trashView) return { ids: [] as string[], force: false }
+    return selectUntaggedForExtract(filtered as Thread[], {
+      max: EXTRACT_DIGEST_MAX,
+      busyIds: threadBusyById,
+      excludeWorkers: true,
+    })
+  }, [filtered, threadBusyById, trashView])
+
+  /** Wave C-2: related hits — local instant, optional companion refine. */
+  const relatedHitsLocal = useMemo(() => {
+    if (!relatedSeedId) return []
+    return findRelatedThreads(relatedSeedId, filtered as Thread[], 3)
+  }, [relatedSeedId, filtered])
+
+  const relatedHits = useMemo(() => {
+    if (!relatedSeedId) return []
+    if (relatedFromServer && relatedFromServer.length > 0) {
+      return relatedFromServer.slice(0, 3).map((h) => ({
+        thread_id: h.thread_id,
+        score: h.score,
+        signals: { co_tag: 0, tf: 0, time: 0 },
+        shared_tags: h.shared_tags || [],
+      }))
+    }
+    return relatedHitsLocal
+  }, [relatedSeedId, relatedFromServer, relatedHitsLocal])
+
+  // Request companion related when seed changes (background bridge + local fallback).
+  useEffect(() => {
+    if (!relatedSeedId) {
+      setRelatedFromServer(null)
+      return
+    }
+    setRelatedFromServer(null)
+    chrome.runtime.sendMessage({
+      type: "thread.related",
+      thread_id: relatedSeedId,
+      limit: 3,
+    })
+    const onRel = (e: Event) => {
+      const d = (e as CustomEvent).detail as {
+        thread_id?: string
+        related?: Array<{ thread_id: string; score: number; shared_tags?: string[] }>
+      }
+      if (d?.thread_id !== relatedSeedId) return
+      if (Array.isArray(d.related)) setRelatedFromServer(d.related)
+    }
+    window.addEventListener("cmspark:thread_related", onRel as EventListener)
+    return () => window.removeEventListener("cmspark:thread_related", onRel as EventListener)
+  }, [relatedSeedId])
+
+  /** Wave C-3: graph edges (local). */
+  const graphEdges = useMemo(() => {
+    if (!graphOpen) return []
+    return buildRelatedEdges(filtered as Thread[], { minScore: 0.2, maxEdges: 80 })
+  }, [graphOpen, filtered])
+
+  /** Wave C-4: lint stats for cleanup helper. */
+  const lintStats = useMemo(
+    () => digestLintStats(filtered as Thread[]),
+    [filtered],
+  )
 
   const selectableIds = useMemo(() => {
     const s = new Set<string>()
@@ -222,26 +484,106 @@ export function ThreadList() {
     setMenuOpen(false)
   }
 
+  const beginExtractBatch = useCallback(
+    (ids: string[], force: boolean, opts?: { countTowardQuota?: boolean }) => {
+      const capped = ids.slice(0, EXTRACT_DIGEST_MAX)
+      if (capped.length === 0) return
+      // Serialize: refuse starting a second batch while one is in flight (A dual-review nit).
+      if (extractBatchRef.current && extractBatchRef.current.remaining.size > 0) {
+        // In-flight batch already shows N/M progress bar; ignore overlapping click.
+        return
+      }
+      if (extractProgressClearTimerRef.current) {
+        clearTimeout(extractProgressClearTimerRef.current)
+        extractProgressClearTimerRef.current = null
+      }
+      const startMark = new Map<string, string>()
+      for (const id of capped) {
+        const t = threads.find((x) => x.id === id) as Thread | undefined
+        const mark =
+          (t?.digest?.extracted_at || "") +
+          "|" +
+          (t?.digest?.content_fingerprint || "") +
+          "|" +
+          (t?.digest?.tags || []).join(",")
+        startMark.set(id, mark)
+      }
+      const batchId = ++extractBatchSeqRef.current
+      extractBatchRef.current = {
+        batchId,
+        remaining: new Set(capped),
+        total: capped.length,
+        startMark,
+        // Quota charged on extract_digest.completed ok[] only (not at send).
+        countTowardQuota: opts?.countTowardQuota === true,
+      }
+      setExtractingIds(new Set(capped))
+      setExtractProgress({ done: 0, total: capped.length })
+      chrome.runtime.sendMessage({
+        type: "thread.extract_digest",
+        thread_ids: capped,
+        force: force === true,
+        batch_id: String(batchId),
+      })
+      // No fixed 60s full clear (S5/GAP-15) — progress from digest UPSERT / completed.
+    },
+    [threads],
+  )
+
+  // Wave B-2: when list opens and settings enable lazy digest, fill coverage once.
+  useEffect(() => {
+    if (!open) {
+      lazyDigestRanRef.current = false
+      return
+    }
+    if (lazyDigestRanRef.current || trashView) return
+    if (config?.thread_digest_enabled !== true) return
+    if (extractBatchRef.current) return
+    const maxPerDay = config.thread_digest_max_per_day ?? 20
+    const idleH = config.thread_digest_on_idle_hours ?? 24
+    let quota = { day: digestQuotaDayKey(now), count: 0 }
+    try {
+      quota = parseDigestQuota(localStorage.getItem(LS_DIGEST_QUOTA), now)
+    } catch {
+      /* ignore */
+    }
+    const remain = remainingDigestQuota(quota, maxPerDay)
+    if (remain <= 0) return
+    const live = (threads as Thread[]).filter((t) => !t.trashed_at)
+    const sel = selectLazyDigestCandidates(live, {
+      now,
+      onIdleHours: idleH,
+      max: Math.min(EXTRACT_DIGEST_MAX, remain),
+      busyIds: threadBusyById,
+      excludeWorkers: true,
+    })
+    if (sel.ids.length === 0) return
+    lazyDigestRanRef.current = true
+    beginExtractBatch(sel.ids, sel.force, { countTowardQuota: true })
+  }, [
+    open,
+    trashView,
+    config?.thread_digest_enabled,
+    config?.thread_digest_max_per_day,
+    config?.thread_digest_on_idle_hours,
+    threads,
+    threadBusyById,
+    now,
+    beginExtractBatch,
+  ])
+
   const handleExtractDigest = (ids: string[]) => {
     if (ids.length === 0) return
-    setExtractingIds((prev) => {
-      const next = new Set(prev)
-      for (const id of ids) next.add(id)
-      return next
-    })
-    chrome.runtime.sendMessage({
-      type: "thread.extract_digest",
-      thread_ids: ids.slice(0, 20),
-      force: false,
-    })
-    // Clear spinners after a while; real updates arrive via digest_updated
-    window.setTimeout(() => {
-      setExtractingIds((prev) => {
-        const next = new Set(prev)
-        for (const id of ids) next.delete(id)
-        return next
-      })
-    }, 60_000)
+    const capped = ids.slice(0, EXTRACT_DIGEST_MAX)
+    const force = batchNeedsForceExtract(filtered as Thread[], capped)
+    beginExtractBatch(capped, force)
+  }
+
+  /** A-1 menu / A-2 CTA: extract untagged (uses selection.force — S1). */
+  const handleExtractUntagged = () => {
+    if (untaggedExtract.ids.length === 0) return
+    beginExtractBatch(untaggedExtract.ids, untaggedExtract.force)
+    setMenuOpen(false)
   }
 
   const handleSelect = (threadId: string) => {
@@ -346,6 +688,14 @@ export function ThreadList() {
     setCleanupSuggestions([])
   }
 
+  /** B-4: extract digests for cleanup-selected threads only (no delete). */
+  const applyCleanupExtractOnly = () => {
+    const ids = [...cleanupSelected].slice(0, EXTRACT_DIGEST_MAX)
+    if (ids.length === 0) return
+    const force = batchNeedsForceExtract(filtered as Thread[], ids)
+    beginExtractBatch(ids, force)
+  }
+
   const panelMaxHeight = selectMode || view === "tags" ? 480 : 360
 
   const renderThreadRow = (t: Thread) => {
@@ -357,6 +707,7 @@ export function ThreadList() {
     const rel = formatRelativeTime(t.updated_at || t.created_at, now)
     const tags = t.digest?.tags || []
     const extracting = extractingIds.has(t.id)
+    const tldr = displayDigestTldr(t)
 
     return (
       <div
@@ -389,12 +740,17 @@ export function ThreadList() {
             <span style={styles.threadAlias}>{title}</span>
             {badge && <span style={styles.badge}>{badge}</span>}
             {extracting && <span style={styles.badgeMuted}>抽取中</span>}
-            {t.digest?.stale && view === "tags" && (
+            {showDigestStaleBadge(t, view, now) && (
               <span style={styles.badgeMuted} title="要点可能过期">
                 过期
               </span>
             )}
           </div>
+          {tldr && (
+            <div style={styles.tldr} title={t.digest?.tldr || tldr}>
+              {tldr}
+            </div>
+          )}
           {tags.length > 0 && (
             <div style={styles.tagRow}>
               {tags.slice(0, 4).map((tag) => (
@@ -422,6 +778,16 @@ export function ThreadList() {
         </div>
         {!selectMode && (
           <>
+            <button
+              style={styles.iconBtn}
+              onClick={(e) => {
+                e.stopPropagation()
+                setRelatedSeedId((prev) => (prev === t.id ? null : t.id))
+              }}
+              title="相关会话"
+            >
+              🔗
+            </button>
             <button
               style={styles.iconBtn}
               onClick={(e) => {
@@ -583,43 +949,104 @@ export function ThreadList() {
         : activeTag === "__untagged__"
           ? untagged
           : tagIndex.get(activeTag) || []
+    const extractDisabled = untaggedExtract.ids.length === 0
+    const extractLabel = `为未标注提取要点（最多${EXTRACT_DIGEST_MAX}）`
+    // Primary CTA only when extractable targets exist (no dead disabled empty-library CTA).
+    const showPrimaryCta = untaggedExtract.ids.length > 0
 
     return (
       <div>
-        <div style={styles.tagCloud}>
-          {tagKeys.length === 0 && untagged.length === 0 && (
-            <div style={{ color: tokens.textMuted, fontSize: 12, padding: 8 }}>
-              暂无标签。点 🏷 或「提取要点」为会话生成标签。
+        {/* A-5: count-fold only; 更多/收起 OUTSIDE pills so they are never clipped (Pi blocking). */}
+        <div style={styles.tagCloudSection}>
+          <div style={styles.tagCloud}>
+            {tagKeys.length === 0 && untagged.length === 0 && (
+              <div style={{ color: tokens.textMuted, fontSize: 12, padding: 8 }}>
+                暂无标签。使用下方按钮为会话提取要点与标签。
+              </div>
+            )}
+            {tagCloudCollapsed.visible.map((tag) => {
+              const n = tagIndex.get(tag)?.length || 0
+              const active = activeTag === tag
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  style={active ? styles.tagPillActive : styles.tagPill}
+                  onClick={() => setActiveTag(active ? null : tag)}
+                >
+                  #{tag} {n}
+                </button>
+              )
+            })}
+            {untagged.length > 0 && (
+              <button
+                type="button"
+                style={
+                  activeTag === "__untagged__" ? styles.tagPillActive : styles.tagPill
+                }
+                onClick={() =>
+                  setActiveTag(activeTag === "__untagged__" ? null : "__untagged__")
+                }
+              >
+                #未标注 {untagged.length}
+              </button>
+            )}
+          </div>
+          {tagCloudCollapsed.hiddenCount > 0 && !tagCloudExpanded && (
+            <div style={styles.tagCloudFoldRow}>
+              <button
+                type="button"
+                style={styles.tagPill}
+                onClick={() => setTagCloudExpanded(true)}
+                title={`还有 ${tagCloudCollapsed.hiddenCount} 个标签`}
+              >
+                更多 · {tagCloudCollapsed.hiddenCount}
+              </button>
             </div>
           )}
-          {tagKeys.map((tag) => {
-            const n = tagIndex.get(tag)?.length || 0
-            const active = activeTag === tag
-            return (
+          {tagCloudExpanded && tagKeys.length > TAG_CLOUD_MAX_VISIBLE && (
+            <div style={styles.tagCloudFoldRow}>
               <button
-                key={tag}
                 type="button"
-                style={active ? styles.tagPillActive : styles.tagPill}
-                onClick={() => setActiveTag(active ? null : tag)}
+                style={styles.tagPill}
+                onClick={() => setTagCloudExpanded(false)}
               >
-                #{tag} {n}
+                收起
               </button>
-            )
-          })}
-          {untagged.length > 0 && (
-            <button
-              type="button"
-              style={
-                activeTag === "__untagged__" ? styles.tagPillActive : styles.tagPill
-              }
-              onClick={() =>
-                setActiveTag(activeTag === "__untagged__" ? null : "__untagged__")
-              }
-            >
-              #未标注 {untagged.length}
-            </button>
+            </div>
           )}
         </div>
+
+        {showPrimaryCta && untaggedExtract.ids.length > 0 && (
+          <div style={styles.untaggedCtaRow}>
+            <button
+              type="button"
+              style={{
+                ...styles.primaryCta,
+                opacity: extractDisabled ? 0.45 : 1,
+                cursor: extractDisabled ? "not-allowed" : "pointer",
+              }}
+              disabled={extractDisabled}
+              onClick={handleExtractUntagged}
+              title={
+                extractDisabled
+                  ? "没有可提取的未标注会话（已跳过运行中与 worker）"
+                  : `将提取最多 ${untaggedExtract.ids.length} 个未标注会话`
+              }
+            >
+              🏷 {extractLabel}
+            </button>
+            {!extractDisabled && (
+              <span style={styles.ctaHint}>
+                本批 {untaggedExtract.ids.length} 个
+                {untagged.length > untaggedExtract.ids.length
+                  ? `（共 ${untagged.length} 未标注）`
+                  : ""}
+              </span>
+            )}
+          </div>
+        )}
+
         {listForTag && (
           <div>
             <div style={styles.groupHeader}>
@@ -701,6 +1128,7 @@ export function ThreadList() {
                 </button>
                 <div style={{ position: "relative" }}>
                   <button
+                    ref={menuBtnRef}
                     type="button"
                     style={styles.menuBtn}
                     onClick={() => setMenuOpen((v) => !v)}
@@ -710,43 +1138,159 @@ export function ThreadList() {
                   >
                     ⋯
                   </button>
-                  {menuOpen && (
-                    <div style={styles.menu} role="menu">
-                      <button type="button" style={styles.menuItem} onClick={handleGenerateTitle}>
-                        ✨ AI 生成标题
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.menuItem}
-                        onClick={() => handleBatchAutoTitle()}
-                      >
-                        📝 未命名→首条起名
-                      </button>
-                      <button type="button" style={styles.menuItem} onClick={handleCleanupEmpty}>
-                        🧹 清理空白
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.menuItem}
-                        onClick={() => {
-                          setCleanupOpen(true)
-                          setMenuOpen(false)
+                  {menuOpen &&
+                    menuPos &&
+                    typeof document !== "undefined" &&
+                    createPortal(
+                      <div
+                        style={{
+                          ...styles.menuPortal,
+                          top: menuPos.top,
+                          right: menuPos.right,
                         }}
+                        role="menu"
                       >
-                        🗂 整理助手
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.menuItem}
-                        onClick={() => (trashView ? closeTrashView() : openTrashView())}
-                      >
-                        {trashView ? "← 返回列表" : "🗑 回收站"}
-                      </button>
-                    </div>
-                  )}
+                        <button
+                          type="button"
+                          style={styles.menuItem}
+                          onClick={handleGenerateTitle}
+                        >
+                          ✨ AI 生成标题
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.menuItem}
+                          onClick={() => handleBatchAutoTitle()}
+                        >
+                          📝 未命名→首条起名
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.menuItem}
+                          onClick={handleCleanupEmpty}
+                        >
+                          🧹 清理空白
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.menuItem}
+                          onClick={() => {
+                            setCleanupOpen(true)
+                            setMenuOpen(false)
+                          }}
+                        >
+                          🗂 整理助手
+                        </button>
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.menuItem,
+                            opacity: untaggedExtract.ids.length === 0 ? 0.45 : 1,
+                            cursor:
+                              untaggedExtract.ids.length === 0
+                                ? "not-allowed"
+                                : "pointer",
+                          }}
+                          disabled={untaggedExtract.ids.length === 0}
+                          onClick={handleExtractUntagged}
+                          title={
+                            untaggedExtract.ids.length === 0
+                              ? "没有可提取的未标注会话"
+                              : `为最多 ${untaggedExtract.ids.length} 个未标注会话提取要点`
+                          }
+                        >
+                          🏷 为未标注提取要点
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.menuItem}
+                          onClick={() => {
+                            setGraphOpen(true)
+                            setMenuOpen(false)
+                          }}
+                        >
+                          🕸 关联图谱
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.menuItem}
+                          onClick={() =>
+                            trashView ? closeTrashView() : openTrashView()
+                          }
+                        >
+                          {trashView ? "← 返回列表" : "🗑 回收站"}
+                        </button>
+                      </div>,
+                      document.body,
+                    )}
                 </div>
               </div>
             </div>
+
+            {extractProgress && extractProgress.total > 0 && (
+              <div style={styles.progressBar} role="status" aria-live="polite">
+                提取要点 {extractProgress.done}/{extractProgress.total}
+                {extractProgress.done >= extractProgress.total ? " · 完成" : "…"}
+              </div>
+            )}
+
+            {relatedSeedId && (
+              <div style={styles.relatedPanel}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 4,
+                  }}
+                >
+                  <span style={{ fontSize: 11, fontWeight: 600, color: tokens.textSecondary }}>
+                    相关 · {displayThreadTitle(
+                      (threads.find((x) => x.id === relatedSeedId) as Thread) || {
+                        id: relatedSeedId,
+                      },
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    style={styles.selectBtn}
+                    onClick={() => setRelatedSeedId(null)}
+                  >
+                    关闭
+                  </button>
+                </div>
+                {relatedHits.length === 0 ? (
+                  <div style={{ fontSize: 11, color: tokens.textMuted }}>
+                    暂无相关会话（需更多标签/要点）
+                  </div>
+                ) : (
+                  relatedHits.map((h) => {
+                    const thr = threads.find((x) => x.id === h.thread_id) as Thread | undefined
+                    const title = thr ? displayThreadTitle(thr) : h.thread_id
+                    return (
+                      <button
+                        key={h.thread_id}
+                        type="button"
+                        style={styles.relatedItem}
+                        onClick={() => handleSelect(h.thread_id)}
+                        title={
+                          h.shared_tags.length
+                            ? `共标签: ${h.shared_tags.join(", ")}`
+                            : `score ${h.score.toFixed(2)}`
+                        }
+                      >
+                        {title}
+                        {h.shared_tags.length > 0 && (
+                          <span style={{ color: tokens.textMuted, marginLeft: 4 }}>
+                            #{h.shared_tags.slice(0, 2).join(" #")}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            )}
 
             {trashView && (
               <div
@@ -867,6 +1411,16 @@ export function ThreadList() {
                     关闭
                   </button>
                 </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: tokens.textMuted,
+                    marginBottom: 6,
+                  }}
+                >
+                  索引健康：未标注 {lintStats.untagged} · 过期 {lintStats.stale} · 孤立{" "}
+                  {lintStats.isolated}
+                </div>
                 {cleanupSuggestions.length === 0 ? (
                   <div style={{ fontSize: 11, color: tokens.textMuted }}>
                     点击扫描：空会话 / 极短孤消息 / 过久且内容少 / 同名
@@ -914,19 +1468,105 @@ export function ThreadList() {
                         )
                       })}
                     </div>
-                    <button
-                      type="button"
-                      style={{ ...styles.dangerBtn, marginTop: 8 }}
-                      disabled={cleanupSelected.size === 0}
-                      onClick={applyCleanupTrash}
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 6,
+                        marginTop: 8,
+                        flexWrap: "wrap",
+                      }}
                     >
-                      移入回收站（{cleanupSelected.size}）
-                    </button>
+                      <button
+                        type="button"
+                        style={styles.selectBtn}
+                        disabled={cleanupSelected.size === 0}
+                        onClick={applyCleanupExtractOnly}
+                        title="仅提取要点/标签，不删除"
+                      >
+                        仅提取要点（{Math.min(cleanupSelected.size, EXTRACT_DIGEST_MAX)}）
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.dangerBtn}
+                        disabled={cleanupSelected.size === 0}
+                        onClick={applyCleanupTrash}
+                      >
+                        移入回收站（{cleanupSelected.size}）
+                      </button>
+                    </div>
                   </>
                 )}
               </div>
             )}
           </div>
+
+          {graphOpen &&
+            createPortal(
+              <div style={styles.graphOverlay} role="dialog" aria-label="关联图谱">
+                <div style={styles.graphCard}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: 8,
+                    }}
+                  >
+                    <strong style={{ fontSize: 13 }}>关联图谱（探索）</strong>
+                    <button
+                      type="button"
+                      style={styles.selectBtn}
+                      onClick={() => setGraphOpen(false)}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11, color: tokens.textMuted, marginBottom: 8 }}>
+                    边 = 共标签 + 要点相似 + 时间邻近 · 不改默认时间轴导航
+                  </div>
+                  {graphEdges.length === 0 ? (
+                    <div style={{ fontSize: 12, color: tokens.textMuted, padding: 12 }}>
+                      暂无足够 digest 边。请先为会话提取要点/标签。
+                    </div>
+                  ) : (
+                    <div style={styles.graphList}>
+                      {graphEdges.slice(0, 40).map((e) => {
+                        const ta = threads.find((x) => x.id === e.a) as Thread | undefined
+                        const tb = threads.find((x) => x.id === e.b) as Thread | undefined
+                        return (
+                          <div key={`${e.a}-${e.b}`} style={styles.graphEdgeRow}>
+                            <button
+                              type="button"
+                              style={styles.relatedItem}
+                              onClick={() => {
+                                handleSelect(e.a)
+                                setGraphOpen(false)
+                              }}
+                            >
+                              {ta ? displayThreadTitle(ta) : e.a}
+                            </button>
+                            <span style={{ color: tokens.textMuted, fontSize: 11 }}>
+                              ↔ {e.score.toFixed(2)}
+                            </span>
+                            <button
+                              type="button"
+                              style={styles.relatedItem}
+                              onClick={() => {
+                                handleSelect(e.b)
+                                setGraphOpen(false)
+                              }}
+                            >
+                              {tb ? displayThreadTitle(tb) : e.b}
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>,
+              document.body,
+            )}
         </>
       )}
     </div>
@@ -1066,18 +1706,17 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     lineHeight: 1.2,
   },
-  menu: {
-    position: "absolute",
-    right: 0,
-    top: "100%",
-    marginTop: 4,
+  /** A-4 portal menu — fixed to body, above panel(51) / backdrop(50). */
+  menuPortal: {
+    position: "fixed",
     background: "#fff",
     border: "1px solid #e0e0e0",
     borderRadius: 6,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-    zIndex: 60,
-    minWidth: 140,
+    boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
+    zIndex: 10060,
+    minWidth: 168,
     overflow: "hidden",
+    fontFamily: tokens.font,
   },
   menuItem: {
     display: "block",
@@ -1088,6 +1727,110 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "8px 12px",
     fontSize: 12,
     cursor: "pointer",
+    fontFamily: tokens.font,
+    color: tokens.text,
+  },
+  progressBar: {
+    padding: "5px 10px",
+    fontSize: 11,
+    color: tokens.accentText,
+    background: tokens.accentSoft,
+    borderBottom: `1px solid ${tokens.border}`,
+    fontFamily: tokens.font,
+  },
+  relatedPanel: {
+    padding: "6px 10px",
+    borderBottom: `1px solid ${tokens.border}`,
+    background: "#f8fafc",
+  },
+  relatedItem: {
+    display: "block",
+    width: "100%",
+    textAlign: "left" as const,
+    background: "none",
+    border: "none",
+    padding: "4px 0",
+    fontSize: 11,
+    cursor: "pointer",
+    fontFamily: tokens.font,
+    color: tokens.accentText,
+  },
+  graphOverlay: {
+    position: "fixed" as const,
+    inset: 0,
+    zIndex: 10080,
+    background: "rgba(0,0,0,0.35)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
+  },
+  graphCard: {
+    width: "min(360px, 100%)",
+    maxHeight: "80vh",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column" as const,
+    background: "#fff",
+    borderRadius: 10,
+    boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
+    padding: 12,
+    fontFamily: tokens.font,
+  },
+  graphList: {
+    overflowY: "auto" as const,
+    flex: 1,
+    maxHeight: "60vh",
+  },
+  graphEdgeRow: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 2,
+    padding: "6px 0",
+    borderBottom: "1px solid #f0f0f0",
+  },
+  tagCloudSection: {
+    borderBottom: "1px solid #f0f0f0",
+  },
+  tagCloudFoldRow: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 6,
+    padding: "0 10px 8px",
+  },
+  untaggedCtaRow: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 4,
+    padding: "8px 10px",
+    borderBottom: "1px solid #f0f0f0",
+    background: tokens.bgMuted,
+  },
+  primaryCta: {
+    background: tokens.accent,
+    color: "#fff",
+    border: "none",
+    borderRadius: 6,
+    padding: "7px 10px",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: tokens.font,
+    textAlign: "center" as const,
+  },
+  ctaHint: {
+    fontSize: 10,
+    color: tokens.textMuted,
+    fontFamily: tokens.font,
+  },
+  tldr: {
+    fontSize: 11,
+    color: tokens.textSecondary,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
+    marginTop: 2,
+    lineHeight: 1.35,
     fontFamily: tokens.font,
   },
   list: {
@@ -1183,7 +1926,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: "wrap",
     gap: 6,
     padding: "8px 10px",
-    borderBottom: "1px solid #f0f0f0",
+    // border lives on tagCloudSection so fold row stays outside any clip
   },
   tagPill: {
     border: `1px solid ${tokens.border}`,

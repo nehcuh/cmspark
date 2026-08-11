@@ -2935,6 +2935,82 @@ export function SettingsSlideout() {
               open={isSectionOpen("experimental")}
               onToggle={() => handleToggleSection("experimental")}
             >
+          {/* Thread History IA Wave B — session index (thread-list IA, not export) */}
+          <div style={styles.sectionTitle}>会话索引（标签 / 要点）</div>
+          <div style={styles.field}>
+            <label style={styles.label}>打开列表时惰性提取要点</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                style={{
+                  ...styles.toggleBtn,
+                  ...(config.thread_digest_enabled
+                    ? { background: tokens.accent, color: "#fff", borderColor: tokens.accent }
+                    : {}),
+                }}
+                onClick={() =>
+                  dispatch({
+                    type: "SET_CONFIG",
+                    config: { thread_digest_enabled: !config.thread_digest_enabled },
+                  })
+                }
+              >
+                {config.thread_digest_enabled ? "已开启" : "默认关闭"}
+              </button>
+            </div>
+            <div style={styles.helpText}>
+              默认关闭。开启后，每次打开线程列表会对空闲未标注/过期会话自动提取要点（受每日上限约束，非全库扫描）。手动「为未标注提取」始终可用。
+            </div>
+          </div>
+          <div style={styles.field}>
+            <label style={styles.label}>空闲阈值（小时）</label>
+            <input
+              style={styles.input}
+              type="number"
+              min={0}
+              max={720}
+              value={config.thread_digest_on_idle_hours ?? 24}
+              onChange={(e) =>
+                dispatch({
+                  type: "SET_CONFIG",
+                  config: {
+                    thread_digest_on_idle_hours: Math.max(
+                      0,
+                      Math.min(720, Number(e.target.value) || 0),
+                    ),
+                  },
+                })
+              }
+            />
+            <div style={styles.helpText}>仅处理 updated_at 早于该小时数的会话（默认 24）。</div>
+          </div>
+          <div style={styles.field}>
+            <label style={styles.label}>每日自动提取上限</label>
+            <input
+              style={styles.input}
+              type="number"
+              min={0}
+              max={100}
+              value={config.thread_digest_max_per_day ?? 20}
+              onChange={(e) =>
+                dispatch({
+                  type: "SET_CONFIG",
+                  config: {
+                    thread_digest_max_per_day: Math.max(
+                      0,
+                      Math.min(100, Number(e.target.value) || 0),
+                    ),
+                  },
+                })
+              }
+            />
+            <div style={styles.helpText}>
+              含惰性自动批；单批仍 ≤20。开关立即影响当前面板；点「保存」写入 Companion 持久配置。
+            </div>
+          </div>
+
+          <div style={styles.divider} />
+
           {/* --- WP5-I4 实验功能(Qwen3-VL 本地模型定位层) --- */}
           <div style={styles.sectionTitle}>实验功能</div>
           {(() => {

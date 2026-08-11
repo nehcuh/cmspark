@@ -19,6 +19,7 @@ import {
   extractThreadDigestQueued,
   isDigestStale,
 } from "./threads/digest"
+import { findRelatedThreads } from "./threads/related"
 import { suggestCleanupRules } from "./threads/cleanup-rules"
 import { buildContextRefsSystemSegment, type ContextRefInput } from "./threads/context-refs"
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
@@ -1371,6 +1372,36 @@ export async function handleMessage(
         extracted_count: ok.length,
       }
     }
+
+    /**
+     * Wave C: related threads from index digests (co-tag + TF + time). Pure local.
+     */
+    case "thread.related": {
+      const seedId = typeof rest.thread_id === "string" ? rest.thread_id : ""
+      if (!seedId) {
+        return { type: "error", error: "thread.related requires thread_id" }
+      }
+      const limit =
+        typeof rest.limit === "number" && rest.limit > 0
+          ? Math.min(20, Math.floor(rest.limit))
+          : 5
+      const all = threadManager.list({ include_trashed: false }) as Array<{
+        id: string
+        alias?: string
+        updated_at?: string
+        created_at?: string
+        digest?: { tldr?: string; tags?: string[]; bullets?: string[] } | null
+        agent_role?: string
+        trashed_at?: string | null
+      }>
+      const related = findRelatedThreads(seedId, all, limit)
+      return {
+        type: "thread.related",
+        thread_id: seedId,
+        related,
+      }
+    }
+
     case "thread.select": {
       const thr = threadManager.get(rest.thread_id)
       if (!thr) return { type: "error", error: `Thread not found: ${rest.thread_id}` }

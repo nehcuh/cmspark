@@ -822,6 +822,16 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
       }
 
+      case "thread.related": {
+        wsClient.send({
+          type: "thread.related",
+          thread_id: message.thread_id,
+          limit: typeof message.limit === "number" ? message.limit : 5,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
       case "thread.cleanup_empty":
         wsClient.send({ type: "thread.cleanup_empty" })
         sendResponse({ ok: true })
