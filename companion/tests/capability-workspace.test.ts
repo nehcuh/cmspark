@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { CMSPARK_PROJECTS_DIRNAME } from "../src/capability/project-dir"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-ws-"))
 process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
@@ -81,4 +82,60 @@ test("module gate blocks when disabled", () => {
     },
   } as any)
   clearConfigCache()
+})
+
+test("effectiveWorkspaceRoot(null) returns ~/CMspark-projects under HOME", () => {
+  const eff = workspace.effectiveWorkspaceRoot(null)
+  assert.ok(eff)
+  assert.ok(eff!.endsWith(CMSPARK_PROJECTS_DIRNAME))
+  assert.ok(eff!.startsWith(fs.realpathSync(tempHome)) || eff!.startsWith(tempHome))
+  assert.ok(fs.existsSync(eff!) && fs.statSync(eff!).isDirectory())
+})
+
+test("null workspaceRoot can workspaceListDir under default sandbox", () => {
+  const sandbox = path.join(tempHome, CMSPARK_PROJECTS_DIRNAME)
+  // ensure not pre-created so list path creates it
+  if (fs.existsSync(sandbox)) {
+    // leave existing from prior test — list still works
+  }
+  const list = workspace.workspaceListDir(null, ".")
+  assert.equal(list.success, true, list.error)
+  assert.ok(fs.existsSync(sandbox) && fs.statSync(sandbox).isDirectory())
+  assert.equal(list.data.path, ".")
+  assert.ok(Array.isArray(list.data.entries))
+})
+
+test("null workspaceRoot workspaceReadFile after writing under sandbox", () => {
+  const sandbox = path.join(tempHome, CMSPARK_PROJECTS_DIRNAME)
+  fs.mkdirSync(sandbox, { recursive: true, mode: 0o700 })
+  const fname = `sandbox-read-${Date.now().toString(36)}.txt`
+  fs.writeFileSync(path.join(sandbox, fname), "sandbox-hello")
+  const read = workspace.workspaceReadFile(null, fname)
+  assert.equal(read.success, true, read.error)
+  assert.equal(read.data.content, "sandbox-hello")
+})
+
+test("explicit workspace root preferred over default sandbox", () => {
+  const explicit = fs.mkdtempSync(path.join(os.tmpdir(), "ws-explicit-"))
+  fs.writeFileSync(path.join(explicit, "only-here.txt"), "explicit-content")
+  // poison sandbox with same name different content
+  const sandbox = path.join(tempHome, CMSPARK_PROJECTS_DIRNAME)
+  fs.mkdirSync(sandbox, { recursive: true, mode: 0o700 })
+  fs.writeFileSync(path.join(sandbox, "only-here.txt"), "sandbox-content")
+
+  const read = workspace.workspaceReadFile(explicit, "only-here.txt")
+  assert.equal(read.success, true, read.error)
+  assert.equal(read.data.content, "explicit-content")
+
+  const list = workspace.workspaceListDir(explicit, ".")
+  assert.equal(list.success, true)
+  assert.ok(list.data.entries.some((e: any) => e.name === "only-here.txt"))
+
+  fs.rmSync(explicit, { recursive: true, force: true })
+})
+
+test("escape ../ still rejected under sandbox fallback", () => {
+  const bad = workspace.resolveUnderWorkspace(null, "../outside")
+  assert.equal(bad.ok, false)
+  assert.match(bad.ok === false ? bad.error : "", /escapes workspace_root/)
 })

@@ -762,6 +762,9 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     // Mission Pack DevSec: missing workspace is user-actionable (pick folder)
     "workspace_root not set",
     "pick a folder first",
+    // Default sandbox ~/CMspark-projects create/resolve failure (Scheme 1)
+    "default_sandbox_unavailable",
+    "cannot create default sandbox",
     "module_disabled",
     "workspace path must come from",
     // Scene (Mission Pack) tool surface — exit scene or use allowed tools
