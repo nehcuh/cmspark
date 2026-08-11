@@ -200,7 +200,7 @@ const s: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontSize: 11,
   },
-  empty: { fontSize: 11, color: tokens.textMuted, padding: "4px 0" },
+  empty: { fontSize: 11, color: tokens.textSecondary, padding: "4px 0" },
   err: { fontSize: 11, color: "#b91c1c", marginBottom: 6 },
   meta: {
     padding: 8,
