@@ -173,7 +173,7 @@ const styles: Record<string, CSSProperties> = {
   status: {
     marginTop: 6,
     fontSize: 11,
-    color: tokens.accent || "#2563eb",
+    color: tokens.accent,
     lineHeight: 1.4,
   },
 }

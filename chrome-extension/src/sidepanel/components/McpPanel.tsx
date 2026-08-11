@@ -385,7 +385,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "16px 8px",
     textAlign: "center",
     fontSize: 12,
-    color: "#888",
+    color: tokens.textSecondary,
     lineHeight: 1.5,
   },
   serverCard: {
@@ -516,7 +516,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   emptyMini: {
     fontSize: 11,
-    color: "#999",
+    color: tokens.textSecondary,
     fontStyle: "italic",
   },
   toolRow: {

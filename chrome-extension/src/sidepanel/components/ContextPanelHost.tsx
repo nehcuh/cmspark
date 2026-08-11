@@ -918,7 +918,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "10px 12px",
   },
   emptyText: {
-    color: tokens.textMuted,
+    color: tokens.textSecondary,
     fontSize: 12,
     textAlign: "center",
     padding: 12,

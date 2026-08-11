@@ -122,7 +122,7 @@ export function AtThreadPopover({
   if (matches.length === 0) {
     return (
       <div style={{ ...style, padding: 12, textAlign: "center" }} ref={popoverRef}>
-        <div style={{ fontSize: 12, color: tokens.textMuted }}>无匹配会话</div>
+        <div style={{ fontSize: 12, color: tokens.textSecondary }}>无匹配会话</div>
       </div>
     )
   }

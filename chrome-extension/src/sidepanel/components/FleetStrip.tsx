@@ -374,7 +374,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.textMuted,
     margin: "6px 0 4px",
   },
-  empty: { fontSize: 10, color: tokens.textMuted, padding: "4px 0" },
+  empty: { fontSize: 10, color: tokens.textSecondary, padding: "4px 0" },
   list: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 },
   item: {
     border: `1px solid ${tokens.border || "#e5e7eb"}`,

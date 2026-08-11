@@ -933,7 +933,7 @@ export function ThreadList() {
         {timeline.months.map(renderMonth)}
 
         {filtered.length === 0 && (
-          <div style={{ color: tokens.textMuted, fontSize: 12, padding: 12, textAlign: "center" }}>
+          <div style={{ color: tokens.textSecondary, fontSize: 12, padding: 12, textAlign: "center" }}>
             {threads.length === 0 ? "暂无线程，点击「+ 新建」" : "无匹配线程"}
           </div>
         )}
@@ -960,7 +960,7 @@ export function ThreadList() {
         <div style={styles.tagCloudSection}>
           <div style={styles.tagCloud}>
             {tagKeys.length === 0 && untagged.length === 0 && (
-              <div style={{ color: tokens.textMuted, fontSize: 12, padding: 8 }}>
+              <div style={{ color: tokens.textSecondary, fontSize: 12, padding: 8 }}>
                 暂无标签。使用下方按钮为会话提取要点与标签。
               </div>
             )}
@@ -1260,7 +1260,7 @@ export function ThreadList() {
                   </button>
                 </div>
                 {relatedHits.length === 0 ? (
-                  <div style={{ fontSize: 11, color: tokens.textMuted }}>
+                  <div style={{ fontSize: 11, color: tokens.textSecondary }}>
                     暂无相关会话（需更多标签/要点）
                   </div>
                 ) : (
@@ -1525,7 +1525,7 @@ export function ThreadList() {
                     边 = 共标签 + 要点相似 + 时间邻近 · 不改默认时间轴导航
                   </div>
                   {graphEdges.length === 0 ? (
-                    <div style={{ fontSize: 12, color: tokens.textMuted, padding: 12 }}>
+                    <div style={{ fontSize: 12, color: tokens.textSecondary, padding: 12 }}>
                       暂无足够 digest 边。请先为会话提取要点/标签。
                     </div>
                   ) : (

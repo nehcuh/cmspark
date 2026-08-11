@@ -1631,7 +1631,7 @@ const styles: Record<string, import("react").CSSProperties> = {
   },
   modOn: { fontSize: 11, color: tokens.textSecondary, marginBottom: 4 },
   hint: { fontSize: 10, color: tokens.textMuted, marginBottom: 6, lineHeight: 1.35 },
-  empty: { color: tokens.textMuted, fontSize: 11, padding: "4px 0" },
+  empty: { color: tokens.textSecondary, fontSize: 11, padding: "4px 0" },
   list: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 },
   item: {
     border: `1px solid ${tokens.border || "#e5e7eb"}`,

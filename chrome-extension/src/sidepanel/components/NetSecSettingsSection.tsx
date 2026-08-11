@@ -366,7 +366,7 @@ const styles: Record<string, CSSProperties> = {
     padding: 10,
     background: tokens.bg,
   },
-  empty: { fontSize: 11, color: tokens.textMuted, marginBottom: 8 },
+  empty: { fontSize: 11, color: tokens.textSecondary, marginBottom: 8 },
   chipList: { listStyle: "none", margin: 0, padding: 0, marginBottom: 8 },
   chipRow: {
     display: "flex",
