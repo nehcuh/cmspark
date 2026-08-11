@@ -76,7 +76,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   title: {
-    // Phase 2b — align with SectionHeader (13/600, no 14/700 chrome drift)
     fontSize: 13,
     fontWeight: 600,
     color: tokens.text,

@@ -18,7 +18,7 @@ export function SectionHeader({
   style?: CSSProperties
 }) {
   return (
-    <div style={{ ...styles.row, ...style }} data-section-header={title}>
+    <div style={{ ...styles.row, ...style }}>
       <div style={styles.title}>{title}</div>
       {meta != null && <div style={styles.meta}>{meta}</div>}
       {action != null && <div style={styles.action}>{action}</div>}
@@ -31,8 +31,8 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 8,
-    padding: "8px 0 6px",
-    marginBottom: 4,
+    padding: "6px 0 4px",
+    marginBottom: 2,
     borderBottom: `1px solid ${tokens.border}`,
     fontFamily: tokens.font,
   },

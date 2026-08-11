@@ -528,6 +528,7 @@ const railStyles: Record<string, CSSProperties> = {
   // Phase 2b: shared popup density (lock-step with ThreadList)
   menu: {
     ...popupMenuStyles.menu,
+    minWidth: 220, // keep rail menu slightly wider than card menus
     position: "absolute",
     right: 0,
     top: "calc(100% + 6px)",
