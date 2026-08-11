@@ -1,0 +1,8 @@
+{
+  "batch": "day-20260810-11-full",
+  "timestamp": "20260811-095748",
+  "claude": { "verdict": "APPROVE", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-c10-godfile/docs/audit/reviews/day-20260810-11-full-claude-20260811-095748.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-c10-godfile/docs/audit/reviews/day-20260810-11-full-pi-20260811-095748.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark-wt-c10-godfile/docs/audit/reviews/day-20260810-11-full-diff-20260811-095748.patch"
+}
