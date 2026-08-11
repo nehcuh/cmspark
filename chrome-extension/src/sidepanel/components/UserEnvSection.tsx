@@ -17,13 +17,13 @@ const labelStyle: CSSProperties = {
   display: "block",
   fontSize: 12,
   fontWeight: 500,
-  color: "#333",
+  color: tokens.text,
   marginBottom: 4,
 }
 const inputStyle: CSSProperties = {
   width: "100%",
   padding: "6px 10px",
-  border: "1px solid #ddd",
+  border: `1px solid ${tokens.borderStrong}`,
   borderRadius: 6,
   fontSize: 13,
   fontFamily: "monospace",
@@ -33,14 +33,14 @@ const inputStyle: CSSProperties = {
 const helpStyle: CSSProperties = {
   marginTop: 6,
   fontSize: 11,
-  color: "#777",
+  color: tokens.textSecondary,
   lineHeight: 1.4,
 }
 const btnStyle: CSSProperties = {
   padding: "4px 10px",
-  border: "1px solid #ddd",
+  border: `1px solid ${tokens.borderStrong}`,
   borderRadius: 6,
-  background: "#fff",
+  background: tokens.bgElevated,
   fontSize: 11,
   cursor: "pointer",
   whiteSpace: "nowrap",
@@ -49,17 +49,17 @@ const primaryBtnStyle: CSSProperties = {
   ...btnStyle,
   border: "none",
   background: tokens.accent,
-  color: "#fff",
+  color: tokens.userBubbleText,
   fontWeight: 500,
 }
 const sectionTitleStyle: CSSProperties = {
   fontSize: 14,
   fontWeight: 700,
-  color: "#333",
+  color: tokens.text,
   marginBottom: 12,
   marginTop: 8,
   paddingBottom: 6,
-  borderBottom: "1px solid #eee",
+  borderBottom: `1px solid ${tokens.border}`,
 }
 const chipStyle: CSSProperties = {
   fontSize: 11,
@@ -67,7 +67,7 @@ const chipStyle: CSSProperties = {
   borderRadius: 12,
   border: `1px solid ${tokens.accent}`,
   color: tokens.accent,
-  background: "#fff",
+  background: tokens.bgElevated,
   cursor: "pointer",
 }
 
@@ -84,7 +84,7 @@ const overlayStyle: CSSProperties = {
 const panelStyle: CSSProperties = {
   width: "100%",
   maxWidth: 320,
-  background: "#fff",
+  background: tokens.bgElevated,
   borderRadius: 10,
   padding: 16,
   boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
@@ -227,8 +227,8 @@ export function UserEnvSection() {
                 style={{
                   padding: 10,
                   borderRadius: 8,
-                  border: "1px solid #eee",
-                  background: "#fafafa",
+                  border: `1px solid ${tokens.border}`,
+                  background: tokens.bgMuted,
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
@@ -245,7 +245,7 @@ export function UserEnvSection() {
                   >
                     ● 已配置
                   </span>
-                  <span style={{ fontSize: 11, color: "#999", fontFamily: "monospace" }}>
+                  <span style={{ fontSize: 11, color: tokens.textMuted, fontFamily: "monospace" }}>
                     {entry.masked || USER_ENV_MASK}
                   </span>
                 </div>
@@ -275,7 +275,7 @@ export function UserEnvSection() {
                     保存
                   </button>
                   <button
-                    style={{ ...btnStyle, color: tokens.danger, borderColor: "#f0c0c0" }}
+                    style={{ ...btnStyle, color: tokens.danger, borderColor: tokens.dangerSoft }}
                     disabled={disabled}
                     onClick={() => requestDelete(entry.name)}
                   >
@@ -367,7 +367,7 @@ export function UserEnvSection() {
         panelStyle={panelStyle}
       >
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>删除环境变量？</div>
-        <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5, marginBottom: 14 }}>
+        <div style={{ fontSize: 12, color: tokens.textSecondary, lineHeight: 1.5, marginBottom: 14 }}>
           将永久删除 <code>{deleteTarget}</code>。子进程将无法再读取该密钥，且无法从 UI 恢复明文。
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>

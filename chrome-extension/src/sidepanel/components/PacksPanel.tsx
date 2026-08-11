@@ -1006,7 +1006,7 @@ export function PacksPanel() {
                 </div>
                 {p.description && <div style={styles.desc}>{p.description}</div>}
                 {p.has_trust ? (
-                  <div style={{ ...styles.toolsLine, color: "#b45309" }}>
+                  <div style={{ ...styles.toolsLine, color: tokens.warning }}>
                     应用时将写入全局安全配置
                     {p.trust_skip_l2 ? "（含跳过 L2 / 三旗巡航）" : ""}
                     ；退出/切换/删除场景会尽量恢复
@@ -1136,7 +1136,7 @@ export function PacksPanel() {
               选择「解锁并用于本对话」将<strong>退出占用方场景</strong>（尽量恢复其应用前配置），再将「
               {trustConflict.packName}」应用到当前对话。
             </p>
-            <p style={{ ...styles.modalP, color: "#b45309", fontWeight: 600 }}>
+            <p style={{ ...styles.modalP, color: tokens.warning, fontWeight: 600 }}>
               ⚠️ 这会移动全局安全配置的占用权；请确认占用方对话可以退出场景。
             </p>
             <div style={styles.modalActions}>
@@ -1187,7 +1187,7 @@ export function PacksPanel() {
               </p>
             )}
             {confirmPack.has_trust ? (
-              <p style={{ ...styles.modalP, color: "#b45309", fontWeight: 600 }}>
+              <p style={{ ...styles.modalP, color: tokens.warning, fontWeight: 600 }}>
                 ⚠️ Trust：此场景应用后会<strong>持久写入</strong>全局安全配置
                 {confirmPack.trust_skip_l2
                   ? "（skip_l2 / 三旗 auto_approve_dangerous + enterprise + allow_all_schemes）"
@@ -1200,7 +1200,7 @@ export function PacksPanel() {
             ) : null}
             {packNeedsTrustPhrase(confirmPack) ? (
               <div style={{ marginTop: 10 }}>
-                <label style={{ fontSize: 12, color: "#b45309", fontWeight: 600, display: "block" }}>
+                <label style={{ fontSize: 12, color: tokens.warning, fontWeight: 600, display: "block" }}>
                   请输入「{SECURITY_ARM_CONFIRM_PHRASE}」以确认写入巡航旗：
                 </label>
                 <input
@@ -1214,7 +1214,7 @@ export function PacksPanel() {
                     padding: "6px 8px",
                     fontSize: 13,
                     borderRadius: tokens.radiusSm,
-                    border: "1px solid #E0C090",
+                    border: `1px solid ${tokens.warning}`,
                     boxSizing: "border-box",
                   }}
                   autoComplete="off"
@@ -1412,7 +1412,7 @@ export function PacksPanel() {
                       style={{
                         fontSize: 10,
                         fontWeight: 600,
-                        color: g.highRisk ? "#b45309" : tokens.textMuted,
+                        color: g.highRisk ? tokens.warning : tokens.textMuted,
                         marginBottom: 2,
                       }}
                     >
@@ -1433,7 +1433,7 @@ export function PacksPanel() {
                 ))}
               </div>
             )}
-            <label style={{ ...styles.fieldLabel, color: "#b45309" }}>Trust（应用场景时写全局配置 · 选项 B）</label>
+            <label style={{ ...styles.fieldLabel, color: tokens.warning }}>Trust（应用场景时写全局配置 · 选项 B）</label>
             <div style={{ ...styles.hint, marginBottom: 4 }}>
               仅「我的」场景。应用时<strong>持久写入</strong> Companion 配置（auto_approve_*）；
               退出场景会尝试恢复。
@@ -1509,7 +1509,7 @@ export function PacksPanel() {
               editor.trust_auto_approve_enterprise ||
               editor.trust_allow_all_schemes) && (
               <div style={{ marginTop: 10 }}>
-                <label style={{ fontSize: 12, color: "#b45309", fontWeight: 600, display: "block" }}>
+                <label style={{ fontSize: 12, color: tokens.warning, fontWeight: 600, display: "block" }}>
                   「保存并用于本对话」时输入「{SECURITY_ARM_CONFIRM_PHRASE}」：
                 </label>
                 <input
@@ -1523,7 +1523,7 @@ export function PacksPanel() {
                     padding: "6px 8px",
                     fontSize: 13,
                     borderRadius: tokens.radiusSm,
-                    border: "1px solid #E0C090",
+                    border: `1px solid ${tokens.warning}`,
                     boxSizing: "border-box",
                   }}
                   autoComplete="off"
@@ -1576,7 +1576,7 @@ const styles: Record<string, import("react").CSSProperties> = {
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusMd,
     padding: 10,
-    background: tokens.accentSoft || "#f0f7ff",
+    background: tokens.accentSoft || tokens.bgActive,
   },
   meetingTitle: { fontWeight: 650, fontSize: 12, marginBottom: 4 },
   linkBtn: {
@@ -1624,7 +1624,7 @@ const styles: Record<string, import("react").CSSProperties> = {
     alignItems: "center",
     gap: 8,
     padding: "6px 8px",
-    background: "#fff7ed",
+    background: tokens.warningSoft,
     borderRadius: 6,
     marginBottom: 6,
     fontSize: 11,
@@ -1634,10 +1634,10 @@ const styles: Record<string, import("react").CSSProperties> = {
   empty: { color: tokens.textSecondary, fontSize: 11, padding: "4px 0" },
   list: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 },
   item: {
-    border: `1px solid ${tokens.border || "#e5e7eb"}`,
+    border: `1px solid ${tokens.border || tokens.border}`,
     borderRadius: 8,
     padding: 8,
-    background: tokens.bgElevated || "#fff",
+    background: tokens.bgElevated,
   },
   row: { display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 },
   name: { fontSize: 12 },
@@ -1647,13 +1647,13 @@ const styles: Record<string, import("react").CSSProperties> = {
   copyLabel: { color: tokens.success, fontWeight: 700, marginRight: 4 },
   copyLabelBad: { color: tokens.warning, fontWeight: 700, marginRight: 4 },
   toolsLine: { marginTop: 4, color: tokens.textMuted },
-  blocked: { fontSize: 10, color: "#b45309", marginBottom: 6 },
+  blocked: { fontSize: 10, color: tokens.warning, marginBottom: 6 },
   primaryBtn: {
     fontSize: 11,
     padding: "4px 8px",
     borderRadius: 6,
-    border: "1px solid #bfdbfe",
-    background: "#eff6ff",
+    border: `1px solid ${tokens.borderStrong}`,
+    background: tokens.bgActive,
     color: tokens.accent,
     cursor: "pointer",
     fontFamily: tokens.font,

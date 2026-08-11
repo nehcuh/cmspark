@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | Date | 2026-08-11 |
-| Status | **Phase 1 impl dual APPROVE_WITH_NITS** (`sidepanel-precision-instrument-p1-impl-verdict-20260811-222056`) · branch `feat/sidepanel-precision-instrument-p1` |
+| Status | **Phase 1 MERGED (#168)** · **Phase 2a token purge (in progress)** · Phase 2b section-header / ThreadList density still open |
 | Mode | **Operate** (~320px Side Panel) |
 | Direction | **精密仪器台**（用户授权「你定方向」） |
 | Rhythm | 设计 dual-review → 分 PR 落地（用户选「稳」） |
@@ -100,6 +100,21 @@ Channel:      unchanged
 
 - Settings / MCP / Apps / Packs: token-only colors, shared section header component  
 - ThreadList hamburger panel: same menu density as StatusRail  
+
+#### Phase 2a (this PR wave) — token-only colors
+
+Mechanical hex → `tokens.*` on secondary surfaces (no layout rewrite):
+
+| File | Notes |
+|------|--------|
+| `SettingsSlideout.tsx` | Settings chrome + nested sections |
+| `UserEnvSection` / `SettingsSection` / `SettingsIntentBar` | Settings subsections |
+| `McpPanel` / `McpServerForm` / `OutboundMcpSettingsSection` | MCP |
+| `AppsPanel` / `PacksPanel` / `NetSecSettingsSection` | Apps / Packs / enterprise |
+| `AtThreadPopover` | small chrome |
+| `ThreadGraphApp` | residual canvas/legend edges → tokens + alpha |
+
+**Out of 2a:** shared `SectionHeader` component, ThreadList menu density (2b), Phase 3 motion.
 
 ### Phase 3 — Motion & polish
 

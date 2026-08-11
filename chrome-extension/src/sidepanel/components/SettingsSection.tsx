@@ -54,7 +54,7 @@ export function SettingsSection({
 
 const styles: Record<string, React.CSSProperties> = {
   section: {
-    borderBottom: `1px solid ${tokens.border || "#eee"}`,
+    borderBottom: `1px solid ${tokens.border || tokens.border}`,
     marginBottom: 4,
   },
   header: {
@@ -71,14 +71,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   chevron: {
     fontSize: 10,
-    color: "#888",
+    color: tokens.textMuted,
     width: 12,
     flexShrink: 0,
   },
   title: {
     fontSize: 14,
     fontWeight: 700,
-    color: "#333",
+    color: tokens.text,
     flex: 1,
   },
   badgeSlot: {
@@ -86,7 +86,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   forceHint: {
     fontSize: 11,
-    color: "#B26B00",
+    color: tokens.warning,
     padding: "0 0 6px 20px",
   },
 }

@@ -399,7 +399,7 @@ export function McpServerForm() {
                   checked={confirmTrusted}
                   onChange={(e) => setConfirmTrusted(e.target.checked)}
                 />
-                <span style={{ color: "#dc2626", fontSize: 11 }}>
+                <span style={{ color: tokens.danger, fontSize: 11 }}>
                   我理解此 server 的所有调用将不再弹安全确认
                 </span>
               </label>
@@ -474,7 +474,7 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 1000,
   },
   panel: {
-    background: "#fff",
+    background: tokens.bgElevated,
     borderRadius: 8,
     width: "90%",
     maxWidth: 420,
@@ -488,14 +488,14 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     padding: "10px 14px",
-    borderBottom: "1px solid #eee",
+    borderBottom: `1px solid ${tokens.border}`,
   },
   closeBtn: {
     border: "none",
     background: "transparent",
     cursor: "pointer",
     fontSize: 16,
-    color: "#666",
+    color: tokens.textSecondary,
   },
   body: {
     padding: "12px 14px",
@@ -511,11 +511,11 @@ const styles: Record<string, React.CSSProperties> = {
   label: {
     fontSize: 12,
     fontWeight: 500,
-    color: "#333",
+    color: tokens.text,
   },
   input: {
     padding: "6px 8px",
-    border: "1px solid #ddd",
+    border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 4,
     fontSize: 12,
     fontFamily: "ui-monospace, monospace",
@@ -523,7 +523,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   hint: {
     fontSize: 10,
-    color: "#888",
+    color: tokens.textMuted,
     lineHeight: 1.4,
   },
   criticalTag: {
@@ -531,9 +531,9 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: 6,
     padding: "0 4px",
     fontSize: 9,
-    color: "#dc2626",
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
+    color: tokens.danger,
+    background: tokens.dangerSoft,
+    border: `1px solid ${tokens.dangerSoft}`,
     borderRadius: 3,
     verticalAlign: "middle",
   },
@@ -556,21 +556,21 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 4,
   },
   minusBtn: {
-    border: "1px solid #ddd",
-    background: "#fff",
+    border: `1px solid ${tokens.borderStrong}`,
+    background: tokens.bgElevated,
     borderRadius: 4,
     cursor: "pointer",
     padding: "0 8px",
-    color: "#dc2626",
+    color: tokens.danger,
   },
   addRowBtn: {
-    border: "1px dashed #aaa",
+    border: `1px dashed ${tokens.textMuted}`,
     background: "transparent",
     borderRadius: 4,
     padding: "4px 8px",
     cursor: "pointer",
     fontSize: 11,
-    color: "#666",
+    color: tokens.textSecondary,
     alignSelf: "flex-start",
   },
   confirmRow: {
@@ -579,29 +579,29 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 6,
     marginTop: 6,
     padding: "6px 8px",
-    background: "#fef2f2",
+    background: tokens.dangerSoft,
     borderRadius: 4,
     cursor: "pointer",
   },
   errorBox: {
     padding: "8px 10px",
-    background: "#fef2f2",
-    color: "#dc2626",
+    background: tokens.dangerSoft,
+    color: tokens.danger,
     borderRadius: 4,
     fontSize: 12,
     marginBottom: 8,
   },
   footer: {
     padding: "10px 14px",
-    borderTop: "1px solid #eee",
+    borderTop: `1px solid ${tokens.border}`,
     display: "flex",
     gap: 8,
     justifyContent: "flex-end",
   },
   cancelBtn: {
     padding: "6px 12px",
-    border: "1px solid #ddd",
-    background: "#fff",
+    border: `1px solid ${tokens.borderStrong}`,
+    background: tokens.bgElevated,
     borderRadius: 4,
     cursor: "pointer",
     fontSize: 12,
@@ -610,7 +610,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 12px",
     border: "none",
     background: tokens.accent,
-    color: "#fff",
+    color: tokens.userBubbleText,
     borderRadius: 4,
     cursor: "pointer",
     fontSize: 12,
