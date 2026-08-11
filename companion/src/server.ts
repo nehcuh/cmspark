@@ -44,7 +44,7 @@ import {
   HUD_SPIKE_THREAD_ID,
   HUD_SPIKE_TASK_ID,
 } from "./hud/spike"
-import { getThreadApprovals } from "./host-use/thread-approvals"
+// getThreadApprovals used by security/confirm-response.ts (C10-H1) — not needed here.
 import { logger, type LogLevel } from "./logger"
 import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile, setupGracefulShutdown } from "./daemon"
 import { getLockFilePath, getPidFilePath } from "./config"
@@ -595,7 +595,7 @@ export type ToolExecutorFn = (
   invokeOpts?: ToolExecuteInvokeOpts,
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
-// FREEZE (C10 multi-adv 2026-08-10 / phase-A..G 2026-08-11):
+// FREEZE (C10 multi-adv 2026-08-10 / phase-A..H 2026-08-11):
 // - ADR-015 multi-agent pre-gate → orchestrator/tool-pregate.ts
 //   (runMultiAgentToolPregate: tab lease / pack whitelist / HOST_CHROME).
 // - L2 security admission → tool/l2-admission.ts (runL2ToolAdmission).
@@ -610,13 +610,15 @@ export type ToolExecutorFn = (
 // - Extension tool-forward (pending map / dispatch / default forward post-process)
 //   → ws/tool-forward.ts (forwardToolToExtension / dispatchToExtension /
 //   handleToolResult / pendingToolCalls; bind via bindToolForwardRuntime).
+// - security.confirmation.response → security/confirm-response.ts (C10-H1)
+//   (handleSecurityConfirmationResponse; inject via ConfirmResponseDeps).
 // - createToolExecutor is the pure orchestration shell: pregate call / cookie /
 //   browser_download / L2 call / URL gate / image gate call / companion dispatch /
 //   MCP / forwardToolToExtension (no pending-map / send / timeout body here).
 // - NEW companion-side tool *cases* → tool/companion-dispatch.ts (or capability/*).
 // - NEW WS validators → ws/validate.ts.
 // Do not re-inflate server.ts with multi-agent pregate, L2 algebra, cookie/URL/image/
-// browser_download/MCP gate bodies, extension-forward plumbing, or business tool bodies.
+// browser_download/MCP gate bodies, extension-forward plumbing, confirm-response, or business tool bodies.
 // Exported for integration tests (audit item 6).
 export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   // Per-connection session id — used as the key for MCP first-use confirmation cache
@@ -979,286 +981,33 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   }
 }
 
+// --- security.confirmation.response (C10-H1: body in security/confirm-response.ts) ---
+// FREEZE: whitelist persist / stop_thread drain / thread-whitelist algebra lives there.
+import {
+  handleSecurityConfirmationResponse as handleSecurityConfirmationResponseImpl,
+  type ConfirmResponseDeps,
+} from "./security/confirm-response"
+export type { ConfirmResponseDeps }
+
 /**
- * Process a `security.confirmation.response` from a WS peer: resolve the
- * pending confirmation (origin-bound via respondFrom), then — only when this
- * response is authoritative AND approved — persist the add_to_whitelist
- * patterns into auto_approved_domains. Patterns are validated against the
- * domains actually shown in the dialog, so a loopback peer cannot ship
- * ["*", "*.com", "attacker.com"] and poison the gate.
- *
- * Extracted from the ws.on("message") handler in startServer() so integration
- * tests can exercise the persistence path (the extension's add_to_whitelist
- * forwarding) without booting the full server. Logic is unchanged.
+ * Process a `security.confirmation.response` from a WS peer.
+ * Thin wrapper: injects server-owned deps into security/confirm-response.ts (C10-H1).
+ * Public signature unchanged for integration tests.
  */
-export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any, sessionId?: string): Promise<void> {
-  const confirmationId = String(msg.confirmation_id || "")
-  const approved = msg.approved === true
-  // stop_thread: Confirm Center "stop" — deny confirm AND authoritatively
-  // abort+drain the stamped worker (do not rely solely on client chat.abort).
-  const stopThread = msg.stop_thread === true
-  const clientStopThreadId =
-    typeof msg.stop_thread_id === "string" && msg.stop_thread_id.length > 0
-      ? String(msg.stop_thread_id)
-      : undefined
-
-  // Validate add_to_whitelist against the domains actually shown in the
-  // dialog. Without this check, any loopback WS peer could ship a
-  // crafted response with add_to_whitelist: ["*", "*.com", "attacker.com"]
-  // and permanently bypass the dangerous-tool gate.
-  const rawWhitelist: string[] = Array.isArray(msg.add_to_whitelist)
-    ? msg.add_to_whitelist.map((p: any) => String(p || "").trim()).filter(Boolean)
-    : []
-  const relevantDomains = securityConfirmations.getRelevantDomains(confirmationId) || []
-  const allowedPatterns = new Set<string>()
-  for (const d of relevantDomains) {
-    const lower = d.toLowerCase()
-    allowedPatterns.add(lower)
-    allowedPatterns.add(`*.${lower}`)
-  }
-  const validPatterns: string[] = []
-  const rejectedPatterns: string[] = []
-  for (const p of rawWhitelist) {
-    if (allowedPatterns.has(p.toLowerCase())) {
-      validPatterns.push(p)
-    } else {
-      rejectedPatterns.push(p)
-    }
-  }
-  if (rejectedPatterns.length > 0) {
-    logger.warn("security.whitelist.invalid_patterns_rejected", {
-      confirmation_id: confirmationId,
-      relevant_domains: relevantDomains,
-      rejected: rejectedPatterns,
-    })
-  }
-
-  // Phase 1 W7 — Validate add_to_thread_whitelist (boolean) for host_use tools.
-  // Validates the requested bundle id against relevantApps originally shown.
-  // Same anti-injection contract as add_to_whitelist above.
-  const rawThreadWhitelist: boolean = msg.add_to_thread_whitelist === true
-  const relevantApps = securityConfirmations.getRelevantApps(confirmationId) || []
-  // Capture metadata BEFORE respondFrom() deletes the pending entry.
-  const confirmationToolName = securityConfirmations.getToolName(confirmationId)
-  const stampedWorkerId = securityConfirmations.getWorkerId(confirmationId)
-  let threadWhitelistApp: string | null = null
-  if (rawThreadWhitelist && relevantApps.length > 0) {
-    // The first (and currently only) relevant app is what the user was shown.
-    // User cannot type a different bundle id — the checkbox is grayed-out
-    // pre-filled by the extension UI.
-    threadWhitelistApp = relevantApps[0]
-  } else if (rawThreadWhitelist && relevantApps.length === 0) {
-    // WS injection attempt: client sent add_to_thread_whitelist=true for a
-    // confirmation that didn't show any app checkbox.
-    logger.warn("security.thread_whitelist.relevant_apps_missing", {
-      confirmation_id: confirmationId,
-    })
-  }
-
-  // Resolve the confirmation FIRST so a saveConfig failure cannot hang the
-  // approved tool call. Persistence runs after, best-effort. By the time the
-  // LLM's next tool call reaches the whitelist gate (next macrotask),
-  // fs.writeFileSync has completed.
-  //
-  // Phase 1 W8-windows / W9: pass the typed manual nonce into respondFrom.
-  // The extension sends nonce_response (uppercased by the UI); matching is
-  // case-insensitive. Adversary amendment A4: nonce_retry / nonce_locked are
-  // dedicated audit events and must NOT be lumped into
-  // origin_mismatch_or_unknown.
-  const nonceResponse = typeof msg.nonce_response === "string" ? msg.nonce_response : undefined
-  // Grill Q2: host_computer session auto-approve checkbox (validated in respondFrom
-  // against relevantApps non-empty).
-  const addToSessionTrust = msg.add_to_session_trust === true
-  const addToEnterpriseSessionTrust = msg.add_to_enterprise_session_trust === true
-  // stop_thread always resolves as deny (even if client sent approved:true)
-  const effectiveApproved = stopThread ? false : approved
-  const respondResult = securityConfirmations.respondFrom(confirmationId, effectiveApproved, ws, nonceResponse, {
-    addToSessionTrust: stopThread ? false : addToSessionTrust,
-    addToEnterpriseSessionTrust: stopThread ? false : addToEnterpriseSessionTrust,
+export async function handleSecurityConfirmationResponse(
+  ws: WebSocket,
+  msg: any,
+  sessionId?: string,
+): Promise<void> {
+  return handleSecurityConfirmationResponseImpl(ws, msg, sessionId, {
+    securityConfirmations,
+    getConfig,
+    saveConfig,
+    getThreadManager: () => threadManager,
+    rejectPendingForThread,
+    hasPendingForTab,
+    rejectPendingForTab,
   })
-  const responded = respondResult.outcome === "resolved"
-  if (respondResult.outcome === "unknown" || respondResult.outcome === "origin_mismatch") {
-    // Either no such pending entry, or the response arrived on a different
-    // socket than the one the confirmation was issued to. [C-SEC-2]: do not
-    // silently drop — log so operators can spot the pattern (e.g., a rogue
-    // local process trying to self-approve).
-    logger.warn("security.confirmation.origin_mismatch_or_unknown", {
-      confirmation_id: confirmationId,
-      approved_requested: approved,
-      stop_thread: stopThread,
-    })
-  } else if (respondResult.outcome === "nonce_retry") {
-    // Wrong code typed — entry stays pending; the client got a
-    // security.confirmation.nonce_retry with attempts_left.
-    logger.warn("security.confirmation.nonce_retry", {
-      confirmation_id: confirmationId,
-      attempts_left: respondResult.attemptsLeft,
-    })
-  } else if (respondResult.outcome === "nonce_locked") {
-    // Max attempts exhausted — confirmation resolved denied.
-    logger.warn("security.confirmation.nonce_locked", {
-      confirmation_id: confirmationId,
-      attempts_left: 0,
-      reason: "max nonce attempts exceeded",
-    })
-  }
-
-  // ADR-015 GATE1/GATE2: authoritative stop — abort LLM + reject pending + release leases.
-  // Prefer server-stamped worker_id over client stop_thread_id (anti-wrong-target).
-  // Note: this response already denied the *current* confirmation via respondFrom;
-  // rejectForWorker clears any *other* open confirms for the same worker.
-  if (stopThread && responded) {
-    const stopTarget =
-      (stampedWorkerId && stampedWorkerId.length > 0 ? stampedWorkerId : undefined) ||
-      clientStopThreadId
-    if (stopTarget) {
-      try {
-        // G13: abandon intents before pending reject + lease release
-        let intentsAbandoned = 0
-        try {
-          const { abandonWorkerIntents } = await import("./board")
-          const ab = await abandonWorkerIntents(threadManager, stopTarget, {
-            reason: "stop_thread",
-          })
-          intentsAbandoned = ab.abandoned
-        } catch {
-          /* best-effort */
-        }
-        const confirmsRejected = securityConfirmations.rejectForWorker(stopTarget, "denied")
-        const rejected = rejectPendingForThread(stopTarget, `stop_thread:${confirmationId}`)
-        const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
-        const { released, drained } = releaseLeasesForThreadPendingAware(
-          stopTarget,
-          `stop_thread:${confirmationId}`,
-          { hasPendingForTab, rejectPendingForTab },
-        )
-        try {
-          const { abortThreadChat } = await import("./message-router")
-          if (typeof abortThreadChat === "function") abortThreadChat(stopTarget)
-        } catch {
-          /* optional if router not loaded */
-        }
-        // stop_thread must also kill in-flight shell_exec (same gap as chat.abort)
-        try {
-          const { abortShellRunsForThread } = await import("./capability/shell")
-          const shellKilled = abortShellRunsForThread(stopTarget)
-          if (shellKilled > 0) {
-            logger.warn("shell.abort.stop_thread", {
-              stop_target: stopTarget,
-              matched: shellKilled,
-            })
-          }
-        } catch {
-          /* best-effort */
-        }
-        logger.info("security.confirmation.stop_thread", {
-          confirmation_id: confirmationId,
-          stop_target: stopTarget,
-          stamped_worker_id: stampedWorkerId || null,
-          client_stop_thread_id: clientStopThreadId || null,
-          rejected_pending: rejected,
-          leases_released: released,
-          confirms_rejected: confirmsRejected,
-          leases_drained: drained,
-          intents_abandoned: intentsAbandoned,
-        })
-      } catch (err: any) {
-        logger.warn("security.confirmation.stop_thread_failed", {
-          confirmation_id: confirmationId,
-          stop_target: stopTarget,
-          error: err?.message || String(err),
-        })
-      }
-    } else {
-      logger.warn("security.confirmation.stop_thread_no_target", {
-        confirmation_id: confirmationId,
-      })
-    }
-  }
-
-  // Only persist whitelist additions when the confirmation was actually
-  // resolved by THIS response. If respondFrom returned false (origin mismatch,
-  // unknown id, or already-expired entry), the response is not authoritative —
-  // accepting its add_to_whitelist payload would let any loopback WS peer that
-  // can guess a confirmation_id poison auto_approved_domains without ever
-  // resolving the prompt.
-  if (responded && effectiveApproved && validPatterns.length > 0) {
-    try {
-      const current = getConfig().auto_approved_domains || []
-      const seen = new Set(current.map((d: string) => d.toLowerCase()))
-      // Lowercase + dedupe on persist. validPatterns is already validated
-      // case-insensitively, so storing the lowercase form keeps config tidy
-      // (matchDomain lowercases both sides, so matching is unaffected). Adding
-      // to `seen` as we go also dedupes within this single response.
-      const newPatterns: string[] = []
-      for (const p of validPatterns) {
-        const lower = p.toLowerCase()
-        if (!seen.has(lower)) {
-          seen.add(lower)
-          newPatterns.push(lower)
-        }
-      }
-      if (newPatterns.length > 0) {
-        saveConfig({ auto_approved_domains: [...current, ...newPatterns] })
-        logger.info("security.whitelist.added", {
-          confirmation_id: confirmationId,
-          patterns: newPatterns,
-        })
-      }
-    } catch (err: any) {
-      // Persistence is best-effort — don't fail the tool call.
-      logger.error("security.whitelist.persist_failed", {
-        confirmation_id: confirmationId,
-        error: err?.message || String(err),
-      })
-    }
-  } else if (!responded && validPatterns.length > 0) {
-    // Defensive: log every attempt to add via a non-authoritative response so
-    // operators can spot a peer probing confirmation ids.
-    logger.warn("security.whitelist.add_ignored_non_authoritative", {
-      confirmation_id: confirmationId,
-      valid_patterns: validPatterns,
-    })
-  }
-
-  // Phase 1 W7 — Record thread-scoped trust when user approved with
-  // add_to_thread_whitelist=true. Only for read operations (Q1 blocker:
-  // writes always require biometric per call, never thread-trusted).
-  if (responded && effectiveApproved && threadWhitelistApp) {
-    const toolName = confirmationToolName
-    if (toolName === "host_read" && sessionId) {
-      getThreadApprovals().add(sessionId, threadWhitelistApp, "read")
-      logger.info("security.thread_whitelist.added", {
-        confirmation_id: confirmationId,
-        thread_id: sessionId,
-        bundle_id: threadWhitelistApp,
-        kind: "read",
-      })
-    } else if (toolName === "host_app" && sessionId) {
-      // App tab WP3 — owner decision 2 (2026-07-18, W7 Blocker-1 amendment):
-      // L0 no-arg app launch MAY be thread-trusted under kind "app-launch".
-      // Reachable only when the gate offered the checkbox (policy "ai" —
-      // "manual" never offers it; the checkbox payload is validated against
-      // the relevantApps shown, so an injected grant for a manual app is
-      // impossible here). The gate additionally never consults trust for
-      // "manual", and apps.remove/set_policy/set_enabled(false) clear it.
-      getThreadApprovals().add(sessionId, threadWhitelistApp, "app-launch")
-      logger.info("security.thread_whitelist.added", {
-        confirmation_id: confirmationId,
-        thread_id: sessionId,
-        bundle_id: threadWhitelistApp,
-        kind: "app-launch",
-      })
-    } else if (toolName === "host_write") {
-      // Q1 ship blocker: writes NEVER thread-trust. Log rejection so
-      // operators can spot a buggy/malicious client attempting bypass.
-      logger.warn("security.thread_whitelist.write_rejected", {
-        confirmation_id: confirmationId,
-        bundle_id: threadWhitelistApp,
-        reason: "biometric per-call is non-negotiable for writes (W7 Q1 blocker)",
-      })
-    }
-  }
 }
 
 /**
