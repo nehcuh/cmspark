@@ -75,6 +75,29 @@ import { runBrowserDownloadAdmission } from "./tool/browser-download-admission"
 export { runBrowserDownloadAdmission } from "./tool/browser-download-admission"
 import { runMultiAgentToolPregate } from "./orchestrator/tool-pregate"
 export { runMultiAgentToolPregate } from "./orchestrator/tool-pregate"
+import {
+  pendingToolCalls,
+  rejectPendingForThread,
+  hasPendingForTab,
+  rejectPendingForTab,
+  handleToolResult,
+  dispatchToExtension,
+  forwardToolToExtension,
+  bindToolForwardRuntime,
+} from "./ws/tool-forward"
+export {
+  TOOL_EXECUTION_TIMEOUT_MS,
+  BROWSER_DOWNLOAD_MAX_TIMEOUT_MS,
+  resolveToolDispatchTimeoutMs,
+  pendingToolCalls,
+  rejectPendingForThread,
+  hasPendingForTab,
+  rejectPendingForTab,
+  handleToolResult,
+  dispatchToExtension,
+  forwardToolToExtension,
+  bindToolForwardRuntime,
+} from "./ws/tool-forward"
 import { applyHardenedProcessPath } from "./process-path"
 import {
   getOrCreateSharedSecret,
@@ -96,19 +119,8 @@ const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
 const MAX_UNAUTHENTICATED_WS = 8
 
 const PORT = 23401
-// Exported for integration tests (audit item 6). Production reads the const directly.
-export const TOOL_EXECUTION_TIMEOUT_MS = 15000
-/** browser_download may wait up to 120s; companion WS timeout must not undercut extension. */
-export const BROWSER_DOWNLOAD_MAX_TIMEOUT_MS = 120_000
-export function resolveToolDispatchTimeoutMs(toolName: string, params?: any): number {
-  if (toolName === "browser_download") {
-    const t = typeof params?.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
-      ? Math.floor(params.timeoutMs)
-      : 60_000
-    return Math.min(BROWSER_DOWNLOAD_MAX_TIMEOUT_MS + 5_000, Math.max(TOOL_EXECUTION_TIMEOUT_MS, t + 5_000))
-  }
-  return TOOL_EXECUTION_TIMEOUT_MS
-}
+// TOOL_EXECUTION_TIMEOUT_MS / BROWSER_DOWNLOAD_MAX_TIMEOUT_MS / resolveToolDispatchTimeoutMs
+// live in ws/tool-forward.ts (C10-G) — re-exported above.
 
 /**
  * P0-2 (audit C1): only chrome-extension:// origins may open a WebSocket to the companion.
@@ -266,56 +278,9 @@ let threadManager: ThreadManager
 let skillEngine: SkillEngine
 let historyStore: HistoryStore
 
-// Pending tool execution promises: toolCallId → { resolve, reject, timer }
-// Exported for integration tests (audit item 6) so tests can inspect timer cleanup
-// and double-resolution behavior. Production code uses the Map directly.
-export const pendingToolCalls = new Map<string, {
-  resolve: (value: any) => void
-  reject: (reason: any) => void
-  timer: NodeJS.Timeout
-  /** ADR-015: bind ownership for worker-cancel + lease expiry drain */
-  thread_id?: string
-  tabId?: number
-  tool_name?: string
-  /**
-   * SEC-E: socket that received tool.execute. Close grace and tool.result
-   * acceptance are scoped to this peer so tray reconnect cannot kill extension tools.
-   */
-  originWs?: WebSocket
-}>()
-
-/** Reject in-flight extension tools owned by a thread (worker-cancel / lease drain). */
-export function rejectPendingForThread(
-  threadId: string,
-  reason: string,
-  tabIdFilter?: number,
-): number {
-  let n = 0
-  for (const [id, pending] of [...pendingToolCalls.entries()]) {
-    if (pending.thread_id !== threadId) continue
-    if (tabIdFilter != null && pending.tabId !== tabIdFilter) continue
-    clearTimeout(pending.timer)
-    pendingToolCalls.delete(id)
-    pending.resolve({ success: false, error: reason })
-    n++
-  }
-  return n
-}
-
-export function hasPendingForTab(tabId: number, holderThreadId: string): boolean {
-  for (const pending of pendingToolCalls.values()) {
-    if (pending.thread_id === holderThreadId && pending.tabId === tabId) return true
-  }
-  return false
-}
-
-export function rejectPendingForTab(
-  tabId: number,
-  holderThreadId: string,
-  reason: string,
-): number {
-  return rejectPendingForThread(holderThreadId, reason, tabId)
-}
+// pendingToolCalls / rejectPending* / hasPendingForTab / handleToolResult /
+// dispatchToExtension / forwardToolToExtension live in ws/tool-forward.ts (C10-G)
+// — re-exported above.
 
 // Wire tab-lease sweeps to pending CDP so internal sweepExpired never silent-FREEs in-flight tabs.
 // Lazy import avoids circular init; register once on first executor use as well.
@@ -593,6 +558,7 @@ async function initServices() {
   }
   bindCompanionDispatchFromServerLocals()
   bindMcpDispatchFromServerLocals()
+  bindToolForwardFromServerLocals()
 }
 
 /**
@@ -603,10 +569,11 @@ export function seedThreadManagerForTests(): ThreadManager {
   if (!threadManager) {
     threadManager = new ThreadManager()
   }
-  // Re-bind so executeCompanionTool / executeMcpTool see the seeded manager
+  // Re-bind so executeCompanionTool / executeMcpTool / tool-forward see the seeded manager
   // (tests may skip full initServices).
   bindCompanionDispatchFromServerLocals()
   bindMcpDispatchFromServerLocals()
+  bindToolForwardFromServerLocals()
   return threadManager
 }
 
@@ -628,7 +595,7 @@ export type ToolExecutorFn = (
   invokeOpts?: ToolExecuteInvokeOpts,
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
-// FREEZE (C10 multi-adv 2026-08-10 / phase-A..F 2026-08-11):
+// FREEZE (C10 multi-adv 2026-08-10 / phase-A..G 2026-08-11):
 // - ADR-015 multi-agent pre-gate → orchestrator/tool-pregate.ts
 //   (runMultiAgentToolPregate: tab lease / pack whitelist / HOST_CHROME).
 // - L2 security admission → tool/l2-admission.ts (runL2ToolAdmission).
@@ -640,12 +607,16 @@ export type ToolExecutorFn = (
 //   (runBrowserDownloadAdmission).
 // - MCP namespaced + meta dispatch → mcp/dispatch.ts
 //   (executeMcpTool / executeMcpMetaTool; bind via bindMcpDispatchRuntime).
-// - createToolExecutor is the orchestration shell: pregate call / cookie / browser_download /
-//   L2 call / URL gate / image gate call / companion dispatch / MCP / extension forward.
+// - Extension tool-forward (pending map / dispatch / default forward post-process)
+//   → ws/tool-forward.ts (forwardToolToExtension / dispatchToExtension /
+//   handleToolResult / pendingToolCalls; bind via bindToolForwardRuntime).
+// - createToolExecutor is the pure orchestration shell: pregate call / cookie /
+//   browser_download / L2 call / URL gate / image gate call / companion dispatch /
+//   MCP / forwardToolToExtension (no pending-map / send / timeout body here).
 // - NEW companion-side tool *cases* → tool/companion-dispatch.ts (or capability/*).
 // - NEW WS validators → ws/validate.ts.
 // Do not re-inflate server.ts with multi-agent pregate, L2 algebra, cookie/URL/image/
-// browser_download/MCP gate bodies, or business tool bodies.
+// browser_download/MCP gate bodies, extension-forward plumbing, or business tool bodies.
 // Exported for integration tests (audit item 6).
 export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   // Per-connection session id — used as the key for MCP first-use confirmation cache
@@ -994,202 +965,18 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       }
     }
 
-    // Send tool execution command to extension
-    return new Promise((resolve, reject) => {
-      const finishAndResolve = (result: any) => {
-        // Refresh tab URL cache when list_tabs returns, so the evaluate
-        // whitelist gate can resolve tabId → hostname on the next call.
-        if (toolName === "list_tabs" && result?.success && Array.isArray(result.data)) {
-          refreshTabUrlCache(result.data)
-          // ADR-015: surface lease holders so LLMs avoid TAB_LOCKED retry storms
-          try {
-            const { lockMetaForTab } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
-            result.data = result.data.map((t: any) => {
-              if (!t || typeof t.id !== "number") return t
-              const meta = lockMetaForTab(t.id)
-              return {
-                ...t,
-                locked_by_thread_id: meta.locked_by_thread_id,
-                lease_state: meta.lease_state,
-                lease_expires_at: meta.lease_expires_at,
-              }
-            })
-          } catch {
-            /* ignore enrichment failures */
-          }
-        }
-        // Synchronize cache after LLM-initiated navigation. A successful
-        // navigate/set_tab_url means the cached URL for this tabId is now stale;
-        // updating it prevents a prompt-injection attack where a malicious page
-        // (or attacker-controlled agent flow) navigates a whitelisted tab to an
-        // attacker domain and the next evaluate({tabId}) is auto-approved
-        // against the OLD (still-whitelisted) hostname.
-        // NOTE: page-initiated navigation via window.location is a residual risk
-        // requiring chrome.tabs.onUpdated subscription on the extension side.
-        if (
-          result?.success === true &&
-          (toolName === "navigate" || toolName === "set_tab_url") &&
-          typeof finalParams.tabId === "number" &&
-          typeof finalParams.url === "string"
-        ) {
-          tabUrlCache.set(finalParams.tabId, finalParams.url)
-        }
-        // Cache the new tab created by create_tab so the next evaluate({tabId})
-        // can be domain-whitelisted without waiting for a fresh list_tabs.
-        if (
-          toolName === "create_tab" &&
-          result?.success === true &&
-          result.data &&
-          typeof result.data.id === "number" &&
-          typeof result.data.url === "string"
-        ) {
-          tabUrlCache.set(result.data.id, result.data.url)
-          // ADR-015: auto HARD-hold new tab for multi-agent creators only.
-          // Normal single-agent create_tab must not consume the per-worker lease
-          // budget (max 2) — AppSec / multi-tab browse open many tabs.
-          if (actingThreadId) {
-            try {
-              const {
-                autoHoldCreatedTab,
-                anyTabLeaseHeld,
-              } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
-              const { isMultiAgentThread } = require("./orchestrator") as typeof import("./orchestrator")
-              const th = threadManager?.get(actingThreadId) as any
-              if (isMultiAgentThread(th) || anyTabLeaseHeld()) {
-                autoHoldCreatedTab(result.data.id, actingThreadId)
-              }
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-        if (toolName === "close_tab" && result?.success === true && typeof finalParams.tabId === "number") {
-          try {
-            const { releaseTabLease } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
-            releaseTabLease(finalParams.tabId, "close_tab", actingThreadId)
-          } catch {
-            /* ignore */
-          }
-        }
-        logToolFinish(toolCallId, toolName, startedAt, result)
-        resolve(result)
-      }
-      const dispatchTimeoutMs = resolveToolDispatchTimeoutMs(toolName, finalParams)
-      const timer = setTimeout(() => {
-        pendingToolCalls.delete(toolCallId)
-        const result = { success: false, error: `Tool execution timeout (${dispatchTimeoutMs}ms): ${toolName}` }
-        logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: dispatchTimeoutMs })
-        finishAndResolve(result)
-      }, dispatchTimeoutMs)
-
-      pendingToolCalls.set(toolCallId, {
-        resolve: finishAndResolve,
-        reject,
-        timer,
-        thread_id: actingThreadId,
-        tabId: typeof finalParams.tabId === "number" ? finalParams.tabId : undefined,
-        tool_name: toolName,
-        originWs: ws,
-      })
-
-      if (ws.readyState === WebSocket.OPEN) {
-        try {
-          ws.send(JSON.stringify({
-            type: "tool.execute",
-            tool_call_id: toolCallId,
-            tool_name: toolName,
-            params: finalParams,
-          }))
-        } catch (err: any) {
-          clearTimeout(timer)
-          pendingToolCalls.delete(toolCallId)
-          const result = { success: false, error: `WebSocket send failed: ${err.message || String(err)}` }
-          logger.error("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: err.message || String(err) })
-          finishAndResolve(result)
-        }
-      } else {
-        clearTimeout(timer)
-        pendingToolCalls.delete(toolCallId)
-        const result = { success: false, error: "WebSocket not connected" }
-        logger.warn("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: result.error })
-        finishAndResolve(result)
-      }
+    // Extension forward — pending map / timeout / tabUrlCache post-process in
+    // ws/tool-forward.ts (C10-G). createToolExecutor stays pure orchestration.
+    return forwardToolToExtension({
+      toolCallId,
+      toolName,
+      finalParams,
+      ws,
+      actingThreadId,
+      startedAt,
+      logToolFinish,
     })
   }
-}
-
-// Exported for integration tests (audit item 6).
-export function handleToolResult(msg: any, fromWs?: WebSocket) {
-  const { tool_call_id, result, error } = msg
-  const pending = pendingToolCalls.get(tool_call_id)
-  if (!pending) return
-  // SEC-E: only the dispatch peer may resolve (prevents other loopback peers spoofing results)
-  if (fromWs && pending.originWs && pending.originWs !== fromWs) {
-    logger.warn("tool.result_origin_mismatch", {
-      tool_call_id,
-      tool_name: pending.tool_name,
-    })
-    return
-  }
-  clearTimeout(pending.timer)
-  pendingToolCalls.delete(tool_call_id)
-  if (error) {
-    pending.resolve({ success: false, error: error.message || String(error) })
-  } else {
-    pending.resolve(result)
-  }
-}
-
-/**
- * Dispatch a single tool execution to the extension and await its result via
- * the `pendingToolCalls` / `handleToolResult` correlation (same plumbing the
- * default forward branch uses). Factored out so the analyze_image two-phase
- * gate (§6.1) can issue a phase-1 resolve and a phase-2 fetch without
- * duplicating the send/timeout/pending-map dance. Resolves to a tool-result
- * object `{ success, data?, error? }`; never rejects (timeouts and send
- * failures are returned as `{ success: false, error }`).
- */
-function dispatchToExtension(
-  toolCallId: string,
-  toolName: string,
-  params: any,
-  ws: WebSocket,
-): Promise<{ success: boolean; data?: any; error?: string }> {
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (result: { success: boolean; data?: any; error?: string }) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      pendingToolCalls.delete(toolCallId)
-      resolve(result)
-    }
-    const timer = setTimeout(() => {
-      const result = { success: false, error: `Tool execution timeout (${TOOL_EXECUTION_TIMEOUT_MS}ms): ${toolName}` }
-      logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: TOOL_EXECUTION_TIMEOUT_MS })
-      finish(result)
-    }, TOOL_EXECUTION_TIMEOUT_MS)
-    pendingToolCalls.set(toolCallId, {
-      resolve: finish as any,
-      reject: finish as any,
-      timer,
-      tool_name: toolName,
-      originWs: ws,
-    })
-    if (ws.readyState !== WebSocket.OPEN) {
-      const result = { success: false, error: "WebSocket not connected" }
-      logger.warn("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: result.error })
-      finish(result)
-      return
-    }
-    try {
-      ws.send(JSON.stringify({ type: "tool.execute", tool_call_id: toolCallId, tool_name: toolName, params }))
-    } catch (err: any) {
-      const result = { success: false, error: `WebSocket send failed: ${err.message || String(err)}` }
-      logger.error("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: err.message || String(err) })
-      finish(result)
-    }
-  })
 }
 
 /**
@@ -1543,6 +1330,16 @@ function bindCompanionDispatchFromServerLocals(): void {
   })
 }
 
+// --- Extension tool-forward (C10-G: body in ws/tool-forward.ts) ---
+// FREEZE: pending map / dispatch / default forward post-process live there.
+// tabUrlCache remains server-owned; inject via bindToolForwardRuntime.
+function bindToolForwardFromServerLocals(): void {
+  bindToolForwardRuntime({
+    getTabUrlCache: () => tabUrlCache,
+    refreshTabUrlCache,
+    getThreadManager: () => threadManager,
+  })
+}
 
 // --- MCP tool dispatch (C10-E2: body in mcp/dispatch.ts) ---
 // FREEZE: NEW MCP capability-gate / trust_level / meta-tool policy lives in
@@ -1583,10 +1380,12 @@ export function broadcastToClients(data: any): void {
   }
 }
 
-// Eager bind so createToolExecutor MCP path works in integration tests that skip
-// full initServices (re-bound after initServices / seedThreadManagerForTests).
-// Placed after broadcastToClients so the reference is definitely initialized.
+// Eager bind so createToolExecutor MCP / extension-forward paths work in
+// integration tests that skip full initServices (re-bound after initServices /
+// seedThreadManagerForTests). Placed after broadcastToClients / tabUrlCache so
+// references are definitely initialized.
 bindMcpDispatchFromServerLocals()
+bindToolForwardFromServerLocals()
 
 /**
  * Redact secrets from a CompanionConfig (or partial) before broadcasting
