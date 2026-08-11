@@ -20,7 +20,7 @@ type BoardSnap = {
 
 function trustBadge(trust?: string): { bg: string; label: string } {
   if (trust === "user_confirmed") return { bg: "#16a34a", label: "用户确认" }
-  if (trust === "tool_verified") return { bg: "#2563eb", label: "工具验证" }
+  if (trust === "tool_verified") return { bg: tokens.accent, label: "工具验证" }
   return { bg: "#ca8a04", label: "模型断言(未证实)" }
 }
 

@@ -8,6 +8,7 @@ import type {
   ComputerTaskEventView,
   ComputerTaskState,
 } from "../types"
+import { tokens } from "../ui/tokens"
 
 /** 时间线默认保留最近 30 步。 */
 export const COMPUTER_TIMELINE_MAX_STEPS = 30
@@ -183,7 +184,7 @@ export function uiaCapableBadge(
     return {
       label: "UIA",
       color: "#1d4ed8",
-      bg: "#dbeafe",
+      bg: tokens.accentSoft,
       title: `支持 UIA 精确定位（能力提示，非安全背书）${manualSuffix}`,
     }
   }
