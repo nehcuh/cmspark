@@ -1,0 +1,8 @@
+{
+  "batch": "thread-history-ia-wave-a-impl",
+  "timestamp": "20260811-111023",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-wave-a-impl-claude-20260811-111023.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-wave-a-impl-pi-20260811-111023.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-wave-a-impl-diff-20260811-111023.patch"
+}

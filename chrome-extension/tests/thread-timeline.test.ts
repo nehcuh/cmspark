@@ -17,6 +17,19 @@ import {
   DEFAULT_THREAD_LIST_EXPAND,
   isPinnedGroupOpen,
   isMonthGroupOpen,
+  isUntaggedForExtract,
+  shouldForceDigestExtract,
+  selectUntaggedForExtract,
+  batchNeedsForceExtract,
+  collapseTagKeys,
+  displayDigestTldr,
+  EXTRACT_DIGEST_MAX,
+  TAG_CLOUD_MAX_VISIBLE,
+  parseDigestQuota,
+  remainingDigestQuota,
+  selectLazyDigestCandidates,
+  showDigestStaleBadge,
+  digestQuotaDayKey,
 } from "../src/sidepanel/utils/thread-timeline"
 
 /** Build ISO in local timezone for year/month/day/hour. */
@@ -190,4 +203,165 @@ test("buildTagIndex groups by tag and untagged", () => {
   assert.equal(idx.get("alpha")?.length, 1)
   assert.equal(idx.get("beta")?.length, 2)
   assert.equal(idx.get("__untagged__")?.length, 1)
+})
+
+// ─── Wave A: untagged extract helpers (GAP-11..15 / S1–S5 / S10) ───────────
+
+test("isUntaggedForExtract: !digest OR empty tags", () => {
+  assert.equal(isUntaggedForExtract({ id: "a" }), true)
+  assert.equal(isUntaggedForExtract({ id: "b", digest: null }), true)
+  assert.equal(isUntaggedForExtract({ id: "c", digest: {} }), true)
+  assert.equal(isUntaggedForExtract({ id: "d", digest: { tags: [] } }), true)
+  assert.equal(isUntaggedForExtract({ id: "e", digest: { tags: ["x"] } }), false)
+  // Stale-with-tags is NOT untagged
+  assert.equal(
+    isUntaggedForExtract({ id: "f", digest: { tags: ["x"], stale: true } }),
+    false,
+  )
+})
+
+test("shouldForceDigestExtract: only empty-tags digests need force", () => {
+  assert.equal(shouldForceDigestExtract({ id: "a" }), false)
+  assert.equal(shouldForceDigestExtract({ id: "b", digest: null }), false)
+  assert.equal(shouldForceDigestExtract({ id: "c", digest: { tags: [] } }), true)
+  assert.equal(shouldForceDigestExtract({ id: "d", digest: {} }), true)
+  assert.equal(shouldForceDigestExtract({ id: "e", digest: { tags: ["ok"] } }), false)
+})
+
+test("selectUntaggedForExtract: skips busy + worker; cap 20; force true", () => {
+  const threads = [
+    { id: "w1", agent_role: "worker" as const },
+    { id: "o1", agent_role: "orchestrator" as const },
+    { id: "n1", agent_role: "normal" as const },
+    { id: "busy1" },
+    { id: "tagged", digest: { tags: ["alpha"] } },
+    { id: "emptyTags", digest: { tags: [] as string[] } },
+    { id: "n2" },
+  ]
+  const sel = selectUntaggedForExtract(threads, {
+    busyIds: { busy1: true },
+    max: EXTRACT_DIGEST_MAX,
+  })
+  // worker + busy + tagged out; orch/normal/emptyTags/n2 in
+  assert.deepEqual(sel.ids.sort(), ["emptyTags", "n1", "n2", "o1"].sort())
+  assert.equal(sel.force, true)
+  assert.ok(!sel.ids.includes("w1"))
+  assert.ok(!sel.ids.includes("busy1"))
+  assert.ok(!sel.ids.includes("tagged"))
+})
+
+test("selectUntaggedForExtract: empty batch when nothing eligible", () => {
+  const threads = [
+    { id: "w1", agent_role: "worker" as const },
+    { id: "t1", digest: { tags: ["x"] } },
+    { id: "b1" },
+  ]
+  const sel = selectUntaggedForExtract(threads, { busyIds: new Set(["b1"]) })
+  assert.deepEqual(sel.ids, [])
+  assert.equal(sel.force, false)
+})
+
+test("selectUntaggedForExtract: respects max cap", () => {
+  const threads = Array.from({ length: 30 }, (_, i) => ({ id: `t${i}` }))
+  const sel = selectUntaggedForExtract(threads, { max: 20 })
+  assert.equal(sel.ids.length, 20)
+  assert.equal(sel.force, true)
+})
+
+test("selectUntaggedForExtract: can include workers when excludeWorkers=false", () => {
+  const threads = [
+    { id: "w1", agent_role: "worker" as const },
+    { id: "n1" },
+  ]
+  const sel = selectUntaggedForExtract(threads, { excludeWorkers: false })
+  assert.deepEqual(sel.ids.sort(), ["n1", "w1"].sort())
+})
+
+test("batchNeedsForceExtract: true when any empty-tags digest in selection", () => {
+  const threads = [
+    { id: "a", digest: { tags: ["x"] } },
+    { id: "b", digest: { tags: [] as string[] } },
+    { id: "c" },
+  ]
+  assert.equal(batchNeedsForceExtract(threads, ["a"]), false)
+  assert.equal(batchNeedsForceExtract(threads, ["a", "b"]), true)
+  assert.equal(batchNeedsForceExtract(threads, ["c"]), false) // no digest → no force needed
+  assert.equal(batchNeedsForceExtract(threads, []), false)
+})
+
+test("collapseTagKeys: folds past maxVisible", () => {
+  const keys = Array.from({ length: 20 }, (_, i) => `t${i}`)
+  const folded = collapseTagKeys(keys, false, TAG_CLOUD_MAX_VISIBLE)
+  assert.equal(folded.visible.length, TAG_CLOUD_MAX_VISIBLE)
+  assert.equal(folded.hiddenCount, 20 - TAG_CLOUD_MAX_VISIBLE)
+  const open = collapseTagKeys(keys, true, TAG_CLOUD_MAX_VISIBLE)
+  assert.equal(open.visible.length, 20)
+  assert.equal(open.hiddenCount, 0)
+})
+
+test("displayDigestTldr: one-line ellipsis", () => {
+  assert.equal(displayDigestTldr({ id: "x" }), null)
+  assert.equal(displayDigestTldr({ id: "x", digest: { tldr: "  short  " } }), "short")
+  const long = "字".repeat(150)
+  const out = displayDigestTldr({ id: "x", digest: { tldr: long } }, 120)
+  assert.ok(out)
+  assert.ok(out!.endsWith("…"))
+  assert.ok(out!.length <= 121)
+})
+
+// ─── Wave B: lazy digest + stale badge ─────────────────────────────────────
+
+test("parseDigestQuota resets on new day", () => {
+  const now = new Date(2026, 7, 11, 12, 0, 0)
+  const day = digestQuotaDayKey(now)
+  assert.equal(parseDigestQuota(JSON.stringify({ day, count: 5 }), now).count, 5)
+  assert.equal(
+    parseDigestQuota(JSON.stringify({ day: "2000-01-01", count: 99 }), now).count,
+    0,
+  )
+  assert.equal(remainingDigestQuota({ day, count: 5 }, 20), 15)
+  assert.equal(remainingDigestQuota({ day, count: 20 }, 20), 0)
+})
+
+test("selectLazyDigestCandidates: idle untagged/stale, skip fresh+worker", () => {
+  const now = new Date(2026, 7, 11, 12, 0, 0)
+  const old = new Date(2026, 7, 9, 12, 0, 0).toISOString()
+  const fresh = new Date(2026, 7, 11, 11, 0, 0).toISOString()
+  const threads = [
+    { id: "fresh", updated_at: fresh },
+    { id: "old", updated_at: old },
+    { id: "stale", updated_at: old, digest: { tags: ["x"], stale: true } },
+    { id: "worker", agent_role: "worker" as const, updated_at: old },
+    { id: "tagged", updated_at: old, digest: { tags: ["ok"] } },
+  ]
+  const sel = selectLazyDigestCandidates(threads, {
+    now,
+    onIdleHours: 24,
+    max: 20,
+  })
+  assert.ok(sel.ids.includes("old"))
+  assert.ok(sel.ids.includes("stale"))
+  assert.ok(!sel.ids.includes("fresh"))
+  assert.ok(!sel.ids.includes("worker"))
+  assert.ok(!sel.ids.includes("tagged"))
+  assert.equal(sel.force, true)
+})
+
+test("showDigestStaleBadge: time view only non-today", () => {
+  const now = new Date(2026, 7, 11, 12, 0, 0)
+  const today = new Date(2026, 7, 11, 10, 0, 0).toISOString()
+  const yday = new Date(2026, 7, 10, 10, 0, 0).toISOString()
+  assert.equal(
+    showDigestStaleBadge({ id: "a", digest: { stale: true }, updated_at: today }, "time", now),
+    false,
+  )
+  assert.equal(
+    showDigestStaleBadge({ id: "b", digest: { stale: true }, updated_at: yday }, "time", now),
+    true,
+  )
+  assert.equal(
+    showDigestStaleBadge({ id: "c", digest: { stale: true }, updated_at: today }, "tags", now),
+    true,
+  )
+  assert.equal(showDigestStaleBadge({ id: "d", digest: { tags: ["x"] } }, "tags", now), false)
 })

@@ -246,6 +246,13 @@ export interface LLMConfig {
   // When false, the McpManager refuses to start any client and listServers()
   // synthesizes disconnected metas — UI uses this to render the master toggle.
   mcp_enabled?: boolean
+  /**
+   * Thread digest lazy extract (Wave B). Flattened from companion config.thread_digest.
+   * Default enabled=false.
+   */
+  thread_digest_enabled?: boolean
+  thread_digest_on_idle_hours?: number
+  thread_digest_max_per_day?: number
 }
 
 export interface Message {

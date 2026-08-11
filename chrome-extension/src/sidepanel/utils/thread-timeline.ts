@@ -342,3 +342,220 @@ export function buildTagIndex(
   }
   return map
 }
+
+// ─── Wave A: untagged batch extract helpers (GAP-11..15 / S1–S5) ───────────
+
+/** Max threads per extract_digest request (companion hard cap). */
+export const EXTRACT_DIGEST_MAX = 20
+
+/** Tag cloud: show this many pills before 「更多」 fold (A-5). Count-fold only — no height clip. */
+export const TAG_CLOUD_MAX_VISIBLE = 16
+
+/**
+ * Untagged for batch extract (S1/GAP-11):
+ * `!digest || tags.length === 0`. Non-empty non-stale tags are out of batch.
+ * (Stale-with-tags is not "untagged" — leave for per-row / multi-select.)
+ */
+export function isUntaggedForExtract(t: TimelineThread): boolean {
+  if (!t.digest) return true
+  const tags = t.digest.tags
+  return !tags || tags.length === 0
+}
+
+/**
+ * Empty-tags digests must re-extract with force:true (S1).
+ * No-digest threads extract without force (handler has nothing to skip).
+ */
+export function shouldForceDigestExtract(t: TimelineThread): boolean {
+  if (!t.digest) return false
+  const tags = t.digest.tags
+  return !tags || tags.length === 0
+}
+
+export type SelectUntaggedForExtractOpts = {
+  /** Cap (default EXTRACT_DIGEST_MAX = 20). */
+  max?: number
+  /** Busy thread ids — skipped (S3/GAP-13). */
+  busyIds?: Set<string> | Record<string, boolean | undefined>
+  /**
+   * Default true: exclude agent_role === "worker" (S2/GAP-12).
+   * Orchestrator and normal are included.
+   */
+  excludeWorkers?: boolean
+}
+
+export type UntaggedExtractSelection = {
+  ids: string[]
+  /**
+   * True when batch needs force:true.
+   * Untagged batches always force when non-empty so empty-tags digests re-run (S1);
+   * no-digest-only batches also send force:true (harmless on companion).
+   */
+  force: boolean
+}
+
+function isBusyId(
+  id: string,
+  busyIds?: Set<string> | Record<string, boolean | undefined>,
+): boolean {
+  if (!busyIds) return false
+  if (busyIds instanceof Set) return busyIds.has(id)
+  return !!busyIds[id]
+}
+
+/**
+ * Select up to `max` untagged threads for 「为未标注提取要点」.
+ * Skips busy + worker (default); force:true for any non-empty selection (S1).
+ * Empty result → UI disables CTA/menu (S3); caller must not send empty batch.
+ */
+export function selectUntaggedForExtract(
+  threads: TimelineThread[],
+  opts: SelectUntaggedForExtractOpts = {},
+): UntaggedExtractSelection {
+  const max = opts.max ?? EXTRACT_DIGEST_MAX
+  const excludeWorkers = opts.excludeWorkers !== false
+  const ids: string[] = []
+
+  for (const t of threads) {
+    if (ids.length >= max) break
+    if (!t?.id) continue
+    if (excludeWorkers && t.agent_role === "worker") continue
+    if (isBusyId(t.id, opts.busyIds)) continue
+    if (!isUntaggedForExtract(t)) continue
+    ids.push(t.id)
+  }
+
+  return { ids, force: ids.length > 0 }
+}
+
+/**
+ * Whether a multi-select / per-row extract batch should send force:true.
+ * True if any target has an empty-tags digest (S1 empty-tags path).
+ */
+export function batchNeedsForceExtract(
+  threads: TimelineThread[],
+  ids: string[],
+): boolean {
+  if (ids.length === 0) return false
+  const byId = new Map(threads.map((t) => [t.id, t]))
+  for (const id of ids) {
+    const t = byId.get(id)
+    if (t && shouldForceDigestExtract(t)) return true
+  }
+  return false
+}
+
+/** Collapse tag keys for cloud UI (A-5). */
+export function collapseTagKeys(
+  keys: string[],
+  expanded: boolean,
+  maxVisible: number = TAG_CLOUD_MAX_VISIBLE,
+): { visible: string[]; hiddenCount: number } {
+  if (expanded || keys.length <= maxVisible) {
+    return { visible: keys, hiddenCount: 0 }
+  }
+  return {
+    visible: keys.slice(0, maxVisible),
+    hiddenCount: keys.length - maxVisible,
+  }
+}
+
+/** One-line tldr for list rows (A-3); empty → null. */
+export function displayDigestTldr(
+  t: TimelineThread,
+  maxLen = 120,
+): string | null {
+  const raw = (t.digest?.tldr || "").replace(/\s+/g, " ").trim()
+  if (!raw) return null
+  if (raw.length <= maxLen) return raw
+  return raw.slice(0, maxLen).trimEnd() + "…"
+}
+
+// ─── Wave B: lazy digest quota + idle candidates ───────────────────────────
+
+export const LS_DIGEST_QUOTA = "cmspark.threadDigest.quota"
+
+export type DigestQuotaState = { day: string; count: number }
+
+/** Local calendar day key for quota (YYYY-MM-DD). */
+export function digestQuotaDayKey(now: Date = new Date()): string {
+  return localDayKey(now)
+}
+
+export function parseDigestQuota(raw: string | null, now: Date = new Date()): DigestQuotaState {
+  const day = digestQuotaDayKey(now)
+  if (!raw) return { day, count: 0 }
+  try {
+    const o = JSON.parse(raw)
+    if (o && typeof o === "object" && o.day === day && typeof o.count === "number") {
+      return { day, count: Math.max(0, Math.floor(o.count)) }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { day, count: 0 }
+}
+
+export function remainingDigestQuota(
+  state: DigestQuotaState,
+  maxPerDay: number,
+): number {
+  const cap = Math.max(0, Math.floor(maxPerDay))
+  return Math.max(0, cap - state.count)
+}
+
+/**
+ * Candidates for lazy extract (Wave B-2): untagged (or empty tags) OR digest.stale,
+ * idle for on_idle_hours, skip busy/worker. Cap by max.
+ */
+export function selectLazyDigestCandidates(
+  threads: TimelineThread[],
+  opts: {
+    now?: Date
+    onIdleHours?: number
+    max?: number
+    busyIds?: Set<string> | Record<string, boolean | undefined>
+    excludeWorkers?: boolean
+  } = {},
+): UntaggedExtractSelection {
+  const now = opts.now || new Date()
+  const idleMs = Math.max(0, (opts.onIdleHours ?? 24) * 3600_000)
+  const max = opts.max ?? EXTRACT_DIGEST_MAX
+  const excludeWorkers = opts.excludeWorkers !== false
+  const ids: string[] = []
+
+  for (const t of threads) {
+    if (ids.length >= max) break
+    if (!t?.id) continue
+    if (excludeWorkers && t.agent_role === "worker") continue
+    if (isBusyId(t.id, opts.busyIds)) continue
+    const updated = t.updated_at || t.created_at
+    if (updated) {
+      const ts = new Date(updated).getTime()
+      if (Number.isFinite(ts) && now.getTime() - ts < idleMs) continue
+    }
+    const untagged = isUntaggedForExtract(t)
+    const stale = !!t.digest?.stale
+    if (!untagged && !stale) continue
+    ids.push(t.id)
+  }
+  // Non-empty lazy batch always force:true (empty-tags / stale re-extract).
+  return { ids, force: ids.length > 0 }
+}
+
+/** Show digest stale badge: tags view always; time view only non-today (B-3). */
+export function showDigestStaleBadge(
+  t: TimelineThread,
+  view: "time" | "tags",
+  now: Date = new Date(),
+): boolean {
+  if (!t.digest?.stale) return false
+  if (view === "tags") return true
+  const updated = t.updated_at || t.created_at
+  if (!updated) return true
+  try {
+    return localDayKey(new Date(updated)) !== localDayKey(now)
+  } catch {
+    return true
+  }
+}

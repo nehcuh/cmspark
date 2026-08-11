@@ -22,6 +22,19 @@
 
 ## Technical Pitfalls
 
+### squash 后 `git branch --no-merged` 假阳性 → 切勿整支硬开 PR（2026-08-11 S63）
+- **现象**：`git branch -r --no-merged origin/main` 仍列出 11 条 remote，但 `gh pr list --head <b>` 全是 MERGED/CLOSED；tip commit 文案在 main 上能 grep 到
+- **根因**：squash/merge 后 **SHA 不同**，git 按可达性判「未合并」；三方 diff / `merge-tree` 仍会把**旧 monolith `server.ts`** 等塞回 C10 后的 main
+- **危险**：对 stale 分支「开 PR → 过 CI → 合」= 冲突地狱 + **回退 god-file 拆分**（companion-dispatch 等）
+- **正确动作**：(1) 对每支查 `gh pr list --state all --head`；(2) `git merge-tree --write-tree origin/main origin/<b>` 看是否 NO_OP / 是否冲突带 `<<<<<<<`；(3) 文案/patch-id 对照；(4) 确认已合则 **`git push origin --delete`**，不要重建 PR
+- **纪律**：`--no-merged` 只是候选；**内容门** = PR 历史 + merge-tree + 关键文件（如 C10 抽取）是否仍在
+
+### C10 抽取后测试须 eager-bind companion-dispatch（2026-08-11 · #163）
+- **现象**：Linux CI `host_app` 等：`companion-dispatch runtime not bound`
+- **根因**：`bindCompanionDispatchFromServerLocals` 若只在 `initServices`/`startServer` 路径调用，直接 `createToolExecutor` 的单测不会 bind
+- **修法**：模块加载侧 **eager bind**（#163 跟进 `d028f2e`）；测试勿假设隐式 runtime
+- **纪律**：god-file 抽出的 dispatch 表，默认路径与 test 入口都要能 bind
+
 ### shell_exec / netsec：issueTokenFor 与 validate 绑定必须同形（2026-08-09 S62 · #161）
 - **现象**：企业 auto / full-autonomy cruise 下 `Invalid or expired security token for shell_exec`（日志显示刚 issue 即 fail）
 - **根因**：`issueTokenFor` 经 `bindingPayloadFor` 绑定 `shell|cmd|cwd=...`（netsec 绑 targets+ports），`executeCompanionTool` 却 `validateToken(token, tool, bareCommand)` — 绑定字符串永远对不上
@@ -501,6 +514,19 @@
 - 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
 
 ## Reusable Patterns
+
+### Remote 分支卫生：PR 历史 → merge-tree → 删 stale（2026-08-11 S63）
+1. `git fetch --prune` + `gh pr list --state open`
+2. `git branch -r --no-merged origin/main` → **候选**，非判决
+3. 每支：`gh pr list --state all --head <branch>`；tip subject 是否已在 `origin/main` log
+4. `git merge-tree --write-tree origin/main origin/<b>`：NO_OP / 小 doc / **大 server.ts 回灌** → 分类
+5. 已合或仅 handoff 噪声 → `git push origin --delete`；真正未合内容 → **基于当前 main 重建**，禁整支 stale 硬合
+6. 顺手清 `merge-base --is-ancestor origin/<b> origin/main` 且 ahead=0 的 remote
+
+### 大重构后合 PR 序：底座 → 叠层；CI 绿再 merge（2026-08-10–11 · #162→#163）
+- multi-adv 安全残差 **#162** 先合 main，再把 god-file **#163** retarget main
+- C10 机械 extract 按 A–H 分期 + 日终 dual nits；CI 失败先修 bind 再 merge
+- 价值：避免叠层 PR 与底座冲突、避免未 bind 的 test 绿本地红 CI
 
 ### Windows 真机「修了不生效」排障序（2026-08-09 S62）
 1. **进程路径**：`Get-Process cmspark-agent | Path` 是否 `dist-package\...\cmspark-agent.exe`
