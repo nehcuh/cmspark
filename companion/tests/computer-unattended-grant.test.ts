@@ -265,3 +265,173 @@ describe("PROMPT_ALWAYS / re-L2 floors (G1 session-trust spirit)", () => {
     assert.equal(reL2ShouldPrompt(["computer.budget_exhausted"]), false)
   })
 })
+
+describe("C1 dual-write cruise snapshot lifecycle", () => {
+  it("arm capture → disarm restores snapshot via handler", () => {
+    let restored: any = null
+    const {
+      captureCruiseSnapshot,
+      registerCruiseRestoreHandler,
+      restoreCruiseFromSnapshot,
+      getCruiseSnapshot,
+      armUnattended,
+      disarmUnattended,
+      resetUnattendedGrantForTests,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    registerCruiseRestoreHandler((snap) => {
+      restored = snap
+    })
+    captureCruiseSnapshot({
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    })
+    armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE })
+    assert.ok(getCruiseSnapshot())
+    disarmUnattended()
+    const snap = restoreCruiseFromSnapshot()
+    assert.equal(snap?.auto_approve_dangerous, true)
+    assert.equal(snap?.auto_approve_enterprise_tools, false)
+    assert.equal(restored?.auto_approve_dangerous, true)
+    assert.equal(getCruiseSnapshot(), null)
+    registerCruiseRestoreHandler(null)
+  })
+
+  it("TTL expire restores cruise once", () => {
+    let restoreCount = 0
+    const {
+      captureCruiseSnapshot,
+      registerCruiseRestoreHandler,
+      armUnattended,
+      isUnattendedArmed,
+      getUnattendedStatus,
+      resetUnattendedGrantForTests,
+      UNATTENDED_HARD_TTL_MS,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    registerCruiseRestoreHandler(() => {
+      restoreCount++
+    })
+    captureCruiseSnapshot({
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: true,
+      allow_all_schemes: false,
+    })
+    const now = 10_000_000
+    armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE, now })
+    assert.equal(isUnattendedArmed(now), true)
+    // Expire
+    assert.equal(isUnattendedArmed(now + UNATTENDED_HARD_TTL_MS), false)
+    assert.equal(restoreCount, 1)
+    // Second status check does not re-fire
+    getUnattendedStatus(now + UNATTENDED_HARD_TTL_MS + 1)
+    assert.equal(restoreCount, 1)
+    registerCruiseRestoreHandler(null)
+  })
+
+  it("no snapshot → restore without forceNull is no-op (Pi nit: bare disarm)", () => {
+    let got: any = "unset"
+    const {
+      registerCruiseRestoreHandler,
+      restoreCruiseFromSnapshot,
+      resetUnattendedGrantForTests,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    registerCruiseRestoreHandler((snap) => {
+      got = snap
+    })
+    const snap = restoreCruiseFromSnapshot()
+    assert.equal(snap, null)
+    assert.equal(got, "unset", "handler must not run without snapshot unless forceNull")
+    registerCruiseRestoreHandler(null)
+  })
+
+  it("forceNull clears flags when user requests clear_cruise wipe", () => {
+    let got: any = "unset"
+    const {
+      registerCruiseRestoreHandler,
+      restoreCruiseFromSnapshot,
+      resetUnattendedGrantForTests,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    registerCruiseRestoreHandler((snap) => {
+      got = snap
+    })
+    restoreCruiseFromSnapshot({ forceNull: true })
+    assert.equal(got, null)
+    registerCruiseRestoreHandler(null)
+  })
+
+  it("shouldRestoreCruiseOnDisarm mirrors message-router gate", () => {
+    const { shouldRestoreCruiseOnDisarm } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: false, had_snapshot: false, clear_cruise: false }), false)
+    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: true, had_snapshot: false, clear_cruise: false }), true)
+    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: false, had_snapshot: true, clear_cruise: false }), true)
+    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: false, had_snapshot: false, clear_cruise: true }), true)
+  })
+
+  it("durable file + boot reconcile restores cruise after process restart", () => {
+    const os = require("os") as typeof import("os")
+    const path = require("path") as typeof import("path")
+    const fs = require("fs") as typeof import("fs")
+    const {
+      captureCruiseSnapshot,
+      registerCruiseRestoreHandler,
+      setCruiseSnapshotPathForTests,
+      reconcileUnattendedCruiseOnBoot,
+      resetUnattendedGrantForTests,
+      getCruiseSnapshot,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    const tmp = path.join(os.tmpdir(), `cmspark-cruise-snap-test-${process.pid}.json`)
+    try {
+      if (fs.existsSync(tmp)) fs.unlinkSync(tmp)
+    } catch {
+      /* ignore */
+    }
+    setCruiseSnapshotPathForTests(tmp)
+    let restored: any = null
+    registerCruiseRestoreHandler((snap) => {
+      restored = snap
+    })
+    captureCruiseSnapshot({
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+      allow_all_schemes: false,
+    })
+    assert.ok(fs.existsSync(tmp), "durable snapshot file written")
+    // Simulate process restart: wipe memory, keep file contents
+    const raw = fs.readFileSync(tmp, "utf-8")
+    resetUnattendedGrantForTests()
+    setCruiseSnapshotPathForTests(tmp)
+    fs.writeFileSync(tmp, raw, { encoding: "utf-8", mode: 0o600 })
+    assert.equal(getCruiseSnapshot(), null)
+    restored = null
+    registerCruiseRestoreHandler((snap) => {
+      restored = snap
+    })
+    const r = reconcileUnattendedCruiseOnBoot()
+    assert.equal(r.restored, true)
+    assert.equal(restored?.auto_approve_dangerous, true)
+    assert.equal(restored?.auto_approve_enterprise_tools, true)
+    assert.equal(fs.existsSync(tmp), false, "file cleared after boot reconcile")
+    registerCruiseRestoreHandler(null)
+    setCruiseSnapshotPathForTests(null)
+  })
+})
+
+describe("C16 unattended re-L2 silence (grant armed)", () => {
+  it("isUnattendedArmed true while grant live (executor short-circuit condition)", () => {
+    const {
+      armUnattended,
+      isUnattendedArmed,
+      resetUnattendedGrantForTests,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    assert.equal(isUnattendedArmed(), false)
+    armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE })
+    assert.equal(isUnattendedArmed(), true)
+    // executor.ts reL2: if (isUnattendedArmed()) return true without confirm
+  })
+})

@@ -7,6 +7,11 @@ import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { useContextPanelHostOptional } from "./ContextPanelHost"
 
+// Lock-step with companion/src/security-arm.ts SECURITY_ARM_CONFIRM_PHRASE (C5 multi-adv).
+// Pack Trust skip_l2 / auto_approve writes durable cruise flags — NOT 无人值守 arm —
+// but still requires the same phrase step-up as Settings.
+const SECURITY_ARM_CONFIRM_PHRASE = "我了解风险"
+
 export type PackListItem = {
   id: string
   name: string
@@ -26,6 +31,11 @@ export type PackListItem = {
   /** Pack writes global security on apply (Trust B) */
   has_trust?: boolean
   trust_skip_l2?: boolean
+}
+
+/** C5: client-side gate — server also rejects missing phrase when cruise flags write. */
+function packNeedsTrustPhrase(p: Pick<PackListItem, "has_trust" | "trust_skip_l2"> | null): boolean {
+  return !!(p?.trust_skip_l2 || p?.has_trust)
 }
 
 type ModuleStateView = {
@@ -157,8 +167,11 @@ export function PacksPanel() {
   const [status, setStatus] = useState("")
   const [busy, setBusy] = useState<string | null>(null)
   const [confirmPack, setConfirmPack] = useState<PackListItem | null>(null)
+  const [trustPhrase, setTrustPhrase] = useState("")
   const [trustConflict, setTrustConflict] = useState<TrustConflictState | null>(null)
   const [editor, setEditor] = useState<SceneEditorState | null>(null)
+  /** Phrase for save+apply path when editor Trust writes cruise flags. */
+  const [editorTrustPhrase, setEditorTrustPhrase] = useState("")
   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([])
   const [mcpOptions, setMcpOptions] = useState<McpOption[]>([])
   /** After pack.saved_user, apply to this thread (also sent as apply_thread_id). */
@@ -482,11 +495,18 @@ export function PacksPanel() {
       flash("请先选择或创建对话")
       return
     }
+    setTrustPhrase("")
     setConfirmPack(p)
   }
 
   const confirmApply = () => {
     if (!confirmPack || !state.activeThreadId) return
+    if (packNeedsTrustPhrase(confirmPack)) {
+      if (trustPhrase.trim() !== SECURITY_ARM_CONFIRM_PHRASE) {
+        flash(`Trust 写入巡航旗需输入「${SECURITY_ARM_CONFIRM_PHRASE}」（≠ 无人值守武装）`)
+        return
+      }
+    }
     setBusy(confirmPack.id)
     pendingApplyRef.current = {
       packId: confirmPack.id,
@@ -498,12 +518,30 @@ export function PacksPanel() {
       pack_id: confirmPack.id,
       thread_id: state.activeThreadId,
       user_gesture: true,
+      ...(packNeedsTrustPhrase(confirmPack)
+        ? { confirmation_phrase: trustPhrase.trim() }
+        : {}),
     })
+    setConfirmPack(null)
+    setTrustPhrase("")
   }
 
   /** After Trust conflict: release other holders' scenes and apply here. */
   const confirmTrustTakeover = () => {
     if (!trustConflict) return
+    // Re-use apply confirm flow when phrase needed — force_takeover still requires phrase on server.
+    const phrase =
+      trustPhrase.trim() === SECURITY_ARM_CONFIRM_PHRASE
+        ? trustPhrase.trim()
+        : window.prompt(
+            `Trust 写入全局巡航旗（≠ 无人值守）。请输入「${SECURITY_ARM_CONFIRM_PHRASE}」以确认：`,
+            "",
+          )
+    if (phrase == null) return
+    if (phrase.trim() !== SECURITY_ARM_CONFIRM_PHRASE) {
+      flash(`需输入「${SECURITY_ARM_CONFIRM_PHRASE}」`)
+      return
+    }
     setBusy(trustConflict.packId)
     pendingApplyRef.current = {
       packId: trustConflict.packId,
@@ -516,8 +554,10 @@ export function PacksPanel() {
       thread_id: trustConflict.threadId,
       user_gesture: true,
       force_takeover: true,
+      confirmation_phrase: phrase.trim(),
     })
     setTrustConflict(null)
+    setTrustPhrase("")
   }
 
   const unapply = () => {
@@ -757,15 +797,39 @@ export function PacksPanel() {
           }
         : null
 
+    const trustWritesCruise =
+      !!trustPayload &&
+      (trustPayload.skip_l2 ||
+        trustPayload.auto_approve_dangerous ||
+        trustPayload.auto_approve_enterprise_tools ||
+        trustPayload.allow_all_schemes)
+
     if (trustPayload && andApply) {
       if (
         !window.confirm(
           "此场景将在「用于本对话」时写入全局安全配置（可能跳过 L2 / 开启模块 / auto_approve）。\n" +
+            "Trust ≠ 无人值守武装；会持久写入 auto_approve_*，不能替代「我了解风险」值守短语流程。\n" +
             "退出场景会尽量恢复应用前的配置。确定继续？",
         )
       ) {
         return
       }
+    }
+
+    let phraseForApply: string | undefined
+    if (andApply && trustWritesCruise) {
+      const p =
+        editorTrustPhrase.trim() ||
+        window.prompt(
+          `Trust 写入巡航旗需输入「${SECURITY_ARM_CONFIRM_PHRASE}」（≠ 无人值守武装）：`,
+          "",
+        )
+      if (p == null) return
+      if (p.trim() !== SECURITY_ARM_CONFIRM_PHRASE) {
+        flash(`需输入「${SECURITY_ARM_CONFIRM_PHRASE}」`)
+        return
+      }
+      phraseForApply = p.trim()
     }
 
     setBusy(andApply ? "save-apply" : "save")
@@ -792,7 +856,9 @@ export function PacksPanel() {
       tools: toolsPayload,
       trust: trustPayload,
       apply_thread_id: andApply ? state.activeThreadId || undefined : undefined,
+      ...(phraseForApply ? { confirmation_phrase: phraseForApply } : {}),
     })
+    setEditorTrustPhrase("")
   }
 
   const deleteUserScene = (p: PackListItem) => {
@@ -1121,15 +1187,48 @@ export function PacksPanel() {
             )}
             {confirmPack.has_trust ? (
               <p style={{ ...styles.modalP, color: "#b45309", fontWeight: 600 }}>
-                ⚠️ Trust：此场景应用后会写入全局安全配置
+                ⚠️ Trust：此场景应用后会<strong>持久写入</strong>全局安全配置
                 {confirmPack.trust_skip_l2
-                  ? "（跳过 L2 / 开启三旗全自动巡航，shell·MCP 等高危调用可能不再弹确认）"
+                  ? "（skip_l2 / 三旗 auto_approve_dangerous + enterprise + allow_all_schemes）"
                   : "（可能开启模块或 auto_approve）"}
-                。退出场景、切换到其他场景或删除场景时会尽量恢复；请确认你信任该场景。
+                。
+                <br />
+                <strong>Trust ≠ 无人值守武装</strong>：不会开启桌面值守 grant；不能替代设置里「我了解风险」值守流程。
+                退出场景会尽量恢复巡航旗。
               </p>
             ) : null}
+            {packNeedsTrustPhrase(confirmPack) ? (
+              <div style={{ marginTop: 10 }}>
+                <label style={{ fontSize: 12, color: "#b45309", fontWeight: 600, display: "block" }}>
+                  请输入「{SECURITY_ARM_CONFIRM_PHRASE}」以确认写入巡航旗：
+                </label>
+                <input
+                  type="text"
+                  value={trustPhrase}
+                  onChange={(e) => setTrustPhrase(e.target.value)}
+                  placeholder={SECURITY_ARM_CONFIRM_PHRASE}
+                  style={{
+                    width: "100%",
+                    marginTop: 6,
+                    padding: "6px 8px",
+                    fontSize: 13,
+                    borderRadius: tokens.radiusSm,
+                    border: "1px solid #E0C090",
+                    boxSizing: "border-box",
+                  }}
+                  autoComplete="off"
+                />
+              </div>
+            ) : null}
             <div style={styles.modalActions}>
-              <button type="button" style={styles.secondaryBtn} onClick={() => setConfirmPack(null)}>
+              <button
+                type="button"
+                style={styles.secondaryBtn}
+                onClick={() => {
+                  setConfirmPack(null)
+                  setTrustPhrase("")
+                }}
+              >
                 取消
               </button>
               <button type="button" style={styles.primaryBtn} onClick={confirmApply} disabled={!!busy}>
@@ -1335,7 +1434,9 @@ export function PacksPanel() {
             )}
             <label style={{ ...styles.fieldLabel, color: "#b45309" }}>Trust（应用场景时写全局配置 · 选项 B）</label>
             <div style={{ ...styles.hint, marginBottom: 4 }}>
-              仅「我的」场景。应用时写入 Companion 配置；退出场景会尝试恢复应用前状态。
+              仅「我的」场景。应用时<strong>持久写入</strong> Companion 配置（auto_approve_*）；
+              退出场景会尝试恢复。
+              <strong> Trust skip_l2 / 三旗 ≠ 无人值守武装</strong>——不能替代设置里的值守短语与双勾选。
             </div>
             <label style={styles.checkRow}>
               <input
@@ -1356,7 +1457,7 @@ export function PacksPanel() {
               <span>
                 <strong>跳过 L2</strong>
                 <span style={{ display: "block", fontSize: 10, color: tokens.textMuted }}>
-                  写入三旗（危险自动批 + 企业工具自动批 + 协议解锁）= 全自动巡航
+                  写入三旗巡航（≠ 桌面值守）。应用时需输入「{SECURITY_ARM_CONFIRM_PHRASE}」
                 </span>
               </span>
             </label>
@@ -1402,8 +1503,34 @@ export function PacksPanel() {
               <span>写 allow_all_schemes（协议解锁 / god-mode）</span>
             </label>
             {suggestNote ? <div style={{ ...styles.hint, marginTop: 8, color: tokens.accent }}>{suggestNote}</div> : null}
+            {(editor.trust_skip_l2 ||
+              editor.trust_auto_approve_dangerous ||
+              editor.trust_auto_approve_enterprise ||
+              editor.trust_allow_all_schemes) && (
+              <div style={{ marginTop: 10 }}>
+                <label style={{ fontSize: 12, color: "#b45309", fontWeight: 600, display: "block" }}>
+                  「保存并用于本对话」时输入「{SECURITY_ARM_CONFIRM_PHRASE}」：
+                </label>
+                <input
+                  type="text"
+                  value={editorTrustPhrase}
+                  onChange={(e) => setEditorTrustPhrase(e.target.value)}
+                  placeholder={SECURITY_ARM_CONFIRM_PHRASE}
+                  style={{
+                    width: "100%",
+                    marginTop: 6,
+                    padding: "6px 8px",
+                    fontSize: 13,
+                    borderRadius: tokens.radiusSm,
+                    border: "1px solid #E0C090",
+                    boxSizing: "border-box",
+                  }}
+                  autoComplete="off"
+                />
+              </div>
+            )}
             <div style={{ ...styles.hint, marginTop: 8 }}>
-              AI 只预填，不会自动保存。勾选 Trust 后「保存并用于本对话」会改全局安全配置。
+              AI 只预填，不会自动保存。勾选 Trust 巡航旗后「保存并用于本对话」会改全局安全配置并要求短语确认。
             </div>
             <div style={{ ...styles.modalActions, flexWrap: "wrap" }}>
               <button

@@ -193,6 +193,29 @@ export function checkShellScope(command: string): { ok: true } | { ok: false; er
   return commandAllowedByPolicy(cmd)
 }
 
+/**
+ * C7 multi-adv: absolute effective cwd for shell_exec — same value for L2 token
+ * bind, preview, and execute. Prefer params.cwd, then working_directory, then
+ * workspaceRoot, then process.cwd(); always path.resolve.
+ */
+export function normalizeShellCwd(
+  params: { cwd?: unknown; working_directory?: unknown },
+  workspaceRoot?: string | null,
+): string {
+  const raw =
+    (typeof params?.cwd === "string" && params.cwd.trim()
+      ? params.cwd.trim()
+      : null) ||
+    (typeof params?.working_directory === "string" && params.working_directory.trim()
+      ? params.working_directory.trim()
+      : null) ||
+    (typeof workspaceRoot === "string" && workspaceRoot.trim()
+      ? workspaceRoot.trim()
+      : null) ||
+    process.cwd()
+  return path.resolve(String(raw))
+}
+
 /** Last N characters of s (for progress tails). */
 export function tailChars(s: string, n: number = PROGRESS_TAIL_CHARS): string {
   if (!s) return ""

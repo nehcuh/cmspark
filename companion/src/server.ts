@@ -645,6 +645,9 @@ export type ToolExecutorFn = (
   invokeOpts?: ToolExecuteInvokeOpts,
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
+// FREEZE (C10 multi-adv 2026-08-10): NEW business tool handlers must NOT grow this
+// function further — extract a module (capability/*, computer/*, packs/*, …) and
+// call it from a thin case. Full 7k LOC split is deferred; stop the bleeding first.
 // Exported for integration tests (audit item 6).
 export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   // Per-connection session id — used as the key for MCP first-use confirmation cache
@@ -741,6 +744,21 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         : typeof (finalParams as any)._thread_id === "string"
           ? String((finalParams as any)._thread_id)
           : undefined
+    // C7/C8 multi-adv: normalize shell cwd / netsec ports BEFORE L2 bind + preview
+    // so issueToken payload === execute payload (no post-approve expansion).
+    if (toolName === "shell_exec") {
+      const { normalizeShellCwd } = require("./capability/shell") as typeof import("./capability/shell")
+      const thr = actingThreadId ? threadManager.get(actingThreadId) : null
+      const cwd = normalizeShellCwd(finalParams, thr?.workspace_root)
+      const { working_directory: _wd, ...restShell } = finalParams as Record<string, any>
+      finalParams = { ...restShell, cwd }
+    } else if (toolName === "netsec_port_scan") {
+      const { normalizeNetsecPorts } = require("./netsec/scan") as typeof import("./netsec/scan")
+      finalParams = {
+        ...finalParams,
+        ports: normalizeNetsecPorts((finalParams as any).ports),
+      }
+    }
     // Notify extension: tool execution started (show in sidebar)
     ws.send(JSON.stringify({
       type: "tool.start",
@@ -1069,7 +1087,14 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostCliGated || hostComputerGated) && !finalParams.security_token) {
       // shell_exec / netsec use command|targets for L2 preview text (not code/expression).
       // spawn_worker / ask_user use role/question summaries for the Confirm Center.
+      // C7/C8: shell preview includes cwd; netsec includes ports summary (post-normalize).
       const code = String(
+        (toolName === "shell_exec"
+          ? `command=${finalParams.command || ""} cwd=${finalParams.cwd || ""}`
+          : null) ||
+          (toolName === "netsec_port_scan"
+            ? `targets=${Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : ""} ports=${Array.isArray(finalParams.ports) ? finalParams.ports.join(",") : ""}`
+            : null) ||
         finalParams.code ||
           finalParams.expression ||
           finalParams.command ||
@@ -3831,6 +3856,15 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       }
     }
     case "shell_exec": {
+      // C7: re-normalize cwd so execute binding matches L2 issue (finalParams may already be normalized)
+      {
+        const { normalizeShellCwd } = await import("./capability/shell")
+        const tid0 = params.__thread_id || params._thread_id
+        const thr0 = tid0 ? threadManager.get(tid0) : null
+        const cwdNorm = normalizeShellCwd(params as any, thr0?.workspace_root)
+        delete (params as any).working_directory
+        ;(params as any).cwd = cwdNorm
+      }
       if (params.security_token) {
         // Must match issueTokenFor (bindingPayloadFor includes command + cwd).
         // validateToken(token, "shell_exec", command) alone always fails after cwd binding.
@@ -3851,8 +3885,8 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       if (!flight.ok) return { success: false, error: flight.error, data: { error_code: "SHELL_BUSY", holder: flight.holder } }
       try {
         const { shellExec, resolveShellTimeoutMs } = await import("./capability/shell")
-        const thread = tid ? threadManager.get(tid) : null
-        const cwd = params.cwd || thread?.workspace_root || undefined
+        // Use only normalized params.cwd (token-bound); never re-expand from workspace alone
+        const cwd = params.cwd as string
         return await shellExec({
           command: params.command,
           cwd,
@@ -3884,6 +3918,11 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       }
     }
     case "netsec_port_scan": {
+      // C8: re-normalize ports so execute binding matches L2 issue
+      {
+        const { normalizeNetsecPorts } = await import("./netsec/scan")
+        ;(params as any).ports = normalizeNetsecPorts((params as any).ports)
+      }
       if (params.security_token) {
         // Match issueTokenFor (targets + ports binding), not raw targets JSON alone.
         const valid = securityPolicy.validateTokenFor(
@@ -6530,6 +6569,37 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     logger.warn("config.model_migrated", { from: migration.from, to: migration.to, note })
   }
   const config = getConfig()
+  // C1 multi-adv (Pi nit): grant is process-memory; dual-write cruise can stick across
+  // restart. If a durable pre-arm snapshot exists, restore cruise flags at boot.
+  try {
+    const {
+      registerCruiseRestoreHandler,
+      reconcileUnattendedCruiseOnBoot,
+    } = await import("./computer/unattended-grant")
+    registerCruiseRestoreHandler((snap) => {
+      const cur = getConfig()
+      saveConfig({
+        security: {
+          ...(cur.security || {}),
+          auto_approve_dangerous: snap ? snap.auto_approve_dangerous : false,
+          auto_approve_enterprise_tools: snap ? snap.auto_approve_enterprise_tools : false,
+          allow_all_schemes: snap ? snap.allow_all_schemes : false,
+        },
+      })
+    })
+    const bootCruise = reconcileUnattendedCruiseOnBoot()
+    if (bootCruise.restored) {
+      logger.info("security.unattended.cruise_boot_restored", {
+        auto_approve_dangerous: bootCruise.snap?.auto_approve_dangerous,
+        auto_approve_enterprise_tools: bootCruise.snap?.auto_approve_enterprise_tools,
+        allow_all_schemes: bootCruise.snap?.allow_all_schemes,
+      })
+    }
+  } catch (e: any) {
+    logger.warn("security.unattended.cruise_boot_reconcile_failed", {
+      error: e?.message || String(e),
+    })
+  }
   // Best-effort model-validity probe — fire-and-forget; never blocks or crashes startup.
   void probeChatModel(config)
 

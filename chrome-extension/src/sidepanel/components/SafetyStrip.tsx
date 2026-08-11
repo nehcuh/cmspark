@@ -80,6 +80,7 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
   if (!task && !hasConfirm && !entActive && !cruiseActive) return null
 
   const disarmCruise = () => {
+    // 急停 ≠ 解除：must clear process grant + restore cruise dual-write
     chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: true })
     chrome.runtime.sendMessage({ type: "config.set", config: disarmAllFlags() })
   }
@@ -87,6 +88,9 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
   const finished = task?.status === "finished"
   const live = task && !finished
   const confirmOnly = !task && hasConfirm
+  // C2: abort acked while 值守 still armed → prominent 「值守仍开」 (not bare「已急停…」)
+  const abortWhileArmed =
+    !!(task?.abortAcked && !finished && unattendedArmed)
   const progressText =
     task && typeof task.total === "number"
       ? `${task.steps.length}/${task.total}`
@@ -100,6 +104,18 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
     setAbortSentAt(Date.now())
     setAbortUnconfirmed(false)
   }
+
+  const abortAckLabel =
+    abortWhileArmed ? (
+      <span style={styles.estopArmed} title="急停只停任务；桌面值守 grant 与巡航旗仍在">
+        任务已停 · 值守仍开 · 点解除
+        <button type="button" style={styles.estopDisarmBtn} onClick={disarmCruise}>
+          解除
+        </button>
+      </span>
+    ) : (
+      <span style={styles.meta}>已急停…</span>
+    )
 
   // FocusBand compact: single TaskChip + 急停 row (confirm path owned by FocusBand P0).
   if (compact) {
@@ -133,9 +149,7 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
               急停
             </button>
           )}
-          {task?.abortAcked && !finished && (
-            <span style={styles.meta}>已急停…</span>
-          )}
+          {task?.abortAcked && !finished && abortAckLabel}
           <button
             type="button"
             style={styles.openBtnCompact}
@@ -181,9 +195,7 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
             急停
           </button>
         )}
-        {task?.abortAcked && !finished && (
-          <span style={styles.meta}>已急停…</span>
-        )}
+        {task?.abortAcked && !finished && abortAckLabel}
         <button
           type="button"
           style={styles.openBtn}
@@ -197,7 +209,15 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
       {abortUnconfirmed && task && !task.abortAcked && !finished && (
         <div style={styles.warn}>急停未确认 — 可用 Ctrl+Alt+End</div>
       )}
-      {cruiseActive && cruiseLabel && (
+      {abortWhileArmed && (
+        <div style={styles.estopBanner} role="status">
+          <span>任务已停 · 值守仍开 · 点解除</span>
+          <button type="button" style={styles.entRevoke} onClick={disarmCruise} title="解除桌面值守并关闭巡航旗">
+            解除
+          </button>
+        </div>
+      )}
+      {cruiseActive && cruiseLabel && !abortWhileArmed && (
         <div style={styles.entChip}>
           <span title={"运行自主度已武装；解除将关闭网页/企业/协议三类自动批准"}>
             {cruiseLabel}
@@ -397,5 +417,40 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 6,
     color: "#fbbf24",
     fontSize: 10,
+  },
+  // C2: 急停 ack while 值守 still armed — non-dismiss-easy, action required
+  estopArmed: {
+    color: tokens.darkDanger,
+    fontSize: 10,
+    fontWeight: 700,
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+  },
+  estopDisarmBtn: {
+    border: "1px solid #7f1d1d",
+    background: tokens.darkDangerBg,
+    color: tokens.darkDanger,
+    borderRadius: tokens.radiusSm,
+    padding: "1px 6px",
+    fontSize: 10,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: tokens.font,
+  },
+  estopBanner: {
+    marginTop: 6,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    padding: "6px 8px",
+    borderRadius: tokens.radiusSm,
+    background: tokens.darkDangerBg,
+    color: tokens.darkDanger,
+    fontSize: 11,
+    fontWeight: 700,
+    border: "1px solid #7f1d1d",
   },
 }

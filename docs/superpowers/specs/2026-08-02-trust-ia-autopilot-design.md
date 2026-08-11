@@ -1,5 +1,10 @@
 # 信任设置 IA + 长程自治 — 产品设计 SoT
 
+> **⚠️ SUPERSEDED in part (2026-08-10 multi-adv deep)** — Desktop re-L2 silence under 无人值守 is governed by **[ADR-021](../../adr/021-unattended-desktop-session.md) 2026-08-09 revision**, not this doc's D4 footnote that said danger re-L2 still confirms.  
+> Autopilot matrix UI SoT for evaluate vs navigate: `chrome-extension/.../autopilot-tier.ts` (post multi-adv Wave0).  
+> Wire bools + Settings IA structure in this doc remain useful; **do not** treat "危险 re-L2 仍确认 under unattended" as current product.
+
+
 > **日期**: 2026-08-02  
 > **状态**: **IMPLEMENTING / P0+P1 landed in tree** — dual-review 2026-08-02 Claude+Pi **APPROVE_WITH_NITS**（nits 已折叠）；实现见 SettingsSlideout / StatusRail / autopilot-tier  
 > **触发**: 权限入口过多；God-mode 名实不符；用户需要「长程自行运行」入口  

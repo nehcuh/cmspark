@@ -34,8 +34,8 @@
 ## 2. 在 Side Panel 管理 Apps
 
 1. 打开 Side Panel 底栏 → **应用（Apps）**。  
-2. **全局 App** 行：只读指示 `apps.enabled`；关闭后 **`host_app` 一律拒绝**。当前版本若显示关闭，需在 **`~/.cmspark-agent/config.json`** 中开启（面板不提供假开关）。  
-3. **坐标操作** 行：只读镜像 `computer.coordinateEnabled`（见 Computer Use 指南）。  
+2. **全局 App** 行：指示 `apps.enabled`；关闭后 **`host_app` 一律拒绝**。  
+3. **坐标操作** 行：可切换 `computer.coordinateEnabled`（经 `computer.set_enabled`；见 Computer Use 指南 §3）。  
 4. 在 **应用** 分段中搜索本机候选、**加白名单**、设置每应用策略（见下）。  
 5. **CLI 工具**分段：添加结构化 CLI（绝对路径 + `cli_manifest` JSON）；LLM 通过 **`host_cli`** 调用声明的 subcommand（无 free-args）。策略最高「AI 判断」，每次执行经 L2；危险级可升生物识别。输出按不可信内容处理。
 

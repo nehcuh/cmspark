@@ -1,5 +1,11 @@
 # 无人值守 · 桌面值守 — 产品设计 SoT
 
+> **⚠️ SUPERSEDED (2026-08-10 multi-adv deep)** — Behavior SoT is **[ADR-021](../../adr/021-unattended-desktop-session.md) 2026-08-09 revision**.  
+> Under armed 值守, **re-L2 is intentionally silent** (including danger/experimental/foreground_yielded).  
+> **Do not implement** this document's older "re-L2 still confirm" / PROMPT_ALWAYS non-silent rows.  
+> Keep for historical product-lock context only; implement against ADR-021 + code.
+
+
 > **日期**: 2026-08-02  
 > **状态**: **LOCKED for M1** — 四路对抗 + Pi/Claude dual-review **APPROVE_WITH_NITS**（`unattended-desktop-verdict-20260802-153129`）；nits 已并入 ADR-021  
 > **用户锁定**: 无人值守硬需求 · 武装后 `host_computer` **零 initial L2** · **会话(进程)作用域** · 仅 `coordinateAllowed` App · 不扩 `allow_all_schemes`  

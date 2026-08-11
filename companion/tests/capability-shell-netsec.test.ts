@@ -174,3 +174,66 @@ test("netsec probes localhost when authorized", async () => {
   assert.equal(r.success, true)
   assert.ok(Array.isArray(r.data?.results))
 })
+
+// --- C7 / C8 multi-adv: bind payload normalization ---
+
+test("C7 normalizeShellCwd: cwd > working_directory > workspace > process.cwd", () => {
+  const a = shell.normalizeShellCwd({ cwd: "/tmp/foo" }, "/workspace")
+  assert.equal(a, path.resolve("/tmp/foo"))
+  const b = shell.normalizeShellCwd({ working_directory: "/tmp/bar" }, "/workspace")
+  assert.equal(b, path.resolve("/tmp/bar"))
+  const c = shell.normalizeShellCwd({}, "/workspace/proj")
+  assert.equal(c, path.resolve("/workspace/proj"))
+  const d = shell.normalizeShellCwd({})
+  assert.equal(d, path.resolve(process.cwd()))
+})
+
+test("C7 shell binding equality: issue/validate with normalized cwd", () => {
+  const { SecurityPolicy } = require("../src/security-policy") as typeof import("../src/security-policy")
+  const pol = new SecurityPolicy()
+  const params = {
+    command: "echo x",
+    cwd: shell.normalizeShellCwd({ working_directory: "rel/dir" }, "/ws"),
+  }
+  const tok = pol.issueTokenFor("shell_exec", params)
+  assert.equal(pol.validateTokenFor(tok.token, "shell_exec", params), true)
+  // Different cwd must fail
+  assert.equal(
+    pol.validateTokenFor(tok.token, "shell_exec", { ...params, cwd: path.resolve("/other") }),
+    false,
+  )
+})
+
+test("C8 normalizeNetsecPorts: empty → COMMON_PORTS copy", () => {
+  const a = scan.normalizeNetsecPorts(undefined)
+  assert.deepEqual(a, [...scan.COMMON_PORTS])
+  const b = scan.normalizeNetsecPorts([])
+  assert.deepEqual(b, [...scan.COMMON_PORTS])
+  const c = scan.normalizeNetsecPorts([80, 443, 99999, -1])
+  assert.deepEqual(c, [80, 443])
+})
+
+test("C8 netsec binding equality: empty ports normalized before issue", () => {
+  const { SecurityPolicy } = require("../src/security-policy") as typeof import("../src/security-policy")
+  const pol = new SecurityPolicy()
+  const ports = scan.normalizeNetsecPorts([])
+  const params = { targets: ["127.0.0.1"], ports }
+  // Tokens are single-use — issue per assertion
+  const tokOk = pol.issueTokenFor("netsec_port_scan", params)
+  assert.equal(pol.validateTokenFor(tokOk.token, "netsec_port_scan", params), true)
+  const tokEmpty = pol.issueTokenFor("netsec_port_scan", params)
+  // Empty ports on validate would bind differently if not normalized
+  assert.equal(
+    pol.validateTokenFor(tokEmpty.token, "netsec_port_scan", { targets: ["127.0.0.1"], ports: [] }),
+    false,
+  )
+  const tokNorm = pol.issueTokenFor("netsec_port_scan", params)
+  // Same after normalize
+  assert.equal(
+    pol.validateTokenFor(tokNorm.token, "netsec_port_scan", {
+      targets: ["127.0.0.1"],
+      ports: scan.normalizeNetsecPorts([]),
+    }),
+    true,
+  )
+})

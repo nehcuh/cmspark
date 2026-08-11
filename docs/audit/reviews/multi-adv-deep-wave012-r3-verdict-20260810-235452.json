@@ -1,0 +1,8 @@
+{
+  "batch": "multi-adv-deep-wave012-r3",
+  "timestamp": "20260810-235452",
+  "claude": { "verdict": "APPROVE", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-multi-adv-deep/docs/audit/reviews/multi-adv-deep-wave012-r3-claude-20260810-235452.md" },
+  "pi": { "verdict": "APPROVE", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-multi-adv-deep/docs/audit/reviews/multi-adv-deep-wave012-r3-pi-20260810-235452.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark-wt-multi-adv-deep/docs/audit/reviews/multi-adv-deep-wave012-r3-diff-20260810-235452.patch"
+}

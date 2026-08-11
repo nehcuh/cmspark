@@ -27,9 +27,15 @@ const argv = [
   `--outfile=${path.join(companionRoot, "dist", "cmspark-agent.js")}`,
 ]
 
+// esbuild ≥0.25 ships a native binary at bin/esbuild (not a JS wrapper).
+// Invoking via process.execPath (node) throws SyntaxError on the Mach-O/PE.
 const esbuildBin = path.join(companionRoot, "node_modules", "esbuild", "bin", "esbuild")
-const r = spawnSync(process.execPath, [esbuildBin, ...argv], {
+const r = spawnSync(esbuildBin, argv, {
   cwd: companionRoot,
   stdio: "inherit",
 })
+if (r.error) {
+  console.error("[run-esbuild-bundle] failed to spawn esbuild:", r.error.message)
+  process.exit(1)
+}
 process.exit(r.status ?? 1)

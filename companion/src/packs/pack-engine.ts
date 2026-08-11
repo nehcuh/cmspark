@@ -31,8 +31,46 @@ import {
 } from "./types"
 import { getAllToolDefinitions } from "../bridge/tool-definitions"
 import { setModuleEnabled } from "../capability/modules"
+import {
+  isValidSecurityArmPhrase,
+  securityArmRejectedError,
+  type SecurityArmFlag,
+} from "../security-arm"
 
 const DEFAULT_USER_TOOLS: PackTools = { mode: "unchanged", allow: [], deny: [] }
+
+/**
+ * C5 multi-adv: Trust skip_l2 / auto_approve_* writes durable cruise flags.
+ * Must require the same Settings phrase step-up as config.set / unattended arm.
+ * Modules-only trust (enable_modules without cruise flags) does not need phrase.
+ */
+export function packTrustWritesCruiseFlags(trust: UserPackTrustPolicy | null | undefined): boolean {
+  if (!trust) return false
+  return (
+    trust.skip_l2 === true ||
+    trust.auto_approve_dangerous === true ||
+    trust.auto_approve_enterprise_tools === true ||
+    trust.allow_all_schemes === true
+  )
+}
+
+/** Which SECURITY_ARM_FLAGS would be set true by this trust policy (for error message). */
+function packTrustArmFlagsList(trust: UserPackTrustPolicy): SecurityArmFlag[] {
+  const flags: SecurityArmFlag[] = []
+  const all =
+    trust.skip_l2 === true ||
+    trust.auto_approve_dangerous === true
+  const ent =
+    trust.skip_l2 === true ||
+    trust.auto_approve_enterprise_tools === true
+  const schemes =
+    trust.skip_l2 === true ||
+    trust.allow_all_schemes === true
+  if (all) flags.push("auto_approve_dangerous")
+  if (ent) flags.push("auto_approve_enterprise_tools")
+  if (schemes) flags.push("allow_all_schemes")
+  return flags
+}
 
 /** Derive requires_modules from allow-list (replace, not merge — avoids stale requires). */
 export function deriveRequiresModulesFromTools(tools: PackTools): string[] {
@@ -1420,13 +1458,20 @@ function configuredMcpServerIds(config: CompanionConfig): Set<string> {
  *   write global config. Default **false** so spawn_worker / non-gesture paths cannot elevate Trust B.
  * @param opts.forceTakeoverTrust - When true (UI after conflict confirm only), unapply other
  *   holders' scenes first so Trust can move to this thread. Requires allowTrust.
+ * @param opts.confirmation_phrase - Required when allowTrust + trust writes any cruise flag
+ *   (skip_l2 / auto_approve_*). Same phrase as Settings / security-arm (C5 multi-adv).
  */
 export function applyPack(
   packId: string,
   threadId: string,
   threadManager: ThreadManager,
   skillEngine: SkillEngine,
-  opts?: { workspace_path?: string; allowTrust?: boolean; forceTakeoverTrust?: boolean },
+  opts?: {
+    workspace_path?: string
+    allowTrust?: boolean
+    forceTakeoverTrust?: boolean
+    confirmation_phrase?: unknown
+  },
 ): {
   ok: true
   thread: any
@@ -1567,6 +1612,19 @@ export function applyPack(
         packTrust.skip_l2 ||
         (result.manifest.requires_modules || []).some((m) => m === "shell" || m === "netsec") ||
         (packTrust.enable_modules || []).some((m) => m === "shell" || m === "netsec"),
+    }
+    // C5: Trust cruise flags require Settings phrase step-up (≠ 无人值守 arm; still durable).
+    if (packTrustWritesCruiseFlags(trustToApply)) {
+      if (!isValidSecurityArmPhrase(opts?.confirmation_phrase)) {
+        clearTrustJournal()
+        return {
+          ok: false,
+          error:
+            securityArmRejectedError(packTrustArmFlagsList(trustToApply)) +
+            " Pack Trust skip_l2 / auto_approve is not unattended arming, but still writes durable cruise flags.",
+          code: "trust_phrase_required",
+        }
+      }
     }
     const tr = applyUserPackTrust(trustToApply, `pack.apply:${packId}`)
     if (!tr.ok) {

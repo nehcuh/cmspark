@@ -767,8 +767,21 @@ test("god-mode alone still forceConfirms evaluate (even non-critical) — only t
     code: "window.open('https://example.com')",
   })
   const confirmation = await confirmationPromise
+  // C12 multi-adv: wire has critical_apis / risk fields — NOT force_confirm.
+  // Confirmation arrived under god-mode alone is the forceConfirm proof.
   assert.equal(confirmation.tool_name, "evaluate")
-  assert.equal(confirmation.force_confirm === true || Array.isArray(confirmation.critical_apis), true)
+  assert.ok(confirmation.confirmation_id, "evaluate under god-mode alone must still raise L2 confirm")
+  assert.ok(
+    Array.isArray(confirmation.critical_apis),
+    "wire exposes critical_apis array (may be empty for non-critical code)",
+  )
+  // When critical_apis is non-empty, entries are API names/labels (e.g. evaluate/fetch) — not force_confirm
+  if (confirmation.critical_apis.length > 0) {
+    assert.ok(
+      confirmation.critical_apis.every((a: unknown) => typeof a === "string" && String(a).length > 0),
+      `critical_apis entries should be non-empty strings: ${JSON.stringify(confirmation.critical_apis)}`,
+    )
+  }
   clientSideWs.send(JSON.stringify({
     type: "security.confirmation.response",
     confirmation_id: confirmation.confirmation_id,

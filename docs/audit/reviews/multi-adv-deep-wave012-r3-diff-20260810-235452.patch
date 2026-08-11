@@ -1,0 +1,112 @@
+# Dual external review context
+batch: multi-adv-deep-wave012-r3
+base: 304d33d
+time: 20260810-235452
+
+470961f
+
+?? docs/audit/reviews/multi-adv-deep-wave012-r2-claude-20260810-234902.md
+?? docs/audit/reviews/multi-adv-deep-wave012-r2-diff-20260810-234902.patch
+?? docs/audit/reviews/multi-adv-deep-wave012-r2-dual-review-prompt.md
+?? docs/audit/reviews/multi-adv-deep-wave012-r2-pi-20260810-234902.md
+?? docs/audit/reviews/multi-adv-deep-wave012-r2-verdict-20260810-234902.json
+?? docs/audit/reviews/multi-adv-deep-wave012-r3-diff-20260810-235452.patch
+?? docs/audit/reviews/multi-adv-deep-wave012-r3-dual-review-prompt.md
+
+## Diff (git diff + staged)
+ companion/src/computer/unattended-grant.ts        | 20 ++++++++++++++++++--
+ companion/src/message-router.ts                   | 15 ++++++++++++---
+ companion/tests/computer-unattended-grant.test.ts |  8 ++++++++
+ 3 files changed, 38 insertions(+), 5 deletions(-)
+
+diff --git a/companion/src/computer/unattended-grant.ts b/companion/src/computer/unattended-grant.ts
+index ad044d9..d121369 100644
+--- a/companion/src/computer/unattended-grant.ts
++++ b/companion/src/computer/unattended-grant.ts
+@@ -124,8 +124,10 @@ export function resetUnattendedGrantForTests(): void {
+   grant = null
+   cruiseSnapshot = null
+   expireRestoreDone = false
+-  cruiseSnapshotPathOverride = null
++  // Clear file while override still points at the test path (Pi r2 nit:
++  // never unlink real DATA_DIR snapshot when override is active).
+   clearCruiseSnapshotFile()
++  cruiseSnapshotPathOverride = null
+ }
+ 
+ /** Test-only: redirect durable snapshot path. */
+@@ -200,10 +202,24 @@ export function restoreCruiseFromSnapshot(opts?: {
+   return snap
+ }
+ 
++/**
++ * Pure gate for message-router disarm path (Pi r2 nit — unit-testable).
++ * Restore dual-write cruise only when this process had a grant/snapshot, or
++ * the client explicitly asked clear_cruise (force wipe).
++ */
++export function shouldRestoreCruiseOnDisarm(opts: {
++  had_grant: boolean
++  had_snapshot: boolean
++  clear_cruise: boolean
++}): boolean {
++  return opts.had_grant === true || opts.had_snapshot === true || opts.clear_cruise === true
++}
++
+ /**
+  * Boot reconcile (Pi C1 nit): grant is always process-memory-null at cold start.
+  * If a durable dual-write snapshot file exists, restore pre-arm flags and delete the file.
+- * Call after registerCruiseRestoreHandler + initDataDir.
++ * Call after registerCruiseRestoreHandler. Safe before full initServices — file presence
++ * implies the snapshot dir already existed (persist does mkdir recursive).
+  */
+ export function reconcileUnattendedCruiseOnBoot(): {
+   restored: boolean
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 04cd0cc..600e061 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -3288,13 +3288,22 @@ export async function handleMessage(
+       })
+       const hadSnapshot = !!getCruiseSnapshot()
+       const status = disarmUnattended()
++      const clearCruise = rest.clear_cruise === true
++      const { shouldRestoreCruiseOnDisarm } = await import("./computer/unattended-grant")
+       let cruiseRestored = false
+-      if (status.had_grant || hadSnapshot || rest.clear_cruise === true) {
++      if (
++        shouldRestoreCruiseOnDisarm({
++          had_grant: status.had_grant,
++          had_snapshot: hadSnapshot,
++          clear_cruise: clearCruise,
++        })
++      ) {
+         // clear_cruise:true forces restore/clear even without snapshot (user intent to wipe cruise)
+-        restoreCruiseFromSnapshot({ forceNull: rest.clear_cruise === true && !hadSnapshot && !status.had_grant })
++        restoreCruiseFromSnapshot({
++          forceNull: clearCruise && !hadSnapshot && !status.had_grant,
++        })
+         cruiseRestored = true
+       }
+-      void rest.clear_cruise
+       // S36 P0/F3: disarm stops in-flight host_computer injects
+       const aborted = flipAllComputerTaskAborts()
+       if (aborted > 0) {
+diff --git a/companion/tests/computer-unattended-grant.test.ts b/companion/tests/computer-unattended-grant.test.ts
+index 1da7f52..8d99f87 100644
+--- a/companion/tests/computer-unattended-grant.test.ts
++++ b/companion/tests/computer-unattended-grant.test.ts
+@@ -363,6 +363,14 @@ describe("C1 dual-write cruise snapshot lifecycle", () => {
+     registerCruiseRestoreHandler(null)
+   })
+ 
++  it("shouldRestoreCruiseOnDisarm mirrors message-router gate", () => {
++    const { shouldRestoreCruiseOnDisarm } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
++    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: false, had_snapshot: false, clear_cruise: false }), false)
++    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: true, had_snapshot: false, clear_cruise: false }), true)
++    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: false, had_snapshot: true, clear_cruise: false }), true)
++    assert.equal(shouldRestoreCruiseOnDisarm({ had_grant: false, had_snapshot: false, clear_cruise: true }), true)
++  })
++
+   it("durable file + boot reconcile restores cruise after process restart", () => {
+     const os = require("os") as typeof import("os")
+     const path = require("path") as typeof import("path")

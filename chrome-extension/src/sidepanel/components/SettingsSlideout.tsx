@@ -2221,21 +2221,25 @@ export function SettingsSlideout() {
                   <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                     {(
                       [
-                        { id: "browser" as const, label: "网页巡航", hint: "跳过网页类 L2（evaluate / 导航）" },
+                        {
+                          id: "browser" as const,
+                          label: "网页巡航",
+                          hint: "跳过导航 L2；evaluate / osascript 仍确认（非三旗）",
+                        },
                         {
                           id: "full" as const,
                           label: "全自动巡航",
-                          hint: "网页 L2 + 企业 shell/netsec（须 enterprise 模块与范围）",
+                          hint: "导航 L2 + 企业 shell/netsec；evaluate 仍确认（须三旗才跳过）",
                         },
                         {
                           id: "full_protocol" as const,
                           label: "全自动巡航（含协议解锁）",
-                          hint: "上者 + 非 http(s)；仍不含桌面",
+                          hint: "三旗全开：evaluate/协议 L1 等可跳过；仍不含桌面值守",
                         },
                         {
                           id: "unattended" as const,
                           label: "无人值守",
-                          hint: "本会话：全自动 + 白名单 App 桌面 L2/re-L2 静默（风险自担，含微信键入）",
+                          hint: "本会话桌面 L2/re-L2 静默 + 默认 dual-write 网页/企业两旗（evaluate 仍确认，除非勾协议）",
                         },
                       ] as const
                     ).map((opt) => (
@@ -2578,7 +2582,9 @@ export function SettingsSlideout() {
               <div>
                 <div style={{ fontWeight: 500 }}>自动批准所有危险操作（网页 L2）</div>
                 <div style={{ fontSize: 11, color: "#B26B00", marginTop: 2 }}>
-                  ⚠ 跳过 evaluate / navigate 等网页类 L2。<b>不含</b> shell / netsec（请用企业开关或全自动巡航）。
+                  ⚠ 跳过 <b>导航</b> 类 L2（navigate / create_tab / set_tab_url）。
+                  <b>不</b>单独跳过 evaluate / osascript（须三旗全开或协议解锁一并武装）。
+                  <b>不含</b> shell / netsec（请用企业开关或全自动巡航）。
                 </div>
               </div>
             </label>

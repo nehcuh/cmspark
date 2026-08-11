@@ -846,10 +846,33 @@ export class ThreadManager {
     } catch { /* ignore */ }
   }
 
-  /** Check if a tool is in the thread's whitelist. Returns true if whitelist is null (no restriction) or tool is listed. */
+  /**
+   * Check if a tool is in the thread's whitelist.
+   * Returns true if whitelist is null (no restriction) or tool is listed.
+   * C6 multi-adv: workers re-enforce WORKER_HARD_DENY at runtime (not only spawn-time).
+   */
   isToolAllowed(threadId: string, toolName: string): boolean {
     const thread = this.get(threadId)
     if (!thread) return false
+    // C6: worker hard-deny always applies, even if whitelist was elevated via thread.update
+    if (thread.agent_role === "worker") {
+      try {
+        // Lazy require avoids circular import with orchestrator at module load
+        const { WORKER_HARD_DENY } = require("../orchestrator/constants") as typeof import("../orchestrator/constants")
+        if (WORKER_HARD_DENY.has(toolName)) return false
+      } catch {
+        /* if constants fail to load, fail closed for known host/shell names */
+        if (
+          toolName === "shell_exec" ||
+          toolName === "netsec_port_scan" ||
+          toolName === "host_computer" ||
+          toolName === "host_write" ||
+          toolName === "spawn_worker"
+        ) {
+          return false
+        }
+      }
+    }
     if (thread.tool_whitelist === null) return true
     // Native pack allowlist is orthogonal to MCP: MCP visibility is controlled by
     // mcp_selection_mode / active_mcp_server_ids (adapter + executeMcpTool).
