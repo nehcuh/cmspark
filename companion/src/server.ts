@@ -73,6 +73,8 @@ import { runImageFetchAdmission } from "./tool/image-fetch-admission"
 export { runImageFetchAdmission } from "./tool/image-fetch-admission"
 import { runBrowserDownloadAdmission } from "./tool/browser-download-admission"
 export { runBrowserDownloadAdmission } from "./tool/browser-download-admission"
+import { runMultiAgentToolPregate } from "./orchestrator/tool-pregate"
+export { runMultiAgentToolPregate } from "./orchestrator/tool-pregate"
 import { applyHardenedProcessPath } from "./process-path"
 import {
   getOrCreateSharedSecret,
@@ -626,7 +628,9 @@ export type ToolExecutorFn = (
   invokeOpts?: ToolExecuteInvokeOpts,
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
-// FREEZE (C10 multi-adv 2026-08-10 / phase-A..E 2026-08-11):
+// FREEZE (C10 multi-adv 2026-08-10 / phase-A..F 2026-08-11):
+// - ADR-015 multi-agent pre-gate → orchestrator/tool-pregate.ts
+//   (runMultiAgentToolPregate: tab lease / pack whitelist / HOST_CHROME).
 // - L2 security admission → tool/l2-admission.ts (runL2ToolAdmission).
 // - Cookie trust + URL navigate admission → tool/url-cookie-admission.ts
 //   (runCookieTrustAdmission / runUrlNavigateAdmission).
@@ -636,12 +640,12 @@ export type ToolExecutorFn = (
 //   (runBrowserDownloadAdmission).
 // - MCP namespaced + meta dispatch → mcp/dispatch.ts
 //   (executeMcpTool / executeMcpMetaTool; bind via bindMcpDispatchRuntime).
-// - createToolExecutor is the orchestration shell: multi-agent / cookie / browser_download /
+// - createToolExecutor is the orchestration shell: pregate call / cookie / browser_download /
 //   L2 call / URL gate / image gate call / companion dispatch / MCP / extension forward.
 // - NEW companion-side tool *cases* → tool/companion-dispatch.ts (or capability/*).
 // - NEW WS validators → ws/validate.ts.
-// Do not re-inflate server.ts with L2 algebra, cookie/URL/image/browser_download/
-// MCP gate bodies, or business tool bodies.
+// Do not re-inflate server.ts with multi-agent pregate, L2 algebra, cookie/URL/image/
+// browser_download/MCP gate bodies, or business tool bodies.
 // Exported for integration tests (audit item 6).
 export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   // Per-connection session id — used as the key for MCP first-use confirmation cache
@@ -769,156 +773,22 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     })
     // Only true when re-applied under trustedOutbound — never from raw LLM params.
     const isOutboundMcpCall = (finalParams as any).__outbound_mcp === true
-    try {
-      const {
-        TAB_LEASE_TOOLS,
-        isMultiAgentThread,
-        anyTabLeaseHeld,
-        acquireOrRenewTabLease,
-        sweepExpired,
-      } = await import("./orchestrator")
-      sweepExpired({ hasPendingForTab })
 
-      // ADR-022 L9: Side Panel wins — if non-outbound actor targets a tab held
-      // by outbound_mcp:*, force-release so dual-entry does not thrash.
-      if (
-        !isOutboundMcpCall &&
-        TAB_LEASE_TOOLS.has(toolName) &&
-        typeof finalParams.tabId === "number"
-      ) {
-        try {
-          const { sidePanelWinsReleaseOutboundLease } = await import("./outbound-mcp/dual-entry")
-          sidePanelWinsReleaseOutboundLease(finalParams.tabId, actingThreadId)
-        } catch {
-          /* best-effort */
-        }
-      }
-
-      // ADR-022 L8/L9 adversary B1: outbound injects synthetic __thread_id
-      // (`outbound_mcp:<caller>`) for lease holder identity, but that id is NOT a
-      // ThreadManager thread — isToolAllowed would always deny. Outbound surface is
-      // already gated by gateOutboundCall + disclosure + dual-entry lease; skip the
-      // multi-agent / pack whitelist path for isOutboundMcpCall.
-      if (actingThreadId && threadManager && !isOutboundMcpCall) {
-        const th = threadManager.get(actingThreadId) as any
-        if (th?.paused) {
-          const result = {
-            success: false,
-            error: `worker_paused:${actingThreadId} — resume before dispatching tools`,
-          }
-          logToolFinish(toolCallId, toolName, startedAt, result)
-          return result
-        }
-        // isToolAllowed hard gate (Mission Pack / scene tool surface)
-        // Orthogonal to god-mode / auto_approve (ADR-014 + scene UX SoT).
-        if (!threadManager.isToolAllowed(actingThreadId, toolName)) {
-          const packId = typeof th?.mission_pack_id === "string" ? th.mission_pack_id : null
-          const toolLabel = toolDisplayNameZh(toolName)
-          const { sceneToolNotAllowedError } = await import("./capability/user-gate-copy")
-          const sceneHint = sceneToolNotAllowedError(toolLabel, packId)
-          const result = {
-            success: false,
-            error: sceneHint,
-            data: {
-              error_code: "tool_not_allowed",
-              error_level: "recoverable" as const,
-              tool_name: toolName,
-              mission_pack_id: packId,
-              suggested_action: packId ? "unapply_pack" : "check_tool_whitelist",
-              user_hint_zh: sceneHint.split("\n")[0],
-            },
-          }
-          logger.warn("security.tool_whitelist_blocked", {
-            tool_call_id: toolCallId,
-            tool_name: toolName,
-            thread_id: actingThreadId,
-            mission_pack_id: packId,
-          })
-          logToolFinish(toolCallId, toolName, startedAt, result)
-          return result
-        }
-        const multi =
-          isMultiAgentThread(th) || anyTabLeaseHeld()
-        if (TAB_LEASE_TOOLS.has(toolName) && multi && typeof finalParams.tabId !== "number") {
-          const result = {
-            success: false,
-            error: "TAB_ID_REQUIRED: multi-agent mode forbids silent active-tab; pass explicit numeric tabId",
-            data: { error_code: "TAB_ID_REQUIRED" },
-          }
-          logToolFinish(toolCallId, toolName, startedAt, result)
-          return result
-        }
-        if (multi) {
-          // Defense-in-depth for extension screenshot/analyze_image fallback
-          ;(finalParams as any).__require_tab_id = true
-        }
-        // Early exclusive HARD for tab tools — multi-agent only (ADR-015).
-        // Outbound MCP already leased in companion-http (L9); skip double-acquire here
-        // when isOutboundMcpCall (holder is outbound_mcp:*).
-        // Normal single-agent chats must not take per-worker tab leases: browse /
-        // AppSec often opens many tabs and max_tabs_leased_per_worker=2 would
-        // hard-fail as non_recoverable (thread 1gfd6t). When any multi-agent
-        // lease is already held, multi is true so exclusivity still covers peers.
-        // GATE2: auto-approve / domain-whitelist / god-mode must still hold exclusive
-        // lease — previously willEnterL2 skipped HARD and skipConfirmation skipped SOFT.
-        // Interactive L2 path upgrades same-holder HARD → HELD_PENDING_L2 below.
-        if (
-          multi &&
-          !isOutboundMcpCall &&
-          TAB_LEASE_TOOLS.has(toolName) &&
-          typeof finalParams.tabId === "number" &&
-          actingThreadId
-        ) {
-          const leaseRes = acquireOrRenewTabLease({
-            tabId: finalParams.tabId,
-            holderThreadId: actingThreadId,
-            needsL2: false,
-          })
-          if (!leaseRes.ok) {
-            const result = {
-              success: false,
-              error: leaseRes.error,
-              data: {
-                error_code: leaseRes.error_code,
-                tab_id: leaseRes.tab_id,
-                holder_thread_id: leaseRes.holder_thread_id,
-              },
-            }
-            logToolFinish(toolCallId, toolName, startedAt, result)
-            return result
-          }
-        }
-      }
-      // host_computer vs any tab lease (Q4): block Chrome window ops while tabs leased
-      if (toolName === "host_computer" && anyTabLeaseHeld()) {
-        const blob = JSON.stringify(finalParams || {}).toLowerCase()
-        const chromeHint =
-          blob.includes("chrome") ||
-          blob.includes("chromium") ||
-          blob.includes("google chrome") ||
-          blob.includes("com.google.chrome")
-        if (chromeHint) {
-          const result = {
-            success: false,
-            error:
-              "host_computer blocked on Chrome while tab leases are held — force-release tab leases first (ADR-015 Q4)",
-            data: { error_code: "HOST_CHROME_TAB_LEASE" },
-          }
-          logToolFinish(toolCallId, toolName, startedAt, result)
-          return result
-        }
-      }
-    } catch (gateErr: any) {
-      // Fail closed: never skip multi-agent exclusivity on gate exception (ADR-015)
-      logger.warn("orchestrator.gate_error", { error: gateErr?.message || String(gateErr) })
-      const result = {
-        success: false,
-        error: `ORCHESTRATOR_GATE_ERROR: ${gateErr?.message || String(gateErr)}`,
-        data: { error_code: "ORCHESTRATOR_GATE_ERROR" },
-      }
-      logToolFinish(toolCallId, toolName, startedAt, result)
-      return result
-    }
+    // ADR-015 multi-agent pre-gate — extracted to orchestrator/tool-pregate.ts (C10-F)
+    const pregate = await runMultiAgentToolPregate({
+      toolName,
+      finalParams,
+      toolCallId,
+      startedAt,
+      actingThreadId,
+      isOutboundMcpCall,
+      logToolFinish,
+      getThreadManager: () => threadManager,
+      hasPendingForTab,
+      toolDisplayNameZh,
+    })
+    if (!pregate.ok) return pregate.result
+    finalParams = pregate.finalParams
 
     // Cookie trust domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
     const cookieOutcome = runCookieTrustAdmission({
