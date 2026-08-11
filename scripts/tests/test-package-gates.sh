@@ -55,6 +55,16 @@ assert_file_lacks() {
   fi
 }
 
+# P0 OPS-01: was referenced but undefined — gates silently no-op'd under set -u
+assert_file_exists() {
+  if [ -f "${1}" ]; then
+    PASS=$((PASS + 1))
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: ${2} (missing file: ${1})" >&2
+  fi
+}
+
 echo "=== P0-D package gate tests ==="
 echo "Root: ${ROOT}"
 echo ""

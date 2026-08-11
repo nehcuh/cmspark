@@ -97,6 +97,8 @@ const abortControllers = new Map<string, AbortController>()
  * delete the successor AbortController or release the multi-agent LLM gate.
  */
 const llmLoopGeneration = new Map<string, number>()
+/** P0 CORR-02: threadId → panel/session id that owns the in-flight LLM loop */
+const llmLoopOwnerPanel = new Map<string, string>()
 
 /** Run-state: threads with an in-flight LLM abort controller. */
 export function listLlmActiveThreadIds(): string[] {
@@ -124,6 +126,7 @@ export function abortThreadChat(threadId: string): boolean {
   if (controller) {
     controller.abort()
     abortControllers.delete(threadId)
+    llmLoopOwnerPanel.delete(threadId)
     // Bump generation so any late finally from this run cannot reclaim the slot
     // or clobber a successor. Because finally will CAS-skip release, we must
     // free the multi-agent gate here (Pi REJECT: abort leaked MULTI_AGENT_LLM_CAP).
@@ -133,6 +136,20 @@ export function abortThreadChat(threadId: string): boolean {
     return true
   }
   return false
+}
+
+/**
+ * P0 CORR-02: abort all LLM loops owned by a panel/WS connection on close.
+ */
+export function abortLlmLoopsForPanel(panelId: string | undefined | null): number {
+  if (!panelId) return 0
+  let n = 0
+  for (const [tid, owner] of [...llmLoopOwnerPanel.entries()]) {
+    if (owner === panelId) {
+      if (abortThreadChat(tid)) n++
+    }
+  }
+  return n
 }
 
 function nextLlmGeneration(threadId: string): number {
@@ -287,9 +304,13 @@ export async function handleMessage(
         }
       }
 
-      // Cancel any existing request for this thread (SEC-D: do not delete map yet —
-      // predecessor finally uses generation CAS so it cannot clobber successor).
+      // P0 CORR-01: claim slot SYNCHRONOUSLY before any await so dual WS handlers
+      // cannot both install controllers (orphan double LLM).
+      const myGeneration = nextLlmGeneration(rest.thread_id)
+      const controller = new AbortController()
       const existing = abortControllers.get(rest.thread_id)
+      abortControllers.set(rest.thread_id, controller)
+      if (session?.panelId) llmLoopOwnerPanel.set(rest.thread_id, session.panelId)
       if (existing) {
         logger.info("llm.thread_request_superseded", { thread_id: rest.thread_id })
         existing.abort()
@@ -301,6 +322,11 @@ export async function handleMessage(
       const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop } = await import("./orchestrator/llm-loop-gate")
       const loopGate = tryAcquireMultiAgentLlmLoop(threadForLlmCap, rest.thread_id)
       if (!loopGate.ok) {
+        // Release the slot we just claimed
+        if (abortControllers.get(rest.thread_id) === controller) {
+          abortControllers.delete(rest.thread_id)
+          llmLoopOwnerPanel.delete(rest.thread_id)
+        }
         return {
           type: "chat.error",
           thread_id: rest.thread_id,
@@ -308,10 +334,6 @@ export async function handleMessage(
           data: { error_code: "MULTI_AGENT_LLM_CAP", active: loopGate.active, cap: loopGate.cap },
         }
       }
-
-      const myGeneration = nextLlmGeneration(rest.thread_id)
-      const controller = new AbortController()
-      abortControllers.set(rest.thread_id, controller)
 
       try {
         // Get thread to determine skill and knowledge selection modes
@@ -880,6 +902,18 @@ export async function handleMessage(
         return { type: "error", error: "Can only regenerate user or assistant messages" }
       }
 
+      // P0 CORR-05: abort + drain FIRST, then truncate tape (no orphan write-back)
+      const myGeneration = nextLlmGeneration(thread_id)
+      const controller = new AbortController()
+      const existing = abortControllers.get(thread_id)
+      abortControllers.set(thread_id, controller)
+      if (session?.panelId) llmLoopOwnerPanel.set(thread_id, session.panelId)
+      if (existing) {
+        logger.info("llm.thread_request_superseded", { thread_id })
+        existing.abort()
+        await drainThreadOnSupersede(thread_id, `chat.regenerate.supersede:${thread_id}`)
+      }
+
       if (deleteFromId) {
         threadManager.deleteMessagesFrom(thread_id, deleteFromId)
       }
@@ -887,21 +921,19 @@ export async function handleMessage(
       // Notify extension of updated message list
       session.sendToExtension({
         type: "thread.messages",
+        thread_id,
         messages: threadManager.getMessages(thread_id),
       })
 
-      // Cancel any existing request for this thread (SEC-D generation CAS)
-      const existing = abortControllers.get(thread_id)
-      if (existing) {
-        logger.info("llm.thread_request_superseded", { thread_id })
-        existing.abort()
-        await drainThreadOnSupersede(thread_id, `chat.regenerate.supersede:${thread_id}`)
-      }
       const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop: releaseRegenLlm } =
         await import("./orchestrator/llm-loop-gate")
       const threadForRegenCap = services.threadManager.get(thread_id)
       const regenLoopGate = tryAcquireMultiAgentLlmLoop(threadForRegenCap, thread_id)
       if (!regenLoopGate.ok) {
+        if (abortControllers.get(thread_id) === controller) {
+          abortControllers.delete(thread_id)
+          llmLoopOwnerPanel.delete(thread_id)
+        }
         return {
           type: "chat.error",
           thread_id,
@@ -913,9 +945,6 @@ export async function handleMessage(
           },
         }
       }
-      const myGeneration = nextLlmGeneration(thread_id)
-      const controller = new AbortController()
-      abortControllers.set(thread_id, controller)
 
       try {
         // Get thread to determine skill and knowledge selection modes

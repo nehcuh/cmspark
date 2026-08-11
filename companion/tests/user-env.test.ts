@@ -250,8 +250,8 @@ describe("shell_exec receives user env", { concurrency: 1 }, () => {
   })
 })
 
-describe("MCP transport merges user env", { concurrency: 1 }, () => {
-  test("stdio env includes user_env before config.env", () => {
+describe("MCP transport stdio env (P0 SEC-02 minimal)", { concurrency: 1 }, () => {
+  test("stdio env does NOT inherit user_env secrets; config.env still applied", () => {
     resetFile()
     userEnv.setUserEnvVars({ DATAYES_TOKEN: "mcp-user", SHARED: "from-user" })
     // Dynamic require after DATA_DIR pin (same pattern as mcp.test.ts)
@@ -264,8 +264,9 @@ describe("MCP transport merges user env", { concurrency: 1 }, () => {
       env: { SHARED: "from-server", EXTRA: "1" },
     })
     const params = (transport as any)._serverParams
-    assert.equal(params.env.DATAYES_TOKEN, "mcp-user")
-    assert.equal(params.env.SHARED, "from-server", "server.env wins over user_env")
+    // P0: user_env secrets must not leak into MCP children
+    assert.equal(params.env.DATAYES_TOKEN, undefined)
+    assert.equal(params.env.SHARED, "from-server", "server.config.env applied")
     assert.equal(params.env.EXTRA, "1")
     assert.equal(params.env.PATH, buildSpawnPath())
   })

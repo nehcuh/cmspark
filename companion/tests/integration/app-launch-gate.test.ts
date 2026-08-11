@@ -377,11 +377,12 @@ test("non-launch action → typed error, NO confirmation requested", { skip: !WI
 // nothing meaningful — the matrix above owns win32 behavior.
 // =============================================================================
 
-test("host_app off win32+darwin → typed platform error, no dialog", { skip: WIN || DARWIN }, async () => {
+test("host_app off win32+darwin → token required first (P0 SEC-01), no dialog", { skip: WIN || DARWIN }, async () => {
   const executeTool = createToolExecutor(serverSideWs)
   const noConfirm = expectNoClientMessage("security.confirmation.request")
+  // P0 SEC-01: missing security_token fails closed before platform check
   const result = await executeTool("tc_app_platform", "host_app", { app: "win.app.gated", action: "launch" })
   await noConfirm
   assert.equal(result.success, false)
-  assert.match(result.error!, /requires macOS or Windows/)
+  assert.match(result.error!, /security_token|L2/)
 })

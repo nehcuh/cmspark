@@ -138,22 +138,71 @@ export function buildSpawnPath(): string {
   return [...new Set([...head, ...Array.from(segments)])].join(path.delimiter)
 }
 
+/** P0 SEC-02: env keys safe to inherit into MCP stdio children (no secrets). */
+const MCP_STDIO_ENV_ALLOW = new Set([
+  "PATH",
+  "PATHEXT",
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+  "COLORTERM",
+  "SHELL",
+  "USER",
+  "USERNAME",
+  "LOGNAME",
+  "SystemRoot",
+  "windir",
+  "ComSpec",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "ProgramFiles",
+  "ProgramFiles(x86)",
+  "ProgramData",
+  "NODE_ENV",
+  "npm_config_cache",
+  "NVM_DIR",
+  "VOLTA_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+])
+
+/** Build minimal env for MCP stdio — no full process.env / user_env dump. */
+export function buildMcpStdioEnv(
+  configEnv?: Record<string, string>,
+): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const key of MCP_STDIO_ENV_ALLOW) {
+    const v = process.env[key]
+    if (typeof v === "string" && v.length > 0) env[key] = v
+  }
+  // Explicit per-server config.env only (operator-chosen secrets stay scoped)
+  if (configEnv) {
+    for (const [k, v] of Object.entries(configEnv)) {
+      if (typeof v === "string") env[k] = v
+    }
+  }
+  env.PATH = configEnv?.PATH || buildSpawnPath()
+  return env
+}
+
 export function createTransport(config: McpServerConfig, extras?: TransportExtras): Transport {
   if (config.transport === "stdio") {
-    // Merge order (ADR-019 §6.2):
-    //   process.env → user_env → buildSpawnPath() (PATH harden) → config.env
-    // config.env is highest among optional layers. When config.env.PATH is set
-    // it overrides buildSpawnPath() verbatim (not merged/augmented).
-    const env: Record<string, string> = {
-      ...process.env,
-      ...getUserEnvVars(),
-    } as Record<string, string>
-    env.PATH = buildSpawnPath()
-    if (config.env) {
-      Object.assign(env, config.env)
-      // Explicit PATH in per-server config wins over buildSpawnPath().
-      if (config.env.PATH) env.PATH = config.env.PATH
-    }
+    // P0 SEC-02: minimal allowlist — do NOT spread process.env or getUserEnvVars()
+    // (API keys / SSH / cloud creds must not leak into npx/uvx MCP children).
+    // Per-server config.env is still applied (operator intent).
+    const env = buildMcpStdioEnv(config.env as Record<string, string> | undefined)
+    // getUserEnvVars retained only for allowlisted keys already in MCP_STDIO_ENV_ALLOW
+    // (none are secrets by ADR-019 denylist) — skip full merge.
+    void getUserEnvVars
 
     // spawn() fails with ENOENT if cwd points to a non-existent directory. This
     // is easy to hit when configs are copied across machines with different

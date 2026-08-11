@@ -275,6 +275,20 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const hostId =
         resolveBoardHostThreadId(threadManager, workerId) ||
         (callerId ? resolveBoardHostThreadId(threadManager, String(callerId)) : null)
+      // P0 ISO-01: caller must be board host, parent, or the worker itself
+      if (callerId) {
+        const w = threadManager.get(workerId) as any
+        const isSelf = String(callerId) === workerId
+        const isParent = w?.parent_thread_id && String(w.parent_thread_id) === String(callerId)
+        const isHost = hostId && String(hostId) === String(callerId)
+        if (!isSelf && !isParent && !isHost) {
+          return {
+            success: false,
+            error: `collect_handback denied: caller does not own worker ${workerId}`,
+            data: { error_code: "WORKER_NOT_OWNED" },
+          }
+        }
+      }
       const resolveToolCall = resolveToolCallFromThreadMessages(
         threadManager,
         workerId,
@@ -482,6 +496,31 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       if (!wid) return { success: false, error: "worker_id required" }
       const w = threadManager.get(String(wid)) as any
       if (!w) return { success: false, error: `worker not found: ${wid}` }
+      // P0 ISO-01: only parent/orchestrator host (or the worker itself) may cancel
+      {
+        const callerId = params.__thread_id || params._thread_id
+        if (!callerId) {
+          return { success: false, error: "worker_cancel requires thread context", data: { error_code: "WORKER_NOT_OWNED" } }
+        }
+        const caller = threadManager.get(String(callerId)) as any
+        const parentId = w.parent_thread_id
+        const sameRun =
+          caller?.orchestrator_run_id &&
+          w.orchestrator_run_id &&
+          caller.orchestrator_run_id === w.orchestrator_run_id
+        const isParent = parentId && String(parentId) === String(callerId)
+        const isSelf = String(callerId) === String(wid)
+        const isHostOfRun =
+          sameRun &&
+          (caller?.agent_role === "orchestrator" || caller?.agent_role === "user" || !caller?.agent_role)
+        if (!isParent && !isSelf && !isHostOfRun) {
+          return {
+            success: false,
+            error: `worker_cancel denied: caller ${callerId} does not own worker ${wid}`,
+            data: { error_code: "WORKER_NOT_OWNED" },
+          }
+        }
+      }
       // G13: abandon worker intents on host BEFORE pending reject + lease release
       let intentsAbandoned = 0
       try {
@@ -836,13 +875,20 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             "Example: {url: 'example.com', expression: 'document.title'}",
         }
       }
-      // Validate security token instead of boolean flag
-      if (params.security_token) {
+      // P0 SEC-01: require L2 security_token (mirror shell_exec) — no tokenless path
+      if (!params.security_token) {
+        return {
+          success: false,
+          error: "osascript_eval requires L2 security_token confirmation",
+        }
+      }
+      {
         const valid = securityPolicy.validateToken(params.security_token, "osascript_eval", jsExpr)
         if (!valid) {
           return { success: false, error: "Invalid or expired security token" }
         }
-      } else {
+      }
+      {
         const safety = checkHighRiskExecution("osascript_eval", jsExpr)
         if (safety.blocked) {
           return {
@@ -914,10 +960,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       // {success:false}. Single source of truth for platform check lives in
       // host-use/index.ts (Standards review M2: drop duplicate guard here).
       //
-      // Kimi Round 2 Critical: validate security_token like osascript_eval does.
-      // Without this, any non-empty security_token string in params bypasses
-      // the L2 gate at server.ts:303 and host_read executes without confirmation.
-      if (params.security_token) {
+      // P0 SEC-01: require L2 security_token (no fail-open without token)
+      if (!params.security_token) {
+        return { success: false, error: "host_read requires L2 security_token confirmation" }
+      }
+      {
         const valid = securityPolicy.validateTokenFor(
           String(params.security_token),
           "host_read",
@@ -955,7 +1002,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
     case "host_write": {
       // Phase 1 W8 (Kimi+Pi advisor Option A): ALL writes go through biometric
       // tier per Round 2 §4.2. W6 ask-once behavior replaced.
-      if (params.security_token) {
+      // P0 SEC-01: require L2 token before biometric path
+      if (!params.security_token) {
+        return { success: false, error: "host_write requires L2 security_token confirmation" }
+      }
+      {
         const valid = securityPolicy.validateTokenFor(
           String(params.security_token),
           "host_write",
@@ -1170,7 +1221,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       // App tab WP3 — L0 no-arg launch of a user-whitelisted app (win32, P1).
       // Adversary 接线警示 ③: THIS is the executor validate branch of the
       // three-place gate wiring (① L2 gate tool list, ② bindingPayloadFor).
-      if (params.security_token) {
+      // P0 SEC-01: require token
+      if (!params.security_token) {
+        return { success: false, error: "host_app requires L2 security_token confirmation" }
+      }
+      {
         const valid = securityPolicy.validateTokenFor(
           String(params.security_token),
           "host_app",
@@ -1356,7 +1411,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       // Coordinate computer-use (WP1). The task-level L2 dialog ran in the
       // gate above (critical-class, originWs-bound); the security token binds
       // app + task + the full action draft (A3 corpus hash included).
-      if (params.security_token) {
+      // P0 SEC-01: require token (no fail-open)
+      if (!params.security_token) {
+        return { success: false, error: "host_computer requires L2 security_token confirmation" }
+      }
+      {
         const valid = securityPolicy.validateTokenFor(
           String(params.security_token),
           "host_computer",
