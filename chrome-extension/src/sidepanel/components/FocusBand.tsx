@@ -222,24 +222,25 @@ function ellipsize(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…"
 }
 
-/** Shared floating card shell (G3 inset ≤80px). */
+/** Shared floating card shell (G3 inset ≤80px) — instrument hairline, not pill. */
 const cardShell: CSSProperties = {
   maxHeight: FOCUS_BAND_MAX_PX,
   overflow: "hidden",
   display: "flex",
   flexDirection: "column",
-  borderRadius: 16,
-  boxShadow: tokens.shadowMd,
+  borderRadius: tokens.radiusLg,
+  boxShadow: tokens.shadowSm,
 }
 
 const styles: Record<string, CSSProperties> = {
   /**
    * Horizontal float only (G3). Keep vertical pad minimal so outer+card
    * footprint stays near FOCUS_BAND_MAX_PX (dual-review footprint nit).
+   * Phase 1: shared horizontal padding 12 with shell.
    */
   outer: {
     flexShrink: 0,
-    padding: "2px 10px 0",
+    padding: "2px 12px 0",
   },
   cardConfirm: {
     ...cardShell,

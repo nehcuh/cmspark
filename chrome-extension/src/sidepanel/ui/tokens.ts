@@ -1,25 +1,26 @@
-// Shared visual tokens — Quiet Premium + Gemini breath (PR-G1).
-// Airier canvas, indigo accent, soft shadows; composer/bubble shape scale.
-// No Material Design status hexes (#4A90D9 / #F44336 / #4CAF50 …).
+// Shared visual tokens — Precision Instrument Desk (Phase 1 shell redesign).
+// Flat cool canvas, indigo spark for primary only, hairline borders, tight radii.
+// Type scale for chrome: 11 / 12 / 13 / 15 only. No Material status hexes.
+// Motion left at 150/220ms in Phase 1 (tighten in Phase 3).
 
 export const tokens = {
   font:
     "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif",
   fontMono: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
 
-  // Light surface — airier tonal canvas (Gemini-breath G1)
-  bg: "#f5f6fa",
+  // Light surface — flat instrument canvas (no gradient shell)
+  bg: "#f4f5f8",
   bgElevated: "#ffffff",
-  bgMuted: "#eef0f5",
-  bgHover: "#e8ebf2",
+  bgMuted: "#eceef3",
+  bgHover: "#e6e8ef",
   bgActive: "#eef2ff",
-  border: "rgba(15, 23, 42, 0.07)",
-  borderStrong: "rgba(15, 23, 42, 0.10)",
+  border: "rgba(15, 23, 42, 0.08)",
+  borderStrong: "rgba(15, 23, 42, 0.12)",
   text: "#0f172a",
   textSecondary: "#475569",
   textMuted: "#94a3b8",
 
-  // Indigo accent — spark, not full-bleed rails
+  // Indigo accent — spark for CTA / focus / user bubble only
   accent: "#4f46e5",
   accentSoft: "#eef2ff",
   accentText: "#3730a3",
@@ -65,31 +66,29 @@ export const tokens = {
   assistantBubbleBg: "#ffffff",
   assistantBubbleText: "#0f172a",
 
-  // Motion
+  // Motion (Phase 1 freeze — Phase 3 may tighten)
   transitionFast: "150ms",
   transition: "220ms",
 
-  // Shape: base 6/8/12; hero surfaces use composer/bubble scale (G1)
+  // Shape: controls 6/8/12; composer/bubble 14 (instrument, not pill-toy)
   radiusSm: 6,
   radiusMd: 8,
   radiusLg: 12,
-  radiusComposer: 18,
-  radiusBubble: 18,
-  /** Bottom sheet / 装配 drawer top corners (G4) */
-  radiusSheet: 20,
-  /** Popup menus (StatusRail ⋯ / panel ⋮) — match elevated chrome */
-  radiusMenu: 14,
+  radiusComposer: 14,
+  radiusBubble: 14,
+  /** Bottom sheet / 装配 drawer top corners */
+  radiusSheet: 16,
+  /** Popup menus (StatusRail ⋯ / panel ⋮) */
+  radiusMenu: 10,
   radiusPill: 999,
 
-  // Soft, diffuse elevation (less “card cage”)
-  shadowSm: "0 1px 2px rgba(15, 23, 42, 0.035), 0 1px 1px rgba(15, 23, 42, 0.025)",
-  shadowMd:
-    "0 4px 18px rgba(15, 23, 42, 0.07), 0 1px 3px rgba(15, 23, 42, 0.035)",
-  shadowLg:
-    "0 14px 36px rgba(15, 23, 42, 0.10), 0 2px 6px rgba(15, 23, 42, 0.035)",
+  // One soft elevation ladder — hairline borders do most of the work
+  shadowSm: "0 1px 2px rgba(15, 23, 42, 0.04)",
+  shadowMd: "0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.04)",
+  shadowLg: "0 4px 16px rgba(15, 23, 42, 0.08), 0 12px 28px rgba(15, 23, 42, 0.05)",
   shadowFocus: "0 0 0 3px rgba(79, 70, 229, 0.16)",
 
-  /** Modal / drawer scrim (G4 Gemini breath — softer than pure black 40%) */
+  /** Modal / drawer scrim */
   scrim: "rgba(15, 23, 42, 0.28)",
 } as const
 

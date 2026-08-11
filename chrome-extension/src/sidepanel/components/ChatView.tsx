@@ -1600,7 +1600,7 @@ const styles: Record<string, React.CSSProperties> = {
   empty: {
     color: tokens.textSecondary,
     textAlign: "center",
-    padding: "56px 20px 28px",
+    padding: "40px 16px 24px",
     fontSize: 13,
     fontFamily: tokens.font,
   },
@@ -1613,12 +1613,12 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 10,
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: 700,
+    fontSize: 15,
+    fontWeight: 650,
     color: tokens.text,
     marginBottom: 8,
-    letterSpacing: "-0.035em",
-    lineHeight: 1.25,
+    letterSpacing: "-0.02em",
+    lineHeight: 1.3,
   },
   emptyHint: {
     fontSize: 13,
@@ -1637,10 +1637,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   suggestChip: {
     border: `1px solid ${tokens.border}`,
-    background: "rgba(255,255,255,0.9)",
+    background: tokens.bgElevated,
     color: tokens.accentText,
     borderRadius: tokens.radiusPill,
-    padding: "6px 12px",
+    padding: "5px 10px",
     fontSize: 11,
     fontWeight: 550,
     cursor: "pointer",
@@ -1671,7 +1671,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: "fit-content" as const,
   },
   userBubble: {
-    background: `linear-gradient(145deg, ${tokens.userBubbleBg} 0%, ${tokens.accentHover} 100%)`,
+    background: tokens.userBubbleBg,
     color: tokens.userBubbleText,
     borderRadius: `${tokens.radiusBubble}px ${tokens.radiusBubble}px 4px ${tokens.radiusBubble}px`,
     padding: "9px 13px",

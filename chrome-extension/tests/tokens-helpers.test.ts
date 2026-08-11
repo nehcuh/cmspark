@@ -81,9 +81,9 @@ test("radius SoT is 6/8/12 (UIUX v2)", () => {
   assert.equal(tokens.radiusPill, 999)
 })
 
-test("semantic role hexes match Quiet Premium + G1 breath tokens", () => {
-  // surface.canvas / elevated (G1 airier canvas)
-  assert.equal(tokens.bg, "#f5f6fa")
+test("semantic role hexes match Precision Instrument Desk tokens", () => {
+  // surface.canvas / elevated (Phase 1 flat instrument canvas)
+  assert.equal(tokens.bg, "#f4f5f8")
   assert.equal(tokens.bgElevated, "#ffffff")
   assert.equal(tokens.darkBg, "#0b0d12")
   assert.equal(tokens.darkElevated, "#141820")
@@ -104,12 +104,12 @@ test("semantic role hexes match Quiet Premium + G1 breath tokens", () => {
   assert.equal(tokens.darkAccent, "#818cf8")
   assert.ok(tokens.shadowFocus)
   assert.ok(tokens.shadowLg)
-  // G1 shape scale for hero surfaces
-  assert.equal(tokens.radiusComposer, 18)
-  assert.equal(tokens.radiusBubble, 18)
-  // G4 sheet / menu / scrim
-  assert.equal(tokens.radiusSheet, 20)
-  assert.equal(tokens.radiusMenu, 14)
+  // Phase 1 hero surfaces — instrument, not pill-toy
+  assert.equal(tokens.radiusComposer, 14)
+  assert.equal(tokens.radiusBubble, 14)
+  // sheet / menu / scrim
+  assert.equal(tokens.radiusSheet, 16)
+  assert.equal(tokens.radiusMenu, 10)
   assert.ok(tokens.scrim.includes("15, 23, 42"))
   assert.ok(tokens.dangerSurface.includes("220, 38, 38"))
   assert.ok(tokens.modeBrowserLine)
