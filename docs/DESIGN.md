@@ -1,6 +1,8 @@
 # CMspark Design System
 
-> Quiet-professional chrome：SVG 图标 + `sidepanel/ui/tokens.ts` 为主；emoji 仅用于消息内容，不用于工具栏。
+> **Precision Instrument Desk**（精密仪器台）— Operate / Restrained.  
+> Quiet-professional chrome：SVG 图标 + `sidepanel/ui/tokens.ts` 为主；emoji 仅用于消息内容，不用于工具栏。  
+> Direction SoT: [sidepanel-precision-instrument-redesign](superpowers/specs/2026-08-11-sidepanel-precision-instrument-redesign.md) · Product: [PRODUCT.md](../PRODUCT.md)
 
 ## Colors
 
@@ -53,7 +55,8 @@ Dark surfaces: L2 SafetyStrip / **Cockpit** only. Panel stays light in v2 (K6); 
 | Size md | `13px` (body, input, rail title) |
 | Size lg | `15px` (heading) |
 
-Scale for chrome: **11 / 12 / 13 / 15** only.
+Scale for chrome: **11 / 12 / 13 / 15** only.  
+**Exemption:** icon-sized glyphs inside a ≤20px badge (e.g. StatusRail brand mark letter, cruise ×) may use 9–10px — not body chrome.
 
 ## Spacing
 
@@ -67,16 +70,19 @@ Scale for chrome: **11 / 12 / 13 / 15** only.
 
 ## Border Radius
 
-**Source of truth:** `tokens.radiusSm/Md/Lg` in `sidepanel/ui/tokens.ts` (UIUX v2).
+**Source of truth:** `tokens.radius*` in `sidepanel/ui/tokens.ts` (Precision Instrument Phase 1).
 
 | Token | Value | Usage |
 |-------|-------|--------|
 | sm | `6px` | chips, icon buttons, menu items |
 | md | `8px` | menus, inputs, cards |
-| lg | `12px` | composer capsule, elevated surfaces, Cockpit cards |
+| lg | `12px` | elevated surfaces, FocusBand, Cockpit cards |
+| composer / bubble | `14px` | `radiusComposer` / `radiusBubble` — hero chat surfaces |
+| sheet | `16px` | bottom sheet / 装配 drawer top corners |
+| menu | `10px` | popup menus (StatusRail ⋯) |
 | pill | `999` | ModeBadge / LIVE chip |
 
-Do not invent other radii for Panel or Cockpit chrome (no `10px` / `4px` ad-hoc).
+Do not invent ad-hoc radii outside this ladder.
 
 ## Components Quick Reference
 
@@ -135,16 +141,24 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 - Primary: `tokens.accent` bg, white text
 - Danger: `tokens.danger` (light) / `tokens.darkDanger` (Cockpit)
 
-### Input / Composer (P2 + PR4)
+### Input / Composer (Precision Instrument Phase 1 + PR4)
 - Unified capsule: attach + textarea + send inside one bordered surface
-- Radius: `tokens.radiusLg` (12px)
+- **Solid** elevated surface + `borderStrong` — **no** glass/`backdrop-filter`, **no** canvas gradient shell
+- Radius: `tokens.radiusComposer` (14px); send = flat `tokens.accent` (no purple→blue gradient)
 - Mode chips row above capsule (see ComposerDock chips above); 装配 via chip / `/装配` / Cmd+K
 - Settings live in StatusRail ⋯ or `/settings` (not in 装配 Board path)
+- Chip row height ceiling: ≤40px — density budget Scenario B  
+  (`docs/audit/reviews/sidepanel-density-budget-20260811.md`). Phase 1 does not change strip min/max heights → static budget re-run not required unless a constant is edited.
+
+### StatusRail / shell (Phase 1)
+- Solid `tokens.bgElevated` rail — no glass blur / no vertical gradient
+- Type scale chrome only **11 / 12 / 13 / 15**; empty title = 15 not 18
+- Hierarchy: **stream first, status second, assembly third**
 
 ### Motion
-- Transitions ≤200ms (`tokens.transition` / `transitionFast`)
+- Phase 1 freeze: `transitionFast` 150ms / `transition` 220ms (tighten in Phase 3)
 - LIVE pulse on Cockpit L2 chip only; **`prefers-reduced-motion: reduce` disables animations** (Panel App + Cockpit shell)
 
 ---
 
-*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B.*
+*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B; **Precision Instrument Desk Phase 1** shell (flat canvas, radius 14/16, no glass).*
