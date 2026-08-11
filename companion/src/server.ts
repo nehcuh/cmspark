@@ -882,10 +882,13 @@ function bindMcpDispatchFromServerLocals(): void {
   })
 }
 
-// Eager bind so createToolExecutor MCP / extension-forward paths work in
-// integration tests that skip full initServices (re-bound after initServices /
-// seedThreadManagerForTests). Placed after broadcastToClients / tabUrlCache so
+// Eager bind so createToolExecutor companion / MCP / extension-forward paths work
+// in integration tests that skip full initServices (re-bound after initServices /
+// seedThreadManagerForTests). Getters read live module vars — threadManager may
+// still be undefined until seed/init; requireRt runs at call time.
+// Placed after broadcastToClients / securityConfirmations / computerTaskAbort so
 // references are definitely initialized.
+bindCompanionDispatchFromServerLocals()
 bindMcpDispatchFromServerLocals()
 bindToolForwardFromServerLocals()
 
