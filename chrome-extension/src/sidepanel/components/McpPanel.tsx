@@ -223,7 +223,7 @@ function ServerCard(props: ServerCardProps) {
         ...styles.serverCard,
         background: enabledInThread ? tokens.bgActive : tokens.bgMuted,
         opacity: server.enabled ? 1 : 0.55,
-        borderColor: status === "error" || status === "dead" ? tokens.dangerSoft : tokens.border,
+        borderColor: status === "error" || status === "dead" ? tokens.danger : tokens.border,
       }}
     >
       <div style={styles.cardHeader}>

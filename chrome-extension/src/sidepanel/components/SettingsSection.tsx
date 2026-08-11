@@ -54,7 +54,7 @@ export function SettingsSection({
 
 const styles: Record<string, React.CSSProperties> = {
   section: {
-    borderBottom: `1px solid ${tokens.border || tokens.border}`,
+    borderBottom: `1px solid ${tokens.border}`,
     marginBottom: 4,
   },
   header: {

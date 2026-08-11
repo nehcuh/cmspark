@@ -3222,7 +3222,7 @@ export function SettingsSlideout() {
                               fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                               fontSize: 10,
                               background: tokens.darkElevated,
-                              color: tokens.borderStrong,
+                              color: tokens.darkText,
                               padding: "8px 8px",
                               borderRadius: 6,
                               marginBottom: 4,

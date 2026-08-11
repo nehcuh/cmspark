@@ -931,7 +931,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     padding: "1px 4px",
     borderRadius: 3,
-    background: tokens.border,
+    background: tokens.bgMuted,
     color: tokens.textMuted,
   },
   serverCard: {
@@ -1198,7 +1198,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   warningsBox: {
-    border: `1px solid ${tokens.warningSoft}`,
+    border: `1px solid ${tokens.warning}`,
     background: tokens.warningSoft,
     borderRadius: 6,
     padding: 8,
@@ -1216,7 +1216,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.5,
   },
   errorBox: {
-    border: `1px solid ${tokens.dangerSoft}`,
+    border: `1px solid ${tokens.danger}`,
     background: tokens.dangerSoft,
     borderRadius: 6,
     padding: 8,

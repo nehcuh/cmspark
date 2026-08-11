@@ -1634,7 +1634,7 @@ const styles: Record<string, import("react").CSSProperties> = {
   empty: { color: tokens.textSecondary, fontSize: 11, padding: "4px 0" },
   list: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 },
   item: {
-    border: `1px solid ${tokens.border || tokens.border}`,
+    border: `1px solid ${tokens.border}`,
     borderRadius: 8,
     padding: 8,
     background: tokens.bgElevated,

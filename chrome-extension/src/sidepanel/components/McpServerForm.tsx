@@ -533,7 +533,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 9,
     color: tokens.danger,
     background: tokens.dangerSoft,
-    border: `1px solid ${tokens.dangerSoft}`,
+    border: `1px solid ${tokens.danger}`,
     borderRadius: 3,
     verticalAlign: "middle",
   },
