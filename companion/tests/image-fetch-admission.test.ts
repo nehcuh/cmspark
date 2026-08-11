@@ -183,10 +183,13 @@ describe("runImageFetchAdmission", () => {
   it("fetch_required + untrusted → confirm denied → fail", async () => {
     const dispatches: Array<{ id: string; name: string }> = []
     let confirmCalls = 0
+    let confirmOpts: any = "unset"
+    const ws = mockWs(true)
     const r = await runImageFetchAdmission(
       makeCtx({
         toolName: "analyze_image",
         finalParams: { selector: "img.x" },
+        ws,
         dispatchToExtension: async (id, name) => {
           dispatches.push({ id, name })
           return {
@@ -198,8 +201,9 @@ describe("runImageFetchAdmission", () => {
           }
         },
         securityConfirmations: {
-          request: async () => {
+          request: async (_send: any, _d: any, opts?: any) => {
             confirmCalls++
+            confirmOpts = opts
             return { approved: false, reason: "denied" }
           },
         } as any,
@@ -209,8 +213,85 @@ describe("runImageFetchAdmission", () => {
     assert.equal(r!.success, false)
     assert.match(r!.error || "", /denied by user/)
     assert.equal(confirmCalls, 1)
+    assert.deepEqual(confirmOpts, { originWs: ws }, "image-fetch confirm must bind originWs")
     assert.equal(dispatches.length, 1, "phase2 must not run after deny")
     assert.equal(dispatches[0].name, "analyze_image")
+  })
+
+  it("god-mode / auto_approve_dangerous do NOT skip IMAGE_FETCH confirm", async () => {
+    saveConfig({
+      trusted_domains: ["evil.example"],
+      auto_approved_domains: [],
+      security: {
+        ...getConfig().security,
+        auto_approve_dangerous: true,
+        auto_approve_enterprise_tools: true,
+        allow_all_schemes: true,
+      },
+    } as any)
+    let confirmCalls = 0
+    const r = await runImageFetchAdmission(
+      makeCtx({
+        toolName: "analyze_image",
+        dispatchToExtension: async (_id, name) => {
+          if (name === "analyze_image") {
+            return {
+              success: true,
+              data: {
+                type: "fetch_required",
+                candidate_url: "https://evil.example/x.png",
+              },
+            }
+          }
+          return { success: true, data: { type: "canvas", image_base64: "x" } }
+        },
+        securityConfirmations: {
+          request: async () => {
+            confirmCalls++
+            return { approved: true, reason: "approved" }
+          },
+        } as any,
+      }),
+    )
+    assert.equal(confirmCalls, 1, "three-flag / god-mode must not waive IMAGE_FETCH confirm")
+    assert.ok(r?.success === true)
+  })
+
+  it("cookie trusted_domains alone do NOT auto-approve image fetch", async () => {
+    saveConfig({
+      trusted_domains: ["cdn.only-cookie.example"],
+      auto_approved_domains: [],
+      security: {
+        ...getConfig().security,
+        auto_approve_dangerous: false,
+        allow_all_schemes: false,
+      },
+    } as any)
+    let confirmCalls = 0
+    await runImageFetchAdmission(
+      makeCtx({
+        toolName: "analyze_image",
+        dispatchToExtension: async (_id, name) => {
+          if (name === "analyze_image") {
+            return {
+              success: true,
+              data: {
+                type: "fetch_required",
+                candidate_url: "https://cdn.only-cookie.example/a.png",
+              },
+            }
+          }
+          return { success: true, data: {} }
+        },
+        securityConfirmations: {
+          request: async () => {
+            confirmCalls++
+            return { approved: false, reason: "denied" }
+          },
+        } as any,
+      }),
+    )
+    assert.equal(confirmCalls, 1, "ADR-007: cookie trust must not skip image fetch confirm")
   })
 
   it("fetch_required + cloud metadata IP → hard block", async () => {

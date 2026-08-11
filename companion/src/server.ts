@@ -60,6 +60,21 @@ export {
   forwardToolToExtension,
   bindToolForwardRuntime,
 } from "./ws/tool-forward"
+import {
+  applyTabNavigated,
+  getCachedTabUrl,
+  getTabUrlCache,
+  refreshTabUrlCache,
+} from "./ws/tab-url-cache"
+export {
+  applyTabNavigated,
+  getCachedTabUrl,
+  getTabUrlCache,
+  refreshTabUrlCache,
+  clearTabUrlCacheForTests,
+} from "./ws/tab-url-cache"
+import { normalizeShellCwd } from "./capability/shell"
+import { normalizeNetsecPorts } from "./netsec/scan"
 
 // --- WS lifecycle (C10-H2: body in ws/lifecycle.ts) ---
 import {
@@ -154,48 +169,8 @@ void import("./orchestrator/tab-lease")
     /* tests may load before package graph is ready */
   })
 
-// Cache of tabId → url, used by the evaluate auto-approve gate to resolve the
-// acting domain (so we can decide whether to skip the confirmation dialog).
-// Populated from list_tabs results AND — critically — kept current by the
-// extension's tab.navigated push (applyTabNavigated below). Without that push a
-// tab can navigate from a trusted domain to an untrusted one and the gate would
-// keep auto-approving evaluate against the STALE trusted hostname (a cross-domain
-// bypass — a security UNDER-prompt, not the harmless over-prompt earlier comments
-// claimed). Unknown/missing entries resolve to "" → the gate confirms (safe default).
-// Residual: a microsecond TOCTOU between the gate's cache read and the forwarded
-// evaluate, and a push lost while the WS is disconnected (next list_tabs refreshes).
-const tabUrlCache = new Map<number, string>()
-
-function refreshTabUrlCache(tabs: any[]): void {
-  if (!Array.isArray(tabs)) return
-  for (const t of tabs) {
-    if (t && typeof t.id === "number" && typeof t.url === "string") {
-      tabUrlCache.set(t.id, t.url)
-    }
-  }
-}
-
-function getCachedTabUrl(tabId: number | undefined | null): string | undefined {
-  if (typeof tabId !== "number") return undefined
-  return tabUrlCache.get(tabId)
-}
-
-/**
- * Apply a tab-navigation push from the extension (M1 / audit P2-1). Updates the
- * cached URL so the evaluate auto-approve gate sees the CURRENT origin, not a
- * stale one. Exported so tests can drive it directly (the WS message handler is
- * the only production caller). Logs when the cached domain changes — surfacing
- * trust-anchor transitions in the audit trail.
- */
-export function applyTabNavigated(tabId: number, url: string): void {
-  const previous = getCachedTabUrl(tabId)
-  tabUrlCache.set(tabId, url)
-  const prevDomain = previous ? getDomainFromUrl(previous) : ""
-  const nextDomain = getDomainFromUrl(url)
-  if (prevDomain && prevDomain !== nextDomain) {
-    logger.info("ws.tab.navigated_domain_changed", { tab_id: tabId, from: prevDomain, to: nextDomain })
-  }
-}
+// tabUrlCache → ws/tab-url-cache.ts (day dual-review nit: colocation)
+// applyTabNavigated / getCachedTabUrl / refreshTabUrlCache re-exported above.
 
 // Exported for integration tests (audit item 2 / 12) so tests can drive
 // securityConfirmations.respond(...) when simulating user approval/denial.
@@ -557,14 +532,13 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           : undefined
     // C7/C8 multi-adv: normalize shell cwd / netsec ports BEFORE L2 bind + preview
     // so issueToken payload === execute payload (no post-approve expansion).
+    // Static imports (day dual-review nit: avoid hot-path require()).
     if (toolName === "shell_exec") {
-      const { normalizeShellCwd } = require("./capability/shell") as typeof import("./capability/shell")
       const thr = actingThreadId ? threadManager.get(actingThreadId) : null
       const cwd = normalizeShellCwd(finalParams, thr?.workspace_root)
       const { working_directory: _wd, ...restShell } = finalParams as Record<string, any>
       finalParams = { ...restShell, cwd }
     } else if (toolName === "netsec_port_scan") {
-      const { normalizeNetsecPorts } = require("./netsec/scan") as typeof import("./netsec/scan")
       finalParams = {
         ...finalParams,
         ports: normalizeNetsecPorts((finalParams as any).ports),
@@ -871,7 +845,7 @@ function bindCompanionDispatchFromServerLocals(): void {
     getThreadManager: () => threadManager,
     getSkillEngine: () => skillEngine,
     getCachedTabUrl,
-    getTabUrlCache: () => tabUrlCache,
+    getTabUrlCache,
     computerTaskAbort,
     computerRateLimiter,
     getComputerRateLimiterSingleton: () => computerRateLimiterSingleton,
@@ -885,10 +859,10 @@ function bindCompanionDispatchFromServerLocals(): void {
 
 // --- Extension tool-forward (C10-G: body in ws/tool-forward.ts) ---
 // FREEZE: pending map / dispatch / default forward post-process live there.
-// tabUrlCache remains server-owned; inject via bindToolForwardRuntime.
+// tabUrlCache: ws/tab-url-cache.ts (shared with L2/companion-dispatch).
 function bindToolForwardFromServerLocals(): void {
   bindToolForwardRuntime({
-    getTabUrlCache: () => tabUrlCache,
+    getTabUrlCache,
     refreshTabUrlCache,
     getThreadManager: () => threadManager,
   })
@@ -1013,7 +987,6 @@ bindWsLifecycle({
   securityConfirmations,
   handleComputerTaskAbort,
   flipAllComputerTaskAborts,
-  applyTabNavigated,
   probeChatModel,
   getMcpSessionId: (ws) => mcpSessionByWs.get(ws),
   clearMcpSession,

@@ -36,6 +36,7 @@ import {
   HUD_SPIKE_TASK_ID,
 } from "../hud/spike"
 import { logger, type LogLevel } from "../logger"
+import { applyTabNavigated } from "./tab-url-cache"
 import {
   acquireLock,
   releaseLock,
@@ -129,7 +130,8 @@ export type WsLifecycleDeps = {
     msg: { task_id?: unknown },
   ) => { taskId: string; matched: number }
   flipAllComputerTaskAborts: () => number
-  applyTabNavigated: (tabId: number, url: string) => void
+  /** @deprecated tab navigated uses ws/tab-url-cache directly; kept optional for bind compat */
+  applyTabNavigated?: (tabId: number, url: string) => void
   probeChatModel: (config: ReturnType<typeof getConfig>) => Promise<void>
   getMcpSessionId: (ws: WebSocket) => string | undefined
   clearMcpSession: (ws: WebSocket) => void
@@ -1135,7 +1137,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         // current. validateWsMessage already enforced tabId:number + url:string.
         // Fire-and-forget — no ack needed.
         if (msg.type === "tab.navigated") {
-          requireRt().applyTabNavigated(msg.tabId, msg.url)
+          applyTabNavigated(msg.tabId, msg.url)
           return
         }
 

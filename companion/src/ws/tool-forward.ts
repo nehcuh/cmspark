@@ -3,10 +3,10 @@
 //
 // FREEZE: pendingToolCalls / handleToolResult / dispatchToExtension / forwardToolToExtension
 // and timeout constants live HERE. Do NOT re-inflate createToolExecutor with the
-// extension-forward Promise block. tabUrlCache + ThreadManager stay server-owned
-// and are injected via bindToolForwardRuntime.
-// L2/cookie/URL/image gates → tool/*; companion tools → tool/companion-dispatch.ts;
-// MCP → mcp/dispatch.ts; multi-agent pregate → orchestrator/tool-pregate.ts.
+// extension-forward Promise block.
+// tabUrlCache: ws/tab-url-cache.ts (shared). ThreadManager via bindToolForwardRuntime.
+// applyConnectionCloseGracePeriod (ws/lifecycle) uses pendingToolCalls from here.
+// L2/cookie/URL/image gates → tool/*; companion → companion-dispatch; MCP → mcp/dispatch.
 
 import { WebSocket } from "ws"
 import { logger } from "../logger"

@@ -190,6 +190,8 @@ export async function runImageFetchAdmission(
       logToolFinish(toolCallId, toolName, startedAt, result)
       return result
     }
+    // P1-2 / day dual-review nit: bind confirm to requesting socket (align with
+    // L2/URL/MCP — prevent other loopback peers burning the confirm).
     const decision = await securityConfirmations.request(
       (data) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data)) },
       {
@@ -200,6 +202,7 @@ export async function runImageFetchAdmission(
         defenseLayer: 2,
         riskLevel: "high",
       },
+      { originWs: ws },
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
