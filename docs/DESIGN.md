@@ -55,7 +55,8 @@ Dark surfaces: L2 SafetyStrip / **Cockpit** only. Panel stays light in v2 (K6); 
 | Size md | `13px` (body, input, rail title) |
 | Size lg | `15px` (heading) |
 
-Scale for chrome: **11 / 12 / 13 / 15** only.
+Scale for chrome: **11 / 12 / 13 / 15** only.  
+**Exemption:** icon-sized glyphs inside a ≤20px badge (e.g. StatusRail brand mark letter, cruise ×) may use 9–10px — not body chrome.
 
 ## Spacing
 
@@ -146,7 +147,8 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 - Radius: `tokens.radiusComposer` (14px); send = flat `tokens.accent` (no purple→blue gradient)
 - Mode chips row above capsule (see ComposerDock chips above); 装配 via chip / `/装配` / Cmd+K
 - Settings live in StatusRail ⋯ or `/settings` (not in 装配 Board path)
-- Chip row height ceiling: ≤40px (density budget Scenario B)
+- Chip row height ceiling: ≤40px — density budget Scenario B  
+  (`docs/audit/reviews/sidepanel-density-budget-20260811.md`). Phase 1 does not change strip min/max heights → static budget re-run not required unless a constant is edited.
 
 ### StatusRail / shell (Phase 1)
 - Solid `tokens.bgElevated` rail — no glass blur / no vertical gradient

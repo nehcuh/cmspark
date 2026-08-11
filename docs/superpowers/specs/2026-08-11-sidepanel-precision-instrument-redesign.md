@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | Date | 2026-08-11 |
-| Status | **Design dual APPROVE_WITH_NITS · Phase 1 impl in WIP (uncommitted)** |
+| Status | **Phase 1 impl dual APPROVE_WITH_NITS** (`sidepanel-precision-instrument-p1-impl-verdict-20260811-222056`) · branch `feat/sidepanel-precision-instrument-p1` |
 | Mode | **Operate** (~320px Side Panel) |
 | Direction | **精密仪器台**（用户授权「你定方向」） |
 | Rhythm | 设计 dual-review → 分 PR 落地（用户选「稳」） |
