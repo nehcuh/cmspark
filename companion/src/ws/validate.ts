@@ -862,6 +862,18 @@ export function validateWsMessage(msg: any): WsValidationResult {
     "config.get": () => ({ valid: true }),
     "config.test": () => ({ valid: true }),
     "config.testVision": () => ({ valid: true }),
+    "llm.oneshot": (m: any) => {
+      if (m.id != null && typeof m.id !== "string") {
+        return { valid: false, error: "llm.oneshot id must be string when set" }
+      }
+      if (typeof m.user_content !== "string" || !m.user_content.trim()) {
+        return { valid: false, error: "llm.oneshot requires user_content string" }
+      }
+      if (m.system_prompt != null && typeof m.system_prompt !== "string") {
+        return { valid: false, error: "llm.oneshot system_prompt must be string when set" }
+      }
+      return { valid: true }
+    },
     "settings.get": () => ({ valid: true }),
     "settings.set": (m) => {
       if (m.settings !== undefined && (typeof m.settings !== "object" || m.settings === null || Array.isArray(m.settings))) {

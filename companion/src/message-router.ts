@@ -252,6 +252,13 @@ export async function handleMessage(
       return { type: "error", error: `Unhandled config type: ${type}` }
     }
 
+    // P2 ARCH-01: one-shot LLM via Companion (keys never leave companion config)
+    // Handler extracted to llm/oneshot-handler.ts (bounded god-file slice).
+    case "llm.oneshot": {
+      const { handleLlmOneshot } = await import("./llm/oneshot-handler")
+      return handleLlmOneshot(rest)
+    }
+
     // --- Chat ---
     case "chat.create": {
       if (!session) return { type: "error", error: "No session" }

@@ -162,6 +162,19 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         } catch (e: any) {
           packApply = { ok: false, error: e?.message || String(e) }
         }
+        // P2: transactional — pack_id requested but apply failed → delete worker
+        if (packApply && !packApply.ok) {
+          try {
+            threadManager.delete(r.worker.id)
+          } catch {
+            /* best-effort rollback */
+          }
+          return {
+            success: false,
+            error: `spawn_worker rolled back: pack apply failed — ${packApply.error}`,
+            data: { error_code: "SPAWN_PACK_FAILED", pack_apply: packApply },
+          }
+        }
       }
       // ADR-016 Stage 3: claim intent on host board after worker exists
       let intentClaim: { ok: boolean; error?: string; intent_id?: string } | null = null
@@ -180,6 +193,19 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           }
         } catch (e: any) {
           intentClaim = { ok: false, error: e?.message || String(e), intent_id: intentId }
+        }
+        // P2: transactional — intent_id requested but claim failed → delete worker
+        if (intentClaim && !intentClaim.ok) {
+          try {
+            threadManager.delete(r.worker.id)
+          } catch {
+            /* best-effort */
+          }
+          return {
+            success: false,
+            error: `spawn_worker rolled back: intent claim failed — ${intentClaim.error}`,
+            data: { error_code: "SPAWN_INTENT_FAILED", intent_claim: intentClaim },
+          }
         }
       }
       const workerAfter = threadManager.get(r.worker.id)

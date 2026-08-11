@@ -5,13 +5,11 @@
 // encryption inside the Swift process using keys stored in the macOS Keychain
 // via SecItemAdd with code-signing ACL.
 
-import { execFile, type ExecFileException } from "child_process"
-import { promisify } from "util"
+import { type ExecFileException } from "child_process"
 import { ComputerError, type RectPx } from "./types"
 import { resolveHostBinary } from "../host-use/darwin/host-bin"
+import { spawnHostBin } from "../host-use/darwin/host-integrity"
 import type { EvidenceSealer } from "./evidence"
-
-const execFileAsync = promisify(execFile)
 
 function parseEvidenceJson(stdout: string, label: string): Record<string, any> {
   let parsed: unknown
@@ -40,13 +38,14 @@ export class MacEvidenceSealer implements EvidenceSealer {
     if (blurRects && blurRects.length > 0) {
       args.push("--blur-rects", JSON.stringify(blurRects))
     }
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, args, { encoding: "utf-8", timeout: 15000 })
+      // P2 SEC-09: integrity-gated host spawn (no raw execFile on cmspark-host)
+      stdout = await spawnHostBin(bin, args, { timeoutMs: 15000 })
     } catch (err) {
       rethrowEvidenceError(err as ExecFileException | Error, "evidence-seal")
     }
-    const parsed = parseEvidenceJson(result.stdout, "evidence-seal")
+    const parsed = parseEvidenceJson(stdout, "evidence-seal")
     if (parsed.ok !== true) {
       throw new ComputerError("EVIDENCE_ERROR", `evidence-seal: ${parsed.error ?? "unknown error"}`)
     }

@@ -301,7 +301,27 @@ function updateBadge(state: "connected" | "connecting" | "disconnected") {
 
 // --- Companion message routing ---
 
+/** P2: pending companion llm.oneshot RPC (id → resolve) */
+const pendingLlmOneshot = new Map<
+  string,
+  (r: { ok: boolean; text?: string; error?: string }) => void
+>()
+
 async function handleCompanionMessage(msg: any) {
+  // P2 ARCH-01: oneshot LLM results for NotebookLM name suggest
+  if (msg.type === "llm.oneshot_result" && typeof msg.id === "string") {
+    const resolve = pendingLlmOneshot.get(msg.id)
+    if (resolve) {
+      pendingLlmOneshot.delete(msg.id)
+      resolve({
+        ok: msg.ok === true,
+        text: typeof msg.text === "string" ? msg.text : undefined,
+        error: typeof msg.error === "string" ? msg.error : undefined,
+      })
+    }
+    return
+  }
+
   // Forward quick action trigger to side panel
   if (msg.type === "quickAction.start") {
     chrome.runtime.sendMessage(msg).then(() => {
@@ -943,9 +963,38 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       }
 
       case "notebooklm.suggest_notebook_name": {
-        suggestNotebookName()
+        // P2: Companion one-shot LLM (no extension storage api_key / direct fetch)
+        const companionOneshot = (req: {
+          systemPrompt: string
+          userContent: string
+        }) =>
+          new Promise<{ ok: boolean; text?: string; error?: string }>((resolve) => {
+            const id = crypto.randomUUID()
+            const timer = setTimeout(() => {
+              pendingLlmOneshot.delete(id)
+              resolve({ ok: false, error: "timeout" })
+            }, 12_000)
+            pendingLlmOneshot.set(id, (r) => {
+              clearTimeout(timer)
+              resolve(r)
+            })
+            const sent = wsClient.send({
+              type: "llm.oneshot",
+              id,
+              system_prompt: req.systemPrompt,
+              user_content: req.userContent,
+            })
+            if (!sent) {
+              clearTimeout(timer)
+              pendingLlmOneshot.delete(id)
+              resolve({ ok: false, error: "companion_disconnected" })
+            }
+          })
+        suggestNotebookName(companionOneshot)
           .then(sendResponse)
-          .catch(e => sendResponse({ ok: false, source: "none", error: e?.message || String(e) }))
+          .catch((e) =>
+            sendResponse({ ok: false, source: "none", error: e?.message || String(e) }),
+          )
         return true
       }
 

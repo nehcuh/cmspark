@@ -246,16 +246,16 @@ export function pickFrontmostWindowId(windows: unknown[]): number {
 export class MacWindowEnumerator implements WindowEnumerator {
   async enumerateByExe(exePath: string): Promise<WindowInfo[]> {
     const bin = resolveHostBinary()
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, ["window-list", "--bundle-id", exePath], {
-        encoding: "utf-8",
-        timeout: DARWIN_QUERY_TIMEOUT_MS,
+      // P2 SEC-09: cmspark-host only via spawnHostBin (integrity)
+      stdout = await spawnHostBin(bin, ["window-list", "--bundle-id", exePath], {
+        timeoutMs: DARWIN_QUERY_TIMEOUT_MS,
       })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "window-list")
     }
-    const parsed = parseComputerJson(result.stdout, "window-list")
+    const parsed = parseComputerJson(stdout, "window-list")
     checkOk(parsed, "window-list")
     const windows: any[] = Array.isArray(parsed.windows) ? parsed.windows : []
     return windows.map((w: any) => ({
@@ -275,16 +275,15 @@ export class MacWindowEnumerator implements WindowEnumerator {
 
   async infoForHwnd(hwnd: number): Promise<WindowInfo> {
     const bin = resolveHostBinary()
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, ["window-list", "--window-id", String(hwnd)], {
-        encoding: "utf-8",
-        timeout: DARWIN_QUERY_TIMEOUT_MS,
+      stdout = await spawnHostBin(bin, ["window-list", "--window-id", String(hwnd)], {
+        timeoutMs: DARWIN_QUERY_TIMEOUT_MS,
       })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "window-list")
     }
-    const parsed = parseComputerJson(result.stdout, "window-list")
+    const parsed = parseComputerJson(stdout, "window-list")
     checkOk(parsed, "window-list")
     const windows: any[] = Array.isArray(parsed.windows) ? parsed.windows : []
     if (windows.length === 0) {
@@ -309,17 +308,16 @@ export class MacWindowEnumerator implements WindowEnumerator {
 export class MacAxProber implements UiaProber {
   async probe(hwnd: number): Promise<UiaVerdict> {
     const bin = resolveHostBinary()
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, ["ax-probe", "--window-id", String(hwnd)], {
-        encoding: "utf-8",
-        timeout: DARWIN_QUERY_TIMEOUT_MS,
+      stdout = await spawnHostBin(bin, ["ax-probe", "--window-id", String(hwnd)], {
+        timeoutMs: DARWIN_QUERY_TIMEOUT_MS,
       })
     } catch (err) {
       // Probe failure = honest unknown, never fail the task
       return { uiaCapable: false, confidence: 0, stats: { nodes: 0, maxDepth: 0, named: 0, namedOnscreen: 0, interactive: 0, edits: 0, documents: 0, capped: true, hydrationRechecked: false, passANodes: 0, durationMs: 0 } }
     }
-    const parsed = parseComputerJson(result.stdout, "ax-probe")
+    const parsed = parseComputerJson(stdout, "ax-probe")
     const stats = parsed.stats ?? parsed
     // Reuse Windows UIA verdict logic (min 40 nodes threshold)
     const { uiaVerdictFromStats } = require("./uia")
@@ -334,16 +332,15 @@ export class MacAxProber implements UiaProber {
 export class MacSecurityEnvironment implements SecurityEnvironment {
   async assertInjectable(_hwnd: number): Promise<void> {
     const bin = resolveHostBinary()
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, ["security-check"], {
-        encoding: "utf-8",
-        timeout: 5000,
+      stdout = await spawnHostBin(bin, ["security-check"], {
+        timeoutMs: 5000,
       })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "security-check")
     }
-    const parsed = parseComputerJson(result.stdout, "security-check")
+    const parsed = parseComputerJson(stdout, "security-check")
     if (parsed.axTrusted !== true) {
       throw new ComputerError(
         "INTEGRITY_LEVEL_DENIED",
@@ -367,27 +364,28 @@ export class MacScreenCapturer implements ScreenCapturer {
   async captureWindow(hwnd: number): Promise<CaptureMeta> {
     const bin = resolveHostBinary()
     const tmpPath = path.join(os.tmpdir(), `cmspark-cap-${randomUUID()}.png`)
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, [
+      // P2 SEC-09: integrity-gated host spawn
+      stdout = await spawnHostBin(bin, [
         "screenshot",
         "--window-id", String(hwnd),
         "--output", tmpPath,
-      ], { encoding: "utf-8", timeout: DARWIN_CAPTURE_TIMEOUT_MS })
+      ], { timeoutMs: DARWIN_CAPTURE_TIMEOUT_MS })
     } catch (err) {
       // Prefer structured stdout JSON over stderr log noise (see rethrowDarwinExecError).
       // NEVER invent ok:true with 0×0 rects — that became OUT_OF_BOUNDS client=0x0
       // after a real Screen Recording denial (2026-07-25).
       const e = err as ExecFileException & { stdout?: string }
-      const stdout = typeof e.stdout === "string" ? e.stdout : ""
-      if (stdout.trim()) {
+      const recoveredStdout = typeof e.stdout === "string" ? e.stdout : ""
+      if (recoveredStdout.trim()) {
         try {
-          const recovered = parseComputerJson(stdout, "screenshot")
+          const recovered = parseComputerJson(recoveredStdout, "screenshot")
           if (recovered.ok === true && fs.existsSync(tmpPath) && fs.statSync(tmpPath).size > 0) {
             const rw = Number(recovered.rect?.width ?? recovered.client?.width ?? 0)
             const rh = Number(recovered.rect?.height ?? recovered.client?.height ?? 0)
             if (rw > 0 && rh > 0) {
-              result = { stdout }
+              stdout = recoveredStdout
             } else {
               rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
             }
@@ -401,7 +399,7 @@ export class MacScreenCapturer implements ScreenCapturer {
         rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
       }
     }
-    const parsed = parseComputerJson(result!.stdout, "screenshot")
+    const parsed = parseComputerJson(stdout!, "screenshot")
     // Compute sha256 BEFORE the ok-check so interpretScreenshotFailure can use
     // it as a fallback when the host's CAPTURE_FAILED payload omits the field
     // (older binaries). Replaces `checkOk(parsed, "screenshot")`; see P2 Pi C4.
@@ -465,7 +463,7 @@ export class MacScreenCapturer implements ScreenCapturer {
   async crop(srcPath: string, rect: RectPx, outPath: string): Promise<string> {
     const bin = resolveHostBinary()
     try {
-      await execFileAsync(bin, [
+      await spawnHostBin(bin, [
         "crop",
         "--source", srcPath,
         "--output", outPath,
@@ -473,7 +471,7 @@ export class MacScreenCapturer implements ScreenCapturer {
         "--y", String(Math.round(rect.y)),
         "--width", String(Math.round(rect.width)),
         "--height", String(Math.round(rect.height)),
-      ], { timeout: 5000 })
+      ], { timeoutMs: 5000 })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "crop")
     }
@@ -489,13 +487,13 @@ export class MacScreenCapturer implements ScreenCapturer {
       args.push("--width", String(Math.round(crop.width)))
       args.push("--height", String(Math.round(crop.height)))
     }
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, args, { timeout: 10000 })
+      stdout = await spawnHostBin(bin, args, { timeoutMs: 10000 })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "imgdiff")
     }
-    const parsed = parseComputerJson(result.stdout, "imgdiff")
+    const parsed = parseComputerJson(stdout, "imgdiff")
     checkOk(parsed, "imgdiff")
     return {
       diffRatio: parsed.diffRatio ?? 0,
@@ -584,17 +582,17 @@ export class MacLocator implements Locator {
 
   async ocr(imagePath: string): Promise<OcrResult> {
     const bin = resolveHostBinary()
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, [
+      stdout = await spawnHostBin(bin, [
         "ocr",
         "--image", imagePath,
         "--languages", this.language.join(","),
-      ], { encoding: "utf-8", timeout: DARWIN_OCR_TIMEOUT_MS })
+      ], { timeoutMs: DARWIN_OCR_TIMEOUT_MS })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "ocr")
     }
-    const parsed = parseComputerJson(result.stdout, "ocr")
+    const parsed = parseComputerJson(stdout, "ocr")
     checkOk(parsed, "ocr")
     return {
       language: parsed.language ?? "zh-Hans",
@@ -629,9 +627,9 @@ export class MacInputInjector implements InputInjector {
     if (cached) return cached
     const bin = resolveHostBinary()
     try {
-      const r = await execFileAsync(bin, ["window-list", "--window-id", String(hwnd)],
-                                    { encoding: "utf-8", timeout: 3000 })
-      const parsed = parseComputerJson(r.stdout, "window-list")
+      const r = await spawnHostBin(bin, ["window-list", "--window-id", String(hwnd)],
+                                    { timeoutMs: 3000 })
+      const parsed = parseComputerJson(r, "window-list")
       const windows: any[] = Array.isArray(parsed.windows) ? parsed.windows : []
       const bid = windows[0]?.bundleId
       if (typeof bid === "string" && bid.length > 0) {
@@ -840,11 +838,10 @@ export class MacInputInjector implements InputInjector {
     // windowId=51 (off-screen Chrome aux) instead of windowId=47 (visible
     // main). Fixed via the three predicates above.
     const bin = resolveHostBinary()
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, ["window-list", "--foreground"], {
-        timeout: 5000,
-        encoding: "utf-8",
+      stdout = await spawnHostBin(bin, ["window-list", "--foreground"], {
+        timeoutMs: 5000,
       })
     } catch (err) {
       // Binary spawn failed (cmspark-host ENOENT, timeout, killed). Throw
@@ -861,7 +858,7 @@ export class MacInputInjector implements InputInjector {
     // previously NOT wrapped → bubbled to fail(INJECT_FAILED). Wrap it.
     let parsed: Record<string, any>
     try {
-      parsed = parseComputerJson(result.stdout, "window-list")
+      parsed = parseComputerJson(stdout, "window-list")
     } catch (err) {
       throw new ForegroundProbeBrokenError(
         `foregroundHwnd: window-list stdout unparseable (${(err as Error).message})`,
@@ -969,17 +966,17 @@ export class MacInputInjector implements InputInjector {
 export class MacAxLocator implements UiaLocator {
   async locate(hwnd: number, target: string): Promise<UiaLocateHit | null> {
     const bin = resolveHostBinary()
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, [
+      stdout = await spawnHostBin(bin, [
         "ax-locate",
         "--window-id", String(hwnd),
         "--target", target,
-      ], { encoding: "utf-8", timeout: DARWIN_QUERY_TIMEOUT_MS })
+      ], { timeoutMs: DARWIN_QUERY_TIMEOUT_MS })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "ax-locate")
     }
-    const parsed = parseComputerJson(result.stdout, "ax-locate")
+    const parsed = parseComputerJson(stdout, "ax-locate")
     if (!parsed.found) return null
 
     return {
@@ -1005,6 +1002,15 @@ export function startMacAxWindowWatcher(
 ): Promise<UiaWatcher> {
   return new Promise((resolve, reject) => {
     const bin = resolveHostBinary()
+    // P2 SEC-09: long-lived spawn — integrity check before fork (spawnHostBin is one-shot)
+    const { checkHostIntegrity } = require("../host-use/darwin/host-integrity") as typeof import("../host-use/darwin/host-integrity")
+    if (process.env.CMSPARK_SKIP_HOST_INTEGRITY !== "1") {
+      const pre = checkHostIntegrity(bin)
+      if (!pre.ok) {
+        reject(new Error(`[host-integrity] ax-watch refused: binary integrity check failed at ${bin}`))
+        return
+      }
+    }
     const args = ["ax-watch", "--pid", String(target.pid)]
     if (opts?.maxSeconds) args.push("--max-seconds", String(opts.maxSeconds))
     const child = require("child_process").spawn(bin, args, {
@@ -1068,13 +1074,13 @@ export class MacPreviewBuilder implements PreviewBuilder {
     if (blurRects && blurRects.length > 0) {
       args.push("--blur-rects", JSON.stringify(blurRects))
     }
-    let result: { stdout: string }
+    let stdout: string
     try {
-      result = await execFileAsync(bin, args, { timeout: 10000 })
+      stdout = await spawnHostBin(bin, args, { timeoutMs: 10000 })
     } catch {
       return null // best-effort, never fail the task
     }
-    const parsed = parseComputerJson(result.stdout, "preview")
+    const parsed = parseComputerJson(stdout, "preview")
     return (parsed.base64 as string) ?? null
   }
 }
