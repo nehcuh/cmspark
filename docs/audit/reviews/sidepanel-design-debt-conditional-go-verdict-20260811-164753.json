@@ -1,0 +1,8 @@
+{
+  "batch": "sidepanel-design-debt-conditional-go",
+  "timestamp": "20260811-164753",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/sidepanel-design-debt-conditional-go-claude-20260811-164753.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/sidepanel-design-debt-conditional-go-pi-20260811-164753.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/sidepanel-design-debt-conditional-go-diff-20260811-164753.patch"
+}
