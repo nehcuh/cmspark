@@ -22,6 +22,13 @@
 
 ## Technical Pitfalls
 
+### 默认工作区沙箱 ≠ 自动 bind workspace_root（2026-08-11 S65 · #165/#166）
+- **产品**：未设置 `thread.workspace_root` 时 `workspace_*` **运行时**落到 `~/CMspark-projects`（mkdir `0o700`），**不**写 thread；folder-picker 显式绑定仍优先；`setWorkspaceRoot` 仍须 native pick；`shell_exec` cwd **不**跟沙箱
+- **安全 nits**：沙箱根若为 **symlink** 会把 host_read 扩到其它家目录路径 → #166 `lstat` 拒绝 symlink + realpath 必须等于字面 `~/CMspark-projects`
+- **文案漂移**：实现后 catalog/ChatView 若仍写「必须选工作区」会逼 LLM 假失败 → 工具描述与 UI hint 须同步 Scheme 1
+- **门禁**：adversary + Claude+Pi dual **APPROVE_WITH_NITS** → nits follow-up PR；机核 `capability-workspace` + `security-thread`
+- **纪律**：默认沙箱是 **consent 边界内的交付沙箱**，不是静默扩权到任意仓库；真实仓仍要用户手势选目录
+
 ### squash 后 `git branch --no-merged` 假阳性 → 切勿整支硬开 PR（2026-08-11 S63）
 - **现象**：`git branch -r --no-merged origin/main` 仍列出 11 条 remote，但 `gh pr list --head <b>` 全是 MERGED/CLOSED；tip commit 文案在 main 上能 grep 到
 - **根因**：squash/merge 后 **SHA 不同**，git 按可达性判「未合并」；三方 diff / `merge-tree` 仍会把**旧 monolith `server.ts`** 等塞回 C10 后的 main
@@ -514,6 +521,12 @@
 - 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
 
 ## Reusable Patterns
+
+### 功能 PR → dual nits follow-up → 同日合 main（2026-08-11 S65 · #165→#166）
+1. 产品小方案先锁契约（运行时 fallback vs 写 thread / shell 是否跟）
+2. Grok workflow 或单会话实现 + 机核 → **独立对抗** → `dual-external-review.sh`（Claude+Pi）
+3. `APPROVE_WITH_NITS` 可先合主功能；**同会话**开 follow-up PR 清 catalog/UI/symlink/docs nits，CI 绿再合
+4. 审计落 `docs/audit/reviews/<batch>-{adversary,claude,pi,verdict}*`
 
 ### Remote 分支卫生：PR 历史 → merge-tree → 删 stale（2026-08-11 S63）
 1. `git fetch --prune` + `gh pr list --state open`

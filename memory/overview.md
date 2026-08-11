@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-11 (S63 · #162/#163 + remote hygiene)
+**Updated**: 2026-08-11 (S65 · #165/#166 default workspace sandbox)
 
 ## CMspark — 产品 0.5.0 稳定切点
 
@@ -17,25 +17,28 @@
 | Health + deep-diagnosis 安全 | **on main**（#159 + #160） |
 | shell_exec L2 token 绑定 | **on main**（#161 `validateTokenFor`） |
 | multi-adv 残差 Wave0–2 | **on main**（#162） |
-| C10 god-file 拆分 A–H | **on main**（#163；`server.ts` ~1k + extract modules） |
+| C10 god-file 拆分 A–H | **on main**（#163） |
+| Thread History IA Wave A–C | **on main**（#164） |
+| DevSec 默认工作区沙箱 | **on main**（#165 Scheme 1 + #166 nits） |
 
 ## Main tip (remote)
 
-- **`origin/main`**: **`a32659e`** — Merge #163 C10 god-file split A–H + day dual nits
-- **#163** MERGED（extract + eager companion-dispatch bind）
-- **#162** MERGED earlier（multi-adv deep Wave0–2）
-- **#161** MERGED earlier（Windows closeout + shell/netsec token）
-- **Open PR: 0** · stale remotes purged (S63)
+- **`origin/main`**: **`06fcd96`** — Merge #166 default-workspace-sandbox nits
+- **#166** MERGED（symlink/catalog/ChatView/docs）
+- **#165** MERGED earlier same day（Scheme 1 runtime sandbox）
+- **#164** Thread History IA（prior）
+- **Open PR: 0**
 
-## Recent locks (S61–S63)
+## Recent locks (S63–S65)
 
-- **Remote hygiene（S63）**: squash 后 `--no-merged` 假阳性；先 PR 历史 + merge-tree，再删支，禁止硬合 stale
+- **Default sandbox（S65）**: null `workspace_root` → `~/CMspark-projects` runtime only; no auto-bind; reject symlink root; dual nits same-day follow-up
+- **Remote hygiene（S63）**: squash 后 `--no-merged` 假阳性；先 PR 历史 + merge-tree，再删支
 - **C10（S63）**: extract 后测试须 eager-bind dispatch runtime
 - **shell_exec token（S62）**: issue/validate 必须同 `bindingPayloadFor`
-- **Unattended（S61）**: armed = risk-accepted；initial L2 + mid-task re-L2 silent
 
 ## Next (optional backlog)
 
+- 真机：未绑定工作区时 `workspace_*` 默认沙箱 list/read
 - Windows 真机：新包 shell_exec（enterprise/全自动）+ 听写 hold/continuous
 - Mac 真机：武装值守后 host_computer 无逐步 L2/re-L2
 - Executor unattended reL2 回归测；estop≠disarm toast
@@ -47,8 +50,9 @@
 ## Docs SoT
 
 - User / arch: `docs/README.md`
+- Mission pack / workspace: `docs/mission-pack-usage.md` · ADR-014
 - Meeting/dictation: `docs/meeting-and-dictation-user-guide.md`
 - Unattended: `docs/adr/021-unattended-desktop-session.md` · `docs/computer-use-user-guide.md` §5.1
-- **S62 项目总结+经验**: `docs/audit/voice-pack-windows-closeout-s62-2026-08-09.md`
-- C10 / multi-adv reviews: `docs/audit/reviews/c10-godfile-split-*` · `multi-adversarial-*` · `day-20260810-11-full-*`
+- Sandbox dual: `docs/audit/reviews/default-workspace-sandbox-*`
+- C10 / multi-adv reviews: `docs/audit/reviews/c10-godfile-split-*` · `multi-adversarial-*`
 - MCP: `docs/mcp.md`

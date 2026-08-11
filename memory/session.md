@@ -2,7 +2,16 @@
 
 ## Current Session
 
-### S64 (2026-08-11) [Thread History IA Wave A — UI only]
+### S65 END (2026-08-11 ~15:50–16:05) [default workspace sandbox Scheme 1 · #165/#166 MERGED]
+- **产品**：未绑 `workspace_root` 时 `workspace_*` 默认 `~/CMspark-projects`（不写 thread）；显式 pick 优先；shell cwd 不跟
+- **Ship**：**#165** `ec6d0f5` Scheme 1 + dual APPROVE_WITH_NITS → **#166** `06fcd96` nits（catalog/ChatView/symlink/chmod/`resolveEffectiveWorkspaceRoot`/docs）
+- **门禁**：adversary + Claude+Pi `both_ok`；CI build 绿后 merge；workflow `.grok/workflows/default-workspace-sandbox.rhai`
+- **main tip**：`origin/main` @ **`06fcd96`**；open PR 0（本会话）
+- **下次**：真机未绑定工作区 list/read 沙箱；可选再验 symlink 拒绝；backlog 仍 Windows/Mac 真机 + message-router 续拆
+- Recorded: yes — 默认沙箱≠auto-bind · symlink 拒绝 · dual nits 同日 follow-up
+
+### S64 (2026-08-11) [Thread History IA Wave A — UI only · 已随 #164 在 main]
+
 - **Task**: Wave A A-1..A-7 (design dual-review APPROVED; impl dual-review later both_ok r2) — untagged batch extract, tldr row, portal menu, tag cloud fold, N/M progress
 - **Pins**: S1 force empty-tags; S2 exclude worker; S3 skip busy / disable 0; S4 portal z>51; S5 digest_updated progress no 60s clear
 - **Files**: `thread-timeline.ts` helpers · `ThreadList.tsx` · `thread-timeline.test.ts` · `useWebSocket.ts` custom events
@@ -591,8 +600,15 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+### Default workspace sandbox 真机 smoke（S65 后 · #165/#166）
+- status: **active**
+- context: Scheme 1 + nits 已在 main `06fcd96`；未绑 workspace_root 应 list/read `~/CMspark-projects`
+- next_action: (1) 重载扩展/Companion (2) 场景不选工作区时 workspace_list_dir (3) 可选：把 CMspark-projects 改 symlink 应失败
+- resume_doc: PR #165 · #166 · `docs/mission-pack-usage.md` §3
+- updated: 2026-08-11
+
 ### God-file / multi-adv 落地（S63）
-- status: **done** (#162 + #163 on main `a32659e`)
+- status: **done** (#162 + #163 on main；tip 后经 #164–#166 → `06fcd96`)
 - context: C10 extract + multi-adv residuals + stale remote 清仓
 - next_action: 可选 message-router 续拆；清 local worktrees/stash
 - resume_doc: PR #162 · #163 · project-knowledge S63 坑
@@ -600,7 +616,7 @@
 
 ### Windows 包真机验收（S62 后 · #161）
 - status: **active**
-- context: #161 已合 main；本地已重编 SEA + whisper bin；shell_exec token 修在 `32ab576`；main 已含 #162/#163
+- context: #161 已合 main；本地已重编 SEA + whisper bin；main 含 #162–#166
 - next_action: (1) 确认跑的是 `dist-package\...\cmspark-agent.exe` 新时间戳 (2) enterprise/全自动下 shell_exec (3) 听写 continuous/hold
 - resume_doc: PR #161 · `memory/project-knowledge.md` shell token 坑
 - updated: 2026-08-11
