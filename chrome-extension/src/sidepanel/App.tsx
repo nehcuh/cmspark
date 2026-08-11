@@ -31,6 +31,7 @@ import {
 } from "./composer/meta-slash"
 import { tokens } from "./ui/tokens"
 import { ui } from "./ui/flags"
+import { PanelBanner, panelBannerBtnStyles } from "./ui/PanelBanner"
 import {
   IconSend,
   IconStop,
@@ -1599,26 +1600,30 @@ function DisconnectedBanner({ visible, onRetry }: { visible: boolean; onRetry: (
   }
 
   return (
-    <div style={bannerStyles.container} role="alert">
-      <div style={bannerStyles.iconWrap}>
-        <IconAlert size={22} style={{ color: tokens.warning }} />
-      </div>
-      <div style={bannerStyles.content}>
-        <h3 style={bannerStyles.title}>Companion 未连接</h3>
-        <p style={bannerStyles.text}>
-          请通过菜单栏启动 Companion，或检查守护进程状态。
-        </p>
-        {hint ? <p style={bannerStyles.hint}>{hint}</p> : null}
-        <div style={bannerStyles.actions}>
-          <button type="button" style={bannerStyles.primaryBtn} onClick={onRetry}>
+    <PanelBanner
+      tone="warning"
+      title="Companion 未连接"
+      icon={<IconAlert size={22} style={{ color: tokens.warning }} />}
+      actions={
+        <>
+          <button type="button" style={panelBannerBtnStyles.primary} onClick={onRetry}>
             重新连接
           </button>
-          <button type="button" style={bannerStyles.secondaryBtn} onClick={handleOpenLogs}>
+          <button type="button" style={panelBannerBtnStyles.secondary} onClick={handleOpenLogs}>
             查看日志
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p style={{ margin: 0 }}>
+        请通过菜单栏启动 Companion，或检查守护进程状态。
+      </p>
+      {hint ? (
+        <p style={{ margin: "8px 0 0", fontSize: 11, wordBreak: "break-all" as const }}>
+          {hint}
+        </p>
+      ) : null}
+    </PanelBanner>
   )
 }
 
@@ -1790,12 +1795,36 @@ function LogBar({ onClose }: { onClose: () => void }) {
 }
 
 const logStyles: Record<string, React.CSSProperties> = {
-  container: { position: "relative" as const, borderTop: "1px solid #eee", padding: "4px 8px", maxHeight: 120, overflowY: "auto", background: "#fafafa", fontFamily: "monospace", fontSize: 10 },
+  container: {
+    position: "relative" as const,
+    borderTop: `1px solid ${tokens.border}`,
+    padding: "4px 8px",
+    maxHeight: 120,
+    overflowY: "auto",
+    background: tokens.bgMuted,
+    fontFamily: tokens.fontMono,
+    fontSize: 10,
+  },
   line: { display: "flex", gap: 8, padding: "1px 0", whiteSpace: "nowrap" },
   level: { width: 40, flexShrink: 0 },
-  source: { width: 120, color: "#666", flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis" },
+  source: {
+    width: 120,
+    color: tokens.textSecondary,
+    flexShrink: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
   event: { flex: 1, overflow: "hidden", textOverflow: "ellipsis" },
-  closeBtn: { position: "absolute" as const, right: 4, top: 2, background: "none", border: "none", fontSize: 12, cursor: "pointer", color: "#999" },
+  closeBtn: {
+    position: "absolute" as const,
+    right: 4,
+    top: 2,
+    background: "none",
+    border: "none",
+    fontSize: 12,
+    cursor: "pointer",
+    color: tokens.textMuted,
+  },
 }
 
 const toastStyles: Record<string, React.CSSProperties> = {
@@ -1805,85 +1834,13 @@ const toastStyles: Record<string, React.CSSProperties> = {
     left: 10,
     right: 10,
     background: tokens.text,
-    color: "#fff",
+    color: tokens.userBubbleText,
     padding: "8px 12px",
     borderRadius: tokens.radiusMd,
     fontSize: 12,
     fontWeight: 500,
     zIndex: 300,
     boxShadow: tokens.shadowMd,
-  },
-}
-
-const bannerStyles: Record<string, React.CSSProperties> = {
-  container: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 12,
-    padding: "14px 14px",
-    background: tokens.warningSoft,
-    borderBottom: "1px solid #fcd34d",
-    flexShrink: 0,
-    fontFamily: tokens.font,
-  },
-  iconWrap: {
-    flexShrink: 0,
-    marginTop: 1,
-    width: 32,
-    height: 32,
-    borderRadius: tokens.radiusMd,
-    background: "#fff",
-    border: "1px solid #fcd34d",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  content: {
-    flex: 1,
-    minWidth: 0,
-  },
-  title: {
-    margin: "0 0 4px",
-    fontSize: 13,
-    fontWeight: 650,
-    color: tokens.text,
-  },
-  text: {
-    margin: "0 0 10px",
-    fontSize: 12,
-    color: tokens.textSecondary,
-    lineHeight: 1.5,
-  },
-  hint: {
-    margin: "0 0 10px",
-    fontSize: 11,
-    color: tokens.textSecondary,
-    lineHeight: 1.45,
-    wordBreak: "break-all" as const,
-  },
-  actions: {
-    display: "flex",
-    gap: 8,
-  },
-  primaryBtn: {
-    padding: "6px 12px",
-    borderRadius: tokens.radiusSm,
-    border: "none",
-    background: tokens.accent,
-    color: "#fff",
-    cursor: "pointer",
-    fontSize: 12,
-    fontWeight: 600,
-  },
-  secondaryBtn: {
-    padding: "6px 12px",
-    borderRadius: tokens.radiusSm,
-    border: `1px solid ${tokens.borderStrong}`,
-    background: "#fff",
-    color: tokens.textSecondary,
-    cursor: "pointer",
-    fontSize: 12,
-    fontWeight: 500,
   },
 }
 

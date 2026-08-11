@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | Date | 2026-08-11 |
-| Status | **Phase 1 MERGED (#168)** · **Phase 2a token purge (in progress)** · Phase 2b section-header / ThreadList density still open |
+| Status | **Phase 1 MERGED (#168)** · **Phase 2a MERGED (#170)** · **Phase 2b+3** (SectionHeader / popup menus / motion / PanelBanner) |
 | Mode | **Operate** (~320px Side Panel) |
 | Direction | **精密仪器台**（用户授权「你定方向」） |
 | Rhythm | 设计 dual-review → 分 PR 落地（用户选「稳」） |
@@ -116,10 +116,19 @@ Mechanical hex → `tokens.*` on secondary surfaces (no layout rewrite):
 
 **Out of 2a:** shared `SectionHeader` component, ThreadList menu density (2b), Phase 3 motion.
 
+#### Phase 2b — shared chrome density
+
+| Deliverable | Location |
+|-------------|----------|
+| `SectionHeader` | `sidepanel/ui/SectionHeader.tsx` — title 13/600 + meta 11 |
+| `popupMenuStyles` | `sidepanel/ui/popupMenuStyles.ts` — StatusRail + ThreadList + MCP/Apps menus |
+| SettingsSection title | 13/600 (was 14/700) |
+| ThreadList residual hex | tokens only |
+
 ### Phase 3 — Motion & polish
 
-- reduced-motion already global; tighten transitions to 120–180ms  
-- Empty / error / disconnected banners unified  
+- reduced-motion already global; tighten transitions to **120 / 180ms** (`tokens.transitionFast` / `transition`)  
+- Empty / error / disconnected banners unified → `PanelBanner` (`ui/PanelBanner.tsx`); DisconnectedBanner wired  
 
 ---
 

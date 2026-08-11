@@ -1,0 +1,1107 @@
+# Dual external review context
+batch: sidepanel-precision-p2b-p3
+base: origin/main
+time: 20260811-230339
+
+4d453e0
+
+ M memory/session.md
+?? docs/audit/reviews/sidepanel-precision-p2b-p3-diff-20260811-230339.patch
+?? docs/audit/reviews/sidepanel-precision-p2b-p3-dual-review-prompt-20260811.md
+
+## Diff (git diff + staged)
+ chrome-extension/src/sidepanel/App.tsx             | 141 +++++++-------------
+ .../src/sidepanel/components/AppsPanel.tsx         |  24 +---
+ .../src/sidepanel/components/KnowledgeSubPanel.tsx |  25 +---
+ .../src/sidepanel/components/McpPanel.tsx          |  24 +---
+ .../components/OutboundMcpSettingsSection.tsx      |  11 +-
+ .../src/sidepanel/components/PacksPanel.tsx        |   2 +-
+ .../src/sidepanel/components/SettingsSection.tsx   |   6 +-
+ .../src/sidepanel/components/StatusRail.tsx        |  54 +-------
+ .../src/sidepanel/components/ThreadList.tsx        |  84 +++++-------
+ chrome-extension/src/sidepanel/ui/PanelBanner.tsx  | 146 +++++++++++++++++++++
+ .../src/sidepanel/ui/SectionHeader.tsx             |  56 ++++++++
+ .../src/sidepanel/ui/popupMenuStyles.ts            |  63 +++++++++
+ chrome-extension/src/sidepanel/ui/tokens.ts        |   6 +-
+ docs/DESIGN.md                                     |   9 +-
+ ...8-11-sidepanel-precision-instrument-redesign.md |  15 ++-
+ memory/session.md                                  |   8 ++
+ 16 files changed, 397 insertions(+), 277 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index 69a0192..f29fc66 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -31,6 +31,7 @@ import {
+ } from "./composer/meta-slash"
+ import { tokens } from "./ui/tokens"
+ import { ui } from "./ui/flags"
++import { PanelBanner, panelBannerBtnStyles } from "./ui/PanelBanner"
+ import {
+   IconSend,
+   IconStop,
+@@ -1599,26 +1600,30 @@ function DisconnectedBanner({ visible, onRetry }: { visible: boolean; onRetry: (
+   }
+ 
+   return (
+-    <div style={bannerStyles.container} role="alert">
+-      <div style={bannerStyles.iconWrap}>
+-        <IconAlert size={22} style={{ color: tokens.warning }} />
+-      </div>
+-      <div style={bannerStyles.content}>
+-        <h3 style={bannerStyles.title}>Companion 未连接</h3>
+-        <p style={bannerStyles.text}>
+-          请通过菜单栏启动 Companion，或检查守护进程状态。
+-        </p>
+-        {hint ? <p style={bannerStyles.hint}>{hint}</p> : null}
+-        <div style={bannerStyles.actions}>
+-          <button type="button" style={bannerStyles.primaryBtn} onClick={onRetry}>
++    <PanelBanner
++      tone="warning"
++      title="Companion 未连接"
++      icon={<IconAlert size={22} style={{ color: tokens.warning }} />}
++      actions={
++        <>
++          <button type="button" style={panelBannerBtnStyles.primary} onClick={onRetry}>
+             重新连接
+           </button>
+-          <button type="button" style={bannerStyles.secondaryBtn} onClick={handleOpenLogs}>
++          <button type="button" style={panelBannerBtnStyles.secondary} onClick={handleOpenLogs}>
+             查看日志
+           </button>
+-        </div>
+-      </div>
+-    </div>
++        </>
++      }
++    >
++      <p style={{ margin: 0 }}>
++        请通过菜单栏启动 Companion，或检查守护进程状态。
++      </p>
++      {hint ? (
++        <p style={{ margin: "8px 0 0", fontSize: 11, wordBreak: "break-all" as const }}>
++          {hint}
++        </p>
++      ) : null}
++    </PanelBanner>
+   )
+ }
+ 
+@@ -1790,12 +1795,36 @@ function LogBar({ onClose }: { onClose: () => void }) {
+ }
+ 
+ const logStyles: Record<string, React.CSSProperties> = {
+-  container: { position: "relative" as const, borderTop: "1px solid #eee", padding: "4px 8px", maxHeight: 120, overflowY: "auto", background: "#fafafa", fontFamily: "monospace", fontSize: 10 },
++  container: {
++    position: "relative" as const,
++    borderTop: `1px solid ${tokens.border}`,
++    padding: "4px 8px",
++    maxHeight: 120,
++    overflowY: "auto",
++    background: tokens.bgMuted,
++    fontFamily: tokens.fontMono,
++    fontSize: 10,
++  },
+   line: { display: "flex", gap: 8, padding: "1px 0", whiteSpace: "nowrap" },
+   level: { width: 40, flexShrink: 0 },
+-  source: { width: 120, color: "#666", flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis" },
++  source: {
++    width: 120,
++    color: tokens.textSecondary,
++    flexShrink: 0,
++    overflow: "hidden",
++    textOverflow: "ellipsis",
++  },
+   event: { flex: 1, overflow: "hidden", textOverflow: "ellipsis" },
+-  closeBtn: { position: "absolute" as const, right: 4, top: 2, background: "none", border: "none", fontSize: 12, cursor: "pointer", color: "#999" },
++  closeBtn: {
++    position: "absolute" as const,
++    right: 4,
++    top: 2,
++    background: "none",
++    border: "none",
++    fontSize: 12,
++    cursor: "pointer",
++    color: tokens.textMuted,
++  },
+ }
+ 
+ const toastStyles: Record<string, React.CSSProperties> = {
+@@ -1805,7 +1834,7 @@ const toastStyles: Record<string, React.CSSProperties> = {
+     left: 10,
+     right: 10,
+     background: tokens.text,
+-    color: "#fff",
++    color: tokens.userBubbleText,
+     padding: "8px 12px",
+     borderRadius: tokens.radiusMd,
+     fontSize: 12,
+@@ -1815,76 +1844,4 @@ const toastStyles: Record<string, React.CSSProperties> = {
+   },
+ }
+ 
+-const bannerStyles: Record<string, React.CSSProperties> = {
+-  container: {
+-    display: "flex",
+-    alignItems: "flex-start",
+-    gap: 12,
+-    padding: "14px 14px",
+-    background: tokens.warningSoft,
+-    borderBottom: "1px solid #fcd34d",
+-    flexShrink: 0,
+-    fontFamily: tokens.font,
+-  },
+-  iconWrap: {
+-    flexShrink: 0,
+-    marginTop: 1,
+-    width: 32,
+-    height: 32,
+-    borderRadius: tokens.radiusMd,
+-    background: "#fff",
+-    border: "1px solid #fcd34d",
+-    display: "flex",
+-    alignItems: "center",
+-    justifyContent: "center",
+-  },
+-  content: {
+-    flex: 1,
+-    minWidth: 0,
+-  },
+-  title: {
+-    margin: "0 0 4px",
+-    fontSize: 13,
+-    fontWeight: 650,
+-    color: tokens.text,
+-  },
+-  text: {
+-    margin: "0 0 10px",
+-    fontSize: 12,
+-    color: tokens.textSecondary,
+-    lineHeight: 1.5,
+-  },
+-  hint: {
+-    margin: "0 0 10px",
+-    fontSize: 11,
+-    color: tokens.textSecondary,
+-    lineHeight: 1.45,
+-    wordBreak: "break-all" as const,
+-  },
+-  actions: {
+-    display: "flex",
+-    gap: 8,
+-  },
+-  primaryBtn: {
+-    padding: "6px 12px",
+-    borderRadius: tokens.radiusSm,
+-    border: "none",
+-    background: tokens.accent,
+-    color: "#fff",
+-    cursor: "pointer",
+-    fontSize: 12,
+-    fontWeight: 600,
+-  },
+-  secondaryBtn: {
+-    padding: "6px 12px",
+-    borderRadius: tokens.radiusSm,
+-    border: `1px solid ${tokens.borderStrong}`,
+-    background: "#fff",
+-    color: tokens.textSecondary,
+-    cursor: "pointer",
+-    fontSize: 12,
+-    fontWeight: 500,
+-  },
+-}
+-
+ export default App
+diff --git a/chrome-extension/src/sidepanel/components/AppsPanel.tsx b/chrome-extension/src/sidepanel/components/AppsPanel.tsx
+index d40ec6d..8f5edcc 100644
+--- a/chrome-extension/src/sidepanel/components/AppsPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/AppsPanel.tsx
+@@ -9,6 +9,7 @@
+ import { useEffect, useState } from "react"
+ import { useAgentStore } from "../store/agentStore"
+ import type { AppEntry, AppEnumerateCandidate, AppPolicy } from "../types"
++import { popupMenuStyles } from "../ui/popupMenuStyles"
+ import {
+   appsPlatformSupported,
+   autoEligible,
+@@ -1023,17 +1024,12 @@ const styles: Record<string, React.CSSProperties> = {
+     letterSpacing: -1,
+   },
+   menuDropdown: {
+-    position: "absolute",
++    ...popupMenuStyles.menu,
++    position: "absolute" as const,
+     right: 0,
+     top: "100%",
+     zIndex: 10,
+-    background: tokens.bgElevated,
+-    border: `1px solid ${tokens.borderStrong}`,
+-    borderRadius: tokens.radiusMenu,
+-    boxShadow: tokens.shadowLg,
+     minWidth: 180,
+-    padding: 4,
+-    overflow: "hidden",
+   },
+   menuSectionTitle: {
+     fontSize: 10,
+@@ -1041,19 +1037,7 @@ const styles: Record<string, React.CSSProperties> = {
+     padding: "6px 12px 2px",
+     fontFamily: tokens.font,
+   },
+-  menuItem: {
+-    display: "block",
+-    width: "100%",
+-    padding: "8px 12px",
+-    border: "none",
+-    borderRadius: tokens.radiusMd,
+-    background: "transparent",
+-    cursor: "pointer",
+-    fontSize: 12,
+-    textAlign: "left",
+-    color: tokens.text,
+-    fontFamily: tokens.font,
+-  },
++  menuItem: popupMenuStyles.menuItem,
+   addBtn: {
+     marginTop: 6,
+     padding: "8px 12px",
+diff --git a/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx b/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+index f49b856..7e8dd33 100644
+--- a/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+@@ -3,6 +3,7 @@
+ import { useState, useRef, useEffect, useMemo } from "react"
+ import { useAgentStore } from "../store/agentStore"
+ import { tokens } from "../ui/tokens"
++import { SectionHeader } from "../ui/SectionHeader"
+ 
+ export function KnowledgeSubPanel() {
+   const { state, dispatch } = useAgentStore()
+@@ -444,10 +445,7 @@ export function KnowledgeSubPanel() {
+       {/* Grouped knowledge list */}
+       {groupedDocs.map(([groupName, docs]) => (
+         <div key={groupName}>
+-          <div style={styles.sectionHeader}>
+-            <span>{groupName}</span>
+-            <span style={styles.sectionCount}>{docs.length}</span>
+-          </div>
++          <SectionHeader title={groupName} meta={docs.length} />
+           {docs.map((doc) => {
+             const active = state.activeKnowledgeIds.includes(doc.name)
+             const rowBg = manageMode
+@@ -683,25 +681,6 @@ const styles: Record<string, React.CSSProperties> = {
+     background: tokens.bgElevated,
+     color: tokens.text,
+   },
+-  sectionHeader: {
+-    fontSize: 11,
+-    fontWeight: 600,
+-    fontFamily: tokens.fontMono,
+-    color: tokens.accentText,
+-    marginTop: 8,
+-    marginBottom: 4,
+-    paddingBottom: 2,
+-    borderBottom: `1px solid ${tokens.border}`,
+-    display: "flex",
+-    justifyContent: "space-between",
+-    alignItems: "center",
+-  },
+-  sectionCount: {
+-    fontSize: 10,
+-    fontWeight: 500,
+-    color: tokens.textMuted,
+-    fontFamily: tokens.font,
+-  },
+   emptyText: {
+     color: tokens.textSecondary,
+     fontSize: 12,
+diff --git a/chrome-extension/src/sidepanel/components/McpPanel.tsx b/chrome-extension/src/sidepanel/components/McpPanel.tsx
+index 4554d2c..3e5fe62 100644
+--- a/chrome-extension/src/sidepanel/components/McpPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/McpPanel.tsx
+@@ -6,6 +6,7 @@ import { useState } from "react"
+ import { useAgentStore } from "../store/agentStore"
+ import type { McpServerMeta, McpSelectionMode } from "../types"
+ import { tokens } from "../ui/tokens"
++import { popupMenuStyles } from "../ui/popupMenuStyles"
+ 
+ const STATUS_COLORS: Record<string, string> = {
+   connected: tokens.success,
+@@ -474,31 +475,14 @@ const styles: Record<string, React.CSSProperties> = {
+     letterSpacing: -1,
+   },
+   menuDropdown: {
+-    position: "absolute",
++    ...popupMenuStyles.menu,
++    position: "absolute" as const,
+     right: 0,
+     top: "100%",
+     zIndex: 10,
+-    background: tokens.bgElevated,
+-    border: `1px solid ${tokens.borderStrong}`,
+-    borderRadius: tokens.radiusMenu,
+-    boxShadow: tokens.shadowLg,
+     minWidth: 100,
+-    padding: 4,
+-    overflow: "hidden",
+-  },
+-  menuItem: {
+-    display: "block",
+-    width: "100%",
+-    padding: "8px 12px",
+-    border: "none",
+-    borderRadius: tokens.radiusMd,
+-    background: "transparent",
+-    cursor: "pointer",
+-    fontSize: 12,
+-    textAlign: "left",
+-    color: tokens.text,
+-    fontFamily: tokens.font,
+   },
++  menuItem: popupMenuStyles.menuItem,
+   cardExpanded: {
+     marginTop: 8,
+     paddingTop: 8,
+diff --git a/chrome-extension/src/sidepanel/components/OutboundMcpSettingsSection.tsx b/chrome-extension/src/sidepanel/components/OutboundMcpSettingsSection.tsx
+index e651076..8298341 100644
+--- a/chrome-extension/src/sidepanel/components/OutboundMcpSettingsSection.tsx
++++ b/chrome-extension/src/sidepanel/components/OutboundMcpSettingsSection.tsx
+@@ -3,6 +3,7 @@
+ 
+ import { useCallback, useEffect, useState, type CSSProperties } from "react"
+ import { tokens } from "../ui/tokens"
++import { SectionHeader } from "../ui/SectionHeader"
+ 
+ type GrantRow = {
+   id: string
+@@ -149,7 +150,7 @@ export function OutboundMcpSettingsSection() {
+ 
+   return (
+     <div>
+-      <div style={styles.sectionTitle}>Outbound MCP 调用方授权</div>
++      <SectionHeader title="Outbound MCP 调用方授权" />
+       <div style={styles.helpText}>
+         把浏览器能力导出给 Grok / Claude Code 等时使用。Grant 与扩展配对密钥（ws_secret）分离（ADR-022 L4+）。
+         Token 只在签发时显示一次；请写入 IDE 的 <code>CMSPARK_OUTBOUND_GRANT</code>。
+@@ -324,14 +325,6 @@ export function OutboundMcpSettingsSection() {
+ }
+ 
+ const styles: Record<string, CSSProperties> = {
+-  sectionTitle: {
+-    fontSize: 12,
+-    fontWeight: 700,
+-    color: tokens.textSecondary,
+-    marginBottom: 8,
+-    textTransform: "uppercase",
+-    letterSpacing: 0.4,
+-  },
+   field: { marginBottom: 8 },
+   label: {
+     display: "block",
+diff --git a/chrome-extension/src/sidepanel/components/PacksPanel.tsx b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+index 29ce16c..2e28090 100644
+--- a/chrome-extension/src/sidepanel/components/PacksPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+@@ -1570,7 +1570,7 @@ const styles: Record<string, import("react").CSSProperties> = {
+     letterSpacing: "0.02em",
+     marginBottom: 2,
+   },
+-  title: { fontWeight: 650, fontSize: 14, letterSpacing: "-0.02em" },
++  title: { fontWeight: 600, fontSize: 13, letterSpacing: "-0.01em" },
+   subtitle: { fontSize: 10, color: tokens.textMuted, marginTop: 2, lineHeight: 1.35 },
+   meetingCard: {
+     border: `1px solid ${tokens.border}`,
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSection.tsx b/chrome-extension/src/sidepanel/components/SettingsSection.tsx
+index cb98be9..48eeaa0 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSection.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSection.tsx
+@@ -76,10 +76,12 @@ const styles: Record<string, React.CSSProperties> = {
+     flexShrink: 0,
+   },
+   title: {
+-    fontSize: 14,
+-    fontWeight: 700,
++    // Phase 2b — align with SectionHeader (13/600, no 14/700 chrome drift)
++    fontSize: 13,
++    fontWeight: 600,
+     color: tokens.text,
+     flex: 1,
++    letterSpacing: "-0.01em",
+   },
+   badgeSlot: {
+     flexShrink: 0,
+diff --git a/chrome-extension/src/sidepanel/components/StatusRail.tsx b/chrome-extension/src/sidepanel/components/StatusRail.tsx
+index 5b60f6c..2a6dda9 100644
+--- a/chrome-extension/src/sidepanel/components/StatusRail.tsx
++++ b/chrome-extension/src/sidepanel/components/StatusRail.tsx
+@@ -11,6 +11,7 @@ import {
+   connectionLabel,
+   connectionDotShadow,
+ } from "../ui/tokens"
++import { popupMenuStyles } from "../ui/popupMenuStyles"
+ import { ModeBadge } from "../ui/ModeBadge"
+ import {
+   IconCraft,
+@@ -524,60 +525,17 @@ const railStyles: Record<string, CSSProperties> = {
+     textOverflow: "ellipsis",
+     whiteSpace: "nowrap" as const,
+   },
++  // Phase 2b: shared popup density (lock-step with ThreadList)
+   menu: {
++    ...popupMenuStyles.menu,
+     position: "absolute",
+     right: 0,
+     top: "calc(100% + 6px)",
+-    minWidth: 220,
+-    maxHeight: 360,
+-    overflowY: "auto",
+-    background: tokens.bgElevated,
+-    border: `1px solid ${tokens.borderStrong}`,
+-    borderRadius: tokens.radiusMenu,
+-    boxShadow: tokens.shadowLg,
+     zIndex: 50,
+-    padding: 6,
+-    display: "flex",
+-    flexDirection: "column",
+-    gap: 1,
+-  },
+-  menuItem: {
+-    border: "none",
+-    background: "transparent",
+-    borderRadius: tokens.radiusMd,
+-    padding: "9px 11px",
+-    fontSize: 12,
+-    cursor: "pointer",
+-    display: "flex",
+-    alignItems: "center",
+-    gap: 9,
+-    color: tokens.text,
+-    textAlign: "left" as const,
+-    width: "100%",
+-    fontFamily: tokens.font,
+-    fontWeight: 500,
+-  },
+-  menuDivider: {
+-    height: 1,
+-    background: tokens.border,
+-    margin: "5px 8px",
+-  },
+-  iconBtn: {
+-    width: 32,
+-    height: 32,
+-    borderRadius: tokens.radiusMd,
+-    border: `1px solid ${tokens.border}`,
+-    background: "rgba(255,255,255,0.85)",
+-    color: tokens.textSecondary,
+-    cursor: "pointer",
+-    flexShrink: 0,
+-    display: "flex",
+-    alignItems: "center",
+-    justifyContent: "center",
+-    padding: 0,
+-    boxShadow: tokens.shadowSm,
+-    transition: `background ${tokens.transitionFast}, border-color ${tokens.transitionFast}`,
+   },
++  menuItem: popupMenuStyles.menuItem,
++  menuDivider: popupMenuStyles.menuDivider,
++  iconBtn: popupMenuStyles.menuTrigger,
+   statusDot: {
+     width: 7,
+     height: 7,
+diff --git a/chrome-extension/src/sidepanel/components/ThreadList.tsx b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+index d70ea86..7f481a1 100644
+--- a/chrome-extension/src/sidepanel/components/ThreadList.tsx
++++ b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+ import { createPortal } from "react-dom"
+ import { useAgentStore } from "../store/agentStore"
+ import { tokens } from "../ui/tokens"
++import { popupMenuStyles } from "../ui/popupMenuStyles"
+ import type { Thread } from "../types"
+ import {
+   batchNeedsForceExtract,
+@@ -1477,7 +1478,7 @@ export function ThreadList() {
+                               alignItems: "flex-start",
+                               fontSize: 11,
+                               padding: "4px 0",
+-                              borderBottom: "1px solid #f5f5f5",
++                              borderBottom: `1px solid ${tokens.border}`,
+                             }}
+                           >
+                             <input
+@@ -1571,8 +1572,8 @@ const styles: Record<string, React.CSSProperties> = {
+     left: 0,
+     width: 300,
+     maxHeight: 360,
+-    background: "#fff",
+-    border: "1px solid #e0e0e0",
++    background: tokens.bgElevated,
++    border: `1px solid ${tokens.borderStrong}`,
+     borderRadius: 8,
+     boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+     zIndex: 51,
+@@ -1585,7 +1586,7 @@ const styles: Record<string, React.CSSProperties> = {
+     justifyContent: "space-between",
+     alignItems: "center",
+     padding: "8px 10px",
+-    borderBottom: "1px solid #eee",
++    borderBottom: `1px solid ${tokens.border}`,
+     gap: 6,
+   },
+   viewToggle: {
+@@ -1607,7 +1608,7 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   viewBtnActive: {
+     border: "none",
+-    background: "#fff",
++    background: tokens.bgElevated,
+     fontSize: 11,
+     padding: "3px 8px",
+     borderRadius: 4,
+@@ -1619,7 +1620,7 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   searchRow: {
+     padding: "6px 10px",
+-    borderBottom: "1px solid #f0f0f0",
++    borderBottom: `1px solid ${tokens.border}`,
+   },
+   searchInput: {
+     width: "100%",
+@@ -1633,7 +1634,7 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   newBtn: {
+     background: tokens.accent,
+-    color: "#fff",
++    color: tokens.userBubbleText,
+     border: "none",
+     borderRadius: 4,
+     padding: "3px 10px",
+@@ -1643,9 +1644,9 @@ const styles: Record<string, React.CSSProperties> = {
+     flexShrink: 0,
+   },
+   selectBtn: {
+-    background: "#fff",
+-    color: "#666",
+-    border: "1px solid #ddd",
++    background: tokens.bgElevated,
++    color: tokens.textSecondary,
++    border: `1px solid ${tokens.borderStrong}`,
+     borderRadius: 4,
+     padding: "3px 8px",
+     fontSize: 11,
+@@ -1664,40 +1665,15 @@ const styles: Record<string, React.CSSProperties> = {
+     whiteSpace: "nowrap",
+     flexShrink: 0,
+   },
+-  menuBtn: {
+-    background: "#fff",
+-    color: "#666",
+-    border: "1px solid #ddd",
+-    borderRadius: 4,
+-    padding: "2px 8px",
+-    fontSize: 14,
+-    cursor: "pointer",
+-    lineHeight: 1.2,
+-  },
++  // Phase 2b: same density as StatusRail ⋯ (popupMenuStyles)
++  menuBtn: popupMenuStyles.menuTrigger,
+   /** A-4 portal menu — fixed to body, above panel(51) / backdrop(50). */
+   menuPortal: {
+-    position: "fixed",
+-    background: "#fff",
+-    border: "1px solid #e0e0e0",
+-    borderRadius: 6,
+-    boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
++    ...popupMenuStyles.menu,
++    position: "fixed" as const,
+     zIndex: 10060,
+-    minWidth: 168,
+-    overflow: "hidden",
+-    fontFamily: tokens.font,
+-  },
+-  menuItem: {
+-    display: "block",
+-    width: "100%",
+-    textAlign: "left",
+-    background: "none",
+-    border: "none",
+-    padding: "8px 12px",
+-    fontSize: 12,
+-    cursor: "pointer",
+-    fontFamily: tokens.font,
+-    color: tokens.text,
+   },
++  menuItem: popupMenuStyles.menuItem,
+   progressBar: {
+     padding: "5px 10px",
+     fontSize: 11,
+@@ -1709,7 +1685,7 @@ const styles: Record<string, React.CSSProperties> = {
+   relatedPanel: {
+     padding: "6px 10px",
+     borderBottom: `1px solid ${tokens.border}`,
+-    background: "#f8fafc",
++    background: tokens.bgMuted,
+   },
+   relatedItem: {
+     display: "block",
+@@ -1724,7 +1700,7 @@ const styles: Record<string, React.CSSProperties> = {
+     color: tokens.accentText,
+   },
+   tagCloudSection: {
+-    borderBottom: "1px solid #f0f0f0",
++    borderBottom: `1px solid ${tokens.border}`,
+   },
+   tagCloudFoldRow: {
+     display: "flex",
+@@ -1737,14 +1713,14 @@ const styles: Record<string, React.CSSProperties> = {
+     flexDirection: "column" as const,
+     gap: 4,
+     padding: "8px 10px",
+-    borderBottom: "1px solid #f0f0f0",
++    borderBottom: `1px solid ${tokens.border}`,
+     background: tokens.bgMuted,
+   },
+   primaryCta: {
+     background: tokens.accent,
+-    color: "#fff",
++    color: tokens.userBubbleText,
+     border: "none",
+-    borderRadius: 6,
++    borderRadius: tokens.radiusSm,
+     padding: "7px 10px",
+     fontSize: 12,
+     fontWeight: 600,
+@@ -1776,8 +1752,8 @@ const styles: Record<string, React.CSSProperties> = {
+     alignItems: "center",
+     gap: 6,
+     padding: "6px 10px",
+-    background: "#fafafa",
+-    borderBottom: "1px solid #f0f0f0",
++    background: tokens.bgMuted,
++    borderBottom: `1px solid ${tokens.border}`,
+     cursor: "pointer",
+     userSelect: "none",
+   },
+@@ -1794,7 +1770,7 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   threadItem: {
+     padding: "8px 12px",
+-    borderBottom: "1px solid #f5f5f5",
++    borderBottom: `1px solid ${tokens.border}`,
+     cursor: "pointer",
+     display: "flex",
+     alignItems: "center",
+@@ -1893,7 +1869,7 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   threadId: {
+     fontSize: 11,
+-    color: "#999",
++    color: tokens.textMuted,
+     fontFamily: "monospace",
+     marginTop: 2,
+   },
+@@ -1907,13 +1883,13 @@ const styles: Record<string, React.CSSProperties> = {
+     justifyContent: "space-between",
+     alignItems: "center",
+     padding: "8px 10px",
+-    borderTop: "1px solid #eee",
+-    background: "#fafafa",
++    borderTop: `1px solid ${tokens.border}`,
++    background: tokens.bgMuted,
+     gap: 8,
+   },
+   dangerBtn: {
+     background: tokens.danger,
+-    color: "#fff",
++    color: tokens.userBubbleText,
+     border: "none",
+     borderRadius: 4,
+     padding: "4px 10px",
+@@ -1921,9 +1897,9 @@ const styles: Record<string, React.CSSProperties> = {
+     cursor: "pointer",
+   },
+   cleanupPanel: {
+-    borderTop: "1px solid #eee",
++    borderTop: `1px solid ${tokens.border}`,
+     padding: "10px",
+-    background: "#fafafa",
++    background: tokens.bgMuted,
+     maxHeight: 260,
+     overflowY: "auto",
+   },
+diff --git a/chrome-extension/src/sidepanel/ui/PanelBanner.tsx b/chrome-extension/src/sidepanel/ui/PanelBanner.tsx
+new file mode 100644
+index 0000000..0e1bc47
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/ui/PanelBanner.tsx
+@@ -0,0 +1,146 @@
++// Unified strip banner for empty / error / disconnected (Phase 3 polish).
++// Tone maps to tokens only — no ad-hoc hex.
++
++import type { CSSProperties, ReactNode } from "react"
++import { tokens } from "./tokens"
++
++export type PanelBannerTone = "warning" | "danger" | "info" | "neutral"
++
++const toneSurface: Record<
++  PanelBannerTone,
++  { bg: string; border: string; iconBg: string }
++> = {
++  warning: {
++    bg: tokens.warningSoft,
++    border: tokens.warning,
++    iconBg: tokens.bgElevated,
++  },
++  danger: {
++    bg: tokens.dangerSoft,
++    border: tokens.danger,
++    iconBg: tokens.bgElevated,
++  },
++  info: {
++    bg: tokens.accentSoft,
++    border: tokens.accent,
++    iconBg: tokens.bgElevated,
++  },
++  neutral: {
++    bg: tokens.bgMuted,
++    border: tokens.borderStrong,
++    iconBg: tokens.bgElevated,
++  },
++}
++
++export function PanelBanner({
++  tone = "warning",
++  title,
++  children,
++  icon,
++  actions,
++  role = "alert",
++}: {
++  tone?: PanelBannerTone
++  title: string
++  children?: ReactNode
++  icon?: ReactNode
++  actions?: ReactNode
++  role?: "alert" | "status"
++}) {
++  const t = toneSurface[tone]
++  return (
++    <div
++      style={{
++        ...styles.container,
++        background: t.bg,
++        borderBottom: `1px solid ${t.border}`,
++      }}
++      role={role}
++    >
++      {icon != null && (
++        <div
++          style={{
++            ...styles.iconWrap,
++            background: t.iconBg,
++            border: `1px solid ${t.border}`,
++          }}
++        >
++          {icon}
++        </div>
++      )}
++      <div style={styles.content}>
++        <h3 style={styles.title}>{title}</h3>
++        {children != null && <div style={styles.body}>{children}</div>}
++        {actions != null && <div style={styles.actions}>{actions}</div>}
++      </div>
++    </div>
++  )
++}
++
++/** Shared primary/secondary buttons for banner actions */
++export const panelBannerBtnStyles: Record<string, CSSProperties> = {
++  primary: {
++    padding: "6px 12px",
++    borderRadius: tokens.radiusSm,
++    border: "none",
++    background: tokens.accent,
++    color: tokens.userBubbleText,
++    cursor: "pointer",
++    fontSize: 12,
++    fontWeight: 600,
++    fontFamily: tokens.font,
++  },
++  secondary: {
++    padding: "6px 12px",
++    borderRadius: tokens.radiusSm,
++    border: `1px solid ${tokens.borderStrong}`,
++    background: tokens.bgElevated,
++    color: tokens.textSecondary,
++    cursor: "pointer",
++    fontSize: 12,
++    fontWeight: 500,
++    fontFamily: tokens.font,
++  },
++}
++
++const styles: Record<string, CSSProperties> = {
++  container: {
++    display: "flex",
++    alignItems: "flex-start",
++    gap: 12,
++    padding: "12px 14px",
++    flexShrink: 0,
++    fontFamily: tokens.font,
++  },
++  iconWrap: {
++    flexShrink: 0,
++    marginTop: 1,
++    width: 32,
++    height: 32,
++    borderRadius: tokens.radiusMd,
++    display: "flex",
++    alignItems: "center",
++    justifyContent: "center",
++  },
++  content: {
++    flex: 1,
++    minWidth: 0,
++  },
++  title: {
++    margin: "0 0 4px",
++    fontSize: 13,
++    fontWeight: 650,
++    color: tokens.text,
++  },
++  body: {
++    margin: "0 0 10px",
++    fontSize: 12,
++    color: tokens.textSecondary,
++    lineHeight: 1.5,
++  },
++  actions: {
++    display: "flex",
++    gap: 8,
++    flexWrap: "wrap",
++  },
++}
+diff --git a/chrome-extension/src/sidepanel/ui/SectionHeader.tsx b/chrome-extension/src/sidepanel/ui/SectionHeader.tsx
+new file mode 100644
+index 0000000..21893bc
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/ui/SectionHeader.tsx
+@@ -0,0 +1,56 @@
++// Shared secondary-panel section header (Precision Instrument Phase 2b).
++// Type scale: title 13 / meta 11. Hairline bottom — no emoji chrome.
++
++import type { CSSProperties, ReactNode } from "react"
++import { tokens } from "./tokens"
++
++export function SectionHeader({
++  title,
++  meta,
++  action,
++  style,
++}: {
++  title: string
++  /** Right-side meta (count, status) */
++  meta?: ReactNode
++  /** Optional action control (button) */
++  action?: ReactNode
++  style?: CSSProperties
++}) {
++  return (
++    <div style={{ ...styles.row, ...style }} data-section-header={title}>
++      <div style={styles.title}>{title}</div>
++      {meta != null && <div style={styles.meta}>{meta}</div>}
++      {action != null && <div style={styles.action}>{action}</div>}
++    </div>
++  )
++}
++
++const styles: Record<string, CSSProperties> = {
++  row: {
++    display: "flex",
++    alignItems: "center",
++    gap: 8,
++    padding: "8px 0 6px",
++    marginBottom: 4,
++    borderBottom: `1px solid ${tokens.border}`,
++    fontFamily: tokens.font,
++  },
++  title: {
++    flex: 1,
++    minWidth: 0,
++    fontSize: 13,
++    fontWeight: 600,
++    color: tokens.text,
++    letterSpacing: "-0.01em",
++  },
++  meta: {
++    flexShrink: 0,
++    fontSize: 11,
++    fontWeight: 500,
++    color: tokens.textMuted,
++  },
++  action: {
++    flexShrink: 0,
++  },
++}
+diff --git a/chrome-extension/src/sidepanel/ui/popupMenuStyles.ts b/chrome-extension/src/sidepanel/ui/popupMenuStyles.ts
+new file mode 100644
+index 0000000..d4bf21f
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/ui/popupMenuStyles.ts
+@@ -0,0 +1,63 @@
++// Shared popup menu chrome — StatusRail ⋯ and ThreadList ⋯ (Phase 2b density).
++// Keep padding / type / radius in lock-step.
++
++import type { CSSProperties } from "react"
++import { tokens } from "./tokens"
++
++export const popupMenuStyles: Record<string, CSSProperties> = {
++  menu: {
++    minWidth: 200,
++    maxHeight: 360,
++    overflowY: "auto",
++    background: tokens.bgElevated,
++    border: `1px solid ${tokens.borderStrong}`,
++    borderRadius: tokens.radiusMenu,
++    boxShadow: tokens.shadowLg,
++    padding: 6,
++    display: "flex",
++    flexDirection: "column",
++    gap: 1,
++    fontFamily: tokens.font,
++  },
++  menuItem: {
++    border: "none",
++    background: "transparent",
++    borderRadius: tokens.radiusMd,
++    padding: "9px 11px",
++    fontSize: 12,
++    fontWeight: 500,
++    cursor: "pointer",
++    display: "flex",
++    alignItems: "center",
++    gap: 9,
++    color: tokens.text,
++    textAlign: "left",
++    width: "100%",
++    fontFamily: tokens.font,
++  },
++  menuDivider: {
++    height: 1,
++    background: tokens.border,
++    margin: "5px 8px",
++  },
++  /** Icon trigger (⋯) matching StatusRail iconBtn density */
++  menuTrigger: {
++    width: 32,
++    height: 32,
++    borderRadius: tokens.radiusMd,
++    border: `1px solid ${tokens.border}`,
++    background: tokens.bgElevated,
++    color: tokens.textSecondary,
++    cursor: "pointer",
++    flexShrink: 0,
++    display: "flex",
++    alignItems: "center",
++    justifyContent: "center",
++    padding: 0,
++    boxShadow: tokens.shadowSm,
++    fontSize: 14,
++    lineHeight: 1,
++    fontFamily: tokens.font,
++    transition: `background ${tokens.transitionFast}, border-color ${tokens.transitionFast}`,
++  },
++}
+diff --git a/chrome-extension/src/sidepanel/ui/tokens.ts b/chrome-extension/src/sidepanel/ui/tokens.ts
+index 3722a95..2e4296b 100644
+--- a/chrome-extension/src/sidepanel/ui/tokens.ts
++++ b/chrome-extension/src/sidepanel/ui/tokens.ts
+@@ -66,9 +66,9 @@ export const tokens = {
+   assistantBubbleBg: "#ffffff",
+   assistantBubbleText: "#0f172a",
+ 
+-  // Motion (Phase 1 freeze — Phase 3 may tighten)
+-  transitionFast: "150ms",
+-  transition: "220ms",
++  // Motion (Phase 3 — tightened from 150/220)
++  transitionFast: "120ms",
++  transition: "180ms",
+ 
+   // Shape: controls 6/8/12; composer/bubble 14 (instrument, not pill-toy)
+   radiusSm: 6,
+diff --git a/docs/DESIGN.md b/docs/DESIGN.md
+index bd2dba8..f554d3e 100644
+--- a/docs/DESIGN.md
++++ b/docs/DESIGN.md
+@@ -156,9 +156,14 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
+ - Hierarchy: **stream first, status second, assembly third**
+ 
+ ### Motion
+-- Phase 1 freeze: `transitionFast` 150ms / `transition` 220ms (tighten in Phase 3)
++- Phase 3: `transitionFast` **120ms** / `transition` **180ms**
+ - LIVE pulse on Cockpit L2 chip only; **`prefers-reduced-motion: reduce` disables animations** (Panel App + Cockpit shell)
+ 
++### Shared chrome (Phase 2b)
++- `SectionHeader` — secondary panel section titles (13/600)
++- `popupMenuStyles` — ⋯ menus (StatusRail / ThreadList / MCP / Apps)
++- `PanelBanner` — disconnected / warn / danger / info strips
++
+ ---
+ 
+-*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B; **Precision Instrument Desk Phase 1** shell (flat canvas, radius 14/16, no glass); **Phase 2a** Settings/MCP/Apps/Packs secondary panels token-only (no ad-hoc product hex).*
++*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B; **Precision Instrument Desk** Phase 1 shell + Phase 2a tokens + Phase 2b density + Phase 3 motion/banners.*
+diff --git a/docs/superpowers/specs/2026-08-11-sidepanel-precision-instrument-redesign.md b/docs/superpowers/specs/2026-08-11-sidepanel-precision-instrument-redesign.md
+index 0eae23f..c44875c 100644
+--- a/docs/superpowers/specs/2026-08-11-sidepanel-precision-instrument-redesign.md
++++ b/docs/superpowers/specs/2026-08-11-sidepanel-precision-instrument-redesign.md
+@@ -3,7 +3,7 @@
+ | Field | Value |
+ |-------|--------|
+ | Date | 2026-08-11 |
+-| Status | **Phase 1 MERGED (#168)** · **Phase 2a token purge (in progress)** · Phase 2b section-header / ThreadList density still open |
++| Status | **Phase 1 MERGED (#168)** · **Phase 2a MERGED (#170)** · **Phase 2b+3** (SectionHeader / popup menus / motion / PanelBanner) |
+ | Mode | **Operate** (~320px Side Panel) |
+ | Direction | **精密仪器台**（用户授权「你定方向」） |
+ | Rhythm | 设计 dual-review → 分 PR 落地（用户选「稳」） |
+@@ -116,10 +116,19 @@ Mechanical hex → `tokens.*` on secondary surfaces (no layout rewrite):
+ 
+ **Out of 2a:** shared `SectionHeader` component, ThreadList menu density (2b), Phase 3 motion.
+ 
++#### Phase 2b — shared chrome density
++
++| Deliverable | Location |
++|-------------|----------|
++| `SectionHeader` | `sidepanel/ui/SectionHeader.tsx` — title 13/600 + meta 11 |
++| `popupMenuStyles` | `sidepanel/ui/popupMenuStyles.ts` — StatusRail + ThreadList + MCP/Apps menus |
++| SettingsSection title | 13/600 (was 14/700) |
++| ThreadList residual hex | tokens only |
++
+ ### Phase 3 — Motion & polish
+ 
+-- reduced-motion already global; tighten transitions to 120–180ms  
+-- Empty / error / disconnected banners unified  
++- reduced-motion already global; tighten transitions to **120 / 180ms** (`tokens.transitionFast` / `transition`)  
++- Empty / error / disconnected banners unified → `PanelBanner` (`ui/PanelBanner.tsx`); DisconnectedBanner wired  
+ 
+ ---
+ 
+diff --git a/memory/session.md b/memory/session.md
+index a85d255..4cf1aac 100644
+--- a/memory/session.md
++++ b/memory/session.md
+@@ -2,6 +2,14 @@
+ 
+ ## Current Session
+ 
++### S66 cont (2026-08-11) [Phase 2a token purge → PR #170]
++- **After #168/#169 MERGED** (`dd77915`): continue Precision Instrument Phase 2
++- **Phase 2a**: Settings/MCP/Apps/Packs hex→tokens; Graph residual edges; r1 Claude REJECT (dark code block) → nits → r2 both APPROVE_WITH_NITS
++- **PR #170** https://github.com/nehcuh/cmspark/pull/170 · branch `feat/sidepanel-precision-p2a-token-purge`
++- **tests** 622 pass; dual r2 both_ok
++- **下次**: CI 绿合 #170；Phase 2b SectionHeader + ThreadList density；Phase 3 motion
++- Recorded: yes
++
+ ### S65 END (2026-08-11 ~15:50–16:05) [default workspace sandbox Scheme 1 · #165/#166 MERGED]
+ - **产品**：未绑 `workspace_root` 时 `workspace_*` 默认 `~/CMspark-projects`（不写 thread）；显式 pick 优先；shell cwd 不跟
+ - **Ship**：**#165** `ec6d0f5` Scheme 1 + dual APPROVE_WITH_NITS → **#166** `06fcd96` nits（catalog/ChatView/symlink/chmod/`resolveEffectiveWorkspaceRoot`/docs）

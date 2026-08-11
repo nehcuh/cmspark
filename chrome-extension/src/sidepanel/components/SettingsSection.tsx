@@ -76,10 +76,11 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   title: {
-    fontSize: 14,
-    fontWeight: 700,
+    fontSize: 13,
+    fontWeight: 600,
     color: tokens.text,
     flex: 1,
+    letterSpacing: "-0.01em",
   },
   badgeSlot: {
     flexShrink: 0,

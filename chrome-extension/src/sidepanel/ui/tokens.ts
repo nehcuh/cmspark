@@ -66,9 +66,9 @@ export const tokens = {
   assistantBubbleBg: "#ffffff",
   assistantBubbleText: "#0f172a",
 
-  // Motion (Phase 1 freeze — Phase 3 may tighten)
-  transitionFast: "150ms",
-  transition: "220ms",
+  // Motion (Phase 3 — tightened from 150/220)
+  transitionFast: "120ms",
+  transition: "180ms",
 
   // Shape: controls 6/8/12; composer/bubble 14 (instrument, not pill-toy)
   radiusSm: 6,

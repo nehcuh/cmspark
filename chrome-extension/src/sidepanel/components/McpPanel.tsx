@@ -6,6 +6,7 @@ import { useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { McpServerMeta, McpSelectionMode } from "../types"
 import { tokens } from "../ui/tokens"
+import { popupMenuStyles } from "../ui/popupMenuStyles"
 
 const STATUS_COLORS: Record<string, string> = {
   connected: tokens.success,
@@ -474,31 +475,14 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: -1,
   },
   menuDropdown: {
-    position: "absolute",
+    ...popupMenuStyles.menu,
+    position: "absolute" as const,
     right: 0,
     top: "100%",
     zIndex: 10,
-    background: tokens.bgElevated,
-    border: `1px solid ${tokens.borderStrong}`,
-    borderRadius: tokens.radiusMenu,
-    boxShadow: tokens.shadowLg,
     minWidth: 100,
-    padding: 4,
-    overflow: "hidden",
   },
-  menuItem: {
-    display: "block",
-    width: "100%",
-    padding: "8px 12px",
-    border: "none",
-    borderRadius: tokens.radiusMd,
-    background: "transparent",
-    cursor: "pointer",
-    fontSize: 12,
-    textAlign: "left",
-    color: tokens.text,
-    fontFamily: tokens.font,
-  },
+  menuItem: popupMenuStyles.menuItem,
   cardExpanded: {
     marginTop: 8,
     paddingTop: 8,
