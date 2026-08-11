@@ -418,20 +418,15 @@ export function StatusRail({
               <IconSettings size={14} />
               <span>密钥与环境</span>
             </button>
+            {/* Discoverability: slash/copy only — no L0 Board Host entry; Board stays Autonomy (/board).
+                BottomBar「更多」is gated off (ui.bottomBarStrip=false); never claim that path. */}
             <div style={railStyles.menuDivider} />
-            <button
-              type="button"
-              role="menuitem"
-              style={{ ...railStyles.menuItem, color: tokens.textMuted, fontSize: 11 }}
-              onClick={() => {
-                closeMenu()
-                onToast?.(
-                  "场景 / 任务板已移至底栏「更多」— 主栏仅保留当前模式高频入口",
-                )
-              }}
+            <div
+              role="note"
+              style={{ ...railStyles.menuItem, color: tokens.textMuted, fontSize: 11, cursor: "default" }}
             >
-              <span>关于「更多」面板</span>
-            </button>
+              <span>场景：装配或 /场景 · 任务板：/board</span>
+            </div>
           </div>
         )}
       </div>

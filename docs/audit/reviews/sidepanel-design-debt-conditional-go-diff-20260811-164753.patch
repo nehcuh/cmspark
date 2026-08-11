@@ -1,0 +1,51 @@
+# Dual external review context
+batch: sidepanel-design-debt-conditional-go
+base: HEAD
+time: 20260811-164753
+
+6d95973
+
+ M .gitignore
+?? .grok/hooks/
+?? .grok/skills/
+?? .impeccable/
+?? docs/audit/reviews/sidepanel-design-debt-conditional-go-diff-20260811-164753.patch
+?? docs/audit/reviews/sidepanel-design-debt-conditional-go-dual-review-prompt-20260811.md
+?? docs/superpowers/specs/2026-08-11-sidepanel-design-debt-conditional-go.md
+
+## Diff (git diff + staged)
+ .gitignore | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/.gitignore b/.gitignore
+index d4724a4..2907a1f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -51,6 +51,27 @@ companion/sql-wasm.wasm
+ .superpowers/
+ .grok/sessions/
+ 
++# impeccable-ignore-start
++# Ephemeral output, runtime state, and per-dev overrides.
++# Shared artifacts stay tracked: config.json, live/config.json,
++# design.json, critique/*.md.
++.impeccable/config.local.json
++.impeccable/hook.cache.json
++.impeccable/hook.pending.json
++.impeccable/*.png
++.impeccable/live/server.json
++.impeccable/live/sessions/
++.impeccable/live/previews/
++.impeccable/live/annotations/
++.impeccable/live/cache/
++.impeccable/live/manual-edit-apply-transaction.json
++.impeccable/live/manual-edit-events.jsonl
++.impeccable/live/manual-edit-evidence/
++.impeccable/live/pending-manual-edits.json
++.impeccable/live/deferred-svelte-component-accepts.json
++.impeccable/live/*.png
++# impeccable-ignore-end
++
+ # Dual-review stderr dumps (keep .md reviews; drop .err)
+ docs/audit/reviews/*.err
+ 

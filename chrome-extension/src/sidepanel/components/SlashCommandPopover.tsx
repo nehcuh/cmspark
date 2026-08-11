@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useMemo, useState, useCallback } from "react"
 import type { SkillMeta } from "../types"
+import { tokens } from "../ui/tokens"
 
 export interface SlashCommandPopoverProps {
   skills: SkillMeta[]
@@ -375,11 +376,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   emptyText: {
     fontSize: 13,
-    color: "#999",
+    color: tokens.textSecondary,
   },
   emptyHint: {
     fontSize: 11,
-    color: "#bbb",
+    color: tokens.textMuted,
     marginTop: 4,
   },
 }

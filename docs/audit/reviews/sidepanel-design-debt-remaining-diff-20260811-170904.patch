@@ -1,0 +1,466 @@
+# Dual external review context
+batch: sidepanel-design-debt-remaining
+base: HEAD
+time: 20260811-170904
+
+6d95973
+
+ M .gitignore
+ M chrome-extension/src/sidepanel/components/AppsPanel.tsx
+ M chrome-extension/src/sidepanel/components/AtThreadPopover.tsx
+ M chrome-extension/src/sidepanel/components/BoardPanel.tsx
+ M chrome-extension/src/sidepanel/components/ChatView.tsx
+ M chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
+ M chrome-extension/src/sidepanel/components/FleetStrip.tsx
+ M chrome-extension/src/sidepanel/components/FleetWorkerList.tsx
+ M chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+ M chrome-extension/src/sidepanel/components/McpPanel.tsx
+ M chrome-extension/src/sidepanel/components/NetSecSettingsSection.tsx
+ M chrome-extension/src/sidepanel/components/PacksPanel.tsx
+ M chrome-extension/src/sidepanel/components/SettingsIntentBar.tsx
+ M chrome-extension/src/sidepanel/components/SlashCommandPopover.tsx
+ M chrome-extension/src/sidepanel/components/StatusRail.tsx
+ M chrome-extension/src/sidepanel/components/ThreadList.tsx
+ M docs/DESIGN.md
+?? .grok/hooks/
+?? .grok/skills/
+?? .grok/workflows/sidepanel-design-debt-w123.rhai
+?? .impeccable/
+?? docs/audit/reviews/sidepanel-design-debt-conditional-go-claude-20260811-164753.md
+?? docs/audit/reviews/sidepanel-design-debt-conditional-go-diff-20260811-164753.patch
+?? docs/audit/reviews/sidepanel-design-debt-conditional-go-dual-review-prompt-20260811.md
+?? docs/audit/reviews/sidepanel-design-debt-conditional-go-pi-20260811-164753.md
+?? docs/audit/reviews/sidepanel-design-debt-conditional-go-verdict-20260811-164753.json
+?? docs/audit/reviews/sidepanel-design-debt-remaining-diff-20260811-170904.patch
+?? docs/audit/reviews/sidepanel-design-debt-remaining-dual-review-prompt-20260811.md
+?? docs/superpowers/specs/2026-08-11-sidepanel-design-debt-conditional-go.md
+?? docs/superpowers/specs/2026-08-11-sidepanel-design-debt-remaining-w4-hex.md
+
+## Diff (git diff + staged)
+ .gitignore                                         | 21 ++++++++
+ .../src/sidepanel/components/AppsPanel.tsx         |  4 +-
+ .../src/sidepanel/components/AtThreadPopover.tsx   |  2 +-
+ .../src/sidepanel/components/BoardPanel.tsx        |  2 +-
+ .../src/sidepanel/components/ChatView.tsx          |  4 +-
+ .../src/sidepanel/components/ContextPanelHost.tsx  |  2 +-
+ .../src/sidepanel/components/FleetStrip.tsx        |  2 +-
+ .../src/sidepanel/components/FleetWorkerList.tsx   |  2 +-
+ .../src/sidepanel/components/KnowledgeSubPanel.tsx |  2 +-
+ .../src/sidepanel/components/McpPanel.tsx          |  4 +-
+ .../sidepanel/components/NetSecSettingsSection.tsx |  2 +-
+ .../src/sidepanel/components/PacksPanel.tsx        |  2 +-
+ .../src/sidepanel/components/SettingsIntentBar.tsx |  2 +-
+ .../sidepanel/components/SlashCommandPopover.tsx   |  5 +-
+ .../src/sidepanel/components/StatusRail.tsx        | 19 +++----
+ .../src/sidepanel/components/ThreadList.tsx        |  8 +--
+ docs/DESIGN.md                                     | 59 ++++++++++++----------
+ 17 files changed, 82 insertions(+), 60 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index d4724a4..2907a1f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -51,6 +51,27 @@ companion/sql-wasm.wasm
+ .superpowers/
+ .grok/sessions/
+ 
++# impeccable-ignore-start
++# Ephemeral output, runtime state, and per-dev overrides.
++# Shared artifacts stay tracked: config.json, live/config.json,
++# design.json, critique/*.md.
++.impeccable/config.local.json
++.impeccable/hook.cache.json
++.impeccable/hook.pending.json
++.impeccable/*.png
++.impeccable/live/server.json
++.impeccable/live/sessions/
++.impeccable/live/previews/
++.impeccable/live/annotations/
++.impeccable/live/cache/
++.impeccable/live/manual-edit-apply-transaction.json
++.impeccable/live/manual-edit-events.jsonl
++.impeccable/live/manual-edit-evidence/
++.impeccable/live/pending-manual-edits.json
++.impeccable/live/deferred-svelte-component-accepts.json
++.impeccable/live/*.png
++# impeccable-ignore-end
++
+ # Dual-review stderr dumps (keep .md reviews; drop .err)
+ docs/audit/reviews/*.err
+ 
+diff --git a/chrome-extension/src/sidepanel/components/AppsPanel.tsx b/chrome-extension/src/sidepanel/components/AppsPanel.tsx
+index aa62d13..3195e4c 100644
+--- a/chrome-extension/src/sidepanel/components/AppsPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/AppsPanel.tsx
+@@ -893,12 +893,12 @@ const styles: Record<string, React.CSSProperties> = {
+     padding: "16px 8px",
+     textAlign: "center",
+     fontSize: 12,
+-    color: "#888",
++    color: tokens.textSecondary,
+     lineHeight: 1.5,
+   },
+   emptyMini: {
+     fontSize: 11,
+-    color: "#999",
++    color: tokens.textSecondary,
+     fontStyle: "italic",
+     padding: "6px 2px",
+   },
+diff --git a/chrome-extension/src/sidepanel/components/AtThreadPopover.tsx b/chrome-extension/src/sidepanel/components/AtThreadPopover.tsx
+index ec67339..7bc76e0 100644
+--- a/chrome-extension/src/sidepanel/components/AtThreadPopover.tsx
++++ b/chrome-extension/src/sidepanel/components/AtThreadPopover.tsx
+@@ -122,7 +122,7 @@ export function AtThreadPopover({
+   if (matches.length === 0) {
+     return (
+       <div style={{ ...style, padding: 12, textAlign: "center" }} ref={popoverRef}>
+-        <div style={{ fontSize: 12, color: tokens.textMuted }}>无匹配会话</div>
++        <div style={{ fontSize: 12, color: tokens.textSecondary }}>无匹配会话</div>
+       </div>
+     )
+   }
+diff --git a/chrome-extension/src/sidepanel/components/BoardPanel.tsx b/chrome-extension/src/sidepanel/components/BoardPanel.tsx
+index 57de4e0..657fb46 100644
+--- a/chrome-extension/src/sidepanel/components/BoardPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/BoardPanel.tsx
+@@ -200,7 +200,7 @@ const s: Record<string, React.CSSProperties> = {
+     cursor: "pointer",
+     fontSize: 11,
+   },
+-  empty: { fontSize: 11, color: tokens.textMuted, padding: "4px 0" },
++  empty: { fontSize: 11, color: tokens.textSecondary, padding: "4px 0" },
+   err: { fontSize: 11, color: "#b91c1c", marginBottom: 6 },
+   meta: {
+     padding: 8,
+diff --git a/chrome-extension/src/sidepanel/components/ChatView.tsx b/chrome-extension/src/sidepanel/components/ChatView.tsx
+index 0fe7316..b15fca2 100644
+--- a/chrome-extension/src/sidepanel/components/ChatView.tsx
++++ b/chrome-extension/src/sidepanel/components/ChatView.tsx
+@@ -1598,7 +1598,7 @@ const styles: Record<string, React.CSSProperties> = {
+     minHeight: "min-content",
+   },
+   empty: {
+-    color: tokens.textMuted,
++    color: tokens.textSecondary,
+     textAlign: "center",
+     padding: "56px 20px 28px",
+     fontSize: 13,
+@@ -1609,7 +1609,7 @@ const styles: Record<string, React.CSSProperties> = {
+     fontWeight: 600,
+     letterSpacing: "0.06em",
+     textTransform: "uppercase" as const,
+-    color: tokens.textMuted,
++    color: tokens.textSecondary,
+     marginBottom: 10,
+   },
+   emptyTitle: {
+diff --git a/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx b/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
+index abed86b..2b933e7 100644
+--- a/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
++++ b/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
+@@ -918,7 +918,7 @@ const styles: Record<string, React.CSSProperties> = {
+     padding: "10px 12px",
+   },
+   emptyText: {
+-    color: tokens.textMuted,
++    color: tokens.textSecondary,
+     fontSize: 12,
+     textAlign: "center",
+     padding: 12,
+diff --git a/chrome-extension/src/sidepanel/components/FleetStrip.tsx b/chrome-extension/src/sidepanel/components/FleetStrip.tsx
+index d96b516..a32a7c8 100644
+--- a/chrome-extension/src/sidepanel/components/FleetStrip.tsx
++++ b/chrome-extension/src/sidepanel/components/FleetStrip.tsx
+@@ -374,7 +374,7 @@ const styles: Record<string, React.CSSProperties> = {
+     color: tokens.textMuted,
+     margin: "6px 0 4px",
+   },
+-  empty: { fontSize: 10, color: tokens.textMuted, padding: "4px 0" },
++  empty: { fontSize: 10, color: tokens.textSecondary, padding: "4px 0" },
+   list: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 },
+   item: {
+     border: `1px solid ${tokens.border || "#e5e7eb"}`,
+diff --git a/chrome-extension/src/sidepanel/components/FleetWorkerList.tsx b/chrome-extension/src/sidepanel/components/FleetWorkerList.tsx
+index e1c868c..36b0122 100644
+--- a/chrome-extension/src/sidepanel/components/FleetWorkerList.tsx
++++ b/chrome-extension/src/sidepanel/components/FleetWorkerList.tsx
+@@ -305,7 +305,7 @@ const styles: Record<string, React.CSSProperties> = {
+     color: tokens.textMuted,
+     margin: "4px 0 6px",
+   },
+-  empty: { fontSize: 10, color: tokens.textMuted, padding: "6px 0" },
++  empty: { fontSize: 10, color: tokens.textSecondary, padding: "6px 0" },
+   list: {
+     listStyle: "none",
+     margin: 0,
+diff --git a/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx b/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+index eb93d92..f49b856 100644
+--- a/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+@@ -703,7 +703,7 @@ const styles: Record<string, React.CSSProperties> = {
+     fontFamily: tokens.font,
+   },
+   emptyText: {
+-    color: tokens.textMuted,
++    color: tokens.textSecondary,
+     fontSize: 12,
+     textAlign: "center",
+     padding: 12,
+diff --git a/chrome-extension/src/sidepanel/components/McpPanel.tsx b/chrome-extension/src/sidepanel/components/McpPanel.tsx
+index 49fcfa3..3b74fd7 100644
+--- a/chrome-extension/src/sidepanel/components/McpPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/McpPanel.tsx
+@@ -385,7 +385,7 @@ const styles: Record<string, React.CSSProperties> = {
+     padding: "16px 8px",
+     textAlign: "center",
+     fontSize: 12,
+-    color: "#888",
++    color: tokens.textSecondary,
+     lineHeight: 1.5,
+   },
+   serverCard: {
+@@ -516,7 +516,7 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   emptyMini: {
+     fontSize: 11,
+-    color: "#999",
++    color: tokens.textSecondary,
+     fontStyle: "italic",
+   },
+   toolRow: {
+diff --git a/chrome-extension/src/sidepanel/components/NetSecSettingsSection.tsx b/chrome-extension/src/sidepanel/components/NetSecSettingsSection.tsx
+index ba139a4..42a9907 100644
+--- a/chrome-extension/src/sidepanel/components/NetSecSettingsSection.tsx
++++ b/chrome-extension/src/sidepanel/components/NetSecSettingsSection.tsx
+@@ -366,7 +366,7 @@ const styles: Record<string, CSSProperties> = {
+     padding: 10,
+     background: tokens.bg,
+   },
+-  empty: { fontSize: 11, color: tokens.textMuted, marginBottom: 8 },
++  empty: { fontSize: 11, color: tokens.textSecondary, marginBottom: 8 },
+   chipList: { listStyle: "none", margin: 0, padding: 0, marginBottom: 8 },
+   chipRow: {
+     display: "flex",
+diff --git a/chrome-extension/src/sidepanel/components/PacksPanel.tsx b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+index 489ba9a..d58c0e9 100644
+--- a/chrome-extension/src/sidepanel/components/PacksPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+@@ -1631,7 +1631,7 @@ const styles: Record<string, import("react").CSSProperties> = {
+   },
+   modOn: { fontSize: 11, color: tokens.textSecondary, marginBottom: 4 },
+   hint: { fontSize: 10, color: tokens.textMuted, marginBottom: 6, lineHeight: 1.35 },
+-  empty: { color: tokens.textMuted, fontSize: 11, padding: "4px 0" },
++  empty: { color: tokens.textSecondary, fontSize: 11, padding: "4px 0" },
+   list: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 },
+   item: {
+     border: `1px solid ${tokens.border || "#e5e7eb"}`,
+diff --git a/chrome-extension/src/sidepanel/components/SettingsIntentBar.tsx b/chrome-extension/src/sidepanel/components/SettingsIntentBar.tsx
+index 5f27365..cb4b8e1 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsIntentBar.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsIntentBar.tsx
+@@ -173,7 +173,7 @@ const styles: Record<string, CSSProperties> = {
+   status: {
+     marginTop: 6,
+     fontSize: 11,
+-    color: tokens.accent || "#2563eb",
++    color: tokens.accent,
+     lineHeight: 1.4,
+   },
+ }
+diff --git a/chrome-extension/src/sidepanel/components/SlashCommandPopover.tsx b/chrome-extension/src/sidepanel/components/SlashCommandPopover.tsx
+index 600bfea..15bee9f 100644
+--- a/chrome-extension/src/sidepanel/components/SlashCommandPopover.tsx
++++ b/chrome-extension/src/sidepanel/components/SlashCommandPopover.tsx
+@@ -2,6 +2,7 @@
+ 
+ import { useEffect, useRef, useMemo, useState, useCallback } from "react"
+ import type { SkillMeta } from "../types"
++import { tokens } from "../ui/tokens"
+ 
+ export interface SlashCommandPopoverProps {
+   skills: SkillMeta[]
+@@ -375,11 +376,11 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   emptyText: {
+     fontSize: 13,
+-    color: "#999",
++    color: tokens.textSecondary,
+   },
+   emptyHint: {
+     fontSize: 11,
+-    color: "#bbb",
++    color: tokens.textMuted,
+     marginTop: 4,
+   },
+ }
+diff --git a/chrome-extension/src/sidepanel/components/StatusRail.tsx b/chrome-extension/src/sidepanel/components/StatusRail.tsx
+index 600e406..2fc6fba 100644
+--- a/chrome-extension/src/sidepanel/components/StatusRail.tsx
++++ b/chrome-extension/src/sidepanel/components/StatusRail.tsx
+@@ -418,20 +418,15 @@ export function StatusRail({
+               <IconSettings size={14} />
+               <span>密钥与环境</span>
+             </button>
++            {/* Discoverability: slash/copy only — no L0 Board Host entry; Board stays Autonomy (/board).
++                BottomBar「更多」is gated off (ui.bottomBarStrip=false); never claim that path. */}
+             <div style={railStyles.menuDivider} />
+-            <button
+-              type="button"
+-              role="menuitem"
+-              style={{ ...railStyles.menuItem, color: tokens.textMuted, fontSize: 11 }}
+-              onClick={() => {
+-                closeMenu()
+-                onToast?.(
+-                  "场景 / 任务板已移至底栏「更多」— 主栏仅保留当前模式高频入口",
+-                )
+-              }}
++            <div
++              role="note"
++              style={{ ...railStyles.menuItem, color: tokens.textMuted, fontSize: 11, cursor: "default" }}
+             >
+-              <span>关于「更多」面板</span>
+-            </button>
++              <span>场景：装配或 /场景 · 任务板：/board</span>
++            </div>
+           </div>
+         )}
+       </div>
+diff --git a/chrome-extension/src/sidepanel/components/ThreadList.tsx b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+index 69641d2..1e9e325 100644
+--- a/chrome-extension/src/sidepanel/components/ThreadList.tsx
++++ b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+@@ -933,7 +933,7 @@ export function ThreadList() {
+         {timeline.months.map(renderMonth)}
+ 
+         {filtered.length === 0 && (
+-          <div style={{ color: tokens.textMuted, fontSize: 12, padding: 12, textAlign: "center" }}>
++          <div style={{ color: tokens.textSecondary, fontSize: 12, padding: 12, textAlign: "center" }}>
+             {threads.length === 0 ? "暂无线程，点击「+ 新建」" : "无匹配线程"}
+           </div>
+         )}
+@@ -960,7 +960,7 @@ export function ThreadList() {
+         <div style={styles.tagCloudSection}>
+           <div style={styles.tagCloud}>
+             {tagKeys.length === 0 && untagged.length === 0 && (
+-              <div style={{ color: tokens.textMuted, fontSize: 12, padding: 8 }}>
++              <div style={{ color: tokens.textSecondary, fontSize: 12, padding: 8 }}>
+                 暂无标签。使用下方按钮为会话提取要点与标签。
+               </div>
+             )}
+@@ -1260,7 +1260,7 @@ export function ThreadList() {
+                   </button>
+                 </div>
+                 {relatedHits.length === 0 ? (
+-                  <div style={{ fontSize: 11, color: tokens.textMuted }}>
++                  <div style={{ fontSize: 11, color: tokens.textSecondary }}>
+                     暂无相关会话（需更多标签/要点）
+                   </div>
+                 ) : (
+@@ -1525,7 +1525,7 @@ export function ThreadList() {
+                     边 = 共标签 + 要点相似 + 时间邻近 · 不改默认时间轴导航
+                   </div>
+                   {graphEdges.length === 0 ? (
+-                    <div style={{ fontSize: 12, color: tokens.textMuted, padding: 12 }}>
++                    <div style={{ fontSize: 12, color: tokens.textSecondary, padding: 12 }}>
+                       暂无足够 digest 边。请先为会话提取要点/标签。
+                     </div>
+                   ) : (
+diff --git a/docs/DESIGN.md b/docs/DESIGN.md
+index a5af625..e3b8fc4 100644
+--- a/docs/DESIGN.md
++++ b/docs/DESIGN.md
+@@ -4,38 +4,43 @@
+ 
+ ## Colors
+ 
+-Canonical source: `chrome-extension/src/sidepanel/ui/tokens.ts` (+ `riskColor` / `statusColor` / `connectionColor*` helpers).
++**Sole hex source of truth:** `chrome-extension/src/sidepanel/ui/tokens.ts` (+ `riskColor` / `statusColor` / `connectionColor*` helpers).  
++Specs and this doc map **role → `tokens.*` only**. Do not copy hex into tables here — read live values from `tokens.ts`.
+ 
+ ### Semantic roles (UIUX v2 §5.2 — intent, not raw hex)
+ 
+ Use role names in specs and AI implementer prompts. **Implement with the mapped `tokens.*` fields** (TS object uses camelCase; roles below are the design-intent names).
+ 
+-| Role | Light (`tokens.*`) | Dark (`tokens.*`) | Light hex | Dark hex |
+-|------|--------------------|-------------------|-----------|----------|
+-| `surface.canvas` | `bg` | `darkBg` | `#fafbfc` | `#0f1115` |
+-| `surface.elevated` | `bgElevated` | `darkElevated` | `#ffffff` | `#161a22` |
+-| `surface.muted` | `bgMuted` | — | `#f3f4f6` | — |
+-| `text.primary` | `text` | `darkText` | `#111827` | `#e8eaed` |
+-| `text.secondary` | `textSecondary` | `darkMuted` | `#4b5563` | `#9aa0a6` |
+-| `text.muted` | `textMuted` | `darkMuted` | `#9ca3af` | `#9aa0a6` |
+-| `border.subtle` | `border` | `darkBorder` | `#e5e7eb` | `#2a2f3a` |
+-| `border.strong` | `borderStrong` | `darkBorder` | `#d1d5db` | `#2a2f3a` |
+-| `accent.primary` | `accent` | `darkAccent` | `#2563eb` | `#5b8def` |
+-| `accent.soft` | `accentSoft` / `bgActive` | — | `#dbeafe` / `#e8f0fe` | — |
+-| `status.live` | `success` | `darkLive` / `darkSuccess` | `#16a34a` | `#4ade80` |
+-| `status.warn` | `warning` | `darkWarning` | `#d97706` | `#fbbf24` |
+-| `status.danger` | `danger` | `darkDanger` | `#dc2626` | `#f87171` |
+-| `risk.high` | `danger` | `darkDanger` | `#dc2626` | `#f87171` |
+-| `risk.medium` | `warning` | `darkWarning` (+ orange mid) | `#d97706` | `#fbbf24` |
+-| `mode.l0` | `modeChatBg` / `modeChatText` | — | `#f3f4f6` / `#374151` | gray chip |
+-| `mode.l1` | `modeBrowserBg` / `modeBrowserText` | — | `#dbeafe` / `#1e40af` | blue soft chip |
+-| `mode.l2` | `modeComputerBg` / `modeComputerText` | LIVE pulse on Cockpit | `#052e16` / `#4ade80` | green-on-dark |
++| Role | Light (`tokens.*`) | Dark (`tokens.*`) |
++|------|--------------------|-------------------|
++| `surface.canvas` | `bg` | `darkBg` |
++| `surface.elevated` | `bgElevated` | `darkElevated` |
++| `surface.muted` | `bgMuted` | — |
++| `text.primary` | `text` | `darkText` |
++| `text.secondary` | `textSecondary` | `darkMuted` |
++| `text.muted` | `textMuted` | `darkMuted` |
++| `border.subtle` | `border` | `darkBorder` |
++| `border.strong` | `borderStrong` | `darkBorder` |
++| `accent.primary` | `accent` | `darkAccent` |
++| `accent.soft` | `accentSoft` / `bgActive` | — |
++| `status.live` | `success` | `darkLive` / `darkSuccess` |
++| `status.warn` | `warning` | `darkWarning` |
++| `status.danger` | `danger` | `darkDanger` |
++| `risk.high` | `danger` | `darkDanger` |
++| `risk.medium` | `warning` | `darkWarning` |
++| `mode.l0` | `modeChatBg` / `modeChatText` | — |
++| `mode.l1` | `modeBrowserBg` / `modeBrowserText` | — |
++| `mode.l2` | `modeComputerBg` / `modeComputerText` | LIVE pulse on Cockpit |
+ 
+ **Legacy aliases (still valid in docs):** Accent = `accent.primary`; Error = `status.danger`; Success = `status.live`; Warning = `status.warn`; Background = `surface.*`; Text / Border as above.
+ 
++**Contrast policy (empty / guidance):** Prefer `tokens.textSecondary` for empty-state copy (`暂无*` / `无匹配*` / ChatView `emptyKicker`). Reserve `tokens.textMuted` for non-essential decorative meta (timestamps, secondary labels).
++
+ Dark surfaces: L2 SafetyStrip / **Cockpit** only. Panel stays light in v2 (K6); tokens for dark are prepared for Cockpit + L2 chrome.
+ 
+-**P2 rule:** do not introduce Material hexes (`#4A90D9`, `#F44336`, `#4CAF50`, …). Prefer `tokens.*`. Secondary panels (Settings/MCP/Apps) may still carry legacy hex — migrate monotonically.
++**P2 rule:** do not introduce Material hexes (`#4A90D9`, `#F44336`, `#4CAF50`, …). Prefer `tokens.*`.
++
++**Lag note (future batch — residual `#2563eb` / legacy accent):** `BoardPanel`, `AppsPanel`, `SettingsIntentBar` may still carry stale blue hex or old accent fallthrough in secondary chrome. Migrate monotonically in a dedicated hex pass; **not** part of bounded design-debt sprint W1–W3. (`SettingsIntentBar` dead `|| "#2563eb"` fallback removed when touched.)
+ 
+ ## Typography
+ 
+@@ -99,7 +104,7 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
+ ### Mode badge (P0)
+ - L0 `聊` · L1 `网页` · L2 `计算机` / `计算机 · LIVE` — see `sidepanel/mode/mode-controller.ts`
+ - **Ontology:** product L0/L1/L2 = Surface axis = UI `CapabilityLevel` `chat|browser|computer` — [ADR-020](adr/020-capability-model-three-axes.md)
+-- L1 header tint: `tokens.modeBrowserBg` (`#dbeafe`)
++- L1 header tint: `tokens.modeBrowserBg`
+ - **BottomBar permanent tab strip (PR5):** gated by `ui.bottomBarStrip` in `sidepanel/ui/flags.ts` — **default `false`**. Host remains SoT; panels open via Composer chips / `/` / 装配. Set flag `true` only for smoke/rollback. Legacy tab sets (if re-enabled): L0 Skills·Know·Hist · L1 Tabs·Skills · L2 empty + overflow「更多」
+ - **ComposerDock chips** (UIUX v2 PR4 §4.4): L0 装配·Skills·Know · L1 装配·Tabs·工作区 · L2 确认台·装配 — open Host / 装配 drawer; **no Abort next to Send**
+ - **装配 P0** bottom-sheet section list → Host (`skills`/`knowledge`/`packs`/`mcp`/`apps`/`history`); Board is Autonomy (`/board` only)
+@@ -118,9 +123,9 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
+ - Known: `cockpitWindowId` is in-memory — SW death may orphan a window until next open (P2)
+ 
+ ### Message Bubbles (P2)
+-- User: `tokens.userBubbleBg` (`#2563eb`) white text
+-- Assistant: `tokens.assistantBubbleBg` (`#f3f4f6`)
+-- Empty: mode-aware L0/L1/L2 copy (see ChatView `EmptyState`)
++- User: `tokens.userBubbleBg` + `tokens.userBubbleText` (values live in `tokens.ts` only — currently indigo accent family, not legacy blue)
++- Assistant: `tokens.assistantBubbleBg` + `tokens.assistantBubbleText`
++- Empty: mode-aware L0/L1/L2 copy (see ChatView `EmptyState`); kicker / guidance use `tokens.textSecondary`
+ 
+ ### Tool Call Card
+ - Border / status via `statusColor()`
+@@ -142,4 +147,4 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
+ 
+ ---
+ 
+-*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar.*
++*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B.*

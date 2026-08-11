@@ -4,38 +4,43 @@
 
 ## Colors
 
-Canonical source: `chrome-extension/src/sidepanel/ui/tokens.ts` (+ `riskColor` / `statusColor` / `connectionColor*` helpers).
+**Sole hex source of truth:** `chrome-extension/src/sidepanel/ui/tokens.ts` (+ `riskColor` / `statusColor` / `connectionColor*` helpers).  
+Specs and this doc map **role → `tokens.*` only**. Do not copy hex into tables here — read live values from `tokens.ts`.
 
 ### Semantic roles (UIUX v2 §5.2 — intent, not raw hex)
 
 Use role names in specs and AI implementer prompts. **Implement with the mapped `tokens.*` fields** (TS object uses camelCase; roles below are the design-intent names).
 
-| Role | Light (`tokens.*`) | Dark (`tokens.*`) | Light hex | Dark hex |
-|------|--------------------|-------------------|-----------|----------|
-| `surface.canvas` | `bg` | `darkBg` | `#fafbfc` | `#0f1115` |
-| `surface.elevated` | `bgElevated` | `darkElevated` | `#ffffff` | `#161a22` |
-| `surface.muted` | `bgMuted` | — | `#f3f4f6` | — |
-| `text.primary` | `text` | `darkText` | `#111827` | `#e8eaed` |
-| `text.secondary` | `textSecondary` | `darkMuted` | `#4b5563` | `#9aa0a6` |
-| `text.muted` | `textMuted` | `darkMuted` | `#9ca3af` | `#9aa0a6` |
-| `border.subtle` | `border` | `darkBorder` | `#e5e7eb` | `#2a2f3a` |
-| `border.strong` | `borderStrong` | `darkBorder` | `#d1d5db` | `#2a2f3a` |
-| `accent.primary` | `accent` | `darkAccent` | `#2563eb` | `#5b8def` |
-| `accent.soft` | `accentSoft` / `bgActive` | — | `#dbeafe` / `#e8f0fe` | — |
-| `status.live` | `success` | `darkLive` / `darkSuccess` | `#16a34a` | `#4ade80` |
-| `status.warn` | `warning` | `darkWarning` | `#d97706` | `#fbbf24` |
-| `status.danger` | `danger` | `darkDanger` | `#dc2626` | `#f87171` |
-| `risk.high` | `danger` | `darkDanger` | `#dc2626` | `#f87171` |
-| `risk.medium` | `warning` | `darkWarning` (+ orange mid) | `#d97706` | `#fbbf24` |
-| `mode.l0` | `modeChatBg` / `modeChatText` | — | `#f3f4f6` / `#374151` | gray chip |
-| `mode.l1` | `modeBrowserBg` / `modeBrowserText` | — | `#dbeafe` / `#1e40af` | blue soft chip |
-| `mode.l2` | `modeComputerBg` / `modeComputerText` | LIVE pulse on Cockpit | `#052e16` / `#4ade80` | green-on-dark |
+| Role | Light (`tokens.*`) | Dark (`tokens.*`) |
+|------|--------------------|-------------------|
+| `surface.canvas` | `bg` | `darkBg` |
+| `surface.elevated` | `bgElevated` | `darkElevated` |
+| `surface.muted` | `bgMuted` | — |
+| `text.primary` | `text` | `darkText` |
+| `text.secondary` | `textSecondary` | `darkMuted` |
+| `text.muted` | `textMuted` | `darkMuted` |
+| `border.subtle` | `border` | `darkBorder` |
+| `border.strong` | `borderStrong` | `darkBorder` |
+| `accent.primary` | `accent` | `darkAccent` |
+| `accent.soft` | `accentSoft` / `bgActive` | — |
+| `status.live` | `success` | `darkLive` / `darkSuccess` |
+| `status.warn` | `warning` | `darkWarning` |
+| `status.danger` | `danger` | `darkDanger` |
+| `risk.high` | `danger` | `darkDanger` |
+| `risk.medium` | `warning` | `darkWarning` |
+| `mode.l0` | `modeChatBg` / `modeChatText` | — |
+| `mode.l1` | `modeBrowserBg` / `modeBrowserText` | — |
+| `mode.l2` | `modeComputerBg` / `modeComputerText` | LIVE pulse on Cockpit |
 
 **Legacy aliases (still valid in docs):** Accent = `accent.primary`; Error = `status.danger`; Success = `status.live`; Warning = `status.warn`; Background = `surface.*`; Text / Border as above.
 
+**Contrast policy (empty / guidance):** Prefer `tokens.textSecondary` for empty-state copy (`暂无*` / `无匹配*` / ChatView `emptyKicker`). Reserve `tokens.textMuted` for non-essential decorative meta (timestamps, secondary labels).
+
 Dark surfaces: L2 SafetyStrip / **Cockpit** only. Panel stays light in v2 (K6); tokens for dark are prepared for Cockpit + L2 chrome.
 
-**P2 rule:** do not introduce Material hexes (`#4A90D9`, `#F44336`, `#4CAF50`, …). Prefer `tokens.*`. Secondary panels (Settings/MCP/Apps) may still carry legacy hex — migrate monotonically.
+**P2 rule:** do not introduce Material hexes (`#4A90D9`, `#F44336`, `#4CAF50`, …). Prefer `tokens.*`.
+
+**Lag note (residual accent hex):** W5 (2026-08-11) mapped Board `tool_verified` → `tokens.accent`, Apps text → `tokens.accentText`, UIA badge bg → `tokens.accentSoft`. `SettingsIntentBar` was already clean (W1–W3). No remaining `#2563eb` product accent on Side Panel named surfaces; OCR gray `#e5e7eb` and mass gray ladders deferred.
 
 ## Typography
 
@@ -99,7 +104,7 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 ### Mode badge (P0)
 - L0 `聊` · L1 `网页` · L2 `计算机` / `计算机 · LIVE` — see `sidepanel/mode/mode-controller.ts`
 - **Ontology:** product L0/L1/L2 = Surface axis = UI `CapabilityLevel` `chat|browser|computer` — [ADR-020](adr/020-capability-model-three-axes.md)
-- L1 header tint: `tokens.modeBrowserBg` (`#dbeafe`)
+- L1 header tint: `tokens.modeBrowserBg`
 - **BottomBar permanent tab strip (PR5):** gated by `ui.bottomBarStrip` in `sidepanel/ui/flags.ts` — **default `false`**. Host remains SoT; panels open via Composer chips / `/` / 装配. Set flag `true` only for smoke/rollback. Legacy tab sets (if re-enabled): L0 Skills·Know·Hist · L1 Tabs·Skills · L2 empty + overflow「更多」
 - **ComposerDock chips** (UIUX v2 PR4 §4.4): L0 装配·Skills·Know · L1 装配·Tabs·工作区 · L2 确认台·装配 — open Host / 装配 drawer; **no Abort next to Send**
 - **装配 P0** bottom-sheet section list → Host (`skills`/`knowledge`/`packs`/`mcp`/`apps`/`history`); Board is Autonomy (`/board` only)
@@ -118,9 +123,9 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 - Known: `cockpitWindowId` is in-memory — SW death may orphan a window until next open (P2)
 
 ### Message Bubbles (P2)
-- User: `tokens.userBubbleBg` (`#2563eb`) white text
-- Assistant: `tokens.assistantBubbleBg` (`#f3f4f6`)
-- Empty: mode-aware L0/L1/L2 copy (see ChatView `EmptyState`)
+- User: `tokens.userBubbleBg` + `tokens.userBubbleText` (values live in `tokens.ts` only — currently indigo accent family, not legacy blue)
+- Assistant: `tokens.assistantBubbleBg` + `tokens.assistantBubbleText`
+- Empty: mode-aware L0/L1/L2 copy (see ChatView `EmptyState`); kicker / guidance use `tokens.textSecondary`
 
 ### Tool Call Card
 - Border / status via `statusColor()`
@@ -142,4 +147,4 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 
 ---
 
-*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar.*
+*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B.*

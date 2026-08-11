@@ -703,7 +703,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: tokens.font,
   },
   emptyText: {
-    color: tokens.textMuted,
+    color: tokens.textSecondary,
     fontSize: 12,
     textAlign: "center",
     padding: 12,

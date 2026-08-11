@@ -1598,7 +1598,7 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: "min-content",
   },
   empty: {
-    color: tokens.textMuted,
+    color: tokens.textSecondary,
     textAlign: "center",
     padding: "56px 20px 28px",
     fontSize: 13,
@@ -1609,7 +1609,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     letterSpacing: "0.06em",
     textTransform: "uppercase" as const,
-    color: tokens.textMuted,
+    color: tokens.textSecondary,
     marginBottom: 10,
   },
   emptyTitle: {
