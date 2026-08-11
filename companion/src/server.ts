@@ -36,6 +36,7 @@ export {
 import { runImageFetchAdmission } from "./tool/image-fetch-admission"
 export { runImageFetchAdmission } from "./tool/image-fetch-admission"
 import { runBrowserDownloadAdmission } from "./tool/browser-download-admission"
+import { isCompanionTool } from "./bridge/companion-tools"
 export { runBrowserDownloadAdmission } from "./tool/browser-download-admission"
 import { runMultiAgentToolPregate } from "./orchestrator/tool-pregate"
 export { runMultiAgentToolPregate } from "./orchestrator/tool-pregate"
@@ -659,37 +660,8 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     }
 
     // Companion-side tools (executed locally, not forwarded to extension)
-    const COMPANION_TOOLS = [
-      "osascript_eval",
-      "host_read",
-      "host_write",
-      "host_app",
-      "host_cli",
-      "host_computer",
-      "use_skill",
-      "thread_recall",
-      "skill_install",
-      "record_experience",
-      "workspace_list_dir",
-      "workspace_read_file",
-      "ensure_project_dir",
-      "shell_exec",
-      "netsec_port_scan",
-      // ADR-015 orchestrator
-      "spawn_worker",
-      "list_workers",
-      "get_worker_status",
-      "list_tab_locks",
-      "collect_handback",
-      "board_read",
-      "board_complete",
-      "board_claim_intent",
-      "board_heartbeat_intent",
-      "wait_workers",
-      "worker_cancel",
-      "ask_user",
-    ]
-    if (COMPANION_TOOLS.includes(toolName)) {
+    // P2: SoT is companion/src/bridge/companion-tools.ts
+    if (isCompanionTool(toolName)) {
       try {
         // Thread id already injected by adapter as __thread_id (computer-use precedent)
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {

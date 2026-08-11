@@ -1,5 +1,3 @@
-import { promisify } from "util"
-import { execFile } from "child_process"
 import type {
   HostAdapter,
   TargetId,
@@ -13,8 +11,6 @@ import { NotImplementedForApp, DarwinPathNotAbsolute } from "../types"
 import { isVaultApp } from "./blacklist"
 import { resolveHostBinary } from "./host-bin"
 import { spawnHostBin } from "./host-integrity"
-
-const execFileAsync = promisify(execFile)
 
 const DEFAULT_LIMIT = 100
 const HOST_TIMEOUT_MS = 15000

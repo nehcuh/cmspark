@@ -2,6 +2,26 @@
 
 ## Current Session
 
+### S66 cont END (2026-08-11) [P2b+3 #171 MERGED · adversarial fanout]
+- **#171 MERGED** `a6eb5a3` — Phase 2b SectionHeader/popupMenu/PanelBanner + Phase 3 motion
+- **Precision stack complete**: #168+#169+#170+#171 all on main
+- **Adversarial fanout** (4 independent explore agents): overall **C+**
+  - UI C+ (graph stale re-open / same-thread wipe / textMuted contrast)
+  - Security B+ (no new P0 from UI; residual eTLD/SSRF/cruise)
+  - Correctness C+ (thread.messages ungated; sticky busy on disconnect)
+  - Tests B− (Phase 2b/3 chrome untested)
+- Report: `docs/audit/precision-merge-adversarial-fanout-2026-08-11.md`
+- **Next fix slices**: isolation+busy · graph freshness · chrome contract tests
+- Recorded: yes
+
+### S66 cont (2026-08-11) [Phase 2a token purge → PR #170]
+- **After #168/#169 MERGED** (`dd77915`): continue Precision Instrument Phase 2
+- **Phase 2a**: Settings/MCP/Apps/Packs hex→tokens; Graph residual edges; r1 Claude REJECT (dark code block) → nits → r2 both APPROVE_WITH_NITS
+- **PR #170** https://github.com/nehcuh/cmspark/pull/170 · branch `feat/sidepanel-precision-p2a-token-purge`
+- **tests** 622 pass; dual r2 both_ok
+- **下次**: CI 绿合 #170；Phase 2b SectionHeader + ThreadList density；Phase 3 motion
+- Recorded: yes
+
 ### S65 END (2026-08-11 ~15:50–16:05) [default workspace sandbox Scheme 1 · #165/#166 MERGED]
 - **产品**：未绑 `workspace_root` 时 `workspace_*` 默认 `~/CMspark-projects`（不写 thread）；显式 pick 优先；shell cwd 不跟
 - **Ship**：**#165** `ec6d0f5` Scheme 1 + dual APPROVE_WITH_NITS → **#166** `06fcd96` nits（catalog/ChatView/symlink/chmod/`resolveEffectiveWorkspaceRoot`/docs）
@@ -863,3 +883,11 @@
 - **Deferred:** server.ts 神文件拆分
 - **Tests:** 27 targeted pass · tsc clean
 - **Closeout:** docs/audit/deep-diagnosis-p2-optimization-closeout-2026-08-09.md
+
+### S67 (2026-08-12) [P2 deep-diagnosis batch in progress]
+- Branch: `fix/p2-deep-diagnosis-batch` off main `e4de749` (#173 P0)
+- P2: COMPANION_TOOLS SoT + lockstep; NotebookLM → llm.oneshot; spawn pack/intent rollback; host CU/evidence → spawnHostBin; oneshot-handler extract
+- Tests: 10 P2 pass; tsc clean
+- Closeout: `docs/audit/deep-diagnosis-p2-closeout-2026-08-12.md`
+- Next: PR + CI + merge
+- Recorded: yes

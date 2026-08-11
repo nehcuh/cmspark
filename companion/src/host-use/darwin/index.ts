@@ -1,12 +1,9 @@
-import { promisify } from "util"
-import { execFile } from "child_process"
 import { randomBytes } from "crypto"
 import type { HostReadParams, HostReadResult } from "../types"
 import { NotImplementedForApp } from "../types"
 import { isVaultApp, isReadAllowed } from "./blacklist"
 import { resolveHostBinary } from "./host-bin"
-
-const execFileAsync = promisify(execFile)
+import { spawnHostBin } from "./host-integrity"
 
 const DEFAULT_MAX_CHARS = 500
 const HOST_READ_TIMEOUT_MS = 15000
@@ -58,16 +55,12 @@ export async function hostRead(params: HostReadParams): Promise<HostReadResult> 
   const maxChars = params.maxChars ?? DEFAULT_MAX_CHARS
   const bin = resolveHostBinary()
   try {
-    // Audit M8: read-mail.scpt truncates at a FIXED 500 chars script-side —
-    // the binary cannot pass argv into a precompiled .scpt without
-    // NSAppleEventDescriptor handler invocation (Phase 2). --max-chars is
-    // intentionally NOT sent (don't pretend it's honored); a smaller maxChars
-    // is applied TS-side below. Values > 500 return at most 500 (script cap).
-    const result = await execFileAsync(bin, ["read-mail"], {
-      encoding: "utf-8",
-      timeout: HOST_READ_TIMEOUT_MS,
+    // P2: all cmspark-host spawns go through spawnHostBin (integrity check).
+    // Audit M8: read-mail.scpt truncates at a FIXED 500 chars script-side.
+    const stdout = await spawnHostBin(bin, ["read-mail"], {
+      timeoutMs: HOST_READ_TIMEOUT_MS,
     })
-    const parsed = parseHostJson(String(result.stdout))
+    const parsed = parseHostJson(String(stdout))
     if (maxChars < parsed.body_preview.length) {
       parsed.body_preview = parsed.body_preview.slice(0, maxChars)
     }
@@ -98,12 +91,13 @@ export async function biometricVerify(toolCallId: string, reason: string): Promi
   // (that's the Linux manual nonce path; macOS uses Touch ID).
   const nonce = randomBytes(8).toString("hex")
   try {
-    const result = await execFileAsync(
+    // P2: spawnHostBin integrity gate
+    const stdout = await spawnHostBin(
       bin,
       ["biometric-verify", "--nonce", nonce, "--reason", reason],
-      { encoding: "utf-8", timeout: 60000 },  // 60s for user to find sensor
+      { timeoutMs: 60000 }, // 60s for user to find sensor
     )
-    const parsed = parseJsonSafeRaw(String(result.stdout), "biometric-verify")
+    const parsed = parseJsonSafeRaw(String(stdout), "biometric-verify")
     if (parsed.verified !== true || parsed.nonce !== nonce) {
       throw new Error("biometric verification returned invalid payload")
     }
