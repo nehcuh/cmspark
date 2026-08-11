@@ -41,6 +41,29 @@ test("buildRelatedEdges: undirected and capped", () => {
   assert.ok(edges.some((e) => (e.a === "1" && e.b === "2") || (e.a === "2" && e.b === "1")))
 })
 
+test("buildRelatedEdges: kind hard when shared tags, soft when TF-only", () => {
+  const threads = [
+    { id: "1", digest: { tags: ["shared"], tldr: "alpha beta gamma" } },
+    { id: "2", digest: { tags: ["shared"], tldr: "delta epsilon" } },
+    { id: "3", digest: { tags: ["only3"], tldr: "alpha beta gamma zeta" } },
+  ]
+  const edges = buildRelatedEdges(threads, { minScore: 0.01, maxEdges: 20 })
+  const hard = edges.find(
+    (e) =>
+      (e.a === "1" && e.b === "2") || (e.a === "2" && e.b === "1"),
+  )
+  assert.ok(hard, "expected co-tag edge 1-2")
+  assert.equal(hard!.kind, "hard")
+  assert.ok(hard!.shared_tags.includes("shared"))
+  const soft = edges.find(
+    (e) =>
+      ((e.a === "1" && e.b === "3") || (e.a === "3" && e.b === "1")) &&
+      e.shared_tags.length === 0,
+  )
+  assert.ok(soft, "expected TF soft edge 1-3 without shared tags")
+  assert.equal(soft!.kind, "soft")
+})
+
 test("digestLintStats counts untagged/stale", () => {
   const stats = digestLintStats([
     { id: "1" },
