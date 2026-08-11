@@ -143,7 +143,7 @@ export function McpPanel() {
               style={{
                 ...styles.modeBtn,
                 background: mcpMode === mode ? tokens.accent : tokens.bgElevated,
-                color: mcpMode === mode ? "#fff" : tokens.textSecondary,
+                color: mcpMode === mode ? tokens.bgElevated : tokens.textSecondary,
                 borderColor: mcpMode === mode ? tokens.accent : tokens.border,
               }}
               onClick={() => handleModeChange(mode)}
@@ -221,9 +221,9 @@ function ServerCard(props: ServerCardProps) {
     <div
       style={{
         ...styles.serverCard,
-        background: enabledInThread ? "#f0f7ff" : "#fafafa",
+        background: enabledInThread ? tokens.bgActive : tokens.bgMuted,
         opacity: server.enabled ? 1 : 0.55,
-        borderColor: status === "error" || status === "dead" ? "#fecaca" : "#e5e7eb",
+        borderColor: status === "error" || status === "dead" ? tokens.danger : tokens.border,
       }}
     >
       <div style={styles.cardHeader}>
@@ -250,7 +250,7 @@ function ServerCard(props: ServerCardProps) {
             {server.capabilities.resources && <span>📦 资源</span>}
             {server.capabilities.prompts && <span>💬 提示词</span>}
             {server.connection.restart_count > 0 && (
-              <span style={{ color: "#f59e0b" }}>↻ 重启 {server.connection.restart_count}</span>
+              <span style={{ color: tokens.warning }}>↻ 重启 {server.connection.restart_count}</span>
             )}
           </div>
         </div>
@@ -346,20 +346,20 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 8,
     padding: "6px 8px",
-    background: "#f9fafb",
-    border: "1px solid #e5e7eb",
+    background: tokens.bgMuted,
+    border: `1px solid ${tokens.border}`,
     borderRadius: 4,
   },
   globalToggleLabel: {
     display: "flex",
     alignItems: "center",
     fontSize: 12,
-    color: "#374151",
+    color: tokens.textSecondary,
     cursor: "pointer",
   },
   globalOffHint: {
     fontSize: 10,
-    color: "#9ca3af",
+    color: tokens.textMuted,
   },
   mcpBody: {
     display: "flex",
@@ -374,12 +374,12 @@ const styles: Record<string, React.CSSProperties> = {
   modeBtn: {
     flex: 1,
     padding: "6px 8px",
-    border: "1px solid #ddd",
+    border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 4,
     fontSize: 12,
     cursor: "pointer",
-    background: "#fff",
-    color: "#666",
+    background: tokens.bgElevated,
+    color: tokens.textSecondary,
   },
   emptyText: {
     padding: "16px 8px",
@@ -389,10 +389,10 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.5,
   },
   serverCard: {
-    border: "1px solid #e5e7eb",
+    border: `1px solid ${tokens.border}`,
     borderRadius: 6,
     padding: 8,
-    background: "#fafafa",
+    background: tokens.bgMuted,
   },
   cardHeader: {
     display: "flex",
@@ -417,34 +417,34 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     padding: "1px 4px",
     borderRadius: 3,
-    background: "#e0e7ff",
-    color: "#3730a3",
+    background: tokens.accentSoft,
+    color: tokens.accentText,
   },
   trustBadge: {
     fontSize: 10,
     padding: "1px 4px",
     borderRadius: 3,
-    background: "#fef3c7",
-    color: "#92400e",
+    background: tokens.warningSoft,
+    color: tokens.warning,
   },
   capBadge: {
     fontSize: 10,
     padding: "1px 4px",
     borderRadius: 3,
-    background: "#f3e8ff",
-    color: "#6b21a8",
+    background: tokens.accentSoft,
+    color: tokens.accentText,
   },
   cardMeta: {
     display: "flex",
     gap: 8,
     fontSize: 11,
-    color: "#666",
+    color: tokens.textSecondary,
     marginTop: 2,
     flexWrap: "wrap",
   },
   enabledToggle: {
     fontSize: 10,
-    color: "#555",
+    color: tokens.textSecondary,
     display: "flex",
     alignItems: "center",
     cursor: "pointer",
@@ -462,7 +462,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     padding: "2px 6px",
     fontSize: 14,
-    color: "#666",
+    color: tokens.textSecondary,
   },
   menuBtn: {
     border: "none",
@@ -470,7 +470,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     padding: "2px 4px",
     fontSize: 14,
-    color: "#666",
+    color: tokens.textSecondary,
     letterSpacing: -1,
   },
   menuDropdown: {
@@ -502,16 +502,16 @@ const styles: Record<string, React.CSSProperties> = {
   cardExpanded: {
     marginTop: 8,
     paddingTop: 8,
-    borderTop: "1px dashed #e5e7eb",
+    borderTop: `1px dashed ${tokens.border}`,
   },
   errorLine: {
     fontSize: 11,
-    color: "#dc2626",
+    color: tokens.danger,
     marginBottom: 4,
   },
   serverInfoLine: {
     fontSize: 11,
-    color: "#888",
+    color: tokens.textMuted,
     marginBottom: 4,
   },
   emptyMini: {
@@ -522,9 +522,9 @@ const styles: Record<string, React.CSSProperties> = {
   toolRow: {
     marginBottom: 6,
     padding: "4px 6px",
-    background: "#fff",
+    background: tokens.bgElevated,
     borderRadius: 3,
-    border: "1px solid #f3f4f6",
+    border: `1px solid ${tokens.border}`,
   },
   toolName: {
     fontSize: 11,
@@ -533,7 +533,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   toolDesc: {
     fontSize: 11,
-    color: "#666",
+    color: tokens.textSecondary,
     marginTop: 2,
   },
   addBtn: {

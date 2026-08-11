@@ -235,12 +235,15 @@ export function ThreadGraphApp() {
         ctx.moveTo(a.x, a.y)
         ctx.lineTo(b.x, b.y)
         const hard = e.kind === "hard"
-        ctx.strokeStyle = hard ? "rgba(79, 70, 229, 0.45)" : "rgba(148, 163, 184, 0.55)"
+        // Canvas has no CSS alpha tokens — stroke solid token + globalAlpha
+        ctx.strokeStyle = hard ? tokens.accent : tokens.textMuted
+        ctx.globalAlpha = hard ? 0.45 : 0.55
         if (!hard) ctx.setLineDash([4, 4])
         else ctx.setLineDash([])
         ctx.lineWidth = Math.min(4, 1 + e.score * 2.5)
         ctx.stroke()
         ctx.setLineDash([])
+        ctx.globalAlpha = 1
       }
 
       // Nodes
@@ -408,15 +411,16 @@ export function ThreadGraphApp() {
           <div style={styles.asideSection}>
             <div style={styles.asideTitle}>图例</div>
             <div style={styles.legendRow}>
-              <span style={{ ...styles.legendLine, borderColor: "rgba(79,70,229,0.6)" }} />
+              <span style={{ ...styles.legendLine, borderColor: tokens.accent, opacity: 0.6 }} />
               共标签（硬边）
             </div>
             <div style={styles.legendRow}>
               <span
                 style={{
                   ...styles.legendLine,
-                  borderColor: "rgba(148,163,184,0.8)",
+                  borderColor: tokens.textMuted,
                   borderStyle: "dashed",
+                  opacity: 0.85,
                 }}
               />
               要点相似（软边）
@@ -577,7 +581,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "none",
     borderRadius: tokens.radiusMd,
     background: tokens.accent,
-    color: tokens.userBubbleText || "#ffffff",
+    color: tokens.userBubbleText,
     padding: "7px 12px",
     fontSize: 12,
     fontWeight: 600,

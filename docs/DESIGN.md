@@ -161,4 +161,4 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 
 ---
 
-*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B; **Precision Instrument Desk Phase 1** shell (flat canvas, radius 14/16, no glass).*
+*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B; **Precision Instrument Desk Phase 1** shell (flat canvas, radius 14/16, no glass); **Phase 2a** Settings/MCP/Apps/Packs secondary panels token-only (no ad-hoc product hex).*

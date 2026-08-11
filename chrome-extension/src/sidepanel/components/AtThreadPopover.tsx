@@ -153,7 +153,7 @@ export function AtThreadPopover({
               padding: "8px 10px",
               cursor: "pointer",
               background: active ? tokens.accentSoft : "transparent",
-              borderBottom: "1px solid #f5f5f5",
+              borderBottom: `1px solid ${tokens.border}`,
             }}
             onClick={() => onSelect({ id: t.id, title })}
             onMouseEnter={() => setHighlightedIndex(i)}
@@ -187,7 +187,7 @@ function calcPopoverStyle(anchorEl: HTMLElement | null): React.CSSProperties {
     width: 280,
     maxHeight: 240,
     overflowY: "auto",
-    background: "#fff",
+    background: tokens.bgElevated,
     border: `1px solid ${tokens.border}`,
     borderRadius: 8,
     boxShadow: "0 8px 24px rgba(15,23,42,0.12)",

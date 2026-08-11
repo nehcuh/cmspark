@@ -226,9 +226,9 @@ export function AppsPanel() {
           <button
             style={{
               ...styles.modeBtn,
-              background: segment === "apps" ? tokens.accent : "#fff",
-              color: segment === "apps" ? "#fff" : "#666",
-              borderColor: segment === "apps" ? tokens.accent : "#ddd",
+              background: segment === "apps" ? tokens.accent : tokens.bgElevated,
+              color: segment === "apps" ? tokens.bgElevated : tokens.textSecondary,
+              borderColor: segment === "apps" ? tokens.accent : tokens.borderStrong,
             }}
             onClick={() => setSegment("apps")}
             title="GUI 应用白名单（L0 无参启动）"
@@ -238,9 +238,9 @@ export function AppsPanel() {
           <button
             style={{
               ...styles.modeBtn,
-              background: segment === "cli" ? tokens.accent : "#fff",
-              color: segment === "cli" ? "#fff" : "#666",
-              borderColor: segment === "cli" ? tokens.accent : "#ddd",
+              background: segment === "cli" ? tokens.accent : tokens.bgElevated,
+              color: segment === "cli" ? tokens.bgElevated : tokens.textSecondary,
+              borderColor: segment === "cli" ? tokens.accent : tokens.borderStrong,
             }}
             onClick={() => setSegment("cli")}
             title="结构化 CLI 契约（Phase 2）"
@@ -512,7 +512,7 @@ function AppCard(props: AppCardProps) {
               {uiaBadge.label}
             </span>
             {entry.coordinateAllowed === true && (
-              <span style={{ ...styles.policyBadgeMini, color: "#047857", background: "#d1fae5" }} title="已允许 agent 在此应用窗口内执行坐标操作">
+              <span style={{ ...styles.policyBadgeMini, color: tokens.success, background: tokens.successSoft }} title="已允许 agent 在此应用窗口内执行坐标操作">
                 坐标
               </span>
             )}
@@ -567,7 +567,7 @@ function AppCard(props: AppCardProps) {
                   key={p}
                   style={{
                     ...styles.menuItem,
-                    color: disabled ? "#9ca3af" : current ? tokens.accent : "#333",
+                    color: disabled ? tokens.textMuted : current ? tokens.accent : tokens.text,
                     cursor: disabled ? "not-allowed" : "pointer",
                   }}
                   disabled={disabled}
@@ -583,11 +583,11 @@ function AppCard(props: AppCardProps) {
                 </button>
               )
             })}
-            <div style={{ ...styles.menuSectionTitle, borderTop: "1px solid #f3f4f6" }}>坐标操作</div>
+            <div style={{ ...styles.menuSectionTitle, borderTop: `1px solid ${tokens.border}` }}>坐标操作</div>
             <button
               style={{
                 ...styles.menuItem,
-                color: entry.coordinateAllowed === true ? "#047857" : "#333",
+                color: entry.coordinateAllowed === true ? tokens.success : tokens.text,
               }}
               title={
                 entry.coordinateAllowed === true
@@ -602,8 +602,8 @@ function AppCard(props: AppCardProps) {
             <button
               style={{
                 ...styles.menuItem,
-                color: isPreset ? "#9ca3af" : tokens.danger,
-                borderTop: "1px solid #f3f4f6",
+                color: isPreset ? tokens.textMuted : tokens.danger,
+                borderTop: `1px solid ${tokens.border}`,
                 cursor: isPreset ? "not-allowed" : "pointer",
               }}
               disabled={isPreset}
@@ -695,7 +695,7 @@ function CandidateRow({
         ...(selected
           ? {
               borderColor: tokens.accent,
-              background: "#eff6ff",
+              background: tokens.bgActive,
               boxShadow: `inset 0 0 0 1px ${tokens.accent}`,
             }
           : {}),
@@ -768,7 +768,7 @@ function CliToolsSegment({ appsEnabled }: { appsEnabled: boolean }) {
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: "#666", marginBottom: 8, lineHeight: 1.45 }}>
+      <div style={{ fontSize: 11, color: tokens.textSecondary, marginBottom: 8, lineHeight: 1.45 }}>
         结构化 CLI：仅声明的 subcommand/flag/positional 可执行（host_cli）。策略最高「AI 判断」，无免确认。输出视为不可信。
         参数风格为 GNU 长旗标（--flag）；Windows 原生 /Flag 工具请用包装脚本或改用 shell 企业通道。路径参数支持中文等 Unicode（默认白名单）。
       </div>
@@ -778,8 +778,8 @@ function CliToolsSegment({ appsEnabled }: { appsEnabled: boolean }) {
         cliEntries.map((e) => (
           <div key={e.token} style={styles.appCard}>
             <div style={{ fontWeight: 600, fontSize: 12 }}>{e.display_name}</div>
-            <div style={{ fontSize: 10, color: "#888" }}>{e.token}</div>
-            <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>
+            <div style={{ fontSize: 10, color: tokens.textMuted }}>{e.token}</div>
+            <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 2 }}>
               policy: {e.policy} · {e.enabled ? "启用" : "停用"}
             </div>
             <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
@@ -811,7 +811,7 @@ function CliToolsSegment({ appsEnabled }: { appsEnabled: boolean }) {
           </div>
         ))
       )}
-      <div style={{ marginTop: 12, borderTop: "1px solid #eee", paddingTop: 10 }}>
+      <div style={{ marginTop: 12, borderTop: `1px solid ${tokens.border}`, paddingTop: 10 }}>
         <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>添加 CLI（粘贴绝对路径 + manifest）</div>
         <input
           style={{ width: "100%", fontSize: 11, marginBottom: 6, boxSizing: "border-box" }}
@@ -833,7 +833,7 @@ function CliToolsSegment({ appsEnabled }: { appsEnabled: boolean }) {
           onChange={(ev) => setManifestJson(ev.target.value)}
           disabled={!appsEnabled}
         />
-        {err && <div style={{ color: "#b91c1c", fontSize: 11, marginTop: 4 }}>{err}</div>}
+        {err && <div style={{ color: tokens.danger, fontSize: 11, marginTop: 4 }}>{err}</div>}
         <button type="button" style={{ ...styles.dismissBtn, marginTop: 6 }} onClick={handleAdd} disabled={!appsEnabled}>
           添加 CLI 工具
         </button>
@@ -855,19 +855,19 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 8,
     padding: "6px 8px",
-    background: "#f9fafb",
-    border: "1px solid #e5e7eb",
+    background: tokens.bgMuted,
+    border: `1px solid ${tokens.border}`,
     borderRadius: 4,
   },
   globalToggleLabel: {
     display: "flex",
     alignItems: "center",
     fontSize: 12,
-    color: "#374151",
+    color: tokens.textSecondary,
   },
   globalOffHint: {
     fontSize: 10,
-    color: "#9ca3af",
+    color: tokens.textMuted,
   },
   mcpBody: {
     display: "flex",
@@ -882,12 +882,12 @@ const styles: Record<string, React.CSSProperties> = {
   modeBtn: {
     flex: 1,
     padding: "6px 8px",
-    border: "1px solid #ddd",
+    border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 4,
     fontSize: 12,
     cursor: "pointer",
-    background: "#fff",
-    color: "#666",
+    background: tokens.bgElevated,
+    color: tokens.textSecondary,
   },
   emptyText: {
     padding: "16px 8px",
@@ -903,15 +903,15 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 2px",
   },
   presetSection: {
-    border: "1px solid #e5e7eb",
+    border: `1px solid ${tokens.border}`,
     borderRadius: 6,
     padding: 6,
-    background: "#fff",
+    background: tokens.bgElevated,
   },
   presetHeader: {
     fontSize: 10,
     fontWeight: 600,
-    color: "#6b7280",
+    color: tokens.textSecondary,
     marginBottom: 2,
   },
   presetRow: {
@@ -924,21 +924,21 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     padding: "1px 4px",
     borderRadius: 3,
-    background: "#dcfce7",
-    color: "#166534",
+    background: tokens.successSoft,
+    color: tokens.success,
   },
   presetUndetectedBadge: {
     fontSize: 10,
     padding: "1px 4px",
     borderRadius: 3,
-    background: "#f3f4f6",
-    color: "#9ca3af",
+    background: tokens.bgMuted,
+    color: tokens.textMuted,
   },
   serverCard: {
-    border: "1px solid #e5e7eb",
+    border: `1px solid ${tokens.border}`,
     borderRadius: 6,
     padding: 8,
-    background: "#fafafa",
+    background: tokens.bgMuted,
   },
   cardHeader: {
     display: "flex",
@@ -957,7 +957,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     gap: 8,
     fontSize: 11,
-    color: "#666",
+    color: tokens.textSecondary,
     marginTop: 2,
     flexWrap: "wrap",
     alignItems: "center",
@@ -966,8 +966,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     padding: "1px 4px",
     borderRadius: 3,
-    background: "#e0e7ff",
-    color: "#3730a3",
+    background: tokens.accentSoft,
+    color: tokens.accentText,
   },
   policyBadgeMini: {
     fontSize: 10,
@@ -979,28 +979,28 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     padding: "1px 4px",
     borderRadius: 3,
-    background: "#fef9c3",
-    color: "#854d0e",
+    background: tokens.warningSoft,
+    color: tokens.warning,
     marginLeft: 4,
   },
   uwpBadge: {
     fontSize: 10,
     padding: "1px 4px",
     borderRadius: 3,
-    background: "#f3e8ff",
-    color: "#6b21a8",
+    background: tokens.accentSoft,
+    color: tokens.accentText,
   },
   blockedBadge: {
     fontSize: 10,
     padding: "1px 4px",
     borderRadius: 3,
-    background: "#fee2e2",
-    color: "#b91c1c",
+    background: tokens.dangerSoft,
+    color: tokens.danger,
     marginLeft: 4,
   },
   enabledToggle: {
     fontSize: 10,
-    color: "#555",
+    color: tokens.textSecondary,
     display: "flex",
     alignItems: "center",
     cursor: "pointer",
@@ -1011,7 +1011,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     padding: "2px 6px",
     fontSize: 14,
-    color: "#666",
+    color: tokens.textSecondary,
   },
   menuBtn: {
     border: "none",
@@ -1019,7 +1019,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     padding: "2px 4px",
     fontSize: 14,
-    color: "#666",
+    color: tokens.textSecondary,
     letterSpacing: -1,
   },
   menuDropdown: {
@@ -1067,18 +1067,18 @@ const styles: Record<string, React.CSSProperties> = {
   platformNotice: {
     marginTop: 6,
     padding: "8px 10px",
-    border: "1px solid #e5e7eb",
+    border: `1px solid ${tokens.border}`,
     borderRadius: 6,
-    background: "#f9fafb",
-    color: "#6b7280",
+    background: tokens.bgMuted,
+    color: tokens.textSecondary,
     fontSize: 11,
     lineHeight: 1.5,
   },
   addArea: {
-    border: "1px solid #e5e7eb",
+    border: `1px solid ${tokens.border}`,
     borderRadius: 6,
     padding: 6,
-    background: "#fff",
+    background: tokens.bgElevated,
     display: "flex",
     flexDirection: "column",
     gap: 6,
@@ -1087,7 +1087,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     gap: 8,
     alignItems: "center",
-    borderBottom: "1px solid #f3f4f6",
+    borderBottom: `1px solid ${tokens.border}`,
   },
   addTabBtn: {
     border: "none",
@@ -1095,11 +1095,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     padding: "4px 6px",
     cursor: "pointer",
-    color: "#374151",
+    color: tokens.textSecondary,
   },
   searchInput: {
     width: "100%",
-    border: "1px solid #ddd",
+    border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 4,
     padding: "4px 8px",
     fontSize: 11,
@@ -1108,7 +1108,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   manualHint: {
     fontSize: 10,
-    color: "#854d0e",
+    color: tokens.warning,
     lineHeight: 1.4,
   },
   candidateList: {
@@ -1122,9 +1122,9 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 6,
-    border: "1px solid #f3f4f6",
+    border: `1px solid ${tokens.border}`,
     borderRadius: 4,
-    background: "#fafafa",
+    background: tokens.bgMuted,
     padding: "4px 6px",
   },
   pickedBanner: {
@@ -1133,14 +1133,14 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
     padding: "6px 8px",
     borderRadius: 4,
-    background: "#eff6ff",
+    background: tokens.bgActive,
     border: `1px solid ${tokens.accent}`,
     fontSize: 12,
-    color: "#1e3a5f",
+    color: tokens.accentText,
   },
   pickedClearBtn: {
-    border: "1px solid #bfdbfe",
-    background: "#fff",
+    border: `1px solid ${tokens.borderStrong}`,
+    background: tokens.bgElevated,
     borderRadius: 4,
     fontSize: 11,
     color: tokens.accentText,
@@ -1151,7 +1151,7 @@ const styles: Record<string, React.CSSProperties> = {
   candidatePath: {
     display: "block",
     fontSize: 10,
-    color: "#9ca3af",
+    color: tokens.textMuted,
     fontFamily: "ui-monospace, monospace",
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -1161,12 +1161,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 9,
     padding: "1px 4px",
     borderRadius: 3,
-    background: "#e3f2fd",
-    color: "#1976d2",
+    background: tokens.bgActive,
+    color: tokens.accent,
     flexShrink: 0,
   },
   policyRow: {
-    borderTop: "1px dashed #e5e7eb",
+    borderTop: `1px dashed ${tokens.border}`,
     paddingTop: 6,
     display: "flex",
     flexDirection: "column",
@@ -1175,7 +1175,7 @@ const styles: Record<string, React.CSSProperties> = {
   policyRowTitle: {
     fontSize: 11,
     fontWeight: 500,
-    color: "#374151",
+    color: tokens.textSecondary,
   },
   policyOption: {
     display: "flex",
@@ -1185,7 +1185,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   autoBioHint: {
     fontSize: 10,
-    color: "#92400e",
+    color: tokens.warning,
   },
   submitBtn: {
     marginTop: 4,
@@ -1193,17 +1193,17 @@ const styles: Record<string, React.CSSProperties> = {
     border: "none",
     borderRadius: 4,
     background: tokens.accent,
-    color: "#fff",
+    color: tokens.userBubbleText,
     fontSize: 12,
     cursor: "pointer",
   },
   warningsBox: {
-    border: "1px solid #fde68a",
-    background: "#fffbeb",
+    border: `1px solid ${tokens.warning}`,
+    background: tokens.warningSoft,
     borderRadius: 6,
     padding: 8,
     fontSize: 11,
-    color: "#854d0e",
+    color: tokens.warning,
     display: "flex",
     flexDirection: "column",
     gap: 2,
@@ -1216,24 +1216,24 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.5,
   },
   errorBox: {
-    border: "1px solid #fecaca",
-    background: "#fef2f2",
+    border: `1px solid ${tokens.danger}`,
+    background: tokens.dangerSoft,
     borderRadius: 6,
     padding: 8,
     fontSize: 11,
-    color: "#b91c1c",
+    color: tokens.danger,
     display: "flex",
     alignItems: "center",
     gap: 6,
   },
   dismissBtn: {
     alignSelf: "flex-end",
-    border: "1px solid #e5e7eb",
-    background: "#fff",
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgElevated,
     borderRadius: 4,
     fontSize: 10,
     padding: "2px 8px",
     cursor: "pointer",
-    color: "#555",
+    color: tokens.textSecondary,
   },
 }

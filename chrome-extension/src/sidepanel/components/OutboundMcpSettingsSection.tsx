@@ -376,7 +376,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 6,
     border: "none",
     background: tokens.accent,
-    color: "#fff",
+    color: tokens.userBubbleText,
     cursor: "pointer",
     fontWeight: 600,
   },

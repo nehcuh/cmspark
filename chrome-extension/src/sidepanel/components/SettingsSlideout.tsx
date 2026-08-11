@@ -832,7 +832,7 @@ export function SettingsSlideout() {
                   fontWeight: 600,
                   padding: "1px 6px",
                   borderRadius: 8,
-                  color: "#B26B00",
+                  color: tokens.warning,
                   background: tokens.warningSoft,
                 }}>未配对</span>
               ) : wsPaired === true ? (
@@ -855,7 +855,7 @@ export function SettingsSlideout() {
                 fontWeight: 400,
                 padding: "1px 6px",
                 borderRadius: 8,
-                color: wsPaired ? tokens.success : "#B26B00",
+                color: wsPaired ? tokens.success : tokens.warning,
                 background: wsPaired ? tokens.successSoft : tokens.warningSoft,
               }}>
                 {wsPaired === null ? "检测中…" : wsPaired ? "已配对" : "未配对"}
@@ -1076,7 +1076,7 @@ export function SettingsSlideout() {
               <option value="claude-opus-4-7" />
             </datalist>
             {!config.model_name && state.companionConfig?.model_name && (
-              <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>
+              <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 2 }}>
                 Using Companion global config: {state.companionConfig.model_name}
               </div>
             )}
@@ -1129,7 +1129,7 @@ export function SettingsSlideout() {
               在输入框显示麦克风（听写进草稿，不自动发送）
             </label>
 
-            <div style={{ marginTop: 10, fontSize: 12, color: "#555" }}>
+            <div style={{ marginTop: 10, fontSize: 12, color: tokens.textSecondary }}>
               <label
                 style={{
                   display: "flex",
@@ -1157,7 +1157,7 @@ export function SettingsSlideout() {
                   <strong>实时出字</strong>
                   （字级 / 近实时）
                   <br />
-                  <span style={{ color: "#888", fontSize: 11 }}>
+                  <span style={{ color: tokens.textMuted, fontSize: 11 }}>
                     浏览器听写：Web Speech 字级 interim。本机 Whisper（连续 + 本开关）：PCM
                     流式上传 + 约 8s 窗口内渐进重解码假设（poll 按上次推断耗时自适应）；窗口结束定稿；非
                     decoder token 流。开启时会切到连续听写。
@@ -1172,10 +1172,10 @@ export function SettingsSlideout() {
                       padding: "6px 8px",
                       fontSize: 11,
                       lineHeight: 1.4,
-                      background: "#ecfdf5",
-                      border: "1px solid #a7f3d0",
+                      background: tokens.successSoft,
+                      border: `1px solid ${tokens.success}`,
                       borderRadius: 6,
-                      color: "#065f46",
+                      color: tokens.success,
                     }}
                   >
                     本机渐进假设流已开：说话中显示临时字，约每 8s
@@ -1205,7 +1205,7 @@ export function SettingsSlideout() {
                 />
                 连续听写（可选 · 最长默认 15 分钟）
               </label>
-              <div style={{ marginTop: 4, fontSize: 11, color: "#888", lineHeight: 1.4 }}>
+              <div style={{ marginTop: 4, fontSize: 11, color: tokens.textMuted, lineHeight: 1.4 }}>
                 浏览器：自动续听 + 字级 interim；本机：实时出字开时约 8 秒一段，否则约 45
                 秒一段。仅进草稿、不自动发送。首次连续听写需隐私 v3。
               </div>
@@ -1232,7 +1232,7 @@ export function SettingsSlideout() {
                   <strong>ASR 纠错</strong>
                   （停后可选；默认关）
                   <br />
-                  <span style={{ color: "#888", fontSize: 11 }}>
+                  <span style={{ color: tokens.textMuted, fontSize: 11 }}>
                     将把<strong>转写文本</strong>发给当前 Companion 模型做极保守纠错（不润色、不自动发送）；需已配置
                     LLM。首次听写前若未确认隐私 v3 将弹出说明。当前模型：
                     {state.companionConfig?.model_name || "（未连接/未配置）"}
@@ -1240,7 +1240,7 @@ export function SettingsSlideout() {
                 </span>
               </label>
 
-              <div style={{ marginTop: 12, fontSize: 12, color: "#555" }}>
+              <div style={{ marginTop: 12, fontSize: 12, color: tokens.textSecondary }}>
                 <div style={{ marginBottom: 4, fontWeight: 500 }}>按住热键听写（D2 · 默认关）</div>
                 <label
                   style={{
@@ -1263,13 +1263,13 @@ export function SettingsSlideout() {
                   <span>
                     启用按住说话
                     <br />
-                    <span style={{ color: "#888", fontSize: 11 }}>
+                    <span style={{ color: tokens.textMuted, fontSize: 11 }}>
                       按住组合键开始连续听写，松手结束；仅进草稿、不自动发送。需 Side Panel
                       打开；禁止 bare Fn / Win+V。会议录音中不可用。
                     </span>
                   </span>
                 </label>
-                <div style={{ marginTop: 8, fontSize: 11, color: "#666" }}>
+                <div style={{ marginTop: 8, fontSize: 11, color: tokens.textSecondary }}>
                   <div style={{ marginBottom: 2 }}>组合键（按键盘录制或点预设）</div>
                   <HotkeyCaptureField
                     value={state.dictationHotkeyChord || DICTATION_HOTKEY_DEFAULT_CHORD}
@@ -1348,8 +1348,8 @@ export function SettingsSlideout() {
                       marginTop: isRecommended ? 8 : 6,
                       padding: "8px 8px 6px",
                       borderRadius: 6,
-                      border: "1px solid #eee",
-                      background: isRecommended ? "#fafafa" : "#fff",
+                      border: `1px solid ${tokens.border}`,
+                      background: isRecommended ? tokens.bgMuted : tokens.bgElevated,
                     }}
                   >
                     <div
@@ -1361,16 +1361,16 @@ export function SettingsSlideout() {
                         fontSize: 12,
                       }}
                     >
-                      <span style={{ fontWeight: isRecommended ? 600 : 500, color: "#333" }}>
+                      <span style={{ fontWeight: isRecommended ? 600 : 500, color: tokens.text }}>
                         {isRecommended ? `${RECOMMENDED_ROW_PREFIX}: ${modelId}` : modelId}
                         {modelId === "large-v3-turbo" ? (
-                          <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
+                          <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 2 }}>
                             仅终稿识别（无实时出字）；可能较慢，推荐先用 medium
                           </div>
                         ) : null}
                         {isActive ? " · 活动" : ""}
                       </span>
-                      <span style={{ color: "#888", fontSize: 11 }}>
+                      <span style={{ color: tokens.textMuted, fontSize: 11 }}>
                         {pendingStart
                           ? VOICE_STATUS_STARTING_DOWNLOAD
                           : modelStatusLabel(status)}
@@ -1455,7 +1455,7 @@ export function SettingsSlideout() {
                           style={{
                             height: 6,
                             borderRadius: 3,
-                            background: "#eee",
+                            background: tokens.border,
                             overflow: "hidden",
                           }}
                         >
@@ -1472,7 +1472,7 @@ export function SettingsSlideout() {
                             }}
                           />
                         </div>
-                        <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
+                        <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 2 }}>
                           {pendingStart
                             ? VOICE_STATUS_STARTING_DOWNLOAD
                             : `${progress?.file ? `${progress.file} · ` : ""}${pct ?? 0}%`}
@@ -1517,7 +1517,7 @@ export function SettingsSlideout() {
                       />
                       <span>
                         <span style={{ fontWeight: 500 }}>{ENGINE_BROWSER_LABEL}</span>
-                        <span style={{ color: "#888", fontSize: 12 }}> — {ENGINE_BROWSER_HINT}</span>
+                        <span style={{ color: tokens.textMuted, fontSize: 12 }}> — {ENGINE_BROWSER_HINT}</span>
                       </span>
                     </label>
                     <label
@@ -1541,7 +1541,7 @@ export function SettingsSlideout() {
                       />
                       <span>
                         <span style={{ fontWeight: 500 }}>{ENGINE_LOCAL_LABEL}</span>
-                        <span style={{ color: "#888", fontSize: 12 }}> — {ENGINE_LOCAL_HINT}</span>
+                        <span style={{ color: tokens.textMuted, fontSize: 12 }}> — {ENGINE_LOCAL_HINT}</span>
                       </span>
                     </label>
                   </div>
@@ -1552,8 +1552,8 @@ export function SettingsSlideout() {
                         marginTop: 10,
                         padding: "10px 10px 8px",
                         borderRadius: 8,
-                        border: "1px solid #e8e8e8",
-                        background: "#fcfcfc",
+                        border: `1px solid ${tokens.border}`,
+                        background: tokens.bgMuted,
                       }}
                     >
                       {voiceModel === null && (
@@ -1571,7 +1571,7 @@ export function SettingsSlideout() {
                           fontSize: 12,
                           border: "none",
                           background: "transparent",
-                          color: "#555",
+                          color: tokens.textSecondary,
                           cursor: "pointer",
                           padding: 0,
                         }}
@@ -1644,7 +1644,7 @@ export function SettingsSlideout() {
                               style={{
                                 fontSize: 12,
                                 fontWeight: 600,
-                                color: (tokens.success as string) || "#2e7d32",
+                                color: tokens.success,
                               }}
                             >
                               {BTN_LOCAL_ENABLED}
@@ -1670,7 +1670,7 @@ export function SettingsSlideout() {
                               ...(canEnableLocal
                                 ? {
                                     background: tokens.accent,
-                                    color: "#fff",
+                                    color: tokens.userBubbleText,
                                     borderColor: tokens.accent as string,
                                   }
                                 : {}),
@@ -1695,14 +1695,14 @@ export function SettingsSlideout() {
                         )}
                       </div>
                       {!committedLocal && !canEnableLocal && voiceModel && (
-                        <div style={{ ...styles.helpText, marginTop: 4, color: "#B26B00" }}>
+                        <div style={{ ...styles.helpText, marginTop: 4, color: tokens.warning }}>
                           请先下载推荐型号 medium（或就绪后启用）。选择「本机转写」仅为预览，不会立刻切换引擎。
                         </div>
                       )}
                     </div>
                   )}
 
-                  <p style={{ fontSize: 11, color: "#888", margin: "8px 0 0", lineHeight: 1.45 }}>
+                  <p style={{ fontSize: 11, color: tokens.textMuted, margin: "8px 0 0", lineHeight: 1.45 }}>
                     {privacyCopyForEngine(privacyEngine)}
                   </p>
 
@@ -1723,7 +1723,7 @@ export function SettingsSlideout() {
                   fontSize: 11,
                   border: "none",
                   background: "transparent",
-                  color: "#888",
+                  color: tokens.textMuted,
                   cursor: "pointer",
                   padding: 0,
                   textDecoration: "underline",
@@ -2178,7 +2178,7 @@ export function SettingsSlideout() {
                   padding: "1px 6px",
                   borderRadius: 8,
                   color: tokens.danger,
-                  background: tokens.dangerSoft || "#fde8e8",
+                  background: tokens.dangerSoft,
                 }}>有开关已开</span>
               ) : null}
             >
@@ -2205,8 +2205,8 @@ export function SettingsSlideout() {
                         marginLeft: 8,
                         padding: "1px 6px",
                         borderRadius: 8,
-                        color: "#fff",
-                        background: "#C62828",
+                        color: tokens.userBubbleText,
+                        background: tokens.danger,
                       }}
                     >
                       {chip}
@@ -2255,9 +2255,9 @@ export function SettingsSlideout() {
                           borderRadius: 6,
                           border:
                             autopilotTierPick === opt.id
-                              ? "1px solid #E0A0A0"
+                              ? `1px solid ${tokens.dangerSoft}`
                               : "1px solid transparent",
-                          background: autopilotTierPick === opt.id ? "#FFF8F8" : "transparent",
+                          background: autopilotTierPick === opt.id ? tokens.dangerSoft : "transparent",
                         }}
                       >
                         <input
@@ -2287,24 +2287,24 @@ export function SettingsSlideout() {
                         width: "100%",
                         borderCollapse: "collapse",
                         fontSize: 10,
-                        color: "#444",
+                        color: tokens.textSecondary,
                       }}
                     >
                       <thead>
-                        <tr style={{ background: "#f5f5f5" }}>
-                          <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
+                        <tr style={{ background: tokens.bgMuted }}>
+                          <th style={{ textAlign: "left", padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>
                             工具族
                           </th>
-                          <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
+                          <th style={{ textAlign: "left", padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>
                             网页
                           </th>
-                          <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
+                          <th style={{ textAlign: "left", padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>
                             全自动
                           </th>
-                          <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
+                          <th style={{ textAlign: "left", padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>
                             +协议
                           </th>
-                          <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
+                          <th style={{ textAlign: "left", padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>
                             值守
                           </th>
                         </tr>
@@ -2312,11 +2312,11 @@ export function SettingsSlideout() {
                       <tbody>
                         {AUTOPILOT_CONSEQUENCE_ROWS.map((row) => (
                           <tr key={row.family}>
-                            <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.family}</td>
-                            <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.browser}</td>
-                            <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.full}</td>
-                            <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.protocol}</td>
-                            <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.unattended}</td>
+                            <td style={{ padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>{row.family}</td>
+                            <td style={{ padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>{row.browser}</td>
+                            <td style={{ padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>{row.full}</td>
+                            <td style={{ padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>{row.protocol}</td>
+                            <td style={{ padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>{row.unattended}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -2337,9 +2337,9 @@ export function SettingsSlideout() {
                       type="button"
                       style={{
                         ...styles.toggleBtn,
-                        color: "#fff",
-                        background: "#C62828",
-                        borderColor: "#C62828",
+                        color: tokens.userBubbleText,
+                        background: tokens.danger,
+                        borderColor: tokens.danger,
                         opacity: autopilotBusy ? 0.6 : 1,
                       }}
                       disabled={autopilotBusy}
@@ -2369,9 +2369,9 @@ export function SettingsSlideout() {
                       style={{
                         marginTop: 10,
                         padding: 8,
-                        background: "#fff",
+                        background: tokens.bgElevated,
                         borderRadius: 6,
-                        border: "1px solid #E0B4B4",
+                        border: `1px solid ${tokens.dangerSoft}`,
                       }}
                     >
                       {autopilotTierPick === "unattended" && (
@@ -2395,7 +2395,7 @@ export function SettingsSlideout() {
                             />
                             确认：桌面值守为进程会话（重启 Companion 后失效）；同时会<strong>写入长期配置</strong>开启网页/企业自动批准（解除武装时一并关闭）
                           </label>
-                          <label style={{ display: "flex", gap: 6, cursor: "pointer", color: "#8a5a00" }}>
+                          <label style={{ display: "flex", gap: 6, cursor: "pointer", color: tokens.warning }}>
                             <input
                               type="checkbox"
                               checked={unattendedIncludeProtocol}
@@ -2428,9 +2428,9 @@ export function SettingsSlideout() {
                           type="button"
                           style={{
                             ...styles.toggleBtn,
-                            color: "#fff",
-                            background: "#C62828",
-                            borderColor: "#C62828",
+                            color: tokens.userBubbleText,
+                            background: tokens.danger,
+                            borderColor: tokens.danger,
                           }}
                           disabled={autopilotBusy}
                           onClick={handleAutopilotArmConfirm}
@@ -2451,7 +2451,7 @@ export function SettingsSlideout() {
                         </button>
                       </div>
                       {autopilotMsg && (
-                        <div style={{ fontSize: 11, color: "#C62828", marginTop: 4 }}>{autopilotMsg}</div>
+                        <div style={{ fontSize: 11, color: tokens.danger, marginTop: 4 }}>{autopilotMsg}</div>
                       )}
                     </div>
                   )}
@@ -2559,10 +2559,10 @@ export function SettingsSlideout() {
                 {(config.auto_approve_dangerous ||
                   config.auto_approve_enterprise_tools ||
                   config.allow_all_schemes) && (
-                  <span style={{ fontSize: 10, color: "#C62828", marginLeft: 6 }}>有开关已开</span>
+                  <span style={{ fontSize: 10, color: tokens.danger, marginLeft: 6 }}>有开关已开</span>
                 )}
               </span>
-              <span style={{ fontSize: 11, color: "#888" }}>{advancedGatesOpen ? "收起 ▲" : "展开 ▼"}</span>
+              <span style={{ fontSize: 11, color: tokens.textMuted }}>{advancedGatesOpen ? "收起 ▲" : "展开 ▼"}</span>
             </button>
             <div style={{ ...styles.helpText, marginTop: 6 }}>
               细粒度手动开关；长程请优先用上方「运行自主度」。下列开关与预设不一致时档位显示「自定义」。
@@ -2581,7 +2581,7 @@ export function SettingsSlideout() {
               />
               <div>
                 <div style={{ fontWeight: 500 }}>自动批准所有危险操作（网页 L2）</div>
-                <div style={{ fontSize: 11, color: "#B26B00", marginTop: 2 }}>
+                <div style={{ fontSize: 11, color: tokens.warning, marginTop: 2 }}>
                   ⚠ 跳过 <b>导航</b> 类 L2（navigate / create_tab / set_tab_url）。
                   <b>不</b>单独跳过 evaluate / osascript（须三旗全开或协议解锁一并武装）。
                   <b>不含</b> shell / netsec（请用企业开关或全自动巡航）。
@@ -2589,8 +2589,8 @@ export function SettingsSlideout() {
               </div>
             </label>
             {autoDangerConfirm && (
-              <div style={{ marginTop: 10, padding: 8, background: "#fff", borderRadius: 6, border: "1px solid #E0C090" }}>
-                <div style={{ fontSize: 12, color: "#B26B00", fontWeight: 500, marginBottom: 6 }}>
+              <div style={{ marginTop: 10, padding: 8, background: tokens.bgElevated, borderRadius: 6, border: `1px solid ${tokens.warning}` }}>
+                <div style={{ fontSize: 12, color: tokens.warning, fontWeight: 500, marginBottom: 6 }}>
                   请输入「<b>{SECURITY_ARM_PHRASE}</b>」以确认开启：
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -2605,7 +2605,7 @@ export function SettingsSlideout() {
                     autoFocus
                   />
                   <button
-                    style={{ ...styles.toggleBtn, color: "#fff", background: "#C62828", borderColor: "#C62828" }}
+                    style={{ ...styles.toggleBtn, color: tokens.userBubbleText, background: tokens.danger, borderColor: tokens.danger }}
                     onClick={handleAutoApproveDangerousConfirm}
                   >确认开启</button>
                   <button
@@ -2614,14 +2614,14 @@ export function SettingsSlideout() {
                   >取消</button>
                 </div>
                 {autoDangerMsg && (
-                  <div style={{ fontSize: 11, color: "#C62828", marginTop: 4 }}>{autoDangerMsg}</div>
+                  <div style={{ fontSize: 11, color: tokens.danger, marginTop: 4 }}>{autoDangerMsg}</div>
                 )}
               </div>
             )}
           </div>
 
           {/* Plan B: enterprise shell/netsec L2 skip under scope */}
-          <div style={{ ...styles.field, padding: 10, borderRadius: 8, background: "#FFF8F0", border: "1px solid #F0D0A0" }}>
+          <div style={{ ...styles.field, padding: 10, borderRadius: 8, background: tokens.warningSoft, border: `1px solid ${tokens.warning}` }}>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", fontSize: 13 }}>
               <input
                 type="checkbox"
@@ -2630,16 +2630,16 @@ export function SettingsSlideout() {
                 style={{ marginTop: 3 }}
               />
               <div>
-                <div style={{ fontWeight: 500, color: "#B26B00" }}>
+                <div style={{ fontWeight: 500, color: tokens.warning }}>
                   全局自动批准企业高危工具（shell / netsec）
                   {config.auto_approve_enterprise_tools === true && (
                     <span style={{
                       fontSize: 10, fontWeight: 600, marginLeft: 6, padding: "1px 6px",
-                      borderRadius: 8, color: "#fff", background: "#C62828",
+                      borderRadius: 8, color: tokens.userBubbleText, background: tokens.danger,
                     }}>已启用</span>
                   )}
                 </div>
-                <div style={{ fontSize: 11, color: "#8a5a00", marginTop: 4, lineHeight: 1.5 }}>
+                <div style={{ fontSize: 11, color: tokens.warning, marginTop: 4, lineHeight: 1.5 }}>
                   仍受模块启用、目标白名单、任务授权（netsec）/ shell 策略约束。
                   <b>不跳过</b> spawn_worker、桌面操控、MCP 关键能力。
                 </div>
@@ -2649,43 +2649,43 @@ export function SettingsSlideout() {
                     marginTop: 8,
                     borderCollapse: "collapse",
                     fontSize: 10,
-                    color: "#555",
+                    color: tokens.textSecondary,
                   }}
                 >
                   <thead>
-                    <tr style={{ background: "#fff8f0" }}>
-                      <th style={{ textAlign: "left", padding: "3px 5px", border: "1px solid #f0d0a0" }}>开关</th>
-                      <th style={{ textAlign: "left", padding: "3px 5px", border: "1px solid #f0d0a0" }}>网页 L2</th>
-                      <th style={{ textAlign: "left", padding: "3px 5px", border: "1px solid #f0d0a0" }}>shell/netsec</th>
-                      <th style={{ textAlign: "left", padding: "3px 5px", border: "1px solid #f0d0a0" }}>协议 L1</th>
+                    <tr style={{ background: tokens.warningSoft }}>
+                      <th style={{ textAlign: "left", padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>开关</th>
+                      <th style={{ textAlign: "left", padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>网页 L2</th>
+                      <th style={{ textAlign: "left", padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>shell/netsec</th>
+                      <th style={{ textAlign: "left", padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>协议 L1</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>自动批准危险</td>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>可跳过</td>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>仍确认</td>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>仍阻断</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>自动批准危险</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>可跳过</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>仍确认</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>仍阻断</td>
                     </tr>
                     <tr>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>协议解锁</td>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>可跳过</td>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>仍确认</td>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>可跳过</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>协议解锁</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>可跳过</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>仍确认</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>可跳过</td>
                     </tr>
                     <tr>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>本开关(企业)</td>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>不变</td>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>可跳过(有范围)</td>
-                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>不变</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>本开关(企业)</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>不变</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>可跳过(有范围)</td>
+                      <td style={{ padding: "3px 5px", border: `1px solid ${tokens.warning}` }}>不变</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             </label>
             {entBConfirm && (
-              <div style={{ marginTop: 10, padding: 8, background: "#fff", borderRadius: 6, border: "1px solid #E0C090" }}>
-                <div style={{ fontSize: 12, color: "#B26B00", fontWeight: 500, marginBottom: 6 }}>
+              <div style={{ marginTop: 10, padding: 8, background: tokens.bgElevated, borderRadius: 6, border: `1px solid ${tokens.warning}` }}>
+                <div style={{ fontSize: 12, color: tokens.warning, fontWeight: 500, marginBottom: 6 }}>
                   请输入「<b>{ENT_B_PHRASE}</b>」以确认开启：
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -2700,7 +2700,7 @@ export function SettingsSlideout() {
                     autoFocus
                   />
                   <button
-                    style={{ ...styles.toggleBtn, color: "#fff", background: "#C62828", borderColor: "#C62828" }}
+                    style={{ ...styles.toggleBtn, color: tokens.userBubbleText, background: tokens.danger, borderColor: tokens.danger }}
                     onClick={handleEnterpriseAutoApproveConfirm}
                   >确认开启</button>
                   <button
@@ -2709,14 +2709,14 @@ export function SettingsSlideout() {
                   >取消</button>
                 </div>
                 {entBMsg && (
-                  <div style={{ fontSize: 11, color: "#C62828", marginTop: 4 }}>{entBMsg}</div>
+                  <div style={{ fontSize: 11, color: tokens.danger, marginTop: 4 }}>{entBMsg}</div>
                 )}
               </div>
             )}
           </div>
 
           {/* Protocol unlock (security.allow_all_schemes) — former UI name God-mode */}
-          <div style={{ ...styles.field, padding: 10, borderRadius: 8, background: "#FFF8F8", border: "1px solid #F0C0C0" }}>
+          <div style={{ ...styles.field, padding: 10, borderRadius: 8, background: tokens.dangerSoft, border: `1px solid ${tokens.dangerSoft}` }}>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", fontSize: 13 }}>
               <input
                 type="checkbox"
@@ -2730,11 +2730,11 @@ export function SettingsSlideout() {
                   {config.allow_all_schemes === true && (
                     <span style={{
                       fontSize: 10, fontWeight: 600, marginLeft: 6, padding: "1px 6px",
-                      borderRadius: 8, color: "#fff", background: "#C62828",
+                      borderRadius: 8, color: tokens.userBubbleText, background: tokens.danger,
                     }}>已启用</span>
                   )}
                 </div>
-                <div style={{ fontSize: 11, color: "#C62828", marginTop: 4, lineHeight: 1.5 }}>
+                <div style={{ fontSize: 11, color: tokens.danger, marginTop: 4, lineHeight: 1.5 }}>
                   ☠ 绕过协议硬阻断（L1）与部分网页 L2——<b>不等于</b>无人值守全开。
                   <b>不含</b> shell_exec / netsec / host_computer / spawn 的 forceConfirm。
                   曾用名 God-mode。关闭后 prompt 注入仍可能驱动 <code>data:</code> / <code>chrome://</code>。
@@ -2743,7 +2743,7 @@ export function SettingsSlideout() {
             </label>
 
             {godmodeConfirm && (
-              <div style={{ marginTop: 10, padding: 8, background: "#fff", borderRadius: 6, border: "1px solid #E0B4B4" }}>
+              <div style={{ marginTop: 10, padding: 8, background: tokens.bgElevated, borderRadius: 6, border: `1px solid ${tokens.dangerSoft}` }}>
                 <div style={{ fontSize: 12, color: tokens.danger, fontWeight: 500, marginBottom: 6 }}>
                   请输入「<b>{SECURITY_ARM_PHRASE}</b>」以确认开启协议解锁：
                 </div>
@@ -2759,7 +2759,7 @@ export function SettingsSlideout() {
                     autoFocus
                   />
                   <button
-                    style={{ ...styles.toggleBtn, color: "#fff", background: "#C62828", borderColor: "#C62828" }}
+                    style={{ ...styles.toggleBtn, color: tokens.userBubbleText, background: tokens.danger, borderColor: tokens.danger }}
                     onClick={handleGodModeConfirm}
                   >确认开启</button>
                   <button
@@ -2768,7 +2768,7 @@ export function SettingsSlideout() {
                   >取消</button>
                 </div>
                 {godmodeMsg && (
-                  <div style={{ fontSize: 11, color: "#C62828", marginTop: 4 }}>{godmodeMsg}</div>
+                  <div style={{ fontSize: 11, color: tokens.danger, marginTop: 4 }}>{godmodeMsg}</div>
                 )}
               </div>
             )}
@@ -2779,12 +2779,12 @@ export function SettingsSlideout() {
           <div style={styles.field}>
             <label style={styles.label}>安全审计日志</label>
             {showAuditLog ? (
-              <div style={{ maxHeight: 200, overflowY: "auto", background: "#f9f9f9", borderRadius: 6, padding: 8, fontSize: 11 }}>
+              <div style={{ maxHeight: 200, overflowY: "auto", background: tokens.bgMuted, borderRadius: 6, padding: 8, fontSize: 11 }}>
                 {state.securityAuditLog.length === 0 ? (
-                  <div style={{ color: "#999", padding: "8px 0" }}>暂无审计记录</div>
+                  <div style={{ color: tokens.textMuted, padding: "8px 0" }}>暂无审计记录</div>
                 ) : (
                   state.securityAuditLog.slice(-20).map(entry => (
-                    <div key={entry.id} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #eee" }}>
+                    <div key={entry.id} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: `1px solid ${tokens.border}` }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <span style={{
                           color: entry.action === "allowed" ? tokens.success
@@ -2800,13 +2800,13 @@ export function SettingsSlideout() {
                             : entry.action === "changed" ? "变更"
                             : "阻断"}
                         </span>
-                        <span style={{ color: "#666" }}>{entry.tool_name}</span>
-                        <span style={{ color: "#999", marginLeft: "auto" }}>{entry.ts.slice(11, 19)}</span>
+                        <span style={{ color: tokens.textSecondary }}>{entry.tool_name}</span>
+                        <span style={{ color: tokens.textMuted, marginLeft: "auto" }}>{entry.ts.slice(11, 19)}</span>
                       </div>
                       <div style={{
                         color: entry.action === "changed"
                           ? (entry.level === "error" ? tokens.danger : tokens.success)
-                          : "#888",
+                          : tokens.textMuted,
                         marginTop: 2,
                         fontWeight: entry.action === "changed" ? 500 : 400,
                       }}>{entry.message}</div>
@@ -2945,7 +2945,7 @@ export function SettingsSlideout() {
                 style={{
                   ...styles.toggleBtn,
                   ...(config.thread_digest_enabled
-                    ? { background: tokens.accent, color: "#fff", borderColor: tokens.accent }
+                    ? { background: tokens.accent, color: tokens.userBubbleText, borderColor: tokens.accent }
                     : {}),
                 }}
                 onClick={() =>
@@ -3046,7 +3046,7 @@ export function SettingsSlideout() {
                   <button
                     style={{
                       ...styles.toggleBtn,
-                      ...(modelEnabled ? { background: tokens.accent, color: "#fff", borderColor: tokens.accent } : {}),
+                      ...(modelEnabled ? { background: tokens.accent, color: tokens.userBubbleText, borderColor: tokens.accent } : {}),
                     }}
                     disabled={disabledReason !== null}
                     onClick={toggle}
@@ -3057,12 +3057,12 @@ export function SettingsSlideout() {
                 </div>
                 {/* P2:任务运行中旁注(per-task 生效 + estop 引导) */}
                 {runningNote && (
-                  <div style={{ ...styles.helpText, color: "#B26B00" }}>{runningNote}</div>
+                  <div style={{ ...styles.helpText, color: tokens.warning }}>{runningNote}</div>
                 )}
                 {/* 三层依赖提示(主开关关)优先;否则本体语义 */}
                 <div style={styles.helpText}>{depHint ?? MODEL_SWITCH_COPY.layerSemantics}</div>
                 {disabledReason && (
-                  <div style={{ ...styles.helpText, color: "#B26B00" }}>{disabledReason}</div>
+                  <div style={{ ...styles.helpText, color: tokens.warning }}>{disabledReason}</div>
                 )}
                 {model?.modelLicenseDeclined === true && (
                   <div style={{ marginTop: 6 }}>
@@ -3097,22 +3097,22 @@ export function SettingsSlideout() {
                     borderRadius: 8,
                     border: `1px solid ${
                       model?.canEnable
-                        ? (tokens.success as string) || "#2e7d32"
+                        ? tokens.success
                         : model?.canDownload === true
-                          ? "#f0c14b"
-                          : "#e57373"
+                          ? tokens.warning
+                          : tokens.danger
                     }`,
                     background: model?.canEnable
-                      ? tokens.successSoft || "#e8f5e9"
+                      ? tokens.successSoft
                       : model?.canDownload === true
-                        ? "#fff8e1"
-                        : "#ffebee",
+                        ? tokens.warningSoft
+                        : tokens.dangerSoft,
                   }}
                 >
-                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4, color: "#222" }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4, color: tokens.text }}>
                     环境检查（下载 / 启用前必看）
                   </div>
-                  <div style={{ fontSize: 12, lineHeight: 1.45, color: "#333", marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, lineHeight: 1.45, color: tokens.text, marginBottom: 6 }}>
                     <strong>状态：</strong>
                     {model?.readinessSummary ||
                       model?.preflight?.readinessSummary ||
@@ -3137,14 +3137,14 @@ export function SettingsSlideout() {
                             gap: 6,
                             marginBottom: 4,
                             alignItems: "flex-start",
-                            color: r.ok ? "#2e7d32" : r.blocking ? "#b71c1c" : "#e65100",
+                            color: r.ok ? tokens.success : r.blocking ? tokens.danger : tokens.warning,
                           }}
                         >
                           <span style={{ flexShrink: 0, fontWeight: 700 }}>{r.ok ? "✓" : "✗"}</span>
                           <span>
                             <span style={{ fontWeight: 600 }}>{r.label}</span>
                             {r.detail ? (
-                              <span style={{ display: "block", color: "#555", fontWeight: 400 }}>
+                              <span style={{ display: "block", color: tokens.textSecondary, fontWeight: 400 }}>
                                 {r.detail}
                               </span>
                             ) : null}
@@ -3153,7 +3153,7 @@ export function SettingsSlideout() {
                       ))}
                     </ul>
                   ) : model?.preflight?.hardware ? (
-                    <div style={{ fontSize: 11, color: "#555", marginBottom: 6 }}>
+                    <div style={{ fontSize: 11, color: tokens.textSecondary, marginBottom: 6 }}>
                       硬件快照：内存 {model.preflight.hardware.totalRamGb ?? "?"}GB
                       {model.preflight.hardware.vramGb != null
                         ? ` · 显存 ${model.preflight.hardware.vramGb}GB`
@@ -3175,7 +3175,7 @@ export function SettingsSlideout() {
                         style={{
                           fontSize: 11,
                           fontWeight: 600,
-                          color: "#b71c1c",
+                          color: tokens.danger,
                           marginBottom: 6,
                           lineHeight: 1.4,
                         }}
@@ -3191,7 +3191,7 @@ export function SettingsSlideout() {
                         style={{
                           fontSize: 11,
                           fontWeight: 600,
-                          color: "#e65100",
+                          color: tokens.warning,
                           marginBottom: 6,
                           lineHeight: 1.4,
                         }}
@@ -3201,7 +3201,7 @@ export function SettingsSlideout() {
                       </div>
                     )}
                   {Array.isArray(model?.nextSteps) && model!.nextSteps!.length > 0 && (
-                    <ol style={{ margin: "0 0 6px 0", paddingLeft: 18, fontSize: 11, color: "#333" }}>
+                    <ol style={{ margin: "0 0 6px 0", paddingLeft: 18, fontSize: 11, color: tokens.text }}>
                       {model!.nextSteps!.slice(0, 6).map((step, i) => (
                         <li key={i} style={{ marginBottom: 3 }}>
                           {step}
@@ -3212,7 +3212,7 @@ export function SettingsSlideout() {
                   {Array.isArray(model?.preflight?.installCommands) &&
                     model!.preflight!.installCommands!.length > 0 && (
                       <div style={{ marginTop: 4 }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: "#333", marginBottom: 4 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: tokens.text, marginBottom: 4 }}>
                           一键安装命令（复制到「终端」执行）
                         </div>
                         {model!.preflight!.installCommands!.map((c) => (
@@ -3221,8 +3221,8 @@ export function SettingsSlideout() {
                             style={{
                               fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                               fontSize: 10,
-                              background: "#1e1e1e",
-                              color: "#e0e0e0",
+                              background: tokens.darkElevated,
+                              color: tokens.darkText,
                               padding: "8px 8px",
                               borderRadius: 6,
                               marginBottom: 4,
@@ -3234,7 +3234,7 @@ export function SettingsSlideout() {
                             {c}
                           </div>
                         ))}
-                        <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>
+                        <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 2 }}>
                           完成后回到本页，清单应变为绿色，再点「下载模型」。无需理解软件包名称。
                         </div>
                       </div>
@@ -3252,7 +3252,7 @@ export function SettingsSlideout() {
                     fontSize: 11,
                     fontFamily: "ui-monospace, monospace",
                     wordBreak: "break-all",
-                    color: "#333",
+                    color: tokens.text,
                   }}
                 >
                   {model?.modelRootDir ||
@@ -3283,14 +3283,14 @@ export function SettingsSlideout() {
                     恢复默认
                   </button>
                 </div>
-                <div style={{ ...styles.helpText, marginTop: 4, fontSize: 10, color: "#666" }}>
+                <div style={{ ...styles.helpText, marginTop: 4, fontSize: 10, color: tokens.textSecondary }}>
                   权重会下载到该目录下的 qwen3-vl-2b / 4b / 8b 子文件夹。请选择有足够空间的磁盘位置。
                 </div>
 
                 <div style={{ ...styles.helpText, marginTop: 12, fontWeight: 700, fontSize: 12 }}>
                   Python 环境
                 </div>
-                <div style={{ ...styles.helpText, marginTop: 4, fontSize: 11, color: "#555" }}>
+                <div style={{ ...styles.helpText, marginTop: 4, fontSize: 11, color: tokens.textSecondary }}>
                   {(model?.pythonResolution || model?.preflight?.pythonResolution) ??
                     "检测中…"}
                   {(() => {
@@ -3347,7 +3347,7 @@ export function SettingsSlideout() {
                           ...styles.helpText,
                           marginTop: 6,
                           fontSize: 10,
-                          color: "#8a5a00",
+                          color: tokens.warning,
                           fontFamily: "ui-monospace, monospace",
                           wordBreak: "break-all",
                         }}
@@ -3383,7 +3383,7 @@ export function SettingsSlideout() {
                           ...styles.secondaryBtn,
                           textAlign: "left",
                           ...(active
-                            ? { borderColor: tokens.accent, background: tokens.accentSoft || "#eef3ff" }
+                            ? { borderColor: tokens.accent, background: tokens.accentSoft }
                             : {}),
                         }}
                         disabled={model === null || model.modelStatus === "downloading"}
@@ -3400,16 +3400,16 @@ export function SettingsSlideout() {
                           {active ? "● " : "○ "}
                           {opt.label}
                         </div>
-                        <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>{opt.desc}</div>
+                        <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 2 }}>{opt.desc}</div>
                       </button>
                     )
                   })}
                 </div>
                 {(model?.pythonMode || model?.preflight?.pythonMode) === "system" && (
                   <div style={{ marginTop: 6 }}>
-                    <div style={{ ...styles.helpText, fontSize: 10, color: "#666", marginBottom: 4 }}>
+                    <div style={{ ...styles.helpText, fontSize: 10, color: tokens.textSecondary, marginBottom: 4 }}>
                       当前全局解释器：
-                      <span style={{ fontFamily: "ui-monospace, monospace", color: "#333" }}>
+                      <span style={{ fontFamily: "ui-monospace, monospace", color: tokens.text }}>
                         {model?.pythonPath ||
                           (typeof model?.preflight?.deps?.pythonPath === "string"
                             ? model.preflight.deps.pythonPath
@@ -3449,7 +3449,7 @@ export function SettingsSlideout() {
                           ...(createPrimary
                             ? {
                                 borderColor: tokens.accent,
-                                background: tokens.accentSoft || "#eef3ff",
+                                background: tokens.accentSoft,
                                 fontWeight: 700,
                               }
                             : {}),
@@ -3502,7 +3502,7 @@ export function SettingsSlideout() {
                         style={{
                           ...styles.secondaryBtn,
                           ...(active
-                            ? { background: tokens.accent, color: "#fff", borderColor: tokens.accent }
+                            ? { background: tokens.accent, color: tokens.userBubbleText, borderColor: tokens.accent }
                             : {}),
                           opacity: model === null || model.modelStatus === "downloading" ? 0.5 : 1,
                         }}
@@ -3521,7 +3521,7 @@ export function SettingsSlideout() {
                     )
                   })}
                 </div>
-                <div style={{ ...styles.helpText, marginTop: 4, fontSize: 11, color: "#666" }}>
+                <div style={{ ...styles.helpText, marginTop: 4, fontSize: 11, color: tokens.textSecondary }}>
                   {model?.downloadSourceReason ||
                     "自动：探测 HF 是否可达；不可达或系统语言为中文时优先 ModelScope。中国大陆建议「自动」或「魔搭」。"}
                   {model?.downloadSourceResolved
@@ -3543,7 +3543,7 @@ export function SettingsSlideout() {
                         style={{
                           ...styles.secondaryBtn,
                           ...(active
-                            ? { background: tokens.accent, color: "#fff", borderColor: tokens.accent }
+                            ? { background: tokens.accent, color: tokens.userBubbleText, borderColor: tokens.accent }
                             : {}),
                           opacity: model === null || model.modelStatus === "downloading" ? 0.5 : 1,
                         }}
@@ -3560,10 +3560,10 @@ export function SettingsSlideout() {
                     )
                   })}
                 </div>
-                <div style={{ ...styles.helpText, marginTop: 4, color: "#B26B00" }}>
+                <div style={{ ...styles.helpText, marginTop: 4, color: tokens.warning }}>
                   {model?.resourceTip || variantResourceTip(model?.variant)}
                 </div>
-                <div style={{ ...styles.helpText, marginTop: 2, fontSize: 11, color: "#888" }}>
+                <div style={{ ...styles.helpText, marginTop: 2, fontSize: 11, color: tokens.textMuted }}>
                   切换规模后请重新「下载模型」。能否流畅运行由 Companion 按本机内存/显存估算；不足仍可下载，但可能很慢或 OOM。
                 </div>
                 {/* 状态行 */}
@@ -3572,7 +3572,7 @@ export function SettingsSlideout() {
                     ...styles.helpText,
                     marginTop: 6,
                     color:
-                      statusLine.kind === "error" ? "#C62828" : statusLine.kind === "ok" ? tokens.success : "#555",
+                      statusLine.kind === "error" ? tokens.danger : statusLine.kind === "ok" ? tokens.success : tokens.textSecondary,
                   }}
                 >
                   {statusLine.text}
@@ -3611,7 +3611,7 @@ export function SettingsSlideout() {
                   <button
                     style={{
                       ...styles.secondaryBtn,
-                      ...(modelDeleteArmed ? { borderColor: "#C62828", color: "#C62828" } : {}),
+                      ...(modelDeleteArmed ? { borderColor: tokens.danger, color: tokens.danger } : {}),
                     }}
                     disabled={model === null || (model.modelStatus !== "ready" && model.modelStatus !== "error" && model.modelStatus !== "disabled")}
                     onClick={() => {
@@ -3716,9 +3716,9 @@ export function SettingsSlideout() {
         {state.companionConfig && (
           <div style={{
             fontSize: 11,
-            color: "#999",
+            color: tokens.textMuted,
             padding: "8px 16px",
-            borderTop: "1px solid #eee",
+            borderTop: `1px solid ${tokens.border}`,
             textAlign: "center",
           }}>
             Companion 全局配置已同步{state.companionConfig.model_name ? ` (${state.companionConfig.model_name})` : ""}
@@ -3741,7 +3741,7 @@ const styles: Record<string, React.CSSProperties> = {
   panel: {
     width: "100%",
     maxHeight: "80vh",
-    background: "#fff",
+    background: tokens.bgElevated,
     borderRadius: "12px 12px 0 0",
     overflow: "hidden",
     display: "flex",
@@ -3752,14 +3752,14 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     padding: "14px 16px",
-    borderBottom: "1px solid #eee",
+    borderBottom: `1px solid ${tokens.border}`,
   },
   closeBtn: {
     background: "none",
     border: "none",
     fontSize: 18,
     cursor: "pointer",
-    color: "#999",
+    color: tokens.textMuted,
   },
   body: {
     padding: "16px",
@@ -3773,13 +3773,13 @@ const styles: Record<string, React.CSSProperties> = {
     display: "block",
     fontSize: 12,
     fontWeight: 500,
-    color: "#333",
+    color: tokens.text,
     marginBottom: 4,
   },
   input: {
     width: "100%",
     padding: "6px 10px",
-    border: "1px solid #ddd",
+    border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 6,
     fontSize: 13,
     fontFamily: "monospace",
@@ -3788,9 +3788,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   toggleBtn: {
     padding: "4px 10px",
-    border: "1px solid #ddd",
+    border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 6,
-    background: "#fff",
+    background: tokens.bgElevated,
     fontSize: 11,
     cursor: "pointer",
     whiteSpace: "nowrap" as const,
@@ -3798,18 +3798,18 @@ const styles: Record<string, React.CSSProperties> = {
   select: {
     width: "100%",
     padding: "6px 10px",
-    border: "1px solid #ddd",
+    border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 6,
     fontSize: 13,
     fontFamily: "monospace",
     outline: "none",
     boxSizing: "border-box" as const,
-    background: "#fff",
+    background: tokens.bgElevated,
   },
   helpText: {
     marginTop: 6,
     fontSize: 11,
-    color: "#777",
+    color: tokens.textSecondary,
     lineHeight: 1.4,
   },
   footer: {
@@ -3818,13 +3818,13 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 10,
     padding: "12px 16px",
-    borderTop: "1px solid #eee",
+    borderTop: `1px solid ${tokens.border}`,
   },
   testBtn: {
     padding: "6px 14px",
     border: `1px solid ${tokens.accent}`,
     borderRadius: 6,
-    background: "#fff",
+    background: tokens.bgElevated,
     color: tokens.accent,
     fontSize: 12,
     cursor: "pointer",
@@ -3834,7 +3834,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "none",
     borderRadius: 6,
     background: tokens.accent,
-    color: "#fff",
+    color: tokens.userBubbleText,
     fontSize: 13,
     fontWeight: 500,
     cursor: "pointer",
@@ -3842,23 +3842,23 @@ const styles: Record<string, React.CSSProperties> = {
   sectionTitle: {
     fontSize: 14,
     fontWeight: 700,
-    color: "#333",
+    color: tokens.text,
     marginBottom: 12,
     marginTop: 8,
     paddingBottom: 6,
-    borderBottom: "1px solid #eee",
+    borderBottom: `1px solid ${tokens.border}`,
   },
   divider: {
     height: 1,
-    background: "#eee",
+    background: tokens.border,
     margin: "16px 0",
   },
   secondaryBtn: {
     padding: "6px 14px",
-    border: "1px solid #ddd",
+    border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 6,
-    background: "#fff",
-    color: "#555",
+    background: tokens.bgElevated,
+    color: tokens.textSecondary,
     fontSize: 12,
     cursor: "pointer",
   },
