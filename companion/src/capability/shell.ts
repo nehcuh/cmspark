@@ -157,6 +157,27 @@ export function hasShellAllowlistMetachar(command: string): boolean {
   return SHELL_ALLOWLIST_METACHAR_RE.test(command)
 }
 
+/** Interpreters that must not receive -c/-e when only bare name is allowlisted. */
+const BARE_INTERPRETER_DENY_FLAGS = /(?:^|\s)(?:-[ce]|--command|--eval)(?:\s|=|$)/
+
+/**
+ * P1 SEC-07: allowlist match as argv template, not naive prefix.
+ * - Exact entry or entry + args OK when entry has spaces (template prefix).
+ * - Bare interpreter names (python3, node, npm, …) reject -c/-e/--eval.
+ */
+export function commandMatchesAllowlistEntry(command: string, entry: string): boolean {
+  const cmd = command.trim()
+  const ent = entry.trim()
+  if (!cmd || !ent) return false
+  if (cmd === ent) return true
+  if (!cmd.startsWith(ent + " ")) return false
+  // Bare single-token interpreter: block code-injection flags
+  if (!/\s/.test(ent) && BARE_INTERPRETER_DENY_FLAGS.test(cmd.slice(ent.length))) {
+    return false
+  }
+  return true
+}
+
 export function commandAllowedByPolicy(command: string): { ok: true } | { ok: false; error: string } {
   const mod = getModule("shell")
   if (!mod) return { ok: false, error: "shell module missing" }
@@ -174,8 +195,14 @@ export function commandAllowedByPolicy(command: string): { ok: true } | { ok: fa
     if (list.length === 0) {
       return { ok: false, error: "shell policy=allowlist but allowlist_commands is empty" }
     }
-    const ok = list.some((prefix) => command === prefix || command.startsWith(prefix + " "))
-    if (!ok) return { ok: false, error: `command not in allowlist_commands` }
+    const ok = list.some((entry) => commandMatchesAllowlistEntry(command, entry))
+    if (!ok) {
+      return {
+        ok: false,
+        error:
+          "command not in allowlist_commands (argv template match; bare interpreters reject -c/-e)",
+      }
+    }
   }
   // confirm_per_command / confirm_session: allow at this layer; L2 gate still required
   return { ok: true }
@@ -214,6 +241,34 @@ export function normalizeShellCwd(
       : null) ||
     process.cwd()
   return path.resolve(String(raw))
+}
+
+/**
+ * P1 SEC-08: when workspaceRoot is set, cwd must resolve inside it
+ * (realpath containment). Returns error string or null if OK.
+ */
+export function assertShellCwdInWorkspace(
+  cwd: string,
+  workspaceRoot?: string | null,
+): string | null {
+  if (!workspaceRoot || !String(workspaceRoot).trim()) return null
+  try {
+    const rootReal = fs.realpathSync(path.resolve(workspaceRoot))
+    let cwdReal: string
+    try {
+      cwdReal = fs.realpathSync(path.resolve(cwd))
+    } catch {
+      // Not yet existing — contain the resolved path string
+      cwdReal = path.resolve(cwd)
+    }
+    const rel = path.relative(rootReal, cwdReal)
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      return `cwd escapes workspace_root (${workspaceRoot})`
+    }
+    return null
+  } catch (e: any) {
+    return `cwd/workspace containment check failed: ${e?.message || e}`
+  }
 }
 
 /** Last N characters of s (for progress tails). */

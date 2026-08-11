@@ -14,7 +14,11 @@ import * as path from "path"
  */
 export function writeCrashLog(label: string, err: unknown): void {
   try {
-    const logDir = path.join(process.env.USERPROFILE || process.env.HOME || ".", ".cmspark-agent", "logs")
+    // P1 OPS-M01: honor CMSPARK_DATA_DIR (same as config.DATA_DIR)
+    const dataDir =
+      process.env.CMSPARK_DATA_DIR ||
+      path.join(process.env.USERPROFILE || process.env.HOME || ".", ".cmspark-agent")
+    const logDir = path.join(dataDir, "logs")
     fs.mkdirSync(logDir, { recursive: true })
     const logFile = path.join(logDir, "crash.log")
     const ts = new Date().toISOString()

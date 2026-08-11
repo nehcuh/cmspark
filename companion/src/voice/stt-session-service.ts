@@ -539,7 +539,11 @@ export class SttSessionService {
     if (this.deps.resolveBinary) return this.deps.resolveBinary()
     // Prefer explicit companionRoot; always also search SEA <exeDir>/bin (package.sh).
     const moduleRoot = this.deps.companionRoot ?? path.join(__dirname, "..", "..")
-    const roots = allWhisperSearchRoots({ companionRoots: [moduleRoot] })
+    // P1 CORR-08: include DATA_DIR / user install cache in binary search
+    const roots = allWhisperSearchRoots({
+      companionRoots: [moduleRoot],
+      dataDir: this.deps.dataDir,
+    })
     const warch = resolveWhisperArch()
     const pinOpts = whisperPinResolveOpts(warch)
     if (pinOpts.forceUnpinned) {

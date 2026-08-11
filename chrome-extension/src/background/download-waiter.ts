@@ -112,7 +112,13 @@ export function createDownloadWaiter(opts: {
         return
       }
     }
-    if (!matchesHint(item.filename)) return
+    // Filename / URL hint filter (always when hint set)
+    const nameOrUrl = item.filename || item.finalUrl || item.url || ""
+    if (!matchesHint(nameOrUrl) && !matchesHint(item.filename)) return
+    // P1 CORR-07: Chrome DownloadItem has no tabId. When caller scopes to a tab
+    // without a filenameHint, only latch the first post-register download to
+    // avoid binding a concurrent peer-tab download.
+    if (opts.tabId != null && !opts.filenameHint && tracked.size > 0) return
     tracked.add(item.id)
     if (item.state === "complete" && item.filename) {
       finishOk({

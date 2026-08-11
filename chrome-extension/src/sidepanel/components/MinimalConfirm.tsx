@@ -19,15 +19,32 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
   const denyBtnRef = useRef<HTMLButtonElement>(null)
   const activeThreadId = state.activeThreadId
   const [enterpriseTrust, setEnterpriseTrust] = useState(false)
+  /** P1 CORR-04: block double-submit while waiting for companion resolved */
+  const [respondingIds, setRespondingIds] = useState<Set<string>>(() => new Set())
 
   // Reset checkbox when queue head changes
   useEffect(() => {
     setEnterpriseTrust(false)
   }, [request?.confirmation_id])
 
+  // Drop responding stamp when companion removes confirm
+  useEffect(() => {
+    const ids = new Set(queue.map((q) => q.confirmation_id))
+    setRespondingIds((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const id of prev) {
+        if (ids.has(id)) next.add(id)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [queue])
+
   const respond = useCallback(
     (approved: boolean, stopThread = false) => {
       if (!request) return
+      if (respondingIds.has(request.confirmation_id)) return
       const needsNonce = !!request.nonce_challenge
       if (approved && needsNonce) return
       // F-S1: stamp-first; multi-agent without worker_id → deny-safe (no wrong abort)
@@ -41,6 +58,10 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
         activeThreadId,
         multiAgentContext,
       })
+      // P1 CORR-04: do not optimistically REMOVE — wait for companion
+      // security.confirmation.resolved. Local responding set blocks double-click;
+      // Cockpit still races but companion origin/id single-flight no-ops second respond.
+      setRespondingIds((prev) => new Set(prev).add(request.confirmation_id))
       chrome.runtime.sendMessage({
         type: "security.confirmation.response",
         confirmation_id: request.confirmation_id,
@@ -52,8 +73,15 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           approved && !stopThread && enterpriseTrust && request.offer_enterprise_session_trust === true
             ? true
             : undefined,
+      }, () => {
+        if (chrome.runtime.lastError) {
+          setRespondingIds((prev) => {
+            const next = new Set(prev)
+            next.delete(request.confirmation_id)
+            return next
+          })
+        }
       })
-      dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
       if (stopThread && stopTargetId) {
         chrome.runtime.sendMessage({
           type: "chat.abort",
@@ -66,7 +94,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
         }
       }
     },
-    [request, activeThreadId, dispatch, enterpriseTrust],
+    [request, activeThreadId, dispatch, enterpriseTrust, respondingIds],
   )
 
   // R2: focus deny (safe default) when queue head changes

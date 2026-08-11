@@ -874,16 +874,30 @@ export class ThreadManager {
       }
     }
     if (thread.tool_whitelist === null) return true
-    // Native pack allowlist is orthogonal to MCP: MCP visibility is controlled by
-    // mcp_selection_mode / active_mcp_server_ids (adapter + executeMcpTool).
-    // Without this, allowlist scenes silently break all mcp__* tools (D8).
+    // P1 / D8 revise: pack tool_whitelist constrains MCP too.
+    // Allow mcp tools only when whitelist includes:
+    //   - exact tool name, or
+    //   - "mcp__*" (all MCP), or
+    //   - "mcp__<server>__*" for that server, or
+    //   - meta tools listed explicitly
     if (
       toolName.startsWith("mcp__") ||
       toolName === "mcp_list_resources" ||
       toolName === "mcp_read_resource" ||
       toolName === "mcp_get_prompt"
     ) {
-      return true
+      const wl = thread.tool_whitelist
+      if (wl.includes(toolName)) return true
+      if (wl.includes("mcp__*")) return true
+      if (toolName.startsWith("mcp__")) {
+        const parts = toolName.split("__")
+        // mcp__server__tool
+        if (parts.length >= 3) {
+          const serverStar = `mcp__${parts[1]}__*`
+          if (wl.includes(serverStar)) return true
+        }
+      }
+      return false
     }
     return thread.tool_whitelist.includes(toolName)
   }
