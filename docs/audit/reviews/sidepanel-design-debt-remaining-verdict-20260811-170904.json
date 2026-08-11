@@ -1,0 +1,8 @@
+{
+  "batch": "sidepanel-design-debt-remaining",
+  "timestamp": "20260811-170904",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/sidepanel-design-debt-remaining-claude-20260811-170904.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/sidepanel-design-debt-remaining-pi-20260811-170904.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/sidepanel-design-debt-remaining-diff-20260811-170904.patch"
+}
