@@ -101,10 +101,10 @@
 ## 3. 本机代码 / 工作区（DevSec）
 
 1. 启用 **`devsec-workspace`**（横幅「启用」）。
-2. **先选中目标线程**，再点 **「选择工作区」** → 系统文件夹对话框选仓库根目录。
-3. 面板显示 **当前工作区: `/path/...`** 后，再让 Agent 使用 `workspace_list_dir` / `workspace_read_file`。
+2. 让 Agent 使用 `workspace_list_dir` / `workspace_read_file`。
+3. **（可选）** 需要真实仓库时：选中目标线程 → **「选择工作区」** → 系统文件夹对话框选根目录；面板显示绑定路径。**「清除工作区」** 仅在已显式绑定时出现。
 
-若未选工作区就调用上述工具，会得到**可恢复**错误（提示来面板选文件夹），不会整段标成「不可恢复」。
+**默认沙箱（Scheme 1）**：线程未绑定 `workspace_root` 时，上述工具运行时落到 `~/CMspark-projects`（不存在则自动创建，权限 `0o700`），**不会**自动写入线程的 `workspace_root`；场景面板显示「默认沙箱 ~/CMspark-projects（可绑定真实项目）」。显式绑定后以绑定路径为准。路径 containment 始终生效。沙箱创建失败或模块未开启时才会拦截。
 
 ---
 
@@ -258,7 +258,7 @@
 ## 8. 验收检查清单
 
 - [ ] 应用 AppSec Pack 后，线程带有 `mission_pack_id`，工具面按 Pack 收窄  
-- [ ] 未选工作区时 `workspace_*` 给出可恢复提示；选文件夹后可 list/read  
+- [ ] 未显式绑定时 `workspace_*` 走默认沙箱 `~/CMspark-projects`；创建失败 / 模块未开时给出可恢复提示；选文件夹后可 list/read 绑定目录  
 - [ ] **community** 下无法真正启用 shell/netsec（点启用后仍未启用）  
 - [ ] **enterprise** 下启用 shell 后，`shell_exec` 必现 L2，且协议解锁不能静默跳过  
 - [ ] netsec **空 allowlist** 时扫描失败；授权目标不在 list 时拒绝  
@@ -273,7 +273,7 @@
 | 一直显示「模块 shell/netsec 未启用」，点启用无效 | `capability_profile` 仍是 `community` | 按 [§4.1](#41-改配置必做) 改成 `enterprise` 并**重启** |
 | 已改 config 仍像 community | Companion 未重启 / 改错文件 / JSON 解析失败回退默认 | 确认路径 `~/.cmspark-agent/config.json`；重启；看 Companion 日志是否报 config 损坏 |
 | Pack「应用到当前线程」按钮灰掉 | `apply_blocked`：缺模块，或 enterprise Pack 在 community | 先开齐 `requires_modules`；企业 Pack 需 enterprise profile |
-| `workspace_*` 报 workspace_root | 当前线程未绑定目录 | 选中线程 → **选择工作区** |
+| `workspace_*` 报 default sandbox / 路径逃逸 | 默认沙箱创建失败，或路径试图逃出根目录 | 检查 `~/CMspark-projects` 权限；或选中线程 → **选择工作区** 绑定明确目录 |
 | NetSec 授权后仍扫不了 | allowlist 为空，或目标不在 list / 未 L2 | 任务包里补 allowlist + 任务授权；**再在确认台/红条批准 L2**（见 [确认台说明](confirm-center-user-guide.md)） |
 | 面板提示「已请求启用 …」但横幅还在 | 后端拒绝（常见 enterprise_profile_required）或未刷新 | 查 profile；点「刷新」；必要时看 `capability-audit.jsonl` |
 

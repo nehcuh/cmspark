@@ -945,7 +945,7 @@ export function PacksPanel() {
                 工作区：<code style={{ fontSize: 10 }}>{workspaceRoot}</code>
               </>
             ) : (
-              "工作区：未选择"
+              "工作区：默认沙箱 ~/CMspark-projects（可绑定真实项目）"
             )}
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
@@ -957,6 +957,7 @@ export function PacksPanel() {
             <button type="button" style={styles.secondaryBtn} onClick={pickWorkspace} disabled={!!busy}>
               {workspaceRoot ? "更换工作区" : "选择工作区"}
             </button>
+            {/* Clear only when explicit workspace_root is bound — not for default sandbox */}
             {workspaceRoot ? (
               <button
                 type="button"

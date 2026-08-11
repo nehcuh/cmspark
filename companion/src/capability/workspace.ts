@@ -1,9 +1,11 @@
 // DevSec workspace — path containment + list/read under thread.workspace_root
+// When workspace_root is unset: runtime fallback to ~/CMspark-projects (does NOT bind thread).
 
 import * as fs from "fs"
 import * as path from "path"
+import * as os from "os"
 import { requireModule } from "./modules"
-import { WORKSPACE_ROOT_NOT_SET_ERROR } from "./user-gate-copy"
+import { cmsparkProjectsRoot, CMSPARK_PROJECTS_DIRNAME } from "./project-dir"
 
 const MAX_READ_BYTES = 512 * 1024
 const MAX_LIST_ENTRIES = 500
@@ -35,21 +37,106 @@ export function consumeNativePick(absPath: string): boolean {
   return true
 }
 
+/**
+ * Ensure ~/CMspark-projects exists (mode 0o700). Runtime fallback only —
+ * does NOT write thread.workspace_root.
+ */
+export function ensureDefaultSandboxRoot(
+  home = os.homedir(),
+): { ok: true; path: string } | { ok: false; error: string } {
+  let homeReal: string
+  try {
+    homeReal = fs.realpathSync(home)
+  } catch {
+    return {
+      ok: false,
+      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: cannot resolve home directory [default_sandbox_unavailable]`,
+    }
+  }
+
+  const base = cmsparkProjectsRoot(homeReal)
+  const relToHome = path.relative(homeReal, base)
+  if (relToHome.startsWith("..") || path.isAbsolute(relToHome)) {
+    return {
+      ok: false,
+      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: path escapes home [default_sandbox_unavailable]`,
+    }
+  }
+
+  try {
+    if (!fs.existsSync(base)) {
+      fs.mkdirSync(base, { recursive: true, mode: 0o700 })
+    }
+  } catch (e: any) {
+    return {
+      ok: false,
+      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: ${e?.message || String(e)} [default_sandbox_unavailable]`,
+    }
+  }
+
+  let rootReal: string
+  try {
+    rootReal = fs.realpathSync(base)
+  } catch (e: any) {
+    return {
+      ok: false,
+      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: ${e?.message || String(e)} [default_sandbox_unavailable]`,
+    }
+  }
+
+  // Post-create containment (symlink / TOCTOU)
+  const relAfter = path.relative(homeReal, rootReal)
+  if (relAfter.startsWith("..") || path.isAbsolute(relAfter)) {
+    return {
+      ok: false,
+      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: path escapes home [default_sandbox_unavailable]`,
+    }
+  }
+  if (!fs.statSync(rootReal).isDirectory()) {
+    return {
+      ok: false,
+      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: path exists and is not a directory [default_sandbox_unavailable]`,
+    }
+  }
+  return { ok: true, path: rootReal }
+}
+
+/**
+ * Effective root for list/read: explicit thread.workspace_root wins;
+ * else default sandbox ~/CMspark-projects (created if missing).
+ * Does NOT bind/write thread.workspace_root.
+ */
+export function effectiveWorkspaceRoot(
+  workspaceRoot: string | null | undefined,
+): string | null {
+  if (typeof workspaceRoot === "string") {
+    const t = workspaceRoot.trim()
+    if (t) return t
+  }
+  const ensured = ensureDefaultSandboxRoot()
+  return ensured.ok ? ensured.path : null
+}
+
 export function resolveUnderWorkspace(
   workspaceRoot: string | null | undefined,
   relPath: string,
 ): { ok: true; abs: string } | { ok: false; error: string } {
-  if (!workspaceRoot || typeof workspaceRoot !== "string") {
-    return {
-      ok: false,
-      error: WORKSPACE_ROOT_NOT_SET_ERROR,
+  let root: string
+  if (typeof workspaceRoot === "string" && workspaceRoot.trim()) {
+    root = workspaceRoot.trim()
+  } else {
+    const ensured = ensureDefaultSandboxRoot()
+    if (!ensured.ok) {
+      return { ok: false, error: ensured.error }
     }
+    root = ensured.path
   }
+
   let rootReal: string
   try {
-    rootReal = fs.realpathSync(workspaceRoot)
+    rootReal = fs.realpathSync(root)
   } catch {
-    return { ok: false, error: `workspace_root does not exist: ${workspaceRoot}` }
+    return { ok: false, error: `workspace_root does not exist: ${root}` }
   }
   const st = fs.statSync(rootReal)
   if (!st.isDirectory()) return { ok: false, error: "workspace_root is not a directory" }

@@ -1,0 +1,419 @@
+# Dual external review context
+batch: default-workspace-sandbox
+base: HEAD
+time: 20260811-154412
+
+19b065d
+
+ M chrome-extension/src/sidepanel/components/PacksPanel.tsx
+ M chrome-extension/src/sidepanel/utils/gate-error-copy.ts
+ M companion/src/capability/user-gate-copy.ts
+ M companion/src/capability/workspace.ts
+ M companion/src/security.ts
+ M companion/tests/capability-workspace.test.ts
+ M companion/tests/security-thread.test.ts
+ M docs/mission-pack-usage.md
+?? .grok/workflows/default-workspace-sandbox.rhai
+?? docs/audit/reviews/default-workspace-sandbox-adversary-20260811.md
+?? docs/audit/reviews/default-workspace-sandbox-diff-20260811-154412.patch
+?? docs/audit/reviews/default-workspace-sandbox-dual-prompt-20260811.md
+
+## Diff (git diff + staged)
+ .../src/sidepanel/components/PacksPanel.tsx        |   3 +-
+ .../src/sidepanel/utils/gate-error-copy.ts         |  25 +++--
+ companion/src/capability/user-gate-copy.ts         |  33 +++++--
+ companion/src/capability/workspace.ts              | 101 +++++++++++++++++++--
+ companion/src/security.ts                          |   3 +
+ companion/tests/capability-workspace.test.ts       |  57 ++++++++++++
+ companion/tests/security-thread.test.ts            |   7 +-
+ docs/mission-pack-usage.md                         |  10 +-
+ 8 files changed, 210 insertions(+), 29 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/components/PacksPanel.tsx b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+index 59af33a..489ba9a 100644
+--- a/chrome-extension/src/sidepanel/components/PacksPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+@@ -945,7 +945,7 @@ export function PacksPanel() {
+                 工作区：<code style={{ fontSize: 10 }}>{workspaceRoot}</code>
+               </>
+             ) : (
+-              "工作区：未选择"
++              "工作区：默认沙箱 ~/CMspark-projects（可绑定真实项目）"
+             )}
+           </div>
+           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+@@ -957,6 +957,7 @@ export function PacksPanel() {
+             <button type="button" style={styles.secondaryBtn} onClick={pickWorkspace} disabled={!!busy}>
+               {workspaceRoot ? "更换工作区" : "选择工作区"}
+             </button>
++            {/* Clear only when explicit workspace_root is bound — not for default sandbox */}
+             {workspaceRoot ? (
+               <button
+                 type="button"
+diff --git a/chrome-extension/src/sidepanel/utils/gate-error-copy.ts b/chrome-extension/src/sidepanel/utils/gate-error-copy.ts
+index a3fcbe7..fa24d5f 100644
+--- a/chrome-extension/src/sidepanel/utils/gate-error-copy.ts
++++ b/chrome-extension/src/sidepanel/utils/gate-error-copy.ts
+@@ -15,13 +15,26 @@ export function humanizeSidepanelGateError(raw: string): string {
+     .replace(/^❌\s*/u, "")
+     .trim()
+ 
+-  if (/workspace_root not set|pick a folder first|需要先绑定工作区/i.test(body + e)) {
++  // Create-fail hard-gate (default sandbox mkdir failed)
++  if (/default_sandbox_unavailable|cannot create default sandbox|默认工作区沙箱不可用/i.test(body + e)) {
+     return (
+-      "📁 **需要先绑定工作区**\n\n" +
+-      "1. 打开侧栏 **「场景」**\n" +
+-      "2. 点 **「选择工作区」**，选中本机文件夹\n" +
+-      "3. 回对话说「继续」\n\n" +
+-      "_说明：God-mode / 自动批准不会跳过工作区绑定。_"
++      "📁 **默认沙箱不可用**\n\n" +
++      "请检查本机 **~/CMspark-projects** 是否可创建；或侧栏 **「场景」** → **「选择工作区」** 绑定明确目录后重试。\n\n" +
++      "_说明：未绑定时会回落到默认沙箱，不会自动写入线程 workspace_root。_"
++    )
++  }
++
++  // Soft path: happy path uses default sandbox; pick is optional for real projects.
++  // Keep matching machine tokens for classifyError recoverability when raw errors remain.
++  if (
++    /workspace_root not set|pick a folder first|需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱/i.test(
++      body + e,
++    )
++  ) {
++    return (
++      "📁 **可用默认沙箱 ~/CMspark-projects**\n\n" +
++      "一般无需选文件夹即可读写沙箱。若要真实项目：侧栏 **「场景」** → **「选择工作区」** → 说「继续」。\n\n" +
++      "_说明：God-mode / 自动批准与场地绑定无关。_"
+     )
+   }
+ 
+diff --git a/companion/src/capability/user-gate-copy.ts b/companion/src/capability/user-gate-copy.ts
+index 7c92dc0..7a32ae8 100644
+--- a/companion/src/capability/user-gate-copy.ts
++++ b/companion/src/capability/user-gate-copy.ts
+@@ -1,11 +1,15 @@
+ // User-facing copy for capability / scene / security gates that god-mode does NOT bypass.
+ // Keep English machine tokens in the string so classifyError() still matches recoverability.
+ 
+-/** Workspace not bound — DevSec workspace_* tools. */
++/**
++ * Legacy / edge gate when an explicit bind is still required by a caller.
++ * Happy path: workspace_* uses default sandbox ~/CMspark-projects without pick.
++ * Keep English machine tokens for classifyError recoverability.
++ */
+ export const WORKSPACE_ROOT_NOT_SET_ERROR =
+-  "需要先绑定工作区，才能读写本机文件夹。\n" +
+-  "下一步：打开侧栏「场景」→ 点「选择工作区」→ 选中文件夹 → 让助手重试。\n" +
+-  "（这与 God-mode / 自动批准无关：工作区是场地绑定，不是确认弹窗。）\n" +
++  "未绑定真实项目目录时，本机读写默认使用沙箱 ~/CMspark-projects。\n" +
++  "若需真实仓库：打开侧栏「场景」→「选择工作区」绑定后重试。\n" +
++  "（God-mode / 自动批准与场地绑定无关。）\n" +
+   "[workspace_root not set — pick a folder first]"
+ 
+ /** Scene tool whitelist — Mission Pack surface. */
+@@ -40,11 +44,20 @@ export function humanizeChatErrorForUser(raw: string): string {
+     .replace(/^❌\s*/u, "")
+     .trim()
+ 
+-  if (/workspace_root not set|pick a folder first|需要先绑定工作区/i.test(body)) {
++  if (/default_sandbox_unavailable|cannot create default sandbox/i.test(body)) {
+     return (
+-      "需要先绑定工作区\n" +
+-      "请打开侧栏「场景」→「选择工作区」选中本机文件夹，然后说「继续」让助手重试。\n" +
+-      "说明：God-mode / 自动批准不会跳过这一步。"
++      "默认工作区沙箱不可用\n" +
++      "请检查本机 ~/CMspark-projects 是否可创建；或打开侧栏「场景」→「选择工作区」绑定明确目录后重试。\n" +
++      "说明：未绑定时会回落到 ~/CMspark-projects，不会自动写入线程 workspace_root。"
++    )
++  }
++
++  // Soft path: happy path no longer requires pick; only create-fail / module_disabled hard-gate.
++  if (/workspace_root not set|pick a folder first|需要先绑定工作区|默认使用沙箱/i.test(body)) {
++    return (
++      "本机读写可用默认沙箱 ~/CMspark-projects\n" +
++      "一般无需选择文件夹；若要真实项目目录，打开侧栏「场景」→「选择工作区」后说「继续」。\n" +
++      "说明：God-mode / 自动批准与场地绑定无关。"
+     )
+   }
+ 
+@@ -84,7 +97,9 @@ export function formatChatErrorLine(
+   const human = humanizeChatErrorForUser(rawError)
+   // Setup gates: never brand as 安全阻断 / 不可恢复
+   if (
+-    /需要先绑定工作区|当前场景限制|本机能力未开启|网络扫描范围未授权/.test(human)
++    /需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱|默认工作区沙箱不可用|当前场景限制|本机能力未开启|网络扫描范围未授权/.test(
++      human,
++    )
+   ) {
+     return human
+   }
+diff --git a/companion/src/capability/workspace.ts b/companion/src/capability/workspace.ts
+index 5b04a81..978cc5a 100644
+--- a/companion/src/capability/workspace.ts
++++ b/companion/src/capability/workspace.ts
+@@ -1,9 +1,11 @@
+ // DevSec workspace — path containment + list/read under thread.workspace_root
++// When workspace_root is unset: runtime fallback to ~/CMspark-projects (does NOT bind thread).
+ 
+ import * as fs from "fs"
+ import * as path from "path"
++import * as os from "os"
+ import { requireModule } from "./modules"
+-import { WORKSPACE_ROOT_NOT_SET_ERROR } from "./user-gate-copy"
++import { cmsparkProjectsRoot, CMSPARK_PROJECTS_DIRNAME } from "./project-dir"
+ 
+ const MAX_READ_BYTES = 512 * 1024
+ const MAX_LIST_ENTRIES = 500
+@@ -35,21 +37,106 @@ export function consumeNativePick(absPath: string): boolean {
+   return true
+ }
+ 
++/**
++ * Ensure ~/CMspark-projects exists (mode 0o700). Runtime fallback only —
++ * does NOT write thread.workspace_root.
++ */
++export function ensureDefaultSandboxRoot(
++  home = os.homedir(),
++): { ok: true; path: string } | { ok: false; error: string } {
++  let homeReal: string
++  try {
++    homeReal = fs.realpathSync(home)
++  } catch {
++    return {
++      ok: false,
++      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: cannot resolve home directory [default_sandbox_unavailable]`,
++    }
++  }
++
++  const base = cmsparkProjectsRoot(homeReal)
++  const relToHome = path.relative(homeReal, base)
++  if (relToHome.startsWith("..") || path.isAbsolute(relToHome)) {
++    return {
++      ok: false,
++      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: path escapes home [default_sandbox_unavailable]`,
++    }
++  }
++
++  try {
++    if (!fs.existsSync(base)) {
++      fs.mkdirSync(base, { recursive: true, mode: 0o700 })
++    }
++  } catch (e: any) {
++    return {
++      ok: false,
++      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: ${e?.message || String(e)} [default_sandbox_unavailable]`,
++    }
++  }
++
++  let rootReal: string
++  try {
++    rootReal = fs.realpathSync(base)
++  } catch (e: any) {
++    return {
++      ok: false,
++      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: ${e?.message || String(e)} [default_sandbox_unavailable]`,
++    }
++  }
++
++  // Post-create containment (symlink / TOCTOU)
++  const relAfter = path.relative(homeReal, rootReal)
++  if (relAfter.startsWith("..") || path.isAbsolute(relAfter)) {
++    return {
++      ok: false,
++      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: path escapes home [default_sandbox_unavailable]`,
++    }
++  }
++  if (!fs.statSync(rootReal).isDirectory()) {
++    return {
++      ok: false,
++      error: `cannot create default sandbox ~/${CMSPARK_PROJECTS_DIRNAME}: path exists and is not a directory [default_sandbox_unavailable]`,
++    }
++  }
++  return { ok: true, path: rootReal }
++}
++
++/**
++ * Effective root for list/read: explicit thread.workspace_root wins;
++ * else default sandbox ~/CMspark-projects (created if missing).
++ * Does NOT bind/write thread.workspace_root.
++ */
++export function effectiveWorkspaceRoot(
++  workspaceRoot: string | null | undefined,
++): string | null {
++  if (typeof workspaceRoot === "string") {
++    const t = workspaceRoot.trim()
++    if (t) return t
++  }
++  const ensured = ensureDefaultSandboxRoot()
++  return ensured.ok ? ensured.path : null
++}
++
+ export function resolveUnderWorkspace(
+   workspaceRoot: string | null | undefined,
+   relPath: string,
+ ): { ok: true; abs: string } | { ok: false; error: string } {
+-  if (!workspaceRoot || typeof workspaceRoot !== "string") {
+-    return {
+-      ok: false,
+-      error: WORKSPACE_ROOT_NOT_SET_ERROR,
++  let root: string
++  if (typeof workspaceRoot === "string" && workspaceRoot.trim()) {
++    root = workspaceRoot.trim()
++  } else {
++    const ensured = ensureDefaultSandboxRoot()
++    if (!ensured.ok) {
++      return { ok: false, error: ensured.error }
+     }
++    root = ensured.path
+   }
++
+   let rootReal: string
+   try {
+-    rootReal = fs.realpathSync(workspaceRoot)
++    rootReal = fs.realpathSync(root)
+   } catch {
+-    return { ok: false, error: `workspace_root does not exist: ${workspaceRoot}` }
++    return { ok: false, error: `workspace_root does not exist: ${root}` }
+   }
+   const st = fs.statSync(rootReal)
+   if (!st.isDirectory()) return { ok: false, error: "workspace_root is not a directory" }
+diff --git a/companion/src/security.ts b/companion/src/security.ts
+index 64313d1..86c53d0 100644
+--- a/companion/src/security.ts
++++ b/companion/src/security.ts
+@@ -762,6 +762,9 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
+     // Mission Pack DevSec: missing workspace is user-actionable (pick folder)
+     "workspace_root not set",
+     "pick a folder first",
++    // Default sandbox ~/CMspark-projects create/resolve failure (Scheme 1)
++    "default_sandbox_unavailable",
++    "cannot create default sandbox",
+     "module_disabled",
+     "workspace path must come from",
+     // Scene (Mission Pack) tool surface — exit scene or use allowed tools
+diff --git a/companion/tests/capability-workspace.test.ts b/companion/tests/capability-workspace.test.ts
+index 4e1623d..3f63960 100644
+--- a/companion/tests/capability-workspace.test.ts
++++ b/companion/tests/capability-workspace.test.ts
+@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
+ import * as fs from "node:fs"
+ import * as os from "node:os"
+ import * as path from "node:path"
++import { CMSPARK_PROJECTS_DIRNAME } from "../src/capability/project-dir"
+ 
+ const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-ws-"))
+ process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
+@@ -82,3 +83,59 @@ test("module gate blocks when disabled", () => {
+   } as any)
+   clearConfigCache()
+ })
++
++test("effectiveWorkspaceRoot(null) returns ~/CMspark-projects under HOME", () => {
++  const eff = workspace.effectiveWorkspaceRoot(null)
++  assert.ok(eff)
++  assert.ok(eff!.endsWith(CMSPARK_PROJECTS_DIRNAME))
++  assert.ok(eff!.startsWith(fs.realpathSync(tempHome)) || eff!.startsWith(tempHome))
++  assert.ok(fs.existsSync(eff!) && fs.statSync(eff!).isDirectory())
++})
++
++test("null workspaceRoot can workspaceListDir under default sandbox", () => {
++  const sandbox = path.join(tempHome, CMSPARK_PROJECTS_DIRNAME)
++  // ensure not pre-created so list path creates it
++  if (fs.existsSync(sandbox)) {
++    // leave existing from prior test — list still works
++  }
++  const list = workspace.workspaceListDir(null, ".")
++  assert.equal(list.success, true, list.error)
++  assert.ok(fs.existsSync(sandbox) && fs.statSync(sandbox).isDirectory())
++  assert.equal(list.data.path, ".")
++  assert.ok(Array.isArray(list.data.entries))
++})
++
++test("null workspaceRoot workspaceReadFile after writing under sandbox", () => {
++  const sandbox = path.join(tempHome, CMSPARK_PROJECTS_DIRNAME)
++  fs.mkdirSync(sandbox, { recursive: true, mode: 0o700 })
++  const fname = `sandbox-read-${Date.now().toString(36)}.txt`
++  fs.writeFileSync(path.join(sandbox, fname), "sandbox-hello")
++  const read = workspace.workspaceReadFile(null, fname)
++  assert.equal(read.success, true, read.error)
++  assert.equal(read.data.content, "sandbox-hello")
++})
++
++test("explicit workspace root preferred over default sandbox", () => {
++  const explicit = fs.mkdtempSync(path.join(os.tmpdir(), "ws-explicit-"))
++  fs.writeFileSync(path.join(explicit, "only-here.txt"), "explicit-content")
++  // poison sandbox with same name different content
++  const sandbox = path.join(tempHome, CMSPARK_PROJECTS_DIRNAME)
++  fs.mkdirSync(sandbox, { recursive: true, mode: 0o700 })
++  fs.writeFileSync(path.join(sandbox, "only-here.txt"), "sandbox-content")
++
++  const read = workspace.workspaceReadFile(explicit, "only-here.txt")
++  assert.equal(read.success, true, read.error)
++  assert.equal(read.data.content, "explicit-content")
++
++  const list = workspace.workspaceListDir(explicit, ".")
++  assert.equal(list.success, true)
++  assert.ok(list.data.entries.some((e: any) => e.name === "only-here.txt"))
++
++  fs.rmSync(explicit, { recursive: true, force: true })
++})
++
++test("escape ../ still rejected under sandbox fallback", () => {
++  const bad = workspace.resolveUnderWorkspace(null, "../outside")
++  assert.equal(bad.ok, false)
++  assert.match(bad.ok === false ? bad.error : "", /escapes workspace_root/)
++})
+diff --git a/companion/tests/security-thread.test.ts b/companion/tests/security-thread.test.ts
+index 3735e30..74831d3 100644
+--- a/companion/tests/security-thread.test.ts
++++ b/companion/tests/security-thread.test.ts
+@@ -298,7 +298,12 @@ test("formatChatErrorLine softens workspace / scene gates (not 安全阻断)", a
+     "../src/capability/user-gate-copy"
+   )
+   const w = formatChatErrorLine("non_recoverable", WORKSPACE_ROOT_NOT_SET_ERROR)
+-  assert.ok(w.includes("绑定工作区") || w.includes("选择工作区"))
++  assert.ok(
++    w.includes("默认沙箱") ||
++      w.includes("CMspark-projects") ||
++      w.includes("选择工作区") ||
++      w.includes("绑定"),
++  )
+   assert.ok(!w.includes("安全阻断"))
+   assert.ok(!w.startsWith("不可恢复"))
+ 
+diff --git a/docs/mission-pack-usage.md b/docs/mission-pack-usage.md
+index 3b1ca4a..7f9bada 100644
+--- a/docs/mission-pack-usage.md
++++ b/docs/mission-pack-usage.md
+@@ -101,10 +101,10 @@
+ ## 3. 本机代码 / 工作区（DevSec）
+ 
+ 1. 启用 **`devsec-workspace`**（横幅「启用」）。
+-2. **先选中目标线程**，再点 **「选择工作区」** → 系统文件夹对话框选仓库根目录。
+-3. 面板显示 **当前工作区: `/path/...`** 后，再让 Agent 使用 `workspace_list_dir` / `workspace_read_file`。
++2. 让 Agent 使用 `workspace_list_dir` / `workspace_read_file`。
++3. **（可选）** 需要真实仓库时：选中目标线程 → **「选择工作区」** → 系统文件夹对话框选根目录；面板显示绑定路径。**「清除工作区」** 仅在已显式绑定时出现。
+ 
+-若未选工作区就调用上述工具，会得到**可恢复**错误（提示来面板选文件夹），不会整段标成「不可恢复」。
++**默认沙箱（Scheme 1）**：线程未绑定 `workspace_root` 时，上述工具运行时落到 `~/CMspark-projects`（不存在则自动创建，权限 `0o700`），**不会**自动写入线程的 `workspace_root`；场景面板显示「默认沙箱 ~/CMspark-projects（可绑定真实项目）」。显式绑定后以绑定路径为准。路径 containment 始终生效。沙箱创建失败或模块未开启时才会拦截。
+ 
+ ---
+ 
+@@ -258,7 +258,7 @@
+ ## 8. 验收检查清单
+ 
+ - [ ] 应用 AppSec Pack 后，线程带有 `mission_pack_id`，工具面按 Pack 收窄  
+-- [ ] 未选工作区时 `workspace_*` 给出可恢复提示；选文件夹后可 list/read  
++- [ ] 未显式绑定时 `workspace_*` 走默认沙箱 `~/CMspark-projects`；创建失败 / 模块未开时给出可恢复提示；选文件夹后可 list/read 绑定目录  
+ - [ ] **community** 下无法真正启用 shell/netsec（点启用后仍未启用）  
+ - [ ] **enterprise** 下启用 shell 后，`shell_exec` 必现 L2，且协议解锁不能静默跳过  
+ - [ ] netsec **空 allowlist** 时扫描失败；授权目标不在 list 时拒绝  
+@@ -273,7 +273,7 @@
+ | 一直显示「模块 shell/netsec 未启用」，点启用无效 | `capability_profile` 仍是 `community` | 按 [§4.1](#41-改配置必做) 改成 `enterprise` 并**重启** |
+ | 已改 config 仍像 community | Companion 未重启 / 改错文件 / JSON 解析失败回退默认 | 确认路径 `~/.cmspark-agent/config.json`；重启；看 Companion 日志是否报 config 损坏 |
+ | Pack「应用到当前线程」按钮灰掉 | `apply_blocked`：缺模块，或 enterprise Pack 在 community | 先开齐 `requires_modules`；企业 Pack 需 enterprise profile |
+-| `workspace_*` 报 workspace_root | 当前线程未绑定目录 | 选中线程 → **选择工作区** |
++| `workspace_*` 报 default sandbox / 路径逃逸 | 默认沙箱创建失败，或路径试图逃出根目录 | 检查 `~/CMspark-projects` 权限；或选中线程 → **选择工作区** 绑定明确目录 |
+ | NetSec 授权后仍扫不了 | allowlist 为空，或目标不在 list / 未 L2 | 任务包里补 allowlist + 任务授权；**再在确认台/红条批准 L2**（见 [确认台说明](confirm-center-user-guide.md)） |
+ | 面板提示「已请求启用 …」但横幅还在 | 后端拒绝（常见 enterprise_profile_required）或未刷新 | 查 profile；点「刷新」；必要时看 `capability-audit.jsonl` |
+ 

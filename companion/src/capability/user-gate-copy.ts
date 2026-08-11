@@ -1,11 +1,15 @@
 // User-facing copy for capability / scene / security gates that god-mode does NOT bypass.
 // Keep English machine tokens in the string so classifyError() still matches recoverability.
 
-/** Workspace not bound — DevSec workspace_* tools. */
+/**
+ * Legacy / edge gate when an explicit bind is still required by a caller.
+ * Happy path: workspace_* uses default sandbox ~/CMspark-projects without pick.
+ * Keep English machine tokens for classifyError recoverability.
+ */
 export const WORKSPACE_ROOT_NOT_SET_ERROR =
-  "需要先绑定工作区，才能读写本机文件夹。\n" +
-  "下一步：打开侧栏「场景」→ 点「选择工作区」→ 选中文件夹 → 让助手重试。\n" +
-  "（这与 God-mode / 自动批准无关：工作区是场地绑定，不是确认弹窗。）\n" +
+  "未绑定真实项目目录时，本机读写默认使用沙箱 ~/CMspark-projects。\n" +
+  "若需真实仓库：打开侧栏「场景」→「选择工作区」绑定后重试。\n" +
+  "（God-mode / 自动批准与场地绑定无关。）\n" +
   "[workspace_root not set — pick a folder first]"
 
 /** Scene tool whitelist — Mission Pack surface. */
@@ -40,11 +44,20 @@ export function humanizeChatErrorForUser(raw: string): string {
     .replace(/^❌\s*/u, "")
     .trim()
 
-  if (/workspace_root not set|pick a folder first|需要先绑定工作区/i.test(body)) {
+  if (/default_sandbox_unavailable|cannot create default sandbox/i.test(body)) {
     return (
-      "需要先绑定工作区\n" +
-      "请打开侧栏「场景」→「选择工作区」选中本机文件夹，然后说「继续」让助手重试。\n" +
-      "说明：God-mode / 自动批准不会跳过这一步。"
+      "默认工作区沙箱不可用\n" +
+      "请检查本机 ~/CMspark-projects 是否可创建；或打开侧栏「场景」→「选择工作区」绑定明确目录后重试。\n" +
+      "说明：未绑定时会回落到 ~/CMspark-projects，不会自动写入线程 workspace_root。"
+    )
+  }
+
+  // Soft path: happy path no longer requires pick; only create-fail / module_disabled hard-gate.
+  if (/workspace_root not set|pick a folder first|需要先绑定工作区|默认使用沙箱/i.test(body)) {
+    return (
+      "本机读写可用默认沙箱 ~/CMspark-projects\n" +
+      "一般无需选择文件夹；若要真实项目目录，打开侧栏「场景」→「选择工作区」后说「继续」。\n" +
+      "说明：God-mode / 自动批准与场地绑定无关。"
     )
   }
 
@@ -84,7 +97,9 @@ export function formatChatErrorLine(
   const human = humanizeChatErrorForUser(rawError)
   // Setup gates: never brand as 安全阻断 / 不可恢复
   if (
-    /需要先绑定工作区|当前场景限制|本机能力未开启|网络扫描范围未授权/.test(human)
+    /需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱|默认工作区沙箱不可用|当前场景限制|本机能力未开启|网络扫描范围未授权/.test(
+      human,
+    )
   ) {
     return human
   }

@@ -15,13 +15,26 @@ export function humanizeSidepanelGateError(raw: string): string {
     .replace(/^❌\s*/u, "")
     .trim()
 
-  if (/workspace_root not set|pick a folder first|需要先绑定工作区/i.test(body + e)) {
+  // Create-fail hard-gate (default sandbox mkdir failed)
+  if (/default_sandbox_unavailable|cannot create default sandbox|默认工作区沙箱不可用/i.test(body + e)) {
     return (
-      "📁 **需要先绑定工作区**\n\n" +
-      "1. 打开侧栏 **「场景」**\n" +
-      "2. 点 **「选择工作区」**，选中本机文件夹\n" +
-      "3. 回对话说「继续」\n\n" +
-      "_说明：God-mode / 自动批准不会跳过工作区绑定。_"
+      "📁 **默认沙箱不可用**\n\n" +
+      "请检查本机 **~/CMspark-projects** 是否可创建；或侧栏 **「场景」** → **「选择工作区」** 绑定明确目录后重试。\n\n" +
+      "_说明：未绑定时会回落到默认沙箱，不会自动写入线程 workspace_root。_"
+    )
+  }
+
+  // Soft path: happy path uses default sandbox; pick is optional for real projects.
+  // Keep matching machine tokens for classifyError recoverability when raw errors remain.
+  if (
+    /workspace_root not set|pick a folder first|需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱/i.test(
+      body + e,
+    )
+  ) {
+    return (
+      "📁 **可用默认沙箱 ~/CMspark-projects**\n\n" +
+      "一般无需选文件夹即可读写沙箱。若要真实项目：侧栏 **「场景」** → **「选择工作区」** → 说「继续」。\n\n" +
+      "_说明：God-mode / 自动批准与场地绑定无关。_"
     )
   }
 

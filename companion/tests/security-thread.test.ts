@@ -298,7 +298,12 @@ test("formatChatErrorLine softens workspace / scene gates (not 安全阻断)", a
     "../src/capability/user-gate-copy"
   )
   const w = formatChatErrorLine("non_recoverable", WORKSPACE_ROOT_NOT_SET_ERROR)
-  assert.ok(w.includes("绑定工作区") || w.includes("选择工作区"))
+  assert.ok(
+    w.includes("默认沙箱") ||
+      w.includes("CMspark-projects") ||
+      w.includes("选择工作区") ||
+      w.includes("绑定"),
+  )
   assert.ok(!w.includes("安全阻断"))
   assert.ok(!w.startsWith("不可恢复"))
 
