@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S63 END (2026-08-11 ~10:40) [multi-adv #162 · C10 #163 · stale remote 清仓]
+- **Ship 已在 main**：`#162` multi-adv Wave0–2 `50c9685` → `#163` C10 god-file A–H + nits `a32659e`（含 eager-bind `d028f2e`）
+- **本会话**：用户要「未合 remote 依次开 PR→CI→合」→ 盘点 11 支均为 **squash 假阳性**（PR 已 MERGED，merge-tree 会回灌旧 `server.ts`）→ **拒绝硬合** → 授权后 `git push origin --delete` 11 支；再清 12 支已是 main 祖先的 leftover remote
+- **远端卫生**：`origin/main` tip `a32659e`；**open PR 0**；remote 仅 `origin/main`（工作区另有 local worktree 分支未推）
+- **本地**：`main` = `origin/main`；`stash@{0}` local-wip-before-pr-pipeline（esbuild/host-integrity）；worktree 可能仍挂 `fix/c10-godfile-split-a` / multi-adv
+- **下次**：真机验收 backlog（Windows shell/听写、Mac 值守）；可选清 local worktree/stash；god-file 后续若有 message-router 再分期
+- Recorded: yes — squash `--no-merged` 假阳性 · merge-tree 防回退 · remote 删支卫生
+
 ### S62 END (2026-08-09 ~22:50–23:35) [Windows voice-pack closeout · shell_exec token · #161 MERGED]
 - **Ship**：**#161 MERGED** `57bad96` → `origin/main`（Windows closeout + shell/netsec `validateTokenFor` + lockfile engines）
 - **根因**：`shell_exec` L2 issue 绑 `command|cwd`，旧 validate 只验 command → enterprise_auto 下恒「Invalid or expired security token」
@@ -576,12 +584,19 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+### God-file / multi-adv 落地（S63）
+- status: **done** (#162 + #163 on main `a32659e`)
+- context: C10 extract + multi-adv residuals + stale remote 清仓
+- next_action: 可选 message-router 续拆；清 local worktrees/stash
+- resume_doc: PR #162 · #163 · project-knowledge S63 坑
+- updated: 2026-08-11
+
 ### Windows 包真机验收（S62 后 · #161）
 - status: **active**
-- context: #161 已合 main；本地已重编 SEA + whisper bin；shell_exec token 修在 `32ab576`
+- context: #161 已合 main；本地已重编 SEA + whisper bin；shell_exec token 修在 `32ab576`；main 已含 #162/#163
 - next_action: (1) 确认跑的是 `dist-package\...\cmspark-agent.exe` 新时间戳 (2) enterprise/全自动下 shell_exec (3) 听写 continuous/hold
 - resume_doc: PR #161 · `memory/project-knowledge.md` shell token 坑
-- updated: 2026-08-09
+- updated: 2026-08-11
 
 ### Trust / 思考 / digest 真机验收（S53 后）
 - status: **active**
