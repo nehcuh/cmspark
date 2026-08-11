@@ -164,11 +164,20 @@ async function handleDaemonStart(): Promise<void> {
 
   writePidFile(pidPath, process.pid)
 
-  // Release daemon lock — startServer() will acquire its own
-  releaseLock(lockPath)
-
+  // P1 OPS-02: do NOT release UDS lock across init — race window allowed a
+  // second daemon to acquire. startServer re-acquires if needed; keep hold
+  // through initDataDir (best-effort). release only if startServer will
+  // replace ownership via its own acquire path after we pass the same lock.
+  // startServer's acquireLock is idempotent when we still hold the socket.
   await initDataDir()
-  await startServer({ onShutdown: () => cleanupPidFile(pidPath) })
+  // Hand off: startServer acquires; if it fails we still release in finally paths.
+  // Keep lock until startServer begins — only release if startServer fails to start.
+  try {
+    await startServer({ onShutdown: () => cleanupPidFile(pidPath) })
+  } catch (e) {
+    releaseLock(lockPath)
+    throw e
+  }
 }
 
 async function handleDaemonStop(): Promise<void> {

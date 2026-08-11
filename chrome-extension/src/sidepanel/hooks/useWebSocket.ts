@@ -534,12 +534,10 @@ export function useWebSocket() {
             typeof msg.thread_id === "string" && msg.thread_id
               ? msg.thread_id
               : ""
-          if (toolTid) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId: toolTid, busy: true })
-          }
-          // With stamped thread_id: only mutate active transcript (no cross-thread pollution).
-          // Missing thread_id: legacy apply to active (compat).
-          if (toolTid && !shouldApplyStreamEvent(toolTid, activeThreadRef.current)) break
+          // P1 CORR-M05: missing thread_id fail-closed (no legacy active fallback)
+          if (!toolTid) break
+          dispatch({ type: "SET_THREAD_BUSY", threadId: toolTid, busy: true })
+          if (!shouldApplyStreamEvent(toolTid, activeThreadRef.current)) break
           // Intermediate assistant stream ends when tools begin. Commit live
           // reasoning/content into a historical row first — otherwise only the
           // shell/tool card remains after the turn (user report on #h1yi2w).
@@ -548,17 +546,16 @@ export function useWebSocket() {
           if (streamingRef.current || reasoningRef.current) {
             const midContent = streamingRef.current || ""
             const midReasoning = reasoningRef.current || ""
-            const midTid = toolTid || activeThreadRef.current || ""
             streamingRef.current = ""
             reasoningRef.current = ""
             dispatch({ type: "SET_STREAMING", content: "" })
             dispatch({ type: "SET_STREAMING_REASONING", content: "" })
-            if (midTid && (midContent || midReasoning)) {
+            if (midContent || midReasoning) {
               dispatch({
                 type: "ADD_MESSAGE",
                 message: {
-                  id: `${midTid}_assistant_mid_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                  thread_id: midTid,
+                  id: `${toolTid}_assistant_mid_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                  thread_id: toolTid,
                   role: "assistant",
                   content: midContent,
                   ...(midReasoning ? { reasoning_content: midReasoning } : {}),
@@ -571,7 +568,7 @@ export function useWebSocket() {
             type: "ADD_MESSAGE",
             message: {
               id: msg.tool_call_id,
-              thread_id: toolTid || activeThreadRef.current || "",
+              thread_id: toolTid,
               role: "tool",
               content: "",
               tool_calls: [{
@@ -1155,9 +1152,18 @@ export function useWebSocket() {
           break
         }
 
-        case "thread.messages":
-          dispatch({ type: "SET_MESSAGES", messages: msg.messages })
+        case "thread.messages": {
+          // P1 CORR-03: never apply history for another thread (stale select race)
+          const histTid =
+            typeof msg.thread_id === "string" && msg.thread_id
+              ? msg.thread_id
+              : typeof msg.threadId === "string" && msg.threadId
+                ? msg.threadId
+                : ""
+          if (!shouldApplyStreamEvent(histTid, activeThreadRef.current)) break
+          dispatch({ type: "SET_MESSAGES", messages: msg.messages || [] })
           break
+        }
 
         case "skill.auto_matched":
           const autoSkills = (msg.skills || []).map((s: any) => s.name).join(", ")

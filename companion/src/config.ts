@@ -493,6 +493,13 @@ export async function initDataDir(): Promise<void> {
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
+  // P1 CORR-09: demote stuck recording meetings after process restart
+  try {
+    const { reconcileStaleRecordings } = require("./meeting/meeting-store") as typeof import("./meeting/meeting-store")
+    reconcileStaleRecordings(DATA_DIR)
+  } catch {
+    /* meetings module optional at very early boot */
+  }
 
   // Ensure data directory itself has restricted permissions
   try {
@@ -572,7 +579,8 @@ function loadConfigFile(configPath: string): CompanionConfig {
       servers: { ...serversObj },
     }
   }
-  return merged
+  // P1 SEC-06: re-filter domain wildcards on load (hand-edited config.json bypass)
+  return sanitizeDomainPatternsOnLoad(merged)
 }
 
 export function getConfig(): CompanionConfig {
@@ -1032,30 +1040,53 @@ function resolveApiKey(
   return undefined
 }
 
+/** Shared domain-pattern filter (saveConfig + loadConfig P1 SEC-06). */
+function filterDomainPatterns(
+  arr: string[] | undefined,
+  label: string,
+  logLabel = "rejecting",
+): string[] {
+  if (!Array.isArray(arr)) return []
+  // Lazy require avoids circular import at module load
+  const { validateWildcardPattern } = require("./security") as typeof import("./security")
+  const kept: string[] = []
+  for (const p of arr) {
+    if (typeof p !== "string") continue
+    const v = validateWildcardPattern(p)
+    if (v.ok) {
+      kept.push(p)
+    } else {
+      console.warn(
+        `[cmspark-agent] WARNING: ${logLabel} dangerous ${label} pattern '${p}' — ${v.reason}.`,
+      )
+    }
+  }
+  return kept
+}
+
+/** P1 SEC-06: drop dangerous wildcards when loading hand-edited config.json. */
+function sanitizeDomainPatternsOnLoad(cfg: CompanionConfig): CompanionConfig {
+  if (Array.isArray(cfg.trusted_domains)) {
+    cfg.trusted_domains = filterDomainPatterns(cfg.trusted_domains, "trusted_domains", "load-dropping")
+  }
+  if (Array.isArray(cfg.auto_approved_domains)) {
+    cfg.auto_approved_domains = filterDomainPatterns(
+      cfg.auto_approved_domains,
+      "auto_approved_domains",
+      "load-dropping",
+    )
+  }
+  return cfg
+}
+
 export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // S-P0-4 (2026-07-24): previously these were advisory warnings. Now we
   // FILTER OUT dangerous patterns at saveConfig time — `*`, `*.com`, `*.cn`,
   // `*.co.uk`, etc. The runtime matchDomain still handles them (for legacy
   // configs loaded directly from disk via deepMerge), but saveConfig refuses
   // to persist them. This closes the "edit config.json directly" bypass.
-  const { validateWildcardPattern } = require("./security") as typeof import("./security")
-  const filterPatterns = (arr: string[] | undefined, label: string): string[] => {
-    if (!Array.isArray(arr)) return []
-    const kept: string[] = []
-    for (const p of arr) {
-      if (typeof p !== "string") continue
-      const v = validateWildcardPattern(p)
-      if (v.ok) {
-        kept.push(p)
-      } else {
-        console.warn(
-          `[cmspark-agent] WARNING: rejecting dangerous ${label} pattern '${p}' — ${v.reason}. ` +
-          `Pattern dropped from saved config; edit config.json manually to override (not recommended).`,
-        )
-      }
-    }
-    return kept
-  }
+  const filterPatterns = (arr: string[] | undefined, label: string): string[] =>
+    filterDomainPatterns(arr, label, "rejecting")
   if (config.trusted_domains) {
     config.trusted_domains = filterPatterns(config.trusted_domains, "trusted_domains")
   }

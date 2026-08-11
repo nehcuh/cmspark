@@ -205,18 +205,23 @@ function AppContent() {
       <DisconnectedBanner
         visible={connectionState === "disconnected"}
         onRetry={() => {
-          // Probe status only — auto-reconnect is owned by background ws-client.
-          // Feedback stays in-banner / toast; never alert() (UIUX v2-P0).
-          chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
+          // P1 C-RACE-07: force SW reconnect (reset backoff), then probe status.
+          chrome.runtime.sendMessage({ type: "ws.forceReconnect" }, () => {
             if (chrome.runtime.lastError) {
               showToast("无法联系扩展后台，请刷新 Side Panel 后重试")
               return
             }
-            if (response?.connectionState === "connected") {
-              showToast("已连接 Companion")
-              return
-            }
-            showToast("正在尝试重新连接…若 Companion 已启动将自动恢复")
+            chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
+              if (chrome.runtime.lastError) {
+                showToast("正在尝试重新连接…")
+                return
+              }
+              if (response?.connectionState === "connected") {
+                showToast("已连接 Companion")
+                return
+              }
+              showToast("正在尝试重新连接…若 Companion 已启动将自动恢复")
+            })
           })
         }}
       />

@@ -432,8 +432,21 @@ export const initialState: AgentState = {
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
   switch (action.type) {
-    case "SET_CONNECTION":
+    case "SET_CONNECTION": {
+      // P1 C-RACE-02: drop sticky busy when companion disconnects — in-flight
+      // map never gets chat.done/aborted over a dead socket.
+      if (action.state === "disconnected") {
+        return {
+          ...state,
+          connectionState: action.state,
+          isProcessing: false,
+          threadBusyById: {},
+          streamingContent: "",
+          streamingReasoning: "",
+        }
+      }
       return { ...state, connectionState: action.state }
+    }
     case "SET_THREADS": {
       // Keep active thread if it's still in the list; otherwise stay null so that
       // the upcoming thread.created (fresh blank thread) can be auto-selected.

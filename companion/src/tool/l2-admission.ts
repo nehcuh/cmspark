@@ -1135,12 +1135,13 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           }
         }
 
+        // P1 SEC-04: default L2 binds originWs so only the requesting peer
+        // (or tray race winner) can resolve. Outbound MCP keeps L8: any
+        // authenticated peer + tray may resolve (operator surface).
         const confirmOriginOpts =
           isOutboundMcpCall
-            ? undefined // L8: any authenticated peer + tray may resolve
-            : winL2NonceChallenge || hostComputerGated
-              ? { originWs: ws }
-              : undefined
+            ? undefined
+            : { originWs: ws }
 
         const wsPromise = securityConfirmations.request(
           sendConfirm,

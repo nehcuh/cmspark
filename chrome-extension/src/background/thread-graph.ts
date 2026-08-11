@@ -69,7 +69,17 @@ export async function prepareThreadGraphSnapshot(
     const tb = new Date(b.updated_at || b.created_at || 0).getTime()
     return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0)
   })
-  const capped = live.slice(0, 300)
+  let capped = live.slice(0, 300)
+  // P1 M-UI-1: always pin focus into the cap set when present
+  if (focusId) {
+    const hasFocus = capped.some((t) => t.id === focusId)
+    if (!hasFocus) {
+      const focusRow = live.find((t) => t.id === focusId)
+      if (focusRow) {
+        capped = [focusRow, ...capped.filter((t) => t.id !== focusId)].slice(0, 300)
+      }
+    }
+  }
   const snap: ThreadGraphSnapshot = {
     ts: Date.now(),
     threads: capped,
@@ -88,7 +98,9 @@ export async function readThreadGraphSnapshot(): Promise<ThreadGraphSnapshot | n
 
 /** Open or focus the graph tab after snapshot is prepared. */
 export async function openOrFocusThreadGraph(focusId?: string | null): Promise<number | null> {
-  const url = threadGraphUrl(focusId)
+  // P1 H-UI-1: bump ts query so same-focus re-open remounts and reloads snapshot
+  const baseUrl = threadGraphUrl(focusId)
+  const url = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}t=${Date.now()}`
   const base = chrome.runtime.getURL(THREAD_GRAPH_PATH)
   const tabs = await chrome.tabs.query({})
   const existing = tabs.find((t) => isThreadGraphTabUrl(t.url, base))

@@ -843,10 +843,24 @@ export class BrowserBridge {
     for (const field of params.fields) {
       if (field.clear_first !== false) {
         await this.click({ tabId, selector: field.selector })
-        // Select all and delete
-        await this.sendCdp(tabId, "Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", ctrlKey: true })
-        await this.sendCdp(tabId, "Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA", ctrlKey: true })
+        // Select all and delete — P1 CORR-06: macOS needs Meta+A; also send Ctrl+A for others
+        // P1 CORR-06: send Meta+A (macOS) then Ctrl+A (others) — both are no-ops on wrong OS
+        // Meta+A (macOS)
+        await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
+          type: "keyDown", key: "a", code: "KeyA", metaKey: true, modifiers: 4,
+        })
+        await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
+          type: "keyUp", key: "a", code: "KeyA", metaKey: true, modifiers: 4,
+        })
+        // Ctrl+A (Windows/Linux)
+        await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
+          type: "keyDown", key: "a", code: "KeyA", ctrlKey: true,
+        })
+        await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
+          type: "keyUp", key: "a", code: "KeyA", ctrlKey: true,
+        })
         await this.sendCdp(tabId, "Input.dispatchKeyEvent", { type: "keyDown", key: "Delete", code: "Delete" })
+        await this.sendCdp(tabId, "Input.dispatchKeyEvent", { type: "keyUp", key: "Delete", code: "Delete" })
       }
       await this.sendCdp(tabId, "Input.insertText", { text: String(field.value) })
     }

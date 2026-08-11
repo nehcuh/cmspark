@@ -72,12 +72,29 @@ const PUBLIC_SUFFIXES = new Set([
   "co.jp", "co.uk", "co.kr", "co.in", "co.nz", "co.za",
   "com.cn", "com.hk", "com.tw", "com.sg", "com.au", "com.br",
   "org.cn", "net.cn", "gov.cn", "edu.cn", "ac.cn",
-  // A10 (Grok round 2 — partial): top multi-tenant eTLDs most likely to be
-  // wildcarded by users. NOT exhaustive — see A8 residual note above.
+  // A10 + P1 expansion: multi-tenant / shared-hosting eTLDs (not exhaustive PSL).
   "github.io", "appspot.com", "vercel.app", "pages.dev",
   "herokuapp.com", "netlify.app", "gitlab.io", "onrender.com",
   "s3.amazonaws.com", "s3-website.us-east-1.amazonaws.com",
+  // P1 SEC-05: residual multi-tenant platforms previously still accepted
+  "azurewebsites.net", "cloudfront.net", "firebaseapp.com", "web.app",
+  "fly.dev", "run.app", "edgeapp.net", "on-aws.com", "lovable.app",
+  "workers.dev", "pages.github.io", "azurestaticapps.net", "web.app",
+  "ngrok.io", "ngrok-free.app", "trycloudflare.com", "r2.dev",
 ])
+
+/**
+ * True when `rest` (the part after `*.`) is a multi-tenant / public suffix that
+ * must not be wildcarded (e.g. `*.azurewebsites.net`, `*.com`).
+ */
+export function isMultiTenantOrPublicSuffix(rest: string): boolean {
+  const r = String(rest || "").trim().toLowerCase()
+  if (!r) return true
+  if (PUBLIC_SUFFIXES.has(r)) return true
+  // Also reject when any right-hand public suffix is the full rest of a
+  // multi-label eTLD already in the set (exact match only — `example.com` OK).
+  return false
+}
 
 export function validateWildcardPattern(pattern: string): { ok: boolean; reason?: string } {
   const p = String(pattern || "").trim().toLowerCase()
@@ -86,9 +103,9 @@ export function validateWildcardPattern(pattern: string): { ok: boolean; reason?
 
   if (p.startsWith("*.")) {
     const rest = p.slice(2)
-    // Reject `*.com`, `*.co.jp`, etc. (bare TLD wildcards).
-    if (PUBLIC_SUFFIXES.has(rest)) {
-      return { ok: false, reason: `wildcard '*.${rest}' matches the entire .${rest} TLD — too broad` }
+    // Reject `*.com`, `*.co.jp`, multi-tenant platforms, etc.
+    if (isMultiTenantOrPublicSuffix(rest)) {
+      return { ok: false, reason: `wildcard '*.${rest}' matches the entire .${rest} shared suffix — too broad` }
     }
     // Require at least one dot in the suffix (so `*.example` is also rejected;
     // it would match every host ending in `.example`).

@@ -608,10 +608,13 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
     case "shell_exec": {
       // C7: re-normalize cwd so execute binding matches L2 issue (finalParams may already be normalized)
       {
-        const { normalizeShellCwd } = await import("../capability/shell")
+        const { normalizeShellCwd, assertShellCwdInWorkspace } = await import("../capability/shell")
         const tid0 = params.__thread_id || params._thread_id
         const thr0 = tid0 ? threadManager.get(tid0) : null
         const cwdNorm = normalizeShellCwd(params as any, thr0?.workspace_root)
+        // P1 SEC-08: bind cwd to workspace when thread has workspace_root
+        const cwdEsc = assertShellCwdInWorkspace(cwdNorm, thr0?.workspace_root)
+        if (cwdEsc) return { success: false, error: cwdEsc }
         delete (params as any).working_directory
         ;(params as any).cwd = cwdNorm
       }

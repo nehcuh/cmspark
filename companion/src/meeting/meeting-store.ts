@@ -162,6 +162,33 @@ export function enforceMeetingCap(dataDir = DATA_DIR): { deleted: string[] } {
   return { deleted }
 }
 
+/**
+ * P1 CORR-09: boot reconcile — stuck `recording` from a dead process never
+ * ends and blocks meeting cap forever. Demote stale recordings to `ready`
+ * when process restarts (no live STT session can survive process death).
+ */
+export function reconcileStaleRecordings(dataDir = DATA_DIR): { demoted: string[] } {
+  const demoted: string[] = []
+  for (const m of listMeetings(dataDir)) {
+    if (m.status !== "recording") continue
+    try {
+      const full = loadMeeting(m.id, dataDir)
+      if (!full || full.status !== "recording") continue
+      full.status = "ready"
+      full.ended_at = full.ended_at || new Date().toISOString()
+      saveMeeting(full, dataDir)
+      demoted.push(m.id)
+      logger.info("meeting.recording_reconciled", { id: m.id })
+    } catch (e: any) {
+      logger.warn("meeting.recording_reconcile_failed", {
+        id: m.id,
+        error: e?.message || String(e),
+      })
+    }
+  }
+  return { demoted }
+}
+
 export function createMeeting(opts: {
   title?: string
   thread_id?: string | null

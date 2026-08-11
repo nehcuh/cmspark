@@ -278,6 +278,24 @@ export class WSClient {
     this.connect(true)
   }
 
+  /**
+   * P1 C-RACE-07: user-initiated reconnect from DisconnectedBanner.
+   * Resets backoff and forces a fresh socket even if mid-retry.
+   */
+  forceReconnect() {
+    if (this.unpaired) return
+    try {
+      this.ws?.close()
+    } catch {
+      /* ignore */
+    }
+    this.ws = null
+    this.authenticated = false
+    this.reconnectAttempts = 0
+    this.setState("connecting")
+    this.connect(true)
+  }
+
   private setState(state: ConnectionState, silent = false) {
     this.state = state
     if (!silent) {

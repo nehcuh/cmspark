@@ -138,13 +138,15 @@ export function ThreadList() {
   useEffect(() => {
     const onMsg = (msg: { type?: string; thread_id?: string }) => {
       if (msg?.type !== "thread_graph.thread_selected" || !msg.thread_id) return
+      // P1 H-UI-2: same thread → no-op (do not wipe messages)
+      if (msg.thread_id === activeThreadId) return
       const thr = threads.find((t) => t.id === msg.thread_id)
       if (thr?.trashed_at) return
       dispatch({ type: "SET_ACTIVE_THREAD", threadId: msg.thread_id })
     }
     chrome.runtime.onMessage.addListener(onMsg)
     return () => chrome.runtime.onMessage.removeListener(onMsg)
-  }, [dispatch, threads])
+  }, [dispatch, threads, activeThreadId])
   /** One-shot lazy extract per panel open when settings enabled (B-2). */
   const lazyDigestRanRef = useRef(false)
 

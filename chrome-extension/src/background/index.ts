@@ -455,6 +455,16 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         })
         return true
 
+      // P1 C-RACE-07: DisconnectedBanner force reconnect (reset backoff)
+      case "ws.forceReconnect":
+        try {
+          wsClient?.forceReconnect?.()
+          sendResponse({ ok: true, connectionState: wsClient?.getState?.() ?? "disconnected" })
+        } catch (e: any) {
+          sendResponse({ ok: false, error: e?.message || String(e) })
+        }
+        return true
+
       // Side Panel → SW diagnostic breadcrumbs (no file bytes).
       case "diag.file_upload": {
         const phase = typeof message.phase === "string" ? message.phase : "unknown"
