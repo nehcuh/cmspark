@@ -130,8 +130,6 @@ export type WsLifecycleDeps = {
     msg: { task_id?: unknown },
   ) => { taskId: string; matched: number }
   flipAllComputerTaskAborts: () => number
-  /** @deprecated tab navigated uses ws/tab-url-cache directly; kept optional for bind compat */
-  applyTabNavigated?: (tabId: number, url: string) => void
   probeChatModel: (config: ReturnType<typeof getConfig>) => Promise<void>
   getMcpSessionId: (ws: WebSocket) => string | undefined
   clearMcpSession: (ws: WebSocket) => void

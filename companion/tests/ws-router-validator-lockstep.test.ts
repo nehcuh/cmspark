@@ -79,12 +79,7 @@ function extractRouterCases(src: string): Set<string> {
 function extractValidatorKeys(src: string): Set<string> {
   const out = new Set<string>()
   const start = src.indexOf("const validators:")
-  if (start < 0) {
-    // Fallback: old layout had validators only as export function body
-    const fnStart = src.indexOf("export function validateWsMessage")
-    if (fnStart < 0) return out
-    return extractValidatorKeysLoose(src.slice(fnStart, fnStart + 80_000))
-  }
+  if (start < 0) return out
   const braceOpen = src.indexOf("{", start)
   if (braceOpen < 0) return out
   let depth = 0
@@ -102,17 +97,6 @@ function extractValidatorKeys(src: string): Set<string> {
   }
   const slice = src.slice(braceOpen, i)
   // Message keys are dotted (chat.create) or underscored families — require a function value
-  const re = /"([a-zA-Z][a-zA-Z0-9_./-]*)"\s*:\s*(?:\(|async\s*\(|function)/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(slice))) {
-    out.add(m[1])
-  }
-  return out
-}
-
-/** Loose fallback when validators object marker is missing. */
-function extractValidatorKeysLoose(slice: string): Set<string> {
-  const out = new Set<string>()
   const re = /"([a-zA-Z][a-zA-Z0-9_./-]*)"\s*:\s*(?:\(|async\s*\(|function)/g
   let m: RegExpExecArray | null
   while ((m = re.exec(slice))) {
