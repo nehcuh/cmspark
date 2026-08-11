@@ -1,0 +1,576 @@
+# Dual external review context
+batch: day-full-nits
+base: 8d0def9
+time: 20260811-101353
+
+ee80f72
+
+?? docs/audit/reviews/day-full-nits-diff-20260811-101353.patch
+?? docs/audit/reviews/day-full-nits-dual-review-prompt.md
+
+## Diff (git diff + staged)
+ companion/src/server.ts                            | 69 ++++++------------
+ companion/src/tool/image-fetch-admission.ts        |  3 +
+ companion/src/ws/lifecycle.ts                      |  6 +-
+ companion/src/ws/tab-url-cache.ts                  | 60 ++++++++++++++++
+ companion/src/ws/tool-forward.ts                   |  8 +--
+ companion/tests/image-fetch-admission.test.ts      | 83 +++++++++++++++++++++-
+ companion/tests/tab-url-cache.test.ts              | 41 +++++++++++
+ .../tests/ws-router-validator-lockstep.test.ts     | 72 ++++++++++++++-----
+ .../reviews/day-full-nits-closeout-20260811.md     | 27 +++++++
+ 9 files changed, 295 insertions(+), 74 deletions(-)
+
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 42d3091..8ae5da0 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -60,6 +60,21 @@ export {
+   forwardToolToExtension,
+   bindToolForwardRuntime,
+ } from "./ws/tool-forward"
++import {
++  applyTabNavigated,
++  getCachedTabUrl,
++  getTabUrlCache,
++  refreshTabUrlCache,
++} from "./ws/tab-url-cache"
++export {
++  applyTabNavigated,
++  getCachedTabUrl,
++  getTabUrlCache,
++  refreshTabUrlCache,
++  clearTabUrlCacheForTests,
++} from "./ws/tab-url-cache"
++import { normalizeShellCwd } from "./capability/shell"
++import { normalizeNetsecPorts } from "./netsec/scan"
+ 
+ // --- WS lifecycle (C10-H2: body in ws/lifecycle.ts) ---
+ import {
+@@ -154,48 +169,8 @@ void import("./orchestrator/tab-lease")
+     /* tests may load before package graph is ready */
+   })
+ 
+-// Cache of tabId → url, used by the evaluate auto-approve gate to resolve the
+-// acting domain (so we can decide whether to skip the confirmation dialog).
+-// Populated from list_tabs results AND — critically — kept current by the
+-// extension's tab.navigated push (applyTabNavigated below). Without that push a
+-// tab can navigate from a trusted domain to an untrusted one and the gate would
+-// keep auto-approving evaluate against the STALE trusted hostname (a cross-domain
+-// bypass — a security UNDER-prompt, not the harmless over-prompt earlier comments
+-// claimed). Unknown/missing entries resolve to "" → the gate confirms (safe default).
+-// Residual: a microsecond TOCTOU between the gate's cache read and the forwarded
+-// evaluate, and a push lost while the WS is disconnected (next list_tabs refreshes).
+-const tabUrlCache = new Map<number, string>()
+-
+-function refreshTabUrlCache(tabs: any[]): void {
+-  if (!Array.isArray(tabs)) return
+-  for (const t of tabs) {
+-    if (t && typeof t.id === "number" && typeof t.url === "string") {
+-      tabUrlCache.set(t.id, t.url)
+-    }
+-  }
+-}
+-
+-function getCachedTabUrl(tabId: number | undefined | null): string | undefined {
+-  if (typeof tabId !== "number") return undefined
+-  return tabUrlCache.get(tabId)
+-}
+-
+-/**
+- * Apply a tab-navigation push from the extension (M1 / audit P2-1). Updates the
+- * cached URL so the evaluate auto-approve gate sees the CURRENT origin, not a
+- * stale one. Exported so tests can drive it directly (the WS message handler is
+- * the only production caller). Logs when the cached domain changes — surfacing
+- * trust-anchor transitions in the audit trail.
+- */
+-export function applyTabNavigated(tabId: number, url: string): void {
+-  const previous = getCachedTabUrl(tabId)
+-  tabUrlCache.set(tabId, url)
+-  const prevDomain = previous ? getDomainFromUrl(previous) : ""
+-  const nextDomain = getDomainFromUrl(url)
+-  if (prevDomain && prevDomain !== nextDomain) {
+-    logger.info("ws.tab.navigated_domain_changed", { tab_id: tabId, from: prevDomain, to: nextDomain })
+-  }
+-}
++// tabUrlCache → ws/tab-url-cache.ts (day dual-review nit: colocation)
++// applyTabNavigated / getCachedTabUrl / refreshTabUrlCache re-exported above.
+ 
+ // Exported for integration tests (audit item 2 / 12) so tests can drive
+ // securityConfirmations.respond(...) when simulating user approval/denial.
+@@ -557,14 +532,13 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+           : undefined
+     // C7/C8 multi-adv: normalize shell cwd / netsec ports BEFORE L2 bind + preview
+     // so issueToken payload === execute payload (no post-approve expansion).
++    // Static imports (day dual-review nit: avoid hot-path require()).
+     if (toolName === "shell_exec") {
+-      const { normalizeShellCwd } = require("./capability/shell") as typeof import("./capability/shell")
+       const thr = actingThreadId ? threadManager.get(actingThreadId) : null
+       const cwd = normalizeShellCwd(finalParams, thr?.workspace_root)
+       const { working_directory: _wd, ...restShell } = finalParams as Record<string, any>
+       finalParams = { ...restShell, cwd }
+     } else if (toolName === "netsec_port_scan") {
+-      const { normalizeNetsecPorts } = require("./netsec/scan") as typeof import("./netsec/scan")
+       finalParams = {
+         ...finalParams,
+         ports: normalizeNetsecPorts((finalParams as any).ports),
+@@ -871,7 +845,7 @@ function bindCompanionDispatchFromServerLocals(): void {
+     getThreadManager: () => threadManager,
+     getSkillEngine: () => skillEngine,
+     getCachedTabUrl,
+-    getTabUrlCache: () => tabUrlCache,
++    getTabUrlCache,
+     computerTaskAbort,
+     computerRateLimiter,
+     getComputerRateLimiterSingleton: () => computerRateLimiterSingleton,
+@@ -885,10 +859,10 @@ function bindCompanionDispatchFromServerLocals(): void {
+ 
+ // --- Extension tool-forward (C10-G: body in ws/tool-forward.ts) ---
+ // FREEZE: pending map / dispatch / default forward post-process live there.
+-// tabUrlCache remains server-owned; inject via bindToolForwardRuntime.
++// tabUrlCache: ws/tab-url-cache.ts (shared with L2/companion-dispatch).
+ function bindToolForwardFromServerLocals(): void {
+   bindToolForwardRuntime({
+-    getTabUrlCache: () => tabUrlCache,
++    getTabUrlCache,
+     refreshTabUrlCache,
+     getThreadManager: () => threadManager,
+   })
+@@ -1013,7 +987,6 @@ bindWsLifecycle({
+   securityConfirmations,
+   handleComputerTaskAbort,
+   flipAllComputerTaskAborts,
+-  applyTabNavigated,
+   probeChatModel,
+   getMcpSessionId: (ws) => mcpSessionByWs.get(ws),
+   clearMcpSession,
+diff --git a/companion/src/tool/image-fetch-admission.ts b/companion/src/tool/image-fetch-admission.ts
+index a37af2c..ef9d462 100644
+--- a/companion/src/tool/image-fetch-admission.ts
++++ b/companion/src/tool/image-fetch-admission.ts
+@@ -190,6 +190,8 @@ export async function runImageFetchAdmission(
+       logToolFinish(toolCallId, toolName, startedAt, result)
+       return result
+     }
++    // P1-2 / day dual-review nit: bind confirm to requesting socket (align with
++    // L2/URL/MCP — prevent other loopback peers burning the confirm).
+     const decision = await securityConfirmations.request(
+       (data) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data)) },
+       {
+@@ -200,6 +202,7 @@ export async function runImageFetchAdmission(
+         defenseLayer: 2,
+         riskLevel: "high",
+       },
++      { originWs: ws },
+     )
+     if (!decision.approved) {
+       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+diff --git a/companion/src/ws/lifecycle.ts b/companion/src/ws/lifecycle.ts
+index ac27873..4a7cf52 100644
+--- a/companion/src/ws/lifecycle.ts
++++ b/companion/src/ws/lifecycle.ts
+@@ -36,6 +36,7 @@ import {
+   HUD_SPIKE_TASK_ID,
+ } from "../hud/spike"
+ import { logger, type LogLevel } from "../logger"
++import { applyTabNavigated } from "./tab-url-cache"
+ import {
+   acquireLock,
+   releaseLock,
+@@ -129,7 +130,8 @@ export type WsLifecycleDeps = {
+     msg: { task_id?: unknown },
+   ) => { taskId: string; matched: number }
+   flipAllComputerTaskAborts: () => number
+-  applyTabNavigated: (tabId: number, url: string) => void
++  /** @deprecated tab navigated uses ws/tab-url-cache directly; kept optional for bind compat */
++  applyTabNavigated?: (tabId: number, url: string) => void
+   probeChatModel: (config: ReturnType<typeof getConfig>) => Promise<void>
+   getMcpSessionId: (ws: WebSocket) => string | undefined
+   clearMcpSession: (ws: WebSocket) => void
+@@ -1135,7 +1137,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+         // current. validateWsMessage already enforced tabId:number + url:string.
+         // Fire-and-forget — no ack needed.
+         if (msg.type === "tab.navigated") {
+-          requireRt().applyTabNavigated(msg.tabId, msg.url)
++          applyTabNavigated(msg.tabId, msg.url)
+           return
+         }
+ 
+diff --git a/companion/src/ws/tab-url-cache.ts b/companion/src/ws/tab-url-cache.ts
+new file mode 100644
+index 0000000..d9cf569
+--- /dev/null
++++ b/companion/src/ws/tab-url-cache.ts
+@@ -0,0 +1,60 @@
++// TabId → URL cache for evaluate auto-approve domain resolution (ADR evaluate gate).
++// C10 dual-review nit: colocated module — no longer server-local only.
++// Populated from list_tabs results and extension tab.navigated (applyTabNavigated).
++// Unknown/missing → gate confirms (safe default). Residual: microsecond TOCTOU between
++// cache read and forwarded evaluate; push lost while WS disconnected (next list_tabs).
++
++import { logger } from "../logger"
++
++const tabUrlCache = new Map<number, string>()
++
++function hostnameFromUrl(urlString: string): string {
++  try {
++    return new URL(urlString).hostname
++  } catch {
++    return ""
++  }
++}
++
++/** Live map (tool-forward / companion-dispatch post-process). */
++export function getTabUrlCache(): Map<number, string> {
++  return tabUrlCache
++}
++
++export function getCachedTabUrl(tabId: number | undefined | null): string | undefined {
++  if (typeof tabId !== "number") return undefined
++  return tabUrlCache.get(tabId)
++}
++
++export function refreshTabUrlCache(tabs: any[]): void {
++  if (!Array.isArray(tabs)) return
++  for (const t of tabs) {
++    if (t && typeof t.id === "number" && typeof t.url === "string") {
++      tabUrlCache.set(t.id, t.url)
++    }
++  }
++}
++
++/**
++ * Apply a tab-navigation push from the extension (M1 / audit P2-1). Updates the
++ * cached URL so the evaluate auto-approve gate sees the CURRENT origin, not a
++ * stale one. Exported so tests can drive it directly.
++ */
++export function applyTabNavigated(tabId: number, url: string): void {
++  const previous = getCachedTabUrl(tabId)
++  tabUrlCache.set(tabId, url)
++  const prevDomain = previous ? hostnameFromUrl(previous) : ""
++  const nextDomain = hostnameFromUrl(url)
++  if (prevDomain && prevDomain !== nextDomain) {
++    logger.info("ws.tab.navigated_domain_changed", {
++      tab_id: tabId,
++      from: prevDomain,
++      to: nextDomain,
++    })
++  }
++}
++
++/** Test hook — wipe cache between cases. */
++export function clearTabUrlCacheForTests(): void {
++  tabUrlCache.clear()
++}
+diff --git a/companion/src/ws/tool-forward.ts b/companion/src/ws/tool-forward.ts
+index 94fb559..7318a46 100644
+--- a/companion/src/ws/tool-forward.ts
++++ b/companion/src/ws/tool-forward.ts
+@@ -3,10 +3,10 @@
+ //
+ // FREEZE: pendingToolCalls / handleToolResult / dispatchToExtension / forwardToolToExtension
+ // and timeout constants live HERE. Do NOT re-inflate createToolExecutor with the
+-// extension-forward Promise block. tabUrlCache + ThreadManager stay server-owned
+-// and are injected via bindToolForwardRuntime.
+-// L2/cookie/URL/image gates → tool/*; companion tools → tool/companion-dispatch.ts;
+-// MCP → mcp/dispatch.ts; multi-agent pregate → orchestrator/tool-pregate.ts.
++// extension-forward Promise block.
++// tabUrlCache: ws/tab-url-cache.ts (shared). ThreadManager via bindToolForwardRuntime.
++// applyConnectionCloseGracePeriod (ws/lifecycle) uses pendingToolCalls from here.
++// L2/cookie/URL/image gates → tool/*; companion → companion-dispatch; MCP → mcp/dispatch.
+ 
+ import { WebSocket } from "ws"
+ import { logger } from "../logger"
+diff --git a/companion/tests/image-fetch-admission.test.ts b/companion/tests/image-fetch-admission.test.ts
+index 6fff04f..b83729e 100644
+--- a/companion/tests/image-fetch-admission.test.ts
++++ b/companion/tests/image-fetch-admission.test.ts
+@@ -183,10 +183,13 @@ describe("runImageFetchAdmission", () => {
+   it("fetch_required + untrusted → confirm denied → fail", async () => {
+     const dispatches: Array<{ id: string; name: string }> = []
+     let confirmCalls = 0
++    let confirmOpts: any = "unset"
++    const ws = mockWs(true)
+     const r = await runImageFetchAdmission(
+       makeCtx({
+         toolName: "analyze_image",
+         finalParams: { selector: "img.x" },
++        ws,
+         dispatchToExtension: async (id, name) => {
+           dispatches.push({ id, name })
+           return {
+@@ -198,8 +201,9 @@ describe("runImageFetchAdmission", () => {
+           }
+         },
+         securityConfirmations: {
+-          request: async () => {
++          request: async (_send: any, _d: any, opts?: any) => {
+             confirmCalls++
++            confirmOpts = opts
+             return { approved: false, reason: "denied" }
+           },
+         } as any,
+@@ -209,10 +213,87 @@ describe("runImageFetchAdmission", () => {
+     assert.equal(r!.success, false)
+     assert.match(r!.error || "", /denied by user/)
+     assert.equal(confirmCalls, 1)
++    assert.deepEqual(confirmOpts, { originWs: ws }, "image-fetch confirm must bind originWs")
+     assert.equal(dispatches.length, 1, "phase2 must not run after deny")
+     assert.equal(dispatches[0].name, "analyze_image")
+   })
+ 
++  it("god-mode / auto_approve_dangerous do NOT skip IMAGE_FETCH confirm", async () => {
++    saveConfig({
++      trusted_domains: ["evil.example"],
++      auto_approved_domains: [],
++      security: {
++        ...getConfig().security,
++        auto_approve_dangerous: true,
++        auto_approve_enterprise_tools: true,
++        allow_all_schemes: true,
++      },
++    } as any)
++    let confirmCalls = 0
++    const r = await runImageFetchAdmission(
++      makeCtx({
++        toolName: "analyze_image",
++        dispatchToExtension: async (_id, name) => {
++          if (name === "analyze_image") {
++            return {
++              success: true,
++              data: {
++                type: "fetch_required",
++                candidate_url: "https://evil.example/x.png",
++              },
++            }
++          }
++          return { success: true, data: { type: "canvas", image_base64: "x" } }
++        },
++        securityConfirmations: {
++          request: async () => {
++            confirmCalls++
++            return { approved: true, reason: "approved" }
++          },
++        } as any,
++      }),
++    )
++    assert.equal(confirmCalls, 1, "three-flag / god-mode must not waive IMAGE_FETCH confirm")
++    assert.ok(r?.success === true)
++  })
++
++  it("cookie trusted_domains alone do NOT auto-approve image fetch", async () => {
++    saveConfig({
++      trusted_domains: ["cdn.only-cookie.example"],
++      auto_approved_domains: [],
++      security: {
++        ...getConfig().security,
++        auto_approve_dangerous: false,
++        allow_all_schemes: false,
++      },
++    } as any)
++    let confirmCalls = 0
++    await runImageFetchAdmission(
++      makeCtx({
++        toolName: "analyze_image",
++        dispatchToExtension: async (_id, name) => {
++          if (name === "analyze_image") {
++            return {
++              success: true,
++              data: {
++                type: "fetch_required",
++                candidate_url: "https://cdn.only-cookie.example/a.png",
++              },
++            }
++          }
++          return { success: true, data: {} }
++        },
++        securityConfirmations: {
++          request: async () => {
++            confirmCalls++
++            return { approved: false, reason: "denied" }
++          },
++        } as any,
++      }),
++    )
++    assert.equal(confirmCalls, 1, "ADR-007: cookie trust must not skip image fetch confirm")
++  })
++
+   it("fetch_required + cloud metadata IP → hard block", async () => {
+     const dispatches: Array<{ id: string; name: string }> = []
+     let confirmCalls = 0
+diff --git a/companion/tests/tab-url-cache.test.ts b/companion/tests/tab-url-cache.test.ts
+new file mode 100644
+index 0000000..41fb9d7
+--- /dev/null
++++ b/companion/tests/tab-url-cache.test.ts
+@@ -0,0 +1,41 @@
++/**
++ * tab-url-cache colocation (day dual-review nit).
++ */
++import { describe, it, beforeEach } from "node:test"
++import assert from "node:assert/strict"
++import {
++  applyTabNavigated,
++  clearTabUrlCacheForTests,
++  getCachedTabUrl,
++  getTabUrlCache,
++  refreshTabUrlCache,
++} from "../src/ws/tab-url-cache"
++
++beforeEach(() => {
++  clearTabUrlCacheForTests()
++})
++
++describe("tab-url-cache", () => {
++  it("get/set via applyTabNavigated", () => {
++    applyTabNavigated(1, "https://example.com/a")
++    assert.equal(getCachedTabUrl(1), "https://example.com/a")
++    assert.equal(getTabUrlCache().get(1), "https://example.com/a")
++  })
++
++  it("refreshTabUrlCache merges list_tabs shape", () => {
++    refreshTabUrlCache([
++      { id: 2, url: "https://a.example/" },
++      { id: 3, url: "https://b.example/" },
++      { id: "bad", url: "https://x/" },
++    ])
++    assert.equal(getCachedTabUrl(2), "https://a.example/")
++    assert.equal(getCachedTabUrl(3), "https://b.example/")
++    assert.equal(getCachedTabUrl(undefined), undefined)
++  })
++
++  it("applyTabNavigated overwrites previous url", () => {
++    applyTabNavigated(9, "https://old.example/")
++    applyTabNavigated(9, "https://new.example/path")
++    assert.equal(getCachedTabUrl(9), "https://new.example/path")
++  })
++})
+diff --git a/companion/tests/ws-router-validator-lockstep.test.ts b/companion/tests/ws-router-validator-lockstep.test.ts
+index d24886e..3afee3f 100644
+--- a/companion/tests/ws-router-validator-lockstep.test.ts
++++ b/companion/tests/ws-router-validator-lockstep.test.ts
+@@ -72,32 +72,51 @@ function extractRouterCases(src: string): Set<string> {
+   return out
+ }
+ 
++/**
++ * Extract validator message-type keys from the `const validators: Record<...> = { ... }`
++ * object only (brace-balanced). Day dual-review nit: avoids whole-file false positives.
++ */
+ function extractValidatorKeys(src: string): Set<string> {
+   const out = new Set<string>()
+-  // Inside validateWsMessage: "type.name": (m) => or "type.name": () =>
+-  // Also multi-line. Prefer keys in validators object — look for quoted keys followed by :
+-  // Scoped: after `const validators:` until closing of validateWsMessage is hard;
+-  // practical: all top-level `"x.y":` patterns near validators assignment.
+   const start = src.indexOf("const validators:")
+-  const fnStart = src.indexOf("export function validateWsMessage")
+-  const sliceStart = start >= 0 ? start : fnStart >= 0 ? fnStart : 0
+-  // End at next export function after validators or 1500 lines later
+-  let sliceEnd = src.indexOf("\nexport function", sliceStart + 20)
+-  if (sliceEnd < 0) sliceEnd = Math.min(src.length, sliceStart + 80_000)
+-  const slice = src.slice(sliceStart, sliceEnd)
+-  const re = /"([a-zA-Z0-9_./-]+)"\s*:\s*(?:\(|async\s*\(|function)/g
++  if (start < 0) {
++    // Fallback: old layout had validators only as export function body
++    const fnStart = src.indexOf("export function validateWsMessage")
++    if (fnStart < 0) return out
++    return extractValidatorKeysLoose(src.slice(fnStart, fnStart + 80_000))
++  }
++  const braceOpen = src.indexOf("{", start)
++  if (braceOpen < 0) return out
++  let depth = 0
++  let i = braceOpen
++  for (; i < src.length; i++) {
++    const c = src[i]
++    if (c === "{") depth++
++    else if (c === "}") {
++      depth--
++      if (depth === 0) {
++        i++
++        break
++      }
++    }
++  }
++  const slice = src.slice(braceOpen, i)
++  // Message keys are dotted (chat.create) or underscored families — require a function value
++  const re = /"([a-zA-Z][a-zA-Z0-9_./-]*)"\s*:\s*(?:\(|async\s*\(|function)/g
+   let m: RegExpExecArray | null
+   while ((m = re.exec(slice))) {
+     out.add(m[1])
+   }
+-  // Also catch `"x.y": () =>` already covered; and `"x.y": (m) =>`
+-  // Fallback: any "a.b": at line start with indent inside validators
+-  const re2 = /^\s+"([a-zA-Z0-9_./-]+)"\s*:/gm
+-  while ((m = re2.exec(slice))) {
+-    // Skip non-message-looking keys
+-    if (m[1].includes(".") || m[1].includes("_") || /^[a-z]/.test(m[1])) {
+-      out.add(m[1])
+-    }
++  return out
++}
++
++/** Loose fallback when validators object marker is missing. */
++function extractValidatorKeysLoose(slice: string): Set<string> {
++  const out = new Set<string>()
++  const re = /"([a-zA-Z][a-zA-Z0-9_./-]*)"\s*:\s*(?:\(|async\s*\(|function)/g
++  let m: RegExpExecArray | null
++  while ((m = re.exec(slice))) {
++    out.add(m[1])
+   }
+   return out
+ }
+@@ -111,6 +130,21 @@ test("C9 extract router cases and validator keys non-empty", () => {
+   const keys = extractValidatorKeys(validatorSrc)
+   assert.ok(cases.size > 30, `expected many router cases, got ${cases.size}`)
+   assert.ok(keys.size > 30, `expected many validator keys, got ${keys.size}`)
++  // Brace-scoped extract should still find CORE_REQUIRED without whole-file noise
++  for (const t of CORE_REQUIRED) {
++    assert.ok(keys.has(t), `brace-scoped validators missing "${t}"`)
++  }
++})
++
++test("C9 validator extract is brace-scoped (not whole-file false positives)", () => {
++  const validatorSrc = fs.existsSync(VALIDATE)
++    ? fs.readFileSync(VALIDATE, "utf8")
++    : fs.readFileSync(SERVER, "utf8")
++  const keys = extractValidatorKeys(validatorSrc)
++  // Should not pick up random object keys from comments or unrelated maps
++  assert.ok(!keys.has("type"), "must not extract generic 'type' key")
++  assert.ok(keys.has("chat.create"))
++  assert.ok(keys.has("security.unattended.arm"))
+ })
+ 
+ test("C9 core client→server types present in both router and validators", () => {
+diff --git a/docs/audit/reviews/day-full-nits-closeout-20260811.md b/docs/audit/reviews/day-full-nits-closeout-20260811.md
+new file mode 100644
+index 0000000..f7f79e1
+--- /dev/null
++++ b/docs/audit/reviews/day-full-nits-closeout-20260811.md
+@@ -0,0 +1,27 @@
++# Day full dual-review nits closeout
++
++**Date:** 2026-08-11  
++**Branch:** `fix/c10-godfile-split-a`  
++**Source verdict:** `day-20260810-11-full-verdict-20260811-095748.json` (Claude APPROVE / Pi APPROVE_WITH_NITS)
++
++## Nits closed
++
++| Nit | Fix |
++|-----|-----|
++| image-fetch confirm lacks `originWs` | `image-fetch-admission.ts` passes `{ originWs: ws }` (P1-2 align with L2/URL/MCP) |
++| tabUrlCache server-only | New `ws/tab-url-cache.ts`; lifecycle/tool-forward/companion-dispatch consume shared SoT |
++| C9 lockstep regex false positives | Brace-scoped `extractValidatorKeys` + extra unit test |
++| hot-path `require()` shell/netsec | Static imports of `normalizeShellCwd` / `normalizeNetsecPorts` in `server.ts` |
++| image unit gaps (god-mode / cookie trust) | Unit tests for three-flag still confirms + cookie trust does not auto-approve |
++
++## Tests `[executed]`
++
++- image-fetch-admission (incl. originWs + god-mode + cookie trust)
++- tab-url-cache
++- ws-router-validator-lockstep (4 tests)
++- security-gates 63
++- computer-unattended-grant + worker-hard-deny
++
++## Residual (none intentional)
++
++All day-full dual-review nits listed by Claude/Pi for production code are addressed.

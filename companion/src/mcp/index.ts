@@ -22,6 +22,14 @@ export {
 } from "./aggregator.js"
 export { createTransport, extractPid } from "./transport.js"
 export {
+  bindMcpDispatchRuntime,
+  executeMcpTool,
+  executeMcpMetaTool,
+  enhanceMcpError,
+  DESTRUCTIVE_MCP_TOOL_PATTERN,
+  type McpDispatchRuntime,
+} from "./dispatch.js"
+export {
   DEFAULT_CALL_TIMEOUT_MS,
   DEFAULT_RESTART_POLICY,
   DEFAULT_STARTUP_TIMEOUT_MS,
