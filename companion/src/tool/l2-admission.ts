@@ -2,7 +2,8 @@
 // Extracted from server.ts (C10 Phase B mechanical split) — zero behavior change.
 //
 // FREEZE: L2 forceConfirm / three-flag / enterprise-skip / G1 algebra lives HERE.
-// Do NOT re-inflate createToolExecutor with this block. URL gate + cookie gate stay in server.ts.
+// Do NOT re-inflate createToolExecutor with this block.
+// Cookie + URL gates → tool/url-cookie-admission.ts (C10-C).
 
 import { randomUUID } from "crypto"
 import os from "os"
