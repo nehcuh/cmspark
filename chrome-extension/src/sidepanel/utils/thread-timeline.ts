@@ -12,6 +12,7 @@ export type TimelineThread = {
   digest?: {
     tldr?: string
     tags?: string[]
+    bullets?: string[]
     extracted_at?: string
     content_fingerprint?: string
     stale?: boolean
@@ -213,27 +214,40 @@ export function threadIdsInDay(day: DayGroup): string[] {
 }
 
 /**
- * P0 local search: alias + id + first_user_preview (+ tags when present).
- * Empty query returns all.
+ * P0 local search: alias + id + first_user_preview + tags + digest tldr/bullets.
+ * Empty query returns all. Leading `#` on id queries is stripped for convenience.
  */
 export function filterThreadsByQuery(
   threads: TimelineThread[],
   query: string,
 ): TimelineThread[] {
-  const q = query.trim().toLowerCase()
+  const raw = query.trim().toLowerCase()
+  if (!raw) return threads
+  const q = raw.startsWith("#") ? raw.slice(1) : raw
   if (!q) return threads
   return threads.filter((t) => {
     const alias = (t.alias || "").toLowerCase()
     const id = (t.id || "").toLowerCase()
     const preview = (t.first_user_preview || "").toLowerCase()
     const tags = (t.digest?.tags || []).join(" ").toLowerCase()
+    const tldr = (t.digest?.tldr || "").toLowerCase()
+    const bullets = (t.digest?.bullets || []).join(" ").toLowerCase()
     return (
       alias.includes(q) ||
       id.includes(q) ||
       preview.includes(q) ||
-      tags.includes(q)
+      tags.includes(q) ||
+      tldr.includes(q) ||
+      bullets.includes(q)
     )
   })
+}
+
+/** List / copy badge: always `#id` (empty id → empty string). */
+export function formatThreadIdBadge(id: string | null | undefined): string {
+  const s = String(id ?? "").trim()
+  if (!s) return ""
+  return s.startsWith("#") ? s : `#${s}`
 }
 
 /** Relative Chinese time for list rows. */
@@ -258,7 +272,8 @@ export function formatRelativeTime(iso: string | undefined, now: Date = new Date
 export function displayThreadTitle(t: TimelineThread): string {
   const alias = (t.alias || "").trim()
   if (alias) return alias
-  return `未命名 · ${String(t.id || "").slice(0, 8)}`
+  // Id is always shown via formatThreadIdBadge on the list row — avoid "未命名 · id" + #id.
+  return "未命名"
 }
 
 /**

@@ -16,6 +16,11 @@ export type FindDownloadsParams = {
   filenameHint?: string
   urlContains?: string
   limit?: number
+  /**
+   * Only return completes whose endTime (or startTime) is at/after this epoch ms.
+   * Used by browser_download timeout recovery so pre-click shelf items are not latched.
+   */
+  minCompletedAfterMs?: number
   /** Injectable for tests */
   __downloadsApi?: DownloadsSearchApi
   /** Injectable Downloads root segments / absolute prefixes (tests). */
@@ -29,6 +34,7 @@ export type FoundDownload = {
   bytes: number
   url: string
   endTime?: string
+  startTime?: string
   source: "cache"
 }
 
@@ -96,10 +102,16 @@ export function filterCompletedDownloads(
     urlContains?: string
     limit: number
     downloadsRoots?: string[]
+    /** Epoch ms — drop completes that finished before the operation started. */
+    minCompletedAfterMs?: number
   },
 ): FoundDownload[] {
   const fh = (opts.filenameHint || "").trim().toLowerCase()
   const uc = (opts.urlContains || "").trim().toLowerCase()
+  const minAfter =
+    typeof opts.minCompletedAfterMs === "number" && Number.isFinite(opts.minCompletedAfterMs)
+      ? opts.minCompletedAfterMs
+      : undefined
   const out: FoundDownload[] = []
   for (const item of items) {
     if (item.state && item.state !== "complete") continue
@@ -108,6 +120,13 @@ export function filterCompletedDownloads(
     if (!path) continue
     // B1: refuse out-of-Downloads absolute paths
     if (!isPathUnderDownloads(path, opts.downloadsRoots)) continue
+    if (minAfter != null) {
+      // Prefer endTime (completion); fall back to startTime. Missing timestamps → reject
+      // under a floor (fail-closed: cannot prove post-click completion).
+      const tRaw = item.endTime || item.startTime
+      const tMs = tRaw ? Date.parse(tRaw) : NaN
+      if (!Number.isFinite(tMs) || tMs < minAfter) continue
+    }
     const base = path.split(/[/\\]/).pop() || path
     if (fh && !path.toLowerCase().includes(fh) && !base.toLowerCase().includes(fh)) continue
     if (uc && !(item.url || "").toLowerCase().includes(uc)) continue
@@ -118,6 +137,7 @@ export function filterCompletedDownloads(
       bytes: item.fileSize ?? item.totalBytes ?? 0,
       url: redactDownloadUrl(item.url || ""),
       endTime: item.endTime || item.startTime,
+      startTime: item.startTime,
       source: "cache",
     })
     if (out.length >= opts.limit) break
@@ -184,24 +204,21 @@ export async function runDownloadsFind(params: FindDownloadsParams): Promise<Too
       filenameHint,
       narrow: true,
     })
-    let matches = filterCompletedDownloads(items, {
+    const filterOpts = {
       filenameHint,
       urlContains,
       limit: scanLimit,
       downloadsRoots: params.__downloadsRoots,
-    })
+      minCompletedAfterMs: params.minCompletedAfterMs,
+    }
+    let matches = filterCompletedDownloads(items, filterOpts)
     if (matches.length === 0) {
       searchMode = "broad"
       items = await searchDownloadsApi(api, {
         filenameHint,
         narrow: false,
       })
-      matches = filterCompletedDownloads(items, {
-        filenameHint,
-        urlContains,
-        limit: scanLimit,
-        downloadsRoots: params.__downloadsRoots,
-      })
+      matches = filterCompletedDownloads(items, filterOpts)
     }
     const conflict = detectDownloadConflicts(matches)
     const trimmed = matches.slice(0, limit)

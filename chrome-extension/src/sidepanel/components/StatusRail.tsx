@@ -1,7 +1,7 @@
 // StatusRail — Zone A (UIUX v2 PR1)
 // Mode badge + pin · connection (token colors) · thread switcher · ⋯ menu
 
-import { useState, useRef, useEffect, type CSSProperties } from "react"
+import { useState, useRef, useEffect, useCallback, type CSSProperties } from "react"
 import { ThreadList } from "./ThreadList"
 import { useAgentStore } from "../store/agentStore"
 import type { ConnectionState, CapabilityLevel } from "../types"
@@ -13,6 +13,7 @@ import {
 } from "../ui/tokens"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
 import { ModeBadge } from "../ui/ModeBadge"
+import { formatThreadIdBadge } from "../utils/thread-timeline"
 import {
   IconCraft,
   IconDownload,
@@ -56,12 +57,16 @@ export function StatusRail({
     }
   }
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
+  const activeThreadId = state.activeThreadId
+  const idBadge = activeThreadId ? formatThreadIdBadge(activeThreadId) : ""
   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
   const [nbTooltip, setNbTooltip] = useState<string>(
     "离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）",
   )
   const [menuOpen, setMenuOpen] = useState(false)
+  const [idCopied, setIdCopied] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const copyIdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // useRef lock is mandatory: React state updates are async, so a rapid second click
   // within the same tick can pass the `nbState === "working"` guard before the first
   // setNbState commits — both fire sendMessage → double download. The ref is synchronous.
@@ -77,6 +82,51 @@ export function StatusRail({
     document.addEventListener("mousedown", onDoc)
     return () => document.removeEventListener("mousedown", onDoc)
   }, [menuOpen])
+
+  useEffect(() => {
+    return () => {
+      if (copyIdTimerRef.current) clearTimeout(copyIdTimerRef.current)
+    }
+  }, [])
+
+  // Reset "已复制" when switching threads so stale feedback never lingers.
+  useEffect(() => {
+    setIdCopied(false)
+    if (copyIdTimerRef.current) {
+      clearTimeout(copyIdTimerRef.current)
+      copyIdTimerRef.current = null
+    }
+  }, [activeThreadId])
+
+  const copyActiveThreadId = useCallback(async () => {
+    const text = String(activeThreadId || "").trim()
+    if (!text) return
+    let ok = false
+    try {
+      await navigator.clipboard.writeText(text)
+      ok = true
+    } catch {
+      try {
+        const ta = document.createElement("textarea")
+        ta.value = text
+        ta.style.position = "fixed"
+        ta.style.left = "-9999px"
+        document.body.appendChild(ta)
+        ta.select()
+        ok = document.execCommand("copy")
+        document.body.removeChild(ta)
+      } catch {
+        ok = false
+      }
+    }
+    if (!ok) return
+    setIdCopied(true)
+    if (copyIdTimerRef.current) clearTimeout(copyIdTimerRef.current)
+    copyIdTimerRef.current = setTimeout(() => {
+      setIdCopied(false)
+      copyIdTimerRef.current = null
+    }, 1200)
+  }, [activeThreadId])
 
   const resetNbIdle = (delay: number, immediate?: boolean) => {
     if (immediate) {
@@ -206,6 +256,22 @@ export function StatusRail({
         </span>
         <span style={railStyles.brandText}>CMspark</span>
       </div>
+      {idBadge ? (
+        <button
+          type="button"
+          style={{
+            ...railStyles.threadIdBadge,
+            color: idCopied ? tokens.accentText : tokens.textMuted,
+          }}
+          title={`当前会话 ${idBadge} — 点击复制编号（可在线程列表搜索框粘贴定位）`}
+          aria-label={`当前会话编号 ${idBadge}，点击复制`}
+          onClick={() => {
+            void copyActiveThreadId()
+          }}
+        >
+          {idCopied ? "已复制" : idBadge}
+        </button>
+      ) : null}
       <div style={railStyles.spacer} />
       <ModeBadge
         level={capabilityLevel}
@@ -476,6 +542,25 @@ const railStyles: Record<string, CSSProperties> = {
     whiteSpace: "nowrap" as const,
     overflow: "hidden",
     textOverflow: "ellipsis",
+  },
+  /** Active thread short id — click copies bare id (lock-step with ThreadList badge). */
+  threadIdBadge: {
+    flexShrink: 0,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgMuted,
+    padding: "2px 6px",
+    margin: 0,
+    fontSize: 11,
+    fontWeight: 600,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    color: tokens.textSecondary,
+    cursor: "pointer",
+    lineHeight: 1.2,
+    maxWidth: 96,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
+    borderRadius: tokens.radiusPill,
   },
   spacer: {
     flex: 1,

@@ -4,6 +4,7 @@ import {
   groupThreadsByCalendar,
   filterThreadsByQuery,
   formatRelativeTime,
+  formatThreadIdBadge,
   localDayKey,
   localMonthKey,
   localYesterdayKey,
@@ -156,6 +157,43 @@ test("filterThreadsByQuery: alias, id, first_user_preview, tags", () => {
   assert.equal(filterThreadsByQuery(threads, "  ").length, 2)
 })
 
+test("filterThreadsByQuery: digest tldr and bullets", () => {
+  const threads = [
+    {
+      id: "a1",
+      alias: "会话甲",
+      digest: {
+        tldr: "敲定了 Q3 预算上限",
+        bullets: ["采用分阶段上线", "保留本地 Whisper"],
+        tags: ["预算"],
+      },
+    },
+    {
+      id: "b2",
+      alias: "会话乙",
+      first_user_preview: "无关内容",
+      digest: { tldr: "修 UI 间距", bullets: ["ThreadList"] },
+    },
+  ]
+  assert.equal(filterThreadsByQuery(threads, "预算上限").length, 1)
+  assert.equal(filterThreadsByQuery(threads, "Whisper").length, 1)
+  assert.equal(filterThreadsByQuery(threads, "分阶段").length, 1)
+  assert.equal(filterThreadsByQuery(threads, "ThreadList").length, 1)
+  assert.equal(filterThreadsByQuery(threads, "不存在的词").length, 0)
+  // id still works with leading #
+  assert.equal(filterThreadsByQuery(threads, "#a1").length, 1)
+  assert.equal(filterThreadsByQuery(threads, "a1").length, 1)
+})
+
+test("formatThreadIdBadge: always #id for list display", () => {
+  assert.equal(formatThreadIdBadge("abc123"), "#abc123")
+  assert.equal(formatThreadIdBadge("#xyz"), "#xyz")
+  assert.equal(formatThreadIdBadge("  def  "), "#def")
+  assert.equal(formatThreadIdBadge(""), "")
+  assert.equal(formatThreadIdBadge(null), "")
+  assert.equal(formatThreadIdBadge(undefined), "")
+})
+
 test("formatRelativeTime buckets", () => {
   const now = new Date("2026-08-06T12:00:00.000Z")
   assert.equal(formatRelativeTime(new Date(now.getTime() - 30_000).toISOString(), now), "刚刚")
@@ -180,7 +218,8 @@ test("selectionState + toggleGroupSelection", () => {
 })
 
 test("displayThreadTitle fallback", () => {
-  assert.equal(displayThreadTitle({ id: "abcdefgh", alias: "  " }), "未命名 · abcdefgh")
+  // Id lives in list badge (formatThreadIdBadge), not inlined into title
+  assert.equal(displayThreadTitle({ id: "abcdefgh", alias: "  " }), "未命名")
   assert.equal(displayThreadTitle({ id: "x", alias: "Hello" }), "Hello")
 })
 

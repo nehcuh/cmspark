@@ -846,16 +846,14 @@ test("skill-engine: importSkillFolder returns name+destPath and enforces extract
   assert.ok(r.destPath.endsWith(`${path.sep}zip-honest`) || r.destPath.endsWith("/zip-honest"))
   assert.ok(fs.existsSync(path.join(r.destPath, "SKILL.md")))
 
-  // Uncompressed budget: many large files (still small compressed if zeros — use random)
+  // File-count budget (cheap): exceed MAX_ZIP_EXTRACT_FILES (2000)
   const bomb = new AdmZip()
   bomb.addFile(
     "SKILL.md",
     Buffer.from("---\nname: bomb-skill\ndescription: t\n---\n\n# Body\n"),
   )
-  // 30 × 1MiB of non-compressible-ish data → >25MiB uncompressed
-  const chunk = Buffer.alloc(1024 * 1024, 0x41)
-  for (let i = 0; i < 30; i++) {
-    bomb.addFile(`blob-${i}.bin`, chunk)
+  for (let i = 0; i < 2001; i++) {
+    bomb.addFile(`blob-${i}.txt`, Buffer.from("x"))
   }
   assert.throws(
     () => engine.importSkillFolder(bomb.toBuffer().toString("base64")),
@@ -863,6 +861,144 @@ test("skill-engine: importSkillFolder returns name+destPath and enforces extract
   )
   // Partial dest cleaned up
   assert.equal(engine.get("bomb-skill"), undefined)
+})
+
+test("skill-engine: monorepo zip extracts only skills/<name>/ subtree", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const AdmZip = require("adm-zip")
+  const zip = new AdmZip()
+  zip.addFile(
+    "repo-main/skills/demo-pack/SKILL.md",
+    Buffer.from("---\nname: demo-pack\ndescription: t\n---\n\n# Demo\n"),
+  )
+  zip.addFile("repo-main/skills/demo-pack/extra.txt", Buffer.from("keep-me"))
+  zip.addFile("repo-main/README.md", Buffer.from("do-not-install"))
+  zip.addFile("repo-main/.github/workflows/ci.yml", Buffer.from("name: ci\n"))
+  zip.addFile("repo-main/other.txt", Buffer.from("noise"))
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  const r = engine.importSkillFolder(zip.toBuffer().toString("base64"))
+  assert.equal(r.name, "demo-pack")
+  assert.ok(fs.existsSync(path.join(r.destPath, "SKILL.md")))
+  assert.ok(fs.existsSync(path.join(r.destPath, "extra.txt")))
+  assert.equal(fs.existsSync(path.join(r.destPath, "README.md")), false)
+  assert.equal(fs.existsSync(path.join(r.destPath, ".github")), false)
+})
+
+test("skill-engine: refuse zero-size entry with large compressedSize (M5)", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+  const AdmZip = require("adm-zip")
+  const crypto = require("crypto")
+  const zip = new AdmZip()
+  zip.addFile(
+    "SKILL.md",
+    Buffer.from("---\nname: zbomb\ndescription: t\n---\n\n# Body\n"),
+  )
+  // Incompressible payload so compressedSize stays large after re-pack
+  zip.addFile("evil.bin", crypto.randomBytes(100 * 1024))
+  const evil = zip.getEntries().find((e: { entryName: string }) =>
+    e.entryName.replace(/\\/g, "/").endsWith("evil.bin"),
+  )
+  assert.ok(evil)
+  // Lie about uncompressed size in central directory (zip-bomb class)
+  ;(evil as any).header.size = 0
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  assert.throws(
+    () => engine.importSkillFolder(zip.toBuffer().toString("base64")),
+    /missing\/zero uncompressed size|compressedSize/i,
+  )
+  assert.equal(engine.get("zbomb"), undefined)
+
+  const multi = SkillEngine.pickSkillMdEntryResult([
+    { entryName: "skills/a/SKILL.md", isDirectory: false },
+    { entryName: "skills/b/SKILL.md", isDirectory: false },
+  ])
+  assert.equal(multi.entryName, null)
+  assert.match(multi.error || "", /multiple SKILL\.md/i)
+})
+
+test("skill-engine: multiple skills/*/SKILL.md fail-closed (no silent pick)", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+  const AdmZip = require("adm-zip")
+  const zip = new AdmZip()
+  zip.addFile(
+    "repo/skills/alpha/SKILL.md",
+    Buffer.from("---\nname: alpha\ndescription: t\n---\n\n# A\n"),
+  )
+  zip.addFile(
+    "repo/skills/beta/SKILL.md",
+    Buffer.from("---\nname: beta\ndescription: t\n---\n\n# B\n"),
+  )
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  assert.throws(
+    () => engine.importSkillFolder(zip.toBuffer().toString("base64")),
+    /multiple SKILL\.md/i,
+  )
+  assert.equal(engine.get("alpha"), undefined)
+  assert.equal(engine.get("beta"), undefined)
+})
+
+test("skill-engine: failed extract preserves pre-existing skill (atomic tmp)", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+  const existing = path.join(skillsDir, "bomb-skill")
+  fs.mkdirSync(existing, { recursive: true })
+  const oldBody = "---\nname: bomb-skill\ndescription: keep\n---\n\nOLD CONTENT\n"
+  fs.writeFileSync(path.join(existing, "SKILL.md"), oldBody)
+
+  const AdmZip = require("adm-zip")
+  const bomb = new AdmZip()
+  bomb.addFile(
+    "SKILL.md",
+    Buffer.from("---\nname: bomb-skill\ndescription: t\n---\n\n# Body\n"),
+  )
+  for (let i = 0; i < 2001; i++) {
+    bomb.addFile(`blob-${i}.txt`, Buffer.from("x"))
+  }
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  assert.throws(
+    () => engine.importSkillFolder(bomb.toBuffer().toString("base64")),
+    /too many files|too large/i,
+  )
+  assert.ok(fs.existsSync(path.join(existing, "SKILL.md")))
+  assert.equal(fs.readFileSync(path.join(existing, "SKILL.md"), "utf-8"), oldBody)
+})
+
+test("skillInstall zip_path: real engine FromPath monorepo (B4 production path)", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+  process.env.CMSPARK_DATA_DIR = mockConfigDir
+  const AdmZip = require("adm-zip")
+  const zip = new AdmZip()
+  zip.addFile(
+    "repo-main/skills/from-path-demo/SKILL.md",
+    Buffer.from("---\nname: from-path-demo\ndescription: t\n---\n\n# Via path\n"),
+  )
+  zip.addFile("repo-main/skills/from-path-demo/note.txt", Buffer.from("binary-safe-ok"))
+  zip.addFile("repo-main/README.md", Buffer.from("noise"))
+  const zipPath = path.join(tempHome, "Downloads", "from-path-demo.zip")
+  fs.mkdirSync(path.dirname(zipPath), { recursive: true })
+  zip.writeZip(zipPath)
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const { skillInstall } = await import("../src/skills/skill-install")
+  const engine = new SkillEngine()
+  assert.equal(typeof engine.importSkillFolderFromPath, "function")
+  const r = skillInstall(engine, { zip_path: zipPath })
+  assert.equal(r.ok, true, r.error)
+  assert.equal(r.name, "from-path-demo")
+  assert.ok(r.dest_path && r.dest_path.includes("from-path-demo"))
+  assert.ok(fs.existsSync(path.join(r.dest_path!, "SKILL.md")))
+  assert.ok(fs.existsSync(path.join(r.dest_path!, "note.txt")))
+  assert.equal(fs.existsSync(path.join(r.dest_path!, "README.md")), false)
 })
 
 test("skill-engine: importSkillFromPath rejects non-directory / missing path", async () => {

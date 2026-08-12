@@ -1,0 +1,8 @@
+{
+  "batch": "thread-id-skill-dl-hotfix-r2",
+  "timestamp": "20260812-231716",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-id-skill-dl-hotfix-r2-claude-20260812-231716.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-id-skill-dl-hotfix-r2-pi-20260812-231716.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-id-skill-dl-hotfix-r2-diff-20260812-231716.patch"
+}

@@ -21,13 +21,13 @@ import * as os from "os"
 import matter from "gray-matter"
 import AdmZip from "adm-zip"
 import { getConfigDir } from "../config"
-import type { SkillEngine } from "./skill-engine"
+import { SkillEngine } from "./skill-engine"
 import { appendCapabilityAudit } from "../packs/audit-log"
 
 export type SkillInstallParams = {
   /** Local directory containing SKILL.md */
   path?: string
-  /** Local .zip file path (will be base64-imported) */
+  /** Local .zip file path (prefer importSkillFolderFromPath; base64 only as fallback) */
   zip_path?: string
   /** Raw markdown content of a single skill .md */
   content?: string
@@ -172,9 +172,13 @@ export function skillInstallSourceDeniedError(kind: "path" | "zip_path"): {
   }
 }
 
-const MAX_ZIP_BYTES = 25 * 1024 * 1024
-const MAX_DIR_BYTES = 25 * 1024 * 1024
-const MAX_DIR_FILES = 500
+/**
+ * Compressed zip cap (aligned with large skill packs e.g. dashiai-ppt ~46MB).
+ * Uncompressed / file-count budgets live on SkillEngine.MAX_ZIP_EXTRACT_*.
+ */
+export const MAX_ZIP_BYTES = 100 * 1024 * 1024
+const MAX_DIR_BYTES = 120 * 1024 * 1024
+const MAX_DIR_FILES = 2000
 /** Content branch size cap (S41 multi-adv — free content is not unbounded). */
 export const MAX_CONTENT_BYTES = 256 * 1024
 
@@ -182,16 +186,24 @@ function safeSkillName(name: string): string {
   return name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
 }
 
-/**
- * S42 P1: best-effort preview of install target for L2 dialog + token binding.
- * Detects whether dest already exists (overwrite) without writing.
- */
-export function skillInstallOverwritePreview(params: SkillInstallParams): {
+export type SkillInstallOverwritePreview = {
   mode: "content" | "zip" | "path" | "empty"
   name: string | null
   dest_path: string | null
   overwrite: boolean
-} {
+  /** Set when zip cannot be previewed/installed (e.g. multi SKILL.md). */
+  error?: string
+  candidates?: string[]
+}
+
+/**
+ * S42 P1: best-effort preview of install target for L2 dialog + token binding.
+ * Detects whether dest already exists (overwrite) without writing.
+ * Must stay lock-step with SkillEngine.pickSkillMdEntryResult for zip sources.
+ */
+export function skillInstallOverwritePreview(
+  params: SkillInstallParams,
+): SkillInstallOverwritePreview {
   const root = getUserSkillsRoot()
   const checkDest = (name: string | null | undefined): {
     name: string | null
@@ -233,15 +245,31 @@ export function skillInstallOverwritePreview(params: SkillInstallParams): {
         }
         const zip = new AdmZip(resolved)
         const entries = zip.getEntries()
-        const skillMd = entries.find(
-          (e) => e.entryName.endsWith("SKILL.md") || e.entryName.endsWith("SKILL.md/"),
-        )
+        // Lock-step with install: same picker as SkillEngine.importSkillFolder*
+        const picked = SkillEngine.pickSkillMdEntryResult(entries)
+        if (!picked.entryName) {
+          return {
+            mode: "zip",
+            name: null,
+            dest_path: null,
+            overwrite: false,
+            error: picked.error || "Zip must contain a SKILL.md file",
+            candidates: picked.candidates,
+          }
+        }
+        const skillMd = entries.find((e) => e.entryName === picked.entryName)
         if (!skillMd) {
-          return { mode: "zip", name: null, dest_path: null, overwrite: false }
+          return {
+            mode: "zip",
+            name: null,
+            dest_path: null,
+            overwrite: false,
+            error: "Zip SKILL.md entry missing after pick",
+          }
         }
         const raw = zip.readAsText(skillMd)
         const parsed = matter(raw)
-        const skillDirName = skillMd.entryName.replace(/\/?SKILL\.md\/?$/, "")
+        const skillDirName = skillMd.entryName.replace(/\\/g, "/").replace(/\/?SKILL\.md$/i, "")
         const folderName = path.basename(skillDirName) || "skill"
         const name = parsed.data?.name ? String(parsed.data.name) : folderName
         return { mode: "zip", ...checkDest(name) }
@@ -386,18 +414,53 @@ export function skillInstall(
       if (!/\.zip$/i.test(resolved)) {
         return { ok: false, error: "zip_path must end with .zip", skills_root: root }
       }
-      const buf = fs.readFileSync(resolved)
-      if (buf.length > MAX_ZIP_BYTES) {
-        return { ok: false, error: `zip too large (max ${MAX_ZIP_BYTES} bytes)`, skills_root: root }
+      const zipBytes = fs.statSync(resolved).size
+      if (zipBytes > MAX_ZIP_BYTES) {
+        return {
+          ok: false,
+          error: `zip too large (${zipBytes} bytes; max ${MAX_ZIP_BYTES} bytes compressed)`,
+          skills_root: root,
+          hint_zh:
+            "技能 ZIP 超过压缩体积上限。可先解压后只 skill_install({ path: 含 SKILL.md 的目录 })，" +
+            "或拆出 skills/<name>/ 子目录再装。",
+        }
       }
-      const imported = engine.importSkillFolder(buf.toString("base64"))
+      // Prefer path import (no base64 33% memory blow-up) when engine supports it.
+      let imported: { name: string; destPath: string }
+      try {
+        const eng = engine as SkillEngine & {
+          importSkillFolderFromPath?: (p: string) => { name: string; destPath: string }
+        }
+        if (typeof eng.importSkillFolderFromPath === "function") {
+          imported = eng.importSkillFolderFromPath(resolved)
+        } else {
+          const buf = fs.readFileSync(resolved)
+          imported = engine.importSkillFolder(buf.toString("base64"))
+        }
+      } catch (e: any) {
+        const msg = e?.message || String(e)
+        auditInstall(false, {
+          mode: "zip",
+          error: msg,
+          zip_bytes: zipBytes,
+          source: resolved,
+        })
+        return {
+          ok: false,
+          error: msg,
+          skills_root: root,
+          hint_zh: /too large|too many files/i.test(msg)
+            ? "解压体积或文件数超限。可只安装含 SKILL.md 的子目录（path=…/skills/xxx），或缩小包内资源。"
+            : undefined,
+        }
+      }
       engine.refresh()
       const tier = classifySkillInstallSource(resolved)
       auditInstall(true, {
         mode: "zip",
         name: imported.name,
         dest_path: imported.destPath,
-        zip_bytes: buf.length,
+        zip_bytes: zipBytes,
         tier,
         source: resolved,
       })
@@ -531,7 +594,7 @@ export const SKILL_INSTALL_TOOL = {
         zip_path: {
           type: "string",
           description:
-            "Local .zip containing SKILL.md (folder skill); source under home/Downloads/tmp/data; size capped",
+            "Local .zip containing SKILL.md (folder skill; monorepo zips install the skills/<name>/ subtree). Source under home/Downloads/tmp/data. Compressed cap 100MiB; extract budgets higher for theme/font packs.",
         },
         content: {
           type: "string",
@@ -544,12 +607,17 @@ export const SKILL_INSTALL_TOOL = {
 }
 
 // Capability declaration (ADR-020) for skill_install
+// Axes (2026-08-12 hotfix): Surface=L0 skill library write + list/search UI chips elsewhere;
+// Composition=existing skill primitive (not Pack/MCP/Agent runtime);
+// Autonomy=L2 default (cruise may waive forceConfirm);
+// Trust=L2 token binds name/overwrite via pickSkillMdEntryResult lock-step; multi-SKILL.md fail-closed;
+// Channel=community install sources (Downloads/home/tmp/data only).
 export const SKILL_INSTALL_CAPABILITY = {
   Surface:
-    "L0 local install write to user skills; path/zip sources: user home + Downloads/tmp/data (system paths denied)",
-  Composition: "Skills install primitive — not a new Agent runtime",
+    "L0 local install write to user skills; path/zip sources: user home + Downloads/tmp/data (system paths denied); monorepo zip installs single skills/<name>/ subtree only",
+  Composition: "Skills install primitive — not a new Agent runtime; atomic tmp+rename overwrite",
   Autonomy: "L2 by default; full-autonomy cruise (three-flag) waives forceConfirm at server",
   Trust:
-    "L2 forceConfirm (security_token) is user authorization for durable skill write; home-zone sources allowed with that consent (not hard-deny); outside home denied; content size-capped; zip budgets; audit tiers",
+    "L2 forceConfirm (security_token) is user authorization for durable skill write; preview picker === install picker (pickSkillMdEntryResult); multi-SKILL.md refused before dialog; home-zone sources allowed with that consent (not hard-deny); outside home denied; content size-capped; zip budgets; zero-size bomb entries refused; audit tiers",
   Channel: "community",
 } as const
