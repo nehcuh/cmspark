@@ -17,6 +17,7 @@ import {
   EXTRACT_DIGEST_MAX,
   filterThreadsByQuery,
   formatRelativeTime,
+  formatThreadIdBadge,
   groupThreadsByCalendar,
   isMonthGroupOpen,
   isPinnedGroupOpen,
@@ -132,6 +133,14 @@ export function ThreadList() {
   const [relatedFromServer, setRelatedFromServer] = useState<
     Array<{ thread_id: string; score: number; shared_tags?: string[] }> | null
   >(null)
+  /** Brief feedback after click-to-copy thread id badge. */
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const copyIdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    return () => {
+      if (copyIdTimerRef.current) clearTimeout(copyIdTimerRef.current)
+    }
+  }, [])
 
   const { threads, activeThreadId, threadBusyById, config } = state
   /** Graph tab → open session (TG-3): keep graph open, switch active thread here. */
@@ -471,6 +480,37 @@ export function ThreadList() {
     setSelected(new Set())
   }, [])
 
+  /** Copy thread id (without #) for search / support; show brief “已复制” only on success. */
+  const copyThreadId = useCallback(async (threadId: string) => {
+    const text = String(threadId || "").trim()
+    if (!text) return
+    let ok = false
+    try {
+      await navigator.clipboard.writeText(text)
+      ok = true
+    } catch {
+      try {
+        const ta = document.createElement("textarea")
+        ta.value = text
+        ta.style.position = "fixed"
+        ta.style.left = "-9999px"
+        document.body.appendChild(ta)
+        ta.select()
+        ok = document.execCommand("copy")
+        document.body.removeChild(ta)
+      } catch {
+        ok = false
+      }
+    }
+    if (!ok) return
+    setCopiedId(threadId)
+    if (copyIdTimerRef.current) clearTimeout(copyIdTimerRef.current)
+    copyIdTimerRef.current = setTimeout(() => {
+      setCopiedId((cur) => (cur === threadId ? null : cur))
+      copyIdTimerRef.current = null
+    }, 1200)
+  }, [])
+
   const handleNewThread = () => {
     const id = generateShortId()
     const thread = {
@@ -744,10 +784,12 @@ export function ThreadList() {
     const badge = roleBadge(t.agent_role)
     const preview = (t.first_user_preview || "").trim()
     const title = displayThreadTitle(t)
+    const idBadge = formatThreadIdBadge(t.id)
     const rel = formatRelativeTime(t.updated_at || t.created_at, now)
     const tags = t.digest?.tags || []
     const extracting = extractingIds.has(t.id)
     const tldr = displayDigestTldr(t)
+    const justCopied = copiedId === t.id
 
     return (
       <div
@@ -778,6 +820,23 @@ export function ThreadList() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={styles.threadAliasRow}>
             <span style={styles.threadAlias}>{title}</span>
+            {idBadge ? (
+              <button
+                type="button"
+                style={{
+                  ...styles.threadIdBadge,
+                  color: justCopied ? tokens.accentText : tokens.textMuted,
+                }}
+                title={`复制编号 ${idBadge}（可在搜索框粘贴定位）`}
+                aria-label={`复制会话编号 ${idBadge}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void copyThreadId(t.id)
+                }}
+              >
+                {justCopied ? "已复制" : idBadge}
+              </button>
+            ) : null}
             {badge && <span style={styles.badge}>{badge}</span>}
             {extracting && <span style={styles.badgeMuted}>抽取中</span>}
             {showDigestStaleBadge(t, view, now) && (
@@ -809,11 +868,7 @@ export function ThreadList() {
               ))}
             </div>
           )}
-          {preview ? (
-            <div style={styles.preview}>{preview}</div>
-          ) : (
-            <div style={styles.threadId}>#{t.id}</div>
-          )}
+          {preview ? <div style={styles.preview}>{preview}</div> : null}
           {rel && <div style={styles.relTime}>{rel}</div>}
         </div>
         {!selectMode && (
@@ -912,7 +967,9 @@ export function ThreadList() {
   }
 
   const renderDay = (day: DayGroup) => {
-    const openDay = expandedDays.has(day.dayKey)
+    // Search: force-open days that still have matches (parity with month groups).
+    const openDay =
+      expandedDays.has(day.dayKey) || (searchActive && day.threads.length > 0)
     const ids = threadIdsInDay(day)
     return (
       <div key={day.dayKey}>
@@ -1354,7 +1411,7 @@ export function ThreadList() {
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜索标题 / ID / 消息 / 标签…"
+                placeholder="搜索标题 / 编号 / 消息 / 要点 / 标签…"
                 style={styles.searchInput}
                 aria-label="搜索线程"
               />
@@ -1808,6 +1865,25 @@ const styles: Record<string, React.CSSProperties> = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
+  /** Always-visible short id; click copies bare id for search. */
+  threadIdBadge: {
+    flexShrink: 0,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgMuted,
+    padding: "1px 5px",
+    margin: 0,
+    fontSize: 10,
+    fontWeight: 600,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    color: tokens.textSecondary,
+    cursor: "pointer",
+    lineHeight: 1.2,
+    maxWidth: 88,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
+    borderRadius: tokens.radiusPill,
+  },
   badge: {
     fontSize: 9,
     fontWeight: 600,
@@ -1867,12 +1943,6 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    marginTop: 2,
-  },
-  threadId: {
-    fontSize: 11,
-    color: tokens.textMuted,
-    fontFamily: "monospace",
     marginTop: 2,
   },
   relTime: {

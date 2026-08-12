@@ -863,43 +863,145 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     return { name: String(name), destPath: filePath }
   }
 
-  // S41 multi-adv: zip compressed cap alone is insufficient — bound extract size/count.
-  private static readonly MAX_ZIP_EXTRACT_BYTES = 25 * 1024 * 1024
-  private static readonly MAX_ZIP_EXTRACT_FILES = 500
+  /**
+   * Zip extract budgets (skill packs with themes/fonts need headroom).
+   * Defense-in-depth: only entries under the chosen SKILL.md directory count;
+   * monorepo zips (repo-main.zip) no longer bill the whole archive.
+   * 2026-08-12: raised after dashiai-ppt-skill (~46MB zip / ~81MB skill tree / ~365 files).
+   */
+  static readonly MAX_ZIP_EXTRACT_BYTES = 120 * 1024 * 1024
+  static readonly MAX_ZIP_EXTRACT_FILES = 2000
 
+  /**
+   * Shared SKILL.md picker for L2 preview + install (must stay lock-step).
+   * Prefer a single entry under `skills/`; fail-closed when multiple skill packs
+   * are present (no silent deepest-wins).
+   */
+  static pickSkillMdEntryResult(
+    entries: Array<{ entryName: string; isDirectory?: boolean }>,
+  ): {
+    entryName: string | null
+    error?: string
+    candidates?: string[]
+  } {
+    const candidates = entries.filter((e) => {
+      if (e.isDirectory) return false
+      const n = e.entryName.replace(/\\/g, "/")
+      return /(^|\/)SKILL\.md$/i.test(n)
+    })
+    if (candidates.length === 0) {
+      return { entryName: null, error: "Zip must contain a SKILL.md file" }
+    }
+    const underSkills = candidates.filter((e) => {
+      const n = e.entryName.replace(/\\/g, "/").toLowerCase()
+      return n.includes("/skills/") || n.startsWith("skills/")
+    })
+    const pool = underSkills.length > 0 ? underSkills : candidates
+    if (pool.length > 1) {
+      const names = pool.map((e) => e.entryName.replace(/\\/g, "/"))
+      return {
+        entryName: null,
+        error:
+          `Zip contains multiple SKILL.md entries (${names.length}); ` +
+          `refuse silent pick. Unpack and skill_install({ path }) for one skills/<name>/, ` +
+          `or ship a single-skill zip. Candidates: ${names.slice(0, 8).join(", ")}`,
+        candidates: names,
+      }
+    }
+    return { entryName: pool[0].entryName }
+  }
+
+  private static pickSkillMdEntry(
+    entries: AdmZip.IZipEntry[],
+  ): AdmZip.IZipEntry {
+    const r = SkillEngine.pickSkillMdEntryResult(entries)
+    if (!r.entryName) {
+      throw new Error(r.error || "Zip must contain a SKILL.md file")
+    }
+    const hit = entries.find((e) => e.entryName === r.entryName)
+    if (!hit) {
+      throw new Error(r.error || "Zip must contain a SKILL.md file")
+    }
+    return hit
+  }
+
+  /** Import from base64 (legacy / tests). Prefer importSkillFolderFromPath for large zips. */
   importSkillFolder(zipBase64: string): { name: string; destPath: string } {
     const buffer = Buffer.from(zipBase64, "base64")
-    const zip = new AdmZip(buffer)
+    return this.importSkillFolderFromZip(new AdmZip(buffer))
+  }
 
-    // Validate: must contain a SKILL.md at some level
-    const entries = zip.getEntries()
-    const skillMdEntry = entries.find((e: AdmZip.IZipEntry) => e.entryName.endsWith("SKILL.md") || e.entryName.endsWith("SKILL.md/"))
-    if (!skillMdEntry) {
-      throw new Error("Zip must contain a SKILL.md file")
+  /**
+   * Import from on-disk zip (no base64 blow-up). AdmZip reads the file path directly.
+   */
+  importSkillFolderFromPath(zipPath: string): { name: string; destPath: string } {
+    const resolved = path.resolve(zipPath)
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      throw new Error(`Zip not found: ${zipPath}`)
     }
+    return this.importSkillFolderFromZip(new AdmZip(resolved))
+  }
 
-    // Determine the skill folder name from the SKILL.md path
-    const skillDirName = skillMdEntry.entryName.replace(/\/?SKILL\.md\/?$/, "")
-    const folderName = path.basename(skillDirName) || skillMdEntry.entryName.replace(".md", "")
+  private importSkillFolderFromZip(zip: AdmZip): { name: string; destPath: string } {
+    const entries = zip.getEntries()
+    const skillMdEntry = SkillEngine.pickSkillMdEntry(entries)
 
-    // Extract name from SKILL.md frontmatter for the directory name
-    const raw = zip.readAsText(skillMdEntry.name)
+    // Directory containing SKILL.md (posix-normalized, no trailing slash)
+    const skillMdNorm = skillMdEntry.entryName.replace(/\\/g, "/")
+    const skillDirName = skillMdNorm.replace(/\/?SKILL\.md$/i, "").replace(/\/$/, "")
+    const folderName = path.basename(skillDirName) || "skill"
+
+    const raw = zip.readAsText(skillMdEntry)
     const parsed = matter(raw)
     const skillName = parsed.data.name || folderName
-    const safeName = skillName.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
+    const safeName = String(skillName)
+      .replace(/[^a-zA-Z0-9-]/g, "-")
+      .toLowerCase()
+    if (!safeName || safeName === "-") {
+      throw new Error(
+        `Skill name '${skillName}' results in an invalid directory name after sanitization`,
+      )
+    }
 
     const destDir = path.join(this.skillsDir, safeName)
+    // Atomic overwrite: extract to tmp under skills root, then rename into place.
+    // On failure only tmp is removed — existing skill at destDir is preserved.
+    const tmpDir = path.join(
+      this.skillsDir,
+      `.${safeName}.extract-tmp-${process.pid}-${Date.now()}`,
+    )
 
-    // S42 P1: pre-check central-directory uncompressed sizes before getData()
-    // materializes buffers (honest zip-bomb defense). Headers can lie — still
-    // enforce post-getData totals below.
+    // Scope extract to the skill tree:
+    // - monorepo (…/skills/foo/SKILL.md): only that directory
+    // - SKILL.md at zip root: whole archive (path safety still rejects ..)
+    const skillEntries = entries.filter((entry) => {
+      if (entry.isDirectory) return false
+      const n = entry.entryName.replace(/\\/g, "/")
+      if (!skillDirName) return true
+      return n === skillMdNorm || n.startsWith(skillDirName + "/")
+    })
+    if (skillEntries.length === 0) {
+      throw new Error("Zip skill directory has no extractable files")
+    }
+
+    // S42 P1: pre-check central-directory sizes for skill subtree only.
+    // Refuse non-trivial entries with missing/zero uncompressed size (zip-bomb class:
+    // getData() would otherwise inflate before post-check — R2 nit M5).
+    const MAX_ZERO_SIZE_COMPRESSED = 64 * 1024
     let headerFiles = 0
     let headerBytes = 0
-    for (const entry of entries) {
-      if (entry.isDirectory) continue
+    for (const entry of skillEntries) {
       headerFiles++
-      const claimed = Number((entry as any).header?.size)
-      if (Number.isFinite(claimed) && claimed > 0) {
+      const hdr = (entry as any).header
+      const claimed = Number(hdr?.size)
+      const compressed = Number(hdr?.compressedSize)
+      if (!Number.isFinite(claimed) || claimed <= 0) {
+        if (Number.isFinite(compressed) && compressed > MAX_ZERO_SIZE_COMPRESSED) {
+          throw new Error(
+            `Zip entry has missing/zero uncompressed size but compressedSize=${compressed}: ${entry.entryName}`,
+          )
+        }
+      } else {
         headerBytes += claimed
       }
       if (headerFiles > SkillEngine.MAX_ZIP_EXTRACT_FILES) {
@@ -914,47 +1016,62 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       }
     }
 
-    // Remove existing if present (L2 preview discloses overwrite=true)
-    if (fs.existsSync(destDir)) {
-      fs.rmSync(destDir, { recursive: true })
+    if (fs.existsSync(tmpDir)) {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
     }
+    fs.mkdirSync(tmpDir, { recursive: true })
 
-    fs.mkdirSync(destDir, { recursive: true })
-
+    const bakDir = path.join(
+      this.skillsDir,
+      `.${safeName}.replace-bak-${process.pid}-${Date.now()}`,
+    )
     let extractBytes = 0
     let extractFiles = 0
     try {
-      // Extract all entries with uncompressed budget (zip-bomb defense)
-      for (const entry of entries) {
-        if (entry.isDirectory) continue
-
-        // Compute the relative path within the zip
-        let relativePath = entry.entryName
-        // Strip leading skill directory name if present
-        if (skillDirName && relativePath.startsWith(skillDirName + "/")) {
-          relativePath = relativePath.slice(skillDirName.length + 1)
+      for (const entry of skillEntries) {
+        const n = entry.entryName.replace(/\\/g, "/")
+        let relativePath = n
+        if (skillDirName && n.startsWith(skillDirName + "/")) {
+          relativePath = n.slice(skillDirName.length + 1)
+        } else if (skillDirName && n === skillMdNorm) {
+          relativePath = "SKILL.md"
         }
 
-        // Normalize and validate: reject absolute paths, parent traversal, and null bytes
         relativePath = path.normalize(relativePath).replace(/\\/g, "/")
-        if (path.isAbsolute(relativePath) || relativePath.startsWith("..") || relativePath.includes("\0")) {
+        if (
+          path.isAbsolute(relativePath) ||
+          relativePath.startsWith("..") ||
+          relativePath.includes("\0") ||
+          relativePath === "" ||
+          relativePath === "."
+        ) {
           throw new Error(`Security Violation: Invalid zip entry path: ${entry.entryName}`)
         }
 
-        // Secure path traversal check (P0) — ensure resolved path stays under destDir
-        const resolvedPath = path.resolve(destDir, relativePath)
-        const normalizedDest = path.resolve(destDir)
-        if (!resolvedPath.startsWith(normalizedDest + path.sep) && resolvedPath !== normalizedDest) {
-          throw new Error(`Security Violation: Path traversal detected in zip entry: ${entry.entryName}`)
+        const resolvedPath = path.resolve(tmpDir, relativePath)
+        const normalizedTmp = path.resolve(tmpDir)
+        if (
+          !resolvedPath.startsWith(normalizedTmp + path.sep) &&
+          resolvedPath !== normalizedTmp
+        ) {
+          throw new Error(
+            `Security Violation: Path traversal detected in zip entry: ${entry.entryName}`,
+          )
         }
 
-        const claimed = Number((entry as any).header?.size)
-        if (Number.isFinite(claimed) && claimed > 0) {
-          if (extractBytes + claimed > SkillEngine.MAX_ZIP_EXTRACT_BYTES) {
+        const hdr = (entry as any).header
+        const claimed = Number(hdr?.size)
+        const compressed = Number(hdr?.compressedSize)
+        if (!Number.isFinite(claimed) || claimed <= 0) {
+          if (Number.isFinite(compressed) && compressed > MAX_ZERO_SIZE_COMPRESSED) {
             throw new Error(
-              `Zip extract too large (max ${SkillEngine.MAX_ZIP_EXTRACT_BYTES} uncompressed bytes)`,
+              `Zip entry has missing/zero uncompressed size but compressedSize=${compressed}: ${entry.entryName}`,
             )
           }
+        } else if (extractBytes + claimed > SkillEngine.MAX_ZIP_EXTRACT_BYTES) {
+          throw new Error(
+            `Zip extract too large (max ${SkillEngine.MAX_ZIP_EXTRACT_BYTES} uncompressed bytes)`,
+          )
         }
 
         const data = entry.getData()
@@ -971,18 +1088,48 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
           )
         }
 
-        // Ensure we don't create nested directories
         if (relativePath.includes("/")) {
-          const subDir = path.dirname(relativePath)
-          fs.mkdirSync(path.join(destDir, subDir), { recursive: true })
+          fs.mkdirSync(path.join(tmpDir, path.dirname(relativePath)), { recursive: true })
         }
-
         fs.writeFileSync(resolvedPath, data)
       }
-    } catch (e) {
-      // Cleanup partial dest on budget/slip failure
+
+      // Commit without rm-then-rename gap: dest → bak, tmp → dest, then drop bak.
+      // If tmp→dest fails, restore bak → dest so the previous skill is not lost.
+      if (fs.existsSync(bakDir)) {
+        fs.rmSync(bakDir, { recursive: true, force: true })
+      }
+      if (fs.existsSync(destDir)) {
+        fs.renameSync(destDir, bakDir)
+      }
       try {
-        if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true })
+        fs.renameSync(tmpDir, destDir)
+      } catch (renameErr) {
+        try {
+          if (!fs.existsSync(destDir) && fs.existsSync(bakDir)) {
+            fs.renameSync(bakDir, destDir)
+          }
+        } catch {
+          /* best-effort restore */
+        }
+        throw renameErr
+      }
+      if (fs.existsSync(bakDir)) {
+        fs.rmSync(bakDir, { recursive: true, force: true })
+      }
+    } catch (e) {
+      try {
+        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true })
+      } catch {
+        /* ignore */
+      }
+      try {
+        // If we moved dest→bak but never landed tmp as dest, restore.
+        if (!fs.existsSync(destDir) && fs.existsSync(bakDir)) {
+          fs.renameSync(bakDir, destDir)
+        } else if (fs.existsSync(bakDir)) {
+          fs.rmSync(bakDir, { recursive: true, force: true })
+        }
       } catch {
         /* ignore */
       }

@@ -229,6 +229,120 @@ test("runBrowserDownload: DOWNLOAD_TIMEOUT via injectable downloads API + busy r
   assert.equal(r.data?.error_code, "DOWNLOAD_TIMEOUT")
   assert.match(r.error || "", /DOWNLOAD_TIMEOUT/)
   assert.match(r.error || "", /5000ms/)
+  assert.equal(r.data?.suggested_action, "downloads_find_then_skill_install")
+  assert.equal(bridge.downloadBusyTabs.size, 0)
+})
+
+test("runBrowserDownload: force_redownload + TIMEOUT must NOT recover pre-existing cache", async () => {
+  const bridge = mockBridge({ sendCdp: singleTextMatchCdp() })
+  const completeItem = {
+    id: 58,
+    filename: "/Users/t/Downloads/dashiai-ppt-skill-main.zip",
+    url: "https://github.com/x/dashiai-ppt-skill/archive/refs/heads/main.zip",
+    state: "complete",
+    exists: true,
+    fileSize: 46339298,
+    totalBytes: 46339298,
+    endTime: new Date().toISOString(),
+  } as Item
+  const api: DownloadsApi = {
+    onCreated: {
+      addListener() {},
+      removeListener() {},
+    },
+    onChanged: {
+      addListener() {},
+      removeListener() {},
+    },
+    async search() {
+      return [completeItem]
+    },
+  }
+  let timerFn: (() => void) | undefined
+  const p = runBrowserDownload(bridge, {
+    tabId: 11,
+    text: "Download ZIP",
+    filenameHint: "dashiai-ppt-skill",
+    timeoutMs: 3_000,
+    force_redownload: true,
+    __downloadsApi: api,
+    __setTimer: (fn: () => void) => {
+      timerFn = fn
+      return 1 as any
+    },
+    __clearTimer: () => {},
+  })
+  await new Promise((r) => setTimeout(r, 30))
+  assert.ok(timerFn)
+  timerFn!()
+  const r = await p
+  assert.equal(r.success, false)
+  assert.equal(r.data?.error_code, "DOWNLOAD_TIMEOUT")
+  assert.equal(r.data?.force_redownload, true)
+  assert.equal(bridge.downloadBusyTabs.size, 0)
+})
+
+test("runBrowserDownload: TIMEOUT recovers only post-op complete (not stale shelf)", async () => {
+  const bridge = mockBridge({ sendCdp: singleTextMatchCdp() })
+  const now = Date.now()
+  const stale = {
+    id: 1,
+    filename: "/Users/t/Downloads/dashiai-ppt-skill-main.zip",
+    url: "https://github.com/x/old.zip",
+    state: "complete",
+    exists: true,
+    fileSize: 1,
+    endTime: new Date(now - 86_400_000).toISOString(),
+    startTime: new Date(now - 86_400_000).toISOString(),
+  } as Item
+  const fresh = {
+    id: 58,
+    filename: "/Users/t/Downloads/dashiai-ppt-skill-main.zip",
+    url: "https://github.com/x/dashiai-ppt-skill/archive/refs/heads/main.zip",
+    state: "complete",
+    exists: true,
+    fileSize: 46339298,
+    endTime: new Date(now).toISOString(),
+    startTime: new Date(now - 500).toISOString(),
+  } as Item
+  const api: DownloadsApi = {
+    onCreated: {
+      addListener() {},
+      removeListener() {},
+    },
+    onChanged: {
+      addListener() {},
+      removeListener() {},
+    },
+    async search() {
+      // Newest first (Chrome orderBy -startTime); stale would win without time floor
+      return [stale, fresh]
+    },
+  }
+  let timerFn: (() => void) | undefined
+  const p = runBrowserDownload(bridge, {
+    tabId: 12,
+    text: "Download ZIP",
+    filenameHint: "dashiai-ppt-skill",
+    timeoutMs: 3_000,
+    prefer_existing: false, // exercise click path then timeout recovery
+    force_redownload: false,
+    __now: () => now,
+    __downloadsApi: api,
+    __setTimer: (fn: () => void) => {
+      timerFn = fn
+      return 1 as any
+    },
+    __clearTimer: () => {},
+  })
+  await new Promise((r) => setTimeout(r, 30))
+  assert.ok(timerFn)
+  timerFn!()
+  const r = await p
+  assert.equal(r.success, true, r.error)
+  assert.equal(r.data?.source, "cache_after_timeout")
+  assert.equal(r.data?.download_id, 58)
+  assert.equal(r.data?.bytes, 46339298)
   assert.equal(bridge.downloadBusyTabs.size, 0)
 })
 

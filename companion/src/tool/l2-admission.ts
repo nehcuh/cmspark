@@ -254,7 +254,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
                 } else if (finalParams.content) {
                   tier = "content"
                 }
-                return `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0} name=${prev.name || ""} overwrite=${prev.overwrite ? "true" : "false"} dest=${prev.dest_path || ""} source_tier=${tier}`
+                const errPart = prev.error
+                  ? ` preview_error=${String(prev.error).slice(0, 200)}`
+                  : ""
+                return `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0} name=${prev.name || ""} overwrite=${prev.overwrite ? "true" : "false"} dest=${prev.dest_path || ""} source_tier=${tier}${errPart}`
               } catch {
                 return `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0}`
               }
@@ -262,7 +265,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           : "") ||
         "",
     )
-    // skill_install: hard-deny outside home/Downloads/tmp/data BEFORE L2 dialog
+    // skill_install: hard-deny multi-SKILL.md / outside source zone BEFORE L2 dialog
     // (user home is allowed — L2 is the authorization; no pointless confirm then fail).
     if (toolName === "skill_install") {
       try {
@@ -270,7 +273,29 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           isSkillInstallSourceAllowed,
           expandUserPath,
           skillInstallSourceDeniedError,
+          skillInstallOverwritePreview,
         } = require("../skills/skill-install") as typeof import("../skills/skill-install")
+        // Surface multi-skill zip failure before confirm (R2 nit: empty name was awkward).
+        if (
+          typeof finalParams.zip_path === "string" &&
+          finalParams.zip_path.trim()
+        ) {
+          const prev = skillInstallOverwritePreview(finalParams)
+          if (prev.error) {
+            const result = {
+              success: false as const,
+              error: prev.error,
+              data: {
+                error_code: "SKILL_INSTALL_PREVIEW_FAILED",
+                candidates: prev.candidates || [],
+                hint_zh:
+                  "ZIP 含多个 SKILL.md 或无法解析安装目标。请解压后 skill_install({ path: 单个 skills/<name> 目录 })。",
+              },
+            }
+            logToolFinish(toolCallId, toolName, startedAt, result)
+            return result
+          }
+        }
         const fs = require("fs") as typeof import("fs")
         const pathMod = require("path") as typeof import("path")
         const srcField =

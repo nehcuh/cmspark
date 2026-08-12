@@ -126,6 +126,11 @@ export async function runBrowserDownload(
 
   let behaviorSet = false
   let waiter: ReturnType<typeof createDownloadWaiter> | null = null
+  // BD-WAITER identity: shelf recovery must not latch completes from before this op.
+  // Skew matches download-waiter pre-registration tolerance (startMs + 50 < registeredAt).
+  const RECOVERY_START_SKEW_MS = 50
+  const nowFn = typeof params.__now === "function" ? params.__now : () => Date.now()
+  const operationStartMs = nowFn() - RECOVERY_START_SKEW_MS
 
   try {
     // Resolve text/selector first (before chrome.downloads) so ELEMENT_* can be unit-tested
@@ -196,7 +201,7 @@ export async function runBrowserDownload(
       filenameHint,
       tabId,
       downloadsApi,
-      now: typeof params.__now === "function" ? params.__now : undefined,
+      now: nowFn,
       setTimer: typeof params.__setTimer === "function" ? params.__setTimer : undefined,
       clearTimer: typeof params.__clearTimer === "function" ? params.__clearTimer : undefined,
     })
@@ -294,6 +299,63 @@ export async function runBrowserDownload(
         : msg.includes("DOWNLOAD_CANCELED")
           ? "DOWNLOAD_CANCELED"
           : "DOWNLOAD_FAILED")
+
+    // x9xinc: slow ZIP may complete in the shelf without a latched onCreated.
+    // Recover ONLY when: not force_redownload, explicit filenameHint/urlContains,
+    // and complete item endTime/startTime ≥ this operation (BD-WAITER discipline).
+    if (code === "DOWNLOAD_TIMEOUT") {
+      const canRecoverShelf =
+        !forceRedownload && !!(filenameHint || urlContains)
+      if (canRecoverShelf) {
+        try {
+          const hit = await findPreferredExistingDownload({
+            filenameHint,
+            urlContains,
+            limit: 1,
+            minCompletedAfterMs: operationStartMs,
+            __downloadsApi: params.__downloadsApi,
+          })
+          if (hit) {
+            return {
+              success: true,
+              data: {
+                path: hit.path,
+                filename: hit.filename,
+                bytes: hit.bytes,
+                state: "completed",
+                url: hit.url,
+                transport: "downloads_cache",
+                source: "cache_after_timeout",
+                download_id: hit.id,
+                note:
+                  "DOWNLOAD_TIMEOUT recovered: a complete download matching filenameHint/urlContains " +
+                  "finished at/after this browser_download started (not a pre-existing shelf item).",
+              },
+            }
+          }
+        } catch {
+          /* fall through to timeout error */
+        }
+      }
+      return {
+        success: false,
+        error: msg.startsWith(code) ? msg : `${code}: ${msg}`,
+        data: {
+          error_code: code,
+          user_hint_zh: forceRedownload
+            ? "强制重新下载超时且未捕获到新完成项。请检查下载栏是否仍在进行，或加大 timeoutMs；不要依赖旧缓存文件。"
+            : "超时内未捕获到新下载事件。请用 downloads_find（filenameHint=仓库名或 .zip）检查浏览器下载列表；" +
+              "若已有本次下载完成的文件则 skill_install({ zip_path })。大 ZIP 可加大 timeoutMs（最长 120s）。",
+          suggested_action: forceRedownload
+            ? "retry_browser_download_or_wait"
+            : "downloads_find_then_skill_install",
+          filenameHint: filenameHint || null,
+          urlContains: urlContains || null,
+          force_redownload: forceRedownload,
+        },
+      }
+    }
+
     return {
       success: false,
       error: msg.startsWith(code) ? msg : `${code}: ${msg}`,
