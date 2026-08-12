@@ -35,13 +35,14 @@ export type ForceLayoutOpts = {
   maxV?: number
 }
 
+// Tighter defaults → denser clusters closer to Obsidian local graph (not sparse giant cards).
 const DEFAULTS = {
-  repulsion: 2800,
-  springLength: 90,
-  springK: 0.02,
-  centerG: 0.008,
-  damping: 0.82,
-  maxV: 12,
+  repulsion: 1600,
+  springLength: 52,
+  springK: 0.028,
+  centerG: 0.014,
+  damping: 0.84,
+  maxV: 10,
 }
 
 /** Place nodes on a ring so the first frame is not a single pile. */
@@ -54,7 +55,7 @@ export function seedLayoutNodes(
   const cx = width / 2
   const cy = height / 2
   const n = Math.max(1, ids.length)
-  const ring = Math.min(width, height) * 0.32
+  const ring = Math.min(width, height) * 0.22
   return ids.map((id, i) => {
     const ang = (i / n) * Math.PI * 2 + 0.2
     const jitter = ((i * 17) % 7) - 3
@@ -64,7 +65,7 @@ export function seedLayoutNodes(
       y: cy + Math.sin(ang) * (ring + jitter),
       vx: 0,
       vy: 0,
-      r: radiusById?.get(id) ?? 10,
+      r: radiusById?.get(id) ?? 4.5,
       pinned: false,
     }
   })
@@ -106,7 +107,7 @@ export function forceLayoutTick(
         dist2 = dx * dx + dy * dy
       }
       const dist = Math.sqrt(dist2)
-      const minDist = a.r + b.r + 4
+      const minDist = a.r + b.r + 10
       const force = repulsion / dist2
       const fx = (dx / dist) * force
       const fy = (dy / dist) * force
@@ -118,9 +119,9 @@ export function forceLayoutTick(
         b.vx += fx
         b.vy += fy
       }
-      // Soft collision
+      // Soft collision — keep dots from stacking (visual r is tiny)
       if (dist < minDist) {
-        const push = ((minDist - dist) / dist) * 0.5
+        const push = ((minDist - dist) / dist) * 0.45
         if (!a.pinned) {
           a.x -= dx * push
           a.y -= dy * push
@@ -171,10 +172,11 @@ export function forceLayoutTick(
       }
       n.x += n.vx
       n.y += n.vy
-      // Soft wall
-      const pad = n.r + 8
-      n.x = Math.max(pad, Math.min(width - pad, n.x))
-      n.y = Math.max(pad, Math.min(height - pad, n.y))
+      // Soft wall — clamp pad so tiny viewports don't collapse all nodes to a line
+      const padX = Math.min(Math.max(24, n.r + 16), Math.max(4, width / 4))
+      const padY = Math.min(Math.max(24, n.r + 16), Math.max(4, height / 4))
+      n.x = Math.max(padX, Math.min(width - padX, n.x))
+      n.y = Math.max(padY, Math.min(height - padY, n.y))
       energy += Math.sqrt(n.vx * n.vx + n.vy * n.vy)
     }
   }
