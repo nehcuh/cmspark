@@ -92,12 +92,14 @@ test("ENOENT on read tool does not push mkdir guidance", () => {
   assert.doesNotMatch(out, /create parent folders first with create_directory/)
 })
 
-test("allowlist denial points user to MCP panel (not god-mode)", () => {
+test("allowlist denial points user to MCP panel / three-flag cruise (not god-mode)", () => {
   const out = enhanceMcpError(
     "Access denied - path outside allowed directories: /secret",
     { serverName: "filesystem", toolName: "write_file" },
     { path: "/secret/x" },
   )
-  assert.match(out, /allowlist|allow paths|MCP panel/i)
-  assert.match(out, /god-mode/i)
+  assert.match(out, /allowlist|allow paths|MCP/i)
+  // Product copy: three-flag cruise auto-expands allow-dirs; do not tell users "god-mode".
+  assert.match(out, /three-flag cruise|三旗|cruise/i)
+  assert.doesNotMatch(out, /god-mode/i)
 })
