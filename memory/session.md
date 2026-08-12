@@ -2,6 +2,17 @@
 
 ## Current Session
 
+### S69 END (2026-08-12~13) [thread ID UI · large skill zip · download recovery · #184 MERGED]
+- **Ship**：**PR #184 MERGED** `5713089` ← `f0d8207` — 会话 `#id` 列表/顶栏 + 大 skill ZIP + `browser_download` 超时恢复
+- **UI**：ThreadList/StatusRail 常驻 `#id`、点复制 bare id；搜索 alias/id/preview/tags/tldr/bullets；搜索展开历史日分组
+- **skill_install**：预算 100/120MiB·2000 files；monorepo 只装 `skills/<name>/`；`pickSkillMdEntryResult` 与 L2 预览锁步；multi-SKILL fail-closed；atomic bak/rename；FromPath；size=0 大 compressed 拒
+- **download**：TIMEOUT 恢复须 hint + 时间窗 50ms skew；`force_redownload` 禁止 cache 恢复
+- **门禁**：四路对抗 REJECT → 修 B1–B4 + nits → dual R2 Claude+Pi **APPROVE_WITH_NITS** `both_ok`；CI build+smoke 绿后 merge
+- **main tip**：`origin/main` @ **`5713089`**；**open PR 0**
+- **本地**：`dist-package` 已 sync；`dist/` / 巨型 audit `.patch` / `_install-local-app.sh` 未进 PR
+- **下次**：重载扩展+重启 Companion；真机装 dashiai zip；三旗/meeting/workspace 真机 backlog 仍在
+- Recorded: yes — L2 picker≠install · force_redownload vs shelf recovery · dist-package 路径
+
 ### S68 END (2026-08-12 ~22:12) [三旗路径风险自担 · #181/#183 MERGED · CI 对齐断言]
 - **Ship 已在 main**：`#179` MERGED → `#181` 工具面/MCP/DSML/acquireLock UX → `#183`（含 #182 cherry-pick）path risk-accept @ **`7e6f638`**
 - **产品法**：三旗 = 工具全开 + 路径几乎无 cage；只拦 SSRF/云元数据/volume·OS 硬危险等语义面；`file://` 无三旗 → `image_fetch_file_requires_cruise`（非 Security Block 文案）
@@ -671,17 +682,24 @@
 
 ### 听写+/会议真机验收（S52 后 · S67 热修）
 - status: **active**
-- context: Mtg0–3 + D1/D2 on main；**#179** 叠 soft-continue/pin/双ack/会议 AI 纠错+分段（待合）
-- next_action: (1) 合 #179 后重载扩展+重启 Companion (2) 双隐私 ack 开录 (3) 勾选「录制 AI 纠错」验同音字 (4) 坏组件应硬停 binary_broken
+- context: Mtg0–3 + D1/D2 + **#179 MERGED** soft-continue/pin/双ack/会议 AI 纠错+分段
+- next_action: (1) 重载扩展+重启 Companion (2) 双隐私 ack 开录 (3) 勾选「录制 AI 纠错」验同音字 (4) 坏组件应硬停 binary_broken
 - resume_doc: PR #179 · `docs/meeting-and-dictation-user-guide.md` · dual verdict 20260812-113816
-- updated: 2026-08-12
+- updated: 2026-08-13
+
+### 大 skill ZIP / 会话编号真机验收（S69 · #184）
+- status: **active**
+- context: #184 on main；dist-package 已 sync agent+extension
+- next_action: (1) 重载 `dist-package/.../chrome-extension` + 重启 Companion (2) 列表/顶栏见 `#id` (3) `skill_install` dashiai zip + L2 (4) multi-skill zip 应预览失败
+- resume_doc: PR #184 · dual r2 verdict 20260812-231716
+- updated: 2026-08-13
 
 ### Meeting STT hotfix PR #179（S67）
-- status: **active**
-- context: 分支 `fix/meeting-stt-hotfix-refine-absorb`；dual both_ok；nits 已吸
-- next_action: 盯 CI → merge → 可选再装 DMG；勿合进 dist/
+- status: **done** (#179 MERGED on main)
+- context: soft-continue / pin / 双 ack / AI refine / drain / binary_broken
+- next_action: 见「听写+/会议真机验收」
 - resume_doc: https://github.com/nehcuh/cmspark/pull/179
-- updated: 2026-08-12
+- updated: 2026-08-13
 
 ### Wave C thread_recall → **#135 MERGED**
 - status: **done** (PR #135 → main `90db018`; CI build pass ~3m)

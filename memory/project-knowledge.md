@@ -22,6 +22,26 @@
 
 ## Technical Pitfalls
 
+### skill_install L2 预览 picker 必须 === 安装 picker（2026-08-12 · #184）
+- **坑**：`skillInstallOverwritePreview` 用 `entries.find(SKILL.md)` 第一个，install 用 `pickSkillMdEntry`（prefer skills/ + deepest）→ monorepo 上 L2 显示 name/overwrite 与真实写入不一致（token 绑定错误）
+- **修**：共享 `SkillEngine.pickSkillMdEntryResult`；多 `skills/*/SKILL.md` **fail-closed**（L2 前硬失败 + candidates）
+- **纪律**：改 zip 选择逻辑必须同步 preview + install + security-policy/l2 文案
+
+### browser_download TIMEOUT 恢复 ≠ prefer_existing 无约束（2026-08-12 · #184）
+- **坑**：超时后扫 chrome.downloads 若无时间窗 / 忽略 `force_redownload`，会返回陈旧 complete，违反 BD-WAITER「禁止 latch 预注册 complete」
+- **修**：仅 `!force_redownload && (filenameHint||urlContains)`；`minCompletedAfterMs`（与 waiter **50ms** skew 对齐）；缺时间戳 fail-closed
+- **纪律**：单测禁止用 `force_redownload:true` 断言 `cache_after_timeout` 成功
+
+### 大 skill 包预算与 monorepo 子树（2026-08-12 · #184 / x9xinc）
+- **现象**：dashiai-ppt ~46MB zip / ~81MB 子树 / 365 文件，旧 25MB·500 直接拒
+- **修**：100MiB compressed / 120MiB extract / 2000 files；只计所选 SKILL 目录；`importSkillFolderFromPath` 免 base64；覆盖用 tmp→bak→dest
+- **纪律**：改预算同步 stub/测试；size=0 且 compressed>64KiB 拒（zip-bomb 类）；生产 FromPath 必须有真实 zip 集成测
+
+### dist-package 路径：源码 build ≠ 用户加载的扩展（2026-08-12）
+- **坑**：用户加载 `dist-package/cmspark-macos-arm64/chrome-extension`，只 `chrome-extension/build` 无效；companion 须 **esbuild** `cmspark-agent.js` 再 cp（`tsc` 模块树不够）
+- **修**：`npm run build` + `run-esbuild-bundle.mjs` + rsync extension + cp agent.js（含 dmg-staging Resources）
+- **纪律**：改 UI/工具后问用户加载路径；热修后重启托盘/Companion
+
 ### analyze_image IMAGE_FETCH：三旗=风险自担，只硬拦疑似 SSRF（2026-08-12）
 - **产品**：不是「为防 SSRF 一律 ban file://」；三旗全开后允许 `file://` 拉图并跳过图片确认；**云元数据 IP / javascript:** 仍硬拦
 - **默认模式**：`file://` 仍拒（非确认窗，错误码 `image_fetch_file_requires_cruise`）— 用 screenshot
@@ -592,6 +612,13 @@
 - 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
 
 ## Reusable Patterns
+
+### 四路对抗 REJECT → 修 B1–B4 → dual R2 both_ok → CI 绿合 main（2026-08-12 · #184）
+1. 产品缺口（UI id / 大 zip / download shelf）实现后 **四路独立 adversarial**（安全/正确性/下载/UI）
+2. 内部 REJECT 落 `docs/audit/reviews/*adversarial*`；修阻塞项 + R2 nits 再收一档
+3. `scripts/dual-external-review.sh` Claude+Pi：R1 REJECT 可接受；修后 R2 **APPROVE_WITH_NITS** 才合
+4. `gh pr checks --watch` 全绿 → `gh pr merge --merge --delete-branch`
+5. 价值：避免 shelf-recovery 错误语义被单测固化进 main
 
 ### 对抗 REJECT → 分 Slice 吸收 → dual → nits 再 PR（2026-08-12 · #179）
 1. 真机/四路对抗合成 **REJECT** 落 `docs/audit/reviews/*adversary-synthesis*`
