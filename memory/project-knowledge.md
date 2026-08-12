@@ -22,6 +22,21 @@
 
 ## Technical Pitfalls
 
+### 线程 tool_whitelist：三旗巡航应扩面；MCP 名 `filesystem` ↔ `fs`（2026-08-12）
+- **现象**：开了无人值守/三旗仍 `tool_whitelist_blocked`（list_tabs/shell）；用户以为权限已全局放开
+- **根因**：
+  1. 旧实现白名单与 L2 **正交**——三旗只免确认，不扩工具面（产品视角不符合）
+  2. 用户在 **新线程**（如 cdl9qs）仍带 `["mcp__filesystem__*"]`，改 dsmgjn 不等于改当前对话
+  3. 只改磁盘 `index.json` 时若 daemon 未重启，`saveIndex` 会用内存旧快照盖回
+  4. `mcp__fs__*` ≠ `mcp__filesystem__*`
+- **修法**：三旗巡航对 **非 worker** 线程 `isToolAllowed` 视为全开；adapter 用同一 gate 过滤 LLM 工具表；别名 fs↔filesystem；改策略走 `thread.update` 或重启
+- **纪律**：查 blocked 的 **thread_id**；全工具 = 该线程 `null` 或三旗；勿假设「无人值守 arm」 alone 放开 shell
+
+### MCP filesystem 失效 allow-dir 须 prune 回落 home（2026-08-12）
+- **现象**：`args` 残留 `/var/folders/.../cmspark-allow-dir-*` → server dead；`ensureFilesystemAllowlist` 曾「有 path 就不注入」
+- **修法**：启动/sanitize 时 drop 不存在的 allow-dir/roots，空则注入 home；测试用 `CMSPARK_DATA_DIR`，禁止污染用户 config
+- **纪律**：allow path 必须 exists；改磁盘 config 后重启 companion
+
 ### 会议 STT soft-continue 与 max-1 槽：conflict/oom 绝不可 soft 空转（2026-08-12 · #179）
 - **现象**：段失败一律 soft → `resource_conflict`/`session_busy` 占着 max-1 槽 → 后续段永久 conflict；坏二进制 sticky `infer_failed`/`binary_broken` soft 到 hard cap
 - **修法**：soft 仅 `infer_failed|empty_result|infer_timeout|partial_skipped` + streak≤3；conflict abort+单次重试后硬停；`oom`/`binary_broken` **首击硬停**

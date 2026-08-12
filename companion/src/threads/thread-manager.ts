@@ -2,7 +2,7 @@
 
 import * as fs from "fs"
 import * as path from "path"
-import { getConfigDir } from "../config"
+import { getConfig, getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
 import type { MissionBoard } from "../board/schema"
 import type { ThreadDigest } from "./digest"
@@ -229,6 +229,77 @@ function lastUserPreviewFromMessages(
     if (text) return text
   }
   return ""
+}
+
+/**
+ * Known MCP server-id aliases for tool_whitelist patterns.
+ * Real default server id is `filesystem` → tools `mcp__filesystem__*`.
+ * Legacy UI/tests often wrote `mcp__fs__*`; match both directions.
+ */
+export const MCP_SERVER_ID_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  filesystem: ["fs"],
+  fs: ["filesystem"],
+}
+
+/** Server ids that should match a whitelist server segment (self + aliases). */
+export function mcpServerIdsForWhitelistMatch(serverId: string): string[] {
+  const alts = MCP_SERVER_ID_ALIASES[serverId]
+  return alts ? [serverId, ...alts] : [serverId]
+}
+
+/**
+ * Whether an MCP tool name is allowed by a non-null thread tool_whitelist.
+ * Pure helper for unit tests (same rules as ThreadManager.isToolAllowed MCP branch).
+ */
+export function isMcpToolAllowedByWhitelist(wl: string[], toolName: string): boolean {
+  if (wl.includes(toolName)) return true
+  if (wl.includes("mcp__*")) return true
+  if (
+    toolName === "mcp_list_resources" ||
+    toolName === "mcp_read_resource" ||
+    toolName === "mcp_get_prompt"
+  ) {
+    // Meta tools: exact name only (unless mcp__* already matched)
+    return false
+  }
+  if (!toolName.startsWith("mcp__")) return false
+
+  const parts = toolName.split("__")
+  // mcp__server__tool…  (tool segment may itself contain __)
+  if (parts.length < 3) return false
+  const serverId = parts[1]!
+  const rest = parts.slice(2).join("__")
+
+  for (const sid of mcpServerIdsForWhitelistMatch(serverId)) {
+    if (wl.includes(`mcp__${sid}__*`)) return true
+    if (wl.includes(`mcp__${sid}__${rest}`)) return true
+  }
+  return false
+}
+
+export type CruiseSecurityFlags = {
+  auto_approve_dangerous?: boolean
+  auto_approve_enterprise_tools?: boolean
+  allow_all_schemes?: boolean
+}
+
+/** Three-flag cruise (same predicate as L2). Pass `security` in tests. */
+export function isFullAutonomyCruiseOpen(security?: CruiseSecurityFlags): boolean {
+  let s: CruiseSecurityFlags
+  if (security) {
+    s = security
+  } else {
+    try {
+      s = (getConfig().security || {}) as CruiseSecurityFlags
+    } catch {
+      s = {}
+    }
+  }
+  return (
+    s.auto_approve_dangerous === true &&
+    s.auto_approve_enterprise_tools === true &&
+    s.allow_all_schemes === true
+  )
 }
 
 export class ThreadManager {
@@ -851,7 +922,14 @@ export class ThreadManager {
    * Returns true if whitelist is null (no restriction) or tool is listed.
    * C6 multi-adv: workers re-enforce WORKER_HARD_DENY at runtime (not only spawn-time).
    */
-  isToolAllowed(threadId: string, toolName: string): boolean {
+  /**
+   * @param opts.cruiseOpen — test override for three-flag cruise (default: live config).
+   */
+  isToolAllowed(
+    threadId: string,
+    toolName: string,
+    opts?: { cruiseOpen?: boolean },
+  ): boolean {
     const thread = this.get(threadId)
     if (!thread) return false
     // C6: worker hard-deny always applies, even if whitelist was elevated via thread.update
@@ -872,13 +950,20 @@ export class ThreadManager {
           return false
         }
       }
+      // Workers never get cruise-expanded surface (spawn whitelist + HARD_DENY stay).
+    } else if (opts?.cruiseOpen ?? isFullAutonomyCruiseOpen()) {
+      // Product: three-flag full-autonomy cruise expands tool surface for normal
+      // threads immediately (scene tool_whitelist still stored, but does not block).
+      // L2 skip is separate (same flags); users arm cruise expecting tools to work
+      // on the *current* chat without recreating the thread.
+      return true
     }
     if (thread.tool_whitelist === null) return true
     // P1 / D8 revise: pack tool_whitelist constrains MCP too.
     // Allow mcp tools only when whitelist includes:
     //   - exact tool name, or
     //   - "mcp__*" (all MCP), or
-    //   - "mcp__<server>__*" for that server, or
+    //   - "mcp__<server>__*" for that server (plus known aliases, e.g. fs ↔ filesystem), or
     //   - meta tools listed explicitly
     if (
       toolName.startsWith("mcp__") ||
@@ -886,18 +971,7 @@ export class ThreadManager {
       toolName === "mcp_read_resource" ||
       toolName === "mcp_get_prompt"
     ) {
-      const wl = thread.tool_whitelist
-      if (wl.includes(toolName)) return true
-      if (wl.includes("mcp__*")) return true
-      if (toolName.startsWith("mcp__")) {
-        const parts = toolName.split("__")
-        // mcp__server__tool
-        if (parts.length >= 3) {
-          const serverStar = `mcp__${parts[1]}__*`
-          if (wl.includes(serverStar)) return true
-        }
-      }
-      return false
+      return isMcpToolAllowedByWhitelist(thread.tool_whitelist, toolName)
     }
     return thread.tool_whitelist.includes(toolName)
   }

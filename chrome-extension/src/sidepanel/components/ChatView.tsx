@@ -847,8 +847,8 @@ function toolResultUserHint(result: any): string | null {
   ) {
     return "本机读写可用默认沙箱 ~/CMspark-projects；真实项目请侧栏「场景」→「选择工作区」。协议解锁 / 运行自主度与场地绑定无关。"
   }
-  if (/tool_not_allowed|当前场景不允许|可退出场景/i.test(err)) {
-    return "当前场景限制了该工具：侧栏「场景」→「退出场景」后再试。协议解锁 / 运行自主度无效于此。"
+  if (/tool_not_allowed|当前场景不允许|可退出场景|工具白名单|工具面已收窄/i.test(err)) {
+    return "本对话工具面已收窄：顶栏点「恢复全工具」或「退出场景」（立即生效）。勿新建对话。三旗巡航会放开普通对话工具面。"
   }
   if (
     /COOKIE_TRUST|Cookie 信任域|not in the trusted_domains|Access to cookie for domain/i.test(err) ||

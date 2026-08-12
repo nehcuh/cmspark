@@ -327,8 +327,10 @@ test("formatChatErrorLine softens workspace / scene gates (not 安全阻断)", a
     "security",
     "当前场景不允许「工作区列表」。可退出场景后重试。 [tool_not_allowed]",
   )
-  assert.ok(s.includes("场景") || s.includes("退出"))
+  assert.ok(s.includes("场景") || s.includes("退出") || s.includes("工具面") || s.includes("全工具"))
   assert.ok(!s.startsWith("安全阻断:"))
+  assert.ok(!s.includes("God-mode 不会放开"))
+  assert.ok(!/新建对话/.test(s) || /勿新建|不要新建/.test(s))
 })
 
 test("classifyError ENOENT / no such file is recoverable (workspace missing path)", () => {

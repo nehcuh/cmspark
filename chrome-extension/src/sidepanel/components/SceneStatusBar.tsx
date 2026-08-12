@@ -1,5 +1,5 @@
-// Scene status strip — active Mission Pack (场景) and/or workspace.
-// Product SoT: docs/superpowers/specs/2026-07-31-mission-pack-ux-redesign.md §6.1
+// Scene status strip — active Mission Pack (场景), tool surface, and/or workspace.
+// Product SoT: mission-pack UX + 2026-08 tool-surface chip (adversarial P0).
 
 import type { CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
@@ -19,6 +19,14 @@ function workspaceBasename(root: string): string {
   return parts[parts.length - 1] || root
 }
 
+/** Short label for tool_whitelist patterns (null = full surface, no chip). */
+function toolSurfaceLabel(wl: string[] | null | undefined): string | null {
+  if (wl == null) return null
+  if (!Array.isArray(wl) || wl.length === 0) return "空白名单"
+  if (wl.length === 1) return wl[0]!.length > 28 ? wl[0]!.slice(0, 26) + "…" : wl[0]!
+  return `${wl.length} 项`
+}
+
 export function SceneStatusBar() {
   const { state } = useAgentStore()
   const host = useContextPanelHostOptional()
@@ -26,8 +34,10 @@ export function SceneStatusBar() {
   const packId = (thread as { mission_pack_id?: string | null } | undefined)?.mission_pack_id || null
   const workspaceRoot =
     (thread as { workspace_root?: string | null } | undefined)?.workspace_root || null
+  const toolWhitelist = (thread as { tool_whitelist?: string[] | null } | undefined)?.tool_whitelist
+  const surfaceLabel = toolSurfaceLabel(toolWhitelist)
 
-  if (!packId && !workspaceRoot) return null
+  if (!packId && !workspaceRoot && surfaceLabel == null) return null
 
   const unapply = () => {
     if (!state.activeThreadId || !packId) return
@@ -47,6 +57,16 @@ export function SceneStatusBar() {
     })
   }
 
+  /** Restore full tool surface on THIS conversation immediately (thread.update). */
+  const restoreFullTools = () => {
+    if (!state.activeThreadId) return
+    chrome.runtime.sendMessage({
+      type: "thread.update",
+      thread_id: state.activeThreadId,
+      updates: { tool_whitelist: null },
+    })
+  }
+
   const openScenes = () => {
     host?.openPanelForce("packs")
   }
@@ -62,7 +82,28 @@ export function SceneStatusBar() {
             场景：{sceneDisplayName(packId)}
           </button>
           <button type="button" style={styles.exitBtn} onClick={unapply} title="退出场景配方，回到通用助手">
-            退出
+            退出场景
+          </button>
+        </span>
+      ) : null}
+      {surfaceLabel != null ? (
+        <span
+          style={{ ...styles.chip, ...styles.surfaceChip }}
+          title={
+            Array.isArray(toolWhitelist)
+              ? `本对话工具白名单：\n${toolWhitelist.join("\n")}\n\n三旗全自动巡航也会放开普通对话工具面；点「恢复全工具」立即对本对话生效。`
+              : "工具面已收窄"
+          }
+          data-testid="tool-surface-chip"
+        >
+          <span style={styles.surfaceText}>工具面：{surfaceLabel}</span>
+          <button
+            type="button"
+            style={styles.exitBtn}
+            onClick={restoreFullTools}
+            title="清除本对话工具白名单（立即生效，无需新建对话）"
+          >
+            恢复全工具
           </button>
         </span>
       ) : null}
@@ -86,7 +127,7 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
     flexWrap: "wrap",
     padding: "4px 10px",
-    maxHeight: 28,
+    maxHeight: 36,
     overflow: "hidden",
     fontSize: 11,
     fontFamily: tokens.font,
@@ -99,6 +140,20 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     gap: 6,
     minWidth: 0,
+  },
+  surfaceChip: {
+    background: tokens.accentSoft || "rgba(245, 158, 11, 0.12)",
+    borderRadius: tokens.radiusSm,
+    padding: "1px 4px 1px 6px",
+  },
+  surfaceText: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: tokens.warning || tokens.accentText,
+    maxWidth: 180,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   linkish: {
     border: "none",

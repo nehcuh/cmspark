@@ -64,12 +64,23 @@ test("P1 SEC-08: cwd must stay inside workspace_root", () => {
 test("P1 D8: pack whitelist constrains mcp__ tools", () => {
   const tm = new ThreadManager()
   const t = tm.create("p1-wl")
+  // Force cruiseOpen=false so live three-flag user config does not expand surface.
+  const noCruise = { cruiseOpen: false as const }
   tm.update(t.id, { tool_whitelist: ["list_tabs"] })
-  assert.equal(tm.isToolAllowed(t.id, "list_tabs"), true)
-  assert.equal(tm.isToolAllowed(t.id, "mcp__fs__read"), false)
+  assert.equal(tm.isToolAllowed(t.id, "list_tabs", noCruise), true)
+  assert.equal(tm.isToolAllowed(t.id, "mcp__fs__read", noCruise), false)
   tm.update(t.id, { tool_whitelist: ["list_tabs", "mcp__*"] })
-  assert.equal(tm.isToolAllowed(t.id, "mcp__fs__read"), true)
+  assert.equal(tm.isToolAllowed(t.id, "mcp__fs__read", noCruise), true)
   tm.update(t.id, { tool_whitelist: ["mcp__fs__*"] })
-  assert.equal(tm.isToolAllowed(t.id, "mcp__fs__read"), true)
-  assert.equal(tm.isToolAllowed(t.id, "mcp__other__x"), false)
+  assert.equal(tm.isToolAllowed(t.id, "mcp__fs__read", noCruise), true)
+  assert.equal(tm.isToolAllowed(t.id, "mcp__other__x", noCruise), false)
+  // Legacy short id `fs` must match real default server `filesystem`
+  assert.equal(
+    tm.isToolAllowed(t.id, "mcp__filesystem__list_allowed_directories", noCruise),
+    true,
+  )
+  tm.update(t.id, { tool_whitelist: ["mcp__filesystem__*"] })
+  assert.equal(tm.isToolAllowed(t.id, "mcp__fs__read_file", noCruise), true)
+  // With cruise, restricted whitelist expands for non-workers
+  assert.equal(tm.isToolAllowed(t.id, "list_tabs", { cruiseOpen: true }), true)
 })

@@ -40,13 +40,13 @@ test("acquireLock returns true on first acquire", async () => {
   releaseLock(lockPath)
 })
 
-test("acquireLock returns false when lock already held", async () => {
+test("acquireLock is idempotent when lock already held by this process", async () => {
   const { acquireLock, releaseLock } = require("../../src/daemon")
   const lockPath = path.join(tempHome, "test2.lock")
   const first = await acquireLock(lockPath)
   assert.equal(first, true)
   const second = await acquireLock(lockPath)
-  assert.equal(second, false)
+  assert.equal(second, true)
   // Cleanup: release the held lock (closes the net.Server handle).
   releaseLock(lockPath)
 })

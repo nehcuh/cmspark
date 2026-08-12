@@ -51,9 +51,10 @@ test("server lock integration: lock prevents double-start", async () => {
   const first = await acquireLock(lockPath)
   assert.equal(first, true)
 
-  // Second acquire should fail (simulating another instance trying to start)
+  // Same-process re-acquire is idempotent (daemon → startServer handoff).
+  // Cross-process exclusion is covered by daemon.test.ts multi-process competition.
   const second = await acquireLock(lockPath)
-  assert.equal(second, false)
+  assert.equal(second, true)
 
   // Cleanup
   releaseLock(lockPath)
