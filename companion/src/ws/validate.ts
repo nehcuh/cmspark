@@ -589,6 +589,14 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (!hasId && !hasText) {
         return { valid: false, error: "meeting.generate_minutes requires id and/or text" }
       }
+      if (m.template_md !== undefined) {
+        if (typeof m.template_md !== "string") {
+          return { valid: false, error: "template_md must be string" }
+        }
+        if (m.template_md.length > 16_384) {
+          return { valid: false, error: "template_md too long" }
+        }
+      }
       return { valid: true }
     },
     "meeting.set_status": (m) => {

@@ -404,7 +404,8 @@ export async function handleMeetingMessage(
     }
 
     const generate = deps.generate ?? generateMeetingMinutes
-    const result = await generate({ transcriptText, config: llm })
+    const templateMd = typeof msg.template_md === "string" ? msg.template_md : undefined
+    const result = await generate({ transcriptText, config: llm, templateMd })
     if (!result.ok) {
       if (id) setMeetingStatus(id, "error", result.message)
       return err(result.code, result.message, { id })

@@ -22,7 +22,11 @@ import {
   deleteMeetingAudio,
 } from "../src/meeting/meeting-store"
 import { generateMeetingMinutes } from "../src/meeting/meeting-minutes"
-import { MEETING_MINUTES_SYSTEM_PROMPT } from "../src/meeting/minutes-prompt"
+import {
+  buildMinutesSystemPrompt,
+  MEETING_MINUTES_MAX_TEMPLATE_CHARS,
+  MEETING_MINUTES_SYSTEM_PROMPT,
+} from "../src/meeting/minutes-prompt"
 import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
 
 const DATA = process.env.CMSPARK_DATA_DIR!
@@ -32,6 +36,47 @@ test("MEETING_MINUTES_SYSTEM_PROMPT is distinct job and forbids invention", () =
   assert.match(MEETING_MINUTES_SYSTEM_PROMPT, /meeting_minutes/)
   assert.match(MEETING_MINUTES_SYSTEM_PROMPT, /Do NOT invent/)
   assert.doesNotMatch(MEETING_MINUTES_SYSTEM_PROMPT, /ASR post-editor/)
+})
+
+test("buildMinutesSystemPrompt embeds safety and optional template", () => {
+  const def = buildMinutesSystemPrompt()
+  assert.match(def, /RULES:/)
+  assert.match(def, /Do NOT invent/)
+  assert.match(def, /### TL;DR/)
+  assert.match(def, /REQUIRED SECTIONS/)
+  // Default path: no filled USER TEMPLATE block (only rule mentions of the phrase)
+  assert.doesNotMatch(def, /fill this structure from the transcript/)
+
+  const withTmpl = buildMinutesSystemPrompt("## Agenda\n## Action items")
+  assert.match(withTmpl, /RULES:/)
+  assert.match(withTmpl, /USER TEMPLATE \(fill this structure from the transcript/)
+  // USER TEMPLATE block appears after RULES block
+  const rulesIdx = withTmpl.indexOf("RULES:")
+  const tmplIdx = withTmpl.indexOf("USER TEMPLATE (fill this structure")
+  assert.ok(rulesIdx >= 0 && tmplIdx > rulesIdx)
+  assert.match(withTmpl, /## Agenda/)
+  assert.match(withTmpl, /cannot override RULES 1–6/)
+})
+
+test("template over max rejected with template_too_long", async () => {
+  const long = "x".repeat(MEETING_MINUTES_MAX_TEMPLATE_CHARS + 1)
+  const r = await generateMeetingMinutes({
+    transcriptText: "有内容的转写。",
+    config: {
+      base_url: "https://x.invalid",
+      api_key: "k",
+      model_name: "m",
+      temperature: 0.2,
+    },
+    templateMd: long,
+    extract: async () => {
+      throw new Error("extract should not be called")
+    },
+  })
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.equal(r.code, "template_too_long")
+  }
 })
 
 test("create/load/list meeting on disk", () => {
