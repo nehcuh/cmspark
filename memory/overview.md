@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-12 (S67 meeting STT hotfix · #179 OPEN)
+**Updated**: 2026-08-12 (S68 three-flag path risk-accept · #183 MERGED)
 
 ## CMspark — 产品 0.5.0 稳定切点
 
@@ -11,8 +11,8 @@
 | Side Panel ↔ Companion | 交付 |
 | Trust / Confirm / Pack / MCP / Multi-agent | 交付 |
 | CU 实验定位 | **仅 Qwen3-VL**（TinyClick 已清） |
-| 无人值守（桌面） | **on main**（#160：L2+re-L2 静默；ADR-021 rev） |
-| 听写+ / 本机 Whisper / 会议 | 交付（ADR-023/024；**#179 OPEN**：soft-continue/pin/双ack/会议 AI 纠错+分段） |
+| 无人值守 / 三旗巡航 | **on main**（#160 值守静默；**#181** 工具面+MCP+DSML；**#183** 路径风险自担） |
+| 听写+ / 本机 Whisper / 会议 | 交付（ADR-023/024；**#179 MERGED** soft-continue/AI refine） |
 | Outbound MCP | 交付 opt-in（**require_grant default true**） |
 | Precision Instrument UI | **on main**（#168–#171） |
 | Deep-diagnosis fanout hardening | **on main**（#172–#175） |
@@ -21,27 +21,26 @@
 
 ## Main tip (remote)
 
-- **`origin/main`**: 以 GitHub 为准（S67 前含 #175 residual 等）
-- **Open PR: 1** — **#179** meeting STT hotfix + live AI refine
+- **`origin/main`**: **`7e6f638`** — `fix(security): three-flag cruise path risk-accept (#183)`
+- **Open PR: 0**
 
-## Recent locks (S67)
+## Recent locks (S68)
 
-- **Meeting STT field-ops**: adversary REJECT → Slice 吸收 → dual both_ok → nits 再 PR
-- **会议 AI 纠错**: 段定稿 correct_only + priorContext；drain 后纪要
-- **Deep-diagnosis / Precision**: 仍在 main（#168–#175）
+- **Three-flag product law**: tools + paths risk-accept; residual floors in `cruise-path.ts` only
+- **IMAGE_FETCH**: cruise allows `file://` + skip confirm; SSRF/metadata still hard-block; no-cruise → `file_requires_cruise`
+- **CI discipline**: gate/hint tests must lock-step product copy (no stale `Security Block` / `god-mode` action text)
 
 ## Next (optional backlog)
 
-- **合 #179** + 真机：双 ack、AI 纠错、坏二进制硬停
-- 真机：workspace 沙箱 / Win shell·听写 / Mac 值守
+- 真机：三旗 file 图 / MCP allow 自动扩 / 危险路径仍拦
+- 真机：meeting 双 ack + AI 纠错；workspace 沙箱；Win shell·听写；Mac 值守
 - message-router 续拆；Whisper multi-arch real pins；codesign
-- residual：install.manifest 同目录信任边界；DYLD_FALLBACK brew
+- residual：install.manifest 同目录信任；DYLD_FALLBACK brew
 
 ## Docs SoT
 
 - User / arch: `docs/README.md`
-- Diagnosis closeouts: `docs/audit/deep-diagnosis-*-closeout-2026-08-1*.md`
-- Mission pack / workspace: `docs/mission-pack-usage.md` · ADR-014
+- MCP: `docs/mcp.md`（三旗 allow-dir 语义）
 - Meeting/dictation: `docs/meeting-and-dictation-user-guide.md`
 - Unattended: `docs/adr/021-unattended-desktop-session.md`
-- MCP: `docs/mcp.md`
+- Mission pack / workspace: `docs/mission-pack-usage.md` · ADR-014

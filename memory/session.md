@@ -2,7 +2,17 @@
 
 ## Current Session
 
-### S67 END (2026-08-12) [会议 STT hotfix + AI 纠错 · dual APPROVE_WITH_NITS · #179 OPEN]
+### S68 END (2026-08-12 ~22:12) [三旗路径风险自担 · #181/#183 MERGED · CI 对齐断言]
+- **Ship 已在 main**：`#179` MERGED → `#181` 工具面/MCP/DSML/acquireLock UX → `#183`（含 #182 cherry-pick）path risk-accept @ **`7e6f638`**
+- **产品法**：三旗 = 工具全开 + 路径几乎无 cage；只拦 SSRF/云元数据/volume·OS 硬危险等语义面；`file://` 无三旗 → `image_fetch_file_requires_cruise`（非 Security Block 文案）
+- **本会话收尾**：盯 #183 build 红（3 测旧断言）→ 改 gates/hints → CI 绿 → squash 合 main
+- **main tip**：`origin/main` @ **`7e6f638`**；**open PR 0**
+- **本地**：可有 `dist/`、audit patch、`scripts/_install-local-app.sh` 未跟踪；热修 app 后重启托盘以吃 main 二进制
+- **下次**：真机三旗：file 图 / MCP allow 自动扩 / 路径写盘；可选全量 DMG；meeting/workspace 真机 backlog
+- Recorded: yes — path residual floors · CI 文案锁步 · acquireLock 同 PID 幂等
+
+### S67 END (2026-08-12) [会议 STT hotfix + AI 纠错 · dual · #179 后已 MERGED]
+
 - **范围**：#177/#178 后真机踩坑热修 + 对抗 F-merge-1..6 吸收 + 会议 live AI correct_only（priorContext）+ 智能分段
 - **Ship 状态**：**PR #179** OPEN `fix/meeting-stt-hotfix-refine-absorb` @ `ff00681`（未合 main）
 - **Dual**：Claude+Pi 均 **APPROVE_WITH_NITS** `both_ok=true`（`meeting-stt-hotfix-refine-verdict-20260812-113816`）；高优先 nits 已二次吸收再 push

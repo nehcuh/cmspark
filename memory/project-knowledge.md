@@ -27,6 +27,18 @@
 - **默认模式**：`file://` 仍拒（非确认窗，错误码 `image_fetch_file_requires_cruise`）— 用 screenshot
 - **单旗** god-mode / auto_approve_dangerous **单独**不放行 image fetch 确认
 - **纪律**：文案禁止写「若你已拒绝弹窗」套用到硬闸；硬闸 vs 确认 vs 风险自担三语分清
+- **CI**：`security-gates` 勿再断言 `/Security Block/` for file:；对齐 `file_requires_cruise|三旗`（#183 曾因此红）
+
+### 三旗路径 ≈ 无 path cage；只拦语义危险（2026-08-12 · #183）
+- **产品法**：三旗 = 工具面 + 路径风险自担；几乎不拦普通路径；**残留地板**见 `cruise-path.ts`（volume/multi-user/OS 硬危险、worker download、modules、netsec allowlist、shell policy 空 allowlist）
+- **模块**：`companion/src/security/cruise-path.ts` + MCP allow-dir expand / skill_install tier / shell cwd / browser-download
+- **文案**：用户可见错误禁止 `god-mode` 作行动指引；写 **三旗 / cruise / MCP 面板加 allow path**
+- **纪律**：改产品门后同步 `mcp-error-hints` / integration gates 断言；hot-patch `/Applications` 时须含完整 PR 栈（勿只打半截再丢 acquireLock）
+
+### acquireLock 自检：本 PID 已持锁 ≠ already_running（2026-08-12 · #180→#181）
+- **现象**：托盘在、Companion 秒退「already_running」——锁文件是 **自己** 的 PID
+- **修法**：`heldLockPath` / acquire 幂等：同 PID 视为已持有，继续 init
+- **纪律**：OPS-02 hold lock through init 后，锁获取必须 idempotent；热修 daemon 时别回滚到无 lock 修复的 bundle
 
 ### 线程 tool_whitelist：三旗巡航应扩面；MCP 名 `filesystem` ↔ `fs`（2026-08-12）
 - **现象**：开了无人值守/三旗仍 `tool_whitelist_blocked`（list_tabs/shell）；用户以为权限已全局放开
