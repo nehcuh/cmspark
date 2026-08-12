@@ -1,14 +1,16 @@
 /**
  * Meeting minutes Mtg0/Mtg1 store + generate + handlers.
+ *
+ * Import order matters: meeting-test-data-dir must run before config/DATA_DIR
+ * (ESM hoists imports ahead of any body-level env assignment).
  */
+import "./meeting-test-data-dir"
 import test from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "fs"
-import * as os from "os"
 import * as path from "path"
 
-process.env.CMSPARK_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-meeting-"))
-
+import { DATA_DIR } from "../src/config"
 import {
   createMeeting,
   loadMeeting,
@@ -28,8 +30,15 @@ import {
   MEETING_MINUTES_SYSTEM_PROMPT,
 } from "../src/meeting/minutes-prompt"
 import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
+import { MEETING_TEST_DATA_DIR } from "./meeting-test-data-dir"
 
-const DATA = process.env.CMSPARK_DATA_DIR!
+/** Same root handlers use (config.DATA_DIR after env bootstrap). */
+const DATA = DATA_DIR
+assert.equal(
+  DATA,
+  MEETING_TEST_DATA_DIR,
+  "DATA_DIR must match CMSPARK_DATA_DIR bootstrap (import order)",
+)
 const EXT = "chrome-extension://abcdefghijklmnopqrstuvwxyz"
 
 test("MEETING_MINUTES_SYSTEM_PROMPT is distinct job and forbids invention", () => {
