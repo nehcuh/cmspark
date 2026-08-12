@@ -22,6 +22,7 @@
 - **#160** 无人值守 re-L2 静默（ADR-021 2026-08-09 修订）
 - **#161** Windows voice/shell closeout（shell/netsec token binding 对齐）
 - 会议用户指南：STT `resource_conflict` 恢复说明 + 纪要模板用法（§3.5–3.6）
+- 会议 **P1 近实时**（默认渐进假设 + ~8s 定稿）与 **P2 长会**（直播/上传硬上限 3h、软提示 2h；纪要输入 20 万字）
 
 ### Packaging
 

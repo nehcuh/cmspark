@@ -55,4 +55,5 @@ export const MEETING_MINUTES_SYSTEM_PROMPT = buildMinutesSystemPrompt()
 
 export const MEETING_MINUTES_TEMP_CAP = 0.3
 export const MEETING_MINUTES_TIMEOUT_MS = 90_000
-export const MEETING_MINUTES_MAX_INPUT_CHARS = 80_000
+/** Raised for multi-hour meetings (P2); still text-only job. */
+export const MEETING_MINUTES_MAX_INPUT_CHARS = 200_000

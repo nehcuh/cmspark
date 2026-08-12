@@ -9,7 +9,10 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { createLocalSttAdapter } from "../voice/local-stt-adapter"
-import { detectLocalMediaCapture } from "../voice/local-stt-detect"
+import {
+  detectLocalMediaCapture,
+  LOCAL_STT_NEAR_REALTIME_SEGMENT_MS,
+} from "../voice/local-stt-detect"
 import {
   fileToWavSegments,
   transcribeWavViaStt,
@@ -19,10 +22,12 @@ import {
   saveMeetingTemplate,
 } from "../voice/meeting-template-storage"
 import {
-  VOICE_CONTINUOUS_HARD_CAP_MS,
-  VOICE_CONTINUOUS_SOFT_CAP_MS,
-  VOICE_DEFAULT_LANG,
-} from "../voice/detect"
+  formatMeetingElapsed,
+  MEETING_LIVE_HARD_CAP_MS,
+  MEETING_LIVE_SOFT_CAP_MS,
+  MEETING_NEAR_REALTIME_DEFAULT,
+} from "../voice/meeting-caps"
+import { VOICE_DEFAULT_LANG } from "../voice/detect"
 import { mapLocalSttError } from "../voice/error-map"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
 
@@ -82,12 +87,7 @@ function subscribeVoiceStt(handler: (msg: any) => void): () => void {
   }
 }
 
-function formatElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000))
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  return `${m}:${r.toString().padStart(2, "0")}`
-}
+const formatElapsed = formatMeetingElapsed
 
 export function MeetingPanel(props: {
   onClose: () => void
@@ -105,6 +105,8 @@ export function MeetingPanel(props: {
   const [capturePhase, setCapturePhase] = useState<CapturePhase>("idle")
   const [elapsedMs, setElapsedMs] = useState(0)
   const [softCapHint, setSoftCapHint] = useState(false)
+  /** P1: progressive hypothesis text (not yet committed to transcript). */
+  const [interimText, setInterimText] = useState("")
   const [pendingGenerate, setPendingGenerate] = useState(false)
   /** Mtg2: optional default speaker for STT append / bulk label (manual only). */
   const [defaultSpeaker, setDefaultSpeaker] = useState("")
@@ -144,6 +146,11 @@ export function MeetingPanel(props: {
   const activeModelId = state.voiceModel?.localModelId || "medium"
   const localModelReady = state.voiceModel?.models?.[activeModelId]?.status === "ready"
   const localBinaryReady = state.voiceModel?.binary?.status === "ready"
+  /** P1: near-rt defaults on; honor global voiceRealtimeStreaming toggle. */
+  const nearRealtime =
+    MEETING_NEAR_REALTIME_DEFAULT &&
+    state.voiceRealtimeStreaming !== false &&
+    activeModelId !== "large-v3-turbo"
   const localMedia = detectLocalMediaCapture(
     typeof globalThis !== "undefined" ? (globalThis as any) : {},
   )
@@ -205,7 +212,7 @@ export function MeetingPanel(props: {
       if (captureStartRef.current != null) {
         const ms = Date.now() - captureStartRef.current
         setElapsedMs(ms)
-        if (ms >= VOICE_CONTINUOUS_SOFT_CAP_MS) setSoftCapHint(true)
+        if (ms >= MEETING_LIVE_SOFT_CAP_MS) setSoftCapHint(true)
       }
     }, 250)
     return () => clearInterval(id)
@@ -328,10 +335,17 @@ export function MeetingPanel(props: {
             setPhase("recording")
             setElapsedMs(0)
             setError(null)
+            setInterimText("")
           },
-          onResult: ({ finalChunk }) => {
+          onResult: ({ interim, finalChunk }) => {
             if (finalChunk?.trim()) {
+              setInterimText("")
               appendLocalAndRemote(finalChunk, meetingIdRef.current || id)
+              return
+            }
+            // Progressive hypothesis only (M2); do not append until window final.
+            if (typeof interim === "string") {
+              setInterimText(interim)
             }
           },
           onError: (code) => {
@@ -341,6 +355,7 @@ export function MeetingPanel(props: {
             setError(mapped.message || `转写错误: ${code}`)
           },
           onEnd: () => {
+            setInterimText("")
             const gen = wantGenerateRef.current
             wantGenerateRef.current = false
             if (phaseRef.current === "idle" && finalizedRef.current) return
@@ -363,12 +378,15 @@ export function MeetingPanel(props: {
       const sid = `mtg-${id}-${Date.now().toString(36)}`
       // STT slot is force-aborted on companion by meeting.start — do not send
       // voice.stt.abort with a fake sessionId (e.g. "mtg-preempt") from the client.
+      // P1 near-rt: streamPartial + ~8s windows; P2 hard cap independent of dictation 15/30m.
       adapter.start({
         lang: VOICE_DEFAULT_LANG,
         sessionId: sid,
         modelId: activeModelId,
         mode: "continuous",
-        hardCapMs: VOICE_CONTINUOUS_HARD_CAP_MS,
+        hardCapMs: MEETING_LIVE_HARD_CAP_MS,
+        segmentMs: nearRealtime ? LOCAL_STT_NEAR_REALTIME_SEGMENT_MS : undefined,
+        streamPartial: nearRealtime,
       })
     },
     [
@@ -379,6 +397,7 @@ export function MeetingPanel(props: {
       localBinaryReady,
       localMedia.ok,
       localModelReady,
+      nearRealtime,
       setPhase,
       state.voicePrivacyAckV2,
     ],
@@ -1000,8 +1019,11 @@ export function MeetingPanel(props: {
 
       <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
         粘贴 / 上传转写，或显式「开始录制」本机分段转写（最长约{" "}
-        {Math.round(VOICE_CONTINUOUS_HARD_CAP_MS / 60_000)} 分钟）。应用场景不会自动开麦。
-        录音与听写互斥。说话人：手动标或实验性自动「发言人N」（非真名识别）；系统混音未支持。
+        {Math.round(MEETING_LIVE_HARD_CAP_MS / 60_000)} 分钟；约 2 小时软提示）。
+        {nearRealtime
+          ? " 默认近实时出字（渐进假设，约 8 秒定稿；large 模型仅终稿）。"
+          : " 当前为分段终稿模式（可在设置开启实时出字）。"}
+        应用场景不会自动开麦。录音与听写互斥。说话人：手动标或实验性自动「发言人N」（非真名识别）；系统混音未支持。
       </div>
 
       {!ack && (
@@ -1083,7 +1105,10 @@ export function MeetingPanel(props: {
         </span>
         <span style={{ fontSize: 11, color: tokens.textSecondary }}>{localReadyLabel}</span>
         {softCapHint && capturing && (
-          <span style={{ fontSize: 11, color: "#b8860b" }}>已超过 5 分钟软提示</span>
+          <span style={{ fontSize: 11, color: "#b8860b" }}>
+            已超过 {Math.round(MEETING_LIVE_SOFT_CAP_MS / 60_000)} 分钟软提示（硬上限{" "}
+            {Math.round(MEETING_LIVE_HARD_CAP_MS / 60_000)} 分钟）
+          </span>
         )}
         {state.dictationCaptureActive && !capturing && (
           <span style={{ fontSize: 11, color: "#c44" }}>听写占用中</span>
@@ -1324,6 +1349,22 @@ export function MeetingPanel(props: {
             lineHeight: 1.45,
           }}
         />
+        {capturing && interimText.trim() ? (
+          <div
+            data-testid="meeting-interim"
+            style={{
+              marginTop: 4,
+              fontSize: 11,
+              color: tokens.textSecondary,
+              fontStyle: "italic",
+              lineHeight: 1.4,
+              maxHeight: 48,
+              overflow: "hidden",
+            }}
+          >
+            识别中… {interimText.trim()}
+          </div>
+        ) : null}
       </label>
 
       <details style={{ fontSize: 12 }}>

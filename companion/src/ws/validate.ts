@@ -510,7 +510,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.v !== 1) return { valid: false, error: "meeting.set_transcript requires v:1" }
       if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.set_transcript requires id" }
       if (typeof m.text !== "string") return { valid: false, error: "meeting.set_transcript requires text" }
-      if (m.text.length > 80_000) return { valid: false, error: "meeting.set_transcript text too long" }
+      // P2 multi-hour meetings — keep in lock-step with MEETING_MINUTES_MAX_INPUT_CHARS
+      if (m.text.length > 200_000) return { valid: false, error: "meeting.set_transcript text too long" }
       return { valid: true }
     },
     "meeting.append_transcript": (m) => {
@@ -552,7 +553,7 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.text !== "string" || !m.text.trim()) {
         return { valid: false, error: "meeting.import_text requires text" }
       }
-      if (m.text.length > 80_000) return { valid: false, error: "meeting.import_text text too long" }
+      if (m.text.length > 200_000) return { valid: false, error: "meeting.import_text text too long" }
       return { valid: true }
     },
     "meeting.auto_diarize": (m) => {
@@ -576,7 +577,7 @@ export function validateWsMessage(msg: any): WsValidationResult {
         if (typeof m.text !== "string") {
           return { valid: false, error: "meeting.auto_diarize text must be string" }
         }
-        if (m.text.length > 80_000) {
+        if (m.text.length > 200_000) {
           return { valid: false, error: "meeting.auto_diarize text too long" }
         }
       }

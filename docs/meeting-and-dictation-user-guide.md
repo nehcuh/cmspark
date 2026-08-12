@@ -111,12 +111,17 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
 | **Mtg1** | 显式「开始录制」本机分段 STT；结束生成纪要；`meeting_privacy_ack_v1`；默认删音频 |
 | **Mtg2** | 静音切分段；默认/批量说话人；上传 `.txt/.md`；上传音频 → 本机转写 |
 | **Mtg3** | 实验：**自动标「发言人N」**（段特征 k-means，**非身份识别**）；弱标交替 |
+| **P1 近实时** | 会议录制默认渐进假设出字 + 约 8s 窗定稿（同听写 M2；非 token 真流式；large 仅终稿） |
+| **P2 长会** | 直播录硬上限 **3 小时**（2 小时软提示）；上传音频同上限；纪要输入抬到 20 万字 |
 
 ### 3.3 诚实边界
 
 - **不是**飞书/Otter 级多方 diarize SLA  
 - **系统/会议软件混音**：未做产品能力，见 [parking 调研](superpowers/specs/2026-08-08-meeting-system-audio-parking.md)  
 - 纪要 LLM **不得臆造**未出现的出席人/决议；已有标签可沿用  
+- **近实时**是 Whisper 重解码假设，不是厂商级字级流式；CPU 上 medium 临时字会偏慢  
+- **3 小时**为产品硬上限；边听边 LLM 语义纠错仍不提供（隐私 / ADR-024）  
+
 
 ### 3.4 数据位置
 
@@ -154,6 +159,11 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
 - [ ] 粘贴转写 → 纪要结构可读  
 - [ ] 本机录 ≥1–5 min → 可编辑转写 → 纪要；默认无残留 audio  
 - [ ] 听写与会议互斥提示  
+- [ ] 开始录制不立即出现 `resource_conflict` 裸码  
+- [ ] 近实时：说话中见「识别中…」临时字，约 8s 后定稿进转写  
+- [ ] 软提示约 2h；硬上限约 3h（勿与听写 15/30 min 混淆）  
+- [ ] 可选模板生成纪要结构贴合模板  
+
 - [ ] 开始录制不立即出现 `resource_conflict` 裸码  
 - [ ] 可选模板生成纪要结构贴合模板  
 
