@@ -72,4 +72,8 @@ test("P1 D8: pack whitelist constrains mcp__ tools", () => {
   tm.update(t.id, { tool_whitelist: ["mcp__fs__*"] })
   assert.equal(tm.isToolAllowed(t.id, "mcp__fs__read"), true)
   assert.equal(tm.isToolAllowed(t.id, "mcp__other__x"), false)
+  // Legacy short id `fs` must match real default server `filesystem`
+  assert.equal(tm.isToolAllowed(t.id, "mcp__filesystem__list_allowed_directories"), true)
+  tm.update(t.id, { tool_whitelist: ["mcp__filesystem__*"] })
+  assert.equal(tm.isToolAllowed(t.id, "mcp__fs__read_file"), true)
 })

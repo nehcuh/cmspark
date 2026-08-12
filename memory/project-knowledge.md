@@ -22,6 +22,17 @@
 
 ## Technical Pitfalls
 
+### 线程 tool_whitelist 与无人值守正交；MCP 名 `filesystem` ↔ 别名 `fs`（2026-08-12）
+- **现象**：三旗巡航已开仍 `security.tool_whitelist_blocked`；`mcp__fs__*` 挡 `mcp__filesystem__*`
+- **根因**：`isToolAllowed` **不看** auto_approve/unattended（只免 L2）；旧白名单短名 `fs` 与真实 server id `filesystem` 不一致
+- **修法**：`isMcpToolAllowedByWhitelist` 双向别名；配置写 `mcp__filesystem__*` 或 `null`；改 index 后重启 daemon
+- **纪律**：白名单用 config 里真实 server 名；见 blocked 日志先查 thread.tool_whitelist
+
+### MCP filesystem 失效 allow-dir 须 prune 回落 home（2026-08-12）
+- **现象**：`args` 残留 `/var/folders/.../cmspark-allow-dir-*` → server dead；`ensureFilesystemAllowlist` 曾「有 path 就不注入」
+- **修法**：启动/sanitize 时 drop 不存在的 allow-dir/roots，空则注入 home；测试用 `CMSPARK_DATA_DIR`，禁止污染用户 config
+- **纪律**：allow path 必须 exists；改磁盘 config 后重启 companion
+
 ### 会议 STT soft-continue 与 max-1 槽：conflict/oom 绝不可 soft 空转（2026-08-12 · #179）
 - **现象**：段失败一律 soft → `resource_conflict`/`session_busy` 占着 max-1 槽 → 后续段永久 conflict；坏二进制 sticky `infer_failed`/`binary_broken` soft 到 hard cap
 - **修法**：soft 仅 `infer_failed|empty_result|infer_timeout|partial_skipped` + streak≤3；conflict abort+单次重试后硬停；`oom`/`binary_broken` **首击硬停**

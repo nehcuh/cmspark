@@ -89,6 +89,8 @@ macOS 示例：`args` 末尾用 `"/Users/you"`，`cwd` 同理。
 关键点：
 - `args` 里的路径才是 filesystem server **真正允许访问的目录**；`cwd` 只是 npx 进程启动目录。
 - **默认主目录**：未配置任何 allow-dir / roots 时，companion 会注入用户 home（见 `ensureFilesystemAllowlist`）。你当前若已写 `/Users/you` 或 `C:/Users/you`，即已覆盖主目录。
+- **失效路径自愈**：`args` / `roots` 里**已不存在**的目录会在 sanitize 时剔除；若剔除后为空则**重新注入 home**（避免测试/动态 expand 留下的 `/tmp/cmspark-allow-dir-*` 永久打死 server）。
+- **线程 `tool_whitelist`**：真实工具名为 `mcp__filesystem__…`（server id = config 键名）。历史短写 `mcp__fs__*` 会与 `filesystem` 双向别名匹配；**无人值守 / 三旗巡航只免 L2 确认，不绕过白名单**。全工具请设 `tool_whitelist: null`。
 - 所有 **作为 allow-dir 的路径必须真实存在**，否则 server 会启动失败；**其下的子目录**可在运行时 `create_directory` 逐级创建（父目录不存在时会报 `Parent directory does not exist`，属可恢复错误，应先建父级）。
 - 想放开多个目录，就在 `args` 里加多个路径参数（或 MCP 面板编辑）。
 - Windows 路径建议正斜杠（`C:/Users/...`），与 companion `normalizeArgsForPlatform` 一致。

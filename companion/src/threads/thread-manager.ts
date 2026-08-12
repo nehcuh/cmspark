@@ -231,6 +231,51 @@ function lastUserPreviewFromMessages(
   return ""
 }
 
+/**
+ * Known MCP server-id aliases for tool_whitelist patterns.
+ * Real default server id is `filesystem` → tools `mcp__filesystem__*`.
+ * Legacy UI/tests often wrote `mcp__fs__*`; match both directions.
+ */
+export const MCP_SERVER_ID_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  filesystem: ["fs"],
+  fs: ["filesystem"],
+}
+
+/** Server ids that should match a whitelist server segment (self + aliases). */
+export function mcpServerIdsForWhitelistMatch(serverId: string): string[] {
+  const alts = MCP_SERVER_ID_ALIASES[serverId]
+  return alts ? [serverId, ...alts] : [serverId]
+}
+
+/**
+ * Whether an MCP tool name is allowed by a non-null thread tool_whitelist.
+ * Pure helper for unit tests (same rules as ThreadManager.isToolAllowed MCP branch).
+ */
+export function isMcpToolAllowedByWhitelist(wl: string[], toolName: string): boolean {
+  if (wl.includes(toolName)) return true
+  if (wl.includes("mcp__*")) return true
+  if (
+    toolName === "mcp_list_resources" ||
+    toolName === "mcp_read_resource" ||
+    toolName === "mcp_get_prompt"
+  ) {
+    return false
+  }
+  if (!toolName.startsWith("mcp__")) return false
+
+  const parts = toolName.split("__")
+  // mcp__server__tool…  (tool segment may itself contain __)
+  if (parts.length < 3) return false
+  const serverId = parts[1]!
+  const rest = parts.slice(2).join("__")
+
+  for (const sid of mcpServerIdsForWhitelistMatch(serverId)) {
+    if (wl.includes(`mcp__${sid}__*`)) return true
+    if (wl.includes(`mcp__${sid}__${rest}`)) return true
+  }
+  return false
+}
+
 export class ThreadManager {
   private index: ThreadIndex
   private indexPath: string
@@ -878,26 +923,16 @@ export class ThreadManager {
     // Allow mcp tools only when whitelist includes:
     //   - exact tool name, or
     //   - "mcp__*" (all MCP), or
-    //   - "mcp__<server>__*" for that server, or
+    //   - "mcp__<server>__*" for that server (plus known aliases, e.g. fs ↔ filesystem), or
     //   - meta tools listed explicitly
+    // Orthogonal to god-mode / auto_approve / unattended (ADR-014) — those only skip L2.
     if (
       toolName.startsWith("mcp__") ||
       toolName === "mcp_list_resources" ||
       toolName === "mcp_read_resource" ||
       toolName === "mcp_get_prompt"
     ) {
-      const wl = thread.tool_whitelist
-      if (wl.includes(toolName)) return true
-      if (wl.includes("mcp__*")) return true
-      if (toolName.startsWith("mcp__")) {
-        const parts = toolName.split("__")
-        // mcp__server__tool
-        if (parts.length >= 3) {
-          const serverStar = `mcp__${parts[1]}__*`
-          if (wl.includes(serverStar)) return true
-        }
-      }
-      return false
+      return isMcpToolAllowedByWhitelist(thread.tool_whitelist, toolName)
     }
     return thread.tool_whitelist.includes(toolName)
   }

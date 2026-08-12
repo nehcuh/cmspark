@@ -52,7 +52,10 @@ test("ensureFilesystemAllowlist is idempotent when path present", () => {
     enabled: true,
     trust_level: "trusted",
   }
-  const again = ensureFilesystemAllowlist("filesystem", withPath, "win32", "C:\\Users\\HuChen") as McpStdioServerConfig
+  // Synthetic Windows path must not be pruned on Linux CI — inject pathExists.
+  const again = ensureFilesystemAllowlist("filesystem", withPath, "win32", "C:\\Users\\HuChen", {
+    pathExists: () => true,
+  }) as McpStdioServerConfig
   assert.deepEqual(again.args, withPath.args)
   // Must not invent cwd — would make requiresRestart true on every applyConfig
   // (trust_level-only soft update) and hang CI on real spawn.
@@ -69,9 +72,47 @@ test("ensureFilesystemAllowlist respects existing roots", () => {
     trust_level: "trusted",
     roots: [{ uri: "file:///D:/data", name: "data" }],
   }
-  const again = ensureFilesystemAllowlist("filesystem", withRoots, "win32", "C:\\Users\\HuChen") as McpStdioServerConfig
+  const again = ensureFilesystemAllowlist("filesystem", withRoots, "win32", "C:\\Users\\HuChen", {
+    pathExists: () => true,
+  }) as McpStdioServerConfig
   assert.deepEqual(again.args, withRoots.args)
   assert.equal(again.roots?.[0]?.uri, "file:///D:/data")
+})
+
+test("ensureFilesystemAllowlist prunes missing allow-dir and re-injects home", () => {
+  const stale: McpStdioServerConfig = {
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", MCP_FILESYSTEM_PACKAGE, "/var/folders/xx/T/cmspark-allow-dir-DEAD"],
+    enabled: true,
+    trust_level: "trusted",
+  }
+  const fixed = ensureFilesystemAllowlist("filesystem", stale, "darwin", "/Users/alice", {
+    pathExists: () => false,
+  }) as McpStdioServerConfig
+  assert.deepEqual(fixed.args, ["-y", MCP_FILESYSTEM_PACKAGE, "/Users/alice"])
+  assert.equal(fixed.cwd, "/Users/alice")
+  assert.equal(fixed.roots?.[0]?.uri, "file:///Users/alice")
+})
+
+test("ensureFilesystemAllowlist keeps live dir and drops only stale ones", () => {
+  const mixed: McpStdioServerConfig = {
+    transport: "stdio",
+    command: "npx",
+    args: [
+      "-y",
+      MCP_FILESYSTEM_PACKAGE,
+      "/Users/alice",
+      "/tmp/cmspark-allow-dir-gone",
+    ],
+    enabled: true,
+    trust_level: "trusted",
+  }
+  const fixed = ensureFilesystemAllowlist("filesystem", mixed, "darwin", "/Users/alice", {
+    pathExists: (p) => p === "/Users/alice" || p.endsWith("/Users/alice"),
+  }) as McpStdioServerConfig
+  assert.deepEqual(fixed.args, ["-y", MCP_FILESYSTEM_PACKAGE, "/Users/alice"])
+  assert.equal(fixed.cwd, undefined)
 })
 
 test("defaultFilesystemServerConfig: darwin home", () => {
