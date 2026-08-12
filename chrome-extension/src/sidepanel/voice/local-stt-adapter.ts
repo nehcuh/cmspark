@@ -660,7 +660,23 @@ export function createLocalSttAdapter(
 
         // Open STT session then immediately stream chunks (keeps idle timer happy).
         sendStart(segSid, segmentMs)
-        const result = await uploadAndWait(segSid, wav)
+        let result = await uploadAndWait(segSid, wav)
+        // One retry on resource_conflict / session_busy (prior segment still held).
+        if (
+          result.ok === false &&
+          (result.code === "resource_conflict" || result.code === "session_busy") &&
+          !dead &&
+          !aborted &&
+          gen === loopGen
+        ) {
+          deps.send({ type: "voice.stt.abort", v: 1, sessionId: segSid })
+          await new Promise((r) => setTimeout(r, 200))
+          if (dead || aborted || gen !== loopGen) return
+          const retrySid = `${segSid}-r1`
+          sessionId = retrySid
+          sendStart(retrySid, segmentMs)
+          result = await uploadAndWait(retrySid, wav)
+        }
         if (dead || gen !== loopGen) return
 
         if (result.ok === false) {

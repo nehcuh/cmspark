@@ -19,6 +19,7 @@ import {
   VOICE_CONTINUOUS_SOFT_CAP_MS,
   VOICE_DEFAULT_LANG,
 } from "../voice/detect"
+import { mapLocalSttError } from "../voice/error-map"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
 
 /** Format companion transcript lines for textarea (Speaker: text). */
@@ -298,7 +299,9 @@ export function MeetingPanel(props: {
           },
           onError: (code) => {
             if (code === "aborted") return
-            setError(`转写错误: ${code}`)
+            const mapped = mapLocalSttError(code)
+            if (mapped.severity === "silent") return
+            setError(mapped.message || `转写错误: ${code}`)
           },
           onEnd: () => {
             const gen = wantGenerateRef.current
@@ -321,6 +324,8 @@ export function MeetingPanel(props: {
       )
       adapterRef.current = adapter
       const sid = `mtg-${id}-${Date.now().toString(36)}`
+      // STT slot is force-aborted on companion by meeting.start — do not send
+      // voice.stt.abort with a fake sessionId (e.g. "mtg-preempt") from the client.
       adapter.start({
         lang: VOICE_DEFAULT_LANG,
         sessionId: sid,

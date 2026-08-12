@@ -268,3 +268,93 @@ test("local continuous: abort mid-session ends once", async () => {
   assert.equal(ends, 1)
   adapter.destroy()
 })
+
+test("local continuous: resource_conflict retries once with -r1 sessionId", async () => {
+  const sent: any[] = []
+  const inbox: { emit?: (m: any) => void } = {}
+  const finals: string[] = []
+  let errors: string[] = []
+  let ends = 0
+  // First segment end → conflict; after abort+retry end → success
+  let endCount = 0
+
+  const adapter = createLocalSttAdapter(
+    {
+      onStart: () => {},
+      onResult: ({ finalChunk }) => {
+        if (finalChunk) finals.push(finalChunk)
+      },
+      onError: (c) => {
+        errors.push(c)
+      },
+      onEnd: () => {
+        ends++
+      },
+    },
+    {
+      send: (msg) => {
+        sent.push(msg)
+        if (msg.type === "voice.stt.end") {
+          endCount++
+          const sid = String(msg.sessionId)
+          queueMicrotask(() => {
+            if (endCount === 1) {
+              // First attempt: resource_conflict
+              inbox.emit?.({
+                type: "voice.stt.error",
+                sessionId: sid,
+                code: "resource_conflict",
+                message: "busy",
+              })
+            } else {
+              // Retry (-r1) or later segments: success
+              inbox.emit?.({
+                type: "voice.stt.result",
+                sessionId: sid,
+                text: `ok-${sid}`,
+              })
+            }
+          })
+        }
+      },
+      onMessage: (h) => {
+        inbox.emit = h
+        return () => {
+          inbox.emit = undefined
+        }
+      },
+      modelId: "medium",
+      startCapture: async () => ({
+        stop: async () => new Uint8Array([1, 2, 3, 4]),
+        abort: () => {},
+      }),
+    },
+  )
+
+  adapter.start({
+    sessionId: "retry-parent",
+    mode: "continuous",
+    hardCapMs: 80,
+    segmentMs: 30,
+  })
+  // Allow first segment + 200ms backoff + retry + optional next segment
+  await new Promise((r) => setTimeout(r, 600))
+  adapter.stop()
+  await new Promise((r) => setTimeout(r, 120))
+
+  const starts = sent.filter((m) => m.type === "voice.stt.start")
+  const aborts = sent.filter((m) => m.type === "voice.stt.abort")
+  assert.ok(starts.length >= 2, `expected ≥2 starts (orig+retry), got ${starts.length}`)
+  assert.ok(
+    aborts.some((m) => String(m.sessionId).match(/-s1$/)),
+    `expected abort of first segment sid, aborts=${JSON.stringify(aborts)}`,
+  )
+  assert.ok(
+    starts.some((m) => String(m.sessionId).endsWith("-r1")),
+    `expected -r1 retry start, starts=${starts.map((s) => s.sessionId).join(",")}`,
+  )
+  assert.ok(finals.length >= 1, `expected at least one final after retry, got ${JSON.stringify(finals)}`)
+  assert.equal(errors.length, 0, `should not surface conflict if retry succeeds: ${errors}`)
+  assert.ok(ends >= 1)
+  adapter.destroy()
+})
