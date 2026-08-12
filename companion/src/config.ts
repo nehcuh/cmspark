@@ -37,15 +37,14 @@ export interface SecurityConfig {
    *   - Layer 2 (confirmation gate): evaluate / osascript_eval / untrusted-
    *     domain navigation skip the human-in-the-loop dialog — EXCEPT the
    *     never-auto CRITICAL_API_GATE subset (exfil + sandbox-escape APIs:
-   *     fetch / eval / Function / ...) and the analyze_image IMAGE_FETCH_GATE,
-   *     which STILL require confirmation even under god-mode (§6.1.5 / §6.2).
-   * Strictly stronger than auto_approve_dangerous (which bypasses Layer 2 only
-   * and likewise does NOT bypass the critical / image gates). The field NAME
-   * describes the Layer 1 effect; each gate's code comment must make the Layer 2
-   * effect explicit. Defaults to false. Enabling is intended for fully-trusted,
-   * user-supervised power workflows — a prompt-injected agent can otherwise
-   * drive the browser to any scheme and run non-critical dangerous code with
-   * no human check.
+   *     fetch / eval / Function / ...). Alone (this flag only), analyze_image
+   *     IMAGE_FETCH still requires confirmation. **Three-flag full-autonomy
+   *     cruise** (dangerous + enterprise + allow_all_schemes) = risk accepted:
+   *     waives image-fetch confirm and allows file:// image pull; still hard-
+   *     blocks suspected SSRF (cloud metadata / javascript:).
+   * Strictly stronger than auto_approve_dangerous for navigation schemes.
+   * Defaults to false. Enabling is intended for fully-trusted, user-supervised
+   * power workflows.
    */
   allow_all_schemes: boolean
   /**
@@ -1097,14 +1096,13 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   if (config.security?.auto_approve_dangerous === true) {
     console.warn("[cmspark-agent] WARNING: security.auto_approve_dangerous is enabled — all dangerous tool calls will be auto-approved without user confirmation. Use only for trusted unattended workflows.")
   }
-  // Warn when GOD-MODE is enabled — it bypasses Layer 1 (URL-scheme hard-block:
-  // any non-http(s) scheme, e.g. javascript:/data:/about:/file:/chrome:) fully,
-  // and Layer 2 (confirmation gate) for NON-critical dangerous tool calls +
-  // untrusted-domain navigation. The CRITICAL_API_GATE (exfil/escape APIs) and
-  // the analyze_image IMAGE_FETCH_GATE STILL require confirmation under god-mode
-  // (§6.1.5 / §6.2). Strictly stronger than auto_approve_dangerous.
+  // Warn when GOD-MODE / protocol unlock is enabled (navigation schemes + partial L2).
+  // Alone: analyze_image IMAGE_FETCH still confirms. Three-flag cruise: image fetch
+  // confirm waived + file:// allowed (risk accepted); cloud-metadata SSRF still hard-blocked.
   if (config.security?.allow_all_schemes === true) {
-    console.warn("[cmspark-agent] WARNING: security.allow_all_schemes (GOD-MODE) is enabled — bypasses the URL-scheme hard-block (any non-http(s) scheme, e.g. javascript:/data:/about:/file:/chrome:) AND the confirmation gate for NON-critical dangerous tool calls / untrusted-domain navigation. CRITICAL exfil/escape APIs (fetch/eval/Function/...) and analyze_image fetch STILL require confirmation (§6.1.5/§6.2). A prompt-injected agent can drive the browser to any scheme and run non-critical dangerous code with no human check. Use only for fully-trusted, supervised workflows.")
+    console.warn(
+      "[cmspark-agent] WARNING: security.allow_all_schemes (protocol unlock) is enabled — bypasses non-http(s) navigate schemes and some L2 confirms. Alone, analyze_image IMAGE_FETCH still confirms. Full three-flag cruise waives image-fetch confirm and allows file:// (risk accepted); cloud-metadata SSRF remains hard-blocked. Use only for fully-trusted workflows.",
+    )
   }
   if (config.security?.auto_approve_enterprise_tools === true) {
     console.warn(

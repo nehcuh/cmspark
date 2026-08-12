@@ -218,15 +218,15 @@ describe("runImageFetchAdmission", () => {
     assert.equal(dispatches[0].name, "analyze_image")
   })
 
-  it("god-mode / auto_approve_dangerous do NOT skip IMAGE_FETCH confirm", async () => {
+  it("single-flag god-mode alone does NOT skip IMAGE_FETCH confirm", async () => {
     saveConfig({
       trusted_domains: ["evil.example"],
       auto_approved_domains: [],
       security: {
         ...getConfig().security,
-        auto_approve_dangerous: true,
-        auto_approve_enterprise_tools: true,
-        allow_all_schemes: true,
+        auto_approve_dangerous: false,
+        auto_approve_enterprise_tools: false,
+        allow_all_schemes: true, // protocol unlock only
       },
     } as any)
     let confirmCalls = 0
@@ -253,8 +253,158 @@ describe("runImageFetchAdmission", () => {
         } as any,
       }),
     )
-    assert.equal(confirmCalls, 1, "three-flag / god-mode must not waive IMAGE_FETCH confirm")
+    assert.equal(confirmCalls, 1, "protocol unlock alone must not waive IMAGE_FETCH confirm")
     assert.ok(r?.success === true)
+  })
+
+  it("three-flag cruise skips IMAGE_FETCH confirm (risk accepted)", async () => {
+    saveConfig({
+      auto_approved_domains: [],
+      security: {
+        ...getConfig().security,
+        auto_approve_dangerous: true,
+        auto_approve_enterprise_tools: true,
+        allow_all_schemes: true,
+      },
+    } as any)
+    let confirmCalls = 0
+    const dispatches: string[] = []
+    const r = await runImageFetchAdmission(
+      makeCtx({
+        toolName: "analyze_image",
+        dispatchToExtension: async (_id, name) => {
+          dispatches.push(name)
+          if (name === "analyze_image") {
+            return {
+              success: true,
+              data: {
+                type: "fetch_required",
+                candidate_url: "https://evil.example/x.png",
+              },
+            }
+          }
+          return { success: true, data: { type: "canvas", image_base64: "x" } }
+        },
+        securityConfirmations: {
+          request: async () => {
+            confirmCalls++
+            return { approved: true, reason: "approved" }
+          },
+        } as any,
+      }),
+    )
+    assert.equal(confirmCalls, 0, "full-autonomy cruise must waive IMAGE_FETCH confirm")
+    assert.ok(r?.success === true)
+    assert.deepEqual(dispatches, ["analyze_image", "analyze_image_fetch"])
+  })
+
+  it("file:// without cruise hard-blocks; with cruise allows phase2", async () => {
+    saveConfig({
+      security: {
+        ...getConfig().security,
+        auto_approve_dangerous: false,
+        auto_approve_enterprise_tools: false,
+        allow_all_schemes: false,
+      },
+    } as any)
+    const fileUrl = "file:///Users/huchen/CMspark-projects/demo/slide.png"
+    let confirmCalls = 0
+    const blocked = await runImageFetchAdmission(
+      makeCtx({
+        toolName: "analyze_image",
+        dispatchToExtension: async (_id, name) => {
+          if (name === "analyze_image") {
+            return {
+              success: true,
+              data: { type: "fetch_required", candidate_url: fileUrl },
+            }
+          }
+          return { success: true, data: { type: "canvas", image_base64: "x" } }
+        },
+        securityConfirmations: {
+          request: async () => {
+            confirmCalls++
+            return { approved: true, reason: "approved" }
+          },
+        } as any,
+      }),
+    )
+    assert.equal(blocked?.success, false)
+    assert.match(blocked?.error || "", /file_requires_cruise|三旗|file:/i)
+    assert.equal(confirmCalls, 0, "file: refusal is not a confirm dialog")
+
+    saveConfig({
+      security: {
+        ...getConfig().security,
+        auto_approve_dangerous: true,
+        auto_approve_enterprise_tools: true,
+        allow_all_schemes: true,
+      },
+    } as any)
+    confirmCalls = 0
+    const dispatches: string[] = []
+    const ok = await runImageFetchAdmission(
+      makeCtx({
+        toolName: "analyze_image",
+        dispatchToExtension: async (_id, name) => {
+          dispatches.push(name)
+          if (name === "analyze_image") {
+            return {
+              success: true,
+              data: { type: "fetch_required", candidate_url: fileUrl },
+            }
+          }
+          return { success: true, data: { type: "canvas", image_base64: "local" } }
+        },
+        securityConfirmations: {
+          request: async () => {
+            confirmCalls++
+            return { approved: true, reason: "approved" }
+          },
+        } as any,
+      }),
+    )
+    assert.equal(confirmCalls, 0)
+    assert.ok(ok?.success === true)
+    assert.deepEqual(dispatches, ["analyze_image", "analyze_image_fetch"])
+  })
+
+  it("three-flag cruise still hard-blocks cloud metadata SSRF", async () => {
+    saveConfig({
+      security: {
+        ...getConfig().security,
+        auto_approve_dangerous: true,
+        auto_approve_enterprise_tools: true,
+        allow_all_schemes: true,
+      },
+    } as any)
+    let confirmCalls = 0
+    const r = await runImageFetchAdmission(
+      makeCtx({
+        toolName: "analyze_image",
+        dispatchToExtension: async (_id, name) => {
+          if (name === "analyze_image") {
+            return {
+              success: true,
+              data: {
+                type: "fetch_required",
+                candidate_url: "http://169.254.169.254/latest/meta-data/",
+              },
+            }
+          }
+          return { success: true, data: {} }
+        },
+        securityConfirmations: {
+          request: async () => {
+            confirmCalls++
+            return { approved: true, reason: "approved" }
+          },
+        } as any,
+      }),
+    )
+    assert.equal(r?.success, false)
+    assert.match(r?.error || "", /metadata|SSRF/i)
+    assert.equal(confirmCalls, 0)
   })
 
   it("cookie trusted_domains alone do NOT auto-approve image fetch", async () => {
@@ -321,7 +471,7 @@ describe("runImageFetchAdmission", () => {
     )
     assert.ok(r)
     assert.equal(r!.success, false)
-    assert.match(r!.error || "", /cloud metadata endpoint/)
+    assert.match(r!.error || "", /cloud metadata|SSRF/i)
     assert.equal(confirmCalls, 0)
     assert.equal(dispatches.length, 1, "phase2 must not run for metadata IP")
   })

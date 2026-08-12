@@ -850,6 +850,9 @@ function toolResultUserHint(result: any): string | null {
   if (/tool_not_allowed|当前场景不允许|可退出场景|工具白名单|工具面已收窄/i.test(err)) {
     return "本对话工具面已收窄：顶栏点「恢复全工具」或「退出场景」（立即生效）。勿新建对话。三旗巡航会放开普通对话工具面。"
   }
+  if (/image_fetch_file_requires_cruise|不能拉取 file:|file_requires_cruise/i.test(err)) {
+    return "本地 file: 图需三旗巡航（风险自担），不是确认弹窗。或改用 screenshot；云元数据 SSRF 仍硬拦。"
+  }
   if (
     /COOKIE_TRUST|Cookie 信任域|not in the trusted_domains|Access to cookie for domain/i.test(err) ||
     result.data?.error_code === "COOKIE_TRUST_DENIED"

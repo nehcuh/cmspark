@@ -75,6 +75,14 @@ export function humanizeChatErrorForUser(raw: string): string {
     )
   }
 
+  if (/image_fetch_file_requires_cruise|不能拉取 file:|file_requires_cruise/i.test(body)) {
+    return (
+      "分析本地 file: 图片需要三旗全自动巡航（风险自担）\n" +
+      "这不是确认弹窗：默认模式禁止拉取 file://；开三旗后会放行本地图并跳过图片拉取确认。\n" +
+      "仍会硬拦云元数据等疑似 SSRF。未开巡航时请用 screenshot。"
+    )
+  }
+
   if (/module_disabled|module_unavailable|enterprise_profile/i.test(body)) {
     return (
       "本机能力未开启或当前安装通道不足\n" +
@@ -103,7 +111,7 @@ export function formatChatErrorLine(
   const human = humanizeChatErrorForUser(rawError)
   // Setup gates: never brand as 安全阻断 / 不可恢复
   if (
-    /需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱|默认工作区沙箱不可用|工具面已收窄|当前场景限制|本机能力未开启|网络扫描范围未授权/.test(
+    /需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱|默认工作区沙箱不可用|工具面已收窄|当前场景限制|本机能力未开启|网络扫描范围未授权|三旗全自动巡航|不能拉取 file:/.test(
       human,
     )
   ) {
