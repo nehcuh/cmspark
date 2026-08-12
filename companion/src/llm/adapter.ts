@@ -896,8 +896,40 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
       messages.push(assistantPushMsg)
 
-      // If no tool calls, we're done
+      // If no tool calls, we're done — unless the model role-played tools in text (DSML etc.).
       if (assistantMsg.length === 0) {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { detectTextToolIntentLeak, TOOL_FORMAT_LEAK_USER_HINT_ZH } = require("./tool-format-leak") as typeof import("./tool-format-leak")
+        const leak = detectTextToolIntentLeak(assistantContent)
+        if (leak) {
+          logger.warn("llm.tool_format_leak", {
+            thread_id: threadId,
+            content_len: (assistantContent || "").length,
+            model: config.model_name,
+          })
+          // Surface an honest system-ish note so UI doesn't look like a successful finish.
+          try {
+            threadManager.addMessage(threadId, {
+              thread_id: threadId,
+              role: "assistant",
+              content: TOOL_FORMAT_LEAK_USER_HINT_ZH,
+            })
+          } catch {
+            /* non-fatal */
+          }
+          sendToExtension({
+            type: "chat.token",
+            thread_id: threadId,
+            content: `\n\n${TOOL_FORMAT_LEAK_USER_HINT_ZH}`,
+          })
+          sendToExtension({
+            type: "chat.tool_format_warning",
+            thread_id: threadId,
+            message_id: savedAssistant.id,
+            reason: "text_tool_intent_without_structured_calls",
+            hint_zh: TOOL_FORMAT_LEAK_USER_HINT_ZH,
+          })
+        }
         // Echo the persisted assistant message id so the UI adopts it (instead of its own
         // client-generated id) — this keeps the UI's message id in sync with what the
         // companion stored, so anchor-based features (per-message export) work on the
@@ -907,6 +939,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           thread_id: threadId,
           message_id: savedAssistant.id,
           ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+          ...(leak ? { tool_format_leak: true } : {}),
         })
         // Best-effort auto-alias: generate a short title if thread has no alias yet
         generateThreadTitle({ threadId, threadManager, config, sendToExtension })

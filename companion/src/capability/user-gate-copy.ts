@@ -1,5 +1,6 @@
-// User-facing copy for capability / scene / security gates that god-mode does NOT bypass.
+// User-facing copy for capability / scene / security gates.
 // Keep English machine tokens in the string so classifyError() still matches recoverability.
+// Lock-step: chrome-extension/src/sidepanel/utils/gate-error-copy.ts key phrases.
 
 /**
  * Legacy / edge gate when an explicit bind is still required by a caller.
@@ -9,22 +10,27 @@
 export const WORKSPACE_ROOT_NOT_SET_ERROR =
   "未绑定真实项目目录时，本机读写默认使用沙箱 ~/CMspark-projects。\n" +
   "若需真实仓库：打开侧栏「场景」→「选择工作区」绑定后重试。\n" +
-  "（God-mode / 自动批准与场地绑定无关。）\n" +
+  "（协议解锁 / 自动批准与场地绑定无关。）\n" +
   "[workspace_root not set — pick a folder first]"
 
-/** Scene tool whitelist — Mission Pack surface. */
+/**
+ * Scene / thread tool whitelist — Mission Pack or bare tool_whitelist surface.
+ * Product 2026-08: three-flag full-autonomy cruise expands surface for non-workers;
+ * single flags (God-mode alone) do not. Primary recovery is THIS conversation.
+ */
 export function sceneToolNotAllowedError(toolLabelZh: string, packId: string | null): string {
   if (packId) {
     return (
       `当前场景不允许使用「${toolLabelZh}」。\n` +
-      `下一步：侧栏「场景」→「退出场景，回到通用助手」，或改用场景说明里列出的工具。\n` +
-      `（God-mode 不会放开场景白名单。）\n` +
+      `下一步：顶栏点「退出场景」恢复全工具，或侧栏「场景」→「退出场景，回到通用助手」后重试。\n` +
+      `（仅开协议解锁/单旗无效；三旗全自动巡航会对普通对话放开工具面。Worker 永不放开。）\n` +
       `[tool_not_allowed / 当前场景不允许 / 可退出场景后重试]`
     )
   }
   return (
-    `当前对话不允许使用「${toolLabelZh}」（工具白名单）。\n` +
-    `下一步：检查线程工具策略，或新建对话。\n` +
+    `当前对话不允许使用「${toolLabelZh}」（工具白名单已收窄）。\n` +
+    `下一步：顶栏点「恢复全工具」立即对本对话生效；勿新建对话（会再次中招）。\n` +
+    `（三旗全自动巡航也会放开普通对话的工具面；仅协议解锁不够。）\n` +
     `[tool_not_allowed / not in thread tool_whitelist]`
   )
 }
@@ -57,15 +63,15 @@ export function humanizeChatErrorForUser(raw: string): string {
     return (
       "本机读写可用默认沙箱 ~/CMspark-projects\n" +
       "一般无需选择文件夹；若要真实项目目录，打开侧栏「场景」→「选择工作区」后说「继续」。\n" +
-      "说明：God-mode / 自动批准与场地绑定无关。"
+      "说明：协议解锁 / 自动批准与场地绑定无关。"
     )
   }
 
-  if (/tool_not_allowed|当前场景不允许|not in thread tool_whitelist|可退出场景/i.test(body)) {
+  if (/tool_not_allowed|当前场景不允许|not in thread tool_whitelist|可退出场景|工具白名单/i.test(body)) {
     return (
-      "当前场景限制了这个工具\n" +
-      "请打开侧栏「场景」→「退出场景，回到通用助手」，再重试。\n" +
-      "说明：God-mode 不会放开场景工具白名单。"
+      "本对话工具面已收窄，拦下了该工具\n" +
+      "请顶栏「恢复全工具」或「退出场景」后重试（立即对本对话生效）。\n" +
+      "说明：三旗全自动巡航会放开普通对话工具面；仅协议解锁/无人值守两旗不够。"
     )
   }
 
@@ -73,7 +79,7 @@ export function humanizeChatErrorForUser(raw: string): string {
     return (
       "本机能力未开启或当前安装通道不足\n" +
       "请到侧栏「场景」→「本机能力」开启对应电源；企业能力还需 enterprise 配置。\n" +
-      "说明：这与确认弹窗 / God-mode 不是同一道门。"
+      "说明：这与确认弹窗 / 协议解锁不是同一道门。"
     )
   }
 
@@ -97,7 +103,7 @@ export function formatChatErrorLine(
   const human = humanizeChatErrorForUser(rawError)
   // Setup gates: never brand as 安全阻断 / 不可恢复
   if (
-    /需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱|默认工作区沙箱不可用|当前场景限制|本机能力未开启|网络扫描范围未授权/.test(
+    /需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱|默认工作区沙箱不可用|工具面已收窄|当前场景限制|本机能力未开启|网络扫描范围未授权/.test(
       human,
     )
   ) {

@@ -25,7 +25,6 @@ export function humanizeSidepanelGateError(raw: string): string {
   }
 
   // Soft path: happy path uses default sandbox; pick is optional for real projects.
-  // Keep matching machine tokens for classifyError recoverability when raw errors remain.
   if (
     /workspace_root not set|pick a folder first|需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱/i.test(
       body + e,
@@ -34,15 +33,19 @@ export function humanizeSidepanelGateError(raw: string): string {
     return (
       "📁 **可用默认沙箱 ~/CMspark-projects**\n\n" +
       "一般无需选文件夹即可读写沙箱。若要真实项目：侧栏 **「场景」** → **「选择工作区」** → 说「继续」。\n\n" +
-      "_说明：God-mode / 自动批准与场地绑定无关。_"
+      "_说明：协议解锁 / 自动批准与场地绑定无关。_"
     )
   }
 
-  if (/tool_not_allowed|当前场景不允许|not in thread tool_whitelist|可退出场景|当前场景限制/i.test(body + e)) {
+  if (
+    /tool_not_allowed|当前场景不允许|not in thread tool_whitelist|可退出场景|当前场景限制|工具白名单|工具面已收窄/i.test(
+      body + e,
+    )
+  ) {
     return (
-      "🎭 **当前场景限制了这个工具**\n\n" +
-      "打开侧栏 **「场景」** → **「退出场景，回到通用助手」**，再重试。\n\n" +
-      "_说明：God-mode 不会放开场景工具白名单。_"
+      "🎭 **本对话工具面已收窄**\n\n" +
+      "顶栏点 **「恢复全工具」** 或 **「退出场景」**（立即对本对话生效）。**不要新建对话**（容易再次中招）。\n\n" +
+      "_说明：三旗全自动巡航会放开普通对话工具面；仅协议解锁/无人值守两旗不够。_"
     )
   }
 
