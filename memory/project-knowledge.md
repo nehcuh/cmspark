@@ -22,6 +22,21 @@
 
 ## Technical Pitfalls
 
+### llm.oneshot / 同类 handler：校验 payload 先于 config/key 门（2026-08-12 · #174）
+- **现象**：本地有 API key 时 empty `user_content` 测绿；CI 无 key 时先返回 `companion_llm_not_configured`，断言 `/user_content/` 失败
+- **修法**：`handleLlmOneshot` 先校验 `user_content` 非空，再查 `api_key` / masked
+- **纪律**：fail-closed 测试须覆盖「无密钥环境」；错误码顺序要确定性，不能依赖本机 `~/.cmspark-agent` 是否已配 key
+
+### spawnHostBin 返回 stdout 字符串，不是 `{stdout}`（2026-08-12 · #174）
+- **现象**：从 `execFileAsync` 迁到 `spawnHostBin` 后仍写 `result.stdout` → runtime/类型错
+- **契约**：`spawnHostBin(bin, args, {timeoutMs}) → Promise<string>`；长进程用 `resolveIntegrityHostBin` + `spawn(realpath, …)`
+- **纪律**：全路径 host 完整性只走 integrity 模块，禁 raw `execFile(cmspark-host)`
+
+### zsh 监控脚本禁用 `status` 作变量名（2026-08-12）
+- **现象**：`status=$(gh run list …)` 秒退 `read-only variable: status`
+- **修法**：用 `st` / `row` / `concl` 等名
+- **纪律**：shell 轮询 CI 脚本避开 zsh 只读特殊变量
+
 ### 默认工作区沙箱 ≠ 自动 bind workspace_root（2026-08-11 S65 · #165/#166）
 - **产品**：未设置 `thread.workspace_root` 时 `workspace_*` **运行时**落到 `~/CMspark-projects`（mkdir `0o700`），**不**写 thread；folder-picker 显式绑定仍优先；`setWorkspaceRoot` 仍须 native pick；`shell_exec` cwd **不**跟沙箱
 - **安全 nits**：沙箱根若为 **symlink** 会把 host_read 扩到其它家目录路径 → #166 `lstat` 拒绝 symlink + realpath 必须等于字面 `~/CMspark-projects`
@@ -521,6 +536,13 @@
 - 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
 
 ## Reusable Patterns
+
+### Deep-diagnosis 按严重度分批合 main（2026-08-11–12 · #172→#175）
+1. Fanout 出 P0/P1/P2 action plan（`docs/audit/deep-diagnosis-fanout-report-*`）
+2. **每批独立分支** off main：`fix/p{0,1,2}-…` → 实现 + 机核 → PR → 盯 CI → rebase merge
+3. P2 可再开 **residual closeout**（#175）：god-file 续拆、密钥 dual-home、多 OS smoke、host 长进程 integrity
+4. CI 失败先修（如 oneshot 错误码顺序）再合；closeout 落 `docs/audit/*closeout*`
+5. 价值：P0 不堵在大 PR；residual 写在 closeout 清单上可验收「清单清完」
 
 ### 功能 PR → dual nits follow-up → 同日合 main（2026-08-11 S65 · #165→#166）
 1. 产品小方案先锁契约（运行时 fallback vs 写 thread / shell 是否跟）

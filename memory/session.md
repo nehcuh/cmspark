@@ -891,3 +891,18 @@
 - Closeout: `docs/audit/deep-diagnosis-p2-closeout-2026-08-12.md`
 - Next: PR + CI + merge
 - Recorded: yes
+
+### S67 END (2026-08-12) [P2 #174 MERGED]
+- **#174 MERGED** `6c93a19` — P2 deep-diagnosis: SoT tools, llm.oneshot, spawn rollback, host spawnHostBin
+- CI r1 fail (empty oneshot when no key) → fix order validate-before-config → r2 green
+- main tip: `6c93a19` = origin/main; deep-diagnosis P0+P1+P2 stack complete
+- Residual: full god-file split; extensionConfig key dual-home cleanup; multi-OS CI smoke
+- Recorded: yes
+
+### S68 END (2026-08-12) [session-end · residual #175 MERGED · deep-diagnosis 闭环]
+- **#175 MERGED** `6d7e7e8` — P2 residual: secrets dual-home gone; resolveIntegrityHostBin; mcp/user_env extract; normalize-config; smoke-os matrix
+- **Full arc on main**: Precision #168–#171 · diagnosis P1#172 · P0#173 · P2#174 · residual#175
+- **Open PR: 0**；main tip `6d7e7e8`
+- **Experience**: oneshot validate-before-key；spawnHostBin→string；zsh `status` readonly；diagnosis 分批 PR pattern
+- **下次**: 真机验收 / SEC-M* / thread·chat 续拆（非挂起 WIP）
+- Recorded: yes
