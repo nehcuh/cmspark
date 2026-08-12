@@ -22,6 +22,13 @@
 
 ## Technical Pitfalls
 
+### daemon acquireLock 必须同进程幂等（OPS-02 持锁过 init → startServer）（2026-08-12 · #180）
+- **现象**：托盘能起，`23401` 永不 listen；日志 `server.start_failed already_running`，**pid = 自己**
+- **根因**：`b3e3968` 为关竞态「不 release UDS 再 startServer」，注释写 acquireLock 幂等，实现却把**本进程** listening sock 当「他人持锁」→ 读刚写的 daemon.pid → exit(1)
+- **修法**：`lockServer != null && heldLockPath === path` → `return true`；`releaseLock` 清 `heldLockPath`
+- **验证**：`daemon start` 打印自身 pid 的 already_running = 回归信号；跨进程互斥仍靠 multi-process 测
+- **纪律**：持锁跨阶段 handoff 前，**先**证明 re-acquire 幂等（单测 + 同进程二次 acquire）；注释承诺须有实现与测例 lock-step；改锁路径后必跑 `daemon start` 看 23401
+
 ### 会议 STT soft-continue 与 max-1 槽：conflict/oom 绝不可 soft 空转（2026-08-12 · #179）
 - **现象**：段失败一律 soft → `resource_conflict`/`session_busy` 占着 max-1 槽 → 后续段永久 conflict；坏二进制 sticky `infer_failed`/`binary_broken` soft 到 hard cap
 - **修法**：soft 仅 `infer_failed|empty_result|infer_timeout|partial_skipped` + streak≤3；conflict abort+单次重试后硬停；`oom`/`binary_broken` **首击硬停**

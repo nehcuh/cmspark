@@ -2,6 +2,17 @@
 
 ## Current Session
 
+### S68 END (2026-08-12) [CMspark.app 无法启动 · daemon lock 自锁 · #180 OPEN]
+- **症状**：托盘能起，WS `23401` 不起；日志 `already_running`，**pid = 自己**
+- **根因**：`b3e3968` OPS-02 持 UDS 锁进 `startServer`，但 `acquireLock` 非幂等 → 自锁 exit(1)
+- **修复**：同 path 已持锁 → return true；测例改幂等；本地 esbuild 热更 `/Applications/CMspark.app` + adhoc 重签
+- **Ship**：**PR #180** OPEN https://github.com/nehcuh/cmspark/pull/180 · branch `fix/daemon-acquirelock-idempotent` @ `e2c8dd4`
+- **验证**：[executed] 安装包 daemon start + full `open` → tray/daemon/extension connected
+- **CI 离场时**：ubuntu+macos smoke **pass**；build + windows smoke **仍 pending**（监控已停，下次 session 查 #180）
+- **次要**：estop CGEventTap degraded（辅助功能）；filesystem MCP allow-dir 临时目录失效
+- **下次**：(1) CI 绿合 #180 (2) 正式 package/DMG 替换热更 (3) 可选修 estop TCC / filesystem MCP
+- Recorded: yes — acquireLock 同进程幂等 / OPS-02 handoff 纪律
+
 ### S67 END (2026-08-12) [会议 STT hotfix + AI 纠错 · dual APPROVE_WITH_NITS · #179 OPEN]
 - **范围**：#177/#178 后真机踩坑热修 + 对抗 F-merge-1..6 吸收 + 会议 live AI correct_only（priorContext）+ 智能分段
 - **Ship 状态**：**PR #179** OPEN `fix/meeting-stt-hotfix-refine-absorb` @ `ff00681`（未合 main）
@@ -659,18 +670,18 @@
 - resume_doc: PR #148 · #149 · `memory/project-knowledge.md` S53 坑
 - updated: 2026-08-08
 
-### 听写+/会议真机验收（S52 后 · S67 热修）
+### 听写+/会议真机验收（S52 后 · S67 热修 · #179 on main）
 - status: **active**
-- context: Mtg0–3 + D1/D2 on main；**#179** 叠 soft-continue/pin/双ack/会议 AI 纠错+分段（待合）
-- next_action: (1) 合 #179 后重载扩展+重启 Companion (2) 双隐私 ack 开录 (3) 勾选「录制 AI 纠错」验同音字 (4) 坏组件应硬停 binary_broken
-- resume_doc: PR #179 · `docs/meeting-and-dictation-user-guide.md` · dual verdict 20260812-113816
+- context: Mtg0–3 + D1/D2 + **#179 MERGED**（soft-continue/pin/双ack/会议 AI 纠错+分段）on main `826e4c8`
+- next_action: (1) 重载扩展+重启 Companion (2) 双隐私 ack 开录 (3) 勾选「录制 AI 纠错」验同音字 (4) 坏组件应硬停 binary_broken
+- resume_doc: PR #179 · `docs/meeting-and-dictation-user-guide.md`
 - updated: 2026-08-12
 
-### Meeting STT hotfix PR #179（S67）
+### Daemon acquireLock 幂等 PR #180（S68）
 - status: **active**
-- context: 分支 `fix/meeting-stt-hotfix-refine-absorb`；dual both_ok；nits 已吸
-- next_action: 盯 CI → merge → 可选再装 DMG；勿合进 dist/
-- resume_doc: https://github.com/nehcuh/cmspark/pull/179
+- context: CMspark.app 自锁不起 companion；fix 已 push；本地 `/Applications` 已热更
+- next_action: (1) 盯 CI 绿 → merge #180 (2) 正式 package/DMG 替换热更 (3) 可选 estop TCC
+- resume_doc: https://github.com/nehcuh/cmspark/pull/180
 - updated: 2026-08-12
 
 ### Wave C thread_recall → **#135 MERGED**
