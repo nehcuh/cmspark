@@ -61,6 +61,8 @@ export type SttServiceErrorCode =
   | "empty_result"
   | "peer_mismatch"
   | "resource_conflict"
+  | "infer_failed"
+  | "oom"
   | "invalid_session_id"
   | "partial_skipped"
   | "partial_busy"
@@ -469,11 +471,12 @@ export class SttSessionService {
         return { ok: false, code: "infer_timeout", message: e.message }
       }
       this.dropBound()
-      return {
-        ok: false,
-        code: "resource_conflict",
-        message: e instanceof Error ? e.message : String(e),
+      const msg = e instanceof Error ? e.message : String(e)
+      const lower = msg.toLowerCase()
+      if (/\booms?\b|out of memory|enomem|cannot allocate/i.test(lower)) {
+        return { ok: false, code: "oom", message: msg }
       }
+      return { ok: false, code: "infer_failed", message: msg }
     }
   }
 

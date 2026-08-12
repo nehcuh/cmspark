@@ -122,6 +122,19 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
 
 `~/.cmspark-agent/meetings/<id>/`（meta / transcript / minutes；权限收紧）
 
+### 3.5 转写错误 resource_conflict / 本机识别
+
+- **含义**：上一段本机识别未结束（会话争用），或识别进程失败（现会区分为「识别失败 / 内存不足」中文提示）。
+- **处理**：等数秒后重试；确认设置里 STT 引擎为「本机」且模型 ready；关闭听写后再开会议。
+- **当前版本**：开始会议会清理陈旧 STT 会话；段失败会自动重试一次；会议错误走中文映射。
+
+### 3.6 纪要模板
+
+- 会议工作台可展开 **「纪要模板（可选）」** 粘贴自定义 Markdown 模板（本地记住上次内容）。
+- 留空则使用默认：TL;DR / 决议 / 待办 / 风险。
+- 模板只约束**输出结构**，不能让模型编造转写中没有的事实。
+- 生成纪要将把转写文本发给已配置的 LLM。
+
 ---
 
 ## 4. 真机验收清单（供用户自测）
@@ -141,6 +154,8 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
 - [ ] 粘贴转写 → 纪要结构可读  
 - [ ] 本机录 ≥1–5 min → 可编辑转写 → 纪要；默认无残留 audio  
 - [ ] 听写与会议互斥提示  
+- [ ] 开始录制不立即出现 `resource_conflict` 裸码  
+- [ ] 可选模板生成纪要结构贴合模板  
 
 ---
 

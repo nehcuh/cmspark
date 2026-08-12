@@ -5,8 +5,9 @@
 import { llmExtract, type LlmExtractConfig } from "../llm/llm-extract"
 import { logger } from "../logger"
 import {
+  buildMinutesSystemPrompt,
   MEETING_MINUTES_MAX_INPUT_CHARS,
-  MEETING_MINUTES_SYSTEM_PROMPT,
+  MEETING_MINUTES_MAX_TEMPLATE_CHARS,
   MEETING_MINUTES_TEMP_CAP,
   MEETING_MINUTES_TIMEOUT_MS,
 } from "./minutes-prompt"
@@ -37,6 +38,8 @@ function parseLooseSections(md: string): Partial<MeetingMinutes> {
 export async function generateMeetingMinutes(params: {
   transcriptText: string
   config: LlmExtractConfig
+  /** Optional user markdown template (structure only; safety rules always win). */
+  templateMd?: string
   extract?: typeof llmExtract
   signal?: AbortSignal
 }): Promise<GenerateMinutesResult> {
@@ -47,15 +50,20 @@ export async function generateMeetingMinutes(params: {
   if (raw.length > MEETING_MINUTES_MAX_INPUT_CHARS) {
     return { ok: false, code: "transcript_too_long", message: "transcript too long" }
   }
+  const tmpl = params.templateMd?.trim() || ""
+  if (tmpl.length > MEETING_MINUTES_MAX_TEMPLATE_CHARS) {
+    return { ok: false, code: "template_too_long", message: "template too long" }
+  }
   if (params.signal?.aborted) {
     return { ok: false, code: "aborted", message: "aborted" }
   }
 
+  const systemPrompt = buildMinutesSystemPrompt(tmpl || undefined)
   const extract = params.extract ?? llmExtract
   let out: string
   try {
     out = await extract({
-      systemPrompt: MEETING_MINUTES_SYSTEM_PROMPT,
+      systemPrompt,
       userContent: raw,
       config: params.config,
       temperatureCap: MEETING_MINUTES_TEMP_CAP,

@@ -48,6 +48,8 @@ export interface MeetingHandlerDeps {
   isExtensionOrigin?: (origin: string | undefined) => boolean
   getLlmConfig?: () => LlmExtractConfig | null
   generate?: typeof generateMeetingMinutes
+  /** Best-effort: drop stale STT max-1 slot (e.g. prior dictation still inferring). */
+  clearSttSessions?: () => void
 }
 
 function llmConfigFromCompanion(): LlmExtractConfig | null {
@@ -128,6 +130,13 @@ export async function handleMeetingMessage(
       retain_days: typeof msg.retain_days === "number" ? msg.retain_days : undefined,
     })
     if (!started) return err("not_found", "meeting not found", { id })
+    // Free STT max-1 slot so extension voice.stt.* for this meeting is not blocked
+    // by a prior dictation/meeting segment still inferring (resource_conflict).
+    try {
+      deps.clearSttSessions?.()
+    } catch {
+      /* best-effort */
+    }
     logger.info("meeting.start.ok", {
       id: started.id,
       audio_retained: started.privacy.audio_retained,
@@ -395,7 +404,8 @@ export async function handleMeetingMessage(
     }
 
     const generate = deps.generate ?? generateMeetingMinutes
-    const result = await generate({ transcriptText, config: llm })
+    const templateMd = typeof msg.template_md === "string" ? msg.template_md : undefined
+    const result = await generate({ transcriptText, config: llm, templateMd })
     if (!result.ok) {
       if (id) setMeetingStatus(id, "error", result.message)
       return err(result.code, result.message, { id })

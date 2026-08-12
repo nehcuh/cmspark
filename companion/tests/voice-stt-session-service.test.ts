@@ -485,3 +485,133 @@ test("resolveModelPath reject escape via custom resolver", async () => {
   assert.equal(end.ok, false)
   if (!end.ok) assert.equal(end.code, "model_missing")
 })
+
+test("end maps generic runner errors to infer_failed not resource_conflict", async () => {
+  const dataDir = tempDataDir()
+  const whisperRoot = path.join(dataDir, "models", "whisper")
+  plantReadyModel(whisperRoot)
+  const svc = makeService({
+    dataDir,
+    whisperRoot,
+    runWhisper: async () => {
+      throw new Error("spawn EACCES")
+    },
+  })
+  assert.equal(
+    svc.start(
+      {
+        sessionId: "e1",
+        modelId: "small",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+      },
+      "p",
+    ).ok,
+    true,
+  )
+  svc.chunk("e1", 0, Buffer.from("RIFF...."), "p")
+  const end = await svc.end("e1", 1, "p")
+  assert.equal(end.ok, false)
+  if (!end.ok) {
+    assert.equal(end.code, "infer_failed")
+    assert.match(end.message, /EACCES|spawn/i)
+  }
+})
+
+test("end maps OOM-like runner errors to oom", async () => {
+  const dataDir = tempDataDir()
+  const whisperRoot = path.join(dataDir, "models", "whisper")
+  plantReadyModel(whisperRoot)
+  const svc = makeService({
+    dataDir,
+    whisperRoot,
+    runWhisper: async () => {
+      throw new Error("out of memory: cannot allocate buffer")
+    },
+  })
+  assert.equal(
+    svc.start(
+      {
+        sessionId: "e-oom",
+        modelId: "small",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+      },
+      "p",
+    ).ok,
+    true,
+  )
+  svc.chunk("e-oom", 0, Buffer.from("RIFF...."), "p")
+  const end = await svc.end("e-oom", 1, "p")
+  assert.equal(end.ok, false)
+  if (!end.ok) {
+    assert.equal(end.code, "oom")
+    assert.match(end.message, /out of memory|cannot allocate/i)
+  }
+})
+
+test("forceAbort clears inferring so a new start can proceed", async () => {
+  const dataDir = tempDataDir()
+  const whisperRoot = path.join(dataDir, "models", "whisper")
+  plantReadyModel(whisperRoot)
+  let release!: () => void
+  const gate = new Promise<void>((r) => {
+    release = r
+  })
+  const svc = makeService({
+    dataDir,
+    whisperRoot,
+    runWhisper: async ({ signal }) => {
+      await gate
+      if (signal?.aborted) {
+        throw new WhisperRunnerError("aborted", "aborted")
+      }
+      return { text: "hi", ms: 1 }
+    },
+  })
+  assert.ok(
+    svc.start(
+      {
+        sessionId: "old",
+        modelId: "small",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+      },
+      "peerA",
+    ).ok,
+  )
+  svc.chunk("old", 0, Buffer.from("x"), "peerA")
+  const endP = svc.end("old", 1, "peerA")
+  await new Promise((r) => setTimeout(r, 20))
+  const blocked = svc.start(
+    {
+      sessionId: "new",
+      modelId: "small",
+      format: "wav",
+      sampleRate: 16000,
+      channels: 1,
+    },
+    "peerA",
+  )
+  assert.equal(blocked.ok, false)
+  if (!blocked.ok) assert.equal(blocked.code, "resource_conflict")
+
+  svc.forceAbort()
+  release()
+  await endP
+
+  const ok = svc.start(
+    {
+      sessionId: "new2",
+      modelId: "small",
+      format: "wav",
+      sampleRate: 16000,
+      channels: 1,
+    },
+    "peerA",
+  )
+  assert.equal(ok.ok, true)
+})

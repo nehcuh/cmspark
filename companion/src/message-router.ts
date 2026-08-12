@@ -29,7 +29,7 @@ import { pickFolderNative } from "./obsidian/folder-picker"
 import type { SkillEngine } from "./skills/skill-engine"
 import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
-import { getConfig, saveConfig, isMaskedApiKey } from "./config"
+import { getConfig, saveConfig, isMaskedApiKey, DATA_DIR } from "./config"
 import { chatCreate, generateThreadTitle } from "./llm/adapter"
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
@@ -49,6 +49,7 @@ import { handleVoiceSttMessage } from "./voice/stt-handlers"
 import { handleVoiceRefineMessage } from "./voice/refine-handlers"
 import { handleDictationHoldState } from "./voice/dictation-hotkey"
 import { handleMeetingMessage } from "./meeting/meeting-handlers"
+import { getSttSessionService } from "./voice/stt-session-service"
 import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
@@ -1719,11 +1720,23 @@ export async function handleMessage(
     case "meeting.auto_diarize":
     case "meeting.generate_minutes":
     case "meeting.set_status":
-      return handleMeetingMessage(msg, {
-        origin: session?.origin,
-        peerId: session?.panelId,
-        send: session?.sendToExtension,
-      })
+      return handleMeetingMessage(
+        msg,
+        {
+          origin: session?.origin,
+          peerId: session?.panelId,
+          send: session?.sendToExtension,
+        },
+        {
+          clearSttSessions: () => {
+            try {
+              getSttSessionService({ dataDir: DATA_DIR }).forceAbort()
+            } catch {
+              /* best-effort: service may not be initialized yet */
+            }
+          },
+        },
+      )
     case "skill.activate": {
       skillEngine.activate(rest.thread_id, rest.skill_name)
       const thread = threadManager.get(rest.thread_id)

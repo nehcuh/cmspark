@@ -15,10 +15,15 @@ import {
   transcribeWavViaStt,
 } from "../voice/meeting-audio-import"
 import {
+  loadMeetingTemplate,
+  saveMeetingTemplate,
+} from "../voice/meeting-template-storage"
+import {
   VOICE_CONTINUOUS_HARD_CAP_MS,
   VOICE_CONTINUOUS_SOFT_CAP_MS,
   VOICE_DEFAULT_LANG,
 } from "../voice/detect"
+import { mapLocalSttError } from "../voice/error-map"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
 
 /** Format companion transcript lines for textarea (Speaker: text). */
@@ -114,6 +119,9 @@ export function MeetingPanel(props: {
   const lineFeaturesRef = useRef<number[][]>([])
   const [diarizeK, setDiarizeK] = useState(2)
   const [autoDiarizeAfterImport, setAutoDiarizeAfterImport] = useState(false)
+  /** Optional markdown template for minutes structure (chrome.storage). */
+  const [templateMd, setTemplateMd] = useState("")
+  const templateMdRef = useRef("")
 
   const adapterRef = useRef<SpeechAdapter | null>(null)
   const captureStartRef = useRef<number | null>(null)
@@ -130,6 +138,7 @@ export function MeetingPanel(props: {
   titleRef.current = title
   phaseRef.current = capturePhase
   defaultSpeakerRef.current = defaultSpeaker
+  templateMdRef.current = templateMd
 
   const companionConnected = state.connectionState === "connected"
   const activeModelId = state.voiceModel?.localModelId || "medium"
@@ -158,6 +167,28 @@ export function MeetingPanel(props: {
       /* */
     }
   }, [])
+
+  const templateLoadedRef = useRef(false)
+  useEffect(() => {
+    let cancelled = false
+    void loadMeetingTemplate().then((t) => {
+      if (cancelled) return
+      setTemplateMd(t)
+      templateMdRef.current = t
+      templateLoadedRef.current = true
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!templateLoadedRef.current) return
+    const t = setTimeout(() => {
+      saveMeetingTemplate(templateMd)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [templateMd])
 
   useEffect(() => {
     if (!companionConnected) return
@@ -243,14 +274,21 @@ export function MeetingPanel(props: {
         setBusy(true)
         setPendingGenerate(true)
         setTimeout(() => {
+          const template_md = templateMdRef.current.trim() || undefined
           if (id) {
-            sendViaRuntime({ type: "meeting.generate_minutes", v: 1, id })
+            sendViaRuntime({
+              type: "meeting.generate_minutes",
+              v: 1,
+              id,
+              template_md,
+            })
           } else {
             const text = transcriptRef.current.trim()
             sendViaRuntime({
               type: "meeting.generate_minutes",
               v: 1,
               text: text || undefined,
+              template_md,
             })
           }
         }, 100)
@@ -298,7 +336,9 @@ export function MeetingPanel(props: {
           },
           onError: (code) => {
             if (code === "aborted") return
-            setError(`转写错误: ${code}`)
+            const mapped = mapLocalSttError(code)
+            if (mapped.severity === "silent") return
+            setError(mapped.message || `转写错误: ${code}`)
           },
           onEnd: () => {
             const gen = wantGenerateRef.current
@@ -321,6 +361,8 @@ export function MeetingPanel(props: {
       )
       adapterRef.current = adapter
       const sid = `mtg-${id}-${Date.now().toString(36)}`
+      // STT slot is force-aborted on companion by meeting.start — do not send
+      // voice.stt.abort with a fake sessionId (e.g. "mtg-preempt") from the client.
       adapter.start({
         lang: VOICE_DEFAULT_LANG,
         sessionId: sid,
@@ -892,6 +934,7 @@ export function MeetingPanel(props: {
       v: 1,
       id: meetingId || undefined,
       text: transcript.trim() || undefined,
+      template_md: templateMdRef.current.trim() || undefined,
     })
   }
 
@@ -1282,6 +1325,60 @@ export function MeetingPanel(props: {
           }}
         />
       </label>
+
+      <details style={{ fontSize: 12 }}>
+        <summary style={{ cursor: "pointer", color: tokens.textSecondary }}>
+          纪要模板（可选）
+        </summary>
+        <p style={{ fontSize: 10, color: tokens.textSecondary, margin: "6px 0" }}>
+          模板只约束输出结构；不会改变「不得臆造」规则。生成时把转写文本发给已配置 LLM。
+        </p>
+        <textarea
+          value={templateMd}
+          onChange={(e) => {
+            const v = e.target.value
+            setTemplateMd(v)
+            templateMdRef.current = v
+          }}
+          placeholder={"### TL;DR\n\n### 决议\n\n### 待办\n\n### 风险 / 开放问题"}
+          rows={5}
+          style={{
+            marginTop: 4,
+            width: "100%",
+            minHeight: 80,
+            padding: 8,
+            borderRadius: 6,
+            border: `1px solid ${tokens.border}`,
+            background: tokens.bg,
+            color: tokens.text,
+            resize: "vertical",
+            boxSizing: "border-box",
+            fontFamily: "inherit",
+            fontSize: 12,
+            lineHeight: 1.45,
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setTemplateMd("")
+            templateMdRef.current = ""
+            saveMeetingTemplate("")
+          }}
+          style={{
+            marginTop: 6,
+            fontSize: 11,
+            padding: "4px 8px",
+            borderRadius: 4,
+            border: `1px solid ${tokens.border}`,
+            background: tokens.bg,
+            color: tokens.textSecondary,
+            cursor: "pointer",
+          }}
+        >
+          恢复默认
+        </button>
+      </details>
 
       <button type="button" disabled={busy || !ack || capturing} onClick={generate} style={btnStyle(true)}>
         {busy || pendingGenerate ? "生成中…" : "生成会议纪要"}

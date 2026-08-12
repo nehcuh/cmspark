@@ -23,6 +23,7 @@ const LOCAL_STT_ERROR_CODES = new Set([
   "infer_timeout",
   "resource_conflict",
   "oom",
+  "infer_failed",
   "origin_denied",
   "total_seq_mismatch",
   "invalid_session_id",
