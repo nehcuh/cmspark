@@ -176,6 +176,17 @@ test("start requires privacy_ack_v1", async () => {
   assert.equal(res.code, "need_privacy_ack")
 })
 
+test("meeting.start invokes clearSttSessions", async () => {
+  let cleared = 0
+  const r = await handleMeetingMessage(
+    { type: "meeting.start", v: 1, privacy_ack_v1: true, title: "t" },
+    { origin: EXT, peerId: "p1" },
+    { clearSttSessions: () => { cleared += 1 } },
+  )
+  assert.equal(r.type, "meeting.started")
+  assert.equal(cleared, 1)
+})
+
 test("start/end live capture + default delete audio", async () => {
   const started = await handleMeetingMessage(
     {
