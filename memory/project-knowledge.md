@@ -22,6 +22,12 @@
 
 ## Technical Pitfalls
 
+### analyze_image IMAGE_FETCH：三旗=风险自担，只硬拦疑似 SSRF（2026-08-12）
+- **产品**：不是「为防 SSRF 一律 ban file://」；三旗全开后允许 `file://` 拉图并跳过图片确认；**云元数据 IP / javascript:** 仍硬拦
+- **默认模式**：`file://` 仍拒（非确认窗，错误码 `image_fetch_file_requires_cruise`）— 用 screenshot
+- **单旗** god-mode / auto_approve_dangerous **单独**不放行 image fetch 确认
+- **纪律**：文案禁止写「若你已拒绝弹窗」套用到硬闸；硬闸 vs 确认 vs 风险自担三语分清
+
 ### 线程 tool_whitelist：三旗巡航应扩面；MCP 名 `filesystem` ↔ `fs`（2026-08-12）
 - **现象**：开了无人值守/三旗仍 `tool_whitelist_blocked`（list_tabs/shell）；用户以为权限已全局放开
 - **根因**：
