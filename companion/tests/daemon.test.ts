@@ -60,13 +60,16 @@ test("acquireLock returns true when lock is free", async () => {
   releaseLock(lockPath)
 })
 
-test("acquireLock returns false when lock is already held", async () => {
+test("acquireLock is idempotent when already held by this process", async () => {
+  // OPS-02: daemon start keeps the UDS lock across initDataDir, then startServer
+  // calls acquireLock again. Same-process re-acquire must succeed (not false-positive
+  // "already_running" against our own PID).
   const lockPath = path.join(tempHome, "test2.sock")
   const first = await acquireLock(lockPath)
   assert.equal(first, true)
 
   const second = await acquireLock(lockPath)
-  assert.equal(second, false)
+  assert.equal(second, true)
 
   releaseLock(lockPath)
 })

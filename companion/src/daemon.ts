@@ -49,6 +49,8 @@ export function getDefaultPidPath(): string {
 // ---------------------------------------------------------------------------
 
 let lockServer: net.Server | null = null
+/** Path currently held by {@link lockServer}, if any. Used for same-process re-acquire. */
+let heldLockPath: string | null = null
 
 /**
  * Acquire a UDS-based exclusive lock.
@@ -56,6 +58,11 @@ let lockServer: net.Server | null = null
  * Creates a net.Server and attempts to listen on the given Unix Domain Socket path.
  * If another process already holds the lock, this returns `false` immediately.
  * On unexpected errors, throws a `DaemonError` with appropriate classification.
+ *
+ * Same-process re-acquire of the path this process already holds is a no-op
+ * success (`true`). That makes the daemon-start → startServer handoff safe when
+ * the UDS lock is intentionally kept across init (OPS-02) so a second process
+ * cannot slip in between release and re-bind.
  *
  * The implementation uses a synchronous connect test to detect stale sockets,
  * then attempts `server.listen()`.  Because `listen()` on a UDS is atomic at
@@ -70,6 +77,14 @@ function isNamedPipe(lockPath: string): boolean {
 }
 
 export async function acquireLock(lockPath: string): Promise<boolean> {
+  // Idempotent same-process re-acquire (daemon start holds lock through initDataDir,
+  // then startServer calls acquireLock again). Without this, the second call sees
+  // our own listening socket as "already held", reads our own PID, and exits with
+  // already_running — companion never binds :23401.
+  if (lockServer !== null && heldLockPath === lockPath) {
+    return true
+  }
+
   const namedPipe = isNamedPipe(lockPath)
 
   if (!namedPipe) {
@@ -138,6 +153,7 @@ export async function acquireLock(lockPath: string): Promise<boolean> {
   }
 
   lockServer = server
+  heldLockPath = lockPath
   return true
 }
 
@@ -203,6 +219,7 @@ export function releaseLock(lockPath: string): void {
       // Ignore close errors
     }
     lockServer = null
+    heldLockPath = null
   }
 
   if (!isNamedPipe(lockPath)) {
