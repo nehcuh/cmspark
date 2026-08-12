@@ -62,14 +62,16 @@ test("progressPercent clamps 0–100", () => {
   assert.equal(progressPercent(NaN, 100), 0)
 })
 
-test("formatDiskUsage and binaryStatusLine (not_found prompts download)", () => {
+test("formatDiskUsage and binaryStatusLine (not_found prompts install)", () => {
   assert.match(formatDiskUsage(100, 4096), /100 MB/)
   assert.match(formatDiskUsage(100, 4096), /预算/)
   const nf = binaryStatusLine({ status: "not_found" })
   assert.match(nf, /未找到/)
-  assert.match(nf, /下载/)
+  assert.match(nf, /安装|Homebrew|组件/)
+  // Must not overclaim "一键下载" on platforms without HTTPS zip
+  assert.equal(/一键下载/.test(nf), false)
   assert.match(binaryStatusLine({ status: "ready", path: "/opt/w" }), /已就绪/)
-  assert.match(binaryStatusLine({ status: "hash_mismatch" }), /校验失败|重新下载/)
+  assert.match(binaryStatusLine({ status: "hash_mismatch" }), /校验失败|重新安装/)
 })
 
 test("parseVoiceSettingsSendResponse surfaces SW / disconnect failures", () => {

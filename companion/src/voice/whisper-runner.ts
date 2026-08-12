@@ -207,6 +207,23 @@ export async function runWhisperTranscribe(
               process.platform === "win32"
                 ? `${binaryDir}${path.delimiter}${process.env.PATH || ""}`
                 : process.env.PATH,
+            // macOS: ensure @loader_path sibling dylibs resolve even if rpath is odd
+            ...(process.platform === "darwin"
+              ? {
+                  DYLD_LIBRARY_PATH: [binaryDir, path.join(binaryDir, "..", "lib"), process.env.DYLD_LIBRARY_PATH]
+                    .filter(Boolean)
+                    .join(path.delimiter),
+                  DYLD_FALLBACK_LIBRARY_PATH: [
+                    binaryDir,
+                    path.join(binaryDir, "..", "lib"),
+                    "/opt/homebrew/lib",
+                    "/usr/local/lib",
+                    process.env.DYLD_FALLBACK_LIBRARY_PATH,
+                  ]
+                    .filter(Boolean)
+                    .join(path.delimiter),
+                }
+              : {}),
           },
         },
         (err, stdout, _stderr) => {
@@ -233,6 +250,18 @@ export async function runWhisperTranscribe(
           }
           // Node marks timeout kills with killed=true
           if (e.killed || e.signal === "SIGTERM" || e.signal === "SIGKILL") {
+            // Early SIGKILL (dyld/OOM/broken binary) is NOT a wall-timeout
+            if (e.signal === "SIGKILL" && ms < 2_000) {
+              // Do NOT put "OOM" in this message — stt-session-service maps
+              // oom via /\booms?\b/ before dyld (dual-review Pi nit: mislabel).
+              finishReject(
+                new WhisperRunnerError(
+                  "spawn_error",
+                  "whisper killed early (dyld missing libs / binary broken / SIGKILL)",
+                ),
+              )
+              return
+            }
             finishReject(
               new WhisperRunnerError(
                 "timeout",

@@ -1235,11 +1235,18 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "voice.model.delete":
       case "voice.model.set_active":
       case "voice.model.set_engine":
-      // Path B M1 voice.stt.* (runtime Side Panel; companion origin fence + session service).
+      // Path B: download cmspark-whisper runtime (settings). Missing cases were
+      // reported as「扩展版本过旧」via Unknown message type map — not a version skew.
+      case "voice.binary.download":
+      case "voice.binary.cancel":
+      // Path B M1/M2 voice.stt.* (runtime Side Panel; companion origin fence + session service).
+      // M2 near-rt: partial_request must be forwarded or SW returns "Unknown message type"
+      // (settings maps that to「扩展版本过旧或不匹配」— false alarm).
       case "voice.stt.start":
       case "voice.stt.chunk":
       case "voice.stt.end":
       case "voice.stt.abort":
+      case "voice.stt.partial_request":
       // Dictation+ D1b ASR Refiner (text-only)
       case "voice.refine.request":
       case "voice.refine.abort":

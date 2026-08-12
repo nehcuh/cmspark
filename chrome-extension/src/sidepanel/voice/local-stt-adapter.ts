@@ -46,6 +46,37 @@ export type LocalSttAdapterDeps = {
   startCapture?: (opts?: StartCaptureOpts) => Promise<CaptureHandle>
 }
 
+/**
+ * Soft-continue only for failures after end() when companion has dropBound.
+ * NEVER soft-continue session_busy / resource_conflict / oom / binary_broken
+ * without reclaiming the slot (adversary B F1/F2 + dual-review: binary_broken is sticky).
+ */
+export function isSoftSttSegmentError(code: string): boolean {
+  const c = (code || "").toLowerCase()
+  return (
+    c === "infer_failed" ||
+    c === "empty_result" ||
+    c === "infer_timeout" ||
+    c === "partial_skipped"
+  )
+}
+
+/** Hard stop — do not keep mic open. */
+export function isHardSttSegmentError(code: string): boolean {
+  const c = (code || "").toLowerCase()
+  return (
+    c === "oom" ||
+    c === "binary_broken" ||
+    c === "model_missing" ||
+    c === "binary_missing" ||
+    c === "hash_fail" ||
+    c === "engine_not_local" ||
+    c === "need_privacy_ack" ||
+    c === "origin_denied" ||
+    c === "peer_mismatch"
+  )
+}
+
 /** uint8 → base64 without Node Buffer (Side Panel / tests). */
 export function uint8ToBase64(data: Uint8Array): string {
   const chunkSize = 0x8000
@@ -115,6 +146,9 @@ export function createLocalSttAdapter(
    * Checked after each await so we never run a full unintended window.
    */
   let pendingSoftStop = false
+  /** Consecutive soft segment failures — hard stop after threshold (adversary B F2). */
+  let softFailStreak = 0
+  const SOFT_FAIL_MAX = 3
   const beginCapture = deps.startCapture ?? defaultStartCapture
 
   const clearSegmentTimer = () => {
@@ -170,6 +204,7 @@ export function createLocalSttAdapter(
     streamPrevHypothesis = ""
     partialPollMs = STREAM_PARTIAL_POLL_DEFAULT_MS
     pendingSoftStop = false
+    softFailStreak = 0
   }
 
   const finishPending = (r: { ok: true; text: string } | { ok: false; code: string }) => {
@@ -237,6 +272,46 @@ export function createLocalSttAdapter(
         handlers.onError("aborted")
         handlers.onEnd()
         reset()
+        return
+      }
+      // No pending (e.g. start rejected mid-stream).
+      // Hard errors always stop. Soft: only when streamPartial is false —
+      // streaming loop already counts soft fails on end() (Pi nit: avoid double streak).
+      if (isHardSttSegmentError(code) || code === "oom") {
+        handlers.onError(code)
+        handlers.onEnd()
+        reset()
+        return
+      }
+      if (
+        mode === "continuous" &&
+        wantListening &&
+        isSoftSttSegmentError(code) &&
+        !streamPartial
+      ) {
+        try {
+          deps.send({ type: "voice.stt.abort", v: 1, sessionId: sid })
+        } catch {
+          /* */
+        }
+        softFailStreak += 1
+        handlers.onError(code)
+        if (softFailStreak >= SOFT_FAIL_MAX) {
+          handlers.onEnd()
+          reset()
+          return
+        }
+        handlers.onSegmentContinue?.()
+        return
+      }
+      // Streaming with pending null on soft: notify UI but let loop own streak via end path
+      if (mode === "continuous" && streamPartial && isSoftSttSegmentError(code)) {
+        try {
+          deps.send({ type: "voice.stt.abort", v: 1, sessionId: sid })
+        } catch {
+          /* */
+        }
+        handlers.onError(code)
         return
       }
       handlers.onError(code)
@@ -585,19 +660,39 @@ export function createLocalSttAdapter(
             return
           }
           if (streamErr === "empty_result") {
-            // Drop interim only
+            softFailStreak = 0
             handlers.onResult({ interim: "", finalChunk: "" })
+          } else if (isSoftSttSegmentError(streamErr) && wantListening) {
+            softFailStreak += 1
+            handlers.onError(streamErr)
+            handlers.onResult({ interim: "", finalChunk: "" })
+            if (softFailStreak >= SOFT_FAIL_MAX) {
+              handlers.onEnd()
+              reset()
+              return
+            }
           } else {
+            // conflict/busy/oom: try reclaim then hard stop (do not soft-loop max-1)
+            if (streamErr === "resource_conflict" || streamErr === "session_busy") {
+              try {
+                deps.send({ type: "voice.stt.abort", v: 1, sessionId: segSid })
+              } catch {
+                /* */
+              }
+              await new Promise((r) => setTimeout(r, 200))
+            }
             handlers.onError(streamErr)
             handlers.onEnd()
             reset()
             return
           }
         } else if (result.text.trim()) {
+          softFailStreak = 0
           // Window commit: one finalChunk for the whole window text
           handlers.onResult({ interim: "", finalChunk: result.text.trim() })
           streamStable = result.text.trim()
         } else {
+          softFailStreak = 0
           handlers.onResult({ interim: "", finalChunk: "" })
         }
 
@@ -661,7 +756,7 @@ export function createLocalSttAdapter(
         // Open STT session then immediately stream chunks (keeps idle timer happy).
         sendStart(segSid, segmentMs)
         let result = await uploadAndWait(segSid, wav)
-        // One retry on resource_conflict / session_busy (prior segment still held).
+        // Conflict: abort any stale holder then one retry (must free max-1 slot).
         if (
           result.ok === false &&
           (result.code === "resource_conflict" || result.code === "session_busy") &&
@@ -670,7 +765,9 @@ export function createLocalSttAdapter(
           gen === loopGen
         ) {
           deps.send({ type: "voice.stt.abort", v: 1, sessionId: segSid })
-          await new Promise((r) => setTimeout(r, 200))
+          // Best-effort: also abort parent-prefixed sessions from this capture
+          deps.send({ type: "voice.stt.abort", v: 1, sessionId: parentSessionId })
+          await new Promise((r) => setTimeout(r, 250))
           if (dead || aborted || gen !== loopGen) return
           const retrySid = `${segSid}-r1`
           sessionId = retrySid
@@ -683,14 +780,36 @@ export function createLocalSttAdapter(
           const errCode = result.code
           if (errCode === "aborted" || aborted) {
             handlers.onError("aborted")
-          } else {
-            handlers.onError(errCode)
+            handlers.onEnd()
+            reset()
+            return
           }
+          if (isHardSttSegmentError(errCode) || errCode === "oom") {
+            handlers.onError(errCode)
+            handlers.onEnd()
+            reset()
+            return
+          }
+          // Soft only after end() failures that drop companion bound
+          if (isSoftSttSegmentError(errCode) && wantListening) {
+            softFailStreak += 1
+            handlers.onError(errCode)
+            if (softFailStreak >= SOFT_FAIL_MAX) {
+              handlers.onEnd()
+              reset()
+              return
+            }
+            handlers.onSegmentContinue?.()
+            continue
+          }
+          // resource_conflict after retry, payload_too_large, etc. → hard stop
+          handlers.onError(errCode)
           handlers.onEnd()
           reset()
           return
         }
 
+        softFailStreak = 0
         if (result.text.trim()) {
           handlers.onResult({ interim: "", finalChunk: result.text })
         }
@@ -749,6 +868,12 @@ export function createLocalSttAdapter(
           if (segmentCapMs >= LOCAL_STT_MAX_RECORD_MS) {
             segmentCapMs = LOCAL_STT_NEAR_REALTIME_SEGMENT_MS
           }
+        }
+        // large-v3-turbo: progressive re-decode is too heavy (loads full model often).
+        // Force final-only continuous windows even if caller asked for streamPartial.
+        if (mid === "large-v3-turbo" || modelId === "large-v3-turbo") {
+          streamPartial = false
+          segmentCapMs = LOCAL_STT_MAX_RECORD_MS
         }
       }
 

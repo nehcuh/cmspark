@@ -128,6 +128,98 @@ mkdir -p "$(dirname "${OUT_BIN}")"
 cp "${SRC}" "${OUT_BIN}"
 chmod +x "${OUT_BIN}"
 
+# macOS: brew whisper-cli is dynamically linked. Stage dylibs next to package layout
+#   Resources/bin/cmspark-whisper-*
+#   Resources/lib/libwhisper*.dylib + libggml*.dylib
+# with @loader_path relative install names so the DMG works without Homebrew.
+if [[ "${OS}" == "Darwin" ]]; then
+  LIB_OUT="${COMPANION_ROOT}/dist/lib"
+  mkdir -p "${LIB_OUT}"
+  # Clear previous staged libs for a clean set
+  rm -f "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib 2>/dev/null || true
+
+  WHISPER_PREFIX=""
+  GGML_PREFIX=""
+  if command -v brew >/dev/null 2>&1; then
+    WHISPER_PREFIX="$(brew --prefix whisper-cpp 2>/dev/null || true)"
+    GGML_PREFIX="$(brew --prefix ggml 2>/dev/null || true)"
+  fi
+  # Copy real (non-symlink) dylibs
+  if [[ -n "${WHISPER_PREFIX}" && -d "${WHISPER_PREFIX}/lib" ]]; then
+    find "${WHISPER_PREFIX}/lib" -maxdepth 1 -type f -name 'libwhisper*.dylib' -exec cp -f {} "${LIB_OUT}/" \;
+  fi
+  if [[ -n "${GGML_PREFIX}" && -d "${GGML_PREFIX}/lib" ]]; then
+    find "${GGML_PREFIX}/lib" -maxdepth 1 -type f -name 'libggml*.dylib' -exec cp -f {} "${LIB_OUT}/" \;
+  fi
+  # Common soname symlinks
+  (
+    cd "${LIB_OUT}"
+    for f in libwhisper.*.dylib; do
+      [[ -f "$f" && ! -L "$f" ]] || continue
+      ln -sfn "$f" libwhisper.1.dylib
+      ln -sfn "$f" libwhisper.dylib
+      break
+    done
+    for f in libggml.[0-9]*.dylib; do
+      [[ -f "$f" && ! -L "$f" ]] || continue
+      ln -sfn "$f" libggml.0.dylib 2>/dev/null || true
+      ln -sfn "$f" libggml.dylib 2>/dev/null || true
+      break
+    done
+    for f in libggml-base.[0-9]*.dylib; do
+      [[ -f "$f" && ! -L "$f" ]] || continue
+      ln -sfn "$f" libggml-base.0.dylib 2>/dev/null || true
+      ln -sfn "$f" libggml-base.dylib 2>/dev/null || true
+      break
+    done
+  )
+
+  if command -v install_name_tool >/dev/null 2>&1 && command -v otool >/dev/null 2>&1; then
+    # Point CLI at @loader_path/../lib/*
+    while read -r dep; do
+      case "${dep}" in
+        /usr/lib/*|/System/*) continue ;;
+      esac
+      depbase="$(basename "${dep}")"
+      if [[ -e "${LIB_OUT}/${depbase}" ]]; then
+        install_name_tool -change "${dep}" "@loader_path/../lib/${depbase}" "${OUT_BIN}" 2>/dev/null || true
+      fi
+    done < <(otool -L "${OUT_BIN}" | awk 'NR>1 {print $1}')
+
+    rewrite_lib() {
+      local lib="$1"
+      [[ -f "${lib}" && ! -L "${lib}" ]] || return 0
+      local base; base="$(basename "${lib}")"
+      install_name_tool -id "@loader_path/${base}" "${lib}" 2>/dev/null || true
+      while read -r dep; do
+        case "${dep}" in
+          /usr/lib/*|/System/*|@loader_path/*) continue ;;
+        esac
+        local depbase; depbase="$(basename "${dep}")"
+        if [[ -e "${LIB_OUT}/${depbase}" ]]; then
+          install_name_tool -change "${dep}" "@loader_path/${depbase}" "${lib}" 2>/dev/null || true
+        fi
+      done < <(otool -L "${lib}" | awk 'NR>1 {print $1}')
+    }
+    for lib in "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib; do
+      rewrite_lib "${lib}"
+    done
+    if command -v codesign >/dev/null 2>&1; then
+      for lib in "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib; do
+        [[ -f "${lib}" && ! -L "${lib}" ]] || continue
+        codesign --force --sign - "${lib}" >/dev/null 2>&1 || true
+      done
+      codesign --force --sign - "${OUT_BIN}" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  _n="$(find "${LIB_OUT}" -maxdepth 1 \( -type f -o -type l \) -name 'lib*.dylib' | wc -l | tr -d ' ')"
+  echo "[build-cmspark-whisper]         staged dist/lib (${_n} dylib entries)"
+  if [[ "${_n}" = "0" ]]; then
+    echo "[build-cmspark-whisper] WARNING: no dylibs staged — packaged macOS STT may fail (dyld libwhisper)" >&2
+  fi
+fi
+
 if command -v shasum >/dev/null 2>&1; then
   HASH="$(shasum -a 256 "${OUT_BIN}" | awk '{print $1}')"
 elif command -v sha256sum >/dev/null 2>&1; then

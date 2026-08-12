@@ -66,6 +66,81 @@ export function sha256FileSync(filePath: string): string {
   return hash.digest("hex")
 }
 
+/** Sidecar written by brew/local install — binds primary + dylib digests. */
+export const WHISPER_USER_INSTALL_MANIFEST = "install.manifest.json"
+
+export type WhisperUserInstallManifest = {
+  version: 1
+  primary: string
+  sha256: string
+  files: Record<string, string>
+  installedAt: string
+  source?: string
+}
+
+/** Verify user-install dir has matching install.manifest.json (anti-substitution). */
+export function verifyUserWhisperInstallManifest(
+  destDir: string,
+  primaryPath: string,
+  primaryDigest: string,
+): boolean {
+  try {
+    const manPath = path.join(destDir, WHISPER_USER_INSTALL_MANIFEST)
+    if (!fs.existsSync(manPath)) return false
+    const man = JSON.parse(fs.readFileSync(manPath, "utf8")) as WhisperUserInstallManifest
+    if (man.version !== 1 || typeof man.sha256 !== "string") return false
+    if (man.sha256.toLowerCase() !== primaryDigest.toLowerCase()) return false
+    const primaryBase = path.basename(primaryPath)
+    if (man.primary && man.primary !== primaryBase) return false
+    if (man.files && typeof man.files === "object") {
+      for (const [name, want] of Object.entries(man.files)) {
+        if (name === WHISPER_USER_INSTALL_MANIFEST) continue
+        const fp = path.join(destDir, name)
+        if (!fs.existsSync(fp)) return false
+        const got = sha256FileSync(fp)
+        if (got.toLowerCase() !== String(want).toLowerCase()) return false
+      }
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Write install.manifest.json after staging a user-local whisper install. */
+export function writeUserWhisperInstallManifest(
+  destDir: string,
+  primaryName: string,
+  source?: string,
+): WhisperUserInstallManifest {
+  const primaryPath = path.join(destDir, primaryName)
+  const files: Record<string, string> = {}
+  for (const name of fs.readdirSync(destDir)) {
+    if (name === WHISPER_USER_INSTALL_MANIFEST) continue
+    const fp = path.join(destDir, name)
+    try {
+      if (!fs.statSync(fp).isFile()) continue
+      files[name] = sha256FileSync(fp)
+    } catch {
+      /* skip */
+    }
+  }
+  const man: WhisperUserInstallManifest = {
+    version: 1,
+    primary: primaryName,
+    sha256: files[primaryName] || sha256FileSync(primaryPath),
+    files,
+    installedAt: new Date().toISOString(),
+    source,
+  }
+  fs.writeFileSync(
+    path.join(destDir, WHISPER_USER_INSTALL_MANIFEST),
+    JSON.stringify(man, null, 2),
+    { mode: 0o600 },
+  )
+  return man
+}
+
 /**
  * Resolve whisper binary under search roots. Does not spawn.
  * Spike S4: unit-tested with temp files; production wires package layout.
@@ -81,66 +156,71 @@ export function resolveWhisperBinary(opts: ResolveWhisperBinaryOpts): ResolveWhi
     }
   }
   const names = whisperBinaryBasenames(arch)
-  let found: string | undefined
+  const pin = opts.expectedSha256?.toLowerCase() || null
+  /** Candidates that exist but fail pin — prefer later roots (e.g. user install) over early mismatch. */
+  let mismatch: {
+    path: string
+    sha256: string
+  } | null = null
+
   for (const root of opts.searchRoots) {
     for (const name of names) {
       const p = path.join(root, name)
       try {
-        if (fs.existsSync(p) && fs.statSync(p).isFile()) {
-          found = p
-          break
-        }
+        if (!fs.existsSync(p) || !fs.statSync(p).isFile()) continue
       } catch {
-        /* continue */
+        continue
       }
-    }
-    if (found) break
-  }
-  if (!found) {
-    return {
-      ok: false,
-      reason: "not_found",
-      arch,
-      message: `cmspark-whisper not found under: ${opts.searchRoots.join(", ")}`,
-    }
-  }
-  let digest: string
-  try {
-    digest = sha256FileSync(found)
-  } catch (e: any) {
-    return {
-      ok: false,
-      reason: "unreadable",
-      arch,
-      path: found,
-      message: e?.message || "unreadable binary",
-    }
-  }
-  const pin = opts.expectedSha256?.toLowerCase() || null
-  if (pin) {
-    if (digest !== pin) {
-      return {
-        ok: false,
-        reason: "hash_mismatch",
-        arch,
-        path: found,
-        sha256: digest,
-        message: `SHA256 mismatch for ${found}`,
+      let digest: string
+      try {
+        digest = sha256FileSync(p)
+      } catch (e: any) {
+        return {
+          ok: false,
+          reason: "unreadable",
+          arch,
+          path: p,
+          message: e?.message || "unreadable binary",
+        }
       }
+      if (pin) {
+        if (digest !== pin) {
+          // User-cache: accept only if install.manifest.json digests still match (no bare pin skip).
+          const isUserInstall = p.includes(`${path.sep}bin${path.sep}whisper${path.sep}`)
+          if (isUserInstall && verifyUserWhisperInstallManifest(path.dirname(p), p, digest)) {
+            return { ok: true, path: p, arch, sha256: digest, pinned: false }
+          }
+          if (!mismatch) mismatch = { path: p, sha256: digest }
+          continue
+        }
+        return { ok: true, path: p, arch, sha256: digest, pinned: true }
+      }
+      if (opts.allowUnpinned === false) {
+        if (!mismatch) mismatch = { path: p, sha256: digest }
+        continue
+      }
+      return { ok: true, path: p, arch, sha256: digest, pinned: false }
     }
-    return { ok: true, path: found, arch, sha256: digest, pinned: true }
   }
-  if (opts.allowUnpinned === false) {
+
+  if (mismatch) {
     return {
       ok: false,
       reason: "hash_mismatch",
       arch,
-      path: found,
-      sha256: digest,
-      message: "expectedSha256 required (allowUnpinned=false)",
+      path: mismatch.path,
+      sha256: mismatch.sha256,
+      message: pin
+        ? `SHA256 mismatch for ${mismatch.path}`
+        : "expectedSha256 required (allowUnpinned=false)",
     }
   }
-  return { ok: true, path: found, arch, sha256: digest, pinned: false }
+  return {
+    ok: false,
+    reason: "not_found",
+    arch,
+    message: `cmspark-whisper not found under: ${opts.searchRoots.join(", ")}`,
+  }
 }
 
 /** Default search roots relative to companion package (dev layout). */

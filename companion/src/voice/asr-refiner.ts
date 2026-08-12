@@ -101,8 +101,39 @@ export function guardAsrRefineOutput(raw: string, modelOut: string): AsrRefineGu
   return { ok: true, text, unchanged: text === raw }
 }
 
+/** Max prior-context chars appended for disambiguation (not refined themselves). */
+export const ASR_REFINER_PRIOR_CONTEXT_MAX = 2_000
+
+/**
+ * Build user content for the refiner.
+ * When priorContext is set (e.g. meeting live STT), the model may use it to fix
+ * homophones in the *new* segment only — output must still be the segment alone.
+ */
+export function buildAsrRefineUserContent(raw: string, priorContext?: string): string {
+  const segment = raw ?? ""
+  const prior = (priorContext ?? "").trim()
+  if (!prior) return segment
+  const clipped =
+    prior.length > ASR_REFINER_PRIOR_CONTEXT_MAX
+      ? prior.slice(-ASR_REFINER_PRIOR_CONTEXT_MAX)
+      : prior
+  return (
+    "Previous transcript (context only — do NOT output or rewrite this block):\n" +
+    "<<<\n" +
+    clipped +
+    "\n>>>\n\n" +
+    "Correct ONLY this new ASR segment. Output only the corrected segment text:\n" +
+    segment
+  )
+}
+
 export type RunAsrRefineParams = {
   raw: string
+  /**
+   * Optional prior transcript (meeting live STT / multi-segment).
+   * Used for disambiguation only; guards still compare model out vs `raw`.
+   */
+  priorContext?: string
   config: LlmExtractConfig
   /** Optional external abort (session cancel). */
   signal?: AbortSignal
@@ -132,6 +163,7 @@ export async function runAsrRefine(params: RunAsrRefineParams): Promise<RunAsrRe
 
   const extract = params.extract ?? llmExtract
   const timeout = params.timeoutMs ?? ASR_REFINER_TIMEOUT_MS
+  const userContent = buildAsrRefineUserContent(raw, params.priorContext)
 
   let modelOut: string
   try {
@@ -144,7 +176,7 @@ export async function runAsrRefine(params: RunAsrRefineParams): Promise<RunAsrRe
     // llmExtract uses its own timeout; pass slightly larger and race with signal
     const extractPromise = extract({
       systemPrompt: ASR_REFINER_SYSTEM_PROMPT,
-      userContent: raw,
+      userContent,
       config: params.config,
       temperatureCap: ASR_REFINER_TEMP_CAP,
       timeout: timeout + 1000,

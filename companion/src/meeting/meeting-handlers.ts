@@ -210,7 +210,12 @@ export async function handleMeetingMessage(
     if (!text.trim()) return err("empty_transcript", "empty text", { id })
     const line: TranscriptLine = {
       text: text.trim(),
-      source: msg.source === "stt" ? "stt" : "user_edit",
+      source:
+        msg.source === "stt"
+          ? "stt"
+          : msg.source === "asr_refiner"
+            ? "asr_refiner"
+            : "user_edit",
       speaker: typeof msg.speaker === "string" ? msg.speaker.slice(0, 32) : undefined,
     }
     const m = appendTranscript(id, line)

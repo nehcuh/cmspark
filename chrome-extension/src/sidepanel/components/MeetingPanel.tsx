@@ -29,6 +29,13 @@ import {
 } from "../voice/meeting-caps"
 import { VOICE_DEFAULT_LANG } from "../voice/detect"
 import { mapLocalSttError } from "../voice/error-map"
+import {
+  createSerialRefineQueue,
+  formatMeetingSoftSegmentError,
+  isMeetingSoftSegmentBanner,
+  requestMeetingSegmentRefine,
+} from "../voice/meeting-live-refine"
+import { VOICE_PRIVACY_ACK_V2_CLAUSES } from "../voice/privacy-copy"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
 
 /** Format companion transcript lines for textarea (Speaker: text). */
@@ -124,6 +131,11 @@ export function MeetingPanel(props: {
   /** Optional markdown template for minutes structure (chrome.storage). */
   const [templateMd, setTemplateMd] = useState("")
   const templateMdRef = useRef("")
+  /** After stop: re-run silence-cut / soft paragraph split on full transcript. */
+  const [autoSegmentOnStop, setAutoSegmentOnStop] = useState(true)
+  const autoSegmentOnStopRef = useRef(true)
+  /** Live segment AI refine in flight (opt-in via asrRefinerEnabled). */
+  const [refinePending, setRefinePending] = useState(0)
 
   const adapterRef = useRef<SpeechAdapter | null>(null)
   const captureStartRef = useRef<number | null>(null)
@@ -134,6 +146,9 @@ export function MeetingPanel(props: {
   /** Prevent double meeting.end / finalize. */
   const finalizedRef = useRef(false)
   const titleRef = useRef(title)
+  const refineGenRef = useRef(0)
+  const refineQueueRef = useRef(createSerialRefineQueue())
+  const asrRefinerEnabledRef = useRef(false)
 
   meetingIdRef.current = meetingId
   transcriptRef.current = transcript
@@ -141,6 +156,8 @@ export function MeetingPanel(props: {
   phaseRef.current = capturePhase
   defaultSpeakerRef.current = defaultSpeaker
   templateMdRef.current = templateMd
+  autoSegmentOnStopRef.current = autoSegmentOnStop
+  asrRefinerEnabledRef.current = state.asrRefinerEnabled === true
 
   const companionConnected = state.connectionState === "connected"
   const activeModelId = state.voiceModel?.localModelId || "medium"
@@ -237,31 +254,81 @@ export function MeetingPanel(props: {
     }
   }, [])
 
-  const appendLocalAndRemote = useCallback((chunk: string, id: string | null) => {
-    const t = chunk.trim()
-    if (!t) return
-    const sp = defaultSpeakerRef.current.trim().slice(0, 32)
-    const display = sp ? `${sp}: ${t}` : t
-    setTranscript((prev) => {
-      const next = prev ? `${prev}\n\n${display}` : display
-      transcriptRef.current = next
-      return next
-    })
-    if (id) {
-      sendViaRuntime({
-        type: "meeting.append_transcript",
-        v: 1,
-        id,
-        text: t,
-        source: "stt",
-        speaker: sp || undefined,
+  const appendLocalAndRemote = useCallback(
+    (
+      chunk: string,
+      id: string | null,
+      source: "stt" | "asr_refiner" = "stt",
+    ) => {
+      const t = chunk.trim()
+      if (!t) return
+      const sp = defaultSpeakerRef.current.trim().slice(0, 32)
+      const display = sp ? `${sp}: ${t}` : t
+      setTranscript((prev) => {
+        // Live STT: blank-line between segments = smart paragraph boundary
+        const next = prev ? `${prev}\n\n${display}` : display
+        transcriptRef.current = next
+        return next
       })
-    }
-  }, [])
+      if (id) {
+        sendViaRuntime({
+          type: "meeting.append_transcript",
+          v: 1,
+          id,
+          text: t,
+          source,
+          speaker: sp || undefined,
+        })
+      }
+    },
+    [],
+  )
+
+  /**
+   * Commit a live STT final: optional ADR-024 refine with prior transcript context,
+   * then append (paragraph-separated). Serial queue preserves order.
+   * Pin meeting id at enqueue so late refine never appends to a newer meeting (Pi nit).
+   */
+  const commitLiveSegment = useCallback(
+    (finalChunk: string, meetingIdForAppend: string) => {
+      const raw = finalChunk.trim()
+      if (!raw) return
+      const pinnedId = meetingIdForAppend
+      const wantRefine = asrRefinerEnabledRef.current
+      if (!wantRefine) {
+        appendLocalAndRemote(raw, pinnedId, "stt")
+        return
+      }
+      refineGenRef.current += 1
+      const gen = refineGenRef.current
+      const sid = `mtg-refine-${pinnedId}-${gen}`
+      const prior = transcriptRef.current
+      setRefinePending((n) => n + 1)
+      void refineQueueRef.current
+        .enqueue(async () => {
+          const { text, refined } = await requestMeetingSegmentRefine({
+            sessionId: sid,
+            refineGen: gen,
+            text: raw,
+            priorTranscript: prior,
+          })
+          // Always pin to the meeting that owned this segment (not meetingIdRef after await)
+          appendLocalAndRemote(
+            text || raw,
+            pinnedId,
+            refined ? "asr_refiner" : "stt",
+          )
+        })
+        .finally(() => {
+          setRefinePending((n) => Math.max(0, n - 1))
+        })
+    },
+    [appendLocalAndRemote],
+  )
 
   /**
    * End server session + tear down adapter. Idempotent via finalizedRef.
-   * Always send meeting.end when we have an id so close/unmount cannot leave status=recording.
+   * Drains in-flight AI refine before end / silence-cut / minutes (dual-review nit #2).
    */
   const finalizeCapture = useCallback(
     (opts: { generate: boolean; id: string | null }) => {
@@ -274,13 +341,43 @@ export function MeetingPanel(props: {
       dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
 
       const id = opts.id || meetingIdRef.current
-      if (id) {
-        sendViaRuntime({ type: "meeting.end", v: 1, id })
-      }
-      if (opts.generate) {
+      const wantGenerate = opts.generate
+      const wantSegment = autoSegmentOnStopRef.current
+
+      if (wantGenerate) {
         setBusy(true)
         setPendingGenerate(true)
-        setTimeout(() => {
+      }
+
+      void (async () => {
+        // Wait for segment refine queue (cap ~22s) so minutes see refined text
+        try {
+          const drained = await refineQueueRef.current.drain()
+          if (!drained && wantGenerate) {
+            setError((prev) =>
+              prev ||
+              "部分 AI 纠错未在时限内完成；纪要将基于当前转写（可稍后重新生成）",
+            )
+          }
+        } catch {
+          /* best-effort */
+        }
+
+        if (id) {
+          sendViaRuntime({ type: "meeting.end", v: 1, id })
+        }
+        // Smart segment after refine drain so silence-cut sees full refined blob
+        if (wantSegment && id && transcriptRef.current.trim()) {
+          sendViaRuntime({
+            type: "meeting.apply_silence_cut",
+            v: 1,
+            id,
+            text: transcriptRef.current,
+          })
+        }
+        if (wantGenerate) {
+          // Brief beat for silence-cut server apply before minutes job
+          await new Promise((r) => setTimeout(r, 150))
           const template_md = templateMdRef.current.trim() || undefined
           if (id) {
             sendViaRuntime({
@@ -290,16 +387,15 @@ export function MeetingPanel(props: {
               template_md,
             })
           } else {
-            const text = transcriptRef.current.trim()
             sendViaRuntime({
               type: "meeting.generate_minutes",
               v: 1,
-              text: text || undefined,
+              text: transcriptRef.current.trim() || undefined,
               template_md,
             })
           }
-        }, 100)
-      }
+        }
+      })()
     },
     [destroyAdapter, dispatch, setPhase],
   )
@@ -316,7 +412,7 @@ export function MeetingPanel(props: {
         return
       }
       if (!state.voicePrivacyAckV2) {
-        setError("请先在设置中确认本机语音隐私说明（voice_privacy_ack_v2）后再录会议")
+        setError("请先确认下方「本机语音隐私说明」（或：设置 › 听写 › 启用本机转写）")
         setPhase("idle")
         sendViaRuntime({ type: "meeting.end", v: 1, id })
         return
@@ -340,7 +436,7 @@ export function MeetingPanel(props: {
           onResult: ({ interim, finalChunk }) => {
             if (finalChunk?.trim()) {
               setInterimText("")
-              appendLocalAndRemote(finalChunk, meetingIdRef.current || id)
+              commitLiveSegment(finalChunk, meetingIdRef.current || id)
               return
             }
             // Progressive hypothesis only (M2); do not append until window final.
@@ -352,7 +448,10 @@ export function MeetingPanel(props: {
             if (code === "aborted") return
             const mapped = mapLocalSttError(code)
             if (mapped.severity === "silent") return
-            setError(mapped.message || `转写错误: ${code}`)
+            // Soft = adapter continues; honest copy (segment+audio irreversibly lost).
+            const soft = isMeetingSoftSegmentBanner(code)
+            const msg = mapped.message || `转写错误: ${code}`
+            setError(soft ? formatMeetingSoftSegmentError(msg) : msg)
           },
           onEnd: () => {
             setInterimText("")
@@ -391,7 +490,7 @@ export function MeetingPanel(props: {
     },
     [
       activeModelId,
-      appendLocalAndRemote,
+      commitLiveSegment,
       destroyAdapter,
       finalizeCapture,
       localBinaryReady,
@@ -567,7 +666,7 @@ export function MeetingPanel(props: {
       return
     }
     if (!state.voicePrivacyAckV2) {
-      setError("请先在设置中确认本机语音隐私说明（voice_privacy_ack_v2）")
+      setError("请先确认下方「本机语音隐私说明」（或：设置 › 听写 › 启用本机转写）")
       return
     }
     if (!localModelReady || !localBinaryReady) {
@@ -661,7 +760,7 @@ export function MeetingPanel(props: {
         id,
         text: transcriptRef.current.trim() || undefined,
       })
-      setImportStatus("已应用静音切 / 段落分段（手动标说话人用）")
+      setImportStatus("已应用智能分段（静音/段落切分；说话人仍可手动标）")
     })
   }
 
@@ -735,7 +834,7 @@ export function MeetingPanel(props: {
       return
     }
     if (!state.voicePrivacyAckV2) {
-      setError("导入音频需本机语音隐私确认（voice_privacy_ack_v2）")
+      setError("导入音频需先确认「本机语音隐私说明」（见下方卡片，或设置 › 听写 › 启用本机转写）")
       return
     }
     if (!localModelReady || !localBinaryReady) {
@@ -1024,7 +1123,64 @@ export function MeetingPanel(props: {
           ? " 默认近实时出字（渐进假设，约 8 秒定稿；large 模型仅终稿）。"
           : " 当前为分段终稿模式（可在设置开启实时出字）。"}
         应用场景不会自动开麦。录音与听写互斥。说话人：手动标或实验性自动「发言人N」（非真名识别）；系统混音未支持。
+        段与段之间自动空行分段；可开「录制 AI 纠错」用上文消歧同音字（需已配置 LLM）。
       </div>
+
+      {/* Path B: meeting live STT / audio import requires voice_privacy_ack_v2.
+          Previously only reachable via Settings → 启用本机转写 (easy to miss). */}
+      {!state.voicePrivacyAckV2 && (
+        <div
+          data-testid="meeting-voice-privacy-v2"
+          style={{
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 8,
+            padding: 10,
+            fontSize: 11,
+            lineHeight: 1.45,
+            color: tokens.textSecondary,
+          }}
+        >
+          <div style={{ marginBottom: 6, color: tokens.text, fontWeight: 500 }}>
+            本机语音隐私说明
+          </div>
+          <p style={{ margin: "0 0 6px", fontSize: 10 }}>
+            会议本机录音 / 上传音频转写前须确认。也可在：侧栏 ⋯ → 设置 → 听写 →
+            「启用本机转写」。
+          </p>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {VOICE_PRIVACY_ACK_V2_CLAUSES.map((c) => (
+              <li key={c.slice(0, 24)}>{c}</li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            data-testid="meeting-voice-privacy-v2-accept"
+            onClick={() => {
+              dispatch({ type: "SET_VOICE_PRIVACY_ACK_V2", ack: true })
+              setError(null)
+              // Companion refuses voice.stt.* unless sttEngine=local — flip if model ready.
+              if (localModelReady && localBinaryReady) {
+                // Companion validate requires source:"settings" for set_engine (settings dual fence).
+                sendViaRuntime({
+                  type: "voice.model.set_engine",
+                  engine: "local",
+                  privacy_ack_v2: true,
+                  source: "settings",
+                })
+              }
+            }}
+            style={{ ...btnStyle(true), marginTop: 8, padding: "4px 10px", fontSize: 12 }}
+          >
+            同意本机语音隐私说明
+            {localModelReady && localBinaryReady ? "并启用本机转写" : ""}
+          </button>
+          {!localModelReady || !localBinaryReady ? (
+            <div style={{ marginTop: 6, fontSize: 10, color: tokens.warning }}>
+              模型或本机组件未就绪时：侧栏 ⋯ → 设置 → 听写 → 下载组件/模型 → 启用本机转写。
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {!ack && (
         <div
@@ -1038,7 +1194,7 @@ export function MeetingPanel(props: {
           }}
         >
           <div style={{ marginBottom: 6, color: tokens.text, fontWeight: 500 }}>
-            隐私说明（meeting_privacy_ack_v1）
+            会议隐私说明
           </div>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             <li>会创建本地会话产物（转写 ± 可选音频）。</li>
@@ -1098,6 +1254,7 @@ export function MeetingPanel(props: {
               {capturePhase === "processing" ? " · 分段识别中…" : ""}
               {capturePhase === "starting" ? " · 启动中…" : ""}
               {capturePhase === "stopping" ? " · 结束中…" : ""}
+              {refinePending > 0 ? ` · AI 纠错中(${refinePending})` : ""}
             </>
           ) : (
             "未录制"
@@ -1115,6 +1272,51 @@ export function MeetingPanel(props: {
         )}
       </div>
 
+      <div
+        data-testid="meeting-live-options"
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 12,
+          fontSize: 11,
+          color: tokens.textSecondary,
+          alignItems: "center",
+        }}
+      >
+        <label
+          style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer" }}
+          title="段末将转写发给已配置 LLM 做 correct_only 纠错（同听写 ASR 纠错开关）；会参考上文消歧同音字"
+        >
+          <input
+            type="checkbox"
+            data-testid="meeting-asr-refine"
+            checked={state.asrRefinerEnabled === true}
+            disabled={capturing}
+            onChange={(e) =>
+              dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: e.target.checked })
+            }
+          />
+          录制 AI 纠错（参考上文）
+        </label>
+        <label
+          style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer" }}
+          title="结束录制后自动按静音/段落规则切分转写"
+        >
+          <input
+            type="checkbox"
+            data-testid="meeting-auto-segment-stop"
+            checked={autoSegmentOnStop}
+            onChange={(e) => setAutoSegmentOnStop(e.target.checked)}
+          />
+          结束时智能分段
+        </label>
+        {state.asrRefinerEnabled === true && (
+          <span style={{ fontSize: 10, color: tokens.warning }}>
+            纠错走 Companion LLM；失败时保留原文
+          </span>
+        )}
+      </div>
+
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button type="button" disabled={busy || capturing} onClick={createMeeting} style={btnStyle(false)}>
           新建会议会话
@@ -1123,9 +1325,14 @@ export function MeetingPanel(props: {
           <button
             type="button"
             data-testid="meeting-start-capture"
-            disabled={busy || !ack}
+            disabled={busy || !ack || !state.voicePrivacyAckV2}
             onClick={startLiveCapture}
             style={btnStyle(true)}
+            title={
+              !ack || !state.voicePrivacyAckV2
+                ? "请先确认本机语音隐私与会议隐私说明"
+                : undefined
+            }
           >
             开始录制
           </button>
@@ -1224,8 +1431,9 @@ export function MeetingPanel(props: {
             disabled={busy || capturing || !ack}
             onClick={applySilenceCut}
             style={btnStyle(false)}
+            title="按空行/句号/长度软切分段（非说话人识别）"
           >
-            静音切分段
+            智能分段
           </button>
           <button
             type="button"

@@ -124,6 +124,15 @@ export async function handleVoiceRefineMessage(
   }
 
   const text = typeof msg?.text === "string" ? msg.text : ""
+  // Optional prior transcript for homophone disambiguation (meeting live STT).
+  // Cap length; ignore non-string (strip attack surface).
+  const priorRaw =
+    typeof msg?.priorContext === "string"
+      ? msg.priorContext
+      : typeof msg?.prior_context === "string"
+        ? msg.prior_context
+        : ""
+  const priorContext = priorRaw.length > 2_000 ? priorRaw.slice(-2_000) : priorRaw
   if (!sessionId || sessionId.length > 128) {
     return refineError(sessionId, refineGen, "invalid_session_id", "invalid sessionId")
   }
@@ -154,7 +163,12 @@ export async function handleVoiceRefineMessage(
   const run = deps.runRefine ?? runAsrRefine
   let result: RunAsrRefineResult
   try {
-    result = await run({ raw: text, config: llmCfg, signal: ac.signal })
+    result = await run({
+      raw: text,
+      priorContext: priorContext || undefined,
+      config: llmCfg,
+      signal: ac.signal,
+    })
   } finally {
     inflight.delete(key)
   }

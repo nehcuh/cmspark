@@ -274,10 +274,47 @@ case "${PLATFORM}" in
     esac
     if [ -n "${_WHISPER_BIN}" ]; then
       if [ -f "companion/dist/bin/${_WHISPER_BIN}" ]; then
-        mkdir -p "${STAGING}/bin"
+        mkdir -p "${STAGING}/bin" "${STAGING}/lib"
         cp "companion/dist/bin/${_WHISPER_BIN}" "${STAGING}/bin/"
         chmod +x "${STAGING}/bin/${_WHISPER_BIN}" 2>/dev/null || true
-        echo "  staged bin/${_WHISPER_BIN} (local STT)"
+        # macOS brew-linked whisper-cli needs sibling dylibs under ../lib (rpath).
+        # Windows path already stages *.dll next to the exe; mirror that for Darwin.
+        _dylib_count=0
+        if ls companion/dist/lib/libwhisper*.dylib >/dev/null 2>&1; then
+          cp -f companion/dist/lib/libwhisper*.dylib "${STAGING}/lib/" 2>/dev/null || true
+          cp -f companion/dist/lib/libggml*.dylib "${STAGING}/lib/" 2>/dev/null || true
+          # preserve versioned symlinks if present as files/links
+          for _l in companion/dist/lib/libwhisper*.dylib companion/dist/lib/libggml*.dylib; do
+            [ -e "${_l}" ] || continue
+            _dylib_count=$((_dylib_count + 1))
+          done
+        fi
+        echo "  staged bin/${_WHISPER_BIN} + lib/ (${_dylib_count} dylibs, local STT)"
+        if [ "${_dylib_count}" = "0" ]; then
+          echo "ERROR: no companion/dist/lib/*.dylib — refuse to ship broken macOS local STT (run companion/scripts/build-cmspark-whisper.sh)" >&2
+          exit 1
+        fi
+        # Partial set is also broken (Pi nit): need libwhisper + at least one libggml*
+        _has_whisper=0
+        _has_ggml=0
+        ls "${STAGING}/lib"/libwhisper*.dylib >/dev/null 2>&1 && _has_whisper=1
+        ls "${STAGING}/lib"/libggml*.dylib >/dev/null 2>&1 && _has_ggml=1
+        if [ "${_has_whisper}" != "1" ] || [ "${_has_ggml}" != "1" ]; then
+          echo "ERROR: incomplete dylib set under ${STAGING}/lib (need libwhisper* and libggml*)" >&2
+          ls -la "${STAGING}/lib" >&2 || true
+          exit 1
+        fi
+        # Fail-closed: staged binary must not retain absolute Homebrew load paths
+        if command -v otool >/dev/null 2>&1; then
+          if otool -L "${STAGING}/bin/${_WHISPER_BIN}" 2>/dev/null | grep -E '/opt/homebrew|/usr/local/opt|Cellar' >/dev/null; then
+            echo "ERROR: ${_WHISPER_BIN} still links absolute Homebrew paths — rewrite install names before packaging" >&2
+            otool -L "${STAGING}/bin/${_WHISPER_BIN}" >&2 || true
+            exit 1
+          fi
+        else
+          echo "ERROR: otool not found — cannot verify whisper install names on darwin package" >&2
+          exit 1
+        fi
       else
         echo "WARNING: companion/dist/bin/${_WHISPER_BIN} missing — local STT disabled in package (run companion/scripts/build-cmspark-whisper.sh)" >&2
       fi
