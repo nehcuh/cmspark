@@ -29,7 +29,7 @@ import { pickFolderNative } from "./obsidian/folder-picker"
 import type { SkillEngine } from "./skills/skill-engine"
 import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
-import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled, isMaskedApiKey } from "./config"
+import { getConfig, saveConfig, isMaskedApiKey } from "./config"
 import { chatCreate, generateThreadTitle } from "./llm/adapter"
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
@@ -49,26 +49,16 @@ import { handleVoiceSttMessage } from "./voice/stt-handlers"
 import { handleVoiceRefineMessage } from "./voice/refine-handlers"
 import { handleDictationHoldState } from "./voice/dictation-hotkey"
 import { handleMeetingMessage } from "./meeting/meeting-handlers"
-import {
-  buildUserEnvPublic,
-  deleteUserEnvKeys,
-  loadUserEnv,
-  redactUserEnvVarsForLog,
-  setUserEnvVars,
-} from "./user-env"
 import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
 } from "./security-confirmation"
-import type {
-  McpServerConfig,
-  McpServerMeta,
-} from "./mcp/types"
 import { releaseMultiAgentLlmLoop } from "./orchestrator/llm-loop-gate"
 import {
   handleConfigFamily,
-  hasPrototypePollutionKey,
 } from "./message-router/handlers/config"
+// Residual extract: MCP redaction used by lifecycle
+export { redactMcpServersForBroadcast } from "./message-router/handlers/mcp"
 
 /**
  * Chat-path hostname for site_knowledge selection only.
@@ -1591,194 +1581,27 @@ export async function handleMessage(
       skillEngine.refresh()
       return { type: "skill.list", skills: skillEngine.list(), refreshed: true }
 
-    // --- User env / secrets (ADR-019) — independent of config.json ---
-    // set/delete success response type is deliberately `user_env.updated` (same
-    // snapshot as the multi-client broadcast) — not a distinct ack. Extension UI
-    // (PR-2) must dispatch on `user_env.updated` for both direct reply + broadcast.
-    case "user_env.list": {
-      // Outbound only via buildUserEnvPublic (R2 / S8)
-      const pub = buildUserEnvPublic(loadUserEnv())
-      return { type: "user_env.list", ...pub }
-    }
-    case "user_env.set": {
-      const vars = rest.vars
-      if (!vars || typeof vars !== "object" || Array.isArray(vars)) {
-        return {
-          type: "error",
-          family: "user_env",
-          error: "vars object required",
-          error_code: "INVALID_PAYLOAD",
-        }
-      }
-      const varsObj = vars as Record<string, unknown>
-      // R1 / S3: never log plaintext values
-      logger.info("user_env.set", {
-        keys: Object.keys(varsObj),
-        vars: redactUserEnvVarsForLog(varsObj),
-      })
-      const r = setUserEnvVars(varsObj)
-      if (!r.ok) {
-        return {
-          type: "error",
-          family: "user_env",
-          error: r.error,
-          error_code: r.error_code,
-        }
-      }
-      const payload = { type: "user_env.updated" as const, ...r.public }
-      try {
-        session?.broadcast?.(payload)
-      } catch {
-        /* best-effort */
-      }
-      return payload
-    }
+    // --- User env / secrets (ADR-019) — handlers/user-env.ts ---
+    case "user_env.list":
+    case "user_env.set":
     case "user_env.delete": {
-      const keys = rest.keys
-      if (!Array.isArray(keys)) {
-        return {
-          type: "error",
-          family: "user_env",
-          error: "keys array required",
-          error_code: "INVALID_PAYLOAD",
-        }
-      }
-      const safeKeys = keys.filter((k: unknown): k is string => typeof k === "string")
-      logger.info("user_env.delete", { keys: safeKeys })
-      const r = deleteUserEnvKeys(safeKeys)
-      if (!r.ok) {
-        return {
-          type: "error",
-          family: "user_env",
-          error: r.error,
-          error_code: r.error_code,
-        }
-      }
-      const payload = { type: "user_env.updated" as const, ...r.public }
-      try {
-        session?.broadcast?.(payload)
-      } catch {
-        /* best-effort */
-      }
-      return payload
+      const { handleUserEnvFamily } = await import("./message-router/handlers/user-env")
+      return handleUserEnvFamily(type, rest, session)
     }
 
-    // --- MCP servers ---
-    case "mcp.list": {
-      // SEC: never ship env/headers secrets on the wire (config.updated already redacts)
-      return { type: "mcp.list", servers: redactMcpServersForBroadcast(getMcpManager().listServers()) }
-    }
-    case "mcp.toggle_enabled": {
-      const enabled = !!rest.enabled
-      setMcpEnabled(enabled)
-      // applyConfig is fired via configEvents listener in server.ts
-      return { type: "mcp.list", servers: redactMcpServersForBroadcast(getMcpManager().listServers()) }
-    }
-    case "mcp.add": {
-      const name = String(rest.name || "").trim()
-      const serverCfg = rest.server as McpServerConfig
-      const validation = validateMcpServerConfig(name, serverCfg)
-      if (validation) return { type: "error", error: validation }
-      const config = getConfig()
-      if (config.mcp?.servers?.[name]) {
-        return { type: "error", error: `MCP server "${name}" already exists. Use mcp.update to modify.` }
-      }
-      // SEC-B: stdio = arbitrary local spawn; require origin-bound L2 (force high)
-      // before replaceMcpServers → applyConfig → StdioClientTransport.
-      const stdioGate = await requireMcpStdioSpawnConfirm(session, name, serverCfg, "add")
-      if (stdioGate) return stdioGate
-      const wasEmpty = Object.keys(config.mcp?.servers || {}).length === 0
-      const newServers = { ...(config.mcp?.servers || {}), [name]: serverCfg }
-      replaceMcpServers(newServers)
-      // Auto-enable the global kill-switch when the user adds their first server
-      // after clearing all servers (or on older configs that still had mcp.enabled=false).
-      // Without this, a user-disabled kill-switch leaves the new server disconnected
-      // with no UI surface to recover (see mcp.toggle_enabled UI gap).
-      if (wasEmpty && !config.mcp?.enabled) {
-        setMcpEnabled(true)
-      }
-      return {
-        type: "mcp.servers.updated",
-        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
-      }
-    }
-    case "mcp.update": {
-      const name = String(rest.name || "").trim()
-      const patch = rest.patch as Partial<McpServerConfig>
-      const config = getConfig()
-      const existing = config.mcp?.servers?.[name]
-      if (!existing) return { type: "error", error: `MCP server "${name}" not found` }
-      if (hasPrototypePollutionKey(patch)) {
-        return { type: "error", error: "Invalid config keys detected" }
-      }
-      // Pi REJECT #2: UI re-sends "***" for redacted env/headers — restore disk secrets
-      const merged = mergeMcpServerPreservingSecrets(existing, patch)
-      // Re-validate after merge
-      const validation = validateMcpServerConfig(name, merged)
-      if (validation) return { type: "error", error: validation }
-      // SEC-B: re-confirm when stdio spawn surface changes (incl. enable false→true)
-      if (mcpStdioSpawnSurfaceChanged(existing, merged)) {
-        const stdioGate = await requireMcpStdioSpawnConfirm(session, name, merged, "update")
-        if (stdioGate) return stdioGate
-      }
-      const newServers = { ...(config.mcp?.servers || {}), [name]: merged }
-      replaceMcpServers(newServers)
-      return {
-        type: "mcp.servers.updated",
-        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
-      }
-    }
-    case "mcp.delete": {
-      const name = String(rest.name || "").trim()
-      const config = getConfig()
-      if (!config.mcp?.servers?.[name]) {
-        return { type: "error", error: `MCP server "${name}" not found` }
-      }
-      const newServers = { ...config.mcp.servers }
-      delete newServers[name]
-      replaceMcpServers(newServers)
-      return {
-        type: "mcp.servers.updated",
-        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
-      }
-    }
-    case "mcp.toggle_server": {
-      const name = String(rest.name || "").trim()
-      const enabled = !!rest.enabled
-      const config = getConfig()
-      const existing = config.mcp?.servers?.[name]
-      if (!existing) return { type: "error", error: `MCP server "${name}" not found` }
-      const newServers = { ...(config.mcp?.servers || {}), [name]: { ...existing, enabled } }
-      // Enabling a previously disabled stdio server spawns the process — same trust as add.
-      if (enabled && existing.enabled === false && existing.transport === "stdio") {
-        const stdioGate = await requireMcpStdioSpawnConfirm(
-          session,
-          name,
-          { ...existing, enabled: true },
-          "update",
-        )
-        if (stdioGate) return stdioGate
-      }
-      replaceMcpServers(newServers)
-      return {
-        type: "mcp.servers.updated",
-        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
-      }
-    }
+    // --- MCP servers — handlers/mcp.ts ---
+    case "mcp.list":
+    case "mcp.toggle_enabled":
+    case "mcp.add":
+    case "mcp.update":
+    case "mcp.delete":
+    case "mcp.toggle_server":
     case "mcp.set_selection": {
-      // Per-thread MCP tool selection mode + active server ids (mirrors skill activation).
-      // Persisted via thread.update — handled here as a convenience pass-through.
-      const thread = threadManager.get(rest.thread_id)
-      if (thread) {
-        const patch: any = {}
-        if (rest.mcp_selection_mode) patch.mcp_selection_mode = rest.mcp_selection_mode
-        if (Array.isArray(rest.active_mcp_server_ids)) patch.active_mcp_server_ids = rest.active_mcp_server_ids
-        threadManager.update(rest.thread_id, patch)
-      }
-      return { type: "mcp.selection_updated", thread_id: rest.thread_id }
+      const { handleMcpFamily } = await import("./message-router/handlers/mcp")
+      return handleMcpFamily(type, rest, session, threadManager)
     }
 
-    // --- Apps (App tab, WP2) — delegated to apps/handlers.ts so gate/fs deps
+// --- Apps (App tab, WP2) — delegated to apps/handlers.ts so gate/fs deps
     // stay injectable in tests. Mutations validate+normalize before
     // replaceAppsEntries and broadcast apps.updated (mcp.servers.updated parity).
     case "apps.list":
@@ -3352,242 +3175,4 @@ export async function handleMessage(
   }
 }
 
-// --- Security helpers (hasPrototypePollutionKey → handlers/config.ts) ---
 
-// --- MCP helpers ---
-
-const MCP_VALID_TRUST_LEVELS = new Set(["manual", "first-use", "trusted"])
-const MCP_VALID_TRANSPORTS = new Set(["stdio", "http"])
-const MCP_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/
-
-/**
- * SEC-B: authenticated mcp.add/update stdio must not spawn without L2.
- * Fail closed when no origin-bound confirmation channel (tests without session
- * cannot silently register spawners).
- */
-async function requireMcpStdioSpawnConfirm(
-  session: SessionCallbacks | undefined,
-  name: string,
-  cfg: McpServerConfig,
-  action: "add" | "update",
-): Promise<{ type: "error"; error: string } | null> {
-  if (cfg.transport !== "stdio") return null
-  if (!session?.requestConfirmation) {
-    return {
-      type: "error",
-      error:
-        "MCP stdio server requires interactive L2 confirmation (requestConfirmation channel missing)",
-    }
-  }
-  const cmd = typeof cfg.command === "string" ? cfg.command : ""
-  const args = Array.isArray(cfg.args) ? cfg.args.map(String).join(" ") : ""
-  const cwd = typeof cfg.cwd === "string" ? cfg.cwd : "(default)"
-  const decision = await session.requestConfirmation({
-    toolName: `mcp.${action}_stdio`,
-    dangerousApis: ["child_process.spawn", "mcp.stdio"],
-    code: [
-      `MCP ${action} stdio server "${name}"`,
-      `command: ${cmd}`,
-      `args: ${args}`,
-      `cwd: ${cwd}`,
-      `enabled: ${cfg.enabled !== false}`,
-    ].join("\n"),
-    riskLevel: "high",
-    autoConfirmEligible: false,
-    criticalApis: ["mcp.stdio.spawn"],
-  })
-  if (!decision.approved) {
-    return {
-      type: "error",
-      error: `MCP stdio server ${action} denied (${decision.reason})`,
-    }
-  }
-  return null
-}
-
-/** True when update changes the spawn surface (not mere trust_level / display). */
-function mcpStdioSpawnSurfaceChanged(
-  existing: McpServerConfig,
-  merged: McpServerConfig,
-): boolean {
-  if (merged.transport === "stdio" && existing.transport !== "stdio") return true
-  if (merged.transport !== "stdio") return false
-  // Pi REJECT #1: enabling a disabled stdio server spawns the process
-  const wasEnabled = existing.enabled !== false
-  const willEnable = merged.enabled !== false
-  if (!wasEnabled && willEnable) return true
-  // Narrow after transport check — union members differ by transport.
-  const ex = existing as Extract<McpServerConfig, { transport: "stdio" }> | McpServerConfig
-  const mg = merged as Extract<McpServerConfig, { transport: "stdio" }>
-  const exCmd = "command" in ex ? ex.command : undefined
-  const mgCmd = mg.command
-  if (exCmd !== mgCmd) return true
-  const exArgs = "args" in ex ? ex.args : undefined
-  const mgArgs = mg.args
-  if (JSON.stringify(exArgs || []) !== JSON.stringify(mgArgs || [])) return true
-  const exCwd = "cwd" in ex ? ex.cwd : undefined
-  const mgCwd = mg.cwd
-  if ((exCwd || "") !== (mgCwd || "")) return true
-  const exEnv = "env" in ex ? ex.env : undefined
-  const mgEnv = mg.env
-  if (JSON.stringify(exEnv || {}) !== JSON.stringify(mgEnv || {})) return true
-  return false
-}
-
-/** Restore env/headers when client echoes redacted `***` placeholders (list→edit→save). */
-function restoreMaskedRecord(
-  existing: Record<string, string> | undefined,
-  incoming: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  if (incoming === undefined) return existing
-  const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(incoming)) {
-    if (v === "***" && existing && typeof existing[k] === "string") {
-      out[k] = existing[k]
-    } else if (v !== "***") {
-      out[k] = v
-    }
-    // v === "***" with no existing key → drop (never persist mask literal)
-  }
-  return out
-}
-
-function mergeMcpServerPreservingSecrets(
-  existing: McpServerConfig,
-  patch: Partial<McpServerConfig>,
-): McpServerConfig {
-  const merged = { ...existing, ...patch } as any
-  const exAny = existing as any
-  if (patch && typeof (patch as any).env === "object") {
-    merged.env = restoreMaskedRecord(exAny.env, (patch as any).env)
-  }
-  if (patch && typeof (patch as any).headers === "object") {
-    merged.headers = restoreMaskedRecord(exAny.headers, (patch as any).headers)
-  }
-  return merged as McpServerConfig
-}
-
-/** Mask env/headers on MCP metas for WS list/update broadcasts. */
-export function redactMcpServersForBroadcast(
-  servers: McpServerMeta[] | Array<Record<string, any>>,
-): any[] {
-  return (servers || []).map((s) => {
-    const copy: any = { ...s }
-    if (copy.config && typeof copy.config === "object") {
-      const cfg = { ...copy.config }
-      if (cfg.env && typeof cfg.env === "object") {
-        const env: Record<string, string> = {}
-        for (const k of Object.keys(cfg.env)) env[k] = "***"
-        cfg.env = env
-      }
-      if (cfg.headers && typeof cfg.headers === "object") {
-        const headers: Record<string, string> = {}
-        for (const k of Object.keys(cfg.headers)) headers[k] = "***"
-        cfg.headers = headers
-      }
-      copy.config = cfg
-    }
-    return copy
-  })
-}
-
-/** Returns an error string if invalid, or null if OK. */
-function validateMcpServerConfig(name: string, cfg: McpServerConfig | undefined): string | null {
-  if (!name) return "MCP server name is required"
-  if (!MCP_NAME_PATTERN.test(name)) {
-    return `Invalid MCP server name "${name}": only letters, digits, underscore, and hyphen allowed`
-  }
-  if (!cfg) return "MCP server config is required"
-  if (hasPrototypePollutionKey(cfg)) return "Invalid MCP server config keys"
-  if (!MCP_VALID_TRANSPORTS.has(cfg.transport)) {
-    return `Invalid MCP transport "${cfg.transport}" (must be stdio or http)`
-  }
-  if (cfg.transport === "stdio") {
-    if (!cfg.command || typeof cfg.command !== "string") {
-      return `MCP stdio server "${name}" requires a command`
-    }
-    if (cfg.args !== undefined && !Array.isArray(cfg.args)) return `args must be an array`
-    if (cfg.env !== undefined && (typeof cfg.env !== "object" || Array.isArray(cfg.env))) {
-      return `env must be an object`
-    }
-    if (cfg.cwd !== undefined && typeof cfg.cwd !== "string") return `cwd must be a string`
-  } else {
-    if (!cfg.url || typeof cfg.url !== "string") {
-      return `MCP http server "${name}" requires a url`
-    }
-    try {
-      new URL(cfg.url)
-    } catch {
-      return `MCP http server "${name}" has invalid url: ${cfg.url}`
-    }
-    if (cfg.headers !== undefined && (typeof cfg.headers !== "object" || Array.isArray(cfg.headers))) {
-      return `headers must be an object`
-    }
-  }
-  if (!MCP_VALID_TRUST_LEVELS.has(cfg.trust_level)) {
-    return `Invalid trust_level "${cfg.trust_level}" (must be manual, first-use, or trusted)`
-  }
-  if (cfg.roots !== undefined) {
-    if (!Array.isArray(cfg.roots)) return `roots must be an array`
-    for (const root of cfg.roots) {
-      if (!root || typeof root !== "object" || Array.isArray(root)) {
-        return `each root must be an object with a uri string`
-      }
-      if (typeof root.uri !== "string" || !root.uri) {
-        return `each root must have a non-empty uri string`
-      }
-      if (root.name !== undefined && typeof root.name !== "string") {
-        return `root name must be a string`
-      }
-    }
-  }
-  return null
-}
-
-function isInternalIp(hostname: string): boolean {
-  const h = hostname.toLowerCase().trim()
-
-  // Block localhost variants
-  if (h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "0.0.0.0") {
-    return true
-  }
-
-  // Block DNS rebinding patterns (domains that embed IP addresses or resolve to internal IPs)
-  // e.g., 127.0.0.1.nip.io, 127-0-0-1.local, 192.168.1.1.xip.io
-  if (/\b\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}\b/.test(h)) return true
-  if (/\b127[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}\b/.test(h)) return true
-  if (/\b10[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}\b/.test(h)) return true
-  if (/\b192[-.]168[-.]\d{1,3}[-.]\d{1,3}\b/.test(h)) return true
-
-  // Block private IPv4 ranges
-  const parts = h.split(".").map(Number)
-  if (parts.length === 4 && parts.every(p => !isNaN(p) && p >= 0 && p <= 255)) {
-    // 10.0.0.0/8
-    if (parts[0] === 10) return true
-    // 172.16.0.0/12
-    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true
-    // 192.168.0.0/16
-    if (parts[0] === 192 && parts[1] === 168) return true
-    // 127.0.0.0/8 (loopback)
-    if (parts[0] === 127) return true
-    // 169.254.0.0/16 (link-local)
-    if (parts[0] === 169 && parts[1] === 254) return true
-    // 0.0.0.0/8
-    if (parts[0] === 0) return true
-  }
-
-  // Block IPv6 loopback variants
-  // ::1, ::ffff:127.0.0.1, fe80::1, etc.
-  if (h.startsWith("::1") || h.startsWith("::ffff:127.") || h.startsWith("fe80::") || h.startsWith("fe80:")) {
-    return true
-  }
-  // Block IPv6 private addresses (fc00::/7, includes fd00::/8)
-  if (h.startsWith("fc") || h.startsWith("fd")) {
-    // Validate it's actually an IPv6 address starting with fc/fd
-    if (/^f[c-d][0-9a-f]:/i.test(h) || /^f[c-d][0-9a-f][0-9a-f]:/i.test(h)) return true
-  }
-  // Block IPv6 link-local (fe80::/10)
-  if (/^fe[8-9a-b][0-9a-f]:/i.test(h) || /^fe[8-9a-b][0-9a-f][0-9a-f]:/i.test(h)) return true
-
-  return false
-}

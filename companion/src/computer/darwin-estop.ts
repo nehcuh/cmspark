@@ -22,6 +22,7 @@ import { spawn, type ChildProcess } from "child_process"
 import { createConnection, type Socket } from "net"
 import * as fs from "fs"
 import { resolveHostBinary } from "../host-use/darwin/host-bin"
+import { resolveIntegrityHostBin } from "../host-use/darwin/host-integrity"
 import { logger } from "../logger"
 
 const ESTOP_SOCK_PATH = "/tmp/cmspark-estop.sock"
@@ -100,9 +101,17 @@ async function tryConnectHeld(attempts: number, gapMs: number): Promise<boolean>
 async function spawnEstopOnce(): Promise<EstopResult> {
   unlinkEstopSocket()
   const bin = resolveHostBinary()
-  logger.info("computer.estop.spawn", { bin, sock: ESTOP_SOCK_PATH, owner: "daemon-fallback" })
+  // P2 residual: long-lived host spawn must pass integrity gate (same as spawnHostBin)
+  let safeBin: string
+  try {
+    safeBin = resolveIntegrityHostBin(bin)
+  } catch (err) {
+    logger.warn("computer.estop.integrity_failed", { bin, error: String(err) })
+    return { ok: false, reason: (err as Error).message || "host integrity failed" }
+  }
+  logger.info("computer.estop.spawn", { bin: safeBin, sock: ESTOP_SOCK_PATH, owner: "daemon-fallback" })
 
-  const child = spawn(bin, ["estop", "--socket-path", ESTOP_SOCK_PATH], {
+  const child = spawn(safeBin, ["estop", "--socket-path", ESTOP_SOCK_PATH], {
     detached: false,
     stdio: ["ignore", "ignore", "pipe"],
     env: process.env,

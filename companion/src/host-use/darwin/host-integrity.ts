@@ -167,6 +167,32 @@ export interface SpawnHostBinOpts {
 }
 
 /**
+ * P2 residual: resolve cmspark-host path for *long-lived* spawns (estop, ax-watch)
+ * after the same integrity gate as spawnHostBin. Callers then `spawn(realpath, …)`.
+ * Returns the realpath to exec; throws on integrity failure.
+ */
+export function resolveIntegrityHostBin(bin: string): string {
+  if (process.env.CMSPARK_SKIP_HOST_INTEGRITY === "1") {
+    try {
+      return fs.realpathSync(bin)
+    } catch {
+      return bin
+    }
+  }
+  const pre = checkHostIntegrity(bin)
+  if (!pre.ok) {
+    throw new Error(
+      `[host-integrity] Binary integrity check FAILED — refusing long-lived spawn. ` +
+        `Expected SHA256 ${CMSPARK_HOST_SHA256.slice(0, 16)}… or codesign ` +
+        `Identifier=${CMSPARK_HOST_CODESIGN_ID} inside *.app/Contents/ at ${bin}. ` +
+        `If you just rebuilt, run \`bash companion/src/host-use/darwin/build-host.sh\` ` +
+        `to auto-update the pin. If not, treat the binary as compromised.`,
+    )
+  }
+  return pre.realpath
+}
+
+/**
  * Spawn cmspark-host with integrity gate + post-spawn TOCTOU re-stat.
  *
  * - Hashes the binary from an open fd pre-spawn (matches swift-tray-bridge.ts
