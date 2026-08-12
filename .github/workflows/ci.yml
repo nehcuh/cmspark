@@ -107,3 +107,51 @@ jobs:
         continue-on-error: true
         run: |
           cd chrome-extension && npm audit
+
+      - name: Coverage observation (informational, residual OPS-M / P2)
+        # Node built-in coverage — observe trends, do not fail the build.
+        # Full suite is already gated above; this prints a summary for maintainers.
+        continue-on-error: true
+        run: |
+          cd companion
+          node --experimental-test-coverage --test-coverage-exclude='**/.test-dist/**' \
+            --import tsx --test \
+            tests/tool-catalog-lockstep.test.ts \
+            tests/p2-deep-diagnosis-batch.test.ts \
+            tests/ws-router-validator-lockstep.test.ts \
+            2>&1 | tail -40
+
+  # Residual: multi-OS smoke (build + pure security/lockstep tests).
+  # Full suite stays on ubuntu (build job). Matrix catches platform compile/runtime breaks.
+  smoke-os:
+    name: smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: companion/package-lock.json
+
+      - name: Install + build companion
+        run: |
+          cd companion
+          npm ci
+          npm run build
+
+      - name: Smoke pure tests (no native host required)
+        shell: bash
+        run: |
+          cd companion
+          node --import tsx --test \
+            tests/tool-catalog-lockstep.test.ts \
+            tests/p2-deep-diagnosis-batch.test.ts \
+            tests/security/security-policy.test.ts \
+            tests/ws-router-validator-lockstep.test.ts

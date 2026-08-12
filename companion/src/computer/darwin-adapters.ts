@@ -1002,18 +1002,18 @@ export function startMacAxWindowWatcher(
 ): Promise<UiaWatcher> {
   return new Promise((resolve, reject) => {
     const bin = resolveHostBinary()
-    // P2 SEC-09: long-lived spawn — integrity check before fork (spawnHostBin is one-shot)
-    const { checkHostIntegrity } = require("../host-use/darwin/host-integrity") as typeof import("../host-use/darwin/host-integrity")
-    if (process.env.CMSPARK_SKIP_HOST_INTEGRITY !== "1") {
-      const pre = checkHostIntegrity(bin)
-      if (!pre.ok) {
-        reject(new Error(`[host-integrity] ax-watch refused: binary integrity check failed at ${bin}`))
-        return
-      }
+    // P2 residual: long-lived spawn via resolveIntegrityHostBin (shared with estop)
+    let safeBin: string
+    try {
+      const { resolveIntegrityHostBin } = require("../host-use/darwin/host-integrity") as typeof import("../host-use/darwin/host-integrity")
+      safeBin = resolveIntegrityHostBin(bin)
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)))
+      return
     }
     const args = ["ax-watch", "--pid", String(target.pid)]
     if (opts?.maxSeconds) args.push("--max-seconds", String(opts.maxSeconds))
-    const child = require("child_process").spawn(bin, args, {
+    const child = require("child_process").spawn(safeBin, args, {
       stdio: ["ignore", "pipe", "pipe"],
     })
     const events: any[] = []

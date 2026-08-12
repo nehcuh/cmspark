@@ -47,15 +47,17 @@ type LogLevel = "debug" | "info" | "warn" | "error"
 
 // Extension's cached copy of the companion global config.
 // Kept in sync via config.set (extension-initiated) and config.updated (companion broadcast).
-// Persisted in chrome.storage.local so settings survive service-worker restarts.
+/**
+ * Non-secret LLM/UI prefs mirrored for SW restarts.
+ * P2 residual ARCH-02: NEVER store api_key / vision_api_key here — Companion
+ * config.json is the sole secret SoT (A1 topology).
+ */
 interface ExtensionConfig {
-  api_key: string
   base_url: string
   model_name: string
   temperature?: number
   context_window?: number
   vision_enabled?: boolean
-  vision_api_key?: string
   vision_base_url?: string
   vision_model_name?: string
   vision_timeout_ms?: number
@@ -63,20 +65,42 @@ interface ExtensionConfig {
 }
 let extensionConfig: ExtensionConfig | null = null
 
+/** Strip secrets from a stored blob (migration for pre-ARCH-02 installs). */
+function stripSecretsFromExtensionConfig(raw: Record<string, unknown> | null | undefined): ExtensionConfig {
+  const src = raw || {}
+  return {
+    base_url: typeof src.base_url === "string" ? src.base_url : "",
+    model_name: typeof src.model_name === "string" ? src.model_name : "",
+    temperature: typeof src.temperature === "number" ? src.temperature : undefined,
+    context_window: typeof src.context_window === "number" ? src.context_window : undefined,
+    vision_enabled: typeof src.vision_enabled === "boolean" ? src.vision_enabled : undefined,
+    vision_base_url: typeof src.vision_base_url === "string" ? src.vision_base_url : undefined,
+    vision_model_name: typeof src.vision_model_name === "string" ? src.vision_model_name : undefined,
+    vision_timeout_ms: typeof src.vision_timeout_ms === "number" ? src.vision_timeout_ms : undefined,
+    vision_fallback: typeof src.vision_fallback === "string" ? src.vision_fallback : undefined,
+  }
+}
+
 function loadExtensionConfig() {
   chrome.storage.local.get(["extensionConfig", "extensionLLMConfig"], (result) => {
     if (result.extensionConfig) {
-      extensionConfig = result.extensionConfig as ExtensionConfig
+      const stripped = stripSecretsFromExtensionConfig(result.extensionConfig as Record<string, unknown>)
+      extensionConfig = stripped
+      // Rewrite storage without secrets if old blob still had keys
+      const hadSecrets =
+        !!(result.extensionConfig as any)?.api_key || !!(result.extensionConfig as any)?.vision_api_key
+      if (hadSecrets) {
+        chrome.storage.local.set({ extensionConfig: stripped })
+      }
     } else if (result.extensionLLMConfig) {
-      // Migrate legacy extensionLLMConfig to the new full extensionConfig
+      // Migrate legacy extensionLLMConfig — drop api_key deliberately
       const legacy = result.extensionLLMConfig as any
-      extensionConfig = {
-        api_key: legacy.api_key || "",
+      extensionConfig = stripSecretsFromExtensionConfig({
         base_url: legacy.base_url || "",
         model_name: legacy.model_name || "",
         temperature: legacy.temperature,
         context_window: legacy.context_window,
-      }
+      })
       chrome.storage.local.set({ extensionConfig })
       chrome.storage.local.remove("extensionLLMConfig")
     }
@@ -84,52 +108,28 @@ function loadExtensionConfig() {
 }
 
 /**
- * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
- * This prevents accidentally overwriting a real key with a masked placeholder.
+ * Persist non-secret prefs only. Companion remains sole holder of api keys
+ * (config.set / config.updated never write secrets into chrome.storage).
  */
-function isMaskedApiKey(key: string | undefined | null): boolean {
-  if (!key || typeof key !== "string") return false
-  if (key === "***") return true
-  // Any occurrence of 4+ consecutive asterisks indicates masking.
-  if (key.includes("****")) return true
-  // Some UIs use dots instead of asterisks
-  if (key.includes("....") && key.length >= 10) return true
-  return false
-}
-
-/** Persist the full config locally so it survives SW restarts. */
 function saveExtensionConfig(cfg: Record<string, unknown>) {
   // Support both flat (legacy settings.set) and nested (config.set) formats
   const llm = (cfg.llm as Record<string, unknown> | undefined) ?? cfg
   const vision = cfg.vision as Record<string, unknown> | undefined
 
   const next: ExtensionConfig = {
-    // Skip masked/empty API keys to keep the existing value
-    api_key: typeof llm.api_key === "string" && llm.api_key && !isMaskedApiKey(llm.api_key)
-      ? llm.api_key
-      : (extensionConfig?.api_key || ""),
     base_url: String(llm.base_url ?? extensionConfig?.base_url ?? ""),
     model_name: String(llm.model_name ?? extensionConfig?.model_name ?? ""),
     temperature: llm.temperature !== undefined ? Number(llm.temperature) : extensionConfig?.temperature,
     context_window: llm.context_window !== undefined ? Number(llm.context_window) : extensionConfig?.context_window,
   }
 
-  // Vision: support both flat fields (from extension UI) and nested vision object (from companion)
+  // Vision non-secret fields only
   if (cfg.vision_enabled !== undefined) {
     next.vision_enabled = !!cfg.vision_enabled
   } else if (vision?.enabled !== undefined) {
     next.vision_enabled = !!vision.enabled
   } else if (extensionConfig?.vision_enabled !== undefined) {
     next.vision_enabled = extensionConfig.vision_enabled
-  }
-
-  // Skip masked vision API keys
-  if (cfg.vision_api_key !== undefined && !isMaskedApiKey(cfg.vision_api_key as string)) {
-    next.vision_api_key = cfg.vision_api_key as string
-  } else if (vision?.api_key !== undefined && !isMaskedApiKey(vision.api_key as string)) {
-    next.vision_api_key = vision.api_key as string
-  } else if (extensionConfig?.vision_api_key !== undefined) {
-    next.vision_api_key = extensionConfig.vision_api_key
   }
 
   if (cfg.vision_base_url !== undefined) {
@@ -164,8 +164,9 @@ function saveExtensionConfig(cfg: Record<string, unknown>) {
     next.vision_fallback = extensionConfig.vision_fallback
   }
 
+  // Explicit: never persist api_key / vision_api_key even if present on wire
   extensionConfig = next
-  chrome.storage.local.set({ extensionConfig })
+  chrome.storage.local.set({ extensionConfig: next })
 }
 
 const NOTIFICATION_ID = "cmspark-companion-disconnected"
