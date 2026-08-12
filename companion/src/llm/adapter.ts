@@ -506,16 +506,14 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   )
   const mcpMetaTools = getMcpMetaToolDefinitions(metaCapabilities)
   // ADR-015: narrow LLM-visible tool schemas by thread tool_whitelist (null = full surface).
-  // isToolAllowed still hard-gates execution; filtering reduces orchestrator/worker hallucination.
+  // Use the same isToolAllowed gate as execution (wildcards, fs↔filesystem aliases,
+  // full-autonomy cruise expansion). Prevents "tool offered to model then blocked".
   // Platform filter: omit osascript_eval on non-darwin so the model cannot call a dead tool.
-  // MCP tools stay orthogonal to native pack allowlist (user-scene D8 / 2026-08-06 design).
   let nativeTools: ToolDefinition[] = [...getToolDefinitions(os.platform())]
-  const whitelist = thread?.tool_whitelist
-  if (Array.isArray(whitelist)) {
-    const allowed = new Set(whitelist)
-    nativeTools = nativeTools.filter((t) => allowed.has(t.function.name))
-  }
   let tools: ToolDefinition[] = [...nativeTools, ...mcpTools, ...mcpMetaTools]
+  if (thread) {
+    tools = tools.filter((t) => threadManager.isToolAllowed(threadId, t.function.name))
+  }
 
   // M1/M2 runtime context budget (request-only; disk untouched).
   // Spec: settings-thread-compact-ux §5. Modes: auto | prompt | off; M2 optional.

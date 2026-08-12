@@ -22,11 +22,15 @@
 
 ## Technical Pitfalls
 
-### 线程 tool_whitelist 与无人值守正交；MCP 名 `filesystem` ↔ 别名 `fs`（2026-08-12）
-- **现象**：三旗巡航已开仍 `security.tool_whitelist_blocked`；`mcp__fs__*` 挡 `mcp__filesystem__*`
-- **根因**：`isToolAllowed` **不看** auto_approve/unattended（只免 L2）；旧白名单短名 `fs` 与真实 server id `filesystem` 不一致
-- **修法**：`isMcpToolAllowedByWhitelist` 双向别名；配置写 `mcp__filesystem__*` 或 `null`；改 index 后重启 daemon
-- **纪律**：白名单用 config 里真实 server 名；见 blocked 日志先查 thread.tool_whitelist
+### 线程 tool_whitelist：三旗巡航应扩面；MCP 名 `filesystem` ↔ `fs`（2026-08-12）
+- **现象**：开了无人值守/三旗仍 `tool_whitelist_blocked`（list_tabs/shell）；用户以为权限已全局放开
+- **根因**：
+  1. 旧实现白名单与 L2 **正交**——三旗只免确认，不扩工具面（产品视角不符合）
+  2. 用户在 **新线程**（如 cdl9qs）仍带 `["mcp__filesystem__*"]`，改 dsmgjn 不等于改当前对话
+  3. 只改磁盘 `index.json` 时若 daemon 未重启，`saveIndex` 会用内存旧快照盖回
+  4. `mcp__fs__*` ≠ `mcp__filesystem__*`
+- **修法**：三旗巡航对 **非 worker** 线程 `isToolAllowed` 视为全开；adapter 用同一 gate 过滤 LLM 工具表；别名 fs↔filesystem；改策略走 `thread.update` 或重启
+- **纪律**：查 blocked 的 **thread_id**；全工具 = 该线程 `null` 或三旗；勿假设「无人值守 arm」 alone 放开 shell
 
 ### MCP filesystem 失效 allow-dir 须 prune 回落 home（2026-08-12）
 - **现象**：`args` 残留 `/var/folders/.../cmspark-allow-dir-*` → server dead；`ensureFilesystemAllowlist` 曾「有 path 就不注入」

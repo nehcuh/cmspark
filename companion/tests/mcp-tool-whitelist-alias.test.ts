@@ -2,7 +2,9 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import {
   isMcpToolAllowedByWhitelist,
+  isFullAutonomyCruiseOpen,
   mcpServerIdsForWhitelistMatch,
+  ThreadManager,
 } from "../src/threads/thread-manager"
 
 test("mcpServerIdsForWhitelistMatch: filesystem ↔ fs", () => {
@@ -34,4 +36,38 @@ test("isMcpToolAllowedByWhitelist: mcp__* and exact and meta", () => {
   )
   assert.equal(isMcpToolAllowedByWhitelist(["list_tabs"], "mcp_list_resources"), false)
   assert.equal(isMcpToolAllowedByWhitelist(["mcp_list_resources"], "mcp_list_resources"), true)
+})
+
+test("isFullAutonomyCruiseOpen requires all three flags", () => {
+  assert.equal(isFullAutonomyCruiseOpen({}), false)
+  assert.equal(
+    isFullAutonomyCruiseOpen({
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+      allow_all_schemes: false,
+    }),
+    false,
+  )
+  assert.equal(
+    isFullAutonomyCruiseOpen({
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+      allow_all_schemes: true,
+    }),
+    true,
+  )
+})
+
+test("isToolAllowed: cruise expands restricted thread surface for non-workers", () => {
+  const tm = new ThreadManager()
+  const t = tm.create("cruise-wl")
+  tm.update(t.id, { tool_whitelist: ["mcp__filesystem__*"] })
+
+  assert.equal(tm.isToolAllowed(t.id, "list_tabs", { cruiseOpen: false }), false)
+  assert.equal(tm.isToolAllowed(t.id, "mcp__filesystem__write_file", { cruiseOpen: false }), true)
+  assert.equal(tm.isToolAllowed(t.id, "list_tabs", { cruiseOpen: true }), true)
+  assert.equal(tm.isToolAllowed(t.id, "shell_exec", { cruiseOpen: true }), true)
+
+  tm.update(t.id, { tool_whitelist: null })
+  assert.equal(tm.isToolAllowed(t.id, "list_tabs", { cruiseOpen: false }), true)
 })
