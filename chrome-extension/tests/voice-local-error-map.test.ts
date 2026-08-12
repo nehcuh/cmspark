@@ -45,11 +45,15 @@ test("mapLocalSttError §6.5 known codes", () => {
   })
   assert.deepEqual(mapLocalSttError("resource_conflict"), {
     severity: "banner",
-    message: "本机资源不足（可关闭实验模型后重试）",
+    message: "上一段识别尚未结束，请稍候再试（或结束听写后重开会议）",
   })
   assert.deepEqual(mapLocalSttError("oom"), {
     severity: "banner",
-    message: "本机资源不足（可关闭实验模型后重试）",
+    message: "本机内存不足（可改用 medium 模型或关闭实验模型后重试）",
+  })
+  assert.deepEqual(mapLocalSttError("infer_failed"), {
+    severity: "banner",
+    message: "本机识别失败，请检查本机听写组件/模型后重试",
   })
   assert.deepEqual(mapLocalSttError("aborted"), {
     severity: "silent",

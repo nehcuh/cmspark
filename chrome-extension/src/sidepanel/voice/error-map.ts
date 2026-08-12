@@ -120,8 +120,20 @@ export function mapLocalSttError(code: string): LocalSttUserFacing {
     case "infer_timeout":
       return { severity: "banner", message: "识别超时，请缩短后重试" }
     case "resource_conflict":
+      return {
+        severity: "banner",
+        message: "上一段识别尚未结束，请稍候再试（或结束听写后重开会议）",
+      }
     case "oom":
-      return { severity: "banner", message: "本机资源不足（可关闭实验模型后重试）" }
+      return {
+        severity: "banner",
+        message: "本机内存不足（可改用 medium 模型或关闭实验模型后重试）",
+      }
+    case "infer_failed":
+      return {
+        severity: "banner",
+        message: "本机识别失败，请检查本机听写组件/模型后重试",
+      }
     case "aborted":
       return { severity: "silent", message: "" }
     default:

@@ -485,3 +485,69 @@ test("resolveModelPath reject escape via custom resolver", async () => {
   assert.equal(end.ok, false)
   if (!end.ok) assert.equal(end.code, "model_missing")
 })
+
+test("end maps generic runner errors to infer_failed not resource_conflict", async () => {
+  const dataDir = tempDataDir()
+  const whisperRoot = path.join(dataDir, "models", "whisper")
+  plantReadyModel(whisperRoot)
+  const svc = makeService({
+    dataDir,
+    whisperRoot,
+    runWhisper: async () => {
+      throw new Error("spawn EACCES")
+    },
+  })
+  assert.equal(
+    svc.start(
+      {
+        sessionId: "e1",
+        modelId: "small",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+      },
+      "p",
+    ).ok,
+    true,
+  )
+  svc.chunk("e1", 0, Buffer.from("RIFF...."), "p")
+  const end = await svc.end("e1", 1, "p")
+  assert.equal(end.ok, false)
+  if (!end.ok) {
+    assert.equal(end.code, "infer_failed")
+    assert.match(end.message, /EACCES|spawn/i)
+  }
+})
+
+test("end maps OOM-like runner errors to oom", async () => {
+  const dataDir = tempDataDir()
+  const whisperRoot = path.join(dataDir, "models", "whisper")
+  plantReadyModel(whisperRoot)
+  const svc = makeService({
+    dataDir,
+    whisperRoot,
+    runWhisper: async () => {
+      throw new Error("out of memory: cannot allocate buffer")
+    },
+  })
+  assert.equal(
+    svc.start(
+      {
+        sessionId: "e-oom",
+        modelId: "small",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+      },
+      "p",
+    ).ok,
+    true,
+  )
+  svc.chunk("e-oom", 0, Buffer.from("RIFF...."), "p")
+  const end = await svc.end("e-oom", 1, "p")
+  assert.equal(end.ok, false)
+  if (!end.ok) {
+    assert.equal(end.code, "oom")
+    assert.match(end.message, /out of memory|cannot allocate/i)
+  }
+})
