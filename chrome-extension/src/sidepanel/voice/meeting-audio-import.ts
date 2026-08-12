@@ -10,14 +10,18 @@ import {
   LOCAL_STT_SAMPLE_RATE,
 } from "./local-stt-detect"
 import {
+  MEETING_AUDIO_IMPORT_MAX_DURATION_SEC,
+  MEETING_AUDIO_IMPORT_MAX_FILE_BYTES,
+} from "./meeting-caps"
+import {
   float32ToS16lePcm,
   resampleFloat32Mono,
   splitIntoChunks,
   wrapPcmS16leAsWav,
 } from "./pcm-encode"
 
-/** Soft cap: ~10 min @ 16k mono s16 (~19MB raw pcm) — we segment; reject huge files early. */
-export const MEETING_AUDIO_IMPORT_MAX_FILE_BYTES = 25 * 1024 * 1024
+/** Re-export import caps (P2 long meeting) for callers/tests. */
+export { MEETING_AUDIO_IMPORT_MAX_FILE_BYTES, MEETING_AUDIO_IMPORT_MAX_DURATION_SEC }
 
 /** Per-segment wall for Path B STT (matches classic max). */
 export const MEETING_AUDIO_SEGMENT_MS = LOCAL_STT_MAX_RECORD_MS
@@ -145,12 +149,13 @@ export async function fileToWavSegments(
   if (!(durationSec > 0) || !Number.isFinite(durationSec)) {
     return { ok: false, code: "empty", message: "音频时长无效" }
   }
-  // Hard cap 30 min wall (same absolute continuous cap family)
-  if (durationSec > 30 * 60) {
+  // P2: align with live meeting hard cap (3h)
+  const maxDur = MEETING_AUDIO_IMPORT_MAX_DURATION_SEC
+  if (durationSec > maxDur) {
     return {
       ok: false,
       code: "too_long",
-      message: "音频超过 30 分钟上限，请先裁剪",
+      message: `音频超过 ${Math.round(maxDur / 60)} 分钟上限，请先裁剪`,
     }
   }
 

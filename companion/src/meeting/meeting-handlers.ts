@@ -362,7 +362,7 @@ export async function handleMeetingMessage(
     }
     const text = typeof msg.text === "string" ? msg.text : ""
     if (!text.trim()) return err("empty_transcript", "empty import text")
-    if (text.length > 80_000) return err("too_large", "import text too long (max 80000)")
+    if (text.length > 200_000) return err("too_large", "import text too long (max 200000)")
     let id = typeof msg.id === "string" ? msg.id : ""
     if (!id) {
       const session = createMeeting({
