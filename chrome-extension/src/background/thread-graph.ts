@@ -56,13 +56,57 @@ export function isSnapshotFresh(snap: ThreadGraphSnapshot | null | undefined, no
   return now - snap.ts <= SNAPSHOT_TTL_MS
 }
 
+/**
+ * Runtime allowlist — never trust callers to pass only slim fields.
+ * Drops workspace_root / message previews / tool lists if a future writer is sloppy.
+ */
+export function slimThreadGraphRow(raw: unknown): ThreadGraphSlim | null {
+  if (!raw || typeof raw !== "object") return null
+  const t = raw as Record<string, unknown>
+  const id = typeof t.id === "string" ? t.id : ""
+  if (!id) return null
+  let digest: ThreadGraphSlim["digest"] = null
+  if (t.digest && typeof t.digest === "object") {
+    const d = t.digest as Record<string, unknown>
+    const tags = Array.isArray(d.tags)
+      ? d.tags.filter((x): x is string => typeof x === "string").slice(0, 32)
+      : undefined
+    const bullets = Array.isArray(d.bullets)
+      ? d.bullets.filter((x): x is string => typeof x === "string").slice(0, 12)
+      : undefined
+    digest = {
+      tldr: typeof d.tldr === "string" ? d.tldr.slice(0, 500) : undefined,
+      tags,
+      bullets,
+      stale: typeof d.stale === "boolean" ? d.stale : undefined,
+    }
+  }
+  return {
+    id,
+    alias: typeof t.alias === "string" ? t.alias.slice(0, 200) : undefined,
+    updated_at: typeof t.updated_at === "string" ? t.updated_at : undefined,
+    created_at: typeof t.created_at === "string" ? t.created_at : undefined,
+    agent_role: typeof t.agent_role === "string" ? t.agent_role : undefined,
+    trashed_at:
+      t.trashed_at === null
+        ? null
+        : typeof t.trashed_at === "string"
+          ? t.trashed_at
+          : undefined,
+    digest,
+  }
+}
+
 export async function prepareThreadGraphSnapshot(
-  threads: ThreadGraphSlim[],
+  threads: ThreadGraphSlim[] | unknown[],
   focusId?: string | null,
 ): Promise<ThreadGraphSnapshot> {
-  // Cap to recent N (design §4.2)
-  const live = (threads || [])
-    .filter((t) => t?.id && !t.trashed_at)
+  // Cap to recent N (design §4.2) after runtime slim
+  const slimmed = (threads || [])
+    .map((t) => slimThreadGraphRow(t))
+    .filter((t): t is ThreadGraphSlim => t != null)
+  const live = slimmed
+    .filter((t) => t.id && !t.trashed_at)
     .filter((t) => t.agent_role !== "worker")
   live.sort((a, b) => {
     const ta = new Date(a.updated_at || a.created_at || 0).getTime()

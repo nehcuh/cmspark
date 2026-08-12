@@ -1,0 +1,5565 @@
+# Dual external review context
+batch: thread-graph-obsidian-v11-20260812
+base: HEAD
+time: 20260812-092554
+
+a17f098
+
+M  chrome-extension/src/thread-graph/ThreadGraphApp.tsx
+M  chrome-extension/src/thread-graph/force-layout.ts
+A  chrome-extension/src/thread-graph/tag-colors.ts
+A  chrome-extension/tests/tag-colors.test.ts
+ M companion/src/host-use/darwin/host-integrity.ts
+A  docs/audit/reviews/thread-graph-obsidian-v11-20260812-adversary-synthesis.md
+A  docs/audit/reviews/thread-graph-obsidian-v11-20260812-dual-prompt.md
+A  docs/audit/reviews/thread-graph-obsidian-v11-20260812-scoped.diff
+M  docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
+?? docs/audit/reviews/thread-graph-obsidian-v11-20260812-diff-20260812-092554.patch
+
+## Diff (git diff + staged)
+ .../src/thread-graph/ThreadGraphApp.tsx            |  750 +++++++++---
+ chrome-extension/src/thread-graph/force-layout.ts  |   27 +-
+ chrome-extension/src/thread-graph/tag-colors.ts    |  120 ++
+ chrome-extension/tests/tag-colors.test.ts          |   61 +
+ companion/src/host-use/darwin/host-integrity.ts    |    2 +-
+ ...ph-obsidian-v11-20260812-adversary-synthesis.md |   72 ++
+ ...read-graph-obsidian-v11-20260812-dual-prompt.md |   52 +
+ .../thread-graph-obsidian-v11-20260812-scoped.diff | 1247 ++++++++++++++++++++
+ ...2026-08-11-thread-graph-obsidian-view-design.md |   18 +-
+ 9 files changed, 2148 insertions(+), 201 deletions(-)
+
+diff --git a/chrome-extension/src/thread-graph/ThreadGraphApp.tsx b/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
+index 3539715..d7cb4a6 100644
+--- a/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
++++ b/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
+@@ -1,5 +1,6 @@
+-// Full-page Obsidian-like thread graph (v1).
++// Full-page Obsidian-like thread graph.
+ // Spec: docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
++// v1.1: tag color groups · labels on hover/zoom · floating chrome (pure canvas)
+ 
+ import {
+   useCallback,
+@@ -7,6 +8,7 @@ import {
+   useMemo,
+   useRef,
+   useState,
++  type CSSProperties,
+   type PointerEvent as ReactPointerEvent,
+   type MouseEvent as ReactMouseEvent,
+   type WheelEvent as ReactWheelEvent,
+@@ -28,34 +30,92 @@ import {
+   type ThreadGraphSlim,
+ } from "../background/thread-graph"
+ import { tokens } from "../sidepanel/ui/tokens"
++import {
++  buildTagColorIndex,
++  hexWithAlpha,
++  lightenHex,
++  UNTAGGED_COLOR,
++} from "./tag-colors"
++
++/** Obsidian-adjacent local palette (graph canvas). */
++const G = {
++  canvas: "#0d0f14",
++  edgeHard: "rgba(148, 163, 184, 0.42)",
++  edgeSoft: "rgba(148, 163, 184, 0.18)",
++  edgeDim: "rgba(148, 163, 184, 0.06)",
++  edgeHot: "rgba(165, 180, 252, 0.75)",
++  label: "rgba(226, 232, 240, 0.7)",
++  labelFocus: "rgba(248, 250, 252, 0.95)",
++} as const
++
++/** Labels only when hovering, focused, or zoomed past this scale. */
++const LABEL_ZOOM_THRESHOLD = 1.15
+ 
+ function displayTitle(t: ThreadGraphSlim): string {
+   const a = (t.alias || "").trim()
+-  if (a) return a.length > 28 ? a.slice(0, 27) + "…" : a
++  if (a) return a.length > 22 ? a.slice(0, 21) + "…" : a
+   return `未命名 · ${(t.id || "").slice(0, 6)}`
+ }
+ 
++/** Visual radius — Obsidian-scale dots. */
+ function radiusForDegree(deg: number): number {
+-  return Math.min(22, Math.max(8, 8 + Math.sqrt(deg) * 3.2))
++  return Math.min(7.5, Math.max(2.8, 2.8 + Math.sqrt(deg) * 1.35))
+ }
+ 
++const HIT_PAD = 8
++
++const PANEL_KEY = "cmspark_thread_graph_panel_open"
++
+ export function ThreadGraphApp() {
+   const [snap, setSnap] = useState<ThreadGraphSnapshot | null>(null)
+   const [loadError, setLoadError] = useState<string | null>(null)
+   const [minScore, setMinScore] = useState(0.2)
+   const [showIsolated, setShowIsolated] = useState(false)
+   const [focusId, setFocusId] = useState<string | null>(null)
++  const [hoverId, setHoverId] = useState<string | null>(null)
+   const [query, setQuery] = useState("")
+   const [status, setStatus] = useState("")
++  /** User chrome preference (toolbar toggle only — node-click open is transient). */
++  const [panelOpen, setPanelOpen] = useState(() => {
++    try {
++      return localStorage.getItem(PANEL_KEY) !== "0"
++    } catch {
++      return true
++    }
++  })
++
+   const canvasRef = useRef<HTMLCanvasElement>(null)
+   const nodesRef = useRef<LayoutNode[]>([])
+   const edgesRef = useRef<RelatedEdge[]>([])
+-  const dragRef = useRef<{ id: string; ox: number; oy: number } | null>(null)
++  const dragRef = useRef<{ id: string; ox: number; oy: number; moved: boolean } | null>(null)
+   const panRef = useRef({ x: 0, y: 0 })
+   const scaleRef = useRef(1)
+   const rafRef = useRef(0)
+   const sizeRef = useRef({ w: 800, h: 600 })
+   const simTicksRef = useRef(0)
++  const hoverIdRef = useRef<string | null>(null)
++  const focusIdRef = useRef<string | null>(null)
++  const fittedRef = useRef(false)
++  const layoutSigRef = useRef("")
++  const colorByIdRef = useRef<Map<string, string>>(new Map())
++  const threadsByIdRef = useRef<Map<string, ThreadGraphSlim>>(new Map())
++  const isolatedIdsRef = useRef<Set<string>>(new Set())
++
++  useEffect(() => {
++    hoverIdRef.current = hoverId
++  }, [hoverId])
++  useEffect(() => {
++    focusIdRef.current = focusId
++  }, [focusId])
++
++  const persistPanelPref = useCallback((open: boolean) => {
++    setPanelOpen(open)
++    try {
++      localStorage.setItem(PANEL_KEY, open ? "1" : "0")
++    } catch {
++      /* ignore */
++    }
++  }, [])
+ 
+   const focusFromUrl = useMemo(() => {
+     try {
+@@ -65,7 +125,6 @@ export function ThreadGraphApp() {
+     }
+   }, [])
+ 
+-  // Load snapshot (contract: storage.session only — dual-review nit)
+   useEffect(() => {
+     let cancelled = false
+     ;(async () => {
+@@ -118,7 +177,6 @@ export function ThreadGraphApp() {
+     let nodeIds = inputs.map((t) => t.id)
+     if (!showIsolated) {
+       nodeIds = nodeIds.filter((id) => !isolated.has(id) || id === focusId)
+-      // keep endpoints of edges only
+       const keep = new Set<string>()
+       for (const e of allEdges) {
+         keep.add(e.a)
+@@ -150,19 +208,74 @@ export function ThreadGraphApp() {
+     }
+   }, [threads, minScore, showIsolated, query, focusId])
+ 
+-  // (Re)seed layout when graph structure changes
++  const tagColors = useMemo(() => {
++    const ids = nodesInput.map((n) => n.id)
++    return buildTagColorIndex(threads, ids)
++  }, [threads, nodesInput])
++
++  /** Topology signature — focus/hover must NOT reseed when id set + edges unchanged. */
++  const layoutSignature = useMemo(() => {
++    const ids = nodesInput
++      .map((n) => n.id)
++      .slice()
++      .sort()
++      .join("\0")
++    const degs = nodesInput
++      .map((n) => `${n.id}:${n.degree}`)
++      .slice()
++      .sort()
++      .join("|")
++    const es = edges
++      .map((e) => {
++        const a = e.a < e.b ? e.a : e.b
++        const b = e.a < e.b ? e.b : e.a
++        return `${a}\t${b}\t${e.kind}\t${e.score.toFixed(3)}`
++      })
++      .slice()
++      .sort()
++      .join("|")
++    return `${ids}#${degs}#${es}`
++  }, [nodesInput, edges])
++
++  // Sync color/thread maps during render (avoid one-frame stale ref)
++  colorByIdRef.current = tagColors.colorById
++  threadsByIdRef.current = new Map(threads.map((t) => [t.id, t]))
++  isolatedIdsRef.current = isolatedIds
++
+   useEffect(() => {
+     const { w, h } = sizeRef.current
+     const rMap = new Map(nodesInput.map((n) => [n.id, radiusForDegree(n.degree)]))
+-    nodesRef.current = seedLayoutNodes(
+-      nodesInput.map((n) => n.id),
+-      w,
+-      h,
+-      rMap,
+-    )
+     edgesRef.current = edges
++
++    const sig = layoutSignature
++    if (sig === layoutSigRef.current && nodesRef.current.length > 0) {
++      // Same topology: only refresh radii / edges; keep x,y,pin
++      for (const n of nodesRef.current) {
++        const r = rMap.get(n.id)
++        if (r != null) n.r = r
++      }
++      return
++    }
++    layoutSigRef.current = sig
++
++    const prev = new Map(nodesRef.current.map((n) => [n.id, n]))
++    const ids = nodesInput.map((n) => n.id)
++    const seeded = seedLayoutNodes(ids, w, h, rMap)
++    // Preserve positions for nodes that remain
++    for (const n of seeded) {
++      const p = prev.get(n.id)
++      if (p) {
++        n.x = p.x
++        n.y = p.y
++        n.vx = 0
++        n.vy = 0
++        n.pinned = p.pinned
++      }
++    }
++    nodesRef.current = seeded
+     simTicksRef.current = 0
+-  }, [nodesInput, edges])
++    fittedRef.current = false
++  }, [layoutSignature, nodesInput, edges])
+ 
+   const focusThread = useMemo(
+     () => (focusId ? threads.find((t) => t.id === focusId) || null : null),
+@@ -171,6 +284,7 @@ export function ThreadGraphApp() {
+ 
+   const openThread = useCallback((threadId: string) => {
+     setFocusId(threadId)
++    setPanelOpen(true) // transient open — does not rewrite localStorage pref
+     chrome.runtime.sendMessage(
+       { type: "thread_graph.open_thread", thread_id: threadId },
+       () => {
+@@ -202,22 +316,52 @@ export function ThreadGraphApp() {
+     const ro = new ResizeObserver(resize)
+     ro.observe(parent)
+ 
++    const fitView = () => {
++      const nodes = nodesRef.current
++      if (nodes.length === 0) return
++      const { w, h } = sizeRef.current
++      let minX = Infinity
++      let minY = Infinity
++      let maxX = -Infinity
++      let maxY = -Infinity
++      for (const n of nodes) {
++        minX = Math.min(minX, n.x - n.r)
++        minY = Math.min(minY, n.y - n.r)
++        maxX = Math.max(maxX, n.x + n.r)
++        maxY = Math.max(maxY, n.y + n.r)
++      }
++      const gw = Math.max(40, maxX - minX)
++      const gh = Math.max(40, maxY - minY)
++      const pad = 56
++      const s = Math.min((w - pad * 2) / gw, (h - pad * 2) / gh, 1.35)
++      scaleRef.current = Math.max(0.45, Math.min(1.8, s * 0.92))
++      const cx = (minX + maxX) / 2
++      const cy = (minY + maxY) / 2
++      panRef.current.x = w / 2 - cx * scaleRef.current
++      panRef.current.y = h / 2 - cy * scaleRef.current
++      fittedRef.current = true
++    }
++
+     const draw = () => {
+       const ctx = canvas.getContext("2d")
+       if (!ctx) return
+       const { w, h } = sizeRef.current
+-      // Simulate a few ticks while energy high
+       if (simTicksRef.current < 320 && nodesRef.current.length > 0) {
+         const e = forceLayoutTick(nodesRef.current, edgesRef.current, {
+           width: w,
+           height: h,
+         })
+         simTicksRef.current++
+-        if (e < 0.06 && simTicksRef.current > 50) simTicksRef.current = 999
++        const settled = e < 0.06 && simTicksRef.current > 50
++        const exhausted = simTicksRef.current >= 320
++        if (settled || exhausted) {
++          simTicksRef.current = 999
++          if (!fittedRef.current) fitView()
++        }
+       }
+ 
+       ctx.clearRect(0, 0, w, h)
+-      ctx.fillStyle = tokens.bgMuted
++      ctx.fillStyle = G.canvas
+       ctx.fillRect(0, 0, w, h)
+ 
+       ctx.save()
+@@ -225,50 +369,90 @@ export function ThreadGraphApp() {
+       ctx.scale(scaleRef.current, scaleRef.current)
+ 
+       const byId = new Map(nodesRef.current.map((n) => [n.id, n]))
++      const active = hoverIdRef.current || focusIdRef.current
++      let hot: Set<string> | null = null
++      if (active) {
++        hot = new Set([active])
++        for (const e of edgesRef.current) {
++          if (e.a === active) hot.add(e.b)
++          if (e.b === active) hot.add(e.a)
++        }
++      }
++      const scale = scaleRef.current
++      const colors = colorByIdRef.current
+ 
+-      // Edges
+       for (const e of edgesRef.current) {
+         const a = byId.get(e.a)
+         const b = byId.get(e.b)
+         if (!a || !b) continue
++        const hard = e.kind === "hard"
++        const isHot = hot ? hot.has(e.a) && hot.has(e.b) : false
++        const isDim = hot != null && !isHot
+         ctx.beginPath()
+         ctx.moveTo(a.x, a.y)
+         ctx.lineTo(b.x, b.y)
+-        const hard = e.kind === "hard"
+-        // Canvas has no CSS alpha tokens — stroke solid token + globalAlpha
+-        ctx.strokeStyle = hard ? tokens.accent : tokens.textMuted
+-        ctx.globalAlpha = hard ? 0.45 : 0.55
+-        if (!hard) ctx.setLineDash([4, 4])
++        if (isDim) {
++          ctx.strokeStyle = G.edgeDim
++          ctx.globalAlpha = 1
++        } else if (isHot) {
++          ctx.strokeStyle = G.edgeHot
++          ctx.globalAlpha = hard ? 0.9 : 0.55
++        } else {
++          ctx.strokeStyle = hard ? G.edgeHard : G.edgeSoft
++          ctx.globalAlpha = 1
++        }
++        if (!hard) ctx.setLineDash([2.5, 3.5])
+         else ctx.setLineDash([])
+-        ctx.lineWidth = Math.min(4, 1 + e.score * 2.5)
++        const base = hard ? 0.55 + e.score * 0.7 : 0.4 + e.score * 0.45
++        ctx.lineWidth = Math.min(1.8, base) / Math.max(0.6, scale)
+         ctx.stroke()
+         ctx.setLineDash([])
+         ctx.globalAlpha = 1
+       }
+ 
+-      // Nodes
+-      const q = query.trim().toLowerCase()
+       for (const n of nodesRef.current) {
+-        const t = threads.find((x) => x.id === n.id)
++        const t = threadsByIdRef.current.get(n.id)
+         const title = t ? displayTitle(t) : n.id.slice(0, 6)
+-        const isFocus = n.id === focusId
+-        const isIso = isolatedIds.has(n.id)
++        const isFocus = n.id === focusIdRef.current
++        const isHover = n.id === hoverIdRef.current
++        const isIso = isolatedIdsRef.current.has(n.id)
++        const inHot = hot ? hot.has(n.id) : true
++        const dimmed = hot != null && !inHot
++        const baseColor = colors.get(n.id) || UNTAGGED_COLOR
++
++        if (isFocus || isHover) {
++          ctx.beginPath()
++          ctx.arc(n.x, n.y, n.r + 3.5, 0, Math.PI * 2)
++          ctx.fillStyle = hexWithAlpha(baseColor, isFocus ? 0.28 : 0.18)
++          ctx.fill()
++        }
+ 
+         ctx.beginPath()
+         ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2)
+-        ctx.fillStyle = isFocus ? tokens.accentSoft : tokens.bgElevated
+-        ctx.globalAlpha = isIso && !isFocus ? 0.45 : 1
++        if (isFocus) {
++          ctx.fillStyle = lightenHex(baseColor, 0.45)
++        } else if (isHover) {
++          ctx.fillStyle = lightenHex(baseColor, 0.28)
++        } else if (dimmed || (isIso && !isFocus)) {
++          ctx.fillStyle = hexWithAlpha(baseColor, 0.28)
++        } else {
++          ctx.fillStyle = baseColor
++        }
++        ctx.globalAlpha = dimmed ? 0.5 : 1
+         ctx.fill()
+-        ctx.strokeStyle = isFocus ? tokens.accent : tokens.borderStrong
+-        ctx.lineWidth = isFocus ? 2.5 : 1.2
+-        ctx.stroke()
+         ctx.globalAlpha = 1
+ 
+-        ctx.fillStyle = tokens.text
+-        ctx.font = `${isFocus ? 12 : 11}px ${tokens.font}`
+-        ctx.textAlign = "center"
+-        ctx.textBaseline = "top"
+-        ctx.fillText(title, n.x, n.y + n.r + 3)
++        // Labels: only hover / focus / deep zoom (not always-on)
++        const showLabel =
++          isFocus || isHover || (scale >= LABEL_ZOOM_THRESHOLD && !dimmed)
++        if (showLabel) {
++          ctx.fillStyle = isFocus || isHover ? G.labelFocus : G.label
++          const fontPx = (isFocus ? 10.5 : 9) / Math.max(0.75, Math.min(1.25, scale))
++          ctx.font = `${fontPx}px ${tokens.font}`
++          ctx.textAlign = "center"
++          ctx.textBaseline = "top"
++          ctx.fillText(title, n.x, n.y + n.r + 2.5)
++        }
+       }
+ 
+       ctx.restore()
+@@ -279,19 +463,22 @@ export function ThreadGraphApp() {
+       ro.disconnect()
+       cancelAnimationFrame(rafRef.current)
+     }
+-  }, [threads, focusId, query, isolatedIds])
++  }, [])
+ 
+   const hitTest = (clientX: number, clientY: number): LayoutNode | null => {
+     const canvas = canvasRef.current
+     if (!canvas) return null
+     const rect = canvas.getBoundingClientRect()
+-    const x = (clientX - rect.left - panRef.current.x) / scaleRef.current
+-    const y = (clientY - rect.top - panRef.current.y) / scaleRef.current
++    const scale = Math.max(0.001, scaleRef.current)
++    const x = (clientX - rect.left - panRef.current.x) / scale
++    const y = (clientY - rect.top - panRef.current.y) / scale
++    // Screen-constant hit pad so tiny dots stay clickable when zoomed out
++    const pad = HIT_PAD / scale
+     let best: LayoutNode | null = null
+     let bestD = Infinity
+     for (const n of nodesRef.current) {
+       const d = Math.hypot(n.x - x, n.y - y)
+-      if (d <= n.r + 4 && d < bestD) {
++      if (d <= n.r + pad && d < bestD) {
+         best = n
+         bestD = d
+       }
+@@ -299,24 +486,58 @@ export function ThreadGraphApp() {
+     return best
+   }
+ 
++  const endDrag = (ev?: ReactPointerEvent) => {
++    const drag = dragRef.current
++    if (drag && drag.id !== "__pan__") {
++      const n = nodesRef.current.find((x) => x.id === drag.id)
++      if (n) {
++        n.vx = 0
++        n.vy = 0
++        // Sticky pin only after real drag (§3.4); pure click must not freeze node
++        n.pinned = drag.moved
++      }
++    }
++    if (ev?.target && "releasePointerCapture" in (ev.target as Element)) {
++      try {
++        ;(ev.target as HTMLElement).releasePointerCapture?.(ev.pointerId)
++      } catch {
++        /* already released */
++      }
++    }
++    dragRef.current = null
++  }
++
+   const onPointerDown = (ev: ReactPointerEvent) => {
+     const n = hitTest(ev.clientX, ev.clientY)
+     if (n) {
+-      n.pinned = true
+-      dragRef.current = { id: n.id, ox: ev.clientX, oy: ev.clientY }
++      n.pinned = true // temporary while dragging
++      dragRef.current = { id: n.id, ox: ev.clientX, oy: ev.clientY, moved: false }
+       setFocusId(n.id)
+-      simTicksRef.current = 0
++      setPanelOpen(true) // transient — not preference write
++      if (simTicksRef.current >= 999) simTicksRef.current = 280
+       ;(ev.target as HTMLElement).setPointerCapture?.(ev.pointerId)
+       return
+     }
+-    dragRef.current = { id: "__pan__", ox: ev.clientX, oy: ev.clientY }
++    // blank click: clear focus, start pan (capture so leave doesn't abort)
++    setFocusId(null)
++    dragRef.current = { id: "__pan__", ox: ev.clientX, oy: ev.clientY, moved: false }
++    ;(ev.target as HTMLElement).setPointerCapture?.(ev.pointerId)
+   }
+ 
+   const onPointerMove = (ev: ReactPointerEvent) => {
+     const drag = dragRef.current
+-    if (!drag) return
++    if (!drag) {
++      const n = hitTest(ev.clientX, ev.clientY)
++      const id = n?.id ?? null
++      if (id !== hoverIdRef.current) {
++        hoverIdRef.current = id
++        setHoverId(id)
++      }
++      return
++    }
+     const dx = ev.clientX - drag.ox
+     const dy = ev.clientY - drag.oy
++    if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true
+     drag.ox = ev.clientX
+     drag.oy = ev.clientY
+     if (drag.id === "__pan__") {
+@@ -333,13 +554,18 @@ export function ThreadGraphApp() {
+     }
+   }
+ 
+-  const onPointerUp = (_ev: ReactPointerEvent) => {
+-    const drag = dragRef.current
+-    if (drag && drag.id !== "__pan__") {
+-      const n = nodesRef.current.find((x) => x.id === drag.id)
+-      if (n) n.pinned = false
+-    }
+-    dragRef.current = null
++  const onPointerUp = (ev: ReactPointerEvent) => {
++    endDrag(ev)
++  }
++
++  const onPointerLeave = () => {
++    // With pointer capture, leave should not end drag mid-gesture
++    hoverIdRef.current = null
++    setHoverId(null)
++  }
++
++  const onPointerCancel = (ev: ReactPointerEvent) => {
++    endDrag(ev)
+   }
+ 
+   const onDoubleClick = (ev: ReactMouseEvent) => {
+@@ -349,16 +575,25 @@ export function ThreadGraphApp() {
+ 
+   const onWheel = (ev: ReactWheelEvent) => {
+     ev.preventDefault()
++    const canvas = canvasRef.current
++    if (!canvas) return
++    const rect = canvas.getBoundingClientRect()
++    const mx = ev.clientX - rect.left
++    const my = ev.clientY - rect.top
++    const prev = scaleRef.current
+     const factor = ev.deltaY > 0 ? 0.92 : 1.08
+-    scaleRef.current = Math.min(3, Math.max(0.35, scaleRef.current * factor))
++    const next = Math.min(3.2, Math.max(0.28, prev * factor))
++    panRef.current.x = mx - ((mx - panRef.current.x) / prev) * next
++    panRef.current.y = my - ((my - panRef.current.y) / prev) * next
++    scaleRef.current = next
+   }
+ 
+   if (loadError) {
+     return (
+       <div style={styles.page}>
+-        <header style={styles.header}>
+-          <strong>关联图谱</strong>
+-        </header>
++        <div style={styles.floatBar}>
++          <strong style={styles.barTitle}>关联图谱</strong>
++        </div>
+         <div style={styles.empty}>{loadError}</div>
+       </div>
+     )
+@@ -366,82 +601,141 @@ export function ThreadGraphApp() {
+ 
+   const hasNodes = nodesInput.length > 0
+   const hasEdges = edges.length > 0
++  const groupsPreview = tagColors.groups.slice(0, 12)
+ 
+   return (
+     <div style={styles.page}>
+-      <header style={styles.header}>
+-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+-          <strong style={{ fontSize: 15 }}>关联图谱</strong>
+-          <span style={styles.meta}>
+-            边 = 共标签（实线）+ 要点相似（虚线）· 本地计算 · 不改默认时间轴
+-          </span>
+-        </div>
+-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
++      {/* Floating top toolbar */}
++      <div style={styles.floatBar} role="toolbar" aria-label="图谱工具栏">
++        <strong style={styles.barTitle}>关联图谱</strong>
++        <input
++          style={styles.search}
++          placeholder="搜索会话 / 标签"
++          value={query}
++          onChange={(e) => setQuery(e.target.value)}
++        />
++        <label style={styles.check}>
+           <input
+-            style={styles.search}
+-            placeholder="搜索会话 / 标签"
+-            value={query}
+-            onChange={(e) => setQuery(e.target.value)}
++            type="checkbox"
++            checked={showIsolated}
++            onChange={(e) => setShowIsolated(e.target.checked)}
+           />
+-          <label style={styles.check}>
+-            <input
+-              type="checkbox"
+-              checked={showIsolated}
+-              onChange={(e) => setShowIsolated(e.target.checked)}
+-            />
+-            显示孤立点
+-          </label>
+-          <label style={styles.check}>
+-            强度
+-            <input
+-              type="range"
+-              min={0.1}
+-              max={0.5}
+-              step={0.05}
+-              value={minScore}
+-              onChange={(e) => setMinScore(Number(e.target.value))}
+-            />
+-            <span style={{ width: 32 }}>{minScore.toFixed(2)}</span>
+-          </label>
+-        </div>
+-      </header>
++          孤立点
++        </label>
++        <label style={styles.check}>
++          强度
++          <input
++            type="range"
++            min={0.1}
++            max={0.5}
++            step={0.05}
++            value={minScore}
++            onChange={(e) => setMinScore(Number(e.target.value))}
++            style={{ width: 72, accentColor: tokens.darkAccent }}
++          />
++          <span style={{ width: 28, fontVariantNumeric: "tabular-nums" }}>
++            {minScore.toFixed(2)}
++          </span>
++        </label>
++        <span style={styles.barMeta}>
++          {nodesInput.length} 点 · {edges.length} 边
++          {threads.length >= 300 ? " · 近 300" : ""}
++        </span>
++        <button
++          type="button"
++          style={styles.barBtn}
++          onClick={() => persistPanelPref(!panelOpen)}
++          aria-pressed={panelOpen}
++          title={panelOpen ? "收起侧栏" : "展开侧栏"}
++        >
++          {panelOpen ? "收起面板" : "图例 · 焦点"}
++        </button>
++      </div>
++
++      {/* Floating side panel */}
++      {panelOpen && (
++        <aside style={styles.floatPanel} aria-label="图例与焦点">
++          <div style={styles.panelHead}>
++            <span style={styles.asideTitle}>面板</span>
++            <button
++              type="button"
++              style={styles.iconBtn}
++              onClick={() => persistPanelPref(false)}
++              aria-label="关闭面板"
++            >
++              ✕
++            </button>
++          </div>
+ 
+-      <div style={styles.body}>
+-        <aside style={styles.aside}>
+           <div style={styles.asideSection}>
+-            <div style={styles.asideTitle}>图例</div>
++            <div style={styles.asideTitle}>边</div>
+             <div style={styles.legendRow}>
+-              <span style={{ ...styles.legendLine, borderColor: tokens.accent, opacity: 0.6 }} />
++              <span style={{ ...styles.legendLine, borderColor: "rgba(165, 180, 252, 0.7)" }} />
+               共标签（硬边）
+             </div>
+             <div style={styles.legendRow}>
+               <span
+                 style={{
+                   ...styles.legendLine,
+-                  borderColor: tokens.textMuted,
++                  borderColor: "rgba(148, 163, 184, 0.45)",
+                   borderStyle: "dashed",
+-                  opacity: 0.85,
+                 }}
+               />
+               要点相似（软边）
+             </div>
+-            <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 8, lineHeight: 1.45 }}>
+-              节点 {nodesInput.length} · 边 {edges.length}
+-              {threads.length >= 300 ? " · 仅最近 300 会话" : ""}
++            <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 6, lineHeight: 1.4 }}>
++              标签默认隐藏 · 悬停 / 放大后显示
+             </div>
+           </div>
+ 
++          <div style={styles.asideSection}>
++            <div style={styles.asideTitle}>颜色组（主标签）</div>
++            {groupsPreview.length === 0 ? (
++              <div style={{ fontSize: 11, color: tokens.darkMuted }}>暂无标签</div>
++            ) : (
++              <div style={styles.colorGroups}>
++                {groupsPreview.map((g) => (
++                  <div key={g.tag} style={styles.colorRow}>
++                    <span style={{ ...styles.colorDot, background: g.color }} />
++                    <span style={styles.colorTag} title={g.tag}>
++                      {g.tag}
++                    </span>
++                    <span style={styles.colorCount}>{g.count}</span>
++                  </div>
++                ))}
++                {tagColors.groups.length > groupsPreview.length && (
++                  <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 4 }}>
++                    +{tagColors.groups.length - groupsPreview.length} 组
++                  </div>
++                )}
++              </div>
++            )}
++          </div>
++
+           <div style={styles.asideSection}>
+             <div style={styles.asideTitle}>焦点</div>
+             {focusThread ? (
+               <>
+-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
++                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: tokens.darkText }}>
+                   {displayTitle(focusThread)}
+                 </div>
+                 {(focusThread.digest?.tags || []).length > 0 && (
+                   <div style={styles.tags}>
+                     {(focusThread.digest?.tags || []).map((tg) => (
+-                      <span key={tg} style={styles.tag}>
++                      <span
++                        key={tg}
++                        style={{
++                          ...styles.tag,
++                          background: hexWithAlpha(
++                            tagColors.colorById.get(focusThread.id) || UNTAGGED_COLOR,
++                            0.2,
++                          ),
++                          color: lightenHex(
++                            tagColors.colorById.get(focusThread.id) || UNTAGGED_COLOR,
++                            0.35,
++                          ),
++                        }}
++                      >
+                         {tg}
+                       </span>
+                     ))}
+@@ -450,152 +744,250 @@ export function ThreadGraphApp() {
+                 {focusThread.digest?.tldr && (
+                   <p style={styles.tldr}>{focusThread.digest.tldr}</p>
+                 )}
+-                <button type="button" style={styles.primaryBtn} onClick={() => openThread(focusThread.id)}>
++                <button
++                  type="button"
++                  style={styles.primaryBtn}
++                  onClick={() => openThread(focusThread.id)}
++                >
+                   打开会话
+                 </button>
+-                <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 6 }}>
++                <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 6 }}>
+                   双击节点也可打开 · 图谱保持打开
+                 </div>
+               </>
+             ) : (
+-              <div style={{ fontSize: 12, color: tokens.textSecondary }}>单击节点查看详情</div>
++              <div style={{ fontSize: 12, color: tokens.darkMuted }}>
++                单击节点查看详情 · 单击空白取消
++              </div>
+             )}
+           </div>
+ 
+           {status && <div style={styles.status}>{status}</div>}
+         </aside>
++      )}
+ 
+-        <main style={styles.main}>
+-          {!hasNodes && (
+-            <div style={styles.empty}>
+-              {threads.length === 0
+-                ? "暂无会话"
+-                : !hasEdges
+-                  ? "还没有关联边（或节点均为孤立）。请先在 Side Panel ☰ →「为未标注提取要点」生成标签，再重新打开图谱；也可勾选「显示孤立点」查看全部会话。"
+-                  : "没有可显示的节点。试试开启「显示孤立点」，或降低强度阈值 / 清空搜索。"}
+-            </div>
+-          )}
+-          {hasNodes && !hasEdges && (
+-            <div style={styles.emptyBanner}>
+-              还没有关联边。请先在 Side Panel ☰ →「为未标注提取要点」生成标签后再打开图谱。
+-            </div>
+-          )}
+-          <canvas
+-            ref={canvasRef}
+-            style={styles.canvas}
+-            onPointerDown={onPointerDown}
+-            onPointerMove={onPointerMove}
+-            onPointerUp={onPointerUp}
+-            onPointerLeave={onPointerUp}
+-            onDoubleClick={onDoubleClick}
+-            onWheel={onWheel}
+-          />
+-        </main>
+-      </div>
++      {/* Full-bleed canvas */}
++      <main style={styles.main}>
++        {!hasNodes && (
++          <div style={styles.empty}>
++            {threads.length === 0
++              ? "暂无会话"
++              : !hasEdges
++                ? "还没有关联边（或节点均为孤立）。请先在 Side Panel ☰ →「为未标注提取要点」生成标签，再重新打开图谱；也可勾选「孤立点」查看全部会话。"
++                : "没有可显示的节点。试试开启「孤立点」，或降低强度阈值 / 清空搜索。"}
++          </div>
++        )}
++        {hasNodes && !hasEdges && (
++          <div style={styles.emptyBanner}>
++            还没有关联边。请先在 Side Panel ☰ →「为未标注提取要点」生成标签后再打开图谱。
++          </div>
++        )}
++        <canvas
++          ref={canvasRef}
++          style={styles.canvas}
++          onPointerDown={onPointerDown}
++          onPointerMove={onPointerMove}
++          onPointerUp={onPointerUp}
++          onPointerLeave={onPointerLeave}
++          onPointerCancel={onPointerCancel}
++          onDoubleClick={onDoubleClick}
++          onWheel={onWheel}
++        />
++      </main>
+     </div>
+   )
+ }
+ 
+-const styles: Record<string, React.CSSProperties> = {
++const glass: CSSProperties = {
++  background: "rgba(20, 24, 32, 0.88)",
++  border: `1px solid ${tokens.darkBorder}`,
++  boxShadow: "0 8px 28px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset",
++  backdropFilter: "blur(12px)",
++  WebkitBackdropFilter: "blur(12px)",
++}
++
++const styles: Record<string, CSSProperties> = {
+   page: {
+-    display: "flex",
+-    flexDirection: "column",
++    position: "relative",
+     height: "100vh",
+     margin: 0,
+     fontFamily: tokens.font,
+-    background: tokens.bg,
+-    color: tokens.text,
++    background: G.canvas,
++    color: tokens.darkText,
++    overflow: "hidden",
+   },
+-  header: {
++  floatBar: {
++    ...glass,
++    position: "absolute",
++    zIndex: 10,
++    top: 12,
++    left: 12,
++    right: 12,
++    maxWidth: "calc(100% - 24px)",
+     display: "flex",
+     flexWrap: "wrap",
+-    gap: 10,
+     alignItems: "center",
+-    justifyContent: "space-between",
+-    padding: "10px 14px",
+-    borderBottom: `1px solid ${tokens.border}`,
+-    background: tokens.bgElevated,
++    gap: 10,
++    padding: "8px 12px",
++    borderRadius: 12,
++    pointerEvents: "auto",
+   },
+-  meta: { fontSize: 11, color: tokens.textMuted },
+-  search: {
+-    border: `1px solid ${tokens.border}`,
++  barTitle: {
++    fontSize: 13,
++    fontWeight: 650,
++    letterSpacing: "0.02em",
++    marginRight: 4,
++  },
++  barMeta: {
++    fontSize: 11,
++    color: tokens.darkMuted,
++    marginLeft: "auto",
++  },
++  barBtn: {
++    border: `1px solid ${tokens.darkBorder}`,
+     borderRadius: tokens.radiusMd,
++    background: "rgba(129, 140, 248, 0.12)",
++    color: tokens.darkAccent,
+     padding: "5px 10px",
++    fontSize: 11,
++    fontWeight: 600,
++    cursor: "pointer",
++    fontFamily: tokens.font,
++  },
++  search: {
++    border: `1px solid ${tokens.darkBorder}`,
++    borderRadius: tokens.radiusMd,
++    padding: "4px 9px",
+     fontSize: 12,
+-    minWidth: 160,
++    minWidth: 140,
++    maxWidth: 200,
+     fontFamily: tokens.font,
++    background: "rgba(11, 13, 18, 0.65)",
++    color: tokens.darkText,
++    outline: "none",
+   },
+   check: {
+     display: "inline-flex",
+     alignItems: "center",
+     gap: 4,
+     fontSize: 11,
+-    color: tokens.textSecondary,
++    color: tokens.darkMuted,
++    userSelect: "none" as const,
+   },
+-  body: { display: "flex", flex: 1, minHeight: 0 },
+-  aside: {
+-    width: 240,
+-    flexShrink: 0,
+-    borderRight: `1px solid ${tokens.border}`,
+-    padding: 12,
++  floatPanel: {
++    ...glass,
++    position: "absolute",
++    zIndex: 10,
++    top: 64,
++    right: 12,
++    width: 220,
++    maxHeight: "calc(100vh - 80px)",
+     overflow: "auto",
+-    background: tokens.bgElevated,
++    padding: 12,
++    borderRadius: 12,
++    pointerEvents: "auto",
+   },
+-  asideSection: { marginBottom: 16 },
++  panelHead: {
++    display: "flex",
++    alignItems: "center",
++    justifyContent: "space-between",
++    marginBottom: 10,
++  },
++  iconBtn: {
++    border: "none",
++    background: "transparent",
++    color: tokens.darkMuted,
++    cursor: "pointer",
++    fontSize: 12,
++    padding: "2px 6px",
++    borderRadius: 4,
++  },
++  asideSection: { marginBottom: 14 },
+   asideTitle: {
+-    fontSize: 11,
++    fontSize: 10,
+     fontWeight: 600,
+-    color: tokens.textMuted,
++    color: tokens.darkMuted,
+     marginBottom: 8,
+-    letterSpacing: "0.04em",
++    letterSpacing: "0.06em",
+     textTransform: "uppercase" as const,
+   },
+   legendRow: {
+     display: "flex",
+     alignItems: "center",
+     gap: 8,
+-    fontSize: 12,
++    fontSize: 11,
+     marginBottom: 4,
++    color: tokens.darkMuted,
+   },
+   legendLine: {
+     display: "inline-block",
+-    width: 22,
+-    borderBottomWidth: 2,
++    width: 18,
++    borderBottomWidth: 1.5,
+     borderBottomStyle: "solid",
+   },
++  colorGroups: { display: "flex", flexDirection: "column", gap: 3 },
++  colorRow: {
++    display: "flex",
++    alignItems: "center",
++    gap: 8,
++    fontSize: 11,
++    color: tokens.darkMuted,
++  },
++  colorDot: {
++    width: 8,
++    height: 8,
++    borderRadius: 999,
++    flexShrink: 0,
++  },
++  colorTag: {
++    flex: 1,
++    overflow: "hidden",
++    textOverflow: "ellipsis",
++    whiteSpace: "nowrap" as const,
++    color: "rgba(226, 232, 240, 0.78)",
++  },
++  colorCount: {
++    fontVariantNumeric: "tabular-nums",
++    color: tokens.darkMuted,
++    fontSize: 10,
++  },
+   tags: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 },
+   tag: {
+     fontSize: 10,
+     padding: "2px 6px",
+     borderRadius: 999,
+-    background: tokens.accentSoft,
+-    color: tokens.accentText,
+   },
+   tldr: {
+     fontSize: 12,
+-    color: tokens.textSecondary,
++    color: tokens.darkMuted,
+     lineHeight: 1.45,
+     margin: "0 0 10px",
+   },
+   primaryBtn: {
+     border: "none",
+     borderRadius: tokens.radiusMd,
+-    background: tokens.accent,
+-    color: tokens.userBubbleText,
+-    padding: "7px 12px",
++    background: tokens.darkAccent,
++    color: "#0b0d12",
++    padding: "6px 11px",
+     fontSize: 12,
+     fontWeight: 600,
+     cursor: "pointer",
+     fontFamily: tokens.font,
++    width: "100%",
+   },
+   status: {
+     fontSize: 11,
+-    color: tokens.accentText,
+-    background: tokens.accentSoft,
++    color: tokens.darkAccent,
++    background: "rgba(129, 140, 248, 0.12)",
+     padding: 8,
+     borderRadius: tokens.radiusMd,
+   },
+-  main: { flex: 1, position: "relative", minWidth: 0, background: tokens.bgMuted },
++  main: {
++    position: "absolute",
++    inset: 0,
++    zIndex: 0,
++    background: G.canvas,
++  },
+   canvas: {
+     width: "100%",
+     height: "100%",
+@@ -613,22 +1005,22 @@ const styles: Record<string, React.CSSProperties> = {
+     padding: 40,
+     textAlign: "center",
+     fontSize: 13,
+-    color: tokens.textSecondary,
++    color: tokens.darkMuted,
+     lineHeight: 1.5,
+     pointerEvents: "none",
+   },
+   emptyBanner: {
+     position: "absolute",
+-    top: 12,
++    top: 72,
+     left: "50%",
+     transform: "translateX(-50%)",
+     zIndex: 2,
+-    background: tokens.warningSoft,
+-    color: tokens.warning,
+-    padding: "8px 14px",
++    background: tokens.darkWarningBg,
++    color: tokens.darkWarning,
++    padding: "7px 12px",
+     borderRadius: tokens.radiusMd,
+     fontSize: 12,
+     maxWidth: "80%",
+-    boxShadow: tokens.shadowSm,
++    border: `1px solid ${tokens.darkBorder}`,
+   },
+ }
+diff --git a/chrome-extension/src/thread-graph/force-layout.ts b/chrome-extension/src/thread-graph/force-layout.ts
+index 54942cf..b86b678 100644
+--- a/chrome-extension/src/thread-graph/force-layout.ts
++++ b/chrome-extension/src/thread-graph/force-layout.ts
+@@ -35,13 +35,14 @@ export type ForceLayoutOpts = {
+   maxV?: number
+ }
+ 
++// Tighter defaults → denser clusters closer to Obsidian local graph (not sparse giant cards).
+ const DEFAULTS = {
+-  repulsion: 2800,
+-  springLength: 90,
+-  springK: 0.02,
+-  centerG: 0.008,
+-  damping: 0.82,
+-  maxV: 12,
++  repulsion: 1600,
++  springLength: 52,
++  springK: 0.028,
++  centerG: 0.014,
++  damping: 0.84,
++  maxV: 10,
+ }
+ 
+ /** Place nodes on a ring so the first frame is not a single pile. */
+@@ -54,7 +55,7 @@ export function seedLayoutNodes(
+   const cx = width / 2
+   const cy = height / 2
+   const n = Math.max(1, ids.length)
+-  const ring = Math.min(width, height) * 0.32
++  const ring = Math.min(width, height) * 0.22
+   return ids.map((id, i) => {
+     const ang = (i / n) * Math.PI * 2 + 0.2
+     const jitter = ((i * 17) % 7) - 3
+@@ -64,7 +65,7 @@ export function seedLayoutNodes(
+       y: cy + Math.sin(ang) * (ring + jitter),
+       vx: 0,
+       vy: 0,
+-      r: radiusById?.get(id) ?? 10,
++      r: radiusById?.get(id) ?? 4.5,
+       pinned: false,
+     }
+   })
+@@ -106,7 +107,7 @@ export function forceLayoutTick(
+         dist2 = dx * dx + dy * dy
+       }
+       const dist = Math.sqrt(dist2)
+-      const minDist = a.r + b.r + 4
++      const minDist = a.r + b.r + 10
+       const force = repulsion / dist2
+       const fx = (dx / dist) * force
+       const fy = (dy / dist) * force
+@@ -118,9 +119,9 @@ export function forceLayoutTick(
+         b.vx += fx
+         b.vy += fy
+       }
+-      // Soft collision
++      // Soft collision — keep dots from stacking (visual r is tiny)
+       if (dist < minDist) {
+-        const push = ((minDist - dist) / dist) * 0.5
++        const push = ((minDist - dist) / dist) * 0.45
+         if (!a.pinned) {
+           a.x -= dx * push
+           a.y -= dy * push
+@@ -171,8 +172,8 @@ export function forceLayoutTick(
+       }
+       n.x += n.vx
+       n.y += n.vy
+-      // Soft wall
+-      const pad = n.r + 8
++      // Soft wall — generous pad so dense graph can sit inward
++      const pad = Math.max(24, n.r + 16)
+       n.x = Math.max(pad, Math.min(width - pad, n.x))
+       n.y = Math.max(pad, Math.min(height - pad, n.y))
+       energy += Math.sqrt(n.vx * n.vx + n.vy * n.vy)
+diff --git a/chrome-extension/src/thread-graph/tag-colors.ts b/chrome-extension/src/thread-graph/tag-colors.ts
+new file mode 100644
+index 0000000..3694a3e
+--- /dev/null
++++ b/chrome-extension/src/thread-graph/tag-colors.ts
+@@ -0,0 +1,120 @@
++// Stable tag → color groups for thread graph (Obsidian-like "颜色组").
++// Pure helpers — no DOM / chrome APIs.
++
++/** Soft pastel dots that read well on near-black canvas. */
++export const TAG_PALETTE = [
++  "#6b9fff", // blue
++  "#f472b6", // pink
++  "#34d399", // green
++  "#fbbf24", // amber
++  "#a78bfa", // violet
++  "#22d3ee", // cyan
++  "#fb923c", // orange
++  "#e879f9", // fuchsia
++  "#4ade80", // lime
++  "#94a3b8", // slate (fallback-ish)
++] as const
++
++export const UNTAGGED_COLOR = "#64748b"
++export const UNTAGGED_LABEL = "未标注"
++
++/** FNV-1a-ish stable hash for string → palette index. */
++export function hashTag(tag: string): number {
++  const s = tag.trim().toLowerCase()
++  let h = 2166136261
++  for (let i = 0; i < s.length; i++) {
++    h ^= s.charCodeAt(i)
++    h = Math.imul(h, 16777619)
++  }
++  return h >>> 0
++}
++
++export function colorForTag(tag: string | null | undefined): string {
++  if (!tag || !tag.trim()) return UNTAGGED_COLOR
++  const i = hashTag(tag) % TAG_PALETTE.length
++  return TAG_PALETTE[i]
++}
++
++/** Primary tag = first non-empty digest tag (stable assignment source). */
++export function primaryTag(tags: string[] | undefined | null): string | null {
++  if (!tags || tags.length === 0) return null
++  for (const t of tags) {
++    const s = (t || "").trim()
++    if (s) return s
++  }
++  return null
++}
++
++export type ColorGroup = {
++  tag: string
++  color: string
++  count: number
++}
++
++/**
++ * Build per-node color map + legend groups (sorted by count desc, then tag).
++ * `nodeIds` limits which threads appear in the legend counts.
++ */
++export function buildTagColorIndex(
++  threads: Array<{ id: string; digest?: { tags?: string[] } | null }>,
++  nodeIds?: Set<string> | string[],
++): {
++  colorById: Map<string, string>
++  tagById: Map<string, string | null>
++  groups: ColorGroup[]
++} {
++  const allow =
++    nodeIds == null
++      ? null
++      : nodeIds instanceof Set
++        ? nodeIds
++        : new Set(nodeIds)
++
++  const colorById = new Map<string, string>()
++  const tagById = new Map<string, string | null>()
++  const counts = new Map<string, number>()
++
++  for (const t of threads) {
++    if (allow && !allow.has(t.id)) continue
++    const tag = primaryTag(t.digest?.tags)
++    const key = tag ?? UNTAGGED_LABEL
++    tagById.set(t.id, tag)
++    colorById.set(t.id, colorForTag(tag))
++    counts.set(key, (counts.get(key) || 0) + 1)
++  }
++
++  const groups: ColorGroup[] = [...counts.entries()]
++    .map(([tag, count]) => ({
++      tag,
++      count,
++      color: tag === UNTAGGED_LABEL ? UNTAGGED_COLOR : colorForTag(tag),
++    }))
++    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh"))
++
++  return { colorById, tagById, groups }
++}
++
++/** Lighten hex for focus/hover (simple channel blend toward white). */
++export function lightenHex(hex: string, amount = 0.35): string {
++  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
++  if (!m) return hex
++  const n = parseInt(m[1], 16)
++  const r = (n >> 16) & 0xff
++  const g = (n >> 8) & 0xff
++  const b = n & 0xff
++  const mix = (c: number) => Math.min(255, Math.round(c + (255 - c) * amount))
++  const to = (c: number) => c.toString(16).padStart(2, "0")
++  return `#${to(mix(r))}${to(mix(g))}${to(mix(b))}`
++}
++
++/** Apply alpha to #rrggbb → rgba(). */
++export function hexWithAlpha(hex: string, alpha: number): string {
++  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
++  if (!m) return hex
++  const n = parseInt(m[1], 16)
++  const r = (n >> 16) & 0xff
++  const g = (n >> 8) & 0xff
++  const b = n & 0xff
++  const a = Math.max(0, Math.min(1, alpha))
++  return `rgba(${r},${g},${b},${a})`
++}
+diff --git a/chrome-extension/tests/tag-colors.test.ts b/chrome-extension/tests/tag-colors.test.ts
+new file mode 100644
+index 0000000..9fd7972
+--- /dev/null
++++ b/chrome-extension/tests/tag-colors.test.ts
+@@ -0,0 +1,61 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  UNTAGGED_COLOR,
++  UNTAGGED_LABEL,
++  buildTagColorIndex,
++  colorForTag,
++  hashTag,
++  hexWithAlpha,
++  lightenHex,
++  primaryTag,
++} from "../src/thread-graph/tag-colors"
++
++test("hashTag is stable and case-insensitive", () => {
++  assert.equal(hashTag("AI安全"), hashTag("ai安全"))
++  assert.equal(hashTag("  foo  "), hashTag("foo"))
++  assert.notStrictEqual(hashTag("a"), hashTag("b"))
++})
++
++test("colorForTag: empty → untagged slate", () => {
++  assert.equal(colorForTag(null), UNTAGGED_COLOR)
++  assert.equal(colorForTag(""), UNTAGGED_COLOR)
++  assert.equal(colorForTag("   "), UNTAGGED_COLOR)
++})
++
++test("colorForTag: same tag → same color", () => {
++  assert.equal(colorForTag("数据安全"), colorForTag("数据安全"))
++})
++
++test("primaryTag uses first non-empty", () => {
++  assert.equal(primaryTag(null), null)
++  assert.equal(primaryTag([]), null)
++  assert.equal(primaryTag(["", "  ", "x"]), "x")
++  assert.equal(primaryTag(["工作", "健康"]), "工作")
++})
++
++test("buildTagColorIndex groups and filters by nodeIds", () => {
++  const threads = [
++    { id: "1", digest: { tags: ["工作", "周报"] } },
++    { id: "2", digest: { tags: ["工作"] } },
++    { id: "3", digest: { tags: [] } },
++    { id: "4", digest: { tags: ["健康"] } },
++  ]
++  const full = buildTagColorIndex(threads)
++  assert.equal(full.colorById.get("1"), colorForTag("工作"))
++  assert.equal(full.tagById.get("1"), "工作")
++  assert.equal(full.colorById.get("3"), UNTAGGED_COLOR)
++  const work = full.groups.find((g) => g.tag === "工作")
++  assert.ok(work && work.count === 2)
++  const un = full.groups.find((g) => g.tag === UNTAGGED_LABEL)
++  assert.ok(un && un.count === 1)
++
++  const subset = buildTagColorIndex(threads, ["1", "4"])
++  assert.equal(subset.groups.find((g) => g.tag === "工作")?.count, 1)
++  assert.equal(subset.colorById.has("2"), false)
++})
++
++test("lightenHex / hexWithAlpha", () => {
++  assert.match(lightenHex("#6b9fff", 0.3), /^#[0-9a-f]{6}$/i)
++  assert.equal(hexWithAlpha("#6b9fff", 0.5), "rgba(107,159,255,0.5)")
++})
+diff --git a/companion/src/host-use/darwin/host-integrity.ts b/companion/src/host-use/darwin/host-integrity.ts
+index 01f129d..9821d65 100644
+--- a/companion/src/host-use/darwin/host-integrity.ts
++++ b/companion/src/host-use/darwin/host-integrity.ts
+@@ -51,7 +51,7 @@ export interface HostIntegrityCheck {
+  * MacOS/CMspark is deep-signed and will NOT match this pin; see
+  * codesignProductIdentityOk path in checkHostIntegrity.
+  */
+-export const CMSPARK_HOST_SHA256 = "1d9ac27e2854e329baff402c85271bb5aeecefc5994f440756be36fc49fc5dcd"
++export const CMSPARK_HOST_SHA256 = "bb1216a0fb65f07845cc98c4586a3a55bff2e6164d3f797a0dc7de5cd4c5d180"
+ 
+ /**
+  * True when realpath is inside a macOS .app Contents tree (packaged install).
+diff --git a/docs/audit/reviews/thread-graph-obsidian-v11-20260812-adversary-synthesis.md b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-adversary-synthesis.md
+new file mode 100644
+index 0000000..4b1af70
+--- /dev/null
++++ b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-adversary-synthesis.md
+@@ -0,0 +1,72 @@
++# Multi-adversarial synthesis — thread-graph Obsidian v1.1
++
++| Field | Value |
++|-------|--------|
++| Batch | `thread-graph-obsidian-v11-20260812` |
++| Date | 2026-08-12 |
++| Blast tier | **T2** Surface L0 UI polish (no L2/Compose/Trust lift) |
++| Scope | `chrome-extension/src/thread-graph/*`, `tests/tag-colors.test.ts`, design §6 |
++| Out of scope | `companion/.../host-integrity.ts` (unrelated dirty tree) |
++
++## Capability (ADR-020)
++
++```
++Surface:      L0
++L2-classes:   (none)
++Compose:      none
++Autonomy:     n/a
++Trust:        no elevation
++Channel:      n/a
++```
++
++## Machine
++
++| Check | Result |
++|-------|--------|
++| `chrome-extension` npm test | **628 pass** (incl. `tag-colors`, `force-layout`, `thread-graph-bg`) `[executed]` |
++
++## Adversary lanes (independent explore agents)
++
++| Lane | Round 1 | Round 2 (after fix) |
++|------|---------|---------------------|
++| Product/UX | APPROVE_WITH_NITS | — |
++| Correctness | **REJECT** | **APPROVE_WITH_NITS** |
++| Security/Trust | APPROVE_WITH_NITS | — |
++| Spec/DoD | APPROVE_WITH_NITS | — |
++
++### Round-1 Correctness REJECT (blockers) → fixed
++
++| # | Issue | Fix |
++|---|--------|-----|
++| C1 | focus click rebuilt `nodesInput` arrays → full reseed/jump | `layoutSignature` (ids+deg+edges); same sig keeps x/y/pin |
++| C2 | fitView only if energy &lt; 0.06 | also fit when sim ticks exhaust (320) |
++| C3 | pointerleave cleared drag without unpin/capture hygiene | leave only clears hover; capture + endDrag on up/cancel |
++| C4 | hit pad world-fixed → unclickable when zoomed out | screen-constant `HIT_PAD / scale` |
++| C5 | pin cleared on pointerup (§3.4 sticky pin) | sticky pin only after real drag (`moved`); click does not freeze |
++
++Additional: panel `localStorage` only on toolbar toggle; node click transient open; draw rAF no longer remounts on focus (`isolatedIdsRef`).
++
++## Residual nits (non-blocking · file for follow-up)
++
++| Source | Nit |
++|--------|-----|
++| UX | No on-canvas mini color legend when panel closed |
++| UX | Empty state lacks in-graph「提取要点」CTA |
++| UX | Toolbar wrap can overlap float panel (`top: 64` fixed) |
++| UX | Canvas a11y (role/img, keyboard node nav) |
++| Spec | §3.1 left rail stale vs §6 floating (doc debt) |
++| Security | `prepareThreadGraphSnapshot` should runtime-slim unknown keys (defense in depth) |
++| Correctness | No `ThreadGraphApp` canvas integration tests; resize no re-fit |
++
++## Synthesis VERDICT
++
++**ADVERSARY_SYNTHESIS: APPROVE_WITH_NITS**
++
++- All four lanes ≥ APPROVE_WITH_NITS after Correctness re-review  
++- No remaining correctness **blocker** for T2 polish ship  
++- Nits tracked; not merge-blockers under blast T2  
++
++## Next gate
++
++→ `scripts/dual-external-review.sh` Claude + Pi with this synthesis + scoped diff  
++→ MERGE only if both external VERDICT ∈ {APPROVE, APPROVE_WITH_NITS}
+diff --git a/docs/audit/reviews/thread-graph-obsidian-v11-20260812-dual-prompt.md b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-dual-prompt.md
+new file mode 100644
+index 0000000..83a7c1c
+--- /dev/null
++++ b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-dual-prompt.md
+@@ -0,0 +1,52 @@
++# Dual external review task — thread-graph Obsidian v1.1 polish
++
++## Batch
++`thread-graph-obsidian-v11-20260812`
++
++## Capability declaration (ADR-020)
++```
++Surface:      L0
++L2-classes:   (none)
++Compose:      none
++Autonomy:     n/a
++Trust:        no elevation
++Channel:      n/a
++```
++
++## What shipped (user-requested sequence)
++1. Primary-tag color groups (`tag-colors.ts` + legend)
++2. Labels hidden by default; show on hover / focus / zoom ≥ ~1.15
++3. Floating pure-canvas chrome (glass toolbar + collapsible panel; localStorage only on explicit toggle)
++
++Plus denser force-layout + Obsidian-dark tiny dots (prior session).
++
++## Files in scope (ignore host-integrity.ts)
++- chrome-extension/src/thread-graph/ThreadGraphApp.tsx
++- chrome-extension/src/thread-graph/force-layout.ts
++- chrome-extension/src/thread-graph/tag-colors.ts
++- chrome-extension/tests/tag-colors.test.ts
++- docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md (§6 updated)
++
++## Machine evidence
++- `cd chrome-extension && npm test` → **628 pass**, 0 fail (this session)
++
++## Independent multi-adversary synthesis (READ THIS)
++Path: `docs/audit/reviews/thread-graph-obsidian-v11-20260812-adversary-synthesis.md`
++
++Summary:
++- Round-1 Correctness **REJECT** on reseed-on-focus / fit / hit / pin → **fixed**
++- Round-2 Correctness **APPROVE_WITH_NITS**
++- UX / Security / Spec: **APPROVE_WITH_NITS**
++- Synthesis: **APPROVE_WITH_NITS**
++
++## Your job
++1. Read the synthesis + real git diff (not only this summary)
++2. Confirm blockers are truly fixed in code (layoutSignature, fit exhausted, sticky pin on drag only, screen hit pad)
++3. Challenge residual nits — mark only **blockers** if any remain
++4. ADR-020: confirm no Trust/L2 elevation
++5. End with EXACTLY one of:
++   - VERDICT: APPROVE
++   - VERDICT: APPROVE_WITH_NITS
++   - VERDICT: REJECT
++
++Do not rubber-stamp. Cite file:line for any issue.
+diff --git a/docs/audit/reviews/thread-graph-obsidian-v11-20260812-scoped.diff b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-scoped.diff
+new file mode 100644
+index 0000000..b735a78
+--- /dev/null
++++ b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-scoped.diff
+@@ -0,0 +1,1247 @@
++diff --git a/chrome-extension/src/thread-graph/ThreadGraphApp.tsx b/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
++index 3539715..cb75b8b 100644
++--- a/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
+++++ b/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
++@@ -1,5 +1,6 @@
++-// Full-page Obsidian-like thread graph (v1).
+++// Full-page Obsidian-like thread graph.
++ // Spec: docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
+++// v1.1: tag color groups · labels on hover/zoom · floating chrome (pure canvas)
++ 
++ import {
++   useCallback,
++@@ -7,6 +8,7 @@ import {
++   useMemo,
++   useRef,
++   useState,
+++  type CSSProperties,
++   type PointerEvent as ReactPointerEvent,
++   type MouseEvent as ReactMouseEvent,
++   type WheelEvent as ReactWheelEvent,
++@@ -28,25 +30,59 @@ import {
++   type ThreadGraphSlim,
++ } from "../background/thread-graph"
++ import { tokens } from "../sidepanel/ui/tokens"
+++import {
+++  buildTagColorIndex,
+++  hexWithAlpha,
+++  lightenHex,
+++  UNTAGGED_COLOR,
+++} from "./tag-colors"
+++
+++/** Obsidian-adjacent local palette (graph canvas). */
+++const G = {
+++  canvas: "#0d0f14",
+++  edgeHard: "rgba(148, 163, 184, 0.42)",
+++  edgeSoft: "rgba(148, 163, 184, 0.18)",
+++  edgeDim: "rgba(148, 163, 184, 0.06)",
+++  edgeHot: "rgba(165, 180, 252, 0.75)",
+++  label: "rgba(226, 232, 240, 0.7)",
+++  labelFocus: "rgba(248, 250, 252, 0.95)",
+++} as const
+++
+++/** Labels only when hovering, focused, or zoomed past this scale. */
+++const LABEL_ZOOM_THRESHOLD = 1.15
++ 
++ function displayTitle(t: ThreadGraphSlim): string {
++   const a = (t.alias || "").trim()
++-  if (a) return a.length > 28 ? a.slice(0, 27) + "…" : a
+++  if (a) return a.length > 22 ? a.slice(0, 21) + "…" : a
++   return `未命名 · ${(t.id || "").slice(0, 6)}`
++ }
++ 
+++/** Visual radius — Obsidian-scale dots. */
++ function radiusForDegree(deg: number): number {
++-  return Math.min(22, Math.max(8, 8 + Math.sqrt(deg) * 3.2))
+++  return Math.min(7.5, Math.max(2.8, 2.8 + Math.sqrt(deg) * 1.35))
++ }
++ 
+++const HIT_PAD = 8
+++
+++const PANEL_KEY = "cmspark_thread_graph_panel_open"
+++
++ export function ThreadGraphApp() {
++   const [snap, setSnap] = useState<ThreadGraphSnapshot | null>(null)
++   const [loadError, setLoadError] = useState<string | null>(null)
++   const [minScore, setMinScore] = useState(0.2)
++   const [showIsolated, setShowIsolated] = useState(false)
++   const [focusId, setFocusId] = useState<string | null>(null)
+++  const [hoverId, setHoverId] = useState<string | null>(null)
++   const [query, setQuery] = useState("")
++   const [status, setStatus] = useState("")
+++  const [panelOpen, setPanelOpen] = useState(() => {
+++    try {
+++      return localStorage.getItem(PANEL_KEY) !== "0"
+++    } catch {
+++      return true
+++    }
+++  })
+++
++   const canvasRef = useRef<HTMLCanvasElement>(null)
++   const nodesRef = useRef<LayoutNode[]>([])
++   const edgesRef = useRef<RelatedEdge[]>([])
++@@ -56,6 +92,25 @@ export function ThreadGraphApp() {
++   const rafRef = useRef(0)
++   const sizeRef = useRef({ w: 800, h: 600 })
++   const simTicksRef = useRef(0)
+++  const hoverIdRef = useRef<string | null>(null)
+++  const focusIdRef = useRef<string | null>(null)
+++  const fittedRef = useRef(false)
+++  const colorByIdRef = useRef<Map<string, string>>(new Map())
+++  const threadsByIdRef = useRef<Map<string, ThreadGraphSlim>>(new Map())
+++
+++  useEffect(() => {
+++    hoverIdRef.current = hoverId
+++  }, [hoverId])
+++  useEffect(() => {
+++    focusIdRef.current = focusId
+++  }, [focusId])
+++  useEffect(() => {
+++    try {
+++      localStorage.setItem(PANEL_KEY, panelOpen ? "1" : "0")
+++    } catch {
+++      /* ignore */
+++    }
+++  }, [panelOpen])
++ 
++   const focusFromUrl = useMemo(() => {
++     try {
++@@ -65,7 +120,6 @@ export function ThreadGraphApp() {
++     }
++   }, [])
++ 
++-  // Load snapshot (contract: storage.session only — dual-review nit)
++   useEffect(() => {
++     let cancelled = false
++     ;(async () => {
++@@ -118,7 +172,6 @@ export function ThreadGraphApp() {
++     let nodeIds = inputs.map((t) => t.id)
++     if (!showIsolated) {
++       nodeIds = nodeIds.filter((id) => !isolated.has(id) || id === focusId)
++-      // keep endpoints of edges only
++       const keep = new Set<string>()
++       for (const e of allEdges) {
++         keep.add(e.a)
++@@ -150,7 +203,16 @@ export function ThreadGraphApp() {
++     }
++   }, [threads, minScore, showIsolated, query, focusId])
++ 
++-  // (Re)seed layout when graph structure changes
+++  const tagColors = useMemo(() => {
+++    const ids = nodesInput.map((n) => n.id)
+++    return buildTagColorIndex(threads, ids)
+++  }, [threads, nodesInput])
+++
+++  useEffect(() => {
+++    colorByIdRef.current = tagColors.colorById
+++    threadsByIdRef.current = new Map(threads.map((t) => [t.id, t]))
+++  }, [tagColors.colorById, threads])
+++
++   useEffect(() => {
++     const { w, h } = sizeRef.current
++     const rMap = new Map(nodesInput.map((n) => [n.id, radiusForDegree(n.degree)]))
++@@ -162,6 +224,7 @@ export function ThreadGraphApp() {
++     )
++     edgesRef.current = edges
++     simTicksRef.current = 0
+++    fittedRef.current = false
++   }, [nodesInput, edges])
++ 
++   const focusThread = useMemo(
++@@ -171,6 +234,7 @@ export function ThreadGraphApp() {
++ 
++   const openThread = useCallback((threadId: string) => {
++     setFocusId(threadId)
+++    setPanelOpen(true)
++     chrome.runtime.sendMessage(
++       { type: "thread_graph.open_thread", thread_id: threadId },
++       () => {
++@@ -202,22 +266,50 @@ export function ThreadGraphApp() {
++     const ro = new ResizeObserver(resize)
++     ro.observe(parent)
++ 
+++    const fitView = () => {
+++      const nodes = nodesRef.current
+++      if (nodes.length === 0) return
+++      const { w, h } = sizeRef.current
+++      let minX = Infinity
+++      let minY = Infinity
+++      let maxX = -Infinity
+++      let maxY = -Infinity
+++      for (const n of nodes) {
+++        minX = Math.min(minX, n.x - n.r)
+++        minY = Math.min(minY, n.y - n.r)
+++        maxX = Math.max(maxX, n.x + n.r)
+++        maxY = Math.max(maxY, n.y + n.r)
+++      }
+++      const gw = Math.max(40, maxX - minX)
+++      const gh = Math.max(40, maxY - minY)
+++      const pad = 56
+++      const s = Math.min((w - pad * 2) / gw, (h - pad * 2) / gh, 1.35)
+++      scaleRef.current = Math.max(0.45, Math.min(1.8, s * 0.92))
+++      const cx = (minX + maxX) / 2
+++      const cy = (minY + maxY) / 2
+++      panRef.current.x = w / 2 - cx * scaleRef.current
+++      panRef.current.y = h / 2 - cy * scaleRef.current
+++      fittedRef.current = true
+++    }
+++
++     const draw = () => {
++       const ctx = canvas.getContext("2d")
++       if (!ctx) return
++       const { w, h } = sizeRef.current
++-      // Simulate a few ticks while energy high
++       if (simTicksRef.current < 320 && nodesRef.current.length > 0) {
++         const e = forceLayoutTick(nodesRef.current, edgesRef.current, {
++           width: w,
++           height: h,
++         })
++         simTicksRef.current++
++-        if (e < 0.06 && simTicksRef.current > 50) simTicksRef.current = 999
+++        if (e < 0.06 && simTicksRef.current > 50) {
+++          simTicksRef.current = 999
+++          if (!fittedRef.current) fitView()
+++        }
++       }
++ 
++       ctx.clearRect(0, 0, w, h)
++-      ctx.fillStyle = tokens.bgMuted
+++      ctx.fillStyle = G.canvas
++       ctx.fillRect(0, 0, w, h)
++ 
++       ctx.save()
++@@ -225,50 +317,90 @@ export function ThreadGraphApp() {
++       ctx.scale(scaleRef.current, scaleRef.current)
++ 
++       const byId = new Map(nodesRef.current.map((n) => [n.id, n]))
+++      const active = hoverIdRef.current || focusIdRef.current
+++      let hot: Set<string> | null = null
+++      if (active) {
+++        hot = new Set([active])
+++        for (const e of edgesRef.current) {
+++          if (e.a === active) hot.add(e.b)
+++          if (e.b === active) hot.add(e.a)
+++        }
+++      }
+++      const scale = scaleRef.current
+++      const colors = colorByIdRef.current
++ 
++-      // Edges
++       for (const e of edgesRef.current) {
++         const a = byId.get(e.a)
++         const b = byId.get(e.b)
++         if (!a || !b) continue
+++        const hard = e.kind === "hard"
+++        const isHot = hot ? hot.has(e.a) && hot.has(e.b) : false
+++        const isDim = hot != null && !isHot
++         ctx.beginPath()
++         ctx.moveTo(a.x, a.y)
++         ctx.lineTo(b.x, b.y)
++-        const hard = e.kind === "hard"
++-        // Canvas has no CSS alpha tokens — stroke solid token + globalAlpha
++-        ctx.strokeStyle = hard ? tokens.accent : tokens.textMuted
++-        ctx.globalAlpha = hard ? 0.45 : 0.55
++-        if (!hard) ctx.setLineDash([4, 4])
+++        if (isDim) {
+++          ctx.strokeStyle = G.edgeDim
+++          ctx.globalAlpha = 1
+++        } else if (isHot) {
+++          ctx.strokeStyle = G.edgeHot
+++          ctx.globalAlpha = hard ? 0.9 : 0.55
+++        } else {
+++          ctx.strokeStyle = hard ? G.edgeHard : G.edgeSoft
+++          ctx.globalAlpha = 1
+++        }
+++        if (!hard) ctx.setLineDash([2.5, 3.5])
++         else ctx.setLineDash([])
++-        ctx.lineWidth = Math.min(4, 1 + e.score * 2.5)
+++        const base = hard ? 0.55 + e.score * 0.7 : 0.4 + e.score * 0.45
+++        ctx.lineWidth = Math.min(1.8, base) / Math.max(0.6, scale)
++         ctx.stroke()
++         ctx.setLineDash([])
++         ctx.globalAlpha = 1
++       }
++ 
++-      // Nodes
++-      const q = query.trim().toLowerCase()
++       for (const n of nodesRef.current) {
++-        const t = threads.find((x) => x.id === n.id)
+++        const t = threadsByIdRef.current.get(n.id)
++         const title = t ? displayTitle(t) : n.id.slice(0, 6)
++-        const isFocus = n.id === focusId
+++        const isFocus = n.id === focusIdRef.current
+++        const isHover = n.id === hoverIdRef.current
++         const isIso = isolatedIds.has(n.id)
+++        const inHot = hot ? hot.has(n.id) : true
+++        const dimmed = hot != null && !inHot
+++        const baseColor = colors.get(n.id) || UNTAGGED_COLOR
+++
+++        if (isFocus || isHover) {
+++          ctx.beginPath()
+++          ctx.arc(n.x, n.y, n.r + 3.5, 0, Math.PI * 2)
+++          ctx.fillStyle = hexWithAlpha(baseColor, isFocus ? 0.28 : 0.18)
+++          ctx.fill()
+++        }
++ 
++         ctx.beginPath()
++         ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2)
++-        ctx.fillStyle = isFocus ? tokens.accentSoft : tokens.bgElevated
++-        ctx.globalAlpha = isIso && !isFocus ? 0.45 : 1
+++        if (isFocus) {
+++          ctx.fillStyle = lightenHex(baseColor, 0.45)
+++        } else if (isHover) {
+++          ctx.fillStyle = lightenHex(baseColor, 0.28)
+++        } else if (dimmed || (isIso && !isFocus)) {
+++          ctx.fillStyle = hexWithAlpha(baseColor, 0.28)
+++        } else {
+++          ctx.fillStyle = baseColor
+++        }
+++        ctx.globalAlpha = dimmed ? 0.5 : 1
++         ctx.fill()
++-        ctx.strokeStyle = isFocus ? tokens.accent : tokens.borderStrong
++-        ctx.lineWidth = isFocus ? 2.5 : 1.2
++-        ctx.stroke()
++         ctx.globalAlpha = 1
++ 
++-        ctx.fillStyle = tokens.text
++-        ctx.font = `${isFocus ? 12 : 11}px ${tokens.font}`
++-        ctx.textAlign = "center"
++-        ctx.textBaseline = "top"
++-        ctx.fillText(title, n.x, n.y + n.r + 3)
+++        // Labels: only hover / focus / deep zoom (not always-on)
+++        const showLabel =
+++          isFocus || isHover || (scale >= LABEL_ZOOM_THRESHOLD && !dimmed)
+++        if (showLabel) {
+++          ctx.fillStyle = isFocus || isHover ? G.labelFocus : G.label
+++          const fontPx = (isFocus ? 10.5 : 9) / Math.max(0.75, Math.min(1.25, scale))
+++          ctx.font = `${fontPx}px ${tokens.font}`
+++          ctx.textAlign = "center"
+++          ctx.textBaseline = "top"
+++          ctx.fillText(title, n.x, n.y + n.r + 2.5)
+++        }
++       }
++ 
++       ctx.restore()
++@@ -279,7 +411,7 @@ export function ThreadGraphApp() {
++       ro.disconnect()
++       cancelAnimationFrame(rafRef.current)
++     }
++-  }, [threads, focusId, query, isolatedIds])
+++  }, [isolatedIds])
++ 
++   const hitTest = (clientX: number, clientY: number): LayoutNode | null => {
++     const canvas = canvasRef.current
++@@ -291,7 +423,7 @@ export function ThreadGraphApp() {
++     let bestD = Infinity
++     for (const n of nodesRef.current) {
++       const d = Math.hypot(n.x - x, n.y - y)
++-      if (d <= n.r + 4 && d < bestD) {
+++      if (d <= n.r + HIT_PAD && d < bestD) {
++         best = n
++         bestD = d
++       }
++@@ -305,16 +437,27 @@ export function ThreadGraphApp() {
++       n.pinned = true
++       dragRef.current = { id: n.id, ox: ev.clientX, oy: ev.clientY }
++       setFocusId(n.id)
+++      setPanelOpen(true)
++       simTicksRef.current = 0
++       ;(ev.target as HTMLElement).setPointerCapture?.(ev.pointerId)
++       return
++     }
+++    // blank click: clear focus, start pan
+++    setFocusId(null)
++     dragRef.current = { id: "__pan__", ox: ev.clientX, oy: ev.clientY }
++   }
++ 
++   const onPointerMove = (ev: ReactPointerEvent) => {
++     const drag = dragRef.current
++-    if (!drag) return
+++    if (!drag) {
+++      const n = hitTest(ev.clientX, ev.clientY)
+++      const id = n?.id ?? null
+++      if (id !== hoverIdRef.current) {
+++        hoverIdRef.current = id
+++        setHoverId(id)
+++      }
+++      return
+++    }
++     const dx = ev.clientX - drag.ox
++     const dy = ev.clientY - drag.oy
++     drag.ox = ev.clientX
++@@ -342,6 +485,12 @@ export function ThreadGraphApp() {
++     dragRef.current = null
++   }
++ 
+++  const onPointerLeave = () => {
+++    dragRef.current = null
+++    hoverIdRef.current = null
+++    setHoverId(null)
+++  }
+++
++   const onDoubleClick = (ev: ReactMouseEvent) => {
++     const n = hitTest(ev.clientX, ev.clientY)
++     if (n) openThread(n.id)
++@@ -349,16 +498,25 @@ export function ThreadGraphApp() {
++ 
++   const onWheel = (ev: ReactWheelEvent) => {
++     ev.preventDefault()
+++    const canvas = canvasRef.current
+++    if (!canvas) return
+++    const rect = canvas.getBoundingClientRect()
+++    const mx = ev.clientX - rect.left
+++    const my = ev.clientY - rect.top
+++    const prev = scaleRef.current
++     const factor = ev.deltaY > 0 ? 0.92 : 1.08
++-    scaleRef.current = Math.min(3, Math.max(0.35, scaleRef.current * factor))
+++    const next = Math.min(3.2, Math.max(0.28, prev * factor))
+++    panRef.current.x = mx - ((mx - panRef.current.x) / prev) * next
+++    panRef.current.y = my - ((my - panRef.current.y) / prev) * next
+++    scaleRef.current = next
++   }
++ 
++   if (loadError) {
++     return (
++       <div style={styles.page}>
++-        <header style={styles.header}>
++-          <strong>关联图谱</strong>
++-        </header>
+++        <div style={styles.floatBar}>
+++          <strong style={styles.barTitle}>关联图谱</strong>
+++        </div>
++         <div style={styles.empty}>{loadError}</div>
++       </div>
++     )
++@@ -366,82 +524,141 @@ export function ThreadGraphApp() {
++ 
++   const hasNodes = nodesInput.length > 0
++   const hasEdges = edges.length > 0
+++  const groupsPreview = tagColors.groups.slice(0, 12)
++ 
++   return (
++     <div style={styles.page}>
++-      <header style={styles.header}>
++-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
++-          <strong style={{ fontSize: 15 }}>关联图谱</strong>
++-          <span style={styles.meta}>
++-            边 = 共标签（实线）+ 要点相似（虚线）· 本地计算 · 不改默认时间轴
++-          </span>
++-        </div>
++-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+++      {/* Floating top toolbar */}
+++      <div style={styles.floatBar} role="toolbar" aria-label="图谱工具栏">
+++        <strong style={styles.barTitle}>关联图谱</strong>
+++        <input
+++          style={styles.search}
+++          placeholder="搜索会话 / 标签"
+++          value={query}
+++          onChange={(e) => setQuery(e.target.value)}
+++        />
+++        <label style={styles.check}>
++           <input
++-            style={styles.search}
++-            placeholder="搜索会话 / 标签"
++-            value={query}
++-            onChange={(e) => setQuery(e.target.value)}
+++            type="checkbox"
+++            checked={showIsolated}
+++            onChange={(e) => setShowIsolated(e.target.checked)}
++           />
++-          <label style={styles.check}>
++-            <input
++-              type="checkbox"
++-              checked={showIsolated}
++-              onChange={(e) => setShowIsolated(e.target.checked)}
++-            />
++-            显示孤立点
++-          </label>
++-          <label style={styles.check}>
++-            强度
++-            <input
++-              type="range"
++-              min={0.1}
++-              max={0.5}
++-              step={0.05}
++-              value={minScore}
++-              onChange={(e) => setMinScore(Number(e.target.value))}
++-            />
++-            <span style={{ width: 32 }}>{minScore.toFixed(2)}</span>
++-          </label>
++-        </div>
++-      </header>
+++          孤立点
+++        </label>
+++        <label style={styles.check}>
+++          强度
+++          <input
+++            type="range"
+++            min={0.1}
+++            max={0.5}
+++            step={0.05}
+++            value={minScore}
+++            onChange={(e) => setMinScore(Number(e.target.value))}
+++            style={{ width: 72, accentColor: tokens.darkAccent }}
+++          />
+++          <span style={{ width: 28, fontVariantNumeric: "tabular-nums" }}>
+++            {minScore.toFixed(2)}
+++          </span>
+++        </label>
+++        <span style={styles.barMeta}>
+++          {nodesInput.length} 点 · {edges.length} 边
+++          {threads.length >= 300 ? " · 近 300" : ""}
+++        </span>
+++        <button
+++          type="button"
+++          style={styles.barBtn}
+++          onClick={() => setPanelOpen((v) => !v)}
+++          aria-pressed={panelOpen}
+++          title={panelOpen ? "收起侧栏" : "展开侧栏"}
+++        >
+++          {panelOpen ? "收起面板" : "图例 · 焦点"}
+++        </button>
+++      </div>
+++
+++      {/* Floating side panel */}
+++      {panelOpen && (
+++        <aside style={styles.floatPanel} aria-label="图例与焦点">
+++          <div style={styles.panelHead}>
+++            <span style={styles.asideTitle}>面板</span>
+++            <button
+++              type="button"
+++              style={styles.iconBtn}
+++              onClick={() => setPanelOpen(false)}
+++              aria-label="关闭面板"
+++            >
+++              ✕
+++            </button>
+++          </div>
++ 
++-      <div style={styles.body}>
++-        <aside style={styles.aside}>
++           <div style={styles.asideSection}>
++-            <div style={styles.asideTitle}>图例</div>
+++            <div style={styles.asideTitle}>边</div>
++             <div style={styles.legendRow}>
++-              <span style={{ ...styles.legendLine, borderColor: tokens.accent, opacity: 0.6 }} />
+++              <span style={{ ...styles.legendLine, borderColor: "rgba(165, 180, 252, 0.7)" }} />
++               共标签（硬边）
++             </div>
++             <div style={styles.legendRow}>
++               <span
++                 style={{
++                   ...styles.legendLine,
++-                  borderColor: tokens.textMuted,
+++                  borderColor: "rgba(148, 163, 184, 0.45)",
++                   borderStyle: "dashed",
++-                  opacity: 0.85,
++                 }}
++               />
++               要点相似（软边）
++             </div>
++-            <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 8, lineHeight: 1.45 }}>
++-              节点 {nodesInput.length} · 边 {edges.length}
++-              {threads.length >= 300 ? " · 仅最近 300 会话" : ""}
+++            <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 6, lineHeight: 1.4 }}>
+++              标签默认隐藏 · 悬停 / 放大后显示
++             </div>
++           </div>
++ 
+++          <div style={styles.asideSection}>
+++            <div style={styles.asideTitle}>颜色组（主标签）</div>
+++            {groupsPreview.length === 0 ? (
+++              <div style={{ fontSize: 11, color: tokens.darkMuted }}>暂无标签</div>
+++            ) : (
+++              <div style={styles.colorGroups}>
+++                {groupsPreview.map((g) => (
+++                  <div key={g.tag} style={styles.colorRow}>
+++                    <span style={{ ...styles.colorDot, background: g.color }} />
+++                    <span style={styles.colorTag} title={g.tag}>
+++                      {g.tag}
+++                    </span>
+++                    <span style={styles.colorCount}>{g.count}</span>
+++                  </div>
+++                ))}
+++                {tagColors.groups.length > groupsPreview.length && (
+++                  <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 4 }}>
+++                    +{tagColors.groups.length - groupsPreview.length} 组
+++                  </div>
+++                )}
+++              </div>
+++            )}
+++          </div>
+++
++           <div style={styles.asideSection}>
++             <div style={styles.asideTitle}>焦点</div>
++             {focusThread ? (
++               <>
++-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+++                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: tokens.darkText }}>
++                   {displayTitle(focusThread)}
++                 </div>
++                 {(focusThread.digest?.tags || []).length > 0 && (
++                   <div style={styles.tags}>
++                     {(focusThread.digest?.tags || []).map((tg) => (
++-                      <span key={tg} style={styles.tag}>
+++                      <span
+++                        key={tg}
+++                        style={{
+++                          ...styles.tag,
+++                          background: hexWithAlpha(
+++                            tagColors.colorById.get(focusThread.id) || UNTAGGED_COLOR,
+++                            0.2,
+++                          ),
+++                          color: lightenHex(
+++                            tagColors.colorById.get(focusThread.id) || UNTAGGED_COLOR,
+++                            0.35,
+++                          ),
+++                        }}
+++                      >
++                         {tg}
++                       </span>
++                     ))}
++@@ -450,152 +667,249 @@ export function ThreadGraphApp() {
++                 {focusThread.digest?.tldr && (
++                   <p style={styles.tldr}>{focusThread.digest.tldr}</p>
++                 )}
++-                <button type="button" style={styles.primaryBtn} onClick={() => openThread(focusThread.id)}>
+++                <button
+++                  type="button"
+++                  style={styles.primaryBtn}
+++                  onClick={() => openThread(focusThread.id)}
+++                >
++                   打开会话
++                 </button>
++-                <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 6 }}>
+++                <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 6 }}>
++                   双击节点也可打开 · 图谱保持打开
++                 </div>
++               </>
++             ) : (
++-              <div style={{ fontSize: 12, color: tokens.textSecondary }}>单击节点查看详情</div>
+++              <div style={{ fontSize: 12, color: tokens.darkMuted }}>
+++                单击节点查看详情 · 单击空白取消
+++              </div>
++             )}
++           </div>
++ 
++           {status && <div style={styles.status}>{status}</div>}
++         </aside>
++-
++-        <main style={styles.main}>
++-          {!hasNodes && (
++-            <div style={styles.empty}>
++-              {threads.length === 0
++-                ? "暂无会话"
++-                : !hasEdges
++-                  ? "还没有关联边（或节点均为孤立）。请先在 Side Panel ☰ →「为未标注提取要点」生成标签，再重新打开图谱；也可勾选「显示孤立点」查看全部会话。"
++-                  : "没有可显示的节点。试试开启「显示孤立点」，或降低强度阈值 / 清空搜索。"}
++-            </div>
++-          )}
++-          {hasNodes && !hasEdges && (
++-            <div style={styles.emptyBanner}>
++-              还没有关联边。请先在 Side Panel ☰ →「为未标注提取要点」生成标签后再打开图谱。
++-            </div>
++-          )}
++-          <canvas
++-            ref={canvasRef}
++-            style={styles.canvas}
++-            onPointerDown={onPointerDown}
++-            onPointerMove={onPointerMove}
++-            onPointerUp={onPointerUp}
++-            onPointerLeave={onPointerUp}
++-            onDoubleClick={onDoubleClick}
++-            onWheel={onWheel}
++-          />
++-        </main>
++-      </div>
+++      )}
+++
+++      {/* Full-bleed canvas */}
+++      <main style={styles.main}>
+++        {!hasNodes && (
+++          <div style={styles.empty}>
+++            {threads.length === 0
+++              ? "暂无会话"
+++              : !hasEdges
+++                ? "还没有关联边（或节点均为孤立）。请先在 Side Panel ☰ →「为未标注提取要点」生成标签，再重新打开图谱；也可勾选「孤立点」查看全部会话。"
+++                : "没有可显示的节点。试试开启「孤立点」，或降低强度阈值 / 清空搜索。"}
+++          </div>
+++        )}
+++        {hasNodes && !hasEdges && (
+++          <div style={styles.emptyBanner}>
+++            还没有关联边。请先在 Side Panel ☰ →「为未标注提取要点」生成标签后再打开图谱。
+++          </div>
+++        )}
+++        <canvas
+++          ref={canvasRef}
+++          style={styles.canvas}
+++          onPointerDown={onPointerDown}
+++          onPointerMove={onPointerMove}
+++          onPointerUp={onPointerUp}
+++          onPointerLeave={onPointerLeave}
+++          onDoubleClick={onDoubleClick}
+++          onWheel={onWheel}
+++        />
+++      </main>
++     </div>
++   )
++ }
++ 
++-const styles: Record<string, React.CSSProperties> = {
+++const glass: CSSProperties = {
+++  background: "rgba(20, 24, 32, 0.88)",
+++  border: `1px solid ${tokens.darkBorder}`,
+++  boxShadow: "0 8px 28px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset",
+++  backdropFilter: "blur(12px)",
+++  WebkitBackdropFilter: "blur(12px)",
+++}
+++
+++const styles: Record<string, CSSProperties> = {
++   page: {
++-    display: "flex",
++-    flexDirection: "column",
+++    position: "relative",
++     height: "100vh",
++     margin: 0,
++     fontFamily: tokens.font,
++-    background: tokens.bg,
++-    color: tokens.text,
+++    background: G.canvas,
+++    color: tokens.darkText,
+++    overflow: "hidden",
++   },
++-  header: {
+++  floatBar: {
+++    ...glass,
+++    position: "absolute",
+++    zIndex: 10,
+++    top: 12,
+++    left: 12,
+++    right: 12,
+++    maxWidth: "calc(100% - 24px)",
++     display: "flex",
++     flexWrap: "wrap",
++-    gap: 10,
++     alignItems: "center",
++-    justifyContent: "space-between",
++-    padding: "10px 14px",
++-    borderBottom: `1px solid ${tokens.border}`,
++-    background: tokens.bgElevated,
+++    gap: 10,
+++    padding: "8px 12px",
+++    borderRadius: 12,
+++    pointerEvents: "auto",
++   },
++-  meta: { fontSize: 11, color: tokens.textMuted },
++-  search: {
++-    border: `1px solid ${tokens.border}`,
+++  barTitle: {
+++    fontSize: 13,
+++    fontWeight: 650,
+++    letterSpacing: "0.02em",
+++    marginRight: 4,
+++  },
+++  barMeta: {
+++    fontSize: 11,
+++    color: tokens.darkMuted,
+++    marginLeft: "auto",
+++  },
+++  barBtn: {
+++    border: `1px solid ${tokens.darkBorder}`,
++     borderRadius: tokens.radiusMd,
+++    background: "rgba(129, 140, 248, 0.12)",
+++    color: tokens.darkAccent,
++     padding: "5px 10px",
+++    fontSize: 11,
+++    fontWeight: 600,
+++    cursor: "pointer",
+++    fontFamily: tokens.font,
+++  },
+++  search: {
+++    border: `1px solid ${tokens.darkBorder}`,
+++    borderRadius: tokens.radiusMd,
+++    padding: "4px 9px",
++     fontSize: 12,
++-    minWidth: 160,
+++    minWidth: 140,
+++    maxWidth: 200,
++     fontFamily: tokens.font,
+++    background: "rgba(11, 13, 18, 0.65)",
+++    color: tokens.darkText,
+++    outline: "none",
++   },
++   check: {
++     display: "inline-flex",
++     alignItems: "center",
++     gap: 4,
++     fontSize: 11,
++-    color: tokens.textSecondary,
+++    color: tokens.darkMuted,
+++    userSelect: "none" as const,
++   },
++-  body: { display: "flex", flex: 1, minHeight: 0 },
++-  aside: {
++-    width: 240,
++-    flexShrink: 0,
++-    borderRight: `1px solid ${tokens.border}`,
++-    padding: 12,
+++  floatPanel: {
+++    ...glass,
+++    position: "absolute",
+++    zIndex: 10,
+++    top: 64,
+++    right: 12,
+++    width: 220,
+++    maxHeight: "calc(100vh - 80px)",
++     overflow: "auto",
++-    background: tokens.bgElevated,
+++    padding: 12,
+++    borderRadius: 12,
+++    pointerEvents: "auto",
+++  },
+++  panelHead: {
+++    display: "flex",
+++    alignItems: "center",
+++    justifyContent: "space-between",
+++    marginBottom: 10,
+++  },
+++  iconBtn: {
+++    border: "none",
+++    background: "transparent",
+++    color: tokens.darkMuted,
+++    cursor: "pointer",
+++    fontSize: 12,
+++    padding: "2px 6px",
+++    borderRadius: 4,
++   },
++-  asideSection: { marginBottom: 16 },
+++  asideSection: { marginBottom: 14 },
++   asideTitle: {
++-    fontSize: 11,
+++    fontSize: 10,
++     fontWeight: 600,
++-    color: tokens.textMuted,
+++    color: tokens.darkMuted,
++     marginBottom: 8,
++-    letterSpacing: "0.04em",
+++    letterSpacing: "0.06em",
++     textTransform: "uppercase" as const,
++   },
++   legendRow: {
++     display: "flex",
++     alignItems: "center",
++     gap: 8,
++-    fontSize: 12,
+++    fontSize: 11,
++     marginBottom: 4,
+++    color: tokens.darkMuted,
++   },
++   legendLine: {
++     display: "inline-block",
++-    width: 22,
++-    borderBottomWidth: 2,
+++    width: 18,
+++    borderBottomWidth: 1.5,
++     borderBottomStyle: "solid",
++   },
+++  colorGroups: { display: "flex", flexDirection: "column", gap: 3 },
+++  colorRow: {
+++    display: "flex",
+++    alignItems: "center",
+++    gap: 8,
+++    fontSize: 11,
+++    color: tokens.darkMuted,
+++  },
+++  colorDot: {
+++    width: 8,
+++    height: 8,
+++    borderRadius: 999,
+++    flexShrink: 0,
+++  },
+++  colorTag: {
+++    flex: 1,
+++    overflow: "hidden",
+++    textOverflow: "ellipsis",
+++    whiteSpace: "nowrap" as const,
+++    color: "rgba(226, 232, 240, 0.78)",
+++  },
+++  colorCount: {
+++    fontVariantNumeric: "tabular-nums",
+++    color: tokens.darkMuted,
+++    fontSize: 10,
+++  },
++   tags: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 },
++   tag: {
++     fontSize: 10,
++     padding: "2px 6px",
++     borderRadius: 999,
++-    background: tokens.accentSoft,
++-    color: tokens.accentText,
++   },
++   tldr: {
++     fontSize: 12,
++-    color: tokens.textSecondary,
+++    color: tokens.darkMuted,
++     lineHeight: 1.45,
++     margin: "0 0 10px",
++   },
++   primaryBtn: {
++     border: "none",
++     borderRadius: tokens.radiusMd,
++-    background: tokens.accent,
++-    color: tokens.userBubbleText,
++-    padding: "7px 12px",
+++    background: tokens.darkAccent,
+++    color: "#0b0d12",
+++    padding: "6px 11px",
++     fontSize: 12,
++     fontWeight: 600,
++     cursor: "pointer",
++     fontFamily: tokens.font,
+++    width: "100%",
++   },
++   status: {
++     fontSize: 11,
++-    color: tokens.accentText,
++-    background: tokens.accentSoft,
+++    color: tokens.darkAccent,
+++    background: "rgba(129, 140, 248, 0.12)",
++     padding: 8,
++     borderRadius: tokens.radiusMd,
++   },
++-  main: { flex: 1, position: "relative", minWidth: 0, background: tokens.bgMuted },
+++  main: {
+++    position: "absolute",
+++    inset: 0,
+++    zIndex: 0,
+++    background: G.canvas,
+++  },
++   canvas: {
++     width: "100%",
++     height: "100%",
++@@ -613,22 +927,22 @@ const styles: Record<string, React.CSSProperties> = {
++     padding: 40,
++     textAlign: "center",
++     fontSize: 13,
++-    color: tokens.textSecondary,
+++    color: tokens.darkMuted,
++     lineHeight: 1.5,
++     pointerEvents: "none",
++   },
++   emptyBanner: {
++     position: "absolute",
++-    top: 12,
+++    top: 72,
++     left: "50%",
++     transform: "translateX(-50%)",
++     zIndex: 2,
++-    background: tokens.warningSoft,
++-    color: tokens.warning,
++-    padding: "8px 14px",
+++    background: tokens.darkWarningBg,
+++    color: tokens.darkWarning,
+++    padding: "7px 12px",
++     borderRadius: tokens.radiusMd,
++     fontSize: 12,
++     maxWidth: "80%",
++-    boxShadow: tokens.shadowSm,
+++    border: `1px solid ${tokens.darkBorder}`,
++   },
++ }
++diff --git a/chrome-extension/src/thread-graph/force-layout.ts b/chrome-extension/src/thread-graph/force-layout.ts
++index 54942cf..b86b678 100644
++--- a/chrome-extension/src/thread-graph/force-layout.ts
+++++ b/chrome-extension/src/thread-graph/force-layout.ts
++@@ -35,13 +35,14 @@ export type ForceLayoutOpts = {
++   maxV?: number
++ }
++ 
+++// Tighter defaults → denser clusters closer to Obsidian local graph (not sparse giant cards).
++ const DEFAULTS = {
++-  repulsion: 2800,
++-  springLength: 90,
++-  springK: 0.02,
++-  centerG: 0.008,
++-  damping: 0.82,
++-  maxV: 12,
+++  repulsion: 1600,
+++  springLength: 52,
+++  springK: 0.028,
+++  centerG: 0.014,
+++  damping: 0.84,
+++  maxV: 10,
++ }
++ 
++ /** Place nodes on a ring so the first frame is not a single pile. */
++@@ -54,7 +55,7 @@ export function seedLayoutNodes(
++   const cx = width / 2
++   const cy = height / 2
++   const n = Math.max(1, ids.length)
++-  const ring = Math.min(width, height) * 0.32
+++  const ring = Math.min(width, height) * 0.22
++   return ids.map((id, i) => {
++     const ang = (i / n) * Math.PI * 2 + 0.2
++     const jitter = ((i * 17) % 7) - 3
++@@ -64,7 +65,7 @@ export function seedLayoutNodes(
++       y: cy + Math.sin(ang) * (ring + jitter),
++       vx: 0,
++       vy: 0,
++-      r: radiusById?.get(id) ?? 10,
+++      r: radiusById?.get(id) ?? 4.5,
++       pinned: false,
++     }
++   })
++@@ -106,7 +107,7 @@ export function forceLayoutTick(
++         dist2 = dx * dx + dy * dy
++       }
++       const dist = Math.sqrt(dist2)
++-      const minDist = a.r + b.r + 4
+++      const minDist = a.r + b.r + 10
++       const force = repulsion / dist2
++       const fx = (dx / dist) * force
++       const fy = (dy / dist) * force
++@@ -118,9 +119,9 @@ export function forceLayoutTick(
++         b.vx += fx
++         b.vy += fy
++       }
++-      // Soft collision
+++      // Soft collision — keep dots from stacking (visual r is tiny)
++       if (dist < minDist) {
++-        const push = ((minDist - dist) / dist) * 0.5
+++        const push = ((minDist - dist) / dist) * 0.45
++         if (!a.pinned) {
++           a.x -= dx * push
++           a.y -= dy * push
++@@ -171,8 +172,8 @@ export function forceLayoutTick(
++       }
++       n.x += n.vx
++       n.y += n.vy
++-      // Soft wall
++-      const pad = n.r + 8
+++      // Soft wall — generous pad so dense graph can sit inward
+++      const pad = Math.max(24, n.r + 16)
++       n.x = Math.max(pad, Math.min(width - pad, n.x))
++       n.y = Math.max(pad, Math.min(height - pad, n.y))
++       energy += Math.sqrt(n.vx * n.vx + n.vy * n.vy)
++diff --git a/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md b/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
++index 3ce0ed7..71352f0 100644
++--- a/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
+++++ b/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
++@@ -252,14 +252,16 @@ type GraphEdge = {
++ 
++ ---
++ 
++-## 6. 视觉（Quiet Premium）
++-
++-- 背景：`tokens.bg` / 略深画布 `#f0f2f7`  
++-- 节点填充：`tokens.bgElevated`；描边 `tokens.borderStrong`  
++-- 焦点：`tokens.accent` 环  
++-- 硬边：`tokens.accent` 低透明；软边：`tokens.textMuted`  
++-- 字体：11–13 系统栈（与 Side Panel 一致）  
++-- **不用** emoji 作节点主图形（可用小点）
+++## 6. 视觉（Obsidian local graph · dark canvas）
+++
+++- **画布**：近黑 `#0d0f14` 全屏；**无固定侧栏占位**（纯画布）  
+++- **节点**：小圆点（半径约 2.8–7.5px，随度数弱放大）；**主标签哈希着色**（颜色组，见 `tag-colors.ts`）  
+++- **焦点 / 悬停**：柔光晕 + 邻接高亮，其余节点/边压暗  
+++- **边**：细灰线；硬边实线、软边虚线；线宽 ≤ ~1.8 屏幕像素  
+++- **标签**：**默认隐藏**；仅 **悬停 / 焦点 / 放大 ≥ ~1.15** 显示（9–10.5px 浅灰）  
+++- **布局**：紧力导向（短弹簧 + 适中斥力）+ 稳定后 fit-to-view  
+++- **Chrome**：**浮动**顶栏工具条 + 可收起右侧玻璃面板（图例 / 颜色组 / 焦点）；偏好记 `localStorage`  
+++- **不用** emoji 作节点主图形
++ 
++ ---
++ 
++diff --git a/chrome-extension/src/thread-graph/tag-colors.ts b/chrome-extension/src/thread-graph/tag-colors.ts
++new file mode 100644
++index 0000000..3694a3e
++--- /dev/null
+++++ b/chrome-extension/src/thread-graph/tag-colors.ts
++@@ -0,0 +1,120 @@
+++// Stable tag → color groups for thread graph (Obsidian-like "颜色组").
+++// Pure helpers — no DOM / chrome APIs.
+++
+++/** Soft pastel dots that read well on near-black canvas. */
+++export const TAG_PALETTE = [
+++  "#6b9fff", // blue
+++  "#f472b6", // pink
+++  "#34d399", // green
+++  "#fbbf24", // amber
+++  "#a78bfa", // violet
+++  "#22d3ee", // cyan
+++  "#fb923c", // orange
+++  "#e879f9", // fuchsia
+++  "#4ade80", // lime
+++  "#94a3b8", // slate (fallback-ish)
+++] as const
+++
+++export const UNTAGGED_COLOR = "#64748b"
+++export const UNTAGGED_LABEL = "未标注"
+++
+++/** FNV-1a-ish stable hash for string → palette index. */
+++export function hashTag(tag: string): number {
+++  const s = tag.trim().toLowerCase()
+++  let h = 2166136261
+++  for (let i = 0; i < s.length; i++) {
+++    h ^= s.charCodeAt(i)
+++    h = Math.imul(h, 16777619)
+++  }
+++  return h >>> 0
+++}
+++
+++export function colorForTag(tag: string | null | undefined): string {
+++  if (!tag || !tag.trim()) return UNTAGGED_COLOR
+++  const i = hashTag(tag) % TAG_PALETTE.length
+++  return TAG_PALETTE[i]
+++}
+++
+++/** Primary tag = first non-empty digest tag (stable assignment source). */
+++export function primaryTag(tags: string[] | undefined | null): string | null {
+++  if (!tags || tags.length === 0) return null
+++  for (const t of tags) {
+++    const s = (t || "").trim()
+++    if (s) return s
+++  }
+++  return null
+++}
+++
+++export type ColorGroup = {
+++  tag: string
+++  color: string
+++  count: number
+++}
+++
+++/**
+++ * Build per-node color map + legend groups (sorted by count desc, then tag).
+++ * `nodeIds` limits which threads appear in the legend counts.
+++ */
+++export function buildTagColorIndex(
+++  threads: Array<{ id: string; digest?: { tags?: string[] } | null }>,
+++  nodeIds?: Set<string> | string[],
+++): {
+++  colorById: Map<string, string>
+++  tagById: Map<string, string | null>
+++  groups: ColorGroup[]
+++} {
+++  const allow =
+++    nodeIds == null
+++      ? null
+++      : nodeIds instanceof Set
+++        ? nodeIds
+++        : new Set(nodeIds)
+++
+++  const colorById = new Map<string, string>()
+++  const tagById = new Map<string, string | null>()
+++  const counts = new Map<string, number>()
+++
+++  for (const t of threads) {
+++    if (allow && !allow.has(t.id)) continue
+++    const tag = primaryTag(t.digest?.tags)
+++    const key = tag ?? UNTAGGED_LABEL
+++    tagById.set(t.id, tag)
+++    colorById.set(t.id, colorForTag(tag))
+++    counts.set(key, (counts.get(key) || 0) + 1)
+++  }
+++
+++  const groups: ColorGroup[] = [...counts.entries()]
+++    .map(([tag, count]) => ({
+++      tag,
+++      count,
+++      color: tag === UNTAGGED_LABEL ? UNTAGGED_COLOR : colorForTag(tag),
+++    }))
+++    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh"))
+++
+++  return { colorById, tagById, groups }
+++}
+++
+++/** Lighten hex for focus/hover (simple channel blend toward white). */
+++export function lightenHex(hex: string, amount = 0.35): string {
+++  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+++  if (!m) return hex
+++  const n = parseInt(m[1], 16)
+++  const r = (n >> 16) & 0xff
+++  const g = (n >> 8) & 0xff
+++  const b = n & 0xff
+++  const mix = (c: number) => Math.min(255, Math.round(c + (255 - c) * amount))
+++  const to = (c: number) => c.toString(16).padStart(2, "0")
+++  return `#${to(mix(r))}${to(mix(g))}${to(mix(b))}`
+++}
+++
+++/** Apply alpha to #rrggbb → rgba(). */
+++export function hexWithAlpha(hex: string, alpha: number): string {
+++  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+++  if (!m) return hex
+++  const n = parseInt(m[1], 16)
+++  const r = (n >> 16) & 0xff
+++  const g = (n >> 8) & 0xff
+++  const b = n & 0xff
+++  const a = Math.max(0, Math.min(1, alpha))
+++  return `rgba(${r},${g},${b},${a})`
+++}
++diff --git a/chrome-extension/tests/tag-colors.test.ts b/chrome-extension/tests/tag-colors.test.ts
++new file mode 100644
++index 0000000..9fd7972
++--- /dev/null
+++++ b/chrome-extension/tests/tag-colors.test.ts
++@@ -0,0 +1,61 @@
+++import test from "node:test"
+++import assert from "node:assert/strict"
+++import {
+++  UNTAGGED_COLOR,
+++  UNTAGGED_LABEL,
+++  buildTagColorIndex,
+++  colorForTag,
+++  hashTag,
+++  hexWithAlpha,
+++  lightenHex,
+++  primaryTag,
+++} from "../src/thread-graph/tag-colors"
+++
+++test("hashTag is stable and case-insensitive", () => {
+++  assert.equal(hashTag("AI安全"), hashTag("ai安全"))
+++  assert.equal(hashTag("  foo  "), hashTag("foo"))
+++  assert.notStrictEqual(hashTag("a"), hashTag("b"))
+++})
+++
+++test("colorForTag: empty → untagged slate", () => {
+++  assert.equal(colorForTag(null), UNTAGGED_COLOR)
+++  assert.equal(colorForTag(""), UNTAGGED_COLOR)
+++  assert.equal(colorForTag("   "), UNTAGGED_COLOR)
+++})
+++
+++test("colorForTag: same tag → same color", () => {
+++  assert.equal(colorForTag("数据安全"), colorForTag("数据安全"))
+++})
+++
+++test("primaryTag uses first non-empty", () => {
+++  assert.equal(primaryTag(null), null)
+++  assert.equal(primaryTag([]), null)
+++  assert.equal(primaryTag(["", "  ", "x"]), "x")
+++  assert.equal(primaryTag(["工作", "健康"]), "工作")
+++})
+++
+++test("buildTagColorIndex groups and filters by nodeIds", () => {
+++  const threads = [
+++    { id: "1", digest: { tags: ["工作", "周报"] } },
+++    { id: "2", digest: { tags: ["工作"] } },
+++    { id: "3", digest: { tags: [] } },
+++    { id: "4", digest: { tags: ["健康"] } },
+++  ]
+++  const full = buildTagColorIndex(threads)
+++  assert.equal(full.colorById.get("1"), colorForTag("工作"))
+++  assert.equal(full.tagById.get("1"), "工作")
+++  assert.equal(full.colorById.get("3"), UNTAGGED_COLOR)
+++  const work = full.groups.find((g) => g.tag === "工作")
+++  assert.ok(work && work.count === 2)
+++  const un = full.groups.find((g) => g.tag === UNTAGGED_LABEL)
+++  assert.ok(un && un.count === 1)
+++
+++  const subset = buildTagColorIndex(threads, ["1", "4"])
+++  assert.equal(subset.groups.find((g) => g.tag === "工作")?.count, 1)
+++  assert.equal(subset.colorById.has("2"), false)
+++})
+++
+++test("lightenHex / hexWithAlpha", () => {
+++  assert.match(lightenHex("#6b9fff", 0.3), /^#[0-9a-f]{6}$/i)
+++  assert.equal(hexWithAlpha("#6b9fff", 0.5), "rgba(107,159,255,0.5)")
+++})
+diff --git a/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md b/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
+index 3ce0ed7..71352f0 100644
+--- a/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
++++ b/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
+@@ -252,14 +252,16 @@ type GraphEdge = {
+ 
+ ---
+ 
+-## 6. 视觉（Quiet Premium）
+-
+-- 背景：`tokens.bg` / 略深画布 `#f0f2f7`  
+-- 节点填充：`tokens.bgElevated`；描边 `tokens.borderStrong`  
+-- 焦点：`tokens.accent` 环  
+-- 硬边：`tokens.accent` 低透明；软边：`tokens.textMuted`  
+-- 字体：11–13 系统栈（与 Side Panel 一致）  
+-- **不用** emoji 作节点主图形（可用小点）
++## 6. 视觉（Obsidian local graph · dark canvas）
++
++- **画布**：近黑 `#0d0f14` 全屏；**无固定侧栏占位**（纯画布）  
++- **节点**：小圆点（半径约 2.8–7.5px，随度数弱放大）；**主标签哈希着色**（颜色组，见 `tag-colors.ts`）  
++- **焦点 / 悬停**：柔光晕 + 邻接高亮，其余节点/边压暗  
++- **边**：细灰线；硬边实线、软边虚线；线宽 ≤ ~1.8 屏幕像素  
++- **标签**：**默认隐藏**；仅 **悬停 / 焦点 / 放大 ≥ ~1.15** 显示（9–10.5px 浅灰）  
++- **布局**：紧力导向（短弹簧 + 适中斥力）+ 稳定后 fit-to-view  
++- **Chrome**：**浮动**顶栏工具条 + 可收起右侧玻璃面板（图例 / 颜色组 / 焦点）；偏好记 `localStorage`  
++- **不用** emoji 作节点主图形
+ 
+ ---
+ 
+diff --git a/chrome-extension/src/thread-graph/ThreadGraphApp.tsx b/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
+index 3539715..d7cb4a6 100644
+--- a/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
++++ b/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
+@@ -1,5 +1,6 @@
+-// Full-page Obsidian-like thread graph (v1).
++// Full-page Obsidian-like thread graph.
+ // Spec: docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
++// v1.1: tag color groups · labels on hover/zoom · floating chrome (pure canvas)
+ 
+ import {
+   useCallback,
+@@ -7,6 +8,7 @@ import {
+   useMemo,
+   useRef,
+   useState,
++  type CSSProperties,
+   type PointerEvent as ReactPointerEvent,
+   type MouseEvent as ReactMouseEvent,
+   type WheelEvent as ReactWheelEvent,
+@@ -28,34 +30,92 @@ import {
+   type ThreadGraphSlim,
+ } from "../background/thread-graph"
+ import { tokens } from "../sidepanel/ui/tokens"
++import {
++  buildTagColorIndex,
++  hexWithAlpha,
++  lightenHex,
++  UNTAGGED_COLOR,
++} from "./tag-colors"
++
++/** Obsidian-adjacent local palette (graph canvas). */
++const G = {
++  canvas: "#0d0f14",
++  edgeHard: "rgba(148, 163, 184, 0.42)",
++  edgeSoft: "rgba(148, 163, 184, 0.18)",
++  edgeDim: "rgba(148, 163, 184, 0.06)",
++  edgeHot: "rgba(165, 180, 252, 0.75)",
++  label: "rgba(226, 232, 240, 0.7)",
++  labelFocus: "rgba(248, 250, 252, 0.95)",
++} as const
++
++/** Labels only when hovering, focused, or zoomed past this scale. */
++const LABEL_ZOOM_THRESHOLD = 1.15
+ 
+ function displayTitle(t: ThreadGraphSlim): string {
+   const a = (t.alias || "").trim()
+-  if (a) return a.length > 28 ? a.slice(0, 27) + "…" : a
++  if (a) return a.length > 22 ? a.slice(0, 21) + "…" : a
+   return `未命名 · ${(t.id || "").slice(0, 6)}`
+ }
+ 
++/** Visual radius — Obsidian-scale dots. */
+ function radiusForDegree(deg: number): number {
+-  return Math.min(22, Math.max(8, 8 + Math.sqrt(deg) * 3.2))
++  return Math.min(7.5, Math.max(2.8, 2.8 + Math.sqrt(deg) * 1.35))
+ }
+ 
++const HIT_PAD = 8
++
++const PANEL_KEY = "cmspark_thread_graph_panel_open"
++
+ export function ThreadGraphApp() {
+   const [snap, setSnap] = useState<ThreadGraphSnapshot | null>(null)
+   const [loadError, setLoadError] = useState<string | null>(null)
+   const [minScore, setMinScore] = useState(0.2)
+   const [showIsolated, setShowIsolated] = useState(false)
+   const [focusId, setFocusId] = useState<string | null>(null)
++  const [hoverId, setHoverId] = useState<string | null>(null)
+   const [query, setQuery] = useState("")
+   const [status, setStatus] = useState("")
++  /** User chrome preference (toolbar toggle only — node-click open is transient). */
++  const [panelOpen, setPanelOpen] = useState(() => {
++    try {
++      return localStorage.getItem(PANEL_KEY) !== "0"
++    } catch {
++      return true
++    }
++  })
++
+   const canvasRef = useRef<HTMLCanvasElement>(null)
+   const nodesRef = useRef<LayoutNode[]>([])
+   const edgesRef = useRef<RelatedEdge[]>([])
+-  const dragRef = useRef<{ id: string; ox: number; oy: number } | null>(null)
++  const dragRef = useRef<{ id: string; ox: number; oy: number; moved: boolean } | null>(null)
+   const panRef = useRef({ x: 0, y: 0 })
+   const scaleRef = useRef(1)
+   const rafRef = useRef(0)
+   const sizeRef = useRef({ w: 800, h: 600 })
+   const simTicksRef = useRef(0)
++  const hoverIdRef = useRef<string | null>(null)
++  const focusIdRef = useRef<string | null>(null)
++  const fittedRef = useRef(false)
++  const layoutSigRef = useRef("")
++  const colorByIdRef = useRef<Map<string, string>>(new Map())
++  const threadsByIdRef = useRef<Map<string, ThreadGraphSlim>>(new Map())
++  const isolatedIdsRef = useRef<Set<string>>(new Set())
++
++  useEffect(() => {
++    hoverIdRef.current = hoverId
++  }, [hoverId])
++  useEffect(() => {
++    focusIdRef.current = focusId
++  }, [focusId])
++
++  const persistPanelPref = useCallback((open: boolean) => {
++    setPanelOpen(open)
++    try {
++      localStorage.setItem(PANEL_KEY, open ? "1" : "0")
++    } catch {
++      /* ignore */
++    }
++  }, [])
+ 
+   const focusFromUrl = useMemo(() => {
+     try {
+@@ -65,7 +125,6 @@ export function ThreadGraphApp() {
+     }
+   }, [])
+ 
+-  // Load snapshot (contract: storage.session only — dual-review nit)
+   useEffect(() => {
+     let cancelled = false
+     ;(async () => {
+@@ -118,7 +177,6 @@ export function ThreadGraphApp() {
+     let nodeIds = inputs.map((t) => t.id)
+     if (!showIsolated) {
+       nodeIds = nodeIds.filter((id) => !isolated.has(id) || id === focusId)
+-      // keep endpoints of edges only
+       const keep = new Set<string>()
+       for (const e of allEdges) {
+         keep.add(e.a)
+@@ -150,19 +208,74 @@ export function ThreadGraphApp() {
+     }
+   }, [threads, minScore, showIsolated, query, focusId])
+ 
+-  // (Re)seed layout when graph structure changes
++  const tagColors = useMemo(() => {
++    const ids = nodesInput.map((n) => n.id)
++    return buildTagColorIndex(threads, ids)
++  }, [threads, nodesInput])
++
++  /** Topology signature — focus/hover must NOT reseed when id set + edges unchanged. */
++  const layoutSignature = useMemo(() => {
++    const ids = nodesInput
++      .map((n) => n.id)
++      .slice()
++      .sort()
++      .join("\0")
++    const degs = nodesInput
++      .map((n) => `${n.id}:${n.degree}`)
++      .slice()
++      .sort()
++      .join("|")
++    const es = edges
++      .map((e) => {
++        const a = e.a < e.b ? e.a : e.b
++        const b = e.a < e.b ? e.b : e.a
++        return `${a}\t${b}\t${e.kind}\t${e.score.toFixed(3)}`
++      })
++      .slice()
++      .sort()
++      .join("|")
++    return `${ids}#${degs}#${es}`
++  }, [nodesInput, edges])
++
++  // Sync color/thread maps during render (avoid one-frame stale ref)
++  colorByIdRef.current = tagColors.colorById
++  threadsByIdRef.current = new Map(threads.map((t) => [t.id, t]))
++  isolatedIdsRef.current = isolatedIds
++
+   useEffect(() => {
+     const { w, h } = sizeRef.current
+     const rMap = new Map(nodesInput.map((n) => [n.id, radiusForDegree(n.degree)]))
+-    nodesRef.current = seedLayoutNodes(
+-      nodesInput.map((n) => n.id),
+-      w,
+-      h,
+-      rMap,
+-    )
+     edgesRef.current = edges
++
++    const sig = layoutSignature
++    if (sig === layoutSigRef.current && nodesRef.current.length > 0) {
++      // Same topology: only refresh radii / edges; keep x,y,pin
++      for (const n of nodesRef.current) {
++        const r = rMap.get(n.id)
++        if (r != null) n.r = r
++      }
++      return
++    }
++    layoutSigRef.current = sig
++
++    const prev = new Map(nodesRef.current.map((n) => [n.id, n]))
++    const ids = nodesInput.map((n) => n.id)
++    const seeded = seedLayoutNodes(ids, w, h, rMap)
++    // Preserve positions for nodes that remain
++    for (const n of seeded) {
++      const p = prev.get(n.id)
++      if (p) {
++        n.x = p.x
++        n.y = p.y
++        n.vx = 0
++        n.vy = 0
++        n.pinned = p.pinned
++      }
++    }
++    nodesRef.current = seeded
+     simTicksRef.current = 0
+-  }, [nodesInput, edges])
++    fittedRef.current = false
++  }, [layoutSignature, nodesInput, edges])
+ 
+   const focusThread = useMemo(
+     () => (focusId ? threads.find((t) => t.id === focusId) || null : null),
+@@ -171,6 +284,7 @@ export function ThreadGraphApp() {
+ 
+   const openThread = useCallback((threadId: string) => {
+     setFocusId(threadId)
++    setPanelOpen(true) // transient open — does not rewrite localStorage pref
+     chrome.runtime.sendMessage(
+       { type: "thread_graph.open_thread", thread_id: threadId },
+       () => {
+@@ -202,22 +316,52 @@ export function ThreadGraphApp() {
+     const ro = new ResizeObserver(resize)
+     ro.observe(parent)
+ 
++    const fitView = () => {
++      const nodes = nodesRef.current
++      if (nodes.length === 0) return
++      const { w, h } = sizeRef.current
++      let minX = Infinity
++      let minY = Infinity
++      let maxX = -Infinity
++      let maxY = -Infinity
++      for (const n of nodes) {
++        minX = Math.min(minX, n.x - n.r)
++        minY = Math.min(minY, n.y - n.r)
++        maxX = Math.max(maxX, n.x + n.r)
++        maxY = Math.max(maxY, n.y + n.r)
++      }
++      const gw = Math.max(40, maxX - minX)
++      const gh = Math.max(40, maxY - minY)
++      const pad = 56
++      const s = Math.min((w - pad * 2) / gw, (h - pad * 2) / gh, 1.35)
++      scaleRef.current = Math.max(0.45, Math.min(1.8, s * 0.92))
++      const cx = (minX + maxX) / 2
++      const cy = (minY + maxY) / 2
++      panRef.current.x = w / 2 - cx * scaleRef.current
++      panRef.current.y = h / 2 - cy * scaleRef.current
++      fittedRef.current = true
++    }
++
+     const draw = () => {
+       const ctx = canvas.getContext("2d")
+       if (!ctx) return
+       const { w, h } = sizeRef.current
+-      // Simulate a few ticks while energy high
+       if (simTicksRef.current < 320 && nodesRef.current.length > 0) {
+         const e = forceLayoutTick(nodesRef.current, edgesRef.current, {
+           width: w,
+           height: h,
+         })
+         simTicksRef.current++
+-        if (e < 0.06 && simTicksRef.current > 50) simTicksRef.current = 999
++        const settled = e < 0.06 && simTicksRef.current > 50
++        const exhausted = simTicksRef.current >= 320
++        if (settled || exhausted) {
++          simTicksRef.current = 999
++          if (!fittedRef.current) fitView()
++        }
+       }
+ 
+       ctx.clearRect(0, 0, w, h)
+-      ctx.fillStyle = tokens.bgMuted
++      ctx.fillStyle = G.canvas
+       ctx.fillRect(0, 0, w, h)
+ 
+       ctx.save()
+@@ -225,50 +369,90 @@ export function ThreadGraphApp() {
+       ctx.scale(scaleRef.current, scaleRef.current)
+ 
+       const byId = new Map(nodesRef.current.map((n) => [n.id, n]))
++      const active = hoverIdRef.current || focusIdRef.current
++      let hot: Set<string> | null = null
++      if (active) {
++        hot = new Set([active])
++        for (const e of edgesRef.current) {
++          if (e.a === active) hot.add(e.b)
++          if (e.b === active) hot.add(e.a)
++        }
++      }
++      const scale = scaleRef.current
++      const colors = colorByIdRef.current
+ 
+-      // Edges
+       for (const e of edgesRef.current) {
+         const a = byId.get(e.a)
+         const b = byId.get(e.b)
+         if (!a || !b) continue
++        const hard = e.kind === "hard"
++        const isHot = hot ? hot.has(e.a) && hot.has(e.b) : false
++        const isDim = hot != null && !isHot
+         ctx.beginPath()
+         ctx.moveTo(a.x, a.y)
+         ctx.lineTo(b.x, b.y)
+-        const hard = e.kind === "hard"
+-        // Canvas has no CSS alpha tokens — stroke solid token + globalAlpha
+-        ctx.strokeStyle = hard ? tokens.accent : tokens.textMuted
+-        ctx.globalAlpha = hard ? 0.45 : 0.55
+-        if (!hard) ctx.setLineDash([4, 4])
++        if (isDim) {
++          ctx.strokeStyle = G.edgeDim
++          ctx.globalAlpha = 1
++        } else if (isHot) {
++          ctx.strokeStyle = G.edgeHot
++          ctx.globalAlpha = hard ? 0.9 : 0.55
++        } else {
++          ctx.strokeStyle = hard ? G.edgeHard : G.edgeSoft
++          ctx.globalAlpha = 1
++        }
++        if (!hard) ctx.setLineDash([2.5, 3.5])
+         else ctx.setLineDash([])
+-        ctx.lineWidth = Math.min(4, 1 + e.score * 2.5)
++        const base = hard ? 0.55 + e.score * 0.7 : 0.4 + e.score * 0.45
++        ctx.lineWidth = Math.min(1.8, base) / Math.max(0.6, scale)
+         ctx.stroke()
+         ctx.setLineDash([])
+         ctx.globalAlpha = 1
+       }
+ 
+-      // Nodes
+-      const q = query.trim().toLowerCase()
+       for (const n of nodesRef.current) {
+-        const t = threads.find((x) => x.id === n.id)
++        const t = threadsByIdRef.current.get(n.id)
+         const title = t ? displayTitle(t) : n.id.slice(0, 6)
+-        const isFocus = n.id === focusId
+-        const isIso = isolatedIds.has(n.id)
++        const isFocus = n.id === focusIdRef.current
++        const isHover = n.id === hoverIdRef.current
++        const isIso = isolatedIdsRef.current.has(n.id)
++        const inHot = hot ? hot.has(n.id) : true
++        const dimmed = hot != null && !inHot
++        const baseColor = colors.get(n.id) || UNTAGGED_COLOR
++
++        if (isFocus || isHover) {
++          ctx.beginPath()
++          ctx.arc(n.x, n.y, n.r + 3.5, 0, Math.PI * 2)
++          ctx.fillStyle = hexWithAlpha(baseColor, isFocus ? 0.28 : 0.18)
++          ctx.fill()
++        }
+ 
+         ctx.beginPath()
+         ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2)
+-        ctx.fillStyle = isFocus ? tokens.accentSoft : tokens.bgElevated
+-        ctx.globalAlpha = isIso && !isFocus ? 0.45 : 1
++        if (isFocus) {
++          ctx.fillStyle = lightenHex(baseColor, 0.45)
++        } else if (isHover) {
++          ctx.fillStyle = lightenHex(baseColor, 0.28)
++        } else if (dimmed || (isIso && !isFocus)) {
++          ctx.fillStyle = hexWithAlpha(baseColor, 0.28)
++        } else {
++          ctx.fillStyle = baseColor
++        }
++        ctx.globalAlpha = dimmed ? 0.5 : 1
+         ctx.fill()
+-        ctx.strokeStyle = isFocus ? tokens.accent : tokens.borderStrong
+-        ctx.lineWidth = isFocus ? 2.5 : 1.2
+-        ctx.stroke()
+         ctx.globalAlpha = 1
+ 
+-        ctx.fillStyle = tokens.text
+-        ctx.font = `${isFocus ? 12 : 11}px ${tokens.font}`
+-        ctx.textAlign = "center"
+-        ctx.textBaseline = "top"
+-        ctx.fillText(title, n.x, n.y + n.r + 3)
++        // Labels: only hover / focus / deep zoom (not always-on)
++        const showLabel =
++          isFocus || isHover || (scale >= LABEL_ZOOM_THRESHOLD && !dimmed)
++        if (showLabel) {
++          ctx.fillStyle = isFocus || isHover ? G.labelFocus : G.label
++          const fontPx = (isFocus ? 10.5 : 9) / Math.max(0.75, Math.min(1.25, scale))
++          ctx.font = `${fontPx}px ${tokens.font}`
++          ctx.textAlign = "center"
++          ctx.textBaseline = "top"
++          ctx.fillText(title, n.x, n.y + n.r + 2.5)
++        }
+       }
+ 
+       ctx.restore()
+@@ -279,19 +463,22 @@ export function ThreadGraphApp() {
+       ro.disconnect()
+       cancelAnimationFrame(rafRef.current)
+     }
+-  }, [threads, focusId, query, isolatedIds])
++  }, [])
+ 
+   const hitTest = (clientX: number, clientY: number): LayoutNode | null => {
+     const canvas = canvasRef.current
+     if (!canvas) return null
+     const rect = canvas.getBoundingClientRect()
+-    const x = (clientX - rect.left - panRef.current.x) / scaleRef.current
+-    const y = (clientY - rect.top - panRef.current.y) / scaleRef.current
++    const scale = Math.max(0.001, scaleRef.current)
++    const x = (clientX - rect.left - panRef.current.x) / scale
++    const y = (clientY - rect.top - panRef.current.y) / scale
++    // Screen-constant hit pad so tiny dots stay clickable when zoomed out
++    const pad = HIT_PAD / scale
+     let best: LayoutNode | null = null
+     let bestD = Infinity
+     for (const n of nodesRef.current) {
+       const d = Math.hypot(n.x - x, n.y - y)
+-      if (d <= n.r + 4 && d < bestD) {
++      if (d <= n.r + pad && d < bestD) {
+         best = n
+         bestD = d
+       }
+@@ -299,24 +486,58 @@ export function ThreadGraphApp() {
+     return best
+   }
+ 
++  const endDrag = (ev?: ReactPointerEvent) => {
++    const drag = dragRef.current
++    if (drag && drag.id !== "__pan__") {
++      const n = nodesRef.current.find((x) => x.id === drag.id)
++      if (n) {
++        n.vx = 0
++        n.vy = 0
++        // Sticky pin only after real drag (§3.4); pure click must not freeze node
++        n.pinned = drag.moved
++      }
++    }
++    if (ev?.target && "releasePointerCapture" in (ev.target as Element)) {
++      try {
++        ;(ev.target as HTMLElement).releasePointerCapture?.(ev.pointerId)
++      } catch {
++        /* already released */
++      }
++    }
++    dragRef.current = null
++  }
++
+   const onPointerDown = (ev: ReactPointerEvent) => {
+     const n = hitTest(ev.clientX, ev.clientY)
+     if (n) {
+-      n.pinned = true
+-      dragRef.current = { id: n.id, ox: ev.clientX, oy: ev.clientY }
++      n.pinned = true // temporary while dragging
++      dragRef.current = { id: n.id, ox: ev.clientX, oy: ev.clientY, moved: false }
+       setFocusId(n.id)
+-      simTicksRef.current = 0
++      setPanelOpen(true) // transient — not preference write
++      if (simTicksRef.current >= 999) simTicksRef.current = 280
+       ;(ev.target as HTMLElement).setPointerCapture?.(ev.pointerId)
+       return
+     }
+-    dragRef.current = { id: "__pan__", ox: ev.clientX, oy: ev.clientY }
++    // blank click: clear focus, start pan (capture so leave doesn't abort)
++    setFocusId(null)
++    dragRef.current = { id: "__pan__", ox: ev.clientX, oy: ev.clientY, moved: false }
++    ;(ev.target as HTMLElement).setPointerCapture?.(ev.pointerId)
+   }
+ 
+   const onPointerMove = (ev: ReactPointerEvent) => {
+     const drag = dragRef.current
+-    if (!drag) return
++    if (!drag) {
++      const n = hitTest(ev.clientX, ev.clientY)
++      const id = n?.id ?? null
++      if (id !== hoverIdRef.current) {
++        hoverIdRef.current = id
++        setHoverId(id)
++      }
++      return
++    }
+     const dx = ev.clientX - drag.ox
+     const dy = ev.clientY - drag.oy
++    if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true
+     drag.ox = ev.clientX
+     drag.oy = ev.clientY
+     if (drag.id === "__pan__") {
+@@ -333,13 +554,18 @@ export function ThreadGraphApp() {
+     }
+   }
+ 
+-  const onPointerUp = (_ev: ReactPointerEvent) => {
+-    const drag = dragRef.current
+-    if (drag && drag.id !== "__pan__") {
+-      const n = nodesRef.current.find((x) => x.id === drag.id)
+-      if (n) n.pinned = false
+-    }
+-    dragRef.current = null
++  const onPointerUp = (ev: ReactPointerEvent) => {
++    endDrag(ev)
++  }
++
++  const onPointerLeave = () => {
++    // With pointer capture, leave should not end drag mid-gesture
++    hoverIdRef.current = null
++    setHoverId(null)
++  }
++
++  const onPointerCancel = (ev: ReactPointerEvent) => {
++    endDrag(ev)
+   }
+ 
+   const onDoubleClick = (ev: ReactMouseEvent) => {
+@@ -349,16 +575,25 @@ export function ThreadGraphApp() {
+ 
+   const onWheel = (ev: ReactWheelEvent) => {
+     ev.preventDefault()
++    const canvas = canvasRef.current
++    if (!canvas) return
++    const rect = canvas.getBoundingClientRect()
++    const mx = ev.clientX - rect.left
++    const my = ev.clientY - rect.top
++    const prev = scaleRef.current
+     const factor = ev.deltaY > 0 ? 0.92 : 1.08
+-    scaleRef.current = Math.min(3, Math.max(0.35, scaleRef.current * factor))
++    const next = Math.min(3.2, Math.max(0.28, prev * factor))
++    panRef.current.x = mx - ((mx - panRef.current.x) / prev) * next
++    panRef.current.y = my - ((my - panRef.current.y) / prev) * next
++    scaleRef.current = next
+   }
+ 
+   if (loadError) {
+     return (
+       <div style={styles.page}>
+-        <header style={styles.header}>
+-          <strong>关联图谱</strong>
+-        </header>
++        <div style={styles.floatBar}>
++          <strong style={styles.barTitle}>关联图谱</strong>
++        </div>
+         <div style={styles.empty}>{loadError}</div>
+       </div>
+     )
+@@ -366,82 +601,141 @@ export function ThreadGraphApp() {
+ 
+   const hasNodes = nodesInput.length > 0
+   const hasEdges = edges.length > 0
++  const groupsPreview = tagColors.groups.slice(0, 12)
+ 
+   return (
+     <div style={styles.page}>
+-      <header style={styles.header}>
+-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+-          <strong style={{ fontSize: 15 }}>关联图谱</strong>
+-          <span style={styles.meta}>
+-            边 = 共标签（实线）+ 要点相似（虚线）· 本地计算 · 不改默认时间轴
+-          </span>
+-        </div>
+-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
++      {/* Floating top toolbar */}
++      <div style={styles.floatBar} role="toolbar" aria-label="图谱工具栏">
++        <strong style={styles.barTitle}>关联图谱</strong>
++        <input
++          style={styles.search}
++          placeholder="搜索会话 / 标签"
++          value={query}
++          onChange={(e) => setQuery(e.target.value)}
++        />
++        <label style={styles.check}>
+           <input
+-            style={styles.search}
+-            placeholder="搜索会话 / 标签"
+-            value={query}
+-            onChange={(e) => setQuery(e.target.value)}
++            type="checkbox"
++            checked={showIsolated}
++            onChange={(e) => setShowIsolated(e.target.checked)}
+           />
+-          <label style={styles.check}>
+-            <input
+-              type="checkbox"
+-              checked={showIsolated}
+-              onChange={(e) => setShowIsolated(e.target.checked)}
+-            />
+-            显示孤立点
+-          </label>
+-          <label style={styles.check}>
+-            强度
+-            <input
+-              type="range"
+-              min={0.1}
+-              max={0.5}
+-              step={0.05}
+-              value={minScore}
+-              onChange={(e) => setMinScore(Number(e.target.value))}
+-            />
+-            <span style={{ width: 32 }}>{minScore.toFixed(2)}</span>
+-          </label>
+-        </div>
+-      </header>
++          孤立点
++        </label>
++        <label style={styles.check}>
++          强度
++          <input
++            type="range"
++            min={0.1}
++            max={0.5}
++            step={0.05}
++            value={minScore}
++            onChange={(e) => setMinScore(Number(e.target.value))}
++            style={{ width: 72, accentColor: tokens.darkAccent }}
++          />
++          <span style={{ width: 28, fontVariantNumeric: "tabular-nums" }}>
++            {minScore.toFixed(2)}
++          </span>
++        </label>
++        <span style={styles.barMeta}>
++          {nodesInput.length} 点 · {edges.length} 边
++          {threads.length >= 300 ? " · 近 300" : ""}
++        </span>
++        <button
++          type="button"
++          style={styles.barBtn}
++          onClick={() => persistPanelPref(!panelOpen)}
++          aria-pressed={panelOpen}
++          title={panelOpen ? "收起侧栏" : "展开侧栏"}
++        >
++          {panelOpen ? "收起面板" : "图例 · 焦点"}
++        </button>
++      </div>
++
++      {/* Floating side panel */}
++      {panelOpen && (
++        <aside style={styles.floatPanel} aria-label="图例与焦点">
++          <div style={styles.panelHead}>
++            <span style={styles.asideTitle}>面板</span>
++            <button
++              type="button"
++              style={styles.iconBtn}
++              onClick={() => persistPanelPref(false)}
++              aria-label="关闭面板"
++            >
++              ✕
++            </button>
++          </div>
+ 
+-      <div style={styles.body}>
+-        <aside style={styles.aside}>
+           <div style={styles.asideSection}>
+-            <div style={styles.asideTitle}>图例</div>
++            <div style={styles.asideTitle}>边</div>
+             <div style={styles.legendRow}>
+-              <span style={{ ...styles.legendLine, borderColor: tokens.accent, opacity: 0.6 }} />
++              <span style={{ ...styles.legendLine, borderColor: "rgba(165, 180, 252, 0.7)" }} />
+               共标签（硬边）
+             </div>
+             <div style={styles.legendRow}>
+               <span
+                 style={{
+                   ...styles.legendLine,
+-                  borderColor: tokens.textMuted,
++                  borderColor: "rgba(148, 163, 184, 0.45)",
+                   borderStyle: "dashed",
+-                  opacity: 0.85,
+                 }}
+               />
+               要点相似（软边）
+             </div>
+-            <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 8, lineHeight: 1.45 }}>
+-              节点 {nodesInput.length} · 边 {edges.length}
+-              {threads.length >= 300 ? " · 仅最近 300 会话" : ""}
++            <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 6, lineHeight: 1.4 }}>
++              标签默认隐藏 · 悬停 / 放大后显示
+             </div>
+           </div>
+ 
++          <div style={styles.asideSection}>
++            <div style={styles.asideTitle}>颜色组（主标签）</div>
++            {groupsPreview.length === 0 ? (
++              <div style={{ fontSize: 11, color: tokens.darkMuted }}>暂无标签</div>
++            ) : (
++              <div style={styles.colorGroups}>
++                {groupsPreview.map((g) => (
++                  <div key={g.tag} style={styles.colorRow}>
++                    <span style={{ ...styles.colorDot, background: g.color }} />
++                    <span style={styles.colorTag} title={g.tag}>
++                      {g.tag}
++                    </span>
++                    <span style={styles.colorCount}>{g.count}</span>
++                  </div>
++                ))}
++                {tagColors.groups.length > groupsPreview.length && (
++                  <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 4 }}>
++                    +{tagColors.groups.length - groupsPreview.length} 组
++                  </div>
++                )}
++              </div>
++            )}
++          </div>
++
+           <div style={styles.asideSection}>
+             <div style={styles.asideTitle}>焦点</div>
+             {focusThread ? (
+               <>
+-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
++                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: tokens.darkText }}>
+                   {displayTitle(focusThread)}
+                 </div>
+                 {(focusThread.digest?.tags || []).length > 0 && (
+                   <div style={styles.tags}>
+                     {(focusThread.digest?.tags || []).map((tg) => (
+-                      <span key={tg} style={styles.tag}>
++                      <span
++                        key={tg}
++                        style={{
++                          ...styles.tag,
++                          background: hexWithAlpha(
++                            tagColors.colorById.get(focusThread.id) || UNTAGGED_COLOR,
++                            0.2,
++                          ),
++                          color: lightenHex(
++                            tagColors.colorById.get(focusThread.id) || UNTAGGED_COLOR,
++                            0.35,
++                          ),
++                        }}
++                      >
+                         {tg}
+                       </span>
+                     ))}
+@@ -450,152 +744,250 @@ export function ThreadGraphApp() {
+                 {focusThread.digest?.tldr && (
+                   <p style={styles.tldr}>{focusThread.digest.tldr}</p>
+                 )}
+-                <button type="button" style={styles.primaryBtn} onClick={() => openThread(focusThread.id)}>
++                <button
++                  type="button"
++                  style={styles.primaryBtn}
++                  onClick={() => openThread(focusThread.id)}
++                >
+                   打开会话
+                 </button>
+-                <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 6 }}>
++                <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 6 }}>
+                   双击节点也可打开 · 图谱保持打开
+                 </div>
+               </>
+             ) : (
+-              <div style={{ fontSize: 12, color: tokens.textSecondary }}>单击节点查看详情</div>
++              <div style={{ fontSize: 12, color: tokens.darkMuted }}>
++                单击节点查看详情 · 单击空白取消
++              </div>
+             )}
+           </div>
+ 
+           {status && <div style={styles.status}>{status}</div>}
+         </aside>
++      )}
+ 
+-        <main style={styles.main}>
+-          {!hasNodes && (
+-            <div style={styles.empty}>
+-              {threads.length === 0
+-                ? "暂无会话"
+-                : !hasEdges
+-                  ? "还没有关联边（或节点均为孤立）。请先在 Side Panel ☰ →「为未标注提取要点」生成标签，再重新打开图谱；也可勾选「显示孤立点」查看全部会话。"
+-                  : "没有可显示的节点。试试开启「显示孤立点」，或降低强度阈值 / 清空搜索。"}
+-            </div>
+-          )}
+-          {hasNodes && !hasEdges && (
+-            <div style={styles.emptyBanner}>
+-              还没有关联边。请先在 Side Panel ☰ →「为未标注提取要点」生成标签后再打开图谱。
+-            </div>
+-          )}
+-          <canvas
+-            ref={canvasRef}
+-            style={styles.canvas}
+-            onPointerDown={onPointerDown}
+-            onPointerMove={onPointerMove}
+-            onPointerUp={onPointerUp}
+-            onPointerLeave={onPointerUp}
+-            onDoubleClick={onDoubleClick}
+-            onWheel={onWheel}
+-          />
+-        </main>
+-      </div>
++      {/* Full-bleed canvas */}
++      <main style={styles.main}>
++        {!hasNodes && (
++          <div style={styles.empty}>
++            {threads.length === 0
++              ? "暂无会话"
++              : !hasEdges
++                ? "还没有关联边（或节点均为孤立）。请先在 Side Panel ☰ →「为未标注提取要点」生成标签，再重新打开图谱；也可勾选「孤立点」查看全部会话。"
++                : "没有可显示的节点。试试开启「孤立点」，或降低强度阈值 / 清空搜索。"}
++          </div>
++        )}
++        {hasNodes && !hasEdges && (
++          <div style={styles.emptyBanner}>
++            还没有关联边。请先在 Side Panel ☰ →「为未标注提取要点」生成标签后再打开图谱。
++          </div>
++        )}
++        <canvas
++          ref={canvasRef}
++          style={styles.canvas}
++          onPointerDown={onPointerDown}
++          onPointerMove={onPointerMove}
++          onPointerUp={onPointerUp}
++          onPointerLeave={onPointerLeave}
++          onPointerCancel={onPointerCancel}
++          onDoubleClick={onDoubleClick}
++          onWheel={onWheel}
++        />
++      </main>
+     </div>
+   )
+ }
+ 
+-const styles: Record<string, React.CSSProperties> = {
++const glass: CSSProperties = {
++  background: "rgba(20, 24, 32, 0.88)",
++  border: `1px solid ${tokens.darkBorder}`,
++  boxShadow: "0 8px 28px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset",
++  backdropFilter: "blur(12px)",
++  WebkitBackdropFilter: "blur(12px)",
++}
++
++const styles: Record<string, CSSProperties> = {
+   page: {
+-    display: "flex",
+-    flexDirection: "column",
++    position: "relative",
+     height: "100vh",
+     margin: 0,
+     fontFamily: tokens.font,
+-    background: tokens.bg,
+-    color: tokens.text,
++    background: G.canvas,
++    color: tokens.darkText,
++    overflow: "hidden",
+   },
+-  header: {
++  floatBar: {
++    ...glass,
++    position: "absolute",
++    zIndex: 10,
++    top: 12,
++    left: 12,
++    right: 12,
++    maxWidth: "calc(100% - 24px)",
+     display: "flex",
+     flexWrap: "wrap",
+-    gap: 10,
+     alignItems: "center",
+-    justifyContent: "space-between",
+-    padding: "10px 14px",
+-    borderBottom: `1px solid ${tokens.border}`,
+-    background: tokens.bgElevated,
++    gap: 10,
++    padding: "8px 12px",
++    borderRadius: 12,
++    pointerEvents: "auto",
+   },
+-  meta: { fontSize: 11, color: tokens.textMuted },
+-  search: {
+-    border: `1px solid ${tokens.border}`,
++  barTitle: {
++    fontSize: 13,
++    fontWeight: 650,
++    letterSpacing: "0.02em",
++    marginRight: 4,
++  },
++  barMeta: {
++    fontSize: 11,
++    color: tokens.darkMuted,
++    marginLeft: "auto",
++  },
++  barBtn: {
++    border: `1px solid ${tokens.darkBorder}`,
+     borderRadius: tokens.radiusMd,
++    background: "rgba(129, 140, 248, 0.12)",
++    color: tokens.darkAccent,
+     padding: "5px 10px",
++    fontSize: 11,
++    fontWeight: 600,
++    cursor: "pointer",
++    fontFamily: tokens.font,
++  },
++  search: {
++    border: `1px solid ${tokens.darkBorder}`,
++    borderRadius: tokens.radiusMd,
++    padding: "4px 9px",
+     fontSize: 12,
+-    minWidth: 160,
++    minWidth: 140,
++    maxWidth: 200,
+     fontFamily: tokens.font,
++    background: "rgba(11, 13, 18, 0.65)",
++    color: tokens.darkText,
++    outline: "none",
+   },
+   check: {
+     display: "inline-flex",
+     alignItems: "center",
+     gap: 4,
+     fontSize: 11,
+-    color: tokens.textSecondary,
++    color: tokens.darkMuted,
++    userSelect: "none" as const,
+   },
+-  body: { display: "flex", flex: 1, minHeight: 0 },
+-  aside: {
+-    width: 240,
+-    flexShrink: 0,
+-    borderRight: `1px solid ${tokens.border}`,
+-    padding: 12,
++  floatPanel: {
++    ...glass,
++    position: "absolute",
++    zIndex: 10,
++    top: 64,
++    right: 12,
++    width: 220,
++    maxHeight: "calc(100vh - 80px)",
+     overflow: "auto",
+-    background: tokens.bgElevated,
++    padding: 12,
++    borderRadius: 12,
++    pointerEvents: "auto",
+   },
+-  asideSection: { marginBottom: 16 },
++  panelHead: {
++    display: "flex",
++    alignItems: "center",
++    justifyContent: "space-between",
++    marginBottom: 10,
++  },
++  iconBtn: {
++    border: "none",
++    background: "transparent",
++    color: tokens.darkMuted,
++    cursor: "pointer",
++    fontSize: 12,
++    padding: "2px 6px",
++    borderRadius: 4,
++  },
++  asideSection: { marginBottom: 14 },
+   asideTitle: {
+-    fontSize: 11,
++    fontSize: 10,
+     fontWeight: 600,
+-    color: tokens.textMuted,
++    color: tokens.darkMuted,
+     marginBottom: 8,
+-    letterSpacing: "0.04em",
++    letterSpacing: "0.06em",
+     textTransform: "uppercase" as const,
+   },
+   legendRow: {
+     display: "flex",
+     alignItems: "center",
+     gap: 8,
+-    fontSize: 12,
++    fontSize: 11,
+     marginBottom: 4,
++    color: tokens.darkMuted,
+   },
+   legendLine: {
+     display: "inline-block",
+-    width: 22,
+-    borderBottomWidth: 2,
++    width: 18,
++    borderBottomWidth: 1.5,
+     borderBottomStyle: "solid",
+   },
++  colorGroups: { display: "flex", flexDirection: "column", gap: 3 },
++  colorRow: {
++    display: "flex",
++    alignItems: "center",
++    gap: 8,
++    fontSize: 11,
++    color: tokens.darkMuted,
++  },
++  colorDot: {
++    width: 8,
++    height: 8,
++    borderRadius: 999,
++    flexShrink: 0,
++  },
++  colorTag: {
++    flex: 1,
++    overflow: "hidden",
++    textOverflow: "ellipsis",
++    whiteSpace: "nowrap" as const,
++    color: "rgba(226, 232, 240, 0.78)",
++  },
++  colorCount: {
++    fontVariantNumeric: "tabular-nums",
++    color: tokens.darkMuted,
++    fontSize: 10,
++  },
+   tags: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 },
+   tag: {
+     fontSize: 10,
+     padding: "2px 6px",
+     borderRadius: 999,
+-    background: tokens.accentSoft,
+-    color: tokens.accentText,
+   },
+   tldr: {
+     fontSize: 12,
+-    color: tokens.textSecondary,
++    color: tokens.darkMuted,
+     lineHeight: 1.45,
+     margin: "0 0 10px",
+   },
+   primaryBtn: {
+     border: "none",
+     borderRadius: tokens.radiusMd,
+-    background: tokens.accent,
+-    color: tokens.userBubbleText,
+-    padding: "7px 12px",
++    background: tokens.darkAccent,
++    color: "#0b0d12",
++    padding: "6px 11px",
+     fontSize: 12,
+     fontWeight: 600,
+     cursor: "pointer",
+     fontFamily: tokens.font,
++    width: "100%",
+   },
+   status: {
+     fontSize: 11,
+-    color: tokens.accentText,
+-    background: tokens.accentSoft,
++    color: tokens.darkAccent,
++    background: "rgba(129, 140, 248, 0.12)",
+     padding: 8,
+     borderRadius: tokens.radiusMd,
+   },
+-  main: { flex: 1, position: "relative", minWidth: 0, background: tokens.bgMuted },
++  main: {
++    position: "absolute",
++    inset: 0,
++    zIndex: 0,
++    background: G.canvas,
++  },
+   canvas: {
+     width: "100%",
+     height: "100%",
+@@ -613,22 +1005,22 @@ const styles: Record<string, React.CSSProperties> = {
+     padding: 40,
+     textAlign: "center",
+     fontSize: 13,
+-    color: tokens.textSecondary,
++    color: tokens.darkMuted,
+     lineHeight: 1.5,
+     pointerEvents: "none",
+   },
+   emptyBanner: {
+     position: "absolute",
+-    top: 12,
++    top: 72,
+     left: "50%",
+     transform: "translateX(-50%)",
+     zIndex: 2,
+-    background: tokens.warningSoft,
+-    color: tokens.warning,
+-    padding: "8px 14px",
++    background: tokens.darkWarningBg,
++    color: tokens.darkWarning,
++    padding: "7px 12px",
+     borderRadius: tokens.radiusMd,
+     fontSize: 12,
+     maxWidth: "80%",
+-    boxShadow: tokens.shadowSm,
++    border: `1px solid ${tokens.darkBorder}`,
+   },
+ }
+diff --git a/chrome-extension/src/thread-graph/force-layout.ts b/chrome-extension/src/thread-graph/force-layout.ts
+index 54942cf..b86b678 100644
+--- a/chrome-extension/src/thread-graph/force-layout.ts
++++ b/chrome-extension/src/thread-graph/force-layout.ts
+@@ -35,13 +35,14 @@ export type ForceLayoutOpts = {
+   maxV?: number
+ }
+ 
++// Tighter defaults → denser clusters closer to Obsidian local graph (not sparse giant cards).
+ const DEFAULTS = {
+-  repulsion: 2800,
+-  springLength: 90,
+-  springK: 0.02,
+-  centerG: 0.008,
+-  damping: 0.82,
+-  maxV: 12,
++  repulsion: 1600,
++  springLength: 52,
++  springK: 0.028,
++  centerG: 0.014,
++  damping: 0.84,
++  maxV: 10,
+ }
+ 
+ /** Place nodes on a ring so the first frame is not a single pile. */
+@@ -54,7 +55,7 @@ export function seedLayoutNodes(
+   const cx = width / 2
+   const cy = height / 2
+   const n = Math.max(1, ids.length)
+-  const ring = Math.min(width, height) * 0.32
++  const ring = Math.min(width, height) * 0.22
+   return ids.map((id, i) => {
+     const ang = (i / n) * Math.PI * 2 + 0.2
+     const jitter = ((i * 17) % 7) - 3
+@@ -64,7 +65,7 @@ export function seedLayoutNodes(
+       y: cy + Math.sin(ang) * (ring + jitter),
+       vx: 0,
+       vy: 0,
+-      r: radiusById?.get(id) ?? 10,
++      r: radiusById?.get(id) ?? 4.5,
+       pinned: false,
+     }
+   })
+@@ -106,7 +107,7 @@ export function forceLayoutTick(
+         dist2 = dx * dx + dy * dy
+       }
+       const dist = Math.sqrt(dist2)
+-      const minDist = a.r + b.r + 4
++      const minDist = a.r + b.r + 10
+       const force = repulsion / dist2
+       const fx = (dx / dist) * force
+       const fy = (dy / dist) * force
+@@ -118,9 +119,9 @@ export function forceLayoutTick(
+         b.vx += fx
+         b.vy += fy
+       }
+-      // Soft collision
++      // Soft collision — keep dots from stacking (visual r is tiny)
+       if (dist < minDist) {
+-        const push = ((minDist - dist) / dist) * 0.5
++        const push = ((minDist - dist) / dist) * 0.45
+         if (!a.pinned) {
+           a.x -= dx * push
+           a.y -= dy * push
+@@ -171,8 +172,8 @@ export function forceLayoutTick(
+       }
+       n.x += n.vx
+       n.y += n.vy
+-      // Soft wall
+-      const pad = n.r + 8
++      // Soft wall — generous pad so dense graph can sit inward
++      const pad = Math.max(24, n.r + 16)
+       n.x = Math.max(pad, Math.min(width - pad, n.x))
+       n.y = Math.max(pad, Math.min(height - pad, n.y))
+       energy += Math.sqrt(n.vx * n.vx + n.vy * n.vy)
+diff --git a/chrome-extension/src/thread-graph/tag-colors.ts b/chrome-extension/src/thread-graph/tag-colors.ts
+new file mode 100644
+index 0000000..3694a3e
+--- /dev/null
++++ b/chrome-extension/src/thread-graph/tag-colors.ts
+@@ -0,0 +1,120 @@
++// Stable tag → color groups for thread graph (Obsidian-like "颜色组").
++// Pure helpers — no DOM / chrome APIs.
++
++/** Soft pastel dots that read well on near-black canvas. */
++export const TAG_PALETTE = [
++  "#6b9fff", // blue
++  "#f472b6", // pink
++  "#34d399", // green
++  "#fbbf24", // amber
++  "#a78bfa", // violet
++  "#22d3ee", // cyan
++  "#fb923c", // orange
++  "#e879f9", // fuchsia
++  "#4ade80", // lime
++  "#94a3b8", // slate (fallback-ish)
++] as const
++
++export const UNTAGGED_COLOR = "#64748b"
++export const UNTAGGED_LABEL = "未标注"
++
++/** FNV-1a-ish stable hash for string → palette index. */
++export function hashTag(tag: string): number {
++  const s = tag.trim().toLowerCase()
++  let h = 2166136261
++  for (let i = 0; i < s.length; i++) {
++    h ^= s.charCodeAt(i)
++    h = Math.imul(h, 16777619)
++  }
++  return h >>> 0
++}
++
++export function colorForTag(tag: string | null | undefined): string {
++  if (!tag || !tag.trim()) return UNTAGGED_COLOR
++  const i = hashTag(tag) % TAG_PALETTE.length
++  return TAG_PALETTE[i]
++}
++
++/** Primary tag = first non-empty digest tag (stable assignment source). */
++export function primaryTag(tags: string[] | undefined | null): string | null {
++  if (!tags || tags.length === 0) return null
++  for (const t of tags) {
++    const s = (t || "").trim()
++    if (s) return s
++  }
++  return null
++}
++
++export type ColorGroup = {
++  tag: string
++  color: string
++  count: number
++}
++
++/**
++ * Build per-node color map + legend groups (sorted by count desc, then tag).
++ * `nodeIds` limits which threads appear in the legend counts.
++ */
++export function buildTagColorIndex(
++  threads: Array<{ id: string; digest?: { tags?: string[] } | null }>,
++  nodeIds?: Set<string> | string[],
++): {
++  colorById: Map<string, string>
++  tagById: Map<string, string | null>
++  groups: ColorGroup[]
++} {
++  const allow =
++    nodeIds == null
++      ? null
++      : nodeIds instanceof Set
++        ? nodeIds
++        : new Set(nodeIds)
++
++  const colorById = new Map<string, string>()
++  const tagById = new Map<string, string | null>()
++  const counts = new Map<string, number>()
++
++  for (const t of threads) {
++    if (allow && !allow.has(t.id)) continue
++    const tag = primaryTag(t.digest?.tags)
++    const key = tag ?? UNTAGGED_LABEL
++    tagById.set(t.id, tag)
++    colorById.set(t.id, colorForTag(tag))
++    counts.set(key, (counts.get(key) || 0) + 1)
++  }
++
++  const groups: ColorGroup[] = [...counts.entries()]
++    .map(([tag, count]) => ({
++      tag,
++      count,
++      color: tag === UNTAGGED_LABEL ? UNTAGGED_COLOR : colorForTag(tag),
++    }))
++    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh"))
++
++  return { colorById, tagById, groups }
++}
++
++/** Lighten hex for focus/hover (simple channel blend toward white). */
++export function lightenHex(hex: string, amount = 0.35): string {
++  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
++  if (!m) return hex
++  const n = parseInt(m[1], 16)
++  const r = (n >> 16) & 0xff
++  const g = (n >> 8) & 0xff
++  const b = n & 0xff
++  const mix = (c: number) => Math.min(255, Math.round(c + (255 - c) * amount))
++  const to = (c: number) => c.toString(16).padStart(2, "0")
++  return `#${to(mix(r))}${to(mix(g))}${to(mix(b))}`
++}
++
++/** Apply alpha to #rrggbb → rgba(). */
++export function hexWithAlpha(hex: string, alpha: number): string {
++  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
++  if (!m) return hex
++  const n = parseInt(m[1], 16)
++  const r = (n >> 16) & 0xff
++  const g = (n >> 8) & 0xff
++  const b = n & 0xff
++  const a = Math.max(0, Math.min(1, alpha))
++  return `rgba(${r},${g},${b},${a})`
++}
+diff --git a/chrome-extension/tests/tag-colors.test.ts b/chrome-extension/tests/tag-colors.test.ts
+new file mode 100644
+index 0000000..9fd7972
+--- /dev/null
++++ b/chrome-extension/tests/tag-colors.test.ts
+@@ -0,0 +1,61 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  UNTAGGED_COLOR,
++  UNTAGGED_LABEL,
++  buildTagColorIndex,
++  colorForTag,
++  hashTag,
++  hexWithAlpha,
++  lightenHex,
++  primaryTag,
++} from "../src/thread-graph/tag-colors"
++
++test("hashTag is stable and case-insensitive", () => {
++  assert.equal(hashTag("AI安全"), hashTag("ai安全"))
++  assert.equal(hashTag("  foo  "), hashTag("foo"))
++  assert.notStrictEqual(hashTag("a"), hashTag("b"))
++})
++
++test("colorForTag: empty → untagged slate", () => {
++  assert.equal(colorForTag(null), UNTAGGED_COLOR)
++  assert.equal(colorForTag(""), UNTAGGED_COLOR)
++  assert.equal(colorForTag("   "), UNTAGGED_COLOR)
++})
++
++test("colorForTag: same tag → same color", () => {
++  assert.equal(colorForTag("数据安全"), colorForTag("数据安全"))
++})
++
++test("primaryTag uses first non-empty", () => {
++  assert.equal(primaryTag(null), null)
++  assert.equal(primaryTag([]), null)
++  assert.equal(primaryTag(["", "  ", "x"]), "x")
++  assert.equal(primaryTag(["工作", "健康"]), "工作")
++})
++
++test("buildTagColorIndex groups and filters by nodeIds", () => {
++  const threads = [
++    { id: "1", digest: { tags: ["工作", "周报"] } },
++    { id: "2", digest: { tags: ["工作"] } },
++    { id: "3", digest: { tags: [] } },
++    { id: "4", digest: { tags: ["健康"] } },
++  ]
++  const full = buildTagColorIndex(threads)
++  assert.equal(full.colorById.get("1"), colorForTag("工作"))
++  assert.equal(full.tagById.get("1"), "工作")
++  assert.equal(full.colorById.get("3"), UNTAGGED_COLOR)
++  const work = full.groups.find((g) => g.tag === "工作")
++  assert.ok(work && work.count === 2)
++  const un = full.groups.find((g) => g.tag === UNTAGGED_LABEL)
++  assert.ok(un && un.count === 1)
++
++  const subset = buildTagColorIndex(threads, ["1", "4"])
++  assert.equal(subset.groups.find((g) => g.tag === "工作")?.count, 1)
++  assert.equal(subset.colorById.has("2"), false)
++})
++
++test("lightenHex / hexWithAlpha", () => {
++  assert.match(lightenHex("#6b9fff", 0.3), /^#[0-9a-f]{6}$/i)
++  assert.equal(hexWithAlpha("#6b9fff", 0.5), "rgba(107,159,255,0.5)")
++})
+diff --git a/docs/audit/reviews/thread-graph-obsidian-v11-20260812-adversary-synthesis.md b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-adversary-synthesis.md
+new file mode 100644
+index 0000000..4b1af70
+--- /dev/null
++++ b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-adversary-synthesis.md
+@@ -0,0 +1,72 @@
++# Multi-adversarial synthesis — thread-graph Obsidian v1.1
++
++| Field | Value |
++|-------|--------|
++| Batch | `thread-graph-obsidian-v11-20260812` |
++| Date | 2026-08-12 |
++| Blast tier | **T2** Surface L0 UI polish (no L2/Compose/Trust lift) |
++| Scope | `chrome-extension/src/thread-graph/*`, `tests/tag-colors.test.ts`, design §6 |
++| Out of scope | `companion/.../host-integrity.ts` (unrelated dirty tree) |
++
++## Capability (ADR-020)
++
++```
++Surface:      L0
++L2-classes:   (none)
++Compose:      none
++Autonomy:     n/a
++Trust:        no elevation
++Channel:      n/a
++```
++
++## Machine
++
++| Check | Result |
++|-------|--------|
++| `chrome-extension` npm test | **628 pass** (incl. `tag-colors`, `force-layout`, `thread-graph-bg`) `[executed]` |
++
++## Adversary lanes (independent explore agents)
++
++| Lane | Round 1 | Round 2 (after fix) |
++|------|---------|---------------------|
++| Product/UX | APPROVE_WITH_NITS | — |
++| Correctness | **REJECT** | **APPROVE_WITH_NITS** |
++| Security/Trust | APPROVE_WITH_NITS | — |
++| Spec/DoD | APPROVE_WITH_NITS | — |
++
++### Round-1 Correctness REJECT (blockers) → fixed
++
++| # | Issue | Fix |
++|---|--------|-----|
++| C1 | focus click rebuilt `nodesInput` arrays → full reseed/jump | `layoutSignature` (ids+deg+edges); same sig keeps x/y/pin |
++| C2 | fitView only if energy &lt; 0.06 | also fit when sim ticks exhaust (320) |
++| C3 | pointerleave cleared drag without unpin/capture hygiene | leave only clears hover; capture + endDrag on up/cancel |
++| C4 | hit pad world-fixed → unclickable when zoomed out | screen-constant `HIT_PAD / scale` |
++| C5 | pin cleared on pointerup (§3.4 sticky pin) | sticky pin only after real drag (`moved`); click does not freeze |
++
++Additional: panel `localStorage` only on toolbar toggle; node click transient open; draw rAF no longer remounts on focus (`isolatedIdsRef`).
++
++## Residual nits (non-blocking · file for follow-up)
++
++| Source | Nit |
++|--------|-----|
++| UX | No on-canvas mini color legend when panel closed |
++| UX | Empty state lacks in-graph「提取要点」CTA |
++| UX | Toolbar wrap can overlap float panel (`top: 64` fixed) |
++| UX | Canvas a11y (role/img, keyboard node nav) |
++| Spec | §3.1 left rail stale vs §6 floating (doc debt) |
++| Security | `prepareThreadGraphSnapshot` should runtime-slim unknown keys (defense in depth) |
++| Correctness | No `ThreadGraphApp` canvas integration tests; resize no re-fit |
++
++## Synthesis VERDICT
++
++**ADVERSARY_SYNTHESIS: APPROVE_WITH_NITS**
++
++- All four lanes ≥ APPROVE_WITH_NITS after Correctness re-review  
++- No remaining correctness **blocker** for T2 polish ship  
++- Nits tracked; not merge-blockers under blast T2  
++
++## Next gate
++
++→ `scripts/dual-external-review.sh` Claude + Pi with this synthesis + scoped diff  
++→ MERGE only if both external VERDICT ∈ {APPROVE, APPROVE_WITH_NITS}
+diff --git a/docs/audit/reviews/thread-graph-obsidian-v11-20260812-dual-prompt.md b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-dual-prompt.md
+new file mode 100644
+index 0000000..83a7c1c
+--- /dev/null
++++ b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-dual-prompt.md
+@@ -0,0 +1,52 @@
++# Dual external review task — thread-graph Obsidian v1.1 polish
++
++## Batch
++`thread-graph-obsidian-v11-20260812`
++
++## Capability declaration (ADR-020)
++```
++Surface:      L0
++L2-classes:   (none)
++Compose:      none
++Autonomy:     n/a
++Trust:        no elevation
++Channel:      n/a
++```
++
++## What shipped (user-requested sequence)
++1. Primary-tag color groups (`tag-colors.ts` + legend)
++2. Labels hidden by default; show on hover / focus / zoom ≥ ~1.15
++3. Floating pure-canvas chrome (glass toolbar + collapsible panel; localStorage only on explicit toggle)
++
++Plus denser force-layout + Obsidian-dark tiny dots (prior session).
++
++## Files in scope (ignore host-integrity.ts)
++- chrome-extension/src/thread-graph/ThreadGraphApp.tsx
++- chrome-extension/src/thread-graph/force-layout.ts
++- chrome-extension/src/thread-graph/tag-colors.ts
++- chrome-extension/tests/tag-colors.test.ts
++- docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md (§6 updated)
++
++## Machine evidence
++- `cd chrome-extension && npm test` → **628 pass**, 0 fail (this session)
++
++## Independent multi-adversary synthesis (READ THIS)
++Path: `docs/audit/reviews/thread-graph-obsidian-v11-20260812-adversary-synthesis.md`
++
++Summary:
++- Round-1 Correctness **REJECT** on reseed-on-focus / fit / hit / pin → **fixed**
++- Round-2 Correctness **APPROVE_WITH_NITS**
++- UX / Security / Spec: **APPROVE_WITH_NITS**
++- Synthesis: **APPROVE_WITH_NITS**
++
++## Your job
++1. Read the synthesis + real git diff (not only this summary)
++2. Confirm blockers are truly fixed in code (layoutSignature, fit exhausted, sticky pin on drag only, screen hit pad)
++3. Challenge residual nits — mark only **blockers** if any remain
++4. ADR-020: confirm no Trust/L2 elevation
++5. End with EXACTLY one of:
++   - VERDICT: APPROVE
++   - VERDICT: APPROVE_WITH_NITS
++   - VERDICT: REJECT
++
++Do not rubber-stamp. Cite file:line for any issue.
+diff --git a/docs/audit/reviews/thread-graph-obsidian-v11-20260812-scoped.diff b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-scoped.diff
+new file mode 100644
+index 0000000..b735a78
+--- /dev/null
++++ b/docs/audit/reviews/thread-graph-obsidian-v11-20260812-scoped.diff
+@@ -0,0 +1,1247 @@
++diff --git a/chrome-extension/src/thread-graph/ThreadGraphApp.tsx b/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
++index 3539715..cb75b8b 100644
++--- a/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
+++++ b/chrome-extension/src/thread-graph/ThreadGraphApp.tsx
++@@ -1,5 +1,6 @@
++-// Full-page Obsidian-like thread graph (v1).
+++// Full-page Obsidian-like thread graph.
++ // Spec: docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
+++// v1.1: tag color groups · labels on hover/zoom · floating chrome (pure canvas)
++ 
++ import {
++   useCallback,
++@@ -7,6 +8,7 @@ import {
++   useMemo,
++   useRef,
++   useState,
+++  type CSSProperties,
++   type PointerEvent as ReactPointerEvent,
++   type MouseEvent as ReactMouseEvent,
++   type WheelEvent as ReactWheelEvent,
++@@ -28,25 +30,59 @@ import {
++   type ThreadGraphSlim,
++ } from "../background/thread-graph"
++ import { tokens } from "../sidepanel/ui/tokens"
+++import {
+++  buildTagColorIndex,
+++  hexWithAlpha,
+++  lightenHex,
+++  UNTAGGED_COLOR,
+++} from "./tag-colors"
+++
+++/** Obsidian-adjacent local palette (graph canvas). */
+++const G = {
+++  canvas: "#0d0f14",
+++  edgeHard: "rgba(148, 163, 184, 0.42)",
+++  edgeSoft: "rgba(148, 163, 184, 0.18)",
+++  edgeDim: "rgba(148, 163, 184, 0.06)",
+++  edgeHot: "rgba(165, 180, 252, 0.75)",
+++  label: "rgba(226, 232, 240, 0.7)",
+++  labelFocus: "rgba(248, 250, 252, 0.95)",
+++} as const
+++
+++/** Labels only when hovering, focused, or zoomed past this scale. */
+++const LABEL_ZOOM_THRESHOLD = 1.15
++ 
++ function displayTitle(t: ThreadGraphSlim): string {
++   const a = (t.alias || "").trim()
++-  if (a) return a.length > 28 ? a.slice(0, 27) + "…" : a
+++  if (a) return a.length > 22 ? a.slice(0, 21) + "…" : a
++   return `未命名 · ${(t.id || "").slice(0, 6)}`
++ }
++ 
+++/** Visual radius — Obsidian-scale dots. */
++ function radiusForDegree(deg: number): number {
++-  return Math.min(22, Math.max(8, 8 + Math.sqrt(deg) * 3.2))
+++  return Math.min(7.5, Math.max(2.8, 2.8 + Math.sqrt(deg) * 1.35))
++ }
++ 
+++const HIT_PAD = 8
+++
+++const PANEL_KEY = "cmspark_thread_graph_panel_open"
+++
++ export function ThreadGraphApp() {
++   const [snap, setSnap] = useState<ThreadGraphSnapshot | null>(null)
++   const [loadError, setLoadError] = useState<string | null>(null)
++   const [minScore, setMinScore] = useState(0.2)
++   const [showIsolated, setShowIsolated] = useState(false)
++   const [focusId, setFocusId] = useState<string | null>(null)
+++  const [hoverId, setHoverId] = useState<string | null>(null)
++   const [query, setQuery] = useState("")
++   const [status, setStatus] = useState("")
+++  const [panelOpen, setPanelOpen] = useState(() => {
+++    try {
+++      return localStorage.getItem(PANEL_KEY) !== "0"
+++    } catch {
+++      return true
+++    }
+++  })
+++
++   const canvasRef = useRef<HTMLCanvasElement>(null)
++   const nodesRef = useRef<LayoutNode[]>([])
++   const edgesRef = useRef<RelatedEdge[]>([])
++@@ -56,6 +92,25 @@ export function ThreadGraphApp() {
++   const rafRef = useRef(0)
++   const sizeRef = useRef({ w: 800, h: 600 })
++   const simTicksRef = useRef(0)
+++  const hoverIdRef = useRef<string | null>(null)
+++  const focusIdRef = useRef<string | null>(null)
+++  const fittedRef = useRef(false)
+++  const colorByIdRef = useRef<Map<string, string>>(new Map())
+++  const threadsByIdRef = useRef<Map<string, ThreadGraphSlim>>(new Map())
+++
+++  useEffect(() => {
+++    hoverIdRef.current = hoverId
+++  }, [hoverId])
+++  useEffect(() => {
+++    focusIdRef.current = focusId
+++  }, [focusId])
+++  useEffect(() => {
+++    try {
+++      localStorage.setItem(PANEL_KEY, panelOpen ? "1" : "0")
+++    } catch {
+++      /* ignore */
+++    }
+++  }, [panelOpen])
++ 
++   const focusFromUrl = useMemo(() => {
++     try {
++@@ -65,7 +120,6 @@ export function ThreadGraphApp() {
++     }
++   }, [])
++ 
++-  // Load snapshot (contract: storage.session only — dual-review nit)
++   useEffect(() => {
++     let cancelled = false
++     ;(async () => {
++@@ -118,7 +172,6 @@ export function ThreadGraphApp() {
++     let nodeIds = inputs.map((t) => t.id)
++     if (!showIsolated) {
++       nodeIds = nodeIds.filter((id) => !isolated.has(id) || id === focusId)
++-      // keep endpoints of edges only
++       const keep = new Set<string>()
++       for (const e of allEdges) {
++         keep.add(e.a)
++@@ -150,7 +203,16 @@ export function ThreadGraphApp() {
++     }
++   }, [threads, minScore, showIsolated, query, focusId])
++ 
++-  // (Re)seed layout when graph structure changes
+++  const tagColors = useMemo(() => {
+++    const ids = nodesInput.map((n) => n.id)
+++    return buildTagColorIndex(threads, ids)
+++  }, [threads, nodesInput])
+++
+++  useEffect(() => {
+++    colorByIdRef.current = tagColors.colorById
+++    threadsByIdRef.current = new Map(threads.map((t) => [t.id, t]))
+++  }, [tagColors.colorById, threads])
+++
++   useEffect(() => {
++     const { w, h } = sizeRef.current
++     const rMap = new Map(nodesInput.map((n) => [n.id, radiusForDegree(n.degree)]))
++@@ -162,6 +224,7 @@ export function ThreadGraphApp() {
++     )
++     edgesRef.current = edges
++     simTicksRef.current = 0
+++    fittedRef.current = false
++   }, [nodesInput, edges])
++ 
++   const focusThread = useMemo(
++@@ -171,6 +234,7 @@ export function ThreadGraphApp() {
++ 
++   const openThread = useCallback((threadId: string) => {
++     setFocusId(threadId)
+++    setPanelOpen(true)
++     chrome.runtime.sendMessage(
++       { type: "thread_graph.open_thread", thread_id: threadId },
++       () => {
++@@ -202,22 +266,50 @@ export function ThreadGraphApp() {
++     const ro = new ResizeObserver(resize)
++     ro.observe(parent)
++ 
+++    const fitView = () => {
+++      const nodes = nodesRef.current
+++      if (nodes.length === 0) return
+++      const { w, h } = sizeRef.current
+++      let minX = Infinity
+++      let minY = Infinity
+++      let maxX = -Infinity
+++      let maxY = -Infinity
+++      for (const n of nodes) {
+++        minX = Math.min(minX, n.x - n.r)
+++        minY = Math.min(minY, n.y - n.r)
+++        maxX = Math.max(maxX, n.x + n.r)
+++        maxY = Math.max(maxY, n.y + n.r)
+++      }
+++      const gw = Math.max(40, maxX - minX)
+++      const gh = Math.max(40, maxY - minY)
+++      const pad = 56
+++      const s = Math.min((w - pad * 2) / gw, (h - pad * 2) / gh, 1.35)
+++      scaleRef.current = Math.max(0.45, Math.min(1.8, s * 0.92))
+++      const cx = (minX + maxX) / 2
+++      const cy = (minY + maxY) / 2
+++      panRef.current.x = w / 2 - cx * scaleRef.current
+++      panRef.current.y = h / 2 - cy * scaleRef.current
+++      fittedRef.current = true
+++    }
+++
++     const draw = () => {
++       const ctx = canvas.getContext("2d")
++       if (!ctx) return
++       const { w, h } = sizeRef.current
++-      // Simulate a few ticks while energy high
++       if (simTicksRef.current < 320 && nodesRef.current.length > 0) {
++         const e = forceLayoutTick(nodesRef.current, edgesRef.current, {
++           width: w,
++           height: h,
++         })
++         simTicksRef.current++
++-        if (e < 0.06 && simTicksRef.current > 50) simTicksRef.current = 999
+++        if (e < 0.06 && simTicksRef.current > 50) {
+++          simTicksRef.current = 999
+++          if (!fittedRef.current) fitView()
+++        }
++       }
++ 
++       ctx.clearRect(0, 0, w, h)
++-      ctx.fillStyle = tokens.bgMuted
+++      ctx.fillStyle = G.canvas
++       ctx.fillRect(0, 0, w, h)
++ 
++       ctx.save()
++@@ -225,50 +317,90 @@ export function ThreadGraphApp() {
++       ctx.scale(scaleRef.current, scaleRef.current)
++ 
++       const byId = new Map(nodesRef.current.map((n) => [n.id, n]))
+++      const active = hoverIdRef.current || focusIdRef.current
+++      let hot: Set<string> | null = null
+++      if (active) {
+++        hot = new Set([active])
+++        for (const e of edgesRef.current) {
+++          if (e.a === active) hot.add(e.b)
+++          if (e.b === active) hot.add(e.a)
+++        }
+++      }
+++      const scale = scaleRef.current
+++      const colors = colorByIdRef.current
++ 
++-      // Edges
++       for (const e of edgesRef.current) {
++         const a = byId.get(e.a)
++         const b = byId.get(e.b)
++         if (!a || !b) continue
+++        const hard = e.kind === "hard"
+++        const isHot = hot ? hot.has(e.a) && hot.has(e.b) : false
+++        const isDim = hot != null && !isHot
++         ctx.beginPath()
++         ctx.moveTo(a.x, a.y)
++         ctx.lineTo(b.x, b.y)
++-        const hard = e.kind === "hard"
++-        // Canvas has no CSS alpha tokens — stroke solid token + globalAlpha
++-        ctx.strokeStyle = hard ? tokens.accent : tokens.textMuted
++-        ctx.globalAlpha = hard ? 0.45 : 0.55
++-        if (!hard) ctx.setLineDash([4, 4])
+++        if (isDim) {
+++          ctx.strokeStyle = G.edgeDim
+++          ctx.globalAlpha = 1
+++        } else if (isHot) {
+++          ctx.strokeStyle = G.edgeHot
+++          ctx.globalAlpha = hard ? 0.9 : 0.55
+++        } else {
+++          ctx.strokeStyle = hard ? G.edgeHard : G.edgeSoft
+++          ctx.globalAlpha = 1
+++        }
+++        if (!hard) ctx.setLineDash([2.5, 3.5])
++         else ctx.setLineDash([])
++-        ctx.lineWidth = Math.min(4, 1 + e.score * 2.5)
+++        const base = hard ? 0.55 + e.score * 0.7 : 0.4 + e.score * 0.45
+++        ctx.lineWidth = Math.min(1.8, base) / Math.max(0.6, scale)
++         ctx.stroke()
++         ctx.setLineDash([])
++         ctx.globalAlpha = 1
++       }
++ 
++-      // Nodes
++-      const q = query.trim().toLowerCase()
++       for (const n of nodesRef.current) {
++-        const t = threads.find((x) => x.id === n.id)
+++        const t = threadsByIdRef.current.get(n.id)
++         const title = t ? displayTitle(t) : n.id.slice(0, 6)
++-        const isFocus = n.id === focusId
+++        const isFocus = n.id === focusIdRef.current
+++        const isHover = n.id === hoverIdRef.current
++         const isIso = isolatedIds.has(n.id)
+++        const inHot = hot ? hot.has(n.id) : true
+++        const dimmed = hot != null && !inHot
+++        const baseColor = colors.get(n.id) || UNTAGGED_COLOR
+++
+++        if (isFocus || isHover) {
+++          ctx.beginPath()
+++          ctx.arc(n.x, n.y, n.r + 3.5, 0, Math.PI * 2)
+++          ctx.fillStyle = hexWithAlpha(baseColor, isFocus ? 0.28 : 0.18)
+++          ctx.fill()
+++        }
++ 
++         ctx.beginPath()
++         ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2)
++-        ctx.fillStyle = isFocus ? tokens.accentSoft : tokens.bgElevated
++-        ctx.globalAlpha = isIso && !isFocus ? 0.45 : 1
+++        if (isFocus) {
+++          ctx.fillStyle = lightenHex(baseColor, 0.45)
+++        } else if (isHover) {
+++          ctx.fillStyle = lightenHex(baseColor, 0.28)
+++        } else if (dimmed || (isIso && !isFocus)) {
+++          ctx.fillStyle = hexWithAlpha(baseColor, 0.28)
+++        } else {
+++          ctx.fillStyle = baseColor
+++        }
+++        ctx.globalAlpha = dimmed ? 0.5 : 1
++         ctx.fill()
++-        ctx.strokeStyle = isFocus ? tokens.accent : tokens.borderStrong
++-        ctx.lineWidth = isFocus ? 2.5 : 1.2
++-        ctx.stroke()
++         ctx.globalAlpha = 1
++ 
++-        ctx.fillStyle = tokens.text
++-        ctx.font = `${isFocus ? 12 : 11}px ${tokens.font}`
++-        ctx.textAlign = "center"
++-        ctx.textBaseline = "top"
++-        ctx.fillText(title, n.x, n.y + n.r + 3)
+++        // Labels: only hover / focus / deep zoom (not always-on)
+++        const showLabel =
+++          isFocus || isHover || (scale >= LABEL_ZOOM_THRESHOLD && !dimmed)
+++        if (showLabel) {
+++          ctx.fillStyle = isFocus || isHover ? G.labelFocus : G.label
+++          const fontPx = (isFocus ? 10.5 : 9) / Math.max(0.75, Math.min(1.25, scale))
+++          ctx.font = `${fontPx}px ${tokens.font}`
+++          ctx.textAlign = "center"
+++          ctx.textBaseline = "top"
+++          ctx.fillText(title, n.x, n.y + n.r + 2.5)
+++        }
++       }
++ 
++       ctx.restore()
++@@ -279,7 +411,7 @@ export function ThreadGraphApp() {
++       ro.disconnect()
++       cancelAnimationFrame(rafRef.current)
++     }
++-  }, [threads, focusId, query, isolatedIds])
+++  }, [isolatedIds])
++ 
++   const hitTest = (clientX: number, clientY: number): LayoutNode | null => {
++     const canvas = canvasRef.current
++@@ -291,7 +423,7 @@ export function ThreadGraphApp() {
++     let bestD = Infinity
++     for (const n of nodesRef.current) {
++       const d = Math.hypot(n.x - x, n.y - y)
++-      if (d <= n.r + 4 && d < bestD) {
+++      if (d <= n.r + HIT_PAD && d < bestD) {
++         best = n
++         bestD = d
++       }
++@@ -305,16 +437,27 @@ export function ThreadGraphApp() {
++       n.pinned = true
++       dragRef.current = { id: n.id, ox: ev.clientX, oy: ev.clientY }
++       setFocusId(n.id)
+++      setPanelOpen(true)
++       simTicksRef.current = 0
++       ;(ev.target as HTMLElement).setPointerCapture?.(ev.pointerId)
++       return
++     }
+++    // blank click: clear focus, start pan
+++    setFocusId(null)
++     dragRef.current = { id: "__pan__", ox: ev.clientX, oy: ev.clientY }
++   }
++ 
++   const onPointerMove = (ev: ReactPointerEvent) => {
++     const drag = dragRef.current
++-    if (!drag) return
+++    if (!drag) {
+++      const n = hitTest(ev.clientX, ev.clientY)
+++      const id = n?.id ?? null
+++      if (id !== hoverIdRef.current) {
+++        hoverIdRef.current = id
+++        setHoverId(id)
+++      }
+++      return
+++    }
++     const dx = ev.clientX - drag.ox
++     const dy = ev.clientY - drag.oy
++     drag.ox = ev.clientX
++@@ -342,6 +485,12 @@ export function ThreadGraphApp() {
++     dragRef.current = null
++   }
++ 
+++  const onPointerLeave = () => {
+++    dragRef.current = null
+++    hoverIdRef.current = null
+++    setHoverId(null)
+++  }
+++
++   const onDoubleClick = (ev: ReactMouseEvent) => {
++     const n = hitTest(ev.clientX, ev.clientY)
++     if (n) openThread(n.id)
++@@ -349,16 +498,25 @@ export function ThreadGraphApp() {
++ 
++   const onWheel = (ev: ReactWheelEvent) => {
++     ev.preventDefault()
+++    const canvas = canvasRef.current
+++    if (!canvas) return
+++    const rect = canvas.getBoundingClientRect()
+++    const mx = ev.clientX - rect.left
+++    const my = ev.clientY - rect.top
+++    const prev = scaleRef.current
++     const factor = ev.deltaY > 0 ? 0.92 : 1.08
++-    scaleRef.current = Math.min(3, Math.max(0.35, scaleRef.current * factor))
+++    const next = Math.min(3.2, Math.max(0.28, prev * factor))
+++    panRef.current.x = mx - ((mx - panRef.current.x) / prev) * next
+++    panRef.current.y = my - ((my - panRef.current.y) / prev) * next
+++    scaleRef.current = next
++   }
++ 
++   if (loadError) {
++     return (
++       <div style={styles.page}>
++-        <header style={styles.header}>
++-          <strong>关联图谱</strong>
++-        </header>
+++        <div style={styles.floatBar}>
+++          <strong style={styles.barTitle}>关联图谱</strong>
+++        </div>
++         <div style={styles.empty}>{loadError}</div>
++       </div>
++     )
++@@ -366,82 +524,141 @@ export function ThreadGraphApp() {
++ 
++   const hasNodes = nodesInput.length > 0
++   const hasEdges = edges.length > 0
+++  const groupsPreview = tagColors.groups.slice(0, 12)
++ 
++   return (
++     <div style={styles.page}>
++-      <header style={styles.header}>
++-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
++-          <strong style={{ fontSize: 15 }}>关联图谱</strong>
++-          <span style={styles.meta}>
++-            边 = 共标签（实线）+ 要点相似（虚线）· 本地计算 · 不改默认时间轴
++-          </span>
++-        </div>
++-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+++      {/* Floating top toolbar */}
+++      <div style={styles.floatBar} role="toolbar" aria-label="图谱工具栏">
+++        <strong style={styles.barTitle}>关联图谱</strong>
+++        <input
+++          style={styles.search}
+++          placeholder="搜索会话 / 标签"
+++          value={query}
+++          onChange={(e) => setQuery(e.target.value)}
+++        />
+++        <label style={styles.check}>
++           <input
++-            style={styles.search}
++-            placeholder="搜索会话 / 标签"
++-            value={query}
++-            onChange={(e) => setQuery(e.target.value)}
+++            type="checkbox"
+++            checked={showIsolated}
+++            onChange={(e) => setShowIsolated(e.target.checked)}
++           />
++-          <label style={styles.check}>
++-            <input
++-              type="checkbox"
++-              checked={showIsolated}
++-              onChange={(e) => setShowIsolated(e.target.checked)}
++-            />
++-            显示孤立点
++-          </label>
++-          <label style={styles.check}>
++-            强度
++-            <input
++-              type="range"
++-              min={0.1}
++-              max={0.5}
++-              step={0.05}
++-              value={minScore}
++-              onChange={(e) => setMinScore(Number(e.target.value))}
++-            />
++-            <span style={{ width: 32 }}>{minScore.toFixed(2)}</span>
++-          </label>
++-        </div>
++-      </header>
+++          孤立点
+++        </label>
+++        <label style={styles.check}>
+++          强度
+++          <input
+++            type="range"
+++            min={0.1}
+++            max={0.5}
+++            step={0.05}
+++            value={minScore}
+++            onChange={(e) => setMinScore(Number(e.target.value))}
+++            style={{ width: 72, accentColor: tokens.darkAccent }}
+++          />
+++          <span style={{ width: 28, fontVariantNumeric: "tabular-nums" }}>
+++            {minScore.toFixed(2)}
+++          </span>
+++        </label>
+++        <span style={styles.barMeta}>
+++          {nodesInput.length} 点 · {edges.length} 边
+++          {threads.length >= 300 ? " · 近 300" : ""}
+++        </span>
+++        <button
+++          type="button"
+++          style={styles.barBtn}
+++          onClick={() => setPanelOpen((v) => !v)}
+++          aria-pressed={panelOpen}
+++          title={panelOpen ? "收起侧栏" : "展开侧栏"}
+++        >
+++          {panelOpen ? "收起面板" : "图例 · 焦点"}
+++        </button>
+++      </div>
+++
+++      {/* Floating side panel */}
+++      {panelOpen && (
+++        <aside style={styles.floatPanel} aria-label="图例与焦点">
+++          <div style={styles.panelHead}>
+++            <span style={styles.asideTitle}>面板</span>
+++            <button
+++              type="button"
+++              style={styles.iconBtn}
+++              onClick={() => setPanelOpen(false)}
+++              aria-label="关闭面板"
+++            >
+++              ✕
+++            </button>
+++          </div>
++ 
++-      <div style={styles.body}>
++-        <aside style={styles.aside}>
++           <div style={styles.asideSection}>
++-            <div style={styles.asideTitle}>图例</div>
+++            <div style={styles.asideTitle}>边</div>
++             <div style={styles.legendRow}>
++-              <span style={{ ...styles.legendLine, borderColor: tokens.accent, opacity: 0.6 }} />
+++              <span style={{ ...styles.legendLine, borderColor: "rgba(165, 180, 252, 0.7)" }} />
++               共标签（硬边）
++             </div>
++             <div style={styles.legendRow}>
++               <span
++                 style={{
++                   ...styles.legendLine,
++-                  borderColor: tokens.textMuted,
+++                  borderColor: "rgba(148, 163, 184, 0.45)",
++                   borderStyle: "dashed",
++-                  opacity: 0.85,
++                 }}
++               />
++               要点相似（软边）
++             </div>
++-            <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 8, lineHeight: 1.45 }}>
++-              节点 {nodesInput.length} · 边 {edges.length}
++-              {threads.length >= 300 ? " · 仅最近 300 会话" : ""}
+++            <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 6, lineHeight: 1.4 }}>
+++              标签默认隐藏 · 悬停 / 放大后显示
++             </div>
++           </div>
++ 
+++          <div style={styles.asideSection}>
+++            <div style={styles.asideTitle}>颜色组（主标签）</div>
+++            {groupsPreview.length === 0 ? (
+++              <div style={{ fontSize: 11, color: tokens.darkMuted }}>暂无标签</div>
+++            ) : (
+++              <div style={styles.colorGroups}>
+++                {groupsPreview.map((g) => (
+++                  <div key={g.tag} style={styles.colorRow}>
+++                    <span style={{ ...styles.colorDot, background: g.color }} />
+++                    <span style={styles.colorTag} title={g.tag}>
+++                      {g.tag}
+++                    </span>
+++                    <span style={styles.colorCount}>{g.count}</span>
+++                  </div>
+++                ))}
+++                {tagColors.groups.length > groupsPreview.length && (
+++                  <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 4 }}>
+++                    +{tagColors.groups.length - groupsPreview.length} 组
+++                  </div>
+++                )}
+++              </div>
+++            )}
+++          </div>
+++
++           <div style={styles.asideSection}>
++             <div style={styles.asideTitle}>焦点</div>
++             {focusThread ? (
++               <>
++-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+++                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: tokens.darkText }}>
++                   {displayTitle(focusThread)}
++                 </div>
++                 {(focusThread.digest?.tags || []).length > 0 && (
++                   <div style={styles.tags}>
++                     {(focusThread.digest?.tags || []).map((tg) => (
++-                      <span key={tg} style={styles.tag}>
+++                      <span
+++                        key={tg}
+++                        style={{
+++                          ...styles.tag,
+++                          background: hexWithAlpha(
+++                            tagColors.colorById.get(focusThread.id) || UNTAGGED_COLOR,
+++                            0.2,
+++                          ),
+++                          color: lightenHex(
+++                            tagColors.colorById.get(focusThread.id) || UNTAGGED_COLOR,
+++                            0.35,
+++                          ),
+++                        }}
+++                      >
++                         {tg}
++                       </span>
++                     ))}
++@@ -450,152 +667,249 @@ export function ThreadGraphApp() {
++                 {focusThread.digest?.tldr && (
++                   <p style={styles.tldr}>{focusThread.digest.tldr}</p>
++                 )}
++-                <button type="button" style={styles.primaryBtn} onClick={() => openThread(focusThread.id)}>
+++                <button
+++                  type="button"
+++                  style={styles.primaryBtn}
+++                  onClick={() => openThread(focusThread.id)}
+++                >
++                   打开会话
++                 </button>
++-                <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 6 }}>
+++                <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 6 }}>
++                   双击节点也可打开 · 图谱保持打开
++                 </div>
++               </>
++             ) : (
++-              <div style={{ fontSize: 12, color: tokens.textSecondary }}>单击节点查看详情</div>
+++              <div style={{ fontSize: 12, color: tokens.darkMuted }}>
+++                单击节点查看详情 · 单击空白取消
+++              </div>
++             )}
++           </div>
++ 
++           {status && <div style={styles.status}>{status}</div>}
++         </aside>
++-
++-        <main style={styles.main}>
++-          {!hasNodes && (
++-            <div style={styles.empty}>
++-              {threads.length === 0
++-                ? "暂无会话"
++-                : !hasEdges
++-                  ? "还没有关联边（或节点均为孤立）。请先在 Side Panel ☰ →「为未标注提取要点」生成标签，再重新打开图谱；也可勾选「显示孤立点」查看全部会话。"
++-                  : "没有可显示的节点。试试开启「显示孤立点」，或降低强度阈值 / 清空搜索。"}
++-            </div>
++-          )}
++-          {hasNodes && !hasEdges && (
++-            <div style={styles.emptyBanner}>
++-              还没有关联边。请先在 Side Panel ☰ →「为未标注提取要点」生成标签后再打开图谱。
++-            </div>
++-          )}
++-          <canvas
++-            ref={canvasRef}
++-            style={styles.canvas}
++-            onPointerDown={onPointerDown}
++-            onPointerMove={onPointerMove}
++-            onPointerUp={onPointerUp}
++-            onPointerLeave={onPointerUp}
++-            onDoubleClick={onDoubleClick}
++-            onWheel={onWheel}
++-          />
++-        </main>
++-      </div>
+++      )}
+++
+++      {/* Full-bleed canvas */}
+++      <main style={styles.main}>
+++        {!hasNodes && (
+++          <div style={styles.empty}>
+++            {threads.length === 0
+++              ? "暂无会话"
+++              : !hasEdges
+++                ? "还没有关联边（或节点均为孤立）。请先在 Side Panel ☰ →「为未标注提取要点」生成标签，再重新打开图谱；也可勾选「孤立点」查看全部会话。"
+++                : "没有可显示的节点。试试开启「孤立点」，或降低强度阈值 / 清空搜索。"}
+++          </div>
+++        )}
+++        {hasNodes && !hasEdges && (
+++          <div style={styles.emptyBanner}>
+++            还没有关联边。请先在 Side Panel ☰ →「为未标注提取要点」生成标签后再打开图谱。
+++          </div>
+++        )}
+++        <canvas
+++          ref={canvasRef}
+++          style={styles.canvas}
+++          onPointerDown={onPointerDown}
+++          onPointerMove={onPointerMove}
+++          onPointerUp={onPointerUp}
+++          onPointerLeave={onPointerLeave}
+++          onDoubleClick={onDoubleClick}
+++          onWheel={onWheel}
+++        />
+++      </main>
++     </div>
++   )
++ }
++ 
++-const styles: Record<string, React.CSSProperties> = {
+++const glass: CSSProperties = {
+++  background: "rgba(20, 24, 32, 0.88)",
+++  border: `1px solid ${tokens.darkBorder}`,
+++  boxShadow: "0 8px 28px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset",
+++  backdropFilter: "blur(12px)",
+++  WebkitBackdropFilter: "blur(12px)",
+++}
+++
+++const styles: Record<string, CSSProperties> = {
++   page: {
++-    display: "flex",
++-    flexDirection: "column",
+++    position: "relative",
++     height: "100vh",
++     margin: 0,
++     fontFamily: tokens.font,
++-    background: tokens.bg,
++-    color: tokens.text,
+++    background: G.canvas,
+++    color: tokens.darkText,
+++    overflow: "hidden",
++   },
++-  header: {
+++  floatBar: {
+++    ...glass,
+++    position: "absolute",
+++    zIndex: 10,
+++    top: 12,
+++    left: 12,
+++    right: 12,
+++    maxWidth: "calc(100% - 24px)",
++     display: "flex",
++     flexWrap: "wrap",
++-    gap: 10,
++     alignItems: "center",
++-    justifyContent: "space-between",
++-    padding: "10px 14px",
++-    borderBottom: `1px solid ${tokens.border}`,
++-    background: tokens.bgElevated,
+++    gap: 10,
+++    padding: "8px 12px",
+++    borderRadius: 12,
+++    pointerEvents: "auto",
++   },
++-  meta: { fontSize: 11, color: tokens.textMuted },
++-  search: {
++-    border: `1px solid ${tokens.border}`,
+++  barTitle: {
+++    fontSize: 13,
+++    fontWeight: 650,
+++    letterSpacing: "0.02em",
+++    marginRight: 4,
+++  },
+++  barMeta: {
+++    fontSize: 11,
+++    color: tokens.darkMuted,
+++    marginLeft: "auto",
+++  },
+++  barBtn: {
+++    border: `1px solid ${tokens.darkBorder}`,
++     borderRadius: tokens.radiusMd,
+++    background: "rgba(129, 140, 248, 0.12)",
+++    color: tokens.darkAccent,
++     padding: "5px 10px",
+++    fontSize: 11,
+++    fontWeight: 600,
+++    cursor: "pointer",
+++    fontFamily: tokens.font,
+++  },
+++  search: {
+++    border: `1px solid ${tokens.darkBorder}`,
+++    borderRadius: tokens.radiusMd,
+++    padding: "4px 9px",
++     fontSize: 12,
++-    minWidth: 160,
+++    minWidth: 140,
+++    maxWidth: 200,
++     fontFamily: tokens.font,
+++    background: "rgba(11, 13, 18, 0.65)",
+++    color: tokens.darkText,
+++    outline: "none",
++   },
++   check: {
++     display: "inline-flex",
++     alignItems: "center",
++     gap: 4,
++     fontSize: 11,
++-    color: tokens.textSecondary,
+++    color: tokens.darkMuted,
+++    userSelect: "none" as const,
++   },
++-  body: { display: "flex", flex: 1, minHeight: 0 },
++-  aside: {
++-    width: 240,
++-    flexShrink: 0,
++-    borderRight: `1px solid ${tokens.border}`,
++-    padding: 12,
+++  floatPanel: {
+++    ...glass,
+++    position: "absolute",
+++    zIndex: 10,
+++    top: 64,
+++    right: 12,
+++    width: 220,
+++    maxHeight: "calc(100vh - 80px)",
++     overflow: "auto",
++-    background: tokens.bgElevated,
+++    padding: 12,
+++    borderRadius: 12,
+++    pointerEvents: "auto",
+++  },
+++  panelHead: {
+++    display: "flex",
+++    alignItems: "center",
+++    justifyContent: "space-between",
+++    marginBottom: 10,
+++  },
+++  iconBtn: {
+++    border: "none",
+++    background: "transparent",
+++    color: tokens.darkMuted,
+++    cursor: "pointer",
+++    fontSize: 12,
+++    padding: "2px 6px",
+++    borderRadius: 4,
++   },
++-  asideSection: { marginBottom: 16 },
+++  asideSection: { marginBottom: 14 },
++   asideTitle: {
++-    fontSize: 11,
+++    fontSize: 10,
++     fontWeight: 600,
++-    color: tokens.textMuted,
+++    color: tokens.darkMuted,
++     marginBottom: 8,
++-    letterSpacing: "0.04em",
+++    letterSpacing: "0.06em",
++     textTransform: "uppercase" as const,
++   },
++   legendRow: {
++     display: "flex",
++     alignItems: "center",
++     gap: 8,
++-    fontSize: 12,
+++    fontSize: 11,
++     marginBottom: 4,
+++    color: tokens.darkMuted,
++   },
++   legendLine: {
++     display: "inline-block",
++-    width: 22,
++-    borderBottomWidth: 2,
+++    width: 18,
+++    borderBottomWidth: 1.5,
++     borderBottomStyle: "solid",
++   },
+++  colorGroups: { display: "flex", flexDirection: "column", gap: 3 },
+++  colorRow: {
+++    display: "flex",
+++    alignItems: "center",
+++    gap: 8,
+++    fontSize: 11,
+++    color: tokens.darkMuted,
+++  },
+++  colorDot: {
+++    width: 8,
+++    height: 8,
+++    borderRadius: 999,
+++    flexShrink: 0,
+++  },
+++  colorTag: {
+++    flex: 1,
+++    overflow: "hidden",
+++    textOverflow: "ellipsis",
+++    whiteSpace: "nowrap" as const,
+++    color: "rgba(226, 232, 240, 0.78)",
+++  },
+++  colorCount: {
+++    fontVariantNumeric: "tabular-nums",
+++    color: tokens.darkMuted,
+++    fontSize: 10,
+++  },
++   tags: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 },
++   tag: {
++     fontSize: 10,
++     padding: "2px 6px",
++     borderRadius: 999,
++-    background: tokens.accentSoft,
++-    color: tokens.accentText,
++   },
++   tldr: {
++     fontSize: 12,
++-    color: tokens.textSecondary,
+++    color: tokens.darkMuted,
++     lineHeight: 1.45,
++     margin: "0 0 10px",
++   },
++   primaryBtn: {
++     border: "none",
++     borderRadius: tokens.radiusMd,
++-    background: tokens.accent,
++-    color: tokens.userBubbleText,
++-    padding: "7px 12px",
+++    background: tokens.darkAccent,
+++    color: "#0b0d12",
+++    padding: "6px 11px",
++     fontSize: 12,
++     fontWeight: 600,
++     cursor: "pointer",
++     fontFamily: tokens.font,
+++    width: "100%",
++   },
++   status: {
++     fontSize: 11,
++-    color: tokens.accentText,
++-    background: tokens.accentSoft,
+++    color: tokens.darkAccent,
+++    background: "rgba(129, 140, 248, 0.12)",
++     padding: 8,
++     borderRadius: tokens.radiusMd,
++   },
++-  main: { flex: 1, position: "relative", minWidth: 0, background: tokens.bgMuted },
+++  main: {
+++    position: "absolute",
+++    inset: 0,
+++    zIndex: 0,
+++    background: G.canvas,
+++  },
++   canvas: {
++     width: "100%",
++     height: "100%",
++@@ -613,22 +927,22 @@ const styles: Record<string, React.CSSProperties> = {
++     padding: 40,
++     textAlign: "center",
++     fontSize: 13,
++-    color: tokens.textSecondary,
+++    color: tokens.darkMuted,
++     lineHeight: 1.5,
++     pointerEvents: "none",
++   },
++   emptyBanner: {
++     position: "absolute",
++-    top: 12,
+++    top: 72,
++     left: "50%",
++     transform: "translateX(-50%)",
++     zIndex: 2,
++-    background: tokens.warningSoft,
++-    color: tokens.warning,
++-    padding: "8px 14px",
+++    background: tokens.darkWarningBg,
+++    color: tokens.darkWarning,
+++    padding: "7px 12px",
++     borderRadius: tokens.radiusMd,
++     fontSize: 12,
++     maxWidth: "80%",
++-    boxShadow: tokens.shadowSm,
+++    border: `1px solid ${tokens.darkBorder}`,
++   },
++ }
++diff --git a/chrome-extension/src/thread-graph/force-layout.ts b/chrome-extension/src/thread-graph/force-layout.ts
++index 54942cf..b86b678 100644
++--- a/chrome-extension/src/thread-graph/force-layout.ts
+++++ b/chrome-extension/src/thread-graph/force-layout.ts
++@@ -35,13 +35,14 @@ export type ForceLayoutOpts = {
++   maxV?: number
++ }
++ 
+++// Tighter defaults → denser clusters closer to Obsidian local graph (not sparse giant cards).
++ const DEFAULTS = {
++-  repulsion: 2800,
++-  springLength: 90,
++-  springK: 0.02,
++-  centerG: 0.008,
++-  damping: 0.82,
++-  maxV: 12,
+++  repulsion: 1600,
+++  springLength: 52,
+++  springK: 0.028,
+++  centerG: 0.014,
+++  damping: 0.84,
+++  maxV: 10,
++ }
++ 
++ /** Place nodes on a ring so the first frame is not a single pile. */
++@@ -54,7 +55,7 @@ export function seedLayoutNodes(
++   const cx = width / 2
++   const cy = height / 2
++   const n = Math.max(1, ids.length)
++-  const ring = Math.min(width, height) * 0.32
+++  const ring = Math.min(width, height) * 0.22
++   return ids.map((id, i) => {
++     const ang = (i / n) * Math.PI * 2 + 0.2
++     const jitter = ((i * 17) % 7) - 3
++@@ -64,7 +65,7 @@ export function seedLayoutNodes(
++       y: cy + Math.sin(ang) * (ring + jitter),
++       vx: 0,
++       vy: 0,
++-      r: radiusById?.get(id) ?? 10,
+++      r: radiusById?.get(id) ?? 4.5,
++       pinned: false,
++     }
++   })
++@@ -106,7 +107,7 @@ export function forceLayoutTick(
++         dist2 = dx * dx + dy * dy
++       }
++       const dist = Math.sqrt(dist2)
++-      const minDist = a.r + b.r + 4
+++      const minDist = a.r + b.r + 10
++       const force = repulsion / dist2
++       const fx = (dx / dist) * force
++       const fy = (dy / dist) * force
++@@ -118,9 +119,9 @@ export function forceLayoutTick(
++         b.vx += fx
++         b.vy += fy
++       }
++-      // Soft collision
+++      // Soft collision — keep dots from stacking (visual r is tiny)
++       if (dist < minDist) {
++-        const push = ((minDist - dist) / dist) * 0.5
+++        const push = ((minDist - dist) / dist) * 0.45
++         if (!a.pinned) {
++           a.x -= dx * push
++           a.y -= dy * push
++@@ -171,8 +172,8 @@ export function forceLayoutTick(
++       }
++       n.x += n.vx
++       n.y += n.vy
++-      // Soft wall
++-      const pad = n.r + 8
+++      // Soft wall — generous pad so dense graph can sit inward
+++      const pad = Math.max(24, n.r + 16)
++       n.x = Math.max(pad, Math.min(width - pad, n.x))
++       n.y = Math.max(pad, Math.min(height - pad, n.y))
++       energy += Math.sqrt(n.vx * n.vx + n.vy * n.vy)
++diff --git a/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md b/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
++index 3ce0ed7..71352f0 100644
++--- a/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
+++++ b/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
++@@ -252,14 +252,16 @@ type GraphEdge = {
++ 
++ ---
++ 
++-## 6. 视觉（Quiet Premium）
++-
++-- 背景：`tokens.bg` / 略深画布 `#f0f2f7`  
++-- 节点填充：`tokens.bgElevated`；描边 `tokens.borderStrong`  
++-- 焦点：`tokens.accent` 环  
++-- 硬边：`tokens.accent` 低透明；软边：`tokens.textMuted`  
++-- 字体：11–13 系统栈（与 Side Panel 一致）  
++-- **不用** emoji 作节点主图形（可用小点）
+++## 6. 视觉（Obsidian local graph · dark canvas）
+++
+++- **画布**：近黑 `#0d0f14` 全屏；**无固定侧栏占位**（纯画布）  
+++- **节点**：小圆点（半径约 2.8–7.5px，随度数弱放大）；**主标签哈希着色**（颜色组，见 `tag-colors.ts`）  
+++- **焦点 / 悬停**：柔光晕 + 邻接高亮，其余节点/边压暗  
+++- **边**：细灰线；硬边实线、软边虚线；线宽 ≤ ~1.8 屏幕像素  
+++- **标签**：**默认隐藏**；仅 **悬停 / 焦点 / 放大 ≥ ~1.15** 显示（9–10.5px 浅灰）  
+++- **布局**：紧力导向（短弹簧 + 适中斥力）+ 稳定后 fit-to-view  
+++- **Chrome**：**浮动**顶栏工具条 + 可收起右侧玻璃面板（图例 / 颜色组 / 焦点）；偏好记 `localStorage`  
+++- **不用** emoji 作节点主图形
++ 
++ ---
++ 
++diff --git a/chrome-extension/src/thread-graph/tag-colors.ts b/chrome-extension/src/thread-graph/tag-colors.ts
++new file mode 100644
++index 0000000..3694a3e
++--- /dev/null
+++++ b/chrome-extension/src/thread-graph/tag-colors.ts
++@@ -0,0 +1,120 @@
+++// Stable tag → color groups for thread graph (Obsidian-like "颜色组").
+++// Pure helpers — no DOM / chrome APIs.
+++
+++/** Soft pastel dots that read well on near-black canvas. */
+++export const TAG_PALETTE = [
+++  "#6b9fff", // blue
+++  "#f472b6", // pink
+++  "#34d399", // green
+++  "#fbbf24", // amber
+++  "#a78bfa", // violet
+++  "#22d3ee", // cyan
+++  "#fb923c", // orange
+++  "#e879f9", // fuchsia
+++  "#4ade80", // lime
+++  "#94a3b8", // slate (fallback-ish)
+++] as const
+++
+++export const UNTAGGED_COLOR = "#64748b"
+++export const UNTAGGED_LABEL = "未标注"
+++
+++/** FNV-1a-ish stable hash for string → palette index. */
+++export function hashTag(tag: string): number {
+++  const s = tag.trim().toLowerCase()
+++  let h = 2166136261
+++  for (let i = 0; i < s.length; i++) {
+++    h ^= s.charCodeAt(i)
+++    h = Math.imul(h, 16777619)
+++  }
+++  return h >>> 0
+++}
+++
+++export function colorForTag(tag: string | null | undefined): string {
+++  if (!tag || !tag.trim()) return UNTAGGED_COLOR
+++  const i = hashTag(tag) % TAG_PALETTE.length
+++  return TAG_PALETTE[i]
+++}
+++
+++/** Primary tag = first non-empty digest tag (stable assignment source). */
+++export function primaryTag(tags: string[] | undefined | null): string | null {
+++  if (!tags || tags.length === 0) return null
+++  for (const t of tags) {
+++    const s = (t || "").trim()
+++    if (s) return s
+++  }
+++  return null
+++}
+++
+++export type ColorGroup = {
+++  tag: string
+++  color: string
+++  count: number
+++}
+++
+++/**
+++ * Build per-node color map + legend groups (sorted by count desc, then tag).
+++ * `nodeIds` limits which threads appear in the legend counts.
+++ */
+++export function buildTagColorIndex(
+++  threads: Array<{ id: string; digest?: { tags?: string[] } | null }>,
+++  nodeIds?: Set<string> | string[],
+++): {
+++  colorById: Map<string, string>
+++  tagById: Map<string, string | null>
+++  groups: ColorGroup[]
+++} {
+++  const allow =
+++    nodeIds == null
+++      ? null
+++      : nodeIds instanceof Set
+++        ? nodeIds
+++        : new Set(nodeIds)
+++
+++  const colorById = new Map<string, string>()
+++  const tagById = new Map<string, string | null>()
+++  const counts = new Map<string, number>()
+++
+++  for (const t of threads) {
+++    if (allow && !allow.has(t.id)) continue
+++    const tag = primaryTag(t.digest?.tags)
+++    const key = tag ?? UNTAGGED_LABEL
+++    tagById.set(t.id, tag)
+++    colorById.set(t.id, colorForTag(tag))
+++    counts.set(key, (counts.get(key) || 0) + 1)
+++  }
+++
+++  const groups: ColorGroup[] = [...counts.entries()]
+++    .map(([tag, count]) => ({
+++      tag,
+++      count,
+++      color: tag === UNTAGGED_LABEL ? UNTAGGED_COLOR : colorForTag(tag),
+++    }))
+++    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh"))
+++
+++  return { colorById, tagById, groups }
+++}
+++
+++/** Lighten hex for focus/hover (simple channel blend toward white). */
+++export function lightenHex(hex: string, amount = 0.35): string {
+++  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+++  if (!m) return hex
+++  const n = parseInt(m[1], 16)
+++  const r = (n >> 16) & 0xff
+++  const g = (n >> 8) & 0xff
+++  const b = n & 0xff
+++  const mix = (c: number) => Math.min(255, Math.round(c + (255 - c) * amount))
+++  const to = (c: number) => c.toString(16).padStart(2, "0")
+++  return `#${to(mix(r))}${to(mix(g))}${to(mix(b))}`
+++}
+++
+++/** Apply alpha to #rrggbb → rgba(). */
+++export function hexWithAlpha(hex: string, alpha: number): string {
+++  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+++  if (!m) return hex
+++  const n = parseInt(m[1], 16)
+++  const r = (n >> 16) & 0xff
+++  const g = (n >> 8) & 0xff
+++  const b = n & 0xff
+++  const a = Math.max(0, Math.min(1, alpha))
+++  return `rgba(${r},${g},${b},${a})`
+++}
++diff --git a/chrome-extension/tests/tag-colors.test.ts b/chrome-extension/tests/tag-colors.test.ts
++new file mode 100644
++index 0000000..9fd7972
++--- /dev/null
+++++ b/chrome-extension/tests/tag-colors.test.ts
++@@ -0,0 +1,61 @@
+++import test from "node:test"
+++import assert from "node:assert/strict"
+++import {
+++  UNTAGGED_COLOR,
+++  UNTAGGED_LABEL,
+++  buildTagColorIndex,
+++  colorForTag,
+++  hashTag,
+++  hexWithAlpha,
+++  lightenHex,
+++  primaryTag,
+++} from "../src/thread-graph/tag-colors"
+++
+++test("hashTag is stable and case-insensitive", () => {
+++  assert.equal(hashTag("AI安全"), hashTag("ai安全"))
+++  assert.equal(hashTag("  foo  "), hashTag("foo"))
+++  assert.notStrictEqual(hashTag("a"), hashTag("b"))
+++})
+++
+++test("colorForTag: empty → untagged slate", () => {
+++  assert.equal(colorForTag(null), UNTAGGED_COLOR)
+++  assert.equal(colorForTag(""), UNTAGGED_COLOR)
+++  assert.equal(colorForTag("   "), UNTAGGED_COLOR)
+++})
+++
+++test("colorForTag: same tag → same color", () => {
+++  assert.equal(colorForTag("数据安全"), colorForTag("数据安全"))
+++})
+++
+++test("primaryTag uses first non-empty", () => {
+++  assert.equal(primaryTag(null), null)
+++  assert.equal(primaryTag([]), null)
+++  assert.equal(primaryTag(["", "  ", "x"]), "x")
+++  assert.equal(primaryTag(["工作", "健康"]), "工作")
+++})
+++
+++test("buildTagColorIndex groups and filters by nodeIds", () => {
+++  const threads = [
+++    { id: "1", digest: { tags: ["工作", "周报"] } },
+++    { id: "2", digest: { tags: ["工作"] } },
+++    { id: "3", digest: { tags: [] } },
+++    { id: "4", digest: { tags: ["健康"] } },
+++  ]
+++  const full = buildTagColorIndex(threads)
+++  assert.equal(full.colorById.get("1"), colorForTag("工作"))
+++  assert.equal(full.tagById.get("1"), "工作")
+++  assert.equal(full.colorById.get("3"), UNTAGGED_COLOR)
+++  const work = full.groups.find((g) => g.tag === "工作")
+++  assert.ok(work && work.count === 2)
+++  const un = full.groups.find((g) => g.tag === UNTAGGED_LABEL)
+++  assert.ok(un && un.count === 1)
+++
+++  const subset = buildTagColorIndex(threads, ["1", "4"])
+++  assert.equal(subset.groups.find((g) => g.tag === "工作")?.count, 1)
+++  assert.equal(subset.colorById.has("2"), false)
+++})
+++
+++test("lightenHex / hexWithAlpha", () => {
+++  assert.match(lightenHex("#6b9fff", 0.3), /^#[0-9a-f]{6}$/i)
+++  assert.equal(hexWithAlpha("#6b9fff", 0.5), "rgba(107,159,255,0.5)")
+++})
+diff --git a/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md b/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
+index 3ce0ed7..71352f0 100644
+--- a/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
++++ b/docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
+@@ -252,14 +252,16 @@ type GraphEdge = {
+ 
+ ---
+ 
+-## 6. 视觉（Quiet Premium）
+-
+-- 背景：`tokens.bg` / 略深画布 `#f0f2f7`  
+-- 节点填充：`tokens.bgElevated`；描边 `tokens.borderStrong`  
+-- 焦点：`tokens.accent` 环  
+-- 硬边：`tokens.accent` 低透明；软边：`tokens.textMuted`  
+-- 字体：11–13 系统栈（与 Side Panel 一致）  
+-- **不用** emoji 作节点主图形（可用小点）
++## 6. 视觉（Obsidian local graph · dark canvas）
++
++- **画布**：近黑 `#0d0f14` 全屏；**无固定侧栏占位**（纯画布）  
++- **节点**：小圆点（半径约 2.8–7.5px，随度数弱放大）；**主标签哈希着色**（颜色组，见 `tag-colors.ts`）  
++- **焦点 / 悬停**：柔光晕 + 邻接高亮，其余节点/边压暗  
++- **边**：细灰线；硬边实线、软边虚线；线宽 ≤ ~1.8 屏幕像素  
++- **标签**：**默认隐藏**；仅 **悬停 / 焦点 / 放大 ≥ ~1.15** 显示（9–10.5px 浅灰）  
++- **布局**：紧力导向（短弹簧 + 适中斥力）+ 稳定后 fit-to-view  
++- **Chrome**：**浮动**顶栏工具条 + 可收起右侧玻璃面板（图例 / 颜色组 / 焦点）；偏好记 `localStorage`  
++- **不用** emoji 作节点主图形
+ 
+ ---
+ 
