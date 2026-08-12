@@ -2,6 +2,17 @@
 
 ## Current Session
 
+### S67 END (2026-08-12) [会议 STT hotfix + AI 纠错 · dual APPROVE_WITH_NITS · #179 OPEN]
+- **范围**：#177/#178 后真机踩坑热修 + 对抗 F-merge-1..6 吸收 + 会议 live AI correct_only（priorContext）+ 智能分段
+- **Ship 状态**：**PR #179** OPEN `fix/meeting-stt-hotfix-refine-absorb` @ `ff00681`（未合 main）
+- **Dual**：Claude+Pi 均 **APPROVE_WITH_NITS** `both_ok=true`（`meeting-stt-hotfix-refine-verdict-20260812-113816`）；高优先 nits 已二次吸收再 push
+- **产品**：双 ack 门控；soft 不 loop conflict/oom；`binary_broken` 首击硬停；停录 drain refine≤22s 再 end/纪要；段定稿 opt-in 纠错（`asrRefinerEnabled`）
+- **macOS**：brew/local install + `install.manifest.json`；package 0/残缺 dylib + otool 硬失败；文案「安装」非假一键下载
+- **机核**：ext meeting-live-refine 8 + suite 645；companion voice 32
+- **本地**：扩展已 sync `dist-package/.../chrome-extension`；agent 已 esbuild 进 `/Applications`（需用户重开托盘）
+- **下次**：(1) CI 绿合 #179 (2) 真机双 ack + AI 纠错 + 坏二进制硬停 (3) residual：manifest 同目录可写 / DYLD_FALLBACK brew
+- Recorded: yes — soft max-1 · priorContext refine · drain 竞态 · SIGKILL≠oom
+
 ### S66 cont END (2026-08-11) [P2b+3 #171 MERGED · adversarial fanout]
 - **#171 MERGED** `a6eb5a3` — Phase 2b SectionHeader/popupMenu/PanelBanner + Phase 3 motion
 - **Precision stack complete**: #168+#169+#170+#171 all on main
@@ -648,12 +659,19 @@
 - resume_doc: PR #148 · #149 · `memory/project-knowledge.md` S53 坑
 - updated: 2026-08-08
 
-### 听写+/会议真机验收（S52 后）
+### 听写+/会议真机验收（S52 后 · S67 热修）
 - status: **active**
-- context: Mtg0–3 + D1/D2 + 草稿闪烁修 均在 main；Windows 0.5.0 SEA 已含 whisper sidecar（S62）
-- next_action: 按 `docs/meeting-and-dictation-user-guide.md` §4 smoke（可与 Windows 包验收一并）
-- resume_doc: `docs/meeting-and-dictation-user-guide.md` · ADR-024
-- updated: 2026-08-09
+- context: Mtg0–3 + D1/D2 on main；**#179** 叠 soft-continue/pin/双ack/会议 AI 纠错+分段（待合）
+- next_action: (1) 合 #179 后重载扩展+重启 Companion (2) 双隐私 ack 开录 (3) 勾选「录制 AI 纠错」验同音字 (4) 坏组件应硬停 binary_broken
+- resume_doc: PR #179 · `docs/meeting-and-dictation-user-guide.md` · dual verdict 20260812-113816
+- updated: 2026-08-12
+
+### Meeting STT hotfix PR #179（S67）
+- status: **active**
+- context: 分支 `fix/meeting-stt-hotfix-refine-absorb`；dual both_ok；nits 已吸
+- next_action: 盯 CI → merge → 可选再装 DMG；勿合进 dist/
+- resume_doc: https://github.com/nehcuh/cmspark/pull/179
+- updated: 2026-08-12
 
 ### Wave C thread_recall → **#135 MERGED**
 - status: **done** (PR #135 → main `90db018`; CI build pass ~3m)

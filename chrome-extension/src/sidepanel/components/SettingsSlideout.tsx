@@ -1593,27 +1593,33 @@ export function SettingsSlideout() {
                             {binaryStatusLine(voiceModel.binary)}
                           </div>
                           {canDownloadWhisperBinary(voiceModel.binary) && (
-                            <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" as const }}>
-                              <button
-                                type="button"
-                                style={styles.secondaryBtn}
-                                onClick={() => {
-                                  clearVoiceErr()
-                                  sendVoice({ type: "voice.binary.download" })
-                                }}
-                              >
-                                下载本机听写组件
-                              </button>
-                              <button
-                                type="button"
-                                style={styles.secondaryBtn}
-                                onClick={() => {
-                                  clearVoiceErr()
-                                  sendVoice({ type: "voice.binary.cancel" })
-                                }}
-                              >
-                                取消组件下载
-                              </button>
+                            <div style={{ marginTop: 6 }}>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+                                <button
+                                  type="button"
+                                  style={styles.secondaryBtn}
+                                  onClick={() => {
+                                    clearVoiceErr()
+                                    sendVoice({ type: "voice.binary.download" })
+                                  }}
+                                >
+                                  安装本机听写组件
+                                </button>
+                                <button
+                                  type="button"
+                                  style={styles.secondaryBtn}
+                                  onClick={() => {
+                                    clearVoiceErr()
+                                    sendVoice({ type: "voice.binary.cancel" })
+                                  }}
+                                >
+                                  取消安装
+                                </button>
+                              </div>
+                              <div style={{ ...styles.helpText, marginTop: 4 }}>
+                                macOS：优先用安装包内置组件；若缺失则从本机 Homebrew whisper-cpp
+                                拷贝（需已 brew install whisper-cpp）。Windows 为 HTTPS 自动下载。
+                              </div>
                             </div>
                           )}
                           {state.voiceBinaryProgress && (

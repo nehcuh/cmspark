@@ -5,6 +5,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import {
   ASR_REFINER_SYSTEM_PROMPT,
+  buildAsrRefineUserContent,
   guardAsrRefineOutput,
   runAsrRefine,
 } from "../src/voice/asr-refiner"
@@ -71,6 +72,18 @@ test("guard: empty model output rejected", () => {
   if (!g.ok) assert.equal(g.reason, "empty_output")
 })
 
+test("buildAsrRefineUserContent: plain raw without prior", () => {
+  assert.equal(buildAsrRefineUserContent("配森"), "配森")
+})
+
+test("buildAsrRefineUserContent: wraps prior for disambiguation only", () => {
+  const u = buildAsrRefineUserContent("配森很好用", "我们用 Python 开发。")
+  assert.match(u, /context only/i)
+  assert.match(u, /我们用 Python 开发/)
+  assert.match(u, /Correct ONLY this new ASR segment/)
+  assert.match(u, /配森很好用/)
+})
+
 test("runAsrRefine: mock identical returns ok unchanged", async () => {
   const raw = "Deploy to staging."
   const r = await runAsrRefine({
@@ -83,6 +96,24 @@ test("runAsrRefine: mock identical returns ok unchanged", async () => {
     assert.equal(r.text, raw)
     assert.equal(r.unchanged, true)
   }
+})
+
+test("runAsrRefine: priorContext is passed into extract userContent", async () => {
+  let seen = ""
+  const raw = "配森"
+  const r = await runAsrRefine({
+    raw,
+    priorContext: "项目用 Python",
+    config: FAKE_LLM,
+    extract: async (opts) => {
+      seen = opts.userContent
+      return "Python"
+    },
+  })
+  assert.equal(r.ok, true)
+  if (r.ok) assert.equal(r.text, "Python")
+  assert.match(seen, /项目用 Python/)
+  assert.match(seen, /配森/)
 })
 
 test("runAsrRefine: mock expand rejected by guard", async () => {

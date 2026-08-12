@@ -204,16 +204,18 @@ export function binaryStatusLine(
       : "本机组件：已就绪"
   }
   if (status === "hash_mismatch") {
-    return "本机组件：校验失败（可重新下载本机组件）"
+    return "本机组件：校验失败（可重新安装本机组件）"
   }
   if (status === "unsupported" || status === "unsupported_arch") {
     return binary?.message
-      ? `本机组件：当前平台不支持自动下载（${binary.message}）`
-      : "本机组件：当前平台不支持自动下载"
+      ? `本机组件：当前平台不支持自动安装（${binary.message}）`
+      : "本机组件：当前平台不支持自动安装"
   }
+  // macOS: no win-style HTTPS zip — brew/local install path (adversary F-merge-4).
+  // Keep platform-agnostic wording; Settings button has the full macOS brew note.
   return binary?.message
-    ? `本机组件：未找到（${binary.message}）— 可一键下载`
-    : "本机组件：未找到 — 可一键下载 cmspark-whisper"
+    ? `本机组件：未找到（${binary.message}）— 可安装本机听写组件`
+    : "本机组件：未找到 — 可安装本机听写组件（macOS 需 Homebrew whisper-cpp 或安装包内置）"
 }
 
 /** Whether Settings should show the binary download button. */

@@ -453,6 +453,13 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.text.length > 12_000) {
         return { valid: false, error: "voice.refine.request text exceeds 12000 chars" }
       }
+      // Optional prior transcript for meeting live STT disambiguation (≤2k)
+      if (m.priorContext != null && typeof m.priorContext !== "string") {
+        return { valid: false, error: "voice.refine.request priorContext must be string" }
+      }
+      if (typeof m.priorContext === "string" && m.priorContext.length > 2_000) {
+        return { valid: false, error: "voice.refine.request priorContext exceeds 2000 chars" }
+      }
       return { valid: true }
     },
     "voice.refine.abort": (m) => {

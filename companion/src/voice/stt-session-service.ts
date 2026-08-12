@@ -62,6 +62,7 @@ export type SttServiceErrorCode =
   | "peer_mismatch"
   | "resource_conflict"
   | "infer_failed"
+  | "binary_broken"
   | "oom"
   | "invalid_session_id"
   | "partial_skipped"
@@ -407,8 +408,10 @@ export class SttSessionService {
       const run = this.deps.runWhisper ?? runWhisperTranscribe
       // large models need more wall time (CPU encode of long utterances)
       const baseTimeout = this.deps.inferMaxMs ?? STT_INFER_MAX_MS
+      // large-v3-turbo: cold start loads ~1.6GB + Metal pipeline compile; 180s was
+      // still too tight on first segments (user:「识别超时」). Prefer medium for meetings.
       const timeoutMs =
-        modelId === "large-v3-turbo" ? Math.max(baseTimeout, 180_000) : baseTimeout
+        modelId === "large-v3-turbo" ? Math.max(baseTimeout, 300_000) : baseTimeout
       try {
         const { logger } = await import("../logger")
         logger.info("voice.stt.infer.start", {
@@ -473,6 +476,15 @@ export class SttSessionService {
       this.dropBound()
       const msg = e instanceof Error ? e.message : String(e)
       const lower = msg.toLowerCase()
+      // Prefer binary_broken over oom when message is dyld/spawn/early-kill
+      // (Pi nit: "killed early … OOM" historically mis-mapped to oom).
+      if (
+        /dyld|library not loaded|image not found|killed early|binary broken|spawn/i.test(
+          lower,
+        )
+      ) {
+        return { ok: false, code: "binary_broken", message: msg }
+      }
       if (/\booms?\b|out of memory|enomem|cannot allocate/i.test(lower)) {
         return { ok: false, code: "oom", message: msg }
       }

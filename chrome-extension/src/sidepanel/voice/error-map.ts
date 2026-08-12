@@ -107,7 +107,7 @@ export function mapLocalSttError(code: string): LocalSttUserFacing {
       return {
         severity: "banner",
         message:
-          "本机听写组件（cmspark-whisper）未找到。请在设置页点「下载本机听写组件」，或重新打包（会自动拉取 pin 过的 whisper），或暂时改用浏览器听写",
+          "本机听写组件（cmspark-whisper）未找到。请在设置页点「安装本机听写组件」（macOS 需 brew whisper-cpp 或安装包内置），或暂时改用浏览器听写",
       }
     case "hash_fail":
       return { severity: "banner", message: "本机听写组件校验失败，请重装 Companion" }
@@ -118,7 +118,11 @@ export function mapLocalSttError(code: string): LocalSttUserFacing {
     case "payload_too_large":
       return { severity: "banner", message: "录音过长或数据异常" }
     case "infer_timeout":
-      return { severity: "banner", message: "识别超时，请缩短后重试" }
+      return {
+        severity: "banner",
+        message:
+          "识别超时（大模型/首段更易发生）。请在设置将活动模型改为 medium，或缩短本段后再试",
+      }
     case "resource_conflict":
       return {
         severity: "banner",
@@ -133,6 +137,12 @@ export function mapLocalSttError(code: string): LocalSttUserFacing {
       return {
         severity: "banner",
         message: "本机识别失败，请检查本机听写组件/模型后重试",
+      }
+    case "binary_broken":
+      return {
+        severity: "banner",
+        message:
+          "本机听写组件无法运行（动态库/二进制损坏）。请设置中重新安装组件，或 brew install whisper-cpp 后点「安装本机听写组件」",
       }
     case "aborted":
       return { severity: "silent", message: "" }

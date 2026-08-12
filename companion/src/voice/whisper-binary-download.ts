@@ -11,6 +11,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -27,6 +28,7 @@ import { DATA_DIR } from "../config"
 import {
   defaultWhisperBinaryInstallDir,
   resolveWhisperArch,
+  writeUserWhisperInstallManifest,
   type WhisperArch,
 } from "./binary-resolve"
 import {
@@ -428,6 +430,241 @@ async function installFromFiles(
 }
 
 /**
+ * macOS: stage cmspark-whisper from Homebrew whisper-cli + sibling dylibs.
+ * Official zip auto-download is Windows-only; Darwin needs dynamic libs.
+ */
+export function installWhisperFromBrewDarwin(opts: {
+  arch: string
+  destDir: string
+  signal?: AbortSignal
+  onProgress?: (p: WhisperBinaryDownloadProgress) => void
+}): { primaryPath: string; destDir: string; arch: string; version: string } {
+  if (opts.signal?.aborted) {
+    throw new WhisperBinaryDownloadError("aborted", "aborted")
+  }
+  const candidates = [
+    process.env.CMSPARK_WHISPER_SRC,
+    "/opt/homebrew/bin/whisper-cli",
+    "/usr/local/bin/whisper-cli",
+  ].filter((p): p is string => typeof p === "string" && p.length > 0)
+
+  let src: string | null = null
+  for (const c of candidates) {
+    try {
+      if (existsSync(c) && statSync(c).isFile()) {
+        src = c
+        break
+      }
+    } catch {
+      /* continue */
+    }
+  }
+  // Also try PATH via which
+  if (!src) {
+    try {
+      const out = execFileSync("which", ["whisper-cli"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim()
+      if (out && existsSync(out)) src = out
+    } catch {
+      /* no brew */
+    }
+  }
+  if (!src) {
+    throw new WhisperBinaryDownloadError(
+      "unsupported_arch",
+      "macOS 无在线组件包：请 brew install whisper-cpp 后重试「下载本机听写组件」，或使用 DMG 安装包内置组件",
+    )
+  }
+
+  opts.onProgress?.({
+    phase: "extract",
+    receivedBytes: 0,
+    totalBytes: 1,
+    file: path.basename(src),
+  })
+
+  const destDir = path.resolve(opts.destDir)
+  mkdirSync(destDir, { recursive: true, mode: 0o755 })
+  const primaryName =
+    opts.arch === "darwin-x64"
+      ? "cmspark-whisper-darwin-x64"
+      : "cmspark-whisper-darwin-arm64"
+  const primaryPath = path.join(destDir, primaryName)
+  // Realpath brew Cellar binary
+  let realSrc = src
+  try {
+    realSrc = realpathSync(src)
+  } catch {
+    realSrc = src
+  }
+  writeFileSync(primaryPath, readFileSync(realSrc))
+  try {
+    execFileSync("chmod", ["+x", primaryPath])
+  } catch {
+    /* best-effort */
+  }
+
+  // Copy dylibs next to binary (@loader_path/...)
+  const libDirs: string[] = []
+  try {
+    const whisperPrefix = execFileSync("brew", ["--prefix", "whisper-cpp"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim()
+    if (whisperPrefix) libDirs.push(path.join(whisperPrefix, "lib"))
+  } catch {
+    /* */
+  }
+  try {
+    const ggmlPrefix = execFileSync("brew", ["--prefix", "ggml"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim()
+    if (ggmlPrefix) libDirs.push(path.join(ggmlPrefix, "lib"))
+  } catch {
+    /* */
+  }
+  libDirs.push("/opt/homebrew/lib", "/usr/local/lib")
+
+  const copied = new Set<string>()
+  for (const dir of libDirs) {
+    if (!existsSync(dir)) continue
+    let names: string[] = []
+    try {
+      names = readdirSync(dir)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!/^lib(whisper|ggml)/.test(name) || !name.endsWith(".dylib")) continue
+      const from = path.join(dir, name)
+      try {
+        // follow symlink to real file once
+        let real = from
+        try {
+          real = realpathSync(from)
+        } catch {
+          real = from
+        }
+        if (!statSync(real).isFile()) continue
+        const base = path.basename(real)
+        if (copied.has(base)) continue
+        writeFileSync(path.join(destDir, base), readFileSync(real))
+        copied.add(base)
+        // soname shortcuts expected by install_name_tool rewrites / otool
+        const sonames: string[] = []
+        if (base.startsWith("libwhisper.")) sonames.push("libwhisper.1.dylib", "libwhisper.dylib")
+        if (/^libggml\.[0-9]/.test(base)) sonames.push("libggml.0.dylib", "libggml.dylib")
+        if (/^libggml-base\.[0-9]/.test(base))
+          sonames.push("libggml-base.0.dylib", "libggml-base.dylib")
+        for (const sn of sonames) {
+          try {
+            writeFileSync(path.join(destDir, sn), readFileSync(real))
+          } catch {
+            /* */
+          }
+        }
+      } catch {
+        /* skip */
+      }
+    }
+  }
+
+  // Rewrite install names to @loader_path (same directory)
+  try {
+    const otool = execFileSync("otool", ["-L", primaryPath], { encoding: "utf8" })
+    for (const line of otool.split("\n").slice(1)) {
+      const dep = line.trim().split(/\s+/)[0]
+      if (!dep || dep.startsWith("/usr/lib") || dep.startsWith("/System")) continue
+      const depBase = path.basename(dep)
+      if (existsSync(path.join(destDir, depBase))) {
+        try {
+          execFileSync(
+            "install_name_tool",
+            ["-change", dep, `@loader_path/${depBase}`, primaryPath],
+            { stdio: "ignore" },
+          )
+        } catch {
+          /* */
+        }
+      }
+    }
+    for (const name of readdirSync(destDir)) {
+      if (!name.endsWith(".dylib")) continue
+      const lib = path.join(destDir, name)
+      try {
+        execFileSync("install_name_tool", ["-id", `@loader_path/${name}`, lib], {
+          stdio: "ignore",
+        })
+      } catch {
+        /* */
+      }
+      try {
+        const lotool = execFileSync("otool", ["-L", lib], { encoding: "utf8" })
+        for (const line of lotool.split("\n").slice(1)) {
+          const dep = line.trim().split(/\s+/)[0]
+          if (!dep || dep.startsWith("/usr/lib") || dep.startsWith("/System")) continue
+          if (dep.startsWith("@loader_path/")) continue
+          const depBase = path.basename(dep)
+          if (existsSync(path.join(destDir, depBase))) {
+            try {
+              execFileSync(
+                "install_name_tool",
+                ["-change", dep, `@loader_path/${depBase}`, lib],
+                { stdio: "ignore" },
+              )
+            } catch {
+              /* */
+            }
+          }
+        }
+      } catch {
+        /* */
+      }
+    }
+  } catch {
+    /* install_name_tool optional if already linked */
+  }
+
+  opts.onProgress?.({
+    phase: "verify",
+    receivedBytes: 1,
+    totalBytes: 1,
+    file: primaryName,
+  })
+
+  // Smoke: binary must at least spawn (help may print backends to stderr)
+  try {
+    execFileSync(primaryPath, ["-h"], {
+      cwd: destDir,
+      timeout: 60_000,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    // -h often exits non-zero after printing help; dyld failures include "Library not loaded"
+    if (/Library not loaded|image not found|dyld/i.test(msg)) {
+      throw new WhisperBinaryDownloadError(
+        "extract-failed",
+        `brew 组件安装后仍无法加载动态库：${msg}`,
+      )
+    }
+  }
+
+  writeUserWhisperInstallManifest(destDir, primaryName, "brew-whisper-cpp")
+
+  return {
+    primaryPath,
+    destDir,
+    arch: opts.arch,
+    version: "brew-whisper-cpp",
+  }
+}
+
+/**
  * Download + install whisper runtime for arch into destDir.
  * Returns absolute path to primary cmspark-whisper binary.
  */
@@ -451,6 +688,17 @@ export async function downloadWhisperBinary(
 
   const entry = getWhisperBinaryArchEntry(arch, manifest)
   if (!entry) {
+    // macOS: no GitHub auto-zip (dylib rpath). Install from Homebrew whisper-cli + libs.
+    if (arch === "darwin-arm64" || arch === "darwin-x64") {
+      return installWhisperFromBrewDarwin({
+        arch,
+        destDir:
+          opts.destDir ??
+          defaultWhisperBinaryInstallDir(arch, opts.dataDir ?? DATA_DIR),
+        signal: opts.signal,
+        onProgress: opts.onProgress,
+      })
+    }
     throw new WhisperBinaryDownloadError(
       "unsupported_arch",
       `no auto-download manifest entry for ${arch} (install via package or brew)`,

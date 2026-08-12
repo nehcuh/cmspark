@@ -494,7 +494,8 @@ test("end maps generic runner errors to infer_failed not resource_conflict", asy
     dataDir,
     whisperRoot,
     runWhisper: async () => {
-      throw new Error("spawn EACCES")
+      // Generic whisper decode failure (not dyld/spawn → binary_broken)
+      throw new Error("whisper decode failed: invalid mel spectrogram")
     },
   })
   assert.equal(
@@ -515,7 +516,75 @@ test("end maps generic runner errors to infer_failed not resource_conflict", asy
   assert.equal(end.ok, false)
   if (!end.ok) {
     assert.equal(end.code, "infer_failed")
-    assert.match(end.message, /EACCES|spawn/i)
+    assert.match(end.message, /decode|mel/i)
+  }
+})
+
+test("end maps dyld/spawn runner errors to binary_broken", async () => {
+  const dataDir = tempDataDir()
+  const whisperRoot = path.join(dataDir, "models", "whisper")
+  plantReadyModel(whisperRoot)
+  const svc = makeService({
+    dataDir,
+    whisperRoot,
+    runWhisper: async () => {
+      throw new Error("dyld: library not loaded: libwhisper.dylib")
+    },
+  })
+  assert.equal(
+    svc.start(
+      {
+        sessionId: "e-bin",
+        modelId: "small",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+      },
+      "p",
+    ).ok,
+    true,
+  )
+  svc.chunk("e-bin", 0, Buffer.from("RIFF...."), "p")
+  const end = await svc.end("e-bin", 1, "p")
+  assert.equal(end.ok, false)
+  if (!end.ok) {
+    assert.equal(end.code, "binary_broken")
+    assert.match(end.message, /dyld|library/i)
+  }
+})
+
+test("end maps early SIGKILL spawn_error to binary_broken not oom", async () => {
+  // Dual-review Pi nit: message must not trip oom via incidental "OOM" substring;
+  // runner uses "killed early … binary broken / SIGKILL" without OOM word.
+  const dataDir = tempDataDir()
+  const whisperRoot = path.join(dataDir, "models", "whisper")
+  plantReadyModel(whisperRoot)
+  const svc = makeService({
+    dataDir,
+    whisperRoot,
+    runWhisper: async () => {
+      throw new Error("whisper killed early (dyld missing libs / binary broken / SIGKILL)")
+    },
+  })
+  assert.equal(
+    svc.start(
+      {
+        sessionId: "e-kill",
+        modelId: "small",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+      },
+      "p",
+    ).ok,
+    true,
+  )
+  svc.chunk("e-kill", 0, Buffer.from("RIFF...."), "p")
+  const end = await svc.end("e-kill", 1, "p")
+  assert.equal(end.ok, false)
+  if (!end.ok) {
+    assert.equal(end.code, "binary_broken")
+    assert.notEqual(end.code, "oom")
   }
 })
 

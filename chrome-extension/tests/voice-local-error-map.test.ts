@@ -39,10 +39,10 @@ test("mapLocalSttError §6.5 known codes", () => {
     severity: "banner",
     message: "录音过长或数据异常",
   })
-  assert.deepEqual(mapLocalSttError("infer_timeout"), {
-    severity: "banner",
-    message: "识别超时，请缩短后重试",
-  })
+  const timeout = mapLocalSttError("infer_timeout")
+  assert.equal(timeout.severity, "banner")
+  assert.match(timeout.message, /识别超时/)
+  assert.match(timeout.message, /medium/)
   assert.deepEqual(mapLocalSttError("resource_conflict"), {
     severity: "banner",
     message: "上一段识别尚未结束，请稍候再试（或结束听写后重开会议）",

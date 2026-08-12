@@ -1,0 +1,8 @@
+{
+  "batch": "meeting-stt-hotfix-refine",
+  "timestamp": "20260812-113816",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/meeting-stt-hotfix-refine-claude-20260812-113816.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/meeting-stt-hotfix-refine-pi-20260812-113816.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/meeting-stt-hotfix-refine-diff-20260812-113816.patch"
+}
