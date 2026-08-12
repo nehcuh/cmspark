@@ -22,6 +22,29 @@
 
 ## Technical Pitfalls
 
+### 会议 STT soft-continue 与 max-1 槽：conflict/oom 绝不可 soft 空转（2026-08-12 · #179）
+- **现象**：段失败一律 soft → `resource_conflict`/`session_busy` 占着 max-1 槽 → 后续段永久 conflict；坏二进制 sticky `infer_failed`/`binary_broken` soft 到 hard cap
+- **修法**：soft 仅 `infer_failed|empty_result|infer_timeout|partial_skipped` + streak≤3；conflict abort+单次重试后硬停；`oom`/`binary_broken` **首击硬停**
+- **诚实 UX**：soft banner 必须写「本段转写已丢失（不可恢复）；结束默认删音频」——不可暗示可重试本段
+- **纪律**：改 STT 错误分类前对照 adversary F-merge-2；流式 start 错误与 end 错误勿双计 streak
+
+### 本机 whisper 用户缓存路径：禁止「pin 失败仍 ok」（2026-08-12 · #179）
+- **现象**：`…/bin/whisper/…` 路径 pin 失败仍 `ok:true, pinned:false` → 可写缓存可被替换执行（违 ADR-023 L5）
+- **修法**：安装写 `install.manifest.json`（primary+dylib sha256）；resolve 时校验 manifest；无 manifest → 不接受 user-cache 旁路
+- **残余**：manifest 与二进制同目录 → 防误配/损坏，**非**防本地攻击者替换；真 pin 需签包或 HTTPS 源
+- **打包**：darwin 0 dylib 或仅 whisper 缺 ggml → hard fail；`otool` 残留 Homebrew 绝对路径 → hard fail
+
+### 会议 AI 纠错：停录必须 drain refine 队列再 end/纪要（2026-08-12 · #179）
+- **现象**：800ms 固定等待；LLM 慢时 `generate_minutes` 看不到 refined 段；`meetingIdRef` 换会后晚到 refine 可能 append 到新会
+- **修法**：`createSerialRefineQueue().drain(22s)` → 再 `meeting.end` / silence-cut / minutes；append **pin 段所属 meeting id**
+- **契约**：`priorContext` ≤2k 仅消歧；guard 仍对 **raw 段** 比长度；fail-open 保留原文；默认 `asrRefinerEnabled=false`
+- **纪律**：correct_only（ADR-024）≠ 润色；job 拆 `asr_refiner` ≠ `meeting_minutes`
+
+### Early SIGKILL 文案勿含 “OOM” 子串（2026-08-12 · #179）
+- **现象**：runner `killed early (… OOM …)` + session 先跑 oom 正则 → dyld 死被标「内存不足」
+- **修法**：early-kill 文案只用 dyld/binary/SIGKILL；映射顺序 **binary_broken 先于 oom**
+- **纪律**：错误码文案是分类输入，禁止在「非内存」路径写 OOM 字样
+
 ### llm.oneshot / 同类 handler：校验 payload 先于 config/key 门（2026-08-12 · #174）
 - **现象**：本地有 API key 时 empty `user_content` 测绿；CI 无 key 时先返回 `companion_llm_not_configured`，断言 `/user_content/` 失败
 - **修法**：`handleLlmOneshot` 先校验 `user_content` 非空，再查 `api_key` / masked
@@ -536,6 +559,13 @@
 - 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
 
 ## Reusable Patterns
+
+### 对抗 REJECT → 分 Slice 吸收 → dual → nits 再 PR（2026-08-12 · #179）
+1. 真机/四路对抗合成 **REJECT** 落 `docs/audit/reviews/*adversary-synthesis*`
+2. 按 F-merge 表 **Slice 实现**（soft/pin/package/UX）+ 机核
+3. `scripts/dual-external-review.sh <batch> <prompt> origin/main`（未跟踪新文件须 **stage** 才能进 patch）
+4. `APPROVE_WITH_NITS` → **同会话**吸高优先 nits → 再开/更新 PR（本轮 #179）
+5. 价值：避免 REJECT 快照直接 merge；nits 不隔夜腐化
 
 ### Deep-diagnosis 按严重度分批合 main（2026-08-11–12 · #172→#175）
 1. Fanout 出 P0/P1/P2 action plan（`docs/audit/deep-diagnosis-fanout-report-*`）
