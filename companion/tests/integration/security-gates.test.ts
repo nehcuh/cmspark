@@ -1569,7 +1569,9 @@ test("M4: cloud metadata endpoint (169.254.169.254) hard-blocked, NO fetch, NO c
   assert.ok(line!.includes("cloud_metadata_endpoint"), "blocked reason must be cloud_metadata_endpoint")
 })
 
-test("M4: non-http(s) candidate scheme (file:) hard-blocked", async () => {
+test("M4: file: without cruise refused (file_requires_cruise, not Security Block)", async () => {
+  // Product 2026-08: file:// is not SSRF-hard-block copy; without three-flag cruise
+  // it is still refused with actionable cruise guidance (image_fetch_file_requires_cruise).
   const executeTool = createToolExecutor(serverSideWs)
   const phase1Promise = expectClientMessage("tool.execute")
   const resultPromise = executeTool("tc_ai_file", "analyze_image", { selector: "img.x" })
@@ -1581,7 +1583,8 @@ test("M4: non-http(s) candidate scheme (file:) hard-blocked", async () => {
   }))
   const result = await resultPromise
   assert.equal(result.success, false)
-  assert.match(result.error!, /Security Block/i)
+  assert.match(result.error!, /file_requires_cruise|三旗|file:/i)
+  assert.doesNotMatch(result.error!, /Security Block/i)
 })
 
 test("M4: god-mode ON does NOT bypass the image gate (untrusted still confirms)", async () => {
@@ -1781,7 +1784,8 @@ test("M4: fetch_required data: oversize → IMAGE_TOO_LARGE short error, NO phas
   assert.equal(pendingToolCalls.size, 0)
 })
 
-test("M4: file: still hard-blocked after data: residual (invariant)", async () => {
+test("M4: file: still refused after data: residual (invariant, no cruise)", async () => {
+  // data: residual path must not weaken file: refusal when cruise is off.
   const executeTool = createToolExecutor(serverSideWs)
   const phase1Promise = expectClientMessage("tool.execute")
   const resultPromise = executeTool("tc_ai_file2", "analyze_image", { selector: "img.x" })
@@ -1796,6 +1800,6 @@ test("M4: file: still hard-blocked after data: residual (invariant)", async () =
   }))
   const result = await resultPromise
   assert.equal(result.success, false)
-  assert.match(result.error!, /Security Block/i)
+  assert.match(result.error!, /file_requires_cruise|三旗|file:/i)
   assert.equal(pendingToolCalls.size, 0)
 })

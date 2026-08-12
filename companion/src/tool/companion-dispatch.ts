@@ -678,7 +678,17 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         const thr0 = tid0 ? threadManager.get(tid0) : null
         const cwdNorm = normalizeShellCwd(params as any, thr0?.workspace_root)
         // P1 SEC-08: bind cwd to workspace when thread has workspace_root
-        const cwdEsc = assertShellCwdInWorkspace(cwdNorm, thr0?.workspace_root)
+        // Three-flag cruise: path risk accepted — do not cage cwd to workspace_root.
+        let cruisePath = false
+        try {
+          const { isCruisePathRiskAccepted } = await import("../security/cruise-path")
+          cruisePath = isCruisePathRiskAccepted()
+        } catch {
+          cruisePath = false
+        }
+        const cwdEsc = cruisePath
+          ? null
+          : assertShellCwdInWorkspace(cwdNorm, thr0?.workspace_root)
         if (cwdEsc) return { success: false, error: cwdEsc }
         delete (params as any).working_directory
         ;(params as any).cwd = cwdNorm

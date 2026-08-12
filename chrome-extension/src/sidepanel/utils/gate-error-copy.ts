@@ -49,6 +49,13 @@ export function humanizeSidepanelGateError(raw: string): string {
     )
   }
 
+  if (/image_fetch_file_requires_cruise|不能拉取 file:|file_requires_cruise/i.test(body + e)) {
+    return (
+      "🖼️ **本地 file: 图片需要三旗巡航**\n\n" +
+      "这不是确认被拒：默认禁止拉取 `file://`。**三旗全自动**后放行本地图并跳过图片拉取确认；**云元数据 SSRF 仍硬拦**。或改用 **screenshot**。"
+    )
+  }
+
   if (/module_disabled|module_unavailable|enterprise_profile|本机能力未开启/i.test(body + e)) {
     return (
       "🔌 **本机能力未开启**\n\n" +

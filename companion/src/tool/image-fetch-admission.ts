@@ -7,6 +7,7 @@
 
 import { WebSocket } from "ws"
 import { logger } from "../logger"
+import { getConfig } from "../config"
 import {
   isAutoApprovedDomain,
   isCloudMetadataIp,
@@ -14,6 +15,16 @@ import {
 } from "../security"
 import { decodeDataUrlImage, summarizeCandidateUrl } from "../image-data-url"
 import type { SecurityConfirmationManager } from "../security-confirmation"
+import { isFullAutonomyCruise } from "./l2-admission"
+
+/** True when user armed three-flag cruise = explicit risk acceptance for tool surface + fewer gates. */
+function cruiseRiskAccepted(): boolean {
+  try {
+    return isFullAutonomyCruise(getConfig().security || {})
+  } catch {
+    return false
+  }
+}
 
 export type ToolResult = { success: boolean; data?: any; error?: string }
 
@@ -79,8 +90,9 @@ export async function runImageFetchAdmission(
   //   phase 2 analyze_image_fetch → dispatched ONLY after the gate approves;
   //     extension fetches candidate_url → image_base64 (adapter VISION_TOOLS
   //     then runs vision, same as today).
-  // Neither god-mode (allow_all_schemes) nor auto_approve_dangerous bypasses
-  // this gate — only trusted/auto-approved domains skip confirmation.
+  // Confirmation: auto_approved_domains skip; three-flag full-autonomy cruise
+  // skips confirm (risk accepted). Suspected SSRF (cloud metadata / javascript:)
+  // remains hard-blocked even under cruise. file:// allowed only under cruise.
   if (toolName !== "analyze_image") {
     return null
   }
@@ -154,34 +166,68 @@ export async function runImageFetchAdmission(
   const host = parsedCu?.hostname || ""
   const isPriv = isPrivateOrLoopbackIp(host)
   const metadata = isCloudMetadataIp(host)
-  const schemeOk = scheme === "http:" || scheme === "https:"
-  // file:/ftp:/javascript:/blob:/etc. are not http(s) → hard-block.
-  // (data: is handled above via local decode; never expand schemeOk to data:.)
+  const isHttp = scheme === "http:" || scheme === "https:"
+  const isFile = scheme === "file:"
+  // Product (2026-08): three-flag cruise = user accepted risk. Hard-block only
+  // suspected SSRF (cloud metadata) / active script schemes — not blanket ban of
+  // file:// "to prevent SSRF". Without cruise, file:// still refused (no silent
+  // local-file vision exfil in default mode). data: handled above via local decode.
+  const riskAccepted = cruiseRiskAccepted()
+  const schemeOk = isHttp || (isFile && riskAccepted)
   const urlSum = summarizeCandidateUrl(candidateUrl)
-  if (!parsedCu || !schemeOk || metadata) {
-    const reason = !parsedCu ? "invalid_url" : metadata ? "cloud_metadata_endpoint" : "blocked_scheme"
+  if (!parsedCu || metadata || scheme === "javascript:" || scheme === "vbscript:") {
+    const reason = !parsedCu
+      ? "invalid_url"
+      : metadata
+        ? "cloud_metadata_endpoint"
+        : "blocked_scheme_ssrf"
     logger.warn("security.image_fetch_blocked", {
       tool_call_id: toolCallId, tool_name: toolName,
       candidate_url: urlSum.summary, scheme, host, is_private_ip: isPriv, reason,
     })
     const result = {
       success: false,
-      error: `Security Block: analyze_image cannot read ${metadata ? "a cloud metadata endpoint" : `${scheme || "non-http(s)"} URL`} (${urlSum.summary}).`,
+      error: metadata
+        ? `Security Block: analyze_image blocked a suspected SSRF target (cloud metadata) (${urlSum.summary}).`
+        : `Security Block: analyze_image blocked scheme ${scheme || "invalid"} as suspected SSRF/script (${urlSum.summary}).`,
+    }
+    logToolFinish(toolCallId, toolName, startedAt, result)
+    return result
+  }
+  if (!schemeOk) {
+    // file:// (or other) without three-flag — not a confirm dialog; product gate.
+    logger.warn("security.image_fetch_blocked", {
+      tool_call_id: toolCallId, tool_name: toolName,
+      candidate_url: urlSum.summary, scheme, host, is_private_ip: isPriv,
+      reason: isFile ? "file_requires_cruise" : "blocked_scheme",
+    })
+    const result = {
+      success: false,
+      error: isFile
+        ? `analyze_image 不能拉取 file: 图片，除非已开三旗全自动巡航（风险自担）。当前未开巡航时请用 screenshot，或开启三旗后重试 (${urlSum.summary})。[image_fetch_file_requires_cruise]`
+        : `analyze_image cannot read ${scheme || "non-http(s)"} URL without full-autonomy cruise (${urlSum.summary}).`,
     }
     logToolFinish(toolCallId, toolName, startedAt, result)
     return result
   }
   // Cookie trusted_domains must not auto-approve image fetch (ADR-007 Cookie-only).
-  const autoApproved = isAutoApprovedDomain(host)
+  // Three-flag cruise = risk accepted: skip IMAGE_FETCH confirm (file: and http alike).
+  const autoApproved = isHttp && isAutoApprovedDomain(host)
   if (autoApproved) {
     logger.info("security.image_fetch_auto_approved", {
       tool_call_id: toolCallId, tool_name: toolName,
       candidate_url: urlSum.summary, scheme, host, is_private_ip: isPriv,
       reason: "auto_approved_domain",
     })
+  } else if (riskAccepted) {
+    logger.warn("security.image_fetch_cruise_waived", {
+      tool_call_id: toolCallId, tool_name: toolName,
+      candidate_url: urlSum.summary, scheme, host, is_private_ip: isPriv,
+      reason: "full_autonomy_cruise",
+    })
   } else {
     // Non-auto-approved public URL or (non-metadata) private IP → confirm.
-    // god-mode + auto_approve_dangerous do NOT skip IMAGE_FETCH http(s) confirm.
+    // Single god-mode / auto_approve_dangerous alone do NOT skip IMAGE_FETCH confirm.
     if (ws.readyState !== WebSocket.OPEN) {
       const result = {
         success: false,
@@ -198,7 +244,7 @@ export async function runImageFetchAdmission(
         toolName: "analyze_image_fetch",
         dangerousApis: [],
         code: `analyze_image_fetch(${urlSum.summary})`,
-        relevantDomains: [host],
+        relevantDomains: host ? [host] : [],
         defenseLayer: 2,
         riskLevel: "high",
       },

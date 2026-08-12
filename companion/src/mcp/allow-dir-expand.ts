@@ -282,10 +282,23 @@ export function resolveAllowDirToOffer(
     return { ok: false, error: "refusing to allow sensitive system path" }
   }
 
-  // Credential-style path segments anywhere
-  const badSeg = hasSensitivePathSegment(dirReal)
-  if (badSeg) {
-    return { ok: false, error: `refusing to allow sensitive path segment ${badSeg}` }
+  // Three-flag cruise = path risk accepted: skip credential-segment / home-subtree
+  // soft cages; still refuse volume roots / multi-user roots / OS trees above.
+  let cruise = false
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { isCruisePathRiskAccepted } = require("../security/cruise-path") as typeof import("../security/cruise-path")
+    cruise = isCruisePathRiskAccepted()
+  } catch {
+    cruise = false
+  }
+
+  if (!cruise) {
+    // Credential-style path segments anywhere
+    const badSeg = hasSensitivePathSegment(dirReal)
+    if (badSeg) {
+      return { ok: false, error: `refusing to allow sensitive path segment ${badSeg}` }
+    }
   }
 
   const rel = path.relative(homeReal, dirReal)
@@ -293,6 +306,7 @@ export function resolveAllowDirToOffer(
 
   if (underHome) {
     // Refuse adding home itself (would look like "open whole home" again)
+    // Under cruise, home is already the default MCP root — expanding home is a no-op refuse.
     if (rel === "" || rel === ".") {
       return {
         ok: false,
@@ -301,12 +315,14 @@ export function resolveAllowDirToOffer(
       }
     }
 
-    // Block sensitive home subtrees (case-insensitive for APFS)
-    const norm = rel.replace(/\\/g, "/").toLowerCase()
-    for (const b of SENSITIVE_HOME_PREFIXES) {
-      const bl = b.toLowerCase()
-      if (norm === bl || norm.startsWith(bl + "/")) {
-        return { ok: false, error: `refusing to allow sensitive path under ~/${b}` }
+    if (!cruise) {
+      // Block sensitive home subtrees (case-insensitive for APFS)
+      const norm = rel.replace(/\\/g, "/").toLowerCase()
+      for (const b of SENSITIVE_HOME_PREFIXES) {
+        const bl = b.toLowerCase()
+        if (norm === bl || norm.startsWith(bl + "/")) {
+          return { ok: false, error: `refusing to allow sensitive path under ~/${b}` }
+        }
       }
     }
   }

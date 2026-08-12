@@ -57,7 +57,22 @@ export function runBrowserDownloadAdmission(
       /* ignore */
     }
   }
-  const prepared = prepareBrowserDownloadParams({ params: finalParams, isWorker })
+  // Three-flag cruise: path risk accepted — allow downloads under home (not only Downloads).
+  // Workers still Downloads-only. Volume/system paths still rejected via realpath checks
+  // when we pass home as root (isWithinRoot home covers CMspark-projects etc.).
+  let roots: string[] | undefined
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { isCruisePathRiskAccepted } = require("../security/cruise-path") as typeof import("../security/cruise-path")
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require("os") as typeof import("os")
+    if (!isWorker && isCruisePathRiskAccepted()) {
+      roots = [os.homedir()]
+    }
+  } catch {
+    roots = undefined
+  }
+  const prepared = prepareBrowserDownloadParams({ params: finalParams, isWorker, roots })
   if (!prepared.ok) {
     const result = {
       success: false as const,
