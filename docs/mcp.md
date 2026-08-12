@@ -95,7 +95,10 @@ macOS 示例：`args` 末尾用 `"/Users/you"`，`cwd` 同理。
 - 所有 **作为 allow-dir 的路径必须真实存在**，否则 server 会启动失败；**其下的子目录**可在运行时 `create_directory` 逐级创建（父目录不存在时会报 `Parent directory does not exist`，属可恢复错误，应先建父级）。
 - 想放开多个目录，就在 `args` 里加多个路径参数（或 MCP 面板编辑）。
 - Windows 路径建议正斜杠（`C:/Users/...`），与 companion `normalizeArgsForPlatform` 一致。
-- **God-mode 不会扩大 MCP allow-dir**；越界路径需改 MCP 配置，不是再开确认开关。
+- **路径笼子 vs 三旗风险自担（2026-08）**：
+  - 默认：越界路径走 L2「是否加入 allow-dir」；God-mode **单独**不扩 allow-dir。
+  - **三旗全开**：越界且 `canOffer` 通过时 **自动加入 allow-dir（无 L2）**；仍拒绝整盘根、`/Users` 多用户根、系统敏感树（`/etc` 等）。
+  - 行为型危险（云元数据 SSRF 等）仍硬拦，与路径笼子无关。
 - **确认门（Autonomy）**：
   - 默认：`file-write` / `exec` / `network-egress` 等 critical 能力会 **强制 L2 确认**（即使 `trust_level=trusted`；`write_file` 等破坏性名称还会按次确认）。
   - **单独** god-mode、`auto_approve_dangerous`、或 **仅** `auto_approve_enterprise_tools` **都不会**免 MCP critical 确认。

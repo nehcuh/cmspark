@@ -316,7 +316,7 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
   const { securityConfirmations } = requireRt()
   const { canOfferAllowDirExpand, addFilesystemAllowDir } = await import("./allow-dir-expand")
 
-  // Pre-check filesystem server + home path BEFORE L2 (Pi nit: no misleading prompt)
+  // Pre-check filesystem server + path BEFORE L2 (Pi nit: no misleading prompt)
   const pre = canOfferAllowDirExpand({
     serverName: opts.route.serverName,
     rawErr: opts.rawErr,
@@ -325,6 +325,26 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
   if (!pre.offer) {
     // Not applicable — leave original error; do not claim we retried
     return { retried: false }
+  }
+
+  // Three-flag cruise = path risk accepted: auto-add allow-dir without L2.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { isCruisePathRiskAccepted } = require("../security/cruise-path") as typeof import("../security/cruise-path")
+  if (isCruisePathRiskAccepted()) {
+    const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir)
+    if (!added.ok) {
+      return {
+        retried: true,
+        ok: false,
+        error: `Failed to expand allow-dir under cruise: ${added.error}. Underlying: ${opts.rawErr}`,
+      }
+    }
+    logger.warn("mcp.allow_dir.cruise_auto_added", {
+      server: opts.route.serverName,
+      dir: pre.dir,
+      reason: "full_autonomy_cruise",
+    })
+    return { retried: true, ok: true }
   }
 
   if (opts.ws.readyState !== WebSocket.OPEN) {
@@ -454,7 +474,7 @@ export function enhanceMcpError(
       `MCP ${route.serverName} denied path access (not in allowlist or roots). ` +
       `Ask the user to open Side Panel → MCP → edit filesystem server → add the parent directory ` +
       `to allow paths (or use a path under already-allowed roots such as home). ` +
-      `God-mode does not expand MCP allow-dirs. Underlying: ${rawErr}`
+      `Default mode does not auto-expand MCP allow-dirs; three-flag cruise auto-adds allowed dirs. Underlying: ${rawErr}`
     )
   }
   // Fallback — keep the original but prefix with context so the LLM knows which

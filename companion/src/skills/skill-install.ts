@@ -133,6 +133,19 @@ export function classifySkillInstallSource(resolvedPath: string): SkillInstallSo
   } catch {
     /* ignore */
   }
+
+  // Three-flag cruise: path risk accepted — allow absolute paths outside home
+  // except volume roots / multi-user roots / OS system trees.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { isCruisePathRiskAccepted, isCruiseHardDangerPath } =
+      require("../security/cruise-path") as typeof import("../security/cruise-path")
+    if (isCruisePathRiskAccepted() && !isCruiseHardDangerPath(norm)) {
+      return "user_home"
+    }
+  } catch {
+    /* ignore */
+  }
   return "denied"
 }
 
