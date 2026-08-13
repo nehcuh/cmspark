@@ -61,7 +61,17 @@ const PROBES: ProbeDef[] = [
     commonPaths: [
       "/opt/homebrew/bin/pi",
       "/usr/local/bin/pi",
-      path.join(os.homedir(), ".nvm", "versions", "node", "v24.16.0", "bin", "pi"),
+      // nvm: prefer latest installed node bin if present
+      ...(() => {
+        try {
+          const nvm = path.join(os.homedir(), ".nvm", "versions", "node")
+          if (!fs.existsSync(nvm)) return [] as string[]
+          const vers = fs.readdirSync(nvm).sort().reverse()
+          return vers.slice(0, 3).map((v) => path.join(nvm, v, "bin", "pi"))
+        } catch {
+          return [] as string[]
+        }
+      })(),
     ],
   },
 ]

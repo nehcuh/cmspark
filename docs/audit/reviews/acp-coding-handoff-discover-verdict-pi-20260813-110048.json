@@ -1,0 +1,7 @@
+{
+  "batch": "acp-coding-handoff-discover",
+  "timestamp": "20260813-110048",
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-discover-pi-20260813-110048.md" },
+  "approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-discover-diff-20260813-110048.patch"
+}

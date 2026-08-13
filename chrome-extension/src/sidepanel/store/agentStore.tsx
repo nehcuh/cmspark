@@ -923,6 +923,12 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "ACP_SESSION_EVENT": {
       const e = action.event
       if (!e?.session_id) return state
+      const nextState = e.state || state.codingSession?.state || "running"
+      // Drop chip a few seconds after terminal closed (Pi nit: don't linger forever)
+      if (nextState === "closed" && state.codingSession?.state === "closed") {
+        const age = Date.now() - (state.codingSession?.updatedAt || 0)
+        if (age > 8000) return { ...state, codingSession: null }
+      }
       return {
         ...state,
         codingSession: {
@@ -930,7 +936,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           threadId: e.thread_id || state.codingSession?.threadId || "",
           agentId: e.agent_id || state.codingSession?.agentId || "",
           displayName: e.display_name || state.codingSession?.displayName,
-          state: e.state || state.codingSession?.state || "running",
+          state: nextState,
           progressTail: e.progress_tail ?? state.codingSession?.progressTail,
           handback: e.handback ?? state.codingSession?.handback,
           error: e.error ?? state.codingSession?.error,

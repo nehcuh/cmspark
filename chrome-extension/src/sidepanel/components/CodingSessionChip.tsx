@@ -1,12 +1,22 @@
 // FocusBand chip for live ACP coding handoff — stop ≠ 急停 (CU).
 
-import type { CSSProperties } from "react"
+import { useEffect, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import type { CodingSessionState } from "../store/agentStore"
+import { useAgentStore } from "../store/agentStore"
 
 export function CodingSessionChip({ session }: { session: CodingSessionState }) {
+  const { dispatch } = useAgentStore()
   const live = session.state === "running" || session.state === "offered"
+
+  useEffect(() => {
+    if (session.state !== "closed") return
+    const t = window.setTimeout(() => {
+      dispatch({ type: "CLEAR_CODING_SESSION" })
+    }, 6000)
+    return () => window.clearTimeout(t)
+  }, [session.state, session.sessionId, dispatch])
   const label = session.displayName || session.agentId || "Agent"
   const tail = (session.progressTail || "").replace(/\s+/g, " ").trim().slice(0, 80)
 
