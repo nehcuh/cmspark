@@ -84,6 +84,13 @@ export const codingHandoffCopy = {
   disclosureCheckbox: "我知悉：代码/页面摘要可能发送到该 Agent 的云模型",
   disclosureBlocked: "请先勾选云模型披露确认",
 
+  // Discovery status (settings + panel)
+  discoveredTitle: "本机已检测到",
+  discoveredEmpty:
+    "未在 PATH / 常见安装路径找到 claude · gemini · codex · pi。安装后点「重新检测」，或把绝对路径写入 config.acp.servers。",
+  discoveredNeedEnable: "已检测到本机助手；请先勾选上方「启用 ACP 会话」再启动。",
+  rediscoverHint: "检测与「启用 ACP」无关：未启用时仍会列出本机已安装助手。",
+
   // Errors
   agentNotFound: "找不到编程助手",
   agentNotFoundBody: "请安装 Claude Code / Gemini CLI 等，并在设置中确认路径。",

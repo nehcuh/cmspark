@@ -74,9 +74,17 @@ export function CodingAgentPanel({
   const [showCopyOnly, setShowCopyOnly] = useState(false)
 
   const readyAgents = useMemo(
-    () => acpAgents.filter((a) => a.enabled && a.command),
+    () => acpAgents.filter((a) => a.enabled !== false && a.command),
     [acpAgents],
   )
+
+  // Prefer first ready agent when list arrives / changes
+  useEffect(() => {
+    if (!readyAgents.length) return
+    if (!agentId || !readyAgents.some((a) => a.id === agentId)) {
+      setAgentId(readyAgents[0].id)
+    }
+  }, [readyAgents, agentId])
   const repoHint = useMemo(() => parseRepoFromUrl(pageUrl), [pageUrl])
   const live = session?.state === "running" || session?.state === "offered"
   const timeline = (session?.timeline || []) as TimelineRow[]
@@ -304,8 +312,16 @@ export function CodingAgentPanel({
               <div style={styles.banner}>
                 {codingHandoffCopy.acpDisabled}
                 <div style={styles.bannerHint}>
-                  设置 → 编程助手 → 启用 ACP。未启用时仍可复制任务包到终端。
+                  {readyAgents.length > 0
+                    ? codingHandoffCopy.discoveredNeedEnable
+                    : "设置 → 编程助手 → 启用 ACP。未启用时仍可复制任务包到终端。"}
                 </div>
+                {readyAgents.length > 0 ? (
+                  <div style={styles.bannerHint}>
+                    {codingHandoffCopy.discoveredTitle}：
+                    {readyAgents.map((a) => a.display_name).join(" · ")}
+                  </div>
+                ) : null}
               </div>
             ) : null}
 

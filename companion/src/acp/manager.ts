@@ -154,6 +154,12 @@ export class AcpManager {
     }
   }
 
+  /**
+   * List configured + PATH-discovered agents for UI/settings.
+   * Independent of master `acp.enabled` — discovery must still work so users
+   * can see "found Claude/Pi, enable ACP to use" instead of a false empty.
+   * Spawn/propose remain gated by `acp.enabled`.
+   */
   listAgents(opts: { redactPaths?: boolean } = {}): Array<{
     id: string
     display_name: string
@@ -175,7 +181,6 @@ export class AcpManager {
     }
     const cfg = getConfig()
     const acp = cfg.acp
-    if (!acp?.enabled) return []
     const out: Array<{
       id: string
       display_name: string
@@ -186,15 +191,15 @@ export class AcpManager {
     }> = []
     const seen = new Set<string>()
     const seenCmd = new Set<string>()
-    for (const [id, s] of Object.entries(acp.servers || {})) {
+    for (const [id, s] of Object.entries(acp?.servers || {})) {
       if (!s.command) continue
       seen.add(id)
       seenCmd.add(s.command)
       out.push({
         id,
         display_name: s.display_name,
-        enabled: s.enabled && !!s.command,
-        profile: s.policy.profile,
+        enabled: s.enabled !== false && !!s.command,
+        profile: s.policy?.profile || "review_readonly",
         command: redactCmd(s.command),
         source: "config",
       })

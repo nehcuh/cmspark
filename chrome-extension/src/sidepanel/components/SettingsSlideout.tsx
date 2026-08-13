@@ -254,6 +254,10 @@ export function SettingsSlideout() {
         /* ignore */
       }
     })
+    // Coding agents: list even when acp.enabled=false (discovery ≠ feature gate)
+    chrome.runtime.sendMessage({ type: "acp.list" }, () => {
+      void chrome.runtime.lastError
+    })
   }, [state.settingsOpen])
 
   // Path B M0: sync engine draft from companion SoT when state arrives.
@@ -2879,6 +2883,7 @@ export function SettingsSlideout() {
           <div style={styles.divider} />
           <CodingHandoffSettingsSection
             acpEnabled={!!(config as { acp?: { enabled?: boolean } }).acp?.enabled}
+            acpAgents={state.acpAgents}
             autoSuggest={
               (config as { coding_handoff?: { auto_suggest?: boolean } }).coding_handoff
                 ?.auto_suggest !== false
@@ -2911,6 +2916,10 @@ export function SettingsSlideout() {
               chrome.runtime.sendMessage({
                 type: "config.set",
                 config: { acp: { enabled: v } },
+              })
+              // Refresh agent list after master switch (list is independent of enabled)
+              chrome.runtime.sendMessage({ type: "acp.list" }, () => {
+                void chrome.runtime.lastError
               })
             }}
           />

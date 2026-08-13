@@ -41,12 +41,19 @@ describe("acp WS gates", () => {
     assert.equal(r.type, "error")
   })
 
-  it("list returns shape when disabled", async () => {
+  it("list returns shape when disabled (agents still discoverable)", async () => {
+    // Discovery is independent of master switch — empty only if nothing on PATH/config.
+    // Spawn remains gated by enabled; list must not pretend "not found" when off.
     const r = await handleAcpWsMessage("acp.list", {}, {})
     assert.equal(r.type, "acp.list")
     assert.equal(r.enabled, false)
     assert.ok(Array.isArray(r.agents))
-    assert.equal(r.agents.length, 0)
+    // May be non-empty if claude/pi etc. are installed on the test host.
+    for (const a of r.agents) {
+      assert.ok(a.id)
+      assert.ok(a.display_name)
+      assert.ok(typeof a.command === "string")
+    }
   })
 
   it("ui_start refuses worker threads", async () => {
