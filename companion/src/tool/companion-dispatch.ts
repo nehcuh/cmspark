@@ -245,25 +245,36 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             "acp_propose_session requires L2 security_token (Confirm Center). Do not set user_confirmed yourself.",
         }
       }
-      const tokenOk = securityPolicy.validateTokenFor(
-        String(params.security_token),
-        "acp_propose_session",
-        params,
-      )
-      if (!tokenOk) {
-        return { success: false, error: "Invalid or expired security token for acp_propose_session" }
-      }
       const thread = threadManager.get(String(threadId)) as any
       if (thread?.agent_role === "worker") {
         return { success: false, error: "acp: worker threads cannot start ACP sessions" }
+      }
+      // Normalize mode+workspace before token validate so L2 binding matches execute path
+      const resolvedMode =
+        params.mode === "propose_diff" ? "propose_diff" : "review_readonly"
+      const resolvedWs = String(
+        thread?.workspace_root || params.workspace_root || params.workspace || "",
+      )
+      const boundParams = {
+        ...params,
+        mode: resolvedMode,
+        workspace_root: resolvedWs,
+      }
+      const tokenOk = securityPolicy.validateTokenFor(
+        String(params.security_token),
+        "acp_propose_session",
+        boundParams,
+      )
+      if (!tokenOk) {
+        return { success: false, error: "Invalid or expired security token for acp_propose_session" }
       }
       const { getAcpManager } = await import("../acp")
       const r = getAcpManager().propose({
         threadId: String(threadId),
         agentId: String(params.agent_id || params.agent || ""),
         goal: String(params.goal || params.prompt || ""),
-        workspaceRoot: thread?.workspace_root || params.workspace_root,
-        mode: params.mode === "propose_diff" ? "propose_diff" : "review_readonly",
+        workspaceRoot: resolvedWs || null,
+        mode: resolvedMode,
       })
       if (!r.ok) return { success: false, error: r.error }
       return {

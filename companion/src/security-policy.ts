@@ -93,9 +93,13 @@ export class SecurityPolicy {
         return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}`
       case "ask_user":
         return String(params?.question || params?.prompt || "")
-      // ADR-025 ACP coding handoff — bind agent/goal/session (never empty default)
-      case "acp_propose_session":
-        return `acp_propose|${String(params?.agent_id || params?.agent || "")}|${String(params?.goal || params?.prompt || "").slice(0, 500)}`
+      // ADR-025 ACP coding handoff — bind agent/goal/mode/workspace/session (never empty default)
+      case "acp_propose_session": {
+        const mode =
+          params?.mode === "propose_diff" ? "propose_diff" : "review_readonly"
+        const ws = String(params?.workspace_root || params?.workspace || "").slice(0, 400)
+        return `acp_propose|${String(params?.agent_id || params?.agent || "")}|${String(params?.goal || params?.prompt || "").slice(0, 500)}|mode=${mode}|ws=${ws}`
+      }
       case "acp_start_session":
         return `acp_start|${String(params?.session_id || "")}`
       case "acp_apply_diff":

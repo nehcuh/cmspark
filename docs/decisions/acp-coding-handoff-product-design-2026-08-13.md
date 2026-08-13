@@ -17,7 +17,7 @@
 | 要不要做「Side Panel 版 Zed」？ | **不要**（320px 不是 IDE；Zed envy 必半残） |
 | 要不要一上来上全量 ACP Client？ | **不要**；先 **薄接力**，再 **只读 ACP**，写盘最后且强门 |
 | 和 Outbound MCP 什么关系？ | **对称双门面**，主叙事勿混：他们租我们的浏览器 ↔ 我们外派他们的写码 |
-| 产品默认票 | **SHIP_THIN 优先；全量 ACP = 条件解锁；静默自动写盘 = 永久 NO-GO** |
+| 产品默认票 | **SHIP_THIN 优先；全量 ACP = 条件解锁；静默自动写盘 = 永久 NO-GO**；**gated apply（HITL + 工作区 containment）= GO（S72 / ADR-025）** |
 
 **产品主名（中文）**：**编程接力**  
 **按钮**：「派给终端助手」/「交给编程助手」  
@@ -30,7 +30,7 @@
 | 路 | 核心立场 | 关键交付 |
 |----|----------|----------|
 | **JTBD** | 只做「页上已有真相 → 本地代码动作」；冷启动写 monorepo 直接 kill | Hero: staging/SSO bug；次: PR 页审查；再次: AppSec 发现落地 |
-| **Trust** | RO + propose-diff = GO-WITH-GATES；apply/shell/auto-spawn = NO-GO v1 | 输出不可信 + Q5 taint；禁 Outbound↔ACP 循环；审计全表 |
+| **Trust** | 审查/起草 + **gated apply** = GO-WITH-GATES；**静默**写盘 / free shell / auto-spawn = NO-GO | 输出不可信 + Q5 taint；禁 Outbound↔ACP 循环；审计全表 |
 | **反膨胀** | 默认 **DEFER** 全协议 Client；优先 Outbound + 导出式 Prompt Chain | 命名「编程接力」；禁底栏新 Tab；4 周薄切片标准 |
 | **UX** | Hybrid：意图 Offer + 永远人工 Confirm；Chip 不刷屏；diff 外开 | `/code` · FocusBand CodingSessionChip · Handback 卡 |
 | **架构** | `companion/src/acp/` 作 Composition client；镜像 MCP 配置 + spawn_worker 确认 | Phase 0 单 Agent 只读 review；非 default-on |
@@ -460,9 +460,10 @@ rg -n "#[0-9A-Fa-f]{6}" chrome-extension/src/sidepanel/components/Coding*.tsx 2>
 | 能力 | 判定 |
 |------|------|
 | UI 建议 Offer | GO（不执行） |
-| 用户启动只读审查 | GO-WITH-GATES |
+| 用户启动审查会话 | GO-WITH-GATES |
 | propose-diff | GO-WITH-GATES |
-| apply / 自由写盘 / shell-in-agent | **NO-GO v1**（或极严后期） |
+| **gated apply**（pending_diffs + L2 + workspace realpath） | **GO**（ADR-025 S72；非静默） |
+| 静默写盘 / free shell / shell-in-agent | **NO-GO** |
 | 分类器自动 spawn | **NO-GO** |
 | auto_approve / 无人值守跳过 ACP | **Never** |
 | Worker / orchestrator 子线程 ACP | **Never** |
@@ -483,8 +484,8 @@ rg -n "#[0-9A-Fa-f]{6}" chrome-extension/src/sidepanel/components/Coding*.tsx 2>
 
 `offer_shown` · `spawn_requested/confirmed/denied` · `session_started/ended` · `disclosure_accepted` · `diff_proposed` · `loop_blocked` · `stdout_ingested` · `policy_violation`
 
-- **`apply_*` 不进 v1 最低集**（apply = Phase D）；若 Phase B 误触 apply 路径，只记 `policy_violation`  
-- 审计文件权限与谁可读：未来 ACP ADR 对齐 `capability-audit.jsonl`（0o600 级）
+- **`apply_*`**：gated apply 已交付时记 `diff_applied` / `apply_denied`；**静默 apply** 仍记 `policy_violation`  
+- 审计文件权限与谁可读：对齐 `capability-audit.jsonl`（0o600 级）
 
 ### 6.5 确认与 originWs（双审 MUST）
 
@@ -520,18 +521,19 @@ Phase 0 spike 成功/杀死标准见架构路；**杀线示例**：无稳定 ACP
 4. 设置：可选「默认终端助手」文档链 / 路径探测（非自动 spawn）  
 5. **成功标准**：≤3 次点击从问题页到外部 Agent 开工；用户能说清「写码的是外部助手」
 
-### Phase B — 只读 ACP（**全部**满足才开工）
+### Phase B — ACP 审查会话（**已交付** · 默认 `acp.enabled=false`）
 
-1. **Accepted** ACP Client ADR（含 originWs、disclosure 会话强制、审计）  
-2. §9 Q1/Q3/Q6/Q8 **书面答完**  
-3. **数字需求门（建议）**：Phase A 上线后 **14 天内** ≥ **10** 次真实「复制/导出任务包」成功路径（跨 ≥ **3** 个不同工作日、非仅作者本机 demo）；未达标则 **DEFER**，不靠建造者自评  
-4. `companion/src/acp` + 单 Agent adapter + Confirm + Session Chip + 不可信 Handback  
-5. 审计 + taint + loop 测试  
-6. **成功标准**：绑定仓库完成一次真实 review；cancel 无孤儿进程
+1. **Accepted** [ADR-025](../adr/025-acp-coding-agent-client.md)  
+2. `companion/src/acp` + Confirm + Session Chip + 不可信 Handback + discover/adopt  
+3. 云披露：UI 勾选 + L2 确认文案（Companion 确认路径强制 HITL）  
+4. **成功标准**：绑定仓库完成一次真实审查；cancel 无孤儿进程
 
-### Phase C — propose-diff + 外开 diff
+### Phase C — propose-diff + live FocusBand（**已交付**）
 
-### Phase D —（可选）受控 apply + 生物识别；shell 永不默认
+### Phase D — gated apply（**已交付** · HITL + containment；**非**静默写盘）
+
+- shell-in-agent / free shell / 静默写盘：**仍 NO-GO**  
+- 可选后续：生物识别二次门、外开 multi-file diff 浏览器
 
 ### 与 Outbound 并行纪律
 
@@ -548,7 +550,7 @@ Phase A 实现前至少锁定 **Q5（dynamic-workflow 合并）与 CLI 唤起范
 
 1. **主叙事 6 个月**：Outbound 与 编程接力 是否双轨且文案不合并？  
 2. **指标**：周活接力次数 / 接力后 24h 是否回 IDE / Offer 接受率？  
-3. **谁拥有 write**：CMspark 是否承诺 v1 **永不** `apply_patch`？  
+3. **谁拥有 write**：**静默** apply 永不；**gated** `acp_apply_diff`（L2 + 工作区 containment）已 GO — 见 ADR-025  
 4. **workspace**：强制与 Agent cwd 同 realpath？monorepo？  
 5. **账单/登录**：是否零承接（只链外文档）？  
 6. **L3+ 外泄（硬要求）**：页摘要/仓库片段进云编码模型的 disclosure 必须与 ADR-022 L3+ **同级**——由 **Companion 会话状态强制**（`disclosure_accepted`），**不得**仅信任 Agent/调用方参数自报；未 disclosure 不得启动会外泄代码/页内容的会话  

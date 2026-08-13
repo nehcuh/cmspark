@@ -21,13 +21,15 @@
 
 **APPROVE_WITH_NITS** — safe to push PR #185; residual nits non-blocking for merge.
 
-### Residual nits (post-merge OK)
+### Residual nits — **closed** on branch `fix/coding-handoff-residual-nits`
 
-- L2 preview show `allow_delete` / mode  
-- Bind mode+workspace on tool propose token  
-- Unit: cruise cannot skip acpForceConfirm  
-- Product design SoT still says apply NO-GO in places (ADR S72 is code SoT)  
-- Mode badge on live chip; disclosure session for cloud  
+| Nit | Resolution |
+|-----|------------|
+| L2 preview mode / allow_delete | `l2-admission` preview strings + WS confirm code |
+| Bind mode+workspace on propose | `SecurityPolicy.bindingPayloadFor` + L2 normalize + dispatch validate |
+| cruise cannot skip acpForceConfirm | pure `resolveL2ForceConfirm` + unit tests |
+| Product SoT apply NO-GO drift | product design §0/§6/§8 + ADR-020 Composition |
+| Mode badge + cloud disclosure | CodingSessionChip + Modal checkbox |
 
 ### Evidence [executed]
 

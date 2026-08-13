@@ -183,11 +183,11 @@ export async function handleAcpWsMessage(
       session.agent_id
     const effectiveMode = session.mode || mode
     const modeLabel =
-      effectiveMode === "propose_diff" ? "起草修改(propose-diff)" : "审查"
+      effectiveMode === "propose_diff" ? "起草修改" : "审查"
     const approved = await confirmOrDeny(ctx, {
       toolName: "acp_start_session",
       dangerousApis: ["acp_start_session"],
-      code: `启动编程助手「${label}」${modeLabel}\n仓库: ${session.workspace_root}\n任务: ${session.goal.slice(0, 200)}\nsession=${session.session_id}`,
+      code: `启动编程助手「${label}」· 模式=${modeLabel}\n仓库: ${session.workspace_root}\n任务: ${session.goal.slice(0, 200)}\nsession=${session.session_id}\n注意: 代码/页面摘要可能发送到该 Agent 的云模型`,
       riskLevel: "high",
       autoConfirmEligible: false,
       criticalApis: ["acp_start_session"],
@@ -227,10 +227,14 @@ export async function handleAcpWsMessage(
       return { type: "error", error: "session is not propose_diff" }
     }
     const paths = Array.isArray(msg.paths) ? msg.paths.map(String) : undefined
+    const allowDelete = msg.allow_delete === true
+    const fileList = (paths || session.pending_diffs?.map((d) => d.relPath) || [])
+      .slice(0, 20)
+      .join(", ")
     const approved = await confirmOrDeny(ctx, {
       toolName: "acp_apply_diff",
       dangerousApis: ["acp_apply_diff"],
-      code: `应用编程接力 diff 到工作区\nsession=${sid}\n仓库: ${session.workspace_root}\nfiles=${(paths || session.pending_diffs?.map((d) => d.relPath) || []).slice(0, 20).join(", ")}`,
+      code: `应用编程接力 diff 到工作区\nsession=${sid}\n仓库: ${session.workspace_root}\nfiles=${fileList}\nallow_delete=${allowDelete ? "yes" : "no"}`,
       riskLevel: "high",
       autoConfirmEligible: false,
       criticalApis: ["acp_apply_diff"],
@@ -240,7 +244,7 @@ export async function handleAcpWsMessage(
     }
     const r = mgr.applyPendingDiffs(sid, {
       paths,
-      allowDelete: msg.allow_delete === true,
+      allowDelete,
     })
     if (ctx.broadcast) {
       ctx.broadcast({

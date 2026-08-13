@@ -65,6 +65,31 @@ export const L2_GATE_TOOLS: readonly string[] = [
   "acp_apply_diff",
 ]
 
+/** ADR-025: ACP tools always force L2 (never waived by cruise / god-mode). */
+export function isAcpL2ForceTool(toolName: string): boolean {
+  return (
+    toolName === "acp_propose_session" ||
+    toolName === "acp_start_session" ||
+    toolName === "acp_apply_diff"
+  )
+}
+
+/**
+ * Pure forceConfirm algebra (extract for unit tests).
+ * ACP tools always true; other capability/host gates waived only under full-autonomy cruise.
+ */
+export function resolveL2ForceConfirm(opts: {
+  toolName: string
+  capabilityForceConfirm: boolean
+  hostComputerGated?: boolean
+  userFullAutonomy: boolean
+}): boolean {
+  if (isAcpL2ForceTool(opts.toolName)) return true
+  return (
+    (opts.capabilityForceConfirm || !!opts.hostComputerGated) && !opts.userFullAutonomy
+  )
+}
+
 /** Three-flag full autonomy cruise (dangerous + enterprise + allow_all_schemes). */
 export function isFullAutonomyCruise(security: {
   auto_approve_dangerous?: boolean
@@ -175,6 +200,30 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
   const threadManager = ctx.getThreadManager()
   const computerTaskAbort = getComputerTaskAbortRegistry()
 
+  // ADR-025: normalize mode + workspace into finalParams so L2 preview, token
+  // binding, and dispatch validateTokenFor share one binding surface.
+  if (toolName === "acp_propose_session") {
+    const tid =
+      actingThreadId ||
+      (typeof finalParams.__thread_id === "string"
+        ? finalParams.__thread_id
+        : typeof finalParams._thread_id === "string"
+          ? finalParams._thread_id
+          : "")
+    const thread = tid ? (threadManager.get(String(tid)) as { workspace_root?: string } | null) : null
+    const mode = finalParams.mode === "propose_diff" ? "propose_diff" : "review_readonly"
+    const workspace_root = String(
+      thread?.workspace_root || finalParams.workspace_root || finalParams.workspace || "",
+    )
+    finalParams = { ...finalParams, mode, workspace_root }
+  }
+  if (toolName === "acp_apply_diff") {
+    finalParams = {
+      ...finalParams,
+      allow_delete: finalParams.allow_delete === true,
+    }
+  }
+
   // Phase 1 W8-windows (adversary amendment A3): when a host_write L2
   // dialog will show on win32 and Windows Hello is unavailable, the
   // manual-nonce challenge rides INSIDE this same dialog. Declared here so
@@ -268,13 +317,13 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             })()
           : "") ||
         (toolName === "acp_propose_session"
-          ? `acp_propose agent=${finalParams.agent_id || finalParams.agent || ""} goal=${String(finalParams.goal || finalParams.prompt || "").slice(0, 200)}`
+          ? `acp_propose agent=${finalParams.agent_id || finalParams.agent || ""} mode=${finalParams.mode === "propose_diff" ? "propose_diff" : "review_readonly"} workspace=${String(finalParams.workspace_root || finalParams.workspace || "").slice(0, 120)} goal=${String(finalParams.goal || finalParams.prompt || "").slice(0, 200)}`
           : "") ||
         (toolName === "acp_start_session"
           ? `acp_start session_id=${finalParams.session_id || ""}`
           : "") ||
         (toolName === "acp_apply_diff"
-          ? `acp_apply session_id=${finalParams.session_id || ""} paths=${Array.isArray(finalParams.paths) ? finalParams.paths.join(",") : "all"}`
+          ? `acp_apply session_id=${finalParams.session_id || ""} paths=${Array.isArray(finalParams.paths) ? finalParams.paths.join(",") : "all"} allow_delete=${finalParams.allow_delete === true ? "yes" : "no"}`
           : "") ||
         "",
     )
@@ -785,10 +834,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // spawn_worker / ask_user / board_complete: real HITL (never LLM self-approve)
     // ADR-025: ACP spawn is real HITL — never waived by god-mode / auto_approve /
     // three-flag full autonomy cruise (product design: Never skip ACP).
-    const acpForceConfirm =
-      toolName === "acp_propose_session" ||
-      toolName === "acp_start_session" ||
-      toolName === "acp_apply_diff"
+    const acpForceConfirm = isAcpL2ForceTool(toolName)
     const capabilityForceConfirm =
       toolName === "shell_exec" ||
       toolName === "netsec_port_scan" ||
@@ -818,10 +864,13 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // must NOT skip task L2 — only three-flag cruise, G1 session-trust, or ADR-021 unattended
     // (hostComputerTrustSkip) may skip. Restore forceConfirm for hostComputerGated after P0
     // when capabilityForceConfirm no longer implied criticalApis.length for this tool.
-    // ACP: NEVER waive (acpForceConfirm overrides cruise).
-    const forceConfirm =
-      acpForceConfirm ||
-      ((capabilityForceConfirm || hostComputerGated) && !userFullAutonomy)
+    // ACP: NEVER waive (acpForceConfirm overrides cruise) — pure algebra in resolveL2ForceConfirm.
+    const forceConfirm = resolveL2ForceConfirm({
+      toolName,
+      capabilityForceConfirm,
+      hostComputerGated,
+      userFullAutonomy,
+    })
     if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy && !acpForceConfirm) {
       logger.info("security.critical_api_waived", {
         tool_call_id: toolCallId,

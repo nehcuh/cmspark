@@ -102,10 +102,31 @@ describe("security policy ACP binding", () => {
       goal: "review auth",
     })
     assert.match(propose, /acp_propose\|claude\|review auth/)
+    assert.match(propose, /mode=review_readonly/)
     const start = SecurityPolicy.bindingPayloadFor("acp_start_session", {
       session_id: "acp_abc",
     })
     assert.match(start, /acp_start\|acp_abc/)
+  })
+
+  it("binds mode and workspace into acp_propose_session payload", async () => {
+    const { SecurityPolicy } = await import("../src/security-policy")
+    const a = SecurityPolicy.bindingPayloadFor("acp_propose_session", {
+      agent_id: "claude",
+      goal: "fix",
+      mode: "propose_diff",
+      workspace_root: "/tmp/ws-a",
+    })
+    const b = SecurityPolicy.bindingPayloadFor("acp_propose_session", {
+      agent_id: "claude",
+      goal: "fix",
+      mode: "review_readonly",
+      workspace_root: "/tmp/ws-b",
+    })
+    assert.match(a, /mode=propose_diff/)
+    assert.match(a, /ws=\/tmp\/ws-a/)
+    assert.match(b, /mode=review_readonly/)
+    assert.notEqual(a, b)
   })
 
   it("binds allow_delete into acp_apply_diff payload", async () => {

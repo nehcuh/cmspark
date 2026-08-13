@@ -63,6 +63,7 @@
 | **Knowledge** | 站点/全局/技能记忆 |
 | **MCP**（inbound） | 外部工具服务器（`mcp__…`）— Companion 作 **client** |
 | **Outbound MCP**（export） | 把 curated **Surface L1** 子集导出给外部编程 Agent（`cmspark__*`）— **门面，非新 runtime**（[ADR-022](022-outbound-mcp-server.md)；Phase 0 门控） |
+| **ACP Coding Client**（编程接力） | CMspark → 本机编程 Agent（任务包 + 可选 stdio 会话）— **Composition 门面，非 Side Panel IDE**（[ADR-025](025-acp-coding-agent-client.md)；`acp.enabled` 默认 false；gated apply GO） |
 | **user-env secrets** | shell/MCP 子进程密钥（[ADR-019](019-user-env-secrets.md)） |
 | **Mission Pack** | 场景配方：skills + knowledge + tool_whitelist + system_prompt_append + modules — **非 runtime**（[ADR-014](014-mission-pack-enterprise-modules.md)） |
 | **Capability modules** | 安装级开关（appsec / workspace / shell / netsec）+ `capability_profile` |
