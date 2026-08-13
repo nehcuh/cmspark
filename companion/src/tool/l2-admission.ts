@@ -779,6 +779,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // enterprise skip (scope ∩ first) or full autonomy. God-mode /
     // auto_approve_dangerous alone still do NOT skip these (ADR-014 G1).
     // spawn_worker / ask_user / board_complete: real HITL (never LLM self-approve)
+    // ADR-025: ACP spawn is real HITL — never waived by god-mode / auto_approve /
+    // three-flag full autonomy cruise (product design: Never skip ACP).
+    const acpForceConfirm =
+      toolName === "acp_propose_session" || toolName === "acp_start_session"
     const capabilityForceConfirm =
       toolName === "shell_exec" ||
       toolName === "netsec_port_scan" ||
@@ -789,7 +793,8 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       toolName === "skill_install" || // S41: durable skill write — god-mode never skips
       // evaluate / osascript: always L2 unless three-flag full autonomy (regex is risk preview only)
       toolName === "evaluate" ||
-      toolName === "osascript_eval"
+      toolName === "osascript_eval" ||
+      acpForceConfirm
     const userFullAutonomy = isFullAutonomyCruise(securityConfig)
     const codeCriticalApis = detectCriticalApis(code)
     // Risk-preview list for the confirm UI: for evaluate/osascript prefer regex hits;
@@ -807,9 +812,11 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // must NOT skip task L2 — only three-flag cruise, G1 session-trust, or ADR-021 unattended
     // (hostComputerTrustSkip) may skip. Restore forceConfirm for hostComputerGated after P0
     // when capabilityForceConfirm no longer implied criticalApis.length for this tool.
+    // ACP: NEVER waive (acpForceConfirm overrides cruise).
     const forceConfirm =
-      (capabilityForceConfirm || hostComputerGated) && !userFullAutonomy
-    if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy) {
+      acpForceConfirm ||
+      ((capabilityForceConfirm || hostComputerGated) && !userFullAutonomy)
+    if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy && !acpForceConfirm) {
       logger.info("security.critical_api_waived", {
         tool_call_id: toolCallId,
         tool_name: toolName,

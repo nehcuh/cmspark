@@ -10,7 +10,7 @@ export const codingHandoffCopy = {
 
   // CTAs
   ctaCopy: "复制编程任务包",
-  ctaOpenTerminal: "在终端打开",
+  ctaOpenTerminal: "复制任务包",
   ctaHandoff: "派给终端助手",
   ctaToCoding: "交给编程助手",
   ctaContinueSidebar: "继续在侧栏",

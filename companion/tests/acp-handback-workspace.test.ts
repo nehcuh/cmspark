@@ -90,5 +90,21 @@ describe("sanitizeAcpConfig", () => {
     assert.equal(c.enabled, true)
     assert.equal(c.servers.x.policy.profile, "review_readonly")
     assert.equal(c.servers.x.policy.allow_exec, false)
+    assert.equal(c.servers.x.policy.allow_write, false)
+  })
+})
+
+describe("security policy ACP binding", () => {
+  it("binds non-empty payload for acp propose/start", async () => {
+    const { SecurityPolicy } = await import("../src/security-policy")
+    const propose = SecurityPolicy.bindingPayloadFor("acp_propose_session", {
+      agent_id: "claude",
+      goal: "review auth",
+    })
+    assert.match(propose, /acp_propose\|claude\|review auth/)
+    const start = SecurityPolicy.bindingPayloadFor("acp_start_session", {
+      session_id: "acp_abc",
+    })
+    assert.match(start, /acp_start\|acp_abc/)
   })
 })

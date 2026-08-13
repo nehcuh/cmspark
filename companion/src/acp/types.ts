@@ -82,11 +82,10 @@ export function sanitizeAcpConfig(raw: unknown): AcpConfig {
     const s = v as Record<string, unknown>
     const policyRaw =
       s.policy && typeof s.policy === "object" ? (s.policy as Record<string, unknown>) : {}
-    let profile = String(policyRaw.profile || "review_readonly") as AcpPolicyProfile
-    if (profile !== "review_readonly" && profile !== "propose_diff" && profile !== "agent_default") {
-      profile = "review_readonly"
-    }
-    const allow_write = profile === "review_readonly" ? false : policyRaw.allow_write === true
+    // Phase B product lock: always coerce to review_readonly at config boundary
+    // (Pi dual-review B/N2 — do not trust hand-edited propose_diff + allow_write).
+    const profile: AcpPolicyProfile = "review_readonly"
+    const allow_write = false
     const allow_exec = false // never in v1
     servers[id] = {
       enabled: s.enabled !== false,

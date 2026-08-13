@@ -1,0 +1,7 @@
+{
+  "batch": "acp-coding-handoff-impl",
+  "timestamp": "20260813-092100",
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-impl-pi-20260813-092100.md" },
+  "approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-impl-diff-20260813-092100.patch"
+}

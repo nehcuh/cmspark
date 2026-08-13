@@ -358,13 +358,14 @@ export function resolveMetaSlash(skill: SkillMeta): MetaSlashEntry | null {
   }
   if (tags.includes("meta-cockpit")) {
     return META_PANEL_SLASH.find((e) => e.metaKind === "cockpit") ?? null
+  }
   if (
+    tags.includes("meta-coding-handoff") ||
     (skill as MetaSlashEntry).metaKind === "coding_handoff" ||
     skill.name === "code" ||
     skill.name === "编程"
   ) {
     return META_PANEL_SLASH.find((e) => e.metaKind === "coding_handoff") ?? null
-  }
   }
   if (tags.includes("meta-panel") && skill.site) {
     const panelId = skill.site as ContextPanelId
