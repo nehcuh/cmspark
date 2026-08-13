@@ -40,6 +40,13 @@ extension coding-handoff + focus-band → 21 pass / 0 fail
 
 ## External dual-review (Pi + Claude host CLI)
 
+**2026-08-13 residual nits (PR #186):** both **APPROVE_WITH_NITS** · `both_ok=true`  
+Artifacts: `acp-coding-handoff-residual-nits-{claude,pi,verdict}-20260813-154232.*`  
+Synthesis: [`docs/decisions/acp-coding-handoff-residual-nits-dual-review-synthesis-2026-08-13.md`](../../decisions/acp-coding-handoff-residual-nits-dual-review-synthesis-2026-08-13.md)
+
+### Earlier note (pre-#186 empty CLI attempt)
+
+
 Two attempts (timeout 180s / 120s) produced **empty stdout** (artifacts 0 bytes). Host CLIs appear non-responsive in this environment (auth/API), not a product REJECT.
 
 **Fallback acceptance:** internal 4-agent adversarial panel + UX re-approve after blocker fixes = ship bar for this closeout.

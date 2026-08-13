@@ -1,0 +1,686 @@
+# Dual external review context
+batch: acp-coding-handoff-residual-nits
+base: b23cb7a
+head: 61b0ffe
+time: 20260813-154232
+
+61b0ffe Merge pull request #186 from nehcuh/fix/coding-handoff-residual-nits
+3e651a1 fix(coding-handoff): close residual acceptance nits
+
+## Diff stat
+ .../src/sidepanel/coding-handoff/copy.ts           | 10 +++-
+ .../src/sidepanel/components/CodingSessionChip.tsx | 12 +++-
+ .../components/CodingTaskPackageModal.tsx          | 29 ++++++++-
+ companion/src/acp/handlers.ts                      | 12 ++--
+ companion/src/bridge/tool-definitions-catalog.json | 19 +++++-
+ companion/src/security-policy.ts                   | 10 +++-
+ companion/src/tool/companion-dispatch.ts           | 25 +++++---
+ companion/src/tool/l2-admission.ts                 | 69 ++++++++++++++++++----
+ companion/tests/acp-handback-workspace.test.ts     | 21 +++++++
+ companion/tests/l2-admission-pure.test.ts          | 54 +++++++++++++++++
+ docs/adr/020-capability-model-three-axes.md        |  1 +
+ ...f-final-acceptance-synthesis-20260813-151800.md | 16 ++---
+ docs/coding-handoff-user-guide.md                  |  4 +-
+ ...acp-coding-handoff-product-design-2026-08-13.md | 34 ++++++-----
+ 14 files changed, 259 insertions(+), 57 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/coding-handoff/copy.ts b/chrome-extension/src/sidepanel/coding-handoff/copy.ts
+index 0acdc35..afdd99a 100644
+--- a/chrome-extension/src/sidepanel/coding-handoff/copy.ts
++++ b/chrome-extension/src/sidepanel/coding-handoff/copy.ts
+@@ -66,6 +66,8 @@ export const codingHandoffCopy = {
+   sessionRunning: "编程助手运行中",
+   sessionDone: "编程会话完成",
+   sessionStopped: "已停止编程会话",
++  statusRunning: "运行中",
++  statusDone: "完成",
+   disclosureRequired: "请先确认：代码/页面摘要可能发送到该 Agent 的云模型",
+   ctaFollowup: "追问",
+   ctaApplyDiff: "应用 diff",
+@@ -74,7 +76,13 @@ export const codingHandoffCopy = {
+   rediscover: "重新检测本机编程助手",
+   adoptConfig: "将检测结果写入 config（持久化）",
+   modeReviewOption: "审查",
+-  modeDraftOption: "起草修改（propose-diff）",
++  modeDraftOption: "起草修改",
++  /** Live chip badge: 审查 / 起草 */
++  modeBadgeReview: "审查",
++  modeBadgeDraft: "起草",
++  /** Checkbox before ACP start (cloud disclosure) */
++  disclosureCheckbox: "我知悉：代码/页面摘要可能发送到该 Agent 的云模型",
++  disclosureBlocked: "请先勾选云模型披露确认",
+ 
+   // Errors
+   agentNotFound: "找不到编程助手",
+diff --git a/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx b/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
+index 2c56aab..cc68d95 100644
+--- a/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
++++ b/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
+@@ -26,6 +26,10 @@ export function CodingSessionChip({
+     return () => window.clearTimeout(t)
+   }, [session.state, session.sessionId, session.hasPendingDiff, dispatch])
+   const label = session.displayName || session.agentId || "Agent"
++  const modeBadge =
++    session.mode === "propose_diff"
++      ? codingHandoffCopy.modeBadgeDraft
++      : codingHandoffCopy.modeBadgeReview
+   const tail = (session.progressTail || "").replace(/\s+/g, " ").trim().slice(0, 80)
+ 
+   const onStop = () => {
+@@ -67,8 +71,12 @@ export function CodingSessionChip({
+       <div style={styles.meta}>
+         <span style={styles.dot} data-live={live ? "1" : "0"} />
+         <span style={styles.title}>
+-          {codingHandoffCopy.offerTitle} · {label}
+-          {live ? " · 运行中" : session.state === "closed" ? " · 完成" : ` · ${session.state}`}
++          {codingHandoffCopy.offerTitle} · {label} · {modeBadge}
++          {live
++            ? ` · ${codingHandoffCopy.statusRunning}`
++            : session.state === "closed"
++              ? ` · ${codingHandoffCopy.statusDone}`
++              : ` · ${session.state}`}
+         </span>
+       </div>
+       {!compact && tail ? <div style={styles.tail}>{tail}</div> : null}
+diff --git a/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx b/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
+index 3b9e227..a7ba966 100644
+--- a/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
++++ b/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
+@@ -69,6 +69,7 @@ export function CodingTaskPackageModal({
+   const [showRaw, setShowRaw] = useState(false)
+   const [agentId, setAgentId] = useState("")
+   const [mode, setMode] = useState<"review_readonly" | "propose_diff">("review_readonly")
++  const [cloudDisclosure, setCloudDisclosure] = useState(false)
+   const readyAgents = useMemo(
+     () => acpAgents.filter((a) => a.enabled && a.command),
+     [acpAgents],
+@@ -87,6 +88,7 @@ export function CodingTaskPackageModal({
+     setStatus("")
+     setPasteBack("")
+     setShowRaw(false)
++    setCloudDisclosure(false)
+     chrome.runtime.sendMessage({ type: "acp.list" }, () => {
+       void chrome.runtime.lastError
+     })
+@@ -169,6 +171,10 @@ export function CodingTaskPackageModal({
+       flash(codingHandoffCopy.agentNotFoundBody, 5000)
+       return
+     }
++    if (!cloudDisclosure) {
++      flash(codingHandoffCopy.disclosureBlocked, 4000)
++      return
++    }
+     flash("请求确认启动…", 3000)
+     chrome.runtime.sendMessage(
+       {
+@@ -178,13 +184,24 @@ export function CodingTaskPackageModal({
+         goal: goal.trim() || pkg.markdown.slice(0, 2000),
+         workspace_root: workspaceRoot,
+         mode,
++        cloud_disclosure_accepted: true,
+       },
+       () => {
+         void chrome.runtime.lastError
+       },
+     )
+     onClose()
+-  }, [threadId, pkg, agentId, goal, workspaceRoot, mode, onRequestWorkspace, onClose])
++  }, [
++    threadId,
++    pkg,
++    agentId,
++    goal,
++    workspaceRoot,
++    mode,
++    cloudDisclosure,
++    onRequestWorkspace,
++    onClose,
++  ])
+ 
+   if (!open) return null
+ 
+@@ -307,11 +324,19 @@ export function CodingTaskPackageModal({
+               <option value="propose_diff">{codingHandoffCopy.modeDraftOption}</option>
+             </select>
+             <p style={styles.privacy}>{codingHandoffCopy.modeFootnote}</p>
++            <label style={styles.check}>
++              <input
++                type="checkbox"
++                checked={cloudDisclosure}
++                onChange={(e) => setCloudDisclosure(e.target.checked)}
++              />
++              {codingHandoffCopy.disclosureCheckbox}
++            </label>
+             <button
+               type="button"
+               style={styles.primary}
+               onClick={doAcpStart}
+-              disabled={!goal.trim() || !agentId}
++              disabled={!goal.trim() || !agentId || !cloudDisclosure}
+             >
+               {mode === "propose_diff"
+                 ? codingHandoffCopy.ctaStartDraft
+diff --git a/companion/src/acp/handlers.ts b/companion/src/acp/handlers.ts
+index eae521f..24019ae 100644
+--- a/companion/src/acp/handlers.ts
++++ b/companion/src/acp/handlers.ts
+@@ -183,11 +183,11 @@ export async function handleAcpWsMessage(
+       session.agent_id
+     const effectiveMode = session.mode || mode
+     const modeLabel =
+-      effectiveMode === "propose_diff" ? "起草修改(propose-diff)" : "审查"
++      effectiveMode === "propose_diff" ? "起草修改" : "审查"
+     const approved = await confirmOrDeny(ctx, {
+       toolName: "acp_start_session",
+       dangerousApis: ["acp_start_session"],
+-      code: `启动编程助手「${label}」${modeLabel}\n仓库: ${session.workspace_root}\n任务: ${session.goal.slice(0, 200)}\nsession=${session.session_id}`,
++      code: `启动编程助手「${label}」· 模式=${modeLabel}\n仓库: ${session.workspace_root}\n任务: ${session.goal.slice(0, 200)}\nsession=${session.session_id}\n注意: 代码/页面摘要可能发送到该 Agent 的云模型`,
+       riskLevel: "high",
+       autoConfirmEligible: false,
+       criticalApis: ["acp_start_session"],
+@@ -227,10 +227,14 @@ export async function handleAcpWsMessage(
+       return { type: "error", error: "session is not propose_diff" }
+     }
+     const paths = Array.isArray(msg.paths) ? msg.paths.map(String) : undefined
++    const allowDelete = msg.allow_delete === true
++    const fileList = (paths || session.pending_diffs?.map((d) => d.relPath) || [])
++      .slice(0, 20)
++      .join(", ")
+     const approved = await confirmOrDeny(ctx, {
+       toolName: "acp_apply_diff",
+       dangerousApis: ["acp_apply_diff"],
+-      code: `应用编程接力 diff 到工作区\nsession=${sid}\n仓库: ${session.workspace_root}\nfiles=${(paths || session.pending_diffs?.map((d) => d.relPath) || []).slice(0, 20).join(", ")}`,
++      code: `应用编程接力 diff 到工作区\nsession=${sid}\n仓库: ${session.workspace_root}\nfiles=${fileList}\nallow_delete=${allowDelete ? "yes" : "no"}`,
+       riskLevel: "high",
+       autoConfirmEligible: false,
+       criticalApis: ["acp_apply_diff"],
+@@ -240,7 +244,7 @@ export async function handleAcpWsMessage(
+     }
+     const r = mgr.applyPendingDiffs(sid, {
+       paths,
+-      allowDelete: msg.allow_delete === true,
++      allowDelete,
+     })
+     if (ctx.broadcast) {
+       ctx.broadcast({
+diff --git a/companion/src/bridge/tool-definitions-catalog.json b/companion/src/bridge/tool-definitions-catalog.json
+index 0bb2dbe..d89abe7 100644
+--- a/companion/src/bridge/tool-definitions-catalog.json
++++ b/companion/src/bridge/tool-definitions-catalog.json
+@@ -1186,7 +1186,7 @@
+     "type": "function",
+     "function": {
+       "name": "acp_propose_session",
+-      "description": "(L2) Propose a read-only ACP coding-agent session on the thread workspace. Does NOT spawn until acp_start_session. Requires Confirm Center. Never auto-spawn from page text. Worker threads forbidden.",
++      "description": "(L2) Propose an ACP coding-agent session (mode: review_readonly or propose_diff) on the thread workspace. Does NOT spawn until acp_start_session. Requires Confirm Center. Never auto-spawn from page text. Worker threads forbidden. Mode is task intent, not OS sandbox.",
+       "parameters": {
+         "type": "object",
+         "properties": {
+@@ -1196,7 +1196,16 @@
+           },
+           "goal": {
+             "type": "string",
+-            "description": "Review task / prompt for the external agent"
++            "description": "Review/draft task / prompt for the external agent"
++          },
++          "mode": {
++            "type": "string",
++            "enum": ["review_readonly", "propose_diff"],
++            "description": "Task intent: review_readonly (default) or propose_diff. Not an OS sandbox claim."
++          },
++          "workspace_root": {
++            "type": "string",
++            "description": "Optional workspace override; defaults to thread workspace_root"
+           }
+         },
+         "required": [
+@@ -1282,7 +1291,7 @@
+     "type": "function",
+     "function": {
+       "name": "acp_apply_diff",
+-      "description": "(L2 always) Apply pending propose_diff files from an ACP session under workspace containment. Never free shell. Prefer user UI acp.apply_diff.",
++      "description": "(L2 always) Apply pending propose_diff files from an ACP session under workspace containment. Never free shell. Prefer user UI acp.apply_diff. allow_delete defaults false and is bound into the L2 token.",
+       "parameters": {
+         "type": "object",
+         "properties": {
+@@ -1295,6 +1304,10 @@
+               "type": "string"
+             },
+             "description": "Optional subset of rel paths"
++          },
++          "allow_delete": {
++            "type": "boolean",
++            "description": "If true, allow delete hunks (default false). Bound into security token."
+           }
+         },
+         "required": [
+diff --git a/companion/src/security-policy.ts b/companion/src/security-policy.ts
+index a95edc5..1d6c5cb 100644
+--- a/companion/src/security-policy.ts
++++ b/companion/src/security-policy.ts
+@@ -93,9 +93,13 @@ export class SecurityPolicy {
+         return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}`
+       case "ask_user":
+         return String(params?.question || params?.prompt || "")
+-      // ADR-025 ACP coding handoff — bind agent/goal/session (never empty default)
+-      case "acp_propose_session":
+-        return `acp_propose|${String(params?.agent_id || params?.agent || "")}|${String(params?.goal || params?.prompt || "").slice(0, 500)}`
++      // ADR-025 ACP coding handoff — bind agent/goal/mode/workspace/session (never empty default)
++      case "acp_propose_session": {
++        const mode =
++          params?.mode === "propose_diff" ? "propose_diff" : "review_readonly"
++        const ws = String(params?.workspace_root || params?.workspace || "").slice(0, 400)
++        return `acp_propose|${String(params?.agent_id || params?.agent || "")}|${String(params?.goal || params?.prompt || "").slice(0, 500)}|mode=${mode}|ws=${ws}`
++      }
+       case "acp_start_session":
+         return `acp_start|${String(params?.session_id || "")}`
+       case "acp_apply_diff":
+diff --git a/companion/src/tool/companion-dispatch.ts b/companion/src/tool/companion-dispatch.ts
+index 83c8e4a..7597270 100644
+--- a/companion/src/tool/companion-dispatch.ts
++++ b/companion/src/tool/companion-dispatch.ts
+@@ -245,25 +245,36 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
+             "acp_propose_session requires L2 security_token (Confirm Center). Do not set user_confirmed yourself.",
+         }
+       }
++      const thread = threadManager.get(String(threadId)) as any
++      if (thread?.agent_role === "worker") {
++        return { success: false, error: "acp: worker threads cannot start ACP sessions" }
++      }
++      // Normalize mode+workspace before token validate so L2 binding matches execute path
++      const resolvedMode =
++        params.mode === "propose_diff" ? "propose_diff" : "review_readonly"
++      const resolvedWs = String(
++        thread?.workspace_root || params.workspace_root || params.workspace || "",
++      )
++      const boundParams = {
++        ...params,
++        mode: resolvedMode,
++        workspace_root: resolvedWs,
++      }
+       const tokenOk = securityPolicy.validateTokenFor(
+         String(params.security_token),
+         "acp_propose_session",
+-        params,
++        boundParams,
+       )
+       if (!tokenOk) {
+         return { success: false, error: "Invalid or expired security token for acp_propose_session" }
+       }
+-      const thread = threadManager.get(String(threadId)) as any
+-      if (thread?.agent_role === "worker") {
+-        return { success: false, error: "acp: worker threads cannot start ACP sessions" }
+-      }
+       const { getAcpManager } = await import("../acp")
+       const r = getAcpManager().propose({
+         threadId: String(threadId),
+         agentId: String(params.agent_id || params.agent || ""),
+         goal: String(params.goal || params.prompt || ""),
+-        workspaceRoot: thread?.workspace_root || params.workspace_root,
+-        mode: params.mode === "propose_diff" ? "propose_diff" : "review_readonly",
++        workspaceRoot: resolvedWs || null,
++        mode: resolvedMode,
+       })
+       if (!r.ok) return { success: false, error: r.error }
+       return {
+diff --git a/companion/src/tool/l2-admission.ts b/companion/src/tool/l2-admission.ts
+index 7e91697..6207175 100644
+--- a/companion/src/tool/l2-admission.ts
++++ b/companion/src/tool/l2-admission.ts
+@@ -65,6 +65,31 @@ export const L2_GATE_TOOLS: readonly string[] = [
+   "acp_apply_diff",
+ ]
+ 
++/** ADR-025: ACP tools always force L2 (never waived by cruise / god-mode). */
++export function isAcpL2ForceTool(toolName: string): boolean {
++  return (
++    toolName === "acp_propose_session" ||
++    toolName === "acp_start_session" ||
++    toolName === "acp_apply_diff"
++  )
++}
++
++/**
++ * Pure forceConfirm algebra (extract for unit tests).
++ * ACP tools always true; other capability/host gates waived only under full-autonomy cruise.
++ */
++export function resolveL2ForceConfirm(opts: {
++  toolName: string
++  capabilityForceConfirm: boolean
++  hostComputerGated?: boolean
++  userFullAutonomy: boolean
++}): boolean {
++  if (isAcpL2ForceTool(opts.toolName)) return true
++  return (
++    (opts.capabilityForceConfirm || !!opts.hostComputerGated) && !opts.userFullAutonomy
++  )
++}
++
+ /** Three-flag full autonomy cruise (dangerous + enterprise + allow_all_schemes). */
+ export function isFullAutonomyCruise(security: {
+   auto_approve_dangerous?: boolean
+@@ -175,6 +200,30 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+   const threadManager = ctx.getThreadManager()
+   const computerTaskAbort = getComputerTaskAbortRegistry()
+ 
++  // ADR-025: normalize mode + workspace into finalParams so L2 preview, token
++  // binding, and dispatch validateTokenFor share one binding surface.
++  if (toolName === "acp_propose_session") {
++    const tid =
++      actingThreadId ||
++      (typeof finalParams.__thread_id === "string"
++        ? finalParams.__thread_id
++        : typeof finalParams._thread_id === "string"
++          ? finalParams._thread_id
++          : "")
++    const thread = tid ? (threadManager.get(String(tid)) as { workspace_root?: string } | null) : null
++    const mode = finalParams.mode === "propose_diff" ? "propose_diff" : "review_readonly"
++    const workspace_root = String(
++      thread?.workspace_root || finalParams.workspace_root || finalParams.workspace || "",
++    )
++    finalParams = { ...finalParams, mode, workspace_root }
++  }
++  if (toolName === "acp_apply_diff") {
++    finalParams = {
++      ...finalParams,
++      allow_delete: finalParams.allow_delete === true,
++    }
++  }
++
+   // Phase 1 W8-windows (adversary amendment A3): when a host_write L2
+   // dialog will show on win32 and Windows Hello is unavailable, the
+   // manual-nonce challenge rides INSIDE this same dialog. Declared here so
+@@ -268,13 +317,13 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+             })()
+           : "") ||
+         (toolName === "acp_propose_session"
+-          ? `acp_propose agent=${finalParams.agent_id || finalParams.agent || ""} goal=${String(finalParams.goal || finalParams.prompt || "").slice(0, 200)}`
++          ? `acp_propose agent=${finalParams.agent_id || finalParams.agent || ""} mode=${finalParams.mode === "propose_diff" ? "propose_diff" : "review_readonly"} workspace=${String(finalParams.workspace_root || finalParams.workspace || "").slice(0, 120)} goal=${String(finalParams.goal || finalParams.prompt || "").slice(0, 200)}`
+           : "") ||
+         (toolName === "acp_start_session"
+           ? `acp_start session_id=${finalParams.session_id || ""}`
+           : "") ||
+         (toolName === "acp_apply_diff"
+-          ? `acp_apply session_id=${finalParams.session_id || ""} paths=${Array.isArray(finalParams.paths) ? finalParams.paths.join(",") : "all"}`
++          ? `acp_apply session_id=${finalParams.session_id || ""} paths=${Array.isArray(finalParams.paths) ? finalParams.paths.join(",") : "all"} allow_delete=${finalParams.allow_delete === true ? "yes" : "no"}`
+           : "") ||
+         "",
+     )
+@@ -785,10 +834,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+     // spawn_worker / ask_user / board_complete: real HITL (never LLM self-approve)
+     // ADR-025: ACP spawn is real HITL — never waived by god-mode / auto_approve /
+     // three-flag full autonomy cruise (product design: Never skip ACP).
+-    const acpForceConfirm =
+-      toolName === "acp_propose_session" ||
+-      toolName === "acp_start_session" ||
+-      toolName === "acp_apply_diff"
++    const acpForceConfirm = isAcpL2ForceTool(toolName)
+     const capabilityForceConfirm =
+       toolName === "shell_exec" ||
+       toolName === "netsec_port_scan" ||
+@@ -818,10 +864,13 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+     // must NOT skip task L2 — only three-flag cruise, G1 session-trust, or ADR-021 unattended
+     // (hostComputerTrustSkip) may skip. Restore forceConfirm for hostComputerGated after P0
+     // when capabilityForceConfirm no longer implied criticalApis.length for this tool.
+-    // ACP: NEVER waive (acpForceConfirm overrides cruise).
+-    const forceConfirm =
+-      acpForceConfirm ||
+-      ((capabilityForceConfirm || hostComputerGated) && !userFullAutonomy)
++    // ACP: NEVER waive (acpForceConfirm overrides cruise) — pure algebra in resolveL2ForceConfirm.
++    const forceConfirm = resolveL2ForceConfirm({
++      toolName,
++      capabilityForceConfirm,
++      hostComputerGated,
++      userFullAutonomy,
++    })
+     if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy && !acpForceConfirm) {
+       logger.info("security.critical_api_waived", {
+         tool_call_id: toolCallId,
+diff --git a/companion/tests/acp-handback-workspace.test.ts b/companion/tests/acp-handback-workspace.test.ts
+index 9766845..4c6be93 100644
+--- a/companion/tests/acp-handback-workspace.test.ts
++++ b/companion/tests/acp-handback-workspace.test.ts
+@@ -102,12 +102,33 @@ describe("security policy ACP binding", () => {
+       goal: "review auth",
+     })
+     assert.match(propose, /acp_propose\|claude\|review auth/)
++    assert.match(propose, /mode=review_readonly/)
+     const start = SecurityPolicy.bindingPayloadFor("acp_start_session", {
+       session_id: "acp_abc",
+     })
+     assert.match(start, /acp_start\|acp_abc/)
+   })
+ 
++  it("binds mode and workspace into acp_propose_session payload", async () => {
++    const { SecurityPolicy } = await import("../src/security-policy")
++    const a = SecurityPolicy.bindingPayloadFor("acp_propose_session", {
++      agent_id: "claude",
++      goal: "fix",
++      mode: "propose_diff",
++      workspace_root: "/tmp/ws-a",
++    })
++    const b = SecurityPolicy.bindingPayloadFor("acp_propose_session", {
++      agent_id: "claude",
++      goal: "fix",
++      mode: "review_readonly",
++      workspace_root: "/tmp/ws-b",
++    })
++    assert.match(a, /mode=propose_diff/)
++    assert.match(a, /ws=\/tmp\/ws-a/)
++    assert.match(b, /mode=review_readonly/)
++    assert.notEqual(a, b)
++  })
++
+   it("binds allow_delete into acp_apply_diff payload", async () => {
+     const { SecurityPolicy } = await import("../src/security-policy")
+     const withDel = SecurityPolicy.bindingPayloadFor("acp_apply_diff", {
+diff --git a/companion/tests/l2-admission-pure.test.ts b/companion/tests/l2-admission-pure.test.ts
+index b861f82..d016102 100644
+--- a/companion/tests/l2-admission-pure.test.ts
++++ b/companion/tests/l2-admission-pure.test.ts
+@@ -9,6 +9,8 @@ import {
+   isHostComputerPlatformGated,
+   isHostAppPlatformGated,
+   isHostCliPlatformGated,
++  isAcpL2ForceTool,
++  resolveL2ForceConfirm,
+   L2_GATE_TOOLS,
+ } from "../src/tool/l2-admission"
+ 
+@@ -78,6 +80,58 @@ describe("host platform gated helpers", () => {
+   })
+ })
+ 
++describe("ACP L2 forceConfirm (cruise cannot skip)", () => {
++  it("L2_GATE_TOOLS includes all acp_* force tools", () => {
++    for (const t of [
++      "acp_propose_session",
++      "acp_start_session",
++      "acp_apply_diff",
++    ] as const) {
++      assert.ok(L2_GATE_TOOLS.includes(t), t)
++      assert.equal(isAcpL2ForceTool(t), true)
++    }
++    assert.equal(isAcpL2ForceTool("shell_exec"), false)
++  })
++
++  it("resolveL2ForceConfirm stays true for ACP under full autonomy cruise", () => {
++    for (const toolName of [
++      "acp_propose_session",
++      "acp_start_session",
++      "acp_apply_diff",
++    ]) {
++      assert.equal(
++        resolveL2ForceConfirm({
++          toolName,
++          capabilityForceConfirm: true,
++          hostComputerGated: false,
++          userFullAutonomy: true,
++        }),
++        true,
++        `${toolName} must not waive under cruise`,
++      )
++    }
++  })
++
++  it("non-ACP capability tools waive under full autonomy cruise", () => {
++    assert.equal(
++      resolveL2ForceConfirm({
++        toolName: "evaluate",
++        capabilityForceConfirm: true,
++        userFullAutonomy: true,
++      }),
++      false,
++    )
++    assert.equal(
++      resolveL2ForceConfirm({
++        toolName: "evaluate",
++        capabilityForceConfirm: true,
++        userFullAutonomy: false,
++      }),
++      true,
++    )
++  })
++})
++
+ describe("L2_GATE_TOOLS", () => {
+   it("includes core L2 tools", () => {
+     for (const t of [
+diff --git a/docs/adr/020-capability-model-three-axes.md b/docs/adr/020-capability-model-three-axes.md
+index c61afaa..9f6f7ab 100644
+--- a/docs/adr/020-capability-model-three-axes.md
++++ b/docs/adr/020-capability-model-three-axes.md
+@@ -63,6 +63,7 @@
+ | **Knowledge** | 站点/全局/技能记忆 |
+ | **MCP**（inbound） | 外部工具服务器（`mcp__…`）— Companion 作 **client** |
+ | **Outbound MCP**（export） | 把 curated **Surface L1** 子集导出给外部编程 Agent（`cmspark__*`）— **门面，非新 runtime**（[ADR-022](022-outbound-mcp-server.md)；Phase 0 门控） |
++| **ACP Coding Client**（编程接力） | CMspark → 本机编程 Agent（任务包 + 可选 stdio 会话）— **Composition 门面，非 Side Panel IDE**（[ADR-025](025-acp-coding-agent-client.md)；`acp.enabled` 默认 false；gated apply GO） |
+ | **user-env secrets** | shell/MCP 子进程密钥（[ADR-019](019-user-env-secrets.md)） |
+ | **Mission Pack** | 场景配方：skills + knowledge + tool_whitelist + system_prompt_append + modules — **非 runtime**（[ADR-014](014-mission-pack-enterprise-modules.md)） |
+ | **Capability modules** | 安装级开关（appsec / workspace / shell / netsec）+ `capability_profile` |
+diff --git a/docs/audit/reviews/acp-coding-handoff-final-acceptance-synthesis-20260813-151800.md b/docs/audit/reviews/acp-coding-handoff-final-acceptance-synthesis-20260813-151800.md
+index b7b3779..219761e 100644
+--- a/docs/audit/reviews/acp-coding-handoff-final-acceptance-synthesis-20260813-151800.md
++++ b/docs/audit/reviews/acp-coding-handoff-final-acceptance-synthesis-20260813-151800.md
+@@ -21,13 +21,15 @@
+ 
+ **APPROVE_WITH_NITS** — safe to push PR #185; residual nits non-blocking for merge.
+ 
+-### Residual nits (post-merge OK)
+-
+-- L2 preview show `allow_delete` / mode  
+-- Bind mode+workspace on tool propose token  
+-- Unit: cruise cannot skip acpForceConfirm  
+-- Product design SoT still says apply NO-GO in places (ADR S72 is code SoT)  
+-- Mode badge on live chip; disclosure session for cloud  
++### Residual nits — **closed** on branch `fix/coding-handoff-residual-nits`
++
++| Nit | Resolution |
++|-----|------------|
++| L2 preview mode / allow_delete | `l2-admission` preview strings + WS confirm code |
++| Bind mode+workspace on propose | `SecurityPolicy.bindingPayloadFor` + L2 normalize + dispatch validate |
++| cruise cannot skip acpForceConfirm | pure `resolveL2ForceConfirm` + unit tests |
++| Product SoT apply NO-GO drift | product design §0/§6/§8 + ADR-020 Composition |
++| Mode badge + cloud disclosure | CodingSessionChip + Modal checkbox |
+ 
+ ### Evidence [executed]
+ 
+diff --git a/docs/coding-handoff-user-guide.md b/docs/coding-handoff-user-guide.md
+index d83eb4d..a563917 100644
+--- a/docs/coding-handoff-user-guide.md
++++ b/docs/coding-handoff-user-guide.md
+@@ -28,8 +28,8 @@
+ 1. **设置 → 编程助手** → 勾选「启用 ACP 会话」  
+ 2. 可选：**重新检测** / **将检测结果写入 config**  
+ 3. 绑定真实工作区  
+-4. `/code` → 选 Agent → **审查** 或 **起草修改** → **启动**  
+-5. 确认台同意后，FocusBand 显示进度 tail  
++4. `/code` → 选 Agent → **审查** 或 **起草修改** → 勾选云模型披露 → **启动**  
++5. 确认台同意后，FocusBand 显示进度 tail（chip 带模式徽章：审查/起草）  
+ 6. 可 **停止编程会话**（≠ 桌面急停）  
+ 7. 结束后聊天出现 handback；起草模式可 **应用 diff**（再次确认）  
+ 8. 可 **追问**（新一轮 + 上文 + 再确认）  
+diff --git a/docs/decisions/acp-coding-handoff-product-design-2026-08-13.md b/docs/decisions/acp-coding-handoff-product-design-2026-08-13.md
+index 6e83246..f7071d8 100644
+--- a/docs/decisions/acp-coding-handoff-product-design-2026-08-13.md
++++ b/docs/decisions/acp-coding-handoff-product-design-2026-08-13.md
+@@ -17,7 +17,7 @@
+ | 要不要做「Side Panel 版 Zed」？ | **不要**（320px 不是 IDE；Zed envy 必半残） |
+ | 要不要一上来上全量 ACP Client？ | **不要**；先 **薄接力**，再 **只读 ACP**，写盘最后且强门 |
+ | 和 Outbound MCP 什么关系？ | **对称双门面**，主叙事勿混：他们租我们的浏览器 ↔ 我们外派他们的写码 |
+-| 产品默认票 | **SHIP_THIN 优先；全量 ACP = 条件解锁；静默自动写盘 = 永久 NO-GO** |
++| 产品默认票 | **SHIP_THIN 优先；全量 ACP = 条件解锁；静默自动写盘 = 永久 NO-GO**；**gated apply（HITL + 工作区 containment）= GO（S72 / ADR-025）** |
+ 
+ **产品主名（中文）**：**编程接力**  
+ **按钮**：「派给终端助手」/「交给编程助手」  
+@@ -30,7 +30,7 @@
+ | 路 | 核心立场 | 关键交付 |
+ |----|----------|----------|
+ | **JTBD** | 只做「页上已有真相 → 本地代码动作」；冷启动写 monorepo 直接 kill | Hero: staging/SSO bug；次: PR 页审查；再次: AppSec 发现落地 |
+-| **Trust** | RO + propose-diff = GO-WITH-GATES；apply/shell/auto-spawn = NO-GO v1 | 输出不可信 + Q5 taint；禁 Outbound↔ACP 循环；审计全表 |
++| **Trust** | 审查/起草 + **gated apply** = GO-WITH-GATES；**静默**写盘 / free shell / auto-spawn = NO-GO | 输出不可信 + Q5 taint；禁 Outbound↔ACP 循环；审计全表 |
+ | **反膨胀** | 默认 **DEFER** 全协议 Client；优先 Outbound + 导出式 Prompt Chain | 命名「编程接力」；禁底栏新 Tab；4 周薄切片标准 |
+ | **UX** | Hybrid：意图 Offer + 永远人工 Confirm；Chip 不刷屏；diff 外开 | `/code` · FocusBand CodingSessionChip · Handback 卡 |
+ | **架构** | `companion/src/acp/` 作 Composition client；镜像 MCP 配置 + spawn_worker 确认 | Phase 0 单 Agent 只读 review；非 default-on |
+@@ -460,9 +460,10 @@ rg -n "#[0-9A-Fa-f]{6}" chrome-extension/src/sidepanel/components/Coding*.tsx 2>
+ | 能力 | 判定 |
+ |------|------|
+ | UI 建议 Offer | GO（不执行） |
+-| 用户启动只读审查 | GO-WITH-GATES |
++| 用户启动审查会话 | GO-WITH-GATES |
+ | propose-diff | GO-WITH-GATES |
+-| apply / 自由写盘 / shell-in-agent | **NO-GO v1**（或极严后期） |
++| **gated apply**（pending_diffs + L2 + workspace realpath） | **GO**（ADR-025 S72；非静默） |
++| 静默写盘 / free shell / shell-in-agent | **NO-GO** |
+ | 分类器自动 spawn | **NO-GO** |
+ | auto_approve / 无人值守跳过 ACP | **Never** |
+ | Worker / orchestrator 子线程 ACP | **Never** |
+@@ -483,8 +484,8 @@ rg -n "#[0-9A-Fa-f]{6}" chrome-extension/src/sidepanel/components/Coding*.tsx 2>
+ 
+ `offer_shown` · `spawn_requested/confirmed/denied` · `session_started/ended` · `disclosure_accepted` · `diff_proposed` · `loop_blocked` · `stdout_ingested` · `policy_violation`
+ 
+-- **`apply_*` 不进 v1 最低集**（apply = Phase D）；若 Phase B 误触 apply 路径，只记 `policy_violation`  
+-- 审计文件权限与谁可读：未来 ACP ADR 对齐 `capability-audit.jsonl`（0o600 级）
++- **`apply_*`**：gated apply 已交付时记 `diff_applied` / `apply_denied`；**静默 apply** 仍记 `policy_violation`  
++- 审计文件权限与谁可读：对齐 `capability-audit.jsonl`（0o600 级）
+ 
+ ### 6.5 确认与 originWs（双审 MUST）
+ 
+@@ -520,18 +521,19 @@ Phase 0 spike 成功/杀死标准见架构路；**杀线示例**：无稳定 ACP
+ 4. 设置：可选「默认终端助手」文档链 / 路径探测（非自动 spawn）  
+ 5. **成功标准**：≤3 次点击从问题页到外部 Agent 开工；用户能说清「写码的是外部助手」
+ 
+-### Phase B — 只读 ACP（**全部**满足才开工）
++### Phase B — ACP 审查会话（**已交付** · 默认 `acp.enabled=false`）
+ 
+-1. **Accepted** ACP Client ADR（含 originWs、disclosure 会话强制、审计）  
+-2. §9 Q1/Q3/Q6/Q8 **书面答完**  
+-3. **数字需求门（建议）**：Phase A 上线后 **14 天内** ≥ **10** 次真实「复制/导出任务包」成功路径（跨 ≥ **3** 个不同工作日、非仅作者本机 demo）；未达标则 **DEFER**，不靠建造者自评  
+-4. `companion/src/acp` + 单 Agent adapter + Confirm + Session Chip + 不可信 Handback  
+-5. 审计 + taint + loop 测试  
+-6. **成功标准**：绑定仓库完成一次真实 review；cancel 无孤儿进程
++1. **Accepted** [ADR-025](../adr/025-acp-coding-agent-client.md)  
++2. `companion/src/acp` + Confirm + Session Chip + 不可信 Handback + discover/adopt  
++3. 云披露：UI 勾选 + L2 确认文案（Companion 确认路径强制 HITL）  
++4. **成功标准**：绑定仓库完成一次真实审查；cancel 无孤儿进程
+ 
+-### Phase C — propose-diff + 外开 diff
++### Phase C — propose-diff + live FocusBand（**已交付**）
+ 
+-### Phase D —（可选）受控 apply + 生物识别；shell 永不默认
++### Phase D — gated apply（**已交付** · HITL + containment；**非**静默写盘）
++
++- shell-in-agent / free shell / 静默写盘：**仍 NO-GO**  
++- 可选后续：生物识别二次门、外开 multi-file diff 浏览器
+ 
+ ### 与 Outbound 并行纪律
+ 
+@@ -548,7 +550,7 @@ Phase A 实现前至少锁定 **Q5（dynamic-workflow 合并）与 CLI 唤起范
+ 
+ 1. **主叙事 6 个月**：Outbound 与 编程接力 是否双轨且文案不合并？  
+ 2. **指标**：周活接力次数 / 接力后 24h 是否回 IDE / Offer 接受率？  
+-3. **谁拥有 write**：CMspark 是否承诺 v1 **永不** `apply_patch`？  
++3. **谁拥有 write**：**静默** apply 永不；**gated** `acp_apply_diff`（L2 + 工作区 containment）已 GO — 见 ADR-025  
+ 4. **workspace**：强制与 Agent cwd 同 realpath？monorepo？  
+ 5. **账单/登录**：是否零承接（只链外文档）？  
+ 6. **L3+ 外泄（硬要求）**：页摘要/仓库片段进云编码模型的 disclosure 必须与 ADR-022 L3+ **同级**——由 **Companion 会话状态强制**（`disclosure_accepted`），**不得**仅信任 Agent/调用方参数自报；未 disclosure 不得启动会外泄代码/页内容的会话  
