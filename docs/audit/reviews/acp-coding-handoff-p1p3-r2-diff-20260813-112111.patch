@@ -1,0 +1,2118 @@
+# Pi external review context
+batch: acp-coding-handoff-p1p3-r2
+base: HEAD~1
+time: 20260813-112111
+
+fdbd712
+
+?? docs/audit/reviews/acp-coding-handoff-p1p3-r2-diff-20260813-112111.patch
+
+## Diff
+ .../src/sidepanel/components/CodingSessionChip.tsx |    1 +
+ companion/src/acp/diff-apply.ts                    |  177 ++-
+ companion/src/acp/handlers.ts                      |    8 +-
+ companion/src/acp/manager.ts                       |    2 +
+ companion/src/acp/types.ts                         |    4 +-
+ companion/tests/acp-diff-apply.test.ts             |   30 +-
+ .../_prompts/acp-coding-handoff-p1p3-20260813.md   |   25 +
+ ...p-coding-handoff-p1p3-claude-20260813-111256.md |    1 +
+ ...-coding-handoff-p1p3-diff-20260813-111256.patch | 1572 ++++++++++++++++++++
+ .../acp-coding-handoff-p1p3-pi-20260813-111256.md  |   44 +
+ ...oding-handoff-p1p3-verdict-20260813-111256.json |    8 +
+ 11 files changed, 1815 insertions(+), 57 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx b/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
+index 98a72a4..8eb7894 100644
+--- a/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
++++ b/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
+@@ -43,6 +43,7 @@ export function CodingSessionChip({
+         type: "acp.session.followup",
+         session_id: session.sessionId,
+         goal: goal.trim(),
++        mode: session.mode === "propose_diff" ? "propose_diff" : "review_readonly",
+       },
+       () => {
+         void chrome.runtime.lastError
+diff --git a/companion/src/acp/diff-apply.ts b/companion/src/acp/diff-apply.ts
+index d5eb8ef..a0f9ff6 100644
+--- a/companion/src/acp/diff-apply.ts
++++ b/companion/src/acp/diff-apply.ts
+@@ -1,47 +1,48 @@
+-// Propose-diff parse + workspace-contained apply (P3). Never shell; no free-args.
++// Propose-diff parse + workspace-contained apply (P3).
++// Partial hunks are applied against existing file content — never truncate by
++// writing only + lines (Pi REJECT 2026-08-13).
+ 
+ import * as fs from "fs"
+ import * as path from "path"
+ import { atomicWriteText } from "../io"
+ 
+ export type ParsedDiffFile = {
+-  /** Path relative to workspace (posix-ish) */
+   relPath: string
+-  /** Full unified diff for this file only (optional) */
+   hunk: string
+-  /** New file body if we can reconstruct; else null → skip apply for that file */
++  /** If set, write this body directly (new file or fully reconstructed). */
+   newContent: string | null
+   isNew: boolean
+   isDelete: boolean
++  /** Structured hunks for safe apply on existing files */
++  hunks: DiffHunk[]
++}
++
++export type DiffHunk = {
++  oldStart: number // 1-based
++  oldCount: number
++  newStart: number
++  newCount: number
++  lines: string[] // including leading + / - / space / \\
+ }
+ 
+-/**
+- * Extract ```diff / ```patch fenced blocks or raw unified diff from agent output.
+- */
+ export function extractDiffText(handback: string): string | null {
+   const raw = String(handback || "")
+   const fence = raw.match(/```(?:diff|patch)\s*\n([\s\S]*?)```/i)
+   if (fence?.[1]?.trim()) return fence[1].trim()
+   if (/^diff --git /m.test(raw) || /^--- /m.test(raw)) {
+-    // strip UNTRUSTED frame if present
+-    const body = raw.replace(/<<<UNTRUSTED_ACP_HANDBACK[\s\S]*?<body>\n?/i, "")
++    const body = raw
++      .replace(/<<<UNTRUSTED_ACP_HANDBACK[\s\S]*?<body>\n?/i, "")
+       .replace(/\n?<\/body>[\s\S]*$/i, "")
+     if (/^diff --git /m.test(body) || /^--- /m.test(body)) return body.trim()
+   }
+   return null
+ }
+ 
+-/**
+- * Parse multi-file unified diffs into per-file ops.
+- * Supports "diff --git a/x b/x" and simple "--- a/x / +++ b/x" forms.
+- * Reconstruction: apply hunks to existing file when possible; new files from +++ only hunks.
+- */
+ export function parseUnifiedDiff(diffText: string): ParsedDiffFile[] {
+   const text = diffText.replace(/\r\n/g, "\n")
+-  const files: ParsedDiffFile[] = []
+-  // Split on diff --git or --- at line start when preceded by blank/start
+   const chunks = text.split(/(?=^diff --git )/m).filter((c) => c.trim())
+   const parts = chunks.length > 0 ? chunks : [text]
++  const files: ParsedDiffFile[] = []
+ 
+   for (const chunk of parts) {
+     let relPath = ""
+@@ -50,9 +51,8 @@ export function parseUnifiedDiff(diffText: string): ParsedDiffFile[] {
+     const plusMatch = chunk.match(/^\+\+\+\s+(?:b\/)?(.+)$/m)
+     const minusMatch = chunk.match(/^---\s+(?:a\/)?(.+)$/m)
+     const gitMatch = chunk.match(/^diff --git a\/(.+?) b\/(.+)$/m)
+-    if (gitMatch) {
+-      relPath = gitMatch[2].trim()
+-    } else if (plusMatch) {
++    if (gitMatch) relPath = gitMatch[2].trim()
++    else if (plusMatch) {
+       relPath = plusMatch[1].trim()
+       if (relPath === "/dev/null") {
+         isDelete = true
+@@ -62,50 +62,98 @@ export function parseUnifiedDiff(diffText: string): ParsedDiffFile[] {
+     if (minusMatch?.[1] === "/dev/null" || minusMatch?.[1]?.endsWith("/dev/null")) {
+       isNew = true
+     }
++    if (/^\+\+\+\s+\/dev\/null/m.test(chunk)) isDelete = true
+     if (!relPath || relPath === "/dev/null") continue
+     relPath = relPath.replace(/^b\//, "").replace(/^a\//, "")
+-    // security: reject path escape tokens early
+     if (relPath.includes("\0") || path.isAbsolute(relPath)) continue
+ 
+-    const newContent = reconstructFromHunks(chunk)
++    const hunks = parseHunks(chunk)
++    let newContent: string | null = null
++    if (isNew && !isDelete) {
++      newContent = applyHunksToLines([], hunks)
++    }
++
+     files.push({
+       relPath,
+       hunk: chunk,
+       newContent,
+       isNew,
+-      isDelete: isDelete || /^\+\+\+\s+\/dev\/null/m.test(chunk),
++      isDelete,
++      hunks,
+     })
+   }
+   return files
+ }
+ 
+-/** Best-effort: collect + lines from hunks into a full new file (works for new files / full rewrites). */
+-function reconstructFromHunks(chunk: string): string | null {
++function parseHunks(chunk: string): DiffHunk[] {
+   const lines = chunk.split("\n")
+-  const out: string[] = []
+-  let inHunk = false
+-  let sawHunk = false
+-  for (const line of lines) {
+-    if (line.startsWith("@@")) {
+-      inHunk = true
+-      sawHunk = true
++  const hunks: DiffHunk[] = []
++  let i = 0
++  while (i < lines.length) {
++    const m = lines[i].match(/^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s@@/)
++    if (!m) {
++      i++
+       continue
+     }
+-    if (!inHunk) continue
+-    if (line.startsWith("diff --git") || line.startsWith("--- ") || line.startsWith("+++ ")) {
+-      inHunk = false
+-      continue
++    const oldStart = parseInt(m[1], 10)
++    const oldCount = m[2] !== undefined ? parseInt(m[2], 10) : 1
++    const newStart = parseInt(m[3], 10)
++    const newCount = m[4] !== undefined ? parseInt(m[4], 10) : 1
++    i++
++    const hLines: string[] = []
++    while (i < lines.length && !lines[i].startsWith("@@") && !lines[i].startsWith("diff --git")) {
++      const L = lines[i]
++      if (
++        L.startsWith("+") ||
++        L.startsWith("-") ||
++        L.startsWith(" ") ||
++        L.startsWith("\\")
++      ) {
++        hLines.push(L)
++      } else if (L.startsWith("---") || L.startsWith("+++")) {
++        break
++      }
++      i++
+     }
+-    if (line.startsWith("+") && !line.startsWith("+++")) {
+-      out.push(line.slice(1))
+-    } else if (line.startsWith(" ")) {
+-      out.push(line.slice(1))
+-    } else if (line.startsWith("-") && !line.startsWith("---")) {
+-      // deleted line — omit
++    hunks.push({ oldStart, oldCount, newStart, newCount, lines: hLines })
++  }
++  return hunks
++}
++
++/** Apply unified hunks to an existing line array (0-based internal). */
++export function applyHunksToLines(original: string[], hunks: DiffHunk[]): string | null {
++  // Work on a copy without trailing empty from split if file ended with newline
++  let lines = original.slice()
++  // Apply from bottom to top so line numbers stay valid
++  const ordered = [...hunks].sort((a, b) => b.oldStart - a.oldStart)
++  for (const h of ordered) {
++    const start = Math.max(0, h.oldStart - 1)
++    let oi = start
++    const out: string[] = []
++    for (const raw of h.lines) {
++      if (raw.startsWith("\\")) continue // "\ No newline at end of file"
++      const tag = raw[0]
++      const text = raw.slice(1)
++      if (tag === " ") {
++        if (oi >= lines.length || lines[oi] !== text) {
++          // context mismatch — refuse rather than corrupt
++          return null
++        }
++        out.push(text)
++        oi++
++      } else if (tag === "-") {
++        if (oi >= lines.length || lines[oi] !== text) {
++          return null
++        }
++        oi++
++      } else if (tag === "+") {
++        out.push(text)
++      }
+     }
++    const end = oi
++    lines = [...lines.slice(0, start), ...out, ...lines.slice(end)]
+   }
+-  if (!sawHunk) return null
+-  return out.join("\n") + (out.length ? "\n" : "")
++  return lines.join("\n") + (lines.length ? "\n" : "")
+ }
+ 
+ export type ApplyResult = {
+@@ -115,10 +163,6 @@ export type ApplyResult = {
+   error?: string
+ }
+ 
+-/**
+- * Apply parsed files under workspace root (realpath containment).
+- * Deletes are skipped unless allowDelete (default false).
+- */
+ export function applyParsedDiffs(
+   workspaceRoot: string,
+   files: ParsedDiffFile[],
+@@ -135,7 +179,7 @@ export function applyParsedDiffs(
+ 
+   for (const f of files) {
+     const rel = f.relPath.replace(/\\/g, "/")
+-    if (rel.startsWith("../") || rel.includes("/../") || rel.startsWith("..")) {
++    if (rel.startsWith("../") || rel.includes("/../") || rel === ".." || rel.startsWith("..")) {
+       skipped.push({ path: rel, reason: "path_escape" })
+       continue
+     }
+@@ -154,6 +198,7 @@ export function applyParsedDiffs(
+       continue
+     }
+     const target = path.join(absRealParent, path.basename(abs))
++
+     if (f.isDelete) {
+       if (!opts.allowDelete) {
+         skipped.push({ path: rel, reason: "delete_not_allowed" })
+@@ -167,12 +212,33 @@ export function applyParsedDiffs(
+       }
+       continue
+     }
+-    if (f.newContent == null) {
+-      skipped.push({ path: rel, reason: "cannot_reconstruct_body" })
+-      continue
++
++    let body: string | null = f.newContent
++    if (body == null) {
++      if (!fs.existsSync(target)) {
++        // treat as new if hunks only additions
++        body = applyHunksToLines([], f.hunks)
++        if (body == null) {
++          skipped.push({ path: rel, reason: "cannot_create_from_hunks" })
++          continue
++        }
++      } else {
++        const existing = fs.readFileSync(target, "utf8")
++        const existingLines = existing.split("\n")
++        // drop trailing empty from split if file ended with \n
++        if (existingLines.length && existingLines[existingLines.length - 1] === "") {
++          existingLines.pop()
++        }
++        body = applyHunksToLines(existingLines, f.hunks)
++        if (body == null) {
++          skipped.push({ path: rel, reason: "hunk_context_mismatch" })
++          continue
++        }
++      }
+     }
++
+     try {
+-      atomicWriteText(target, f.newContent, 0o644)
++      atomicWriteText(target, body, 0o644)
+       applied.push(rel)
+     } catch (e: any) {
+       skipped.push({ path: rel, reason: e?.message || "write_failed" })
+@@ -181,13 +247,16 @@ export function applyParsedDiffs(
+   return { ok: applied.length > 0, applied, skipped }
+ }
+ 
+-/** Human summary for chat */
+ export function summarizeDiffFiles(files: ParsedDiffFile[]): string {
+   if (!files.length) return "（未解析到可应用的 diff 文件）"
+   return files
+     .map((f) => {
+       const tag = f.isDelete ? "D" : f.isNew ? "A" : "M"
+-      return `- ${tag} \`${f.relPath}\`${f.newContent == null ? " （需人工在 IDE 应用）" : ""}`
++      const note =
++        !f.isNew && !f.isDelete && f.hunks.length === 0
++          ? " （无 hunk）"
++          : ""
++      return `- ${tag} \`${f.relPath}\`${note}`
+     })
+     .join("\n")
+ }
+diff --git a/companion/src/acp/handlers.ts b/companion/src/acp/handlers.ts
+index 1faa026..4d7db0e 100644
+--- a/companion/src/acp/handlers.ts
++++ b/companion/src/acp/handlers.ts
+@@ -134,10 +134,16 @@ export async function handleAcpWsMessage(
+       if (!parentId || !goal) {
+         return { type: "error", error: "session_id and goal required for followup" }
+       }
++      const parent = mgr.getSession(parentId)
++      // inherit parent mode unless UI overrides with msg.mode
++      const followMode =
++        msg.mode === "propose_diff" || msg.mode === "review_readonly"
++          ? (msg.mode as "review_readonly" | "propose_diff")
++          : parent?.mode || "review_readonly"
+       proposed = mgr.followup({
+         parentSessionId: parentId,
+         goal,
+-        mode: mode as "review_readonly" | "propose_diff",
++        mode: followMode,
+       })
+     } else {
+       const threadId = String(msg.thread_id || ctx.threadId || "")
+diff --git a/companion/src/acp/manager.ts b/companion/src/acp/manager.ts
+index aef2ac5..8c6e9f7 100644
+--- a/companion/src/acp/manager.ts
++++ b/companion/src/acp/manager.ts
+@@ -410,6 +410,7 @@ export class AcpManager {
+               isDelete: p.isDelete,
+               newContent: p.newContent,
+               hunk: p.hunk,
++              hunks: p.hunks,
+             }))
+             session.diff_summary = summarizeDiffFiles(parsed)
+           }
+@@ -499,6 +500,7 @@ export class AcpManager {
+         newContent: f.newContent,
+         isNew: f.isNew,
+         isDelete: f.isDelete,
++        hunks: f.hunks || [],
+       })),
+       { allowDelete: opts.allowDelete === true },
+     )
+diff --git a/companion/src/acp/types.ts b/companion/src/acp/types.ts
+index 99af175..099c17e 100644
+--- a/companion/src/acp/types.ts
++++ b/companion/src/acp/types.ts
+@@ -48,9 +48,11 @@ export interface AcpPendingDiff {
+   relPath: string
+   isNew: boolean
+   isDelete: boolean
+-  /** Full new content if reconstructable */
++  /** Full new content if reconstructable (new files) */
+   newContent: string | null
+   hunk: string
++  /** Structured hunks for safe apply on existing files */
++  hunks?: import("./diff-apply").DiffHunk[]
+ }
+ 
+ export interface AcpSessionRecord {
+diff --git a/companion/tests/acp-diff-apply.test.ts b/companion/tests/acp-diff-apply.test.ts
+index f4aef9d..a3cf0a8 100644
+--- a/companion/tests/acp-diff-apply.test.ts
++++ b/companion/tests/acp-diff-apply.test.ts
+@@ -40,6 +40,33 @@ describe("diff extract/parse/apply", () => {
+     fs.rmSync(root, { recursive: true, force: true })
+   })
+ 
++  it("applies partial hunk without truncating rest of file (Pi B1)", () => {
++    const root = fs.mkdtempSync(path.join(os.tmpdir(), "acp-diff-"))
++    const big = Array.from({ length: 20 }, (_, i) => `line${i}`).join("\n") + "\n"
++    fs.writeFileSync(path.join(root, "big.txt"), big)
++    const diff = [
++      "diff --git a/big.txt b/big.txt",
++      "--- a/big.txt",
++      "+++ b/big.txt",
++      "@@ -5,3 +5,3 @@",
++      " line4",
++      "-line5",
++      "+LINE5-CHANGED",
++      " line6",
++      "",
++    ].join("\n")
++    const files = parseUnifiedDiff(diff)
++    const r = applyParsedDiffs(root, files)
++    assert.equal(r.ok, true, JSON.stringify(r))
++    const result = fs.readFileSync(path.join(root, "big.txt"), "utf8")
++    const lines = result.replace(/\n$/, "").split("\n")
++    assert.equal(lines.length, 20, `expected 20 lines got ${lines.length}: ${result}`)
++    assert.equal(lines[5], "LINE5-CHANGED")
++    assert.equal(lines[0], "line0")
++    assert.equal(lines[19], "line19")
++    fs.rmSync(root, { recursive: true, force: true })
++  })
++
+   it("rejects path escape", () => {
+     const root = fs.mkdtempSync(path.join(os.tmpdir(), "acp-diff-"))
+     const files = [
+@@ -49,6 +76,7 @@ describe("diff extract/parse/apply", () => {
+         newContent: "x",
+         isNew: true,
+         isDelete: false,
++        hunks: [],
+       },
+     ]
+     const r = applyParsedDiffs(root, files)
+@@ -59,7 +87,7 @@ describe("diff extract/parse/apply", () => {
+ 
+   it("summarizeDiffFiles non-empty", () => {
+     const s = summarizeDiffFiles([
+-      { relPath: "a.ts", hunk: "", newContent: "1", isNew: true, isDelete: false },
++      { relPath: "a.ts", hunk: "", newContent: "1", isNew: true, isDelete: false, hunks: [] },
+     ])
+     assert.match(s, /a\.ts/)
+   })
+diff --git a/docs/audit/reviews/_prompts/acp-coding-handoff-p1p3-20260813.md b/docs/audit/reviews/_prompts/acp-coding-handoff-p1p3-20260813.md
+new file mode 100644
+index 0000000..9426d0a
+--- /dev/null
++++ b/docs/audit/reviews/_prompts/acp-coding-handoff-p1p3-20260813.md
+@@ -0,0 +1,25 @@
++# Dual review: coding-handoff P1–P3 batch
++
++## Scope
++feat/coding-handoff implements remaining P1–P3:
++- Launch presets (claude -p)
++- Follow-up multi-turn (new session + prior context)
++- adopt_discovered → config
++- Handback summary format
++- CU+ACP secondary stop
++- propose_diff + workspace-contained apply (L2 never cruise-skip)
++
++## Verify
++1. acp_apply_diff / acp.apply_diff always HITL
++2. path escape rejected
++3. followup requires confirm
++4. no free shell
++5. catalog lockstep includes acp_apply_diff
++
++## Capability
++Surface: L0/L1 + workspace write only via gated apply
++Compose: acp
++Trust: forceConfirm never waive for acp_* spawn/apply
++Autonomy: single session
++
++VERDICT required.
+diff --git a/docs/audit/reviews/acp-coding-handoff-p1p3-claude-20260813-111256.md b/docs/audit/reviews/acp-coding-handoff-p1p3-claude-20260813-111256.md
+new file mode 100644
+index 0000000..ff0b6e5
+--- /dev/null
++++ b/docs/audit/reviews/acp-coding-handoff-p1p3-claude-20260813-111256.md
+@@ -0,0 +1 @@
++API Error: 529 [1305][该模型当前访问量过大，请您稍后再试][20260813111557f992c16032c74d26]. This is a server-side issue, usually temporary — try again in a moment. If it persists, check your inference gateway (open.bigmodel.cn).
+diff --git a/docs/audit/reviews/acp-coding-handoff-p1p3-diff-20260813-111256.patch b/docs/audit/reviews/acp-coding-handoff-p1p3-diff-20260813-111256.patch
+new file mode 100644
+index 0000000..19c687e
+--- /dev/null
++++ b/docs/audit/reviews/acp-coding-handoff-p1p3-diff-20260813-111256.patch
+@@ -0,0 +1,1572 @@
++# Dual external review context
++batch: acp-coding-handoff-p1p3
++base: HEAD~2
++time: 20260813-111256
++
++03aca58
++
++?? docs/audit/reviews/_prompts/acp-coding-handoff-p1p3-20260813.md
++?? docs/audit/reviews/acp-coding-handoff-p1p3-diff-20260813-111256.patch
++
++## Diff (git diff + staged)
++ chrome-extension/src/background/index.ts           |   3 +
++ .../components/CodingHandoffSettingsSection.tsx    |  13 +-
++ .../src/sidepanel/components/CodingSessionChip.tsx |  60 ++++++-
++ .../components/CodingTaskPackageModal.tsx          |  17 +-
++ .../src/sidepanel/components/FocusBand.tsx         |   5 +
++ .../sidepanel/components/focus-band-priority.ts    |   3 +-
++ .../src/sidepanel/hooks/useWebSocket.ts            |  22 +++
++ .../src/sidepanel/store/agentStore.tsx             |   9 +
++ .../tests/focus-band-coding-session.test.ts        |   1 +
++ companion/src/acp/diff-apply.ts                    | 193 +++++++++++++++++++++
++ companion/src/acp/handback-format.ts               |  52 ++++++
++ companion/src/acp/handlers.ts                      | 181 ++++++++++++++-----
++ companion/src/acp/index.ts                         |   8 +
++ companion/src/acp/launch-presets.ts                |  65 +++++++
++ companion/src/acp/manager.ts                       | 138 +++++++++++++--
++ companion/src/acp/types.ts                         |  17 ++
++ companion/src/bridge/companion-tools.ts            |   1 +
++ companion/src/bridge/tool-definitions-catalog.json |  25 +++
++ companion/src/message-router.ts                    |   5 +-
++ companion/src/orchestrator/constants.ts            |   1 +
++ companion/src/security-policy.ts                   |   2 +
++ companion/src/tool/companion-dispatch.ts           |  29 ++++
++ companion/src/tool/l2-admission.ts                 |   8 +-
++ companion/src/ws/lifecycle.ts                      |  23 ++-
++ companion/src/ws/validate.ts                       |  16 ++
++ companion/tests/acp-diff-apply.test.ts             |  92 ++++++++++
++ docs/adr/025-acp-coding-agent-client.md            |  15 +-
++ 27 files changed, 929 insertions(+), 75 deletions(-)
++
++diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
++index 349f6ab..463664a 100644
++--- a/chrome-extension/src/background/index.ts
+++++ b/chrome-extension/src/background/index.ts
++@@ -1206,8 +1206,11 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
++       // 编程接力 ACP (Composition live session)
++       case "acp.list":
++       case "acp.rediscover":
+++      case "acp.adopt_discovered":
++       case "acp.session.cancel":
+++      case "acp.session.followup":
++       case "acp.ui_start":
+++      case "acp.apply_diff":
++       // 坐标 computer-use(WP4):每应用坐标开关(AppsPanel 卡片菜单;开启由
++       // companion 生物识别门承担)、急停按钮(任务条)、全局态只读行、证据目录打开。
++       case "apps.set_coordinate_allowed":
++diff --git a/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx b/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx
++index a7c13bc..dc22af9 100644
++--- a/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx
+++++ b/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx
++@@ -59,8 +59,19 @@ export function CodingHandoffSettingsSection({
++       >
++         重新检测本机编程助手
++       </button>
+++      <button
+++        type="button"
+++        style={styles.redetect}
+++        onClick={() => {
+++          chrome.runtime.sendMessage({ type: "acp.adopt_discovered" }, () => {
+++            void chrome.runtime.lastError
+++          })
+++        }}
+++      >
+++        将检测结果写入 config（持久化）
+++      </button>
++       <p style={styles.hint}>
++-        开启 ACP 后会探测 PATH 上的 claude / gemini / codex / pi（无需手写路径也可启动只读审查）。
+++        开启 ACP 后会探测 PATH 上的 claude / gemini / codex / pi；可持久化路径，也可直接用「已检测」临时启动。
++       </p>
++     </div>
++   )
++diff --git a/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx b/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
++index ed57338..98a72a4 100644
++--- a/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
+++++ b/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
++@@ -6,7 +6,13 @@ import { codingHandoffCopy } from "../coding-handoff/copy"
++ import type { CodingSessionState } from "../store/agentStore"
++ import { useAgentStore } from "../store/agentStore"
++ 
++-export function CodingSessionChip({ session }: { session: CodingSessionState }) {
+++export function CodingSessionChip({
+++  session,
+++  compact = false,
+++}: {
+++  session: CodingSessionState
+++  compact?: boolean
+++}) {
++   const { dispatch } = useAgentStore()
++   const live = session.state === "running" || session.state === "offered"
++ 
++@@ -29,8 +35,32 @@ export function CodingSessionChip({ session }: { session: CodingSessionState })
++     )
++   }
++ 
+++  const onFollowup = () => {
+++    const goal = window.prompt("继续追问编程助手（将开新一轮并确认）")
+++    if (!goal?.trim()) return
+++    chrome.runtime.sendMessage(
+++      {
+++        type: "acp.session.followup",
+++        session_id: session.sessionId,
+++        goal: goal.trim(),
+++      },
+++      () => {
+++        void chrome.runtime.lastError
+++      },
+++    )
+++  }
+++
+++  const onApply = () => {
+++    chrome.runtime.sendMessage(
+++      { type: "acp.apply_diff", session_id: session.sessionId },
+++      () => {
+++        void chrome.runtime.lastError
+++      },
+++    )
+++  }
+++
++   return (
++-    <div style={styles.row} role="status" aria-label="编程助手会话">
+++    <div style={{ ...styles.row, ...(compact ? styles.compact : {}) }} role="status" aria-label="编程助手会话">
++       <div style={styles.meta}>
++         <span style={styles.dot} data-live={live ? "1" : "0"} />
++         <span style={styles.title}>
++@@ -38,13 +68,25 @@ export function CodingSessionChip({ session }: { session: CodingSessionState })
++           {live ? " · 运行中" : session.state === "closed" ? " · 完成" : ` · ${session.state}`}
++         </span>
++       </div>
++-      {tail ? <div style={styles.tail}>{tail}</div> : null}
+++      {!compact && tail ? <div style={styles.tail}>{tail}</div> : null}
++       {session.error ? <div style={styles.err}>{session.error}</div> : null}
++-      {live ? (
++-        <button type="button" style={styles.stop} onClick={onStop}>
++-          {codingHandoffCopy.ctaStopSession}
++-        </button>
++-      ) : null}
+++      <div style={styles.btns}>
+++        {live ? (
+++          <button type="button" style={styles.stop} onClick={onStop}>
+++            {codingHandoffCopy.ctaStopSession}
+++          </button>
+++        ) : null}
+++        {!live && session.state === "closed" ? (
+++          <button type="button" style={styles.stop} onClick={onFollowup}>
+++            追问
+++          </button>
+++        ) : null}
+++        {!live && session.hasPendingDiff ? (
+++          <button type="button" style={styles.stop} onClick={onApply}>
+++            应用 diff
+++          </button>
+++        ) : null}
+++      </div>
++     </div>
++   )
++ }
++@@ -100,4 +142,6 @@ const styles: Record<string, CSSProperties> = {
++     color: tokens.text || "#111",
++     cursor: "pointer",
++   },
+++  btns: { display: "flex", flexWrap: "wrap", gap: 4 },
+++  compact: { gap: 2 },
++ }
++diff --git a/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx b/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
++index a3130b2..f76231b 100644
++--- a/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
+++++ b/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
++@@ -68,6 +68,7 @@ export function CodingTaskPackageModal({
++   const [pasteBack, setPasteBack] = useState("")
++   const [showRaw, setShowRaw] = useState(false)
++   const [agentId, setAgentId] = useState("")
+++  const [mode, setMode] = useState<"review_readonly" | "propose_diff">("review_readonly")
++   const readyAgents = useMemo(
++     () => acpAgents.filter((a) => a.enabled && a.command),
++     [acpAgents],
++@@ -176,13 +177,14 @@ export function CodingTaskPackageModal({
++         agent_id: agentId,
++         goal: goal.trim() || pkg.markdown.slice(0, 2000),
++         workspace_root: workspaceRoot,
+++        mode,
++       },
++       () => {
++         void chrome.runtime.lastError
++       },
++     )
++     onClose()
++-  }, [threadId, pkg, agentId, goal, workspaceRoot, onRequestWorkspace, onClose])
+++  }, [threadId, pkg, agentId, goal, workspaceRoot, mode, onRequestWorkspace, onClose])
++ 
++   if (!open) return null
++ 
++@@ -294,6 +296,16 @@ export function CodingTaskPackageModal({
++                 </option>
++               ))}
++             </select>
+++            <select
+++              value={mode}
+++              onChange={(e) =>
+++                setMode(e.target.value === "propose_diff" ? "propose_diff" : "review_readonly")
+++              }
+++              style={styles.select}
+++            >
+++              <option value="review_readonly">只读审查</option>
+++              <option value="propose_diff">起草修改（propose-diff）</option>
+++            </select>
++             <p style={styles.privacy}>{codingHandoffCopy.modeFootnote}</p>
++             <button
++               type="button"
++@@ -301,7 +313,8 @@ export function CodingTaskPackageModal({
++               onClick={doAcpStart}
++               disabled={!goal.trim() || !agentId}
++             >
++-              {codingHandoffCopy.ctaStart} · 只读审查
+++              {codingHandoffCopy.ctaStart} ·{" "}
+++              {mode === "propose_diff" ? "起草修改" : "只读审查"}
++             </button>
++           </div>
++         ) : acpEnabled ? (
++diff --git a/chrome-extension/src/sidepanel/components/FocusBand.tsx b/chrome-extension/src/sidepanel/components/FocusBand.tsx
++index 47d428e..0201cfe 100644
++--- a/chrome-extension/src/sidepanel/components/FocusBand.tsx
+++++ b/chrome-extension/src/sidepanel/components/FocusBand.tsx
++@@ -142,6 +142,11 @@ export function FocusBand({
++         {slot.primary === "l2_safety" && (
++           <div style={styles.primary}>
++             <SafetyStrip compact />
+++            {slot.secondaryTools && coding && (
+++              <div style={{ marginTop: 4 }} data-coding-session-secondary>
+++                <CodingSessionChip session={coding} compact />
+++              </div>
+++            )}
++           </div>
++         )}
++         {slot.primary === "coding_session" && coding && (
++diff --git a/chrome-extension/src/sidepanel/components/focus-band-priority.ts b/chrome-extension/src/sidepanel/components/focus-band-priority.ts
++index 1c1d994..64ceab2 100644
++--- a/chrome-extension/src/sidepanel/components/focus-band-priority.ts
+++++ b/chrome-extension/src/sidepanel/components/focus-band-priority.ts
++@@ -80,11 +80,12 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
++     }
++   }
++   if (input.hasL2Task) {
+++    // CU owns primary (急停); surface coding stop as secondaryTools line when ACP also live
++     return {
++       primary: "l2_safety",
++       secondaryAbort: false,
++       secondaryContext: false,
++-      secondaryTools: false,
+++      secondaryTools: input.hasCodingSession === true,
++     }
++   }
++   // Confirm > CU L2 > coding session > fleet (急停 never buried under coding)
++diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++index 85a10ac..0ca6164 100644
++--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++@@ -1188,6 +1188,28 @@ export function useWebSocket() {
++           ) {
++             dispatch({ type: "ADD_MESSAGE", message: msg.message as any })
++           }
+++          if (typeof msg.session_id === "string") {
+++            dispatch({
+++              type: "ACP_SESSION_EVENT",
+++              event: {
+++                session_id: msg.session_id,
+++                thread_id: msg.thread_id,
+++                state: "closed",
+++                mode: msg.mode,
+++                pending_diffs: msg.pending_diffs,
+++                handback: msg.message?.content,
+++              },
+++            })
+++          }
+++          break
+++
+++        case "acp.apply_diff.result":
+++          dispatch({
+++            type: "SET_PROCESSING_STATUS",
+++            status: msg.ok
+++              ? `已应用 ${Array.isArray(msg.applied) ? msg.applied.length : 0} 个文件`
+++              : `应用 diff 失败: ${msg.error || "unknown"}`,
+++          })
++           break
++ 
++         case "acp.ui_start.accepted":
++diff --git a/chrome-extension/src/sidepanel/store/agentStore.tsx b/chrome-extension/src/sidepanel/store/agentStore.tsx
++index aea90b9..b5501dd 100644
++--- a/chrome-extension/src/sidepanel/store/agentStore.tsx
+++++ b/chrome-extension/src/sidepanel/store/agentStore.tsx
++@@ -18,6 +18,8 @@ export type CodingSessionState = {
++   workspaceRoot?: string
++   partial?: boolean
++   updatedAt: number
+++  mode?: string
+++  hasPendingDiff?: boolean
++ }
++ 
++ export type CodingSessionEvent = {
++@@ -33,6 +35,8 @@ export type CodingSessionEvent = {
++   workspace_root?: string
++   display_name?: string
++   partial?: boolean
+++  mode?: string
+++  pending_diffs?: unknown[]
++ }
++ 
++ export type AcpAgentInfo = {
++@@ -944,6 +948,11 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
++           workspaceRoot: e.workspace_root ?? state.codingSession?.workspaceRoot,
++           partial: e.partial ?? state.codingSession?.partial,
++           updatedAt: Date.now(),
+++          mode: (e as any).mode ?? state.codingSession?.mode,
+++          hasPendingDiff:
+++            Array.isArray((e as any).pending_diffs) && (e as any).pending_diffs.length > 0
+++              ? true
+++              : state.codingSession?.hasPendingDiff,
++         },
++       }
++     }
++diff --git a/chrome-extension/tests/focus-band-coding-session.test.ts b/chrome-extension/tests/focus-band-coding-session.test.ts
++index 139081f..eb97401 100644
++--- a/chrome-extension/tests/focus-band-coding-session.test.ts
+++++ b/chrome-extension/tests/focus-band-coding-session.test.ts
++@@ -32,4 +32,5 @@ test("coding_session is below confirm and l2_safety, above fleet", () => {
++     isBrowserContext: false,
++   })
++   assert.equal(cuWins.primary, "l2_safety")
+++  assert.equal(cuWins.secondaryTools, true)
++ })
++diff --git a/companion/src/acp/diff-apply.ts b/companion/src/acp/diff-apply.ts
++new file mode 100644
++index 0000000..d5eb8ef
++--- /dev/null
+++++ b/companion/src/acp/diff-apply.ts
++@@ -0,0 +1,193 @@
+++// Propose-diff parse + workspace-contained apply (P3). Never shell; no free-args.
+++
+++import * as fs from "fs"
+++import * as path from "path"
+++import { atomicWriteText } from "../io"
+++
+++export type ParsedDiffFile = {
+++  /** Path relative to workspace (posix-ish) */
+++  relPath: string
+++  /** Full unified diff for this file only (optional) */
+++  hunk: string
+++  /** New file body if we can reconstruct; else null → skip apply for that file */
+++  newContent: string | null
+++  isNew: boolean
+++  isDelete: boolean
+++}
+++
+++/**
+++ * Extract ```diff / ```patch fenced blocks or raw unified diff from agent output.
+++ */
+++export function extractDiffText(handback: string): string | null {
+++  const raw = String(handback || "")
+++  const fence = raw.match(/```(?:diff|patch)\s*\n([\s\S]*?)```/i)
+++  if (fence?.[1]?.trim()) return fence[1].trim()
+++  if (/^diff --git /m.test(raw) || /^--- /m.test(raw)) {
+++    // strip UNTRUSTED frame if present
+++    const body = raw.replace(/<<<UNTRUSTED_ACP_HANDBACK[\s\S]*?<body>\n?/i, "")
+++      .replace(/\n?<\/body>[\s\S]*$/i, "")
+++    if (/^diff --git /m.test(body) || /^--- /m.test(body)) return body.trim()
+++  }
+++  return null
+++}
+++
+++/**
+++ * Parse multi-file unified diffs into per-file ops.
+++ * Supports "diff --git a/x b/x" and simple "--- a/x / +++ b/x" forms.
+++ * Reconstruction: apply hunks to existing file when possible; new files from +++ only hunks.
+++ */
+++export function parseUnifiedDiff(diffText: string): ParsedDiffFile[] {
+++  const text = diffText.replace(/\r\n/g, "\n")
+++  const files: ParsedDiffFile[] = []
+++  // Split on diff --git or --- at line start when preceded by blank/start
+++  const chunks = text.split(/(?=^diff --git )/m).filter((c) => c.trim())
+++  const parts = chunks.length > 0 ? chunks : [text]
+++
+++  for (const chunk of parts) {
+++    let relPath = ""
+++    let isNew = false
+++    let isDelete = false
+++    const plusMatch = chunk.match(/^\+\+\+\s+(?:b\/)?(.+)$/m)
+++    const minusMatch = chunk.match(/^---\s+(?:a\/)?(.+)$/m)
+++    const gitMatch = chunk.match(/^diff --git a\/(.+?) b\/(.+)$/m)
+++    if (gitMatch) {
+++      relPath = gitMatch[2].trim()
+++    } else if (plusMatch) {
+++      relPath = plusMatch[1].trim()
+++      if (relPath === "/dev/null") {
+++        isDelete = true
+++        relPath = minusMatch?.[1]?.replace(/^a\//, "").trim() || ""
+++      }
+++    }
+++    if (minusMatch?.[1] === "/dev/null" || minusMatch?.[1]?.endsWith("/dev/null")) {
+++      isNew = true
+++    }
+++    if (!relPath || relPath === "/dev/null") continue
+++    relPath = relPath.replace(/^b\//, "").replace(/^a\//, "")
+++    // security: reject path escape tokens early
+++    if (relPath.includes("\0") || path.isAbsolute(relPath)) continue
+++
+++    const newContent = reconstructFromHunks(chunk)
+++    files.push({
+++      relPath,
+++      hunk: chunk,
+++      newContent,
+++      isNew,
+++      isDelete: isDelete || /^\+\+\+\s+\/dev\/null/m.test(chunk),
+++    })
+++  }
+++  return files
+++}
+++
+++/** Best-effort: collect + lines from hunks into a full new file (works for new files / full rewrites). */
+++function reconstructFromHunks(chunk: string): string | null {
+++  const lines = chunk.split("\n")
+++  const out: string[] = []
+++  let inHunk = false
+++  let sawHunk = false
+++  for (const line of lines) {
+++    if (line.startsWith("@@")) {
+++      inHunk = true
+++      sawHunk = true
+++      continue
+++    }
+++    if (!inHunk) continue
+++    if (line.startsWith("diff --git") || line.startsWith("--- ") || line.startsWith("+++ ")) {
+++      inHunk = false
+++      continue
+++    }
+++    if (line.startsWith("+") && !line.startsWith("+++")) {
+++      out.push(line.slice(1))
+++    } else if (line.startsWith(" ")) {
+++      out.push(line.slice(1))
+++    } else if (line.startsWith("-") && !line.startsWith("---")) {
+++      // deleted line — omit
+++    }
+++  }
+++  if (!sawHunk) return null
+++  return out.join("\n") + (out.length ? "\n" : "")
+++}
+++
+++export type ApplyResult = {
+++  ok: boolean
+++  applied: string[]
+++  skipped: Array<{ path: string; reason: string }>
+++  error?: string
+++}
+++
+++/**
+++ * Apply parsed files under workspace root (realpath containment).
+++ * Deletes are skipped unless allowDelete (default false).
+++ */
+++export function applyParsedDiffs(
+++  workspaceRoot: string,
+++  files: ParsedDiffFile[],
+++  opts: { allowDelete?: boolean } = {},
+++): ApplyResult {
+++  let root: string
+++  try {
+++    root = fs.realpathSync(workspaceRoot)
+++  } catch {
+++    return { ok: false, applied: [], skipped: [], error: "workspace root missing" }
+++  }
+++  const applied: string[] = []
+++  const skipped: Array<{ path: string; reason: string }> = []
+++
+++  for (const f of files) {
+++    const rel = f.relPath.replace(/\\/g, "/")
+++    if (rel.startsWith("../") || rel.includes("/../") || rel.startsWith("..")) {
+++      skipped.push({ path: rel, reason: "path_escape" })
+++      continue
+++    }
+++    const abs = path.resolve(root, rel)
+++    let absRealParent: string
+++    try {
+++      const parent = path.dirname(abs)
+++      if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true })
+++      absRealParent = fs.realpathSync(parent)
+++    } catch {
+++      skipped.push({ path: rel, reason: "parent_unresolvable" })
+++      continue
+++    }
+++    if (absRealParent !== root && !absRealParent.startsWith(root + path.sep)) {
+++      skipped.push({ path: rel, reason: "outside_workspace" })
+++      continue
+++    }
+++    const target = path.join(absRealParent, path.basename(abs))
+++    if (f.isDelete) {
+++      if (!opts.allowDelete) {
+++        skipped.push({ path: rel, reason: "delete_not_allowed" })
+++        continue
+++      }
+++      try {
+++        if (fs.existsSync(target)) fs.unlinkSync(target)
+++        applied.push(rel)
+++      } catch (e: any) {
+++        skipped.push({ path: rel, reason: e?.message || "delete_failed" })
+++      }
+++      continue
+++    }
+++    if (f.newContent == null) {
+++      skipped.push({ path: rel, reason: "cannot_reconstruct_body" })
+++      continue
+++    }
+++    try {
+++      atomicWriteText(target, f.newContent, 0o644)
+++      applied.push(rel)
+++    } catch (e: any) {
+++      skipped.push({ path: rel, reason: e?.message || "write_failed" })
+++    }
+++  }
+++  return { ok: applied.length > 0, applied, skipped }
+++}
+++
+++/** Human summary for chat */
+++export function summarizeDiffFiles(files: ParsedDiffFile[]): string {
+++  if (!files.length) return "（未解析到可应用的 diff 文件）"
+++  return files
+++    .map((f) => {
+++      const tag = f.isDelete ? "D" : f.isNew ? "A" : "M"
+++      return `- ${tag} \`${f.relPath}\`${f.newContent == null ? " （需人工在 IDE 应用）" : ""}`
+++    })
+++    .join("\n")
+++}
++diff --git a/companion/src/acp/handback-format.ts b/companion/src/acp/handback-format.ts
++new file mode 100644
++index 0000000..4b91189
++--- /dev/null
+++++ b/companion/src/acp/handback-format.ts
++@@ -0,0 +1,52 @@
+++// Chat-facing handback: short summary + optional full body in <details>
+++
+++const OPEN = "<<<UNTRUSTED_ACP_HANDBACK"
+++const CLOSE = "<<<END_UNTRUSTED_ACP_HANDBACK>>>"
+++
+++export function stripUntrustedFrame(text: string): string {
+++  let t = String(text || "")
+++  const body = t.match(/<body>\n?([\s\S]*?)\n?<\/body>/i)
+++  if (body?.[1]) return body[1].trim()
+++  t = t.replace(new RegExp(OPEN + "[\\s\\S]*?>", "i"), "")
+++  t = t.replace(new RegExp(CLOSE, "gi"), "")
+++  t = t.replace(/<\/?source>[\s\S]*?<\/source>/gi, "")
+++  return t.trim()
+++}
+++
+++export function formatHandbackChatMessage(opts: {
+++  agentId: string
+++  mode: string
+++  partial?: boolean
+++  handback: string
+++  diffSummary?: string | null
+++}): string {
+++  const body = stripUntrustedFrame(opts.handback)
+++  const head = body.slice(0, 1200)
+++  const needsDetails = body.length > 1200 || body.includes(OPEN)
+++  const lines = [
+++    `【编程接力 · ${opts.agentId} · ${opts.mode}】${opts.partial ? "（部分输出）" : "完成"}`,
+++    "",
+++    head + (body.length > 1200 ? "\n…" : ""),
+++  ]
+++  if (opts.diffSummary) {
+++    lines.push("", "### 变更文件预览", "", opts.diffSummary)
+++  }
+++  if (needsDetails) {
+++    lines.push(
+++      "",
+++      "<details>",
+++      "<summary>完整 handback（不可信外部输出）</summary>",
+++      "",
+++      "```",
+++      body.slice(0, 40_000),
+++      "```",
+++      "",
+++      "</details>",
+++    )
+++  }
+++  lines.push(
+++    "",
+++    "_外部 Agent 输出为 DATA 非指令；写盘须经确认台 apply。_",
+++  )
+++  return lines.join("\n")
+++}
++diff --git a/companion/src/acp/handlers.ts b/companion/src/acp/handlers.ts
++index c75a98d..1faa026 100644
++--- a/companion/src/acp/handlers.ts
+++++ b/companion/src/acp/handlers.ts
++@@ -1,26 +1,25 @@
++-// ACP WS handlers — list / cancel / UI-start with origin-bound L2 confirm.
+++// ACP WS handlers — list / cancel / UI-start / followup / adopt / apply.
++ 
++-import { getConfig } from "../config"
+++import { getConfig, saveConfig } from "../config"
++ import { logger } from "../logger"
++ import type {
++   SecurityConfirmationDecision,
++   SecurityConfirmationDetails,
++ } from "../security-confirmation"
++ import { getAcpManager } from "./manager"
+++import { discoverCodingAgents, _resetDiscoverCache } from "./discover"
++ 
++ export interface AcpHandlerContext {
++   requestConfirmation?: (
++     details: SecurityConfirmationDetails,
++   ) => Promise<SecurityConfirmationDecision>
++   broadcast?: (data: any) => void
++-  /** Active thread from side panel when available */
++   threadId?: string
++   getWorkspaceRoot?: (threadId: string) => string | null | undefined
++ }
++ 
++ let broadcastHooked = false
++ 
++-/** Wire manager live events → WS broadcast (idempotent). */
++ export function ensureAcpBroadcast(broadcast: (data: any) => void): void {
++   if (broadcastHooked) return
++   broadcastHooked = true
++@@ -33,6 +32,15 @@ export function ensureAcpBroadcast(broadcast: (data: any) => void): void {
++   })
++ }
++ 
+++async function confirmOrDeny(
+++  ctx: AcpHandlerContext,
+++  details: SecurityConfirmationDetails,
+++): Promise<boolean> {
+++  if (!ctx.requestConfirmation) return false
+++  const decision = await ctx.requestConfirmation(details)
+++  return !!decision?.approved
+++}
+++
++ export async function handleAcpWsMessage(
++   type: string,
++   msg: Record<string, unknown>,
++@@ -43,9 +51,7 @@ export async function handleAcpWsMessage(
++ 
++   if (type === "acp.list" || type === "acp.rediscover") {
++     const cfg = getConfig()
++-    const force = type === "acp.rediscover"
++-    if (force) {
++-      const { _resetDiscoverCache, discoverCodingAgents } = await import("./discover")
+++    if (type === "acp.rediscover") {
++       _resetDiscoverCache()
++       discoverCodingAgents(true)
++     }
++@@ -57,6 +63,51 @@ export async function handleAcpWsMessage(
++     }
++   }
++ 
+++  if (type === "acp.adopt_discovered") {
+++    // Persist discovered agents into config.acp.servers (user gesture from settings)
+++    const cfg = getConfig()
+++    if (!cfg.acp) {
+++      return { type: "error", error: "acp config missing" }
+++    }
+++    const ids = Array.isArray(msg.agent_ids)
+++      ? msg.agent_ids.map(String)
+++      : discoverCodingAgents(true).map((d) => d.id)
+++    const discovered = discoverCodingAgents(true)
+++    const servers = { ...(cfg.acp.servers || {}) }
+++    let added = 0
+++    for (const d of discovered) {
+++      if (ids.length && !ids.includes(d.id)) continue
+++      if (servers[d.id]?.command) continue
+++      servers[d.id] = {
+++        enabled: true,
+++        display_name: d.display_name,
+++        transport: "stdio",
+++        command: d.command,
+++        args: [],
+++        policy: {
+++          profile: "review_readonly",
+++          allow_write: false,
+++          allow_exec: false,
+++        },
+++      }
+++      added++
+++    }
+++    saveConfig({
+++      acp: {
+++        ...cfg.acp,
+++        enabled: cfg.acp.enabled === true ? true : cfg.acp.enabled,
+++        servers,
+++      },
+++    })
+++    logger.info("acp.adopt_discovered", { added, total: Object.keys(servers).length })
+++    return {
+++      type: "acp.list",
+++      enabled: !!getConfig().acp?.enabled,
+++      agents: mgr.listAgents(),
+++      adopted: added,
+++    }
+++  }
+++
++   if (type === "acp.session.cancel") {
++     const sid = String(msg.session_id || "")
++     if (!sid) return { type: "error", error: "session_id required" }
++@@ -65,49 +116,66 @@ export async function handleAcpWsMessage(
++     return { type: "acp.session.cancel.ack", session_id: sid }
++   }
++ 
++-  if (type === "acp.ui_start") {
++-    // Side Panel user gesture: propose + L2 confirm + start, with live events.
+++  if (type === "acp.ui_start" || type === "acp.session.followup") {
++     const cfg = getConfig()
++     if (!cfg.acp?.enabled) {
++       return { type: "error", error: "acp: feature disabled — enable in 设置 → 编程助手" }
++     }
++-    const threadId = String(msg.thread_id || ctx.threadId || "")
++-    if (!threadId) return { type: "error", error: "thread_id required" }
++-    const agentId = String(msg.agent_id || "")
++-    const goal = String(msg.goal || "").trim()
++-    if (!agentId) return { type: "error", error: "agent_id required" }
++-    if (!goal) return { type: "error", error: "goal required" }
++-
++-    const workspaceRoot =
++-      (typeof msg.workspace_root === "string" && msg.workspace_root) ||
++-      ctx.getWorkspaceRoot?.(threadId) ||
++-      null
++-
++-    const proposed = mgr.propose({
++-      threadId,
++-      agentId,
++-      goal,
++-      workspaceRoot,
++-    })
++-    if (!proposed.ok) return { type: "error", error: proposed.error }
+++    const mode =
+++      msg.mode === "propose_diff" ? "propose_diff" : "review_readonly"
+++
+++    let proposed:
+++      | { ok: true; session: import("./types").AcpSessionRecord }
+++      | { ok: false; error: string }
+++
+++    if (type === "acp.session.followup") {
+++      const parentId = String(msg.session_id || msg.parent_session_id || "")
+++      const goal = String(msg.goal || "").trim()
+++      if (!parentId || !goal) {
+++        return { type: "error", error: "session_id and goal required for followup" }
+++      }
+++      proposed = mgr.followup({
+++        parentSessionId: parentId,
+++        goal,
+++        mode: mode as "review_readonly" | "propose_diff",
+++      })
+++    } else {
+++      const threadId = String(msg.thread_id || ctx.threadId || "")
+++      if (!threadId) return { type: "error", error: "thread_id required" }
+++      const agentId = String(msg.agent_id || "")
+++      const goal = String(msg.goal || "").trim()
+++      if (!agentId) return { type: "error", error: "agent_id required" }
+++      if (!goal) return { type: "error", error: "goal required" }
+++      const workspaceRoot =
+++        (typeof msg.workspace_root === "string" && msg.workspace_root) ||
+++        ctx.getWorkspaceRoot?.(threadId) ||
+++        null
+++      proposed = mgr.propose({
+++        threadId,
+++        agentId,
+++        goal,
+++        workspaceRoot,
+++        mode: mode as "review_readonly" | "propose_diff",
+++      })
+++    }
++ 
+++    if (!proposed.ok) return { type: "error", error: proposed.error }
++     const session = proposed.session
++-    if (!ctx.requestConfirmation) {
++-      mgr.cancel(session.session_id)
++-      return { type: "error", error: "acp.ui_start requires confirmation channel" }
++-    }
++ 
++-    const label = mgr.listAgents().find((a) => a.id === agentId)?.display_name || agentId
++-    const decision = await ctx.requestConfirmation({
+++    const label =
+++      mgr.listAgents().find((a) => a.id === session.agent_id)?.display_name ||
+++      session.agent_id
+++    const modeLabel = mode === "propose_diff" ? "起草修改(propose-diff)" : "只读审查"
+++    const approved = await confirmOrDeny(ctx, {
++       toolName: "acp_start_session",
++       dangerousApis: ["acp_start_session"],
++-      code: `启动编程助手「${label}」只读审查\n仓库: ${session.workspace_root}\n任务: ${goal.slice(0, 200)}\nsession=${session.session_id}`,
+++      code: `启动编程助手「${label}」${modeLabel}\n仓库: ${session.workspace_root}\n任务: ${session.goal.slice(0, 200)}\nsession=${session.session_id}`,
++       riskLevel: "high",
++       autoConfirmEligible: false,
++       criticalApis: ["acp_start_session"],
++     })
++ 
++-    if (!decision?.approved) {
+++    if (!approved) {
++       mgr.cancel(session.session_id)
++       return {
++         type: "acp.ui_start.denied",
++@@ -116,7 +184,6 @@ export async function handleAcpWsMessage(
++       }
++     }
++ 
++-    // Fire-and-forget start so WS reply is immediate; progress via acp.session.event
++     void mgr.start(session.session_id).then((r) => {
++       if (!r.ok) {
++         logger.warn("acp.ui_start_failed", { session_id: session.session_id, err: r.error })
++@@ -126,11 +193,47 @@ export async function handleAcpWsMessage(
++     return {
++       type: "acp.ui_start.accepted",
++       session_id: session.session_id,
++-      agent_id: agentId,
++-      thread_id: threadId,
+++      agent_id: session.agent_id,
+++      thread_id: session.thread_id,
+++      mode,
++       state: "running",
++     }
++   }
++ 
+++  if (type === "acp.apply_diff") {
+++    const sid = String(msg.session_id || "")
+++    if (!sid) return { type: "error", error: "session_id required" }
+++    const session = mgr.getSession(sid)
+++    if (!session) return { type: "error", error: "unknown session" }
+++    if (session.mode !== "propose_diff") {
+++      return { type: "error", error: "session is not propose_diff" }
+++    }
+++    const paths = Array.isArray(msg.paths) ? msg.paths.map(String) : undefined
+++    const approved = await confirmOrDeny(ctx, {
+++      toolName: "acp_apply_diff",
+++      dangerousApis: ["acp_apply_diff"],
+++      code: `应用编程接力 diff 到工作区\nsession=${sid}\n仓库: ${session.workspace_root}\nfiles=${(paths || session.pending_diffs?.map((d) => d.relPath) || []).slice(0, 20).join(", ")}`,
+++      riskLevel: "high",
+++      autoConfirmEligible: false,
+++      criticalApis: ["acp_apply_diff"],
+++    })
+++    if (!approved) {
+++      return { type: "acp.apply_diff.denied", session_id: sid, error: "user_denied" }
+++    }
+++    const r = mgr.applyPendingDiffs(sid, {
+++      paths,
+++      allowDelete: msg.allow_delete === true,
+++    })
+++    if (ctx.broadcast) {
+++      ctx.broadcast({
+++        type: "acp.apply_diff.result",
+++        session_id: sid,
+++        thread_id: session.thread_id,
+++        ...r,
+++      })
+++    }
+++    return { type: "acp.apply_diff.result", session_id: sid, thread_id: session.thread_id, ...r }
+++  }
+++
++   return null
++ }
++diff --git a/companion/src/acp/index.ts b/companion/src/acp/index.ts
++index fd503bb..e4be767 100644
++--- a/companion/src/acp/index.ts
+++++ b/companion/src/acp/index.ts
++@@ -10,3 +10,11 @@ export {
++ } from "./manager"
++ export { handleAcpWsMessage, ensureAcpBroadcast } from "./handlers"
++ export { discoverCodingAgents, _resetDiscoverCache } from "./discover"
+++export {
+++  extractDiffText,
+++  parseUnifiedDiff,
+++  applyParsedDiffs,
+++  summarizeDiffFiles,
+++} from "./diff-apply"
+++export { formatHandbackChatMessage, stripUntrustedFrame } from "./handback-format"
+++export { resolveLaunchArgs, LAUNCH_PRESETS } from "./launch-presets"
++diff --git a/companion/src/acp/launch-presets.ts b/companion/src/acp/launch-presets.ts
++new file mode 100644
++index 0000000..2e54f0f
++--- /dev/null
+++++ b/companion/src/acp/launch-presets.ts
++@@ -0,0 +1,65 @@
+++// Per-agent launch argv templates (P1). Prompt is always also written to stdin.
+++// args may include {{prompt_file}} placeholder for agents that need a file path.
+++
+++export type LaunchPreset = {
+++  /** Default argv when user/config does not specify args */
+++  args: string[]
+++  /** If true, append prompt as final argv element (after expanding placeholders) */
+++  append_prompt_arg?: boolean
+++  /** Prefer writing prompt to temp file and pass path */
+++  use_prompt_file?: boolean
+++}
+++
+++/** Known CLI conventions — absolute paths still resolved by discover/config. */
+++export const LAUNCH_PRESETS: Record<string, LaunchPreset> = {
+++  claude: {
+++    // Claude Code non-interactive print mode (best-effort; stdin also fed)
+++    args: ["-p", "--output-format", "text"],
+++    append_prompt_arg: false,
+++  },
+++  gemini: {
+++    args: [],
+++    append_prompt_arg: false,
+++  },
+++  codex: {
+++    args: ["exec"],
+++    append_prompt_arg: false,
+++  },
+++  pi: {
+++    args: ["-p", "--no-session"],
+++    append_prompt_arg: false,
+++  },
+++}
+++
+++export function resolveLaunchArgs(
+++  agentId: string,
+++  configuredArgs: string[] | undefined,
+++  opts: { prompt: string; promptFile: string },
+++): string[] {
+++  const preset = LAUNCH_PRESETS[agentId]
+++  const base =
+++    configuredArgs && configuredArgs.length > 0
+++      ? [...configuredArgs]
+++      : preset
+++        ? [...preset.args]
+++        : []
+++  const expanded = base.map((a) =>
+++    a
+++      .replace(/\{\{prompt_file\}\}/g, opts.promptFile)
+++      .replace(/\{\{prompt\}\}/g, opts.prompt.slice(0, 4000)),
+++  )
+++  if (preset?.append_prompt_arg || configuredArgs?.includes("{{prompt}}") === false) {
+++    if (preset?.append_prompt_arg) {
+++      expanded.push(opts.prompt)
+++    }
+++  }
+++  // claude -p often wants prompt as next arg if not using stdin-only
+++  if (agentId === "claude" && expanded.includes("-p")) {
+++    const i = expanded.indexOf("-p")
+++    const next = expanded[i + 1]
+++    if (!next || next.startsWith("-")) {
+++      expanded.splice(i + 1, 0, opts.prompt)
+++    }
+++  }
+++  return expanded
+++}
++diff --git a/companion/src/acp/manager.ts b/companion/src/acp/manager.ts
++index 38e4f5e..aef2ac5 100644
++--- a/companion/src/acp/manager.ts
+++++ b/companion/src/acp/manager.ts
++@@ -12,6 +12,9 @@ import { resolveAcpWorkspaceRoot } from "./workspace-bind"
++ import { frameAcpHandback } from "./handback"
++ import { markAcpHandbackSeen } from "./taint"
++ import { discoverCodingAgents } from "./discover"
+++import { resolveLaunchArgs } from "./launch-presets"
+++import { extractDiffText, parseUnifiedDiff, applyParsedDiffs, summarizeDiffFiles } from "./diff-apply"
+++import { formatHandbackChatMessage } from "./handback-format"
++ import type { AcpAgentServerConfig } from "./types"
++ 
++ export type AcpHandbackSink = (info: {
++@@ -185,6 +188,8 @@ export class AcpManager {
++     agentId: string
++     goal: string
++     workspaceRoot?: string | null
+++    mode?: "review_readonly" | "propose_diff"
+++    parentSessionId?: string
++   }): { ok: true; session: AcpSessionRecord } | { ok: false; error: string } {
++     const cfg = getConfig()
++     if (!cfg.acp?.enabled) {
++@@ -212,7 +217,10 @@ export class AcpManager {
++         to: "review_readonly",
++       })
++     }
++-    const profile: AcpPolicyProfile = "review_readonly"
+++    const mode =
+++      opts.mode === "propose_diff" ? "propose_diff" : "review_readonly"
+++    const profile: AcpPolicyProfile =
+++      mode === "propose_diff" ? "propose_diff" : "review_readonly"
++ 
++     const session: AcpSessionRecord = {
++       session_id: newSessionId(),
++@@ -221,9 +229,11 @@ export class AcpManager {
++       state: "offered",
++       workspace_root: ws.root,
++       profile,
+++      mode,
++       goal: String(opts.goal || "").slice(0, 8000),
++       created_at: new Date().toISOString(),
++       partial: false,
+++      parent_session_id: opts.parentSessionId,
++     }
++     this.sessions.set(session.session_id, session)
++     logger.info("acp.offer", { session_id: session.session_id, agent: opts.agentId })
++@@ -249,16 +259,32 @@ export class AcpManager {
++     session.state = "running"
++     this.emitProgress(session, "starting…", true)
++ 
++-    const prompt = [
++-      "You are running under CMspark 编程接力 (read-only review session).",
++-      "Do NOT modify files, run package installs, or git push.",
++-      `Workspace: ${session.workspace_root}`,
++-      "",
++-      "Task:",
++-      session.goal,
++-      "",
++-      "Return a structured code review: findings (severity), files of interest, residual risks.",
++-    ].join("\n")
+++    const prompt =
+++      session.mode === "propose_diff"
+++        ? [
+++            "You are running under CMspark 编程接力 (propose-diff mode).",
+++            "Do NOT run package installs, git push, or network exfil.",
+++            "You MAY reason about edits; output a unified diff the host can apply.",
+++            `Workspace: ${session.workspace_root}`,
+++            "",
+++            "Task:",
+++            session.goal,
+++            "",
+++            "Output requirements:",
+++            "1) Short summary of changes",
+++            "2) One fenced block: ```diff ... ``` with unified diffs (paths relative to workspace)",
+++            "Prefer complete file rewrites in the diff when unsure about hunk context.",
+++          ].join("\n")
+++        : [
+++            "You are running under CMspark 编程接力 (read-only review session).",
+++            "Do NOT modify files, run package installs, or git push.",
+++            `Workspace: ${session.workspace_root}`,
+++            "",
+++            "Task:",
+++            session.goal,
+++            "",
+++            "Return a structured code review: findings (severity), files of interest, residual risks.",
+++          ].join("\n")
++ 
++     const promptPath = path.join(os.tmpdir(), `cmspark-acp-${session.session_id}.md`)
++     try {
++@@ -271,7 +297,10 @@ export class AcpManager {
++       return { ok: false, error: session.error }
++     }
++ 
++-    const args = [...(server.args || [])]
+++    const args = resolveLaunchArgs(session.agent_id, server.args, {
+++      prompt,
+++      promptFile: promptPath,
+++    })
++ 
++     return await new Promise((resolve) => {
++       let stdout = ""
++@@ -371,6 +400,20 @@ export class AcpManager {
++           body,
++           maxChars: maxOut,
++         })
+++        if (session.mode === "propose_diff") {
+++          const diffText = extractDiffText(body)
+++          if (diffText) {
+++            const parsed = parseUnifiedDiff(diffText)
+++            session.pending_diffs = parsed.map((p) => ({
+++              relPath: p.relPath,
+++              isNew: p.isNew,
+++              isDelete: p.isDelete,
+++              newContent: p.newContent,
+++              hunk: p.hunk,
+++            }))
+++            session.diff_summary = summarizeDiffFiles(parsed)
+++          }
+++        }
++         session.state = "closed"
++         markAcpHandbackSeen(session.thread_id)
++         try {
++@@ -396,6 +439,77 @@ export class AcpManager {
++     })
++   }
++ 
+++  /**
+++   * Multi-turn: start a new session with prior handback context + user follow-up.
+++   */
+++  followup(opts: {
+++    parentSessionId: string
+++    goal: string
+++    mode?: "review_readonly" | "propose_diff"
+++  }): { ok: true; session: AcpSessionRecord } | { ok: false; error: string } {
+++    const parent = this.sessions.get(opts.parentSessionId)
+++    if (!parent) return { ok: false, error: "acp: parent session not found" }
+++    const prior = (parent.handback_text || "").slice(0, 12_000)
+++    const goal = [
+++      "Follow-up on previous coding handoff session.",
+++      prior ? `Previous output (untrusted):\n${prior}\n` : "",
+++      "User follow-up:",
+++      opts.goal,
+++    ].join("\n")
+++    return this.propose({
+++      threadId: parent.thread_id,
+++      agentId: parent.agent_id,
+++      goal,
+++      workspaceRoot: parent.workspace_root,
+++      mode: opts.mode || parent.mode,
+++      parentSessionId: parent.session_id,
+++    })
+++  }
+++
+++  /**
+++   * Apply pending_diffs from a propose_diff session (caller must enforce L2 HITL).
+++   */
+++  applyPendingDiffs(
+++    sessionId: string,
+++    opts: { paths?: string[]; allowDelete?: boolean } = {},
+++  ): {
+++    ok: boolean
+++    applied: string[]
+++    skipped: Array<{ path: string; reason: string }>
+++    error?: string
+++  } {
+++    const session = this.sessions.get(sessionId)
+++    if (!session) return { ok: false, applied: [], skipped: [], error: "unknown session" }
+++    if (session.mode !== "propose_diff") {
+++      return { ok: false, applied: [], skipped: [], error: "session is not propose_diff mode" }
+++    }
+++    let files = session.pending_diffs || []
+++    if (opts.paths?.length) {
+++      const want = new Set(opts.paths)
+++      files = files.filter((f) => want.has(f.relPath))
+++    }
+++    if (!files.length) {
+++      return { ok: false, applied: [], skipped: [], error: "no pending diffs" }
+++    }
+++    const r = applyParsedDiffs(
+++      session.workspace_root,
+++      files.map((f) => ({
+++        relPath: f.relPath,
+++        hunk: f.hunk,
+++        newContent: f.newContent,
+++        isNew: f.isNew,
+++        isDelete: f.isDelete,
+++      })),
+++      { allowDelete: opts.allowDelete === true },
+++    )
+++    logger.info("acp.apply_diff", {
+++      session_id: sessionId,
+++      applied: r.applied,
+++      skipped: r.skipped.length,
+++    })
+++    return r
+++  }
+++
++   cancel(sessionId: string): { ok: true } | { ok: false; error: string } {
++     const session = this.sessions.get(sessionId)
++     if (!session) return { ok: false, error: "acp: unknown session" }
++diff --git a/companion/src/acp/types.ts b/companion/src/acp/types.ts
++index e21fa30..99af175 100644
++--- a/companion/src/acp/types.ts
+++++ b/companion/src/acp/types.ts
++@@ -41,6 +41,18 @@ export type AcpSessionState =
++   | "handback"
++   | "closed"
++ 
+++/** Session run mode (runtime; not free shell). */
+++export type AcpSessionMode = "review_readonly" | "propose_diff"
+++
+++export interface AcpPendingDiff {
+++  relPath: string
+++  isNew: boolean
+++  isDelete: boolean
+++  /** Full new content if reconstructable */
+++  newContent: string | null
+++  hunk: string
+++}
+++
++ export interface AcpSessionRecord {
++   session_id: string
++   thread_id: string
++@@ -48,12 +60,17 @@ export interface AcpSessionRecord {
++   state: AcpSessionState
++   workspace_root: string
++   profile: AcpPolicyProfile
+++  /** Runtime mode for this session (propose_diff enables parse+apply path). */
+++  mode: AcpSessionMode
++   goal: string
++   created_at: string
++   partial: boolean
++   handback_text?: string
++   error?: string
++   pid?: number
+++  parent_session_id?: string
+++  pending_diffs?: AcpPendingDiff[]
+++  diff_summary?: string
++ }
++ 
++ export const DEFAULT_ACP_CONFIG: AcpConfig = {
++diff --git a/companion/src/bridge/companion-tools.ts b/companion/src/bridge/companion-tools.ts
++index e5f52b4..3839233 100644
++--- a/companion/src/bridge/companion-tools.ts
+++++ b/companion/src/bridge/companion-tools.ts
++@@ -38,6 +38,7 @@ export const COMPANION_TOOLS = [
++   "acp_collect_result",
++   "acp_cancel_session",
++   "acp_get_status",
+++  "acp_apply_diff",
++ ] as const
++ 
++ export type CompanionToolName = (typeof COMPANION_TOOLS)[number]
++diff --git a/companion/src/bridge/tool-definitions-catalog.json b/companion/src/bridge/tool-definitions-catalog.json
++index 1edab81..0bb2dbe 100644
++--- a/companion/src/bridge/tool-definitions-catalog.json
+++++ b/companion/src/bridge/tool-definitions-catalog.json
++@@ -1278,6 +1278,31 @@
++       }
++     }
++   },
+++  {
+++    "type": "function",
+++    "function": {
+++      "name": "acp_apply_diff",
+++      "description": "(L2 always) Apply pending propose_diff files from an ACP session under workspace containment. Never free shell. Prefer user UI acp.apply_diff.",
+++      "parameters": {
+++        "type": "object",
+++        "properties": {
+++          "session_id": {
+++            "type": "string"
+++          },
+++          "paths": {
+++            "type": "array",
+++            "items": {
+++              "type": "string"
+++            },
+++            "description": "Optional subset of rel paths"
+++          }
+++        },
+++        "required": [
+++          "session_id"
+++        ]
+++      }
+++    }
+++  },
++   {
++     "type": "function",
++     "function": {
++diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
++index 34e4ddd..8fa78ab 100644
++--- a/companion/src/message-router.ts
+++++ b/companion/src/message-router.ts
++@@ -1607,8 +1607,11 @@ export async function handleMessage(
++     // replaceAppsEntries and broadcast apps.updated (mcp.servers.updated parity).
++     case "acp.list":
++     case "acp.rediscover":
+++    case "acp.adopt_discovered":
++     case "acp.session.cancel":
++-    case "acp.ui_start": {
+++    case "acp.session.followup":
+++    case "acp.ui_start":
+++    case "acp.apply_diff": {
++       const { handleAcpWsMessage } = await import("./acp/handlers")
++       const acpRes = await handleAcpWsMessage(type, rest, {
++         requestConfirmation: session?.requestConfirmation,
++diff --git a/companion/src/orchestrator/constants.ts b/companion/src/orchestrator/constants.ts
++index c7e8592..999494b 100644
++--- a/companion/src/orchestrator/constants.ts
+++++ b/companion/src/orchestrator/constants.ts
++@@ -28,6 +28,7 @@ export const WORKER_HARD_DENY = new Set([
++   "acp_collect_result",
++   "acp_cancel_session",
++   "acp_get_status",
+++  "acp_apply_diff",
++   // Control-plane / orchestrator surface — never inherit onto workers (incl. 2nd spawn)
++   "spawn_worker",
++   "wait_workers",
++diff --git a/companion/src/security-policy.ts b/companion/src/security-policy.ts
++index 1c28709..148cc4d 100644
++--- a/companion/src/security-policy.ts
+++++ b/companion/src/security-policy.ts
++@@ -98,6 +98,8 @@ export class SecurityPolicy {
++         return `acp_propose|${String(params?.agent_id || params?.agent || "")}|${String(params?.goal || params?.prompt || "").slice(0, 500)}`
++       case "acp_start_session":
++         return `acp_start|${String(params?.session_id || "")}`
+++      case "acp_apply_diff":
+++        return `acp_apply|${String(params?.session_id || "")}|${Array.isArray(params?.paths) ? params.paths.join(",") : ""}`
++       // ADR-016: bind complete intent so token cannot be swapped for empty_complete flip
++       case "board_complete":
++         return `board_complete|empty=${params?.empty_complete === true ? "1" : "0"}|ids=${Array.isArray(params?.supporting_fact_ids) ? params.supporting_fact_ids.join(",") : ""}|reason=${String(params?.empty_complete_reason || params?.goal_summary || "")}`
++diff --git a/companion/src/tool/companion-dispatch.ts b/companion/src/tool/companion-dispatch.ts
++index 6d8b501..83c8e4a 100644
++--- a/companion/src/tool/companion-dispatch.ts
+++++ b/companion/src/tool/companion-dispatch.ts
++@@ -263,6 +263,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
++         agentId: String(params.agent_id || params.agent || ""),
++         goal: String(params.goal || params.prompt || ""),
++         workspaceRoot: thread?.workspace_root || params.workspace_root,
+++        mode: params.mode === "propose_diff" ? "propose_diff" : "review_readonly",
++       })
++       if (!r.ok) return { success: false, error: r.error }
++       return {
++@@ -350,11 +351,39 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
++           state: s.state,
++           agent_id: s.agent_id,
++           profile: s.profile,
+++          mode: s.mode,
++           partial: s.partial,
++           error: s.error || null,
+++          pending_diffs: (s.pending_diffs || []).map((d) => d.relPath),
++         },
++       }
++     }
+++    case "acp_apply_diff": {
+++      if (!params.security_token) {
+++        return {
+++          success: false,
+++          error: "acp_apply_diff requires L2 security_token (never auto-approved)",
+++        }
+++      }
+++      const applyTok = securityPolicy.validateTokenFor(
+++        String(params.security_token),
+++        "acp_apply_diff",
+++        params,
+++      )
+++      if (!applyTok) {
+++        return { success: false, error: "Invalid or expired security token for acp_apply_diff" }
+++      }
+++      const sid = String(params.session_id || "")
+++      if (!sid) return { success: false, error: "session_id required" }
+++      const { getAcpManager } = await import("../acp")
+++      const paths = Array.isArray(params.paths) ? params.paths.map(String) : undefined
+++      const r = getAcpManager().applyPendingDiffs(sid, {
+++        paths,
+++        allowDelete: params.allow_delete === true,
+++      })
+++      if (!r.ok && r.error) return { success: false, error: r.error, data: r }
+++      return { success: true, data: r }
+++    }
++     case "ask_user": {
++       // Binary HITL via L2 Confirm Center (approve = yes, deny = no). Free-text answers are P2.
++       if (!params.security_token) {
++diff --git a/companion/src/tool/l2-admission.ts b/companion/src/tool/l2-admission.ts
++index 1d45d1d..7e91697 100644
++--- a/companion/src/tool/l2-admission.ts
+++++ b/companion/src/tool/l2-admission.ts
++@@ -62,6 +62,7 @@ export const L2_GATE_TOOLS: readonly string[] = [
++   // ADR-025 ACP coding handoff — spawn/start always HITL
++   "acp_propose_session",
++   "acp_start_session",
+++  "acp_apply_diff",
++ ]
++ 
++ /** Three-flag full autonomy cruise (dangerous + enterprise + allow_all_schemes). */
++@@ -272,6 +273,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
++         (toolName === "acp_start_session"
++           ? `acp_start session_id=${finalParams.session_id || ""}`
++           : "") ||
+++        (toolName === "acp_apply_diff"
+++          ? `acp_apply session_id=${finalParams.session_id || ""} paths=${Array.isArray(finalParams.paths) ? finalParams.paths.join(",") : "all"}`
+++          : "") ||
++         "",
++     )
++     // skill_install: hard-deny multi-SKILL.md / outside source zone BEFORE L2 dialog
++@@ -782,7 +786,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
++     // ADR-025: ACP spawn is real HITL — never waived by god-mode / auto_approve /
++     // three-flag full autonomy cruise (product design: Never skip ACP).
++     const acpForceConfirm =
++-      toolName === "acp_propose_session" || toolName === "acp_start_session"
+++      toolName === "acp_propose_session" ||
+++      toolName === "acp_start_session" ||
+++      toolName === "acp_apply_diff"
++     const capabilityForceConfirm =
++       toolName === "shell_exec" ||
++       toolName === "netsec_port_scan" ||
++diff --git a/companion/src/ws/lifecycle.ts b/companion/src/ws/lifecycle.ts
++index 9927000..5ab83b2 100644
++--- a/companion/src/ws/lifecycle.ts
+++++ b/companion/src/ws/lifecycle.ts
++@@ -514,16 +514,15 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
++     ensureAcpBroadcast(broadcastToClients)
++     getAcpManager().setHandbackSink(({ session, handback }) => {
++       try {
+++        const { formatHandbackChatMessage } = require("../acp/handback-format") as typeof import("../acp/handback-format")
++         const tm = requireRt().getThreadManager()
++-        const display = session.agent_id
++-        const content = [
++-          `【编程接力 · ${display}】审查完成`,
++-          session.partial ? "（部分输出 / 超时或非零退出）" : "",
++-          "",
+++        const content = formatHandbackChatMessage({
+++          agentId: session.agent_id,
+++          mode: session.mode || "review_readonly",
+++          partial: session.partial,
++           handback,
++-        ]
++-          .filter(Boolean)
++-          .join("\n")
+++          diffSummary: session.diff_summary || null,
+++        })
++         const msg = tm.addMessage(session.thread_id, {
++           thread_id: session.thread_id,
++           role: "assistant",
++@@ -533,6 +532,14 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
++           type: "acp.handback.message",
++           thread_id: session.thread_id,
++           message: msg,
+++          session_id: session.session_id,
+++          pending_diffs: (session.pending_diffs || []).map((d) => ({
+++            path: d.relPath,
+++            isNew: d.isNew,
+++            isDelete: d.isDelete,
+++            applyable: d.newContent != null && !d.isDelete,
+++          })),
+++          mode: session.mode,
++         })
++       } catch (err: any) {
++         logger.warn("acp.handback_inject_failed", { error: err?.message || String(err) })
++diff --git a/companion/src/ws/validate.ts b/companion/src/ws/validate.ts
++index 56dd58e..60ceb6c 100644
++--- a/companion/src/ws/validate.ts
+++++ b/companion/src/ws/validate.ts
++@@ -177,12 +177,22 @@ export function validateWsMessage(msg: any): WsValidationResult {
++     },
++     "acp.list": () => ({ valid: true }),
++     "acp.rediscover": () => ({ valid: true }),
+++    "acp.adopt_discovered": () => ({ valid: true }),
++     "acp.session.cancel": (m) => {
++       if (typeof m.session_id !== "string" || !m.session_id) {
++         return { valid: false, error: "acp.session.cancel requires session_id" }
++       }
++       return { valid: true }
++     },
+++    "acp.session.followup": (m) => {
+++      if (typeof m.session_id !== "string" || !m.session_id) {
+++        return { valid: false, error: "acp.session.followup requires session_id" }
+++      }
+++      if (typeof m.goal !== "string" || !m.goal.trim()) {
+++        return { valid: false, error: "acp.session.followup requires goal" }
+++      }
+++      return { valid: true }
+++    },
++     "acp.ui_start": (m) => {
++       if (typeof m.thread_id !== "string" || !m.thread_id) {
++         return { valid: false, error: "acp.ui_start requires thread_id" }
++@@ -195,6 +205,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
++       }
++       return { valid: true }
++     },
+++    "acp.apply_diff": (m) => {
+++      if (typeof m.session_id !== "string" || !m.session_id) {
+++        return { valid: false, error: "acp.apply_diff requires session_id" }
+++      }
+++      return { valid: true }
+++    },
++     "shell.exec.abort": (m) => {
++       const hasTool =
++         typeof m.tool_call_id === "string" && m.tool_call_id.length > 0
++diff --git a/companion/tests/acp-diff-apply.test.ts b/companion/tests/acp-diff-apply.test.ts
++new file mode 100644
++index 0000000..f4aef9d
++--- /dev/null
+++++ b/companion/tests/acp-diff-apply.test.ts
++@@ -0,0 +1,92 @@
+++import { describe, it } from "node:test"
+++import assert from "node:assert/strict"
+++import * as fs from "fs"
+++import * as os from "os"
+++import * as path from "path"
+++import {
+++  extractDiffText,
+++  parseUnifiedDiff,
+++  applyParsedDiffs,
+++  summarizeDiffFiles,
+++} from "../src/acp/diff-apply"
+++import { formatHandbackChatMessage, stripUntrustedFrame } from "../src/acp/handback-format"
+++import { resolveLaunchArgs } from "../src/acp/launch-presets"
+++
+++describe("diff extract/parse/apply", () => {
+++  it("extracts fenced diff", () => {
+++    const t = extractDiffText("hello\n```diff\n--- a/x\n+++ b/x\n@@\n+hi\n```\n")
+++    assert.ok(t)
+++    assert.match(t!, /\+\+\+/)
+++  })
+++
+++  it("parses and applies new file under workspace", () => {
+++    const root = fs.mkdtempSync(path.join(os.tmpdir(), "acp-diff-"))
+++    const diff = [
+++      "diff --git a/hello.txt b/hello.txt",
+++      "--- /dev/null",
+++      "+++ b/hello.txt",
+++      "@@ -0,0 +1,2 @@",
+++      "+hello",
+++      "+world",
+++      "",
+++    ].join("\n")
+++    const files = parseUnifiedDiff(diff)
+++    assert.ok(files.length >= 1)
+++    const r = applyParsedDiffs(root, files)
+++    assert.equal(r.ok, true)
+++    assert.ok(r.applied.includes("hello.txt") || r.applied.some((p) => p.endsWith("hello.txt")))
+++    const body = fs.readFileSync(path.join(root, "hello.txt"), "utf8")
+++    assert.match(body, /hello/)
+++    fs.rmSync(root, { recursive: true, force: true })
+++  })
+++
+++  it("rejects path escape", () => {
+++    const root = fs.mkdtempSync(path.join(os.tmpdir(), "acp-diff-"))
+++    const files = [
+++      {
+++        relPath: "../evil.txt",
+++        hunk: "",
+++        newContent: "x",
+++        isNew: true,
+++        isDelete: false,
+++      },
+++    ]
+++    const r = applyParsedDiffs(root, files)
+++    assert.equal(r.applied.length, 0)
+++    assert.ok(r.skipped.some((s) => s.reason === "path_escape"))
+++    fs.rmSync(root, { recursive: true, force: true })
+++  })
+++
+++  it("summarizeDiffFiles non-empty", () => {
+++    const s = summarizeDiffFiles([
+++      { relPath: "a.ts", hunk: "", newContent: "1", isNew: true, isDelete: false },
+++    ])
+++    assert.match(s, /a\.ts/)
+++  })
+++})
+++
+++describe("handback format", () => {
+++  it("strips frame and formats chat", () => {
+++    const framed =
+++      "<<<UNTRUSTED_ACP_HANDBACK agent=x session=s profile=review_readonly partial=false>\n<source>x</source>\n<body>\nfinding one\n</body>\n<<<END_UNTRUSTED_ACP_HANDBACK>>>"
+++    assert.match(stripUntrustedFrame(framed), /finding one/)
+++    const chat = formatHandbackChatMessage({
+++      agentId: "claude",
+++      mode: "review_readonly",
+++      handback: framed,
+++    })
+++    assert.match(chat, /编程接力/)
+++    assert.match(chat, /finding one/)
+++  })
+++})
+++
+++describe("launch presets", () => {
+++  it("injects claude -p prompt arg", () => {
+++    const args = resolveLaunchArgs("claude", undefined, {
+++      prompt: "review me",
+++      promptFile: "/tmp/p.md",
+++    })
+++    assert.ok(args.includes("-p"))
+++    assert.ok(args.includes("review me"))
+++  })
+++})
++diff --git a/docs/adr/025-acp-coding-agent-client.md b/docs/adr/025-acp-coding-agent-client.md
++index 4388cbf..3d3e876 100644
++--- a/docs/adr/025-acp-coding-agent-client.md
+++++ b/docs/adr/025-acp-coding-agent-client.md
++@@ -51,6 +51,17 @@ Channel:      community Phase A/B readonly; apply/shell NO-GO v1
++ - Extension: `coding-handoff/*` · `CodingTaskPackageModal` · meta slash  
++ - Pack: `coding-handoff`  
++ 
++-### 6. 后续
+++### 6. 后续 / 修订（2026-08-13 S72）
++ 
++-Phase C propose-diff / Phase D apply 须 **单独 dual-review** 后升本 ADR 修订。
+++已在 `feat/coding-handoff` 落地增量（仍默认 `acp.enabled=false`）：
+++
+++| 项 | 状态 |
+++|----|------|
+++| 路径探测 + adopt 持久化 | ✅ |
+++| 启动 argv presets（claude -p 等） | ✅ |
+++| 多轮 follow-up（新 session + 上文） | ✅ |
+++| Live FocusBand + handback 注入 | ✅ |
+++| **propose_diff** + **gated apply**（工作区 containment、L2 永不 cruise 跳过） | ✅ |
+++| 完整 Zed IDE / free shell / 静默写盘 | ❌ 仍 NO-GO |
+++
+++Apply 路径：`acp.apply_diff` / tool `acp_apply_diff` — 仅应用会话内解析出的 pending_diffs，禁止路径逃逸。
+diff --git a/docs/audit/reviews/acp-coding-handoff-p1p3-pi-20260813-111256.md b/docs/audit/reviews/acp-coding-handoff-p1p3-pi-20260813-111256.md
+new file mode 100644
+index 0000000..d969876
+--- /dev/null
++++ b/docs/audit/reviews/acp-coding-handoff-p1p3-pi-20260813-111256.md
+@@ -0,0 +1,44 @@
++I've inspected the patch file against the live repo (working tree is clean at `03aca58`, patch is not stale — it corresponds to `4e82434..03aca58`), read the ADR-020 checklist, and traced every security-critical path in the actual source. I also executed the apply path directly to test a non-trivial case.
++
++## Verification results (security gates)
++
++| Check | Result |
++|---|---|
++| `acp_apply_diff` tool always HITL | ✅ `companion-dispatch.ts:361-378` requires `security_token` + `validateTokenFor`; token signature binds `session_id`+`paths` (`security-policy.ts:101-102`) |
++| `acp.apply_diff` WS always HITL | ✅ `handlers.ts:213-223` → `confirmOrDeny`; returns `false` if no confirm channel (`handlers.ts:35-41`), fail-closed |
++| Never waived by cruise/god-mode | ✅ `l2-admission.ts:790-826` — `forceConfirm = acpForceConfirm || ...`; `acp_apply_diff` in both `L2_GATE_TOOLS` (:65) and `acpForceConfirm` (:791) |
++| Path escape rejected | ✅ `diff-apply.ts:60-61` (abs/null-byte) + `:143-160` (`../`, `..`, realpath containment on parent). Final-component symlink escape is neutralized by `atomicWriteText` rename semantics (`io.ts:32-45`) |
++| No free shell | ✅ `spawn(server.command, args, {…})` with no `shell:true` (`manager.ts` ~320); `command` is realpath'd absolute path (`discover.ts`), args are fixed presets |
++| Follow-up requires confirm | ✅ `followup` → `propose` (offered) → `confirmOrDeny` → `start` (`handlers.ts:119-180`) |
++| Catalog lockstep | ✅ `acp_apply_diff` present in `companion-tools.ts:41`, `tool-definitions-catalog.json:1284`, `security-policy.ts:101`, `orchestrator/constants.ts:31` (WORKER_HARD_DENY), `l2-admission.ts:65`, `companion-dispatch.ts:361` |
++| originWs | ✅ WS path binds `{ originWs: ws }` (`lifecycle.ts:1203-1211`); apply reuses the existing origin-bound channel, no new confirm dialect |
++
++ADR-020 declaration is present (Surface / Compose / Autonomy / Trust stated); only `Channel:`/`L2-classes:` fields are omitted — minor, not blocking given the declaration exists.
++
++## Blocking issue
++
++**1. `propose_diff` apply truncates modified files (data loss).** `reconstructFromHunks` (`companion/src/acp/diff-apply.ts:83-117`) builds the new file body by concatenating only `+` and context lines from hunks — it has no notion of the file outside the hunk ranges. `applyParsedDiffs` then writes that fragment as the **entire** file for any non-delete file with non-null `newContent` (`diff-apply.ts:170-176`). The `isNew` flag is computed (`:63`) but never used to gate the write.
++
++I verified this empirically against the actual module:
++
++```
++applied: ["big.txt"]
++original lines: 101
++result lines: 6
++result content: "line47\nline48\nLINE49-CHANGED\nline50\nline51\n"
++```
++
++A realistic 101-line file with a 5-line hunk becomes a 6-line file after "应用 diff". This is the **normal case** for modified files (agents emit minimal hunks, not full rewrites), so the core P3 write feature will silently destroy file contents. The soft prompt instruction "Prefer complete file rewrites" (`manager.ts`) is not enforcement, and the handback summary shows `- M foo.ts` with no truncation warning (the `（需人工在 IDE 应用）` marker only appears when `newContent == null`).
++
++This is not covered by the new tests — `acp-diff-apply.test.ts` only exercises *new-file* apply and path-escape, never a modified-file (`M`) apply.
++
++**Required fix:** gate the write to files that are genuinely reconstructable (new file, or detected full-file rewrite e.g. hunk spanning `@@ -1,N +1,M` / `@@ -0,0`), and skip everything else with an explicit reason (e.g. `partial_hunk_unsupported`) instead of writing a truncated body — plus a regression test for a partial-hunk `M` file.
++
++## Non-blocking nits (for completeness)
++
++- `followup` from a `propose_diff` session downgrades to `review_readonly` because the UI doesn't pass `mode` and `handlers.ts` defaults it (`handlers.ts:126-128` → `manager.followup` `mode: opts.mode || parent.mode`), losing the parent's propose-diff capability.
++- `hasPendingDiff` is set from raw `pending_diffs.length` (`agentStore.tsx:951-954`), so the "应用 diff" button appears even when every file is `applyable:false`/delete — apply then no-ops.
++- `reconstructFromHunks` also mis-handles multi-hunk files (concatenates hunks, duplicating/overlapping context), reinforcing #1.
++- `resolveLaunchArgs` claude-splice runs even when `configuredArgs` already positioned the prompt, potentially duplicating the prompt argv (cosmetic; no shell risk).
++
++VERDICT: REJECT
+diff --git a/docs/audit/reviews/acp-coding-handoff-p1p3-verdict-20260813-111256.json b/docs/audit/reviews/acp-coding-handoff-p1p3-verdict-20260813-111256.json
+new file mode 100644
+index 0000000..68fb4ad
+--- /dev/null
++++ b/docs/audit/reviews/acp-coding-handoff-p1p3-verdict-20260813-111256.json
+@@ -0,0 +1,8 @@
++{
++  "batch": "acp-coding-handoff-p1p3",
++  "timestamp": "20260813-111256",
++  "claude": { "verdict": "UNKNOWN", "exit_code": 1, "path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-p1p3-claude-20260813-111256.md" },
++  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-p1p3-pi-20260813-111256.md" },
++  "both_approve": false,
++  "diff_path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-p1p3-diff-20260813-111256.patch"
++}
