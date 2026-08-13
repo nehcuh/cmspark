@@ -32,6 +32,8 @@ import {
 import { tokens } from "./ui/tokens"
 import { ui } from "./ui/flags"
 import { PanelBanner, panelBannerBtnStyles } from "./ui/PanelBanner"
+import { CodingTaskPackageModal } from "./components/CodingTaskPackageModal"
+import { codingHandoffCopy } from "./coding-handoff/copy"
 import {
   IconSend,
   IconStop,
@@ -841,6 +843,19 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     })
   }
 
+  const [codingHandoffOpen, setCodingHandoffOpen] = useState(false)
+  const [codingHandoffSeed, setCodingHandoffSeed] = useState<string | undefined>()
+
+  useEffect(() => {
+    const onOpen = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as { seedGoal?: string } | undefined
+      setCodingHandoffSeed(detail?.seedGoal)
+      setCodingHandoffOpen(true)
+    }
+    window.addEventListener("cmspark:open-coding-handoff", onOpen as EventListener)
+    return () => window.removeEventListener("cmspark:open-coding-handoff", onOpen as EventListener)
+  }, [])
+
   const handleSlashSelect = (skill: SkillMeta) => {
     const textarea = textareaRef.current
     if (!textarea) return
@@ -871,6 +886,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
           void chrome.runtime.lastError
         })
+        return
+      }
+      if (meta.metaKind === "coding_handoff") {
+        setComposeOpen(false)
+        setCodingHandoffSeed(undefined)
+        setCodingHandoffOpen(true)
         return
       }
       if (meta.metaKind === "panel" && meta.panelId) {
@@ -1554,6 +1575,27 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           anchorEl={textareaRef.current}
           onSelect={handleSlashSelect}
           onDismiss={() => setSlashVisible(false)}
+        />
+        <CodingTaskPackageModal
+          open={codingHandoffOpen}
+          onClose={() => setCodingHandoffOpen(false)}
+          workspaceRoot={
+            (activeThread as { workspace_root?: string | null } | undefined)?.workspace_root ??
+            null
+          }
+          messages={(state.messages || []) as Array<{ role?: string; content?: string }>}
+          pageUrl={(state as { lastTabUrl?: string }).lastTabUrl || null}
+          pageTitle={(state as { lastTabTitle?: string }).lastTabTitle || null}
+          seedGoal={codingHandoffSeed}
+          onRequestWorkspace={() => {
+            setCodingHandoffOpen(false)
+            openPanelForce("packs")
+          }}
+          onPasteBack={(note) => {
+            const prefix = `【${codingHandoffCopy.productName} handback】\n`
+            setText((t) => (t ? `${t}\n\n${prefix}${note}` : `${prefix}${note}`))
+            setCodingHandoffOpen(false)
+          }}
         />
       </div>
       <ComposeDrawer

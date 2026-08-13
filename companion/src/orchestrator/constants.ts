@@ -22,6 +22,12 @@ export const WORKER_HARD_DENY = new Set([
   "host_read",
   "host_app",
   "host_cli",
+  "acp_list_agents",
+  "acp_propose_session",
+  "acp_start_session",
+  "acp_collect_result",
+  "acp_cancel_session",
+  "acp_get_status",
   // Control-plane / orchestrator surface — never inherit onto workers (incl. 2nd spawn)
   "spawn_worker",
   "wait_workers",

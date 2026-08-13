@@ -703,6 +703,23 @@ const MessageRow = memo(function MessageRow({
               <button type="button" style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此条到 Obsidian" aria-label="导出到 Obsidian">
                 <IconDownload size={13} />
               </button>
+              <button
+                type="button"
+                style={styles.actionBtn}
+                title="派给终端助手（编程接力）"
+                aria-label="派给终端助手"
+                onClick={() => {
+                  window.dispatchEvent(
+                    new CustomEvent("cmspark:open-coding-handoff", {
+                      detail: {
+                        seedGoal: String(msg.content || "").slice(0, 800),
+                      },
+                    }),
+                  )
+                }}
+              >
+                <span style={{ fontSize: 11, fontWeight: 600 }}>{"</>"}</span>
+              </button>
             </div>
           </>
         )}

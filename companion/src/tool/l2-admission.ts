@@ -59,6 +59,9 @@ export const L2_GATE_TOOLS: readonly string[] = [
   "board_complete",
   // S41 multi-adv: durable skill-library write (content/path/zip) — L2 + forceConfirm
   "skill_install",
+  // ADR-025 ACP coding handoff — spawn/start always HITL
+  "acp_propose_session",
+  "acp_start_session",
 ]
 
 /** Three-flag full autonomy cruise (dangerous + enterprise + allow_all_schemes). */
@@ -726,6 +729,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       || appWhitelisted
     // Q5 (L-CLI-5): after host_cli output in this thread, force L2 for host_cli
     // and host_app until the next real user message.
+    // ADR-025: same idea after ACP handback for a wider high-blast tool set.
     try {
       const { isCliOutputTainted } = require("../apps/cli-q5") as typeof import("../apps/cli-q5")
       const q5Thread =
@@ -735,6 +739,23 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       if (isCliOutputTainted(q5Thread) && (toolName === "host_cli" || toolName === "host_app")) {
         skipConfirmation = false
         logger.info("security.cli_q5_force_l2", { tool_name: toolName, thread: q5Thread })
+      }
+      try {
+        const { isAcpHandbackTainted } = require("../acp/taint") as typeof import("../acp/taint")
+        const acpBlast =
+          toolName === "host_cli" ||
+          toolName === "host_app" ||
+          toolName === "shell_exec" ||
+          toolName === "evaluate" ||
+          toolName === "osascript_eval" ||
+          toolName === "acp_propose_session" ||
+          toolName === "acp_start_session"
+        if (isAcpHandbackTainted(q5Thread) && acpBlast) {
+          skipConfirmation = false
+          logger.info("security.acp_q5_force_l2", { tool_name: toolName, thread: q5Thread })
+        }
+      } catch {
+        /* acp module optional at boot */
       }
     } catch { /* ignore */ }
     // §6.2 CRITICAL_API_GATE: detectCriticalApis() is the never-auto-approved

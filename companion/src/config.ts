@@ -255,6 +255,15 @@ export interface CompanionConfig {
   mcp?: McpConfig
   apps?: AppsConfig
   /**
+   * ACP coding-agent client (ADR-025 / 编程接力 Phase B).
+   * Default enabled=false. See docs/adr/025-acp-coding-agent-client.md.
+   */
+  acp?: import("./acp/types").AcpConfig
+  /** Phase A 编程接力 UI prefs (auto suggest offer, etc.). */
+  coding_handoff?: {
+    auto_suggest?: boolean
+  }
+  /**
    * Coordinate computer-use (A10 default-deny). coordinateEnabled is the
    * GLOBAL kill-switch for host_computer: default false; enabling goes through
    * the biometric gate (computer/handlers.ts) — a hand-edited config.json is
@@ -434,6 +443,18 @@ const defaultConfig: CompanionConfig = {
     enabled: true,
     entries: {},
   },
+  acp: {
+    enabled: false,
+    servers: {},
+    policy: {
+      require_workspace: true,
+      force_confirm_session_start: true,
+      default_profile: "review_readonly",
+    },
+  },
+  coding_handoff: {
+    auto_suggest: true,
+  },
   computer: {
     coordinateEnabled: false,
     // WP5-I4 实验层默认形：开关默认关、许可证未拒绝、变体默认 hybrid。
@@ -576,6 +597,21 @@ function loadConfigFile(configPath: string): CompanionConfig {
     merged.mcp = {
       enabled: typeof diskEnabled === "boolean" ? diskEnabled : productDefaultMcp.enabled,
       servers: { ...serversObj },
+    }
+  }
+  // ACP config sanitize (ADR-025) — force review_readonly defaults on tamper
+  try {
+    const { sanitizeAcpConfig } = require("./acp/types") as typeof import("./acp/types")
+    merged.acp = sanitizeAcpConfig(merged.acp ?? parsed.acp)
+  } catch {
+    merged.acp = {
+      enabled: false,
+      servers: {},
+      policy: {
+        require_workspace: true,
+        force_confirm_session_start: true,
+        default_profile: "review_readonly",
+      },
     }
   }
   // P1 SEC-06: re-filter domain wildcards on load (hand-edited config.json bypass)

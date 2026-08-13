@@ -1,0 +1,8 @@
+{
+  "batch": "acp-coding-handoff-design",
+  "timestamp": "20260813-084345",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/acp-coding-handoff-design-claude-20260813-084345.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/acp-coding-handoff-design-pi-20260813-084345.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/acp-coding-handoff-design-diff-20260813-084345.patch"
+}

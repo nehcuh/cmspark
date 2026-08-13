@@ -302,6 +302,12 @@ export async function chatCreate(params: ChatCreateParams) {
     try {
       const { clearCliOutputTaint } = require("../apps/cli-q5") as typeof import("../apps/cli-q5")
       clearCliOutputTaint(threadId)
+      try {
+        const { clearAcpHandbackTaint } = require("../acp/taint") as typeof import("../acp/taint")
+        clearAcpHandbackTaint(threadId)
+      } catch {
+        /* optional */
+      }
     } catch { /* ignore */ }
     let userContent = message
     // G3.1: provisional list title immediately (before LLM / tools)
