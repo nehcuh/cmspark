@@ -15,6 +15,7 @@ import {
   cloneCommand,
 } from "../coding-handoff/repo-context"
 import { useAgentStore } from "../store/agentStore"
+import { MinimalConfirm } from "./MinimalConfirm"
 
 type AcpAgent = {
   id: string
@@ -60,6 +61,9 @@ export function CodingAgentPanel({
 }: Props) {
   const { state, dispatch } = useAgentStore()
   const session = state.codingSession
+  const pendingConfirm = state.pendingSecurityConfirmations.length > 0
+  // Companion errors also land on processingStatus for ACP
+  const externalStatus = state.processingStatus
 
   const dialogDefault = useMemo(
     () => summarizeDialogMessages(messages, 6),
@@ -72,6 +76,7 @@ export function CodingAgentPanel({
   const [status, setStatus] = useState("")
   const [input, setInput] = useState("")
   const [showCopyOnly, setShowCopyOnly] = useState(false)
+  const [starting, setStarting] = useState(false)
 
   const readyAgents = useMemo(
     () => acpAgents.filter((a) => a.enabled !== false && a.command),
@@ -129,10 +134,13 @@ export function CodingAgentPanel({
     })
   }, [threadId])
 
-  /** Fire acp.ui_start (Companion still L2-confirms). */
+  /** Fire acp.ui_start (Companion still L2-confirms — confirm UI is in this panel). */
   const sendUiStart = useCallback(() => {
-    if (!threadId || !agentId || !workspaceRoot) return
-    flash("请求确认启动…")
+    if (!threadId || !agentId || !workspaceRoot) {
+      setStarting(false)
+      return
+    }
+    flash("正在启动…请在下方确认条点「允许」")
     const page_context = formatPageContext({
       pageUrl,
       pageTitle,
@@ -152,8 +160,20 @@ export function CodingAgentPanel({
         page_title: pageTitle || undefined,
         repo_hint: repoHint ? `${repoHint.owner}/${repoHint.name}` : undefined,
       },
-      () => {
-        void chrome.runtime.lastError
+      (resp?: { ok?: boolean; error?: string }) => {
+        const err = chrome.runtime.lastError?.message
+        if (err) {
+          flash(`扩展转发失败: ${err}`, 6000)
+          setStarting(false)
+          return
+        }
+        if (resp && resp.ok === false) {
+          flash(resp.error || "Companion 未连接", 6000)
+          setStarting(false)
+          return
+        }
+        // L2 confirm + session events arrive over WS; keep starting until confirm or error
+        window.setTimeout(() => setStarting(false), 8000)
       },
     )
   }, [threadId, agentId, workspaceRoot, goal, mode, pageUrl, pageTitle, repoHint])
@@ -163,6 +183,7 @@ export function CodingAgentPanel({
    * If master switch still off, enable it inline then start — no detour to Settings.
    */
   const doStart = useCallback(() => {
+    if (starting) return
     if (!threadId) {
       flash("请先选择对话")
       return
@@ -185,6 +206,7 @@ export function CodingAgentPanel({
       return
     }
 
+    setStarting(true)
     const start = () => sendUiStart()
 
     if (acpEnabled) {
@@ -192,8 +214,8 @@ export function CodingAgentPanel({
       return
     }
 
-    // Inline first-run enable — product surface is this panel, not Settings checkbox
-    flash(codingHandoffCopy.acpDisabled)
+    // Inline first-run enable — must reach companion config.set (acp allow-listed)
+    flash("正在启用本机 Agent 会话…")
     dispatch({
       type: "SET_ACP_LIST",
       enabled: true,
@@ -201,13 +223,25 @@ export function CodingAgentPanel({
     })
     chrome.runtime.sendMessage(
       { type: "config.set", config: { acp: { enabled: true } } },
-      () => {
-        void chrome.runtime.lastError
-        // Companion processes config then ui_start in order on same WS
-        start()
+      (resp?: { ok?: boolean; error?: string }) => {
+        const err = chrome.runtime.lastError?.message
+        if (err) {
+          flash(`启用失败: ${err}`, 6000)
+          setStarting(false)
+          return
+        }
+        if (resp && resp.ok === false) {
+          flash(resp.error || "启用失败：Companion 未连接", 6000)
+          setStarting(false)
+          return
+        }
+        // Give companion a beat to persist + process before ui_start (same WS queue is ordered,
+        // but SW callback only means "sent", not "applied").
+        window.setTimeout(start, 120)
       },
     )
   }, [
+    starting,
     threadId,
     workspaceRoot,
     acpEnabled,
@@ -289,6 +323,14 @@ export function CodingAgentPanel({
             ×
           </button>
         </div>
+
+        {/* L2 confirm must live inside this overlay — FocusBand is covered by the panel */}
+        {pendingConfirm ? (
+          <div style={styles.confirmHost} data-acp-confirm>
+            <div style={styles.confirmHint}>启动本机 Agent 需要确认</div>
+            <MinimalConfirm />
+          </div>
+        ) : null}
 
         {/* Context strip */}
         <div style={styles.contextBar}>
@@ -398,13 +440,21 @@ export function CodingAgentPanel({
                   type="button"
                   style={styles.primary}
                   onClick={doStart}
-                  disabled={!goal.trim() || !agentId || !cloudDisclosure || !workspaceRoot}
+                  disabled={
+                    starting ||
+                    !goal.trim() ||
+                    !agentId ||
+                    !cloudDisclosure ||
+                    !workspaceRoot
+                  }
                 >
-                  {!acpEnabled
-                    ? codingHandoffCopy.ctaEnableAndStart
-                    : mode === "propose_diff"
-                      ? codingHandoffCopy.ctaStartDraft
-                      : codingHandoffCopy.ctaStartReview}
+                  {starting
+                    ? "启动中…"
+                    : !acpEnabled
+                      ? codingHandoffCopy.ctaEnableAndStart
+                      : mode === "propose_diff"
+                        ? codingHandoffCopy.ctaStartDraft
+                        : codingHandoffCopy.ctaStartReview}
                 </button>
                 {!acpEnabled ? (
                   <p style={styles.footnote}>{codingHandoffCopy.discoveredNeedEnable}</p>
@@ -528,6 +578,9 @@ export function CodingAgentPanel({
         )}
 
         {status ? <div style={styles.status}>{status}</div> : null}
+        {!status && externalStatus ? (
+          <div style={styles.status}>{externalStatus}</div>
+        ) : null}
       </div>
     </div>
   )
@@ -574,6 +627,19 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 0,
     padding: 10,
     gap: 8,
+  },
+  confirmHost: {
+    border: `1px solid ${tokens.border || "#fecaca"}`,
+    borderRadius: 8,
+    padding: 8,
+    background: tokens.dangerSurface || "#fef2f2",
+    flexShrink: 0,
+  },
+  confirmHint: {
+    fontSize: 11,
+    fontWeight: 600,
+    color: tokens.text || "#7f1d1d",
+    marginBottom: 6,
   },
   header: {
     display: "flex",

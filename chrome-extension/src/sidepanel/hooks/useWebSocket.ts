@@ -1637,6 +1637,18 @@ export function useWebSocket() {
             })
             break
           }
+          // ACP / coding agent panel — surface in processing status (panel reads status)
+          if (
+            typeof msg.error === "string" &&
+            (/^acp:|acp\.|编程助手|cloud_disclosure|feature disabled/i.test(msg.error) ||
+              msg.family === "acp")
+          ) {
+            dispatch({
+              type: "SET_PROCESSING_STATUS",
+              status: msg.error,
+            })
+            break
+          }
           // App tab (WP4, routing hardened in WP6a): apps.* failures
           // (biometric cancel, policy cap, add-flow validation, …) render in
           // the panel's error area instead of the chat stream — the user is

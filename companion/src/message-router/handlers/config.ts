@@ -226,6 +226,41 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
               : (cur.max_per_day ?? 20),
         }
       }
+      // ACP / coding handoff — previously dropped by this allow-list (silent no-op).
+      // UI "启用 ACP" / in-panel first-start depend on these keys surviving config.set.
+      if (cfg.acp && typeof cfg.acp === "object" && !Array.isArray(cfg.acp)) {
+        const current = getConfig()
+        const cur = current.acp || { enabled: false, servers: {}, policy: {} }
+        const src = cfg.acp as Record<string, unknown>
+        const next: Record<string, unknown> = {
+          ...cur,
+          // Only flip enabled when explicitly boolean; preserve servers/policy via deepMerge
+          ...(typeof src.enabled === "boolean" ? { enabled: src.enabled } : {}),
+        }
+        // Optional partial servers map (adopt path may set full servers via acp.adopt_discovered)
+        if (src.servers && typeof src.servers === "object" && !Array.isArray(src.servers)) {
+          next.servers = {
+            ...((cur as { servers?: object }).servers || {}),
+            ...(src.servers as object),
+          }
+        }
+        if (src.policy && typeof src.policy === "object" && !Array.isArray(src.policy)) {
+          next.policy = {
+            ...((cur as { policy?: object }).policy || {}),
+            ...(src.policy as object),
+          }
+        }
+        normalized.acp = next
+      }
+      if (cfg.coding_handoff && typeof cfg.coding_handoff === "object" && !Array.isArray(cfg.coding_handoff)) {
+        const current = getConfig()
+        const cur = current.coding_handoff || { auto_suggest: true }
+        const src = cfg.coding_handoff as Record<string, unknown>
+        normalized.coding_handoff = {
+          ...cur,
+          ...(typeof src.auto_suggest === "boolean" ? { auto_suggest: src.auto_suggest } : {}),
+        }
+      }
       const updated = saveConfig(normalized)
       if (armingFlags.length > 0) {
         logger.warn("security.flag_armed", {
