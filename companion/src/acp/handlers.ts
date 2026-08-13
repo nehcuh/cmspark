@@ -119,6 +119,14 @@ export async function handleAcpWsMessage(
   }
 
   if (type === "acp.ui_start" || type === "acp.session.followup") {
+    // Workers never start ACP — check before enabled so isolation holds even when feature off
+    // and tests need not mutate global config.json (CI DATA_DIR).
+    if (type === "acp.ui_start") {
+      const tid = String(msg.thread_id || ctx.threadId || "")
+      if (tid && ctx.getAgentRole?.(tid) === "worker") {
+        return { type: "error", error: "acp: worker threads cannot start ACP sessions" }
+      }
+    }
     const cfg = getConfig()
     if (!cfg.acp?.enabled) {
       return { type: "error", error: "acp: feature disabled — enable in 设置 → 编程助手" }
@@ -150,9 +158,6 @@ export async function handleAcpWsMessage(
     } else {
       const threadId = String(msg.thread_id || ctx.threadId || "")
       if (!threadId) return { type: "error", error: "thread_id required" }
-      if (ctx.getAgentRole?.(threadId) === "worker") {
-        return { type: "error", error: "acp: worker threads cannot start ACP sessions" }
-      }
       const agentId = String(msg.agent_id || "")
       const goal = String(msg.goal || "").trim()
       if (!agentId) return { type: "error", error: "agent_id required" }

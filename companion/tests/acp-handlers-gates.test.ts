@@ -49,35 +49,20 @@ describe("acp WS gates", () => {
   })
 
   it("ui_start refuses worker threads", async () => {
-    const { getConfig, saveConfig } = await import("../src/config")
-    const { DEFAULT_ACP_CONFIG } = await import("../src/acp/types")
-    const prev = getConfig().acp
-    try {
-      saveConfig({
-        acp: {
-          ...DEFAULT_ACP_CONFIG,
-          ...(prev || {}),
-          enabled: true,
-          servers: prev?.servers || {},
-          policy: prev?.policy || DEFAULT_ACP_CONFIG.policy,
-        },
-      })
-      const r = await handleAcpWsMessage(
-        "acp.ui_start",
-        {
-          thread_id: "worker-1",
-          agent_id: "claude",
-          goal: "review",
-        },
-        {
-          getAgentRole: () => "worker",
-          requestConfirmation: async () => ({ approved: true } as any),
-        },
-      )
-      assert.equal(r.type, "error")
-      assert.match(String(r.error), /worker/i)
-    } finally {
-      saveConfig({ acp: prev })
-    }
+    // Worker check is before enabled gate — no saveConfig / home DATA_DIR needed
+    const r = await handleAcpWsMessage(
+      "acp.ui_start",
+      {
+        thread_id: "worker-1",
+        agent_id: "claude",
+        goal: "review",
+      },
+      {
+        getAgentRole: () => "worker",
+        requestConfirmation: async () => ({ approved: true } as any),
+      },
+    )
+    assert.equal(r.type, "error")
+    assert.match(String(r.error), /worker/i)
   })
 })
