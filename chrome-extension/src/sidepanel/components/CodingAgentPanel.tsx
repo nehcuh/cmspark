@@ -129,32 +129,9 @@ export function CodingAgentPanel({
     })
   }, [threadId])
 
-  const doStart = useCallback(() => {
-    if (!threadId) {
-      flash("请先选择对话")
-      return
-    }
-    if (!workspaceRoot) {
-      flash(codingHandoffCopy.workspaceMissingBody)
-      pickWorkspace()
-      return
-    }
-    if (!acpEnabled) {
-      flash(codingHandoffCopy.acpDisabled)
-      return
-    }
-    if (!agentId) {
-      flash(codingHandoffCopy.agentNotFoundBody)
-      return
-    }
-    if (!cloudDisclosure) {
-      flash(codingHandoffCopy.disclosureBlocked)
-      return
-    }
-    if (!goal.trim()) {
-      flash("请填写任务目标")
-      return
-    }
+  /** Fire acp.ui_start (Companion still L2-confirms). */
+  const sendUiStart = useCallback(() => {
+    if (!threadId || !agentId || !workspaceRoot) return
     flash("请求确认启动…")
     const page_context = formatPageContext({
       pageUrl,
@@ -179,6 +156,57 @@ export function CodingAgentPanel({
         void chrome.runtime.lastError
       },
     )
+  }, [threadId, agentId, workspaceRoot, goal, mode, pageUrl, pageTitle, repoHint])
+
+  /**
+   * Primary path: run local agent inside this panel (Zed-like shell).
+   * If master switch still off, enable it inline then start — no detour to Settings.
+   */
+  const doStart = useCallback(() => {
+    if (!threadId) {
+      flash("请先选择对话")
+      return
+    }
+    if (!workspaceRoot) {
+      flash(codingHandoffCopy.workspaceMissingBody)
+      pickWorkspace()
+      return
+    }
+    if (!agentId) {
+      flash(codingHandoffCopy.agentNotFoundBody)
+      return
+    }
+    if (!cloudDisclosure) {
+      flash(codingHandoffCopy.disclosureBlocked)
+      return
+    }
+    if (!goal.trim()) {
+      flash("请填写任务目标")
+      return
+    }
+
+    const start = () => sendUiStart()
+
+    if (acpEnabled) {
+      start()
+      return
+    }
+
+    // Inline first-run enable — product surface is this panel, not Settings checkbox
+    flash(codingHandoffCopy.acpDisabled)
+    dispatch({
+      type: "SET_ACP_LIST",
+      enabled: true,
+      agents: state.acpAgents.length ? state.acpAgents : (acpAgents as any),
+    })
+    chrome.runtime.sendMessage(
+      { type: "config.set", config: { acp: { enabled: true } } },
+      () => {
+        void chrome.runtime.lastError
+        // Companion processes config then ui_start in order on same WS
+        start()
+      },
+    )
   }, [
     threadId,
     workspaceRoot,
@@ -186,11 +214,11 @@ export function CodingAgentPanel({
     agentId,
     cloudDisclosure,
     goal,
-    mode,
-    pageUrl,
-    pageTitle,
-    repoHint,
     pickWorkspace,
+    sendUiStart,
+    dispatch,
+    state.acpAgents,
+    acpAgents,
   ])
 
   const doCopyPackage = useCallback(async () => {
@@ -305,25 +333,14 @@ export function CodingAgentPanel({
           ) : null}
         </div>
 
-        {/* Setup (when no live session) */}
+        {/* Setup (when no live session) — primary path is in-panel start */}
         {!live ? (
           <div style={styles.setup}>
-            {!acpEnabled ? (
-              <div style={styles.banner}>
-                {codingHandoffCopy.acpDisabled}
-                <div style={styles.bannerHint}>
-                  {readyAgents.length > 0
-                    ? codingHandoffCopy.discoveredNeedEnable
-                    : "设置 → 编程助手 → 启用 ACP。未启用时仍可复制任务包到终端。"}
-                </div>
-                {readyAgents.length > 0 ? (
-                  <div style={styles.bannerHint}>
-                    {codingHandoffCopy.discoveredTitle}：
-                    {readyAgents.map((a) => a.display_name).join(" · ")}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+            {readyAgents.length > 0 ? (
+              <p style={styles.footnote}>{codingHandoffCopy.firstRunNote}</p>
+            ) : (
+              <div style={styles.banner}>{codingHandoffCopy.agentNotFoundBody}</div>
+            )}
 
             <label style={styles.field}>
               <span style={styles.fieldLabel}>任务</span>
@@ -336,7 +353,7 @@ export function CodingAgentPanel({
               />
             </label>
 
-            {acpEnabled && readyAgents.length > 0 ? (
+            {readyAgents.length > 0 ? (
               <>
                 <label style={styles.field}>
                   <span style={styles.fieldLabel}>本机 Agent</span>
@@ -348,7 +365,7 @@ export function CodingAgentPanel({
                     {readyAgents.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.display_name}
-                        {a.source === "discovered" ? "（已检测）" : ""}
+                        {a.source === "discovered" ? "（已检测）" : "（已配置）"}
                       </option>
                     ))}
                   </select>
@@ -383,30 +400,34 @@ export function CodingAgentPanel({
                   onClick={doStart}
                   disabled={!goal.trim() || !agentId || !cloudDisclosure || !workspaceRoot}
                 >
-                  {mode === "propose_diff"
-                    ? codingHandoffCopy.ctaStartDraft
-                    : codingHandoffCopy.ctaStartReview}
+                  {!acpEnabled
+                    ? codingHandoffCopy.ctaEnableAndStart
+                    : mode === "propose_diff"
+                      ? codingHandoffCopy.ctaStartDraft
+                      : codingHandoffCopy.ctaStartReview}
                 </button>
+                {!acpEnabled ? (
+                  <p style={styles.footnote}>{codingHandoffCopy.discoveredNeedEnable}</p>
+                ) : null}
               </>
-            ) : acpEnabled ? (
-              <div style={styles.banner}>{codingHandoffCopy.agentNotFoundBody}</div>
             ) : null}
 
-            <button type="button" style={styles.secondary} onClick={() => void doCopyPackage()}>
-              {codingHandoffCopy.ctaCopy}
-            </button>
             <button
               type="button"
               style={styles.linkBtn}
               onClick={() => setShowCopyOnly((v) => !v)}
             >
-              {showCopyOnly ? "收起说明" : "为何是「壳」不是侧栏 IDE？"}
+              {showCopyOnly ? "收起备选" : codingHandoffCopy.ctaCopy}
             </button>
             {showCopyOnly ? (
-              <p style={styles.footnote}>
-                底层能力是本机编程 Agent（配置与模型在本机）。本面板负责输入、时间线、确认与停
-                止——类似 Zed 的 Agent Panel，不是把 Cursor 塞进 320px。
-              </p>
+              <>
+                <p style={styles.footnote}>
+                  没有本机 Agent、或只想粘贴到外部终端时，可复制任务包。主路径仍是上方「在本面板启动」。
+                </p>
+                <button type="button" style={styles.secondary} onClick={() => void doCopyPackage()}>
+                  复制任务包 Markdown
+                </button>
+              </>
             ) : null}
           </div>
         ) : null}

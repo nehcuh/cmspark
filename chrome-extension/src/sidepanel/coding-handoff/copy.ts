@@ -2,17 +2,17 @@
 // Components must import from here; no ad-hoc Chinese strings in UI chrome.
 
 export const codingHandoffCopy = {
-  productName: "编程接力",
+  productName: "编程 Agent",
   productBlurb:
-    "把当前页与对话证据打包，交给本机终端编程助手（Claude Code / Gemini CLI 等）。写码在外部完成；浏览器仍归 CMspark。",
+    "在侧栏直接运行本机编程 Agent（Claude Code / Pi 等）：输入、时间线、确认都在这里，不必切终端。",
   outboundContrast:
-    "对照：若要让本机编程 Agent 使用已登录浏览器 → 设置中的 Outbound MCP，不是编程接力。",
+    "对照：若要让本机编程 Agent 使用已登录浏览器 → 设置中的 Outbound MCP，不是本面板。",
 
   // CTAs
-  ctaCopy: "复制编程任务包",
+  ctaCopy: "改为复制任务包到终端（备选）",
   ctaOpenTerminal: "复制任务包",
-  ctaHandoff: "派给终端助手",
-  ctaToCoding: "交给编程助手",
+  ctaHandoff: "打开编程 Agent",
+  ctaToCoding: "在侧栏运行编程 Agent",
   ctaContinueSidebar: "继续在侧栏",
   ctaBindWorkspace: "选择工作区",
   ctaCancel: "取消",
@@ -71,11 +71,12 @@ export const codingHandoffCopy = {
   disclosureRequired: "请先确认：代码/页面摘要可能发送到该 Agent 的云模型",
   ctaFollowup: "追问",
   ctaApplyDiff: "应用 diff",
-  ctaStartReview: "启动 · 审查",
-  ctaStartDraft: "启动 · 起草",
+  ctaStartReview: "在本面板启动 · 审查",
+  ctaStartDraft: "在本面板启动 · 起草",
+  ctaEnableAndStart: "启用并在本面板启动",
   rediscover: "重新检测本机编程助手",
   adoptConfig: "将检测结果写入 config（持久化）",
-  modeReviewOption: "审查",
+  modeReviewOption: "审查（只读意图）",
   modeDraftOption: "起草修改",
   /** Live chip badge: 审查 / 起草 */
   modeBadgeReview: "审查",
@@ -88,8 +89,10 @@ export const codingHandoffCopy = {
   discoveredTitle: "本机已检测到",
   discoveredEmpty:
     "未在 PATH / 常见安装路径找到 claude · gemini · codex · pi。安装后点「重新检测」，或把绝对路径写入 config.acp.servers。",
-  discoveredNeedEnable: "已检测到本机助手；请先勾选上方「启用 ACP 会话」再启动。",
-  rediscoverHint: "检测与「启用 ACP」无关：未启用时仍会列出本机已安装助手。",
+  discoveredNeedEnable:
+    "首次启动会自动开启本机 Agent 会话能力（仍会弹确认）。之后输入与输出都在本面板。",
+  rediscoverHint: "检测与总开关无关：未启用时仍会列出本机已安装助手。",
+  firstRunNote: "点下方启动即可在侧栏运行本机 Agent；复制任务包只是没有本机 Agent 时的备选。",
 
   // Errors
   agentNotFound: "找不到编程助手",
@@ -101,7 +104,7 @@ export const codingHandoffCopy = {
   timeout: "等待超时",
   spawnFailed: "无法启动",
   sessionBusy: "已有编程会话在跑",
-  acpDisabled: "ACP 会话未启用（设置 → 编程助手）",
+  acpDisabled: "正在启用本机 Agent 会话…",
 } as const
 
 export type CodingHandoffCopyKey = keyof typeof codingHandoffCopy
