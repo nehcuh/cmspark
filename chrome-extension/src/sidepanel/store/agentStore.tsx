@@ -949,10 +949,15 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           partial: e.partial ?? state.codingSession?.partial,
           updatedAt: Date.now(),
           mode: (e as any).mode ?? state.codingSession?.mode,
-          hasPendingDiff:
-            Array.isArray((e as any).pending_diffs) && (e as any).pending_diffs.length > 0
-              ? true
-              : state.codingSession?.hasPendingDiff,
+          hasPendingDiff: (() => {
+            const pd = (e as any).pending_diffs
+            if (Array.isArray(pd)) {
+              if (pd.length === 0) return false
+              // require explicit applyable:true when field present
+              return pd.some((d: any) => d && d.applyable === true)
+            }
+            return state.codingSession?.hasPendingDiff
+          })(),
         },
       }
     }

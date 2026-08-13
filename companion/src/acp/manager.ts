@@ -78,6 +78,11 @@ export class AcpManager {
     if (!force && now - last < 800) return
     this.lastProgressAt.set(session.session_id, now)
     const display = this.agentDisplayName(session.agent_id)
+    // Cap live WS payload: full handback only via acp.handback.message inject
+    const handbackPreview =
+      session.state === "closed" && session.handback_text
+        ? session.handback_text.slice(0, 2000)
+        : undefined
     this.emit({
       type: "acp.session.event",
       session_id: session.session_id,
@@ -85,12 +90,12 @@ export class AcpManager {
       agent_id: session.agent_id,
       state: session.state,
       progress_tail: tail.slice(-400),
-      goal: session.goal,
+      goal: session.goal?.slice(0, 500),
       workspace_root: session.workspace_root,
       display_name: display,
       partial: session.partial,
       error: session.error,
-      handback: session.handback_text,
+      handback: handbackPreview,
     })
   }
 
@@ -127,7 +132,7 @@ export class AcpManager {
     }
   }
 
-  listAgents(): Array<{
+  listAgents(opts: { redactPaths?: boolean } = {}): Array<{
     id: string
     display_name: string
     enabled: boolean
@@ -135,6 +140,17 @@ export class AcpManager {
     command: string
     source?: "config" | "discovered"
   }> {
+    const redact = opts.redactPaths !== false
+    const redactCmd = (cmd: string) => {
+      if (!redact) return cmd
+      // UI only needs basename; full path stays server-side for spawn
+      try {
+        const base = cmd.split(/[/\\]/).filter(Boolean).pop() || cmd
+        return base
+      } catch {
+        return "(set)"
+      }
+    }
     const cfg = getConfig()
     const acp = cfg.acp
     if (!acp?.enabled) return []
@@ -147,28 +163,30 @@ export class AcpManager {
       source?: "config" | "discovered"
     }> = []
     const seen = new Set<string>()
+    const seenCmd = new Set<string>()
     for (const [id, s] of Object.entries(acp.servers || {})) {
       if (!s.command) continue
       seen.add(id)
+      seenCmd.add(s.command)
       out.push({
         id,
         display_name: s.display_name,
         enabled: s.enabled && !!s.command,
         profile: s.policy.profile,
-        command: s.command,
+        command: redactCmd(s.command),
         source: "config",
       })
     }
     for (const d of discoverCodingAgents()) {
       if (seen.has(d.id)) continue
-      // skip if same command already registered under another id
-      if (out.some((a) => a.command === d.command)) continue
+      if (seenCmd.has(d.command)) continue
+      seenCmd.add(d.command)
       out.push({
         id: d.id,
         display_name: d.display_name,
         enabled: true,
         profile: "review_readonly",
-        command: d.command,
+        command: redactCmd(d.command),
         source: "discovered",
       })
     }

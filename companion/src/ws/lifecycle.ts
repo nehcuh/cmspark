@@ -537,7 +537,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
             path: d.relPath,
             isNew: d.isNew,
             isDelete: d.isDelete,
-            applyable: d.newContent != null && !d.isDelete,
+            // applyable: new files with body, or existing files with parseable hunks
+            applyable:
+              !d.isDelete &&
+              ((d.isNew && d.newContent != null) ||
+                (Array.isArray(d.hunks) && d.hunks.length > 0) ||
+                d.newContent != null),
           })),
           mode: session.mode,
         })
