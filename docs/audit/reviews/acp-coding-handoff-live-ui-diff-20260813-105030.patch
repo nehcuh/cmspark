@@ -1,0 +1,1175 @@
+# Dual external review context
+batch: acp-coding-handoff-live-ui
+base: HEAD~1
+time: 20260813-105030
+
+4cc1f8b
+
+?? docs/audit/reviews/acp-coding-handoff-live-ui-claude-20260813-104018.md
+?? docs/audit/reviews/acp-coding-handoff-live-ui-diff-20260813-104018.patch
+?? docs/audit/reviews/acp-coding-handoff-live-ui-diff-20260813-105030.patch
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/index.ts           |   4 +
+ chrome-extension/src/sidepanel/App.tsx             |   3 +
+ .../src/sidepanel/components/CodingSessionChip.tsx |  93 +++++++++++++++
+ .../components/CodingTaskPackageModal.tsx          | 101 ++++++++++++++++
+ .../src/sidepanel/components/FocusBand.tsx         |  12 ++
+ .../sidepanel/components/focus-band-priority.ts    |  14 +++
+ .../src/sidepanel/hooks/useWebSocket.ts            |  19 +++
+ .../src/sidepanel/store/agentStore.tsx             |  82 +++++++++++++
+ .../tests/focus-band-coding-session.test.ts        |  35 ++++++
+ companion/src/acp/handlers.ts                      | 130 +++++++++++++++++++++
+ companion/src/acp/index.ts                         |   8 +-
+ companion/src/acp/manager.ts                       | 104 +++++++++++++----
+ companion/src/message-router.ts                    |  17 +++
+ companion/src/ws/lifecycle.ts                      |   8 ++
+ companion/src/ws/validate.ts                       |  19 +++
+ companion/tests/acp-live-events.test.ts            |  41 +++++++
+ .../acp-coding-handoff-live-ui-20260813.md         |  44 +++++++
+ 17 files changed, 708 insertions(+), 26 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 29b7bcb..0e42380 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -1203,6 +1203,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+       case "apps.remove":
+       case "apps.set_policy":
+       case "apps.set_enabled":
++      // 编程接力 ACP (Composition live session)
++      case "acp.list":
++      case "acp.session.cancel":
++      case "acp.ui_start":
+       // 坐标 computer-use(WP4):每应用坐标开关(AppsPanel 卡片菜单;开启由
+       // companion 生物识别门承担)、急停按钮(任务条)、全局态只读行、证据目录打开。
+       case "apps.set_coordinate_allowed":
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index 6f39835..d0c7e65 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -1587,6 +1587,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+           pageUrl={(state as { lastTabUrl?: string }).lastTabUrl || null}
+           pageTitle={(state as { lastTabTitle?: string }).lastTabTitle || null}
+           seedGoal={codingHandoffSeed}
++          threadId={state.activeThreadId}
++          acpEnabled={state.acpEnabled}
++          acpAgents={state.acpAgents}
+           onRequestWorkspace={() => {
+             setCodingHandoffOpen(false)
+             openPanelForce("packs")
+diff --git a/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx b/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
+new file mode 100644
+index 0000000..d031fea
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/components/CodingSessionChip.tsx
+@@ -0,0 +1,93 @@
++// FocusBand chip for live ACP coding handoff — stop ≠ 急停 (CU).
++
++import type { CSSProperties } from "react"
++import { tokens } from "../ui/tokens"
++import { codingHandoffCopy } from "../coding-handoff/copy"
++import type { CodingSessionState } from "../store/agentStore"
++
++export function CodingSessionChip({ session }: { session: CodingSessionState }) {
++  const live = session.state === "running" || session.state === "offered"
++  const label = session.displayName || session.agentId || "Agent"
++  const tail = (session.progressTail || "").replace(/\s+/g, " ").trim().slice(0, 80)
++
++  const onStop = () => {
++    chrome.runtime.sendMessage(
++      { type: "acp.session.cancel", session_id: session.sessionId },
++      () => {
++        void chrome.runtime.lastError
++      },
++    )
++  }
++
++  return (
++    <div style={styles.row} role="status" aria-label="编程助手会话">
++      <div style={styles.meta}>
++        <span style={styles.dot} data-live={live ? "1" : "0"} />
++        <span style={styles.title}>
++          {codingHandoffCopy.offerTitle} · {label}
++          {live ? " · 运行中" : session.state === "closed" ? " · 完成" : ` · ${session.state}`}
++        </span>
++      </div>
++      {tail ? <div style={styles.tail}>{tail}</div> : null}
++      {session.error ? <div style={styles.err}>{session.error}</div> : null}
++      {live ? (
++        <button type="button" style={styles.stop} onClick={onStop}>
++          {codingHandoffCopy.ctaStopSession}
++        </button>
++      ) : null}
++    </div>
++  )
++}
++
++const styles: Record<string, CSSProperties> = {
++  row: {
++    display: "flex",
++    flexDirection: "column",
++    gap: 4,
++    width: "100%",
++    minWidth: 0,
++  },
++  meta: {
++    display: "flex",
++    alignItems: "center",
++    gap: 6,
++    fontSize: 12,
++    fontWeight: 500,
++    color: tokens.text || "#111",
++  },
++  dot: {
++    width: 8,
++    height: 8,
++    borderRadius: 999,
++    background: tokens.success || "#16a34a",
++    flexShrink: 0,
++  },
++  title: {
++    overflow: "hidden",
++    textOverflow: "ellipsis",
++    whiteSpace: "nowrap",
++  },
++  tail: {
++    fontSize: 11,
++    color: tokens.textSecondary || "#666",
++    overflow: "hidden",
++    textOverflow: "ellipsis",
++    whiteSpace: "nowrap",
++    fontFamily: tokens.fontMono || "ui-monospace, monospace",
++  },
++  err: {
++    fontSize: 11,
++    color: tokens.danger || "#b91c1c",
++  },
++  stop: {
++    alignSelf: "flex-start",
++    marginTop: 2,
++    fontSize: 11,
++    padding: "3px 8px",
++    borderRadius: tokens.radiusSm || 6,
++    border: `1px solid ${tokens.border || "#ddd"}`,
++    background: tokens.bgElevated || "#fff",
++    color: tokens.text || "#111",
++    cursor: "pointer",
++  },
++}
+diff --git a/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx b/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
+index 2292319..fa808dd 100644
+--- a/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
++++ b/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
+@@ -17,6 +17,13 @@ export type CodingHandoffOpenDetail = {
+   pageExcerpt?: string | null
+ }
+ 
++type AcpAgent = {
++  id: string
++  display_name: string
++  enabled: boolean
++  command: string
++}
++
+ type Props = {
+   open: boolean
+   onClose: () => void
+@@ -26,6 +33,9 @@ type Props = {
+   pageTitle?: string | null
+   pageExcerpt?: string | null
+   seedGoal?: string
++  threadId?: string | null
++  acpEnabled?: boolean
++  acpAgents?: AcpAgent[]
+   onRequestWorkspace?: () => void
+   onPasteBack?: (note: string) => void
+ }
+@@ -39,6 +49,9 @@ export function CodingTaskPackageModal({
+   pageTitle,
+   pageExcerpt,
+   seedGoal,
++  threadId,
++  acpEnabled = false,
++  acpAgents = [],
+   onRequestWorkspace,
+   onPasteBack,
+ }: Props) {
+@@ -53,6 +66,11 @@ export function CodingTaskPackageModal({
+   const [status, setStatus] = useState("")
+   const [pasteBack, setPasteBack] = useState("")
+   const [showRaw, setShowRaw] = useState(false)
++  const [agentId, setAgentId] = useState("")
++  const readyAgents = useMemo(
++    () => acpAgents.filter((a) => a.enabled && a.command),
++    [acpAgents],
++  )
+ 
+   useEffect(() => {
+     if (!open) return
+@@ -67,8 +85,17 @@ export function CodingTaskPackageModal({
+     setStatus("")
+     setPasteBack("")
+     setShowRaw(false)
++    chrome.runtime.sendMessage({ type: "acp.list" }, () => {
++      void chrome.runtime.lastError
++    })
+   }, [open, seedGoal, messages])
+ 
++  useEffect(() => {
++    if (readyAgents.length && !readyAgents.some((a) => a.id === agentId)) {
++      setAgentId(readyAgents[0].id)
++    }
++  }, [readyAgents, agentId])
++
+   const pkg = useMemo(
+     () =>
+       buildCodingTaskPackage({
+@@ -126,6 +153,36 @@ export function CodingTaskPackageModal({
+     flash(codingHandoffCopy.copiedOk + " — 请打开终端粘贴", 5000)
+   }, [pkg.markdown])
+ 
++  const doAcpStart = useCallback(() => {
++    if (!threadId) {
++      flash("需要先有对话线程", 4000)
++      return
++    }
++    if (!pkg.hasWorkspace) {
++      flash(codingHandoffCopy.workspaceMissingBody, 5000)
++      onRequestWorkspace?.()
++      return
++    }
++    if (!agentId) {
++      flash(codingHandoffCopy.agentNotFoundBody, 5000)
++      return
++    }
++    flash("请求确认启动…", 3000)
++    chrome.runtime.sendMessage(
++      {
++        type: "acp.ui_start",
++        thread_id: threadId,
++        agent_id: agentId,
++        goal: goal.trim() || pkg.markdown.slice(0, 2000),
++        workspace_root: workspaceRoot,
++      },
++      () => {
++        void chrome.runtime.lastError
++      },
++    )
++    onClose()
++  }, [threadId, pkg, agentId, goal, workspaceRoot, onRequestWorkspace, onClose])
++
+   if (!open) return null
+ 
+   const workspaceLabel = workspaceRoot
+@@ -221,6 +278,36 @@ export function CodingTaskPackageModal({
+           <textarea readOnly value={pkg.markdown} rows={8} style={styles.raw} />
+         ) : null}
+ 
++        {acpEnabled && readyAgents.length > 0 ? (
++          <div style={styles.acpBlock}>
++            <div style={styles.label}>{codingHandoffCopy.spawnTitle}（本机 · 确认后运行）</div>
++            <select
++              value={agentId}
++              onChange={(e) => setAgentId(e.target.value)}
++              style={styles.select}
++            >
++              {readyAgents.map((a) => (
++                <option key={a.id} value={a.id}>
++                  {a.display_name}
++                </option>
++              ))}
++            </select>
++            <p style={styles.privacy}>{codingHandoffCopy.modeFootnote}</p>
++            <button
++              type="button"
++              style={styles.primary}
++              onClick={doAcpStart}
++              disabled={!goal.trim() || !agentId}
++            >
++              {codingHandoffCopy.ctaStart} · 只读审查
++            </button>
++          </div>
++        ) : acpEnabled ? (
++          <p style={styles.hint}>{codingHandoffCopy.agentNotFoundBody}</p>
++        ) : (
++          <p style={styles.hint}>{codingHandoffCopy.settingsAcpHint}</p>
++        )}
++
+         <div style={styles.actions}>
+           <button type="button" style={styles.secondary} onClick={onClose}>
+             {codingHandoffCopy.ctaCancel}
+@@ -422,4 +509,18 @@ const styles: Record<string, CSSProperties> = {
+     borderTop: `1px solid ${tokens.border || "#eee"}`,
+     paddingTop: 10,
+   },
++  acpBlock: {
++    borderTop: `1px solid ${tokens.border || "#eee"}`,
++    paddingTop: 10,
++    marginBottom: 10,
++    display: "flex",
++    flexDirection: "column",
++    gap: 6,
++  },
++  select: {
++    fontSize: 12,
++    padding: 6,
++    borderRadius: tokens.radiusSm || 6,
++    border: `1px solid ${tokens.border || "#ddd"}`,
++  },
+ }
+diff --git a/chrome-extension/src/sidepanel/components/FocusBand.tsx b/chrome-extension/src/sidepanel/components/FocusBand.tsx
+index 27ab069..47d428e 100644
+--- a/chrome-extension/src/sidepanel/components/FocusBand.tsx
++++ b/chrome-extension/src/sidepanel/components/FocusBand.tsx
+@@ -9,6 +9,7 @@ import { tokens } from "../ui/tokens"
+ import { IconStop } from "../ui/icons"
+ import { MinimalConfirm } from "./MinimalConfirm"
+ import { SafetyStrip } from "./SafetyStrip"
++import { CodingSessionChip } from "./CodingSessionChip"
+ import { ContextStrip } from "./ContextStrip"
+ import { FleetStrip } from "./FleetStrip"
+ import {
+@@ -90,12 +91,18 @@ export function FocusBand({
+   const hasThreadTools = runningTools.length > 0
+   const toolsLabel = formatRunningToolsLabel(runningTools)
+ 
++  const coding = state.codingSession
++  const hasCodingSession =
++    !!coding &&
++    (coding.state === "running" || coding.state === "offered" || coding.state === "handback")
++
+   const slot: FocusBandSlot = resolveFocusBandSlot({
+     hasPendingConfirm,
+     hasL2Task,
+     l2AbortRequired,
+     hasFleetActivity,
+     hasThreadTools,
++    hasCodingSession,
+     isBrowserContext,
+   })
+ 
+@@ -137,6 +144,11 @@ export function FocusBand({
+             <SafetyStrip compact />
+           </div>
+         )}
++        {slot.primary === "coding_session" && coding && (
++          <div style={styles.primary} data-coding-session-chip>
++            <CodingSessionChip session={coding} />
++          </div>
++        )}
+         {slot.primary === "fleet" && (
+           <div style={styles.primary}>
+             <FleetStrip focusBand />
+diff --git a/chrome-extension/src/sidepanel/components/focus-band-priority.ts b/chrome-extension/src/sidepanel/components/focus-band-priority.ts
+index 7ad925f..1c1d994 100644
+--- a/chrome-extension/src/sidepanel/components/focus-band-priority.ts
++++ b/chrome-extension/src/sidepanel/components/focus-band-priority.ts
+@@ -10,6 +10,7 @@ export const FOCUS_BAND_SECONDARY_MAX_PX = 24
+ export type FocusBandPrimary =
+   | "confirm"
+   | "l2_safety"
++  | "coding_session"
+   | "fleet"
+   | "thread_tools"
+   | "l1_context"
+@@ -35,6 +36,10 @@ export interface FocusBandInput {
+    * Surfaces long shell_exec / tool loops in FocusBand, not only chat footer.
+    */
+   hasThreadTools?: boolean
++  /**
++   * 编程接力 ACP live session (Composition). Below L2 CU (急停优先), above Fleet.
++   */
++  hasCodingSession?: boolean
+   /** L1 browser surface — ContextStrip when nothing higher. */
+   isBrowserContext: boolean
+ }
+@@ -82,6 +87,15 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
+       secondaryTools: false,
+     }
+   }
++  // Confirm > CU L2 > coding session > fleet (急停 never buried under coding)
++  if (input.hasCodingSession) {
++    return {
++      primary: "coding_session",
++      secondaryAbort: false,
++      secondaryContext: false,
++      secondaryTools: false,
++    }
++  }
+   if (input.hasFleetActivity) {
+     return {
+       primary: "fleet",
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index 439e489..4e83de4 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -1165,6 +1165,25 @@ export function useWebSocket() {
+           }
+           break
+ 
++        case "acp.session.event":
++          if (typeof msg.session_id === "string") {
++            dispatch({ type: "ACP_SESSION_EVENT", event: msg })
++          }
++          break
++
++        case "acp.list":
++          dispatch({
++            type: "SET_ACP_LIST",
++            enabled: msg.enabled === true,
++            agents: Array.isArray(msg.agents) ? msg.agents : [],
++          })
++          break
++
++        case "acp.ui_start.accepted":
++        case "acp.ui_start.denied":
++          // progress follows acp.session.event; denied surfaces as toast via status if needed
++          break
++
+         case "computer.task.abort.ack":
+           dispatch({
+             type: "COMPUTER_TASK_ABORT_ACK",
+diff --git a/chrome-extension/src/sidepanel/store/agentStore.tsx b/chrome-extension/src/sidepanel/store/agentStore.tsx
+index 2bad919..affbbb5 100644
+--- a/chrome-extension/src/sidepanel/store/agentStore.tsx
++++ b/chrome-extension/src/sidepanel/store/agentStore.tsx
+@@ -4,6 +4,45 @@ import { createContext, useContext, useReducer, type ReactNode, type Dispatch }
+ import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
+ import { reduceComputerTaskEvent } from "../utils/computer-utils"
+ 
++/** Live ACP coding handoff session (Composition). */
++export type CodingSessionState = {
++  sessionId: string
++  threadId: string
++  agentId: string
++  displayName?: string
++  state: string
++  progressTail?: string
++  handback?: string
++  error?: string
++  goal?: string
++  workspaceRoot?: string
++  partial?: boolean
++  updatedAt: number
++}
++
++export type CodingSessionEvent = {
++  type?: string
++  session_id?: string
++  thread_id?: string
++  agent_id?: string
++  state?: string
++  progress_tail?: string
++  handback?: string
++  error?: string
++  goal?: string
++  workspace_root?: string
++  display_name?: string
++  partial?: boolean
++}
++
++export type AcpAgentInfo = {
++  id: string
++  display_name: string
++  enabled: boolean
++  profile: string
++  command: string
++}
++
+ export interface AgentState {
+   connectionState: ConnectionState
+   threads: Thread[]
+@@ -115,6 +154,14 @@ export interface AgentState {
+   // 坐标 computer-use(WP4)— computer.task.event 折叠视图 + 全局坐标开关只读镜像。
+   /** 当前/最近一个坐标任务的折叠状态(null = 无任务;驱动任务条 + 急停按钮)。 */
+   computerTask: ComputerTaskState | null
++  /**
++   * 编程接力 ACP live session (acp.session.event). null = none.
++   * Not L2 computer-use — separate Composition handoff surface.
++   */
++  codingSession: CodingSessionState | null
++  /** Last acp.list payload (agents + enabled flag). */
++  acpAgents: AcpAgentInfo[]
++  acpEnabled: boolean
+   /** computer.state 只读镜像(null = 尚未查询;WP4 不做面板内全局开关切换)。 */
+   computerCoordinateEnabled: boolean | null
+   // WP5-I4 实验层模型切片——全部只读镜像,无乐观更新(设置页实验区消费):
+@@ -270,6 +317,9 @@ export type AgentAction =
+   | { type: "SET_APPS_ERROR"; error: string | null }
+   | { type: "COMPUTER_TASK_EVENT"; event: ComputerTaskEventView }
+   | { type: "COMPUTER_TASK_ABORT_ACK"; taskId: string; matched: number }
++  | { type: "ACP_SESSION_EVENT"; event: CodingSessionEvent }
++  | { type: "SET_ACP_LIST"; enabled: boolean; agents: AcpAgentInfo[] }
++  | { type: "CLEAR_CODING_SESSION" }
+   /** Cockpit/panel hydrate from SW mirror — full snapshot, not incremental event. */
+   | { type: "HYDRATE_COMPUTER_TASK"; task: ComputerTaskState | null }
+   | { type: "HYDRATE_SECURITY_CONFIRMATIONS"; requests: SecurityConfirmationRequest[] }
+@@ -409,6 +459,9 @@ export const initialState: AgentState = {
+   appsError: null,
+   appsPlatform: null,
+   computerTask: null,
++  codingSession: null,
++  acpAgents: [],
++  acpEnabled: false,
+   computerCoordinateEnabled: null,
+   computerModel: null,
+   computerModelProgress: null,
+@@ -866,6 +919,35 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
+     case "COMPUTER_TASK_EVENT":
+       // 状态机(含 P4 懒创建/完结后丢弃)全部在纯函数 reduceComputerTaskEvent 里。
+       return { ...state, computerTask: reduceComputerTaskEvent(state.computerTask, action.event) }
++    case "ACP_SESSION_EVENT": {
++      const e = action.event
++      if (!e?.session_id) return state
++      return {
++        ...state,
++        codingSession: {
++          sessionId: e.session_id,
++          threadId: e.thread_id || state.codingSession?.threadId || "",
++          agentId: e.agent_id || state.codingSession?.agentId || "",
++          displayName: e.display_name || state.codingSession?.displayName,
++          state: e.state || state.codingSession?.state || "running",
++          progressTail: e.progress_tail ?? state.codingSession?.progressTail,
++          handback: e.handback ?? state.codingSession?.handback,
++          error: e.error ?? state.codingSession?.error,
++          goal: e.goal ?? state.codingSession?.goal,
++          workspaceRoot: e.workspace_root ?? state.codingSession?.workspaceRoot,
++          partial: e.partial ?? state.codingSession?.partial,
++          updatedAt: Date.now(),
++        },
++      }
++    }
++    case "SET_ACP_LIST":
++      return {
++        ...state,
++        acpEnabled: action.enabled === true,
++        acpAgents: Array.isArray(action.agents) ? action.agents : [],
++      }
++    case "CLEAR_CODING_SESSION":
++      return { ...state, codingSession: null }
+     case "COMPUTER_TASK_ABORT_ACK": {
+       // matched>0 才置位;task_id="*"(急停全部)对当前任务同样生效。
+       const t = state.computerTask
+diff --git a/chrome-extension/tests/focus-band-coding-session.test.ts b/chrome-extension/tests/focus-band-coding-session.test.ts
+new file mode 100644
+index 0000000..139081f
+--- /dev/null
++++ b/chrome-extension/tests/focus-band-coding-session.test.ts
+@@ -0,0 +1,35 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import { resolveFocusBandSlot } from "../src/sidepanel/components/focus-band-priority"
++
++test("coding_session is below confirm and l2_safety, above fleet", () => {
++  const withCoding = resolveFocusBandSlot({
++    hasPendingConfirm: false,
++    hasL2Task: false,
++    l2AbortRequired: false,
++    hasFleetActivity: true,
++    hasCodingSession: true,
++    isBrowserContext: true,
++  })
++  assert.equal(withCoding.primary, "coding_session")
++
++  const confirmWins = resolveFocusBandSlot({
++    hasPendingConfirm: true,
++    hasL2Task: false,
++    l2AbortRequired: false,
++    hasFleetActivity: false,
++    hasCodingSession: true,
++    isBrowserContext: false,
++  })
++  assert.equal(confirmWins.primary, "confirm")
++
++  const cuWins = resolveFocusBandSlot({
++    hasPendingConfirm: false,
++    hasL2Task: true,
++    l2AbortRequired: true,
++    hasFleetActivity: false,
++    hasCodingSession: true,
++    isBrowserContext: false,
++  })
++  assert.equal(cuWins.primary, "l2_safety")
++})
+diff --git a/companion/src/acp/handlers.ts b/companion/src/acp/handlers.ts
+new file mode 100644
+index 0000000..c2b9b54
+--- /dev/null
++++ b/companion/src/acp/handlers.ts
+@@ -0,0 +1,130 @@
++// ACP WS handlers — list / cancel / UI-start with origin-bound L2 confirm.
++
++import { getConfig } from "../config"
++import { logger } from "../logger"
++import type {
++  SecurityConfirmationDecision,
++  SecurityConfirmationDetails,
++} from "../security-confirmation"
++import { getAcpManager } from "./manager"
++
++export interface AcpHandlerContext {
++  requestConfirmation?: (
++    details: SecurityConfirmationDetails,
++  ) => Promise<SecurityConfirmationDecision>
++  broadcast?: (data: any) => void
++  /** Active thread from side panel when available */
++  threadId?: string
++  getWorkspaceRoot?: (threadId: string) => string | null | undefined
++}
++
++let broadcastHooked = false
++
++/** Wire manager live events → WS broadcast (idempotent). */
++export function ensureAcpBroadcast(broadcast: (data: any) => void): void {
++  if (broadcastHooked) return
++  broadcastHooked = true
++  getAcpManager().onEvent((ev) => {
++    try {
++      broadcast(ev)
++    } catch {
++      /* ignore */
++    }
++  })
++}
++
++export async function handleAcpWsMessage(
++  type: string,
++  msg: Record<string, unknown>,
++  ctx: AcpHandlerContext,
++): Promise<any> {
++  const mgr = getAcpManager()
++  if (ctx.broadcast) ensureAcpBroadcast(ctx.broadcast)
++
++  if (type === "acp.list") {
++    const cfg = getConfig()
++    return {
++      type: "acp.list",
++      enabled: !!cfg.acp?.enabled,
++      agents: mgr.listAgents(),
++      auto_suggest: cfg.coding_handoff?.auto_suggest !== false,
++    }
++  }
++
++  if (type === "acp.session.cancel") {
++    const sid = String(msg.session_id || "")
++    if (!sid) return { type: "error", error: "session_id required" }
++    const r = mgr.cancel(sid)
++    if (!r.ok) return { type: "error", error: r.error }
++    return { type: "acp.session.cancel.ack", session_id: sid }
++  }
++
++  if (type === "acp.ui_start") {
++    // Side Panel user gesture: propose + L2 confirm + start, with live events.
++    const cfg = getConfig()
++    if (!cfg.acp?.enabled) {
++      return { type: "error", error: "acp: feature disabled — enable in 设置 → 编程助手" }
++    }
++    const threadId = String(msg.thread_id || ctx.threadId || "")
++    if (!threadId) return { type: "error", error: "thread_id required" }
++    const agentId = String(msg.agent_id || "")
++    const goal = String(msg.goal || "").trim()
++    if (!agentId) return { type: "error", error: "agent_id required" }
++    if (!goal) return { type: "error", error: "goal required" }
++
++    const workspaceRoot =
++      (typeof msg.workspace_root === "string" && msg.workspace_root) ||
++      ctx.getWorkspaceRoot?.(threadId) ||
++      null
++
++    const proposed = mgr.propose({
++      threadId,
++      agentId,
++      goal,
++      workspaceRoot,
++    })
++    if (!proposed.ok) return { type: "error", error: proposed.error }
++
++    const session = proposed.session
++    if (!ctx.requestConfirmation) {
++      mgr.cancel(session.session_id)
++      return { type: "error", error: "acp.ui_start requires confirmation channel" }
++    }
++
++    const label = mgr.listAgents().find((a) => a.id === agentId)?.display_name || agentId
++    const decision = await ctx.requestConfirmation({
++      toolName: "acp_start_session",
++      dangerousApis: ["acp_start_session"],
++      code: `启动编程助手「${label}」只读审查\n仓库: ${session.workspace_root}\n任务: ${goal.slice(0, 200)}\nsession=${session.session_id}`,
++      riskLevel: "high",
++      autoConfirmEligible: false,
++      criticalApis: ["acp_start_session"],
++    })
++
++    if (!decision?.approved) {
++      mgr.cancel(session.session_id)
++      return {
++        type: "acp.ui_start.denied",
++        session_id: session.session_id,
++        error: "user_denied",
++      }
++    }
++
++    // Fire-and-forget start so WS reply is immediate; progress via acp.session.event
++    void mgr.start(session.session_id).then((r) => {
++      if (!r.ok) {
++        logger.warn("acp.ui_start_failed", { session_id: session.session_id, err: r.error })
++      }
++    })
++
++    return {
++      type: "acp.ui_start.accepted",
++      session_id: session.session_id,
++      agent_id: agentId,
++      thread_id: threadId,
++      state: "running",
++    }
++  }
++
++  return null
++}
+diff --git a/companion/src/acp/index.ts b/companion/src/acp/index.ts
+index 8769552..3426cb6 100644
+--- a/companion/src/acp/index.ts
++++ b/companion/src/acp/index.ts
+@@ -2,4 +2,10 @@ export * from "./types"
+ export * from "./handback"
+ export * from "./taint"
+ export * from "./workspace-bind"
+-export { getAcpManager, AcpManager, _resetAcpManagerForTests } from "./manager"
++export {
++  getAcpManager,
++  AcpManager,
++  _resetAcpManagerForTests,
++  type AcpLiveEvent,
++} from "./manager"
++export { handleAcpWsMessage, ensureAcpBroadcast } from "./handlers"
+diff --git a/companion/src/acp/manager.ts b/companion/src/acp/manager.ts
+index 07f195a..618aab5 100644
+--- a/companion/src/acp/manager.ts
++++ b/companion/src/acp/manager.ts
+@@ -1,6 +1,5 @@
+-// ACP session manager — Phase B read-only review (default off).
+-// Spawns configured stdio agent with a single prompt; collects stdout as handback.
+-// Full JSON-RPC ACP dialect can be swapped in later without changing tool surface.
++// ACP session manager — Phase B+ live progress (default acp.enabled=false).
++// Spawns configured stdio agent; streams progress via onEvent → WS broadcast.
+ 
+ import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
+ import * as fs from "fs"
+@@ -13,6 +12,24 @@ import { resolveAcpWorkspaceRoot } from "./workspace-bind"
+ import { frameAcpHandback } from "./handback"
+ import { markAcpHandbackSeen } from "./taint"
+ 
++export type AcpLiveEvent = {
++  type: "acp.session.event"
++  session_id: string
++  thread_id: string
++  agent_id: string
++  state: AcpSessionRecord["state"]
++  /** Throttled tail of stdout for UI (not full stream). */
++  progress_tail?: string
++  handback?: string
++  error?: string
++  partial?: boolean
++  goal?: string
++  workspace_root?: string
++  display_name?: string
++}
++
++export type AcpEventListener = (ev: AcpLiveEvent) => void
++
+ function newSessionId(): string {
+   return `acp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+ }
+@@ -21,6 +38,50 @@ export class AcpManager {
+   private sessions = new Map<string, AcpSessionRecord>()
+   private processes = new Map<string, ChildProcessWithoutNullStreams>()
+   private runningCount = 0
++  private listeners = new Set<AcpEventListener>()
++  private lastProgressAt = new Map<string, number>()
++
++  onEvent(fn: AcpEventListener): () => void {
++    this.listeners.add(fn)
++    return () => this.listeners.delete(fn)
++  }
++
++  private emit(ev: AcpLiveEvent): void {
++    for (const fn of this.listeners) {
++      try {
++        fn(ev)
++      } catch (e) {
++        logger.warn("acp.listener_error", { err: String((e as Error)?.message || e) })
++      }
++    }
++  }
++
++  private emitProgress(session: AcpSessionRecord, tail: string, force = false): void {
++    const now = Date.now()
++    const last = this.lastProgressAt.get(session.session_id) || 0
++    if (!force && now - last < 800) return
++    this.lastProgressAt.set(session.session_id, now)
++    const display = this.agentDisplayName(session.agent_id)
++    this.emit({
++      type: "acp.session.event",
++      session_id: session.session_id,
++      thread_id: session.thread_id,
++      agent_id: session.agent_id,
++      state: session.state,
++      progress_tail: tail.slice(-400),
++      goal: session.goal,
++      workspace_root: session.workspace_root,
++      display_name: display,
++      partial: session.partial,
++      error: session.error,
++      handback: session.handback_text,
++    })
++  }
++
++  private agentDisplayName(agentId: string): string {
++    const s = getConfig().acp?.servers?.[agentId]
++    return s?.display_name || agentId
++  }
+ 
+   listAgents(): Array<{
+     id: string
+@@ -49,9 +110,6 @@ export class AcpManager {
+     return [...this.sessions.values()].filter((s) => s.thread_id === threadId)
+   }
+ 
+-  /**
+-   * Create an offered session (does not spawn). Caller must confirm then start.
+-   */
+   propose(opts: {
+     threadId: string
+     agentId: string
+@@ -67,7 +125,7 @@ export class AcpManager {
+       return { ok: false, error: `acp: unknown or disabled agent "${opts.agentId}"` }
+     }
+     if (this.runningCount >= 1) {
+-      return { ok: false, error: "ACP_SESSION_BUSY: only one ACP session at a time (Phase B)" }
++      return { ok: false, error: "ACP_SESSION_BUSY: only one ACP session at a time" }
+     }
+     for (const s of this.sessions.values()) {
+       if (s.thread_id === opts.threadId && (s.state === "running" || s.state === "offered")) {
+@@ -77,7 +135,6 @@ export class AcpManager {
+     const ws = resolveAcpWorkspaceRoot(opts.workspaceRoot)
+     if (!ws.ok) return { ok: false, error: ws.error }
+ 
+-    // Phase B product lock: always review_readonly regardless of config profile
+     if (server.policy.profile !== "review_readonly") {
+       logger.info("acp.profile_demoted", {
+         agent: opts.agentId,
+@@ -100,12 +157,10 @@ export class AcpManager {
+     }
+     this.sessions.set(session.session_id, session)
+     logger.info("acp.offer", { session_id: session.session_id, agent: opts.agentId })
++    this.emitProgress(session, "offered — waiting to start", true)
+     return { ok: true, session }
+   }
+ 
+-  /**
+-   * Start after user confirm. Spawns child with review prompt; non-interactive best-effort.
+-   */
+   async start(sessionId: string): Promise<
+     | { ok: true; session: AcpSessionRecord }
+     | { ok: false; error: string }
+@@ -122,6 +177,7 @@ export class AcpManager {
+ 
+     this.runningCount++
+     session.state = "running"
++    this.emitProgress(session, "starting…", true)
+ 
+     const prompt = [
+       "You are running under CMspark 编程接力 (read-only review session).",
+@@ -134,21 +190,17 @@ export class AcpManager {
+       "Return a structured code review: findings (severity), files of interest, residual risks.",
+     ].join("\n")
+ 
+-    // Temp file outside user repo (Claude dual-review nit) + stdin for CLI tools.
+-    const promptPath = path.join(
+-      os.tmpdir(),
+-      `cmspark-acp-${session.session_id}.md`,
+-    )
++    const promptPath = path.join(os.tmpdir(), `cmspark-acp-${session.session_id}.md`)
+     try {
+       fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600 })
+     } catch (e: any) {
+       this.runningCount = Math.max(0, this.runningCount - 1)
+       session.state = "closed"
+       session.error = `cannot write prompt file: ${e?.message || e}`
++      this.emitProgress(session, session.error, true)
+       return { ok: false, error: session.error }
+     }
+ 
+-    // Use configured args only — do not invent bare-path argv (stdin is primary).
+     const args = [...(server.args || [])]
+ 
+     return await new Promise((resolve) => {
+@@ -167,7 +219,6 @@ export class AcpManager {
+             USERPROFILE: process.env.USERPROFILE,
+             LANG: process.env.LANG,
+             ...(server.env || {}),
+-            // Never inject Companion API keys / CMSPARK secrets
+             CMSPARK_ACP_SESSION: session.session_id,
+             CMSPARK_ACP_MODE: "review_readonly",
+           },
+@@ -178,12 +229,14 @@ export class AcpManager {
+         session.state = "closed"
+         const errMsg = e?.message || String(e)
+         session.error = errMsg
++        this.emitProgress(session, errMsg, true)
+         resolve({ ok: false, error: errMsg })
+         return
+       }
+ 
+       session.pid = child.pid
+       this.processes.set(sessionId, child)
++      this.emitProgress(session, `pid ${child.pid} running…`, true)
+ 
+       try {
+         child.stdin.write(prompt)
+@@ -194,6 +247,7 @@ export class AcpManager {
+ 
+       const timer = setTimeout(() => {
+         session.partial = true
++        this.emitProgress(session, "timeout — stopping…", true)
+         try {
+           child.kill("SIGTERM")
+         } catch {
+@@ -211,10 +265,12 @@ export class AcpManager {
+       child.stdout.on("data", (buf: Buffer) => {
+         stdout += buf.toString("utf8")
+         if (stdout.length > maxOut * 2) stdout = stdout.slice(-maxOut)
++        this.emitProgress(session, stdout)
+       })
+       child.stderr.on("data", (buf: Buffer) => {
+         stderr += buf.toString("utf8")
+         if (stderr.length > 8000) stderr = stderr.slice(-8000)
++        this.emitProgress(session, stderr)
+       })
+ 
+       child.on("error", (err) => {
+@@ -225,6 +281,7 @@ export class AcpManager {
+         const msg = err?.message || String(err)
+         session.error = msg
+         logger.warn("acp.spawn_error", { session_id: sessionId, err: msg })
++        this.emitProgress(session, msg, true)
+         resolve({ ok: false, error: msg })
+       })
+ 
+@@ -235,7 +292,7 @@ export class AcpManager {
+         const body =
+           stdout.trim() ||
+           stderr.trim() ||
+-          `(agent exited code=${code} with no output; prompt at ${promptPath})`
++          `(agent exited code=${code} with no output)`
+         session.handback_text = frameAcpHandback({
+           agentId: session.agent_id,
+           sessionId: session.session_id,
+@@ -244,10 +301,8 @@ export class AcpManager {
+           body,
+           maxChars: maxOut,
+         })
+-        session.state = "handback"
+-        markAcpHandbackSeen(session.thread_id)
+-        // move to closed after handback is collected
+         session.state = "closed"
++        markAcpHandbackSeen(session.thread_id)
+         try {
+           fs.unlinkSync(promptPath)
+         } catch {
+@@ -258,6 +313,7 @@ export class AcpManager {
+           code,
+           handback_len: session.handback_text?.length,
+         })
++        this.emitProgress(session, body.slice(-400), true)
+         resolve({ ok: true, session })
+       })
+     })
+@@ -284,10 +340,8 @@ export class AcpManager {
+     session.error = session.error || "cancelled"
+     if (session.state === "offered" || session.state === "running" || session.state === "confirmed") {
+       session.state = "closed"
+-      if (this.runningCount > 0 && !child) {
+-        /* already decremented on close */
+-      }
+     }
++    this.emitProgress(session, "cancelled", true)
+     return { ok: true }
+   }
+ 
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index d505383..fe4fc93 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -1605,6 +1605,23 @@ export async function handleMessage(
+ // --- Apps (App tab, WP2) — delegated to apps/handlers.ts so gate/fs deps
+     // stay injectable in tests. Mutations validate+normalize before
+     // replaceAppsEntries and broadcast apps.updated (mcp.servers.updated parity).
++    case "acp.list":
++    case "acp.session.cancel":
++    case "acp.ui_start": {
++      const { handleAcpWsMessage } = await import("./acp/handlers")
++      const acpRes = await handleAcpWsMessage(type, rest, {
++        requestConfirmation: session?.requestConfirmation,
++        broadcast: session?.broadcast,
++        threadId: typeof rest.thread_id === "string" ? rest.thread_id : undefined,
++        getWorkspaceRoot: (tid) => {
++          const t = threadManager.get(tid) as { workspace_root?: string | null } | null
++          return t?.workspace_root
++        },
++      })
++      if (acpRes) return acpRes
++      return { type: "error", error: `Unhandled acp type: ${type}` }
++    }
++
+     case "apps.list":
+     case "apps.enumerate":
+     case "apps.add":
+diff --git a/companion/src/ws/lifecycle.ts b/companion/src/ws/lifecycle.ts
+index d9e9837..1313290 100644
+--- a/companion/src/ws/lifecycle.ts
++++ b/companion/src/ws/lifecycle.ts
+@@ -506,6 +506,14 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+     base_url: config.llm.base_url,
+   })
+ 
++  // 编程接力 live progress → Side Panel (acp.session.event)
++  try {
++    const { ensureAcpBroadcast } = await import("../acp/handlers")
++    ensureAcpBroadcast(broadcastToClients)
++  } catch (e: any) {
++    logger.warn("acp.broadcast_hook_failed", { error: e?.message || String(e) })
++  }
++
+   // Warn if no API key configured
+   if (!config.llm.api_key || config.llm.api_key === "sk-placeholder") {
+     console.warn("[cmspark-agent] ⚠️  No API key configured!")
+diff --git a/companion/src/ws/validate.ts b/companion/src/ws/validate.ts
+index 21accb1..4a6734d 100644
+--- a/companion/src/ws/validate.ts
++++ b/companion/src/ws/validate.ts
+@@ -175,6 +175,25 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       if (typeof m.task_id !== "string" || !m.task_id) return { valid: false, error: "computer.task.abort requires task_id (a task id or '*')" }
+       return { valid: true }
+     },
++    "acp.list": () => ({ valid: true }),
++    "acp.session.cancel": (m) => {
++      if (typeof m.session_id !== "string" || !m.session_id) {
++        return { valid: false, error: "acp.session.cancel requires session_id" }
++      }
++      return { valid: true }
++    },
++    "acp.ui_start": (m) => {
++      if (typeof m.thread_id !== "string" || !m.thread_id) {
++        return { valid: false, error: "acp.ui_start requires thread_id" }
++      }
++      if (typeof m.agent_id !== "string" || !m.agent_id) {
++        return { valid: false, error: "acp.ui_start requires agent_id" }
++      }
++      if (typeof m.goal !== "string" || !m.goal.trim()) {
++        return { valid: false, error: "acp.ui_start requires goal" }
++      }
++      return { valid: true }
++    },
+     "shell.exec.abort": (m) => {
+       const hasTool =
+         typeof m.tool_call_id === "string" && m.tool_call_id.length > 0
+diff --git a/companion/tests/acp-live-events.test.ts b/companion/tests/acp-live-events.test.ts
+new file mode 100644
+index 0000000..0d7f9d9
+--- /dev/null
++++ b/companion/tests/acp-live-events.test.ts
+@@ -0,0 +1,41 @@
++import { describe, it, beforeEach } from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "fs"
++import * as os from "os"
++import * as path from "path"
++import {
++  getAcpManager,
++  _resetAcpManagerForTests,
++  type AcpLiveEvent,
++} from "../src/acp/manager"
++
++// Minimal config stub via env is hard; use real getConfig if available with acp disabled.
++// These tests only cover event emission shape when propose fails (disabled).
++
++describe("acp live events", () => {
++  beforeEach(() => {
++    _resetAcpManagerForTests()
++  })
++
++  it("propose fails closed when acp disabled (default)", () => {
++    const mgr = getAcpManager()
++    const events: AcpLiveEvent[] = []
++    mgr.onEvent((e) => events.push(e))
++    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-live-"))
++    const r = mgr.propose({
++      threadId: "t1",
++      agentId: "x",
++      goal: "review",
++      workspaceRoot: dir,
++    })
++    assert.equal(r.ok, false)
++    if (!r.ok) assert.match(r.error, /disabled|unknown/i)
++    fs.rmSync(dir, { recursive: true, force: true })
++  })
++
++  it("cancel unknown session returns error", () => {
++    const mgr = getAcpManager()
++    const r = mgr.cancel("nope")
++    assert.equal(r.ok, false)
++  })
++})
+diff --git a/docs/audit/reviews/_prompts/acp-coding-handoff-live-ui-20260813.md b/docs/audit/reviews/_prompts/acp-coding-handoff-live-ui-20260813.md
+new file mode 100644
+index 0000000..6614d17
+--- /dev/null
++++ b/docs/audit/reviews/_prompts/acp-coding-handoff-live-ui-20260813.md
+@@ -0,0 +1,44 @@
++# Dual review: 编程接力 live session UI (S71)
++
++## Scope
++
++Branch `feat/coding-handoff` adds **minimal real-time** ACP session surface in Chrome Side Panel:
++
++### Companion
++- `acp.session.event` broadcast (throttled stdout/stderr tail)
++- WS: `acp.list`, `acp.ui_start` (origin-bound L2 confirm then start), `acp.session.cancel`
++- `ensureAcpBroadcast` on server start
++
++### Extension
++- store `codingSession` / `acpAgents`
++- FocusBand primary `coding_session` (below confirm & CU L2, above fleet)
++- `CodingSessionChip` with **停止编程会话** (not 急停)
++- Modal: when `acp.enabled` + agents configured → **启动 · 只读审查**
++
++### Explicit non-goals (still)
++- Full multi-turn interactive ACP IDE
++- Side Panel apply/write
++- Auto-spawn without confirm
++
++## Capability declaration
++
++```text
++Surface:      L0/L1 evidence; live view is Composition status only
++L2-classes:   acp.ui_start / acp_start_session HITL (never cruise-skip)
++Compose:      acp client + task package
++Autonomy:     single session global cap
++Trust:        originWs confirm; stop is cancel not estop
++Channel:      community
++```
++
++## Verify
++
++1. forceConfirm never waived for ACP under god-mode (prior B1)
++2. FocusBand priority: confirm > l2_safety > coding_session > fleet
++3. Stop sends acp.session.cancel only
++4. No free-exec from Phase A copy path
++5. acp.enabled default still false
++
++## Output
++
++Findings + VERDICT line.

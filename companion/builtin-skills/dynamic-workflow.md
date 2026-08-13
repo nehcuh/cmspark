@@ -1,6 +1,6 @@
 ---
 name: dynamic-workflow
-description: Dynamic Workflow — 为每个任务创建专属执行引擎。用扇出并综合、对抗式验证、锦标赛、循环至完成等模式处理复杂/多步骤任务。v2 新增 Prompt Chain 模式：分析代码库后输出结构化 Claude Code 提示词链
+description: Dynamic Workflow — 为每个任务创建专属执行引擎。用扇出并综合、对抗式验证、锦标赛、循环至完成等模式处理复杂/多步骤任务。v2 Prompt Chain；v3 与「编程接力」任务包合并（/code · 勿平行第二入口）
 type: prompt_template
 ---
 
@@ -9,6 +9,15 @@ type: prompt_template
 ## 核心思想
 
 每个复杂任务都应该拥有自己的"执行引擎"。v2 将能力从"直接写代码"升级为**"设计工作流，生成 Claude Code 提示词，让 Claude Code 执行"**——即元工作流（meta-workflow）。
+
+### v3 · 编程接力合并（产品 SoT · 禁止双轨）
+
+当任务是 **浏览器证据 → 本机改仓库** 时，**不要**另起一套 UI/入口：
+
+1. 优先引导用户使用 **`/code` / `/编程` / 消息「派给终端助手」** 打开 **编程接力任务包**（复制 Markdown）。
+2. 本 skill 的 Prompt Chain 输出应 **兼容同一任务包字段**（Goal / Workspace / Browser evidence / Constraints / Acceptance / Handback）。
+3. 与 **Outbound MCP**（编程 Agent 租浏览器）方向相反，勿混讲。
+4. 可选 ACP **审查 / 起草**会话仅当用户启用 `acp.enabled` 且 L2 确认——见 ADR-025（模式=任务意图，≠ OS 沙箱只读）。
 
 ## 何时使用
 

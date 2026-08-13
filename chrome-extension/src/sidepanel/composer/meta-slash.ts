@@ -10,6 +10,7 @@ export type MetaSlashKind =
   | "compose" // open 装配 section list
   | "settings" // settings slideout
   | "cockpit" // confirm-center window
+  | "coding_handoff" // 编程接力 task package (Phase A)
 
 export type MetaSlashEntry = SkillMeta & {
   /** Discriminator for handleSlashSelect. */
@@ -133,6 +134,22 @@ export const META_PANEL_SLASH: MetaSlashEntry[] = [
     builtin: true,
     tags: ["meta-compose", "meta-slash"],
     metaKind: "compose",
+  },
+  {
+    name: "code",
+    description: "编程接力 — 复制任务包给本机终端编程助手",
+    type: "prompt_template",
+    builtin: true,
+    tags: ["meta-coding-handoff", "meta-slash", "composition"],
+    metaKind: "coding_handoff",
+  },
+  {
+    name: "编程",
+    description: "编程接力 — 复制任务包给本机终端编程助手",
+    type: "prompt_template",
+    builtin: true,
+    tags: ["meta-coding-handoff", "meta-slash", "composition"],
+    metaKind: "coding_handoff",
   },
 ]
 
@@ -341,6 +358,14 @@ export function resolveMetaSlash(skill: SkillMeta): MetaSlashEntry | null {
   }
   if (tags.includes("meta-cockpit")) {
     return META_PANEL_SLASH.find((e) => e.metaKind === "cockpit") ?? null
+  }
+  if (
+    tags.includes("meta-coding-handoff") ||
+    (skill as MetaSlashEntry).metaKind === "coding_handoff" ||
+    skill.name === "code" ||
+    skill.name === "编程"
+  ) {
+    return META_PANEL_SLASH.find((e) => e.metaKind === "coding_handoff") ?? null
   }
   if (tags.includes("meta-panel") && skill.site) {
     const panelId = skill.site as ContextPanelId

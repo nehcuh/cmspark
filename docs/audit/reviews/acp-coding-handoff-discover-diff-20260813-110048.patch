@@ -1,0 +1,574 @@
+# Pi external review context
+batch: acp-coding-handoff-discover
+base: HEAD~1
+time: 20260813-110048
+
+8276724
+
+?? docs/audit/reviews/acp-coding-handoff-discover-diff-20260813-110048.patch
+
+## Diff
+ chrome-extension/src/background/index.ts           |   1 +
+ .../components/CodingHandoffSettingsSection.tsx    |  23 ++++
+ .../components/CodingTaskPackageModal.tsx          |   2 +
+ .../src/sidepanel/hooks/useWebSocket.ts            |  11 ++
+ .../src/sidepanel/store/agentStore.tsx             |   1 +
+ companion/src/acp/discover.ts                      | 152 +++++++++++++++++++++
+ companion/src/acp/handlers.ts                      |   8 +-
+ companion/src/acp/index.ts                         |   1 +
+ companion/src/acp/manager.ts                       |  97 +++++++++++--
+ companion/src/message-router.ts                    |   1 +
+ companion/src/ws/lifecycle.ts                      |  28 ++++
+ companion/src/ws/validate.ts                       |   1 +
+ companion/tests/acp-discover.test.ts               |  25 ++++
+ 13 files changed, 340 insertions(+), 11 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 0e42380..349f6ab 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -1205,6 +1205,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+       case "apps.set_enabled":
+       // 编程接力 ACP (Composition live session)
+       case "acp.list":
++      case "acp.rediscover":
+       case "acp.session.cancel":
+       case "acp.ui_start":
+       // 坐标 computer-use(WP4):每应用坐标开关(AppsPanel 卡片菜单;开启由
+diff --git a/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx b/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx
+index 1c773e7..a7c13bc 100644
+--- a/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx
++++ b/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx
+@@ -48,6 +48,20 @@ export function CodingHandoffSettingsSection({
+         快捷入口：对话中输入 <code>/code</code> 或 <code>/编程</code>，或消息旁「
+         {codingHandoffCopy.ctaHandoff}」。
+       </p>
++      <button
++        type="button"
++        style={styles.redetect}
++        onClick={() => {
++          chrome.runtime.sendMessage({ type: "acp.rediscover" }, () => {
++            void chrome.runtime.lastError
++          })
++        }}
++      >
++        重新检测本机编程助手
++      </button>
++      <p style={styles.hint}>
++        开启 ACP 后会探测 PATH 上的 claude / gemini / codex / pi（无需手写路径也可启动只读审查）。
++      </p>
+     </div>
+   )
+ }
+@@ -80,4 +94,13 @@ const styles: Record<string, CSSProperties> = {
+     lineHeight: 1.4,
+     margin: "0 0 8px",
+   },
++  redetect: {
++    fontSize: 12,
++    padding: "6px 10px",
++    borderRadius: 6,
++    border: `1px solid ${tokens.border || "#ddd"}`,
++    background: tokens.bg || "#fff",
++    cursor: "pointer",
++    marginBottom: 8,
++  },
+ }
+diff --git a/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx b/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
+index fa808dd..a3130b2 100644
+--- a/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
++++ b/chrome-extension/src/sidepanel/components/CodingTaskPackageModal.tsx
+@@ -22,6 +22,7 @@ type AcpAgent = {
+   display_name: string
+   enabled: boolean
+   command: string
++  source?: "config" | "discovered"
+ }
+ 
+ type Props = {
+@@ -289,6 +290,7 @@ export function CodingTaskPackageModal({
+               {readyAgents.map((a) => (
+                 <option key={a.id} value={a.id}>
+                   {a.display_name}
++                  {a.source === "discovered" ? "（已检测）" : ""}
+                 </option>
+               ))}
+             </select>
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index 31e4046..85a10ac 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -1179,6 +1179,17 @@ export function useWebSocket() {
+           })
+           break
+ 
++        case "acp.handback.message":
++          if (
++            msg.message &&
++            typeof msg.message === "object" &&
++            typeof msg.thread_id === "string" &&
++            msg.thread_id === activeThreadRef.current
++          ) {
++            dispatch({ type: "ADD_MESSAGE", message: msg.message as any })
++          }
++          break
++
+         case "acp.ui_start.accepted":
+           // progress follows acp.session.event
+           break
+diff --git a/chrome-extension/src/sidepanel/store/agentStore.tsx b/chrome-extension/src/sidepanel/store/agentStore.tsx
+index affbbb5..bf2097e 100644
+--- a/chrome-extension/src/sidepanel/store/agentStore.tsx
++++ b/chrome-extension/src/sidepanel/store/agentStore.tsx
+@@ -41,6 +41,7 @@ export type AcpAgentInfo = {
+   enabled: boolean
+   profile: string
+   command: string
++  source?: "config" | "discovered"
+ }
+ 
+ export interface AgentState {
+diff --git a/companion/src/acp/discover.ts b/companion/src/acp/discover.ts
+new file mode 100644
+index 0000000..6f30464
+--- /dev/null
++++ b/companion/src/acp/discover.ts
+@@ -0,0 +1,152 @@
++// Best-effort discovery of local coding-agent CLIs on PATH / common install dirs.
++// Does not spawn agents; does not write config.json (runtime merge only).
++
++import { execFileSync } from "child_process"
++import * as fs from "fs"
++import * as os from "os"
++import * as path from "path"
++
++export type DiscoveredAgent = {
++  id: string
++  display_name: string
++  command: string
++  source: "path" | "common"
++}
++
++type ProbeDef = {
++  id: string
++  display_name: string
++  /** PATH basenames to try with `which` / `where` */
++  basenames: string[]
++  /** Absolute candidates if PATH miss */
++  commonPaths: string[]
++}
++
++const PROBES: ProbeDef[] = [
++  {
++    id: "claude",
++    display_name: "Claude Code",
++    basenames: ["claude"],
++    commonPaths: [
++      "/opt/homebrew/bin/claude",
++      "/usr/local/bin/claude",
++      path.join(os.homedir(), ".local", "bin", "claude"),
++      path.join(os.homedir(), ".claude", "local", "claude"),
++    ],
++  },
++  {
++    id: "gemini",
++    display_name: "Gemini CLI",
++    basenames: ["gemini"],
++    commonPaths: [
++      "/opt/homebrew/bin/gemini",
++      "/usr/local/bin/gemini",
++      path.join(os.homedir(), ".local", "bin", "gemini"),
++    ],
++  },
++  {
++    id: "codex",
++    display_name: "Codex CLI",
++    basenames: ["codex"],
++    commonPaths: [
++      "/opt/homebrew/bin/codex",
++      "/usr/local/bin/codex",
++      path.join(os.homedir(), ".local", "bin", "codex"),
++    ],
++  },
++  {
++    id: "pi",
++    display_name: "Pi Agent",
++    basenames: ["pi"],
++    commonPaths: [
++      "/opt/homebrew/bin/pi",
++      "/usr/local/bin/pi",
++      path.join(os.homedir(), ".nvm", "versions", "node", "v24.16.0", "bin", "pi"),
++    ],
++  },
++]
++
++function isExecutableFile(p: string): boolean {
++  try {
++    const st = fs.statSync(p)
++    if (!st.isFile()) return false
++    fs.accessSync(p, fs.constants.X_OK)
++    return true
++  } catch {
++    return false
++  }
++}
++
++function whichOnPath(basename: string): string | undefined {
++  try {
++    const cmd = process.platform === "win32" ? "where" : "which"
++    const out = execFileSync(cmd, [basename], {
++      encoding: "utf8",
++      timeout: 2000,
++      stdio: ["ignore", "pipe", "ignore"],
++    })
++    const first = String(out)
++      .split(/\r?\n/)
++      .map((l) => l.trim())
++      .find(Boolean)
++    if (first && isExecutableFile(first)) return first
++  } catch {
++    /* not found */
++  }
++  return undefined
++}
++
++/**
++ * Probe PATH + common install locations. Pure-ish (reads FS); safe to call on acp.list.
++ * Cached for a short TTL to avoid hammering which(1).
++ */
++let cache: { at: number; agents: DiscoveredAgent[] } | null = null
++const CACHE_MS = 30_000
++
++export function discoverCodingAgents(force = false): DiscoveredAgent[] {
++  if (!force && cache && Date.now() - cache.at < CACHE_MS) {
++    return cache.agents
++  }
++  const out: DiscoveredAgent[] = []
++  const seenCmd = new Set<string>()
++
++  for (const def of PROBES) {
++    let found: string | undefined
++    let source: "path" | "common" = "path"
++    for (const b of def.basenames) {
++      found = whichOnPath(b)
++      if (found) break
++    }
++    if (!found) {
++      source = "common"
++      for (const p of def.commonPaths) {
++        if (isExecutableFile(p)) {
++          found = p
++          break
++        }
++      }
++    }
++    if (!found) continue
++    try {
++      found = fs.realpathSync(found)
++    } catch {
++      /* keep */
++    }
++    if (seenCmd.has(found)) continue
++    seenCmd.add(found)
++    out.push({
++      id: def.id,
++      display_name: def.display_name,
++      command: found,
++      source,
++    })
++  }
++
++  cache = { at: Date.now(), agents: out }
++  return out
++}
++
++/** Test helper */
++export function _resetDiscoverCache(): void {
++  cache = null
++}
+diff --git a/companion/src/acp/handlers.ts b/companion/src/acp/handlers.ts
+index c2b9b54..c75a98d 100644
+--- a/companion/src/acp/handlers.ts
++++ b/companion/src/acp/handlers.ts
+@@ -41,8 +41,14 @@ export async function handleAcpWsMessage(
+   const mgr = getAcpManager()
+   if (ctx.broadcast) ensureAcpBroadcast(ctx.broadcast)
+ 
+-  if (type === "acp.list") {
++  if (type === "acp.list" || type === "acp.rediscover") {
+     const cfg = getConfig()
++    const force = type === "acp.rediscover"
++    if (force) {
++      const { _resetDiscoverCache, discoverCodingAgents } = await import("./discover")
++      _resetDiscoverCache()
++      discoverCodingAgents(true)
++    }
+     return {
+       type: "acp.list",
+       enabled: !!cfg.acp?.enabled,
+diff --git a/companion/src/acp/index.ts b/companion/src/acp/index.ts
+index 3426cb6..fd503bb 100644
+--- a/companion/src/acp/index.ts
++++ b/companion/src/acp/index.ts
+@@ -9,3 +9,4 @@ export {
+   type AcpLiveEvent,
+ } from "./manager"
+ export { handleAcpWsMessage, ensureAcpBroadcast } from "./handlers"
++export { discoverCodingAgents, _resetDiscoverCache } from "./discover"
+diff --git a/companion/src/acp/manager.ts b/companion/src/acp/manager.ts
+index 618aab5..38e4f5e 100644
+--- a/companion/src/acp/manager.ts
++++ b/companion/src/acp/manager.ts
+@@ -11,6 +11,13 @@ import type { AcpSessionRecord, AcpPolicyProfile } from "./types"
+ import { resolveAcpWorkspaceRoot } from "./workspace-bind"
+ import { frameAcpHandback } from "./handback"
+ import { markAcpHandbackSeen } from "./taint"
++import { discoverCodingAgents } from "./discover"
++import type { AcpAgentServerConfig } from "./types"
++
++export type AcpHandbackSink = (info: {
++  session: AcpSessionRecord
++  handback: string
++}) => void
+ 
+ export type AcpLiveEvent = {
+   type: "acp.session.event"
+@@ -40,12 +47,18 @@ export class AcpManager {
+   private runningCount = 0
+   private listeners = new Set<AcpEventListener>()
+   private lastProgressAt = new Map<string, number>()
++  private handbackSink: AcpHandbackSink | null = null
+ 
+   onEvent(fn: AcpEventListener): () => void {
+     this.listeners.add(fn)
+     return () => this.listeners.delete(fn)
+   }
+ 
++  /** Inject completed handback into thread history (wired from server boot). */
++  setHandbackSink(fn: AcpHandbackSink | null): void {
++    this.handbackSink = fn
++  }
++
+   private emit(ev: AcpLiveEvent): void {
+     for (const fn of this.listeners) {
+       try {
+@@ -80,7 +93,35 @@ export class AcpManager {
+ 
+   private agentDisplayName(agentId: string): string {
+     const s = getConfig().acp?.servers?.[agentId]
+-    return s?.display_name || agentId
++    if (s?.display_name) return s.display_name
++    const d = discoverCodingAgents().find((a) => a.id === agentId)
++    return d?.display_name || agentId
++  }
++
++  /**
++   * Resolve configured server or discovered PATH probe as ephemeral server.
++   * Does not persist discovery into config.json.
++   */
++  resolveServer(agentId: string): AcpAgentServerConfig | null {
++    const cfg = getConfig()
++    const configured = cfg.acp?.servers?.[agentId]
++    if (configured?.enabled && configured.command) return configured
++    const disc = discoverCodingAgents().find((a) => a.id === agentId)
++    if (!disc) return null
++    return {
++      enabled: true,
++      display_name: disc.display_name,
++      transport: "stdio",
++      command: disc.command,
++      args: [],
++      policy: {
++        profile: "review_readonly",
++        allow_write: false,
++        allow_exec: false,
++        session_timeout_ms: 15 * 60_000,
++        max_handback_chars: 48_000,
++      },
++    }
+   }
+ 
+   listAgents(): Array<{
+@@ -89,17 +130,46 @@ export class AcpManager {
+     enabled: boolean
+     profile: string
+     command: string
++    source?: "config" | "discovered"
+   }> {
+     const cfg = getConfig()
+     const acp = cfg.acp
+     if (!acp?.enabled) return []
+-    return Object.entries(acp.servers || {}).map(([id, s]) => ({
+-      id,
+-      display_name: s.display_name,
+-      enabled: s.enabled && !!s.command,
+-      profile: s.policy.profile,
+-      command: s.command,
+-    }))
++    const out: Array<{
++      id: string
++      display_name: string
++      enabled: boolean
++      profile: string
++      command: string
++      source?: "config" | "discovered"
++    }> = []
++    const seen = new Set<string>()
++    for (const [id, s] of Object.entries(acp.servers || {})) {
++      if (!s.command) continue
++      seen.add(id)
++      out.push({
++        id,
++        display_name: s.display_name,
++        enabled: s.enabled && !!s.command,
++        profile: s.policy.profile,
++        command: s.command,
++        source: "config",
++      })
++    }
++    for (const d of discoverCodingAgents()) {
++      if (seen.has(d.id)) continue
++      // skip if same command already registered under another id
++      if (out.some((a) => a.command === d.command)) continue
++      out.push({
++        id: d.id,
++        display_name: d.display_name,
++        enabled: true,
++        profile: "review_readonly",
++        command: d.command,
++        source: "discovered",
++      })
++    }
++    return out
+   }
+ 
+   getSession(sessionId: string): AcpSessionRecord | undefined {
+@@ -120,7 +190,7 @@ export class AcpManager {
+     if (!cfg.acp?.enabled) {
+       return { ok: false, error: "acp: feature disabled (config.acp.enabled=false)" }
+     }
+-    const server = cfg.acp.servers[opts.agentId]
++    const server = this.resolveServer(opts.agentId)
+     if (!server || !server.enabled || !server.command) {
+       return { ok: false, error: `acp: unknown or disabled agent "${opts.agentId}"` }
+     }
+@@ -172,7 +242,7 @@ export class AcpManager {
+     }
+     const cfg = getConfig()
+     if (!cfg.acp?.enabled) return { ok: false, error: "acp: feature disabled" }
+-    const server = cfg.acp.servers[session.agent_id]
++    const server = this.resolveServer(session.agent_id)
+     if (!server?.command) return { ok: false, error: "acp: agent config missing" }
+ 
+     this.runningCount++
+@@ -308,6 +378,13 @@ export class AcpManager {
+         } catch {
+           /* best-effort */
+         }
++        if (session.handback_text && this.handbackSink) {
++          try {
++            this.handbackSink({ session, handback: session.handback_text })
++          } catch (e: any) {
++            logger.warn("acp.handback_sink_error", { err: e?.message || String(e) })
++          }
++        }
+         logger.info("acp.session_ended", {
+           session_id: sessionId,
+           code,
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index fe4fc93..34e4ddd 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -1606,6 +1606,7 @@ export async function handleMessage(
+     // stay injectable in tests. Mutations validate+normalize before
+     // replaceAppsEntries and broadcast apps.updated (mcp.servers.updated parity).
+     case "acp.list":
++    case "acp.rediscover":
+     case "acp.session.cancel":
+     case "acp.ui_start": {
+       const { handleAcpWsMessage } = await import("./acp/handlers")
+diff --git a/companion/src/ws/lifecycle.ts b/companion/src/ws/lifecycle.ts
+index 1313290..9927000 100644
+--- a/companion/src/ws/lifecycle.ts
++++ b/companion/src/ws/lifecycle.ts
+@@ -507,9 +507,37 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+   })
+ 
+   // 编程接力 live progress → Side Panel (acp.session.event)
++  // + handback auto-inject into thread messages
+   try {
+     const { ensureAcpBroadcast } = await import("../acp/handlers")
++    const { getAcpManager } = await import("../acp/manager")
+     ensureAcpBroadcast(broadcastToClients)
++    getAcpManager().setHandbackSink(({ session, handback }) => {
++      try {
++        const tm = requireRt().getThreadManager()
++        const display = session.agent_id
++        const content = [
++          `【编程接力 · ${display}】审查完成`,
++          session.partial ? "（部分输出 / 超时或非零退出）" : "",
++          "",
++          handback,
++        ]
++          .filter(Boolean)
++          .join("\n")
++        const msg = tm.addMessage(session.thread_id, {
++          thread_id: session.thread_id,
++          role: "assistant",
++          content,
++        })
++        broadcastToClients({
++          type: "acp.handback.message",
++          thread_id: session.thread_id,
++          message: msg,
++        })
++      } catch (err: any) {
++        logger.warn("acp.handback_inject_failed", { error: err?.message || String(err) })
++      }
++    })
+   } catch (e: any) {
+     logger.warn("acp.broadcast_hook_failed", { error: e?.message || String(e) })
+   }
+diff --git a/companion/src/ws/validate.ts b/companion/src/ws/validate.ts
+index 4a6734d..56dd58e 100644
+--- a/companion/src/ws/validate.ts
++++ b/companion/src/ws/validate.ts
+@@ -176,6 +176,7 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       return { valid: true }
+     },
+     "acp.list": () => ({ valid: true }),
++    "acp.rediscover": () => ({ valid: true }),
+     "acp.session.cancel": (m) => {
+       if (typeof m.session_id !== "string" || !m.session_id) {
+         return { valid: false, error: "acp.session.cancel requires session_id" }
+diff --git a/companion/tests/acp-discover.test.ts b/companion/tests/acp-discover.test.ts
+new file mode 100644
+index 0000000..f2f6c6e
+--- /dev/null
++++ b/companion/tests/acp-discover.test.ts
+@@ -0,0 +1,25 @@
++import { describe, it, beforeEach } from "node:test"
++import assert from "node:assert/strict"
++import {
++  discoverCodingAgents,
++  _resetDiscoverCache,
++} from "../src/acp/discover"
++
++describe("discoverCodingAgents", () => {
++  beforeEach(() => {
++    _resetDiscoverCache()
++  })
++
++  it("returns array and caches", () => {
++    const a = discoverCodingAgents(true)
++    assert.ok(Array.isArray(a))
++    const b = discoverCodingAgents(false)
++    assert.deepEqual(a, b)
++    // On this machine we often have claude on PATH
++    if (a.some((x) => x.id === "claude")) {
++      const c = a.find((x) => x.id === "claude")!
++      assert.ok(c.command.includes("claude") || c.command.endsWith("claude"))
++      assert.ok(c.source === "path" || c.source === "common")
++    }
++  })
++})

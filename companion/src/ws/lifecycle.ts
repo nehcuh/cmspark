@@ -506,6 +506,54 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     base_url: config.llm.base_url,
   })
 
+  // 编程接力 live progress → Side Panel (acp.session.event)
+  // + handback auto-inject into thread messages
+  try {
+    const { ensureAcpBroadcast } = await import("../acp/handlers")
+    const { getAcpManager } = await import("../acp/manager")
+    ensureAcpBroadcast(broadcastToClients)
+    getAcpManager().setHandbackSink(({ session, handback }) => {
+      try {
+        const { formatHandbackChatMessage } = require("../acp/handback-format") as typeof import("../acp/handback-format")
+        const tm = requireRt().getThreadManager()
+        const content = formatHandbackChatMessage({
+          agentId: session.agent_id,
+          mode: session.mode || "review_readonly",
+          partial: session.partial,
+          handback,
+          diffSummary: session.diff_summary || null,
+        })
+        const msg = tm.addMessage(session.thread_id, {
+          thread_id: session.thread_id,
+          role: "assistant",
+          content,
+        })
+        broadcastToClients({
+          type: "acp.handback.message",
+          thread_id: session.thread_id,
+          message: msg,
+          session_id: session.session_id,
+          pending_diffs: (session.pending_diffs || []).map((d) => ({
+            path: d.relPath,
+            isNew: d.isNew,
+            isDelete: d.isDelete,
+            // applyable: new files with body, or existing files with parseable hunks
+            applyable:
+              !d.isDelete &&
+              ((d.isNew && d.newContent != null) ||
+                (Array.isArray(d.hunks) && d.hunks.length > 0) ||
+                d.newContent != null),
+          })),
+          mode: session.mode,
+        })
+      } catch (err: any) {
+        logger.warn("acp.handback_inject_failed", { error: err?.message || String(err) })
+      }
+    })
+  } catch (e: any) {
+    logger.warn("acp.broadcast_hook_failed", { error: e?.message || String(e) })
+  }
+
   // Warn if no API key configured
   if (!config.llm.api_key || config.llm.api_key === "sk-placeholder") {
     console.warn("[cmspark-agent] ⚠️  No API key configured!")

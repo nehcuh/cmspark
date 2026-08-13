@@ -59,6 +59,10 @@ export const L2_GATE_TOOLS: readonly string[] = [
   "board_complete",
   // S41 multi-adv: durable skill-library write (content/path/zip) — L2 + forceConfirm
   "skill_install",
+  // ADR-025 ACP coding handoff — spawn/start always HITL
+  "acp_propose_session",
+  "acp_start_session",
+  "acp_apply_diff",
 ]
 
 /** Three-flag full autonomy cruise (dangerous + enterprise + allow_all_schemes). */
@@ -262,6 +266,15 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
                 return `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0}`
               }
             })()
+          : "") ||
+        (toolName === "acp_propose_session"
+          ? `acp_propose agent=${finalParams.agent_id || finalParams.agent || ""} goal=${String(finalParams.goal || finalParams.prompt || "").slice(0, 200)}`
+          : "") ||
+        (toolName === "acp_start_session"
+          ? `acp_start session_id=${finalParams.session_id || ""}`
+          : "") ||
+        (toolName === "acp_apply_diff"
+          ? `acp_apply session_id=${finalParams.session_id || ""} paths=${Array.isArray(finalParams.paths) ? finalParams.paths.join(",") : "all"}`
           : "") ||
         "",
     )
@@ -726,6 +739,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       || appWhitelisted
     // Q5 (L-CLI-5): after host_cli output in this thread, force L2 for host_cli
     // and host_app until the next real user message.
+    // ADR-025: same idea after ACP handback for a wider high-blast tool set.
     try {
       const { isCliOutputTainted } = require("../apps/cli-q5") as typeof import("../apps/cli-q5")
       const q5Thread =
@@ -735,6 +749,23 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       if (isCliOutputTainted(q5Thread) && (toolName === "host_cli" || toolName === "host_app")) {
         skipConfirmation = false
         logger.info("security.cli_q5_force_l2", { tool_name: toolName, thread: q5Thread })
+      }
+      try {
+        const { isAcpHandbackTainted } = require("../acp/taint") as typeof import("../acp/taint")
+        const acpBlast =
+          toolName === "host_cli" ||
+          toolName === "host_app" ||
+          toolName === "shell_exec" ||
+          toolName === "evaluate" ||
+          toolName === "osascript_eval" ||
+          toolName === "acp_propose_session" ||
+          toolName === "acp_start_session"
+        if (isAcpHandbackTainted(q5Thread) && acpBlast) {
+          skipConfirmation = false
+          logger.info("security.acp_q5_force_l2", { tool_name: toolName, thread: q5Thread })
+        }
+      } catch {
+        /* acp module optional at boot */
       }
     } catch { /* ignore */ }
     // §6.2 CRITICAL_API_GATE: detectCriticalApis() is the never-auto-approved
@@ -752,6 +783,12 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // enterprise skip (scope ∩ first) or full autonomy. God-mode /
     // auto_approve_dangerous alone still do NOT skip these (ADR-014 G1).
     // spawn_worker / ask_user / board_complete: real HITL (never LLM self-approve)
+    // ADR-025: ACP spawn is real HITL — never waived by god-mode / auto_approve /
+    // three-flag full autonomy cruise (product design: Never skip ACP).
+    const acpForceConfirm =
+      toolName === "acp_propose_session" ||
+      toolName === "acp_start_session" ||
+      toolName === "acp_apply_diff"
     const capabilityForceConfirm =
       toolName === "shell_exec" ||
       toolName === "netsec_port_scan" ||
@@ -762,7 +799,8 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       toolName === "skill_install" || // S41: durable skill write — god-mode never skips
       // evaluate / osascript: always L2 unless three-flag full autonomy (regex is risk preview only)
       toolName === "evaluate" ||
-      toolName === "osascript_eval"
+      toolName === "osascript_eval" ||
+      acpForceConfirm
     const userFullAutonomy = isFullAutonomyCruise(securityConfig)
     const codeCriticalApis = detectCriticalApis(code)
     // Risk-preview list for the confirm UI: for evaluate/osascript prefer regex hits;
@@ -780,9 +818,11 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // must NOT skip task L2 — only three-flag cruise, G1 session-trust, or ADR-021 unattended
     // (hostComputerTrustSkip) may skip. Restore forceConfirm for hostComputerGated after P0
     // when capabilityForceConfirm no longer implied criticalApis.length for this tool.
+    // ACP: NEVER waive (acpForceConfirm overrides cruise).
     const forceConfirm =
-      (capabilityForceConfirm || hostComputerGated) && !userFullAutonomy
-    if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy) {
+      acpForceConfirm ||
+      ((capabilityForceConfirm || hostComputerGated) && !userFullAutonomy)
+    if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy && !acpForceConfirm) {
       logger.info("security.critical_api_waived", {
         tool_call_id: toolCallId,
         tool_name: toolName,

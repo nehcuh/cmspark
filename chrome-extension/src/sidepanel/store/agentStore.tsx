@@ -4,6 +4,50 @@ import { createContext, useContext, useReducer, type ReactNode, type Dispatch } 
 import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
+/** Live ACP coding handoff session (Composition). */
+export type CodingSessionState = {
+  sessionId: string
+  threadId: string
+  agentId: string
+  displayName?: string
+  state: string
+  progressTail?: string
+  handback?: string
+  error?: string
+  goal?: string
+  workspaceRoot?: string
+  partial?: boolean
+  updatedAt: number
+  mode?: string
+  hasPendingDiff?: boolean
+}
+
+export type CodingSessionEvent = {
+  type?: string
+  session_id?: string
+  thread_id?: string
+  agent_id?: string
+  state?: string
+  progress_tail?: string
+  handback?: string
+  error?: string
+  goal?: string
+  workspace_root?: string
+  display_name?: string
+  partial?: boolean
+  mode?: string
+  pending_diffs?: unknown[]
+}
+
+export type AcpAgentInfo = {
+  id: string
+  display_name: string
+  enabled: boolean
+  profile: string
+  command: string
+  source?: "config" | "discovered"
+}
+
 export interface AgentState {
   connectionState: ConnectionState
   threads: Thread[]
@@ -115,6 +159,14 @@ export interface AgentState {
   // 坐标 computer-use(WP4)— computer.task.event 折叠视图 + 全局坐标开关只读镜像。
   /** 当前/最近一个坐标任务的折叠状态(null = 无任务;驱动任务条 + 急停按钮)。 */
   computerTask: ComputerTaskState | null
+  /**
+   * 编程接力 ACP live session (acp.session.event). null = none.
+   * Not L2 computer-use — separate Composition handoff surface.
+   */
+  codingSession: CodingSessionState | null
+  /** Last acp.list payload (agents + enabled flag). */
+  acpAgents: AcpAgentInfo[]
+  acpEnabled: boolean
   /** computer.state 只读镜像(null = 尚未查询;WP4 不做面板内全局开关切换)。 */
   computerCoordinateEnabled: boolean | null
   // WP5-I4 实验层模型切片——全部只读镜像,无乐观更新(设置页实验区消费):
@@ -270,6 +322,9 @@ export type AgentAction =
   | { type: "SET_APPS_ERROR"; error: string | null }
   | { type: "COMPUTER_TASK_EVENT"; event: ComputerTaskEventView }
   | { type: "COMPUTER_TASK_ABORT_ACK"; taskId: string; matched: number }
+  | { type: "ACP_SESSION_EVENT"; event: CodingSessionEvent }
+  | { type: "SET_ACP_LIST"; enabled: boolean; agents: AcpAgentInfo[] }
+  | { type: "CLEAR_CODING_SESSION" }
   /** Cockpit/panel hydrate from SW mirror — full snapshot, not incremental event. */
   | { type: "HYDRATE_COMPUTER_TASK"; task: ComputerTaskState | null }
   | { type: "HYDRATE_SECURITY_CONFIRMATIONS"; requests: SecurityConfirmationRequest[] }
@@ -409,6 +464,9 @@ export const initialState: AgentState = {
   appsError: null,
   appsPlatform: null,
   computerTask: null,
+  codingSession: null,
+  acpAgents: [],
+  acpEnabled: false,
   computerCoordinateEnabled: null,
   computerModel: null,
   computerModelProgress: null,
@@ -866,6 +924,57 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "COMPUTER_TASK_EVENT":
       // 状态机(含 P4 懒创建/完结后丢弃)全部在纯函数 reduceComputerTaskEvent 里。
       return { ...state, computerTask: reduceComputerTaskEvent(state.computerTask, action.event) }
+    case "ACP_SESSION_EVENT": {
+      const e = action.event
+      if (!e?.session_id) return state
+      const nextState = e.state || state.codingSession?.state || "running"
+      const nextHasPendingDiff = (() => {
+        const pd = (e as any).pending_diffs
+        if (Array.isArray(pd)) {
+          if (pd.length === 0) return false
+          // require explicit applyable:true when field present
+          return pd.some((d: any) => d && d.applyable === true)
+        }
+        return state.codingSession?.hasPendingDiff
+      })()
+      // Drop chip after terminal closed only when no applyable diffs remain
+      if (
+        nextState === "closed" &&
+        state.codingSession?.state === "closed" &&
+        !nextHasPendingDiff &&
+        !state.codingSession?.hasPendingDiff
+      ) {
+        const age = Date.now() - (state.codingSession?.updatedAt || 0)
+        if (age > 12_000) return { ...state, codingSession: null }
+      }
+      return {
+        ...state,
+        codingSession: {
+          sessionId: e.session_id,
+          threadId: e.thread_id || state.codingSession?.threadId || "",
+          agentId: e.agent_id || state.codingSession?.agentId || "",
+          displayName: e.display_name || state.codingSession?.displayName,
+          state: nextState,
+          progressTail: e.progress_tail ?? state.codingSession?.progressTail,
+          handback: e.handback ?? state.codingSession?.handback,
+          error: e.error ?? state.codingSession?.error,
+          goal: e.goal ?? state.codingSession?.goal,
+          workspaceRoot: e.workspace_root ?? state.codingSession?.workspaceRoot,
+          partial: e.partial ?? state.codingSession?.partial,
+          updatedAt: Date.now(),
+          mode: (e as any).mode ?? state.codingSession?.mode,
+          hasPendingDiff: nextHasPendingDiff,
+        },
+      }
+    }
+    case "SET_ACP_LIST":
+      return {
+        ...state,
+        acpEnabled: action.enabled === true,
+        acpAgents: Array.isArray(action.agents) ? action.agents : [],
+      }
+    case "CLEAR_CODING_SESSION":
+      return { ...state, codingSession: null }
     case "COMPUTER_TASK_ABORT_ACK": {
       // matched>0 才置位;task_id="*"(急停全部)对当前任务同样生效。
       const t = state.computerTask

@@ -1,0 +1,8 @@
+{
+  "batch": "acp-coding-handoff-live-ui",
+  "timestamp": "20260813-105030",
+  "claude": { "verdict": "UNKNOWN", "exit_code": 1, "path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-live-ui-claude-20260813-105030.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-live-ui-pi-20260813-105030.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-live-ui-diff-20260813-105030.patch"
+}

@@ -9,6 +9,7 @@ import { tokens } from "../ui/tokens"
 import { IconStop } from "../ui/icons"
 import { MinimalConfirm } from "./MinimalConfirm"
 import { SafetyStrip } from "./SafetyStrip"
+import { CodingSessionChip } from "./CodingSessionChip"
 import { ContextStrip } from "./ContextStrip"
 import { FleetStrip } from "./FleetStrip"
 import {
@@ -90,12 +91,22 @@ export function FocusBand({
   const hasThreadTools = runningTools.length > 0
   const toolsLabel = formatRunningToolsLabel(runningTools)
 
+  const coding = state.codingSession
+  // Keep chip after close so 追问 / 应用 diff CTAs remain reachable (manager emits state=closed, not handback)
+  const hasCodingSession =
+    !!coding &&
+    (coding.state === "running" ||
+      coding.state === "offered" ||
+      coding.state === "handback" ||
+      coding.state === "closed")
+
   const slot: FocusBandSlot = resolveFocusBandSlot({
     hasPendingConfirm,
     hasL2Task,
     l2AbortRequired,
     hasFleetActivity,
     hasThreadTools,
+    hasCodingSession,
     isBrowserContext,
   })
 
@@ -135,6 +146,16 @@ export function FocusBand({
         {slot.primary === "l2_safety" && (
           <div style={styles.primary}>
             <SafetyStrip compact />
+            {slot.secondaryTools && coding && (
+              <div style={{ marginTop: 4 }} data-coding-session-secondary>
+                <CodingSessionChip session={coding} compact />
+              </div>
+            )}
+          </div>
+        )}
+        {slot.primary === "coding_session" && coding && (
+          <div style={styles.primary} data-coding-session-chip>
+            <CodingSessionChip session={coding} />
           </div>
         )}
         {slot.primary === "fleet" && (

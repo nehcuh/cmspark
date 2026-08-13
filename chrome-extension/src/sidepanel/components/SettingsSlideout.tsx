@@ -7,6 +7,7 @@ import { tokens } from "../ui/tokens"
 import { UserEnvSection } from "./UserEnvSection"
 import { NetSecSettingsSection } from "./NetSecSettingsSection"
 import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
+import { CodingHandoffSettingsSection } from "./CodingHandoffSettingsSection"
 import { SettingsSection } from "./SettingsSection"
 import { SettingsIntentBar } from "./SettingsIntentBar"
 import { HotkeyCaptureField } from "./HotkeyCaptureField"
@@ -2874,6 +2875,45 @@ export function SettingsSlideout() {
 
                     {/* --- Outbound MCP L4+ grants --- */}
           <OutboundMcpSettingsSection />
+
+          <div style={styles.divider} />
+          <CodingHandoffSettingsSection
+            acpEnabled={!!(config as { acp?: { enabled?: boolean } }).acp?.enabled}
+            autoSuggest={
+              (config as { coding_handoff?: { auto_suggest?: boolean } }).coding_handoff
+                ?.auto_suggest !== false
+            }
+            onToggleAutoSuggest={(v) => {
+              dispatch({
+                type: "SET_CONFIG",
+                config: {
+                  coding_handoff: {
+                    ...((config as { coding_handoff?: object }).coding_handoff || {}),
+                    auto_suggest: v,
+                  },
+                } as any,
+              })
+              chrome.runtime.sendMessage({
+                type: "config.set",
+                config: { coding_handoff: { auto_suggest: v } },
+              })
+            }}
+            onToggleAcp={(v) => {
+              dispatch({
+                type: "SET_CONFIG",
+                config: {
+                  acp: {
+                    ...((config as { acp?: object }).acp || {}),
+                    enabled: v,
+                  },
+                } as any,
+              })
+              chrome.runtime.sendMessage({
+                type: "config.set",
+                config: { acp: { enabled: v } },
+              })
+            }}
+          />
 
           
             </SettingsSection>

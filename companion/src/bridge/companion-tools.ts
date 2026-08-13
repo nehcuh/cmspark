@@ -31,6 +31,14 @@ export const COMPANION_TOOLS = [
   "wait_workers",
   "worker_cancel",
   "ask_user",
+  // ADR-025 ACP coding handoff (Composition client)
+  "acp_list_agents",
+  "acp_propose_session",
+  "acp_start_session",
+  "acp_collect_result",
+  "acp_cancel_session",
+  "acp_get_status",
+  "acp_apply_diff",
 ] as const
 
 export type CompanionToolName = (typeof COMPANION_TOOLS)[number]

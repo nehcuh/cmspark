@@ -13,7 +13,7 @@ CMspark **不是**多套 Agent runtime，而是 **一个** Companion tool-loop�
 | 轴 | 名称 | 内容 |
 |----|------|------|
 | **A Surface** | 作用面 | **L0 聊**（无 CDP tool）→ **L1 网页**（CDP/tabs/cookies）→ **L2 宿主**（CU / Host / Apps / 企业 shell·netsec，opt-in） |
-| **B Composition** | 组合面 | Skill · Knowledge · MCP（client）· Outbound MCP（export，[ADR-022](adr/022-outbound-mcp-server.md)）· Pack · user-env · modules — **装配**，不是「中层 Agent」 |
+| **B Composition** | 组合面 | Skill · Knowledge · MCP（client）· Outbound MCP（export，[ADR-022](adr/022-outbound-mcp-server.md)）· **ACP 编程接力 Client**（[ADR-025](adr/025-acp-coding-agent-client.md)，默认关）· Pack · user-env · modules — **装配**，不是「中层 Agent」 |
 | **C Autonomy** | 自主度 | 单线程 → multi-worker + tab lease → Mission Board（Board **只**归本轴） |
 
 **横切标签**：Trust（随 Surface 单调变严；session-trust 见 ADR-017）· Channel（`community` | `enterprise`）。
@@ -23,7 +23,7 @@ CMspark **不是**多套 Agent runtime，而是 **一个** Companion tool-loop�
 **叠加纪律**：新场景优先 **Pack**（+ skill/MCP）；**内置/installed Pack 禁止**写全局 auto_approve/god-mode；**例外**：`origin=user` 用户场景的 `trust` 块仅在 Side Panel `user_gesture` + `allowTrust` 下写入，且须可恢复（见 §7.5 / [ADR-020](adr/020-capability-model-three-axes.md)）；禁止无 Pack 替代就加一级 Side Panel 入口。
 
 ```text
-  Composition: Skill · Knowledge · MCP · Outbound MCP · Pack · user-env
+  Composition: Skill · Knowledge · MCP · Outbound MCP · ACP Client · Pack · user-env
         │
    L0 ──▶ L1 ──▶ L2 (opt-in)
         │
@@ -656,6 +656,22 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及�
 - 工具命名：`cmspark__*`（默认 curated L1 子集；禁 cookies / evaluate / L2 / shell / netsec）
 - 代码：`companion/src/outbound-mcp/`（profile · façade gate · audit）；stdio 真桥 / L8 托盘确认 / L9 tab lease / grant 见 ADR 分阶段
 - 产品主叙事仍是 Side Panel；outbound **非** default-on；Skill 仅 adoption
+
+### 8.4 ACP 编程接力 Client（本机写码助手 · ADR-025）
+
+> 决策 SoT：[ADR-025](adr/025-acp-coding-agent-client.md) · 用户指南：[coding-handoff-user-guide.md](coding-handoff-user-guide.md)。  
+> **方向与 Outbound 相反**：CMspark → 本机编程 Agent（stdio spawn / 任务包）；**不是** Side Panel IDE。
+
+| 项 | 约定 |
+|----|------|
+| **Phase A** | 任务包 Markdown 复制（默认可用，无 spawn） |
+| **Phase B** | `config.acp.enabled` 默认 **false**；审查 / 起草会话 + live FocusBand |
+| **Trust** | start / apply_diff **强制 L2**；cruise / god-mode **不可**静默跳过 |
+| **写盘** | 仅工作区 realpath 内 hunk apply；free shell NO-GO |
+| **Autonomy** | workers **HARD_DENY** 全部 `acp_*` |
+| **文案** | 审查/起草 = 任务意图，**不**声称 OS 沙箱只读 |
+
+代码：`companion/src/acp/*` · Extension `coding-handoff/*` · Pack `coding-handoff`。
 
 ---
 
