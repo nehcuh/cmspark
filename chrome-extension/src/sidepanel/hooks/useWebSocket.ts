@@ -1180,8 +1180,13 @@ export function useWebSocket() {
           break
 
         case "acp.ui_start.accepted":
+          // progress follows acp.session.event
+          break
         case "acp.ui_start.denied":
-          // progress follows acp.session.event; denied surfaces as toast via status if needed
+          dispatch({
+            type: "SET_PROCESSING_STATUS",
+            status: msg.error === "user_denied" ? "编程助手启动已取消" : "编程助手启动失败",
+          })
           break
 
         case "computer.task.abort.ack":
