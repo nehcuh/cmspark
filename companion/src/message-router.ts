@@ -1606,6 +1606,7 @@ export async function handleMessage(
     // stay injectable in tests. Mutations validate+normalize before
     // replaceAppsEntries and broadcast apps.updated (mcp.servers.updated parity).
     case "acp.list":
+    case "acp.rediscover":
     case "acp.session.cancel":
     case "acp.ui_start": {
       const { handleAcpWsMessage } = await import("./acp/handlers")

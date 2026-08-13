@@ -22,6 +22,7 @@ type AcpAgent = {
   display_name: string
   enabled: boolean
   command: string
+  source?: "config" | "discovered"
 }
 
 type Props = {
@@ -289,6 +290,7 @@ export function CodingTaskPackageModal({
               {readyAgents.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.display_name}
+                  {a.source === "discovered" ? "（已检测）" : ""}
                 </option>
               ))}
             </select>

@@ -507,9 +507,37 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   })
 
   // 编程接力 live progress → Side Panel (acp.session.event)
+  // + handback auto-inject into thread messages
   try {
     const { ensureAcpBroadcast } = await import("../acp/handlers")
+    const { getAcpManager } = await import("../acp/manager")
     ensureAcpBroadcast(broadcastToClients)
+    getAcpManager().setHandbackSink(({ session, handback }) => {
+      try {
+        const tm = requireRt().getThreadManager()
+        const display = session.agent_id
+        const content = [
+          `【编程接力 · ${display}】审查完成`,
+          session.partial ? "（部分输出 / 超时或非零退出）" : "",
+          "",
+          handback,
+        ]
+          .filter(Boolean)
+          .join("\n")
+        const msg = tm.addMessage(session.thread_id, {
+          thread_id: session.thread_id,
+          role: "assistant",
+          content,
+        })
+        broadcastToClients({
+          type: "acp.handback.message",
+          thread_id: session.thread_id,
+          message: msg,
+        })
+      } catch (err: any) {
+        logger.warn("acp.handback_inject_failed", { error: err?.message || String(err) })
+      }
+    })
   } catch (e: any) {
     logger.warn("acp.broadcast_hook_failed", { error: e?.message || String(e) })
   }

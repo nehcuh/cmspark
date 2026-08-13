@@ -176,6 +176,7 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "acp.list": () => ({ valid: true }),
+    "acp.rediscover": () => ({ valid: true }),
     "acp.session.cancel": (m) => {
       if (typeof m.session_id !== "string" || !m.session_id) {
         return { valid: false, error: "acp.session.cancel requires session_id" }

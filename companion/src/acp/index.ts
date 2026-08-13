@@ -9,3 +9,4 @@ export {
   type AcpLiveEvent,
 } from "./manager"
 export { handleAcpWsMessage, ensureAcpBroadcast } from "./handlers"
+export { discoverCodingAgents, _resetDiscoverCache } from "./discover"

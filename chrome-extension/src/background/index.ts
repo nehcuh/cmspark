@@ -1205,6 +1205,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "apps.set_enabled":
       // 编程接力 ACP (Composition live session)
       case "acp.list":
+      case "acp.rediscover":
       case "acp.session.cancel":
       case "acp.ui_start":
       // 坐标 computer-use(WP4):每应用坐标开关(AppsPanel 卡片菜单;开启由

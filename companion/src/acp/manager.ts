@@ -11,6 +11,13 @@ import type { AcpSessionRecord, AcpPolicyProfile } from "./types"
 import { resolveAcpWorkspaceRoot } from "./workspace-bind"
 import { frameAcpHandback } from "./handback"
 import { markAcpHandbackSeen } from "./taint"
+import { discoverCodingAgents } from "./discover"
+import type { AcpAgentServerConfig } from "./types"
+
+export type AcpHandbackSink = (info: {
+  session: AcpSessionRecord
+  handback: string
+}) => void
 
 export type AcpLiveEvent = {
   type: "acp.session.event"
@@ -40,10 +47,16 @@ export class AcpManager {
   private runningCount = 0
   private listeners = new Set<AcpEventListener>()
   private lastProgressAt = new Map<string, number>()
+  private handbackSink: AcpHandbackSink | null = null
 
   onEvent(fn: AcpEventListener): () => void {
     this.listeners.add(fn)
     return () => this.listeners.delete(fn)
+  }
+
+  /** Inject completed handback into thread history (wired from server boot). */
+  setHandbackSink(fn: AcpHandbackSink | null): void {
+    this.handbackSink = fn
   }
 
   private emit(ev: AcpLiveEvent): void {
@@ -80,7 +93,35 @@ export class AcpManager {
 
   private agentDisplayName(agentId: string): string {
     const s = getConfig().acp?.servers?.[agentId]
-    return s?.display_name || agentId
+    if (s?.display_name) return s.display_name
+    const d = discoverCodingAgents().find((a) => a.id === agentId)
+    return d?.display_name || agentId
+  }
+
+  /**
+   * Resolve configured server or discovered PATH probe as ephemeral server.
+   * Does not persist discovery into config.json.
+   */
+  resolveServer(agentId: string): AcpAgentServerConfig | null {
+    const cfg = getConfig()
+    const configured = cfg.acp?.servers?.[agentId]
+    if (configured?.enabled && configured.command) return configured
+    const disc = discoverCodingAgents().find((a) => a.id === agentId)
+    if (!disc) return null
+    return {
+      enabled: true,
+      display_name: disc.display_name,
+      transport: "stdio",
+      command: disc.command,
+      args: [],
+      policy: {
+        profile: "review_readonly",
+        allow_write: false,
+        allow_exec: false,
+        session_timeout_ms: 15 * 60_000,
+        max_handback_chars: 48_000,
+      },
+    }
   }
 
   listAgents(): Array<{
@@ -89,17 +130,46 @@ export class AcpManager {
     enabled: boolean
     profile: string
     command: string
+    source?: "config" | "discovered"
   }> {
     const cfg = getConfig()
     const acp = cfg.acp
     if (!acp?.enabled) return []
-    return Object.entries(acp.servers || {}).map(([id, s]) => ({
-      id,
-      display_name: s.display_name,
-      enabled: s.enabled && !!s.command,
-      profile: s.policy.profile,
-      command: s.command,
-    }))
+    const out: Array<{
+      id: string
+      display_name: string
+      enabled: boolean
+      profile: string
+      command: string
+      source?: "config" | "discovered"
+    }> = []
+    const seen = new Set<string>()
+    for (const [id, s] of Object.entries(acp.servers || {})) {
+      if (!s.command) continue
+      seen.add(id)
+      out.push({
+        id,
+        display_name: s.display_name,
+        enabled: s.enabled && !!s.command,
+        profile: s.policy.profile,
+        command: s.command,
+        source: "config",
+      })
+    }
+    for (const d of discoverCodingAgents()) {
+      if (seen.has(d.id)) continue
+      // skip if same command already registered under another id
+      if (out.some((a) => a.command === d.command)) continue
+      out.push({
+        id: d.id,
+        display_name: d.display_name,
+        enabled: true,
+        profile: "review_readonly",
+        command: d.command,
+        source: "discovered",
+      })
+    }
+    return out
   }
 
   getSession(sessionId: string): AcpSessionRecord | undefined {
@@ -120,7 +190,7 @@ export class AcpManager {
     if (!cfg.acp?.enabled) {
       return { ok: false, error: "acp: feature disabled (config.acp.enabled=false)" }
     }
-    const server = cfg.acp.servers[opts.agentId]
+    const server = this.resolveServer(opts.agentId)
     if (!server || !server.enabled || !server.command) {
       return { ok: false, error: `acp: unknown or disabled agent "${opts.agentId}"` }
     }
@@ -172,7 +242,7 @@ export class AcpManager {
     }
     const cfg = getConfig()
     if (!cfg.acp?.enabled) return { ok: false, error: "acp: feature disabled" }
-    const server = cfg.acp.servers[session.agent_id]
+    const server = this.resolveServer(session.agent_id)
     if (!server?.command) return { ok: false, error: "acp: agent config missing" }
 
     this.runningCount++
@@ -307,6 +377,13 @@ export class AcpManager {
           fs.unlinkSync(promptPath)
         } catch {
           /* best-effort */
+        }
+        if (session.handback_text && this.handbackSink) {
+          try {
+            this.handbackSink({ session, handback: session.handback_text })
+          } catch (e: any) {
+            logger.warn("acp.handback_sink_error", { err: e?.message || String(e) })
+          }
         }
         logger.info("acp.session_ended", {
           session_id: sessionId,

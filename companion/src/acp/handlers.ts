@@ -41,8 +41,14 @@ export async function handleAcpWsMessage(
   const mgr = getAcpManager()
   if (ctx.broadcast) ensureAcpBroadcast(ctx.broadcast)
 
-  if (type === "acp.list") {
+  if (type === "acp.list" || type === "acp.rediscover") {
     const cfg = getConfig()
+    const force = type === "acp.rediscover"
+    if (force) {
+      const { _resetDiscoverCache, discoverCodingAgents } = await import("./discover")
+      _resetDiscoverCache()
+      discoverCodingAgents(true)
+    }
     return {
       type: "acp.list",
       enabled: !!cfg.acp?.enabled,

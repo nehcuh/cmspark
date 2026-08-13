@@ -1179,6 +1179,17 @@ export function useWebSocket() {
           })
           break
 
+        case "acp.handback.message":
+          if (
+            msg.message &&
+            typeof msg.message === "object" &&
+            typeof msg.thread_id === "string" &&
+            msg.thread_id === activeThreadRef.current
+          ) {
+            dispatch({ type: "ADD_MESSAGE", message: msg.message as any })
+          }
+          break
+
         case "acp.ui_start.accepted":
           // progress follows acp.session.event
           break

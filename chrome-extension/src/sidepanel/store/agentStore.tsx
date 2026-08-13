@@ -41,6 +41,7 @@ export type AcpAgentInfo = {
   enabled: boolean
   profile: string
   command: string
+  source?: "config" | "discovered"
 }
 
 export interface AgentState {

@@ -48,6 +48,20 @@ export function CodingHandoffSettingsSection({
         快捷入口：对话中输入 <code>/code</code> 或 <code>/编程</code>，或消息旁「
         {codingHandoffCopy.ctaHandoff}」。
       </p>
+      <button
+        type="button"
+        style={styles.redetect}
+        onClick={() => {
+          chrome.runtime.sendMessage({ type: "acp.rediscover" }, () => {
+            void chrome.runtime.lastError
+          })
+        }}
+      >
+        重新检测本机编程助手
+      </button>
+      <p style={styles.hint}>
+        开启 ACP 后会探测 PATH 上的 claude / gemini / codex / pi（无需手写路径也可启动只读审查）。
+      </p>
     </div>
   )
 }
@@ -79,5 +93,14 @@ const styles: Record<string, CSSProperties> = {
     color: tokens.textMuted || "#888",
     lineHeight: 1.4,
     margin: "0 0 8px",
+  },
+  redetect: {
+    fontSize: 12,
+    padding: "6px 10px",
+    borderRadius: 6,
+    border: `1px solid ${tokens.border || "#ddd"}`,
+    background: tokens.bg || "#fff",
+    cursor: "pointer",
+    marginBottom: 8,
   },
 }
