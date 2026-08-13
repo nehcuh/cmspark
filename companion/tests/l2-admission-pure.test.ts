@@ -9,6 +9,8 @@ import {
   isHostComputerPlatformGated,
   isHostAppPlatformGated,
   isHostCliPlatformGated,
+  isAcpL2ForceTool,
+  resolveL2ForceConfirm,
   L2_GATE_TOOLS,
 } from "../src/tool/l2-admission"
 
@@ -75,6 +77,58 @@ describe("host platform gated helpers", () => {
       assert.equal(isHostAppPlatformGated(p), false)
       assert.equal(isHostCliPlatformGated(p), false)
     }
+  })
+})
+
+describe("ACP L2 forceConfirm (cruise cannot skip)", () => {
+  it("L2_GATE_TOOLS includes all acp_* force tools", () => {
+    for (const t of [
+      "acp_propose_session",
+      "acp_start_session",
+      "acp_apply_diff",
+    ] as const) {
+      assert.ok(L2_GATE_TOOLS.includes(t), t)
+      assert.equal(isAcpL2ForceTool(t), true)
+    }
+    assert.equal(isAcpL2ForceTool("shell_exec"), false)
+  })
+
+  it("resolveL2ForceConfirm stays true for ACP under full autonomy cruise", () => {
+    for (const toolName of [
+      "acp_propose_session",
+      "acp_start_session",
+      "acp_apply_diff",
+    ]) {
+      assert.equal(
+        resolveL2ForceConfirm({
+          toolName,
+          capabilityForceConfirm: true,
+          hostComputerGated: false,
+          userFullAutonomy: true,
+        }),
+        true,
+        `${toolName} must not waive under cruise`,
+      )
+    }
+  })
+
+  it("non-ACP capability tools waive under full autonomy cruise", () => {
+    assert.equal(
+      resolveL2ForceConfirm({
+        toolName: "evaluate",
+        capabilityForceConfirm: true,
+        userFullAutonomy: true,
+      }),
+      false,
+    )
+    assert.equal(
+      resolveL2ForceConfirm({
+        toolName: "evaluate",
+        capabilityForceConfirm: true,
+        userFullAutonomy: false,
+      }),
+      true,
+    )
   })
 })
 

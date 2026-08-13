@@ -66,6 +66,8 @@ export const codingHandoffCopy = {
   sessionRunning: "编程助手运行中",
   sessionDone: "编程会话完成",
   sessionStopped: "已停止编程会话",
+  statusRunning: "运行中",
+  statusDone: "完成",
   disclosureRequired: "请先确认：代码/页面摘要可能发送到该 Agent 的云模型",
   ctaFollowup: "追问",
   ctaApplyDiff: "应用 diff",
@@ -74,7 +76,13 @@ export const codingHandoffCopy = {
   rediscover: "重新检测本机编程助手",
   adoptConfig: "将检测结果写入 config（持久化）",
   modeReviewOption: "审查",
-  modeDraftOption: "起草修改（propose-diff）",
+  modeDraftOption: "起草修改",
+  /** Live chip badge: 审查 / 起草 */
+  modeBadgeReview: "审查",
+  modeBadgeDraft: "起草",
+  /** Checkbox before ACP start (cloud disclosure) */
+  disclosureCheckbox: "我知悉：代码/页面摘要可能发送到该 Agent 的云模型",
+  disclosureBlocked: "请先勾选云模型披露确认",
 
   // Errors
   agentNotFound: "找不到编程助手",

@@ -26,6 +26,10 @@ export function CodingSessionChip({
     return () => window.clearTimeout(t)
   }, [session.state, session.sessionId, session.hasPendingDiff, dispatch])
   const label = session.displayName || session.agentId || "Agent"
+  const modeBadge =
+    session.mode === "propose_diff"
+      ? codingHandoffCopy.modeBadgeDraft
+      : codingHandoffCopy.modeBadgeReview
   const tail = (session.progressTail || "").replace(/\s+/g, " ").trim().slice(0, 80)
 
   const onStop = () => {
@@ -67,8 +71,12 @@ export function CodingSessionChip({
       <div style={styles.meta}>
         <span style={styles.dot} data-live={live ? "1" : "0"} />
         <span style={styles.title}>
-          {codingHandoffCopy.offerTitle} · {label}
-          {live ? " · 运行中" : session.state === "closed" ? " · 完成" : ` · ${session.state}`}
+          {codingHandoffCopy.offerTitle} · {label} · {modeBadge}
+          {live
+            ? ` · ${codingHandoffCopy.statusRunning}`
+            : session.state === "closed"
+              ? ` · ${codingHandoffCopy.statusDone}`
+              : ` · ${session.state}`}
         </span>
       </div>
       {!compact && tail ? <div style={styles.tail}>{tail}</div> : null}

@@ -69,6 +69,7 @@ export function CodingTaskPackageModal({
   const [showRaw, setShowRaw] = useState(false)
   const [agentId, setAgentId] = useState("")
   const [mode, setMode] = useState<"review_readonly" | "propose_diff">("review_readonly")
+  const [cloudDisclosure, setCloudDisclosure] = useState(false)
   const readyAgents = useMemo(
     () => acpAgents.filter((a) => a.enabled && a.command),
     [acpAgents],
@@ -87,6 +88,7 @@ export function CodingTaskPackageModal({
     setStatus("")
     setPasteBack("")
     setShowRaw(false)
+    setCloudDisclosure(false)
     chrome.runtime.sendMessage({ type: "acp.list" }, () => {
       void chrome.runtime.lastError
     })
@@ -169,6 +171,10 @@ export function CodingTaskPackageModal({
       flash(codingHandoffCopy.agentNotFoundBody, 5000)
       return
     }
+    if (!cloudDisclosure) {
+      flash(codingHandoffCopy.disclosureBlocked, 4000)
+      return
+    }
     flash("请求确认启动…", 3000)
     chrome.runtime.sendMessage(
       {
@@ -178,13 +184,24 @@ export function CodingTaskPackageModal({
         goal: goal.trim() || pkg.markdown.slice(0, 2000),
         workspace_root: workspaceRoot,
         mode,
+        cloud_disclosure_accepted: true,
       },
       () => {
         void chrome.runtime.lastError
       },
     )
     onClose()
-  }, [threadId, pkg, agentId, goal, workspaceRoot, mode, onRequestWorkspace, onClose])
+  }, [
+    threadId,
+    pkg,
+    agentId,
+    goal,
+    workspaceRoot,
+    mode,
+    cloudDisclosure,
+    onRequestWorkspace,
+    onClose,
+  ])
 
   if (!open) return null
 
@@ -307,11 +324,19 @@ export function CodingTaskPackageModal({
               <option value="propose_diff">{codingHandoffCopy.modeDraftOption}</option>
             </select>
             <p style={styles.privacy}>{codingHandoffCopy.modeFootnote}</p>
+            <label style={styles.check}>
+              <input
+                type="checkbox"
+                checked={cloudDisclosure}
+                onChange={(e) => setCloudDisclosure(e.target.checked)}
+              />
+              {codingHandoffCopy.disclosureCheckbox}
+            </label>
             <button
               type="button"
               style={styles.primary}
               onClick={doAcpStart}
-              disabled={!goal.trim() || !agentId}
+              disabled={!goal.trim() || !agentId || !cloudDisclosure}
             >
               {mode === "propose_diff"
                 ? codingHandoffCopy.ctaStartDraft
