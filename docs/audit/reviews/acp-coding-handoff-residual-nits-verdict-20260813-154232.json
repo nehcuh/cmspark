@@ -1,0 +1,20 @@
+{
+  "batch": "acp-coding-handoff-residual-nits",
+  "timestamp": "20260813-154232",
+  "base": "b23cb7a",
+  "head": "61b0ffe",
+  "scope": "PR #186 residual nits closeout after coding-handoff #185",
+  "claude": {
+    "verdict": "APPROVE_WITH_NITS",
+    "exit_code": 0,
+    "path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-residual-nits-claude-20260813-154232.md"
+  },
+  "pi": {
+    "verdict": "APPROVE_WITH_NITS",
+    "exit_code": 0,
+    "path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-residual-nits-pi-20260813-154232.md"
+  },
+  "both_approve": true,
+  "both_ok": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/.worktrees/feat-coding-handoff/docs/audit/reviews/acp-coding-handoff-residual-nits-diff-20260813-154232.patch"
+}
