@@ -41,6 +41,7 @@ import {
   shouldL2GateOsascript,
 } from "../bridge/tool-definitions"
 import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
+import { resolveAcpThreadId } from "../acp/thread-id"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
 
@@ -203,13 +204,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
   // ADR-025: normalize mode + workspace into finalParams so L2 preview, token
   // binding, and dispatch validateTokenFor share one binding surface.
   if (toolName === "acp_propose_session") {
-    const tid =
-      actingThreadId ||
-      (typeof finalParams.__thread_id === "string"
-        ? finalParams.__thread_id
-        : typeof finalParams._thread_id === "string"
-          ? finalParams._thread_id
-          : "")
+    const tid = resolveAcpThreadId(finalParams, actingThreadId)
     const thread = tid ? (threadManager.get(String(tid)) as { workspace_root?: string } | null) : null
     const mode = finalParams.mode === "propose_diff" ? "propose_diff" : "review_readonly"
     const workspace_root = String(
@@ -808,7 +803,8 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           toolName === "evaluate" ||
           toolName === "osascript_eval" ||
           toolName === "acp_propose_session" ||
-          toolName === "acp_start_session"
+          toolName === "acp_start_session" ||
+          toolName === "acp_apply_diff"
         if (isAcpHandbackTainted(q5Thread) && acpBlast) {
           skipConfirmation = false
           logger.info("security.acp_q5_force_l2", { tool_name: toolName, thread: q5Thread })

@@ -15,6 +15,7 @@ describe("acp WS gates", () => {
         thread_id: "t1",
         agent_id: "claude",
         goal: "review",
+        cloud_disclosure_accepted: true,
       },
       {
         requestConfirmation: async () => ({ approved: true } as any),
@@ -56,6 +57,7 @@ describe("acp WS gates", () => {
         thread_id: "worker-1",
         agent_id: "claude",
         goal: "review",
+        cloud_disclosure_accepted: true,
       },
       {
         getAgentRole: () => "worker",
@@ -64,5 +66,21 @@ describe("acp WS gates", () => {
     )
     assert.equal(r.type, "error")
     assert.match(String(r.error), /worker/i)
+  })
+
+  it("ui_start requires cloud_disclosure_accepted", async () => {
+    const r = await handleAcpWsMessage(
+      "acp.ui_start",
+      {
+        thread_id: "t1",
+        agent_id: "claude",
+        goal: "review",
+      },
+      {
+        requestConfirmation: async () => ({ approved: true } as any),
+      },
+    )
+    assert.equal(r.type, "error")
+    assert.match(String(r.error), /cloud_disclosure/i)
   })
 })
