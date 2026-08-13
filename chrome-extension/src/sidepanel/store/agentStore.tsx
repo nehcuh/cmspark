@@ -928,10 +928,24 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const e = action.event
       if (!e?.session_id) return state
       const nextState = e.state || state.codingSession?.state || "running"
-      // Drop chip a few seconds after terminal closed (Pi nit: don't linger forever)
-      if (nextState === "closed" && state.codingSession?.state === "closed") {
+      const nextHasPendingDiff = (() => {
+        const pd = (e as any).pending_diffs
+        if (Array.isArray(pd)) {
+          if (pd.length === 0) return false
+          // require explicit applyable:true when field present
+          return pd.some((d: any) => d && d.applyable === true)
+        }
+        return state.codingSession?.hasPendingDiff
+      })()
+      // Drop chip after terminal closed only when no applyable diffs remain
+      if (
+        nextState === "closed" &&
+        state.codingSession?.state === "closed" &&
+        !nextHasPendingDiff &&
+        !state.codingSession?.hasPendingDiff
+      ) {
         const age = Date.now() - (state.codingSession?.updatedAt || 0)
-        if (age > 8000) return { ...state, codingSession: null }
+        if (age > 12_000) return { ...state, codingSession: null }
       }
       return {
         ...state,
@@ -949,15 +963,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           partial: e.partial ?? state.codingSession?.partial,
           updatedAt: Date.now(),
           mode: (e as any).mode ?? state.codingSession?.mode,
-          hasPendingDiff: (() => {
-            const pd = (e as any).pending_diffs
-            if (Array.isArray(pd)) {
-              if (pd.length === 0) return false
-              // require explicit applyable:true when field present
-              return pd.some((d: any) => d && d.applyable === true)
-            }
-            return state.codingSession?.hasPendingDiff
-          })(),
+          hasPendingDiff: nextHasPendingDiff,
         },
       }
     }

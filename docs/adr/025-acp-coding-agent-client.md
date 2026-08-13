@@ -1,6 +1,6 @@
 # ADR-025: ACP Coding Agent Client（编程接力 · Composition）
 
-**日期**: 2026-08-13 | **状态**: Accepted（Phase A 交付 + Phase B 默认关；写盘/shell 仍 NO-GO）  
+**日期**: 2026-08-13 | **状态**: Accepted（Phase A 交付 + Phase B 默认关；**静默写盘 / free shell** 仍 NO-GO；**gated apply** GO）  
 **相关**: [ADR-020](020-capability-model-three-axes.md) · [ADR-022](022-outbound-mcp-server.md) · [产品设计](../decisions/acp-coding-handoff-product-design-2026-08-13.md) · [双审](../decisions/acp-coding-handoff-dual-review-synthesis-2026-08-13.md)
 
 ---
@@ -47,7 +47,8 @@ Channel:      community Phase A default; Phase B opt-in; gated apply GO; free sh
 ### 5. 实现落点
 
 - `companion/src/acp/*`  
-- tools: `acp_list_agents` · `acp_propose_session` · `acp_start_session` · `acp_collect_result` · `acp_cancel_session` · `acp_get_status`  
+- tools: `acp_list_agents` · `acp_propose_session` · `acp_start_session` · `acp_collect_result` · `acp_cancel_session` · `acp_get_status` · `acp_apply_diff`  
+
 - Extension: `coding-handoff/*` · `CodingTaskPackageModal` · meta slash  
 - Pack: `coding-handoff`  
 

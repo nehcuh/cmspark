@@ -34,3 +34,16 @@ test("coding_session is below confirm and l2_safety, above fleet", () => {
   assert.equal(cuWins.primary, "l2_safety")
   assert.equal(cuWins.secondaryTools, true)
 })
+
+test("closed coding session still occupies FocusBand slot (apply/followup CTAs)", () => {
+  // FocusBand hasCodingSession includes state===closed; priority logic treats any hasCodingSession
+  const closed = resolveFocusBandSlot({
+    hasPendingConfirm: false,
+    hasL2Task: false,
+    l2AbortRequired: false,
+    hasFleetActivity: false,
+    hasCodingSession: true,
+    isBrowserContext: false,
+  })
+  assert.equal(closed.primary, "coding_session")
+})

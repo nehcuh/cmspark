@@ -92,9 +92,13 @@ export function FocusBand({
   const toolsLabel = formatRunningToolsLabel(runningTools)
 
   const coding = state.codingSession
+  // Keep chip after close so 追问 / 应用 diff CTAs remain reachable (manager emits state=closed, not handback)
   const hasCodingSession =
     !!coding &&
-    (coding.state === "running" || coding.state === "offered" || coding.state === "handback")
+    (coding.state === "running" ||
+      coding.state === "offered" ||
+      coding.state === "handback" ||
+      coding.state === "closed")
 
   const slot: FocusBandSlot = resolveFocusBandSlot({
     hasPendingConfirm,

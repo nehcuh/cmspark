@@ -18,11 +18,13 @@ export function CodingSessionChip({
 
   useEffect(() => {
     if (session.state !== "closed") return
+    // Do not auto-dismiss while applyable diffs remain (UX: 应用 diff must stay reachable)
+    if (session.hasPendingDiff) return
     const t = window.setTimeout(() => {
       dispatch({ type: "CLEAR_CODING_SESSION" })
-    }, 6000)
+    }, 12_000)
     return () => window.clearTimeout(t)
-  }, [session.state, session.sessionId, dispatch])
+  }, [session.state, session.sessionId, session.hasPendingDiff, dispatch])
   const label = session.displayName || session.agentId || "Agent"
   const tail = (session.progressTail || "").replace(/\s+/g, " ").trim().slice(0, 80)
 
