@@ -1587,6 +1587,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           pageUrl={(state as { lastTabUrl?: string }).lastTabUrl || null}
           pageTitle={(state as { lastTabTitle?: string }).lastTabTitle || null}
           seedGoal={codingHandoffSeed}
+          threadId={state.activeThreadId}
+          acpEnabled={state.acpEnabled}
+          acpAgents={state.acpAgents}
           onRequestWorkspace={() => {
             setCodingHandoffOpen(false)
             openPanelForce("packs")

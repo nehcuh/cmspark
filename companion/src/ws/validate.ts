@@ -175,6 +175,25 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.task_id !== "string" || !m.task_id) return { valid: false, error: "computer.task.abort requires task_id (a task id or '*')" }
       return { valid: true }
     },
+    "acp.list": () => ({ valid: true }),
+    "acp.session.cancel": (m) => {
+      if (typeof m.session_id !== "string" || !m.session_id) {
+        return { valid: false, error: "acp.session.cancel requires session_id" }
+      }
+      return { valid: true }
+    },
+    "acp.ui_start": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "acp.ui_start requires thread_id" }
+      }
+      if (typeof m.agent_id !== "string" || !m.agent_id) {
+        return { valid: false, error: "acp.ui_start requires agent_id" }
+      }
+      if (typeof m.goal !== "string" || !m.goal.trim()) {
+        return { valid: false, error: "acp.ui_start requires goal" }
+      }
+      return { valid: true }
+    },
     "shell.exec.abort": (m) => {
       const hasTool =
         typeof m.tool_call_id === "string" && m.tool_call_id.length > 0

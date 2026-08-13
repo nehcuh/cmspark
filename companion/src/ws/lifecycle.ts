@@ -506,6 +506,14 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     base_url: config.llm.base_url,
   })
 
+  // 编程接力 live progress → Side Panel (acp.session.event)
+  try {
+    const { ensureAcpBroadcast } = await import("../acp/handlers")
+    ensureAcpBroadcast(broadcastToClients)
+  } catch (e: any) {
+    logger.warn("acp.broadcast_hook_failed", { error: e?.message || String(e) })
+  }
+
   // Warn if no API key configured
   if (!config.llm.api_key || config.llm.api_key === "sk-placeholder") {
     console.warn("[cmspark-agent] ⚠️  No API key configured!")

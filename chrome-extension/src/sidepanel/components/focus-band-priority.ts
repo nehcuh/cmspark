@@ -10,6 +10,7 @@ export const FOCUS_BAND_SECONDARY_MAX_PX = 24
 export type FocusBandPrimary =
   | "confirm"
   | "l2_safety"
+  | "coding_session"
   | "fleet"
   | "thread_tools"
   | "l1_context"
@@ -35,6 +36,10 @@ export interface FocusBandInput {
    * Surfaces long shell_exec / tool loops in FocusBand, not only chat footer.
    */
   hasThreadTools?: boolean
+  /**
+   * 编程接力 ACP live session (Composition). Below L2 CU (急停优先), above Fleet.
+   */
+  hasCodingSession?: boolean
   /** L1 browser surface — ContextStrip when nothing higher. */
   isBrowserContext: boolean
 }
@@ -77,6 +82,15 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
   if (input.hasL2Task) {
     return {
       primary: "l2_safety",
+      secondaryAbort: false,
+      secondaryContext: false,
+      secondaryTools: false,
+    }
+  }
+  // Confirm > CU L2 > coding session > fleet (急停 never buried under coding)
+  if (input.hasCodingSession) {
+    return {
+      primary: "coding_session",
       secondaryAbort: false,
       secondaryContext: false,
       secondaryTools: false,

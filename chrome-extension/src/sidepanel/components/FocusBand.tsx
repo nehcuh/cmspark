@@ -9,6 +9,7 @@ import { tokens } from "../ui/tokens"
 import { IconStop } from "../ui/icons"
 import { MinimalConfirm } from "./MinimalConfirm"
 import { SafetyStrip } from "./SafetyStrip"
+import { CodingSessionChip } from "./CodingSessionChip"
 import { ContextStrip } from "./ContextStrip"
 import { FleetStrip } from "./FleetStrip"
 import {
@@ -90,12 +91,18 @@ export function FocusBand({
   const hasThreadTools = runningTools.length > 0
   const toolsLabel = formatRunningToolsLabel(runningTools)
 
+  const coding = state.codingSession
+  const hasCodingSession =
+    !!coding &&
+    (coding.state === "running" || coding.state === "offered" || coding.state === "handback")
+
   const slot: FocusBandSlot = resolveFocusBandSlot({
     hasPendingConfirm,
     hasL2Task,
     l2AbortRequired,
     hasFleetActivity,
     hasThreadTools,
+    hasCodingSession,
     isBrowserContext,
   })
 
@@ -135,6 +142,11 @@ export function FocusBand({
         {slot.primary === "l2_safety" && (
           <div style={styles.primary}>
             <SafetyStrip compact />
+          </div>
+        )}
+        {slot.primary === "coding_session" && coding && (
+          <div style={styles.primary} data-coding-session-chip>
+            <CodingSessionChip session={coding} />
           </div>
         )}
         {slot.primary === "fleet" && (

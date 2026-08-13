@@ -1165,6 +1165,25 @@ export function useWebSocket() {
           }
           break
 
+        case "acp.session.event":
+          if (typeof msg.session_id === "string") {
+            dispatch({ type: "ACP_SESSION_EVENT", event: msg })
+          }
+          break
+
+        case "acp.list":
+          dispatch({
+            type: "SET_ACP_LIST",
+            enabled: msg.enabled === true,
+            agents: Array.isArray(msg.agents) ? msg.agents : [],
+          })
+          break
+
+        case "acp.ui_start.accepted":
+        case "acp.ui_start.denied":
+          // progress follows acp.session.event; denied surfaces as toast via status if needed
+          break
+
         case "computer.task.abort.ack":
           dispatch({
             type: "COMPUTER_TASK_ABORT_ACK",

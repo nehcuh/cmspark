@@ -1605,6 +1605,23 @@ export async function handleMessage(
 // --- Apps (App tab, WP2) — delegated to apps/handlers.ts so gate/fs deps
     // stay injectable in tests. Mutations validate+normalize before
     // replaceAppsEntries and broadcast apps.updated (mcp.servers.updated parity).
+    case "acp.list":
+    case "acp.session.cancel":
+    case "acp.ui_start": {
+      const { handleAcpWsMessage } = await import("./acp/handlers")
+      const acpRes = await handleAcpWsMessage(type, rest, {
+        requestConfirmation: session?.requestConfirmation,
+        broadcast: session?.broadcast,
+        threadId: typeof rest.thread_id === "string" ? rest.thread_id : undefined,
+        getWorkspaceRoot: (tid) => {
+          const t = threadManager.get(tid) as { workspace_root?: string | null } | null
+          return t?.workspace_root
+        },
+      })
+      if (acpRes) return acpRes
+      return { type: "error", error: `Unhandled acp type: ${type}` }
+    }
+
     case "apps.list":
     case "apps.enumerate":
     case "apps.add":

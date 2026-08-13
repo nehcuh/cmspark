@@ -1,6 +1,5 @@
-// ACP session manager — Phase B read-only review (default off).
-// Spawns configured stdio agent with a single prompt; collects stdout as handback.
-// Full JSON-RPC ACP dialect can be swapped in later without changing tool surface.
+// ACP session manager — Phase B+ live progress (default acp.enabled=false).
+// Spawns configured stdio agent; streams progress via onEvent → WS broadcast.
 
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
 import * as fs from "fs"
@@ -13,6 +12,24 @@ import { resolveAcpWorkspaceRoot } from "./workspace-bind"
 import { frameAcpHandback } from "./handback"
 import { markAcpHandbackSeen } from "./taint"
 
+export type AcpLiveEvent = {
+  type: "acp.session.event"
+  session_id: string
+  thread_id: string
+  agent_id: string
+  state: AcpSessionRecord["state"]
+  /** Throttled tail of stdout for UI (not full stream). */
+  progress_tail?: string
+  handback?: string
+  error?: string
+  partial?: boolean
+  goal?: string
+  workspace_root?: string
+  display_name?: string
+}
+
+export type AcpEventListener = (ev: AcpLiveEvent) => void
+
 function newSessionId(): string {
   return `acp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
@@ -21,6 +38,50 @@ export class AcpManager {
   private sessions = new Map<string, AcpSessionRecord>()
   private processes = new Map<string, ChildProcessWithoutNullStreams>()
   private runningCount = 0
+  private listeners = new Set<AcpEventListener>()
+  private lastProgressAt = new Map<string, number>()
+
+  onEvent(fn: AcpEventListener): () => void {
+    this.listeners.add(fn)
+    return () => this.listeners.delete(fn)
+  }
+
+  private emit(ev: AcpLiveEvent): void {
+    for (const fn of this.listeners) {
+      try {
+        fn(ev)
+      } catch (e) {
+        logger.warn("acp.listener_error", { err: String((e as Error)?.message || e) })
+      }
+    }
+  }
+
+  private emitProgress(session: AcpSessionRecord, tail: string, force = false): void {
+    const now = Date.now()
+    const last = this.lastProgressAt.get(session.session_id) || 0
+    if (!force && now - last < 800) return
+    this.lastProgressAt.set(session.session_id, now)
+    const display = this.agentDisplayName(session.agent_id)
+    this.emit({
+      type: "acp.session.event",
+      session_id: session.session_id,
+      thread_id: session.thread_id,
+      agent_id: session.agent_id,
+      state: session.state,
+      progress_tail: tail.slice(-400),
+      goal: session.goal,
+      workspace_root: session.workspace_root,
+      display_name: display,
+      partial: session.partial,
+      error: session.error,
+      handback: session.handback_text,
+    })
+  }
+
+  private agentDisplayName(agentId: string): string {
+    const s = getConfig().acp?.servers?.[agentId]
+    return s?.display_name || agentId
+  }
 
   listAgents(): Array<{
     id: string
@@ -49,9 +110,6 @@ export class AcpManager {
     return [...this.sessions.values()].filter((s) => s.thread_id === threadId)
   }
 
-  /**
-   * Create an offered session (does not spawn). Caller must confirm then start.
-   */
   propose(opts: {
     threadId: string
     agentId: string
@@ -67,7 +125,7 @@ export class AcpManager {
       return { ok: false, error: `acp: unknown or disabled agent "${opts.agentId}"` }
     }
     if (this.runningCount >= 1) {
-      return { ok: false, error: "ACP_SESSION_BUSY: only one ACP session at a time (Phase B)" }
+      return { ok: false, error: "ACP_SESSION_BUSY: only one ACP session at a time" }
     }
     for (const s of this.sessions.values()) {
       if (s.thread_id === opts.threadId && (s.state === "running" || s.state === "offered")) {
@@ -77,7 +135,6 @@ export class AcpManager {
     const ws = resolveAcpWorkspaceRoot(opts.workspaceRoot)
     if (!ws.ok) return { ok: false, error: ws.error }
 
-    // Phase B product lock: always review_readonly regardless of config profile
     if (server.policy.profile !== "review_readonly") {
       logger.info("acp.profile_demoted", {
         agent: opts.agentId,
@@ -100,12 +157,10 @@ export class AcpManager {
     }
     this.sessions.set(session.session_id, session)
     logger.info("acp.offer", { session_id: session.session_id, agent: opts.agentId })
+    this.emitProgress(session, "offered — waiting to start", true)
     return { ok: true, session }
   }
 
-  /**
-   * Start after user confirm. Spawns child with review prompt; non-interactive best-effort.
-   */
   async start(sessionId: string): Promise<
     | { ok: true; session: AcpSessionRecord }
     | { ok: false; error: string }
@@ -122,6 +177,7 @@ export class AcpManager {
 
     this.runningCount++
     session.state = "running"
+    this.emitProgress(session, "starting…", true)
 
     const prompt = [
       "You are running under CMspark 编程接力 (read-only review session).",
@@ -134,21 +190,17 @@ export class AcpManager {
       "Return a structured code review: findings (severity), files of interest, residual risks.",
     ].join("\n")
 
-    // Temp file outside user repo (Claude dual-review nit) + stdin for CLI tools.
-    const promptPath = path.join(
-      os.tmpdir(),
-      `cmspark-acp-${session.session_id}.md`,
-    )
+    const promptPath = path.join(os.tmpdir(), `cmspark-acp-${session.session_id}.md`)
     try {
       fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600 })
     } catch (e: any) {
       this.runningCount = Math.max(0, this.runningCount - 1)
       session.state = "closed"
       session.error = `cannot write prompt file: ${e?.message || e}`
+      this.emitProgress(session, session.error, true)
       return { ok: false, error: session.error }
     }
 
-    // Use configured args only — do not invent bare-path argv (stdin is primary).
     const args = [...(server.args || [])]
 
     return await new Promise((resolve) => {
@@ -167,7 +219,6 @@ export class AcpManager {
             USERPROFILE: process.env.USERPROFILE,
             LANG: process.env.LANG,
             ...(server.env || {}),
-            // Never inject Companion API keys / CMSPARK secrets
             CMSPARK_ACP_SESSION: session.session_id,
             CMSPARK_ACP_MODE: "review_readonly",
           },
@@ -178,12 +229,14 @@ export class AcpManager {
         session.state = "closed"
         const errMsg = e?.message || String(e)
         session.error = errMsg
+        this.emitProgress(session, errMsg, true)
         resolve({ ok: false, error: errMsg })
         return
       }
 
       session.pid = child.pid
       this.processes.set(sessionId, child)
+      this.emitProgress(session, `pid ${child.pid} running…`, true)
 
       try {
         child.stdin.write(prompt)
@@ -194,6 +247,7 @@ export class AcpManager {
 
       const timer = setTimeout(() => {
         session.partial = true
+        this.emitProgress(session, "timeout — stopping…", true)
         try {
           child.kill("SIGTERM")
         } catch {
@@ -211,10 +265,12 @@ export class AcpManager {
       child.stdout.on("data", (buf: Buffer) => {
         stdout += buf.toString("utf8")
         if (stdout.length > maxOut * 2) stdout = stdout.slice(-maxOut)
+        this.emitProgress(session, stdout)
       })
       child.stderr.on("data", (buf: Buffer) => {
         stderr += buf.toString("utf8")
         if (stderr.length > 8000) stderr = stderr.slice(-8000)
+        this.emitProgress(session, stderr)
       })
 
       child.on("error", (err) => {
@@ -225,6 +281,7 @@ export class AcpManager {
         const msg = err?.message || String(err)
         session.error = msg
         logger.warn("acp.spawn_error", { session_id: sessionId, err: msg })
+        this.emitProgress(session, msg, true)
         resolve({ ok: false, error: msg })
       })
 
@@ -235,7 +292,7 @@ export class AcpManager {
         const body =
           stdout.trim() ||
           stderr.trim() ||
-          `(agent exited code=${code} with no output; prompt at ${promptPath})`
+          `(agent exited code=${code} with no output)`
         session.handback_text = frameAcpHandback({
           agentId: session.agent_id,
           sessionId: session.session_id,
@@ -244,10 +301,8 @@ export class AcpManager {
           body,
           maxChars: maxOut,
         })
-        session.state = "handback"
-        markAcpHandbackSeen(session.thread_id)
-        // move to closed after handback is collected
         session.state = "closed"
+        markAcpHandbackSeen(session.thread_id)
         try {
           fs.unlinkSync(promptPath)
         } catch {
@@ -258,6 +313,7 @@ export class AcpManager {
           code,
           handback_len: session.handback_text?.length,
         })
+        this.emitProgress(session, body.slice(-400), true)
         resolve({ ok: true, session })
       })
     })
@@ -284,10 +340,8 @@ export class AcpManager {
     session.error = session.error || "cancelled"
     if (session.state === "offered" || session.state === "running" || session.state === "confirmed") {
       session.state = "closed"
-      if (this.runningCount > 0 && !child) {
-        /* already decremented on close */
-      }
     }
+    this.emitProgress(session, "cancelled", true)
     return { ok: true }
   }
 

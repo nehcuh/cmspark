@@ -17,6 +17,13 @@ export type CodingHandoffOpenDetail = {
   pageExcerpt?: string | null
 }
 
+type AcpAgent = {
+  id: string
+  display_name: string
+  enabled: boolean
+  command: string
+}
+
 type Props = {
   open: boolean
   onClose: () => void
@@ -26,6 +33,9 @@ type Props = {
   pageTitle?: string | null
   pageExcerpt?: string | null
   seedGoal?: string
+  threadId?: string | null
+  acpEnabled?: boolean
+  acpAgents?: AcpAgent[]
   onRequestWorkspace?: () => void
   onPasteBack?: (note: string) => void
 }
@@ -39,6 +49,9 @@ export function CodingTaskPackageModal({
   pageTitle,
   pageExcerpt,
   seedGoal,
+  threadId,
+  acpEnabled = false,
+  acpAgents = [],
   onRequestWorkspace,
   onPasteBack,
 }: Props) {
@@ -53,6 +66,11 @@ export function CodingTaskPackageModal({
   const [status, setStatus] = useState("")
   const [pasteBack, setPasteBack] = useState("")
   const [showRaw, setShowRaw] = useState(false)
+  const [agentId, setAgentId] = useState("")
+  const readyAgents = useMemo(
+    () => acpAgents.filter((a) => a.enabled && a.command),
+    [acpAgents],
+  )
 
   useEffect(() => {
     if (!open) return
@@ -67,7 +85,16 @@ export function CodingTaskPackageModal({
     setStatus("")
     setPasteBack("")
     setShowRaw(false)
+    chrome.runtime.sendMessage({ type: "acp.list" }, () => {
+      void chrome.runtime.lastError
+    })
   }, [open, seedGoal, messages])
+
+  useEffect(() => {
+    if (readyAgents.length && !readyAgents.some((a) => a.id === agentId)) {
+      setAgentId(readyAgents[0].id)
+    }
+  }, [readyAgents, agentId])
 
   const pkg = useMemo(
     () =>
@@ -125,6 +152,36 @@ export function CodingTaskPackageModal({
     }
     flash(codingHandoffCopy.copiedOk + " — 请打开终端粘贴", 5000)
   }, [pkg.markdown])
+
+  const doAcpStart = useCallback(() => {
+    if (!threadId) {
+      flash("需要先有对话线程", 4000)
+      return
+    }
+    if (!pkg.hasWorkspace) {
+      flash(codingHandoffCopy.workspaceMissingBody, 5000)
+      onRequestWorkspace?.()
+      return
+    }
+    if (!agentId) {
+      flash(codingHandoffCopy.agentNotFoundBody, 5000)
+      return
+    }
+    flash("请求确认启动…", 3000)
+    chrome.runtime.sendMessage(
+      {
+        type: "acp.ui_start",
+        thread_id: threadId,
+        agent_id: agentId,
+        goal: goal.trim() || pkg.markdown.slice(0, 2000),
+        workspace_root: workspaceRoot,
+      },
+      () => {
+        void chrome.runtime.lastError
+      },
+    )
+    onClose()
+  }, [threadId, pkg, agentId, goal, workspaceRoot, onRequestWorkspace, onClose])
 
   if (!open) return null
 
@@ -220,6 +277,36 @@ export function CodingTaskPackageModal({
         {showRaw ? (
           <textarea readOnly value={pkg.markdown} rows={8} style={styles.raw} />
         ) : null}
+
+        {acpEnabled && readyAgents.length > 0 ? (
+          <div style={styles.acpBlock}>
+            <div style={styles.label}>{codingHandoffCopy.spawnTitle}（本机 · 确认后运行）</div>
+            <select
+              value={agentId}
+              onChange={(e) => setAgentId(e.target.value)}
+              style={styles.select}
+            >
+              {readyAgents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.display_name}
+                </option>
+              ))}
+            </select>
+            <p style={styles.privacy}>{codingHandoffCopy.modeFootnote}</p>
+            <button
+              type="button"
+              style={styles.primary}
+              onClick={doAcpStart}
+              disabled={!goal.trim() || !agentId}
+            >
+              {codingHandoffCopy.ctaStart} · 只读审查
+            </button>
+          </div>
+        ) : acpEnabled ? (
+          <p style={styles.hint}>{codingHandoffCopy.agentNotFoundBody}</p>
+        ) : (
+          <p style={styles.hint}>{codingHandoffCopy.settingsAcpHint}</p>
+        )}
 
         <div style={styles.actions}>
           <button type="button" style={styles.secondary} onClick={onClose}>
@@ -421,5 +508,19 @@ const styles: Record<string, CSSProperties> = {
   pasteBlock: {
     borderTop: `1px solid ${tokens.border || "#eee"}`,
     paddingTop: 10,
+  },
+  acpBlock: {
+    borderTop: `1px solid ${tokens.border || "#eee"}`,
+    paddingTop: 10,
+    marginBottom: 10,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  select: {
+    fontSize: 12,
+    padding: 6,
+    borderRadius: tokens.radiusSm || 6,
+    border: `1px solid ${tokens.border || "#ddd"}`,
   },
 }
