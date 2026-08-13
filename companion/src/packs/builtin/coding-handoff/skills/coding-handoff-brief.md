@@ -1,6 +1,6 @@
 ---
 name: coding-handoff-brief
-description: 编程接力 — 如何把浏览器证据打成终端编程助手任务包，以及何时用 ACP 只读审查
+description: 编程接力 — 如何把浏览器证据打成终端编程助手任务包，以及何时用 ACP 审查/起草会话
 type: prompt_template
 ---
 

@@ -303,8 +303,8 @@ export function CodingTaskPackageModal({
               }
               style={styles.select}
             >
-              <option value="review_readonly">只读审查</option>
-              <option value="propose_diff">起草修改（propose-diff）</option>
+              <option value="review_readonly">{codingHandoffCopy.modeReviewOption}</option>
+              <option value="propose_diff">{codingHandoffCopy.modeDraftOption}</option>
             </select>
             <p style={styles.privacy}>{codingHandoffCopy.modeFootnote}</p>
             <button
@@ -313,8 +313,9 @@ export function CodingTaskPackageModal({
               onClick={doAcpStart}
               disabled={!goal.trim() || !agentId}
             >
-              {codingHandoffCopy.ctaStart} ·{" "}
-              {mode === "propose_diff" ? "起草修改" : "只读审查"}
+              {mode === "propose_diff"
+                ? codingHandoffCopy.ctaStartDraft
+                : codingHandoffCopy.ctaStartReview}
             </button>
           </div>
         ) : acpEnabled ? (

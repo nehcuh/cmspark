@@ -99,7 +99,7 @@ export class SecurityPolicy {
       case "acp_start_session":
         return `acp_start|${String(params?.session_id || "")}`
       case "acp_apply_diff":
-        return `acp_apply|${String(params?.session_id || "")}|${Array.isArray(params?.paths) ? params.paths.join(",") : ""}`
+        return `acp_apply|${String(params?.session_id || "")}|${Array.isArray(params?.paths) ? params.paths.join(",") : ""}|del=${params?.allow_delete === true ? "1" : "0"}`
       // ADR-016: bind complete intent so token cannot be swapped for empty_complete flip
       case "board_complete":
         return `board_complete|empty=${params?.empty_complete === true ? "1" : "0"}|ids=${Array.isArray(params?.supporting_fact_ids) ? params.supporting_fact_ids.join(",") : ""}|reason=${String(params?.empty_complete_reason || params?.goal_summary || "")}`

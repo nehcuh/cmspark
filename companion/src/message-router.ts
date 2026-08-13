@@ -1621,6 +1621,10 @@ export async function handleMessage(
           const t = threadManager.get(tid) as { workspace_root?: string | null } | null
           return t?.workspace_root
         },
+        getAgentRole: (tid) => {
+          const t = threadManager.get(tid) as { agent_role?: string } | null
+          return t?.agent_role
+        },
       })
       if (acpRes) return acpRes
       return { type: "error", error: `Unhandled acp type: ${type}` }

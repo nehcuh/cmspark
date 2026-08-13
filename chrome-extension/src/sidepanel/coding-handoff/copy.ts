@@ -58,7 +58,7 @@ export const codingHandoffCopy = {
   settingsAutoSuggest: "自动建议编程接力（Offer）",
   settingsAcpEnabled: "启用 ACP 会话（实验 · 默认关）",
   settingsAcpHint:
-    "开启后可用本机 ACP 兼容 Agent 做只读审查会话。默认关闭；启动仍需确认。",
+    "开启后可用本机 ACP 兼容 Agent 做审查 / 起草会话。默认关闭；启动仍需确认。",
 
   // Phase B
   spawnTitle: "启动编程助手",
@@ -67,6 +67,14 @@ export const codingHandoffCopy = {
   sessionDone: "编程会话完成",
   sessionStopped: "已停止编程会话",
   disclosureRequired: "请先确认：代码/页面摘要可能发送到该 Agent 的云模型",
+  ctaFollowup: "追问",
+  ctaApplyDiff: "应用 diff",
+  ctaStartReview: "启动 · 审查",
+  ctaStartDraft: "启动 · 起草",
+  rediscover: "重新检测本机编程助手",
+  adoptConfig: "将检测结果写入 config（持久化）",
+  modeReviewOption: "审查",
+  modeDraftOption: "起草修改（propose-diff）",
 
   // Errors
   agentNotFound: "找不到编程助手",

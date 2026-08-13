@@ -47,4 +47,34 @@ describe("acp WS gates", () => {
     assert.ok(Array.isArray(r.agents))
     assert.equal(r.agents.length, 0)
   })
+
+  it("ui_start refuses worker threads", async () => {
+    const { getConfig, saveConfig } = await import("../src/config")
+    const prev = getConfig().acp
+    try {
+      saveConfig({
+        acp: {
+          ...(prev || { servers: {} }),
+          enabled: true,
+          servers: prev?.servers || {},
+        },
+      })
+      const r = await handleAcpWsMessage(
+        "acp.ui_start",
+        {
+          thread_id: "worker-1",
+          agent_id: "claude",
+          goal: "review",
+        },
+        {
+          getAgentRole: () => "worker",
+          requestConfirmation: async () => ({ approved: true } as any),
+        },
+      )
+      assert.equal(r.type, "error")
+      assert.match(String(r.error), /worker/i)
+    } finally {
+      saveConfig({ acp: prev })
+    }
+  })
 })

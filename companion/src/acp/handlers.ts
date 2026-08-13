@@ -16,6 +16,8 @@ export interface AcpHandlerContext {
   broadcast?: (data: any) => void
   threadId?: string
   getWorkspaceRoot?: (threadId: string) => string | null | undefined
+  /** Return agent_role for thread if known (refuse worker). */
+  getAgentRole?: (threadId: string) => string | undefined
 }
 
 let broadcastHooked = false
@@ -148,6 +150,9 @@ export async function handleAcpWsMessage(
     } else {
       const threadId = String(msg.thread_id || ctx.threadId || "")
       if (!threadId) return { type: "error", error: "thread_id required" }
+      if (ctx.getAgentRole?.(threadId) === "worker") {
+        return { type: "error", error: "acp: worker threads cannot start ACP sessions" }
+      }
       const agentId = String(msg.agent_id || "")
       const goal = String(msg.goal || "").trim()
       if (!agentId) return { type: "error", error: "agent_id required" }
@@ -171,7 +176,9 @@ export async function handleAcpWsMessage(
     const label =
       mgr.listAgents().find((a) => a.id === session.agent_id)?.display_name ||
       session.agent_id
-    const modeLabel = mode === "propose_diff" ? "起草修改(propose-diff)" : "只读审查"
+    const effectiveMode = session.mode || mode
+    const modeLabel =
+      effectiveMode === "propose_diff" ? "起草修改(propose-diff)" : "审查"
     const approved = await confirmOrDeny(ctx, {
       toolName: "acp_start_session",
       dangerousApis: ["acp_start_session"],
@@ -201,7 +208,7 @@ export async function handleAcpWsMessage(
       session_id: session.session_id,
       agent_id: session.agent_id,
       thread_id: session.thread_id,
-      mode,
+      mode: effectiveMode,
       state: "running",
     }
   }

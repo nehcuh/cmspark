@@ -107,4 +107,21 @@ describe("security policy ACP binding", () => {
     })
     assert.match(start, /acp_start\|acp_abc/)
   })
+
+  it("binds allow_delete into acp_apply_diff payload", async () => {
+    const { SecurityPolicy } = await import("../src/security-policy")
+    const withDel = SecurityPolicy.bindingPayloadFor("acp_apply_diff", {
+      session_id: "s1",
+      paths: ["a.ts"],
+      allow_delete: true,
+    })
+    const noDel = SecurityPolicy.bindingPayloadFor("acp_apply_diff", {
+      session_id: "s1",
+      paths: ["a.ts"],
+      allow_delete: false,
+    })
+    assert.match(withDel, /del=1/)
+    assert.match(noDel, /del=0/)
+    assert.notEqual(withDel, noDel)
+  })
 })

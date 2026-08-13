@@ -57,7 +57,7 @@ export function CodingHandoffSettingsSection({
           })
         }}
       >
-        重新检测本机编程助手
+        {codingHandoffCopy.rediscover}
       </button>
       <button
         type="button"
@@ -68,7 +68,7 @@ export function CodingHandoffSettingsSection({
           })
         }}
       >
-        将检测结果写入 config（持久化）
+        {codingHandoffCopy.adoptConfig}
       </button>
       <p style={styles.hint}>
         开启 ACP 后会探测 PATH 上的 claude / gemini / codex / pi；可持久化路径，也可直接用「已检测」临时启动。

@@ -17,7 +17,7 @@ type: prompt_template
 1. 优先引导用户使用 **`/code` / `/编程` / 消息「派给终端助手」** 打开 **编程接力任务包**（复制 Markdown）。
 2. 本 skill 的 Prompt Chain 输出应 **兼容同一任务包字段**（Goal / Workspace / Browser evidence / Constraints / Acceptance / Handback）。
 3. 与 **Outbound MCP**（编程 Agent 租浏览器）方向相反，勿混讲。
-4. 可选 ACP 只读会话仅当用户启用 `acp.enabled` 且 L2 确认——见 ADR-025。
+4. 可选 ACP **审查 / 起草**会话仅当用户启用 `acp.enabled` 且 L2 确认——见 ADR-025（模式=任务意图，≠ OS 沙箱只读）。
 
 ## 何时使用
 

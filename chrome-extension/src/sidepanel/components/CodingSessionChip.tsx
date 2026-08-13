@@ -79,12 +79,12 @@ export function CodingSessionChip({
         ) : null}
         {!live && session.state === "closed" ? (
           <button type="button" style={styles.stop} onClick={onFollowup}>
-            追问
+            {codingHandoffCopy.ctaFollowup}
           </button>
         ) : null}
         {!live && session.hasPendingDiff ? (
           <button type="button" style={styles.stop} onClick={onApply}>
-            应用 diff
+            {codingHandoffCopy.ctaApplyDiff}
           </button>
         ) : null}
       </div>

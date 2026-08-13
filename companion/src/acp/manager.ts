@@ -337,7 +337,7 @@ export class AcpManager {
             LANG: process.env.LANG,
             ...(server.env || {}),
             CMSPARK_ACP_SESSION: session.session_id,
-            CMSPARK_ACP_MODE: "review_readonly",
+            CMSPARK_ACP_MODE: session.mode || "review_readonly",
           },
           stdio: ["pipe", "pipe", "pipe"],
         })

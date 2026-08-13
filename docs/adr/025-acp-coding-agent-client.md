@@ -9,18 +9,18 @@
 
 ### 1. 一句话
 
-> CMspark Companion 作为 **ACP / 本机编程 Agent 的 Client（Composition）**：先交付 **任务包导出（Phase A）**；可选 **只读审查会话（Phase B，`acp.enabled` 默认 false）**。  
+> CMspark Companion 作为 **ACP / 本机编程 Agent 的 Client（Composition）**：先交付 **任务包导出（Phase A）**；可选 **审查 / 起草会话（Phase B，`acp.enabled` 默认 false）**。  
 > **不是** Side Panel IDE，**不是**第三 runtime，**不是** Outbound MCP 的反写。
 
 ### 2. 能力坐标
 
 ```text
 Surface:      L0/L1 采证；写码不在 CMspark Surface 叙事内
-L2-classes:   (none default); session start 走 L2 Confirm
+L2-classes:   (none default); session start / apply_diff 走 L2 Confirm
 Compose:      coding_handoff pack + acp client + task package export
 Autonomy:     single-thread handoff; workers HARD_DENY acp_*
-Trust:        HITL start; originWs; untrusted handback + Q5-like taint; never auto_approve skip
-Channel:      community Phase A/B readonly; apply/shell NO-GO v1
+Trust:        HITL start+apply; originWs; untrusted handback + Q5-like taint; never auto_approve skip
+Channel:      community Phase A default; Phase B opt-in; gated apply GO; free shell NO-GO
 ```
 
 ### 3. 锁定
@@ -29,8 +29,8 @@ Channel:      community Phase A/B readonly; apply/shell NO-GO v1
 |----|-----|
 | **L1** | Phase A（复制任务包）可 default 可用；无 spawn |
 | **L2** | Phase B `config.acp.enabled` 默认 **false** |
-| **L3** | 仅 `review_readonly` 产品默认；`allow_exec` 永不 true |
-| **L4** | `acp_propose_session` / `acp_start_session` 强制 L2；`autoConfirmEligible` 不适用静默 |
+| **L3** | 默认模式 `review_readonly`（任务意图=审查）；`propose_diff` 需显选；`allow_exec` 永不 true |
+| **L4** | `acp_propose_session` / `acp_start_session` / `acp_apply_diff` 强制 L2；cruise/god-mode **不可**静默跳过 |
 | **L5** | Handback `<<<UNTRUSTED_ACP_HANDBACK>>>` + taint 至下一条用户消息 |
 | **L6** | Worker / orchestrator 子线程 **禁止** 全部 `acp_*` |
 | **L7** | 与 Outbound：子进程不注入 `CMSPARK_*` outbound tokens；无 `cmspark__acp_*` 导出 |
