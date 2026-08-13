@@ -35,6 +35,8 @@ export type CodingSessionEvent = {
   workspace_root?: string
   display_name?: string
   partial?: boolean
+  mode?: string
+  pending_diffs?: unknown[]
 }
 
 export type AcpAgentInfo = {
