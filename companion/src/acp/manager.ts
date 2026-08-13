@@ -218,9 +218,10 @@ export class AcpManager {
         this.runningCount = Math.max(0, this.runningCount - 1)
         this.processes.delete(sessionId)
         session.state = "closed"
-        session.error = err.message
-        logger.warn("acp.spawn_error", { session_id: sessionId, err: err.message })
-        resolve({ ok: false, error: err.message })
+        const msg = err?.message || String(err)
+        session.error = msg
+        logger.warn("acp.spawn_error", { session_id: sessionId, err: msg })
+        resolve({ ok: false, error: msg })
       })
 
       child.on("close", (code) => {
