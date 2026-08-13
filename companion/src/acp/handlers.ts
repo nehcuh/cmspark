@@ -134,10 +134,16 @@ export async function handleAcpWsMessage(
       if (!parentId || !goal) {
         return { type: "error", error: "session_id and goal required for followup" }
       }
+      const parent = mgr.getSession(parentId)
+      // inherit parent mode unless UI overrides with msg.mode
+      const followMode =
+        msg.mode === "propose_diff" || msg.mode === "review_readonly"
+          ? (msg.mode as "review_readonly" | "propose_diff")
+          : parent?.mode || "review_readonly"
       proposed = mgr.followup({
         parentSessionId: parentId,
         goal,
-        mode: mode as "review_readonly" | "propose_diff",
+        mode: followMode,
       })
     } else {
       const threadId = String(msg.thread_id || ctx.threadId || "")

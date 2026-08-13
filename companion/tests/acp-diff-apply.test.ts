@@ -40,6 +40,33 @@ describe("diff extract/parse/apply", () => {
     fs.rmSync(root, { recursive: true, force: true })
   })
 
+  it("applies partial hunk without truncating rest of file (Pi B1)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "acp-diff-"))
+    const big = Array.from({ length: 20 }, (_, i) => `line${i}`).join("\n") + "\n"
+    fs.writeFileSync(path.join(root, "big.txt"), big)
+    const diff = [
+      "diff --git a/big.txt b/big.txt",
+      "--- a/big.txt",
+      "+++ b/big.txt",
+      "@@ -5,3 +5,3 @@",
+      " line4",
+      "-line5",
+      "+LINE5-CHANGED",
+      " line6",
+      "",
+    ].join("\n")
+    const files = parseUnifiedDiff(diff)
+    const r = applyParsedDiffs(root, files)
+    assert.equal(r.ok, true, JSON.stringify(r))
+    const result = fs.readFileSync(path.join(root, "big.txt"), "utf8")
+    const lines = result.replace(/\n$/, "").split("\n")
+    assert.equal(lines.length, 20, `expected 20 lines got ${lines.length}: ${result}`)
+    assert.equal(lines[5], "LINE5-CHANGED")
+    assert.equal(lines[0], "line0")
+    assert.equal(lines[19], "line19")
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
   it("rejects path escape", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "acp-diff-"))
     const files = [
@@ -49,6 +76,7 @@ describe("diff extract/parse/apply", () => {
         newContent: "x",
         isNew: true,
         isDelete: false,
+        hunks: [],
       },
     ]
     const r = applyParsedDiffs(root, files)
@@ -59,7 +87,7 @@ describe("diff extract/parse/apply", () => {
 
   it("summarizeDiffFiles non-empty", () => {
     const s = summarizeDiffFiles([
-      { relPath: "a.ts", hunk: "", newContent: "1", isNew: true, isDelete: false },
+      { relPath: "a.ts", hunk: "", newContent: "1", isNew: true, isDelete: false, hunks: [] },
     ])
     assert.match(s, /a\.ts/)
   })

@@ -48,9 +48,11 @@ export interface AcpPendingDiff {
   relPath: string
   isNew: boolean
   isDelete: boolean
-  /** Full new content if reconstructable */
+  /** Full new content if reconstructable (new files) */
   newContent: string | null
   hunk: string
+  /** Structured hunks for safe apply on existing files */
+  hunks?: import("./diff-apply").DiffHunk[]
 }
 
 export interface AcpSessionRecord {

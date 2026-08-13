@@ -410,6 +410,7 @@ export class AcpManager {
               isDelete: p.isDelete,
               newContent: p.newContent,
               hunk: p.hunk,
+              hunks: p.hunks,
             }))
             session.diff_summary = summarizeDiffFiles(parsed)
           }
@@ -499,6 +500,7 @@ export class AcpManager {
         newContent: f.newContent,
         isNew: f.isNew,
         isDelete: f.isDelete,
+        hunks: f.hunks || [],
       })),
       { allowDelete: opts.allowDelete === true },
     )

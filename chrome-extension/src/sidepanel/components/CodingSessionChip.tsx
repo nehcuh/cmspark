@@ -43,6 +43,7 @@ export function CodingSessionChip({
         type: "acp.session.followup",
         session_id: session.sessionId,
         goal: goal.trim(),
+        mode: session.mode === "propose_diff" ? "propose_diff" : "review_readonly",
       },
       () => {
         void chrome.runtime.lastError

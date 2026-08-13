@@ -1,47 +1,48 @@
-// Propose-diff parse + workspace-contained apply (P3). Never shell; no free-args.
+// Propose-diff parse + workspace-contained apply (P3).
+// Partial hunks are applied against existing file content — never truncate by
+// writing only + lines (Pi REJECT 2026-08-13).
 
 import * as fs from "fs"
 import * as path from "path"
 import { atomicWriteText } from "../io"
 
 export type ParsedDiffFile = {
-  /** Path relative to workspace (posix-ish) */
   relPath: string
-  /** Full unified diff for this file only (optional) */
   hunk: string
-  /** New file body if we can reconstruct; else null → skip apply for that file */
+  /** If set, write this body directly (new file or fully reconstructed). */
   newContent: string | null
   isNew: boolean
   isDelete: boolean
+  /** Structured hunks for safe apply on existing files */
+  hunks: DiffHunk[]
 }
 
-/**
- * Extract ```diff / ```patch fenced blocks or raw unified diff from agent output.
- */
+export type DiffHunk = {
+  oldStart: number // 1-based
+  oldCount: number
+  newStart: number
+  newCount: number
+  lines: string[] // including leading + / - / space / \\
+}
+
 export function extractDiffText(handback: string): string | null {
   const raw = String(handback || "")
   const fence = raw.match(/```(?:diff|patch)\s*\n([\s\S]*?)```/i)
   if (fence?.[1]?.trim()) return fence[1].trim()
   if (/^diff --git /m.test(raw) || /^--- /m.test(raw)) {
-    // strip UNTRUSTED frame if present
-    const body = raw.replace(/<<<UNTRUSTED_ACP_HANDBACK[\s\S]*?<body>\n?/i, "")
+    const body = raw
+      .replace(/<<<UNTRUSTED_ACP_HANDBACK[\s\S]*?<body>\n?/i, "")
       .replace(/\n?<\/body>[\s\S]*$/i, "")
     if (/^diff --git /m.test(body) || /^--- /m.test(body)) return body.trim()
   }
   return null
 }
 
-/**
- * Parse multi-file unified diffs into per-file ops.
- * Supports "diff --git a/x b/x" and simple "--- a/x / +++ b/x" forms.
- * Reconstruction: apply hunks to existing file when possible; new files from +++ only hunks.
- */
 export function parseUnifiedDiff(diffText: string): ParsedDiffFile[] {
   const text = diffText.replace(/\r\n/g, "\n")
-  const files: ParsedDiffFile[] = []
-  // Split on diff --git or --- at line start when preceded by blank/start
   const chunks = text.split(/(?=^diff --git )/m).filter((c) => c.trim())
   const parts = chunks.length > 0 ? chunks : [text]
+  const files: ParsedDiffFile[] = []
 
   for (const chunk of parts) {
     let relPath = ""
@@ -50,9 +51,8 @@ export function parseUnifiedDiff(diffText: string): ParsedDiffFile[] {
     const plusMatch = chunk.match(/^\+\+\+\s+(?:b\/)?(.+)$/m)
     const minusMatch = chunk.match(/^---\s+(?:a\/)?(.+)$/m)
     const gitMatch = chunk.match(/^diff --git a\/(.+?) b\/(.+)$/m)
-    if (gitMatch) {
-      relPath = gitMatch[2].trim()
-    } else if (plusMatch) {
+    if (gitMatch) relPath = gitMatch[2].trim()
+    else if (plusMatch) {
       relPath = plusMatch[1].trim()
       if (relPath === "/dev/null") {
         isDelete = true
@@ -62,50 +62,98 @@ export function parseUnifiedDiff(diffText: string): ParsedDiffFile[] {
     if (minusMatch?.[1] === "/dev/null" || minusMatch?.[1]?.endsWith("/dev/null")) {
       isNew = true
     }
+    if (/^\+\+\+\s+\/dev\/null/m.test(chunk)) isDelete = true
     if (!relPath || relPath === "/dev/null") continue
     relPath = relPath.replace(/^b\//, "").replace(/^a\//, "")
-    // security: reject path escape tokens early
     if (relPath.includes("\0") || path.isAbsolute(relPath)) continue
 
-    const newContent = reconstructFromHunks(chunk)
+    const hunks = parseHunks(chunk)
+    let newContent: string | null = null
+    if (isNew && !isDelete) {
+      newContent = applyHunksToLines([], hunks)
+    }
+
     files.push({
       relPath,
       hunk: chunk,
       newContent,
       isNew,
-      isDelete: isDelete || /^\+\+\+\s+\/dev\/null/m.test(chunk),
+      isDelete,
+      hunks,
     })
   }
   return files
 }
 
-/** Best-effort: collect + lines from hunks into a full new file (works for new files / full rewrites). */
-function reconstructFromHunks(chunk: string): string | null {
+function parseHunks(chunk: string): DiffHunk[] {
   const lines = chunk.split("\n")
-  const out: string[] = []
-  let inHunk = false
-  let sawHunk = false
-  for (const line of lines) {
-    if (line.startsWith("@@")) {
-      inHunk = true
-      sawHunk = true
+  const hunks: DiffHunk[] = []
+  let i = 0
+  while (i < lines.length) {
+    const m = lines[i].match(/^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s@@/)
+    if (!m) {
+      i++
       continue
     }
-    if (!inHunk) continue
-    if (line.startsWith("diff --git") || line.startsWith("--- ") || line.startsWith("+++ ")) {
-      inHunk = false
-      continue
+    const oldStart = parseInt(m[1], 10)
+    const oldCount = m[2] !== undefined ? parseInt(m[2], 10) : 1
+    const newStart = parseInt(m[3], 10)
+    const newCount = m[4] !== undefined ? parseInt(m[4], 10) : 1
+    i++
+    const hLines: string[] = []
+    while (i < lines.length && !lines[i].startsWith("@@") && !lines[i].startsWith("diff --git")) {
+      const L = lines[i]
+      if (
+        L.startsWith("+") ||
+        L.startsWith("-") ||
+        L.startsWith(" ") ||
+        L.startsWith("\\")
+      ) {
+        hLines.push(L)
+      } else if (L.startsWith("---") || L.startsWith("+++")) {
+        break
+      }
+      i++
     }
-    if (line.startsWith("+") && !line.startsWith("+++")) {
-      out.push(line.slice(1))
-    } else if (line.startsWith(" ")) {
-      out.push(line.slice(1))
-    } else if (line.startsWith("-") && !line.startsWith("---")) {
-      // deleted line — omit
-    }
+    hunks.push({ oldStart, oldCount, newStart, newCount, lines: hLines })
   }
-  if (!sawHunk) return null
-  return out.join("\n") + (out.length ? "\n" : "")
+  return hunks
+}
+
+/** Apply unified hunks to an existing line array (0-based internal). */
+export function applyHunksToLines(original: string[], hunks: DiffHunk[]): string | null {
+  // Work on a copy without trailing empty from split if file ended with newline
+  let lines = original.slice()
+  // Apply from bottom to top so line numbers stay valid
+  const ordered = [...hunks].sort((a, b) => b.oldStart - a.oldStart)
+  for (const h of ordered) {
+    const start = Math.max(0, h.oldStart - 1)
+    let oi = start
+    const out: string[] = []
+    for (const raw of h.lines) {
+      if (raw.startsWith("\\")) continue // "\ No newline at end of file"
+      const tag = raw[0]
+      const text = raw.slice(1)
+      if (tag === " ") {
+        if (oi >= lines.length || lines[oi] !== text) {
+          // context mismatch — refuse rather than corrupt
+          return null
+        }
+        out.push(text)
+        oi++
+      } else if (tag === "-") {
+        if (oi >= lines.length || lines[oi] !== text) {
+          return null
+        }
+        oi++
+      } else if (tag === "+") {
+        out.push(text)
+      }
+    }
+    const end = oi
+    lines = [...lines.slice(0, start), ...out, ...lines.slice(end)]
+  }
+  return lines.join("\n") + (lines.length ? "\n" : "")
 }
 
 export type ApplyResult = {
@@ -115,10 +163,6 @@ export type ApplyResult = {
   error?: string
 }
 
-/**
- * Apply parsed files under workspace root (realpath containment).
- * Deletes are skipped unless allowDelete (default false).
- */
 export function applyParsedDiffs(
   workspaceRoot: string,
   files: ParsedDiffFile[],
@@ -135,7 +179,7 @@ export function applyParsedDiffs(
 
   for (const f of files) {
     const rel = f.relPath.replace(/\\/g, "/")
-    if (rel.startsWith("../") || rel.includes("/../") || rel.startsWith("..")) {
+    if (rel.startsWith("../") || rel.includes("/../") || rel === ".." || rel.startsWith("..")) {
       skipped.push({ path: rel, reason: "path_escape" })
       continue
     }
@@ -154,6 +198,7 @@ export function applyParsedDiffs(
       continue
     }
     const target = path.join(absRealParent, path.basename(abs))
+
     if (f.isDelete) {
       if (!opts.allowDelete) {
         skipped.push({ path: rel, reason: "delete_not_allowed" })
@@ -167,12 +212,33 @@ export function applyParsedDiffs(
       }
       continue
     }
-    if (f.newContent == null) {
-      skipped.push({ path: rel, reason: "cannot_reconstruct_body" })
-      continue
+
+    let body: string | null = f.newContent
+    if (body == null) {
+      if (!fs.existsSync(target)) {
+        // treat as new if hunks only additions
+        body = applyHunksToLines([], f.hunks)
+        if (body == null) {
+          skipped.push({ path: rel, reason: "cannot_create_from_hunks" })
+          continue
+        }
+      } else {
+        const existing = fs.readFileSync(target, "utf8")
+        const existingLines = existing.split("\n")
+        // drop trailing empty from split if file ended with \n
+        if (existingLines.length && existingLines[existingLines.length - 1] === "") {
+          existingLines.pop()
+        }
+        body = applyHunksToLines(existingLines, f.hunks)
+        if (body == null) {
+          skipped.push({ path: rel, reason: "hunk_context_mismatch" })
+          continue
+        }
+      }
     }
+
     try {
-      atomicWriteText(target, f.newContent, 0o644)
+      atomicWriteText(target, body, 0o644)
       applied.push(rel)
     } catch (e: any) {
       skipped.push({ path: rel, reason: e?.message || "write_failed" })
@@ -181,13 +247,16 @@ export function applyParsedDiffs(
   return { ok: applied.length > 0, applied, skipped }
 }
 
-/** Human summary for chat */
 export function summarizeDiffFiles(files: ParsedDiffFile[]): string {
   if (!files.length) return "（未解析到可应用的 diff 文件）"
   return files
     .map((f) => {
       const tag = f.isDelete ? "D" : f.isNew ? "A" : "M"
-      return `- ${tag} \`${f.relPath}\`${f.newContent == null ? " （需人工在 IDE 应用）" : ""}`
+      const note =
+        !f.isNew && !f.isDelete && f.hunks.length === 0
+          ? " （无 hunk）"
+          : ""
+      return `- ${tag} \`${f.relPath}\`${note}`
     })
     .join("\n")
 }
