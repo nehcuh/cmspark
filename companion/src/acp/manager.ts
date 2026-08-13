@@ -16,6 +16,8 @@ import { resolveLaunchArgs } from "./launch-presets"
 import { extractDiffText, parseUnifiedDiff, applyParsedDiffs, summarizeDiffFiles } from "./diff-apply"
 import { formatHandbackChatMessage } from "./handback-format"
 import type { AcpAgentServerConfig } from "./types"
+import { tryStartProtocolSession, type ProtocolSessionHandle } from "./protocol-session"
+import { timelineItem, capTimeline, type TimelineItem } from "./timeline"
 
 export type AcpHandbackSink = (info: {
   session: AcpSessionRecord
@@ -36,6 +38,10 @@ export type AcpLiveEvent = {
   goal?: string
   workspace_root?: string
   display_name?: string
+  mode?: string
+  transport?: "acp" | "cli"
+  timeline?: import("./timeline").TimelineItem[]
+  pending_diffs?: unknown[]
 }
 
 export type AcpEventListener = (ev: AcpLiveEvent) => void
@@ -47,10 +53,15 @@ function newSessionId(): string {
 export class AcpManager {
   private sessions = new Map<string, AcpSessionRecord>()
   private processes = new Map<string, ChildProcessWithoutNullStreams>()
+  private protocolHandles = new Map<string, ProtocolSessionHandle>()
   private runningCount = 0
   private listeners = new Set<AcpEventListener>()
   private lastProgressAt = new Map<string, number>()
   private handbackSink: AcpHandbackSink | null = null
+  /** Optional: wire L2 for ACP permission requests */
+  permissionGate:
+    | ((info: { title: string; detail?: string; sessionId: string }) => Promise<boolean>)
+    | null = null
 
   onEvent(fn: AcpEventListener): () => void {
     this.listeners.add(fn)
@@ -96,7 +107,18 @@ export class AcpManager {
       partial: session.partial,
       error: session.error,
       handback: handbackPreview,
+      mode: session.mode,
+      transport: session.transport,
+      timeline: session.timeline ? session.timeline.slice(-40) : undefined,
+      pending_diffs: session.pending_diffs,
     })
+  }
+
+  private pushTimeline(session: AcpSessionRecord, items: TimelineItem[], progress?: string): void {
+    const prev = session.timeline || []
+    session.timeline = capTimeline([...prev, ...items])
+    if (progress) this.emitProgress(session, progress, true)
+    else this.emitProgress(session, items[items.length - 1]?.label || "", true)
   }
 
   private agentDisplayName(agentId: string): string {
@@ -259,6 +281,81 @@ export class AcpManager {
     return { ok: true, session }
   }
 
+  private buildUserPrompt(session: AcpSessionRecord): string {
+    const page = session.page_context ? `\nBrowser context:\n${session.page_context}\n` : ""
+    if (session.mode === "propose_diff") {
+      return [
+        "You are running under CMspark 编程接力 (propose-diff mode).",
+        "Do NOT run package installs, git push, or network exfil.",
+        "You MAY reason about edits; output a unified diff the host can apply.",
+        `Workspace: ${session.workspace_root}`,
+        page,
+        "Task:",
+        session.goal,
+        "",
+        "Output requirements:",
+        "1) Short summary of changes",
+        "2) One fenced block: ```diff ... ``` with unified diffs (paths relative to workspace)",
+      ].join("\n")
+    }
+    return [
+      "You are running under CMspark 编程接力 (review mode).",
+      "Do NOT modify files, run package installs, or git push.",
+      `Workspace: ${session.workspace_root}`,
+      page,
+      "Task:",
+      session.goal,
+      "",
+      "Return a structured code review: findings (severity), files of interest, residual risks.",
+    ].join("\n")
+  }
+
+  private finishSession(
+    session: AcpSessionRecord,
+    body: string,
+    maxOut: number,
+    code: number | null,
+  ): void {
+    session.agent_text = body
+    session.handback_text = frameAcpHandback({
+      agentId: session.agent_id,
+      sessionId: session.session_id,
+      profile: session.profile,
+      partial: session.partial || (code !== 0 && code != null),
+      body,
+      maxChars: maxOut,
+    })
+    if (session.mode === "propose_diff") {
+      const diffText = extractDiffText(body)
+      if (diffText) {
+        const parsed = parseUnifiedDiff(diffText)
+        session.pending_diffs = parsed.map((p) => ({
+          relPath: p.relPath,
+          isNew: p.isNew,
+          isDelete: p.isDelete,
+          newContent: p.newContent,
+          hunk: p.hunk,
+          hunks: p.hunks,
+        }))
+        session.diff_summary = summarizeDiffFiles(parsed)
+        this.pushTimeline(session, [
+          timelineItem("diff", session.diff_summary || "diff ready", { status: "done" }),
+        ])
+      }
+    }
+    session.state = "closed"
+    markAcpHandbackSeen(session.thread_id)
+    if (session.handback_text && this.handbackSink) {
+      try {
+        this.handbackSink({ session, handback: session.handback_text })
+      } catch (e: any) {
+        logger.warn("acp.handback_sink_error", { err: e?.message || String(e) })
+      }
+    }
+    this.pushTimeline(session, [timelineItem("status", "session closed", { status: "done" })])
+    this.emitProgress(session, body.slice(-400), true)
+  }
+
   async start(sessionId: string): Promise<
     | { ok: true; session: AcpSessionRecord }
     | { ok: false; error: string }
@@ -275,35 +372,111 @@ export class AcpManager {
 
     this.runningCount++
     session.state = "running"
-    this.emitProgress(session, "starting…", true)
+    session.timeline = []
+    this.pushTimeline(session, [timelineItem("status", "starting…", { status: "running" })])
 
-    const prompt =
-      session.mode === "propose_diff"
-        ? [
-            "You are running under CMspark 编程接力 (propose-diff mode).",
-            "Do NOT run package installs, git push, or network exfil.",
-            "You MAY reason about edits; output a unified diff the host can apply.",
-            `Workspace: ${session.workspace_root}`,
-            "",
-            "Task:",
-            session.goal,
-            "",
-            "Output requirements:",
-            "1) Short summary of changes",
-            "2) One fenced block: ```diff ... ``` with unified diffs (paths relative to workspace)",
-            "Prefer complete file rewrites in the diff when unsure about hunk context.",
-          ].join("\n")
-        : [
-            "You are running under CMspark 编程接力 (read-only review session).",
-            "Do NOT modify files, run package installs, or git push.",
-            `Workspace: ${session.workspace_root}`,
-            "",
-            "Task:",
-            session.goal,
-            "",
-            "Return a structured code review: findings (severity), files of interest, residual risks.",
-          ].join("\n")
+    const prompt = this.buildUserPrompt(session)
+    const protocolMode = server.protocol || "auto"
+    const env = {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      USERPROFILE: process.env.USERPROFILE,
+      LANG: process.env.LANG,
+      ...(server.env || {}),
+      CMSPARK_ACP_SESSION: session.session_id,
+      CMSPARK_ACP_MODE: session.mode || "review_readonly",
+    }
 
+    // --- S1: try real ACP JSON-RPC Client ---
+    if (protocolMode === "auto" || protocolMode === "acp") {
+      const handle = await tryStartProtocolSession({
+        command: server.command,
+        args: server.args || [],
+        cwd: session.workspace_root,
+        env,
+        session,
+        hooks: {
+          onTimeline: (items, progress) => {
+            for (const it of items) {
+              if (
+                (it.kind === "agent_message" || it.kind === "status") &&
+                (it.detail || it.label)
+              ) {
+                session.agent_text =
+                  (session.agent_text || "") +
+                  (it.detail || it.label || "") +
+                  "\n"
+              }
+            }
+            this.pushTimeline(session, items, progress)
+          },
+          onAgentSessionId: (id) => {
+            session.agent_session_id = id
+          },
+          onPermission: async ({ title, detail }) => {
+            if (!this.permissionGate) return "deny"
+            const ok = await this.permissionGate({
+              title,
+              detail,
+              sessionId: session.session_id,
+            })
+            return ok ? "allow" : "deny"
+          },
+        },
+      })
+      if (handle) {
+        session.transport = "acp"
+        session.pid = handle.child.pid
+        this.protocolHandles.set(sessionId, handle)
+        this.processes.set(sessionId, handle.child)
+        this.pushTimeline(session, [
+          timelineItem("status", "ACP Client connected", { status: "done" }),
+        ])
+        try {
+          await handle.prompt(prompt)
+          const body = session.agent_text || session.timeline?.map((t) => t.detail || t.label).join("\n") || "(empty)"
+          this.runningCount = Math.max(0, this.runningCount - 1)
+          this.protocolHandles.delete(sessionId)
+          this.processes.delete(sessionId)
+          this.finishSession(session, body, server.policy.max_handback_chars ?? 48_000, 0)
+          return { ok: true, session }
+        } catch (e: any) {
+          this.runningCount = Math.max(0, this.runningCount - 1)
+          this.protocolHandles.delete(sessionId)
+          this.processes.delete(sessionId)
+          session.state = "closed"
+          const errMsg = e?.message || String(e)
+          session.error = errMsg
+          this.pushTimeline(session, [
+            timelineItem("error", errMsg, { status: "error" }),
+          ])
+          handle.kill()
+          return { ok: false, error: errMsg }
+        }
+      }
+      if (protocolMode === "acp") {
+        this.runningCount = Math.max(0, this.runningCount - 1)
+        session.state = "closed"
+        const errMsg = "agent does not speak ACP JSON-RPC"
+        session.error = errMsg
+        return { ok: false, error: errMsg }
+      }
+      this.pushTimeline(session, [
+        timelineItem("status", "ACP handshake failed — CLI bridge", { status: "done" }),
+      ])
+    }
+
+    // --- CLI bridge (legacy / fallback) ---
+    return this.startCliBridge(session, server, prompt)
+  }
+
+  private async startCliBridge(
+    session: AcpSessionRecord,
+    server: AcpAgentServerConfig,
+    prompt: string,
+  ): Promise<{ ok: true; session: AcpSessionRecord } | { ok: false; error: string }> {
+    session.transport = "cli"
+    const sessionId = session.session_id
     const promptPath = path.join(os.tmpdir(), `cmspark-acp-${session.session_id}.md`)
     try {
       fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600 })
@@ -325,6 +498,7 @@ export class AcpManager {
       let stderr = ""
       const maxOut = server.policy.max_handback_chars ?? 48_000
       const timeoutMs = server.policy.session_timeout_ms ?? 15 * 60_000
+      let lineBuf = ""
 
       let child: ChildProcessWithoutNullStreams
       try {
@@ -353,7 +527,9 @@ export class AcpManager {
 
       session.pid = child.pid
       this.processes.set(sessionId, child)
-      this.emitProgress(session, `pid ${child.pid} running…`, true)
+      this.pushTimeline(session, [
+        timelineItem("status", `CLI pid ${child.pid}`, { status: "running" }),
+      ])
 
       try {
         child.stdin.write(prompt)
@@ -379,16 +555,34 @@ export class AcpManager {
         }, 2000)
       }, timeoutMs)
 
-      child.stdout.on("data", (buf: Buffer) => {
-        stdout += buf.toString("utf8")
-        if (stdout.length > maxOut * 2) stdout = stdout.slice(-maxOut)
-        this.emitProgress(session, stdout)
-      })
-      child.stderr.on("data", (buf: Buffer) => {
-        stderr += buf.toString("utf8")
-        if (stderr.length > 8000) stderr = stderr.slice(-8000)
-        this.emitProgress(session, stderr)
-      })
+      const onChunk = (buf: Buffer, isErr: boolean) => {
+        const s = buf.toString("utf8")
+        if (isErr) {
+          stderr += s
+          if (stderr.length > 8000) stderr = stderr.slice(-8000)
+        } else {
+          stdout += s
+          if (stdout.length > maxOut * 2) stdout = stdout.slice(-maxOut)
+        }
+        lineBuf += s
+        const parts = lineBuf.split("\n")
+        lineBuf = parts.pop() || ""
+        for (const line of parts) {
+          const t = line.trim()
+          if (t.length > 8) {
+            this.pushTimeline(session, [
+              timelineItem(isErr ? "status" : "agent_message", t.slice(0, 200), {
+                detail: t,
+                status: "running",
+              }),
+            ])
+          }
+        }
+        this.emitProgress(session, isErr ? stderr : stdout)
+      }
+
+      child.stdout.on("data", (buf: Buffer) => onChunk(buf, false))
+      child.stderr.on("data", (buf: Buffer) => onChunk(buf, true))
 
       child.on("error", (err) => {
         clearTimeout(timer)
@@ -410,52 +604,55 @@ export class AcpManager {
           stdout.trim() ||
           stderr.trim() ||
           `(agent exited code=${code} with no output)`
-        session.handback_text = frameAcpHandback({
-          agentId: session.agent_id,
-          sessionId: session.session_id,
-          profile: session.profile,
-          partial: session.partial || code !== 0,
-          body,
-          maxChars: maxOut,
-        })
-        if (session.mode === "propose_diff") {
-          const diffText = extractDiffText(body)
-          if (diffText) {
-            const parsed = parseUnifiedDiff(diffText)
-            session.pending_diffs = parsed.map((p) => ({
-              relPath: p.relPath,
-              isNew: p.isNew,
-              isDelete: p.isDelete,
-              newContent: p.newContent,
-              hunk: p.hunk,
-              hunks: p.hunks,
-            }))
-            session.diff_summary = summarizeDiffFiles(parsed)
-          }
-        }
-        session.state = "closed"
-        markAcpHandbackSeen(session.thread_id)
         try {
           fs.unlinkSync(promptPath)
         } catch {
           /* best-effort */
         }
-        if (session.handback_text && this.handbackSink) {
-          try {
-            this.handbackSink({ session, handback: session.handback_text })
-          } catch (e: any) {
-            logger.warn("acp.handback_sink_error", { err: e?.message || String(e) })
-          }
-        }
+        this.finishSession(session, body, maxOut, code)
         logger.info("acp.session_ended", {
           session_id: sessionId,
           code,
+          transport: "cli",
           handback_len: session.handback_text?.length,
         })
-        this.emitProgress(session, body.slice(-400), true)
         resolve({ ok: true, session })
       })
     })
+  }
+
+  /**
+   * S2: multi-turn prompt into live ACP session (same process).
+   * CLI transport: queues as followup propose (new process) for UX continuity.
+   */
+  async promptSession(
+    sessionId: string,
+    text: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const session = this.sessions.get(sessionId)
+    if (!session) return { ok: false, error: "unknown session" }
+    const t = String(text || "").trim()
+    if (!t) return { ok: false, error: "empty prompt" }
+
+    const handle = this.protocolHandles.get(sessionId)
+    if (handle && session.state === "running") {
+      this.pushTimeline(session, [timelineItem("user_message", t.slice(0, 200), { detail: t })])
+      try {
+        await handle.prompt(t)
+        return { ok: true }
+      } catch (e: any) {
+        return { ok: false, error: e?.message || String(e) }
+      }
+    }
+
+    // CLI or closed: new turn via followup
+    const fu = this.followup({ parentSessionId: sessionId, goal: t, mode: session.mode })
+    if (!fu.ok) return { ok: false, error: fu.error }
+    // Auto-start followup requires caller HITL — return session id for UI to confirm
+    return {
+      ok: false,
+      error: `NEEDS_CONFIRM_FOLLOWUP:${fu.session.session_id}`,
+    }
   }
 
   /**
@@ -533,6 +730,15 @@ export class AcpManager {
   cancel(sessionId: string): { ok: true } | { ok: false; error: string } {
     const session = this.sessions.get(sessionId)
     if (!session) return { ok: false, error: "acp: unknown session" }
+    const handle = this.protocolHandles.get(sessionId)
+    if (handle) {
+      try {
+        handle.cancel()
+      } catch {
+        /* */
+      }
+      this.protocolHandles.delete(sessionId)
+    }
     const child = this.processes.get(sessionId)
     if (child) {
       try {
@@ -552,6 +758,7 @@ export class AcpManager {
     if (session.state === "offered" || session.state === "running" || session.state === "confirmed") {
       session.state = "closed"
     }
+    this.pushTimeline(session, [timelineItem("status", "cancelled", { status: "error" })])
     this.emitProgress(session, "cancelled", true)
     return { ok: true }
   }

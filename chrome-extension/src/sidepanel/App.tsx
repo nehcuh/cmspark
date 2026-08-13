@@ -11,6 +11,7 @@ import {
   useContextPanelHost,
 } from "./components/ContextPanelHost"
 import { FocusBand } from "./components/FocusBand"
+import { CodingSessionShell } from "./components/CodingSessionShell"
 import { SceneStatusBar } from "./components/SceneStatusBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
@@ -187,6 +188,12 @@ function AppContent() {
       />
       {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px */}
       <FocusBand capabilityLevel={level} />
+      {/* ACP Client shell — stay in side panel for input / timeline (Zed-like) */}
+      {appState.codingSession ? (
+        <div style={{ padding: "0 8px 8px" }}>
+          <CodingSessionShell session={appState.codingSession} />
+        </div>
+      ) : null}
       {/* Scene / workspace status — Mission Pack UX redesign P0 */}
       <SceneStatusBar />
       <RunBusyChip />
@@ -1591,8 +1598,25 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           acpEnabled={state.acpEnabled}
           acpAgents={state.acpAgents}
           onRequestWorkspace={() => {
-            setCodingHandoffOpen(false)
-            openPanelForce("packs")
+            // P0: pick in-place — do NOT close modal or only jump to packs
+            const tid = state.activeThreadId
+            if (!tid) {
+              dispatch({
+                type: "SET_PROCESSING_STATUS",
+                status: "请先选择对话再绑定工作区",
+              })
+              return
+            }
+            dispatch({
+              type: "SET_PROCESSING_STATUS",
+              status: "正在打开文件夹选择…",
+            })
+            chrome.runtime.sendMessage(
+              { type: "workspace.pick", thread_id: tid },
+              () => {
+                void chrome.runtime.lastError
+              },
+            )
           }}
           onPasteBack={(note) => {
             const prefix = `【${codingHandoffCopy.productName} handback】\n`

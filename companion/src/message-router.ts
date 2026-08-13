@@ -1610,9 +1610,26 @@ export async function handleMessage(
     case "acp.adopt_discovered":
     case "acp.session.cancel":
     case "acp.session.followup":
+    case "acp.session.prompt":
     case "acp.ui_start":
     case "acp.apply_diff": {
       const { handleAcpWsMessage } = await import("./acp/handlers")
+      const { getAcpManager } = await import("./acp/manager")
+      // Wire permission gate once per process for ACP request_permission
+      const am = getAcpManager()
+      if (!am.permissionGate && session?.requestConfirmation) {
+        am.permissionGate = async ({ title, detail, sessionId }) => {
+          const d = await session!.requestConfirmation!({
+            toolName: "acp_permission",
+            dangerousApis: ["acp_permission"],
+            code: `编程助手请求权限\nsession=${sessionId}\n${title}\n${detail || ""}`,
+            riskLevel: "high",
+            autoConfirmEligible: false,
+            criticalApis: ["acp_permission"],
+          })
+          return !!d?.approved
+        }
+      }
       const acpRes = await handleAcpWsMessage(type, rest, {
         requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,

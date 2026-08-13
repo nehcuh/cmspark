@@ -1083,9 +1083,39 @@ export function useWebSocket() {
         case "pack.unapplied":
         case "workspace.clear_result":
         case "workspace.set_result":
+        case "workspace.pick_result":
           // Thread fields updated by companion (mission_pack_id, workspace_root, …)
+          // pick_result must be global so /code modal can bind without PacksPanel mounted
           if (msg.thread?.id) {
             dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+            if (msg.type === "workspace.pick_result" && msg.thread.workspace_root) {
+              const base = String(msg.thread.workspace_root).split(/[/\\]/).filter(Boolean).pop()
+              dispatch({
+                type: "SET_PROCESSING_STATUS",
+                status: base ? `已绑定工作区 ${base}` : "已绑定工作区",
+              })
+            } else if (msg.type === "workspace.pick_result" && msg.error) {
+              dispatch({
+                type: "SET_PROCESSING_STATUS",
+                status: `工作区选择失败: ${msg.error}`,
+              })
+            } else if (msg.type === "workspace.pick_result" && msg.cancelled) {
+              dispatch({
+                type: "SET_PROCESSING_STATUS",
+                status: "未选择工作区",
+              })
+            }
+          } else if (msg.type === "workspace.pick_result") {
+            if (msg.error) {
+              dispatch({
+                type: "SET_PROCESSING_STATUS",
+                status: `工作区选择失败: ${msg.error}`,
+              })
+            } else if (msg.cancelled) {
+              dispatch({ type: "SET_PROCESSING_STATUS", status: "未选择工作区" })
+            } else {
+              chrome.runtime.sendMessage({ type: "thread.list" })
+            }
           } else if (msg.type !== "workspace.set_result" && msg.type !== "workspace.clear_result") {
             chrome.runtime.sendMessage({ type: "thread.list" })
           }

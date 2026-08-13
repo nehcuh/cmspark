@@ -7,6 +7,8 @@ export {
   formatAcpStartConfirmCode,
   formatAcpApplyConfirmCode,
 } from "./confirm-copy"
+export { timelineItem, parseSessionUpdate, type TimelineItem } from "./timeline"
+export { JsonRpcStdioClient, tryAcpInitialize } from "./jsonrpc-stdio"
 export {
   getAcpManager,
   AcpManager,

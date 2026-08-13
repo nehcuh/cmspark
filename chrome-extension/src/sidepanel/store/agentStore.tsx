@@ -20,6 +20,16 @@ export type CodingSessionState = {
   updatedAt: number
   mode?: string
   hasPendingDiff?: boolean
+  transport?: "acp" | "cli" | string
+  timeline?: Array<{
+    id?: string
+    kind?: string
+    label?: string
+    detail?: string
+    path?: string
+    status?: string
+    at?: string
+  }>
 }
 
 export type CodingSessionEvent = {
@@ -37,6 +47,8 @@ export type CodingSessionEvent = {
   partial?: boolean
   mode?: string
   pending_diffs?: unknown[]
+  transport?: string
+  timeline?: CodingSessionState["timeline"]
 }
 
 export type AcpAgentInfo = {
@@ -964,6 +976,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           updatedAt: Date.now(),
           mode: (e as any).mode ?? state.codingSession?.mode,
           hasPendingDiff: nextHasPendingDiff,
+          transport: (e as any).transport ?? state.codingSession?.transport,
+          timeline: Array.isArray((e as any).timeline)
+            ? (e as any).timeline
+            : state.codingSession?.timeline,
         },
       }
     }
