@@ -4,6 +4,8 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
 import * as fs from "fs"
+import * as os from "os"
+import * as path from "path"
 import { getConfig } from "../config"
 import { logger } from "../logger"
 import type { AcpSessionRecord, AcpPolicyProfile } from "./types"
@@ -64,9 +66,6 @@ export class AcpManager {
     if (!server || !server.enabled || !server.command) {
       return { ok: false, error: `acp: unknown or disabled agent "${opts.agentId}"` }
     }
-    if (server.policy.profile !== "review_readonly" && !server.policy.allow_write) {
-      // Phase B only ships review_readonly by default
-    }
     if (this.runningCount >= 1) {
       return { ok: false, error: "ACP_SESSION_BUSY: only one ACP session at a time (Phase B)" }
     }
@@ -78,8 +77,15 @@ export class AcpManager {
     const ws = resolveAcpWorkspaceRoot(opts.workspaceRoot)
     if (!ws.ok) return { ok: false, error: ws.error }
 
-    const profile: AcpPolicyProfile =
-      server.policy.profile === "review_readonly" ? "review_readonly" : "review_readonly"
+    // Phase B product lock: always review_readonly regardless of config profile
+    if (server.policy.profile !== "review_readonly") {
+      logger.info("acp.profile_demoted", {
+        agent: opts.agentId,
+        from: server.policy.profile,
+        to: "review_readonly",
+      })
+    }
+    const profile: AcpPolicyProfile = "review_readonly"
 
     const session: AcpSessionRecord = {
       session_id: newSessionId(),
@@ -114,7 +120,6 @@ export class AcpManager {
     const server = cfg.acp.servers[session.agent_id]
     if (!server?.command) return { ok: false, error: "acp: agent config missing" }
 
-    session.state = "confirmed"
     this.runningCount++
     session.state = "running"
 
@@ -129,9 +134,11 @@ export class AcpManager {
       "Return a structured code review: findings (severity), files of interest, residual risks.",
     ].join("\n")
 
-    // Prefer writing prompt to a temp file under workspace for agents that read files;
-    // also pass via stdin for CLI tools that accept stdin.
-    const promptPath = `${session.workspace_root}/.cmspark-acp-review-prompt.md`
+    // Temp file outside user repo (Claude dual-review nit) + stdin for CLI tools.
+    const promptPath = path.join(
+      os.tmpdir(),
+      `cmspark-acp-${session.session_id}.md`,
+    )
     try {
       fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600 })
     } catch (e: any) {
@@ -141,11 +148,8 @@ export class AcpManager {
       return { ok: false, error: session.error }
     }
 
+    // Use configured args only — do not invent bare-path argv (stdin is primary).
     const args = [...(server.args || [])]
-    // Generic: many agents accept a prompt file path as last arg if args empty
-    if (args.length === 0) {
-      args.push(promptPath)
-    }
 
     return await new Promise((resolve) => {
       let stdout = ""
@@ -277,9 +281,12 @@ export class AcpManager {
         }
       }, 1500)
     }
-    if (session.state === "offered") {
+    session.error = session.error || "cancelled"
+    if (session.state === "offered" || session.state === "running" || session.state === "confirmed") {
       session.state = "closed"
-      session.error = "cancelled"
+      if (this.runningCount > 0 && !child) {
+        /* already decremented on close */
+      }
     }
     return { ok: true }
   }

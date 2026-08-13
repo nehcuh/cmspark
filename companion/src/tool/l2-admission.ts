@@ -266,6 +266,12 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
               }
             })()
           : "") ||
+        (toolName === "acp_propose_session"
+          ? `acp_propose agent=${finalParams.agent_id || finalParams.agent || ""} goal=${String(finalParams.goal || finalParams.prompt || "").slice(0, 200)}`
+          : "") ||
+        (toolName === "acp_start_session"
+          ? `acp_start session_id=${finalParams.session_id || ""}`
+          : "") ||
         "",
     )
     // skill_install: hard-deny multi-SKILL.md / outside source zone BEFORE L2 dialog

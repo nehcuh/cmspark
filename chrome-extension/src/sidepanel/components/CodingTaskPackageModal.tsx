@@ -115,25 +115,15 @@ export function CodingTaskPackageModal({
   }, [pkg, onRequestWorkspace])
 
   const doOpenTerminal = useCallback(async () => {
-    // Design §4 L0: never free-exec arbitrary path. Best-effort: copy first,
-    // then ask companion/host to open Terminal.app only (macOS) via existing bridge if any.
+    // Design §4 L0: copy-first only — no free-exec / no dead chrome message (Claude nit).
+    // User opens their own terminal and pastes.
     const ok = await copyTextToClipboard(pkg.markdown)
     if (!ok) {
       setShowRaw(true)
       flash(codingHandoffCopy.clipboardFailed, 6000)
       return
     }
-    try {
-      chrome.runtime.sendMessage(
-        { type: "coding_handoff.open_terminal_hint" },
-        () => {
-          void chrome.runtime.lastError
-        },
-      )
-    } catch {
-      /* ignore */
-    }
-    flash(codingHandoffCopy.copiedAndTerminal, 5000)
+    flash(codingHandoffCopy.copiedOk + " — 请打开终端粘贴", 5000)
   }, [pkg.markdown])
 
   if (!open) return null
