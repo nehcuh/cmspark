@@ -11,7 +11,7 @@ import {
   useContextPanelHost,
 } from "./components/ContextPanelHost"
 import { FocusBand } from "./components/FocusBand"
-import { CodingSessionShell } from "./components/CodingSessionShell"
+import { CodingAgentPanel } from "./components/CodingAgentPanel"
 import { SceneStatusBar } from "./components/SceneStatusBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
@@ -33,8 +33,6 @@ import {
 import { tokens } from "./ui/tokens"
 import { ui } from "./ui/flags"
 import { PanelBanner, panelBannerBtnStyles } from "./ui/PanelBanner"
-import { CodingTaskPackageModal } from "./components/CodingTaskPackageModal"
-import { codingHandoffCopy } from "./coding-handoff/copy"
 import {
   IconSend,
   IconStop,
@@ -142,6 +140,24 @@ function AppContent() {
   const [showLogs, setShowLogs] = useState(false)
   const { state: appState, dispatch } = useAgentStore()
   const [toast, setToast] = useState("")
+  // Full-height Coding Agent Panel (Zed-like shell) — primary /code surface
+  const [codingPanelOpen, setCodingPanelOpen] = useState(false)
+  const [codingPanelSeed, setCodingPanelSeed] = useState<string | undefined>()
+
+  useEffect(() => {
+    const onOpen = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as { seedGoal?: string } | undefined
+      setCodingPanelSeed(detail?.seedGoal)
+      setCodingPanelOpen(true)
+    }
+    window.addEventListener("cmspark:open-coding-handoff", onOpen as EventListener)
+    return () => window.removeEventListener("cmspark:open-coding-handoff", onOpen as EventListener)
+  }, [])
+
+  // Auto-open panel when a coding session starts (e.g. from offer CTA)
+  useEffect(() => {
+    if (appState.codingSession) setCodingPanelOpen(true)
+  }, [appState.codingSession?.sessionId])
 
   // Show auto-matched skill toast
   useEffect(() => {
@@ -188,12 +204,6 @@ function AppContent() {
       />
       {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px */}
       <FocusBand capabilityLevel={level} />
-      {/* ACP Client shell — stay in side panel for input / timeline (Zed-like) */}
-      {appState.codingSession ? (
-        <div style={{ padding: "0 8px 8px" }}>
-          <CodingSessionShell session={appState.codingSession} />
-        </div>
-      ) : null}
       {/* Scene / workspace status — Mission Pack UX redesign P0 */}
       <SceneStatusBar />
       <RunBusyChip />
@@ -207,6 +217,25 @@ function AppContent() {
       <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
+      {/* Full-height 编程 Agent 壳 — replaces old task-package-only modal as primary UX */}
+      <CodingAgentPanel
+        open={codingPanelOpen}
+        onClose={() => setCodingPanelOpen(false)}
+        workspaceRoot={
+          (
+            appState.threads.find((t) => t.id === appState.activeThreadId) as
+              | { workspace_root?: string | null }
+              | undefined
+          )?.workspace_root ?? null
+        }
+        messages={(appState.messages || []) as Array<{ role?: string; content?: string }>}
+        pageUrl={(appState as { lastTabUrl?: string }).lastTabUrl || null}
+        pageTitle={(appState as { lastTabTitle?: string }).lastTabTitle || null}
+        seedGoal={codingPanelSeed}
+        threadId={appState.activeThreadId}
+        acpEnabled={appState.acpEnabled}
+        acpAgents={appState.acpAgents}
+      />
       {/* P1 D10′: full confirm dialog removed from Panel — Cockpit ConfirmElevated + MinimalConfirm */}
       <McpServerForm />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
@@ -850,19 +879,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     })
   }
 
-  const [codingHandoffOpen, setCodingHandoffOpen] = useState(false)
-  const [codingHandoffSeed, setCodingHandoffSeed] = useState<string | undefined>()
-
-  useEffect(() => {
-    const onOpen = (ev: Event) => {
-      const detail = (ev as CustomEvent).detail as { seedGoal?: string } | undefined
-      setCodingHandoffSeed(detail?.seedGoal)
-      setCodingHandoffOpen(true)
-    }
-    window.addEventListener("cmspark:open-coding-handoff", onOpen as EventListener)
-    return () => window.removeEventListener("cmspark:open-coding-handoff", onOpen as EventListener)
-  }, [])
-
   const handleSlashSelect = (skill: SkillMeta) => {
     const textarea = textareaRef.current
     if (!textarea) return
@@ -897,8 +913,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       }
       if (meta.metaKind === "coding_handoff") {
         setComposeOpen(false)
-        setCodingHandoffSeed(undefined)
-        setCodingHandoffOpen(true)
+        window.dispatchEvent(new CustomEvent("cmspark:open-coding-handoff", { detail: {} }))
         return
       }
       if (meta.metaKind === "panel" && meta.panelId) {
@@ -1583,47 +1598,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           onSelect={handleSlashSelect}
           onDismiss={() => setSlashVisible(false)}
         />
-        <CodingTaskPackageModal
-          open={codingHandoffOpen}
-          onClose={() => setCodingHandoffOpen(false)}
-          workspaceRoot={
-            (activeThread as { workspace_root?: string | null } | undefined)?.workspace_root ??
-            null
-          }
-          messages={(state.messages || []) as Array<{ role?: string; content?: string }>}
-          pageUrl={(state as { lastTabUrl?: string }).lastTabUrl || null}
-          pageTitle={(state as { lastTabTitle?: string }).lastTabTitle || null}
-          seedGoal={codingHandoffSeed}
-          threadId={state.activeThreadId}
-          acpEnabled={state.acpEnabled}
-          acpAgents={state.acpAgents}
-          onRequestWorkspace={() => {
-            // P0: pick in-place — do NOT close modal or only jump to packs
-            const tid = state.activeThreadId
-            if (!tid) {
-              dispatch({
-                type: "SET_PROCESSING_STATUS",
-                status: "请先选择对话再绑定工作区",
-              })
-              return
-            }
-            dispatch({
-              type: "SET_PROCESSING_STATUS",
-              status: "正在打开文件夹选择…",
-            })
-            chrome.runtime.sendMessage(
-              { type: "workspace.pick", thread_id: tid },
-              () => {
-                void chrome.runtime.lastError
-              },
-            )
-          }}
-          onPasteBack={(note) => {
-            const prefix = `【${codingHandoffCopy.productName} handback】\n`
-            setText((t) => (t ? `${t}\n\n${prefix}${note}` : `${prefix}${note}`))
-            setCodingHandoffOpen(false)
-          }}
-        />
       </div>
       <ComposeDrawer
         open={composeOpen}
@@ -1771,6 +1745,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.text,
     background: tokens.bg,
     WebkitFontSmoothing: "antialiased",
+    position: "relative" as const,
   },
   inputArea: {
     display: "flex",
