@@ -1607,8 +1607,11 @@ export async function handleMessage(
     // replaceAppsEntries and broadcast apps.updated (mcp.servers.updated parity).
     case "acp.list":
     case "acp.rediscover":
+    case "acp.adopt_discovered":
     case "acp.session.cancel":
-    case "acp.ui_start": {
+    case "acp.session.followup":
+    case "acp.ui_start":
+    case "acp.apply_diff": {
       const { handleAcpWsMessage } = await import("./acp/handlers")
       const acpRes = await handleAcpWsMessage(type, rest, {
         requestConfirmation: session?.requestConfirmation,

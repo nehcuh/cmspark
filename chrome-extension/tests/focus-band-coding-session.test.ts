@@ -32,4 +32,5 @@ test("coding_session is below confirm and l2_safety, above fleet", () => {
     isBrowserContext: false,
   })
   assert.equal(cuWins.primary, "l2_safety")
+  assert.equal(cuWins.secondaryTools, true)
 })

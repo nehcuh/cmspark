@@ -177,9 +177,19 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "acp.list": () => ({ valid: true }),
     "acp.rediscover": () => ({ valid: true }),
+    "acp.adopt_discovered": () => ({ valid: true }),
     "acp.session.cancel": (m) => {
       if (typeof m.session_id !== "string" || !m.session_id) {
         return { valid: false, error: "acp.session.cancel requires session_id" }
+      }
+      return { valid: true }
+    },
+    "acp.session.followup": (m) => {
+      if (typeof m.session_id !== "string" || !m.session_id) {
+        return { valid: false, error: "acp.session.followup requires session_id" }
+      }
+      if (typeof m.goal !== "string" || !m.goal.trim()) {
+        return { valid: false, error: "acp.session.followup requires goal" }
       }
       return { valid: true }
     },
@@ -192,6 +202,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       if (typeof m.goal !== "string" || !m.goal.trim()) {
         return { valid: false, error: "acp.ui_start requires goal" }
+      }
+      return { valid: true }
+    },
+    "acp.apply_diff": (m) => {
+      if (typeof m.session_id !== "string" || !m.session_id) {
+        return { valid: false, error: "acp.apply_diff requires session_id" }
       }
       return { valid: true }
     },

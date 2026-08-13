@@ -41,6 +41,18 @@ export type AcpSessionState =
   | "handback"
   | "closed"
 
+/** Session run mode (runtime; not free shell). */
+export type AcpSessionMode = "review_readonly" | "propose_diff"
+
+export interface AcpPendingDiff {
+  relPath: string
+  isNew: boolean
+  isDelete: boolean
+  /** Full new content if reconstructable */
+  newContent: string | null
+  hunk: string
+}
+
 export interface AcpSessionRecord {
   session_id: string
   thread_id: string
@@ -48,12 +60,17 @@ export interface AcpSessionRecord {
   state: AcpSessionState
   workspace_root: string
   profile: AcpPolicyProfile
+  /** Runtime mode for this session (propose_diff enables parse+apply path). */
+  mode: AcpSessionMode
   goal: string
   created_at: string
   partial: boolean
   handback_text?: string
   error?: string
   pid?: number
+  parent_session_id?: string
+  pending_diffs?: AcpPendingDiff[]
+  diff_summary?: string
 }
 
 export const DEFAULT_ACP_CONFIG: AcpConfig = {

@@ -263,6 +263,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         agentId: String(params.agent_id || params.agent || ""),
         goal: String(params.goal || params.prompt || ""),
         workspaceRoot: thread?.workspace_root || params.workspace_root,
+        mode: params.mode === "propose_diff" ? "propose_diff" : "review_readonly",
       })
       if (!r.ok) return { success: false, error: r.error }
       return {
@@ -350,10 +351,38 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           state: s.state,
           agent_id: s.agent_id,
           profile: s.profile,
+          mode: s.mode,
           partial: s.partial,
           error: s.error || null,
+          pending_diffs: (s.pending_diffs || []).map((d) => d.relPath),
         },
       }
+    }
+    case "acp_apply_diff": {
+      if (!params.security_token) {
+        return {
+          success: false,
+          error: "acp_apply_diff requires L2 security_token (never auto-approved)",
+        }
+      }
+      const applyTok = securityPolicy.validateTokenFor(
+        String(params.security_token),
+        "acp_apply_diff",
+        params,
+      )
+      if (!applyTok) {
+        return { success: false, error: "Invalid or expired security token for acp_apply_diff" }
+      }
+      const sid = String(params.session_id || "")
+      if (!sid) return { success: false, error: "session_id required" }
+      const { getAcpManager } = await import("../acp")
+      const paths = Array.isArray(params.paths) ? params.paths.map(String) : undefined
+      const r = getAcpManager().applyPendingDiffs(sid, {
+        paths,
+        allowDelete: params.allow_delete === true,
+      })
+      if (!r.ok && r.error) return { success: false, error: r.error, data: r }
+      return { success: true, data: r }
     }
     case "ask_user": {
       // Binary HITL via L2 Confirm Center (approve = yes, deny = no). Free-text answers are P2.

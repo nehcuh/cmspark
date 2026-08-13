@@ -10,3 +10,11 @@ export {
 } from "./manager"
 export { handleAcpWsMessage, ensureAcpBroadcast } from "./handlers"
 export { discoverCodingAgents, _resetDiscoverCache } from "./discover"
+export {
+  extractDiffText,
+  parseUnifiedDiff,
+  applyParsedDiffs,
+  summarizeDiffFiles,
+} from "./diff-apply"
+export { formatHandbackChatMessage, stripUntrustedFrame } from "./handback-format"
+export { resolveLaunchArgs, LAUNCH_PRESETS } from "./launch-presets"

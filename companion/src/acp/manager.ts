@@ -12,6 +12,9 @@ import { resolveAcpWorkspaceRoot } from "./workspace-bind"
 import { frameAcpHandback } from "./handback"
 import { markAcpHandbackSeen } from "./taint"
 import { discoverCodingAgents } from "./discover"
+import { resolveLaunchArgs } from "./launch-presets"
+import { extractDiffText, parseUnifiedDiff, applyParsedDiffs, summarizeDiffFiles } from "./diff-apply"
+import { formatHandbackChatMessage } from "./handback-format"
 import type { AcpAgentServerConfig } from "./types"
 
 export type AcpHandbackSink = (info: {
@@ -185,6 +188,8 @@ export class AcpManager {
     agentId: string
     goal: string
     workspaceRoot?: string | null
+    mode?: "review_readonly" | "propose_diff"
+    parentSessionId?: string
   }): { ok: true; session: AcpSessionRecord } | { ok: false; error: string } {
     const cfg = getConfig()
     if (!cfg.acp?.enabled) {
@@ -212,7 +217,10 @@ export class AcpManager {
         to: "review_readonly",
       })
     }
-    const profile: AcpPolicyProfile = "review_readonly"
+    const mode =
+      opts.mode === "propose_diff" ? "propose_diff" : "review_readonly"
+    const profile: AcpPolicyProfile =
+      mode === "propose_diff" ? "propose_diff" : "review_readonly"
 
     const session: AcpSessionRecord = {
       session_id: newSessionId(),
@@ -221,9 +229,11 @@ export class AcpManager {
       state: "offered",
       workspace_root: ws.root,
       profile,
+      mode,
       goal: String(opts.goal || "").slice(0, 8000),
       created_at: new Date().toISOString(),
       partial: false,
+      parent_session_id: opts.parentSessionId,
     }
     this.sessions.set(session.session_id, session)
     logger.info("acp.offer", { session_id: session.session_id, agent: opts.agentId })
@@ -249,16 +259,32 @@ export class AcpManager {
     session.state = "running"
     this.emitProgress(session, "starting…", true)
 
-    const prompt = [
-      "You are running under CMspark 编程接力 (read-only review session).",
-      "Do NOT modify files, run package installs, or git push.",
-      `Workspace: ${session.workspace_root}`,
-      "",
-      "Task:",
-      session.goal,
-      "",
-      "Return a structured code review: findings (severity), files of interest, residual risks.",
-    ].join("\n")
+    const prompt =
+      session.mode === "propose_diff"
+        ? [
+            "You are running under CMspark 编程接力 (propose-diff mode).",
+            "Do NOT run package installs, git push, or network exfil.",
+            "You MAY reason about edits; output a unified diff the host can apply.",
+            `Workspace: ${session.workspace_root}`,
+            "",
+            "Task:",
+            session.goal,
+            "",
+            "Output requirements:",
+            "1) Short summary of changes",
+            "2) One fenced block: ```diff ... ``` with unified diffs (paths relative to workspace)",
+            "Prefer complete file rewrites in the diff when unsure about hunk context.",
+          ].join("\n")
+        : [
+            "You are running under CMspark 编程接力 (read-only review session).",
+            "Do NOT modify files, run package installs, or git push.",
+            `Workspace: ${session.workspace_root}`,
+            "",
+            "Task:",
+            session.goal,
+            "",
+            "Return a structured code review: findings (severity), files of interest, residual risks.",
+          ].join("\n")
 
     const promptPath = path.join(os.tmpdir(), `cmspark-acp-${session.session_id}.md`)
     try {
@@ -271,7 +297,10 @@ export class AcpManager {
       return { ok: false, error: session.error }
     }
 
-    const args = [...(server.args || [])]
+    const args = resolveLaunchArgs(session.agent_id, server.args, {
+      prompt,
+      promptFile: promptPath,
+    })
 
     return await new Promise((resolve) => {
       let stdout = ""
@@ -371,6 +400,20 @@ export class AcpManager {
           body,
           maxChars: maxOut,
         })
+        if (session.mode === "propose_diff") {
+          const diffText = extractDiffText(body)
+          if (diffText) {
+            const parsed = parseUnifiedDiff(diffText)
+            session.pending_diffs = parsed.map((p) => ({
+              relPath: p.relPath,
+              isNew: p.isNew,
+              isDelete: p.isDelete,
+              newContent: p.newContent,
+              hunk: p.hunk,
+            }))
+            session.diff_summary = summarizeDiffFiles(parsed)
+          }
+        }
         session.state = "closed"
         markAcpHandbackSeen(session.thread_id)
         try {
@@ -394,6 +437,77 @@ export class AcpManager {
         resolve({ ok: true, session })
       })
     })
+  }
+
+  /**
+   * Multi-turn: start a new session with prior handback context + user follow-up.
+   */
+  followup(opts: {
+    parentSessionId: string
+    goal: string
+    mode?: "review_readonly" | "propose_diff"
+  }): { ok: true; session: AcpSessionRecord } | { ok: false; error: string } {
+    const parent = this.sessions.get(opts.parentSessionId)
+    if (!parent) return { ok: false, error: "acp: parent session not found" }
+    const prior = (parent.handback_text || "").slice(0, 12_000)
+    const goal = [
+      "Follow-up on previous coding handoff session.",
+      prior ? `Previous output (untrusted):\n${prior}\n` : "",
+      "User follow-up:",
+      opts.goal,
+    ].join("\n")
+    return this.propose({
+      threadId: parent.thread_id,
+      agentId: parent.agent_id,
+      goal,
+      workspaceRoot: parent.workspace_root,
+      mode: opts.mode || parent.mode,
+      parentSessionId: parent.session_id,
+    })
+  }
+
+  /**
+   * Apply pending_diffs from a propose_diff session (caller must enforce L2 HITL).
+   */
+  applyPendingDiffs(
+    sessionId: string,
+    opts: { paths?: string[]; allowDelete?: boolean } = {},
+  ): {
+    ok: boolean
+    applied: string[]
+    skipped: Array<{ path: string; reason: string }>
+    error?: string
+  } {
+    const session = this.sessions.get(sessionId)
+    if (!session) return { ok: false, applied: [], skipped: [], error: "unknown session" }
+    if (session.mode !== "propose_diff") {
+      return { ok: false, applied: [], skipped: [], error: "session is not propose_diff mode" }
+    }
+    let files = session.pending_diffs || []
+    if (opts.paths?.length) {
+      const want = new Set(opts.paths)
+      files = files.filter((f) => want.has(f.relPath))
+    }
+    if (!files.length) {
+      return { ok: false, applied: [], skipped: [], error: "no pending diffs" }
+    }
+    const r = applyParsedDiffs(
+      session.workspace_root,
+      files.map((f) => ({
+        relPath: f.relPath,
+        hunk: f.hunk,
+        newContent: f.newContent,
+        isNew: f.isNew,
+        isDelete: f.isDelete,
+      })),
+      { allowDelete: opts.allowDelete === true },
+    )
+    logger.info("acp.apply_diff", {
+      session_id: sessionId,
+      applied: r.applied,
+      skipped: r.skipped.length,
+    })
+    return r
   }
 
   cancel(sessionId: string): { ok: true } | { ok: false; error: string } {

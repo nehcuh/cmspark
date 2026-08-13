@@ -51,6 +51,17 @@ Channel:      community Phase A/B readonly; apply/shell NO-GO v1
 - Extension: `coding-handoff/*` · `CodingTaskPackageModal` · meta slash  
 - Pack: `coding-handoff`  
 
-### 6. 后续
+### 6. 后续 / 修订（2026-08-13 S72）
 
-Phase C propose-diff / Phase D apply 须 **单独 dual-review** 后升本 ADR 修订。
+已在 `feat/coding-handoff` 落地增量（仍默认 `acp.enabled=false`）：
+
+| 项 | 状态 |
+|----|------|
+| 路径探测 + adopt 持久化 | ✅ |
+| 启动 argv presets（claude -p 等） | ✅ |
+| 多轮 follow-up（新 session + 上文） | ✅ |
+| Live FocusBand + handback 注入 | ✅ |
+| **propose_diff** + **gated apply**（工作区 containment、L2 永不 cruise 跳过） | ✅ |
+| 完整 Zed IDE / free shell / 静默写盘 | ❌ 仍 NO-GO |
+
+Apply 路径：`acp.apply_diff` / tool `acp_apply_diff` — 仅应用会话内解析出的 pending_diffs，禁止路径逃逸。

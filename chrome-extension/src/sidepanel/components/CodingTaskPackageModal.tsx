@@ -68,6 +68,7 @@ export function CodingTaskPackageModal({
   const [pasteBack, setPasteBack] = useState("")
   const [showRaw, setShowRaw] = useState(false)
   const [agentId, setAgentId] = useState("")
+  const [mode, setMode] = useState<"review_readonly" | "propose_diff">("review_readonly")
   const readyAgents = useMemo(
     () => acpAgents.filter((a) => a.enabled && a.command),
     [acpAgents],
@@ -176,13 +177,14 @@ export function CodingTaskPackageModal({
         agent_id: agentId,
         goal: goal.trim() || pkg.markdown.slice(0, 2000),
         workspace_root: workspaceRoot,
+        mode,
       },
       () => {
         void chrome.runtime.lastError
       },
     )
     onClose()
-  }, [threadId, pkg, agentId, goal, workspaceRoot, onRequestWorkspace, onClose])
+  }, [threadId, pkg, agentId, goal, workspaceRoot, mode, onRequestWorkspace, onClose])
 
   if (!open) return null
 
@@ -294,6 +296,16 @@ export function CodingTaskPackageModal({
                 </option>
               ))}
             </select>
+            <select
+              value={mode}
+              onChange={(e) =>
+                setMode(e.target.value === "propose_diff" ? "propose_diff" : "review_readonly")
+              }
+              style={styles.select}
+            >
+              <option value="review_readonly">只读审查</option>
+              <option value="propose_diff">起草修改（propose-diff）</option>
+            </select>
             <p style={styles.privacy}>{codingHandoffCopy.modeFootnote}</p>
             <button
               type="button"
@@ -301,7 +313,8 @@ export function CodingTaskPackageModal({
               onClick={doAcpStart}
               disabled={!goal.trim() || !agentId}
             >
-              {codingHandoffCopy.ctaStart} · 只读审查
+              {codingHandoffCopy.ctaStart} ·{" "}
+              {mode === "propose_diff" ? "起草修改" : "只读审查"}
             </button>
           </div>
         ) : acpEnabled ? (

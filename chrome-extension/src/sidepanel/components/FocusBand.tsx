@@ -142,6 +142,11 @@ export function FocusBand({
         {slot.primary === "l2_safety" && (
           <div style={styles.primary}>
             <SafetyStrip compact />
+            {slot.secondaryTools && coding && (
+              <div style={{ marginTop: 4 }} data-coding-session-secondary>
+                <CodingSessionChip session={coding} compact />
+              </div>
+            )}
           </div>
         )}
         {slot.primary === "coding_session" && coding && (

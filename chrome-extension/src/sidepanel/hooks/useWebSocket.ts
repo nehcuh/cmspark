@@ -1188,6 +1188,28 @@ export function useWebSocket() {
           ) {
             dispatch({ type: "ADD_MESSAGE", message: msg.message as any })
           }
+          if (typeof msg.session_id === "string") {
+            dispatch({
+              type: "ACP_SESSION_EVENT",
+              event: {
+                session_id: msg.session_id,
+                thread_id: msg.thread_id,
+                state: "closed",
+                mode: msg.mode,
+                pending_diffs: msg.pending_diffs,
+                handback: msg.message?.content,
+              },
+            })
+          }
+          break
+
+        case "acp.apply_diff.result":
+          dispatch({
+            type: "SET_PROCESSING_STATUS",
+            status: msg.ok
+              ? `已应用 ${Array.isArray(msg.applied) ? msg.applied.length : 0} 个文件`
+              : `应用 diff 失败: ${msg.error || "unknown"}`,
+          })
           break
 
         case "acp.ui_start.accepted":

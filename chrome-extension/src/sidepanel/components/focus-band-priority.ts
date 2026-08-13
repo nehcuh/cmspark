@@ -80,11 +80,12 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
     }
   }
   if (input.hasL2Task) {
+    // CU owns primary (急停); surface coding stop as secondaryTools line when ACP also live
     return {
       primary: "l2_safety",
       secondaryAbort: false,
       secondaryContext: false,
-      secondaryTools: false,
+      secondaryTools: input.hasCodingSession === true,
     }
   }
   // Confirm > CU L2 > coding session > fleet (急停 never buried under coding)

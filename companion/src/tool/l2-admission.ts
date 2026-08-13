@@ -62,6 +62,7 @@ export const L2_GATE_TOOLS: readonly string[] = [
   // ADR-025 ACP coding handoff — spawn/start always HITL
   "acp_propose_session",
   "acp_start_session",
+  "acp_apply_diff",
 ]
 
 /** Three-flag full autonomy cruise (dangerous + enterprise + allow_all_schemes). */
@@ -271,6 +272,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           : "") ||
         (toolName === "acp_start_session"
           ? `acp_start session_id=${finalParams.session_id || ""}`
+          : "") ||
+        (toolName === "acp_apply_diff"
+          ? `acp_apply session_id=${finalParams.session_id || ""} paths=${Array.isArray(finalParams.paths) ? finalParams.paths.join(",") : "all"}`
           : "") ||
         "",
     )
@@ -782,7 +786,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // ADR-025: ACP spawn is real HITL — never waived by god-mode / auto_approve /
     // three-flag full autonomy cruise (product design: Never skip ACP).
     const acpForceConfirm =
-      toolName === "acp_propose_session" || toolName === "acp_start_session"
+      toolName === "acp_propose_session" ||
+      toolName === "acp_start_session" ||
+      toolName === "acp_apply_diff"
     const capabilityForceConfirm =
       toolName === "shell_exec" ||
       toolName === "netsec_port_scan" ||

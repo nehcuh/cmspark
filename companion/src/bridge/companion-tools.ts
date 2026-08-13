@@ -38,6 +38,7 @@ export const COMPANION_TOOLS = [
   "acp_collect_result",
   "acp_cancel_session",
   "acp_get_status",
+  "acp_apply_diff",
 ] as const
 
 export type CompanionToolName = (typeof COMPANION_TOOLS)[number]

@@ -59,8 +59,19 @@ export function CodingHandoffSettingsSection({
       >
         重新检测本机编程助手
       </button>
+      <button
+        type="button"
+        style={styles.redetect}
+        onClick={() => {
+          chrome.runtime.sendMessage({ type: "acp.adopt_discovered" }, () => {
+            void chrome.runtime.lastError
+          })
+        }}
+      >
+        将检测结果写入 config（持久化）
+      </button>
       <p style={styles.hint}>
-        开启 ACP 后会探测 PATH 上的 claude / gemini / codex / pi（无需手写路径也可启动只读审查）。
+        开启 ACP 后会探测 PATH 上的 claude / gemini / codex / pi；可持久化路径，也可直接用「已检测」临时启动。
       </p>
     </div>
   )

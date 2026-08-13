@@ -18,6 +18,8 @@ export type CodingSessionState = {
   workspaceRoot?: string
   partial?: boolean
   updatedAt: number
+  mode?: string
+  hasPendingDiff?: boolean
 }
 
 export type CodingSessionEvent = {
@@ -944,6 +946,11 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           workspaceRoot: e.workspace_root ?? state.codingSession?.workspaceRoot,
           partial: e.partial ?? state.codingSession?.partial,
           updatedAt: Date.now(),
+          mode: (e as any).mode ?? state.codingSession?.mode,
+          hasPendingDiff:
+            Array.isArray((e as any).pending_diffs) && (e as any).pending_diffs.length > 0
+              ? true
+              : state.codingSession?.hasPendingDiff,
         },
       }
     }

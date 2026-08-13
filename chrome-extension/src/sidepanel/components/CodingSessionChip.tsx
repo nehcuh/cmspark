@@ -6,7 +6,13 @@ import { codingHandoffCopy } from "../coding-handoff/copy"
 import type { CodingSessionState } from "../store/agentStore"
 import { useAgentStore } from "../store/agentStore"
 
-export function CodingSessionChip({ session }: { session: CodingSessionState }) {
+export function CodingSessionChip({
+  session,
+  compact = false,
+}: {
+  session: CodingSessionState
+  compact?: boolean
+}) {
   const { dispatch } = useAgentStore()
   const live = session.state === "running" || session.state === "offered"
 
@@ -29,8 +35,32 @@ export function CodingSessionChip({ session }: { session: CodingSessionState }) 
     )
   }
 
+  const onFollowup = () => {
+    const goal = window.prompt("继续追问编程助手（将开新一轮并确认）")
+    if (!goal?.trim()) return
+    chrome.runtime.sendMessage(
+      {
+        type: "acp.session.followup",
+        session_id: session.sessionId,
+        goal: goal.trim(),
+      },
+      () => {
+        void chrome.runtime.lastError
+      },
+    )
+  }
+
+  const onApply = () => {
+    chrome.runtime.sendMessage(
+      { type: "acp.apply_diff", session_id: session.sessionId },
+      () => {
+        void chrome.runtime.lastError
+      },
+    )
+  }
+
   return (
-    <div style={styles.row} role="status" aria-label="编程助手会话">
+    <div style={{ ...styles.row, ...(compact ? styles.compact : {}) }} role="status" aria-label="编程助手会话">
       <div style={styles.meta}>
         <span style={styles.dot} data-live={live ? "1" : "0"} />
         <span style={styles.title}>
@@ -38,13 +68,25 @@ export function CodingSessionChip({ session }: { session: CodingSessionState }) 
           {live ? " · 运行中" : session.state === "closed" ? " · 完成" : ` · ${session.state}`}
         </span>
       </div>
-      {tail ? <div style={styles.tail}>{tail}</div> : null}
+      {!compact && tail ? <div style={styles.tail}>{tail}</div> : null}
       {session.error ? <div style={styles.err}>{session.error}</div> : null}
-      {live ? (
-        <button type="button" style={styles.stop} onClick={onStop}>
-          {codingHandoffCopy.ctaStopSession}
-        </button>
-      ) : null}
+      <div style={styles.btns}>
+        {live ? (
+          <button type="button" style={styles.stop} onClick={onStop}>
+            {codingHandoffCopy.ctaStopSession}
+          </button>
+        ) : null}
+        {!live && session.state === "closed" ? (
+          <button type="button" style={styles.stop} onClick={onFollowup}>
+            追问
+          </button>
+        ) : null}
+        {!live && session.hasPendingDiff ? (
+          <button type="button" style={styles.stop} onClick={onApply}>
+            应用 diff
+          </button>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -100,4 +142,6 @@ const styles: Record<string, CSSProperties> = {
     color: tokens.text || "#111",
     cursor: "pointer",
   },
+  btns: { display: "flex", flexWrap: "wrap", gap: 4 },
+  compact: { gap: 2 },
 }

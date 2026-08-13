@@ -514,16 +514,15 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     ensureAcpBroadcast(broadcastToClients)
     getAcpManager().setHandbackSink(({ session, handback }) => {
       try {
+        const { formatHandbackChatMessage } = require("../acp/handback-format") as typeof import("../acp/handback-format")
         const tm = requireRt().getThreadManager()
-        const display = session.agent_id
-        const content = [
-          `【编程接力 · ${display}】审查完成`,
-          session.partial ? "（部分输出 / 超时或非零退出）" : "",
-          "",
+        const content = formatHandbackChatMessage({
+          agentId: session.agent_id,
+          mode: session.mode || "review_readonly",
+          partial: session.partial,
           handback,
-        ]
-          .filter(Boolean)
-          .join("\n")
+          diffSummary: session.diff_summary || null,
+        })
         const msg = tm.addMessage(session.thread_id, {
           thread_id: session.thread_id,
           role: "assistant",
@@ -533,6 +532,14 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           type: "acp.handback.message",
           thread_id: session.thread_id,
           message: msg,
+          session_id: session.session_id,
+          pending_diffs: (session.pending_diffs || []).map((d) => ({
+            path: d.relPath,
+            isNew: d.isNew,
+            isDelete: d.isDelete,
+            applyable: d.newContent != null && !d.isDelete,
+          })),
+          mode: session.mode,
         })
       } catch (err: any) {
         logger.warn("acp.handback_inject_failed", { error: err?.message || String(err) })
