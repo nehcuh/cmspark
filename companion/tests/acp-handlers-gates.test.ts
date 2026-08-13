@@ -50,13 +50,16 @@ describe("acp WS gates", () => {
 
   it("ui_start refuses worker threads", async () => {
     const { getConfig, saveConfig } = await import("../src/config")
+    const { DEFAULT_ACP_CONFIG } = await import("../src/acp/types")
     const prev = getConfig().acp
     try {
       saveConfig({
         acp: {
-          ...(prev || { servers: {} }),
+          ...DEFAULT_ACP_CONFIG,
+          ...(prev || {}),
           enabled: true,
           servers: prev?.servers || {},
+          policy: prev?.policy || DEFAULT_ACP_CONFIG.policy,
         },
       })
       const r = await handleAcpWsMessage(
