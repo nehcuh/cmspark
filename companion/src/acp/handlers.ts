@@ -122,6 +122,53 @@ export async function handleAcpWsMessage(
     return { type: "acp.session.cancel.ack", session_id: sid }
   }
 
+  // S2: multi-turn input into live shell (ACP process) or followup path
+  if (type === "acp.session.prompt") {
+    const sid = String(msg.session_id || "")
+    const text = String(msg.text || msg.goal || "").trim()
+    if (!sid) return { type: "error", error: "session_id required" }
+    if (!text) return { type: "error", error: "text required" }
+    const r = await mgr.promptSession(sid, text)
+    if (!r.ok) {
+      if (String(r.error).startsWith("NEEDS_CONFIRM_FOLLOWUP:")) {
+        const newId = String(r.error).slice("NEEDS_CONFIRM_FOLLOWUP:".length)
+        // Start followup with L2 (same as followup handler)
+        const session = mgr.getSession(newId)
+        if (!session) return { type: "error", error: "followup session missing" }
+        const label =
+          mgr.listAgents().find((a) => a.id === session.agent_id)?.display_name ||
+          session.agent_id
+        const approved = await confirmOrDeny(ctx, {
+          toolName: "acp_start_session",
+          dangerousApis: ["acp_start_session"],
+          code: formatAcpStartConfirmCode({
+            agentLabel: label,
+            mode: session.mode,
+            workspaceRoot: session.workspace_root,
+            goal: session.goal,
+            sessionId: session.session_id,
+          }),
+          riskLevel: "high",
+          autoConfirmEligible: false,
+          criticalApis: ["acp_start_session"],
+        })
+        if (!approved) {
+          mgr.cancel(session.session_id)
+          return { type: "acp.session.prompt.denied", session_id: sid, error: "user_denied" }
+        }
+        void mgr.start(session.session_id)
+        return {
+          type: "acp.session.prompt.accepted",
+          session_id: session.session_id,
+          parent_session_id: sid,
+          mode: "followup_turn",
+        }
+      }
+      return { type: "error", error: r.error }
+    }
+    return { type: "acp.session.prompt.accepted", session_id: sid, mode: "live" }
+  }
+
   if (type === "acp.ui_start" || type === "acp.session.followup") {
     // Workers never start ACP — check before enabled so isolation holds even when feature off
     // and tests need not mutate global config.json (CI DATA_DIR).
@@ -178,6 +225,12 @@ export async function handleAcpWsMessage(
         (typeof msg.workspace_root === "string" && msg.workspace_root) ||
         ctx.getWorkspaceRoot?.(threadId) ||
         null
+      const pageContext =
+        typeof msg.page_context === "string"
+          ? msg.page_context
+          : [msg.page_url, msg.page_title, msg.repo_hint]
+              .filter((x) => typeof x === "string" && x)
+              .join("\n")
       proposed = mgr.propose({
         threadId,
         agentId,
@@ -185,6 +238,9 @@ export async function handleAcpWsMessage(
         workspaceRoot,
         mode: mode as "review_readonly" | "propose_diff",
       })
+      if (proposed.ok && pageContext) {
+        proposed.session.page_context = String(pageContext).slice(0, 4000)
+      }
     }
 
     if (!proposed.ok) return { type: "error", error: proposed.error }

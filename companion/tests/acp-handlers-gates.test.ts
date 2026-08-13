@@ -83,4 +83,13 @@ describe("acp WS gates", () => {
     assert.equal(r.type, "error")
     assert.match(String(r.error), /cloud_disclosure/i)
   })
+
+  it("session.prompt requires session_id and text", async () => {
+    const r = await handleAcpWsMessage(
+      "acp.session.prompt",
+      { session_id: "", text: "" },
+      {},
+    )
+    assert.equal(r.type, "error")
+  })
 })

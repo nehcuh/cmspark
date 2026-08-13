@@ -193,6 +193,16 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "acp.session.prompt": (m) => {
+      if (typeof m.session_id !== "string" || !m.session_id) {
+        return { valid: false, error: "acp.session.prompt requires session_id" }
+      }
+      const text = m.text ?? m.goal
+      if (typeof text !== "string" || !String(text).trim()) {
+        return { valid: false, error: "acp.session.prompt requires text" }
+      }
+      return { valid: true }
+    },
     "acp.ui_start": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) {
         return { valid: false, error: "acp.ui_start requires thread_id" }

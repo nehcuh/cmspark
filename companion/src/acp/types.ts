@@ -8,6 +8,13 @@ export interface AcpAgentServerConfig {
   enabled: boolean
   display_name: string
   transport: "stdio"
+  /**
+   * Protocol dialect:
+   * - auto: try ACP JSON-RPC initialize, else CLI prompt bridge
+   * - acp: require JSON-RPC ACP
+   * - cli: fire-and-forget / stdin prompt (legacy bridge)
+   */
+  protocol?: "auto" | "acp" | "cli"
   command: string
   args?: string[]
   env?: Record<string, string>
@@ -73,6 +80,16 @@ export interface AcpSessionRecord {
   parent_session_id?: string
   pending_diffs?: AcpPendingDiff[]
   diff_summary?: string
+  /** How this session is talking to the agent process */
+  transport?: "acp" | "cli"
+  /** Agent-side session id (ACP session/new) */
+  agent_session_id?: string
+  /** Live timeline for browser session shell */
+  timeline?: import("./timeline").TimelineItem[]
+  /** Accumulated agent text for handback */
+  agent_text?: string
+  /** Page context injected at start (URL/title/repo hint) */
+  page_context?: string
 }
 
 export const DEFAULT_ACP_CONFIG: AcpConfig = {

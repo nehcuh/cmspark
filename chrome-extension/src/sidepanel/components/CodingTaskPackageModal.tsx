@@ -9,6 +9,11 @@ import {
   copyTextToClipboard,
   summarizeDialogMessages,
 } from "../coding-handoff/task-package"
+import {
+  parseRepoFromUrl,
+  formatPageContext,
+  cloneCommand,
+} from "../coding-handoff/repo-context"
 
 export type CodingHandoffOpenDetail = {
   seedGoal?: string
@@ -74,6 +79,7 @@ export function CodingTaskPackageModal({
     () => acpAgents.filter((a) => a.enabled && a.command),
     [acpAgents],
   )
+  const repoHint = useMemo(() => parseRepoFromUrl(pageUrl), [pageUrl])
 
   useEffect(() => {
     if (!open) return
@@ -176,6 +182,11 @@ export function CodingTaskPackageModal({
       return
     }
     flash("请求确认启动…", 3000)
+    const page_context = formatPageContext({
+      pageUrl,
+      pageTitle,
+      repo: repoHint,
+    })
     chrome.runtime.sendMessage(
       {
         type: "acp.ui_start",
@@ -185,6 +196,10 @@ export function CodingTaskPackageModal({
         workspace_root: workspaceRoot,
         mode,
         cloud_disclosure_accepted: true,
+        page_context,
+        page_url: pageUrl || undefined,
+        page_title: pageTitle || undefined,
+        repo_hint: repoHint ? `${repoHint.owner}/${repoHint.name}` : undefined,
       },
       () => {
         void chrome.runtime.lastError
@@ -201,6 +216,9 @@ export function CodingTaskPackageModal({
     cloudDisclosure,
     onRequestWorkspace,
     onClose,
+    pageUrl,
+    pageTitle,
+    repoHint,
   ])
 
   if (!open) return null
@@ -296,6 +314,35 @@ export function CodingTaskPackageModal({
 
         {showRaw ? (
           <textarea readOnly value={pkg.markdown} rows={8} style={styles.raw} />
+        ) : null}
+
+        {repoHint ? (
+          <div style={styles.repoStrip}>
+            <div style={styles.repoTitle}>
+              {repoHint.kind === "gitlab" ? "GitLab" : "GitHub"} · {repoHint.owner}/
+              {repoHint.name}
+              {repoHint.isPr && repoHint.prNumber ? ` · #${repoHint.prNumber}` : ""}
+            </div>
+            <div style={styles.repoActions}>
+              <button
+                type="button"
+                style={styles.secondary}
+                onClick={() => onRequestWorkspace?.()}
+              >
+                关联本机目录
+              </button>
+              <button
+                type="button"
+                style={styles.secondary}
+                onClick={async () => {
+                  const ok = await copyTextToClipboard(cloneCommand(repoHint))
+                  flash(ok ? "已复制 git clone 命令" : codingHandoffCopy.clipboardFailed)
+                }}
+              >
+                复制 clone 命令
+              </button>
+            </div>
+          </div>
         ) : null}
 
         {acpEnabled && readyAgents.length > 0 ? (
@@ -453,6 +500,20 @@ const styles: Record<string, CSSProperties> = {
     color: tokens.textSecondary || "#666",
     marginBottom: 8,
   },
+  repoStrip: {
+    marginBottom: 10,
+    padding: 8,
+    borderRadius: 8,
+    border: `1px solid ${tokens.border || "#e5e7eb"}`,
+    background: tokens.bg || "#fafafa",
+  },
+  repoTitle: {
+    fontSize: 12,
+    fontWeight: 600,
+    marginBottom: 6,
+    color: tokens.text || "#111",
+  },
+  repoActions: { display: "flex", flexWrap: "wrap", gap: 6 },
   mono: {
     fontFamily: tokens.fontMono || "ui-monospace, monospace",
     wordBreak: "break-all",
