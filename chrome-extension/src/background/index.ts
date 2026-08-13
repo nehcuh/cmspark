@@ -1209,6 +1209,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "acp.adopt_discovered":
       case "acp.session.cancel":
       case "acp.session.followup":
+      case "acp.session.prompt":
       case "acp.ui_start":
       case "acp.apply_diff":
       // 坐标 computer-use(WP4):每应用坐标开关(AppsPanel 卡片菜单;开启由

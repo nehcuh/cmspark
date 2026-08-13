@@ -273,7 +273,7 @@ const styles: Record<string, CSSProperties> = {
     padding: "6px 10px",
     borderRadius: 6,
     border: "none",
-    background: tokens.primary || "#2563eb",
+    background: tokens.accent || "#4f46e5",
     color: "#fff",
     cursor: "pointer",
     flexShrink: 0,

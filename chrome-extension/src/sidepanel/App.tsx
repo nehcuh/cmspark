@@ -189,9 +189,9 @@ function AppContent() {
       {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px */}
       <FocusBand capabilityLevel={level} />
       {/* ACP Client shell — stay in side panel for input / timeline (Zed-like) */}
-      {state.codingSession ? (
+      {appState.codingSession ? (
         <div style={{ padding: "0 8px 8px" }}>
-          <CodingSessionShell session={state.codingSession} />
+          <CodingSessionShell session={appState.codingSession} />
         </div>
       ) : null}
       {/* Scene / workspace status — Mission Pack UX redesign P0 */}

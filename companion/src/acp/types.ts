@@ -123,10 +123,16 @@ export function sanitizeAcpConfig(raw: unknown): AcpConfig {
     const profile: AcpPolicyProfile = "review_readonly"
     const allow_write = false
     const allow_exec = false // never in v1
+    const protocolRaw = s.protocol
+    const protocol: AcpAgentServerConfig["protocol"] =
+      protocolRaw === "acp" || protocolRaw === "cli" || protocolRaw === "auto"
+        ? protocolRaw
+        : "auto"
     servers[id] = {
       enabled: s.enabled !== false,
       display_name: typeof s.display_name === "string" ? s.display_name : id,
       transport: "stdio",
+      protocol,
       command: typeof s.command === "string" ? s.command : "",
       args: Array.isArray(s.args) ? s.args.map(String) : [],
       env:
