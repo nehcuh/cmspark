@@ -8,6 +8,10 @@ import type {
 } from "../security-confirmation"
 import { getAcpManager } from "./manager"
 import { discoverCodingAgents, _resetDiscoverCache } from "./discover"
+import {
+  formatAcpStartConfirmCode,
+  formatAcpApplyConfirmCode,
+} from "./confirm-copy"
 
 export interface AcpHandlerContext {
   requestConfirmation?: (
@@ -126,6 +130,14 @@ export async function handleAcpWsMessage(
       if (tid && ctx.getAgentRole?.(tid) === "worker") {
         return { type: "error", error: "acp: worker threads cannot start ACP sessions" }
       }
+      // RN1: require disclosure flag before feature-disabled so UI can distinguish
+      // missing checkbox vs master switch (no home config mutation needed in tests).
+      if (msg.cloud_disclosure_accepted !== true) {
+        return {
+          type: "error",
+          error: "acp: cloud_disclosure_accepted required (勾选云模型披露)",
+        }
+      }
     }
     const cfg = getConfig()
     if (!cfg.acp?.enabled) {
@@ -182,12 +194,16 @@ export async function handleAcpWsMessage(
       mgr.listAgents().find((a) => a.id === session.agent_id)?.display_name ||
       session.agent_id
     const effectiveMode = session.mode || mode
-    const modeLabel =
-      effectiveMode === "propose_diff" ? "起草修改" : "审查"
     const approved = await confirmOrDeny(ctx, {
       toolName: "acp_start_session",
       dangerousApis: ["acp_start_session"],
-      code: `启动编程助手「${label}」· 模式=${modeLabel}\n仓库: ${session.workspace_root}\n任务: ${session.goal.slice(0, 200)}\nsession=${session.session_id}\n注意: 代码/页面摘要可能发送到该 Agent 的云模型`,
+      code: formatAcpStartConfirmCode({
+        agentLabel: label,
+        mode: effectiveMode,
+        workspaceRoot: session.workspace_root,
+        goal: session.goal,
+        sessionId: session.session_id,
+      }),
       riskLevel: "high",
       autoConfirmEligible: false,
       criticalApis: ["acp_start_session"],
@@ -234,7 +250,12 @@ export async function handleAcpWsMessage(
     const approved = await confirmOrDeny(ctx, {
       toolName: "acp_apply_diff",
       dangerousApis: ["acp_apply_diff"],
-      code: `应用编程接力 diff 到工作区\nsession=${sid}\n仓库: ${session.workspace_root}\nfiles=${fileList}\nallow_delete=${allowDelete ? "yes" : "no"}`,
+      code: formatAcpApplyConfirmCode({
+        sessionId: sid,
+        workspaceRoot: session.workspace_root,
+        files: fileList,
+        allowDelete,
+      }),
       riskLevel: "high",
       autoConfirmEligible: false,
       criticalApis: ["acp_apply_diff"],

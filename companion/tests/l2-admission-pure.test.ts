@@ -109,6 +109,16 @@ describe("ACP L2 forceConfirm (cruise cannot skip)", () => {
         true,
         `${toolName} must not waive under cruise`,
       )
+      // RN dual-review: hostComputerGated does not change ACP short-circuit
+      assert.equal(
+        resolveL2ForceConfirm({
+          toolName,
+          capabilityForceConfirm: false,
+          hostComputerGated: true,
+          userFullAutonomy: true,
+        }),
+        true,
+      )
     }
   })
 

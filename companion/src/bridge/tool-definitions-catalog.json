@@ -1205,7 +1205,7 @@
           },
           "workspace_root": {
             "type": "string",
-            "description": "Optional workspace override; defaults to thread workspace_root"
+            "description": "Optional fallback when the thread has no workspace_root yet. Thread-bound workspace always wins when present (not a free path override)."
           }
         },
         "required": [

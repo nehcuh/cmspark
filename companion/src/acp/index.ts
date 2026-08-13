@@ -2,6 +2,11 @@ export * from "./types"
 export * from "./handback"
 export * from "./taint"
 export * from "./workspace-bind"
+export { resolveAcpThreadId } from "./thread-id"
+export {
+  formatAcpStartConfirmCode,
+  formatAcpApplyConfirmCode,
+} from "./confirm-copy"
 export {
   getAcpManager,
   AcpManager,

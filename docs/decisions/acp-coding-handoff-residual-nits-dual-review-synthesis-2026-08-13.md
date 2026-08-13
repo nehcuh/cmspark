@@ -24,15 +24,15 @@
 
 ---
 
-## Shared nits (union · non-blocking)
+## Shared nits (union · non-blocking) — **closed** on `fix/coding-handoff-dual-review-nits`
 
-| ID | Source | Topic | Suggested action |
-|----|--------|-------|------------------|
-| **RN1** | Both | Modal sends `cloud_disclosure_accepted` but server does not assert it; real gate is L2 confirm text | Optional: assert flag server-side, or drop dead field |
-| **RN2** | Claude | L2 vs dispatch thread-id resolver asymmetry (fail-closed) | Share one resolver helper |
-| **RN3** | Claude | Catalog “workspace override” overpromises (thread root wins) | Soften catalog wording |
-| **RN4** | Claude | Taint list omits `acp_apply_diff` (harmless — always forceConfirm) | Optional symmetry |
-| **RN5** | Pi | No unit test for WS confirm *string* contents (mode / allow_delete / cloud note) | Optional snapshot test |
+| ID | Source | Topic | Resolution |
+|----|--------|-------|------------|
+| **RN1** | Both | `cloud_disclosure_accepted` not asserted server-side | `acp.ui_start` requires `cloud_disclosure_accepted === true` |
+| **RN2** | Claude | L2 vs dispatch thread-id asymmetry | Shared `resolveAcpThreadId` in `acp/thread-id.ts` |
+| **RN3** | Claude | Catalog “workspace override” overpromises | Catalog: thread wins; param is fallback only |
+| **RN4** | Claude | Taint list omits `acp_apply_diff` | Added to ACP Q5 blast set |
+| **RN5** | Pi | No WS confirm string unit tests | `confirm-copy.ts` + `acp-confirm-copy.test.ts` |
 
 **No REJECT path.** Residual nits do not reopen ship bar for #185/#186.
 

@@ -236,7 +236,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       }
     }
     case "acp_propose_session": {
-      const threadId = params.__thread_id || params._thread_id
+      const { resolveAcpThreadId } = await import("../acp/thread-id")
+      const threadId = resolveAcpThreadId(params)
       if (!threadId) return { success: false, error: "acp_propose_session requires __thread_id" }
       if (!params.security_token) {
         return {
