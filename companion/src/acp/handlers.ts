@@ -1,5 +1,6 @@
 // ACP WS handlers — list / cancel / UI-start / followup / adopt / apply.
 
+import * as fs from "fs"
 import { getConfig, saveConfig } from "../config"
 import { logger } from "../logger"
 import type {
@@ -12,6 +13,7 @@ import {
   formatAcpStartConfirmCode,
   formatAcpApplyConfirmCode,
 } from "./confirm-copy"
+import { getWorkspaceGitStatus } from "./git-status"
 
 export interface AcpHandlerContext {
   requestConfirmation?: (
@@ -122,6 +124,49 @@ export async function handleAcpWsMessage(
     return { type: "acp.session.cancel.ack", session_id: sid }
   }
 
+  // B-lite S1: one-line git status (branch · dirty N) for panel context bar.
+  // Fixed argv + realpath cwd only; fail soft — never blocks session start.
+  if (type === "coding.git_status" || type === "acp.workspace_status") {
+    // Prefer thread-bound workspace (Pi dual); client-supplied path only if equal.
+    const tid =
+      (typeof msg.thread_id === "string" && msg.thread_id) || ctx.threadId || ""
+    const bound =
+      (tid && ctx.getWorkspaceRoot?.(tid)) ||
+      (ctx.threadId ? ctx.getWorkspaceRoot?.(ctx.threadId) : null) ||
+      null
+    const client =
+      (typeof msg.workspace_root === "string" && msg.workspace_root) ||
+      (typeof msg.workspace === "string" && msg.workspace) ||
+      null
+    let raw: string | null = typeof bound === "string" && bound ? bound : null
+    if (!raw && client) raw = client
+    else if (raw && client) {
+      try {
+        const a = fs.realpathSync(raw)
+        const b = fs.realpathSync(client)
+        if (a !== b) {
+          // Ignore mismatched client path — do not probe arbitrary dirs
+          raw = a
+        }
+      } catch {
+        /* keep bound */
+      }
+    }
+    const st = await getWorkspaceGitStatus(
+      typeof raw === "string" ? raw : null,
+    )
+    return {
+      type: "coding.git_status",
+      // Agent spawn uses session.workspace_root as cwd (manager.ts) — true today.
+      agent_cwd_is_workspace: true,
+      branch: st.branch,
+      dirty_count: st.dirty_count,
+      is_repo: st.is_repo,
+      workspace_root: st.workspace_root ?? (typeof raw === "string" ? raw : null),
+      ...(st.error ? { error: st.error } : {}),
+    }
+  }
+
   // S2: multi-turn input into live shell (ACP process) or followup path
   if (type === "acp.session.prompt") {
     const sid = String(msg.session_id || "")
@@ -147,6 +192,8 @@ export async function handleAcpWsMessage(
             workspaceRoot: session.workspace_root,
             goal: session.goal,
             sessionId: session.session_id,
+            // Session snapshot from propose — not live config (TOCTOU)
+            openLocalTerminal: session.open_local_terminal_snapshot === true,
           }),
           riskLevel: "high",
           autoConfirmEligible: false,
@@ -250,6 +297,7 @@ export async function handleAcpWsMessage(
       mgr.listAgents().find((a) => a.id === session.agent_id)?.display_name ||
       session.agent_id
     const effectiveMode = session.mode || mode
+    // L2 copy must match session snapshot from propose (TOCTOU vs live config).
     const approved = await confirmOrDeny(ctx, {
       toolName: "acp_start_session",
       dangerousApis: ["acp_start_session"],
@@ -259,6 +307,7 @@ export async function handleAcpWsMessage(
         workspaceRoot: session.workspace_root,
         goal: session.goal,
         sessionId: session.session_id,
+        openLocalTerminal: session.open_local_terminal_snapshot === true,
       }),
       riskLevel: "high",
       autoConfirmEligible: false,

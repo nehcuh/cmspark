@@ -1209,6 +1209,18 @@ export function useWebSocket() {
           })
           break
 
+        // B-lite S1: git one-line for CodingAgentPanel context bar (local listener)
+        case "coding.git_status":
+        case "acp.workspace_status":
+          try {
+            window.dispatchEvent(
+              new CustomEvent("cmspark:coding.git_status", { detail: msg }),
+            )
+          } catch {
+            /* ignore */
+          }
+          break
+
         case "acp.handback.message":
           if (
             msg.message &&
@@ -1243,12 +1255,21 @@ export function useWebSocket() {
           break
 
         case "acp.ui_start.accepted":
-          // progress follows acp.session.event
+          // progress follows acp.session.event — keep status for panel feedback
+          dispatch({
+            type: "SET_PROCESSING_STATUS",
+            status: "编程助手已确认启动…",
+          })
           break
         case "acp.ui_start.denied":
           dispatch({
             type: "SET_PROCESSING_STATUS",
-            status: msg.error === "user_denied" ? "编程助手启动已取消" : "编程助手启动失败",
+            status:
+              msg.error === "user_denied"
+                ? "编程助手启动已取消"
+                : typeof msg.error === "string" && msg.error
+                  ? msg.error
+                  : "编程助手启动失败",
           })
           break
 
@@ -1634,6 +1655,23 @@ export function useWebSocket() {
             dispatch({
               type: "SET_VOICE_MODEL_ERROR",
               error: typeof msg.error === "string" && msg.error ? msg.error : "Unknown voice.model error",
+            })
+            break
+          }
+          // ACP / coding agent panel — surface in processingStatus (panel rollback/start UX).
+          // Must break before generic path that nulls processingStatus (Pi dual R1).
+          if (
+            msg.family === "acp" ||
+            (typeof msg.error === "string" &&
+              (/^acp[:.]|acp:\s|编程助手|cloud_disclosure|feature disabled/i.test(msg.error) ||
+                /\bacp\b/i.test(msg.error) && /disabled|未启用|disclosure/i.test(msg.error)))
+          ) {
+            dispatch({
+              type: "SET_PROCESSING_STATUS",
+              status:
+                typeof msg.error === "string" && msg.error
+                  ? msg.error
+                  : "编程助手错误",
             })
             break
           }

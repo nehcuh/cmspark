@@ -23,6 +23,7 @@
 | [multi-agent-user-guide.md](multi-agent-user-guide.md) | **Autonomy**（Worker≈L1） | spawn_worker、tab 锁、Mission Board、上限 |
 | [notebooklm-user-guide.md](notebooklm-user-guide.md) | **产品特性**（非组合原语） | NotebookLM 导入器、权限、结果 |
 | [meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) | **产品特性** L0 输入 / Pack | 听写+（含按住热键）· 会议 Mtg0–3 · 真机验收清单 |
+| [coding-handoff-user-guide.md](coding-handoff-user-guide.md) | **Composition**（外派本机写码） | 编程接力 · 侧栏壳 vs 本机 Agent · 模式 C 双进程 · Stop 只杀桥 · 对照 Outbound MCP |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | — | 常见故障速查 |
 
 ### 导出 / 图表（产品特性 · ADR 即用户向说明）

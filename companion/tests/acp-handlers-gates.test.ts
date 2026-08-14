@@ -1,11 +1,31 @@
-import { describe, it, beforeEach } from "node:test"
+import "./_acp-gates-setup" // MUST be first — pins DATA_DIR before config/handlers import
+
+import { describe, it, before, beforeEach } from "node:test"
 import assert from "node:assert/strict"
 import { handleAcpWsMessage } from "../src/acp/handlers"
 import { getAcpManager, _resetAcpManagerForTests } from "../src/acp/manager"
+import { getConfig, initDataDir, saveConfig } from "../src/config"
 
 describe("acp WS gates", () => {
+  before(async () => {
+    await initDataDir()
+  })
+
   beforeEach(() => {
     _resetAcpManagerForTests()
+    // Master switch off for gate tests (independent of developer home config)
+    saveConfig({
+      acp: {
+        enabled: false,
+        servers: {},
+        policy: {
+          require_workspace: true,
+          force_confirm_session_start: true,
+          default_profile: "review_readonly",
+        },
+      },
+    })
+    assert.equal(getConfig().acp?.enabled, false)
   })
 
   it("ui_start fails closed when acp disabled", async () => {
@@ -16,6 +36,7 @@ describe("acp WS gates", () => {
         agent_id: "claude",
         goal: "review",
         cloud_disclosure_accepted: true,
+        workspace_root: "/tmp/acp-gate-ws",
       },
       {
         requestConfirmation: async () => ({ approved: true } as any),
@@ -41,16 +62,23 @@ describe("acp WS gates", () => {
     assert.equal(r.type, "error")
   })
 
-  it("list returns shape when disabled", async () => {
+  it("list returns shape when disabled (agents still discoverable)", async () => {
+    // Discovery is independent of master switch — empty only if nothing on PATH/config.
+    // Spawn remains gated by enabled; list must not pretend "not found" when off.
     const r = await handleAcpWsMessage("acp.list", {}, {})
     assert.equal(r.type, "acp.list")
     assert.equal(r.enabled, false)
     assert.ok(Array.isArray(r.agents))
-    assert.equal(r.agents.length, 0)
+    // May be non-empty if claude/pi etc. are installed on the test host.
+    for (const a of r.agents) {
+      assert.ok(a.id)
+      assert.ok(a.display_name)
+      assert.ok(typeof a.command === "string")
+    }
   })
 
   it("ui_start refuses worker threads", async () => {
-    // Worker check is before enabled gate — no saveConfig / home DATA_DIR needed
+    // Worker check is before enabled gate — no home DATA_DIR needed
     const r = await handleAcpWsMessage(
       "acp.ui_start",
       {
@@ -91,5 +119,152 @@ describe("acp WS gates", () => {
       {},
     )
     assert.equal(r.type, "error")
+  })
+
+  it("propose snapshots open_local_terminal for Mode C TOCTOU (not live config after)", async () => {
+    const fs = await import("node:fs")
+    const os = await import("node:os")
+    const path = await import("node:path")
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-mode-c-snap-"))
+    try {
+      saveConfig({
+        acp: {
+          enabled: true,
+          servers: {
+            echo: {
+              enabled: true,
+              display_name: "Echo",
+              transport: "stdio",
+              command: process.execPath,
+              args: ["-e", "process.exit(0)"],
+              protocol: "cli",
+              policy: {
+                profile: "review_readonly",
+                allow_write: false,
+                allow_exec: false,
+              },
+            },
+          },
+          policy: {
+            require_workspace: true,
+            force_confirm_session_start: true,
+            default_profile: "review_readonly",
+          },
+        },
+        coding_handoff: { open_local_terminal: true, auto_suggest: true },
+      })
+      assert.equal(getConfig().coding_handoff?.open_local_terminal, true)
+
+      const mgr = getAcpManager()
+      const proposed = mgr.propose({
+        threadId: "t-mode-c",
+        agentId: "echo",
+        goal: "snapshot test",
+        workspaceRoot: dir,
+      })
+      assert.equal(proposed.ok, true)
+      if (!proposed.ok) return
+      assert.equal(proposed.session.open_local_terminal_snapshot, true)
+
+      // Flip live config after propose (simulate post-L2 toggle) — snapshot must hold.
+      saveConfig({
+        coding_handoff: { open_local_terminal: false, auto_suggest: true },
+      })
+      assert.equal(getConfig().coding_handoff?.open_local_terminal, false)
+      const still = mgr.getSession(proposed.session.session_id)
+      assert.equal(still?.open_local_terminal_snapshot, true)
+
+      // L2 copy must still mention Mode C from snapshot, not live false
+      const { formatAcpStartConfirmCode } = await import("../src/acp/confirm-copy")
+      const code = formatAcpStartConfirmCode({
+        agentLabel: "Echo",
+        mode: still!.mode,
+        workspaceRoot: still!.workspace_root,
+        goal: still!.goal,
+        sessionId: still!.session_id,
+        openLocalTerminal: still!.open_local_terminal_snapshot === true,
+      })
+      assert.match(code, /模式 C/)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+      saveConfig({
+        acp: {
+          enabled: false,
+          servers: {},
+          policy: {
+            require_workspace: true,
+            force_confirm_session_start: true,
+            default_profile: "review_readonly",
+          },
+        },
+        coding_handoff: { open_local_terminal: false },
+      })
+    }
+  })
+
+  it("propose snapshots open_local_terminal=false so post-confirm enable cannot open terminal", async () => {
+    const fs = await import("node:fs")
+    const os = await import("node:os")
+    const path = await import("node:path")
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-mode-c-off-"))
+    try {
+      saveConfig({
+        acp: {
+          enabled: true,
+          servers: {
+            echo: {
+              enabled: true,
+              display_name: "Echo",
+              transport: "stdio",
+              command: process.execPath,
+              args: ["-e", "process.exit(0)"],
+              protocol: "cli",
+              policy: {
+                profile: "review_readonly",
+                allow_write: false,
+                allow_exec: false,
+              },
+            },
+          },
+          policy: {
+            require_workspace: true,
+            force_confirm_session_start: true,
+            default_profile: "review_readonly",
+          },
+        },
+        coding_handoff: { open_local_terminal: false },
+      })
+      const mgr = getAcpManager()
+      const proposed = mgr.propose({
+        threadId: "t-mode-c-off",
+        agentId: "echo",
+        goal: "no terminal",
+        workspaceRoot: dir,
+      })
+      assert.equal(proposed.ok, true)
+      if (!proposed.ok) return
+      assert.equal(proposed.session.open_local_terminal_snapshot, false)
+
+      saveConfig({ coding_handoff: { open_local_terminal: true } })
+      assert.equal(getConfig().coding_handoff?.open_local_terminal, true)
+      assert.equal(
+        mgr.getSession(proposed.session.session_id)?.open_local_terminal_snapshot,
+        false,
+      )
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+      saveConfig({
+        acp: {
+          enabled: false,
+          servers: {},
+          policy: {
+            require_workspace: true,
+            force_confirm_session_start: true,
+            default_profile: "review_readonly",
+          },
+        },
+        coding_handoff: { open_local_terminal: false },
+      })
+    }
   })
 })

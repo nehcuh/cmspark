@@ -32,6 +32,21 @@ const PROBES: ProbeDef[] = [
       "/usr/local/bin/claude",
       path.join(os.homedir(), ".local", "bin", "claude"),
       path.join(os.homedir(), ".claude", "local", "claude"),
+      // Homebrew Caskroom (GUI-launched Companion often lacks brew in PATH)
+      ...(() => {
+        try {
+          const base = "/opt/homebrew/Caskroom/claude-code"
+          if (!fs.existsSync(base)) return [] as string[]
+          return fs
+            .readdirSync(base)
+            .sort()
+            .reverse()
+            .slice(0, 3)
+            .map((v) => path.join(base, v, "claude"))
+        } catch {
+          return [] as string[]
+        }
+      })(),
     ],
   },
   {

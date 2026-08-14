@@ -32,6 +32,14 @@ export function CodingSessionShell({
       ? codingHandoffCopy.modeBadgeDraft
       : codingHandoffCopy.modeBadgeReview
   const timeline = (session.timeline || []) as TimelineRow[]
+  // Same Mode C honesty as Chip/Panel (exclude failed — bridge is sole process)
+  const modeCMonitorStop =
+    session.localTerminal === "opened" ||
+    session.localTerminal === "opened_l0" ||
+    session.localTerminal === "pending" ||
+    (session.openLocalTerminal === true &&
+      session.localTerminal !== "failed" &&
+      session.localTerminal !== "skipped")
 
   const onStop = () => {
     chrome.runtime.sendMessage(
@@ -42,7 +50,12 @@ export function CodingSessionShell({
     )
   }
 
+  /** CLI bridge is one-shot; multi-turn only on ACP transport. */
+  const isCliTransport = session.transport === "cli"
+  const composerDisabled = isCliTransport
+
   const onSend = () => {
+    if (composerDisabled) return
     const t = text.trim()
     if (!t) return
     chrome.runtime.sendMessage(
@@ -87,8 +100,19 @@ export function CodingSessionShell({
         </div>
         <div style={styles.headerBtns}>
           {live ? (
-            <button type="button" style={styles.btn} onClick={onStop}>
-              {codingHandoffCopy.ctaStopSession}
+            <button
+              type="button"
+              style={styles.btn}
+              onClick={onStop}
+              title={
+                modeCMonitorStop
+                  ? codingHandoffCopy.ctaStopMonitorTitle
+                  : codingHandoffCopy.ctaStopSession
+              }
+            >
+              {modeCMonitorStop
+                ? codingHandoffCopy.ctaStopMonitorSession
+                : codingHandoffCopy.ctaStopSession}
             </button>
           ) : null}
           {!live && session.hasPendingDiff ? (
@@ -130,26 +154,46 @@ export function CodingSessionShell({
         )}
       </div>
 
-      <div style={styles.inputRow}>
-        <input
-          style={styles.input}
-          value={text}
-          placeholder={
-            live
-              ? "继续对编程助手说…（留在侧栏，不必切终端）"
-              : "会话已结束 — 输入将开启新一轮（需确认）"
-          }
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault()
-              onSend()
+      <div style={styles.inputCol}>
+        {composerDisabled ? (
+          <div style={styles.cliNote} role="status">
+            {codingHandoffCopy.cliComposerDisabled}
+          </div>
+        ) : null}
+        <div style={styles.inputRow}>
+          <input
+            style={{
+              ...styles.input,
+              ...(composerDisabled ? { opacity: 0.55, cursor: "not-allowed" } : null),
+            }}
+            value={text}
+            disabled={composerDisabled}
+            placeholder={
+              composerDisabled
+                ? codingHandoffCopy.cliComposerPlaceholder
+                : live
+                  ? "继续对编程助手说…（侧栏监视；模式 C 时终端需自行退出）"
+                  : "会话已结束 — 输入将开启新一轮（需确认）"
             }
-          }}
-        />
-        <button type="button" style={styles.send} onClick={onSend} disabled={!text.trim()}>
-          发送
-        </button>
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (composerDisabled) return
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                onSend()
+              }
+            }}
+          />
+          <button
+            type="button"
+            style={styles.send}
+            onClick={onSend}
+            disabled={composerDisabled || !text.trim()}
+            title={composerDisabled ? codingHandoffCopy.cliComposerDisabled : undefined}
+          >
+            发送
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -230,6 +274,16 @@ const styles: Record<string, CSSProperties> = {
     padding: "6px 0",
   },
   empty: { fontSize: 11, color: tokens.textSecondary || "#888", padding: 4 },
+  cliNote: {
+    width: "100%",
+    fontSize: 11,
+    lineHeight: 1.35,
+    color: "#9a3412",
+    background: "#fff7ed",
+    borderRadius: 6,
+    padding: "6px 8px",
+    marginBottom: 4,
+  },
   tail: {
     marginTop: 4,
     fontFamily: tokens.fontMono || "ui-monospace, monospace",
@@ -259,6 +313,7 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: tokens.fontMono || "ui-monospace, monospace",
   },
   st: { fontSize: 10, color: tokens.textSecondary || "#999", flexShrink: 0 },
+  inputCol: { display: "flex", flexDirection: "column", gap: 4 },
   inputRow: { display: "flex", gap: 4 },
   input: {
     flex: 1,

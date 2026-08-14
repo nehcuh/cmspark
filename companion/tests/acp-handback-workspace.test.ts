@@ -43,6 +43,15 @@ describe("acp handback framing", () => {
   })
 })
 
+describe("progress caps", () => {
+  it("exports PROGRESS_TAIL_CLI_CHARS=12000 and display line budget 200", async () => {
+    const caps = await import("../src/acp/progress-caps")
+    assert.equal(caps.PROGRESS_TAIL_CLI_CHARS, 12_000)
+    assert.equal(caps.PROGRESS_TAIL_ACP_CHARS, 2_000)
+    assert.equal(caps.PROGRESS_TAIL_DISPLAY_LINES, 200)
+  })
+})
+
 describe("acp workspace bind", () => {
   it("accepts real directory and rejects missing", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-ws-"))

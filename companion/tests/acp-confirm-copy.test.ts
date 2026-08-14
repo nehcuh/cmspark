@@ -33,6 +33,31 @@ describe("acp confirm copy (RN5)", () => {
     assert.match(code, /模式=起草修改/)
   })
 
+  it("start confirm Mode C dual-open mentions terminal + 两进程", () => {
+    const code = formatAcpStartConfirmCode({
+      agentLabel: "Claude Code",
+      mode: "propose_diff",
+      workspaceRoot: "/tmp/ws",
+      goal: "review",
+      sessionId: "s1",
+      openLocalTerminal: true,
+    })
+    assert.match(code, /模式 C/)
+    assert.match(code, /本机终端/)
+    assert.match(code, /两进程/)
+    assert.match(code, /监视桥/)
+    const off = formatAcpStartConfirmCode({
+      agentLabel: "Claude Code",
+      mode: "propose_diff",
+      workspaceRoot: "/tmp/ws",
+      goal: "review",
+      sessionId: "s1",
+      openLocalTerminal: false,
+    })
+    assert.doesNotMatch(off, /模式 C/)
+    assert.doesNotMatch(off, /监视桥/)
+  })
+
   it("apply confirm includes allow_delete yes/no", () => {
     const yes = formatAcpApplyConfirmCode({
       sessionId: "s",

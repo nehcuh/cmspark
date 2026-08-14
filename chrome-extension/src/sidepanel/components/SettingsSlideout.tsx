@@ -254,6 +254,10 @@ export function SettingsSlideout() {
         /* ignore */
       }
     })
+    // Coding agents: list even when acp.enabled=false (discovery ≠ feature gate)
+    chrome.runtime.sendMessage({ type: "acp.list" }, () => {
+      void chrome.runtime.lastError
+    })
   }, [state.settingsOpen])
 
   // Path B M0: sync engine draft from companion SoT when state arrives.
@@ -2879,9 +2883,18 @@ export function SettingsSlideout() {
           <div style={styles.divider} />
           <CodingHandoffSettingsSection
             acpEnabled={!!(config as { acp?: { enabled?: boolean } }).acp?.enabled}
+            acpAgents={state.acpAgents}
             autoSuggest={
               (config as { coding_handoff?: { auto_suggest?: boolean } }).coding_handoff
                 ?.auto_suggest !== false
+            }
+            openLocalTerminal={
+              (config as { coding_handoff?: { open_local_terminal?: boolean } }).coding_handoff
+                ?.open_local_terminal === true
+            }
+            localTerminalApp={
+              (config as { coding_handoff?: { local_terminal_app?: string } }).coding_handoff
+                ?.local_terminal_app || "auto"
             }
             onToggleAutoSuggest={(v) => {
               dispatch({
@@ -2898,6 +2911,36 @@ export function SettingsSlideout() {
                 config: { coding_handoff: { auto_suggest: v } },
               })
             }}
+            onToggleOpenLocalTerminal={(v) => {
+              dispatch({
+                type: "SET_CONFIG",
+                config: {
+                  coding_handoff: {
+                    ...((config as { coding_handoff?: object }).coding_handoff || {}),
+                    open_local_terminal: v,
+                  },
+                } as any,
+              })
+              chrome.runtime.sendMessage({
+                type: "config.set",
+                config: { coding_handoff: { open_local_terminal: v } },
+              })
+            }}
+            onChangeLocalTerminalApp={(v) => {
+              dispatch({
+                type: "SET_CONFIG",
+                config: {
+                  coding_handoff: {
+                    ...((config as { coding_handoff?: object }).coding_handoff || {}),
+                    local_terminal_app: v,
+                  },
+                } as any,
+              })
+              chrome.runtime.sendMessage({
+                type: "config.set",
+                config: { coding_handoff: { local_terminal_app: v } },
+              })
+            }}
             onToggleAcp={(v) => {
               dispatch({
                 type: "SET_CONFIG",
@@ -2911,6 +2954,10 @@ export function SettingsSlideout() {
               chrome.runtime.sendMessage({
                 type: "config.set",
                 config: { acp: { enabled: v } },
+              })
+              // Refresh agent list after master switch (list is independent of enabled)
+              chrome.runtime.sendMessage({ type: "acp.list" }, () => {
+                void chrome.runtime.lastError
               })
             }}
           />

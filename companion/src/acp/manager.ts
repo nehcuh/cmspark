@@ -14,10 +14,16 @@ import { markAcpHandbackSeen } from "./taint"
 import { discoverCodingAgents } from "./discover"
 import { resolveLaunchArgs } from "./launch-presets"
 import { extractDiffText, parseUnifiedDiff, applyParsedDiffs, summarizeDiffFiles } from "./diff-apply"
-import { formatHandbackChatMessage } from "./handback-format"
+import { shapeHandbackBody } from "./handback-format"
 import type { AcpAgentServerConfig } from "./types"
 import { tryStartProtocolSession, type ProtocolSessionHandle } from "./protocol-session"
 import { timelineItem, capTimeline, type TimelineItem } from "./timeline"
+import { openLocalTerminalForAgent } from "./open-local-terminal"
+import {
+  PROGRESS_TAIL_CLI_CHARS,
+  PROGRESS_TAIL_ACP_CHARS,
+} from "./progress-caps"
+import { buildAcpAgentEnv } from "./agent-env"
 
 export type AcpHandbackSink = (info: {
   session: AcpSessionRecord
@@ -42,6 +48,10 @@ export type AcpLiveEvent = {
   transport?: "acp" | "cli"
   timeline?: import("./timeline").TimelineItem[]
   pending_diffs?: unknown[]
+  /** Mode C propose-time snapshot (UI Stop honesty) */
+  open_local_terminal?: boolean
+  /** Mode C host terminal outcome */
+  local_terminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped"
 }
 
 export type AcpEventListener = (ev: AcpLiveEvent) => void
@@ -89,18 +99,28 @@ export class AcpManager {
     if (!force && now - last < 800) return
     this.lastProgressAt.set(session.session_id, now)
     const display = this.agentDisplayName(session.agent_id)
-    // Cap live WS payload: full handback only via acp.handback.message inject
+    // Cap live WS payload: full handback only via acp.handback.message inject.
+    // CLI uses PROGRESS_TAIL_CLI_CHARS (12k); UI also shows last 200 lines — see progress-caps.ts.
     const handbackPreview =
       session.state === "closed" && session.handback_text
-        ? session.handback_text.slice(0, 2000)
+        ? session.handback_text.slice(0, 8000)
         : undefined
+    const tailCap =
+      session.transport === "cli" ? PROGRESS_TAIL_CLI_CHARS : PROGRESS_TAIL_ACP_CHARS
+    const localTerm =
+      session.local_terminal ||
+      (session.open_local_terminal_snapshot === true
+        ? "pending"
+        : session.open_local_terminal_snapshot === false
+          ? "skipped"
+          : undefined)
     this.emit({
       type: "acp.session.event",
       session_id: session.session_id,
       thread_id: session.thread_id,
       agent_id: session.agent_id,
       state: session.state,
-      progress_tail: tail.slice(-400),
+      progress_tail: tail.slice(-tailCap),
       goal: session.goal?.slice(0, 500),
       workspace_root: session.workspace_root,
       display_name: display,
@@ -109,8 +129,10 @@ export class AcpManager {
       handback: handbackPreview,
       mode: session.mode,
       transport: session.transport,
-      timeline: session.timeline ? session.timeline.slice(-40) : undefined,
+      timeline: session.timeline ? session.timeline.slice(-60) : undefined,
       pending_diffs: session.pending_diffs,
+      open_local_terminal: session.open_local_terminal_snapshot === true,
+      local_terminal: localTerm,
     })
   }
 
@@ -126,6 +148,72 @@ export class AcpManager {
     if (s?.display_name) return s.display_name
     const d = discoverCodingAgents().find((a) => a.id === agentId)
     return d?.display_name || agentId
+  }
+
+  /**
+   * Mode C: best-effort open host Terminal with interactive agent.
+   * Fail-soft — never fails the side-panel bridge session.
+   */
+  private maybeOpenLocalTerminal(
+    session: AcpSessionRecord,
+    server: AcpAgentServerConfig,
+  ): void {
+    // TOCTOU: use flag snapshotted at propose/L2 confirm — not live config
+    // (post-confirm toggle must not open terminal without L2 lines, nor skip if L2 promised).
+    if (session.open_local_terminal_snapshot !== true) {
+      session.local_terminal = "skipped"
+      return
+    }
+    const cwd = session.workspace_root
+    if (!cwd || !server.command) {
+      session.local_terminal = "failed"
+      return
+    }
+    session.local_terminal = "pending"
+    session.mode_c_open_cancelled = false
+    this.emitProgress(session, "Mode C: opening host terminal…", true)
+    // Full browser task → interactive agent (not banner-only). Same intent as bridge prompt.
+    const modeCPrompt = this.buildUserPrompt(session)
+    const terminalApp =
+      getConfig().coding_handoff?.local_terminal_app || "auto"
+    void openLocalTerminalForAgent({
+      command: server.command,
+      cwd,
+      agentId: session.agent_id,
+      goalHint: session.goal,
+      agentLabel: server.display_name || session.agent_id,
+      prompt: modeCPrompt,
+      terminalApp,
+    }).then((r) => {
+      // Stop/cancel raced the open — do not mutate a closed session as success.
+      if (session.mode_c_open_cancelled || session.state === "closed") {
+        if (session.local_terminal === "pending") session.local_terminal = "skipped"
+        return
+      }
+      if (r.ok) {
+        session.local_terminal = r.level === "L0" ? "opened_l0" : "opened"
+        const label =
+          r.level === "L0"
+            ? `已打开本机终端（L0 · ${terminalApp === "auto" ? "系统默认" : terminalApp} · 可能需粘贴）`
+            : `已打开本机终端（${terminalApp === "auto" ? "系统默认" : terminalApp} · 交互）`
+        this.pushTimeline(session, [
+          timelineItem("status", label, {
+            status: "done",
+            detail: r.detail,
+          }),
+        ])
+      } else {
+        session.local_terminal = "failed"
+        this.pushTimeline(session, [
+          timelineItem("status", `本机终端未打开[${terminalApp}]: ${r.detail}`, {
+            status: "error",
+            detail: r.commandLine
+              ? `可手动粘贴: ${r.commandLine.slice(0, 400)}`
+              : undefined,
+          }),
+        ])
+      }
+    })
   }
 
   /**
@@ -154,6 +242,12 @@ export class AcpManager {
     }
   }
 
+  /**
+   * List configured + PATH-discovered agents for UI/settings.
+   * Independent of master `acp.enabled` — discovery must still work so users
+   * can see "found Claude/Pi, enable ACP to use" instead of a false empty.
+   * Spawn/propose remain gated by `acp.enabled`.
+   */
   listAgents(opts: { redactPaths?: boolean } = {}): Array<{
     id: string
     display_name: string
@@ -175,7 +269,6 @@ export class AcpManager {
     }
     const cfg = getConfig()
     const acp = cfg.acp
-    if (!acp?.enabled) return []
     const out: Array<{
       id: string
       display_name: string
@@ -186,15 +279,15 @@ export class AcpManager {
     }> = []
     const seen = new Set<string>()
     const seenCmd = new Set<string>()
-    for (const [id, s] of Object.entries(acp.servers || {})) {
+    for (const [id, s] of Object.entries(acp?.servers || {})) {
       if (!s.command) continue
       seen.add(id)
       seenCmd.add(s.command)
       out.push({
         id,
         display_name: s.display_name,
-        enabled: s.enabled && !!s.command,
-        profile: s.policy.profile,
+        enabled: s.enabled !== false && !!s.command,
+        profile: s.policy?.profile || "review_readonly",
         command: redactCmd(s.command),
         source: "config",
       })
@@ -262,6 +355,9 @@ export class AcpManager {
     const profile: AcpPolicyProfile =
       mode === "propose_diff" ? "propose_diff" : "review_readonly"
 
+    // Snapshot Mode C flag at propose (L2 confirm copy + maybeOpenLocalTerminal both use this).
+    const openLocalTerminalSnap =
+      getConfig().coding_handoff?.open_local_terminal === true
     const session: AcpSessionRecord = {
       session_id: newSessionId(),
       thread_id: opts.threadId,
@@ -274,6 +370,7 @@ export class AcpManager {
       created_at: new Date().toISOString(),
       partial: false,
       parent_session_id: opts.parentSessionId,
+      open_local_terminal_snapshot: openLocalTerminalSnap,
     }
     this.sessions.set(session.session_id, session)
     logger.info("acp.offer", { session_id: session.session_id, agent: opts.agentId })
@@ -317,14 +414,8 @@ export class AcpManager {
     code: number | null,
   ): void {
     session.agent_text = body
-    session.handback_text = frameAcpHandback({
-      agentId: session.agent_id,
-      sessionId: session.session_id,
-      profile: session.profile,
-      partial: session.partial || (code !== 0 && code != null),
-      body,
-      maxChars: maxOut,
-    })
+    // Parse diffs first so 路径 section can list files (empty → still template headers).
+    let pathList: string[] = []
     if (session.mode === "propose_diff") {
       const diffText = extractDiffText(body)
       if (diffText) {
@@ -336,13 +427,31 @@ export class AcpManager {
           newContent: p.newContent,
           hunk: p.hunk,
           hunks: p.hunks,
+          // Must match lifecycle handback mapping so closed session.event
+          // does not clobber hasPendingDiff in the extension reducer.
+          applyable:
+            !p.isDelete &&
+            ((p.isNew && p.newContent != null) ||
+              (Array.isArray(p.hunks) && p.hunks.length > 0) ||
+              p.newContent != null),
         }))
         session.diff_summary = summarizeDiffFiles(parsed)
+        pathList = parsed.map((p) => p.relPath).filter(Boolean)
         this.pushTimeline(session, [
           timelineItem("diff", session.diff_summary || "diff ready", { status: "done" }),
         ])
       }
     }
+    // Structured handback body: ### 路径 / ### 摘要 / ### 建议验收 (no LLM).
+    const shaped = shapeHandbackBody({ body, paths: pathList })
+    session.handback_text = frameAcpHandback({
+      agentId: session.agent_id,
+      sessionId: session.session_id,
+      profile: session.profile,
+      partial: session.partial || (code !== 0 && code != null),
+      body: shaped,
+      maxChars: maxOut,
+    })
     session.state = "closed"
     markAcpHandbackSeen(session.thread_id)
     if (session.handback_text && this.handbackSink) {
@@ -377,15 +486,13 @@ export class AcpManager {
 
     const prompt = this.buildUserPrompt(session)
     const protocolMode = server.protocol || "auto"
-    const env = {
-      PATH: process.env.PATH,
-      HOME: process.env.HOME,
-      USERPROFILE: process.env.USERPROFILE,
-      LANG: process.env.LANG,
-      ...(server.env || {}),
-      CMSPARK_ACP_SESSION: session.session_id,
-      CMSPARK_ACP_MODE: session.mode || "review_readonly",
-    }
+    // Terminal parity: full process + login-shell + user-env + server.env
+    // (NOT the old PATH/HOME/LANG whitelist that stripped API keys).
+    const env = buildAcpAgentEnv({
+      sessionId: session.session_id,
+      mode: session.mode || "review_readonly",
+      serverEnv: server.env,
+    })
 
     // --- S1: try real ACP JSON-RPC Client ---
     if (protocolMode === "auto" || protocolMode === "acp") {
@@ -432,6 +539,7 @@ export class AcpManager {
         this.pushTimeline(session, [
           timelineItem("status", "ACP Client connected", { status: "done" }),
         ])
+        this.maybeOpenLocalTerminal(session, server)
         try {
           await handle.prompt(prompt)
           const body = session.agent_text || session.timeline?.map((t) => t.detail || t.label).join("\n") || "(empty)"
@@ -504,15 +612,11 @@ export class AcpManager {
       try {
         child = spawn(server.command, args, {
           cwd: session.workspace_root,
-          env: {
-            PATH: process.env.PATH,
-            HOME: process.env.HOME,
-            USERPROFILE: process.env.USERPROFILE,
-            LANG: process.env.LANG,
-            ...(server.env || {}),
-            CMSPARK_ACP_SESSION: session.session_id,
-            CMSPARK_ACP_MODE: session.mode || "review_readonly",
-          },
+          env: buildAcpAgentEnv({
+            sessionId: session.session_id,
+            mode: session.mode || "review_readonly",
+            serverEnv: server.env,
+          }),
           stdio: ["pipe", "pipe", "pipe"],
         })
       } catch (e: any) {
@@ -530,6 +634,7 @@ export class AcpManager {
       this.pushTimeline(session, [
         timelineItem("status", `CLI pid ${child.pid}`, { status: "running" }),
       ])
+      this.maybeOpenLocalTerminal(session, server)
 
       try {
         child.stdin.write(prompt)
@@ -559,26 +664,33 @@ export class AcpManager {
         const s = buf.toString("utf8")
         if (isErr) {
           stderr += s
-          if (stderr.length > 8000) stderr = stderr.slice(-8000)
+          if (stderr.length > 16_000) stderr = stderr.slice(-16_000)
         } else {
           stdout += s
           if (stdout.length > maxOut * 2) stdout = stdout.slice(-maxOut)
+          // Keep agent_text for handback + UI even when lines are long without \n
+          session.agent_text = (session.agent_text || "") + s
+          if ((session.agent_text || "").length > maxOut * 2) {
+            session.agent_text = session.agent_text!.slice(-maxOut)
+          }
         }
         lineBuf += s
         const parts = lineBuf.split("\n")
         lineBuf = parts.pop() || ""
         for (const line of parts) {
           const t = line.trim()
-          if (t.length > 8) {
+          // Lower threshold: short progress lines still matter in the steps list
+          if (t.length > 0) {
             this.pushTimeline(session, [
-              timelineItem(isErr ? "status" : "agent_message", t.slice(0, 200), {
-                detail: t,
+              timelineItem(isErr ? "status" : "agent_message", t.slice(0, 240), {
+                detail: t.slice(0, 4000),
                 status: "running",
               }),
             ])
           }
         }
-        this.emitProgress(session, isErr ? stderr : stdout)
+        // Always push live stream to progress_tail (UI primary log), not only on newlines
+        this.emitProgress(session, isErr ? stderr : stdout, true)
       }
 
       child.stdout.on("data", (buf: Buffer) => onChunk(buf, false))
@@ -730,6 +842,13 @@ export class AcpManager {
   cancel(sessionId: string): { ok: true } | { ok: false; error: string } {
     const session = this.sessions.get(sessionId)
     if (!session) return { ok: false, error: "acp: unknown session" }
+    // Stop must never inject a "完成" handback — bridge killed, work may be partial
+    // (and Mode C terminal agent may still be running).
+    session.partial = true
+    session.mode_c_open_cancelled = true
+    if (session.local_terminal === "pending") {
+      session.local_terminal = "skipped"
+    }
     const handle = this.protocolHandles.get(sessionId)
     if (handle) {
       try {
@@ -758,7 +877,15 @@ export class AcpManager {
     if (session.state === "offered" || session.state === "running" || session.state === "confirmed") {
       session.state = "closed"
     }
-    this.pushTimeline(session, [timelineItem("status", "cancelled", { status: "error" })])
+    this.pushTimeline(session, [
+      timelineItem(
+        "status",
+        session.open_local_terminal_snapshot
+          ? "监视已停止（本机终端 Agent 可能仍在运行）"
+          : "cancelled",
+        { status: "error" },
+      ),
+    ])
     this.emitProgress(session, "cancelled", true)
     return { ok: true }
   }

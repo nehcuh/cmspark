@@ -522,6 +522,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           partial: session.partial,
           handback,
           diffSummary: session.diff_summary || null,
+          paths: (session.pending_diffs || []).map((d) => d.relPath).filter(Boolean),
         })
         const msg = tm.addMessage(session.thread_id, {
           thread_id: session.thread_id,

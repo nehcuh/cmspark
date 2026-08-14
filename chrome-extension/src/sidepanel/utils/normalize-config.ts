@@ -100,6 +100,25 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     if (typeof td.on_idle_hours === "number") normalized.thread_digest_on_idle_hours = td.on_idle_hours
     if (typeof td.max_per_day === "number") normalized.thread_digest_max_per_day = td.max_per_day
   }
+  // Mode C prefs (nested; stored on config for Settings UI round-trip)
+  const ch = config.coding_handoff
+  if (ch && typeof ch === "object" && !Array.isArray(ch)) {
+    const handoff: {
+      auto_suggest?: boolean
+      open_local_terminal?: boolean
+      local_terminal_app?: string
+    } = {}
+    if (typeof ch.auto_suggest === "boolean") handoff.auto_suggest = ch.auto_suggest
+    if (typeof ch.open_local_terminal === "boolean") {
+      handoff.open_local_terminal = ch.open_local_terminal
+    }
+    if (typeof ch.local_terminal_app === "string" && ch.local_terminal_app.trim()) {
+      handoff.local_terminal_app = ch.local_terminal_app.trim().slice(0, 512)
+    }
+    if (Object.keys(handoff).length > 0) {
+      ;(normalized as any).coding_handoff = handoff
+    }
+  }
   return Object.fromEntries(
     Object.entries(normalized).filter(([, value]) => value !== undefined)
   ) as Partial<LLMConfig>

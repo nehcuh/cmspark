@@ -79,3 +79,7 @@ docs/audit/reviews/*.err
 tmp-*.png
 tmp-*.jpg
 *.tmp.png
+
+# Local app package staging (never commit)
+dist/
+dist-package/

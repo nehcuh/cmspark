@@ -137,7 +137,7 @@ export const META_PANEL_SLASH: MetaSlashEntry[] = [
   },
   {
     name: "code",
-    description: "编程接力 — 复制任务包给本机终端编程助手",
+    description: "编程接力 — 侧栏监视 + 可选本机终端（任务包/ACP）",
     type: "prompt_template",
     builtin: true,
     tags: ["meta-coding-handoff", "meta-slash", "composition"],
@@ -145,7 +145,7 @@ export const META_PANEL_SLASH: MetaSlashEntry[] = [
   },
   {
     name: "编程",
-    description: "编程接力 — 复制任务包给本机终端编程助手",
+    description: "编程接力 — 侧栏监视 + 可选本机终端（任务包/ACP）",
     type: "prompt_template",
     builtin: true,
     tags: ["meta-coding-handoff", "meta-slash", "composition"],
