@@ -18,10 +18,24 @@ export {
 export { handleAcpWsMessage, ensureAcpBroadcast } from "./handlers"
 export { discoverCodingAgents, _resetDiscoverCache } from "./discover"
 export {
+  getWorkspaceGitStatus,
+  GIT_STATUS_TIMEOUT_MS,
+  type WorkspaceGitStatus,
+} from "./git-status"
+export {
   extractDiffText,
   parseUnifiedDiff,
   applyParsedDiffs,
   summarizeDiffFiles,
 } from "./diff-apply"
-export { formatHandbackChatMessage, stripUntrustedFrame } from "./handback-format"
+export {
+  formatHandbackChatMessage,
+  stripUntrustedFrame,
+  shapeHandbackBody,
+} from "./handback-format"
+export {
+  PROGRESS_TAIL_CLI_CHARS,
+  PROGRESS_TAIL_ACP_CHARS,
+  PROGRESS_TAIL_DISPLAY_LINES,
+} from "./progress-caps"
 export { resolveLaunchArgs, LAUNCH_PRESETS } from "./launch-presets"

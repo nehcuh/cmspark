@@ -702,23 +702,37 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
       }
 
-      case "config.set":
+      case "config.set": {
         // Persist locally so settings survive SW restarts, then forward to companion
         // so it becomes the global source of truth.
         // P1-1: pass through non-empty confirmation_phrase for security flag arm step-up.
         // Empty string is omitted (companion rejects empty as missing_phrase anyway).
+        // P0-4: report actual ws send result (same as acp.* forward) — do not claim ok
+        // when Companion is disconnected.
         saveExtensionConfig(message.config || {})
         const armPhrase =
           typeof message.confirmation_phrase === "string"
             ? message.confirmation_phrase.trim()
             : ""
-        wsClient.send({
+        if (!wsClient) {
+          sendResponse({ ok: false, error: "Service worker 未初始化，请重载扩展" })
+          return true
+        }
+        const sent = wsClient.send({
           type: "config.set",
           config: message.config,
           ...(armPhrase ? { confirmation_phrase: armPhrase } : {}),
         })
+        if (!sent) {
+          sendResponse({
+            ok: false,
+            error: "Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接",
+          })
+          return true
+        }
         sendResponse({ ok: true })
         return true
+      }
 
       case "config.test": {
         // message.llmOverride: unsaved UI fields (protocol/profile/url/key) for the probe.
@@ -1212,6 +1226,9 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "acp.session.prompt":
       case "acp.ui_start":
       case "acp.apply_diff":
+      // B-lite S1: one-line git status for Coding Agent Panel context bar
+      case "coding.git_status":
+      case "acp.workspace_status":
       // 坐标 computer-use(WP4):每应用坐标开关(AppsPanel 卡片菜单;开启由
       // companion 生物识别门承担)、急停按钮(任务条)、全局态只读行、证据目录打开。
       case "apps.set_coordinate_allowed":

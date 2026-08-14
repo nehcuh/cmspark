@@ -94,7 +94,7 @@ describe("diff extract/parse/apply", () => {
 })
 
 describe("handback format", () => {
-  it("strips frame and formats chat", () => {
+  it("strips frame and formats chat with 路径/摘要/建议验收 sections", () => {
     const framed =
       "<<<UNTRUSTED_ACP_HANDBACK agent=x session=s profile=review_readonly partial=false>\n<source>x</source>\n<body>\nfinding one\n</body>\n<<<END_UNTRUSTED_ACP_HANDBACK>>>"
     assert.match(stripUntrustedFrame(framed), /finding one/)
@@ -105,6 +105,21 @@ describe("handback format", () => {
     })
     assert.match(chat, /编程接力/)
     assert.match(chat, /finding one/)
+    assert.match(chat, /### 路径/)
+    assert.match(chat, /### 摘要/)
+    assert.match(chat, /### 建议验收/)
+  })
+
+  it("shapeHandbackBody always emits section headers even with empty paths", async () => {
+    const { shapeHandbackBody } = await import("../src/acp/handback-format")
+    const empty = shapeHandbackBody({ body: "", paths: [] })
+    assert.match(empty, /### 路径/)
+    assert.match(empty, /（无）/)
+    assert.match(empty, /### 摘要/)
+    assert.match(empty, /### 建议验收/)
+    const withPaths = shapeHandbackBody({ body: "done", paths: ["src/a.ts", "b.ts"] })
+    assert.match(withPaths, /- src\/a\.ts/)
+    assert.match(withPaths, /### 摘要\ndone/)
   })
 })
 

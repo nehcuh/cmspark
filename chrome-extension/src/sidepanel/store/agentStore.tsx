@@ -30,6 +30,10 @@ export type CodingSessionState = {
     status?: string
     at?: string
   }>
+  /** Mode C propose-time snapshot from companion (authoritative) */
+  openLocalTerminal?: boolean
+  /** Mode C host terminal outcome */
+  localTerminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | string
 }
 
 export type CodingSessionEvent = {
@@ -49,6 +53,8 @@ export type CodingSessionEvent = {
   pending_diffs?: unknown[]
   transport?: string
   timeline?: CodingSessionState["timeline"]
+  open_local_terminal?: boolean
+  local_terminal?: string
 }
 
 export type AcpAgentInfo = {
@@ -980,6 +986,14 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           timeline: Array.isArray((e as any).timeline)
             ? (e as any).timeline
             : state.codingSession?.timeline,
+          openLocalTerminal:
+            typeof (e as any).open_local_terminal === "boolean"
+              ? (e as any).open_local_terminal
+              : state.codingSession?.openLocalTerminal,
+          localTerminal:
+            typeof (e as any).local_terminal === "string"
+              ? (e as any).local_terminal
+              : state.codingSession?.localTerminal,
         },
       }
     }

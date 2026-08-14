@@ -262,6 +262,18 @@ export interface CompanionConfig {
   /** Phase A 编程接力 UI prefs (auto suggest offer, etc.). */
   coding_handoff?: {
     auto_suggest?: boolean
+    /**
+     * Mode C: after ACP/CLI session starts, also open host Terminal with
+     * interactive agent (default false). Dual process — not same session.
+     */
+    open_local_terminal?: boolean
+    /**
+     * Which host terminal to open for Mode C.
+     * - `auto` (default): macOS Terminal.app; Linux $TERMINAL / common emulators
+     * - Known: Terminal | iTerm | Warp | Alacritty | Kitty | Ghostty
+     * - Or absolute path to .app / binary
+     */
+    local_terminal_app?: string
   }
   /**
    * Coordinate computer-use (A10 default-deny). coordinateEnabled is the
@@ -454,6 +466,8 @@ const defaultConfig: CompanionConfig = {
   },
   coding_handoff: {
     auto_suggest: true,
+    open_local_terminal: false,
+    local_terminal_app: "auto",
   },
   computer: {
     coordinateEnabled: false,
@@ -1163,6 +1177,45 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // append and concurrent settings writes will silently lose data.
   const current = getConfig()
   const updated = deepMerge(current, config) as CompanionConfig
+
+  // ACP: re-sanitize after deepMerge so hand-edited/partial writes cannot skip
+  // profile coercion (review_readonly) that load-time sanitize already enforces.
+  // Use require() like loadConfig to avoid circular ESM import edges.
+  if (updated.acp != null || config.acp != null) {
+    try {
+      const { sanitizeAcpConfig } = require("./acp/types") as typeof import("./acp/types")
+      updated.acp = sanitizeAcpConfig(updated.acp)
+    } catch (e) {
+      // Fail closed to defaults (match loadConfig spirit) — never persist unsanitized acp
+      try {
+        const { DEFAULT_ACP_CONFIG } =
+          require("./acp/types") as typeof import("./acp/types")
+        updated.acp = {
+          ...DEFAULT_ACP_CONFIG,
+          servers: {},
+          enabled: updated.acp?.enabled === true,
+        }
+      } catch {
+        updated.acp = {
+          enabled: false,
+          servers: {},
+          policy: {
+            require_workspace: true,
+            force_confirm_session_start: true,
+            default_profile: "review_readonly",
+          },
+        }
+      }
+      try {
+        console.warn(
+          "[cmspark-agent] saveConfig: sanitizeAcpConfig failed — forced safe defaults",
+          e,
+        )
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 
   // Resolve LLM and vision API keys using the same priority rules.
   // Note: vision has no env-var equivalent, so envKey is undefined for it.

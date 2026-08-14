@@ -217,7 +217,7 @@ function AppContent() {
       <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
-      {/* Full-height 编程 Agent 壳 — replaces old task-package-only modal as primary UX */}
+      {/* Full-height 编程接力 壳 — replaces old task-package-only modal as primary UX */}
       <CodingAgentPanel
         open={codingPanelOpen}
         onClose={() => setCodingPanelOpen(false)}
@@ -235,6 +235,13 @@ function AppContent() {
         threadId={appState.activeThreadId}
         acpEnabled={appState.acpEnabled}
         acpAgents={appState.acpAgents}
+        openLocalTerminal={
+          (
+            appState.config as
+              | { coding_handoff?: { open_local_terminal?: boolean } }
+              | undefined
+          )?.coding_handoff?.open_local_terminal === true
+        }
       />
       {/* P1 D10′: full confirm dialog removed from Panel — Cockpit ConfirmElevated + MinimalConfirm */}
       <McpServerForm />

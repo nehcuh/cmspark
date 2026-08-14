@@ -2888,6 +2888,14 @@ export function SettingsSlideout() {
               (config as { coding_handoff?: { auto_suggest?: boolean } }).coding_handoff
                 ?.auto_suggest !== false
             }
+            openLocalTerminal={
+              (config as { coding_handoff?: { open_local_terminal?: boolean } }).coding_handoff
+                ?.open_local_terminal === true
+            }
+            localTerminalApp={
+              (config as { coding_handoff?: { local_terminal_app?: string } }).coding_handoff
+                ?.local_terminal_app || "auto"
+            }
             onToggleAutoSuggest={(v) => {
               dispatch({
                 type: "SET_CONFIG",
@@ -2901,6 +2909,36 @@ export function SettingsSlideout() {
               chrome.runtime.sendMessage({
                 type: "config.set",
                 config: { coding_handoff: { auto_suggest: v } },
+              })
+            }}
+            onToggleOpenLocalTerminal={(v) => {
+              dispatch({
+                type: "SET_CONFIG",
+                config: {
+                  coding_handoff: {
+                    ...((config as { coding_handoff?: object }).coding_handoff || {}),
+                    open_local_terminal: v,
+                  },
+                } as any,
+              })
+              chrome.runtime.sendMessage({
+                type: "config.set",
+                config: { coding_handoff: { open_local_terminal: v } },
+              })
+            }}
+            onChangeLocalTerminalApp={(v) => {
+              dispatch({
+                type: "SET_CONFIG",
+                config: {
+                  coding_handoff: {
+                    ...((config as { coding_handoff?: object }).coding_handoff || {}),
+                    local_terminal_app: v,
+                  },
+                } as any,
+              })
+              chrome.runtime.sendMessage({
+                type: "config.set",
+                config: { coding_handoff: { local_terminal_app: v } },
               })
             }}
             onToggleAcp={(v) => {

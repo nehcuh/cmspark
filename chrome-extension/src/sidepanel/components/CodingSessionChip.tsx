@@ -31,6 +31,15 @@ export function CodingSessionChip({
       ? codingHandoffCopy.modeBadgeDraft
       : codingHandoffCopy.modeBadgeReview
   const tail = (session.progressTail || "").replace(/\s+/g, " ").trim().slice(0, 80)
+  // Authoritative Mode C: only when a host terminal is/was actually involved.
+  // Exclude `failed` — then the bridge is the only process (Stop = 停止编程会话).
+  const modeCMonitorStop =
+    session.localTerminal === "opened" ||
+    session.localTerminal === "opened_l0" ||
+    session.localTerminal === "pending" ||
+    (session.openLocalTerminal === true &&
+      session.localTerminal !== "failed" &&
+      session.localTerminal !== "skipped")
 
   const onStop = () => {
     chrome.runtime.sendMessage(
@@ -71,7 +80,8 @@ export function CodingSessionChip({
       <div style={styles.meta}>
         <span style={styles.dot} data-live={live ? "1" : "0"} />
         <span style={styles.title}>
-          {codingHandoffCopy.offerTitle} · {label} · {modeBadge}
+          {codingHandoffCopy.productName} · {label} · {modeBadge}
+          {session.transport ? ` · ${session.transport}` : ""}
           {live
             ? ` · ${codingHandoffCopy.statusRunning}`
             : session.state === "closed"
@@ -81,10 +91,32 @@ export function CodingSessionChip({
       </div>
       {!compact && tail ? <div style={styles.tail}>{tail}</div> : null}
       {session.error ? <div style={styles.err}>{session.error}</div> : null}
+      {live && modeCMonitorStop ? (
+        <div style={styles.modeCHint}>
+          {session.localTerminal === "failed"
+            ? "模式 C：本机终端未打开；侧栏监视仍在。停止仅结束侧栏桥。"
+            : session.localTerminal === "opened_l0"
+              ? "模式 C：终端已开（L0 仅横幅，需手动粘贴）。停止仅结束侧栏桥。"
+              : session.localTerminal === "pending"
+                ? "模式 C：正在打开本机终端…"
+                : codingHandoffCopy.modeCDualProcessBanner}
+        </div>
+      ) : null}
       <div style={styles.btns}>
         {live ? (
-          <button type="button" style={styles.stop} onClick={onStop}>
-            {codingHandoffCopy.ctaStopSession}
+          <button
+            type="button"
+            style={styles.stop}
+            onClick={onStop}
+            title={
+              modeCMonitorStop
+                ? codingHandoffCopy.ctaStopMonitorTitle
+                : codingHandoffCopy.ctaStopSession
+            }
+          >
+            {modeCMonitorStop
+              ? codingHandoffCopy.ctaStopMonitorSession
+              : codingHandoffCopy.ctaStopSession}
           </button>
         ) : null}
         {!live && session.state === "closed" ? (
@@ -141,6 +173,11 @@ const styles: Record<string, CSSProperties> = {
   err: {
     fontSize: 11,
     color: tokens.danger || "#b91c1c",
+  },
+  modeCHint: {
+    fontSize: 10,
+    color: "#9a3412",
+    lineHeight: 1.35,
   },
   stop: {
     alignSelf: "flex-start",

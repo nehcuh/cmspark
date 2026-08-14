@@ -60,6 +60,11 @@ export interface AcpPendingDiff {
   hunk: string
   /** Structured hunks for safe apply on existing files */
   hunks?: import("./diff-apply").DiffHunk[]
+  /**
+   * Whether UI can offer Apply. Emitted on session.event so the extension
+   * reducer is not clobbered by a handback-only mapping.
+   */
+  applyable?: boolean
 }
 
 export interface AcpSessionRecord {
@@ -90,6 +95,18 @@ export interface AcpSessionRecord {
   agent_text?: string
   /** Page context injected at start (URL/title/repo hint) */
   page_context?: string
+  /**
+   * Mode C flag captured at propose/L2 time (TOCTOU-safe).
+   * maybeOpenLocalTerminal must honor this snapshot, not live config after approve.
+   */
+  open_local_terminal_snapshot?: boolean
+  /**
+   * Outcome of host Terminal open for Mode C (emitted on acp.session.event).
+   * UI must key Stop honesty off this + snapshot, not live settings toggles.
+   */
+  local_terminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped"
+  /** Set by cancel() so in-flight Mode C open does not update a closed session */
+  mode_c_open_cancelled?: boolean
 }
 
 export const DEFAULT_ACP_CONFIG: AcpConfig = {

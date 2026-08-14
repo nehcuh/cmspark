@@ -1612,7 +1612,9 @@ export async function handleMessage(
     case "acp.session.followup":
     case "acp.session.prompt":
     case "acp.ui_start":
-    case "acp.apply_diff": {
+    case "acp.apply_diff":
+    case "coding.git_status":
+    case "acp.workspace_status": {
       const { handleAcpWsMessage } = await import("./acp/handlers")
       const { getAcpManager } = await import("./acp/manager")
       // Wire permission gate once per process for ACP request_permission

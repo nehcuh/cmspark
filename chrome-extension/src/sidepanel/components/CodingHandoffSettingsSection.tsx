@@ -13,22 +13,43 @@ type AcpAgent = {
   source?: "config" | "discovered"
 }
 
+/** Preset options for coding_handoff.local_terminal_app */
+export const LOCAL_TERMINAL_APP_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "auto", label: "系统自动（推荐）" },
+  { value: "Terminal", label: "Terminal.app（macOS）" },
+  { value: "iTerm", label: "iTerm2" },
+  { value: "Warp", label: "Warp（可能需粘贴任务）" },
+  { value: "Alacritty", label: "Alacritty" },
+  { value: "Kitty", label: "Kitty" },
+  { value: "Ghostty", label: "Ghostty" },
+]
+
 type Props = {
   /** From companion config.acp.enabled when available */
   acpEnabled?: boolean
   autoSuggest?: boolean
+  /** Mode C: open host Terminal with interactive agent on start */
+  openLocalTerminal?: boolean
+  /** Mode C: preferred terminal app id or path */
+  localTerminalApp?: string
   /** Last acp.list agents (discovery independent of master switch) */
   acpAgents?: AcpAgent[]
   onToggleAutoSuggest?: (v: boolean) => void
   onToggleAcp?: (v: boolean) => void
+  onToggleOpenLocalTerminal?: (v: boolean) => void
+  onChangeLocalTerminalApp?: (v: string) => void
 }
 
 export function CodingHandoffSettingsSection({
   acpEnabled = false,
   autoSuggest = true,
+  openLocalTerminal = false,
+  localTerminalApp = "auto",
   acpAgents = [],
   onToggleAutoSuggest,
   onToggleAcp,
+  onToggleOpenLocalTerminal,
+  onChangeLocalTerminalApp,
 }: Props) {
   const [busy, setBusy] = useState<"none" | "rediscover" | "adopt">("none")
   const [flash, setFlash] = useState("")
@@ -70,6 +91,65 @@ export function CodingHandoffSettingsSection({
         <span>{codingHandoffCopy.settingsAcpEnabled}</span>
       </label>
       <p style={styles.hint}>{codingHandoffCopy.settingsAcpHint}</p>
+
+      <label style={styles.row}>
+        <input
+          type="checkbox"
+          checked={openLocalTerminal}
+          onChange={(e) => onToggleOpenLocalTerminal?.(e.target.checked)}
+        />
+        <span>{codingHandoffCopy.settingsOpenLocalTerminal}</span>
+      </label>
+      <p style={styles.hint}>{codingHandoffCopy.settingsOpenLocalTerminalHint}</p>
+
+      <label style={{ ...styles.row, flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 500 }}>{codingHandoffCopy.settingsLocalTerminalApp}</span>
+        <select
+          style={styles.select}
+          value={
+            LOCAL_TERMINAL_APP_OPTIONS.some((o) => o.value === (localTerminalApp || "auto"))
+              ? localTerminalApp || "auto"
+              : "__custom__"
+          }
+          disabled={!openLocalTerminal}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === "__custom__") return
+            onChangeLocalTerminalApp?.(v)
+          }}
+        >
+          {LOCAL_TERMINAL_APP_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+          {!LOCAL_TERMINAL_APP_OPTIONS.some((o) => o.value === (localTerminalApp || "auto")) ? (
+            <option value="__custom__">自定义：{localTerminalApp}</option>
+          ) : null}
+        </select>
+        <input
+          type="text"
+          style={styles.pathInput}
+          placeholder="或填绝对路径，如 /Applications/iTerm.app"
+          disabled={!openLocalTerminal}
+          defaultValue={
+            LOCAL_TERMINAL_APP_OPTIONS.some((o) => o.value === (localTerminalApp || "auto"))
+              ? ""
+              : localTerminalApp || ""
+          }
+          onBlur={(e) => {
+            const v = e.target.value.trim()
+            if (v) onChangeLocalTerminalApp?.(v)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              const v = (e.target as HTMLInputElement).value.trim()
+              if (v) onChangeLocalTerminalApp?.(v)
+            }
+          }}
+        />
+      </label>
+      <p style={styles.hint}>{codingHandoffCopy.settingsLocalTerminalAppHint}</p>
 
       <div style={styles.detectBox}>
         <div style={styles.detectTitle}>{codingHandoffCopy.discoveredTitle}</div>
@@ -146,6 +226,25 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     marginBottom: 8,
     color: tokens.text || "#111",
+  },
+  select: {
+    width: "100%",
+    fontSize: 12,
+    padding: "6px 8px",
+    borderRadius: 6,
+    border: `1px solid ${tokens.border || "#ddd"}`,
+    background: tokens.bgElevated || "#fff",
+    color: tokens.text || "#111",
+  },
+  pathInput: {
+    width: "100%",
+    fontSize: 11,
+    padding: "5px 8px",
+    borderRadius: 6,
+    border: `1px solid ${tokens.border || "#ddd"}`,
+    background: tokens.bgElevated || "#fff",
+    color: tokens.text || "#111",
+    boxSizing: "border-box" as const,
   },
   hint: {
     fontSize: 11,

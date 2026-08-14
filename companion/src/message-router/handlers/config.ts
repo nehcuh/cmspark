@@ -12,6 +12,7 @@ import {
 } from "../../security-arm"
 import { logger } from "../../logger"
 import { redactConfigForWire } from "../../config-redact"
+import { normalizeLocalTerminalApp } from "../../acp/open-local-terminal"
 
 
 const PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"])
@@ -228,37 +229,42 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       }
       // ACP / coding handoff — previously dropped by this allow-list (silent no-op).
       // UI "启用 ACP" / in-panel first-start depend on these keys surviving config.set.
+      // Narrow allow-list (P0-1): only boolean `enabled` via config.set.
+      // servers/policy mutations stay on acp.adopt_discovered / disk load sanitize only.
       if (cfg.acp && typeof cfg.acp === "object" && !Array.isArray(cfg.acp)) {
-        const current = getConfig()
-        const cur = current.acp || { enabled: false, servers: {}, policy: {} }
         const src = cfg.acp as Record<string, unknown>
-        const next: Record<string, unknown> = {
-          ...cur,
-          // Only flip enabled when explicitly boolean; preserve servers/policy via deepMerge
-          ...(typeof src.enabled === "boolean" ? { enabled: src.enabled } : {}),
-        }
-        // Optional partial servers map (adopt path may set full servers via acp.adopt_discovered)
-        if (src.servers && typeof src.servers === "object" && !Array.isArray(src.servers)) {
-          next.servers = {
-            ...((cur as { servers?: object }).servers || {}),
-            ...(src.servers as object),
+        if (typeof src.enabled === "boolean") {
+          const current = getConfig()
+          const cur = current.acp || { enabled: false, servers: {}, policy: {} }
+          // Spread current acp so deepMerge preserves servers/policy; ignore any
+          // servers/policy payload on the wire (WS injection / confused deputy).
+          normalized.acp = {
+            ...cur,
+            enabled: src.enabled,
           }
         }
-        if (src.policy && typeof src.policy === "object" && !Array.isArray(src.policy)) {
-          next.policy = {
-            ...((cur as { policy?: object }).policy || {}),
-            ...(src.policy as object),
-          }
-        }
-        normalized.acp = next
+        // non-boolean enabled (and any servers/policy-only payload) ignored
       }
       if (cfg.coding_handoff && typeof cfg.coding_handoff === "object" && !Array.isArray(cfg.coding_handoff)) {
         const current = getConfig()
-        const cur = current.coding_handoff || { auto_suggest: true }
+        const cur = current.coding_handoff || {
+          auto_suggest: true,
+          open_local_terminal: false,
+          local_terminal_app: "auto",
+        }
         const src = cfg.coding_handoff as Record<string, unknown>
+        // Sanitize terminal pref (ids or absolute path; reject metachar)
+        let local_terminal_app = cur.local_terminal_app || "auto"
+        if (typeof src.local_terminal_app === "string") {
+          local_terminal_app = normalizeLocalTerminalApp(src.local_terminal_app)
+        }
         normalized.coding_handoff = {
           ...cur,
           ...(typeof src.auto_suggest === "boolean" ? { auto_suggest: src.auto_suggest } : {}),
+          ...(typeof src.open_local_terminal === "boolean"
+            ? { open_local_terminal: src.open_local_terminal }
+            : {}),
+          local_terminal_app,
         }
       }
       const updated = saveConfig(normalized)

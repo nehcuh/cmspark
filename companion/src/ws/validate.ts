@@ -221,6 +221,35 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // B-lite S1: git one-line — workspace_root or thread_id (handler resolves)
+    "coding.git_status": (m) => {
+      const hasRoot =
+        typeof m.workspace_root === "string" && m.workspace_root.trim().length > 0
+      const hasWs =
+        typeof m.workspace === "string" && String(m.workspace).trim().length > 0
+      const hasThread =
+        typeof m.thread_id === "string" && m.thread_id.trim().length > 0
+      if (!hasRoot && !hasWs && !hasThread) {
+        return {
+          valid: false,
+          error: "coding.git_status requires workspace_root or thread_id",
+        }
+      }
+      return { valid: true }
+    },
+    "acp.workspace_status": (m) => {
+      const hasRoot =
+        typeof m.workspace_root === "string" && m.workspace_root.trim().length > 0
+      const hasThread =
+        typeof m.thread_id === "string" && m.thread_id.trim().length > 0
+      if (!hasRoot && !hasThread) {
+        return {
+          valid: false,
+          error: "acp.workspace_status requires workspace_root or thread_id",
+        }
+      }
+      return { valid: true }
+    },
     "shell.exec.abort": (m) => {
       const hasTool =
         typeof m.tool_call_id === "string" && m.tool_call_id.length > 0
