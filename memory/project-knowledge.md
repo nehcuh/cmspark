@@ -22,6 +22,24 @@
 
 ## Technical Pitfalls
 
+### L2_GATE_TOOLS ≠ 永远弹确认（ACP B1 · 2026-08-13 · S70）
+- **现象**：工具在 `L2_GATE_TOOLS` 里，但 `auto_approve_dangerous` / god-mode / 三旗巡航下仍无对话框就拿到 `security_token`
+- **根因**：`skipConfirmation` 为 true 时只有 `capabilityForceConfirm`（及 host_computer 特例）会 `forceConfirm`；漏加则走 auto_approved 发 token
+- **修法**：关键 spawn 类加入 `capabilityForceConfirm`；若产品要求永不巡航跳过（如 ACP），用 `forceConfirm = acpForceConfirm || (… && !userFullAutonomy)`
+- **相关**：`companion/src/tool/l2-admission.ts` · ADR-025 · Pi dual-review REJECT
+
+### Ghostty/macOS 终端：禁止 spawn CLI，用 open -na --args（2026-08-14 · #190）
+- **现象**：选了 Ghostty 仍开系统 Terminal；或 spawn 无窗口
+- **根因**：(1) `coding_handoff.local_terminal_app` 未落盘 → `auto`→Terminal；(2) Ghostty 文档：**macOS 不支持 CLI 起 GUI**，须 `open -na Ghostty.app --args -e bash -lc '…'`
+- **修**：config.set 允许 `local_terminal_app`；Mode C 用 open-args-e；未安装**禁止**静默回退 Terminal
+- **相关**：`companion/src/acp/open-local-terminal.ts` · PR #190
+
+### ACP pending_diffs 必须带 applyable（否则 Apply CTA 死）（2026-08-14 · #190）
+- **现象**：propose_diff 结束后侧栏没有「应用 diff」
+- **根因**：`acp.handback.message` 带 `applyable`，随后 closed `acp.session.event` 的 `pending_diffs` 无该字段 → reducer 把 `hasPendingDiff` 冲回 false
+- **修**：manager 写 `pending_diffs` 时同步算 `applyable`（与 lifecycle 谓词一致）+ 回归测
+- **纪律**：extension 事件合同字段跨消息类型要对齐，后到的 event 不能静默降级
+
 ### skill_install L2 预览 picker 必须 === 安装 picker（2026-08-12 · #184）
 - **坑**：`skillInstallOverwritePreview` 用 `entries.find(SKILL.md)` 第一个，install 用 `pickSkillMdEntry`（prefer skills/ + deepest）→ monorepo 上 L2 显示 name/overwrite 与真实写入不一致（token 绑定错误）
 - **修**：共享 `SkillEngine.pickSkillMdEntryResult`；多 `skills/*/SKILL.md` **fail-closed**（L2 前硬失败 + candidates）
@@ -847,6 +865,25 @@
 - 教训：JS 单线程下，**全同步**的 read-modify-write 天然原子，不存在交错竞态——只有 caller「读 → await → 用陈旧快照写」才有竞态。审计/评审提"竞态"时先确认是否有 await 间隙，别为不存在的竞态加锁（cargo-cult）。kimi 终审也独立验证了所有 caller无 await 间隙，确认非 bug。
 
 ## Architecture Decisions
+
+### 编程接力 Panel + Mode C（2026-08-14 · S71 · #190 MERGED）
+- **产品锁**：无 TUI embed / 无伪 IDE；Mode C = **侧栏监视桥 + 本机终端双进程**（非同一会话）；Stop 只杀桥
+- **诚实源**：`open_local_terminal_snapshot` 在 propose 拍；UI 的 Stop/banner 只信 session 的 `openLocalTerminal` + `local_terminal`（非 live config + 时间线正则）
+- **Env**：`buildAcpAgentEnv` = process.env + login-shell snapshot + user-env + server.env；禁止 PATH/HOME/LANG 白名单剥 API key
+- **终端偏好**：`coding_handoff.local_terminal_app`；macOS Ghostty 必须 `open -na App.app --args -e bash -lc …`（CLI binary 不能起 GUI）
+- **SoT**：`docs/coding-handoff-user-guide.md` · `docs/decisions/acp-dual-open-terminal-mode-c-2026-08-14.md` · PR **#190** `8708f89`
+- **仍 DEFER**：TUI embed、full tree、Monaco、与终端完全同一 ACP session
+
+### 编程接力 / ACP Client（2026-08-13 · S70 · feat/coding-handoff）
+- **产品**：浏览器证据 → 本机编程 Agent 的 **接力（handoff）**，不是 Side Panel IDE / 第三 runtime；与 Outbound MCP 方向相反（他们租浏览器 / 我们外派写码）
+- **分期**：Phase A 任务包复制（`/code`）默认可用；Phase B `config.acp.enabled` 默认 false；写盘/shell-in-agent NO-GO
+- **HITL 坑（Pi B1）**：仅把工具放进 `L2_GATE_TOOLS` **不够** — 必须进 `capabilityForceConfirm`，且 ACP 应对 **三旗巡航也永不 waive**（`acpForceConfirm` 覆盖 `userFullAutonomy`）。否则 god-mode/auto_approve 会静默发 token 开 spawn
+- **Token 绑定**：新 L2 工具必须扩 `SecurityPolicy.bindingPayloadFor`，禁止落 `default: ""`
+- **诚实文案**：UI 用「会话模式: 审查/起草」，禁止「只读」暗示 OS 沙箱（外部 Agent 是独立进程）
+- **SoT**：`docs/decisions/acp-coding-handoff-product-design-2026-08-13.md` · ADR-025 · **shipped as #190**
+- **演进**：S71 已交付 Panel 实时监视 + Mode C 本机终端（仍非 TUI embed）
+
+## Architecture Decisions (legacy)
 
 ### 运行时上下文分层：M1 · H1 · cold recall（2026-08-07）
 - **M1**：turn-safe head-drop + omit notice；磁盘全文保留

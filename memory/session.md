@@ -2,6 +2,29 @@
 
 ## Current Session
 
+### S71 END (2026-08-14 ~15:12) [编程接力 Panel · Mode C · multi-adv · **#190 MERGED**]
+- **Ship**：**PR #190 MERGED** `8708f89` ← `feat/coding-agent-panel` — Coding Agent Panel + Mode C dual-open residual
+- **产品**：侧栏监视桥 + 可选本机终端（双进程）；Stop 仅杀桥；可选终端应用（Ghostty `open -na --args`）
+- **工程**：`buildAcpAgentEnv` 登录 shell 对等；Mode C 任务注入；工作区 pick 后 auto-start；B-lite git；applyable 不冲 Apply CTA；cancel→partial
+- **门禁**：多路对抗 + Pi dual → must-fix → CI build+smoke 绿 → merge main
+- **Worktree**：`.worktrees/feat-coding-handoff`（分支可保留清理）
+- **下次**：(1) `git pull` main + 重装/重载 Companion+扩展 (2) 真机 Ghostty Mode C + Stop 诚实 (3) residual：prompt 文件 unlink、login-shell 失败重试、WS throttle
+- Recorded: yes — Ghostty macOS open-na；pending_diffs applyable 合同；config.local_terminal_app 必须落盘
+
+### S70 END (2026-08-13 ~09:50) [编程接力 / ACP design+impl · session-end]
+- **产品讨论**：本机编程 TUI 不靠 Apps 装配；方向 = **编程接力**（任务包）+ 可选 ACP Client；与 Outbound MCP 对称双门面
+- **设计**：5 路对抗 + Pi/Claude 设计双审 APPROVE_WITH_NITS → SoT `docs/decisions/acp-coding-handoff-product-design-2026-08-13.md` · §5.7 UX Consistency Contract
+- **实现**：独立 worktree **`feat/coding-handoff`** @ `.worktrees/feat-coding-handoff`
+  - Phase A：`/code` · 任务包 Modal · 复制 · Pack `coding-handoff` · settings
+  - Phase B：`companion/src/acp/*` · `acp_*` tools · 默认 `acp.enabled=false` · ADR-025
+  - Phase C/D 写盘：未做（NO-GO）
+- **双审实现**：Claude APPROVE_WITH_NITS；Pi R1 **REJECT**（B1 HITL 可被 god-mode 跳过）→ 已修 forceConfirm 永不 waive ACP → Pi R2 APPROVE_WITH_NITS
+- **产品缺口（对用户说清）**：**不能**在 Chrome 插件内实时看/操作编程 Agent；仅任务包外派 + 后端一次性 handback
+- **未 push / 未 merge main**；main tip 仍为 #184 栈
+- Recorded: yes — L2_GATE vs capabilityForceConfirm；编程接力坐标
+
+
+
 ### S69 END (2026-08-12~13) [thread ID UI · large skill zip · download recovery · #184 MERGED]
 - **Ship**：**PR #184 MERGED** `5713089` ← `f0d8207` — 会话 `#id` 列表/顶栏 + 大 skill ZIP + `browser_download` 超时恢复
 - **UI**：ThreadList/StatusRail 常驻 `#id`、点复制 bare id；搜索 alias/id/preview/tags/tldr/bullets；搜索展开历史日分组
@@ -651,6 +674,20 @@
 - Recorded: yes 鈥?瑙?project-knowledge.md銆孧ermaid 鍥捐〃娓叉煋鐨勪笁涓潙銆? docs/adr/009
 
 ## In-Flight Tasks (Cross-Session)
+
+### 编程接力 / Mode C 真机 dogfood（S71 后 · #190）
+- status: **active**
+- context: #190 已合 main `8708f89`；Panel+Mode C+终端偏好+env 对等已落地
+- next_action: (1) pull main 重装 app/重载扩展 (2) Ghostty 启动路径 + 任务注入 (3) Stop 监视 vs 编程文案；Apply CTA propose_diff
+- resume_doc: PR #190 · `docs/coding-handoff-user-guide.md` · `docs/decisions/acp-dual-open-terminal-mode-c-2026-08-14.md`
+- updated: 2026-08-14
+
+### 编程接力 feat/coding-handoff（S70）
+- status: **done**（演进为 #190 `feat/coding-agent-panel` MERGED）
+- context: 设计 SoT → panel residual → multi-adv → merge
+- next_action: 真机 dogfood 见上条
+- resume_doc: PR #190
+- updated: 2026-08-14
 
 ### Default workspace sandbox 真机 smoke（S65 后 · #165/#166）
 - status: **active**
