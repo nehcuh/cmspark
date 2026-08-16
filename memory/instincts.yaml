@@ -26,9 +26,23 @@ instincts:
   - id: multi-adversarial-then-dual-then-ci-merge
     pattern: "安全/产品敏感合入：先多路独立对抗 agent（security/correctness/product）→ 无 P0 后双路复审 → 全 APPROVE* 再合；CI green 后 merge。GraphQL merge 失败时可用 gh api REST PUT pulls/{n}/merge。对抗 nits 中用户可见谎言（文档/矩阵）优先修再合。"
     confidence: 0.88
-    source_session: "2026-08-09 S61 #160 · S62 #161"
+    source_session: "2026-08-09 S61 #160 · S62 #161 · S72 #191"
     tags: [review, adversarial, dual-review, ci, merge]
-    applications: 2
+    applications: 3
+
+  - id: windows-npm-shim-spawn-unwrap
+    pattern: "Windows 启动 npm 全局 CLI（claude/pi/codex）：where 先返回无扩展 shebang（ENOENT），spawn(.cmd) 无 shell 为 EINVAL。发现优先 .exe/.cmd；unwrap %dp0%/%~dp0 到 PE 或 sibling node.exe+script；禁止 shell:true 送 prompt；禁止用打包 cmspark-agent.exe 当 node。"
+    confidence: 0.9
+    source_session: "2026-08-16 S72 #191 Windows ACP spawn"
+    tags: [windows, spawn, npm, acp, cmd]
+    applications: 1
+
+  - id: windows-mode-c-no-false-l1
+    pattern: "Windows Mode C 不得把 80ms 无 spawn error 写成「已打开终端」。WindowsApps wt.exe 是 0 字节别名。auto 先 start+PowerShell；cmd-host 只 L0；粘贴行必须带任务文件（Get-Content），否则用户贴出空 TUI。"
+    confidence: 0.88
+    source_session: "2026-08-16 S72 #191 Mode C honesty R1-R5"
+    tags: [windows, mode-c, honesty, wt, acp]
+    applications: 1
 
   - id: dual-review-official-entrypoint-and-narrow-r2
     pattern: "dual-external-review 机核必须跑产品入口（companion npm test），不能只 node --test 单文件。JSDoc/块注释禁止写入 */ 序列（如 **/glob）。大 PR 全量 patch 易打爆 Claude context → r1 以能产出 VERDICT 的审阅方为准，r2 base 收窄到 blocker 修复 commit。Windows 用 Git Bash + PATH=/c/nvm4w/nodejs 跑 scripts/dual-external-review.sh。"

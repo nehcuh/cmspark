@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S72 END (2026-08-16~17) [Windows ACP spawn · 多路对抗 · **#191 MERGED**]
+- **Ship**：**PR #191 MERGED** `33022bd` ← `fix/windows-acp-spawn` — Windows 外部编程 Agent 启动（shebang/.cmd + Mode C 诚实 + P2）
+- **根因**：`where` 先打 npm Unix shebang → `spawn ENOENT`；`.cmd` 无 shell → `EINVAL`
+- **工程**：`win-spawn.ts` unwrap PE/`node cli.js`；R1–R5 Mode C 不假 L1 / wrapViaCmd 禁 prompt；R6–R14 wx 临时文件、taskkill、拒 companion PE、`%~dp0`、设置 WT/cmd
+- **门禁**：三路对抗 A REJECT / B REJECT / C APPROVE_WITH_NITS → 修 R1–R14 → CI build+3 smoke 绿 → merge
+- **机核**：ACP win-spawn/open-local-terminal/discover **77 pass**（含本机 `claude --version`）
+- **下次**：(1) 重启 Companion + 重载扩展 (2) 真机侧栏启动 Claude/Pi (3) Mode C 不谎报已开终端
+- Recorded: yes — Windows npm shim spawn；wt 别名假 L1；wrapViaCmd 禁 page_context
+
 ### S71 END (2026-08-14 ~15:12) [编程接力 Panel · Mode C · multi-adv · **#190 MERGED**]
 - **Ship**：**PR #190 MERGED** `8708f89` ← `feat/coding-agent-panel` — Coding Agent Panel + Mode C dual-open residual
 - **产品**：侧栏监视桥 + 可选本机终端（双进程）；Stop 仅杀桥；可选终端应用（Ghostty `open -na --args`）
@@ -675,12 +684,12 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### 编程接力 / Mode C 真机 dogfood（S71 后 · #190）
+### 编程接力 / Mode C 真机 dogfood（S71–S72 · #190 + #191）
 - status: **active**
-- context: #190 已合 main `8708f89`；Panel+Mode C+终端偏好+env 对等已落地
-- next_action: (1) pull main 重装 app/重载扩展 (2) Ghostty 启动路径 + 任务注入 (3) Stop 监视 vs 编程文案；Apply CTA propose_diff
-- resume_doc: PR #190 · `docs/coding-handoff-user-guide.md` · `docs/decisions/acp-dual-open-terminal-mode-c-2026-08-14.md`
-- updated: 2026-08-14
+- context: #190 Panel+Mode C 已在 main；#191 Windows spawn/Mode C 诚实已合 `33022bd`
+- next_action: (1) 重启 Companion + 重载扩展 (2) Windows 侧栏启动 Claude/Pi (3) Mode C 不谎报 L1；(mac) Ghostty 路径 + Stop 文案
+- resume_doc: PR #191 · #190 · `docs/audit/reviews/acp-win-spawn-consensus-20260816-090554.md`
+- updated: 2026-08-17
 
 ### 编程接力 feat/coding-handoff（S70）
 - status: **done**（演进为 #190 `feat/coding-agent-panel` MERGED）

@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-14 (S71 · #190 编程接力 Panel+Mode C MERGED)
+**Updated**: 2026-08-17 (S72 · #191 Windows ACP spawn MERGED)
 
 ## CMspark — 产品 0.5.0 稳定切点
 
@@ -16,16 +16,15 @@
 | Outbound MCP | 交付 opt-in |
 | Precision Instrument UI | **on main**（#168–#171） |
 | Thread list ID + large skill install | **on main**（#184） |
-| **编程接力 / Mode C** | **on main**（**#190** Panel + dual-open terminal + env 对等 + 终端偏好） |
+| **编程接力 / Mode C** | **on main**（**#190** Panel+Mode C；**#191** Windows spawn/诚实 L1） |
 | Deep-diagnosis fanout hardening | **on main**（#172–#175） |
 | multi-OS CI smoke | **on main**（#175 `smoke-os`） |
 | DevSec 默认工作区沙箱 | **on main**（#165/#166） |
 
 ## Main tip (remote)
 
-- **`origin/main`**: merge PR **#190** (`8708f89`) — Coding Agent Panel + Mode C residual  
-  （本地 `main` 可能仍 ahead/behind；以 `git pull` 为准）
-- **Open PR**: 以 `gh pr list` 为准（#190 已 MERGED）
+- **`origin/main`**: merge PR **#191** (`33022bd`) — Windows ACP spawn + Mode C honesty  
+- **Open PR**: 以 `gh pr list` 为准（#191 已 MERGED）
 
 ## Recent locks (S71)
 
@@ -36,8 +35,9 @@
 
 ## Next (optional backlog)
 
-- 真机：#190 重装 app + 重载扩展；Ghostty Mode C + 任务注入 + Stop 文案
-- residual：Mode C prompt 文件 unlink；login-shell 失败重试；WS progress throttle
+- 真机：#191 重启 Companion + 重载扩展；Windows 侧栏启动 Claude/Pi + Mode C 不假 L1
+- 真机：#190 Ghostty Mode C + Stop 文案（mac）
+- residual：login-shell 失败重试；WS progress throttle
 - 真机：三旗 / meeting / workspace / Win shell backlog
 - message-router 续拆；Whisper multi-arch pins；codesign
 

@@ -866,6 +866,17 @@
 
 ## Architecture Decisions
 
+### Windows npm shim ≠ spawnable（2026-08-16 · #191）
+- **坑**：nvm/npm 在 `node.exe` 旁放一对垫片：`claude`（`#!/bin/sh`）+ `claude.cmd`。`where` 先列出 shebang。Node `spawn` 无 shell 时：shebang → ENOENT，`.cmd` → EINVAL。仓库里 `shell_exec` 已写过这条，ACP 漏了。
+- **修**：`pickWindowsWhereHit`；`resolveAcpSpawn` 解包 `%dp0%`/`%~dp0` → PE 或 sibling `node.exe`+`cli.js`；禁止 `shell:true` 送 prompt；unwrap 失败 `wrapViaCmd` 必须剥 `-p`/长参数/`&|<>`。
+- **勿**：把 `process.execPath`（打包 `cmspark-agent.exe`）当 node 跑 JS shim。
+- **对照**：`capability/shell.ts` `shouldUseArgvSpawn`、`scripts/verify-ort-sea.js` cmd `/d /s /c`。PR **#191**。
+
+### Windows Mode C 禁止 80ms 假 L1（2026-08-16 · #191）
+- **坑**：WindowsApps `wt.exe` 是 0 字节执行别名；`spawn` 常不报 `error`。80ms 当成功会让 UI 写「已打开本机终端」，实际没窗。
+- **修**：拒绝裸 `wt.exe` / WindowsApps 路径；`auto` 先 `start`+PowerShell；cmd-host 只 L0；粘贴行带 `Get-Content` 任务文件。
+- **诚实**：观察失败必须 `failed` 或真 L0，旧 `ok:false` 比假 L1 更好。
+
 ### 编程接力 Panel + Mode C（2026-08-14 · S71 · #190 MERGED）
 - **产品锁**：无 TUI embed / 无伪 IDE；Mode C = **侧栏监视桥 + 本机终端双进程**（非同一会话）；Stop 只杀桥
 - **诚实源**：`open_local_terminal_snapshot` 在 propose 拍；UI 的 Stop/banner 只信 session 的 `openLocalTerminal` + `local_terminal`（非 live config + 时间线正则）
