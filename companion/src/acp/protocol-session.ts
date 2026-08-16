@@ -1,7 +1,8 @@
 // Run one ACP session over JSON-RPC stdio (true Client path).
 // Falls back responsibility stays in manager when initialize fails.
 
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
+import type { ChildProcessWithoutNullStreams } from "child_process"
+import { spawnAcpChild } from "./win-spawn"
 import { JsonRpcStdioClient, tryAcpInitialize } from "./jsonrpc-stdio"
 import {
   capTimeline,
@@ -46,11 +47,11 @@ export async function tryStartProtocolSession(opts: {
 }): Promise<ProtocolSessionHandle | null> {
   let child: ChildProcessWithoutNullStreams
   try {
-    child = spawn(opts.command, opts.args, {
+    child = spawnAcpChild(opts.command, opts.args, {
       cwd: opts.cwd,
       env: opts.env as NodeJS.ProcessEnv,
       stdio: ["pipe", "pipe", "pipe"],
-    })
+    }) as ChildProcessWithoutNullStreams
   } catch (e: any) {
     logger.warn("acp.protocol_spawn_failed", { err: e?.message || String(e) })
     return null

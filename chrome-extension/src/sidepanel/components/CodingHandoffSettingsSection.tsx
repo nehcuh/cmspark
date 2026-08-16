@@ -16,6 +16,8 @@ type AcpAgent = {
 /** Preset options for coding_handoff.local_terminal_app */
 export const LOCAL_TERMINAL_APP_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "auto", label: "系统自动（推荐）" },
+  { value: "wt", label: "Windows Terminal" },
+  { value: "cmd", label: "Windows 控制台 (cmd)" },
   { value: "Terminal", label: "Terminal.app（macOS）" },
   { value: "iTerm", label: "iTerm2" },
   { value: "Warp", label: "Warp（可能需粘贴任务）" },

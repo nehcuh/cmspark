@@ -1,7 +1,8 @@
 // ACP session manager — Phase B+ live progress (default acp.enabled=false).
 // Spawns configured stdio agent; streams progress via onEvent → WS broadcast.
 
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
+import type { ChildProcessWithoutNullStreams } from "child_process"
+import { spawnAcpChild, killAcpChild } from "./win-spawn"
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
@@ -587,7 +588,7 @@ export class AcpManager {
     const sessionId = session.session_id
     const promptPath = path.join(os.tmpdir(), `cmspark-acp-${session.session_id}.md`)
     try {
-      fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600 })
+      fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" })
     } catch (e: any) {
       this.runningCount = Math.max(0, this.runningCount - 1)
       session.state = "closed"
@@ -610,7 +611,7 @@ export class AcpManager {
 
       let child: ChildProcessWithoutNullStreams
       try {
-        child = spawn(server.command, args, {
+        child = spawnAcpChild(server.command, args, {
           cwd: session.workspace_root,
           env: buildAcpAgentEnv({
             sessionId: session.session_id,
@@ -618,7 +619,7 @@ export class AcpManager {
             serverEnv: server.env,
           }),
           stdio: ["pipe", "pipe", "pipe"],
-        })
+        }) as ChildProcessWithoutNullStreams
       } catch (e: any) {
         this.runningCount = Math.max(0, this.runningCount - 1)
         session.state = "closed"
@@ -647,13 +648,13 @@ export class AcpManager {
         session.partial = true
         this.emitProgress(session, "timeout — stopping…", true)
         try {
-          child.kill("SIGTERM")
+          killAcpChild(child, "SIGTERM")
         } catch {
           /* */
         }
         setTimeout(() => {
           try {
-            child.kill("SIGKILL")
+            killAcpChild(child, "SIGKILL")
           } catch {
             /* */
           }
@@ -861,13 +862,13 @@ export class AcpManager {
     const child = this.processes.get(sessionId)
     if (child) {
       try {
-        child.kill("SIGTERM")
+        killAcpChild(child, "SIGTERM")
       } catch {
         /* */
       }
       setTimeout(() => {
         try {
-          child.kill("SIGKILL")
+          killAcpChild(child, "SIGKILL")
         } catch {
           /* */
         }

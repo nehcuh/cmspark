@@ -5,6 +5,12 @@ import { execFileSync } from "child_process"
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
+import { hardenPath } from "../process-path"
+import {
+  pickWindowsWhereHit,
+  findWindowsSiblingShim,
+  resolveWindowsAgentCommand,
+} from "./win-spawn"
 
 export type DiscoveredAgent = {
   id: string
@@ -32,6 +38,7 @@ const PROBES: ProbeDef[] = [
       "/usr/local/bin/claude",
       path.join(os.homedir(), ".local", "bin", "claude"),
       path.join(os.homedir(), ".claude", "local", "claude"),
+      ...windowsCommonAgentPaths("claude"),
       // Homebrew Caskroom (GUI-launched Companion often lacks brew in PATH)
       ...(() => {
         try {
@@ -57,6 +64,7 @@ const PROBES: ProbeDef[] = [
       "/opt/homebrew/bin/gemini",
       "/usr/local/bin/gemini",
       path.join(os.homedir(), ".local", "bin", "gemini"),
+      ...windowsCommonAgentPaths("gemini"),
     ],
   },
   {
@@ -67,6 +75,7 @@ const PROBES: ProbeDef[] = [
       "/opt/homebrew/bin/codex",
       "/usr/local/bin/codex",
       path.join(os.homedir(), ".local", "bin", "codex"),
+      ...windowsCommonAgentPaths("codex"),
     ],
   },
   {
@@ -87,6 +96,7 @@ const PROBES: ProbeDef[] = [
           return [] as string[]
         }
       })(),
+      ...windowsCommonAgentPaths("pi"),
     ],
   },
 ]
@@ -102,18 +112,69 @@ function isExecutableFile(p: string): boolean {
   }
 }
 
+/** npm / nvm-windows / node-sibling shims (GUI-launched Companion often lacks these on PATH). */
+export function windowsCommonAgentPaths(basename: string): string[] {
+  if (process.platform !== "win32") return []
+  const home = os.homedir()
+  const appdata = process.env.APPDATA || path.join(home, "AppData", "Roaming")
+  const out: string[] = []
+  const push = (p: string) => {
+    if (p) out.push(p)
+  }
+  push(path.join(appdata, "npm", `${basename}.cmd`))
+  push(path.join(appdata, "npm", `${basename}.exe`))
+  try {
+    const nodeDir = path.dirname(process.execPath)
+    push(path.join(nodeDir, `${basename}.cmd`))
+    push(path.join(nodeDir, `${basename}.exe`))
+  } catch {
+    /* */
+  }
+  const nvmSymlink = process.env.NVM_SYMLINK
+  if (nvmSymlink) {
+    push(path.join(nvmSymlink, `${basename}.cmd`))
+    push(path.join(nvmSymlink, `${basename}.exe`))
+  }
+  const nvmHome = process.env.NVM_HOME
+  if (nvmHome) {
+    push(path.join(nvmHome, `${basename}.cmd`))
+  }
+  return out
+}
+
+function whereBinary(): string {
+  if (process.platform !== "win32") return "which"
+  const root = process.env.SystemRoot || process.env.SYSTEMROOT || "C:\\Windows"
+  return path.join(root, "System32", "where.exe")
+}
+
 function whichOnPath(basename: string): string | undefined {
   try {
-    const cmd = process.platform === "win32" ? "where" : "which"
+    const cmd = whereBinary()
+    const env =
+      process.platform === "win32"
+        ? { ...process.env, PATH: hardenPath() }
+        : process.env
     const out = execFileSync(cmd, [basename], {
       encoding: "utf8",
       timeout: 2000,
       stdio: ["ignore", "pipe", "ignore"],
+      env,
     })
-    const first = String(out)
+    const lines = String(out)
       .split(/\r?\n/)
       .map((l) => l.trim())
-      .find(Boolean)
+      .filter(Boolean)
+    if (process.platform === "win32") {
+      const picked = pickWindowsWhereHit(lines)
+      if (picked) return resolveWindowsAgentCommand(picked)
+      for (const line of lines) {
+        const sib = findWindowsSiblingShim(line)
+        if (sib) return sib
+      }
+      return undefined
+    }
+    const first = lines.find(Boolean)
     if (first && isExecutableFile(first)) return first
   } catch {
     /* not found */
@@ -156,6 +217,9 @@ export function discoverCodingAgents(force = false): DiscoveredAgent[] {
       found = fs.realpathSync(found)
     } catch {
       /* keep */
+    }
+    if (process.platform === "win32") {
+      found = resolveWindowsAgentCommand(found)
     }
     if (seenCmd.has(found)) continue
     seenCmd.add(found)

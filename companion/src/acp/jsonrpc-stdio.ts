@@ -3,6 +3,7 @@
 
 import type { ChildProcessWithoutNullStreams } from "child_process"
 import { EventEmitter } from "events"
+import { killAcpChild } from "./win-spawn"
 
 export type JsonRpcId = string | number
 
@@ -135,13 +136,13 @@ export class JsonRpcStdioClient extends EventEmitter {
 
   kill(): void {
     try {
-      this.child.kill("SIGTERM")
+      killAcpChild(this.child, "SIGTERM")
     } catch {
       /* */
     }
     setTimeout(() => {
       try {
-        this.child.kill("SIGKILL")
+        killAcpChild(this.child, "SIGKILL")
       } catch {
         /* */
       }

@@ -13,9 +13,15 @@ import {
   buildInteractiveExecFragment,
   buildL0DegradeScript,
   buildWindowsCommandLine,
+  buildWindowsModeCScript,
+  quotePowerShellLiteral,
   resolveLinuxTerminalBinary,
   resolveLinuxTerminalFromPref,
   normalizeLocalTerminalApp,
+  isRealWindowsTerminalExe,
+  findWindowsTerminalExe,
+  modeCWindowsLevelForSpec,
+  buildWindowsStartCommandLine,
 } from "../src/acp/open-local-terminal"
 
 describe("shellSingleQuote", () => {
@@ -55,6 +61,84 @@ describe("windowsQuotePath", () => {
   })
 })
 
+describe("quotePowerShellLiteral / buildWindowsModeCScript", () => {
+  it("escapes single quotes for PowerShell literals", () => {
+    assert.equal(quotePowerShellLiteral("C:\\repo"), "'C:\\repo'")
+    assert.equal(quotePowerShellLiteral("O'Brien"), "'O''Brien'")
+  })
+
+  it("L1 script cds, banners, and invokes unwrapped command with prompt file", () => {
+    const s = buildWindowsModeCScript({
+      cwd: "C:\\Users\\me\\My Project",
+      command: "C:\\Tools\\claude.exe",
+      extraArgs: [],
+      agentLabel: "Claude",
+      goalHint: "fix auth",
+      promptFile: "C:\\tmp\\task.md",
+    })
+    assert.match(s, /Set-Location -LiteralPath 'C:\\Users\\me\\My Project'/)
+    assert.match(s, /不是同一会话/)
+    assert.match(s, /Agent: Claude/)
+    assert.match(s, /Get-Content -LiteralPath 'C:\\tmp\\task\.md'/)
+    assert.match(s, /& 'C:\\Tools\\claude\.exe' \$task/)
+    assert.doesNotMatch(s, /L0/)
+  })
+
+  it("L0 script has no invocation of the agent binary", () => {
+    const s = buildWindowsModeCScript({
+      cwd: "C:\\ws",
+      command: "C:\\Tools\\claude.exe",
+      agentLabel: "Claude",
+      l0: true,
+    })
+    assert.match(s, /L0/)
+    assert.doesNotMatch(s, /& 'C:\\Tools\\claude\.exe'/)
+    assert.match(s, /Set-Location -LiteralPath 'C:\\ws'/)
+  })
+
+  it("L0 Write-Host paste includes prompt-file invocation", () => {
+    const s = buildWindowsModeCScript({
+      cwd: "C:\\ws",
+      command: "C:\\Tools\\claude.exe",
+      agentLabel: "Claude",
+      l0: true,
+      promptFile: "C:\\tmp\\task.md",
+    })
+    assert.match(s, /L0/)
+    assert.match(s, /Write-Host/)
+    assert.match(s, /Get-Content/)
+    assert.match(s, /task\.md/)
+    assert.ok(
+      !s.split(/\r?\n/).some((l) => l.startsWith("& ")),
+      "L0 must not exec the agent; only Write-Host the paste line",
+    )
+  })
+})
+
+describe("modeCWindowsLevelForSpec", () => {
+  it("does not claim L1 for a cmd host", () => {
+    assert.equal(modeCWindowsLevelForSpec({ command: "C:\\Windows\\System32\\cmd.exe" }), "L0")
+    assert.equal(modeCWindowsLevelForSpec({ command: "cmd.exe" }), "L0")
+    assert.equal(modeCWindowsLevelForSpec({ command: "C:\\Tools\\claude.exe" }), "L1")
+    assert.equal(modeCWindowsLevelForSpec({ command: "C:\\nvm4w\\nodejs\\node.exe" }), "L1")
+  })
+})
+
+describe("buildWindowsStartCommandLine", () => {
+  it("quotes every token including -File path (R7)", () => {
+    const line = buildWindowsStartCommandLine([
+      "-NoExit",
+      "-File",
+      "C:\\Users\\me\\AppData\\Local\\Temp\\cmspark-mode-c-x\\run.ps1",
+    ])
+    assert.match(line, /^start "CMspark" /)
+    assert.match(line, /"powershell\.exe"/)
+    assert.match(line, /"-NoExit"/)
+    assert.match(line, /"-File"/)
+    assert.match(line, /"C:\\Users\\me\\AppData\\Local\\Temp\\cmspark-mode-c-x\\run\.ps1"/)
+  })
+})
+
 describe("buildWindowsCommandLine", () => {
   it("uses cd /d and quotes cwd + command", () => {
     const line = buildWindowsCommandLine(
@@ -71,6 +155,92 @@ describe("buildWindowsCommandLine", () => {
     const line = buildWindowsCommandLine('D:\\a"b', 'E:\\x"y.exe')
     assert.match(line, /cd \/d "D:\\a""b"/)
     assert.match(line, /"E:\\x""y\.exe"/)
+  })
+
+  it("with promptFile uses Get-Content and the file path (no raw body)", () => {
+    const line = buildWindowsCommandLine("C:\\ws", "C:\\Tools\\claude.exe", {
+      promptFile: "C:\\tmp\\task.md",
+    })
+    assert.match(line, /Get-Content/)
+    assert.match(line, /LiteralPath/)
+    assert.match(line, /C:\\tmp\\task\.md/)
+    assert.match(line, /& 'C:\\Tools\\claude\.exe' \$task/)
+    assert.doesNotMatch(line, /cd \/d/)
+  })
+})
+
+describe("findWindowsTerminalExe / isRealWindowsTerminalExe", () => {
+  const pe = { isFile: () => true, size: 200_000 }
+  const empty = { isFile: () => true, size: 0 }
+
+  it("rejects bare wt.exe", () => {
+    assert.equal(isRealWindowsTerminalExe("wt.exe", { stat: () => pe }), false)
+    assert.equal(isRealWindowsTerminalExe("WT.EXE", { stat: () => pe }), false)
+  })
+
+  it("rejects Microsoft\\WindowsApps alias even if size>0", () => {
+    assert.equal(
+      isRealWindowsTerminalExe(
+        "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe",
+        { stat: () => pe },
+      ),
+      false,
+    )
+    assert.equal(
+      isRealWindowsTerminalExe(
+        "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe",
+        { stat: () => empty },
+      ),
+      false,
+    )
+  })
+
+  it("rejects 0-byte files and non-files", () => {
+    assert.equal(
+      isRealWindowsTerminalExe("C:\\Program Files\\Windows Terminal\\wt.exe", {
+        stat: () => empty,
+      }),
+      false,
+    )
+    assert.equal(
+      isRealWindowsTerminalExe("C:\\Program Files\\Windows Terminal\\wt.exe", {
+        stat: () => ({ isFile: () => false, size: 200_000 }),
+      }),
+      false,
+    )
+  })
+
+  it("accepts a real PE path outside WindowsApps", () => {
+    assert.equal(
+      isRealWindowsTerminalExe("C:\\Program Files\\Windows Terminal\\wt.exe", {
+        stat: () => pe,
+      }),
+      true,
+    )
+  })
+
+  it("findWindowsTerminalExe never returns WindowsApps or bare wt", () => {
+    assert.equal(
+      findWindowsTerminalExe({
+        candidates: [
+          "wt.exe",
+          "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe",
+        ],
+        stat: () => pe,
+      }),
+      null,
+    )
+    assert.equal(
+      findWindowsTerminalExe({
+        candidates: [
+          "wt.exe",
+          "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe",
+          "C:\\Program Files\\Windows Terminal\\wt.exe",
+        ],
+        stat: () => pe,
+      }),
+      "C:\\Program Files\\Windows Terminal\\wt.exe",
+    )
   })
 })
 
@@ -217,6 +387,13 @@ describe("normalizeLocalTerminalApp", () => {
   it("accepts known ids and absolute paths", () => {
     assert.equal(normalizeLocalTerminalApp("iTerm"), "iTerm")
     assert.equal(normalizeLocalTerminalApp("/Applications/iTerm.app"), "/Applications/iTerm.app")
+  })
+
+  it("maps Windows terminal ids", () => {
+    assert.equal(normalizeLocalTerminalApp("wt"), "wt")
+    assert.equal(normalizeLocalTerminalApp("Windows Terminal"), "wt")
+    assert.equal(normalizeLocalTerminalApp("cmd"), "cmd")
+    assert.equal(normalizeLocalTerminalApp("powershell"), "cmd")
   })
 
   it("maps common typos to Ghostty / iTerm", () => {
