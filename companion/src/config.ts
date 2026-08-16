@@ -269,8 +269,9 @@ export interface CompanionConfig {
     open_local_terminal?: boolean
     /**
      * Which host terminal to open for Mode C.
-     * - `auto` (default): macOS Terminal.app; Linux $TERMINAL / common emulators
-     * - Known: Terminal | iTerm | Warp | Alacritty | Kitty | Ghostty
+     * - `auto` (default): macOS Terminal.app; Linux $TERMINAL / common;
+     *   Windows `start` + PowerShell (then real Windows Terminal PE if present)
+     * - Known: Terminal | iTerm | Warp | Alacritty | Kitty | Ghostty | wt | cmd
      * - Or absolute path to .app / binary
      */
     local_terminal_app?: string

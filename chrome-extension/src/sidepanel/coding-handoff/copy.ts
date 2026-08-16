@@ -73,7 +73,7 @@ export const codingHandoffCopy = {
   /** Which host terminal app (Mode C). */
   settingsLocalTerminalApp: "本机终端应用",
   settingsLocalTerminalAppHint:
-    "默认「系统自动」：macOS 用 Terminal.app，Linux 用 $TERMINAL 或常见模拟器。可改 iTerm / Warp / Alacritty 等；Warp 可能需手动粘贴任务命令。",
+    "默认「系统自动」：Windows 用「开始」打开控制台（有安装则再试 Windows Terminal）；macOS 用 Terminal.app；Linux 用 $TERMINAL 或常见模拟器。可改 Windows Terminal / cmd、iTerm / Warp / Alacritty 等；Warp 可能需手动粘贴任务命令。",
   /** Panel mirror of Mode C setting (same config key). */
   panelOpenLocalTerminal: "启动时打开本机终端（模式 C）",
 
@@ -111,7 +111,7 @@ export const codingHandoffCopy = {
   // Discovery status (settings + panel)
   discoveredTitle: "本机已检测到",
   discoveredEmpty:
-    "未在 PATH / 常见安装路径找到 claude · gemini · codex · pi。安装后点「重新检测」，或把绝对路径写入 config.acp.servers。",
+    "未在 PATH / 常见安装路径找到 claude · gemini · codex · pi。安装后点「重新检测」，或把绝对路径写入 config.acp.servers。Windows 会忽略 npm 的 Unix shebang 垫片（无扩展的 claude 脚本），需要同目录的 .cmd / .exe。",
   discoveredNeedEnable:
     "首次启动会自动开启本机 Agent 会话能力（仍会弹确认）。之后输入与输出都在本面板。",
   rediscoverHint: "检测与总开关无关：未启用时仍会列出本机已安装助手。",

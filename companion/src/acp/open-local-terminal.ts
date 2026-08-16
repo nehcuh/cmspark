@@ -13,6 +13,13 @@ import * as os from "os"
 import * as path from "path"
 import { promisify } from "util"
 import { logger } from "../logger"
+import {
+  acpSpawnUsesCmdHost,
+  resolveAcpSpawn,
+  resolveWindowsAgentCommand,
+  writeExclusiveUtf8,
+  scheduleUnlink,
+} from "./win-spawn"
 
 const execFileAsync = promisify(execFile)
 
@@ -241,9 +248,302 @@ export function buildL0DegradeScript(opts: {
   return lines.join(" && ")
 }
 
-/** Windows paste-friendly one-liner (cmd.exe). */
-export function buildWindowsCommandLine(cwd: string, command: string): string {
+/** `start "title"` line: every token quoted (R7 — TEMP paths with `&` must not split). */
+export function buildWindowsStartCommandLine(psArgs: string[]): string {
+  return `start "CMspark" ${["powershell.exe", ...psArgs].map(windowsQuotePath).join(" ")}`
+}
+
+/**
+ * Windows paste-friendly one-liner.
+ * Without promptFile: cmd `cd /d && command`.
+ * With promptFile: PowerShell cd + Get-Content -LiteralPath + & agent $task
+ * (no raw interpolation of the file body).
+ */
+export function buildWindowsCommandLine(
+  cwd: string,
+  command: string,
+  opts?: { promptFile?: string; extraArgs?: string[] },
+): string {
+  const pf = opts?.promptFile?.trim()
+  if (pf) {
+    const tokens = [command, ...(opts?.extraArgs || [])].map(quotePowerShellLiteral)
+    return [
+      `Set-Location -LiteralPath ${quotePowerShellLiteral(cwd)}`,
+      `$task = Get-Content -LiteralPath ${quotePowerShellLiteral(pf)} -Raw -Encoding utf8`,
+      `& ${tokens.join(" ")} $task`,
+    ].join("; ")
+  }
   return `cd /d ${windowsQuotePath(cwd)} && ${windowsQuotePath(command)}`
+}
+
+/** L1 only when the resolved spawn target is an unwrapped PE or node+script — never cmd.exe. */
+export function modeCWindowsLevelForSpec(spec: { command: string }): "L1" | "L0" {
+  return acpSpawnUsesCmdHost(spec) ? "L0" : "L1"
+}
+
+/** PowerShell single-quoted literal (`'` → `''`). */
+export function quotePowerShellLiteral(s: string): string {
+  return `'${String(s).replace(/'/g, "''")}'`
+}
+
+/**
+ * Mode C L1/L0 PowerShell script: cd workspace, print banner, optionally exec agent.
+ * Paths go through -LiteralPath / single-quoted literals — no interpolation.
+ */
+export function buildWindowsModeCScript(opts: {
+  cwd: string
+  command: string
+  extraArgs?: string[]
+  agentLabel?: string
+  goalHint?: string
+  promptFile?: string
+  l0?: boolean
+}): string {
+  const label = (opts.agentLabel || path.basename(opts.command) || "agent").replace(/'/g, "")
+  const hint = (opts.goalHint || "").replace(/[\r\n]+/g, " ").slice(0, 120).replace(/'/g, "")
+  const lines = [
+    "$ErrorActionPreference = 'Stop'",
+    `Set-Location -LiteralPath ${quotePowerShellLiteral(opts.cwd)}`,
+    "Write-Host ''",
+    "Write-Host '════════════════════════════════════════'",
+    "Write-Host ' CMspark 编程接力 · 本机交互窗口'",
+    "Write-Host ' 侧栏另有监视会话（桥接）—— 不是同一会话'",
+    `Write-Host ' Agent: ${label}'`,
+    hint ? `Write-Host ' 任务: ${hint}'` : "Write-Host ''",
+    "Write-Host '════════════════════════════════════════'",
+    "Write-Host ''",
+  ]
+  if (opts.l0) {
+    lines.push("Write-Host '（L0 降级：未自动启动 Agent。请粘贴下方命令或从剪贴板运行）'")
+    const paste = opts.promptFile
+      ? buildWindowsCommandLine(opts.cwd, opts.command, {
+          promptFile: opts.promptFile,
+          extraArgs: opts.extraArgs,
+        })
+      : [opts.command, ...(opts.extraArgs || [])].join(" ")
+    lines.push(`Write-Host ${quotePowerShellLiteral(paste)}`)
+    return lines.join("\r\n")
+  }
+  const tokens = [opts.command, ...(opts.extraArgs || [])].map(quotePowerShellLiteral)
+  if (opts.promptFile) {
+    lines.push(
+      `$task = Get-Content -LiteralPath ${quotePowerShellLiteral(opts.promptFile)} -Raw -Encoding utf8`,
+    )
+    lines.push(`& ${tokens.join(" ")} $task`)
+  } else {
+    lines.push(`& ${tokens.join(" ")}`)
+  }
+  return lines.join("\r\n")
+}
+
+export type WinTermStat = { isFile(): boolean; size: number }
+
+function winPathBasename(p: string): string {
+  const norm = String(p || "").replace(/\//g, "\\")
+  const i = norm.lastIndexOf("\\")
+  return i >= 0 ? norm.slice(i + 1) : norm
+}
+
+function isWindowsAppsAliasPath(p: string): boolean {
+  const norm = String(p || "").replace(/\//g, "\\").toLowerCase()
+  return (
+    norm.includes("\\microsoft\\windowsapps\\") ||
+    norm.endsWith("\\microsoft\\windowsapps")
+  )
+}
+
+/**
+ * Real Windows Terminal PE only.
+ * Never accepts bare `wt.exe` (PATH / App Execution Alias).
+ * Never accepts Microsoft\WindowsApps\wt.exe (0-byte alias).
+ * Success = exists + isFile + size > 0 + not under Microsoft\WindowsApps.
+ */
+export function isRealWindowsTerminalExe(
+  filePath: string,
+  deps?: { stat?: (p: string) => WinTermStat },
+): boolean {
+  const p = String(filePath || "").trim()
+  if (!p) return false
+  if (p.toLowerCase() === "wt.exe") return false
+  if (!/[\\/]/.test(p)) return false
+  if (winPathBasename(p).toLowerCase() !== "wt.exe") return false
+  if (isWindowsAppsAliasPath(p)) return false
+  try {
+    const st = deps?.stat ? deps.stat(p) : fs.statSync(p)
+    return !!(st && typeof st.isFile === "function" && st.isFile() && st.size > 0)
+  } catch {
+    return false
+  }
+}
+
+function defaultWindowsTerminalCandidates(): string[] {
+  const home = os.homedir()
+  const local = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local")
+  const pf = process.env.ProgramFiles || "C:\\Program Files"
+  return [
+    path.join(local, "Microsoft", "WindowsApps", "wt.exe"),
+    path.join(home, "AppData", "Local", "Microsoft", "WindowsApps", "wt.exe"),
+    path.join(pf, "Windows Terminal", "wt.exe"),
+    path.join(local, "Microsoft", "Windows Terminal", "wt.exe"),
+    path.join(home, "scoop", "apps", "windows-terminal", "current", "wt.exe"),
+  ]
+}
+
+/** Locate a real wt.exe PE. Never returns bare `wt.exe` or a WindowsApps alias. */
+export function findWindowsTerminalExe(deps?: {
+  candidates?: string[]
+  stat?: (p: string) => WinTermStat
+}): string | null {
+  const list = deps?.candidates ?? defaultWindowsTerminalCandidates()
+  for (const c of list) {
+    if (c && isRealWindowsTerminalExe(c, deps)) return c
+  }
+  return null
+}
+
+const WT_OBSERVE_MS = 300
+const START_CONFIRM_MS = 2500
+
+/**
+ * Detached Windows spawn with honesty:
+ * - reject on `error`
+ * - if earlyExitIsFailure (wt): reject on close/exit inside the observe window;
+ *   still-running after the window is success. 80ms-without-error is NOT success.
+ * - if launcher (cmd /c start): wait for exit 0 (start is expected to exit);
+ *   reject on error / non-zero / timeout without confirmation.
+ */
+function spawnDetachedWin(
+  command: string,
+  args: string[],
+  opts?: { earlyExitIsFailure?: boolean },
+): Promise<void> {
+  const earlyExitIsFailure = opts?.earlyExitIsFailure === true
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const settle = (err?: Error) => {
+      if (settled) return
+      settled = true
+      if (err) reject(err)
+      else resolve()
+    }
+
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(command, args, {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      })
+    } catch (e: any) {
+      settle(e instanceof Error ? e : new Error(String(e)))
+      return
+    }
+
+    child.once("error", (err) => settle(err))
+    const onGone = (code: number | null) => {
+      if (earlyExitIsFailure) {
+        settle(new Error(`process exited immediately (code ${code})`))
+        return
+      }
+      if (code != null && code !== 0) {
+        settle(new Error(`process exited with code ${code}`))
+        return
+      }
+      settle()
+    }
+    child.once("exit", onGone)
+    child.once("close", onGone)
+    child.unref()
+
+    const waitMs = earlyExitIsFailure ? WT_OBSERVE_MS : START_CONFIRM_MS
+    setTimeout(() => {
+      if (settled) return
+      if (earlyExitIsFailure) {
+        if (child.exitCode != null || child.signalCode != null) {
+          settle(new Error("process exited immediately"))
+        } else {
+          settle()
+        }
+        return
+      }
+      settle(new Error("process did not confirm launch"))
+    }, waitMs)
+  })
+}
+
+/**
+ * Open a visible Windows console running the Mode C PowerShell script.
+ * auto: prefer visible `start`+powershell; only try wt if a real PE was found.
+ * wt launch fail/early-exit → fall through to start. start fail → throw (no fake success).
+ */
+export async function openWindowsWithPref(
+  scriptPath: string,
+  cwd: string,
+  pref: string | undefined,
+): Promise<{ appLabel: string }> {
+  const n = normalizeLocalTerminalApp(pref).toLowerCase()
+  const auto = n === "auto"
+  const wantWt = n === "wt" || n === "windowsterminal" || n === "windows terminal"
+  const wantStart = n === "cmd" || n === "powershell" || n === "conhost" || auto
+  const psArgs = [
+    "-NoExit",
+    "-NoLogo",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    scriptPath,
+  ]
+  const wt = findWindowsTerminalExe()
+
+  const launchStart = async (): Promise<{ appLabel: string }> => {
+    const comspec = process.env.ComSpec || "cmd.exe"
+    const line = buildWindowsStartCommandLine(psArgs)
+    await spawnDetachedWin(comspec, ["/d", "/s", "/c", line], { earlyExitIsFailure: false })
+    return { appLabel: "Windows Console" }
+  }
+
+  const launchWt = async (): Promise<{ appLabel: string }> => {
+    if (!wt) throw new Error("Windows Terminal (wt.exe) not found")
+    await spawnDetachedWin(wt, ["-d", cwd, "--", "powershell.exe", ...psArgs], {
+      earlyExitIsFailure: true,
+    })
+    return { appLabel: "Windows Terminal" }
+  }
+
+  if (auto) {
+    try {
+      return await launchStart()
+    } catch (startErr) {
+      if (wt) {
+        try {
+          return await launchWt()
+        } catch {
+          throw startErr instanceof Error ? startErr : new Error(String(startErr))
+        }
+      }
+      throw startErr instanceof Error ? startErr : new Error(String(startErr))
+    }
+  }
+
+  if (wantWt) {
+    if (wt) {
+      try {
+        return await launchWt()
+      } catch {
+        /* fall through to start */
+      }
+    }
+    try {
+      return await launchStart()
+    } catch {
+      throw new Error(wt ? "Windows Terminal failed to launch" : "Windows Terminal (wt.exe) not found")
+    }
+  }
+
+  if (wantStart) {
+    return await launchStart()
+  }
+  throw new Error(`terminal pref "${pref}" is not supported on Windows (use auto / wt / cmd)`)
 }
 
 /** Common typos / aliases → canonical preset id */
@@ -255,6 +555,12 @@ const LOCAL_TERMINAL_ALIASES: Record<string, string> = {
   "iterm 2": "iTerm",
   terminalapp: "Terminal",
   "terminal.app": "Terminal",
+  wt: "wt",
+  windowsterminal: "wt",
+  "windows terminal": "wt",
+  cmd: "cmd",
+  conhost: "cmd",
+  powershell: "cmd",
 }
 
 /**
@@ -578,7 +884,7 @@ function openLinuxTerminal(term: string, script: string): void {
 /**
  * Best-effort open host terminal running interactive agent in workspace.
  * macOS: Terminal.app via osascript. Linux: $TERMINAL / x-terminal-emulator.
- * Windows: fail-soft with safely quoted paste line (no free exec of arbitrary shell).
+ * Windows: Windows Terminal (`wt`) or `start` + PowerShell -File (quoted literals).
  */
 export async function openLocalTerminalForAgent(
   opts: OpenLocalTerminalOpts,
@@ -590,7 +896,10 @@ export async function openLocalTerminalForAgent(
   if (!resolved.ok) {
     return { ok: false, platform, detail: resolved.reason }
   }
-  const command = resolved.absolute
+  let command = resolved.absolute
+  if (platform === "win32") {
+    command = resolveWindowsAgentCommand(command)
+  }
   if (!isExecutableFile(command)) {
     return {
       ok: false,
@@ -618,15 +927,17 @@ export async function openLocalTerminalForAgent(
   }
 
   // Persist full task for interactive agent (Mode C must not open empty TUI).
+  // R6: mkdtemp + exclusive create (wx); delayed unlink after the new window reads.
   let promptFile: string | undefined
+  let modeCTempDir: string | undefined
+  const modeCTempFiles: string[] = []
   const fullPrompt = typeof opts.prompt === "string" ? opts.prompt.trim() : ""
   if (fullPrompt) {
     try {
-      promptFile = path.join(
-        os.tmpdir(),
-        `cmspark-mode-c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.md`,
-      )
-      fs.writeFileSync(promptFile, fullPrompt, { encoding: "utf8", mode: 0o600 })
+      modeCTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mode-c-"))
+      promptFile = path.join(modeCTempDir, "task.md")
+      writeExclusiveUtf8(promptFile, fullPrompt)
+      modeCTempFiles.push(promptFile)
     } catch (e: any) {
       logger.warn("acp.open_local_terminal_prompt_file", {
         err: e?.message || String(e),
@@ -639,7 +950,7 @@ export async function openLocalTerminalForAgent(
   const l1Script = buildInteractiveScript(scriptOpts)
   const pasteLine =
     platform === "win32"
-      ? buildWindowsCommandLine(cwd, command)
+      ? buildWindowsCommandLine(cwd, command, promptFile ? { promptFile } : undefined)
       : `cd ${shellSingleQuote(cwd)} && ${buildInteractiveExecFragment({
           command,
           agentId: opts.agentId,
@@ -764,7 +1075,114 @@ export async function openLocalTerminalForAgent(
       }
     }
 
-    // win32 / other: fail-soft with safely quoted paste line (no free shell exec)
+    if (platform === "win32") {
+      const spec = resolveAcpSpawn(command, [])
+      const cmdHost = acpSpawnUsesCmdHost(spec)
+      const l1Allowed = modeCWindowsLevelForSpec(spec) === "L1"
+      const writeModeCPs1 = (l0: boolean): string => {
+        // L1 may only invoke an unwrapped PE or node+script (never cmd.exe /c … $task).
+        const invokeUnwrapped = !l0 && l1Allowed && !cmdHost
+        const body = buildWindowsModeCScript({
+          cwd,
+          command: invokeUnwrapped ? spec.command : command,
+          extraArgs: invokeUnwrapped ? spec.args : [],
+          agentLabel: opts.agentLabel,
+          goalHint: opts.goalHint,
+          promptFile,
+          l0,
+        })
+        if (!modeCTempDir) {
+          modeCTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mode-c-"))
+        }
+        const ps1 = path.join(modeCTempDir, l0 ? "l0.ps1" : "run.ps1")
+        writeExclusiveUtf8(ps1, body)
+        modeCTempFiles.push(ps1)
+        return ps1
+      }
+
+      const returnL0 = (
+        appLabel: string | undefined,
+        detail: string,
+        ok: boolean,
+      ): OpenLocalTerminalResult => {
+        if (ok && appLabel) {
+          logger.info("acp.open_local_terminal", {
+            platform,
+            ok: true,
+            level: "L0",
+            app: appLabel,
+            cwd,
+          })
+          return {
+            ok: true,
+            platform,
+            detail,
+            commandLine: pasteLine,
+            level: "L0",
+          }
+        }
+        logger.warn("acp.open_local_terminal_failed", { err: detail, platform })
+        return { ok: false, platform, detail, commandLine: pasteLine }
+      }
+
+      // R4: cmd host cannot L1-exec `& cmd /d /s /c agent.cmd $task`. L0 only.
+      if (!l1Allowed) {
+        if (!allowL0) {
+          return {
+            ok: false,
+            platform,
+            detail: "agent is a cmd host; L1 exec refused",
+            commandLine: pasteLine,
+          }
+        }
+        try {
+          const ps1 = writeModeCPs1(true)
+          const opened = await openWindowsWithPref(ps1, cwd, termPref)
+          return returnL0(
+            opened.appLabel,
+            `opened ${opened.appLabel} (L0: cmd host cannot L1-exec; paste agent command)`,
+            true,
+          )
+        } catch (e: any) {
+          return returnL0(undefined, e?.message || String(e), false)
+        }
+      }
+
+      try {
+        const ps1 = writeModeCPs1(false)
+        const opened = await openWindowsWithPref(ps1, cwd, termPref)
+        logger.info("acp.open_local_terminal", {
+          platform,
+          ok: true,
+          level: "L1",
+          app: opened.appLabel,
+          cwd,
+        })
+        return {
+          ok: true,
+          platform,
+          detail: `opened ${opened.appLabel} with interactive agent`,
+          commandLine: pasteLine,
+          level: "L1",
+        }
+      } catch (e: any) {
+        if (!allowL0) throw e
+        try {
+          const ps1 = writeModeCPs1(true)
+          const opened = await openWindowsWithPref(ps1, cwd, termPref)
+          return returnL0(
+            opened.appLabel,
+            `opened ${opened.appLabel} (L0 degrade: banner only; paste agent command)`,
+            true,
+          )
+        } catch (e2: any) {
+          const msg = e2?.message || e?.message || String(e2)
+          return returnL0(undefined, msg, false)
+        }
+      }
+    }
+
+    // other OS: fail-soft with safely quoted paste line
     return {
       ok: false,
       platform,
@@ -780,5 +1198,7 @@ export async function openLocalTerminalForAgent(
       detail: msg,
       commandLine: pasteLine,
     }
+  } finally {
+    scheduleUnlink(modeCTempFiles)
   }
 }
