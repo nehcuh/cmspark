@@ -187,7 +187,10 @@ export function redactMessagesForCompaction(messages: CanonicalChatMessage[]): C
       return { role: "system", content: scrubSecretPatterns(m.content || "").slice(0, 400) }
     }
     if (m.role === "user") {
-      return { role: "user", content: scrubSecretPatterns(m.content || "").slice(0, 800) }
+      return {
+        role: "user",
+        content: scrubSecretPatterns(typeof m.content === "string" ? m.content : "").slice(0, 800),
+      }
     }
     if (m.role === "assistant") {
       const names = (m.tool_calls || []).map((tc) => tc.function?.name || "?").join(",")
