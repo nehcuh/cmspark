@@ -19,6 +19,8 @@ import {
   resolveWindowsAgentCommand,
   writeExclusiveUtf8,
   scheduleUnlink,
+  windowsCmdExePath,
+  windowsPowerShellExePath,
 } from "./win-spawn"
 
 const execFileAsync = promisify(execFile)
@@ -70,6 +72,20 @@ export type OpenLocalTerminalResult = {
   commandLine?: string
   /** Which open level succeeded when ok (L1 interactive / L0 banner-only) */
   level?: "L1" | "L0"
+  /** Actual launched app label (never the config terminalApp pref). */
+  app?: string
+}
+
+/** Success timeline title: prefer the launched app, never a raw pref when `app` is set. */
+export function formatModeCOpenedLabel(
+  level: "L1" | "L0" | undefined,
+  app: string | undefined,
+  terminalApp: string | undefined,
+): string {
+  const shown = app || (terminalApp === "auto" || !terminalApp ? "系统默认" : terminalApp)
+  return level === "L0"
+    ? `已打开本机终端（L0 · ${shown} · 可能需粘贴）`
+    : `已打开本机终端（${shown} · 交互）`
 }
 
 // ── Pure helpers (unit-tested) ──────────────────────────────────────────────
@@ -250,7 +266,25 @@ export function buildL0DegradeScript(opts: {
 
 /** `start "title"` line: every token quoted (R7 — TEMP paths with `&` must not split). */
 export function buildWindowsStartCommandLine(psArgs: string[]): string {
-  return `start "CMspark" ${["powershell.exe", ...psArgs].map(windowsQuotePath).join(" ")}`
+  return `start "CMspark" ${[windowsPowerShellExePath(), ...psArgs].map(windowsQuotePath).join(" ")}`
+}
+
+/**
+ * cmd /d /s /c plan for `start "CMspark" …` (F1).
+ * Extra wrap + windowsVerbatimArguments — same contract as wrapViaCmd.
+ * Never set verbatim on the wt PE argv.
+ */
+export function planWindowsStartSpawn(psArgs: string[]): {
+  command: string
+  args: [string, string, string, string]
+  options: { windowsVerbatimArguments: true; windowsHide: true }
+} {
+  const line = buildWindowsStartCommandLine(psArgs)
+  return {
+    command: windowsCmdExePath(),
+    args: ["/d", "/s", "/c", `"${line}"`],
+    options: { windowsVerbatimArguments: true, windowsHide: true },
+  }
 }
 
 /**
@@ -404,35 +438,68 @@ export function findWindowsTerminalExe(deps?: {
 const WT_OBSERVE_MS = 300
 const START_CONFIRM_MS = 2500
 
+export type WinDetachedChild = {
+  once(event: string, listener: (...args: any[]) => void): unknown
+  unref(): void
+  exitCode: number | null
+  signalCode: NodeJS.Signals | null
+}
+
+export type WinDetachedSpawnFn = (
+  command: string,
+  args: readonly string[],
+  options: {
+    detached?: boolean
+    stdio?: "ignore"
+    windowsHide?: boolean
+    windowsVerbatimArguments?: boolean
+  },
+) => WinDetachedChild
+
 /**
  * Detached Windows spawn with honesty:
  * - reject on `error`
- * - if earlyExitIsFailure (wt): reject on close/exit inside the observe window;
- *   still-running after the window is success. 80ms-without-error is NOT success.
- * - if launcher (cmd /c start): wait for exit 0 (start is expected to exit);
+ * - cliHandoff (real wt PE): exit 0 / null-after-unref = CLI handoff success;
+ *   still-running after WT_OBSERVE_MS = success; only non-zero / spawn error reject.
+ *   80ms-without-error is NOT success — must observe the window or receive exit 0.
+ * - launcher (cmd /c start): wait for exit 0 (start is expected to exit);
  *   reject on error / non-zero / timeout without confirmation.
+ * - windowsVerbatimArguments only when the caller sets it (launchStart / wrapViaCmd
+ *   contract). Never set on the wt PE argv.
  */
 function spawnDetachedWin(
   command: string,
   args: string[],
-  opts?: { earlyExitIsFailure?: boolean },
+  opts?: {
+    earlyExitIsFailure?: boolean
+    cliHandoff?: boolean
+    windowsVerbatimArguments?: boolean
+    spawn?: WinDetachedSpawnFn
+  },
 ): Promise<void> {
-  const earlyExitIsFailure = opts?.earlyExitIsFailure === true
+  const cliHandoff = opts?.cliHandoff === true
+  const earlyExitIsFailure = !cliHandoff && opts?.earlyExitIsFailure === true
+  const spawnFn = opts?.spawn ?? spawn
   return new Promise((resolve, reject) => {
     let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     const settle = (err?: Error) => {
       if (settled) return
       settled = true
+      if (timer) clearTimeout(timer)
       if (err) reject(err)
       else resolve()
     }
 
-    let child: ReturnType<typeof spawn>
+    let child: ReturnType<WinDetachedSpawnFn>
     try {
-      child = spawn(command, args, {
+      child = spawnFn(command, args, {
         detached: true,
         stdio: "ignore",
         windowsHide: true,
+        ...(opts?.windowsVerbatimArguments === true
+          ? { windowsVerbatimArguments: true as const }
+          : {}),
       })
     } catch (e: any) {
       settle(e instanceof Error ? e : new Error(String(e)))
@@ -441,6 +508,14 @@ function spawnDetachedWin(
 
     child.once("error", (err) => settle(err))
     const onGone = (code: number | null) => {
+      if (cliHandoff) {
+        if (code != null && code !== 0) {
+          settle(new Error(`process exited with code ${code}`))
+          return
+        }
+        settle()
+        return
+      }
       if (earlyExitIsFailure) {
         settle(new Error(`process exited immediately (code ${code})`))
         return
@@ -455,9 +530,17 @@ function spawnDetachedWin(
     child.once("close", onGone)
     child.unref()
 
-    const waitMs = earlyExitIsFailure ? WT_OBSERVE_MS : START_CONFIRM_MS
-    setTimeout(() => {
+    const waitMs = cliHandoff || earlyExitIsFailure ? WT_OBSERVE_MS : START_CONFIRM_MS
+    timer = setTimeout(() => {
       if (settled) return
+      if (cliHandoff) {
+        if (child.exitCode != null && child.exitCode !== 0) {
+          settle(new Error(`process exited with code ${child.exitCode}`))
+        } else {
+          settle()
+        }
+        return
+      }
       if (earlyExitIsFailure) {
         if (child.exitCode != null || child.signalCode != null) {
           settle(new Error("process exited immediately"))
@@ -468,18 +551,26 @@ function spawnDetachedWin(
       }
       settle(new Error("process did not confirm launch"))
     }, waitMs)
+    timer.unref?.()
   })
+}
+
+export type OpenWindowsWithPrefDeps = {
+  spawn?: WinDetachedSpawnFn
+  findWindowsTerminalExe?: typeof findWindowsTerminalExe
 }
 
 /**
  * Open a visible Windows console running the Mode C PowerShell script.
  * auto: prefer visible `start`+powershell; only try wt if a real PE was found.
- * wt launch fail/early-exit → fall through to start. start fail → throw (no fake success).
+ * wt spawn error / non-zero → fall through to start. start fail → throw (no fake success).
+ * Real wt PE exit 0 (CLI handoff) or still-running after WT_OBSERVE_MS is success (F2).
  */
 export async function openWindowsWithPref(
   scriptPath: string,
   cwd: string,
   pref: string | undefined,
+  deps?: OpenWindowsWithPrefDeps,
 ): Promise<{ appLabel: string }> {
   const n = normalizeLocalTerminalApp(pref).toLowerCase()
   const auto = n === "auto"
@@ -493,20 +584,38 @@ export async function openWindowsWithPref(
     "-File",
     scriptPath,
   ]
-  const wt = findWindowsTerminalExe()
+  const findWt = deps?.findWindowsTerminalExe ?? findWindowsTerminalExe
+  const wt = findWt()
 
   const launchStart = async (): Promise<{ appLabel: string }> => {
-    const comspec = process.env.ComSpec || "cmd.exe"
-    const line = buildWindowsStartCommandLine(psArgs)
-    await spawnDetachedWin(comspec, ["/d", "/s", "/c", line], { earlyExitIsFailure: false })
+    const plan = planWindowsStartSpawn(psArgs)
+    await spawnDetachedWin(plan.command, plan.args, {
+      earlyExitIsFailure: false,
+      windowsVerbatimArguments: true,
+      spawn: deps?.spawn,
+    })
     return { appLabel: "Windows Console" }
   }
 
   const launchWt = async (): Promise<{ appLabel: string }> => {
     if (!wt) throw new Error("Windows Terminal (wt.exe) not found")
-    await spawnDetachedWin(wt, ["-d", cwd, "--", "powershell.exe", ...psArgs], {
-      earlyExitIsFailure: true,
-    })
+    // Never spawn bare wt.exe or a WindowsApps alias even if a test injects one.
+    const wtNorm = wt.trim()
+    if (
+      wtNorm.toLowerCase() === "wt.exe" ||
+      !/[\\/]/.test(wtNorm) ||
+      isWindowsAppsAliasPath(wtNorm)
+    ) {
+      throw new Error("Windows Terminal (wt.exe) not found")
+    }
+    await spawnDetachedWin(
+      wt,
+      ["-d", cwd, "--", windowsPowerShellExePath(), ...psArgs],
+      {
+        cliHandoff: true,
+        spawn: deps?.spawn,
+      },
+    )
     return { appLabel: "Windows Terminal" }
   }
 
@@ -981,6 +1090,7 @@ export async function openLocalTerminalForAgent(
             detail: `opened ${opened.appLabel} (paste task command — app has no script API)`,
             commandLine: pasteLine,
             level: "L0",
+            app: opened.appLabel,
           }
         }
         logger.info("acp.open_local_terminal", {
@@ -999,6 +1109,7 @@ export async function openLocalTerminalForAgent(
             : `opened ${opened.appLabel} with interactive agent`,
           commandLine: l1Script,
           level: "L1",
+          app: opened.appLabel,
         }
       } catch (e: any) {
         if (!allowL0) throw e
@@ -1018,6 +1129,7 @@ export async function openLocalTerminalForAgent(
             detail: `opened ${opened.appLabel} (L0 degrade: banner only; paste agent command)`,
             commandLine: pasteLine,
             level: "L0",
+            app: opened.appLabel,
           }
         } catch (e2: any) {
           const msg = e2?.message || e?.message || String(e2)
@@ -1053,6 +1165,7 @@ export async function openLocalTerminalForAgent(
           detail: `launched ${term}`,
           commandLine: l1Script,
           level: "L1",
+          app: term,
         }
       } catch (e: any) {
         if (!allowL0) throw e
@@ -1066,6 +1179,7 @@ export async function openLocalTerminalForAgent(
             detail: `launched ${term} (L0 degrade: banner only; paste agent command)`,
             commandLine: pasteLine,
             level: "L0",
+            app: term,
           }
         } catch (e2: any) {
           const msg = e2?.message || e?.message || String(e2)
@@ -1119,6 +1233,7 @@ export async function openLocalTerminalForAgent(
             detail,
             commandLine: pasteLine,
             level: "L0",
+            app: appLabel,
           }
         }
         logger.warn("acp.open_local_terminal_failed", { err: detail, platform })
@@ -1164,6 +1279,7 @@ export async function openLocalTerminalForAgent(
           detail: `opened ${opened.appLabel} with interactive agent`,
           commandLine: pasteLine,
           level: "L1",
+          app: opened.appLabel,
         }
       } catch (e: any) {
         if (!allowL0) throw e

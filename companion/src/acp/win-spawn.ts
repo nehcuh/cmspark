@@ -262,7 +262,8 @@ function wrapViaCmd(command: string, args: string[]): AcpSpawnSpec {
   const safeArgs = argvForCmdWrap(args)
   const inner = [command, ...safeArgs].map(quoteCmdArg).join(" ")
   const cmdline = `"${inner}"`
-  const comspec = process.env.ComSpec || "cmd.exe"
+  // Pin System32 cmd — never env ComSpec or a bare PATH name (F5).
+  const comspec = windowsCmdExePath()
   return {
     command: comspec,
     args: ["/d", "/s", "/c", cmdline],
@@ -320,12 +321,31 @@ export function spawnAcpChild(
   })
 }
 
+function windowsSystemRoot(env: NodeJS.ProcessEnv = process.env): string {
+  return env.SystemRoot || env.SYSTEMROOT || env.windir || "C:\\Windows"
+}
+
 /** Absolute System32\taskkill.exe (never PATH / hijack). */
 export function windowsTaskkillPath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const root = env.SystemRoot || env.SYSTEMROOT || "C:\\Windows"
-  return path.join(root, "System32", "taskkill.exe")
+  return path.join(windowsSystemRoot(env), "System32", "taskkill.exe")
+}
+
+/** Absolute System32\cmd.exe (never ComSpec / bare cmd.exe / PATH). Missing file → spawn ENOENT. */
+export function windowsCmdExePath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(windowsSystemRoot(env), "System32", "cmd.exe")
+}
+
+/** Absolute System32 Windows PowerShell (never bare powershell.exe / PATH). Missing file → spawn ENOENT. */
+export function windowsPowerShellExePath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(
+    windowsSystemRoot(env),
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  )
 }
 
 /** Exclusive create (O_EXCL / `wx`) so a pre-planted TEMP file cannot be overwritten. */

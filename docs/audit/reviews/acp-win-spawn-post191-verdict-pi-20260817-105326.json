@@ -1,0 +1,7 @@
+{
+  "batch": "acp-win-spawn-post191",
+  "timestamp": "20260817-105326",
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/acp-win-spawn-post191-pi-20260817-105326.md" },
+  "approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/acp-win-spawn-post191-diff-20260817-105326.patch"
+}

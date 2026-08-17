@@ -21,6 +21,8 @@ import {
   resolveNodeForJsShim,
   writeExclusiveUtf8,
   windowsTaskkillPath,
+  windowsCmdExePath,
+  windowsPowerShellExePath,
 } from "../src/acp/win-spawn"
 import { discoverCodingAgents, _resetDiscoverCache } from "../src/acp/discover"
 
@@ -183,7 +185,9 @@ describe("resolveAcpSpawn", () => {
         throw new Error("nope")
       },
     })
-    assert.match(r.command, /cmd\.exe$/i)
+    assert.match(r.command.replace(/\//g, "\\"), /\\System32\\cmd\.exe$/i)
+    assert.notEqual(r.command.toLowerCase(), "cmd.exe")
+    assert.doesNotMatch(r.command, /^cmd\.exe$/i)
     assert.equal(acpSpawnUsesCmdHost(r), true)
     assert.equal(r.args[0], "/d")
     assert.equal(r.args[1], "/s")
@@ -349,6 +353,25 @@ describe("joinDp0Relative / resolveNodeForJsShim / exclusive write", () => {
     const p = windowsTaskkillPath({ SystemRoot: "C:\\Windows" })
     assert.match(p.replace(/\//g, "\\"), /\\System32\\taskkill\.exe$/i)
     assert.doesNotMatch(p, /^taskkill$/i)
+    const viaWindir = windowsTaskkillPath({ windir: "D:\\Win" })
+    assert.match(viaWindir.replace(/\//g, "\\"), /D:\\Win\\System32\\taskkill\.exe$/i)
+  })
+})
+
+describe("windowsCmdExePath / windowsPowerShellExePath (F5)", () => {
+  it("pins System32 paths from SystemRoot with no PATH fallback", () => {
+    const env = { SystemRoot: "C:\\Windows" }
+    const cmd = windowsCmdExePath(env)
+    const ps = windowsPowerShellExePath(env)
+    assert.match(cmd.replace(/\//g, "\\"), /\\System32\\cmd\.exe$/i)
+    assert.match(
+      ps.replace(/\//g, "\\"),
+      /\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/i,
+    )
+    assert.notEqual(cmd, "cmd.exe")
+    assert.notEqual(ps, "powershell.exe")
+    assert.doesNotMatch(cmd, /^cmd\.exe$/i)
+    assert.doesNotMatch(ps, /^powershell\.exe$/i)
   })
 })
 
