@@ -106,6 +106,8 @@ interface ChatCreateParams {
     sha256: string
     bytes: number
   }>
+  /** Must match the msgId used in writeImageSidecar so hydrate can find bytes. */
+  reservedUserMessageId?: string
   /** Full llm config (protocol + credentials). Default protocol=openai preserves DeepSeek path. */
   config: LlmConfig
   threadManager: ThreadManager
@@ -308,7 +310,7 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 }
 
 export async function chatCreate(params: ChatCreateParams) {
-  const { threadId, message, skillIds, knowledgeIds, fileContents, imageAttachments, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage, contextRefsSegment } = params
+  const { threadId, message, skillIds, knowledgeIds, fileContents, imageAttachments, reservedUserMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage, contextRefsSegment } = params
 
   // Create user message (skip for regenerate)
   if (!skipUserMessage) {
@@ -379,6 +381,7 @@ export async function chatCreate(params: ChatCreateParams) {
       role: "user",
       content: userContent,
       attachments: imageAttachments?.map((a) => ({ kind: "image" as const, ...a })),
+      ...(reservedUserMessageId ? { id: reservedUserMessageId } : {}),
     })
     sendToExtension({
       type: "chat.user",

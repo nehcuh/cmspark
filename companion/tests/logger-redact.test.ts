@@ -62,6 +62,24 @@ test("redactLogData still redacts sensitive keys", () => {
   assert.equal(redacted.headers.safe, "value")
 })
 
+test("redactLogData redacts base64, image_url, and content so logs never dump image payloads", () => {
+  const redacted = redactLogData({
+    base64: "iVBORw0KGgoAAAANSUhEUg",
+    image_base64: "AAAA",
+    image_url: "data:image/png;base64,AAA",
+    content: "huge user/image payload",
+    content_b64_lens: [12],
+    filename: "shot.png",
+  }) as any
+
+  assert.equal(redacted.base64, "[REDACTED]")
+  assert.equal(redacted.image_base64, "[REDACTED]")
+  assert.equal(redacted.image_url, "[REDACTED]")
+  assert.equal(redacted.content, "[REDACTED]")
+  assert.deepEqual(redacted.content_b64_lens, [12], "content_b64_lens is not the content key")
+  assert.equal(redacted.filename, "shot.png")
+})
+
 test("redactLogData redacts code and params keys defensively", () => {
   const redacted = redactLogData({
     code: "fetch('https://example.com')",

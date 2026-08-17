@@ -23,7 +23,7 @@ const REDACTED = "[REDACTED]"
 const MAX_STRING_LENGTH = 2000
 const MAX_ARRAY_LENGTH = 50
 const MAX_DEPTH = 6
-const SENSITIVE_KEY_RE = /(api[_-]?key|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|password|passwd|secret|cookie|set-cookie|session|bearer|\bcode\b|\bparams\b)/i
+const SENSITIVE_KEY_RE = /(api[_-]?key|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|password|passwd|secret|cookie|set-cookie|session|bearer|\bcode\b|\bparams\b|base64|image_url|^content$)/i
 const URL_KEY_RE = /(^|_)(url|href|link|endpoint|origin)$/i
 // Query-param keys whose VALUE is secret material. `id_token` (OIDC JWT) is
 // included alongside access/refresh tokens; `code` covers the OAuth

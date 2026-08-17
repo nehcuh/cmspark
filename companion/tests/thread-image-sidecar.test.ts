@@ -97,6 +97,30 @@ test("writeImageSidecar writes threads/<id>.files/<msgId>-<n>.<ext> mode 0o600, 
   assert.deepEqual(fs.readFileSync(filePath), PNG)
 })
 
+test("addMessage honors reserved id so pre-written sidecar hydrates", () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("reserved-id")
+  const reserved = `${thread.id}_reserved1`
+  const written = writeImageSidecar(thread.id, reserved, 0, "image/png", PNG)
+  assert.ok(written)
+  const msg = tm.addMessage(thread.id, {
+    thread_id: thread.id,
+    role: "user",
+    content: "pic",
+    id: reserved,
+    attachments: [{
+      kind: "image",
+      name: "a.png",
+      mime: "image/png",
+      sha256: "aa",
+      bytes: PNG.length,
+    }],
+  })
+  assert.equal(msg.id, reserved)
+  assert.equal(msg.attachments![0]!.rel, `${reserved}-0.png`)
+  assert.deepEqual(tm.readImageAttachment(thread.id, msg.attachments![0]!), PNG)
+})
+
 test("readImageSidecar / readImageAttachment: companion names work; forged ../ rel returns null", () => {
   const tm = new ThreadManager()
   const thread = tm.create("sidecar-read")

@@ -917,12 +917,17 @@ export class ThreadManager {
     }
   }
 
-  addMessage(threadId: string, message: Omit<Message, "id" | "created_at">): Message {
+  addMessage(threadId: string, message: Omit<Message, "id" | "created_at"> & { id?: string }): Message {
     // Fail closed: never create files outside threads/ via crafted thread_id
     this.assertSafeThreadId(threadId)
+    // Reserved id lets file.upload write sidecars before chatCreate (Task 7).
+    const requested = typeof message.id === "string" ? message.id : ""
+    const id = /^[a-zA-Z0-9_-]{1,128}$/.test(requested)
+      ? requested
+      : `${threadId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const msg: Message = {
       ...message,
-      id: `${threadId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id,
       created_at: monotonicTimestamp(),
     }
     if (Array.isArray(msg.attachments) && msg.attachments.length > 0) {

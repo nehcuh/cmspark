@@ -34,6 +34,17 @@ import { chatCreate, generateThreadTitle } from "./llm/adapter"
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
+import { likelyMultimodal } from "./llm/likely-multimodal"
+import {
+  allocateUploadMessageId,
+  buildVisionAttachMessage,
+  partitionUploadFiles,
+  planStandaloneImageAnalysis,
+  sha256hex,
+  validateImageCaps,
+} from "./llm/split-upload-files"
+import { writeImageSidecar } from "./threads/image-sidecar"
+import type { RasterMime } from "./llm/image-sniff"
 import { chunkFile, searchChunks } from "./file-chunker"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
@@ -506,17 +517,30 @@ export async function handleMessage(
         })
       }
 
-      // Phase 1: Parse all files (text + embedded images)
-      // Wrap the whole parse/vision path so timeouts / unexpected throws become
-      // file.upload_error (UI clears busy). Uncaught throws only send type:"error"
-      // which historically left the Side Panel stuck on "思考中".
+      // Phase 1: MIME-split images vs docs BEFORE allowed_types / parseFile
+      // (images are not required to be in allowed_types). Wrap parse/vision so
+      // timeouts / unexpected throws become file.upload_error (UI clears busy).
       const parseResults: FileParseResult[] = []
       let finalFileContents: Array<{ filename: string; content: string }> = []
+      const partitioned = partitionUploadFiles(Array.isArray(files) ? files : [])
+      if (partitioned.error) return uploadError(partitioned.error)
+      const standaloneImages = partitioned.images
+      const docFiles = partitioned.docs
 
       try {
-        const fileCount = Array.isArray(files) ? files.length : 0
-        for (let fi = 0; fi < files.length; fi++) {
-          const file = files[fi]
+        if (standaloneImages.length > 0) {
+          pushUploadStatus(
+            "parsing",
+            standaloneImages.length > 1
+              ? `正在处理图片（${standaloneImages.length} 张）…`
+              : "正在处理图片…",
+            { image_count: standaloneImages.length },
+          )
+        }
+
+        const fileCount = docFiles.length
+        for (let fi = 0; fi < docFiles.length; fi++) {
+          const file = docFiles[fi]
           const { name, type, content } = file
 
           pushUploadStatus(
@@ -632,9 +656,18 @@ export async function handleMessage(
           filename: f.filename,
           chars: f.content.length,
         })),
+        image_count: standaloneImages.length,
       })
 
-      pushUploadStatus("chat", "文档已解析，模型思考中…")
+      // Re-validate image caps after parse (partition already checked; belt-and-suspenders)
+      {
+        const capErr = validateImageCaps(standaloneImages)
+        if (capErr) return uploadError(capErr)
+      }
+
+      if (finalFileContents.length > 0 && standaloneImages.length === 0) {
+        pushUploadStatus("chat", "文档已解析，模型思考中…")
+      }
 
       // Same gates as chat.create: paused, multi-agent LLM cap, supersede CAS
       {
@@ -667,7 +700,11 @@ export async function handleMessage(
       abortControllers.set(thread_id, uploadController)
 
       try {
-        const userMessage = rest.message || "请分析我上传的文件"
+        const rawCaption = typeof rest.message === "string" ? rest.message : ""
+        const userMessageBase =
+          standaloneImages.length > 0 && finalFileContents.length === 0
+            ? rawCaption
+            : (rawCaption || "请分析我上传的文件")
         const threadForConfig = services.threadManager.get(thread_id)
         const threadLLMOverride = threadForConfig?.config_override || {}
         const effectiveLLMConfig = { ...config.llm }
@@ -675,6 +712,73 @@ export async function handleMessage(
           if (key in effectiveLLMConfig && val !== undefined && val !== null) {
             (effectiveLLMConfig as any)[key] = val
           }
+        }
+
+        // Write sidecars before chatCreate so hydrate can load bytes (preview JPEG skipped — no canvas).
+        const reservedUserMessageId = standaloneImages.length
+          ? allocateUploadMessageId(thread_id)
+          : undefined
+        const imageAttachments: Array<{
+          name: string
+          mime: RasterMime
+          sha256: string
+          bytes: number
+        }> = []
+        if (reservedUserMessageId) {
+          for (let i = 0; i < standaloneImages.length; i++) {
+            const img = standaloneImages[i]!
+            const mime = img.type as RasterMime
+            const written = writeImageSidecar(thread_id, reservedUserMessageId, i, mime, img.buf)
+            if (!written) {
+              return uploadError(`图片 "${img.name}" 保存失败`)
+            }
+            imageAttachments.push({
+              name: img.name,
+              mime,
+              sha256: sha256hex(img.buf),
+              bytes: img.buf.length,
+            })
+          }
+        }
+
+        const useNative = likelyMultimodal(effectiveLLMConfig.model_name)
+        const visionRailOn = !!(config.vision?.enabled && fileConfig.enable_vision_analysis !== false)
+        const standalonePlan = planStandaloneImageAnalysis({
+          imageCount: standaloneImages.length,
+          useNative,
+          visionRailOn,
+        })
+        if (standalonePlan.error) return uploadError(standalonePlan.error)
+
+        let userMessage = userMessageBase
+        if (standalonePlan.analyze) {
+          // !useNative && vision rail on — NEVER analyzeImage standalone images when useNative
+          pushUploadStatus("vision", "正在分析图片…", { image_count: standaloneImages.length })
+          const visionResults: Array<{ name: string; description: string }> = []
+          for (const img of standaloneImages) {
+            try {
+              const visionResult = await analyzeImage(
+                {
+                  base64: img.buf.toString("base64"),
+                  width: 0,
+                  height: 0,
+                  url: "",
+                  title: img.name,
+                },
+                config.vision!,
+                `分析这张用户附图 "${img.name}" 的内容，提取所有可见文本和视觉信息。`,
+                uploadController.signal,
+              )
+              visionResults.push({ name: img.name, description: visionResult.description })
+            } catch {
+              visionResults.push({ name: img.name, description: "(视觉分析不可用)" })
+            }
+          }
+          userMessage = buildVisionAttachMessage(userMessageBase, visionResults)
+        } else if (standaloneImages.length > 0 && useNative) {
+          pushUploadStatus("chat", "主模型看图中…", { image_count: standaloneImages.length })
+        } else if (finalFileContents.length > 0) {
+          pushUploadStatus("chat", "文档已解析，模型思考中…")
         }
 
         // Same skill/knowledge auto-load as chat.create (include site knowledge when hostname set)
@@ -701,6 +805,8 @@ export async function handleMessage(
             filename: f.filename,
             chars: f.content.length,
           })),
+          image_count: imageAttachments.length,
+          use_native: useNative,
           skill_count: allSkillIds.length,
           knowledge_count: resolvedKnowledgeIds?.length ?? 0,
           model: effectiveLLMConfig.model_name,
@@ -710,6 +816,8 @@ export async function handleMessage(
           threadId: thread_id,
           message: userMessage,
           fileContents: finalFileContents,
+          imageAttachments: imageAttachments.length ? imageAttachments : undefined,
+          reservedUserMessageId,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
           config: effectiveLLMConfig,
@@ -743,11 +851,15 @@ export async function handleMessage(
         }
       }
 
+      const uploadedNames = [
+        ...finalFileContents.map(f => f.filename),
+        ...standaloneImages.map(i => i.name),
+      ]
       logger.info("file.upload.complete", {
         thread_id,
-        files: finalFileContents.map(f => f.filename),
+        files: uploadedNames,
       })
-      return { type: "file.uploaded", thread_id, files: finalFileContents.map(f => f.filename) }
+      return { type: "file.uploaded", thread_id, files: uploadedNames }
     }
 
     case "file.query_chunks": {
