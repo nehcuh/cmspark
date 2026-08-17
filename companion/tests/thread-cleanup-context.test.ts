@@ -66,8 +66,122 @@ test("suggestCleanupRules: empty + short_orphan + duplicate", () => {
   )
   assert.ok(cands.some((c) => c.thread_id === "e1" && c.reason === "empty"))
   assert.ok(cands.some((c) => c.thread_id === "s1" && c.reason === "short_orphan"))
-  assert.ok(cands.some((c) => c.reason === "duplicate_alias"))
+  assert.ok(cands.some((c) => c.thread_id === "d2" && c.reason === "duplicate_alias"))
+  assert.ok(!cands.some((c) => c.thread_id === "d1" && c.reason === "duplicate_alias"))
   assert.ok(cands.some((c) => c.thread_id === "old" && c.reason === "stale_thin"))
+})
+
+test("hygiene gold fixtures: rny77t / 4j6l6f / t4s8kw / vpfb7g", () => {
+  const now = new Date("2026-08-17T12:00:00Z")
+  const cands = suggestCleanupRules(
+    [
+      {
+        id: "2b8ckp",
+        alias: "",
+        message_count: 0,
+        user_message_count: 0,
+        updated_at: "2026-08-17T05:41:03.494Z",
+      },
+      {
+        id: "rny77t",
+        alias: "",
+        message_count: 2,
+        user_message_count: 0,
+        has_assistant: true,
+        assistant_chars: 80,
+        looks_like_acp: true,
+        assistant_excerpt: "【编程接力 · pi · propose_diff】完成\nNo API key found",
+        updated_at: "2026-08-14T08:35:03.695Z",
+      },
+      {
+        id: "4j6l6f",
+        alias: "p1-wl",
+        message_count: 1,
+        user_message_count: 0,
+        has_assistant: true,
+        assistant_chars: 80,
+        looks_like_acp: true,
+        assistant_excerpt: "【编程接力 · pi · propose_diff】完成\nNo API key found",
+        updated_at: "2026-08-17T05:38:53.039Z",
+      },
+      {
+        id: "t4s8kw",
+        alias: "p1-wl",
+        message_count: 1,
+        user_message_count: 0,
+        has_assistant: true,
+        assistant_chars: 4000,
+        looks_like_acp: true,
+        assistant_excerpt: "【编程接力 · claude · propose_diff】完成\n## 模块映射",
+        updated_at: "2026-08-14T00:14:19.473Z",
+      },
+      {
+        id: "vpfb7g",
+        alias: "p1-wl",
+        message_count: 215,
+        user_message_count: 3,
+        has_assistant: true,
+        first_user_len: 20,
+        first_user_preview: "上海弘积调研",
+        updated_at: "2026-08-13T13:56:07.325Z",
+      },
+      {
+        id: "cxzzjr",
+        alias: "p1-wl",
+        message_count: 1,
+        user_message_count: 1,
+        has_assistant: false,
+        first_user_len: 16,
+        first_user_preview: "从投资角度看阿基视觉",
+        updated_at: "2026-08-13T03:08:24.062Z",
+      },
+    ],
+    { now },
+  )
+  const byId = Object.fromEntries(cands.map((c) => [c.thread_id, c]))
+  assert.equal(byId["2b8ckp"]?.reason, "empty")
+  assert.equal(byId["2b8ckp"]?.precheck, true)
+  assert.equal(byId["rny77t"]?.reason, "acp_husk")
+  assert.equal(byId["rny77t"]?.precheck, true)
+  assert.equal(byId["4j6l6f"]?.reason, "acp_husk")
+  assert.equal(byId["4j6l6f"]?.precheck, true)
+  assert.equal(byId["t4s8kw"], undefined)
+  assert.equal(byId["vpfb7g"], undefined)
+  assert.equal(byId["cxzzjr"], undefined)
+})
+
+test("substantial ACP with timeout in body is omitted, not husk", () => {
+  const body =
+    "【编程接力 · claude · propose_diff】完成\n### 摘要\n" +
+    "The review mentioned a timeout in the old path. ".repeat(20)
+  const cands = suggestCleanupRules(
+    [
+      {
+        id: "t4s8kw",
+        alias: "p1-wl",
+        message_count: 1,
+        user_message_count: 0,
+        has_assistant: true,
+        assistant_chars: body.replace(/\s+/g, "").length,
+        looks_like_acp: true,
+        assistant_excerpt: body.slice(0, 400),
+      },
+    ],
+    { now: new Date("2026-08-17T12:00:00Z") },
+  )
+  assert.equal(cands.length, 0)
+})
+
+test("active empty draft is excluded from suggestions", () => {
+  const cands = suggestCleanupRules(
+    [
+      { id: "draft", alias: "", message_count: 0 },
+      { id: "other", alias: "", message_count: 0 },
+    ],
+    { except_thread_id: "draft" },
+  )
+  assert.ok(!cands.some((c) => c.thread_id === "draft"))
+  assert.ok(cands.some((c) => c.thread_id === "other" && c.reason === "empty" && c.precheck))
 })
 
 test("buildSummaryCard fallback without digest", () => {

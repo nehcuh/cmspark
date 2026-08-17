@@ -512,6 +512,35 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     const { ensureAcpBroadcast } = await import("../acp/handlers")
     const { getAcpManager } = await import("../acp/manager")
     ensureAcpBroadcast(broadcastToClients)
+    getAcpManager().setTerminalSink(({ session, kind, code }) => {
+      try {
+        const {
+          commitThreadAlias,
+          formatAcpProvisionalAlias,
+          acpTokenFromMode,
+        } = require("../threads/alias-commit") as typeof import("../threads/alias-commit")
+        const tm = requireRt().getThreadManager()
+        const token = acpTokenFromMode({
+          mode: session.mode,
+          failed: kind === "failed" || (code != null && code !== 0),
+          cancelled: kind === "cancelled",
+          partial: session.partial === true,
+        })
+        const next = formatAcpProvisionalAlias(session.agent_id || "agent", token)
+        const committed = commitThreadAlias({
+          threadManager: tm,
+          threadId: session.thread_id,
+          next,
+          class: "provisional_acp",
+        })
+        if (committed.ok) {
+          const thread = tm.get(session.thread_id)
+          if (thread) broadcastToClients({ type: "thread.updated", thread })
+        }
+      } catch (err: any) {
+        logger.warn("acp.alias_commit_failed", { error: err?.message || String(err) })
+      }
+    })
     getAcpManager().setHandbackSink(({ session, handback }) => {
       try {
         const { formatHandbackChatMessage } = require("../acp/handback-format") as typeof import("../acp/handback-format")

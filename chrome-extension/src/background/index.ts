@@ -838,6 +838,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
           from: message.from,
           to: message.to,
           include_workers: message.include_workers === true,
+          except_thread_id: message.except_thread_id || undefined,
         })
         sendResponse({ ok: true })
         return true
@@ -884,7 +885,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       }
 
       case "thread.cleanup_empty":
-        wsClient.send({ type: "thread.cleanup_empty" })
+        wsClient.send({
+          type: "thread.cleanup_empty",
+          except_thread_id: message.except_thread_id || undefined,
+        })
         sendResponse({ ok: true })
         return true
 

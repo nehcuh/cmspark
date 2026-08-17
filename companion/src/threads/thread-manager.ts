@@ -7,6 +7,7 @@ import { atomicWriteJSON } from "../io"
 import type { MissionBoard } from "../board/schema"
 import type { ThreadDigest } from "./digest"
 import { isDigestStale, sanitizeDigest } from "./digest"
+import { inspectThreadMessages } from "./thread-inspect"
 import {
   sanitizeRuntimeContextBudget,
   type RuntimeContextBudgetMeta,
@@ -558,9 +559,12 @@ export class ThreadManager {
     return ids
   }
 
-  cleanupEmpty(): string[] {
+  cleanupEmpty(exceptId?: string): string[] {
     const emptyThreads = this.index.threads.filter(
-      (t) => !this.isTrashed(t) && this.getMessages(t.id).length === 0,
+      (t) =>
+        !this.isTrashed(t) &&
+        t.id !== exceptId &&
+        this.getMessages(t.id).length === 0,
     )
     const deletedIds: string[] = []
     for (const thread of emptyThreads) {
@@ -597,11 +601,20 @@ export class ThreadManager {
   listWithPreviews(opts?: {
     include_trashed?: boolean
     only_trashed?: boolean
-  }): Array<Thread & { first_user_preview: string; last_user_preview?: string }> {
+  }): Array<
+    Thread & {
+      first_user_preview: string
+      last_user_preview?: string
+      message_count: number
+      user_message_count: number
+      acp_list: import("./thread-inspect").AcpListMeta | null
+    }
+  > {
     return this.list(opts).map((t) => {
       const msgs = this.getMessages(t.id)
       const first_user_preview = firstUserPreviewFromMessages(msgs, 80)
       const last_user_preview = lastUserPreviewFromMessages(msgs, 80)
+      const inspected = inspectThreadMessages(msgs)
       let digest = t.digest
       if (digest) {
         if (isDigestStale(digest, msgs)) {
@@ -613,6 +626,9 @@ export class ThreadManager {
         digest,
         first_user_preview,
         last_user_preview,
+        message_count: inspected.message_count,
+        user_message_count: inspected.user_message_count,
+        acp_list: inspected.acp_list,
       }
     })
   }

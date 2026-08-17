@@ -1,6 +1,12 @@
 // Thread History IA — calendar grouping + filter helpers (pure).
 // Spec: docs/superpowers/specs/2026-08-06-thread-history-ia-product-design.md
 
+export type AcpListMeta = {
+  outcome?: "ok" | "partial" | "fail" | "cancelled"
+  agent_id?: string
+  goal_preview?: string
+}
+
 export type TimelineThread = {
   id: string
   alias?: string
@@ -9,6 +15,10 @@ export type TimelineThread = {
   /** First user message preview (optional, from companion list enrichment). */
   first_user_preview?: string | null
   agent_role?: "normal" | "orchestrator" | "worker" | string
+  message_count?: number
+  user_message_count?: number
+  /** First-party ACP list meta from companion — never parsed from handback body. */
+  acp_list?: AcpListMeta | null
   digest?: {
     tldr?: string
     tags?: string[]
@@ -232,13 +242,15 @@ export function filterThreadsByQuery(
     const tags = (t.digest?.tags || []).join(" ").toLowerCase()
     const tldr = (t.digest?.tldr || "").toLowerCase()
     const bullets = (t.digest?.bullets || []).join(" ").toLowerCase()
+    const goal = (t.acp_list?.goal_preview || "").toLowerCase()
     return (
       alias.includes(q) ||
       id.includes(q) ||
       preview.includes(q) ||
       tags.includes(q) ||
       tldr.includes(q) ||
-      bullets.includes(q)
+      bullets.includes(q) ||
+      goal.includes(q)
     )
   })
 }
@@ -271,9 +283,84 @@ export function formatRelativeTime(iso: string | undefined, now: Date = new Date
 
 export function displayThreadTitle(t: TimelineThread): string {
   const alias = (t.alias || "").trim()
-  if (alias) return alias
-  // Id is always shown via formatThreadIdBadge on the list row — avoid "未命名 · id" + #id.
+  const id = String(t.id || "").trim()
+  if (alias && alias !== id && alias !== `#${id}`) return alias
+  // Missing enrichment (old companion) → keep 「未命名」, do not guess.
+  if (t.message_count === 0) return "空会话"
+  if (t.acp_list) return "编程接力"
+  if (typeof t.user_message_count === "number" && t.user_message_count === 0 && (t.message_count ?? 0) > 0) {
+    return "无用户消息"
+  }
+  const preview = (t.first_user_preview || "").trim()
+  if (preview) {
+    const fromUser = aliasFromFirstUserText(preview, 24)
+    if (fromUser) return fromUser
+  }
   return "未命名"
+}
+
+export function acpOutcomeChip(t: TimelineThread): "完成" | "部分" | "失败" | null {
+  const o = t.acp_list?.outcome
+  if (o === "ok") return "完成"
+  if (o === "partial") return "部分"
+  if (o === "fail" || o === "cancelled") return "失败"
+  return null
+}
+
+/** One evidence line: tldr > unused preview > goal / first-party ACP template. */
+export function displayThreadEvidence(t: TimelineThread): string | null {
+  const tldr = displayDigestTldr(t)
+  if (tldr) return tldr
+  const preview = (t.first_user_preview || "").trim()
+  const title = displayThreadTitle(t)
+  if (preview && preview !== title && !title.startsWith(preview.slice(0, 8))) {
+    return preview
+  }
+  const goal = (t.acp_list?.goal_preview || "").replace(/\s+/g, " ").trim()
+  if (goal) return goal.length > 40 ? goal.slice(0, 40).trimEnd() + "…" : goal
+  if (t.acp_list) {
+    const chip = acpOutcomeChip(t)
+    const agent = (t.acp_list.agent_id || "").trim()
+    if (agent && chip) return `编程接力 · ${agent} · ${chip}`
+    if (chip) return `编程接力 · ${chip}`
+  }
+  return preview && preview !== title ? preview : null
+}
+
+export function formatClockTime(iso: string | undefined, now: Date = new Date()): string {
+  if (!iso) return ""
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ""
+  const d = new Date(t)
+  const hh = String(d.getHours()).padStart(2, "0")
+  const mm = String(d.getMinutes()).padStart(2, "0")
+  if (localDayKey(d) === localDayKey(now)) return `今天 ${hh}:${mm}`
+  const mo = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${mo}-${day} ${hh}:${mm}`
+}
+
+export function formatThreadListTime(
+  t: TimelineThread,
+  now: Date,
+  aliasDupCount: Map<string, number>,
+): string {
+  const alias = (t.alias || "").trim()
+  const iso = t.updated_at || t.created_at
+  if (alias && (aliasDupCount.get(alias) || 0) >= 2) {
+    return formatClockTime(iso, now)
+  }
+  return formatRelativeTime(iso, now)
+}
+
+export function countAliases(threads: TimelineThread[]): Map<string, number> {
+  const m = new Map<string, number>()
+  for (const t of threads) {
+    const a = (t.alias || "").trim()
+    if (!a) continue
+    m.set(a, (m.get(a) || 0) + 1)
+  }
+  return m
 }
 
 /**

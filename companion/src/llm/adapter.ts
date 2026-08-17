@@ -33,6 +33,7 @@ import {
   type ThreadHandoff,
 } from "./context-handoff"
 import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
+import { classifyAlias, commitThreadAlias } from "../threads/alias-commit"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -1464,10 +1465,16 @@ export function ensureProvisionalThreadTitle(params: {
   const { threadId, threadManager, userText, sendToExtension } = params
   const thread = threadManager.get(threadId)
   if (!thread) return false
-  if (thread.alias && String(thread.alias).trim()) return false
   const alias = provisionalTitleFromUserText(userText)
   if (!alias) return false
-  threadManager.update(threadId, { alias })
+  const committed = commitThreadAlias({
+    threadManager,
+    threadId,
+    next: alias,
+    class: "provisional_user",
+    firstUserText: userText,
+  })
+  if (!committed.ok) return false
   sendToExtension({ type: "thread.updated", thread: threadManager.get(threadId) })
   return true
 }
@@ -1484,26 +1491,28 @@ export async function generateThreadTitle(params: {
   try {
     const thread = threadManager.get(threadId)
     if (!thread) return
-    // Allow upgrade from provisional first-user-snippet when we have a full exchange
-    const hasOnlyProvisional =
-      !!thread.alias &&
-      (() => {
-        const msgs = threadManager.getMessages(threadId)
-        const firstUser = msgs.find((m) => m.role === "user")
-        if (!firstUser?.content) return false
-        const prov = provisionalTitleFromUserText(String(firstUser.content))
-        return prov === thread.alias || prov.replace(/…$/, "") === String(thread.alias).replace(/…$/, "")
-      })()
-    if (thread.alias && !force && !hasOnlyProvisional) return
-
     const msgs = threadManager.getMessages(threadId)
+    const firstUser = msgs.find((m) => m.role === "user")
+    const fromClass = classifyAlias(
+      thread.alias,
+      firstUser?.content ? String(firstUser.content) : undefined,
+    )
+    if (thread.alias && !force && fromClass !== "empty" && fromClass !== "provisional_user" && fromClass !== "provisional_acp") {
+      return
+    }
+
     const hasUser = msgs.some(m => m.role === "user")
     const hasAssistant = msgs.some(m => m.role === "assistant")
     if (!hasUser || !hasAssistant) return
 
-    // Take first few exchanges (up to 3 rounds) to keep the prompt short
+    // Take first few exchanges (up to 3 rounds) to keep the prompt short.
+    // Strip ACP handback frames — untrusted DATA must not name the thread.
     const previewMsgs = msgs
       .filter(m => m.role === "user" || m.role === "assistant")
+      .filter(m => {
+        const c = String(m.content || "")
+        return !c.includes("【编程接力") && !c.includes("UNTRUSTED_ACP_HANDBACK")
+      })
       .slice(0, 6)
       .map(m => `${m.role === "user" ? "用户" : "AI"}: ${(m.content || "").substring(0, 180)}`)
       .join("\n")
@@ -1540,8 +1549,17 @@ export async function generateThreadTitle(params: {
     // Truncate and sanitize
     alias = alias.slice(0, 16)
     if (alias) {
-      threadManager.update(threadId, { alias })
-      sendToExtension({ type: "thread.updated", thread: threadManager.get(threadId) })
+      const committed = commitThreadAlias({
+        threadManager,
+        threadId,
+        next: alias,
+        class: "llm",
+        force: force === true,
+        firstUserText: firstUser?.content ? String(firstUser.content) : undefined,
+      })
+      if (committed.ok) {
+        sendToExtension({ type: "thread.updated", thread: threadManager.get(threadId) })
+      }
     }
   } catch (e: any) {
     // G3.4: do not silent-void — title generation is best-effort but must be observable
