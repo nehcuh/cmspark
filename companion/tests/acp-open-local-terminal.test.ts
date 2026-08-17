@@ -3,6 +3,7 @@
 
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { EventEmitter } from "node:events"
 import * as path from "node:path"
 import {
   shellSingleQuote,
@@ -22,7 +23,12 @@ import {
   findWindowsTerminalExe,
   modeCWindowsLevelForSpec,
   buildWindowsStartCommandLine,
+  planWindowsStartSpawn,
+  openWindowsWithPref,
+  formatModeCOpenedLabel,
+  type WinDetachedSpawnFn,
 } from "../src/acp/open-local-terminal"
+import { windowsCmdExePath, windowsPowerShellExePath } from "../src/acp/win-spawn"
 
 describe("shellSingleQuote", () => {
   it("wraps plain strings in single quotes", () => {
@@ -132,10 +138,13 @@ describe("buildWindowsStartCommandLine", () => {
       "C:\\Users\\me\\AppData\\Local\\Temp\\cmspark-mode-c-x\\run.ps1",
     ])
     assert.match(line, /^start "CMspark" /)
-    assert.match(line, /"powershell\.exe"/)
+    assert.match(line.replace(/\//g, "\\"), /WindowsPowerShell\\v1\.0\\powershell\.exe/)
+    assert.match(line, /powershell\.exe/)
     assert.match(line, /"-NoExit"/)
     assert.match(line, /"-File"/)
     assert.match(line, /"C:\\Users\\me\\AppData\\Local\\Temp\\cmspark-mode-c-x\\run\.ps1"/)
+    // F5: first token is pinned System32 powershell, not a bare PATH name
+    assert.doesNotMatch(line, /(?:^| )"powershell\.exe"/)
   })
 })
 
@@ -458,6 +467,201 @@ describe("resolveLinuxTerminalBinary", () => {
   it("trims TERMINAL", () => {
     const t = resolveLinuxTerminalBinary({ TERMINAL: "  kitty  " })
     assert.equal(t, "kitty")
+  })
+})
+
+describe("planWindowsStartSpawn (F1)", () => {
+  it("uses wrapViaCmd /d /s /c extra-wrap + verbatim on System32 cmd", () => {
+    const plan = planWindowsStartSpawn(["-NoExit", "-File", "C:\\tmp\\run.ps1"])
+    assert.match(plan.command.replace(/\//g, "\\"), /\\System32\\cmd\.exe$/i)
+    assert.notEqual(plan.command.toLowerCase(), "cmd.exe")
+    assert.deepEqual(plan.args.slice(0, 3), ["/d", "/s", "/c"])
+    const wrapped = plan.args[3]
+    assert.ok(wrapped.startsWith('"') && wrapped.endsWith('"'))
+    assert.match(wrapped, /start "CMspark"/)
+    assert.doesNotMatch(wrapped, /\\"/)
+    assert.equal(plan.options.windowsVerbatimArguments, true)
+    assert.equal(plan.options.windowsHide, true)
+  })
+
+  it("pins PowerShell payload (F5) and does not emit a bare powershell.exe token", () => {
+    const plan = planWindowsStartSpawn(["-NoExit", "-File", "C:\\tmp\\run.ps1"])
+    const wrapped = plan.args[3]
+    assert.match(wrapped.replace(/\//g, "\\"), /WindowsPowerShell\\v1\.0\\powershell\.exe/)
+    assert.doesNotMatch(wrapped, /(?:^| )"powershell\.exe"/)
+    const ps = windowsPowerShellExePath()
+    assert.ok(wrapped.includes(ps) || wrapped.replace(/\//g, "\\").includes(ps.replace(/\//g, "\\")))
+    assert.ok(plan.command.includes("cmd.exe") || /cmd\.exe$/i.test(plan.command))
+    assert.match(windowsCmdExePath({ SystemRoot: "C:\\Windows" }).replace(/\//g, "\\"), /\\System32\\cmd\.exe$/i)
+  })
+})
+
+function makeWinChild(opts?: {
+  exitAtMs?: number
+  exitCode?: number | null
+  errorAtMs?: number
+  error?: Error
+}) {
+  const child = new EventEmitter() as EventEmitter & {
+    exitCode: number | null
+    signalCode: NodeJS.Signals | null
+    unref: () => void
+  }
+  child.exitCode = null
+  child.signalCode = null
+  child.unref = () => {}
+  if (opts?.errorAtMs != null) {
+    setTimeout(() => {
+      child.emit("error", opts.error ?? new Error("spawn ENOENT"))
+    }, opts.errorAtMs)
+  }
+  if (opts?.exitAtMs != null) {
+    setTimeout(() => {
+      child.exitCode = opts.exitCode ?? 0
+      child.emit("exit", child.exitCode)
+    }, opts.exitAtMs)
+  }
+  return child
+}
+
+function winSpawnTracker(behavior: {
+  onWt?: "exit0-fast" | "exit1" | "error" | "hang"
+  onStart?: "exit0" | "hang"
+}) {
+  const calls: Array<{
+    command: string
+    args: string[]
+    options?: { windowsVerbatimArguments?: boolean }
+  }> = []
+  const spawnFn: WinDetachedSpawnFn = (command, args, options) => {
+    calls.push({
+      command,
+      args: [...args],
+      options: options as { windowsVerbatimArguments?: boolean },
+    })
+    const isWt = /wt\.exe$/i.test(String(command).replace(/\//g, "\\"))
+    const mode = isWt ? behavior.onWt : behavior.onStart
+    if (mode === "exit0-fast") return makeWinChild({ exitAtMs: 10, exitCode: 0 })
+    if (mode === "exit1") return makeWinChild({ exitAtMs: 10, exitCode: 1 })
+    if (mode === "error") return makeWinChild({ errorAtMs: 5, error: new Error("spawn ENOENT") })
+    if (mode === "exit0") return makeWinChild({ exitAtMs: 10, exitCode: 0 })
+    return makeWinChild()
+  }
+  const isStartCall = (c: (typeof calls)[0]) =>
+    /cmd\.exe$/i.test(c.command.replace(/\//g, "\\")) && c.args.includes("/c")
+  return { calls, spawnFn, isStartCall }
+}
+
+const REAL_WT = "C:\\Program Files\\Windows Terminal\\wt.exe"
+
+describe("openWindowsWithPref (F2 / F5)", () => {
+  it("real wt PE exit 0 at 10ms is handoff success and does not call start", async () => {
+    const { calls, spawnFn, isStartCall } = winSpawnTracker({ onWt: "exit0-fast" })
+    const r = await openWindowsWithPref("C:\\tmp\\run.ps1", "C:\\ws", "wt", {
+      spawn: spawnFn,
+      findWindowsTerminalExe: () => REAL_WT,
+    })
+    assert.equal(r.appLabel, "Windows Terminal")
+    assert.ok(calls.some((c) => /wt\.exe$/i.test(c.command.replace(/\//g, "\\"))))
+    assert.equal(calls.filter(isStartCall).length, 0)
+    const wtCall = calls.find((c) => /wt\.exe$/i.test(c.command.replace(/\//g, "\\")))
+    assert.ok(wtCall)
+    assert.notEqual(wtCall!.options?.windowsVerbatimArguments, true)
+    const blob = (wtCall!.args || []).join("\0")
+    assert.match(blob.replace(/\//g, "\\"), /WindowsPowerShell\\v1\.0\\powershell\.exe/)
+    assert.ok(
+      !wtCall!.args.some((a) => a.toLowerCase() === "powershell.exe"),
+      "wt argv must not use bare powershell.exe",
+    )
+  })
+
+  it("wt spawn error falls through to start (cmd /c)", async () => {
+    const { calls, spawnFn, isStartCall } = winSpawnTracker({
+      onWt: "error",
+      onStart: "exit0",
+    })
+    const r = await openWindowsWithPref("C:\\tmp\\run.ps1", "C:\\ws", "wt", {
+      spawn: spawnFn,
+      findWindowsTerminalExe: () => REAL_WT,
+    })
+    assert.equal(r.appLabel, "Windows Console")
+    assert.ok(calls.some((c) => /wt\.exe$/i.test(c.command.replace(/\//g, "\\"))))
+    assert.ok(calls.some(isStartCall))
+    const start = calls.find(isStartCall)!
+    assert.equal(start.options?.windowsVerbatimArguments, true)
+    const wrapped = start.args[3] || ""
+    assert.match(wrapped, /start "CMspark"/)
+    assert.doesNotMatch(wrapped, /\\"/)
+  })
+
+  it("wt exit 1 falls through to start (cmd /c)", async () => {
+    const { calls, spawnFn, isStartCall } = winSpawnTracker({
+      onWt: "exit1",
+      onStart: "exit0",
+    })
+    const r = await openWindowsWithPref("C:\\tmp\\run.ps1", "C:\\ws", "wt", {
+      spawn: spawnFn,
+      findWindowsTerminalExe: () => REAL_WT,
+    })
+    assert.equal(r.appLabel, "Windows Console")
+    assert.ok(calls.some(isStartCall))
+  })
+
+  it("wt still-running after 300ms succeeds without start", async () => {
+    const { calls, spawnFn, isStartCall } = winSpawnTracker({ onWt: "hang" })
+    const r = await openWindowsWithPref("C:\\tmp\\run.ps1", "C:\\ws", "wt", {
+      spawn: spawnFn,
+      findWindowsTerminalExe: () => REAL_WT,
+    })
+    assert.equal(r.appLabel, "Windows Terminal")
+    assert.equal(calls.filter(isStartCall).length, 0)
+  })
+
+  it("never spawns bare wt.exe or a WindowsApps alias", async () => {
+    const { calls, spawnFn, isStartCall } = winSpawnTracker({ onStart: "exit0" })
+    const r = await openWindowsWithPref("C:\\tmp\\run.ps1", "C:\\ws", "wt", {
+      spawn: spawnFn,
+      findWindowsTerminalExe: () => "wt.exe",
+    })
+    assert.equal(r.appLabel, "Windows Console")
+    assert.ok(!calls.some((c) => c.command.toLowerCase() === "wt.exe"))
+    assert.ok(calls.some(isStartCall))
+
+    const second = winSpawnTracker({ onStart: "exit0" })
+    const r2 = await openWindowsWithPref("C:\\tmp\\run.ps1", "C:\\ws", "wt", {
+      spawn: second.spawnFn,
+      findWindowsTerminalExe: () =>
+        "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe",
+    })
+    assert.equal(r2.appLabel, "Windows Console")
+    assert.ok(!second.calls.some((c) => /windowsapps/i.test(c.command)))
+    assert.ok(second.calls.some(second.isStartCall))
+  })
+})
+
+describe("formatModeCOpenedLabel (F7)", () => {
+  it("uses launched app, not pref, when app is set", () => {
+    const l1 = formatModeCOpenedLabel("L1", "Windows Console", "wt")
+    assert.match(l1, /Windows Console/)
+    assert.doesNotMatch(l1, /wt · 交互/)
+    assert.equal(l1, "已打开本机终端（Windows Console · 交互）")
+  })
+
+  it("L0 includes paste hint and still prefers app over pref", () => {
+    const l0 = formatModeCOpenedLabel("L0", "gnome-terminal", "wt")
+    assert.equal(l0, "已打开本机终端（L0 · gnome-terminal · 可能需粘贴）")
+    assert.doesNotMatch(l0, /wt/)
+  })
+
+  it("falls back to pref only when app is missing", () => {
+    assert.equal(
+      formatModeCOpenedLabel("L1", undefined, "auto"),
+      "已打开本机终端（系统默认 · 交互）",
+    )
+    assert.equal(
+      formatModeCOpenedLabel("L1", undefined, "wt"),
+      "已打开本机终端（wt · 交互）",
+    )
   })
 })
 

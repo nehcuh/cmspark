@@ -19,7 +19,7 @@ import { shapeHandbackBody } from "./handback-format"
 import type { AcpAgentServerConfig } from "./types"
 import { tryStartProtocolSession, type ProtocolSessionHandle } from "./protocol-session"
 import { timelineItem, capTimeline, type TimelineItem } from "./timeline"
-import { openLocalTerminalForAgent } from "./open-local-terminal"
+import { formatModeCOpenedLabel, openLocalTerminalForAgent } from "./open-local-terminal"
 import {
   PROGRESS_TAIL_CLI_CHARS,
   PROGRESS_TAIL_ACP_CHARS,
@@ -193,10 +193,7 @@ export class AcpManager {
       }
       if (r.ok) {
         session.local_terminal = r.level === "L0" ? "opened_l0" : "opened"
-        const label =
-          r.level === "L0"
-            ? `已打开本机终端（L0 · ${terminalApp === "auto" ? "系统默认" : terminalApp} · 可能需粘贴）`
-            : `已打开本机终端（${terminalApp === "auto" ? "系统默认" : terminalApp} · 交互）`
+        const label = formatModeCOpenedLabel(r.level, r.app, terminalApp)
         this.pushTimeline(session, [
           timelineItem("status", label, {
             status: "done",
