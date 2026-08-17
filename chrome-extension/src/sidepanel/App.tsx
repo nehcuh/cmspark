@@ -1528,6 +1528,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                 whiteSpace: "nowrap", minWidth: 0,
               }}>
                 {file.name} ({formatFileSize(file.size)})
+                {file.compressed ? " · 已压缩" : ""}
                 {isAllowlistedImageMime(file.type) ? ` · ${destHost}` : ""}
               </span>
               <span
