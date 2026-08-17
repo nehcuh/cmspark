@@ -12,6 +12,13 @@ import {
   sanitizeRuntimeContextBudget,
   type RuntimeContextBudgetMeta,
 } from "./runtime-context-budget"
+import type { ImageAttachmentMeta } from "../llm/image-parts"
+import { sniffedExt, type RasterMime } from "../llm/image-sniff"
+import {
+  deleteSidecarsForMessages,
+  readImageAttachment as readImageAttachmentBytes,
+  removeAttachmentsDir,
+} from "./image-sidecar"
 
 interface ThreadPackSnapshot {
   tool_whitelist: string[] | null
@@ -177,6 +184,34 @@ interface Message {
   /** DeepSeek / Anthropic thinking text (optional; UI shows as collapsible). */
   reasoning_content?: string
   created_at: string
+  /** Image attachments (metadata only; bytes live in `threads/<id>.files/`). */
+  attachments?: ImageAttachmentMeta[]
+}
+
+const RASTER_MIMES = new Set<RasterMime>([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+])
+
+/** Stamp companion-chosen rel/msg_id/index; never persist a client-supplied path. */
+function stampAttachments(msgId: string, atts: ImageAttachmentMeta[]): ImageAttachmentMeta[] {
+  return atts
+    .filter((a): a is ImageAttachmentMeta => !!a && a.kind === "image" && RASTER_MIMES.has(a.mime))
+    .map((a, i) => ({
+      kind: "image" as const,
+      name: String(a.name || "image").slice(0, 200),
+      mime: a.mime,
+      sha256: String(a.sha256 || "").slice(0, 128),
+      bytes: typeof a.bytes === "number" && Number.isFinite(a.bytes) ? a.bytes : 0,
+      ...(typeof a.width === "number" ? { width: a.width } : {}),
+      ...(typeof a.height === "number" ? { height: a.height } : {}),
+      ...(typeof a.preview_jpeg_b64 === "string" ? { preview_jpeg_b64: a.preview_jpeg_b64 } : {}),
+      msg_id: msgId,
+      index: i,
+      rel: `${msgId}-${i}.${sniffedExt(a.mime)}`,
+    }))
 }
 
 const MAX_MESSAGES_PER_THREAD = 1000
@@ -505,6 +540,7 @@ export class ThreadManager {
     this.saveIndex()
     if (!ThreadManager.isSafeThreadId(threadId)) return
     try { fs.unlinkSync(this.threadFilePath(threadId)) } catch { /* ignore */ }
+    removeAttachmentsDir(threadId)
   }
 
   /** Soft-delete into recycle bin. Returns false if not found. */
@@ -555,6 +591,7 @@ export class ThreadManager {
       } catch {
         /* ignore missing file */
       }
+      removeAttachmentsDir(id)
     }
     return ids
   }
@@ -888,6 +925,12 @@ export class ThreadManager {
       id: `${threadId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       created_at: monotonicTimestamp(),
     }
+    if (Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+      msg.attachments = stampAttachments(msg.id, msg.attachments)
+      if (msg.attachments.length === 0) delete msg.attachments
+    } else {
+      delete msg.attachments
+    }
 
     const filePath = this.threadFilePath(threadId)
     let data: { messages: Message[] }
@@ -902,6 +945,9 @@ export class ThreadManager {
 
     // Soft cap enforcement
     if (data.messages.length > MAX_MESSAGES_PER_THREAD) {
+      const dropped = data.messages.slice(0, data.messages.length - MAX_MESSAGES_PER_THREAD)
+      // Cap-trim: unlink sidecars of dropped oldest rows (same helper as deleteMessagesFrom).
+      deleteSidecarsForMessages(threadId, dropped)
       data.messages = data.messages.slice(-MAX_MESSAGES_PER_THREAD)
       if (!_capWarnedThreads.has(threadId)) {
         _capWarnedThreads.add(threadId)
@@ -1002,11 +1048,22 @@ export class ThreadManager {
       const messages: Message[] = data.messages || []
       const idx = messages.findIndex(m => m.id === messageId)
       if (idx < 0) return false
+      const removed = messages.slice(idx)
+      deleteSidecarsForMessages(threadId, removed)
       data.messages = messages.slice(0, idx)
       atomicWriteJSON(filePath, data)
       return true
     } catch {
       return false
     }
+  }
+
+  /**
+   * Hydrate helper (Task 6): load sidecar bytes from companion-chosen name
+   * (`${msgId}-${n}.${ext}`). Never follows `att.rel` as a path.
+   */
+  readImageAttachment(threadId: string, att: ImageAttachmentMeta): Buffer | null {
+    if (!ThreadManager.isSafeThreadId(threadId)) return null
+    return readImageAttachmentBytes(threadId, att)
   }
 }

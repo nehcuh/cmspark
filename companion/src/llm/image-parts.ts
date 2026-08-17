@@ -9,6 +9,16 @@ export interface ImageAttachmentMeta {
   preview_jpeg_b64?: string
   width?: number
   height?: number
+  /**
+   * Companion-chosen basename (`${msgId}-${n}.${ext}`). Persisted for debug /
+   * display. Never used as a filesystem load path — reconstruct from
+   * `msg_id` + `index` + `mime` instead.
+   */
+  rel?: string
+  /** 0-based index among this message's image attachments. */
+  index?: number
+  /** Owning message id — used with index + mime to reconstruct the sidecar name. */
+  msg_id?: string
 }
 
 export function estimateImagePartTokens(width?: number, height?: number): number {
