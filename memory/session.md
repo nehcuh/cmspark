@@ -2,6 +2,16 @@
 
 ## Current Session
 
+### S73 (2026-08-17) [thread hygiene · 五路对抗 · 设计已拍板]
+- **用户问题**：整理会话 + 清理空白后仍见 `4j6l6f` / `rny77t` 一类意义不明对话
+- **诊断**：cleanup_empty 只硬删 0 消息；整理默认只扫 30 天前；无 user 的 ACP handback 不起名、不进规则
+- **方法**：五路独立对抗（A JTBD / B 呈现 / C 起名 / D 清理 / E 安全）
+- **用户裁决**：C′（新 ACP 终态写 `接力·{agent}·{token}`；旧行只改显示）+ D（薄空壳含失败 ACP husk **默认勾**）
+- **SoT**：`docs/superpowers/specs/2026-08-17-thread-hygiene-adversarial-design.md`
+- **下次**：用户审规格 → writing-plans → H1 呈现+召回 / H2 起名写口
+- Recorded: yes — 无意义=无 user 回合；p1-wl 禁止静默改名；cleanup_empty 语义冻结
+
+
 ### S72 END (2026-08-16~17) [Windows ACP spawn · 多路对抗 · **#191 MERGED**]
 - **Ship**：**PR #191 MERGED** `33022bd` ← `fix/windows-acp-spawn` — Windows 外部编程 Agent 启动（shebang/.cmd + Mode C 诚实 + P2）
 - **根因**：`where` 先打 npm Unix shebang → `spawn ENOENT`；`.cmd` 无 shell → `EINVAL`
