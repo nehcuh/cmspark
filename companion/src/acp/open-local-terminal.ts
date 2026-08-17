@@ -551,7 +551,10 @@ function spawnDetachedWin(
       }
       settle(new Error("process did not confirm launch"))
     }, waitMs)
-    timer.unref?.()
+    // Keep the timer referenced: child is unref'd, and an unref'd observe
+    // timer lets node:test cancel the suite (CI: cancelledByParent on the
+    // still-running WT case). clearTimeout on settle is what drops leftover
+    // START_CONFIRM_MS handles.
   })
 }
 
