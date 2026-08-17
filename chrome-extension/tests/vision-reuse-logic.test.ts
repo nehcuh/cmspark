@@ -172,9 +172,11 @@ test("extractHostname + banner body include host", () => {
 test("copy honesty: no Ollama-required framing", () => {
   assert.ok(!/需要\s*Ollama/.test(VISION_COPY.sectionHelp))
   assert.ok(!/必须.*Ollama/.test(VISION_COPY.sectionHelp))
-  assert.ok(VISION_COPY.sectionHelp.includes("转成文字"))
+  assert.ok(VISION_COPY.sectionHelp.includes("转文字"))
+  assert.ok(VISION_COPY.sectionHelp.includes("粘贴/选/拖"))
   assert.ok(VISION_COPY.railDifferentiator.includes("Qwen3-VL"))
-  assert.ok(VISION_COPY.fallbackPassthrough.includes("不能真正看图"))
+  assert.ok(VISION_COPY.fallbackPassthrough.includes("视觉轨"))
+  assert.ok(VISION_COPY.fallbackPassthrough.includes("原生看图"))
 })
 
 test("normalizeEndpointUrl and placeholder key helpers", () => {

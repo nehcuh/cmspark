@@ -1517,7 +1517,11 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
       <div style={styles.empty} data-testid="empty-state-browser">
         <div style={styles.emptyKicker}>网页</div>
         <div style={styles.emptyTitle}>要对这页做什么？</div>
-        <div style={styles.emptyHint}>总结、提问，或让 Agent 操作当前标签。</div>
+        <div style={styles.emptyHint}>
+          总结、提问，或让 Agent 操作当前标签。
+          <br />
+          可直接粘贴截图
+        </div>
         <SuggestionChips
           items={[
             { label: "总结本页", fill: "请总结当前页面的要点" },
@@ -1547,7 +1551,11 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
     <div style={styles.empty} data-testid="empty-state-chat">
       <div style={styles.emptyKicker}>CMspark</div>
       <div style={styles.emptyTitle}>有什么可以帮你？</div>
-      <div style={styles.emptyHint}>问问题、写文案，或描述浏览器任务。</div>
+      <div style={styles.emptyHint}>
+        问问题、写文案，或描述浏览器任务。
+        <br />
+        可直接粘贴截图
+      </div>
       <SuggestionChips
         items={[
           { label: "总结本页", fill: "请总结当前页面的要点" },

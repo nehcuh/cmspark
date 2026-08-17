@@ -12,8 +12,7 @@ export const VISION_PLACEHOLDER_KEY = "ollama"
 
 export const VISION_COPY = {
   sectionHelp:
-    "开启后，截图 / analyze_image 会先经视觉模型转成文字再交给主对话（主对话不会直接收图）。" +
-    "可使用本地 VLM（如 Ollama llava），也可使用云端 OpenAI 兼容多模态 API（与主模型相同亦可）。",
+    "本段只管工具截图 / analyze_image：先视觉轨转文字再进对话。输入框粘贴/选/拖的图另算——主模型能看图则直送主模型，否则才走本视觉轨。",
   railDifferentiator:
     "本段是「看图描述」轨。桌面点击定位用的实验层 Qwen3-VL（设置 → 实验功能）与此无关，不能代替截图分析。",
   bannerTitle: "主模型可能已支持图片理解",
@@ -35,7 +34,8 @@ export const VISION_COPY = {
     "主模型 API Key 未在界面显示（仅 Companion 已保存或为掩码）。已写入 URL/Model；" +
     "保存时 Companion 会在端点匹配且视觉 Key 占位时继承主 Key。建议保存后点「测试视觉模型连接」。",
   postReuseTestHint: "建议立即测试视觉连接，确认端点可用后再用于截图分析。",
-  fallbackPassthrough: "保留截断 base64（主模型通常仍不能真正看图）",
+  fallbackPassthrough:
+    "视觉轨会把截断 base64 塞进说明；只有主模型走原生看图时才能看见像素",
   fallbackMetadata: "仅元数据（推荐）",
   fallbackError: "报错",
 } as const
