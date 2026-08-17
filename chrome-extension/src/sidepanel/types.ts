@@ -409,6 +409,8 @@ export interface FileAttachment {
   type: string       // MIME type
   size: number
   content: string    // base64 encoded
+  /** True when the client resized / re-encoded before upload. */
+  compressed?: boolean
 }
 
 export interface SkillMeta {

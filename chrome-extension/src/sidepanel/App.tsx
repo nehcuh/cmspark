@@ -61,6 +61,21 @@ import {
   deriveThreadBusy,
   resolveComposerMode,
 } from "./utils/thread-busy"
+import {
+  IMAGE_ACCEPT,
+  IMAGE_GIF_SHRINK_FIRST,
+  IMAGE_MAX_DECODED,
+  IMAGE_PREFLIGHT_NO_VISION,
+  checkComposerImageCaps,
+  classifyDrop,
+  compressImageBlob,
+  defaultCaption,
+  isAllowlistedImageMime,
+  needsCompress,
+  pasteImageDisplayName,
+  visionRailOpen,
+} from "./utils/image-compose"
+import { extractHostname, likelyMultimodal } from "./components/vision-reuse-logic"
 import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
 import { WorkerScopeBar } from "./components/WorkerScopeBar"
 import { RunBusyChip } from "./components/RunBusyChip"
@@ -290,6 +305,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const [threadRefs, setThreadRefs] = useState<AtThreadChoice[]>([])
   const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([])
   const [fileError, setFileError] = useState("")
+  const [destAck, setDestAck] = useState("")
+  const [dragOver, setDragOver] = useState(false)
   const [composeOpen, setComposeOpen] = useState(false)
   const [voicePrivacyOpen, setVoicePrivacyOpen] = useState(false)
   /** Privacy sheet: v1 browser · v2 local · v3 continuous/refiner. */
@@ -305,6 +322,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const sendingRef = useRef(false)
   const textRef = useRef(text)
   textRef.current = text
+  const selectedFilesRef = useRef(selectedFiles)
+  selectedFilesRef.current = selectedFiles
+  const dragDepthRef = useRef(0)
   /** Fresh active thread for SW upload callbacks (closure state is stale after switch). */
   const activeThreadIdRef = useRef(state.activeThreadId)
   activeThreadIdRef.current = state.activeThreadId
@@ -777,6 +797,24 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     state.connectionState === "connected" &&
     !voice.listening
 
+  const ingestBlocked =
+    needsThread ||
+    needsConnection ||
+    threadBusy ||
+    composerMode === "l2_task" ||
+    voice.liveOverlay !== null ||
+    voice.listening
+  const ingestBlockedRef = useRef(ingestBlocked)
+  ingestBlockedRef.current = ingestBlocked
+
+  const effectiveModel =
+    (activeThread?.config_override?.model_name || "").trim() ||
+    state.config.model_name
+  const useNativeVision = likelyMultimodal(effectiveModel)
+  const destHost = extractHostname(
+    useNativeVision ? state.config.base_url : state.config.vision_base_url,
+  )
+
   const getPlaceholder = () => {
     if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
@@ -989,8 +1027,17 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     }
   }
 
-  const handleSend = () => {
-    if (!canSend || sendingRef.current) return
+  const handleSend = (overrideFiles?: FileAttachment[]) => {
+    const files = Array.isArray(overrideFiles) ? overrideFiles : selectedFilesRef.current
+    const trimmed = textRef.current.trim()
+    const sendAllowed =
+      composerMode !== "l2_task" &&
+      composerMode !== "thread_busy" &&
+      !!state.activeThreadId &&
+      state.connectionState === "connected" &&
+      !voice.listening
+    if (!sendAllowed || sendingRef.current) return
+    if (!trimmed && files.length === 0) return
     // Defense in depth: never dual-conduct while L2 task is active
     if (
       isComputer &&
@@ -999,10 +1046,43 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     ) {
       return
     }
+
+    const imageFiles = files.filter((f) => isAllowlistedImageMime(f.type))
+    const docFiles = files.filter((f) => !isAllowlistedImageMime(f.type))
+    if (imageFiles.length > 0) {
+      const capErr = checkComposerImageCaps(imageFiles)
+      if (capErr) {
+        setFileError(capErr)
+        return
+      }
+      const useNative = likelyMultimodal(effectiveModel)
+      if (!useNative && !visionRailOpen(state.config)) {
+        setFileError(IMAGE_PREFLIGHT_NO_VISION)
+        return
+      }
+      if (useNative) {
+        const host = extractHostname(state.config.base_url)
+        const ackKey = `cmspark.imageDestAck.${host}`
+        try {
+          chrome.storage.local.get([ackKey], (result) => {
+            if (chrome.runtime.lastError) return
+            if (!result?.[ackKey]) {
+              setDestAck(`图片将发送至 ${host}`)
+              try {
+                chrome.storage.local.set({ [ackKey]: true })
+              } catch {
+                /* ignore */
+              }
+            }
+          })
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
     sendingRef.current = true
     try {
-      const trimmed = text.trim()
-
       // Parse slash command to auto-activate skill
       const slashMatch = trimmed.match(/^\/(\S+)/)
       let skillIds = state.activeSkillIds
@@ -1017,17 +1097,21 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       }
 
       // File upload path
-      if (selectedFiles.length > 0) {
-        const userMessage = trimmed || "请分析我上传的文件"
-        const fileSummary = selectedFiles.map(f => f.name).join(", ")
+      if (files.length > 0) {
+        const userMessage = defaultCaption({
+          images: imageFiles.length,
+          docs: docFiles.length,
+          userText: trimmed,
+        })
+        const fileSummary = files.map(f => f.name).join(", ")
         const uploadThreadId = state.activeThreadId
         const panelDiag = {
           thread_id: uploadThreadId,
           connection: state.connectionState,
           isProcessing: state.isProcessing,
           mapBusy: !!(uploadThreadId && state.threadBusyById[uploadThreadId]),
-          file_count: selectedFiles.length,
-          files: selectedFiles.map((f) => ({
+          file_count: files.length,
+          files: files.map((f) => ({
             name: f.name,
             type: f.type,
             size: f.size,
@@ -1066,7 +1150,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             type: "file.upload",
             threadId: uploadThreadId,
             message: userMessage,
-            files: selectedFiles,
+            files,
             skillIds,
           },
           (response) => {
@@ -1091,7 +1175,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               /* ignore */
             }
             if (swErr || !response?.ok) {
-              // Always clear mapBusy for the upload thread.
+              // Always clear mapBusy for the upload thread. Keep chips on error.
               if (uploadThreadId) {
                 dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: false })
               }
@@ -1111,6 +1195,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                   created_at: new Date().toISOString(),
                 },
               })
+            } else {
+              setSelectedFiles([])
             }
           },
         )
@@ -1156,7 +1242,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       setSlashVisible(false)
       setAtVisible(false)
       setThreadRefs([])
-      setSelectedFiles([])
+      // selectedFiles stay until file.uploaded / SW ok so chips survive errors.
     } finally {
       sendingRef.current = false
     }
@@ -1178,50 +1264,207 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     }
   }
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files) return
+  const readFileAsBase64 = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        resolve(result.split(",")[1] || "")
+      }
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(blob)
+    })
 
-    const maxFileSize = 10 * 1024 * 1024
-    const newFiles: FileAttachment[] = []
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-      if (file.size > maxFileSize) {
+  const mimeFromName = (name: string): string => {
+    const ext = name.split(".").pop()?.toLowerCase()
+    const mimeMap: Record<string, string> = {
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      pdf: "application/pdf",
+      odt: "application/vnd.oasis.opendocument.text",
+      rtf: "application/rtf",
+      csv: "text/csv",
+      md: "text/markdown",
+      txt: "text/plain",
+      html: "text/html",
+      htm: "text/html",
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+    }
+    return mimeMap[ext || ""] || "application/octet-stream"
+  }
+
+  const addIncomingFiles = async (
+    list: File[],
+    opts: { fromGesture?: boolean; fromPaste?: boolean },
+  ) => {
+    if (ingestBlockedRef.current) return
+    const maxDocSize = 10 * 1024 * 1024
+    const incoming: FileAttachment[] = []
+    let addedImages = 0
+    for (const file of list) {
+      const type = file.type || mimeFromName(file.name)
+      if (type.startsWith("image/") && !isAllowlistedImageMime(type)) {
+        setFileError("不支持该图片格式（请使用 PNG / JPEG / GIF / WebP）")
+        continue
+      }
+      const isImage = isAllowlistedImageMime(type)
+      if (!isImage && file.size > maxDocSize) {
         setFileError(`文件 "${file.name}" 超过 10MB 限制`)
         continue
       }
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => {
-          const result = reader.result as string
-          resolve(result.split(",")[1])
-        }
-        reader.onerror = () => reject(reader.error)
-        reader.readAsDataURL(file)
-      })
-      const ext = file.name.split(".").pop()?.toLowerCase()
-      const mimeMap: Record<string, string> = {
-        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        pdf: "application/pdf",
-        odt: "application/vnd.oasis.opendocument.text",
-        rtf: "application/rtf",
-        csv: "text/csv",
-        md: "text/markdown",
-        txt: "text/plain",
-        html: "text/html",
-        htm: "text/html",
+      if (isImage && file.size > IMAGE_MAX_DECODED && /^image\/gif$/i.test(type.split(";")[0].trim())) {
+        setFileError(IMAGE_GIF_SHRINK_FIRST)
+        continue
       }
-      newFiles.push({
-        name: file.name,
-        type: file.type || mimeMap[ext || ""] || "application/octet-stream",
-        size: file.size,
-        content: base64,
-      })
+      try {
+        let working: Blob = file
+        let workingType = type
+        let compressed = false
+        if (isImage && needsCompress(file.size)) {
+          const result = await compressImageBlob(file)
+          working = result.blob
+          workingType = result.blob.type || type
+          compressed = result.compressed
+        } else if (isImage) {
+          // Dimension-only compress when canvas can decode (no-op in node).
+          try {
+            const result = await compressImageBlob(file)
+            working = result.blob
+            workingType = result.blob.type || type
+            compressed = result.compressed
+          } catch {
+            working = file
+          }
+        }
+        const base64 = await readFileAsBase64(working)
+        const name = opts.fromPaste
+          ? pasteImageDisplayName(file.name)
+          : file.name || pasteImageDisplayName("")
+        incoming.push({
+          name,
+          type: workingType,
+          size: working.size,
+          content: base64,
+          ...(compressed ? { compressed: true } : {}),
+        })
+        if (isImage) addedImages += 1
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "添加文件失败"
+        setFileError(msg)
+      }
     }
-    setSelectedFiles(prev => [...prev, ...newFiles])
+    if (incoming.length === 0) return
+
+    const nextFiles = [...selectedFilesRef.current, ...incoming]
+    const capErr = checkComposerImageCaps(nextFiles.filter((f) => isAllowlistedImageMime(f.type)))
+    if (capErr) {
+      setFileError(capErr)
+      return
+    }
+    setFileError("")
+    setSelectedFiles(nextFiles)
+    selectedFilesRef.current = nextFiles
+
+    // Mixed send: typed text + gesture-added images → send with explicit array.
+    if (opts.fromGesture && addedImages > 0 && textRef.current.trim()) {
+      handleSend(nextFiles)
+    }
+  }
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+    await addIncomingFiles(Array.from(files), { fromGesture: false })
     e.target.value = ""
+  }
+
+  const handleComposerPaste = (e: React.ClipboardEvent) => {
+    if (e.defaultPrevented) return
+    if (ingestBlockedRef.current) return
+    const items = e.clipboardData?.items
+    if (!items) return
+    const imageFiles: File[] = []
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.kind === "file" && isAllowlistedImageMime(item.type)) {
+        const f = item.getAsFile()
+        if (f) imageFiles.push(f)
+      }
+    }
+    if (imageFiles.length === 0) return
+    // Keep typed text. Do not let the browser insert an HTML <img>.
+    e.preventDefault()
+    void addIncomingFiles(imageFiles, { fromGesture: true, fromPaste: true })
+  }
+
+  const handleComposerDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (ingestBlockedRef.current) {
+      e.dataTransfer.dropEffect = "none"
+      return
+    }
+    e.dataTransfer.dropEffect = "copy"
+    setDragOver(true)
+  }
+
+  const handleComposerDragEnter = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (ingestBlockedRef.current) return
+    dragDepthRef.current += 1
+    setDragOver(true)
+  }
+
+  const handleComposerDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setDragOver(false)
+  }
+
+  const handleComposerDrop = (e: React.DragEvent) => {
+    dragDepthRef.current = 0
+    setDragOver(false)
+    if (ingestBlockedRef.current) {
+      e.preventDefault()
+      return
+    }
+    e.preventDefault()
+    const types = Array.from(e.dataTransfer?.types || [])
+    const rawFiles = Array.from(e.dataTransfer?.files || [])
+    const verdict = classifyDrop(
+      types,
+      rawFiles.map((f) => ({ type: f.type, size: f.size, name: f.name })),
+    )
+    if (verdict.ok === false) {
+      setFileError(verdict.error)
+      return
+    }
+    // NEVER fetch — only local File objects from the drop.
+    void addIncomingFiles(rawFiles, { fromGesture: true })
+  }
+
+  useEffect(() => {
+    const onMsg = (msg: { type?: string } | undefined) => {
+      if (msg?.type === "file.uploaded") {
+        setSelectedFiles([])
+      }
+    }
+    try {
+      chrome.runtime.onMessage.addListener(onMsg)
+      return () => {
+        try {
+          chrome.runtime.onMessage.removeListener(onMsg)
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      return undefined
+    }
   }, [])
 
   const removeFile = useCallback((idx: number) => {
@@ -1235,13 +1478,20 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   }
 
   return (
-    <div style={{ borderTop: `1px solid ${tokens.border}`, flexShrink: 0, position: "relative" as const, background: tokens.bg }}>
+    <div
+      style={{ borderTop: `1px solid ${tokens.border}`, flexShrink: 0, position: "relative" as const, background: tokens.bg }}
+      onPaste={handleComposerPaste}
+      onDragEnter={handleComposerDragEnter}
+      onDragOver={handleComposerDragOver}
+      onDragLeave={handleComposerDragLeave}
+      onDrop={handleComposerDrop}
+    >
       <input
         ref={fileInputRef}
         type="file"
         hidden
         multiple
-        accept=".docx,.pptx,.xlsx,.pdf,.odt,.rtf,.csv,.md,.txt,.html,.htm"
+        accept={IMAGE_ACCEPT}
         onChange={handleFileSelect}
       />
       {fileError && (
@@ -1251,6 +1501,15 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         }}>
           <span>{fileError}</span>
           <span role="button" style={{ cursor: "pointer", fontWeight: "bold" }} onClick={() => setFileError("")}>×</span>
+        </div>
+      )}
+      {destAck && (
+        <div style={{
+          padding: "4px 12px", color: tokens.textSecondary,
+          fontSize: 11, display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <span>{destAck}</span>
+          <span role="button" style={{ cursor: "pointer", fontWeight: "bold" }} onClick={() => setDestAck("")}>×</span>
         </div>
       )}
       {selectedFiles.length > 0 && (
@@ -1269,6 +1528,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                 whiteSpace: "nowrap", minWidth: 0,
               }}>
                 {file.name} ({formatFileSize(file.size)})
+                {isAllowlistedImageMime(file.type) ? ` · ${destHost}` : ""}
               </span>
               <span
                 role="button"
@@ -1351,6 +1611,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             ...styles.composerCapsule,
             opacity: needsThread || needsConnection ? 0.85 : 1,
             background: needsThread || needsConnection ? tokens.bgMuted : tokens.bgElevated,
+            borderColor: dragOver ? tokens.accent : tokens.borderStrong,
+            boxShadow: dragOver ? `0 0 0 1px ${tokens.accent}` : tokens.shadowSm,
           }}
         >
           {!showStop && !(voice.listening && showVoiceMic) && (
@@ -1359,7 +1621,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               style={styles.attachBtn}
               onClick={() => fileInputRef.current?.click()}
               disabled={needsThread || needsConnection || threadBusy}
-              title="上传文件"
+              title="添加文件或图片"
             >
               <IconAttach size={16} />
             </button>
@@ -1380,6 +1642,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             }
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onPaste={handleComposerPaste}
           />
           {showVoiceMic && (
             <VoiceMicButton
@@ -1415,7 +1678,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                 opacity: canSend ? 1 : 0.45,
                 cursor: canSend ? "pointer" : "not-allowed",
               }}
-              onClick={handleSend}
+              onClick={() => handleSend()}
               disabled={!canSend}
               title={
                 needsThread
