@@ -34,6 +34,8 @@ import {
 } from "./context-handoff"
 import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
 import { classifyAlias, commitThreadAlias } from "../threads/alias-commit"
+import { hydrateUserImageParts } from "./image-parts"
+import { likelyMultimodal } from "./likely-multimodal"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -97,6 +99,13 @@ interface ChatCreateParams {
   skillIds: string[]
   knowledgeIds?: string[]
   fileContents?: Array<{ filename: string; content: string }>
+  /** Image sidecar metadata only — bytes are written by the router before chatCreate. */
+  imageAttachments?: Array<{
+    name: string
+    mime: "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+    sha256: string
+    bytes: number
+  }>
   /** Full llm config (protocol + credentials). Default protocol=openai preserves DeepSeek path. */
   config: LlmConfig
   threadManager: ThreadManager
@@ -158,7 +167,11 @@ export function createToolResultMessage(threadId: string, toolCall: any, result:
   }
 }
 
-/** Persisted thread message shape used when rebuilding the OpenAI payload. */
+/**
+ * Persisted thread message shape used when rebuilding the OpenAI payload.
+ * String content only — image attachments stay on disk metadata and are
+ * hydrated AFTER rebuild via hydrateUserImageParts (no I/O here).
+ */
 export type HistoryMessageLike = {
   role: string
   content?: string | null
@@ -295,7 +308,7 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 }
 
 export async function chatCreate(params: ChatCreateParams) {
-  const { threadId, message, skillIds, knowledgeIds, fileContents, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage, contextRefsSegment } = params
+  const { threadId, message, skillIds, knowledgeIds, fileContents, imageAttachments, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage, contextRefsSegment } = params
 
   // Create user message (skip for regenerate)
   if (!skipUserMessage) {
@@ -354,7 +367,26 @@ export async function chatCreate(params: ChatCreateParams) {
 
       userContent = `${message}\n\n${docTags.join("\n\n")}`
     }
-    threadManager.addMessage(threadId, { thread_id: threadId, role: "user", content: userContent })
+    const displayNames = [
+      ...(fileContents || []).map((f) => f.filename),
+      ...(imageAttachments || []).map((a) => a.name),
+    ]
+    if (displayNames.length && !userContent.includes("📎")) {
+      userContent = `${userContent}\n📎 ${displayNames.join(", ")}`
+    }
+    const msg = threadManager.addMessage(threadId, {
+      thread_id: threadId,
+      role: "user",
+      content: userContent,
+      attachments: imageAttachments?.map((a) => ({ kind: "image" as const, ...a })),
+    })
+    sendToExtension({
+      type: "chat.user",
+      thread_id: threadId,
+      message_id: msg.id,
+      content: userContent,
+      attachments: msg.attachments,
+    })
   }
 
   // Activate requested skills
@@ -474,6 +506,28 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   }
 
   messages.push(...rebuildMessagesFromHistory(history))
+
+  // Hydrate image parts AFTER rebuild (string-only pairing). Sidecar I/O lives
+  // here — never inside rebuildMessagesFromHistory. skipUserMessage uses the
+  // same path (no second addMessage).
+  const useNative = likelyMultimodal(config.model_name)
+  const persisted = threadManager.getMessages(threadId)
+  messages = [
+    ...messages.filter((m) => m.role === "system"),
+    ...hydrateUserImageParts(
+      messages.filter((m) => m.role !== "system"),
+      persisted,
+      {
+        useNative,
+        maxImages: 4,
+        readImage: (att) => {
+          const buf = threadManager.readImageAttachment(threadId, att)
+          if (!buf) return null
+          return { base64: buf.toString("base64"), mime: att.mime }
+        },
+      },
+    ),
+  ]
 
   // L2: provider abstraction — openai SDK or Anthropic Messages fetch+SSE
   const provider = createProvider(config)

@@ -417,3 +417,27 @@ test("P0-B: rebuildMessagesFromHistory accepts reordered ids inside contiguous t
   assert.equal(rebuilt[2].role, "tool")
   assert.equal(rebuilt[3].role, "tool")
 })
+
+test("rebuildMessagesFromHistory ignores attachments on HistoryMessageLike (pairing stays string-only)", () => {
+  const history = [
+    {
+      role: "user",
+      content: "see this",
+      attachments: [{
+        kind: "image",
+        name: "shot.png",
+        mime: "image/png",
+        sha256: "abc",
+        bytes: 12,
+      }],
+    },
+    { role: "assistant", content: "ok" },
+  ]
+  const rebuilt = rebuildMessagesFromHistory(history)
+  assert.equal(rebuilt.length, 2)
+  assert.equal(rebuilt[0].role, "user")
+  assert.equal(rebuilt[0].content, "see this")
+  assert.equal(typeof rebuilt[0].content, "string")
+  assert.ok(!("attachments" in rebuilt[0]), "rebuild must not copy attachments onto payload")
+  assert.ok(!(rebuilt[0] as { tool_calls?: unknown }).tool_calls)
+})
