@@ -11,6 +11,11 @@ import {
   selectionState,
   toggleGroupSelection,
   displayThreadTitle,
+  displayThreadEvidence,
+  acpOutcomeChip,
+  formatClockTime,
+  formatThreadListTime,
+  countAliases,
   threadIdsInMonth,
   aliasFromFirstUserText,
   buildTagIndex,
@@ -221,6 +226,66 @@ test("displayThreadTitle fallback", () => {
   // Id lives in list badge (formatThreadIdBadge), not inlined into title
   assert.equal(displayThreadTitle({ id: "abcdefgh", alias: "  " }), "未命名")
   assert.equal(displayThreadTitle({ id: "x", alias: "Hello" }), "Hello")
+})
+
+test("displayThreadTitle hygiene ladder (P-B1)", () => {
+  assert.equal(displayThreadTitle({ id: "2b8ckp", alias: "", message_count: 0 }), "空会话")
+  assert.equal(
+    displayThreadTitle({
+      id: "rny77t",
+      alias: "",
+      message_count: 2,
+      user_message_count: 0,
+      acp_list: { outcome: "fail", agent_id: "pi" },
+    }),
+    "编程接力",
+  )
+  assert.equal(
+    displayThreadTitle({
+      id: "4j6l6f",
+      alias: "p1-wl",
+      message_count: 1,
+      user_message_count: 0,
+      acp_list: { outcome: "fail", agent_id: "pi" },
+    }),
+    "p1-wl",
+  )
+  assert.equal(
+    displayThreadTitle({
+      id: "x",
+      alias: "",
+      message_count: 2,
+      user_message_count: 0,
+    }),
+    "无用户消息",
+  )
+  assert.ok(!/未命名\s*·/.test(displayThreadTitle({ id: "rny77t", alias: "" })))
+})
+
+test("acpOutcomeChip + evidence never inlines handback body", () => {
+  const t = {
+    id: "rny77t",
+    alias: "",
+    message_count: 2,
+    user_message_count: 0,
+    acp_list: { outcome: "fail" as const, agent_id: "pi" },
+  }
+  assert.equal(acpOutcomeChip(t), "失败")
+  const ev = displayThreadEvidence(t)
+  assert.equal(ev, "编程接力 · pi · 失败")
+  assert.ok(!String(ev).includes("No API key"))
+})
+
+test("duplicate alias uses clock time", () => {
+  const now = new Date(2026, 7, 17, 15, 0, 0)
+  const threads = [
+    { id: "a", alias: "p1-wl", updated_at: new Date(2026, 7, 17, 14, 32).toISOString() },
+    { id: "b", alias: "p1-wl", updated_at: new Date(2026, 7, 17, 11, 8).toISOString() },
+  ]
+  const counts = countAliases(threads)
+  assert.equal(counts.get("p1-wl"), 2)
+  assert.match(formatThreadListTime(threads[0], now, counts), /今天 14:32/)
+  assert.match(formatClockTime(threads[1].updated_at, now), /今天 11:08/)
 })
 
 test("aliasFromFirstUserText strips prefixes and truncates", () => {

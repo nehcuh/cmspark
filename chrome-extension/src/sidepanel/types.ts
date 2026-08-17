@@ -59,6 +59,13 @@ export interface Thread {
    * Used for unnamed fallback display + local search.
    */
   first_user_preview?: string | null
+  message_count?: number
+  user_message_count?: number
+  acp_list?: {
+    outcome?: "ok" | "partial" | "fail" | "cancelled"
+    agent_id?: string
+    goal_preview?: string
+  } | null
   /** P1: short searchable index from extract_digest */
   digest?: {
     extracted_at?: string

@@ -12,12 +12,14 @@ import {
   buildTagIndex,
   collapseTagKeys,
   digestQuotaDayKey,
-  displayDigestTldr,
+  acpOutcomeChip,
+  countAliases,
+  displayThreadEvidence,
   displayThreadTitle,
   EXTRACT_DIGEST_MAX,
   filterThreadsByQuery,
-  formatRelativeTime,
   formatThreadIdBadge,
+  formatThreadListTime,
   groupThreadsByCalendar,
   isMonthGroupOpen,
   isPinnedGroupOpen,
@@ -123,10 +125,17 @@ export function ThreadList() {
   const [trashView, setTrashView] = useState(false)
   const [cleanupOpen, setCleanupOpen] = useState(false)
   const [cleanupSuggestions, setCleanupSuggestions] = useState<
-    Array<{ thread_id: string; reason: string; detail: string; confidence: number }>
+    Array<{
+      thread_id: string
+      reason: string
+      detail: string
+      confidence: number
+      precheck?: boolean
+    }>
   >([])
   const [cleanupSelected, setCleanupSelected] = useState<Set<string>>(() => new Set())
-  const [cleanupDays, setCleanupDays] = useState(30)
+  /** 0 = 全部（含近期） */
+  const [cleanupDays, setCleanupDays] = useState(0)
   /** Wave C: seed for related list; graph focus */
   const [relatedSeedId, setRelatedSeedId] = useState<string | null>(null)
   /** Companion thread.related override (local mirror first; WS may refine). */
@@ -166,7 +175,13 @@ export function ThreadList() {
       const detail = (e as CustomEvent).detail
       const list = Array.isArray(detail?.suggestions) ? detail.suggestions : []
       setCleanupSuggestions(list)
-      setCleanupSelected(new Set(list.map((s: { thread_id: string }) => s.thread_id)))
+      setCleanupSelected(
+        new Set(
+          list
+            .filter((s: { precheck?: boolean }) => s.precheck === true)
+            .map((s: { thread_id: string }) => s.thread_id),
+        ),
+      )
       setCleanupOpen(true)
     }
     window.addEventListener("cmspark:cleanup_suggestions", onSug as EventListener)
@@ -323,6 +338,8 @@ export function ThreadList() {
     )
     return filterThreadsByQuery(base, query)
   }, [threads, query, trashView])
+
+  const aliasDupCount = useMemo(() => countAliases(filtered as Thread[]), [filtered])
 
   const timeline = useMemo(
     () => groupThreadsByCalendar(filtered as Thread[], now),
@@ -538,8 +555,26 @@ export function ThreadList() {
   }
 
   const handleCleanupEmpty = () => {
-    if (!confirm("确定清理所有空白线程？\n没有消息的线程将被永久删除，此操作不可恢复。")) return
-    chrome.runtime.sendMessage({ type: "thread.cleanup_empty" })
+    const emptyN = threads.filter(
+      (t) => t.message_count === 0 && t.id !== activeThreadId && !t.trashed_at,
+    ).length
+    if (threads.some((t) => typeof t.message_count === "number") && emptyN === 0) {
+      alert("没有空白线程")
+      setMenuOpen(false)
+      return
+    }
+    const nLabel = emptyN > 0 ? `${emptyN} 个` : "所有"
+    if (
+      !confirm(
+        `将永久删除 ${nLabel}没有任何消息的空白线程。此操作不可恢复，也不经过回收站。`,
+      )
+    ) {
+      return
+    }
+    chrome.runtime.sendMessage({
+      type: "thread.cleanup_empty",
+      except_thread_id: activeThreadId,
+    })
     setMenuOpen(false)
     setOpen(false)
   }
@@ -748,20 +783,39 @@ export function ThreadList() {
   }
 
   const runCleanupScan = () => {
-    const to = new Date()
-    const from = new Date(to.getTime() - cleanupDays * 86400_000)
-    chrome.runtime.sendMessage({
+    const payload: Record<string, unknown> = {
       type: "thread.suggest_cleanup",
-      to: from.toISOString(), // threads updated before (now - days)
       include_workers: false,
-    })
+      except_thread_id: activeThreadId || undefined,
+    }
+    if (cleanupDays > 0) {
+      const to = new Date()
+      const from = new Date(to.getTime() - cleanupDays * 86400_000)
+      payload.to = from.toISOString()
+    }
+    chrome.runtime.sendMessage(payload)
     setMenuOpen(false)
   }
 
   const applyCleanupTrash = () => {
-    const ids = [...cleanupSelected]
+    const ids = [...cleanupSelected].slice(0, 50)
     if (ids.length === 0) return
-    if (!confirm(`将 ${ids.length} 个建议会话移入回收站？`)) return
+    const picked = cleanupSuggestions.filter((s) => ids.includes(s.thread_id))
+    const hasHusk = picked.some((s) => s.reason === "acp_husk")
+    const lines = picked.slice(0, 12).map((s) => {
+      const thr = threads.find((t) => t.id === s.thread_id)
+      const n = thr?.message_count
+      return `#${s.thread_id}${typeof n === "number" ? ` · ${n} 条消息` : ""}`
+    })
+    const more = picked.length > 12 ? `\n…另 ${picked.length - 12} 个` : ""
+    const warn = hasHusk ? "\n含编程接力记录，请再核对。" : ""
+    if (
+      !confirm(
+        `将把 ${ids.length} 个会话移入回收站（可在 ⋯ → 回收站 恢复，约 30 天后自动清除）。${warn}\n\n${lines.join("\n")}${more}`,
+      )
+    ) {
+      return
+    }
     chrome.runtime.sendMessage({ type: "thread.batch_delete", thread_ids: ids, mode: "trash" })
     dispatch({ type: "REMOVE_THREADS", threadIds: ids })
     setCleanupOpen(false)
@@ -782,13 +836,13 @@ export function ThreadList() {
     const busy = !!threadBusyById[t.id]
     const isActive = t.id === activeThreadId
     const badge = roleBadge(t.agent_role)
-    const preview = (t.first_user_preview || "").trim()
     const title = displayThreadTitle(t)
     const idBadge = formatThreadIdBadge(t.id)
-    const rel = formatRelativeTime(t.updated_at || t.created_at, now)
+    const rel = formatThreadListTime(t, now, aliasDupCount)
     const tags = t.digest?.tags || []
     const extracting = extractingIds.has(t.id)
-    const tldr = displayDigestTldr(t)
+    const evidence = displayThreadEvidence(t)
+    const chip = acpOutcomeChip(t)
     const justCopied = copiedId === t.id
 
     return (
@@ -820,6 +874,7 @@ export function ThreadList() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={styles.threadAliasRow}>
             <span style={styles.threadAlias}>{title}</span>
+            {chip ? <span style={styles.badge}>{chip}</span> : null}
             {idBadge ? (
               <button
                 type="button"
@@ -845,9 +900,9 @@ export function ThreadList() {
               </span>
             )}
           </div>
-          {tldr && (
-            <div style={styles.tldr} title={t.digest?.tldr || tldr}>
-              {tldr}
+          {evidence && (
+            <div style={styles.tldr} title={evidence}>
+              {evidence}
             </div>
           )}
           {tags.length > 0 && (
@@ -868,7 +923,6 @@ export function ThreadList() {
               ))}
             </div>
           )}
-          {preview ? <div style={styles.preview}>{preview}</div> : null}
           {rel && <div style={styles.relTime}>{rel}</div>}
         </div>
         {!selectMode && (
@@ -1274,6 +1328,7 @@ export function ThreadList() {
                           onClick={() => {
                             setCleanupOpen(true)
                             setMenuOpen(false)
+                            runCleanupScan()
                           }}
                         >
                           🗂 整理助手
@@ -1488,7 +1543,7 @@ export function ThreadList() {
                     onChange={(e) => setCleanupDays(Number(e.target.value))}
                     style={{ fontSize: 11, padding: "2px 4px" }}
                   >
-                    <option value={7}>7 天前以前</option>
+                    <option value={0}>全部（含近期）</option>
                     <option value={30}>30 天前以前</option>
                     <option value={90}>90 天前以前</option>
                   </select>
@@ -1518,7 +1573,7 @@ export function ThreadList() {
                 </div>
                 {cleanupSuggestions.length === 0 ? (
                   <div style={{ fontSize: 11, color: tokens.textMuted }}>
-                    点击扫描：空会话 / 极短孤消息 / 过久且内容少 / 同名
+                    空会话 / 无用户消息 / 极短孤消息 / 过久且少 / 同名薄会话（不含簇主）
                   </div>
                 ) : (
                   <>
@@ -1579,6 +1634,13 @@ export function ThreadList() {
                         title="仅提取要点/标签，不删除"
                       >
                         仅提取要点（{Math.min(cleanupSelected.size, EXTRACT_DIGEST_MAX)}）
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.selectBtn}
+                        onClick={() => setCleanupSelected(new Set())}
+                      >
+                        全不选
                       </button>
                       <button
                         type="button"

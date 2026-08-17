@@ -69,6 +69,14 @@ export class AcpManager {
   private listeners = new Set<AcpEventListener>()
   private lastProgressAt = new Map<string, number>()
   private handbackSink: AcpHandbackSink | null = null
+  private terminalSink:
+    | ((info: {
+        session: AcpSessionRecord
+        kind: "closed" | "cancelled" | "failed"
+        code?: number | null
+      }) => void)
+    | null = null
+  private terminalEmitted = new WeakSet<AcpSessionRecord>()
   /** Optional: wire L2 for ACP permission requests */
   permissionGate:
     | ((info: { title: string; detail?: string; sessionId: string }) => Promise<boolean>)
@@ -82,6 +90,34 @@ export class AcpManager {
   /** Inject completed handback into thread history (wired from server boot). */
   setHandbackSink(fn: AcpHandbackSink | null): void {
     this.handbackSink = fn
+  }
+
+  /** Alias / hygiene hook — terminal state only, never handback body. */
+  setTerminalSink(
+    fn:
+      | ((info: {
+          session: AcpSessionRecord
+          kind: "closed" | "cancelled" | "failed"
+          code?: number | null
+        }) => void)
+      | null,
+  ): void {
+    this.terminalSink = fn
+  }
+
+  private emitTerminal(
+    session: AcpSessionRecord,
+    kind: "closed" | "cancelled" | "failed",
+    code?: number | null,
+  ): void {
+    if (this.terminalEmitted.has(session)) return
+    this.terminalEmitted.add(session)
+    if (!this.terminalSink) return
+    try {
+      this.terminalSink({ session, kind, code })
+    } catch (e: any) {
+      logger.warn("acp.terminal_sink_error", { err: e?.message || String(e) })
+    }
   }
 
   private emit(ev: AcpLiveEvent): void {
@@ -461,6 +497,11 @@ export class AcpManager {
     }
     this.pushTimeline(session, [timelineItem("status", "session closed", { status: "done" })])
     this.emitProgress(session, body.slice(-400), true)
+    this.emitTerminal(
+      session,
+      code !== 0 && code != null ? "failed" : "closed",
+      code,
+    )
   }
 
   async start(sessionId: string): Promise<
@@ -557,6 +598,7 @@ export class AcpManager {
             timelineItem("error", errMsg, { status: "error" }),
           ])
           handle.kill()
+          this.emitTerminal(session, "failed")
           return { ok: false, error: errMsg }
         }
       }
@@ -565,6 +607,7 @@ export class AcpManager {
         session.state = "closed"
         const errMsg = "agent does not speak ACP JSON-RPC"
         session.error = errMsg
+        this.emitTerminal(session, "failed")
         return { ok: false, error: errMsg }
       }
       this.pushTimeline(session, [
@@ -591,6 +634,7 @@ export class AcpManager {
       session.state = "closed"
       session.error = `cannot write prompt file: ${e?.message || e}`
       this.emitProgress(session, session.error, true)
+      this.emitTerminal(session, "failed")
       return { ok: false, error: session.error }
     }
 
@@ -623,6 +667,7 @@ export class AcpManager {
         const errMsg = e?.message || String(e)
         session.error = errMsg
         this.emitProgress(session, errMsg, true)
+        this.emitTerminal(session, "failed")
         resolve({ ok: false, error: errMsg })
         return
       }
@@ -703,6 +748,7 @@ export class AcpManager {
         session.error = msg
         logger.warn("acp.spawn_error", { session_id: sessionId, err: msg })
         this.emitProgress(session, msg, true)
+        this.emitTerminal(session, "failed")
         resolve({ ok: false, error: msg })
       })
 
@@ -885,6 +931,7 @@ export class AcpManager {
       ),
     ])
     this.emitProgress(session, "cancelled", true)
+    this.emitTerminal(session, "cancelled")
     return { ok: true }
   }
 

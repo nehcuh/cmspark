@@ -1163,8 +1163,10 @@ export async function handleMessage(
       const includeWorkers = rest.include_workers === true
       const from = typeof rest.from === "string" ? rest.from : null
       const to = typeof rest.to === "string" ? rest.to : null
+      const { inspectThreadMessages } = await import("./threads/thread-inspect")
       const threads = threadManager.list({ include_trashed: false }).map((t) => {
         const msgs = threadManager.getMessages(t.id)
+        const inspected = inspectThreadMessages(msgs)
         const users = msgs.filter((m) => m.role === "user")
         const first = users[0]
         const firstLen = first ? String(first.content || "").trim().length : 0
@@ -1175,16 +1177,24 @@ export async function handleMessage(
           created_at: t.created_at,
           agent_role: t.agent_role,
           parent_thread_id: t.parent_thread_id,
-          message_count: msgs.length,
-          first_user_preview: threadManager.getFirstUserPreview(t.id),
+          message_count: inspected.message_count,
+          first_user_preview: first
+            ? String(first.content || "").replace(/\s+/g, " ").trim().slice(0, 80)
+            : "",
           first_user_len: firstLen,
           has_assistant: msgs.some((m) => m.role === "assistant"),
+          user_message_count: inspected.user_message_count,
+          assistant_chars: inspected.assistant_chars,
+          looks_like_acp: inspected.looks_like_acp,
+          assistant_excerpt: inspected.assistant_excerpt,
         }
       })
       const suggestions = suggestCleanupRules(threads, {
         from,
         to,
         include_workers: includeWorkers,
+        except_thread_id:
+          typeof rest.except_thread_id === "string" ? rest.except_thread_id : null,
       })
       return {
         type: "thread.cleanup_suggestions",
@@ -1194,9 +1204,14 @@ export async function handleMessage(
       }
     }
     case "thread.cleanup_empty": {
+      const exceptId =
+        typeof rest.except_thread_id === "string" && rest.except_thread_id
+          ? rest.except_thread_id
+          : undefined
       try {
         const { releaseTrustBeforeThreadGone } = await import("./packs/pack-engine")
         for (const t of threadManager.list()) {
+          if (exceptId && t.id === exceptId) continue
           if (threadManager.getMessages(t.id).length === 0) {
             releaseTrustBeforeThreadGone(t, "thread.cleanup_empty", threadManager)
           }
@@ -1204,7 +1219,7 @@ export async function handleMessage(
       } catch {
         /* best-effort */
       }
-      const deletedIds = threadManager.cleanupEmpty()
+      const deletedIds = threadManager.cleanupEmpty(exceptId)
       // Notify all connected side panels so their thread lists stay in sync.
       if (session?.broadcast) {
         for (const threadId of deletedIds) {
@@ -1301,12 +1316,20 @@ export async function handleMessage(
           skipped.push({ id: thr.id, reason: "no_user_message" })
           continue
         }
-        const alias = aliasFromFirstUserText(preview, 40)
+        const alias = aliasFromFirstUserText(preview, 16)
         if (!alias) {
           skipped.push({ id: thr.id, reason: "empty_title" })
           continue
         }
-        const next = threadManager.update(thr.id, { alias })
+        const { commitThreadAlias } = await import("./threads/alias-commit")
+        const committed = commitThreadAlias({
+          threadManager,
+          threadId: thr.id,
+          next: alias,
+          class: "provisional_user",
+          firstUserText: preview,
+        })
+        const next = committed.ok ? threadManager.get(thr.id) : null
         if (next) {
           updated.push({ id: next.id, alias: next.alias })
           session?.broadcast?.({ type: "thread.updated", thread: next })
