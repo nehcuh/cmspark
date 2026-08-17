@@ -288,6 +288,58 @@ export function deleteSidecarsForMessages(
   for (const name of names) unlinkContained(realDir, name)
 }
 
+function iterIdMap(
+  idMap: ReadonlyMap<string, string> | Record<string, string>,
+): Iterable<[string, string]> {
+  return idMap instanceof Map ? idMap.entries() : Object.entries(idMap)
+}
+
+/**
+ * Copy sidecar bytes from `fromId` → `toId` using oldMsgId → newMsgId.
+ * Used by `thread.fork` after messages are copied (new ids). Source load and
+ * dest write use the same containment as read/write (lstat dir not symlink,
+ * realpath file strictly inside realpath dir). Caller stamps dest
+ * attachments.rel / msg_id (addMessage → stampAttachments).
+ *
+ * @returns number of sidecar files written to the dest thread
+ */
+export function copyAttachmentsToThread(
+  fromId: string,
+  toId: string,
+  idMap: ReadonlyMap<string, string> | Record<string, string>,
+): number {
+  if (!isSafeThreadId(fromId) || !isSafeThreadId(toId) || fromId === toId) return 0
+
+  const srcDir = resolveAttachmentsDir(getConfigDir(), fromId)
+  if (!srcDir || !lstatDirNotSymlink(srcDir)) return 0
+  try {
+    fs.realpathSync(srcDir)
+  } catch {
+    return 0
+  }
+
+  let entries: string[]
+  try {
+    entries = fs.readdirSync(srcDir)
+  } catch {
+    return 0
+  }
+
+  let copied = 0
+  for (const [oldMsgId, newMsgId] of iterIdMap(idMap)) {
+    if (!isSafeMsgId(oldMsgId) || !isSafeMsgId(newMsgId)) continue
+    for (const ent of entries) {
+      const parsed = parseCompanionSidecarRel(ent)
+      if (!parsed || parsed.msgId !== oldMsgId) continue
+      const buf = loadSidecarBytes(fromId, sidecarBasename(parsed.msgId, parsed.index, parsed.mime))
+      if (!buf) continue
+      const written = writeImageSidecar(toId, newMsgId, parsed.index, parsed.mime, buf)
+      if (written) copied++
+    }
+  }
+  return copied
+}
+
 /**
  * Hard-delete `threads/<id>.files/`. Refuses if the path is a symlink or not a
  * directory (do not rmSync through a planted link).

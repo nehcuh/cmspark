@@ -17,6 +17,7 @@ let writeImageSidecar: typeof import("../src/threads/image-sidecar").writeImageS
 let readImageSidecar: typeof import("../src/threads/image-sidecar").readImageSidecar
 let readImageAttachment: typeof import("../src/threads/image-sidecar").readImageAttachment
 let deleteSidecarsForMessages: typeof import("../src/threads/image-sidecar").deleteSidecarsForMessages
+let copyAttachmentsToThread: typeof import("../src/threads/image-sidecar").copyAttachmentsToThread
 let attachmentsDir: typeof import("../src/threads/image-sidecar").attachmentsDir
 let removeAttachmentsDir: typeof import("../src/threads/image-sidecar").removeAttachmentsDir
 
@@ -36,6 +37,7 @@ before(async () => {
   readImageSidecar = sidecar.readImageSidecar
   readImageAttachment = sidecar.readImageAttachment
   deleteSidecarsForMessages = sidecar.deleteSidecarsForMessages
+  copyAttachmentsToThread = sidecar.copyAttachmentsToThread
   attachmentsDir = sidecar.attachmentsDir
   removeAttachmentsDir = sidecar.removeAttachmentsDir
   await initDataDir()
@@ -333,4 +335,105 @@ test("soft-trash (trash()) does not delete .files/", () => {
   const purged = tm.purgeExpiredTrash(30, cutoff)
   assert.ok(purged.includes(thread.id))
   assert.ok(!fs.existsSync(dir), "purgeExpiredTrash must remove .files/")
+})
+
+test("copyAttachmentsToThread remaps sidecars and dest attachments (fork leftover)", () => {
+  const tm = new ThreadManager()
+  const src = tm.create("fork-src")
+  const dest = tm.create("fork-dest")
+  const oldMsg = tm.addMessage(src.id, {
+    thread_id: src.id,
+    role: "user",
+    content: "pic",
+    attachments: [
+      { kind: "image", name: "a.png", mime: "image/png", sha256: "1", bytes: PNG.length },
+      { kind: "image", name: "b.png", mime: "image/png", sha256: "2", bytes: PNG.length },
+    ],
+  })
+  assert.ok(writeImageSidecar(src.id, oldMsg.id, 0, "image/png", PNG))
+  assert.ok(writeImageSidecar(src.id, oldMsg.id, 1, "image/png", PNG))
+
+  // Mirror thread.fork: addMessage stamps dest rel/msg_id; then copy bytes.
+  const newMsg = tm.addMessage(dest.id, {
+    thread_id: dest.id,
+    role: "user",
+    content: oldMsg.content,
+    attachments: oldMsg.attachments,
+  })
+  const copied = copyAttachmentsToThread(src.id, dest.id, new Map([[oldMsg.id, newMsg.id]]))
+  assert.equal(copied, 2)
+
+  const destDir = filesDir(dest.id)
+  assert.ok(fs.existsSync(path.join(destDir, `${newMsg.id}-0.png`)))
+  assert.ok(fs.existsSync(path.join(destDir, `${newMsg.id}-1.png`)))
+  assert.equal(fs.statSync(destDir).mode & 0o777, 0o700)
+  assert.equal(fs.statSync(path.join(destDir, `${newMsg.id}-0.png`)).mode & 0o777, 0o600)
+  assert.deepEqual(fs.readFileSync(path.join(destDir, `${newMsg.id}-0.png`)), PNG)
+  assert.ok(fs.existsSync(path.join(filesDir(src.id), `${oldMsg.id}-0.png`)), "source sidecar remains")
+
+  const destPersisted = tm.getMessages(dest.id)[0]
+  assert.equal(destPersisted.attachments!.length, 2)
+  assert.equal(destPersisted.attachments![0]!.rel, `${newMsg.id}-0.png`)
+  assert.equal(destPersisted.attachments![0]!.msg_id, newMsg.id)
+  assert.equal(destPersisted.attachments![1]!.rel, `${newMsg.id}-1.png`)
+  assert.equal(destPersisted.attachments![1]!.msg_id, newMsg.id)
+  assert.notEqual(destPersisted.attachments![0]!.rel, oldMsg.attachments![0]!.rel)
+  assert.deepEqual(tm.readImageAttachment(dest.id, destPersisted.attachments![0]!), PNG)
+  assert.deepEqual(tm.readImageAttachment(dest.id, destPersisted.attachments![1]!), PNG)
+})
+
+test("copyAttachmentsToThread refuses source/dest .files symlink (no copy through link)", () => {
+  const tm = new ThreadManager()
+  const src = tm.create("fork-sym-src")
+  const dest = tm.create("fork-sym-dest")
+  const oldMsg = tm.addMessage(src.id, {
+    thread_id: src.id,
+    role: "user",
+    content: "pic",
+    attachments: [{ kind: "image", name: "a.png", mime: "image/png", sha256: "1", bytes: PNG.length }],
+  })
+  assert.ok(writeImageSidecar(src.id, oldMsg.id, 0, "image/png", PNG))
+
+  const newMsg = tm.addMessage(dest.id, {
+    thread_id: dest.id,
+    role: "user",
+    content: "pic",
+    attachments: oldMsg.attachments,
+  })
+
+  // Source .files is a symlink → refuse (do not read through planted link).
+  const srcFiles = filesDir(src.id)
+  const victim = path.join(tempHome, `victim-fork-${src.id}`)
+  fs.mkdirSync(victim, { recursive: true })
+  fs.writeFileSync(path.join(victim, "keep.txt"), "secret")
+  fs.rmSync(srcFiles, { recursive: true, force: true })
+  fs.symlinkSync(victim, srcFiles)
+  assert.equal(copyAttachmentsToThread(src.id, dest.id, { [oldMsg.id]: newMsg.id }), 0)
+  assert.ok(!fs.existsSync(path.join(filesDir(dest.id), `${newMsg.id}-0.png`)))
+
+  // Restore a real source dir and plant dest .files as a symlink.
+  fs.unlinkSync(srcFiles)
+  assert.ok(writeImageSidecar(src.id, oldMsg.id, 0, "image/png", PNG))
+  const destFiles = filesDir(dest.id)
+  const destVictim = path.join(tempHome, `victim-fork-dest-${dest.id}`)
+  fs.mkdirSync(destVictim, { recursive: true })
+  const planted = path.join(destVictim, `${newMsg.id}-0.png`)
+  if (fs.existsSync(destFiles)) fs.rmSync(destFiles, { recursive: true, force: true })
+  fs.symlinkSync(destVictim, destFiles)
+  assert.equal(copyAttachmentsToThread(src.id, dest.id, new Map([[oldMsg.id, newMsg.id]])), 0)
+  assert.ok(!fs.existsSync(planted), "must not write through dest .files symlink")
+  assert.ok(fs.lstatSync(destFiles).isSymbolicLink())
+})
+
+test("thread.fork calls copyAttachmentsToThread (lockstep leftover Task 5/12)", () => {
+  const srcCandidates = [
+    path.join(__dirname, "..", "..", "src", "message-router.ts"),
+    path.join(__dirname, "..", "src", "message-router.js"),
+  ]
+  const srcPath = srcCandidates.find((p) => fs.existsSync(p))
+  assert.ok(srcPath, "message-router source not found for fork-copy lock")
+  const src = fs.readFileSync(srcPath, "utf-8")
+  assert.match(src, /case "thread\.fork"/)
+  assert.match(src, /copyAttachmentsToThread\(/)
+  assert.match(src, /idMap\.set\(msg\.id,\s*copied\.id\)/)
 })

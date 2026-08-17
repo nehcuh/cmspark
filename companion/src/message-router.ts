@@ -43,7 +43,7 @@ import {
   sha256hex,
   validateImageCaps,
 } from "./llm/split-upload-files"
-import { writeImageSidecar } from "./threads/image-sidecar"
+import { copyAttachmentsToThread, writeImageSidecar } from "./threads/image-sidecar"
 import type { RasterMime } from "./llm/image-sniff"
 import { chunkFile, searchChunks } from "./file-chunker"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
@@ -1592,8 +1592,9 @@ export async function handleMessage(
       const idx = messages.findIndex(m => m.id === rest.message_id)
       const msgsToCopy = idx >= 0 ? messages.slice(0, idx + 1) : messages
 
+      const idMap = new Map<string, string>()
       for (const msg of msgsToCopy) {
-        threadManager.addMessage(newThread.id, {
+        const copied = threadManager.addMessage(newThread.id, {
           thread_id: newThread.id,
           role: msg.role,
           content: msg.content,
@@ -1602,8 +1603,16 @@ export async function handleMessage(
           ...(msg.reasoning_content != null
             ? { reasoning_content: msg.reasoning_content }
             : {}),
+          // Task 12 / leftover Task 5: persist remapped attachment metadata
+          // (stampAttachments rewrites rel / msg_id onto the new message id).
+          ...(Array.isArray(msg.attachments) && msg.attachments.length > 0
+            ? { attachments: msg.attachments }
+            : {}),
         })
+        idMap.set(msg.id, copied.id)
       }
+      // Bytes live under threads/<id>.files/; copy ${oldMsgId}-n.ext → ${newMsgId}-n.ext.
+      copyAttachmentsToThread(rest.thread_id, newThread.id, idMap)
 
       // Wave E P1-2: copy Composition surface (skills/knowledge/modes/whitelist/MCP).
       // Do NOT copy Trust (mission_pack_trust_snapshot / auto_approve) or runtime
