@@ -2,14 +2,14 @@
 
 ## Current Session
 
-### S73 (2026-08-17) [thread hygiene · 五路对抗 · 设计已拍板]
-- **用户问题**：整理会话 + 清理空白后仍见 `4j6l6f` / `rny77t` 一类意义不明对话
-- **诊断**：cleanup_empty 只硬删 0 消息；整理默认只扫 30 天前；无 user 的 ACP handback 不起名、不进规则
-- **方法**：五路独立对抗（A JTBD / B 呈现 / C 起名 / D 清理 / E 安全）
-- **用户裁决**：C′（新 ACP 终态写 `接力·{agent}·{token}`；旧行只改显示）+ D（薄空壳含失败 ACP husk **默认勾**）
-- **SoT**：`docs/superpowers/specs/2026-08-17-thread-hygiene-adversarial-design.md`
-- **下次**：用户审规格 → writing-plans → H1 呈现+召回 / H2 起名写口
-- Recorded: yes — 无意义=无 user 回合；p1-wl 禁止静默改名；cleanup_empty 语义冻结
+### S73 END (2026-08-17 ~14:53) [thread hygiene · 五路对抗 · **#193 MERGED**]
+- **Ship**：**PR #193 MERGED** rebase `7a88b8c` ← `feat/thread-hygiene` — 未命名/ACP husk 卫生（规格 C′+D + H1/H2）
+- **诊断**：清理空白只删 0 消息；整理默认 30 天前；无 user 的编程接力不起名、不进规则；用户把 `#id` 当名字
+- **设计**：五路独立对抗 → 用户拍 C′（终态写 `接力·{agent}·{token}`）+ D（薄 husk 预勾）
+- **落地**：呈现阶梯 + `acp_husk`/`no_user` + 整理默认全部；`commitThreadAlias`；三路对抗 REJECT 后修草稿/正文失败词/Trust exceptId/终态幂等
+- **CI**：build + 3 smoke 绿后 rebase 合 main
+- **下次**：(1) 重启 Companion + 重载扩展 (2) `⋯ → 整理助手` 验 `rny77t`/`4j6l6f` 预勾、`vpfb7g` 不动 (3) 新开失败接力应起名
+- Recorded: yes — 无意义=无 user；失败词禁扫 body；SW 必须转发 except_thread_id
 
 
 ### S72 END (2026-08-16~17) [Windows ACP spawn · 多路对抗 · **#191 MERGED**]
@@ -693,6 +693,13 @@
 - Recorded: yes 鈥?瑙?project-knowledge.md銆孧ermaid 鍥捐〃娓叉煋鐨勪笁涓潙銆? docs/adr/009
 
 ## In-Flight Tasks (Cross-Session)
+
+### 会话卫生 #193 真机 dogfood（S73 · #193 MERGED）
+- status: **active**
+- context: 规格 C′+D 与 H1/H2 已在 main `7a88b8c`
+- next_action: (1) 重启 Companion + 重载扩展 (2) 整理助手默认「全部」验 husk 预勾 (3) 新失败接力应写 `接力·…·失败`；长 p1-wl 研究帖不得进建议
+- resume_doc: PR #193 · `docs/superpowers/specs/2026-08-17-thread-hygiene-adversarial-design.md`
+- updated: 2026-08-17
 
 ### 编程接力 / Mode C 真机 dogfood（S71–S72 · #190 + #191）
 - status: **active**
