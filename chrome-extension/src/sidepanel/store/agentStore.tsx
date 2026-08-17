@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
+import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
 /** Live ACP coding handoff session (Composition). */
@@ -506,6 +506,84 @@ export const initialState: AgentState = {
   contextCompactedByThreadId: {},
 }
 
+/** Client-generated optimistic user ids: `${threadId}_user_${ms}` or `${threadId}_${ms}`. */
+export function isTempUserMessageId(id: string, threadId: string): boolean {
+  if (!id) return false
+  if (/_user_\d{10,}$/.test(id)) return true
+  if (threadId && id.startsWith(`${threadId}_`) && new RegExp(`^${escapeRegExp(threadId)}_\\d{10,}$`).test(id)) {
+    return true
+  }
+  return false
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function mergeAttachments(
+  existing: MessageAttachment[] | undefined,
+  incoming: MessageAttachment[] | undefined,
+): MessageAttachment[] | undefined {
+  if (incoming && incoming.length > 0) return incoming
+  if (existing && existing.length > 0) return existing
+  return existing
+}
+
+function reduceAddMessage(state: AgentState, incoming: Message): AgentState {
+  const sameIdIdx = state.messages.findIndex((m) => m.id === incoming.id)
+  if (sameIdIdx >= 0) {
+    const existing = state.messages[sameIdIdx]!
+    const merged = mergeAttachments(existing.attachments, incoming.attachments)
+    if (merged === existing.attachments) return state
+    return {
+      ...state,
+      messages: state.messages.map((m, i) =>
+        i === sameIdIdx ? { ...m, attachments: merged } : m,
+      ),
+    }
+  }
+
+  if (incoming.role === "user" && incoming.thread_id) {
+    let lastUserIdx = -1
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+      const m = state.messages[i]!
+      if (m.role === "user" && m.thread_id === incoming.thread_id) {
+        lastUserIdx = i
+        break
+      }
+    }
+    if (lastUserIdx >= 0) {
+      const last = state.messages[lastUserIdx]!
+      const lastTemp = isTempUserMessageId(last.id, incoming.thread_id)
+      const incomingTemp = isTempUserMessageId(incoming.id, incoming.thread_id)
+      if (lastTemp && !incomingTemp) {
+        const merged = mergeAttachments(last.attachments, incoming.attachments)
+        return {
+          ...state,
+          messages: state.messages.map((m, i) =>
+            i === lastUserIdx
+              ? { ...m, id: incoming.id, ...(merged ? { attachments: merged } : {}) }
+              : m,
+          ),
+        }
+      }
+      // Late SW echo after companion adopt — do not re-append the temp id.
+      if (!lastTemp && incomingTemp) {
+        const merged = mergeAttachments(last.attachments, incoming.attachments)
+        if (merged === last.attachments) return state
+        return {
+          ...state,
+          messages: state.messages.map((m, i) =>
+            i === lastUserIdx ? { ...m, attachments: merged } : m,
+          ),
+        }
+      }
+    }
+  }
+
+  return { ...state, messages: [...state.messages, incoming] }
+}
+
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
   switch (action.type) {
     case "SET_CONNECTION": {
@@ -581,10 +659,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "ADD_MESSAGE":
       // Dedup by id: Side Panel optimistic add + SW `chat.user` broadcast (Cockpit
       // / multi-surface) must not double-append the same user turn.
-      if (state.messages.some((m) => m.id === action.message.id)) {
-        return state
-      }
-      return { ...state, messages: [...state.messages, action.message] }
+      // Same-id echo may carry companion attachments — merge them onto the row.
+      // Companion persist uses a new message_id; adopt it onto the last temp
+      // optimistic user bubble in this thread (DoD #13).
+      return reduceAddMessage(state, action.message)
     case "UPDATE_MESSAGE":
       return {
         ...state,

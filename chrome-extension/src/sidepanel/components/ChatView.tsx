@@ -23,6 +23,9 @@ import {
   isIntentOnlyRunBusy,
 } from "../utils/thread-busy"
 import { tokens, statusColor } from "../ui/tokens"
+import { captionOnlyForEdit } from "../utils/image-compose"
+import { previewImageSafe } from "../utils/computer-utils"
+import type { MessageAttachment } from "../types"
 import {
   IconBranch,
   IconCopy,
@@ -558,6 +561,28 @@ export function ChatView() {
   )
 }
 
+/** 48px transcript thumb — preview JPEG or empty tile + name. No lightbox. */
+function UserImageThumb({ att }: { att: MessageAttachment }) {
+  const preview = typeof att.preview_jpeg_b64 === "string" ? att.preview_jpeg_b64 : ""
+  const src = previewImageSafe(preview) ? `data:image/jpeg;base64,${preview}` : ""
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={att.name || "image"}
+        width={48}
+        height={48}
+        style={styles.thumbImg}
+      />
+    )
+  }
+  return (
+    <div style={styles.thumbEmpty} title={att.name || "image"}>
+      {att.name || "image"}
+    </div>
+  )
+}
+
 /**
  * Memoized historical message row. Subscribes only to its own msg prop;
  * token-stream updates to `streamingContent` in the parent do NOT re-render this.
@@ -674,6 +699,13 @@ const MessageRow = memo(function MessageRow({
                 <ToolCallCard key={tc.id} tc={tc} />
               ))}
             </div>
+            {isUser && Array.isArray(msg.attachments) && msg.attachments.length > 0 ? (
+              <div style={styles.thumbRow} aria-label="附图">
+                {msg.attachments.map((att: MessageAttachment, i: number) => (
+                  <UserImageThumb key={`${att.sha256 || att.name}-${i}`} att={att} />
+                ))}
+              </div>
+            ) : null}
             <div style={{
               ...styles.actionBar,
               alignSelf: isUser ? "flex-end" : "flex-start",
@@ -685,7 +717,7 @@ const MessageRow = memo(function MessageRow({
                 <button
                   type="button"
                   style={styles.actionBtn}
-                  onClick={() => { setIsEditing(true); setEditingText(msg.content || "") }}
+                  onClick={() => { setIsEditing(true); setEditingText(captionOnlyForEdit(msg.content || "")) }}
                   title="编辑并重新生成"
                   aria-label="编辑并重新生成"
                 >
@@ -737,6 +769,7 @@ const MessageRow = memo(function MessageRow({
     prev.msg.content === next.msg.content &&
     prev.msg.reasoning_content === next.msg.reasoning_content &&
     prev.msg.tool_calls === next.msg.tool_calls &&
+    prev.msg.attachments === next.msg.attachments &&
     prev.activeThreadId === next.activeThreadId &&
     prev.sendShortcut === next.sendShortcut &&
     prev.showReasoningMode === next.showReasoningMode &&
@@ -1689,6 +1722,41 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column",
     maxWidth: "90%",
     width: "fit-content" as const,
+  },
+  thumbRow: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 6,
+    marginTop: 6,
+    alignSelf: "flex-end" as const,
+    maxWidth: "100%",
+  },
+  thumbImg: {
+    width: 48,
+    height: 48,
+    objectFit: "cover" as const,
+    borderRadius: tokens.radiusSm,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgMuted,
+    display: "block",
+  },
+  thumbEmpty: {
+    width: 48,
+    height: 48,
+    borderRadius: tokens.radiusSm,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgMuted,
+    color: tokens.textMuted,
+    fontSize: 9,
+    lineHeight: 1.2,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    textAlign: "center" as const,
+    padding: 3,
+    boxSizing: "border-box" as const,
+    overflow: "hidden",
+    wordBreak: "break-all" as const,
   },
   userBubble: {
     background: tokens.userBubbleBg,

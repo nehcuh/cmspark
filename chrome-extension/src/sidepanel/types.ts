@@ -262,6 +262,16 @@ export interface LLMConfig {
   thread_digest_max_per_day?: number
 }
 
+/** Image attachment metadata on a transcript row (bytes live on companion disk). */
+export interface MessageAttachment {
+  kind: "image"
+  name: string
+  mime: string
+  sha256?: string
+  bytes?: number
+  preview_jpeg_b64?: string
+}
+
 export interface Message {
   id: string
   thread_id: string
@@ -272,6 +282,7 @@ export interface Message {
   reasoning_content?: string
   created_at: string
   streaming?: boolean
+  attachments?: MessageAttachment[]
 }
 
 export interface SecurityConfirmationRequest {

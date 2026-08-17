@@ -96,6 +96,17 @@ export function defaultCaption(opts: {
   return ""
 }
 
+/**
+ * Transcript edit box: caption only.
+ * Strips the `📎 …` attachment/ref line and the `<!-- 用户附图分析 -->` vision block.
+ */
+export function captionOnlyForEdit(content: string): string {
+  let text = String(content || "")
+  text = text.replace(/\n*<!-- 用户附图分析 -->[\s\S]*$/, "")
+  text = text.replace(/(^|\n)📎[^\n]*/g, "")
+  return text.replace(/^\s+|\s+$/g, "")
+}
+
 /** Vision rail is open when enabled and file-upload vision is not explicitly off. */
 export function visionRailOpen(cfg: {
   vision_enabled?: boolean

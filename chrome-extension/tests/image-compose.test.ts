@@ -14,6 +14,7 @@ import {
   classifyDrop,
   clipboardImageDisplayName,
   compressImageBlob,
+  captionOnlyForEdit,
   defaultCaption,
   isAllowlistedImageMime,
   needsCompress,
@@ -154,6 +155,23 @@ test("defaultCaption: mixed attachments", () => {
 
 test("defaultCaption: empty everything", () => {
   assert.equal(defaultCaption({ images: 0, docs: 0, userText: "" }), "")
+})
+
+test("captionOnlyForEdit: strips 📎 line and vision block", () => {
+  assert.equal(
+    captionOnlyForEdit("看看这张图\n📎 shot.png"),
+    "看看这张图",
+  )
+  assert.equal(
+    captionOnlyForEdit("看看这张图\n\n<!-- 用户附图分析 -->\n[图片: shot.png] 一只橘猫\n📎 shot.png"),
+    "看看这张图",
+  )
+  assert.equal(
+    captionOnlyForEdit("hello\n\n📎 引用 2 个会话"),
+    "hello",
+  )
+  assert.equal(captionOnlyForEdit("plain"), "plain")
+  assert.equal(captionOnlyForEdit("📎 only.png"), "")
 })
 
 // --- visionRailOpen ---
