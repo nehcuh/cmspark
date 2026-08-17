@@ -42,6 +42,37 @@ test("serializeMessage includes tool_call arguments", () => {
   assert.match(serializeMessage(m), /ls/)
 })
 
+test("serializeMessage: user image parts do not stringify to [object Object]", () => {
+  const m: CanonicalChatMessage = {
+    role: "user",
+    content: [
+      { type: "text", text: "请看这张图" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+    ],
+  }
+  const s = serializeMessage(m)
+  assert.doesNotMatch(s, /\[object Object\]/)
+  assert.match(s, /请看这张图/)
+  assert.match(s, /\[image:\d+\]/)
+})
+
+test("redactMessagesForCompaction: user parts extract text, never replace on array", () => {
+  const msgs: CanonicalChatMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "see this sk-abc123456789secret" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+      ],
+    },
+  ]
+  const red = redactMessagesForCompaction(msgs)
+  assert.equal(typeof red[0].content, "string")
+  assert.doesNotMatch(String(red[0].content), /\[object Object\]/)
+  assert.match(String(red[0].content), /redacted-secret/)
+  assert.doesNotMatch(String(red[0].content), /sk-abc123456789secret/)
+})
+
 test("compactMessagesTurnSafe: no-op under budget", () => {
   const msgs = [system("s"), user("hi"), assistant("yo")]
   const r = compactMessagesTurnSafe(msgs, 1_000_000)

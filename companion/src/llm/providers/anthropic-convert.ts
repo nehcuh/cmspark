@@ -13,6 +13,7 @@ import type {
   CanonicalChatMessage,
   CanonicalToolCall,
   CanonicalToolDefinition,
+  UserContentPart,
 } from "../provider"
 
 /** Anthropic tool definition on the wire. */
@@ -29,6 +30,7 @@ export interface AnthropicTool {
 
 export type AnthropicContentBlock =
   | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }
 
@@ -92,6 +94,40 @@ export function convertToolsToAnthropic(
       input_schema,
     }
   })
+}
+
+/** Parse `data:<mime>;base64,<data>` only. http(s) and other URLs are skipped (no fetch). */
+function parseDataImageUrl(url: string | undefined | null): { mediaType: string; data: string } | null {
+  if (!url || typeof url !== "string") return null
+  const m = /^data:([^;,]+);base64,([\s\S]+)$/i.exec(url)
+  if (!m) return null
+  return { mediaType: m[1], data: m[2] }
+}
+
+function userContentToAnthropicBlocks(
+  content: string | UserContentPart[] | undefined | null,
+): AnthropicContentBlock[] {
+  if (typeof content === "string") {
+    return content ? [{ type: "text", text: content }] : []
+  }
+  if (!Array.isArray(content)) return []
+  const blocks: AnthropicContentBlock[] = []
+  for (const part of content) {
+    if (part.type === "text") {
+      if (part.text) blocks.push({ type: "text", text: part.text })
+      continue
+    }
+    if (part.type === "image_url") {
+      const parsed = parseDataImageUrl(part.image_url?.url)
+      if (parsed) {
+        blocks.push({
+          type: "image",
+          source: { type: "base64", media_type: parsed.mediaType, data: parsed.data },
+        })
+      }
+    }
+  }
+  return blocks
 }
 
 function parseToolArguments(args: string | undefined): Record<string, unknown> {
@@ -162,18 +198,25 @@ export function convertMessagesToAnthropic(messages: CanonicalChatMessage[]): {
     }
 
     if (msg.role === "user") {
-      // Merge consecutive string user turns (omit notice + next user) to avoid Anthropic 400.
-      // Spec: settings-thread-compact Pi nit F-I4.
-      let text = typeof msg.content === "string" ? msg.content : ""
+      // Merge consecutive user turns (omit notice + next user, including image parts)
+      // to avoid Anthropic 400. All-text → joined string; any image → block array.
+      const blocks: AnthropicContentBlock[] = [...userContentToAnthropicBlocks(msg.content)]
       i++
       while (i < messages.length && messages[i].role === "user") {
-        const next = messages[i]
-        const nextText =
-          typeof next.content === "string" ? next.content : next.content == null ? "" : String(next.content)
-        text = text ? `${text}\n\n${nextText}` : nextText
+        const next = messages[i] as Extract<CanonicalChatMessage, { role: "user" }>
+        blocks.push(...userContentToAnthropicBlocks(next.content))
         i++
       }
-      out.push({ role: "user", content: text })
+      const hasImage = blocks.some((b) => b.type === "image")
+      if (hasImage) {
+        out.push({ role: "user", content: blocks })
+      } else {
+        const text = blocks
+          .filter((b): b is { type: "text"; text: string } => b.type === "text")
+          .map((b) => b.text)
+          .join("\n\n")
+        out.push({ role: "user", content: text })
+      }
       continue
     }
 

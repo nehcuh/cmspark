@@ -5,6 +5,7 @@
 import { createHash } from "crypto"
 import { estimateTokens } from "../threads/summary-export"
 import type { CanonicalChatMessage } from "./provider"
+import { estimateImagePartTokens, userContentToText } from "./image-parts"
 // Avoid circular import with context-handoff (which imports buildRedactedTranscript here).
 // Structured ThreadHandoff is typed loosely on meta; format happens in adapter/handoff module.
 
@@ -55,6 +56,14 @@ export function serializeMessage(m: CanonicalChatMessage): string {
         const args = tc.function?.arguments || ""
         s += `\n${name}:${args}`
       }
+    }
+    return s
+  }
+  if (m.role === "user" && Array.isArray(m.content)) {
+    let s = ""
+    for (const p of m.content) {
+      if (p.type === "text") s += p.text
+      else s += `[image:${estimateImagePartTokens()}]`
     }
     return s
   }
@@ -187,10 +196,8 @@ export function redactMessagesForCompaction(messages: CanonicalChatMessage[]): C
       return { role: "system", content: scrubSecretPatterns(m.content || "").slice(0, 400) }
     }
     if (m.role === "user") {
-      return {
-        role: "user",
-        content: scrubSecretPatterns(typeof m.content === "string" ? m.content : "").slice(0, 800),
-      }
+      const text = typeof m.content === "string" ? m.content : userContentToText(m.content)
+      return { role: "user", content: scrubSecretPatterns(text || "").slice(0, 800) }
     }
     if (m.role === "assistant") {
       const names = (m.tool_calls || []).map((tc) => tc.function?.name || "?").join(",")

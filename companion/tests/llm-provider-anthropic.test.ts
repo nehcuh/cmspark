@@ -154,6 +154,29 @@ test("convertMessagesToAnthropic: merges consecutive user messages (omit notice 
   assert.match(String(messages[0].content), /What next/)
 })
 
+test("convertMessagesToAnthropic: merges omit notice + image user as blocks", () => {
+  const { messages } = convertMessagesToAnthropic([
+    { role: "system", content: "sys" },
+    { role: "user", content: "[context_omitted] Earlier 3 messages omitted." },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "请看这张图" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+      ],
+    },
+  ])
+  assert.equal(messages.length, 1)
+  assert.ok(Array.isArray(messages[0].content))
+  const blocks = messages[0].content as any[]
+  assert.ok(blocks.some((b) => b.type === "text" && /context_omitted/.test(b.text)))
+  assert.ok(blocks.some((b) => b.type === "text" && /请看这张图/.test(b.text)))
+  const img = blocks.find((b) => b.type === "image")
+  assert.equal(img.source.type, "base64")
+  assert.equal(img.source.media_type, "image/png")
+  assert.equal(img.source.data, "AAA")
+})
+
 test("convertMessagesToAnthropic: assistant tool_calls → tool_use blocks", () => {
   const { messages } = convertMessagesToAnthropic([
     { role: "user", content: "Read tab" },
