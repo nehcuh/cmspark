@@ -63,7 +63,7 @@ export function serializeMessage(m: CanonicalChatMessage): string {
     let s = ""
     for (const p of m.content) {
       if (p.type === "text") s += p.text
-      else s += `[image:${estimateImagePartTokens()}]`
+      else s += "[image]"
     }
     return s
   }
@@ -72,7 +72,16 @@ export function serializeMessage(m: CanonicalChatMessage): string {
 
 export function estimateMessagesTokens(msgs: CanonicalChatMessage[]): number {
   let n = 0
-  for (const m of msgs) n += estimateTokens(serializeMessage(m))
+  for (const m of msgs) {
+    if (m.role === "user" && Array.isArray(m.content)) {
+      for (const p of m.content) {
+        if (p.type === "text") n += estimateTokens(p.text)
+        else n += estimateImagePartTokens()
+      }
+    } else {
+      n += estimateTokens(serializeMessage(m))
+    }
+  }
   return n
 }
 

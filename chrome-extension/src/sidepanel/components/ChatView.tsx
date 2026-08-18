@@ -564,7 +564,15 @@ export function ChatView() {
 /** 48px transcript thumb — preview JPEG or empty tile + name. No lightbox. */
 function UserImageThumb({ att }: { att: MessageAttachment }) {
   const preview = typeof att.preview_jpeg_b64 === "string" ? att.preview_jpeg_b64 : ""
-  const src = previewImageSafe(preview) ? `data:image/jpeg;base64,${preview}` : ""
+  const src = previewImageSafe(preview)
+    ? preview.startsWith("iVBOR")
+      ? `data:image/png;base64,${preview}`
+      : preview.startsWith("R0lGOD") || preview.startsWith("R0lGod")
+        ? `data:image/gif;base64,${preview}`
+        : preview.startsWith("UklGR")
+          ? `data:image/webp;base64,${preview}`
+          : `data:image/jpeg;base64,${preview}`
+    : ""
   if (src) {
     return (
       <img

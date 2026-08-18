@@ -49,6 +49,14 @@ export function partitionUploadFiles(
     const name = typeof f?.name === "string" && f.name ? f.name : "file"
     const type = typeof f?.type === "string" ? f.type : ""
     const content = typeof f?.content === "string" ? f.content : ""
+    const declaredImage = type.toLowerCase().startsWith("image/")
+    if (declaredImage && !normalizeImageMime(type)) {
+      return {
+        images: [],
+        docs,
+        error: "不支持该图片格式（请使用 PNG / JPEG / GIF / WebP）",
+      }
+    }
     if (normalizeImageMime(type)) {
       let buf: Buffer
       try {
@@ -77,9 +85,27 @@ export function buildVisionAttachMessage(
   results: Array<{ name: string; description: string }>,
 ): string {
   if (!results.length) return userMessage
-  const block = results.map((r) => `[图片: ${r.name}] ${r.description}`).join("\n")
-  const head = userMessage ? `${userMessage}\n\n` : ""
-  return `${head}<!-- 用户附图分析 -->\n${block}`
+  const names = results.map((r) => r.name).join(", ")
+  const attach = names ? `📎 ${names}` : ""
+  const block = `<!-- 用户附图分析 -->\n${results.map((r) => `[图片: ${r.name}] ${r.description}`).join("\n")}`
+  return [userMessage.trim(), attach, block].filter(Boolean).join("\n\n")
+}
+
+export const VISION_ANALYSIS_MARKER = "<!-- 用户附图分析 -->"
+
+/** Keep 📎 + vision block on disk when the user edits only the caption. */
+export function spliceEditedCaption(diskContent: string, editedCaption: string): string {
+  const raw = String(diskContent || "")
+  const markerIdx = raw.indexOf(VISION_ANALYSIS_MARKER)
+  const pin = raw.search(/(^|\n)📎/)
+  let cut = -1
+  if (markerIdx >= 0 && pin >= 0) cut = Math.min(markerIdx, pin === 0 ? 0 : pin)
+  else if (markerIdx >= 0) cut = markerIdx
+  else if (pin >= 0) cut = pin === 0 ? 0 : pin
+  const suffix = cut >= 0 ? raw.slice(cut).replace(/^\n+/, "") : ""
+  const cap = String(editedCaption || "").trim()
+  if (!suffix) return cap
+  return cap ? `${cap}\n\n${suffix}` : suffix
 }
 
 /**

@@ -1663,6 +1663,7 @@ export function useWebSocket() {
             dispatch({ type: "SET_THREAD_BUSY", threadId: upTid, busy: false })
           }
           if (!shouldApplyStreamEvent(upTid, activeThreadRef.current)) break
+          dispatch({ type: "BUMP_COMPOSER_UPLOAD_CLEAR" })
           dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           // Only clear processing if no stream is in flight for this panel.
           if (!streamingRef.current && !reasoningRef.current) {

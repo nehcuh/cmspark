@@ -41,8 +41,10 @@ import {
   partitionUploadFiles,
   planStandaloneImageAnalysis,
   sha256hex,
+  spliceEditedCaption,
   validateImageCaps,
 } from "./llm/split-upload-files"
+import { makePreviewB64 } from "./llm/image-preview"
 import { copyAttachmentsToThread, writeImageSidecar } from "./threads/image-sidecar"
 import type { RasterMime } from "./llm/image-sniff"
 import { chunkFile, searchChunks } from "./file-chunker"
@@ -714,7 +716,16 @@ export async function handleMessage(
           }
         }
 
-        // Write sidecars before chatCreate so hydrate can load bytes (preview JPEG skipped — no canvas).
+        const useNative = likelyMultimodal(effectiveLLMConfig.model_name)
+        const visionRailOn = !!(config.vision?.enabled && fileConfig.enable_vision_analysis !== false)
+        const standalonePlan = planStandaloneImageAnalysis({
+          imageCount: standaloneImages.length,
+          useNative,
+          visionRailOn,
+        })
+        if (standalonePlan.error) return uploadError(standalonePlan.error)
+
+        // Sidecars only after the vision-rail plan succeeds (no orphans on vision-off).
         const reservedUserMessageId = standaloneImages.length
           ? allocateUploadMessageId(thread_id)
           : undefined
@@ -723,6 +734,7 @@ export async function handleMessage(
           mime: RasterMime
           sha256: string
           bytes: number
+          preview_jpeg_b64?: string
         }> = []
         if (reservedUserMessageId) {
           for (let i = 0; i < standaloneImages.length; i++) {
@@ -732,23 +744,16 @@ export async function handleMessage(
             if (!written) {
               return uploadError(`图片 "${img.name}" 保存失败`)
             }
+            const preview = makePreviewB64(img.buf, mime)
             imageAttachments.push({
               name: img.name,
               mime,
               sha256: sha256hex(img.buf),
               bytes: img.buf.length,
+              ...(preview ? { preview_jpeg_b64: preview } : {}),
             })
           }
         }
-
-        const useNative = likelyMultimodal(effectiveLLMConfig.model_name)
-        const visionRailOn = !!(config.vision?.enabled && fileConfig.enable_vision_analysis !== false)
-        const standalonePlan = planStandaloneImageAnalysis({
-          imageCount: standaloneImages.length,
-          useNative,
-          visionRailOn,
-        })
-        if (standalonePlan.error) return uploadError(standalonePlan.error)
 
         let userMessage = userMessageBase
         if (standalonePlan.analyze) {
@@ -988,8 +993,9 @@ export async function handleMessage(
         // Editing a user message: update its content and regenerate the reply.
         userMsg = messages[idx]
         if (editedMessage !== undefined && editedMessage !== userMsg.content) {
-          threadManager.updateMessage(thread_id, message_id, { content: editedMessage })
-          userMsg = { ...userMsg, content: editedMessage }
+          const spliced = spliceEditedCaption(userMsg.content, editedMessage)
+          threadManager.updateMessage(thread_id, message_id, { content: spliced })
+          userMsg = { ...userMsg, content: spliced }
         }
         // Delete everything after this user message.
         const nextAssistantIdx = messages.findIndex((m, i) => i > idx && m.role === "assistant")

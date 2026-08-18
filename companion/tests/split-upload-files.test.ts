@@ -4,6 +4,7 @@ import {
   partitionUploadFiles,
   buildVisionAttachMessage,
   planStandaloneImageAnalysis,
+  spliceEditedCaption,
   validateImageCaps,
   MAX_UPLOAD_IMAGES,
   MAX_UPLOAD_IMAGE_BYTES,
@@ -74,15 +75,20 @@ test("partitionUploadFiles: image types do not need to be in allowed_types", () 
   assert.equal(r.docs.length, 0)
 })
 
-test("partitionUploadFiles: svg / heic / pdf stay docs (normalizeImageMime null)", () => {
-  const r = partitionUploadFiles([
+test("partitionUploadFiles: svg / heic refuse as unsupported images", () => {
+  const svg = partitionUploadFiles([
     file("icon.svg", "image/svg+xml", Buffer.from("<svg></svg>")),
-    file("raw.heic", "image/heic", Buffer.alloc(16, 1)),
-    file("doc.pdf", "application/pdf", PDF),
   ])
-  assert.equal(r.error, undefined)
-  assert.equal(r.images.length, 0)
-  assert.equal(r.docs.length, 3)
+  assert.ok(svg.error)
+  assert.match(svg.error!, /不支持该图片格式/)
+  const heic = partitionUploadFiles([
+    file("raw.heic", "image/heic", Buffer.alloc(16, 1)),
+  ])
+  assert.ok(heic.error)
+  assert.match(heic.error!, /不支持该图片格式/)
+  const pdf = partitionUploadFiles([file("doc.pdf", "application/pdf", PDF)])
+  assert.equal(pdf.error, undefined)
+  assert.equal(pdf.docs.length, 1)
 })
 
 test("partitionUploadFiles: single image over 4MiB → error", () => {
@@ -114,25 +120,34 @@ test("validateImageCaps re-checks count and decoded total", () => {
   )
 })
 
-test("buildVisionAttachMessage: §5.1a wraps user caption + descriptions", () => {
+test("buildVisionAttachMessage: §5.1a caption then 📎 then analysis", () => {
   const out = buildVisionAttachMessage("看看这张图", [
     { name: "shot.png", description: "一只橘猫坐在键盘上" },
   ])
-  assert.equal(
-    out,
-    "看看这张图\n\n<!-- 用户附图分析 -->\n[图片: shot.png] 一只橘猫坐在键盘上",
-  )
+  assert.match(out, /^看看这张图/)
+  assert.match(out, /📎 shot\.png/)
+  assert.match(out, /<!-- 用户附图分析 -->\n\[图片: shot\.png\] 一只橘猫坐在键盘上/)
 })
 
-test("buildVisionAttachMessage: empty caption still emits the analysis block", () => {
+test("buildVisionAttachMessage: empty caption still emits 📎 + analysis", () => {
   const out = buildVisionAttachMessage("", [
     { name: "a.png", description: "红点" },
     { name: "b.png", description: "蓝点" },
   ])
-  assert.equal(
-    out,
-    "<!-- 用户附图分析 -->\n[图片: a.png] 红点\n[图片: b.png] 蓝点",
-  )
+  assert.match(out, /📎 a\.png, b\.png/)
+  assert.match(out, /<!-- 用户附图分析 -->/)
+  assert.match(out, /\[图片: a\.png\] 红点/)
+})
+
+test("spliceEditedCaption: keeps vision block when caption changes", () => {
+  const disk = buildVisionAttachMessage("旧说明", [
+    { name: "shot.png", description: "一只橘猫" },
+  ])
+  const next = spliceEditedCaption(disk, "新说明")
+  assert.match(next, /^新说明/)
+  assert.match(next, /<!-- 用户附图分析 -->/)
+  assert.match(next, /一只橘猫/)
+  assert.doesNotMatch(next, /旧说明/)
 })
 
 test("planStandaloneImageAnalysis: useNative skips analyzeImage", () => {

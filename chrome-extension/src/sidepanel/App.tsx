@@ -811,9 +811,36 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     (activeThread?.config_override?.model_name || "").trim() ||
     state.config.model_name
   const useNativeVision = likelyMultimodal(effectiveModel)
+  const effectiveLlmBase =
+    (typeof activeThread?.config_override?.base_url === "string" &&
+      activeThread.config_override.base_url.trim()) ||
+    state.config.base_url
   const destHost = extractHostname(
-    useNativeVision ? state.config.base_url : state.config.vision_base_url,
+    useNativeVision ? effectiveLlmBase : state.config.vision_base_url,
   )
+  const destAckRef = useRef<Record<string, string>>({})
+  useEffect(() => {
+    try {
+      chrome.storage.local.get(null, (all) => {
+        if (chrome.runtime.lastError) return
+        const next: Record<string, string> = {}
+        for (const [k, v] of Object.entries(all || {})) {
+          if (k.startsWith("cmspark.imageDestAck.")) next[k] = String(v ?? "")
+        }
+        destAckRef.current = next
+      })
+    } catch {
+      /* ignore */
+    }
+  }, [])
+  const uploadClearSeq = state.composerUploadClearSeq
+  const uploadClearSeen = useRef(uploadClearSeq)
+  useEffect(() => {
+    if (uploadClearSeq !== uploadClearSeen.current) {
+      uploadClearSeen.current = uploadClearSeq
+      setSelectedFiles([])
+    }
+  }, [uploadClearSeq])
 
   const getPlaceholder = () => {
     if (needsThread) return "请先创建或选择一个线程"
@@ -1061,22 +1088,17 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         return
       }
       if (useNative) {
-        const host = extractHostname(state.config.base_url)
+        const host = extractHostname(effectiveLlmBase)
         const ackKey = `cmspark.imageDestAck.${host}`
-        try {
-          chrome.storage.local.get([ackKey], (result) => {
-            if (chrome.runtime.lastError) return
-            if (!result?.[ackKey]) {
-              setDestAck(`图片将发送至 ${host}`)
-              try {
-                chrome.storage.local.set({ [ackKey]: true })
-              } catch {
-                /* ignore */
-              }
-            }
-          })
-        } catch {
-          /* ignore */
+        if (!destAckRef.current[ackKey]) {
+          setDestAck(`图片将发送至 ${host}`)
+          const iso = new Date().toISOString()
+          destAckRef.current[ackKey] = iso
+          try {
+            chrome.storage.local.set({ [ackKey]: iso })
+          } catch {
+            /* ignore */
+          }
         }
       }
     }
@@ -1103,7 +1125,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           docs: docFiles.length,
           userText: trimmed,
         })
-        const fileSummary = files.map(f => f.name).join(", ")
         const uploadThreadId = state.activeThreadId
         const panelDiag = {
           thread_id: uploadThreadId,
@@ -1134,16 +1155,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         if (uploadThreadId) {
           dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: true })
         }
-        dispatch({
-          type: "ADD_MESSAGE",
-          message: {
-            id: `${uploadThreadId}_${Date.now()}`,
-            thread_id: uploadThreadId!,
-            role: "user",
-            content: `${userMessage}\n📎 ${fileSummary}`,
-            created_at: new Date().toISOString(),
-          },
-        })
 
         chrome.runtime.sendMessage(
           {
@@ -1195,8 +1206,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                   created_at: new Date().toISOString(),
                 },
               })
-            } else {
-              setSelectedFiles([])
             }
           },
         )
@@ -1529,7 +1538,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               }}>
                 {file.name} ({formatFileSize(file.size)})
                 {file.compressed ? " · 已压缩" : ""}
-                {isAllowlistedImageMime(file.type) ? ` · ${destHost}` : ""}
+                {isAllowlistedImageMime(file.type) ? ` → ${destHost}` : ""}
               </span>
               <span
                 role="button"

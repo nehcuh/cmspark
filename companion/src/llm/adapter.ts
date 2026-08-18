@@ -105,6 +105,7 @@ interface ChatCreateParams {
     mime: "image/png" | "image/jpeg" | "image/gif" | "image/webp"
     sha256: string
     bytes: number
+    preview_jpeg_b64?: string
   }>
   /** Must match the msgId used in writeImageSidecar so hydrate can find bytes. */
   reservedUserMessageId?: string

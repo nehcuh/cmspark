@@ -53,7 +53,19 @@ test("serializeMessage: user image parts do not stringify to [object Object]", (
   const s = serializeMessage(m)
   assert.doesNotMatch(s, /\[object Object\]/)
   assert.match(s, /请看这张图/)
-  assert.match(s, /\[image:\d+\]/)
+  assert.match(s, /\[image\]/)
+})
+
+test("estimateMessagesTokens: image parts add 1600 not ~3", () => {
+  const m: CanonicalChatMessage = {
+    role: "user",
+    content: [
+      { type: "text", text: "x" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+    ],
+  }
+  const n = estimateMessagesTokens([m])
+  assert.ok(n >= 1600, `expected >=1600, got ${n}`)
 })
 
 test("redactMessagesForCompaction: user parts extract text, never replace on array", () => {

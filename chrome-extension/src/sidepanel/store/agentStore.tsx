@@ -148,6 +148,8 @@ export interface AgentState {
   securityAuditLog: SecurityAuditEntry[]
   companionConfig: LLMConfig | null
   isProcessing: boolean
+  /** Bumped on file.uploaded so InputArea can drop chips after companion admit. */
+  composerUploadClearSeq: number
   obsidianProfileStatus: { ok: boolean; message: string } | null
   /** Status of the last companion-side folder import (null = idle). */
   knowledgeImportStatus: { ok: boolean; message: string } | null
@@ -324,6 +326,7 @@ export type AgentAction =
   | { type: "ADD_SECURITY_AUDIT"; entry: SecurityAuditEntry }
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
   | { type: "SET_PROCESSING"; isProcessing: boolean }
+  | { type: "BUMP_COMPOSER_UPLOAD_CLEAR" }
   | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_KNOWLEDGE_IMPORT_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
@@ -465,6 +468,7 @@ export const initialState: AgentState = {
   securityAuditLog: [],
   companionConfig: null,
   isProcessing: false,
+  composerUploadClearSeq: 0,
   obsidianProfileStatus: null,
   knowledgeImportStatus: null,
   summarizingThreadId: null,
@@ -963,6 +967,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, companionConfig: action.config }
     case "SET_PROCESSING":
       return { ...state, isProcessing: action.isProcessing }
+    case "BUMP_COMPOSER_UPLOAD_CLEAR":
+      return { ...state, composerUploadClearSeq: state.composerUploadClearSeq + 1 }
     case "SET_THREAD_BUSY": {
       const id = action.threadId
       if (!id) return state
