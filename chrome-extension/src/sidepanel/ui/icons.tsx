@@ -157,6 +157,16 @@ export function IconLogs(p: IconProps) {
   )
 }
 
+/** Thumbtack — pin current capability level (not a chat bubble). */
+export function IconPin(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M12 17v5" />
+      <path d="M8 3h8l-1.2 6.2 2.7 2.3V14H6.5v-2.5l2.7-2.3L8 3z" />
+    </Svg>
+  )
+}
+
 export function IconSettings(p: IconProps) {
   return (
     <Svg {...p}>
@@ -166,11 +176,60 @@ export function IconSettings(p: IconProps) {
   )
 }
 
+/** 看山-style new conversation: bubble + plus. */
+export function IconNewChat(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M5 7h10a3 3 0 013 3v5a3 3 0 01-3 3H10l-4 3v-3H5a3 3 0 01-3-3V10a3 3 0 013-3z" />
+      <path d="M10 10v4M8 12h4" />
+    </Svg>
+  )
+}
+
+export function IconChevronDown(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M6 9l6 6 6-6" />
+    </Svg>
+  )
+}
+
+export function IconList(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M8 7h10M8 12h10M8 17h7" />
+      <path d="M5 7h.01M5 12h.01M5 17h.01" />
+    </Svg>
+  )
+}
+
+/** Empty-state companion — original mark, not the 看山 fox. Filled stamp, not outline. */
+export function CompanionMark({ size = 92 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 92 92"
+      fill="none"
+      aria-hidden
+      style={{ display: "block", flexShrink: 0 }}
+    >
+      <ellipse cx="46" cy="84" rx="18" ry="4" fill="rgba(23,23,23,0.10)" />
+      <circle cx="46" cy="50" r="28" fill="#171717" />
+      <path d="M28 36 L24 16 L40 32Z" fill="#171717" />
+      <path d="M64 36 L68 16 L52 32Z" fill="#171717" />
+      <circle cx="38" cy="50" r="3.4" fill="#ffffff" />
+      <circle cx="54" cy="50" r="3.4" fill="#ffffff" />
+      <path d="M46 61 l1.6 4.1 4.3 1.1-4.3 1.5L46 72l-1.6-4.3-4.3-1.5 4.3-1.1z" fill="#4f46e5" />
+    </svg>
+  )
+}
+
 export function IconSend(p: IconProps) {
   return (
     <Svg {...p}>
-      <path d="M4 12l15-7-4 15-3.5-5.5L4 12z" />
-      <path d="M11.5 14.5L19 5" />
+      <path d="M12 19V6" />
+      <path d="M6 12l6-6 6 6" />
     </Svg>
   )
 }

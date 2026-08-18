@@ -120,7 +120,7 @@ export function ComposeDrawer({
         ))}
 
         <p style={styles.footNote} data-testid="compose-autonomy-note">
-          任务板 / 编排不在装配内 — 使用 /board 或 ⋯「编排」
+          任务板不在装配内 — 使用 /board
         </p>
       </div>
     </Modal>

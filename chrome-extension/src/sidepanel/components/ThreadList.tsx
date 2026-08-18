@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
+import { IconChevronDown } from "../ui/icons"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
 import type { Thread } from "../types"
 import {
@@ -47,6 +48,25 @@ import {
   findRelatedThreads,
 } from "../utils/thread-related"
 import type { ThreadGraphSlim } from "../../background/thread-graph"
+
+export function createBlankThread(dispatch: (action: { type: "ADD_THREAD"; thread: Thread }) => void) {
+  const id = generateShortId()
+  const now = new Date().toISOString()
+  const thread = {
+    id,
+    alias: "",
+    created_at: now,
+    updated_at: now,
+    // Inherit live companion config — do not stamp DeepSeek / empty trust.
+    config_override: {} as Thread["config_override"],
+    tool_whitelist: null as string[] | null,
+    pinned_tabs: [] as number[],
+    active_skill_ids: [] as string[],
+  }
+  dispatch({ type: "ADD_THREAD", thread: thread as Thread })
+  chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
+  return id
+}
 
 function generateShortId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -101,6 +121,8 @@ export function ThreadList() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
   const menuBtnRef = useRef<HTMLButtonElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const [panelBox, setPanelBox] = useState<{ top: number; maxHeight: number } | null>(null)
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [extractingIds, setExtractingIds] = useState<Set<string>>(() => new Set())
   /** A-7 batch progress: done/total while untagged or multi extract runs. */
@@ -529,27 +551,7 @@ export function ThreadList() {
   }, [])
 
   const handleNewThread = () => {
-    const id = generateShortId()
-    const thread = {
-      id,
-      alias: "",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      config_override: {
-        base_url: "https://api.deepseek.com/v1",
-        api_key: "",
-        model_name: "deepseek-v4-flash",
-        temperature: 0.7,
-        context_window: 128000,
-        trusted_domains: [],
-        safety_skills_enabled: [] as string[],
-      },
-      tool_whitelist: null as string[] | null,
-      pinned_tabs: [] as number[],
-      active_skill_ids: ["browse"] as string[],
-    }
-    dispatch({ type: "ADD_THREAD", thread })
-    chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
+    createBlankThread(dispatch)
     setOpen(false)
     exitSelectMode()
   }
@@ -831,6 +833,24 @@ export function ThreadList() {
   }
 
   const panelMaxHeight = selectMode || view === "tags" ? 480 : 360
+
+  useEffect(() => {
+    if (!open) {
+      setPanelBox(null)
+      return
+    }
+    const place = () => {
+      const r = triggerRef.current?.getBoundingClientRect()
+      const top = Math.round((r?.bottom ?? 48) + 6)
+      setPanelBox({
+        top,
+        maxHeight: Math.max(180, window.innerHeight - top - 12),
+      })
+    }
+    place()
+    window.addEventListener("resize", place)
+    return () => window.removeEventListener("resize", place)
+  }, [open, selectMode, view])
 
   const renderThreadRow = (t: Thread) => {
     const busy = !!threadBusyById[t.id]
@@ -1221,17 +1241,24 @@ export function ThreadList() {
   return (
     <div style={{ position: "relative" }}>
       <button
+        ref={triggerRef}
         type="button"
-        style={styles.hamburger}
+        style={{
+          ...styles.hamburger,
+          ...(open ? { color: tokens.text } : null),
+        }}
         onClick={() => setOpen(!open)}
-        title="线程列表"
-        aria-label="线程列表"
+        title="历史对话"
+        aria-label="历史对话"
         aria-expanded={open}
       >
-        ☰
+        <IconChevronDown size={18} />
       </button>
 
-      {open && (
+      {open &&
+        panelBox &&
+        typeof document !== "undefined" &&
+        createPortal(
         <>
           <div
             style={styles.backdrop}
@@ -1241,7 +1268,18 @@ export function ThreadList() {
               if (selectMode) exitSelectMode()
             }}
           />
-          <div style={{ ...styles.panel, maxHeight: panelMaxHeight }}>
+          <div
+            style={{
+              ...styles.panel,
+              position: "fixed",
+              top: panelBox.top,
+              left: 8,
+              right: 8,
+              width: "auto",
+              maxHeight: Math.min(panelMaxHeight, panelBox.maxHeight),
+              zIndex: 10050,
+            }}
+          >
             <div style={styles.panelHeader}>
               <div style={styles.viewToggle}>
                 <button
@@ -1657,7 +1695,8 @@ export function ThreadList() {
             )}
           </div>
 
-        </>
+        </>,
+        document.body,
       )}
     </div>
   )
@@ -1670,34 +1709,31 @@ const styles: Record<string, React.CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "rgba(255,255,255,0.85)",
-    border: `1px solid ${tokens.border}`,
+    background: "transparent",
+    border: "none",
     borderRadius: tokens.radiusMd,
-    fontSize: 15,
     cursor: "pointer",
     padding: 0,
-    lineHeight: 1,
-    color: tokens.textSecondary,
-    boxShadow: tokens.shadowSm,
+    color: tokens.text,
     flexShrink: 0,
     fontFamily: tokens.font,
   },
   backdrop: {
     position: "fixed",
     inset: 0,
-    zIndex: 50,
+    zIndex: 10040,
   },
   panel: {
-    position: "absolute",
-    top: "100%",
-    left: 0,
-    width: 300,
+    position: "fixed",
+    left: 8,
+    right: 8,
+    width: "auto",
     maxHeight: 360,
     background: tokens.bgElevated,
     border: `1px solid ${tokens.borderStrong}`,
     borderRadius: tokens.radiusMd,
     boxShadow: tokens.shadowMd,
-    zIndex: 51,
+    zIndex: 10050,
     overflow: "hidden",
     display: "flex",
     flexDirection: "column",

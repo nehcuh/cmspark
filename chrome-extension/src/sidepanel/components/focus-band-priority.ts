@@ -42,6 +42,12 @@ export interface FocusBandInput {
   hasCodingSession?: boolean
   /** L1 browser surface — ContextStrip when nothing higher. */
   isBrowserContext: boolean
+  /**
+   * Thread has user/assistant messages. Empty L1 must not hang the webpage
+   * strip (S1.1 / C″). Confirm / 急停 / L2 / fleet / tools ignore this.
+   * Default true so callers that omit it keep the work-state L1 strip.
+   */
+  hasThreadMessages?: boolean
 }
 
 export interface FocusBandSlot {
@@ -69,13 +75,15 @@ export interface FocusBandSlot {
  */
 export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
   const hasTools = input.hasThreadTools === true
+  const showL1Context = input.isBrowserContext && input.hasThreadMessages !== false
   if (input.hasPendingConfirm) {
     // Confirm owns primary. 急停 secondary when L2 task active (never bury abort).
     // Tools secondary only when no abort secondary (height budget).
+    // Webpage strip stays off on empty L1 (S1.1) even under confirm.
     return {
       primary: "confirm",
       secondaryAbort: input.l2AbortRequired,
-      secondaryContext: input.isBrowserContext && !input.l2AbortRequired && !hasTools,
+      secondaryContext: showL1Context && !input.l2AbortRequired && !hasTools,
       secondaryTools: hasTools && !input.l2AbortRequired,
     }
   }
@@ -113,7 +121,7 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
       secondaryTools: false,
     }
   }
-  if (input.isBrowserContext) {
+  if (showL1Context) {
     return {
       primary: "l1_context",
       secondaryAbort: false,

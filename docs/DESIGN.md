@@ -1,8 +1,8 @@
 # CMspark Design System
 
-> **Precision Instrument Desk**（精密仪器台）— Operate / Restrained.  
-> Quiet-professional chrome：SVG 图标 + `sidepanel/ui/tokens.ts` 为主；emoji 仅用于消息内容，不用于工具栏。  
-> Direction SoT: [sidepanel-precision-instrument-redesign](superpowers/specs/2026-08-11-sidepanel-precision-instrument-redesign.md) · Product: [PRODUCT.md](../PRODUCT.md)
+> **Consumer assistant canon**（看山质量杠 · Comp A 角色居中）— Operate.  
+> 白底陪伴空态：填色角色印记 + 22px 招呼 + 句子行 + 安静输入。SVG 图标；emoji 仅用于消息内容。  
+> Direction SoT: `.impeccable/mocks/comp-a-centered.png` · Product: [PRODUCT.md](../PRODUCT.md)
 
 ## Colors
 
@@ -36,7 +36,7 @@ Use role names in specs and AI implementer prompts. **Implement with the mapped 
 
 **Legacy aliases (still valid in docs):** Accent = `accent.primary`; Error = `status.danger`; Success = `status.live`; Warning = `status.warn`; Background = `surface.*`; Text / Border as above.
 
-**Contrast policy (empty / guidance):** Prefer `tokens.textSecondary` for empty-state copy (`暂无*` / `无匹配*` / ChatView `emptyKicker`). Reserve `tokens.textMuted` for non-essential decorative meta (timestamps, secondary labels).
+**Contrast policy (empty / guidance):** Prefer `tokens.textSecondary` for empty-state hint and `暂无*` / `无匹配*`. Reserve `tokens.textMuted` for non-essential decorative meta (timestamps, secondary labels). Empty greeting uses `tokens.text`.
 
 Dark surfaces: L2 SafetyStrip / **Cockpit** only. Panel stays light in v2 (K6); tokens for dark are prepared for Cockpit + L2 chrome.
 
@@ -56,7 +56,7 @@ Dark surfaces: L2 SafetyStrip / **Cockpit** only. Panel stays light in v2 (K6); 
 | Size lg | `15px` (heading) |
 
 Scale for chrome: **11 / 12 / 13 / 15** only.  
-**Exemption:** icon-sized glyphs inside a ≤20px badge (e.g. StatusRail brand mark letter, cruise ×) may use 9–10px — not body chrome.
+**Exemption:** empty-state greeting is **22px** (`tokens.emptyTitle`). Icon-sized glyphs inside a ≤20px badge may use 9–10px.
 
 ## Spacing
 
@@ -102,7 +102,7 @@ Helpers (dark / Cockpit): `connectionColorDark` / `connectionDotShadowDark` (+ s
 
 | Surface | Mode | Connection | Other |
 |---------|------|------------|--------|
-| **Panel** `StatusRail` | ModeBadge L0 `聊` / L1 `网页` / L2 `计算机` · LIVE; pin-on-badge | Dot + tooltip (`connectionColor*`) | Thread switcher · ⋯ menu |
+| **Panel** `StatusRail` | ModeBadge whisper（28px 图标，title 仍带层级）；字标左贴齿轮，巡航/断连时藏 | 已连 `role=status` 圆点；断连短标签按钮 | 新对话 + 历史 chevron · 巡航短词 `值守`/`巡航` · ⋯ |
 | **Cockpit** header | Chip `L2 · LIVE` / `L2` / `确认` / `工作区` (same Surface grammar) | Dot + **label text** (`connectionColorDark` + `connectionLabel`) | Thread id · fleet summary · 急停 · 收起 |
 
 Grammar must match: mode chip · connection · secondary context. Cockpit is dark; Panel is light. Type scale 11–13; rail min-height ~40–44px.
@@ -112,10 +112,10 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 - **Ontology:** product L0/L1/L2 = Surface axis = UI `CapabilityLevel` `chat|browser|computer` — [ADR-020](adr/020-capability-model-three-axes.md)
 - L1 header tint: `tokens.modeBrowserBg`
 - **BottomBar permanent tab strip (PR5):** gated by `ui.bottomBarStrip` in `sidepanel/ui/flags.ts` — **default `false`**. Host remains SoT; panels open via Composer chips / `/` / 装配. Set flag `true` only for smoke/rollback. Legacy tab sets (if re-enabled): L0 Skills·Know·Hist · L1 Tabs·Skills · L2 empty + overflow「更多」
-- **ComposerDock chips** (UIUX v2 PR4 §4.4): L0 装配·Skills·Know · L1 装配·Tabs·工作区 · L2 确认台·装配 — open Host / 装配 drawer; **no Abort next to Send**
-- **装配 P0** bottom-sheet section list → Host (`skills`/`knowledge`/`packs`/`mcp`/`apps`/`history`); Board is Autonomy (`/board` only)
+- **ComposerDock chips** (UIUX v2 PR4 §4.4): always above the field (including empty). L0 装配 · L1 装配·Tabs·工作区 · L2 确认台·装配 — open Host / 装配 drawer; **no Abort next to Send**
+- **装配 P0** bottom-sheet section list → Host (`skills`/`knowledge`/`packs`/`mcp`/`apps`/`history`); Board is Autonomy (`/board` only — no ⋯「编排」)
 - **Slash parity** (§4.8): `/skills` `/knowledge` `/history` `/tabs` `/packs` `/mcp` `/apps` `/board` `/settings` `/cockpit` `/装配`
-- **FocusBand** (UIUX v2 §4.3): single slot Confirm > L2 Safety+急停 > Fleet > L1 Context; hard cap ≤80px; 急停 never buried under L2 task
+- **FocusBand** (UIUX v2 §4.3): single slot Confirm > L2 Safety+急停 > Fleet > L1 Context; hard cap ≤80px; 急停 never buried under L2 task. **Empty L1 hides the webpage strip**; confirm / 急停 still take the slot.
 - FleetStrip: hidden when idle single-agent; show only multi-worker / locks / intents (**not** pending confirms — those are MinimalConfirm / FocusBand)
 
 ### Cockpit (确认台)
@@ -131,7 +131,7 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 ### Message Bubbles (P2)
 - User: `tokens.userBubbleBg` + `tokens.userBubbleText` (values live in `tokens.ts` only — currently indigo accent family, not legacy blue)
 - Assistant: `tokens.assistantBubbleBg` + `tokens.assistantBubbleText`
-- Empty: mode-aware L0/L1/L2 copy (see ChatView `EmptyState`); kicker / guidance use `tokens.textSecondary`
+- Empty: CompanionMark + 22px greeting + sentence rows (see ChatView `EmptyState`); no kicker. Guidance uses `tokens.textSecondary`
 
 ### Tool Call Card
 - Border / status via `statusColor()`
@@ -141,18 +141,22 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 - Primary: `tokens.accent` bg, white text
 - Danger: `tokens.danger` (light) / `tokens.darkDanger` (Cockpit)
 
-### Input / Composer (Precision Instrument Phase 1 + PR4)
-- Unified capsule: attach + textarea + send inside one bordered surface
-- **Solid** elevated surface + `borderStrong` — **no** glass/`backdrop-filter`, **no** canvas gradient shell
-- Radius: `tokens.radiusComposer` (14px); send = flat `tokens.accent` (no purple→blue gradient)
-- Mode chips row above capsule (see ComposerDock chips above); 装配 via chip / `/装配` / Cmd+K
-- Settings live in StatusRail ⋯ or `/settings` (not in 装配 Board path)
+### Input / Composer (companion canon + PR4)
+- Unified capsule: textarea + circular up-arrow send
+- 装配 lives on the ComposerDock chip above the field (`/装配` / Cmd+K still work); do not duplicate it inside the capsule
+- Empty capsule = field + send; attach / 听写 appear after the first character
+- **Solid** white surface — **no** glass/`backdrop-filter`
+- Radius: `tokens.radiusComposer` (16px); send is circular; gray at rest, `tokens.accent` when armed
+- Empty-state placeholder: L0 `描述任务，或粘贴截图…` · L1 `问这页，或描述操作…` (`composerPlaceholder`)
+- ComposerChips stay visible on the empty stream so 装配 is not duplicated inside the capsule
+- Settings: StatusRail gear and ⋯「设置」 share the same route (disconnected → connection, else model)
+- Legal line under empty capsule: `tokens.textMuted` ≥11px
 - Chip row height ceiling: ≤40px — density budget Scenario B  
   (`docs/audit/reviews/sidepanel-density-budget-20260811.md`). Phase 1 does not change strip min/max heights → static budget re-run not required unless a constant is edited.
 
 ### StatusRail / shell (Phase 1)
 - Solid `tokens.bgElevated` rail — no glass blur / no vertical gradient
-- Type scale chrome only **11 / 12 / 13 / 15**; empty title = 15 not 18
+- Type scale chrome only **11 / 12 / 13 / 15**; empty greeting is the one **22px** exemption (`tokens.emptyTitle`)
 - Hierarchy: **stream first, status second, assembly third**
 
 ### Motion
@@ -166,4 +170,4 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 
 ---
 
-*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B; **Precision Instrument Desk** Phase 1 shell + Phase 2a tokens + Phase 2b density + Phase 3 motion/banners.*
+*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-18: consumer assistant canon（看山质量杠 · Comp A）；空态 D″ + C″ 一条栏。Cockpit 夜世界仍是下一表面。*

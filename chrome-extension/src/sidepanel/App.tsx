@@ -1,3 +1,9 @@
+/* THESIS: Side Panel is a consumer assistant empty, not an instrument desk — first viewport is a person who greets you.
+   OWN-WORLD: White surface, ink type, 22px greeting, sentence rows, circular send, indigo spark only on the companion mark.
+   STORY: Open → meet someone → type or tap a sentence → work still fits 320px.
+   FIRST VIEWPORT: Centered CompanionMark, 要我帮你做什么？, sentence invitations, quiet composer, 新对话.
+   FORM: Canon (知乎看山 quality bar) · seed e96a500f · Comp A approved.
+   FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md */
 // CMspark Browser Agent — Root App Component
 
 import { Component, useState, useRef, useCallback, useEffect, useMemo } from "react"
@@ -1647,7 +1653,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         onSelect={handleAtSelect}
         onDismiss={() => setAtVisible(false)}
       />
-      {/* PR4: ComposerDock chips + capsule; 装配 drawer is portal-like fixed sheet */}
+      {/* PR4: ComposerDock chips + capsule; 装配 lives on the chip, not in the field */}
       <div style={styles.inputArea}>
         <ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />
         <div
@@ -1659,16 +1665,24 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             boxShadow: dragOver ? `0 0 0 1px ${tokens.accent}` : tokens.shadowSm,
           }}
         >
-          {!showStop && !(voice.listening && showVoiceMic) && (
-            <button
-              type="button"
-              style={styles.attachBtn}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={needsThread || needsConnection || threadBusy}
-              title="添加文件或图片"
-            >
-              <IconAttach size={16} />
-            </button>
+          {!showStop &&
+            !(voice.listening && showVoiceMic) &&
+            !(
+              state.messages.length === 0 &&
+              !isStreaming &&
+              !text.trim() &&
+              !voice.liveOverlay
+            ) && (
+              <button
+                type="button"
+                style={styles.attachBtn}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={needsThread || needsConnection || threadBusy}
+                title="添加文件或图片"
+                aria-label="添加文件或图片"
+              >
+                <IconAttach size={16} />
+              </button>
           )}
           <textarea
             ref={textareaRef}
@@ -1688,7 +1702,15 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             onKeyDown={handleKeyDown}
             onPaste={handleComposerPaste}
           />
-          {showVoiceMic && (
+          {showVoiceMic &&
+            !(
+              state.messages.length === 0 &&
+              !isStreaming &&
+              !text.trim() &&
+              !voice.listening &&
+              !voice.processing &&
+              !voice.liveOverlay
+            ) && (
             <VoiceMicButton
               listening={voice.listening && !voice.processing}
               processing={voice.processing}
@@ -1719,7 +1741,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               type="button"
               style={{
                 ...styles.sendBtn,
-                opacity: canSend ? 1 : 0.45,
+                background: canSend ? tokens.accent : "#e4e4e7",
                 cursor: canSend ? "pointer" : "not-allowed",
               }}
               onClick={() => handleSend()}
@@ -1912,6 +1934,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           onSelect={handleSlashSelect}
           onDismiss={() => setSlashVisible(false)}
         />
+        {state.messages.length === 0 && !isStreaming && (
+          <div style={styles.legal}>本地 Companion · 确认后才会执行危险操作</div>
+        )}
       </div>
       <ComposeDrawer
         open={composeOpen}
@@ -2064,29 +2089,28 @@ const styles: Record<string, React.CSSProperties> = {
   inputArea: {
     display: "flex",
     flexDirection: "column",
-    padding: "10px 12px 12px",
+    padding: "8px 14px 12px",
     background: tokens.bgElevated,
-    borderTop: `1px solid ${tokens.border}`,
     flexShrink: 0,
     position: "relative" as const,
   },
   composerCapsule: {
     display: "flex",
     alignItems: "flex-end",
-    gap: 6,
-    border: `1px solid ${tokens.borderStrong}`,
+    gap: 8,
+    border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusComposer,
-    padding: "8px 8px 8px 6px",
+    padding: "10px 10px 10px 14px",
     background: tokens.bgElevated,
-    boxShadow: tokens.shadowSm,
+    minHeight: 72,
     transition: `border-color ${tokens.transitionFast} ease, box-shadow ${tokens.transitionFast} ease`,
   },
   textarea: {
     flex: 1,
     border: "none",
     borderRadius: tokens.radiusMd,
-    padding: "6px 8px",
-    fontSize: 13,
+    padding: "4px 0 8px",
+    fontSize: 14,
     fontFamily: "inherit",
     resize: "none" as const,
     outline: "none",
@@ -2094,7 +2118,7 @@ const styles: Record<string, React.CSSProperties> = {
     maxHeight: 120,
     background: "transparent",
     color: tokens.text,
-    lineHeight: 1.5,
+    lineHeight: 1.45,
   },
   attachBtn: {
     width: 32,
@@ -2113,10 +2137,10 @@ const styles: Record<string, React.CSSProperties> = {
   sendBtn: {
     width: 32,
     height: 32,
-    borderRadius: tokens.radiusMd,
+    borderRadius: tokens.radiusPill,
     border: "none",
-    background: tokens.accent,
-    color: tokens.userBubbleText,
+    background: "#e4e4e7",
+    color: "#ffffff",
     cursor: "pointer",
     flexShrink: 0,
     display: "flex",
@@ -2137,6 +2161,13 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     padding: 0,
+  },
+  legal: {
+    textAlign: "center" as const,
+    fontSize: 11,
+    color: tokens.textMuted,
+    padding: "8px 4px 0",
+    lineHeight: 1.4,
   },
 }
 

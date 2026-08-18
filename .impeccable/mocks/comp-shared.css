@@ -1,0 +1,126 @@
+:root {
+  --canvas: #f3f4f6;
+  --card: #ffffff;
+  --ink: #171717;
+  --muted: #737373;
+  --line: rgba(23, 23, 23, 0.08);
+  --line-strong: rgba(23, 23, 23, 0.14);
+  --spark: #4f46e5;
+  --shadow: 0 8px 28px rgba(23, 23, 23, 0.06);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #d9dbe0;
+  font-family: var(--font);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.panel {
+  width: 320px;
+  height: 680px;
+  margin: 24px auto;
+  background: var(--card);
+  border-radius: 20px;
+  box-shadow: 0 16px 40px rgba(23, 23, 23, 0.12);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rail {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 14px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.rail-title {
+  flex: 1;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+  border-radius: 10px;
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+.icon-btn.ghost {
+  background: #f4f4f5;
+}
+
+.stream {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.composer {
+  padding: 0 14px 16px;
+  flex-shrink: 0;
+}
+.field {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-height: 56px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: var(--card);
+}
+.field span {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #a3a3a3;
+  padding: 6px 0 8px;
+}
+.send {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: #e5e5e5;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.creature { display: block; }
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 4px;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font: 400 14px/1.4 var(--font);
+  text-align: left;
+}
+.row svg { flex-shrink: 0; color: #525252; }
+.legal {
+  text-align: center;
+  font-size: 10px;
+  color: #c4c4c4;
+  padding: 8px 16px 0;
+}
+
+.hint { font-size: 13px; color: var(--muted); line-height: 1.5; }

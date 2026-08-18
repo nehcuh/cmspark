@@ -81,15 +81,17 @@ test("radius SoT is 6/8/12 (UIUX v2)", () => {
   assert.equal(tokens.radiusPill, 999)
 })
 
-test("semantic role hexes match Precision Instrument Desk tokens", () => {
-  // surface.canvas / elevated (Phase 1 flat instrument canvas)
-  assert.equal(tokens.bg, "#f4f5f8")
+test("semantic role hexes match companion canon tokens", () => {
+  // surface.canvas / elevated (white companion)
+  assert.equal(tokens.bg, "#ffffff")
   assert.equal(tokens.bgElevated, "#ffffff")
   assert.equal(tokens.darkBg, "#0b0d12")
   assert.equal(tokens.darkElevated, "#141820")
   // text
-  assert.equal(tokens.text, "#0f172a")
-  assert.equal(tokens.textSecondary, "#475569")
+  assert.equal(tokens.text, "#171717")
+  assert.equal(tokens.textSecondary, "#737373")
+  assert.equal(tokens.emptyTitle, 22)
+  assert.equal(tokens.radiusComposer, 16)
   // borders are translucent rgba (not flat gray)
   assert.ok(String(tokens.border).includes("rgba"))
   assert.ok(String(tokens.darkBorder).includes("rgba"))
@@ -104,8 +106,7 @@ test("semantic role hexes match Precision Instrument Desk tokens", () => {
   assert.equal(tokens.darkAccent, "#818cf8")
   assert.ok(tokens.shadowFocus)
   assert.ok(tokens.shadowLg)
-  // Phase 1 hero surfaces — instrument, not pill-toy
-  assert.equal(tokens.radiusComposer, 14)
+  // Hero surfaces
   assert.equal(tokens.radiusBubble, 14)
   // sheet / menu / scrim
   assert.equal(tokens.radiusSheet, 16)

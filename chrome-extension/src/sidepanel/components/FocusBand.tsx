@@ -108,6 +108,7 @@ export function FocusBand({
     hasThreadTools,
     hasCodingSession,
     isBrowserContext,
+    hasThreadMessages: state.messages.length > 0,
   })
 
   if (slot.primary === "empty") return null

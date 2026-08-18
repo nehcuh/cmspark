@@ -4,6 +4,16 @@ declare module "node:test" {
   export default test
 }
 
+declare module "node:fs" {
+  export function readFileSync(path: string, encoding: string): string
+}
+
+declare module "node:path" {
+  export function join(...parts: string[]): string
+}
+
+declare const process: { cwd(): string }
+
 declare module "node:assert/strict" {
   interface Assert {
     equal(actual: unknown, expected: unknown, message?: string): void

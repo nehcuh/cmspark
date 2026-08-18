@@ -76,6 +76,22 @@
 - **修**：100MiB compressed / 120MiB extract / 2000 files；只计所选 SKILL 目录；`importSkillFolderFromPath` 免 base64；覆盖用 tmp→bak→dest
 - **纪律**：改预算同步 stub/测试；size=0 且 compressed>64KiB 拒（zip-bomb 类）；生产 FromPath 必须有真实 zip 集成测
 
+### `tsconfig.test.json` 绿 ≠ 生产 `tsc --noEmit`（2026-08-18 · #196）
+- **坑**：扩展 `npm test` 只编 `tsconfig.test.json` 的 include 白名单，**不编** `ChatView.tsx` 等组件。对测试套说「tsc 0」会漏掉 `TS1117` 重复属性
+- **后果**：S12 外部 dual 两轮 REJECT（重复 `color` → 再生产 `tsc` 红）
+- **纪律**：宣称机核必须跑 `chrome-extension` 的 **主** `tsc --noEmit`（`npm run build` 的前半）；dual prompt 写明「不得只信 test tsconfig」
+
+### 行内 `color`（含 `inherit`）会杀死 stylesheet `:hover`（2026-08-18 · #196）
+- **坑**：`styles.inviteRow` 先有 `color: tokens.text`，再补 `color: "inherit"` —— 修了 TS1117，但 **任何** style 属性里的 `color` 都压过 `.invite-row:hover`
+- **修**：`inviteRow` **不准**写 `color`；颜色只活在 class CSS
+- **测**：源码切片断言 `inviteRow` 块无 `color:`（jsdom 测不了 cascade）
+- **纪律**：要 hover 变色就别在 React inline 上声明同一属性
+
+### 320px 历史列表禁止 `absolute + left:0 + width:300`（2026-08-18 · #196）
+- **坑**：chevron 在栏右侧，300px 下拉往右撑，Side Panel 视口裁成一半
+- **修**：`createPortal` + `position:fixed; left:8; right:8`；`styles.panel` 基座也要是这套，禁止基座残留 300px
+- **相关**：巡航短词 + 芯片占宽后更易复现
+
 ### dist-package 路径：源码 build ≠ 用户加载的扩展（2026-08-12）
 - **坑**：用户加载 `dist-package/cmspark-macos-arm64/chrome-extension`，只 `chrome-extension/build` 无效；companion 须 **esbuild** `cmspark-agent.js` 再 cp（`tsc` 模块树不够）
 - **修**：`npm run build` + `run-esbuild-bundle.mjs` + rsync extension + cp agent.js（含 dmg-staging Resources）

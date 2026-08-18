@@ -27,12 +27,19 @@ import { captionOnlyForEdit, previewDataUrl } from "../utils/image-compose"
 import { previewImageSafe } from "../utils/computer-utils"
 import type { MessageAttachment } from "../types"
 import {
+  CompanionMark,
   IconBranch,
+  IconChat,
   IconCopy,
   IconDownload,
   IconEdit,
+  IconGlobe,
+  IconList,
+  IconMonitor,
   IconRefresh,
+  type IconProps,
 } from "../ui/icons"
+import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
 import "katex/dist/katex.min.css"
 
@@ -1477,102 +1484,86 @@ function fillComposer(text: string) {
 }
 
 type SuggestItem =
-  | { label: string; fill: string; primary?: boolean }
-  | { label: string; action: "compose" | "packs" | "cockpit"; primary?: boolean }
+  | { label: string; fill: string; Icon: (p: IconProps) => JSX.Element }
+  | { label: string; action: "compose" | "packs" | "cockpit"; Icon: (p: IconProps) => JSX.Element }
 
-function SuggestionChips({ items }: { items: SuggestItem[] }) {
+const inviteRowCSS = `
+  .invite-row { color: ${tokens.text}; }
+  .invite-row:hover,
+  .invite-row:focus-visible { color: ${tokens.accentText}; }
+  .invite-row:focus-visible {
+    outline: none;
+    box-shadow: ${tokens.shadowFocus};
+    border-radius: ${tokens.radiusSm}px;
+  }
+`
+
+function InvitationRows({ items }: { items: SuggestItem[] }) {
   return (
-    <div style={styles.chipRow}>
-      {items.map((it) => (
-        <button
-          key={it.label}
-          type="button"
-          style={{
-            ...styles.suggestChip,
-            ...(it.primary ? styles.suggestChipPrimary : null),
-          }}
-          onClick={() => {
-            if ("action" in it) {
-              if (it.action === "compose") {
-                window.dispatchEvent(new CustomEvent("cmspark:open-compose"))
+    <div style={styles.inviteCol}>
+      <style>{inviteRowCSS}</style>
+      {items.map((it) => {
+        const Icon = it.Icon
+        return (
+          <button
+            key={it.label}
+            type="button"
+            className="invite-row"
+            style={styles.inviteRow}
+            onClick={() => {
+              if ("action" in it) {
+                if (it.action === "compose") {
+                  window.dispatchEvent(new CustomEvent("cmspark:open-compose"))
+                  return
+                }
+                if (it.action === "packs") {
+                  window.dispatchEvent(
+                    new CustomEvent("cmspark:open-context-panel", { detail: { panel: "packs" } }),
+                  )
+                  return
+                }
+                if (it.action === "cockpit") {
+                  chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
+                    void chrome.runtime.lastError
+                  })
+                }
                 return
               }
-              if (it.action === "packs") {
-                window.dispatchEvent(
-                  new CustomEvent("cmspark:open-context-panel", { detail: { panel: "packs" } }),
-                )
-                return
-              }
-              if (it.action === "cockpit") {
-                chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
-                  void chrome.runtime.lastError
-                })
-              }
-              return
-            }
-            fillComposer(it.fill)
-          }}
-        >
-          {it.label}
-        </button>
-      ))}
+              fillComposer(it.fill)
+            }}
+          >
+            <Icon size={16} />
+            {it.label}
+          </button>
+        )
+      })}
     </div>
   )
 }
 
+function inviteIcon(it: EmptyInvite): (p: IconProps) => JSX.Element {
+  if (it.kind === "action" && it.action === "cockpit") return IconMonitor
+  if (it.kind === "action") return IconList
+  if (it.label.includes("起草")) return IconChat
+  return IconGlobe
+}
+
 function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
-  // Gemini-breath G2: editorial empty — one title, one line, ≤3 soft suggestions.
-  if (level === "browser") {
-    return (
-      <div style={styles.empty} data-testid="empty-state-browser">
-        <div style={styles.emptyKicker}>网页</div>
-        <div style={styles.emptyTitle}>要对这页做什么？</div>
-        <div style={styles.emptyHint}>
-          总结、提问，或让 Agent 操作当前标签。
-          <br />
-          可直接粘贴截图
-        </div>
-        <SuggestionChips
-          items={[
-            { label: "总结本页", fill: "请总结当前页面的要点" },
-            { label: "装配", action: "compose", primary: true },
-            { label: "场景", action: "packs" },
-          ]}
-        />
-      </div>
-    )
-  }
-  if (level === "computer") {
-    return (
-      <div style={styles.empty} data-testid="empty-state-computer">
-        <div style={styles.emptyKicker}>计算机</div>
-        <div style={styles.emptyTitle}>任务在确认台进行</div>
-        <div style={styles.emptyHint}>此处可排队跟进。步骤与确认请用确认台。</div>
-        <SuggestionChips
-          items={[
-            { label: "确认台", action: "cockpit", primary: true },
-            { label: "装配", action: "compose" },
-          ]}
-        />
-      </div>
-    )
-  }
+  const { title, hint, items } = emptyStateCopy(level)
+  const rows: SuggestItem[] = items.map((it) =>
+    it.kind === "fill"
+      ? { label: it.label, fill: it.fill, Icon: inviteIcon(it) }
+      : { label: it.label, action: it.action, Icon: inviteIcon(it) },
+  )
+  const testId =
+    level === "browser" ? "empty-state-browser" : level === "computer" ? "empty-state-computer" : "empty-state-chat"
+
   return (
-    <div style={styles.empty} data-testid="empty-state-chat">
-      <div style={styles.emptyKicker}>CMspark</div>
-      <div style={styles.emptyTitle}>有什么可以帮你？</div>
-      <div style={styles.emptyHint}>
-        问问题、写文案，或描述浏览器任务。
-        <br />
-        可直接粘贴截图
-      </div>
-      <SuggestionChips
-        items={[
-          { label: "总结本页", fill: "请总结当前页面的要点" },
-          { label: "装配", action: "compose", primary: true },
-          { label: "场景", action: "packs" },
-        ]}
-      />
+    <div style={styles.empty} data-testid={testId}>
+      <CompanionMark size={92} />
+      <div style={styles.emptyTitle}>{title}</div>
+      <div style={styles.emptyHint}>{hint}</div>
+      <InvitationRows items={rows} />
     </div>
   )
 }
@@ -1661,69 +1652,66 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: "auto",
     padding: "14px 14px 16px",
     background: "transparent",
+    display: "flex",
+    flexDirection: "column",
     // Disable scroll-anchoring so late inserts (tools/markdown) cannot yank
     // long threads toward the top; stick-to-bottom is handled in JS.
     overflowAnchor: "none" as any,
   },
   contentInner: {
-    minHeight: "min-content",
+    minHeight: "100%",
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
   },
   empty: {
-    color: tokens.textSecondary,
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    color: tokens.text,
     textAlign: "center",
-    padding: "40px 16px 24px",
-    fontSize: 13,
+    padding: "12px 8px 8px",
     fontFamily: tokens.font,
   },
-  emptyKicker: {
-    fontSize: 11,
-    fontWeight: 600,
-    letterSpacing: "0.06em",
-    textTransform: "uppercase" as const,
-    color: tokens.textSecondary,
-    marginBottom: 10,
-  },
   emptyTitle: {
-    fontSize: 15,
-    fontWeight: 650,
+    fontSize: tokens.emptyTitle,
+    fontWeight: 600,
     color: tokens.text,
-    marginBottom: 8,
-    letterSpacing: "-0.02em",
-    lineHeight: 1.3,
+    margin: "18px 0 8px",
+    letterSpacing: "-0.035em",
+    lineHeight: 1.25,
   },
   emptyHint: {
     fontSize: 13,
     color: tokens.textSecondary,
-    lineHeight: 1.55,
+    lineHeight: 1.5,
     maxWidth: 260,
-    margin: "0 auto 20px",
+    margin: "0 0 28px",
   },
-  chipRow: {
+  inviteCol: {
     display: "flex",
-    flexWrap: "wrap",
-    gap: 8,
-    justifyContent: "center",
-    maxWidth: 300,
-    margin: "0 auto",
+    flexDirection: "column",
+    gap: 16,
+    width: "100%",
+    maxWidth: 260,
+    alignItems: "flex-start",
   },
-  suggestChip: {
-    border: `1px solid ${tokens.border}`,
-    background: tokens.bgElevated,
-    color: tokens.accentText,
-    borderRadius: tokens.radiusPill,
-    padding: "5px 10px",
-    fontSize: 11,
-    fontWeight: 550,
+  inviteRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    width: "100%",
+    padding: 0,
+    border: "none",
+    background: "transparent",
+    fontSize: 14,
+    fontWeight: 400,
+    lineHeight: 1.4,
     cursor: "pointer",
     fontFamily: tokens.font,
-    boxShadow: tokens.shadowSm,
-  },
-  suggestChipPrimary: {
-    borderColor: "rgba(79, 70, 229, 0.25)",
-    background: tokens.accentSoft,
-    color: tokens.accentText,
-    fontWeight: 650,
-    boxShadow: "0 2px 8px rgba(79, 70, 229, 0.12)",
+    textAlign: "left" as const,
   },
   userMsg: {
     display: "flex",

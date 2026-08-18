@@ -1,24 +1,25 @@
-// Shared visual tokens — Precision Instrument Desk (Phase 1 shell redesign).
-// Flat cool canvas, indigo spark for primary only, hairline borders, tight radii.
-// Type scale for chrome: 11 / 12 / 13 / 15 only. No Material status hexes.
-// Motion left at 150/220ms in Phase 1 (tighten in Phase 3).
+// Shared visual tokens — consumer assistant canon (看山 quality bar, Comp A).
+// White companion surface, indigo spark only on character + armed send.
+// Chrome stays 11 / 12 / 13 / 15. Empty greeting is the one 22px exemption.
 
 export const tokens = {
   font:
-    "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif",
+    "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Helvetica Neue', sans-serif",
   fontMono: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
 
-  // Light surface — flat instrument canvas (no gradient shell)
-  bg: "#f4f5f8",
+  // Light companion canvas
+  bg: "#ffffff",
   bgElevated: "#ffffff",
-  bgMuted: "#eceef3",
-  bgHover: "#e6e8ef",
+  bgMuted: "#f4f4f5",
+  bgHover: "#f4f4f5",
   bgActive: "#eef2ff",
-  border: "rgba(15, 23, 42, 0.08)",
-  borderStrong: "rgba(15, 23, 42, 0.12)",
-  text: "#0f172a",
-  textSecondary: "#475569",
-  textMuted: "#94a3b8",
+  border: "rgba(23, 23, 23, 0.10)",
+  borderStrong: "rgba(23, 23, 23, 0.14)",
+  text: "#171717",
+  textSecondary: "#737373",
+  textMuted: "#a3a3a3",
+  /** Empty-state hero only — not chrome. */
+  emptyTitle: 22,
 
   // Indigo accent — spark for CTA / focus / user bubble only
   accent: "#4f46e5",
@@ -70,11 +71,11 @@ export const tokens = {
   transitionFast: "120ms",
   transition: "180ms",
 
-  // Shape: controls 6/8/12; composer/bubble 14 (instrument, not pill-toy)
+  // Shape: controls 6/8/12; composer matches 看山 invitation (16)
   radiusSm: 6,
   radiusMd: 8,
   radiusLg: 12,
-  radiusComposer: 14,
+  radiusComposer: 16,
   radiusBubble: 14,
   /** Bottom sheet / 装配 drawer top corners */
   radiusSheet: 16,

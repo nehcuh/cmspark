@@ -1,0 +1,75 @@
+{
+  "title": "Choose the visual world",
+  "question": "The roll assigned 条漫工作条. Keep it, take an alternate, or re-roll.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "条漫工作条",
+      "kicker": "THE ROLL",
+      "lineage": "中文竖条漫 / webtoon 连载栏",
+      "thesis": "Side Panel 是一条正在连载的工作条漫：角色住在格子里，任务是分镜。",
+      "palette": ["#F6F1E8", "#1A1714", "#C23A2B", "#12141A"],
+      "materials": ["ink line", "panel gutters", "paper tooth", "vermilion stamp"],
+      "viewport": "320px 竖栏。顶栏极薄。角色半身格 + 一句招呼。三行台词格。底栏是对白输入。",
+      "risk": "画成萌宠漫画就变玩具；装饰格子会吃掉 320px 的任务。",
+      "sketch": ".impeccable/sketches/assigned.webp"
+    },
+    {
+      "id": "challenger-leather-studio",
+      "label": "工位皮具架",
+      "kicker": "CHALLENGER",
+      "lineage": "skeuomorph leather studio",
+      "thesis": "Companion 是桌上的皮具和摆件：角色是工位小人，对话是便签。",
+      "palette": ["#C4A484", "#E8E0D4", "#3F2A1D", "#8B5A2B"],
+      "materials": ["saddle leather", "linen", "torn paper", "walnut"],
+      "viewport": "皮革顶栏压在亚麻底上，小人坐在架上招呼，纸条建议叠在下方。",
+      "risk": "皮革和卷页会把 320px 吃掉。",
+      "case": "工位摆件有温度，但材质本身违反「任务必须塞得下」。",
+      "sketch": ".impeccable/sketches/challenger-leather.webp",
+      "hero": "https://impeccable.style/worlds/cards/digital-design-canon-skeuomorph-leather-studio-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/digital-design-canon-skeuomorph-leather-studio.webp"
+    },
+    {
+      "id": "challenger-timetable",
+      "label": "时刻表玻片架",
+      "kicker": "CHALLENGER",
+      "lineage": "1971 pocket airline timetable",
+      "thesis": "窄栏是金色灯箱上的玻片：一切同字号，等级靠粗细和反白。",
+      "palette": ["#E3B341", "#2B2F33", "#FFF8E8", "#C23A2B"],
+      "materials": ["goldenrod stock", "tinted glass", "carbon ink", "acetate rule"],
+      "viewport": "倾斜玻片叠成栏。招呼是一条反白标题。建议是三列时刻。",
+      "risk": "密得下任务，但『谁在跟你说话』站不住。",
+      "case": "密度轴完胜，角色存在感轴完败。",
+      "sketch": ".impeccable/sketches/challenger-timetable.webp",
+      "hero": "https://impeccable.style/worlds/cards/rw-timetable-slide-rack-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/rw-timetable-slide-rack.webp"
+    },
+    {
+      "id": "challenger-cyclorama",
+      "label": "天幕晨昏",
+      "kicker": "CHALLENGER",
+      "lineage": "theater cyclorama dawn",
+      "thesis": "聊是白日，网页是晨光，确认台是夜场；角色是台上的人。",
+      "palette": ["#0B0D12", "#1E3A6E", "#C45C6A", "#F4F1EA"],
+      "materials": ["cyc wash", "horizon band", "actor silhouette", "cue stencil"],
+      "viewport": "低位钴色地平线，角色剪影招呼。底栏输入像提词器。",
+      "risk": "确认台当夜场成立，空态招呼会被光带抢走。",
+      "case": "双表面（Panel+Cockpit）最优雅，320px 里光先于任务。",
+      "sketch": ".impeccable/sketches/challenger-cyclorama.webp",
+      "hero": "https://impeccable.style/worlds/cards/stagecraft-theater-lighting-cyclorama-dawn-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/stagecraft-theater-lighting-cyclorama-dawn.webp"
+    }
+  ],
+  "reroll": true,
+  "steer": true,
+  "canon": true,
+  "canonCard": {
+    "label": "消费级 AI 助手空态",
+    "thesis": "看山 / Claude / ChatGPT 那一类：大招呼、角色、安静输入，做成满工艺。",
+    "viewport": "白卡片、角色半身、三句邀请、圆角输入。品类标准，不打折。",
+    "palette": ["#FFFFFF", "#111111", "#5B5B5B", "#F3F3F3"],
+    "materials": ["soft card", "ambient shadow", "system sans"],
+    "risk": "好看，但会回到你已经拒绝的品类默认。",
+    "sketch": ".impeccable/sketches/canon.webp"
+  }
+}

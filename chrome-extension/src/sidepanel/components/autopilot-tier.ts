@@ -69,7 +69,7 @@ export function tierShortLabel(tier: AutopilotTier): string {
 }
 
 /**
- * StatusRail / SafetyStrip chip.
+ * SafetyStrip / Settings / rail title+aria.
  * Unattended takes priority over cruise (design §2.2).
  */
 export function trustStatusChip(
@@ -80,6 +80,19 @@ export function trustStatusChip(
   const tier = deriveAutopilotTier(flags)
   if (tier === "off") return null
   return `巡航中 · ${tierShortLabel(tier)}`
+}
+
+/**
+ * StatusRail 320px chip — two hanzi. Full `trustStatusChip` stays on
+ * title/aria and SafetyStrip so 解除 remains named, not buried.
+ */
+export function trustStatusChipShort(
+  flags: SecurityArmFlags,
+  unattendedArmed: boolean,
+): string | null {
+  if (unattendedArmed) return "值守"
+  if (deriveAutopilotTier(flags) === "off") return null
+  return "巡航"
 }
 
 /** @deprecated use trustStatusChip — kept for call sites that only have flags */

@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-17 (S73 · #193 thread hygiene MERGED)
+**Updated**: 2026-08-18 (S74 · #196 companion-canon Side Panel OPEN)
 
 ## CMspark — 产品 0.5.1（0.5.0 切点 + 用户附图）
 
@@ -14,7 +14,7 @@
 | 无人值守 / 三旗巡航 | **on main** |
 | 听写+ / 本机 Whisper / 会议 | 交付（ADR-023/024） |
 | Outbound MCP | 交付 opt-in |
-| Precision Instrument UI | **on main**（#168–#171） |
+| Precision Instrument UI | **on main**（#168–#171）；**被消费级助手 canon 替换中**（**#196 OPEN**） |
 | Thread list ID + large skill install | **on main**（#184） |
 | **编程接力 / Mode C** | **on main**（**#190** Panel+Mode C；**#191** Windows spawn/诚实 L1） |
 | Thread hygiene（未命名 / ACP husk） | **on main**（**#193**） |
@@ -24,8 +24,8 @@
 
 ## Main tip (remote)
 
-- **`origin/main`**: merge PR **#193** (`7a88b8c`) — thread hygiene（C′+D）  
-- **Open PR**: 以 `gh pr list` 为准（#193 已 MERGED）
+- **`origin/main`**: merge PR **#195** (`b3f1098`) — attach r3 nits  
+- **Open PR**: **#196** companion-canon Side Panel（CI 绿 · MERGEABLE）
 
 ## Recent locks (S73)
 
@@ -35,6 +35,7 @@
 
 ## Next (optional backlog)
 
+- 合 **#196** 后重载扩展；可选重打 DMG（现 `/Applications` 0.5.1 不含图钉/portal/去铅笔）
 - 真机：#193 重启 Companion + 重载扩展；整理助手验 husk / 簇主
 - 真机：#191 Windows Claude/Pi + Mode C 不假 L1
 - 真机：#190 Ghostty Mode C + Stop 文案（mac）

@@ -75,6 +75,35 @@ test("§4.3 P3 L1 context alone", () => {
   assert.equal(slot.secondaryAbort, false)
 })
 
+test("S1.1 empty L1 hides webpage strip; confirm/急停 still win", () => {
+  const emptyL1 = resolveFocusBandSlot({
+    ...idle,
+    isBrowserContext: true,
+    hasThreadMessages: false,
+  })
+  assert.equal(emptyL1.primary, "empty")
+
+  const confirmEmpty = resolveFocusBandSlot({
+    ...idle,
+    hasPendingConfirm: true,
+    isBrowserContext: true,
+    hasThreadMessages: false,
+  })
+  assert.equal(confirmEmpty.primary, "confirm")
+  assert.equal(confirmEmpty.secondaryContext, false)
+
+  const abortEmpty = resolveFocusBandSlot({
+    ...idle,
+    hasPendingConfirm: true,
+    hasL2Task: true,
+    l2AbortRequired: true,
+    isBrowserContext: true,
+    hasThreadMessages: false,
+  })
+  assert.equal(abortEmpty.primary, "confirm")
+  assert.equal(abortEmpty.secondaryAbort, true)
+})
+
 test("§4.3 P2 Fleet beats L1 Context", () => {
   const slot = resolveFocusBandSlot({
     ...idle,
