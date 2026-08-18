@@ -1,0 +1,35 @@
+{
+  "batch": "post191-review-fixes",
+  "date": "2026-08-18",
+  "stage": "post-implementation verification (9 P2 fixes, uncommitted working tree)",
+  "prompt": "docs/audit/reviews/post191-review-fixes-dual-prompt-20260818.md",
+  "reviewers": {
+    "claude": {
+      "version": "2.1.220",
+      "raw": "docs/audit/reviews/post191-review-fixes-claude-raw-20260818.md",
+      "verdict": "APPROVE",
+      "blocking": 0,
+      "nits": 0,
+      "gates": { "R1": "PASS", "R2": "PASS", "R3": "PASS", "R4": "PASS", "R5": "PASS" }
+    },
+    "pi": {
+      "version": "0.83.0",
+      "raw": "docs/audit/reviews/post191-review-fixes-pi-raw-20260818.md",
+      "verdict": "APPROVE_WITH_NITS",
+      "blocking": 0,
+      "nits": 5,
+      "gates": { "R1": "PASS", "R2": "PASS", "R3": "PASS", "R4": "PASS", "R5": "PASS" },
+      "nit_disposition": {
+        "NIT1": "converged: third F10 behavior change (politeness-prefix strip on immediate titles) documented in synthesis §5",
+        "NIT2": "converged: companion/tests/client-message-id-passthrough.test.ts — router-level direct tests for both pass-through seams (chat.create emit/omit + file.upload), verified non-vacuous",
+        "NIT3": "converged: fileUploadedEffects refactored to fileUploadedApplyToPanel(msgThreadId, activeThreadId): boolean (no constant branch); source-order lock test added",
+        "NIT4": "converged: logic extracted to testable pure module chrome-extension/src/sidepanel/utils/upload-send.ts (buildOptimisticUploadBubble + uploadSendOutcome), direct tests in tests/upload-send.test.ts",
+        "NIT5": "converged: shared chrome-extension/src/utils/temp-message-id.ts mints `${threadId}_user_${ms}_${rand}`; all 5 generation sites + isTempUserMessageId regex synced (legacy suffix-less ids still recognized)"
+      },
+      "nits_converged": "2026-08-18 (all 5; regression: extension 728/728, companion affected 36/36)"
+    }
+  },
+  "leftovers_converged": "2026-08-18 (legacy-alias fallback in classifyAlias; preview_jpeg_b64 400_000 cap both sides + hydrate sanitizer unification; final regression: extension 730/730, companion affected 41/41)",
+  "combined_verdict": "APPROVE_WITH_NITS",
+  "ship": true
+}

@@ -1,0 +1,1146 @@
+﻿diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 1c854ef..7234d85 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -24,9 +24,13 @@
+ - 浼氳鐢ㄦ埛鎸囧崡锛歋TT `resource_conflict` 鎭㈠璇存槑 + 绾妯℃澘鐢ㄦ硶锛埪?.5鈥?.6锛? - 浼氳 **P1 杩戝疄鏃?*锛堥粯璁ゆ笎杩涘亣璁?+ ~8s 瀹氱锛変笌 **P2 闀夸細**锛堢洿鎾?涓婁紶纭笂闄?3h銆佽蒋鎻愮ず 2h锛涚邯瑕佽緭鍏?20 涓囧瓧锛? 
++### Fixed
++
++- Windows锛氬閮ㄧ紪绋?Agent锛圓CP锛夊惎鍔ㄤ笉鍐嶅懡涓?npm 鐨?Unix shebang 鍨墖锛坄spawn ENOENT`锛夛紝涔熶笉鍐嶅 `.cmd` 鐩存帴 CreateProcess锛坄EINVAL`锛夈€傚彂鐜颁紭鍏?`.exe`/`.cmd`锛屽苟鎶?Claude/Pi 绛?shim 瑙ｅ寘涓?PE / `node script.js`锛汳ode C 鐢?Windows Terminal 鎴?`start` + PowerShell 鎵撳紑鏈満浜や簰绐椼€?+
+ ### Packaging
+ 
+-- `run-esbuild-bundle.mjs` 鐩存帴 spawn esbuild 鍘熺敓浜岃繘鍒讹紙閬垮厤 node 瑙ｆ瀽 Mach-O锛?+- `run-esbuild-bundle.mjs` 鐩存帴 spawn esbuild 鍘熺敓浜岃繘鍒讹紙閬垮厤 node 瑙ｆ瀽 Mach-O锛夛紱Windows 瑙ｆ瀽 `@esbuild/win32-*/esbuild.exe`锛坄bin/esbuild` 鏄?JS 鍖呰锛宻pawn 浼?ENOENT锛? 
+ ## [0.5.0] 鈥?2026-08-08
+ 
+diff --git a/companion/src/acp/discover.ts b/companion/src/acp/discover.ts
+index 7bccf69..d20d87e 100644
+--- a/companion/src/acp/discover.ts
++++ b/companion/src/acp/discover.ts
+@@ -5,6 +5,12 @@ import { execFileSync } from "child_process"
+ import * as fs from "fs"
+ import * as os from "os"
+ import * as path from "path"
++import { hardenPath } from "../process-path"
++import {
++  pickWindowsWhereHit,
++  findWindowsSiblingShim,
++  resolveWindowsAgentCommand,
++} from "./win-spawn"
+ 
+ export type DiscoveredAgent = {
+   id: string
+@@ -32,6 +38,7 @@ const PROBES: ProbeDef[] = [
+       "/usr/local/bin/claude",
+       path.join(os.homedir(), ".local", "bin", "claude"),
+       path.join(os.homedir(), ".claude", "local", "claude"),
++      ...windowsCommonAgentPaths("claude"),
+       // Homebrew Caskroom (GUI-launched Companion often lacks brew in PATH)
+       ...(() => {
+         try {
+@@ -57,6 +64,7 @@ const PROBES: ProbeDef[] = [
+       "/opt/homebrew/bin/gemini",
+       "/usr/local/bin/gemini",
+       path.join(os.homedir(), ".local", "bin", "gemini"),
++      ...windowsCommonAgentPaths("gemini"),
+     ],
+   },
+   {
+@@ -67,6 +75,7 @@ const PROBES: ProbeDef[] = [
+       "/opt/homebrew/bin/codex",
+       "/usr/local/bin/codex",
+       path.join(os.homedir(), ".local", "bin", "codex"),
++      ...windowsCommonAgentPaths("codex"),
+     ],
+   },
+   {
+@@ -87,6 +96,7 @@ const PROBES: ProbeDef[] = [
+           return [] as string[]
+         }
+       })(),
++      ...windowsCommonAgentPaths("pi"),
+     ],
+   },
+ ]
+@@ -102,18 +112,69 @@ function isExecutableFile(p: string): boolean {
+   }
+ }
+ 
++/** npm / nvm-windows / node-sibling shims (GUI-launched Companion often lacks these on PATH). */
++export function windowsCommonAgentPaths(basename: string): string[] {
++  if (process.platform !== "win32") return []
++  const home = os.homedir()
++  const appdata = process.env.APPDATA || path.join(home, "AppData", "Roaming")
++  const out: string[] = []
++  const push = (p: string) => {
++    if (p) out.push(p)
++  }
++  push(path.join(appdata, "npm", `${basename}.cmd`))
++  push(path.join(appdata, "npm", `${basename}.exe`))
++  try {
++    const nodeDir = path.dirname(process.execPath)
++    push(path.join(nodeDir, `${basename}.cmd`))
++    push(path.join(nodeDir, `${basename}.exe`))
++  } catch {
++    /* */
++  }
++  const nvmSymlink = process.env.NVM_SYMLINK
++  if (nvmSymlink) {
++    push(path.join(nvmSymlink, `${basename}.cmd`))
++    push(path.join(nvmSymlink, `${basename}.exe`))
++  }
++  const nvmHome = process.env.NVM_HOME
++  if (nvmHome) {
++    push(path.join(nvmHome, `${basename}.cmd`))
++  }
++  return out
++}
++
++function whereBinary(): string {
++  if (process.platform !== "win32") return "which"
++  const root = process.env.SystemRoot || process.env.SYSTEMROOT || "C:\\Windows"
++  return path.join(root, "System32", "where.exe")
++}
++
+ function whichOnPath(basename: string): string | undefined {
+   try {
+-    const cmd = process.platform === "win32" ? "where" : "which"
++    const cmd = whereBinary()
++    const env =
++      process.platform === "win32"
++        ? { ...process.env, PATH: hardenPath() }
++        : process.env
+     const out = execFileSync(cmd, [basename], {
+       encoding: "utf8",
+       timeout: 2000,
+       stdio: ["ignore", "pipe", "ignore"],
++      env,
+     })
+-    const first = String(out)
++    const lines = String(out)
+       .split(/\r?\n/)
+       .map((l) => l.trim())
+-      .find(Boolean)
++      .filter(Boolean)
++    if (process.platform === "win32") {
++      const picked = pickWindowsWhereHit(lines)
++      if (picked) return resolveWindowsAgentCommand(picked)
++      for (const line of lines) {
++        const sib = findWindowsSiblingShim(line)
++        if (sib) return sib
++      }
++      return undefined
++    }
++    const first = lines.find(Boolean)
+     if (first && isExecutableFile(first)) return first
+   } catch {
+     /* not found */
+@@ -157,6 +218,9 @@ export function discoverCodingAgents(force = false): DiscoveredAgent[] {
+     } catch {
+       /* keep */
+     }
++    if (process.platform === "win32") {
++      found = resolveWindowsAgentCommand(found)
++    }
+     if (seenCmd.has(found)) continue
+     seenCmd.add(found)
+     out.push({
+diff --git a/companion/src/acp/jsonrpc-stdio.ts b/companion/src/acp/jsonrpc-stdio.ts
+index d9a5379..21427cf 100644
+--- a/companion/src/acp/jsonrpc-stdio.ts
++++ b/companion/src/acp/jsonrpc-stdio.ts
+@@ -3,6 +3,7 @@
+ 
+ import type { ChildProcessWithoutNullStreams } from "child_process"
+ import { EventEmitter } from "events"
++import { killAcpChild } from "./win-spawn"
+ 
+ export type JsonRpcId = string | number
+ 
+@@ -135,13 +136,13 @@ export class JsonRpcStdioClient extends EventEmitter {
+ 
+   kill(): void {
+     try {
+-      this.child.kill("SIGTERM")
++      killAcpChild(this.child, "SIGTERM")
+     } catch {
+       /* */
+     }
+     setTimeout(() => {
+       try {
+-        this.child.kill("SIGKILL")
++        killAcpChild(this.child, "SIGKILL")
+       } catch {
+         /* */
+       }
+diff --git a/companion/src/acp/manager.ts b/companion/src/acp/manager.ts
+index d1bbcd8..229f9af 100644
+--- a/companion/src/acp/manager.ts
++++ b/companion/src/acp/manager.ts
+@@ -1,7 +1,8 @@
+ // ACP session manager 鈥?Phase B+ live progress (default acp.enabled=false).
+ // Spawns configured stdio agent; streams progress via onEvent 鈫?WS broadcast.
+ 
+-import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
++import type { ChildProcessWithoutNullStreams } from "child_process"
++import { spawnAcpChild, killAcpChild } from "./win-spawn"
+ import * as fs from "fs"
+ import * as os from "os"
+ import * as path from "path"
+@@ -610,7 +611,7 @@ export class AcpManager {
+ 
+       let child: ChildProcessWithoutNullStreams
+       try {
+-        child = spawn(server.command, args, {
++        child = spawnAcpChild(server.command, args, {
+           cwd: session.workspace_root,
+           env: buildAcpAgentEnv({
+             sessionId: session.session_id,
+@@ -618,7 +619,7 @@ export class AcpManager {
+             serverEnv: server.env,
+           }),
+           stdio: ["pipe", "pipe", "pipe"],
+-        })
++        }) as ChildProcessWithoutNullStreams
+       } catch (e: any) {
+         this.runningCount = Math.max(0, this.runningCount - 1)
+         session.state = "closed"
+@@ -647,13 +648,13 @@ export class AcpManager {
+         session.partial = true
+         this.emitProgress(session, "timeout 鈥?stopping鈥?, true)
+         try {
+-          child.kill("SIGTERM")
++          killAcpChild(child, "SIGTERM")
+         } catch {
+           /* */
+         }
+         setTimeout(() => {
+           try {
+-            child.kill("SIGKILL")
++            killAcpChild(child, "SIGKILL")
+           } catch {
+             /* */
+           }
+@@ -861,13 +862,13 @@ export class AcpManager {
+     const child = this.processes.get(sessionId)
+     if (child) {
+       try {
+-        child.kill("SIGTERM")
++        killAcpChild(child, "SIGTERM")
+       } catch {
+         /* */
+       }
+       setTimeout(() => {
+         try {
+-          child.kill("SIGKILL")
++          killAcpChild(child, "SIGKILL")
+         } catch {
+           /* */
+         }
+diff --git a/companion/src/acp/open-local-terminal.ts b/companion/src/acp/open-local-terminal.ts
+index f8f304e..d8c73e6 100644
+--- a/companion/src/acp/open-local-terminal.ts
++++ b/companion/src/acp/open-local-terminal.ts
+@@ -13,6 +13,7 @@ import * as os from "os"
+ import * as path from "path"
+ import { promisify } from "util"
+ import { logger } from "../logger"
++import { resolveAcpSpawn, resolveWindowsAgentCommand } from "./win-spawn"
+ 
+ const execFileAsync = promisify(execFile)
+ 
+@@ -246,6 +247,142 @@ export function buildWindowsCommandLine(cwd: string, command: string): string {
+   return `cd /d ${windowsQuotePath(cwd)} && ${windowsQuotePath(command)}`
+ }
+ 
++/** PowerShell single-quoted literal (`'` 鈫?`''`). */
++export function quotePowerShellLiteral(s: string): string {
++  return `'${String(s).replace(/'/g, "''")}'`
++}
++
++/**
++ * Mode C L1/L0 PowerShell script: cd workspace, print banner, optionally exec agent.
++ * Paths go through -LiteralPath / single-quoted literals 鈥?no interpolation.
++ */
++export function buildWindowsModeCScript(opts: {
++  cwd: string
++  command: string
++  extraArgs?: string[]
++  agentLabel?: string
++  goalHint?: string
++  promptFile?: string
++  l0?: boolean
++}): string {
++  const label = (opts.agentLabel || path.basename(opts.command) || "agent").replace(/'/g, "")
++  const hint = (opts.goalHint || "").replace(/[\r\n]+/g, " ").slice(0, 120).replace(/'/g, "")
++  const lines = [
++    "$ErrorActionPreference = 'Stop'",
++    `Set-Location -LiteralPath ${quotePowerShellLiteral(opts.cwd)}`,
++    "Write-Host ''",
++    "Write-Host '鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲'",
++    "Write-Host ' CMspark 缂栫▼鎺ュ姏 路 鏈満浜や簰绐楀彛'",
++    "Write-Host ' 渚ф爮鍙︽湁鐩戣浼氳瘽锛堟ˉ鎺ワ級鈥斺€?涓嶆槸鍚屼竴浼氳瘽'",
++    `Write-Host ' Agent: ${label}'`,
++    hint ? `Write-Host ' 浠诲姟: ${hint}'` : "Write-Host ''",
++    "Write-Host '鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲'",
++    "Write-Host ''",
++  ]
++  if (opts.l0) {
++    lines.push("Write-Host '锛圠0 闄嶇骇锛氭湭鑷姩鍚姩 Agent銆傝绮樿创涓嬫柟鍛戒护鎴栦粠鍓创鏉胯繍琛岋級'")
++    const paste = [opts.command, ...(opts.extraArgs || [])].join(" ")
++    lines.push(`Write-Host ${quotePowerShellLiteral(paste)}`)
++    return lines.join("\r\n")
++  }
++  const tokens = [opts.command, ...(opts.extraArgs || [])].map(quotePowerShellLiteral)
++  if (opts.promptFile) {
++    lines.push(
++      `$task = Get-Content -LiteralPath ${quotePowerShellLiteral(opts.promptFile)} -Raw -Encoding utf8`,
++    )
++    lines.push(`& ${tokens.join(" ")} $task`)
++  } else {
++    lines.push(`& ${tokens.join(" ")}`)
++  }
++  return lines.join("\r\n")
++}
++
++function findWindowsTerminalExe(): string | null {
++  const home = os.homedir()
++  const candidates = [
++    process.env.LOCALAPPDATA
++      ? path.join(process.env.LOCALAPPDATA, "Microsoft", "WindowsApps", "wt.exe")
++      : "",
++    path.join(home, "AppData", "Local", "Microsoft", "WindowsApps", "wt.exe"),
++    "wt.exe",
++  ].filter(Boolean)
++  for (const c of candidates) {
++    try {
++      if (c === "wt.exe") return c
++      if (fs.existsSync(c)) return c
++    } catch {
++      /* next */
++    }
++  }
++  return null
++}
++
++function spawnDetachedWin(command: string, args: string[]): Promise<void> {
++  return new Promise((resolve, reject) => {
++    let settled = false
++    const child = spawn(command, args, {
++      detached: true,
++      stdio: "ignore",
++      windowsHide: true,
++    })
++    child.once("error", (err) => {
++      if (settled) return
++      settled = true
++      reject(err)
++    })
++    child.unref()
++    setTimeout(() => {
++      if (settled) return
++      settled = true
++      resolve()
++    }, 80)
++  })
++}
++
++/**
++ * Open a visible Windows console running the Mode C PowerShell script.
++ * Pref: `wt` / `Windows Terminal` / `auto` 鈫?wt.exe then `start`; `cmd` 鈫?start only.
++ */
++export async function openWindowsWithPref(
++  scriptPath: string,
++  cwd: string,
++  pref: string | undefined,
++): Promise<{ appLabel: string }> {
++  const n = normalizeLocalTerminalApp(pref).toLowerCase()
++  const wantWt = n === "auto" || n === "wt" || n === "windowsterminal" || n === "windows terminal"
++  const wantStart = n === "cmd" || n === "powershell" || n === "conhost" || n === "auto"
++  const psArgs = [
++    "-NoExit",
++    "-NoLogo",
++    "-ExecutionPolicy",
++    "Bypass",
++    "-File",
++    scriptPath,
++  ]
++  if (wantWt) {
++    const wt = findWindowsTerminalExe()
++    if (wt) {
++      try {
++        await spawnDetachedWin(wt, ["-d", cwd, "--", "powershell.exe", ...psArgs])
++        return { appLabel: "Windows Terminal" }
++      } catch {
++        if (n !== "auto") {
++          throw new Error("Windows Terminal failed to launch")
++        }
++      }
++    } else if (n !== "auto") {
++      throw new Error("Windows Terminal (wt.exe) not found")
++    }
++  }
++  if (wantStart || n === "auto") {
++    const comspec = process.env.ComSpec || "cmd.exe"
++    const line = `start "CMspark" powershell.exe ${psArgs.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ")}`
++    await spawnDetachedWin(comspec, ["/d", "/s", "/c", line])
++    return { appLabel: "Windows Console" }
++  }
++  throw new Error(`terminal pref "${pref}" is not supported on Windows (use auto / wt / cmd)`)
++}
++
+ /** Common typos / aliases 鈫?canonical preset id */
+ const LOCAL_TERMINAL_ALIASES: Record<string, string> = {
+   ghotty: "Ghostty",
+@@ -578,7 +715,7 @@ function openLinuxTerminal(term: string, script: string): void {
+ /**
+  * Best-effort open host terminal running interactive agent in workspace.
+  * macOS: Terminal.app via osascript. Linux: $TERMINAL / x-terminal-emulator.
+- * Windows: fail-soft with safely quoted paste line (no free exec of arbitrary shell).
++ * Windows: Windows Terminal (`wt`) or `start` + PowerShell -File (quoted literals).
+  */
+ export async function openLocalTerminalForAgent(
+   opts: OpenLocalTerminalOpts,
+@@ -590,7 +727,10 @@ export async function openLocalTerminalForAgent(
+   if (!resolved.ok) {
+     return { ok: false, platform, detail: resolved.reason }
+   }
+-  const command = resolved.absolute
++  let command = resolved.absolute
++  if (platform === "win32") {
++    command = resolveWindowsAgentCommand(command)
++  }
+   if (!isExecutableFile(command)) {
+     return {
+       ok: false,
+@@ -764,7 +904,70 @@ export async function openLocalTerminalForAgent(
+       }
+     }
+ 
+-    // win32 / other: fail-soft with safely quoted paste line (no free shell exec)
++    if (platform === "win32") {
++      const spec = resolveAcpSpawn(command, [])
++      const writeModeCPs1 = (l0: boolean): string => {
++        const body = buildWindowsModeCScript({
++          cwd,
++          command: spec.command,
++          extraArgs: spec.args,
++          agentLabel: opts.agentLabel,
++          goalHint: opts.goalHint,
++          promptFile,
++          l0,
++        })
++        const ps1 = path.join(
++          os.tmpdir(),
++          `cmspark-mode-c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`,
++        )
++        fs.writeFileSync(ps1, body, { encoding: "utf8" })
++        return ps1
++      }
++      try {
++        const ps1 = writeModeCPs1(false)
++        const opened = await openWindowsWithPref(ps1, cwd, termPref)
++        logger.info("acp.open_local_terminal", {
++          platform,
++          ok: true,
++          level: "L1",
++          app: opened.appLabel,
++          cwd,
++        })
++        return {
++          ok: true,
++          platform,
++          detail: `opened ${opened.appLabel} with interactive agent`,
++          commandLine: pasteLine,
++          level: "L1",
++        }
++      } catch (e: any) {
++        if (!allowL0) throw e
++        try {
++          const ps1 = writeModeCPs1(true)
++          const opened = await openWindowsWithPref(ps1, cwd, termPref)
++          logger.info("acp.open_local_terminal", {
++            platform,
++            ok: true,
++            level: "L0",
++            app: opened.appLabel,
++            cwd,
++          })
++          return {
++            ok: true,
++            platform,
++            detail: `opened ${opened.appLabel} (L0 degrade: banner only; paste agent command)`,
++            commandLine: pasteLine,
++            level: "L0",
++          }
++        } catch (e2: any) {
++          const msg = e2?.message || e?.message || String(e2)
++          logger.warn("acp.open_local_terminal_failed", { err: msg, platform })
++          return { ok: false, platform, detail: msg, commandLine: pasteLine }
++        }
++      }
++    }
++
++    // other OS: fail-soft with safely quoted paste line
+     return {
+       ok: false,
+       platform,
+diff --git a/companion/src/acp/protocol-session.ts b/companion/src/acp/protocol-session.ts
+index 1cdbe09..14690c3 100644
+--- a/companion/src/acp/protocol-session.ts
++++ b/companion/src/acp/protocol-session.ts
+@@ -1,7 +1,8 @@
+ // Run one ACP session over JSON-RPC stdio (true Client path).
+ // Falls back responsibility stays in manager when initialize fails.
+ 
+-import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
++import type { ChildProcessWithoutNullStreams } from "child_process"
++import { spawnAcpChild } from "./win-spawn"
+ import { JsonRpcStdioClient, tryAcpInitialize } from "./jsonrpc-stdio"
+ import {
+   capTimeline,
+@@ -46,11 +47,11 @@ export async function tryStartProtocolSession(opts: {
+ }): Promise<ProtocolSessionHandle | null> {
+   let child: ChildProcessWithoutNullStreams
+   try {
+-    child = spawn(opts.command, opts.args, {
++    child = spawnAcpChild(opts.command, opts.args, {
+       cwd: opts.cwd,
+       env: opts.env as NodeJS.ProcessEnv,
+       stdio: ["pipe", "pipe", "pipe"],
+-    })
++    }) as ChildProcessWithoutNullStreams
+   } catch (e: any) {
+     logger.warn("acp.protocol_spawn_failed", { err: e?.message || String(e) })
+     return null
+diff --git a/companion/tests/acp-open-local-terminal.test.ts b/companion/tests/acp-open-local-terminal.test.ts
+index b9a8dee..f00c42e 100644
+--- a/companion/tests/acp-open-local-terminal.test.ts
++++ b/companion/tests/acp-open-local-terminal.test.ts
+@@ -13,6 +13,8 @@ import {
+   buildInteractiveExecFragment,
+   buildL0DegradeScript,
+   buildWindowsCommandLine,
++  buildWindowsModeCScript,
++  quotePowerShellLiteral,
+   resolveLinuxTerminalBinary,
+   resolveLinuxTerminalFromPref,
+   normalizeLocalTerminalApp,
+@@ -55,6 +57,42 @@ describe("windowsQuotePath", () => {
+   })
+ })
+ 
++describe("quotePowerShellLiteral / buildWindowsModeCScript", () => {
++  it("escapes single quotes for PowerShell literals", () => {
++    assert.equal(quotePowerShellLiteral("C:\\repo"), "'C:\\repo'")
++    assert.equal(quotePowerShellLiteral("O'Brien"), "'O''Brien'")
++  })
++
++  it("L1 script cds, banners, and invokes unwrapped command with prompt file", () => {
++    const s = buildWindowsModeCScript({
++      cwd: "C:\\Users\\me\\My Project",
++      command: "C:\\Tools\\claude.exe",
++      extraArgs: [],
++      agentLabel: "Claude",
++      goalHint: "fix auth",
++      promptFile: "C:\\tmp\\task.md",
++    })
++    assert.match(s, /Set-Location -LiteralPath 'C:\\Users\\me\\My Project'/)
++    assert.match(s, /涓嶆槸鍚屼竴浼氳瘽/)
++    assert.match(s, /Agent: Claude/)
++    assert.match(s, /Get-Content -LiteralPath 'C:\\tmp\\task\.md'/)
++    assert.match(s, /& 'C:\\Tools\\claude\.exe' \$task/)
++    assert.doesNotMatch(s, /L0/)
++  })
++
++  it("L0 script has no invocation of the agent binary", () => {
++    const s = buildWindowsModeCScript({
++      cwd: "C:\\ws",
++      command: "C:\\Tools\\claude.exe",
++      agentLabel: "Claude",
++      l0: true,
++    })
++    assert.match(s, /L0/)
++    assert.doesNotMatch(s, /& 'C:\\Tools\\claude\.exe'/)
++    assert.match(s, /Set-Location -LiteralPath 'C:\\ws'/)
++  })
++})
++
+ describe("buildWindowsCommandLine", () => {
+   it("uses cd /d and quotes cwd + command", () => {
+     const line = buildWindowsCommandLine(
+diff --git a/companion/src/acp/win-spawn.ts b/companion/src/acp/win-spawn.ts
+new file mode 100644
+index 0000000..797b38a
+--- /dev/null
++++ b/companion/src/acp/win-spawn.ts
+@@ -0,0 +1,246 @@
++// Windows spawn helpers for ACP coding agents.
++//
++// npm / nvm-windows install a pair of shims next to node.exe:
++//   claude        鈥?POSIX `#!/bin/sh` script (CreateProcess 鈫?ENOENT)
++//   claude.cmd    鈥?cmd.exe wrapper (CreateProcess 鈫?EINVAL without a console host)
++// `where claude` lists the shebang first. Discovery and spawn must prefer
++// .exe/.cmd and unwrap cmd-shims to a PE or `node script.js` so JSON-RPC
++// stdio does not go through a hidden `cmd.exe`.
++
++import { spawn, type ChildProcess, type SpawnOptions } from "child_process"
++import * as fs from "fs"
++import * as path from "path"
++
++export type AcpSpawnSpec = {
++  command: string
++  args: string[]
++  options: {
++    windowsHide?: boolean
++    windowsVerbatimArguments?: boolean
++  }
++}
++
++export type WinFsDeps = {
++  exists?: (p: string) => boolean
++  isShebang?: (p: string) => boolean
++  readHead?: (p: string) => string
++  readFile?: (p: string) => string
++}
++
++function defaultExists(p: string): boolean {
++  try {
++    return fs.statSync(p).isFile()
++  } catch {
++    return false
++  }
++}
++
++/** First 256 bytes look like a POSIX shebang (`#!/bin/sh`, `#!/usr/bin/env node`). */
++export function looksLikeWindowsShebangScript(
++  filePath: string,
++  deps?: WinFsDeps,
++): boolean {
++  try {
++    const head = (deps?.readHead || ((p) => fs.readFileSync(p, { encoding: "utf8" }).slice(0, 256)))(
++      filePath,
++    )
++    return /^#![ \t]*\//.test(head)
++  } catch {
++    return false
++  }
++}
++
++/**
++ * Rank `where` hits for a spawnable Windows target.
++ * `.exe`/`.com` > `.cmd`/`.bat` > other non-shebang > (never) shebang-only.
++ */
++export function pickWindowsWhereHit(lines: string[], deps?: WinFsDeps): string | undefined {
++  const exists = deps?.exists ?? defaultExists
++  const isShebang = deps?.isShebang ?? ((p: string) => looksLikeWindowsShebangScript(p, deps))
++  const files = [...new Set(lines.map((l) => l.trim()).filter(Boolean))].filter(exists)
++  if (!files.length) return undefined
++
++  const rank = (p: string): number => {
++    const ext = path.extname(p).toLowerCase()
++    if (ext === ".exe" || ext === ".com") return 0
++    if (ext === ".cmd" || ext === ".bat") return 1
++    if (isShebang(p)) return 9
++    return 5
++  }
++  files.sort((a, b) => rank(a) - rank(b) || a.length - b.length)
++  const best = files[0]
++  if (!best || rank(best) >= 9) return undefined
++  return best
++}
++
++/** If `p` is extensionless (or a shebang), return sibling `.exe` / `.cmd` / `.bat`. */
++export function findWindowsSiblingShim(p: string, deps?: WinFsDeps): string | undefined {
++  const exists = deps?.exists ?? defaultExists
++  const trimmed = p.trim()
++  if (!trimmed) return undefined
++  const ext = path.extname(trimmed)
++  const base = ext ? trimmed.slice(0, -ext.length) : trimmed
++  for (const e of [".exe", ".com", ".cmd", ".bat"]) {
++    const cand = base + e
++    if (cand !== trimmed && exists(cand)) return cand
++  }
++  return undefined
++}
++
++export type UnwrappedCmd = {
++  command: string
++  prefixArgs: string[]
++}
++
++/**
++ * Parse a typical npm / Claude Code `.cmd` shim into a PE or `node script.js`.
++ * Conservative: only `%dp0%` relative targets that exist on disk.
++ */
++export function unwrapWindowsCmdShim(cmdPath: string, deps?: WinFsDeps): UnwrappedCmd | null {
++  const ext = path.extname(cmdPath).toLowerCase()
++  if (ext !== ".cmd" && ext !== ".bat") return null
++  let text: string
++  try {
++    text = deps?.readFile ? deps.readFile(cmdPath) : fs.readFileSync(cmdPath, "utf8")
++  } catch {
++    return null
++  }
++  if (text.length > 32_000) text = text.slice(0, 32_000)
++  const dir = path.dirname(cmdPath)
++  const exists = deps?.exists ?? defaultExists
++
++  const joinDp0 = (rel: string): string => path.join(dir, rel.replace(/\//g, path.sep))
++
++  // "%dp0%\relative\file.exe" %*
++  const exe = text.match(/"%dp0%[\\/]([^"\r\n]+\.exe)"\s*%\*/i)
++  if (exe?.[1]) {
++    const resolved = joinDp0(exe[1])
++    if (exists(resolved)) return { command: resolved, prefixArgs: [] }
++  }
++
++  // "%_prog%"  "%dp0%\relative\cli.js" %*
++  const js = text.match(/"%_prog%"\s+"%dp0%[\\/]([^"\r\n]+\.(?:js|mjs|cjs))"/i)
++  if (js?.[1]) {
++    const script = joinDp0(js[1])
++    if (!exists(script)) return null
++    const siblingNode = path.join(dir, "node.exe")
++    const node = exists(siblingNode) ? siblingNode : process.execPath
++    return { command: node, prefixArgs: [script] }
++  }
++
++  return null
++}
++
++/**
++ * Map a discovered / configured command to something CreateProcess can run.
++ * Never returns a POSIX shebang path when a sibling `.cmd`/`.exe` exists.
++ */
++export function resolveWindowsAgentCommand(command: string, deps?: WinFsDeps): string {
++  const exists = deps?.exists ?? defaultExists
++  const trimmed = command.trim()
++  if (!trimmed) return command
++
++  const ext = path.extname(trimmed).toLowerCase()
++  if (ext === ".exe" || ext === ".com") return trimmed
++  if (ext === ".cmd" || ext === ".bat") return trimmed
++
++  const sibling = findWindowsSiblingShim(trimmed, deps)
++  if (sibling) return sibling
++
++  const isShebang = deps?.isShebang ?? ((p: string) => looksLikeWindowsShebangScript(p, deps))
++  if (exists(trimmed) && isShebang(trimmed)) {
++    // last resort: keep it (caller may still wrap via cmd 鈥?will fail, but honest)
++    return trimmed
++  }
++  return trimmed
++}
++
++export function quoteCmdArg(s: string): string {
++  if (!/[\s"&<>|^()]/.test(s)) return s
++  return `"${s.replace(/"/g, '\\"')}"`
++}
++
++function wrapViaCmd(command: string, args: string[]): AcpSpawnSpec {
++  const cmdline = [command, ...args].map(quoteCmdArg).join(" ")
++  const comspec = process.env.ComSpec || "cmd.exe"
++  return {
++    command: comspec,
++    args: ["/d", "/s", "/c", cmdline],
++    options: { windowsHide: true, windowsVerbatimArguments: true },
++  }
++}
++
++export function resolveAcpSpawn(
++  command: string,
++  args: string[],
++  opts?: WinFsDeps & { platform?: NodeJS.Platform },
++): AcpSpawnSpec {
++  const platform = opts?.platform ?? process.platform
++  if (platform !== "win32") {
++    return { command, args, options: {} }
++  }
++
++  const target = resolveWindowsAgentCommand(command, opts)
++  const ext = path.extname(target).toLowerCase()
++
++  if (ext === ".exe" || ext === ".com") {
++    return { command: target, args, options: { windowsHide: true } }
++  }
++
++  const unwrapped = unwrapWindowsCmdShim(target, opts)
++  if (unwrapped) {
++    return {
++      command: unwrapped.command,
++      args: [...unwrapped.prefixArgs, ...args],
++      options: { windowsHide: true },
++    }
++  }
++
++  if (ext === ".cmd" || ext === ".bat") {
++    return wrapViaCmd(target, args)
++  }
++
++  // Bare / unknown: still go through cmd so PATHEXT can resolve .cmd
++  return wrapViaCmd(target, args)
++}
++
++export function spawnAcpChild(
++  command: string,
++  args: string[],
++  options: SpawnOptions,
++): ReturnType<typeof spawn> {
++  const spec = resolveAcpSpawn(command, args)
++  return spawn(spec.command, spec.args, {
++    ...options,
++    windowsHide: spec.options.windowsHide ?? (options.windowsHide as boolean | undefined),
++    windowsVerbatimArguments:
++      spec.options.windowsVerbatimArguments ??
++      (options.windowsVerbatimArguments as boolean | undefined),
++  })
++}
++
++/** Kill ACP child + descendants (win32 taskkill tree; POSIX SIGTERM). */
++export function killAcpChild(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM"): void {
++  const pid = child.pid
++  if (pid == null || pid <= 0) return
++  if (process.platform === "win32") {
++    try {
++      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
++        stdio: "ignore",
++        windowsHide: true,
++      })
++    } catch {
++      try {
++        child.kill()
++      } catch {
++        /* */
++      }
++    }
++    return
++  }
++  try {
++    child.kill(signal)
++  } catch {
++    /* */
++  }
++}
+diff --git a/companion/tests/acp-win-spawn.test.ts b/companion/tests/acp-win-spawn.test.ts
+new file mode 100644
+index 0000000..bf78367
+--- /dev/null
++++ b/companion/tests/acp-win-spawn.test.ts
+@@ -0,0 +1,318 @@
++// Windows ACP spawn: npm shims are #!/bin/sh + .cmd pairs; Node CreateProcess
++// cannot run shebang scripts (ENOENT) or .cmd without a console host (EINVAL).
++
++import { describe, it } from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as os from "node:os"
++import * as path from "node:path"
++import { spawn } from "node:child_process"
++import {
++  pickWindowsWhereHit,
++  looksLikeWindowsShebangScript,
++  findWindowsSiblingShim,
++  unwrapWindowsCmdShim,
++  resolveWindowsAgentCommand,
++  resolveAcpSpawn,
++  quoteCmdArg,
++} from "../src/acp/win-spawn"
++import { discoverCodingAgents, _resetDiscoverCache } from "../src/acp/discover"
++
++const WIN = process.platform === "win32"
++
++describe("pickWindowsWhereHit", () => {
++  it("prefers .exe over .cmd over extensionless shebang", () => {
++    const picked = pickWindowsWhereHit(
++      [
++        "C:\\nvm4w\\nodejs\\claude",
++        "C:\\nvm4w\\nodejs\\claude.cmd",
++        "C:\\nvm4w\\nodejs\\claude.exe",
++      ],
++      {
++        exists: () => true,
++        isShebang: (p) => !path.extname(p),
++      },
++    )
++    assert.equal(picked, "C:\\nvm4w\\nodejs\\claude.exe")
++  })
++
++  it("prefers .cmd when no PE is listed (typical npm global)", () => {
++    const picked = pickWindowsWhereHit(
++      ["C:\\nvm4w\\nodejs\\claude", "C:\\nvm4w\\nodejs\\claude.cmd"],
++      {
++        exists: () => true,
++        isShebang: (p) => p.endsWith("claude") && !p.endsWith(".cmd"),
++      },
++    )
++    assert.equal(picked, "C:\\nvm4w\\nodejs\\claude.cmd")
++  })
++
++  it("returns undefined when only a shebang shim exists", () => {
++    const picked = pickWindowsWhereHit(["C:\\nvm4w\\nodejs\\claude"], {
++      exists: () => true,
++      isShebang: () => true,
++    })
++    assert.equal(picked, undefined)
++  })
++
++  it("skips missing paths", () => {
++    const picked = pickWindowsWhereHit(
++      ["C:\\missing\\claude.exe", "C:\\real\\claude.cmd"],
++      {
++        exists: (p) => p.includes("real"),
++        isShebang: () => false,
++      },
++    )
++    assert.equal(picked, "C:\\real\\claude.cmd")
++  })
++})
++
++describe("looksLikeWindowsShebangScript", () => {
++  it("detects #!/bin/sh from injected reader", () => {
++    assert.equal(
++      looksLikeWindowsShebangScript("C:\\x\\claude", {
++        readHead: () => "#!/bin/sh\nbasedir=$(dirname \"$0\")\n",
++      }),
++      true,
++    )
++    assert.equal(
++      looksLikeWindowsShebangScript("C:\\x\\claude.cmd", {
++        readHead: () => "@ECHO off\r\n",
++      }),
++      false,
++    )
++  })
++})
++
++describe("findWindowsSiblingShim", () => {
++  it("finds .cmd next to an extensionless shebang path", () => {
++    const sib = findWindowsSiblingShim("C:\\nvm4w\\nodejs\\claude", {
++      exists: (p) => p === "C:\\nvm4w\\nodejs\\claude.cmd",
++    })
++    assert.equal(sib, "C:\\nvm4w\\nodejs\\claude.cmd")
++  })
++
++  it("prefers sibling .exe over .cmd", () => {
++    const sib = findWindowsSiblingShim("C:\\tools\\claude", {
++      exists: (p) => p === "C:\\tools\\claude.exe" || p === "C:\\tools\\claude.cmd",
++    })
++    assert.equal(sib, "C:\\tools\\claude.exe")
++  })
++})
++
++describe("unwrapWindowsCmdShim", () => {
++  it("resolves %dp0% ...exe %* wrappers (Claude Code)", () => {
++    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-cmd-"))
++    const exe = path.join(dir, "node_modules", "pkg", "bin", "agent.exe")
++    fs.mkdirSync(path.dirname(exe), { recursive: true })
++    fs.writeFileSync(exe, "MZ")
++    const cmdPath = path.join(dir, "agent.cmd")
++    fs.writeFileSync(
++      cmdPath,
++      [
++        "@ECHO off",
++        "SETLOCAL",
++        'CALL :find_dp0',
++        '"%dp0%\\node_modules\\pkg\\bin\\agent.exe"   %*',
++        "",
++      ].join("\r\n"),
++    )
++    const u = unwrapWindowsCmdShim(cmdPath)
++    assert.ok(u)
++    assert.equal(u!.command, exe)
++    assert.deepEqual(u!.prefixArgs, [])
++    fs.rmSync(dir, { recursive: true, force: true })
++  })
++
++  it("resolves npm node + cli.js shims (Pi)", () => {
++    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-cmd-"))
++    const script = path.join(dir, "node_modules", "pi", "dist", "cli.js")
++    fs.mkdirSync(path.dirname(script), { recursive: true })
++    fs.writeFileSync(script, "console.log('ok')")
++    const nodeExe = path.join(dir, "node.exe")
++    fs.writeFileSync(nodeExe, "MZ")
++    const cmdPath = path.join(dir, "pi.cmd")
++    fs.writeFileSync(
++      cmdPath,
++      [
++        "@ECHO off",
++        'IF EXIST "%dp0%\\node.exe" (',
++        '  SET "_prog=%dp0%\\node.exe"',
++        ") ELSE (",
++        '  SET "_prog=node"',
++        ")",
++        'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\pi\\dist\\cli.js" %*',
++        "",
++      ].join("\r\n"),
++    )
++    const u = unwrapWindowsCmdShim(cmdPath)
++    assert.ok(u)
++    assert.equal(u!.command, nodeExe)
++    assert.deepEqual(u!.prefixArgs, [script])
++    fs.rmSync(dir, { recursive: true, force: true })
++  })
++})
++
++describe("resolveAcpSpawn", () => {
++  it("is identity on non-win32", () => {
++    const r = resolveAcpSpawn("/opt/homebrew/bin/claude", ["-p"], { platform: "darwin" })
++    assert.equal(r.command, "/opt/homebrew/bin/claude")
++    assert.deepEqual(r.args, ["-p"])
++    assert.deepEqual(r.options, {})
++  })
++
++  it("passes .exe through with windowsHide on win32", () => {
++    const r = resolveAcpSpawn("C:\\Tools\\claude.exe", ["-p", "hi"], { platform: "win32" })
++    assert.equal(r.command, "C:\\Tools\\claude.exe")
++    assert.deepEqual(r.args, ["-p", "hi"])
++    assert.equal(r.options.windowsHide, true)
++    assert.equal(r.options.windowsVerbatimArguments, undefined)
++  })
++
++  it("wraps unresolved .cmd via cmd.exe /d /s /c (no shell:true)", () => {
++    const r = resolveAcpSpawn("C:\\missing\\agent.cmd", ["--version"], {
++      platform: "win32",
++      exists: () => false,
++      readFile: () => {
++        throw new Error("nope")
++      },
++    })
++    assert.match(r.command, /cmd\.exe$/i)
++    assert.equal(r.args[0], "/d")
++    assert.equal(r.args[1], "/s")
++    assert.equal(r.args[2], "/c")
++    assert.match(r.args[3] || "", /agent\.cmd/)
++    assert.equal(r.options.windowsHide, true)
++    assert.equal(r.options.windowsVerbatimArguments, true)
++  })
++
++  it("rewrites extensionless shebang to sibling .cmd then unwraps", () => {
++    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-shim-"))
++    const exe = path.join(dir, "node_modules", "x", "bin", "claude.exe")
++    fs.mkdirSync(path.dirname(exe), { recursive: true })
++    fs.writeFileSync(exe, "MZ")
++    const shim = path.join(dir, "claude")
++    fs.writeFileSync(shim, "#!/bin/sh\nexec \"$basedir/node_modules/x/bin/claude.exe\"\n")
++    const cmdPath = path.join(dir, "claude.cmd")
++    fs.writeFileSync(cmdPath, `"%dp0%\\node_modules\\x\\bin\\claude.exe"   %*\r\n`)
++    const r = resolveAcpSpawn(shim, ["--version"], { platform: "win32" })
++    assert.equal(r.command, exe)
++    assert.deepEqual(r.args, ["--version"])
++    fs.rmSync(dir, { recursive: true, force: true })
++  })
++})
++
++describe("quoteCmdArg", () => {
++  it("leaves simple tokens bare", () => {
++    assert.equal(quoteCmdArg("--version"), "--version")
++    assert.equal(quoteCmdArg("C:\\a\\b.exe"), "C:\\a\\b.exe")
++  })
++
++  it("quotes spaces and escapes quotes", () => {
++    assert.equal(quoteCmdArg("C:\\Program Files\\a.exe"), `"C:\\Program Files\\a.exe"`)
++    assert.equal(quoteCmdArg('say "hi"'), `"say \\"hi\\""`)
++  })
++})
++
++describe("discoverCodingAgents Windows spawn target", () => {
++  it("does not return a Unix shebang shim when a .cmd/.exe sibling exists", {
++    skip: !WIN,
++  }, () => {
++    _resetDiscoverCache()
++    const agents = discoverCodingAgents(true)
++    for (const a of agents) {
++      let head = ""
++      try {
++        head = fs.readFileSync(a.command, "utf8").slice(0, 80)
++      } catch {
++        continue
++      }
++      assert.doesNotMatch(
++        head,
++        /^#![ \t]*\//,
++        `discovered ${a.id} command is a POSIX shebang shim: ${a.command}`,
++      )
++      assert.match(
++        a.command,
++        /\.(cmd|bat|exe|com)$/i,
++        `discovered ${a.id} should be a Windows spawnable (.cmd/.exe), got ${a.command}`,
++      )
++    }
++  })
++})
++
++describe("live spawn via resolveAcpSpawn", () => {
++  it("spawns a fixture .cmd wrapper and captures stdout (win32)", { skip: !WIN }, async () => {
++    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-live-"))
++    const exe = process.execPath
++    const script = path.join(dir, "echo.js")
++    fs.writeFileSync(script, "process.stdout.write('ACP_WIN_OK')")
++    const cmdPath = path.join(dir, "echo-agent.cmd")
++    // Unresolvable shim so we exercise the cmd.exe fallback path
++    fs.writeFileSync(
++      cmdPath,
++      `@ECHO off\r\n"${exe}" "${script}"\r\n`,
++    )
++    const spec = resolveAcpSpawn(cmdPath, [], { platform: "win32" })
++    const out = await new Promise<{ code: number | null; stdout: string; err?: string }>(
++      (resolve) => {
++        const child = spawn(spec.command, spec.args, {
++          stdio: ["pipe", "pipe", "pipe"],
++          windowsHide: spec.options.windowsHide,
++          windowsVerbatimArguments: spec.options.windowsVerbatimArguments,
++        })
++        let stdout = ""
++        let err: string | undefined
++        child.stdout.on("data", (d: Buffer) => {
++          stdout += d.toString("utf8")
++        })
++        child.on("error", (e) => {
++          err = e.message
++        })
++        child.on("close", (code) => resolve({ code, stdout, err }))
++      },
++    )
++    fs.rmSync(dir, { recursive: true, force: true })
++    assert.equal(out.err, undefined, out.err)
++    assert.equal(out.code, 0)
++    assert.match(out.stdout, /ACP_WIN_OK/)
++  })
++
++  it("spawns discovered claude --version without ENOENT/EINVAL (win32)", {
++    skip: !WIN,
++  }, async () => {
++    _resetDiscoverCache()
++    const claude = discoverCodingAgents(true).find((a) => a.id === "claude")
++    if (!claude) return
++    const spec = resolveAcpSpawn(claude.command, ["--version"], { platform: "win32" })
++    const out = await new Promise<{ code: number | null; stdout: string; err?: string }>(
++      (resolve) => {
++        const child = spawn(spec.command, spec.args, {
++          stdio: ["pipe", "pipe", "pipe"],
++          windowsHide: spec.options.windowsHide,
++          windowsVerbatimArguments: spec.options.windowsVerbatimArguments,
++        })
++        let stdout = ""
++        let err: string | undefined
++        child.stdout.on("data", (d: Buffer) => {
++          stdout += d.toString("utf8")
++        })
++        child.on("error", (e) => {
++          err = (e as NodeJS.ErrnoException).code + " " + e.message
++        })
++        child.on("close", (code) => resolve({ code, stdout, err }))
++        setTimeout(() => {
++          try {
++            child.kill()
++          } catch {
++            /* */
++          }
++        }, 8000)
++      },
++    )
++    assert.equal(out.err, undefined, `spawn failed: ${out.err} via ${spec.command}`)
++    assert.notEqual(out.code, -4058)
++    assert.doesNotMatch(out.err || "", /ENOENT|EINVAL/)
++    assert.match(out.stdout, /Claude|claude|\d+\.\d+/)
++  })
++})
