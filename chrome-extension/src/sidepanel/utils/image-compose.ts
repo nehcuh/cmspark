@@ -12,6 +12,30 @@ export const IMAGE_ACCEPT =
 export const IMAGE_PREFLIGHT_NO_VISION =
   "当前主模型不支持直接看图，且未启用视觉分析。请在设置中开启视觉分析，或改用支持图片的模型。"
 
+export const IMAGE_FORMAT_REFUSED =
+  "不支持该图片格式（请使用 PNG / JPEG / GIF / WebP）"
+
+/** Declared image/* that is not an allowlisted raster. */
+export function imageTypeRefuseReason(type: string): string | undefined {
+  const t = String(type || "")
+    .trim()
+    .toLowerCase()
+    .split(";")[0]
+    .trim()
+  if (t.startsWith("image/") && !isAllowlistedImageMime(t)) return IMAGE_FORMAT_REFUSED
+  return undefined
+}
+
+/** Keep refuse banner when some files were accepted; cap error wins. */
+export function nextFileErrorAfterIngest(opts: {
+  refuse?: string
+  capErr?: string
+}): string {
+  if (opts.capErr) return opts.capErr
+  if (opts.refuse) return opts.refuse
+  return ""
+}
+
 export const IMAGE_GIF_SHRINK_FIRST = "动画图请先缩小"
 
 const ALLOWED_IMAGE_MIMES = new Set([

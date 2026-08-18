@@ -208,6 +208,9 @@ function stampAttachments(msgId: string, atts: ImageAttachmentMeta[]): ImageAtta
       ...(typeof a.width === "number" ? { width: a.width } : {}),
       ...(typeof a.height === "number" ? { height: a.height } : {}),
       ...(typeof a.preview_jpeg_b64 === "string" ? { preview_jpeg_b64: a.preview_jpeg_b64 } : {}),
+      ...(typeof a.dest_host === "string" && a.dest_host
+        ? { dest_host: a.dest_host.replace(/[\n\r]/g, "").slice(0, 200) }
+        : {}),
       msg_id: msgId,
       index: i,
       rel: `${msgId}-${i}.${sniffedExt(a.mime)}`,

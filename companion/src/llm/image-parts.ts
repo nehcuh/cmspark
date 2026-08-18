@@ -9,6 +9,8 @@ export interface ImageAttachmentMeta {
   preview_jpeg_b64?: string
   width?: number
   height?: number
+  /** Hostname the pixels were sent to (native LLM or vision). Display only. */
+  dest_host?: string
   /**
    * Companion-chosen basename (`${msgId}-${n}.${ext}`). Persisted for debug /
    * display. Never used as a filesystem load path — reconstruct from

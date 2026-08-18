@@ -261,6 +261,10 @@ test("parseChatUserAttachments: image only, skip junk", () => {
     bytes: 12,
     preview_jpeg_b64: "qq",
   })
+  const withHost = parseChatUserAttachments([
+    { kind: "image", name: "shot.png", mime: "image/png", dest_host: "api.openai.com" },
+  ])
+  assert.equal(withHost?.[0]?.dest_host, "api.openai.com")
 })
 
 test("security confirmation requests are queued and removable", () => {

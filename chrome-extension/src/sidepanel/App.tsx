@@ -1,6 +1,6 @@
 // CMspark Browser Agent — Root App Component
 
-import { Component, useState, useRef, useCallback, useEffect } from "react"
+import { Component, useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ChatView } from "./components/ChatView"
@@ -70,9 +70,11 @@ import {
   classifyDrop,
   compressImageBlob,
   defaultCaption,
+  imageTypeRefuseReason,
   isAllowlistedImageMime,
   mimeFromName,
   needsCompress,
+  nextFileErrorAfterIngest,
   pasteImageDisplayName,
   visionRailOpen,
 } from "./utils/image-compose"
@@ -293,6 +295,74 @@ function AppContent() {
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+}
+
+function blobUrlFromB64(b64: string, mime: string): string {
+  try {
+    const bin = atob(b64)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    return URL.createObjectURL(new Blob([bytes], { type: mime || "application/octet-stream" }))
+  } catch {
+    return ""
+  }
+}
+
+function ComposerImageChip({
+  file,
+  destHost,
+  onRemove,
+}: {
+  file: FileAttachment
+  destHost: string
+  onRemove: () => void
+}) {
+  const [broken, setBroken] = useState(false)
+  const url = useMemo(() => blobUrlFromB64(file.content, file.type), [file.content, file.type])
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url) }, [url])
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 6,
+      padding: "2px 8px 2px 2px", background: tokens.accentSoft, borderRadius: tokens.radiusPill,
+      fontSize: 11, color: tokens.accentText, maxWidth: 220,
+    }}>
+      {url && !broken ? (
+        <img
+          src={url}
+          alt={file.name}
+          width={48}
+          height={48}
+          onError={() => setBroken(true)}
+          style={{
+            width: 48, height: 48, objectFit: "cover", borderRadius: tokens.radiusSm,
+            border: `1px solid ${tokens.border}`, background: tokens.bgMuted, display: "block", flexShrink: 0,
+          }}
+        />
+      ) : (
+        <span style={{
+          width: 48, height: 48, borderRadius: tokens.radiusSm, border: `1px solid ${tokens.border}`,
+          background: tokens.bgMuted, display: "inline-flex", alignItems: "center", justifyContent: "center",
+          fontSize: 9, color: tokens.textMuted, flexShrink: 0,
+        }}>
+          图
+        </span>
+      )}
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+        {file.name} ({formatFileSize(file.size)})
+        {file.compressed ? " · 已压缩" : ""}
+        {` → ${destHost}`}
+      </span>
+      <span role="button" onClick={onRemove} style={{ cursor: "pointer", marginLeft: 2, fontWeight: "bold", flexShrink: 0 }}>
+        {"\u00d7"}
+      </span>
+    </span>
+  )
 }
 
 function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityLevel }) {
@@ -1293,10 +1363,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     const maxDocSize = 10 * 1024 * 1024
     const incoming: FileAttachment[] = []
     let addedImages = 0
+    let refuse: string | undefined
     for (const file of list) {
       const type = file.type || mimeFromName(file.name)
-      if (type.startsWith("image/") && !isAllowlistedImageMime(type)) {
-        setFileError("不支持该图片格式（请使用 PNG / JPEG / GIF / WebP）")
+      const refuseReason = imageTypeRefuseReason(type)
+      if (refuseReason) {
+        refuse = refuseReason
         continue
       }
       const isImage = isAllowlistedImageMime(type)
@@ -1345,15 +1417,15 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         setFileError(msg)
       }
     }
-    if (incoming.length === 0) return
+    if (incoming.length === 0) {
+      if (refuse) setFileError(refuse)
+      return
+    }
 
     const nextFiles = [...selectedFilesRef.current, ...incoming]
     const capErr = checkComposerImageCaps(nextFiles.filter((f) => isAllowlistedImageMime(f.type)))
-    if (capErr) {
-      setFileError(capErr)
-      return
-    }
-    setFileError("")
+    setFileError(nextFileErrorAfterIngest({ refuse, capErr }))
+    if (capErr) return
     setSelectedFiles(nextFiles)
     selectedFilesRef.current = nextFiles
 
@@ -1378,9 +1450,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     const imageFiles: File[] = []
     for (let i = 0; i < items.length; i++) {
       const item = items[i]
-      if (item.kind === "file" && isAllowlistedImageMime(item.type)) {
-        const f = item.getAsFile()
-        if (f) imageFiles.push(f)
+      if (item.kind !== "file") continue
+      const f = item.getAsFile()
+      if (!f) continue
+      const type = item.type || mimeFromName(f.name)
+      if (isAllowlistedImageMime(type) || type.startsWith("image/")) {
+        imageFiles.push(f)
       }
     }
     if (imageFiles.length === 0) return
@@ -1438,12 +1513,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     setSelectedFiles(prev => prev.filter((_, i) => i !== idx))
   }, [])
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes}B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
-  }
-
   return (
     <div
       style={{ borderTop: `1px solid ${tokens.border}`, flexShrink: 0, position: "relative" as const, background: tokens.bg }}
@@ -1485,6 +1554,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           padding: "8px 12px 0",
         }}>
           {selectedFiles.map((file, idx) => (
+            isAllowlistedImageMime(file.type) ? (
+              <ComposerImageChip
+                key={`${file.name}-${idx}`}
+                file={file}
+                destHost={destHost}
+                onRemove={() => removeFile(idx)}
+              />
+            ) : (
             <span key={idx} style={{
               display: "inline-flex", alignItems: "center", gap: 4,
               padding: "2px 8px", background: tokens.accentSoft, borderRadius: tokens.radiusPill,
@@ -1495,8 +1572,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                 whiteSpace: "nowrap", minWidth: 0,
               }}>
                 {file.name} ({formatFileSize(file.size)})
-                {file.compressed ? " · 已压缩" : ""}
-                {isAllowlistedImageMime(file.type) ? ` → ${destHost}` : ""}
               </span>
               <span
                 role="button"
@@ -1506,6 +1581,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                 {"\u00d7"}
               </span>
             </span>
+            )
           ))}
         </div>
       )}

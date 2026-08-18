@@ -270,6 +270,8 @@ export interface MessageAttachment {
   sha256?: string
   bytes?: number
   preview_jpeg_b64?: string
+  /** Hostname pixels were sent to (native LLM or vision). */
+  dest_host?: string
 }
 
 export interface Message {
