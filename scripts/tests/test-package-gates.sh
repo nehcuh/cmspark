@@ -89,6 +89,8 @@ assert_file_has "${PACKAGE_SH}" 'run-esbuild-bundle\.mjs' \
   "package.sh uses shared esbuild SoT runner"
 assert_file_has "${ESBUILD_RUNNER}" 'esbuild-bundle-args\.json' \
   "run-esbuild-bundle.mjs loads esbuild-bundle-args.json"
+assert_file_has "${ESBUILD_RUNNER}" 'win32-' \
+  "run-esbuild-bundle.mjs resolves Windows @esbuild/win32-* esbuild.exe"
 
 # --- Whisper binary auto-fetch SoT -------------------------------------------
 echo "[static] whisper-binary auto-fetch SoT"
