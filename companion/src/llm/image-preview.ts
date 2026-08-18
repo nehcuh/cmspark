@@ -76,19 +76,55 @@ function nnDownscale(
   return { rgba: out, width: w, height: h }
 }
 
+async function tryCanvasPreview(buf: Buffer): Promise<string | undefined> {
+  try {
+    const canvasMod = (await import("canvas")) as Record<string, unknown>
+    const root = (canvasMod.loadImage ? canvasMod : canvasMod.default) as {
+      createCanvas: (w: number, h: number) => {
+        getContext: (k: "2d") => { drawImage: (...a: unknown[]) => void }
+        toBuffer: (fmt: string, opts?: { quality?: number }) => Buffer
+      }
+      loadImage: (src: Buffer) => Promise<{ width: number; height: number }>
+    }
+    const { loadImage, createCanvas } = root
+    if (!loadImage || !createCanvas) return undefined
+    const img = await loadImage(buf)
+    const long = Math.max(img.width, img.height) || 1
+    const scale = long > PREVIEW_MAX_EDGE ? PREVIEW_MAX_EDGE / long : 1
+    const w = Math.max(1, Math.round(img.width * scale))
+    const h = Math.max(1, Math.round(img.height * scale))
+    const canvas = createCanvas(w, h)
+    canvas.getContext("2d").drawImage(img, 0, 0, w, h)
+    let out: Buffer = canvas.toBuffer("image/jpeg", { quality: 0.5 })
+    if (out.length > PREVIEW_MAX_BYTES) {
+      const s2 = 48 / long
+      const w2 = Math.max(1, Math.round(img.width * s2))
+      const h2 = Math.max(1, Math.round(img.height * s2))
+      const c2 = createCanvas(w2, h2)
+      c2.getContext("2d").drawImage(img, 0, 0, w2, h2)
+      out = c2.toBuffer("image/jpeg", { quality: 0.4 })
+    }
+    if (out.length <= PREVIEW_MAX_BYTES) return out.toString("base64")
+  } catch {
+    return undefined
+  }
+  return undefined
+}
+
 /** Returns base64 preview (PNG or JPEG) capped at 8KB, or undefined. */
-export function makePreviewB64(buf: Buffer, mime: string): string | undefined {
+export async function makePreviewB64(buf: Buffer, mime: string): Promise<string | undefined> {
   if (!buf || buf.length === 0) return undefined
   if (mime === "image/jpeg" && buf.length <= PREVIEW_MAX_BYTES) {
     return buf.toString("base64")
   }
+  const viaCanvas = await tryCanvasPreview(buf)
+  if (viaCanvas) return viaCanvas
   if (mime === "image/png") {
     try {
       const decoded = decodePngToRgba(buf)
       const small = nnDownscale(decoded.rgba, decoded.width, decoded.height, PREVIEW_MAX_EDGE)
       const png = encodePngRgba(small.rgba, small.width, small.height)
       if (png.length <= PREVIEW_MAX_BYTES) return png.toString("base64")
-      // Last resort: 32px
       const tiny = nnDownscale(decoded.rgba, decoded.width, decoded.height, 32)
       const png2 = encodePngRgba(tiny.rgba, tiny.width, tiny.height)
       if (png2.length <= PREVIEW_MAX_BYTES) return png2.toString("base64")

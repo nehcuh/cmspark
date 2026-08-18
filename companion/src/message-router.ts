@@ -744,7 +744,7 @@ export async function handleMessage(
             if (!written) {
               return uploadError(`图片 "${img.name}" 保存失败`)
             }
-            const preview = makePreviewB64(img.buf, mime)
+            const preview = await makePreviewB64(img.buf, mime)
             imageAttachments.push({
               name: img.name,
               mime,

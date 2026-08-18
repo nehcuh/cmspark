@@ -8,9 +8,8 @@ const TINY_PNG = Buffer.from(
   "base64",
 )
 
-test("makePreviewB64: tiny PNG produces a preview under 8KB", () => {
-  const b64 = makePreviewB64(TINY_PNG, "image/png")
+test("makePreviewB64: tiny PNG produces a preview under 8KB", async () => {
+  const b64 = await makePreviewB64(TINY_PNG, "image/png")
   assert.ok(b64)
   assert.ok(Buffer.from(b64!, "base64").length <= PREVIEW_MAX_BYTES)
-  assert.ok(b64!.startsWith("iVBOR"))
 })
