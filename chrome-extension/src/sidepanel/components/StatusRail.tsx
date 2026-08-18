@@ -1,8 +1,8 @@
 // StatusRail — Zone A (UIUX v2 PR1)
 // Mode badge + pin · connection (token colors) · thread switcher · ⋯ menu
 
-import { useState, useRef, useEffect, useCallback, type CSSProperties } from "react"
-import { ThreadList } from "./ThreadList"
+import { useState, useRef, useEffect, type CSSProperties } from "react"
+import { ThreadList, createBlankThread } from "./ThreadList"
 import { useAgentStore } from "../store/agentStore"
 import type { ConnectionState, CapabilityLevel } from "../types"
 import {
@@ -13,7 +13,7 @@ import {
 } from "../ui/tokens"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
 import { ModeBadge } from "../ui/ModeBadge"
-import { formatThreadIdBadge } from "../utils/thread-timeline"
+
 import {
   IconCraft,
   IconDownload,
@@ -25,8 +25,9 @@ import {
   IconAlert,
   IconSpinner,
   IconMore,
+  IconNewChat,
 } from "../ui/icons"
-import { disarmAllFlags, trustStatusChip } from "./autopilot-tier"
+import { disarmAllFlags, trustStatusChip, trustStatusChipShort } from "./autopilot-tier"
 
 export function StatusRail({
   connectionState,
@@ -58,15 +59,12 @@ export function StatusRail({
   }
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
   const activeThreadId = state.activeThreadId
-  const idBadge = activeThreadId ? formatThreadIdBadge(activeThreadId) : ""
   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
   const [nbTooltip, setNbTooltip] = useState<string>(
     "离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）",
   )
   const [menuOpen, setMenuOpen] = useState(false)
-  const [idCopied, setIdCopied] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const copyIdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // useRef lock is mandatory: React state updates are async, so a rapid second click
   // within the same tick can pass the `nbState === "working"` guard before the first
   // setNbState commits — both fire sendMessage → double download. The ref is synchronous.
@@ -82,51 +80,6 @@ export function StatusRail({
     document.addEventListener("mousedown", onDoc)
     return () => document.removeEventListener("mousedown", onDoc)
   }, [menuOpen])
-
-  useEffect(() => {
-    return () => {
-      if (copyIdTimerRef.current) clearTimeout(copyIdTimerRef.current)
-    }
-  }, [])
-
-  // Reset "已复制" when switching threads so stale feedback never lingers.
-  useEffect(() => {
-    setIdCopied(false)
-    if (copyIdTimerRef.current) {
-      clearTimeout(copyIdTimerRef.current)
-      copyIdTimerRef.current = null
-    }
-  }, [activeThreadId])
-
-  const copyActiveThreadId = useCallback(async () => {
-    const text = String(activeThreadId || "").trim()
-    if (!text) return
-    let ok = false
-    try {
-      await navigator.clipboard.writeText(text)
-      ok = true
-    } catch {
-      try {
-        const ta = document.createElement("textarea")
-        ta.value = text
-        ta.style.position = "fixed"
-        ta.style.left = "-9999px"
-        document.body.appendChild(ta)
-        ta.select()
-        ok = document.execCommand("copy")
-        document.body.removeChild(ta)
-      } catch {
-        ok = false
-      }
-    }
-    if (!ok) return
-    setIdCopied(true)
-    if (copyIdTimerRef.current) clearTimeout(copyIdTimerRef.current)
-    copyIdTimerRef.current = setTimeout(() => {
-      setIdCopied(false)
-      copyIdTimerRef.current = null
-    }, 1200)
-  }, [activeThreadId])
 
   const resetNbIdle = (delay: number, immediate?: boolean) => {
     if (immediate) {
@@ -214,14 +167,13 @@ export function StatusRail({
   const closeMenu = () => setMenuOpen(false)
   const connLabel = connectionLabel(connectionState)
   const unattendedArmed = state.unattended?.armed === true
-  const cruiseLabel = trustStatusChip(
-    {
-      auto_approve_dangerous: state.config.auto_approve_dangerous === true,
-      auto_approve_enterprise_tools: state.config.auto_approve_enterprise_tools === true,
-      allow_all_schemes: state.config.allow_all_schemes === true,
-    },
-    unattendedArmed,
-  )
+  const armFlags = {
+    auto_approve_dangerous: state.config.auto_approve_dangerous === true,
+    auto_approve_enterprise_tools: state.config.auto_approve_enterprise_tools === true,
+    allow_all_schemes: state.config.allow_all_schemes === true,
+  }
+  const cruiseDetail = trustStatusChip(armFlags, unattendedArmed)
+  const cruiseLabel = trustStatusChipShort(armFlags, unattendedArmed)
   const disarmCruise = () => {
     // Full disarm: unattended grant + cruise flags (clear_cruise on companion)
     chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: true })
@@ -242,79 +194,74 @@ export function StatusRail({
       aria-label="状态栏"
       style={{
         ...railStyles.rail,
-        ...(modeLine
-          ? {
-              boxShadow: `inset 0 -2.5px 0 ${modeLine}, 0 1px 0 rgba(255,255,255,0.9) inset, ${tokens.shadowSm}`,
-            }
-          : { boxShadow: `0 1px 0 rgba(255,255,255,0.9) inset, ${tokens.shadowSm}` }),
+        ...(modeLine ? { boxShadow: `inset 0 -2px 0 ${modeLine}` } : null),
       }}
     >
-      <ThreadList />
-      <div style={railStyles.brand}>
-        <span style={railStyles.brandMark} aria-hidden>
-          ◆
-        </span>
-        <span style={railStyles.brandText}>CMspark</span>
-      </div>
-      {idBadge ? (
-        <button
-          type="button"
-          style={{
-            ...railStyles.threadIdBadge,
-            color: idCopied ? tokens.accentText : tokens.textMuted,
-          }}
-          title={`当前会话 ${idBadge} — 点击复制编号（可在线程列表搜索框粘贴定位）`}
-          aria-label={`当前会话编号 ${idBadge}，点击复制`}
-          onClick={() => {
-            void copyActiveThreadId()
-          }}
-        >
-          {idCopied ? "已复制" : idBadge}
-        </button>
-      ) : null}
-      <div style={railStyles.spacer} />
       <ModeBadge
         level={capabilityLevel}
         label={badgeLabel}
         pinned={pinned}
         onTogglePin={togglePin}
+        whisper
       />
+      {!(cruiseLabel || connectionState !== "connected") && (
+      <div style={railStyles.brand}>
+        <span style={railStyles.brandText}>CMspark</span>
+      </div>
+      )}
+      <div style={railStyles.cluster}>
+      <button
+        type="button"
+        style={railStyles.ghostBtn}
+        title="新增对话"
+        aria-label="新增对话"
+        onClick={() => createBlankThread(dispatch)}
+      >
+        <IconNewChat size={18} />
+      </button>
+      <ThreadList />
+      </div>
       {cruiseLabel && (
         <button
           type="button"
           style={railStyles.cruisePill}
-          title={
-            unattendedArmed
-              ? "无人值守已武装；左键解除，右键打开安全设置"
-              : "运行自主度已武装；左键解除，右键打开安全设置"
-          }
+          title={`${cruiseDetail}；左键解除，右键打开安全设置`}
           onClick={disarmCruise}
           onContextMenu={(e) => {
             e.preventDefault()
             dispatch({ type: "OPEN_SETTINGS_SECTION", section: "security" })
           }}
-          aria-label={`${cruiseLabel}，点击解除`}
+          aria-label={`${cruiseDetail}，点击解除`}
         >
           {cruiseLabel}
-          <span style={railStyles.cruiseX}>解除</span>
         </button>
       )}
-      <div
-        role="status"
+      {connectionState === "connected" ? (
+        <span
+          role="status"
+          aria-label={connLabel}
+          title={connLabel}
+          style={railStyles.connDot}
+        >
+          <span
+            style={{
+              ...railStyles.statusDot,
+              background: connectionColor(connectionState),
+              boxShadow: connectionDotShadow(connectionState),
+            }}
+          />
+        </span>
+      ) : (
+      <button
+        type="button"
         aria-label={connLabel}
-        title={
-          connectionState !== "connected"
-            ? "连接异常 — 点击打开连接与配对设置"
-            : connLabel
-        }
+        title="连接异常 — 点击打开连接与配对设置"
         style={{
           ...railStyles.connPill,
-          cursor: connectionState !== "connected" ? "pointer" : "default",
+          cursor: "pointer",
         }}
         onClick={() => {
-          if (connectionState !== "connected") {
-            dispatch({ type: "OPEN_SETTINGS_SECTION", section: "connection" })
-          }
+          dispatch({ type: "OPEN_SETTINGS_SECTION", section: "connection" })
         }}
       >
         <span
@@ -325,26 +272,23 @@ export function StatusRail({
           }}
         />
         <span style={railStyles.connLabel}>{connLabel}</span>
-      </div>
-      {/* Power actions in ⋯ menu — not permanent icon strip */}
+      </button>
+      )}
       <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}>
         <button
           type="button"
           style={{
-            ...railStyles.iconBtn,
+            ...railStyles.ghostBtn,
             ...(menuOpen || nbState === "warning"
               ? {
                   background: nbState === "warning" ? tokens.warningSoft : tokens.bgActive,
-                  borderColor:
-                    nbState === "warning"
-                      ? "rgba(217, 119, 6, 0.45)"
-                      : tokens.modeBrowserLine,
                   color: tokens.accentText,
                 }
               : {}),
           }}
           onClick={() => setMenuOpen((v) => !v)}
           title="更多工具与设置"
+          aria-label="更多工具与设置"
           aria-expanded={menuOpen}
           aria-haspopup="menu"
         >
@@ -467,7 +411,10 @@ export function StatusRail({
               style={railStyles.menuItem}
               onClick={() => {
                 closeMenu()
-                dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model" })
+                dispatch({
+                  type: "OPEN_SETTINGS_SECTION",
+                  section: connectionState !== "connected" ? "connection" : "model",
+                })
               }}
             >
               <IconSettings size={14} />
@@ -492,7 +439,7 @@ export function StatusRail({
               role="note"
               style={{ ...railStyles.menuItem, color: tokens.textMuted, fontSize: 11, cursor: "default" }}
             >
-              <span>场景：装配或 /场景 · 任务板：/board</span>
+              <span>装配：输入上方芯片或 /装配 · 任务板：/board</span>
             </div>
           </div>
         )}
@@ -505,73 +452,59 @@ const railStyles: Record<string, CSSProperties> = {
   rail: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
-    padding: "6px 12px",
-    borderBottom: `1px solid ${tokens.border}`,
-    // Precision Instrument Desk — solid elevated chrome, no glass
+    justifyContent: "flex-start",
+    gap: 2,
+    padding: "6px 10px",
+    borderBottom: "none",
     background: tokens.bgElevated,
     flexShrink: 0,
-    minHeight: 44,
+    minHeight: 48,
   },
   brand: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
     minWidth: 0,
-    flexShrink: 1,
+    marginLeft: 2,
   },
-  brandMark: {
-    width: 18,
-    height: 18,
-    borderRadius: tokens.radiusSm,
-    display: "inline-flex",
+  cluster: {
+    display: "flex",
+    alignItems: "center",
+    gap: 0,
+    flexShrink: 0,
+    marginLeft: "auto",
+  },
+  ghostBtn: {
+    width: 32,
+    height: 32,
+    border: "none",
+    background: "transparent",
+    borderRadius: tokens.radiusMd,
+    color: tokens.text,
+    cursor: "pointer",
+    flexShrink: 0,
+    display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 9,
-    color: tokens.accent,
-    background: tokens.accentSoft,
-    border: `1px solid ${tokens.borderStrong}`,
-    flexShrink: 0,
-    lineHeight: 1,
+    padding: 0,
+    fontFamily: tokens.font,
   },
   brandText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: 600,
     letterSpacing: "-0.02em",
     color: tokens.text,
     whiteSpace: "nowrap" as const,
     overflow: "hidden",
     textOverflow: "ellipsis",
-  },
-  /** Active thread short id — click copies bare id (lock-step with ThreadList badge). */
-  threadIdBadge: {
-    flexShrink: 0,
-    border: `1px solid ${tokens.border}`,
-    background: tokens.bgMuted,
-    padding: "2px 6px",
-    margin: 0,
-    fontSize: 11,
-    fontWeight: 600,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    color: tokens.textSecondary,
-    cursor: "pointer",
-    lineHeight: 1.2,
     maxWidth: 96,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap" as const,
-    borderRadius: tokens.radiusPill,
-  },
-  spacer: {
-    flex: 1,
-    minWidth: 4,
   },
   cruisePill: {
-    flexShrink: 0,
+    flexShrink: 1,
+    minWidth: 0,
     display: "inline-flex",
     alignItems: "center",
-    gap: 4,
-    maxWidth: 140,
+    justifyContent: "center",
+    maxWidth: 56,
     padding: "2px 8px",
     borderRadius: tokens.radiusPill,
     border: `1px solid ${tokens.danger}55`,
@@ -585,21 +518,29 @@ const railStyles: Record<string, CSSProperties> = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  cruiseX: {
-    fontWeight: 600,
-    opacity: 0.85,
-    fontSize: 10,
+  connDot: {
+    width: 28,
+    height: 28,
+    padding: 0,
+    border: "none",
+    background: "transparent",
+    borderRadius: tokens.radiusMd,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
   connPill: {
     display: "inline-flex",
     alignItems: "center",
-    gap: 5,
-    padding: "3px 8px 3px 6px",
+    gap: 4,
+    padding: "2px 6px",
     borderRadius: tokens.radiusPill,
     background: tokens.bgMuted,
-    border: `1px solid ${tokens.border}`,
-    flexShrink: 0,
-    maxWidth: 88,
+    border: "none",
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: 72,
   },
   connLabel: {
     fontSize: 11,
@@ -621,7 +562,6 @@ const railStyles: Record<string, CSSProperties> = {
   },
   menuItem: popupMenuStyles.menuItem,
   menuDivider: popupMenuStyles.menuDivider,
-  iconBtn: popupMenuStyles.menuTrigger,
   statusDot: {
     width: 7,
     height: 7,

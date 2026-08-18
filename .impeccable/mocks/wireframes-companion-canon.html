@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CMspark · 线稿 · Comp A</title>
+  <style>
+    :root { --ink: #111; --paper: #f6f4ef; --mute: #6b6b6b; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--paper); color: var(--ink);
+      font-family: "SF Pro Text", "PingFang SC", -apple-system, sans-serif; }
+    body { padding: 28px 32px 40px; }
+    h1 { margin: 0 0 4px; font-size: 18px; font-weight: 650; letter-spacing: -0.03em; }
+    .sub { margin: 0 0 22px; font-size: 12px; color: var(--mute); }
+    .board { display: flex; gap: 28px; align-items: flex-start; }
+    .col { width: 320px; }
+    .cap { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--mute); margin: 0 0 8px; font-weight: 600; }
+    .note { font-size: 11px; color: var(--mute); margin: 8px 0 0; line-height: 1.45; }
+    .phone {
+      width: 320px; height: 640px; background: #fff;
+      border: 1.5px solid var(--ink); border-radius: 18px;
+      display: flex; flex-direction: column; overflow: hidden;
+      position: relative;
+    }
+    .rail {
+      height: 48px; border-bottom: none;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 8px; flex-shrink: 0; position: relative;
+    }
+    .title { position: absolute; left: 50%; transform: translateX(-50%);
+      font-size: 15px; font-weight: 600; pointer-events: none; }
+    .right { display: flex; align-items: center; gap: 2px; }
+    .ghost { width: 32px; height: 32px; display: grid; place-items: center;
+      font-size: 13px; line-height: 1; }
+    .stream { flex: 1; display: flex; flex-direction: column; padding: 16px 20px 8px; }
+    .stream.center { justify-content: center; align-items: center; text-align: center; }
+    .face {
+      width: 72px; height: 72px; border: 1.5px solid var(--ink); border-radius: 50%;
+      position: relative; margin: 0 auto 14px;
+    }
+    .face:before, .face:after {
+      content: ""; position: absolute; width: 12px; height: 16px;
+      border: 1.5px solid var(--ink); border-bottom: 0; background: #fff;
+    }
+    .face:before { left: 10px; top: -10px; transform: rotate(-18deg); }
+    .face:after { right: 10px; top: -10px; transform: rotate(18deg); }
+    .eye { position: absolute; width: 5px; height: 5px; background: var(--ink); border-radius: 50%; top: 32px; }
+    .eye.l { left: 22px; } .eye.r { right: 22px; }
+    .spark { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+      font-size: 10px; line-height: 1; }
+    h2 { margin: 0 0 6px; font-size: 20px; font-weight: 650; letter-spacing: -0.03em; }
+    .hint { margin: 0 0 22px; font-size: 12px; color: var(--mute); }
+    .rows { width: 100%; display: flex; flex-direction: column; gap: 14px; text-align: left; }
+    .row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .ico { width: 14px; height: 14px; border: 1px solid var(--ink); border-radius: 3px; flex-shrink: 0; }
+    .dock { padding: 10px 14px 16px; flex-shrink: 0; }
+    .field {
+      min-height: 64px; border: 1.5px solid var(--ink); border-radius: 14px;
+      display: flex; align-items: flex-end; padding: 10px 10px 10px 14px; gap: 8px;
+    }
+    .ph { flex: 1; color: var(--mute); font-size: 13px; padding-bottom: 6px; }
+    .send { width: 26px; height: 26px; border: 1.5px solid var(--ink); border-radius: 50%;
+      display: grid; place-items: center; font-size: 11px; }
+    .legal { text-align: center; font-size: 9px; color: #999; margin-top: 8px; }
+
+    .msg { max-width: 86%; font-size: 13px; line-height: 1.45; padding: 8px 10px;
+      border: 1px solid var(--ink); border-radius: 12px; margin-bottom: 10px; }
+    .msg.user { align-self: flex-end; background: #111; color: #fff; border-color: #111; }
+    .msg.bot { align-self: flex-start; }
+    .tool { align-self: flex-start; width: 100%; border: 1px dashed var(--ink);
+      border-radius: 10px; padding: 8px 10px; font-size: 11px; margin-bottom: 10px; }
+    .tool b { display: block; font-size: 11px; margin-bottom: 2px; }
+
+    .anno {
+      position: absolute; font-size: 10px; color: #c23a2b; letter-spacing: 0.02em;
+      font-weight: 600; white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>CMspark 线稿 · 消费级助手第一屏</h1>
+  <p class="sub">锁定构图 A · 知乎看山为工艺杠 · 角色居中 · 320×640</p>
+  <div class="board">
+
+    <div class="col">
+      <p class="cap">01  空态 · 打开面板</p>
+      <div class="phone">
+        <div class="rail">
+          <div class="ghost" title="设置">⚙</div>
+          <div class="title">CMspark</div>
+          <div class="right">
+            <div class="ghost">⊕</div>
+            <div class="ghost">⌄</div>
+          </div>
+        </div>
+        <div class="stream center">
+          <div class="face"><i class="eye l"></i><i class="eye r"></i><span class="spark">✦</span></div>
+          <h2>接下来想做什么？</h2>
+          <p class="hint">问问题，或让我操作当前标签。</p>
+          <div class="rows">
+            <div class="row"><span class="ico"></span>总结当前打开的页面</div>
+            <div class="row"><span class="ico"></span>随便和我聊两句</div>
+            <div class="row"><span class="ico"></span>打开装配，接技能或场景</div>
+          </div>
+        </div>
+        <div class="dock">
+          <div class="field">
+            <div class="ghost" title="装配">✦</div>
+            <div class="ph">畅所欲问</div>
+            <div class="send">↑</div>
+          </div>
+          <div class="legal">本地 Companion · 确认后才会执行危险操作</div>
+        </div>
+      </div>
+      <p class="note">顶栏按看山：标题绝对居中，右侧只有「新增对话」和「历史」箭头，没有方框按钮。</p>
+    </div>
+
+    <div class="col">
+      <p class="cap">02  输入中</p>
+      <div class="phone">
+        <div class="rail">
+          <div class="ghost">⚙</div>
+          <div class="title">CMspark</div>
+          <div class="right">
+            <div class="ghost">⊕</div>
+            <div class="ghost">⌄</div>
+          </div>
+        </div>
+        <div class="stream center">
+          <div class="face"><i class="eye l"></i><i class="eye r"></i><span class="spark">✦</span></div>
+          <h2>接下来想做什么？</h2>
+          <p class="hint">问问题，或让我操作当前标签。</p>
+          <div class="rows">
+            <div class="row"><span class="ico"></span>总结当前打开的页面</div>
+            <div class="row"><span class="ico"></span>随便和我聊两句</div>
+            <div class="row"><span class="ico"></span>打开装配，接技能或场景</div>
+          </div>
+        </div>
+        <div class="dock">
+          <div class="field">
+            <div class="ghost">✦</div>
+            <div class="ph" style="color:#111">总结当前打开的页面</div>
+            <div class="send" style="background:#111;color:#fff;border-color:#111">↑</div>
+          </div>
+        </div>
+      </div>
+      <p class="note">点第一句邀请，字填进输入框。发送键从空心圆变成实心。装配 chip 仍不出现。</p>
+    </div>
+
+    <div class="col">
+      <p class="cap">03  对话中 · 320px 仍要塞得下</p>
+      <div class="phone">
+        <div class="rail">
+          <div class="ghost">⚙</div>
+          <div class="title">CMspark</div>
+          <div class="right">
+            <div class="ghost">⊕</div>
+            <div class="ghost">⌄</div>
+          </div>
+        </div>
+        <div class="stream" style="justify-content:flex-end">
+          <div class="msg user">总结当前打开的页面</div>
+          <div class="tool"><b>read_page</b>当前标签 · 进行中…</div>
+          <div class="msg bot">这页在讲知乎看山助手的空态：角色招呼、三句邀请、安静输入。</div>
+        </div>
+        <div class="dock">
+          <div class="field" style="min-height:52px">
+            <div class="ghost">✦</div>
+            <div class="ph">畅所欲问</div>
+            <div class="send">↑</div>
+          </div>
+        </div>
+      </div>
+      <p class="note">角色空态让位给消息流。顶栏这时才露出「聊」。工具是一条细框，不另起卡片堆。</p>
+    </div>
+
+  </div>
+</body>
+</html>

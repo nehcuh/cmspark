@@ -1,0 +1,1740 @@
+# Dual external review context
+batch: companion-canon-ui-s12
+base: HEAD
+time: 20260818-162747
+
+b3f1098
+
+ M PRODUCT.md
+ M chrome-extension/src/sidepanel/App.tsx
+ M chrome-extension/src/sidepanel/components/ChatView.tsx
+ M chrome-extension/src/sidepanel/components/ComposeDrawer.tsx
+ M chrome-extension/src/sidepanel/components/FocusBand.tsx
+ M chrome-extension/src/sidepanel/components/StatusRail.tsx
+ M chrome-extension/src/sidepanel/components/ThreadList.tsx
+ M chrome-extension/src/sidepanel/components/autopilot-tier.ts
+ M chrome-extension/src/sidepanel/components/focus-band-priority.ts
+ M chrome-extension/src/sidepanel/composer/meta-slash.ts
+ M chrome-extension/src/sidepanel/ui/ModeBadge.tsx
+ M chrome-extension/src/sidepanel/ui/icons.tsx
+ M chrome-extension/src/sidepanel/ui/tokens.ts
+ M chrome-extension/tests/autopilot-tier.test.ts
+ M chrome-extension/tests/composer-slash-parity.test.ts
+ M chrome-extension/tests/focus-band-priority.test.ts
+ M chrome-extension/tests/node-shims.d.ts
+ M chrome-extension/tests/tokens-helpers.test.ts
+ M chrome-extension/tsconfig.test.json
+ M docs/DESIGN.md
+?? .grok/hooks/vibesop-route.json
+?? .grok/rules/
+?? .impeccable/briefs/
+?? .impeccable/direction/
+?? .impeccable/mocks/
+?? .impeccable/sketches/
+?? chrome-extension/src/sidepanel/empty-state-copy.ts
+?? chrome-extension/tests/companion-canon-s12.test.ts
+?? chrome-extension/tests/create-blank-thread.test.ts
+?? chrome-extension/tests/empty-state-copy.test.ts
+?? docs/audit/reviews/_prompts/companion-canon-ui-r2-20260818.md
+?? docs/audit/reviews/_prompts/companion-canon-ui-s12-20260818.md
+?? docs/audit/reviews/companion-canon-ui-adversary-synthesis-20260818.md
+?? docs/audit/reviews/companion-canon-ui-r2-claude-20260818-154102.md
+?? docs/audit/reviews/companion-canon-ui-r2-diff-20260818-154102.patch
+?? docs/audit/reviews/companion-canon-ui-r2-kimi-20260818.md
+?? docs/audit/reviews/companion-canon-ui-r2-pi-20260818-154102.md
+?? docs/audit/reviews/companion-canon-ui-r2-synthesis-plan-20260818.md
+?? docs/audit/reviews/companion-canon-ui-r2-verdict-20260818-154102.json
+?? docs/audit/reviews/companion-canon-ui-s0-adversary-20260818.md
+?? docs/audit/reviews/companion-canon-ui-s12-diff-20260818-162747.patch
+?? docs/audit/reviews/companion-canon-ui-s12-presentation-20260818.md
+?? docs/audit/reviews/companion-canon-ui-s12-product-20260818.md
+?? docs/audit/reviews/companion-canon-ui-s12-safety-20260818.md
+
+## Diff (git diff + staged)
+ PRODUCT.md                                         |  10 +-
+ chrome-extension/src/sidepanel/App.tsx             |  93 +++++--
+ .../src/sidepanel/components/ChatView.tsx          | 244 +++++++++--------
+ .../src/sidepanel/components/ComposeDrawer.tsx     |   2 +-
+ .../src/sidepanel/components/FocusBand.tsx         |   1 +
+ .../src/sidepanel/components/StatusRail.tsx        | 288 +++++++++------------
+ .../src/sidepanel/components/ThreadList.tsx        |  76 +++---
+ .../src/sidepanel/components/autopilot-tier.ts     |  15 +-
+ .../sidepanel/components/focus-band-priority.ts    |  12 +-
+ .../src/sidepanel/composer/meta-slash.ts           |   4 +-
+ chrome-extension/src/sidepanel/ui/ModeBadge.tsx    |  16 +-
+ chrome-extension/src/sidepanel/ui/icons.tsx        |  53 +++-
+ chrome-extension/src/sidepanel/ui/tokens.ts        |  33 +--
+ chrome-extension/tests/autopilot-tier.test.ts      |  15 ++
+ .../tests/composer-slash-parity.test.ts            |   4 +-
+ chrome-extension/tests/focus-band-priority.test.ts |  29 +++
+ chrome-extension/tests/node-shims.d.ts             |  10 +
+ chrome-extension/tests/tokens-helpers.test.ts      |  15 +-
+ chrome-extension/tsconfig.test.json                |   1 +
+ docs/DESIGN.md                                     |  39 +--
+ 20 files changed, 551 insertions(+), 409 deletions(-)
+
+diff --git a/PRODUCT.md b/PRODUCT.md
+index 457c520..3e080a6 100644
+--- a/PRODUCT.md
++++ b/PRODUCT.md
+@@ -32,9 +32,11 @@
+ 
+ ## Brand / anti-references
+ 
+-- **Wanted:** quiet confidence, precise, local-tool seriousness, indigo “spark” not purple SaaS glow  
+-- **Avoid:** Inter-purple gradient cards, nested card cages, emoji toolbar chrome, Material status dots, noisy multi-strip status landfill  
+-- **Identity:** Mode ontology (聊/网页/计算机), 装配 vs 确认台, Quiet Premium tokens  
++- **Visual world (2026-08-18):** Consumer AI assistant **canon**. Quality bar = **知乎看山**, executed at full fidelity — no irony, no smuggled instrument chrome, no 条漫 overlay.  
++- **Wanted:** character presence on empty, large conversational greeting, sentence-length invitation rows, quiet rounded composer, obvious new-chat, soft elevated surface  
++- **Avoid:** Precision Instrument gray admin (11px pills, 15px empty title, status landfill), Inter-purple SaaS glow, copying 看山’s fox, decorative chrome that crowds the 320px stream  
++- **Identity:** Mode ontology (聊/网页/计算机) and 装配 / 确认台 / 急停 stay. Presentation is companion-grade, not instrument-grade. Character is original CMspark presence, not a 看山 clone.  
++- **Cockpit:** same world at night — still companion craft, still a confirm stage, never a second design system.
+ 
+ ## Constraints (non-negotiable)
+ 
+@@ -46,4 +48,4 @@
+ 
+ ## Success for this redesign
+ 
+-A first-time power user opens the panel and immediately sees: **where am I (mode/connection), what can I type, what is running** — without scanning three competing status strips and a glassmorphism toy composer.
++A first-time user opens the panel and **meets someone**, sees they can type, and can start. When work starts, the same 320px column still holds the stream, tool frames, and 确认 / 急停 — pretty that cannot fit the task is a failed canon.
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index e6704e3..28aad60 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -1,3 +1,9 @@
++/* THESIS: Side Panel is a consumer assistant empty, not an instrument desk — first viewport is a person who greets you.
++   OWN-WORLD: White surface, ink type, 22px greeting, sentence rows, circular send, indigo spark only on the companion mark.
++   STORY: Open → meet someone → type or tap a sentence → work still fits 320px.
++   FIRST VIEWPORT: Centered CompanionMark, 要我帮你做什么？, sentence invitations, quiet composer, 新对话.
++   FORM: Canon (知乎看山 quality bar) · seed e96a500f · Comp A approved.
++   FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md */
+ // CMspark Browser Agent — Root App Component
+ 
+ import { Component, useState, useRef, useCallback, useEffect, useMemo } from "react"
+@@ -38,6 +44,7 @@ import {
+   IconStop,
+   IconAttach,
+   IconAlert,
++  IconCraft,
+ } from "./ui/icons"
+ import { VoiceMicButton } from "./components/VoiceMicButton"
+ import { parseHotkeyChord, eventMatchesChord } from "./voice/hotkey-chord"
+@@ -1649,7 +1656,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+       />
+       {/* PR4: ComposerDock chips + capsule; 装配 drawer is portal-like fixed sheet */}
+       <div style={styles.inputArea}>
+-        <ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />
++        {!(state.messages.length === 0 && !isStreaming) && (
++          <ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />
++        )}
+         <div
+           style={{
+             ...styles.composerCapsule,
+@@ -1660,15 +1669,35 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+           }}
+         >
+           {!showStop && !(voice.listening && showVoiceMic) && (
+-            <button
+-              type="button"
+-              style={styles.attachBtn}
+-              onClick={() => fileInputRef.current?.click()}
+-              disabled={needsThread || needsConnection || threadBusy}
+-              title="添加文件或图片"
+-            >
+-              <IconAttach size={16} />
+-            </button>
++            <>
++              <button
++                type="button"
++                style={styles.attachBtn}
++                onClick={openCompose}
++                disabled={needsThread || needsConnection || threadBusy}
++                title="装配 — 技能、场景、知识"
++                aria-label="装配"
++              >
++                <IconCraft size={16} />
++              </button>
++              {!(
++                state.messages.length === 0 &&
++                !isStreaming &&
++                !text.trim() &&
++                !voice.liveOverlay
++              ) && (
++              <button
++                type="button"
++                style={styles.attachBtn}
++                onClick={() => fileInputRef.current?.click()}
++                disabled={needsThread || needsConnection || threadBusy}
++                title="添加文件或图片"
++                aria-label="添加文件或图片"
++              >
++                <IconAttach size={16} />
++              </button>
++              )}
++            </>
+           )}
+           <textarea
+             ref={textareaRef}
+@@ -1688,7 +1717,15 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+             onKeyDown={handleKeyDown}
+             onPaste={handleComposerPaste}
+           />
+-          {showVoiceMic && (
++          {showVoiceMic &&
++            !(
++              state.messages.length === 0 &&
++              !isStreaming &&
++              !text.trim() &&
++              !voice.listening &&
++              !voice.processing &&
++              !voice.liveOverlay
++            ) && (
+             <VoiceMicButton
+               listening={voice.listening && !voice.processing}
+               processing={voice.processing}
+@@ -1719,7 +1756,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+               type="button"
+               style={{
+                 ...styles.sendBtn,
+-                opacity: canSend ? 1 : 0.45,
++                background: canSend ? tokens.accent : "#e4e4e7",
+                 cursor: canSend ? "pointer" : "not-allowed",
+               }}
+               onClick={() => handleSend()}
+@@ -1913,6 +1950,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+           onDismiss={() => setSlashVisible(false)}
+         />
+       </div>
++      {state.messages.length === 0 && !isStreaming && (
++        <div style={styles.legal}>本地 Companion · 确认后才会执行危险操作</div>
++      )}
+       <ComposeDrawer
+         open={composeOpen}
+         onClose={closeCompose}
+@@ -2064,29 +2104,28 @@ const styles: Record<string, React.CSSProperties> = {
+   inputArea: {
+     display: "flex",
+     flexDirection: "column",
+-    padding: "10px 12px 12px",
++    padding: "8px 14px 16px",
+     background: tokens.bgElevated,
+-    borderTop: `1px solid ${tokens.border}`,
+     flexShrink: 0,
+     position: "relative" as const,
+   },
+   composerCapsule: {
+     display: "flex",
+     alignItems: "flex-end",
+-    gap: 6,
+-    border: `1px solid ${tokens.borderStrong}`,
++    gap: 8,
++    border: `1px solid ${tokens.border}`,
+     borderRadius: tokens.radiusComposer,
+-    padding: "8px 8px 8px 6px",
++    padding: "10px 10px 10px 14px",
+     background: tokens.bgElevated,
+-    boxShadow: tokens.shadowSm,
++    minHeight: 72,
+     transition: `border-color ${tokens.transitionFast} ease, box-shadow ${tokens.transitionFast} ease`,
+   },
+   textarea: {
+     flex: 1,
+     border: "none",
+     borderRadius: tokens.radiusMd,
+-    padding: "6px 8px",
+-    fontSize: 13,
++    padding: "4px 0 8px",
++    fontSize: 14,
+     fontFamily: "inherit",
+     resize: "none" as const,
+     outline: "none",
+@@ -2094,7 +2133,7 @@ const styles: Record<string, React.CSSProperties> = {
+     maxHeight: 120,
+     background: "transparent",
+     color: tokens.text,
+-    lineHeight: 1.5,
++    lineHeight: 1.45,
+   },
+   attachBtn: {
+     width: 32,
+@@ -2113,10 +2152,10 @@ const styles: Record<string, React.CSSProperties> = {
+   sendBtn: {
+     width: 32,
+     height: 32,
+-    borderRadius: tokens.radiusMd,
++    borderRadius: tokens.radiusPill,
+     border: "none",
+-    background: tokens.accent,
+-    color: tokens.userBubbleText,
++    background: "#e4e4e7",
++    color: "#ffffff",
+     cursor: "pointer",
+     flexShrink: 0,
+     display: "flex",
+@@ -2138,6 +2177,12 @@ const styles: Record<string, React.CSSProperties> = {
+     justifyContent: "center",
+     padding: 0,
+   },
++  legal: {
++    textAlign: "center" as const,
++    fontSize: 11,
++    color: tokens.textMuted,
++    padding: "8px 12px 0",
++  },
+ }
+ 
+ function LogBar({ onClose }: { onClose: () => void }) {
+diff --git a/chrome-extension/src/sidepanel/components/ChatView.tsx b/chrome-extension/src/sidepanel/components/ChatView.tsx
+index 2eab241..8f71e1c 100644
+--- a/chrome-extension/src/sidepanel/components/ChatView.tsx
++++ b/chrome-extension/src/sidepanel/components/ChatView.tsx
+@@ -27,12 +27,19 @@ import { captionOnlyForEdit, previewDataUrl } from "../utils/image-compose"
+ import { previewImageSafe } from "../utils/computer-utils"
+ import type { MessageAttachment } from "../types"
+ import {
++  CompanionMark,
+   IconBranch,
++  IconChat,
+   IconCopy,
+   IconDownload,
+   IconEdit,
++  IconGlobe,
++  IconList,
++  IconMonitor,
+   IconRefresh,
++  type IconProps,
+ } from "../ui/icons"
++import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
+ // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
+ import "katex/dist/katex.min.css"
+ 
+@@ -1477,102 +1484,86 @@ function fillComposer(text: string) {
+ }
+ 
+ type SuggestItem =
+-  | { label: string; fill: string; primary?: boolean }
+-  | { label: string; action: "compose" | "packs" | "cockpit"; primary?: boolean }
++  | { label: string; fill: string; Icon: (p: IconProps) => JSX.Element }
++  | { label: string; action: "compose" | "packs" | "cockpit"; Icon: (p: IconProps) => JSX.Element }
+ 
+-function SuggestionChips({ items }: { items: SuggestItem[] }) {
++const inviteRowCSS = `
++  .invite-row { color: ${tokens.text}; }
++  .invite-row:hover,
++  .invite-row:focus-visible { color: ${tokens.accentText}; }
++  .invite-row:focus-visible {
++    outline: none;
++    box-shadow: ${tokens.shadowFocus};
++    border-radius: ${tokens.radiusSm}px;
++  }
++`
++
++function InvitationRows({ items }: { items: SuggestItem[] }) {
+   return (
+-    <div style={styles.chipRow}>
+-      {items.map((it) => (
+-        <button
+-          key={it.label}
+-          type="button"
+-          style={{
+-            ...styles.suggestChip,
+-            ...(it.primary ? styles.suggestChipPrimary : null),
+-          }}
+-          onClick={() => {
+-            if ("action" in it) {
+-              if (it.action === "compose") {
+-                window.dispatchEvent(new CustomEvent("cmspark:open-compose"))
+-                return
+-              }
+-              if (it.action === "packs") {
+-                window.dispatchEvent(
+-                  new CustomEvent("cmspark:open-context-panel", { detail: { panel: "packs" } }),
+-                )
++    <div style={styles.inviteCol}>
++      <style>{inviteRowCSS}</style>
++      {items.map((it) => {
++        const Icon = it.Icon
++        return (
++          <button
++            key={it.label}
++            type="button"
++            className="invite-row"
++            style={styles.inviteRow}
++            onClick={() => {
++              if ("action" in it) {
++                if (it.action === "compose") {
++                  window.dispatchEvent(new CustomEvent("cmspark:open-compose"))
++                  return
++                }
++                if (it.action === "packs") {
++                  window.dispatchEvent(
++                    new CustomEvent("cmspark:open-context-panel", { detail: { panel: "packs" } }),
++                  )
++                  return
++                }
++                if (it.action === "cockpit") {
++                  chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
++                    void chrome.runtime.lastError
++                  })
++                }
+                 return
+               }
+-              if (it.action === "cockpit") {
+-                chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
+-                  void chrome.runtime.lastError
+-                })
+-              }
+-              return
+-            }
+-            fillComposer(it.fill)
+-          }}
+-        >
+-          {it.label}
+-        </button>
+-      ))}
++              fillComposer(it.fill)
++            }}
++          >
++            <Icon size={16} />
++            {it.label}
++          </button>
++        )
++      })}
+     </div>
+   )
+ }
+ 
++function inviteIcon(it: EmptyInvite): (p: IconProps) => JSX.Element {
++  if (it.kind === "action" && it.action === "cockpit") return IconMonitor
++  if (it.kind === "action") return IconList
++  if (it.label.includes("起草")) return IconChat
++  return IconGlobe
++}
++
+ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
+-  // Gemini-breath G2: editorial empty — one title, one line, ≤3 soft suggestions.
+-  if (level === "browser") {
+-    return (
+-      <div style={styles.empty} data-testid="empty-state-browser">
+-        <div style={styles.emptyKicker}>网页</div>
+-        <div style={styles.emptyTitle}>要对这页做什么？</div>
+-        <div style={styles.emptyHint}>
+-          总结、提问，或让 Agent 操作当前标签。
+-          <br />
+-          可直接粘贴截图
+-        </div>
+-        <SuggestionChips
+-          items={[
+-            { label: "总结本页", fill: "请总结当前页面的要点" },
+-            { label: "装配", action: "compose", primary: true },
+-            { label: "场景", action: "packs" },
+-          ]}
+-        />
+-      </div>
+-    )
+-  }
+-  if (level === "computer") {
+-    return (
+-      <div style={styles.empty} data-testid="empty-state-computer">
+-        <div style={styles.emptyKicker}>计算机</div>
+-        <div style={styles.emptyTitle}>任务在确认台进行</div>
+-        <div style={styles.emptyHint}>此处可排队跟进。步骤与确认请用确认台。</div>
+-        <SuggestionChips
+-          items={[
+-            { label: "确认台", action: "cockpit", primary: true },
+-            { label: "装配", action: "compose" },
+-          ]}
+-        />
+-      </div>
+-    )
+-  }
++  const { title, hint, items } = emptyStateCopy(level)
++  const rows: SuggestItem[] = items.map((it) =>
++    it.kind === "fill"
++      ? { label: it.label, fill: it.fill, Icon: inviteIcon(it) }
++      : { label: it.label, action: it.action, Icon: inviteIcon(it) },
++  )
++  const testId =
++    level === "browser" ? "empty-state-browser" : level === "computer" ? "empty-state-computer" : "empty-state-chat"
++
+   return (
+-    <div style={styles.empty} data-testid="empty-state-chat">
+-      <div style={styles.emptyKicker}>CMspark</div>
+-      <div style={styles.emptyTitle}>有什么可以帮你？</div>
+-      <div style={styles.emptyHint}>
+-        问问题、写文案，或描述浏览器任务。
+-        <br />
+-        可直接粘贴截图
+-      </div>
+-      <SuggestionChips
+-        items={[
+-          { label: "总结本页", fill: "请总结当前页面的要点" },
+-          { label: "装配", action: "compose", primary: true },
+-          { label: "场景", action: "packs" },
+-        ]}
+-      />
++    <div style={styles.empty} data-testid={testId}>
++      <CompanionMark size={92} />
++      <div style={styles.emptyTitle}>{title}</div>
++      <div style={styles.emptyHint}>{hint}</div>
++      <InvitationRows items={rows} />
+     </div>
+   )
+ }
+@@ -1661,69 +1652,68 @@ const styles: Record<string, React.CSSProperties> = {
+     overflowY: "auto",
+     padding: "14px 14px 16px",
+     background: "transparent",
++    display: "flex",
++    flexDirection: "column",
+     // Disable scroll-anchoring so late inserts (tools/markdown) cannot yank
+     // long threads toward the top; stick-to-bottom is handled in JS.
+     overflowAnchor: "none" as any,
+   },
+   contentInner: {
+-    minHeight: "min-content",
++    minHeight: "100%",
++    flex: 1,
++    display: "flex",
++    flexDirection: "column",
+   },
+   empty: {
+-    color: tokens.textSecondary,
++    flex: 1,
++    display: "flex",
++    flexDirection: "column",
++    alignItems: "center",
++    justifyContent: "center",
++    color: tokens.text,
+     textAlign: "center",
+-    padding: "40px 16px 24px",
+-    fontSize: 13,
++    padding: "12px 8px 8px",
+     fontFamily: tokens.font,
+   },
+-  emptyKicker: {
+-    fontSize: 11,
+-    fontWeight: 600,
+-    letterSpacing: "0.06em",
+-    textTransform: "uppercase" as const,
+-    color: tokens.textSecondary,
+-    marginBottom: 10,
+-  },
+   emptyTitle: {
+-    fontSize: 15,
+-    fontWeight: 650,
++    fontSize: tokens.emptyTitle,
++    fontWeight: 600,
+     color: tokens.text,
+-    marginBottom: 8,
+-    letterSpacing: "-0.02em",
+-    lineHeight: 1.3,
++    margin: "18px 0 8px",
++    letterSpacing: "-0.035em",
++    lineHeight: 1.25,
+   },
+   emptyHint: {
+     fontSize: 13,
+     color: tokens.textSecondary,
+-    lineHeight: 1.55,
++    lineHeight: 1.5,
+     maxWidth: 260,
+-    margin: "0 auto 20px",
++    margin: "0 0 28px",
+   },
+-  chipRow: {
++  inviteCol: {
+     display: "flex",
+-    flexWrap: "wrap",
+-    gap: 8,
+-    justifyContent: "center",
+-    maxWidth: 300,
+-    margin: "0 auto",
++    flexDirection: "column",
++    gap: 16,
++    width: "100%",
++    maxWidth: 260,
++    alignItems: "flex-start",
+   },
+-  suggestChip: {
+-    border: `1px solid ${tokens.border}`,
+-    background: tokens.bgElevated,
+-    color: tokens.accentText,
+-    borderRadius: tokens.radiusPill,
+-    padding: "5px 10px",
+-    fontSize: 11,
+-    fontWeight: 550,
++  inviteRow: {
++    display: "flex",
++    alignItems: "center",
++    gap: 10,
++    width: "100%",
++    padding: 0,
++    border: "none",
++    background: "transparent",
++    color: tokens.text,
++    fontSize: 14,
++    fontWeight: 400,
++    lineHeight: 1.4,
+     cursor: "pointer",
+     fontFamily: tokens.font,
+-    boxShadow: tokens.shadowSm,
+-  },
+-  suggestChipPrimary: {
+-    borderColor: "rgba(79, 70, 229, 0.25)",
+-    background: tokens.accentSoft,
+-    color: tokens.accentText,
+-    fontWeight: 650,
+-    boxShadow: "0 2px 8px rgba(79, 70, 229, 0.12)",
++    textAlign: "left" as const,
++    color: "inherit",
+   },
+   userMsg: {
+     display: "flex",
+diff --git a/chrome-extension/src/sidepanel/components/ComposeDrawer.tsx b/chrome-extension/src/sidepanel/components/ComposeDrawer.tsx
+index 25ddc45..e4f6b4b 100644
+--- a/chrome-extension/src/sidepanel/components/ComposeDrawer.tsx
++++ b/chrome-extension/src/sidepanel/components/ComposeDrawer.tsx
+@@ -120,7 +120,7 @@ export function ComposeDrawer({
+         ))}
+ 
+         <p style={styles.footNote} data-testid="compose-autonomy-note">
+-          任务板 / 编排不在装配内 — 使用 /board 或 ⋯「编排」
++          任务板不在装配内 — 使用 /board
+         </p>
+       </div>
+     </Modal>
+diff --git a/chrome-extension/src/sidepanel/components/FocusBand.tsx b/chrome-extension/src/sidepanel/components/FocusBand.tsx
+index 978f2b5..ae83805 100644
+--- a/chrome-extension/src/sidepanel/components/FocusBand.tsx
++++ b/chrome-extension/src/sidepanel/components/FocusBand.tsx
+@@ -108,6 +108,7 @@ export function FocusBand({
+     hasThreadTools,
+     hasCodingSession,
+     isBrowserContext,
++    hasThreadMessages: state.messages.length > 0,
+   })
+ 
+   if (slot.primary === "empty") return null
+diff --git a/chrome-extension/src/sidepanel/components/StatusRail.tsx b/chrome-extension/src/sidepanel/components/StatusRail.tsx
+index c061498..e416572 100644
+--- a/chrome-extension/src/sidepanel/components/StatusRail.tsx
++++ b/chrome-extension/src/sidepanel/components/StatusRail.tsx
+@@ -1,8 +1,8 @@
+ // StatusRail — Zone A (UIUX v2 PR1)
+ // Mode badge + pin · connection (token colors) · thread switcher · ⋯ menu
+ 
+-import { useState, useRef, useEffect, useCallback, type CSSProperties } from "react"
+-import { ThreadList } from "./ThreadList"
++import { useState, useRef, useEffect, type CSSProperties } from "react"
++import { ThreadList, createBlankThread } from "./ThreadList"
+ import { useAgentStore } from "../store/agentStore"
+ import type { ConnectionState, CapabilityLevel } from "../types"
+ import {
+@@ -13,7 +13,7 @@ import {
+ } from "../ui/tokens"
+ import { popupMenuStyles } from "../ui/popupMenuStyles"
+ import { ModeBadge } from "../ui/ModeBadge"
+-import { formatThreadIdBadge } from "../utils/thread-timeline"
++
+ import {
+   IconCraft,
+   IconDownload,
+@@ -25,8 +25,9 @@ import {
+   IconAlert,
+   IconSpinner,
+   IconMore,
++  IconNewChat,
+ } from "../ui/icons"
+-import { disarmAllFlags, trustStatusChip } from "./autopilot-tier"
++import { disarmAllFlags, trustStatusChip, trustStatusChipShort } from "./autopilot-tier"
+ 
+ export function StatusRail({
+   connectionState,
+@@ -58,15 +59,12 @@ export function StatusRail({
+   }
+   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
+   const activeThreadId = state.activeThreadId
+-  const idBadge = activeThreadId ? formatThreadIdBadge(activeThreadId) : ""
+   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
+   const [nbTooltip, setNbTooltip] = useState<string>(
+     "离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）",
+   )
+   const [menuOpen, setMenuOpen] = useState(false)
+-  const [idCopied, setIdCopied] = useState(false)
+   const menuRef = useRef<HTMLDivElement>(null)
+-  const copyIdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+   // useRef lock is mandatory: React state updates are async, so a rapid second click
+   // within the same tick can pass the `nbState === "working"` guard before the first
+   // setNbState commits — both fire sendMessage → double download. The ref is synchronous.
+@@ -83,51 +81,6 @@ export function StatusRail({
+     return () => document.removeEventListener("mousedown", onDoc)
+   }, [menuOpen])
+ 
+-  useEffect(() => {
+-    return () => {
+-      if (copyIdTimerRef.current) clearTimeout(copyIdTimerRef.current)
+-    }
+-  }, [])
+-
+-  // Reset "已复制" when switching threads so stale feedback never lingers.
+-  useEffect(() => {
+-    setIdCopied(false)
+-    if (copyIdTimerRef.current) {
+-      clearTimeout(copyIdTimerRef.current)
+-      copyIdTimerRef.current = null
+-    }
+-  }, [activeThreadId])
+-
+-  const copyActiveThreadId = useCallback(async () => {
+-    const text = String(activeThreadId || "").trim()
+-    if (!text) return
+-    let ok = false
+-    try {
+-      await navigator.clipboard.writeText(text)
+-      ok = true
+-    } catch {
+-      try {
+-        const ta = document.createElement("textarea")
+-        ta.value = text
+-        ta.style.position = "fixed"
+-        ta.style.left = "-9999px"
+-        document.body.appendChild(ta)
+-        ta.select()
+-        ok = document.execCommand("copy")
+-        document.body.removeChild(ta)
+-      } catch {
+-        ok = false
+-      }
+-    }
+-    if (!ok) return
+-    setIdCopied(true)
+-    if (copyIdTimerRef.current) clearTimeout(copyIdTimerRef.current)
+-    copyIdTimerRef.current = setTimeout(() => {
+-      setIdCopied(false)
+-      copyIdTimerRef.current = null
+-    }, 1200)
+-  }, [activeThreadId])
+-
+   const resetNbIdle = (delay: number, immediate?: boolean) => {
+     if (immediate) {
+       setNbState("idle")
+@@ -214,14 +167,13 @@ export function StatusRail({
+   const closeMenu = () => setMenuOpen(false)
+   const connLabel = connectionLabel(connectionState)
+   const unattendedArmed = state.unattended?.armed === true
+-  const cruiseLabel = trustStatusChip(
+-    {
+-      auto_approve_dangerous: state.config.auto_approve_dangerous === true,
+-      auto_approve_enterprise_tools: state.config.auto_approve_enterprise_tools === true,
+-      allow_all_schemes: state.config.allow_all_schemes === true,
+-    },
+-    unattendedArmed,
+-  )
++  const armFlags = {
++    auto_approve_dangerous: state.config.auto_approve_dangerous === true,
++    auto_approve_enterprise_tools: state.config.auto_approve_enterprise_tools === true,
++    allow_all_schemes: state.config.allow_all_schemes === true,
++  }
++  const cruiseDetail = trustStatusChip(armFlags, unattendedArmed)
++  const cruiseLabel = trustStatusChipShort(armFlags, unattendedArmed)
+   const disarmCruise = () => {
+     // Full disarm: unattended grant + cruise flags (clear_cruise on companion)
+     chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: true })
+@@ -242,79 +194,88 @@ export function StatusRail({
+       aria-label="状态栏"
+       style={{
+         ...railStyles.rail,
+-        ...(modeLine
+-          ? {
+-              boxShadow: `inset 0 -2.5px 0 ${modeLine}, 0 1px 0 rgba(255,255,255,0.9) inset, ${tokens.shadowSm}`,
+-            }
+-          : { boxShadow: `0 1px 0 rgba(255,255,255,0.9) inset, ${tokens.shadowSm}` }),
++        ...(modeLine ? { boxShadow: `inset 0 -2px 0 ${modeLine}` } : null),
+       }}
+     >
+-      <ThreadList />
++      <button
++        type="button"
++        style={railStyles.ghostBtn}
++        title="设置"
++        aria-label="设置"
++        onClick={() =>
++          dispatch({
++            type: "OPEN_SETTINGS_SECTION",
++            section: connectionState !== "connected" ? "connection" : "model",
++          })
++        }
++      >
++        <IconSettings size={18} />
++      </button>
++      {!(cruiseLabel || connectionState !== "connected") && (
+       <div style={railStyles.brand}>
+-        <span style={railStyles.brandMark} aria-hidden>
+-          ◆
+-        </span>
+         <span style={railStyles.brandText}>CMspark</span>
+       </div>
+-      {idBadge ? (
+-        <button
+-          type="button"
+-          style={{
+-            ...railStyles.threadIdBadge,
+-            color: idCopied ? tokens.accentText : tokens.textMuted,
+-          }}
+-          title={`当前会话 ${idBadge} — 点击复制编号（可在线程列表搜索框粘贴定位）`}
+-          aria-label={`当前会话编号 ${idBadge}，点击复制`}
+-          onClick={() => {
+-            void copyActiveThreadId()
+-          }}
+-        >
+-          {idCopied ? "已复制" : idBadge}
+-        </button>
+-      ) : null}
+-      <div style={railStyles.spacer} />
++      )}
++      <div style={railStyles.cluster}>
+       <ModeBadge
+         level={capabilityLevel}
+         label={badgeLabel}
+         pinned={pinned}
+         onTogglePin={togglePin}
++        whisper
+       />
++      <button
++        type="button"
++        style={railStyles.ghostBtn}
++        title="新增对话"
++        aria-label="新增对话"
++        onClick={() => createBlankThread(dispatch)}
++      >
++        <IconNewChat size={18} />
++      </button>
++      <ThreadList />
++      </div>
+       {cruiseLabel && (
+         <button
+           type="button"
+           style={railStyles.cruisePill}
+-          title={
+-            unattendedArmed
+-              ? "无人值守已武装；左键解除，右键打开安全设置"
+-              : "运行自主度已武装；左键解除，右键打开安全设置"
+-          }
++          title={`${cruiseDetail}；左键解除，右键打开安全设置`}
+           onClick={disarmCruise}
+           onContextMenu={(e) => {
+             e.preventDefault()
+             dispatch({ type: "OPEN_SETTINGS_SECTION", section: "security" })
+           }}
+-          aria-label={`${cruiseLabel}，点击解除`}
++          aria-label={`${cruiseDetail}，点击解除`}
+         >
+           {cruiseLabel}
+-          <span style={railStyles.cruiseX}>解除</span>
+         </button>
+       )}
+-      <div
+-        role="status"
++      {connectionState === "connected" ? (
++        <span
++          role="status"
++          aria-label={connLabel}
++          title={connLabel}
++          style={railStyles.connDot}
++        >
++          <span
++            style={{
++              ...railStyles.statusDot,
++              background: connectionColor(connectionState),
++              boxShadow: connectionDotShadow(connectionState),
++            }}
++          />
++        </span>
++      ) : (
++      <button
++        type="button"
+         aria-label={connLabel}
+-        title={
+-          connectionState !== "connected"
+-            ? "连接异常 — 点击打开连接与配对设置"
+-            : connLabel
+-        }
++        title="连接异常 — 点击打开连接与配对设置"
+         style={{
+           ...railStyles.connPill,
+-          cursor: connectionState !== "connected" ? "pointer" : "default",
++          cursor: "pointer",
+         }}
+         onClick={() => {
+-          if (connectionState !== "connected") {
+-            dispatch({ type: "OPEN_SETTINGS_SECTION", section: "connection" })
+-          }
++          dispatch({ type: "OPEN_SETTINGS_SECTION", section: "connection" })
+         }}
+       >
+         <span
+@@ -325,26 +286,23 @@ export function StatusRail({
+           }}
+         />
+         <span style={railStyles.connLabel}>{connLabel}</span>
+-      </div>
+-      {/* Power actions in ⋯ menu — not permanent icon strip */}
++      </button>
++      )}
+       <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}>
+         <button
+           type="button"
+           style={{
+-            ...railStyles.iconBtn,
++            ...railStyles.ghostBtn,
+             ...(menuOpen || nbState === "warning"
+               ? {
+                   background: nbState === "warning" ? tokens.warningSoft : tokens.bgActive,
+-                  borderColor:
+-                    nbState === "warning"
+-                      ? "rgba(217, 119, 6, 0.45)"
+-                      : tokens.modeBrowserLine,
+                   color: tokens.accentText,
+                 }
+               : {}),
+           }}
+           onClick={() => setMenuOpen((v) => !v)}
+           title="更多工具与设置"
++          aria-label="更多工具与设置"
+           aria-expanded={menuOpen}
+           aria-haspopup="menu"
+         >
+@@ -467,7 +425,10 @@ export function StatusRail({
+               style={railStyles.menuItem}
+               onClick={() => {
+                 closeMenu()
+-                dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model" })
++                dispatch({
++                  type: "OPEN_SETTINGS_SECTION",
++                  section: connectionState !== "connected" ? "connection" : "model",
++                })
+               }}
+             >
+               <IconSettings size={14} />
+@@ -492,7 +453,7 @@ export function StatusRail({
+               role="note"
+               style={{ ...railStyles.menuItem, color: tokens.textMuted, fontSize: 11, cursor: "default" }}
+             >
+-              <span>场景：装配或 /场景 · 任务板：/board</span>
++              <span>装配：输入左侧或 /装配 · 任务板：/board</span>
+             </div>
+           </div>
+         )}
+@@ -505,73 +466,59 @@ const railStyles: Record<string, CSSProperties> = {
+   rail: {
+     display: "flex",
+     alignItems: "center",
+-    gap: 6,
+-    padding: "6px 12px",
+-    borderBottom: `1px solid ${tokens.border}`,
+-    // Precision Instrument Desk — solid elevated chrome, no glass
++    justifyContent: "flex-start",
++    gap: 2,
++    padding: "6px 10px",
++    borderBottom: "none",
+     background: tokens.bgElevated,
+     flexShrink: 0,
+-    minHeight: 44,
++    minHeight: 48,
+   },
+   brand: {
+     display: "flex",
+     alignItems: "center",
+-    gap: 6,
+     minWidth: 0,
+-    flexShrink: 1,
++    marginLeft: 2,
+   },
+-  brandMark: {
+-    width: 18,
+-    height: 18,
+-    borderRadius: tokens.radiusSm,
+-    display: "inline-flex",
++  cluster: {
++    display: "flex",
+     alignItems: "center",
+-    justifyContent: "center",
+-    fontSize: 9,
+-    color: tokens.accent,
+-    background: tokens.accentSoft,
+-    border: `1px solid ${tokens.borderStrong}`,
++    gap: 0,
++    flexShrink: 0,
++    marginLeft: "auto",
++  },
++  ghostBtn: {
++    width: 32,
++    height: 32,
++    border: "none",
++    background: "transparent",
++    borderRadius: tokens.radiusMd,
++    color: tokens.text,
++    cursor: "pointer",
+     flexShrink: 0,
+-    lineHeight: 1,
++    display: "flex",
++    alignItems: "center",
++    justifyContent: "center",
++    padding: 0,
++    fontFamily: tokens.font,
+   },
+   brandText: {
+-    fontSize: 13,
++    fontSize: 14,
+     fontWeight: 600,
+     letterSpacing: "-0.02em",
+     color: tokens.text,
+     whiteSpace: "nowrap" as const,
+     overflow: "hidden",
+     textOverflow: "ellipsis",
+-  },
+-  /** Active thread short id — click copies bare id (lock-step with ThreadList badge). */
+-  threadIdBadge: {
+-    flexShrink: 0,
+-    border: `1px solid ${tokens.border}`,
+-    background: tokens.bgMuted,
+-    padding: "2px 6px",
+-    margin: 0,
+-    fontSize: 11,
+-    fontWeight: 600,
+-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+-    color: tokens.textSecondary,
+-    cursor: "pointer",
+-    lineHeight: 1.2,
+     maxWidth: 96,
+-    overflow: "hidden",
+-    textOverflow: "ellipsis",
+-    whiteSpace: "nowrap" as const,
+-    borderRadius: tokens.radiusPill,
+-  },
+-  spacer: {
+-    flex: 1,
+-    minWidth: 4,
+   },
+   cruisePill: {
+-    flexShrink: 0,
++    flexShrink: 1,
++    minWidth: 0,
+     display: "inline-flex",
+     alignItems: "center",
+-    gap: 4,
+-    maxWidth: 140,
++    justifyContent: "center",
++    maxWidth: 56,
+     padding: "2px 8px",
+     borderRadius: tokens.radiusPill,
+     border: `1px solid ${tokens.danger}55`,
+@@ -585,21 +532,29 @@ const railStyles: Record<string, CSSProperties> = {
+     textOverflow: "ellipsis",
+     whiteSpace: "nowrap",
+   },
+-  cruiseX: {
+-    fontWeight: 600,
+-    opacity: 0.85,
+-    fontSize: 10,
++  connDot: {
++    width: 28,
++    height: 28,
++    padding: 0,
++    border: "none",
++    background: "transparent",
++    borderRadius: tokens.radiusMd,
++    display: "inline-flex",
++    alignItems: "center",
++    justifyContent: "center",
++    flexShrink: 0,
+   },
+   connPill: {
+     display: "inline-flex",
+     alignItems: "center",
+-    gap: 5,
+-    padding: "3px 8px 3px 6px",
++    gap: 4,
++    padding: "2px 6px",
+     borderRadius: tokens.radiusPill,
+     background: tokens.bgMuted,
+-    border: `1px solid ${tokens.border}`,
+-    flexShrink: 0,
+-    maxWidth: 88,
++    border: "none",
++    flexShrink: 1,
++    minWidth: 0,
++    maxWidth: 72,
+   },
+   connLabel: {
+     fontSize: 11,
+@@ -621,7 +576,6 @@ const railStyles: Record<string, CSSProperties> = {
+   },
+   menuItem: popupMenuStyles.menuItem,
+   menuDivider: popupMenuStyles.menuDivider,
+-  iconBtn: popupMenuStyles.menuTrigger,
+   statusDot: {
+     width: 7,
+     height: 7,
+diff --git a/chrome-extension/src/sidepanel/components/ThreadList.tsx b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+index 5525293..b97c999 100644
+--- a/chrome-extension/src/sidepanel/components/ThreadList.tsx
++++ b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+ import { createPortal } from "react-dom"
+ import { useAgentStore } from "../store/agentStore"
+ import { tokens } from "../ui/tokens"
++import { IconChevronDown } from "../ui/icons"
+ import { popupMenuStyles } from "../ui/popupMenuStyles"
+ import type { Thread } from "../types"
+ import {
+@@ -48,6 +49,25 @@ import {
+ } from "../utils/thread-related"
+ import type { ThreadGraphSlim } from "../../background/thread-graph"
+ 
++export function createBlankThread(dispatch: (action: { type: "ADD_THREAD"; thread: Thread }) => void) {
++  const id = generateShortId()
++  const now = new Date().toISOString()
++  const thread = {
++    id,
++    alias: "",
++    created_at: now,
++    updated_at: now,
++    // Inherit live companion config — do not stamp DeepSeek / empty trust.
++    config_override: {} as Thread["config_override"],
++    tool_whitelist: null as string[] | null,
++    pinned_tabs: [] as number[],
++    active_skill_ids: [] as string[],
++  }
++  dispatch({ type: "ADD_THREAD", thread: thread as Thread })
++  chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
++  return id
++}
++
+ function generateShortId(): string {
+   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+   let id = ""
+@@ -529,27 +549,7 @@ export function ThreadList() {
+   }, [])
+ 
+   const handleNewThread = () => {
+-    const id = generateShortId()
+-    const thread = {
+-      id,
+-      alias: "",
+-      created_at: new Date().toISOString(),
+-      updated_at: new Date().toISOString(),
+-      config_override: {
+-        base_url: "https://api.deepseek.com/v1",
+-        api_key: "",
+-        model_name: "deepseek-v4-flash",
+-        temperature: 0.7,
+-        context_window: 128000,
+-        trusted_domains: [],
+-        safety_skills_enabled: [] as string[],
+-      },
+-      tool_whitelist: null as string[] | null,
+-      pinned_tabs: [] as number[],
+-      active_skill_ids: ["browse"] as string[],
+-    }
+-    dispatch({ type: "ADD_THREAD", thread })
+-    chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
++    createBlankThread(dispatch)
+     setOpen(false)
+     exitSelectMode()
+   }
+@@ -1222,13 +1222,16 @@ export function ThreadList() {
+     <div style={{ position: "relative" }}>
+       <button
+         type="button"
+-        style={styles.hamburger}
++        style={{
++          ...styles.hamburger,
++          ...(open ? { color: tokens.text } : null),
++        }}
+         onClick={() => setOpen(!open)}
+-        title="线程列表"
+-        aria-label="线程列表"
++        title="历史对话"
++        aria-label="历史对话"
+         aria-expanded={open}
+       >
+-        ☰
++        <IconChevronDown size={18} />
+       </button>
+ 
+       {open && (
+@@ -1277,6 +1280,20 @@ export function ThreadList() {
+                 <button style={styles.newBtn} onClick={handleNewThread} title="新建线程">
+                   + 新建
+                 </button>
++                <button
++                  type="button"
++                  style={styles.selectBtn}
++                  title="设置"
++                  onClick={() => {
++                    setOpen(false)
++                    dispatch({
++                      type: "OPEN_SETTINGS_SECTION",
++                      section: state.connectionState !== "connected" ? "connection" : "model",
++                    })
++                  }}
++                >
++                  设置
++                </button>
+                 <div style={{ position: "relative" }}>
+                   <button
+                     ref={menuBtnRef}
+@@ -1670,15 +1687,12 @@ const styles: Record<string, React.CSSProperties> = {
+     display: "inline-flex",
+     alignItems: "center",
+     justifyContent: "center",
+-    background: "rgba(255,255,255,0.85)",
+-    border: `1px solid ${tokens.border}`,
++    background: "transparent",
++    border: "none",
+     borderRadius: tokens.radiusMd,
+-    fontSize: 15,
+     cursor: "pointer",
+     padding: 0,
+-    lineHeight: 1,
+-    color: tokens.textSecondary,
+-    boxShadow: tokens.shadowSm,
++    color: tokens.text,
+     flexShrink: 0,
+     fontFamily: tokens.font,
+   },
+diff --git a/chrome-extension/src/sidepanel/components/autopilot-tier.ts b/chrome-extension/src/sidepanel/components/autopilot-tier.ts
+index 1d06420..8fcaab6 100644
+--- a/chrome-extension/src/sidepanel/components/autopilot-tier.ts
++++ b/chrome-extension/src/sidepanel/components/autopilot-tier.ts
+@@ -69,7 +69,7 @@ export function tierShortLabel(tier: AutopilotTier): string {
+ }
+ 
+ /**
+- * StatusRail / SafetyStrip chip.
++ * SafetyStrip / Settings / rail title+aria.
+  * Unattended takes priority over cruise (design §2.2).
+  */
+ export function trustStatusChip(
+@@ -82,6 +82,19 @@ export function trustStatusChip(
+   return `巡航中 · ${tierShortLabel(tier)}`
+ }
+ 
++/**
++ * StatusRail 320px chip — two hanzi. Full `trustStatusChip` stays on
++ * title/aria and SafetyStrip so 解除 remains named, not buried.
++ */
++export function trustStatusChipShort(
++  flags: SecurityArmFlags,
++  unattendedArmed: boolean,
++): string | null {
++  if (unattendedArmed) return "值守"
++  if (deriveAutopilotTier(flags) === "off") return null
++  return "巡航"
++}
++
+ /** @deprecated use trustStatusChip — kept for call sites that only have flags */
+ export function cruiseChipLabel(flags: SecurityArmFlags): string | null {
+   return trustStatusChip(flags, false)
+diff --git a/chrome-extension/src/sidepanel/components/focus-band-priority.ts b/chrome-extension/src/sidepanel/components/focus-band-priority.ts
+index 64ceab2..98da484 100644
+--- a/chrome-extension/src/sidepanel/components/focus-band-priority.ts
++++ b/chrome-extension/src/sidepanel/components/focus-band-priority.ts
+@@ -42,6 +42,12 @@ export interface FocusBandInput {
+   hasCodingSession?: boolean
+   /** L1 browser surface — ContextStrip when nothing higher. */
+   isBrowserContext: boolean
++  /**
++   * Thread has user/assistant messages. Empty L1 must not hang the webpage
++   * strip (S1.1 / C″). Confirm / 急停 / L2 / fleet / tools ignore this.
++   * Default true so callers that omit it keep the work-state L1 strip.
++   */
++  hasThreadMessages?: boolean
+ }
+ 
+ export interface FocusBandSlot {
+@@ -69,13 +75,15 @@ export interface FocusBandSlot {
+  */
+ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
+   const hasTools = input.hasThreadTools === true
++  const showL1Context = input.isBrowserContext && input.hasThreadMessages !== false
+   if (input.hasPendingConfirm) {
+     // Confirm owns primary. 急停 secondary when L2 task active (never bury abort).
+     // Tools secondary only when no abort secondary (height budget).
++    // Webpage strip stays off on empty L1 (S1.1) even under confirm.
+     return {
+       primary: "confirm",
+       secondaryAbort: input.l2AbortRequired,
+-      secondaryContext: input.isBrowserContext && !input.l2AbortRequired && !hasTools,
++      secondaryContext: showL1Context && !input.l2AbortRequired && !hasTools,
+       secondaryTools: hasTools && !input.l2AbortRequired,
+     }
+   }
+@@ -113,7 +121,7 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
+       secondaryTools: false,
+     }
+   }
+-  if (input.isBrowserContext) {
++  if (showL1Context) {
+     return {
+       primary: "l1_context",
+       secondaryAbort: false,
+diff --git a/chrome-extension/src/sidepanel/composer/meta-slash.ts b/chrome-extension/src/sidepanel/composer/meta-slash.ts
+index 9c61c86..e6e14f0 100644
+--- a/chrome-extension/src/sidepanel/composer/meta-slash.ts
++++ b/chrome-extension/src/sidepanel/composer/meta-slash.ts
+@@ -331,9 +331,9 @@ export function composerChipsForLevel(level: CapabilityLevel): ComposerChip[] {
+ export function composerPlaceholder(level: CapabilityLevel): string {
+   switch (level) {
+     case "chat":
+-      return "问任何问题，或粘贴截图…"
++      return "描述任务，或粘贴截图…"
+     case "browser":
+-      return "问任何问题，或粘贴截图…"
++      return "问这页，或描述操作…"
+     case "computer":
+       return "排队跟进…（任务指挥在确认台）"
+   }
+diff --git a/chrome-extension/src/sidepanel/ui/ModeBadge.tsx b/chrome-extension/src/sidepanel/ui/ModeBadge.tsx
+index 83e2d7e..2866028 100644
+--- a/chrome-extension/src/sidepanel/ui/ModeBadge.tsx
++++ b/chrome-extension/src/sidepanel/ui/ModeBadge.tsx
+@@ -8,11 +8,14 @@ export function ModeBadge({
+   label,
+   pinned,
+   onTogglePin,
++  whisper,
+ }: {
+   level: CapabilityLevel
+   label: string
+   pinned?: boolean
+   onTogglePin?: () => void
++  /** Icon-only whisper for 320px rail (S0.2). */
++  whisper?: boolean
+ }) {
+   const theme =
+     level === "computer"
+@@ -44,11 +47,14 @@ export function ModeBadge({
+   const style: CSSProperties = {
+     display: "inline-flex",
+     alignItems: "center",
+-    gap: 5,
++    justifyContent: "center",
++    gap: whisper ? 0 : 5,
+     fontSize: 11,
+     fontWeight: 650,
+     letterSpacing: "0.02em",
+-    padding: "4px 10px 4px 7px",
++    padding: whisper ? 0 : "4px 10px 4px 7px",
++    width: whisper ? 28 : undefined,
++    height: whisper ? 28 : undefined,
+     borderRadius: tokens.radiusPill,
+     background: theme.bg,
+     color: theme.color,
+@@ -75,8 +81,8 @@ export function ModeBadge({
+         style={{ ...style, appearance: "none" as const }}
+       >
+         <Icon size={13} />
+-        <span>{label}</span>
+-        {pinned && (
++        {!whisper && <span>{label}</span>}
++        {!whisper && pinned && (
+           <span style={{ fontSize: 9, opacity: 0.9 }} aria-hidden>
+             钉
+           </span>
+@@ -88,7 +94,7 @@ export function ModeBadge({
+   return (
+     <span role="status" aria-live="polite" title={`能力层级：${label}`} style={style}>
+       <Icon size={13} />
+-      <span>{label}</span>
++      {!whisper && <span>{label}</span>}
+     </span>
+   )
+ }
+diff --git a/chrome-extension/src/sidepanel/ui/icons.tsx b/chrome-extension/src/sidepanel/ui/icons.tsx
+index 6b70092..b636167 100644
+--- a/chrome-extension/src/sidepanel/ui/icons.tsx
++++ b/chrome-extension/src/sidepanel/ui/icons.tsx
+@@ -166,11 +166,60 @@ export function IconSettings(p: IconProps) {
+   )
+ }
+ 
++/** 看山-style new conversation: bubble + plus. */
++export function IconNewChat(p: IconProps) {
++  return (
++    <Svg {...p}>
++      <path d="M5 7h10a3 3 0 013 3v5a3 3 0 01-3 3H10l-4 3v-3H5a3 3 0 01-3-3V10a3 3 0 013-3z" />
++      <path d="M10 10v4M8 12h4" />
++    </Svg>
++  )
++}
++
++export function IconChevronDown(p: IconProps) {
++  return (
++    <Svg {...p}>
++      <path d="M6 9l6 6 6-6" />
++    </Svg>
++  )
++}
++
++export function IconList(p: IconProps) {
++  return (
++    <Svg {...p}>
++      <path d="M8 7h10M8 12h10M8 17h7" />
++      <path d="M5 7h.01M5 12h.01M5 17h.01" />
++    </Svg>
++  )
++}
++
++/** Empty-state companion — original mark, not the 看山 fox. Filled stamp, not outline. */
++export function CompanionMark({ size = 92 }: { size?: number }) {
++  return (
++    <svg
++      width={size}
++      height={size}
++      viewBox="0 0 92 92"
++      fill="none"
++      aria-hidden
++      style={{ display: "block", flexShrink: 0 }}
++    >
++      <ellipse cx="46" cy="84" rx="18" ry="4" fill="rgba(23,23,23,0.10)" />
++      <circle cx="46" cy="50" r="28" fill="#171717" />
++      <path d="M28 36 L24 16 L40 32Z" fill="#171717" />
++      <path d="M64 36 L68 16 L52 32Z" fill="#171717" />
++      <circle cx="38" cy="50" r="3.4" fill="#ffffff" />
++      <circle cx="54" cy="50" r="3.4" fill="#ffffff" />
++      <path d="M46 61 l1.6 4.1 4.3 1.1-4.3 1.5L46 72l-1.6-4.3-4.3-1.5 4.3-1.1z" fill="#4f46e5" />
++    </svg>
++  )
++}
++
+ export function IconSend(p: IconProps) {
+   return (
+     <Svg {...p}>
+-      <path d="M4 12l15-7-4 15-3.5-5.5L4 12z" />
+-      <path d="M11.5 14.5L19 5" />
++      <path d="M12 19V6" />
++      <path d="M6 12l6-6 6 6" />
+     </Svg>
+   )
+ }
+diff --git a/chrome-extension/src/sidepanel/ui/tokens.ts b/chrome-extension/src/sidepanel/ui/tokens.ts
+index 2e4296b..2bb181a 100644
+--- a/chrome-extension/src/sidepanel/ui/tokens.ts
++++ b/chrome-extension/src/sidepanel/ui/tokens.ts
+@@ -1,24 +1,25 @@
+-// Shared visual tokens — Precision Instrument Desk (Phase 1 shell redesign).
+-// Flat cool canvas, indigo spark for primary only, hairline borders, tight radii.
+-// Type scale for chrome: 11 / 12 / 13 / 15 only. No Material status hexes.
+-// Motion left at 150/220ms in Phase 1 (tighten in Phase 3).
++// Shared visual tokens — consumer assistant canon (看山 quality bar, Comp A).
++// White companion surface, indigo spark only on character + armed send.
++// Chrome stays 11 / 12 / 13 / 15. Empty greeting is the one 22px exemption.
+ 
+ export const tokens = {
+   font:
+-    "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif",
++    "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Helvetica Neue', sans-serif",
+   fontMono: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
+ 
+-  // Light surface — flat instrument canvas (no gradient shell)
+-  bg: "#f4f5f8",
++  // Light companion canvas
++  bg: "#ffffff",
+   bgElevated: "#ffffff",
+-  bgMuted: "#eceef3",
+-  bgHover: "#e6e8ef",
++  bgMuted: "#f4f4f5",
++  bgHover: "#f4f4f5",
+   bgActive: "#eef2ff",
+-  border: "rgba(15, 23, 42, 0.08)",
+-  borderStrong: "rgba(15, 23, 42, 0.12)",
+-  text: "#0f172a",
+-  textSecondary: "#475569",
+-  textMuted: "#94a3b8",
++  border: "rgba(23, 23, 23, 0.10)",
++  borderStrong: "rgba(23, 23, 23, 0.14)",
++  text: "#171717",
++  textSecondary: "#737373",
++  textMuted: "#a3a3a3",
++  /** Empty-state hero only — not chrome. */
++  emptyTitle: 22,
+ 
+   // Indigo accent — spark for CTA / focus / user bubble only
+   accent: "#4f46e5",
+@@ -70,11 +71,11 @@ export const tokens = {
+   transitionFast: "120ms",
+   transition: "180ms",
+ 
+-  // Shape: controls 6/8/12; composer/bubble 14 (instrument, not pill-toy)
++  // Shape: controls 6/8/12; composer matches 看山 invitation (16)
+   radiusSm: 6,
+   radiusMd: 8,
+   radiusLg: 12,
+-  radiusComposer: 14,
++  radiusComposer: 16,
+   radiusBubble: 14,
+   /** Bottom sheet / 装配 drawer top corners */
+   radiusSheet: 16,
+diff --git a/chrome-extension/tests/autopilot-tier.test.ts b/chrome-extension/tests/autopilot-tier.test.ts
+index 3e8f404..cbdd62f 100644
+--- a/chrome-extension/tests/autopilot-tier.test.ts
++++ b/chrome-extension/tests/autopilot-tier.test.ts
+@@ -11,6 +11,7 @@ import {
+   flagsNeedingDisarm,
+   cruiseChipLabel,
+   trustStatusChip,
++  trustStatusChipShort,
+   tierShortLabel,
+ } from "../src/sidepanel/components/autopilot-tier"
+ 
+@@ -54,6 +55,20 @@ test("trustStatusChip unattended priority", () => {
+   assert.equal(cruiseChipLabel({}), null)
+ })
+ 
++test("trustStatusChipShort is two-hanzi rail compact", () => {
++  assert.equal(trustStatusChipShort({}, true), "值守")
++  assert.equal(trustStatusChipShort({ auto_approve_dangerous: true }, false), "巡航")
++  assert.equal(
++    trustStatusChipShort(
++      { auto_approve_dangerous: true, auto_approve_enterprise_tools: true },
++      false,
++    ),
++    "巡航",
++  )
++  assert.equal(trustStatusChipShort({}, false), null)
++  assert.equal(trustStatusChip({}, true), "值守中 · 桌面")
++})
++
+ test("targetFlagsForTier unattended with/without protocol", () => {
+   assert.deepEqual(targetFlagsForTier("unattended", {}, { includeProtocol: false }), {
+     auto_approve_dangerous: true,
+diff --git a/chrome-extension/tests/composer-slash-parity.test.ts b/chrome-extension/tests/composer-slash-parity.test.ts
+index 21bd812..c9414a1 100644
+--- a/chrome-extension/tests/composer-slash-parity.test.ts
++++ b/chrome-extension/tests/composer-slash-parity.test.ts
+@@ -117,8 +117,8 @@ test("G2 / Q1 composer chips: L0 one 装配 only; L1 ≤3; no Abort", () => {
+ })
+ 
+ test("G2 mode-aware placeholders (short, human)", () => {
+-  assert.match(composerPlaceholder("chat"), /问任何问题，或粘贴截图/)
+-  assert.match(composerPlaceholder("browser"), /问任何问题，或粘贴截图/)
++  assert.match(composerPlaceholder("chat"), /描述任务/)
++  assert.match(composerPlaceholder("browser"), /问这页/)
+   assert.match(composerPlaceholder("computer"), /确认台/)
+ })
+ 
+diff --git a/chrome-extension/tests/focus-band-priority.test.ts b/chrome-extension/tests/focus-band-priority.test.ts
+index f8a83c3..74d5a21 100644
+--- a/chrome-extension/tests/focus-band-priority.test.ts
++++ b/chrome-extension/tests/focus-band-priority.test.ts
+@@ -75,6 +75,35 @@ test("§4.3 P3 L1 context alone", () => {
+   assert.equal(slot.secondaryAbort, false)
+ })
+ 
++test("S1.1 empty L1 hides webpage strip; confirm/急停 still win", () => {
++  const emptyL1 = resolveFocusBandSlot({
++    ...idle,
++    isBrowserContext: true,
++    hasThreadMessages: false,
++  })
++  assert.equal(emptyL1.primary, "empty")
++
++  const confirmEmpty = resolveFocusBandSlot({
++    ...idle,
++    hasPendingConfirm: true,
++    isBrowserContext: true,
++    hasThreadMessages: false,
++  })
++  assert.equal(confirmEmpty.primary, "confirm")
++  assert.equal(confirmEmpty.secondaryContext, false)
++
++  const abortEmpty = resolveFocusBandSlot({
++    ...idle,
++    hasPendingConfirm: true,
++    hasL2Task: true,
++    l2AbortRequired: true,
++    isBrowserContext: true,
++    hasThreadMessages: false,
++  })
++  assert.equal(abortEmpty.primary, "confirm")
++  assert.equal(abortEmpty.secondaryAbort, true)
++})
++
+ test("§4.3 P2 Fleet beats L1 Context", () => {
+   const slot = resolveFocusBandSlot({
+     ...idle,
+diff --git a/chrome-extension/tests/node-shims.d.ts b/chrome-extension/tests/node-shims.d.ts
+index 3b56eeb..d2e7f38 100644
+--- a/chrome-extension/tests/node-shims.d.ts
++++ b/chrome-extension/tests/node-shims.d.ts
+@@ -4,6 +4,16 @@ declare module "node:test" {
+   export default test
+ }
+ 
++declare module "node:fs" {
++  export function readFileSync(path: string, encoding: string): string
++}
++
++declare module "node:path" {
++  export function join(...parts: string[]): string
++}
++
++declare const process: { cwd(): string }
++
+ declare module "node:assert/strict" {
+   interface Assert {
+     equal(actual: unknown, expected: unknown, message?: string): void
+diff --git a/chrome-extension/tests/tokens-helpers.test.ts b/chrome-extension/tests/tokens-helpers.test.ts
+index b3586b2..4a68125 100644
+--- a/chrome-extension/tests/tokens-helpers.test.ts
++++ b/chrome-extension/tests/tokens-helpers.test.ts
+@@ -81,15 +81,17 @@ test("radius SoT is 6/8/12 (UIUX v2)", () => {
+   assert.equal(tokens.radiusPill, 999)
+ })
+ 
+-test("semantic role hexes match Precision Instrument Desk tokens", () => {
+-  // surface.canvas / elevated (Phase 1 flat instrument canvas)
+-  assert.equal(tokens.bg, "#f4f5f8")
++test("semantic role hexes match companion canon tokens", () => {
++  // surface.canvas / elevated (white companion)
++  assert.equal(tokens.bg, "#ffffff")
+   assert.equal(tokens.bgElevated, "#ffffff")
+   assert.equal(tokens.darkBg, "#0b0d12")
+   assert.equal(tokens.darkElevated, "#141820")
+   // text
+-  assert.equal(tokens.text, "#0f172a")
+-  assert.equal(tokens.textSecondary, "#475569")
++  assert.equal(tokens.text, "#171717")
++  assert.equal(tokens.textSecondary, "#737373")
++  assert.equal(tokens.emptyTitle, 22)
++  assert.equal(tokens.radiusComposer, 16)
+   // borders are translucent rgba (not flat gray)
+   assert.ok(String(tokens.border).includes("rgba"))
+   assert.ok(String(tokens.darkBorder).includes("rgba"))
+@@ -104,8 +106,7 @@ test("semantic role hexes match Precision Instrument Desk tokens", () => {
+   assert.equal(tokens.darkAccent, "#818cf8")
+   assert.ok(tokens.shadowFocus)
+   assert.ok(tokens.shadowLg)
+-  // Phase 1 hero surfaces — instrument, not pill-toy
+-  assert.equal(tokens.radiusComposer, 14)
++  // Hero surfaces
+   assert.equal(tokens.radiusBubble, 14)
+   // sheet / menu / scrim
+   assert.equal(tokens.radiusSheet, 16)
+diff --git a/chrome-extension/tsconfig.test.json b/chrome-extension/tsconfig.test.json
+index 0d55d11..9d9af06 100644
+--- a/chrome-extension/tsconfig.test.json
++++ b/chrome-extension/tsconfig.test.json
+@@ -52,6 +52,7 @@
+     "src/notebooklm/rpc-client.ts",
+     "src/sidepanel/hooks/useModalDialog.ts",
+     "src/sidepanel/ui/tokens.ts",
++    "src/sidepanel/empty-state-copy.ts",
+     "src/sidepanel/utils/thread-related.ts",
+     "src/sidepanel/utils/thread-timeline.ts",
+     "src/thread-graph/force-layout.ts",
+diff --git a/docs/DESIGN.md b/docs/DESIGN.md
+index f554d3e..82c6613 100644
+--- a/docs/DESIGN.md
++++ b/docs/DESIGN.md
+@@ -1,8 +1,8 @@
+ # CMspark Design System
+ 
+-> **Precision Instrument Desk**（精密仪器台）— Operate / Restrained.  
+-> Quiet-professional chrome：SVG 图标 + `sidepanel/ui/tokens.ts` 为主；emoji 仅用于消息内容，不用于工具栏。  
+-> Direction SoT: [sidepanel-precision-instrument-redesign](superpowers/specs/2026-08-11-sidepanel-precision-instrument-redesign.md) · Product: [PRODUCT.md](../PRODUCT.md)
++> **Consumer assistant canon**（看山质量杠 · Comp A 角色居中）— Operate.  
++> 白底陪伴空态：填色角色印记 + 22px 招呼 + 句子行 + 安静输入。SVG 图标；emoji 仅用于消息内容。  
++> Direction SoT: `.impeccable/mocks/comp-a-centered.png` · Product: [PRODUCT.md](../PRODUCT.md)
+ 
+ ## Colors
+ 
+@@ -36,7 +36,7 @@ Use role names in specs and AI implementer prompts. **Implement with the mapped
+ 
+ **Legacy aliases (still valid in docs):** Accent = `accent.primary`; Error = `status.danger`; Success = `status.live`; Warning = `status.warn`; Background = `surface.*`; Text / Border as above.
+ 
+-**Contrast policy (empty / guidance):** Prefer `tokens.textSecondary` for empty-state copy (`暂无*` / `无匹配*` / ChatView `emptyKicker`). Reserve `tokens.textMuted` for non-essential decorative meta (timestamps, secondary labels).
++**Contrast policy (empty / guidance):** Prefer `tokens.textSecondary` for empty-state hint and `暂无*` / `无匹配*`. Reserve `tokens.textMuted` for non-essential decorative meta (timestamps, secondary labels). Empty greeting uses `tokens.text`.
+ 
+ Dark surfaces: L2 SafetyStrip / **Cockpit** only. Panel stays light in v2 (K6); tokens for dark are prepared for Cockpit + L2 chrome.
+ 
+@@ -56,7 +56,7 @@ Dark surfaces: L2 SafetyStrip / **Cockpit** only. Panel stays light in v2 (K6);
+ | Size lg | `15px` (heading) |
+ 
+ Scale for chrome: **11 / 12 / 13 / 15** only.  
+-**Exemption:** icon-sized glyphs inside a ≤20px badge (e.g. StatusRail brand mark letter, cruise ×) may use 9–10px — not body chrome.
++**Exemption:** empty-state greeting is **22px** (`tokens.emptyTitle`). Icon-sized glyphs inside a ≤20px badge may use 9–10px.
+ 
+ ## Spacing
+ 
+@@ -102,7 +102,7 @@ Helpers (dark / Cockpit): `connectionColorDark` / `connectionDotShadowDark` (+ s
+ 
+ | Surface | Mode | Connection | Other |
+ |---------|------|------------|--------|
+-| **Panel** `StatusRail` | ModeBadge L0 `聊` / L1 `网页` / L2 `计算机` · LIVE; pin-on-badge | Dot + tooltip (`connectionColor*`) | Thread switcher · ⋯ menu |
++| **Panel** `StatusRail` | ModeBadge whisper（28px 图标，title 仍带层级）；字标左贴齿轮，巡航/断连时藏 | 已连 `role=status` 圆点；断连短标签按钮 | 新对话 + 历史 chevron · 巡航短词 `值守`/`巡航` · ⋯ |
+ | **Cockpit** header | Chip `L2 · LIVE` / `L2` / `确认` / `工作区` (same Surface grammar) | Dot + **label text** (`connectionColorDark` + `connectionLabel`) | Thread id · fleet summary · 急停 · 收起 |
+ 
+ Grammar must match: mode chip · connection · secondary context. Cockpit is dark; Panel is light. Type scale 11–13; rail min-height ~40–44px.
+@@ -112,10 +112,10 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
+ - **Ontology:** product L0/L1/L2 = Surface axis = UI `CapabilityLevel` `chat|browser|computer` — [ADR-020](adr/020-capability-model-three-axes.md)
+ - L1 header tint: `tokens.modeBrowserBg`
+ - **BottomBar permanent tab strip (PR5):** gated by `ui.bottomBarStrip` in `sidepanel/ui/flags.ts` — **default `false`**. Host remains SoT; panels open via Composer chips / `/` / 装配. Set flag `true` only for smoke/rollback. Legacy tab sets (if re-enabled): L0 Skills·Know·Hist · L1 Tabs·Skills · L2 empty + overflow「更多」
+-- **ComposerDock chips** (UIUX v2 PR4 §4.4): L0 装配·Skills·Know · L1 装配·Tabs·工作区 · L2 确认台·装配 — open Host / 装配 drawer; **no Abort next to Send**
+-- **装配 P0** bottom-sheet section list → Host (`skills`/`knowledge`/`packs`/`mcp`/`apps`/`history`); Board is Autonomy (`/board` only)
++- **ComposerDock chips** (UIUX v2 PR4 §4.4): hidden on empty stream; work state L0 装配 · L1 装配·Tabs·工作区 · L2 确认台·装配 — open Host / 装配 drawer; **no Abort next to Send**
++- **装配 P0** bottom-sheet section list → Host (`skills`/`knowledge`/`packs`/`mcp`/`apps`/`history`); Board is Autonomy (`/board` only — no ⋯「编排」)
+ - **Slash parity** (§4.8): `/skills` `/knowledge` `/history` `/tabs` `/packs` `/mcp` `/apps` `/board` `/settings` `/cockpit` `/装配`
+-- **FocusBand** (UIUX v2 §4.3): single slot Confirm > L2 Safety+急停 > Fleet > L1 Context; hard cap ≤80px; 急停 never buried under L2 task
++- **FocusBand** (UIUX v2 §4.3): single slot Confirm > L2 Safety+急停 > Fleet > L1 Context; hard cap ≤80px; 急停 never buried under L2 task. **Empty L1 hides the webpage strip**; confirm / 急停 still take the slot.
+ - FleetStrip: hidden when idle single-agent; show only multi-worker / locks / intents (**not** pending confirms — those are MinimalConfirm / FocusBand)
+ 
+ ### Cockpit (确认台)
+@@ -131,7 +131,7 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
+ ### Message Bubbles (P2)
+ - User: `tokens.userBubbleBg` + `tokens.userBubbleText` (values live in `tokens.ts` only — currently indigo accent family, not legacy blue)
+ - Assistant: `tokens.assistantBubbleBg` + `tokens.assistantBubbleText`
+-- Empty: mode-aware L0/L1/L2 copy (see ChatView `EmptyState`); kicker / guidance use `tokens.textSecondary`
++- Empty: CompanionMark + 22px greeting + sentence rows (see ChatView `EmptyState`); no kicker. Guidance uses `tokens.textSecondary`
+ 
+ ### Tool Call Card
+ - Border / status via `statusColor()`
+@@ -141,18 +141,21 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
+ - Primary: `tokens.accent` bg, white text
+ - Danger: `tokens.danger` (light) / `tokens.darkDanger` (Cockpit)
+ 
+-### Input / Composer (Precision Instrument Phase 1 + PR4)
+-- Unified capsule: attach + textarea + send inside one bordered surface
+-- **Solid** elevated surface + `borderStrong` — **no** glass/`backdrop-filter`, **no** canvas gradient shell
+-- Radius: `tokens.radiusComposer` (14px); send = flat `tokens.accent` (no purple→blue gradient)
+-- Mode chips row above capsule (see ComposerDock chips above); 装配 via chip / `/装配` / Cmd+K
+-- Settings live in StatusRail ⋯ or `/settings` (not in 装配 Board path)
++### Input / Composer (companion canon + PR4)
++- Unified capsule: 装配 + textarea + circular up-arrow send
++- Empty capsule = 装配 + field + send; attach / 听写 appear after the first character
++- **Solid** white surface — **no** glass/`backdrop-filter`
++- Radius: `tokens.radiusComposer` (16px); send is circular; gray at rest, `tokens.accent` when armed
++- Empty-state placeholder: L0 `描述任务，或粘贴截图…` · L1 `问这页，或描述操作…` (`composerPlaceholder`)
++- Hide ComposerChips while the stream is empty
++- Settings: StatusRail gear and ⋯「设置」 share the same route (disconnected → connection, else model)
++- Legal line under empty capsule: `tokens.textMuted` ≥11px
+ - Chip row height ceiling: ≤40px — density budget Scenario B  
+   (`docs/audit/reviews/sidepanel-density-budget-20260811.md`). Phase 1 does not change strip min/max heights → static budget re-run not required unless a constant is edited.
+ 
+ ### StatusRail / shell (Phase 1)
+ - Solid `tokens.bgElevated` rail — no glass blur / no vertical gradient
+-- Type scale chrome only **11 / 12 / 13 / 15**; empty title = 15 not 18
++- Type scale chrome only **11 / 12 / 13 / 15**; empty greeting is the one **22px** exemption (`tokens.emptyTitle`)
+ - Hierarchy: **stream first, status second, assembly third**
+ 
+ ### Motion
+@@ -166,4 +169,4 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
+ 
+ ---
+ 
+-*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-11: sole hex SoT = tokens.ts; empty/guidance contrast policy B; **Precision Instrument Desk** Phase 1 shell + Phase 2a tokens + Phase 2b density + Phase 3 motion/banners.*
++*设计系统基于代码审计提取，持续同步。UIUX v2 PR7: semantic roles + Cockpit StatusRail grammar. 2026-08-18: consumer assistant canon（看山质量杠 · Comp A）；空态 D″ + C″ 一条栏。Cockpit 夜世界仍是下一表面。*

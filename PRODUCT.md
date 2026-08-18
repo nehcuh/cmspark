@@ -32,9 +32,11 @@
 
 ## Brand / anti-references
 
-- **Wanted:** quiet confidence, precise, local-tool seriousness, indigo “spark” not purple SaaS glow  
-- **Avoid:** Inter-purple gradient cards, nested card cages, emoji toolbar chrome, Material status dots, noisy multi-strip status landfill  
-- **Identity:** Mode ontology (聊/网页/计算机), 装配 vs 确认台, Quiet Premium tokens  
+- **Visual world (2026-08-18):** Consumer AI assistant **canon**. Quality bar = **知乎看山**, executed at full fidelity — no irony, no smuggled instrument chrome, no 条漫 overlay.  
+- **Wanted:** character presence on empty, large conversational greeting, sentence-length invitation rows, quiet rounded composer, obvious new-chat, soft elevated surface  
+- **Avoid:** Precision Instrument gray admin (11px pills, 15px empty title, status landfill), Inter-purple SaaS glow, copying 看山’s fox, decorative chrome that crowds the 320px stream  
+- **Identity:** Mode ontology (聊/网页/计算机) and 装配 / 确认台 / 急停 stay. Presentation is companion-grade, not instrument-grade. Character is original CMspark presence, not a 看山 clone.  
+- **Cockpit:** same world at night — still companion craft, still a confirm stage, never a second design system.
 
 ## Constraints (non-negotiable)
 
@@ -46,4 +48,4 @@
 
 ## Success for this redesign
 
-A first-time power user opens the panel and immediately sees: **where am I (mode/connection), what can I type, what is running** — without scanning three competing status strips and a glassmorphism toy composer.
+A first-time user opens the panel and **meets someone**, sees they can type, and can start. When work starts, the same 320px column still holds the stream, tool frames, and 确认 / 急停 — pretty that cannot fit the task is a failed canon.

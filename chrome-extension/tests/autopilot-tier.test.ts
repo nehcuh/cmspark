@@ -11,6 +11,7 @@ import {
   flagsNeedingDisarm,
   cruiseChipLabel,
   trustStatusChip,
+  trustStatusChipShort,
   tierShortLabel,
 } from "../src/sidepanel/components/autopilot-tier"
 
@@ -52,6 +53,20 @@ test("trustStatusChip unattended priority", () => {
     `巡航中 · ${tierShortLabel("browser")}`,
   )
   assert.equal(cruiseChipLabel({}), null)
+})
+
+test("trustStatusChipShort is two-hanzi rail compact", () => {
+  assert.equal(trustStatusChipShort({}, true), "值守")
+  assert.equal(trustStatusChipShort({ auto_approve_dangerous: true }, false), "巡航")
+  assert.equal(
+    trustStatusChipShort(
+      { auto_approve_dangerous: true, auto_approve_enterprise_tools: true },
+      false,
+    ),
+    "巡航",
+  )
+  assert.equal(trustStatusChipShort({}, false), null)
+  assert.equal(trustStatusChip({}, true), "值守中 · 桌面")
 })
 
 test("targetFlagsForTier unattended with/without protocol", () => {

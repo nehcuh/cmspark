@@ -1,0 +1,8 @@
+{
+  "batch": "companion-canon-ui-pr",
+  "timestamp": "20260818-172531",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/companion-canon-ui-pr-claude-20260818-172531.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/companion-canon-ui-pr-pi-20260818-172531.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/companion-canon-ui-pr-diff-20260818-172531.patch"
+}
