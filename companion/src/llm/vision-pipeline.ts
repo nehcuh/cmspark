@@ -128,7 +128,7 @@ async function doAnalyze(
     }
 
     const client = new OpenAI({
-      baseURL: config.base_url,
+      baseURL: normalizeVisionBaseUrl(config.base_url),
       apiKey,
       timeout: config.timeout_ms,
       maxRetries: 0,
@@ -154,12 +154,27 @@ async function doAnalyze(
       { signal },
     )
 
-    const description = response.choices[0]?.message?.content?.trim() || ""
+    // OpenAI-compatible servers can resolve with a non-standard body on engine
+    // errors (e.g. LM Studio: no `choices`, `error` as a double-encoded string).
+    // Never index `choices` blindly — surface the server's own message instead.
+    const raw = response as unknown as {
+      choices?: Array<{ message?: { content?: unknown } }>
+      error?: unknown
+    }
+    const content = Array.isArray(raw?.choices) ? raw.choices[0]?.message?.content : undefined
+    const description = typeof content === "string" ? content.trim() : ""
     const latencyMs = Date.now() - startTime
 
     if (!description) {
-      logger.warn("vision.empty_response", { model: config.model_name })
-      return buildFallback(image, config, "Vision model returned empty response")
+      const serverError = extractServerErrorMessage(raw?.error)
+      logger.warn("vision.empty_response", { model: config.model_name, server_error: serverError })
+      return buildFallback(
+        image,
+        config,
+        serverError
+          ? `Vision endpoint returned an error: ${serverError}`
+          : "Vision model returned empty response",
+      )
     }
 
     setCache(cacheKey, description, config.model_name)
@@ -175,6 +190,67 @@ async function doAnalyze(
     })
     return buildFallback(image, config, err.message)
   }
+}
+
+/**
+ * OpenAI-compatible servers mount the API at /v1, but users routinely paste the
+ * server root (LM Studio shows `http://localhost:1234`). Append /v1 when the URL
+ * carries no path so a bare host:port still reaches /v1/chat/completions.
+ * Scheme-less pastes default to http (vision endpoints are local HTTP servers);
+ * URLs that already carry a path (…/v1, Azure /openai/…, gateways) pass through.
+ * Rebuilt from URL parts so /v1 never lands after a stray query/fragment.
+ * Note: a server that truly mounts the API at the root can no longer be
+ * expressed — every mainstream OpenAI-compatible server uses /v1.
+ */
+export function normalizeVisionBaseUrl(url: string): string {
+  const trimmed = String(url || "").trim().replace(/\/+$/, "")
+  if (!trimmed) return trimmed
+  try {
+    const withScheme = trimmed.includes("://") ? trimmed : `http://${trimmed}`
+    const u = new URL(withScheme)
+    if (u.pathname !== "" && u.pathname !== "/") return withScheme
+    const auth = u.username ? `${u.username}${u.password ? `:${u.password}` : ""}@` : ""
+    return `${u.protocol}//${auth}${u.host}/v1`
+  } catch {
+    return trimmed
+  }
+}
+
+/** Cap server-controlled text that lands in the transcript / main-model context. */
+const MAX_SERVER_ERROR_CHARS = 300
+
+/**
+ * Best-effort human message from a non-standard 2xx error body.
+ * LM Studio double-encodes engine errors, e.g.
+ * `{"error":"Engine protocol predict request returned 400: {\"error\":{\"message\":\"…\"}}"}`.
+ */
+export function extractServerErrorMessage(err: unknown): string | undefined {
+  const raw = extractRawServerError(err)
+  if (!raw) return undefined
+  return raw.length > MAX_SERVER_ERROR_CHARS
+    ? `${raw.slice(0, MAX_SERVER_ERROR_CHARS)}…`
+    : raw
+}
+
+function extractRawServerError(err: unknown): string | undefined {
+  if (!err) return undefined
+  if (typeof err !== "string") {
+    const msg = (err as { message?: unknown })?.message
+    return typeof msg === "string" && msg ? msg : undefined
+  }
+  const jsonPart = err.match(/\{[\s\S]*\}/)
+  if (jsonPart) {
+    try {
+      const inner = JSON.parse(jsonPart[0]) as { error?: { message?: unknown } | string }
+      // Flat shape: {"error":"plain message"}.
+      if (typeof inner?.error === "string" && inner.error) return inner.error
+      const msg = (inner?.error as { message?: unknown } | undefined)?.message
+      if (typeof msg === "string" && msg) return msg
+    } catch {
+      /* fall through to the raw string */
+    }
+  }
+  return err
 }
 
 function buildFallback(image: ImageInput, config: VisionConfig, error: string): VisionResult {

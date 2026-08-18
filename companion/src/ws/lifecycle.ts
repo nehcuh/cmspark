@@ -59,6 +59,7 @@ import {
 import { allowInboundLogEvent } from "../log-event-gate"
 import { pendingToolCalls, handleToolResult } from "./tool-forward"
 import { validateWsMessage } from "./validate"
+import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 
 // ---------------------------------------------------------------------------
 // Constants + module state
@@ -610,13 +611,13 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     try {
       const OpenAI = (await import("openai")).default
       const visionClient = new OpenAI({
-        baseURL: config.vision.base_url,
+        baseURL: normalizeVisionBaseUrl(config.vision.base_url),
         apiKey: config.vision.api_key || "ollama",
         timeout: 5000,
         maxRetries: 0,
       })
       await visionClient.models.list()
-      console.log(`[cmspark-agent] Vision model: ${config.vision.model_name} @ ${config.vision.base_url}`)
+      console.log(`[cmspark-agent] Vision model: ${config.vision.model_name} @ ${normalizeVisionBaseUrl(config.vision.base_url)}`)
     } catch (e: any) {
       console.warn(`[cmspark-agent] Vision model unavailable: ${e.message}`)
       console.warn(`[cmspark-agent] Screenshot analysis will use fallback: ${config.vision.fallback}`)

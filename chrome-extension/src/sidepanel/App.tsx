@@ -1689,24 +1689,20 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             boxShadow: dragOver ? `0 0 0 1px ${tokens.accent}` : tokens.shadowSm,
           }}
         >
-          {!showStop &&
-            !(voice.listening && showVoiceMic) &&
-            !(
-              state.messages.length === 0 &&
-              !isStreaming &&
-              !text.trim() &&
-              !voice.liveOverlay
-            ) && (
-              <button
-                type="button"
-                style={styles.attachBtn}
-                onClick={() => fileInputRef.current?.click()}
-                disabled={needsThread || needsConnection || threadBusy}
-                title="添加文件或图片"
-                aria-label="添加文件或图片"
-              >
-                <IconAttach size={16} />
-              </button>
+          {/* Attach stays visible in the empty composer — first-run affordance. */}
+          {!showStop && !(voice.listening && showVoiceMic) && (
+            <button
+              type="button"
+              style={styles.attachBtn}
+              onClick={() => fileInputRef.current?.click()}
+              // l2_task: ingest is blocked for an active computer task — don't
+              // present a clickable affordance whose selection is silently dropped.
+              disabled={needsThread || needsConnection || threadBusy || composerMode === "l2_task"}
+              title="添加文件或图片"
+              aria-label="添加文件或图片"
+            >
+              <IconAttach size={16} />
+            </button>
           )}
           <textarea
             ref={textareaRef}
@@ -1726,15 +1722,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             onKeyDown={handleKeyDown}
             onPaste={handleComposerPaste}
           />
-          {showVoiceMic &&
-            !(
-              state.messages.length === 0 &&
-              !isStreaming &&
-              !text.trim() &&
-              !voice.listening &&
-              !voice.processing &&
-              !voice.liveOverlay
-            ) && (
+          {showVoiceMic && (
             <VoiceMicButton
               listening={voice.listening && !voice.processing}
               processing={voice.processing}
@@ -2131,6 +2119,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   textarea: {
     flex: 1,
+    // Replaced element: without minWidth 0 the cols=20 min-content overflows
+    // the 4-element capsule row (attach/textarea/mic/send) in narrow panels.
+    minWidth: 0,
     border: "none",
     borderRadius: tokens.radiusMd,
     padding: "4px 0 8px",

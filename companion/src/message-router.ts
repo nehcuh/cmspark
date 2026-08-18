@@ -790,11 +790,14 @@ export async function handleMessage(
           const visionResults: Array<{ name: string; description: string }> = []
           for (const img of standaloneImages) {
             try {
+              // Real dims keep the vision-unavailable fallback honest (was 0x0px,
+              // which read as "image never made it over" in the transcript).
+              const imgDims = parseRasterDims(img.buf, img.type as RasterMime)
               const visionResult = await analyzeImage(
                 {
                   base64: img.buf.toString("base64"),
-                  width: 0,
-                  height: 0,
+                  width: imgDims?.width ?? 0,
+                  height: imgDims?.height ?? 0,
                   url: "",
                   title: img.name,
                 },

@@ -4,6 +4,7 @@
 import OpenAI from "openai"
 import { getConfig, saveConfig, isMaskedApiKey } from "../../config"
 import { probeLlmConnection } from "../../llm/connection-test"
+import { normalizeVisionBaseUrl } from "../../llm/vision-pipeline"
 import {
   findArmingSecurityFlags,
   isValidSecurityArmPhrase,
@@ -339,7 +340,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       }
       try {
         const client = new OpenAI({
-          baseURL: config.vision.base_url,
+          baseURL: normalizeVisionBaseUrl(config.vision.base_url),
           apiKey: config.vision.api_key || "ollama",
           timeout: 5000,
           maxRetries: 0,
