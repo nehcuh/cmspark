@@ -11,14 +11,17 @@ import {
   IMAGE_MAX_TOTAL_DECODED,
   IMAGE_PREFLIGHT_NO_VISION,
   checkComposerImageCaps,
+  IMAGE_FORMAT_REFUSED,
   classifyDrop,
   clipboardImageDisplayName,
   compressImageBlob,
   captionOnlyForEdit,
   defaultCaption,
+  imageTypeRefuseReason,
   isAllowlistedImageMime,
   mimeFromName,
   needsCompress,
+  nextFileErrorAfterIngest,
   pasteImageDisplayName,
   previewDataUrl,
   visionRailOpen,
@@ -133,6 +136,25 @@ test("mimeFromName: rasters + refuse heic/svg as image/*", () => {
   assert.equal(mimeFromName("icon.svg"), "image/svg+xml")
   assert.equal(mimeFromName("notes.md"), "text/markdown")
   assert.equal(mimeFromName("noext"), "application/octet-stream")
+})
+
+test("imageTypeRefuseReason: heic/svg refuse; rasters ok", () => {
+  assert.equal(imageTypeRefuseReason("image/heic"), IMAGE_FORMAT_REFUSED)
+  assert.equal(imageTypeRefuseReason("image/svg+xml"), IMAGE_FORMAT_REFUSED)
+  assert.equal(imageTypeRefuseReason("image/png"), undefined)
+  assert.equal(imageTypeRefuseReason("application/pdf"), undefined)
+})
+
+test("nextFileErrorAfterIngest: keep refuse when some files accepted", () => {
+  assert.equal(
+    nextFileErrorAfterIngest({ refuse: IMAGE_FORMAT_REFUSED }),
+    IMAGE_FORMAT_REFUSED,
+  )
+  assert.match(
+    nextFileErrorAfterIngest({ refuse: IMAGE_FORMAT_REFUSED, capErr: "一次最多添加 4 张图片" }),
+    /一次最多添加/,
+  )
+  assert.equal(nextFileErrorAfterIngest({}), "")
 })
 
 test("previewDataUrl: magic prefixes", () => {

@@ -739,13 +739,28 @@ export async function handleMessage(
           preview_jpeg_b64?: string
           width?: number
           height?: number
+          dest_host?: string
         }> = []
+        const destUrl = useNative
+          ? String(effectiveLLMConfig.base_url || "")
+          : String(config.vision?.base_url || "")
+        let destHost: string | undefined
+        try {
+          destHost = new URL(destUrl.includes("://") ? destUrl : `https://${destUrl}`).hostname || undefined
+        } catch {
+          destHost = undefined
+        }
         if (reservedUserMessageId) {
           for (let i = 0; i < standaloneImages.length; i++) {
             const img = standaloneImages[i]!
             const mime = img.type as RasterMime
             const written = writeImageSidecar(thread_id, reservedUserMessageId, i, mime, img.buf)
             if (!written) {
+              try {
+                deleteSidecarsForMessages(thread_id, [{ id: reservedUserMessageId }])
+              } catch {
+                /* best-effort: image-0 must not survive image-1 write fail */
+              }
               return uploadError(`图片 "${img.name}" 保存失败`)
             }
             const preview = await makePreviewB64(img.buf, mime)
@@ -757,6 +772,7 @@ export async function handleMessage(
               bytes: img.buf.length,
               ...(preview ? { preview_jpeg_b64: preview } : {}),
               ...(dims ? { width: dims.width, height: dims.height } : {}),
+              ...(destHost ? { dest_host: destHost } : {}),
             })
           }
         }

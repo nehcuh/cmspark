@@ -117,6 +117,9 @@ export function parseChatUserAttachments(raw: unknown): MessageAttachment[] | un
     if (typeof rec.preview_jpeg_b64 === "string" && rec.preview_jpeg_b64) {
       att.preview_jpeg_b64 = rec.preview_jpeg_b64
     }
+    if (typeof rec.dest_host === "string" && rec.dest_host.trim()) {
+      att.dest_host = rec.dest_host.replace(/[\n\r]/g, "").trim().slice(0, 200)
+    }
     out.push(att)
   }
   return out.length ? out : undefined

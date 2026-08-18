@@ -702,11 +702,19 @@ const MessageRow = memo(function MessageRow({
               ))}
             </div>
             {isUser && Array.isArray(msg.attachments) && msg.attachments.length > 0 ? (
+              <>
               <div style={styles.thumbRow} aria-label="附图">
                 {msg.attachments.map((att: MessageAttachment, i: number) => (
                   <UserImageThumb key={`${att.sha256 || att.name}-${i}`} att={att} />
                 ))}
               </div>
+              <div style={styles.attachMeta}>
+                {`📎 ${msg.attachments.map((a: MessageAttachment) => a.name).join(", ")}`}
+                {msg.attachments.find((a: MessageAttachment) => a.dest_host)?.dest_host
+                  ? ` · → ${msg.attachments.find((a: MessageAttachment) => a.dest_host)!.dest_host}`
+                  : ""}
+              </div>
+              </>
             ) : null}
             <div style={{
               ...styles.actionBar,
@@ -1767,6 +1775,16 @@ const styles: Record<string, React.CSSProperties> = {
     boxSizing: "border-box" as const,
     overflow: "hidden",
     wordBreak: "break-all" as const,
+  },
+  attachMeta: {
+    alignSelf: "flex-end" as const,
+    marginTop: 4,
+    fontSize: 11,
+    color: tokens.textSecondary,
+    maxWidth: "100%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
   },
   userBubble: {
     background: tokens.userBubbleBg,

@@ -106,6 +106,9 @@ interface ChatCreateParams {
     sha256: string
     bytes: number
     preview_jpeg_b64?: string
+    width?: number
+    height?: number
+    dest_host?: string
   }>
   /** Must match the msgId used in writeImageSidecar so hydrate can find bytes. */
   reservedUserMessageId?: string
