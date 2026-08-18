@@ -1,0 +1,8 @@
+{
+  "batch": "clipboard-image-paste-design",
+  "timestamp": "20260817-161248",
+  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/clipboard-image-paste-design-diff-20260817-161248.patch"
+}

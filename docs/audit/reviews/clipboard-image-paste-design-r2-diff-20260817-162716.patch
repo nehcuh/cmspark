@@ -1,0 +1,2087 @@
+# Dual external review context
+batch: clipboard-image-paste-design-r2
+base: HEAD
+time: 20260817-162716
+
+54f76a5
+
+A  docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md
+A  docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md
+A  docs/audit/reviews/clipboard-image-paste-design-dual-review-prompt.md
+A  docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md
+A  docs/audit/reviews/clipboard-image-paste-design-r2-dual-review-prompt.md
+A  docs/audit/reviews/clipboard-image-paste-design-verdict-20260817-161248.json
+A  docs/decisions/clipboard-image-paste-strawman-2026-08-17.md
+A  docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md
+?? docs/audit/reviews/clipboard-image-paste-design-diff-20260817-161248.patch
+?? docs/audit/reviews/clipboard-image-paste-design-r2-diff-20260817-162716.patch
+
+## Diff (git diff + staged)
+ ...ard-image-paste-adversary-synthesis-20260817.md |  98 +++++
+ ...rd-image-paste-design-claude-20260817-161248.md |  49 +++
+ ...pboard-image-paste-design-dual-review-prompt.md |  61 +++
+ ...pboard-image-paste-design-pi-20260817-161248.md |  33 ++
+ ...ard-image-paste-design-r2-dual-review-prompt.md |  60 +++
+ ...image-paste-design-verdict-20260817-161248.json |   8 +
+ .../clipboard-image-paste-strawman-2026-08-17.md   | 241 ++++++++++++
+ .../2026-08-17-clipboard-image-paste-design.md     | 431 +++++++++++++++++++++
+ 8 files changed, 981 insertions(+)
+
+diff --git a/docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md b/docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md
+new file mode 100644
+index 0000000..51a27c5
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md
+@@ -0,0 +1,98 @@
++# Multi-adversarial synthesis — 对话框用户附图（粘贴/选/拖）
++
++**Date**: 2026-08-17  
++**Strawman**: `docs/decisions/clipboard-image-paste-strawman-2026-08-17.md`  
++**Method**: 3 independent plan agents (Product / Security / Architecture) + orchestrator lock  
++**Blast**: T2 (Surface L0 composer + adapter hydrate; no new tool / L2 / confirm dialect)
++
++## Lane verdicts
++
++| Lane | VERDICT | Blocking themes |
++|------|---------|-----------------|
++| Product/UX | **REJECT** | 📎-only history; OS screenshot 4MiB bounce; P0 copy becomes a lie; mixed-send ghost failures; edit/regen drops pixels; first native send has no destination honesty |
++| Security | **REJECT** | Legal mixed send trips WS 10MB `maxPayload` (socket death); sidecar path escape (`rel` / symlink / fork / hard-delete); magic sniff vaporware; URI drop as IMAGE_FETCH bypass if implemented loosely |
++| Architecture | **REJECT** | `fileContents` cannot carry images; Anthropic user-merge stringifies parts; hydrate missing so regenerate/rebuild go blind; 1600 tok/image dishonest for 4K; `likelyMultimodal` must be companion SoT |
++
++Strawman as written is **not implementable**. Locked table below absorbs every blocking item. User conversation locks (sources / mixed-send / paste+picker+drop / native-if-multimodal) are **kept**.
++
++## Locked decisions (implementer MUST)
++
++| # | Decision |
++|---|----------|
++| U1 | Sources = all clipboard rasters (OS screenshot / web copy / Finder file) |
++| U2 | Mixed send: empty composer → attach+wait; nonempty text → attach+send same tick (explicit file list, no stale `setState`) |
++| U3 | Surface = paste + picker + drag-drop on InputArea |
++| U4 | Routing = `likelyMultimodal(effective model)` → native main-loop parts; else vision rail. **Not** protocol-gated. Tool screenshot / `analyze_image` / PDF embeds **unchanged** (vision rail) |
++| P1 | Transcript v1 **must** show a 48px thumb (composer-parity), not 📎-only. Full-size lightbox deferred. Clipboard names → `截图 YYYY-MM-DD HH:mm` |
++| P2 | Client **recompress/downscale** before send (longest edge ≤ 1568, JPEG q≈0.85 unless already small PNG/GIF). Chip shows `已压缩` when bytes change. Typical Retina OS screenshot must succeed |
++| P3 | Composer **preflight**: `!useNative && !vision.enabled` → do not send; banner + chips stay. Companion reject → restore chips, **no ghost user turn** |
++| P4 | Edit / regenerate / fork of an image turn **keeps** sidecars. Edit is caption-only. `skipUserMessage` still hydrates |
++| P5 | Destination honesty: chip + optimistic line always show hostname. First native send **per hostname** → one composer line (not L2). Persist ack in `chrome.storage.local`; `base_url` change re-prompts |
++| P6 | Exact copy rewrite (Side Panel **and** settings-web) — see design §8. Never again claim “主对话不会直接收图” as universal |
++| S1 | **Serialized UTF-8 JSON size** of the whole `file.upload` frame computed **before** `ws.send`. Refuse if `> 10MiB − 256KiB`. Do not raise `MAX_WS_MESSAGE_SIZE` |
++| S2 | Joint budget: images + docs + envelope share the frame cap. Decoded image caps (4MiB/ea, 6MiB total **after** compress) are additional |
++| S3 | Keep `selectedFiles` until `file.uploaded` / `file.upload_error` / disconnect. Client refuse must not clear chips |
++| S4 | Magic sniff algorithm locked (PNG/JPEG/GIF/WEBP signatures). `sniffed === declared` or reject. Images **never** enter `allowed_types` / `parseFile` |
++| S5 | Sidecar names **companion-chosen** only. `realpath` + `lstat` not symlink + `isStrictlyInside`. NEVER trust client `rel`/`sha256` as a load path. Hard-delete all paths remove `.files/`. Fork **copies bytes** + new names |
++| S6 | NEVER fetch / `fetchImageAsBase64` / `analyze_image` from paste/drop. Reject uri-list / moz-url / html / 0-byte File / data: / blob: / file: URI |
++| S7 | Thumbs = React `<img src={blob:}>` from sniffed raster only. No innerHTML / SVG / object / embed |
++| S8 | NEVER log `content` / base64 / `image_url.url`. Log `byte_len` / sha256 / sniffed MIME |
++| A1 | New `chatCreate.imageAttachments` (metadata). **Do not** overload `fileContents` |
++| A2 | Exactly **one** user `addMessage` per send, inside `chatCreate`. Disk `content` stays string; `attachments?` is metadata |
++| A3 | `hydrateUserImageParts` is the **only** injection of image parts, after `rebuildMessagesFromHistory`, before context budget. Rebuild pairing stays pure/string |
++| A4 | Anthropic consecutive-user merge is **block-wise** and **stays** (omit-notice requires it) |
++| A5 | `likelyMultimodal` SoT = `companion/src/llm/likely-multimodal.ts`. Denylist `kimi-k2` / `moonshot-v1*` unless `vl\|vision\|omni`. Extension/settings-web lockstep tests. Client cannot force native |
++| A6 | Token: after P2 downscale (≤1568), estimate **1600 tok/image** is honest for high-detail tiles. `serializeMessage` / redact **must** handle parts (never `String(array)` / `.replace` on array). Title/summary/Obsidian never get pixels |
++| A7 | Echo persisted `message_id` so optimistic row adopts disk id (regenerate/export) |
++| A8 | Open questions closed: no `supports_vision` config in v1; GIF/WebP sent as-is; image+doc empty caption = `请查看附件`; worker/orchestrator same caps; `file_upload_max_size` slider does **not** raise image budget |
++
++## Dual review (Claude + Pi) — 2026-08-17 16:12
++
++| Judge | VERDICT | Note |
++|-------|---------|------|
++| Claude | **REJECT** | One blocker: vision-rail `analyzeImage` text had no persist/replay carrier |
++| Pi | **APPROVE_WITH_NITS** | Preflight vs `enable_vision_analysis`; companion re-validate caps; name extension test file; 1600 tok under-counts squares |
++
++**Folded into locked spec after dual (not re-reviewed in this batch):**
++
++- §5.1a — vision description appended to disk `content` (`<!-- 用户附图分析 -->`); regenerate replays it
++- Preflight uses `vision.enabled && enable_vision_analysis !== false`
++- Companion re-validates 4 / 4MiB / 6MiB / frame JSON
++- Sidecar only after LLM gates; `deleteMessagesFrom` cleans sidecars
++- Token 1600 vs 2800 by aspect; ack keyed by hostname (incl. override)
++- DoD #16 + extension test file named in §10
++
++`both_approve=false` on the *pre-fold* spec. Implementer must not treat this batch as merge-ready. Optional r2 dual on the folded spec before coding.
++
++## Overall design gate
++
++**CONDITIONAL APPROVE as product SoT after fold.**  
++**NOT APPROVE for implementation** until a dual r2 on the folded spec is APPROVE* (or the user waives r2 after reading §5.1a).
++
++Security/Product/Architecture REJECT was against the *strawman*. Locked table resolves those.
++
++## Capability declaration
++
++```text
++Surface:      L0 (chat composer attachments — no new CDP/tool)
++L2-classes:   (none)
++Compose:      none (reuses file.upload + existing vision rail)
++Autonomy:     single
++Trust:        user-initiated image bytes → effective chat LLM (native)
++              or config.vision (text-only). No new confirm dialect.
++              Destination hostname disclosed on chip + first-send line.
++Channel:      community
++```
++
++## Residual risks (named, accepted)
++
++- Indirect prompt injection via pixels (same class as screenshot / analyze_image)
++- Prefix-only magic: GIFAR / JPEG+HTML polyglot — accepted if thumbs are `<img>`-only
++- Paired extension + stolen `ws_secret` can already `file.upload`; pixels raise blast to cloud LLM
++- User pasting secrets (same as pasting a password as text); mixed-send raises accident rate — mitigated by destination-on-chip, not a new L2
++- History replay re-sends up to 4 images until compacted
++- Heuristic false-negative: user must rename model or enable vision (no override field in v1)
++
++---
++
++*Orchestrator synthesis · lanes were isolated · 2026-08-17*
+diff --git a/docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md b/docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md
+new file mode 100644
+index 0000000..c855a6b
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md
+@@ -0,0 +1,49 @@
++# Dual review — `clipboard-image-paste-design` (design only)
++
++## Verification basis
++
++Diff is docs-only (4 new .md, 791 insertions) and the patch file matches the staged diff — not stale. I grounded every load-bearing claim against real code before judging:
++
++| Spec claim | Code ground | Status |
++|---|---|---|
++| No paste/drop; docs-only accept | `App.tsx:1244` (accept list), no `onPaste`/`onDrop` in file | ✅ |
++| Optimistic user bubble before upload (ghost risk) | `App.tsx:1053-1062` ADD_MESSAGE before `file.upload` | ✅ |
++| SW computes `over_companion_10mb` but still sends | `background/index.ts:601-620` | ✅ |
++| `MAX_WS_MESSAGE_SIZE` 10MB / maxPayload kills control plane | `lifecycle.ts:67,663` | ✅ |
++| Anthropic consecutive-user merge would stringify parts | `anthropic-convert.ts:167-176` (`String(next.content)`) | ✅ |
++| `serializeMessage` garbles array content | `context-budget.ts:61` | ✅ |
++| Single `addMessage` inside `chatCreate`; docs → `<document>` | `adapter.ts:325-357`; router adds only assistant error turns (`message-router.ts:472`) | ✅ |
++| Empty `File.type` rejected today | `validate.ts:717` | ✅ |
++| `IMAGE_FORMATS` includes svg/bmp/tiff (must not gate input) | `file-parser.ts:54` | ✅ |
++| `kimi-k2`/`moonshot-v1*` false-positive multimodal | `vision-reuse-logic.ts:94` (`/kimi\|moonshot/` → true); companion has **no** `likelyMultimodal` yet (SoT file is new per §10.1) | ✅ |
++| Settings lies exist | `vision-reuse-logic.ts:15,38`; `settings-web.ts:668` | ✅ |
++| Regenerate replays original content, `skipUserMessage:true` | `message-router.ts:983,993` | ✅ |
++| `ALLOWED_IMAGE_MIMES_LIST` = png/jpeg/gif/webp; `normalizeImageMime` reusable | `image-data-url.ts:11-40` | ✅ |
++| Message-cap slice exists | `thread-manager.ts:182,904-905` | ✅ |
++
++## ADR-020 capability check
++
++Declaration present and well-formed. Surface L0 is the correct axis (ADR-020 L0 = 对话、附件); Compose none (reuses `file.upload` + vision rail); Autonomy single; Channel community. No new confirm dialect (destination disclosure is chip + one-line, not a `SecurityConfirmationManager` family). No new WS message family, no new runtime, no new primary Side Panel chrome. Trust monotonicity intact — vision rail keeps `shouldBlockVisionRequest`, no `clipboardRead`, main key same trust class as normal chat. Pack-first N/A for composer UX. `originWs` N/A (no new confirm `request(`). **Passes.**
++
++## Trajectory
++
++The locked table genuinely absorbed the three lanes' blockers — I traced S1–S8, A1–A8, P1–P8 into concrete spec sections and each corresponds to a real defect in current code (verified above). Not papered over.
++
++## Blocking issue
++
++The spec is incomplete on one of its three routing rows:
++
++1. **Vision-rail turn has no carrier for the `analyzeImage` description and no replay story.** §4 (row `!useNative` 且 vision 开 → "`analyzeImage` → 文字") requires the description to reach the LLM, but §5.1 locks the persistence shape as `content = 用户文案 + "\n📎 " + 显示名列表` plus an `imageAttachments` schema that is metadata-only (name/mime/sha256/bytes/preview) — there is **no field anywhere** that can carry the description text, and `fileContents` is pinned to "解析后的文档 ONLY". Consequence under faithful implementation: `chat.regenerate` replays the original persisted content with `skipUserMessage:true` (`message-router.ts:983,993`) and `hydrateUserImageParts` (§5.2) injects parts only — so regenerating a vision-rail image turn drops the description entirely. The existing doc flow persists descriptions (`message-router.ts:601-607` → `adapter.ts:355` → persisted at `357`); this spec changes images off that path without defining the replacement. This is exactly the failure class the spec itself forbids (§10: "没有 hydrate 的 UI 只是「第一轮能看、regen 变瞎」"), it hits the spec's #2 JTBD persona (DeepSeek/llama3.1 + vision), and DoD §11 has no item covering vision-rail replay. Fix is a small amendment: choose the description's carrier (append to persisted disk content like the existing embedded-image flow, or add e.g. `vision_text` to `attachments`) + add a DoD line.
++
++## Non-blocking nits
++
++- §3.7/§5.4: 1600 tok/image is OpenAI-tile-calibrated; Anthropic ≈ (w·h)/750 ≈ 3.3k for 1568² — under-reserves on Anthropic protocol. Consider protocol-aware estimate or a note.
++- §4: snippet says `useNative = likelyMultimodal(effective.model_name) // 不看 protocol` while the correction bullet says "Anthropic 协议 + Claude → true" — claude-family names already return true by name regex so there's no functional hole, but the two sentences read as contradictory; clarify (or pass protocol explicitly).
++- §5.5 sidecar-cleanup list omits `deleteMessagesFrom` (`thread-manager.ts:996`) — regenerate deeper in history deletes later image turns and orphans their sidecars until thread hard-delete (leak only, not escape).
++- Router writes the sidecar (§5.1 step 3) before the LLM-loop gate / thread re-checks (`message-router.ts:640-664`) — gate rejection after parse orphans a sidecar; bounded by thread-delete cleanup, worth one sentence.
++- §3.3 preflight checks `vision.enabled` only; companion gates vision on `vision.enabled && file_upload.enable_vision_analysis` (`message-router.ts:569`). Mismatch lands on the specified `file.upload_error`, so not silent — but aligning avoids a guaranteed-fail send.
++- §3.6: ensure the ack store is keyed by destination hostname itself (including `thread.config_override` base_url hosts), not by `llm.base_url`, since the chip copy promises per-rail hostname disclosure.
++
++Everything else — WS frame budget math (6MiB decoded ≈ 8MiB b64 + joint envelope headroom), sniff/normalize reuse, sidecar containment, ghost-bubble recovery, kimi-k2 correction, settings-copy rewrite targets, and the hydrate-only injection architecture for the native path — is grounded, internally consistent, and implementable.
++
++VERDICT: REJECT
+diff --git a/docs/audit/reviews/clipboard-image-paste-design-dual-review-prompt.md b/docs/audit/reviews/clipboard-image-paste-design-dual-review-prompt.md
+new file mode 100644
+index 0000000..3ceb5b9
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-design-dual-review-prompt.md
+@@ -0,0 +1,61 @@
++# Dual-review prompt — clipboard / composer user images (design only)
++
++**Batch**: `clipboard-image-paste-design`  
++**Nature**: product + architecture lock. **No implementation code in this batch.**  
++**Confirm order already done**: 3 isolated adversary lanes REJECTED the strawman; orchestrator absorbed blockers into the locked spec.
++
++## Read these (in order)
++
++1. `docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md` — **SoT, review this**
++2. `docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md` — locked table
++3. `docs/decisions/clipboard-image-paste-strawman-2026-08-17.md` — superseded where it conflicts
++4. `docs/decisions/vision-reuse-main-llm-brief-2026-08-08.md` — P0 “main loop does not receive images” is now **split**: screenshots stay pre-analyze; **user attachments** may be native
++5. ADR-020 + `docs/audit/reviews/_templates/dual-review-capability-checklist.md`
++
++Ground in real code (do not rubber-stamp):
++
++- `chrome-extension/src/sidepanel/App.tsx` (InputArea, file.upload, optimistic ADD_MESSAGE)
++- `companion/src/llm/adapter.ts` (`fileContents`, `rebuildMessagesFromHistory`, `skipUserMessage`)
++- `companion/src/llm/providers/anthropic-convert.ts` (consecutive user merge)
++- `companion/src/llm/context-budget.ts` (`serializeMessage`, redact)
++- `companion/src/ws/lifecycle.ts` (`MAX_WS_MESSAGE_SIZE`)
++- `companion/src/ws/validate.ts` (`file.upload`)
++- `companion/src/threads/thread-manager.ts` (Message, delete)
++- `chrome-extension/src/sidepanel/components/vision-reuse-logic.ts` (`likelyMultimodal`, `VISION_COPY`)
++
++## Capability declaration (from spec §0)
++
++```text
++Surface:      L0 (chat composer attachments — no new CDP/tool)
++L2-classes:   (none)
++Compose:      none (reuses file.upload + vision rail)
++Autonomy:     single
++Trust:        user-initiated image bytes → effective chat LLM (native)
++              or config.vision (text-only). No new confirm dialect.
++              Destination hostname on chip + first-send line.
++Channel:      community
++```
++
++## What you must decide
++
++This is a **design** review. Ask:
++
++1. **Outcome**: If implemented faithfully, does paste-screenshot-into-chat + native-if-multimodal actually work (first send, regenerate, model switch, Anthropic compact merge, WS 10MB, OS Retina screenshot)?
++2. **Trajectory**: Did the locked table absorb Product/Security/Architecture blockers, or paper over them?
++3. **Component**: Any remaining hole that will 400, drop pixels, escape paths, or ship a lie in settings copy?
++4. **ADR-020**: Axes, Pack-first, no new confirm family, trust monotonicity, no new runtime.
++
++Do **not** reject solely because there is no code. Reject if the **spec** is still incomplete or internally contradictory.
++
++User-locked (do not reopen unless product-broken): all clipboard sources; mixed send; paste+picker+drop; native when multimodal else vision; no silent native→vision fallback; no new L2 confirm.
++
++## Verdict
++
++End with exactly one of:
++
++VERDICT: APPROVE  
++VERDICT: APPROVE_WITH_NITS  
++VERDICT: REJECT  
++
++If REJECT: blocking list with spec section or file:line **before** the verdict line.  
++If APPROVE_WITH_NITS: non-blocking nits only before the verdict line.
+diff --git a/docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md b/docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md
+new file mode 100644
+index 0000000..ebd9f4e
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md
+@@ -0,0 +1,33 @@
++Review complete. I read the locked spec, adversary synthesis, strawman, vision-reuse P0 brief, ADR-020 + capability checklist, and verified the design's claims against ~15 real code sites.
++
++## Grounding check (all claims in the spec verified against code)
++
++- **WS 10MB**: `companion/src/ws/lifecycle.ts:67` `MAX_WS_MESSAGE_SIZE = 10MB`; design keeps it. ✔
++- **SW computes-but-sends**: `chrome-extension/src/background/index.ts:614-619` computes `json_bytes`/`over_companion_10mb` then `wsClient.send` anyway — §5.6's "改为拒发" fixes a real bug. ✔
++- **Anthropic merge stringifies parts**: `anthropic-convert.ts:172` `String(next.content)` — A4/§5.3 block-wise merge is required, not hypothetical. ✔
++- **`serializeMessage`/redact**: `context-budget.ts:51,61` `String(m.content)` on non-string; §5.4 part-stub handling is needed. ✔
++- **Regenerate id 坑**: `chat.regenerate` resolves user msg by disk `message_id` (`message-router.ts:868` `findIndex(m => m.id === message_id)`), but optimistic file.upload bubble uses local `${uploadThreadId}_${Date.now()}` (`App.tsx:1054`) and the SW `chat.user` echo echoes the client id (`background/index.ts:525`). A7's disk-id echo fixes a real break. ✔
++- **P0 heuristic mislabels**: `vision-reuse-logic.ts` `/kimi|moonshot/ → true` and `tests/vision-reuse-logic.test.ts:31-32` assert `kimi-k2`/`moonshot-v1-128k` → true; §4/DoD #15 correction is real and machine-checkable. ✔
++- **Settings lies**: `vision-reuse-logic.ts:15`「主对话不会直接收图」, `settings-web.ts:668` "main loop does not receive image bytes", `SettingsSlideout.tsx:2155` — §8 rewrite list maps to real copy. ✔
++- **Sidecar/persistence**: `thread-manager.ts` `Message.content: string`, `purgeExpiredTrash`/`cleanupEmpty` unlink only the JSON (no `.files/` today) — §5.5 CRUD additions are needed. ✔
++- **`file.upload` validate**: `ws/validate.ts:712-723` max 10 files + truthy name/type/content; empty `File.type` from OS paste is indeed rejected today. ✔
++- **No `onPaste`/`onDrop`/`onDragOver`** in `App.tsx`; `accept` is documents-only (`App.tsx:1244`). ✔
++
++## Trajectory — locked table absorbs, doesn't paper over
++
++Every one of the 3 lane blockers (Product P1–P6, Security S1–S8, Architecture A1–A8) maps to a concrete spec section with mechanism + machine-checkable DoD (sidecar containment w/ realpath+lstat+isStrictlyInside, block-wise Anthropic merge, hydrate as sole injection point, SW/panel refuse-before-send, exact magic-byte signatures, exact copy rewrites).
++
++## ADR-020 checklist
++
++Declaration present and complete in spec §0 and synthesis. Axes fit (L0 composer attachment — correct axis, no CDP/tool). Pack-first: paste/drop/picker on the existing composer is not new primary Side Panel chrome. No new confirm family (P5 explicitly non-L2, chip + one-line notice). Trust monotonicity holds: native images go to the same main LLM endpoint/key as chat text — same trust level, no god-mode interaction, screenshot rail unchanged. `originWs`: no new `securityConfirmations.request` (N/A). No new runtime (reuses `file.upload` + vision rail). Forbidden language honored.
++
++## Nits (non-blocking)
++
++1. **§3.3 preflight vs `enable_vision_analysis`**: preflight blocks only on `!vision.enabled`, but the vision rail is gated by `config.vision?.enabled && file_upload.enable_vision_analysis !== false` (as `message-router.ts:564` does today). Text-only main + vision enabled + embedded-analysis disabled → spec is ambiguous whether the image is analyzed (violating user config) or silently unanalyzed (violating U4). Recommend: preflight gate `!useNative && !(vision.enabled && enable_vision_analysis !== false)`.
++2. **§5.4 1600 tok/image undercounts squares**: 1568px long edge matches Anthropic's 1600 base, but OpenAI high-detail tiles a 1568×1568 square to ~2800 tok; as-is oversized GIFs/WebP (§3.7) are also sent un-downscaled. Bounded by the 4-image cap (~11k worst-case vs 6.4k assumed) — say the estimate targets typical screenshot aspect, or use 1600 as floor for OpenAI-high-detail.
++3. **Companion-side numeric caps not mandated**: §3.3/§5.6 enforce 4-image / 4MiB / 6MiB client-side only; a version-skewed or buggy client could still ship 5×1.5MiB and trip `maxPayload` 1009 (the exact death the design forbids). Recommend the router re-validate image count/decoded caps and return `file.upload_error` (cheap, consistent with DoD #4's 漏网 path).
++4. **Existing P0 test flip not named in §10**: §10's file cut lists companion lockstep tests but not the update to `chrome-extension/tests/vision-reuse-logic.test.ts:31-32` (asserts kimi-k2/moonshot-v1 true). DoD #15 machine-checks the flip, so it's covered, but name the file so the implementer doesn't leave a stale green assertion.
++
++Diff is fresh and pure-docs (4 staged files match `git diff HEAD`; patch timestamped today). This is a design review; the spec is complete, internally consistent, grounded in real code, and implementable as written.
++
++VERDICT: APPROVE_WITH_NITS
+diff --git a/docs/audit/reviews/clipboard-image-paste-design-r2-dual-review-prompt.md b/docs/audit/reviews/clipboard-image-paste-design-r2-dual-review-prompt.md
+new file mode 100644
+index 0000000..1f69e58
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-design-r2-dual-review-prompt.md
+@@ -0,0 +1,60 @@
++# Dual-review prompt r2 — folded clipboard-image-paste design
++
++**Batch**: `clipboard-image-paste-design-r2`  
++**Nature**: design re-review after r1 fold. **No implementation code.**  
++**r1**: Claude **REJECT** + Pi **APPROVE_WITH_NITS** → `clipboard-image-paste-design-verdict-20260817-161248.json`
++
++## Your job this round
++
++This is **not** a first-principles redesign. Decide whether the **folded spec** closed r1, and whether anything still blocks implementation planning.
++
++1. Read the **current** SoT: `docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md`
++2. Read r1 reports and confirm each item is absorbed or explicitly residual:
++   - Claude REJECT: `docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md`  
++     Blocker was: vision-rail `analyzeImage` text had no persist/replay carrier.
++   - Pi nits: `docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md`
++   - Orchestrator fold note: `docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md` (Dual review section)
++3. Ground remaining claims in real code (same files as r1). Do not rubber-stamp.
++
++## r1 items that MUST be closed in the folded spec (verify by section)
++
++| Source | Claim | Expected lock |
++|--------|--------|----------------|
++| Claude blocker | Vision-rail description vanishes on regenerate | **§5.1a** — description appended to disk `content` (`<!-- 用户附图分析 -->`); no `vision_text`-only field; DoD #16 |
++| Pi nit 1 | Preflight ignored `enable_vision_analysis` | §3.3 + §4 use `vision.enabled && enable_vision_analysis !== false` |
++| Pi nit 2 | 1600 tok under-counts squares | §5.4 1600 vs 2800 by aspect |
++| Pi nit 3 | Companion must re-validate caps | §5.1 step 6 |
++| Pi nit 4 | Extension test file unnamed | §10 item 1 names `vision-reuse-logic.test.ts` |
++| Claude nit | `deleteMessagesFrom` orphans sidecars | §5.5 |
++| Claude nit | Sidecar written before LLM gates | §5.1 step 5 |
++| Claude nit | Ack key not hostname | §3.6 keyed by hostname including override |
++
++If any of the above is missing or internally contradictory → **REJECT** that item as still blocking.
++
++## Still do not reopen (unless newly product-broken)
++
++User locks: all clipboard sources; mixed send; paste+picker+drop; native when multimodal else vision; no silent native→vision fallback; no new L2 confirm.
++
++## Capability (unchanged)
++
++```text
++Surface:      L0 (chat composer attachments — no new CDP/tool)
++L2-classes:   (none)
++Compose:      none (reuses file.upload + vision rail)
++Autonomy:     single
++Trust:        user-initiated image bytes → effective chat LLM (native)
++              or config.vision (text-only). No new confirm dialect.
++              Destination hostname on chip + first-send line.
++Channel:      community
++```
++
++## Verdict rules
++
++- Do **not** reject solely because there is no code.
++- REJECT only if the folded spec is still incomplete / contradictory / r1 blocker unfixed.
++- APPROVE_WITH_NITS = r1 closed; leftover nits are non-blocking for writing an implementation plan.
++- End with exactly one line:
++
++VERDICT: APPROVE  
++VERDICT: APPROVE_WITH_NITS  
++VERDICT: REJECT  
+diff --git a/docs/audit/reviews/clipboard-image-paste-design-verdict-20260817-161248.json b/docs/audit/reviews/clipboard-image-paste-design-verdict-20260817-161248.json
+new file mode 100644
+index 0000000..3c1f600
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-design-verdict-20260817-161248.json
+@@ -0,0 +1,8 @@
++{
++  "batch": "clipboard-image-paste-design",
++  "timestamp": "20260817-161248",
++  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md" },
++  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md" },
++  "both_approve": false,
++  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/clipboard-image-paste-design-diff-20260817-161248.patch"
++}
+diff --git a/docs/decisions/clipboard-image-paste-strawman-2026-08-17.md b/docs/decisions/clipboard-image-paste-strawman-2026-08-17.md
+new file mode 100644
+index 0000000..c19bd4c
+--- /dev/null
++++ b/docs/decisions/clipboard-image-paste-strawman-2026-08-17.md
+@@ -0,0 +1,241 @@
++# Strawman — 对话框粘贴/选/拖图片（用户附图 · 原生多模态分流）
++
++**Date**: 2026-08-17  
++**Status**: STRAWMAN for multi-path adversary (not locked)  
++**Blast**: T2 (Surface L0 composer + adapter message shape; no new tool / L2 / confirm dialect)  
++**Related**: vision-reuse P0 (`docs/decisions/vision-reuse-main-llm-brief-2026-08-08.md`) · `vision-pipeline.ts` · `file.upload` · ADR-020
++
++This is a **draft for independent lanes to attack**. Locked table comes after synthesis.
++
++---
++
++## 0. Capability declaration (ADR-020)
++
++```text
++Surface:      L0 (chat composer attachments — no new CDP/tool)
++L2-classes:   (none)
++Compose:      none (not a Pack / skill / MCP; reuses file.upload + vision rail)
++Autonomy:     single
++Trust:        user-initiated image bytes go to the effective chat LLM endpoint
++              (native) or config.vision endpoint (text-only fallback).
++              No new confirm dialect. No clipboardRead permission.
++Channel:      community
++```
++
++**Not**: a new runtime, a new Side Panel chrome tab, native multimodal for *tool* screenshots, or Qwen3-VL CU locate.
++
++---
++
++## 1. Thesis
++
++> Users can paste, pick, or drop raster images into the Side Panel composer.  
++> If the **thread-effective main LLM is likely multimodal**, those user images ride in the **main chat turn** (OpenAI `image_url` / Anthropic image block).  
++> If the main LLM is text-only (or unknown — fail closed), images go through the **existing vision side-pipeline** (`analyzeImage`).  
++> Tool `screenshot` / page `analyze_image` / PDF embedded images are **out of scope** and stay on the vision rail.
++
++**Non-thesis**
++
++- Do not auto-fallback native → vision on API 400 (user locked “option 2”).
++- Do not request `clipboardRead`.
++- Do not fetch remote URLs dropped from a webpage (that is `analyze_image` + IMAGE_FETCH_GATE).
++- Do not inject tool-screenshot pixels into the main loop.
++
++---
++
++## 2. Locked user choices (conversation)
++
++| # | Choice |
++|---|--------|
++| Sources | All clipboard images: OS screenshot, web “copy image”, Finder/Explorer file copy |
++| Send model | **Mixed**: empty composer → attach and wait; composer already has text → attach + send immediately |
++| Input surface | Paste + file picker + drag-drop onto composer |
++| Routing | Native multimodal when `likelyMultimodal(effective model)`; else vision config |
++
++---
++
++## 3. Problem / JTBD
++
++| Actor | Pain | Desired |
++|-------|------|---------|
++| User with GPT-4o / Kimi / glm-4v / Claude Messages | Paste does nothing; or would be pre-described by a weaker/separate VLM | Main model *sees* the screenshot they just took |
++| User with DeepSeek / llama3.1 | No native vision | Same paste UX; vision rail describes, then main reads text |
++| User who configured a cheap local VLM + strong text model | Must not lose that split | Text-only main → still uses `config.vision` |
++| User who clicked「使用主模型」for screenshots | Settings reuse ≠ native chat | Screenshots stay pre-analyze; *user paste* is a different rail |
++
++---
++
++## 4. As-is (inspected)
++
++- Composer `InputArea` (`chrome-extension/src/sidepanel/App.tsx`): file picker `accept` is documents only; **no `onPaste` / `onDrop`**.
++- `file.upload` → `parseFile` **rejects** `image/*`; `allowed_types` has no image MIME.
++- Vision is a **side-pipeline**: `analyzeImage` → text. Main `CanonicalChatMessage` user content is `string` only.
++- Vision-reuse P0 copies credentials into `config.vision`; **explicitly did not** put `image_url` in the agent loop (P2 deferred).
++- `likelyMultimodal` exists and is tested (fail-closed unknown → false). `shouldOfferVisionReuse` additionally blocks `protocol=anthropic`.
++- WS `maxPayload` = **10MB** (`companion/src/ws/lifecycle.ts`). Base64 inflates ×4/3. A 6MB decoded image is ~8MB on the wire — one image can saturate the frame.
++- `file.upload` validate: max **10 files**, requires name/type/content strings.
++- Thread messages live in `~/.cmspark-agent/threads/<id>.json` (`content: string`). No attachment sidecar today.
++- Anthropic convert (`anthropic-convert.ts`) treats user content as a string and merges consecutive user turns as text.
++
++---
++
++## 5. Proposed design (attack this)
++
++### 5.1 Routing (send time)
++
++```
++effectiveModel = thread.config_override.model_name || config.llm.model_name
++useNative = likelyMultimodal(effectiveModel)   // NOT gated on protocol
++```
++
++| Case | Images | Docs |
++|------|--------|------|
++| `useNative` | parts on user turn; **do not** call `config.vision` | existing parse → `<document>` text |
++| `!useNative` && vision.enabled && file_upload.enable_vision_analysis | `analyzeImage` per image; text injected | unchanged |
++| `!useNative` && vision off | **fail the send** (do not drop images silently) | n/a if only images |
++
++Anthropic Messages + Claude: **native** (Messages supports images). This is *not* the vision-reuse CTA (that stays blocked for Anthropic).
++
++Heuristic false-positive (name looks multimodal, endpoint rejects images): surface the provider error; **no silent fallback** to vision.
++
++### 5.2 Composer UX
++
++- `onPaste` on textarea (and composer chrome): if any `clipboardData.items` is `image/*` allowlisted, `preventDefault`, add to `selectedFiles`. Do **not** also paste accompanying `text/html` / URL junk. Keep already-typed textarea text.
++- `onDrop` / `onDragOver` on the InputArea root: highlight; accept `DataTransfer.files` that are allowlisted images or existing document types. Reject `text/uri-list` / http(s) URL drops (no fetch).
++- File picker `accept` adds `.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp`.
++- Preview: image → thumbnail chip (max ~48px, 320px panel); docs stay text chips. Remove = ×.
++- Mixed send: if `text.trim()` nonempty at paste/drop of an image, attach then `handleSend` **with the new file list in the same tick** (do not rely on `setState` then `handleSend` — React stale state).
++- Empty text + Send with only images: default caption `请看这张图` / `请看这些图片`.
++- Disabled composer (no thread / disconnected / threadBusy / voice overlay): ignore paste/drop of files; show existing disabled affordance.
++
++### 5.3 Limits (must fit WS 10MB)
++
++| Limit | Strawman value | Why |
++|-------|----------------|-----|
++| MIME | png / jpeg / gif / webp only | lock-step with `ALLOWED_IMAGE_MIMES_LIST`; reject HEIC / SVG / BMP / TIFF with explicit copy |
++| Magic bytes | companion sniffs signature; MIME spoof → reject | defense in depth |
++| Per-image decoded | **4 MiB** | 4×4/3 ≈ 5.3MB b64; headroom under 10MB |
++| Per-send decoded total (all images) | **6 MiB** | whole `file.upload` JSON must stay < 10MB |
++| Count | max **4** images per send | UX + token |
++| Documents | existing 10MB / 10 files rules unchanged | mixed send: images count toward 6MiB image budget; docs toward file size |
++
++### 5.4 Persistence
++
++- Thread JSON `content` stays human text (`user text` + `📎 name`). **No base64 in `threads/<id>.json`.**
++- Sidecar: `~/.cmspark-agent/threads/<id>.files/<msgId>-<n>.<ext>` mode `0o600`. Containment: thread id already `^[a-zA-Z0-9_-]{1,64}$`.
++- Message field: `attachments?: { kind:"image", name, mime, sha256, bytes, rel }[]`
++- Thread hard-delete / cleanup: delete `<id>.files/` with the json.
++- Soft-trash: keep sidecars (restore must still see images).
++
++### 5.5 Canonical / providers
++
++Extend:
++
++```ts
++type UserContentPart =
++  | { type: "text"; text: string }
++  | { type: "image_url"; image_url: { url: `data:${mime};base64,...` } }
++
++CanonicalChatMessage user.content: string | UserContentPart[]
++```
++
++- OpenAI provider: pass through (SDK already accepts parts).
++- Anthropic convert: map data-URL parts → `{ type:"image", source:{ type:"base64", media_type, data } }`. Consecutive user-turn merge must **not** stringify image parts away.
++- Same `chatCreate` / tool-loop in-memory messages **keep** image parts for the whole request (「看这张图点红按钮」).
++
++### 5.6 History replay
++
++- `rebuildMessagesFromHistory`: if message has image attachments **and** current `useNative`, load sidecar → parts. If file missing, stub `[图片丢失: name]`.
++- If current model is **not** multimodal (user switched thread model to DeepSeek): **strip** image parts; keep text stub. Do not 400 the text-only endpoint.
++- Wire cap: newest **4** images across the compacted window; older → `[图片: name]`.
++- Token estimate: **1600 tokens / image** in context budget so compaction actually drops old image turns.
++- Compaction / title / summary / Obsidian export: text stub only (no pixels). Export may mention `📎 name`.
++
++### 5.7 Protocol
++
++Reuse `file.upload` (no new WS type). Companion splits `files[]` by MIME:
++
++- image → native or vision
++- other → `parseFile`
++
++Extension `FileAttachment` unchanged (`name, type, size, content` base64).
++
++Optimistic UI message (`📎 names`) stays; companion still `addMessage` as today for documents. **Adversaries: check double-user-message / dedup.**
++
++### 5.8 Settings / honesty copy
++
++- Vision section help must distinguish:
++  - **用户附图**（粘贴/选/拖）→ 主模型能看图则直送主模型；否则走视觉轨
++  - **截图 / analyze_image** → 仍先视觉轨转文字（P0 reuse 不变）
++- When native path is used, do **not** require `vision.enabled`.
++- Privacy: user images go to `llm.base_url` hostname (native) or `vision.base_url` (fallback). No extra toast required if settings already show those hosts; error/status should name the destination on failure.
++
++### 5.9 Errors (user-visible)
++
++| Situation | Copy (zh) |
++|-----------|-----------|
++| Unsupported type / HEIC | 不支持该图片格式（请使用 PNG / JPEG / GIF / WebP） |
++| Over per-image or total size | 图片过大（单张 ≤4MB，合计 ≤6MB） |
++| SVG / URI drop | 不能从网页链接拉图；请复制图片本身或改用截图 |
++| Text-only + vision off | 当前主模型不能看图。请在设置中开启「视觉分析」并配置视觉模型 |
++| Native endpoint rejects image | 主模型拒绝了图片（{provider error}）。可换多模态模型，或改用文本模型并开启视觉分析 |
++| Sidecar missing on replay | [图片丢失: name] |
++| Magic-byte mismatch | 文件内容与类型不符，已拒绝 |
++
++### 5.10 Out of scope (v1)
++
++- HEIC decode / convert
++- Native multimodal for tool screenshots / PDF embeds
++- Auto-fallback native→vision
++- `clipboardRead` / reading clipboard without paste
++- Rendering full-size image in the transcript (thumbnail in composer only; history shows `📎`)
++- New confirm / L2
++- Changing `MAX_WS_MESSAGE_SIZE`
++
++---
++
++## 6. Risks for adversaries
++
++1. WS 10MB vs 4×4MB images (even with 6MB total — is 6MB total still too tight with JSON/docs?)
++2. Heuristic false positive / false negative (`kimi-k2` is marked multimodal — is that true?)
++3. Thread model switch mid-history
++4. Anthropic consecutive-user merge dropping images
++5. Double user message (extension optimistic + companion addMessage)
++6. Sidecar path escape / leftover files after hard-delete
++7. Prompt injection via pasted screenshot of “ignore previous instructions”
++8. SVG/HTML polyglot if we ever render thumbs as img src=blob (XSS)
++9. Voice overlay + paste race
++10. Worker / multi-agent threads receiving huge images
++11. Settings copy still saying “主对话不会直接收图” after this ships (lie)
++12. Regenerating a turn that had images (`skipUserMessage`)
++13. `file.upload` + native path still running vision on mixed PDF embeds (OK) vs standalone PNG (must not)
++14. Privacy: clipboard screenshots of other apps (password managers) sent to cloud LLM with no extra confirm
++15. Context budget 1600 tok/image under/over estimate → silent overflow or over-drop
++
++---
++
++## 7. External DoD (machine-observable, post-impl)
++
++1. Extension: paste/drop/picker accept allowlisted images; reject others with copy
++2. Mixed send: nonempty text + paste image → one send, no stale `selectedFiles`
++3. Companion: `likelyMultimodal` true → no `analyzeImage` call for standalone images (unit/spy)
++4. Companion: `likelyMultimodal` false + vision off → `file.upload_error` (not silent drop)
++5. Magic-byte reject; HEIC reject
++6. Anthropic convert emits image blocks; consecutive user merge preserves them
++7. `rebuildMessagesFromHistory` strips images when current model is text-only
++8. Sidecar 0o600; thread delete removes `.files/`
++9. Upload payload >10MB never reaches handler (existing WS gate) + client-side total 6MiB
++10. No `clipboardRead` in manifest
++11. Settings help no longer claims “主对话不会直接收图” as a universal truth
++12. Tool screenshot / analyze_image tests unchanged (no native injection)
++
++---
++
++## 8. Eval gate card (design stage)
++
++**Blast tier**: T2  
++**Capability**: see §0  
++**Judges**: 3 independent lanes (Product / Security / Architecture) → synthesis → Claude+Pi dual review of the **locked design** (no impl in this batch)
++
++---
++
++*Strawman only — do not implement from this file.*
+diff --git a/docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md b/docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md
+new file mode 100644
+index 0000000..a9cd3d7
+--- /dev/null
++++ b/docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md
+@@ -0,0 +1,431 @@
++# 对话框用户附图 — 产品设计（锁定）
++
++**Date**: 2026-08-17  
++**Status**: Locked for dual-review (Claude + Pi). Do not implement until dual APPROVE*.  
++**Blast**: T2  
++**Strawman**: `docs/decisions/clipboard-image-paste-strawman-2026-08-17.md`  
++**Adversary synthesis**: `docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md`  
++**Related**: vision-reuse P0 · ADR-020 · `file.upload` · `vision-pipeline.ts`
++
++This document is the product SoT. Where it conflicts with the strawman, **this file wins**.
++
++---
++
++## 0. Capability declaration (ADR-020)
++
++```text
++Surface:      L0 (chat composer attachments — no new CDP/tool)
++L2-classes:   (none)
++Compose:      none (not a Pack / skill / MCP; reuses file.upload + vision rail)
++Autonomy:     single
++Trust:        user-initiated image bytes go to the effective chat LLM endpoint
++              (native) or config.vision (text-only fallback).
++              No new confirm dialect. Destination hostname on chip + first-send line.
++Channel:      community
++```
++
++**Forbidden language**: 中层 Agent · 第二 runtime · 新确认方言 · 「主对话永远不收图」.
++
++**Not this feature**: tool `screenshot` · page `analyze_image` · PDF 内嵌图 · Qwen3-VL 定位 · `clipboardRead`.
++
++---
++
++## 1. Thesis
++
++> 用户可以把系统截图、网页「复制图片」、或文件管理器里的图片，粘贴 / 点选 / 拖进 Side Panel 输入区。  
++> **线程生效主模型**若 `likelyMultimodal`，这些**用户附图**作为本轮 user message 的图像块发给主模型（OpenAI `image_url` / Anthropic `image`）。  
++> 主模型是纯文本（或未知 — fail-closed）时，走现有 `analyzeImage` 视觉轨。  
++> 工具截图 / `analyze_image` / 文档内嵌图 **仍走视觉轨**，这次不改。
++
++用户对话已锁定、对抗后仍保留：
++
++| ID | Lock |
++|----|------|
++| U1 | 三种剪贴板来源都接 |
++| U2 | 空框：挂附件等发送。框里已有字：同拍挂上并发送 |
++| U3 | 粘贴 + 附件按钮 + 拖到输入区 |
++| U4 | 主模型能看图 → 原生；否则视觉轨。不因 API 400 静默降级 |
++
++---
++
++## 2. JTBD / 非目标
++
++| 角色 | 痛 | 做成什么样算成 |
++|------|----|----------------|
++| GPT-4o / Kimi VL / glm-4v / Claude Messages | 粘贴没反应；或被弱 VLM 先转述 | 主模型直接看见刚截的屏；历史里看得到小图 |
++| DeepSeek / llama3.1 | 主模型不能看图 | 同一套粘贴；开了视觉就转文字；没开则**发不出去**并说清楚 |
++| 本地廉价 VLM + 强文本主模型 | 怕被「主模型复用」吃掉分流 | 文本主模型仍走 `config.vision` |
++| 只点过「使用主模型」的截图用户 | 设置复用 ≠ 对话原生看图 | 截图仍先转文字；**粘贴**才是原生轨 |
++
++**非目标（v1）**
++
++- HEIC 转码  
++- 工具截图 / PDF 内嵌图改走原生  
++- 原生失败自动降级视觉  
++- 申请 `clipboardRead`  
++- 拖入网页 URL 去拉图  
++- 对话里点开全尺寸灯箱  
++- 新 L2 / 新确认家族  
++- 提高 `MAX_WS_MESSAGE_SIZE`  
++- 新增 `supports_vision` 配置项  
++
++---
++
++## 3. 用户可见行为
++
++### 3.1 输入
++
++- **粘贴**：textarea 与 InputArea 根节点 `onPaste`。`clipboardData.items` / `.files` 中 `kind=file` 且体积 > 0 的 allowlist 栅格图 → `preventDefault`，加入附件。**不**把同行的 `text/html` / URL 贴进框。已键入的字保留。
++- **拖放**：InputArea `dragover` 高亮，`drop` 收 `DataTransfer.files`（图 + 现有文档类型）。拒绝：`text/uri-list`、`text/x-moz-url`、`text/html`、纯 URL 的 `text/plain`、0 字节 File、`data:` / `blob:` / `file:` URI。**禁止** `fetch` / `fetchImageAsBase64` / `analyze_image`。
++- **附件按钮**：`accept` 增加 `.png,.jpg,.jpeg,.gif,.webp` 与对应 MIME。`title` 改为「添加文件或图片」。
++- **忽略粘贴/拖入**（不消费剪贴板）：无线程 / 未连接 / `threadBusy` / `l2_task` / `voice.liveOverlay != null` / `voice.listening`。
++- Worker / 编排线程：同一套限额与分流，不加新 chrome。`run_busy` 仍可发送（现状）。
++- 空状态（chat/browser）：加一行「可直接粘贴截图」。computer 空状态仍走 cockpit。
++
++### 3.2 附件条
++
++- 图：48px 缩略图（React `<img src={blob:}>`，仅已 sniff 的栅格字节；卸载 `revokeObjectURL`）。文档：现有文字 chip。
++- 剪贴板无名文件：显示名 **`截图 YYYY-MM-DD HH:mm`**，不用 `image.png`。
++- 经过压缩：chip 上 `已压缩`。
++- chip 副文案始终带目的地主机：`→ api.openai.com` 或 `→ vision.example`（按即将走的轨）。
++- × 移除。第 5 张图 / 超限 / 拒收格式 → 输入区 `fileError` 横幅，**不发送**。
++- 混合粘贴（一张 HEIC + 一张 PNG）：收下 PNG，横幅拒 HEIC，**不**丢掉已键入的字。
++
++### 3.3 发送
++
++| 输入区状态 | 行为 |
++|------------|------|
++| 只有图，无字 | 默认文案：一张 `请看这张图`；多张 `请看这些图片` |
++| 只有文档，无字 | 保持 `请分析我上传的文件` |
++| 图+文档，无字 | `请查看附件` |
++| 有字 | 用用户的字 |
++| 有字 + 粘贴/拖入图 | 同拍加入附件并发送（把**新列表**传进 `handleSend`，禁止 `setState` 后再读旧 state） |
++
++**Composer 预检（先于 WS）**
++
++1. 线程生效模型 `!likelyMultimodal` **且** 视觉轨关（`!(vision.enabled && file_upload.enable_vision_analysis !== false)`）→ **不发送**，横幅：「当前主模型不能看图。请在设置中开启视觉分析，或换一个多模态模型。」芯片保留。
++2. 压缩后单张 > 4MiB 或图合计 > 6MiB 或整帧 JSON > 10MiB−256KiB → 不发送，横幅，芯片保留。
++3. Companion / SW 拒绝：芯片**回到** `selectedFiles`，不留幽灵用户气泡。成功或 `file.upload_error` / 断线前不要清空芯片。
++
++听写结束后框里有字再贴图 = 会发出去（U2）。可接受，因为历史里有缩略图 + 目的地。
++
++### 3.4 对话气泡
++
++- 用户气泡：文案 + **48px 缩略图**（与输入区同级，不是灯箱）。
++- 乐观更新用内存 blob；重载后用消息上的 **≤8KB / 96px JPEG preview**（`attachments[].preview_jpeg_b64`）。原图只在 sidecar。
++- 副行：`📎 截图 2026-08-17 15:58 · → hostname`。
++- 模型已换成纯文本：缩略图**仍显示**（本地 preview），不再把原图像素 POST 给新模型。
++- 全尺寸查看：v1 不做。
++
++### 3.5 编辑 / 重新生成 / 分叉
++
++- 编辑只改说明文字；缩略图留下。v1 不提供编辑态 × 丢图（避免误删 sidecar）。
++- `chat.regenerate` / `skipUserMessage`：hydrate 仍带图（见 §5）。
++- Fork：把 sidecar **拷贝**到新线程新文件名，重写 `attachments`。禁止继承父线程 `rel`。
++
++### 3.6 目的地第一次说明
++
++- 每个 **destination hostname** 第一次走原生发图：输入区一行（非 modal、非 L2）「图片将发送至 {hostname}」。
++- `chrome.storage.local` 的 ack **按 hostname 本身**记（含 `thread.config_override.base_url` 解析出的主机，不是只看全局 `llm.base_url`）。主机变了再提示。
++- 失败文案也带 hostname。
++
++### 3.7 压缩
++
++发送前在扩展里：
++
++1. 已 ≤ 4MiB 且长边 ≤ 1568 → 原样（保留 PNG/GIF 透明度/动画）。
++2. 否则画到 canvas，长边 **≤ 1568**，导出 JPEG q≈0.85（GIF 动画保原样，若仍超限则拒并说明「动画图请先缩小」）。
++3. 芯片标 `已压缩`。典型 Retina 全屏截图必须能发出去。
++
++1568 使 OpenAI high-detail tile 估算 ≈ 1600 tok/图，与预算一致。
++
++---
++
++## 4. 分流（Companion SoT）
++
++```
++effective = { ...config.llm, ...thread.config_override }
++useNative = likelyMultimodal(effective.model_name)   // 不看 protocol
++```
++
++`likelyMultimodal` **只以** `companion/src/llm/likely-multimodal.ts` 为准。扩展 / settings-web 可镜像，同一组测试向量。客户端不能强迫原生。
++
++分流函数签名：`likelyMultimodal(modelName)`，**不读 protocol**。Claude 家族靠**名字**判 true（`claude|sonnet|opus|haiku`），因此 Anthropic Messages 主模型会走原生——这是故意的。`shouldOfferVisionReuse` 仍对 `protocol=anthropic` 硬拦（视觉轨不会 OpenAI image_url）。两套函数不要合成一个。
++
++相对 P0 启发式的修正（必须进 SoT 测试）：
++
++- **剔除** `kimi-k2`、`moonshot-v1*`（无 `vl|vision|omni`）— 它们是文本模型，P0 测试里被误标 true。同步改 `chrome-extension/tests/vision-reuse-logic.test.ts`（现断言这两名为 true）。
++- `kimi` + `vl|vision|k1.5` 等仍 true。
++- 未知 → false。
++
++| 情况 | 用户附图 | 文档 / PDF 内嵌图 |
++|------|----------|-------------------|
++| `useNative` | 本轮 image parts；**不**调 `analyzeImage` | 现有 `<document>`；内嵌图仍视觉轨 |
++| `!useNative` 且视觉轨开（`vision.enabled && file_upload.enable_vision_analysis !== false`） | `analyzeImage` → 文字写入磁盘 `content`（见 §5.1a） | 不变 |
++| `!useNative` 且视觉轨关 | 预检拦截；若漏网则 `file.upload_error` | — |
++
++原生被端点 400：把 provider 错误亮给用户（带 hostname）。**不**静默改走视觉。芯片恢复。
++
++---
++
++## 5. 协议与历史
++
++### 5.1 仍用 `file.upload`，但 `chatCreate` 增加字段
++
++```ts
++fileContents?: Array<{ filename: string; content: string }>  // 解析后的文档 ONLY
++
++imageAttachments?: Array<{
++  name: string
++  mime: "image/png" | "image/jpeg" | "image/gif" | "image/webp"
++  sha256: string
++  bytes: number
++}>
++```
++
++禁止把 PNG base64 塞进 `fileContents`（会变成 `<document>` 垃圾）。
++
++Router：
++
++1. 解码 → sniff → `sniffed === normalizeImageMime(type)`，否则拒。
++2. **先**按 MIME 分流，**再**走文档 `allowed_types` / `parseFile`。图永不进这两处。
++3. 图写入 sidecar，把 metadata 交给 `chatCreate.imageAttachments`。
++4. 文档走现有 parse +（可选）内嵌视觉。
++5. **不要**在 router 里 `addMessage` 用户轮。Sidecar 只在 LLM 门（paused / trashed / 并发 cap）通过之后写；门拒则不落盘。
++6. Companion **重核** 4 张 / 单张 4MiB / 合计 6MiB / 整帧 JSON。漏网客户端不得打到 `maxPayload`。
++
++`chatCreate` **恰好一次** `addMessage`：
++
++```
++content:  用户文案 + "\n📎 " + 显示名列表
++          [视觉轨时追加 §5.1a 描述]
++attachments: [{ kind:"image", name, mime, sha256, bytes, preview_jpeg_b64 }]
++```
++
++磁盘 `content` 永远是 string。像素不进 `threads/<id>.json`。Sidecar + preview 两种轨都写（换模型后 UI 仍能显示缩略图；`!useNative` 时 hydrate **不** POST 像素）。
++
++### 5.1a 视觉轨描述的载体（Claude dual-review 阻断项 · 已锁）
++
++`!useNative` 且视觉轨开：`analyzeImage` 的说明必须进**磁盘 `content`**，否则 regenerate / `skipUserMessage` 只会重放 `📎 名字`，主模型第二次看不见图。
++
++格式（对齐今天 PDF 内嵌图，`message-router.ts` 现有 `<!-- 文档内嵌图片分析 -->`）：
++
++```
++{用户文案}
++📎 {显示名}
++
++<!-- 用户附图分析 -->
++[图片: {显示名}] {description}
++```
++
++禁止另造 `vision_text` 字段当唯一载体（regen 只重放 `content`）。`fileContents` 仍只装文档。原生轨不加这段（模型看的是 parts）。
++
++发成功后回 `chat.user`（或等价）带 **磁盘 `message_id`**，乐观气泡改用这个 id。否则 regenerate / 单条导出对不上（文档上传已有此坑，附图后变成主路径）。
++
++### 5.2 Hydrate 是唯一注图点
++
++```
++rebuildMessagesFromHistory(history)          // 纯配对，仍是 string
++→ hydrateUserImageParts(rebuilt, persisted, { useNative, maxImages: 4 })
++→ runContextBudgetPass("pre_loop")
++→ provider.streamChat
++```
++
++- `rebuildMessagesFromHistory` **禁止**读盘、禁止 `likelyMultimodal`。
++- `skipUserMessage`（regenerate）走同一段 hydrate。
++- 同一次请求的 tool loop **不再** hydrate（内存里已有 parts）。
++- `!useNative`：剥掉 parts，留文字 stub；sidecar 不删。以后换回多模态可再 hydrate。
++- 窗口内最多 4 张图（新的优先）；更早的变 `[图片: name]`。
++- sidecar 丢了：`[图片丢失: name]`。
++
++### 5.3 Provider
++
++- OpenAI：parts 原样（`image_url` data URL）。v1 **不**设 `detail:"low"`（压缩后 1568 已够；low 会看不清报错字）。
++- Anthropic：`AnthropicContentBlock` 增加 `image` + `source.base64`。连续 user（omit notice + 真 user）**按 block 拼接**，禁止 `String(parts[])`。合并本身保留（Anthropic 拒连续 user）。
++- `complete()` / 标题 / 摘要 / H1 / Obsidian：**永不**收图。
++
++### 5.4 Context budget
++
++- `serializeMessage`：text 按现规则；每个 **仍在 parts 里的** image：长宽比 > 1.3（典型截图）**+1600**；压缩后短边 ≥ 1200 的近方形 **+2800**（OpenAI high-detail tile）。视觉轨无 parts，描述按纯文本估。Anthropic 原生同样用这张表（略保守即可）。
++- `redactMessagesForCompaction`：parts 拍扁成 stub，禁止对 array `.replace`。
++- 标题预览只切 string stub。
++
++### 5.5 Sidecar
++
++路径：`~/.cmspark-agent/threads/<safeId>.files/<safeMsgId>-<n>.<ext>`  
++`ext ∈ {png,jpg,gif,webp}`，由 sniff 决定，不由用户文件名决定。
++
++- 目录 `0o700`，文件 `0o600`。`mkdir` 后 `lstat` 必须是非 symlink 目录。
++- 加载：只信 companion 自己写下的 basename；`realpath` 必须严格落在 `realpath(threads/<id>.files)` 内。
++- **禁止**把客户端 `rel` / `sha256` / `name` 当路径。
++- 硬删（`delete` / `batch_delete` hard / `purgeExpiredTrash` / `cleanupEmpty`）：按同样 realpath/lstat 删 `.files/`。目标是 symlink → **拒绝**，不要 `rmSync`。ENOENT 可忽略。
++- 软删：保留 sidecar。
++- 消息条数封顶丢掉旧 JSON 行时：同步删对应 sidecar。
++- `deleteMessagesFrom`（regenerate 裁掉后面的轮）：删那些行对应的 sidecar，避免孤儿文件。
++- `preview_jpeg_b64`：**仅 Companion** 在 `addMessage` 时从 sidecar 生成（≤8KB / 96px JPEG），写入 metadata。扩展乐观态用内存 blob；回传 `message_id` 后改用 preview。禁止把全图 base64 塞进 JSON。
++
++### 5.6 线框预算
++
++| 项 | 值 |
++|----|----|
++| MIME | png / jpeg / gif / webp（与 `ALLOWED_IMAGE_MIMES_LIST` 锁步，**不含** svg/bmp/tiff） |
++| sniff | 见 §6 |
++| 压缩后单张 | ≤ 4 MiB decoded |
++| 压缩后图合计 | ≤ 6 MiB decoded |
++| 整帧 `file.upload` JSON | ≤ 10 MiB − 256 KiB（扩展 **和** companion 都算） |
++| 每发图数 | ≤ 4 |
++| `files.length` | 图+文档合计仍 ≤ 10（现校验） |
++| `MAX_WS_MESSAGE_SIZE` | **不改** |
++
++文档体积规则不变，但必须和图像、信封挤在同一帧里。超了在客户端拒，不要撞 `maxPayload` 1009（会杀掉整条控制面）。
++
++扩展 SW 已在算 `json_bytes` / `over_companion_10mb` 却仍发送 — **改为拒发**并回 `file.upload_error`。
++
++---
++
++## 6. Magic sniff（必须实现，不是注释）
++
++Companion 在 `Buffer.from(content, "base64")` 之后；扩展发送前可预检同一套字节。
++
++```
++PNG  89 50 4E 47 0D 0A 1A 0A
++JPEG FF D8 FF
++GIF  47 49 46 38 37/39 61
++WEBP 52 49 46 46 .... 57 45 42 50   // 拒 RIFF/WAVE
++```
++
++1. `sniffed = sniffRasterImage(buf)`，`null` → 拒（内容与类型不符）。  
++2. `declared = normalizeImageMime(type)`，`null` → 拒（HEIC/SVG/BMP/…）。  
++3. `sniffed !== declared` → 拒，**不要**改类型放行。  
++4. 某些 OS 粘贴 `File.type` 为空：扩展必须先 sniff 再填 type；空 type 现校验已拒。
++
++前缀 sniff 杀不掉 GIFAR / JPEG+HTML。可接受条件：缩略图只用 `<img>`，文件永不执行。
++
++**禁止**把 `file-parser.ts` 的 `IMAGE_FORMATS`（含 svg/bmp/tiff）用于输入区准入。
++
++---
++
++## 7. 错误文案（中文）
++
++| 情况 | 文案 |
++|------|------|
++| 不支持的格式 / HEIC / SVG | 不支持该图片格式（请使用 PNG / JPEG / GIF / WebP） |
++| 压缩后仍超限 | 图片过大（压缩后单张 ≤4MB，合计 ≤6MB） |
++| 整帧超 10MB | 附件总体积过大，请少选几个文件 |
++| 网页链接拖入 | 不能从网页链接拉图；请复制图片本身或改用截图 |
++| 文本主模型且视觉关 | 当前主模型不能看图。请在设置中开启「视觉分析」并配置视觉模型 |
++| 原生端点拒图 | 主模型拒绝了图片（{短错误}）。可换多模态模型，或改用文本模型并开启视觉分析 |
++| sniff 不符 | 文件内容与类型不符，已拒绝 |
++| sidecar 丢失 | [图片丢失: name] |
++| 第 5 张 | 一次最多添加 4 张图片 |
++
++预检/拒收走输入区横幅。不要先乐观插入用户气泡再在下面加 ❌（Companion `uploadError` 若在用户 `addMessage` 之前失败，也不要落盘用户轮）。
++
++---
++
++## 8. 设置文案（Side Panel + settings-web 同一补丁）
++
++必须改掉的谎言：
++
++| 现文案 | 锁定替换 |
++|--------|----------|
++| `VISION_COPY.sectionHelp`「（主对话不会直接收图）」 | 本段只管**工具截图 / analyze_image**：先视觉轨转文字再进对话。输入框**粘贴/选/拖的图**另算——主模型能看图则直送主模型，否则才走本视觉轨。 |
++| settings-web `main loop does not receive image bytes` | 与上对齐的英文，区分 screenshot rail vs user attach |
++| `fallbackPassthrough`「主模型通常仍不能真正看图」 | 仅描述**视觉轨失败**：视觉轨会把截断 base64 塞进说明；只有主模型走原生看图时才能看见像素 |
++| 文件上传「上传图片时尝试使用视觉模型…」 | 仅当主模型**不能**看图时，用户附图才走视觉轨。主模型能看图时此开关不影响粘贴/选/拖 |
++| `正在解析文档` / `文档已解析`（对 PNG） | `正在处理图片…` / `主模型看图中…` 或 `正在分析图片…`（视觉轨） |
++| 附件按钮「上传文件」 | 添加文件或图片 |
++| `file_upload_max_size` 滑条 | 注明**不**提高 4/6MiB 图像预算 |
++
++「使用主模型」横幅/芯片 **只**服务截图视觉轨，不要拿来解释粘贴原生。
++
++占位符（chat/browser）：`问任何问题，或粘贴截图…`。
++
++---
++
++## 9. 安全 / Trust
++
++- 不申请 `clipboardRead`。不要用 `navigator.clipboard.read()`。
++- 不新开 `SecurityConfirmationManager` family。目的地用 chip + 首次一行（P5）。
++- `shouldBlockVisionRequest` 仍管视觉轨。原生用主模型 key（和普通聊天同一信任级）。
++- `jailbreakScanWindow` **不**覆盖像素。系统提示把用户附图标成不可信数据（`<untrusted-image name>`），不加 L2。
++- 日志：只记 `byte_len` / sha256 / sniffed MIME。`redactLogData` 增加 `content` / `base64` / `image_url`。
++- `file.upload` 保持 HMAC。建议拒 tray origin（纵深；文档上传已是 paired peer）。
++- Worker LLM **不能**发 `file.upload`（保持）。用户往 worker 线程贴图：同一限额。
++
++---
++
++## 10. 文件级切分（实现时按此，本批不写代码）
++
++1. `companion/src/llm/likely-multimodal.ts` + 锁步测试（含 kimi-k2 剔除）；同步改 `chrome-extension/tests/vision-reuse-logic.test.ts` 里对 `kimi-k2` / `moonshot-v1-128k` 的旧断言  
++2. `companion/src/llm/image-sniff.ts` — sniff + normalize  
++3. `companion/src/llm/image-parts.ts` — hydrate、4 张帽、stub、token  
++4. `companion/src/llm/adapter.ts` — `imageAttachments`；一次 addMessage；rebuild 后 hydrate  
++5. `companion/src/llm/providers/anthropic-convert.ts` + `openai.ts` — image block + block merge  
++6. `companion/src/llm/context-budget.ts` — serialize / estimate / redact 认 parts  
++7. `companion/src/message-router.ts` `file.upload` — MIME 先分流  
++8. `companion/src/threads/thread-manager.ts` — `attachments`、sidecar CRUD、硬删/fork  
++9. `chrome-extension/src/sidepanel/App.tsx` — paste/drop/picker、同拍发送、压缩、预检、回收 id  
++10. `ChatView.tsx` — 气泡 48px preview  
++11. `vision-reuse-logic.ts` + `settings-web.ts` — §8 文案  
++12. `chrome-extension/src/background/index.ts` — 整帧 JSON 超限拒发  
++
++不要先做 9/10 再做 3/4/5：没有 hydrate 的 UI 只是「第一轮能看、regen 变瞎」。
++
++---
++
++## 11. 外部可观察 DoD（实现后机核）
++
++1. 粘贴 / 拖 / 选 allowlist 图成功；HEIC/SVG/URL 拖入被拒且有文案  
++2. 空框贴图不自动发；有字贴图一次发出，无 stale `selectedFiles`  
++3. `likelyMultimodal` true → standalone 图 **零** `analyzeImage` 调用（spy）  
++4. `likelyMultimodal` false + vision 关 → 预检不发；漏网则 `file.upload_error`  
++5. sniff 不符 / HEIC 拒  
++6. Anthropic 转换产出 image block；连续 user 合并后图还在  
++7. 当前模型改文本后 hydrate **剥** parts；preview 仍在 UI  
++8. sidecar 0o600；硬删去掉 `.files/`；fork 拷贝新文件  
++9. 整帧 >10MiB−256KiB 客户端拒发，companion `maxPayload` 不被合法发送打到  
++10. manifest 无 `clipboardRead`  
++11. 设置不再把「主对话不收图」写成全称；settings-web 同步  
++12. 工具截图 / `analyze_image` 单测无回归  
++13. 乐观气泡在成功后改用磁盘 `message_id`；对该条 regenerate 仍带图  
++14. 典型大截图（压缩前 >4MiB）经压缩后发出，芯片有 `已压缩`  
++15. `kimi-k2` / `moonshot-v1-128k` 的 `likelyMultimodal` 为 **false**  
++16. 视觉轨发图后磁盘 `content` 含 `<!-- 用户附图分析 -->`；对该条 regenerate 仍带描述、不 POST image parts  
++
++---
++
++## 12. Eval gate card
++
++**Blast tier**: T2  
++**Capability**: §0  
++
++### Machine（实现阶段才跑）
++
++- companion：sniff / hydrate / anthropic merge / likelyMultimodal / sidecar containment  
++- extension：compress 纯函数、paste 分类、整帧 JSON 计算  
++- 相关 suite 绿  
++
++### Judges（本批 = 设计）
++
++- 独立对抗：三路 REJECT strawman → 本锁定表吸收 → `clipboard-image-paste-adversary-synthesis-20260817.md`  
++- 下一步：`scripts/dual-external-review.sh` Claude+Pi 审**本设计**（无实现代码）  
++
++### Blast
++
++T2：一级输入 UX + adapter 形状，无新 tool/L2。图像出站与今天截图视觉轨同类，且用户手势触发。T4 不成立（非 default-on 对外声称）。
++
++---
++
++## 13. 实现次序（dual APPROVE* 之后）
++
++1. Companion SoT：heuristic + sniff + hydrate + anthropic merge + tests  
++2. `file.upload` 分流 + sidecar + 一次 addMessage + message_id 回传  
++3. 扩展：压缩、paste/drop/picker、预检、整帧拒发  
++4. ChatView 缩略图 + 文案  
++5. 设置诚实文案  
++6. 机核 DoD → 实现后再跑一轮独立对抗 → Pi  
++
++---
++
++*Locked design · 2026-08-17 · implementer must not self-APPROVE*
+diff --git a/docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md b/docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md
+new file mode 100644
+index 0000000..51a27c5
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md
+@@ -0,0 +1,98 @@
++# Multi-adversarial synthesis — 对话框用户附图（粘贴/选/拖）
++
++**Date**: 2026-08-17  
++**Strawman**: `docs/decisions/clipboard-image-paste-strawman-2026-08-17.md`  
++**Method**: 3 independent plan agents (Product / Security / Architecture) + orchestrator lock  
++**Blast**: T2 (Surface L0 composer + adapter hydrate; no new tool / L2 / confirm dialect)
++
++## Lane verdicts
++
++| Lane | VERDICT | Blocking themes |
++|------|---------|-----------------|
++| Product/UX | **REJECT** | 📎-only history; OS screenshot 4MiB bounce; P0 copy becomes a lie; mixed-send ghost failures; edit/regen drops pixels; first native send has no destination honesty |
++| Security | **REJECT** | Legal mixed send trips WS 10MB `maxPayload` (socket death); sidecar path escape (`rel` / symlink / fork / hard-delete); magic sniff vaporware; URI drop as IMAGE_FETCH bypass if implemented loosely |
++| Architecture | **REJECT** | `fileContents` cannot carry images; Anthropic user-merge stringifies parts; hydrate missing so regenerate/rebuild go blind; 1600 tok/image dishonest for 4K; `likelyMultimodal` must be companion SoT |
++
++Strawman as written is **not implementable**. Locked table below absorbs every blocking item. User conversation locks (sources / mixed-send / paste+picker+drop / native-if-multimodal) are **kept**.
++
++## Locked decisions (implementer MUST)
++
++| # | Decision |
++|---|----------|
++| U1 | Sources = all clipboard rasters (OS screenshot / web copy / Finder file) |
++| U2 | Mixed send: empty composer → attach+wait; nonempty text → attach+send same tick (explicit file list, no stale `setState`) |
++| U3 | Surface = paste + picker + drag-drop on InputArea |
++| U4 | Routing = `likelyMultimodal(effective model)` → native main-loop parts; else vision rail. **Not** protocol-gated. Tool screenshot / `analyze_image` / PDF embeds **unchanged** (vision rail) |
++| P1 | Transcript v1 **must** show a 48px thumb (composer-parity), not 📎-only. Full-size lightbox deferred. Clipboard names → `截图 YYYY-MM-DD HH:mm` |
++| P2 | Client **recompress/downscale** before send (longest edge ≤ 1568, JPEG q≈0.85 unless already small PNG/GIF). Chip shows `已压缩` when bytes change. Typical Retina OS screenshot must succeed |
++| P3 | Composer **preflight**: `!useNative && !vision.enabled` → do not send; banner + chips stay. Companion reject → restore chips, **no ghost user turn** |
++| P4 | Edit / regenerate / fork of an image turn **keeps** sidecars. Edit is caption-only. `skipUserMessage` still hydrates |
++| P5 | Destination honesty: chip + optimistic line always show hostname. First native send **per hostname** → one composer line (not L2). Persist ack in `chrome.storage.local`; `base_url` change re-prompts |
++| P6 | Exact copy rewrite (Side Panel **and** settings-web) — see design §8. Never again claim “主对话不会直接收图” as universal |
++| S1 | **Serialized UTF-8 JSON size** of the whole `file.upload` frame computed **before** `ws.send`. Refuse if `> 10MiB − 256KiB`. Do not raise `MAX_WS_MESSAGE_SIZE` |
++| S2 | Joint budget: images + docs + envelope share the frame cap. Decoded image caps (4MiB/ea, 6MiB total **after** compress) are additional |
++| S3 | Keep `selectedFiles` until `file.uploaded` / `file.upload_error` / disconnect. Client refuse must not clear chips |
++| S4 | Magic sniff algorithm locked (PNG/JPEG/GIF/WEBP signatures). `sniffed === declared` or reject. Images **never** enter `allowed_types` / `parseFile` |
++| S5 | Sidecar names **companion-chosen** only. `realpath` + `lstat` not symlink + `isStrictlyInside`. NEVER trust client `rel`/`sha256` as a load path. Hard-delete all paths remove `.files/`. Fork **copies bytes** + new names |
++| S6 | NEVER fetch / `fetchImageAsBase64` / `analyze_image` from paste/drop. Reject uri-list / moz-url / html / 0-byte File / data: / blob: / file: URI |
++| S7 | Thumbs = React `<img src={blob:}>` from sniffed raster only. No innerHTML / SVG / object / embed |
++| S8 | NEVER log `content` / base64 / `image_url.url`. Log `byte_len` / sha256 / sniffed MIME |
++| A1 | New `chatCreate.imageAttachments` (metadata). **Do not** overload `fileContents` |
++| A2 | Exactly **one** user `addMessage` per send, inside `chatCreate`. Disk `content` stays string; `attachments?` is metadata |
++| A3 | `hydrateUserImageParts` is the **only** injection of image parts, after `rebuildMessagesFromHistory`, before context budget. Rebuild pairing stays pure/string |
++| A4 | Anthropic consecutive-user merge is **block-wise** and **stays** (omit-notice requires it) |
++| A5 | `likelyMultimodal` SoT = `companion/src/llm/likely-multimodal.ts`. Denylist `kimi-k2` / `moonshot-v1*` unless `vl\|vision\|omni`. Extension/settings-web lockstep tests. Client cannot force native |
++| A6 | Token: after P2 downscale (≤1568), estimate **1600 tok/image** is honest for high-detail tiles. `serializeMessage` / redact **must** handle parts (never `String(array)` / `.replace` on array). Title/summary/Obsidian never get pixels |
++| A7 | Echo persisted `message_id` so optimistic row adopts disk id (regenerate/export) |
++| A8 | Open questions closed: no `supports_vision` config in v1; GIF/WebP sent as-is; image+doc empty caption = `请查看附件`; worker/orchestrator same caps; `file_upload_max_size` slider does **not** raise image budget |
++
++## Dual review (Claude + Pi) — 2026-08-17 16:12
++
++| Judge | VERDICT | Note |
++|-------|---------|------|
++| Claude | **REJECT** | One blocker: vision-rail `analyzeImage` text had no persist/replay carrier |
++| Pi | **APPROVE_WITH_NITS** | Preflight vs `enable_vision_analysis`; companion re-validate caps; name extension test file; 1600 tok under-counts squares |
++
++**Folded into locked spec after dual (not re-reviewed in this batch):**
++
++- §5.1a — vision description appended to disk `content` (`<!-- 用户附图分析 -->`); regenerate replays it
++- Preflight uses `vision.enabled && enable_vision_analysis !== false`
++- Companion re-validates 4 / 4MiB / 6MiB / frame JSON
++- Sidecar only after LLM gates; `deleteMessagesFrom` cleans sidecars
++- Token 1600 vs 2800 by aspect; ack keyed by hostname (incl. override)
++- DoD #16 + extension test file named in §10
++
++`both_approve=false` on the *pre-fold* spec. Implementer must not treat this batch as merge-ready. Optional r2 dual on the folded spec before coding.
++
++## Overall design gate
++
++**CONDITIONAL APPROVE as product SoT after fold.**  
++**NOT APPROVE for implementation** until a dual r2 on the folded spec is APPROVE* (or the user waives r2 after reading §5.1a).
++
++Security/Product/Architecture REJECT was against the *strawman*. Locked table resolves those.
++
++## Capability declaration
++
++```text
++Surface:      L0 (chat composer attachments — no new CDP/tool)
++L2-classes:   (none)
++Compose:      none (reuses file.upload + existing vision rail)
++Autonomy:     single
++Trust:        user-initiated image bytes → effective chat LLM (native)
++              or config.vision (text-only). No new confirm dialect.
++              Destination hostname disclosed on chip + first-send line.
++Channel:      community
++```
++
++## Residual risks (named, accepted)
++
++- Indirect prompt injection via pixels (same class as screenshot / analyze_image)
++- Prefix-only magic: GIFAR / JPEG+HTML polyglot — accepted if thumbs are `<img>`-only
++- Paired extension + stolen `ws_secret` can already `file.upload`; pixels raise blast to cloud LLM
++- User pasting secrets (same as pasting a password as text); mixed-send raises accident rate — mitigated by destination-on-chip, not a new L2
++- History replay re-sends up to 4 images until compacted
++- Heuristic false-negative: user must rename model or enable vision (no override field in v1)
++
++---
++
++*Orchestrator synthesis · lanes were isolated · 2026-08-17*
+diff --git a/docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md b/docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md
+new file mode 100644
+index 0000000..c855a6b
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md
+@@ -0,0 +1,49 @@
++# Dual review — `clipboard-image-paste-design` (design only)
++
++## Verification basis
++
++Diff is docs-only (4 new .md, 791 insertions) and the patch file matches the staged diff — not stale. I grounded every load-bearing claim against real code before judging:
++
++| Spec claim | Code ground | Status |
++|---|---|---|
++| No paste/drop; docs-only accept | `App.tsx:1244` (accept list), no `onPaste`/`onDrop` in file | ✅ |
++| Optimistic user bubble before upload (ghost risk) | `App.tsx:1053-1062` ADD_MESSAGE before `file.upload` | ✅ |
++| SW computes `over_companion_10mb` but still sends | `background/index.ts:601-620` | ✅ |
++| `MAX_WS_MESSAGE_SIZE` 10MB / maxPayload kills control plane | `lifecycle.ts:67,663` | ✅ |
++| Anthropic consecutive-user merge would stringify parts | `anthropic-convert.ts:167-176` (`String(next.content)`) | ✅ |
++| `serializeMessage` garbles array content | `context-budget.ts:61` | ✅ |
++| Single `addMessage` inside `chatCreate`; docs → `<document>` | `adapter.ts:325-357`; router adds only assistant error turns (`message-router.ts:472`) | ✅ |
++| Empty `File.type` rejected today | `validate.ts:717` | ✅ |
++| `IMAGE_FORMATS` includes svg/bmp/tiff (must not gate input) | `file-parser.ts:54` | ✅ |
++| `kimi-k2`/`moonshot-v1*` false-positive multimodal | `vision-reuse-logic.ts:94` (`/kimi\|moonshot/` → true); companion has **no** `likelyMultimodal` yet (SoT file is new per §10.1) | ✅ |
++| Settings lies exist | `vision-reuse-logic.ts:15,38`; `settings-web.ts:668` | ✅ |
++| Regenerate replays original content, `skipUserMessage:true` | `message-router.ts:983,993` | ✅ |
++| `ALLOWED_IMAGE_MIMES_LIST` = png/jpeg/gif/webp; `normalizeImageMime` reusable | `image-data-url.ts:11-40` | ✅ |
++| Message-cap slice exists | `thread-manager.ts:182,904-905` | ✅ |
++
++## ADR-020 capability check
++
++Declaration present and well-formed. Surface L0 is the correct axis (ADR-020 L0 = 对话、附件); Compose none (reuses `file.upload` + vision rail); Autonomy single; Channel community. No new confirm dialect (destination disclosure is chip + one-line, not a `SecurityConfirmationManager` family). No new WS message family, no new runtime, no new primary Side Panel chrome. Trust monotonicity intact — vision rail keeps `shouldBlockVisionRequest`, no `clipboardRead`, main key same trust class as normal chat. Pack-first N/A for composer UX. `originWs` N/A (no new confirm `request(`). **Passes.**
++
++## Trajectory
++
++The locked table genuinely absorbed the three lanes' blockers — I traced S1–S8, A1–A8, P1–P8 into concrete spec sections and each corresponds to a real defect in current code (verified above). Not papered over.
++
++## Blocking issue
++
++The spec is incomplete on one of its three routing rows:
++
++1. **Vision-rail turn has no carrier for the `analyzeImage` description and no replay story.** §4 (row `!useNative` 且 vision 开 → "`analyzeImage` → 文字") requires the description to reach the LLM, but §5.1 locks the persistence shape as `content = 用户文案 + "\n📎 " + 显示名列表` plus an `imageAttachments` schema that is metadata-only (name/mime/sha256/bytes/preview) — there is **no field anywhere** that can carry the description text, and `fileContents` is pinned to "解析后的文档 ONLY". Consequence under faithful implementation: `chat.regenerate` replays the original persisted content with `skipUserMessage:true` (`message-router.ts:983,993`) and `hydrateUserImageParts` (§5.2) injects parts only — so regenerating a vision-rail image turn drops the description entirely. The existing doc flow persists descriptions (`message-router.ts:601-607` → `adapter.ts:355` → persisted at `357`); this spec changes images off that path without defining the replacement. This is exactly the failure class the spec itself forbids (§10: "没有 hydrate 的 UI 只是「第一轮能看、regen 变瞎」"), it hits the spec's #2 JTBD persona (DeepSeek/llama3.1 + vision), and DoD §11 has no item covering vision-rail replay. Fix is a small amendment: choose the description's carrier (append to persisted disk content like the existing embedded-image flow, or add e.g. `vision_text` to `attachments`) + add a DoD line.
++
++## Non-blocking nits
++
++- §3.7/§5.4: 1600 tok/image is OpenAI-tile-calibrated; Anthropic ≈ (w·h)/750 ≈ 3.3k for 1568² — under-reserves on Anthropic protocol. Consider protocol-aware estimate or a note.
++- §4: snippet says `useNative = likelyMultimodal(effective.model_name) // 不看 protocol` while the correction bullet says "Anthropic 协议 + Claude → true" — claude-family names already return true by name regex so there's no functional hole, but the two sentences read as contradictory; clarify (or pass protocol explicitly).
++- §5.5 sidecar-cleanup list omits `deleteMessagesFrom` (`thread-manager.ts:996`) — regenerate deeper in history deletes later image turns and orphans their sidecars until thread hard-delete (leak only, not escape).
++- Router writes the sidecar (§5.1 step 3) before the LLM-loop gate / thread re-checks (`message-router.ts:640-664`) — gate rejection after parse orphans a sidecar; bounded by thread-delete cleanup, worth one sentence.
++- §3.3 preflight checks `vision.enabled` only; companion gates vision on `vision.enabled && file_upload.enable_vision_analysis` (`message-router.ts:569`). Mismatch lands on the specified `file.upload_error`, so not silent — but aligning avoids a guaranteed-fail send.
++- §3.6: ensure the ack store is keyed by destination hostname itself (including `thread.config_override` base_url hosts), not by `llm.base_url`, since the chip copy promises per-rail hostname disclosure.
++
++Everything else — WS frame budget math (6MiB decoded ≈ 8MiB b64 + joint envelope headroom), sniff/normalize reuse, sidecar containment, ghost-bubble recovery, kimi-k2 correction, settings-copy rewrite targets, and the hydrate-only injection architecture for the native path — is grounded, internally consistent, and implementable.
++
++VERDICT: REJECT
+diff --git a/docs/audit/reviews/clipboard-image-paste-design-dual-review-prompt.md b/docs/audit/reviews/clipboard-image-paste-design-dual-review-prompt.md
+new file mode 100644
+index 0000000..3ceb5b9
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-design-dual-review-prompt.md
+@@ -0,0 +1,61 @@
++# Dual-review prompt — clipboard / composer user images (design only)
++
++**Batch**: `clipboard-image-paste-design`  
++**Nature**: product + architecture lock. **No implementation code in this batch.**  
++**Confirm order already done**: 3 isolated adversary lanes REJECTED the strawman; orchestrator absorbed blockers into the locked spec.
++
++## Read these (in order)
++
++1. `docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md` — **SoT, review this**
++2. `docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md` — locked table
++3. `docs/decisions/clipboard-image-paste-strawman-2026-08-17.md` — superseded where it conflicts
++4. `docs/decisions/vision-reuse-main-llm-brief-2026-08-08.md` — P0 “main loop does not receive images” is now **split**: screenshots stay pre-analyze; **user attachments** may be native
++5. ADR-020 + `docs/audit/reviews/_templates/dual-review-capability-checklist.md`
++
++Ground in real code (do not rubber-stamp):
++
++- `chrome-extension/src/sidepanel/App.tsx` (InputArea, file.upload, optimistic ADD_MESSAGE)
++- `companion/src/llm/adapter.ts` (`fileContents`, `rebuildMessagesFromHistory`, `skipUserMessage`)
++- `companion/src/llm/providers/anthropic-convert.ts` (consecutive user merge)
++- `companion/src/llm/context-budget.ts` (`serializeMessage`, redact)
++- `companion/src/ws/lifecycle.ts` (`MAX_WS_MESSAGE_SIZE`)
++- `companion/src/ws/validate.ts` (`file.upload`)
++- `companion/src/threads/thread-manager.ts` (Message, delete)
++- `chrome-extension/src/sidepanel/components/vision-reuse-logic.ts` (`likelyMultimodal`, `VISION_COPY`)
++
++## Capability declaration (from spec §0)
++
++```text
++Surface:      L0 (chat composer attachments — no new CDP/tool)
++L2-classes:   (none)
++Compose:      none (reuses file.upload + vision rail)
++Autonomy:     single
++Trust:        user-initiated image bytes → effective chat LLM (native)
++              or config.vision (text-only). No new confirm dialect.
++              Destination hostname on chip + first-send line.
++Channel:      community
++```
++
++## What you must decide
++
++This is a **design** review. Ask:
++
++1. **Outcome**: If implemented faithfully, does paste-screenshot-into-chat + native-if-multimodal actually work (first send, regenerate, model switch, Anthropic compact merge, WS 10MB, OS Retina screenshot)?
++2. **Trajectory**: Did the locked table absorb Product/Security/Architecture blockers, or paper over them?
++3. **Component**: Any remaining hole that will 400, drop pixels, escape paths, or ship a lie in settings copy?
++4. **ADR-020**: Axes, Pack-first, no new confirm family, trust monotonicity, no new runtime.
++
++Do **not** reject solely because there is no code. Reject if the **spec** is still incomplete or internally contradictory.
++
++User-locked (do not reopen unless product-broken): all clipboard sources; mixed send; paste+picker+drop; native when multimodal else vision; no silent native→vision fallback; no new L2 confirm.
++
++## Verdict
++
++End with exactly one of:
++
++VERDICT: APPROVE  
++VERDICT: APPROVE_WITH_NITS  
++VERDICT: REJECT  
++
++If REJECT: blocking list with spec section or file:line **before** the verdict line.  
++If APPROVE_WITH_NITS: non-blocking nits only before the verdict line.
+diff --git a/docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md b/docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md
+new file mode 100644
+index 0000000..ebd9f4e
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md
+@@ -0,0 +1,33 @@
++Review complete. I read the locked spec, adversary synthesis, strawman, vision-reuse P0 brief, ADR-020 + capability checklist, and verified the design's claims against ~15 real code sites.
++
++## Grounding check (all claims in the spec verified against code)
++
++- **WS 10MB**: `companion/src/ws/lifecycle.ts:67` `MAX_WS_MESSAGE_SIZE = 10MB`; design keeps it. ✔
++- **SW computes-but-sends**: `chrome-extension/src/background/index.ts:614-619` computes `json_bytes`/`over_companion_10mb` then `wsClient.send` anyway — §5.6's "改为拒发" fixes a real bug. ✔
++- **Anthropic merge stringifies parts**: `anthropic-convert.ts:172` `String(next.content)` — A4/§5.3 block-wise merge is required, not hypothetical. ✔
++- **`serializeMessage`/redact**: `context-budget.ts:51,61` `String(m.content)` on non-string; §5.4 part-stub handling is needed. ✔
++- **Regenerate id 坑**: `chat.regenerate` resolves user msg by disk `message_id` (`message-router.ts:868` `findIndex(m => m.id === message_id)`), but optimistic file.upload bubble uses local `${uploadThreadId}_${Date.now()}` (`App.tsx:1054`) and the SW `chat.user` echo echoes the client id (`background/index.ts:525`). A7's disk-id echo fixes a real break. ✔
++- **P0 heuristic mislabels**: `vision-reuse-logic.ts` `/kimi|moonshot/ → true` and `tests/vision-reuse-logic.test.ts:31-32` assert `kimi-k2`/`moonshot-v1-128k` → true; §4/DoD #15 correction is real and machine-checkable. ✔
++- **Settings lies**: `vision-reuse-logic.ts:15`「主对话不会直接收图」, `settings-web.ts:668` "main loop does not receive image bytes", `SettingsSlideout.tsx:2155` — §8 rewrite list maps to real copy. ✔
++- **Sidecar/persistence**: `thread-manager.ts` `Message.content: string`, `purgeExpiredTrash`/`cleanupEmpty` unlink only the JSON (no `.files/` today) — §5.5 CRUD additions are needed. ✔
++- **`file.upload` validate**: `ws/validate.ts:712-723` max 10 files + truthy name/type/content; empty `File.type` from OS paste is indeed rejected today. ✔
++- **No `onPaste`/`onDrop`/`onDragOver`** in `App.tsx`; `accept` is documents-only (`App.tsx:1244`). ✔
++
++## Trajectory — locked table absorbs, doesn't paper over
++
++Every one of the 3 lane blockers (Product P1–P6, Security S1–S8, Architecture A1–A8) maps to a concrete spec section with mechanism + machine-checkable DoD (sidecar containment w/ realpath+lstat+isStrictlyInside, block-wise Anthropic merge, hydrate as sole injection point, SW/panel refuse-before-send, exact magic-byte signatures, exact copy rewrites).
++
++## ADR-020 checklist
++
++Declaration present and complete in spec §0 and synthesis. Axes fit (L0 composer attachment — correct axis, no CDP/tool). Pack-first: paste/drop/picker on the existing composer is not new primary Side Panel chrome. No new confirm family (P5 explicitly non-L2, chip + one-line notice). Trust monotonicity holds: native images go to the same main LLM endpoint/key as chat text — same trust level, no god-mode interaction, screenshot rail unchanged. `originWs`: no new `securityConfirmations.request` (N/A). No new runtime (reuses `file.upload` + vision rail). Forbidden language honored.
++
++## Nits (non-blocking)
++
++1. **§3.3 preflight vs `enable_vision_analysis`**: preflight blocks only on `!vision.enabled`, but the vision rail is gated by `config.vision?.enabled && file_upload.enable_vision_analysis !== false` (as `message-router.ts:564` does today). Text-only main + vision enabled + embedded-analysis disabled → spec is ambiguous whether the image is analyzed (violating user config) or silently unanalyzed (violating U4). Recommend: preflight gate `!useNative && !(vision.enabled && enable_vision_analysis !== false)`.
++2. **§5.4 1600 tok/image undercounts squares**: 1568px long edge matches Anthropic's 1600 base, but OpenAI high-detail tiles a 1568×1568 square to ~2800 tok; as-is oversized GIFs/WebP (§3.7) are also sent un-downscaled. Bounded by the 4-image cap (~11k worst-case vs 6.4k assumed) — say the estimate targets typical screenshot aspect, or use 1600 as floor for OpenAI-high-detail.
++3. **Companion-side numeric caps not mandated**: §3.3/§5.6 enforce 4-image / 4MiB / 6MiB client-side only; a version-skewed or buggy client could still ship 5×1.5MiB and trip `maxPayload` 1009 (the exact death the design forbids). Recommend the router re-validate image count/decoded caps and return `file.upload_error` (cheap, consistent with DoD #4's 漏网 path).
++4. **Existing P0 test flip not named in §10**: §10's file cut lists companion lockstep tests but not the update to `chrome-extension/tests/vision-reuse-logic.test.ts:31-32` (asserts kimi-k2/moonshot-v1 true). DoD #15 machine-checks the flip, so it's covered, but name the file so the implementer doesn't leave a stale green assertion.
++
++Diff is fresh and pure-docs (4 staged files match `git diff HEAD`; patch timestamped today). This is a design review; the spec is complete, internally consistent, grounded in real code, and implementable as written.
++
++VERDICT: APPROVE_WITH_NITS
+diff --git a/docs/audit/reviews/clipboard-image-paste-design-r2-dual-review-prompt.md b/docs/audit/reviews/clipboard-image-paste-design-r2-dual-review-prompt.md
+new file mode 100644
+index 0000000..1f69e58
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-design-r2-dual-review-prompt.md
+@@ -0,0 +1,60 @@
++# Dual-review prompt r2 — folded clipboard-image-paste design
++
++**Batch**: `clipboard-image-paste-design-r2`  
++**Nature**: design re-review after r1 fold. **No implementation code.**  
++**r1**: Claude **REJECT** + Pi **APPROVE_WITH_NITS** → `clipboard-image-paste-design-verdict-20260817-161248.json`
++
++## Your job this round
++
++This is **not** a first-principles redesign. Decide whether the **folded spec** closed r1, and whether anything still blocks implementation planning.
++
++1. Read the **current** SoT: `docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md`
++2. Read r1 reports and confirm each item is absorbed or explicitly residual:
++   - Claude REJECT: `docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md`  
++     Blocker was: vision-rail `analyzeImage` text had no persist/replay carrier.
++   - Pi nits: `docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md`
++   - Orchestrator fold note: `docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md` (Dual review section)
++3. Ground remaining claims in real code (same files as r1). Do not rubber-stamp.
++
++## r1 items that MUST be closed in the folded spec (verify by section)
++
++| Source | Claim | Expected lock |
++|--------|--------|----------------|
++| Claude blocker | Vision-rail description vanishes on regenerate | **§5.1a** — description appended to disk `content` (`<!-- 用户附图分析 -->`); no `vision_text`-only field; DoD #16 |
++| Pi nit 1 | Preflight ignored `enable_vision_analysis` | §3.3 + §4 use `vision.enabled && enable_vision_analysis !== false` |
++| Pi nit 2 | 1600 tok under-counts squares | §5.4 1600 vs 2800 by aspect |
++| Pi nit 3 | Companion must re-validate caps | §5.1 step 6 |
++| Pi nit 4 | Extension test file unnamed | §10 item 1 names `vision-reuse-logic.test.ts` |
++| Claude nit | `deleteMessagesFrom` orphans sidecars | §5.5 |
++| Claude nit | Sidecar written before LLM gates | §5.1 step 5 |
++| Claude nit | Ack key not hostname | §3.6 keyed by hostname including override |
++
++If any of the above is missing or internally contradictory → **REJECT** that item as still blocking.
++
++## Still do not reopen (unless newly product-broken)
++
++User locks: all clipboard sources; mixed send; paste+picker+drop; native when multimodal else vision; no silent native→vision fallback; no new L2 confirm.
++
++## Capability (unchanged)
++
++```text
++Surface:      L0 (chat composer attachments — no new CDP/tool)
++L2-classes:   (none)
++Compose:      none (reuses file.upload + vision rail)
++Autonomy:     single
++Trust:        user-initiated image bytes → effective chat LLM (native)
++              or config.vision (text-only). No new confirm dialect.
++              Destination hostname on chip + first-send line.
++Channel:      community
++```
++
++## Verdict rules
++
++- Do **not** reject solely because there is no code.
++- REJECT only if the folded spec is still incomplete / contradictory / r1 blocker unfixed.
++- APPROVE_WITH_NITS = r1 closed; leftover nits are non-blocking for writing an implementation plan.
++- End with exactly one line:
++
++VERDICT: APPROVE  
++VERDICT: APPROVE_WITH_NITS  
++VERDICT: REJECT  
+diff --git a/docs/audit/reviews/clipboard-image-paste-design-verdict-20260817-161248.json b/docs/audit/reviews/clipboard-image-paste-design-verdict-20260817-161248.json
+new file mode 100644
+index 0000000..3c1f600
+--- /dev/null
++++ b/docs/audit/reviews/clipboard-image-paste-design-verdict-20260817-161248.json
+@@ -0,0 +1,8 @@
++{
++  "batch": "clipboard-image-paste-design",
++  "timestamp": "20260817-161248",
++  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/clipboard-image-paste-design-claude-20260817-161248.md" },
++  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/clipboard-image-paste-design-pi-20260817-161248.md" },
++  "both_approve": false,
++  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/clipboard-image-paste-design-diff-20260817-161248.patch"
++}
+diff --git a/docs/decisions/clipboard-image-paste-strawman-2026-08-17.md b/docs/decisions/clipboard-image-paste-strawman-2026-08-17.md
+new file mode 100644
+index 0000000..c19bd4c
+--- /dev/null
++++ b/docs/decisions/clipboard-image-paste-strawman-2026-08-17.md
+@@ -0,0 +1,241 @@
++# Strawman — 对话框粘贴/选/拖图片（用户附图 · 原生多模态分流）
++
++**Date**: 2026-08-17  
++**Status**: STRAWMAN for multi-path adversary (not locked)  
++**Blast**: T2 (Surface L0 composer + adapter message shape; no new tool / L2 / confirm dialect)  
++**Related**: vision-reuse P0 (`docs/decisions/vision-reuse-main-llm-brief-2026-08-08.md`) · `vision-pipeline.ts` · `file.upload` · ADR-020
++
++This is a **draft for independent lanes to attack**. Locked table comes after synthesis.
++
++---
++
++## 0. Capability declaration (ADR-020)
++
++```text
++Surface:      L0 (chat composer attachments — no new CDP/tool)
++L2-classes:   (none)
++Compose:      none (not a Pack / skill / MCP; reuses file.upload + vision rail)
++Autonomy:     single
++Trust:        user-initiated image bytes go to the effective chat LLM endpoint
++              (native) or config.vision endpoint (text-only fallback).
++              No new confirm dialect. No clipboardRead permission.
++Channel:      community
++```
++
++**Not**: a new runtime, a new Side Panel chrome tab, native multimodal for *tool* screenshots, or Qwen3-VL CU locate.
++
++---
++
++## 1. Thesis
++
++> Users can paste, pick, or drop raster images into the Side Panel composer.  
++> If the **thread-effective main LLM is likely multimodal**, those user images ride in the **main chat turn** (OpenAI `image_url` / Anthropic image block).  
++> If the main LLM is text-only (or unknown — fail closed), images go through the **existing vision side-pipeline** (`analyzeImage`).  
++> Tool `screenshot` / page `analyze_image` / PDF embedded images are **out of scope** and stay on the vision rail.
++
++**Non-thesis**
++
++- Do not auto-fallback native → vision on API 400 (user locked “option 2”).
++- Do not request `clipboardRead`.
++- Do not fetch remote URLs dropped from a webpage (that is `analyze_image` + IMAGE_FETCH_GATE).
++- Do not inject tool-screenshot pixels into the main loop.
++
++---
++
++## 2. Locked user choices (conversation)
++
++| # | Choice |
++|---|--------|
++| Sources | All clipboard images: OS screenshot, web “copy image”, Finder/Explorer file copy |
++| Send model | **Mixed**: empty composer → attach and wait; composer already has text → attach + send immediately |
++| Input surface | Paste + file picker + drag-drop onto composer |
++| Routing | Native multimodal when `likelyMultimodal(effective model)`; else vision config |
++
++---
++
++## 3. Problem / JTBD
++
++| Actor | Pain | Desired |
++|-------|------|---------|
++| User with GPT-4o / Kimi / glm-4v / Claude Messages | Paste does nothing; or would be pre-described by a weaker/separate VLM | Main model *sees* the screenshot they just took |
++| User with DeepSeek / llama3.1 | No native vision | Same paste UX; vision rail describes, then main reads text |
++| User who configured a cheap local VLM + strong text model | Must not lose that split | Text-only main → still uses `config.vision` |
++| User who clicked「使用主模型」for screenshots | Settings reuse ≠ native chat | Screenshots stay pre-analyze; *user paste* is a different rail |
++
++---
++
++## 4. As-is (inspected)
++
++- Composer `InputArea` (`chrome-extension/src/sidepanel/App.tsx`): file picker `accept` is documents only; **no `onPaste` / `onDrop`**.
++- `file.upload` → `parseFile` **rejects** `image/*`; `allowed_types` has no image MIME.
++- Vision is a **side-pipeline**: `analyzeImage` → text. Main `CanonicalChatMessage` user content is `string` only.
++- Vision-reuse P0 copies credentials into `config.vision`; **explicitly did not** put `image_url` in the agent loop (P2 deferred).
++- `likelyMultimodal` exists and is tested (fail-closed unknown → false). `shouldOfferVisionReuse` additionally blocks `protocol=anthropic`.
++- WS `maxPayload` = **10MB** (`companion/src/ws/lifecycle.ts`). Base64 inflates ×4/3. A 6MB decoded image is ~8MB on the wire — one image can saturate the frame.
++- `file.upload` validate: max **10 files**, requires name/type/content strings.
++- Thread messages live in `~/.cmspark-agent/threads/<id>.json` (`content: string`). No attachment sidecar today.
++- Anthropic convert (`anthropic-convert.ts`) treats user content as a string and merges consecutive user turns as text.
++
++---
++
++## 5. Proposed design (attack this)
++
++### 5.1 Routing (send time)
++
++```
++effectiveModel = thread.config_override.model_name || config.llm.model_name
++useNative = likelyMultimodal(effectiveModel)   // NOT gated on protocol
++```
++
++| Case | Images | Docs |
++|------|--------|------|
++| `useNative` | parts on user turn; **do not** call `config.vision` | existing parse → `<document>` text |
++| `!useNative` && vision.enabled && file_upload.enable_vision_analysis | `analyzeImage` per image; text injected | unchanged |
++| `!useNative` && vision off | **fail the send** (do not drop images silently) | n/a if only images |
++
++Anthropic Messages + Claude: **native** (Messages supports images). This is *not* the vision-reuse CTA (that stays blocked for Anthropic).
++
++Heuristic false-positive (name looks multimodal, endpoint rejects images): surface the provider error; **no silent fallback** to vision.
++
++### 5.2 Composer UX
++
++- `onPaste` on textarea (and composer chrome): if any `clipboardData.items` is `image/*` allowlisted, `preventDefault`, add to `selectedFiles`. Do **not** also paste accompanying `text/html` / URL junk. Keep already-typed textarea text.
++- `onDrop` / `onDragOver` on the InputArea root: highlight; accept `DataTransfer.files` that are allowlisted images or existing document types. Reject `text/uri-list` / http(s) URL drops (no fetch).
++- File picker `accept` adds `.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp`.
++- Preview: image → thumbnail chip (max ~48px, 320px panel); docs stay text chips. Remove = ×.
++- Mixed send: if `text.trim()` nonempty at paste/drop of an image, attach then `handleSend` **with the new file list in the same tick** (do not rely on `setState` then `handleSend` — React stale state).
++- Empty text + Send with only images: default caption `请看这张图` / `请看这些图片`.
++- Disabled composer (no thread / disconnected / threadBusy / voice overlay): ignore paste/drop of files; show existing disabled affordance.
++
++### 5.3 Limits (must fit WS 10MB)
++
++| Limit | Strawman value | Why |
++|-------|----------------|-----|
++| MIME | png / jpeg / gif / webp only | lock-step with `ALLOWED_IMAGE_MIMES_LIST`; reject HEIC / SVG / BMP / TIFF with explicit copy |
++| Magic bytes | companion sniffs signature; MIME spoof → reject | defense in depth |
++| Per-image decoded | **4 MiB** | 4×4/3 ≈ 5.3MB b64; headroom under 10MB |
++| Per-send decoded total (all images) | **6 MiB** | whole `file.upload` JSON must stay < 10MB |
++| Count | max **4** images per send | UX + token |
++| Documents | existing 10MB / 10 files rules unchanged | mixed send: images count toward 6MiB image budget; docs toward file size |
++
++### 5.4 Persistence
++
++- Thread JSON `content` stays human text (`user text` + `📎 name`). **No base64 in `threads/<id>.json`.**
++- Sidecar: `~/.cmspark-agent/threads/<id>.files/<msgId>-<n>.<ext>` mode `0o600`. Containment: thread id already `^[a-zA-Z0-9_-]{1,64}$`.
++- Message field: `attachments?: { kind:"image", name, mime, sha256, bytes, rel }[]`
++- Thread hard-delete / cleanup: delete `<id>.files/` with the json.
++- Soft-trash: keep sidecars (restore must still see images).
++
++### 5.5 Canonical / providers
++
++Extend:
++
++```ts
++type UserContentPart =
++  | { type: "text"; text: string }
++  | { type: "image_url"; image_url: { url: `data:${mime};base64,...` } }
++
++CanonicalChatMessage user.content: string | UserContentPart[]
++```
++
++- OpenAI provider: pass through (SDK already accepts parts).
++- Anthropic convert: map data-URL parts → `{ type:"image", source:{ type:"base64", media_type, data } }`. Consecutive user-turn merge must **not** stringify image parts away.
++- Same `chatCreate` / tool-loop in-memory messages **keep** image parts for the whole request (「看这张图点红按钮」).
++
++### 5.6 History replay
++
++- `rebuildMessagesFromHistory`: if message has image attachments **and** current `useNative`, load sidecar → parts. If file missing, stub `[图片丢失: name]`.
++- If current model is **not** multimodal (user switched thread model to DeepSeek): **strip** image parts; keep text stub. Do not 400 the text-only endpoint.
++- Wire cap: newest **4** images across the compacted window; older → `[图片: name]`.
++- Token estimate: **1600 tokens / image** in context budget so compaction actually drops old image turns.
++- Compaction / title / summary / Obsidian export: text stub only (no pixels). Export may mention `📎 name`.
++
++### 5.7 Protocol
++
++Reuse `file.upload` (no new WS type). Companion splits `files[]` by MIME:
++
++- image → native or vision
++- other → `parseFile`
++
++Extension `FileAttachment` unchanged (`name, type, size, content` base64).
++
++Optimistic UI message (`📎 names`) stays; companion still `addMessage` as today for documents. **Adversaries: check double-user-message / dedup.**
++
++### 5.8 Settings / honesty copy
++
++- Vision section help must distinguish:
++  - **用户附图**（粘贴/选/拖）→ 主模型能看图则直送主模型；否则走视觉轨
++  - **截图 / analyze_image** → 仍先视觉轨转文字（P0 reuse 不变）
++- When native path is used, do **not** require `vision.enabled`.
++- Privacy: user images go to `llm.base_url` hostname (native) or `vision.base_url` (fallback). No extra toast required if settings already show those hosts; error/status should name the destination on failure.
++
++### 5.9 Errors (user-visible)
++
++| Situation | Copy (zh) |
++|-----------|-----------|
++| Unsupported type / HEIC | 不支持该图片格式（请使用 PNG / JPEG / GIF / WebP） |
++| Over per-image or total size | 图片过大（单张 ≤4MB，合计 ≤6MB） |
++| SVG / URI drop | 不能从网页链接拉图；请复制图片本身或改用截图 |
++| Text-only + vision off | 当前主模型不能看图。请在设置中开启「视觉分析」并配置视觉模型 |
++| Native endpoint rejects image | 主模型拒绝了图片（{provider error}）。可换多模态模型，或改用文本模型并开启视觉分析 |
++| Sidecar missing on replay | [图片丢失: name] |
++| Magic-byte mismatch | 文件内容与类型不符，已拒绝 |
++
++### 5.10 Out of scope (v1)
++
++- HEIC decode / convert
++- Native multimodal for tool screenshots / PDF embeds
++- Auto-fallback native→vision
++- `clipboardRead` / reading clipboard without paste
++- Rendering full-size image in the transcript (thumbnail in composer only; history shows `📎`)
++- New confirm / L2
++- Changing `MAX_WS_MESSAGE_SIZE`
++
++---
++
++## 6. Risks for adversaries
++
++1. WS 10MB vs 4×4MB images (even with 6MB total — is 6MB total still too tight with JSON/docs?)
++2. Heuristic false positive / false negative (`kimi-k2` is marked multimodal — is that true?)
++3. Thread model switch mid-history
++4. Anthropic consecutive-user merge dropping images
++5. Double user message (extension optimistic + companion addMessage)
++6. Sidecar path escape / leftover files after hard-delete
++7. Prompt injection via pasted screenshot of “ignore previous instructions”
++8. SVG/HTML polyglot if we ever render thumbs as img src=blob (XSS)
++9. Voice overlay + paste race
++10. Worker / multi-agent threads receiving huge images
++11. Settings copy still saying “主对话不会直接收图” after this ships (lie)
++12. Regenerating a turn that had images (`skipUserMessage`)
++13. `file.upload` + native path still running vision on mixed PDF embeds (OK) vs standalone PNG (must not)
++14. Privacy: clipboard screenshots of other apps (password managers) sent to cloud LLM with no extra confirm
++15. Context budget 1600 tok/image under/over estimate → silent overflow or over-drop
++
++---
++
++## 7. External DoD (machine-observable, post-impl)
++
++1. Extension: paste/drop/picker accept allowlisted images; reject others with copy
++2. Mixed send: nonempty text + paste image → one send, no stale `selectedFiles`
++3. Companion: `likelyMultimodal` true → no `analyzeImage` call for standalone images (unit/spy)
++4. Companion: `likelyMultimodal` false + vision off → `file.upload_error` (not silent drop)
++5. Magic-byte reject; HEIC reject
++6. Anthropic convert emits image blocks; consecutive user merge preserves them
++7. `rebuildMessagesFromHistory` strips images when current model is text-only
++8. Sidecar 0o600; thread delete removes `.files/`
++9. Upload payload >10MB never reaches handler (existing WS gate) + client-side total 6MiB
++10. No `clipboardRead` in manifest
++11. Settings help no longer claims “主对话不会直接收图” as a universal truth
++12. Tool screenshot / analyze_image tests unchanged (no native injection)
++
++---
++
++## 8. Eval gate card (design stage)
++
++**Blast tier**: T2  
++**Capability**: see §0  
++**Judges**: 3 independent lanes (Product / Security / Architecture) → synthesis → Claude+Pi dual review of the **locked design** (no impl in this batch)
++
++---
++
++*Strawman only — do not implement from this file.*
+diff --git a/docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md b/docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md
+new file mode 100644
+index 0000000..a9cd3d7
+--- /dev/null
++++ b/docs/superpowers/specs/2026-08-17-clipboard-image-paste-design.md
+@@ -0,0 +1,431 @@
++# 对话框用户附图 — 产品设计（锁定）
++
++**Date**: 2026-08-17  
++**Status**: Locked for dual-review (Claude + Pi). Do not implement until dual APPROVE*.  
++**Blast**: T2  
++**Strawman**: `docs/decisions/clipboard-image-paste-strawman-2026-08-17.md`  
++**Adversary synthesis**: `docs/audit/reviews/clipboard-image-paste-adversary-synthesis-20260817.md`  
++**Related**: vision-reuse P0 · ADR-020 · `file.upload` · `vision-pipeline.ts`
++
++This document is the product SoT. Where it conflicts with the strawman, **this file wins**.
++
++---
++
++## 0. Capability declaration (ADR-020)
++
++```text
++Surface:      L0 (chat composer attachments — no new CDP/tool)
++L2-classes:   (none)
++Compose:      none (not a Pack / skill / MCP; reuses file.upload + vision rail)
++Autonomy:     single
++Trust:        user-initiated image bytes go to the effective chat LLM endpoint
++              (native) or config.vision (text-only fallback).
++              No new confirm dialect. Destination hostname on chip + first-send line.
++Channel:      community
++```
++
++**Forbidden language**: 中层 Agent · 第二 runtime · 新确认方言 · 「主对话永远不收图」.
++
++**Not this feature**: tool `screenshot` · page `analyze_image` · PDF 内嵌图 · Qwen3-VL 定位 · `clipboardRead`.
++
++---
++
++## 1. Thesis
++
++> 用户可以把系统截图、网页「复制图片」、或文件管理器里的图片，粘贴 / 点选 / 拖进 Side Panel 输入区。  
++> **线程生效主模型**若 `likelyMultimodal`，这些**用户附图**作为本轮 user message 的图像块发给主模型（OpenAI `image_url` / Anthropic `image`）。  
++> 主模型是纯文本（或未知 — fail-closed）时，走现有 `analyzeImage` 视觉轨。  
++> 工具截图 / `analyze_image` / 文档内嵌图 **仍走视觉轨**，这次不改。
++
++用户对话已锁定、对抗后仍保留：
++
++| ID | Lock |
++|----|------|
++| U1 | 三种剪贴板来源都接 |
++| U2 | 空框：挂附件等发送。框里已有字：同拍挂上并发送 |
++| U3 | 粘贴 + 附件按钮 + 拖到输入区 |
++| U4 | 主模型能看图 → 原生；否则视觉轨。不因 API 400 静默降级 |
++
++---
++
++## 2. JTBD / 非目标
++
++| 角色 | 痛 | 做成什么样算成 |
++|------|----|----------------|
++| GPT-4o / Kimi VL / glm-4v / Claude Messages | 粘贴没反应；或被弱 VLM 先转述 | 主模型直接看见刚截的屏；历史里看得到小图 |
++| DeepSeek / llama3.1 | 主模型不能看图 | 同一套粘贴；开了视觉就转文字；没开则**发不出去**并说清楚 |
++| 本地廉价 VLM + 强文本主模型 | 怕被「主模型复用」吃掉分流 | 文本主模型仍走 `config.vision` |
++| 只点过「使用主模型」的截图用户 | 设置复用 ≠ 对话原生看图 | 截图仍先转文字；**粘贴**才是原生轨 |
++
++**非目标（v1）**
++
++- HEIC 转码  
++- 工具截图 / PDF 内嵌图改走原生  
++- 原生失败自动降级视觉  
++- 申请 `clipboardRead`  
++- 拖入网页 URL 去拉图  
++- 对话里点开全尺寸灯箱  
++- 新 L2 / 新确认家族  
++- 提高 `MAX_WS_MESSAGE_SIZE`  
++- 新增 `supports_vision` 配置项  
++
++---
++
++## 3. 用户可见行为
++
++### 3.1 输入
++
++- **粘贴**：textarea 与 InputArea 根节点 `onPaste`。`clipboardData.items` / `.files` 中 `kind=file` 且体积 > 0 的 allowlist 栅格图 → `preventDefault`，加入附件。**不**把同行的 `text/html` / URL 贴进框。已键入的字保留。
++- **拖放**：InputArea `dragover` 高亮，`drop` 收 `DataTransfer.files`（图 + 现有文档类型）。拒绝：`text/uri-list`、`text/x-moz-url`、`text/html`、纯 URL 的 `text/plain`、0 字节 File、`data:` / `blob:` / `file:` URI。**禁止** `fetch` / `fetchImageAsBase64` / `analyze_image`。
++- **附件按钮**：`accept` 增加 `.png,.jpg,.jpeg,.gif,.webp` 与对应 MIME。`title` 改为「添加文件或图片」。
++- **忽略粘贴/拖入**（不消费剪贴板）：无线程 / 未连接 / `threadBusy` / `l2_task` / `voice.liveOverlay != null` / `voice.listening`。
++- Worker / 编排线程：同一套限额与分流，不加新 chrome。`run_busy` 仍可发送（现状）。
++- 空状态（chat/browser）：加一行「可直接粘贴截图」。computer 空状态仍走 cockpit。
++
++### 3.2 附件条
++
++- 图：48px 缩略图（React `<img src={blob:}>`，仅已 sniff 的栅格字节；卸载 `revokeObjectURL`）。文档：现有文字 chip。
++- 剪贴板无名文件：显示名 **`截图 YYYY-MM-DD HH:mm`**，不用 `image.png`。
++- 经过压缩：chip 上 `已压缩`。
++- chip 副文案始终带目的地主机：`→ api.openai.com` 或 `→ vision.example`（按即将走的轨）。
++- × 移除。第 5 张图 / 超限 / 拒收格式 → 输入区 `fileError` 横幅，**不发送**。
++- 混合粘贴（一张 HEIC + 一张 PNG）：收下 PNG，横幅拒 HEIC，**不**丢掉已键入的字。
++
++### 3.3 发送
++
++| 输入区状态 | 行为 |
++|------------|------|
++| 只有图，无字 | 默认文案：一张 `请看这张图`；多张 `请看这些图片` |
++| 只有文档，无字 | 保持 `请分析我上传的文件` |
++| 图+文档，无字 | `请查看附件` |
++| 有字 | 用用户的字 |
++| 有字 + 粘贴/拖入图 | 同拍加入附件并发送（把**新列表**传进 `handleSend`，禁止 `setState` 后再读旧 state） |
++
++**Composer 预检（先于 WS）**
++
++1. 线程生效模型 `!likelyMultimodal` **且** 视觉轨关（`!(vision.enabled && file_upload.enable_vision_analysis !== false)`）→ **不发送**，横幅：「当前主模型不能看图。请在设置中开启视觉分析，或换一个多模态模型。」芯片保留。
++2. 压缩后单张 > 4MiB 或图合计 > 6MiB 或整帧 JSON > 10MiB−256KiB → 不发送，横幅，芯片保留。
++3. Companion / SW 拒绝：芯片**回到** `selectedFiles`，不留幽灵用户气泡。成功或 `file.upload_error` / 断线前不要清空芯片。
++
++听写结束后框里有字再贴图 = 会发出去（U2）。可接受，因为历史里有缩略图 + 目的地。
++
++### 3.4 对话气泡
++
++- 用户气泡：文案 + **48px 缩略图**（与输入区同级，不是灯箱）。
++- 乐观更新用内存 blob；重载后用消息上的 **≤8KB / 96px JPEG preview**（`attachments[].preview_jpeg_b64`）。原图只在 sidecar。
++- 副行：`📎 截图 2026-08-17 15:58 · → hostname`。
++- 模型已换成纯文本：缩略图**仍显示**（本地 preview），不再把原图像素 POST 给新模型。
++- 全尺寸查看：v1 不做。
++
++### 3.5 编辑 / 重新生成 / 分叉
++
++- 编辑只改说明文字；缩略图留下。v1 不提供编辑态 × 丢图（避免误删 sidecar）。
++- `chat.regenerate` / `skipUserMessage`：hydrate 仍带图（见 §5）。
++- Fork：把 sidecar **拷贝**到新线程新文件名，重写 `attachments`。禁止继承父线程 `rel`。
++
++### 3.6 目的地第一次说明
++
++- 每个 **destination hostname** 第一次走原生发图：输入区一行（非 modal、非 L2）「图片将发送至 {hostname}」。
++- `chrome.storage.local` 的 ack **按 hostname 本身**记（含 `thread.config_override.base_url` 解析出的主机，不是只看全局 `llm.base_url`）。主机变了再提示。
++- 失败文案也带 hostname。
++
++### 3.7 压缩
++
++发送前在扩展里：
++
++1. 已 ≤ 4MiB 且长边 ≤ 1568 → 原样（保留 PNG/GIF 透明度/动画）。
++2. 否则画到 canvas，长边 **≤ 1568**，导出 JPEG q≈0.85（GIF 动画保原样，若仍超限则拒并说明「动画图请先缩小」）。
++3. 芯片标 `已压缩`。典型 Retina 全屏截图必须能发出去。
++
++1568 使 OpenAI high-detail tile 估算 ≈ 1600 tok/图，与预算一致。
++
++---
++
++## 4. 分流（Companion SoT）
++
++```
++effective = { ...config.llm, ...thread.config_override }
++useNative = likelyMultimodal(effective.model_name)   // 不看 protocol
++```
++
++`likelyMultimodal` **只以** `companion/src/llm/likely-multimodal.ts` 为准。扩展 / settings-web 可镜像，同一组测试向量。客户端不能强迫原生。
++
++分流函数签名：`likelyMultimodal(modelName)`，**不读 protocol**。Claude 家族靠**名字**判 true（`claude|sonnet|opus|haiku`），因此 Anthropic Messages 主模型会走原生——这是故意的。`shouldOfferVisionReuse` 仍对 `protocol=anthropic` 硬拦（视觉轨不会 OpenAI image_url）。两套函数不要合成一个。
++
++相对 P0 启发式的修正（必须进 SoT 测试）：
++
++- **剔除** `kimi-k2`、`moonshot-v1*`（无 `vl|vision|omni`）— 它们是文本模型，P0 测试里被误标 true。同步改 `chrome-extension/tests/vision-reuse-logic.test.ts`（现断言这两名为 true）。
++- `kimi` + `vl|vision|k1.5` 等仍 true。
++- 未知 → false。
++
++| 情况 | 用户附图 | 文档 / PDF 内嵌图 |
++|------|----------|-------------------|
++| `useNative` | 本轮 image parts；**不**调 `analyzeImage` | 现有 `<document>`；内嵌图仍视觉轨 |
++| `!useNative` 且视觉轨开（`vision.enabled && file_upload.enable_vision_analysis !== false`） | `analyzeImage` → 文字写入磁盘 `content`（见 §5.1a） | 不变 |
++| `!useNative` 且视觉轨关 | 预检拦截；若漏网则 `file.upload_error` | — |
++
++原生被端点 400：把 provider 错误亮给用户（带 hostname）。**不**静默改走视觉。芯片恢复。
++
++---
++
++## 5. 协议与历史
++
++### 5.1 仍用 `file.upload`，但 `chatCreate` 增加字段
++
++```ts
++fileContents?: Array<{ filename: string; content: string }>  // 解析后的文档 ONLY
++
++imageAttachments?: Array<{
++  name: string
++  mime: "image/png" | "image/jpeg" | "image/gif" | "image/webp"
++  sha256: string
++  bytes: number
++}>
++```
++
++禁止把 PNG base64 塞进 `fileContents`（会变成 `<document>` 垃圾）。
++
++Router：
++
++1. 解码 → sniff → `sniffed === normalizeImageMime(type)`，否则拒。
++2. **先**按 MIME 分流，**再**走文档 `allowed_types` / `parseFile`。图永不进这两处。
++3. 图写入 sidecar，把 metadata 交给 `chatCreate.imageAttachments`。
++4. 文档走现有 parse +（可选）内嵌视觉。
++5. **不要**在 router 里 `addMessage` 用户轮。Sidecar 只在 LLM 门（paused / trashed / 并发 cap）通过之后写；门拒则不落盘。
++6. Companion **重核** 4 张 / 单张 4MiB / 合计 6MiB / 整帧 JSON。漏网客户端不得打到 `maxPayload`。
++
++`chatCreate` **恰好一次** `addMessage`：
++
++```
++content:  用户文案 + "\n📎 " + 显示名列表
++          [视觉轨时追加 §5.1a 描述]
++attachments: [{ kind:"image", name, mime, sha256, bytes, preview_jpeg_b64 }]
++```
++
++磁盘 `content` 永远是 string。像素不进 `threads/<id>.json`。Sidecar + preview 两种轨都写（换模型后 UI 仍能显示缩略图；`!useNative` 时 hydrate **不** POST 像素）。
++
++### 5.1a 视觉轨描述的载体（Claude dual-review 阻断项 · 已锁）
++
++`!useNative` 且视觉轨开：`analyzeImage` 的说明必须进**磁盘 `content`**，否则 regenerate / `skipUserMessage` 只会重放 `📎 名字`，主模型第二次看不见图。
++
++格式（对齐今天 PDF 内嵌图，`message-router.ts` 现有 `<!-- 文档内嵌图片分析 -->`）：
++
++```
++{用户文案}
++📎 {显示名}
++
++<!-- 用户附图分析 -->
++[图片: {显示名}] {description}
++```
++
++禁止另造 `vision_text` 字段当唯一载体（regen 只重放 `content`）。`fileContents` 仍只装文档。原生轨不加这段（模型看的是 parts）。
++
++发成功后回 `chat.user`（或等价）带 **磁盘 `message_id`**，乐观气泡改用这个 id。否则 regenerate / 单条导出对不上（文档上传已有此坑，附图后变成主路径）。
++
++### 5.2 Hydrate 是唯一注图点
++
++```
++rebuildMessagesFromHistory(history)          // 纯配对，仍是 string
++→ hydrateUserImageParts(rebuilt, persisted, { useNative, maxImages: 4 })
++→ runContextBudgetPass("pre_loop")
++→ provider.streamChat
++```
++
++- `rebuildMessagesFromHistory` **禁止**读盘、禁止 `likelyMultimodal`。
++- `skipUserMessage`（regenerate）走同一段 hydrate。
++- 同一次请求的 tool loop **不再** hydrate（内存里已有 parts）。
++- `!useNative`：剥掉 parts，留文字 stub；sidecar 不删。以后换回多模态可再 hydrate。
++- 窗口内最多 4 张图（新的优先）；更早的变 `[图片: name]`。
++- sidecar 丢了：`[图片丢失: name]`。
++
++### 5.3 Provider
++
++- OpenAI：parts 原样（`image_url` data URL）。v1 **不**设 `detail:"low"`（压缩后 1568 已够；low 会看不清报错字）。
++- Anthropic：`AnthropicContentBlock` 增加 `image` + `source.base64`。连续 user（omit notice + 真 user）**按 block 拼接**，禁止 `String(parts[])`。合并本身保留（Anthropic 拒连续 user）。
++- `complete()` / 标题 / 摘要 / H1 / Obsidian：**永不**收图。
++
++### 5.4 Context budget
++
++- `serializeMessage`：text 按现规则；每个 **仍在 parts 里的** image：长宽比 > 1.3（典型截图）**+1600**；压缩后短边 ≥ 1200 的近方形 **+2800**（OpenAI high-detail tile）。视觉轨无 parts，描述按纯文本估。Anthropic 原生同样用这张表（略保守即可）。
++- `redactMessagesForCompaction`：parts 拍扁成 stub，禁止对 array `.replace`。
++- 标题预览只切 string stub。
++
++### 5.5 Sidecar
++
++路径：`~/.cmspark-agent/threads/<safeId>.files/<safeMsgId>-<n>.<ext>`  
++`ext ∈ {png,jpg,gif,webp}`，由 sniff 决定，不由用户文件名决定。
++
++- 目录 `0o700`，文件 `0o600`。`mkdir` 后 `lstat` 必须是非 symlink 目录。
++- 加载：只信 companion 自己写下的 basename；`realpath` 必须严格落在 `realpath(threads/<id>.files)` 内。
++- **禁止**把客户端 `rel` / `sha256` / `name` 当路径。
++- 硬删（`delete` / `batch_delete` hard / `purgeExpiredTrash` / `cleanupEmpty`）：按同样 realpath/lstat 删 `.files/`。目标是 symlink → **拒绝**，不要 `rmSync`。ENOENT 可忽略。
++- 软删：保留 sidecar。
++- 消息条数封顶丢掉旧 JSON 行时：同步删对应 sidecar。
++- `deleteMessagesFrom`（regenerate 裁掉后面的轮）：删那些行对应的 sidecar，避免孤儿文件。
++- `preview_jpeg_b64`：**仅 Companion** 在 `addMessage` 时从 sidecar 生成（≤8KB / 96px JPEG），写入 metadata。扩展乐观态用内存 blob；回传 `message_id` 后改用 preview。禁止把全图 base64 塞进 JSON。
++
++### 5.6 线框预算
++
++| 项 | 值 |
++|----|----|
++| MIME | png / jpeg / gif / webp（与 `ALLOWED_IMAGE_MIMES_LIST` 锁步，**不含** svg/bmp/tiff） |
++| sniff | 见 §6 |
++| 压缩后单张 | ≤ 4 MiB decoded |
++| 压缩后图合计 | ≤ 6 MiB decoded |
++| 整帧 `file.upload` JSON | ≤ 10 MiB − 256 KiB（扩展 **和** companion 都算） |
++| 每发图数 | ≤ 4 |
++| `files.length` | 图+文档合计仍 ≤ 10（现校验） |
++| `MAX_WS_MESSAGE_SIZE` | **不改** |
++
++文档体积规则不变，但必须和图像、信封挤在同一帧里。超了在客户端拒，不要撞 `maxPayload` 1009（会杀掉整条控制面）。
++
++扩展 SW 已在算 `json_bytes` / `over_companion_10mb` 却仍发送 — **改为拒发**并回 `file.upload_error`。
++
++---
++
++## 6. Magic sniff（必须实现，不是注释）
++
++Companion 在 `Buffer.from(content, "base64")` 之后；扩展发送前可预检同一套字节。
++
++```
++PNG  89 50 4E 47 0D 0A 1A 0A
++JPEG FF D8 FF
++GIF  47 49 46 38 37/39 61
++WEBP 52 49 46 46 .... 57 45 42 50   // 拒 RIFF/WAVE
++```
++
++1. `sniffed = sniffRasterImage(buf)`，`null` → 拒（内容与类型不符）。  
++2. `declared = normalizeImageMime(type)`，`null` → 拒（HEIC/SVG/BMP/…）。  
++3. `sniffed !== declared` → 拒，**不要**改类型放行。  
++4. 某些 OS 粘贴 `File.type` 为空：扩展必须先 sniff 再填 type；空 type 现校验已拒。
++
++前缀 sniff 杀不掉 GIFAR / JPEG+HTML。可接受条件：缩略图只用 `<img>`，文件永不执行。
++
++**禁止**把 `file-parser.ts` 的 `IMAGE_FORMATS`（含 svg/bmp/tiff）用于输入区准入。
++
++---
++
++## 7. 错误文案（中文）
++
++| 情况 | 文案 |
++|------|------|
++| 不支持的格式 / HEIC / SVG | 不支持该图片格式（请使用 PNG / JPEG / GIF / WebP） |
++| 压缩后仍超限 | 图片过大（压缩后单张 ≤4MB，合计 ≤6MB） |
++| 整帧超 10MB | 附件总体积过大，请少选几个文件 |
++| 网页链接拖入 | 不能从网页链接拉图；请复制图片本身或改用截图 |
++| 文本主模型且视觉关 | 当前主模型不能看图。请在设置中开启「视觉分析」并配置视觉模型 |
++| 原生端点拒图 | 主模型拒绝了图片（{短错误}）。可换多模态模型，或改用文本模型并开启视觉分析 |
++| sniff 不符 | 文件内容与类型不符，已拒绝 |
++| sidecar 丢失 | [图片丢失: name] |
++| 第 5 张 | 一次最多添加 4 张图片 |
++
++预检/拒收走输入区横幅。不要先乐观插入用户气泡再在下面加 ❌（Companion `uploadError` 若在用户 `addMessage` 之前失败，也不要落盘用户轮）。
++
++---
++
++## 8. 设置文案（Side Panel + settings-web 同一补丁）
++
++必须改掉的谎言：
++
++| 现文案 | 锁定替换 |
++|--------|----------|
++| `VISION_COPY.sectionHelp`「（主对话不会直接收图）」 | 本段只管**工具截图 / analyze_image**：先视觉轨转文字再进对话。输入框**粘贴/选/拖的图**另算——主模型能看图则直送主模型，否则才走本视觉轨。 |
++| settings-web `main loop does not receive image bytes` | 与上对齐的英文，区分 screenshot rail vs user attach |
++| `fallbackPassthrough`「主模型通常仍不能真正看图」 | 仅描述**视觉轨失败**：视觉轨会把截断 base64 塞进说明；只有主模型走原生看图时才能看见像素 |
++| 文件上传「上传图片时尝试使用视觉模型…」 | 仅当主模型**不能**看图时，用户附图才走视觉轨。主模型能看图时此开关不影响粘贴/选/拖 |
++| `正在解析文档` / `文档已解析`（对 PNG） | `正在处理图片…` / `主模型看图中…` 或 `正在分析图片…`（视觉轨） |
++| 附件按钮「上传文件」 | 添加文件或图片 |
++| `file_upload_max_size` 滑条 | 注明**不**提高 4/6MiB 图像预算 |
++
++「使用主模型」横幅/芯片 **只**服务截图视觉轨，不要拿来解释粘贴原生。
++
++占位符（chat/browser）：`问任何问题，或粘贴截图…`。
++
++---
++
++## 9. 安全 / Trust
++
++- 不申请 `clipboardRead`。不要用 `navigator.clipboard.read()`。
++- 不新开 `SecurityConfirmationManager` family。目的地用 chip + 首次一行（P5）。
++- `shouldBlockVisionRequest` 仍管视觉轨。原生用主模型 key（和普通聊天同一信任级）。
++- `jailbreakScanWindow` **不**覆盖像素。系统提示把用户附图标成不可信数据（`<untrusted-image name>`），不加 L2。
++- 日志：只记 `byte_len` / sha256 / sniffed MIME。`redactLogData` 增加 `content` / `base64` / `image_url`。
++- `file.upload` 保持 HMAC。建议拒 tray origin（纵深；文档上传已是 paired peer）。
++- Worker LLM **不能**发 `file.upload`（保持）。用户往 worker 线程贴图：同一限额。
++
++---
++
++## 10. 文件级切分（实现时按此，本批不写代码）
++
++1. `companion/src/llm/likely-multimodal.ts` + 锁步测试（含 kimi-k2 剔除）；同步改 `chrome-extension/tests/vision-reuse-logic.test.ts` 里对 `kimi-k2` / `moonshot-v1-128k` 的旧断言  
++2. `companion/src/llm/image-sniff.ts` — sniff + normalize  
++3. `companion/src/llm/image-parts.ts` — hydrate、4 张帽、stub、token  
++4. `companion/src/llm/adapter.ts` — `imageAttachments`；一次 addMessage；rebuild 后 hydrate  
++5. `companion/src/llm/providers/anthropic-convert.ts` + `openai.ts` — image block + block merge  
++6. `companion/src/llm/context-budget.ts` — serialize / estimate / redact 认 parts  
++7. `companion/src/message-router.ts` `file.upload` — MIME 先分流  
++8. `companion/src/threads/thread-manager.ts` — `attachments`、sidecar CRUD、硬删/fork  
++9. `chrome-extension/src/sidepanel/App.tsx` — paste/drop/picker、同拍发送、压缩、预检、回收 id  
++10. `ChatView.tsx` — 气泡 48px preview  
++11. `vision-reuse-logic.ts` + `settings-web.ts` — §8 文案  
++12. `chrome-extension/src/background/index.ts` — 整帧 JSON 超限拒发  
++
++不要先做 9/10 再做 3/4/5：没有 hydrate 的 UI 只是「第一轮能看、regen 变瞎」。
++
++---
++
++## 11. 外部可观察 DoD（实现后机核）
++
++1. 粘贴 / 拖 / 选 allowlist 图成功；HEIC/SVG/URL 拖入被拒且有文案  
++2. 空框贴图不自动发；有字贴图一次发出，无 stale `selectedFiles`  
++3. `likelyMultimodal` true → standalone 图 **零** `analyzeImage` 调用（spy）  
++4. `likelyMultimodal` false + vision 关 → 预检不发；漏网则 `file.upload_error`  
++5. sniff 不符 / HEIC 拒  
++6. Anthropic 转换产出 image block；连续 user 合并后图还在  
++7. 当前模型改文本后 hydrate **剥** parts；preview 仍在 UI  
++8. sidecar 0o600；硬删去掉 `.files/`；fork 拷贝新文件  
++9. 整帧 >10MiB−256KiB 客户端拒发，companion `maxPayload` 不被合法发送打到  
++10. manifest 无 `clipboardRead`  
++11. 设置不再把「主对话不收图」写成全称；settings-web 同步  
++12. 工具截图 / `analyze_image` 单测无回归  
++13. 乐观气泡在成功后改用磁盘 `message_id`；对该条 regenerate 仍带图  
++14. 典型大截图（压缩前 >4MiB）经压缩后发出，芯片有 `已压缩`  
++15. `kimi-k2` / `moonshot-v1-128k` 的 `likelyMultimodal` 为 **false**  
++16. 视觉轨发图后磁盘 `content` 含 `<!-- 用户附图分析 -->`；对该条 regenerate 仍带描述、不 POST image parts  
++
++---
++
++## 12. Eval gate card
++
++**Blast tier**: T2  
++**Capability**: §0  
++
++### Machine（实现阶段才跑）
++
++- companion：sniff / hydrate / anthropic merge / likelyMultimodal / sidecar containment  
++- extension：compress 纯函数、paste 分类、整帧 JSON 计算  
++- 相关 suite 绿  
++
++### Judges（本批 = 设计）
++
++- 独立对抗：三路 REJECT strawman → 本锁定表吸收 → `clipboard-image-paste-adversary-synthesis-20260817.md`  
++- 下一步：`scripts/dual-external-review.sh` Claude+Pi 审**本设计**（无实现代码）  
++
++### Blast
++
++T2：一级输入 UX + adapter 形状，无新 tool/L2。图像出站与今天截图视觉轨同类，且用户手势触发。T4 不成立（非 default-on 对外声称）。
++
++---
++
++## 13. 实现次序（dual APPROVE* 之后）
++
++1. Companion SoT：heuristic + sniff + hydrate + anthropic merge + tests  
++2. `file.upload` 分流 + sidecar + 一次 addMessage + message_id 回传  
++3. 扩展：压缩、paste/drop/picker、预检、整帧拒发  
++4. ChatView 缩略图 + 文案  
++5. 设置诚实文案  
++6. 机核 DoD → 实现后再跑一轮独立对抗 → Pi  
++
++---
++
++*Locked design · 2026-08-17 · implementer must not self-APPROVE*
