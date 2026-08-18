@@ -91,10 +91,15 @@ export function hydrateUserImageParts(
         parts.push({ type: "text", text: `\n[图片丢失: ${att.name}]` })
         continue
       }
+      const safeName = String(att.name || "image").replace(/[<>"\n]/g, "").slice(0, 120)
+      parts.push({ type: "text", text: `\n<untrusted-image name="${safeName}">` })
       parts.push({
         type: "image_url",
         image_url: { url: `data:${loaded.mime};base64,${loaded.base64}` },
+        ...(typeof att.width === "number" ? { width: att.width } : {}),
+        ...(typeof att.height === "number" ? { height: att.height } : {}),
       })
+      parts.push({ type: "text", text: "</untrusted-image>" })
     }
     ;(out[ri] as { role: "user"; content: UserContentPart[] }).content = parts
   })

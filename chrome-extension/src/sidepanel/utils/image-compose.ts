@@ -37,14 +37,15 @@ function looksLikeUrlName(name: string): boolean {
   if (!n) return false
   if (/^https?:\/\//i.test(n)) return true
   if (/^ftp:\/\//i.test(n)) return true
+  if (/^(data|blob|file):/i.test(n)) return true
   // Browser 0-byte URL-drag leftovers sometimes omit the scheme.
   if (/^www\./i.test(n) && /\./.test(n.slice(4))) return true
   return false
 }
 
 /**
- * Drop classifier. Rejects URI-list / moz-url (never fetch) and 0-byte files
- * whose name looks like a URL (browser URL-drag artifact).
+ * Drop classifier. Rejects URI-list / moz-url / html-or-plain URL payloads
+ * (never fetch) and 0-byte / data:/blob:/file: names.
  */
 export function classifyDrop(
   types: string[],
@@ -55,14 +56,53 @@ export function classifyDrop(
     return { ok: false, error: "不支持拖入网页链接（不会下载远程图片）" }
   }
   for (const f of files || []) {
-    if ((f.size || 0) === 0 && looksLikeUrlName(f.name)) {
+    if (looksLikeUrlName(f.name) && ((f.size || 0) === 0 || /^(data|blob|file):/i.test(String(f.name || "").trim()))) {
       return { ok: false, error: "不支持拖入网页链接（不会下载远程图片）" }
     }
+  }
+  const hasRealFiles = (files || []).some((f) => (f.size || 0) > 0 && !looksLikeUrlName(f.name))
+  if (!hasRealFiles && (typeSet.has("text/html") || typeSet.has("text/plain"))) {
+    return { ok: false, error: "不支持拖入网页链接（不会下载远程图片）" }
   }
   if (!files || files.length === 0) {
     return { ok: false, error: "没有可添加的文件" }
   }
   return { ok: true }
+}
+
+/** Guess MIME from basename. heic/heif/svg map to image/* so the allowlist can refuse. */
+export function mimeFromName(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase()
+  const mimeMap: Record<string, string> = {
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    pdf: "application/pdf",
+    odt: "application/vnd.oasis.opendocument.text",
+    rtf: "application/rtf",
+    csv: "text/csv",
+    md: "text/markdown",
+    txt: "text/plain",
+    html: "text/html",
+    htm: "text/html",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    heic: "image/heic",
+    heif: "image/heif",
+    svg: "image/svg+xml",
+  }
+  return mimeMap[ext || ""] || "application/octet-stream"
+}
+
+/** Magic-prefix → data URL for persisted thumbs (PNG/GIF/WEBP/JPEG). */
+export function previewDataUrl(b64: string): string {
+  if (b64.startsWith("iVBOR")) return `data:image/png;base64,${b64}`
+  if (b64.startsWith("R0lGOD") || b64.startsWith("R0lGod")) return `data:image/gif;base64,${b64}`
+  if (b64.startsWith("UklGR")) return `data:image/webp;base64,${b64}`
+  return `data:image/jpeg;base64,${b64}`
 }
 
 /** Display name for a clipboard screenshot: `截图 YYYY-MM-DD HH:mm`. */

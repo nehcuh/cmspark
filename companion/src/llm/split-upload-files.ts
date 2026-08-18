@@ -49,6 +49,14 @@ export function partitionUploadFiles(
     const name = typeof f?.name === "string" && f.name ? f.name : "file"
     const type = typeof f?.type === "string" ? f.type : ""
     const content = typeof f?.content === "string" ? f.content : ""
+    const ext = name.split(".").pop()?.toLowerCase() || ""
+    if (ext === "heic" || ext === "heif" || ext === "svg") {
+      return {
+        images: [],
+        docs,
+        error: "不支持该图片格式（请使用 PNG / JPEG / GIF / WebP）",
+      }
+    }
     const declaredImage = type.toLowerCase().startsWith("image/")
     if (declaredImage && !normalizeImageMime(type)) {
       return {

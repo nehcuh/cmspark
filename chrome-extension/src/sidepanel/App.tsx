@@ -71,6 +71,7 @@ import {
   compressImageBlob,
   defaultCaption,
   isAllowlistedImageMime,
+  mimeFromName,
   needsCompress,
   pasteImageDisplayName,
   visionRailOpen,
@@ -827,7 +828,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         for (const [k, v] of Object.entries(all || {})) {
           if (k.startsWith("cmspark.imageDestAck.")) next[k] = String(v ?? "")
         }
-        destAckRef.current = next
+        destAckRef.current = { ...next, ...destAckRef.current }
       })
     } catch {
       /* ignore */
@@ -1251,7 +1252,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       setSlashVisible(false)
       setAtVisible(false)
       setThreadRefs([])
-      // selectedFiles stay until file.uploaded / SW ok so chips survive errors.
+      // selectedFiles stay until companion file.uploaded (BUMP_COMPOSER_UPLOAD_CLEAR).
     } finally {
       sendingRef.current = false
     }
@@ -1283,29 +1284,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       reader.onerror = () => reject(reader.error)
       reader.readAsDataURL(blob)
     })
-
-  const mimeFromName = (name: string): string => {
-    const ext = name.split(".").pop()?.toLowerCase()
-    const mimeMap: Record<string, string> = {
-      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      pdf: "application/pdf",
-      odt: "application/vnd.oasis.opendocument.text",
-      rtf: "application/rtf",
-      csv: "text/csv",
-      md: "text/markdown",
-      txt: "text/plain",
-      html: "text/html",
-      htm: "text/html",
-      png: "image/png",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      gif: "image/gif",
-      webp: "image/webp",
-    }
-    return mimeMap[ext || ""] || "application/octet-stream"
-  }
 
   const addIncomingFiles = async (
     list: File[],
@@ -1455,26 +1433,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     // NEVER fetch — only local File objects from the drop.
     void addIncomingFiles(rawFiles, { fromGesture: true })
   }
-
-  useEffect(() => {
-    const onMsg = (msg: { type?: string } | undefined) => {
-      if (msg?.type === "file.uploaded") {
-        setSelectedFiles([])
-      }
-    }
-    try {
-      chrome.runtime.onMessage.addListener(onMsg)
-      return () => {
-        try {
-          chrome.runtime.onMessage.removeListener(onMsg)
-        } catch {
-          /* ignore */
-        }
-      }
-    } catch {
-      return undefined
-    }
-  }, [])
 
   const removeFile = useCallback((idx: number) => {
     setSelectedFiles(prev => prev.filter((_, i) => i !== idx))

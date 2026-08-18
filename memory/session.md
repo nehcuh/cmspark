@@ -2,6 +2,52 @@
 
 ## Current Session
 
+### r2 nits fold (2026-08-18) [clipboard image paste]
+- **Ship**：`fix(attach): fold r2 nits (dims, untrusted wrap, WS headroom, heic ext)`
+- **落地**：budget 传 width/height（2800 可达）；companion WS_SOFT_MAX=10MiB-256KiB；hydrate `<untrusted-image>` 包裹；basename 拒 .heic/.svg；ChatView `previewDataUrl` + onError 空砖；chips 只走 `file.uploaded` bump；destAck merge-on-hydrate；sidecar 失败清理 hoist
+- **验证**：companion 指定 41+28 pass；extension image-compose/vision/ws 45 pass；tsc --noEmit 绿
+- **范围**：worktree `feat/clipboard-image-paste`；未 merge / 未 PR
+
+### P2 spec gap (2026-08-17) [clipboard image paste · 已压缩 chip]
+- **Ship**：`fix(sidepanel): show 已压缩 on recompressed image chips`
+- **落地**：`App.tsx` image chip 在 `file.compressed` 时于 name/size 旁显示 ` · 已压缩`
+- **范围**：单行 UI；`FileAttachment.compressed` 已由 Task 9 写入
+
+### Task 12 (2026-08-17) [clipboard image paste · DoD sweep + fork sidecar copy]
+- **Ship**：`feat(threads): copy image sidecars on fork`
+- **落地**：`copyAttachmentsToThread(fromId, toId, idMap)` 拷 `${oldMsgId}-n.ext` → `${newMsgId}-n.ext`（lstat/realpath 同 write）；`thread.fork` 传 attachments（stamp rel/msg_id）后拷字节
+- **测试**：companion 指定套 105 pass；extension 指定套 42 pass；`clipboardRead` 无；honesty grep 无
+- **下次**：独立对抗 + Claude/Pi dual（不要 self-APPROVE）
+
+### Task 11 (2026-08-17) [clipboard image paste · honesty copy]
+- **Ship**：`docs(settings): distinguish user-attach native vs screenshot vision rail`
+- **落地**：VISION_COPY.sectionHelp / fallbackPassthrough；settings-web 英译区分截图轨 vs 粘贴/选/拖原生；file_upload_vision / max_size 诚实提示；chat/browser placeholder + empty `可直接粘贴截图`
+- **验证**：`rg` 无 `主对话不会直接收图|main loop does not receive image bytes`；vision-reuse-logic + composer-slash-parity 20 pass
+
+### Task 10 (2026-08-17) [clipboard image paste · transcript thumbs + caption-only edit]
+- **Ship**：`feat(sidepanel): 48px image thumbs and adopt persisted message id`
+- **落地**：`MessageAttachment` + user MessageRow 48px thumbs；edit 剥 📎 / `<!-- 用户附图分析 -->`；`chat.user` 解析 attachments；`ADD_MESSAGE` same-id merge + temp-id adopt persisted `message_id`（DoD #13）
+- **测试**：sidepanel-state adopt/merge + image-compose captionOnlyForEdit；`npm --prefix chrome-extension test` 698 pass；`tsc --noEmit` 绿
+
+### Task 9 (2026-08-17) [clipboard image paste · composer paste/drop/picker]
+- **Ship**：`feat(sidepanel): paste/drop/pick images with preflight and compress`
+- **落地**：`image-compose.ts` 纯函数 + InputArea 粘贴/拖放/选择器；preflight `likelyMultimodal` / `visionRailOpen`；client caps 4 / 4MiB / 6MiB；chips 到 `file.uploaded`/SW ok 才清；首次 native dest ack
+- **测试**：image-compose + vision-reuse-logic + ws-frame-budget 41 pass；`tsc --noEmit` 绿
+- **跳过**：node 测环境无 canvas，压缩测只覆盖 GIF 拒绝 / 无 canvas 回退；Chrome 侧仍走 canvas 缩放
+
+### Task 7 (2026-08-17) [clipboard image paste · file.upload MIME split + §5.1a]
+- **Ship**：`feat(upload): split images from docs; persist vision descriptions`
+- **落地**：`partitionUploadFiles` 先按 MIME 拆图/文档 → docs 仍走 parseFile/内嵌 analyzeImage → 闸门后 `writeImageSidecar` + `chatCreate({ imageAttachments, reservedUserMessageId })`；`useNative` 跳过 standalone `analyzeImage`，否则 vision rail §5.1a `<!-- 用户附图分析 -->`
+- **测试**：split-upload-files 12 + file-parser / adapter / sidecar / logger — 93 pass
+- **下次**：端到端粘贴 PNG（主模型看图 / 文本模型 vision rail / 文档上传不回归）
+
+### Task 6 (2026-08-17) [clipboard image paste · chatCreate hydrate]
+- **Ship**：`418899c` `feat(llm): persist image metadata and hydrate on every chatCreate`
+- **范围**：`companion/src/llm/adapter.ts` + `companion/tests/adapter.test.ts` only
+- **落地**：`ChatCreateParams.imageAttachments` 元数据落盘（sidecar 字节由 Task 7 先写）；`chat.user` echo；rebuild 后 `hydrateUserImageParts`（`likelyMultimodal` + max 4）；`skipUserMessage` 同路径
+- **测试**：`npx tsc -p tsconfig.test.json && node --test .test-dist/tests/adapter.test.js` — 16 pass
+- **下次**：Task 7 file.upload MIME split 调 `imageAttachments`
+
 ### S73 END (2026-08-17 ~14:53) [thread hygiene · 五路对抗 · **#193 MERGED**]
 - **Ship**：**PR #193 MERGED** rebase `7a88b8c` ← `feat/thread-hygiene` — 未命名/ACP husk 卫生（规格 C′+D + H1/H2）
 - **诊断**：清理空白只删 0 消息；整理默认 30 天前；无 user 的编程接力不起名、不进规则；用户把 `#id` 当名字

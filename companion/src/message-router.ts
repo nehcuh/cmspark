@@ -44,8 +44,8 @@ import {
   spliceEditedCaption,
   validateImageCaps,
 } from "./llm/split-upload-files"
-import { makePreviewB64 } from "./llm/image-preview"
-import { copyAttachmentsToThread, writeImageSidecar } from "./threads/image-sidecar"
+import { makePreviewB64, parseRasterDims } from "./llm/image-preview"
+import { copyAttachmentsToThread, deleteSidecarsForMessages, writeImageSidecar } from "./threads/image-sidecar"
 import type { RasterMime } from "./llm/image-sniff"
 import { chunkFile, searchChunks } from "./file-chunker"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
@@ -701,6 +701,8 @@ export async function handleMessage(
       const uploadController = new AbortController()
       abortControllers.set(thread_id, uploadController)
 
+      // Hoisted so chatCreate failure can delete already-written sidecars.
+      let reservedUserMessageId: string | undefined
       try {
         const rawCaption = typeof rest.message === "string" ? rest.message : ""
         const userMessageBase =
@@ -726,7 +728,7 @@ export async function handleMessage(
         if (standalonePlan.error) return uploadError(standalonePlan.error)
 
         // Sidecars only after the vision-rail plan succeeds (no orphans on vision-off).
-        const reservedUserMessageId = standaloneImages.length
+        reservedUserMessageId = standaloneImages.length
           ? allocateUploadMessageId(thread_id)
           : undefined
         const imageAttachments: Array<{
@@ -735,6 +737,8 @@ export async function handleMessage(
           sha256: string
           bytes: number
           preview_jpeg_b64?: string
+          width?: number
+          height?: number
         }> = []
         if (reservedUserMessageId) {
           for (let i = 0; i < standaloneImages.length; i++) {
@@ -745,12 +749,14 @@ export async function handleMessage(
               return uploadError(`图片 "${img.name}" 保存失败`)
             }
             const preview = await makePreviewB64(img.buf, mime)
+            const dims = parseRasterDims(img.buf, mime)
             imageAttachments.push({
               name: img.name,
               mime,
               sha256: sha256hex(img.buf),
               bytes: img.buf.length,
               ...(preview ? { preview_jpeg_b64: preview } : {}),
+              ...(dims ? { width: dims.width, height: dims.height } : {}),
             })
           }
         }
@@ -835,6 +841,13 @@ export async function handleMessage(
         })
         logger.info("file.upload.chat_done", { thread_id })
       } catch (e: any) {
+        if (reservedUserMessageId) {
+          try {
+            deleteSidecarsForMessages(thread_id, [{ id: reservedUserMessageId }])
+          } catch {
+            /* best-effort orphan cleanup */
+          }
+        }
         logger.warn("file.upload.chat_error", {
           thread_id,
           error: e?.message || String(e),

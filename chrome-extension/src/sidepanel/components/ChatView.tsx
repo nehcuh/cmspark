@@ -23,7 +23,7 @@ import {
   isIntentOnlyRunBusy,
 } from "../utils/thread-busy"
 import { tokens, statusColor } from "../ui/tokens"
-import { captionOnlyForEdit } from "../utils/image-compose"
+import { captionOnlyForEdit, previewDataUrl } from "../utils/image-compose"
 import { previewImageSafe } from "../utils/computer-utils"
 import type { MessageAttachment } from "../types"
 import {
@@ -564,15 +564,8 @@ export function ChatView() {
 /** 48px transcript thumb — preview JPEG or empty tile + name. No lightbox. */
 function UserImageThumb({ att }: { att: MessageAttachment }) {
   const preview = typeof att.preview_jpeg_b64 === "string" ? att.preview_jpeg_b64 : ""
-  const src = previewImageSafe(preview)
-    ? preview.startsWith("iVBOR")
-      ? `data:image/png;base64,${preview}`
-      : preview.startsWith("R0lGOD") || preview.startsWith("R0lGod")
-        ? `data:image/gif;base64,${preview}`
-        : preview.startsWith("UklGR")
-          ? `data:image/webp;base64,${preview}`
-          : `data:image/jpeg;base64,${preview}`
-    : ""
+  const [broken, setBroken] = useState(false)
+  const src = !broken && previewImageSafe(preview) ? previewDataUrl(preview) : ""
   if (src) {
     return (
       <img
@@ -581,6 +574,7 @@ function UserImageThumb({ att }: { att: MessageAttachment }) {
         width={48}
         height={48}
         style={styles.thumbImg}
+        onError={() => setBroken(true)}
       />
     )
   }

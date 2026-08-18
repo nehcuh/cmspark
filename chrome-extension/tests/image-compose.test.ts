@@ -17,8 +17,10 @@ import {
   captionOnlyForEdit,
   defaultCaption,
   isAllowlistedImageMime,
+  mimeFromName,
   needsCompress,
   pasteImageDisplayName,
+  previewDataUrl,
   visionRailOpen,
 } from "../src/sidepanel/utils/image-compose"
 
@@ -104,6 +106,40 @@ test("classifyDrop: 0-byte non-URL name is not a URI-drag (ok at classify)", () 
     { type: "image/png", size: 0, name: "empty.png" },
   ])
   assert.deepEqual(r, { ok: true })
+})
+
+test("classifyDrop: reject html/plain-only drops and data/blob/file names", () => {
+  const html = classifyDrop(["text/html"], [])
+  assert.equal(html.ok, false)
+  const plain = classifyDrop(["text/plain"], [])
+  assert.equal(plain.ok, false)
+  const data = classifyDrop(["Files"], [
+    { type: "", size: 0, name: "data:image/png;base64,AAA" },
+  ])
+  assert.equal(data.ok, false)
+  const blob = classifyDrop(["Files"], [
+    { type: "", size: 12, name: "blob:https://example.com/abc" },
+  ])
+  assert.equal(blob.ok, false)
+  const fileUri = classifyDrop(["Files"], [
+    { type: "", size: 0, name: "file:///tmp/shot.png" },
+  ])
+  assert.equal(fileUri.ok, false)
+})
+
+test("mimeFromName: rasters + refuse heic/svg as image/*", () => {
+  assert.equal(mimeFromName("a.png"), "image/png")
+  assert.equal(mimeFromName("a.HEIC"), "image/heic")
+  assert.equal(mimeFromName("icon.svg"), "image/svg+xml")
+  assert.equal(mimeFromName("notes.md"), "text/markdown")
+  assert.equal(mimeFromName("noext"), "application/octet-stream")
+})
+
+test("previewDataUrl: magic prefixes", () => {
+  assert.match(previewDataUrl("iVBORxxxx"), /^data:image\/png;base64,/)
+  assert.match(previewDataUrl("R0lGODxxxx"), /^data:image\/gif;base64,/)
+  assert.match(previewDataUrl("UklGRxxxx"), /^data:image\/webp;base64,/)
+  assert.match(previewDataUrl("/9j/xxxx"), /^data:image\/jpeg;base64,/)
 })
 
 // --- clipboardImageDisplayName ---

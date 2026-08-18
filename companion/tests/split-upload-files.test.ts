@@ -91,6 +91,20 @@ test("partitionUploadFiles: svg / heic refuse as unsupported images", () => {
   assert.equal(pdf.docs.length, 1)
 })
 
+test("partitionUploadFiles: typeless .heic/.svg refuse by basename", () => {
+  const heic = partitionUploadFiles([
+    file("raw.heic", "application/octet-stream", Buffer.alloc(16, 1)),
+  ])
+  assert.ok(heic.error)
+  assert.match(heic.error!, /不支持该图片格式/)
+  assert.equal(heic.docs.length, 0)
+  const svg = partitionUploadFiles([
+    file("icon.svg", "", Buffer.from("<svg></svg>")),
+  ])
+  assert.ok(svg.error)
+  assert.match(svg.error!, /不支持该图片格式/)
+})
+
 test("partitionUploadFiles: single image over 4MiB → error", () => {
   const r = partitionUploadFiles([
     file("big.png", "image/png", pngOf(MAX_UPLOAD_IMAGE_BYTES + 1)),

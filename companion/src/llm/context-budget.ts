@@ -76,7 +76,7 @@ export function estimateMessagesTokens(msgs: CanonicalChatMessage[]): number {
     if (m.role === "user" && Array.isArray(m.content)) {
       for (const p of m.content) {
         if (p.type === "text") n += estimateTokens(p.text)
-        else n += estimateImagePartTokens()
+        else n += estimateImagePartTokens(p.width, p.height)
       }
     } else {
       n += estimateTokens(serializeMessage(m))

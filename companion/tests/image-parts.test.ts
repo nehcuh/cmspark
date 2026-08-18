@@ -34,7 +34,10 @@ test("hydrate: native loads parts newest-4; text-only strips", () => {
   const last = native[2]
   assert.equal(last.role, "user")
   assert.ok(Array.isArray(last.content))
-  assert.equal((last.content as any[]).some((p) => p.type === "image_url"), true)
+  const parts = last.content as any[]
+  assert.equal(parts.some((p) => p.type === "image_url"), true)
+  assert.equal(parts.some((p) => p.type === "text" && String(p.text).includes('<untrusted-image name="two">')), true)
+  assert.equal(parts.some((p) => p.type === "text" && p.text === "</untrusted-image>"), true)
 
   const stripped = hydrateUserImageParts(rebuilt, persisted, { useNative: false, maxImages: 4, readImage })
   assert.equal(typeof stripped[2].content, "string")
@@ -48,4 +51,23 @@ test("hydrate: missing sidecar → 图片丢失 stub", () => {
     useNative: true, maxImages: 4, readImage: () => null,
   })
   assert.match(JSON.stringify(out[0].content), /图片丢失/)
+})
+
+test("hydrate: passes dims onto image_url and wraps untrusted-image", () => {
+  const rebuilt = [{ role: "user" as const, content: "x\n📎 shot" }]
+  const persisted = [{
+    role: "user",
+    content: "x\n📎 shot",
+    attachments: [{ ...att, width: 1568, height: 1568 }],
+  }]
+  const out = hydrateUserImageParts(rebuilt, persisted, {
+    useNative: true,
+    maxImages: 4,
+    readImage: () => ({ base64: "QQ==", mime: "image/png" }),
+  })
+  const parts = out[0].content as any[]
+  const img = parts.find((p) => p.type === "image_url")
+  assert.equal(img.width, 1568)
+  assert.equal(img.height, 1568)
+  assert.match(JSON.stringify(parts), /untrusted-image/)
 })

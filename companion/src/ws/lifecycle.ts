@@ -65,6 +65,9 @@ import { validateWsMessage } from "./validate"
 // ---------------------------------------------------------------------------
 
 const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
+/** Match extension SW refuse so HMAC peers get file.upload_error, not 1009. */
+const WS_FRAME_HEADROOM = 256 * 1024
+const WS_SOFT_MAX = MAX_WS_MESSAGE_SIZE - WS_FRAME_HEADROOM
 /** Cap concurrent unauthenticated sockets during handshake window (pre-auth DoS). */
 const MAX_UNAUTHENTICATED_WS = 8
 const PORT = 23401
@@ -811,7 +814,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       try {
         // WebSocket message size limit (P0)
         const rawLen = Buffer.isBuffer(raw) ? raw.length : Buffer.byteLength(raw.toString())
-        if (rawLen > MAX_WS_MESSAGE_SIZE) {
+        if (rawLen > WS_SOFT_MAX) {
           // Peek type + thread_id without full parse (prefix search) for diagnostics
           // and to stamp file.upload_error so UI can clear the right mapBusy.
           const peek = (() => {

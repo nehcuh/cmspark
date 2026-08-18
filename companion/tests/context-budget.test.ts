@@ -68,6 +68,18 @@ test("estimateMessagesTokens: image parts add 1600 not ~3", () => {
   assert.ok(n >= 1600, `expected >=1600, got ${n}`)
 })
 
+test("estimateMessagesTokens: square >=1200 charges 2800", () => {
+  const m: CanonicalChatMessage = {
+    role: "user",
+    content: [
+      { type: "text", text: "x" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" }, width: 1568, height: 1568 },
+    ],
+  }
+  const n = estimateMessagesTokens([m])
+  assert.ok(n >= 2800, `expected >=2800, got ${n}`)
+})
+
 test("redactMessagesForCompaction: user parts extract text, never replace on array", () => {
   const msgs: CanonicalChatMessage[] = [
     {

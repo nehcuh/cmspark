@@ -8,6 +8,44 @@ import { decodePngToRgba } from "../computer/png-decode"
 export const PREVIEW_MAX_EDGE = 96
 export const PREVIEW_MAX_BYTES = 8 * 1024
 
+/** Best-effort raster dimensions (PNG IHDR / JPEG SOF). */
+export function parseRasterDims(buf: Buffer, mime: string): { width: number; height: number } | undefined {
+  if (!buf || buf.length < 10) return undefined
+  if (mime === "image/png") {
+    if (buf.length < 24) return undefined
+    if (buf[0] !== 0x89 || buf[1] !== 0x50) return undefined
+    const width = buf.readUInt32BE(16)
+    const height = buf.readUInt32BE(20)
+    if (width > 0 && height > 0 && width < 20000 && height < 20000) return { width, height }
+    return undefined
+  }
+  if (mime === "image/jpeg") {
+    let i = 2
+    while (i + 8 < buf.length) {
+      if (buf[i] !== 0xff) {
+        i++
+        continue
+      }
+      const marker = buf[i + 1]!
+      if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
+        const height = buf.readUInt16BE(i + 5)
+        const width = buf.readUInt16BE(i + 7)
+        if (width > 0 && height > 0) return { width, height }
+        return undefined
+      }
+      if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+        i += 2
+        continue
+      }
+      if (i + 3 >= buf.length) break
+      const len = buf.readUInt16BE(i + 2)
+      if (len < 2) break
+      i += 2 + len
+    }
+  }
+  return undefined
+}
+
 function crc32(buf: Buffer): number {
   let c = ~0
   for (let i = 0; i < buf.length; i++) {
