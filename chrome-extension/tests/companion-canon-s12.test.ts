@@ -10,7 +10,15 @@ test("S1.2 装配 is the chip above the field, not a capsule icon", () => {
   assert.match(app, /<ComposerChips/)
   assert.ok(!/title="装配 — 技能、场景、知识"/.test(app))
   assert.match(app, /添加文件或图片/)
-  assert.match(app, /!text\.trim\(\)/)
+  // Attach + mic icons stay visible by default — no empty-conversation gate
+  // (users couldn't discover attach / dictation on a fresh thread).
+  assert.match(app, /\{!showStop && !\(voice\.listening && showVoiceMic\) && \(/)
+  assert.match(app, /\{showVoiceMic && \(\s*<VoiceMicButton/)
+  // Negative tripwire: any return of the empty-conversation gate turns red.
+  assert.ok(
+    !/messages\.length === 0[\s\S]{0,160}text\.trim\(\)/.test(app),
+    "empty-conversation icon gate must not return",
+  )
   assert.ok(!/畅所欲问/.test(app))
 })
 
