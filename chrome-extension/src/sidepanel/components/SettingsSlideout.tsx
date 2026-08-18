@@ -2122,7 +2122,7 @@ export function SettingsSlideout() {
               onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_size: parseInt(e.target.value) * 1024 * 1024 } })}
             />
             <div style={styles.helpText}>
-              上传文件的大小上限，范围 1–100 MB
+              上传文件的大小上限，范围 1–100 MB。此上限不提高图片预算（压缩后单张 ≤4MB，合计 ≤6MB）。
             </div>
           </div>
 
@@ -2152,7 +2152,7 @@ export function SettingsSlideout() {
               启用文件视觉分析
             </label>
             <div style={styles.helpText}>
-              上传图片时尝试使用视觉模型分析图片内容
+              仅当主模型不能看图时，用户附图才走视觉轨。主模型能看图时此开关不影响粘贴/选/拖。
             </div>
           </div>
 

@@ -34,6 +34,19 @@ import { chatCreate, generateThreadTitle } from "./llm/adapter"
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
+import { likelyMultimodal } from "./llm/likely-multimodal"
+import {
+  allocateUploadMessageId,
+  buildVisionAttachMessage,
+  partitionUploadFiles,
+  planStandaloneImageAnalysis,
+  sha256hex,
+  spliceEditedCaption,
+  validateImageCaps,
+} from "./llm/split-upload-files"
+import { makePreviewB64, parseRasterDims } from "./llm/image-preview"
+import { copyAttachmentsToThread, deleteSidecarsForMessages, writeImageSidecar } from "./threads/image-sidecar"
+import type { RasterMime } from "./llm/image-sniff"
 import { chunkFile, searchChunks } from "./file-chunker"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
@@ -506,17 +519,30 @@ export async function handleMessage(
         })
       }
 
-      // Phase 1: Parse all files (text + embedded images)
-      // Wrap the whole parse/vision path so timeouts / unexpected throws become
-      // file.upload_error (UI clears busy). Uncaught throws only send type:"error"
-      // which historically left the Side Panel stuck on "思考中".
+      // Phase 1: MIME-split images vs docs BEFORE allowed_types / parseFile
+      // (images are not required to be in allowed_types). Wrap parse/vision so
+      // timeouts / unexpected throws become file.upload_error (UI clears busy).
       const parseResults: FileParseResult[] = []
       let finalFileContents: Array<{ filename: string; content: string }> = []
+      const partitioned = partitionUploadFiles(Array.isArray(files) ? files : [])
+      if (partitioned.error) return uploadError(partitioned.error)
+      const standaloneImages = partitioned.images
+      const docFiles = partitioned.docs
 
       try {
-        const fileCount = Array.isArray(files) ? files.length : 0
-        for (let fi = 0; fi < files.length; fi++) {
-          const file = files[fi]
+        if (standaloneImages.length > 0) {
+          pushUploadStatus(
+            "parsing",
+            standaloneImages.length > 1
+              ? `正在处理图片（${standaloneImages.length} 张）…`
+              : "正在处理图片…",
+            { image_count: standaloneImages.length },
+          )
+        }
+
+        const fileCount = docFiles.length
+        for (let fi = 0; fi < docFiles.length; fi++) {
+          const file = docFiles[fi]
           const { name, type, content } = file
 
           pushUploadStatus(
@@ -632,9 +658,18 @@ export async function handleMessage(
           filename: f.filename,
           chars: f.content.length,
         })),
+        image_count: standaloneImages.length,
       })
 
-      pushUploadStatus("chat", "文档已解析，模型思考中…")
+      // Re-validate image caps after parse (partition already checked; belt-and-suspenders)
+      {
+        const capErr = validateImageCaps(standaloneImages)
+        if (capErr) return uploadError(capErr)
+      }
+
+      if (finalFileContents.length > 0 && standaloneImages.length === 0) {
+        pushUploadStatus("chat", "文档已解析，模型思考中…")
+      }
 
       // Same gates as chat.create: paused, multi-agent LLM cap, supersede CAS
       {
@@ -666,8 +701,14 @@ export async function handleMessage(
       const uploadController = new AbortController()
       abortControllers.set(thread_id, uploadController)
 
+      // Hoisted so chatCreate failure can delete already-written sidecars.
+      let reservedUserMessageId: string | undefined
       try {
-        const userMessage = rest.message || "请分析我上传的文件"
+        const rawCaption = typeof rest.message === "string" ? rest.message : ""
+        const userMessageBase =
+          standaloneImages.length > 0 && finalFileContents.length === 0
+            ? rawCaption
+            : (rawCaption || "请分析我上传的文件")
         const threadForConfig = services.threadManager.get(thread_id)
         const threadLLMOverride = threadForConfig?.config_override || {}
         const effectiveLLMConfig = { ...config.llm }
@@ -675,6 +716,80 @@ export async function handleMessage(
           if (key in effectiveLLMConfig && val !== undefined && val !== null) {
             (effectiveLLMConfig as any)[key] = val
           }
+        }
+
+        const useNative = likelyMultimodal(effectiveLLMConfig.model_name)
+        const visionRailOn = !!(config.vision?.enabled && fileConfig.enable_vision_analysis !== false)
+        const standalonePlan = planStandaloneImageAnalysis({
+          imageCount: standaloneImages.length,
+          useNative,
+          visionRailOn,
+        })
+        if (standalonePlan.error) return uploadError(standalonePlan.error)
+
+        // Sidecars only after the vision-rail plan succeeds (no orphans on vision-off).
+        reservedUserMessageId = standaloneImages.length
+          ? allocateUploadMessageId(thread_id)
+          : undefined
+        const imageAttachments: Array<{
+          name: string
+          mime: RasterMime
+          sha256: string
+          bytes: number
+          preview_jpeg_b64?: string
+          width?: number
+          height?: number
+        }> = []
+        if (reservedUserMessageId) {
+          for (let i = 0; i < standaloneImages.length; i++) {
+            const img = standaloneImages[i]!
+            const mime = img.type as RasterMime
+            const written = writeImageSidecar(thread_id, reservedUserMessageId, i, mime, img.buf)
+            if (!written) {
+              return uploadError(`图片 "${img.name}" 保存失败`)
+            }
+            const preview = await makePreviewB64(img.buf, mime)
+            const dims = parseRasterDims(img.buf, mime)
+            imageAttachments.push({
+              name: img.name,
+              mime,
+              sha256: sha256hex(img.buf),
+              bytes: img.buf.length,
+              ...(preview ? { preview_jpeg_b64: preview } : {}),
+              ...(dims ? { width: dims.width, height: dims.height } : {}),
+            })
+          }
+        }
+
+        let userMessage = userMessageBase
+        if (standalonePlan.analyze) {
+          // !useNative && vision rail on — NEVER analyzeImage standalone images when useNative
+          pushUploadStatus("vision", "正在分析图片…", { image_count: standaloneImages.length })
+          const visionResults: Array<{ name: string; description: string }> = []
+          for (const img of standaloneImages) {
+            try {
+              const visionResult = await analyzeImage(
+                {
+                  base64: img.buf.toString("base64"),
+                  width: 0,
+                  height: 0,
+                  url: "",
+                  title: img.name,
+                },
+                config.vision!,
+                `分析这张用户附图 "${img.name}" 的内容，提取所有可见文本和视觉信息。`,
+                uploadController.signal,
+              )
+              visionResults.push({ name: img.name, description: visionResult.description })
+            } catch {
+              visionResults.push({ name: img.name, description: "(视觉分析不可用)" })
+            }
+          }
+          userMessage = buildVisionAttachMessage(userMessageBase, visionResults)
+        } else if (standaloneImages.length > 0 && useNative) {
+          pushUploadStatus("chat", "主模型看图中…", { image_count: standaloneImages.length })
+        } else if (finalFileContents.length > 0) {
+          pushUploadStatus("chat", "文档已解析，模型思考中…")
         }
 
         // Same skill/knowledge auto-load as chat.create (include site knowledge when hostname set)
@@ -701,6 +816,8 @@ export async function handleMessage(
             filename: f.filename,
             chars: f.content.length,
           })),
+          image_count: imageAttachments.length,
+          use_native: useNative,
           skill_count: allSkillIds.length,
           knowledge_count: resolvedKnowledgeIds?.length ?? 0,
           model: effectiveLLMConfig.model_name,
@@ -710,6 +827,8 @@ export async function handleMessage(
           threadId: thread_id,
           message: userMessage,
           fileContents: finalFileContents,
+          imageAttachments: imageAttachments.length ? imageAttachments : undefined,
+          reservedUserMessageId,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
           config: effectiveLLMConfig,
@@ -722,6 +841,13 @@ export async function handleMessage(
         })
         logger.info("file.upload.chat_done", { thread_id })
       } catch (e: any) {
+        if (reservedUserMessageId) {
+          try {
+            deleteSidecarsForMessages(thread_id, [{ id: reservedUserMessageId }])
+          } catch {
+            /* best-effort orphan cleanup */
+          }
+        }
         logger.warn("file.upload.chat_error", {
           thread_id,
           error: e?.message || String(e),
@@ -743,11 +869,15 @@ export async function handleMessage(
         }
       }
 
+      const uploadedNames = [
+        ...finalFileContents.map(f => f.filename),
+        ...standaloneImages.map(i => i.name),
+      ]
       logger.info("file.upload.complete", {
         thread_id,
-        files: finalFileContents.map(f => f.filename),
+        files: uploadedNames,
       })
-      return { type: "file.uploaded", thread_id, files: finalFileContents.map(f => f.filename) }
+      return { type: "file.uploaded", thread_id, files: uploadedNames }
     }
 
     case "file.query_chunks": {
@@ -876,8 +1006,9 @@ export async function handleMessage(
         // Editing a user message: update its content and regenerate the reply.
         userMsg = messages[idx]
         if (editedMessage !== undefined && editedMessage !== userMsg.content) {
-          threadManager.updateMessage(thread_id, message_id, { content: editedMessage })
-          userMsg = { ...userMsg, content: editedMessage }
+          const spliced = spliceEditedCaption(userMsg.content, editedMessage)
+          threadManager.updateMessage(thread_id, message_id, { content: spliced })
+          userMsg = { ...userMsg, content: spliced }
         }
         // Delete everything after this user message.
         const nextAssistantIdx = messages.findIndex((m, i) => i > idx && m.role === "assistant")
@@ -1480,8 +1611,9 @@ export async function handleMessage(
       const idx = messages.findIndex(m => m.id === rest.message_id)
       const msgsToCopy = idx >= 0 ? messages.slice(0, idx + 1) : messages
 
+      const idMap = new Map<string, string>()
       for (const msg of msgsToCopy) {
-        threadManager.addMessage(newThread.id, {
+        const copied = threadManager.addMessage(newThread.id, {
           thread_id: newThread.id,
           role: msg.role,
           content: msg.content,
@@ -1490,8 +1622,16 @@ export async function handleMessage(
           ...(msg.reasoning_content != null
             ? { reasoning_content: msg.reasoning_content }
             : {}),
+          // Task 12 / leftover Task 5: persist remapped attachment metadata
+          // (stampAttachments rewrites rel / msg_id onto the new message id).
+          ...(Array.isArray(msg.attachments) && msg.attachments.length > 0
+            ? { attachments: msg.attachments }
+            : {}),
         })
+        idMap.set(msg.id, copied.id)
       }
+      // Bytes live under threads/<id>.files/; copy ${oldMsgId}-n.ext → ${newMsgId}-n.ext.
+      copyAttachmentsToThread(rest.thread_id, newThread.id, idMap)
 
       // Wave E P1-2: copy Composition surface (skills/knowledge/modes/whitelist/MCP).
       // Do NOT copy Trust (mission_pack_trust_snapshot / auto_approve) or runtime

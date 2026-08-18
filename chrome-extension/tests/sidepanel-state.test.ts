@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { agentReducer, initialState, type AgentState } from "../src/sidepanel/store/agentStore"
-import { normalizeConfig, requestInitialSidePanelData } from "../src/sidepanel/hooks/useWebSocket"
+import { agentReducer, initialState, isTempUserMessageId, type AgentState } from "../src/sidepanel/store/agentStore"
+import { normalizeConfig, parseChatUserAttachments, requestInitialSidePanelData } from "../src/sidepanel/hooks/useWebSocket"
 import type { SkillMeta } from "../src/sidepanel/types"
 
 function stateWithThreads(): AgentState {
@@ -165,6 +165,102 @@ test("ADD_MESSAGE dedupes by message id (optimistic panel + SW chat.user echo)",
     message: { ...msg, id: "thread-a_user_2", content: "second" },
   })
   assert.equal(other.messages.length, 2)
+})
+
+test("ADD_MESSAGE same id merges attachments without replacing content", () => {
+  const msg = {
+    id: "thread-a_user_1730000000000",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "look",
+    created_at: "2026-08-17T00:00:00.000Z",
+  }
+  const once = agentReducer(initialState, { type: "ADD_MESSAGE", message: msg })
+  const att = { kind: "image" as const, name: "shot.png", mime: "image/png", preview_jpeg_b64: "abc" }
+  const merged = agentReducer(once, {
+    type: "ADD_MESSAGE",
+    message: { ...msg, content: "ignored", attachments: [att] },
+  })
+  assert.equal(merged.messages.length, 1)
+  assert.equal(merged.messages[0].content, "look")
+  assert.equal(merged.messages[0].attachments?.[0]?.name, "shot.png")
+  assert.equal(merged.messages[0].attachments?.[0]?.preview_jpeg_b64, "abc")
+})
+
+test("ADD_MESSAGE adopts persisted message_id onto last temp user bubble", () => {
+  const optimistic = {
+    id: "thread-a_user_1730000000000",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "look",
+    created_at: "2026-08-17T00:00:00.000Z",
+  }
+  const once = agentReducer(initialState, { type: "ADD_MESSAGE", message: optimistic })
+  const persisted = {
+    id: "thread-a_1730000000001_x7k2p1",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "look\n📎 shot.png",
+    created_at: "2026-08-17T00:00:01.000Z",
+    attachments: [{ kind: "image" as const, name: "shot.png", mime: "image/png" }],
+  }
+  const adopted = agentReducer(once, { type: "ADD_MESSAGE", message: persisted })
+  assert.equal(adopted.messages.length, 1)
+  assert.equal(adopted.messages[0].id, persisted.id)
+  assert.equal(adopted.messages[0].content, "look", "keep optimistic caption")
+  assert.equal(adopted.messages[0].attachments?.[0]?.name, "shot.png")
+})
+
+test("ADD_MESSAGE late temp echo after adopt does not duplicate", () => {
+  const persisted = {
+    id: "thread-a_1730000000001_x7k2p1",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "look",
+    created_at: "2026-08-17T00:00:00.000Z",
+    attachments: [{ kind: "image" as const, name: "shot.png", mime: "image/png" }],
+  }
+  const once = agentReducer(initialState, { type: "ADD_MESSAGE", message: persisted })
+  const late = agentReducer(once, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: "thread-a_user_1730000000000",
+      thread_id: "thread-a",
+      role: "user",
+      content: "look",
+      created_at: "2026-08-17T00:00:00.000Z",
+    },
+  })
+  assert.equal(late.messages.length, 1)
+  assert.equal(late.messages[0].id, persisted.id)
+  assert.equal(late.messages[0].attachments?.[0]?.name, "shot.png")
+})
+
+test("isTempUserMessageId: panel/SW/file-upload vs companion persist", () => {
+  assert.equal(isTempUserMessageId("thread-a_user_1730000000000", "thread-a"), true)
+  assert.equal(isTempUserMessageId("thread-a_1730000000000", "thread-a"), true)
+  assert.equal(isTempUserMessageId("thread-a_1730000000000_x7k2p1", "thread-a"), false)
+  assert.equal(isTempUserMessageId("thread-b_user_1730000000000", "thread-a"), true)
+})
+
+test("parseChatUserAttachments: image only, skip junk", () => {
+  assert.equal(parseChatUserAttachments(undefined), undefined)
+  assert.equal(parseChatUserAttachments([]), undefined)
+  const parsed = parseChatUserAttachments([
+    { kind: "image", name: "a.png", mime: "image/png", sha256: "ab", bytes: 12, preview_jpeg_b64: "qq" },
+    { kind: "file", name: "x.pdf", mime: "application/pdf" },
+    { kind: "image", name: "", mime: "image/png" },
+    null,
+  ])
+  assert.equal(parsed?.length, 1)
+  assert.deepEqual(parsed![0], {
+    kind: "image",
+    name: "a.png",
+    mime: "image/png",
+    sha256: "ab",
+    bytes: 12,
+    preview_jpeg_b64: "qq",
+  })
 })
 
 test("security confirmation requests are queued and removable", () => {

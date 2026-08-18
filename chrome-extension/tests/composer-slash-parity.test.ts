@@ -117,8 +117,8 @@ test("G2 / Q1 composer chips: L0 one 装配 only; L1 ≤3; no Abort", () => {
 })
 
 test("G2 mode-aware placeholders (short, human)", () => {
-  assert.match(composerPlaceholder("chat"), /问任何问题/)
-  assert.match(composerPlaceholder("browser"), /网页任务/)
+  assert.match(composerPlaceholder("chat"), /问任何问题，或粘贴截图/)
+  assert.match(composerPlaceholder("browser"), /问任何问题，或粘贴截图/)
   assert.match(composerPlaceholder("computer"), /确认台/)
 })
 

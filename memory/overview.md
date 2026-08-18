@@ -2,9 +2,9 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-17 (S72 · #191 Windows ACP spawn MERGED)
+**Updated**: 2026-08-17 (S73 · #193 thread hygiene MERGED)
 
-## CMspark — 产品 0.5.0 稳定切点
+## CMspark — 产品 0.5.1（0.5.0 切点 + 用户附图）
 
 | 轴 | 状态 |
 |----|------|
@@ -17,25 +17,26 @@
 | Precision Instrument UI | **on main**（#168–#171） |
 | Thread list ID + large skill install | **on main**（#184） |
 | **编程接力 / Mode C** | **on main**（**#190** Panel+Mode C；**#191** Windows spawn/诚实 L1） |
+| Thread hygiene（未命名 / ACP husk） | **on main**（**#193**） |
 | Deep-diagnosis fanout hardening | **on main**（#172–#175） |
 | multi-OS CI smoke | **on main**（#175 `smoke-os`） |
 | DevSec 默认工作区沙箱 | **on main**（#165/#166） |
 
 ## Main tip (remote)
 
-- **`origin/main`**: merge PR **#191** (`33022bd`) — Windows ACP spawn + Mode C honesty  
-- **Open PR**: 以 `gh pr list` 为准（#191 已 MERGED）
+- **`origin/main`**: merge PR **#193** (`7a88b8c`) — thread hygiene（C′+D）  
+- **Open PR**: 以 `gh pr list` 为准（#193 已 MERGED）
 
-## Recent locks (S71)
+## Recent locks (S73)
 
-- Mode C dual-process honesty（Stop 只杀桥；snapshot 字段）
-- Ghostty：`open -na --args -e`；无静默回退 Terminal
-- `buildAcpAgentEnv` 登录 shell 对等 API key
-- applyable on session.event pending_diffs
+- 无意义会话 = 无 user 回合；`#id` 徽章不是标题
+- ACP 标题闭枚举；handback 正文不当删除谓词
+- 整理默认全部时间；薄 husk 预勾；`cleanup_empty` 只硬删 0 消息
 
 ## Next (optional backlog)
 
-- 真机：#191 重启 Companion + 重载扩展；Windows 侧栏启动 Claude/Pi + Mode C 不假 L1
+- 真机：#193 重启 Companion + 重载扩展；整理助手验 husk / 簇主
+- 真机：#191 Windows Claude/Pi + Mode C 不假 L1
 - 真机：#190 Ghostty Mode C + Stop 文案（mac）
 - residual：login-shell 失败重试；WS progress throttle
 - 真机：三旗 / meeting / workspace / Win shell backlog

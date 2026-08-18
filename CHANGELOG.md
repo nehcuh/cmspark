@@ -4,7 +4,16 @@
 
 ## [Unreleased]
 
-### Security / Trust (multi-adv deep Wave0–2, 2026-08-10)
+（无）
+
+## [0.5.1] — 2026-08-18
+
+### Added
+
+- **对话框用户附图**：Side Panel 可粘贴 / 点选 / 拖入 PNG·JPEG·GIF·WebP。线程生效主模型 `likelyMultimodal` 时原生看图，否则走视觉轨；工具截图 / PDF 内嵌图仍走视觉轨。
+- 附件芯片、48px 对话缩略图、首次发送目的地主机提示；sidecar 落盘（0o600/0o700 + realpath）；WS 帧 10MiB−256KiB 拒发。
+
+### Security / Trust (already on main since 0.5.0; recorded at 0.5.1 cut)
 
 - **C1** 无人值守 dual-write：武装前快照三旗；解除/TTL 过期**始终**恢复快照（不再仅 `clear_cruise`）
 - **C2/C3** 急停 ≠ 解除：值守仍开 banner；确认台空桌面常驻「值守中：桌面确认已静默」
@@ -17,7 +26,7 @@
 - **C11** UI `SURFACE_BY_TOOL` 表（含 shell_exec / netsec / scroll_to / upload_file）
 - **C13–C16** SoT/文档诚实：SUPERSEDED Aug-02 设计；mcp.md `require_grant` 默认 true；CU Apps 坐标开关 0.5.0；ADR-021 residual windowLevel hard
 
-### Added (tip ships after 0.5.0 cut)
+### Also on tip since 0.5.0 (recorded at 0.5.1 cut)
 
 - **#160** 无人值守 re-L2 静默（ADR-021 2026-08-09 修订）
 - **#161** Windows voice/shell closeout（shell/netsec token binding 对齐）
@@ -55,7 +64,7 @@
 
 ### Changed
 
-- 产品版本 **0.4.0 → 0.5.0**  
+- 产品版本 **0.4.0 → 0.5.0**
 - 文档导航、GOAL G22、architecture §9 与 README 能力表同步  
 
 ### Security / Trust

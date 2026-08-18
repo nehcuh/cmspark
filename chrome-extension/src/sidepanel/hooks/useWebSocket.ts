@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
-import type { ComputerTaskEventView, LLMConfig } from "../types"
+import type { ComputerTaskEventView, LLMConfig, MessageAttachment } from "../types"
 import { isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
 import { isBrowserTool } from "../mode/mode-controller"
@@ -95,6 +95,31 @@ export function shouldApplyStreamEvent(
   if (msgThreadId == null || msgThreadId === "") return false
   if (activeThreadId == null || activeThreadId === "") return false
   return msgThreadId === activeThreadId
+}
+
+/** Sanitize chat.user / history attachment metadata (image thumbs only). */
+export function parseChatUserAttachments(raw: unknown): MessageAttachment[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  const out: MessageAttachment[] = []
+  for (const a of raw) {
+    if (!a || typeof a !== "object") continue
+    const rec = a as Record<string, unknown>
+    if (rec.kind !== "image") continue
+    if (typeof rec.name !== "string" || typeof rec.mime !== "string") continue
+    const name = rec.name.trim().slice(0, 200)
+    const mime = rec.mime.trim().slice(0, 64)
+    if (!name || !mime) continue
+    const att: MessageAttachment = { kind: "image", name, mime }
+    if (typeof rec.sha256 === "string" && rec.sha256) att.sha256 = rec.sha256.slice(0, 128)
+    if (typeof rec.bytes === "number" && Number.isFinite(rec.bytes) && rec.bytes >= 0) {
+      att.bytes = rec.bytes
+    }
+    if (typeof rec.preview_jpeg_b64 === "string" && rec.preview_jpeg_b64) {
+      att.preview_jpeg_b64 = rec.preview_jpeg_b64
+    }
+    out.push(att)
+  }
+  return out.length ? out : undefined
 }
 
 export function useWebSocket() {
@@ -251,11 +276,13 @@ export function useWebSocket() {
         }
 
         case "chat.user": {
-          // SW rebroadcast of user turns from any surface (panel / Cockpit).
-          // Companion never echoes the user message; multi-tree stores need this.
+          // SW rebroadcast + companion persist echo (message_id + attachments).
+          // Optimistic panel bubble uses a temp id; ADD_MESSAGE adopts the
+          // persisted id and merges attachments (DoD #13).
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           const content = typeof msg.content === "string" ? msg.content : ""
-          if (!content.trim()) break
+          const attachments = parseChatUserAttachments(msg.attachments)
+          if (!content.trim() && !attachments?.length) break
           const threadId =
             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
           const id =
@@ -275,6 +302,7 @@ export function useWebSocket() {
               created_at:
                 (typeof msg.created_at === "string" && msg.created_at) ||
                 new Date().toISOString(),
+              ...(attachments ? { attachments } : {}),
             },
           })
           break
@@ -1635,6 +1663,7 @@ export function useWebSocket() {
             dispatch({ type: "SET_THREAD_BUSY", threadId: upTid, busy: false })
           }
           if (!shouldApplyStreamEvent(upTid, activeThreadRef.current)) break
+          dispatch({ type: "BUMP_COMPOSER_UPLOAD_CLEAR" })
           dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           // Only clear processing if no stream is in flight for this panel.
           if (!streamingRef.current && !reasoningRef.current) {

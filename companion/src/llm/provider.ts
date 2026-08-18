@@ -36,9 +36,13 @@ export interface CanonicalToolDefinition {
   }
 }
 
+export type UserContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string }; width?: number; height?: number }
+
 export type CanonicalChatMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
+  | { role: "user"; content: string | UserContentPart[] }
   | {
       role: "assistant"
       content?: string | null

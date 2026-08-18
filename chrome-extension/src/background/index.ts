@@ -39,6 +39,7 @@ import {
   forwardFailureConsoleLevel,
   shouldReportForwardFailureToCompanion,
 } from "./log-forward-policy"
+import { shouldRefuseWsFrame } from "./ws-frame-budget"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -603,6 +604,15 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             jsonBytes = new TextEncoder().encode(JSON.stringify(payload)).length
           } catch {
             jsonBytes = -1
+          }
+          if (shouldRefuseWsFrame(jsonBytes)) {
+            chrome.runtime.sendMessage({
+              type: "file.upload_error",
+              thread_id: message.threadId,
+              error: "附件总体积过大，请少选几个文件",
+            })
+            sendResponse({ ok: false, diag: { sent: false, json_bytes: jsonBytes, over_companion_10mb: true } })
+            return true
           }
           const before = wsClient?.getDiag?.() ?? null
           const sent = wsClient.send(payload)

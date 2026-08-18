@@ -22,6 +22,27 @@
 
 ## Technical Pitfalls
 
+### 清理空白 / 整理助手扫不到「未命名」编程接力 husk（2026-08-17 · #193）
+- **现象**：点完整理+清理空白，列表仍有 `#rny77t` / `p1-wl` 一类意义不明行
+- **根因**：(1) `cleanupEmpty` 只硬删 `message_count===0`，ACP handback 一写入 assistant 就免疫；(2) 整理默认 `to=now-30d`，近端 husk 根本不进扫描；(3) 规则无 `no_user`/`acp_husk`；(4) 自动起名要 user 消息
+- **产品锁**：无意义=无 user 回合，不是标题不好听；`cleanup_empty` 语义冻结；整理默认「全部（含近期）」
+- **相关**：`docs/superpowers/specs/2026-08-17-thread-hygiene-adversarial-design.md` · PR #193
+
+### ACP 失败词禁止扫 handback 正文（2026-08-17 · #193 对抗 REJECT）
+- **坑**：`isAcpFailTemplate` 对 `denied|timeout|cancelled` 做 `includes()`，扫的是 assistant 前 400 字（已进入 `### 摘要` DATA）
+- **后果**：实质 diff（`t4s8kw` 类）正文提到 timeout → 被标 `acp_husk` 并预勾进回收站
+- **修**：只看第一方标题行（`【编程接力 · …】完成|部分`）；薄 husk 靠字数 &lt;200，不靠正文英文词
+- **纪律**：不可信 handback 不得当删除谓词、标题或列表证据
+
+### cleanup_empty 的 Trust 释放必须与 exceptId 对齐（2026-08-17 · #193）
+- **坑**：先对所有 0 消息线程 `releaseTrustBeforeThreadGone`，再 `cleanupEmpty(exceptId)` 留下当前草稿
+- **后果**：刚 `+新建` 且绑了 Pack Trust 的空槽被清 cookie，会话还在
+- **修**：release 循环跳过 `except_thread_id`；整理扫描同样 exclude active
+
+### SW 转发 suggest_cleanup 必须显式带 except_thread_id（2026-08-17 · #193）
+- **坑**：Side Panel 发了 `except_thread_id`，background 只转发 `from/to/include_workers` → companion 仍预勾当前空草稿
+- **纪律**：新增 WS 字段要同时改 panel → SW → validate/router；不要假设整包透传
+
 ### L2_GATE_TOOLS ≠ 永远弹确认（ACP B1 · 2026-08-13 · S70）
 - **现象**：工具在 `L2_GATE_TOOLS` 里，但 `auto_approve_dangerous` / god-mode / 三旗巡航下仍无对话框就拿到 `security_token`
 - **根因**：`skipConfirmation` 为 true 时只有 `capabilityForceConfirm`（及 host_computer 特例）会 `forceConfirm`；漏加则走 auto_approved 发 token
@@ -631,6 +652,12 @@
 
 ## Reusable Patterns
 
+### 五路独立对抗 → 用户拍两叉 → 落地三路 REJECT → 修 → CI 合（2026-08-17 · #193）
+- **设计**：A JTBD / B 呈现 / C 起名 / D 清理 / E 安全 互不看见；合成后只让用户裁 1–2 个真分歧（本轮 C′ 写库 + D 预勾）
+- **落地**：H1 呈现+召回可单独验收；H2 起名写口防新 husk；实现后再开独立对抗，**禁止同会话自 APPROVE**
+- **本轮 REJECT 共识**：活跃草稿预勾、body 失败词、Trust exceptId、终态漏钩/双写、batch≤50
+- **相关**：`alias-commit.ts` 唯一写口；`cleanup-rules.ts` 纯函数金样
+
 ### 四路对抗 REJECT → 修 B1–B4 → dual R2 both_ok → CI 绿合 main（2026-08-12 · #184）
 1. 产品缺口（UI id / 大 zip / download shelf）实现后 **四路独立 adversarial**（安全/正确性/下载/UI）
 2. 内部 REJECT 落 `docs/audit/reviews/*adversarial*`；修阻塞项 + R2 nits 再收一档
@@ -865,6 +892,13 @@
 - 教训：JS 单线程下，**全同步**的 read-modify-write 天然原子，不存在交错竞态——只有 caller「读 → await → 用陈旧快照写」才有竞态。审计/评审提"竞态"时先确认是否有 await 间隙，别为不存在的竞态加锁（cargo-cult）。kimi 终审也独立验证了所有 caller无 await 间隙，确认非 bug。
 
 ## Architecture Decisions
+
+### 会话卫生：无意义=无 user；C′ 闭枚举；D 薄 husk 预勾（2026-08-17 · #193 MERGED）
+- **SoT**：`docs/superpowers/specs/2026-08-17-thread-hygiene-adversarial-design.md`
+- **呈现**：空 alias 显示 `空会话`/`编程接力`/`无用户消息`；禁止 `未命名 · id`（`#id` 徽章留下）
+- **写库**：ACP 终态且 alias 空 → `接力·{agent}·{审查|起草|失败|部分|取消}`；`p1-wl` 等已提交短码禁止静默改
+- **清理**：整理默认全部时间；`acp_husk`/`no_user` 薄默认勾；实质 ACP 与簇主 omit；`cleanup_empty` 仍只硬删 0 消息
+- **Ship**：PR **#193** rebase `7a88b8c`
 
 ### Windows npm shim ≠ spawnable（2026-08-16 · #191）
 - **坑**：nvm/npm 在 `node.exe` 旁放一对垫片：`claude`（`#!/bin/sh`）+ `claude.cmd`。`where` 先列出 shebang。Node `spawn` 无 shell 时：shebang → ENOENT，`.cmd` → EINVAL。仓库里 `shell_exec` 已写过这条，ACP 漏了。

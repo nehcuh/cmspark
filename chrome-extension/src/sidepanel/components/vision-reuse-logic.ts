@@ -12,8 +12,7 @@ export const VISION_PLACEHOLDER_KEY = "ollama"
 
 export const VISION_COPY = {
   sectionHelp:
-    "开启后，截图 / analyze_image 会先经视觉模型转成文字再交给主对话（主对话不会直接收图）。" +
-    "可使用本地 VLM（如 Ollama llava），也可使用云端 OpenAI 兼容多模态 API（与主模型相同亦可）。",
+    "本段只管工具截图 / analyze_image：先视觉轨转文字再进对话。输入框粘贴/选/拖的图另算——主模型能看图则直送主模型，否则才走本视觉轨。",
   railDifferentiator:
     "本段是「看图描述」轨。桌面点击定位用的实验层 Qwen3-VL（设置 → 实验功能）与此无关，不能代替截图分析。",
   bannerTitle: "主模型可能已支持图片理解",
@@ -35,7 +34,8 @@ export const VISION_COPY = {
     "主模型 API Key 未在界面显示（仅 Companion 已保存或为掩码）。已写入 URL/Model；" +
     "保存时 Companion 会在端点匹配且视觉 Key 占位时继承主 Key。建议保存后点「测试视觉模型连接」。",
   postReuseTestHint: "建议立即测试视觉连接，确认端点可用后再用于截图分析。",
-  fallbackPassthrough: "保留截断 base64（主模型通常仍不能真正看图）",
+  fallbackPassthrough:
+    "视觉轨会把截断 base64 塞进说明；只有主模型走原生看图时才能看见像素",
   fallbackMetadata: "仅元数据（推荐）",
   fallbackError: "报错",
 } as const
@@ -74,31 +74,23 @@ export function extractHostname(url: string | undefined | null): string {
  * Fail-closed multimodal name heuristic. Unknown models → false.
  * Does NOT check protocol (use shouldOfferVisionReuse for offer gate).
  */
+// lock-step companion/src/llm/likely-multimodal.ts
 export function likelyMultimodal(modelName: string | undefined | null): boolean {
   const m = (modelName || "").trim().toLowerCase()
   if (!m) return false
-
-  // Known text-only / non-vision families first
   if (/deepseek/.test(m)) return false
   if (/\br1\b/.test(m) && !/vision|vl/.test(m)) return false
-  // coder/reasoner without explicit vision tag
   if (/(^|[-_])(coder|reasoner)($|[-_])/.test(m) && !/vl|vision|omni/.test(m)) return false
-
-  if (
-    /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-4-vision|o[1-9].*vision|chatgpt-4o/.test(m)
-  ) {
-    return true
-  }
+  if (/kimi-k2/.test(m) && !/vl|vision|omni/.test(m)) return false
+  if (/moonshot-v1/.test(m) && !/vl|vision|omni/.test(m)) return false
+  if (/gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-4-vision|o[1-9].*vision|chatgpt-4o/.test(m)) return true
   if (/claude|sonnet|opus|haiku/.test(m)) return true
   if (/gemini|gemma.*vision/.test(m)) return true
   if (/kimi|moonshot/.test(m)) return true
   if (/glm-4v|glm-4\.?\d*v|glm-4\.6v/.test(m)) return true
   if (/qwen.*vl|vl.*qwen|qwen2\.5-?vl|qwen2-vl|qwen3-vl/.test(m)) return true
-  if (/llava|minicpm-v|moondream|pixtral|phi-3-vision|phi-4-multimodal/.test(m)) {
-    return true
-  }
+  if (/llava|minicpm-v|moondream|pixtral|phi-3-vision|phi-4-multimodal/.test(m)) return true
   if (/\bvision\b|multimodal|omni/.test(m)) return true
-
   return false
 }
 

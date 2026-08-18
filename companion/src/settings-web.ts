@@ -665,7 +665,7 @@ input:focus{border-color:#4A90D9}
         <input type="checkbox" id="visionEnabled" style="width:auto">
         Enable Vision Analysis
       </label>
-      <div class="hint">When enabled, screenshots / analyze_image are pre-analyzed by a vision model into text before the main chat (main loop does not receive image bytes). Use a local VLM (e.g. Ollama llava) or any OpenAI-compatible cloud multimodal endpoint — may match your main LLM. Not the same as experimental Qwen3-VL locate.</div>
+      <div class="hint">This section only covers tool screenshots / analyze_image: they are pre-analyzed by the vision rail into text before the main chat. Images you paste, pick, or drop in the composer are separate — if the main model can see images they go to it natively; otherwise they use this vision rail. Use a local VLM (e.g. Ollama llava) or any OpenAI-compatible cloud multimodal endpoint — may match your main LLM. Not the same as experimental Qwen3-VL locate.</div>
     </div>
 
     <div id="visionFields" style="opacity:0.4;pointer-events:none">
@@ -718,7 +718,7 @@ input:focus{border-color:#4A90D9}
         <label>Fallback Strategy</label>
         <select id="visionFallback" style="width:100%;padding:8px 12px;background:#0f3460;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e0e0e0;font-size:14px;font-family:inherit;outline:none">
           <option value="metadata">Metadata only (recommended)</option>
-          <option value="passthrough">Keep truncated base64 (main model usually cannot truly see images)</option>
+          <option value="passthrough">Vision-rail fallback: stuff truncated base64 into the description (pixels only if the main model uses native vision)</option>
           <option value="error">Fail with error</option>
         </select>
         <div class="hint">What to do when vision model is unavailable</div>

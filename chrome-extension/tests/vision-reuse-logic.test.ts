@@ -28,8 +28,7 @@ test("likelyMultimodal: known multimodal families true", () => {
     "claude-sonnet-4-6",
     "claude-opus-4-7",
     "gemini-2.0-flash",
-    "kimi-k2",
-    "moonshot-v1-128k",
+    "kimi-vl",
     "glm-4v",
     "glm-4.6v",
     "qwen2.5-vl",
@@ -49,6 +48,8 @@ test("likelyMultimodal: text-only and unknown false (fail closed)", () => {
     "deepseek-chat",
     "deepseek-v4-flash",
     "deepseek-reasoner",
+    "kimi-k2",
+    "moonshot-v1-128k",
     "my-coder-7b",
     "some-reasoner",
     "",
@@ -171,9 +172,11 @@ test("extractHostname + banner body include host", () => {
 test("copy honesty: no Ollama-required framing", () => {
   assert.ok(!/需要\s*Ollama/.test(VISION_COPY.sectionHelp))
   assert.ok(!/必须.*Ollama/.test(VISION_COPY.sectionHelp))
-  assert.ok(VISION_COPY.sectionHelp.includes("转成文字"))
+  assert.ok(VISION_COPY.sectionHelp.includes("转文字"))
+  assert.ok(VISION_COPY.sectionHelp.includes("粘贴/选/拖"))
   assert.ok(VISION_COPY.railDifferentiator.includes("Qwen3-VL"))
-  assert.ok(VISION_COPY.fallbackPassthrough.includes("不能真正看图"))
+  assert.ok(VISION_COPY.fallbackPassthrough.includes("视觉轨"))
+  assert.ok(VISION_COPY.fallbackPassthrough.includes("原生看图"))
 })
 
 test("normalizeEndpointUrl and placeholder key helpers", () => {

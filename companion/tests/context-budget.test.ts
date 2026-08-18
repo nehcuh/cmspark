@@ -42,6 +42,61 @@ test("serializeMessage includes tool_call arguments", () => {
   assert.match(serializeMessage(m), /ls/)
 })
 
+test("serializeMessage: user image parts do not stringify to [object Object]", () => {
+  const m: CanonicalChatMessage = {
+    role: "user",
+    content: [
+      { type: "text", text: "请看这张图" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+    ],
+  }
+  const s = serializeMessage(m)
+  assert.doesNotMatch(s, /\[object Object\]/)
+  assert.match(s, /请看这张图/)
+  assert.match(s, /\[image\]/)
+})
+
+test("estimateMessagesTokens: image parts add 1600 not ~3", () => {
+  const m: CanonicalChatMessage = {
+    role: "user",
+    content: [
+      { type: "text", text: "x" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+    ],
+  }
+  const n = estimateMessagesTokens([m])
+  assert.ok(n >= 1600, `expected >=1600, got ${n}`)
+})
+
+test("estimateMessagesTokens: square >=1200 charges 2800", () => {
+  const m: CanonicalChatMessage = {
+    role: "user",
+    content: [
+      { type: "text", text: "x" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" }, width: 1568, height: 1568 },
+    ],
+  }
+  const n = estimateMessagesTokens([m])
+  assert.ok(n >= 2800, `expected >=2800, got ${n}`)
+})
+
+test("redactMessagesForCompaction: user parts extract text, never replace on array", () => {
+  const msgs: CanonicalChatMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "see this sk-abc123456789secret" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+      ],
+    },
+  ]
+  const red = redactMessagesForCompaction(msgs)
+  assert.equal(typeof red[0].content, "string")
+  assert.doesNotMatch(String(red[0].content), /\[object Object\]/)
+  assert.match(String(red[0].content), /redacted-secret/)
+  assert.doesNotMatch(String(red[0].content), /sk-abc123456789secret/)
+})
+
 test("compactMessagesTurnSafe: no-op under budget", () => {
   const msgs = [system("s"), user("hi"), assistant("yo")]
   const r = compactMessagesTurnSafe(msgs, 1_000_000)

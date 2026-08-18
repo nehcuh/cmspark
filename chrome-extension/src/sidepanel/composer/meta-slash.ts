@@ -331,9 +331,9 @@ export function composerChipsForLevel(level: CapabilityLevel): ComposerChip[] {
 export function composerPlaceholder(level: CapabilityLevel): string {
   switch (level) {
     case "chat":
-      return "问任何问题，或描述网页任务…"
+      return "问任何问题，或粘贴截图…"
     case "browser":
-      return "描述网页任务，或继续提问…"
+      return "问任何问题，或粘贴截图…"
     case "computer":
       return "排队跟进…（任务指挥在确认台）"
   }
