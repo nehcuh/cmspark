@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S74 END (2026-08-18 ~18:02) [companion-canon Side Panel · #196 OPEN · CI 绿]
+- **Ship**：`feat/companion-canon-sidepanel` `54f0610` → **PR #196**；CI build + 3 smoke 全绿、MERGEABLE。未合 main
+- **产品**：精密仪器台 → 消费级助手 canon（看山质量杠 · Comp A）；C″ 一条栏 + D″ 诚实空态
+- **真机后收**：图钉左上 / 设置只留 ⋯ / 历史 portal 铺满 / 去掉胶囊铅笔（装配只留芯片）
+- **闸门**：内部三路 AWN；外部两轮 REJECT（生产 tsc / hover cascade）→ 修完 Claude+Pi AWN；PR dual 再 AWN/`both_ok`
+- **本机**：`/Applications` 0.5.1（16:53 DMG，**不含**后三刀 UI）；验 UI 靠重载 `chrome-extension/build/chrome-mv3-prod/`
+- **下次**：(1) 用户点头再合 #196 (2) 重载扩展验现网 (3) 可选重打 DMG；(P2) legal 对比 / 空闲发送箭头 / 巡航档位都缩成「巡航」
+- Recorded: yes — test-tsconfig 掩生产 tsc；inline color 杀 hover；320 历史须 portal
+
 ### r3 eval gate (2026-08-18) [clipboard image paste]
 - **对抗**: 三路独立 explore 均为 APPROVE_WITH_NITS；M1–M6 仍关；r2 leftovers 已验
 - **Pi**: APPROVE_WITH_NITS（自跑 111+76）
@@ -745,6 +754,13 @@
 - Recorded: yes 鈥?瑙?project-knowledge.md銆孧ermaid 鍥捐〃娓叉煋鐨勪笁涓潙銆? docs/adr/009
 
 ## In-Flight Tasks (Cross-Session)
+
+### Companion-canon Side Panel（S74 · #196 OPEN）
+- status: **active**
+- context: 消费级助手空态 + 320 栏；C″/D″；外部 PR dual AWN；CI 4/4 绿
+- next_action: (1) 合 #196（实现者不得自放行）(2) 重载 `chrome-extension/build/chrome-mv3-prod/` (3) 可选 `make package-macos` 换 `/Applications`
+- resume_doc: PR #196 · `docs/audit/reviews/companion-canon-ui-pr-verdict-20260818-172531.json`
+- updated: 2026-08-18
 
 ### 会话卫生 #193 真机 dogfood（S73 · #193 MERGED）
 - status: **active**
