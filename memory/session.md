@@ -2,6 +2,12 @@
 
 ## Current Session
 
+### r3 eval gate (2026-08-18) [clipboard image paste]
+- **对抗**: 三路独立 explore 均为 APPROVE_WITH_NITS；M1–M6 仍关；r2 leftovers 已验
+- **Pi**: APPROVE_WITH_NITS（自跑 111+76）
+- **Claude**: UNKNOWN（529×2）
+- **MERGE 序**: 对抗→Pi 已 APPROVE*；未合 main / 未 PR
+
 ### r2 nits fold (2026-08-18) [clipboard image paste]
 - **Ship**：`fix(attach): fold r2 nits (dims, untrusted wrap, WS headroom, heic ext)`
 - **落地**：budget 传 width/height（2800 可达）；companion WS_SOFT_MAX=10MiB-256KiB；hydrate `<untrusted-image>` 包裹；basename 拒 .heic/.svg；ChatView `previewDataUrl` + onError 空砖；chips 只走 `file.uploaded` bump；destAck merge-on-hydrate；sidecar 失败清理 hoist

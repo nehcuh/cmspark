@@ -1,0 +1,8 @@
+{
+  "batch": "clipboard-image-paste-impl-r3",
+  "timestamp": "20260818-110845",
+  "claude": { "verdict": "UNKNOWN", "exit_code": 1, "path": "/Users/huchen/Projects/cmspark/.worktrees/feat-clipboard-image-paste/docs/audit/reviews/clipboard-image-paste-impl-r3-claude-20260818-110845.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/.worktrees/feat-clipboard-image-paste/docs/audit/reviews/clipboard-image-paste-impl-r3-pi-20260818-110845.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/.worktrees/feat-clipboard-image-paste/docs/audit/reviews/clipboard-image-paste-impl-r3-diff-20260818-110845.patch"
+}
