@@ -1,7 +1,7 @@
 # CMspark — Product Context (Impeccable)
 
 > Written 2026-08-11 for design harnesses. Product truth for Side Panel redesign.
-> Version lock: companion/extension **0.5.0**.
+> Version lock: companion/extension **0.5.1**.
 
 ## One sentence
 
