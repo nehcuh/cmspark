@@ -85,6 +85,8 @@ import {
   visionRailOpen,
 } from "./utils/image-compose"
 import { extractHostname, likelyMultimodal } from "./components/vision-reuse-logic"
+import { buildOptimisticUploadBubble, uploadSendOutcome } from "./utils/upload-send"
+import { newTempUserMessageId } from "../utils/temp-message-id"
 import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
 import { WorkerScopeBar } from "./components/WorkerScopeBar"
 import { RunBusyChip } from "./components/RunBusyChip"
@@ -1232,6 +1234,15 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         if (uploadThreadId) {
           dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: true })
         }
+        // Optimistic bubble (F2): a new companion's chat.user echo adopts it via
+        // client_message_id; an old companion (no echo) simply keeps it — the
+        // upload turn never vanishes from the transcript.
+        const { clientMessageId, message: uploadBubble } = buildOptimisticUploadBubble({
+          threadId: uploadThreadId!,
+          userMessage,
+          fileNames: files.map((f) => f.name),
+        })
+        dispatch({ type: "ADD_MESSAGE", message: uploadBubble })
 
         chrome.runtime.sendMessage(
           {
@@ -1240,6 +1251,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             message: userMessage,
             files,
             skillIds,
+            clientMessageId,
           },
           (response) => {
             // Companion down / SW failed — free the busy UI (file.upload_error path
@@ -1262,7 +1274,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             } catch {
               /* ignore */
             }
-            if (swErr || !response?.ok) {
+            const sendOutcome = uploadSendOutcome(swErr, response)
+            if (sendOutcome !== "ok") {
               // Always clear mapBusy for the upload thread. Keep chips on error.
               if (uploadThreadId) {
                 dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: false })
@@ -1273,6 +1286,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               }
               dispatch({ type: "SET_PROCESSING_STATUS", status: null })
               dispatch({ type: "SET_PROCESSING", isProcessing: false })
+              // F6: SW refused the oversized frame and already broadcast
+              // file.upload_error with the correct banner — don't stack a
+              // second, misleading 「Companion 未连接」 bubble on top.
+              if (sendOutcome === "refused") {
+                return
+              }
               dispatch({
                 type: "ADD_MESSAGE",
                 message: {
@@ -1289,7 +1308,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       } else {
         // Same clientMessageId as SW `chat.user` echo so ADD_MESSAGE dedupes
         // when both optimistic local append and multi-surface broadcast land.
-        const clientMessageId = `${state.activeThreadId}_user_${Date.now()}`
+        const clientMessageId = newTempUserMessageId(state.activeThreadId)
         const context_refs = threadRefs.map((r) => ({
           type: "thread" as const,
           id: r.id,
@@ -1370,6 +1389,10 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     const incoming: FileAttachment[] = []
     let addedImages = 0
     let refuse: string | undefined
+    // F5: first per-file rejection survives the post-loop banner merge —
+    // otherwise a mixed batch (some accepted, some refused) erases the error
+    // and the refused files vanish silently.
+    let firstErr: string | undefined
     for (const file of list) {
       const type = file.type || mimeFromName(file.name)
       const refuseReason = imageTypeRefuseReason(type)
@@ -1379,11 +1402,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       }
       const isImage = isAllowlistedImageMime(type)
       if (!isImage && file.size > maxDocSize) {
-        setFileError(`文件 "${file.name}" 超过 10MB 限制`)
+        if (!firstErr) firstErr = `文件 "${file.name}" 超过 10MB 限制`
         continue
       }
       if (isImage && file.size > IMAGE_MAX_DECODED && /^image\/gif$/i.test(type.split(";")[0].trim())) {
-        setFileError(IMAGE_GIF_SHRINK_FIRST)
+        if (!firstErr) firstErr = IMAGE_GIF_SHRINK_FIRST
         continue
       }
       try {
@@ -1420,17 +1443,18 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         if (isImage) addedImages += 1
       } catch (err) {
         const msg = err instanceof Error ? err.message : "添加文件失败"
-        setFileError(msg)
+        if (!firstErr) firstErr = msg
       }
     }
     if (incoming.length === 0) {
-      if (refuse) setFileError(refuse)
+      const err = nextFileErrorAfterIngest({ refuse, loopErr: firstErr })
+      if (err) setFileError(err)
       return
     }
 
     const nextFiles = [...selectedFilesRef.current, ...incoming]
     const capErr = checkComposerImageCaps(nextFiles.filter((f) => isAllowlistedImageMime(f.type)))
-    setFileError(nextFileErrorAfterIngest({ refuse, capErr }))
+    setFileError(nextFileErrorAfterIngest({ refuse, capErr, loopErr: firstErr }))
     if (capErr) return
     setSelectedFiles(nextFiles)
     selectedFilesRef.current = nextFiles

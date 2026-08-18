@@ -440,6 +440,11 @@ export async function handleMessage(
           message: rest.message,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
+          // F1: echo back as chat.user client_message_id (optimistic-bubble adopt)
+          clientMessageId:
+            typeof rest.clientMessageId === "string" && rest.clientMessageId
+              ? rest.clientMessageId
+              : undefined,
           config: effectiveLLMConfig,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
@@ -701,7 +706,8 @@ export async function handleMessage(
       const uploadController = new AbortController()
       abortControllers.set(thread_id, uploadController)
 
-      // Hoisted so chatCreate failure can delete already-written sidecars.
+      // Hoisted so chatCreate failure can clean up already-written sidecars
+      // (only when the user message was never persisted — F9).
       let reservedUserMessageId: string | undefined
       try {
         const rawCaption = typeof rest.message === "string" ? rest.message : ""
@@ -845,6 +851,11 @@ export async function handleMessage(
           fileContents: finalFileContents,
           imageAttachments: imageAttachments.length ? imageAttachments : undefined,
           reservedUserMessageId,
+          // F1: echo back as chat.user client_message_id (optimistic-bubble adopt)
+          clientMessageId:
+            typeof rest.clientMessageId === "string" && rest.clientMessageId
+              ? rest.clientMessageId
+              : undefined,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
           config: effectiveLLMConfig,
@@ -857,11 +868,20 @@ export async function handleMessage(
         })
         logger.info("file.upload.chat_done", { thread_id })
       } catch (e: any) {
+        // F9: chatCreate persists the user message (with attachment metadata)
+        // BEFORE the LLM call — when it landed, keep the sidecars or the
+        // on-disk message's image references dangle. Only delete sidecars for
+        // a message that never made it to disk.
         if (reservedUserMessageId) {
-          try {
-            deleteSidecarsForMessages(thread_id, [{ id: reservedUserMessageId }])
-          } catch {
-            /* best-effort orphan cleanup */
+          const userMsgPersisted = services.threadManager
+            .getMessages(thread_id)
+            .some((m) => m.id === reservedUserMessageId)
+          if (!userMsgPersisted) {
+            try {
+              deleteSidecarsForMessages(thread_id, [{ id: reservedUserMessageId }])
+            } catch {
+              /* best-effort orphan cleanup */
+            }
           }
         }
         logger.warn("file.upload.chat_error", {

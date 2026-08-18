@@ -26,6 +26,7 @@ import {
 import { cockpitModeBadgeLabel } from "./cockpit-status"
 import { resolveStopTargetId } from "../sidepanel/utils/thread-busy"
 import { disarmAllFlags } from "../sidepanel/components/autopilot-tier"
+import { newTempUserMessageId } from "../utils/temp-message-id"
 
 export function CockpitRoot() {
   return (
@@ -84,7 +85,7 @@ function CockpitApp() {
     if (!msg || !state.activeThreadId) return
     // clientMessageId + SW `chat.user` broadcast → Side Panel history + local
     // Cockpit compact track (separate React trees; companion does not echo user).
-    const clientMessageId = `${state.activeThreadId}_user_${Date.now()}`
+    const clientMessageId = newTempUserMessageId(state.activeThreadId)
     chrome.runtime.sendMessage({
       type: "chat.send",
       threadId: state.activeThreadId,

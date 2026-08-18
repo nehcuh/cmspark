@@ -23,6 +23,12 @@ let removeAttachmentsDir: typeof import("../src/threads/image-sidecar").removeAt
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
 
+// Windows (non-developer mode) cannot create symlinks (EPERM); a directory
+// junction needs no privilege and hits the same lstat-isSymbolicLink refusal
+// paths under test. chmod is a best-effort no-op on Windows, so POSIX mode-bit
+// assertions below are guarded on process.platform.
+const linkType = process.platform === "win32" ? "junction" : "dir"
+
 before(async () => {
   process.env.HOME = tempHome
   process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
@@ -94,8 +100,10 @@ test("writeImageSidecar writes threads/<id>.files/<msgId>-<n>.<ext> mode 0o600, 
   assert.ok(fs.existsSync(filePath), "sidecar file must exist")
   assert.equal(fs.lstatSync(dir).isSymbolicLink(), false)
   assert.ok(fs.lstatSync(dir).isDirectory())
-  assert.equal(fs.statSync(dir).mode & 0o777, 0o700)
-  assert.equal(fs.statSync(filePath).mode & 0o777, 0o600)
+  if (process.platform !== "win32") {
+    assert.equal(fs.statSync(dir).mode & 0o777, 0o700)
+    assert.equal(fs.statSync(filePath).mode & 0o777, 0o600)
+  }
   assert.deepEqual(fs.readFileSync(filePath), PNG)
 })
 
@@ -236,7 +244,7 @@ test("delete(threadId) removes .files/; if .files is a symlink, refuse (do not r
   const keep = path.join(victim, "keep.txt")
   fs.writeFileSync(keep, "do-not-delete")
   fs.rmSync(files, { recursive: true, force: true })
-  fs.symlinkSync(victim, files)
+  fs.symlinkSync(victim, files, linkType)
 
   assert.equal(removeAttachmentsDir(thread2.id), false)
   tm.delete(thread2.id)
@@ -311,6 +319,18 @@ test("deleteSidecarsForMessages unlinks dropped rows (cap-trim calls this; do no
   assert.match(fs.readFileSync(srcPath, "utf-8"), /deleteSidecarsForMessages[\s\S]{0,40}threadId,\s*dropped/)
 })
 
+test("deleteSidecarsForMessages: deleting msg `abc` keeps `abc-1` sidecars (no prefix overmatch)", () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("sidecar-prefix")
+  assert.ok(writeImageSidecar(thread.id, "abc", 0, "image/png", PNG))
+  assert.ok(writeImageSidecar(thread.id, "abc-1", 0, "image/png", PNG))
+
+  const dir = filesDir(thread.id)
+  deleteSidecarsForMessages(thread.id, [{ id: "abc" }])
+  assert.ok(!fs.existsSync(path.join(dir, "abc-0.png")), "own sidecar deleted")
+  assert.ok(fs.existsSync(path.join(dir, "abc-1-0.png")), "`abc-` prefix must not match `abc-1` sidecars")
+})
+
 test("soft-trash (trash()) does not delete .files/", () => {
   const tm = new ThreadManager()
   const thread = tm.create("sidecar-trash")
@@ -366,8 +386,10 @@ test("copyAttachmentsToThread remaps sidecars and dest attachments (fork leftove
   const destDir = filesDir(dest.id)
   assert.ok(fs.existsSync(path.join(destDir, `${newMsg.id}-0.png`)))
   assert.ok(fs.existsSync(path.join(destDir, `${newMsg.id}-1.png`)))
-  assert.equal(fs.statSync(destDir).mode & 0o777, 0o700)
-  assert.equal(fs.statSync(path.join(destDir, `${newMsg.id}-0.png`)).mode & 0o777, 0o600)
+  if (process.platform !== "win32") {
+    assert.equal(fs.statSync(destDir).mode & 0o777, 0o700)
+    assert.equal(fs.statSync(path.join(destDir, `${newMsg.id}-0.png`)).mode & 0o777, 0o600)
+  }
   assert.deepEqual(fs.readFileSync(path.join(destDir, `${newMsg.id}-0.png`)), PNG)
   assert.ok(fs.existsSync(path.join(filesDir(src.id), `${oldMsg.id}-0.png`)), "source sidecar remains")
 
@@ -407,7 +429,7 @@ test("copyAttachmentsToThread refuses source/dest .files symlink (no copy throug
   fs.mkdirSync(victim, { recursive: true })
   fs.writeFileSync(path.join(victim, "keep.txt"), "secret")
   fs.rmSync(srcFiles, { recursive: true, force: true })
-  fs.symlinkSync(victim, srcFiles)
+  fs.symlinkSync(victim, srcFiles, linkType)
   assert.equal(copyAttachmentsToThread(src.id, dest.id, { [oldMsg.id]: newMsg.id }), 0)
   assert.ok(!fs.existsSync(path.join(filesDir(dest.id), `${newMsg.id}-0.png`)))
 
@@ -419,10 +441,34 @@ test("copyAttachmentsToThread refuses source/dest .files symlink (no copy throug
   fs.mkdirSync(destVictim, { recursive: true })
   const planted = path.join(destVictim, `${newMsg.id}-0.png`)
   if (fs.existsSync(destFiles)) fs.rmSync(destFiles, { recursive: true, force: true })
-  fs.symlinkSync(destVictim, destFiles)
+  fs.symlinkSync(destVictim, destFiles, linkType)
   assert.equal(copyAttachmentsToThread(src.id, dest.id, new Map([[oldMsg.id, newMsg.id]])), 0)
   assert.ok(!fs.existsSync(planted), "must not write through dest .files symlink")
   assert.ok(fs.lstatSync(destFiles).isSymbolicLink())
+})
+
+test("stampAttachments caps preview_jpeg_b64 at 400K chars; normal length kept as-is", () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("preview-cap")
+  const huge = "a".repeat(500_000)
+  const msg = tm.addMessage(thread.id, {
+    thread_id: thread.id,
+    role: "user",
+    content: "pic",
+    attachments: [
+      { kind: "image", name: "big.png", mime: "image/png", sha256: "1", bytes: PNG.length, preview_jpeg_b64: huge },
+      { kind: "image", name: "ok.png", mime: "image/png", sha256: "2", bytes: PNG.length, preview_jpeg_b64: "abc123" },
+      { kind: "image", name: "none.png", mime: "image/png", sha256: "3", bytes: PNG.length },
+    ],
+  })
+  const atts = tm.getMessages(thread.id)[0]!.attachments!
+  assert.equal(atts.length, 3)
+  assert.equal(atts[0]!.preview_jpeg_b64!.length, 400_000)
+  assert.equal(atts[0]!.preview_jpeg_b64, huge.slice(0, 400_000))
+  assert.equal(atts[1]!.preview_jpeg_b64, "abc123")
+  assert.equal(atts[2]!.preview_jpeg_b64, undefined)
+  // msg attachment metadata mirrors what was persisted.
+  assert.equal(msg.attachments![0]!.preview_jpeg_b64!.length, 400_000)
 })
 
 test("thread.fork calls copyAttachmentsToThread (lockstep leftover Task 5/12)", () => {

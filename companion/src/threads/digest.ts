@@ -85,22 +85,10 @@ export function isDigestStale(
   return digest.content_fingerprint !== contentFingerprint(messages)
 }
 
-/** Rule-based alias from first user message (P0.5, no LLM). */
-export function aliasFromFirstUserText(text: string, maxLen = 40): string {
-  let s = String(text || "")
-    .replace(/\s+/g, " ")
-    .trim()
-  s = s.replace(/^(请|帮我|麻烦|请问)[，,\s]*/u, "")
-  if (!s) return ""
-  if (s.length > maxLen) {
-    const cut = s.slice(0, maxLen)
-    const m = cut.match(/^(.+?)[\s，。、；;,.!?…]+[^\s，。、；;,.!?…]*$/)
-    s = (m?.[1] || cut).trim()
-    if (s.length < 8) s = cut.trim()
-    if (!s.endsWith("…") && String(text).trim().length > s.length) s += "…"
-  }
-  return s.slice(0, maxLen + 1)
-}
+// Canonical provisional-alias derivation lives in ./alias-commit (F10: single
+// source of truth so batch-written aliases classify as provisional_user).
+// Re-exported here for existing digest/batch callers.
+export { aliasFromFirstUserText } from "./alias-commit"
 
 export const DIGEST_SYSTEM_PROMPT = `你是会话索引助手。根据对话摘录输出**仅一行 JSON**（不要 markdown 围栏、不要解释）:
 {"tldr":"一句话摘要≤60字","tags":["标签1","标签2"],"bullets":["要点1","要点2"]}

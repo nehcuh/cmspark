@@ -285,6 +285,12 @@ export interface Message {
   created_at: string
   streaming?: boolean
   attachments?: MessageAttachment[]
+  /**
+   * Companion chat.user persist echo correlation (F1): the optimistic bubble's
+   * temp id from the chat.create/file.upload frame's clientMessageId. Lets the
+   * store adopt the persisted id by exact match instead of positional guessing.
+   */
+  client_message_id?: string
 }
 
 export interface SecurityConfirmationRequest {

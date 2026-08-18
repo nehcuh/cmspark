@@ -26,13 +26,20 @@ export function imageTypeRefuseReason(type: string): string | undefined {
   return undefined
 }
 
-/** Keep refuse banner when some files were accepted; cap error wins. */
+/**
+ * Keep refuse banner when some files were accepted; cap error wins.
+ * loopErr (F5) is the first per-file ingest rejection from the loop (doc >10MB,
+ * oversized GIF, compress/read failure) — without it a mixed batch erased those
+ * errors whenever any file was accepted.
+ */
 export function nextFileErrorAfterIngest(opts: {
   refuse?: string
   capErr?: string
+  loopErr?: string
 }): string {
   if (opts.capErr) return opts.capErr
   if (opts.refuse) return opts.refuse
+  if (opts.loopErr) return opts.loopErr
   return ""
 }
 

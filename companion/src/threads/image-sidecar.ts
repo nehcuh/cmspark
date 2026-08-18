@@ -277,9 +277,11 @@ export function deleteSidecarsForMessages(
       names.add(sidecarBasename(m.id, idx, att.mime))
     })
     try {
-      const prefix = `${m.id}-`
       for (const ent of fs.readdirSync(dir)) {
-        if (ent.startsWith(prefix) && parseCompanionSidecarRel(ent)) names.add(ent)
+        // Parse then exact-compare: a `${m.id}-` string prefix would also match
+        // sidecars of a longer id (e.g. `abc` prefix-matches `abc-1-0.png`).
+        const parsed = parseCompanionSidecarRel(ent)
+        if (parsed && parsed.msgId === m.id) names.add(ent)
       }
     } catch {
       /* ignore */

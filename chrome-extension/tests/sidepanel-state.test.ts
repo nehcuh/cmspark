@@ -1,7 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { agentReducer, initialState, isTempUserMessageId, type AgentState } from "../src/sidepanel/store/agentStore"
-import { normalizeConfig, parseChatUserAttachments, requestInitialSidePanelData } from "../src/sidepanel/hooks/useWebSocket"
+import { newTempUserMessageId } from "../src/utils/temp-message-id"
+import { normalizeConfig, parseChatUserAttachments, requestInitialSidePanelData, sanitizeHydratedMessages } from "../src/sidepanel/hooks/useWebSocket"
 import type { SkillMeta } from "../src/sidepanel/types"
 
 function stateWithThreads(): AgentState {
@@ -236,11 +237,177 @@ test("ADD_MESSAGE late temp echo after adopt does not duplicate", () => {
   assert.equal(late.messages[0].attachments?.[0]?.name, "shot.png")
 })
 
+test("ADD_MESSAGE client_message_id adopts the matching temp bubble, not the last (F1)", () => {
+  // Multi-surface race: panel + Cockpit each optimistic-append into the same
+  // thread inside one WS window. The persist echo for the FIRST message must
+  // not cross-adopt onto the SECOND bubble.
+  const bubbleA = {
+    id: "thread-a_user_1730000000001",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "from panel",
+    created_at: "2026-08-18T00:00:00.000Z",
+  }
+  const bubbleB = {
+    id: "thread-a_user_1730000000002",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "from cockpit",
+    created_at: "2026-08-18T00:00:01.000Z",
+  }
+  let s = agentReducer(initialState, { type: "ADD_MESSAGE", message: bubbleA })
+  s = agentReducer(s, { type: "ADD_MESSAGE", message: bubbleB })
+  s = agentReducer(s, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: "thread-a_1730000000003_persistA",
+      thread_id: "thread-a",
+      role: "user",
+      content: "from panel",
+      created_at: "2026-08-18T00:00:02.000Z",
+      attachments: [{ kind: "image" as const, name: "shot.png", mime: "image/png" }],
+      client_message_id: "thread-a_user_1730000000001",
+    },
+  })
+  assert.equal(s.messages.length, 2)
+  assert.equal(s.messages[0].id, "thread-a_1730000000003_persistA")
+  assert.equal(s.messages[0].content, "from panel", "keep optimistic caption")
+  assert.equal(s.messages[0].attachments?.[0]?.name, "shot.png")
+  assert.equal(s.messages[1].id, "thread-a_user_1730000000002", "second bubble untouched")
+})
+
+test("ADD_MESSAGE client_message_id out-of-order echoes adopt their own bubbles (F1)", () => {
+  const bubbleA = {
+    id: "thread-a_user_1730000000001",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "first",
+    created_at: "2026-08-18T00:00:00.000Z",
+  }
+  const bubbleB = {
+    id: "thread-a_user_1730000000002",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "second",
+    created_at: "2026-08-18T00:00:01.000Z",
+  }
+  let s = agentReducer(initialState, { type: "ADD_MESSAGE", message: bubbleA })
+  s = agentReducer(s, { type: "ADD_MESSAGE", message: bubbleB })
+  // Echo for B lands before echo for A.
+  s = agentReducer(s, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: "thread-a_1730000000004_persistB",
+      thread_id: "thread-a",
+      role: "user",
+      content: "second",
+      created_at: "2026-08-18T00:00:02.000Z",
+      client_message_id: "thread-a_user_1730000000002",
+    },
+  })
+  s = agentReducer(s, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: "thread-a_1730000000003_persistA",
+      thread_id: "thread-a",
+      role: "user",
+      content: "first",
+      created_at: "2026-08-18T00:00:03.000Z",
+      client_message_id: "thread-a_user_1730000000001",
+    },
+  })
+  assert.deepEqual(
+    s.messages.map((m) => m.id),
+    ["thread-a_1730000000003_persistA", "thread-a_1730000000004_persistB"],
+  )
+  assert.equal(s.messages[0].content, "first")
+  assert.equal(s.messages[1].content, "second")
+})
+
+test("ADD_MESSAGE client_message_id without a matching bubble appends — no position guessing (F1)", () => {
+  const bubble = {
+    id: "thread-a_user_1730000000001",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "still optimistic",
+    created_at: "2026-08-18T00:00:00.000Z",
+  }
+  let s = agentReducer(initialState, { type: "ADD_MESSAGE", message: bubble })
+  s = agentReducer(s, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: "thread-a_1730000000009_orphan",
+      thread_id: "thread-a",
+      role: "user",
+      content: "from a closed surface",
+      created_at: "2026-08-18T00:00:01.000Z",
+      client_message_id: "thread-a_user_9999999999999",
+    },
+  })
+  assert.equal(s.messages.length, 2)
+  assert.equal(s.messages[0].id, "thread-a_user_1730000000001", "temp bubble keeps its temp id")
+  assert.equal(s.messages[1].id, "thread-a_1730000000009_orphan")
+})
+
+test("ADD_MESSAGE without client_message_id keeps legacy last-temp adoption (F1 fallback)", () => {
+  // Old companion: no correlation id → last temp bubble takes the persisted id.
+  const bubbleA = {
+    id: "thread-a_user_1730000000001",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "first",
+    created_at: "2026-08-18T00:00:00.000Z",
+  }
+  const bubbleB = {
+    id: "thread-a_user_1730000000002",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "second",
+    created_at: "2026-08-18T00:00:01.000Z",
+  }
+  let s = agentReducer(initialState, { type: "ADD_MESSAGE", message: bubbleA })
+  s = agentReducer(s, { type: "ADD_MESSAGE", message: bubbleB })
+  s = agentReducer(s, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: "thread-a_1730000000003_persisted",
+      thread_id: "thread-a",
+      role: "user",
+      content: "second",
+      created_at: "2026-08-18T00:00:02.000Z",
+    },
+  })
+  assert.equal(s.messages.length, 2)
+  assert.equal(s.messages[0].id, "thread-a_user_1730000000001")
+  assert.equal(s.messages[1].id, "thread-a_1730000000003_persisted")
+})
+
 test("isTempUserMessageId: panel/SW/file-upload vs companion persist", () => {
   assert.equal(isTempUserMessageId("thread-a_user_1730000000000", "thread-a"), true)
+  // Random suffix (same-millisecond collision fix) — still a temp id.
+  assert.equal(isTempUserMessageId("thread-a_user_1730000000000_x7k2p1", "thread-a"), true)
   assert.equal(isTempUserMessageId("thread-a_1730000000000", "thread-a"), true)
+  // Companion persisted id `${threadId}_${ms}_${rand}` must NOT read as temp.
   assert.equal(isTempUserMessageId("thread-a_1730000000000_x7k2p1", "thread-a"), false)
   assert.equal(isTempUserMessageId("thread-b_user_1730000000000", "thread-a"), true)
+})
+
+test("newTempUserMessageId: format, temp-id recognition, same-ms uniqueness", () => {
+  assert.equal(
+    newTempUserMessageId("thread-a", 1730000000000, "x7k2p1"),
+    "thread-a_user_1730000000000_x7k2p1",
+  )
+  assert.equal(
+    newTempUserMessageId(undefined, 1730000000000, "x7k2p1"),
+    "user_1730000000000_x7k2p1",
+  )
+  // Two sends in the same thread+millisecond must not share an id (they would
+  // sameIdIdx-merge into one bubble in agentStore).
+  const a = newTempUserMessageId("thread-a", 1730000000000, "aaaa01")
+  const b = newTempUserMessageId("thread-a", 1730000000000, "bbbb02")
+  assert.notStrictEqual(a, b)
+  assert.equal(isTempUserMessageId(a, "thread-a"), true)
+  assert.equal(isTempUserMessageId(b, "thread-a"), true)
 })
 
 test("parseChatUserAttachments: image only, skip junk", () => {
@@ -265,6 +432,68 @@ test("parseChatUserAttachments: image only, skip junk", () => {
     { kind: "image", name: "shot.png", mime: "image/png", dest_host: "api.openai.com" },
   ])
   assert.equal(withHost?.[0]?.dest_host, "api.openai.com")
+})
+
+test("parseChatUserAttachments: preview_jpeg_b64 capped at 400_000 chars (F4)", () => {
+  const oversized = "q".repeat(400_001)
+  const parsed = parseChatUserAttachments([
+    { kind: "image", name: "big.png", mime: "image/png", preview_jpeg_b64: oversized },
+  ])
+  assert.equal(parsed?.[0]?.preview_jpeg_b64?.length, 400_000)
+  assert.equal(parsed?.[0]?.preview_jpeg_b64, oversized.slice(0, 400_000))
+  // Boundary: exactly at the cap passes through intact.
+  const atCap = "r".repeat(400_000)
+  const parsedAtCap = parseChatUserAttachments([
+    { kind: "image", name: "cap.png", mime: "image/png", preview_jpeg_b64: atCap },
+  ])
+  assert.equal(parsedAtCap?.[0]?.preview_jpeg_b64, atCap)
+})
+
+test("sanitizeHydratedMessages: hydrate path runs attachments through the sanitizer (F4)", () => {
+  // Non-array input hydrates to an empty history (was `msg.messages || []`).
+  assert.deepEqual(sanitizeHydratedMessages(undefined), [])
+  assert.deepEqual(sanitizeHydratedMessages(null), [])
+
+  const cleanMsg = { id: "m1", thread_id: "t", role: "user", content: "hi", created_at: "x" }
+  const out = sanitizeHydratedMessages([
+    cleanMsg,
+    null,
+    {
+      id: "m2",
+      thread_id: "t",
+      role: "user",
+      content: "with image",
+      created_at: "x",
+      attachments: [
+        {
+          kind: "image",
+          name: `${"n".repeat(250)}.png`,
+          mime: "image/png",
+          preview_jpeg_b64: "q".repeat(500_000),
+        },
+        { kind: "file", name: "x.pdf", mime: "application/pdf" },
+      ],
+    },
+    {
+      id: "m3",
+      thread_id: "t",
+      role: "user",
+      content: "junk attachments",
+      created_at: "x",
+      attachments: "not-an-array",
+    },
+  ])
+  assert.equal(out.length, 4)
+  // Messages without attachments pass through untouched (same reference).
+  assert.equal(out[0], cleanMsg)
+  assert.equal(out[1], null)
+  // Same bounds as the live echo: name 200 / preview 400_000 / image-only.
+  const atts = out[2]?.attachments
+  assert.equal(atts?.length, 1)
+  assert.equal(atts?.[0]?.name.length, 200)
+  assert.equal(atts?.[0]?.preview_jpeg_b64?.length, 400_000)
+  // Junk (non-array) attachments fail closed to undefined.
+  assert.equal(out[3]?.attachments, undefined)
 })
 
 test("security confirmation requests are queued and removable", () => {

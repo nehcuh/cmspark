@@ -33,7 +33,7 @@ import {
   type ThreadHandoff,
 } from "./context-handoff"
 import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
-import { classifyAlias, commitThreadAlias } from "../threads/alias-commit"
+import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
 import { hydrateUserImageParts } from "./image-parts"
 import { likelyMultimodal } from "./likely-multimodal"
 
@@ -112,6 +112,12 @@ interface ChatCreateParams {
   }>
   /** Must match the msgId used in writeImageSidecar so hydrate can find bytes. */
   reservedUserMessageId?: string
+  /**
+   * Extension-side optimistic bubble id (chat.create frame's clientMessageId).
+   * Echoed back in the chat.user broadcast as client_message_id so panels can
+   * adopt the persisted message_id onto the exact optimistic bubble (F1).
+   */
+  clientMessageId?: string
   /** Full llm config (protocol + credentials). Default protocol=openai preserves DeepSeek path. */
   config: LlmConfig
   threadManager: ThreadManager
@@ -314,7 +320,7 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 }
 
 export async function chatCreate(params: ChatCreateParams) {
-  const { threadId, message, skillIds, knowledgeIds, fileContents, imageAttachments, reservedUserMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage, contextRefsSegment } = params
+  const { threadId, message, skillIds, knowledgeIds, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage, contextRefsSegment } = params
 
   // Create user message (skip for regenerate)
   if (!skipUserMessage) {
@@ -391,6 +397,7 @@ export async function chatCreate(params: ChatCreateParams) {
       type: "chat.user",
       thread_id: threadId,
       message_id: msg.id,
+      ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
       content: userContent,
       attachments: msg.attachments,
     })
@@ -1500,17 +1507,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
 /**
  * Immediate title from first user message (G3.1) — no LLM.
- * Collapses whitespace; truncates for list UI.
+ * Delegates to the shared provisional-alias derivation (F10) so the immediate
+ * title, thread.batch_auto_title, and classifyAlias never diverge.
  */
 export function provisionalTitleFromUserText(raw: string, maxLen = 16): string {
-  const t = String(raw || "")
-    .replace(/\s+/g, " ")
-    .trim()
-  if (!t) return ""
-  // Drop common file-upload noise prefixes
-  const cleaned = t.replace(/^\[文件[^\]]*\]\s*/g, "").trim() || t
-  if (cleaned.length <= maxLen) return cleaned
-  return cleaned.slice(0, maxLen - 1) + "…"
+  return aliasFromFirstUserText(raw, maxLen)
 }
 
 /**

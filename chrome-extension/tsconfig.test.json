@@ -21,6 +21,8 @@
     "src/sidepanel/utils/user-env-utils.ts",
     "src/sidepanel/utils/computer-utils.ts",
     "src/sidepanel/utils/image-compose.ts",
+    "src/sidepanel/utils/upload-send.ts",
+    "src/utils/temp-message-id.ts",
     "src/sidepanel/components/vision-reuse-logic.ts",
     "src/sidepanel/components/model-switch-logic.ts",
     "src/sidepanel/components/focus-band-priority.ts",

@@ -2,13 +2,14 @@
 
 import { useEffect, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
-import type { ComputerTaskEventView, LLMConfig, MessageAttachment } from "../types"
+import type { ComputerTaskEventView, LLMConfig, Message, MessageAttachment } from "../types"
 import { isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
 import { isBrowserTool } from "../mode/mode-controller"
 import { isUserEnvErrorMessage, mapUserEnvError, normalizeUserEnvPublic } from "../utils/user-env-utils"
 import { normalizeInboundLogEvent } from "../log-event-normalize"
 import { humanizeSidepanelGateError } from "../utils/gate-error-copy"
+import { newTempUserMessageId } from "../../utils/temp-message-id"
 
 import { normalizeConfig } from "../utils/normalize-config"
 export { normalizeConfig }
@@ -97,6 +98,24 @@ export function shouldApplyStreamEvent(
   return msgThreadId === activeThreadId
 }
 
+/**
+ * file.uploaded panel-chrome gate (F3). The composer chip clear is a global UI
+ * signal with no thread ownership — the listener dispatches it unconditionally,
+ * before this gate, so it fires even when the user switched threads mid-upload
+ * (otherwise the sent chips stick and leak into the next send on another
+ * thread). Only panel chrome (status/processing) is gated here.
+ * Pure helper for unit tests (stream-thread-gate).
+ */
+export function fileUploadedApplyToPanel(
+  msgThreadId: string | undefined | null,
+  activeThreadId: string | null | undefined,
+): boolean {
+  return shouldApplyStreamEvent(msgThreadId, activeThreadId)
+}
+
+/** Cap on preview thumbnail base64 (≈300KB binary); same value as companion. */
+const MAX_PREVIEW_B64_CHARS = 400_000
+
 /** Sanitize chat.user / history attachment metadata (image thumbs only). */
 export function parseChatUserAttachments(raw: unknown): MessageAttachment[] | undefined {
   if (!Array.isArray(raw) || raw.length === 0) return undefined
@@ -115,7 +134,7 @@ export function parseChatUserAttachments(raw: unknown): MessageAttachment[] | un
       att.bytes = rec.bytes
     }
     if (typeof rec.preview_jpeg_b64 === "string" && rec.preview_jpeg_b64) {
-      att.preview_jpeg_b64 = rec.preview_jpeg_b64
+      att.preview_jpeg_b64 = rec.preview_jpeg_b64.slice(0, MAX_PREVIEW_B64_CHARS)
     }
     if (typeof rec.dest_host === "string" && rec.dest_host.trim()) {
       att.dest_host = rec.dest_host.replace(/[\n\r]/g, "").trim().slice(0, 200)
@@ -123,6 +142,24 @@ export function parseChatUserAttachments(raw: unknown): MessageAttachment[] | un
     out.push(att)
   }
   return out.length ? out : undefined
+}
+
+/**
+ * Hydrate path (thread.messages / thread.forked): history arrives wholesale from
+ * companion, so run each message's attachments through the same sanitizer as the
+ * live chat.user echo (F4). Messages without attachments pass through untouched.
+ */
+export function sanitizeHydratedMessages(raw: unknown): Message[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((m) => {
+    if (!m || typeof m !== "object" || (m as Message).attachments == null) {
+      return m as Message
+    }
+    return {
+      ...(m as Message),
+      attachments: parseChatUserAttachments((m as Message).attachments),
+    }
+  })
 }
 
 export function useWebSocket() {
@@ -290,7 +327,12 @@ export function useWebSocket() {
             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
           const id =
             (typeof msg.message_id === "string" && msg.message_id) ||
-            `${threadId}_user_${Date.now()}`
+            newTempUserMessageId(threadId)
+          // F1: persist echo correlates the optimistic bubble (temp id from the
+          // chat.create/file.upload clientMessageId) so the store adopts by
+          // exact id instead of last-temp positional guessing.
+          const clientMessageId =
+            (typeof msg.client_message_id === "string" && msg.client_message_id) || undefined
           if (threadId) {
             dispatch({ type: "SET_THREAD_BUSY", threadId, busy: true })
           }
@@ -306,6 +348,7 @@ export function useWebSocket() {
                 (typeof msg.created_at === "string" && msg.created_at) ||
                 new Date().toISOString(),
               ...(attachments ? { attachments } : {}),
+              ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
             },
           })
           break
@@ -958,7 +1001,7 @@ export function useWebSocket() {
         case "thread.forked": {
           dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
           dispatch({ type: "SET_ACTIVE_THREAD", threadId: msg.thread.id })
-          dispatch({ type: "SET_MESSAGES", messages: msg.messages || [] })
+          dispatch({ type: "SET_MESSAGES", messages: sanitizeHydratedMessages(msg.messages) })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
           break
         }
@@ -1089,7 +1132,7 @@ export function useWebSocket() {
                 ? msg.threadId
                 : ""
           if (!shouldApplyStreamEvent(histTid, activeThreadRef.current)) break
-          dispatch({ type: "SET_MESSAGES", messages: msg.messages || [] })
+          dispatch({ type: "SET_MESSAGES", messages: sanitizeHydratedMessages(msg.messages) })
           break
         }
 
@@ -1665,8 +1708,10 @@ export function useWebSocket() {
           if (upTid) {
             dispatch({ type: "SET_THREAD_BUSY", threadId: upTid, busy: false })
           }
-          if (!shouldApplyStreamEvent(upTid, activeThreadRef.current)) break
+          // F3: chip clear has no thread ownership — dispatch before the gate,
+          // like SET_THREAD_BUSY above, or chips leak across threads.
           dispatch({ type: "BUMP_COMPOSER_UPLOAD_CLEAR" })
+          if (!fileUploadedApplyToPanel(upTid, activeThreadRef.current)) break
           dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           // Only clear processing if no stream is in flight for this panel.
           if (!streamingRef.current && !reasoningRef.current) {

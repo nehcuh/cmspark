@@ -44,6 +44,49 @@ export function acpTokenFromMode(opts: {
   return "审查"
 }
 
+/**
+ * Rule-based provisional alias from first user text (P0.5, no LLM) — SINGLE
+ * source of truth shared by chatCreate's immediate title (G3.1),
+ * thread.batch_auto_title, and classifyAlias's provisional reference, so an
+ * alias written by one path is always recognized by the others (F10).
+ * Strips [文件 …] upload noise + politeness prefixes; truncates at maxLen
+ * (smart cut at the last punctuation boundary) and appends ….
+ */
+export function aliasFromFirstUserText(text: string, maxLen = 16): string {
+  let s = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+  // Drop common file-upload noise prefixes (fall back to the text itself if
+  // nothing else remains, so a pure "[文件 x]" first turn still titles).
+  s = s.replace(/^\[文件[^\]]*\]\s*/g, "").trim() || s
+  s = s.replace(/^(请|帮我|麻烦|请问)[，,\s]*/u, "")
+  if (!s) return ""
+  if (s.length > maxLen) {
+    const cut = s.slice(0, maxLen)
+    const m = cut.match(/^(.+?)[\s，。、；;,.!?…]+[^\s，。、；;,.!?…]*$/)
+    s = (m?.[1] || cut).trim()
+    if (s.length < 8) s = cut.trim()
+    if (!s.endsWith("…") && String(text).trim().length > s.length) s += "…"
+  }
+  return s.slice(0, maxLen + 1)
+}
+
+/**
+ * Pre-F10 immediate-title formula (old provisionalTitleFromUserText): no
+ * politeness strip, [文件 …] strip only, slice(0,15)+"…" (16 chars total).
+ * Exists ONLY to recognize aliases already persisted by that path — never
+ * use it for new writes (new writes go through aliasFromFirstUserText).
+ */
+function legacyProvisionalTitleFromUserText(raw: string): string {
+  const t = String(raw || "")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!t) return ""
+  const cleaned = t.replace(/^\[文件[^\]]*\]\s*/g, "").trim() || t
+  if (cleaned.length <= 16) return cleaned
+  return cleaned.slice(0, 15) + "…"
+}
+
 export function classifyAlias(
   alias: string | undefined,
   firstUserText?: string,
@@ -53,14 +96,17 @@ export function classifyAlias(
   if (isAcpProvisionalAlias(a)) return "provisional_acp"
   if (WORKER_RE.test(a)) return "create"
   if (firstUserText) {
-    const t = String(firstUserText)
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/^\[文件[^\]]*\]\s*/g, "")
-      .trim()
-    const prov = !t ? "" : t.length <= 16 ? t : t.slice(0, 15) + "…"
-    if (prov && (prov === a || prov.replace(/…$/, "") === a.replace(/…$/, ""))) {
-      return "provisional_user"
+    // Match either the shared derivation (F10) or the legacy pre-F10 formula —
+    // aliases persisted by the old immediate-title path must still classify as
+    // provisional_user, or canTransition locks them out of →llm forever.
+    const refs = [
+      aliasFromFirstUserText(String(firstUserText), 16),
+      legacyProvisionalTitleFromUserText(String(firstUserText)),
+    ]
+    for (const ref of refs) {
+      if (ref && (ref === a || ref.replace(/…$/, "") === a.replace(/…$/, ""))) {
+        return "provisional_user"
+      }
     }
   }
   return "user"

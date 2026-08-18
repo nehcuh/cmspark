@@ -40,6 +40,7 @@ import {
   shouldReportForwardFailureToCompanion,
 } from "./log-forward-policy"
 import { shouldRefuseWsFrame } from "./ws-frame-budget"
+import { newTempUserMessageId } from "../utils/temp-message-id"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -518,7 +519,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         const userText = typeof message.message === "string" ? message.message : ""
         const clientMessageId =
           (typeof message.clientMessageId === "string" && message.clientMessageId) ||
-          (threadId ? `${threadId}_user_${Date.now()}` : `user_${Date.now()}`)
+          newTempUserMessageId(threadId)
         const echoUser = (sent: boolean) => {
           if (!sent || !threadId || !userText.trim()) return
           chrome.runtime
@@ -539,6 +540,9 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             thread_id: message.threadId,
             message: message.message,
             skill_ids: message.skillIds,
+            // F1: companion echoes this back as chat.user client_message_id so
+            // panels can adopt the persisted id onto the exact optimistic bubble.
+            clientMessageId,
             ...(hostname ? { hostname } : {}),
             ...(Array.isArray(message.context_refs) ? { context_refs: message.context_refs } : {}),
           })
@@ -554,6 +558,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             thread_id: message.threadId,
             message: message.message,
             skill_ids: message.skillIds,
+            clientMessageId,
             ...(Array.isArray(message.context_refs) ? { context_refs: message.context_refs } : {}),
           })
           if (sent) echoUser(true)
@@ -597,6 +602,11 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             files: message.files,
             message: message.message || "",
             skill_ids: message.skillIds || [],
+            // F1/F2: companion echoes this as chat.user client_message_id so the
+            // panel's optimistic upload bubble is adopted by exact id.
+            ...(typeof message.clientMessageId === "string" && message.clientMessageId
+              ? { clientMessageId: message.clientMessageId }
+              : {}),
             ...(hostname ? { hostname } : {}),
           }
           let jsonBytes = 0

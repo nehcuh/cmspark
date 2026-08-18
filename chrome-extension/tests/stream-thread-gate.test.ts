@@ -1,6 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { shouldApplyStreamEvent } from "../src/sidepanel/hooks/useWebSocket"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { fileUploadedApplyToPanel, shouldApplyStreamEvent } from "../src/sidepanel/hooks/useWebSocket"
 
 test("shouldApplyStreamEvent: missing thread_id fail-closed (P1)", () => {
   assert.equal(shouldApplyStreamEvent(undefined, "thread-a"), false)
@@ -29,4 +31,32 @@ test("shouldApplyStreamEvent: missing thread_id rejected when active is null", (
 test("shouldApplyStreamEvent: upload-error style foreign thread is rejected", () => {
   assert.equal(shouldApplyStreamEvent("upload-thread-a", "active-thread-b"), false)
   assert.equal(shouldApplyStreamEvent("upload-thread-a", "upload-thread-a"), true)
+})
+
+test("fileUploadedApplyToPanel: only panel chrome is thread-gated (F3)", () => {
+  // The chip-clear BUMP has no thread ownership: the listener dispatches it
+  // unconditionally BEFORE this gate, so a mid-upload thread switch cannot skip
+  // it (pre-F3 the BUMP sat behind the gate and chips leaked across threads).
+  // This helper decides only whether panel chrome (status/processing) applies.
+  assert.equal(fileUploadedApplyToPanel("thread-a", "thread-b"), false)
+  assert.equal(fileUploadedApplyToPanel("thread-a", "thread-a"), true)
+  assert.equal(fileUploadedApplyToPanel(undefined, "thread-a"), false)
+  assert.equal(fileUploadedApplyToPanel("thread-a", null), false)
+})
+
+test("file.uploaded: chip-clear BUMP is dispatched before the thread gate (F3)", () => {
+  // Source-order lock (pre-F3 this ordering was inverted → red): the BUMP sat
+  // behind shouldApplyStreamEvent, so foreign-thread uploads never cleared chips.
+  const src = readFileSync(
+    join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"),
+    "utf8",
+  )
+  const start = src.indexOf('case "file.uploaded"')
+  assert.ok(start >= 0, "file.uploaded case missing")
+  const body = src.slice(start, start + 1200)
+  const bumpIdx = body.indexOf('type: "BUMP_COMPOSER_UPLOAD_CLEAR"')
+  const gateIdx = body.indexOf("fileUploadedApplyToPanel(")
+  assert.ok(bumpIdx >= 0, "BUMP dispatch missing")
+  assert.ok(gateIdx >= 0, "panel gate missing")
+  assert.ok(bumpIdx < gateIdx, "chip clear must dispatch before the thread gate")
 })

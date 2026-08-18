@@ -157,6 +157,23 @@ test("nextFileErrorAfterIngest: keep refuse when some files accepted", () => {
   assert.equal(nextFileErrorAfterIngest({}), "")
 })
 
+test("nextFileErrorAfterIngest: loopErr survives accepted files; cap > refuse > loopErr (F5)", () => {
+  const sizeErr = '文件 "big.docx" 超过 10MB 限制'
+  assert.equal(nextFileErrorAfterIngest({ loopErr: sizeErr }), sizeErr)
+  assert.equal(
+    nextFileErrorAfterIngest({ refuse: IMAGE_FORMAT_REFUSED, loopErr: sizeErr }),
+    IMAGE_FORMAT_REFUSED,
+  )
+  assert.equal(
+    nextFileErrorAfterIngest({
+      capErr: "一次最多添加 4 张图片",
+      refuse: IMAGE_FORMAT_REFUSED,
+      loopErr: sizeErr,
+    }),
+    "一次最多添加 4 张图片",
+  )
+})
+
 test("previewDataUrl: magic prefixes", () => {
   assert.match(previewDataUrl("iVBORxxxx"), /^data:image\/png;base64,/)
   assert.match(previewDataUrl("R0lGODxxxx"), /^data:image\/gif;base64,/)

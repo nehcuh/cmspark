@@ -13,3 +13,14 @@ export const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024
 export function shouldRefuseWsFrame(jsonBytes: number): boolean {
   return jsonBytes > MAX_WS_MESSAGE_SIZE - WS_FRAME_HEADROOM
 }
+
+/**
+ * F6 double-bubble dedupe: when SW refuses an oversized file.upload frame it
+ * both broadcasts file.upload_error (correct banner) and answers the panel's
+ * sendResponse with diag.over_companion_10mb. The panel must recognize the
+ * marker and skip its own generic 「Companion 未连接」 bubble.
+ */
+export function isFrameBudgetRefusal(response: unknown): boolean {
+  const diag = (response as { diag?: { over_companion_10mb?: unknown } } | null | undefined)?.diag
+  return diag?.over_companion_10mb === true
+}

@@ -510,10 +510,15 @@ export const initialState: AgentState = {
   contextCompactedByThreadId: {},
 }
 
-/** Client-generated optimistic user ids: `${threadId}_user_${ms}` or `${threadId}_${ms}`. */
+/**
+ * Client-generated optimistic user ids: `${threadId}_user_${ms}[_${rand}]`
+ * (random suffix defeats same-millisecond collisions) or legacy
+ * `${threadId}_${ms}`. Companion persisted ids (`${threadId}_${ms}_${rand}`,
+ * no `_user_` infix) must NOT match.
+ */
 export function isTempUserMessageId(id: string, threadId: string): boolean {
   if (!id) return false
-  if (/_user_\d{10,}$/.test(id)) return true
+  if (/_user_\d{10,}(_[a-z0-9]+)?$/.test(id)) return true
   if (threadId && id.startsWith(`${threadId}_`) && new RegExp(`^${escapeRegExp(threadId)}_\\d{10,}$`).test(id)) {
     return true
   }
@@ -548,6 +553,36 @@ function reduceAddMessage(state: AgentState, incoming: Message): AgentState {
   }
 
   if (incoming.role === "user" && incoming.thread_id) {
+    // F1 precise adopt: persist echo carries the optimistic bubble's temp id —
+    // adopt by exact id, never by position. No match → plain append (multi-
+    // surface sends in one WS window must not cross-adopt each other's bubble).
+    const clientMessageId =
+      typeof incoming.client_message_id === "string" && incoming.client_message_id
+        ? incoming.client_message_id
+        : null
+    if (clientMessageId) {
+      const matchIdx = state.messages.findIndex(
+        (m) =>
+          m.id === clientMessageId &&
+          m.role === "user" &&
+          m.thread_id === incoming.thread_id,
+      )
+      if (matchIdx < 0) {
+        return { ...state, messages: [...state.messages, incoming] }
+      }
+      const matched = state.messages[matchIdx]!
+      const merged = mergeAttachments(matched.attachments, incoming.attachments)
+      return {
+        ...state,
+        messages: state.messages.map((m, i) =>
+          i === matchIdx
+            ? { ...m, id: incoming.id, ...(merged ? { attachments: merged } : {}) }
+            : m,
+        ),
+      }
+    }
+    // Legacy adopt (pre-F1 companion without client_message_id): last temp
+    // user bubble in this thread takes the persisted id.
     let lastUserIdx = -1
     for (let i = state.messages.length - 1; i >= 0; i--) {
       const m = state.messages[i]!
@@ -664,8 +699,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       // Dedup by id: Side Panel optimistic add + SW `chat.user` broadcast (Cockpit
       // / multi-surface) must not double-append the same user turn.
       // Same-id echo may carry companion attachments — merge them onto the row.
-      // Companion persist uses a new message_id; adopt it onto the last temp
-      // optimistic user bubble in this thread (DoD #13).
+      // Companion persist uses a new message_id; adopt it onto the optimistic
+      // bubble matched by client_message_id (F1), falling back to the last temp
+      // user bubble for pre-F1 companions (DoD #13).
       return reduceAddMessage(state, action.message)
     case "UPDATE_MESSAGE":
       return {

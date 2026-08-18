@@ -195,6 +195,9 @@ const RASTER_MIMES = new Set<RasterMime>([
   "image/webp",
 ])
 
+/** ~300KB binary as base64; makePreviewB64 caps at ~11K chars, so this only bounds hostile/legacy payloads. */
+const MAX_PREVIEW_B64_CHARS = 400_000
+
 /** Stamp companion-chosen rel/msg_id/index; never persist a client-supplied path. */
 function stampAttachments(msgId: string, atts: ImageAttachmentMeta[]): ImageAttachmentMeta[] {
   return atts
@@ -207,7 +210,9 @@ function stampAttachments(msgId: string, atts: ImageAttachmentMeta[]): ImageAtta
       bytes: typeof a.bytes === "number" && Number.isFinite(a.bytes) ? a.bytes : 0,
       ...(typeof a.width === "number" ? { width: a.width } : {}),
       ...(typeof a.height === "number" ? { height: a.height } : {}),
-      ...(typeof a.preview_jpeg_b64 === "string" ? { preview_jpeg_b64: a.preview_jpeg_b64 } : {}),
+      ...(typeof a.preview_jpeg_b64 === "string"
+        ? { preview_jpeg_b64: a.preview_jpeg_b64.slice(0, MAX_PREVIEW_B64_CHARS) }
+        : {}),
       ...(typeof a.dest_host === "string" && a.dest_host
         ? { dest_host: a.dest_host.replace(/[\n\r]/g, "").slice(0, 200) }
         : {}),

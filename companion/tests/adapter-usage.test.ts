@@ -20,6 +20,9 @@ let completionsProto: any = undefined
 
 before(async () => {
   process.env.HOME = tempHome
+  // Windows: os.homedir() ignores HOME — pin DATA_DIR explicitly or config.ts
+  // captures the real ~/.cmspark-agent at module load.
+  process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
   delete process.env.DEEPSEEK_API_KEY
 
   const adapter = await import("../src/llm/adapter")
@@ -207,6 +210,40 @@ test("chatCreate includes reasoning_tokens when present in usage details", async
   const event = logEvents.find(e => e.event === "llm.usage")
   assert.ok(event)
   assert.equal(event!.data.reasoning_tokens, 3)
+})
+
+// --- chatCreate chat.user echo (F1 client_message_id) ---
+
+test("chatCreate echoes client_message_id in chat.user when client provided it", async () => {
+  clearLogEvents()
+  mockStreamChunks = [
+    { choices: [{ delta: { content: "Hi" } }] },
+    { choices: [] },
+  ]
+
+  const params = buildMockParams()
+  await chatCreate({ ...params, clientMessageId: "thread-1_user_1724000000000" })
+
+  const echo = params.getSentMessages().find((m) => m.type === "chat.user")
+  assert.ok(echo, "chat.user echo must be sent")
+  assert.equal(echo.client_message_id, "thread-1_user_1724000000000")
+  assert.ok(echo.message_id, "persisted companion id still present")
+  assert.notEqual(echo.message_id, echo.client_message_id)
+})
+
+test("chatCreate omits client_message_id in chat.user when not provided", async () => {
+  clearLogEvents()
+  mockStreamChunks = [
+    { choices: [{ delta: { content: "Hi" } }] },
+    { choices: [] },
+  ]
+
+  const params = buildMockParams()
+  await chatCreate(params)
+
+  const echo = params.getSentMessages().find((m) => m.type === "chat.user")
+  assert.ok(echo, "chat.user echo must be sent")
+  assert.equal("client_message_id" in echo, false)
 })
 
 // --- generateThreadTitle usage tests ---
