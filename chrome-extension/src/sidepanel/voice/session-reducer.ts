@@ -27,6 +27,8 @@ const LOCAL_STT_ERROR_CODES = new Set([
   "origin_denied",
   "total_seq_mismatch",
   "invalid_session_id",
+  "session_unknown",
+  "peer_mismatch",
 ])
 
 /** Side Panel / MV3 always has navigator; keep pure-friendly for unit tests. */

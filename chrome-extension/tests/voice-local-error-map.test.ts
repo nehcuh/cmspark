@@ -59,6 +59,10 @@ test("mapLocalSttError §6.5 known codes", () => {
     severity: "silent",
     message: "",
   })
+  assert.deepEqual(mapLocalSttError("session_unknown"), {
+    severity: "banner",
+    message: "本机听写会话已断开，请再试一次",
+  })
 })
 
 test("mapLocalSttError is case-insensitive; unknown → banner fallback", () => {

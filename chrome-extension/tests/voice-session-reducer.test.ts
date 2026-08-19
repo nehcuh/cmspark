@@ -261,6 +261,20 @@ test("network error → end keeps network banner", () => {
   assert.match(s.banner || "", /网络/)
 })
 
+test("session_unknown uses local banner, not empty-listen copy", () => {
+  let s = initialVoiceSession(true)
+  s = reduceVoiceSession(s, {
+    type: "USER_TOGGLE_START",
+    sessionId: "s1",
+    baseText: "",
+  })
+  s = reduceVoiceSession(s, { type: "ENGINE_ERROR", code: "session_unknown" })
+  s = reduceVoiceSession(s, { type: "ENGINE_END" })
+  assert.match(s.banner || "", /会话已断开/)
+  assert.equal(/未识别到内容/.test(s.banner || ""), false)
+  assert.equal(/session_unknown/.test(s.banner || ""), false)
+})
+
 test("USER_TOGGLE_STOP while stopping forces idle (stuck recovery)", () => {
   let s = initialVoiceSession(true)
   s = reduceVoiceSession(s, {

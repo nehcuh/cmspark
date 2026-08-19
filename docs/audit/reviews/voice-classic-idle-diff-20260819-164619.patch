@@ -1,0 +1,377 @@
+# Pi external review context
+batch: voice-classic-idle
+base: HEAD
+time: 20260819-164619
+
+b9d58a2
+
+ M chrome-extension/src/sidepanel/voice/error-map.ts
+ M chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+ M chrome-extension/src/sidepanel/voice/session-reducer.ts
+ M chrome-extension/tests/voice-local-error-map.test.ts
+ M chrome-extension/tests/voice-local-stt-adapter-ws.test.ts
+ M chrome-extension/tests/voice-session-reducer.test.ts
+?? .grok/hooks/vibesop-route.json
+?? .grok/rules/
+?? .impeccable/sketches/
+?? docs/audit/reviews/_prompts/voice-classic-idle-20260819.md
+?? docs/audit/reviews/_prompts/voice-classic-idle-pi-rereview-20260819.md
+?? docs/audit/reviews/voice-classic-idle-adversary-synthesis-20260819.md
+?? docs/audit/reviews/voice-classic-idle-diff-20260819-164619.patch
+?? docs/audit/reviews/voice-classic-idle-eval-gate-20260819.md
+?? docs/audit/reviews/voice-classic-idle-impl-diff-20260819.patch
+
+## Diff
+ chrome-extension/src/sidepanel/voice/error-map.ts  |   6 +
+ .../src/sidepanel/voice/local-stt-adapter.ts       |  23 ++-
+ .../src/sidepanel/voice/session-reducer.ts         |   2 +
+ .../tests/voice-local-error-map.test.ts            |   4 +
+ .../tests/voice-local-stt-adapter-ws.test.ts       | 203 ++++++++++++++++++++-
+ .../tests/voice-session-reducer.test.ts            |  14 ++
+ 6 files changed, 246 insertions(+), 6 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/voice/error-map.ts b/chrome-extension/src/sidepanel/voice/error-map.ts
+index 9e8abcf..b9c9c25 100644
+--- a/chrome-extension/src/sidepanel/voice/error-map.ts
++++ b/chrome-extension/src/sidepanel/voice/error-map.ts
+@@ -146,6 +146,12 @@ export function mapLocalSttError(code: string): LocalSttUserFacing {
+       }
+     case "aborted":
+       return { severity: "silent", message: "" }
++    case "session_unknown":
++    case "peer_mismatch":
++      return {
++        severity: "banner",
++        message: "本机听写会话已断开，请再试一次",
++      }
+     default:
+       return {
+         severity: "banner",
+diff --git a/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts b/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+index 9a5d712..5bc1909 100644
+--- a/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
++++ b/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+@@ -443,7 +443,8 @@ export function createLocalSttAdapter(
+         return
+       }
+       capture = handle
+-      sendStart(sid, LOCAL_STT_MAX_RECORD_MS)
++      // C1 / D1c: do NOT voice.stt.start until upload. Companion arms 10s idle
++      // on start with zero chunks during record → forceAbort (classic ≥10s).
+       if (dead || aborted) {
+         handle.abort()
+         return
+@@ -934,12 +935,30 @@ export function createLocalSttAdapter(
+         return
+       }
+ 
++      const genAtStop = loopGen
+       void handle
+         .stop()
+         .then(async (wav) => {
+           const sid = sessionId
+           if (!sid) return
+-          const result = await uploadAndWait(sid, wav)
++          if (dead || aborted || genAtStop !== loopGen) return
++          // Open STT session then immediately stream chunks (keeps idle timer happy).
++          sendStart(sid, LOCAL_STT_MAX_RECORD_MS)
++          let result = await uploadAndWait(sid, wav)
++          if (
++            result.ok === false &&
++            (result.code === "resource_conflict" || result.code === "session_busy") &&
++            !dead &&
++            genAtStop === loopGen
++          ) {
++            deps.send({ type: "voice.stt.abort", v: 1, sessionId: sid })
++            await new Promise((r) => setTimeout(r, 250))
++            if (dead || genAtStop !== loopGen) return
++            const retrySid = `${sid}-r1`
++            sessionId = retrySid
++            sendStart(retrySid, LOCAL_STT_MAX_RECORD_MS)
++            result = await uploadAndWait(retrySid, wav)
++          }
+           if (dead) return
+           if (result.ok === false) {
+             const errCode = result.code
+diff --git a/chrome-extension/src/sidepanel/voice/session-reducer.ts b/chrome-extension/src/sidepanel/voice/session-reducer.ts
+index 0983bb8..107b33a 100644
+--- a/chrome-extension/src/sidepanel/voice/session-reducer.ts
++++ b/chrome-extension/src/sidepanel/voice/session-reducer.ts
+@@ -27,6 +27,8 @@ const LOCAL_STT_ERROR_CODES = new Set([
+   "origin_denied",
+   "total_seq_mismatch",
+   "invalid_session_id",
++  "session_unknown",
++  "peer_mismatch",
+ ])
+ 
+ /** Side Panel / MV3 always has navigator; keep pure-friendly for unit tests. */
+diff --git a/chrome-extension/tests/voice-local-error-map.test.ts b/chrome-extension/tests/voice-local-error-map.test.ts
+index f29262c..70e338e 100644
+--- a/chrome-extension/tests/voice-local-error-map.test.ts
++++ b/chrome-extension/tests/voice-local-error-map.test.ts
+@@ -59,6 +59,10 @@ test("mapLocalSttError §6.5 known codes", () => {
+     severity: "silent",
+     message: "",
+   })
++  assert.deepEqual(mapLocalSttError("session_unknown"), {
++    severity: "banner",
++    message: "本机听写会话已断开，请再试一次",
++  })
+ })
+ 
+ test("mapLocalSttError is case-insensitive; unknown → banner fallback", () => {
+diff --git a/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts b/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts
+index 56303a2..b4e0a1f 100644
+--- a/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts
++++ b/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts
+@@ -70,18 +70,25 @@ test("happy path: start → stop → voice.stt.start/chunk/end → result", asyn
+   adapter.start({ sessionId: "s-happy", modelId: "medium", lang: "zh-CN" })
+   await new Promise((r) => setTimeout(r, 20))
+   assert.ok(events.includes("start"), `expected start, got ${events.join(",")}`)
++  // C1: recording must not open the Companion session (idle-safe).
++  assert.equal(
++    sent.filter((m) => m.type === "voice.stt.start").length,
++    0,
++    "classic must not voice.stt.start while still recording",
++  )
++
++  adapter.stop()
++  await new Promise((r) => setTimeout(r, 20))
+ 
+   const startMsg = sent.find((m) => m.type === "voice.stt.start")
+-  assert.ok(startMsg)
++  assert.ok(startMsg, "voice.stt.start after stop")
+   assert.equal(startMsg.sessionId, "s-happy")
+   assert.equal(startMsg.modelId, "medium")
+   assert.equal(startMsg.format, "wav")
+   assert.equal(startMsg.sampleRate, 16000)
+   assert.equal(startMsg.channels, 1)
+   assert.equal(startMsg.v, 1)
+-
+-  adapter.stop()
+-  await new Promise((r) => setTimeout(r, 20))
++  assert.equal(startMsg.privacy_ack_v2, true)
+ 
+   assert.ok(events.includes("capture_stopped"))
+   const chunks = sent.filter((m) => m.type === "voice.stt.chunk")
+@@ -109,6 +116,194 @@ test("happy path: start → stop → voice.stt.start/chunk/end → result", asyn
+   adapter.destroy()
+ })
+ 
++test("classic: voice.stt.start is deferred until after captureStop (idle-safe)", async () => {
++  const timeline: string[] = []
++  const inbox: { emit?: (m: any) => void } = {}
++
++  const adapter = createLocalSttAdapter(
++    {
++      onStart: () => timeline.push("onStart"),
++      onResult: () => timeline.push("onResult"),
++      onError: () => timeline.push("onError"),
++      onEnd: () => timeline.push("onEnd"),
++      onCaptureStopped: () => timeline.push("captureStopped"),
++    },
++    {
++      send: (msg) => {
++        timeline.push(String(msg.type))
++        if (msg.type === "voice.stt.end") {
++          queueMicrotask(() => {
++            inbox.emit?.({
++              type: "voice.stt.result",
++              sessionId: msg.sessionId,
++              text: "ok",
++            })
++          })
++        }
++      },
++      onMessage: (h) => {
++        inbox.emit = h
++        return () => {
++          inbox.emit = undefined
++        }
++      },
++      modelId: "medium",
++      startCapture: async () => {
++        timeline.push("captureBegin")
++        return {
++          stop: async () => {
++            timeline.push("captureStop")
++            await new Promise((r) => setTimeout(r, 40))
++            return new Uint8Array([9])
++          },
++          abort: () => {},
++        }
++      },
++    },
++  )
++
++  adapter.start({ sessionId: "classic-idle-safe", modelId: "medium" })
++  await new Promise((r) => setTimeout(r, 20))
++  assert.ok(timeline.includes("onStart"), `timeline=${timeline.join(",")}`)
++  assert.ok(!timeline.includes("voice.stt.start"), `start leaked during record: ${timeline.join(",")}`)
++  adapter.stop()
++  await new Promise((r) => setTimeout(r, 80))
++  adapter.destroy()
++
++  const iOnStart = timeline.indexOf("onStart")
++  const iStop = timeline.indexOf("captureStop")
++  const iStart = timeline.indexOf("voice.stt.start")
++  const iChunk = timeline.indexOf("voice.stt.chunk")
++  const iEnd = timeline.indexOf("voice.stt.end")
++  assert.ok(iOnStart >= 0 && iStop >= 0 && iStart >= 0, `timeline=${timeline.join(",")}`)
++  assert.ok(iOnStart < iStop, "onStart (listening chrome) must precede captureStop")
++  assert.ok(
++    iStart > iStop,
++    `voice.stt.start must be after captureStop (got ${timeline.join(",")})`,
++  )
++  assert.ok(iChunk > iStart && iEnd > iChunk, `upload order ${timeline.join(",")}`)
++})
++
++test("classic: resource_conflict retries once with -r1 sessionId", async () => {
++  const sent: any[] = []
++  const inbox: { emit?: (m: any) => void } = {}
++  const finals: string[] = []
++  const errors: string[] = []
++  let endCount = 0
++
++  const adapter = createLocalSttAdapter(
++    {
++      onStart: () => {},
++      onResult: ({ finalChunk }) => {
++        if (finalChunk) finals.push(finalChunk)
++      },
++      onError: (c) => {
++        errors.push(c)
++      },
++      onEnd: () => {},
++    },
++    {
++      send: (msg) => {
++        sent.push(msg)
++        if (msg.type === "voice.stt.end") {
++          endCount++
++          const sid = String(msg.sessionId)
++          queueMicrotask(() => {
++            if (endCount === 1) {
++              inbox.emit?.({
++                type: "voice.stt.error",
++                sessionId: sid,
++                code: "resource_conflict",
++                message: "busy",
++              })
++            } else {
++              inbox.emit?.({
++                type: "voice.stt.result",
++                sessionId: sid,
++                text: "retried-ok",
++              })
++            }
++          })
++        }
++      },
++      onMessage: (h) => {
++        inbox.emit = h
++        return () => {
++          inbox.emit = undefined
++        }
++      },
++      modelId: "medium",
++      startCapture: fakeCaptureFactory(silentWav()),
++    },
++  )
++
++  adapter.start({ sessionId: "classic-retry", modelId: "medium" })
++  await new Promise((r) => setTimeout(r, 20))
++  adapter.stop()
++  await new Promise((r) => setTimeout(r, 400))
++
++  const starts = sent.filter((m) => m.type === "voice.stt.start")
++  assert.ok(starts.length >= 2, `expected orig+retry starts, got ${starts.length}`)
++  assert.ok(
++    starts.some((m) => String(m.sessionId).endsWith("-r1")),
++    `expected -r1 retry start, starts=${starts.map((s) => s.sessionId).join(",")}`,
++  )
++  assert.deepEqual(finals, ["retried-ok"])
++  assert.equal(errors.length, 0, `retry success must not surface conflict: ${errors}`)
++  adapter.destroy()
++})
++
++test("classic: abort during conflict backoff does not start -r1", async () => {
++  const sent: any[] = []
++  const inbox: { emit?: (m: any) => void } = {}
++
++  const adapter = createLocalSttAdapter(
++    {
++      onStart: () => {},
++      onResult: () => {},
++      onError: () => {},
++      onEnd: () => {},
++    },
++    {
++      send: (msg) => {
++        sent.push(msg)
++        if (msg.type === "voice.stt.end") {
++          queueMicrotask(() => {
++            inbox.emit?.({
++              type: "voice.stt.error",
++              sessionId: msg.sessionId,
++              code: "resource_conflict",
++            })
++          })
++        }
++      },
++      onMessage: (h) => {
++        inbox.emit = h
++        return () => {
++          inbox.emit = undefined
++        }
++      },
++      modelId: "medium",
++      startCapture: fakeCaptureFactory(silentWav()),
++    },
++  )
++
++  adapter.start({ sessionId: "classic-abort-retry", modelId: "medium" })
++  await new Promise((r) => setTimeout(r, 20))
++  adapter.stop()
++  await new Promise((r) => setTimeout(r, 30))
++  adapter.abort()
++  await new Promise((r) => setTimeout(r, 400))
++
++  const starts = sent.filter((m) => m.type === "voice.stt.start")
++  assert.equal(
++    starts.filter((m) => String(m.sessionId).endsWith("-r1")).length,
++    0,
++    `cancelled classic must not retry: ${starts.map((s) => s.sessionId).join(",")}`,
++  )
++  adapter.destroy()
++})
++
+ test("abort during recording: voice.stt.abort + silent error path", async () => {
+   const wav = silentWav()
+   const sent: any[] = []
+diff --git a/chrome-extension/tests/voice-session-reducer.test.ts b/chrome-extension/tests/voice-session-reducer.test.ts
+index 7b105cd..85ff5f9 100644
+--- a/chrome-extension/tests/voice-session-reducer.test.ts
++++ b/chrome-extension/tests/voice-session-reducer.test.ts
+@@ -261,6 +261,20 @@ test("network error → end keeps network banner", () => {
+   assert.match(s.banner || "", /网络/)
+ })
+ 
++test("session_unknown uses local banner, not empty-listen copy", () => {
++  let s = initialVoiceSession(true)
++  s = reduceVoiceSession(s, {
++    type: "USER_TOGGLE_START",
++    sessionId: "s1",
++    baseText: "",
++  })
++  s = reduceVoiceSession(s, { type: "ENGINE_ERROR", code: "session_unknown" })
++  s = reduceVoiceSession(s, { type: "ENGINE_END" })
++  assert.match(s.banner || "", /会话已断开/)
++  assert.equal(/未识别到内容/.test(s.banner || ""), false)
++  assert.equal(/session_unknown/.test(s.banner || ""), false)
++})
++
+ test("USER_TOGGLE_STOP while stopping forces idle (stuck recovery)", () => {
+   let s = initialVoiceSession(true)
+   s = reduceVoiceSession(s, {

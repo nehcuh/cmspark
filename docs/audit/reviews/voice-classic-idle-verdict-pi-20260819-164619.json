@@ -1,0 +1,7 @@
+{
+  "batch": "voice-classic-idle",
+  "timestamp": "20260819-164619",
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/voice-classic-idle-pi-20260819-164619.md" },
+  "approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/voice-classic-idle-diff-20260819-164619.patch"
+}
