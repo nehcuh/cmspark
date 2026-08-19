@@ -3,7 +3,8 @@
 
 import OpenAI from "openai"
 import { getConfig, saveConfig, isMaskedApiKey } from "../../config"
-import { probeLlmConnection } from "../../llm/connection-test"
+import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
+import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
 import { normalizeVisionBaseUrl } from "../../llm/vision-pipeline"
 import {
   findArmingSecurityFlags,
@@ -107,6 +108,9 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         }
         if (typeof cfg.anthropic_version === "string" && cfg.anthropic_version.trim()) {
           normalized.llm.anthropic_version = cfg.anthropic_version.trim()
+        }
+        if (cfg.native_vision === "auto" || cfg.native_vision === "on" || cfg.native_vision === "off") {
+          normalized.llm.native_vision = cfg.native_vision
         }
       }
       if (cfg.port) normalized.port = cfg.port
@@ -268,6 +272,9 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
           local_terminal_app,
         }
       }
+      if (normalized.llm) {
+        delete normalized.llm.native_vision_detected
+      }
       const updated = saveConfig(normalized)
       if (armingFlags.length > 0) {
         logger.warn("security.flag_armed", {
@@ -318,17 +325,24 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (!testConfig.api_key || testConfig.api_key === "sk-placeholder" || isMaskedApiKey(testConfig.api_key)) {
         return { type: "config.testResult", ok: false, error: "API Key 未配置" }
       }
-      // SSRF: refuse config.test against private/loopback base_url (shared gate)
+      // LLM endpoint: allow intranet/loopback (user-configured). Still block IMDS.
       if (testConfig.base_url) {
-        const { assertOutboundFetchUrlAllowed } = await import("../../security")
-        const ssrf = assertOutboundFetchUrlAllowed(String(testConfig.base_url))
-        if (ssrf) {
-          return { type: "config.testResult", ok: false, error: ssrf }
+        const { assertLlmEndpointUrlAllowed } = await import("../../security")
+        const blocked = assertLlmEndpointUrlAllowed(String(testConfig.base_url))
+        if (blocked) {
+          return { type: "config.testResult", ok: false, error: blocked }
         }
       }
       const probe = await probeLlmConnection(testConfig)
       if (probe.ok) {
-        return { type: "config.testResult", ok: true, message: probe.message }
+        const nativeVision = await probeNativeVision(testConfig)
+        rememberNativeVisionProbe(testConfig.base_url, testConfig.model_name, nativeVision)
+        return {
+          type: "config.testResult",
+          ok: true,
+          message: probe.message,
+          native_vision: nativeVision,
+        }
       }
       return { type: "config.testResult", ok: false, error: probe.error || "连接失败" }
     }

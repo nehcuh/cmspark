@@ -253,10 +253,12 @@ export function reduceVoiceSession(
         ...state,
         finals,
         interim:
-          event.interim !== undefined
-            ? event.interim
-            : event.finalChunk
-              ? ""
+          event.finalChunk
+            ? ""
+            : event.interim !== undefined
+              ? event.interim.trim()
+                ? event.interim
+                : state.interim
               : state.interim,
       }
     }

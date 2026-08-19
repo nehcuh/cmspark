@@ -29,3 +29,32 @@ export async function getActiveTabHostname(): Promise<string | undefined> {
     return undefined
   }
 }
+
+/**
+ * Site-knowledge hostname is best-effort. Never stall chat.create / chat.user
+ * echo on a hung tabs.query — 40ms is enough for the normal path.
+ */
+export function withHostnameBudget<T>(
+  getter: () => Promise<T | undefined>,
+  timeoutMs = 40,
+): Promise<T | undefined> {
+  const ms = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 40
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (value?: T) => {
+      if (done) return
+      done = true
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(undefined), ms)
+    getter()
+      .then((value) => {
+        clearTimeout(timer)
+        finish(value)
+      })
+      .catch(() => {
+        clearTimeout(timer)
+        finish(undefined)
+      })
+  })
+}

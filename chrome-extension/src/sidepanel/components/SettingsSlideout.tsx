@@ -428,7 +428,9 @@ export function SettingsSlideout() {
   const config = state.config
 
   const handleSave = () => {
-    chrome.runtime.sendMessage({ type: "config.set", config }, () => {
+    // Probe bit is session-only; never persist native_vision_detected.
+    const { native_vision_detected: _drop, ...toSave } = config
+    chrome.runtime.sendMessage({ type: "config.set", config: toSave }, () => {
       dispatch({ type: "TOGGLE_SETTINGS" })
     })
   }
@@ -938,14 +940,14 @@ export function SettingsSlideout() {
               placeholder={
                 config.protocol === "anthropic"
                   ? "https://api.anthropic.com 或中继 https://host/v1"
-                  : "https://api.deepseek.com/v1"
+                  : "https://api.deepseek.com/v1 或 http://10.x.x.x/v1"
               }
             />
-            {config.protocol === "anthropic" && (
-              <div style={styles.helpText}>
-                将拼到 /messages；勿混用 /chat/completions。官方 Anthropic 主机不要开下方兼容头。
-              </div>
-            )}
+            <div style={styles.helpText}>
+              {config.protocol === "anthropic"
+                ? "将拼到 /messages；勿混用 /chat/completions。官方 Anthropic 主机不要开下方兼容头。"
+                : "支持内网 OpenAI 兼容服务（如 http://10.x.x.x/v1）。云元数据地址仍会被拒绝。"}
+            </div>
           </div>
 
           <div style={styles.field}>
@@ -1085,6 +1087,33 @@ export function SettingsSlideout() {
                 Using Companion global config: {state.companionConfig.model_name}
               </div>
             )}
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>主模型看图</label>
+            <select
+              style={styles.input}
+              value={config.native_vision || "auto"}
+              onChange={(e) =>
+                dispatch({
+                  type: "SET_CONFIG",
+                  config: { native_vision: e.target.value as "auto" | "on" | "off" },
+                })
+              }
+            >
+              <option value="auto">自动（名称启发式 + 测试连接探测）</option>
+              <option value="on">强制走主模型</option>
+              <option value="off">关闭（截图走下方视觉轨）</option>
+            </select>
+            <div style={styles.helpText}>
+              网页截图 / analyze_image 过去一律发给「视觉分析」里配置的模型（默认
+              Ollama/llava）。主模型本身能看图时应走主模型。点「测试连接」会探测端点是否接受图片。
+              {config.native_vision_detected === true
+                ? " 最近一次探测：支持看图。"
+                : config.native_vision_detected === false
+                  ? " 最近一次探测：未接受图片。"
+                  : " 尚未探测。"}
+            </div>
           </div>
 
           <div style={styles.field}>

@@ -33,7 +33,7 @@ import {
   noteSecurityConfirmationGone,
   noteSecurityConfirmationRequest,
 } from "./computer-task-mirror"
-import { getActiveTabHostname } from "./active-tab-hostname"
+import { getActiveTabHostname, withHostnameBudget } from "./active-tab-hostname"
 import {
   buildLogEventPayload,
   forwardFailureConsoleLevel,
@@ -534,7 +534,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
               /* panel/cockpit may be closed */
             })
         }
-        getActiveTabHostname().then((hostname) => {
+        const sendCreate = (hostname?: string) => {
           const sent = wsClient.send({
             type: "chat.create",
             thread_id: message.threadId,
@@ -552,18 +552,11 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             echoUser(true)
           }
           sendResponse({ ok: sent })
-        }).catch(() => {
-          const sent = wsClient.send({
-            type: "chat.create",
-            thread_id: message.threadId,
-            message: message.message,
-            skill_ids: message.skillIds,
-            clientMessageId,
-            ...(Array.isArray(message.context_refs) ? { context_refs: message.context_refs } : {}),
-          })
-          if (sent) echoUser(true)
-          sendResponse({ ok: sent })
-        })
+        }
+        // Site-knowledge hostname is best-effort; never stall chat.create on tabs.query.
+        withHostnameBudget(() => getActiveTabHostname())
+          .then((hostname) => sendCreate(hostname))
+          .catch(() => sendCreate())
         return true
       }
 
@@ -664,7 +657,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
           })
         }
 
-        getActiveTabHostname()
+        withHostnameBudget(() => getActiveTabHostname())
           .then((hostname) => {
             doSend(hostname || undefined)
           })
@@ -698,7 +691,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       }
 
       case "chat.regenerate": {
-        getActiveTabHostname().then((hostname) => {
+        const sendRegen = (hostname?: string) => {
           const sent = wsClient.send({
             type: "chat.regenerate",
             thread_id: message.thread_id,
@@ -710,15 +703,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，无法重新生成" })
           }
           sendResponse({ ok: sent })
-        }).catch(() => {
-          const sent = wsClient.send({
-            type: "chat.regenerate",
-            thread_id: message.thread_id,
-            message_id: message.message_id,
-            message: message.message,
-          })
-          sendResponse({ ok: sent })
-        })
+        }
+        withHostnameBudget(() => getActiveTabHostname())
+          .then((hostname) => sendRegen(hostname))
+          .catch(() => sendRegen())
         return true
       }
 

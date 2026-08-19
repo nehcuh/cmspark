@@ -335,10 +335,6 @@ export function useWebSocket() {
           // exact id instead of last-temp positional guessing.
           const clientMessageId =
             (typeof msg.client_message_id === "string" && msg.client_message_id) || undefined
-          if (threadId) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId, busy: true })
-          }
-          dispatch({ type: "SET_PROCESSING", isProcessing: true })
           dispatch({
             type: "ADD_MESSAGE",
             message: {
@@ -353,6 +349,10 @@ export function useWebSocket() {
               ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
             },
           })
+          if (threadId) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId, busy: true })
+          }
+          dispatch({ type: "SET_PROCESSING", isProcessing: true })
           break
         }
 
@@ -640,7 +640,21 @@ export function useWebSocket() {
           break
 
         case "config.testResult":
-          dispatch({ type: "SET_TEST_RESULT", result: msg.ok ? "连接成功 ✓" : `连接失败: ${msg.error || "未知错误"}` })
+          dispatch({
+            type: "SET_TEST_RESULT",
+            result: msg.ok
+              ? `连接成功 ✓${
+                  msg.native_vision === true
+                    ? " · 已探测到看图能力（截图/附图走主模型）"
+                    : msg.native_vision === false
+                      ? " · 未探测到看图（截图仍走视觉轨，可在下方强制开启）"
+                      : ""
+                }`
+              : `连接失败: ${msg.error || "未知错误"}`,
+          })
+          if (typeof msg.native_vision === "boolean") {
+            dispatch({ type: "SET_CONFIG", config: { native_vision_detected: msg.native_vision } })
+          }
           break
 
         case "openSettings":
@@ -1009,13 +1023,19 @@ export function useWebSocket() {
         }
 
         case "thread.list": {
+          // Cockpit + Panel both call useWebSocket. chrome.runtime.sendMessage
+          // delivers the *request* `{type:"thread.list"}` to the other page.
+          // That payload has no `threads` array — treating it as [] used to
+          // auto-create a blank thread (and steal the active conversation)
+          // whenever 确认台 opened.
+          if (!Array.isArray(msg.threads)) break
           // Dual-review B2: trash-scoped lists must not auto-create blank
           // threads or force-select a different active chat.
           const listScope =
             msg.list_scope ||
             (msg.only_trashed ? "trash" : msg.include_trashed ? "all" : "active")
           const isScopedList = listScope === "trash" || listScope === "all"
-          const incoming = Array.isArray(msg.threads) ? msg.threads : []
+          const incoming = msg.threads
 
           // only_trashed responses: ignore for global store (ThreadList uses
           // include_trashed:true which returns active+trashed together).
@@ -1149,9 +1169,11 @@ export function useWebSocket() {
           break
 
         case "skill.list":
+          // Same request-echo trap as thread.list — missing array is a command, not a hydrate.
+          if (!Array.isArray(msg.skills)) break
           dispatch({
             type: "SET_SKILLS",
-            skills: Array.isArray(msg.skills) ? msg.skills : [],
+            skills: msg.skills,
           })
           break
 
@@ -1220,6 +1242,7 @@ export function useWebSocket() {
         // `user_env.updated` (not a distinct ack) — companion message-router PR-1.
         case "user_env.list":
         case "user_env.updated": {
+          if (msg.type === "user_env.list" && !Array.isArray(msg.keys)) break
           const pub = normalizeUserEnvPublic(msg)
           dispatch({ type: "SET_USER_ENV", userEnv: pub })
           if (msg.type === "user_env.updated") {
@@ -1537,7 +1560,8 @@ export function useWebSocket() {
           break
 
         case "knowledge.list":
-          dispatch({ type: "SET_KNOWLEDGE_DOCS", docs: msg.docs || [] })
+          if (!Array.isArray(msg.docs)) break
+          dispatch({ type: "SET_KNOWLEDGE_DOCS", docs: msg.docs })
           break
 
         case "knowledge.import_directory_result": {

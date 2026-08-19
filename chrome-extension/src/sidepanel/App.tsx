@@ -84,7 +84,7 @@ import {
   pasteImageDisplayName,
   visionRailOpen,
 } from "./utils/image-compose"
-import { extractHostname, likelyMultimodal } from "./components/vision-reuse-logic"
+import { extractHostname, resolveNativeVision } from "./components/vision-reuse-logic"
 import { buildOptimisticUploadBubble, nextComposerText, uploadSendFailureOps, uploadSendOutcome } from "./utils/upload-send"
 import { newTempUserMessageId } from "../utils/temp-message-id"
 import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
@@ -896,7 +896,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const effectiveModel =
     (activeThread?.config_override?.model_name || "").trim() ||
     state.config.model_name
-  const useNativeVision = likelyMultimodal(effectiveModel)
+  const useNativeVision = resolveNativeVision({
+    modelName: effectiveModel,
+    mode: state.config.native_vision,
+    // Probe bit is companion-keyed {url,model}. Never pass the unkeyed
+    // session flag — it would treat any later model as native after one test.
+  })
   const effectiveLlmBase =
     (typeof activeThread?.config_override?.base_url === "string" &&
       activeThread.config_override.base_url.trim()) ||
@@ -931,6 +936,18 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const getPlaceholder = () => {
     if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
+    if (voice.processing) return sttEngine === "local" ? "正在本机识别…" : "正在识别…"
+    if (voice.listening) {
+      const localNearRt =
+        sttEngine === "local" &&
+        state.voiceDictationMode === "continuous" &&
+        state.voiceRealtimeStreaming !== false
+      if (sttEngine === "local") {
+        return localNearRt ? "正在听…约 8 秒出第一段字" : "正在听…结束后出字"
+      }
+      return "正在听…"
+    }
+    if (voice.refining) return "正在纠错…"
     const busyPh = composerBusyPlaceholder(composerMode, {
       lockCount,
       isWorker,
@@ -1168,7 +1185,10 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         setFileError(capErr)
         return
       }
-      const useNative = likelyMultimodal(effectiveModel)
+      const useNative = resolveNativeVision({
+        modelName: effectiveModel,
+        mode: state.config.native_vision,
+      })
       if (!useNative && !visionRailOpen(state.config)) {
         setFileError(IMAGE_PREFLIGHT_NO_VISION)
         return
@@ -1237,10 +1257,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           /* ignore */
         }
 
-        dispatch({ type: "SET_PROCESSING", isProcessing: true })
-        if (uploadThreadId) {
-          dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: true })
-        }
         // Optimistic bubble (F2): a new companion's chat.user echo adopts it via
         // client_message_id; an old companion (no echo) simply keeps it — the
         // upload turn never vanishes from the transcript.
@@ -1250,6 +1266,10 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           fileNames: files.map((f) => f.name),
         })
         dispatch({ type: "ADD_MESSAGE", message: uploadBubble })
+        dispatch({ type: "SET_PROCESSING", isProcessing: true })
+        if (uploadThreadId) {
+          dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: true })
+        }
         dispatch({
           type: "SET_PENDING_UPLOAD",
           threadId: uploadThreadId!,
@@ -1339,6 +1359,22 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           mode: "summary_card" as const,
           title: r.title,
         }))
+        const displayContent =
+          context_refs.length > 0
+            ? `${trimmed}\n\n📎 引用 ${context_refs.length} 个会话`
+            : trimmed
+        // Paint the user bubble before busy chrome so the transcript never
+        // shows 「思考中」 without the query that started it.
+        dispatch({
+          type: "ADD_MESSAGE",
+          message: {
+            id: clientMessageId,
+            thread_id: state.activeThreadId!,
+            role: "user",
+            content: displayContent,
+            created_at: new Date().toISOString(),
+          },
+        })
         chrome.runtime.sendMessage({
           type: "chat.send",
           threadId: state.activeThreadId,
@@ -1351,20 +1387,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         if (state.activeThreadId) {
           dispatch({ type: "SET_THREAD_BUSY", threadId: state.activeThreadId, busy: true })
         }
-        const displayContent =
-          context_refs.length > 0
-            ? `${trimmed}\n\n📎 引用 ${context_refs.length} 个会话`
-            : trimmed
-        dispatch({
-          type: "ADD_MESSAGE",
-          message: {
-            id: clientMessageId,
-            thread_id: state.activeThreadId!,
-            role: "user",
-            content: displayContent,
-            created_at: new Date().toISOString(),
-          },
-        })
       }
 
       setText("")

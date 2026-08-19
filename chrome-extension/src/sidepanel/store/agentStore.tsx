@@ -634,6 +634,49 @@ function reduceAddMessage(state: AgentState, incoming: Message): AgentState {
   return { ...state, messages: [...state.messages, incoming] }
 }
 
+/**
+ * thread.messages / hydrate wholesale replace must not drop an in-flight
+ * optimistic user bubble (temp id) that companion has not persisted yet.
+ * Stale select / list races previously wiped the bubble so the panel only
+ * showed 「思考中」 until chat.user arrived.
+ *
+ * If incoming already carries the persisted twin (same user content not
+ * already accounted for by a non-temp existing row), drop the temp — do
+ * not double-render.
+ */
+export function mergeHydratedMessages(
+  existing: Message[],
+  incoming: Message[],
+): Message[] {
+  const next = Array.isArray(incoming) ? incoming : []
+  if (!Array.isArray(existing) || existing.length === 0) return next
+  const incomingIds = new Set(next.map((m) => m.id).filter(Boolean))
+  const unmatchedIncomingContents: string[] = next
+    .filter((m) => m.role === "user")
+    .map((m) => m.content)
+  for (const m of existing) {
+    if (!m || m.role !== "user") continue
+    const tid = typeof m.thread_id === "string" ? m.thread_id : ""
+    if (isTempUserMessageId(m.id, tid)) continue
+    const i = unmatchedIncomingContents.indexOf(m.content)
+    if (i >= 0) unmatchedIncomingContents.splice(i, 1)
+  }
+  const extras: Message[] = []
+  for (const m of existing) {
+    if (!m || incomingIds.has(m.id)) continue
+    if (m.role !== "user") continue
+    const tid = typeof m.thread_id === "string" ? m.thread_id : ""
+    if (!isTempUserMessageId(m.id, tid)) continue
+    const i = unmatchedIncomingContents.indexOf(m.content)
+    if (i >= 0) {
+      unmatchedIncomingContents.splice(i, 1)
+      continue
+    }
+    extras.push(m)
+  }
+  return extras.length ? [...next, ...extras] : next
+}
+
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
   switch (action.type) {
     case "SET_CONNECTION": {
@@ -685,6 +728,11 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
     }
     case "SET_ACTIVE_THREAD": {
+      // Same thread: keep transcript / busy. Re-select used to wipe the
+      // in-flight user bubble (确认台 thread.list → auto-select).
+      if (action.threadId && action.threadId === state.activeThreadId) {
+        return state
+      }
       const threads = Array.isArray(state.threads) ? state.threads : []
       const activeThread = threads.find(t => t.id === action.threadId)
       return {
@@ -740,7 +788,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         }),
       }
     case "SET_MESSAGES":
-      return { ...state, messages: action.messages }
+      return {
+        ...state,
+        messages: mergeHydratedMessages(state.messages, action.messages),
+      }
     case "SET_SKILLS":
       // Guard: skill.list / error payloads may omit skills → never leave non-iterable state
       // (App.tsx spreads state.skills into slashSkills; undefined throws "is not iterable").

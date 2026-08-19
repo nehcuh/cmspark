@@ -197,22 +197,23 @@ test("POST /api/test with AWS metadata IP → 403 / SSRF blocked", async () => {
   assert.match(data.error, /SSRF|private|link-local|blocked/i)
 })
 
-test("POST /api/test with RFC1918 IP → SSRF blocked", async () => {
+test("POST /api/test with RFC1918 IP is not SSRF-blocked", async () => {
   const { port, token } = await ensureStarted()
   const r = await request({
     method: "POST",
     port,
     path: `/api/test?token=${token}`,
     headers: jsonHeaders(token),
-    body: JSON.stringify({ base_url: "http://192.168.1.1/", api_key: "sk-xxxx" }),
+    // 127.0.0.1:9 → connection refused quickly; must NOT be the old Internal/private copy.
+    body: JSON.stringify({ base_url: "http://127.0.0.1:9/v1", api_key: "sk-xxxx" }),
   })
   assert.equal(r.status, 200)
   const data = JSON.parse(r.body)
   assert.equal(data.ok, false)
-  assert.match(data.error, /SSRF|private|link-local|blocked|loopback/i)
+  assert.doesNotMatch(String(data.error || ""), /Internal|private|SSRF|link-local/i)
 })
 
-test("POST /api/test with loopback IP → SSRF blocked", async () => {
+test("POST /api/test with loopback IP tries connect (not Internal/private copy)", async () => {
   const { port, token } = await ensureStarted()
   const r = await request({
     method: "POST",

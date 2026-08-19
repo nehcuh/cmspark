@@ -86,10 +86,9 @@ function forbidden(res: http.ServerResponse, reason: string) {
 // SSRF guard
 // ---------------------------------------------------------------------------
 
-// Known LLM / vision provider hostnames that the user may legitimately test
-// against. Hosts on this list bypass the private-IP block (DNS resolution can
-// still be skipped, but we trust these names). Users can extend this list by
-// editing the array below.
+// Known LLM / vision provider hostnames. Skip DNS for these names.
+// RFC1918 / loopback literals are allowed for LAN OpenAI-compatible servers;
+// only cloud-metadata / link-local stay blocked.
 const LLM_HOST_ALLOWLIST = new Set<string>([
   "api.openai.com",
   "api.anthropic.com",
@@ -114,64 +113,40 @@ const LLM_HOST_ALLOWLIST = new Set<string>([
   "127.0.0.1",
 ])
 
-// Returns true if the IP literal is in a private / reserved range that must
-// not be reachable from the SSRF proxy.
-function isPrivateIp(ip: string): boolean {
-  // Normalize IPv6-mapped IPv4
+/** Cloud metadata + 169.254/16 only — RFC1918/loopback are valid LAN LLM hosts. */
+function isMetadataOrLinkLocalIp(ip: string): boolean {
   const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip
-
-  // IPv6 loopback / link-local / unique-local / unspecified
-  if (v4 === ip) {
-    // pure IPv4
-    if (net.isIPv4(v4)) {
-      const parts = v4.split(".").map((p) => parseInt(p, 10))
-      if (parts.length !== 4 || parts.some((n) => isNaN(n) || n < 0 || n > 255)) return true
-      const [a, b] = parts
-      if (a === 10) return true // 10.0.0.0/8
-      if (a === 127) return true // 127.0.0.0/8 loopback
-      if (a === 0) return true // 0.0.0.0/8 "this host"
-      if (a === 169 && b === 254) return true // 169.254.0.0/16 link-local (incl. AWS metadata)
-      if (a === 172 && b >= 16 && b <= 31) return true // 172.16.0.0/12
-      if (a === 192 && b === 168) return true // 192.168.0.0/16
-      if (a === 100 && b >= 64 && b <= 127) return true // 100.64.0.0/10 CGNAT
-      if (a === 192 && b === 0 && parts[2] === 0) return true // 192.0.0.0/24
-      if (a === 198 && (b === 18 || b === 19)) return true // 198.18.0.0/15 benchmark
-      if (a >= 224) return true // multicast (224.0.0.0/4) + reserved (240.0.0.0/4)
-      return false
-    }
+  if (net.isIPv4(v4)) {
+    const parts = v4.split(".").map((p) => parseInt(p, 10))
+    if (parts.length !== 4 || parts.some((n) => isNaN(n) || n < 0 || n > 255)) return true
+    const [a, b] = parts
+    if (a === 169 && b === 254) return true
+    return false
   }
-  // IPv6
   const lower = v4.toLowerCase()
-  if (lower === "::1") return true // loopback
-  if (lower.startsWith("fe80")) return true // link-local
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true // unique-local fc00::/7
-  if (lower === "::") return true // unspecified
-  if (lower.startsWith("ff")) return true // multicast
+  if (lower === "fd00:ec2::254") return true
+  if (lower.startsWith("fe80")) return true
   return false
 }
 
-// Resolve a hostname via dns.lookup (returns all addresses) and check each.
-async function hostnameIsBlocked(hostname: string): Promise<boolean> {
-  // Literal IP?
+/**
+ * LLM / vision test proxy: allow intranet + loopback, block IMDS / link-local.
+ * DNS names that resolve onto 169.254/16 are still blocked (rebinding).
+ */
+async function hostnameIsBlockedForLlm(hostname: string): Promise<boolean> {
+  const lowerHost = String(hostname || "").toLowerCase()
+  if (lowerHost === "metadata.google.internal") return true
+  if (LLM_HOST_ALLOWLIST.has(lowerHost)) return false
   if (net.isIP(hostname)) {
-    return isPrivateIp(hostname)
+    return isMetadataOrLinkLocalIp(hostname)
   }
-  // Allowlisted DNS name (still subject to local-only loopback allowance above).
-  const lowerHost = hostname.toLowerCase()
-  if (LLM_HOST_ALLOWLIST.has(lowerHost)) {
-    return false
-  }
-  // Resolve and check
   try {
     const result = await dns.promises.lookup(hostname, { all: true })
     if (result.length === 0) return true
-    for (const r of result) {
-      if (isPrivateIp(r.address)) return true
-    }
-    return false
+    return result.some((r) => isMetadataOrLinkLocalIp(r.address))
   } catch {
-    // Resolution failed — block to avoid an error-path bypass
-    return true
+    // Unknown host — let the probe fail with a connection error, not SSRF copy.
+    return false
   }
 }
 
@@ -190,9 +165,9 @@ async function validateTestBaseUrl(rawBaseUrl: string): Promise<string> {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`base_url protocol must be http or https (got ${parsed.protocol})`)
   }
-  if (await hostnameIsBlocked(parsed.hostname)) {
+  if (await hostnameIsBlockedForLlm(parsed.hostname)) {
     throw new Error(
-      `base_url host "${parsed.hostname}" resolves to a private/loopback/link-local address; blocked by SSRF guard. To allow a known LLM provider, add it to LLM_HOST_ALLOWLIST in companion/src/settings-web.ts.`,
+      `base_url host "${parsed.hostname}" is a cloud-metadata / link-local address; blocked.`,
     )
   }
   return parsed.toString()

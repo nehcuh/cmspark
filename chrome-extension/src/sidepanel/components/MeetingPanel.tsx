@@ -440,7 +440,8 @@ export function MeetingPanel(props: {
               return
             }
             // Progressive hypothesis only (M2); do not append until window final.
-            if (typeof interim === "string") {
+            // Empty interim is a soft/empty window — keep last visible text.
+            if (typeof interim === "string" && interim.trim()) {
               setInterimText(interim)
             }
           },
@@ -545,12 +546,20 @@ export function MeetingPanel(props: {
       if (msg.type === "meeting.updated" && msg.meeting) {
         setMeetingId(msg.meeting.id)
         setStatus(msg.meeting.status)
-        // Only push server transcript when explicit cut/import ops or textarea not dirty
+        // Only push server transcript when explicit cut/import ops or textarea not dirty.
+        // During live capture, local appends own the textarea — a stale
+        // meeting.updated (append N-1 arriving after local N) used to flicker
+        // or drop the newest line.
+        const live =
+          phaseRef.current === "recording" ||
+          phaseRef.current === "processing" ||
+          phaseRef.current === "starting" ||
+          phaseRef.current === "stopping"
         const forceSync = msg.cut === true
         if (
           Array.isArray(msg.meeting.transcript) &&
           msg.meeting.transcript.length > 0 &&
-          (forceSync || !transcriptDirtyRef.current)
+          (forceSync || (!transcriptDirtyRef.current && !live))
         ) {
           const formatted = formatLinesFromMeeting(msg.meeting.transcript)
           if (formatted) {
@@ -1557,20 +1566,29 @@ export function MeetingPanel(props: {
             lineHeight: 1.45,
           }}
         />
-        {capturing && interimText.trim() ? (
+        {capturing ? (
           <div
             data-testid="meeting-interim"
             style={{
-              marginTop: 4,
-              fontSize: 11,
-              color: tokens.textSecondary,
-              fontStyle: "italic",
-              lineHeight: 1.4,
-              maxHeight: 48,
-              overflow: "hidden",
+              marginTop: 6,
+              padding: "8px 10px",
+              borderRadius: 8,
+              background: tokens.accentSoft,
+              border: `1px solid rgba(79, 70, 229, 0.16)`,
+              fontSize: 13,
+              color: tokens.accentText,
+              lineHeight: 1.45,
+              maxHeight: 96,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
             }}
           >
-            识别中… {interimText.trim()}
+            {interimText.trim()
+              ? `识别中… ${interimText.trim()}`
+              : nearRealtime
+                ? "正在听…约 8 秒出第一段字（渐进假设，非字级流式）"
+                : "正在听…本段结束后出字"}
+            {refinePending > 0 ? ` · AI 纠错中(${refinePending})` : ""}
           </div>
         ) : null}
       </label>

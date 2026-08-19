@@ -86,14 +86,6 @@ function CockpitApp() {
     // clientMessageId + SW `chat.user` broadcast → Side Panel history + local
     // Cockpit compact track (separate React trees; companion does not echo user).
     const clientMessageId = newTempUserMessageId(state.activeThreadId)
-    chrome.runtime.sendMessage({
-      type: "chat.send",
-      threadId: state.activeThreadId,
-      message: msg,
-      skillIds: state.activeSkillIds,
-      clientMessageId,
-    })
-    dispatch({ type: "SET_PROCESSING", isProcessing: true })
     dispatch({
       type: "ADD_MESSAGE",
       message: {
@@ -104,6 +96,14 @@ function CockpitApp() {
         created_at: new Date().toISOString(),
       },
     })
+    chrome.runtime.sendMessage({
+      type: "chat.send",
+      threadId: state.activeThreadId,
+      message: msg,
+      skillIds: state.activeSkillIds,
+      clientMessageId,
+    })
+    dispatch({ type: "SET_PROCESSING", isProcessing: true })
     setText("")
   }
 

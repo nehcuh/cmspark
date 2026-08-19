@@ -15,6 +15,7 @@ import {
   isVisionReusingMain,
   likelyMultimodal,
   normalizeEndpointUrl,
+  resolveNativeVision,
   shouldOfferVisionReuse,
 } from "../src/sidepanel/components/vision-reuse-logic"
 
@@ -58,6 +59,13 @@ test("likelyMultimodal: text-only and unknown false (fail closed)", () => {
   ]) {
     assert.equal(likelyMultimodal(m), false, m)
   }
+})
+
+test("resolveNativeVision: auto ignores unkeyed probe flag", () => {
+  assert.equal(resolveNativeVision({ modelName: "custom-vlm", mode: "auto", detected: true }), false)
+  assert.equal(resolveNativeVision({ modelName: "gpt-4o", mode: "auto", detected: false }), true)
+  assert.equal(resolveNativeVision({ modelName: "custom-vlm", mode: "on" }), true)
+  assert.equal(resolveNativeVision({ modelName: "gpt-4o", mode: "off" }), false)
 })
 
 // --- shouldOfferVisionReuse ---

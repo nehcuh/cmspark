@@ -216,6 +216,9 @@ export interface LLMConfig {
    * Flattened from companion config.llm.client_header_profile.
    */
   client_header_profile?: LlmClientHeaderProfile
+  /** auto (default) = name heuristic + last connection-test probe. */
+  native_vision?: "auto" | "on" | "off"
+  native_vision_detected?: boolean
   trusted_domains: string[]
   safety_skills_enabled: string[]
   // Domains whose tool-call confirmations (evaluate, navigate, etc.) are auto-approved.

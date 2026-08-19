@@ -58,6 +58,30 @@ test("voiceLiveComposerText keeps finals during processing (no flash disappear)"
   assert.equal(idle, null)
 })
 
+test("voiceLiveComposerText keeps finals during refining", () => {
+  const refining = voiceLiveComposerText({
+    phase: "refining",
+    abortReason: null,
+    baseText: "",
+    finals: ["识别原文"],
+    interim: "",
+  })
+  assert.equal(refining, "识别原文")
+})
+
+test("ENGINE_RESULT empty interim keeps previous hypothesis", () => {
+  let s = initialVoiceSession(true)
+  s = reduceVoiceSession(s, { type: "USER_TOGGLE_START", sessionId: "s1", baseText: "" })
+  s = reduceVoiceSession(s, { type: "ENGINE_START" })
+  s = reduceVoiceSession(s, { type: "ENGINE_RESULT", interim: "正在说" })
+  assert.equal(s.interim, "正在说")
+  s = reduceVoiceSession(s, { type: "ENGINE_RESULT", interim: "" })
+  assert.equal(s.interim, "正在说")
+  s = reduceVoiceSession(s, { type: "ENGINE_RESULT", finalChunk: "定稿", interim: "" })
+  assert.equal(s.interim, "")
+  assert.deepEqual(s.finals, ["定稿"])
+})
+
 test("empty final → banner, no meaningful merge", () => {
   let s = initialVoiceSession(true)
   s = reduceVoiceSession(s, {
