@@ -39,6 +39,10 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     protocol: llm.protocol === "anthropic" ? "anthropic" : "openai",
     client_header_profile:
       llm.client_header_profile === "claude_code_compat" ? "claude_code_compat" : "none",
+    native_vision:
+      llm.native_vision === "on" || llm.native_vision === "off" || llm.native_vision === "auto"
+        ? llm.native_vision
+        : undefined,
   }
   if (Array.isArray(config.trusted_domains)) {
     normalized.trusted_domains = config.trusted_domains

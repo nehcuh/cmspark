@@ -220,6 +220,13 @@ export interface LlmConfig {
   extra_headers?: Record<string, string>
   /** Anthropic API version header; default "2023-06-01". */
   anthropic_version?: string
+  /**
+   * Whether the main chat model should consume images natively.
+   * auto (default) = name heuristic + last config.test probe.
+   */
+  native_vision?: "auto" | "on" | "off"
+  /** Last image-probe result from config.test. Cleared when url/model changes. */
+  native_vision_detected?: boolean
 }
 
 /**
@@ -350,6 +357,7 @@ const defaultConfig: CompanionConfig = {
     client_header_profile: "none",
     claude_code_compat_version: "2.1.220",
     anthropic_version: "2023-06-01",
+    native_vision: "auto",
   },
   vision: {
     enabled: false,

@@ -202,8 +202,49 @@ export function isCloudMetadataIp(hostname: string): boolean {
 }
 
 /**
- * Shared SSRF gate for outbound companion fetches (skill/knowledge import, config.test, …).
+ * User-configured LLM / vision endpoint (config.test, settings-web /api/test*).
+ * Allows RFC1918 / loopback / CGNAT so intranet OpenAI-compatible servers
+ * (e.g. http://10.251.241.12/v1) work. Still hard-blocks cloud metadata and
+ * link-local IMDS. Untrusted fetches (skill/knowledge import) must keep using
+ * assertOutboundFetchUrlAllowed.
+ */
+export function assertLlmEndpointUrlAllowed(urlStr: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(String(urlStr || ""))
+  } catch {
+    return "Invalid URL"
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return `URL protocol not allowed: ${parsed.protocol}`
+  }
+  const hostname = parsed.hostname
+  if (!hostname) return "Invalid URL hostname"
+  if (isCloudMetadataIp(hostname) || isLinkLocalImdsHost(hostname)) {
+    return "Cloud-metadata / link-local hosts are not allowed"
+  }
+  return null
+}
+
+/** 169.254/16 IPv4 + IPv6 link-local — IMDS / APIPA, never a legitimate LLM. */
+function isLinkLocalImdsHost(hostname: string): boolean {
+  const h = String(hostname || "").toLowerCase().trim()
+  if (!h) return false
+  if (h === "169.254.169.254" || h === "169.254.170.2") return true
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (m) {
+    const a = parseInt(m[1], 10)
+    const b = parseInt(m[2], 10)
+    return a === 169 && b === 254
+  }
+  if (/^fe[89ab][0-9a-f]?:/.test(h)) return true
+  return false
+}
+
+/**
+ * Shared SSRF gate for outbound companion fetches (skill/knowledge import).
  * Returns null when the URL is allowed; otherwise a short error string.
+ * Do NOT use this for user-configured LLM base_url — see assertLlmEndpointUrlAllowed.
  */
 export function assertOutboundFetchUrlAllowed(urlStr: string): string | null {
   let parsed: URL

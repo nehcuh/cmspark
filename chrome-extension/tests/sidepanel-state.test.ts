@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { agentReducer, initialState, isTempUserMessageId, type AgentState } from "../src/sidepanel/store/agentStore"
+import { agentReducer, initialState, isTempUserMessageId, mergeHydratedMessages, type AgentState } from "../src/sidepanel/store/agentStore"
 import { newTempUserMessageId } from "../src/utils/temp-message-id"
 import { normalizeConfig, parseChatUserAttachments, requestInitialSidePanelData, sanitizeHydratedMessages } from "../src/sidepanel/hooks/useWebSocket"
 import type { SkillMeta } from "../src/sidepanel/types"
@@ -40,6 +40,27 @@ function stateWithThreads(): AgentState {
     knowledgeSelectionMode: "manual",
   }
 }
+
+test("SET_ACTIVE_THREAD same id keeps in-flight messages and busy", () => {
+  const base = stateWithThreads()
+  const withMsg = {
+    ...base,
+    isProcessing: true,
+    messages: [
+      {
+        id: "thread-a_user_1730000000000_abc",
+        thread_id: "thread-a",
+        role: "user" as const,
+        content: "in flight",
+        created_at: "2026-08-19T00:00:00.000Z",
+      },
+    ],
+  }
+  const next = agentReducer(withMsg, { type: "SET_ACTIVE_THREAD", threadId: "thread-a" })
+  assert.equal(next, withMsg)
+  assert.equal(next.messages.length, 1)
+  assert.equal(next.isProcessing, true)
+})
 
 test("SET_ACTIVE_THREAD restores pinned tabs, skillSelectionMode, and knowledgeSelectionMode from thread metadata", () => {
   const next = agentReducer(stateWithThreads(), { type: "SET_ACTIVE_THREAD", threadId: "thread-b" })
@@ -455,6 +476,69 @@ test("ADD_MESSAGE without client_message_id keeps legacy last-temp adoption (F1 
   assert.equal(s.messages.length, 2)
   assert.equal(s.messages[0].id, "thread-a_user_1730000000001")
   assert.equal(s.messages[1].id, "thread-a_1730000000003_persisted")
+})
+
+test("SET_MESSAGES keeps unmatched optimistic user bubble (stale hydrate)", () => {
+  const temp = {
+    id: "thread-a_user_1730000000000_abc",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "just sent",
+    created_at: "2026-08-19T00:00:00.000Z",
+  }
+  const hist = {
+    id: "thread-a_1",
+    thread_id: "thread-a",
+    role: "assistant" as const,
+    content: "old reply",
+    created_at: "2026-08-18T00:00:00.000Z",
+  }
+  let s = agentReducer(initialState, { type: "ADD_MESSAGE", message: temp })
+  s = agentReducer(s, { type: "SET_MESSAGES", messages: [hist] })
+  assert.equal(s.messages.length, 2)
+  assert.equal(s.messages[0].id, hist.id)
+  assert.equal(s.messages[1].id, temp.id)
+})
+
+test("SET_MESSAGES drops optimistic bubble when persist twin is in hydrate", () => {
+  const temp = {
+    id: "thread-a_user_1730000000000_abc",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "just sent",
+    created_at: "2026-08-19T00:00:00.000Z",
+  }
+  const persist = {
+    id: "thread-a_1730000000001_xyz",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "just sent",
+    created_at: "2026-08-19T00:00:01.000Z",
+  }
+  let s = agentReducer(initialState, { type: "ADD_MESSAGE", message: temp })
+  s = agentReducer(s, { type: "SET_MESSAGES", messages: [persist] })
+  assert.equal(s.messages.length, 1)
+  assert.equal(s.messages[0].id, persist.id)
+})
+
+test("mergeHydratedMessages keeps second identical-content temp when first persist is already accounted", () => {
+  const persistHello = {
+    id: "thread-a_1",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "你好",
+    created_at: "2026-08-19T00:00:00.000Z",
+  }
+  const tempHello = {
+    id: "thread-a_user_1730000000002_abc",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "你好",
+    created_at: "2026-08-19T00:00:01.000Z",
+  }
+  const merged = mergeHydratedMessages([persistHello, tempHello], [persistHello])
+  assert.equal(merged.length, 2)
+  assert.equal(merged[1].id, tempHello.id)
 })
 
 test("isTempUserMessageId: panel/SW/file-upload vs companion persist", () => {

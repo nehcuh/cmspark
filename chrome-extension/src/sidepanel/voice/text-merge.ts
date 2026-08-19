@@ -58,7 +58,8 @@ export function voiceLiveComposerText(opts: {
     (ph === "listening" ||
       ph === "starting" ||
       ph === "stopping" ||
-      ph === "processing") &&
+      ph === "processing" ||
+      ph === "refining") &&
     !opts.abortReason
   if (!live) return null
   return (

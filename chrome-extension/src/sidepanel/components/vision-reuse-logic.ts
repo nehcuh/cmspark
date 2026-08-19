@@ -75,6 +75,8 @@ export function extractHostname(url: string | undefined | null): string {
  * Does NOT check protocol (use shouldOfferVisionReuse for offer gate).
  */
 // lock-step companion/src/llm/likely-multimodal.ts
+export type NativeVisionMode = "auto" | "on" | "off"
+
 export function likelyMultimodal(modelName: string | undefined | null): boolean {
   const m = (modelName || "").trim().toLowerCase()
   if (!m) return false
@@ -83,14 +85,30 @@ export function likelyMultimodal(modelName: string | undefined | null): boolean 
   if (/(^|[-_])(coder|reasoner)($|[-_])/.test(m) && !/vl|vision|omni/.test(m)) return false
   if (/kimi-k2/.test(m) && !/vl|vision|omni/.test(m)) return false
   if (/moonshot-v1/.test(m) && !/vl|vision|omni/.test(m)) return false
-  if (/gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-4-vision|o[1-9].*vision|chatgpt-4o/.test(m)) return true
+  if (/gpt-5|gpt-4o|gpt-4\.1|gpt-4\.5|gpt-4-turbo|gpt-4-vision|o[1-9].*vision|chatgpt-4o/.test(m)) return true
   if (/claude|sonnet|opus|haiku/.test(m)) return true
   if (/gemini|gemma.*vision/.test(m)) return true
   if (/kimi|moonshot/.test(m)) return true
   if (/glm-4v|glm-4\.?\d*v|glm-4\.6v/.test(m)) return true
   if (/qwen.*vl|vl.*qwen|qwen2\.5-?vl|qwen2-vl|qwen3-vl/.test(m)) return true
-  if (/llava|minicpm-v|moondream|pixtral|phi-3-vision|phi-4-multimodal/.test(m)) return true
-  if (/\bvision\b|multimodal|omni/.test(m)) return true
+  if (/llava|minicpm-v|minicpm-o|moondream|pixtral|phi-3-vision|phi-4-multimodal/.test(m)) return true
+  if (/internvl|intern-vl|cogvlm|yi-vl|step-1v|llama-?3\.2.*vision|llama-?4/.test(m)) return true
+  if (/\bvision\b|multimodal|omni|\bvl\b/.test(m)) return true
+  return false
+}
+
+export function resolveNativeVision(opts: {
+  modelName?: string | null
+  mode?: NativeVisionMode | boolean | null
+  detected?: boolean | null
+}): boolean {
+  const raw = opts.mode
+  const mode: NativeVisionMode =
+    raw === true || raw === "on" ? "on" : raw === false || raw === "off" ? "off" : "auto"
+  if (mode === "on") return true
+  if (mode === "off") return false
+  if (likelyMultimodal(opts.modelName)) return true
+  // Unkeyed session probe bits are ignored. Companion owns {url,model} cache.
   return false
 }
 

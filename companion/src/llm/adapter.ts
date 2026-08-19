@@ -35,7 +35,7 @@ import {
 import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
 import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
 import { hydrateUserImageParts } from "./image-parts"
-import { likelyMultimodal } from "./likely-multimodal"
+import { resolveNativeVision, visionConfigForAnalyze } from "./likely-multimodal"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -524,7 +524,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   // Hydrate image parts AFTER rebuild (string-only pairing). Sidecar I/O lives
   // here — never inside rebuildMessagesFromHistory. skipUserMessage uses the
   // same path (no second addMessage).
-  const useNative = likelyMultimodal(config.model_name)
+  const useNative = resolveNativeVision({
+    modelName: config.model_name,
+    baseUrl: config.base_url,
+    mode: config.native_vision,
+  })
   const persisted = threadManager.getMessages(threadId)
   messages = [
     ...messages.filter((m) => m.role === "system"),
@@ -1166,12 +1170,15 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           // Vision pipeline: intercept image-carrying tool results for local analysis
           const VISION_TOOLS = ["screenshot", "analyze_image"]
           if (VISION_TOOLS.includes(toolName) && toolResult.success && toolResult.data?.image_base64) {
-            const config = getConfig()
-            const visionEnabled = config.vision?.enabled
-              // Thread-level override: vision_enabled can disable per-thread
-              ?? (threadManager.get(threadId)?.config_override as any)?.vision_enabled
+            const globalCfg = getConfig()
+            const threadVisionOff =
+              (threadManager.get(threadId)?.config_override as any)?.vision_enabled === false
+            // Use this turn's LLM (chatCreate `config`), not a getConfig() shadow.
+            const visionCfg = threadVisionOff
+              ? null
+              : visionConfigForAnalyze(config, globalCfg.vision)
 
-            if (visionEnabled && config.vision) {
+            if (visionCfg) {
               sendToExtension({ type: "tool.vision_start", thread_id: threadId,
                   tool_call_id: tc.id })
 
@@ -1184,7 +1191,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                     url: toolResult.data.url,
                     title: toolResult.data.title,
                   },
-                  config.vision,
+                  visionCfg as any,
                   params.prompt, // custom prompt from analyze_image tool
                   signal,
                 )
@@ -1218,7 +1225,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                 logger.warn("llm.vision_failed", {
                   tool_call_id: tc.id,
                   error: visionErr.message,
-                  fallback: config.vision.fallback,
+                  fallback: visionCfg.fallback,
                 })
                 sendToExtension({
                   type: "tool.vision_done",
@@ -1227,7 +1234,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                   error: visionErr.message,
                 })
 
-                if (config.vision.fallback === "metadata") {
+                if (visionCfg.fallback === "metadata") {
                   const errMsg = String(visionErr?.message || visionErr)
                   const subject = formatVisionFallbackSubject(
                     String(toolResult.data.title || ""),

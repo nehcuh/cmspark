@@ -118,6 +118,58 @@ export async function probeLlmConnection(input: LlmProbeInput): Promise<LlmProbe
   }
 }
 
+/** 1×1 PNG — probe only, never logged. */
+const PROBE_PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+/**
+ * After a successful text probe: does this OpenAI-compatible endpoint accept an image part?
+ * Anthropic is skipped (name heuristic already treats Claude as multimodal).
+ */
+export async function probeNativeVision(input: LlmProbeInput): Promise<boolean> {
+  const protocol = normalizeProtocol(input.protocol)
+  if (protocol === "anthropic") return true
+  const model = (input.model_name || "").trim()
+  const key = input.api_key || ""
+  const base = String(input.base_url || "").replace(/\/+$/, "")
+  if (!model || !key || !base) return false
+  const timeout = 8000
+  try {
+    const headers = buildRequestHeaders({
+      baseUrl: input.base_url,
+      protocol: "openai",
+      apiKey: key,
+      auth_style: normalizeAuthStyle(input.auth_style),
+      client_header_profile: normalizeProfile(input.client_header_profile),
+      extra_headers: input.extra_headers,
+    })
+    const response = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        max_tokens: 4,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "ok" },
+              {
+                type: "image_url",
+                image_url: { url: `data:image/png;base64,${PROBE_PNG_B64}` },
+              },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(timeout),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 async function probeOpenAI(opts: {
   baseUrl: string
   apiKey: string

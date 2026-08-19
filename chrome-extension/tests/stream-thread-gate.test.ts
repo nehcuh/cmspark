@@ -69,6 +69,29 @@ test("InputArea consumes composerRestore via nextComposerText", () => {
   assert.match(body, /CLEAR_COMPOSER_RESTORE/)
 })
 
+test("chat.user paints the bubble before busy chrome", () => {
+  const src = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
+  const start = src.indexOf('case "chat.user"')
+  assert.ok(start >= 0, "chat.user case missing")
+  const body = src.slice(start, src.indexOf("case \"chat.done\"", start))
+  const addIdx = body.indexOf("ADD_MESSAGE")
+  const procIdx = body.indexOf("SET_PROCESSING")
+  assert.ok(addIdx >= 0 && procIdx > addIdx, "ADD_MESSAGE must precede SET_PROCESSING")
+})
+
+test("thread.list request echo must not be treated as an empty hydrate", () => {
+  // Cockpit open → sendMessage({type:"thread.list"}) lands on the Panel listener.
+  // Without this guard, incoming=[] → auto-create a blank thread.
+  const src = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
+  const start = src.indexOf('case "thread.list"')
+  assert.ok(start >= 0, "thread.list case missing")
+  const body = src.slice(start, src.indexOf("case \"quickAction.start\"", start))
+  assert.match(body, /Array\.isArray\(msg\.threads\)/)
+  const guardIdx = body.indexOf("Array.isArray(msg.threads)")
+  const createIdx = body.indexOf("thread.create")
+  assert.ok(guardIdx >= 0 && createIdx > guardIdx, "auto-create must sit behind threads-array hydrate guard")
+})
+
 test("file.uploaded: chip-clear BUMP is dispatched before the thread gate (F3)", () => {
   // Source-order lock (pre-F3 this ordering was inverted → red): the BUMP sat
   // behind shouldApplyStreamEvent, so foreign-thread uploads never cleared chips.

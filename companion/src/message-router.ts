@@ -34,7 +34,7 @@ import { chatCreate, generateThreadTitle } from "./llm/adapter"
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
-import { likelyMultimodal } from "./llm/likely-multimodal"
+import { resolveNativeVision, visionConfigForAnalyze } from "./llm/likely-multimodal"
 import {
   allocateUploadMessageId,
   buildVisionAttachMessage,
@@ -597,7 +597,16 @@ export async function handleMessage(
         }
 
         // Phase 2: Vision analysis for embedded images
-        const visionEnabled = config.vision?.enabled && fileConfig.enable_vision_analysis !== false
+        const threadForEmbed = services.threadManager.get(thread_id)
+        const embedOverride = threadForEmbed?.config_override || {}
+        const embedLlm = { ...config.llm }
+        for (const [key, val] of Object.entries(embedOverride)) {
+          if (key in embedLlm && val !== undefined && val !== null) {
+            (embedLlm as any)[key] = val
+          }
+        }
+        const embedVisionCfg = visionConfigForAnalyze(embedLlm, config.vision)
+        const visionEnabled = !!(embedVisionCfg && fileConfig.enable_vision_analysis !== false)
 
         for (const parseResult of parseResults) {
           let content = parseResult.text
@@ -626,7 +635,7 @@ export async function handleMessage(
                     url: "",
                     title: img.title,
                   },
-                  config.vision!,
+                  embedVisionCfg as any,
                   `分析这张文档内嵌图片 "${img.title}" 的内容，提取所有可见文本和视觉信息。`,
                 )
                 visionDescriptions.push(`[图片: ${img.title}] ${visionResult.description}`)
@@ -724,8 +733,15 @@ export async function handleMessage(
           }
         }
 
-        const useNative = likelyMultimodal(effectiveLLMConfig.model_name)
-        const visionRailOn = !!(config.vision?.enabled && fileConfig.enable_vision_analysis !== false)
+        const useNative = resolveNativeVision({
+          modelName: effectiveLLMConfig.model_name,
+          baseUrl: effectiveLLMConfig.base_url,
+          mode: effectiveLLMConfig.native_vision,
+        })
+        const visionRailOn = !!(
+          visionConfigForAnalyze(effectiveLLMConfig, config.vision) &&
+          fileConfig.enable_vision_analysis !== false
+        )
         const standalonePlan = planStandaloneImageAnalysis({
           imageCount: standaloneImages.length,
           useNative,
@@ -801,7 +817,7 @@ export async function handleMessage(
                   url: "",
                   title: img.name,
                 },
-                config.vision!,
+                visionConfigForAnalyze(effectiveLLMConfig, config.vision) as any,
                 `分析这张用户附图 "${img.name}" 的内容，提取所有可见文本和视觉信息。`,
                 uploadController.signal,
               )
