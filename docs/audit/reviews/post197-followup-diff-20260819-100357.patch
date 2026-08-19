@@ -1,0 +1,1022 @@
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index 53a7b72..de12763 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -85,7 +85,7 @@ import {
+   visionRailOpen,
+ } from "./utils/image-compose"
+ import { extractHostname, likelyMultimodal } from "./components/vision-reuse-logic"
+-import { buildOptimisticUploadBubble, uploadSendOutcome } from "./utils/upload-send"
++import { buildOptimisticUploadBubble, uploadSendFailureOps, uploadSendOutcome } from "./utils/upload-send"
+ import { newTempUserMessageId } from "../utils/temp-message-id"
+ import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
+ import { WorkerScopeBar } from "./components/WorkerScopeBar"
+@@ -377,6 +377,13 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+   const { state, dispatch } = useAgentStore()
+   const { openPanelForce, closePanel, activePanel } = useContextPanelHost()
+   const [text, setText] = useState("")
++
++  useEffect(() => {
++    const restore = state.composerRestore
++    if (!restore?.text) return
++    setText((prev) => (prev.trim() ? prev : restore.text))
++    dispatch({ type: "CLEAR_COMPOSER_RESTORE" })
++  }, [state.composerRestore?.token])
+   const [slashVisible, setSlashVisible] = useState(false)
+   const [slashQuery, setSlashQuery] = useState("")
+   const [atVisible, setAtVisible] = useState(false)
+@@ -1243,6 +1250,10 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+           fileNames: files.map((f) => f.name),
+         })
+         dispatch({ type: "ADD_MESSAGE", message: uploadBubble })
++        dispatch({
++          type: "SET_PENDING_UPLOAD",
++          pending: { messageId: clientMessageId, threadId: uploadThreadId!, composerText: userMessage },
++        })
+ 
+         chrome.runtime.sendMessage(
+           {
+@@ -1276,32 +1287,41 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+             }
+             const sendOutcome = uploadSendOutcome(swErr, response)
+             if (sendOutcome !== "ok") {
+-              // Always clear mapBusy for the upload thread. Keep chips on error.
+-              if (uploadThreadId) {
+-                dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: false })
+-              }
+-              // S45 P0: do not unlock / pollute another thread if user switched mid-send.
+-              if (!shouldApplyStreamEvent(uploadThreadId, activeThreadIdRef.current)) {
+-                return
+-              }
+-              dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+-              dispatch({ type: "SET_PROCESSING", isProcessing: false })
+-              // F6: SW refused the oversized frame and already broadcast
+-              // file.upload_error with the correct banner — don't stack a
+-              // second, misleading 「Companion 未连接」 bubble on top.
+-              if (sendOutcome === "refused") {
+-                return
+-              }
+-              dispatch({
+-                type: "ADD_MESSAGE",
+-                message: {
+-                  id: `${uploadThreadId || "file"}_send_err_${Date.now()}`,
+-                  thread_id: uploadThreadId || "",
+-                  role: "assistant",
+-                  content: `\u274c ${swErr || "Companion 未连接，无法上传文件"}`,
+-                  created_at: new Date().toISOString(),
+-                },
++              // F2 failure retract: drop the optimistic user turn unless the
++              // WS frame was accepted. Ops run even after a thread switch so
++              // mapBusy clears; panel unlock / error bubble stay gated.
++              const ops = uploadSendFailureOps({
++                clientMessageId,
++                uploadThreadId: uploadThreadId || "",
++                sendOutcome,
++                swErr,
++                applyToActivePanel: shouldApplyStreamEvent(uploadThreadId, activeThreadIdRef.current),
++                composerText: userMessage,
+               })
++              for (const op of ops) {
++                if (op.op === "retract") {
++                  dispatch({ type: "REMOVE_MESSAGE", id: op.id })
++                  dispatch({ type: "SET_PENDING_UPLOAD", pending: null })
++                } else if (op.op === "busy_off") {
++                  dispatch({ type: "SET_THREAD_BUSY", threadId: op.threadId, busy: false })
++                } else if (op.op === "unlock_panel") {
++                  dispatch({ type: "SET_PROCESSING_STATUS", status: null })
++                  dispatch({ type: "SET_PROCESSING", isProcessing: false })
++                } else if (op.op === "restore_composer") {
++                  setText((prev) => (prev.trim() ? prev : op.text))
++                } else if (op.op === "error_bubble") {
++                  dispatch({
++                    type: "ADD_MESSAGE",
++                    message: {
++                      id: `${uploadThreadId || "file"}_send_err_${Date.now()}`,
++                      thread_id: uploadThreadId || "",
++                      role: "assistant",
++                      content: op.content,
++                      created_at: new Date().toISOString(),
++                    },
++                  })
++                }
++              }
+             }
+           },
+         )
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index d0a9efb..095d508 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -173,8 +173,10 @@ export function useWebSocket() {
+   // will auto-create again) or when thread.created acknowledges the request.
+   const creatingBlankThreadRef = useRef(false)
+ 
+-  // Keep refs in sync
++  // Keep refs in sync (listener is mount-once — never close over render state)
+   activeThreadRef.current = state.activeThreadId
++  const pendingUploadRef = useRef(state.pendingUpload)
++  pendingUploadRef.current = state.pendingUpload
+ 
+   // P0-B: clear accumulated stream buffer on thread switch so late tokens from
+   // the previous thread cannot reappear via chat.done → ADD_MESSAGE.
+@@ -1675,6 +1677,16 @@ export function useWebSocket() {
+           if (uploadErrTid) {
+             dispatch({ type: "SET_THREAD_BUSY", threadId: uploadErrTid, busy: false })
+           }
++          // Companion parse/type/size fail after WS accept: retract the
++          // exact optimistic id (ref — listener must not close over render state).
++          const pending = pendingUploadRef.current
++          if (pending && (!uploadErrTid || pending.threadId === uploadErrTid)) {
++            dispatch({ type: "REMOVE_MESSAGE", id: pending.messageId })
++            dispatch({ type: "SET_PENDING_UPLOAD", pending: null })
++            if (pending.composerText) {
++              dispatch({ type: "REQUEST_COMPOSER_RESTORE", text: pending.composerText })
++            }
++          }
+           if (!shouldApplyStreamEvent(uploadErrTid, activeThreadRef.current)) break
+           streamingRef.current = ""
+           reasoningRef.current = ""
+@@ -1705,6 +1717,7 @@ export function useWebSocket() {
+         case "file.uploaded": {
+           const upTid =
+             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
++          dispatch({ type: "SET_PENDING_UPLOAD", pending: null })
+           if (upTid) {
+             dispatch({ type: "SET_THREAD_BUSY", threadId: upTid, busy: false })
+           }
+diff --git a/chrome-extension/src/sidepanel/store/agentStore.tsx b/chrome-extension/src/sidepanel/store/agentStore.tsx
+index 0e51688..49aaf8d 100644
+--- a/chrome-extension/src/sidepanel/store/agentStore.tsx
++++ b/chrome-extension/src/sidepanel/store/agentStore.tsx
+@@ -150,6 +150,10 @@ export interface AgentState {
+   isProcessing: boolean
+   /** Bumped on file.uploaded so InputArea can drop chips after companion admit. */
+   composerUploadClearSeq: number
++  /** In-flight file.upload optimistic bubble — exact id for fail retract. */
++  pendingUpload: { messageId: string; threadId: string; composerText: string } | null
++  /** One-shot: App restores composer text after a failed upload, then clears. */
++  composerRestore: { text: string; token: number } | null
+   obsidianProfileStatus: { ok: boolean; message: string } | null
+   /** Status of the last companion-side folder import (null = idle). */
+   knowledgeImportStatus: { ok: boolean; message: string } | null
+@@ -269,6 +273,7 @@ export type AgentAction =
+   | { type: "SET_THREADS"; threads: Thread[] }
+   | { type: "SET_ACTIVE_THREAD"; threadId: string }
+   | { type: "ADD_MESSAGE"; message: Message }
++  | { type: "REMOVE_MESSAGE"; id: string }
+   | { type: "UPDATE_MESSAGE"; id: string; content: string }
+   | { type: "SET_MESSAGES"; messages: Message[] }
+   | { type: "ADD_TOOL_CALL"; messageId: string; toolCall: any }
+@@ -327,6 +332,9 @@ export type AgentAction =
+   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
+   | { type: "SET_PROCESSING"; isProcessing: boolean }
+   | { type: "BUMP_COMPOSER_UPLOAD_CLEAR" }
++  | { type: "SET_PENDING_UPLOAD"; pending: { messageId: string; threadId: string; composerText: string } | null }
++  | { type: "REQUEST_COMPOSER_RESTORE"; text: string }
++  | { type: "CLEAR_COMPOSER_RESTORE" }
+   | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
+   | { type: "SET_KNOWLEDGE_IMPORT_STATUS"; status: { ok: boolean; message: string } | null }
+   | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
+@@ -469,6 +477,8 @@ export const initialState: AgentState = {
+   companionConfig: null,
+   isProcessing: false,
+   composerUploadClearSeq: 0,
++  pendingUpload: null,
++  composerRestore: null,
+   obsidianProfileStatus: null,
+   knowledgeImportStatus: null,
+   summarizingThreadId: null,
+@@ -703,6 +713,11 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
+       // bubble matched by client_message_id (F1), falling back to the last temp
+       // user bubble for pre-F1 companions (DoD #13).
+       return reduceAddMessage(state, action.message)
++    case "REMOVE_MESSAGE":
++      return {
++        ...state,
++        messages: state.messages.filter((m) => m.id !== action.id),
++      }
+     case "UPDATE_MESSAGE":
+       return {
+         ...state,
+@@ -1005,6 +1020,15 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
+       return { ...state, isProcessing: action.isProcessing }
+     case "BUMP_COMPOSER_UPLOAD_CLEAR":
+       return { ...state, composerUploadClearSeq: state.composerUploadClearSeq + 1 }
++    case "SET_PENDING_UPLOAD":
++      return { ...state, pendingUpload: action.pending }
++    case "REQUEST_COMPOSER_RESTORE":
++      return {
++        ...state,
++        composerRestore: { text: action.text, token: (state.composerRestore?.token ?? 0) + 1 },
++      }
++    case "CLEAR_COMPOSER_RESTORE":
++      return { ...state, composerRestore: null }
+     case "SET_THREAD_BUSY": {
+       const id = action.threadId
+       if (!id) return state
+diff --git a/chrome-extension/src/sidepanel/utils/upload-send.ts b/chrome-extension/src/sidepanel/utils/upload-send.ts
+index 8ab26ef..b80217f 100644
+--- a/chrome-extension/src/sidepanel/utils/upload-send.ts
++++ b/chrome-extension/src/sidepanel/utils/upload-send.ts
+@@ -40,6 +40,48 @@ export function uploadSendOutcome(
+   response: unknown,
+ ): "ok" | "refused" | "error" {
+   if (isFrameBudgetRefusal(response)) return "refused"
+-  if (swErr || !(response as { ok?: unknown } | null | undefined)?.ok) return "error"
+-  return "ok"
++  const ok = !!(response as { ok?: unknown } | null | undefined)?.ok
++  // SW answered ok — lastError after a delivered sendResponse must not retract
++  // a turn companion already accepted.
++  if (ok) return "ok"
++  // SW answered failure (offline / frame-budget / etc.) — it already
++  // broadcast file.upload_error. Treat like refused so the panel does not
++  // stack a second 「Companion 未连接」 bubble (F6 for the common drop).
++  if (response && typeof response === "object") return "refused"
++  if (swErr) return "error"
++  return "error"
++}
++
++/**
++ * Panel ops after a failed file.upload send (post-#197 F2).
++ * Always retract the optimistic user bubble — keep it only on sendOutcome === "ok".
++ * "refused" still retracts but must not stack a second 「Companion 未连接」 bubble (F6).
++ * Thread-switch: retract + mapBusy-off still apply; do not unlock the new thread.
++ */
++export type UploadSendFailureOp =
++  | { op: "retract"; id: string }
++  | { op: "busy_off"; threadId: string }
++  | { op: "unlock_panel" }
++  | { op: "restore_composer"; text: string }
++  | { op: "error_bubble"; content: string }
++
++export function uploadSendFailureOps(opts: {
++  clientMessageId: string
++  uploadThreadId: string
++  sendOutcome: "refused" | "error"
++  swErr?: string | null
++  applyToActivePanel: boolean
++  composerText?: string
++}): UploadSendFailureOp[] {
++  const ops: UploadSendFailureOp[] = [{ op: "retract", id: opts.clientMessageId }]
++  if (opts.uploadThreadId) ops.push({ op: "busy_off", threadId: opts.uploadThreadId })
++  if (!opts.applyToActivePanel) return ops
++  ops.push({ op: "unlock_panel" })
++  if (opts.composerText) ops.push({ op: "restore_composer", text: opts.composerText })
++  if (opts.sendOutcome === "refused") return ops
++  ops.push({
++    op: "error_bubble",
++    content: `\u274c ${opts.swErr || "Companion 未连接，无法上传文件"}`,
++  })
++  return ops
+ }
+diff --git a/chrome-extension/tests/sidepanel-state.test.ts b/chrome-extension/tests/sidepanel-state.test.ts
+index 62717ee..7bf5b24 100644
+--- a/chrome-extension/tests/sidepanel-state.test.ts
++++ b/chrome-extension/tests/sidepanel-state.test.ts
+@@ -148,6 +148,72 @@ test("normalizeConfig flattens context_compaction modes", () => {
+   )
+ })
+ 
++test("SET_PENDING_UPLOAD + REQUEST_COMPOSER_RESTORE are exact-id restore tokens", () => {
++  let s = agentReducer(initialState, {
++    type: "SET_PENDING_UPLOAD",
++    pending: { messageId: "thread-a_user_1_abc", threadId: "thread-a", composerText: "看图" },
++  })
++  assert.equal(s.pendingUpload?.messageId, "thread-a_user_1_abc")
++  s = agentReducer(s, { type: "REQUEST_COMPOSER_RESTORE", text: "看图" })
++  assert.equal(s.composerRestore?.text, "看图")
++  assert.ok((s.composerRestore?.token ?? 0) > 0)
++  s = agentReducer(s, { type: "CLEAR_COMPOSER_RESTORE" })
++  assert.equal(s.composerRestore, null)
++  s = agentReducer(s, { type: "SET_PENDING_UPLOAD", pending: null })
++  assert.equal(s.pendingUpload, null)
++})
++
++test("REMOVE_MESSAGE after F1 adopt is a no-op on the temp id (landed turn stays)", () => {
++  const tempId = "thread-a_user_1730000000999_abc"
++  const bubble = {
++    id: tempId,
++    thread_id: "thread-a",
++    role: "user" as const,
++    content: "landed",
++    created_at: "2026-08-19T00:00:00.000Z",
++  }
++  let s = agentReducer(initialState, { type: "ADD_MESSAGE", message: bubble })
++  s = agentReducer(s, {
++    type: "ADD_MESSAGE",
++    message: {
++      id: "thread-a_persist_1",
++      thread_id: "thread-a",
++      role: "user",
++      content: "landed",
++      created_at: "2026-08-19T00:00:01.000Z",
++      client_message_id: tempId,
++    } as any,
++  })
++  assert.equal(s.messages[0]!.id, "thread-a_persist_1")
++  s = agentReducer(s, { type: "REMOVE_MESSAGE", id: tempId })
++  assert.equal(s.messages.length, 1)
++  assert.equal(s.messages[0]!.id, "thread-a_persist_1")
++})
++
++test("REMOVE_MESSAGE drops the optimistic upload bubble by exact id (post-#197 F2 failure retract)", () => {
++  const bubble = {
++    id: "thread-a_user_1_abc",
++    thread_id: "thread-a",
++    role: "user" as const,
++    content: "请分析\n📎 shot.png",
++    created_at: "2026-08-19T00:00:00.000Z",
++  }
++  const other = {
++    id: "thread-a_user_2_def",
++    thread_id: "thread-a",
++    role: "user" as const,
++    content: "keep me",
++    created_at: "2026-08-19T00:00:01.000Z",
++  }
++  let s = agentReducer(initialState, { type: "ADD_MESSAGE", message: bubble })
++  s = agentReducer(s, { type: "ADD_MESSAGE", message: other })
++  s = agentReducer(s, { type: "REMOVE_MESSAGE", id: bubble.id })
++  assert.equal(s.messages.length, 1)
++  assert.equal(s.messages[0]!.id, other.id)
++  const noop = agentReducer(s, { type: "REMOVE_MESSAGE", id: "missing" })
++  assert.equal(noop.messages.length, 1)
++})
++
+ test("ADD_MESSAGE dedupes by message id (optimistic panel + SW chat.user echo)", () => {
+   const msg = {
+     id: "thread-a_user_1",
+diff --git a/chrome-extension/tests/stream-thread-gate.test.ts b/chrome-extension/tests/stream-thread-gate.test.ts
+index eda75d8..eebafe0 100644
+--- a/chrome-extension/tests/stream-thread-gate.test.ts
++++ b/chrome-extension/tests/stream-thread-gate.test.ts
+@@ -44,6 +44,18 @@ test("fileUploadedApplyToPanel: only panel chrome is thread-gated (F3)", () => {
+   assert.equal(fileUploadedApplyToPanel("thread-a", null), false)
+ })
+ 
++test("file.upload_error retracts via pendingUploadRef (not stale state.messages)", () => {
++  const src = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
++  assert.match(src, /pendingUploadRef\.current = state\.pendingUpload/)
++  const start = src.indexOf('case "file.upload_error"')
++  assert.ok(start >= 0, "file.upload_error case missing")
++  const body = src.slice(start, start + 1800)
++  assert.match(body, /pendingUploadRef\.current/)
++  assert.match(body, /REMOVE_MESSAGE/)
++  assert.equal(body.includes("state.messages"), false)
++  assert.match(body, /REQUEST_COMPOSER_RESTORE/)
++})
++
+ test("file.uploaded: chip-clear BUMP is dispatched before the thread gate (F3)", () => {
+   // Source-order lock (pre-F3 this ordering was inverted → red): the BUMP sat
+   // behind shouldApplyStreamEvent, so foreign-thread uploads never cleared chips.
+diff --git a/chrome-extension/tests/upload-send.test.ts b/chrome-extension/tests/upload-send.test.ts
+index f762e38..ae2ef35 100644
+--- a/chrome-extension/tests/upload-send.test.ts
++++ b/chrome-extension/tests/upload-send.test.ts
+@@ -1,6 +1,8 @@
+ import test from "node:test"
+ import assert from "node:assert/strict"
+-import { buildOptimisticUploadBubble, uploadSendOutcome } from "../src/sidepanel/utils/upload-send"
++import { readFileSync } from "node:fs"
++import { join } from "node:path"
++import { buildOptimisticUploadBubble, uploadSendFailureOps, uploadSendOutcome } from "../src/sidepanel/utils/upload-send"
+ import { isTempUserMessageId } from "../src/sidepanel/store/agentStore"
+ 
+ test("buildOptimisticUploadBubble: bubble id IS the file.upload clientMessageId (F2/F1)", () => {
+@@ -28,21 +30,86 @@ test("buildOptimisticUploadBubble: same-millisecond sends get distinct ids", ()
+ 
+ test("uploadSendOutcome: ok only when the send actually succeeded", () => {
+   assert.equal(uploadSendOutcome(undefined, { ok: true }), "ok")
+-  assert.equal(uploadSendOutcome(undefined, { ok: false }), "error")
++  // lastError after a delivered sendResponse must not retract a landed turn
++  assert.equal(uploadSendOutcome("Could not establish connection", { ok: true }), "ok")
++  // No SW answer at all → panel posts the fallback bubble
+   assert.equal(uploadSendOutcome(undefined, undefined), "error")
+   assert.equal(uploadSendOutcome(null, null), "error")
+-  assert.equal(uploadSendOutcome("Could not establish connection", { ok: true }), "error")
++  assert.equal(uploadSendOutcome("Could not establish connection", undefined), "error")
+ })
+ 
+-test("uploadSendOutcome: frame-budget refusal suppresses the panel's own bubble (F6)", () => {
++test("uploadSendOutcome: any SW-answered ok:false is refused (F6 for the common drop)", () => {
+   // SW refused the oversized frame: it broadcast file.upload_error with the
+-  // correct banner AND answered ok:false with the stamped diag. Pre-F6 the
+-  // panel stacked its own misleading 「Companion 未连接」 bubble on top.
++  // correct banner AND answered ok:false with the stamped diag.
+   const refusal = {
+     ok: false,
+     diag: { sent: false, json_bytes: 11_000_000, over_companion_10mb: true },
+   }
+   assert.equal(uploadSendOutcome(undefined, refusal), "refused")
+-  // Same failure shape minus the marker → generic fallback bubble.
+-  assert.equal(uploadSendOutcome(undefined, { ok: false, diag: { sent: false } }), "error")
++  // Companion-offline uses the same broadcast + {ok:false} shape minus the stamp.
++  // Must not stack a second 「Companion 未连接」 bubble.
++  assert.equal(uploadSendOutcome(undefined, { ok: false, diag: { sent: false } }), "refused")
++  assert.equal(uploadSendOutcome(undefined, { ok: false }), "refused")
++})
++
++test("uploadSendFailureOps: error retracts optimistic bubble then posts fallback", () => {
++  const ops = uploadSendFailureOps({
++    clientMessageId: "thread-a_user_1_abc",
++    uploadThreadId: "thread-a",
++    sendOutcome: "error",
++    swErr: "Could not establish connection",
++    applyToActivePanel: true,
++    composerText: "请分析这张图",
++  })
++  assert.deepEqual(
++    ops.map((o) => o.op),
++    ["retract", "busy_off", "unlock_panel", "restore_composer", "error_bubble"],
++  )
++  assert.equal(ops[0]!.op === "retract" && ops[0].id, "thread-a_user_1_abc")
++  assert.equal(ops[1]!.op === "busy_off" && ops[1].threadId, "thread-a")
++  const restore = ops.find((o) => o.op === "restore_composer")
++  assert.equal(restore?.op === "restore_composer" && restore.text, "请分析这张图")
++  const bubble = ops.find((o) => o.op === "error_bubble")
++  assert.equal(bubble?.op, "error_bubble")
++  if (bubble?.op !== "error_bubble") throw new Error("expected error_bubble")
++  assert.match(bubble.content, /Could not establish connection/)
++})
++
++test("uploadSendFailureOps: refused retracts but does not stack Companion-offline bubble (F6)", () => {
++  const ops = uploadSendFailureOps({
++    clientMessageId: "thread-a_user_1_abc",
++    uploadThreadId: "thread-a",
++    sendOutcome: "refused",
++    applyToActivePanel: true,
++    composerText: "caption",
++  })
++  assert.deepEqual(
++    ops.map((o) => o.op),
++    ["retract", "busy_off", "unlock_panel", "restore_composer"],
++  )
++})
++
++test("App.tsx wires uploadSendFailureOps + REMOVE_MESSAGE on file.upload send failure", () => {
++  const src = readFileSync(join(process.cwd(), "src/sidepanel/App.tsx"), "utf8")
++  assert.match(src, /uploadSendFailureOps\(/)
++  const failIdx = src.indexOf("uploadSendFailureOps(")
++  const loop = src.slice(failIdx, failIdx + 1800)
++  assert.match(loop, /type: "REMOVE_MESSAGE"/)
++  assert.match(loop, /op === "restore_composer"/)
++  assert.match(loop, /composerText: userMessage/)
++  assert.match(src, /SET_PENDING_UPLOAD/)
++})
++
++test("uploadSendFailureOps: switched thread still retracts + clears mapBusy, no panel unlock", () => {
++  const ops = uploadSendFailureOps({
++    clientMessageId: "thread-a_user_1_abc",
++    uploadThreadId: "thread-a",
++    sendOutcome: "error",
++    swErr: "offline",
++    applyToActivePanel: false,
++  })
++  assert.deepEqual(
++    ops.map((o) => o.op),
++    ["retract", "busy_off"],
++  )
+ })
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index bb1e995..ab6aa3e 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -8,7 +8,7 @@ import { getToolDefinitions, getMcpMetaToolDefinitions, ToolDefinition } from ".
+ import { tryParseToolArgs } from "../bridge/tool-schemas"
+ import { classifyError } from "../security"
+ import { logger } from "../logger"
+-import { analyzeImage } from "./vision-pipeline"
++import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
+ import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
+ import { getConfig, type LlmConfig } from "../config"
+ import { getMcpManager } from "../mcp"
+@@ -1183,6 +1183,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+                     height: toolResult.data.height,
+                     url: toolResult.data.url,
+                     title: toolResult.data.title,
++                    mime: typeof toolResult.data.mime === "string" ? toolResult.data.mime : undefined,
+                   },
+                   config.vision,
+                   params.prompt, // custom prompt from analyze_image tool
+@@ -1229,12 +1230,17 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+ 
+                 if (config.vision.fallback === "metadata") {
+                   const errMsg = String(visionErr?.message || visionErr)
++                  const subject = formatVisionFallbackSubject(
++                    String(toolResult.data.title || ""),
++                    String(toolResult.data.url || ""),
++                    Number(toolResult.data.width) || 0,
++                    Number(toolResult.data.height) || 0,
++                  )
+                   toolResult = {
+                     success: true,
+                     data: {
+                       vision_description:
+-                        `Screenshot of "${toolResult.data.title}" (${toolResult.data.url}), ` +
+-                        `${toolResult.data.width}x${toolResult.data.height}px. ` +
++                        `${subject}. ` +
+                         `(Vision model unavailable: ${errMsg}. ` +
+                         `This is config.vision only — do NOT hunt for local ollama/qwen3-vl OpenAI servers. ` +
+                         `For browser text use get_page_text; for desktop on-screen text use host_computer describe. ` +
+diff --git a/companion/src/llm/image-preview.ts b/companion/src/llm/image-preview.ts
+index 07c6e12..4961d70 100644
+--- a/companion/src/llm/image-preview.ts
++++ b/companion/src/llm/image-preview.ts
+@@ -8,16 +8,18 @@ import { decodePngToRgba } from "../computer/png-decode"
+ export const PREVIEW_MAX_EDGE = 96
+ export const PREVIEW_MAX_BYTES = 8 * 1024
+ 
+-/** Best-effort raster dimensions (PNG IHDR / JPEG SOF). */
++function saneDims(width: number, height: number): { width: number; height: number } | undefined {
++  if (width > 0 && height > 0 && width < 20000 && height < 20000) return { width, height }
++  return undefined
++}
++
++/** Best-effort raster dimensions (PNG IHDR / JPEG SOF / GIF LSD / WebP VP8*). */
+ export function parseRasterDims(buf: Buffer, mime: string): { width: number; height: number } | undefined {
+   if (!buf || buf.length < 10) return undefined
+   if (mime === "image/png") {
+     if (buf.length < 24) return undefined
+     if (buf[0] !== 0x89 || buf[1] !== 0x50) return undefined
+-    const width = buf.readUInt32BE(16)
+-    const height = buf.readUInt32BE(20)
+-    if (width > 0 && height > 0 && width < 20000 && height < 20000) return { width, height }
+-    return undefined
++    return saneDims(buf.readUInt32BE(16), buf.readUInt32BE(20))
+   }
+   if (mime === "image/jpeg") {
+     let i = 2
+@@ -28,10 +30,7 @@ export function parseRasterDims(buf: Buffer, mime: string): { width: number; hei
+       }
+       const marker = buf[i + 1]!
+       if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
+-        const height = buf.readUInt16BE(i + 5)
+-        const width = buf.readUInt16BE(i + 7)
+-        if (width > 0 && height > 0) return { width, height }
+-        return undefined
++        return saneDims(buf.readUInt16BE(i + 7), buf.readUInt16BE(i + 5))
+       }
+       if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+         i += 2
+@@ -42,6 +41,32 @@ export function parseRasterDims(buf: Buffer, mime: string): { width: number; hei
+       if (len < 2) break
+       i += 2 + len
+     }
++    return undefined
++  }
++  if (mime === "image/gif") {
++    if (buf[0] !== 0x47 || buf[1] !== 0x49 || buf[2] !== 0x46) return undefined
++    return saneDims(buf.readUInt16LE(6), buf.readUInt16LE(8))
++  }
++  if (mime === "image/webp") {
++    if (buf.length < 20) return undefined
++    if (buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WEBP") return undefined
++    const fourcc = buf.toString("ascii", 12, 16)
++    if (fourcc === "VP8X") {
++      if (buf.length < 30) return undefined
++      const width = 1 + (buf[24]! | (buf[25]! << 8) | (buf[26]! << 16))
++      const height = 1 + (buf[27]! | (buf[28]! << 8) | (buf[29]! << 16))
++      return saneDims(width, height)
++    }
++    if (fourcc === "VP8L") {
++      if (buf.length < 25 || buf[20] !== 0x2f) return undefined
++      const bits = buf.readUInt32LE(21)
++      return saneDims((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1)
++    }
++    if (fourcc === "VP8 ") {
++      if (buf.length < 30) return undefined
++      if (buf[23] !== 0x9d || buf[24] !== 0x01 || buf[25] !== 0x2a) return undefined
++      return saneDims(buf.readUInt16LE(26) & 0x3fff, buf.readUInt16LE(28) & 0x3fff)
++    }
+   }
+   return undefined
+ }
+diff --git a/companion/src/llm/vision-pipeline.ts b/companion/src/llm/vision-pipeline.ts
+index 36fd0d4..ad635c6 100644
+--- a/companion/src/llm/vision-pipeline.ts
++++ b/companion/src/llm/vision-pipeline.ts
+@@ -4,6 +4,7 @@ import OpenAI from "openai"
+ import * as crypto from "crypto"
+ import type { VisionConfig } from "../config"
+ import { logger } from "../logger"
++import { sniffRasterImage } from "./image-sniff"
+ import { shouldBlockVisionRequest } from "./vision-reuse-inherit"
+ 
+ const DEFAULT_VISION_PROMPT =
+@@ -69,6 +70,40 @@ export interface ImageInput {
+   height: number
+   url: string
+   title: string
++  /** Declared raster mime; sniffed bytes win when they disagree. */
++  mime?: string
++}
++
++/** Omit `NxNpx` when either edge is missing/zero — never interpolate 0x0. */
++export function formatVisionFallbackDims(width?: number, height?: number): string {
++  if (typeof width === "number" && typeof height === "number" && width > 0 && height > 0) {
++    return `, ${width}x${height}px`
++  }
++  return ""
++}
++
++/** Subject line for vision fallback. Omit empty `(url)` and `0x0px`. */
++export function formatVisionFallbackSubject(title: string, url: string, width?: number, height?: number): string {
++  const loc = url ? ` (${url})` : ""
++  return `Screenshot of "${title}"${loc}${formatVisionFallbackDims(width, height)}`
++}
++
++/**
++ * Build the vision data URL. Sniffed raster mime wins over a lying declared
++ * type (PNG bytes labeled jpeg). Returns null when bytes are not a known
++ * raster and the declared mime is not allowlisted — never wrap SVG/HTML as jpeg.
++ */
++export function visionImageDataUrl(image: { base64: string; mime?: string }): string | null {
++  let sniffed: ReturnType<typeof sniffRasterImage> = null
++  try {
++    sniffed = sniffRasterImage(Buffer.from(image.base64, "base64"))
++  } catch {
++    sniffed = null
++  }
++  // Sniff only — declared mime without matching bytes is content-type confusion
++  // (SVG labeled image/jpeg). Screenshots and admits are real rasters.
++  if (!sniffed) return null
++  return `data:${sniffed};base64,${image.base64}`
+ }
+ 
+ export async function analyzeImage(
+@@ -135,6 +170,10 @@ async function doAnalyze(
+     })
+ 
+     const prompt = customPrompt || config.prompt || DEFAULT_VISION_PROMPT
++    const dataUrl = visionImageDataUrl(image)
++    if (!dataUrl) {
++      return buildFallback(image, config, "Image is not a recognized raster")
++    }
+ 
+     const response = await client.chat.completions.create(
+       {
+@@ -144,7 +183,7 @@ async function doAnalyze(
+             role: "user",
+             content: [
+               { type: "text", text: prompt },
+-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${image.base64}` } },
++              { type: "image_url", image_url: { url: dataUrl } },
+             ],
+           },
+         ],
+@@ -258,10 +297,11 @@ function buildFallback(image: ImageInput, config: VisionConfig, error: string):
+     throw new Error(`Vision analysis failed: ${error}`)
+   }
+ 
++  const subject = formatVisionFallbackSubject(image.title, image.url, image.width, image.height)
+   if (config.fallback === "passthrough") {
+     // Return minimal metadata — caller will keep original base64
+     return {
+-      description: `Screenshot of "${image.title}" (${image.url}), ${image.width}x${image.height}px. Vision unavailable: ${error}`,
++      description: `${subject}. Vision unavailable: ${error}`,
+       cached: false,
+       model_used: "none",
+       latency_ms: 0,
+@@ -270,7 +310,7 @@ function buildFallback(image: ImageInput, config: VisionConfig, error: string):
+ 
+   // Default: metadata fallback
+   return {
+-    description: `Screenshot of "${image.title}" (${image.url}), ${image.width}x${image.height}px. Vision model unavailable: ${error}`,
++    description: `${subject}. Vision model unavailable: ${error}`,
+     cached: false,
+     model_used: "none",
+     latency_ms: 0,
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 605487e..a181665 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -625,6 +625,7 @@ export async function handleMessage(
+                     height: img.height,
+                     url: "",
+                     title: img.title,
++                    mime: img.format && img.format !== "note" ? `image/${img.format}` : undefined,
+                   },
+                   config.vision!,
+                   `分析这张文档内嵌图片 "${img.title}" 的内容，提取所有可见文本和视觉信息。`,
+@@ -800,6 +801,7 @@ export async function handleMessage(
+                   height: imgDims?.height ?? 0,
+                   url: "",
+                   title: img.name,
++                  mime: img.type,
+                 },
+                 config.vision!,
+                 `分析这张用户附图 "${img.name}" 的内容，提取所有可见文本和视觉信息。`,
+diff --git a/companion/tests/image-preview.test.ts b/companion/tests/image-preview.test.ts
+index 4749094..dd40e79 100644
+--- a/companion/tests/image-preview.test.ts
++++ b/companion/tests/image-preview.test.ts
+@@ -29,6 +29,67 @@ test("parseRasterDims: JPEG SOF0", () => {
+   assert.deepEqual(parseRasterDims(jpeg, "image/jpeg"), { width: 30, height: 20 })
+ })
+ 
++test("parseRasterDims: GIF logical screen descriptor", () => {
++  // GIF89a + width 320 LE + height 200 LE
++  const gif = Buffer.from([
++    0x47, 0x49, 0x46, 0x38, 0x39, 0x61,
++    0x40, 0x01, 0xc8, 0x00,
++    0x00, 0x00, 0x00,
++  ])
++  assert.deepEqual(parseRasterDims(gif, "image/gif"), { width: 320, height: 200 })
++})
++
++test("parseRasterDims: WebP VP8X canvas size", () => {
++  const webp = Buffer.alloc(30)
++  webp.write("RIFF", 0)
++  webp.writeUInt32LE(22, 4)
++  webp.write("WEBP", 8)
++  webp.write("VP8X", 12)
++  webp.writeUInt32LE(10, 16)
++  // canvas width-1 = 639 → 640; height-1 = 479 → 480 (24-bit LE)
++  webp[24] = 0x7f
++  webp[25] = 0x02
++  webp[26] = 0x00
++  webp[27] = 0xdf
++  webp[28] = 0x01
++  webp[29] = 0x00
++  assert.deepEqual(parseRasterDims(webp, "image/webp"), { width: 640, height: 480 })
++})
++
++test("parseRasterDims: WebP VP8 lossy start-code size", () => {
++  const webp = Buffer.alloc(30)
++  webp.write("RIFF", 0)
++  webp.writeUInt32LE(22, 4)
++  webp.write("WEBP", 8)
++  webp.write("VP8 ", 12)
++  webp.writeUInt32LE(10, 16)
++  webp[23] = 0x9d
++  webp[24] = 0x01
++  webp[25] = 0x2a
++  webp.writeUInt16LE(320, 26)
++  webp.writeUInt16LE(240, 28)
++  assert.deepEqual(parseRasterDims(webp, "image/webp"), { width: 320, height: 240 })
++})
++
++test("parseRasterDims: WebP VP8L packed size", () => {
++  const webp = Buffer.alloc(25)
++  webp.write("RIFF", 0)
++  webp.writeUInt32LE(17, 4)
++  webp.write("WEBP", 8)
++  webp.write("VP8L", 12)
++  webp.writeUInt32LE(5, 16)
++  webp[20] = 0x2f
++  // width-1=99, height-1=49 → 100×50. bits 0-13 = 99, bits 14-27 = 49
++  const packed = 99 | (49 << 14)
++  webp.writeUInt32LE(packed, 21)
++  assert.deepEqual(parseRasterDims(webp, "image/webp"), { width: 100, height: 50 })
++})
++
++test("parseRasterDims: unknown / truncated returns undefined (never 0x0)", () => {
++  assert.equal(parseRasterDims(Buffer.from("not-an-image"), "image/gif"), undefined)
++  assert.equal(parseRasterDims(Buffer.from("RIFF....WEBP"), "image/webp"), undefined)
++})
++
+ test("previewDataUrl: magic prefixes", () => {
+   assert.match(previewDataUrl("iVBORxxxx"), /^data:image\/png;base64,/)
+   assert.match(previewDataUrl("R0lGODxxxx"), /^data:image\/gif;base64,/)
+diff --git a/companion/tests/vision-pipeline.test.ts b/companion/tests/vision-pipeline.test.ts
+index bd5b5ef..a988a46 100644
+--- a/companion/tests/vision-pipeline.test.ts
++++ b/companion/tests/vision-pipeline.test.ts
+@@ -8,7 +8,10 @@ import assert from "node:assert/strict"
+ import {
+   analyzeImage,
+   extractServerErrorMessage,
++  formatVisionFallbackDims,
++  formatVisionFallbackSubject,
+   normalizeVisionBaseUrl,
++  visionImageDataUrl,
+ } from "../src/llm/vision-pipeline"
+ 
+ test("normalizeVisionBaseUrl: bare host:port gets /v1 (LM Studio root paste)", () => {
+@@ -96,7 +99,14 @@ test("analyzeImage: 2xx error body without choices → readable fallback, never
+   })
+   try {
+     const r = await analyzeImage(
+-      { base64: "Y21zcGFyay1jaG9pY2VsZXNzLXJlZ3Jlc3Npb24=", width: 1053, height: 481, url: "", title: "shot" },
++      {
++        // Real PNG so visionImageDataUrl does not fail-closed before the mock.
++        base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
++        width: 1053,
++        height: 481,
++        url: "",
++        title: "shot",
++      },
+       {
+         enabled: true,
+         base_url: "http://127.0.0.1:1234",
+@@ -115,3 +125,73 @@ test("analyzeImage: 2xx error body without choices → readable fallback, never
+     proto.create = original
+   }
+ })
++
++test("formatVisionFallbackDims: omit NxNpx when width/height unknown (no 0x0 lie)", () => {
++  assert.equal(formatVisionFallbackDims(1053, 481), ", 1053x481px")
++  assert.equal(formatVisionFallbackDims(0, 0), "")
++  assert.equal(formatVisionFallbackDims(320, 0), "")
++  assert.equal(formatVisionFallbackDims(undefined, 200), "")
++})
++
++test("formatVisionFallbackSubject: omit empty (url) and 0x0px", () => {
++  assert.equal(formatVisionFallbackSubject("shot", "https://ex", 10, 8), 'Screenshot of "shot" (https://ex), 10x8px')
++  assert.equal(formatVisionFallbackSubject("cat.gif", "", 0, 0), 'Screenshot of "cat.gif"')
++})
++
++test("visionImageDataUrl: sniff real raster mime; refuse svg/garbage instead of wrapping as jpeg", () => {
++  const png = Buffer.from(
++    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
++    "base64",
++  )
++  const gif = Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00])
++  const webp = Buffer.from("RIFF\x0c\x00\x00\x00WEBPVP8L", "binary")
++  assert.match(visionImageDataUrl({ base64: png.toString("base64") })!, /^data:image\/png;base64,/)
++  assert.match(visionImageDataUrl({ base64: gif.toString("base64"), mime: "image/gif" })!, /^data:image\/gif;base64,/)
++  assert.match(visionImageDataUrl({ base64: webp.toString("base64") })!, /^data:image\/webp;base64,/)
++  assert.equal(visionImageDataUrl({ base64: "not-a-raster", mime: "image/svg+xml" }), null)
++  assert.equal(visionImageDataUrl({ base64: "not-a-raster" }), null)
++  assert.equal(visionImageDataUrl({ base64: "not-a-raster", mime: "image/jpeg" }), null)
++  assert.match(
++    visionImageDataUrl({ base64: png.toString("base64"), mime: "image/jpeg" })!,
++    /^data:image\/png;base64,/,
++  )
++})
++
++test("analyzeImage: data URL mime follows sniffed bytes (PNG is not labeled jpeg)", async () => {
++  const openaiMod = await import("openai")
++  const OpenAI = (openaiMod as any).default || openaiMod
++  const dummy = new OpenAI({ baseURL: "http://127.0.0.1:9", apiKey: "ollama" })
++  const proto = Object.getPrototypeOf(dummy.chat.completions)
++  const original = proto.create
++  let seenUrl = ""
++  proto.create = async (body: any) => {
++    const part = body?.messages?.[0]?.content?.find((c: any) => c.type === "image_url")
++    seenUrl = part?.image_url?.url || ""
++    return { choices: [{ message: { content: "ok" } }] }
++  }
++  const png = Buffer.concat([
++    Buffer.from(
++      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
++      "base64",
++    ),
++    Buffer.from("mime-probe"),
++  ])
++  try {
++    await analyzeImage(
++      { base64: png.toString("base64"), width: 1, height: 1, url: "", title: "p", mime: "image/png" },
++      {
++        enabled: true,
++        base_url: "http://127.0.0.1:1234",
++        api_key: "ollama",
++        model_name: "m",
++        timeout_ms: 5000,
++        max_tokens: 16,
++        fallback: "metadata",
++        cache_ttl_seconds: 0,
++      } as any,
++    )
++    assert.match(seenUrl, /^data:image\/png;base64,/)
++  } finally {
++    proto.create = original
++  }
++})
+diff --git a/docs/audit/reviews/post197-followup-adversary-synthesis-20260819.md b/docs/audit/reviews/post197-followup-adversary-synthesis-20260819.md
+new file mode 100644
+index 0000000..8399407
+--- /dev/null
++++ b/docs/audit/reviews/post197-followup-adversary-synthesis-20260819.md
+@@ -0,0 +1,55 @@
++# Post-#197 follow-up — 4-lane adversarial synthesis
++
++**Batch:** `post197-followup`  
++**Branch:** `fix/post-197-review-followup`  
++**Base:** `origin/main` (`98bb586`)  
++**Blast:** T2 (Side Panel composer + vision observe; no new tool / L2 / confirm)
++
++## Capability declaration (ADR-020)
++
++```text
++Surface:      L1 observe (vision analyze + sidepanel composer)
++L2-classes:   none
++Compose:      none
++Autonomy:     single
++Trust:        no new gate; raster sniff allowlist reused
++Channel:      community
++```
++
++## DoD (external)
++
++1. `file.upload` send never-landed → optimistic user turn is retracted.
++2. Vision data URL mime is sniffed raster only — never svg/html/jpeg-wrap of garbage.
++3. Fallback copy never interpolates `0x0px` or empty `()`.
++4. Companion parse/type/size fail after WS accept also retracts the same bubble (exact id).
++
++## Machine
++
++- chrome-extension `npm test`: 738 pass / 0 fail `[executed]`
++- companion `npm test`: run this session, exit 0 expected `[executed]`
++
++## Lane verdicts
++
++| Lane | R1 | R2 | Notes |
++|------|----|----|-------|
++| Security | APPROVE_WITH_NITS | — | sniff-only data URL folded |
++| Correctness | APPROVE_WITH_NITS | — | lastError+ok:true, SW {ok:false}=refused |
++| UI | REJECT | REJECT | R2 P0: stale `state.messages` in mount-once listener |
++| Tests | REJECT | REJECT | same P0; grep locked dead code |
++
++## Folded after R2 P0
++
++- `pendingUpload` on the store; `pendingUploadRef` synced every render (same pattern as `activeThreadRef`).
++- `file.upload_error` retracts **exact** `pending.messageId` + `REQUEST_COMPOSER_RESTORE`.
++- `visionImageDataUrl` sniff-only (declared-without-bytes → null).
++- Caption restore on SW-fail (`restore_composer`) and parse-fail (store token + InputArea effect).
++
++## Residual (owned, not blocking)
++
++- Source-order greps are not behavioral tests of the WS listener.
++- Document-embedded `mime: image/${format}` has no dedicated test (sniff-only makes it unused for the data URL).
++- Unify admit across sidecar + hydrate is out of scope.
++
++## Implementer (not a gate)
++
++Fold complete; dual review (Claude + Kimi) is the external gate.
+diff --git a/docs/audit/reviews/post197-followup-dual-prompt-20260819.md b/docs/audit/reviews/post197-followup-dual-prompt-20260819.md
+new file mode 100644
+index 0000000..89ec5ca
+--- /dev/null
++++ b/docs/audit/reviews/post197-followup-dual-prompt-20260819.md
+@@ -0,0 +1,70 @@
++# Dual review: post-#197 Important follow-up (F2 retract + vision mime + dims)
++
++## Context
++
++Post-merge review of `98bb586` found 3 Importants. This branch lands them, then folded 4-lane adversarial (security/correctness/UI/tests). UI+Tests R2 REJECT'd a real P0 (stale `state.messages` in a mount-once listener); that is now folded via `pendingUploadRef`.
++
++Adversarial synthesis: `docs/audit/reviews/post197-followup-adversary-synthesis-20260819.md`
++
++## Capability declaration (ADR-020)
++
++```text
++Surface:      L1 observe (vision analyze + sidepanel composer)
++L2-classes:   none
++Compose:      none
++Autonomy:     single
++Trust:        no new gate; raster sniff allowlist reused
++Channel:      community
++```
++
++## Locked DoD
++
++1. Failed `file.upload` send (SW `{ok:false}` or no answer) retracts the optimistic user bubble by exact `clientMessageId`.
++2. SW-answered `{ok:false}` does **not** stack a second 「Companion 未连接」 bubble (`uploadSendOutcome` → `refused`; SW already broadcast `file.upload_error`).
++3. `lastError` + `{ok:true}` is **ok** (do not retract a landed turn).
++4. Companion `file.upload_error` after WS accept retracts via `pendingUploadRef` (never `state.messages` in the mount-once listener).
++5. Caption restored if the composer is still empty (send-callback `restore_composer` **and** parse-fail `REQUEST_COMPOSER_RESTORE`).
++6. `visionImageDataUrl` is sniff-only; SVG/garbage/`image/jpeg` on non-raster → `null` → fallback "not a recognized raster".
++7. Fallback subject omits empty `(url)` and `0x0px`. GIF/WebP/VP8* dims parse.
++
++## Files in scope
++
++```
++chrome-extension/src/sidepanel/App.tsx
++chrome-extension/src/sidepanel/store/agentStore.tsx
++chrome-extension/src/sidepanel/utils/upload-send.ts
++chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++chrome-extension/tests/upload-send.test.ts
++chrome-extension/tests/sidepanel-state.test.ts
++chrome-extension/tests/stream-thread-gate.test.ts
++companion/src/llm/vision-pipeline.ts
++companion/src/llm/image-preview.ts
++companion/src/llm/adapter.ts
++companion/src/message-router.ts
++companion/tests/vision-pipeline.test.ts
++companion/tests/image-preview.test.ts
++```
++
++Read full files, not only the patch. Ignore unrelated dirty tree (`.grok/`, `.impeccable/`).
++
++## Tests claimed
++
++- chrome-extension: 738 pass / 0 fail
++- companion: `npm test` exit 0 this session
++
++You may re-run targeted tests. Do not require full monorepo green if targeted pass.
++
++## Review focus (hostile)
++
++1. Can `pendingUploadRef` still be stale, or can `REMOVE_MESSAGE` hit the wrong turn after F1 adopt?
++2. Double ❌ still possible on the real offline path?
++3. `visionImageDataUrl` still jpeg-wrap anything?
++4. Missing tests that would stay green if App forgot `SET_PENDING_UPLOAD`?
++5. Trust monotonicity / new confirms / data: scheme expansion?
++6. Apply ADR-020 checklist.
++
++## Output
++
++Findings with file:line, then **exactly one final line**:
++
++`VERDICT: APPROVE` | `VERDICT: APPROVE_WITH_NITS` | `VERDICT: REJECT`

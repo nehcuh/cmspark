@@ -1,0 +1,43 @@
+{
+  "batch": "post197-followup",
+  "date": "2026-08-19",
+  "stage": "post-implementation dual review (Claude + Kimi)",
+  "base": "origin/main",
+  "head_branch": "fix/post-197-review-followup",
+  "prompt": "docs/audit/reviews/post197-followup-dual-prompt-20260819.md",
+  "adversary_synthesis": "docs/audit/reviews/post197-followup-adversary-synthesis-20260819.md",
+  "machine": {
+    "chrome-extension": "738 pass / 0 fail",
+    "companion": "3020 tests / 2997 pass / 23 skip / 0 fail"
+  },
+  "adversary": {
+    "security": "APPROVE_WITH_NITS",
+    "correctness": "APPROVE_WITH_NITS",
+    "ui": { "R1": "REJECT", "R2": "REJECT", "folded": "pendingUploadRef exact-id retract" },
+    "tests": { "R1": "REJECT", "R2": "REJECT", "folded": "source locks + sniff-only + adopt-noop" }
+  },
+  "reviewers": {
+    "claude": {
+      "raw": "docs/audit/reviews/post197-followup-claude-20260819-100357.md",
+      "verdict": "APPROVE_WITH_NITS",
+      "blocking": 0,
+      "nits": 5
+    },
+    "kimi": {
+      "raw": "docs/audit/reviews/post197-followup-kimi-20260819-100357.md",
+      "verdict": "APPROVE_WITH_NITS",
+      "blocking": 0,
+      "nits": 6
+    }
+  },
+  "shared_nits": [
+    "single-slot pendingUpload (cross-thread concurrent uploads)",
+    "ImageInput.mime dead after sniff-only",
+    "SET_PENDING_UPLOAD grep not specific to the set site",
+    "composer-restore effect untested"
+  ],
+  "combined_verdict": "APPROVE_WITH_NITS",
+  "ship": true,
+  "nits_folded": "2026-08-19 pendingUploads-by-thread; drop ImageInput.mime; SET_PENDING_UPLOAD set-site lock; nextComposerText + restore effect lock; restore gated on active thread",
+  "note": "Implementer must not self-APPROVE. Gate is adversary fold + Claude APPROVE* + Kimi APPROVE* + MACHINE PASS. Shared nits folded after dual."
+}
