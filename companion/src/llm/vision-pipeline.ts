@@ -32,7 +32,9 @@ interface CacheEntry {
   timestamp: number
 }
 
-// LRU cache keyed by SHA-256 hash of base64 data
+// LRU cache keyed by SHA-256 of endpoint + model + base64 data — the same
+// image described by two different endpoints/models must never share an entry
+// (the native track and the vision track both call analyzeImage).
 const cache = new Map<string, CacheEntry>()
 
 // Dedup map for concurrent requests
@@ -108,7 +110,10 @@ export async function analyzeImage(
   customPrompt?: string,
   signal?: AbortSignal,
 ): Promise<VisionResult> {
-  const key = hashBase64(image.base64)
+  // Scope the image hash to endpoint + model so two models (or the native
+  // track vs the vision track) never share a cached description — and
+  // model_used on a cache hit names the model that actually produced it.
+  const key = hashBase64(`${config.base_url} ${config.model_name} ${image.base64}`)
 
   // Check cache
   const cached = getCached(key, config.cache_ttl_seconds)

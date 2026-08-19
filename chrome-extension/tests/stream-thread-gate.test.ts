@@ -92,6 +92,32 @@ test("thread.list request echo must not be treated as an empty hydrate", () => {
   assert.ok(guardIdx >= 0 && createIdx > guardIdx, "auto-create must sit behind threads-array hydrate guard")
 })
 
+test("apps.list/acp.list request echo must not clear entries or flip enabled", () => {
+  // Same request-echo trap as thread.list: a bare {type:"apps.list"} /
+  // {type:"acp.list"} request forwarded to the other page's listener carries
+  // no array payload — treating it as a hydrate would wipe entries and force
+  // acpEnabled=false.
+  const src = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
+  const appsStart = src.indexOf('case "apps.list"')
+  assert.ok(appsStart >= 0, "apps.list case missing")
+  const appsBody = src.slice(appsStart, src.indexOf('case "apps.updated"', appsStart))
+  const appsGuardIdx = appsBody.indexOf("Array.isArray(msg.entries)")
+  const appsDispatchIdx = appsBody.indexOf("SET_APPS_STATE")
+  assert.ok(
+    appsGuardIdx >= 0 && appsDispatchIdx > appsGuardIdx,
+    "apps.list hydrate must sit behind entries-array guard",
+  )
+  const acpStart = src.indexOf('case "acp.list"')
+  assert.ok(acpStart >= 0, "acp.list case missing")
+  const acpBody = src.slice(acpStart, src.indexOf('case "coding.git_status"', acpStart))
+  const acpGuardIdx = acpBody.indexOf("Array.isArray(msg.agents)")
+  const acpDispatchIdx = acpBody.indexOf("SET_ACP_LIST")
+  assert.ok(
+    acpGuardIdx >= 0 && acpDispatchIdx > acpGuardIdx,
+    "acp.list hydrate must sit behind agents-array guard",
+  )
+})
+
 test("file.uploaded: chip-clear BUMP is dispatched before the thread gate (F3)", () => {
   // Source-order lock (pre-F3 this ordering was inverted → red): the BUMP sat
   // behind shouldApplyStreamEvent, so foreign-thread uploads never cleared chips.

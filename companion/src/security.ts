@@ -1,5 +1,6 @@
 // Security policy — trusted domains, evaluate safety, error classification
 
+import * as net from "net"
 import { getConfig } from "./config"
 
 /**
@@ -187,18 +188,112 @@ export function isAutoApprovedDomain(domain: string): boolean {
 }
 
 /**
+ * Parse an IPv6 literal into eight 16-bit groups. Handles `::` compression and
+ * a trailing embedded dotted-quad (`::ffff:169.254.169.254`). Returns null for
+ * non-IPv6 input (guarded by net.isIPv6, so garbage never parses).
+ */
+function parseIpv6Groups(addr: string): number[] | null {
+  if (!net.isIPv6(addr)) return null
+  let h = addr.toLowerCase()
+  // Split off an embedded dotted-quad tail (v4-mapped / v4-compatible).
+  let v4Groups: number[] = []
+  const lastColon = h.lastIndexOf(":")
+  const tail = h.slice(lastColon + 1)
+  if (tail.includes(".") && net.isIPv4(tail)) {
+    const p = tail.split(".").map((n) => parseInt(n, 10))
+    v4Groups = [(p[0] << 8) | p[1], (p[2] << 8) | p[3]]
+    h = h.slice(0, lastColon + 1) // keep the trailing colon
+  }
+  const halves = h.split("::")
+  if (halves.length > 2) return null
+  const left = halves[0] ? halves[0].split(":").filter(Boolean) : []
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":").filter(Boolean) : []
+  for (const g of [...left, ...right]) {
+    if (!/^[0-9a-f]{1,4}$/.test(g)) return null
+  }
+  const leftNums = left.map((g) => parseInt(g, 16))
+  const rightNums = [...right.map((g) => parseInt(g, 16)), ...v4Groups]
+  const total = leftNums.length + rightNums.length
+  if (halves.length === 2) {
+    if (total > 7) return null
+    return [...leftNums, ...new Array(8 - total).fill(0), ...rightNums]
+  }
+  if (total !== 8) return null
+  return [...leftNums, ...rightNums]
+}
+
+/**
+ * Dotted-quad embedded in a transitional IPv6 group list, else null.
+ * Covers v4-mapped (`::ffff:a9fe:a9fe`), v4-compatible (`::a9fe:a9fe`),
+ * NAT64 well-known prefix (`64:ff9b::a9fe:a9fe`, RFC 6052), and 6to4
+ * (`2002:a9fe:a9fe::`, RFC 3056) so the IPv4 range tables apply to all of
+ * them. v4-compatible skips 0.0.0.0/8 so `::` and `::1` keep their native
+ * IPv6 (unspecified / loopback) semantics.
+ */
+function embeddedV4FromGroups(groups: number[]): string | null {
+  const dotted = (hi: number, lo: number) =>
+    `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
+  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+    return dotted(groups[6], groups[7]) // v4-mapped
+  }
+  if (groups.slice(0, 6).every((g) => g === 0) && groups[6] >> 8 !== 0) {
+    return dotted(groups[6], groups[7]) // v4-compatible (0.0.0.0/8 excluded)
+  }
+  if (groups[0] === 0x0064 && groups[1] === 0xff9b && groups.slice(2, 6).every((g) => g === 0)) {
+    return dotted(groups[6], groups[7]) // NAT64 (RFC 6052 well-known prefix)
+  }
+  if (groups[0] === 0x2002) {
+    return dotted(groups[1], groups[2]) // 6to4 (RFC 3056)
+  }
+  return null
+}
+
+/**
+ * Canonicalize an IP literal for range checks.
+ * - strips the brackets `new URL().hostname` keeps on IPv6 (`[fe80::1]`)
+ * - expands compressed IPv6 to eight 4-digit hex groups so `::` compression
+ *   cannot dodge an exact/prefix match (`fd00:ec2::254` →
+ *   `fd00:0ec2:0000:0000:0000:0000:0000:0254`)
+ * - reduces v4-mapped IPv6 to the dotted quad — both the dotted form
+ *   (`::ffff:169.254.169.254`) and the hex form WHATWG URL serializes it to
+ *   (`::ffff:a9fe:a9fe`) — plus the other transitional forms that embed an
+ *   IPv4 address (v4-compatible `::a9fe:a9fe`, NAT64 `64:ff9b::/96`,
+ *   6to4 `2002::/16`) — so the IPv4 range tables apply
+ * Returns null when the input is not an IP literal (i.e. a DNS name).
+ */
+export function normalizeIpLiteral(hostname: string): string | null {
+  let h = String(hostname || "").toLowerCase().trim()
+  if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1)
+  if (net.isIPv4(h)) return h
+  const groups = parseIpv6Groups(h)
+  if (!groups) return null
+  const v4 = embeddedV4FromGroups(groups)
+  if (v4) return v4
+  return groups.map((g) => g.toString(16).padStart(4, "0")).join(":")
+}
+
+/** First-hextet range test on the expanded form from normalizeIpLiteral. */
+function ipv6FirstHextetIn(expanded: string, prefix: number, mask: number): boolean {
+  return (parseInt(expanded.split(":")[0], 16) & mask) === prefix
+}
+
+/**
  * Is `hostname` a cloud instance-metadata endpoint? These expose ephemeral
  * IAM credentials / tokens reachable from inside the host and have NO legitimate
  * analyze_image use case → IMAGE_FETCH_GATE hard-blocks them outright (§6.1.4).
- * `hostname` is expected pre-normalized (no port, no brackets), as produced by
- * `new URL(url).hostname`.
+ * Accepts `new URL(url).hostname` output verbatim — IPv6 brackets and the
+ * hex-serialized v4-mapped form are normalized inside (normalizeIpLiteral).
  */
 export function isCloudMetadataIp(hostname: string): boolean {
   const h = String(hostname || "").toLowerCase().trim()
-  // AWS IMDSv1/v2 (169.254.169.254), ECS task metadata (169.254.170.2),
-  // AWS IMDS IPv6 (fd00:ec2::254), and GCP/Azure (metadata.google.internal
-  // resolves to 169.254.169.254).
-  return h === "169.254.169.254" || h === "169.254.170.2" || h === "fd00:ec2::254" || h === "metadata.google.internal"
+  // GCP/Azure alias (resolves to 169.254.169.254).
+  if (h === "metadata.google.internal") return true
+  const ip = normalizeIpLiteral(h)
+  if (!ip) return false
+  // AWS IMDSv1/v2 (169.254.169.254), ECS task metadata (169.254.170.2).
+  if (net.isIPv4(ip)) return ip === "169.254.169.254" || ip === "169.254.170.2"
+  // AWS IMDS over IPv6 (fd00:ec2::254, expanded form).
+  return ip === "fd00:0ec2:0000:0000:0000:0000:0000:0254"
 }
 
 /**
@@ -228,17 +323,13 @@ export function assertLlmEndpointUrlAllowed(urlStr: string): string | null {
 
 /** 169.254/16 IPv4 + IPv6 link-local — IMDS / APIPA, never a legitimate LLM. */
 function isLinkLocalImdsHost(hostname: string): boolean {
-  const h = String(hostname || "").toLowerCase().trim()
-  if (!h) return false
-  if (h === "169.254.169.254" || h === "169.254.170.2") return true
-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
-  if (m) {
-    const a = parseInt(m[1], 10)
-    const b = parseInt(m[2], 10)
+  const ip = normalizeIpLiteral(hostname)
+  if (!ip) return false
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split(".").map((p) => parseInt(p, 10))
     return a === 169 && b === 254
   }
-  if (/^fe[89ab][0-9a-f]?:/.test(h)) return true
-  return false
+  return ipv6FirstHextetIn(ip, 0xfe80, 0xffc0) // fe80::/10
 }
 
 /**
@@ -280,16 +371,10 @@ export function isPrivateOrLoopbackIp(hostname: string): boolean {
   const h = String(hostname || "").toLowerCase().trim()
   if (!h) return false
   if (h === "localhost") return true
-  // IPv6 loopback / unspecified / ULA (fc00::/7) / link-local (fe80::/10)
-  if (h === "::1" || h === "::") return true
-  if (h.startsWith("fc") || h.startsWith("fd")) return true
-  if (/^fe[89ab][0-9a-f]?:/.test(h)) return true
-  // IPv4 dotted-quad
-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
-  if (m) {
-    const a = parseInt(m[1], 10)
-    const b = parseInt(m[2], 10)
-    if (Number.isNaN(a) || Number.isNaN(b)) return false
+  const ip = normalizeIpLiteral(h)
+  if (!ip) return false
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split(".").map((p) => parseInt(p, 10))
     if (a === 10) return true                       // 10.0.0.0/8
     if (a === 127) return true                      // 127.0.0.0/8 loopback
     if (a === 0) return true                        // 0.0.0.0/8 "this network"
@@ -297,7 +382,14 @@ export function isPrivateOrLoopbackIp(hostname: string): boolean {
     if (a === 172 && b >= 16 && b <= 31) return true // 172.16.0.0/12
     if (a === 192 && b === 168) return true         // 192.168.0.0/16
     if (a === 100 && b >= 64 && b <= 127) return true // 100.64.0.0/10 CGNAT
+    return false
   }
+  // IPv6 (expanded form): ::1 loopback, :: unspecified,
+  // fc00::/7 ULA, fe80::/10 link-local
+  if (ip === "0000:0000:0000:0000:0000:0000:0000:0001") return true
+  if (ip === "0000:0000:0000:0000:0000:0000:0000:0000") return true
+  if (ipv6FirstHextetIn(ip, 0xfc00, 0xfe00)) return true
+  if (ipv6FirstHextetIn(ip, 0xfe80, 0xffc0)) return true
   return false
 }
 

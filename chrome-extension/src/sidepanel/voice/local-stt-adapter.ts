@@ -148,6 +148,8 @@ export function createLocalSttAdapter(
   let pendingSoftStop = false
   /** Consecutive soft segment failures — hard stop after threshold (adversary B F2). */
   let softFailStreak = 0
+  /** Classic: first stop() already started the stop→upload chain; repeat stops are ignored. */
+  let stopChainInFlight = false
   const SOFT_FAIL_MAX = 3
   const beginCapture = deps.startCapture ?? defaultStartCapture
 
@@ -177,6 +179,11 @@ export function createLocalSttAdapter(
   }
 
   const reset = () => {
+    // V1: invalidate every in-flight coroutine gen guard (classic stop chain,
+    // continuous loops). Without this a coroutine sleeping in conflict backoff
+    // survived reset() and woke as a zombie — uploading with no subscription,
+    // pending never settled, phase stuck "waiting" → mic locked for good.
+    loopGen += 1
     clearSegmentTimer()
     clearPartialTimer()
     segmentStopTrigger = null
@@ -205,6 +212,7 @@ export function createLocalSttAdapter(
     partialPollMs = STREAM_PARTIAL_POLL_DEFAULT_MS
     pendingSoftStop = false
     softFailStreak = 0
+    stopChainInFlight = false
   }
 
   const finishPending = (r: { ok: true; text: string } | { ok: false; code: string }) => {
@@ -681,6 +689,9 @@ export function createLocalSttAdapter(
                 /* */
               }
               await new Promise((r) => setTimeout(r, 200))
+              // The abort's own "aborted" ACK may have torn us down during the
+              // wait (no-pending kill path) — do not fire handlers a second time.
+              if (dead || gen !== loopGen) return
             }
             handlers.onError(streamErr)
             handlers.onEnd()
@@ -765,13 +776,19 @@ export function createLocalSttAdapter(
           !aborted &&
           gen === loopGen
         ) {
+          const retrySid = `${segSid}-r1`
+          // V1/L10: adopt the retry sid BEFORE abort+backoff. The rejected sid's
+          // chunk/end session_unknown rejects and the abort's own error ACK land
+          // during the sleep; with the old sid still current they hit the
+          // no-pending kill path (onError+onEnd+reset) and orphaned this retry.
+          sessionId = retrySid
           deps.send({ type: "voice.stt.abort", v: 1, sessionId: segSid })
           // Best-effort: also abort parent-prefixed sessions from this capture
           deps.send({ type: "voice.stt.abort", v: 1, sessionId: parentSessionId })
           await new Promise((r) => setTimeout(r, 250))
           if (dead || aborted || gen !== loopGen) return
-          const retrySid = `${segSid}-r1`
-          sessionId = retrySid
+          // Belt-and-suspenders: never upload the retry without a subscription.
+          ensureSub()
           sendStart(retrySid, segmentMs)
           result = await uploadAndWait(retrySid, wav)
         }
@@ -928,6 +945,10 @@ export function createLocalSttAdapter(
       const handle = capture
       capture = null
       if (!handle) {
+        // L10: double-click stop while the first stop's upload chain is in
+        // flight — ignore the repeat instead of aborting the upload (which
+        // silently discarded the whole recording).
+        if (stopChainInFlight) return
         aborted = true
         handlers.onError("aborted")
         handlers.onEnd()
@@ -935,6 +956,7 @@ export function createLocalSttAdapter(
         return
       }
 
+      stopChainInFlight = true
       const genAtStop = loopGen
       void handle
         .stop()
@@ -951,11 +973,18 @@ export function createLocalSttAdapter(
             !dead &&
             genAtStop === loopGen
           ) {
+            const retrySid = `${sid}-r1`
+            // V1: adopt the retry sid BEFORE abort+backoff. The rejected sid's
+            // chunk/end session_unknown rejects and the abort's own error ACK
+            // land during the sleep; with the old sid still current they hit
+            // the no-pending kill path (onError+onEnd+reset) and turned this
+            // retry into a zombie (no subscription, pending never settled).
+            sessionId = retrySid
             deps.send({ type: "voice.stt.abort", v: 1, sessionId: sid })
             await new Promise((r) => setTimeout(r, 250))
             if (dead || genAtStop !== loopGen) return
-            const retrySid = `${sid}-r1`
-            sessionId = retrySid
+            // Belt-and-suspenders: never upload the retry without a subscription.
+            ensureSub()
             sendStart(retrySid, LOCAL_STT_MAX_RECORD_MS)
             result = await uploadAndWait(retrySid, wav)
           }

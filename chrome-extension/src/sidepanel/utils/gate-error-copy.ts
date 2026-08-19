@@ -70,7 +70,7 @@ export function humanizeSidepanelGateError(raw: string): string {
     )
   }
 
-  if (/file: URL is invalid|WebSocket is not connected/i.test(body + e) && /file/i.test(body + e)) {
+  if (/file: URL is invalid|WebSocket is not connected/i.test(body + e) && /local file|file: URL/i.test(body + e)) {
     return (
       "🚫 **无法打开该本地文件地址**\n\n" +
       "这不是确认弹窗：链接无效或侧栏未连上 Companion。不是 MCP 允许列表，也不是域名白名单。"
@@ -88,7 +88,7 @@ export function humanizeSidepanelGateError(raw: string): string {
   if (/local path is not allowed \(sensitive\/system\/unc\)/i.test(body + e)) {
     return (
       "🚫 **该本地路径不能在浏览器中打开**\n\n" +
-      "这不是确认弹窗：系统目录、凭据目录、家目录以外或网络路径被硬拦。不是 MCP 允许列表，也不是域名白名单。"
+      "这不是确认弹窗：系统目录、常见凭据路径、家目录以外或网络路径被硬拦。不是 MCP 允许列表，也不是域名白名单。"
     )
   }
 

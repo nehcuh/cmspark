@@ -1,6 +1,27 @@
 // Resolve active-tab hostname for site-knowledge auto-load (ADR knowledge + skill-engine getBySite).
 // Only used for knowledge/skill *selection* — never for cookie/trust security gates.
 
+import { buildLogEventPayload } from "./log-forward-policy"
+
+/**
+ * Budget-drop signal through the existing log channel's local fan-out (same
+ * chrome.runtime.sendMessage path as background logToCompanion, minus the WS
+ * upload which lives in index.ts). Guarded: chrome is undefined under node:test.
+ */
+function logHostnameBudgetDrop(budgetMs: number): void {
+  try {
+    chrome.runtime
+      .sendMessage(
+        buildLogEventPayload("debug", "extension.hostname_budget_exceeded", {
+          budget_ms: budgetMs,
+        }),
+      )
+      .catch(() => {})
+  } catch {
+    /* no UI listeners / non-extension env */
+  }
+}
+
 /**
  * Pure extract: http(s) only → hostname. Used by getActiveTabHostname and unit tests.
  * SW has no "current window"; callers should prefer lastFocusedWindow (see getActiveTabHostname).
@@ -32,7 +53,8 @@ export async function getActiveTabHostname(): Promise<string | undefined> {
 
 /**
  * Site-knowledge hostname is best-effort. Never stall chat.create / chat.user
- * echo on a hung tabs.query — 40ms is enough for the normal path.
+ * echo on a hung tabs.query — 40ms is enough for the normal path. A budget
+ * drop is logged (debug) instead of silently losing the hostname.
  */
 export function withHostnameBudget<T>(
   getter: () => Promise<T | undefined>,
@@ -46,7 +68,10 @@ export function withHostnameBudget<T>(
       done = true
       resolve(value)
     }
-    const timer = setTimeout(() => finish(undefined), ms)
+    const timer = setTimeout(() => {
+      logHostnameBudgetDrop(ms)
+      finish(undefined)
+    }, ms)
     getter()
       .then((value) => {
         clearTimeout(timer)

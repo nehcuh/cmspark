@@ -6,11 +6,33 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { useAgentStore } from "../store/agentStore"
 import type { SecurityConfirmationRequest } from "../types"
 import { tokens, riskColorDark, riskLabel } from "../ui/tokens"
+import { canOfferThreadTrust, canOfferComputerSessionTrust } from "../utils/apps-utils"
 import { resolveStopTargetId } from "../utils/thread-busy"
 
 /** Darker red ink for compact confirm on soft dangerSurface (~WCAG AA at 11px). */
 const COMPACT_DANGER_INK = "#b91c1c"
 const COMPACT_DANGER_BORDER = "#991b1b"
+
+/**
+ * Queue-head hint line (pure — node:test without a React mount).
+ * L5: relevant_apps confirms DO offer trust in Cockpit, so they must not
+ * claim「仅这一次，不加白名单」— but only when the tool actually offers
+ * trust there (host_read/host_app thread-trust, host_computer session-trust).
+ * host_write NEVER offers trust (apps-utils.ts) → falls to the default hint.
+ */
+export function minimalConfirmHint(request: SecurityConfirmationRequest): string {
+  if (request.nonce_challenge) return "此确认需要输入确认码 — 请在确认台完成。"
+  if (request.relevant_domains?.[0]) return "详细预览与白名单在确认台；此处可快速允许或拒绝。"
+  const relevantApp = request.relevant_apps?.[0]
+  if (
+    relevantApp &&
+    (canOfferThreadTrust(request.tool_name, relevantApp) ||
+      canOfferComputerSessionTrust(request.tool_name, relevantApp))
+  ) {
+    return "详细预览与信任选项在确认台；此处可快速允许或拒绝。"
+  }
+  return "详细预览在确认台；此处可快速允许或拒绝（仅这一次，不加白名单）。"
+}
 
 export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) {
   const { state, dispatch } = useAgentStore()
@@ -310,11 +332,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
         </div>
       )}
       <div style={{ color: tokens.darkMuted, marginBottom: 8, fontSize: 10, lineHeight: 1.45 }}>
-        {needsNonce
-          ? "此确认需要输入确认码 — 请在确认台完成。"
-          : request.relevant_domains?.[0]
-            ? "详细预览与白名单在确认台；此处可快速允许或拒绝。"
-            : "详细预览在确认台；此处可快速允许或拒绝（仅这一次，不加白名单）。"}
+        {minimalConfirmHint(request)}
       </div>
       {offerEnterprise && (
         <label

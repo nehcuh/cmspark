@@ -117,6 +117,16 @@ export function parseLocalFileUrl(raw: string): ParseLocalFileUrlResult {
     return { ok: false, kind: "unc", error: cage }
   }
 
+  // F1: hard-refuse non-absolute output (design §2.2). fileURLToPath on win32
+  // yields a drive-relative path for file:///C:path ("C:path", no slash); a
+  // later path.resolve would anchor it to the companion cwd — lexically inside
+  // home → fake OFFER — while Chrome opens it against its own per-drive cwd
+  // outside the cage. ("/…" shapes stay: win32 resolve pins them to the cwd
+  // drive, then the offer cage refuses them as outside home, as before.)
+  if (!path.isAbsolute(abs) && !abs.startsWith("/") && !/^[a-zA-Z]:[\\/]/.test(abs)) {
+    return { ok: false, kind: "invalid", error: "invalid file: URL" }
+  }
+
   // Drive-letter paths must not go through POSIX path.resolve (would prefix cwd).
   if (/^[a-zA-Z]:[\\/]/.test(abs) && process.platform !== "win32") {
     abs = slash(abs)
@@ -136,6 +146,11 @@ export function assertFileOpenOfferable(
 ): FileOpenOfferResult {
   const cage = FILE_OPEN_CAGE_TOKEN
   if (!absPath || typeof absPath !== "string" || absPath.includes("\0")) {
+    return { ok: false, error: cage }
+  }
+  // Design §2.2 / F1: non-absolute input is hard-refused — path.resolve would
+  // silently anchor a drive-relative path (C:path) to the companion cwd.
+  if (!path.isAbsolute(absPath) && !absPath.startsWith("/") && !/^[a-zA-Z]:[\\/]/.test(absPath)) {
     return { ok: false, error: cage }
   }
 
@@ -211,9 +226,48 @@ export function assertFileOpenOfferable(
   if (existedFile) {
     // Existing path (incl. symlink): realpath must stay inside home.
     if (!underHomeReal) return { ok: false, error: cage }
-  } else if (!underHomeLexical) {
+    // L6: directories must not reach the dialog — one confirm would let
+    // get_page_text enumerate the whole tree. Regular files only (lstat:
+    // symlinks are refused too; the realpath above still cages escaping ones).
+    try {
+      if (!fs.lstatSync(resolved).isFile()) return { ok: false, error: cage }
+    } catch {
+      return { ok: false, error: cage }
+    }
+  } else {
     // Missing file: lexical path must sit under HOME (macOS /var vs /private/var).
-    return { ok: false, error: cage }
+    if (!underHomeLexical) return { ok: false, error: cage }
+    // M2: an in-home symlink/junction on an existing ancestor could redirect
+    // the not-yet-created leaf outside home (TOCTOU between check and open).
+    // Realpath the deepest existing ancestor and cage it the same way.
+    let anchor: string | null = path.dirname(resolved)
+    while (anchor && !fs.existsSync(anchor)) {
+      const parent = path.dirname(anchor)
+      anchor = parent === anchor ? null : parent
+    }
+    if (!anchor) return { ok: false, error: cage }
+    let anchorReal: string
+    try {
+      anchorReal = fs.realpathSync(anchor)
+    } catch {
+      return { ok: false, error: cage }
+    }
+    const insideOrEqual = (p: string, h: string): boolean => {
+      const rel = path.relative(h, p)
+      return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
+    }
+    if (!insideOrEqual(anchorReal, homeReal) && !insideOrEqual(anchorReal, homeResolved)) {
+      return { ok: false, error: cage }
+    }
+    if (isSensitiveLocalFilePath(anchorReal) || hasSensitivePathSegment(anchorReal)) {
+      return { ok: false, error: cage }
+    }
+    if (
+      hasSensitiveHomePrefix(anchorReal, homeReal) ||
+      hasSensitiveHomePrefix(anchorReal, homeResolved)
+    ) {
+      return { ok: false, error: cage }
+    }
   }
 
   return { ok: true, realPath: existedFile ? real : resolved }

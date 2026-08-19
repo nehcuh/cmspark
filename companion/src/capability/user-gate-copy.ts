@@ -98,7 +98,10 @@ export function humanizeChatErrorForUser(raw: string): string {
     )
   }
 
-  if (/file: URL is invalid|WebSocket is not connected/i.test(body) && /file/i.test(body)) {
+  // L4: second condition must be file-specific — a bare /file/i mislabels
+  // "…untrusted domain files.example.com… WebSocket is not connected" as a
+  // local-file error.
+  if (/file: URL is invalid|WebSocket is not connected/i.test(body) && /local file|file: URL/i.test(body)) {
     return (
       "无法打开该本地文件地址\n" +
       "这不是确认弹窗：链接无效或侧栏未连上 Companion。\n" +
@@ -117,7 +120,7 @@ export function humanizeChatErrorForUser(raw: string): string {
   if (/local path is not allowed \(sensitive\/system\/unc\)/i.test(body)) {
     return (
       "该本地路径不能在浏览器中打开\n" +
-      "这不是确认弹窗：系统目录、凭据目录、家目录以外或网络路径被硬拦。\n" +
+      "这不是确认弹窗：系统目录、常见凭据路径、家目录以外或网络路径被硬拦。\n" +
       "不是 MCP 允许列表，也不是域名白名单。"
     )
   }

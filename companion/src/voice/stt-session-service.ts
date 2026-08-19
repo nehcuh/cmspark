@@ -445,7 +445,9 @@ export class SttSessionService {
       await removeSessionDir(sessionDir)
       sessionDir = undefined
       this.core.clearIfEnded()
-      this.dropBound()
+      // V2: a peer-level abort may have dropped this bound and a retry may have
+      // bound a newer session while this infer was unwinding — never drop it.
+      if (this.bound === bound) this.dropBound()
 
       return {
         ok: true,
@@ -462,18 +464,17 @@ export class SttSessionService {
         }
       }
       this.core.clearIfEnded()
+      // V2: same newer-bound guard as the success path (see above).
+      if (this.bound === bound) this.dropBound()
       const aborted =
         ac.signal.aborted ||
         (e instanceof WhisperRunnerError && e.code === "aborted")
       if (aborted) {
-        this.dropBound()
         return { ok: false, code: "aborted", message: "session aborted" }
       }
       if (e instanceof WhisperRunnerError && e.code === "timeout") {
-        this.dropBound()
         return { ok: false, code: "infer_timeout", message: e.message }
       }
-      this.dropBound()
       const msg = e instanceof Error ? e.message : String(e)
       const lower = msg.toLowerCase()
       // Prefer binary_broken over oom when message is dyld/spawn/early-kill
@@ -497,9 +498,11 @@ export class SttSessionService {
       if (this.bound.peerId !== peerId) {
         return { ok: false, code: "peer_mismatch", message: "peer does not own session" }
       }
-      if (sessionId !== undefined && this.bound.sessionId !== sessionId) {
-        return { ok: false, code: "session_unknown", message: "session id mismatch" }
-      }
+      // V2: same peer + stale/mismatched sessionId still aborts the bound session
+      // (peer-level abort). Conflict retry aborts the rejected sid while the
+      // peer's previous session holds the max-1 slot — usually mid-infer, so the
+      // 250ms-backoff retry could never win. peerId is the ownership boundary.
+      const boundSid = this.bound.sessionId
       try {
         this.bound.abortController.abort()
       } catch {
@@ -514,6 +517,10 @@ export class SttSessionService {
       if (this.bound.sessionDir) {
         void removeSessionDir(this.bound.sessionDir).catch(() => {})
       }
+      this.clearTimersOnly()
+      const r = this.core.abort(boundSid)
+      this.dropBound()
+      return r
     }
     this.clearTimersOnly()
     const r = this.core.abort(sessionId)

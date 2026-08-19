@@ -1,0 +1,2304 @@
+diff --git a/chrome-extension/src/background/active-tab-hostname.ts b/chrome-extension/src/background/active-tab-hostname.ts
+index 34a1b72..887a7cb 100644
+--- a/chrome-extension/src/background/active-tab-hostname.ts
++++ b/chrome-extension/src/background/active-tab-hostname.ts
+@@ -1,6 +1,27 @@
+ // Resolve active-tab hostname for site-knowledge auto-load (ADR knowledge + skill-engine getBySite).
+ // Only used for knowledge/skill *selection* — never for cookie/trust security gates.
+ 
++import { buildLogEventPayload } from "./log-forward-policy"
++
++/**
++ * Budget-drop signal through the existing log channel's local fan-out (same
++ * chrome.runtime.sendMessage path as background logToCompanion, minus the WS
++ * upload which lives in index.ts). Guarded: chrome is undefined under node:test.
++ */
++function logHostnameBudgetDrop(budgetMs: number): void {
++  try {
++    chrome.runtime
++      .sendMessage(
++        buildLogEventPayload("debug", "extension.hostname_budget_exceeded", {
++          budget_ms: budgetMs,
++        }),
++      )
++      .catch(() => {})
++  } catch {
++    /* no UI listeners / non-extension env */
++  }
++}
++
+ /**
+  * Pure extract: http(s) only → hostname. Used by getActiveTabHostname and unit tests.
+  * SW has no "current window"; callers should prefer lastFocusedWindow (see getActiveTabHostname).
+@@ -32,7 +53,8 @@ export async function getActiveTabHostname(): Promise<string | undefined> {
+ 
+ /**
+  * Site-knowledge hostname is best-effort. Never stall chat.create / chat.user
+- * echo on a hung tabs.query — 40ms is enough for the normal path.
++ * echo on a hung tabs.query — 40ms is enough for the normal path. A budget
++ * drop is logged (debug) instead of silently losing the hostname.
+  */
+ export function withHostnameBudget<T>(
+   getter: () => Promise<T | undefined>,
+@@ -46,7 +68,10 @@ export function withHostnameBudget<T>(
+       done = true
+       resolve(value)
+     }
+-    const timer = setTimeout(() => finish(undefined), ms)
++    const timer = setTimeout(() => {
++      logHostnameBudgetDrop(ms)
++      finish(undefined)
++    }, ms)
+     getter()
+       .then((value) => {
+         clearTimeout(timer)
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index 8aed058..73e8369 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -896,16 +896,19 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+   const effectiveModel =
+     (activeThread?.config_override?.model_name || "").trim() ||
+     state.config.model_name
+-  const useNativeVision = resolveNativeVision({
+-    modelName: effectiveModel,
+-    mode: state.config.native_vision,
+-    // Probe bit is companion-keyed {url,model}. Never pass the unkeyed
+-    // session flag — it would treat any later model as native after one test.
+-  })
+   const effectiveLlmBase =
+     (typeof activeThread?.config_override?.base_url === "string" &&
+       activeThread.config_override.base_url.trim()) ||
+     state.config.base_url
++  const useNativeVision = resolveNativeVision({
++    modelName: effectiveModel,
++    baseUrl: effectiveLlmBase,
++    mode: state.config.native_vision,
++    // Probe bit is keyed {url,model} (companion config.test echo), so preflight,
++    // destHost and the dest-ack route exactly like the companion probe cache.
++    // Never pass the unkeyed session flag — it would treat any later model as
++    // native after one test.
++  })
+   const destHost = extractHostname(
+     useNativeVision ? effectiveLlmBase : state.config.vision_base_url,
+   )
+@@ -1187,6 +1190,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+       }
+       const useNative = resolveNativeVision({
+         modelName: effectiveModel,
++        baseUrl: effectiveLlmBase,
+         mode: state.config.native_vision,
+       })
+       if (!useNative && !visionRailOpen(state.config)) {
+diff --git a/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx b/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx
+index 505f544..f44fcd6 100644
+--- a/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx
++++ b/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx
+@@ -6,12 +6,34 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
+ import { useAgentStore } from "../store/agentStore"
+ import type { SecurityConfirmationRequest } from "../types"
+ import { tokens, riskColorDark, riskLabel } from "../ui/tokens"
++import { canOfferThreadTrust, canOfferComputerSessionTrust } from "../utils/apps-utils"
+ import { resolveStopTargetId } from "../utils/thread-busy"
+ 
+ /** Darker red ink for compact confirm on soft dangerSurface (~WCAG AA at 11px). */
+ const COMPACT_DANGER_INK = "#b91c1c"
+ const COMPACT_DANGER_BORDER = "#991b1b"
+ 
++/**
++ * Queue-head hint line (pure — node:test without a React mount).
++ * L5: relevant_apps confirms DO offer trust in Cockpit, so they must not
++ * claim「仅这一次，不加白名单」— but only when the tool actually offers
++ * trust there (host_read/host_app thread-trust, host_computer session-trust).
++ * host_write NEVER offers trust (apps-utils.ts) → falls to the default hint.
++ */
++export function minimalConfirmHint(request: SecurityConfirmationRequest): string {
++  if (request.nonce_challenge) return "此确认需要输入确认码 — 请在确认台完成。"
++  if (request.relevant_domains?.[0]) return "详细预览与白名单在确认台；此处可快速允许或拒绝。"
++  const relevantApp = request.relevant_apps?.[0]
++  if (
++    relevantApp &&
++    (canOfferThreadTrust(request.tool_name, relevantApp) ||
++      canOfferComputerSessionTrust(request.tool_name, relevantApp))
++  ) {
++    return "详细预览与信任选项在确认台；此处可快速允许或拒绝。"
++  }
++  return "详细预览在确认台；此处可快速允许或拒绝（仅这一次，不加白名单）。"
++}
++
+ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) {
+   const { state, dispatch } = useAgentStore()
+   const queue = state.pendingSecurityConfirmations
+@@ -310,11 +332,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {})
+         </div>
+       )}
+       <div style={{ color: tokens.darkMuted, marginBottom: 8, fontSize: 10, lineHeight: 1.45 }}>
+-        {needsNonce
+-          ? "此确认需要输入确认码 — 请在确认台完成。"
+-          : request.relevant_domains?.[0]
+-            ? "详细预览与白名单在确认台；此处可快速允许或拒绝。"
+-            : "详细预览在确认台；此处可快速允许或拒绝（仅这一次，不加白名单）。"}
++        {minimalConfirmHint(request)}
+       </div>
+       {offerEnterprise && (
+         <label
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index 471dd83..502ba2f 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -1109,7 +1109,7 @@ export function SettingsSlideout() {
+               网页截图 / analyze_image 过去一律发给「视觉分析」里配置的模型（默认
+               Ollama/llava）。主模型本身能看图时应走主模型。点「测试连接」会探测端点是否接受图片。
+               {config.native_vision_detected === true
+-                ? " 最近一次探测：支持看图。"
++                ? " 最近一次探测：端点接受图片输入。"
+                 : config.native_vision_detected === false
+                   ? " 最近一次探测：未接受图片。"
+                   : " 尚未探测。"}
+diff --git a/chrome-extension/src/sidepanel/components/vision-reuse-logic.ts b/chrome-extension/src/sidepanel/components/vision-reuse-logic.ts
+index 58bdc02..6c8d0a7 100644
+--- a/chrome-extension/src/sidepanel/components/vision-reuse-logic.ts
++++ b/chrome-extension/src/sidepanel/components/vision-reuse-logic.ts
+@@ -97,9 +97,65 @@ export function likelyMultimodal(modelName: string | undefined | null): boolean
+   return false
+ }
+ 
++// In-memory image-probe bit from config.test, keyed by {url, model} —
++// lock-step companion/src/llm/native-vision-probe-cache.ts. Session-only,
++// never persisted; saving a new model/base_url invalidates the key by itself.
++
++/**
++ * Normalize only the case-insensitive parts of the URL: scheme and host are
++ * lowercased (via URL parsing) and trailing slashes are stripped. The path
++ * keeps its original case — some gateways route on case-sensitive paths.
++ * Unparsable input falls back to the trimmed string (still exact-matched).
++ */
++export function normalizeProbeUrl(url: string): string {
++  const trimmed = String(url || "").trim().replace(/\/+$/, "")
++  if (!trimmed) return trimmed
++  try {
++    const u = new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`)
++    const auth = u.username ? `${u.username}${u.password ? `:${u.password}` : ""}@` : ""
++    const path = u.pathname === "/" ? "" : u.pathname
++    return `${u.protocol}//${auth}${u.host}${path}${u.search}${u.hash}`
++  } catch {
++    return trimmed
++  }
++}
++
++/**
++ * Model names keep their original case — case-sensitive serving stacks
++ * (e.g. vLLM served-model-name) treat `MyModel` and `mymodel` as different
++ * models, so folding case here would let one model's probe poison another's.
++ */
++export function normalizeProbeModel(model: string): string {
++  return String(model || "").trim()
++}
++
++let nativeVisionProbe: { url: string; model: string; detected: boolean } | null = null
++
++export function rememberNativeVisionProbe(url: string, model: string, detected: boolean): void {
++  nativeVisionProbe = {
++    url: normalizeProbeUrl(url),
++    model: normalizeProbeModel(model),
++    detected: detected === true,
++  }
++}
++
++/** Exact url+model match only. Mismatch / empty cache → undefined. */
++export function lookupNativeVisionProbe(url: string, model: string): boolean | undefined {
++  if (!nativeVisionProbe) return undefined
++  if (nativeVisionProbe.url !== normalizeProbeUrl(url)) return undefined
++  if (nativeVisionProbe.model !== normalizeProbeModel(model)) return undefined
++  return nativeVisionProbe.detected
++}
++
++export function clearNativeVisionProbe(): void {
++  nativeVisionProbe = null
++}
++
+ export function resolveNativeVision(opts: {
+   modelName?: string | null
++  baseUrl?: string | null
+   mode?: NativeVisionMode | boolean | null
++  /** Unkeyed session probe flag — always ignored; only the keyed cache counts. */
+   detected?: boolean | null
+ }): boolean {
+   const raw = opts.mode
+@@ -108,8 +164,9 @@ export function resolveNativeVision(opts: {
+   if (mode === "on") return true
+   if (mode === "off") return false
+   if (likelyMultimodal(opts.modelName)) return true
+-  // Unkeyed session probe bits are ignored. Companion owns {url,model} cache.
+-  return false
++  // Keyed {url,model} probe bit echoed by companion config.test. An unkeyed
++  // session flag would leak "native" onto any later model — never accepted.
++  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") === true
+ }
+ 
+ /**
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index cd895a4..4be72db 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -7,6 +7,7 @@ import { isAppsErrorMessage } from "../utils/apps-utils"
+ import { isComputerModelErrorMessage } from "../components/model-switch-logic"
+ import { isBrowserTool } from "../mode/mode-controller"
+ import { isUserEnvErrorMessage, mapUserEnvError, normalizeUserEnvPublic } from "../utils/user-env-utils"
++import { rememberNativeVisionProbe } from "../components/vision-reuse-logic"
+ import { normalizeInboundLogEvent } from "../log-event-normalize"
+ import { humanizeSidepanelGateError } from "../utils/gate-error-copy"
+ import { newTempUserMessageId } from "../../utils/temp-message-id"
+@@ -645,7 +646,9 @@ export function useWebSocket() {
+             result: msg.ok
+               ? `连接成功 ✓${
+                   msg.native_vision === true
+-                    ? " · 已探测到看图能力（截图/附图走主模型）"
++                    // Probe only proves the endpoint accepted an image part
++                    // (HTTP 200) — not true multimodal quality (M3-copy).
++                    ? " · 端点接受图片输入（截图/附图走主模型）"
+                     : msg.native_vision === false
+                       ? " · 未探测到看图（截图仍走视觉轨，可在下方强制开启）"
+                       : ""
+@@ -654,6 +657,12 @@ export function useWebSocket() {
+           })
+           if (typeof msg.native_vision === "boolean") {
+             dispatch({ type: "SET_CONFIG", config: { native_vision_detected: msg.native_vision } })
++            // Keyed probe cache (M1): only accept the bit when companion echoes
++            // the tested {base_url, model_name}; the unkeyed session flag above
++            // stays display-only and never feeds resolveNativeVision.
++            if (typeof msg.base_url === "string" && typeof msg.model_name === "string") {
++              rememberNativeVisionProbe(msg.base_url, msg.model_name, msg.native_vision)
++            }
+           }
+           break
+ 
+@@ -1255,6 +1264,9 @@ export function useWebSocket() {
+         // (mutations broadcast to all clients; the requester's response also
+         // carries warnings/added — update state from both, keep warnings).
+         case "apps.list":
++          // Same request-echo trap as thread.list — missing array is a command,
++          // not a hydrate (echo must not clear entries / flip enabled).
++          if (!Array.isArray(msg.entries)) break
+           dispatch({
+             type: "SET_APPS_STATE",
+             enabled: msg.enabled !== false,
+@@ -1301,6 +1313,9 @@ export function useWebSocket() {
+           break
+ 
+         case "acp.list":
++          // Same request-echo trap as thread.list — missing array is a command,
++          // not a hydrate (echo must not clear agents / force acpEnabled=false).
++          if (!Array.isArray(msg.agents)) break
+           dispatch({
+             type: "SET_ACP_LIST",
+             enabled: msg.enabled === true,
+diff --git a/chrome-extension/src/sidepanel/utils/gate-error-copy.ts b/chrome-extension/src/sidepanel/utils/gate-error-copy.ts
+index c0c0b98..f9f4d69 100644
+--- a/chrome-extension/src/sidepanel/utils/gate-error-copy.ts
++++ b/chrome-extension/src/sidepanel/utils/gate-error-copy.ts
+@@ -70,7 +70,7 @@ export function humanizeSidepanelGateError(raw: string): string {
+     )
+   }
+ 
+-  if (/file: URL is invalid|WebSocket is not connected/i.test(body + e) && /file/i.test(body + e)) {
++  if (/file: URL is invalid|WebSocket is not connected/i.test(body + e) && /local file|file: URL/i.test(body + e)) {
+     return (
+       "🚫 **无法打开该本地文件地址**\n\n" +
+       "这不是确认弹窗：链接无效或侧栏未连上 Companion。不是 MCP 允许列表，也不是域名白名单。"
+@@ -88,7 +88,7 @@ export function humanizeSidepanelGateError(raw: string): string {
+   if (/local path is not allowed \(sensitive\/system\/unc\)/i.test(body + e)) {
+     return (
+       "🚫 **该本地路径不能在浏览器中打开**\n\n" +
+-      "这不是确认弹窗：系统目录、凭据目录、家目录以外或网络路径被硬拦。不是 MCP 允许列表，也不是域名白名单。"
++      "这不是确认弹窗：系统目录、常见凭据路径、家目录以外或网络路径被硬拦。不是 MCP 允许列表，也不是域名白名单。"
+     )
+   }
+ 
+diff --git a/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts b/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+index 5bc1909..5a652e1 100644
+--- a/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
++++ b/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+@@ -148,6 +148,8 @@ export function createLocalSttAdapter(
+   let pendingSoftStop = false
+   /** Consecutive soft segment failures — hard stop after threshold (adversary B F2). */
+   let softFailStreak = 0
++  /** Classic: first stop() already started the stop→upload chain; repeat stops are ignored. */
++  let stopChainInFlight = false
+   const SOFT_FAIL_MAX = 3
+   const beginCapture = deps.startCapture ?? defaultStartCapture
+ 
+@@ -177,6 +179,11 @@ export function createLocalSttAdapter(
+   }
+ 
+   const reset = () => {
++    // V1: invalidate every in-flight coroutine gen guard (classic stop chain,
++    // continuous loops). Without this a coroutine sleeping in conflict backoff
++    // survived reset() and woke as a zombie — uploading with no subscription,
++    // pending never settled, phase stuck "waiting" → mic locked for good.
++    loopGen += 1
+     clearSegmentTimer()
+     clearPartialTimer()
+     segmentStopTrigger = null
+@@ -205,6 +212,7 @@ export function createLocalSttAdapter(
+     partialPollMs = STREAM_PARTIAL_POLL_DEFAULT_MS
+     pendingSoftStop = false
+     softFailStreak = 0
++    stopChainInFlight = false
+   }
+ 
+   const finishPending = (r: { ok: true; text: string } | { ok: false; code: string }) => {
+@@ -681,6 +689,9 @@ export function createLocalSttAdapter(
+                 /* */
+               }
+               await new Promise((r) => setTimeout(r, 200))
++              // The abort's own "aborted" ACK may have torn us down during the
++              // wait (no-pending kill path) — do not fire handlers a second time.
++              if (dead || gen !== loopGen) return
+             }
+             handlers.onError(streamErr)
+             handlers.onEnd()
+@@ -765,13 +776,19 @@ export function createLocalSttAdapter(
+           !aborted &&
+           gen === loopGen
+         ) {
++          const retrySid = `${segSid}-r1`
++          // V1/L10: adopt the retry sid BEFORE abort+backoff. The rejected sid's
++          // chunk/end session_unknown rejects and the abort's own error ACK land
++          // during the sleep; with the old sid still current they hit the
++          // no-pending kill path (onError+onEnd+reset) and orphaned this retry.
++          sessionId = retrySid
+           deps.send({ type: "voice.stt.abort", v: 1, sessionId: segSid })
+           // Best-effort: also abort parent-prefixed sessions from this capture
+           deps.send({ type: "voice.stt.abort", v: 1, sessionId: parentSessionId })
+           await new Promise((r) => setTimeout(r, 250))
+           if (dead || aborted || gen !== loopGen) return
+-          const retrySid = `${segSid}-r1`
+-          sessionId = retrySid
++          // Belt-and-suspenders: never upload the retry without a subscription.
++          ensureSub()
+           sendStart(retrySid, segmentMs)
+           result = await uploadAndWait(retrySid, wav)
+         }
+@@ -928,6 +945,10 @@ export function createLocalSttAdapter(
+       const handle = capture
+       capture = null
+       if (!handle) {
++        // L10: double-click stop while the first stop's upload chain is in
++        // flight — ignore the repeat instead of aborting the upload (which
++        // silently discarded the whole recording).
++        if (stopChainInFlight) return
+         aborted = true
+         handlers.onError("aborted")
+         handlers.onEnd()
+@@ -935,6 +956,7 @@ export function createLocalSttAdapter(
+         return
+       }
+ 
++      stopChainInFlight = true
+       const genAtStop = loopGen
+       void handle
+         .stop()
+@@ -951,11 +973,18 @@ export function createLocalSttAdapter(
+             !dead &&
+             genAtStop === loopGen
+           ) {
++            const retrySid = `${sid}-r1`
++            // V1: adopt the retry sid BEFORE abort+backoff. The rejected sid's
++            // chunk/end session_unknown rejects and the abort's own error ACK
++            // land during the sleep; with the old sid still current they hit
++            // the no-pending kill path (onError+onEnd+reset) and turned this
++            // retry into a zombie (no subscription, pending never settled).
++            sessionId = retrySid
+             deps.send({ type: "voice.stt.abort", v: 1, sessionId: sid })
+             await new Promise((r) => setTimeout(r, 250))
+             if (dead || genAtStop !== loopGen) return
+-            const retrySid = `${sid}-r1`
+-            sessionId = retrySid
++            // Belt-and-suspenders: never upload the retry without a subscription.
++            ensureSub()
+             sendStart(retrySid, LOCAL_STT_MAX_RECORD_MS)
+             result = await uploadAndWait(retrySid, wav)
+           }
+diff --git a/chrome-extension/tests/active-tab-hostname-budget-log.test.ts b/chrome-extension/tests/active-tab-hostname-budget-log.test.ts
+new file mode 100644
+index 0000000..c946b35
+--- /dev/null
++++ b/chrome-extension/tests/active-tab-hostname-budget-log.test.ts
+@@ -0,0 +1,62 @@
++// L8: a hung tabs.query must not silently lose the site-knowledge hostname —
++// the budget drop emits one debug log via the local log fan-out channel.
++import test from "node:test"
++import assert from "node:assert/strict"
++import { withHostnameBudget } from "../src/background/active-tab-hostname"
++
++function stubChromeSendMessage(sent: unknown[]) {
++  ;(globalThis as any).chrome = {
++    runtime: {
++      sendMessage: (payload: unknown) => {
++        sent.push(payload)
++        return Promise.resolve()
++      },
++    },
++  }
++}
++
++function restoreChrome() {
++  delete (globalThis as any).chrome
++}
++
++test("withHostnameBudget budget drop logs a debug via local fan-out", async () => {
++  const sent: unknown[] = []
++  stubChromeSendMessage(sent)
++  try {
++    const h = await withHostnameBudget(
++      () => new Promise<string>(() => { /* never settle */ }),
++      10,
++    )
++    assert.equal(h, undefined)
++    assert.equal(sent.length, 1)
++    const payload = sent[0] as any
++    assert.equal(payload.type, "log.event")
++    assert.equal(payload.source, "extension")
++    assert.equal(payload.level, "debug")
++    assert.equal(payload.event, "extension.hostname_budget_exceeded")
++    assert.equal(payload.data.budget_ms, 10)
++  } finally {
++    restoreChrome()
++  }
++})
++
++test("withHostnameBudget fast path resolves without logging", async () => {
++  const sent: unknown[] = []
++  stubChromeSendMessage(sent)
++  try {
++    const h = await withHostnameBudget(async () => "intranet.example", 80)
++    assert.equal(h, "intranet.example")
++    assert.equal(sent.length, 0)
++  } finally {
++    restoreChrome()
++  }
++})
++
++test("withHostnameBudget missing chrome env still resolves (no throw)", async () => {
++  restoreChrome()
++  const h = await withHostnameBudget(
++    () => new Promise<string>(() => { /* never settle */ }),
++    10,
++  )
++  assert.equal(h, undefined)
++})
+diff --git a/chrome-extension/tests/gate-error-copy.test.ts b/chrome-extension/tests/gate-error-copy.test.ts
+new file mode 100644
+index 0000000..9a162df
+--- /dev/null
++++ b/chrome-extension/tests/gate-error-copy.test.ts
+@@ -0,0 +1,34 @@
++// L3/L4 (post-merge-198-201 adversary): sidepanel gate copy must not mislabel
++// a files.example.com WS drop as a local-file error, and must not overclaim
++// credential cages. Lock-step with companion/src/capability/user-gate-copy.ts.
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import { humanizeSidepanelGateError } from "../src/sidepanel/utils/gate-error-copy"
++
++test("L4: files.example.com WS disconnect is NOT the local-file copy", () => {
++  const out = humanizeSidepanelGateError(
++    'Security Block: navigate to untrusted domain "files.example.com" requires user confirmation, but the WebSocket is not connected.',
++  )
++  assert.ok(!out.includes("无法打开该本地文件地址"), `got: ${out}`)
++})
++
++test("L4: local-file disconnect and invalid file: URL keep the local-file copy", () => {
++  const disconnect = humanizeSidepanelGateError(
++    "Security Block: create_tab to local file requires user confirmation, but the WebSocket is not connected. This is not a denied popup.",
++  )
++  assert.match(disconnect, /无法打开该本地文件地址/)
++
++  const invalid = humanizeSidepanelGateError(
++    "Security Block: create_tab to file: URL is invalid. This is not a confirmation dialog.",
++  )
++  assert.match(invalid, /无法打开该本地文件地址/)
++})
++
++test("L3: cage copy says common credential paths (no 凭据目录 overclaim)", () => {
++  const out = humanizeSidepanelGateError(
++    "Security Block: navigate to local path is not allowed (sensitive/system/unc).",
++  )
++  assert.match(out, /常见凭据路径/)
++  assert.ok(!out.includes("凭据目录"))
++})
+diff --git a/chrome-extension/tests/minimal-confirm-hint.test.ts b/chrome-extension/tests/minimal-confirm-hint.test.ts
+new file mode 100644
+index 0000000..0bb0520
+--- /dev/null
++++ b/chrome-extension/tests/minimal-confirm-hint.test.ts
+@@ -0,0 +1,44 @@
++// L5 (post-merge-198-201 adversary): MinimalConfirm hint must not claim
++// 「仅这一次，不加白名单」 for relevant_apps (host_use app trust) confirms —
++// Cockpit offers thread-scoped app trust for those.
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import { minimalConfirmHint } from "../src/sidepanel/components/MinimalConfirm"
++import type { SecurityConfirmationRequest } from "../src/sidepanel/types"
++
++function req(extra: Partial<SecurityConfirmationRequest>): SecurityConfirmationRequest {
++  return { confirmation_id: "c1", tool_name: "host_read", ...extra } as SecurityConfirmationRequest
++}
++
++test("nonce confirm points at 确认台 code entry", () => {
++  assert.match(minimalConfirmHint(req({ nonce_challenge: "AB12CD" })), /确认码/)
++})
++
++test("domain confirm mentions whitelist preview", () => {
++  assert.match(minimalConfirmHint(req({ relevant_domains: ["example.com"] })), /白名单/)
++})
++
++test("relevant_apps confirm does NOT claim one-off no-whitelist (L5)", () => {
++  const hint = minimalConfirmHint(req({ relevant_apps: ["com.apple.finder"] }))
++  assert.ok(!hint.includes("仅这一次"), `got: ${hint}`)
++  assert.match(hint, /信任/)
++})
++
++test("trust hint only for tools Cockpit actually offers trust on", () => {
++  // host_app thread-trust / host_computer session-trust → trust hint.
++  for (const tool_name of ["host_read", "host_app", "host_computer"]) {
++    const hint = minimalConfirmHint(req({ tool_name, relevant_apps: ["com.apple.finder"] }))
++    assert.match(hint, /信任选项/, tool_name)
++    assert.ok(!hint.includes("仅这一次"), `${tool_name}: ${hint}`)
++  }
++  // host_write NEVER offers trust (writes require biometric per call) even
++  // though relevant_apps is set → default one-off hint.
++  const write = minimalConfirmHint(req({ tool_name: "host_write", relevant_apps: ["com.apple.finder"] }))
++  assert.match(write, /仅这一次，不加白名单/)
++  assert.ok(!write.includes("信任"), `got: ${write}`)
++})
++
++test("plain file-open confirm keeps the one-off copy", () => {
++  assert.match(minimalConfirmHint(req({ relevant_domains: [] })), /仅这一次，不加白名单/)
++})
+diff --git a/chrome-extension/tests/stream-thread-gate.test.ts b/chrome-extension/tests/stream-thread-gate.test.ts
+index 835278d..5405d4d 100644
+--- a/chrome-extension/tests/stream-thread-gate.test.ts
++++ b/chrome-extension/tests/stream-thread-gate.test.ts
+@@ -92,6 +92,32 @@ test("thread.list request echo must not be treated as an empty hydrate", () => {
+   assert.ok(guardIdx >= 0 && createIdx > guardIdx, "auto-create must sit behind threads-array hydrate guard")
+ })
+ 
++test("apps.list/acp.list request echo must not clear entries or flip enabled", () => {
++  // Same request-echo trap as thread.list: a bare {type:"apps.list"} /
++  // {type:"acp.list"} request forwarded to the other page's listener carries
++  // no array payload — treating it as a hydrate would wipe entries and force
++  // acpEnabled=false.
++  const src = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
++  const appsStart = src.indexOf('case "apps.list"')
++  assert.ok(appsStart >= 0, "apps.list case missing")
++  const appsBody = src.slice(appsStart, src.indexOf('case "apps.updated"', appsStart))
++  const appsGuardIdx = appsBody.indexOf("Array.isArray(msg.entries)")
++  const appsDispatchIdx = appsBody.indexOf("SET_APPS_STATE")
++  assert.ok(
++    appsGuardIdx >= 0 && appsDispatchIdx > appsGuardIdx,
++    "apps.list hydrate must sit behind entries-array guard",
++  )
++  const acpStart = src.indexOf('case "acp.list"')
++  assert.ok(acpStart >= 0, "acp.list case missing")
++  const acpBody = src.slice(acpStart, src.indexOf('case "coding.git_status"', acpStart))
++  const acpGuardIdx = acpBody.indexOf("Array.isArray(msg.agents)")
++  const acpDispatchIdx = acpBody.indexOf("SET_ACP_LIST")
++  assert.ok(
++    acpGuardIdx >= 0 && acpDispatchIdx > acpGuardIdx,
++    "acp.list hydrate must sit behind agents-array guard",
++  )
++})
++
+ test("file.uploaded: chip-clear BUMP is dispatched before the thread gate (F3)", () => {
+   // Source-order lock (pre-F3 this ordering was inverted → red): the BUMP sat
+   // behind shouldApplyStreamEvent, so foreign-thread uploads never cleared chips.
+diff --git a/chrome-extension/tests/vision-reuse-logic.test.ts b/chrome-extension/tests/vision-reuse-logic.test.ts
+index 08fbf78..5ce7f4b 100644
+--- a/chrome-extension/tests/vision-reuse-logic.test.ts
++++ b/chrome-extension/tests/vision-reuse-logic.test.ts
+@@ -9,12 +9,15 @@ import {
+   VISION_COPY,
+   applyVisionReuseFromMain,
+   bannerBodyForHost,
++  clearNativeVisionProbe,
+   extractHostname,
+   isCustomVisionConfig,
+   isVisionKeyPlaceholder,
+   isVisionReusingMain,
+   likelyMultimodal,
++  lookupNativeVisionProbe,
+   normalizeEndpointUrl,
++  rememberNativeVisionProbe,
+   resolveNativeVision,
+   shouldOfferVisionReuse,
+ } from "../src/sidepanel/components/vision-reuse-logic"
+@@ -61,11 +64,93 @@ test("likelyMultimodal: text-only and unknown false (fail closed)", () => {
+   }
+ })
+ 
+-test("resolveNativeVision: auto ignores unkeyed probe flag", () => {
++test("resolveNativeVision: auto accepts keyed probe, still rejects unkeyed flag", () => {
++  clearNativeVisionProbe()
++  // Unkeyed session flag is never accepted (would leak onto any later model).
+   assert.equal(resolveNativeVision({ modelName: "custom-vlm", mode: "auto", detected: true }), false)
+   assert.equal(resolveNativeVision({ modelName: "gpt-4o", mode: "auto", detected: false }), true)
+   assert.equal(resolveNativeVision({ modelName: "custom-vlm", mode: "on" }), true)
+   assert.equal(resolveNativeVision({ modelName: "gpt-4o", mode: "off" }), false)
++  // Keyed probe bit (companion config.test echo) routes a non-heuristic name.
++  rememberNativeVisionProbe("http://10.251.241.12/v1/", "My-Intranet-VLM", true)
++  assert.equal(
++    resolveNativeVision({
++      modelName: "My-Intranet-VLM",
++      baseUrl: "http://10.251.241.12/v1",
++      mode: "auto",
++    }),
++    true,
++  )
++  // Model names keep case (lock-step companion native-vision-probe-cache):
++  // a case-folded lookup is a DIFFERENT model → miss → fail closed.
++  assert.equal(
++    resolveNativeVision({
++      modelName: "my-intranet-vlm",
++      baseUrl: "http://10.251.241.12/v1",
++      mode: "auto",
++    }),
++    false,
++  )
++  // Key mismatch (model or url changed after save) → fail closed.
++  assert.equal(
++    resolveNativeVision({
++      modelName: "other-model",
++      baseUrl: "http://10.251.241.12/v1",
++      mode: "auto",
++    }),
++    false,
++  )
++  assert.equal(
++    resolveNativeVision({
++      modelName: "My-Intranet-VLM",
++      baseUrl: "https://api.deepseek.com/v1",
++      mode: "auto",
++    }),
++    false,
++  )
++  // Missing key material behaves like a miss.
++  assert.equal(resolveNativeVision({ modelName: "My-Intranet-VLM", mode: "auto" }), false)
++  clearNativeVisionProbe()
++})
++
++test("keyed probe cache: URL/model normalization lock-step with companion", () => {
++  clearNativeVisionProbe()
++  // Scheme/host case is folded (URL parsing), path case is preserved —
++  // case-sensitive gateways route /V1 and /v1 to different endpoints.
++  rememberNativeVisionProbe("HTTP://10.1.1.1:8000/V1/", "m", true)
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1:8000/V1", "m"), true)
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1:8000/v1", "m"), undefined)
++  clearNativeVisionProbe()
++  // Default port for the scheme is normalized away (both directions).
++  rememberNativeVisionProbe("http://10.1.1.1:80/v1", "m", true)
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "m"), true)
++  clearNativeVisionProbe()
++  rememberNativeVisionProbe("https://10.1.1.1/v1", "m", true)
++  assert.equal(lookupNativeVisionProbe("https://10.1.1.1:443/v1", "m"), true)
++  clearNativeVisionProbe()
++  // Model case change → miss (no cross-model poisoning).
++  rememberNativeVisionProbe("http://10.1.1.1/v1", "MyModel", true)
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "MyModel"), true)
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "mymodel"), undefined)
++  clearNativeVisionProbe()
++})
++
++test("keyed probe cache: exact url+model match, negative bit honored", () => {
++  clearNativeVisionProbe()
++  rememberNativeVisionProbe("http://10.1.1.1/v1/", "custom-vlm", false)
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "custom-vlm"), false)
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "other-model"), undefined)
++  assert.equal(lookupNativeVisionProbe("http://10.2.2.2/v1", "custom-vlm"), undefined)
++  assert.equal(
++    resolveNativeVision({
++      modelName: "custom-vlm",
++      baseUrl: "http://10.1.1.1/v1",
++      mode: "auto",
++    }),
++    false,
++  )
++  clearNativeVisionProbe()
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "custom-vlm"), undefined)
+ })
+ 
+ // --- shouldOfferVisionReuse ---
+diff --git a/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts b/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts
+index b4e0a1f..da17910 100644
+--- a/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts
++++ b/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts
+@@ -184,12 +184,118 @@ test("classic: voice.stt.start is deferred until after captureStop (idle-safe)",
+   assert.ok(iChunk > iStart && iEnd > iChunk, `upload order ${timeline.join(",")}`)
+ })
+ 
++/**
++ * Faithful fake of the real companion voice.stt protocol (M4 — the previous
++ * fake asserted a companion that does not exist):
++ * - start while a session holds the max-1 slot → resource_conflict error
++ *   (stt-session-service.ts start: bound infer still in progress)
++ * - every chunk/end for a rejected/unknown session → session_unknown error
++ *   (requirePeer, stt-handlers.ts) — the old fake never sent these
++ * - abort → peer-level abort frees the peer's bound slot (V2) and always
++ *   replies an error ACK ("aborted" on success, session_unknown otherwise)
++ * Replies are macrotasks (setTimeout 0): real WS delivers each message in its
++ * own task, so the adapter's microtask continuation (conflict retry block)
++ * runs between the start rejection and the per-chunk rejects.
++ */
++function fakeCompanion(sent: any[], opts?: { holderBusy?: boolean }) {
++  const inbox: { emit?: (m: any) => void } = {}
++  let holderBusy = opts?.holderBusy ?? false
++  const sessions = new Set<string>()
++  const reply = (m: any) => {
++    setTimeout(() => inbox.emit?.(m), 0)
++  }
++  const send = (msg: any) => {
++    sent.push(msg)
++    const sid = String(msg.sessionId ?? "")
++    switch (msg.type) {
++      case "voice.stt.start":
++        if (holderBusy) {
++          reply({
++            type: "voice.stt.error",
++            v: 1,
++            sessionId: sid,
++            code: "resource_conflict",
++            message: "previous STT infer still in progress",
++          })
++        } else {
++          holderBusy = true
++          sessions.add(sid)
++          reply({ type: "voice.stt.partial", v: 1, sessionId: sid, status: "receiving" })
++        }
++        break
++      case "voice.stt.chunk":
++        // No per-chunk ack on success (fire-and-forget); requirePeer rejects
++        if (!sessions.has(sid)) {
++          reply({
++            type: "voice.stt.error",
++            v: 1,
++            sessionId: sid,
++            code: "session_unknown",
++            message: "no matching session",
++          })
++        }
++        break
++      case "voice.stt.end":
++        if (!sessions.has(sid)) {
++          reply({
++            type: "voice.stt.error",
++            v: 1,
++            sessionId: sid,
++            code: "session_unknown",
++            message: "no matching session",
++          })
++        } else {
++          sessions.delete(sid)
++          holderBusy = false
++          reply({
++            type: "voice.stt.result",
++            v: 1,
++            sessionId: sid,
++            text: `ok-${sid}`,
++            ms: 5,
++            modelId: "medium",
++          })
++        }
++        break
++      case "voice.stt.abort":
++        if (holderBusy) {
++          // V2: same peer aborts whatever session holds the slot, stale sid or not
++          sessions.clear()
++          holderBusy = false
++          reply({
++            type: "voice.stt.error",
++            v: 1,
++            sessionId: sid,
++            code: "aborted",
++            message: "session aborted",
++          })
++        } else {
++          reply({
++            type: "voice.stt.error",
++            v: 1,
++            sessionId: sid,
++            code: "session_unknown",
++            message: "no active session",
++          })
++        }
++        break
++    }
++  }
++  const onMessage = (h: (m: any) => void) => {
++    inbox.emit = h
++    return () => {
++      inbox.emit = undefined
++    }
++  }
++  return { send, onMessage }
++}
++
+ test("classic: resource_conflict retries once with -r1 sessionId", async () => {
+   const sent: any[] = []
+-  const inbox: { emit?: (m: any) => void } = {}
+   const finals: string[] = []
+   const errors: string[] = []
+-  let endCount = 0
++  let ends = 0
++  const companion = fakeCompanion(sent, { holderBusy: true })
+ 
+   const adapter = createLocalSttAdapter(
+     {
+@@ -200,38 +306,13 @@ test("classic: resource_conflict retries once with -r1 sessionId", async () => {
+       onError: (c) => {
+         errors.push(c)
+       },
+-      onEnd: () => {},
++      onEnd: () => {
++        ends++
++      },
+     },
+     {
+-      send: (msg) => {
+-        sent.push(msg)
+-        if (msg.type === "voice.stt.end") {
+-          endCount++
+-          const sid = String(msg.sessionId)
+-          queueMicrotask(() => {
+-            if (endCount === 1) {
+-              inbox.emit?.({
+-                type: "voice.stt.error",
+-                sessionId: sid,
+-                code: "resource_conflict",
+-                message: "busy",
+-              })
+-            } else {
+-              inbox.emit?.({
+-                type: "voice.stt.result",
+-                sessionId: sid,
+-                text: "retried-ok",
+-              })
+-            }
+-          })
+-        }
+-      },
+-      onMessage: (h) => {
+-        inbox.emit = h
+-        return () => {
+-          inbox.emit = undefined
+-        }
+-      },
++      send: companion.send,
++      onMessage: companion.onMessage,
+       modelId: "medium",
+       startCapture: fakeCaptureFactory(silentWav()),
+     },
+@@ -240,49 +321,56 @@ test("classic: resource_conflict retries once with -r1 sessionId", async () => {
+   adapter.start({ sessionId: "classic-retry", modelId: "medium" })
+   await new Promise((r) => setTimeout(r, 20))
+   adapter.stop()
++
++  // Sample mid-backoff: stale-sid session_unknown rejects + the abort's own
++  // error ACK arrive inside the 250ms window and must not kill the adapter.
++  let waited = 0
++  while (!sent.some((m) => m.type === "voice.stt.abort") && waited < 500) {
++    await new Promise((r) => setTimeout(r, 10))
++    waited += 10
++  }
++  await new Promise((r) => setTimeout(r, 100))
++  assert.deepEqual(errors, [], `stale-sid ACKs during backoff must not surface: ${errors}`)
++  assert.equal(ends, 0, "stale-sid ACKs during backoff must not end the session")
++
+   await new Promise((r) => setTimeout(r, 400))
+ 
+   const starts = sent.filter((m) => m.type === "voice.stt.start")
+-  assert.ok(starts.length >= 2, `expected orig+retry starts, got ${starts.length}`)
+-  assert.ok(
+-    starts.some((m) => String(m.sessionId).endsWith("-r1")),
+-    `expected -r1 retry start, starts=${starts.map((s) => s.sessionId).join(",")}`,
++  assert.deepEqual(
++    starts.map((m) => m.sessionId),
++    ["classic-retry", "classic-retry-r1"],
+   )
+-  assert.deepEqual(finals, ["retried-ok"])
+-  assert.equal(errors.length, 0, `retry success must not surface conflict: ${errors}`)
++  assert.deepEqual(finals, ["ok-classic-retry-r1"])
++  assert.deepEqual(errors, [], `retry success must not surface conflict: ${errors}`)
++  assert.equal(ends, 1)
++
++  // After conflict recovery the adapter is not locked: a fresh dictation works.
++  adapter.start({ sessionId: "classic-after", modelId: "medium" })
++  await new Promise((r) => setTimeout(r, 20))
++  adapter.stop()
++  await new Promise((r) => setTimeout(r, 100))
++  assert.deepEqual(finals, ["ok-classic-retry-r1", "ok-classic-after"])
++  assert.deepEqual(errors, [])
+   adapter.destroy()
+ })
+ 
+ test("classic: abort during conflict backoff does not start -r1", async () => {
+   const sent: any[] = []
+-  const inbox: { emit?: (m: any) => void } = {}
++  const errors: string[] = []
++  const companion = fakeCompanion(sent, { holderBusy: true })
+ 
+   const adapter = createLocalSttAdapter(
+     {
+       onStart: () => {},
+       onResult: () => {},
+-      onError: () => {},
++      onError: (c) => {
++        errors.push(c)
++      },
+       onEnd: () => {},
+     },
+     {
+-      send: (msg) => {
+-        sent.push(msg)
+-        if (msg.type === "voice.stt.end") {
+-          queueMicrotask(() => {
+-            inbox.emit?.({
+-              type: "voice.stt.error",
+-              sessionId: msg.sessionId,
+-              code: "resource_conflict",
+-            })
+-          })
+-        }
+-      },
+-      onMessage: (h) => {
+-        inbox.emit = h
+-        return () => {
+-          inbox.emit = undefined
+-        }
+-      },
++      send: companion.send,
++      onMessage: companion.onMessage,
+       modelId: "medium",
+       startCapture: fakeCaptureFactory(silentWav()),
+     },
+@@ -301,7 +389,35 @@ test("classic: abort during conflict backoff does not start -r1", async () => {
+     0,
+     `cancelled classic must not retry: ${starts.map((s) => s.sessionId).join(",")}`,
+   )
++  assert.deepEqual(errors, ["aborted"])
++
++  // Abort during backoff must not lock the adapter either.
++  const finals: string[] = []
++  const adapter2 = createLocalSttAdapter(
++    {
++      onStart: () => {},
++      onResult: ({ finalChunk }) => {
++        if (finalChunk) finals.push(finalChunk)
++      },
++      onError: (c) => {
++        errors.push(c)
++      },
++      onEnd: () => {},
++    },
++    {
++      send: companion.send,
++      onMessage: companion.onMessage,
++      modelId: "medium",
++      startCapture: fakeCaptureFactory(silentWav()),
++    },
++  )
++  adapter2.start({ sessionId: "classic-after-abort", modelId: "medium" })
++  await new Promise((r) => setTimeout(r, 20))
++  adapter2.stop()
++  await new Promise((r) => setTimeout(r, 100))
++  assert.deepEqual(finals, ["ok-classic-after-abort"])
+   adapter.destroy()
++  adapter2.destroy()
+ })
+ 
+ test("abort during recording: voice.stt.abort + silent error path", async () => {
+diff --git a/companion/src/capability/user-gate-copy.ts b/companion/src/capability/user-gate-copy.ts
+index 1f91045..c85321b 100644
+--- a/companion/src/capability/user-gate-copy.ts
++++ b/companion/src/capability/user-gate-copy.ts
+@@ -98,7 +98,10 @@ export function humanizeChatErrorForUser(raw: string): string {
+     )
+   }
+ 
+-  if (/file: URL is invalid|WebSocket is not connected/i.test(body) && /file/i.test(body)) {
++  // L4: second condition must be file-specific — a bare /file/i mislabels
++  // "…untrusted domain files.example.com… WebSocket is not connected" as a
++  // local-file error.
++  if (/file: URL is invalid|WebSocket is not connected/i.test(body) && /local file|file: URL/i.test(body)) {
+     return (
+       "无法打开该本地文件地址\n" +
+       "这不是确认弹窗：链接无效或侧栏未连上 Companion。\n" +
+@@ -117,7 +120,7 @@ export function humanizeChatErrorForUser(raw: string): string {
+   if (/local path is not allowed \(sensitive\/system\/unc\)/i.test(body)) {
+     return (
+       "该本地路径不能在浏览器中打开\n" +
+-      "这不是确认弹窗：系统目录、凭据目录、家目录以外或网络路径被硬拦。\n" +
++      "这不是确认弹窗：系统目录、常见凭据路径、家目录以外或网络路径被硬拦。\n" +
+       "不是 MCP 允许列表，也不是域名白名单。"
+     )
+   }
+diff --git a/companion/src/llm/native-vision-probe-cache.ts b/companion/src/llm/native-vision-probe-cache.ts
+index 04a8ced..b1ecc5d 100644
+--- a/companion/src/llm/native-vision-probe-cache.ts
++++ b/companion/src/llm/native-vision-probe-cache.ts
+@@ -11,12 +11,32 @@ export type NativeVisionProbeEntry = {
+ 
+ let cache: NativeVisionProbeEntry | null = null
+ 
++/**
++ * Normalize only the case-insensitive parts of the URL: scheme and host are
++ * lowercased (via URL parsing) and trailing slashes are stripped. The path
++ * keeps its original case — some gateways route on case-sensitive paths.
++ * Unparsable input falls back to the trimmed string (still exact-matched).
++ */
+ export function normalizeProbeUrl(url: string): string {
+-  return String(url || "").trim().replace(/\/+$/, "").toLowerCase()
++  const trimmed = String(url || "").trim().replace(/\/+$/, "")
++  if (!trimmed) return trimmed
++  try {
++    const u = new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`)
++    const auth = u.username ? `${u.username}${u.password ? `:${u.password}` : ""}@` : ""
++    const path = u.pathname === "/" ? "" : u.pathname
++    return `${u.protocol}//${auth}${u.host}${path}${u.search}${u.hash}`
++  } catch {
++    return trimmed
++  }
+ }
+ 
++/**
++ * Model names keep their original case — case-sensitive serving stacks
++ * (e.g. vLLM served-model-name) treat `MyModel` and `mymodel` as different
++ * models, so folding case here would let one model's probe poison another's.
++ */
+ export function normalizeProbeModel(model: string): string {
+-  return String(model || "").trim().toLowerCase()
++  return String(model || "").trim()
+ }
+ 
+ export function rememberNativeVisionProbe(url: string, model: string, detected: boolean): void {
+diff --git a/companion/src/llm/vision-pipeline.ts b/companion/src/llm/vision-pipeline.ts
+index a570cf9..ecc768a 100644
+--- a/companion/src/llm/vision-pipeline.ts
++++ b/companion/src/llm/vision-pipeline.ts
+@@ -32,7 +32,9 @@ interface CacheEntry {
+   timestamp: number
+ }
+ 
+-// LRU cache keyed by SHA-256 hash of base64 data
++// LRU cache keyed by SHA-256 of endpoint + model + base64 data — the same
++// image described by two different endpoints/models must never share an entry
++// (the native track and the vision track both call analyzeImage).
+ const cache = new Map<string, CacheEntry>()
+ 
+ // Dedup map for concurrent requests
+@@ -108,7 +110,10 @@ export async function analyzeImage(
+   customPrompt?: string,
+   signal?: AbortSignal,
+ ): Promise<VisionResult> {
+-  const key = hashBase64(image.base64)
++  // Scope the image hash to endpoint + model so two models (or the native
++  // track vs the vision track) never share a cached description — and
++  // model_used on a cache hit names the model that actually produced it.
++  const key = hashBase64(`${config.base_url} ${config.model_name} ${image.base64}`)
+ 
+   // Check cache
+   const cached = getCached(key, config.cache_ttl_seconds)
+diff --git a/companion/src/mcp/allow-dir-expand.ts b/companion/src/mcp/allow-dir-expand.ts
+index 33a83b5..7b3ac86 100644
+--- a/companion/src/mcp/allow-dir-expand.ts
++++ b/companion/src/mcp/allow-dir-expand.ts
+@@ -77,6 +77,13 @@ export const SENSITIVE_HOME_PREFIXES = [
+   ".config/gcloud",
+   ".config/gh",
+   ".kube",
++  // Plaintext-token files / dirs directly under home (L3 2026-08: the gate
++  // copy claimed credential paths are hard-blocked; make it true for the
++  // common ones). Shared with the file-open cage — keep both surfaces aligned.
++  ".git-credentials",
++  ".npmrc",
++  ".netrc",
++  ".docker",
+   // Windows profile secrets often live under AppData
+   "appdata/roaming/gnupg",
+   "appdata/roaming/openssh",
+diff --git a/companion/src/message-router/handlers/config.ts b/companion/src/message-router/handlers/config.ts
+index 61b0e30..6693223 100644
+--- a/companion/src/message-router/handlers/config.ts
++++ b/companion/src/message-router/handlers/config.ts
+@@ -342,6 +342,11 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
+           ok: true,
+           message: probe.message,
+           native_vision: nativeVision,
++          // Echo the tested key so the panel can cache the probe bit under
++          // {base_url, model_name} — its preflight/destHost then route exactly
++          // like the companion probe cache (panel M1).
++          base_url: testConfig.base_url,
++          model_name: testConfig.model_name,
+         }
+       }
+       return { type: "config.testResult", ok: false, error: probe.error || "连接失败" }
+diff --git a/companion/src/security.ts b/companion/src/security.ts
+index 4ac805f..fd5b56e 100644
+--- a/companion/src/security.ts
++++ b/companion/src/security.ts
+@@ -1,5 +1,6 @@
+ // Security policy — trusted domains, evaluate safety, error classification
+ 
++import * as net from "net"
+ import { getConfig } from "./config"
+ 
+ /**
+@@ -186,19 +187,93 @@ export function isAutoApprovedDomain(domain: string): boolean {
+   return matchDomain(getConfig().auto_approved_domains, domain)
+ }
+ 
++/**
++ * Parse an IPv6 literal into eight 16-bit groups. Handles `::` compression and
++ * a trailing embedded dotted-quad (`::ffff:169.254.169.254`). Returns null for
++ * non-IPv6 input (guarded by net.isIPv6, so garbage never parses).
++ */
++function parseIpv6Groups(addr: string): number[] | null {
++  if (!net.isIPv6(addr)) return null
++  let h = addr.toLowerCase()
++  // Split off an embedded dotted-quad tail (v4-mapped / v4-compatible).
++  let v4Groups: number[] = []
++  const lastColon = h.lastIndexOf(":")
++  const tail = h.slice(lastColon + 1)
++  if (tail.includes(".") && net.isIPv4(tail)) {
++    const p = tail.split(".").map((n) => parseInt(n, 10))
++    v4Groups = [(p[0] << 8) | p[1], (p[2] << 8) | p[3]]
++    h = h.slice(0, lastColon + 1) // keep the trailing colon
++  }
++  const halves = h.split("::")
++  if (halves.length > 2) return null
++  const left = halves[0] ? halves[0].split(":").filter(Boolean) : []
++  const right = halves.length === 2 && halves[1] ? halves[1].split(":").filter(Boolean) : []
++  for (const g of [...left, ...right]) {
++    if (!/^[0-9a-f]{1,4}$/.test(g)) return null
++  }
++  const leftNums = left.map((g) => parseInt(g, 16))
++  const rightNums = [...right.map((g) => parseInt(g, 16)), ...v4Groups]
++  const total = leftNums.length + rightNums.length
++  if (halves.length === 2) {
++    if (total > 7) return null
++    return [...leftNums, ...new Array(8 - total).fill(0), ...rightNums]
++  }
++  if (total !== 8) return null
++  return [...leftNums, ...rightNums]
++}
++
++/** Dotted-quad for a v4-mapped IPv6 group list (`::ffff:a9fe:a9fe`), else null. */
++function mappedV4FromGroups(groups: number[]): string | null {
++  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
++    return `${groups[6] >> 8}.${groups[6] & 0xff}.${groups[7] >> 8}.${groups[7] & 0xff}`
++  }
++  return null
++}
++
++/**
++ * Canonicalize an IP literal for range checks.
++ * - strips the brackets `new URL().hostname` keeps on IPv6 (`[fe80::1]`)
++ * - expands compressed IPv6 to eight 4-digit hex groups so `::` compression
++ *   cannot dodge an exact/prefix match (`fd00:ec2::254` →
++ *   `fd00:0ec2:0000:0000:0000:0000:0000:0254`)
++ * - reduces v4-mapped IPv6 to the dotted quad — both the dotted form
++ *   (`::ffff:169.254.169.254`) and the hex form WHATWG URL serializes it to
++ *   (`::ffff:a9fe:a9fe`) — so the IPv4 range tables apply
++ * Returns null when the input is not an IP literal (i.e. a DNS name).
++ */
++export function normalizeIpLiteral(hostname: string): string | null {
++  let h = String(hostname || "").toLowerCase().trim()
++  if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1)
++  if (net.isIPv4(h)) return h
++  const groups = parseIpv6Groups(h)
++  if (!groups) return null
++  const v4 = mappedV4FromGroups(groups)
++  if (v4) return v4
++  return groups.map((g) => g.toString(16).padStart(4, "0")).join(":")
++}
++
++/** First-hextet range test on the expanded form from normalizeIpLiteral. */
++function ipv6FirstHextetIn(expanded: string, prefix: number, mask: number): boolean {
++  return (parseInt(expanded.split(":")[0], 16) & mask) === prefix
++}
++
+ /**
+  * Is `hostname` a cloud instance-metadata endpoint? These expose ephemeral
+  * IAM credentials / tokens reachable from inside the host and have NO legitimate
+  * analyze_image use case → IMAGE_FETCH_GATE hard-blocks them outright (§6.1.4).
+- * `hostname` is expected pre-normalized (no port, no brackets), as produced by
+- * `new URL(url).hostname`.
++ * Accepts `new URL(url).hostname` output verbatim — IPv6 brackets and the
++ * hex-serialized v4-mapped form are normalized inside (normalizeIpLiteral).
+  */
+ export function isCloudMetadataIp(hostname: string): boolean {
+   const h = String(hostname || "").toLowerCase().trim()
+-  // AWS IMDSv1/v2 (169.254.169.254), ECS task metadata (169.254.170.2),
+-  // AWS IMDS IPv6 (fd00:ec2::254), and GCP/Azure (metadata.google.internal
+-  // resolves to 169.254.169.254).
+-  return h === "169.254.169.254" || h === "169.254.170.2" || h === "fd00:ec2::254" || h === "metadata.google.internal"
++  // GCP/Azure alias (resolves to 169.254.169.254).
++  if (h === "metadata.google.internal") return true
++  const ip = normalizeIpLiteral(h)
++  if (!ip) return false
++  // AWS IMDSv1/v2 (169.254.169.254), ECS task metadata (169.254.170.2).
++  if (net.isIPv4(ip)) return ip === "169.254.169.254" || ip === "169.254.170.2"
++  // AWS IMDS over IPv6 (fd00:ec2::254, expanded form).
++  return ip === "fd00:0ec2:0000:0000:0000:0000:0000:0254"
+ }
+ 
+ /**
+@@ -228,17 +303,13 @@ export function assertLlmEndpointUrlAllowed(urlStr: string): string | null {
+ 
+ /** 169.254/16 IPv4 + IPv6 link-local — IMDS / APIPA, never a legitimate LLM. */
+ function isLinkLocalImdsHost(hostname: string): boolean {
+-  const h = String(hostname || "").toLowerCase().trim()
+-  if (!h) return false
+-  if (h === "169.254.169.254" || h === "169.254.170.2") return true
+-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+-  if (m) {
+-    const a = parseInt(m[1], 10)
+-    const b = parseInt(m[2], 10)
++  const ip = normalizeIpLiteral(hostname)
++  if (!ip) return false
++  if (net.isIPv4(ip)) {
++    const [a, b] = ip.split(".").map((p) => parseInt(p, 10))
+     return a === 169 && b === 254
+   }
+-  if (/^fe[89ab][0-9a-f]?:/.test(h)) return true
+-  return false
++  return ipv6FirstHextetIn(ip, 0xfe80, 0xffc0) // fe80::/10
+ }
+ 
+ /**
+@@ -280,16 +351,10 @@ export function isPrivateOrLoopbackIp(hostname: string): boolean {
+   const h = String(hostname || "").toLowerCase().trim()
+   if (!h) return false
+   if (h === "localhost") return true
+-  // IPv6 loopback / unspecified / ULA (fc00::/7) / link-local (fe80::/10)
+-  if (h === "::1" || h === "::") return true
+-  if (h.startsWith("fc") || h.startsWith("fd")) return true
+-  if (/^fe[89ab][0-9a-f]?:/.test(h)) return true
+-  // IPv4 dotted-quad
+-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+-  if (m) {
+-    const a = parseInt(m[1], 10)
+-    const b = parseInt(m[2], 10)
+-    if (Number.isNaN(a) || Number.isNaN(b)) return false
++  const ip = normalizeIpLiteral(h)
++  if (!ip) return false
++  if (net.isIPv4(ip)) {
++    const [a, b] = ip.split(".").map((p) => parseInt(p, 10))
+     if (a === 10) return true                       // 10.0.0.0/8
+     if (a === 127) return true                      // 127.0.0.0/8 loopback
+     if (a === 0) return true                        // 0.0.0.0/8 "this network"
+@@ -297,7 +362,14 @@ export function isPrivateOrLoopbackIp(hostname: string): boolean {
+     if (a === 172 && b >= 16 && b <= 31) return true // 172.16.0.0/12
+     if (a === 192 && b === 168) return true         // 192.168.0.0/16
+     if (a === 100 && b >= 64 && b <= 127) return true // 100.64.0.0/10 CGNAT
++    return false
+   }
++  // IPv6 (expanded form): ::1 loopback, :: unspecified,
++  // fc00::/7 ULA, fe80::/10 link-local
++  if (ip === "0000:0000:0000:0000:0000:0000:0000:0001") return true
++  if (ip === "0000:0000:0000:0000:0000:0000:0000:0000") return true
++  if (ipv6FirstHextetIn(ip, 0xfc00, 0xfe00)) return true
++  if (ipv6FirstHextetIn(ip, 0xfe80, 0xffc0)) return true
+   return false
+ }
+ 
+diff --git a/companion/src/settings-web.ts b/companion/src/settings-web.ts
+index 6aa1d3e..1eba8a0 100644
+--- a/companion/src/settings-web.ts
++++ b/companion/src/settings-web.ts
+@@ -10,9 +10,10 @@
+ //   defense (a malicious page cannot know the token).
+ // - Host header must equal `127.0.0.1:<port>` or `localhost:<port>`.
+ // - Origin header (on POSTs) must equal one of those loopback origins.
+-// - `/api/test` and `/api/testVision` enforce an SSRF guard: private IPs,
+-//   loopback, link-local (incl. AWS metadata 169.254.169.254) are blocked.
+-//   A small LLM-provider host allowlist may bypass the private-IP block.
++// - `/api/test` and `/api/testVision` enforce an SSRF guard: RFC1918 /
++//   loopback intranet LLM hosts are allowed; cloud-metadata and link-local
++//   addresses (incl. AWS metadata 169.254.169.254) stay blocked. DNS
++//   resolution failure is fail-closed (treated as blocked).
+ 
+ import * as http from "http"
+ import * as crypto from "crypto"
+@@ -20,6 +21,7 @@ import * as dns from "dns"
+ import * as net from "net"
+ import { getConfig, saveConfig, isMaskedApiKey } from "./config"
+ import { probeLlmConnection } from "./llm/connection-test"
++import { normalizeIpLiteral } from "./security"
+ 
+ // ---------------------------------------------------------------------------
+ // Helpers
+@@ -113,19 +115,19 @@ const LLM_HOST_ALLOWLIST = new Set<string>([
+   "127.0.0.1",
+ ])
+ 
+-/** Cloud metadata + 169.254/16 only — RFC1918/loopback are valid LAN LLM hosts. */
++/** Cloud metadata + 169.254/16 + IPv6 link-local — RFC1918/loopback are valid LAN LLM hosts. */
+ function isMetadataOrLinkLocalIp(ip: string): boolean {
+-  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip
+-  if (net.isIPv4(v4)) {
+-    const parts = v4.split(".").map((p) => parseInt(p, 10))
+-    if (parts.length !== 4 || parts.some((n) => isNaN(n) || n < 0 || n > 255)) return true
+-    const [a, b] = parts
+-    if (a === 169 && b === 254) return true
+-    return false
+-  }
+-  const lower = v4.toLowerCase()
+-  if (lower === "fd00:ec2::254") return true
+-  if (lower.startsWith("fe80")) return true
++  // Brackets, `::` compression and v4-mapped forms (dotted + hex) are all
++  // canonicalized by normalizeIpLiteral before range matching.
++  const n = normalizeIpLiteral(ip)
++  if (!n) return true // unreachable for net.isIP / DNS results — fail closed
++  if (net.isIPv4(n)) {
++    const [a, b] = n.split(".").map((p) => parseInt(p, 10))
++    return a === 169 && b === 254
++  }
++  if (n === "fd00:0ec2:0000:0000:0000:0000:0000:0254") return true // AWS IMDS v6
++  const first = parseInt(n.split(":")[0], 16)
++  if ((first & 0xffc0) === 0xfe80) return true // fe80::/10 link-local
+   return false
+ }
+ 
+@@ -134,19 +136,26 @@ function isMetadataOrLinkLocalIp(ip: string): boolean {
+  * DNS names that resolve onto 169.254/16 are still blocked (rebinding).
+  */
+ async function hostnameIsBlockedForLlm(hostname: string): Promise<boolean> {
+-  const lowerHost = String(hostname || "").toLowerCase()
++  let lowerHost = String(hostname || "").toLowerCase()
++  // `new URL().hostname` keeps the brackets on IPv6 literals — strip them so
++  // net.isIP below actually recognizes the literal.
++  if (lowerHost.startsWith("[") && lowerHost.endsWith("]")) {
++    lowerHost = lowerHost.slice(1, -1)
++  }
+   if (lowerHost === "metadata.google.internal") return true
+   if (LLM_HOST_ALLOWLIST.has(lowerHost)) return false
+-  if (net.isIP(hostname)) {
+-    return isMetadataOrLinkLocalIp(hostname)
++  if (net.isIP(lowerHost)) {
++    return isMetadataOrLinkLocalIp(lowerHost)
+   }
+   try {
+-    const result = await dns.promises.lookup(hostname, { all: true })
++    const result = await dns.promises.lookup(lowerHost, { all: true })
+     if (result.length === 0) return true
+     return result.some((r) => isMetadataOrLinkLocalIp(r.address))
+   } catch {
+-    // Unknown host — let the probe fail with a connection error, not SSRF copy.
+-    return false
++    // DNS failure is fail-closed: an unresolvable host is blocked outright
++    // (a fail-open here let bracketed IPv6 literals skip the guard via a
++    // getaddrinfo error on the bracketed name).
++    return true
+   }
+ }
+ 
+diff --git a/companion/src/tool/file-url-admission.ts b/companion/src/tool/file-url-admission.ts
+index 3e94ee7..c41e3cc 100644
+--- a/companion/src/tool/file-url-admission.ts
++++ b/companion/src/tool/file-url-admission.ts
+@@ -117,6 +117,16 @@ export function parseLocalFileUrl(raw: string): ParseLocalFileUrlResult {
+     return { ok: false, kind: "unc", error: cage }
+   }
+ 
++  // F1: hard-refuse non-absolute output (design §2.2). fileURLToPath on win32
++  // yields a drive-relative path for file:///C:path ("C:path", no slash); a
++  // later path.resolve would anchor it to the companion cwd — lexically inside
++  // home → fake OFFER — while Chrome opens it against its own per-drive cwd
++  // outside the cage. ("/…" shapes stay: win32 resolve pins them to the cwd
++  // drive, then the offer cage refuses them as outside home, as before.)
++  if (!path.isAbsolute(abs) && !abs.startsWith("/") && !/^[a-zA-Z]:[\\/]/.test(abs)) {
++    return { ok: false, kind: "invalid", error: "invalid file: URL" }
++  }
++
+   // Drive-letter paths must not go through POSIX path.resolve (would prefix cwd).
+   if (/^[a-zA-Z]:[\\/]/.test(abs) && process.platform !== "win32") {
+     abs = slash(abs)
+@@ -138,6 +148,11 @@ export function assertFileOpenOfferable(
+   if (!absPath || typeof absPath !== "string" || absPath.includes("\0")) {
+     return { ok: false, error: cage }
+   }
++  // Design §2.2 / F1: non-absolute input is hard-refused — path.resolve would
++  // silently anchor a drive-relative path (C:path) to the companion cwd.
++  if (!path.isAbsolute(absPath) && !absPath.startsWith("/") && !/^[a-zA-Z]:[\\/]/.test(absPath)) {
++    return { ok: false, error: cage }
++  }
+ 
+   const slashedInput = slash(absPath)
+   if (isSensitiveLocalFilePath(slashedInput) || isSensitiveLocalFilePath(absPath)) {
+@@ -211,9 +226,48 @@ export function assertFileOpenOfferable(
+   if (existedFile) {
+     // Existing path (incl. symlink): realpath must stay inside home.
+     if (!underHomeReal) return { ok: false, error: cage }
+-  } else if (!underHomeLexical) {
++    // L6: directories must not reach the dialog — one confirm would let
++    // get_page_text enumerate the whole tree. Regular files only (lstat:
++    // symlinks are refused too; the realpath above still cages escaping ones).
++    try {
++      if (!fs.lstatSync(resolved).isFile()) return { ok: false, error: cage }
++    } catch {
++      return { ok: false, error: cage }
++    }
++  } else {
+     // Missing file: lexical path must sit under HOME (macOS /var vs /private/var).
+-    return { ok: false, error: cage }
++    if (!underHomeLexical) return { ok: false, error: cage }
++    // M2: an in-home symlink/junction on an existing ancestor could redirect
++    // the not-yet-created leaf outside home (TOCTOU between check and open).
++    // Realpath the deepest existing ancestor and cage it the same way.
++    let anchor: string | null = path.dirname(resolved)
++    while (anchor && !fs.existsSync(anchor)) {
++      const parent = path.dirname(anchor)
++      anchor = parent === anchor ? null : parent
++    }
++    if (!anchor) return { ok: false, error: cage }
++    let anchorReal: string
++    try {
++      anchorReal = fs.realpathSync(anchor)
++    } catch {
++      return { ok: false, error: cage }
++    }
++    const insideOrEqual = (p: string, h: string): boolean => {
++      const rel = path.relative(h, p)
++      return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
++    }
++    if (!insideOrEqual(anchorReal, homeReal) && !insideOrEqual(anchorReal, homeResolved)) {
++      return { ok: false, error: cage }
++    }
++    if (isSensitiveLocalFilePath(anchorReal) || hasSensitivePathSegment(anchorReal)) {
++      return { ok: false, error: cage }
++    }
++    if (
++      hasSensitiveHomePrefix(anchorReal, homeReal) ||
++      hasSensitiveHomePrefix(anchorReal, homeResolved)
++    ) {
++      return { ok: false, error: cage }
++    }
+   }
+ 
+   return { ok: true, realPath: existedFile ? real : resolved }
+diff --git a/companion/src/voice/stt-session-service.ts b/companion/src/voice/stt-session-service.ts
+index f17792f..04b69e6 100644
+--- a/companion/src/voice/stt-session-service.ts
++++ b/companion/src/voice/stt-session-service.ts
+@@ -445,7 +445,9 @@ export class SttSessionService {
+       await removeSessionDir(sessionDir)
+       sessionDir = undefined
+       this.core.clearIfEnded()
+-      this.dropBound()
++      // V2: a peer-level abort may have dropped this bound and a retry may have
++      // bound a newer session while this infer was unwinding — never drop it.
++      if (this.bound === bound) this.dropBound()
+ 
+       return {
+         ok: true,
+@@ -462,18 +464,17 @@ export class SttSessionService {
+         }
+       }
+       this.core.clearIfEnded()
++      // V2: same newer-bound guard as the success path (see above).
++      if (this.bound === bound) this.dropBound()
+       const aborted =
+         ac.signal.aborted ||
+         (e instanceof WhisperRunnerError && e.code === "aborted")
+       if (aborted) {
+-        this.dropBound()
+         return { ok: false, code: "aborted", message: "session aborted" }
+       }
+       if (e instanceof WhisperRunnerError && e.code === "timeout") {
+-        this.dropBound()
+         return { ok: false, code: "infer_timeout", message: e.message }
+       }
+-      this.dropBound()
+       const msg = e instanceof Error ? e.message : String(e)
+       const lower = msg.toLowerCase()
+       // Prefer binary_broken over oom when message is dyld/spawn/early-kill
+@@ -497,9 +498,11 @@ export class SttSessionService {
+       if (this.bound.peerId !== peerId) {
+         return { ok: false, code: "peer_mismatch", message: "peer does not own session" }
+       }
+-      if (sessionId !== undefined && this.bound.sessionId !== sessionId) {
+-        return { ok: false, code: "session_unknown", message: "session id mismatch" }
+-      }
++      // V2: same peer + stale/mismatched sessionId still aborts the bound session
++      // (peer-level abort). Conflict retry aborts the rejected sid while the
++      // peer's previous session holds the max-1 slot — usually mid-infer, so the
++      // 250ms-backoff retry could never win. peerId is the ownership boundary.
++      const boundSid = this.bound.sessionId
+       try {
+         this.bound.abortController.abort()
+       } catch {
+@@ -514,6 +517,10 @@ export class SttSessionService {
+       if (this.bound.sessionDir) {
+         void removeSessionDir(this.bound.sessionDir).catch(() => {})
+       }
++      this.clearTimersOnly()
++      const r = this.core.abort(boundSid)
++      this.dropBound()
++      return r
+     }
+     this.clearTimersOnly()
+     const r = this.core.abort(sessionId)
+diff --git a/companion/tests/allow-dir-sensitive-credentials.test.ts b/companion/tests/allow-dir-sensitive-credentials.test.ts
+new file mode 100644
+index 0000000..a64a250
+--- /dev/null
++++ b/companion/tests/allow-dir-sensitive-credentials.test.ts
+@@ -0,0 +1,49 @@
++/**
++ * L3 (post-merge-198-201 adversary): common credential paths under home must be
++ * refused as MCP allow-dirs too — SENSITIVE_HOME_PREFIXES is shared with the
++ * file-open cage (tool/file-url-admission.ts), keep both surfaces aligned.
++ * Isolates HOME so the test does not depend on the developer machine.
++ */
++import * as os from "node:os"
++import * as path from "node:path"
++import * as fs from "node:fs"
++
++const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-allow-dir-creds-"))
++process.env.HOME = tempHome
++process.env.USERPROFILE = tempHome
++process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
++process.on("exit", () => {
++  try {
++    fs.rmSync(tempHome, { recursive: true, force: true })
++  } catch {
++    /* best-effort */
++  }
++})
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import { resolveAllowDirToOffer, SENSITIVE_HOME_PREFIXES } from "../src/mcp/allow-dir-expand"
++
++test("SENSITIVE_HOME_PREFIXES covers common credential files/dirs (L3)", () => {
++  for (const p of [".git-credentials", ".npmrc", ".netrc", ".docker"]) {
++    assert.ok(SENSITIVE_HOME_PREFIXES.includes(p), `missing ${p}`)
++  }
++})
++
++test("resolveAllowDirToOffer refuses ~/.docker as an allow-dir (L3)", () => {
++  const docker = path.join(tempHome, ".docker")
++  fs.mkdirSync(docker, { recursive: true })
++  const r = resolveAllowDirToOffer(docker, tempHome)
++  assert.equal(r.ok, false)
++  if (!r.ok) assert.match(r.error, /sensitive/i)
++})
++
++test("resolveAllowDirToOffer refuses a file under ~/.npmrc parent walk-up stays refused (L3)", () => {
++  // .npmrc is a file: offering its parent would be home itself (already refused),
++  // but a same-named directory must hit the sensitive-prefix cage.
++  const npmrcDir = path.join(tempHome, ".npmrc")
++  fs.mkdirSync(npmrcDir, { recursive: true })
++  const r = resolveAllowDirToOffer(path.join(npmrcDir, "x"), tempHome)
++  assert.equal(r.ok, false)
++  if (!r.ok) assert.match(r.error, /sensitive/i)
++})
+diff --git a/companion/tests/config-test-probe-keyed.test.ts b/companion/tests/config-test-probe-keyed.test.ts
+new file mode 100644
+index 0000000..c7939ab
+--- /dev/null
++++ b/companion/tests/config-test-probe-keyed.test.ts
+@@ -0,0 +1,86 @@
++// M1: config.test success must echo the tested {base_url, model_name} so the
++// panel can cache the probe bit under that key (its preflight/destHost then
++// route exactly like the companion probe cache). fetch is stubbed — the probe
++// itself is covered by llm-endpoint-url/connection-test suites.
++
++import "./_config-router-setup" // MUST be first — pins DATA_DIR before config import.
++
++import test, { before } from "node:test"
++import * as assert from "node:assert/strict"
++
++let handleMessage: typeof import("../src/message-router").handleMessage
++let saveConfig: typeof import("../src/config").saveConfig
++let initDataDir: typeof import("../src/config").initDataDir
++let lookupNativeVisionProbe: typeof import("../src/llm/native-vision-probe-cache").lookupNativeVisionProbe
++let clearNativeVisionProbe: typeof import("../src/llm/native-vision-probe-cache").clearNativeVisionProbe
++
++const TEST_BASE_URL = "http://127.0.0.1:9/v1"
++const TEST_MODEL = "my-intranet-vlm"
++
++before(async () => {
++  const mr = await import("../src/message-router")
++  const cfg = await import("../src/config")
++  const cache = await import("../src/llm/native-vision-probe-cache")
++  handleMessage = mr.handleMessage
++  saveConfig = cfg.saveConfig
++  initDataDir = cfg.initDataDir
++  lookupNativeVisionProbe = cache.lookupNativeVisionProbe
++  clearNativeVisionProbe = cache.clearNativeVisionProbe
++  await initDataDir()
++  saveConfig({
++    llm: {
++      base_url: TEST_BASE_URL,
++      api_key: "sk-probe-keyed-test",
++      model_name: TEST_MODEL,
++      protocol: "openai",
++      temperature: 0.7,
++      context_window: 128000,
++    },
++  })
++})
++
++test("config.test echoes the tested {base_url, model_name} with the probe bit", async () => {
++  clearNativeVisionProbe()
++  const origFetch = globalThis.fetch
++  // Both probes POST chat/completions; HTTP 200 = endpoint accepted the request.
++  globalThis.fetch = (async () => ({ ok: true, status: 200 })) as any
++  try {
++    const r: any = await handleMessage({ type: "config.test" } as any, {} as any)
++    assert.equal(r.type, "config.testResult")
++    assert.equal(r.ok, true)
++    assert.equal(r.native_vision, true)
++    assert.equal(r.base_url, TEST_BASE_URL, "echo the tested base_url")
++    assert.equal(r.model_name, TEST_MODEL, "echo the tested model_name")
++    // Companion in-memory cache stays keyed the same way.
++    assert.equal(lookupNativeVisionProbe(TEST_BASE_URL, TEST_MODEL), true)
++    assert.equal(lookupNativeVisionProbe(TEST_BASE_URL, "other-model"), undefined)
++  } finally {
++    globalThis.fetch = origFetch
++    clearNativeVisionProbe()
++  }
++})
++
++test("config.test llm_override echoes the override key, not the saved one", async () => {
++  clearNativeVisionProbe()
++  const origFetch = globalThis.fetch
++  globalThis.fetch = (async () => ({ ok: true, status: 200 })) as any
++  try {
++    const r: any = await handleMessage(
++      {
++        type: "config.test",
++        llm_override: { base_url: "http://127.0.0.1:8/v1", model_name: "unsaved-ui-model" },
++      } as any,
++      {} as any,
++    )
++    assert.equal(r.type, "config.testResult")
++    assert.equal(r.ok, true)
++    assert.equal(r.base_url, "http://127.0.0.1:8/v1")
++    assert.equal(r.model_name, "unsaved-ui-model")
++    assert.equal(lookupNativeVisionProbe("http://127.0.0.1:8/v1", "unsaved-ui-model"), true)
++    // Saved config was not clobbered by the override probe.
++    assert.equal(lookupNativeVisionProbe(TEST_BASE_URL, TEST_MODEL), undefined)
++  } finally {
++    globalThis.fetch = origFetch
++    clearNativeVisionProbe()
++  }
++})
+diff --git a/companion/tests/file-url-admission.test.ts b/companion/tests/file-url-admission.test.ts
+index c0647c8..4c6558d 100644
+--- a/companion/tests/file-url-admission.test.ts
++++ b/companion/tests/file-url-admission.test.ts
+@@ -89,6 +89,25 @@ describe("parseLocalFileUrl", () => {
+     assert.equal(r.ok, false)
+     if (!r.ok) assert.equal(r.kind, "invalid")
+   })
++
++  it("hard-refuses drive-relative file:///C:path (F1 — no resolve against companion cwd)", () => {
++    const r = parseLocalFileUrl("file:///C:Windows/System32")
++    if (process.platform === "win32") {
++      // fileURLToPath yields drive-relative C:Windows\System32 — hard refuse,
++      // never let path.resolve anchor it inside the companion cwd (home).
++      // kind "invalid" ⇒ the error field must carry the invalid family, not a
++      // cage token (user-facing string stays fileOpenInvalidError).
++      assert.equal(r.ok, false)
++      if (!r.ok) {
++        assert.equal(r.kind, "invalid")
++        assert.match(r.error, /invalid file: URL/i)
++        assert.ok(!r.error.includes(FILE_OPEN_CAGE_TOKEN))
++      }
++    } else if (r.ok) {
++      // POSIX has no per-drive cwd; the /C:… shape must still be caged downstream.
++      assert.equal(assertFileOpenOfferable(r.absPath, tmpHome).ok, false)
++    }
++  })
+ })
+ 
+ describe("assertFileOpenOfferable", () => {
+@@ -155,4 +174,49 @@ describe("assertFileOpenOfferable", () => {
+     assert.equal(r.ok, false)
+     if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
+   })
++
++  it("hard-refuses drive-relative input on every platform (F1)", () => {
++    const r = assertFileOpenOfferable("C:Windows\\System32", tmpHome)
++    assert.equal(r.ok, false)
++    if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
++  })
++
++  it("refuses a directory under home (L6 — regular files only)", () => {
++    const r = assertFileOpenOfferable(downloads, tmpHome)
++    assert.equal(r.ok, false)
++    if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
++  })
++
++  it("cages a missing leaf under an in-home junction pointing outside home (M2)", () => {
++    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-junction-out-"))
++    const link = path.join(downloads, "junc-escape")
++    try {
++      // dir junction needs no privilege on win32; plain dir symlink elsewhere.
++      fs.symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir")
++    } catch {
++      fs.rmSync(outside, { recursive: true, force: true })
++      return // cannot create link on this host — skip rather than fail
++    }
++    try {
++      const r = assertFileOpenOfferable(path.join(link, "not-yet.pdf"), tmpHome)
++      assert.equal(r.ok, false)
++      if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
++    } finally {
++      fs.rmSync(link, { recursive: true, force: true })
++      fs.rmSync(outside, { recursive: true, force: true })
++    }
++  })
++
++  it("still offers a missing file whose existing ancestors are really inside home (M2)", () => {
++    const r = assertFileOpenOfferable(path.join(downloads, "new-dir", "not-yet.pdf"), tmpHome)
++    assert.equal(r.ok, true)
++  })
++
++  it("cages common credential paths under home (L3: .git-credentials/.npmrc/.netrc/.docker)", () => {
++    for (const p of [".git-credentials", ".npmrc", ".netrc", path.join(".docker", "config.json")]) {
++      const r = assertFileOpenOfferable(path.join(tmpHome, p), tmpHome)
++      assert.equal(r.ok, false, `${p} must be caged`)
++      if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
++    }
++  })
+ })
+diff --git a/companion/tests/integration/security-gates.test.ts b/companion/tests/integration/security-gates.test.ts
+index e73d8ca..35b59b7 100644
+--- a/companion/tests/integration/security-gates.test.ts
++++ b/companion/tests/integration/security-gates.test.ts
+@@ -435,6 +435,21 @@ test("item 12: navigate to file:///etc/passwd is path-caged (no confirmation)",
+   assert.doesNotMatch(result.error!, /scheme is not allowed/i)
+ })
+ 
++test("item 12: navigate to drive-relative file:///C:path is hard-blocked (F1, no confirmation)", async () => {
++  // F1: fileURLToPath(file:///C:path) is drive-relative on win32; resolving it
++  // against the companion cwd produced a fake in-home OFFER while Chrome opens
++  // the real per-drive-cwd target outside the cage. Must never reach a dialog.
++  const executeTool = createToolExecutor(serverSideWs)
++  const result = await executeTool("tc_nav_drive_rel", "navigate", {
++    tabId: 1,
++    url: "file:///C:Windows/System32",
++  })
++  assert.equal(result.success, false)
++  assert.ok(result.error)
++  assert.match(result.error!, /Security Block/)
++  assert.doesNotMatch(result.error!, /scheme is not allowed/i)
++})
++
+ test("item 12: navigate with invalid URL is rejected before any WS send", async () => {
+   const executeTool = createToolExecutor(serverSideWs)
+   const result = await executeTool("tc_nav_invalid", "navigate", {
+diff --git a/companion/tests/llm-endpoint-url.test.ts b/companion/tests/llm-endpoint-url.test.ts
+index 64083b0..6755af9 100644
+--- a/companion/tests/llm-endpoint-url.test.ts
++++ b/companion/tests/llm-endpoint-url.test.ts
+@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
+ import {
+   assertLlmEndpointUrlAllowed,
+   assertOutboundFetchUrlAllowed,
++  normalizeIpLiteral,
+ } from "../src/security"
+ 
+ test("assertLlmEndpointUrlAllowed allows intranet OpenAI-compatible URLs", () => {
+@@ -29,6 +30,60 @@ test("assertLlmEndpointUrlAllowed still blocks cloud metadata / link-local", ()
+   )
+ })
+ 
++test("assertLlmEndpointUrlAllowed blocks IPv6 IMDS / link-local literals", () => {
++  // `new URL().hostname` keeps brackets and serializes v4-mapped as hex —
++  // the guard must see through both.
++  assert.match(
++    String(assertLlmEndpointUrlAllowed("http://[fd00:ec2::254]/v1")),
++    /metadata|link-local/i,
++  )
++  assert.match(
++    String(assertLlmEndpointUrlAllowed("http://[fe80::1]/v1")),
++    /metadata|link-local/i,
++  )
++  assert.match(
++    String(assertLlmEndpointUrlAllowed("http://[::ffff:169.254.169.254]/v1")),
++    /metadata|link-local/i,
++  )
++})
++
++test("assertLlmEndpointUrlAllowed allows loopback / public IPv6 literals", () => {
++  // Loopback stays allowed for local servers (same policy as 127.0.0.1).
++  assert.equal(assertLlmEndpointUrlAllowed("http://[::1]:11434/v1"), null)
++  assert.equal(assertLlmEndpointUrlAllowed("http://[::ffff:127.0.0.1]:11434/v1"), null)
++  // Public v6 (documentation range 2001:db8::/32 is not link-local/IMDS).
++  assert.equal(assertLlmEndpointUrlAllowed("http://[2001:db8::1]/v1"), null)
++})
++
++test("assertOutboundFetchUrlAllowed blocks bracketed / mapped loopback", () => {
++  assert.match(
++    String(assertOutboundFetchUrlAllowed("http://[::1]:8080/")),
++    /Internal|private/i,
++  )
++  assert.match(
++    String(assertOutboundFetchUrlAllowed("http://[::ffff:127.0.0.1]/")),
++    /Internal|private/i,
++  )
++  assert.match(
++    String(assertOutboundFetchUrlAllowed("http://[fd12::8]/")),
++    /Internal|private/i,
++  )
++  // Public v6 and hostnames still pass.
++  assert.equal(assertOutboundFetchUrlAllowed("https://example.com/"), null)
++  assert.equal(assertOutboundFetchUrlAllowed("http://[2001:db8::1]/"), null)
++})
++
++test("normalizeIpLiteral canonicalizes brackets / compression / v4-mapped", () => {
++  assert.equal(normalizeIpLiteral("[::1]"), "0000:0000:0000:0000:0000:0000:0000:0001")
++  assert.equal(normalizeIpLiteral("[fe80::1]"), "fe80:0000:0000:0000:0000:0000:0000:0001")
++  assert.equal(normalizeIpLiteral("fd00:ec2::254"), "fd00:0ec2:0000:0000:0000:0000:0000:0254")
++  assert.equal(normalizeIpLiteral("[::ffff:169.254.169.254]"), "169.254.169.254")
++  assert.equal(normalizeIpLiteral("[::ffff:a9fe:a9fe]"), "169.254.169.254")
++  assert.equal(normalizeIpLiteral("::ffff:127.0.0.1"), "127.0.0.1")
++  assert.equal(normalizeIpLiteral("10.0.0.1"), "10.0.0.1")
++  assert.equal(normalizeIpLiteral("example.com"), null)
++})
++
+ test("assertOutboundFetchUrlAllowed still blocks RFC1918 (untrusted fetch)", () => {
+   assert.match(
+     String(assertOutboundFetchUrlAllowed("http://10.251.241.12/v1")),
+diff --git a/companion/tests/native-vision-probe-cache.test.ts b/companion/tests/native-vision-probe-cache.test.ts
+index ac33770..241d975 100644
+--- a/companion/tests/native-vision-probe-cache.test.ts
++++ b/companion/tests/native-vision-probe-cache.test.ts
+@@ -19,6 +19,25 @@ test("probe cache hits only the same url+model", () => {
+   assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "custom-vlm"), undefined)
+ })
+ 
++test("probe cache keeps model name case (no cross-model poisoning)", () => {
++  clearNativeVisionProbe()
++  // vLLM-style case-sensitive served-model-name: probing "MyModel" must NOT
++  // answer a lookup for a different model "mymodel".
++  rememberNativeVisionProbe("http://10.1.1.1/v1", "MyModel", true)
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "MyModel"), true)
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "mymodel"), undefined)
++  clearNativeVisionProbe()
++})
++
++test("probe cache normalizes scheme/host case but keeps URL path case", () => {
++  clearNativeVisionProbe()
++  rememberNativeVisionProbe("HTTP://10.1.1.1:8000/V1/", "m", true)
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1:8000/V1", "m"), true)
++  // A case-sensitive gateway path is a different endpoint.
++  assert.equal(lookupNativeVisionProbe("http://10.1.1.1:8000/v1", "m"), undefined)
++  clearNativeVisionProbe()
++})
++
+ test("resolveNativeVision auto uses in-memory probe for unknown model names", () => {
+   clearNativeVisionProbe()
+   rememberNativeVisionProbe("http://10.251.241.12/v1", "my-intranet-vlm", true)
+diff --git a/companion/tests/security-thread.test.ts b/companion/tests/security-thread.test.ts
+index 6584dc0..a854322 100644
+--- a/companion/tests/security-thread.test.ts
++++ b/companion/tests/security-thread.test.ts
+@@ -335,6 +335,33 @@ test("formatChatErrorLine scheme/cage hard-blocks do not mention 弹窗", async
+   assert.ok(!invalid.includes("若你已拒绝弹窗"))
+ })
+ 
++test("humanizeChatErrorForUser: files.example.com WS drop is not mislabeled as local file error (L4)", async () => {
++  const { humanizeChatErrorForUser } = await import("../src/capability/user-gate-copy")
++  const mislabel = humanizeChatErrorForUser(
++    'Security Block: navigate to untrusted domain "files.example.com" requires user confirmation, but the WebSocket is not connected.',
++  )
++  assert.ok(!mislabel.includes("无法打开该本地文件地址"), `got: ${mislabel}`)
++
++  const fileDisconnect = humanizeChatErrorForUser(
++    "Security Block: create_tab to local file requires user confirmation, but the WebSocket is not connected. This is not a denied popup.",
++  )
++  assert.match(fileDisconnect, /无法打开该本地文件地址/)
++
++  const invalid = humanizeChatErrorForUser(
++    "Security Block: create_tab to file: URL is invalid. This is not a confirmation dialog.",
++  )
++  assert.match(invalid, /无法打开该本地文件地址/)
++})
++
++test("cage copy says common credential paths, no 凭据目录 overclaim (L3)", async () => {
++  const { humanizeChatErrorForUser } = await import("../src/capability/user-gate-copy")
++  const cage = humanizeChatErrorForUser(
++    "Security Block: navigate to local path is not allowed (sensitive/system/unc).",
++  )
++  assert.match(cage, /常见凭据路径/)
++  assert.ok(!cage.includes("凭据目录"))
++})
++
+ test("formatChatErrorLine softens workspace / scene gates (not 安全阻断)", async () => {
+   const { formatChatErrorLine, WORKSPACE_ROOT_NOT_SET_ERROR } = await import(
+     "../src/capability/user-gate-copy"
+diff --git a/companion/tests/settings-web.test.ts b/companion/tests/settings-web.test.ts
+index 8533784..31e65d9 100644
+--- a/companion/tests/settings-web.test.ts
++++ b/companion/tests/settings-web.test.ts
+@@ -197,6 +197,53 @@ test("POST /api/test with AWS metadata IP → 403 / SSRF blocked", async () => {
+   assert.match(data.error, /SSRF|private|link-local|blocked/i)
+ })
+ 
++test("POST /api/test with IPv6 metadata / link-local literals → SSRF blocked", async () => {
++  const { port, token } = await ensureStarted()
++  for (const base_url of [
++    "http://[fd00:ec2::254]/v1",               // AWS IMDS over IPv6
++    "http://[fe80::1]/v1",                     // IPv6 link-local
++    "http://[::ffff:169.254.169.254]/v1",      // v4-mapped (URL serializes to hex)
++  ]) {
++    const r = await request({
++      method: "POST",
++      port,
++      path: `/api/test?token=${token}`,
++      headers: jsonHeaders(token),
++      body: JSON.stringify({ base_url, api_key: "sk-xxxx" }),
++    })
++    assert.equal(r.status, 200)
++    const data = JSON.parse(r.body)
++    assert.equal(data.ok, false, `expected SSRF block for ${base_url}`)
++    assert.match(data.error, /metadata|link-local|blocked/i, `expected SSRF copy for ${base_url}`)
++  }
++})
++
++test("POST /api/test with DNS failure → fail-closed (blocked)", async () => {
++  const { port, token } = await ensureStarted()
++  // Force a DNS error in-process (a public DNS-hijacking resolver would
++  // otherwise resolve even bogus names and mask the fail-closed path).
++  const dnsMod = await import("node:dns")
++  const origLookup = dnsMod.promises.lookup
++  ;(dnsMod.promises as any).lookup = async () => {
++    throw new Error("getaddrinfo ENOTFOUND forced-by-test")
++  }
++  try {
++    const r = await request({
++      method: "POST",
++      port,
++      path: `/api/test?token=${token}`,
++      headers: jsonHeaders(token),
++      body: JSON.stringify({ base_url: "http://unresolvable.example/v1", api_key: "sk-xxxx" }),
++    })
++    assert.equal(r.status, 200)
++    const data = JSON.parse(r.body)
++    assert.equal(data.ok, false)
++    assert.match(data.error, /metadata|link-local|blocked/i)
++  } finally {
++    ;(dnsMod.promises as any).lookup = origLookup
++  }
++})
++
+ test("POST /api/test with RFC1918 IP is not SSRF-blocked", async () => {
+   const { port, token } = await ensureStarted()
+   const r = await request({
+diff --git a/companion/tests/vision-pipeline.test.ts b/companion/tests/vision-pipeline.test.ts
+index b5c5e79..37dc07b 100644
+--- a/companion/tests/vision-pipeline.test.ts
++++ b/companion/tests/vision-pipeline.test.ts
+@@ -126,6 +126,56 @@ test("analyzeImage: 2xx error body without choices → readable fallback, never
+   }
+ })
+ 
++test("analyzeImage: description cache is scoped to base_url + model_name", async () => {
++  const openaiMod = await import("openai")
++  const OpenAI = (openaiMod as any).default || openaiMod
++  const dummy = new OpenAI({ baseURL: "http://127.0.0.1:9", apiKey: "ollama" })
++  const proto = Object.getPrototypeOf(dummy.chat.completions)
++  const original = proto.create
++  proto.create = async (body: any) => ({
++    choices: [{ message: { content: `desc-from-${body.model}` } }],
++  })
++  // Distinct image so this test never collides with other cache entries.
++  const png = Buffer.concat([
++    Buffer.from(
++      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
++      "base64",
++    ),
++    Buffer.from("cache-scope-probe"),
++  ])
++  const img = { base64: png.toString("base64"), width: 1, height: 1, url: "", title: "p" }
++  const baseCfg = {
++    enabled: true,
++    base_url: "http://127.0.0.1:1234",
++    api_key: "ollama",
++    model_name: "model-a",
++    timeout_ms: 5000,
++    max_tokens: 16,
++    fallback: "metadata",
++    cache_ttl_seconds: 300,
++  } as any
++  try {
++    const r1 = await analyzeImage(img, baseCfg)
++    assert.equal(r1.description, "desc-from-model-a")
++    assert.equal(r1.cached, false)
++    // Same image, different model → must NOT hit model-a's cached description.
++    const r2 = await analyzeImage(img, { ...baseCfg, model_name: "model-b" })
++    assert.equal(r2.description, "desc-from-model-b")
++    assert.equal(r2.cached, false)
++    // Same model + endpoint → cache hit, model_used names the producer.
++    const r3 = await analyzeImage(img, baseCfg)
++    assert.equal(r3.description, "desc-from-model-a")
++    assert.equal(r3.cached, true)
++    assert.equal(r3.model_used, "model-a")
++    // Same model on a different endpoint → separate entry.
++    const r4 = await analyzeImage(img, { ...baseCfg, base_url: "http://127.0.0.1:1235" })
++    assert.equal(r4.cached, false)
++    assert.equal(r4.description, "desc-from-model-a")
++  } finally {
++    proto.create = original
++  }
++})
++
+ test("formatVisionFallbackDims: omit NxNpx when width/height unknown (no 0x0 lie)", () => {
+   assert.equal(formatVisionFallbackDims(1053, 481), ", 1053x481px")
+   assert.equal(formatVisionFallbackDims(0, 0), "")
+diff --git a/companion/tests/voice-stt-session-service.test.ts b/companion/tests/voice-stt-session-service.test.ts
+index 9b43e54..86d3058 100644
+--- a/companion/tests/voice-stt-session-service.test.ts
++++ b/companion/tests/voice-stt-session-service.test.ts
+@@ -684,3 +684,120 @@ test("forceAbort clears inferring so a new start can proceed", async () => {
+   )
+   assert.equal(ok.ok, true)
+ })
++
++test("V2: abort with stale sessionId from same peer frees the bound slot", async () => {
++  const dataDir = tempDataDir()
++  const whisperRoot = path.join(dataDir, "models", "whisper")
++  plantReadyModel(whisperRoot)
++  const svc = makeService({ dataDir, whisperRoot })
++
++  assert.equal(
++    svc.start(
++      {
++        sessionId: "old",
++        modelId: "small",
++        format: "wav",
++        sampleRate: 16000,
++        channels: 1,
++      },
++      "peerA",
++    ).ok,
++    true,
++  )
++  // Conflict-retry shape: the rejected sid never existed, the holder is bound.
++  const ab = svc.abort("old-r1", "peerA")
++  assert.equal(ab.ok, true)
++  assert.equal(svc.getActive(), null)
++  assert.equal(svc.getBoundPeerId(), null)
++  const ok = svc.start(
++    {
++      sessionId: "new",
++      modelId: "small",
++      format: "wav",
++      sampleRate: 16000,
++      channels: 1,
++    },
++    "peerA",
++  )
++  assert.equal(ok.ok, true)
++  svc.forceAbort()
++})
++
++test("V2: peer-level abort cancels in-flight infer; late end() must not drop the retry session", async () => {
++  const dataDir = tempDataDir()
++  const whisperRoot = path.join(dataDir, "models", "whisper")
++  plantReadyModel(whisperRoot)
++  let release!: () => void
++  const gate = new Promise<void>((r) => {
++    release = r
++  })
++  const svc = makeService({
++    dataDir,
++    whisperRoot,
++    runWhisper: async ({ signal }) => {
++      await gate
++      if (signal?.aborted) {
++        throw new WhisperRunnerError("aborted", "aborted")
++      }
++      return { text: "retry-text", ms: 1 }
++    },
++  })
++  assert.ok(
++    svc.start(
++      {
++        sessionId: "old",
++        modelId: "small",
++        format: "wav",
++        sampleRate: 16000,
++        channels: 1,
++      },
++      "peerA",
++    ).ok,
++  )
++  svc.chunk("old", 0, Buffer.from("x"), "peerA")
++  const endP = svc.end("old", 1, "peerA")
++  await new Promise((r) => setTimeout(r, 20))
++
++  // Holder is mid-infer → retry start conflicts (adapter-side resource_conflict)
++  const blocked = svc.start(
++    {
++      sessionId: "old-r1",
++      modelId: "small",
++      format: "wav",
++      sampleRate: 16000,
++      channels: 1,
++    },
++    "peerA",
++  )
++  assert.equal(blocked.ok, false)
++  if (!blocked.ok) assert.equal(blocked.code, "resource_conflict")
++
++  // Adapter aborts its rejected sid; same peer → frees the holder mid-infer
++  const ab = svc.abort("old-r1", "peerA")
++  assert.equal(ab.ok, true)
++
++  // Retry start binds a new session BEFORE the old infer finishes unwinding
++  const retry = svc.start(
++    {
++      sessionId: "old-r1",
++      modelId: "small",
++      format: "wav",
++      sampleRate: 16000,
++      channels: 1,
++    },
++    "peerA",
++  )
++  assert.equal(retry.ok, true)
++
++  release()
++  const oldEnd = await endP
++  assert.equal(oldEnd.ok, false)
++  if (!oldEnd.ok) assert.equal(oldEnd.code, "aborted")
++
++  // The late end() of the aborted holder must not have dropped the retry binding
++  assert.equal(svc.getBoundPeerId(), "peerA")
++  assert.equal(svc.chunk("old-r1", 0, Buffer.from("y"), "peerA").ok, true)
++  const retryEnd = await svc.end("old-r1", 1, "peerA")
++  assert.equal(retryEnd.ok, true)
++  if (retryEnd.ok) assert.equal(retryEnd.text, "retry-text")
++})
+diff --git a/docs/audit/reviews/post-merge-198-201-adversary-synthesis-20260819.md b/docs/audit/reviews/post-merge-198-201-adversary-synthesis-20260819.md
+new file mode 100644
+index 0000000..e13d743
+--- /dev/null
++++ b/docs/audit/reviews/post-merge-198-201-adversary-synthesis-20260819.md
+@@ -0,0 +1,108 @@
++# 四路对抗合成 — main 98bb586..2faaefa (PR #198–#201)
++
++> **日期**: 2026-08-19
++> **对象**: `git diff 98bb586..2faaefa`（PR #198 vision/sidepanel followup、#199 sidepanel+companion、#200 voice classic idle、#201 file-scheme L2 path cage）
++> **核验**: 四路均对照源码 `[inspected]`；关键发现均以真实探针/协议建模脚本 `[executed]` 复现；相关测试包全绿后评审
++
++---
++
++## 参与路与裁决
++
++| 路 | 范围 | 裁决 |
++|----|------|------|
++| **A** | file: path cage + 一次性 L2（d0589e5） | SHIP-WITH-FIXES（high×1 med×1 low×4） |
++| **B** | vision/LLM 管线（17f543f, f4e0098） | SHIP-WITH-FIXES（high×1 med×2 low×2） |
++| **C** | sidepanel 状态/WS/cockpit/background（f4e0098, 1a09439） | SHIP-WITH-FIXES（med×1 low×3） |
++| **D** | voice classic STT 延迟启动（8e3cf67） | **BLOCK**（crit×1 high×1 med×1 low×1） |
++
++### 合成裁决
++
++**BLOCK**。voice 路 critical 为日常双倍速听写即可确定性触发的「报错 + 麦克风永久锁死」，由 #200 新引入 classic 路径；须先修。
++
++---
++
++## Critical / High（必须修）
++
++### V1 [critical] classic 冲突重试被自身 abort ACK 杀死，僵尸重试永久锁死 adapter
++- 位置：`chrome-extension/src/sidepanel/voice/local-stt-adapter.ts:948-961`（重试块）、`:317-319`（无 pending fall-through kill）、`:179-208`（`reset()` 不碰 `loopGen` 且 `clearSub()`）、`:367`
++- 序列：stop → start 被 `resource_conflict` 拒 → 每 chunk/end 被 `requirePeer` 拒 `session_unknown` → 进重试块发 `voice.stt.abort` + sleep 250ms → 旧 sid 的 `session_unknown` 落 `:317-319` 触发 `onError+onEnd+reset()` → `reset()` 不递增 `loopGen`，250ms 后僵尸醒来发 `-r1` start，但已 `clearSub()` 退订 → `uploadAndWait` 永不 settle → `phase` 永卡 `waiting`，`start()/stop()` 全静默拒绝。仅切线程/chat abort/重挂载可解锁。已按真实 companion 协议建模复现。
++
++### V2 [high] 重试 abort 永远释放不了 max-1 槽位
++- 位置：`local-stt-adapter.ts:954` 只 abort 自己被拒的新 sid；`companion/src/voice/stt-session-service.ts:495-502` 在 `sessionId` 不匹配时 early return，不触碰 holder 的 abortController。whisper infer 秒级，250ms backoff 后 holder 几乎必在 infer → `-r1` 必再冲突。连续模式 `:768-770` `abort(parentSessionId)` 同构。
++
++### S1 [high] SSRF 守卫对所有 IPv6 字面量失效，API key 随 probe POST 到被禁主机
++- 位置：`companion/src/security.ts:211-242`；调用点 `message-router/handlers/config.ts:330-335`
++- `new URL().hostname` 对 IPv6 保留 `[]`、mapped v4 序列化为 hex（`[::ffff:a9fe:a9fe]`），而 `isCloudMetadataIp`/`isLinkLocalImdsHost` 按无括号字符串匹配 → `http://[fd00:ec2::254]/v1`、`http://[::ffff:169.254.169.254]/v1`、`http://[fe80::1]/v1` 全放行（已用编译产物实测）。`security.ts:193-194` 注释契约错误。新测试 `llm-endpoint-url.test.ts` 只测 v4 点分十进制。
++- 关联：`settings-web.ts:147-150` 把 DNS 失败从 fail-closed 改成 fail-open（glibc 平台 bracketed 名被 getaddrinfo 拒 → 直接放行），须恢复 fail-closed；`settings-web.ts:13-15` 头部注释与新逻辑相反。
++
++### F1 [high] drive-relative `file:///C:path` 绕过 path cage
++- 位置：`companion/src/tool/file-url-admission.ts:124`（`path.resolve` 静默吸收非绝对路径）
++- `fileURLToPath` 在 win32 对 `file:///C:...` 返回 drive-relative；`path.resolve` 锚到 companion cwd → 词法 home 内 → OFFER，弹窗显示 home 内假路径；Chrome 按自己的 per-drive cwd 打开**笼外系统文件**（已端到端实测弹窗放行）。设计文档 §2.2 明令「非绝对路径硬拒绝」，实现从未检查 `isAbsolute`。
++
++---
++
++## Medium（同批修）
++
++| # | 发现 | 位置 |
++|---|------|------|
++| M1 | **B/C 两路独立收敛**：面板 `resolveNativeVision` 不读 probe 位——设置页刚提示「已探测到看图能力」，composer 附图却被 `IMAGE_PREFLIGHT_NO_VISION` 拦下；走视觉轨则目的地披露指向错误主机（companion 实际发主模型 host） | `chrome-extension/src/sidepanel/components/vision-reuse-logic.ts:100-115`、`App.tsx:899-911,1188-1195`、对照 `companion/src/message-router.ts:736-740` |
++| M2 | junction TOCTOU：不存在的文件只作词法检查，窗口期内经 home 内 junction 落盘笼外文件（真实 junction 实测 OFFER） | `file-url-admission.ts:211-217` |
++| M3 | `probeNativeVision` 仅凭 HTTP 200 判定，one-api/new-api 类网关对纯文本模型也 200 → 假阳性缓存 | `companion/src/llm/connection-test.ts:129-166` |
++| M4 | voice 重试测试断言不存在的 companion（不回逐 chunk `session_unknown`、不回 abort error ACK），给 V1 发假通行证 | `chrome-extension/tests/voice-local-stt-adapter-ws.test.ts:187-254` |
++
++---
++
++## Low（顺手修/跟进）
++
++- L1 probe 缓存键小写归一化模型名/URL → 大小写敏感服务端跨模型投毒（`native-vision-probe-cache.ts:18-28`）
++- L2 vision 描述缓存键不含模型/端点，双管线共享串味（`vision-pipeline.ts:36,58,111-117`）
++- L3 门文案「凭据目录被硬拦」过度声明（实测 `.git-credentials`/`.npmrc`/浏览器凭据库均 OFFER），名单仅 5 段（`user-gate-copy.ts`、`gate-error-copy.ts`、`mcp/allow-dir-expand.ts:71-95`）
++- L4 gate-error-copy `/file/i` 把 `files.example.com` 的 WS 断连误标为本地文件错误
++- L5 MinimalConfirm 对 relevantApps 类确认误显「仅这一次，不加白名单」（`MinimalConfirm.tsx:315`）
++- L6 目录 URL 可进弹窗，一枚确认可经 `get_page_text` 枚举目录（`file-url-admission.ts:211-219` 缺 `isFile()`）
++- L7 `apps.list`/`acp.list` 未加 `Array.isArray` 请求回显守卫（`useWebSocket.ts:1257-1267,1303-1309`）
++- L8 40ms hostname 预算静默丢弃站点知识，无日志（`background/active-tab-hostname.ts:36-60`）
++- L9（跟进，非本批）`mergeHydratedMessages` 内容相等假设 → echo 丢失时用户轮次永久重复（`agentStore.tsx:647-678`），修法为 client_message_id 关联，单列跟进
++- L10（存量提示）连续模式同构 kill+锁死模式；双重点击 stop 静默丢弃整段录音
++
++---
++
++## 已实测无问题（勿回退）
++
++- A 路：遍历/双重编码/UNC/IPv6 host/junction 穿透已存在文件/8.3 短名 fail-closed；一次性语义（无 token、不写白名单、确认 id 随机 UUID + 已认证 socket + 解析即删）；`auto_approve_dangerous` 下 file: 仍弹；错误信息不泄漏 realPath；cookie 门 fail-closed。
++- B 路：上传撤回链路幂等、跨线程 retract 精确；`admitComposerImage`/`visionImageDataUrl` 嗅探 fail-closed；GIF/VP8  dims 解析逐字节正确。
++- C 路：stream-thread-gate 按 thread 门控齐全；`chat.token` 全量累积不丢中段；`pendingUploads` 三处清理完整；`withHostnameBudget` 无双发；`hostnameFromTabUrl` 解析正确。
++- D 路：修复前存量测试全绿（755/755）。
++
++---
++
++*合成者: Kimi（4 路独立 coder subagent，各自 `[executed]` 验证）。修复后须以独立对抗路复验，不得用本文件自我 APPROVE。*
++
++---
++
++## 修复轮（2026-08-19，未提交，工作树）
++
++4 路并行修复（文件范围互斥切分）→ 4 路独立对抗复验（重放原始攻击 + 攻击修复机制本身）→ 1 路残留修复。
++
++### 复验裁决
++
++| 范围 | 复验裁决 | 结果 |
++|------|----------|------|
++| voice（V1/V2/M4/L10） | **PASS** | 4 项全部闭合并经 HEAD 对照组重放验证（修复版不再锁死、HEAD 版复现锁死）；无修复引入新问题 |
++| SSRF + LLM 缓存（S1/L1/L2） | PASS-WITH-NOTES | S1/L2 闭合（80/80 函数级探针 + settings-web 端到端 21/21）；L1 companion 侧闭合 |
++| file path cage（F1/M2/L6/L3/L4/L5） | PASS-WITH-NOTES | 6 项全部实测闭合（20+ 形态探针、真实 junction 链）；无误伤 |
++| 面板 probe + sidepanel（M1/L7/L8/M3-copy） | PASS-WITH-NOTES | 主流程闭环；复验发现 N1 失锁残留 |
++
++### 复验发现的残留与处置
++
++- **N1 [medium，两路复验独立收敛]**：扩展侧 keyed probe 缓存归一化未随 companion L1 同步（7 类编辑场景两侧判定相反，含面板侧 fail-open）→ **已修**（归一化算法逐行移植，`vision-reuse-logic.test.ts` 锁错方向的用例已反转）。
++- **N2 [low]**：`SettingsSlideout.tsx` 探测文案过度声称 → 已对齐「端点接受图片输入」。
++- **[low]×2 修复批次自引入**：MinimalConfirm host_write 信任提示过矫正、F1 拒绝 kind/error 字段不一致 → 已修。
++- **跟进项（不阻断）**：dangling-junction anchor 的 TOCTOU 残余窗口（pre-existing，威胁模型外）；in-home symlink 一律 fail-closed 拒绝但 cage 文案未列该原因；`voice-local-continuous.test.ts:272` 仍是弱 fake；上传中 abort 双发 onError/onEnd（存量）；NAT64/6to4 内嵌 IMDS 地址（存量）；WS config.test 路径无 DNS 复查（存量）；L9 mergeHydratedMessages 内容相等去重（单列跟进）。
++
++### 最终测试状态
++
++- `chrome-extension && npm test`：**769/769**（基线 755 → +14 新/改测试）
++- `companion` 相关套件（file-url-admission / security-gates / security-thread / llm-endpoint-url / settings-web / native-vision-probe-cache / vision-pipeline / config-test-probe-keyed / voice-stt 等）：全绿；全量套件 63 个失败均为 Windows-only 存量（chmod/symlink/daemon/POSIX 路径形），修复范围文件 0 失败
++
++**合成裁决更新：BLOCK 解除 → SHIP-WITH-FIXES 完成。** 改动未提交，待用户审阅后提交。
