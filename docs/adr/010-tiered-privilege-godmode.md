@@ -8,7 +8,7 @@
 
 CMspark 的安全模型是**两层门**（见 [ADR-006](006-layered-defense.md)）：
 
-- **Layer 1（scheme 硬阻断）**：`navigate` / `create_tab` / `set_tab_url` 对非 http(s) scheme（`javascript:` / `data:` / `about:` / `file:` / `chrome:`）**直接拒绝**，不可被任何开关绕过。这一层堵死了 prompt 注入经由导航工具执行任意脚本 / 打开特权页 / 读本地文件的口子。
+- **Layer 1（scheme 硬阻断）**：`navigate` / `create_tab` / `set_tab_url` 对非 http(s) scheme（`javascript:` / `data:` / `about:` / `chrome:` / `blob:`）**直接拒绝**，不可被 `auto_approve_dangerous` 绕过。**2026-08-19**：`file:` 从本层拆出，改走家目录路径笼子 + 每次 L2（域白名单 / 无人值守开关不能跳过）。God-mode（`allow_all_schemes`）仍可绕过 L1 与 `file:` 笼子。
 - **Layer 2（确认门）**：`evaluate` / `osascript_eval` / 未授信域导航需人工确认（`securityConfirmations.request`）；可被 `auto_approve_dangerous`（全局）或 `auto_approved_domains`（per-domain，见 [ADR-007](007-domain-whitelist-auto-approve.md)）跳过。
 
 长期以来存在一个缺口：**没有一条合法通道在受控前提下放行 Layer 1**。某些可信工作流（调试内嵌 `data:` 页、自动化操作 `chrome://` 设置页）被 Layer 1 完全锁死，用户只能通过绕过手段。同时，2026-07-09 全量审计发现 **WS 端点缺乏鉴权**——本地任何进程伪造 `Origin: chrome-extension://...` 即可发 `config.set` 翻转 `auto_approve_dangerous` / 写 `auto_approved_domains`（软 L1 绕过 / L2 自动放行），这让任何「危险开关」的 UI 启用路径都不安全。
@@ -82,14 +82,14 @@ God-mode 关闭协议保护后，**任何 prompt 注入**（agent 读到的不�
 
 - 执行 `data:` / `javascript:` 内嵌脚本（在目标 tab origin 内任意 JS）；
 - 打开 `chrome://` 特权页（设置 / 扩展 / 历史等，含敏感操作面）；
-- 读 `file:` 本地文件（泄露本机数据给 LLM）。
+- 读 `file:` 本地文件（泄露本机数据给 LLM）。**2026-08-19**：未开 God-mode 时，`file:` 不再走 Layer 1 硬拦，改为 **家目录内路径笼子 + 每次 L2**（`auto_approve_dangerous` / 域白名单 **不能**跳过）。God-mode 仍绕过笼子与确认。
 
 `auto_approve_dangerous` 至少保留 Layer 1 的协议阻断；God-mode 连这层也撤掉，是**最高风险档**。**仅在你完全信任的机器上，为你完全信任的工作流启用**，并预期 Side Panel 审计日志 + companion 日志（`security.godmode_bypassed`）会逐条记录每一次绕过。
 
 ## 显式不做（Non-goals）
 
 - ❌ God-mode 默认开启，或引导普通用户开启。
-- ❌ 非 http(s) 协议开 per-domain allowlist（God-mode 是全局开关，不做细粒度）。
+- ❌ 非 http(s) 协议开 **per-domain** allowlist（God-mode 仍是「所有 scheme」全局开关）。**2026-08-19 修订**：`file:` 单独从 L1 拆出，走路径笼子 + 每次 L2；**不是**把 `file:` 写入 `auto_approved_domains`。`javascript:` / `data:` / `chrome:` / `about:` / `blob:` 仍 L1。
 - ❌ 改 `auto_approve_dangerous` 现有语义。
 - ❌ Tier 2「LLM 自动放行」（反模式）；窄版推迟 P3+。
 

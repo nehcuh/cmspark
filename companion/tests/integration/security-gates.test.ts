@@ -423,7 +423,7 @@ test("item 12: navigate to chrome:// scheme is blocked outright (no confirmation
   assert.match(result.error!, /scheme is not allowed/i)
 })
 
-test("item 12: navigate to file:// scheme is blocked", async () => {
+test("item 12: navigate to file:///etc/passwd is path-caged (no confirmation)", async () => {
   const executeTool = createToolExecutor(serverSideWs)
   const result = await executeTool("tc_nav_file", "navigate", {
     tabId: 1,
@@ -431,7 +431,8 @@ test("item 12: navigate to file:// scheme is blocked", async () => {
   })
   assert.equal(result.success, false)
   assert.ok(result.error)
-  assert.match(result.error!, /scheme is not allowed/i)
+  assert.match(result.error!, /local path is not allowed/i)
+  assert.doesNotMatch(result.error!, /scheme is not allowed/i)
 })
 
 test("item 12: navigate with invalid URL is rejected before any WS send", async () => {

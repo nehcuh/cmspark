@@ -32,8 +32,9 @@ export interface SecurityConfig {
   /**
    * GOD-MODE. When true, bypasses Layer 1 FULLY and Layer 2 PARTIALLY:
    *   - Layer 1 (scheme hard-block): non-http(s) schemes (javascript:, data:,
-   *     about:, file:, chrome:) are permitted for navigate / create_tab /
-   *     set_tab_url. (Fully bypassed.)
+   *     about:, chrome:, blob:) are permitted for navigate / create_tab /
+   *     set_tab_url. file: is separately path-caged + L2 unless this flag
+   *     is on (Fully bypassed).
    *   - Layer 2 (confirmation gate): evaluate / osascript_eval / untrusted-
    *     domain navigation skip the human-in-the-loop dialog — EXCEPT the
    *     never-auto CRITICAL_API_GATE subset (exfil + sandbox-escape APIs:

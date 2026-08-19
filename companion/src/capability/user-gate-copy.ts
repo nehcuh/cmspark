@@ -98,6 +98,30 @@ export function humanizeChatErrorForUser(raw: string): string {
     )
   }
 
+  if (/file: URL is invalid|WebSocket is not connected/i.test(body) && /file/i.test(body)) {
+    return (
+      "无法打开该本地文件地址\n" +
+      "这不是确认弹窗：链接无效或侧栏未连上 Companion。\n" +
+      "不是 MCP 允许列表，也不是域名白名单。"
+    )
+  }
+
+  if (/scheme is not allowed/i.test(body)) {
+    return (
+      "浏览器不能打开该地址（协议不被允许）\n" +
+      "这不是确认弹窗：javascript: / chrome: / data: 等非 http(s) 协议默认硬拦。\n" +
+      "若要看本机文件：请明确说「在浏览器打开」，或把文件拖进对话让我读内容。"
+    )
+  }
+
+  if (/local path is not allowed \(sensitive\/system\/unc\)/i.test(body)) {
+    return (
+      "该本地路径不能在浏览器中打开\n" +
+      "这不是确认弹窗：系统目录、凭据目录、家目录以外或网络路径被硬拦。\n" +
+      "不是 MCP 允许列表，也不是域名白名单。"
+    )
+  }
+
   // Keep original for true security / unknown, but avoid double "安全阻断"
   if (/^安全阻断/i.test(e) || /^不可恢复/.test(e)) return e
   return body
@@ -111,7 +135,7 @@ export function formatChatErrorLine(
   const human = humanizeChatErrorForUser(rawError)
   // Setup gates: never brand as 安全阻断 / 不可恢复
   if (
-    /需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱|默认工作区沙箱不可用|工具面已收窄|当前场景限制|本机能力未开启|网络扫描范围未授权|三旗全自动巡航|不能拉取 file:/.test(
+    /需要先绑定工作区|默认使用沙箱|本机读写可用默认沙箱|默认工作区沙箱不可用|工具面已收窄|当前场景限制|本机能力未开启|网络扫描范围未授权|三旗全自动巡航|不能拉取 file:|这不是确认弹窗/.test(
       human,
     )
   ) {

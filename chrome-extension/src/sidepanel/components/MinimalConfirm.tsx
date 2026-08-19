@@ -312,7 +312,9 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
       <div style={{ color: tokens.darkMuted, marginBottom: 8, fontSize: 10, lineHeight: 1.45 }}>
         {needsNonce
           ? "此确认需要输入确认码 — 请在确认台完成。"
-          : "详细预览与白名单在确认台；此处可快速允许或拒绝。"}
+          : request.relevant_domains?.[0]
+            ? "详细预览与白名单在确认台；此处可快速允许或拒绝。"
+            : "详细预览在确认台；此处可快速允许或拒绝（仅这一次，不加白名单）。"}
       </div>
       {offerEnterprise && (
         <label

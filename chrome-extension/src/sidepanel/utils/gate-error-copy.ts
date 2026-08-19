@@ -70,6 +70,28 @@ export function humanizeSidepanelGateError(raw: string): string {
     )
   }
 
+  if (/file: URL is invalid|WebSocket is not connected/i.test(body + e) && /file/i.test(body + e)) {
+    return (
+      "🚫 **无法打开该本地文件地址**\n\n" +
+      "这不是确认弹窗：链接无效或侧栏未连上 Companion。不是 MCP 允许列表，也不是域名白名单。"
+    )
+  }
+
+  if (/scheme is not allowed/i.test(body + e)) {
+    return (
+      "🚫 **浏览器不能打开该地址**\n\n" +
+      "这不是确认弹窗：`javascript:` / `chrome:` / `data:` 等非 http(s) 协议默认硬拦。\n" +
+      "若要看本机文件：请明确说「在浏览器打开」，或把文件拖进对话。"
+    )
+  }
+
+  if (/local path is not allowed \(sensitive\/system\/unc\)/i.test(body + e)) {
+    return (
+      "🚫 **该本地路径不能在浏览器中打开**\n\n" +
+      "这不是确认弹窗：系统目录、凭据目录、家目录以外或网络路径被硬拦。不是 MCP 允许列表，也不是域名白名单。"
+    )
+  }
+
   // Soften residual scary prefixes
   if (/安全阻断/i.test(e) && !/已拒绝|user denied|blocked by user/i.test(e)) {
     return `⚠️ ${body}`
