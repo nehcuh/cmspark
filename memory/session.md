@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S75 END (2026-08-20 ~07:49) [post-merge 对抗评审 · #202 MERGED · CI 绿]
+- **Ship**：`fix/post-merge-198-201-adversarial-fixes` `a14f32b` → **PR #202 MERGED** `17ba84e`；CI build + 3 smoke 全绿；本地 main 已同步
+- **流程**：拉取 `98bb586..2faaefa`（9 commits，PR #198–#201）→ 4 路独立对抗评审（1 critical / 2 high / 4 medium / 8 low）→ 报告落盘 → 4 路并行修复（文件范围互斥）→ 4 路独立复验（重放原始攻击 + HEAD 对照组）→ 残留修复（N1 双端 probe 归一化失锁等 4 项）→ grok+pi 双路复审 AWN → grok medium（NAT64/6to4/v4-compatible 内嵌 IMDS）当场折叠 → PR → CI → 合并
+- **关键修复**：voice classic 重试锁死（retry-sid 置换 + `reset()` 递增 `loopGen` + peer 级 abort 释放 max-1 槽）；SSRF 守卫 IPv6 全形态（方括号/mapped/v4-compatible/NAT64/6to4/fe80::/10/fd00:ec2::254）+ settings-web DNS 恢复 fail-closed；file 笼 drive-relative 硬拒 + 最深存在前缀 realpath（junction TOCTOU）+ 目录/symlink fail-closed + 敏感名单扩 `.git-credentials/.npmrc/.netrc/.docker`；面板 probe 缓存 `{base_url, model_name}` 键化与 companion lock-step；vision 描述缓存键含模型+端点
+- **验证**：chrome-extension 769/769（基线 755）；companion 目标套件全绿；voice 重试测试经 HEAD 交换实验证明能抓原 bug；Windows 全量 63 失败均存量（chmod/symlink/daemon/POSIX 路径）
+- **下次**：跟进项——`voice-local-continuous.test.ts` 弱 fake / in-home symlink 拒绝文案 / dangling-junction TOCTOU / 上传中 abort 双发 onError/onEnd / L9 mergeHydratedMessages echo 去重
+- Recorded: yes — `docs/audit/reviews/post-merge-198-201-adversary-synthesis-20260819.md`（评审+修复+复验全记录）、`-fix-dual-prompt-` / `-fix-grok-` / `-fix-pi-` / `-fix-diff-*.patch`
+
 ### S74 END (2026-08-18 ~18:02) [companion-canon Side Panel · #196 OPEN · CI 绿]
 - **Ship**：`feat/companion-canon-sidepanel` `54f0610` → **PR #196**；CI build + 3 smoke 全绿、MERGEABLE。未合 main
 - **产品**：精密仪器台 → 消费级助手 canon（看山质量杠 · Comp A）；C″ 一条栏 + D″ 诚实空态

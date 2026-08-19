@@ -2,6 +2,13 @@
 
 ## Process Patterns
 
+### 多路对抗流水线：评审→互斥修复→重放复验→外部双路（2026-08-20 · #202）
+- **链**：kimi AgentSwarm 4 路独立对抗评审（各自 `[executed]` 实测攻击，非目测）→ 4 路并行修复（**文件范围互斥切分**是并行不互踩的关键，prompt 里明写禁止改的范围外文件）→ 4 路独立复验（重放原始攻击 + 攻击修复机制本身）→ 收敛残留（复验两路独立撞到同一 N1 = 高置信）→ `grok --single` + `pi -p` 双路 → PR → CI → merge
+- **复验硬招**：`git show HEAD:<file>` 编译出修复前产物做**对照组**——新测试必须在旧代码上红、新代码上绿，否则测试可能在发假通行证（本批 M4 就是这么抓出来的）
+- **grok headless**：`grok --single "<prompt>" --always-approve --output-format plain > out.md`（`-p` 同义）；与 `pi -p --no-session` 配对可替代 claude+pi 双路
+- **教训**：F2 改了 companion 侧缓存键归一化，F4 的扩展侧 lock-step 缓存没跟上 → 复验才暴露；凡「两侧 lock-step」声明，必须实测两侧键输出矩阵一致，不能信注释
+- **记录**：`docs/audit/reviews/post-merge-198-201-adversary-synthesis-20260819.md`
+
 ### 脏工作区混功能：server.ts 必须手术式拆分再提交（2026-08-04）
 - **现象**：同一 `server.ts` 同时有 full-autonomy cruise 与 run-state `thread_id`；`git add` 整文件会把未审 Trust 改动塞进 UX PR
 - **做法**：HEAD 还原 → 只重放本功能 hunk；另一功能 hunk 再单独回放；或 `git add -p`；dual-review 附带 patch 若含 dirty tree 须在 prompt 声明
