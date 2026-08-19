@@ -85,7 +85,7 @@ import {
   visionRailOpen,
 } from "./utils/image-compose"
 import { extractHostname, likelyMultimodal } from "./components/vision-reuse-logic"
-import { buildOptimisticUploadBubble, uploadSendOutcome } from "./utils/upload-send"
+import { buildOptimisticUploadBubble, nextComposerText, uploadSendFailureOps, uploadSendOutcome } from "./utils/upload-send"
 import { newTempUserMessageId } from "../utils/temp-message-id"
 import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
 import { WorkerScopeBar } from "./components/WorkerScopeBar"
@@ -377,6 +377,13 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const { state, dispatch } = useAgentStore()
   const { openPanelForce, closePanel, activePanel } = useContextPanelHost()
   const [text, setText] = useState("")
+
+  useEffect(() => {
+    const restore = state.composerRestore
+    if (!restore?.text) return
+    setText((prev) => nextComposerText(prev, restore.text))
+    dispatch({ type: "CLEAR_COMPOSER_RESTORE" })
+  }, [state.composerRestore?.token])
   const [slashVisible, setSlashVisible] = useState(false)
   const [slashQuery, setSlashQuery] = useState("")
   const [atVisible, setAtVisible] = useState(false)
@@ -1243,6 +1250,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           fileNames: files.map((f) => f.name),
         })
         dispatch({ type: "ADD_MESSAGE", message: uploadBubble })
+        dispatch({
+          type: "SET_PENDING_UPLOAD",
+          threadId: uploadThreadId!,
+          messageId: clientMessageId,
+          composerText: userMessage,
+        })
 
         chrome.runtime.sendMessage(
           {
@@ -1276,32 +1289,43 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             }
             const sendOutcome = uploadSendOutcome(swErr, response)
             if (sendOutcome !== "ok") {
-              // Always clear mapBusy for the upload thread. Keep chips on error.
-              if (uploadThreadId) {
-                dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: false })
-              }
-              // S45 P0: do not unlock / pollute another thread if user switched mid-send.
-              if (!shouldApplyStreamEvent(uploadThreadId, activeThreadIdRef.current)) {
-                return
-              }
-              dispatch({ type: "SET_PROCESSING_STATUS", status: null })
-              dispatch({ type: "SET_PROCESSING", isProcessing: false })
-              // F6: SW refused the oversized frame and already broadcast
-              // file.upload_error with the correct banner — don't stack a
-              // second, misleading 「Companion 未连接」 bubble on top.
-              if (sendOutcome === "refused") {
-                return
-              }
-              dispatch({
-                type: "ADD_MESSAGE",
-                message: {
-                  id: `${uploadThreadId || "file"}_send_err_${Date.now()}`,
-                  thread_id: uploadThreadId || "",
-                  role: "assistant",
-                  content: `\u274c ${swErr || "Companion 未连接，无法上传文件"}`,
-                  created_at: new Date().toISOString(),
-                },
+              // F2 failure retract: drop the optimistic user turn unless the
+              // WS frame was accepted. Ops run even after a thread switch so
+              // mapBusy clears; panel unlock / error bubble stay gated.
+              const ops = uploadSendFailureOps({
+                clientMessageId,
+                uploadThreadId: uploadThreadId || "",
+                sendOutcome,
+                swErr,
+                applyToActivePanel: shouldApplyStreamEvent(uploadThreadId, activeThreadIdRef.current),
+                composerText: userMessage,
               })
+              for (const op of ops) {
+                if (op.op === "retract") {
+                  dispatch({ type: "REMOVE_MESSAGE", id: op.id })
+                  if (uploadThreadId) {
+                    dispatch({ type: "CLEAR_PENDING_UPLOAD", threadId: uploadThreadId })
+                  }
+                } else if (op.op === "busy_off") {
+                  dispatch({ type: "SET_THREAD_BUSY", threadId: op.threadId, busy: false })
+                } else if (op.op === "unlock_panel") {
+                  dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+                  dispatch({ type: "SET_PROCESSING", isProcessing: false })
+                } else if (op.op === "restore_composer") {
+                  setText((prev) => nextComposerText(prev, op.text))
+                } else if (op.op === "error_bubble") {
+                  dispatch({
+                    type: "ADD_MESSAGE",
+                    message: {
+                      id: `${uploadThreadId || "file"}_send_err_${Date.now()}`,
+                      thread_id: uploadThreadId || "",
+                      role: "assistant",
+                      content: op.content,
+                      created_at: new Date().toISOString(),
+                    },
+                  })
+                }
+              }
             }
           },
         )

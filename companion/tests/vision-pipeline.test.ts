@@ -8,7 +8,10 @@ import assert from "node:assert/strict"
 import {
   analyzeImage,
   extractServerErrorMessage,
+  formatVisionFallbackDims,
+  formatVisionFallbackSubject,
   normalizeVisionBaseUrl,
+  visionImageDataUrl,
 } from "../src/llm/vision-pipeline"
 
 test("normalizeVisionBaseUrl: bare host:port gets /v1 (LM Studio root paste)", () => {
@@ -96,7 +99,14 @@ test("analyzeImage: 2xx error body without choices → readable fallback, never 
   })
   try {
     const r = await analyzeImage(
-      { base64: "Y21zcGFyay1jaG9pY2VsZXNzLXJlZ3Jlc3Npb24=", width: 1053, height: 481, url: "", title: "shot" },
+      {
+        // Real PNG so visionImageDataUrl does not fail-closed before the mock.
+        base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        width: 1053,
+        height: 481,
+        url: "",
+        title: "shot",
+      },
       {
         enabled: true,
         base_url: "http://127.0.0.1:1234",
@@ -111,6 +121,70 @@ test("analyzeImage: 2xx error body without choices → readable fallback, never 
     assert.equal(r.model_used, "none")
     assert.match(r.description, /Failed to load image or audio file/)
     assert.match(r.description, /1053x481px/)
+  } finally {
+    proto.create = original
+  }
+})
+
+test("formatVisionFallbackDims: omit NxNpx when width/height unknown (no 0x0 lie)", () => {
+  assert.equal(formatVisionFallbackDims(1053, 481), ", 1053x481px")
+  assert.equal(formatVisionFallbackDims(0, 0), "")
+  assert.equal(formatVisionFallbackDims(320, 0), "")
+  assert.equal(formatVisionFallbackDims(undefined, 200), "")
+})
+
+test("formatVisionFallbackSubject: omit empty (url) and 0x0px", () => {
+  assert.equal(formatVisionFallbackSubject("shot", "https://ex", 10, 8), 'Screenshot of "shot" (https://ex), 10x8px')
+  assert.equal(formatVisionFallbackSubject("cat.gif", "", 0, 0), 'Screenshot of "cat.gif"')
+})
+
+test("visionImageDataUrl: sniff real raster mime; refuse svg/garbage instead of wrapping as jpeg", () => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  )
+  const gif = Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00])
+  const webp = Buffer.from("RIFF\x0c\x00\x00\x00WEBPVP8L", "binary")
+  assert.match(visionImageDataUrl({ base64: png.toString("base64") })!, /^data:image\/png;base64,/)
+  assert.match(visionImageDataUrl({ base64: gif.toString("base64") })!, /^data:image\/gif;base64,/)
+  assert.match(visionImageDataUrl({ base64: webp.toString("base64") })!, /^data:image\/webp;base64,/)
+  assert.equal(visionImageDataUrl({ base64: "not-a-raster" }), null)
+})
+
+test("analyzeImage: data URL mime follows sniffed bytes (PNG is not labeled jpeg)", async () => {
+  const openaiMod = await import("openai")
+  const OpenAI = (openaiMod as any).default || openaiMod
+  const dummy = new OpenAI({ baseURL: "http://127.0.0.1:9", apiKey: "ollama" })
+  const proto = Object.getPrototypeOf(dummy.chat.completions)
+  const original = proto.create
+  let seenUrl = ""
+  proto.create = async (body: any) => {
+    const part = body?.messages?.[0]?.content?.find((c: any) => c.type === "image_url")
+    seenUrl = part?.image_url?.url || ""
+    return { choices: [{ message: { content: "ok" } }] }
+  }
+  const png = Buffer.concat([
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+    Buffer.from("mime-probe"),
+  ])
+  try {
+    await analyzeImage(
+      { base64: png.toString("base64"), width: 1, height: 1, url: "", title: "p" },
+      {
+        enabled: true,
+        base_url: "http://127.0.0.1:1234",
+        api_key: "ollama",
+        model_name: "m",
+        timeout_ms: 5000,
+        max_tokens: 16,
+        fallback: "metadata",
+        cache_ttl_seconds: 0,
+      } as any,
+    )
+    assert.match(seenUrl, /^data:image\/png;base64,/)
   } finally {
     proto.create = original
   }

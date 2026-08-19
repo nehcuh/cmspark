@@ -4,6 +4,7 @@ import OpenAI from "openai"
 import * as crypto from "crypto"
 import type { VisionConfig } from "../config"
 import { logger } from "../logger"
+import { sniffRasterImage } from "./image-sniff"
 import { shouldBlockVisionRequest } from "./vision-reuse-inherit"
 
 const DEFAULT_VISION_PROMPT =
@@ -71,6 +72,36 @@ export interface ImageInput {
   title: string
 }
 
+/** Omit `NxNpx` when either edge is missing/zero — never interpolate 0x0. */
+export function formatVisionFallbackDims(width?: number, height?: number): string {
+  if (typeof width === "number" && typeof height === "number" && width > 0 && height > 0) {
+    return `, ${width}x${height}px`
+  }
+  return ""
+}
+
+/** Subject line for vision fallback. Omit empty `(url)` and `0x0px`. */
+export function formatVisionFallbackSubject(title: string, url: string, width?: number, height?: number): string {
+  const loc = url ? ` (${url})` : ""
+  return `Screenshot of "${title}"${loc}${formatVisionFallbackDims(width, height)}`
+}
+
+/**
+ * Build the vision data URL from sniffed magic bytes only.
+ * Returns null when the payload is not PNG/JPEG/GIF/WebP — never wrap
+ * SVG/HTML/unknown as jpeg, never trust a declared mime.
+ */
+export function visionImageDataUrl(image: { base64: string }): string | null {
+  let sniffed: ReturnType<typeof sniffRasterImage> = null
+  try {
+    sniffed = sniffRasterImage(Buffer.from(image.base64, "base64"))
+  } catch {
+    sniffed = null
+  }
+  if (!sniffed) return null
+  return `data:${sniffed};base64,${image.base64}`
+}
+
 export async function analyzeImage(
   image: ImageInput,
   config: VisionConfig,
@@ -135,6 +166,10 @@ async function doAnalyze(
     })
 
     const prompt = customPrompt || config.prompt || DEFAULT_VISION_PROMPT
+    const dataUrl = visionImageDataUrl(image)
+    if (!dataUrl) {
+      return buildFallback(image, config, "Image is not a recognized raster")
+    }
 
     const response = await client.chat.completions.create(
       {
@@ -144,7 +179,7 @@ async function doAnalyze(
             role: "user",
             content: [
               { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${image.base64}` } },
+              { type: "image_url", image_url: { url: dataUrl } },
             ],
           },
         ],
@@ -258,10 +293,11 @@ function buildFallback(image: ImageInput, config: VisionConfig, error: string): 
     throw new Error(`Vision analysis failed: ${error}`)
   }
 
+  const subject = formatVisionFallbackSubject(image.title, image.url, image.width, image.height)
   if (config.fallback === "passthrough") {
     // Return minimal metadata — caller will keep original base64
     return {
-      description: `Screenshot of "${image.title}" (${image.url}), ${image.width}x${image.height}px. Vision unavailable: ${error}`,
+      description: `${subject}. Vision unavailable: ${error}`,
       cached: false,
       model_used: "none",
       latency_ms: 0,
@@ -270,7 +306,7 @@ function buildFallback(image: ImageInput, config: VisionConfig, error: string): 
 
   // Default: metadata fallback
   return {
-    description: `Screenshot of "${image.title}" (${image.url}), ${image.width}x${image.height}px. Vision model unavailable: ${error}`,
+    description: `${subject}. Vision model unavailable: ${error}`,
     cached: false,
     model_used: "none",
     latency_ms: 0,

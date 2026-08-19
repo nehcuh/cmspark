@@ -8,7 +8,7 @@ import { getToolDefinitions, getMcpMetaToolDefinitions, ToolDefinition } from ".
 import { tryParseToolArgs } from "../bridge/tool-schemas"
 import { classifyError } from "../security"
 import { logger } from "../logger"
-import { analyzeImage } from "./vision-pipeline"
+import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
 import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
 import { getConfig, type LlmConfig } from "../config"
 import { getMcpManager } from "../mcp"
@@ -1229,12 +1229,17 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
                 if (config.vision.fallback === "metadata") {
                   const errMsg = String(visionErr?.message || visionErr)
+                  const subject = formatVisionFallbackSubject(
+                    String(toolResult.data.title || ""),
+                    String(toolResult.data.url || ""),
+                    Number(toolResult.data.width) || 0,
+                    Number(toolResult.data.height) || 0,
+                  )
                   toolResult = {
                     success: true,
                     data: {
                       vision_description:
-                        `Screenshot of "${toolResult.data.title}" (${toolResult.data.url}), ` +
-                        `${toolResult.data.width}x${toolResult.data.height}px. ` +
+                        `${subject}. ` +
                         `(Vision model unavailable: ${errMsg}. ` +
                         `This is config.vision only — do NOT hunt for local ollama/qwen3-vl OpenAI servers. ` +
                         `For browser text use get_page_text; for desktop on-screen text use host_computer describe. ` +

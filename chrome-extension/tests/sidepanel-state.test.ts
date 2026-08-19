@@ -148,6 +148,81 @@ test("normalizeConfig flattens context_compaction modes", () => {
   )
 })
 
+test("pendingUploads is keyed by thread so concurrent uploads do not overwrite", () => {
+  let s = agentReducer(initialState, {
+    type: "SET_PENDING_UPLOAD",
+    threadId: "thread-a",
+    messageId: "thread-a_user_1_abc",
+    composerText: "看图 A",
+  })
+  s = agentReducer(s, {
+    type: "SET_PENDING_UPLOAD",
+    threadId: "thread-b",
+    messageId: "thread-b_user_2_def",
+    composerText: "看图 B",
+  })
+  assert.equal(s.pendingUploads["thread-a"]?.messageId, "thread-a_user_1_abc")
+  assert.equal(s.pendingUploads["thread-b"]?.messageId, "thread-b_user_2_def")
+  s = agentReducer(s, { type: "CLEAR_PENDING_UPLOAD", threadId: "thread-a" })
+  assert.equal(s.pendingUploads["thread-a"], undefined)
+  assert.equal(s.pendingUploads["thread-b"]?.messageId, "thread-b_user_2_def")
+  s = agentReducer(s, { type: "REQUEST_COMPOSER_RESTORE", text: "看图 B" })
+  assert.equal(s.composerRestore?.text, "看图 B")
+  s = agentReducer(s, { type: "CLEAR_COMPOSER_RESTORE" })
+  assert.equal(s.composerRestore, null)
+})
+
+test("REMOVE_MESSAGE after F1 adopt is a no-op on the temp id (landed turn stays)", () => {
+  const tempId = "thread-a_user_1730000000999_abc"
+  const bubble = {
+    id: tempId,
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "landed",
+    created_at: "2026-08-19T00:00:00.000Z",
+  }
+  let s = agentReducer(initialState, { type: "ADD_MESSAGE", message: bubble })
+  s = agentReducer(s, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: "thread-a_persist_1",
+      thread_id: "thread-a",
+      role: "user",
+      content: "landed",
+      created_at: "2026-08-19T00:00:01.000Z",
+      client_message_id: tempId,
+    } as any,
+  })
+  assert.equal(s.messages[0]!.id, "thread-a_persist_1")
+  s = agentReducer(s, { type: "REMOVE_MESSAGE", id: tempId })
+  assert.equal(s.messages.length, 1)
+  assert.equal(s.messages[0]!.id, "thread-a_persist_1")
+})
+
+test("REMOVE_MESSAGE drops the optimistic upload bubble by exact id (post-#197 F2 failure retract)", () => {
+  const bubble = {
+    id: "thread-a_user_1_abc",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "请分析\n📎 shot.png",
+    created_at: "2026-08-19T00:00:00.000Z",
+  }
+  const other = {
+    id: "thread-a_user_2_def",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "keep me",
+    created_at: "2026-08-19T00:00:01.000Z",
+  }
+  let s = agentReducer(initialState, { type: "ADD_MESSAGE", message: bubble })
+  s = agentReducer(s, { type: "ADD_MESSAGE", message: other })
+  s = agentReducer(s, { type: "REMOVE_MESSAGE", id: bubble.id })
+  assert.equal(s.messages.length, 1)
+  assert.equal(s.messages[0]!.id, other.id)
+  const noop = agentReducer(s, { type: "REMOVE_MESSAGE", id: "missing" })
+  assert.equal(noop.messages.length, 1)
+})
+
 test("ADD_MESSAGE dedupes by message id (optimistic panel + SW chat.user echo)", () => {
   const msg = {
     id: "thread-a_user_1",

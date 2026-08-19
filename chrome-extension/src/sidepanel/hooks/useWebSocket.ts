@@ -173,8 +173,10 @@ export function useWebSocket() {
   // will auto-create again) or when thread.created acknowledges the request.
   const creatingBlankThreadRef = useRef(false)
 
-  // Keep refs in sync
+  // Keep refs in sync (listener is mount-once — never close over render state)
   activeThreadRef.current = state.activeThreadId
+  const pendingUploadsRef = useRef(state.pendingUploads)
+  pendingUploadsRef.current = state.pendingUploads
 
   // P0-B: clear accumulated stream buffer on thread switch so late tokens from
   // the previous thread cannot reappear via chat.done → ADD_MESSAGE.
@@ -1675,6 +1677,19 @@ export function useWebSocket() {
           if (uploadErrTid) {
             dispatch({ type: "SET_THREAD_BUSY", threadId: uploadErrTid, busy: false })
           }
+          // Companion parse/type/size fail after WS accept: retract the
+          // exact optimistic id (ref — listener must not close over render state).
+          const pending = uploadErrTid ? pendingUploadsRef.current[uploadErrTid] : undefined
+          if (pending) {
+            dispatch({ type: "REMOVE_MESSAGE", id: pending.messageId })
+            dispatch({ type: "CLEAR_PENDING_UPLOAD", threadId: uploadErrTid })
+            if (
+              pending.composerText &&
+              shouldApplyStreamEvent(uploadErrTid, activeThreadRef.current)
+            ) {
+              dispatch({ type: "REQUEST_COMPOSER_RESTORE", text: pending.composerText })
+            }
+          }
           if (!shouldApplyStreamEvent(uploadErrTid, activeThreadRef.current)) break
           streamingRef.current = ""
           reasoningRef.current = ""
@@ -1706,6 +1721,7 @@ export function useWebSocket() {
           const upTid =
             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
           if (upTid) {
+            dispatch({ type: "CLEAR_PENDING_UPLOAD", threadId: upTid })
             dispatch({ type: "SET_THREAD_BUSY", threadId: upTid, busy: false })
           }
           // F3: chip clear has no thread ownership — dispatch before the gate,

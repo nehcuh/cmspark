@@ -150,6 +150,10 @@ export interface AgentState {
   isProcessing: boolean
   /** Bumped on file.uploaded so InputArea can drop chips after companion admit. */
   composerUploadClearSeq: number
+  /** In-flight file.upload optimistic bubbles, keyed by threadId. */
+  pendingUploads: Record<string, { messageId: string; composerText: string }>
+  /** One-shot: App restores composer text after a failed upload, then clears. */
+  composerRestore: { text: string; token: number } | null
   obsidianProfileStatus: { ok: boolean; message: string } | null
   /** Status of the last companion-side folder import (null = idle). */
   knowledgeImportStatus: { ok: boolean; message: string } | null
@@ -269,6 +273,7 @@ export type AgentAction =
   | { type: "SET_THREADS"; threads: Thread[] }
   | { type: "SET_ACTIVE_THREAD"; threadId: string }
   | { type: "ADD_MESSAGE"; message: Message }
+  | { type: "REMOVE_MESSAGE"; id: string }
   | { type: "UPDATE_MESSAGE"; id: string; content: string }
   | { type: "SET_MESSAGES"; messages: Message[] }
   | { type: "ADD_TOOL_CALL"; messageId: string; toolCall: any }
@@ -327,6 +332,10 @@ export type AgentAction =
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
   | { type: "SET_PROCESSING"; isProcessing: boolean }
   | { type: "BUMP_COMPOSER_UPLOAD_CLEAR" }
+  | { type: "SET_PENDING_UPLOAD"; threadId: string; messageId: string; composerText: string }
+  | { type: "CLEAR_PENDING_UPLOAD"; threadId: string }
+  | { type: "REQUEST_COMPOSER_RESTORE"; text: string }
+  | { type: "CLEAR_COMPOSER_RESTORE" }
   | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_KNOWLEDGE_IMPORT_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
@@ -469,6 +478,8 @@ export const initialState: AgentState = {
   companionConfig: null,
   isProcessing: false,
   composerUploadClearSeq: 0,
+  pendingUploads: {},
+  composerRestore: null,
   obsidianProfileStatus: null,
   knowledgeImportStatus: null,
   summarizingThreadId: null,
@@ -703,6 +714,11 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       // bubble matched by client_message_id (F1), falling back to the last temp
       // user bubble for pre-F1 companions (DoD #13).
       return reduceAddMessage(state, action.message)
+    case "REMOVE_MESSAGE":
+      return {
+        ...state,
+        messages: state.messages.filter((m) => m.id !== action.id),
+      }
     case "UPDATE_MESSAGE":
       return {
         ...state,
@@ -1005,6 +1021,27 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, isProcessing: action.isProcessing }
     case "BUMP_COMPOSER_UPLOAD_CLEAR":
       return { ...state, composerUploadClearSeq: state.composerUploadClearSeq + 1 }
+    case "SET_PENDING_UPLOAD":
+      if (!action.threadId) return state
+      return {
+        ...state,
+        pendingUploads: {
+          ...state.pendingUploads,
+          [action.threadId]: { messageId: action.messageId, composerText: action.composerText },
+        },
+      }
+    case "CLEAR_PENDING_UPLOAD": {
+      if (!action.threadId || !(action.threadId in state.pendingUploads)) return state
+      const { [action.threadId]: _dropped, ...rest } = state.pendingUploads
+      return { ...state, pendingUploads: rest }
+    }
+    case "REQUEST_COMPOSER_RESTORE":
+      return {
+        ...state,
+        composerRestore: { text: action.text, token: (state.composerRestore?.token ?? 0) + 1 },
+      }
+    case "CLEAR_COMPOSER_RESTORE":
+      return { ...state, composerRestore: null }
     case "SET_THREAD_BUSY": {
       const id = action.threadId
       if (!id) return state

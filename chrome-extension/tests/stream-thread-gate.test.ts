@@ -44,6 +44,31 @@ test("fileUploadedApplyToPanel: only panel chrome is thread-gated (F3)", () => {
   assert.equal(fileUploadedApplyToPanel("thread-a", null), false)
 })
 
+test("file.upload_error retracts via pendingUploadsRef (not stale state.messages)", () => {
+  const src = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
+  assert.match(src, /pendingUploadsRef\.current = state\.pendingUploads/)
+  const start = src.indexOf('case "file.upload_error"')
+  assert.ok(start >= 0, "file.upload_error case missing")
+  const body = src.slice(start, start + 2000)
+  assert.match(body, /pendingUploadsRef\.current/)
+  assert.match(body, /REMOVE_MESSAGE/)
+  assert.equal(body.includes("state.messages"), false)
+  assert.match(body, /CLEAR_PENDING_UPLOAD/)
+  const restoreIdx = body.indexOf("REQUEST_COMPOSER_RESTORE")
+  const gateIdx = body.indexOf("shouldApplyStreamEvent(uploadErrTid")
+  assert.ok(restoreIdx >= 0, "REQUEST_COMPOSER_RESTORE missing")
+  assert.ok(gateIdx >= 0 && gateIdx < restoreIdx, "composer restore must sit behind the active-thread gate")
+})
+
+test("InputArea consumes composerRestore via nextComposerText", () => {
+  const src = readFileSync(join(process.cwd(), "src/sidepanel/App.tsx"), "utf8")
+  const start = src.indexOf("state.composerRestore")
+  assert.ok(start >= 0, "composerRestore effect missing")
+  const body = src.slice(start, start + 400)
+  assert.match(body, /nextComposerText\(/)
+  assert.match(body, /CLEAR_COMPOSER_RESTORE/)
+})
+
 test("file.uploaded: chip-clear BUMP is dispatched before the thread gate (F3)", () => {
   // Source-order lock (pre-F3 this ordering was inverted → red): the BUMP sat
   // behind shouldApplyStreamEvent, so foreign-thread uploads never cleared chips.

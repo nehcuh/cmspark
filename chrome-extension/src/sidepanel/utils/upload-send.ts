@@ -40,6 +40,52 @@ export function uploadSendOutcome(
   response: unknown,
 ): "ok" | "refused" | "error" {
   if (isFrameBudgetRefusal(response)) return "refused"
-  if (swErr || !(response as { ok?: unknown } | null | undefined)?.ok) return "error"
-  return "ok"
+  const ok = !!(response as { ok?: unknown } | null | undefined)?.ok
+  // SW answered ok — lastError after a delivered sendResponse must not retract
+  // a turn companion already accepted.
+  if (ok) return "ok"
+  // SW answered failure (offline / frame-budget / etc.) — it already
+  // broadcast file.upload_error. Treat like refused so the panel does not
+  // stack a second 「Companion 未连接」 bubble (F6 for the common drop).
+  if (response && typeof response === "object") return "refused"
+  return "error"
+}
+
+/** Restore caption only when the composer is still empty. */
+export function nextComposerText(prev: string, restore: string): string {
+  return prev.trim() ? prev : restore
+}
+
+/**
+ * Panel ops after a failed file.upload send (post-#197 F2).
+ * Always retract the optimistic user bubble — keep it only on sendOutcome === "ok".
+ * "refused" still retracts but must not stack a second 「Companion 未连接」 bubble (F6).
+ * Thread-switch: retract + mapBusy-off still apply; do not unlock the new thread.
+ */
+export type UploadSendFailureOp =
+  | { op: "retract"; id: string }
+  | { op: "busy_off"; threadId: string }
+  | { op: "unlock_panel" }
+  | { op: "restore_composer"; text: string }
+  | { op: "error_bubble"; content: string }
+
+export function uploadSendFailureOps(opts: {
+  clientMessageId: string
+  uploadThreadId: string
+  sendOutcome: "refused" | "error"
+  swErr?: string | null
+  applyToActivePanel: boolean
+  composerText?: string
+}): UploadSendFailureOp[] {
+  const ops: UploadSendFailureOp[] = [{ op: "retract", id: opts.clientMessageId }]
+  if (opts.uploadThreadId) ops.push({ op: "busy_off", threadId: opts.uploadThreadId })
+  if (!opts.applyToActivePanel) return ops
+  ops.push({ op: "unlock_panel" })
+  if (opts.composerText) ops.push({ op: "restore_composer", text: opts.composerText })
+  if (opts.sendOutcome === "refused") return ops
+  ops.push({
+    op: "error_bubble",
+    content: `\u274c ${opts.swErr || "Companion 未连接，无法上传文件"}`,
+  })
+  return ops
 }

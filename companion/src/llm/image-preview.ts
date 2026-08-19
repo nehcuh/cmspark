@@ -8,16 +8,18 @@ import { decodePngToRgba } from "../computer/png-decode"
 export const PREVIEW_MAX_EDGE = 96
 export const PREVIEW_MAX_BYTES = 8 * 1024
 
-/** Best-effort raster dimensions (PNG IHDR / JPEG SOF). */
+function saneDims(width: number, height: number): { width: number; height: number } | undefined {
+  if (width > 0 && height > 0 && width < 20000 && height < 20000) return { width, height }
+  return undefined
+}
+
+/** Best-effort raster dimensions (PNG IHDR / JPEG SOF / GIF LSD / WebP VP8*). */
 export function parseRasterDims(buf: Buffer, mime: string): { width: number; height: number } | undefined {
   if (!buf || buf.length < 10) return undefined
   if (mime === "image/png") {
     if (buf.length < 24) return undefined
     if (buf[0] !== 0x89 || buf[1] !== 0x50) return undefined
-    const width = buf.readUInt32BE(16)
-    const height = buf.readUInt32BE(20)
-    if (width > 0 && height > 0 && width < 20000 && height < 20000) return { width, height }
-    return undefined
+    return saneDims(buf.readUInt32BE(16), buf.readUInt32BE(20))
   }
   if (mime === "image/jpeg") {
     let i = 2
@@ -28,10 +30,7 @@ export function parseRasterDims(buf: Buffer, mime: string): { width: number; hei
       }
       const marker = buf[i + 1]!
       if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
-        const height = buf.readUInt16BE(i + 5)
-        const width = buf.readUInt16BE(i + 7)
-        if (width > 0 && height > 0) return { width, height }
-        return undefined
+        return saneDims(buf.readUInt16BE(i + 7), buf.readUInt16BE(i + 5))
       }
       if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
         i += 2
@@ -41,6 +40,32 @@ export function parseRasterDims(buf: Buffer, mime: string): { width: number; hei
       const len = buf.readUInt16BE(i + 2)
       if (len < 2) break
       i += 2 + len
+    }
+    return undefined
+  }
+  if (mime === "image/gif") {
+    if (buf[0] !== 0x47 || buf[1] !== 0x49 || buf[2] !== 0x46) return undefined
+    return saneDims(buf.readUInt16LE(6), buf.readUInt16LE(8))
+  }
+  if (mime === "image/webp") {
+    if (buf.length < 20) return undefined
+    if (buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WEBP") return undefined
+    const fourcc = buf.toString("ascii", 12, 16)
+    if (fourcc === "VP8X") {
+      if (buf.length < 30) return undefined
+      const width = 1 + (buf[24]! | (buf[25]! << 8) | (buf[26]! << 16))
+      const height = 1 + (buf[27]! | (buf[28]! << 8) | (buf[29]! << 16))
+      return saneDims(width, height)
+    }
+    if (fourcc === "VP8L") {
+      if (buf.length < 25 || buf[20] !== 0x2f) return undefined
+      const bits = buf.readUInt32LE(21)
+      return saneDims((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1)
+    }
+    if (fourcc === "VP8 ") {
+      if (buf.length < 30) return undefined
+      if (buf[23] !== 0x9d || buf[24] !== 0x01 || buf[25] !== 0x2a) return undefined
+      return saneDims(buf.readUInt16LE(26) & 0x3fff, buf.readUInt16LE(28) & 0x3fff)
     }
   }
   return undefined
