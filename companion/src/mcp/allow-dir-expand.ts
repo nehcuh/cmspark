@@ -77,6 +77,13 @@ export const SENSITIVE_HOME_PREFIXES = [
   ".config/gcloud",
   ".config/gh",
   ".kube",
+  // Plaintext-token files / dirs directly under home (L3 2026-08: the gate
+  // copy claimed credential paths are hard-blocked; make it true for the
+  // common ones). Shared with the file-open cage — keep both surfaces aligned.
+  ".git-credentials",
+  ".npmrc",
+  ".netrc",
+  ".docker",
   // Windows profile secrets often live under AppData
   "appdata/roaming/gnupg",
   "appdata/roaming/openssh",

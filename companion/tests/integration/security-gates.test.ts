@@ -435,6 +435,21 @@ test("item 12: navigate to file:///etc/passwd is path-caged (no confirmation)", 
   assert.doesNotMatch(result.error!, /scheme is not allowed/i)
 })
 
+test("item 12: navigate to drive-relative file:///C:path is hard-blocked (F1, no confirmation)", async () => {
+  // F1: fileURLToPath(file:///C:path) is drive-relative on win32; resolving it
+  // against the companion cwd produced a fake in-home OFFER while Chrome opens
+  // the real per-drive-cwd target outside the cage. Must never reach a dialog.
+  const executeTool = createToolExecutor(serverSideWs)
+  const result = await executeTool("tc_nav_drive_rel", "navigate", {
+    tabId: 1,
+    url: "file:///C:Windows/System32",
+  })
+  assert.equal(result.success, false)
+  assert.ok(result.error)
+  assert.match(result.error!, /Security Block/)
+  assert.doesNotMatch(result.error!, /scheme is not allowed/i)
+})
+
 test("item 12: navigate with invalid URL is rejected before any WS send", async () => {
   const executeTool = createToolExecutor(serverSideWs)
   const result = await executeTool("tc_nav_invalid", "navigate", {

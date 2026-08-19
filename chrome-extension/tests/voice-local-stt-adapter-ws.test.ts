@@ -184,12 +184,118 @@ test("classic: voice.stt.start is deferred until after captureStop (idle-safe)",
   assert.ok(iChunk > iStart && iEnd > iChunk, `upload order ${timeline.join(",")}`)
 })
 
+/**
+ * Faithful fake of the real companion voice.stt protocol (M4 — the previous
+ * fake asserted a companion that does not exist):
+ * - start while a session holds the max-1 slot → resource_conflict error
+ *   (stt-session-service.ts start: bound infer still in progress)
+ * - every chunk/end for a rejected/unknown session → session_unknown error
+ *   (requirePeer, stt-handlers.ts) — the old fake never sent these
+ * - abort → peer-level abort frees the peer's bound slot (V2) and always
+ *   replies an error ACK ("aborted" on success, session_unknown otherwise)
+ * Replies are macrotasks (setTimeout 0): real WS delivers each message in its
+ * own task, so the adapter's microtask continuation (conflict retry block)
+ * runs between the start rejection and the per-chunk rejects.
+ */
+function fakeCompanion(sent: any[], opts?: { holderBusy?: boolean }) {
+  const inbox: { emit?: (m: any) => void } = {}
+  let holderBusy = opts?.holderBusy ?? false
+  const sessions = new Set<string>()
+  const reply = (m: any) => {
+    setTimeout(() => inbox.emit?.(m), 0)
+  }
+  const send = (msg: any) => {
+    sent.push(msg)
+    const sid = String(msg.sessionId ?? "")
+    switch (msg.type) {
+      case "voice.stt.start":
+        if (holderBusy) {
+          reply({
+            type: "voice.stt.error",
+            v: 1,
+            sessionId: sid,
+            code: "resource_conflict",
+            message: "previous STT infer still in progress",
+          })
+        } else {
+          holderBusy = true
+          sessions.add(sid)
+          reply({ type: "voice.stt.partial", v: 1, sessionId: sid, status: "receiving" })
+        }
+        break
+      case "voice.stt.chunk":
+        // No per-chunk ack on success (fire-and-forget); requirePeer rejects
+        if (!sessions.has(sid)) {
+          reply({
+            type: "voice.stt.error",
+            v: 1,
+            sessionId: sid,
+            code: "session_unknown",
+            message: "no matching session",
+          })
+        }
+        break
+      case "voice.stt.end":
+        if (!sessions.has(sid)) {
+          reply({
+            type: "voice.stt.error",
+            v: 1,
+            sessionId: sid,
+            code: "session_unknown",
+            message: "no matching session",
+          })
+        } else {
+          sessions.delete(sid)
+          holderBusy = false
+          reply({
+            type: "voice.stt.result",
+            v: 1,
+            sessionId: sid,
+            text: `ok-${sid}`,
+            ms: 5,
+            modelId: "medium",
+          })
+        }
+        break
+      case "voice.stt.abort":
+        if (holderBusy) {
+          // V2: same peer aborts whatever session holds the slot, stale sid or not
+          sessions.clear()
+          holderBusy = false
+          reply({
+            type: "voice.stt.error",
+            v: 1,
+            sessionId: sid,
+            code: "aborted",
+            message: "session aborted",
+          })
+        } else {
+          reply({
+            type: "voice.stt.error",
+            v: 1,
+            sessionId: sid,
+            code: "session_unknown",
+            message: "no active session",
+          })
+        }
+        break
+    }
+  }
+  const onMessage = (h: (m: any) => void) => {
+    inbox.emit = h
+    return () => {
+      inbox.emit = undefined
+    }
+  }
+  return { send, onMessage }
+}
+
 test("classic: resource_conflict retries once with -r1 sessionId", async () => {
   const sent: any[] = []
-  const inbox: { emit?: (m: any) => void } = {}
   const finals: string[] = []
   const errors: string[] = []
-  let endCount = 0
+  let ends = 0
+  const companion = fakeCompanion(sent, { holderBusy: true })
 
   const adapter = createLocalSttAdapter(
     {
@@ -200,38 +306,13 @@ test("classic: resource_conflict retries once with -r1 sessionId", async () => {
       onError: (c) => {
         errors.push(c)
       },
-      onEnd: () => {},
+      onEnd: () => {
+        ends++
+      },
     },
     {
-      send: (msg) => {
-        sent.push(msg)
-        if (msg.type === "voice.stt.end") {
-          endCount++
-          const sid = String(msg.sessionId)
-          queueMicrotask(() => {
-            if (endCount === 1) {
-              inbox.emit?.({
-                type: "voice.stt.error",
-                sessionId: sid,
-                code: "resource_conflict",
-                message: "busy",
-              })
-            } else {
-              inbox.emit?.({
-                type: "voice.stt.result",
-                sessionId: sid,
-                text: "retried-ok",
-              })
-            }
-          })
-        }
-      },
-      onMessage: (h) => {
-        inbox.emit = h
-        return () => {
-          inbox.emit = undefined
-        }
-      },
+      send: companion.send,
+      onMessage: companion.onMessage,
       modelId: "medium",
       startCapture: fakeCaptureFactory(silentWav()),
     },
@@ -240,49 +321,56 @@ test("classic: resource_conflict retries once with -r1 sessionId", async () => {
   adapter.start({ sessionId: "classic-retry", modelId: "medium" })
   await new Promise((r) => setTimeout(r, 20))
   adapter.stop()
+
+  // Sample mid-backoff: stale-sid session_unknown rejects + the abort's own
+  // error ACK arrive inside the 250ms window and must not kill the adapter.
+  let waited = 0
+  while (!sent.some((m) => m.type === "voice.stt.abort") && waited < 500) {
+    await new Promise((r) => setTimeout(r, 10))
+    waited += 10
+  }
+  await new Promise((r) => setTimeout(r, 100))
+  assert.deepEqual(errors, [], `stale-sid ACKs during backoff must not surface: ${errors}`)
+  assert.equal(ends, 0, "stale-sid ACKs during backoff must not end the session")
+
   await new Promise((r) => setTimeout(r, 400))
 
   const starts = sent.filter((m) => m.type === "voice.stt.start")
-  assert.ok(starts.length >= 2, `expected orig+retry starts, got ${starts.length}`)
-  assert.ok(
-    starts.some((m) => String(m.sessionId).endsWith("-r1")),
-    `expected -r1 retry start, starts=${starts.map((s) => s.sessionId).join(",")}`,
+  assert.deepEqual(
+    starts.map((m) => m.sessionId),
+    ["classic-retry", "classic-retry-r1"],
   )
-  assert.deepEqual(finals, ["retried-ok"])
-  assert.equal(errors.length, 0, `retry success must not surface conflict: ${errors}`)
+  assert.deepEqual(finals, ["ok-classic-retry-r1"])
+  assert.deepEqual(errors, [], `retry success must not surface conflict: ${errors}`)
+  assert.equal(ends, 1)
+
+  // After conflict recovery the adapter is not locked: a fresh dictation works.
+  adapter.start({ sessionId: "classic-after", modelId: "medium" })
+  await new Promise((r) => setTimeout(r, 20))
+  adapter.stop()
+  await new Promise((r) => setTimeout(r, 100))
+  assert.deepEqual(finals, ["ok-classic-retry-r1", "ok-classic-after"])
+  assert.deepEqual(errors, [])
   adapter.destroy()
 })
 
 test("classic: abort during conflict backoff does not start -r1", async () => {
   const sent: any[] = []
-  const inbox: { emit?: (m: any) => void } = {}
+  const errors: string[] = []
+  const companion = fakeCompanion(sent, { holderBusy: true })
 
   const adapter = createLocalSttAdapter(
     {
       onStart: () => {},
       onResult: () => {},
-      onError: () => {},
+      onError: (c) => {
+        errors.push(c)
+      },
       onEnd: () => {},
     },
     {
-      send: (msg) => {
-        sent.push(msg)
-        if (msg.type === "voice.stt.end") {
-          queueMicrotask(() => {
-            inbox.emit?.({
-              type: "voice.stt.error",
-              sessionId: msg.sessionId,
-              code: "resource_conflict",
-            })
-          })
-        }
-      },
-      onMessage: (h) => {
-        inbox.emit = h
-        return () => {
-          inbox.emit = undefined
-        }
-      },
+      send: companion.send,
+      onMessage: companion.onMessage,
       modelId: "medium",
       startCapture: fakeCaptureFactory(silentWav()),
     },
@@ -301,7 +389,35 @@ test("classic: abort during conflict backoff does not start -r1", async () => {
     0,
     `cancelled classic must not retry: ${starts.map((s) => s.sessionId).join(",")}`,
   )
+  assert.deepEqual(errors, ["aborted"])
+
+  // Abort during backoff must not lock the adapter either.
+  const finals: string[] = []
+  const adapter2 = createLocalSttAdapter(
+    {
+      onStart: () => {},
+      onResult: ({ finalChunk }) => {
+        if (finalChunk) finals.push(finalChunk)
+      },
+      onError: (c) => {
+        errors.push(c)
+      },
+      onEnd: () => {},
+    },
+    {
+      send: companion.send,
+      onMessage: companion.onMessage,
+      modelId: "medium",
+      startCapture: fakeCaptureFactory(silentWav()),
+    },
+  )
+  adapter2.start({ sessionId: "classic-after-abort", modelId: "medium" })
+  await new Promise((r) => setTimeout(r, 20))
+  adapter2.stop()
+  await new Promise((r) => setTimeout(r, 100))
+  assert.deepEqual(finals, ["ok-classic-after-abort"])
   adapter.destroy()
+  adapter2.destroy()
 })
 
 test("abort during recording: voice.stt.abort + silent error path", async () => {

@@ -10,9 +10,10 @@
 //   defense (a malicious page cannot know the token).
 // - Host header must equal `127.0.0.1:<port>` or `localhost:<port>`.
 // - Origin header (on POSTs) must equal one of those loopback origins.
-// - `/api/test` and `/api/testVision` enforce an SSRF guard: private IPs,
-//   loopback, link-local (incl. AWS metadata 169.254.169.254) are blocked.
-//   A small LLM-provider host allowlist may bypass the private-IP block.
+// - `/api/test` and `/api/testVision` enforce an SSRF guard: RFC1918 /
+//   loopback intranet LLM hosts are allowed; cloud-metadata and link-local
+//   addresses (incl. AWS metadata 169.254.169.254) stay blocked. DNS
+//   resolution failure is fail-closed (treated as blocked).
 
 import * as http from "http"
 import * as crypto from "crypto"
@@ -20,6 +21,7 @@ import * as dns from "dns"
 import * as net from "net"
 import { getConfig, saveConfig, isMaskedApiKey } from "./config"
 import { probeLlmConnection } from "./llm/connection-test"
+import { normalizeIpLiteral } from "./security"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -113,19 +115,19 @@ const LLM_HOST_ALLOWLIST = new Set<string>([
   "127.0.0.1",
 ])
 
-/** Cloud metadata + 169.254/16 only — RFC1918/loopback are valid LAN LLM hosts. */
+/** Cloud metadata + 169.254/16 + IPv6 link-local — RFC1918/loopback are valid LAN LLM hosts. */
 function isMetadataOrLinkLocalIp(ip: string): boolean {
-  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip
-  if (net.isIPv4(v4)) {
-    const parts = v4.split(".").map((p) => parseInt(p, 10))
-    if (parts.length !== 4 || parts.some((n) => isNaN(n) || n < 0 || n > 255)) return true
-    const [a, b] = parts
-    if (a === 169 && b === 254) return true
-    return false
+  // Brackets, `::` compression and v4-mapped forms (dotted + hex) are all
+  // canonicalized by normalizeIpLiteral before range matching.
+  const n = normalizeIpLiteral(ip)
+  if (!n) return true // unreachable for net.isIP / DNS results — fail closed
+  if (net.isIPv4(n)) {
+    const [a, b] = n.split(".").map((p) => parseInt(p, 10))
+    return a === 169 && b === 254
   }
-  const lower = v4.toLowerCase()
-  if (lower === "fd00:ec2::254") return true
-  if (lower.startsWith("fe80")) return true
+  if (n === "fd00:0ec2:0000:0000:0000:0000:0000:0254") return true // AWS IMDS v6
+  const first = parseInt(n.split(":")[0], 16)
+  if ((first & 0xffc0) === 0xfe80) return true // fe80::/10 link-local
   return false
 }
 
@@ -134,19 +136,26 @@ function isMetadataOrLinkLocalIp(ip: string): boolean {
  * DNS names that resolve onto 169.254/16 are still blocked (rebinding).
  */
 async function hostnameIsBlockedForLlm(hostname: string): Promise<boolean> {
-  const lowerHost = String(hostname || "").toLowerCase()
+  let lowerHost = String(hostname || "").toLowerCase()
+  // `new URL().hostname` keeps the brackets on IPv6 literals — strip them so
+  // net.isIP below actually recognizes the literal.
+  if (lowerHost.startsWith("[") && lowerHost.endsWith("]")) {
+    lowerHost = lowerHost.slice(1, -1)
+  }
   if (lowerHost === "metadata.google.internal") return true
   if (LLM_HOST_ALLOWLIST.has(lowerHost)) return false
-  if (net.isIP(hostname)) {
-    return isMetadataOrLinkLocalIp(hostname)
+  if (net.isIP(lowerHost)) {
+    return isMetadataOrLinkLocalIp(lowerHost)
   }
   try {
-    const result = await dns.promises.lookup(hostname, { all: true })
+    const result = await dns.promises.lookup(lowerHost, { all: true })
     if (result.length === 0) return true
     return result.some((r) => isMetadataOrLinkLocalIp(r.address))
   } catch {
-    // Unknown host — let the probe fail with a connection error, not SSRF copy.
-    return false
+    // DNS failure is fail-closed: an unresolvable host is blocked outright
+    // (a fail-open here let bracketed IPv6 literals skip the guard via a
+    // getaddrinfo error on the bracketed name).
+    return true
   }
 }
 

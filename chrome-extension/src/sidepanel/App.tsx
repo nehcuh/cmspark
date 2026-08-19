@@ -896,16 +896,19 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const effectiveModel =
     (activeThread?.config_override?.model_name || "").trim() ||
     state.config.model_name
-  const useNativeVision = resolveNativeVision({
-    modelName: effectiveModel,
-    mode: state.config.native_vision,
-    // Probe bit is companion-keyed {url,model}. Never pass the unkeyed
-    // session flag — it would treat any later model as native after one test.
-  })
   const effectiveLlmBase =
     (typeof activeThread?.config_override?.base_url === "string" &&
       activeThread.config_override.base_url.trim()) ||
     state.config.base_url
+  const useNativeVision = resolveNativeVision({
+    modelName: effectiveModel,
+    baseUrl: effectiveLlmBase,
+    mode: state.config.native_vision,
+    // Probe bit is keyed {url,model} (companion config.test echo), so preflight,
+    // destHost and the dest-ack route exactly like the companion probe cache.
+    // Never pass the unkeyed session flag — it would treat any later model as
+    // native after one test.
+  })
   const destHost = extractHostname(
     useNativeVision ? effectiveLlmBase : state.config.vision_base_url,
   )
@@ -1187,6 +1190,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       }
       const useNative = resolveNativeVision({
         modelName: effectiveModel,
+        baseUrl: effectiveLlmBase,
         mode: state.config.native_vision,
       })
       if (!useNative && !visionRailOpen(state.config)) {

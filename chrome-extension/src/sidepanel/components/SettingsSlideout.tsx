@@ -1109,7 +1109,7 @@ export function SettingsSlideout() {
               网页截图 / analyze_image 过去一律发给「视觉分析」里配置的模型（默认
               Ollama/llava）。主模型本身能看图时应走主模型。点「测试连接」会探测端点是否接受图片。
               {config.native_vision_detected === true
-                ? " 最近一次探测：支持看图。"
+                ? " 最近一次探测：端点接受图片输入。"
                 : config.native_vision_detected === false
                   ? " 最近一次探测：未接受图片。"
                   : " 尚未探测。"}

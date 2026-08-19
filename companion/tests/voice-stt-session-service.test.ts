@@ -684,3 +684,120 @@ test("forceAbort clears inferring so a new start can proceed", async () => {
   )
   assert.equal(ok.ok, true)
 })
+
+test("V2: abort with stale sessionId from same peer frees the bound slot", async () => {
+  const dataDir = tempDataDir()
+  const whisperRoot = path.join(dataDir, "models", "whisper")
+  plantReadyModel(whisperRoot)
+  const svc = makeService({ dataDir, whisperRoot })
+
+  assert.equal(
+    svc.start(
+      {
+        sessionId: "old",
+        modelId: "small",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+      },
+      "peerA",
+    ).ok,
+    true,
+  )
+  // Conflict-retry shape: the rejected sid never existed, the holder is bound.
+  const ab = svc.abort("old-r1", "peerA")
+  assert.equal(ab.ok, true)
+  assert.equal(svc.getActive(), null)
+  assert.equal(svc.getBoundPeerId(), null)
+  const ok = svc.start(
+    {
+      sessionId: "new",
+      modelId: "small",
+      format: "wav",
+      sampleRate: 16000,
+      channels: 1,
+    },
+    "peerA",
+  )
+  assert.equal(ok.ok, true)
+  svc.forceAbort()
+})
+
+test("V2: peer-level abort cancels in-flight infer; late end() must not drop the retry session", async () => {
+  const dataDir = tempDataDir()
+  const whisperRoot = path.join(dataDir, "models", "whisper")
+  plantReadyModel(whisperRoot)
+  let release!: () => void
+  const gate = new Promise<void>((r) => {
+    release = r
+  })
+  const svc = makeService({
+    dataDir,
+    whisperRoot,
+    runWhisper: async ({ signal }) => {
+      await gate
+      if (signal?.aborted) {
+        throw new WhisperRunnerError("aborted", "aborted")
+      }
+      return { text: "retry-text", ms: 1 }
+    },
+  })
+  assert.ok(
+    svc.start(
+      {
+        sessionId: "old",
+        modelId: "small",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+      },
+      "peerA",
+    ).ok,
+  )
+  svc.chunk("old", 0, Buffer.from("x"), "peerA")
+  const endP = svc.end("old", 1, "peerA")
+  await new Promise((r) => setTimeout(r, 20))
+
+  // Holder is mid-infer → retry start conflicts (adapter-side resource_conflict)
+  const blocked = svc.start(
+    {
+      sessionId: "old-r1",
+      modelId: "small",
+      format: "wav",
+      sampleRate: 16000,
+      channels: 1,
+    },
+    "peerA",
+  )
+  assert.equal(blocked.ok, false)
+  if (!blocked.ok) assert.equal(blocked.code, "resource_conflict")
+
+  // Adapter aborts its rejected sid; same peer → frees the holder mid-infer
+  const ab = svc.abort("old-r1", "peerA")
+  assert.equal(ab.ok, true)
+
+  // Retry start binds a new session BEFORE the old infer finishes unwinding
+  const retry = svc.start(
+    {
+      sessionId: "old-r1",
+      modelId: "small",
+      format: "wav",
+      sampleRate: 16000,
+      channels: 1,
+    },
+    "peerA",
+  )
+  assert.equal(retry.ok, true)
+
+  release()
+  const oldEnd = await endP
+  assert.equal(oldEnd.ok, false)
+  if (!oldEnd.ok) assert.equal(oldEnd.code, "aborted")
+
+  // The late end() of the aborted holder must not have dropped the retry binding
+  assert.equal(svc.getBoundPeerId(), "peerA")
+  assert.equal(svc.chunk("old-r1", 0, Buffer.from("y"), "peerA").ok, true)
+  const retryEnd = await svc.end("old-r1", 1, "peerA")
+  assert.equal(retryEnd.ok, true)
+  if (retryEnd.ok) assert.equal(retryEnd.text, "retry-text")
+})

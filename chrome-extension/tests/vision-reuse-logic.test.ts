@@ -9,12 +9,15 @@ import {
   VISION_COPY,
   applyVisionReuseFromMain,
   bannerBodyForHost,
+  clearNativeVisionProbe,
   extractHostname,
   isCustomVisionConfig,
   isVisionKeyPlaceholder,
   isVisionReusingMain,
   likelyMultimodal,
+  lookupNativeVisionProbe,
   normalizeEndpointUrl,
+  rememberNativeVisionProbe,
   resolveNativeVision,
   shouldOfferVisionReuse,
 } from "../src/sidepanel/components/vision-reuse-logic"
@@ -61,11 +64,93 @@ test("likelyMultimodal: text-only and unknown false (fail closed)", () => {
   }
 })
 
-test("resolveNativeVision: auto ignores unkeyed probe flag", () => {
+test("resolveNativeVision: auto accepts keyed probe, still rejects unkeyed flag", () => {
+  clearNativeVisionProbe()
+  // Unkeyed session flag is never accepted (would leak onto any later model).
   assert.equal(resolveNativeVision({ modelName: "custom-vlm", mode: "auto", detected: true }), false)
   assert.equal(resolveNativeVision({ modelName: "gpt-4o", mode: "auto", detected: false }), true)
   assert.equal(resolveNativeVision({ modelName: "custom-vlm", mode: "on" }), true)
   assert.equal(resolveNativeVision({ modelName: "gpt-4o", mode: "off" }), false)
+  // Keyed probe bit (companion config.test echo) routes a non-heuristic name.
+  rememberNativeVisionProbe("http://10.251.241.12/v1/", "My-Intranet-VLM", true)
+  assert.equal(
+    resolveNativeVision({
+      modelName: "My-Intranet-VLM",
+      baseUrl: "http://10.251.241.12/v1",
+      mode: "auto",
+    }),
+    true,
+  )
+  // Model names keep case (lock-step companion native-vision-probe-cache):
+  // a case-folded lookup is a DIFFERENT model → miss → fail closed.
+  assert.equal(
+    resolveNativeVision({
+      modelName: "my-intranet-vlm",
+      baseUrl: "http://10.251.241.12/v1",
+      mode: "auto",
+    }),
+    false,
+  )
+  // Key mismatch (model or url changed after save) → fail closed.
+  assert.equal(
+    resolveNativeVision({
+      modelName: "other-model",
+      baseUrl: "http://10.251.241.12/v1",
+      mode: "auto",
+    }),
+    false,
+  )
+  assert.equal(
+    resolveNativeVision({
+      modelName: "My-Intranet-VLM",
+      baseUrl: "https://api.deepseek.com/v1",
+      mode: "auto",
+    }),
+    false,
+  )
+  // Missing key material behaves like a miss.
+  assert.equal(resolveNativeVision({ modelName: "My-Intranet-VLM", mode: "auto" }), false)
+  clearNativeVisionProbe()
+})
+
+test("keyed probe cache: URL/model normalization lock-step with companion", () => {
+  clearNativeVisionProbe()
+  // Scheme/host case is folded (URL parsing), path case is preserved —
+  // case-sensitive gateways route /V1 and /v1 to different endpoints.
+  rememberNativeVisionProbe("HTTP://10.1.1.1:8000/V1/", "m", true)
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1:8000/V1", "m"), true)
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1:8000/v1", "m"), undefined)
+  clearNativeVisionProbe()
+  // Default port for the scheme is normalized away (both directions).
+  rememberNativeVisionProbe("http://10.1.1.1:80/v1", "m", true)
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "m"), true)
+  clearNativeVisionProbe()
+  rememberNativeVisionProbe("https://10.1.1.1/v1", "m", true)
+  assert.equal(lookupNativeVisionProbe("https://10.1.1.1:443/v1", "m"), true)
+  clearNativeVisionProbe()
+  // Model case change → miss (no cross-model poisoning).
+  rememberNativeVisionProbe("http://10.1.1.1/v1", "MyModel", true)
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "MyModel"), true)
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "mymodel"), undefined)
+  clearNativeVisionProbe()
+})
+
+test("keyed probe cache: exact url+model match, negative bit honored", () => {
+  clearNativeVisionProbe()
+  rememberNativeVisionProbe("http://10.1.1.1/v1/", "custom-vlm", false)
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "custom-vlm"), false)
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "other-model"), undefined)
+  assert.equal(lookupNativeVisionProbe("http://10.2.2.2/v1", "custom-vlm"), undefined)
+  assert.equal(
+    resolveNativeVision({
+      modelName: "custom-vlm",
+      baseUrl: "http://10.1.1.1/v1",
+      mode: "auto",
+    }),
+    false,
+  )
+  clearNativeVisionProbe()
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "custom-vlm"), undefined)
 })
 
 // --- shouldOfferVisionReuse ---

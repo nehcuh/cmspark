@@ -19,6 +19,25 @@ test("probe cache hits only the same url+model", () => {
   assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "custom-vlm"), undefined)
 })
 
+test("probe cache keeps model name case (no cross-model poisoning)", () => {
+  clearNativeVisionProbe()
+  // vLLM-style case-sensitive served-model-name: probing "MyModel" must NOT
+  // answer a lookup for a different model "mymodel".
+  rememberNativeVisionProbe("http://10.1.1.1/v1", "MyModel", true)
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "MyModel"), true)
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1/v1", "mymodel"), undefined)
+  clearNativeVisionProbe()
+})
+
+test("probe cache normalizes scheme/host case but keeps URL path case", () => {
+  clearNativeVisionProbe()
+  rememberNativeVisionProbe("HTTP://10.1.1.1:8000/V1/", "m", true)
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1:8000/V1", "m"), true)
+  // A case-sensitive gateway path is a different endpoint.
+  assert.equal(lookupNativeVisionProbe("http://10.1.1.1:8000/v1", "m"), undefined)
+  clearNativeVisionProbe()
+})
+
 test("resolveNativeVision auto uses in-memory probe for unknown model names", () => {
   clearNativeVisionProbe()
   rememberNativeVisionProbe("http://10.251.241.12/v1", "my-intranet-vlm", true)

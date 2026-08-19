@@ -97,9 +97,65 @@ export function likelyMultimodal(modelName: string | undefined | null): boolean 
   return false
 }
 
+// In-memory image-probe bit from config.test, keyed by {url, model} —
+// lock-step companion/src/llm/native-vision-probe-cache.ts. Session-only,
+// never persisted; saving a new model/base_url invalidates the key by itself.
+
+/**
+ * Normalize only the case-insensitive parts of the URL: scheme and host are
+ * lowercased (via URL parsing) and trailing slashes are stripped. The path
+ * keeps its original case — some gateways route on case-sensitive paths.
+ * Unparsable input falls back to the trimmed string (still exact-matched).
+ */
+export function normalizeProbeUrl(url: string): string {
+  const trimmed = String(url || "").trim().replace(/\/+$/, "")
+  if (!trimmed) return trimmed
+  try {
+    const u = new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`)
+    const auth = u.username ? `${u.username}${u.password ? `:${u.password}` : ""}@` : ""
+    const path = u.pathname === "/" ? "" : u.pathname
+    return `${u.protocol}//${auth}${u.host}${path}${u.search}${u.hash}`
+  } catch {
+    return trimmed
+  }
+}
+
+/**
+ * Model names keep their original case — case-sensitive serving stacks
+ * (e.g. vLLM served-model-name) treat `MyModel` and `mymodel` as different
+ * models, so folding case here would let one model's probe poison another's.
+ */
+export function normalizeProbeModel(model: string): string {
+  return String(model || "").trim()
+}
+
+let nativeVisionProbe: { url: string; model: string; detected: boolean } | null = null
+
+export function rememberNativeVisionProbe(url: string, model: string, detected: boolean): void {
+  nativeVisionProbe = {
+    url: normalizeProbeUrl(url),
+    model: normalizeProbeModel(model),
+    detected: detected === true,
+  }
+}
+
+/** Exact url+model match only. Mismatch / empty cache → undefined. */
+export function lookupNativeVisionProbe(url: string, model: string): boolean | undefined {
+  if (!nativeVisionProbe) return undefined
+  if (nativeVisionProbe.url !== normalizeProbeUrl(url)) return undefined
+  if (nativeVisionProbe.model !== normalizeProbeModel(model)) return undefined
+  return nativeVisionProbe.detected
+}
+
+export function clearNativeVisionProbe(): void {
+  nativeVisionProbe = null
+}
+
 export function resolveNativeVision(opts: {
   modelName?: string | null
+  baseUrl?: string | null
   mode?: NativeVisionMode | boolean | null
+  /** Unkeyed session probe flag — always ignored; only the keyed cache counts. */
   detected?: boolean | null
 }): boolean {
   const raw = opts.mode
@@ -108,8 +164,9 @@ export function resolveNativeVision(opts: {
   if (mode === "on") return true
   if (mode === "off") return false
   if (likelyMultimodal(opts.modelName)) return true
-  // Unkeyed session probe bits are ignored. Companion owns {url,model} cache.
-  return false
+  // Keyed {url,model} probe bit echoed by companion config.test. An unkeyed
+  // session flag would leak "native" onto any later model — never accepted.
+  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") === true
 }
 
 /**

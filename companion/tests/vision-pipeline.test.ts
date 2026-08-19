@@ -126,6 +126,56 @@ test("analyzeImage: 2xx error body without choices → readable fallback, never 
   }
 })
 
+test("analyzeImage: description cache is scoped to base_url + model_name", async () => {
+  const openaiMod = await import("openai")
+  const OpenAI = (openaiMod as any).default || openaiMod
+  const dummy = new OpenAI({ baseURL: "http://127.0.0.1:9", apiKey: "ollama" })
+  const proto = Object.getPrototypeOf(dummy.chat.completions)
+  const original = proto.create
+  proto.create = async (body: any) => ({
+    choices: [{ message: { content: `desc-from-${body.model}` } }],
+  })
+  // Distinct image so this test never collides with other cache entries.
+  const png = Buffer.concat([
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+    Buffer.from("cache-scope-probe"),
+  ])
+  const img = { base64: png.toString("base64"), width: 1, height: 1, url: "", title: "p" }
+  const baseCfg = {
+    enabled: true,
+    base_url: "http://127.0.0.1:1234",
+    api_key: "ollama",
+    model_name: "model-a",
+    timeout_ms: 5000,
+    max_tokens: 16,
+    fallback: "metadata",
+    cache_ttl_seconds: 300,
+  } as any
+  try {
+    const r1 = await analyzeImage(img, baseCfg)
+    assert.equal(r1.description, "desc-from-model-a")
+    assert.equal(r1.cached, false)
+    // Same image, different model → must NOT hit model-a's cached description.
+    const r2 = await analyzeImage(img, { ...baseCfg, model_name: "model-b" })
+    assert.equal(r2.description, "desc-from-model-b")
+    assert.equal(r2.cached, false)
+    // Same model + endpoint → cache hit, model_used names the producer.
+    const r3 = await analyzeImage(img, baseCfg)
+    assert.equal(r3.description, "desc-from-model-a")
+    assert.equal(r3.cached, true)
+    assert.equal(r3.model_used, "model-a")
+    // Same model on a different endpoint → separate entry.
+    const r4 = await analyzeImage(img, { ...baseCfg, base_url: "http://127.0.0.1:1235" })
+    assert.equal(r4.cached, false)
+    assert.equal(r4.description, "desc-from-model-a")
+  } finally {
+    proto.create = original
+  }
+})
+
 test("formatVisionFallbackDims: omit NxNpx when width/height unknown (no 0x0 lie)", () => {
   assert.equal(formatVisionFallbackDims(1053, 481), ", 1053x481px")
   assert.equal(formatVisionFallbackDims(0, 0), "")

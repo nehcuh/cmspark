@@ -7,6 +7,7 @@ import { isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
 import { isBrowserTool } from "../mode/mode-controller"
 import { isUserEnvErrorMessage, mapUserEnvError, normalizeUserEnvPublic } from "../utils/user-env-utils"
+import { rememberNativeVisionProbe } from "../components/vision-reuse-logic"
 import { normalizeInboundLogEvent } from "../log-event-normalize"
 import { humanizeSidepanelGateError } from "../utils/gate-error-copy"
 import { newTempUserMessageId } from "../../utils/temp-message-id"
@@ -645,7 +646,9 @@ export function useWebSocket() {
             result: msg.ok
               ? `连接成功 ✓${
                   msg.native_vision === true
-                    ? " · 已探测到看图能力（截图/附图走主模型）"
+                    // Probe only proves the endpoint accepted an image part
+                    // (HTTP 200) — not true multimodal quality (M3-copy).
+                    ? " · 端点接受图片输入（截图/附图走主模型）"
                     : msg.native_vision === false
                       ? " · 未探测到看图（截图仍走视觉轨，可在下方强制开启）"
                       : ""
@@ -654,6 +657,12 @@ export function useWebSocket() {
           })
           if (typeof msg.native_vision === "boolean") {
             dispatch({ type: "SET_CONFIG", config: { native_vision_detected: msg.native_vision } })
+            // Keyed probe cache (M1): only accept the bit when companion echoes
+            // the tested {base_url, model_name}; the unkeyed session flag above
+            // stays display-only and never feeds resolveNativeVision.
+            if (typeof msg.base_url === "string" && typeof msg.model_name === "string") {
+              rememberNativeVisionProbe(msg.base_url, msg.model_name, msg.native_vision)
+            }
           }
           break
 
@@ -1255,6 +1264,9 @@ export function useWebSocket() {
         // (mutations broadcast to all clients; the requester's response also
         // carries warnings/added — update state from both, keep warnings).
         case "apps.list":
+          // Same request-echo trap as thread.list — missing array is a command,
+          // not a hydrate (echo must not clear entries / flip enabled).
+          if (!Array.isArray(msg.entries)) break
           dispatch({
             type: "SET_APPS_STATE",
             enabled: msg.enabled !== false,
@@ -1301,6 +1313,9 @@ export function useWebSocket() {
           break
 
         case "acp.list":
+          // Same request-echo trap as thread.list — missing array is a command,
+          // not a hydrate (echo must not clear agents / force acpEnabled=false).
+          if (!Array.isArray(msg.agents)) break
           dispatch({
             type: "SET_ACP_LIST",
             enabled: msg.enabled === true,

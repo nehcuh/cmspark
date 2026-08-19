@@ -89,6 +89,25 @@ describe("parseLocalFileUrl", () => {
     assert.equal(r.ok, false)
     if (!r.ok) assert.equal(r.kind, "invalid")
   })
+
+  it("hard-refuses drive-relative file:///C:path (F1 — no resolve against companion cwd)", () => {
+    const r = parseLocalFileUrl("file:///C:Windows/System32")
+    if (process.platform === "win32") {
+      // fileURLToPath yields drive-relative C:Windows\System32 — hard refuse,
+      // never let path.resolve anchor it inside the companion cwd (home).
+      // kind "invalid" ⇒ the error field must carry the invalid family, not a
+      // cage token (user-facing string stays fileOpenInvalidError).
+      assert.equal(r.ok, false)
+      if (!r.ok) {
+        assert.equal(r.kind, "invalid")
+        assert.match(r.error, /invalid file: URL/i)
+        assert.ok(!r.error.includes(FILE_OPEN_CAGE_TOKEN))
+      }
+    } else if (r.ok) {
+      // POSIX has no per-drive cwd; the /C:… shape must still be caged downstream.
+      assert.equal(assertFileOpenOfferable(r.absPath, tmpHome).ok, false)
+    }
+  })
 })
 
 describe("assertFileOpenOfferable", () => {
@@ -154,5 +173,50 @@ describe("assertFileOpenOfferable", () => {
     const r = assertFileOpenOfferable(link, tmpHome)
     assert.equal(r.ok, false)
     if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
+  })
+
+  it("hard-refuses drive-relative input on every platform (F1)", () => {
+    const r = assertFileOpenOfferable("C:Windows\\System32", tmpHome)
+    assert.equal(r.ok, false)
+    if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
+  })
+
+  it("refuses a directory under home (L6 — regular files only)", () => {
+    const r = assertFileOpenOfferable(downloads, tmpHome)
+    assert.equal(r.ok, false)
+    if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
+  })
+
+  it("cages a missing leaf under an in-home junction pointing outside home (M2)", () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-junction-out-"))
+    const link = path.join(downloads, "junc-escape")
+    try {
+      // dir junction needs no privilege on win32; plain dir symlink elsewhere.
+      fs.symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir")
+    } catch {
+      fs.rmSync(outside, { recursive: true, force: true })
+      return // cannot create link on this host — skip rather than fail
+    }
+    try {
+      const r = assertFileOpenOfferable(path.join(link, "not-yet.pdf"), tmpHome)
+      assert.equal(r.ok, false)
+      if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
+    } finally {
+      fs.rmSync(link, { recursive: true, force: true })
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("still offers a missing file whose existing ancestors are really inside home (M2)", () => {
+    const r = assertFileOpenOfferable(path.join(downloads, "new-dir", "not-yet.pdf"), tmpHome)
+    assert.equal(r.ok, true)
+  })
+
+  it("cages common credential paths under home (L3: .git-credentials/.npmrc/.netrc/.docker)", () => {
+    for (const p of [".git-credentials", ".npmrc", ".netrc", path.join(".docker", "config.json")]) {
+      const r = assertFileOpenOfferable(path.join(tmpHome, p), tmpHome)
+      assert.equal(r.ok, false, `${p} must be caged`)
+      if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
+    }
   })
 })

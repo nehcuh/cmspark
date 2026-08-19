@@ -342,6 +342,11 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
           ok: true,
           message: probe.message,
           native_vision: nativeVision,
+          // Echo the tested key so the panel can cache the probe bit under
+          // {base_url, model_name} — its preflight/destHost then route exactly
+          // like the companion probe cache (panel M1).
+          base_url: testConfig.base_url,
+          model_name: testConfig.model_name,
         }
       }
       return { type: "config.testResult", ok: false, error: probe.error || "连接失败" }

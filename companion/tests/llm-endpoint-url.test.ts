@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   assertLlmEndpointUrlAllowed,
   assertOutboundFetchUrlAllowed,
+  normalizeIpLiteral,
 } from "../src/security"
 
 test("assertLlmEndpointUrlAllowed allows intranet OpenAI-compatible URLs", () => {
@@ -27,6 +28,98 @@ test("assertLlmEndpointUrlAllowed still blocks cloud metadata / link-local", () 
     String(assertLlmEndpointUrlAllowed("http://metadata.google.internal/")),
     /metadata|link-local/i,
   )
+})
+
+test("assertLlmEndpointUrlAllowed blocks IPv6 IMDS / link-local literals", () => {
+  // `new URL().hostname` keeps brackets and serializes v4-mapped as hex —
+  // the guard must see through both.
+  assert.match(
+    String(assertLlmEndpointUrlAllowed("http://[fd00:ec2::254]/v1")),
+    /metadata|link-local/i,
+  )
+  assert.match(
+    String(assertLlmEndpointUrlAllowed("http://[fe80::1]/v1")),
+    /metadata|link-local/i,
+  )
+  assert.match(
+    String(assertLlmEndpointUrlAllowed("http://[::ffff:169.254.169.254]/v1")),
+    /metadata|link-local/i,
+  )
+})
+
+test("assertLlmEndpointUrlAllowed blocks transitional IPv6 embedding IMDS", () => {
+  // v4-compatible, NAT64 (RFC 6052 WKP) and 6to4 (RFC 3056) forms carrying
+  // 169.254.169.254 must reduce to the dotted quad and hit the v4 tables.
+  assert.match(
+    String(assertLlmEndpointUrlAllowed("http://[::169.254.169.254]/v1")),
+    /metadata|link-local/i,
+  )
+  assert.match(
+    String(assertLlmEndpointUrlAllowed("http://[64:ff9b::169.254.169.254]/v1")),
+    /metadata|link-local/i,
+  )
+  assert.match(
+    String(assertLlmEndpointUrlAllowed("http://[2002:a9fe:a9fe::]/v1")),
+    /metadata|link-local/i,
+  )
+  // NAT64 of a PUBLIC address is not blocked by the LLM gate.
+  assert.equal(assertLlmEndpointUrlAllowed("http://[64:ff9b::808:808]/v1"), null)
+})
+
+test("assertLlmEndpointUrlAllowed allows loopback / public IPv6 literals", () => {
+  // Loopback stays allowed for local servers (same policy as 127.0.0.1).
+  assert.equal(assertLlmEndpointUrlAllowed("http://[::1]:11434/v1"), null)
+  assert.equal(assertLlmEndpointUrlAllowed("http://[::ffff:127.0.0.1]:11434/v1"), null)
+  // Public v6 (documentation range 2001:db8::/32 is not link-local/IMDS).
+  assert.equal(assertLlmEndpointUrlAllowed("http://[2001:db8::1]/v1"), null)
+})
+
+test("assertOutboundFetchUrlAllowed blocks bracketed / mapped loopback", () => {
+  assert.match(
+    String(assertOutboundFetchUrlAllowed("http://[::1]:8080/")),
+    /Internal|private/i,
+  )
+  assert.match(
+    String(assertOutboundFetchUrlAllowed("http://[::ffff:127.0.0.1]/")),
+    /Internal|private/i,
+  )
+  assert.match(
+    String(assertOutboundFetchUrlAllowed("http://[fd12::8]/")),
+    /Internal|private/i,
+  )
+  // v4-compatible / NAT64 / 6to4 forms embedding loopback or RFC1918 too.
+  assert.match(
+    String(assertOutboundFetchUrlAllowed("http://[::127.0.0.1]/")),
+    /Internal|private/i,
+  )
+  assert.match(
+    String(assertOutboundFetchUrlAllowed("http://[64:ff9b::7f00:1]/")),
+    /Internal|private/i,
+  )
+  assert.match(
+    String(assertOutboundFetchUrlAllowed("http://[2002:0a00:0001::]/")),
+    /Internal|private/i,
+  )
+  // Public v6 and hostnames still pass.
+  assert.equal(assertOutboundFetchUrlAllowed("https://example.com/"), null)
+  assert.equal(assertOutboundFetchUrlAllowed("http://[2001:db8::1]/"), null)
+})
+
+test("normalizeIpLiteral canonicalizes brackets / compression / v4-mapped", () => {
+  assert.equal(normalizeIpLiteral("[::1]"), "0000:0000:0000:0000:0000:0000:0000:0001")
+  assert.equal(normalizeIpLiteral("[fe80::1]"), "fe80:0000:0000:0000:0000:0000:0000:0001")
+  assert.equal(normalizeIpLiteral("fd00:ec2::254"), "fd00:0ec2:0000:0000:0000:0000:0000:0254")
+  assert.equal(normalizeIpLiteral("[::ffff:169.254.169.254]"), "169.254.169.254")
+  assert.equal(normalizeIpLiteral("[::ffff:a9fe:a9fe]"), "169.254.169.254")
+  assert.equal(normalizeIpLiteral("::ffff:127.0.0.1"), "127.0.0.1")
+  // Transitional forms embedding a v4 address reduce to the dotted quad…
+  assert.equal(normalizeIpLiteral("[::169.254.169.254]"), "169.254.169.254")
+  assert.equal(normalizeIpLiteral("[64:ff9b::a9fe:a9fe]"), "169.254.169.254")
+  assert.equal(normalizeIpLiteral("[2002:a9fe:a9fe::]"), "169.254.169.254")
+  // …but `::` / `::1` keep their native IPv6 semantics (no 0.0.0.0/8 reduction).
+  assert.equal(normalizeIpLiteral("[::]"), "0000:0000:0000:0000:0000:0000:0000:0000")
+  assert.equal(normalizeIpLiteral("10.0.0.1"), "10.0.0.1")
+  assert.equal(normalizeIpLiteral("example.com"), null)
 })
 
 test("assertOutboundFetchUrlAllowed still blocks RFC1918 (untrusted fetch)", () => {

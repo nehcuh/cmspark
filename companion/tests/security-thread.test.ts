@@ -335,6 +335,33 @@ test("formatChatErrorLine scheme/cage hard-blocks do not mention 弹窗", async 
   assert.ok(!invalid.includes("若你已拒绝弹窗"))
 })
 
+test("humanizeChatErrorForUser: files.example.com WS drop is not mislabeled as local file error (L4)", async () => {
+  const { humanizeChatErrorForUser } = await import("../src/capability/user-gate-copy")
+  const mislabel = humanizeChatErrorForUser(
+    'Security Block: navigate to untrusted domain "files.example.com" requires user confirmation, but the WebSocket is not connected.',
+  )
+  assert.ok(!mislabel.includes("无法打开该本地文件地址"), `got: ${mislabel}`)
+
+  const fileDisconnect = humanizeChatErrorForUser(
+    "Security Block: create_tab to local file requires user confirmation, but the WebSocket is not connected. This is not a denied popup.",
+  )
+  assert.match(fileDisconnect, /无法打开该本地文件地址/)
+
+  const invalid = humanizeChatErrorForUser(
+    "Security Block: create_tab to file: URL is invalid. This is not a confirmation dialog.",
+  )
+  assert.match(invalid, /无法打开该本地文件地址/)
+})
+
+test("cage copy says common credential paths, no 凭据目录 overclaim (L3)", async () => {
+  const { humanizeChatErrorForUser } = await import("../src/capability/user-gate-copy")
+  const cage = humanizeChatErrorForUser(
+    "Security Block: navigate to local path is not allowed (sensitive/system/unc).",
+  )
+  assert.match(cage, /常见凭据路径/)
+  assert.ok(!cage.includes("凭据目录"))
+})
+
 test("formatChatErrorLine softens workspace / scene gates (not 安全阻断)", async () => {
   const { formatChatErrorLine, WORKSPACE_ROOT_NOT_SET_ERROR } = await import(
     "../src/capability/user-gate-copy"

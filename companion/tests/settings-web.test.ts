@@ -197,6 +197,53 @@ test("POST /api/test with AWS metadata IP → 403 / SSRF blocked", async () => {
   assert.match(data.error, /SSRF|private|link-local|blocked/i)
 })
 
+test("POST /api/test with IPv6 metadata / link-local literals → SSRF blocked", async () => {
+  const { port, token } = await ensureStarted()
+  for (const base_url of [
+    "http://[fd00:ec2::254]/v1",               // AWS IMDS over IPv6
+    "http://[fe80::1]/v1",                     // IPv6 link-local
+    "http://[::ffff:169.254.169.254]/v1",      // v4-mapped (URL serializes to hex)
+  ]) {
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/test?token=${token}`,
+      headers: jsonHeaders(token),
+      body: JSON.stringify({ base_url, api_key: "sk-xxxx" }),
+    })
+    assert.equal(r.status, 200)
+    const data = JSON.parse(r.body)
+    assert.equal(data.ok, false, `expected SSRF block for ${base_url}`)
+    assert.match(data.error, /metadata|link-local|blocked/i, `expected SSRF copy for ${base_url}`)
+  }
+})
+
+test("POST /api/test with DNS failure → fail-closed (blocked)", async () => {
+  const { port, token } = await ensureStarted()
+  // Force a DNS error in-process (a public DNS-hijacking resolver would
+  // otherwise resolve even bogus names and mask the fail-closed path).
+  const dnsMod = await import("node:dns")
+  const origLookup = dnsMod.promises.lookup
+  ;(dnsMod.promises as any).lookup = async () => {
+    throw new Error("getaddrinfo ENOTFOUND forced-by-test")
+  }
+  try {
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/test?token=${token}`,
+      headers: jsonHeaders(token),
+      body: JSON.stringify({ base_url: "http://unresolvable.example/v1", api_key: "sk-xxxx" }),
+    })
+    assert.equal(r.status, 200)
+    const data = JSON.parse(r.body)
+    assert.equal(data.ok, false)
+    assert.match(data.error, /metadata|link-local|blocked/i)
+  } finally {
+    ;(dnsMod.promises as any).lookup = origLookup
+  }
+})
+
 test("POST /api/test with RFC1918 IP is not SSRF-blocked", async () => {
   const { port, token } = await ensureStarted()
   const r = await request({
