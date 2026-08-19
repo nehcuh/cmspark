@@ -146,6 +146,12 @@ export function mapLocalSttError(code: string): LocalSttUserFacing {
       }
     case "aborted":
       return { severity: "silent", message: "" }
+    case "session_unknown":
+    case "peer_mismatch":
+      return {
+        severity: "banner",
+        message: "本机听写会话已断开，请再试一次",
+      }
     default:
       return {
         severity: "banner",

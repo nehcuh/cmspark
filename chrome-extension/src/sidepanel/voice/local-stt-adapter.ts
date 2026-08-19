@@ -443,7 +443,8 @@ export function createLocalSttAdapter(
         return
       }
       capture = handle
-      sendStart(sid, LOCAL_STT_MAX_RECORD_MS)
+      // C1 / D1c: do NOT voice.stt.start until upload. Companion arms 10s idle
+      // on start with zero chunks during record → forceAbort (classic ≥10s).
       if (dead || aborted) {
         handle.abort()
         return
@@ -934,12 +935,30 @@ export function createLocalSttAdapter(
         return
       }
 
+      const genAtStop = loopGen
       void handle
         .stop()
         .then(async (wav) => {
           const sid = sessionId
           if (!sid) return
-          const result = await uploadAndWait(sid, wav)
+          if (dead || aborted || genAtStop !== loopGen) return
+          // Open STT session then immediately stream chunks (keeps idle timer happy).
+          sendStart(sid, LOCAL_STT_MAX_RECORD_MS)
+          let result = await uploadAndWait(sid, wav)
+          if (
+            result.ok === false &&
+            (result.code === "resource_conflict" || result.code === "session_busy") &&
+            !dead &&
+            genAtStop === loopGen
+          ) {
+            deps.send({ type: "voice.stt.abort", v: 1, sessionId: sid })
+            await new Promise((r) => setTimeout(r, 250))
+            if (dead || genAtStop !== loopGen) return
+            const retrySid = `${sid}-r1`
+            sessionId = retrySid
+            sendStart(retrySid, LOCAL_STT_MAX_RECORD_MS)
+            result = await uploadAndWait(retrySid, wav)
+          }
           if (dead) return
           if (result.ok === false) {
             const errCode = result.code
