@@ -154,7 +154,7 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
             type="button"
             style={styles.openBtnCompact}
             onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
-            title="打开确认台：完整预览 / 白名单 / 确认码；关闭窗口不会停止任务"
+            title="打开确认台：完整预览 / 确认码；关闭窗口不会停止任务"
           >
             确认台
             <IconExternal size={11} />
@@ -200,7 +200,7 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
           type="button"
           style={styles.openBtn}
           onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
-          title="打开确认台：完整预览 / 白名单 / 确认码；关闭窗口不会停止任务"
+          title="打开确认台：完整预览 / 确认码；关闭窗口不会停止任务"
         >
           确认台
           <IconExternal size={12} />

@@ -456,7 +456,7 @@ export async function chatCreate(params: ChatCreateParams) {
 CRITICAL RULES:
 1. ALWAYS call list_tabs first to get real tab IDs. Chrome tab IDs are large numbers like 83161113 — NEVER use 1, 2, 3.
 2. When operating on a page, use the actual tabId from list_tabs results.
-3. For create_tab, always pass the full URL parameter.
+3. For create_tab, always pass the full URL parameter. Use http(s) URLs. Do NOT use create_tab/navigate/set_tab_url with file: to *read* a document (especially PDF) — ask the user to drag the file into the chat. Only use file: if the user explicitly asked to open a local file in the browser. Listing local files is mcp__filesystem__* (rule 10), a different gate from opening a tab.
 4. Use navigate(tabId, url) to change a tab's URL — check list_tabs for existing tabs first.
 5. Before calling screenshot or page tools, ensure the tab is on a real website (not chrome:// or about:blank).
 6. Wait for pages to load before extracting content.

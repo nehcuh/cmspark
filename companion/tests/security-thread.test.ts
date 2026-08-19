@@ -309,6 +309,32 @@ test("classifyError MCP parent directory / allowlist path is recoverable", () =>
   )
 })
 
+test("formatChatErrorLine scheme/cage hard-blocks do not mention 弹窗", async () => {
+  const { formatChatErrorLine } = await import("../src/capability/user-gate-copy")
+  const scheme = formatChatErrorLine(
+    "security",
+    "Security Block: create_tab to javascript: scheme is not allowed. Only http/https URLs are permitted.",
+  )
+  assert.match(scheme, /这不是确认弹窗/)
+  assert.ok(!scheme.includes("若你已拒绝弹窗"))
+  assert.ok(!scheme.startsWith("操作未通过安全确认"))
+
+  const cage = formatChatErrorLine(
+    "security",
+    "Security Block: navigate to local path is not allowed (sensitive/system/unc).",
+  )
+  assert.match(cage, /这不是确认弹窗/)
+  assert.match(cage, /不是 MCP/)
+  assert.ok(!cage.includes("若你已拒绝弹窗"))
+
+  const invalid = formatChatErrorLine(
+    "security",
+    "Security Block: create_tab to file: URL is invalid. This is not a confirmation dialog.",
+  )
+  assert.match(invalid, /这不是确认弹窗/)
+  assert.ok(!invalid.includes("若你已拒绝弹窗"))
+})
+
 test("formatChatErrorLine softens workspace / scene gates (not 安全阻断)", async () => {
   const { formatChatErrorLine, WORKSPACE_ROOT_NOT_SET_ERROR } = await import(
     "../src/capability/user-gate-copy"

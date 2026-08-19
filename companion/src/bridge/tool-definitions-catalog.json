@@ -15,7 +15,7 @@
     "type": "function",
     "function": {
       "name": "create_tab",
-      "description": "打开新标签页",
+      "description": "打开新标签页。url 用 http/https。不要用 file: 来「读」本地 PDF/文档（请用户把文件拖进对话）。仅当用户明确要求在浏览器里打开本机文件时才用 file:，届时会弹出「仅这一次」确认，不会加入 MCP 目录或域名白名单。",
       "parameters": {
         "type": "object",
         "properties": {

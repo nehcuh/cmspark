@@ -17,6 +17,12 @@ import {
 } from "../security"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import { isFullAutonomyCruise } from "./l2-admission"
+import {
+  parseLocalFileUrl,
+  assertFileOpenOfferable,
+  fileOpenCageError,
+  fileOpenInvalidError,
+} from "./file-url-admission"
 
 export const COOKIE_TOOLS = [
   "get_cookies",
@@ -146,8 +152,8 @@ export async function runUrlNavigateAdmission(
   // Audit item 12: navigate / create_tab trust-domain gate. Agents can otherwise
   // drive the browser to ANY URL (including chrome://, file://, data:, or attacker
   // domains) with no confirmation — a credential-phishing / internal-page-pivot
-  // vector via prompt injection. Require confirmation for URLs whose host is not
-  // in trusted_domains or auto_approved_domains; block non-http(s) schemes outright.
+  // vector via prompt injection. javascript:/data:/chrome:/about:/blob: stay
+  // Layer 1 hard-block. file: is path-caged + L2 (never skipUrlConfirmation).
   const rawUrl = String(finalParams.url || "")
   let parsedUrl: URL | null = null
   try {
@@ -161,6 +167,107 @@ export async function runUrlNavigateAdmission(
     return { ok: false, result }
   }
   const securityConfig = getConfig().security
+  // file: is NOT in the scheme hard-block bucket (javascript:/data:/chrome:/…).
+  // Never fall through to skipUrlConfirmation — auto_approve_dangerous and
+  // auto_approved_domains (including localhost / *) must not open local files.
+  // Only allow_all_schemes (god-mode; three-flag cruise includes it) skips.
+  if (parsedUrl.protocol === "file:") {
+    if (securityConfig.allow_all_schemes === true) {
+      logger.warn("security.godmode_bypassed", {
+        tool_call_id: toolCallId,
+        tool_name: toolName,
+        layer: "scheme",
+        scheme: "file:",
+        javascript: false,
+        url: rawUrl,
+      })
+      return { ok: true }
+    }
+    const parsed = parseLocalFileUrl(rawUrl)
+    if (!parsed.ok) {
+      const result = {
+        success: false as const,
+        error:
+          parsed.kind === "invalid" ? fileOpenInvalidError(toolName) : fileOpenCageError(toolName),
+      }
+      logger.warn("security.file_open_blocked", {
+        tool_call_id: toolCallId,
+        tool_name: toolName,
+        kind: parsed.kind,
+      })
+      logToolFinish(toolCallId, toolName, startedAt, result)
+      return { ok: false, result }
+    }
+    const offer = assertFileOpenOfferable(parsed.absPath)
+    if (!offer.ok) {
+      const result = {
+        success: false as const,
+        error: fileOpenCageError(toolName),
+      }
+      logger.warn("security.file_open_blocked", {
+        tool_call_id: toolCallId,
+        tool_name: toolName,
+        kind: "cage",
+      })
+      logToolFinish(toolCallId, toolName, startedAt, result)
+      return { ok: false, result }
+    }
+    if (ws.readyState !== WebSocket.OPEN) {
+      const result = {
+        success: false as const,
+        error: `Security Block: ${toolName} to local file requires user confirmation, but the WebSocket is not connected. This is not a denied popup.`,
+      }
+      logToolFinish(toolCallId, toolName, startedAt, result)
+      return { ok: false, result }
+    }
+    logger.warn("security.file_open_confirmation.requested", {
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      path: offer.realPath,
+    })
+    const decision = await securityConfirmations.request(
+      (data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify(data))
+          } catch {
+            /* ignore */
+          }
+        }
+      },
+      {
+        toolName: "打开本地文件（仅这一次）",
+        dangerousApis: ["local-file"],
+        code:
+          "在浏览器打开本地文件（仅这一次；不会加入 MCP 允许目录，也不会加入域名白名单）：\n" +
+          offer.realPath,
+        relevantDomains: [],
+        riskLevel: "medium",
+        autoConfirmEligible: false,
+      },
+      isOutboundMcpCall ? {} : { originWs: ws },
+    )
+    if (!decision.approved) {
+      const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+      const result = {
+        success: false as const,
+        error: `Security Block: ${toolName} to "${rawUrl}" was ${reason === "denied" ? "denied by user" : reason}.`,
+      }
+      logger.warn("security.file_open_confirmation.denied", {
+        tool_call_id: toolCallId,
+        tool_name: toolName,
+        reason,
+      })
+      logToolFinish(toolCallId, toolName, startedAt, result)
+      return { ok: false, result }
+    }
+    logger.info("security.file_open_confirmation.approved", {
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+    })
+    return { ok: true }
+  }
+
   // Layer 1 — scheme hard-block. skipL1 = allow_all_schemes (GOD-MODE). When
   // bypassed, emit a prominent audit log (javascript: flagged) so god-mode
   // navigations stay traceable, then fall through to the Layer 2 domain gate.
