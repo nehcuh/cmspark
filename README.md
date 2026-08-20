@@ -774,8 +774,8 @@ make package
 ```bash
 make package-macos
 # 产出：
-#   dist-package/CMspark-v0.5.1-macOS.dmg   ← 安装包
-#   dist-package/cmspark-v0.5.1-macos-arm64.zip  ← 原始压缩包
+#   dist-package/CMspark-v0.5.2-macOS.dmg   ← 安装包
+#   dist-package/cmspark-v0.5.2-macos-arm64.zip  ← 原始压缩包
 ```
 
 Windows 打包流程（**官方 zip + Setup.exe / package.sh**）：
@@ -909,4 +909,4 @@ cmspark/
 
 ---
 
-> **当前阶段（0.5.1）**：MVP 与组合面已稳；**听写+ / 会议 / 本机 Whisper M2** 已交付；**对话框可粘贴/点选/拖入图片**（主模型多模态则原生看图）；CU 实验定位仅 **Qwen3-VL**（TinyClick 残留已清）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织：**L0 聊 / L1 网页 / 组合面 / L2 宿主 opt-in / 编排 Autonomy**。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（0.5.2）**：MVP 与组合面已稳；**听写+ / 会议 / 本机 Whisper M2** 已交付；**对话框可粘贴/点选/拖入图片**（主模型多模态则原生看图）；**Windows 官方 NSIS Setup.exe** 随 GitHub Release 分发；CU 实验定位仅 **Qwen3-VL**（TinyClick 残留已清）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织：**L0 聊 / L1 网页 / 组合面 / L2 宿主 opt-in / 编排 Autonomy**。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。

@@ -1,6 +1,6 @@
 # CMspark 文档导航
 
-> 产品 **0.5.1** · 入口 README：[仓库根 README.md](../README.md)  
+> 产品 **0.5.2** · 入口 README：[仓库根 README.md](../README.md)  
 > 本页只做**导航**，不搬运正文。过程件已于 **Phase 4** 迁入 [`archive/2026-07/`](archive/2026-07/)；`user/` 物理搬家仍可选（见 [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)）。
 
 ---
