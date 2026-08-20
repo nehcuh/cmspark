@@ -136,7 +136,7 @@ export interface AgentState {
    * auto_live = expand while streaming, collapse when done (default).
    */
   showReasoningMode: "always_collapsed" | "auto_live" | "always_open"
-  /** Wave D: include reasoning in Obsidian export when true. */
+  /** Wave D: include reasoning in Markdown export when true. */
   exportIncludeReasoning: boolean
   pendingSecurityConfirmations: SecurityConfirmationRequest[]
   logs: LogEntry[]

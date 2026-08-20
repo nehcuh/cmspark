@@ -14,6 +14,8 @@ import { OSASCRIPT_BIN } from "../process-path"
 
 const execFileP = promisify(execFile)
 const PICK_TIMEOUT_MS = 120000 // the dialog blocks until the user picks/cancels
+/** Native dialog title — export is Markdown; this folder is optional convention source. */
+const MARKDOWN_FOLDER_PROMPT = "选择 Markdown 笔记文件夹"
 
 export interface PickResult {
   path?: string
@@ -41,7 +43,7 @@ function trimTrailingSlash(p: string): string {
 async function pickMacOS(): Promise<PickResult> {
   // `choose folder` returns an alias; `POSIX path of` yields the path (with a trailing slash).
   // Cancel → osascript exits non-zero with "User canceled" / error -128 in stderr.
-  const script = 'POSIX path of (choose folder with prompt "选择你的 Obsidian Vault 文件夹")'
+  const script = `POSIX path of (choose folder with prompt "${MARKDOWN_FOLDER_PROMPT}")`
   try {
     const { stdout } = await execFileP(OSASCRIPT_BIN, ["-e", script], { timeout: PICK_TIMEOUT_MS })
     const p = trimTrailingSlash(stdout)
@@ -58,7 +60,7 @@ async function pickLinux(): Promise<PickResult> {
   try {
     const { stdout } = await execFileP(
       "zenity",
-      ["--file-selection", "--directory", "--title=选择你的 Obsidian Vault 文件夹"],
+      ["--file-selection", "--directory", `--title=${MARKDOWN_FOLDER_PROMPT}`],
       { timeout: PICK_TIMEOUT_MS },
     )
     const p = trimTrailingSlash(stdout)
@@ -75,6 +77,7 @@ async function pickWindows(): Promise<PickResult> {
   const ps =
     "Add-Type -AssemblyName System.Windows.Forms; " +
     "$d = New-Object System.Windows.Forms.FolderBrowserDialog; " +
+    `$d.Description = '${MARKDOWN_FOLDER_PROMPT.replace(/'/g, "''")}'; ` +
     "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }"
   try {
     const { stdout } = await execFileP("powershell", ["-NoProfile", "-Command", ps], {

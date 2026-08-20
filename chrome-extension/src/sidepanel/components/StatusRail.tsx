@@ -336,7 +336,7 @@ export function StatusRail({
               }}
             >
               <IconDownload size={14} />
-              <span>导出线程 (Obsidian)</span>
+              <span>导出为 Markdown</span>
             </button>
             <button
               type="button"

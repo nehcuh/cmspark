@@ -325,7 +325,7 @@ export function ChatView() {
     })
   }, [activeThreadId])
 
-  // Export the Q&A pair containing this message to Obsidian markdown (UI-side download).
+  // Export the Q&A pair containing this message as Markdown (UI-side download).
   const handleExport = useCallback((messageId: string) => {
     if (!activeThreadId) return
     chrome.runtime.sendMessage({
@@ -749,7 +749,7 @@ const MessageRow = memo(function MessageRow({
               <button type="button" style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支" aria-label="创建分支">
                 <IconBranch size={13} />
               </button>
-              <button type="button" style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此条到 Obsidian" aria-label="导出到 Obsidian">
+              <button type="button" style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此条为 Markdown" aria-label="导出此条为 Markdown">
                 <IconDownload size={13} />
               </button>
               <button
