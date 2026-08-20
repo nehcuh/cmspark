@@ -36,6 +36,7 @@ jobs:
         # an unverified (supply-chain-tamperable) node binary.
         run: |
           bash -n scripts/package.sh
+          bash -n scripts/build-windows-installer.sh
           bash -n scripts/verify-node.sh
           bash scripts/tests/test-verify-node.sh
 

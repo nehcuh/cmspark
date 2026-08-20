@@ -1,0 +1,32 @@
+{
+  "batch": "windows-nsis-official",
+  "blast_tier": "T2",
+  "machine": {
+    "test-package-gates": "99 passed, 0 failed",
+    "makensis_compile": "3.12 exit 0, single Plugin command ExecToLog powershell"
+  },
+  "independent_lanes": {
+    "A": "REJECT (design — absorbed)",
+    "B": "REJECT (design — absorbed)",
+    "C": "REJECT (design — absorbed)"
+  },
+  "r1": {
+    "claude": "REJECT",
+    "kimi": "APPROVE_WITH_NITS",
+    "claude_path": "docs/audit/reviews/windows-nsis-official-claude-20260820-152115.md",
+    "kimi_path": "docs/audit/reviews/windows-nsis-official-kimi-20260820-152115.md"
+  },
+  "r2": {
+    "claude": "APPROVE_WITH_NITS",
+    "kimi": "APPROVE_WITH_NITS",
+    "claude_path": "docs/audit/reviews/windows-nsis-official-r2-claude-20260820.md",
+    "kimi_path": "docs/audit/reviews/windows-nsis-official-r2-kimi-20260820.md",
+    "nits": [
+      "apostrophe in $INSTDIR breaks PS GetFullPath sweep (O'Brien); daemon stop + taskkill still run",
+      "first Windows CI compile should be workflow_dispatch dry-run before first tag",
+      "Get-CimInstance needs PowerShell 3+ (Win10/11 OK)"
+    ]
+  },
+  "both_approve": true,
+  "merge": "NO — wait user (T2, dual APPROVE_WITH_NITS, implementer must not self-merge)"
+}

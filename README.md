@@ -588,9 +588,10 @@ dist-package\cmspark-windows-x64\        ← 便携包（解压即用）
   host-scripts-win\
   node_modules\systray2\                 ← 系统托盘支持
   launch-hidden.vbs / launch.bat
-dist-package\CMspark-v*-windows-x64.zip  ← 可分发压缩包
-dist-package\CMspark-Setup-v*.exe        ← 安装向导（安装 NSIS 时生成）
+dist-package\CMspark-v*-windows-x64.zip  ← SEA 便携压缩包（非 GitHub Release 默认）
 ```
+
+官方安装向导 `CMspark-Setup-v*.exe` **不是**本脚本产物，见下方「打包分发」。
 
 #### 本机听写组件（Path B / cmspark-whisper）
 
@@ -620,7 +621,7 @@ build-package.bat
 
 验证：包内 `dist-package\cmspark-windows-x64\bin\cmspark-whisper-win-x64.exe` 或设置页「本机组件：已就绪」。
 
-> Windows 构建仅要求本机有 Node.js ≥ 20。安装 [NSIS](https://nsis.sourceforge.io/) 后，构建脚本会额外生成安装向导 `.exe`。
+> 本地 SEA 构建仅要求本机有 Node.js ≥ 20。官方 Setup.exe 由 `make package-windows` / CI `package.sh` 在安装 [NSIS](https://nsis.sourceforge.io/) 后生成。
 
 #### 安装（注册后台服务）
 
@@ -754,8 +755,8 @@ make package
 | 平台 | 命令 | 产物 | 说明 |
 |------|------|------|------|
 | **macOS (ARM64)** | `make package-macos` | `dist-package/CMspark-v*-macOS.dmg` | 含 Swift 托盘 + 嵌入 Node 运行时 |
-| **Windows (x64)** | `build-package.bat` / `make package-windows` / CI `package.sh` | `dist-package/CMspark-v*-windows-x64.zip` | **官方发布 SoT**：`scripts/package.sh` 打 zip（`node.exe` + 编译后 JS + 扩展），**非**强制 SEA |
-| **Windows SEA（可选）** | `scripts/build-windows-exe.ps1` | 同目录下 `cmspark-agent.exe` | 可选单文件 Node SEA；与官方 zip 形态不同，见下表 |
+| **Windows (x64)** | `make package-windows` / CI `package.sh` | `dist-package/cmspark-v*-windows-x64.zip` + `CMspark-Setup-v*.exe` | **官方发布 SoT**：`scripts/package.sh` 打 zip（`node.exe` + `cmspark-agent.js` + 扩展）；NSIS 安装器包**同一份** staging。CI 缺 `makensis` 则失败，不静默只发 zip |
+| **Windows SEA（可选）** | `scripts/build-windows-exe.ps1` / `build-package.bat` | `cmspark-agent.exe` + `CMspark-v*-windows-x64.zip` | 本地/进阶单 exe；**不**生成官方 `CMspark-Setup-v*.exe` |
 | **Linux (x64)** | `make package-linux` | `dist-package/cmspark-v*-linux-x64.zip` | 嵌入 Node 运行时的压缩包 |
 | **当前平台** | `make package` | `dist-package/cmspark-v*-<platform>.zip` | 自动检测平台 |
 
@@ -763,8 +764,8 @@ make package
 
 | 路径 | 谁生产 | 是否 GitHub Release 默认 |
 |------|--------|--------------------------|
-| `scripts/package.sh windows-x64`（`make package-windows` / CI release） | zip：`node.exe` + `cmspark-agent.js`（esbuild）+ 扩展 + 脚本 | **是** — 官方发布物 |
-| `scripts/build-windows-exe.ps1` / `build-package.bat`（可选 SEA 步骤） | 额外 `cmspark-agent.exe`（Node SEA） | **否** — 本地/进阶单 exe 形态 |
+| `scripts/package.sh windows-x64`（`make package-windows` / CI release） | zip `cmspark-v*-windows-x64.zip`（`node.exe` + `cmspark-agent.js`）+ `CMspark-Setup-v*.exe` | **是** — 官方发布物 |
+| `scripts/build-windows-exe.ps1` / `build-package.bat`（可选 SEA 步骤） | 额外 `cmspark-agent.exe`（Node SEA）+ `CMspark-v*-windows-x64.zip` | **否** — 本地/进阶单 exe 形态 |
 
 文档与脚本不得再暗示「Release 只发 SEA exe」；CI 以 `package.sh` 为准。SEA 适合本机免解压试用，但 Whisper 等 sidecar 仍须旁路放置。
 
@@ -777,10 +778,11 @@ make package-macos
 #   dist-package/cmspark-v0.5.1-macos-arm64.zip  ← 原始压缩包
 ```
 
-Windows 打包流程（**官方 zip / package.sh**）：
+Windows 打包流程（**官方 zip + Setup.exe / package.sh**）：
 1. TypeScript 编译 → `esbuild` bundle 为 `cmspark-agent.js`（`systray2` 等运行时依赖保持 external）
 2. 暂存 `node.exe` + bundle + Chrome 扩展 + 内置技能 + `sql-wasm.wasm` + 平台脚本
-3. 压缩为 `CMspark-v*-windows-x64.zip`（CI / `make package-windows`）
+3. 压缩为 `cmspark-v*-windows-x64.zip`（CI / `make package-windows`）
+4. `scripts/build-windows-installer.sh` 用 NSIS 包同一 staging → `CMspark-Setup-v*.exe`（CI `CMSPARK_REQUIRE_NSIS=1`）
 
 Windows **可选 SEA**（`build-windows-exe.ps1`）：
 1. 将 bundle 注入 `node.exe` 副本 → `cmspark-agent.exe`
@@ -792,7 +794,7 @@ macOS 打包流程：
 2. esbuild bundle + 复制 Node.js 运行时、原生依赖
 3. 压缩为 zip，额外生成 DMG 安装包
 
-**Windows 前提**：仅需本机已安装 Node.js ≥ 20；NSIS 为可选依赖。
+**Windows 前提**：本机 Node.js ≥ 20。官方 Setup.exe 需要 [NSIS](https://nsis.sourceforge.io/)（CI 钉死 Chocolatey `nsis` 3.12.0）；本机未装则 `package.sh` 跳过安装器并警告，zip 仍可用。
 
 ### 分别启动
 
@@ -855,7 +857,8 @@ cmspark/
 │
 ├── scripts/
 │   ├── build-windows-exe.ps1   # Windows exe 构建脚本（Node.js SEA）
-│   ├── installer.nsi           # NSIS 安装包脚本（可选）
+│   ├── installer.nsi           # NSIS 官方安装器（package.sh / CI）
+│   ├── build-windows-installer.sh  # 官方 CMspark-Setup-v*.exe 生产者
 │   └── ...                     # 其他平台脚本
 ├── Makefile                    # 常用命令
 └── README.md                   # 本文件

@@ -477,9 +477,13 @@ fi
 # --- Step 6: Platform-specific launch scripts ---
 echo "[7/9] Adding launch scripts..."
 if [[ "${PLATFORM}" == windows* ]]; then
+  if [ ! -f companion/launch-hidden.vbs ]; then
+    echo "ERROR: companion/launch-hidden.vbs missing — Windows package refuses to ship without hidden launcher" >&2
+    exit 1
+  fi
+  cp companion/launch-hidden.vbs "${STAGING}/"
   cp companion/install.bat "${STAGING}/" 2>/dev/null || true
   cp companion/launch.bat "${STAGING}/" 2>/dev/null || true
-  cp companion/launch-hidden.vbs "${STAGING}/" 2>/dev/null || true
   cp companion/uninstall.bat "${STAGING}/" 2>/dev/null || true
   cp scripts/install-daemon.ps1 "${STAGING}/" 2>/dev/null || true
 else
@@ -510,6 +514,12 @@ else
   exit 1
 fi
 echo "  $(du -sh "${ZIP_NAME}" | cut -f1) compressed"
+
+if [[ "${PLATFORM}" == windows* ]]; then
+  echo ""
+  echo "[nsis] Building official CMspark-Setup-v${VERSION}.exe from staging..."
+  bash "${ROOT_DIR}/scripts/build-windows-installer.sh"
+fi
 
 echo ""
 echo "=== Done: dist-package/${ZIP_NAME} ==="

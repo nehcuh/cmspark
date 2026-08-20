@@ -145,12 +145,14 @@ package-macos: build build-tray build-host
 	@bash scripts/create-dmg.sh
 	@echo "Done: dist-package/CMspark-v*-macOS.dmg"
 
-# 打包 Windows x64（Node.js SEA 独立 exe + zip；可选 NSIS 安装包）
-# 版本号读 companion/package.json（与 package.sh / create-dmg 同源）
-# 产物: dist-package/CMspark-v{ver}-windows-x64.zip + 可选 CMspark-Setup-v{ver}.exe
-# 在 Windows 上双击 build-package.bat 也可完成相同任务
+# 打包 Windows x64 官方产物（与 CI 同源：package.sh）
+# zip: dist-package/cmspark-v{ver}-windows-x64.zip
+# Setup.exe: dist-package/CMspark-Setup-v{ver}.exe（需 makensis；CI 设 CMSPARK_REQUIRE_NSIS=1）
+# 本地 SEA：powershell -File scripts/build-windows-exe.ps1 或 build-package.bat
 package-windows:
-	@powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1
+	@bash scripts/package.sh windows-x64
+	@echo "Official zip: dist-package/cmspark-v*-windows-x64.zip"
+	@echo "Setup.exe:    dist-package/CMspark-Setup-v*.exe (skipped with a warning if makensis is missing)"
 
 # 打包 Linux x64
 package-linux: build
