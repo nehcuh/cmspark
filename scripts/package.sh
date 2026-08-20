@@ -510,8 +510,24 @@ elif command -v 7z >/dev/null 2>&1; then
   # progress bar (CI logs). Output layout matches `zip -rq dir`.
   7z a -tzip -bd "${ZIP_NAME}" "cmspark-${PLATFORM}" >/dev/null
 else
-  echo "ERROR: neither zip nor 7z available to create artifact" >&2
-  exit 1
+  # Local Windows dev boxes: 7-Zip is typically installed but not on PATH.
+  # Probe standard install dirs (same pattern as find_makensis in
+  # build-windows-installer.sh).
+  SEVENZ=""
+  for c in \
+    "/c/Program Files/7-Zip/7z.exe" \
+    "/c/Program Files (x86)/7-Zip/7z.exe" \
+    "C:/Program Files/7-Zip/7z.exe" \
+    "C:/Program Files (x86)/7-Zip/7z.exe"
+  do
+    if [ -x "${c}" ]; then SEVENZ="${c}"; break; fi
+  done
+  if [ -n "${SEVENZ}" ]; then
+    "${SEVENZ}" a -tzip -bd "${ZIP_NAME}" "cmspark-${PLATFORM}" >/dev/null
+  else
+    echo "ERROR: neither zip nor 7z available to create artifact" >&2
+    exit 1
+  fi
 fi
 echo "  $(du -sh "${ZIP_NAME}" | cut -f1) compressed"
 
