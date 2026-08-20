@@ -19,13 +19,35 @@ export type DiscoveredAgent = {
   source: "path" | "common"
 }
 
-type ProbeDef = {
+export type ProbeDef = {
   id: string
   display_name: string
   /** PATH basenames to try with `which` / `where` */
   basenames: string[]
   /** Absolute candidates if PATH miss */
   commonPaths: string[]
+}
+
+/** nvm node bins — GUI-launched Companion often lacks nvm on PATH. */
+function nvmNodeBins(basename: string): string[] {
+  try {
+    const nvm = path.join(os.homedir(), ".nvm", "versions", "node")
+    if (!fs.existsSync(nvm)) return [] as string[]
+    const vers = fs.readdirSync(nvm).sort().reverse()
+    return vers.slice(0, 3).map((v) => path.join(nvm, v, "bin", basename))
+  } catch {
+    return [] as string[]
+  }
+}
+
+/** Vendor install dirs (installer may not put the binary on GUI PATH). */
+function vendorBins(relDir: string, basename: string): string[] {
+  const dir = path.join(os.homedir(), relDir)
+  const out = [path.join(dir, basename)]
+  if (process.platform === "win32") {
+    out.push(path.join(dir, `${basename}.exe`), path.join(dir, `${basename}.cmd`))
+  }
+  return out
 }
 
 const PROBES: ProbeDef[] = [
@@ -85,21 +107,64 @@ const PROBES: ProbeDef[] = [
     commonPaths: [
       "/opt/homebrew/bin/pi",
       "/usr/local/bin/pi",
-      // nvm: prefer latest installed node bin if present
-      ...(() => {
-        try {
-          const nvm = path.join(os.homedir(), ".nvm", "versions", "node")
-          if (!fs.existsSync(nvm)) return [] as string[]
-          const vers = fs.readdirSync(nvm).sort().reverse()
-          return vers.slice(0, 3).map((v) => path.join(nvm, v, "bin", "pi"))
-        } catch {
-          return [] as string[]
-        }
-      })(),
+      path.join(os.homedir(), ".local", "bin", "pi"),
+      ...nvmNodeBins("pi"),
       ...windowsCommonAgentPaths("pi"),
     ],
   },
+  {
+    id: "grok",
+    display_name: "Grok",
+    basenames: ["grok"],
+    commonPaths: [
+      "/opt/homebrew/bin/grok",
+      "/usr/local/bin/grok",
+      path.join(os.homedir(), ".local", "bin", "grok"),
+      // Official Grok Build installer (often missing from GUI PATH)
+      ...vendorBins(path.join(".grok", "bin"), "grok"),
+      ...nvmNodeBins("grok"),
+      ...windowsCommonAgentPaths("grok"),
+    ],
+  },
+  {
+    id: "kimi",
+    display_name: "Kimi Code",
+    basenames: ["kimi"],
+    commonPaths: [
+      "/opt/homebrew/bin/kimi",
+      "/usr/local/bin/kimi",
+      path.join(os.homedir(), ".local", "bin", "kimi"),
+      ...vendorBins(path.join(".kimi-code", "bin"), "kimi"),
+      ...nvmNodeBins("kimi"),
+      ...windowsCommonAgentPaths("kimi"),
+    ],
+  },
+  {
+    id: "opencode",
+    display_name: "OpenCode",
+    basenames: ["opencode"],
+    commonPaths: [
+      "/opt/homebrew/bin/opencode",
+      "/usr/local/bin/opencode",
+      path.join(os.homedir(), ".local", "bin", "opencode"),
+      path.join(os.homedir(), ".bun", "bin", "opencode"),
+      // Official install script → ~/.opencode/bin/opencode
+      ...vendorBins(path.join(".opencode", "bin"), "opencode"),
+      ...nvmNodeBins("opencode"),
+      ...windowsCommonAgentPaths("opencode"),
+    ],
+  },
 ]
+
+/** Probe registry (id + display + paths). Safe for tests; discovery still uses PATH first. */
+export function listCodingAgentProbes(): ProbeDef[] {
+  return PROBES.map((p) => ({
+    id: p.id,
+    display_name: p.display_name,
+    basenames: [...p.basenames],
+    commonPaths: [...p.commonPaths],
+  }))
+}
 
 function isExecutableFile(p: string): boolean {
   try {

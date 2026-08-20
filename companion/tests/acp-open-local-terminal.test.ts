@@ -383,6 +383,25 @@ describe("buildInteractiveScript / buildL0DegradeScript", () => {
     assert.ok(frag.startsWith("exec "))
     assert.ok(frag.includes(shellSingleQuote("使用 fanout 审查")))
   })
+
+  it("kimi Mode C does not pass the task as a positional (subcommand collision)", () => {
+    const pf =
+      process.platform === "win32" ? "C:\\tmp\\task.md" : "/tmp/cmspark-mode-c-task.md"
+    const withFile = buildInteractiveExecFragment({
+      command: cmd,
+      agentId: "kimi",
+      promptFile: pf,
+    })
+    assert.equal(withFile, `exec ${shellSingleQuote(cmd)}`)
+    assert.doesNotMatch(withFile, /CMSPARK_TASK/)
+    const inline = buildInteractiveExecFragment({
+      command: cmd,
+      agentId: "kimi",
+      prompt: "review auth",
+    })
+    assert.equal(inline, `exec ${shellSingleQuote(cmd)}`)
+    assert.doesNotMatch(inline, /review auth/)
+  })
 })
 
 describe("normalizeLocalTerminalApp", () => {

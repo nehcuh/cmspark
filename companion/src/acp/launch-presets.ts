@@ -29,6 +29,54 @@ export const LAUNCH_PRESETS: Record<string, LaunchPreset> = {
     args: ["-p", "--no-session"],
     append_prompt_arg: false,
   },
+  grok: {
+    // Headless single-turn; prompt file avoids ARG_MAX / shell quoting
+    args: ["--prompt-file", "{{prompt_file}}", "--output-format", "plain"],
+    append_prompt_arg: false,
+  },
+  kimi: {
+    // kimi -p cannot combine with -y/--auto (project knowledge).
+    args: ["-p", "--output-format", "text"],
+    append_prompt_arg: false,
+  },
+  opencode: {
+    args: ["run"],
+    append_prompt_arg: true,
+  },
+}
+
+/**
+ * Extra argv for the ACP JSON-RPC handshake (not the CLI-bridge fallback).
+ * Only agents whose CLI needs a subcommand to speak ACP belong here.
+ * Empty/omitted → spawn the binary with configured args or none (claude default).
+ */
+export const ACP_PROTOCOL_ARGS: Record<string, string[]> = {
+  kimi: ["acp"],
+  opencode: ["acp"],
+}
+
+/** Args for tryStartProtocolSession. Configured args win; else ACP subcommand preset. */
+export function resolveProtocolArgs(
+  agentId: string,
+  configuredArgs: string[] | undefined,
+): string[] {
+  if (configuredArgs && configuredArgs.length > 0) return [...configuredArgs]
+  const preset = ACP_PROTOCOL_ARGS[agentId]
+  return preset ? [...preset] : []
+}
+
+function injectMissingFlagValue(args: string[], flags: string[], value: string): string[] {
+  const out = [...args]
+  for (const flag of flags) {
+    const i = out.indexOf(flag)
+    if (i < 0) continue
+    const next = out[i + 1]
+    if (!next || next.startsWith("-")) {
+      out.splice(i + 1, 0, value)
+    }
+    return out
+  }
+  return out
 }
 
 export function resolveLaunchArgs(
@@ -53,13 +101,9 @@ export function resolveLaunchArgs(
       expanded.push(opts.prompt)
     }
   }
-  // claude -p often wants prompt as next arg if not using stdin-only
-  if (agentId === "claude" && expanded.includes("-p")) {
-    const i = expanded.indexOf("-p")
-    const next = expanded[i + 1]
-    if (!next || next.startsWith("-")) {
-      expanded.splice(i + 1, 0, opts.prompt)
-    }
+  // claude / kimi: -p often wants the prompt as the next argv if not using stdin-only
+  if (agentId === "claude" || agentId === "kimi") {
+    return injectMissingFlagValue(expanded, ["-p", "--prompt"], opts.prompt)
   }
   return expanded
 }
