@@ -2046,7 +2046,11 @@ export async function handleMessage(
         }
       }
       const obsCfg = getConfig().obsidian
-      if (!obsCfg) return { type: "error", error: "obsidian export not configured" }
+      if (!obsCfg)
+        return {
+          type: "error",
+          error: "笔记库导出未配置（请在 设置 → 导出与集成 填写笔记库路径）",
+        }
       // Apply the cached vault profile (P1) if present + matches the configured vault.
       const profile = loadCachedProfile(obsCfg.vault_path)
       // P2: find topically-related vault notes (from the cached index) for the [[wikilinks]] footer.
@@ -3321,7 +3325,7 @@ export async function handleMessage(
           template_count,
         }
       } catch (e: any) {
-        return { type: "error", error: `vault 分析失败: ${e.message || String(e)}` }
+        return { type: "error", error: `笔记库分析失败: ${e.message || String(e)}` }
       }
     }
 

@@ -172,11 +172,12 @@ export function buildBannerLines(opts: {
  * Prefer reading prompt from a temp file (handles newlines / quotes / length).
  *
  * Conventions (interactive, NOT -p print mode):
- * - claude: `claude [prompt]`  (first user message)
- * - pi:     `pi [messages…]`
- * - grok:   `grok [prompt]`
- * - kimi:   `kimi` only — positionals are subcommands (acp/web/login…), not a task
- * - others: trailing prompt arg when present
+ * - claude:   `claude [prompt]`  (first user message)
+ * - pi:       `pi [messages…]`
+ * - grok:     `grok [prompt]`
+ * - kimi:     `kimi` only — positionals are subcommands (acp/web/login…), not a task
+ * - opencode: `opencode --prompt <text>` — root positional is the project dir, not a task
+ * - others:   trailing prompt arg when present
  */
 export function buildInteractiveExecFragment(opts: {
   command: string
@@ -199,6 +200,17 @@ export function buildInteractiveExecFragment(opts: {
   // kimi treats positionals as subcommands (acp/web/login…), not an initial message.
   if (id === "kimi") {
     return `exec ${cmd}`
+  }
+
+  // opencode root positional is the project directory, not a task — the task goes
+  // via --prompt (documented TUI flag, opencode.ai/docs/cli).
+  if (id === "opencode") {
+    if (hasFile) {
+      const fileQ = shellSingleQuote(opts.promptFile!.trim())
+      const load = `CMSPARK_TASK=$(cat ${fileQ})`
+      return `${load} && exec ${cmd} --prompt "\${CMSPARK_TASK}"`
+    }
+    return `exec ${cmd} --prompt ${shellSingleQuote(inline)}`
   }
 
   // Read file into $CMSPARK_TASK so we don't rely on ARG_MAX for huge packages,
@@ -295,19 +307,32 @@ export function planWindowsStartSpawn(psArgs: string[]): {
  * Without promptFile: cmd `cd /d && command`.
  * With promptFile: PowerShell cd + Get-Content -LiteralPath + & agent $task
  * (no raw interpolation of the file body).
+ * Per-agent task delivery mirrors buildInteractiveExecFragment: kimi launches
+ * bare (positionals are subcommands); opencode takes the task via --prompt.
  */
 export function buildWindowsCommandLine(
   cwd: string,
   command: string,
-  opts?: { promptFile?: string; extraArgs?: string[] },
+  opts?: { promptFile?: string; extraArgs?: string[]; agentId?: string },
 ): string {
   const pf = opts?.promptFile?.trim()
   if (pf) {
+    const id = (opts?.agentId || "").toLowerCase()
     const tokens = [command, ...(opts?.extraArgs || [])].map(quotePowerShellLiteral)
+    // kimi: positionals are subcommands (acp/web/login…) — bare launch, task via paste.
+    if (id === "kimi") {
+      return [
+        `Set-Location -LiteralPath ${quotePowerShellLiteral(cwd)}`,
+        `& ${tokens.join(" ")}`,
+      ].join("; ")
+    }
+    // opencode: root positional is the project directory — task goes via --prompt.
+    const invoke =
+      id === "opencode" ? `& ${tokens.join(" ")} --prompt $task` : `& ${tokens.join(" ")} $task`
     return [
       `Set-Location -LiteralPath ${quotePowerShellLiteral(cwd)}`,
       `$task = Get-Content -LiteralPath ${quotePowerShellLiteral(pf)} -Raw -Encoding utf8`,
-      `& ${tokens.join(" ")} $task`,
+      invoke,
     ].join("; ")
   }
   return `cd /d ${windowsQuotePath(cwd)} && ${windowsQuotePath(command)}`
@@ -331,6 +356,7 @@ export function buildWindowsModeCScript(opts: {
   cwd: string
   command: string
   extraArgs?: string[]
+  agentId?: string
   agentLabel?: string
   goalHint?: string
   promptFile?: string
@@ -356,17 +382,23 @@ export function buildWindowsModeCScript(opts: {
       ? buildWindowsCommandLine(opts.cwd, opts.command, {
           promptFile: opts.promptFile,
           extraArgs: opts.extraArgs,
+          agentId: opts.agentId,
         })
       : [opts.command, ...(opts.extraArgs || [])].join(" ")
     lines.push(`Write-Host ${quotePowerShellLiteral(paste)}`)
     return lines.join("\r\n")
   }
   const tokens = [opts.command, ...(opts.extraArgs || [])].map(quotePowerShellLiteral)
-  if (opts.promptFile) {
+  const id = (opts.agentId || "").toLowerCase()
+  // kimi: positionals are subcommands — bare launch, task via paste (POSIX parity).
+  if (opts.promptFile && id !== "kimi") {
     lines.push(
       `$task = Get-Content -LiteralPath ${quotePowerShellLiteral(opts.promptFile)} -Raw -Encoding utf8`,
     )
-    lines.push(`& ${tokens.join(" ")} $task`)
+    // opencode: root positional is the project directory — task goes via --prompt.
+    lines.push(
+      id === "opencode" ? `& ${tokens.join(" ")} --prompt $task` : `& ${tokens.join(" ")} $task`,
+    )
   } else {
     lines.push(`& ${tokens.join(" ")}`)
   }
@@ -1065,7 +1097,11 @@ export async function openLocalTerminalForAgent(
   const l1Script = buildInteractiveScript(scriptOpts)
   const pasteLine =
     platform === "win32"
-      ? buildWindowsCommandLine(cwd, command, promptFile ? { promptFile } : undefined)
+      ? buildWindowsCommandLine(
+          cwd,
+          command,
+          promptFile ? { promptFile, agentId: opts.agentId } : undefined,
+        )
       : `cd ${shellSingleQuote(cwd)} && ${buildInteractiveExecFragment({
           command,
           agentId: opts.agentId,
@@ -1206,6 +1242,7 @@ export async function openLocalTerminalForAgent(
           cwd,
           command: invokeUnwrapped ? spec.command : command,
           extraArgs: invokeUnwrapped ? spec.args : [],
+          agentId: opts.agentId,
           agentLabel: opts.agentLabel,
           goalHint: opts.goalHint,
           promptFile,

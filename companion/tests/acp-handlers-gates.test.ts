@@ -4,6 +4,7 @@ import { describe, it, before, beforeEach } from "node:test"
 import assert from "node:assert/strict"
 import { handleAcpWsMessage } from "../src/acp/handlers"
 import { getAcpManager, _resetAcpManagerForTests } from "../src/acp/manager"
+import * as protocolSession from "../src/acp/protocol-session"
 import { getConfig, initDataDir, saveConfig } from "../src/config"
 
 describe("acp WS gates", () => {
@@ -264,6 +265,117 @@ describe("acp WS gates", () => {
           },
         },
         coding_handoff: { open_local_terminal: false },
+      })
+    }
+  })
+})
+
+describe("acp manager protocol argv wiring", () => {
+  before(async () => {
+    await initDataDir()
+  })
+
+  beforeEach(() => {
+    _resetAcpManagerForTests()
+  })
+
+  it("start() passes resolveProtocolArgs(session.agent_id, server.args) to the protocol session", async (t) => {
+    const fs = await import("node:fs")
+    const os = await import("node:os")
+    const path = await import("node:path")
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-proto-args-"))
+    const agents = ["kimi", "opencode", "claude", "grok"] as const
+    const expected: Record<string, string[]> = {
+      kimi: ["acp"],
+      opencode: ["acp"],
+      claude: [],
+      grok: [],
+    }
+    try {
+      saveConfig({
+        acp: {
+          enabled: true,
+          servers: Object.fromEntries(
+            agents.map((id) => [
+              id,
+              {
+                enabled: true,
+                display_name: id,
+                transport: "stdio" as const,
+                command: process.execPath,
+                args: [],
+                policy: {
+                  profile: "review_readonly" as const,
+                  allow_write: false,
+                  allow_exec: false,
+                },
+              },
+            ]),
+          ),
+          policy: {
+            require_workspace: true,
+            force_confirm_session_start: true,
+            default_profile: "review_readonly",
+          },
+        },
+        coding_handoff: { open_local_terminal: false },
+      })
+
+      // Intercept the ACP handshake: record argv, return a fake handle so the
+      // manager takes the transport="acp" path without spawning a real process.
+      const captured: Array<{ agentId: string; args: string[] }> = []
+      t.mock.method(
+        protocolSession as any,
+        "tryStartProtocolSession",
+        async (opts: any) => {
+          captured.push({ agentId: opts.session.agent_id, args: [...opts.args] })
+          return {
+            child: { pid: 43210 },
+            client: null,
+            agentSessionId: "agent-sess-stub",
+            transport: "acp",
+            prompt: async () => {},
+            cancel: () => {},
+            kill: () => {},
+          }
+        },
+      )
+
+      const mgr = getAcpManager()
+      for (const agentId of agents) {
+        const proposed = mgr.propose({
+          threadId: `t-proto-${agentId}`,
+          agentId,
+          goal: "wiring check",
+          workspaceRoot: dir,
+        })
+        assert.equal(proposed.ok, true, `propose ${agentId}`)
+        if (!proposed.ok) continue
+        const started = await mgr.start(proposed.session.session_id)
+        assert.equal(started.ok, true, `start ${agentId}`)
+        assert.equal(proposed.session.transport, "acp", `${agentId} must take the ACP path`)
+      }
+
+      assert.deepEqual(
+        captured.map((c) => c.agentId).sort(),
+        [...agents].sort(),
+        "every agent reached the protocol session",
+      )
+      for (const c of captured) {
+        assert.deepEqual(c.args, expected[c.agentId], `protocol argv for ${c.agentId}`)
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+      saveConfig({
+        acp: {
+          enabled: false,
+          servers: {},
+          policy: {
+            require_workspace: true,
+            force_confirm_session_start: true,
+            default_profile: "review_readonly",
+          },
+        },
       })
     }
   })
