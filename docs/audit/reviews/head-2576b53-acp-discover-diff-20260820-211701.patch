@@ -1,0 +1,713 @@
+diff --git a/chrome-extension/src/sidepanel/coding-handoff/copy.ts b/chrome-extension/src/sidepanel/coding-handoff/copy.ts
+index f70f0dc..8aa6e4d 100644
+--- a/chrome-extension/src/sidepanel/coding-handoff/copy.ts
++++ b/chrome-extension/src/sidepanel/coding-handoff/copy.ts
+@@ -4,7 +4,7 @@
+ export const codingHandoffCopy = {
+   productName: "编程接力",
+   productBlurb:
+-    "侧栏监视 + 可选本机终端完整交互：在侧栏跑本机编程助手（Claude Code / Pi 等）看时间线与确认；需要完整 TUI/权限时可开模式 C 本机终端。",
++    "侧栏监视 + 可选本机终端完整交互：在侧栏跑本机编程助手（Claude Code / Grok / Kimi / OpenCode / Pi 等）看时间线与确认；需要完整 TUI/权限时可开模式 C 本机终端。",
+   outboundContrast:
+     "对照：若要让本机编程 Agent 使用已登录浏览器 → 设置中的 Outbound MCP，不是本面板。",
+ 
+@@ -52,7 +52,7 @@ export const codingHandoffCopy = {
+   privacyLine: "页面摘要与仓库路径将进入任务包；粘贴到外部 Agent 后可能再上云模型。",
+ 
+   // Toasts / status
+-  copiedOk: "已复制编程任务包 — 可粘贴到 Claude Code / Gemini CLI / 终端助手",
++  copiedOk: "已复制编程任务包 — 可粘贴到 Claude Code / Grok / Kimi / OpenCode / 终端助手",
+   copiedAndTerminal:
+     "已复制任务包，并尝试打开终端。若终端未出现，请手动粘贴。",
+   terminalFailed: "已复制任务包（终端未能打开，请手动粘贴）",
+@@ -111,7 +111,7 @@ export const codingHandoffCopy = {
+   // Discovery status (settings + panel)
+   discoveredTitle: "本机已检测到",
+   discoveredEmpty:
+-    "未在 PATH / 常见安装路径找到 claude · gemini · codex · pi。安装后点「重新检测」，或把绝对路径写入 config.acp.servers。Windows 会忽略 npm 的 Unix shebang 垫片（无扩展的 claude 脚本），需要同目录的 .cmd / .exe。",
++    "未在 PATH / 常见安装路径找到 claude · gemini · codex · pi · grok · kimi · opencode。安装后点「重新检测」，或把绝对路径写入 config.acp.servers。Windows 会忽略 npm 的 Unix shebang 垫片（无扩展的 claude 脚本），需要同目录的 .cmd / .exe。",
+   discoveredNeedEnable:
+     "首次启动会自动开启本机 Agent 会话能力（仍会弹确认）。之后输入与输出都在本面板。",
+   rediscoverHint: "检测与总开关无关：未启用时仍会列出本机已安装助手。",
+@@ -119,7 +119,7 @@ export const codingHandoffCopy = {
+ 
+   // Errors
+   agentNotFound: "找不到编程助手",
+-  agentNotFoundBody: "请安装 Claude Code / Gemini CLI 等，并在设置中确认路径。",
++  agentNotFoundBody: "请安装 Claude Code / Grok / Kimi / OpenCode 等，并在设置中确认路径。",
+   agentNotLoggedIn: "需要先登录",
+   authExpired: "登录已过期",
+   pathDenied: "路径被拒绝",
+diff --git a/chrome-extension/src/sidepanel/coding-handoff/task-package.ts b/chrome-extension/src/sidepanel/coding-handoff/task-package.ts
+index 3a42bd7..04695b5 100644
+--- a/chrome-extension/src/sidepanel/coding-handoff/task-package.ts
++++ b/chrome-extension/src/sidepanel/coding-handoff/task-package.ts
+@@ -40,7 +40,7 @@ function basenamePath(p: string): string {
+ 
+ /**
+  * Build the Markdown task package per product design §4 L0 / §5.7.7.
+- * Output is meant to be pasted into Claude Code / Gemini CLI / etc.
++ * Output is meant to be pasted into Claude Code / Grok / Kimi / OpenCode / etc.
+  */
+ export function buildCodingTaskPackage(input: TaskPackageInput): TaskPackageResult {
+   const goal = cap(input.goal || "（未填写任务摘要）", MAX_GOAL)
+diff --git a/chrome-extension/src/sidepanel/components/ChatView.tsx b/chrome-extension/src/sidepanel/components/ChatView.tsx
+index dc1f214..3e752a2 100644
+--- a/chrome-extension/src/sidepanel/components/ChatView.tsx
++++ b/chrome-extension/src/sidepanel/components/ChatView.tsx
+@@ -325,7 +325,7 @@ export function ChatView() {
+     })
+   }, [activeThreadId])
+ 
+-  // Export the Q&A pair containing this message to Obsidian markdown (UI-side download).
++  // Export the Q&A pair containing this message as Markdown (UI-side download).
+   const handleExport = useCallback((messageId: string) => {
+     if (!activeThreadId) return
+     chrome.runtime.sendMessage({
+@@ -749,7 +749,7 @@ const MessageRow = memo(function MessageRow({
+               <button type="button" style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支" aria-label="创建分支">
+                 <IconBranch size={13} />
+               </button>
+-              <button type="button" style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此条到 Obsidian" aria-label="导出到 Obsidian">
++              <button type="button" style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此条为 Markdown" aria-label="导出此条为 Markdown">
+                 <IconDownload size={13} />
+               </button>
+               <button
+diff --git a/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx b/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx
+index b8e2571..08f5915 100644
+--- a/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx
++++ b/chrome-extension/src/sidepanel/components/CodingHandoffSettingsSection.tsx
+@@ -200,8 +200,8 @@ export function CodingHandoffSettingsSection({
+       </button>
+       {flash ? <p style={styles.flash}>{flash}</p> : null}
+       <p style={styles.hint}>
+-        开启 ACP 后可用列表中的 claude / gemini / codex / pi 启动会话；也可「写入
+-        config」持久化路径。
++        开启 ACP 后可用列表中的 claude / gemini / codex / pi / grok / kimi / opencode
++        启动会话；也可「写入 config」持久化路径。
+       </p>
+     </div>
+   )
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index 502ba2f..125961d 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -1871,7 +1871,7 @@ export function SettingsSlideout() {
+                   dispatch({ type: "SET_EXPORT_INCLUDE_REASONING", enabled: e.target.checked })
+                 }
+               />
+-              导出到 Obsidian 时包含思考过程
++              导出 Markdown 时包含思考过程
+             </label>
+             <div style={styles.helpText}>
+               默认关闭。开启后以折叠块写入笔记；请注意思考可能含中间假设，勿默认分享。
+@@ -3001,14 +3001,14 @@ export function SettingsSlideout() {
+               open={isSectionOpen("export")}
+               onToggle={() => handleToggleSection("export")}
+             >
+-          {/* --- Obsidian Export --- */}
++          {/* --- Markdown export (optional note-folder conventions) --- */}
+           <div style={styles.field}>
+-            <label style={styles.label}>Vault 路径</label>
++            <label style={styles.label}>笔记库路径（可选）</label>
+             <input
+               style={styles.input}
+               value={config.obsidian_vault_path || ""}
+               onChange={e => dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: e.target.value } })}
+-              placeholder="/path/to/your/vault"
++              placeholder="/path/to/your/notes"
+             />
+             <button
+               style={{ ...styles.secondaryBtn, marginTop: 6 }}
+@@ -3028,7 +3028,7 @@ export function SettingsSlideout() {
+               </div>
+             )}
+             <div style={styles.helpText}>
+-              导出时会扫描此 vault:把约 200 篇笔记的 frontmatter + 正文前 200 字发给你的 LLM 提取 frontmatter / 命名 / tag 约定,并建立笔记索引、检测模板。缓存后导出自动套用——frontmatter 贴合约定、footer 用 [[wikilinks]] 链向相关笔记、并用 vault 模板骨架包裹。
++              对话导出为 Markdown 文件下载，不写进该文件夹。若填写笔记库路径，会抽样约 200 篇笔记的 frontmatter 与正文前 200 字，提取命名 / tag 约定并建立索引；之后导出自动套用 frontmatter、相关笔记 [[wikilinks]] 与模板骨架。
+             </div>
+             <button
+               style={styles.secondaryBtn}
+@@ -3039,7 +3039,7 @@ export function SettingsSlideout() {
+                 chrome.runtime.sendMessage({ type: "obsidian.refresh_profile", vault_path: vp })
+               }}
+             >
+-              刷新 vault 档案
++              刷新笔记库档案
+             </button>
+             {state.obsidianProfileStatus && (
+               <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? tokens.success : tokens.danger, marginTop: 6 }}>
+diff --git a/chrome-extension/src/sidepanel/components/StatusRail.tsx b/chrome-extension/src/sidepanel/components/StatusRail.tsx
+index 13234a7..e5e8aef 100644
+--- a/chrome-extension/src/sidepanel/components/StatusRail.tsx
++++ b/chrome-extension/src/sidepanel/components/StatusRail.tsx
+@@ -336,7 +336,7 @@ export function StatusRail({
+               }}
+             >
+               <IconDownload size={14} />
+-              <span>导出线程 (Obsidian)</span>
++              <span>导出为 Markdown</span>
+             </button>
+             <button
+               type="button"
+diff --git a/chrome-extension/src/sidepanel/components/ThreadList.tsx b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+index 6e52870..f9be33f 100644
+--- a/chrome-extension/src/sidepanel/components/ThreadList.tsx
++++ b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+@@ -981,7 +981,7 @@ export function ThreadList() {
+                 })
+               }}
+               disabled={state.summarizingThreadId === t.id}
+-              title="导出此线程摘要到 Obsidian"
++              title="导出此线程摘要为 Markdown"
+             >
+               {state.summarizingThreadId === t.id ? "⏳" : "🧠"}
+             </button>
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index 4be72db..9ca2ffb 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -1662,12 +1662,12 @@ export function useWebSocket() {
+             if (msg.template_count != null && msg.template_count > 0) parts.push(`模板 ${msg.template_count} 个`)
+             dispatch({
+               type: "SET_OBSIDIAN_PROFILE_STATUS",
+-              status: { ok: true, message: `✓ Vault 档案已更新（${parts.join(" · ")}）` },
++              status: { ok: true, message: `✓ 笔记库档案已更新（${parts.join(" · ")}）` },
+             })
+           } else {
+             dispatch({
+               type: "SET_OBSIDIAN_PROFILE_STATUS",
+-              status: { ok: false, message: msg.reason || "未识别到 vault 结构化约定" },
++              status: { ok: false, message: msg.reason || "未识别到笔记库结构化约定" },
+             })
+           }
+           break
+diff --git a/chrome-extension/src/sidepanel/store/agentStore.tsx b/chrome-extension/src/sidepanel/store/agentStore.tsx
+index 86ca4a0..2e1721b 100644
+--- a/chrome-extension/src/sidepanel/store/agentStore.tsx
++++ b/chrome-extension/src/sidepanel/store/agentStore.tsx
+@@ -136,7 +136,7 @@ export interface AgentState {
+    * auto_live = expand while streaming, collapse when done (default).
+    */
+   showReasoningMode: "always_collapsed" | "auto_live" | "always_open"
+-  /** Wave D: include reasoning in Obsidian export when true. */
++  /** Wave D: include reasoning in Markdown export when true. */
+   exportIncludeReasoning: boolean
+   pendingSecurityConfirmations: SecurityConfirmationRequest[]
+   logs: LogEntry[]
+diff --git a/companion/src/acp/discover.ts b/companion/src/acp/discover.ts
+index d20d87e..cbf5069 100644
+--- a/companion/src/acp/discover.ts
++++ b/companion/src/acp/discover.ts
+@@ -19,7 +19,7 @@ export type DiscoveredAgent = {
+   source: "path" | "common"
+ }
+ 
+-type ProbeDef = {
++export type ProbeDef = {
+   id: string
+   display_name: string
+   /** PATH basenames to try with `which` / `where` */
+@@ -28,6 +28,28 @@ type ProbeDef = {
+   commonPaths: string[]
+ }
+ 
++/** nvm node bins — GUI-launched Companion often lacks nvm on PATH. */
++function nvmNodeBins(basename: string): string[] {
++  try {
++    const nvm = path.join(os.homedir(), ".nvm", "versions", "node")
++    if (!fs.existsSync(nvm)) return [] as string[]
++    const vers = fs.readdirSync(nvm).sort().reverse()
++    return vers.slice(0, 3).map((v) => path.join(nvm, v, "bin", basename))
++  } catch {
++    return [] as string[]
++  }
++}
++
++/** Vendor install dirs (installer may not put the binary on GUI PATH). */
++function vendorBins(relDir: string, basename: string): string[] {
++  const dir = path.join(os.homedir(), relDir)
++  const out = [path.join(dir, basename)]
++  if (process.platform === "win32") {
++    out.push(path.join(dir, `${basename}.exe`), path.join(dir, `${basename}.cmd`))
++  }
++  return out
++}
++
+ const PROBES: ProbeDef[] = [
+   {
+     id: "claude",
+@@ -85,22 +107,65 @@ const PROBES: ProbeDef[] = [
+     commonPaths: [
+       "/opt/homebrew/bin/pi",
+       "/usr/local/bin/pi",
+-      // nvm: prefer latest installed node bin if present
+-      ...(() => {
+-        try {
+-          const nvm = path.join(os.homedir(), ".nvm", "versions", "node")
+-          if (!fs.existsSync(nvm)) return [] as string[]
+-          const vers = fs.readdirSync(nvm).sort().reverse()
+-          return vers.slice(0, 3).map((v) => path.join(nvm, v, "bin", "pi"))
+-        } catch {
+-          return [] as string[]
+-        }
+-      })(),
++      path.join(os.homedir(), ".local", "bin", "pi"),
++      ...nvmNodeBins("pi"),
+       ...windowsCommonAgentPaths("pi"),
+     ],
+   },
++  {
++    id: "grok",
++    display_name: "Grok",
++    basenames: ["grok"],
++    commonPaths: [
++      "/opt/homebrew/bin/grok",
++      "/usr/local/bin/grok",
++      path.join(os.homedir(), ".local", "bin", "grok"),
++      // Official Grok Build installer (often missing from GUI PATH)
++      ...vendorBins(path.join(".grok", "bin"), "grok"),
++      ...nvmNodeBins("grok"),
++      ...windowsCommonAgentPaths("grok"),
++    ],
++  },
++  {
++    id: "kimi",
++    display_name: "Kimi Code",
++    basenames: ["kimi"],
++    commonPaths: [
++      "/opt/homebrew/bin/kimi",
++      "/usr/local/bin/kimi",
++      path.join(os.homedir(), ".local", "bin", "kimi"),
++      ...vendorBins(path.join(".kimi-code", "bin"), "kimi"),
++      ...nvmNodeBins("kimi"),
++      ...windowsCommonAgentPaths("kimi"),
++    ],
++  },
++  {
++    id: "opencode",
++    display_name: "OpenCode",
++    basenames: ["opencode"],
++    commonPaths: [
++      "/opt/homebrew/bin/opencode",
++      "/usr/local/bin/opencode",
++      path.join(os.homedir(), ".local", "bin", "opencode"),
++      path.join(os.homedir(), ".bun", "bin", "opencode"),
++      // Official install script → ~/.opencode/bin/opencode
++      ...vendorBins(path.join(".opencode", "bin"), "opencode"),
++      ...nvmNodeBins("opencode"),
++      ...windowsCommonAgentPaths("opencode"),
++    ],
++  },
+ ]
+ 
++/** Probe registry (id + display + paths). Safe for tests; discovery still uses PATH first. */
++export function listCodingAgentProbes(): ProbeDef[] {
++  return PROBES.map((p) => ({
++    id: p.id,
++    display_name: p.display_name,
++    basenames: [...p.basenames],
++    commonPaths: [...p.commonPaths],
++  }))
++}
++
+ function isExecutableFile(p: string): boolean {
+   try {
+     const st = fs.statSync(p)
+diff --git a/companion/src/acp/index.ts b/companion/src/acp/index.ts
+index a595896..0ce1fbd 100644
+--- a/companion/src/acp/index.ts
++++ b/companion/src/acp/index.ts
+@@ -16,7 +16,7 @@ export {
+   type AcpLiveEvent,
+ } from "./manager"
+ export { handleAcpWsMessage, ensureAcpBroadcast } from "./handlers"
+-export { discoverCodingAgents, _resetDiscoverCache } from "./discover"
++export { discoverCodingAgents, _resetDiscoverCache, listCodingAgentProbes } from "./discover"
+ export {
+   getWorkspaceGitStatus,
+   GIT_STATUS_TIMEOUT_MS,
+@@ -38,4 +38,9 @@ export {
+   PROGRESS_TAIL_ACP_CHARS,
+   PROGRESS_TAIL_DISPLAY_LINES,
+ } from "./progress-caps"
+-export { resolveLaunchArgs, LAUNCH_PRESETS } from "./launch-presets"
++export {
++  resolveLaunchArgs,
++  resolveProtocolArgs,
++  LAUNCH_PRESETS,
++  ACP_PROTOCOL_ARGS,
++} from "./launch-presets"
+diff --git a/companion/src/acp/launch-presets.ts b/companion/src/acp/launch-presets.ts
+index 2e54f0f..83f517d 100644
+--- a/companion/src/acp/launch-presets.ts
++++ b/companion/src/acp/launch-presets.ts
+@@ -29,6 +29,54 @@ export const LAUNCH_PRESETS: Record<string, LaunchPreset> = {
+     args: ["-p", "--no-session"],
+     append_prompt_arg: false,
+   },
++  grok: {
++    // Headless single-turn; prompt file avoids ARG_MAX / shell quoting
++    args: ["--prompt-file", "{{prompt_file}}", "--output-format", "plain"],
++    append_prompt_arg: false,
++  },
++  kimi: {
++    // kimi -p cannot combine with -y/--auto (project knowledge).
++    args: ["-p", "--output-format", "text"],
++    append_prompt_arg: false,
++  },
++  opencode: {
++    args: ["run"],
++    append_prompt_arg: true,
++  },
++}
++
++/**
++ * Extra argv for the ACP JSON-RPC handshake (not the CLI-bridge fallback).
++ * Only agents whose CLI needs a subcommand to speak ACP belong here.
++ * Empty/omitted → spawn the binary with configured args or none (claude default).
++ */
++export const ACP_PROTOCOL_ARGS: Record<string, string[]> = {
++  kimi: ["acp"],
++  opencode: ["acp"],
++}
++
++/** Args for tryStartProtocolSession. Configured args win; else ACP subcommand preset. */
++export function resolveProtocolArgs(
++  agentId: string,
++  configuredArgs: string[] | undefined,
++): string[] {
++  if (configuredArgs && configuredArgs.length > 0) return [...configuredArgs]
++  const preset = ACP_PROTOCOL_ARGS[agentId]
++  return preset ? [...preset] : []
++}
++
++function injectMissingFlagValue(args: string[], flags: string[], value: string): string[] {
++  const out = [...args]
++  for (const flag of flags) {
++    const i = out.indexOf(flag)
++    if (i < 0) continue
++    const next = out[i + 1]
++    if (!next || next.startsWith("-")) {
++      out.splice(i + 1, 0, value)
++    }
++    return out
++  }
++  return out
+ }
+ 
+ export function resolveLaunchArgs(
+@@ -53,13 +101,9 @@ export function resolveLaunchArgs(
+       expanded.push(opts.prompt)
+     }
+   }
+-  // claude -p often wants prompt as next arg if not using stdin-only
+-  if (agentId === "claude" && expanded.includes("-p")) {
+-    const i = expanded.indexOf("-p")
+-    const next = expanded[i + 1]
+-    if (!next || next.startsWith("-")) {
+-      expanded.splice(i + 1, 0, opts.prompt)
+-    }
++  // claude / kimi: -p often wants the prompt as the next argv if not using stdin-only
++  if (agentId === "claude" || agentId === "kimi") {
++    return injectMissingFlagValue(expanded, ["-p", "--prompt"], opts.prompt)
+   }
+   return expanded
+ }
+diff --git a/companion/src/acp/manager.ts b/companion/src/acp/manager.ts
+index e58bc96..dee0a31 100644
+--- a/companion/src/acp/manager.ts
++++ b/companion/src/acp/manager.ts
+@@ -13,7 +13,7 @@ import { resolveAcpWorkspaceRoot } from "./workspace-bind"
+ import { frameAcpHandback } from "./handback"
+ import { markAcpHandbackSeen } from "./taint"
+ import { discoverCodingAgents } from "./discover"
+-import { resolveLaunchArgs } from "./launch-presets"
++import { resolveLaunchArgs, resolveProtocolArgs } from "./launch-presets"
+ import { extractDiffText, parseUnifiedDiff, applyParsedDiffs, summarizeDiffFiles } from "./diff-apply"
+ import { shapeHandbackBody } from "./handback-format"
+ import type { AcpAgentServerConfig } from "./types"
+@@ -537,7 +537,7 @@ export class AcpManager {
+     if (protocolMode === "auto" || protocolMode === "acp") {
+       const handle = await tryStartProtocolSession({
+         command: server.command,
+-        args: server.args || [],
++        args: resolveProtocolArgs(session.agent_id, server.args),
+         cwd: session.workspace_root,
+         env,
+         session,
+diff --git a/companion/src/acp/open-local-terminal.ts b/companion/src/acp/open-local-terminal.ts
+index e3c05a7..382b7a8 100644
+--- a/companion/src/acp/open-local-terminal.ts
++++ b/companion/src/acp/open-local-terminal.ts
+@@ -42,7 +42,7 @@ export type OpenLocalTerminalOpts = {
+   goalHint?: string
+   agentLabel?: string
+   /**
+-   * Agent id (claude / pi / gemini / codex…) for interactive argv conventions.
++   * Agent id (claude / pi / gemini / codex / grok / kimi / opencode…) for interactive argv conventions.
+    * Without this we still pass prompt as a single trailing arg (most CLIs).
+    */
+   agentId?: string
+@@ -174,6 +174,8 @@ export function buildBannerLines(opts: {
+  * Conventions (interactive, NOT -p print mode):
+  * - claude: `claude [prompt]`  (first user message)
+  * - pi:     `pi [messages…]`
++ * - grok:   `grok [prompt]`
++ * - kimi:   `kimi` only — positionals are subcommands (acp/web/login…), not a task
+  * - others: trailing prompt arg when present
+  */
+ export function buildInteractiveExecFragment(opts: {
+@@ -194,17 +196,18 @@ export function buildInteractiveExecFragment(opts: {
+     return `exec ${cmd}`
+   }
+ 
++  // kimi treats positionals as subcommands (acp/web/login…), not an initial message.
++  if (id === "kimi") {
++    return `exec ${cmd}`
++  }
++
+   // Read file into $CMSPARK_TASK so we don't rely on ARG_MAX for huge packages,
+   // then pass as a single argv. Trailing newline stripped by $(cat) is OK.
+   if (hasFile) {
+     const fileQ = shellSingleQuote(opts.promptFile!.trim())
+     // shellcheck: intentional word-split disable via quoted expansion
+     const load = `CMSPARK_TASK=$(cat ${fileQ})`
+-    // Claude / Pi / generic: first message = task
+-    if (id === "codex") {
+-      // codex often wants `codex` interactive; pass via exec with prompt if supported
+-      return `${load} && exec ${cmd} "\${CMSPARK_TASK}"`
+-    }
++    // Claude / Pi / grok / generic: first message = task
+     return `${load} && exec ${cmd} "\${CMSPARK_TASK}"`
+   }
+ 
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 0876df0..111abe3 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -3259,7 +3259,7 @@ export async function handleMessage(
+       try {
+         const raw = rest.vault_path ? rest.vault_path : getConfig().obsidian?.vault_path
+         if (!raw) {
+-          return { type: "error", error: "vault_path 未设置（请在 设置 → Obsidian 填写）" }
++          return { type: "error", error: "笔记库路径未设置（请在 设置 → 导出与集成 填写）" }
+         }
+         let resolved: string
+         try {
+@@ -3290,7 +3290,7 @@ export async function handleMessage(
+           return {
+             type: "obsidian.profile_ready",
+             profile: null,
+-            reason: "未识别到 vault 结构化约定（空 vault 或 LLM 未提取出）",
++            reason: "未识别到笔记库结构化约定（空文件夹或未能提取）",
+           }
+         }
+         saveProfile(profile)
+diff --git a/companion/src/obsidian/folder-picker.ts b/companion/src/obsidian/folder-picker.ts
+index 3fe1c3e..1e1de36 100644
+--- a/companion/src/obsidian/folder-picker.ts
++++ b/companion/src/obsidian/folder-picker.ts
+@@ -14,6 +14,8 @@ import { OSASCRIPT_BIN } from "../process-path"
+ 
+ const execFileP = promisify(execFile)
+ const PICK_TIMEOUT_MS = 120000 // the dialog blocks until the user picks/cancels
++/** Native dialog title — export is Markdown; this folder is optional convention source. */
++const MARKDOWN_FOLDER_PROMPT = "选择 Markdown 笔记文件夹"
+ 
+ export interface PickResult {
+   path?: string
+@@ -41,7 +43,7 @@ function trimTrailingSlash(p: string): string {
+ async function pickMacOS(): Promise<PickResult> {
+   // `choose folder` returns an alias; `POSIX path of` yields the path (with a trailing slash).
+   // Cancel → osascript exits non-zero with "User canceled" / error -128 in stderr.
+-  const script = 'POSIX path of (choose folder with prompt "选择你的 Obsidian Vault 文件夹")'
++  const script = `POSIX path of (choose folder with prompt "${MARKDOWN_FOLDER_PROMPT}")`
+   try {
+     const { stdout } = await execFileP(OSASCRIPT_BIN, ["-e", script], { timeout: PICK_TIMEOUT_MS })
+     const p = trimTrailingSlash(stdout)
+@@ -58,7 +60,7 @@ async function pickLinux(): Promise<PickResult> {
+   try {
+     const { stdout } = await execFileP(
+       "zenity",
+-      ["--file-selection", "--directory", "--title=选择你的 Obsidian Vault 文件夹"],
++      ["--file-selection", "--directory", `--title=${MARKDOWN_FOLDER_PROMPT}`],
+       { timeout: PICK_TIMEOUT_MS },
+     )
+     const p = trimTrailingSlash(stdout)
+@@ -75,6 +77,7 @@ async function pickWindows(): Promise<PickResult> {
+   const ps =
+     "Add-Type -AssemblyName System.Windows.Forms; " +
+     "$d = New-Object System.Windows.Forms.FolderBrowserDialog; " +
++    `$d.Description = '${MARKDOWN_FOLDER_PROMPT.replace(/'/g, "''")}'; ` +
+     "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }"
+   try {
+     const { stdout } = await execFileP("powershell", ["-NoProfile", "-Command", ps], {
+diff --git a/companion/tests/acp-diff-apply.test.ts b/companion/tests/acp-diff-apply.test.ts
+index 7b70c15..c7d8ed4 100644
+--- a/companion/tests/acp-diff-apply.test.ts
++++ b/companion/tests/acp-diff-apply.test.ts
+@@ -10,7 +10,7 @@ import {
+   summarizeDiffFiles,
+ } from "../src/acp/diff-apply"
+ import { formatHandbackChatMessage, stripUntrustedFrame } from "../src/acp/handback-format"
+-import { resolveLaunchArgs } from "../src/acp/launch-presets"
++import { resolveLaunchArgs, resolveProtocolArgs } from "../src/acp/launch-presets"
+ 
+ describe("diff extract/parse/apply", () => {
+   it("extracts fenced diff", () => {
+@@ -132,4 +132,37 @@ describe("launch presets", () => {
+     assert.ok(args.includes("-p"))
+     assert.ok(args.includes("review me"))
+   })
++
++  it("uses grok --prompt-file for CLI bridge", () => {
++    const args = resolveLaunchArgs("grok", undefined, {
++      prompt: "review me",
++      promptFile: "/tmp/p.md",
++    })
++    assert.deepEqual(args, ["--prompt-file", "/tmp/p.md", "--output-format", "plain"])
++    assert.deepEqual(resolveProtocolArgs("grok", undefined), [])
++    assert.deepEqual(resolveProtocolArgs("grok", ["agent", "stdio"]), ["agent", "stdio"])
++  })
++
++  it("injects kimi -p prompt and uses acp protocol args", () => {
++    const args = resolveLaunchArgs("kimi", undefined, {
++      prompt: "review me",
++      promptFile: "/tmp/p.md",
++    })
++    assert.equal(args[0], "-p")
++    assert.equal(args[1], "review me")
++    assert.ok(args.includes("--output-format"))
++    assert.ok(!args.includes("-y") && !args.includes("--auto"))
++    assert.deepEqual(resolveProtocolArgs("kimi", undefined), ["acp"])
++    assert.deepEqual(resolveProtocolArgs("kimi", []), ["acp"])
++    assert.deepEqual(resolveProtocolArgs("kimi", ["--login"]), ["--login"])
++  })
++
++  it("appends opencode run prompt and uses acp protocol args", () => {
++    const args = resolveLaunchArgs("opencode", undefined, {
++      prompt: "fix the bug",
++      promptFile: "/tmp/p.md",
++    })
++    assert.deepEqual(args, ["run", "fix the bug"])
++    assert.deepEqual(resolveProtocolArgs("opencode", undefined), ["acp"])
++  })
+ })
+diff --git a/companion/tests/acp-discover.test.ts b/companion/tests/acp-discover.test.ts
+index f2f6c6e..e14650e 100644
+--- a/companion/tests/acp-discover.test.ts
++++ b/companion/tests/acp-discover.test.ts
+@@ -1,7 +1,11 @@
+ import { describe, it, beforeEach } from "node:test"
+ import assert from "node:assert/strict"
++import * as fs from "fs"
++import * as os from "os"
++import * as path from "path"
+ import {
+   discoverCodingAgents,
++  listCodingAgentProbes,
+   _resetDiscoverCache,
+ } from "../src/acp/discover"
+ 
+@@ -22,4 +26,35 @@ describe("discoverCodingAgents", () => {
+       assert.ok(c.source === "path" || c.source === "common")
+     }
+   })
++
++  it("probes grok / kimi / opencode with vendor install dirs", () => {
++    const probes = listCodingAgentProbes()
++    const ids = probes.map((p) => p.id)
++    for (const id of ["claude", "gemini", "codex", "pi", "grok", "kimi", "opencode"]) {
++      assert.ok(ids.includes(id), `missing probe ${id}`)
++    }
++    const grok = probes.find((p) => p.id === "grok")!
++    const kimi = probes.find((p) => p.id === "kimi")!
++    const opencode = probes.find((p) => p.id === "opencode")!
++    const grokVendor = path.join(os.homedir(), ".grok", "bin", "grok")
++    const kimiVendor = path.join(os.homedir(), ".kimi-code", "bin", "kimi")
++    const opencodeVendor = path.join(os.homedir(), ".opencode", "bin", "opencode")
++    assert.ok(grok.commonPaths.includes(grokVendor), grok.commonPaths.join(","))
++    assert.ok(kimi.commonPaths.includes(kimiVendor), kimi.commonPaths.join(","))
++    assert.ok(opencode.commonPaths.includes(opencodeVendor), opencode.commonPaths.join(","))
++    assert.ok(opencode.commonPaths.includes(path.join(os.homedir(), ".bun", "bin", "opencode")))
++  })
++
++  it("discovers grok and kimi when their vendor bins exist on this host", () => {
++    const agents = discoverCodingAgents(true)
++    const expectIfPresent = (id: string, candidate: string) => {
++      if (!fs.existsSync(candidate)) return
++      const hit = agents.find((a) => a.id === id)
++      assert.ok(hit, `${id} should be discovered (candidate ${candidate})`)
++      assert.ok(path.isAbsolute(hit!.command), hit!.command)
++    }
++    expectIfPresent("grok", path.join(os.homedir(), ".local", "bin", "grok"))
++    expectIfPresent("grok", path.join(os.homedir(), ".grok", "bin", "grok"))
++    expectIfPresent("kimi", path.join(os.homedir(), ".kimi-code", "bin", "kimi"))
++  })
+ })
+diff --git a/companion/tests/acp-open-local-terminal.test.ts b/companion/tests/acp-open-local-terminal.test.ts
+index 021af96..5225882 100644
+--- a/companion/tests/acp-open-local-terminal.test.ts
++++ b/companion/tests/acp-open-local-terminal.test.ts
+@@ -383,6 +383,25 @@ describe("buildInteractiveScript / buildL0DegradeScript", () => {
+     assert.ok(frag.startsWith("exec "))
+     assert.ok(frag.includes(shellSingleQuote("使用 fanout 审查")))
+   })
++
++  it("kimi Mode C does not pass the task as a positional (subcommand collision)", () => {
++    const pf =
++      process.platform === "win32" ? "C:\\tmp\\task.md" : "/tmp/cmspark-mode-c-task.md"
++    const withFile = buildInteractiveExecFragment({
++      command: cmd,
++      agentId: "kimi",
++      promptFile: pf,
++    })
++    assert.equal(withFile, `exec ${shellSingleQuote(cmd)}`)
++    assert.doesNotMatch(withFile, /CMSPARK_TASK/)
++    const inline = buildInteractiveExecFragment({
++      command: cmd,
++      agentId: "kimi",
++      prompt: "review auth",
++    })
++    assert.equal(inline, `exec ${shellSingleQuote(cmd)}`)
++    assert.doesNotMatch(inline, /review auth/)
++  })
+ })
+ 
+ describe("normalizeLocalTerminalApp", () => {
+diff --git a/docs/coding-handoff-user-guide.md b/docs/coding-handoff-user-guide.md
+index 7548250..fe56cd7 100644
+--- a/docs/coding-handoff-user-guide.md
++++ b/docs/coding-handoff-user-guide.md
+@@ -8,7 +8,7 @@
+ 
+ ## 1. 是什么
+ 
+-**编程接力**：把浏览器里已有的真相（staging 复现、PR 页、AppSec 发现等）打成任务，**外派**给本机编程助手（Claude Code / Gemini CLI / Codex / Pi 等），再把摘要/发现 **handback** 回对话。
++**编程接力**：把浏览器里已有的真相（staging 复现、PR 页、AppSec 发现等）打成任务，**外派**给本机编程助手（Claude Code / Gemini CLI / Codex / Pi / Grok / Kimi Code / OpenCode 等），再把摘要/发现 **handback** 回对话。
+ 
+ | 一句话 | |
+ |--------|--|
+diff --git a/memory/session.md b/memory/session.md
+index 01b0e79..313375c 100644
+--- a/memory/session.md
++++ b/memory/session.md
+@@ -2,6 +2,17 @@
+ 
+ ## Current Session
+ 
++### export copy: Markdown not Obsidian (2026-08-20)
++- **Task**: 导出对话用户文案去掉 Obsidian 品牌，实际就是 Markdown 下载
++- **落地**: 消息/线程/摘要按钮、设置开关与笔记库路径、文件夹选择器、companion 错误提示
++- **未改**: WS `thread.export_obsidian`、关联图「类 Obsidian」、知识库导入文案
++
++### coding-agent discover grok/kimi/opencode (2026-08-20)
++- **Task**: 编程接力扫描补 grok / kimi / opencode（原先只 claude/gemini/codex/pi）
++- **落地**: `companion/src/acp/discover.ts` 探针 + 厂商目录（`~/.grok/bin`、`~/.kimi-code/bin`、`~/.opencode/bin`）；CLI presets + kimi/opencode `acp` 协议 argv；kimi Mode C 不传位置参数
++- **验证**: `[executed]` 本机 discover 已扫到 grok+kimi；ACP 单测 71 pass
++- **下次**: 用户装 opencode 后再点「重新检测」；未 commit / 未 PR
++
+ ### S76 END (2026-08-20 ~13:59) [#203 MERGED · fzbcro osascript 假拒窗 · DMG 换装]
+ - **Ship**：**PR #203 MERGED** `a468925` — LLM DNS/IMDS nits + osascript 批准后 regex 二次硬拦 + 确认文案；CI build+3 smoke 绿。`make package-macos` → `CMspark-v0.5.1-macOS.dmg`；替换 `/Applications`（备份 `~/CMspark.app.bak-20260820-132406`）；daemon 23401 已起
+ - **fzbcro**：日志已 `confirmation.approved`，dispatch 仍 `contains high-risk APIs (fetch)`；聊天套「若你已拒绝弹窗」。修：token 后 regex 只审计；copy 仅真 deny

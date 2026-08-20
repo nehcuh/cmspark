@@ -1,0 +1,380 @@
+diff --git a/companion/src/acp/open-local-terminal.ts b/companion/src/acp/open-local-terminal.ts
+index 382b7a8..f0f40d6 100644
+--- a/companion/src/acp/open-local-terminal.ts
++++ b/companion/src/acp/open-local-terminal.ts
+@@ -172,11 +172,12 @@ export function buildBannerLines(opts: {
+  * Prefer reading prompt from a temp file (handles newlines / quotes / length).
+  *
+  * Conventions (interactive, NOT -p print mode):
+- * - claude: `claude [prompt]`  (first user message)
+- * - pi:     `pi [messages…]`
+- * - grok:   `grok [prompt]`
+- * - kimi:   `kimi` only — positionals are subcommands (acp/web/login…), not a task
+- * - others: trailing prompt arg when present
++ * - claude:   `claude [prompt]`  (first user message)
++ * - pi:       `pi [messages…]`
++ * - grok:     `grok [prompt]`
++ * - kimi:     `kimi` only — positionals are subcommands (acp/web/login…), not a task
++ * - opencode: `opencode --prompt <text>` — root positional is the project dir, not a task
++ * - others:   trailing prompt arg when present
+  */
+ export function buildInteractiveExecFragment(opts: {
+   command: string
+@@ -201,6 +202,17 @@ export function buildInteractiveExecFragment(opts: {
+     return `exec ${cmd}`
+   }
+ 
++  // opencode root positional is the project directory, not a task — the task goes
++  // via --prompt (documented TUI flag, opencode.ai/docs/cli).
++  if (id === "opencode") {
++    if (hasFile) {
++      const fileQ = shellSingleQuote(opts.promptFile!.trim())
++      const load = `CMSPARK_TASK=$(cat ${fileQ})`
++      return `${load} && exec ${cmd} --prompt "\${CMSPARK_TASK}"`
++    }
++    return `exec ${cmd} --prompt ${shellSingleQuote(inline)}`
++  }
++
+   // Read file into $CMSPARK_TASK so we don't rely on ARG_MAX for huge packages,
+   // then pass as a single argv. Trailing newline stripped by $(cat) is OK.
+   if (hasFile) {
+@@ -295,19 +307,32 @@ export function planWindowsStartSpawn(psArgs: string[]): {
+  * Without promptFile: cmd `cd /d && command`.
+  * With promptFile: PowerShell cd + Get-Content -LiteralPath + & agent $task
+  * (no raw interpolation of the file body).
++ * Per-agent task delivery mirrors buildInteractiveExecFragment: kimi launches
++ * bare (positionals are subcommands); opencode takes the task via --prompt.
+  */
+ export function buildWindowsCommandLine(
+   cwd: string,
+   command: string,
+-  opts?: { promptFile?: string; extraArgs?: string[] },
++  opts?: { promptFile?: string; extraArgs?: string[]; agentId?: string },
+ ): string {
+   const pf = opts?.promptFile?.trim()
+   if (pf) {
++    const id = (opts?.agentId || "").toLowerCase()
+     const tokens = [command, ...(opts?.extraArgs || [])].map(quotePowerShellLiteral)
++    // kimi: positionals are subcommands (acp/web/login…) — bare launch, task via paste.
++    if (id === "kimi") {
++      return [
++        `Set-Location -LiteralPath ${quotePowerShellLiteral(cwd)}`,
++        `& ${tokens.join(" ")}`,
++      ].join("; ")
++    }
++    // opencode: root positional is the project directory — task goes via --prompt.
++    const invoke =
++      id === "opencode" ? `& ${tokens.join(" ")} --prompt $task` : `& ${tokens.join(" ")} $task`
+     return [
+       `Set-Location -LiteralPath ${quotePowerShellLiteral(cwd)}`,
+       `$task = Get-Content -LiteralPath ${quotePowerShellLiteral(pf)} -Raw -Encoding utf8`,
+-      `& ${tokens.join(" ")} $task`,
++      invoke,
+     ].join("; ")
+   }
+   return `cd /d ${windowsQuotePath(cwd)} && ${windowsQuotePath(command)}`
+@@ -331,6 +356,7 @@ export function buildWindowsModeCScript(opts: {
+   cwd: string
+   command: string
+   extraArgs?: string[]
++  agentId?: string
+   agentLabel?: string
+   goalHint?: string
+   promptFile?: string
+@@ -356,17 +382,23 @@ export function buildWindowsModeCScript(opts: {
+       ? buildWindowsCommandLine(opts.cwd, opts.command, {
+           promptFile: opts.promptFile,
+           extraArgs: opts.extraArgs,
++          agentId: opts.agentId,
+         })
+       : [opts.command, ...(opts.extraArgs || [])].join(" ")
+     lines.push(`Write-Host ${quotePowerShellLiteral(paste)}`)
+     return lines.join("\r\n")
+   }
+   const tokens = [opts.command, ...(opts.extraArgs || [])].map(quotePowerShellLiteral)
+-  if (opts.promptFile) {
++  const id = (opts.agentId || "").toLowerCase()
++  // kimi: positionals are subcommands — bare launch, task via paste (POSIX parity).
++  if (opts.promptFile && id !== "kimi") {
+     lines.push(
+       `$task = Get-Content -LiteralPath ${quotePowerShellLiteral(opts.promptFile)} -Raw -Encoding utf8`,
+     )
+-    lines.push(`& ${tokens.join(" ")} $task`)
++    // opencode: root positional is the project directory — task goes via --prompt.
++    lines.push(
++      id === "opencode" ? `& ${tokens.join(" ")} --prompt $task` : `& ${tokens.join(" ")} $task`,
++    )
+   } else {
+     lines.push(`& ${tokens.join(" ")}`)
+   }
+@@ -1065,7 +1097,11 @@ export async function openLocalTerminalForAgent(
+   const l1Script = buildInteractiveScript(scriptOpts)
+   const pasteLine =
+     platform === "win32"
+-      ? buildWindowsCommandLine(cwd, command, promptFile ? { promptFile } : undefined)
++      ? buildWindowsCommandLine(
++          cwd,
++          command,
++          promptFile ? { promptFile, agentId: opts.agentId } : undefined,
++        )
+       : `cd ${shellSingleQuote(cwd)} && ${buildInteractiveExecFragment({
+           command,
+           agentId: opts.agentId,
+@@ -1206,6 +1242,7 @@ export async function openLocalTerminalForAgent(
+           cwd,
+           command: invokeUnwrapped ? spec.command : command,
+           extraArgs: invokeUnwrapped ? spec.args : [],
++          agentId: opts.agentId,
+           agentLabel: opts.agentLabel,
+           goalHint: opts.goalHint,
+           promptFile,
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 111abe3..f9da30e 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -2046,7 +2046,11 @@ export async function handleMessage(
+         }
+       }
+       const obsCfg = getConfig().obsidian
+-      if (!obsCfg) return { type: "error", error: "obsidian export not configured" }
++      if (!obsCfg)
++        return {
++          type: "error",
++          error: "笔记库导出未配置（请在 设置 → 导出与集成 填写笔记库路径）",
++        }
+       // Apply the cached vault profile (P1) if present + matches the configured vault.
+       const profile = loadCachedProfile(obsCfg.vault_path)
+       // P2: find topically-related vault notes (from the cached index) for the [[wikilinks]] footer.
+@@ -3321,7 +3325,7 @@ export async function handleMessage(
+           template_count,
+         }
+       } catch (e: any) {
+-        return { type: "error", error: `vault 分析失败: ${e.message || String(e)}` }
++        return { type: "error", error: `笔记库分析失败: ${e.message || String(e)}` }
+       }
+     }
+ 
+diff --git a/companion/tests/acp-handlers-gates.test.ts b/companion/tests/acp-handlers-gates.test.ts
+index 193409e..b833411 100644
+--- a/companion/tests/acp-handlers-gates.test.ts
++++ b/companion/tests/acp-handlers-gates.test.ts
+@@ -4,6 +4,7 @@ import { describe, it, before, beforeEach } from "node:test"
+ import assert from "node:assert/strict"
+ import { handleAcpWsMessage } from "../src/acp/handlers"
+ import { getAcpManager, _resetAcpManagerForTests } from "../src/acp/manager"
++import * as protocolSession from "../src/acp/protocol-session"
+ import { getConfig, initDataDir, saveConfig } from "../src/config"
+ 
+ describe("acp WS gates", () => {
+@@ -268,3 +269,114 @@ describe("acp WS gates", () => {
+     }
+   })
+ })
++
++describe("acp manager protocol argv wiring", () => {
++  before(async () => {
++    await initDataDir()
++  })
++
++  beforeEach(() => {
++    _resetAcpManagerForTests()
++  })
++
++  it("start() passes resolveProtocolArgs(session.agent_id, server.args) to the protocol session", async (t) => {
++    const fs = await import("node:fs")
++    const os = await import("node:os")
++    const path = await import("node:path")
++    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-proto-args-"))
++    const agents = ["kimi", "opencode", "claude", "grok"] as const
++    const expected: Record<string, string[]> = {
++      kimi: ["acp"],
++      opencode: ["acp"],
++      claude: [],
++      grok: [],
++    }
++    try {
++      saveConfig({
++        acp: {
++          enabled: true,
++          servers: Object.fromEntries(
++            agents.map((id) => [
++              id,
++              {
++                enabled: true,
++                display_name: id,
++                transport: "stdio" as const,
++                command: process.execPath,
++                args: [],
++                policy: {
++                  profile: "review_readonly" as const,
++                  allow_write: false,
++                  allow_exec: false,
++                },
++              },
++            ]),
++          ),
++          policy: {
++            require_workspace: true,
++            force_confirm_session_start: true,
++            default_profile: "review_readonly",
++          },
++        },
++        coding_handoff: { open_local_terminal: false },
++      })
++
++      // Intercept the ACP handshake: record argv, return a fake handle so the
++      // manager takes the transport="acp" path without spawning a real process.
++      const captured: Array<{ agentId: string; args: string[] }> = []
++      t.mock.method(
++        protocolSession as any,
++        "tryStartProtocolSession",
++        async (opts: any) => {
++          captured.push({ agentId: opts.session.agent_id, args: [...opts.args] })
++          return {
++            child: { pid: 43210 },
++            client: null,
++            agentSessionId: "agent-sess-stub",
++            transport: "acp",
++            prompt: async () => {},
++            cancel: () => {},
++            kill: () => {},
++          }
++        },
++      )
++
++      const mgr = getAcpManager()
++      for (const agentId of agents) {
++        const proposed = mgr.propose({
++          threadId: `t-proto-${agentId}`,
++          agentId,
++          goal: "wiring check",
++          workspaceRoot: dir,
++        })
++        assert.equal(proposed.ok, true, `propose ${agentId}`)
++        if (!proposed.ok) continue
++        const started = await mgr.start(proposed.session.session_id)
++        assert.equal(started.ok, true, `start ${agentId}`)
++        assert.equal(proposed.session.transport, "acp", `${agentId} must take the ACP path`)
++      }
++
++      assert.deepEqual(
++        captured.map((c) => c.agentId).sort(),
++        [...agents].sort(),
++        "every agent reached the protocol session",
++      )
++      for (const c of captured) {
++        assert.deepEqual(c.args, expected[c.agentId], `protocol argv for ${c.agentId}`)
++      }
++    } finally {
++      fs.rmSync(dir, { recursive: true, force: true })
++      saveConfig({
++        acp: {
++          enabled: false,
++          servers: {},
++          policy: {
++            require_workspace: true,
++            force_confirm_session_start: true,
++            default_profile: "review_readonly",
++          },
++        },
++      })
++    }
++  })
++})
+diff --git a/companion/tests/acp-open-local-terminal.test.ts b/companion/tests/acp-open-local-terminal.test.ts
+index 5225882..66b7998 100644
+--- a/companion/tests/acp-open-local-terminal.test.ts
++++ b/companion/tests/acp-open-local-terminal.test.ts
+@@ -119,6 +119,35 @@ describe("quotePowerShellLiteral / buildWindowsModeCScript", () => {
+       "L0 must not exec the agent; only Write-Host the paste line",
+     )
+   })
++
++  it("kimi L1 launches bare — no $task variable at all (POSIX parity)", () => {
++    const s = buildWindowsModeCScript({
++      cwd: "C:\\ws",
++      command: "C:\\Tools\\kimi.exe",
++      agentId: "kimi",
++      agentLabel: "Kimi",
++      goalHint: "fix auth",
++      promptFile: "C:\\tmp\\task.md",
++    })
++    assert.match(s, /& 'C:\\Tools\\kimi\.exe'\r?$/, "kimi invoked without any positional")
++    assert.doesNotMatch(s, /\$task/)
++    assert.doesNotMatch(s, /Get-Content/)
++    // Banner still carries the goal hint so the user can paste the task.
++    assert.match(s, /任务: fix auth/)
++  })
++
++  it("opencode L1 passes the task via --prompt $task", () => {
++    const s = buildWindowsModeCScript({
++      cwd: "C:\\ws",
++      command: "C:\\Tools\\opencode.exe",
++      agentId: "opencode",
++      agentLabel: "opencode",
++      promptFile: "C:\\tmp\\task.md",
++    })
++    assert.match(s, /\$task = Get-Content -LiteralPath 'C:\\tmp\\task\.md'/)
++    assert.match(s, /& 'C:\\Tools\\opencode\.exe' --prompt \$task/)
++    assert.doesNotMatch(s, /opencode\.exe' \$task/)
++  })
+ })
+ 
+ describe("modeCWindowsLevelForSpec", () => {
+@@ -176,6 +205,27 @@ describe("buildWindowsCommandLine", () => {
+     assert.match(line, /& 'C:\\Tools\\claude\.exe' \$task/)
+     assert.doesNotMatch(line, /cd \/d/)
+   })
++
++  it("kimi launches bare — no $task invocation, no task file load", () => {
++    const line = buildWindowsCommandLine("C:\\ws", "C:\\Tools\\kimi.exe", {
++      promptFile: "C:\\tmp\\task.md",
++      agentId: "kimi",
++    })
++    assert.match(line, /& 'C:\\Tools\\kimi\.exe'/)
++    assert.doesNotMatch(line, /\$task/)
++    assert.doesNotMatch(line, /Get-Content/)
++    assert.doesNotMatch(line, /task\.md/)
++  })
++
++  it("opencode passes the task via --prompt $task (root positional is the project dir)", () => {
++    const line = buildWindowsCommandLine("C:\\ws", "C:\\Tools\\opencode.exe", {
++      promptFile: "C:\\tmp\\task.md",
++      agentId: "opencode",
++    })
++    assert.match(line, /Get-Content -LiteralPath 'C:\\tmp\\task\.md'/)
++    assert.match(line, /& 'C:\\Tools\\opencode\.exe' --prompt \$task/)
++    assert.doesNotMatch(line, /opencode\.exe' \$task/)
++  })
+ })
+ 
+ describe("findWindowsTerminalExe / isRealWindowsTerminalExe", () => {
+@@ -402,6 +452,28 @@ describe("buildInteractiveScript / buildL0DegradeScript", () => {
+     assert.equal(inline, `exec ${shellSingleQuote(cmd)}`)
+     assert.doesNotMatch(inline, /review auth/)
+   })
++
++  it("opencode Mode C passes the task via --prompt (root positional is the project dir)", () => {
++    const pf =
++      process.platform === "win32" ? "C:\\tmp\\task.md" : "/tmp/cmspark-mode-c-task.md"
++    const withFile = buildInteractiveExecFragment({
++      command: cmd,
++      agentId: "opencode",
++      promptFile: pf,
++    })
++    // Exact shape: file-loaded task goes to --prompt, never a bare positional
++    // (opencode would read a positional as the project path).
++    assert.equal(
++      withFile,
++      `CMSPARK_TASK=$(cat ${shellSingleQuote(pf)}) && exec ${shellSingleQuote(cmd)} --prompt "\${CMSPARK_TASK}"`,
++    )
++    const inline = buildInteractiveExecFragment({
++      command: cmd,
++      agentId: "opencode",
++      prompt: "fix the bug",
++    })
++    assert.equal(inline, `exec ${shellSingleQuote(cmd)} --prompt ${shellSingleQuote("fix the bug")}`)
++  })
+ })
+ 
+ describe("normalizeLocalTerminalApp", () => {

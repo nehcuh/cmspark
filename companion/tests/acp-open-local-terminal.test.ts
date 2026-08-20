@@ -119,6 +119,35 @@ describe("quotePowerShellLiteral / buildWindowsModeCScript", () => {
       "L0 must not exec the agent; only Write-Host the paste line",
     )
   })
+
+  it("kimi L1 launches bare — no $task variable at all (POSIX parity)", () => {
+    const s = buildWindowsModeCScript({
+      cwd: "C:\\ws",
+      command: "C:\\Tools\\kimi.exe",
+      agentId: "kimi",
+      agentLabel: "Kimi",
+      goalHint: "fix auth",
+      promptFile: "C:\\tmp\\task.md",
+    })
+    assert.match(s, /& 'C:\\Tools\\kimi\.exe'\r?$/, "kimi invoked without any positional")
+    assert.doesNotMatch(s, /\$task/)
+    assert.doesNotMatch(s, /Get-Content/)
+    // Banner still carries the goal hint so the user can paste the task.
+    assert.match(s, /任务: fix auth/)
+  })
+
+  it("opencode L1 passes the task via --prompt $task", () => {
+    const s = buildWindowsModeCScript({
+      cwd: "C:\\ws",
+      command: "C:\\Tools\\opencode.exe",
+      agentId: "opencode",
+      agentLabel: "opencode",
+      promptFile: "C:\\tmp\\task.md",
+    })
+    assert.match(s, /\$task = Get-Content -LiteralPath 'C:\\tmp\\task\.md'/)
+    assert.match(s, /& 'C:\\Tools\\opencode\.exe' --prompt \$task/)
+    assert.doesNotMatch(s, /opencode\.exe' \$task/)
+  })
 })
 
 describe("modeCWindowsLevelForSpec", () => {
@@ -175,6 +204,27 @@ describe("buildWindowsCommandLine", () => {
     assert.match(line, /C:\\tmp\\task\.md/)
     assert.match(line, /& 'C:\\Tools\\claude\.exe' \$task/)
     assert.doesNotMatch(line, /cd \/d/)
+  })
+
+  it("kimi launches bare — no $task invocation, no task file load", () => {
+    const line = buildWindowsCommandLine("C:\\ws", "C:\\Tools\\kimi.exe", {
+      promptFile: "C:\\tmp\\task.md",
+      agentId: "kimi",
+    })
+    assert.match(line, /& 'C:\\Tools\\kimi\.exe'/)
+    assert.doesNotMatch(line, /\$task/)
+    assert.doesNotMatch(line, /Get-Content/)
+    assert.doesNotMatch(line, /task\.md/)
+  })
+
+  it("opencode passes the task via --prompt $task (root positional is the project dir)", () => {
+    const line = buildWindowsCommandLine("C:\\ws", "C:\\Tools\\opencode.exe", {
+      promptFile: "C:\\tmp\\task.md",
+      agentId: "opencode",
+    })
+    assert.match(line, /Get-Content -LiteralPath 'C:\\tmp\\task\.md'/)
+    assert.match(line, /& 'C:\\Tools\\opencode\.exe' --prompt \$task/)
+    assert.doesNotMatch(line, /opencode\.exe' \$task/)
   })
 })
 
@@ -401,6 +451,28 @@ describe("buildInteractiveScript / buildL0DegradeScript", () => {
     })
     assert.equal(inline, `exec ${shellSingleQuote(cmd)}`)
     assert.doesNotMatch(inline, /review auth/)
+  })
+
+  it("opencode Mode C passes the task via --prompt (root positional is the project dir)", () => {
+    const pf =
+      process.platform === "win32" ? "C:\\tmp\\task.md" : "/tmp/cmspark-mode-c-task.md"
+    const withFile = buildInteractiveExecFragment({
+      command: cmd,
+      agentId: "opencode",
+      promptFile: pf,
+    })
+    // Exact shape: file-loaded task goes to --prompt, never a bare positional
+    // (opencode would read a positional as the project path).
+    assert.equal(
+      withFile,
+      `CMSPARK_TASK=$(cat ${shellSingleQuote(pf)}) && exec ${shellSingleQuote(cmd)} --prompt "\${CMSPARK_TASK}"`,
+    )
+    const inline = buildInteractiveExecFragment({
+      command: cmd,
+      agentId: "opencode",
+      prompt: "fix the bug",
+    })
+    assert.equal(inline, `exec ${shellSingleQuote(cmd)} --prompt ${shellSingleQuote("fix the bug")}`)
   })
 })
 
