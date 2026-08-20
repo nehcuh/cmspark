@@ -53,7 +53,7 @@ Var /GLOBAL START_MENU_FOLDER
 !insertmacro MUI_LANGUAGE "English"
 
 ; Stop tray + daemon whose ExecutablePath lives under $INSTDIR.
-; `daemon stop` only kills daemon.pid — tray is a second node.exe.
+; `daemon stop` only kills daemon.pid - tray is a second node.exe.
 ; Do not use WMIC (removed/optional on Windows 11 24H2+).
 ; Quote rule (Claude dual-review B1, makensis 3.12 executed): NSIS does NOT
 ; treat '' as an escaped quote. Backtick strings may contain both ' and ".
@@ -100,7 +100,7 @@ Section "CMspark Agent" SecMain
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "EstimatedSize" "$0"
 
-  ; Single autostart path — HKCU Run only (not also Startup folder).
+  ; Single autostart path - HKCU Run only (not also Startup folder).
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}" 'wscript.exe "$INSTDIR\launch-hidden.vbs"'
 
   ; --- Shortcuts ---

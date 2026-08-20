@@ -202,14 +202,14 @@ assert_file_has "${NSIS}" 'dist-package\\cmspark-windows-x64' \
 assert_file_lacks "${NSIS}" '\*\.\*' \
   "installer.nsi does not use *.* glob (would skip extensionless files)"
 # S52 N4: NSIS fallback PRODUCT_VERSION must equal companion/package.json version
-COMP_VER="$(node -p "require('${ROOT}/companion/package.json').version" 2>/dev/null || true)"
+COMP_VER="$(cd "${ROOT}" && node -p "require('./companion/package.json').version" 2>/dev/null || true)"
 if [ -n "${COMP_VER}" ]; then
   NSIS_FALLBACK="$(
     grep -E '^\s*!define PRODUCT_VERSION "' "${NSIS}" | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/'
   )"
   assert_eq "${COMP_VER}" "${NSIS_FALLBACK}" \
     "installer.nsi fallback PRODUCT_VERSION must match companion/package.json (${COMP_VER})"
-  EXT_VER="$(node -p "require('${ROOT}/chrome-extension/package.json').version" 2>/dev/null || true)"
+  EXT_VER="$(cd "${ROOT}" && node -p "require('./chrome-extension/package.json').version" 2>/dev/null || true)"
   if [ -n "${EXT_VER}" ]; then
     assert_eq "${COMP_VER}" "${EXT_VER}" \
       "chrome-extension package.json version must lock-step with companion (${COMP_VER})"
@@ -235,6 +235,17 @@ assert_file_has "${WIN_NSIS}" 'cmspark-agent\.exe' \
   "wrapper refuses to wrap a SEA/mixed staging tree"
 assert_file_has "${WIN_NSIS}" 'launch-hidden\.vbs' \
   "wrapper requires launch-hidden.vbs in staging"
+assert_file_has "${PACKAGE_SH}" '7-Zip/7z\.exe' \
+  "package.sh probes standard 7-Zip install dirs when zip/7z not on PATH"
+# installer.nsi must stay pure ASCII: without a BOM makensis decodes .nsi in
+# the system ANSI codepage, so any non-ASCII byte aborts the build on
+# non-CP1252 locales (e.g. GBK on zh-CN Windows).
+if LC_ALL=C grep -qP '[^\x00-\x7F]' "${NSIS}"; then
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: installer.nsi contains non-ASCII bytes (breaks makensis on non-CP1252 locales)" >&2
+else
+  PASS=$((PASS + 1))
+fi
 assert_file_has "${MAKEFILE}" 'package\.sh windows-x64' \
   "Makefile package-windows uses package.sh (CI SoT)"
 assert_file_has "${RELEASE_YML}" 'nsis --version=3\.12\.0' \
