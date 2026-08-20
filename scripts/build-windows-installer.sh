@@ -34,8 +34,12 @@ find_makensis() {
   fi
   local c
   for c in \
+    "/c/Program Files (x86)/NSIS/Bin/makensis.exe" \
+    "/c/Program Files/NSIS/Bin/makensis.exe" \
     "/c/Program Files (x86)/NSIS/makensis.exe" \
     "/c/Program Files/NSIS/makensis.exe" \
+    "C:/Program Files (x86)/NSIS/Bin/makensis.exe" \
+    "C:/Program Files/NSIS/Bin/makensis.exe" \
     "C:/Program Files (x86)/NSIS/makensis.exe" \
     "C:/Program Files/NSIS/makensis.exe" \
     "/usr/bin/makensis" \
