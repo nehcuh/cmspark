@@ -5,6 +5,7 @@
 
 import type { LlmConfig } from "../../config"
 import { logger } from "../../logger"
+import { throwIfLlmEndpointBlocked } from "../../security"
 import type {
   CanonicalStreamEvent,
   CompleteParams,
@@ -60,6 +61,7 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   async *streamChat(params: StreamChatParams): AsyncIterable<CanonicalStreamEvent> {
+    await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
     const url = resolveAnthropicMessagesUrl(this.config.base_url)
@@ -99,6 +101,7 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   async complete(params: CompleteParams): Promise<CompleteResult> {
+    await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
     const url = resolveAnthropicMessagesUrl(this.config.base_url)

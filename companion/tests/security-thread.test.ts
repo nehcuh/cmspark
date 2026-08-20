@@ -185,7 +185,7 @@ test("dangerous JavaScript APIs are detected before evaluate-style execution", (
   assert.deepEqual(detectDangerousApis("document.body?.innerText || ''"), [])
 })
 
-test("high-risk execution is blocked before osascript_eval can run", async () => {
+test("high-risk regex still flags fetch; tokenless osascript is not a fake confirm-block", async () => {
   const safety = checkHighRiskExecution("evaluate", "fetch('/api')")
   assert.equal(safety.blocked, true)
   assert.deepEqual(safety.dangerousApis, ["fetch"])
@@ -201,12 +201,13 @@ test("high-risk execution is blocked before osascript_eval can run", async () =>
 
   assert.equal(response.type, "tool.result")
   assert.equal(response.success, false)
-  // non-darwin: platform early-reject before high-risk scan (P0 osascript filter)
+  // non-darwin: platform early-reject. darwin without a session must not
+  // pretend confirmation was refused (L2 lives on executeTool).
   if (process.platform !== "darwin") {
     assert.match(response.error, /macos-only/i)
   } else {
-    assert.match(response.error, /Security Block/)
-    assert.deepEqual(response.data.dangerous_apis_found, ["document.cookie"])
+    assert.match(response.error, /No session available/)
+    assert.doesNotMatch(response.error, /Execution requires user confirmation/)
   }
 })
 
@@ -307,6 +308,39 @@ test("classifyError MCP parent directory / allowlist path is recoverable", () =>
     classifyError("Access denied - path outside allowed directories: /etc"),
     "recoverable",
   )
+})
+
+test("formatChatErrorLine high-risk: deny mentions 弹窗; leftover after-approve does not", async () => {
+  const { formatChatErrorLine, looksLikeUserDeniedGateCopy } = await import("../src/capability/user-gate-copy")
+  assert.equal(looksLikeUserDeniedGateCopy("User denied execution."), true)
+  assert.equal(looksLikeUserDeniedGateCopy("你拒绝了这次页面脚本"), true)
+  assert.equal(looksLikeUserDeniedGateCopy("不是你拒绝了弹窗"), false)
+  const denied = formatChatErrorLine(
+    "security",
+    "Security Block: osascript_eval contains high-risk APIs (fetch). User denied execution.",
+  )
+  assert.match(denied, /拒绝/)
+  assert.match(denied, /若你已拒绝弹窗/)
+
+  const timeout = formatChatErrorLine(
+    "security",
+    "Security Block: osascript_eval contains high-risk APIs (fetch). User confirmation timed out.",
+  )
+  assert.match(timeout, /超时/)
+  assert.ok(!timeout.includes("若你已拒绝弹窗"))
+
+  const leftover = formatChatErrorLine(
+    "security",
+    "Security Block: osascript_eval contains high-risk APIs (fetch). Execution requires user confirmation.",
+  )
+  assert.match(leftover, /这不是确认弹窗/)
+  assert.ok(!leftover.includes("若你已拒绝弹窗"))
+
+  const notDenied = formatChatErrorLine(
+    "security",
+    "页面脚本（fetch）需要确认，但确认通道不可用。\n这不是确认弹窗：侧栏未连上或确认台不可用，不是你拒绝了。",
+  )
+  assert.ok(!notDenied.includes("若你已拒绝弹窗"), `got: ${notDenied}`)
 })
 
 test("formatChatErrorLine scheme/cage hard-blocks do not mention 弹窗", async () => {

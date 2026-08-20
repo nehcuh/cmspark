@@ -327,8 +327,8 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       }
       // LLM endpoint: allow intranet/loopback (user-configured). Still block IMDS.
       if (testConfig.base_url) {
-        const { assertLlmEndpointUrlAllowed } = await import("../../security")
-        const blocked = assertLlmEndpointUrlAllowed(String(testConfig.base_url))
+        const { assertLlmEndpointAllowedAsync } = await import("../../security")
+        const blocked = await assertLlmEndpointAllowedAsync(String(testConfig.base_url))
         if (blocked) {
           return { type: "config.testResult", ok: false, error: blocked }
         }
@@ -358,8 +358,14 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         return { type: "config.testVisionResult", ok: false, error: "Vision not enabled" }
       }
       try {
+        const visionUrl = normalizeVisionBaseUrl(config.vision.base_url)
+        const { assertLlmEndpointAllowedAsync } = await import("../../security")
+        const blocked = await assertLlmEndpointAllowedAsync(visionUrl)
+        if (blocked) {
+          return { type: "config.testVisionResult", ok: false, error: blocked }
+        }
         const client = new OpenAI({
-          baseURL: normalizeVisionBaseUrl(config.vision.base_url),
+          baseURL: visionUrl,
           apiKey: config.vision.api_key || "ollama",
           timeout: 5000,
           maxRetries: 0,

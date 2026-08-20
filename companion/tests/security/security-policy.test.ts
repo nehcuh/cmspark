@@ -20,6 +20,20 @@ test("validateToken succeeds for matching tool and code", () => {
   assert.equal(valid, true)
 })
 
+test("osascript_eval binding payload is expression || code (C-N3)", () => {
+  const policy = new SecurityPolicy()
+  assert.equal(
+    SecurityPolicy.bindingPayloadFor("osascript_eval", { expression: "fetch('/a')" }),
+    "fetch('/a')",
+  )
+  assert.equal(
+    SecurityPolicy.bindingPayloadFor("osascript_eval", { code: "fetch('/b')" }),
+    "fetch('/b')",
+  )
+  const { token } = policy.issueTokenFor("osascript_eval", { code: "fetch('/c')" })
+  assert.equal(policy.validateToken(token, "osascript_eval", "fetch('/c')"), true)
+})
+
 test("validateToken fails for mismatched tool name", () => {
   const policy = new SecurityPolicy()
   const { token } = policy.issueToken("evaluate", "fetch('/api')")

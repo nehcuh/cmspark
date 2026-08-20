@@ -17,11 +17,17 @@
 
 import * as http from "http"
 import * as crypto from "crypto"
-import * as dns from "dns"
 import * as net from "net"
 import { getConfig, saveConfig, isMaskedApiKey } from "./config"
 import { probeLlmConnection } from "./llm/connection-test"
-import { normalizeIpLiteral } from "./security"
+import {
+  LLM_ENDPOINT_DNS_ERROR,
+  LLM_ENDPOINT_IMDS_ERROR,
+  assertLlmEndpointAllowedAsync,
+  canonicalizeLlmHostname,
+  classifyLlmHostnameDns,
+  normalizeIpLiteral,
+} from "./security"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -134,29 +140,19 @@ function isMetadataOrLinkLocalIp(ip: string): boolean {
 /**
  * LLM / vision test proxy: allow intranet + loopback, block IMDS / link-local.
  * DNS names that resolve onto 169.254/16 are still blocked (rebinding).
+ * Returns a distinct IMDS vs DNS-failure string (N1); null if allowed.
  */
-async function hostnameIsBlockedForLlm(hostname: string): Promise<boolean> {
-  let lowerHost = String(hostname || "").toLowerCase()
-  // `new URL().hostname` keeps the brackets on IPv6 literals — strip them so
-  // net.isIP below actually recognizes the literal.
-  if (lowerHost.startsWith("[") && lowerHost.endsWith("]")) {
-    lowerHost = lowerHost.slice(1, -1)
-  }
-  if (lowerHost === "metadata.google.internal") return true
-  if (LLM_HOST_ALLOWLIST.has(lowerHost)) return false
+async function llmHostBlockReason(hostname: string): Promise<string | null> {
+  const lowerHost = canonicalizeLlmHostname(hostname)
+  if (lowerHost === "metadata.google.internal") return LLM_ENDPOINT_IMDS_ERROR
+  if (LLM_HOST_ALLOWLIST.has(lowerHost)) return null
   if (net.isIP(lowerHost)) {
-    return isMetadataOrLinkLocalIp(lowerHost)
+    return isMetadataOrLinkLocalIp(lowerHost) ? LLM_ENDPOINT_IMDS_ERROR : null
   }
-  try {
-    const result = await dns.promises.lookup(lowerHost, { all: true })
-    if (result.length === 0) return true
-    return result.some((r) => isMetadataOrLinkLocalIp(r.address))
-  } catch {
-    // DNS failure is fail-closed: an unresolvable host is blocked outright
-    // (a fail-open here let bracketed IPv6 literals skip the guard via a
-    // getaddrinfo error on the bracketed name).
-    return true
-  }
+  const kind = await classifyLlmHostnameDns(lowerHost)
+  if (kind === "imds") return LLM_ENDPOINT_IMDS_ERROR
+  if (kind === "unresolved") return LLM_ENDPOINT_DNS_ERROR
+  return null
 }
 
 // Validate and normalize a base_url for the /api/test* SSRF proxy.
@@ -174,10 +170,9 @@ async function validateTestBaseUrl(rawBaseUrl: string): Promise<string> {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`base_url protocol must be http or https (got ${parsed.protocol})`)
   }
-  if (await hostnameIsBlockedForLlm(parsed.hostname)) {
-    throw new Error(
-      `base_url host "${parsed.hostname}" is a cloud-metadata / link-local address; blocked.`,
-    )
+  const blocked = await llmHostBlockReason(parsed.hostname)
+  if (blocked) {
+    throw new Error(`base_url host "${parsed.hostname}": ${blocked}`)
   }
   return parsed.toString()
 }
@@ -480,7 +475,14 @@ async function handleTestProxy(
         jsonResponse(res, { ok: false, error: probe.error || "Connection failed" })
       }
     } else {
-      // vision — probe /models (always OpenAI-compatible, L10)
+      // vision — probe /models (always OpenAI-compatible, L10).
+      // Allowlist skip in validateTestBaseUrl must not bypass DNS-to-IMDS
+      // (P2-A1: /api/test re-gates via probeLlmConnection; this branch did not).
+      const blocked = await assertLlmEndpointAllowedAsync(validatedBaseUrl)
+      if (blocked) {
+        jsonResponse(res, { ok: false, error: blocked })
+        return
+      }
       const url = validatedBaseUrl.endsWith("/models")
         ? validatedBaseUrl
         : validatedBaseUrl.replace(/\/+$/, "") + "/models"

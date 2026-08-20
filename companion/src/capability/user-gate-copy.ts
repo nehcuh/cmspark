@@ -125,9 +125,36 @@ export function humanizeChatErrorForUser(raw: string): string {
     )
   }
 
+  if (/contains high-risk APIs/i.test(body)) {
+    const apis = body.match(/high-risk APIs \(([^)]*)\)/i)?.[1]?.trim() || "高风险 API"
+    if (/User denied/i.test(body)) {
+      return `你拒绝了在页面执行含 ${apis} 的脚本。\n可重新发起并在确认台选择批准。`
+    }
+    if (/timed out/i.test(body)) {
+      return `页面脚本（${apis}）确认超时。\n请看侧栏确认台，下次出现时及时批准或拒绝。`
+    }
+    if (/disconnected|unavailable/i.test(body)) {
+      return (
+        `页面脚本（${apis}）需要确认，但确认通道不可用。\n` +
+        `这不是确认弹窗：侧栏未连上或确认台不可用，不是你拒绝了。`
+      )
+    }
+    return (
+      `页面脚本含 ${apis}，批准后仍被后端误拦。\n` +
+      `这不是确认弹窗：确认已经结束，不应再用同一黑名单硬拒。`
+    )
+  }
+
   // Keep original for true security / unknown, but avoid double "安全阻断"
   if (/^安全阻断/i.test(e) || /^不可恢复/.test(e)) return e
   return body
+}
+
+/** True deny copy — must not match「不是你拒绝了」(C-N2). */
+export function looksLikeUserDeniedGateCopy(s: string): boolean {
+  if (/User denied/i.test(s)) return true
+  if (/不是你拒绝了/.test(s)) return false
+  return /你拒绝了这次|你拒绝了在页面执行/.test(s)
 }
 
 /** Map error_level + raw message → chat.error string shown in Side Panel. */
@@ -145,7 +172,16 @@ export function formatChatErrorLine(
     return human
   }
   if (errorLevel === "security") {
-    return `操作未通过安全确认：${human}\n若你已拒绝弹窗，可重新发起并选择批准；企业 shell/netsec 可能仍需单独确认。`
+    if (looksLikeUserDeniedGateCopy(`${rawError}\n${human}`)) {
+      return `操作未通过安全确认：${human}\n若你已拒绝弹窗，可重新发起并选择批准；企业 shell/netsec 可能仍需单独确认。`
+    }
+    if (/timed out|确认超时/i.test(`${rawError}\n${human}`)) {
+      return `操作未通过安全确认：${human}\n确认等待超时，请看侧栏确认台；不是已经拒绝。`
+    }
+    if (/disconnected|unavailable|确认通道不可用|未连上/i.test(`${rawError}\n${human}`)) {
+      return `操作未通过安全确认：${human}\n确认没送到（连接断开或确认台不可用），不是你拒绝了弹窗。`
+    }
+    return `操作未通过安全确认：${human}\n请看侧栏确认台批准；若刚批过仍出现，是批准后被误拦。`
   }
   if (errorLevel === "non_recoverable") {
     return `无法继续：${human}`

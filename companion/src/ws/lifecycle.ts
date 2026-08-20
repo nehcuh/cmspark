@@ -609,15 +609,18 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   // Vision model health check
   if (config.vision?.enabled) {
     try {
+      const visionUrl = normalizeVisionBaseUrl(config.vision.base_url)
+      const { throwIfLlmEndpointBlocked } = await import("../security")
+      await throwIfLlmEndpointBlocked(visionUrl)
       const OpenAI = (await import("openai")).default
       const visionClient = new OpenAI({
-        baseURL: normalizeVisionBaseUrl(config.vision.base_url),
+        baseURL: visionUrl,
         apiKey: config.vision.api_key || "ollama",
         timeout: 5000,
         maxRetries: 0,
       })
       await visionClient.models.list()
-      console.log(`[cmspark-agent] Vision model: ${config.vision.model_name} @ ${normalizeVisionBaseUrl(config.vision.base_url)}`)
+      console.log(`[cmspark-agent] Vision model: ${config.vision.model_name} @ ${visionUrl}`)
     } catch (e: any) {
       console.warn(`[cmspark-agent] Vision model unavailable: ${e.message}`)
       console.warn(`[cmspark-agent] Screenshot analysis will use fallback: ${config.vision.fallback}`)

@@ -238,10 +238,49 @@ test("POST /api/test with DNS failure → fail-closed (blocked)", async () => {
     assert.equal(r.status, 200)
     const data = JSON.parse(r.body)
     assert.equal(data.ok, false)
-    assert.match(data.error, /metadata|link-local|blocked/i)
+    assert.match(data.error, /resolve|DNS/i)
+    assert.doesNotMatch(data.error, /metadata|link-local/i)
   } finally {
     ;(dnsMod.promises as any).lookup = origLookup
   }
+})
+
+test("POST /api/test hostname resolving to IMDS uses metadata copy (not DNS copy)", async () => {
+  const { port, token } = await ensureStarted()
+  const dnsMod = await import("node:dns")
+  const origLookup = dnsMod.promises.lookup
+  ;(dnsMod.promises as any).lookup = async () => [{ address: "169.254.169.254", family: 4 }]
+  try {
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/test?token=${token}`,
+      headers: jsonHeaders(token),
+      body: JSON.stringify({ base_url: "http://imds.example.test/v1", api_key: "sk-xxxx" }),
+    })
+    assert.equal(r.status, 200)
+    const data = JSON.parse(r.body)
+    assert.equal(data.ok, false)
+    assert.match(data.error, /metadata|link-local/i)
+    assert.doesNotMatch(data.error, /resolve|DNS failed/i)
+  } finally {
+    ;(dnsMod.promises as any).lookup = origLookup
+  }
+})
+
+test("POST /api/test trailing-dot localhost hits allowlist (not DNS)", async () => {
+  const { port, token } = await ensureStarted()
+  const r = await request({
+    method: "POST",
+    port,
+    path: `/api/test?token=${token}`,
+    headers: jsonHeaders(token),
+    body: JSON.stringify({ base_url: "http://localhost.:9/v1", api_key: "sk-xxxx" }),
+  })
+  assert.equal(r.status, 200)
+  const data = JSON.parse(r.body)
+  assert.equal(data.ok, false)
+  assert.doesNotMatch(String(data.error || ""), /metadata|link-local|resolve|DNS/i)
 })
 
 test("POST /api/test with RFC1918 IP is not SSRF-blocked", async () => {
@@ -276,6 +315,28 @@ test("POST /api/test with loopback IP tries connect (not Internal/private copy)"
   // blocked (no allowlist for /api/test) OR fail to connect — both signal
   // that we did NOT succeed in proxying to a real server.
   assert.equal(data.ok === true, false)
+})
+
+test("POST /api/testVision allowlisted public host resolving to IMDS is blocked", async () => {
+  const { port, token } = await ensureStarted()
+  const dnsMod = await import("node:dns")
+  const origLookup = dnsMod.promises.lookup
+  ;(dnsMod.promises as any).lookup = async () => [{ address: "169.254.169.254", family: 4 }]
+  try {
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/testVision?token=${token}`,
+      headers: jsonHeaders(token),
+      body: JSON.stringify({ base_url: "https://api.openai.com/v1", model_name: "llava:7b", api_key: "sk-xxxx" }),
+    })
+    assert.equal(r.status, 200)
+    const data = JSON.parse(r.body)
+    assert.equal(data.ok, false)
+    assert.match(data.error, /metadata|link-local/i)
+  } finally {
+    ;(dnsMod.promises as any).lookup = origLookup
+  }
 })
 
 test("POST /api/testVision with allowlisted localhost → tries fetch (connection fail ok)", async () => {

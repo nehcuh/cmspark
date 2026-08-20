@@ -24,7 +24,8 @@ test("likelyMultimodal: text-only and unknown false (fail closed)", () => {
 test("resolveNativeVision: on/off override heuristic", () => {
   assert.equal(resolveNativeVision({ modelName: "foo-bar-7b", mode: "on" }), true)
   assert.equal(resolveNativeVision({ modelName: "gpt-4o", mode: "off" }), false)
-  assert.equal(resolveNativeVision({ modelName: "foo-bar-7b", mode: "auto", detected: true }), true)
+  // Unkeyed detected must not flip routing (C1 — panel lock-step).
+  assert.equal(resolveNativeVision({ modelName: "foo-bar-7b", mode: "auto", detected: true }), false)
   assert.equal(resolveNativeVision({ modelName: "foo-bar-7b", mode: "auto", detected: false }), false)
 })
 

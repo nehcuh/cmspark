@@ -1,6 +1,7 @@
 // Security policy — trusted domains, evaluate safety, error classification
 
 import * as net from "net"
+import * as dns from "dns"
 import { getConfig } from "./config"
 
 /**
@@ -236,6 +237,14 @@ function embeddedV4FromGroups(groups: number[]): string | null {
   if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
     return dotted(groups[6], groups[7]) // v4-mapped
   }
+  // IPv4-translated (RFC 2765 SIIT): ::ffff:0:0:0/96 — groups[4]=ffff, [5]=0
+  if (
+    groups.slice(0, 4).every((g) => g === 0) &&
+    groups[4] === 0xffff &&
+    groups[5] === 0
+  ) {
+    return dotted(groups[6], groups[7])
+  }
   if (groups.slice(0, 6).every((g) => g === 0) && groups[6] >> 8 !== 0) {
     return dotted(groups[6], groups[7]) // v4-compatible (0.0.0.0/8 excluded)
   }
@@ -285,7 +294,10 @@ function ipv6FirstHextetIn(expanded: string, prefix: number, mask: number): bool
  * hex-serialized v4-mapped form are normalized inside (normalizeIpLiteral).
  */
 export function isCloudMetadataIp(hostname: string): boolean {
-  const h = String(hostname || "").toLowerCase().trim()
+  let h = String(hostname || "").toLowerCase().trim()
+  if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1)
+  // Trailing-dot FQDN (S-GCPDOT): metadata.google.internal. === the alias.
+  h = h.replace(/\.+$/, "")
   // GCP/Azure alias (resolves to 169.254.169.254).
   if (h === "metadata.google.internal") return true
   const ip = normalizeIpLiteral(h)
@@ -316,9 +328,71 @@ export function assertLlmEndpointUrlAllowed(urlStr: string): string | null {
   const hostname = parsed.hostname
   if (!hostname) return "Invalid URL hostname"
   if (isCloudMetadataIp(hostname) || isLinkLocalImdsHost(hostname)) {
-    return "Cloud-metadata / link-local hosts are not allowed"
+    return LLM_ENDPOINT_IMDS_ERROR
   }
   return null
+}
+
+export const LLM_ENDPOINT_IMDS_ERROR = "Cloud-metadata / link-local hosts are not allowed"
+export const LLM_ENDPOINT_DNS_ERROR = "Could not resolve LLM host (DNS failed)"
+
+/** Strip IPv6 brackets and trailing FQDN dots for allowlist / IMDS / DNS. */
+export function canonicalizeLlmHostname(hostname: string): string {
+  let h = String(hostname || "").toLowerCase().trim()
+  if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1)
+  return h.replace(/\.+$/, "")
+}
+
+export type LlmHostDnsKind = "ok" | "imds" | "unresolved"
+
+/**
+ * S-NODNS: after the lexical LLM-endpoint allow, DNS-resolve names.
+ * Fail-closed: empty answers and lookup errors are `unresolved` (not IMDS).
+ * IP literals skip DNS.
+ */
+export async function classifyLlmHostnameDns(hostname: string): Promise<LlmHostDnsKind> {
+  const h = canonicalizeLlmHostname(hostname)
+  if (!h) return "unresolved"
+  if (net.isIP(h)) {
+    return isCloudMetadataIp(h) || isLinkLocalImdsHost(h) ? "imds" : "ok"
+  }
+  try {
+    const result = await dns.promises.lookup(h, { all: true })
+    if (result.length === 0) return "unresolved"
+    if (result.some((r) => isCloudMetadataIp(r.address) || isLinkLocalImdsHost(r.address))) {
+      return "imds"
+    }
+    return "ok"
+  } catch {
+    return "unresolved"
+  }
+}
+
+/** True when DNS is IMDS *or* fail-closed unresolved. Name is historical. */
+export async function hostnameResolvesToImds(hostname: string): Promise<boolean> {
+  return (await classifyLlmHostnameDns(hostname)) !== "ok"
+}
+
+/** Lexical IMDS gate + DNS rebinding check. Distinct copy for DNS vs IMDS. */
+export async function assertLlmEndpointAllowedAsync(urlStr: string): Promise<string | null> {
+  const lexical = assertLlmEndpointUrlAllowed(urlStr)
+  if (lexical) return lexical
+  let host: string
+  try {
+    host = new URL(String(urlStr || "")).hostname
+  } catch {
+    return "Invalid URL"
+  }
+  const kind = await classifyLlmHostnameDns(host)
+  if (kind === "imds") return LLM_ENDPOINT_IMDS_ERROR
+  if (kind === "unresolved") return LLM_ENDPOINT_DNS_ERROR
+  return null
+}
+
+/** Request-path choke: throw before fetch / SDK create. */
+export async function throwIfLlmEndpointBlocked(urlStr: string): Promise<void> {
+  const blocked = await assertLlmEndpointAllowedAsync(urlStr)
+  if (blocked) throw new Error(blocked)
 }
 
 /** 169.254/16 IPv4 + IPv6 link-local — IMDS / APIPA, never a legitimate LLM. */
@@ -795,6 +869,9 @@ export interface HighRiskCheckResult {
 
 /**
  * Check if execution is high-risk and return detailed risk information.
+ *
+ * `blocked` means "preview as high-risk" for the L2 dialog. It must NOT
+ * hard-refuse after a valid security_token (regex is not a second gate).
  *
  * @param toolName - The tool being executed.
  * @param code - The code/expression to evaluate.

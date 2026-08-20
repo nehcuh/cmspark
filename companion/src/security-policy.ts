@@ -48,7 +48,9 @@ export class SecurityPolicy {
       case "evaluate":
         return String(params?.code || "")
       case "osascript_eval":
-        return String(params?.expression || "")
+        // Same string dispatch validates/runs (expression || code). Preview
+        // must not bind a different alias (C-N3).
+        return String(params?.expression || params?.code || "")
       case "host_read":
         return String(params?.application || "")
       case "host_write":

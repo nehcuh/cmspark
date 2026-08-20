@@ -25,13 +25,13 @@ export function likelyMultimodal(modelName: string | undefined | null): boolean 
 
 /**
  * Composer attachments + screenshot rail: honor explicit override, else name
- * heuristic, else last successful image probe (`detected`).
+ * heuristic, else keyed {url,model} probe cache. Unkeyed `detected` is ignored.
  */
 export function resolveNativeVision(opts: {
   modelName?: string | null
   baseUrl?: string | null
   mode?: NativeVisionMode | boolean | null
-  /** Explicit probe bit (tests). Production prefers in-memory {url,model} cache. */
+  /** Display/session probe bit — always ignored for routing (C1 lock-step with panel). */
   detected?: boolean | null
 }): boolean {
   const raw = opts.mode
@@ -40,7 +40,8 @@ export function resolveNativeVision(opts: {
   if (mode === "on") return true
   if (mode === "off") return false
   if (likelyMultimodal(opts.modelName)) return true
-  if (opts.detected === true) return true
+  // Unkeyed `detected` is display-only (C1). Routing uses the {url,model} cache.
+  void opts.detected
   return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") === true
 }
 

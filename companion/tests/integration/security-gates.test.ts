@@ -1111,6 +1111,64 @@ test("M3' §6.2.9: domain-whitelist + critical still forceConfirms (M3' domain �
   assert.equal(result.success, false)
 })
 
+test("item 2: osascript_eval with fetch APPROVE is not re-blocked by regex", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const { shouldL2GateOsascript, OSASCRIPT_MACOS_ONLY_ERROR } = await import(
+    "../../src/bridge/tool-definitions"
+  )
+  const expr = "fetch('http://127.0.0.1/x')"
+  if (!shouldL2GateOsascript(process.platform as NodeJS.Platform)) {
+    const result = await executeTool("tc_osa_fetch_approve", "osascript_eval", {
+      url: "example.com",
+      expression: expr,
+    })
+    assert.equal(result.success, false)
+    assert.equal(result.error, OSASCRIPT_MACOS_ONLY_ERROR)
+    return
+  }
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+  const resultPromise = executeTool("tc_osa_fetch_approve", "osascript_eval", {
+    url: "example.com",
+    expression: expr,
+  })
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "osascript_eval")
+  assert.ok(
+    Array.isArray(confirmation.dangerous_apis) && confirmation.dangerous_apis.includes("fetch"),
+    `preview must flag fetch; got ${JSON.stringify(confirmation.dangerous_apis)}`,
+  )
+  clientSideWs.send(
+    JSON.stringify({
+      type: "security.confirmation.response",
+      confirmation_id: confirmation.confirmation_id,
+      approved: true,
+    }),
+  )
+  const result = await resultPromise
+  assert.doesNotMatch(String(result.error || ""), /Execution requires user confirmation/)
+  assert.doesNotMatch(String(result.error || ""), /contains high-risk APIs/)
+})
+
+test("C-N1: executeCompanionTool valid token + fetch is not regex-reblocked (any platform)", async () => {
+  const { executeCompanionTool } = await import("../../src/tool/companion-dispatch.js")
+  const { securityPolicy } = await import("../../src/security-policy.js")
+  const { shouldL2GateOsascript, OSASCRIPT_MACOS_ONLY_ERROR } = await import(
+    "../../src/bridge/tool-definitions.js"
+  )
+  const expr = "fetch('http://127.0.0.1/x')"
+  const { token } = securityPolicy.issueToken("osascript_eval", expr)
+  const r = await executeCompanionTool("osascript_eval", {
+    url: "example.com",
+    expression: expr,
+    security_token: token,
+  })
+  assert.doesNotMatch(String(r.error || ""), /contains high-risk APIs/)
+  assert.doesNotMatch(String(r.error || ""), /Execution requires user confirmation/)
+  if (!shouldL2GateOsascript(process.platform as NodeJS.Platform)) {
+    assert.equal(r.error, OSASCRIPT_MACOS_ONLY_ERROR)
+  }
+})
+
 test("M3' §6.2.9: osascript_eval + critical under god-mode alone still forceConfirms", async () => {
   enableGodMode()
   const executeTool = createToolExecutor(serverSideWs)
@@ -1365,6 +1423,7 @@ test("M4 unit: isCloudMetadataIp flags IMDS endpoints", () => {
   assert.equal(isCloudMetadataIp("169.254.170.2"), true)   // ECS task metadata
   assert.equal(isCloudMetadataIp("fd00:ec2::254"), true)   // AWS IMDS IPv6
   assert.equal(isCloudMetadataIp("metadata.google.internal"), true)
+  assert.equal(isCloudMetadataIp("metadata.google.internal."), true)
   assert.equal(isCloudMetadataIp("192.168.1.1"), false)
   assert.equal(isCloudMetadataIp("example.com"), false)
 })
