@@ -13,7 +13,9 @@ echo.
 
 cd /d "%~dp0"
 
-echo Delegating to PowerShell build script...
+echo Delegating to PowerShell SEA build script...
+echo Official Setup.exe is make package-windows / scripts\package.sh, not this path.
+echo.
 echo.
 
 powershell -ExecutionPolicy Bypass -File "%~dp0scripts\build-windows-exe.ps1" %*

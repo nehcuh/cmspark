@@ -1,12 +1,15 @@
 ; CMspark Windows Installer (NSIS)
-; Build (preferred — injects version from companion/package.json):
-;   makensis /DPRODUCT_VERSION=x.y.z scripts/installer.nsi
-;   (scripts/build-windows-exe.ps1 does this automatically)
-; Manual: makensis scripts/installer.nsi  → uses fallback PRODUCT_VERSION below
-; Requires: makensis (https://nsis.sourceforge.io/ or choco install nsis)
+; Official producer: scripts/build-windows-installer.sh
+;   (called from scripts/package.sh windows-x64 after staging)
+;   makensis -DPRODUCT_VERSION=x.y.z scripts/installer.nsi
+; Manual: makensis -DPRODUCT_VERSION=x.y.z scripts/installer.nsi
+; Requires: makensis (https://nsis.sourceforge.io/ or choco install nsis --version=3.12.0)
+;
+; Payload MUST be package.sh staging (node.exe + cmspark-agent.js).
+; build-windows-exe.ps1 (SEA) must NOT emit this OutFile.
 
 !define PRODUCT_NAME "CMspark"
-; Prefer /DPRODUCT_VERSION= from build-windows-exe.ps1; fallback must match companion/package.json.
+; Prefer -DPRODUCT_VERSION= from build-windows-installer.sh; fallback must match companion/package.json.
 !ifndef PRODUCT_VERSION
   !define PRODUCT_VERSION "0.5.1"
 !endif
@@ -49,14 +52,42 @@ Var /GLOBAL START_MENU_FOLDER
 
 !insertmacro MUI_LANGUAGE "English"
 
+; Stop tray + daemon whose ExecutablePath lives under $INSTDIR.
+; `daemon stop` only kills daemon.pid — tray is a second node.exe.
+; Do not use WMIC (removed/optional on Windows 11 24H2+).
+; Quote rule (Claude dual-review B1, makensis 3.12 executed): NSIS does NOT
+; treat '' as an escaped quote. Backtick strings may contain both ' and ".
+; Residual nit: an apostrophe in $INSTDIR (username O'Brien) still breaks the
+; PowerShell single-quoted GetFullPath; daemon stop + taskkill still run.
+!macro StopInstalledAgentUnshared
+  IfFileExists "$INSTDIR\node.exe" 0 +3
+    nsExec::ExecToLog `"$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" daemon stop`
+    Sleep 200
+  nsExec::ExecToLog `taskkill /F /IM cmspark-agent.exe`
+  nsExec::ExecToLog `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$r = [IO.Path]::GetFullPath('$INSTDIR').TrimEnd('\') + '\'; Get-CimInstance Win32_Process | ForEach-Object { if ($$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$r, [StringComparison]::OrdinalIgnoreCase)) { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue } }"`
+  Sleep 400
+!macroend
+
+Function StopInstalledAgent
+  !insertmacro StopInstalledAgentUnshared
+FunctionEnd
+
+Function un.StopInstalledAgent
+  !insertmacro StopInstalledAgentUnshared
+FunctionEnd
+
 ; --- Install Section ---
 Section "CMspark Agent" SecMain
   SectionIn RO
 
+  Call StopInstalledAgent
+  ; Leftover SEA from a previous local build must not stay (VBS prefers it).
+  Delete "$INSTDIR\cmspark-agent.exe"
+
   SetOutPath "$INSTDIR"
 
-  ; Write all files from staging directory
-  File /r "..\dist-package\cmspark-windows-x64\*.*"
+  ; Trailing slash copies the complete tree, including extensionless files.
+  File /r "..\dist-package\cmspark-windows-x64\"
 
   ; Write registry for Add/Remove Programs
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
@@ -69,41 +100,29 @@ Section "CMspark Agent" SecMain
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "EstimatedSize" "$0"
 
-  ; Auto-start via Registry Run key — use wscript for hidden launch
+  ; Single autostart path — HKCU Run only (not also Startup folder).
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}" 'wscript.exe "$INSTDIR\launch-hidden.vbs"'
 
   ; --- Shortcuts ---
-  ; Desktop icon — hidden launch via wscript
   CreateShortCut "$DESKTOP\CMspark Agent.lnk" "wscript.exe" '"$INSTDIR\launch-hidden.vbs"' "$INSTDIR\assets\cmspark.ico" 0
 
-  ; Start Menu
   !insertmacro MUI_STARTMENU_WRITE_BEGIN "StartMenu"
     CreateDirectory "$SMPROGRAMS\$START_MENU_FOLDER"
     CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\CMspark Agent.lnk" "wscript.exe" '"$INSTDIR\launch-hidden.vbs"' "$INSTDIR\assets\cmspark.ico" 0
     CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\Uninstall CMspark.lnk" "$INSTDIR\uninstall.exe"
   !insertmacro MUI_STARTMENU_WRITE_END
 
-  ; Startup folder (belt-and-suspenders with registry Run)
-  CreateShortCut "$SMSTARTUP\CMspark Agent.lnk" "wscript.exe" '"$INSTDIR\launch-hidden.vbs"' "" 0
-
-  ; Create uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
 SectionEnd
 
 ; --- Uninstall Section ---
 Section "Uninstall"
-  ; Kill running agent process (read PID from data dir, then kill)
-  nsExec::ExecToLog '"$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" daemon stop'
-  ; Fallback: kill any node.exe launched from our install dir
-  nsExec::ExecToLog 'wmic process where "ExecutablePath='$INSTDIR\node.exe'" call terminate 2>nul'
+  Call un.StopInstalledAgent
 
-  ; Remove Task Scheduler task (if created via tray toggle)
-  nsExec::ExecToLog 'schtasks /delete /tn "cmspark-companion" /f 2>nul'
+  nsExec::ExecToLog 'schtasks /delete /tn "cmspark-companion" /f'
 
-  ; Remove auto-start
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}"
 
-  ; Remove shortcuts
   Delete "$DESKTOP\CMspark Agent.lnk"
   Delete "$SMSTARTUP\CMspark Agent.lnk"
   !insertmacro MUI_STARTMENU_GETFOLDER "StartMenu" $0
@@ -111,10 +130,8 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\$0\Uninstall CMspark.lnk"
   RMDir "$SMPROGRAMS\$0"
 
-  ; Remove registry
   DeleteRegKey HKCU "${PRODUCT_UNINST_KEY}"
 
-  ; Remove files and install directory
   RMDir /r "$INSTDIR"
 SectionEnd
 

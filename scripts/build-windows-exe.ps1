@@ -14,8 +14,9 @@
 # Output (version from package.json, example 0.5.1):
 #   dist-package\cmspark-windows-x64\cmspark-agent.exe   <- standalone SEA exe
 #   dist-package\cmspark-windows-x64\bin\cmspark-whisper-win-x64.exe  <- local STT (if prepared)
-#   dist-package\CMspark-v{version}-windows-x64.zip     <- portable package
-#   dist-package\CMspark-Setup-v{version}.exe             <- NSIS installer (if makensis found)
+#   dist-package\CMspark-v{version}-windows-x64.zip     <- portable SEA package
+# Official GitHub Release Setup.exe is NOT produced here — see
+# scripts/build-windows-installer.sh (package.sh windows-x64 staging only).
 #
 # Local STT (Path B): whisper is NOT embedded inside the SEA blob. Stage a native
 # binary before packaging:
@@ -25,8 +26,7 @@
 
 [CmdletBinding()]
 param(
-    [switch]$SkipInstall,  # Skip npm install (use if already installed)
-    [switch]$SkipNsis      # Skip NSIS installer step even if makensis is found
+    [switch]$SkipInstall  # Skip npm install (use if already installed)
 )
 
 $ErrorActionPreference = "Stop"
@@ -496,38 +496,14 @@ if (Test-Path $CrxBuild) {
 }
 
 # ---------------------------------------------------------------------------
-# [6/6] Create zip archive + optional NSIS installer
+# [6/6] Create zip archive (SEA portable). Official Setup.exe is package.sh only.
 # ---------------------------------------------------------------------------
 Step 6 6 "Packaging..."
 
 $ZipPath = "$DistDir\CMspark-v$Version-windows-x64.zip"
 Compress-Archive -Path "$StagingDir\*" -DestinationPath $ZipPath -Force
 Ok "ZIP: $ZipPath"
-
-# Optional NSIS installer (makensis must be in PATH)
-# Install NSIS from: https://nsis.sourceforge.io/Download
-if (-not $SkipNsis) {
-    $MakeNsis = Get-Command makensis -ErrorAction SilentlyContinue
-    if ($MakeNsis) {
-        Write-Host ""
-        Write-Host "[NSIS] Building installer exe..." -ForegroundColor Yellow
-        Push-Location $ProjectRoot
-        try {
-            # Inject version from package.json so installer.nsi cannot drift.
-            & makensis "/DPRODUCT_VERSION=$Version" scripts\installer.nsi
-            if ($LASTEXITCODE -eq 0) {
-                Ok "Installer: $DistDir\CMspark-Setup-v$Version.exe"
-            } else {
-                Warn "NSIS build failed (exit $LASTEXITCODE)"
-            }
-        } finally { Pop-Location }
-    } else {
-        Write-Host ""
-        Write-Host "  [NSIS] makensis not found — skipping installer." -ForegroundColor DarkGray
-        Write-Host "  [NSIS] To also build an installer .exe, install NSIS:" -ForegroundColor DarkGray
-        Write-Host "         https://nsis.sourceforge.io/Download  (then re-run this script)" -ForegroundColor DarkGray
-    }
-}
+Write-Host "  Official installer (CMspark-Setup-v$Version.exe) is produced by scripts/package.sh windows-x64, not SEA." -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------------------
 # Done

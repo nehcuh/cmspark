@@ -172,6 +172,26 @@ expected to clear in one plasmo bump; until then it is accepted, bounded to the
 build toolchain, and separated from the shipped surface by the production audit
 gate.
 
+## Windows official Setup.exe (NSIS)
+
+GitHub Releases for `windows-x64` attach `CMspark-Setup-v{version}.exe` in
+addition to `cmspark-v{version}-windows-x64.zip`. The installer is an NSIS
+wrapper around the **same** `scripts/package.sh` staging tree (`node.exe` +
+`cmspark-agent.js`). It is **not** Authenticode-signed (REL-1); SmartScreen
+will warn.
+
+**Build-time TCB:** CI installs Chocolatey package `nsis` **3.12.0** (not
+`latest`) and puts `makensis.exe` on `GITHUB_PATH`. The NSIS stubs, lzma, and
+`nsExec` plugin become part of the shipped Setup.exe. A compromised or
+floating NSIS package would taint the installer; pin the version in
+`.github/workflows/release.yml` and bump it deliberately. The payload files
+inside the installer are the same sha256-verified Node runtime + companion
+bundle as the zip.
+
+Missing `makensis` on the Windows release job **fails the job**
+(`CMSPARK_REQUIRE_NSIS=1`); we do not publish a zip-only Windows release by
+accident.
+
 ## Re-evaluation trigger — companion
 
 Re-run `npm audit --omit=dev` when: `node-notifier` publishes a release that

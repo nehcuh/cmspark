@@ -81,6 +81,17 @@ jobs:
       - name: Install extension deps
         run: cd chrome-extension && npm ci
 
+      - name: Install pinned NSIS (Windows official Setup.exe)
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.12.0 -y --no-progress
+          $nsis = 'C:\Program Files (x86)\NSIS'
+          if (-not (Test-Path "$nsis\makensis.exe")) {
+            throw "makensis.exe missing after choco install nsis --version=3.12.0"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsis
+
       - name: Package (${{ matrix.platform }})
         # package.sh: builds both projects, esbuild-bundles the companion,
         # sha256-verifies + downloads the target Node runtime, strips the
@@ -90,7 +101,10 @@ jobs:
         # fallback chain handles BSD/libarchive tar on macOS/Windows.
         # P0-D: hard-fails if macOS host/tray, Windows host-scripts-win, or
         # qwen-vl-worker.py missing. Models/ORT are not package gates.
+        # Windows: CMSPARK_REQUIRE_NSIS=1 — missing Setup.exe fails the job.
         shell: bash
+        env:
+          CMSPARK_REQUIRE_NSIS: ${{ matrix.platform == 'windows-x64' && '1' || '' }}
         run: bash scripts/package.sh ${{ matrix.platform }}
 
       # P0-D fail-closed content asserts — package.sh already gates at stage time;
@@ -126,11 +140,29 @@ jobs:
           list_zip "${ZIP}" | grep -E 'qwen-vl-worker\.py'
           echo "windows-x64 zip content assert OK"
 
+      - name: Assert Windows Setup.exe exists
+        if: matrix.platform == 'windows-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXE="$(ls dist-package/CMspark-Setup-v*.exe | head -1)"
+          echo "Checking ${EXE}..."
+          test -s "${EXE}"
+          echo "windows-x64 Setup.exe assert OK"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: cmspark-${{ matrix.platform }}
           path: dist-package/cmspark-*.zip
+          if-no-files-found: error
+
+      - name: Upload Windows Setup.exe
+        if: matrix.platform == 'windows-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmspark-windows-x64-setup
+          path: dist-package/CMspark-Setup-v*.exe
           if-no-files-found: error
 
   release:
@@ -154,13 +186,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist-release
-          # Flatten zips into dist-release/
+          # Flatten zips + Windows Setup.exe (must not use cmspark-*.exe —
+          # official installer is CMspark-Setup-v*.exe).
           find artifacts -type f -name 'cmspark-*.zip' -exec cp -v {} dist-release/ \;
+          find artifacts -type f -name 'CMspark-Setup-v*.exe' -exec cp -v {} dist-release/ \;
           cd dist-release
+          if ! ls CMspark-Setup-v*.exe >/dev/null 2>&1; then
+            echo "ERROR: CMspark-Setup-v*.exe missing after flatten — refuse zip-only release" >&2
+            ls -la >&2 || true
+            exit 1
+          fi
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum cmspark-*.zip > SHA256SUMS
+            sha256sum cmspark-*.zip CMspark-Setup-v*.exe > SHA256SUMS
           else
-            shasum -a 256 cmspark-*.zip > SHA256SUMS
+            shasum -a 256 cmspark-*.zip CMspark-Setup-v*.exe > SHA256SUMS
           fi
           # REL-2: lightweight SBOM pointer (full CycloneDX deferred until signed tooling)
           {
@@ -177,8 +216,10 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          fail_on_unmatched_files: true
           files: |
             dist-release/*.zip
+            dist-release/CMspark-Setup-v*.exe
             dist-release/SHA256SUMS
             dist-release/SHA256SUMS.txt
           draft: false
@@ -186,7 +227,8 @@ jobs:
           body: |
             ## CMspark ${{ github.ref_name }}
 
-            Distributable zips for companion + Chrome extension. See
+            Distributable zips (all platforms) plus a Windows NSIS Setup.exe.
+            See
             [`docs/remediation-plan-2026-07-09.md`](https://github.com/nehcuh/cmspark/blob/main/docs/remediation-plan-2026-07-09.md)
             and [`docs/supply-chain.md`](https://github.com/nehcuh/cmspark/blob/main/docs/supply-chain.md).
 
@@ -201,12 +243,16 @@ jobs:
             | `cmspark-v*-macos-arm64.zip` | macOS (Apple Silicon) | `cmspark-host`, `cmspark-tray`, `host-scripts/*.scpt`, `qwen-vl-worker.py` |
             | `cmspark-v*-linux-x64.zip` | Linux x64 | systray2 linux binary, `qwen-vl-worker.py` |
             | `cmspark-v*-windows-x64.zip` | Windows x64 | `host-scripts-win/*.ps1`, `qwen-vl-worker.py` |
+            | `CMspark-Setup-v*.exe` | Windows x64 installer | Same files as the zip; per-user `%LOCALAPPDATA%\CMspark` |
 
             Packaging is **fail-closed** on platform-critical assets (aborts rather
             than shipping a zip that ENONTs at runtime):
             - **macos-arm64**: missing `cmspark-host`, `cmspark-tray`, or `host-scripts/*.scpt`
             - **all platforms**: missing `qwen-vl-worker.py` (Qwen3-VL experimental locate)
-            - **windows-x64**: missing `host-scripts-win/*.ps1`
+            - **windows-x64**: missing `host-scripts-win/*.ps1` **or** NSIS Setup.exe
+            - **Windows Setup.exe**: wraps the same `package.sh` staging as the zip
+              (`node.exe` + `cmspark-agent.js`). Missing `makensis` **fails** the
+              Windows job (`CMSPARK_REQUIRE_NSIS=1`) rather than shipping zip-only.
             - **Qwen3-VL weights / Python env**: **not** packaged — download/preflight
               on demand under `~/.cmspark-agent/` (see `docs/qwen-vl-experimental-layer.md`).
               TinyClick/ORT are **not** ship requirements.
@@ -222,7 +268,8 @@ jobs:
             - **Signing limits**: the bundled Node runtime is sha256-verified; app
               binaries are **not** Developer ID–codesigned / notarized / Authenticode-
               signed (pending certificates). macOS Gatekeeper / Windows SmartScreen
-              may warn. Ad-hoc signed `cmspark-host` / tray satisfy local TCC needs
-              only — not Gatekeeper distribution trust.
+              may warn. **`CMspark-Setup-v*.exe` is unsigned** — SmartScreen / Smart
+              App Control will prompt on first run. Ad-hoc signed `cmspark-host` /
+              tray satisfy local TCC needs only — not Gatekeeper distribution trust.
 
             Full install steps: project `CLAUDE.md` / `Agents.md` Quick Start.

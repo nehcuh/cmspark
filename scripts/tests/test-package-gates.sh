@@ -15,6 +15,7 @@ MAKEFILE="${ROOT}/Makefile"
 RELEASE_YML="${ROOT}/.github/workflows/release.yml"
 CI_YML="${ROOT}/.github/workflows/ci.yml"
 PS1="${ROOT}/scripts/build-windows-exe.ps1"
+WIN_NSIS="${ROOT}/scripts/build-windows-installer.sh"
 
 PASS=0
 FAIL=0
@@ -177,15 +178,29 @@ assert_file_has "${PS1}" 'package\.json' \
   "ps1 reads version from companion/package.json"
 assert_file_lacks "${PS1}" 'CMspark-v0\.2\.0' \
   "ps1 header must not advertise stale 0.2.0 artifact names"
-assert_file_has "${PS1}" '/DPRODUCT_VERSION=' \
-  "ps1 injects PRODUCT_VERSION into NSIS"
+assert_file_lacks "${PS1}" 'makensis' \
+  "ps1 must not produce official CMspark-Setup-v*.exe (package.sh wrapper only)"
 assert_file_has "${PS1}" 'CMSPARK_ALLOW_VERSION_DRIFT' \
   "ps1 documents version-drift override for ext/companion lock-step"
 assert_file_has "${PS1}" 'chrome-extension version' \
   "ps1 fail-closed on ext vs companion version mismatch (S52 N4)"
 NSIS="${ROOT}/scripts/installer.nsi"
 assert_file_has "${NSIS}" '!ifndef PRODUCT_VERSION' \
-  "installer.nsi accepts /DPRODUCT_VERSION override"
+  "installer.nsi accepts -DPRODUCT_VERSION override"
+assert_file_has "${NSIS}" 'StopInstalledAgent' \
+  "installer.nsi stops INSTDIR processes on install/uninstall"
+assert_file_has "${NSIS}" 'nsExec::ExecToLog `' \
+  "nsExec PowerShell uses backtick strings (NSIS '' is not a quote escape)"
+assert_file_lacks "${NSIS}" "GetFullPath\\(''" \
+  "installer.nsi must not use '' inside GetFullPath (NSIS token split)"
+assert_file_lacks "${NSIS}" 'CreateShortCut "\$SMSTARTUP' \
+  "installer.nsi must not create Startup-folder autostart (HKCU Run only)"
+assert_file_lacks "${NSIS}" 'wmic process' \
+  "installer.nsi no longer depends on WMIC"
+assert_file_has "${NSIS}" 'dist-package\\cmspark-windows-x64' \
+  "installer.nsi File /r copies package.sh staging tree"
+assert_file_lacks "${NSIS}" '\*\.\*' \
+  "installer.nsi does not use *.* glob (would skip extensionless files)"
 # S52 N4: NSIS fallback PRODUCT_VERSION must equal companion/package.json version
 COMP_VER="$(node -p "require('${ROOT}/companion/package.json').version" 2>/dev/null || true)"
 if [ -n "${COMP_VER}" ]; then
@@ -202,6 +217,99 @@ if [ -n "${COMP_VER}" ]; then
 else
   FAIL=$((FAIL + 1))
   echo "  FAIL: could not read companion/package.json version" >&2
+fi
+
+# --- Static: official Windows NSIS producer (not SEA ps1) -------------------
+echo "[static] official Windows NSIS installer producer"
+assert_file_has "${PACKAGE_SH}" 'build-windows-installer\.sh' \
+  "package.sh calls build-windows-installer.sh after the windows zip"
+assert_file_has "${PACKAGE_SH}" 'launch-hidden\.vbs missing' \
+  "package.sh fail-closed if launch-hidden.vbs is missing"
+assert_file_has "${WIN_NSIS}" 'CMSPARK_REQUIRE_NSIS' \
+  "wrapper honors CMSPARK_REQUIRE_NSIS"
+assert_file_has "${WIN_NSIS}" 'MSYS_NO_PATHCONV' \
+  "wrapper disables Git Bash /D path conversion"
+assert_file_has "${WIN_NSIS}" '\-DPRODUCT_VERSION=' \
+  "wrapper injects -DPRODUCT_VERSION= (not bash argv /D)"
+assert_file_has "${WIN_NSIS}" 'cmspark-agent\.exe' \
+  "wrapper refuses to wrap a SEA/mixed staging tree"
+assert_file_has "${WIN_NSIS}" 'launch-hidden\.vbs' \
+  "wrapper requires launch-hidden.vbs in staging"
+assert_file_has "${MAKEFILE}" 'package\.sh windows-x64' \
+  "Makefile package-windows uses package.sh (CI SoT)"
+assert_file_has "${RELEASE_YML}" 'nsis --version=3\.12\.0' \
+  "release.yml pins Chocolatey NSIS 3.12.0"
+assert_file_has "${RELEASE_YML}" 'CMSPARK_REQUIRE_NSIS' \
+  "release.yml sets CMSPARK_REQUIRE_NSIS on windows-x64"
+assert_file_has "${RELEASE_YML}" 'cmspark-windows-x64-setup' \
+  "release.yml uses a distinct Setup.exe artifact name"
+assert_file_has "${RELEASE_YML}" 'CMspark-Setup-v\*\.exe' \
+  "release.yml references CMspark-Setup-v*.exe by name"
+assert_file_has "${RELEASE_YML}" 'fail_on_unmatched_files' \
+  "release.yml fail-closed if Setup.exe glob matches nothing"
+assert_file_has "${RELEASE_YML}" 'CMspark-Setup-v\*\.exe missing after flatten' \
+  "release flatten refuses zip-only GitHub Release"
+assert_file_has "${CI_YML}" 'build-windows-installer\.sh' \
+  "ci.yml bash -n the NSIS wrapper"
+assert_file_has "${NSIS}" 'build-windows-installer\.sh' \
+  "installer.nsi documents the official producer"
+
+echo "[dynamic] CMSPARK_REQUIRE_NSIS=1 without makensis → nonzero"
+set +e
+OUT_NSIS="$(
+  CMSPARK_REQUIRE_NSIS=1 CMSPARK_MAKENSIS=/no/such/cmspark-makensis \
+    bash "${WIN_NSIS}" 2>&1
+)"
+RC_NSIS=$?
+set -e
+if [ "${RC_NSIS}" != "0" ]; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: REQUIRE_NSIS=1 must fail when makensis is missing" >&2
+  echo "${OUT_NSIS}" >&2
+fi
+
+echo "[dynamic] wrapper refuses SEA/mixed staging even if makensis exists"
+if [ -x /usr/bin/true ] || [ -x /bin/true ]; then
+  _TRUE="/usr/bin/true"
+  [ -x "${_TRUE}" ] || _TRUE="/bin/true"
+  _STAGE="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-nsis-stage.XXXXXX")"
+  mkdir -p "${_STAGE}/chrome-extension"
+  touch "${_STAGE}/node.exe" "${_STAGE}/cmspark-agent.js" "${_STAGE}/launch-hidden.vbs" "${_STAGE}/cmspark-agent.exe"
+  set +e
+  OUT_SEA="$(
+    CMSPARK_STAGING_DIR="${_STAGE}" CMSPARK_MAKENSIS="${_TRUE}" \
+      bash "${WIN_NSIS}" 2>&1
+  )"
+  RC_SEA=$?
+  set -e
+  rm -rf "${_STAGE}"
+  if [ "${RC_SEA}" != "0" ]; then
+    PASS=$((PASS + 1))
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: wrapper must refuse staging that contains cmspark-agent.exe" >&2
+    echo "${OUT_SEA}" >&2
+  fi
+else
+  echo "  skip: no true(1) for fake makensis"
+fi
+
+echo "[dynamic] missing makensis without REQUIRE → skip (exit 0)"
+set +e
+OUT_SKIP="$(
+  CMSPARK_REQUIRE_NSIS= CMSPARK_MAKENSIS=/no/such/cmspark-makensis \
+    bash "${WIN_NSIS}" 2>&1
+)"
+RC_SKIP=$?
+set -e
+if [ "${RC_SKIP}" = "0" ]; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: wrapper should skip (exit 0) when makensis missing and REQUIRE unset (rc=${RC_SKIP})" >&2
+  echo "${OUT_SKIP}" >&2
 fi
 
 # --- Dynamic negative: missing cmspark-host → exit 1 -------------------------
