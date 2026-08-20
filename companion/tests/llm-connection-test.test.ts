@@ -2,13 +2,28 @@
 
 import test, { type TestContext } from "node:test"
 import assert from "node:assert/strict"
+import * as dns from "node:dns"
 import {
   formatProbeHttpError,
   probeLlmConnection,
+  probeNativeVision,
 } from "../src/llm/connection-test"
 
 function mockFetch(t: TestContext, impl: (...args: unknown[]) => unknown): void {
   t.mock.method(globalThis, "fetch", impl as (...args: unknown[]) => unknown)
+}
+
+/** Probe now DNS-gates names; fixtures use .example hosts that would NXDOMAIN. */
+function mockDnsPublic(t: TestContext): void {
+  t.mock.method(
+    dns.promises,
+    "lookup",
+    async (_host: string, opts?: { all?: boolean }) => {
+      const rec = [{ address: "8.8.8.8", family: 4 as const }]
+      if (opts && opts.all) return rec
+      return rec[0]
+    },
+  )
 }
 
 test("formatProbeHttpError distinguishes 401 / 404 / 400", () => {
@@ -19,6 +34,7 @@ test("formatProbeHttpError distinguishes 401 / 404 / 400", () => {
 })
 
 test("probe openai posts chat/completions with Bearer", async (t) => {
+  mockDnsPublic(t)
   let fetchedUrl = ""
   let init: RequestInit | undefined
   mockFetch(t, async (url: unknown, i?: unknown) => {
@@ -40,6 +56,7 @@ test("probe openai posts chat/completions with Bearer", async (t) => {
 })
 
 test("probe anthropic posts /messages with x-api-key", async (t) => {
+  mockDnsPublic(t)
   let fetchedUrl = ""
   let init: RequestInit | undefined
   mockFetch(t, async (url: unknown, i?: unknown) => {
@@ -62,6 +79,7 @@ test("probe anthropic posts /messages with x-api-key", async (t) => {
 })
 
 test("probe anthropic + claude_code_compat injects UA on non-first-party", async (t) => {
+  mockDnsPublic(t)
   let init: RequestInit | undefined
   mockFetch(t, async (_url: unknown, i?: unknown) => {
     init = i as RequestInit
@@ -82,6 +100,7 @@ test("probe anthropic + claude_code_compat injects UA on non-first-party", async
 })
 
 test("probe anthropic first-party + compat profile refuses before fetch", async (t) => {
+  mockDnsPublic(t)
   let called = false
   mockFetch(t, () => {
     called = true
@@ -100,6 +119,7 @@ test("probe anthropic first-party + compat profile refuses before fetch", async 
 })
 
 test("probe maps 401 to auth hint", async (t) => {
+  mockDnsPublic(t)
   mockFetch(t, async () => ({ ok: false, status: 401 }))
   const r = await probeLlmConnection({
     base_url: "https://api.deepseek.com/v1",
@@ -123,4 +143,28 @@ test("probe empty key fails without fetch", async (t) => {
   assert.equal(r.ok, false)
   assert.equal(called, false)
   assert.match(r.error || "", /API Key/)
+})
+
+test("probeNativeVision DNS-to-IMDS does not fetch", async (t) => {
+  t.mock.method(
+    dns.promises,
+    "lookup",
+    async (_host: string, opts?: { all?: boolean }) => {
+      const rec = [{ address: "169.254.169.254", family: 4 as const }]
+      if (opts && opts.all) return rec
+      return rec[0]
+    },
+  )
+  let called = false
+  mockFetch(t, () => {
+    called = true
+    throw new Error("must not fetch")
+  })
+  const ok = await probeNativeVision({
+    base_url: "https://api.openai.com/v1",
+    api_key: "sk-x",
+    model_name: "gpt-4o",
+  })
+  assert.equal(ok, false)
+  assert.equal(called, false)
 })

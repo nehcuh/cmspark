@@ -163,8 +163,19 @@ async function doAnalyze(
       return buildFallback(image, config, gate.reason || "Vision key missing for remote endpoint")
     }
 
+    const visionUrl = normalizeVisionBaseUrl(config.base_url)
+    const { assertLlmEndpointAllowedAsync } = await import("../security")
+    const blocked = await assertLlmEndpointAllowedAsync(visionUrl)
+    if (blocked) {
+      logger.warn("vision.blocked_llm_endpoint", {
+        base_url: config.base_url,
+        reason: blocked,
+      })
+      return buildFallback(image, config, blocked)
+    }
+
     const client = new OpenAI({
-      baseURL: normalizeVisionBaseUrl(config.base_url),
+      baseURL: visionUrl,
       apiKey,
       timeout: config.timeout_ms,
       maxRetries: 0,

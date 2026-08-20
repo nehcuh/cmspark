@@ -3,8 +3,9 @@
  * Fixtures only — no real gateway.
  */
 
-import test from "node:test"
+import test, { afterEach, beforeEach } from "node:test"
 import assert from "node:assert/strict"
+import * as dns from "node:dns"
 import type { LlmConfig } from "../src/config"
 import { createProvider } from "../src/llm/provider"
 import type {
@@ -27,6 +28,19 @@ import {
   sseStringToStream,
 } from "../src/llm/providers/anthropic"
 import { HeaderPolicyError } from "../src/llm/providers/headers"
+import { LLM_ENDPOINT_DNS_ERROR, LLM_ENDPOINT_IMDS_ERROR } from "../src/security"
+
+const origDnsLookup = dns.promises.lookup
+beforeEach(() => {
+  dns.promises.lookup = (async (_host: string, opts?: { all?: boolean }) => {
+    const rec = [{ address: "8.8.8.8", family: 4 as const }]
+    if (opts && opts.all) return rec
+    return rec[0]
+  }) as unknown as typeof origDnsLookup
+})
+afterEach(() => {
+  dns.promises.lookup = origDnsLookup
+})
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -789,6 +803,58 @@ test("streamChat request body does not embed api_key; headers built via policy",
       provider.streamChat({ messages: [{ role: "user", content: "hi" }] }),
     )
     assert.equal(seenAuthHeader, true)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("streamChat DNS NXDOMAIN uses DNS copy and does not fetch", async () => {
+  dns.promises.lookup = (async () => {
+    throw Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })
+  }) as unknown as typeof origDnsLookup
+  let fetched = false
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => {
+    fetched = true
+    throw new Error("must not fetch")
+  }) as typeof fetch
+  try {
+    const provider = new AnthropicProvider(baseLlm({ base_url: "https://unresolvable.invalid/v1" }))
+    await assert.rejects(
+      () => collectEvents(provider.streamChat({ messages: [{ role: "user", content: "hi" }] })),
+      (err: unknown) => {
+        assert.ok(err instanceof Error)
+        assert.equal(err.message, LLM_ENDPOINT_DNS_ERROR)
+        return true
+      },
+    )
+    assert.equal(fetched, false)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("streamChat host resolving to IMDS uses IMDS copy and does not fetch", async () => {
+  dns.promises.lookup = (async () => [
+    { address: "169.254.169.254", family: 4 },
+  ]) as unknown as typeof origDnsLookup
+  let fetched = false
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => {
+    fetched = true
+    throw new Error("must not fetch")
+  }) as typeof fetch
+  try {
+    const provider = new AnthropicProvider(baseLlm({ base_url: "https://imds.example.test/v1" }))
+    await assert.rejects(
+      () => collectEvents(provider.streamChat({ messages: [{ role: "user", content: "hi" }] })),
+      (err: unknown) => {
+        assert.ok(err instanceof Error)
+        assert.equal(err.message, LLM_ENDPOINT_IMDS_ERROR)
+        return true
+      },
+    )
+    assert.equal(fetched, false)
   } finally {
     globalThis.fetch = originalFetch
   }

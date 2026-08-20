@@ -1097,14 +1097,15 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           return { success: false, error: "Invalid or expired security token" }
         }
       }
+      // L2 already confirmed. Regex hits (fetch, cookie, …) are preview-only —
+      // never a second hard-block after a valid token (fzbcro: approved then
+      // "Execution requires user confirmation").
       {
         const safety = checkHighRiskExecution("osascript_eval", jsExpr)
-        if (safety.blocked) {
-          return {
-            success: false,
-            error: safety.error,
-            data: { dangerous_apis_found: safety.dangerousApis },
-          }
+        if (safety.dangerousApis.length > 0) {
+          logger.info("osascript_eval.high_risk_preview", {
+            dangerous_apis: safety.dangerousApis,
+          })
         }
       }
       const lengthCheck = securityPolicy.checkLength("osascript_eval", jsExpr)

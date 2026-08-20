@@ -13,6 +13,7 @@ import type {
   LlmProvider,
   StreamChatParams,
 } from "../provider"
+import { throwIfLlmEndpointBlocked } from "../../security"
 import { cleanCompanionUserAgent } from "./headers"
 
 export class OpenAIProvider implements LlmProvider {
@@ -33,6 +34,7 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   async *streamChat(params: StreamChatParams): AsyncIterable<CanonicalStreamEvent> {
+    await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
     const messages = params.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[]
@@ -107,6 +109,7 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   async complete(params: CompleteParams): Promise<CompleteResult> {
+    await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
     const messages = params.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[]

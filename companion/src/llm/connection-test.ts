@@ -86,6 +86,12 @@ export async function probeLlmConnection(input: LlmProbeInput): Promise<LlmProbe
     return { ok: false, error: "Base URL 未配置" }
   }
 
+  const { assertLlmEndpointAllowedAsync } = await import("../security")
+  const blocked = await assertLlmEndpointAllowedAsync(String(input.base_url))
+  if (blocked) {
+    return { ok: false, error: blocked }
+  }
+
   try {
     if (protocol === "anthropic") {
       return await probeAnthropic({
@@ -133,6 +139,8 @@ export async function probeNativeVision(input: LlmProbeInput): Promise<boolean> 
   const key = input.api_key || ""
   const base = String(input.base_url || "").replace(/\/+$/, "")
   if (!model || !key || !base) return false
+  const { assertLlmEndpointAllowedAsync } = await import("../security")
+  if (await assertLlmEndpointAllowedAsync(input.base_url)) return false
   const timeout = 8000
   try {
     const headers = buildRequestHeaders({

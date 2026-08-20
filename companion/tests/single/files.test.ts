@@ -399,7 +399,7 @@ test("message-router: unknown type returns error", async () => {
   assert.ok(response.error?.includes("Unknown message type"))
 })
 
-test("message-router: osascript_eval blocks dangerous code", async () => {
+test("message-router: osascript_eval tokenless fetch is not a fake confirm-block", async () => {
   const response = await handleMessage(
     {
       type: "osascript_eval",
@@ -412,12 +412,11 @@ test("message-router: osascript_eval blocks dangerous code", async () => {
 
   assert.equal(response.type, "tool.result")
   assert.equal(response.success, false)
-  // non-darwin: absolute first platform reject (before high-risk Security Block)
   if (process.platform !== "darwin") {
     assert.match(response.error || "", /macos-only/i)
   } else {
-    assert.ok(response.error?.includes("Security Block"))
-    assert.deepEqual(response.data.dangerous_apis_found, ["fetch"])
+    assert.match(response.error || "", /No session available/)
+    assert.doesNotMatch(response.error || "", /Execution requires user confirmation/)
   }
 })
 
@@ -770,10 +769,9 @@ test("security: dangerous API patterns cover sessionStorage", () => {
 // Combined integration tests
 // ========================================
 
-test("integration: message-router respects security policy for osascript_eval", async () => {
+test("integration: message-router osascript_eval without session does not spoof a denied confirm", async () => {
   const threadManager = new ThreadManager()
 
-  // Dangerous code should be blocked (or platform-fail on non-darwin before policy scan)
   const response = await handleMessage(
     {
       type: "osascript_eval",
@@ -789,7 +787,8 @@ test("integration: message-router respects security policy for osascript_eval", 
   if (process.platform !== "darwin") {
     assert.match(response.error || "", /macos-only/i)
   } else {
-    assert.ok(response.error?.includes("Security Block"))
+    assert.match(response.error || "", /No session available/)
+    assert.doesNotMatch(response.error || "", /Security Block/)
   }
 })
 

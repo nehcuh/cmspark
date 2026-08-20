@@ -1,8 +1,15 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import * as dns from "node:dns"
 import {
+  LLM_ENDPOINT_DNS_ERROR,
+  LLM_ENDPOINT_IMDS_ERROR,
+  assertLlmEndpointAllowedAsync,
   assertLlmEndpointUrlAllowed,
   assertOutboundFetchUrlAllowed,
+  canonicalizeLlmHostname,
+  classifyLlmHostnameDns,
+  hostnameResolvesToImds,
   normalizeIpLiteral,
 } from "../src/security"
 
@@ -64,6 +71,22 @@ test("assertLlmEndpointUrlAllowed blocks transitional IPv6 embedding IMDS", () =
   )
   // NAT64 of a PUBLIC address is not blocked by the LLM gate.
   assert.equal(assertLlmEndpointUrlAllowed("http://[64:ff9b::808:808]/v1"), null)
+  // S-XLAT: IPv4-translated ::ffff:0:0:0/96 (RFC 2765)
+  assert.match(
+    String(assertLlmEndpointUrlAllowed("http://[::ffff:0:a9fe:a9fe]/v1")),
+    /metadata|link-local/i,
+  )
+  assert.match(
+    String(assertLlmEndpointUrlAllowed("http://[::ffff:0:169.254.169.254]/v1")),
+    /metadata|link-local/i,
+  )
+})
+
+test("assertLlmEndpointUrlAllowed blocks trailing-dot GCP metadata alias", () => {
+  assert.match(
+    String(assertLlmEndpointUrlAllowed("http://metadata.google.internal./")),
+    /metadata|link-local/i,
+  )
 })
 
 test("assertLlmEndpointUrlAllowed allows loopback / public IPv6 literals", () => {
@@ -116,6 +139,8 @@ test("normalizeIpLiteral canonicalizes brackets / compression / v4-mapped", () =
   assert.equal(normalizeIpLiteral("[::169.254.169.254]"), "169.254.169.254")
   assert.equal(normalizeIpLiteral("[64:ff9b::a9fe:a9fe]"), "169.254.169.254")
   assert.equal(normalizeIpLiteral("[2002:a9fe:a9fe::]"), "169.254.169.254")
+  assert.equal(normalizeIpLiteral("[::ffff:0:a9fe:a9fe]"), "169.254.169.254")
+  assert.equal(normalizeIpLiteral("[::ffff:0:169.254.169.254]"), "169.254.169.254")
   // …but `::` / `::1` keep their native IPv6 semantics (no 0.0.0.0/8 reduction).
   assert.equal(normalizeIpLiteral("[::]"), "0000:0000:0000:0000:0000:0000:0000:0000")
   assert.equal(normalizeIpLiteral("10.0.0.1"), "10.0.0.1")
@@ -132,4 +157,77 @@ test("assertOutboundFetchUrlAllowed still blocks RFC1918 (untrusted fetch)", () 
 test("assertLlmEndpointUrlAllowed rejects non-http schemes", () => {
   assert.match(String(assertLlmEndpointUrlAllowed("file:///etc/passwd")), /protocol/i)
   assert.match(String(assertLlmEndpointUrlAllowed("not a url")), /Invalid URL/)
+})
+
+test("hostnameResolvesToImds: IP literals use the same tables; names DNS-fail-closed", async () => {
+  assert.equal(await hostnameResolvesToImds("127.0.0.1"), false)
+  assert.equal(await hostnameResolvesToImds("[::ffff:0:a9fe:a9fe]"), true)
+  const orig = dns.promises.lookup
+  dns.promises.lookup = (async () => [{ address: "169.254.169.254", family: 4 }]) as unknown as typeof orig
+  try {
+    assert.equal(await hostnameResolvesToImds("imds.example.test"), true)
+  } finally {
+    dns.promises.lookup = orig
+  }
+  dns.promises.lookup = (async () => {
+    throw Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })
+  }) as unknown as typeof orig
+  try {
+    assert.equal(await hostnameResolvesToImds("unresolvable.invalid"), true)
+  } finally {
+    dns.promises.lookup = orig
+  }
+})
+
+test("canonicalizeLlmHostname strips brackets and trailing FQDN dots", () => {
+  assert.equal(canonicalizeLlmHostname("LocalHost."), "localhost")
+  assert.equal(canonicalizeLlmHostname("[::1]"), "::1")
+  assert.equal(canonicalizeLlmHostname("metadata.google.internal."), "metadata.google.internal")
+})
+
+test("classifyLlmHostnameDns distinguishes ok / imds / unresolved", async () => {
+  assert.equal(await classifyLlmHostnameDns("127.0.0.1"), "ok")
+  assert.equal(await classifyLlmHostnameDns("[::ffff:0:a9fe:a9fe]"), "imds")
+  const orig = dns.promises.lookup
+  dns.promises.lookup = (async () => [{ address: "169.254.169.254", family: 4 }]) as unknown as typeof orig
+  try {
+    assert.equal(await classifyLlmHostnameDns("imds.example.test"), "imds")
+  } finally {
+    dns.promises.lookup = orig
+  }
+  dns.promises.lookup = (async () => {
+    throw Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })
+  }) as unknown as typeof orig
+  try {
+    assert.equal(await classifyLlmHostnameDns("unresolvable.invalid"), "unresolved")
+  } finally {
+    dns.promises.lookup = orig
+  }
+})
+
+test("assertLlmEndpointAllowedAsync: DNS fail copy is not the IMDS copy", async () => {
+  assert.equal(
+    await assertLlmEndpointAllowedAsync("http://169.254.169.254/v1"),
+    LLM_ENDPOINT_IMDS_ERROR,
+  )
+  const orig = dns.promises.lookup
+  dns.promises.lookup = (async () => {
+    throw Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })
+  }) as unknown as typeof orig
+  try {
+    const err = await assertLlmEndpointAllowedAsync("http://unresolvable.invalid/v1")
+    assert.equal(err, LLM_ENDPOINT_DNS_ERROR)
+    assert.notEqual(err, LLM_ENDPOINT_IMDS_ERROR)
+  } finally {
+    dns.promises.lookup = orig
+  }
+  dns.promises.lookup = (async () => [{ address: "169.254.169.254", family: 4 }]) as unknown as typeof orig
+  try {
+    assert.equal(
+      await assertLlmEndpointAllowedAsync("http://imds.example.test/v1"),
+      LLM_ENDPOINT_IMDS_ERROR,
+    )
+  } finally {
+    dns.promises.lookup = orig
+  }
 })

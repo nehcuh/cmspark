@@ -49,7 +49,6 @@ import { copyAttachmentsToThread, deleteSidecarsForMessages, writeImageSidecar }
 import type { RasterMime } from "./llm/image-sniff"
 import { chunkFile, searchChunks } from "./file-chunker"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
-import { checkHighRiskExecution } from "./security"
 import { securityPolicy } from "./security-policy"
 import { OSASCRIPT_MACOS_ONLY_ERROR } from "./bridge/tool-definitions"
 import { getMcpManager } from "./mcp"
@@ -3372,22 +3371,11 @@ export async function handleMessage(
             `Got url=${pageUrl ? "set" : "missing"}, expression=${jsExpr ? "set" : "missing"}.`,
         }
       }
-      // Security check runs regardless of session availability
+      // Token check only — high-risk regex is L2 preview, not a tokenless hard-block.
       if (rest.security_token) {
         const valid = securityPolicy.validateToken(String(rest.security_token), "osascript_eval", jsExpr)
         if (!valid) {
           return { type: "tool.result", id: msg.id, success: false, error: "Invalid or expired security token" }
-        }
-      } else {
-        const safety = checkHighRiskExecution("osascript_eval", jsExpr)
-        if (safety.blocked) {
-          return {
-            type: "tool.result",
-            id: msg.id,
-            success: false,
-            error: safety.error,
-            data: { dangerous_apis_found: safety.dangerousApis },
-          }
         }
       }
       if (!session) {

@@ -1,0 +1,8 @@
+{
+  "batch": "head-d1e505c-batch2",
+  "timestamp": "20260820-111515",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/head-d1e505c-batch2-claude-20260820-111515.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/head-d1e505c-batch2-pi-20260820-111515.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/head-d1e505c-batch2-diff-20260820-111515.patch"
+}

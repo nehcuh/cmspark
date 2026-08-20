@@ -269,14 +269,110 @@ test("local continuous: abort mid-session ends once", async () => {
   adapter.destroy()
 })
 
+/**
+ * Same companion protocol as classic V1 tests: start-while-busy → resource_conflict;
+ * unknown sid chunk/end → session_unknown; abort frees the slot + aborted ACK.
+ * Macrotask replies so the retry microtask runs between start-reject and leftover ACKs.
+ */
+function fakeCompanion(sent: any[], opts?: { holderBusy?: boolean }) {
+  const inbox: { emit?: (m: any) => void } = {}
+  let holderBusy = opts?.holderBusy ?? false
+  const sessions = new Set<string>()
+  const reply = (m: any) => {
+    setTimeout(() => inbox.emit?.(m), 0)
+  }
+  const send = (msg: any) => {
+    sent.push(msg)
+    const sid = String(msg.sessionId ?? "")
+    switch (msg.type) {
+      case "voice.stt.start":
+        if (holderBusy) {
+          reply({
+            type: "voice.stt.error",
+            v: 1,
+            sessionId: sid,
+            code: "resource_conflict",
+            message: "previous STT infer still in progress",
+          })
+        } else {
+          holderBusy = true
+          sessions.add(sid)
+          reply({ type: "voice.stt.partial", v: 1, sessionId: sid, status: "receiving" })
+        }
+        break
+      case "voice.stt.chunk":
+        if (!sessions.has(sid)) {
+          reply({
+            type: "voice.stt.error",
+            v: 1,
+            sessionId: sid,
+            code: "session_unknown",
+            message: "no matching session",
+          })
+        }
+        break
+      case "voice.stt.end":
+        if (!sessions.has(sid)) {
+          reply({
+            type: "voice.stt.error",
+            v: 1,
+            sessionId: sid,
+            code: "session_unknown",
+            message: "no matching session",
+          })
+        } else {
+          sessions.delete(sid)
+          holderBusy = false
+          reply({
+            type: "voice.stt.result",
+            v: 1,
+            sessionId: sid,
+            text: `ok-${sid}`,
+            ms: 5,
+            modelId: "medium",
+          })
+        }
+        break
+      case "voice.stt.abort":
+        if (holderBusy) {
+          sessions.clear()
+          holderBusy = false
+          reply({
+            type: "voice.stt.error",
+            v: 1,
+            sessionId: sid,
+            code: "aborted",
+            message: "session aborted",
+          })
+        } else {
+          reply({
+            type: "voice.stt.error",
+            v: 1,
+            sessionId: sid,
+            code: "session_unknown",
+            message: "no active session",
+          })
+        }
+        break
+    }
+  }
+  return {
+    send,
+    onMessage: (h: (m: any) => void) => {
+      inbox.emit = h
+      return () => {
+        inbox.emit = undefined
+      }
+    },
+  }
+}
+
 test("local continuous: resource_conflict retries once with -r1 sessionId", async () => {
   const sent: any[] = []
-  const inbox: { emit?: (m: any) => void } = {}
   const finals: string[] = []
-  let errors: string[] = []
+  const errors: string[] = []
   let ends = 0
-  // First segment end → conflict; after abort+retry end → success
-  let endCount = 0
+  const companion = fakeCompanion(sent, { holderBusy: true })
 
   const adapter = createLocalSttAdapter(
     {
@@ -292,37 +388,8 @@ test("local continuous: resource_conflict retries once with -r1 sessionId", asyn
       },
     },
     {
-      send: (msg) => {
-        sent.push(msg)
-        if (msg.type === "voice.stt.end") {
-          endCount++
-          const sid = String(msg.sessionId)
-          queueMicrotask(() => {
-            if (endCount === 1) {
-              // First attempt: resource_conflict
-              inbox.emit?.({
-                type: "voice.stt.error",
-                sessionId: sid,
-                code: "resource_conflict",
-                message: "busy",
-              })
-            } else {
-              // Retry (-r1) or later segments: success
-              inbox.emit?.({
-                type: "voice.stt.result",
-                sessionId: sid,
-                text: `ok-${sid}`,
-              })
-            }
-          })
-        }
-      },
-      onMessage: (h) => {
-        inbox.emit = h
-        return () => {
-          inbox.emit = undefined
-        }
-      },
+      send: companion.send,
+      onMessage: companion.onMessage,
       modelId: "medium",
       startCapture: async () => ({
         stop: async () => new Uint8Array([1, 2, 3, 4]),
@@ -337,21 +404,32 @@ test("local continuous: resource_conflict retries once with -r1 sessionId", asyn
     hardCapMs: 80,
     segmentMs: 30,
   })
-  // Allow first segment + 200ms backoff + retry + optional next segment
-  await new Promise((r) => setTimeout(r, 600))
+
+  let waited = 0
+  while (!sent.some((m) => m.type === "voice.stt.abort") && waited < 800) {
+    await new Promise((r) => setTimeout(r, 10))
+    waited += 10
+  }
+  await new Promise((r) => setTimeout(r, 80))
+  assert.deepEqual(errors, [], `stale-sid ACKs during backoff must not surface: ${errors}`)
+  assert.equal(ends, 0, "stale-sid ACKs during backoff must not end the session")
+
+  await new Promise((r) => setTimeout(r, 500))
   adapter.stop()
   await new Promise((r) => setTimeout(r, 120))
 
   const starts = sent.filter((m) => m.type === "voice.stt.start")
   const aborts = sent.filter((m) => m.type === "voice.stt.abort")
+  const startSids = starts.map((m) => String(m.sessionId))
   assert.ok(starts.length >= 2, `expected ≥2 starts (orig+retry), got ${starts.length}`)
+  assert.match(startSids[0] || "", /-s1$/, `first start must be segment -s1, got ${startSids[0]}`)
   assert.ok(
-    aborts.some((m) => String(m.sessionId).match(/-s1$/)),
+    aborts.some((m) => String(m.sessionId).endsWith("-s1")),
     `expected abort of first segment sid, aborts=${JSON.stringify(aborts)}`,
   )
   assert.ok(
-    starts.some((m) => String(m.sessionId).endsWith("-r1")),
-    `expected -r1 retry start, starts=${starts.map((s) => s.sessionId).join(",")}`,
+    startSids.some((s) => /-s1-r1$/.test(s)),
+    `expected -s1-r1 retry start, starts=${startSids.join(",")}`,
   )
   assert.ok(finals.length >= 1, `expected at least one final after retry, got ${JSON.stringify(finals)}`)
   assert.equal(errors.length, 0, `should not surface conflict if retry succeeds: ${errors}`)

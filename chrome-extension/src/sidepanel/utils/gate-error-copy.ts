@@ -92,6 +92,31 @@ export function humanizeSidepanelGateError(raw: string): string {
     )
   }
 
+  if (/contains high-risk APIs|页面脚本含|你拒绝了在页面执行/i.test(body + e)) {
+    if (/User denied/i.test(body + e) || (/你拒绝了这次|你拒绝了在页面执行/.test(body + e) && !/不是你拒绝了/.test(body + e))) {
+      return (
+        "🛑 **你拒绝了这次页面脚本**\n\n" +
+        "可重新发起并在确认台选择批准。"
+      )
+    }
+    if (/timed out|确认超时/i.test(body + e)) {
+      return (
+        "⏳ **页面脚本确认超时**\n\n" +
+        "请看侧栏确认台，下次出现时及时批准或拒绝。不是已经拒绝。"
+      )
+    }
+    if (/disconnected|unavailable|确认通道不可用/i.test(body + e)) {
+      return (
+        "🔌 **页面脚本确认没送到**\n\n" +
+        "这不是确认弹窗被拒绝：侧栏未连上或确认台不可用。"
+      )
+    }
+    return (
+      "⚠️ **页面脚本批准后被误拦**\n\n" +
+      "这不是确认弹窗：确认已经结束，Companion 不应再用 `fetch` 等黑名单硬拒。"
+    )
+  }
+
   // Soften residual scary prefixes
   if (/安全阻断/i.test(e) && !/已拒绝|user denied|blocked by user/i.test(e)) {
     return `⚠️ ${body}`

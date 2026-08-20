@@ -420,6 +420,53 @@ test("classic: abort during conflict backoff does not start -r1", async () => {
   adapter2.destroy()
 })
 
+test("classic: double-stop during drain does not abort/discard the recording", async () => {
+  const sent: any[] = []
+  const finals: string[] = []
+  const errors: string[] = []
+  let ends = 0
+  const companion = fakeCompanion(sent)
+  const adapter = createLocalSttAdapter(
+    {
+      onStart: () => {},
+      onResult: ({ finalChunk }) => {
+        if (finalChunk) finals.push(finalChunk)
+      },
+      onError: (c) => {
+        errors.push(c)
+      },
+      onEnd: () => {
+        ends++
+      },
+    },
+    {
+      send: companion.send,
+      onMessage: companion.onMessage,
+      modelId: "medium",
+      startCapture: fakeCaptureFactory(silentWav(), { delayMs: 80 }),
+    },
+  )
+  adapter.start({ sessionId: "classic-dblstop", modelId: "medium" })
+  await new Promise((r) => setTimeout(r, 20))
+  // delayMs=80: second stop must land while handle.stop() is still pending so
+  // stopChainInFlight (not the idle/uploading early-return) is the load-bearing path.
+  adapter.stop()
+  await new Promise((r) => setTimeout(r, 40))
+  assert.equal(
+    sent.filter((m) => m.type === "voice.stt.start").length,
+    0,
+    "delayMs must still block upload at t+40ms (otherwise stopChainInFlight is not exercised)",
+  )
+  adapter.stop()
+  await new Promise((r) => setTimeout(r, 250))
+  assert.deepEqual(errors, [], `double-stop must not abort: ${errors}`)
+  assert.deepEqual(finals, ["ok-classic-dblstop"])
+  assert.equal(ends, 1)
+  const aborts = sent.filter((m) => m.type === "voice.stt.abort")
+  assert.equal(aborts.length, 0, `double-stop must not send abort: ${JSON.stringify(aborts)}`)
+  adapter.destroy()
+})
+
 test("abort during recording: voice.stt.abort + silent error path", async () => {
   const wav = silentWav()
   const sent: any[] = []

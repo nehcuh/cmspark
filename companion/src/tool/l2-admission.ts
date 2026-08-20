@@ -264,6 +264,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         (toolName === "netsec_port_scan"
           ? `targets=${Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : ""} ports=${Array.isArray(finalParams.ports) ? finalParams.ports.join(",") : ""}`
           : null) ||
+        (toolName === "osascript_eval"
+          ? String(finalParams.expression || finalParams.code || "")
+          : null) ||
       finalParams.code ||
         finalParams.expression ||
         finalParams.command ||
