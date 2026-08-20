@@ -981,7 +981,7 @@ export function ThreadList() {
                 })
               }}
               disabled={state.summarizingThreadId === t.id}
-              title="导出此线程摘要到 Obsidian"
+              title="导出此线程摘要为 Markdown"
             >
               {state.summarizingThreadId === t.id ? "⏳" : "🧠"}
             </button>

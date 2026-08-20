@@ -40,7 +40,7 @@ function basenamePath(p: string): string {
 
 /**
  * Build the Markdown task package per product design §4 L0 / §5.7.7.
- * Output is meant to be pasted into Claude Code / Gemini CLI / etc.
+ * Output is meant to be pasted into Claude Code / Grok / Kimi / OpenCode / etc.
  */
 export function buildCodingTaskPackage(input: TaskPackageInput): TaskPackageResult {
   const goal = cap(input.goal || "（未填写任务摘要）", MAX_GOAL)

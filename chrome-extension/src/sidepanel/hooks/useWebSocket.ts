@@ -1662,12 +1662,12 @@ export function useWebSocket() {
             if (msg.template_count != null && msg.template_count > 0) parts.push(`模板 ${msg.template_count} 个`)
             dispatch({
               type: "SET_OBSIDIAN_PROFILE_STATUS",
-              status: { ok: true, message: `✓ Vault 档案已更新（${parts.join(" · ")}）` },
+              status: { ok: true, message: `✓ 笔记库档案已更新（${parts.join(" · ")}）` },
             })
           } else {
             dispatch({
               type: "SET_OBSIDIAN_PROFILE_STATUS",
-              status: { ok: false, message: msg.reason || "未识别到 vault 结构化约定" },
+              status: { ok: false, message: msg.reason || "未识别到笔记库结构化约定" },
             })
           }
           break

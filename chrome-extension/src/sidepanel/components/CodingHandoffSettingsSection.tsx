@@ -200,8 +200,8 @@ export function CodingHandoffSettingsSection({
       </button>
       {flash ? <p style={styles.flash}>{flash}</p> : null}
       <p style={styles.hint}>
-        开启 ACP 后可用列表中的 claude / gemini / codex / pi 启动会话；也可「写入
-        config」持久化路径。
+        开启 ACP 后可用列表中的 claude / gemini / codex / pi / grok / kimi / opencode
+        启动会话；也可「写入 config」持久化路径。
       </p>
     </div>
   )

@@ -1871,7 +1871,7 @@ export function SettingsSlideout() {
                   dispatch({ type: "SET_EXPORT_INCLUDE_REASONING", enabled: e.target.checked })
                 }
               />
-              导出到 Obsidian 时包含思考过程
+              导出 Markdown 时包含思考过程
             </label>
             <div style={styles.helpText}>
               默认关闭。开启后以折叠块写入笔记；请注意思考可能含中间假设，勿默认分享。
@@ -3001,14 +3001,14 @@ export function SettingsSlideout() {
               open={isSectionOpen("export")}
               onToggle={() => handleToggleSection("export")}
             >
-          {/* --- Obsidian Export --- */}
+          {/* --- Markdown export (optional note-folder conventions) --- */}
           <div style={styles.field}>
-            <label style={styles.label}>Vault 路径</label>
+            <label style={styles.label}>笔记库路径（可选）</label>
             <input
               style={styles.input}
               value={config.obsidian_vault_path || ""}
               onChange={e => dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: e.target.value } })}
-              placeholder="/path/to/your/vault"
+              placeholder="/path/to/your/notes"
             />
             <button
               style={{ ...styles.secondaryBtn, marginTop: 6 }}
@@ -3028,7 +3028,7 @@ export function SettingsSlideout() {
               </div>
             )}
             <div style={styles.helpText}>
-              导出时会扫描此 vault:把约 200 篇笔记的 frontmatter + 正文前 200 字发给你的 LLM 提取 frontmatter / 命名 / tag 约定,并建立笔记索引、检测模板。缓存后导出自动套用——frontmatter 贴合约定、footer 用 [[wikilinks]] 链向相关笔记、并用 vault 模板骨架包裹。
+              对话导出为 Markdown 文件下载，不写进该文件夹。若填写笔记库路径，会抽样约 200 篇笔记的 frontmatter 与正文前 200 字，提取命名 / tag 约定并建立索引；之后导出自动套用 frontmatter、相关笔记 [[wikilinks]] 与模板骨架。
             </div>
             <button
               style={styles.secondaryBtn}
@@ -3039,7 +3039,7 @@ export function SettingsSlideout() {
                 chrome.runtime.sendMessage({ type: "obsidian.refresh_profile", vault_path: vp })
               }}
             >
-              刷新 vault 档案
+              刷新笔记库档案
             </button>
             {state.obsidianProfileStatus && (
               <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? tokens.success : tokens.danger, marginTop: 6 }}>

@@ -10,7 +10,7 @@ import {
   summarizeDiffFiles,
 } from "../src/acp/diff-apply"
 import { formatHandbackChatMessage, stripUntrustedFrame } from "../src/acp/handback-format"
-import { resolveLaunchArgs } from "../src/acp/launch-presets"
+import { resolveLaunchArgs, resolveProtocolArgs } from "../src/acp/launch-presets"
 
 describe("diff extract/parse/apply", () => {
   it("extracts fenced diff", () => {
@@ -131,5 +131,38 @@ describe("launch presets", () => {
     })
     assert.ok(args.includes("-p"))
     assert.ok(args.includes("review me"))
+  })
+
+  it("uses grok --prompt-file for CLI bridge", () => {
+    const args = resolveLaunchArgs("grok", undefined, {
+      prompt: "review me",
+      promptFile: "/tmp/p.md",
+    })
+    assert.deepEqual(args, ["--prompt-file", "/tmp/p.md", "--output-format", "plain"])
+    assert.deepEqual(resolveProtocolArgs("grok", undefined), [])
+    assert.deepEqual(resolveProtocolArgs("grok", ["agent", "stdio"]), ["agent", "stdio"])
+  })
+
+  it("injects kimi -p prompt and uses acp protocol args", () => {
+    const args = resolveLaunchArgs("kimi", undefined, {
+      prompt: "review me",
+      promptFile: "/tmp/p.md",
+    })
+    assert.equal(args[0], "-p")
+    assert.equal(args[1], "review me")
+    assert.ok(args.includes("--output-format"))
+    assert.ok(!args.includes("-y") && !args.includes("--auto"))
+    assert.deepEqual(resolveProtocolArgs("kimi", undefined), ["acp"])
+    assert.deepEqual(resolveProtocolArgs("kimi", []), ["acp"])
+    assert.deepEqual(resolveProtocolArgs("kimi", ["--login"]), ["--login"])
+  })
+
+  it("appends opencode run prompt and uses acp protocol args", () => {
+    const args = resolveLaunchArgs("opencode", undefined, {
+      prompt: "fix the bug",
+      promptFile: "/tmp/p.md",
+    })
+    assert.deepEqual(args, ["run", "fix the bug"])
+    assert.deepEqual(resolveProtocolArgs("opencode", undefined), ["acp"])
   })
 })

@@ -13,7 +13,7 @@ import { resolveAcpWorkspaceRoot } from "./workspace-bind"
 import { frameAcpHandback } from "./handback"
 import { markAcpHandbackSeen } from "./taint"
 import { discoverCodingAgents } from "./discover"
-import { resolveLaunchArgs } from "./launch-presets"
+import { resolveLaunchArgs, resolveProtocolArgs } from "./launch-presets"
 import { extractDiffText, parseUnifiedDiff, applyParsedDiffs, summarizeDiffFiles } from "./diff-apply"
 import { shapeHandbackBody } from "./handback-format"
 import type { AcpAgentServerConfig } from "./types"
@@ -537,7 +537,7 @@ export class AcpManager {
     if (protocolMode === "auto" || protocolMode === "acp") {
       const handle = await tryStartProtocolSession({
         command: server.command,
-        args: server.args || [],
+        args: resolveProtocolArgs(session.agent_id, server.args),
         cwd: session.workspace_root,
         env,
         session,

@@ -3259,7 +3259,7 @@ export async function handleMessage(
       try {
         const raw = rest.vault_path ? rest.vault_path : getConfig().obsidian?.vault_path
         if (!raw) {
-          return { type: "error", error: "vault_path 未设置（请在 设置 → Obsidian 填写）" }
+          return { type: "error", error: "笔记库路径未设置（请在 设置 → 导出与集成 填写）" }
         }
         let resolved: string
         try {
@@ -3290,7 +3290,7 @@ export async function handleMessage(
           return {
             type: "obsidian.profile_ready",
             profile: null,
-            reason: "未识别到 vault 结构化约定（空 vault 或 LLM 未提取出）",
+            reason: "未识别到笔记库结构化约定（空文件夹或未能提取）",
           }
         }
         saveProfile(profile)

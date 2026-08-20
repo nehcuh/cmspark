@@ -4,7 +4,7 @@
 export const codingHandoffCopy = {
   productName: "编程接力",
   productBlurb:
-    "侧栏监视 + 可选本机终端完整交互：在侧栏跑本机编程助手（Claude Code / Pi 等）看时间线与确认；需要完整 TUI/权限时可开模式 C 本机终端。",
+    "侧栏监视 + 可选本机终端完整交互：在侧栏跑本机编程助手（Claude Code / Grok / Kimi / OpenCode / Pi 等）看时间线与确认；需要完整 TUI/权限时可开模式 C 本机终端。",
   outboundContrast:
     "对照：若要让本机编程 Agent 使用已登录浏览器 → 设置中的 Outbound MCP，不是本面板。",
 
@@ -52,7 +52,7 @@ export const codingHandoffCopy = {
   privacyLine: "页面摘要与仓库路径将进入任务包；粘贴到外部 Agent 后可能再上云模型。",
 
   // Toasts / status
-  copiedOk: "已复制编程任务包 — 可粘贴到 Claude Code / Gemini CLI / 终端助手",
+  copiedOk: "已复制编程任务包 — 可粘贴到 Claude Code / Grok / Kimi / OpenCode / 终端助手",
   copiedAndTerminal:
     "已复制任务包，并尝试打开终端。若终端未出现，请手动粘贴。",
   terminalFailed: "已复制任务包（终端未能打开，请手动粘贴）",
@@ -111,7 +111,7 @@ export const codingHandoffCopy = {
   // Discovery status (settings + panel)
   discoveredTitle: "本机已检测到",
   discoveredEmpty:
-    "未在 PATH / 常见安装路径找到 claude · gemini · codex · pi。安装后点「重新检测」，或把绝对路径写入 config.acp.servers。Windows 会忽略 npm 的 Unix shebang 垫片（无扩展的 claude 脚本），需要同目录的 .cmd / .exe。",
+    "未在 PATH / 常见安装路径找到 claude · gemini · codex · pi · grok · kimi · opencode。安装后点「重新检测」，或把绝对路径写入 config.acp.servers。Windows 会忽略 npm 的 Unix shebang 垫片（无扩展的 claude 脚本），需要同目录的 .cmd / .exe。",
   discoveredNeedEnable:
     "首次启动会自动开启本机 Agent 会话能力（仍会弹确认）。之后输入与输出都在本面板。",
   rediscoverHint: "检测与总开关无关：未启用时仍会列出本机已安装助手。",
@@ -119,7 +119,7 @@ export const codingHandoffCopy = {
 
   // Errors
   agentNotFound: "找不到编程助手",
-  agentNotFoundBody: "请安装 Claude Code / Gemini CLI 等，并在设置中确认路径。",
+  agentNotFoundBody: "请安装 Claude Code / Grok / Kimi / OpenCode 等，并在设置中确认路径。",
   agentNotLoggedIn: "需要先登录",
   authExpired: "登录已过期",
   pathDenied: "路径被拒绝",

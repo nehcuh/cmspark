@@ -42,7 +42,7 @@ export type OpenLocalTerminalOpts = {
   goalHint?: string
   agentLabel?: string
   /**
-   * Agent id (claude / pi / gemini / codex…) for interactive argv conventions.
+   * Agent id (claude / pi / gemini / codex / grok / kimi / opencode…) for interactive argv conventions.
    * Without this we still pass prompt as a single trailing arg (most CLIs).
    */
   agentId?: string
@@ -174,6 +174,8 @@ export function buildBannerLines(opts: {
  * Conventions (interactive, NOT -p print mode):
  * - claude: `claude [prompt]`  (first user message)
  * - pi:     `pi [messages…]`
+ * - grok:   `grok [prompt]`
+ * - kimi:   `kimi` only — positionals are subcommands (acp/web/login…), not a task
  * - others: trailing prompt arg when present
  */
 export function buildInteractiveExecFragment(opts: {
@@ -194,17 +196,18 @@ export function buildInteractiveExecFragment(opts: {
     return `exec ${cmd}`
   }
 
+  // kimi treats positionals as subcommands (acp/web/login…), not an initial message.
+  if (id === "kimi") {
+    return `exec ${cmd}`
+  }
+
   // Read file into $CMSPARK_TASK so we don't rely on ARG_MAX for huge packages,
   // then pass as a single argv. Trailing newline stripped by $(cat) is OK.
   if (hasFile) {
     const fileQ = shellSingleQuote(opts.promptFile!.trim())
     // shellcheck: intentional word-split disable via quoted expansion
     const load = `CMSPARK_TASK=$(cat ${fileQ})`
-    // Claude / Pi / generic: first message = task
-    if (id === "codex") {
-      // codex often wants `codex` interactive; pass via exec with prompt if supported
-      return `${load} && exec ${cmd} "\${CMSPARK_TASK}"`
-    }
+    // Claude / Pi / grok / generic: first message = task
     return `${load} && exec ${cmd} "\${CMSPARK_TASK}"`
   }
 

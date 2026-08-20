@@ -2,6 +2,17 @@
 
 ## Current Session
 
+### export copy: Markdown not Obsidian (2026-08-20)
+- **Task**: 导出对话用户文案去掉 Obsidian 品牌，实际就是 Markdown 下载
+- **落地**: 消息/线程/摘要按钮、设置开关与笔记库路径、文件夹选择器、companion 错误提示
+- **未改**: WS `thread.export_obsidian`、关联图「类 Obsidian」、知识库导入文案
+
+### coding-agent discover grok/kimi/opencode (2026-08-20)
+- **Task**: 编程接力扫描补 grok / kimi / opencode（原先只 claude/gemini/codex/pi）
+- **落地**: `companion/src/acp/discover.ts` 探针 + 厂商目录（`~/.grok/bin`、`~/.kimi-code/bin`、`~/.opencode/bin`）；CLI presets + kimi/opencode `acp` 协议 argv；kimi Mode C 不传位置参数
+- **验证**: `[executed]` 本机 discover 已扫到 grok+kimi；ACP 单测 71 pass
+- **下次**: 用户装 opencode 后再点「重新检测」；未 commit / 未 PR
+
 ### S76 END (2026-08-20 ~13:59) [#203 MERGED · fzbcro osascript 假拒窗 · DMG 换装]
 - **Ship**：**PR #203 MERGED** `a468925` — LLM DNS/IMDS nits + osascript 批准后 regex 二次硬拦 + 确认文案；CI build+3 smoke 绿。`make package-macos` → `CMspark-v0.5.1-macOS.dmg`；替换 `/Applications`（备份 `~/CMspark.app.bak-20260820-132406`）；daemon 23401 已起
 - **fzbcro**：日志已 `confirmation.approved`，dispatch 仍 `contains high-risk APIs (fetch)`；聊天套「若你已拒绝弹窗」。修：token 后 regex 只审计；copy 仅真 deny

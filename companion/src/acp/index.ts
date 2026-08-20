@@ -16,7 +16,7 @@ export {
   type AcpLiveEvent,
 } from "./manager"
 export { handleAcpWsMessage, ensureAcpBroadcast } from "./handlers"
-export { discoverCodingAgents, _resetDiscoverCache } from "./discover"
+export { discoverCodingAgents, _resetDiscoverCache, listCodingAgentProbes } from "./discover"
 export {
   getWorkspaceGitStatus,
   GIT_STATUS_TIMEOUT_MS,
@@ -38,4 +38,9 @@ export {
   PROGRESS_TAIL_ACP_CHARS,
   PROGRESS_TAIL_DISPLAY_LINES,
 } from "./progress-caps"
-export { resolveLaunchArgs, LAUNCH_PRESETS } from "./launch-presets"
+export {
+  resolveLaunchArgs,
+  resolveProtocolArgs,
+  LAUNCH_PRESETS,
+  ACP_PROTOCOL_ARGS,
+} from "./launch-presets"

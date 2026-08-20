@@ -8,7 +8,7 @@
 
 ## 1. 是什么
 
-**编程接力**：把浏览器里已有的真相（staging 复现、PR 页、AppSec 发现等）打成任务，**外派**给本机编程助手（Claude Code / Gemini CLI / Codex / Pi 等），再把摘要/发现 **handback** 回对话。
+**编程接力**：把浏览器里已有的真相（staging 复现、PR 页、AppSec 发现等）打成任务，**外派**给本机编程助手（Claude Code / Gemini CLI / Codex / Pi / Grok / Kimi Code / OpenCode 等），再把摘要/发现 **handback** 回对话。
 
 | 一句话 | |
 |--------|--|
