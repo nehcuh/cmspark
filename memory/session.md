@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S76 END (2026-08-20 ~13:59) [#203 MERGED · fzbcro osascript 假拒窗 · DMG 换装]
+- **Ship**：**PR #203 MERGED** `a468925` — LLM DNS/IMDS nits + osascript 批准后 regex 二次硬拦 + 确认文案；CI build+3 smoke 绿。`make package-macos` → `CMspark-v0.5.1-macOS.dmg`；替换 `/Applications`（备份 `~/CMspark.app.bak-20260820-132406`）；daemon 23401 已起
+- **fzbcro**：日志已 `confirmation.approved`，dispatch 仍 `contains high-risk APIs (fetch)`；聊天套「若你已拒绝弹窗」。修：token 后 regex 只审计；copy 仅真 deny
+- **闸门**：3 路独立对抗 AWN → Claude+Pi AWN → 折 nits（testVision DNS、probeNativeVision 门、C-N1 跨平台 token 测、delayMs 锁、deny 负例、osascript expression\|\|code）→ PR → 合
+- **下次**：侧栏重载扩展；fzbcro 带 fetch 注入应能批准后真跑；P2-A3 lookup→fetch 钉 IP 未做；`host-integrity.ts` 打包脏 SHA **勿误 commit**
+- Recorded: yes — L2 后再 regex 硬拦 + 拒窗文案套用；dispatch 单测勿绑 `_rt`/HOME
+
 ### S75 END (2026-08-20 ~07:49) [post-merge 对抗评审 · #202 MERGED · CI 绿]
 - **Ship**：`fix/post-merge-198-201-adversarial-fixes` `a14f32b` → **PR #202 MERGED** `17ba84e`；CI build + 3 smoke 全绿；本地 main 已同步
 - **流程**：拉取 `98bb586..2faaefa`（9 commits，PR #198–#201）→ 4 路独立对抗评审（1 critical / 2 high / 4 medium / 8 low）→ 报告落盘 → 4 路并行修复（文件范围互斥）→ 4 路独立复验（重放原始攻击 + HEAD 对照组）→ 残留修复（N1 双端 probe 归一化失锁等 4 项）→ grok+pi 双路复审 AWN → grok medium（NAT64/6to4/v4-compatible 内嵌 IMDS）当场折叠 → PR → CI → 合并
@@ -765,10 +772,10 @@
 
 ### Companion-canon Side Panel（S74 · #196 OPEN）
 - status: **active**
-- context: 消费级助手空态 + 320 栏；C″/D″；外部 PR dual AWN；CI 4/4 绿
-- next_action: (1) 合 #196（实现者不得自放行）(2) 重载 `chrome-extension/build/chrome-mv3-prod/` (3) 可选 `make package-macos` 换 `/Applications`
+- context: 消费级助手空态 + 320 栏；C″/D″；外部 PR dual AWN；CI 4/4 绿。S76 已重打 0.5.1 DMG（含 #203 安全，**仍可能不含** #196 UI）
+- next_action: (1) 合 #196（实现者不得自放行）(2) 重载 `chrome-extension/build/chrome-mv3-prod/` 验侧栏 (3) #196 合后再打 DMG
 - resume_doc: PR #196 · `docs/audit/reviews/companion-canon-ui-pr-verdict-20260818-172531.json`
-- updated: 2026-08-18
+- updated: 2026-08-20
 
 ### 会话卫生 #193 真机 dogfood（S73 · #193 MERGED）
 - status: **active**

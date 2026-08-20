@@ -2,6 +2,13 @@
 
 ## Process Patterns
 
+### L2 批准后再跑 regex 硬拦 = 假「拒绝弹窗」（2026-08-20 · #203 · fzbcro）
+- **现象**：日志 `security.confirmation.approved` 后立刻 `contains high-risk APIs (fetch). Execution requires user confirmation`；聊天再套「若你已拒绝弹窗」；用户以为没弹窗
+- **根因**：(1) `companion-dispatch` 在 **valid token 之后** 仍 `return checkHighRiskExecution.error`；(2) `formatChatErrorLine` 凡 `error_level===security` 一律加拒绝弹窗，不看 denied/timeout/unavailable
+- **纪律**：`checkHighRiskExecution.blocked` 只做 L2 **预览**，批准后不得二次 veto；文案仅 `User denied` / `你拒绝了这次` 才写拒绝弹窗（禁止匹配「不是你拒绝了」）
+- **测**：platform-free `issueToken` + `executeCompanionTool` 断言无 `contains high-risk APIs`（勿新开文件去 `bindCompanionDispatchRuntime`+改 `HOME`，会污染并行套件）
+- **相关**：`companion-dispatch.ts` osascript 案 · `user-gate-copy.ts` · PR #203
+
 ### 多路对抗流水线：评审→互斥修复→重放复验→外部双路（2026-08-20 · #202）
 - **链**：kimi AgentSwarm 4 路独立对抗评审（各自 `[executed]` 实测攻击，非目测）→ 4 路并行修复（**文件范围互斥切分**是并行不互踩的关键，prompt 里明写禁止改的范围外文件）→ 4 路独立复验（重放原始攻击 + 攻击修复机制本身）→ 收敛残留（复验两路独立撞到同一 N1 = 高置信）→ `grok --single` + `pi -p` 双路 → PR → CI → merge
 - **复验硬招**：`git show HEAD:<file>` 编译出修复前产物做**对照组**——新测试必须在旧代码上红、新代码上绿，否则测试可能在发假通行证（本批 M4 就是这么抓出来的）
@@ -28,6 +35,15 @@
 - **Outbound 应用**: `docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md`
 
 ## Technical Pitfalls
+
+### `formatChatErrorLine` 不得把硬闸/批准后失败说成拒窗（2026-08-20 · #203）
+- **坑**：`errorLevel==="security"` 无分流 → scheme/cage/批准后 regex 都带「若你已拒绝弹窗」
+- **修**：硬闸走「这不是确认弹窗」短接；deny / timeout / unavailable / leftover 分句；`looksLikeUserDeniedGateCopy` 排除「不是你拒绝了」
+- **扩展**：`gate-error-copy.ts` 必须 lock-step
+
+### 单测文件 `bindCompanionDispatchRuntime` + 模块级 `HOME=` 污染并行 `npm test`（2026-08-20）
+- **坑**：新文件 `before()` 绑 stub `_rt`、顶层改 `process.env.HOME` → 同进程 computer-executor / allow-dir 红
+- **修**：C-N1 类断言放进已有 `security-gates.test.ts`（server 已 bind）；不要为 dispatch 单测另开污染文件
 
 ### 清理空白 / 整理助手扫不到「未命名」编程接力 husk（2026-08-17 · #193）
 - **现象**：点完整理+清理空白，列表仍有 `#rny77t` / `p1-wl` 一类意义不明行

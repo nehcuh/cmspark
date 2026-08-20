@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-18 (S74 · #196 companion-canon Side Panel OPEN)
+**Updated**: 2026-08-20 (S76 · #203 MERGED · DMG 换装)
 
 ## CMspark — 产品 0.5.1（0.5.0 切点 + 用户附图）
 
@@ -24,8 +24,8 @@
 
 ## Main tip (remote)
 
-- **`origin/main`**: merge PR **#195** (`b3f1098`) — attach r3 nits  
-- **Open PR**: **#196** companion-canon Side Panel（CI 绿 · MERGEABLE）
+- **`origin/main`**: merge PR **#203** (`a468925`) — LLM DNS/IMDS + osascript 批准后不再 regex 二次硬拦  
+- **Open PR**: **#196** companion-canon Side Panel（CI 绿 · MERGEABLE；本机 0.5.1 DMG 含 #203 安全，未必含 #196 UI）
 
 ## Recent locks (S73)
 
@@ -35,7 +35,8 @@
 
 ## Next (optional backlog)
 
-- 合 **#196** 后重载扩展；可选重打 DMG（现 `/Applications` 0.5.1 不含图钉/portal/去铅笔）
+- 重载扩展验 #203；fzbcro 带 fetch 的 osascript 批准后应真跑
+- 合 **#196** 后再打 DMG（现 `/Applications` 0.5.1 含 #203，仍可能不含图钉/portal）
 - 真机：#193 重启 Companion + 重载扩展；整理助手验 husk / 簇主
 - 真机：#191 Windows Claude/Pi + Mode C 不假 L1
 - 真机：#190 Ghostty Mode C + Stop 文案（mac）
