@@ -7,7 +7,7 @@ type Item = chrome.downloads.DownloadItem
 type Delta = chrome.downloads.DownloadDelta
 
 function mockBridge(overrides: Partial<BrowserDownloadBridge> = {}): BrowserDownloadBridge {
-  return {
+  const bridge: BrowserDownloadBridge = {
     getTabId: (p) => {
       if (typeof p.tabId !== "number") throw new Error("tabId is required")
       return p.tabId
@@ -15,9 +15,65 @@ function mockBridge(overrides: Partial<BrowserDownloadBridge> = {}): BrowserDown
     sendCdp: async () => ({}),
     scriptingExecute: async () => null,
     click: async () => ({ success: true }),
+    resolveLocator: async (tabId, params) => {
+      const text = typeof params.text === "string" && params.text.trim() ? params.text.trim() : undefined
+      const selector =
+        typeof params.selector === "string" && params.selector.trim() ? params.selector.trim() : undefined
+      if (!text && !selector) {
+        return {
+          ok: false,
+          result: {
+            success: false,
+            error: "SELECTOR_OR_TEXT_REQUIRED: provide text or selector",
+            data: { error_code: "SELECTOR_OR_TEXT_REQUIRED" },
+          },
+        }
+      }
+      if (text) {
+        let match: { count?: number; matches?: Array<{ x: number; y: number }> } | null = null
+        try {
+          const r = await bridge.sendCdp(tabId, "Runtime.evaluate", {})
+          match = r?.result?.value ?? null
+        } catch {
+          match = null
+        }
+        const count = match?.count ?? 0
+        if (count <= 0) {
+          return {
+            ok: false,
+            result: {
+              success: false,
+              error: `ELEMENT_NOT_FOUND: no visible element matching text "${text}"`,
+              data: { error_code: "ELEMENT_NOT_FOUND" },
+            },
+          }
+        }
+        if (count > 1) {
+          return {
+            ok: false,
+            result: {
+              success: false,
+              error: `ELEMENT_AMBIGUOUS: ${count} elements match text "${text}"`,
+              data: {
+                error_code: "ELEMENT_AMBIGUOUS",
+                count,
+                matches: match?.matches,
+                user_hint_zh: `页面上有 ${count} 处匹配「${text}」`,
+                suggested_action: "disambiguate_selector_or_exact_text",
+              },
+            },
+          }
+        }
+        const m0 = match?.matches?.[0]
+        if (m0 && typeof m0.x === "number") return { ok: true, coords: { x: m0.x, y: m0.y } }
+        return { ok: true, selector: '[data-cmspark-dl-hit="1"]' }
+      }
+      return { ok: true, selector }
+    },
     downloadBusyTabs: new Set<number>(),
     ...overrides,
   }
+  return bridge
 }
 
 function hangDownloadsApi(): DownloadsApi & {

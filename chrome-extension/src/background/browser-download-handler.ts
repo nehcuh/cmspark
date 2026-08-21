@@ -4,11 +4,7 @@
  * Optional CDP setDownloadBehavior path hint only.
  */
 
-import {
-  buildFindByTextExpression,
-  classifyTextMatchCount,
-  type TextMatchResult,
-} from "./find-element-by-text"
+import { DOWNLOAD_HIT_ATTR } from "./find-element-by-text"
 import {
   createDownloadWaiter,
   type DownloadCompleteInfo,
@@ -20,6 +16,14 @@ export interface BrowserDownloadBridge {
   sendCdp(tabId: number, method: string, params?: any): Promise<any>
   scriptingExecute(tabId: number, code: string): Promise<any>
   click(params: Record<string, any>, clickCount?: number): Promise<{ success: boolean; error?: string }>
+  resolveLocator(
+    tabId: number,
+    params: Record<string, any>,
+    opts: { requireLocator: boolean; hitAttr?: string },
+  ): Promise<
+    | { ok: true; selector?: string; coords?: { x: number; y: number } }
+    | { ok: false; result: ToolResult }
+  >
   downloadBusyTabs: Set<number>
 }
 
@@ -105,7 +109,7 @@ export async function runBrowserDownload(
       success: false,
       error: preferExisting
         ? "ELEMENT_NOT_FOUND: no existing download matched filenameHint/urlContains; provide selector and/or text to download"
-        : "ELEMENT_NOT_FOUND: browser_download requires selector and/or text",
+        : "SELECTOR_OR_TEXT_REQUIRED: browser_download requires selector and/or text",
       data: {
         error_code: preferExisting ? "CACHE_MISS_NEEDS_ELEMENT" : "SELECTOR_OR_TEXT_REQUIRED",
       },
@@ -133,63 +137,25 @@ export async function runBrowserDownload(
   const operationStartMs = nowFn() - RECOVERY_START_SKEW_MS
 
   try {
-    // Resolve text/selector first (before chrome.downloads) so ELEMENT_* can be unit-tested
-    // without a real downloads permission surface.
+    // Combination C via shared resolveLocator (download hitAttr). No second matcher.
     let clickSelector = selector
     let textCoords: { x: number; y: number } | null = null
-    if (text) {
-      const expr = buildFindByTextExpression(text, exact)
-      let match: TextMatchResult | null = null
-      try {
-        const r = await bridge.sendCdp(tabId, "Runtime.evaluate", {
-          expression: expr,
-          returnByValue: true,
-        })
-        match = r?.result?.value ?? null
-      } catch {
-        match = (await bridge.scriptingExecute(tabId, expr)) as TextMatchResult | null
-      }
-      const count = match?.count ?? 0
-      const classification = classifyTextMatchCount(count)
-      if (classification === "ELEMENT_NOT_FOUND") {
-        return {
-          success: false,
-          error: `ELEMENT_NOT_FOUND: no visible element matching text "${text}"`,
-          data: {
-            error_code: "ELEMENT_NOT_FOUND",
-            text,
-            exact,
-            user_hint_zh: `页面上找不到可见文字「${text}」。请换更准确的按钮文案（如「Download ZIP」）、提供 CSS selector，或先 list_tabs/截图确认页面已加载完成。`,
-            suggested_action: "refine_text_or_selector",
-          },
+    if (text || selector) {
+      const loc = await bridge.resolveLocator(
+        tabId,
+        { text, selector, exact },
+        { requireLocator: true, hitAttr: DOWNLOAD_HIT_ATTR },
+      )
+      if (loc.ok === false) return loc.result
+      if (text) {
+        if (loc.coords) {
+          textCoords = loc.coords
+          clickSelector = undefined
+        } else {
+          clickSelector = loc.selector
         }
-      }
-      if (classification === "ELEMENT_AMBIGUOUS") {
-        const preview = (match?.matches || [])
-          .slice(0, 5)
-          .map((m, i) => `${i + 1}.${m.tag}「${(m.text || "").slice(0, 40)}」`)
-          .join("；")
-        return {
-          success: false,
-          error: `ELEMENT_AMBIGUOUS: ${count} elements match text "${text}"`,
-          data: {
-            error_code: "ELEMENT_AMBIGUOUS",
-            count,
-            matches: match?.matches?.slice(0, 5),
-            user_hint_zh:
-              `页面上有 ${count} 处匹配「${text}」，无法安全自动点击（防止点错）。` +
-              (preview ? ` 候选：${preview}。` : " ") +
-              `请改用更精确的文字（exact=true 或完整「Download ZIP」）、CSS selector，或先 evaluate/截图定位唯一按钮。`,
-            suggested_action: "disambiguate_selector_or_exact_text",
-          },
-        }
-      }
-      const m0 = match?.matches?.[0]
-      if (m0 && typeof m0.x === "number" && typeof m0.y === "number") {
-        textCoords = { x: m0.x, y: m0.y }
-        clickSelector = undefined
       } else {
-        clickSelector = undefined
+        clickSelector = loc.selector
       }
     }
 

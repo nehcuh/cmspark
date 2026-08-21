@@ -73,6 +73,73 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
+  click: z.object({
+    tabId: tabIdSchema,
+    selector: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    exact: z.boolean().optional(),
+  }).refine((v) => !!(v.selector || v.text), { message: "click requires text or selector" }),
+  dblclick: z.object({
+    tabId: tabIdSchema,
+    selector: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    exact: z.boolean().optional(),
+  }).refine((v) => !!(v.selector || v.text), { message: "dblclick requires text or selector" }),
+  type: z.object({
+    tabId: tabIdSchema,
+    value: z.string(),
+    selector: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    exact: z.boolean().optional(),
+  }),
+  fill_form: z.object({
+    tabId: tabIdSchema,
+    fields: z.array(z.object({
+      selector: z.string().min(1).optional(),
+      text: z.string().min(1).optional(),
+      value: z.string(),
+      clear_first: z.boolean().optional(),
+    }).refine((f) => !!(f.selector || f.text), { message: "each field needs selector or text" })),
+  }),
+  hover: z.object({
+    tabId: tabIdSchema,
+    selector: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    exact: z.boolean().optional(),
+  }).refine((v) => !!(v.selector || v.text), { message: "hover requires text or selector" }),
+  get_element_info: z.object({
+    tabId: tabIdSchema,
+    selector: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    exact: z.boolean().optional(),
+  }).refine((v) => !!(v.selector || v.text), { message: "get_element_info requires text or selector" }),
+  select_option: z.object({
+    tabId: tabIdSchema,
+    value: z.string(),
+    selector: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+  }).refine((v) => !!(v.selector || v.text), { message: "select_option requires text or selector" }),
+  drag_and_drop: z.object({
+    tabId: tabIdSchema,
+    from_selector: z.string().min(1).optional(),
+    from_text: z.string().min(1).optional(),
+    to_selector: z.string().min(1).optional(),
+    to_text: z.string().min(1).optional(),
+    exact: z.boolean().optional(),
+  }).refine((v) => !!(v.from_selector || v.from_text) && !!(v.to_selector || v.to_text), {
+    message: "drag_and_drop needs from_text/from_selector and to_text/to_selector",
+  }),
+  press_key: z.object({
+    tabId: tabIdSchema,
+    key: z.string().min(1),
+    code: z.string().optional(),
+    ctrlKey: z.boolean().optional(),
+    metaKey: z.boolean().optional(),
+    altKey: z.boolean().optional(),
+    shiftKey: z.boolean().optional(),
+    modifiers: z.number().int().optional(),
+  }),
+
   // --- browser_download (P1.0: click/text → chrome.downloads complete) ---
   // At least one of selector|text required (refine). downloadPath optional; companion
   // re-validates with assertDownloadPathAllowed (LLM path never trusted raw).

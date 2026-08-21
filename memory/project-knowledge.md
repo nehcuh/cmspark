@@ -2,6 +2,18 @@
 
 ## Process Patterns
 
+### 网页操作：CSS-only click + 成功路径风暴（2026-08-21 · a7ubt9）
+- **现象**：读推文/发知乎；`click` 3/3 失败；`osascript_eval` 81 次（80 成功）；`shell_exec` 54；用户喝止 get_element_info / 要求 host_computer
+- **根因（对抗后）**：(1) catalog click 只收 CSS，finder 已在 download（D10 欠账）；(2) CDP attach 失败被 **改写成** Element not found；(3) `element not found` 可恢复但无 suggested_action；(4) `MAX_SAME_TOOL_RECOVERABLE_FAILURES=3` **不计成功**，osascript 工作环刷爆；(5) type/hover/fill_form **假 success:true**；(6) last-resort 只在 prompt
+- **不要**：http 上禁 osascript（会杀掉这场唯一能写的知乎路径）；click({text}) 当本场救命；`chrome-extension://` 子串改 non_recoverable（https 编辑器同一句 attach error）；host_computer 当网页默认
+- **方向锁**（3 路对抗 + Claude/Kimi APPROVE_WITH_NITS）：W1 共享 resolveLocator + fail-closed ELEMENT_*；W3′ 类型化 WRONG_ORIGIN（tabs.get url）+ 成功环预算 + evaluate 死世界诚实；W2 snapshot 第二波
+- **设计 SoT**：`docs/superpowers/specs/2026-08-21-web-act-loop-design.md`（locator/budget/win32 三路 **REJECT** 已折入）：text 独占不 fall through；成功环 = 同脚本 3 次 + origin 体积 24；Windows **无**第三条 JS，`CDP_ATTACH_FAILED` 禁止 suggest evaluate/CU；shell 按 payload 指纹；fill_form Ctrl 半边必须带 VK
+- **Windows**：`osascript_eval` 不进工具表。禁止把 evaluate 当成 attach 失败的退路（同一 debugger）。轨迹未在 win32 复放。
+- **相关**：`docs/audit/reviews/web-act-loop-direction-20260821.md`
+- **实现（WAVE-1 · 2026-08-21）**：combination C `planLocator`；`classifyInteractiveFailure` URL-first（`Debugger is not attached` ≠ ELEMENT_NOT_FOUND）；evaluate 探针 `1+1===2`；`dom_script` peek-before-execute 3/24；fill_form Ctrl 半边 VK=65 modifiers=2；catalog `text`；Rule 12/12b NEVER host_computer for DOM；linux 无 CU 文案
+- **闸门**：locator/budget APPROVE_WITH_NITS；win32 先 REJECT（tsc.test import.meta + attach 正则）→ 折入后 rereview APPROVE_WITH_NITS；Claude+Kimi impl dual 均 APPROVE_WITH_NITS。**MERGE=NO**（未 CI 全绿 / 未 PR / 未打包）
+- **4 行 case**：动作=click({text}) + origin 成功环 24；成功=类型化失败/假 success 关掉/体积封顶；归责=规格曾把 attach 当找不到元素 + 只计失败；保护=L1 网页可按可见字点、风暴可停
+
 ### 打包 Node 无 npm：npx 会去 lstat `<app>/Contents/lib`（2026-08-21 · 会议+MCP 同日翻车）
 - **现象**：MCP filesystem `-32000 Connection closed`；stderr `ENOENT lstat /Applications/CMspark.app/Contents/lib`
 - **根因**：DMG 只带 `Contents/Resources/node`（无 npx/npm、无 `Contents/lib`）。`buildSpawnPath` 把该目录排 PATH 最前 → nvm 的 `npx` 跑在打包 node 下 → npm prefix=`Contents/`

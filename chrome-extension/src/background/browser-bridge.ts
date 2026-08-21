@@ -17,6 +17,24 @@ import { runDownloadsFind } from "./downloads-find"
 export { selectorJsLiteral } from "./selector-js-literal"
 export { TabQueue, coerceTabId } from "./tab-queue"
 export { buildFindByTextExpression } from "./find-element-by-text"
+import {
+  buildFindByTextExpression,
+  CLICK_HIT_ATTR,
+  classifyTextMatchCount,
+  type TextMatchResult,
+} from "./find-element-by-text"
+import {
+  codedToolError,
+  planLocator,
+  classifyInteractiveFailure,
+} from "./locator-classify"
+import { buildTypeFallbackExpression } from "./type-fallback"
+import {
+  cdpModifiersFromKeys,
+  keysFromLegacyModifierMask,
+  windowsVirtualKeyCode,
+  selectAllKeyPayloads,
+} from "./cdp-keys"
 export { runWithDownloadBusyBeforeQueue, isBrowserDownloadToolName } from "./download-busy-entry"
 export { resolveEvaluateExecution } from "./evaluate-code-policy"
 
@@ -144,7 +162,10 @@ export class BrowserBridge {
           return { success: false, error: `Unknown tool: ${toolName}` }
       }
     } catch (e: any) {
-      return { success: false, error: e.message || String(e) }
+      const msg = e?.message || String(e)
+      const m = /^([A-Z][A-Z0-9_]+):/.exec(msg)
+      if (m) return { success: false, error: msg, data: { error_code: m[1] } }
+      return { success: false, error: msg }
     }
   }
 
@@ -289,6 +310,148 @@ export class BrowserBridge {
   private getTabId(params: Record<string, any>): number {
     if (params.tabId) return params.tabId
     throw new Error("tabId is required")
+  }
+
+  private async getTabUrl(tabId: number): Promise<string | undefined> {
+    try {
+      const tab = await chrome.tabs.get(tabId)
+      return tab.url
+    } catch {
+      return undefined
+    }
+  }
+
+  private async failInteractive(tabId: number, err: any, fallbackCode = "CDP_ATTACH_FAILED"): Promise<ToolResult> {
+    const msg = String(err?.message || err || "")
+    const url = await this.getTabUrl(tabId)
+    const c = classifyInteractiveFailure(url, msg, fallbackCode)
+    return codedToolError(c.error_code, msg, {
+      suggested_action: c.suggested_action,
+      tab_url: url || "",
+    })
+  }
+
+  /** Combination C: text exclusive when present; else CSS. type may omit both (focus). */
+  async resolveLocator(
+    tabId: number,
+    params: Record<string, any>,
+    opts: { requireLocator: boolean; hitAttr?: string },
+  ): Promise<
+    | { ok: true; selector?: string; coords?: { x: number; y: number } }
+    | { ok: false; result: ToolResult }
+  > {
+    const plan = planLocator(params)
+    const hitAttr = opts.hitAttr || CLICK_HIT_ATTR
+    if (plan.kind === "none") {
+      if (!opts.requireLocator) return { ok: true }
+      return {
+        ok: false,
+        result: codedToolError("SELECTOR_OR_TEXT_REQUIRED", "provide text or selector", {
+          suggested_action: "provide_text_or_selector",
+        }),
+      }
+    }
+    if (plan.kind === "text") {
+      const text = plan.text
+      const exact = params.exact === true
+      const expr = buildFindByTextExpression(text, exact, hitAttr)
+      const start = Date.now()
+      let match: TextMatchResult | null = null
+      while (Date.now() - start < 3000) {
+        try {
+          const raw = await this.safeEvaluate(tabId, expr)
+          match = (raw?.result?.value as TextMatchResult) || null
+        } catch (e: any) {
+          return { ok: false, result: await this.failInteractive(tabId, e) }
+        }
+        if (match && match.count === 1) break
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      const count = match?.count ?? 0
+      const classification = classifyTextMatchCount(count)
+      if (classification === "ELEMENT_NOT_FOUND") {
+        return {
+          ok: false,
+          result: codedToolError("ELEMENT_NOT_FOUND", `no visible element matching text "${text}"`, {
+            suggested_action: "refine_text_or_selector",
+            user_hint_zh: `页面上找不到可见文字「${text}」。请换更准确的文案或 CSS selector。`,
+            text,
+          }),
+        }
+      }
+      if (classification === "ELEMENT_AMBIGUOUS") {
+        const preview = (match?.matches || [])
+          .slice(0, 5)
+          .map((m, i) => `${i + 1}.${m.tag}「${(m.text || "").slice(0, 40)}」`)
+          .join("；")
+        return {
+          ok: false,
+          result: codedToolError("ELEMENT_AMBIGUOUS", `${count} elements match text "${text}"`, {
+            suggested_action: "disambiguate_selector_or_exact_text",
+            user_hint_zh: `页面上有 ${count} 处匹配「${text}」，无法安全自动点击。${preview ? ` 候选：${preview}` : ""}`,
+            count,
+            matches: match?.matches?.slice(0, 5),
+          }),
+        }
+      }
+      const m0 = match?.matches?.[0]
+      if (m0 && typeof m0.x === "number" && typeof m0.y === "number") {
+        return { ok: true, coords: { x: m0.x, y: m0.y }, selector: `[${hitAttr}="1"]` }
+      }
+      return { ok: true, selector: `[${hitAttr}="1"]` }
+    }
+    const selector = plan.selector
+    const syntaxProbe = `(()=>{try{document.querySelector(${selectorJsLiteral(selector)});return{ok:true}}catch(e){return{ok:false,name:e&&e.name,message:String(e&&e.message||e)}}})()`
+    try {
+      const probed = await this.safeEvaluate(tabId, syntaxProbe)
+      const pv = probed?.result?.value
+      if (pv && pv.ok === false) {
+        return {
+          ok: false,
+          result: codedToolError("INVALID_SELECTOR", pv.message || "invalid selector", {
+            suggested_action: "refine_text_or_selector",
+          }),
+        }
+      }
+    } catch (e: any) {
+      return { ok: false, result: await this.failInteractive(tabId, e) }
+    }
+    try {
+      await this.waitForSelector(tabId, selector, 3000)
+      const coords = await this.getElementCenter(tabId, selector)
+      return { ok: true, selector, coords }
+    } catch (e: any) {
+      return { ok: false, result: await this.failInteractive(tabId, e, "ELEMENT_NOT_FOUND") }
+    }
+  }
+
+  private async mouseClickAt(
+    tabId: number,
+    coords: { x: number; y: number },
+    clickCount: number,
+  ): Promise<void> {
+    await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: coords.x,
+      y: coords.y,
+    })
+    await new Promise((r) => setTimeout(r, 50))
+    await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x: coords.x,
+      y: coords.y,
+      button: "left",
+      buttons: 1,
+      clickCount,
+    })
+    await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x: coords.x,
+      y: coords.y,
+      button: "left",
+      buttons: 0,
+      clickCount,
+    })
   }
 
   // --- Tab tools ---
@@ -752,11 +915,17 @@ export class BrowserBridge {
 
   private async getElementInfo(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    if (!params.selector) throw new Error("selector is required")
-    // Safe interpolation: JSON.stringify produces a valid JS string literal.
+    const loc = await this.resolveLocator(tabId, params, { requireLocator: true })
+    if (loc.ok === false) return loc.result
+    const selector = loc.selector
+    if (!selector) {
+      return codedToolError("ELEMENT_NOT_FOUND", "no element for get_element_info", {
+        suggested_action: "refine_text_or_selector",
+      })
+    }
     const expression = `
       (() => {
-        const el = document.querySelector(${JSON.stringify(params.selector)});
+        const el = document.querySelector(${JSON.stringify(selector)});
         if (!el) return null;
         const rect = el.getBoundingClientRect();
         return {
@@ -767,104 +936,165 @@ export class BrowserBridge {
         };
       })()
     `
-    const result = await this.safeEvaluate(tabId, expression)
-    if (!result.result?.value) throw new Error(`Element not found: ${params.selector}`)
-    return { success: true, data: result.result.value }
+    try {
+      const result = await this.safeEvaluate(tabId, expression)
+      if (!result.result?.value) {
+        return codedToolError("ELEMENT_NOT_FOUND", `Element not found: ${selector}`, {
+          suggested_action: "refine_text_or_selector",
+        })
+      }
+      return { success: true, data: result.result.value }
+    } catch (e: any) {
+      return await this.failInteractive(tabId, e, "ELEMENT_NOT_FOUND")
+    }
   }
 
   // --- Page interaction tools ---
 
+  private async applyResolvedClick(
+    tabId: number,
+    loc: { selector?: string; coords?: { x: number; y: number } },
+    clickCount = 1,
+  ): Promise<ToolResult> {
+    const selector = loc.selector
+    try {
+      const coords = loc.coords || (selector ? await this.getElementCenter(tabId, selector) : null)
+      if (!coords) {
+        return codedToolError("ELEMENT_NOT_FOUND", "no click target", {
+          suggested_action: "refine_text_or_selector",
+        })
+      }
+      await this.mouseClickAt(tabId, coords, clickCount)
+      return { success: true }
+    } catch (err: any) {
+      if (selector) {
+        try {
+          const found = await this.scriptingExecute(tabId,
+            `(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(el){el.focus();el.click();for(let i=1;i<${clickCount};i++)el.click();return true}return false})()`)
+          if (found) return { success: true }
+        } catch (e2: any) {
+          return await this.failInteractive(tabId, e2)
+        }
+      }
+      return await this.failInteractive(tabId, err, "ELEMENT_NOT_FOUND")
+    }
+  }
+
   private async click(params: Record<string, any>, clickCount = 1): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    const selector = params.selector
-    try {
-      // Wait for element to appear (handles async SPA rendering)
-      if (selector) {
-        await this.waitForSelector(tabId, selector, 3000)
-      }
-      const coords = await this.getElementCenter(tabId, selector)
-      // Hover/Move mouse first to trigger hover listeners
-      await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
-        type: "mouseMoved", x: coords.x, y: coords.y,
-      })
-      await new Promise(r => setTimeout(r, 50)) // Settle hover
-      await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
-        type: "mousePressed", x: coords.x, y: coords.y, button: "left", buttons: 1, clickCount,
-      })
-      await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
-        type: "mouseReleased", x: coords.x, y: coords.y, button: "left", buttons: 0, clickCount,
-      })
-    } catch (err: any) {
-      // Fallback: direct DOM click when CDP mouse events fail (e.g. debugger not attached)
-      if (selector) {
-        // Safe interpolation: JSON.stringify produces a valid JS string literal.
-        const found = await this.scriptingExecute(tabId,
-          `(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(el){el.focus();el.click();for(let i=1;i<${clickCount};i++)el.click();return true}return false})()`)
-        if (!found) {
-          return { success: false, error: `Element not found for selector: ${selector}` }
-        }
-      } else {
-        return { success: false, error: `Click failed and no selector provided: ${err.message}` }
-      }
-    }
-    return { success: true }
+    const loc = await this.resolveLocator(tabId, params, { requireLocator: true })
+    if (loc.ok === false) return loc.result
+    return this.applyResolvedClick(tabId, loc, clickCount)
   }
 
   private async typeText(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    if (!params.value) throw new Error("value is required")
+    if (params.value === undefined || params.value === null) {
+      return codedToolError("SELECTOR_OR_TEXT_REQUIRED", "value is required", {
+        suggested_action: "provide_text_or_selector",
+      })
+    }
 
-    if (params.selector) {
-      await this.click({ tabId, selector: params.selector })
-      await new Promise(r => setTimeout(r, 100))
+    const loc = await this.resolveLocator(tabId, params, { requireLocator: false })
+    if (loc.ok === false) return loc.result
+
+    if (loc.selector || loc.coords) {
+      const clicked = await this.applyResolvedClick(tabId, loc, 1)
+      if (!clicked.success) return clicked
+      await new Promise((r) => setTimeout(r, 100))
     }
 
     try {
-      await this.sendCdp(tabId, "Input.insertText", { text: params.value })
-    } catch {
-      // Fallback: set value via DOM scripting.
-      // Safe interpolation: JSON.stringify produces a valid JS string literal.
-      const valueLit = JSON.stringify(String(params.value))
-      if (params.selector) {
-        await this.scriptingExecute(tabId,
-          `(()=>{const el=document.querySelector(${JSON.stringify(params.selector)});if(el){el.value=${valueLit};el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true}return false})()`)
-      } else {
-        await this.scriptingExecute(tabId,
-          `(()=>{const el=document.activeElement;if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA')){el.value=${valueLit};el.dispatchEvent(new Event('input',{bubbles:true}));return true}return false})()`)
+      await this.sendCdp(tabId, "Input.insertText", { text: String(params.value) })
+      return { success: true }
+    } catch (err: any) {
+      try {
+        const raw = await this.scriptingExecute(
+          tabId,
+          buildTypeFallbackExpression(String(params.value), loc.selector),
+        )
+        const fb = raw && typeof raw === "object" ? raw : { ok: !!raw, reason: "unsupported" }
+        if (fb.ok) return { success: true }
+        if (fb.reason === "unsupported") {
+          return codedToolError("TYPE_UNSUPPORTED_EDITOR", "contenteditable/value fallback failed", {
+            suggested_action: "click_then_type",
+          })
+        }
+        return codedToolError("ELEMENT_NOT_FOUND", "no focused field to type into", {
+          suggested_action: "click_then_type",
+        })
+      } catch (e2: any) {
+        return await this.failInteractive(tabId, e2, "TYPE_UNSUPPORTED_EDITOR")
       }
     }
-    return { success: true }
   }
 
   private async fillForm(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    if (!params.fields || !Array.isArray(params.fields)) throw new Error("fields array is required")
-
-    for (const field of params.fields) {
-      if (field.clear_first !== false) {
-        await this.click({ tabId, selector: field.selector })
-        // Select all and delete — P1 CORR-06: macOS needs Meta+A; also send Ctrl+A for others
-        // P1 CORR-06: send Meta+A (macOS) then Ctrl+A (others) — both are no-ops on wrong OS
-        // Meta+A (macOS)
-        await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
-          type: "keyDown", key: "a", code: "KeyA", metaKey: true, modifiers: 4,
-        })
-        await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
-          type: "keyUp", key: "a", code: "KeyA", metaKey: true, modifiers: 4,
-        })
-        // Ctrl+A (Windows/Linux)
-        await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
-          type: "keyDown", key: "a", code: "KeyA", ctrlKey: true,
-        })
-        await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
-          type: "keyUp", key: "a", code: "KeyA", ctrlKey: true,
-        })
-        await this.sendCdp(tabId, "Input.dispatchKeyEvent", { type: "keyDown", key: "Delete", code: "Delete" })
-        await this.sendCdp(tabId, "Input.dispatchKeyEvent", { type: "keyUp", key: "Delete", code: "Delete" })
-      }
-      await this.sendCdp(tabId, "Input.insertText", { text: String(field.value) })
+    if (!params.fields || !Array.isArray(params.fields)) {
+      return codedToolError("SELECTOR_OR_TEXT_REQUIRED", "fields array is required", {
+        suggested_action: "provide_text_or_selector",
+      })
     }
-    return { success: true }
+
+    const filled: Array<{ selector?: string; text?: string }> = []
+    for (const field of params.fields) {
+      if (field.value === undefined || field.value === null) {
+        return {
+          ...codedToolError("SELECTOR_OR_TEXT_REQUIRED", "each field needs value", {
+            suggested_action: "provide_text_or_selector",
+          }),
+          data: {
+            ...codedToolError("SELECTOR_OR_TEXT_REQUIRED", "each field needs value").data,
+            filled,
+          },
+        }
+      }
+      const loc = await this.resolveLocator(tabId, field, { requireLocator: true })
+      if (loc.ok === false) {
+        return { success: false, error: loc.result.error, data: { ...loc.result.data, filled } }
+      }
+      const clicked = await this.applyResolvedClick(tabId, loc, 1)
+      if (!clicked.success) {
+        return { success: false, error: clicked.error, data: { ...clicked.data, filled } }
+      }
+      if (field.clear_first !== false) {
+        try {
+          for (const payload of selectAllKeyPayloads()) {
+            await this.sendCdp(tabId, "Input.dispatchKeyEvent", payload)
+          }
+          await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
+            type: "keyDown",
+            key: "Delete",
+            code: "Delete",
+            windowsVirtualKeyCode: 46,
+            nativeVirtualKeyCode: 46,
+          })
+          await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
+            type: "keyUp",
+            key: "Delete",
+            code: "Delete",
+            windowsVirtualKeyCode: 46,
+            nativeVirtualKeyCode: 46,
+          })
+        } catch (e: any) {
+          const fail = await this.failInteractive(tabId, e)
+          return { success: false, error: fail.error, data: { ...fail.data, filled } }
+        }
+      }
+      try {
+        await this.sendCdp(tabId, "Input.insertText", { text: String(field.value) })
+      } catch (e: any) {
+        const fb = await this.typeText({
+          tabId,
+          value: String(field.value),
+          selector: loc.selector,
+        })
+        if (!fb.success) return { success: false, error: fb.error, data: { ...fb.data, filled } }
+      }
+      filled.push({ selector: field.selector, text: field.text })
+    }
+    return { success: true, data: { filled } }
   }
 
   /**
@@ -1129,76 +1359,149 @@ export class BrowserBridge {
         path: "none",
         warning:
           `All scroll paths failed (${errors.join("; ") || "unknown"}). ` +
-          "Try press_key PageDown, or host_computer scroll if coordinate mode is on. " +
-          "Verify with get_page_text — do not claim scrolled.",
+          "Try press_key PageDown. Verify with get_page_text — do not claim scrolled. " +
+          "Do not use host_computer or evaluate as a scroll fallback for the web page.",
       },
     }
   }
 
   private async pressKey(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    if (!params.key) throw new Error("key is required")
-    const modifiers = params.modifiers || 0
-    await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
-      type: "keyDown", key: params.key, code: params.code || `Key${params.key.toUpperCase()}`,
-      ctrlKey: !!(modifiers & 2), altKey: !!(modifiers & 1), shiftKey: !!(modifiers & 4), metaKey: !!(modifiers & 8),
-    })
-    await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
-      type: "keyUp", key: params.key, code: params.code || `Key${params.key.toUpperCase()}`,
-      ctrlKey: !!(modifiers & 2), altKey: !!(modifiers & 1), shiftKey: !!(modifiers & 4), metaKey: !!(modifiers & 8),
-    })
-    return { success: true }
+    if (!params.key) {
+      return codedToolError("SELECTOR_OR_TEXT_REQUIRED", "key is required", {
+        suggested_action: "provide_text_or_selector",
+      })
+    }
+    const fromMask =
+      typeof params.modifiers === "number" ? keysFromLegacyModifierMask(params.modifiers) : undefined
+    const keys = {
+      altKey: params.altKey === true || fromMask?.altKey || false,
+      ctrlKey: params.ctrlKey === true || fromMask?.ctrlKey || false,
+      metaKey: params.metaKey === true || fromMask?.metaKey || false,
+      shiftKey: params.shiftKey === true || fromMask?.shiftKey || false,
+    }
+    const modifiers = cdpModifiersFromKeys(keys)
+    const vk = windowsVirtualKeyCode(String(params.key))
+    const payload: Record<string, unknown> = {
+      key: params.key,
+      code: params.code || `Key${String(params.key).toUpperCase()}`,
+      ...keys,
+      modifiers,
+      ...(vk !== undefined ? { windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk } : {}),
+    }
+    try {
+      await this.sendCdp(tabId, "Input.dispatchKeyEvent", { type: "keyDown", ...payload })
+      await this.sendCdp(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...payload })
+      return { success: true }
+    } catch (e: any) {
+      return await this.failInteractive(tabId, e)
+    }
   }
 
   private async hover(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
+    const loc = await this.resolveLocator(tabId, params, { requireLocator: true })
+    if (loc.ok === false) return loc.result
+    const selector = loc.selector
     try {
-      const coords = await this.getElementCenter(tabId, params.selector)
-      await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x: coords.x, y: coords.y })
-    } catch {
-      // Fallback: dispatch mouseenter via scripting
-      if (params.selector) {
-        await this.scriptingExecute(tabId,
-          `(()=>{const el=document.querySelector(${JSON.stringify(params.selector)});if(el){el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));return true}return false})()`)
+      const coords = loc.coords || (selector ? await this.getElementCenter(tabId, selector) : null)
+      if (!coords) {
+        return codedToolError("ELEMENT_NOT_FOUND", "no hover target", {
+          suggested_action: "refine_text_or_selector",
+        })
       }
+      await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x: coords.x, y: coords.y })
+      return { success: true }
+    } catch (err: any) {
+      if (selector) {
+        try {
+          const found = await this.scriptingExecute(tabId,
+            `(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(el){el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));return true}return false})()`)
+          if (found) return { success: true }
+        } catch (e2: any) {
+          return await this.failInteractive(tabId, e2)
+        }
+      }
+      return await this.failInteractive(tabId, err, "ELEMENT_NOT_FOUND")
     }
-    return { success: true }
   }
 
   private async selectOption(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    if (!params.selector || params.value === undefined) throw new Error("selector and value are required")
-    // Safe interpolation: JSON.stringify produces a valid JS string literal (selector AND value).
-    await this.sendCdp(tabId, "Runtime.evaluate", {
-      expression: `
+    if (params.value === undefined) {
+      return codedToolError("SELECTOR_OR_TEXT_REQUIRED", "value is required", {
+        suggested_action: "provide_text_or_selector",
+      })
+    }
+    const loc = await this.resolveLocator(tabId, params, { requireLocator: true })
+    if (loc.ok === false) return loc.result
+    const selector = loc.selector
+    if (!selector) {
+      return codedToolError("ELEMENT_NOT_FOUND", "select element not found", {
+        suggested_action: "refine_text_or_selector",
+      })
+    }
+    try {
+      const raw = await this.safeEvaluate(tabId, `
         (() => {
-          const el = document.querySelector(${JSON.stringify(params.selector)});
-          if (!el) throw new Error('Select not found');
+          const el = document.querySelector(${JSON.stringify(selector)});
+          if (!el) return {ok:false};
           el.value = ${JSON.stringify(String(params.value))};
           el.dispatchEvent(new Event('change', { bubbles: true }));
+          return {ok:true};
         })()
-      `,
-      returnByValue: true,
-    })
-    return { success: true }
+      `)
+      if (!raw?.result?.value?.ok) {
+        return codedToolError("ELEMENT_NOT_FOUND", "Select not found", {
+          suggested_action: "refine_text_or_selector",
+        })
+      }
+      return { success: true }
+    } catch (e: any) {
+      return await this.failInteractive(tabId, e, "ELEMENT_NOT_FOUND")
+    }
   }
 
   private async dragAndDrop(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    const from = await this.getElementCenter(tabId, params.from_selector)
-    const to = await this.getElementCenter(tabId, params.to_selector)
+    const fromLoc = await this.resolveLocator(
+      tabId,
+      { selector: params.from_selector, text: params.from_text, exact: params.exact },
+      { requireLocator: true },
+    )
+    if (fromLoc.ok === false) return fromLoc.result
+    const toLoc = await this.resolveLocator(
+      tabId,
+      { selector: params.to_selector, text: params.to_text, exact: params.exact },
+      { requireLocator: true },
+    )
+    if (toLoc.ok === false) return toLoc.result
+    try {
+      const from =
+        fromLoc.coords ||
+        (fromLoc.selector ? await this.getElementCenter(tabId, fromLoc.selector) : null)
+      const to =
+        toLoc.coords ||
+        (toLoc.selector ? await this.getElementCenter(tabId, toLoc.selector) : null)
+      if (!from || !to) {
+        return codedToolError("ELEMENT_NOT_FOUND", "drag_and_drop needs from and to targets", {
+          suggested_action: "refine_text_or_selector",
+        })
+      }
 
-    await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x: from.x, y: from.y, button: "left", buttons: 1, clickCount: 1 })
-    // Move in steps for smooth drag
-    const steps = 10
-    for (let i = 1; i <= steps; i++) {
-      const x = from.x + (to.x - from.x) * (i / steps)
-      const y = from.y + (to.y - from.y) * (i / steps)
-      await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "left", buttons: 1 })
-      await new Promise(r => setTimeout(r, 30))
+      await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x: from.x, y: from.y, button: "left", buttons: 1, clickCount: 1 })
+      const steps = 10
+      for (let i = 1; i <= steps; i++) {
+        const x = from.x + (to.x - from.x) * (i / steps)
+        const y = from.y + (to.y - from.y) * (i / steps)
+        await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "left", buttons: 1 })
+        await new Promise(r => setTimeout(r, 30))
+      }
+      await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x: to.x, y: to.y, button: "left", buttons: 0, clickCount: 1 })
+      return { success: true }
+    } catch (e: any) {
+      return await this.failInteractive(tabId, e, "ELEMENT_NOT_FOUND")
     }
-    await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x: to.x, y: to.y, button: "left", buttons: 0, clickCount: 1 })
-    return { success: true }
   }
 
   // --- Advanced tools ---
@@ -1265,21 +1568,78 @@ export class BrowserBridge {
     const matches = decision.risk_pattern_matches
     const codeToExecute = decision.code
 
-    const result = await this.safeEvaluate(tabId, codeToExecute)
-
-    return {
-      success: true,
-      data: {
-        result: result.result?.value,
-        type: result.result?.type,
-        risk_pattern_matches: matches.length > 0 ? matches : undefined,
-        // P1-3: no threats_removed on approved evaluate — source was not mutated.
-        exception: result.exceptionDetails ? {
-          text: result.exceptionDetails.text,
-          line: result.exceptionDetails.lineNumber,
-        } : undefined,
-      },
+    let result: any
+    try {
+      result = await this.sendCdp(tabId, "Runtime.evaluate", {
+        expression: codeToExecute,
+        returnByValue: true,
+        awaitPromise: params.await_promise !== false,
+      })
+    } catch (cdpErr: any) {
+      try {
+        const scripted = await this.scriptingExecute(tabId, codeToExecute)
+        result = { result: { value: scripted, type: scripted === undefined ? "undefined" : typeof scripted } }
+      } catch (scriptErr: any) {
+        return await this.failInteractive(
+          tabId,
+          new Error(`${cdpErr?.message || cdpErr}; scripting fallback: ${scriptErr?.message || scriptErr}`),
+        )
+      }
     }
+
+    if (result?.exceptionDetails) {
+      const text =
+        result.exceptionDetails?.exception?.description ||
+        result.exceptionDetails?.text ||
+        "Runtime.evaluate exception"
+      return codedToolError("EVAL_THROWN", text, { suggested_action: "fix_expression" })
+    }
+
+    const value = result?.result?.value
+    const type = result?.result?.type
+    const looksEmpty = type === "undefined" || (value === undefined && type !== "object")
+
+    if (!looksEmpty) {
+      return {
+        success: true,
+        data: {
+          result: value,
+          type,
+          risk_pattern_matches: matches.length > 0 ? matches : undefined,
+        },
+      }
+    }
+
+    let probeOk = false
+    try {
+      const probe = await this.sendCdp(tabId, "Runtime.evaluate", {
+        expression: "1+1===2",
+        returnByValue: true,
+      })
+      probeOk = probe?.result?.value === true
+    } catch {
+      try {
+        probeOk = (await this.scriptingExecute(tabId, "1+1===2")) === true
+      } catch (e: any) {
+        return await this.failInteractive(tabId, e)
+      }
+    }
+
+    if (probeOk) {
+      return {
+        success: true,
+        data: {
+          result: value,
+          type,
+          evaluate_kind: "empty_completion",
+          risk_pattern_matches: matches.length > 0 ? matches : undefined,
+        },
+      }
+    }
+
+    return codedToolError("EVAL_DEAD_WORLD", "page JS world did not return a live completion (probe 1+1===2 failed)", {
+      suggested_action: "list_tabs",
+    })
   }
 
   private async uploadFile(params: Record<string, any>): Promise<ToolResult> {

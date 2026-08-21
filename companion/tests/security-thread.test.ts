@@ -459,6 +459,12 @@ test("classifyError osascript missing url/expression is recoverable (not chat-ki
   )
 })
 
+test("classifyError web act-loop codes are recoverable (not chat.error)", () => {
+  assert.equal(classifyError("CDP_ATTACH_FAILED: debugger attach failed"), "recoverable")
+  assert.equal(classifyError("DOM_SCRIPT_VOLUME_CAPPED: stop or change the task"), "recoverable")
+  assert.equal(classifyError("EVAL_DEAD_WORLD: probe failed"), "recoverable")
+})
+
 test("classifyError TAB_LEASE_CAP is recoverable so agent can close_tab and retry", () => {
   assert.equal(
     classifyError(
