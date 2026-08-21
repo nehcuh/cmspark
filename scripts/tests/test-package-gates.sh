@@ -235,12 +235,31 @@ assert_file_has "${WIN_NSIS}" 'cmspark-agent\.exe' \
   "wrapper refuses to wrap a SEA/mixed staging tree"
 assert_file_has "${WIN_NSIS}" 'launch-hidden\.vbs' \
   "wrapper requires launch-hidden.vbs in staging"
+assert_file_has "${PACKAGE_SH}" 'win-vendor-bins\.sh' \
+  "package.sh sources shared Windows vendor-bin lookup"
+assert_file_has "${WIN_NSIS}" 'win-vendor-bins\.sh' \
+  "build-windows-installer.sh sources shared Windows vendor-bin lookup"
+assert_file_has "${WIN_NSIS}" 'NSIS/Bin/makensis\.exe' \
+  "find_makensis probes NSIS/Bin/makensis.exe (winget 3.12 layout)"
+assert_file_has "${PACKAGE_SH}" 'command -v zip' \
+  "package.sh tries PATH zip before 7-Zip install-dir probe"
+assert_file_has "${PACKAGE_SH}" 'elif command -v 7z' \
+  "package.sh tries PATH 7z before 7-Zip install-dir probe"
+assert_file_has "${PACKAGE_SH}" 'find_windows_pe' \
+  "package.sh uses find_windows_pe (quoted exec + MSYS C:/ gate)"
+assert_file_has "${PACKAGE_SH}" 'SEVENZ_CANDIDATES' \
+  "package.sh shares 7-Zip candidates for extract and compress"
 assert_file_has "${PACKAGE_SH}" '7-Zip/7z\.exe' \
   "package.sh probes standard 7-Zip install dirs when zip/7z not on PATH"
+assert_file_has "${ROOT}/scripts/win-vendor-bins.sh" 'is_msysish' \
+  "C:/ vendor paths are gated to MSYS (not cwd-relative on POSIX)"
+assert_file_has "${ROOT}/scripts/win-vendor-bins.sh" '\[ -f ' \
+  "vendor lookup uses -f not -x (Git Bash -x flaky on Program Files .exe)"
 # installer.nsi must stay pure ASCII: without a BOM makensis decodes .nsi in
 # the system ANSI codepage, so any non-ASCII byte aborts the build on
 # non-CP1252 locales (e.g. GBK on zh-CN Windows).
-if LC_ALL=C grep -qP '[^\x00-\x7F]' "${NSIS}"; then
+# Portable: do NOT use grep -P (BSD grep treats unknown -P as fail-open PASS).
+if LC_ALL=C grep -q $'[\200-\377]' "${NSIS}"; then
   FAIL=$((FAIL + 1))
   echo "  FAIL: installer.nsi contains non-ASCII bytes (breaks makensis on non-CP1252 locales)" >&2
 else

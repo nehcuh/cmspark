@@ -175,8 +175,10 @@ export function buildBannerLines(opts: {
  * - claude:   `claude [prompt]`  (first user message)
  * - pi:       `pi [messages…]`
  * - grok:     `grok [prompt]`
- * - kimi:     `kimi` only — positionals are subcommands (acp/web/login…), not a task
- * - opencode: `opencode --prompt <text>` — root positional is the project dir, not a task
+ * - kimi:     `kimi` only — positionals are subcommands (acp/web/login…), not a task.
+ *             `-p`/`--prompt` is non-interactive print mode, not TUI prefill — do not use it here.
+ * - opencode: `opencode --prompt <text>` — root positional is the project dir, not a task.
+ *             `--prompt` prefills the TUI input (user still hits Enter; auto-submit is sst/opencode#3937).
  * - others:   trailing prompt arg when present
  */
 export function buildInteractiveExecFragment(opts: {
@@ -198,12 +200,13 @@ export function buildInteractiveExecFragment(opts: {
   }
 
   // kimi treats positionals as subcommands (acp/web/login…), not an initial message.
+  // Do not pass -p/--prompt: that is one-shot print mode, not an interactive TUI.
   if (id === "kimi") {
     return `exec ${cmd}`
   }
 
   // opencode root positional is the project directory, not a task — the task goes
-  // via --prompt (documented TUI flag, opencode.ai/docs/cli).
+  // via --prompt (TUI prefill; user still Enter — opencode.ai/docs/cli).
   if (id === "opencode") {
     if (hasFile) {
       const fileQ = shellSingleQuote(opts.promptFile!.trim())

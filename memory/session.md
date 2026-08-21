@@ -2,6 +2,24 @@
 
 ## Current Session
 
+### 折 nits HEAD be52585 对抗 (2026-08-21)
+- S1 ASCII 门改 POSIX `[\200-\377]`（去掉 grep -P fail-open）
+- S2–S6 `scripts/win-vendor-bins.sh`：`-f`、MSYS 才用 `C:/`、解压/压缩共用 7-Zip 探针；Bin 路径有 gate
+- S7–S8 run-tests 引用 #64061 + Node <22 不加 isolation flag
+- S9 L0 kimi/opencode 测试 + 笔记库路径文案；opencode `--prompt` 注释写明需 Enter
+- S10 kimi 仍裸 TUI（`-p` 是 print）— 只加注释
+- 机核：package-gates 110/0；ACP Mode C 64/64
+
+### 四路独立对抗 HEAD be52585 (2026-08-21)
+- **Pull**: `2576b53` → `be52585`（#207 Mode C 修复、#208 Windows 打包、#209 settings-web 隔离）
+- **范围**: `e8900bc..HEAD`（#206/#207 已有在库对抗，不重复）+ Lane D 复验 Mode C P1
+- **四路**: A packaging security · B packaging correctness · C test isolation · D ACP residual — 全 **APPROVE_WITH_NITS**，无 P0/P1
+- **跨路**: ASCII 门 `grep -qP` Darwin fail-open（A+B）；Mode C P1 未回退（D 86/86）
+- **产物**: `docs/audit/reviews/head-be52585-post207-independent-adversary-synthesis-20260821.md`
+- **未做**: Pi 复审；未 commit 评审文档
+
+
+
 ### export copy: Markdown not Obsidian (2026-08-20)
 - **Task**: 导出对话用户文案去掉 Obsidian 品牌，实际就是 Markdown 下载
 - **落地**: 消息/线程/摘要按钮、设置开关与笔记库路径、文件夹选择器、companion 错误提示

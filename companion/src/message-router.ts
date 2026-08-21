@@ -3275,10 +3275,10 @@ export async function handleMessage(
         try {
           stat = fs.statSync(resolved)
         } catch {
-          return { type: "error", error: `vault 路径不存在: ${resolved}` }
+          return { type: "error", error: `笔记库路径不存在: ${resolved}` }
         }
         if (!stat.isDirectory()) {
-          return { type: "error", error: `vault 路径不是目录: ${resolved}` }
+          return { type: "error", error: `笔记库路径不是目录: ${resolved}` }
         }
         // Persist the resolved vault_path so later exports can find the cached profile.
         const curObs = getConfig().obsidian

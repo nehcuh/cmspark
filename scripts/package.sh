@@ -28,6 +28,16 @@ to_mixed() {
   if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
 }
 ROOT_DIR="$(to_mixed "${ROOT_DIR}")"
+# shellcheck source=win-vendor-bins.sh
+. "${ROOT_DIR}/scripts/win-vendor-bins.sh"
+
+# 7-Zip off PATH (local Windows). /c/ always; C:/ skipped on POSIX (see win-vendor-bins.sh).
+SEVENZ_CANDIDATES=(
+  "/c/Program Files/7-Zip/7z.exe"
+  "/c/Program Files (x86)/7-Zip/7z.exe"
+  "C:/Program Files/7-Zip/7z.exe"
+  "C:/Program Files (x86)/7-Zip/7z.exe"
+)
 
 # --- Platform detection ---
 if [ -z "${1:-}" ]; then
@@ -436,19 +446,28 @@ if [ "${PLATFORM}" = "windows-x64" ]; then
     curl -fSL --retry 3 "${NODE_MIRROR}/${NODE_VERSION}/node-v${NODE_VERSION#v}-${NODE_ARCH}.zip" -o "${CACHE_ZIP}"
   fi
   bash "${ROOT_DIR}/scripts/verify-node.sh" "${CACHE_ZIP}" "${NODE_SHASUMS}" "Node ${NODE_VERSION} ${NODE_ARCH} (.zip)"
-  if command -v unzip >/dev/null 2>&1; then
-    ( cd "${STAGING}" && unzip -jo "${CACHE_ZIP}" "*/node.exe" )
-  elif command -v 7z >/dev/null 2>&1; then
+  extract_node_zip() {
+    local sevenz="$1"
     # Git Bash on windows-latest does not reliably ship Info-ZIP unzip, but
     # 7-Zip is always preinstalled. Extract to a temp dir then move node.exe
     # flat into staging (matches `unzip -jo` junk-paths behavior).
     tmp_extract="$(to_mixed "$(mktemp -d)")"
-    7z x "${CACHE_ZIP}" -o"${tmp_extract}" -bd -y >/dev/null
+    "${sevenz}" x "${CACHE_ZIP}" -o"${tmp_extract}" -bd -y >/dev/null
     mv "${tmp_extract}"/node-*/node.exe "${STAGING}/node.exe"
     rm -rf "${tmp_extract}"
+  }
+  if command -v unzip >/dev/null 2>&1; then
+    ( cd "${STAGING}" && unzip -jo "${CACHE_ZIP}" "*/node.exe" )
+  elif command -v 7z >/dev/null 2>&1; then
+    extract_node_zip 7z
   else
-    echo "ERROR: neither unzip nor 7z available to extract Node runtime" >&2
-    exit 1
+    SEVENZ="$(find_windows_pe "${SEVENZ_CANDIDATES[@]}")" || true
+    if [ -n "${SEVENZ}" ]; then
+      extract_node_zip "${SEVENZ}"
+    else
+      echo "ERROR: neither unzip nor 7z available to extract Node runtime" >&2
+      exit 1
+    fi
   fi
   echo "  node.exe: $(du -h "${STAGING}/node.exe" | cut -f1)"
 else
@@ -511,17 +530,8 @@ elif command -v 7z >/dev/null 2>&1; then
   7z a -tzip -bd "${ZIP_NAME}" "cmspark-${PLATFORM}" >/dev/null
 else
   # Local Windows dev boxes: 7-Zip is typically installed but not on PATH.
-  # Probe standard install dirs (same pattern as find_makensis in
-  # build-windows-installer.sh).
-  SEVENZ=""
-  for c in \
-    "/c/Program Files/7-Zip/7z.exe" \
-    "/c/Program Files (x86)/7-Zip/7z.exe" \
-    "C:/Program Files/7-Zip/7z.exe" \
-    "C:/Program Files (x86)/7-Zip/7z.exe"
-  do
-    if [ -x "${c}" ]; then SEVENZ="${c}"; break; fi
-  done
+  # PATH zip / PATH 7z already tried above. Probe standard install dirs.
+  SEVENZ="$(find_windows_pe "${SEVENZ_CANDIDATES[@]}")" || true
   if [ -n "${SEVENZ}" ]; then
     "${SEVENZ}" a -tzip -bd "${ZIP_NAME}" "cmspark-${PLATFORM}" >/dev/null
   else
