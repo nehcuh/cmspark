@@ -37,6 +37,8 @@ import {
 } from "./cdp-keys"
 export { runWithDownloadBusyBeforeQueue, isBrowserDownloadToolName } from "./download-busy-entry"
 export { resolveEvaluateExecution } from "./evaluate-code-policy"
+import { resolveWaitForMode } from "./wait-for-mode"
+export { resolveWaitForMode } from "./wait-for-mode"
 
 interface ToolResult {
   success: boolean
@@ -478,6 +480,15 @@ export class BrowserBridge {
       url: params.url || "about:blank",
       active: params.active !== false,
     })
+    // chrome.tabs.create often returns before navigation finishes (thread 1snvlv:
+    // {id, url:"", title:""} → model called wait_for({tabId}) and hit schema/runtime mismatch).
+    if (params.wait_for_load !== false && tab.id) {
+      // Cap under companion WS 15s so a hung page still returns {id} instead of
+      // "Tool execution timeout: create_tab" with no tab id (runtime adversary).
+      await this.waitForTabLoad(tab.id, 12_000)
+      const updated = await chrome.tabs.get(tab.id)
+      return { success: true, data: { id: updated.id, url: updated.url, title: updated.title } }
+    }
     return { success: true, data: { id: tab.id, url: tab.url, title: tab.title } }
   }
 
@@ -505,26 +516,31 @@ export class BrowserBridge {
   }
 
   /** Wait for a tab to finish loading */
-  private waitForTabLoad(tabId: number): Promise<void> {
+  private waitForTabLoad(tabId: number, timeoutMs = 30000): Promise<void> {
     return new Promise((resolve) => {
       const start = Date.now()
-      const maxWait = 30000 // 30s max
+      const maxWait = timeoutMs > 0 ? timeoutMs : 30000
+      let done = false
+      const finish = () => {
+        if (done) return
+        done = true
+        chrome.tabs.onUpdated.removeListener(listener)
+        resolve()
+      }
 
       const check = async () => {
+        if (done) return
         try {
           const tab = await chrome.tabs.get(tabId)
-          if (tab.status === "complete") return resolve()
-        } catch { return resolve() } // tab closed
-        if (Date.now() - start > maxWait) return resolve()
+          if (tab.status === "complete") return finish()
+        } catch { return finish() } // tab closed
+        if (Date.now() - start > maxWait) return finish()
         setTimeout(check, 300)
       }
 
       // Also listen for onUpdated in case the tab hasn't started loading yet
       const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
-        if (updatedTabId === tabId && changeInfo.status === "complete") {
-          chrome.tabs.onUpdated.removeListener(listener)
-          resolve()
-        }
+        if (updatedTabId === tabId && changeInfo.status === "complete") finish()
       }
       chrome.tabs.onUpdated.addListener(listener)
 
@@ -532,10 +548,7 @@ export class BrowserBridge {
       setTimeout(check, 300)
 
       // Cleanup listener after maxWait
-      setTimeout(() => {
-        chrome.tabs.onUpdated.removeListener(listener)
-        resolve()
-      }, maxWait)
+      setTimeout(finish, maxWait)
     })
   }
 
@@ -1508,41 +1521,35 @@ export class BrowserBridge {
 
   private async waitFor(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    const timeout = params.timeout || 15000
-    const interval = params.interval || 500
-    const selector = params.selector
+    const mode = resolveWaitForMode(params)
+    if (mode.kind === "invalid") {
+      return codedToolError("WAIT_CONDITION_REQUIRED", mode.error, {
+        suggested_action: "wait_for_network_idle",
+      })
+    }
 
-    if (selector) {
-      const expectVisible = params.state !== "hidden"
+    if (mode.kind === "selector") {
+      const timeout = typeof params.timeout === "number" && params.timeout > 0 ? params.timeout : 15000
+      const interval = params.interval || 500
       const start = Date.now()
       while (Date.now() - start < timeout) {
         try {
           const result = await this.sendCdp(tabId, "Runtime.evaluate", {
             // Safe interpolation: JSON.stringify produces a valid JS string literal.
-            expression: `!!document.querySelector(${JSON.stringify(selector)})`,
+            expression: `!!document.querySelector(${JSON.stringify(mode.selector)})`,
             returnByValue: true,
           })
           const exists = result.result?.value === true
-          if (exists === expectVisible) return { success: true, data: { elapsed_ms: Date.now() - start } }
+          if (exists === mode.expectVisible) return { success: true, data: { elapsed_ms: Date.now() - start } }
         } catch { /* ignore */ }
         await new Promise(r => setTimeout(r, interval))
       }
-      throw new Error(`Timeout waiting for selector "${selector}" (${expectVisible ? "visible" : "hidden"})`)
+      throw new Error(`Timeout waiting for selector "${mode.selector}" (${mode.expectVisible ? "visible" : "hidden"})`)
     }
 
-    if (params.network_idle) {
-      // Wait for page load to complete, then settle period for dynamic content
-      await this.waitForTabLoad(tabId)
-      // Extra settle time for async content (SPA rendering, lazy loading)
-      const settleMs = params.settle_ms || 2000
-      await new Promise(r => setTimeout(r, settleMs))
-      return { success: true }
-      // Wait for network to settle
-      await new Promise(r => setTimeout(r, 2000))
-      return { success: true }
-    }
-
-    throw new Error("selector or network_idle is required")
+    await this.waitForTabLoad(tabId, mode.timeoutMs)
+    await new Promise(r => setTimeout(r, mode.settleMs))
+    return { success: true, data: { mode: "network_idle", settle_ms: mode.settleMs } }
   }
 
   private async evaluate(params: Record<string, any>): Promise<ToolResult> {

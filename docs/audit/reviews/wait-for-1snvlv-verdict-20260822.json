@@ -1,0 +1,28 @@
+{
+  "batch": "wait-for-1snvlv",
+  "timestamp": "20260822",
+  "blast": "T2 L1",
+  "machine": {
+    "companion_targeted": "130 pass",
+    "chrome_wait_for_mode": "7/7",
+    "tsc": 0
+  },
+  "adversaries": {
+    "runtime": "APPROVE_WITH_NITS",
+    "product": "APPROVE_WITH_NITS",
+    "trust": "APPROVE_WITH_NITS"
+  },
+  "dual": {
+    "claude": "APPROVE_WITH_NITS",
+    "kimi": "APPROVE_WITH_NITS"
+  },
+  "both_approve": true,
+  "fold": [
+    "default wait 12s+2s under WS 15s",
+    "create_tab waitForTabLoad 12s",
+    "settle_ms cap 5000",
+    "whitespace selector strip",
+    "create_tab wait_for_load kept in zod+catalog",
+    "catalog timeout description 12000"
+  ]
+}

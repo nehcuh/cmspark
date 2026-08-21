@@ -422,6 +422,10 @@ test("tool-definitions: wait_for has enum for state parameter", () => {
 
   assert.ok(waitFor)
   assert.deepEqual(waitFor.function.parameters.properties.state.enum, ["visible", "hidden"])
+  assert.equal(waitFor.function.parameters.required.includes("selector"), false)
+  assert.equal(waitFor.function.parameters.required.includes("network_idle"), false)
+  assert.ok(waitFor.function.parameters.properties.settle_ms)
+  assert.match(waitFor.function.description, /tabId/)
 })
 
 test("tool-definitions: record_experience has enum for target and category", () => {

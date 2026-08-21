@@ -1,0 +1,547 @@
+diff --git a/chrome-extension/src/background/browser-bridge.ts b/chrome-extension/src/background/browser-bridge.ts
+index 9cfe0b1..20a5b7e 100644
+--- a/chrome-extension/src/background/browser-bridge.ts
++++ b/chrome-extension/src/background/browser-bridge.ts
+@@ -37,6 +37,8 @@ import {
+ } from "./cdp-keys"
+ export { runWithDownloadBusyBeforeQueue, isBrowserDownloadToolName } from "./download-busy-entry"
+ export { resolveEvaluateExecution } from "./evaluate-code-policy"
++import { resolveWaitForMode } from "./wait-for-mode"
++export { resolveWaitForMode } from "./wait-for-mode"
+ 
+ interface ToolResult {
+   success: boolean
+@@ -478,6 +480,15 @@ export class BrowserBridge {
+       url: params.url || "about:blank",
+       active: params.active !== false,
+     })
++    // chrome.tabs.create often returns before navigation finishes (thread 1snvlv:
++    // {id, url:"", title:""} → model called wait_for({tabId}) and hit schema/runtime mismatch).
++    if (params.wait_for_load !== false && tab.id) {
++      // Cap under companion WS 15s so a hung page still returns {id} instead of
++      // "Tool execution timeout: create_tab" with no tab id (runtime adversary).
++      await this.waitForTabLoad(tab.id, 12_000)
++      const updated = await chrome.tabs.get(tab.id)
++      return { success: true, data: { id: updated.id, url: updated.url, title: updated.title } }
++    }
+     return { success: true, data: { id: tab.id, url: tab.url, title: tab.title } }
+   }
+ 
+@@ -505,26 +516,31 @@ export class BrowserBridge {
+   }
+ 
+   /** Wait for a tab to finish loading */
+-  private waitForTabLoad(tabId: number): Promise<void> {
++  private waitForTabLoad(tabId: number, timeoutMs = 30000): Promise<void> {
+     return new Promise((resolve) => {
+       const start = Date.now()
+-      const maxWait = 30000 // 30s max
++      const maxWait = timeoutMs > 0 ? timeoutMs : 30000
++      let done = false
++      const finish = () => {
++        if (done) return
++        done = true
++        chrome.tabs.onUpdated.removeListener(listener)
++        resolve()
++      }
+ 
+       const check = async () => {
++        if (done) return
+         try {
+           const tab = await chrome.tabs.get(tabId)
+-          if (tab.status === "complete") return resolve()
+-        } catch { return resolve() } // tab closed
+-        if (Date.now() - start > maxWait) return resolve()
++          if (tab.status === "complete") return finish()
++        } catch { return finish() } // tab closed
++        if (Date.now() - start > maxWait) return finish()
+         setTimeout(check, 300)
+       }
+ 
+       // Also listen for onUpdated in case the tab hasn't started loading yet
+       const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+-        if (updatedTabId === tabId && changeInfo.status === "complete") {
+-          chrome.tabs.onUpdated.removeListener(listener)
+-          resolve()
+-        }
++        if (updatedTabId === tabId && changeInfo.status === "complete") finish()
+       }
+       chrome.tabs.onUpdated.addListener(listener)
+ 
+@@ -532,10 +548,7 @@ export class BrowserBridge {
+       setTimeout(check, 300)
+ 
+       // Cleanup listener after maxWait
+-      setTimeout(() => {
+-        chrome.tabs.onUpdated.removeListener(listener)
+-        resolve()
+-      }, maxWait)
++      setTimeout(finish, maxWait)
+     })
+   }
+ 
+@@ -1508,41 +1521,35 @@ export class BrowserBridge {
+ 
+   private async waitFor(params: Record<string, any>): Promise<ToolResult> {
+     const tabId = this.getTabId(params)
+-    const timeout = params.timeout || 15000
+-    const interval = params.interval || 500
+-    const selector = params.selector
++    const mode = resolveWaitForMode(params)
++    if (mode.kind === "invalid") {
++      return codedToolError("WAIT_CONDITION_REQUIRED", mode.error, {
++        suggested_action: "wait_for_network_idle",
++      })
++    }
+ 
+-    if (selector) {
+-      const expectVisible = params.state !== "hidden"
++    if (mode.kind === "selector") {
++      const timeout = typeof params.timeout === "number" && params.timeout > 0 ? params.timeout : 15000
++      const interval = params.interval || 500
+       const start = Date.now()
+       while (Date.now() - start < timeout) {
+         try {
+           const result = await this.sendCdp(tabId, "Runtime.evaluate", {
+             // Safe interpolation: JSON.stringify produces a valid JS string literal.
+-            expression: `!!document.querySelector(${JSON.stringify(selector)})`,
++            expression: `!!document.querySelector(${JSON.stringify(mode.selector)})`,
+             returnByValue: true,
+           })
+           const exists = result.result?.value === true
+-          if (exists === expectVisible) return { success: true, data: { elapsed_ms: Date.now() - start } }
++          if (exists === mode.expectVisible) return { success: true, data: { elapsed_ms: Date.now() - start } }
+         } catch { /* ignore */ }
+         await new Promise(r => setTimeout(r, interval))
+       }
+-      throw new Error(`Timeout waiting for selector "${selector}" (${expectVisible ? "visible" : "hidden"})`)
+-    }
+-
+-    if (params.network_idle) {
+-      // Wait for page load to complete, then settle period for dynamic content
+-      await this.waitForTabLoad(tabId)
+-      // Extra settle time for async content (SPA rendering, lazy loading)
+-      const settleMs = params.settle_ms || 2000
+-      await new Promise(r => setTimeout(r, settleMs))
+-      return { success: true }
+-      // Wait for network to settle
+-      await new Promise(r => setTimeout(r, 2000))
+-      return { success: true }
++      throw new Error(`Timeout waiting for selector "${mode.selector}" (${mode.expectVisible ? "visible" : "hidden"})`)
+     }
+ 
+-    throw new Error("selector or network_idle is required")
++    await this.waitForTabLoad(tabId, mode.timeoutMs)
++    await new Promise(r => setTimeout(r, mode.settleMs))
++    return { success: true, data: { mode: "network_idle", settle_ms: mode.settleMs } }
+   }
+ 
+   private async evaluate(params: Record<string, any>): Promise<ToolResult> {
+diff --git a/chrome-extension/src/background/wait-for-mode.ts b/chrome-extension/src/background/wait-for-mode.ts
+new file mode 100644
+index 0000000..49b0fde
+--- /dev/null
++++ b/chrome-extension/src/background/wait-for-mode.ts
+@@ -0,0 +1,48 @@
++/**
++ * wait_for condition resolver (pure).
++ *
++ * Thread 1snvlv: GLM called wait_for({tabId}) after create_tab returned empty
++ * url/title. Catalog only requires tabId; runtime used to throw
++ * "selector or network_idle is required" (non_recoverable → chat ⚠️).
++ * TabId-only / timeout-only defaults to network_idle.
++ */
++
++/** Must stay under companion TOOL_EXECUTION_TIMEOUT_MS (15s) including settle. */
++export const DEFAULT_WAIT_TIMEOUT_MS = 12_000
++export const DEFAULT_SETTLE_MS = 2_000
++export const MAX_SETTLE_MS = 5_000
++
++export type WaitForMode =
++  | { kind: "selector"; selector: string; expectVisible: boolean }
++  | { kind: "network_idle"; timeoutMs: number; settleMs: number }
++  | { kind: "invalid"; error: string }
++
++function positiveMs(v: unknown, fallback: number, cap?: number): number {
++  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return fallback
++  return cap != null ? Math.min(v, cap) : v
++}
++
++function nonNegativeMs(v: unknown, fallback: number, cap?: number): number {
++  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return fallback
++  return cap != null ? Math.min(v, cap) : v
++}
++
++export function resolveWaitForMode(params: Record<string, unknown>): WaitForMode {
++  const selector = typeof params.selector === "string" ? params.selector.trim() : ""
++  if (selector) {
++    return {
++      kind: "selector",
++      selector,
++      expectVisible: params.state !== "hidden",
++    }
++  }
++  // Explicit false without a selector is the only remaining invalid shape.
++  if (params.network_idle === false) {
++    return { kind: "invalid", error: "selector or network_idle is required" }
++  }
++  return {
++    kind: "network_idle",
++    timeoutMs: positiveMs(params.timeout, DEFAULT_WAIT_TIMEOUT_MS, DEFAULT_WAIT_TIMEOUT_MS),
++    settleMs: nonNegativeMs(params.settle_ms, DEFAULT_SETTLE_MS, MAX_SETTLE_MS),
++  }
++}
+diff --git a/chrome-extension/tests/wait-for-mode.test.ts b/chrome-extension/tests/wait-for-mode.test.ts
+new file mode 100644
+index 0000000..3926cf0
+--- /dev/null
++++ b/chrome-extension/tests/wait-for-mode.test.ts
+@@ -0,0 +1,71 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  resolveWaitForMode,
++  DEFAULT_WAIT_TIMEOUT_MS,
++  DEFAULT_SETTLE_MS,
++} from "../src/background/wait-for-mode"
++
++test("wait_for tabId-only (thread 1snvlv) defaults to network_idle", () => {
++  const m = resolveWaitForMode({ tabId: 1492094196 })
++  assert.equal(m.kind, "network_idle")
++  if (m.kind === "network_idle") {
++    assert.equal(m.timeoutMs, DEFAULT_WAIT_TIMEOUT_MS)
++    assert.equal(m.settleMs, DEFAULT_SETTLE_MS)
++  }
++})
++
++test("wait_for timeout-only uses timeout as load wait", () => {
++  const m = resolveWaitForMode({ tabId: 1, timeout: 5000 })
++  assert.equal(m.kind, "network_idle")
++  if (m.kind === "network_idle") {
++    assert.equal(m.timeoutMs, 5000)
++    assert.equal(m.settleMs, DEFAULT_SETTLE_MS)
++  }
++})
++
++test("wait_for default load+settle stays under companion 15s WS", () => {
++  const m = resolveWaitForMode({ tabId: 1 })
++  assert.equal(m.kind, "network_idle")
++  if (m.kind === "network_idle") {
++    assert.ok(m.timeoutMs + m.settleMs < 15_000)
++  }
++})
++
++test("wait_for caps huge settle_ms", () => {
++  const m = resolveWaitForMode({ tabId: 1, network_idle: true, settle_ms: 60_000 })
++  assert.equal(m.kind, "network_idle")
++  if (m.kind === "network_idle") {
++    assert.equal(m.settleMs, 5_000)
++  }
++})
++
++test("wait_for selector still wins over network_idle", () => {
++  const m = resolveWaitForMode({
++    tabId: 1,
++    selector: " textarea",
++    network_idle: true,
++    state: "hidden",
++  })
++  assert.equal(m.kind, "selector")
++  if (m.kind === "selector") {
++    assert.equal(m.selector, "textarea")
++    assert.equal(m.expectVisible, false)
++  }
++})
++
++test("wait_for network_idle true without selector is network_idle", () => {
++  const m = resolveWaitForMode({ tabId: 1, network_idle: true, settle_ms: 3000 })
++  assert.equal(m.kind, "network_idle")
++  if (m.kind === "network_idle") {
++    assert.equal(m.settleMs, 3000)
++  }
++})
++
++test("wait_for network_idle false without selector is invalid", () => {
++  const m = resolveWaitForMode({ tabId: 1, network_idle: false })
++  assert.equal(m.kind, "invalid")
++  if (m.kind === "invalid") {
++    assert.equal(m.error, "selector or network_idle is required")
++  }
++})
+diff --git a/companion/src/bridge/tool-definitions-catalog.json b/companion/src/bridge/tool-definitions-catalog.json
+index 2c532cc..5b9e7de 100644
+--- a/companion/src/bridge/tool-definitions-catalog.json
++++ b/companion/src/bridge/tool-definitions-catalog.json
+@@ -26,6 +26,10 @@
+           "active": {
+             "type": "boolean",
+             "description": "是否激活新标签页，默认 true"
++          },
++          "wait_for_load": {
++            "type": "boolean",
++            "description": "是否等待页面加载完成再返回，默认 true。false 则立即返回（可能 url/title 仍空）"
+           }
+         },
+         "required": [
+@@ -510,7 +514,7 @@
+     "type": "function",
+     "function": {
+       "name": "wait_for",
+-      "description": "等待条件满足（选择器出现/消失或网络空闲）",
++      "description": "等待页面加载或元素出现。只传 tabId（或 tabId+timeout）视为等待加载完成（network_idle）。也可传 selector 等指定元素，或显式 network_idle:true。",
+       "parameters": {
+         "type": "object",
+         "properties": {
+@@ -519,7 +523,7 @@
+           },
+           "selector": {
+             "type": "string",
+-            "description": "等待的 CSS 选择器"
++            "description": "等待的 CSS 选择器。与 network_idle 二选一；都不传则默认 network_idle"
+           },
+           "state": {
+             "type": "string",
+@@ -535,7 +539,11 @@
+           },
+           "network_idle": {
+             "type": "boolean",
+-            "description": "等待网络空闲"
++            "description": "等待页面加载完成后再短暂 settle。不传 selector 时默认 true"
++          },
++          "settle_ms": {
++            "type": "number",
++            "description": "network_idle 时加载完成后的额外等待毫秒，默认 2000"
+           }
+         },
+         "required": [
+diff --git a/companion/src/bridge/tool-schemas.ts b/companion/src/bridge/tool-schemas.ts
+index a7561e1..7bd3f34 100644
+--- a/companion/src/bridge/tool-schemas.ts
++++ b/companion/src/bridge/tool-schemas.ts
+@@ -140,6 +140,18 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
+     modifiers: z.number().int().optional(),
+   }),
+ 
++  // TabId-only is valid (thread 1snvlv). Do NOT refine selector|network_idle —
++  // companion + extension default missing condition to network_idle.
++  wait_for: z.object({
++    tabId: tabIdSchema,
++    selector: z.string().min(1).optional(),
++    state: z.enum(["visible", "hidden"]).optional(),
++    timeout: z.number().positive().optional(),
++    network_idle: z.boolean().optional(),
++    settle_ms: z.number().nonnegative().optional(),
++    interval: z.number().positive().optional(),
++  }),
++
+   // --- browser_download (P1.0: click/text → chrome.downloads complete) ---
+   // At least one of selector|text required (refine). downloadPath optional; companion
+   // re-validates with assertDownloadPathAllowed (LLM path never trusted raw).
+@@ -323,6 +335,7 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
+     url: urlSchema,
+     active: z.boolean().optional(),
+     index: z.number().int().min(0).optional(),
++    wait_for_load: z.boolean().optional(),
+   }),
+   set_tab_url: z.object({
+     tabId: tabIdSchema,
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index c02906c..81deea9 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -44,6 +44,7 @@ import {
+   cappedDomScriptResult,
+ } from "../tool/dom-script-budget"
+ import { getCachedTabUrl } from "../ws/tab-url-cache"
++import { normalizeWaitForParams } from "../tool/wait-for-params"
+ 
+ // Jailbreak patterns to detect in LLM output
+ const JAILBREAK_OUTPUT_PATTERNS = [
+@@ -473,7 +474,7 @@ CRITICAL RULES:
+ 3. For create_tab, always pass the full URL parameter. Use http(s) URLs. Do NOT use create_tab/navigate/set_tab_url with file: to *read* a document (especially PDF) — ask the user to drag the file into the chat. Only use file: if the user explicitly asked to open a local file in the browser. Listing local files is mcp__filesystem__* (rule 10), a different gate from opening a tab.
+ 4. Use navigate(tabId, url) to change a tab's URL — check list_tabs for existing tabs first.
+ 5. Before calling screenshot or page tools, ensure the tab is on a real website (not chrome:// or about:blank).
+-6. Wait for pages to load before extracting content.
++6. Wait for pages to load before extracting content. After create_tab/navigate, wait_for({tabId}) or wait_for({tabId, network_idle:true}) waits for load (tabId-only is treated as network_idle). Use wait_for({tabId, selector}) when waiting for a specific element.
+ 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate. For clicking visible labels use click({text}) or click({selector}) — text is exclusive when provided. If a tool returns CDP_ATTACH_FAILED, call list_tabs / ask the user to focus the tab; do NOT retry via evaluate or host_computer (same debugger / not a web fallback).
+ 8. ${
+   os.platform() === "darwin"
+@@ -1152,7 +1153,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+             }
+           }
+           const execParams = {
+-            ...params,
++            ...normalizeWaitForParams(toolName, params as Record<string, unknown>),
+             tabId: resolvedTabId,
+             // Grill Q1: computer session-trust keys off chat thread, not WS uuid.
+             __thread_id: threadId,
+diff --git a/companion/src/security.ts b/companion/src/security.ts
+index b287d06..1ba6083 100644
+--- a/companion/src/security.ts
++++ b/companion/src/security.ts
+@@ -1038,6 +1038,9 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
+     "path is outside",
+     // Web act-loop W1/W3′/W4 coded errors (default is non_recoverable)
+     "selector_or_text_required",
++    "wait_condition_required",
++    "selector or network_idle",
++    "network_idle is required",
+     "element_not_found",
+     "element_ambiguous",
+     "invalid_selector",
+diff --git a/companion/src/tool/wait-for-params.ts b/companion/src/tool/wait-for-params.ts
+new file mode 100644
+index 0000000..31e06d9
+--- /dev/null
++++ b/companion/src/tool/wait-for-params.ts
+@@ -0,0 +1,21 @@
++/**
++ * Normalize wait_for args before they hit the extension.
++ *
++ * Thread 1snvlv: models often call wait_for({tabId}) after create_tab.
++ * Catalog only requires tabId; old extension throws if neither selector nor
++ * network_idle is set. Inject network_idle:true so a rebuilt companion still
++ * works against an unreloaded unpacked extension.
++ */
++
++export function normalizeWaitForParams(
++  toolName: string,
++  params: Record<string, unknown>,
++): Record<string, unknown> {
++  if (toolName !== "wait_for") return params
++  const selector = typeof params.selector === "string" ? params.selector.trim() : ""
++  const next: Record<string, unknown> = { ...params }
++  if (!selector && "selector" in next) delete next.selector
++  if (selector) return next
++  if (next.network_idle === true || next.network_idle === false) return next
++  return { ...next, network_idle: true }
++}
+diff --git a/companion/tests/bridge.test.ts b/companion/tests/bridge.test.ts
+index d3bf2ad..be4b751 100644
+--- a/companion/tests/bridge.test.ts
++++ b/companion/tests/bridge.test.ts
+@@ -422,6 +422,10 @@ test("tool-definitions: wait_for has enum for state parameter", () => {
+ 
+   assert.ok(waitFor)
+   assert.deepEqual(waitFor.function.parameters.properties.state.enum, ["visible", "hidden"])
++  assert.equal(waitFor.function.parameters.required.includes("selector"), false)
++  assert.equal(waitFor.function.parameters.required.includes("network_idle"), false)
++  assert.ok(waitFor.function.parameters.properties.settle_ms)
++  assert.match(waitFor.function.description, /tabId/)
+ })
+ 
+ test("tool-definitions: record_experience has enum for target and category", () => {
+diff --git a/companion/tests/security-thread.test.ts b/companion/tests/security-thread.test.ts
+index bfbf966..8c9b044 100644
+--- a/companion/tests/security-thread.test.ts
++++ b/companion/tests/security-thread.test.ts
+@@ -443,6 +443,17 @@ test("classifyError ENOENT / no such file is recoverable (workspace missing path
+   )
+ })
+ 
++test("classifyError wait_for missing selector/network_idle is recoverable (thread 1snvlv)", () => {
++  assert.equal(
++    classifyError("selector or network_idle is required", { toolName: "wait_for" }),
++    "recoverable",
++  )
++  assert.equal(
++    classifyError("WAIT_CONDITION_REQUIRED: selector or network_idle is required", { toolName: "wait_for" }),
++    "recoverable",
++  )
++})
++
+ test("classifyError osascript missing url/expression is recoverable (not chat-killing)", () => {
+   // Regression l74du8: LLM often omitted url; runtime error was default non_recoverable
+   // → "不可恢复错误: url and expression required" and the whole turn stopped.
+diff --git a/companion/tests/tool-schemas.test.ts b/companion/tests/tool-schemas.test.ts
+index 5298dc8..27bf64e 100644
+--- a/companion/tests/tool-schemas.test.ts
++++ b/companion/tests/tool-schemas.test.ts
+@@ -87,6 +87,11 @@ test("create_tab: accepts http URL with optional active flag", () => {
+   assert.equal(out.active, false)
+ })
+ 
++test("create_tab: wait_for_load false is not stripped (runtime adversary hatch)", () => {
++  const out = parseToolArgs("create_tab", { url: "https://zhuanlan.zhihu.com/write", wait_for_load: false })
++  assert.equal(out.wait_for_load, false)
++})
++
+ test("create_tab: rejects missing URL", () => {
+   assert.throws(
+     () => parseToolArgs("create_tab", {}),
+@@ -249,6 +254,19 @@ test("unknown tool accepts any shape including edge cases", () => {
+   assert.deepEqual(parseToolArgs("some_unknown_tool", wild), wild)
+ })
+ 
++test("wait_for tabId-only (thread 1snvlv) parses — do not require selector/network_idle", () => {
++  const out = parseToolArgs("wait_for", { tabId: 1492094196 })
++  assert.equal(out.tabId, 1492094196)
++  assert.equal(out.selector, undefined)
++  assert.equal(out.network_idle, undefined)
++})
++
++test("wait_for accepts selector or network_idle or timeout", () => {
++  assert.equal(tryParseToolArgs("wait_for", { tabId: 1, selector: "#app" }).ok, true)
++  assert.equal(tryParseToolArgs("wait_for", { tabId: 1, network_idle: true, settle_ms: 3000 }).ok, true)
++  assert.equal(tryParseToolArgs("wait_for", { tabId: 1, timeout: 5000 }).ok, true)
++})
++
+ // =============================================================================
+ // tryParseToolArgs — Result-style variant
+ // =============================================================================
+diff --git a/companion/tests/wait-for-params.test.ts b/companion/tests/wait-for-params.test.ts
+new file mode 100644
+index 0000000..a7f808c
+--- /dev/null
++++ b/companion/tests/wait-for-params.test.ts
+@@ -0,0 +1,38 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import { normalizeWaitForParams } from "../src/tool/wait-for-params.js"
++
++test("normalizeWaitForParams: tabId-only (1snvlv) injects network_idle", () => {
++  const out = normalizeWaitForParams("wait_for", { tabId: 1492094196 })
++  assert.equal(out.network_idle, true)
++  assert.equal(out.tabId, 1492094196)
++})
++
++test("normalizeWaitForParams: timeout-only injects network_idle", () => {
++  const out = normalizeWaitForParams("wait_for", { tabId: 1, timeout: 5000 })
++  assert.equal(out.network_idle, true)
++  assert.equal(out.timeout, 5000)
++})
++
++test("normalizeWaitForParams: selector unchanged", () => {
++  const src: Record<string, unknown> = { tabId: 1, selector: "#app" }
++  const out = normalizeWaitForParams("wait_for", src)
++  assert.equal(out.selector, "#app")
++  assert.equal(out.network_idle, undefined)
++})
++
++test("normalizeWaitForParams: whitespace-only selector stripped then idle", () => {
++  const out = normalizeWaitForParams("wait_for", { tabId: 1, selector: "  " })
++  assert.equal(out.selector, undefined)
++  assert.equal(out.network_idle, true)
++})
++
++test("normalizeWaitForParams: explicit false is not overwritten", () => {
++  const out = normalizeWaitForParams("wait_for", { tabId: 1, network_idle: false })
++  assert.equal(out.network_idle, false)
++})
++
++test("normalizeWaitForParams: other tools untouched", () => {
++  const src = { tabId: 1 }
++  assert.equal(normalizeWaitForParams("click", src), src)
++})
+diff --git a/companion/tests/web-act-loop-wave1.test.ts b/companion/tests/web-act-loop-wave1.test.ts
+index 663e994..22dd184 100644
+--- a/companion/tests/web-act-loop-wave1.test.ts
++++ b/companion/tests/web-act-loop-wave1.test.ts
+@@ -56,6 +56,7 @@ test("classifyError: new act-loop codes are recoverable", () => {
+     "DOM_SCRIPT_VOLUME_CAPPED: stop",
+     "TYPE_UNSUPPORTED_EDITOR: ce",
+     "ELEMENT_NOT_FOUND: no visible element",
++    "WAIT_CONDITION_REQUIRED: selector or network_idle is required",
+   ]
+   for (const c of codes) {
+     assert.equal(classifyError(c), "recoverable", c)
