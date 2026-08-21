@@ -2,6 +2,12 @@
 
 ## Process Patterns
 
+### 站点负知识：继续会重置同工具失败闸（2026-08-21 · qg44es）
+- **现象**：WAVE-1 已类型化仍 `click` 9 败 / `get_element_info` 8 败；知乎写作。体积封顶打到了 osascript/shell，然后 hop 到 click。
+- **根因**：`MAX_SAME_TOOL_RECOVERABLE_FAILURES` 在每个 chatCreate /「继续」清零；换工具名再点同一 locator；`record_experience` 要 LLM 自觉写；同一 tab `CDP_ATTACH_FAILED` 后仍对同一 tabId 发 CDP
+- **闸**：`(origin, tool, locator)` 失败 2 次 → `SITE_OP_BANNED`（跨工具同 locator 也禁）；tab attach 失败 1 次 → `TAB_ATTACH_FROZEN`；继续不清零；prompt 注入 + site_knowledge 一条 DO NOT retry
+- **4 行 case**：动作=知乎 click 写文章 ×2 + attach 后再 type；失败=继续重置 3 次闸；归责=计数器作用域错；保护=同一网址重复失败的 CDP 不得再试
+
 ### 网页操作：CSS-only click + 成功路径风暴（2026-08-21 · a7ubt9）
 - **现象**：读推文/发知乎；`click` 3/3 失败；`osascript_eval` 81 次（80 成功）；`shell_exec` 54；用户喝止 get_element_info / 要求 host_computer
 - **根因（对抗后）**：(1) catalog click 只收 CSS，finder 已在 download（D10 欠账）；(2) CDP attach 失败被 **改写成** Element not found；(3) `element not found` 可恢复但无 suggested_action；(4) `MAX_SAME_TOOL_RECOVERABLE_FAILURES=3` **不计成功**，osascript 工作环刷爆；(5) type/hover/fill_form **假 success:true**；(6) last-resort 只在 prompt
