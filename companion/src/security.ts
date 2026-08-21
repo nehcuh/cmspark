@@ -1048,6 +1048,8 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "dom_script_loop_capped",
     "dom_script_volume_capped",
     "type_unsupported_editor",
+    "site_op_banned",
+    "tab_attach_frozen",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"
