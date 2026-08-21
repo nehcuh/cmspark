@@ -120,6 +120,44 @@ describe("quotePowerShellLiteral / buildWindowsModeCScript", () => {
     )
   })
 
+  it("kimi L0 paste is bare — agentId must be forwarded (no $task)", () => {
+    const s = buildWindowsModeCScript({
+      cwd: "C:\\ws",
+      command: "C:\\Tools\\kimi.exe",
+      agentId: "kimi",
+      agentLabel: "Kimi",
+      l0: true,
+      promptFile: "C:\\tmp\\task.md",
+    })
+    assert.match(s, /L0/)
+    assert.doesNotMatch(s, /\$task/)
+    assert.doesNotMatch(s, /Get-Content/)
+    // Paste lives inside Write-Host '…'; PowerShell doubles single quotes.
+    assert.match(s, /& ''C:\\Tools\\kimi\.exe''/)
+    assert.ok(
+      !s.split(/\r?\n/).some((l) => l.startsWith("& ")),
+      "L0 must not exec the agent",
+    )
+  })
+
+  it("opencode L0 paste uses --prompt $task (agentId forwarded)", () => {
+    const s = buildWindowsModeCScript({
+      cwd: "C:\\ws",
+      command: "C:\\Tools\\opencode.exe",
+      agentId: "opencode",
+      agentLabel: "OpenCode",
+      l0: true,
+      promptFile: "C:\\tmp\\task.md",
+    })
+    assert.match(s, /L0/)
+    assert.match(s, /--prompt \$task/)
+    assert.doesNotMatch(s, /opencode\.exe' \$task/)
+    assert.ok(
+      !s.split(/\r?\n/).some((l) => l.startsWith("& ")),
+      "L0 must not exec the agent",
+    )
+  })
+
   it("kimi L1 launches bare — no $task variable at all (POSIX parity)", () => {
     const s = buildWindowsModeCScript({
       cwd: "C:\\ws",

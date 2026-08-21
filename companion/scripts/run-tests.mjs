@@ -45,16 +45,21 @@ function runNodeTest(files, extraArgs = []) {
   return r.status ?? 1
 }
 
+function nodeMajor() {
+  return Number.parseInt(String(process.versions.node).split(".")[0], 10) || 0
+}
+
+/** Node 22+ only. Node 20 rejects the flag (exit 9) after a green main suite. */
+function settingsWebIsolationArgs() {
+  if (nodeMajor() < 22) return []
+  // Node 22 child-process test IPC intermittently V8-deserializes stdout
+  // ("Unable to deserialize cloned data…", nodejs/node#64061 / camunda/c8ctl#182;
+  // same English error as the older structuredClone ticket #49844, different stack).
+  // A lone in-process file has no IPC channel. Unflagged --test-isolation exists
+  // only on Node >= 23; Node 22 rejects it; 22 and 24 accept the experimental name.
+  return ["--experimental-test-isolation=none"]
+}
+
 let code = runNodeTest(main)
-// settings-web is a single file run last; execute it in-process
-// (--experimental-test-isolation=none). Node 22's child-process test IPC has
-// an intermittent V8 deserialization crash ("Unable to deserialize cloned
-// data due to invalid or unsupported version", nodejs/node#49844) that fails
-// the file after all its tests pass. A lone in-process file has no IPC
-// channel, so the flake class is eliminated; isolation semantics are
-// unchanged (there are no sibling files to share state with). The
-// experimental flag name is used because the unflagged --test-isolation only
-// exists on Node >= 23 — Node 22 (CI + shipped runtime) rejects it, while
-// both 22 and 24 accept the experimental spelling.
-if (code === 0) code = runNodeTest(settings, ["--experimental-test-isolation=none"])
+if (code === 0) code = runNodeTest(settings, settingsWebIsolationArgs())
 process.exit(code)

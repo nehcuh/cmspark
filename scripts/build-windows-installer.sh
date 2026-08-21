@@ -16,6 +16,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 if command -v cygpath >/dev/null 2>&1; then
   ROOT_DIR="$(cygpath -m "${ROOT_DIR}")"
 fi
+# shellcheck source=win-vendor-bins.sh
+. "${ROOT_DIR}/scripts/win-vendor-bins.sh"
 
 VERSION="$(node -p "require('${ROOT_DIR}/companion/package.json').version")"
 STAGING="${CMSPARK_STAGING_DIR:-${ROOT_DIR}/dist-package/cmspark-windows-x64}"
@@ -32,8 +34,8 @@ find_makensis() {
     command -v makensis
     return 0
   fi
-  local c
-  for c in \
+  local found
+  if found="$(find_windows_pe \
     "/c/Program Files (x86)/NSIS/Bin/makensis.exe" \
     "/c/Program Files/NSIS/Bin/makensis.exe" \
     "/c/Program Files (x86)/NSIS/makensis.exe" \
@@ -41,11 +43,14 @@ find_makensis() {
     "C:/Program Files (x86)/NSIS/Bin/makensis.exe" \
     "C:/Program Files/NSIS/Bin/makensis.exe" \
     "C:/Program Files (x86)/NSIS/makensis.exe" \
-    "C:/Program Files/NSIS/makensis.exe" \
-    "/usr/bin/makensis" \
-    "/usr/local/bin/makensis"
-  do
-    if [ -x "${c}" ]; then
+    "C:/Program Files/NSIS/makensis.exe"
+  )"; then
+    printf '%s' "${found}"
+    return 0
+  fi
+  local c
+  for c in "/usr/bin/makensis" "/usr/local/bin/makensis"; do
+    if [ -f "${c}" ]; then
       printf '%s' "${c}"
       return 0
     fi
@@ -60,7 +65,7 @@ else
   MAKENSIS=""
 fi
 
-if [ -z "${MAKENSIS}" ] || [ ! -x "${MAKENSIS}" ]; then
+if [ -z "${MAKENSIS}" ] || [ ! -f "${MAKENSIS}" ]; then
   if [ "${REQUIRE}" = "1" ]; then
     echo "ERROR: makensis not found (CMSPARK_REQUIRE_NSIS=1). Install NSIS 3.12.0 (choco install nsis --version=3.12.0) and re-run." >&2
     exit 1
