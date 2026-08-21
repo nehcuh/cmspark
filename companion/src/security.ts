@@ -1036,6 +1036,18 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "allowed director", // "allowed directories" / "allowed directory"
     "outside allowed",
     "path is outside",
+    // Web act-loop W1/W3′/W4 coded errors (default is non_recoverable)
+    "selector_or_text_required",
+    "element_not_found",
+    "element_ambiguous",
+    "invalid_selector",
+    "wrong_origin",
+    "cdp_attach_failed",
+    "eval_dead_world",
+    "eval_thrown",
+    "dom_script_loop_capped",
+    "dom_script_volume_capped",
+    "type_unsupported_editor",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"

@@ -1,16 +1,15 @@
 /**
- * Visible-text element finder for browser_download / future click({text}).
- * Pure helpers — unit-testable without Chrome (PR-6 / plan D10).
+ * Visible-text element finder for browser_download and click({text}) (web act-loop W1).
+ * Pure helpers — unit-testable without Chrome (PR-6 / plan D10 / spec 2026-08-21).
  *
  * Matching rules:
- * - Prefer interactive candidates: a, button, [role=button], input[type=submit|button],
- *   [onclick], label
- * - Fallback: any visible element whose direct text matches
+ * - Prefer interactive candidates (buttons, links, form fields, contenteditable)
+ * - Fallback: any visible element whose text matches
  * - exact=false (default): case-sensitive substring contains
  * - exact=true: trimmed text equality
  * - 0 → ELEMENT_NOT_FOUND; >1 after prefer → ELEMENT_AMBIGUOUS
  *
- * Side effect in-page: marks single hit with data-cmspark-dl-hit="1" for click fallback.
+ * Side effect in-page: marks hits with hitAttr (download vs click namespaces).
  */
 
 export interface TextMatchSummary {
@@ -25,18 +24,31 @@ export interface TextMatchResult {
   matches: TextMatchSummary[]
 }
 
+export const DOWNLOAD_HIT_ATTR = "data-cmspark-dl-hit"
+export const CLICK_HIT_ATTR = "data-cmspark-hit"
+
+/** Buttons + form fields so fill_form({text}) does not uniquely match a <label>. */
+export const INTERACTIVE_SEL =
+  'a,button,[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="option"],[role="checkbox"],input,textarea,select,[contenteditable="true"],[contenteditable=""],[role="textbox"],[onclick],label,summary'
+
 /**
  * Build a Runtime.evaluate / scripting expression that returns TextMatchResult.
- * Uses JSON.stringify for safe text embedding.
+ * Uses JSON.stringify for safe text embedding. hitAttr defaults to download namespace.
  */
-export function buildFindByTextExpression(text: string, exact = false): string {
+export function buildFindByTextExpression(
+  text: string,
+  exact = false,
+  hitAttr: string = DOWNLOAD_HIT_ATTR,
+): string {
   const textLit = JSON.stringify(text)
   const exactLit = exact ? "true" : "false"
-  // IIFE — no outer free variables. Marks matches with data-cmspark-dl-hit for click.
+  const attrLit = JSON.stringify(hitAttr)
+  // IIFE — no outer free variables. Marks matches with parameterized hitAttr.
   return `(()=>{
   const needle=${textLit};
   const exact=${exactLit};
-  document.querySelectorAll('[data-cmspark-dl-hit]').forEach(el=>el.removeAttribute('data-cmspark-dl-hit'));
+  const hitAttr=${attrLit};
+  document.querySelectorAll('['+hitAttr+']').forEach(el=>el.removeAttribute(hitAttr));
   function visible(el){
     if(!el||el.nodeType!==1)return false;
     const st=window.getComputedStyle(el);
@@ -49,7 +61,7 @@ export function buildFindByTextExpression(text: string, exact = false): string {
     for(const n of el.childNodes){
       if(n.nodeType===3) t+=n.textContent||'';
     }
-    const aria=(el.getAttribute&& (el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('value')))||'';
+    const aria=(el.getAttribute&& (el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('value')||el.getAttribute('placeholder')))||'';
     const full=((el.innerText||el.textContent||'')+ ' ' + aria).replace(/\\s+/g,' ').trim();
     return full;
   }
@@ -59,7 +71,7 @@ export function buildFindByTextExpression(text: string, exact = false): string {
     if(exact) return t===String(needle).trim();
     return t.includes(needle);
   }
-  const interactiveSel='a,button,[role="button"],input[type="submit"],input[type="button"],[onclick],label,summary';
+  const interactiveSel=${JSON.stringify(INTERACTIVE_SEL)};
   const interactive=Array.from(document.querySelectorAll(interactiveSel)).filter(visible).filter(matches);
   let pool=interactive;
   if(pool.length===0){
@@ -71,6 +83,9 @@ export function buildFindByTextExpression(text: string, exact = false): string {
       return true;
     });
   }
+  const formSel='input,textarea,select,[contenteditable="true"],[contenteditable=""],[role="textbox"]';
+  const formHits=pool.filter(el=>{ try{ return el.matches(formSel); }catch(e){ return false; } });
+  if(formHits.length>0) pool=formHits;
   const matchesOut=pool.slice(0,10).map(el=>{
     const r=el.getBoundingClientRect();
     return {
@@ -81,9 +96,9 @@ export function buildFindByTextExpression(text: string, exact = false): string {
     };
   });
   if(pool.length===1){
-    pool[0].setAttribute('data-cmspark-dl-hit','1');
+    pool[0].setAttribute(hitAttr,'1');
   } else if(pool.length>1){
-    pool.forEach((el,i)=>{ if(i<5) el.setAttribute('data-cmspark-dl-hit',String(i+1)); });
+    pool.forEach((el,i)=>{ if(i<5) el.setAttribute(hitAttr,String(i+1)); });
   }
   return { count: pool.length, matches: matchesOut };
 })()`

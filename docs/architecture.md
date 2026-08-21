@@ -302,12 +302,12 @@ Agent 执行:
   │    ├─ get_page_text → 检测到登录页
   │    ├─ get_cookies → 发现已有 SSO session（2小时前在系统A登录）
   │    ├─ navigate(hr.company.com/dashboard) → 免登录进入
-  │    ├─ click("员工管理") → navigate → get_page_text
+  │    ├─ click({text:"员工管理"}) → navigate → get_page_text
   │    └─ evaluate("提取表格数据") → [{name, dept, joinDate}, ...]
   │
   ├─ [14:35] Tab: finance.company.com
   │    ├─ navigate → 同样免登录（共享 SSO cookie .company.com）
-  │    ├─ type("#search", name) → click("搜索") × N
+  │    ├─ type("#search", name) → click({text:"搜索"}) × N
   │    └─ evaluate("提取报销汇总") → [{name, total, status}, ...]
   │
   └─ [14:40] 结果汇总:

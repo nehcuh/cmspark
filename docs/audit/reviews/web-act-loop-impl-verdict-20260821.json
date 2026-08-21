@@ -1,0 +1,18 @@
+{
+  "batch_id": "web-act-loop-wave1-20260821",
+  "timestamp": "2026-08-21T07:25:00Z",
+  "blast_tier": "T2",
+  "machine": "PASS",
+  "adversary": {
+    "locator": "APPROVE_WITH_NITS",
+    "budget": "APPROVE_WITH_NITS",
+    "win32_first": "REJECT",
+    "win32_rereview": "APPROVE_WITH_NITS"
+  },
+  "pi_rereview": {
+    "claude": "APPROVE_WITH_NITS",
+    "kimi": "APPROVE_WITH_NITS"
+  },
+  "merge": "NO",
+  "reason": "T2 not auto-merge; no PR/CI this turn; packaged app unpatched; a7ubt9/win32 live replay not claimed"
+}
