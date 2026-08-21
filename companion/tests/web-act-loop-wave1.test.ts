@@ -56,6 +56,7 @@ test("classifyError: new act-loop codes are recoverable", () => {
     "DOM_SCRIPT_VOLUME_CAPPED: stop",
     "TYPE_UNSUPPORTED_EDITOR: ce",
     "ELEMENT_NOT_FOUND: no visible element",
+    "WAIT_CONDITION_REQUIRED: selector or network_idle is required",
   ]
   for (const c of codes) {
     assert.equal(classifyError(c), "recoverable", c)

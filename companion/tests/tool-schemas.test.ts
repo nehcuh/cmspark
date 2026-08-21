@@ -87,6 +87,11 @@ test("create_tab: accepts http URL with optional active flag", () => {
   assert.equal(out.active, false)
 })
 
+test("create_tab: wait_for_load false is not stripped (runtime adversary hatch)", () => {
+  const out = parseToolArgs("create_tab", { url: "https://zhuanlan.zhihu.com/write", wait_for_load: false })
+  assert.equal(out.wait_for_load, false)
+})
+
 test("create_tab: rejects missing URL", () => {
   assert.throws(
     () => parseToolArgs("create_tab", {}),
@@ -247,6 +252,19 @@ test("unknown tool accepts any shape including edge cases", () => {
   // Wild shapes — generic fallback doesn't constrain.
   const wild = { foo: null, bar: [true, false, null] }
   assert.deepEqual(parseToolArgs("some_unknown_tool", wild), wild)
+})
+
+test("wait_for tabId-only (thread 1snvlv) parses — do not require selector/network_idle", () => {
+  const out = parseToolArgs("wait_for", { tabId: 1492094196 })
+  assert.equal(out.tabId, 1492094196)
+  assert.equal(out.selector, undefined)
+  assert.equal(out.network_idle, undefined)
+})
+
+test("wait_for accepts selector or network_idle or timeout", () => {
+  assert.equal(tryParseToolArgs("wait_for", { tabId: 1, selector: "#app" }).ok, true)
+  assert.equal(tryParseToolArgs("wait_for", { tabId: 1, network_idle: true, settle_ms: 3000 }).ok, true)
+  assert.equal(tryParseToolArgs("wait_for", { tabId: 1, timeout: 5000 }).ok, true)
 })
 
 // =============================================================================

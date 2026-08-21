@@ -140,6 +140,18 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     modifiers: z.number().int().optional(),
   }),
 
+  // TabId-only is valid (thread 1snvlv). Do NOT refine selector|network_idle —
+  // companion + extension default missing condition to network_idle.
+  wait_for: z.object({
+    tabId: tabIdSchema,
+    selector: z.string().min(1).optional(),
+    state: z.enum(["visible", "hidden"]).optional(),
+    timeout: z.number().positive().optional(),
+    network_idle: z.boolean().optional(),
+    settle_ms: z.number().nonnegative().optional(),
+    interval: z.number().positive().optional(),
+  }),
+
   // --- browser_download (P1.0: click/text → chrome.downloads complete) ---
   // At least one of selector|text required (refine). downloadPath optional; companion
   // re-validates with assertDownloadPathAllowed (LLM path never trusted raw).
@@ -323,6 +335,7 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     url: urlSchema,
     active: z.boolean().optional(),
     index: z.number().int().min(0).optional(),
+    wait_for_load: z.boolean().optional(),
   }),
   set_tab_url: z.object({
     tabId: tabIdSchema,

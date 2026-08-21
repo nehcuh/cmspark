@@ -443,6 +443,17 @@ test("classifyError ENOENT / no such file is recoverable (workspace missing path
   )
 })
 
+test("classifyError wait_for missing selector/network_idle is recoverable (thread 1snvlv)", () => {
+  assert.equal(
+    classifyError("selector or network_idle is required", { toolName: "wait_for" }),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError("WAIT_CONDITION_REQUIRED: selector or network_idle is required", { toolName: "wait_for" }),
+    "recoverable",
+  )
+})
+
 test("classifyError osascript missing url/expression is recoverable (not chat-killing)", () => {
   // Regression l74du8: LLM often omitted url; runtime error was default non_recoverable
   // → "不可恢复错误: url and expression required" and the whole turn stopped.

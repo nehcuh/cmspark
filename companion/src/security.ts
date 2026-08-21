@@ -1038,6 +1038,9 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "path is outside",
     // Web act-loop W1/W3′/W4 coded errors (default is non_recoverable)
     "selector_or_text_required",
+    "wait_condition_required",
+    "selector or network_idle",
+    "network_idle is required",
     "element_not_found",
     "element_ambiguous",
     "invalid_selector",

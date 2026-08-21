@@ -44,6 +44,7 @@ import {
   cappedDomScriptResult,
 } from "../tool/dom-script-budget"
 import { getCachedTabUrl } from "../ws/tab-url-cache"
+import { normalizeWaitForParams } from "../tool/wait-for-params"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -473,7 +474,7 @@ CRITICAL RULES:
 3. For create_tab, always pass the full URL parameter. Use http(s) URLs. Do NOT use create_tab/navigate/set_tab_url with file: to *read* a document (especially PDF) — ask the user to drag the file into the chat. Only use file: if the user explicitly asked to open a local file in the browser. Listing local files is mcp__filesystem__* (rule 10), a different gate from opening a tab.
 4. Use navigate(tabId, url) to change a tab's URL — check list_tabs for existing tabs first.
 5. Before calling screenshot or page tools, ensure the tab is on a real website (not chrome:// or about:blank).
-6. Wait for pages to load before extracting content.
+6. Wait for pages to load before extracting content. After create_tab/navigate, wait_for({tabId}) or wait_for({tabId, network_idle:true}) waits for load (tabId-only is treated as network_idle). Use wait_for({tabId, selector}) when waiting for a specific element.
 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate. For clicking visible labels use click({text}) or click({selector}) — text is exclusive when provided. If a tool returns CDP_ATTACH_FAILED, call list_tabs / ask the user to focus the tab; do NOT retry via evaluate or host_computer (same debugger / not a web fallback).
 8. ${
   os.platform() === "darwin"
@@ -1152,7 +1153,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             }
           }
           const execParams = {
-            ...params,
+            ...normalizeWaitForParams(toolName, params as Record<string, unknown>),
             tabId: resolvedTabId,
             // Grill Q1: computer session-trust keys off chat thread, not WS uuid.
             __thread_id: threadId,

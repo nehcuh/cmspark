@@ -26,6 +26,10 @@
           "active": {
             "type": "boolean",
             "description": "是否激活新标签页，默认 true"
+          },
+          "wait_for_load": {
+            "type": "boolean",
+            "description": "是否等待页面加载完成再返回，默认 true。false 则立即返回（可能 url/title 仍空）"
           }
         },
         "required": [
@@ -510,7 +514,7 @@
     "type": "function",
     "function": {
       "name": "wait_for",
-      "description": "等待条件满足（选择器出现/消失或网络空闲）",
+      "description": "等待页面加载或元素出现。只传 tabId（或 tabId+timeout）视为等待加载完成（network_idle）。也可传 selector 等指定元素，或显式 network_idle:true。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -519,7 +523,7 @@
           },
           "selector": {
             "type": "string",
-            "description": "等待的 CSS 选择器"
+            "description": "等待的 CSS 选择器。与 network_idle 二选一；都不传则默认 network_idle"
           },
           "state": {
             "type": "string",
@@ -531,11 +535,15 @@
           },
           "timeout": {
             "type": "number",
-            "description": "超时毫秒数，默认 15000"
+            "description": "超时毫秒数，默认 12000（须低于 companion WS 15s）"
           },
           "network_idle": {
             "type": "boolean",
-            "description": "等待网络空闲"
+            "description": "等待页面加载完成后再短暂 settle。不传 selector 时默认 true"
+          },
+          "settle_ms": {
+            "type": "number",
+            "description": "network_idle 时加载完成后的额外等待毫秒，默认 2000"
           }
         },
         "required": [
