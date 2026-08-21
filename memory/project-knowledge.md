@@ -2,6 +2,20 @@
 
 ## Process Patterns
 
+### 打包 Node 无 npm：npx 会去 lstat `<app>/Contents/lib`（2026-08-21 · 会议+MCP 同日翻车）
+- **现象**：MCP filesystem `-32000 Connection closed`；stderr `ENOENT lstat /Applications/CMspark.app/Contents/lib`
+- **根因**：DMG 只带 `Contents/Resources/node`（无 npx/npm、无 `Contents/lib`）。`buildSpawnPath` 把该目录排 PATH 最前 → nvm 的 `npx` 跑在打包 node 下 → npm prefix=`Contents/`
+- **纪律**：(1) 只把 **node+npx 成对** 的目录放 PATH 头；未配对打包 node 必须排在用户 PATH **之后**；(2) MCP stdio **强制** `npm_config_prefix=~/.cmspark-agent/npm-prefix`（mkdir，不写进 .app，免得坏签名）；(3) 文档不得用现在时暗示「已安装包已修好」——旧 DMG 要 `config.env.PATH=nvm/bin` 或重打包
+- **测**：`dirHasNpx` 假 Resources；`buildSpawnPath({execPath: bundled node})` 断言 nvm 对在 Resources 前；`buildMcpStdioEnv` prefix；`launch-companion.sh` 含 `npm_config_prefix`（zip；MCP 子进程不依赖它）
+- **4 行 case**：动作=spawn `npx -y @modelcontextprotocol/server-filesystem`；失败=Contents/lib ENOENT；归责=AI/产品把未配对 node 当 nvm 对；保护=Compose mcp-server 在打包 Companion 下可启动
+
+### 会议「结束并生成纪要」死等 STT ACK（2026-08-21 · 同日 Companion SIGTERM）
+- **现象**：点结束 UI 仍「正在听…约 8 秒出第一段字」；`meeting.recording_reconciled`→`ready` 无纪要
+- **根因**：近实时 streaming 在 `voice.stt.end` 后 **无限** `pending`；`stop()` 在 `waiting` 几乎空操作。Companion 一死 ACK 永不来，`onEnd`/`finalizeCapture` 不跑
+- **纪律**：(1) STT pending 必须有墙钟（默认 95s；用户 stop 后 `stopGrace` 12s **含 waiting 重武装**）；(2) 工作台 stopping 20s failsafe + 断连 5s debounce（WS 1s blip 不得杀录）；(3) **不得**在 Companion 断开时 `pendingGenerate=true` 后 fire-and-forget WS——对抗 REJECT：按钮卡「生成中」。须 defer-reconnect + watchdog
+- **测**：classic/streaming「companion never ACKs」→ `onEnd` 于 stopGrace 内；`meetingMinutesSendPlan(false)==="defer-reconnect"`；stopping hint ≠ 正在听
+- **4 行 case**：动作=结束并生成纪要；失败=永远 listening + 无 minutes；归责=规格漏了「ACK 永不来」；保护=L0 会议可结束、转写可再生成纪要
+
 ### L2 批准后再跑 regex 硬拦 = 假「拒绝弹窗」（2026-08-20 · #203 · fzbcro）
 - **现象**：日志 `security.confirmation.approved` 后立刻 `contains high-risk APIs (fetch). Execution requires user confirmation`；聊天再套「若你已拒绝弹窗」；用户以为没弹窗
 - **根因**：(1) `companion-dispatch` 在 **valid token 之后** 仍 `return checkHighRiskExecution.error`；(2) `formatChatErrorLine` 凡 `error_level===security` 一律加拒绝弹窗，不看 denied/timeout/unavailable

@@ -27,6 +27,49 @@ export const MEETING_AUDIO_IMPORT_MAX_DURATION_SEC = MEETING_LIVE_HARD_CAP_MS / 
  */
 export const MEETING_AUDIO_IMPORT_MAX_FILE_BYTES = 200 * 1024 * 1024
 
+/**
+ * If 「结束并生成纪要」 stays in stopping because the STT adapter hung
+ * (Companion restart mid-window), force-finalize after this wall time.
+ * Longer than LOCAL_STT_STOP_GRACE_MS (12s) so a live last-window infer can finish.
+ */
+export const MEETING_STOP_FAILSAFE_MS = 20_000
+
+/**
+ * Companion WS blips are ~1s; a SIGTERM restart was ~18s. After this of
+ * disconnect while still capturing, force-finalize so the UI cannot stay on
+ * 「正在听」 waiting for a dead STT session.
+ */
+export const MEETING_DISCONNECT_FINALIZE_MS = 5_000
+
+/** If minutes_result never arrives (WS drop after send), unblock 「生成会议纪要」. */
+export const MEETING_MINUTES_WATCHDOG_MS = 90_000
+
+/** Companion down: do not leave busy/pendingGenerate stuck on a dropped WS send. */
+export function meetingMinutesSendPlan(connected: boolean): "send" | "defer-reconnect" {
+  return connected ? "send" : "defer-reconnect"
+}
+
+export type MeetingCapturePhase = "idle" | "starting" | "recording" | "processing" | "stopping"
+
+/** Copy under the live transcript while capturing. */
+export function meetingLiveInterimHint(opts: {
+  phase: MeetingCapturePhase
+  interimText: string
+  nearRealtime: boolean
+  refinePending: number
+}): string {
+  const extra = opts.refinePending > 0 ? ` · AI 纠错中(${opts.refinePending})` : ""
+  if (opts.interimText.trim()) return `识别中… ${opts.interimText.trim()}${extra}`
+  if (opts.phase === "stopping") return `正在结束…等待最后一段识别${extra}`
+  if (opts.phase === "processing") return `分段识别中…${extra}`
+  if (opts.phase === "starting") return `正在启动识别…${extra}`
+  return (
+    (opts.nearRealtime
+      ? "正在听…约 8 秒出第一段字（渐进假设，非字级流式）"
+      : "正在听…本段结束后出字") + extra
+  )
+}
+
 /** Format wall clock for meeting status (m:ss or h:mm:ss). */
 export function formatMeetingElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))

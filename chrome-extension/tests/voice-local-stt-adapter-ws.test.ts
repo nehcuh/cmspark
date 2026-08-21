@@ -552,3 +552,91 @@ test("error from companion while waiting: maps code", async () => {
 
   adapter.destroy()
 })
+
+test("classic: companion never ACKs end → stop still fires onEnd after stopGrace", async () => {
+  const wav = silentWav()
+  const events: string[] = []
+  const adapter = createLocalSttAdapter(
+    {
+      onStart: () => events.push("start"),
+      onResult: () => events.push("result"),
+      onError: (c) => events.push(`error:${c}`),
+      onEnd: () => events.push("end"),
+      onCaptureStopped: () => events.push("capture_stopped"),
+    },
+    {
+      send: () => {},
+      onMessage: () => () => {},
+      modelId: "medium",
+      startCapture: fakeCaptureFactory(wav),
+      pendingTimeoutMs: 5_000,
+      stopGraceMs: 40,
+    },
+  )
+
+  adapter.start({ sessionId: "s-hang-classic", modelId: "medium" })
+  await new Promise((r) => setTimeout(r, 20))
+  adapter.stop()
+  await new Promise((r) => setTimeout(r, 120))
+
+  assert.ok(events.includes("capture_stopped"), `got ${events.join(",")}`)
+  assert.ok(events.includes("end"), `stop must not hang waiting for STT ACK; got ${events.join(",")}`)
+  assert.ok(!events.includes("result"))
+  adapter.destroy()
+})
+
+test("streaming: stop while waiting for missing end ACK fires onEnd within stopGrace", async () => {
+  const events: string[] = []
+  const sent: any[] = []
+  const adapter = createLocalSttAdapter(
+    {
+      onStart: () => events.push("start"),
+      onResult: () => events.push("result"),
+      onError: (c) => events.push(`error:${c}`),
+      onEnd: () => events.push("end"),
+      onCaptureStopped: () => events.push("capture_stopped"),
+    },
+    {
+      send: (m) => sent.push(m),
+      onMessage: () => () => {},
+      modelId: "medium",
+      pendingTimeoutMs: 400,
+      stopGraceMs: 40,
+      startPcmStreamCapture: async (opts) => ({
+        stop: async () => {
+          opts.onPcmChunk(new Uint8Array([1, 0, 2, 0]))
+        },
+        abort: () => {},
+        backend: "audioworklet",
+      }),
+    },
+  )
+
+  adapter.start({
+    sessionId: "s-hang-stream",
+    modelId: "medium",
+    mode: "continuous",
+    streamPartial: true,
+    segmentMs: 30,
+    hardCapMs: 5_000,
+  })
+  await new Promise((r) => setTimeout(r, 80))
+  assert.ok(
+    events.includes("capture_stopped"),
+    `window should have ended; got ${events.join(",")}`,
+  )
+  assert.ok(
+    sent.some((m) => m.type === "voice.stt.end"),
+    "streaming window must send voice.stt.end",
+  )
+  const t0 = Date.now()
+  adapter.stop()
+  await new Promise((r) => setTimeout(r, 120))
+  const waited = Date.now() - t0
+  assert.ok(events.includes("end"), `stop while waiting must not hang; got ${events.join(",")}`)
+  assert.ok(
+    waited < 300,
+    `stopGrace must shorten the pending wait (waited ${waited}ms, pendingTimeout was 400ms)`,
+  )
+  adapter.destroy()
+})

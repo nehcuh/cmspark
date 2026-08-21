@@ -70,6 +70,7 @@ tail -f ~/.cmspark-agent/logs/companion-$(date +%Y-%m-%d).log | grep -i "mcp.cli
 - `args` 里的允许目录不存在（filesystem server 会因此崩溃）。
 - server 需要交互式确认（如 pentest-ai 的 AUP），但 daemon 是非交互的 —— 加对应 env var，如 `PENTEST_AI_AUP_ACCEPTED=1`。
 - command/args 写错，或依赖的命令未安装。
+- **打包版 `.app` + `npx`：** 安装包只带 `Contents/Resources/node`、不带 npm。若 PATH 把该目录排在 nvm 的 `npx` 前面，npm 会去 `lstat /Applications/CMspark.app/Contents/lib` 并立刻退出。**已发布的旧包没有这层修复**——立刻可用的办法是在该 server 的 `env.PATH` 写 nvm 的 `bin`（不要包含 `CMspark.app/Contents/Resources`），或把 `npm_config_prefix` 指到 `~/.cmspark-agent/npm-prefix`。新版本 Companion 会把「带 npx 的 node 目录」排在打包 node 之前，并默认 pin 这个 prefix。
 
 ### "此 server 未声明 tools 能力"
 

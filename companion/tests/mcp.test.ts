@@ -15,7 +15,7 @@ import {
   isMcpNamespaced,
   sanitizeSegment,
 } from "../src/mcp/aggregator.js"
-import { buildSpawnPath } from "../src/mcp/transport.js"
+import { buildSpawnPath, dirHasNpx } from "../src/mcp/transport.js"
 import type { McpToolMeta } from "../src/mcp/types.js"
 
 // ============================================================================
@@ -218,6 +218,42 @@ test("buildSpawnPath includes the running node's bin directory so npx is findabl
     segments.includes(nodeBin),
     `buildSpawnPath should include node's bin dir (${nodeBin}); got: ${p}`,
   )
+})
+
+test("dirHasNpx: packaged Resources/node without npx sibling is unpaired", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mcp-npx-"))
+  try {
+    const resDir = path.join(tmp, "Fake.app", "Contents", "Resources")
+    fs.mkdirSync(resDir, { recursive: true })
+    fs.writeFileSync(path.join(resDir, "node"), "")
+    assert.equal(dirHasNpx(resDir), false)
+    fs.writeFileSync(path.join(resDir, process.platform === "win32" ? "npx.cmd" : "npx"), "")
+    assert.equal(dirHasNpx(resDir), true)
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test("buildSpawnPath: bundled node without npx must not precede an npx pair (Contents/lib ENOENT)", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mcp-bundle-"))
+  try {
+    const resDir = path.join(tmp, "CMspark.app", "Contents", "Resources")
+    fs.mkdirSync(resDir, { recursive: true })
+    const bundledNode = path.join(resDir, "node")
+    fs.writeFileSync(bundledNode, "")
+    const p = buildSpawnPath({ execPath: bundledNode })
+    const segments = p.split(path.delimiter)
+    assert.ok(segments.includes(resDir), `bundled node dir still on PATH: ${p}`)
+    const paired = path.dirname(process.execPath)
+    if (segments.includes(paired) && fs.existsSync(path.join(paired, process.platform === "win32" ? "npx.cmd" : "npx"))) {
+      assert.ok(
+        segments.indexOf(paired) < segments.indexOf(resDir),
+        `npx-paired node dir (${paired}) must precede bundled Resources (${resDir}); got: ${p}`,
+      )
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
 })
 
 test("buildSpawnPath fills in common macOS/Linux locations when PATH is stripped", () => {
