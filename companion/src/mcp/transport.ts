@@ -35,17 +35,46 @@ export interface TransportExtras {
  *   3. Well-known Windows locations (npm global bin, Node.js, fnm, Volta,
  *      Python Scripts for pip/uvx, Scoop, Chocolatey)
  */
-export function buildSpawnPath(): string {
+export type BuildSpawnPathOpts = {
+  /** Override process.execPath (tests / packaged layout). */
+  execPath?: string
+}
+
+const NPX_BASENAMES =
+  process.platform === "win32" ? ["npx.cmd", "npx.exe", "npx"] : ["npx"]
+
+/** True when `dir` contains an npx binary (node+npx are a matching pair). */
+export function dirHasNpx(dir: string): boolean {
+  if (!dir) return false
+  for (const name of NPX_BASENAMES) {
+    try {
+      if (fs.existsSync(path.join(dir, name))) return true
+    } catch {
+      /* ignore */
+    }
+  }
+  return false
+}
+
+export function buildSpawnPath(opts?: BuildSpawnPathOpts): string {
   const existing = process.env.PATH ?? ""
   // Drop file-in-PATH segments (spawn ENOTDIR). Keep only real directories.
   const segments = new Set<string>(keepOnlyDirectories(splitPathEnv(existing)))
 
   const candidates: string[] = []
-  // 1. Sibling binaries of the running node (npx/npm live alongside node).
+  // 1. Sibling binaries of the running node — ONLY if npx lives there too.
+  // Packaged CMspark.app ships Contents/Resources/node without npm/npx.
+  // Prepending that dir makes `npx` (from nvm) run under the bundled node,
+  // and npm then lstats `<app>/Contents/lib` → ENOENT (MCP -32000).
+  let nodeDir = ""
   try {
-    candidates.push(path.dirname(process.execPath))
+    nodeDir = path.dirname(opts?.execPath ?? process.execPath)
   } catch {
-    // ignore
+    nodeDir = ""
+  }
+  const nodeDirPaired = nodeDir ? dirHasNpx(nodeDir) : false
+  if (nodeDirPaired) {
+    candidates.push(nodeDir)
   }
   // 2. macOS homebrew (apple silicon + intel)
   candidates.push("/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin")
@@ -127,7 +156,7 @@ export function buildSpawnPath(): string {
     }
   }
 
-  // Re-order: node-sibling dir + homebrew first, then the user's existing PATH.
+  // Re-order: paired node + homebrew/nvm first, then the user's existing PATH.
   const head: string[] = []
   for (const c of candidates) {
     if (c && segments.has(c)) {
@@ -135,7 +164,10 @@ export function buildSpawnPath(): string {
       segments.delete(c)
     }
   }
-  return [...new Set([...head, ...Array.from(segments)])].join(path.delimiter)
+  // Packaged node without npx: last-resort `node` only — never ahead of asdf/mise leftovers.
+  const tail = Array.from(segments).filter((s) => !(nodeDir && !nodeDirPaired && s === nodeDir))
+  if (nodeDir && !nodeDirPaired) tail.push(nodeDir)
+  return [...new Set([...head, ...tail])].join(path.delimiter)
 }
 
 /** P0 SEC-02: env keys safe to inherit into MCP stdio children (no secrets). */
@@ -191,6 +223,18 @@ export function buildMcpStdioEnv(
     }
   }
   env.PATH = configEnv?.PATH || buildSpawnPath()
+  // Packaged node has no global prefix (`<app>/Contents/lib`). Pin npx/npm
+  // installs to the data dir so mixed nvm-npx + bundled-node cannot ENOENT.
+  if (!env.npm_config_prefix) {
+    const dataDir = process.env.CMSPARK_DATA_DIR || path.join(os.homedir(), ".cmspark-agent")
+    const prefix = path.join(dataDir, "npm-prefix")
+    try {
+      fs.mkdirSync(prefix, { recursive: true })
+    } catch {
+      /* best-effort */
+    }
+    env.npm_config_prefix = prefix
+  }
   return env
 }
 

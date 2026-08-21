@@ -26,3 +26,11 @@ test("P0 SEC-02: MCP stdio allows explicit config.env secrets (operator intent)"
   assert.equal(env.MY_MCP_TOKEN, "tok")
   assert.equal(env.PATH, "/custom/bin")
 })
+
+test("MCP stdio env pins npm_config_prefix under the data dir (packaged Contents/lib)", () => {
+  const env = buildMcpStdioEnv()
+  assert.ok(env.npm_config_prefix, "npm_config_prefix must be set")
+  assert.match(env.npm_config_prefix, /\.cmspark-agent[/\\]npm-prefix$/)
+  const overridden = buildMcpStdioEnv({ npm_config_prefix: "/tmp/custom-prefix" })
+  assert.equal(overridden.npm_config_prefix, "/tmp/custom-prefix")
+})

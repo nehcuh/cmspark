@@ -18,7 +18,11 @@ import {
   type CaptureHandle,
   type StartCaptureOpts,
 } from "./audio-capture"
-import { startPcmStreamCapture, type PcmStreamHandle } from "./pcm-stream-capture"
+import {
+  startPcmStreamCapture as defaultStartPcmStreamCapture,
+  type PcmStreamCaptureOpts,
+  type PcmStreamHandle,
+} from "./pcm-stream-capture"
 import {
   nextPartialPollMs,
   STREAM_PARTIAL_POLL_DEFAULT_MS,
@@ -44,7 +48,25 @@ export type LocalSttAdapterDeps = {
   onMessage: LocalSttOnMessage
   modelId: string
   startCapture?: (opts?: StartCaptureOpts) => Promise<CaptureHandle>
+  startPcmStreamCapture?: (opts: PcmStreamCaptureOpts) => Promise<PcmStreamHandle>
+  /**
+   * Wall timeout waiting for voice.stt.result/error after end().
+   * Companion infer cap is 90s; default a hair over that so a live infer can finish.
+   */
+  pendingTimeoutMs?: number
+  /**
+   * After user stop(), do not wait the full pendingTimeoutMs — Companion restart
+   * mid-window used to leave meeting "正在听" forever because stop() while
+   * waiting was a no-op until the missing ACK.
+   */
+  stopGraceMs?: number
 }
+
+/** Client wait for companion infer ACK (server STT_INFER_MAX_MS = 90s). */
+export const LOCAL_STT_PENDING_TIMEOUT_MS = 95_000
+
+/** After user stop, give the in-flight window this long then end anyway. */
+export const LOCAL_STT_STOP_GRACE_MS = 12_000
 
 /**
  * Soft-continue only for failures after end() when companion has dropBound.
@@ -130,6 +152,7 @@ export function createLocalSttAdapter(
   let wallStart = 0
   let segmentIndex = 0
   let pending: PendingWait | null = null
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null
   let loopGen = 0
   /** Continuous: resolve when current segment should stop recording. */
   let segmentStopTrigger: (() => void) | null = null
@@ -152,6 +175,9 @@ export function createLocalSttAdapter(
   let stopChainInFlight = false
   const SOFT_FAIL_MAX = 3
   const beginCapture = deps.startCapture ?? defaultStartCapture
+  const beginPcmStream = deps.startPcmStreamCapture ?? defaultStartPcmStreamCapture
+  const pendingTimeoutMs = deps.pendingTimeoutMs ?? LOCAL_STT_PENDING_TIMEOUT_MS
+  const stopGraceMs = deps.stopGraceMs ?? LOCAL_STT_STOP_GRACE_MS
 
   const clearSegmentTimer = () => {
     if (segmentTimer) {
@@ -165,6 +191,30 @@ export function createLocalSttAdapter(
       clearTimeout(partialTimer)
       partialTimer = null
     }
+  }
+
+  const clearPendingTimer = () => {
+    if (pendingTimer) {
+      clearTimeout(pendingTimer)
+      pendingTimer = null
+    }
+  }
+
+  const pendingWaitMs = () => (wantListening ? pendingTimeoutMs : Math.min(stopGraceMs, pendingTimeoutMs))
+
+  const armPendingTimer = (sid: string) => {
+    clearPendingTimer()
+    const ms = pendingWaitMs()
+    pendingTimer = setTimeout(() => {
+      pendingTimer = null
+      if (!pending || pending.sessionId !== sid) return
+      // Still listening: surface infer_timeout (soft streak). After user stop:
+      // empty_result so the loop can onEnd without a scary banner.
+      finishPending({
+        ok: false,
+        code: wantListening ? "infer_timeout" : "empty_result",
+      })
+    }, ms)
   }
 
   const clearSub = () => {
@@ -186,6 +236,7 @@ export function createLocalSttAdapter(
     loopGen += 1
     clearSegmentTimer()
     clearPartialTimer()
+    clearPendingTimer()
     segmentStopTrigger = null
     if (pcmStream) {
       try {
@@ -216,6 +267,7 @@ export function createLocalSttAdapter(
   }
 
   const finishPending = (r: { ok: true; text: string } | { ok: false; code: string }) => {
+    clearPendingTimer()
     const p = pending
     pending = null
     p?.resolve(r)
@@ -352,6 +404,7 @@ export function createLocalSttAdapter(
 
       pending = { sessionId: sid, resolve }
       sessionId = sid
+      armPendingTimer(sid)
 
       const chunks = splitIntoChunks(wav, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
       for (let seq = 0; seq < chunks.length; seq++) {
@@ -508,7 +561,7 @@ export function createLocalSttAdapter(
 
         // F7: open mic first, then voice.stt.start (avoid idle abort during gUM)
         try {
-          pcmStream = await startPcmStreamCapture({
+          pcmStream = await beginPcmStream({
             maxMs: windowMs,
             onPcmChunk: (pcm) => {
               if (dead || aborted || gen !== loopGen || sessionId !== segSid) return
@@ -650,6 +703,7 @@ export function createLocalSttAdapter(
         const result = await new Promise<{ ok: true; text: string } | { ok: false; code: string }>(
           (resolve) => {
             pending = { sessionId: segSid, resolve }
+            armPendingTimer(segSid)
             deps.send({
               type: "voice.stt.end",
               v: 1,
@@ -933,7 +987,11 @@ export function createLocalSttAdapter(
           }
           segmentStopTrigger?.()
         }
-        // uploading/waiting: let segment complete, loop exits
+        // Waiting for companion infer: re-arm with stopGrace so a dead
+        // Companion (SIGTERM mid-window) cannot leave the mic/UI hung.
+        if ((phase === "waiting" || phase === "uploading") && pending && sessionId) {
+          armPendingTimer(sessionId)
+        }
         return
       }
 
@@ -991,7 +1049,10 @@ export function createLocalSttAdapter(
           if (dead) return
           if (result.ok === false) {
             const errCode = result.code
-            handlers.onError(errCode === "aborted" ? "aborted" : errCode)
+            // User-stop timeout uses empty_result so we can onEnd without a banner.
+            if (errCode !== "empty_result") {
+              handlers.onError(errCode === "aborted" ? "aborted" : errCode)
+            }
           } else if (result.text.trim()) {
             handlers.onResult({ interim: "", finalChunk: result.text })
           }

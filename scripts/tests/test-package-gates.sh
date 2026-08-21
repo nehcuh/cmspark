@@ -134,6 +134,14 @@ assert_file_has "${INFO_PLIST}" '__CMSPARK_VERSION__' \
 assert_file_lacks "${INFO_PLIST}" '>[0-9]\+\.[0-9]\+\.[0-9]\+<' \
   "Info.plist template must not hardcode x.y.z (stamp at dmg time)"
 
+# --- Static: packaged node has no Contents/lib; npx must not use app prefix --
+echo "[static] launch-companion.sh pins npm_config_prefix off the .app bundle"
+LAUNCH_SH="${ROOT}/scripts/launch-companion.sh"
+assert_file_has "${LAUNCH_SH}" 'npm_config_prefix' \
+  "launch-companion.sh exports npm_config_prefix (packaged node has no Contents/lib)"
+assert_file_has "${LAUNCH_SH}" 'npm-prefix' \
+  "launch-companion.sh uses ~/.cmspark-agent/npm-prefix (or CMSPARK_DATA_DIR)"
+
 # --- Static: Makefile package-macos depends on build-host --------------------
 echo "[static] Makefile package-macos → build-host"
 assert_file_has "${MAKEFILE}" '^build-host:' \

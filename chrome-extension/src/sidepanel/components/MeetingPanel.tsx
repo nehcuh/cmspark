@@ -23,9 +23,14 @@ import {
 } from "../voice/meeting-template-storage"
 import {
   formatMeetingElapsed,
+  meetingLiveInterimHint,
+  meetingMinutesSendPlan,
+  MEETING_DISCONNECT_FINALIZE_MS,
   MEETING_LIVE_HARD_CAP_MS,
   MEETING_LIVE_SOFT_CAP_MS,
+  MEETING_MINUTES_WATCHDOG_MS,
   MEETING_NEAR_REALTIME_DEFAULT,
+  MEETING_STOP_FAILSAFE_MS,
 } from "../voice/meeting-caps"
 import { VOICE_DEFAULT_LANG } from "../voice/detect"
 import { mapLocalSttError } from "../voice/error-map"
@@ -149,6 +154,9 @@ export function MeetingPanel(props: {
   const refineGenRef = useRef(0)
   const refineQueueRef = useRef(createSerialRefineQueue())
   const asrRefinerEnabledRef = useRef(false)
+  const companionConnectedRef = useRef(false)
+  /** Companion died after 「结束并生成纪要」: retry when WS is back. */
+  const retryGenerateOnReconnectRef = useRef(false)
 
   meetingIdRef.current = meetingId
   transcriptRef.current = transcript
@@ -160,6 +168,7 @@ export function MeetingPanel(props: {
   asrRefinerEnabledRef.current = state.asrRefinerEnabled === true
 
   const companionConnected = state.connectionState === "connected"
+  companionConnectedRef.current = companionConnected
   const activeModelId = state.voiceModel?.localModelId || "medium"
   const localModelReady = state.voiceModel?.models?.[activeModelId]?.status === "ready"
   const localBinaryReady = state.voiceModel?.binary?.status === "ready"
@@ -327,6 +336,34 @@ export function MeetingPanel(props: {
   )
 
   /**
+   * Fire minutes job or defer until Companion is back.
+   * Product adversary B1: dropped WS send used to leave 「生成中…」 forever.
+   */
+  const sendMinutesJob = useCallback((id: string | null) => {
+    if (meetingMinutesSendPlan(companionConnectedRef.current) === "defer-reconnect") {
+      retryGenerateOnReconnectRef.current = true
+      setBusy(false)
+      setPendingGenerate(false)
+      setError(
+        (prev) =>
+          prev ||
+          "Companion 未连接；转写已保留，重连后将自动生成纪要（也可手动点「生成会议纪要」）",
+      )
+      return
+    }
+    retryGenerateOnReconnectRef.current = false
+    setBusy(true)
+    setPendingGenerate(true)
+    sendViaRuntime({
+      type: "meeting.generate_minutes",
+      v: 1,
+      id: id || undefined,
+      text: transcriptRef.current.trim() || undefined,
+      template_md: templateMdRef.current.trim() || undefined,
+    })
+  }, [])
+
+  /**
    * End server session + tear down adapter. Idempotent via finalizedRef.
    * Drains in-flight AI refine before end / silence-cut / minutes (dual-review nit #2).
    */
@@ -343,11 +380,6 @@ export function MeetingPanel(props: {
       const id = opts.id || meetingIdRef.current
       const wantGenerate = opts.generate
       const wantSegment = autoSegmentOnStopRef.current
-
-      if (wantGenerate) {
-        setBusy(true)
-        setPendingGenerate(true)
-      }
 
       void (async () => {
         // Wait for segment refine queue (cap ~22s) so minutes see refined text
@@ -378,27 +410,61 @@ export function MeetingPanel(props: {
         if (wantGenerate) {
           // Brief beat for silence-cut server apply before minutes job
           await new Promise((r) => setTimeout(r, 150))
-          const template_md = templateMdRef.current.trim() || undefined
-          if (id) {
-            sendViaRuntime({
-              type: "meeting.generate_minutes",
-              v: 1,
-              id,
-              template_md,
-            })
-          } else {
-            sendViaRuntime({
-              type: "meeting.generate_minutes",
-              v: 1,
-              text: transcriptRef.current.trim() || undefined,
-              template_md,
-            })
-          }
+          sendMinutesJob(id)
         }
       })()
     },
-    [destroyAdapter, dispatch, setPhase],
+    [destroyAdapter, dispatch, sendMinutesJob, setPhase],
   )
+
+  // Companion restart mid-window used to leave phase=stopping forever
+  // (adapter awaited a voice.stt.end ACK that never arrived). Force-finalize.
+  useEffect(() => {
+    if (capturePhase !== "stopping") return
+    const t = setTimeout(() => {
+      if (phaseRef.current !== "stopping" || finalizedRef.current) return
+      setError((prev) => prev || "结束超时：已停止录制。可基于已有转写生成纪要")
+      const gen = wantGenerateRef.current
+      wantGenerateRef.current = false
+      finalizeCapture({ generate: gen, id: meetingIdRef.current })
+    }, MEETING_STOP_FAILSAFE_MS)
+    return () => clearTimeout(t)
+  }, [capturePhase, finalizeCapture])
+
+  // Debounced disconnect: WS auth blips (~1s) must not kill capture; a real
+  // Companion death (SIGTERM ~18s this incident) must not leave 「正在听」.
+  useEffect(() => {
+    if (companionConnected) return
+    if (phaseRef.current === "idle") return
+    const t = setTimeout(() => {
+      if (finalizedRef.current) return
+      if (phaseRef.current === "idle") return
+      setError((prev) => prev || "Companion 断开，已停止录制。可基于已有转写生成纪要")
+      const gen = wantGenerateRef.current
+      wantGenerateRef.current = false
+      finalizeCapture({ generate: gen, id: meetingIdRef.current })
+    }, MEETING_DISCONNECT_FINALIZE_MS)
+    return () => clearTimeout(t)
+  }, [companionConnected, finalizeCapture])
+
+  useEffect(() => {
+    if (!companionConnected) return
+    if (!retryGenerateOnReconnectRef.current) return
+    if (phaseRef.current !== "idle") return
+    retryGenerateOnReconnectRef.current = false
+    sendMinutesJob(meetingIdRef.current)
+  }, [companionConnected, sendMinutesJob])
+
+  useEffect(() => {
+    if (!pendingGenerate) return
+    const t = setTimeout(() => {
+      setPendingGenerate(false)
+      setBusy(false)
+      retryGenerateOnReconnectRef.current = false
+      setError((prev) => prev || "纪要生成超时。转写已保留，可再点「生成会议纪要」")
+    }, MEETING_MINUTES_WATCHDOG_MS)
+    return () => clearTimeout(t)
+  }, [pendingGenerate])
 
   const startLocalSegments = useCallback(
     (id: string) => {
@@ -1056,13 +1122,7 @@ export function MeetingPanel(props: {
         silence_cut: true,
       })
     }
-    sendViaRuntime({
-      type: "meeting.generate_minutes",
-      v: 1,
-      id: meetingId || undefined,
-      text: transcript.trim() || undefined,
-      template_md: templateMdRef.current.trim() || undefined,
-    })
+    sendMinutesJob(meetingId)
   }
 
   const copyMinutes = async () => {
@@ -1583,12 +1643,12 @@ export function MeetingPanel(props: {
               whiteSpace: "pre-wrap",
             }}
           >
-            {interimText.trim()
-              ? `识别中… ${interimText.trim()}`
-              : nearRealtime
-                ? "正在听…约 8 秒出第一段字（渐进假设，非字级流式）"
-                : "正在听…本段结束后出字"}
-            {refinePending > 0 ? ` · AI 纠错中(${refinePending})` : ""}
+            {meetingLiveInterimHint({
+              phase: capturePhase,
+              interimText,
+              nearRealtime,
+              refinePending,
+            })}
           </div>
         ) : null}
       </label>

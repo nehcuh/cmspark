@@ -1,0 +1,775 @@
+diff --git a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+index a46cd95..d2e361b 100644
+--- a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+@@ -23,9 +23,14 @@ import {
+ } from "../voice/meeting-template-storage"
+ import {
+   formatMeetingElapsed,
++  meetingLiveInterimHint,
++  meetingMinutesSendPlan,
++  MEETING_DISCONNECT_FINALIZE_MS,
+   MEETING_LIVE_HARD_CAP_MS,
+   MEETING_LIVE_SOFT_CAP_MS,
++  MEETING_MINUTES_WATCHDOG_MS,
+   MEETING_NEAR_REALTIME_DEFAULT,
++  MEETING_STOP_FAILSAFE_MS,
+ } from "../voice/meeting-caps"
+ import { VOICE_DEFAULT_LANG } from "../voice/detect"
+ import { mapLocalSttError } from "../voice/error-map"
+@@ -149,6 +154,9 @@ export function MeetingPanel(props: {
+   const refineGenRef = useRef(0)
+   const refineQueueRef = useRef(createSerialRefineQueue())
+   const asrRefinerEnabledRef = useRef(false)
++  const companionConnectedRef = useRef(false)
++  /** Companion died after 「结束并生成纪要」: retry when WS is back. */
++  const retryGenerateOnReconnectRef = useRef(false)
+ 
+   meetingIdRef.current = meetingId
+   transcriptRef.current = transcript
+@@ -160,6 +168,7 @@ export function MeetingPanel(props: {
+   asrRefinerEnabledRef.current = state.asrRefinerEnabled === true
+ 
+   const companionConnected = state.connectionState === "connected"
++  companionConnectedRef.current = companionConnected
+   const activeModelId = state.voiceModel?.localModelId || "medium"
+   const localModelReady = state.voiceModel?.models?.[activeModelId]?.status === "ready"
+   const localBinaryReady = state.voiceModel?.binary?.status === "ready"
+@@ -326,6 +335,34 @@ export function MeetingPanel(props: {
+     [appendLocalAndRemote],
+   )
+ 
++  /**
++   * Fire minutes job or defer until Companion is back.
++   * Product adversary B1: dropped WS send used to leave 「生成中…」 forever.
++   */
++  const sendMinutesJob = useCallback((id: string | null) => {
++    if (meetingMinutesSendPlan(companionConnectedRef.current) === "defer-reconnect") {
++      retryGenerateOnReconnectRef.current = true
++      setBusy(false)
++      setPendingGenerate(false)
++      setError(
++        (prev) =>
++          prev ||
++          "Companion 未连接；转写已保留，重连后将自动生成纪要（也可手动点「生成会议纪要」）",
++      )
++      return
++    }
++    retryGenerateOnReconnectRef.current = false
++    setBusy(true)
++    setPendingGenerate(true)
++    sendViaRuntime({
++      type: "meeting.generate_minutes",
++      v: 1,
++      id: id || undefined,
++      text: transcriptRef.current.trim() || undefined,
++      template_md: templateMdRef.current.trim() || undefined,
++    })
++  }, [])
++
+   /**
+    * End server session + tear down adapter. Idempotent via finalizedRef.
+    * Drains in-flight AI refine before end / silence-cut / minutes (dual-review nit #2).
+@@ -344,11 +381,6 @@ export function MeetingPanel(props: {
+       const wantGenerate = opts.generate
+       const wantSegment = autoSegmentOnStopRef.current
+ 
+-      if (wantGenerate) {
+-        setBusy(true)
+-        setPendingGenerate(true)
+-      }
+-
+       void (async () => {
+         // Wait for segment refine queue (cap ~22s) so minutes see refined text
+         try {
+@@ -378,28 +410,62 @@ export function MeetingPanel(props: {
+         if (wantGenerate) {
+           // Brief beat for silence-cut server apply before minutes job
+           await new Promise((r) => setTimeout(r, 150))
+-          const template_md = templateMdRef.current.trim() || undefined
+-          if (id) {
+-            sendViaRuntime({
+-              type: "meeting.generate_minutes",
+-              v: 1,
+-              id,
+-              template_md,
+-            })
+-          } else {
+-            sendViaRuntime({
+-              type: "meeting.generate_minutes",
+-              v: 1,
+-              text: transcriptRef.current.trim() || undefined,
+-              template_md,
+-            })
+-          }
++          sendMinutesJob(id)
+         }
+       })()
+     },
+-    [destroyAdapter, dispatch, setPhase],
++    [destroyAdapter, dispatch, sendMinutesJob, setPhase],
+   )
+ 
++  // Companion restart mid-window used to leave phase=stopping forever
++  // (adapter awaited a voice.stt.end ACK that never arrived). Force-finalize.
++  useEffect(() => {
++    if (capturePhase !== "stopping") return
++    const t = setTimeout(() => {
++      if (phaseRef.current !== "stopping" || finalizedRef.current) return
++      setError((prev) => prev || "结束超时：已停止录制。可基于已有转写生成纪要")
++      const gen = wantGenerateRef.current
++      wantGenerateRef.current = false
++      finalizeCapture({ generate: gen, id: meetingIdRef.current })
++    }, MEETING_STOP_FAILSAFE_MS)
++    return () => clearTimeout(t)
++  }, [capturePhase, finalizeCapture])
++
++  // Debounced disconnect: WS auth blips (~1s) must not kill capture; a real
++  // Companion death (SIGTERM ~18s this incident) must not leave 「正在听」.
++  useEffect(() => {
++    if (companionConnected) return
++    if (phaseRef.current === "idle") return
++    const t = setTimeout(() => {
++      if (finalizedRef.current) return
++      if (phaseRef.current === "idle") return
++      setError((prev) => prev || "Companion 断开，已停止录制。可基于已有转写生成纪要")
++      const gen = wantGenerateRef.current
++      wantGenerateRef.current = false
++      finalizeCapture({ generate: gen, id: meetingIdRef.current })
++    }, MEETING_DISCONNECT_FINALIZE_MS)
++    return () => clearTimeout(t)
++  }, [companionConnected, finalizeCapture])
++
++  useEffect(() => {
++    if (!companionConnected) return
++    if (!retryGenerateOnReconnectRef.current) return
++    if (phaseRef.current !== "idle") return
++    retryGenerateOnReconnectRef.current = false
++    sendMinutesJob(meetingIdRef.current)
++  }, [companionConnected, sendMinutesJob])
++
++  useEffect(() => {
++    if (!pendingGenerate) return
++    const t = setTimeout(() => {
++      setPendingGenerate(false)
++      setBusy(false)
++      retryGenerateOnReconnectRef.current = false
++      setError((prev) => prev || "纪要生成超时。转写已保留，可再点「生成会议纪要」")
++    }, MEETING_MINUTES_WATCHDOG_MS)
++    return () => clearTimeout(t)
++  }, [pendingGenerate])
++
+   const startLocalSegments = useCallback(
+     (id: string) => {
+       destroyAdapter()
+@@ -1056,13 +1122,7 @@ export function MeetingPanel(props: {
+         silence_cut: true,
+       })
+     }
+-    sendViaRuntime({
+-      type: "meeting.generate_minutes",
+-      v: 1,
+-      id: meetingId || undefined,
+-      text: transcript.trim() || undefined,
+-      template_md: templateMdRef.current.trim() || undefined,
+-    })
++    sendMinutesJob(meetingId)
+   }
+ 
+   const copyMinutes = async () => {
+@@ -1583,12 +1643,12 @@ export function MeetingPanel(props: {
+               whiteSpace: "pre-wrap",
+             }}
+           >
+-            {interimText.trim()
+-              ? `识别中… ${interimText.trim()}`
+-              : nearRealtime
+-                ? "正在听…约 8 秒出第一段字（渐进假设，非字级流式）"
+-                : "正在听…本段结束后出字"}
+-            {refinePending > 0 ? ` · AI 纠错中(${refinePending})` : ""}
++            {meetingLiveInterimHint({
++              phase: capturePhase,
++              interimText,
++              nearRealtime,
++              refinePending,
++            })}
+           </div>
+         ) : null}
+       </label>
+diff --git a/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts b/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+index 5a652e1..c7d1339 100644
+--- a/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
++++ b/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+@@ -18,7 +18,11 @@ import {
+   type CaptureHandle,
+   type StartCaptureOpts,
+ } from "./audio-capture"
+-import { startPcmStreamCapture, type PcmStreamHandle } from "./pcm-stream-capture"
++import {
++  startPcmStreamCapture as defaultStartPcmStreamCapture,
++  type PcmStreamCaptureOpts,
++  type PcmStreamHandle,
++} from "./pcm-stream-capture"
+ import {
+   nextPartialPollMs,
+   STREAM_PARTIAL_POLL_DEFAULT_MS,
+@@ -44,8 +48,26 @@ export type LocalSttAdapterDeps = {
+   onMessage: LocalSttOnMessage
+   modelId: string
+   startCapture?: (opts?: StartCaptureOpts) => Promise<CaptureHandle>
++  startPcmStreamCapture?: (opts: PcmStreamCaptureOpts) => Promise<PcmStreamHandle>
++  /**
++   * Wall timeout waiting for voice.stt.result/error after end().
++   * Companion infer cap is 90s; default a hair over that so a live infer can finish.
++   */
++  pendingTimeoutMs?: number
++  /**
++   * After user stop(), do not wait the full pendingTimeoutMs — Companion restart
++   * mid-window used to leave meeting "正在听" forever because stop() while
++   * waiting was a no-op until the missing ACK.
++   */
++  stopGraceMs?: number
+ }
+ 
++/** Client wait for companion infer ACK (server STT_INFER_MAX_MS = 90s). */
++export const LOCAL_STT_PENDING_TIMEOUT_MS = 95_000
++
++/** After user stop, give the in-flight window this long then end anyway. */
++export const LOCAL_STT_STOP_GRACE_MS = 12_000
++
+ /**
+  * Soft-continue only for failures after end() when companion has dropBound.
+  * NEVER soft-continue session_busy / resource_conflict / oom / binary_broken
+@@ -130,6 +152,7 @@ export function createLocalSttAdapter(
+   let wallStart = 0
+   let segmentIndex = 0
+   let pending: PendingWait | null = null
++  let pendingTimer: ReturnType<typeof setTimeout> | null = null
+   let loopGen = 0
+   /** Continuous: resolve when current segment should stop recording. */
+   let segmentStopTrigger: (() => void) | null = null
+@@ -152,6 +175,9 @@ export function createLocalSttAdapter(
+   let stopChainInFlight = false
+   const SOFT_FAIL_MAX = 3
+   const beginCapture = deps.startCapture ?? defaultStartCapture
++  const beginPcmStream = deps.startPcmStreamCapture ?? defaultStartPcmStreamCapture
++  const pendingTimeoutMs = deps.pendingTimeoutMs ?? LOCAL_STT_PENDING_TIMEOUT_MS
++  const stopGraceMs = deps.stopGraceMs ?? LOCAL_STT_STOP_GRACE_MS
+ 
+   const clearSegmentTimer = () => {
+     if (segmentTimer) {
+@@ -167,6 +193,30 @@ export function createLocalSttAdapter(
+     }
+   }
+ 
++  const clearPendingTimer = () => {
++    if (pendingTimer) {
++      clearTimeout(pendingTimer)
++      pendingTimer = null
++    }
++  }
++
++  const pendingWaitMs = () => (wantListening ? pendingTimeoutMs : Math.min(stopGraceMs, pendingTimeoutMs))
++
++  const armPendingTimer = (sid: string) => {
++    clearPendingTimer()
++    const ms = pendingWaitMs()
++    pendingTimer = setTimeout(() => {
++      pendingTimer = null
++      if (!pending || pending.sessionId !== sid) return
++      // Still listening: surface infer_timeout (soft streak). After user stop:
++      // empty_result so the loop can onEnd without a scary banner.
++      finishPending({
++        ok: false,
++        code: wantListening ? "infer_timeout" : "empty_result",
++      })
++    }, ms)
++  }
++
+   const clearSub = () => {
+     if (unsub) {
+       try {
+@@ -186,6 +236,7 @@ export function createLocalSttAdapter(
+     loopGen += 1
+     clearSegmentTimer()
+     clearPartialTimer()
++    clearPendingTimer()
+     segmentStopTrigger = null
+     if (pcmStream) {
+       try {
+@@ -216,6 +267,7 @@ export function createLocalSttAdapter(
+   }
+ 
+   const finishPending = (r: { ok: true; text: string } | { ok: false; code: string }) => {
++    clearPendingTimer()
+     const p = pending
+     pending = null
+     p?.resolve(r)
+@@ -352,6 +404,7 @@ export function createLocalSttAdapter(
+ 
+       pending = { sessionId: sid, resolve }
+       sessionId = sid
++      armPendingTimer(sid)
+ 
+       const chunks = splitIntoChunks(wav, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
+       for (let seq = 0; seq < chunks.length; seq++) {
+@@ -508,7 +561,7 @@ export function createLocalSttAdapter(
+ 
+         // F7: open mic first, then voice.stt.start (avoid idle abort during gUM)
+         try {
+-          pcmStream = await startPcmStreamCapture({
++          pcmStream = await beginPcmStream({
+             maxMs: windowMs,
+             onPcmChunk: (pcm) => {
+               if (dead || aborted || gen !== loopGen || sessionId !== segSid) return
+@@ -650,6 +703,7 @@ export function createLocalSttAdapter(
+         const result = await new Promise<{ ok: true; text: string } | { ok: false; code: string }>(
+           (resolve) => {
+             pending = { sessionId: segSid, resolve }
++            armPendingTimer(segSid)
+             deps.send({
+               type: "voice.stt.end",
+               v: 1,
+@@ -933,7 +987,11 @@ export function createLocalSttAdapter(
+           }
+           segmentStopTrigger?.()
+         }
+-        // uploading/waiting: let segment complete, loop exits
++        // Waiting for companion infer: re-arm with stopGrace so a dead
++        // Companion (SIGTERM mid-window) cannot leave the mic/UI hung.
++        if ((phase === "waiting" || phase === "uploading") && pending && sessionId) {
++          armPendingTimer(sessionId)
++        }
+         return
+       }
+ 
+@@ -991,7 +1049,10 @@ export function createLocalSttAdapter(
+           if (dead) return
+           if (result.ok === false) {
+             const errCode = result.code
+-            handlers.onError(errCode === "aborted" ? "aborted" : errCode)
++            // User-stop timeout uses empty_result so we can onEnd without a banner.
++            if (errCode !== "empty_result") {
++              handlers.onError(errCode === "aborted" ? "aborted" : errCode)
++            }
+           } else if (result.text.trim()) {
+             handlers.onResult({ interim: "", finalChunk: result.text })
+           }
+diff --git a/chrome-extension/src/sidepanel/voice/meeting-caps.ts b/chrome-extension/src/sidepanel/voice/meeting-caps.ts
+index c431c54..142a799 100644
+--- a/chrome-extension/src/sidepanel/voice/meeting-caps.ts
++++ b/chrome-extension/src/sidepanel/voice/meeting-caps.ts
+@@ -27,6 +27,49 @@ export const MEETING_AUDIO_IMPORT_MAX_DURATION_SEC = MEETING_LIVE_HARD_CAP_MS /
+  */
+ export const MEETING_AUDIO_IMPORT_MAX_FILE_BYTES = 200 * 1024 * 1024
+ 
++/**
++ * If 「结束并生成纪要」 stays in stopping because the STT adapter hung
++ * (Companion restart mid-window), force-finalize after this wall time.
++ * Longer than LOCAL_STT_STOP_GRACE_MS (12s) so a live last-window infer can finish.
++ */
++export const MEETING_STOP_FAILSAFE_MS = 20_000
++
++/**
++ * Companion WS blips are ~1s; a SIGTERM restart was ~18s. After this of
++ * disconnect while still capturing, force-finalize so the UI cannot stay on
++ * 「正在听」 waiting for a dead STT session.
++ */
++export const MEETING_DISCONNECT_FINALIZE_MS = 5_000
++
++/** If minutes_result never arrives (WS drop after send), unblock 「生成会议纪要」. */
++export const MEETING_MINUTES_WATCHDOG_MS = 90_000
++
++/** Companion down: do not leave busy/pendingGenerate stuck on a dropped WS send. */
++export function meetingMinutesSendPlan(connected: boolean): "send" | "defer-reconnect" {
++  return connected ? "send" : "defer-reconnect"
++}
++
++export type MeetingCapturePhase = "idle" | "starting" | "recording" | "processing" | "stopping"
++
++/** Copy under the live transcript while capturing. */
++export function meetingLiveInterimHint(opts: {
++  phase: MeetingCapturePhase
++  interimText: string
++  nearRealtime: boolean
++  refinePending: number
++}): string {
++  const extra = opts.refinePending > 0 ? ` · AI 纠错中(${opts.refinePending})` : ""
++  if (opts.interimText.trim()) return `识别中… ${opts.interimText.trim()}${extra}`
++  if (opts.phase === "stopping") return `正在结束…等待最后一段识别${extra}`
++  if (opts.phase === "processing") return `分段识别中…${extra}`
++  if (opts.phase === "starting") return `正在启动识别…${extra}`
++  return (
++    (opts.nearRealtime
++      ? "正在听…约 8 秒出第一段字（渐进假设，非字级流式）"
++      : "正在听…本段结束后出字") + extra
++  )
++}
++
+ /** Format wall clock for meeting status (m:ss or h:mm:ss). */
+ export function formatMeetingElapsed(ms: number): string {
+   const s = Math.max(0, Math.floor(ms / 1000))
+diff --git a/chrome-extension/tests/meeting-caps.test.ts b/chrome-extension/tests/meeting-caps.test.ts
+index cd9b8e5..8c5bf38 100644
+--- a/chrome-extension/tests/meeting-caps.test.ts
++++ b/chrome-extension/tests/meeting-caps.test.ts
+@@ -4,8 +4,13 @@ import {
+   MEETING_LIVE_HARD_CAP_MS,
+   MEETING_LIVE_SOFT_CAP_MS,
+   MEETING_AUDIO_IMPORT_MAX_DURATION_SEC,
++  MEETING_STOP_FAILSAFE_MS,
++  MEETING_DISCONNECT_FINALIZE_MS,
+   clampMeetingHardCapMs,
+   formatMeetingElapsed,
++  meetingLiveInterimHint,
++  meetingMinutesSendPlan,
++  MEETING_MINUTES_WATCHDOG_MS,
+ } from "../src/sidepanel/voice/meeting-caps"
+ 
+ test("meeting live caps are 2h soft / 3h hard", () => {
+@@ -25,3 +30,36 @@ test("clampMeetingHardCapMs", () => {
+   assert.equal(clampMeetingHardCapMs(MEETING_LIVE_HARD_CAP_MS), MEETING_LIVE_HARD_CAP_MS)
+   assert.equal(clampMeetingHardCapMs(99 * 60 * 60_000), MEETING_LIVE_HARD_CAP_MS)
+ })
++
++test("meetingLiveInterimHint: stopping must not keep the 正在听 8s copy", () => {
++  assert.equal(MEETING_STOP_FAILSAFE_MS, 20_000)
++  assert.equal(MEETING_DISCONNECT_FINALIZE_MS, 5_000)
++  assert.ok(
++    MEETING_DISCONNECT_FINALIZE_MS < MEETING_STOP_FAILSAFE_MS,
++    "disconnect debounce must fire before stop failsafe",
++  )
++  assert.equal(
++    meetingLiveInterimHint({
++      phase: "stopping",
++      interimText: "",
++      nearRealtime: true,
++      refinePending: 0,
++    }),
++    "正在结束…等待最后一段识别",
++  )
++  assert.match(
++    meetingLiveInterimHint({
++      phase: "recording",
++      interimText: "",
++      nearRealtime: true,
++      refinePending: 0,
++    }),
++    /正在听/,
++  )
++})
++
++test("meetingMinutesSendPlan defers when Companion is down (do not stick 生成中)", () => {
++  assert.equal(meetingMinutesSendPlan(true), "send")
++  assert.equal(meetingMinutesSendPlan(false), "defer-reconnect")
++  assert.equal(MEETING_MINUTES_WATCHDOG_MS, 90_000)
++})
+diff --git a/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts b/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts
+index 8b03111..e9bf812 100644
+--- a/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts
++++ b/chrome-extension/tests/voice-local-stt-adapter-ws.test.ts
+@@ -552,3 +552,91 @@ test("error from companion while waiting: maps code", async () => {
+ 
+   adapter.destroy()
+ })
++
++test("classic: companion never ACKs end → stop still fires onEnd after stopGrace", async () => {
++  const wav = silentWav()
++  const events: string[] = []
++  const adapter = createLocalSttAdapter(
++    {
++      onStart: () => events.push("start"),
++      onResult: () => events.push("result"),
++      onError: (c) => events.push(`error:${c}`),
++      onEnd: () => events.push("end"),
++      onCaptureStopped: () => events.push("capture_stopped"),
++    },
++    {
++      send: () => {},
++      onMessage: () => () => {},
++      modelId: "medium",
++      startCapture: fakeCaptureFactory(wav),
++      pendingTimeoutMs: 5_000,
++      stopGraceMs: 40,
++    },
++  )
++
++  adapter.start({ sessionId: "s-hang-classic", modelId: "medium" })
++  await new Promise((r) => setTimeout(r, 20))
++  adapter.stop()
++  await new Promise((r) => setTimeout(r, 120))
++
++  assert.ok(events.includes("capture_stopped"), `got ${events.join(",")}`)
++  assert.ok(events.includes("end"), `stop must not hang waiting for STT ACK; got ${events.join(",")}`)
++  assert.ok(!events.includes("result"))
++  adapter.destroy()
++})
++
++test("streaming: stop while waiting for missing end ACK fires onEnd within stopGrace", async () => {
++  const events: string[] = []
++  const sent: any[] = []
++  const adapter = createLocalSttAdapter(
++    {
++      onStart: () => events.push("start"),
++      onResult: () => events.push("result"),
++      onError: (c) => events.push(`error:${c}`),
++      onEnd: () => events.push("end"),
++      onCaptureStopped: () => events.push("capture_stopped"),
++    },
++    {
++      send: (m) => sent.push(m),
++      onMessage: () => () => {},
++      modelId: "medium",
++      pendingTimeoutMs: 400,
++      stopGraceMs: 40,
++      startPcmStreamCapture: async (opts) => ({
++        stop: async () => {
++          opts.onPcmChunk(new Uint8Array([1, 0, 2, 0]))
++        },
++        abort: () => {},
++        backend: "audioworklet",
++      }),
++    },
++  )
++
++  adapter.start({
++    sessionId: "s-hang-stream",
++    modelId: "medium",
++    mode: "continuous",
++    streamPartial: true,
++    segmentMs: 30,
++    hardCapMs: 5_000,
++  })
++  await new Promise((r) => setTimeout(r, 80))
++  assert.ok(
++    events.includes("capture_stopped"),
++    `window should have ended; got ${events.join(",")}`,
++  )
++  assert.ok(
++    sent.some((m) => m.type === "voice.stt.end"),
++    "streaming window must send voice.stt.end",
++  )
++  const t0 = Date.now()
++  adapter.stop()
++  await new Promise((r) => setTimeout(r, 120))
++  const waited = Date.now() - t0
++  assert.ok(events.includes("end"), `stop while waiting must not hang; got ${events.join(",")}`)
++  assert.ok(
++    waited < 300,
++    `stopGrace must shorten the pending wait (waited ${waited}ms, pendingTimeout was 400ms)`,
++  )
++  adapter.destroy()
++})
+diff --git a/companion/src/mcp/transport.ts b/companion/src/mcp/transport.ts
+index 8ef2d5c..868355a 100644
+--- a/companion/src/mcp/transport.ts
++++ b/companion/src/mcp/transport.ts
+@@ -35,17 +35,46 @@ export interface TransportExtras {
+  *   3. Well-known Windows locations (npm global bin, Node.js, fnm, Volta,
+  *      Python Scripts for pip/uvx, Scoop, Chocolatey)
+  */
+-export function buildSpawnPath(): string {
++export type BuildSpawnPathOpts = {
++  /** Override process.execPath (tests / packaged layout). */
++  execPath?: string
++}
++
++const NPX_BASENAMES =
++  process.platform === "win32" ? ["npx.cmd", "npx.exe", "npx"] : ["npx"]
++
++/** True when `dir` contains an npx binary (node+npx are a matching pair). */
++export function dirHasNpx(dir: string): boolean {
++  if (!dir) return false
++  for (const name of NPX_BASENAMES) {
++    try {
++      if (fs.existsSync(path.join(dir, name))) return true
++    } catch {
++      /* ignore */
++    }
++  }
++  return false
++}
++
++export function buildSpawnPath(opts?: BuildSpawnPathOpts): string {
+   const existing = process.env.PATH ?? ""
+   // Drop file-in-PATH segments (spawn ENOTDIR). Keep only real directories.
+   const segments = new Set<string>(keepOnlyDirectories(splitPathEnv(existing)))
+ 
+   const candidates: string[] = []
+-  // 1. Sibling binaries of the running node (npx/npm live alongside node).
++  // 1. Sibling binaries of the running node — ONLY if npx lives there too.
++  // Packaged CMspark.app ships Contents/Resources/node without npm/npx.
++  // Prepending that dir makes `npx` (from nvm) run under the bundled node,
++  // and npm then lstats `<app>/Contents/lib` → ENOENT (MCP -32000).
++  let nodeDir = ""
+   try {
+-    candidates.push(path.dirname(process.execPath))
++    nodeDir = path.dirname(opts?.execPath ?? process.execPath)
+   } catch {
+-    // ignore
++    nodeDir = ""
++  }
++  const nodeDirPaired = nodeDir ? dirHasNpx(nodeDir) : false
++  if (nodeDirPaired) {
++    candidates.push(nodeDir)
+   }
+   // 2. macOS homebrew (apple silicon + intel)
+   candidates.push("/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin")
+@@ -127,7 +156,7 @@ export function buildSpawnPath(): string {
+     }
+   }
+ 
+-  // Re-order: node-sibling dir + homebrew first, then the user's existing PATH.
++  // Re-order: paired node + homebrew/nvm first, then the user's existing PATH.
+   const head: string[] = []
+   for (const c of candidates) {
+     if (c && segments.has(c)) {
+@@ -135,7 +164,10 @@ export function buildSpawnPath(): string {
+       segments.delete(c)
+     }
+   }
+-  return [...new Set([...head, ...Array.from(segments)])].join(path.delimiter)
++  // Packaged node without npx: last-resort `node` only — never ahead of asdf/mise leftovers.
++  const tail = Array.from(segments).filter((s) => !(nodeDir && !nodeDirPaired && s === nodeDir))
++  if (nodeDir && !nodeDirPaired) tail.push(nodeDir)
++  return [...new Set([...head, ...tail])].join(path.delimiter)
+ }
+ 
+ /** P0 SEC-02: env keys safe to inherit into MCP stdio children (no secrets). */
+@@ -191,6 +223,18 @@ export function buildMcpStdioEnv(
+     }
+   }
+   env.PATH = configEnv?.PATH || buildSpawnPath()
++  // Packaged node has no global prefix (`<app>/Contents/lib`). Pin npx/npm
++  // installs to the data dir so mixed nvm-npx + bundled-node cannot ENOENT.
++  if (!env.npm_config_prefix) {
++    const dataDir = process.env.CMSPARK_DATA_DIR || path.join(os.homedir(), ".cmspark-agent")
++    const prefix = path.join(dataDir, "npm-prefix")
++    try {
++      fs.mkdirSync(prefix, { recursive: true })
++    } catch {
++      /* best-effort */
++    }
++    env.npm_config_prefix = prefix
++  }
+   return env
+ }
+ 
+diff --git a/companion/tests/mcp.test.ts b/companion/tests/mcp.test.ts
+index b192ac9..b9f120e 100644
+--- a/companion/tests/mcp.test.ts
++++ b/companion/tests/mcp.test.ts
+@@ -15,7 +15,7 @@ import {
+   isMcpNamespaced,
+   sanitizeSegment,
+ } from "../src/mcp/aggregator.js"
+-import { buildSpawnPath } from "../src/mcp/transport.js"
++import { buildSpawnPath, dirHasNpx } from "../src/mcp/transport.js"
+ import type { McpToolMeta } from "../src/mcp/types.js"
+ 
+ // ============================================================================
+@@ -220,6 +220,42 @@ test("buildSpawnPath includes the running node's bin directory so npx is findabl
+   )
+ })
+ 
++test("dirHasNpx: packaged Resources/node without npx sibling is unpaired", () => {
++  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mcp-npx-"))
++  try {
++    const resDir = path.join(tmp, "Fake.app", "Contents", "Resources")
++    fs.mkdirSync(resDir, { recursive: true })
++    fs.writeFileSync(path.join(resDir, "node"), "")
++    assert.equal(dirHasNpx(resDir), false)
++    fs.writeFileSync(path.join(resDir, process.platform === "win32" ? "npx.cmd" : "npx"), "")
++    assert.equal(dirHasNpx(resDir), true)
++  } finally {
++    fs.rmSync(tmp, { recursive: true, force: true })
++  }
++})
++
++test("buildSpawnPath: bundled node without npx must not precede an npx pair (Contents/lib ENOENT)", () => {
++  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mcp-bundle-"))
++  try {
++    const resDir = path.join(tmp, "CMspark.app", "Contents", "Resources")
++    fs.mkdirSync(resDir, { recursive: true })
++    const bundledNode = path.join(resDir, "node")
++    fs.writeFileSync(bundledNode, "")
++    const p = buildSpawnPath({ execPath: bundledNode })
++    const segments = p.split(path.delimiter)
++    assert.ok(segments.includes(resDir), `bundled node dir still on PATH: ${p}`)
++    const paired = path.dirname(process.execPath)
++    if (segments.includes(paired) && fs.existsSync(path.join(paired, process.platform === "win32" ? "npx.cmd" : "npx"))) {
++      assert.ok(
++        segments.indexOf(paired) < segments.indexOf(resDir),
++        `npx-paired node dir (${paired}) must precede bundled Resources (${resDir}); got: ${p}`,
++      )
++    }
++  } finally {
++    fs.rmSync(tmp, { recursive: true, force: true })
++  }
++})
++
+ test("buildSpawnPath fills in common macOS/Linux locations when PATH is stripped", () => {
+   const saved = process.env.PATH
+   try {
+diff --git a/companion/tests/p0-deep-diagnosis-batch.test.ts b/companion/tests/p0-deep-diagnosis-batch.test.ts
+index b5a1110..8d8907c 100644
+--- a/companion/tests/p0-deep-diagnosis-batch.test.ts
++++ b/companion/tests/p0-deep-diagnosis-batch.test.ts
+@@ -26,3 +26,11 @@ test("P0 SEC-02: MCP stdio allows explicit config.env secrets (operator intent)"
+   assert.equal(env.MY_MCP_TOKEN, "tok")
+   assert.equal(env.PATH, "/custom/bin")
+ })
++
++test("MCP stdio env pins npm_config_prefix under the data dir (packaged Contents/lib)", () => {
++  const env = buildMcpStdioEnv()
++  assert.ok(env.npm_config_prefix, "npm_config_prefix must be set")
++  assert.match(env.npm_config_prefix, /\.cmspark-agent[/\\]npm-prefix$/)
++  const overridden = buildMcpStdioEnv({ npm_config_prefix: "/tmp/custom-prefix" })
++  assert.equal(overridden.npm_config_prefix, "/tmp/custom-prefix")
++})
+diff --git a/docs/TROUBLESHOOTING.md b/docs/TROUBLESHOOTING.md
+index e5623a3..21bf245 100644
+--- a/docs/TROUBLESHOOTING.md
++++ b/docs/TROUBLESHOOTING.md
+@@ -70,6 +70,7 @@ tail -f ~/.cmspark-agent/logs/companion-$(date +%Y-%m-%d).log | grep -i "mcp.cli
+ - `args` 里的允许目录不存在（filesystem server 会因此崩溃）。
+ - server 需要交互式确认（如 pentest-ai 的 AUP），但 daemon 是非交互的 —— 加对应 env var，如 `PENTEST_AI_AUP_ACCEPTED=1`。
+ - command/args 写错，或依赖的命令未安装。
++- **打包版 `.app` + `npx`：** 安装包只带 `Contents/Resources/node`、不带 npm。若 PATH 把该目录排在 nvm 的 `npx` 前面，npm 会去 `lstat /Applications/CMspark.app/Contents/lib` 并立刻退出。**已发布的旧包没有这层修复**——立刻可用的办法是在该 server 的 `env.PATH` 写 nvm 的 `bin`（不要包含 `CMspark.app/Contents/Resources`），或把 `npm_config_prefix` 指到 `~/.cmspark-agent/npm-prefix`。新版本 Companion 会把「带 npx 的 node 目录」排在打包 node 之前，并默认 pin 这个 prefix。
+ 
+ ### "此 server 未声明 tools 能力"
+ 
+diff --git a/scripts/launch-companion.sh b/scripts/launch-companion.sh
+index 9782bd3..16176ea 100755
+--- a/scripts/launch-companion.sh
++++ b/scripts/launch-companion.sh
+@@ -2,4 +2,10 @@
+ # CMspark Companion launcher — runs the bundled agent using the embedded Node.js
+ set -euo pipefail
+ DIR="$(cd "$(dirname "$0")" && pwd)"
++# Packaged node is a standalone binary (no npm/npx siblings, no Contents/lib).
++# MCP stdio often spawns nvm's `npx` under this node; npm then lstats
++# `<app>/Contents/lib` and exits ENOENT. Pin the prefix to the data dir.
++DATA_DIR="${CMSPARK_DATA_DIR:-${HOME}/.cmspark-agent}"
++mkdir -p "${DATA_DIR}/npm-prefix"
++export npm_config_prefix="${DATA_DIR}/npm-prefix"
+ exec "${DIR}/node" "${DIR}/cmspark-agent.js" "$@"
+diff --git a/scripts/tests/test-package-gates.sh b/scripts/tests/test-package-gates.sh
+index f530e93..0cced83 100755
+--- a/scripts/tests/test-package-gates.sh
++++ b/scripts/tests/test-package-gates.sh
+@@ -134,6 +134,14 @@ assert_file_has "${INFO_PLIST}" '__CMSPARK_VERSION__' \
+ assert_file_lacks "${INFO_PLIST}" '>[0-9]\+\.[0-9]\+\.[0-9]\+<' \
+   "Info.plist template must not hardcode x.y.z (stamp at dmg time)"
+ 
++# --- Static: packaged node has no Contents/lib; npx must not use app prefix --
++echo "[static] launch-companion.sh pins npm_config_prefix off the .app bundle"
++LAUNCH_SH="${ROOT}/scripts/launch-companion.sh"
++assert_file_has "${LAUNCH_SH}" 'npm_config_prefix' \
++  "launch-companion.sh exports npm_config_prefix (packaged node has no Contents/lib)"
++assert_file_has "${LAUNCH_SH}" 'npm-prefix' \
++  "launch-companion.sh uses ~/.cmspark-agent/npm-prefix (or CMSPARK_DATA_DIR)"
++
+ # --- Static: Makefile package-macos depends on build-host --------------------
+ echo "[static] Makefile package-macos → build-host"
+ assert_file_has "${MAKEFILE}" '^build-host:' \
