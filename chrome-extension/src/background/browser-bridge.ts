@@ -916,7 +916,7 @@ export class BrowserBridge {
   private async getElementInfo(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
     const loc = await this.resolveLocator(tabId, params, { requireLocator: true })
-    if (!loc.ok) return loc.result
+    if (loc.ok === false) return loc.result
     const selector = loc.selector
     if (!selector) {
       return codedToolError("ELEMENT_NOT_FOUND", "no element for get_element_info", {
@@ -983,7 +983,7 @@ export class BrowserBridge {
   private async click(params: Record<string, any>, clickCount = 1): Promise<ToolResult> {
     const tabId = this.getTabId(params)
     const loc = await this.resolveLocator(tabId, params, { requireLocator: true })
-    if (!loc.ok) return loc.result
+    if (loc.ok === false) return loc.result
     return this.applyResolvedClick(tabId, loc, clickCount)
   }
 
@@ -996,7 +996,7 @@ export class BrowserBridge {
     }
 
     const loc = await this.resolveLocator(tabId, params, { requireLocator: false })
-    if (!loc.ok) return loc.result
+    if (loc.ok === false) return loc.result
 
     if (loc.selector || loc.coords) {
       const clicked = await this.applyResolvedClick(tabId, loc, 1)
@@ -1051,7 +1051,7 @@ export class BrowserBridge {
         }
       }
       const loc = await this.resolveLocator(tabId, field, { requireLocator: true })
-      if (!loc.ok) {
+      if (loc.ok === false) {
         return { success: false, error: loc.result.error, data: { ...loc.result.data, filled } }
       }
       const clicked = await this.applyResolvedClick(tabId, loc, 1)
@@ -1401,7 +1401,7 @@ export class BrowserBridge {
   private async hover(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
     const loc = await this.resolveLocator(tabId, params, { requireLocator: true })
-    if (!loc.ok) return loc.result
+    if (loc.ok === false) return loc.result
     const selector = loc.selector
     try {
       const coords = loc.coords || (selector ? await this.getElementCenter(tabId, selector) : null)
@@ -1434,7 +1434,7 @@ export class BrowserBridge {
       })
     }
     const loc = await this.resolveLocator(tabId, params, { requireLocator: true })
-    if (!loc.ok) return loc.result
+    if (loc.ok === false) return loc.result
     const selector = loc.selector
     if (!selector) {
       return codedToolError("ELEMENT_NOT_FOUND", "select element not found", {
@@ -1469,13 +1469,13 @@ export class BrowserBridge {
       { selector: params.from_selector, text: params.from_text, exact: params.exact },
       { requireLocator: true },
     )
-    if (!fromLoc.ok) return fromLoc.result
+    if (fromLoc.ok === false) return fromLoc.result
     const toLoc = await this.resolveLocator(
       tabId,
       { selector: params.to_selector, text: params.to_text, exact: params.exact },
       { requireLocator: true },
     )
-    if (!toLoc.ok) return toLoc.result
+    if (toLoc.ok === false) return toLoc.result
     try {
       const from =
         fromLoc.coords ||

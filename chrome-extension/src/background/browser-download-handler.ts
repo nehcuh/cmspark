@@ -146,7 +146,7 @@ export async function runBrowserDownload(
         { text, selector, exact },
         { requireLocator: true, hitAttr: DOWNLOAD_HIT_ATTR },
       )
-      if (!loc.ok) return loc.result
+      if (loc.ok === false) return loc.result
       if (text) {
         if (loc.coords) {
           textCoords = loc.coords
