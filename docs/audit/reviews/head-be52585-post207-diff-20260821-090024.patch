@@ -1,0 +1,160 @@
+# Frozen diff e8900bc..be52585 (PR #208+#209 after ACP Mode C #207)
+HEAD: be52585a93dd8f04bc044c80d23809fb614f656d
+BASE: e8900bc e8900bcb9331a489391c31e681109ded8e91281f
+time: 20260821-090024
+
+be52585 Merge pull request #209 from nehcuh/fix/settings-web-test-isolation
+511bc87 test(companion): run settings-web in-process to dodge Node 22 runner IPC flake
+563a114 Merge pull request #208 from nehcuh/fix/windows-local-package-gates
+90613c0 fix(build): make local Windows packaging work on zh-CN dev boxes
+f244422 fix(build): add Bin subdirectory to makensis search path
+
+ companion/scripts/run-tests.mjs     | 16 +++++++++++++---
+ scripts/build-windows-installer.sh  |  4 ++++
+ scripts/installer.nsi               |  4 ++--
+ scripts/package.sh                  | 20 ++++++++++++++++++--
+ scripts/tests/test-package-gates.sh | 15 +++++++++++++--
+ 5 files changed, 50 insertions(+), 9 deletions(-)
+
+diff --git a/companion/scripts/run-tests.mjs b/companion/scripts/run-tests.mjs
+index aa63174..db6b29e 100644
+--- a/companion/scripts/run-tests.mjs
++++ b/companion/scripts/run-tests.mjs
+@@ -35,9 +35,9 @@ if (main.length === 0 && settings.length === 0) {
+   process.exit(1)
+ }
+ 
+-function runNodeTest(files) {
++function runNodeTest(files, extraArgs = []) {
+   if (files.length === 0) return 0
+-  const r = spawnSync(process.execPath, ["--test", ...files], {
++  const r = spawnSync(process.execPath, ["--test", ...extraArgs, ...files], {
+     cwd: root,
+     stdio: "inherit",
+     env: process.env,
+@@ -46,5 +46,15 @@ function runNodeTest(files) {
+ }
+ 
+ let code = runNodeTest(main)
+-if (code === 0) code = runNodeTest(settings)
++// settings-web is a single file run last; execute it in-process
++// (--experimental-test-isolation=none). Node 22's child-process test IPC has
++// an intermittent V8 deserialization crash ("Unable to deserialize cloned
++// data due to invalid or unsupported version", nodejs/node#49844) that fails
++// the file after all its tests pass. A lone in-process file has no IPC
++// channel, so the flake class is eliminated; isolation semantics are
++// unchanged (there are no sibling files to share state with). The
++// experimental flag name is used because the unflagged --test-isolation only
++// exists on Node >= 23 — Node 22 (CI + shipped runtime) rejects it, while
++// both 22 and 24 accept the experimental spelling.
++if (code === 0) code = runNodeTest(settings, ["--experimental-test-isolation=none"])
+ process.exit(code)
+diff --git a/scripts/build-windows-installer.sh b/scripts/build-windows-installer.sh
+index 89cd58d..089c031 100755
+--- a/scripts/build-windows-installer.sh
++++ b/scripts/build-windows-installer.sh
+@@ -34,8 +34,12 @@ find_makensis() {
+   fi
+   local c
+   for c in \
++    "/c/Program Files (x86)/NSIS/Bin/makensis.exe" \
++    "/c/Program Files/NSIS/Bin/makensis.exe" \
+     "/c/Program Files (x86)/NSIS/makensis.exe" \
+     "/c/Program Files/NSIS/makensis.exe" \
++    "C:/Program Files (x86)/NSIS/Bin/makensis.exe" \
++    "C:/Program Files/NSIS/Bin/makensis.exe" \
+     "C:/Program Files (x86)/NSIS/makensis.exe" \
+     "C:/Program Files/NSIS/makensis.exe" \
+     "/usr/bin/makensis" \
+diff --git a/scripts/installer.nsi b/scripts/installer.nsi
+index 13114da..9e361af 100644
+--- a/scripts/installer.nsi
++++ b/scripts/installer.nsi
+@@ -53,7 +53,7 @@ Var /GLOBAL START_MENU_FOLDER
+ !insertmacro MUI_LANGUAGE "English"
+ 
+ ; Stop tray + daemon whose ExecutablePath lives under $INSTDIR.
+-; `daemon stop` only kills daemon.pid — tray is a second node.exe.
++; `daemon stop` only kills daemon.pid - tray is a second node.exe.
+ ; Do not use WMIC (removed/optional on Windows 11 24H2+).
+ ; Quote rule (Claude dual-review B1, makensis 3.12 executed): NSIS does NOT
+ ; treat '' as an escaped quote. Backtick strings may contain both ' and ".
+@@ -100,7 +100,7 @@ Section "CMspark Agent" SecMain
+   IntFmt $0 "0x%08X" $0
+   WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "EstimatedSize" "$0"
+ 
+-  ; Single autostart path — HKCU Run only (not also Startup folder).
++  ; Single autostart path - HKCU Run only (not also Startup folder).
+   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}" 'wscript.exe "$INSTDIR\launch-hidden.vbs"'
+ 
+   ; --- Shortcuts ---
+diff --git a/scripts/package.sh b/scripts/package.sh
+index 2272142..8334e49 100755
+--- a/scripts/package.sh
++++ b/scripts/package.sh
+@@ -510,8 +510,24 @@ elif command -v 7z >/dev/null 2>&1; then
+   # progress bar (CI logs). Output layout matches `zip -rq dir`.
+   7z a -tzip -bd "${ZIP_NAME}" "cmspark-${PLATFORM}" >/dev/null
+ else
+-  echo "ERROR: neither zip nor 7z available to create artifact" >&2
+-  exit 1
++  # Local Windows dev boxes: 7-Zip is typically installed but not on PATH.
++  # Probe standard install dirs (same pattern as find_makensis in
++  # build-windows-installer.sh).
++  SEVENZ=""
++  for c in \
++    "/c/Program Files/7-Zip/7z.exe" \
++    "/c/Program Files (x86)/7-Zip/7z.exe" \
++    "C:/Program Files/7-Zip/7z.exe" \
++    "C:/Program Files (x86)/7-Zip/7z.exe"
++  do
++    if [ -x "${c}" ]; then SEVENZ="${c}"; break; fi
++  done
++  if [ -n "${SEVENZ}" ]; then
++    "${SEVENZ}" a -tzip -bd "${ZIP_NAME}" "cmspark-${PLATFORM}" >/dev/null
++  else
++    echo "ERROR: neither zip nor 7z available to create artifact" >&2
++    exit 1
++  fi
+ fi
+ echo "  $(du -sh "${ZIP_NAME}" | cut -f1) compressed"
+ 
+diff --git a/scripts/tests/test-package-gates.sh b/scripts/tests/test-package-gates.sh
+index 2c22fd0..3390093 100755
+--- a/scripts/tests/test-package-gates.sh
++++ b/scripts/tests/test-package-gates.sh
+@@ -202,14 +202,14 @@ assert_file_has "${NSIS}" 'dist-package\\cmspark-windows-x64' \
+ assert_file_lacks "${NSIS}" '\*\.\*' \
+   "installer.nsi does not use *.* glob (would skip extensionless files)"
+ # S52 N4: NSIS fallback PRODUCT_VERSION must equal companion/package.json version
+-COMP_VER="$(node -p "require('${ROOT}/companion/package.json').version" 2>/dev/null || true)"
++COMP_VER="$(cd "${ROOT}" && node -p "require('./companion/package.json').version" 2>/dev/null || true)"
+ if [ -n "${COMP_VER}" ]; then
+   NSIS_FALLBACK="$(
+     grep -E '^\s*!define PRODUCT_VERSION "' "${NSIS}" | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/'
+   )"
+   assert_eq "${COMP_VER}" "${NSIS_FALLBACK}" \
+     "installer.nsi fallback PRODUCT_VERSION must match companion/package.json (${COMP_VER})"
+-  EXT_VER="$(node -p "require('${ROOT}/chrome-extension/package.json').version" 2>/dev/null || true)"
++  EXT_VER="$(cd "${ROOT}" && node -p "require('./chrome-extension/package.json').version" 2>/dev/null || true)"
+   if [ -n "${EXT_VER}" ]; then
+     assert_eq "${COMP_VER}" "${EXT_VER}" \
+       "chrome-extension package.json version must lock-step with companion (${COMP_VER})"
+@@ -235,6 +235,17 @@ assert_file_has "${WIN_NSIS}" 'cmspark-agent\.exe' \
+   "wrapper refuses to wrap a SEA/mixed staging tree"
+ assert_file_has "${WIN_NSIS}" 'launch-hidden\.vbs' \
+   "wrapper requires launch-hidden.vbs in staging"
++assert_file_has "${PACKAGE_SH}" '7-Zip/7z\.exe' \
++  "package.sh probes standard 7-Zip install dirs when zip/7z not on PATH"
++# installer.nsi must stay pure ASCII: without a BOM makensis decodes .nsi in
++# the system ANSI codepage, so any non-ASCII byte aborts the build on
++# non-CP1252 locales (e.g. GBK on zh-CN Windows).
++if LC_ALL=C grep -qP '[^\x00-\x7F]' "${NSIS}"; then
++  FAIL=$((FAIL + 1))
++  echo "  FAIL: installer.nsi contains non-ASCII bytes (breaks makensis on non-CP1252 locales)" >&2
++else
++  PASS=$((PASS + 1))
++fi
+ assert_file_has "${MAKEFILE}" 'package\.sh windows-x64' \
+   "Makefile package-windows uses package.sh (CI SoT)"
+ assert_file_has "${RELEASE_YML}" 'nsis --version=3\.12\.0' \
