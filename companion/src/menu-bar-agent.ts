@@ -30,6 +30,7 @@ import {
   filterThreadsByTitle,
   mapChatMessageToSummonerCmd,
 } from "./summoner/client"
+import type { SummonerInboundEvt } from "./summoner/protocol"
 
 // node-notifier does not ship TypeScript declarations
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -595,7 +596,9 @@ export function handleSummonerSubmit(thread_id: string, text: string): boolean {
 export async function handleSummonerSearch(query: string) {
   const threads = (await summonerClient?.listThreads()) ?? []
   const result = filterThreadsByTitle(threads, query)
-  if (!query.trim() && result.matches[0]) {
+  if (result.matches.length === 1) {
+    summonerThreadId = result.matches[0].id
+  } else if (!query.trim() && result.matches[0]) {
     summonerThreadId = result.matches[0].id
   }
   return result
@@ -603,6 +606,31 @@ export async function handleSummonerSearch(query: string) {
 
 export function setSummonerThreadId(id: string | null): void {
   summonerThreadId = id
+}
+
+/**
+ * Swift overlay → Node. Close is summoner.closed only — never chat.abort.
+ */
+export function handleSummonerInbound(evt: SummonerInboundEvt): void {
+  switch (evt.type) {
+    case "summoner.submit":
+      handleSummonerSubmit(evt.thread_id, evt.text)
+      return
+    case "summoner.search":
+      void handleSummonerSearch(evt.query)
+      return
+    case "summoner.attach_chrome":
+      handleSummonerAttach()
+      return
+    case "summoner.continue":
+      handleSummonerContinue()
+      return
+    case "summoner.ready":
+    case "summoner.closed":
+    case "summoner.composing":
+    case "summoner.hotkey.chosen":
+      return
+  }
 }
 
 async function handleQuickAction(id: string): Promise<void> {
@@ -780,6 +808,14 @@ export async function startMenuBarAgent(): Promise<void> {
         handleAction(action).catch((err) => {
           console.error("[menu-bar] Action handler error:", err)
         })
+      })
+
+      trayInstance.onSummonerEvent?.((evt) => {
+        try {
+          handleSummonerInbound(evt)
+        } catch (err) {
+          console.error("[menu-bar] summoner event error:", err)
+        }
       })
 
       // Push initial state

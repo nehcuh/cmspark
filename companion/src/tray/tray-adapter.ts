@@ -139,6 +139,8 @@ export interface UnifiedTray {
   sendSummoner?(cmd: import("../summoner/protocol").SummonerOutboundCmd): void
   openSummoner?(threadId: string): void
   hydrateSummoner?(payload: import("../summoner/protocol").SummonerHydratePayload): void
+  /** Swift overlay → Node. Non-Swift backends omit (callers use optional chaining). */
+  onSummonerEvent?(callback: (evt: import("../summoner/protocol").SummonerInboundEvt) => void): void
   stop(): Promise<void>
 }
 

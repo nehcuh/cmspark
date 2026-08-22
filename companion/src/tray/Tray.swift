@@ -15,7 +15,11 @@
 //   {"type":"click","action":"start|stop|restart|status|logs|chrome|settings|autostart|quit"}
 //   {"type":"click","action":"quick-action","id":"read-page"}
 //   {"type":"click","action":"recent-thread","id":"abc"}
+//   {"type":"summoner.ready|closed|submit|search|attach_chrome|continue|composing"}
 //   {"type":"exit","code":0}
+//
+// Summoner stdin (Companion → Swift):
+//   {"cmd":"summoner.open|hydrate|token|done|error|close|hotkey.prompt", ...}
 
 import AppKit
 import Foundation
@@ -116,6 +120,7 @@ enum MenuTag: Int {
   case chrome = 201
   case settings = 202
   case pairing = 203
+  case summoner = 204
   case autostart = 300
   case quit = 999
   // Dynamic ranges
@@ -238,6 +243,11 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   pairingItem.tag = MenuTag.pairing.rawValue
   menu.addItem(pairingItem)
 
+  let summonerItem = NSMenuItem(title: "召唤器（实验）…", action: action, keyEquivalent: "")
+  summonerItem.target = target
+  summonerItem.tag = MenuTag.summoner.rawValue
+  menu.addItem(summonerItem)
+
   let chromeItem = NSMenuItem(title: "🌐 打开 Chrome", action: action, keyEquivalent: "c")
   chromeItem.target = target
   chromeItem.tag = MenuTag.chrome.rawValue
@@ -334,6 +344,9 @@ class TrayDelegate: NSObject {
       jsonLine(["type": "click", "action": "chrome"])
     } else if tag == MenuTag.pairing.rawValue {
       jsonLine(["type": "click", "action": "show-pairing"])
+    } else if tag == MenuTag.summoner.rawValue {
+      // Overlay opens locally; stdout summoner.ready lets Node hydrate. Not a confirm surface.
+      summonerController.open(threadId: "")
     } else if tag == MenuTag.settings.rawValue {
       jsonLine(["type": "click", "action": "settings"])
     } else if tag == MenuTag.autostart.rawValue {
@@ -447,6 +460,7 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
         return RecentThread(id: id, title: title)
       }
       delegate.rebuildMenu()
+      summonerController.noteThreadsChanged()
     }
 
   case "show-pairing-window":
@@ -510,6 +524,33 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
 
   case "hud.close":
     hudController.hide(reason: "cmd")
+
+  // --- Summoner overlay (Task 9). Third lazy window. Zero Allow/Deny chrome. ---
+  case "summoner.open":
+    let threadId = (json["thread_id"] as? String) ?? ""
+    summonerController.open(threadId: threadId)
+
+  case "summoner.hydrate":
+    summonerController.applyHydrate(json)
+
+  case "summoner.token":
+    let text = (json["text"] as? String) ?? ""
+    summonerController.appendToken(text)
+
+  case "summoner.done":
+    summonerController.markDone()
+
+  case "summoner.error":
+    let message = (json["message"] as? String) ?? ""
+    let code = json["error_code"] as? String
+    summonerController.applyError(message: message, errorCode: code)
+
+  case "summoner.close":
+    summonerController.hide()
+
+  case "summoner.hotkey.prompt":
+    // Task 10 owns the picker. Swallow so an early stdin line is not a hard miss.
+    break
 
   case "quit":
     delegate.shutdown()
@@ -1207,6 +1248,638 @@ extension HudController: NSWindowDelegate {
 
 // Lazy singleton (main thread, from handleCommand).
 let hudController = HudController()
+
+// ---------------------------------------------------------------------------
+// SummonerController — P0 capture overlay (same process as tray; third window).
+// Lazy NSPanel (.nonactivatingPanel + .floating). Close ≠ chat.abort.
+// Look: two-phase capture + 看山 white tokens. History is plaintext, never bubbles.
+// Overlay is capture-only — not an L2 gate surface.
+// ---------------------------------------------------------------------------
+
+enum SummonerTokens {
+  static let paper = NSColor.white
+  static let muted = NSColor(calibratedRed: 244/255, green: 244/255, blue: 245/255, alpha: 1)
+  static let text = NSColor(calibratedRed: 23/255, green: 23/255, blue: 23/255, alpha: 1)
+  static let secondary = NSColor(calibratedRed: 115/255, green: 115/255, blue: 115/255, alpha: 1)
+  static let faint = NSColor(calibratedRed: 163/255, green: 163/255, blue: 163/255, alpha: 1)
+  static let indigo = NSColor(calibratedRed: 79/255, green: 70/255, blue: 229/255, alpha: 1)
+  static let indigoSoft = NSColor(calibratedRed: 238/255, green: 242/255, blue: 255/255, alpha: 1)
+  static let okBg = NSColor(calibratedRed: 236/255, green: 253/255, blue: 245/255, alpha: 1)
+  static let okFg = NSColor(calibratedRed: 4/255, green: 120/255, blue: 87/255, alpha: 1)
+  static let okBorder = NSColor(calibratedRed: 167/255, green: 243/255, blue: 208/255, alpha: 1)
+  static let warnBg = NSColor(calibratedRed: 255/255, green: 251/255, blue: 235/255, alpha: 1)
+  static let warnFg = NSColor(calibratedRed: 146/255, green: 64/255, blue: 14/255, alpha: 1)
+  static let warnBorder = NSColor(calibratedRed: 253/255, green: 230/255, blue: 138/255, alpha: 1)
+}
+
+private let summonerWindowTitle = "CMspark 召唤器（实验）"
+private let summonerSearchHint = "P0 不搜正文 · 也不搜文件和应用"
+private let summonerEmptyHint = "输入线程标题 · 不搜文件和应用 · P0 不搜正文"
+private let summonerCtaCopy = "我们不能替你打开侧栏。可激活 Google Chrome，然后点工具栏 CMspark（没有就拼图 🧩 钉上）。"
+
+class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
+  private var window: NSPanel?
+  private var isOpen = false
+  private var threadId: String = ""
+  private var browserAttached = false
+  private var sawBrowserUnavailable = false
+  private var lines: [String] = []
+  private var streamingAssistant = false
+  private var lastComposing = false
+  private var hits: [RecentThread] = []
+  private var selectedHit = 0
+  private var searchTimer: Timer?
+
+  private var badgeField: NSTextField?
+  private var hintField: NSTextField?
+  private var placeholderField: NSTextField?
+  private var fieldBox: NSView?
+  private var composer: NSTextView?
+  private var hitsStack: NSStackView?
+  private var logBox: NSView?
+  private var logView: NSTextView?
+  private var ctaBox: NSView?
+  private var ctaLabel: NSTextField?
+  private var attachButton: NSButton?
+  private var footRow: NSStackView?
+  private var sendButton: NSButton?
+  private var continueButton: NSButton?
+  private var sideNote: NSTextField?
+
+  func open(threadId: String) {
+    self.threadId = threadId
+    if threadId.isEmpty {
+      lines = []
+      streamingAssistant = false
+      sawBrowserUnavailable = false
+    }
+    if window == nil { window = makeWindow() }
+    guard let window = window else { return }
+    isOpen = true
+    applyPhase()
+    NSApp.activate(ignoringOtherApps: true)
+    window.center()
+    window.makeKeyAndOrderFront(nil)
+    window.orderFrontRegardless()
+    window.makeFirstResponder(composer)
+    jsonLine(["type": "summoner.ready"])
+  }
+
+  func hide() {
+    window?.orderOut(nil)
+    emitClosedIfOpen()
+  }
+
+  func applyHydrate(_ json: [String: Any]) {
+    if let tid = json["thread_id"] as? String {
+      threadId = tid
+    }
+    if let rawLines = json["lines"] as? [String] {
+      lines = Array(rawLines.suffix(20))
+    }
+    let browser = (json["browser"] as? String) ?? "detached"
+    browserAttached = (browser == "attached")
+    streamingAssistant = false
+    applyPhase()
+    if window?.isVisible != true {
+      open(threadId: threadId)
+    } else {
+      window?.makeFirstResponder(composer)
+    }
+  }
+
+  func appendToken(_ text: String) {
+    if text.isEmpty { return }
+    if streamingAssistant, let last = lines.last, last.hasPrefix("助手") {
+      lines[lines.count - 1] = last + text
+    } else {
+      lines.append("助手　" + text)
+      streamingAssistant = true
+    }
+    capLines()
+    refreshLog()
+  }
+
+  func markDone() {
+    streamingAssistant = false
+  }
+
+  func applyError(message: String, errorCode: String?) {
+    streamingAssistant = false
+    let code = errorCode ?? ""
+    if code == "BROWSER_UNAVAILABLE" {
+      sawBrowserUnavailable = true
+      browserAttached = false
+      lines.append("系统　BROWSER_UNAVAILABLE")
+    } else {
+      let shown = message.isEmpty ? (code.isEmpty ? "出错了" : code) : message
+      lines.append("系统　\(shown)")
+    }
+    capLines()
+    applyPhase()
+  }
+
+  func noteThreadsChanged() {
+    if isOpen && threadId.isEmpty {
+      refreshHits()
+    }
+  }
+
+  @objc func windowWillClose(_ notification: Notification) {
+    emitClosedIfOpen()
+  }
+
+  private func emitClosedIfOpen() {
+    guard isOpen else { return }
+    isOpen = false
+    // Close releases the overlay; do not abort the running chat.
+    jsonLine(["type": "summoner.closed"])
+  }
+
+  private func capLines() {
+    if lines.count > 20 {
+      lines = Array(lines.suffix(20))
+    }
+  }
+
+  private var composerText: String {
+    composer?.string ?? ""
+  }
+
+  func textDidChange(_ notification: Notification) {
+    updatePlaceholder()
+    let on = composer?.hasMarkedText() ?? false
+    if on != lastComposing {
+      lastComposing = on
+      jsonLine(["type": "summoner.composing", "on": on])
+    }
+    if threadId.isEmpty {
+      refreshHits()
+      searchTimer?.invalidate()
+      searchTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+        self?.emitSearch()
+      }
+    }
+  }
+
+  func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+    if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+      hide()
+      return true
+    }
+    if threadId.isEmpty {
+      if commandSelector == #selector(NSResponder.moveUp(_:)) {
+        moveHit(-1)
+        return true
+      }
+      if commandSelector == #selector(NSResponder.moveDown(_:)) {
+        moveHit(1)
+        return true
+      }
+      if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+        if textView.hasMarkedText() { return false }
+        if !hits.isEmpty {
+          let i = min(max(0, selectedHit), hits.count - 1)
+          selectThread(hits[i])
+        }
+        return true
+      }
+      return false
+    }
+    if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+      if textView.hasMarkedText() { return false }
+      submitComposer()
+      return true
+    }
+    return false
+  }
+
+  private func emitSearch() {
+    jsonLine(["type": "summoner.search", "query": composerText])
+  }
+
+  private func moveHit(_ delta: Int) {
+    guard !hits.isEmpty else { return }
+    selectedHit = min(max(0, selectedHit + delta), hits.count - 1)
+    refreshHits(filterAgain: false)
+  }
+
+  private func selectThread(_ thread: RecentThread) {
+    threadId = thread.id
+    hits = []
+    selectedHit = 0
+    composer?.string = ""
+    updatePlaceholder()
+    applyPhase()
+    jsonLine(["type": "summoner.search", "query": thread.title])
+  }
+
+  private func submitComposer() {
+    let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty, !threadId.isEmpty else { return }
+    if composer?.hasMarkedText() == true { return }
+    lines.append("你　\(text)")
+    capLines()
+    refreshLog()
+    composer?.string = ""
+    updatePlaceholder()
+    jsonLine(["type": "summoner.submit", "thread_id": threadId, "text": text])
+  }
+
+  @objc func sendClicked() { submitComposer() }
+
+  @objc func attachClicked() {
+    jsonLine(["type": "summoner.attach_chrome"])
+  }
+
+  @objc func continueClicked() {
+    jsonLine(["type": "summoner.continue"])
+  }
+
+  @objc func hitClicked(_ sender: NSButton) {
+    let idx = sender.tag
+    guard idx >= 0, idx < hits.count else { return }
+    selectThread(hits[idx])
+  }
+
+  private func refreshHits(filterAgain: Bool = true) {
+    if filterAgain {
+      let q = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+      if q.isEmpty {
+        hits = []
+      } else {
+        hits = recentThreads.filter { $0.title.contains(q) }
+      }
+      if selectedHit >= hits.count { selectedHit = 0 }
+    }
+    guard let stack = hitsStack else { return }
+    while let v = stack.arrangedSubviews.first {
+      stack.removeArrangedSubview(v)
+      v.removeFromSuperview()
+    }
+    for (i, t) in hits.prefix(6).enumerated() {
+      let row = NSButton(title: t.title, target: self, action: #selector(hitClicked(_:)))
+      row.tag = i
+      row.bezelStyle = .inline
+      row.isBordered = false
+      row.alignment = .left
+      row.font = .systemFont(ofSize: 13, weight: .semibold)
+      row.contentTintColor = SummonerTokens.text
+      row.wantsLayer = true
+      row.layer?.cornerRadius = 10
+      if i == selectedHit {
+        row.layer?.backgroundColor = SummonerTokens.indigoSoft.cgColor
+      }
+      row.heightAnchor.constraint(equalToConstant: 32).isActive = true
+      stack.addArrangedSubview(row)
+    }
+    stack.isHidden = hits.isEmpty || !threadId.isEmpty
+    relayout()
+  }
+
+  private func refreshLog() {
+    logView?.string = lines.joined(separator: "\n")
+    if let tv = logView {
+      tv.scrollToEndOfDocument(nil)
+    }
+  }
+
+  private func updatePlaceholder() {
+    let empty = composerText.isEmpty
+    placeholderField?.isHidden = !empty
+    placeholderField?.stringValue = threadId.isEmpty ? "输入线程标题" : ""
+    if let box = fieldBox {
+      let focused = (window?.firstResponder === composer)
+      box.layer?.backgroundColor = focused ? SummonerTokens.paper.cgColor : SummonerTokens.muted.cgColor
+      box.layer?.borderColor = focused
+        ? SummonerTokens.indigo.withAlphaComponent(0.45).cgColor
+        : NSColor(white: 0.09, alpha: 0.10).cgColor
+    }
+  }
+
+  private func applyPhase() {
+    let searching = threadId.isEmpty
+    let chatting = !searching
+    let detached = chatting && !browserAttached
+
+    badgeField?.stringValue = browserAttached ? "浏览器已连接" : "浏览器未连接"
+    if let badge = badgeField {
+      badge.wantsLayer = true
+      badge.layer?.cornerRadius = 999
+      badge.layer?.masksToBounds = true
+      if browserAttached {
+        badge.backgroundColor = SummonerTokens.okBg
+        badge.textColor = SummonerTokens.okFg
+        badge.layer?.borderColor = SummonerTokens.okBorder.cgColor
+      } else {
+        badge.backgroundColor = SummonerTokens.warnBg
+        badge.textColor = SummonerTokens.warnFg
+        badge.layer?.borderColor = SummonerTokens.warnBorder.cgColor
+      }
+    }
+
+    hintField?.stringValue = searching
+      ? (composerText.isEmpty ? summonerEmptyHint : summonerSearchHint)
+      : summonerSearchHint
+
+    if searching { refreshHits() } else {
+      hitsStack?.isHidden = true
+    }
+    logBox?.isHidden = !chatting
+    refreshLog()
+    ctaBox?.isHidden = !detached
+    attachButton?.isHidden = !detached
+    footRow?.isHidden = !chatting || detached
+    sendButton?.isHidden = !chatting || detached
+    continueButton?.isHidden = !(chatting && browserAttached && sawBrowserUnavailable)
+    sideNote?.isHidden = !chatting
+    updatePlaceholder()
+    relayout()
+  }
+
+  private func relayout() {
+    guard let window = window else { return }
+    var h: CGFloat = 108
+    if hitsStack?.isHidden == false { h += 8 + CGFloat(min(hits.count, 6)) * 36 }
+    if logBox?.isHidden == false { h += 168 }
+    if ctaBox?.isHidden == false { h += 96 }
+    if footRow?.isHidden == false { h += 48 }
+    if sideNote?.isHidden == false { h += 22 }
+    window.setContentSize(NSSize(width: 420, height: max(140, h)))
+  }
+
+  private func makeWindow() -> NSPanel? {
+    let contentRect = NSRect(x: 0, y: 0, width: 420, height: 180)
+    let style: NSWindow.StyleMask = [.titled, .closable, .nonactivatingPanel]
+    let panel = NSPanel(contentRect: contentRect, styleMask: style, backing: .buffered, defer: false)
+    panel.title = summonerWindowTitle
+    panel.isReleasedWhenClosed = false
+    panel.becomesKeyOnlyIfNeeded = false
+    panel.hidesOnDeactivate = false
+    panel.level = .floating
+    panel.minSize = NSSize(width: 420, height: 140)
+    panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient]
+    panel.delegate = self
+    panel.appearance = NSAppearance(named: .aqua)
+    panel.backgroundColor = SummonerTokens.paper
+
+    let stack = NSStackView()
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 8
+    stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 12, right: 12)
+    stack.translatesAutoresizingMaskIntoConstraints = false
+
+    let header = NSStackView()
+    header.orientation = .horizontal
+    header.alignment = .centerY
+    header.spacing = 8
+    let badge = NSTextField(labelWithString: "浏览器未连接")
+    badge.font = .systemFont(ofSize: 11)
+    badge.alignment = .center
+    badge.drawsBackground = true
+    badge.wantsLayer = true
+    badge.layer?.cornerRadius = 999
+    badge.layer?.borderWidth = 1
+    badge.layer?.masksToBounds = true
+    badge.translatesAutoresizingMaskIntoConstraints = false
+    let badgeWrap = NSView()
+    badgeWrap.translatesAutoresizingMaskIntoConstraints = false
+    badgeWrap.addSubview(badge)
+    NSLayoutConstraint.activate([
+      badge.leadingAnchor.constraint(equalTo: badgeWrap.leadingAnchor, constant: 8),
+      badge.trailingAnchor.constraint(equalTo: badgeWrap.trailingAnchor, constant: -8),
+      badge.topAnchor.constraint(equalTo: badgeWrap.topAnchor, constant: 3),
+      badge.bottomAnchor.constraint(equalTo: badgeWrap.bottomAnchor, constant: -3),
+      badgeWrap.heightAnchor.constraint(equalToConstant: 22),
+    ])
+    badgeField = badge
+    let exp = NSTextField(labelWithString: "召唤器 · 实验")
+    exp.font = .systemFont(ofSize: 11)
+    exp.textColor = SummonerTokens.faint
+    exp.alignment = .right
+    header.addArrangedSubview(badgeWrap)
+    header.addArrangedSubview(NSView())
+    header.addArrangedSubview(exp)
+    header.translatesAutoresizingMaskIntoConstraints = false
+    header.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    stack.addArrangedSubview(header)
+
+    let fieldBox = NSView()
+    fieldBox.translatesAutoresizingMaskIntoConstraints = false
+    fieldBox.wantsLayer = true
+    fieldBox.layer?.backgroundColor = SummonerTokens.muted.cgColor
+    fieldBox.layer?.cornerRadius = 16
+    fieldBox.layer?.borderWidth = 1
+    fieldBox.layer?.borderColor = NSColor(white: 0.09, alpha: 0.10).cgColor
+    fieldBox.heightAnchor.constraint(equalToConstant: 40).isActive = true
+    fieldBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    self.fieldBox = fieldBox
+
+    let searchGlyph = NSTextField(labelWithString: "⌕")
+    searchGlyph.font = .systemFont(ofSize: 14)
+    searchGlyph.textColor = SummonerTokens.faint
+    searchGlyph.translatesAutoresizingMaskIntoConstraints = false
+    fieldBox.addSubview(searchGlyph)
+
+    let scroll = NSScrollView()
+    scroll.translatesAutoresizingMaskIntoConstraints = false
+    scroll.hasVerticalScroller = false
+    scroll.hasHorizontalScroller = false
+    scroll.borderType = .noBorder
+    scroll.drawsBackground = false
+    let tv = NSTextView()
+    tv.isRichText = false
+    tv.font = .systemFont(ofSize: 15)
+    tv.textColor = SummonerTokens.text
+    tv.backgroundColor = .clear
+    tv.drawsBackground = false
+    tv.isAutomaticQuoteSubstitutionEnabled = false
+    tv.isAutomaticDashSubstitutionEnabled = false
+    tv.isAutomaticTextReplacementEnabled = false
+    tv.allowsUndo = true
+    tv.textContainerInset = NSSize(width: 0, height: 4)
+    tv.isHorizontallyResizable = false
+    tv.isVerticallyResizable = true
+    tv.autoresizingMask = [.width]
+    tv.textContainer?.widthTracksTextView = true
+    tv.textContainer?.lineFragmentPadding = 0
+    tv.delegate = self
+    scroll.documentView = tv
+    composer = tv
+    fieldBox.addSubview(scroll)
+
+    let placeholder = NSTextField(labelWithString: "输入线程标题")
+    placeholder.font = .systemFont(ofSize: 15)
+    placeholder.textColor = SummonerTokens.faint
+    placeholder.translatesAutoresizingMaskIntoConstraints = false
+    placeholderField = placeholder
+    fieldBox.addSubview(placeholder)
+
+    NSLayoutConstraint.activate([
+      searchGlyph.leadingAnchor.constraint(equalTo: fieldBox.leadingAnchor, constant: 12),
+      searchGlyph.centerYAnchor.constraint(equalTo: fieldBox.centerYAnchor),
+      searchGlyph.widthAnchor.constraint(equalToConstant: 16),
+      scroll.leadingAnchor.constraint(equalTo: searchGlyph.trailingAnchor, constant: 8),
+      scroll.trailingAnchor.constraint(equalTo: fieldBox.trailingAnchor, constant: -12),
+      scroll.topAnchor.constraint(equalTo: fieldBox.topAnchor, constant: 6),
+      scroll.bottomAnchor.constraint(equalTo: fieldBox.bottomAnchor, constant: -6),
+      placeholder.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
+      placeholder.centerYAnchor.constraint(equalTo: fieldBox.centerYAnchor),
+    ])
+    stack.addArrangedSubview(fieldBox)
+
+    let hint = NSTextField(labelWithString: summonerEmptyHint)
+    hint.font = .systemFont(ofSize: 11)
+    hint.textColor = SummonerTokens.faint
+    hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    hintField = hint
+    stack.addArrangedSubview(hint)
+
+    let hits = NSStackView()
+    hits.orientation = .vertical
+    hits.alignment = .leading
+    hits.spacing = 4
+    hits.translatesAutoresizingMaskIntoConstraints = false
+    hits.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    hits.isHidden = true
+    hitsStack = hits
+    stack.addArrangedSubview(hits)
+
+    let logBox = NSView()
+    logBox.translatesAutoresizingMaskIntoConstraints = false
+    logBox.wantsLayer = true
+    logBox.layer?.backgroundColor = SummonerTokens.muted.cgColor
+    logBox.layer?.cornerRadius = 12
+    logBox.heightAnchor.constraint(equalToConstant: 160).isActive = true
+    logBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    logBox.isHidden = true
+    self.logBox = logBox
+    let logScroll = NSScrollView()
+    logScroll.translatesAutoresizingMaskIntoConstraints = false
+    logScroll.hasVerticalScroller = true
+    logScroll.borderType = .noBorder
+    logScroll.drawsBackground = false
+    let logTv = NSTextView()
+    logTv.isEditable = false
+    logTv.isSelectable = true
+    logTv.isRichText = false
+    logTv.font = .systemFont(ofSize: 13)
+    logTv.textColor = NSColor(calibratedRed: 51/255, green: 65/255, blue: 85/255, alpha: 1)
+    logTv.backgroundColor = .clear
+    logTv.drawsBackground = false
+    logTv.textContainerInset = NSSize(width: 10, height: 8)
+    logTv.autoresizingMask = [.width]
+    logTv.textContainer?.widthTracksTextView = true
+    logScroll.documentView = logTv
+    logView = logTv
+    logBox.addSubview(logScroll)
+    NSLayoutConstraint.activate([
+      logScroll.topAnchor.constraint(equalTo: logBox.topAnchor),
+      logScroll.bottomAnchor.constraint(equalTo: logBox.bottomAnchor),
+      logScroll.leadingAnchor.constraint(equalTo: logBox.leadingAnchor),
+      logScroll.trailingAnchor.constraint(equalTo: logBox.trailingAnchor),
+    ])
+    stack.addArrangedSubview(logBox)
+
+    let ctaBox = NSView()
+    ctaBox.translatesAutoresizingMaskIntoConstraints = false
+    ctaBox.wantsLayer = true
+    ctaBox.layer?.backgroundColor = SummonerTokens.warnBg.cgColor
+    ctaBox.layer?.borderColor = SummonerTokens.warnBorder.cgColor
+    ctaBox.layer?.borderWidth = 1
+    ctaBox.layer?.cornerRadius = 12
+    ctaBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    ctaBox.isHidden = true
+    self.ctaBox = ctaBox
+    let ctaStack = NSStackView()
+    ctaStack.orientation = .vertical
+    ctaStack.alignment = .leading
+    ctaStack.spacing = 8
+    ctaStack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+    ctaStack.translatesAutoresizingMaskIntoConstraints = false
+    let cta = NSTextField(wrappingLabelWithString: summonerCtaCopy)
+    cta.font = .systemFont(ofSize: 12.5)
+    cta.textColor = SummonerTokens.warnFg
+    cta.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    ctaLabel = cta
+    ctaStack.addArrangedSubview(cta)
+    let attach = makeIndigoButton(title: "激活 Google Chrome", action: #selector(attachClicked))
+    attach.widthAnchor.constraint(equalToConstant: 372).isActive = true
+    attachButton = attach
+    ctaStack.addArrangedSubview(attach)
+    ctaBox.addSubview(ctaStack)
+    NSLayoutConstraint.activate([
+      ctaStack.topAnchor.constraint(equalTo: ctaBox.topAnchor),
+      ctaStack.bottomAnchor.constraint(equalTo: ctaBox.bottomAnchor),
+      ctaStack.leadingAnchor.constraint(equalTo: ctaBox.leadingAnchor),
+      ctaStack.trailingAnchor.constraint(equalTo: ctaBox.trailingAnchor),
+    ])
+    stack.addArrangedSubview(ctaBox)
+
+    let foot = NSStackView()
+    foot.orientation = .horizontal
+    foot.spacing = 8
+    foot.distribution = .fillEqually
+    foot.translatesAutoresizingMaskIntoConstraints = false
+    foot.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    foot.heightAnchor.constraint(equalToConstant: 36).isActive = true
+    let send = makePlainButton(title: "发送", action: #selector(sendClicked))
+    let cont = makeIndigoButton(title: "已连接，继续对话", action: #selector(continueClicked))
+    sendButton = send
+    continueButton = cont
+    foot.addArrangedSubview(send)
+    foot.addArrangedSubview(cont)
+    foot.isHidden = true
+    footRow = foot
+    stack.addArrangedSubview(foot)
+
+    let side = NSTextField(labelWithString: "完整格式在侧栏")
+    side.font = .systemFont(ofSize: 11)
+    side.textColor = SummonerTokens.faint
+    side.alignment = .center
+    side.isHidden = true
+    sideNote = side
+    side.translatesAutoresizingMaskIntoConstraints = false
+    side.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    stack.addArrangedSubview(side)
+
+    guard let cv = panel.contentView else { return panel }
+    cv.wantsLayer = true
+    cv.layer?.backgroundColor = SummonerTokens.paper.cgColor
+    cv.addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.topAnchor.constraint(equalTo: cv.topAnchor),
+      stack.bottomAnchor.constraint(equalTo: cv.bottomAnchor),
+      stack.leadingAnchor.constraint(equalTo: cv.leadingAnchor),
+      stack.trailingAnchor.constraint(equalTo: cv.trailingAnchor),
+    ])
+    return panel
+  }
+
+  private func makeIndigoButton(title: String, action: Selector) -> NSButton {
+    let btn = NSButton(title: title, target: self, action: action)
+    btn.bezelStyle = .rounded
+    btn.controlSize = .large
+    if #available(macOS 11.0, *) {
+      btn.bezelColor = SummonerTokens.indigo
+      btn.contentTintColor = .white
+    }
+    // Never bind Return — IME composing Return must not fire a button.
+    btn.keyEquivalent = ""
+    return btn
+  }
+
+  private func makePlainButton(title: String, action: Selector) -> NSButton {
+    let btn = NSButton(title: title, target: self, action: action)
+    btn.bezelStyle = .rounded
+    btn.controlSize = .large
+    btn.keyEquivalent = ""
+    return btn
+  }
+}
+
+let summonerController = SummonerController()
 
 // ---------------------------------------------------------------------------
 // Entry point
