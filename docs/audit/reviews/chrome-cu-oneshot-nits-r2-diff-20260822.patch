@@ -1,0 +1,186 @@
+diff --git a/companion/src/computer/policy.ts b/companion/src/computer/policy.ts
+index f2e3ce1..84228bb 100644
+--- a/companion/src/computer/policy.ts
++++ b/companion/src/computer/policy.ts
+@@ -88,34 +88,33 @@ function bundleIdInSet(id: string | undefined, set: ReadonlySet<string>): boolea
+   return false
+ }
+ 
+-/** Windows exe identity — used so a pasted mac bundleId cannot classify notepad as a browser. */
++/** Windows exe identity (tests / probes). Production classifiers key off `platform`. */
+ export function looksLikeWinExePath(p: string): boolean {
+   const s = String(p || "")
+   return /\.exe$/i.test(s) || /^[a-zA-Z]:[\\/]/.test(s)
+ }
+ 
+-/** True when the AppEntry is a browser vault surface (Chrome/Safari/…). */
+-export function isVaultBrowserEntry(entry: AppEntry): boolean {
+-  // Win32 identity wins: a hand-edited bundleId:"com.google.Chrome" + notepad.exe
+-  // must not take the one-shot path (Trust tamper nit).
+-  if (entry.exe?.path && looksLikeWinExePath(entry.exe.path)) {
+-    try {
+-      const tok = basenameToVault(entry.exe.path)
+-      return tok != null && WIN_BROWSER_VAULT_TOKENS.has(tok)
+-    } catch {
+-      return false
+-    }
++function vaultPathIsBrowser(p: string): boolean {
++  try {
++    const tok = basenameToVault(p)
++    return tok != null && WIN_BROWSER_VAULT_TOKENS.has(tok)
++  } catch {
++    return false
+   }
+-  if (bundleIdInSet(entry.bundleId, MAC_BROWSER_VAULT_BUNDLE_IDS)) return true
+-  if (entry.exe?.path) {
+-    try {
+-      const tok = basenameToVault(entry.exe.path)
+-      if (tok && WIN_BROWSER_VAULT_TOKENS.has(tok)) return true
+-    } catch {
+-      return false
+-    }
++}
++
++/**
++ * True when the AppEntry is a browser vault surface (Chrome/Safari/…).
++ * Identity is platform-native (Trust REJECT 2026-08-22 nits fold):
++ *   win32  → exe path only (pasted mac bundleId on notepad.exe is not a browser)
++ *   darwin → bundleId wins when present (dummy.exe must not un-vault Chrome)
++ */
++export function isVaultBrowserEntry(entry: AppEntry, platform: string = os.platform()): boolean {
++  if (platform === "win32") {
++    return entry.exe?.path ? vaultPathIsBrowser(entry.exe.path) : false
+   }
+-  return false
++  if (bundleIdInSet(entry.bundleId, MAC_BROWSER_VAULT_BUNDLE_IDS)) return true
++  return entry.exe?.path ? vaultPathIsBrowser(entry.exe.path) : false
+ }
+ 
+ export function isBrowserVaultExePath(p: string): boolean {
+@@ -142,30 +141,32 @@ export type CoordinateAssertOpts = {
+  * wallet) and LOLBIN exes can NEVER carry coordinateAllowed (A10.3).
+  * macOS: vault bundle IDs are structurally excluded.
+  */
+-export function canEverCoordinate(entry: AppEntry): boolean {
+-  // Windows-looking exe path is the identity: a pasted mac bundleId on notepad.exe
+-  // must not structural-deny (or one-shot) a non-browser binary.
+-  if (entry.exe?.path && looksLikeWinExePath(entry.exe.path)) {
+-    if (isLolbinPath(entry.exe.path)) return false
+-    try {
+-      if (basenameToVault(entry.exe.path) !== null) return false
+-    } catch {
+-      return false
++export function canEverCoordinate(entry: AppEntry, platform: string = os.platform()): boolean {
++  if (platform === "win32") {
++    // Exe path is the identity — ignore a pasted mac bundleId.
++    if (entry.exe?.path) {
++      if (isLolbinPath(entry.exe.path)) return false
++      try {
++        if (basenameToVault(entry.exe.path) !== null) return false
++      } catch {
++        return false
++      }
+     }
+     return true
+   }
+-  // macOS vault bundle ID check (adversarial review H6). Case-insensitive so
++  // darwin / others: bundleId is native identity. Case-insensitive so
+   // Chrome Canary/Dev stored as com.google.chrome.canary still fail closed.
++  // dummy.exe on a Chrome bundle must NOT un-vault (Trust nits REJECT).
+   if (bundleIdInSet(entry.bundleId, MAC_VAULT_BUNDLE_IDS)) {
+     return false
+   }
+-  // Windows path-based vault/LOLBIN checks.
+-  // Guard: skip when running on darwin AND the entry is a macOS entry (has bundleId),
+-  // to avoid calling Windows path functions with bundle IDs.
+-  const isMacEntry = os.platform() === "darwin" && entry.bundleId != null
+-  if (!isMacEntry && entry.exe?.path) {
++  if (entry.exe?.path) {
+     if (isLolbinPath(entry.exe.path)) return false
+-    if (basenameToVault(entry.exe.path) !== null) return false
++    try {
++      if (basenameToVault(entry.exe.path) !== null) return false
++    } catch {
++      return false
++    }
+   }
+   return true
+ }
+diff --git a/companion/tests/apps-coordinate.test.ts b/companion/tests/apps-coordinate.test.ts
+index 75a1929..5b50200 100644
+--- a/companion/tests/apps-coordinate.test.ts
++++ b/companion/tests/apps-coordinate.test.ts
+@@ -101,6 +101,27 @@ test("apps.set_coordinate_allowed: unknown token -> NOT_FOUND", async () => {
+   assert.equal(r.code, "NOT_FOUND")
+ })
+ 
++test("apps.set_coordinate_allowed: mac Chrome + dummy.exe still STRUCTURAL (Trust nits REJECT)", async () => {
++  reset()
++  replaceAppsEntries({
++    "mac.app.google_chrome": seedEntry({
++      token: "mac.app.google_chrome",
++      bundleId: "com.google.Chrome",
++      exe: { path: "dummy.exe", user_writable_dir: false },
++      display_name: "Google Chrome",
++    }),
++  })
++  const gateCalls = { calls: 0 }
++  const r: any = await handleAppsMessage(
++    { type: "apps.set_coordinate_allowed", token: "mac.app.google_chrome", allowed: true },
++    { requestConfirmation: approveChannel },
++    deps({ platform: "darwin", gate: fakeGate("approve", gateCalls) }),
++  )
++  assert.equal(r.code, "COORDINATE_STRUCTURAL_DENY")
++  assert.equal(gateCalls.calls, 0)
++  assert.equal(getConfig().apps?.entries["mac.app.google_chrome"]?.coordinateAllowed, undefined)
++})
++
+ test("apps.set_coordinate_allowed: mac Chrome bundleId-only -> COORDINATE_STRUCTURAL_DENY (Trust REJECT fold)", async () => {
+   reset()
+   replaceAppsEntries({
+diff --git a/companion/tests/computer-policy.test.ts b/companion/tests/computer-policy.test.ts
+index 0559306..ec896cc 100644
+--- a/companion/tests/computer-policy.test.ts
++++ b/companion/tests/computer-policy.test.ts
+@@ -249,21 +249,32 @@ test("policy: chromium.exe is vault-browser one-shot", () => {
+   })
+ })
+ 
+-test("policy: win exe notepad + pasted Chrome bundleId is NOT a vault browser (tamper)", () => {
++test("policy: win32 notepad + pasted Chrome bundleId is NOT a vault browser (tamper)", () => {
+   const tampered = makeEntry({
+     bundleId: "com.google.Chrome",
+     exe: { path: "C:\\Windows\\System32\\notepad.exe", user_writable_dir: false },
+     coordinateAllowed: false,
+   })
+   assert.equal(looksLikeWinExePath(tampered.exe!.path), true)
+-  assert.equal(isVaultBrowserEntry(tampered), false)
+-  assertComputerError(
+-    () =>
+-      assertCoordinateAllowed(makeConfig({ entry: tampered }), "win.app.test", {
+-        allowVaultBrowserOneShot: true,
+-      }),
+-    "APP_COORDINATE_DENIED",
+-  )
++  assert.equal(isVaultBrowserEntry(tampered, "win32"), false)
++  assert.equal(canEverCoordinate(tampered, "win32"), true)
++})
++
++test("policy: darwin Chrome bundleId + dummy.exe stays vault (Trust nits REJECT fold)", () => {
++  const hybrid = makeEntry({
++    bundleId: "com.google.Chrome",
++    exe: { path: "dummy.exe", user_writable_dir: false },
++    coordinateAllowed: false,
++  })
++  assert.equal(canEverCoordinate(hybrid, "darwin"), false)
++  assert.equal(isVaultBrowserEntry(hybrid, "darwin"), true)
++  const notepadHybrid = makeEntry({
++    bundleId: "com.google.Chrome",
++    exe: { path: "C:\\Windows\\System32\\notepad.exe", user_writable_dir: false },
++    coordinateAllowed: true,
++  })
++  assert.equal(canEverCoordinate(notepadHybrid, "darwin"), false)
++  assert.equal(isVaultBrowserEntry(notepadHybrid, "darwin"), true)
+ })
+ 
+ test("policy: powershell exe + coordinateAllowed=true (hand-edited) -> APP_COORDINATE_STRUCTURAL", () => {

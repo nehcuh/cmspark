@@ -1,0 +1,40 @@
+{
+  "batch": "chrome-cu-oneshot-nits",
+  "timestamp": "20260822",
+  "blast": "T3 Trust",
+  "commits": ["f4a743e", "ec65d92"],
+  "head": "ec65d92",
+  "machine": {
+    "tsc": 0,
+    "named_suite": "199 pass / 0 fail"
+  },
+  "adversaries": {
+    "trust": "REJECT then fold (dummy.exe un-vault)",
+    "trust_r2": "APPROVE_WITH_NITS",
+    "product": "APPROVE_WITH_NITS",
+    "runtime": "APPROVE_WITH_NITS"
+  },
+  "dual": {
+    "claude": "APPROVE_WITH_NITS",
+    "kimi": "APPROVE_WITH_NITS"
+  },
+  "both_approve": true,
+  "fold": [
+    "catalog host_computer one-shot description",
+    "user-guide checklist browser exception",
+    "Rule 7/8/9c vs Rule 12 (still phantom TAB_ATTACH_FROZEN nit)",
+    "ADR-017 D3 cruise exception",
+    "Canary / chromium.exe vault map",
+    "HOST_CHROME params.app only (Safari/Edge/Brave)",
+    "hwnd Chrome→powershell HWND_NOT_OWNED test",
+    "skip algebra helper + relevantApps pin",
+    "platform-native identity after Trust REJECT"
+  ],
+  "residual_nits": [
+    "TAB_ATTACH_FROZEN phantom code in Rule 7/8",
+    "ADR-021 §4 re-L2 wording still 全部静默通过",
+    "HOST_CHROME needles vs isVaultBrowserEntry last-seg tokens",
+    "no runL2ToolAdmission integration test",
+    "MinimalConfirm compact preview (out of fold)"
+  ]
+}
