@@ -17,3 +17,13 @@ test("BROWSER_UNAVAILABLE is non_recoverable even if copy mentions not connected
 test("substring timeout without code stays recoverable", () => {
   assert.equal(classifyError("Tool execution timeout (15000ms)", { toolName: "click" }), "recoverable")
 })
+
+test("error_code BROWSER_UNAVAILABLE wins over recoverable substrings", () => {
+  assert.equal(
+    classifyError("timeout disconnected not found", {
+      toolName: "navigate",
+      error_code: "BROWSER_UNAVAILABLE",
+    }),
+    "non_recoverable",
+  )
+})
