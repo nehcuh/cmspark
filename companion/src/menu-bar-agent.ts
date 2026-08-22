@@ -28,9 +28,18 @@ import {
   attachChromeOnly,
   buildContinueChatCreate,
   filterThreadsByTitle,
+  isSummonerSearchQuery,
   mapChatMessageToSummonerCmd,
+  mapVoiceSttToSummonerCmd,
+  micPcmStartFrame,
+  micWavToSttFrames,
+  submitSummonerTalk,
+  summonerSearchNeedle,
+  type SummonerSttModelId,
+  type VoiceSttFrame,
 } from "./summoner/client"
-import { encodeSummonerHotkeySet, type SummonerInboundEvt } from "./summoner/protocol"
+import { encodeSummonerHotkeySet, SUMMONER_SEARCH_HINT, type SummonerInboundEvt } from "./summoner/protocol"
+import { hydratePlaintext } from "./summoner/hydrate"
 import { acceptedSummonerHotkey, nextSummonerHotkeyCmd } from "./summoner/hotkey"
 
 // node-notifier does not ship TypeScript declarations
@@ -120,6 +129,8 @@ let companionClient: CompanionClient | null = null
 /** Second WS: overlay chat (`surface: "summoner"`). Tray menus stay on companionClient. */
 let summonerClient: CompanionClient | null = null
 let summonerThreadId: string | null = null
+let summonerMicSessionId: string | null = null
+let summonerMicSeq = 0
 let pollTimer: NodeJS.Timeout | null = null
 let lastNotifiedStatus: CompanionStatus | null = null
 // Auto-surface the pairing popup at most once per launcher session — only while the
@@ -589,17 +600,48 @@ export function handleSummonerContinue(): boolean {
   return summonerClient.sendChatCreate(buildContinueChatCreate(summonerThreadId))
 }
 
-export function handleSummonerSubmit(thread_id: string, text: string): boolean {
-  summonerThreadId = thread_id
-  return summonerClient?.sendChatCreate({ thread_id, message: text }) ?? false
+export async function handleSummonerSubmit(thread_id: string, text: string): Promise<boolean> {
+  const client = summonerClient
+  if (!client) return false
+  const result = await submitSummonerTalk(thread_id, text, {
+    listThreads: () => client.listThreads(),
+    createThread: () => client.createThread(),
+    claimLease: (id) => client.claimOverlayComposerLease(id),
+    sendChatCreate: (args) => client.sendChatCreate(args),
+    selectMessages: (id) => client.selectThreadMessages(id),
+    hydrate: ({ thread_id: id, messages }) => {
+      summonerThreadId = id
+      const prior = messages as Array<{
+        role: string
+        content?: string
+        tool_calls?: Array<{ function?: { name?: string } }>
+      }>
+      const trimmed = text.trim()
+      const last = prior[prior.length - 1]
+      const already =
+        !!trimmed &&
+        last?.role === "user" &&
+        String(last.content || "").includes(trimmed)
+      const lines = hydratePlaintext(
+        already || !trimmed ? prior : [...prior, { role: "user", content: trimmed }],
+      )
+      trayInstance?.hydrateSummoner?.({
+        thread_id: id,
+        lines,
+        browser: "detached",
+        search_hint: SUMMONER_SEARCH_HINT,
+      })
+    },
+  })
+  if (result.threadId) summonerThreadId = result.threadId
+  return result.ok
 }
 
 export async function handleSummonerSearch(query: string) {
+  const needle = isSummonerSearchQuery(query) ? summonerSearchNeedle(query) : query
   const threads = (await summonerClient?.listThreads()) ?? []
-  const result = filterThreadsByTitle(threads, query)
+  const result = filterThreadsByTitle(threads, needle)
   if (result.matches.length === 1) {
-    summonerThreadId = result.matches[0].id
-  } else if (!query.trim() && result.matches[0]) {
     summonerThreadId = result.matches[0].id
   }
   return result
@@ -633,10 +675,77 @@ export function persistSummonerHotkeyChosen(combo: string): string | null {
 /**
  * Swift overlay → Node. Close is summoner.closed only — never chat.abort.
  */
+function summonerSttModelId(): SummonerSttModelId {
+  const id = getConfig().voice?.localModelId
+  if (id === "small" || id === "medium" || id === "large-v3-turbo") return id
+  return "medium"
+}
+
+function sendSummonerSttFrame(frame: VoiceSttFrame): boolean {
+  const { type, ...params } = frame
+  return summonerClient?.sendAppMessage(type, params) ?? false
+}
+
+/** Overlay mic gesture → local STT (privacy_ack_v2: user pressed the mic). */
+export function handleSummonerMic(
+  evt:
+    | { type: "summoner.mic.start" }
+    | { type: "summoner.mic.chunk"; seq: number; data: string }
+    | { type: "summoner.mic.end" }
+    | { type: "summoner.mic.wav"; data: string },
+): void {
+  if (!summonerClient) return
+  switch (evt.type) {
+    case "summoner.mic.start":
+      summonerMicSessionId = null
+      summonerMicSeq = 0
+      return
+    case "summoner.mic.chunk": {
+      if (!summonerMicSessionId) {
+        summonerMicSessionId = `summoner-mic-${Date.now()}`
+        sendSummonerSttFrame(micPcmStartFrame({
+          sessionId: summonerMicSessionId,
+          modelId: summonerSttModelId(),
+        }))
+      }
+      sendSummonerSttFrame({
+        type: "voice.stt.chunk",
+        v: 1,
+        sessionId: summonerMicSessionId,
+        seq: evt.seq,
+        data: evt.data,
+      })
+      summonerMicSeq = evt.seq + 1
+      return
+    }
+    case "summoner.mic.end": {
+      if (!summonerMicSessionId) return
+      sendSummonerSttFrame({
+        type: "voice.stt.end",
+        v: 1,
+        sessionId: summonerMicSessionId,
+        totalSeq: summonerMicSeq,
+      })
+      summonerMicSessionId = null
+      return
+    }
+    case "summoner.mic.wav": {
+      summonerMicSessionId = null
+      const frames = micWavToSttFrames({
+        sessionId: `summoner-mic-${Date.now()}`,
+        modelId: summonerSttModelId(),
+        data: evt.data,
+      })
+      for (const frame of frames) sendSummonerSttFrame(frame)
+      return
+    }
+  }
+}
+
 export function handleSummonerInbound(evt: SummonerInboundEvt): void {
   switch (evt.type) {
     case "summoner.submit":
-      handleSummonerSubmit(evt.thread_id, evt.text)
+      void handleSummonerSubmit(evt.thread_id, evt.text)
       return
     case "summoner.search":
       void handleSummonerSearch(evt.query)
@@ -653,6 +762,12 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       return
     case "summoner.hotkey.chosen":
       persistSummonerHotkeyChosen(evt.combo)
+      return
+    case "summoner.mic.start":
+    case "summoner.mic.chunk":
+    case "summoner.mic.end":
+    case "summoner.mic.wav":
+      handleSummonerMic(evt)
       return
     case "summoner.closed":
     case "summoner.composing":
@@ -897,6 +1012,12 @@ export async function startMenuBarAgent(): Promise<void> {
     surface: "summoner",
   })
   summonerClient.onAppMessage((msg) => {
+    const sttCmd = mapVoiceSttToSummonerCmd(msg)
+    if (sttCmd) {
+      // voice.stt.result → summoner.dictate (fill composer; user hits send)
+      trayInstance?.sendSummoner?.(sttCmd)
+      return
+    }
     const cmd = mapChatMessageToSummonerCmd(msg)
     if (!cmd) return
     // Task 9 wires Swift stdin; non-Swift / pre-rebuild adapters no-op.

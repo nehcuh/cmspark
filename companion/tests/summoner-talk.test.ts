@@ -1,0 +1,187 @@
+/**
+ * Summoner v2 — empty overlay TALKS (last/new thread). `#` prefix searches titles.
+ */
+import test from "node:test"
+import assert from "node:assert/strict"
+import * as fs from "node:fs"
+import * as path from "node:path"
+import {
+  isSummonerSearchQuery,
+  summonerSearchNeedle,
+  resolveSubmitThread,
+  submitSummonerTalk,
+} from "../src/summoner/client"
+
+const ROOT = path.resolve(__dirname, "..", "..")
+function srcFile(...parts: string[]): string {
+  const candidates = [
+    path.join(ROOT, "src", ...parts),
+    path.join(__dirname, "..", "src", ...parts),
+  ]
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p
+  }
+  return candidates[0]
+}
+
+const THREADS = [
+  { id: "old", title: "Old notes", updated_at: "2026-08-01T00:00:00Z" },
+  { id: "mid", title: "Browser tab", updated_at: "2026-08-10T00:00:00Z" },
+  { id: "new", title: "Latest", updated_at: "2026-08-20T12:00:00Z", created_at: "2026-08-19T00:00:00Z" },
+]
+
+test("isSummonerSearchQuery is true iff trimmed text starts with #", () => {
+  assert.equal(isSummonerSearchQuery("#"), true)
+  assert.equal(isSummonerSearchQuery("#invoice"), true)
+  assert.equal(isSummonerSearchQuery("  #foo"), true)
+  assert.equal(isSummonerSearchQuery("# foo"), true)
+  assert.equal(isSummonerSearchQuery("invoice"), false)
+  assert.equal(isSummonerSearchQuery("foo #bar"), false)
+  assert.equal(isSummonerSearchQuery(""), false)
+  assert.equal(isSummonerSearchQuery("   "), false)
+})
+
+test("summonerSearchNeedle is the text after #", () => {
+  assert.equal(summonerSearchNeedle("#invoice"), "invoice")
+  assert.equal(summonerSearchNeedle("  #foo  "), "foo")
+  assert.equal(summonerSearchNeedle("#"), "")
+  assert.equal(summonerSearchNeedle("# title"), "title")
+  assert.equal(summonerSearchNeedle("not-search"), "")
+})
+
+test("resolveSubmitThread uses requestedId when present", () => {
+  assert.equal(resolveSubmitThread({ requestedId: "mid", threads: THREADS }), "mid")
+  assert.equal(resolveSubmitThread({ requestedId: "  mid  ", threads: THREADS }), "mid")
+  // unknown id is still the requested one — create happens only when empty
+  assert.equal(resolveSubmitThread({ requestedId: "ghost", threads: THREADS }), "ghost")
+})
+
+test("resolveSubmitThread empty requestedId picks newest thread or null", () => {
+  assert.equal(resolveSubmitThread({ requestedId: "", threads: THREADS }), "new")
+  assert.equal(resolveSubmitThread({ requestedId: "   ", threads: THREADS }), "new")
+  assert.equal(resolveSubmitThread({ requestedId: "", threads: [] }), null)
+})
+
+test("submitSummonerTalk empty id uses newest thread, claims overlay, sends chat", async () => {
+  const calls: string[] = []
+  const r = await submitSummonerTalk("", "hello overlay", {
+    listThreads: async () => THREADS,
+    createThread: async () => {
+      calls.push("create")
+      return { id: "created" }
+    },
+    claimLease: async (id) => {
+      calls.push(`claim:${id}`)
+    },
+    sendChatCreate: ({ thread_id, message }) => {
+      calls.push(`chat:${thread_id}:${message}`)
+      return true
+    },
+  })
+  assert.equal(r.ok, true)
+  assert.equal(r.threadId, "new")
+  assert.deepEqual(calls, ["claim:new", "chat:new:hello overlay"])
+})
+
+test("submitSummonerTalk creates a thread when none exist", async () => {
+  const r = await submitSummonerTalk("", "first", {
+    listThreads: async () => [],
+    createThread: async () => ({ id: "fresh" }),
+    claimLease: async () => {},
+    sendChatCreate: () => true,
+  })
+  assert.equal(r.ok, true)
+  assert.equal(r.threadId, "fresh")
+})
+
+test("submitSummonerTalk hydrates after resolve when hydrate is provided", async () => {
+  let hydrated: { thread_id: string; messages: unknown[] } | undefined
+  await submitSummonerTalk("mid", "go", {
+    listThreads: async () => THREADS,
+    createThread: async () => ({ id: "nope" }),
+    claimLease: async () => {},
+    sendChatCreate: () => true,
+    selectMessages: async (id) => {
+      assert.equal(id, "mid")
+      return [{ role: "user", content: "prior" }]
+    },
+    hydrate: (payload) => {
+      hydrated = payload
+    },
+  })
+  assert.equal(hydrated?.thread_id, "mid")
+  assert.deepEqual(hydrated?.messages, [{ role: "user", content: "prior" }])
+})
+
+test("submitSummonerTalk refuses blank text and does not create", async () => {
+  let created = false
+  const r = await submitSummonerTalk("", "   ", {
+    listThreads: async () => [],
+    createThread: async () => {
+      created = true
+      return { id: "x" }
+    },
+    claimLease: async () => {},
+    sendChatCreate: () => true,
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.threadId, null)
+  assert.equal(created, false)
+})
+
+test("SummonerController v2 empty state talks, not title-search", () => {
+  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  assert.match(src, /说点什么，或按住说话…/)
+  assert.match(src, /回车发送到当前线程 · 输入 # 搜标题 · 不搜文件/)
+  assert.match(src, /继续 · /)
+  assert.doesNotMatch(src, /输入线程标题/)
+  // Send stays visible in talk (including detached)
+  const apply = src.slice(src.indexOf("private func applyPhase()"), src.indexOf("private func relayout()"))
+  assert.doesNotMatch(apply, /sendButton\?\.isHidden = !chatting \|\| detached/)
+  // Search only on # prefix
+  assert.match(src, /isSummonerSearchQuery|hasPrefix\("#"\)|startsWith\("#"\)/)
+  // submitComposer allows empty threadId
+  const submit = src.slice(src.indexOf("private func submitComposer()"), src.indexOf("@objc func sendClicked()"))
+  assert.doesNotMatch(submit, /!threadId\.isEmpty/)
+  assert.match(submit, /summoner\.submit/)
+})
+
+test("menu-bar-agent empty submit resolves last/new thread then claims overlay lease", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const start = src.search(/export (async )?function handleSummonerSubmit/)
+  assert.ok(start >= 0, "handleSummonerSubmit missing")
+  const next = src.indexOf("\nexport ", start + 10)
+  const body = src.slice(start, next > start ? next : start + 1800)
+  assert.match(body, /listThreads/)
+  assert.match(body, /createThread/)
+  assert.match(body, /composer\.lease|claimLease|claimOverlay/)
+  assert.match(body, /sendChatCreate/)
+  assert.match(body, /hydrate/)
+})
+
+test("SummonerController has press-hold mic that emits summoner.mic", () => {
+  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  assert.match(src, /🎙/)
+  assert.match(src, /summoner\.mic\.start/)
+  assert.match(src, /summoner\.mic\.(wav|end)/)
+  assert.match(src, /summoner\.dictate/)
+  assert.match(src, /applyDictate|composer\?\.string = text/)
+})
+
+test("menu-bar-agent maps summoner.mic to voice.stt and dictate on result", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  assert.match(src, /summoner\.mic/)
+  assert.match(src, /micWavToSttFrames|voice\.stt\.start/)
+  assert.match(src, /privacy_ack_v2/)
+  assert.match(src, /mapVoiceSttToSummonerCmd/)
+  assert.match(src, /summoner\.dictate/)
+})
+
+test("CompanionClient.createThread sends thread.create", () => {
+  const src = fs.readFileSync(srcFile("tray", "companion-client.ts"), "utf8")
+  assert.match(src, /async createThread\(/)
+  const start = src.indexOf("async createThread(")
+  const method = src.slice(start, start + 500)
+  assert.match(method, /thread\.create/)
+  assert.match(method, /sendRequest/)
+})

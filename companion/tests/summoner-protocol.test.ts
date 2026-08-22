@@ -18,6 +18,11 @@ import {
   encodeSummonerContinue,
   encodeSummonerHotkeyChosen,
   encodeSummonerComposing,
+  encodeSummonerDictate,
+  encodeSummonerMicStart,
+  encodeSummonerMicChunk,
+  encodeSummonerMicEnd,
+  encodeSummonerMicWav,
   summonerLine,
   parseSummonerLine,
   decodeSummonerOutbound,
@@ -98,6 +103,35 @@ test("round-trip summoner.composing", () => {
   roundTripInbound(off)
 })
 
+test("round-trip summoner.dictate fills composer (no auto-submit)", () => {
+  const msg = encodeSummonerDictate({ text: "你好世界" })
+  assert.equal(msg.cmd, "summoner.dictate")
+  assert.equal(msg.text, "你好世界")
+  roundTripOutbound(msg)
+})
+
+test("round-trip summoner.mic start/chunk/end/wav", () => {
+  roundTripInbound(encodeSummonerMicStart())
+  const chunk = encodeSummonerMicChunk({ seq: 0, data: "cGNt" })
+  assert.equal(chunk.type, "summoner.mic.chunk")
+  assert.equal(chunk.seq, 0)
+  roundTripInbound(chunk)
+  roundTripInbound(encodeSummonerMicEnd())
+  const wav = encodeSummonerMicWav({ data: "UklGRg==" })
+  assert.equal(wav.type, "summoner.mic.wav")
+  roundTripInbound(wav)
+})
+
+test("mic inbound rejects missing/wrong fields", () => {
+  assert.equal(decodeSummonerInbound({ type: "summoner.mic.chunk" }), null)
+  assert.equal(decodeSummonerInbound({ type: "summoner.mic.chunk", seq: -1, data: "x" }), null)
+  assert.equal(decodeSummonerInbound({ type: "summoner.mic.chunk", seq: 0, data: 1 }), null)
+  assert.equal(decodeSummonerInbound({ type: "summoner.mic.wav" }), null)
+  assert.equal(decodeSummonerInbound({ type: "summoner.mic.wav", data: 1 }), null)
+  assert.equal(decodeSummonerOutbound({ cmd: "summoner.dictate" }), null)
+  assert.equal(decodeSummonerOutbound({ cmd: "summoner.dictate", text: 1 }), null)
+})
+
 test("remaining outbound cmds round-trip", () => {
   roundTripOutbound(encodeSummonerClose())
   roundTripOutbound(encodeSummonerToken({ text: "tok" }))
@@ -109,6 +143,7 @@ test("remaining outbound cmds round-trip", () => {
   }))
   roundTripOutbound(encodeSummonerHotkeyPrompt())
   roundTripOutbound(encodeSummonerHotkeySet({ combo: "ctrl+alt+space" }))
+  roundTripOutbound(encodeSummonerDictate({ text: "filled by STT" }))
 })
 
 test("summoner.hotkey.set requires a non-empty combo", () => {
@@ -124,6 +159,8 @@ test("remaining inbound events round-trip", () => {
   roundTripInbound(encodeSummonerSearch({ query: "" }))
   roundTripInbound(encodeSummonerContinue())
   roundTripInbound(encodeSummonerHotkeyChosen({ combo: "Ctrl+Alt+Space" }))
+  roundTripInbound(encodeSummonerMicStart())
+  roundTripInbound(encodeSummonerMicEnd())
 })
 
 test("{ cmd: summoner.confirm.allow } is invalid — no confirm dialect", () => {
@@ -169,6 +206,7 @@ test("encoded messages never carry Allow/Deny confirm chrome", () => {
     encodeSummonerError({ message: "e" }),
     encodeSummonerHotkeyPrompt(),
     encodeSummonerHotkeySet({ combo: "ctrl+alt+k" }),
+    encodeSummonerDictate({ text: "draft" }),
   ]
   const inbound = [
     encodeSummonerReady(),
@@ -179,6 +217,10 @@ test("encoded messages never carry Allow/Deny confirm chrome", () => {
     encodeSummonerContinue(),
     encodeSummonerHotkeyChosen({ combo: "Ctrl+Shift+D" }),
     encodeSummonerComposing({ on: false }),
+    encodeSummonerMicStart(),
+    encodeSummonerMicChunk({ seq: 0, data: "AA==" }),
+    encodeSummonerMicEnd(),
+    encodeSummonerMicWav({ data: "AA==" }),
   ]
   for (const msg of [...outbound, ...inbound]) {
     const blob = JSON.stringify(msg)

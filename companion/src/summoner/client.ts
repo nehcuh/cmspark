@@ -12,6 +12,7 @@ import {
   encodeSummonerToken,
   encodeSummonerDone,
   encodeSummonerError,
+  encodeSummonerDictate,
   type SummonerOutboundCmd,
   type SummonerSearchHint,
 } from "./protocol"
@@ -68,6 +69,74 @@ export function filterThreadsByTitle(
   return { matches, searchHint }
 }
 
+/** v2 empty-state: `#` prefix is title search; anything else is talk. */
+export function isSummonerSearchQuery(text: string): boolean {
+  return text.trim().startsWith("#")
+}
+
+/** Needle after a leading `#`. Empty when the text is not a search query. */
+export function summonerSearchNeedle(text: string): string {
+  const t = text.trim()
+  if (!t.startsWith("#")) return ""
+  return t.slice(1).trim()
+}
+
+/**
+ * Resolve chat.create thread_id. Non-empty requestedId wins (caller already
+ * picked a hit). Empty → newest thread id, or null so the agent can create.
+ */
+export function resolveSubmitThread(args: {
+  requestedId: string
+  threads: ThreadTitleRecord[]
+}): string | null {
+  const requested = args.requestedId.trim()
+  if (requested) return requested
+  return sortRecentFirst(args.threads)[0]?.id ?? null
+}
+
+export type SubmitSummonerTalkDeps = {
+  listThreads: () => Promise<ThreadTitleRecord[]>
+  createThread: () => Promise<{ id: string } | null>
+  claimLease: (threadId: string) => Promise<void>
+  sendChatCreate: (args: { thread_id: string; message: string }) => boolean
+  selectMessages?: (threadId: string) => Promise<unknown[]>
+  hydrate?: (args: { thread_id: string; messages: unknown[] }) => void
+}
+
+export type SubmitSummonerTalkResult = {
+  ok: boolean
+  threadId: string | null
+}
+
+/**
+ * Empty overlay talk: last thread, or create, then overlay lease + chat.create.
+ * Hydrate is optional (agent supplies stdin after resolve).
+ */
+export async function submitSummonerTalk(
+  requestedId: string,
+  text: string,
+  deps: SubmitSummonerTalkDeps,
+): Promise<SubmitSummonerTalkResult> {
+  const message = text.trim()
+  if (!message) return { ok: false, threadId: null }
+
+  const threads = await deps.listThreads()
+  let id = resolveSubmitThread({ requestedId, threads })
+  if (!id) {
+    const created = await deps.createThread()
+    id = created?.id ?? null
+  }
+  if (!id) return { ok: false, threadId: null }
+
+  await deps.claimLease(id)
+  const ok = deps.sendChatCreate({ thread_id: id, message })
+  if (deps.hydrate) {
+    const messages = (await deps.selectMessages?.(id)) ?? []
+    deps.hydrate({ thread_id: id, messages })
+  }
+  return { ok, threadId: id }
+}
+
 export function buildContinueChatCreate(thread_id: string): {
   thread_id: string
   message: typeof CONTINUE_MESSAGE
@@ -118,6 +187,106 @@ export function mapChatMessageToSummonerCmd(msg: unknown): SummonerOutboundCmd |
         : typeof data?.error_code === "string"
           ? data.error_code
           : undefined
+    return encodeSummonerError(error_code !== undefined ? { message, error_code } : { message })
+  }
+  return null
+}
+
+export type SummonerSttModelId = "small" | "medium" | "large-v3-turbo"
+
+export type VoiceSttStartFrame = {
+  type: "voice.stt.start"
+  v: 1
+  sessionId: string
+  modelId: SummonerSttModelId
+  format: "wav" | "pcm_s16le"
+  sampleRate: 16000
+  channels: 1
+  privacy_ack_v2: true
+}
+
+export type VoiceSttChunkFrame = {
+  type: "voice.stt.chunk"
+  v: 1
+  sessionId: string
+  seq: number
+  data: string
+}
+
+export type VoiceSttEndFrame = {
+  type: "voice.stt.end"
+  v: 1
+  sessionId: string
+  totalSeq: number
+}
+
+export type VoiceSttFrame = VoiceSttStartFrame | VoiceSttChunkFrame | VoiceSttEndFrame
+
+/** Overlay mic gesture = privacy ack. One-shot wav → start/chunk/end. */
+export function micWavToSttFrames(args: {
+  sessionId: string
+  modelId: SummonerSttModelId
+  data: string
+}): VoiceSttFrame[] {
+  return [
+    {
+      type: "voice.stt.start",
+      v: 1,
+      sessionId: args.sessionId,
+      modelId: args.modelId,
+      format: "wav",
+      sampleRate: 16000,
+      channels: 1,
+      privacy_ack_v2: true,
+    },
+    {
+      type: "voice.stt.chunk",
+      v: 1,
+      sessionId: args.sessionId,
+      seq: 0,
+      data: args.data,
+    },
+    {
+      type: "voice.stt.end",
+      v: 1,
+      sessionId: args.sessionId,
+      totalSeq: 1,
+    },
+  ]
+}
+
+export function micPcmStartFrame(args: {
+  sessionId: string
+  modelId: SummonerSttModelId
+}): VoiceSttStartFrame {
+  return {
+    type: "voice.stt.start",
+    v: 1,
+    sessionId: args.sessionId,
+    modelId: args.modelId,
+    format: "pcm_s16le",
+    sampleRate: 16000,
+    channels: 1,
+    privacy_ack_v2: true,
+  }
+}
+
+/** voice.stt.result → fill overlay composer. Prefer dictate over auto-submit. */
+export function mapVoiceSttToSummonerCmd(msg: unknown): SummonerOutboundCmd | null {
+  const m = asRecord(msg)
+  if (!m) return null
+  if (m.type === "voice.stt.result") {
+    const text = typeof m.text === "string" ? m.text : ""
+    return encodeSummonerDictate({ text })
+  }
+  if (m.type === "voice.stt.error") {
+    const message =
+      typeof m.message === "string"
+        ? m.message
+        : typeof m.code === "string"
+          ? m.code
+          : "听写失败"
+    const error_code = typeof m.code === "string" ? m.code : undefined
     return encodeSummonerError(error_code !== undefined ? { message, error_code } : { message })
   }
   return null

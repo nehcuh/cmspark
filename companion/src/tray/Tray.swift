@@ -24,6 +24,7 @@
 import AppKit
 import Foundation
 import Carbon
+import AVFoundation
 
 // ---------------------------------------------------------------------------
 // JSON helpers
@@ -556,6 +557,10 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
     let combo = (json["combo"] as? String) ?? ""
     _ = registerSummonerHotKey(combo: combo)
     summonerController.noteHotkeyConfigured()
+
+  case "summoner.dictate":
+    let text = (json["text"] as? String) ?? ""
+    summonerController.applyDictate(text)
 
   case "quit":
     delegate.shutdown()
@@ -1368,9 +1373,117 @@ enum SummonerTokens {
 }
 
 private let summonerWindowTitle = "CMspark 召唤器（实验）"
-private let summonerSearchHint = "P0 不搜正文 · 也不搜文件和应用"
-private let summonerEmptyHint = "输入线程标题 · 不搜文件和应用 · P0 不搜正文"
+private let summonerTalkPlaceholder = "说点什么，或按住说话…"
+private let summonerTalkHint = "回车发送到当前线程 · 输入 # 搜标题 · 不搜文件"
 private let summonerCtaCopy = "我们不能替你打开侧栏。可激活 Google Chrome，然后点工具栏 CMspark（没有就拼图 🧩 钉上）。"
+
+private func wavFromPcmS16le(_ pcm: Data, sampleRate: Int, channels: Int) -> Data {
+  var d = Data()
+  func ascii(_ s: String) { d.append(contentsOf: s.utf8) }
+  func u16(_ v: UInt16) {
+    var x = v.littleEndian
+    withUnsafeBytes(of: &x) { d.append(contentsOf: $0) }
+  }
+  func u32(_ v: UInt32) {
+    var x = v.littleEndian
+    withUnsafeBytes(of: &x) { d.append(contentsOf: $0) }
+  }
+  ascii("RIFF")
+  u32(UInt32(36 + pcm.count))
+  ascii("WAVE")
+  ascii("fmt ")
+  u32(16)
+  u16(1)
+  u16(UInt16(channels))
+  u32(UInt32(sampleRate))
+  u32(UInt32(sampleRate * channels * 2))
+  u16(UInt16(channels * 2))
+  u16(16)
+  ascii("data")
+  u32(UInt32(pcm.count))
+  d.append(pcm)
+  return d
+}
+
+final class SummonerMicCapture {
+  private let engine = AVAudioEngine()
+  private var chunks: [Data] = []
+  private var running = false
+
+  var isRunning: Bool { running }
+
+  func start(onDenied: @escaping () -> Void) {
+    if running { return }
+    chunks = []
+    let proceed = { [weak self] in
+      guard let self else { return }
+      do {
+        try self.startEngine()
+      } catch {
+        onDenied()
+      }
+    }
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized:
+      proceed()
+    case .notDetermined:
+      AVCaptureDevice.requestAccess(for: .audio) { ok in
+        DispatchQueue.main.async {
+          if ok { proceed() } else { onDenied() }
+        }
+      }
+    default:
+      onDenied()
+    }
+  }
+
+  func stop() -> Data {
+    guard running else { return Data() }
+    running = false
+    engine.inputNode.removeTap(onBus: 0)
+    if engine.isRunning { engine.stop() }
+    let pcm = chunks.reduce(Data(), +)
+    chunks = []
+    return wavFromPcmS16le(pcm, sampleRate: 16000, channels: 1)
+  }
+
+  private func startEngine() throws {
+    let input = engine.inputNode
+    let hw = input.outputFormat(forBus: 0)
+    guard let dst = AVAudioFormat(
+      commonFormat: .pcmFormatInt16,
+      sampleRate: 16000,
+      channels: 1,
+      interleaved: true
+    ) else {
+      throw NSError(domain: "summoner.mic", code: 1)
+    }
+    input.removeTap(onBus: 0)
+    let ratio = dst.sampleRate / hw.sampleRate
+    input.installTap(onBus: 0, bufferSize: 1024, format: hw) { [weak self] buffer, _ in
+      guard let converter = AVAudioConverter(from: hw, to: dst) else { return }
+      let outFrames = AVAudioFrameCount(max(Double(buffer.frameLength) * ratio, 1))
+      guard let out = AVAudioPCMBuffer(pcmFormat: dst, frameCapacity: outFrames) else { return }
+      var err: NSError?
+      var got = false
+      converter.convert(to: out, error: &err) { _, status in
+        if got {
+          status.pointee = .noDataNow
+          return nil
+        }
+        got = true
+        status.pointee = .haveData
+        return buffer
+      }
+      guard err == nil, let ch = out.int16ChannelData else { return }
+      let n = Int(out.frameLength) * MemoryLayout<Int16>.size
+      self?.chunks.append(Data(bytes: ch[0], count: n))
+    }
+    engine.prepare()
+    try engine.start()
+    running = true
+  }
+}
 
 class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var window: NSPanel?
@@ -1402,6 +1515,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var continueButton: NSButton?
   private var sideNote: NSTextField?
   private var pickerBox: NSView?
+  private var lastThreadField: NSTextField?
+  private var micButton: NSButton?
+  private let micCapture = SummonerMicCapture()
+  private var micDown = false
 
   var overlayVisible: Bool { isOpen && window?.isVisible == true }
   var composingNow: Bool { composer?.hasMarkedText() == true }
@@ -1481,8 +1598,11 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   func noteThreadsChanged() {
-    if isOpen && threadId.isEmpty {
-      refreshHits()
+    if isOpen {
+      updateLastThreadLabel()
+      if isSearchQuery(composerText) {
+        refreshHits()
+      }
     }
   }
 
@@ -1543,6 +1663,16 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     composer?.string ?? ""
   }
 
+  private func isSearchQuery(_ text: String) -> Bool {
+    return text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#")
+  }
+
+  private func searchNeedle(_ text: String) -> String {
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard t.hasPrefix("#") else { return "" }
+    return String(t.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   func textDidChange(_ notification: Notification) {
     updatePlaceholder()
     let on = composer?.hasMarkedText() ?? false
@@ -1550,12 +1680,17 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       lastComposing = on
       jsonLine(["type": "summoner.composing", "on": on])
     }
-    if threadId.isEmpty {
+    if isSearchQuery(composerText) {
       refreshHits()
       searchTimer?.invalidate()
       searchTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
         self?.emitSearch()
       }
+    } else {
+      hits = []
+      selectedHit = 0
+      hitsStack?.isHidden = true
+      relayout()
     }
   }
 
@@ -1564,7 +1699,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       hide()
       return true
     }
-    if threadId.isEmpty {
+    if isSearchQuery(composerText) {
       if commandSelector == #selector(NSResponder.moveUp(_:)) {
         moveHit(-1)
         return true
@@ -1578,6 +1713,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
         if !hits.isEmpty {
           let i = min(max(0, selectedHit), hits.count - 1)
           selectThread(hits[i])
+        } else {
+          submitComposer()
         }
         return true
       }
@@ -1592,7 +1729,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   private func emitSearch() {
-    jsonLine(["type": "summoner.search", "query": composerText])
+    jsonLine(["type": "summoner.search", "query": searchNeedle(composerText)])
   }
 
   private func moveHit(_ delta: Int) {
@@ -1608,12 +1745,12 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     composer?.string = ""
     updatePlaceholder()
     applyPhase()
-    jsonLine(["type": "summoner.search", "query": thread.title])
+    window?.makeFirstResponder(composer)
   }
 
   private func submitComposer() {
     let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, !threadId.isEmpty else { return }
+    guard !text.isEmpty else { return }
     if composer?.hasMarkedText() == true { return }
     lines.append("你　\(text)")
     capLines()
@@ -1621,6 +1758,32 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     composer?.string = ""
     updatePlaceholder()
     jsonLine(["type": "summoner.submit", "thread_id": threadId, "text": text])
+  }
+
+  func applyDictate(_ text: String) {
+    guard !text.isEmpty else { return }
+    composer?.string = text
+    updatePlaceholder()
+    window?.makeFirstResponder(composer)
+  }
+
+  @objc func micHoldChanged(_ sender: NSButton) {
+    let down = (NSEvent.pressedMouseButtons & (1 << 0)) != 0
+    if down && !micDown {
+      micDown = true
+      jsonLine(["type": "summoner.mic.start"])
+      micCapture.start {
+        self.micDown = false
+      }
+    } else if !down && micDown {
+      micDown = false
+      let wav = micCapture.stop()
+      if wav.isEmpty {
+        jsonLine(["type": "summoner.mic.end"])
+      } else {
+        jsonLine(["type": "summoner.mic.wav", "data": wav.base64EncodedString()])
+      }
+    }
   }
 
   @objc func sendClicked() { submitComposer() }
@@ -1641,11 +1804,15 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
 
   private func refreshHits(filterAgain: Bool = true) {
     if filterAgain {
-      let q = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-      if q.isEmpty {
+      if !isSearchQuery(composerText) {
         hits = []
       } else {
-        hits = recentThreads.filter { $0.title.contains(q) }
+        let q = searchNeedle(composerText)
+        if q.isEmpty {
+          hits = []
+        } else {
+          hits = recentThreads.filter { $0.title.contains(q) }
+        }
       }
       if selectedHit >= hits.count { selectedHit = 0 }
     }
@@ -1670,7 +1837,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       row.heightAnchor.constraint(equalToConstant: 32).isActive = true
       stack.addArrangedSubview(row)
     }
-    stack.isHidden = hits.isEmpty || !threadId.isEmpty
+    stack.isHidden = hits.isEmpty
     relayout()
   }
 
@@ -1681,10 +1848,27 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     }
   }
 
+  private func lastThreadCaption() -> String? {
+    let title: String?
+    if !threadId.isEmpty {
+      title = recentThreads.first(where: { $0.id == threadId })?.title
+    } else {
+      title = recentThreads.first?.title
+    }
+    guard let title, !title.isEmpty else { return nil }
+    return "继续 · \(title)"
+  }
+
+  private func updateLastThreadLabel() {
+    let cap = lastThreadCaption()
+    lastThreadField?.stringValue = cap ?? ""
+    lastThreadField?.isHidden = cap == nil
+  }
+
   private func updatePlaceholder() {
     let empty = composerText.isEmpty
     placeholderField?.isHidden = !empty
-    placeholderField?.stringValue = threadId.isEmpty ? "输入线程标题" : ""
+    placeholderField?.stringValue = summonerTalkPlaceholder
     if let box = fieldBox {
       let focused = (window?.firstResponder === composer)
       box.layer?.backgroundColor = focused ? SummonerTokens.paper.cgColor : SummonerTokens.muted.cgColor
@@ -1695,9 +1879,9 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   private func applyPhase() {
-    let searching = threadId.isEmpty
-    let chatting = !searching
-    let detached = chatting && !browserAttached
+    let searching = isSearchQuery(composerText)
+    let hasTranscript = !lines.isEmpty || !threadId.isEmpty
+    let detached = !browserAttached
 
     badgeField?.stringValue = browserAttached ? "浏览器已连接" : "浏览器未连接"
     if let badge = badgeField {
@@ -1715,21 +1899,23 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       }
     }
 
-    hintField?.stringValue = searching
-      ? (composerText.isEmpty ? summonerEmptyHint : summonerSearchHint)
-      : summonerSearchHint
+    hintField?.stringValue = summonerTalkHint
 
-    if searching { refreshHits() } else {
+    if searching {
+      refreshHits()
+    } else {
+      hits = []
       hitsStack?.isHidden = true
     }
-    logBox?.isHidden = !chatting
+    logBox?.isHidden = !hasTranscript
     refreshLog()
-    ctaBox?.isHidden = !detached
-    attachButton?.isHidden = !detached
-    footRow?.isHidden = !chatting || detached
-    sendButton?.isHidden = !chatting || detached
-    continueButton?.isHidden = !(chatting && browserAttached && sawBrowserUnavailable)
-    sideNote?.isHidden = !chatting
+    ctaBox?.isHidden = !(detached && hasTranscript)
+    attachButton?.isHidden = !(detached && hasTranscript)
+    footRow?.isHidden = false
+    sendButton?.isHidden = false
+    continueButton?.isHidden = !(hasTranscript && browserAttached && sawBrowserUnavailable)
+    sideNote?.isHidden = !hasTranscript
+    updateLastThreadLabel()
     updatePlaceholder()
     relayout()
   }
@@ -1738,6 +1924,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     guard let window = window else { return }
     var h: CGFloat = 108
     if pickerBox?.isHidden == false { h += 248 }
+    if lastThreadField?.isHidden == false { h += 18 }
     if hitsStack?.isHidden == false { h += 8 + CGFloat(min(hits.count, 6)) * 36 }
     if logBox?.isHidden == false { h += 168 }
     if ctaBox?.isHidden == false { h += 96 }
@@ -1857,12 +2044,6 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     fieldBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
     self.fieldBox = fieldBox
 
-    let searchGlyph = NSTextField(labelWithString: "⌕")
-    searchGlyph.font = .systemFont(ofSize: 14)
-    searchGlyph.textColor = SummonerTokens.faint
-    searchGlyph.translatesAutoresizingMaskIntoConstraints = false
-    fieldBox.addSubview(searchGlyph)
-
     let scroll = NSScrollView()
     scroll.translatesAutoresizingMaskIntoConstraints = false
     scroll.hasVerticalScroller = false
@@ -1890,19 +2071,31 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     composer = tv
     fieldBox.addSubview(scroll)
 
-    let placeholder = NSTextField(labelWithString: "输入线程标题")
+    let placeholder = NSTextField(labelWithString: summonerTalkPlaceholder)
     placeholder.font = .systemFont(ofSize: 15)
     placeholder.textColor = SummonerTokens.faint
     placeholder.translatesAutoresizingMaskIntoConstraints = false
     placeholderField = placeholder
     fieldBox.addSubview(placeholder)
 
+    let mic = NSButton(title: "🎙", target: self, action: #selector(micHoldChanged(_:)))
+    mic.bezelStyle = .inline
+    mic.isBordered = false
+    mic.font = .systemFont(ofSize: 14)
+    mic.toolTip = "按住说话"
+    mic.keyEquivalent = ""
+    mic.sendAction(on: [.leftMouseDown, .leftMouseUp])
+    mic.translatesAutoresizingMaskIntoConstraints = false
+    micButton = mic
+    fieldBox.addSubview(mic)
+
     NSLayoutConstraint.activate([
-      searchGlyph.leadingAnchor.constraint(equalTo: fieldBox.leadingAnchor, constant: 12),
-      searchGlyph.centerYAnchor.constraint(equalTo: fieldBox.centerYAnchor),
-      searchGlyph.widthAnchor.constraint(equalToConstant: 16),
-      scroll.leadingAnchor.constraint(equalTo: searchGlyph.trailingAnchor, constant: 8),
-      scroll.trailingAnchor.constraint(equalTo: fieldBox.trailingAnchor, constant: -12),
+      mic.trailingAnchor.constraint(equalTo: fieldBox.trailingAnchor, constant: -8),
+      mic.centerYAnchor.constraint(equalTo: fieldBox.centerYAnchor),
+      mic.widthAnchor.constraint(equalToConstant: 28),
+      mic.heightAnchor.constraint(equalToConstant: 28),
+      scroll.leadingAnchor.constraint(equalTo: fieldBox.leadingAnchor, constant: 12),
+      scroll.trailingAnchor.constraint(equalTo: mic.leadingAnchor, constant: -6),
       scroll.topAnchor.constraint(equalTo: fieldBox.topAnchor, constant: 6),
       scroll.bottomAnchor.constraint(equalTo: fieldBox.bottomAnchor, constant: -6),
       placeholder.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
@@ -1910,12 +2103,19 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     ])
     stack.addArrangedSubview(fieldBox)
 
-    let hint = NSTextField(labelWithString: summonerEmptyHint)
+    let hint = NSTextField(labelWithString: summonerTalkHint)
     hint.font = .systemFont(ofSize: 11)
     hint.textColor = SummonerTokens.faint
     hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     hintField = hint
     stack.addArrangedSubview(hint)
+
+    let lastThread = NSTextField(labelWithString: "")
+    lastThread.font = .systemFont(ofSize: 12, weight: .medium)
+    lastThread.textColor = SummonerTokens.secondary
+    lastThread.isHidden = true
+    lastThreadField = lastThread
+    stack.addArrangedSubview(lastThread)
 
     let hits = NSStackView()
     hits.orientation = .vertical
@@ -2011,7 +2211,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     continueButton = cont
     foot.addArrangedSubview(send)
     foot.addArrangedSubview(cont)
-    foot.isHidden = true
+    foot.isHidden = false
+    send.isHidden = false
     footRow = foot
     stack.addArrangedSubview(foot)
 

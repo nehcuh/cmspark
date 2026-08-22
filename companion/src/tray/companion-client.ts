@@ -310,6 +310,55 @@ export class CompanionClient {
     }
   }
 
+  /** Overlay empty-state: create a thread when the user has none. */
+  async createThread(): Promise<{ id: string } | null> {
+    if (this._state !== "connected") return null
+    try {
+      const resp = await this.sendRequest("thread.create")
+      const id = resp?.thread?.id
+      return typeof id === "string" && id ? { id } : null
+    } catch {
+      return null
+    }
+  }
+
+  async selectThreadMessages(threadId: string): Promise<Array<{
+    role: string
+    content?: string
+    tool_calls?: Array<{ function?: { name?: string } }>
+  }>> {
+    if (this._state !== "connected") return []
+    try {
+      const resp = await this.sendRequest("thread.select", { thread_id: threadId })
+      return Array.isArray(resp?.messages) ? resp.messages : []
+    } catch {
+      return []
+    }
+  }
+
+  /** get then claim overlay with CAS rev. Overlay chat.create is denied until this lands. */
+  async claimOverlayComposerLease(threadId: string): Promise<void> {
+    if (this._state !== "connected") return
+    try {
+      const got = await this.sendRequest("composer.lease.get", { thread_id: threadId })
+      const rev = typeof got?.rev === "number" ? got.rev : 0
+      const claim = await this.sendRequest("composer.lease.claim", {
+        thread_id: threadId,
+        holder: "overlay",
+        rev,
+      })
+      if (claim?.error_code === "LEASE_REV_MISMATCH" && typeof claim.rev === "number") {
+        await this.sendRequest("composer.lease.claim", {
+          thread_id: threadId,
+          holder: "overlay",
+          rev: claim.rev,
+        })
+      }
+    } catch {
+      // chat.create may still return OVERLAY_STANDBY; caller continues
+    }
+  }
+
   /** Refresh all data from server */
   async refreshAll(): Promise<void> {
     const [actions, threads] = await Promise.all([

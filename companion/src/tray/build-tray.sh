@@ -44,7 +44,8 @@ swiftc \
   "${SCRIPT_DIR}/Tray.swift" \
   -framework AppKit \
   -framework Foundation \
-  -framework Carbon
+  -framework Carbon \
+  -framework AVFoundation
 
 # Verify
 if [[ ! -f "${OUTPUT_BIN}" ]]; then

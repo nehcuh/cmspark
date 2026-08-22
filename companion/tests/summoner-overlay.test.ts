@@ -53,7 +53,8 @@ test("SummonerController copy lock: badge, hint, CTA, buttons", () => {
   const body = summonerControllerBody()
   assert.match(body, /浏览器已连接/)
   assert.match(body, /浏览器未连接/)
-  assert.match(body, /P0 不搜正文 · 也不搜文件和应用/)
+  assert.match(body, /回车发送到当前线程 · 输入 # 搜标题 · 不搜文件/)
+  assert.match(body, /说点什么，或按住说话…/)
   assert.match(body, /我们不能替你打开侧栏/)
   assert.match(body, /发送/)
   assert.match(body, /激活 Google Chrome/)
@@ -84,6 +85,7 @@ test("Tray.swift stdin handles summoner.open/hydrate/token/done/error/close", ()
     "summoner.close",
     "summoner.hotkey.prompt",
     "summoner.hotkey.set",
+    "summoner.dictate",
   ]) {
     assert.ok(src.includes(`"${cmd}"`), `missing stdin cmd ${cmd}`)
   }

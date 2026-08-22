@@ -13,6 +13,8 @@ import {
   ATTACH_NOTIFY_COPY,
   filterThreadsByTitle,
   mapChatMessageToSummonerCmd,
+  mapVoiceSttToSummonerCmd,
+  micWavToSttFrames,
   attachChromeOnly,
   buildContinueChatCreate,
 } from "../src/summoner/client"
@@ -121,6 +123,47 @@ test("mapChatMessageToSummonerCmd: chat.error passes error_code", () => {
   if (fromTop?.cmd === "summoner.error") {
     assert.equal(fromTop.error_code, "BROWSER_UNAVAILABLE")
   }
+})
+
+test("micWavToSttFrames emits start/chunk/end with privacy_ack_v2", () => {
+  const frames = micWavToSttFrames({
+    sessionId: "summoner-mic-1",
+    modelId: "medium",
+    data: "UklGRg==",
+  })
+  assert.equal(frames.length, 3)
+  assert.deepEqual(frames[0], {
+    type: "voice.stt.start",
+    v: 1,
+    sessionId: "summoner-mic-1",
+    modelId: "medium",
+    format: "wav",
+    sampleRate: 16000,
+    channels: 1,
+    privacy_ack_v2: true,
+  })
+  assert.deepEqual(frames[1], {
+    type: "voice.stt.chunk",
+    v: 1,
+    sessionId: "summoner-mic-1",
+    seq: 0,
+    data: "UklGRg==",
+  })
+  assert.deepEqual(frames[2], {
+    type: "voice.stt.end",
+    v: 1,
+    sessionId: "summoner-mic-1",
+    totalSeq: 1,
+  })
+})
+
+test("mapVoiceSttToSummonerCmd result fills composer via dictate", () => {
+  assert.deepEqual(
+    mapVoiceSttToSummonerCmd({ type: "voice.stt.result", sessionId: "s", text: "听写稿", v: 1 }),
+    { cmd: "summoner.dictate", text: "听写稿" },
+  )
+  assert.equal(mapVoiceSttToSummonerCmd({ type: "voice.stt.partial", status: "receiving" }), null)
+  assert.equal(mapVoiceSttToSummonerCmd({ type: "chat.token", content: "x" }), null)
 })
 
 test("mapChatMessageToSummonerCmd ignores unrelated / confirm frames", () => {

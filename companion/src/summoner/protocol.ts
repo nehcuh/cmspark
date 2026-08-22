@@ -49,6 +49,7 @@ export type SummonerDoneCmd = { cmd: "summoner.done" }
 export type SummonerErrorCmd = { cmd: "summoner.error" } & SummonerErrorPayload
 export type SummonerHotkeyPromptCmd = { cmd: "summoner.hotkey.prompt" }
 export type SummonerHotkeySetCmd = { cmd: "summoner.hotkey.set"; combo: string }
+export type SummonerDictateCmd = { cmd: "summoner.dictate"; text: string }
 
 export type SummonerOutboundCmd =
   | SummonerOpenCmd
@@ -59,6 +60,7 @@ export type SummonerOutboundCmd =
   | SummonerErrorCmd
   | SummonerHotkeyPromptCmd
   | SummonerHotkeySetCmd
+  | SummonerDictateCmd
 
 // ── Swift → Companion events ────────────────────────────────────────────────
 
@@ -70,6 +72,10 @@ export type SummonerAttachChromeEvt = { type: "summoner.attach_chrome" }
 export type SummonerContinueEvt = { type: "summoner.continue" }
 export type SummonerHotkeyChosenEvt = { type: "summoner.hotkey.chosen"; combo: string }
 export type SummonerComposingEvt = { type: "summoner.composing"; on: boolean }
+export type SummonerMicStartEvt = { type: "summoner.mic.start" }
+export type SummonerMicChunkEvt = { type: "summoner.mic.chunk"; seq: number; data: string }
+export type SummonerMicEndEvt = { type: "summoner.mic.end" }
+export type SummonerMicWavEvt = { type: "summoner.mic.wav"; data: string }
 
 export type SummonerInboundEvt =
   | SummonerReadyEvt
@@ -80,6 +86,10 @@ export type SummonerInboundEvt =
   | SummonerContinueEvt
   | SummonerHotkeyChosenEvt
   | SummonerComposingEvt
+  | SummonerMicStartEvt
+  | SummonerMicChunkEvt
+  | SummonerMicEndEvt
+  | SummonerMicWavEvt
 
 export type SummonerWireMessage = SummonerOutboundCmd | SummonerInboundEvt
 
@@ -156,6 +166,26 @@ export function encodeSummonerHotkeyChosen(p: { combo: string }): SummonerHotkey
 
 export function encodeSummonerComposing(p: { on: boolean }): SummonerComposingEvt {
   return { type: "summoner.composing", on: p.on }
+}
+
+export function encodeSummonerDictate(p: { text: string }): SummonerDictateCmd {
+  return { cmd: "summoner.dictate", text: p.text }
+}
+
+export function encodeSummonerMicStart(): SummonerMicStartEvt {
+  return { type: "summoner.mic.start" }
+}
+
+export function encodeSummonerMicChunk(p: { seq: number; data: string }): SummonerMicChunkEvt {
+  return { type: "summoner.mic.chunk", seq: p.seq, data: p.data }
+}
+
+export function encodeSummonerMicEnd(): SummonerMicEndEvt {
+  return { type: "summoner.mic.end" }
+}
+
+export function encodeSummonerMicWav(p: { data: string }): SummonerMicWavEvt {
+  return { type: "summoner.mic.wav", data: p.data }
 }
 
 /** One stdin/stdout JSON line (no trailing newline). */
@@ -254,6 +284,9 @@ export function decodeSummonerOutbound(raw: unknown): SummonerOutboundCmd | null
     case "summoner.hotkey.set":
       if (!isString(o.combo) || o.combo.length === 0) return null
       return encodeSummonerHotkeySet({ combo: o.combo })
+    case "summoner.dictate":
+      if (!isString(o.text)) return null
+      return encodeSummonerDictate({ text: o.text })
     default:
       return null
   }
@@ -290,6 +323,17 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
     case "summoner.composing":
       if (typeof o.on !== "boolean") return null
       return encodeSummonerComposing({ on: o.on })
+    case "summoner.mic.start":
+      return encodeSummonerMicStart()
+    case "summoner.mic.chunk":
+      if (typeof o.seq !== "number" || !Number.isInteger(o.seq) || o.seq < 0) return null
+      if (!isString(o.data)) return null
+      return encodeSummonerMicChunk({ seq: o.seq, data: o.data })
+    case "summoner.mic.end":
+      return encodeSummonerMicEnd()
+    case "summoner.mic.wav":
+      if (!isString(o.data)) return null
+      return encodeSummonerMicWav({ data: o.data })
     default:
       return null
   }
