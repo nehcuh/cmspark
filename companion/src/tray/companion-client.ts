@@ -36,6 +36,8 @@ export interface CompanionClientOptions {
   maxReconnectAttempts: number
   /** Override the WS Origin header (defaults to the trusted tray origin). */
   origin?: string
+  /** Handshake surface. Tray menus default to "tray"; overlay uses "summoner". */
+  surface?: "tray" | "summoner"
   /** Override the shared-secret source (defaults to getOrCreateSharedSecret).
    *  Mainly a test seam for simulating the unpaired (no-secret) state. */
   secretLoader?: () => string
@@ -445,7 +447,12 @@ export class CompanionClient {
       const proof = crypto.createHmac("sha256", secret).update(String(nonce)).digest("hex")
       if (this.ws?.readyState === WebSocket.OPEN) {
         // protocol_version lock-step with companion/src/protocol.ts
-        this.ws.send(JSON.stringify({ type: "auth.handshake", proof, protocol_version: 1 }))
+        this.ws.send(JSON.stringify({
+          type: "auth.handshake",
+          proof,
+          protocol_version: 1,
+          surface: this.options.surface ?? "tray",
+        }))
       }
     } catch (err) {
       this.debug(`auth handshake failed: ${(err as Error).message}`)

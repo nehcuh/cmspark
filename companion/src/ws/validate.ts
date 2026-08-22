@@ -702,6 +702,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.proof !== "string" || !m.proof) {
         return { valid: false, error: "auth.handshake requires proof string" }
       }
+      if (m.surface !== undefined && m.surface !== "tray" && m.surface !== "summoner") {
+        return { valid: false, error: 'auth.handshake surface must be "tray" | "summoner"' }
+      }
       return { valid: true }
     },
     "executeQuickAction": (m) => {

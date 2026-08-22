@@ -22,6 +22,8 @@ interface AuthServer {
   port: number
   /** The HMAC proof the client sent in its auth.handshake (null if none). */
   receivedProof: () => string | null
+  /** Full auth.handshake body (null if none). */
+  receivedHandshake: () => any | null
   /** App-level messages (everything after auth.ok) the client sent. */
   appMessages: () => any[]
   /** Total inbound connections (used to detect reconnect behavior). */
@@ -36,6 +38,7 @@ interface AuthServer {
 function startAuthServer(serverSecret: string, requireOrigin = true, silent = false): Promise<AuthServer> {
   return new Promise((resolve) => {
     let proofValue: string | null = null
+    let handshakeValue: any | null = null
     const app: any[] = []
     let connections = 0
 
@@ -57,6 +60,7 @@ function startAuthServer(serverSecret: string, requireOrigin = true, silent = fa
         resolve({
           port,
           receivedProof: () => proofValue,
+          receivedHandshake: () => handshakeValue,
           appMessages: () => app,
           connectionCount: () => connections,
           close: () =>
@@ -86,6 +90,7 @@ function startAuthServer(serverSecret: string, requireOrigin = true, silent = fa
         }
 
         if (msg.type === "auth.handshake") {
+          handshakeValue = msg
           proofValue = String(msg.proof)
           const expected = crypto
             .createHmac("sha256", serverSecret)
@@ -314,6 +319,41 @@ test("CompanionClient closes + reconnects when the server upgrades but never cha
       server.connectionCount() >= 2,
       "watchdog must close the parked socket and trigger at least one reconnect",
     )
+  } finally {
+    client.disconnect()
+    await server.close()
+  }
+})
+
+test("CompanionClient handshake includes surface tray by default", async () => {
+  const server = await startAuthServer(TEST_SECRET)
+  const client = new CompanionClient({
+    host: "127.0.0.1",
+    port: server.port,
+    reconnectInterval: 100,
+    maxReconnectAttempts: 0,
+  })
+  try {
+    await client.connect()
+    assert.equal(server.receivedHandshake()?.surface, "tray")
+  } finally {
+    client.disconnect()
+    await server.close()
+  }
+})
+
+test("CompanionClient handshake includes surface summoner when option set", async () => {
+  const server = await startAuthServer(TEST_SECRET)
+  const client = new CompanionClient({
+    host: "127.0.0.1",
+    port: server.port,
+    reconnectInterval: 100,
+    maxReconnectAttempts: 0,
+    surface: "summoner",
+  })
+  try {
+    await client.connect()
+    assert.equal(server.receivedHandshake()?.surface, "summoner")
   } finally {
     client.disconnect()
     await server.close()

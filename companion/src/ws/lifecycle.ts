@@ -59,6 +59,7 @@ import {
 import { allowInboundLogEvent } from "../log-event-gate"
 import { pendingToolCalls, handleToolResult } from "./tool-forward"
 import { validateWsMessage } from "./validate"
+import { assertSummonerAllowed } from "./summoner-acl"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 
 // ---------------------------------------------------------------------------
@@ -83,17 +84,16 @@ let outboundRunnerWs: WebSocket | null = null
 // message is rejected (and the connection terminated) until then, so a local
 // process that forged the Origin header still cannot drive the agent without the
 // shared secret. See ws-auth.ts and docs for the threat model.
-const wsAuth = new WeakMap<
-  WebSocket,
-  { nonce: string; authenticated: boolean; timer: NodeJS.Timeout; origin?: string }
->()
-
 export type WsAuthState = {
   nonce: string
   authenticated: boolean
   timer: NodeJS.Timeout
   origin?: string
+  /** Handshake surface. Omitted / non-summoner → tray (not ACL-gated). */
+  surface?: "tray" | "summoner"
 }
+
+const wsAuth = new WeakMap<WebSocket, WsAuthState>()
 
 /** Accessor for createToolExecutor / L2 admission (server-owned orchestration). */
 export function getWsClients(): Set<WebSocket> {
@@ -986,8 +986,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               return
             }
             st.authenticated = true
+            const rawSurface = (msg as { surface?: unknown }).surface
+            st.surface = rawSurface === "summoner" ? "summoner" : "tray"
             clearTimeout(st.timer)
-            logger.info("ws.authenticated", { protocol_version: nego.negotiated })
+            logger.info("ws.authenticated", { protocol_version: nego.negotiated, surface: st.surface })
             // Record (idempotently) that some peer has paired, so the tray can stop
             // auto-surfacing the pairing secret. Best-effort; never blocks auth.
             markPaired()
@@ -1028,6 +1030,15 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         if (!authState?.authenticated) {
           logger.warn("ws.unauthenticated_message", { type: msg.type })
           try { ws.terminate() } catch { /* closing */ }
+          return
+        }
+        // S21: per-connection ACL keyed off handshake surface. Do not origin-cleave
+        // (tray skill.list must keep working). auth.handshake already returned above.
+        const gate = assertSummonerAllowed(authState.surface, msg.type)
+        if (!gate.ok) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "error", error: gate.error, error_code: gate.error_code }))
+          }
           return
         }
         if (msg.type !== "system.ping") {
