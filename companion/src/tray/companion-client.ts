@@ -195,6 +195,8 @@ export class CompanionClient {
   // --- Data fetching ---
 
   async fetchQuickActions(): Promise<QuickActionItem[]> {
+    // Summoner ACL forbids skill.list — overlay never drives tray quick-actions.
+    if (this.options.surface === "summoner") return this.cachedQuickActions
     if (this._state !== "connected") return DEFAULT_QUICK_ACTIONS
 
     try {
@@ -247,6 +249,40 @@ export class CompanionClient {
     }
     this.cachedThreads = []
     return []
+  }
+
+  /**
+   * Raw `thread.list` for overlay title search (alias + title). Unlike
+   * fetchRecentThreads this is not capped at 5 and does not collapse alias→title.
+   */
+  async listThreads(): Promise<Array<{
+    id: string
+    title?: string
+    alias?: string
+    updated_at?: string
+    created_at?: string
+  }>> {
+    if (this._state !== "connected") return []
+    try {
+      const resp = await this.sendRequest("thread.list")
+      if (resp?.threads && Array.isArray(resp.threads)) {
+        return resp.threads.filter((t: any) => t && typeof t.id === "string")
+      }
+    } catch {
+      // ignore
+    }
+    return []
+  }
+
+  /**
+   * Fire-and-forget chat.create. MUST NOT use sendRequest (5s RPC) — tokens
+   * stream back as chat.token / chat.done / chat.error on this socket.
+   */
+  sendChatCreate(params: { thread_id: string; message: string }): boolean {
+    return this.sendAppMessage("chat.create", {
+      thread_id: params.thread_id,
+      message: params.message,
+    })
   }
 
   async executeQuickAction(id: string): Promise<any> {
@@ -366,7 +402,10 @@ export class CompanionClient {
       this.debug("authenticated")
       this.settleConnect()
       this.connectedCbs.forEach(cb => cb())
-      this.refreshAll().catch(() => {})
+      // Summoner ACL forbids skill.list; overlay fetches threads on demand.
+      if (this.options.surface !== "summoner") {
+        this.refreshAll().catch(() => {})
+      }
       return
     }
     // auth.failed / handshake timeout → companion terminates the socket; the

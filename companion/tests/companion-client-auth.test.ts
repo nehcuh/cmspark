@@ -359,3 +359,70 @@ test("CompanionClient handshake includes surface summoner when option set", asyn
     await server.close()
   }
 })
+
+async function waitForAppType(server: AuthServer, type: string, timeoutMs = 1500): Promise<any> {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeoutMs) {
+    const hit = server.appMessages().find((m) => m.type === type)
+    if (hit) return hit
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  return null
+}
+
+test("sendChatCreate is fire-and-forget: no request id, returns immediately, not 5s RPC", async () => {
+  const server = await startAuthServer(TEST_SECRET)
+  const client = new CompanionClient({
+    host: "127.0.0.1",
+    port: server.port,
+    reconnectInterval: 100,
+    maxReconnectAttempts: 0,
+    surface: "summoner",
+  })
+  try {
+    await client.connect()
+    assert.equal(client.connectionState, "connected")
+
+    const t0 = Date.now()
+    const ok = client.sendChatCreate({
+      thread_id: "thr-stream-1",
+      message: "hello overlay",
+    })
+    const elapsed = Date.now() - t0
+    assert.equal(ok, true)
+    assert.ok(elapsed < 500, `sendChatCreate must return immediately, took ${elapsed}ms`)
+
+    const frame = await waitForAppType(server, "chat.create")
+    assert.ok(frame, "server must receive chat.create")
+    assert.equal(frame.type, "chat.create")
+    assert.equal(frame.thread_id, "thr-stream-1")
+    assert.equal(frame.message, "hello overlay")
+    assert.equal(frame.id, undefined, "chat.create must not use sendRequest id / 5s RPC")
+  } finally {
+    client.disconnect()
+    await server.close()
+  }
+})
+
+test("summoner surface does not send skill.list after auth.ok (ACL)", async () => {
+  const server = await startAuthServer(TEST_SECRET)
+  const client = new CompanionClient({
+    host: "127.0.0.1",
+    port: server.port,
+    reconnectInterval: 100,
+    maxReconnectAttempts: 0,
+    surface: "summoner",
+  })
+  try {
+    await client.connect()
+    await new Promise((r) => setTimeout(r, 150))
+    assert.equal(
+      server.appMessages().some((m) => m.type === "skill.list"),
+      false,
+      "summoner ACL forbids skill.list; refreshAll must skip it",
+    )
+  } finally {
+    client.disconnect()
+    await server.close()
+  }
+})

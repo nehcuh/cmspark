@@ -132,6 +132,13 @@ export interface UnifiedTray {
   cancelHudConfirm?(id: string): void
   notifyHudConfirmResolved?(id: string, outcome: string): void
   standbyHud?(threadId: string, activeShell: "hud" | "cockpit", message: string): void
+  /**
+   * Summoner overlay stdin (Task 8 Node path / Task 9 Swift window).
+   * Non-Swift backends omit these — callers use optional chaining (no-op).
+   */
+  sendSummoner?(cmd: import("../summoner/protocol").SummonerOutboundCmd): void
+  openSummoner?(threadId: string): void
+  hydrateSummoner?(payload: import("../summoner/protocol").SummonerHydratePayload): void
   stop(): Promise<void>
 }
 

@@ -24,6 +24,12 @@ import {
 import { CompanionClient } from "./tray/companion-client"
 import { readPairingSecret, hasPaired, resolveClipboardCommand } from "./tray/pairing"
 import { OSASCRIPT_BIN } from "./process-path"
+import {
+  attachChromeOnly,
+  buildContinueChatCreate,
+  filterThreadsByTitle,
+  mapChatMessageToSummonerCmd,
+} from "./summoner/client"
 
 // node-notifier does not ship TypeScript declarations
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -109,6 +115,9 @@ export function getTrayInstance(): UnifiedTray | null {
 
 let activeBackend: TrayBackend | null = null
 let companionClient: CompanionClient | null = null
+/** Second WS: overlay chat (`surface: "summoner"`). Tray menus stay on companionClient. */
+let summonerClient: CompanionClient | null = null
+let summonerThreadId: string | null = null
 let pollTimer: NodeJS.Timeout | null = null
 let lastNotifiedStatus: CompanionStatus | null = null
 // Auto-surface the pairing popup at most once per launcher session — only while the
@@ -559,6 +568,43 @@ function openChromeSidePanel(): void {
   }
 }
 
+/** Overlay attach CTA — Chrome only. Never openSidePanel (that copy lies). */
+export function handleSummonerAttach(): void {
+  try {
+    const copy = attachChromeOnly(getChromeOpener())
+    trayDebugLog(copy)
+    safeNotify({ title: "CMspark 召唤器", message: copy, timeout: 5 })
+  } catch (err: any) {
+    const copy = `打开 Chrome 失败: ${err?.message || err}。我们不能替你打开侧栏。`
+    trayDebugLog(copy)
+    safeNotify({ title: "CMspark 召唤器", message: copy, timeout: 5 })
+  }
+}
+
+/** Overlay continue CTA — new user message, no L1 replay. */
+export function handleSummonerContinue(): boolean {
+  if (!summonerClient || !summonerThreadId) return false
+  return summonerClient.sendChatCreate(buildContinueChatCreate(summonerThreadId))
+}
+
+export function handleSummonerSubmit(thread_id: string, text: string): boolean {
+  summonerThreadId = thread_id
+  return summonerClient?.sendChatCreate({ thread_id, message: text }) ?? false
+}
+
+export async function handleSummonerSearch(query: string) {
+  const threads = (await summonerClient?.listThreads()) ?? []
+  const result = filterThreadsByTitle(threads, query)
+  if (!query.trim() && result.matches[0]) {
+    summonerThreadId = result.matches[0].id
+  }
+  return result
+}
+
+export function setSummonerThreadId(id: string | null): void {
+  summonerThreadId = id
+}
+
 async function handleQuickAction(id: string): Promise<void> {
   if (!companionClient) {
     safeNotify({ title: "CMspark Agent", message: "Companion 未运行，无法执行操作", timeout: 3 })
@@ -687,6 +733,10 @@ function cleanup(): void {
     companionClient.disconnect()
     companionClient = null
   }
+  if (summonerClient) {
+    summonerClient.disconnect()
+    summonerClient = null
+  }
   try {
     if (fs.existsSync(STATUS_FILE)) fs.unlinkSync(STATUS_FILE)
   } catch { /* ignore */ }
@@ -771,6 +821,22 @@ export async function startMenuBarAgent(): Promise<void> {
 
   // Connect (non-blocking — data arrives via callbacks)
   companionClient.connect().catch(() => {})
+
+  // Second WS: overlay chat. Same origin; handshake surface=summoner (ACL).
+  summonerClient = new CompanionClient({
+    host: WS_HOST,
+    port: WS_PORT,
+    reconnectInterval: 5000,
+    maxReconnectAttempts: -1,
+    surface: "summoner",
+  })
+  summonerClient.onAppMessage((msg) => {
+    const cmd = mapChatMessageToSummonerCmd(msg)
+    if (!cmd) return
+    // Task 9 wires Swift stdin; non-Swift / pre-rebuild adapters no-op.
+    trayInstance?.sendSummoner?.(cmd)
+  })
+  summonerClient.connect().catch(() => {})
 
   // P3a HUD spike (dual-process): tray owns Swift UI; server owns manager.
   // Requires CMSPARK_HUD_SPIKE=1 on BOTH tray and companion processes.
@@ -960,6 +1026,10 @@ export async function stopMenuBarAgent(): Promise<void> {
   if (companionClient) {
     companionClient.disconnect()
     companionClient = null
+  }
+  if (summonerClient) {
+    summonerClient.disconnect()
+    summonerClient = null
   }
   cleanup()
   console.log("[tray] CMspark Agent menu bar stopped")
