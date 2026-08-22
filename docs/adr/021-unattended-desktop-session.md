@@ -44,7 +44,7 @@ mustInteract 保持 sibling 形式：
 `unattendedInitialSkipEligible`：
 
 - armed 且未过期  
-- 该次任务 App **实时** `coordinateAllowed`  
+- 该次任务 App **实时** `coordinateAllowed`（**vault-browser one-shot 永不 skip** — 浏览器不能持有该 bit，确认台必须弹出）  
 - budget/actions ≤ caps（默认 30）  
 - **不含** corpus ⊆（**open_within_app** — 与 G1 分列；blast radius 高于 G1，必须在 UI 红句披露）  
 - **不再**因 `modelEnabled` / experimental action / credential latch 拒绝 skip（2026-08 修订）

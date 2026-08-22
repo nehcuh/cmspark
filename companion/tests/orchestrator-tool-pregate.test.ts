@@ -21,6 +21,7 @@ import { describe, it, before, afterEach } from "node:test"
 import assert from "node:assert/strict"
 import {
   runMultiAgentToolPregate,
+  hostComputerAppHintsVaultBrowser,
   type ToolPregateCtx,
 } from "../src/orchestrator/tool-pregate"
 import {
@@ -192,8 +193,39 @@ describe("runMultiAgentToolPregate", () => {
     assert.equal(out.ok, false)
     if (out.ok) return
     assert.equal(out.result.data?.error_code, "HOST_CHROME_TAB_LEASE")
-    assert.match(String(out.result.error), /host_computer blocked on Chrome/)
+    assert.match(String(out.result.error), /host_computer blocked on a browser window/)
     assert.equal(finished.length, 1)
+  })
+
+  it("host_computer + Safari/Edge/Brave + anyTabLeaseHeld → HOST_CHROME_TAB_LEASE", async () => {
+    const lease = acquireOrRenewTabLease({
+      tabId: 57,
+      holderThreadId: "seed-holder-browser",
+      needsL2: false,
+    })
+    assert.equal(lease.ok, true)
+    for (const app of ["Safari", "Microsoft Edge", "Brave Browser", "mac.app.microsoft_edge"]) {
+      const out = await runMultiAgentToolPregate(
+        makeCtx({
+          toolName: "host_computer",
+          finalParams: { task: "click", app },
+        }),
+      )
+      assert.equal(out.ok, false, app)
+      if (out.ok) return
+      assert.equal(out.result.data?.error_code, "HOST_CHROME_TAB_LEASE", app)
+    }
+  })
+
+  it("hostComputerAppHintsVaultBrowser matches app field only (not task text)", () => {
+    assert.equal(hostComputerAppHintsVaultBrowser({ app: "Google Chrome" }), true)
+    assert.equal(hostComputerAppHintsVaultBrowser({ app: "Safari" }), true)
+    assert.equal(hostComputerAppHintsVaultBrowser({ app: "win.app.edge" }), true)
+    assert.equal(hostComputerAppHintsVaultBrowser({ app: "TextEdit" }), false)
+    assert.equal(
+      hostComputerAppHintsVaultBrowser({ app: "TextEdit", task: "click the chrome button in knowledge" }),
+      false,
+    )
   })
 
   it("host_computer without chrome hint passes when leases held", async () => {

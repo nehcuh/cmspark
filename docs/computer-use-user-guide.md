@@ -61,7 +61,7 @@
 - [ ] Companion 已启动，扩展已连接  
 - [ ] 已在 Apps 面板打开「坐标操作」（`computer.set_enabled`），或在 `config.json` 设 `computer.coordinateEnabled: true`  
 - [ ] 底栏 **应用** 面板：全局 App 已开  
-- [ ] 目标 App 已加白名单，且已开「允许坐标」  
+- [ ] 目标 App 已加白名单；**原生 App** 须已开「允许坐标」。**浏览器**不能开该开关，走 `host_computer` 一次性确认（确认台必须点允许）
 - [ ] 有确认时打开 **确认台**，看清预览后再批  
 
 ---
@@ -103,14 +103,14 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
 |--|----------------------|-------------------------|
 | 入口 | 确认台勾「本会话自动同意同类」 | 设置 → **运行自主度 → 无人值守** + 短语 + 双勾选 |
 | 首枪 initial L2 | **必须**先交互批一次 | 武装后 **跳过**（键入无逐字预览） |
-| App 范围 | 已批的那个 app | 每次任务实时 `coordinateAllowed` |
+| App 范围 | 已批的那个 app | 每次任务实时 `coordinateAllowed`（**浏览器 one-shot 永不 skip**） |
 | type 文本 | 须 ⊆ 已批 corpus | **open_within_app**（不绑 corpus） |
 | 寿命 | ~30min idle / 重启清 | **8h 墙钟** / 重启清 / 点解除 |
 | 徽章 | （企业信任等） | 顶栏 **值守中 · 桌面** |
 | mid-task re-L2（危险/实验/前台） | 始终确认 | **静默通过**（武装=风险自担；硬拒绝仍 throw） |
 | 急停 | 停任务 | 停任务，**不等于**解除值守 |
 
-**启用前**：`computer.coordinateEnabled`、Apps 白名单、目标 App「允许坐标」。  
+**启用前**：`computer.coordinateEnabled`、Apps 白名单；原生 App 须「允许坐标」。**浏览器**不能开该开关，每次 `host_computer` 都要确认台点允许（值守/G1/三旗都不跳过）。  
 **诚实风险**：值守武装 = 风险自担；任务级 L2 与 mid-task re-L2 均静默后，prompt 注入可驱动已放权 App 上的键鼠；OCR 可能漏检部分支付 UI——自负后果。支付/验证码等硬拒绝仍直接失败、不弹窗。
 
 ---

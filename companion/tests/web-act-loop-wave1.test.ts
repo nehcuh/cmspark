@@ -77,10 +77,20 @@ test("click is not L2; evaluate/osascript still are", () => {
   assert.equal(L2_GATE_TOOLS.includes("osascript_eval"), true)
 })
 
+test("catalog host_computer describes browser one-shot L2 (not persist coordinateAllowed)", () => {
+  const hc = tool("host_computer", "darwin")
+  assert.match(hc.description, /one-shot L2 confirm/)
+  assert.match(hc.description, /will NOT skip/)
+  assert.match(String(hc.parameters.properties.app.description), /one-shot L2 confirm/)
+  assert.equal(/AND explicitly opted into coordinate control/.test(hc.description), false)
+})
+
 test("W5 Rule 12/7/12b never default host_computer for browser-DOM (source lock)", () => {
   const src = readFileSync(join(process.cwd(), "src/llm/adapter.ts"), "utf8")
   assert.match(src, /NEVER default to host_computer for browser-DOM/)
-  assert.match(src, /do NOT retry via evaluate or host_computer/)
+  assert.match(src, /do NOT retry via evaluate \(same debugger\)/)
+  assert.match(src, /host_computer is NOT a substitute for a missed debugger/)
   assert.match(src, /ALWAYS pops a confirm/)
+  assert.match(src, /Do NOT use 9b\/9c as the default way to operate a browser DOM/)
   assert.match(src, /host_computer is NOT available on this platform \(Linux\)/)
 })

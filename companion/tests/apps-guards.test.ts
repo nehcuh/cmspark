@@ -96,6 +96,7 @@ test("non-lolbin lookalikes are NOT denied (substring must not match)", () => {
 test("basenameToVault: browsers / password managers / terminals / wallets", () => {
   const cases: Array<[string, string]> = [
     ["C:\\Google\\chrome.exe", "win.chrome"],
+    ["C:\\Chromium\\chromium.exe", "win.chrome"],
     ["C:\\Edge\\msedge.exe", "win.edge"],
     ["C:\\Edge\\msedge_proxy.exe", "win.edge"],
     ["C:\\Mozilla\\firefox.exe", "win.firefox"],
@@ -126,7 +127,7 @@ test("basenameToVault: every mapped token exists in VAULT_WIN_APPS (no drift)", 
   // Spot-check via the public function across a spread of basenames — the
   // function itself throws on drift, but assert the set relationship too.
   const mapped = new Set<string>()
-  for (const b of ["chrome", "msedge", "firefox", "brave", "arc", "opera", "op", "bw", "keepassxc", "keepass", "wt", "windowsterminal", "metamask", "exodus", "ledgerlive", "electrum"]) {
+  for (const b of ["chrome", "chromium", "msedge", "firefox", "brave", "arc", "opera", "op", "bw", "keepassxc", "keepass", "wt", "windowsterminal", "metamask", "exodus", "ledgerlive", "electrum"]) {
     const t = basenameToVault(`${b}.exe`)
     assert.ok(t, `${b} must be mapped`)
     mapped.add(t!)

@@ -24,10 +24,17 @@ import { ComputerError, type WindowInfo } from "./types"
  * remain impossible even with L2.
  */
 export const MAC_BROWSER_VAULT_BUNDLE_IDS: ReadonlySet<string> = new Set([
-  "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox",
+  "com.apple.Safari",
+  "com.google.Chrome",
+  "com.google.Chrome.beta",
+  "com.google.Chrome.canary",
+  "com.google.Chrome.dev",
+  "org.mozilla.firefox",
+  "org.mozilla.firefoxdeveloperedition",
   "company.thebrowser.Browser",     // Arc
   "com.brave.Browser",              // Brave
   "com.microsoft.edgemac",          // Edge
+  "com.microsoft.edgemac.beta",
   "com.operasoftware.Opera",
   "com.vivaldi.Vivaldi",
   "org.chromium.Chromium",
@@ -71,9 +78,35 @@ const MAC_VAULT_BUNDLE_IDS = new Set([
   "com.maxgoedjen.secretive.Secretive",
 ])
 
+function bundleIdInSet(id: string | undefined, set: ReadonlySet<string>): boolean {
+  if (!id) return false
+  if (set.has(id)) return true
+  const lower = id.toLowerCase()
+  for (const x of set) {
+    if (x.toLowerCase() === lower) return true
+  }
+  return false
+}
+
+/** Windows exe identity — used so a pasted mac bundleId cannot classify notepad as a browser. */
+export function looksLikeWinExePath(p: string): boolean {
+  const s = String(p || "")
+  return /\.exe$/i.test(s) || /^[a-zA-Z]:[\\/]/.test(s)
+}
+
 /** True when the AppEntry is a browser vault surface (Chrome/Safari/…). */
 export function isVaultBrowserEntry(entry: AppEntry): boolean {
-  if (entry.bundleId && MAC_BROWSER_VAULT_BUNDLE_IDS.has(entry.bundleId)) return true
+  // Win32 identity wins: a hand-edited bundleId:"com.google.Chrome" + notepad.exe
+  // must not take the one-shot path (Trust tamper nit).
+  if (entry.exe?.path && looksLikeWinExePath(entry.exe.path)) {
+    try {
+      const tok = basenameToVault(entry.exe.path)
+      return tok != null && WIN_BROWSER_VAULT_TOKENS.has(tok)
+    } catch {
+      return false
+    }
+  }
+  if (bundleIdInSet(entry.bundleId, MAC_BROWSER_VAULT_BUNDLE_IDS)) return true
   if (entry.exe?.path) {
     try {
       const tok = basenameToVault(entry.exe.path)
@@ -110,8 +143,20 @@ export type CoordinateAssertOpts = {
  * macOS: vault bundle IDs are structurally excluded.
  */
 export function canEverCoordinate(entry: AppEntry): boolean {
-  // macOS vault bundle ID check (adversarial review H6)
-  if (entry.bundleId && MAC_VAULT_BUNDLE_IDS.has(entry.bundleId)) {
+  // Windows-looking exe path is the identity: a pasted mac bundleId on notepad.exe
+  // must not structural-deny (or one-shot) a non-browser binary.
+  if (entry.exe?.path && looksLikeWinExePath(entry.exe.path)) {
+    if (isLolbinPath(entry.exe.path)) return false
+    try {
+      if (basenameToVault(entry.exe.path) !== null) return false
+    } catch {
+      return false
+    }
+    return true
+  }
+  // macOS vault bundle ID check (adversarial review H6). Case-insensitive so
+  // Chrome Canary/Dev stored as com.google.chrome.canary still fail closed.
+  if (bundleIdInSet(entry.bundleId, MAC_VAULT_BUNDLE_IDS)) {
     return false
   }
   // Windows path-based vault/LOLBIN checks.

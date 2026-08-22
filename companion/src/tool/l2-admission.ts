@@ -119,6 +119,23 @@ export function isHostCliPlatformGated(platform: string): boolean {
   return platform === "win32" || platform === "darwin"
 }
 
+/**
+ * G1 / unattended initial-skip algebra must not run for vault-browser one-shot.
+ * Pin this rather than a set-then-wipe (Trust T-02 / runtime P1).
+ */
+export function hostComputerTrustSkipAlgebraOpen(vaultBrowserOneShot: boolean): boolean {
+  return vaultBrowserOneShot !== true
+}
+
+/** G1 checkbox: never offer session-trust on a vault-browser one-shot L2. */
+export function hostComputerConfirmRelevantApps(
+  vaultBrowserOneShot: boolean,
+  app: unknown,
+): string[] {
+  if (vaultBrowserOneShot) return []
+  return typeof app === "string" && app.length > 0 ? [app] : []
+}
+
 // Phase 1 W7 — resolve app token from host_read/host_write params for
 // thread-scoped trust + relevantApps in confirmation dialog.
 // Phase 1 W8-windows: platform-aware defaults (win32 uses win.* tokens).
@@ -528,7 +545,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         // isTrusted() already enforces idle expiry (30 min, anchored to last
         // interactive approve) and credential latch — those need no separate
         // check here.
-        if (!vaultBrowserOneShot && sessionId && finalParams.app) {
+        if (hostComputerTrustSkipAlgebraOpen(vaultBrowserOneShot) && sessionId && finalParams.app) {
           const {
             getComputerSessionTrust,
             resolveComputerTrustKey,
@@ -636,7 +653,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
               })
             }
           }
-        } else if (!vaultBrowserOneShot && finalParams.app) {
+        } else if (hostComputerTrustSkipAlgebraOpen(vaultBrowserOneShot) && finalParams.app) {
           // No sessionId — G1 needs session; unattended is process-global (ADR-021).
           const {
             evaluateUnattendedHostComputerSkipDetail,
@@ -1295,7 +1312,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             // panel can show "本会话自动同意同类操作" (session trust opt-in,
             // NOT ThreadApprovals / not write-biometric skip).
             relevantApps: hostComputerGated
-              ? (vaultBrowserOneShot ? [] : (finalParams.app ? [String(finalParams.app)] : []))
+              ? hostComputerConfirmRelevantApps(vaultBrowserOneShot, finalParams.app)
               : hostApp
                 ? (hostApp.policy === "ai" ? [hostApp.token] : [])
                 : (relevantApp ? [relevantApp] : []),

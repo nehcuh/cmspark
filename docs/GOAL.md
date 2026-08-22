@@ -67,7 +67,7 @@
 
 ## 已交付功能扩展：Computer Use / Host Use / Apps（0.3.0，opt-in）
 
-- **Computer Use**（`host_computer`）：白名单应用窗口坐标键鼠；全局 `computer.coordinateEnabled` + 每应用 `coordinateAllowed` 双开关；任务级 L2 不受 god-mode / auto_approve 跳过；session-trust 可抑 mid-task re-L2，且（显式 opt-in + corpus/预算/actions）可跳过同线程同 App 后续任务 initial L2；danger/experimental/foreground_yielded 始终 prompt；Cockpit 急停。
+- **Computer Use**（`host_computer`）：白名单应用窗口坐标键鼠；全局 `computer.coordinateEnabled` + 每应用 `coordinateAllowed` 双开关；**浏览器**不能持久该 bit，走一次性 L2（无人值守/三旗/G1 永不跳过）；任务级 L2 不受 god-mode / auto_approve 跳过；session-trust 可抑 mid-task re-L2，且（显式 opt-in + corpus/预算/actions）可跳过同线程同 **非浏览器** App 后续任务 initial L2；danger/experimental/foreground_yielded 始终 prompt；Cockpit 急停。
 - **Host Use**（`host_read` / `host_write`）：Mail/Outlook 等读、Notes/受限 move 等写；写操作生物识别/nonce；opaque TargetId。
 - **Apps**（`host_app`）：用户白名单应用无参 launch；per-app policy（auto/ai/manual）。
 - 平台：macOS / Windows 主路径；Linux 部分 pending。
