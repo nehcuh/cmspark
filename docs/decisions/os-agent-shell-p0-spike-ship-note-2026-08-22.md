@@ -9,7 +9,7 @@
 | Worktree | `/Users/huchen/.grok/worktrees/projects-cmspark/subagent-01a02969-31cc-7bf0-8eb0-0aa555160e9b` |
 | Branch | `feat/site-op-memory` |
 | HEAD at checklist | `56248cdad4cd894176d515b7a59ebc66d0280daa` |
-| Binary pin | `SWIFT_TRAY_SHA256` = `4f7ce9d99c547cf28a95e1ffadb545fe635345fc6a618dd1b370de6b609c44b1` |
+| Binary pin | `SWIFT_TRAY_SHA256` = `c8bdfa166907aa1a7ba54a362f7d61c1625e974865a751c9ba83093f5cc9cd59` |
 
 ---
 
@@ -26,7 +26,7 @@ Companion remains the only tool-loop. Overlay window/hotkey travel the existing 
 
 This is **Axis A L0 capture**, not a fourth axis, not a native chat home, not a confirm dialect. Identity lock: 召唤器不是「主界面」；完整工作面在 Chrome 在场时仍是 Side Panel.
 
-**Explicit non-goals (still true):** Electron / Raycast plugin / marketplace; overlay Pack install / dictation / message-body search; five-state Chrome probes; window-rect self-ui; Windows/Linux overlay; auto-replay of the failed L1 tool_call; **GOAL.md / ADR-020 one-liner rewrite**.
+**Explicit non-goals (still true):** Electron / Raycast plugin / marketplace; overlay Pack install / message-body search; five-state Chrome probes; window-rect self-ui; Windows/Linux overlay; auto-replay of the failed L1 tool_call; **GOAL.md / ADR-020 one-liner rewrite**. Overlay local STT (v2 press-hold mic) is a narrow summoner-surface exception, not a Side Panel dictation+ replacement.
 
 ---
 
@@ -49,6 +49,19 @@ User lock 2026-08-22: **两段式捕获结构 × Side Panel 看山白底 token**
 4. **空场** — single 16px-radius composer; no instrument chrome.
 
 **Copy lock:** window title `CMspark 召唤器（实验）`; tray item `召唤器（实验）…`; never 「主界面」. Zero Allow/Deny/确认 on the overlay.
+
+### v2 empty-state (user lock, same day)
+
+Empty overlay **talks**, it does not search:
+
+- Placeholder `说点什么，或按住说话…`. Hint `回车发送到当前线程 · 输入 # 搜标题 · 不搜文件`. Last-thread label `继续 · {title}` when known.
+- Send is always visible in talk mode, including **browser detached** (L0 `chat.create` still runs; L1 still `BROWSER_UNAVAILABLE`).
+- Title search **only** when composer text (trimmed) starts with `#`. Selecting a hit clears `#…`, stays in talk, focuses composer.
+- Empty `thread_id` on submit → newest thread, or `thread.create` then `chat.create`. Overlay claims `composer.lease` (holder overlay) first.
+
+**STT origin (ADR-023 §7.2 narrow amend):** `voice.stt.*` remains extension-only **except** `Origin: cmspark-tray://local` **and** handshake `surface: "summoner"`. Tray menus (`surface: "tray"`) still get `origin_denied`. `privacy_ack_v2` unchanged (mic press = gesture). `voice.model.*` is not on `SUMMONER_ALLOW`. Press-hold 🎙 captures 16 kHz mono WAV (or PCM chunks) and fills the composer via `summoner.dictate` — user hits send. Residual: mic TCC permission; Whisper weights may be absent (`engine_not_local` / model not downloaded).
+
+Wait-for WIP is still out of this note. **GOAL.md / ADR-020 one-liner untouched.**
 
 ---
 
