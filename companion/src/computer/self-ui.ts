@@ -33,6 +33,13 @@ const MAC_COMPANION_BUNDLE_IDS = [
 ]
 
 /**
+ * Unbundled companion UI process names (Windows ProcessName / Darwin exe).
+ * Swift tray (`dist/cmspark-tray`) has no CFBundleIdentifier — matching is
+ * process-level only; window-rect hit-test is P1.
+ */
+const COMPANION_UI_PROCESS_BASENAMES = ["cmspark-tray"]
+
+/**
  * True when `fgOwner` is CMspark's own UI host (browser side panel or agent).
  *
  * @param fgOwner  Windows: full exe path or process name. macOS: bundle id
@@ -55,6 +62,9 @@ export function isCompanionUiOwner(
   // Exact allow-list hit (path basename or full string).
   const base = exeBasename(fgOwner)
   if (allow.has(base) || allow.has(raw)) return true
+  // Known companion UI binaries (Swift tray overlay) even when the operator
+  // customized the browser allow-list and omitted the tray name.
+  if (COMPANION_UI_PROCESS_BASENAMES.includes(base)) return true
 
   // macOS / reverse-DNS bundle id: last segment often matches basename
   // (com.google.chrome → "chrome"; com.brave.browser → "browser" — weaker).

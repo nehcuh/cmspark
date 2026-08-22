@@ -882,3 +882,18 @@ describe("saveConfig vision inherit does not persist env-sourced keys", { concur
     assert.equal(readSavedConfig().llm?.api_key, "")
   })
 })
+
+describe("default companion_ui_exe_basenames", { concurrency: 1 }, () => {
+  before(async () => {
+    delete process.env.DEEPSEEK_API_KEY
+    await resetConfigFile()
+  })
+
+  test("first-run defaults include cmspark-tray (Swift tray overlay)", () => {
+    const names = getConfig().security.companion_ui_exe_basenames
+    assert.ok(
+      names.includes("cmspark-tray"),
+      `expected cmspark-tray in ${JSON.stringify(names)}`,
+    )
+  })
+})

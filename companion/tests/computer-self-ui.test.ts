@@ -40,3 +40,19 @@ test("null / empty never match", () => {
   assert.equal(isCompanionUiOwner("", ALLOW), false)
   assert.equal(isCompanionUiOwner("com.google.Chrome", []), false)
 })
+
+test("cmspark-tray (Swift tray overlay) is companion UI", () => {
+  // S23 / Task 12: summoner overlay lives in dist/cmspark-tray. When it
+  // becomes frontmost, FOREGROUND-YIELD must treat that as our UI (process-
+  // level; window-rect hit-test is P1). Empty allow-list still fail-closes.
+  assert.equal(isCompanionUiOwner("cmspark-tray", ALLOW), true)
+  assert.equal(
+    isCompanionUiOwner("/Applications/CMspark.app/Contents/MacOS/cmspark-tray", ALLOW),
+    true,
+  )
+  assert.equal(
+    isCompanionUiOwner("C:\\Program Files\\CMspark\\cmspark-tray.exe", ALLOW),
+    true,
+  )
+  assert.equal(isCompanionUiOwner("cmspark-tray", []), false)
+})

@@ -59,14 +59,15 @@ export interface SecurityConfig {
   /**
    * Basenames (no extension, lowercased) of the companion's OWN UI host
    * processes — the browser that renders the sidepanel, plus the packaged
-   * companion binary. When the computer-use FOREGROUND-YIELD detector finds
-   * the foreground was taken over by one of these (the user just clicked
-   * "Allow" in the sidepanel, so the browser briefly became frontmost), the
-   * executor silently re-raises the target window and continues instead of
-   * pausing for a redundant re-L2. Matching is by basename only (multiple
-   * Chrome windows share one exe), so this is a UX heuristic, NOT a security
-   * boundary — the initial task L2 still gates every task. Defaults cover the
-   * browsers CMspark supports plus the packaged agent exe.
+   * companion binary and the Swift tray (`cmspark-tray`). When the computer-use
+   * FOREGROUND-YIELD detector finds the foreground was taken over by one of
+   * these (the user just clicked "Allow" in the sidepanel, so the browser
+   * briefly became frontmost), the executor silently re-raises the target
+   * window and continues instead of pausing for a redundant re-L2. Matching is
+   * by basename only (multiple Chrome windows share one exe), so this is a UX
+   * heuristic, NOT a security boundary — the initial task L2 still gates every
+   * task. Defaults cover the browsers CMspark supports plus the packaged agent
+   * exe and the Swift tray overlay.
    */
   companion_ui_exe_basenames: string[]
 }
@@ -436,6 +437,8 @@ const defaultConfig: CompanionConfig = {
     // app frontmost while authorizing in Chrome.
     companion_ui_exe_basenames: [
       "chrome", "msedge", "msedge_proxy", "firefox", "brave", "arc", "opera", "cmspark-agent",
+      // Swift tray / summoner overlay (unbundled Darwin exe; same basename on disk)
+      "cmspark-tray",
       // macOS bundle-id last segments / full ids also accepted by isCompanionUiOwner
       "com.google.chrome", "com.microsoft.edgemac", "org.mozilla.firefox",
       "company.thebrowser.browser", "com.brave.browser",
