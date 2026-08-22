@@ -60,6 +60,7 @@ import { allowInboundLogEvent } from "../log-event-gate"
 import { pendingToolCalls, handleToolResult } from "./tool-forward"
 import { validateWsMessage } from "./validate"
 import { assertSummonerAllowed } from "./summoner-acl"
+import { stampCmsparkSurface } from "./composer-lease"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 
 // ---------------------------------------------------------------------------
@@ -1041,6 +1042,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           }
           return
         }
+        // S20: overwrite always after ACL. Never trust a client-supplied field.
+        stampCmsparkSurface(msg, authState.surface)
         if (msg.type !== "system.ping") {
           logger.debug("ws.message.received", summarizeMessage(msg))
         }

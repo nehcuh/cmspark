@@ -70,6 +70,11 @@ import { releaseMultiAgentLlmLoop } from "./orchestrator/llm-loop-gate"
 import {
   handleConfigFamily,
 } from "./message-router/handlers/config"
+import {
+  gateChatCreateOnLease,
+  handleComposerLeaseFamily,
+  stripCmsparkSurface,
+} from "./ws/composer-lease"
 // Residual extract: MCP redaction used by lifecycle
 export { redactMcpServersForBroadcast } from "./message-router/handlers/mcp"
 
@@ -239,6 +244,9 @@ export async function handleMessage(
   session?: SessionCallbacks,
 ): Promise<any> {
   const { type, ...rest } = msg
+  // S20: lifecycle stamped this from auth; never forward a client-spoofable field to LLM.
+  const stampedSurface = stripCmsparkSurface(rest)
+  stripCmsparkSurface(msg)
   const { threadManager, skillEngine, historyStore } = services
 
   switch (type) {
@@ -287,6 +295,10 @@ export async function handleMessage(
             data: { error_code: "thread_paused" },
           }
         }
+      }
+      {
+        const leaseErr = gateChatCreateOnLease(rest.thread_id, stampedSurface)
+        if (leaseErr) return leaseErr
       }
       const config = getConfig()
 
@@ -1013,6 +1025,14 @@ export async function handleMessage(
         /* best-effort */
       }
       return { type: "chat.aborted", thread_id: rest.thread_id }
+    }
+
+    case "composer.lease.get":
+    case "composer.lease.claim":
+    case "composer.lease.release": {
+      const leaseResult = handleComposerLeaseFamily(type, rest)
+      if (leaseResult !== null) return leaseResult
+      return { type: "error", error: `Unhandled composer.lease type: ${type}` }
     }
 
     case "chat.regenerate": {

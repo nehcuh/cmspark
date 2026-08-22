@@ -50,6 +50,33 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.url !== undefined && typeof m.url !== "string") return { valid: false, error: "url must be a string" }
       return { valid: true }
     },
+    "composer.lease.get": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "composer.lease.get requires thread_id" }
+      }
+      return { valid: true }
+    },
+    "composer.lease.claim": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "composer.lease.claim requires thread_id" }
+      }
+      if (m.holder !== "overlay" && m.holder !== "panel") {
+        return { valid: false, error: 'composer.lease.claim holder must be "overlay" | "panel"' }
+      }
+      if (typeof m.rev !== "number" || !Number.isInteger(m.rev)) {
+        return { valid: false, error: "composer.lease.claim requires rev number" }
+      }
+      return { valid: true }
+    },
+    "composer.lease.release": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "composer.lease.release requires thread_id" }
+      }
+      if (typeof m.rev !== "number" || !Number.isInteger(m.rev)) {
+        return { valid: false, error: "composer.lease.release requires rev number" }
+      }
+      return { valid: true }
+    },
     "thread.create": (m) => {
       if (m.alias !== undefined && typeof m.alias !== "string") return { valid: false, error: "alias must be a string" }
       if (m.id !== undefined && typeof m.id !== "string") return { valid: false, error: "id must be a string" }
