@@ -88,34 +88,33 @@ function bundleIdInSet(id: string | undefined, set: ReadonlySet<string>): boolea
   return false
 }
 
-/** Windows exe identity — used so a pasted mac bundleId cannot classify notepad as a browser. */
+/** Windows exe identity (tests / probes). Production classifiers key off `platform`. */
 export function looksLikeWinExePath(p: string): boolean {
   const s = String(p || "")
   return /\.exe$/i.test(s) || /^[a-zA-Z]:[\\/]/.test(s)
 }
 
-/** True when the AppEntry is a browser vault surface (Chrome/Safari/…). */
-export function isVaultBrowserEntry(entry: AppEntry): boolean {
-  // Win32 identity wins: a hand-edited bundleId:"com.google.Chrome" + notepad.exe
-  // must not take the one-shot path (Trust tamper nit).
-  if (entry.exe?.path && looksLikeWinExePath(entry.exe.path)) {
-    try {
-      const tok = basenameToVault(entry.exe.path)
-      return tok != null && WIN_BROWSER_VAULT_TOKENS.has(tok)
-    } catch {
-      return false
-    }
+function vaultPathIsBrowser(p: string): boolean {
+  try {
+    const tok = basenameToVault(p)
+    return tok != null && WIN_BROWSER_VAULT_TOKENS.has(tok)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * True when the AppEntry is a browser vault surface (Chrome/Safari/…).
+ * Identity is platform-native (Trust REJECT 2026-08-22 nits fold):
+ *   win32  → exe path only (pasted mac bundleId on notepad.exe is not a browser)
+ *   darwin → bundleId wins when present (dummy.exe must not un-vault Chrome)
+ */
+export function isVaultBrowserEntry(entry: AppEntry, platform: string = os.platform()): boolean {
+  if (platform === "win32") {
+    return entry.exe?.path ? vaultPathIsBrowser(entry.exe.path) : false
   }
   if (bundleIdInSet(entry.bundleId, MAC_BROWSER_VAULT_BUNDLE_IDS)) return true
-  if (entry.exe?.path) {
-    try {
-      const tok = basenameToVault(entry.exe.path)
-      if (tok && WIN_BROWSER_VAULT_TOKENS.has(tok)) return true
-    } catch {
-      return false
-    }
-  }
-  return false
+  return entry.exe?.path ? vaultPathIsBrowser(entry.exe.path) : false
 }
 
 export function isBrowserVaultExePath(p: string): boolean {
@@ -142,30 +141,32 @@ export type CoordinateAssertOpts = {
  * wallet) and LOLBIN exes can NEVER carry coordinateAllowed (A10.3).
  * macOS: vault bundle IDs are structurally excluded.
  */
-export function canEverCoordinate(entry: AppEntry): boolean {
-  // Windows-looking exe path is the identity: a pasted mac bundleId on notepad.exe
-  // must not structural-deny (or one-shot) a non-browser binary.
-  if (entry.exe?.path && looksLikeWinExePath(entry.exe.path)) {
+export function canEverCoordinate(entry: AppEntry, platform: string = os.platform()): boolean {
+  if (platform === "win32") {
+    // Exe path is the identity — ignore a pasted mac bundleId.
+    if (entry.exe?.path) {
+      if (isLolbinPath(entry.exe.path)) return false
+      try {
+        if (basenameToVault(entry.exe.path) !== null) return false
+      } catch {
+        return false
+      }
+    }
+    return true
+  }
+  // darwin / others: bundleId is native identity. Case-insensitive so
+  // Chrome Canary/Dev stored as com.google.chrome.canary still fail closed.
+  // dummy.exe on a Chrome bundle must NOT un-vault (Trust nits REJECT).
+  if (bundleIdInSet(entry.bundleId, MAC_VAULT_BUNDLE_IDS)) {
+    return false
+  }
+  if (entry.exe?.path) {
     if (isLolbinPath(entry.exe.path)) return false
     try {
       if (basenameToVault(entry.exe.path) !== null) return false
     } catch {
       return false
     }
-    return true
-  }
-  // macOS vault bundle ID check (adversarial review H6). Case-insensitive so
-  // Chrome Canary/Dev stored as com.google.chrome.canary still fail closed.
-  if (bundleIdInSet(entry.bundleId, MAC_VAULT_BUNDLE_IDS)) {
-    return false
-  }
-  // Windows path-based vault/LOLBIN checks.
-  // Guard: skip when running on darwin AND the entry is a macOS entry (has bundleId),
-  // to avoid calling Windows path functions with bundle IDs.
-  const isMacEntry = os.platform() === "darwin" && entry.bundleId != null
-  if (!isMacEntry && entry.exe?.path) {
-    if (isLolbinPath(entry.exe.path)) return false
-    if (basenameToVault(entry.exe.path) !== null) return false
   }
   return true
 }

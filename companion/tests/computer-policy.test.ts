@@ -249,21 +249,32 @@ test("policy: chromium.exe is vault-browser one-shot", () => {
   })
 })
 
-test("policy: win exe notepad + pasted Chrome bundleId is NOT a vault browser (tamper)", () => {
+test("policy: win32 notepad + pasted Chrome bundleId is NOT a vault browser (tamper)", () => {
   const tampered = makeEntry({
     bundleId: "com.google.Chrome",
     exe: { path: "C:\\Windows\\System32\\notepad.exe", user_writable_dir: false },
     coordinateAllowed: false,
   })
   assert.equal(looksLikeWinExePath(tampered.exe!.path), true)
-  assert.equal(isVaultBrowserEntry(tampered), false)
-  assertComputerError(
-    () =>
-      assertCoordinateAllowed(makeConfig({ entry: tampered }), "win.app.test", {
-        allowVaultBrowserOneShot: true,
-      }),
-    "APP_COORDINATE_DENIED",
-  )
+  assert.equal(isVaultBrowserEntry(tampered, "win32"), false)
+  assert.equal(canEverCoordinate(tampered, "win32"), true)
+})
+
+test("policy: darwin Chrome bundleId + dummy.exe stays vault (Trust nits REJECT fold)", () => {
+  const hybrid = makeEntry({
+    bundleId: "com.google.Chrome",
+    exe: { path: "dummy.exe", user_writable_dir: false },
+    coordinateAllowed: false,
+  })
+  assert.equal(canEverCoordinate(hybrid, "darwin"), false)
+  assert.equal(isVaultBrowserEntry(hybrid, "darwin"), true)
+  const notepadHybrid = makeEntry({
+    bundleId: "com.google.Chrome",
+    exe: { path: "C:\\Windows\\System32\\notepad.exe", user_writable_dir: false },
+    coordinateAllowed: true,
+  })
+  assert.equal(canEverCoordinate(notepadHybrid, "darwin"), false)
+  assert.equal(isVaultBrowserEntry(notepadHybrid, "darwin"), true)
 })
 
 test("policy: powershell exe + coordinateAllowed=true (hand-edited) -> APP_COORDINATE_STRUCTURAL", () => {
