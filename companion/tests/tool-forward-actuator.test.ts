@@ -126,7 +126,8 @@ test("production createToolExecutor L1 path calls forwardL1OrUnavailable (lockst
   const src = fs.readFileSync(srcPath!, "utf8")
   assert.match(src, /from\s+["']\.\/ws\/l1-actuator["']/)
   assert.match(src, /forwardL1OrUnavailable\s*\(/)
-  assert.match(src, /pickAuthenticatedClientWs/)
+  assert.match(src, /pickExtensionWs:\s*pickAuthenticatedClientWs/)
+  assert.match(src, /getAuth:\s*\(w\)\s*=>\s*getWsAuthState\(w\)/)
   // actuator socket is what forwardToolToExtension receives
   assert.match(src, /ws:\s*actuatorWs/)
   // companion-tool confirm binding still uses originating ws (S6)

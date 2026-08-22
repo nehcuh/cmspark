@@ -22,6 +22,7 @@ import {
   pendingToolCalls,
   securityConfirmations,
   seedThreadManagerForTests,
+  seedExtensionWsAuthForTests,
 } from "../../src/server.js"
 import { ThreadManager } from "../../src/threads/thread-manager.js"
 import { getConfigDir } from "../../src/config.js"
@@ -79,6 +80,7 @@ beforeEach(async () => {
     wss.once("connection", (ws) => {
       clearTimeout(timeout)
       serverSideWs = ws
+      seedExtensionWsAuthForTests(ws)
       ws.on("error", () => {
         /* teardown */
       })

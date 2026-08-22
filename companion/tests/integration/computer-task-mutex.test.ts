@@ -34,6 +34,7 @@ import {
   securityConfirmations,
   getComputerTaskRegistryForTests,
   setComputerEstopEnsureForTests,
+  seedExtensionWsAuthForTests,
 } from "../../src/server.js"
 import { saveConfig, getConfig, replaceAppsEntries } from "../../src/config.js"
 import type { AppEntry } from "../../src/apps/types.js"
@@ -102,6 +103,7 @@ beforeEach(async () => {
     wss.once("connection", (ws) => {
       clearTimeout(timeout)
       serverSideWs = ws
+      seedExtensionWsAuthForTests(ws)
       ws.on("error", () => { /* expected during teardown */ })
       ws.on("message", (raw) => {
         try {

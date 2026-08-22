@@ -94,6 +94,8 @@ export {
   ensureOutboundToolRunnerWired,
   applyConnectionCloseGracePeriod,
   setupBroadcastAuthForTests,
+  seedExtensionWsAuthForTests,
+  TEST_EXTENSION_ORIGIN,
   startServer,
   bindWsLifecycle,
   getWsClients,

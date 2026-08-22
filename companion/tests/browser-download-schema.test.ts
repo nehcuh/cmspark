@@ -13,6 +13,7 @@ import {
   createToolExecutor,
   handleToolResult,
   pendingToolCalls,
+  seedExtensionWsAuthForTests,
 } from "../src/server.js"
 
 test("browser_download is in tool catalog", () => {
@@ -111,7 +112,7 @@ test("resolveToolDispatchTimeoutMs: download alias normalized only by executor �
 // --- BD-ALIAS-SANDBOX: createToolExecutor renames download → browser_download then runs prepare ---
 
 function mockExecutorWs(onMessage?: (msg: any) => void): any {
-  return {
+  const ws = {
     readyState: 1, // WebSocket.OPEN
     send(raw: string) {
       try {
@@ -122,6 +123,8 @@ function mockExecutorWs(onMessage?: (msg: any) => void): any {
       }
     },
   }
+  seedExtensionWsAuthForTests(ws as any)
+  return ws
 }
 
 function evilPathOutsideDownloads(): string {
@@ -131,6 +134,29 @@ function evilPathOutsideDownloads(): string {
   }
   return path.join(os.tmpdir(), "cmspark-bd-alias-escape-" + Date.now())
 }
+
+test("createToolExecutor: unseeded origin does not fall back to originating ws", async () => {
+  const sent: any[] = []
+  const ws = {
+    readyState: 1,
+    send(raw: string) {
+      try {
+        sent.push(JSON.parse(raw))
+      } catch {
+        /* ignore */
+      }
+    },
+  }
+  const executeTool = createToolExecutor(ws as any)
+  const result = await executeTool("tc-unseeded", "list_tabs", {})
+  assert.equal(result.success, false)
+  assert.equal((result as any).error_code, "BROWSER_UNAVAILABLE")
+  assert.equal(
+    sent.filter((m) => m.type === "tool.execute").length,
+    0,
+    "missing origin must not send tool.execute on originating ws",
+  )
+})
 
 test("createToolExecutor: download alias → prepare PATH_ESCAPE (no tool.execute)", async () => {
   const sent: any[] = []

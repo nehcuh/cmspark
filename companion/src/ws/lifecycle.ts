@@ -363,6 +363,36 @@ export function broadcastToClients(data: any): void {
   }
 }
 
+/** Origin used when tests seed an authenticated Chrome extension peer. */
+export const TEST_EXTENSION_ORIGIN = "chrome-extension://test"
+
+/**
+ * Seed wsAuth so createToolExecutor L1 dispatch treats `ws` as an authenticated
+ * Chrome extension peer. Tests must not rely on missing-origin fallback
+ * (that would re-break tray: missing origin stays BROWSER_UNAVAILABLE).
+ */
+export function seedExtensionWsAuthForTests(
+  ws: WebSocket,
+  opts?: { origin?: string; authenticated?: boolean },
+): void {
+  const prev = wsAuth.get(ws)
+  if (prev?.timer) {
+    try {
+      clearTimeout(prev.timer)
+    } catch {
+      /* ignore */
+    }
+  }
+  const timer = setTimeout(() => {}, 60_000)
+  timer.unref()
+  wsAuth.set(ws, {
+    nonce: prev?.nonce ?? "test-nonce",
+    authenticated: opts?.authenticated !== false,
+    timer,
+    origin: opts?.origin ?? TEST_EXTENSION_ORIGIN,
+  })
+}
+
 /**
  * Exported for integration tests (X3): aim broadcastToClients at a test
  * WebSocketServer and seed wsAuth entries (both states), so the REAL
@@ -376,13 +406,11 @@ export function setupBroadcastAuthForTests(
   unauthenticatedClients: WebSocket[] = [],
 ): void {
   wss = server as WebSocketServer
-  for (const [client, authenticated] of [
-    ...authenticatedClients.map((c): [WebSocket, boolean] => [c, true]),
-    ...unauthenticatedClients.map((c): [WebSocket, boolean] => [c, false]),
-  ]) {
-    const timer = setTimeout(() => {}, 60000)
-    timer.unref()
-    wsAuth.set(client, { nonce: "test-nonce", authenticated, timer })
+  for (const client of authenticatedClients) {
+    seedExtensionWsAuthForTests(client)
+  }
+  for (const client of unauthenticatedClients) {
+    seedExtensionWsAuthForTests(client, { authenticated: false, origin: "" })
   }
 }
 

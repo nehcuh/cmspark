@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createToolExecutor } from "../../src/server"
+import { createToolExecutor, seedExtensionWsAuthForTests } from "../../src/server"
 
 // E2E for the P0-4 (audit H2) change: evaluate is forwarded to the extension, and its
 // security_token was previously never validated companion-side. Now, when a security_token is
@@ -9,7 +9,9 @@ import { createToolExecutor } from "../../src/server"
 // mocked — the security-policy validateToken logic is the real production code path).
 
 function mockWs(): any {
-  return { readyState: 1 /* WebSocket.OPEN */, send: () => { /* swallow tool.start */ } }
+  const ws = { readyState: 1 /* WebSocket.OPEN */, send: () => { /* swallow tool.start */ } }
+  seedExtensionWsAuthForTests(ws as any)
+  return ws
 }
 
 test("Phase 1 W8 bugfix: evaluate with LLM-provided bogus token gets STRIPPED → gate runs", async () => {
