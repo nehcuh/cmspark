@@ -20,7 +20,7 @@
 1. **工具入口**：`host_computer`（任务描述 + app token + actions[] + budget）。  
 2. **双开关 fail-closed**：  
    - 全局 `computer.coordinateEnabled`（默认 false）。**0.5.0 用户路径**：Side Panel **Apps 面板**「坐标操作」调用 `computer.set_enabled`（可走生物识别/确认台）；亦可写 `config.json`。  
-   - 每应用 `AppEntry.coordinateAllowed`（vault/浏览器/终端/钱包/LOLBIN **结构排除**，永远不可开）。  
+   - 每应用 `AppEntry.coordinateAllowed`（密码箱/终端/钱包/LOLBIN **结构排除**，永远不可开）。**浏览器**同样不能把该位置成 true（无人值守不得静默注入）；但 `host_computer` 可走 **一次性 L2**（确认台弹出，必须真人点允许；无人值守 / 三旗 / G1 **永不跳过**；授权不落盘）。  
 3. **任务级 L2 强制**：枚举 task、app、全部 type 文本、预算。  
    - **全局 bool**（`allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools`）**永不**单独跳过任务级 initial L2（1–2 旗）。三旗全开巡航可 waive `forceConfirm`（含 host initial）——与值守 grant 分列。  
    - **例外（[ADR-021](021-unattended-desktop-session.md)，2026-08-09 修订）**：用户经短语+双勾选**显式武装**的进程内 **无人值守 grant** 可静默 **initial L2 与 mid-task re-L2**（含危险/实验/前台让出；仅 `coordinateAllowed` App；open_within_app；8h 墙钟）。硬拒绝仍 throw 无对话框。G1/巡航无 grant 时 PROMPT_ALWAYS 仍强制确认。  

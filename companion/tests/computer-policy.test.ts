@@ -10,6 +10,7 @@ import {
   assertExeNotDrifted,
   assertHwndOwnedByEntry,
   canEverCoordinate,
+  isVaultBrowserEntry,
   normalizeExePath,
 } from "../src/computer/policy"
 import { ComputerError, type WindowInfo } from "../src/computer/types"
@@ -131,6 +132,60 @@ test("policy: chrome exe + coordinateAllowed=true (hand-edited config) -> APP_CO
     () => assertCoordinateAllowed(makeConfig({ entry: tampered }), "win.app.test"),
     "APP_COORDINATE_STRUCTURAL",
   )
+})
+
+test("policy: chrome one-shot L2 path does not persist the bit and skips STRUCTURAL", () => {
+  const chrome = makeEntry({
+    exe: { path: CHROME_EXE, user_writable_dir: false },
+    coordinateAllowed: false,
+  })
+  assert.equal(canEverCoordinate(chrome), false)
+  assert.equal(isVaultBrowserEntry(chrome), true)
+  const got = assertCoordinateAllowed(makeConfig({ entry: chrome }), "win.app.test", {
+    allowVaultBrowserOneShot: true,
+  })
+  assert.equal(got.token, "win.app.test")
+  assert.equal(got.coordinateAllowed, false)
+})
+
+test("policy: mac Chrome bundle one-shot L2 path", () => {
+  const chrome = makeEntry({
+    bundleId: "com.google.Chrome",
+    coordinateAllowed: false,
+    exe: undefined,
+  })
+  assert.equal(isVaultBrowserEntry(chrome), true)
+  assert.equal(canEverCoordinate(chrome), false)
+  const got = assertCoordinateAllowed(makeConfig({ entry: chrome }), "win.app.test", {
+    allowVaultBrowserOneShot: true,
+  })
+  assert.equal(got.bundleId, "com.google.Chrome")
+})
+
+test("policy: powershell cannot use vault-browser one-shot", () => {
+  const ps = makeEntry({ exe: { path: POWERSHELL_EXE, user_writable_dir: false }, coordinateAllowed: false })
+  assertComputerError(
+    () =>
+      assertCoordinateAllowed(makeConfig({ entry: ps }), "win.app.test", { allowVaultBrowserOneShot: true }),
+    "APP_COORDINATE_STRUCTURAL",
+  )
+})
+
+test("policy: hwnd chrome allowed only on one-shot browser entry", () => {
+  const chrome = makeEntry({
+    exe: { path: CHROME_EXE, user_writable_dir: false },
+    coordinateAllowed: false,
+  })
+  const info = {
+    hwnd: 1,
+    pid: 2,
+    exePath: CHROME_EXE,
+    title: "Zhihu",
+    alive: true,
+    rect: { x: 0, y: 0, width: 100, height: 100 },
+  }
+  assertComputerError(() => assertHwndOwnedByEntry(info as any, chrome), "APP_COORDINATE_STRUCTURAL")
+  assertHwndOwnedByEntry(info as any, chrome, { allowVaultBrowserOneShot: true })
 })
 
 test("policy: powershell exe + coordinateAllowed=true (hand-edited) -> APP_COORDINATE_STRUCTURAL", () => {

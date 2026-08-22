@@ -77,10 +77,10 @@ test("click is not L2; evaluate/osascript still are", () => {
   assert.equal(L2_GATE_TOOLS.includes("osascript_eval"), true)
 })
 
-test("W5 Rule 12/7/12b never host_computer for browser-DOM (source lock)", () => {
+test("W5 Rule 12/7/12b never default host_computer for browser-DOM (source lock)", () => {
   const src = readFileSync(join(process.cwd(), "src/llm/adapter.ts"), "utf8")
-  assert.match(src, /NEVER use host_read\/host_write\/host_computer for browser-DOM/)
+  assert.match(src, /NEVER default to host_computer for browser-DOM/)
   assert.match(src, /do NOT retry via evaluate or host_computer/)
-  assert.match(src, /NEVER for browser-DOM \(use click\(\{text\}\)/)
+  assert.match(src, /ALWAYS pops a confirm/)
   assert.match(src, /host_computer is NOT available on this platform \(Linux\)/)
 })

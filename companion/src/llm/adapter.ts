@@ -422,8 +422,8 @@ export async function chatCreate(params: ChatCreateParams) {
   // Rule 12 (host_use) is platform-aware (Phase 1 W8-windows): win32 describes
   // classic-Outlook read / OneNote create / allowlisted file move + Windows
   // Hello; darwin keeps the original Mail/Notes/Finder text. The "ask the
-  // user first per thread" and "NEVER for browser-DOM" sentences are verbatim
-  // on both platforms.
+  // user first per thread" sentences are verbatim on both platforms.
+  // Browser-DOM: never *default* to host_computer; Chrome one-shot L2 is allowed.
   const hostPlat = os.platform()
   const hostUseRule12 = hostPlat === "win32"
     ? `12. Windows host_use tools (computer-use, Phase 1):
@@ -437,7 +437,7 @@ export async function chatCreate(params: ChatCreateParams) {
      - 文件 / move file / 归类 → host_write move
      - 启动 / 打开 an app that appears in the Whitelisted apps section → host_app launch
    host_read and host_write require user confirmation (L2 gate); writes additionally require Windows Hello verification per call, or a 6-char manually typed code when Hello hardware is unavailable. The first time per thread, ASK the user explicitly before calling — e.g. "这个任务需要读取你的 Outlook 收件箱（只读第一封）。可以吗？". Respect denial; do not retry without user re-prompting.
-   NEVER use host_read/host_write/host_computer for browser-DOM tasks — use get_page_text / click({text}) / type / evaluate. NEVER propose host_computer as the default way to operate a web page.
+   NEVER default to host_computer for browser-DOM — use get_page_text / click({text}) / type / evaluate first. After CDP attach freeze / DOM-script cap, OR when the user explicitly asks for 模拟点击/像素点击, you MAY call host_computer on the Chrome app token. That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). Password managers / terminals / LOLBIN remain impossible.
    NEVER propose these tools speculatively — only when the user's task cannot be accomplished via browser alone.`
     : hostPlat === "darwin"
     ? `12. macOS host_use — prefer SEMANTIC tools over coordinate host_computer (grill 2026-07-26):
@@ -446,7 +446,7 @@ export async function chatCreate(params: ChatCreateParams) {
    - host_computer: LAST RESORT pixel/OCR inject. Prefer host_read/host_write for Mail/Notes. Aggregate ALL same-app actions in ONE host_computer call (do not split one user goal into many tasks). Results may have posted=true,verified=false — NEVER say "已发送/已完成" unless verified===true or verified_steps covers the write. For reading on-screen text use action describe (host Vision OCR, spatial lines) or screenshot — NEVER shell_exec screencapture / swift Vision / ad-hoc OCR scripts as a substitute (bypasses evidence + estop). Optional experimental on-device Qwen3-VL may help locate click targets by natural-language anchor; it is NOT a general image-chat / captcha API (see rule 9). See rule 12b for observe→act playbook.
    ONLY propose host_read/host_write when the user EXPLICITLY mentions Mail/邮件/Notes/备忘录/Finder file move.
    Both require L2 confirmation. First time per thread, ASK the user before calling. Respect denial.
-   NEVER use host_read/host_write/host_computer for browser-DOM — use get_page_text / click({text}) / type / evaluate. NEVER propose host_computer as the default way to operate a web page. NEVER propose speculatively.`
+   NEVER default to host_computer for browser-DOM — use get_page_text / click({text}) / type / evaluate first. After CDP attach freeze / DOM-script cap, OR when the user explicitly asks for 模拟点击/像素点击, you MAY call host_computer on the Chrome app token. That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). Password managers / terminals / LOLBIN remain impossible. NEVER propose speculatively.`
     : `12. host_computer is NOT available on this platform (Linux). NEVER propose it — not for native UI and NEVER for browser-DOM. Use get_page_text / click({text}) / type / evaluate. If CDP_ATTACH_FAILED, list_tabs or stop; there is no third JS injection path.`
 
   // App tab (WP5, design §5): compact host_app index injected right after
@@ -460,7 +460,7 @@ export async function chatCreate(params: ChatCreateParams) {
 12b. host_computer is not available here. NEVER propose it for browser-DOM or native UI.`
     : `
 12b. host_computer playbook (when coordinate CU is enabled and required):
-   - Prefer structure first: browser CDP for web; host_read/host_write when semantic APIs exist; host_computer is LAST RESORT pixel/OCR inject for native apps — NEVER for browser-DOM (use click({text}) / type / get_page_text / evaluate).
+   - Prefer structure first: browser CDP for web; host_read/host_write when semantic APIs exist; host_computer is LAST RESORT pixel/OCR inject for native apps. For browser-DOM do NOT default to host_computer; after CDP freeze/volume cap or an explicit user ask, Chrome pixel CU is allowed and ALWAYS confirms (never skipped by 无人值守).
    - Aggregate ALL same-app injective steps in ONE host_computer call; put a short plan in the task string; type texts must be the exact strings the user will see in L2.
    - Observe→act→observe: after uncertain UI changes use wait / describe / screenshot before more clicks — do not spray blind coordinates.
    - Optional experimental on-device vision may propose click anchors only; it is NOT free-form image chat. Humans may 急停 or re-confirm at any time — never claim "已完成" unless verified===true or the tool result says so.`

@@ -122,6 +122,29 @@ describe("ACP L2 forceConfirm (cruise cannot skip)", () => {
     }
   })
 
+  it("vault-browser host_computer one-shot never waives under full autonomy cruise", () => {
+    assert.equal(
+      resolveL2ForceConfirm({
+        toolName: "host_computer",
+        capabilityForceConfirm: false,
+        hostComputerGated: true,
+        userFullAutonomy: true,
+        vaultBrowserOneShot: true,
+      }),
+      true,
+    )
+    assert.equal(
+      resolveL2ForceConfirm({
+        toolName: "host_computer",
+        capabilityForceConfirm: false,
+        hostComputerGated: true,
+        userFullAutonomy: true,
+        vaultBrowserOneShot: false,
+      }),
+      false,
+    )
+  })
+
   it("non-ACP capability tools waive under full autonomy cruise", () => {
     assert.equal(
       resolveL2ForceConfirm({
