@@ -83,7 +83,9 @@ import {
   bindWsLifecycle,
   getWsClients,
   getWsAuthState,
+  pickAuthenticatedClientWs,
 } from "./ws/lifecycle"
+import { forwardL1OrUnavailable } from "./ws/l1-actuator"
 export {
   broadcastToClients,
   isAllowedWsOrigin,
@@ -755,14 +757,25 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
 
     // Extension forward — pending map / timeout / tabUrlCache post-process in
     // ws/tool-forward.ts (C10-G). createToolExecutor stays pure orchestration.
-    return forwardToolToExtension({
+    // L1 actuator is the Chrome extension peer, never tray/summoner (tool.execute).
+    return forwardL1OrUnavailable({
+      originatingWs: ws,
+      getAuth: (w) => getWsAuthState(w),
+      pickExtensionWs: pickAuthenticatedClientWs,
       toolCallId,
       toolName,
-      finalParams,
-      ws,
-      actingThreadId,
       startedAt,
       logToolFinish,
+      forward: ({ ws: actuatorWs }) =>
+        forwardToolToExtension({
+          toolCallId,
+          toolName,
+          finalParams,
+          ws: actuatorWs,
+          actingThreadId,
+          startedAt,
+          logToolFinish,
+        }),
     })
   }
 }

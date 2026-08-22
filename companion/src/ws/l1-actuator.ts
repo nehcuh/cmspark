@@ -31,3 +31,41 @@ export function resolveL1ActuatorWs(
   if (!ext) return { ok: false, error_code: BROWSER_UNAVAILABLE }
   return { ok: true, ws: ext }
 }
+
+export type L1ForwardResult = {
+  success: boolean
+  data?: any
+  error?: string
+  error_code?: typeof BROWSER_UNAVAILABLE
+}
+
+export type ForwardL1OrUnavailableOpts = {
+  originatingWs: WebSocket
+  getAuth: L1ActuatorDeps["getAuth"]
+  pickExtensionWs: L1ActuatorDeps["pickExtensionWs"]
+  toolCallId: string
+  toolName: string
+  startedAt: number
+  logToolFinish: (id: string, name: string, startedAt: number, result: any) => void
+  forward: (args: { ws: WebSocket }) => Promise<L1ForwardResult>
+}
+
+/**
+ * L1 (extension CDP) dispatch: never send tool.execute to tray/summoner.
+ * Resolve actuator via resolveL1ActuatorWs; if missing, return BROWSER_UNAVAILABLE
+ * without calling forward.
+ */
+export async function forwardL1OrUnavailable(
+  opts: ForwardL1OrUnavailableOpts,
+): Promise<L1ForwardResult> {
+  const resolved = resolveL1ActuatorWs(opts.originatingWs, {
+    getAuth: opts.getAuth,
+    pickExtensionWs: opts.pickExtensionWs,
+  })
+  if (!resolved.ok) {
+    const result = browserUnavailableResult()
+    opts.logToolFinish(opts.toolCallId, opts.toolName, opts.startedAt, result)
+    return result
+  }
+  return opts.forward({ ws: resolved.ws })
+}
