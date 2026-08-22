@@ -84,8 +84,11 @@ export function resolveL2ForceConfirm(opts: {
   capabilityForceConfirm: boolean
   hostComputerGated?: boolean
   userFullAutonomy: boolean
+  /** Chrome/Safari one-shot pixel CU — never waived by 三旗巡航. */
+  vaultBrowserOneShot?: boolean
 }): boolean {
   if (isAcpL2ForceTool(opts.toolName)) return true
+  if (opts.vaultBrowserOneShot && opts.hostComputerGated) return true
   return (
     (opts.capabilityForceConfirm || !!opts.hostComputerGated) && !opts.userFullAutonomy
   )
@@ -114,6 +117,23 @@ export function isHostAppPlatformGated(platform: string): boolean {
 
 export function isHostCliPlatformGated(platform: string): boolean {
   return platform === "win32" || platform === "darwin"
+}
+
+/**
+ * G1 / unattended initial-skip algebra must not run for vault-browser one-shot.
+ * Pin this rather than a set-then-wipe (Trust T-02 / runtime P1).
+ */
+export function hostComputerTrustSkipAlgebraOpen(vaultBrowserOneShot: boolean): boolean {
+  return vaultBrowserOneShot !== true
+}
+
+/** G1 checkbox: never offer session-trust on a vault-browser one-shot L2. */
+export function hostComputerConfirmRelevantApps(
+  vaultBrowserOneShot: boolean,
+  app: unknown,
+): string[] {
+  if (vaultBrowserOneShot) return []
+  return typeof app === "string" && app.length > 0 ? [app] : []
 }
 
 // Phase 1 W7 — resolve app token from host_read/host_write params for
@@ -480,8 +500,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     /** ADR-021 audit: "session_trust_corpus_subset" | "unattended_session_grant" */
     let hostComputerTrustSkipReason: "session_trust_corpus_subset" | "unattended_session_grant" | null =
       null
+    let vaultBrowserOneShot = false
     if (hostComputerGated) {
-      const { assertCoordinateAllowed } = await import("../computer/policy")
+      const { assertCoordinateAllowed, isVaultBrowserEntry } = await import("../computer/policy")
       // Y3 (WP2): the preview text comes from the PURE builder — task text
       // JSON-escaped against layout spoofing, every injectable action
       // enumerated verbatim; unit-tested in computer-preview.test.ts.
@@ -492,7 +513,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         return result
       }
       try {
-        const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""))
+        const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""), {
+          allowVaultBrowserOneShot: true,
+        })
+        vaultBrowserOneShot = isVaultBrowserEntry(entryC)
         const budgetN = Math.min(Math.max(1, Number(finalParams.budget) || 15), 30)
         // R1 (§E.6.2): global single-task invariant — a second computer
         // task is refused BEFORE the L2 dialog while one is executing (no
@@ -521,7 +545,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         // isTrusted() already enforces idle expiry (30 min, anchored to last
         // interactive approve) and credential latch — those need no separate
         // check here.
-        if (sessionId && finalParams.app) {
+        if (hostComputerTrustSkipAlgebraOpen(vaultBrowserOneShot) && sessionId && finalParams.app) {
           const {
             getComputerSessionTrust,
             resolveComputerTrustKey,
@@ -629,7 +653,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
               })
             }
           }
-        } else if (finalParams.app) {
+        } else if (hostComputerTrustSkipAlgebraOpen(vaultBrowserOneShot) && finalParams.app) {
           // No sessionId — G1 needs session; unattended is process-global (ADR-021).
           const {
             evaluateUnattendedHostComputerSkipDetail,
@@ -669,12 +693,23 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             })
           }
         }
+        if (vaultBrowserOneShot) {
+          // Do not compute skip then wipe — never pass coordinateAllowed:true for
+          // a one-shot browser (Trust REJECT + runtime P1).
+          hostComputerTrustSkip = false
+          hostComputerTrustSkipReason = null
+        }
         computerPreview = buildComputerL2Preview({
           task: String(finalParams.task || ""),
           appDisplayName: entryC.display_name,
           appToken: entryC.token,
           budget: budgetN,
           actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
+          leadLines: vaultBrowserOneShot
+            ? [
+                "⚠️ 浏览器像素点击：将绕过页面 CDP，直接操作浏览器窗口。必须你点「允许」。无人值守 / 三旗巡航 / 会话信任都不会跳过本次确认。本次授权不写入 Apps 坐标开关。",
+              ]
+            : undefined,
           extraLines: [limiter.statusLine()],
         })
         // WP4 (护栏 a,对抗裁决定案):L2 标注截图 helper 的调用点固定在这
@@ -869,8 +904,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       capabilityForceConfirm,
       hostComputerGated,
       userFullAutonomy,
+      vaultBrowserOneShot,
     })
-    if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy && !acpForceConfirm) {
+    if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy && !acpForceConfirm && !vaultBrowserOneShot) {
       logger.info("security.critical_api_waived", {
         tool_call_id: toolCallId,
         tool_name: toolName,
@@ -1276,7 +1312,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             // panel can show "本会话自动同意同类操作" (session trust opt-in,
             // NOT ThreadApprovals / not write-biometric skip).
             relevantApps: hostComputerGated
-              ? (finalParams.app ? [String(finalParams.app)] : [])
+              ? hostComputerConfirmRelevantApps(vaultBrowserOneShot, finalParams.app)
               : hostApp
                 ? (hostApp.policy === "ai" ? [hostApp.token] : [])
                 : (relevantApp ? [relevantApp] : []),

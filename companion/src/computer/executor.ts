@@ -49,7 +49,13 @@ import {
 } from "./gui-action-parse"
 import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { sanitizeComputerCaption } from "./preview"
-import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
+import {
+  assertCoordinateAllowed,
+  assertExeNotDrifted,
+  assertHwndOwnedByEntry,
+  isVaultBrowserEntry,
+  normalizeExePath,
+} from "./policy"
 import { isCompanionUiOwner } from "./self-ui"
 import { getComputerSessionTrust, reL2ShouldPrompt } from "./session-trust"
 import { maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
@@ -443,8 +449,10 @@ export async function runComputerTask(
 
   // A10 + §E.2 gate (executor-side belt; the server gate already checked).
   let entry
+  let vaultBrowserOneShot = false
   try {
-    entry = assertCoordinateAllowed(deps.config, params.app)
+    entry = assertCoordinateAllowed(deps.config, params.app, { allowVaultBrowserOneShot: true })
+    vaultBrowserOneShot = isVaultBrowserEntry(entry)
     // WP2: exe sha256 drift vs the add-time record (§E.2.1) — computed once,
     // fail-closed; the per-action path + vault/LOLBIN rechecks stay fresh.
     const hashFile =
@@ -489,7 +497,7 @@ export async function runComputerTask(
     wins.sort((a, b) => score(b) - score(a))
     hwnd = wins[0].hwnd
     targetPid = wins[0].pid
-    assertHwndOwnedByEntry(wins[0], entry)
+    assertHwndOwnedByEntry(wins[0], entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
   } catch (err) {
     return fail(err instanceof ComputerError ? err : new ComputerError("APP_WINDOW_NOT_FOUND", String((err as Error)?.message ?? err)))
   }
@@ -645,7 +653,7 @@ export async function runComputerTask(
     // 否则「值守中仍逐步弹窗」与 JTBD 矛盾。硬拒绝仍走 throw，不经 reL2。
     try {
       const { isUnattendedArmed } = require("./unattended-grant") as typeof import("./unattended-grant")
-      if (isUnattendedArmed()) {
+      if (isUnattendedArmed() && !vaultBrowserOneShot) {
         log("computer.task.reconfirm.auto_approved", {
           taskId,
           reason,
@@ -667,7 +675,7 @@ export async function runComputerTask(
     // Full autonomy cruise (网页+企业+协议三旗全开): skip mid-task re-L2 for
     // non-force tags only (product 2026-08). Never short-circuit PROMPT_ALWAYS
     // unless unattended (handled above).
-    if (!forceInteractive && !reL2ShouldPrompt(dangerous)) {
+    if (!forceInteractive && !reL2ShouldPrompt(dangerous) && !vaultBrowserOneShot) {
       try {
         const { getConfig } = require("../config") as typeof import("../config")
         const sec = getConfig().security
@@ -692,7 +700,7 @@ export async function runComputerTask(
     // UX-spike 2026-07-23: per-session re-L2 suppression (G1 session-trust).
     // Budget / uncross / task_induced_dialog auto-approve under trust;
     // foreground_yielded / danger / experimental still prompt without unattended.
-    if (deps.sessionId && params.app && !forceInteractive) {
+    if (deps.sessionId && params.app && !forceInteractive && !vaultBrowserOneShot) {
       const trust = deps.sessionTrust ?? getComputerSessionTrust()
       if (trust.isTrusted(deps.sessionId, params.app) && !reL2ShouldPrompt(dangerous)) {
         log("computer.task.reconfirm.auto_approved", { taskId, reason, tags: dangerous, app: params.app })
@@ -814,7 +822,7 @@ export async function runComputerTask(
     try {
       // Per-action revalidation (§E.2.4/B5): hwnd still owned by the whitelisted exe.
       const info = await deps.windows.infoForHwnd(hwnd)
-      assertHwndOwnedByEntry(info, entry)
+      assertHwndOwnedByEntry(info, entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
 
       // WP2 (§T5-8): IL + input desktop re-probe — the app may have been
       // relaunched elevated (hwnd ownership still matches, but SendInput

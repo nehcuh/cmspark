@@ -57,6 +57,7 @@ export const LOLBIN_BASENAMES: ReadonlySet<string> = new Set([
 const BASENAME_TO_VAULT_TOKEN: Readonly<Record<string, string>> = {
   // browsers
   chrome: "win.chrome",
+  chromium: "win.chrome",
   msedge: "win.edge",
   msedge_proxy: "win.edge",
   firefox: "win.firefox",

@@ -11,6 +11,8 @@ import {
   isHostCliPlatformGated,
   isAcpL2ForceTool,
   resolveL2ForceConfirm,
+  hostComputerTrustSkipAlgebraOpen,
+  hostComputerConfirmRelevantApps,
   L2_GATE_TOOLS,
 } from "../src/tool/l2-admission"
 
@@ -120,6 +122,40 @@ describe("ACP L2 forceConfirm (cruise cannot skip)", () => {
         true,
       )
     }
+  })
+
+  it("vault-browser one-shot never enters G1/unattended skip algebra and offers no G1 checkbox", () => {
+    assert.equal(hostComputerTrustSkipAlgebraOpen(true), false)
+    assert.equal(hostComputerTrustSkipAlgebraOpen(false), true)
+    assert.deepEqual(hostComputerConfirmRelevantApps(true, "mac.app.google_chrome"), [])
+    assert.deepEqual(hostComputerConfirmRelevantApps(false, "mac.app.google_chrome"), [
+      "mac.app.google_chrome",
+    ])
+    assert.deepEqual(hostComputerConfirmRelevantApps(false, ""), [])
+    assert.deepEqual(hostComputerConfirmRelevantApps(false, undefined), [])
+  })
+
+  it("vault-browser host_computer one-shot never waives under full autonomy cruise", () => {
+    assert.equal(
+      resolveL2ForceConfirm({
+        toolName: "host_computer",
+        capabilityForceConfirm: false,
+        hostComputerGated: true,
+        userFullAutonomy: true,
+        vaultBrowserOneShot: true,
+      }),
+      true,
+    )
+    assert.equal(
+      resolveL2ForceConfirm({
+        toolName: "host_computer",
+        capabilityForceConfirm: false,
+        hostComputerGated: true,
+        userFullAutonomy: true,
+        vaultBrowserOneShot: false,
+      }),
+      false,
+    )
   })
 
   it("non-ACP capability tools waive under full autonomy cruise", () => {

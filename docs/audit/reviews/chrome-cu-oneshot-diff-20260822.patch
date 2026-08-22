@@ -1,0 +1,662 @@
+diff --git a/companion/src/apps/handlers.ts b/companion/src/apps/handlers.ts
+index 0effaba..7ea9105 100644
+--- a/companion/src/apps/handlers.ts
++++ b/companion/src/apps/handlers.ts
+@@ -444,10 +444,12 @@ const cap = maxPolicyForEntry(entry)
+       const entry = existing[token]
+       if (!entry) return appsError(`App "${token}" not found`, { code: "NOT_FOUND" })
+       // A10.3 — structural exclusion: vault-mapped / LOLBIN binaries can never
+-      // opt into coordinate injection, no matter the gate outcome.
+-      if (rest.allowed === true && entry.exe?.path) {
+-        if (isLolbinPath(entry.exe.path) || basenameToVault(entry.exe.path) !== null) {
+-          logger.warn("apps.coordinate_structural_deny", { token, exe: entry.exe.path })
++      // persist coordinateAllowed (macOS Chrome is bundleId-only — path basename
++      // "Google Chrome" is NOT in the Windows vault table). Trust adversary 2026-08-22.
++      if (rest.allowed === true) {
++        const { canEverCoordinate } = await import("../computer/policy")
++        if (!canEverCoordinate(entry)) {
++          logger.warn("apps.coordinate_structural_deny", { token, bundleId: entry.bundleId, exe: entry.exe?.path })
+           return appsError(
+             `"${token}" maps to a vault/LOLBIN binary — coordinate operation is structurally denied (A10)`,
+             { code: "COORDINATE_STRUCTURAL_DENY" },
+diff --git a/companion/src/apps/types.ts b/companion/src/apps/types.ts
+index 0f35f86..26f2de3 100644
+--- a/companion/src/apps/types.ts
++++ b/companion/src/apps/types.ts
+@@ -292,8 +292,20 @@ export function normalizeAppEntry(entry: AppEntry): AppEntry {
+   let coordinateAllowed = entry.coordinateAllowed
+   let uiaCapable = entry.uiaCapable
+   let uiaProbedAt = entry.uiaProbedAt
+-  if ((coordinateAllowed === true || uiaCapable !== undefined || uiaProbedAt !== undefined) && entry.exe?.path) {
+-    if (isLolbinPath(entry.exe.path) || basenameToVault(entry.exe.path) !== null) {
++  if (coordinateAllowed === true || uiaCapable !== undefined || uiaProbedAt !== undefined) {
++    let structural = false
++    if (entry.exe?.path && (isLolbinPath(entry.exe.path) || basenameToVault(entry.exe.path) !== null)) {
++      structural = true
++    }
++    if (!structural) {
++      try {
++        const { canEverCoordinate } = require("../computer/policy") as typeof import("../computer/policy")
++        if (!canEverCoordinate(entry)) structural = true
++      } catch {
++        /* policy import unavailable in isolated tests — path/lolbin check above still runs */
++      }
++    }
++    if (structural) {
+       console.error(
+         `[cmspark-agent] apps entry "${entry.token}" has coordinate/UIA hints on a vault/LOLBIN binary — force-cleared (structural exclusion, A10/Y5)`,
+       )
+diff --git a/companion/src/computer/executor.ts b/companion/src/computer/executor.ts
+index 02b72cb..f58fd4a 100644
+--- a/companion/src/computer/executor.ts
++++ b/companion/src/computer/executor.ts
+@@ -49,7 +49,13 @@ import {
+ } from "./gui-action-parse"
+ import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
+ import { sanitizeComputerCaption } from "./preview"
+-import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
++import {
++  assertCoordinateAllowed,
++  assertExeNotDrifted,
++  assertHwndOwnedByEntry,
++  isVaultBrowserEntry,
++  normalizeExePath,
++} from "./policy"
+ import { isCompanionUiOwner } from "./self-ui"
+ import { getComputerSessionTrust, reL2ShouldPrompt } from "./session-trust"
+ import { maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
+@@ -443,8 +449,10 @@ export async function runComputerTask(
+ 
+   // A10 + §E.2 gate (executor-side belt; the server gate already checked).
+   let entry
++  let vaultBrowserOneShot = false
+   try {
+-    entry = assertCoordinateAllowed(deps.config, params.app)
++    entry = assertCoordinateAllowed(deps.config, params.app, { allowVaultBrowserOneShot: true })
++    vaultBrowserOneShot = isVaultBrowserEntry(entry)
+     // WP2: exe sha256 drift vs the add-time record (§E.2.1) — computed once,
+     // fail-closed; the per-action path + vault/LOLBIN rechecks stay fresh.
+     const hashFile =
+@@ -489,7 +497,7 @@ export async function runComputerTask(
+     wins.sort((a, b) => score(b) - score(a))
+     hwnd = wins[0].hwnd
+     targetPid = wins[0].pid
+-    assertHwndOwnedByEntry(wins[0], entry)
++    assertHwndOwnedByEntry(wins[0], entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
+   } catch (err) {
+     return fail(err instanceof ComputerError ? err : new ComputerError("APP_WINDOW_NOT_FOUND", String((err as Error)?.message ?? err)))
+   }
+@@ -645,7 +653,7 @@ export async function runComputerTask(
+     // 否则「值守中仍逐步弹窗」与 JTBD 矛盾。硬拒绝仍走 throw，不经 reL2。
+     try {
+       const { isUnattendedArmed } = require("./unattended-grant") as typeof import("./unattended-grant")
+-      if (isUnattendedArmed()) {
++      if (isUnattendedArmed() && !vaultBrowserOneShot) {
+         log("computer.task.reconfirm.auto_approved", {
+           taskId,
+           reason,
+@@ -667,7 +675,7 @@ export async function runComputerTask(
+     // Full autonomy cruise (网页+企业+协议三旗全开): skip mid-task re-L2 for
+     // non-force tags only (product 2026-08). Never short-circuit PROMPT_ALWAYS
+     // unless unattended (handled above).
+-    if (!forceInteractive && !reL2ShouldPrompt(dangerous)) {
++    if (!forceInteractive && !reL2ShouldPrompt(dangerous) && !vaultBrowserOneShot) {
+       try {
+         const { getConfig } = require("../config") as typeof import("../config")
+         const sec = getConfig().security
+@@ -692,7 +700,7 @@ export async function runComputerTask(
+     // UX-spike 2026-07-23: per-session re-L2 suppression (G1 session-trust).
+     // Budget / uncross / task_induced_dialog auto-approve under trust;
+     // foreground_yielded / danger / experimental still prompt without unattended.
+-    if (deps.sessionId && params.app && !forceInteractive) {
++    if (deps.sessionId && params.app && !forceInteractive && !vaultBrowserOneShot) {
+       const trust = deps.sessionTrust ?? getComputerSessionTrust()
+       if (trust.isTrusted(deps.sessionId, params.app) && !reL2ShouldPrompt(dangerous)) {
+         log("computer.task.reconfirm.auto_approved", { taskId, reason, tags: dangerous, app: params.app })
+@@ -814,7 +822,7 @@ export async function runComputerTask(
+     try {
+       // Per-action revalidation (§E.2.4/B5): hwnd still owned by the whitelisted exe.
+       const info = await deps.windows.infoForHwnd(hwnd)
+-      assertHwndOwnedByEntry(info, entry)
++      assertHwndOwnedByEntry(info, entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
+ 
+       // WP2 (§T5-8): IL + input desktop re-probe — the app may have been
+       // relaunched elevated (hwnd ownership still matches, but SendInput
+diff --git a/companion/src/computer/policy.ts b/companion/src/computer/policy.ts
+index 0bce556..c0139f5 100644
+--- a/companion/src/computer/policy.ts
++++ b/companion/src/computer/policy.ts
+@@ -18,8 +18,30 @@ import { ComputerError, type WindowInfo } from "./types"
+ 
+ /**
+  * macOS vault bundle IDs — structural exclusion set (WP3 + adversarial review H6).
+- * Apps whose bundle ID matches any entry here can NEVER carry coordinateAllowed.
++ * Apps whose bundle ID matches any entry here can NEVER carry coordinateAllowed
++ * as a persistent Apps bit. Browsers may still take a one-shot L2 path
++ * (`allowVaultBrowserOneShot`); LOLBIN / password-managers / terminals / wallets
++ * remain impossible even with L2.
+  */
++export const MAC_BROWSER_VAULT_BUNDLE_IDS: ReadonlySet<string> = new Set([
++  "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox",
++  "company.thebrowser.Browser",     // Arc
++  "com.brave.Browser",              // Brave
++  "com.microsoft.edgemac",          // Edge
++  "com.operasoftware.Opera",
++  "com.vivaldi.Vivaldi",
++  "org.chromium.Chromium",
++])
++
++export const WIN_BROWSER_VAULT_TOKENS: ReadonlySet<string> = new Set([
++  "win.chrome",
++  "win.edge",
++  "win.firefox",
++  "win.brave",
++  "win.arc",
++  "win.opera",
++])
++
+ const MAC_VAULT_BUNDLE_IDS = new Set([
+   // 密码管理器
+   "com.agilebits.onepassword7",
+@@ -28,14 +50,8 @@ const MAC_VAULT_BUNDLE_IDS = new Set([
+   "com.lastpass.lastpassmacdesktop",
+   "com.dashlane.dashlanephonefinal",
+   "com.keepassxc.keepassxc",
+-  // 浏览器
+-  "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox",
+-  "company.thebrowser.Browser",     // Arc
+-  "com.brave.Browser",              // Brave
+-  "com.microsoft.edgemac",          // Edge
+-  "com.operasoftware.Opera",
+-  "com.vivaldi.Vivaldi",
+-  "org.chromium.Chromium",
++  // 浏览器 (persistent coordinateAllowed still denied; one-shot L2 is separate)
++  ...MAC_BROWSER_VAULT_BUNDLE_IDS,
+   // 终端 + 编辑器
+   "com.apple.Terminal", "com.googlecode.iterm2",
+   "dev.warp.Warp-Stable",
+@@ -55,6 +71,39 @@ const MAC_VAULT_BUNDLE_IDS = new Set([
+   "com.maxgoedjen.secretive.Secretive",
+ ])
+ 
++/** True when the AppEntry is a browser vault surface (Chrome/Safari/…). */
++export function isVaultBrowserEntry(entry: AppEntry): boolean {
++  if (entry.bundleId && MAC_BROWSER_VAULT_BUNDLE_IDS.has(entry.bundleId)) return true
++  if (entry.exe?.path) {
++    try {
++      const tok = basenameToVault(entry.exe.path)
++      if (tok && WIN_BROWSER_VAULT_TOKENS.has(tok)) return true
++    } catch {
++      return false
++    }
++  }
++  return false
++}
++
++export function isBrowserVaultExePath(p: string): boolean {
++  try {
++    const tok = basenameToVault(p)
++    return tok != null && WIN_BROWSER_VAULT_TOKENS.has(tok)
++  } catch {
++    return false
++  }
++}
++
++export type CoordinateAssertOpts = {
++  /**
++   * host_computer admission only. Lets a vault *browser* through without the
++   * persistent coordinateAllowed bit. Unattended/cruise/G1 MUST still not skip
++   * the task L2 (enforced in l2-admission + executor). Never used by
++   * apps.set_coordinate_allowed.
++   */
++  allowVaultBrowserOneShot?: boolean
++}
++
+ /**
+  * Structural eligibility — vault-mapped (browser/password-manager/terminal/
+  * wallet) and LOLBIN exes can NEVER carry coordinateAllowed (A10.3).
+@@ -80,7 +129,11 @@ export function canEverCoordinate(entry: AppEntry): boolean {
+  * The full A10 + whitelist gate. Returns the entry on success; throws a typed
+  * ComputerError otherwise. Pure over the passed config — injectable in tests.
+  */
+-export function assertCoordinateAllowed(cfg: CompanionConfig, token: string): AppEntry {
++export function assertCoordinateAllowed(
++  cfg: CompanionConfig,
++  token: string,
++  opts?: CoordinateAssertOpts,
++): AppEntry {
+   if (!APP_TOKEN_PATTERN.test(token)) {
+     throw new ComputerError("APP_NOT_WHITELISTED", `computer: invalid app token "${token}"`)
+   }
+@@ -115,7 +168,12 @@ export function assertCoordinateAllowed(cfg: CompanionConfig, token: string): Ap
+   }
+   // Structural exclusion is re-checked here even though the bit cannot be set
+   // through any handler — a hand-edited config must not smuggle it in.
++  // Vault browsers: persistent bit still denied (canEverCoordinate false);
++  // host_computer may pass allowVaultBrowserOneShot and skip the bit (L2 required).
+   if (!canEverCoordinate(entry)) {
++    if (opts?.allowVaultBrowserOneShot === true && isVaultBrowserEntry(entry)) {
++      return entry
++    }
+     throw new ComputerError(
+       "APP_COORDINATE_STRUCTURAL",
+       `computer: "${token}" maps to a vault/LOLBIN binary — coordinate operation is structurally denied`,
+@@ -145,7 +203,11 @@ export function normalizeExePath(p: string): string {
+  * process (config tamper, path swap) is denied at execution time, same as
+  * `win/adapter.ts`'s vacuous recheck philosophy (§E.2.2).
+  */
+-export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void {
++export function assertHwndOwnedByEntry(
++  info: WindowInfo,
++  entry: AppEntry,
++  opts?: CoordinateAssertOpts,
++): void {
+   if (!info.alive) {
+     throw new ComputerError("HWND_DEAD", `computer: hwnd ${info.hwnd} is no longer a live window`)
+   }
+@@ -168,7 +230,18 @@ export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void
+   // recorded entry config) — the coordinate path re-denies vault/LOLBIN at
+   // the moment of truth. macOS entries (bundleId) skip this Windows-only path.
+   if (!isMacEntry && info.exePath) {
+-    if (isLolbinPath(info.exePath) || basenameToVault(info.exePath) !== null) {
++    if (isLolbinPath(info.exePath)) {
++      throw new ComputerError(
++        "APP_COORDINATE_STRUCTURAL",
++        `computer: hwnd ${info.hwnd} resolves to a vault/LOLBIN binary "${info.exePath}" — coordinate operation is structurally denied`,
++        { hwnd: info.hwnd, actual: info.exePath },
++      )
++    }
++    const browserHwnd =
++      opts?.allowVaultBrowserOneShot === true &&
++      isVaultBrowserEntry(entry) &&
++      isBrowserVaultExePath(info.exePath)
++    if (!browserHwnd && basenameToVault(info.exePath) !== null) {
+       throw new ComputerError(
+         "APP_COORDINATE_STRUCTURAL",
+         `computer: hwnd ${info.hwnd} resolves to a vault/LOLBIN binary "${info.exePath}" — coordinate operation is structurally denied`,
+diff --git a/companion/src/computer/preview.ts b/companion/src/computer/preview.ts
+index 57e546d..ad97901 100644
+--- a/companion/src/computer/preview.ts
++++ b/companion/src/computer/preview.ts
+@@ -94,6 +94,8 @@ export interface ComputerL2PreviewInput {
+   appToken: string
+   budget: number
+   actions: ComputerAction[]
++  /** Shown FIRST so Cockpit's 1200-char slice cannot hide a vault-browser warning. */
++  leadLines?: string[]
+   /** C6: extra status lines (e.g. injection rate counters) appended verbatim. */
+   extraLines?: string[]
+ }
+@@ -102,6 +104,7 @@ export function buildComputerL2Preview(input: ComputerL2PreviewInput): string {
+   const actions = Array.isArray(input.actions) ? input.actions : []
+   const corpus = corpusOf(actions)
+   const lines = [
++    ...(input.leadLines ?? []),
+     `任务: ${JSON.stringify(input.task)}`,
+     `目标应用: ${input.appDisplayName} (${input.appToken})`,
+     `动作预算: ${input.budget} 个注入动作（共 ${actions.length} 个草案动作）`,
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index 81deea9..bf2ef5a 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -422,8 +422,8 @@ export async function chatCreate(params: ChatCreateParams) {
+   // Rule 12 (host_use) is platform-aware (Phase 1 W8-windows): win32 describes
+   // classic-Outlook read / OneNote create / allowlisted file move + Windows
+   // Hello; darwin keeps the original Mail/Notes/Finder text. The "ask the
+-  // user first per thread" and "NEVER for browser-DOM" sentences are verbatim
+-  // on both platforms.
++  // user first per thread" sentences are verbatim on both platforms.
++  // Browser-DOM: never *default* to host_computer; Chrome one-shot L2 is allowed.
+   const hostPlat = os.platform()
+   const hostUseRule12 = hostPlat === "win32"
+     ? `12. Windows host_use tools (computer-use, Phase 1):
+@@ -437,7 +437,7 @@ export async function chatCreate(params: ChatCreateParams) {
+      - 文件 / move file / 归类 → host_write move
+      - 启动 / 打开 an app that appears in the Whitelisted apps section → host_app launch
+    host_read and host_write require user confirmation (L2 gate); writes additionally require Windows Hello verification per call, or a 6-char manually typed code when Hello hardware is unavailable. The first time per thread, ASK the user explicitly before calling — e.g. "这个任务需要读取你的 Outlook 收件箱（只读第一封）。可以吗？". Respect denial; do not retry without user re-prompting.
+-   NEVER use host_read/host_write/host_computer for browser-DOM tasks — use get_page_text / click({text}) / type / evaluate. NEVER propose host_computer as the default way to operate a web page.
++   NEVER default to host_computer for browser-DOM — use get_page_text / click({text}) / type / evaluate first. After CDP attach freeze / DOM-script cap, OR when the user explicitly asks for 模拟点击/像素点击, you MAY call host_computer on the Chrome app token. That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). Password managers / terminals / LOLBIN remain impossible.
+    NEVER propose these tools speculatively — only when the user's task cannot be accomplished via browser alone.`
+     : hostPlat === "darwin"
+     ? `12. macOS host_use — prefer SEMANTIC tools over coordinate host_computer (grill 2026-07-26):
+@@ -446,7 +446,7 @@ export async function chatCreate(params: ChatCreateParams) {
+    - host_computer: LAST RESORT pixel/OCR inject. Prefer host_read/host_write for Mail/Notes. Aggregate ALL same-app actions in ONE host_computer call (do not split one user goal into many tasks). Results may have posted=true,verified=false — NEVER say "已发送/已完成" unless verified===true or verified_steps covers the write. For reading on-screen text use action describe (host Vision OCR, spatial lines) or screenshot — NEVER shell_exec screencapture / swift Vision / ad-hoc OCR scripts as a substitute (bypasses evidence + estop). Optional experimental on-device Qwen3-VL may help locate click targets by natural-language anchor; it is NOT a general image-chat / captcha API (see rule 9). See rule 12b for observe→act playbook.
+    ONLY propose host_read/host_write when the user EXPLICITLY mentions Mail/邮件/Notes/备忘录/Finder file move.
+    Both require L2 confirmation. First time per thread, ASK the user before calling. Respect denial.
+-   NEVER use host_read/host_write/host_computer for browser-DOM — use get_page_text / click({text}) / type / evaluate. NEVER propose host_computer as the default way to operate a web page. NEVER propose speculatively.`
++   NEVER default to host_computer for browser-DOM — use get_page_text / click({text}) / type / evaluate first. After CDP attach freeze / DOM-script cap, OR when the user explicitly asks for 模拟点击/像素点击, you MAY call host_computer on the Chrome app token. That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). Password managers / terminals / LOLBIN remain impossible. NEVER propose speculatively.`
+     : `12. host_computer is NOT available on this platform (Linux). NEVER propose it — not for native UI and NEVER for browser-DOM. Use get_page_text / click({text}) / type / evaluate. If CDP_ATTACH_FAILED, list_tabs or stop; there is no third JS injection path.`
+ 
+   // App tab (WP5, design §5): compact host_app index injected right after
+@@ -460,7 +460,7 @@ export async function chatCreate(params: ChatCreateParams) {
+ 12b. host_computer is not available here. NEVER propose it for browser-DOM or native UI.`
+     : `
+ 12b. host_computer playbook (when coordinate CU is enabled and required):
+-   - Prefer structure first: browser CDP for web; host_read/host_write when semantic APIs exist; host_computer is LAST RESORT pixel/OCR inject for native apps — NEVER for browser-DOM (use click({text}) / type / get_page_text / evaluate).
++   - Prefer structure first: browser CDP for web; host_read/host_write when semantic APIs exist; host_computer is LAST RESORT pixel/OCR inject for native apps. For browser-DOM do NOT default to host_computer; after CDP freeze/volume cap or an explicit user ask, Chrome pixel CU is allowed and ALWAYS confirms (never skipped by 无人值守).
+    - Aggregate ALL same-app injective steps in ONE host_computer call; put a short plan in the task string; type texts must be the exact strings the user will see in L2.
+    - Observe→act→observe: after uncertain UI changes use wait / describe / screenshot before more clicks — do not spray blind coordinates.
+    - Optional experimental on-device vision may propose click anchors only; it is NOT free-form image chat. Humans may 急停 or re-confirm at any time — never claim "已完成" unless verified===true or the tool result says so.`
+diff --git a/companion/src/tool/l2-admission.ts b/companion/src/tool/l2-admission.ts
+index f156241..4296202 100644
+--- a/companion/src/tool/l2-admission.ts
++++ b/companion/src/tool/l2-admission.ts
+@@ -84,8 +84,11 @@ export function resolveL2ForceConfirm(opts: {
+   capabilityForceConfirm: boolean
+   hostComputerGated?: boolean
+   userFullAutonomy: boolean
++  /** Chrome/Safari one-shot pixel CU — never waived by 三旗巡航. */
++  vaultBrowserOneShot?: boolean
+ }): boolean {
+   if (isAcpL2ForceTool(opts.toolName)) return true
++  if (opts.vaultBrowserOneShot && opts.hostComputerGated) return true
+   return (
+     (opts.capabilityForceConfirm || !!opts.hostComputerGated) && !opts.userFullAutonomy
+   )
+@@ -480,8 +483,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+     /** ADR-021 audit: "session_trust_corpus_subset" | "unattended_session_grant" */
+     let hostComputerTrustSkipReason: "session_trust_corpus_subset" | "unattended_session_grant" | null =
+       null
++    let vaultBrowserOneShot = false
+     if (hostComputerGated) {
+-      const { assertCoordinateAllowed } = await import("../computer/policy")
++      const { assertCoordinateAllowed, isVaultBrowserEntry } = await import("../computer/policy")
+       // Y3 (WP2): the preview text comes from the PURE builder — task text
+       // JSON-escaped against layout spoofing, every injectable action
+       // enumerated verbatim; unit-tested in computer-preview.test.ts.
+@@ -492,7 +496,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+         return result
+       }
+       try {
+-        const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""))
++        const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""), {
++          allowVaultBrowserOneShot: true,
++        })
++        vaultBrowserOneShot = isVaultBrowserEntry(entryC)
+         const budgetN = Math.min(Math.max(1, Number(finalParams.budget) || 15), 30)
+         // R1 (§E.6.2): global single-task invariant — a second computer
+         // task is refused BEFORE the L2 dialog while one is executing (no
+@@ -521,7 +528,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+         // isTrusted() already enforces idle expiry (30 min, anchored to last
+         // interactive approve) and credential latch — those need no separate
+         // check here.
+-        if (sessionId && finalParams.app) {
++        if (!vaultBrowserOneShot && sessionId && finalParams.app) {
+           const {
+             getComputerSessionTrust,
+             resolveComputerTrustKey,
+@@ -629,7 +636,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+               })
+             }
+           }
+-        } else if (finalParams.app) {
++        } else if (!vaultBrowserOneShot && finalParams.app) {
+           // No sessionId — G1 needs session; unattended is process-global (ADR-021).
+           const {
+             evaluateUnattendedHostComputerSkipDetail,
+@@ -669,12 +676,23 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+             })
+           }
+         }
++        if (vaultBrowserOneShot) {
++          // Do not compute skip then wipe — never pass coordinateAllowed:true for
++          // a one-shot browser (Trust REJECT + runtime P1).
++          hostComputerTrustSkip = false
++          hostComputerTrustSkipReason = null
++        }
+         computerPreview = buildComputerL2Preview({
+           task: String(finalParams.task || ""),
+           appDisplayName: entryC.display_name,
+           appToken: entryC.token,
+           budget: budgetN,
+           actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
++          leadLines: vaultBrowserOneShot
++            ? [
++                "⚠️ 浏览器像素点击：将绕过页面 CDP，直接操作浏览器窗口。必须你点「允许」。无人值守 / 三旗巡航 / 会话信任都不会跳过本次确认。本次授权不写入 Apps 坐标开关。",
++              ]
++            : undefined,
+           extraLines: [limiter.statusLine()],
+         })
+         // WP4 (护栏 a,对抗裁决定案):L2 标注截图 helper 的调用点固定在这
+@@ -869,6 +887,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+       capabilityForceConfirm,
+       hostComputerGated,
+       userFullAutonomy,
++      vaultBrowserOneShot,
+     })
+     if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy && !acpForceConfirm) {
+       logger.info("security.critical_api_waived", {
+diff --git a/companion/tests/apps-coordinate.test.ts b/companion/tests/apps-coordinate.test.ts
+index 675d006..75a1929 100644
+--- a/companion/tests/apps-coordinate.test.ts
++++ b/companion/tests/apps-coordinate.test.ts
+@@ -101,6 +101,27 @@ test("apps.set_coordinate_allowed: unknown token -> NOT_FOUND", async () => {
+   assert.equal(r.code, "NOT_FOUND")
+ })
+ 
++test("apps.set_coordinate_allowed: mac Chrome bundleId-only -> COORDINATE_STRUCTURAL_DENY (Trust REJECT fold)", async () => {
++  reset()
++  replaceAppsEntries({
++    "mac.app.google_chrome": seedEntry({
++      token: "mac.app.google_chrome",
++      bundleId: "com.google.Chrome",
++      exe: undefined,
++      display_name: "Google Chrome",
++    }),
++  })
++  const gateCalls = { calls: 0 }
++  const r: any = await handleAppsMessage(
++    { type: "apps.set_coordinate_allowed", token: "mac.app.google_chrome", allowed: true },
++    { requestConfirmation: approveChannel },
++    deps({ platform: "darwin", gate: fakeGate("approve", gateCalls) }),
++  )
++  assert.equal(r.code, "COORDINATE_STRUCTURAL_DENY")
++  assert.equal(gateCalls.calls, 0)
++  assert.equal(getConfig().apps?.entries["mac.app.google_chrome"]?.coordinateAllowed, undefined)
++})
++
+ test("apps.set_coordinate_allowed: chrome exe -> COORDINATE_STRUCTURAL_DENY, gate never runs (A10.3)", async () => {
+   reset()
+   replaceAppsEntries({ "win.app.test": seedEntry({ exe: { path: CHROME_EXE, user_writable_dir: false } }) })
+diff --git a/companion/tests/computer-policy.test.ts b/companion/tests/computer-policy.test.ts
+index d4c0210..ea85f61 100644
+--- a/companion/tests/computer-policy.test.ts
++++ b/companion/tests/computer-policy.test.ts
+@@ -10,6 +10,7 @@ import {
+   assertExeNotDrifted,
+   assertHwndOwnedByEntry,
+   canEverCoordinate,
++  isVaultBrowserEntry,
+   normalizeExePath,
+ } from "../src/computer/policy"
+ import { ComputerError, type WindowInfo } from "../src/computer/types"
+@@ -133,6 +134,60 @@ test("policy: chrome exe + coordinateAllowed=true (hand-edited config) -> APP_CO
+   )
+ })
+ 
++test("policy: chrome one-shot L2 path does not persist the bit and skips STRUCTURAL", () => {
++  const chrome = makeEntry({
++    exe: { path: CHROME_EXE, user_writable_dir: false },
++    coordinateAllowed: false,
++  })
++  assert.equal(canEverCoordinate(chrome), false)
++  assert.equal(isVaultBrowserEntry(chrome), true)
++  const got = assertCoordinateAllowed(makeConfig({ entry: chrome }), "win.app.test", {
++    allowVaultBrowserOneShot: true,
++  })
++  assert.equal(got.token, "win.app.test")
++  assert.equal(got.coordinateAllowed, false)
++})
++
++test("policy: mac Chrome bundle one-shot L2 path", () => {
++  const chrome = makeEntry({
++    bundleId: "com.google.Chrome",
++    coordinateAllowed: false,
++    exe: undefined,
++  })
++  assert.equal(isVaultBrowserEntry(chrome), true)
++  assert.equal(canEverCoordinate(chrome), false)
++  const got = assertCoordinateAllowed(makeConfig({ entry: chrome }), "win.app.test", {
++    allowVaultBrowserOneShot: true,
++  })
++  assert.equal(got.bundleId, "com.google.Chrome")
++})
++
++test("policy: powershell cannot use vault-browser one-shot", () => {
++  const ps = makeEntry({ exe: { path: POWERSHELL_EXE, user_writable_dir: false }, coordinateAllowed: false })
++  assertComputerError(
++    () =>
++      assertCoordinateAllowed(makeConfig({ entry: ps }), "win.app.test", { allowVaultBrowserOneShot: true }),
++    "APP_COORDINATE_STRUCTURAL",
++  )
++})
++
++test("policy: hwnd chrome allowed only on one-shot browser entry", () => {
++  const chrome = makeEntry({
++    exe: { path: CHROME_EXE, user_writable_dir: false },
++    coordinateAllowed: false,
++  })
++  const info = {
++    hwnd: 1,
++    pid: 2,
++    exePath: CHROME_EXE,
++    title: "Zhihu",
++    alive: true,
++    rect: { x: 0, y: 0, width: 100, height: 100 },
++  }
++  assertComputerError(() => assertHwndOwnedByEntry(info as any, chrome), "APP_COORDINATE_STRUCTURAL")
++  assertHwndOwnedByEntry(info as any, chrome, { allowVaultBrowserOneShot: true })
++})
++
+ test("policy: powershell exe + coordinateAllowed=true (hand-edited) -> APP_COORDINATE_STRUCTURAL", () => {
+   const tampered = makeEntry({ exe: { path: POWERSHELL_EXE, user_writable_dir: false }, coordinateAllowed: true })
+   assertComputerError(
+@@ -221,6 +276,24 @@ test("policy: hwnd with no exePath -> HWND_NOT_OWNED", () => {
+ 
+ // --- normalizeAppEntry: A10.3 force-clear --------------------------------------
+ 
++test("policy: normalizeAppEntry force-clears coordinateAllowed on mac Chrome bundleId (no exe path)", () => {
++  const tampered = makeEntry({
++    bundleId: "com.google.Chrome",
++    exe: undefined,
++    coordinateAllowed: true,
++  })
++  const errors: string[] = []
++  const origError = console.error
++  console.error = (msg: unknown) => errors.push(String(msg))
++  try {
++    const out = normalizeAppEntry(tampered)
++    assert.equal(out.coordinateAllowed, false)
++    assert.ok(errors.some((m) => m.includes("force-cleared")))
++  } finally {
++    console.error = origError
++  }
++})
++
+ test("policy: normalizeAppEntry force-clears coordinateAllowed on a vault binary (chrome)", () => {
+   const tampered = makeEntry({ exe: { path: CHROME_EXE, user_writable_dir: false }, coordinateAllowed: true })
+   const errors: string[] = []
+diff --git a/companion/tests/computer-preview.test.ts b/companion/tests/computer-preview.test.ts
+index 6874e3d..82258b5 100644
+--- a/companion/tests/computer-preview.test.ts
++++ b/companion/tests/computer-preview.test.ts
+@@ -69,6 +69,18 @@ test("L2 preview: type corpus enumerated with JSON.stringify; empty corpus says
+   assert.ok(without.includes("本任务不包含文本输入动作。"))
+ })
+ 
++test("L2 preview: leadLines appear before 任务 so 1200-char slice cannot hide vault-browser warning", () => {
++  const warn = "⚠️ 浏览器像素点击"
++  const out = buildComputerL2Preview({
++    ...BASE,
++    task: "x".repeat(2000),
++    actions: [{ action: "click", x: 1, y: 1 } as ComputerAction],
++    leadLines: [warn],
++  })
++  assert.ok(out.startsWith(warn))
++  assert.ok(out.slice(0, 1200).includes(warn))
++})
++
+ test("L2 preview: extraLines (C6 rate counters) append verbatim", () => {
+   const out = buildComputerL2Preview({
+     ...BASE,
+diff --git a/companion/tests/l2-admission-pure.test.ts b/companion/tests/l2-admission-pure.test.ts
+index c89a319..6b8617c 100644
+--- a/companion/tests/l2-admission-pure.test.ts
++++ b/companion/tests/l2-admission-pure.test.ts
+@@ -122,6 +122,29 @@ describe("ACP L2 forceConfirm (cruise cannot skip)", () => {
+     }
+   })
+ 
++  it("vault-browser host_computer one-shot never waives under full autonomy cruise", () => {
++    assert.equal(
++      resolveL2ForceConfirm({
++        toolName: "host_computer",
++        capabilityForceConfirm: false,
++        hostComputerGated: true,
++        userFullAutonomy: true,
++        vaultBrowserOneShot: true,
++      }),
++      true,
++    )
++    assert.equal(
++      resolveL2ForceConfirm({
++        toolName: "host_computer",
++        capabilityForceConfirm: false,
++        hostComputerGated: true,
++        userFullAutonomy: true,
++        vaultBrowserOneShot: false,
++      }),
++      false,
++    )
++  })
++
+   it("non-ACP capability tools waive under full autonomy cruise", () => {
+     assert.equal(
+       resolveL2ForceConfirm({
+diff --git a/companion/tests/web-act-loop-wave1.test.ts b/companion/tests/web-act-loop-wave1.test.ts
+index 22dd184..c45660a 100644
+--- a/companion/tests/web-act-loop-wave1.test.ts
++++ b/companion/tests/web-act-loop-wave1.test.ts
+@@ -77,10 +77,10 @@ test("click is not L2; evaluate/osascript still are", () => {
+   assert.equal(L2_GATE_TOOLS.includes("osascript_eval"), true)
+ })
+ 
+-test("W5 Rule 12/7/12b never host_computer for browser-DOM (source lock)", () => {
++test("W5 Rule 12/7/12b never default host_computer for browser-DOM (source lock)", () => {
+   const src = readFileSync(join(process.cwd(), "src/llm/adapter.ts"), "utf8")
+-  assert.match(src, /NEVER use host_read\/host_write\/host_computer for browser-DOM/)
++  assert.match(src, /NEVER default to host_computer for browser-DOM/)
+   assert.match(src, /do NOT retry via evaluate or host_computer/)
+-  assert.match(src, /NEVER for browser-DOM \(use click\(\{text\}\)/)
++  assert.match(src, /ALWAYS pops a confirm/)
+   assert.match(src, /host_computer is NOT available on this platform \(Linux\)/)
+ })
+diff --git a/docs/adr/017-computer-use.md b/docs/adr/017-computer-use.md
+index ac2fe77..c3aa8b5 100644
+--- a/docs/adr/017-computer-use.md
++++ b/docs/adr/017-computer-use.md
+@@ -20,7 +20,7 @@
+ 1. **工具入口**：`host_computer`（任务描述 + app token + actions[] + budget）。  
+ 2. **双开关 fail-closed**：  
+    - 全局 `computer.coordinateEnabled`（默认 false）。**0.5.0 用户路径**：Side Panel **Apps 面板**「坐标操作」调用 `computer.set_enabled`（可走生物识别/确认台）；亦可写 `config.json`。  
+-   - 每应用 `AppEntry.coordinateAllowed`（vault/浏览器/终端/钱包/LOLBIN **结构排除**，永远不可开）。  
++   - 每应用 `AppEntry.coordinateAllowed`（密码箱/终端/钱包/LOLBIN **结构排除**，永远不可开）。**浏览器**同样不能把该位置成 true（无人值守不得静默注入）；但 `host_computer` 可走 **一次性 L2**（确认台弹出，必须真人点允许；无人值守 / 三旗 / G1 **永不跳过**；授权不落盘）。  
+ 3. **任务级 L2 强制**：枚举 task、app、全部 type 文本、预算。  
+    - **全局 bool**（`allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools`）**永不**单独跳过任务级 initial L2（1–2 旗）。三旗全开巡航可 waive `forceConfirm`（含 host initial）——与值守 grant 分列。  
+    - **例外（[ADR-021](021-unattended-desktop-session.md)，2026-08-09 修订）**：用户经短语+双勾选**显式武装**的进程内 **无人值守 grant** 可静默 **initial L2 与 mid-task re-L2**（含危险/实验/前台让出；仅 `coordinateAllowed` App；open_within_app；8h 墙钟）。硬拒绝仍 throw 无对话框。G1/巡航无 grant 时 PROMPT_ALWAYS 仍强制确认。  
+diff --git a/docs/computer-use-user-guide.md b/docs/computer-use-user-guide.md
+index 8686272..40578d7 100644
+--- a/docs/computer-use-user-guide.md
++++ b/docs/computer-use-user-guide.md
+@@ -47,9 +47,9 @@
+ 
+ 2. **Apps 功能打开** 且目标 App 在白名单内（`apps.enabled` + 对应 `AppEntry`）。
+ 
+-3. **该 App 已显式允许坐标** `AppEntry.coordinateAllowed === true`（逐应用，不是全局一开全放）。
++3. **该 App 已显式允许坐标** `AppEntry.coordinateAllowed === true`（逐应用，不是全局一开全放）。**例外：浏览器**不能打开这个开关；Chrome 像素点击走 `host_computer` 一次性确认台，不写这个 bit。
+ 
+-4. **目标不是结构排除类**：密码管理器、浏览器本体、终端、钱包、LOLBIN 等 **永远不能** 开坐标（见 ADR-017 / 代码 `canEverCoordinate`）。
++4. **结构排除**：密码管理器、终端、钱包、LOLBIN **永远不能** 开坐标。**浏览器**不能把 Apps「允许坐标」打开（防止无人值守静默注入），但 `host_computer` 可以对 Chrome/Safari 等走 **一次性确认**：确认台弹出后必须点允许；无人值守 / 三旗 / 会话信任都不会跳过。
+ 
+ 5. **任务级 L2**：`host_computer` 任务在确认台/红条展示任务描述、目标 App、**逐字 type 文本**、动作预算。  
+    - **全局开关**（协议解锁 / 自动批准危险 / 企业自动批准）**不能单独**跳过任务级 initial L2。  

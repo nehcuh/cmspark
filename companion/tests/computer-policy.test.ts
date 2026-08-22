@@ -10,6 +10,8 @@ import {
   assertExeNotDrifted,
   assertHwndOwnedByEntry,
   canEverCoordinate,
+  isVaultBrowserEntry,
+  looksLikeWinExePath,
   normalizeExePath,
 } from "../src/computer/policy"
 import { ComputerError, type WindowInfo } from "../src/computer/types"
@@ -20,7 +22,9 @@ import type { CompanionConfig } from "../src/config"
 
 const EXE = "C:\\Program Files\\TestApp\\app.exe"
 const CHROME_EXE = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+const CHROMIUM_EXE = "C:\\Program Files\\Chromium\\Application\\chromium.exe"
 const POWERSHELL_EXE = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+const ONEPASSWORD_EXE = "C:\\Program Files\\1Password\\app\\8\\1Password.exe"
 
 function makeEntry(overrides: Partial<AppEntry> = {}): AppEntry {
   return {
@@ -133,6 +137,146 @@ test("policy: chrome exe + coordinateAllowed=true (hand-edited config) -> APP_CO
   )
 })
 
+test("policy: chrome one-shot L2 path does not persist the bit and skips STRUCTURAL", () => {
+  const chrome = makeEntry({
+    exe: { path: CHROME_EXE, user_writable_dir: false },
+    coordinateAllowed: false,
+  })
+  assert.equal(canEverCoordinate(chrome), false)
+  assert.equal(isVaultBrowserEntry(chrome), true)
+  const got = assertCoordinateAllowed(makeConfig({ entry: chrome }), "win.app.test", {
+    allowVaultBrowserOneShot: true,
+  })
+  assert.equal(got.token, "win.app.test")
+  assert.equal(got.coordinateAllowed, false)
+})
+
+test("policy: mac Chrome bundle one-shot L2 path", () => {
+  const chrome = makeEntry({
+    bundleId: "com.google.Chrome",
+    coordinateAllowed: false,
+    exe: undefined,
+  })
+  assert.equal(isVaultBrowserEntry(chrome), true)
+  assert.equal(canEverCoordinate(chrome), false)
+  const got = assertCoordinateAllowed(makeConfig({ entry: chrome }), "win.app.test", {
+    allowVaultBrowserOneShot: true,
+  })
+  assert.equal(got.bundleId, "com.google.Chrome")
+})
+
+test("policy: powershell cannot use vault-browser one-shot", () => {
+  const ps = makeEntry({ exe: { path: POWERSHELL_EXE, user_writable_dir: false }, coordinateAllowed: false })
+  assertComputerError(
+    () =>
+      assertCoordinateAllowed(makeConfig({ entry: ps }), "win.app.test", { allowVaultBrowserOneShot: true }),
+    "APP_COORDINATE_STRUCTURAL",
+  )
+})
+
+test("policy: hwnd chrome allowed only on one-shot browser entry", () => {
+  const chrome = makeEntry({
+    exe: { path: CHROME_EXE, user_writable_dir: false },
+    coordinateAllowed: false,
+  })
+  const info = {
+    hwnd: 1,
+    pid: 2,
+    exePath: CHROME_EXE,
+    title: "Zhihu",
+    alive: true,
+    rect: { x: 0, y: 0, width: 100, height: 100 },
+  }
+  assertComputerError(() => assertHwndOwnedByEntry(info as any, chrome), "APP_COORDINATE_STRUCTURAL")
+  assertHwndOwnedByEntry(info as any, chrome, { allowVaultBrowserOneShot: true })
+})
+
+test("policy: hwnd chrome entry + powershell hwnd is HWND_NOT_OWNED even on one-shot", () => {
+  const chrome = makeEntry({
+    exe: { path: CHROME_EXE, user_writable_dir: false },
+    coordinateAllowed: false,
+  })
+  const info = {
+    hwnd: 1,
+    pid: 2,
+    exePath: POWERSHELL_EXE,
+    title: "PowerShell",
+    alive: true,
+    rect: { x: 0, y: 0, width: 100, height: 100 },
+  }
+  assertComputerError(
+    () => assertHwndOwnedByEntry(info as any, chrome, { allowVaultBrowserOneShot: true }),
+    "HWND_NOT_OWNED",
+  )
+})
+
+test("policy: 1Password cannot use vault-browser one-shot", () => {
+  const op = makeEntry({
+    exe: { path: ONEPASSWORD_EXE, user_writable_dir: false },
+    coordinateAllowed: false,
+  })
+  assert.equal(isVaultBrowserEntry(op), false)
+  assertComputerError(
+    () =>
+      assertCoordinateAllowed(makeConfig({ entry: op }), "win.app.test", { allowVaultBrowserOneShot: true }),
+    "APP_COORDINATE_STRUCTURAL",
+  )
+})
+
+test("policy: Chrome Canary bundle is vault-browser one-shot (not persistable)", () => {
+  const canary = makeEntry({
+    bundleId: "com.google.Chrome.canary",
+    coordinateAllowed: false,
+    exe: undefined,
+  })
+  assert.equal(isVaultBrowserEntry(canary), true)
+  assert.equal(canEverCoordinate(canary), false)
+  const got = assertCoordinateAllowed(makeConfig({ entry: canary }), "win.app.test", {
+    allowVaultBrowserOneShot: true,
+  })
+  assert.equal(got.bundleId, "com.google.Chrome.canary")
+})
+
+test("policy: chromium.exe is vault-browser one-shot", () => {
+  const chromium = makeEntry({
+    exe: { path: CHROMIUM_EXE, user_writable_dir: false },
+    coordinateAllowed: false,
+  })
+  assert.equal(isVaultBrowserEntry(chromium), true)
+  assert.equal(canEverCoordinate(chromium), false)
+  assertCoordinateAllowed(makeConfig({ entry: chromium }), "win.app.test", {
+    allowVaultBrowserOneShot: true,
+  })
+})
+
+test("policy: win32 notepad + pasted Chrome bundleId is NOT a vault browser (tamper)", () => {
+  const tampered = makeEntry({
+    bundleId: "com.google.Chrome",
+    exe: { path: "C:\\Windows\\System32\\notepad.exe", user_writable_dir: false },
+    coordinateAllowed: false,
+  })
+  assert.equal(looksLikeWinExePath(tampered.exe!.path), true)
+  assert.equal(isVaultBrowserEntry(tampered, "win32"), false)
+  assert.equal(canEverCoordinate(tampered, "win32"), true)
+})
+
+test("policy: darwin Chrome bundleId + dummy.exe stays vault (Trust nits REJECT fold)", () => {
+  const hybrid = makeEntry({
+    bundleId: "com.google.Chrome",
+    exe: { path: "dummy.exe", user_writable_dir: false },
+    coordinateAllowed: false,
+  })
+  assert.equal(canEverCoordinate(hybrid, "darwin"), false)
+  assert.equal(isVaultBrowserEntry(hybrid, "darwin"), true)
+  const notepadHybrid = makeEntry({
+    bundleId: "com.google.Chrome",
+    exe: { path: "C:\\Windows\\System32\\notepad.exe", user_writable_dir: false },
+    coordinateAllowed: true,
+  })
+  assert.equal(canEverCoordinate(notepadHybrid, "darwin"), false)
+  assert.equal(isVaultBrowserEntry(notepadHybrid, "darwin"), true)
+})
+
 test("policy: powershell exe + coordinateAllowed=true (hand-edited) -> APP_COORDINATE_STRUCTURAL", () => {
   const tampered = makeEntry({ exe: { path: POWERSHELL_EXE, user_writable_dir: false }, coordinateAllowed: true })
   assertComputerError(
@@ -220,6 +364,24 @@ test("policy: hwnd with no exePath -> HWND_NOT_OWNED", () => {
 })
 
 // --- normalizeAppEntry: A10.3 force-clear --------------------------------------
+
+test("policy: normalizeAppEntry force-clears coordinateAllowed on mac Chrome bundleId (no exe path)", () => {
+  const tampered = makeEntry({
+    bundleId: "com.google.Chrome",
+    exe: undefined,
+    coordinateAllowed: true,
+  })
+  const errors: string[] = []
+  const origError = console.error
+  console.error = (msg: unknown) => errors.push(String(msg))
+  try {
+    const out = normalizeAppEntry(tampered)
+    assert.equal(out.coordinateAllowed, false)
+    assert.ok(errors.some((m) => m.includes("force-cleared")))
+  } finally {
+    console.error = origError
+  }
+})
 
 test("policy: normalizeAppEntry force-clears coordinateAllowed on a vault binary (chrome)", () => {
   const tampered = makeEntry({ exe: { path: CHROME_EXE, user_writable_dir: false }, coordinateAllowed: true })

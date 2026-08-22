@@ -18,8 +18,37 @@ import { ComputerError, type WindowInfo } from "./types"
 
 /**
  * macOS vault bundle IDs — structural exclusion set (WP3 + adversarial review H6).
- * Apps whose bundle ID matches any entry here can NEVER carry coordinateAllowed.
+ * Apps whose bundle ID matches any entry here can NEVER carry coordinateAllowed
+ * as a persistent Apps bit. Browsers may still take a one-shot L2 path
+ * (`allowVaultBrowserOneShot`); LOLBIN / password-managers / terminals / wallets
+ * remain impossible even with L2.
  */
+export const MAC_BROWSER_VAULT_BUNDLE_IDS: ReadonlySet<string> = new Set([
+  "com.apple.Safari",
+  "com.google.Chrome",
+  "com.google.Chrome.beta",
+  "com.google.Chrome.canary",
+  "com.google.Chrome.dev",
+  "org.mozilla.firefox",
+  "org.mozilla.firefoxdeveloperedition",
+  "company.thebrowser.Browser",     // Arc
+  "com.brave.Browser",              // Brave
+  "com.microsoft.edgemac",          // Edge
+  "com.microsoft.edgemac.beta",
+  "com.operasoftware.Opera",
+  "com.vivaldi.Vivaldi",
+  "org.chromium.Chromium",
+])
+
+export const WIN_BROWSER_VAULT_TOKENS: ReadonlySet<string> = new Set([
+  "win.chrome",
+  "win.edge",
+  "win.firefox",
+  "win.brave",
+  "win.arc",
+  "win.opera",
+])
+
 const MAC_VAULT_BUNDLE_IDS = new Set([
   // 密码管理器
   "com.agilebits.onepassword7",
@@ -28,14 +57,8 @@ const MAC_VAULT_BUNDLE_IDS = new Set([
   "com.lastpass.lastpassmacdesktop",
   "com.dashlane.dashlanephonefinal",
   "com.keepassxc.keepassxc",
-  // 浏览器
-  "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox",
-  "company.thebrowser.Browser",     // Arc
-  "com.brave.Browser",              // Brave
-  "com.microsoft.edgemac",          // Edge
-  "com.operasoftware.Opera",
-  "com.vivaldi.Vivaldi",
-  "org.chromium.Chromium",
+  // 浏览器 (persistent coordinateAllowed still denied; one-shot L2 is separate)
+  ...MAC_BROWSER_VAULT_BUNDLE_IDS,
   // 终端 + 编辑器
   "com.apple.Terminal", "com.googlecode.iterm2",
   "dev.warp.Warp-Stable",
@@ -55,23 +78,95 @@ const MAC_VAULT_BUNDLE_IDS = new Set([
   "com.maxgoedjen.secretive.Secretive",
 ])
 
+function bundleIdInSet(id: string | undefined, set: ReadonlySet<string>): boolean {
+  if (!id) return false
+  if (set.has(id)) return true
+  const lower = id.toLowerCase()
+  for (const x of set) {
+    if (x.toLowerCase() === lower) return true
+  }
+  return false
+}
+
+/** Windows exe identity (tests / probes). Production classifiers key off `platform`. */
+export function looksLikeWinExePath(p: string): boolean {
+  const s = String(p || "")
+  return /\.exe$/i.test(s) || /^[a-zA-Z]:[\\/]/.test(s)
+}
+
+function vaultPathIsBrowser(p: string): boolean {
+  try {
+    const tok = basenameToVault(p)
+    return tok != null && WIN_BROWSER_VAULT_TOKENS.has(tok)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * True when the AppEntry is a browser vault surface (Chrome/Safari/…).
+ * Identity is platform-native (Trust REJECT 2026-08-22 nits fold):
+ *   win32  → exe path only (pasted mac bundleId on notepad.exe is not a browser)
+ *   darwin → bundleId wins when present (dummy.exe must not un-vault Chrome)
+ */
+export function isVaultBrowserEntry(entry: AppEntry, platform: string = os.platform()): boolean {
+  if (platform === "win32") {
+    return entry.exe?.path ? vaultPathIsBrowser(entry.exe.path) : false
+  }
+  if (bundleIdInSet(entry.bundleId, MAC_BROWSER_VAULT_BUNDLE_IDS)) return true
+  return entry.exe?.path ? vaultPathIsBrowser(entry.exe.path) : false
+}
+
+export function isBrowserVaultExePath(p: string): boolean {
+  try {
+    const tok = basenameToVault(p)
+    return tok != null && WIN_BROWSER_VAULT_TOKENS.has(tok)
+  } catch {
+    return false
+  }
+}
+
+export type CoordinateAssertOpts = {
+  /**
+   * host_computer admission only. Lets a vault *browser* through without the
+   * persistent coordinateAllowed bit. Unattended/cruise/G1 MUST still not skip
+   * the task L2 (enforced in l2-admission + executor). Never used by
+   * apps.set_coordinate_allowed.
+   */
+  allowVaultBrowserOneShot?: boolean
+}
+
 /**
  * Structural eligibility — vault-mapped (browser/password-manager/terminal/
  * wallet) and LOLBIN exes can NEVER carry coordinateAllowed (A10.3).
  * macOS: vault bundle IDs are structurally excluded.
  */
-export function canEverCoordinate(entry: AppEntry): boolean {
-  // macOS vault bundle ID check (adversarial review H6)
-  if (entry.bundleId && MAC_VAULT_BUNDLE_IDS.has(entry.bundleId)) {
+export function canEverCoordinate(entry: AppEntry, platform: string = os.platform()): boolean {
+  if (platform === "win32") {
+    // Exe path is the identity — ignore a pasted mac bundleId.
+    if (entry.exe?.path) {
+      if (isLolbinPath(entry.exe.path)) return false
+      try {
+        if (basenameToVault(entry.exe.path) !== null) return false
+      } catch {
+        return false
+      }
+    }
+    return true
+  }
+  // darwin / others: bundleId is native identity. Case-insensitive so
+  // Chrome Canary/Dev stored as com.google.chrome.canary still fail closed.
+  // dummy.exe on a Chrome bundle must NOT un-vault (Trust nits REJECT).
+  if (bundleIdInSet(entry.bundleId, MAC_VAULT_BUNDLE_IDS)) {
     return false
   }
-  // Windows path-based vault/LOLBIN checks.
-  // Guard: skip when running on darwin AND the entry is a macOS entry (has bundleId),
-  // to avoid calling Windows path functions with bundle IDs.
-  const isMacEntry = os.platform() === "darwin" && entry.bundleId != null
-  if (!isMacEntry && entry.exe?.path) {
+  if (entry.exe?.path) {
     if (isLolbinPath(entry.exe.path)) return false
-    if (basenameToVault(entry.exe.path) !== null) return false
+    try {
+      if (basenameToVault(entry.exe.path) !== null) return false
+    } catch {
+      return false
+    }
   }
   return true
 }
@@ -80,7 +175,11 @@ export function canEverCoordinate(entry: AppEntry): boolean {
  * The full A10 + whitelist gate. Returns the entry on success; throws a typed
  * ComputerError otherwise. Pure over the passed config — injectable in tests.
  */
-export function assertCoordinateAllowed(cfg: CompanionConfig, token: string): AppEntry {
+export function assertCoordinateAllowed(
+  cfg: CompanionConfig,
+  token: string,
+  opts?: CoordinateAssertOpts,
+): AppEntry {
   if (!APP_TOKEN_PATTERN.test(token)) {
     throw new ComputerError("APP_NOT_WHITELISTED", `computer: invalid app token "${token}"`)
   }
@@ -115,7 +214,12 @@ export function assertCoordinateAllowed(cfg: CompanionConfig, token: string): Ap
   }
   // Structural exclusion is re-checked here even though the bit cannot be set
   // through any handler — a hand-edited config must not smuggle it in.
+  // Vault browsers: persistent bit still denied (canEverCoordinate false);
+  // host_computer may pass allowVaultBrowserOneShot and skip the bit (L2 required).
   if (!canEverCoordinate(entry)) {
+    if (opts?.allowVaultBrowserOneShot === true && isVaultBrowserEntry(entry)) {
+      return entry
+    }
     throw new ComputerError(
       "APP_COORDINATE_STRUCTURAL",
       `computer: "${token}" maps to a vault/LOLBIN binary — coordinate operation is structurally denied`,
@@ -145,7 +249,11 @@ export function normalizeExePath(p: string): string {
  * process (config tamper, path swap) is denied at execution time, same as
  * `win/adapter.ts`'s vacuous recheck philosophy (§E.2.2).
  */
-export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void {
+export function assertHwndOwnedByEntry(
+  info: WindowInfo,
+  entry: AppEntry,
+  opts?: CoordinateAssertOpts,
+): void {
   if (!info.alive) {
     throw new ComputerError("HWND_DEAD", `computer: hwnd ${info.hwnd} is no longer a live window`)
   }
@@ -168,7 +276,18 @@ export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void 
   // recorded entry config) — the coordinate path re-denies vault/LOLBIN at
   // the moment of truth. macOS entries (bundleId) skip this Windows-only path.
   if (!isMacEntry && info.exePath) {
-    if (isLolbinPath(info.exePath) || basenameToVault(info.exePath) !== null) {
+    if (isLolbinPath(info.exePath)) {
+      throw new ComputerError(
+        "APP_COORDINATE_STRUCTURAL",
+        `computer: hwnd ${info.hwnd} resolves to a vault/LOLBIN binary "${info.exePath}" — coordinate operation is structurally denied`,
+        { hwnd: info.hwnd, actual: info.exePath },
+      )
+    }
+    const browserHwnd =
+      opts?.allowVaultBrowserOneShot === true &&
+      isVaultBrowserEntry(entry) &&
+      isBrowserVaultExePath(info.exePath)
+    if (!browserHwnd && basenameToVault(info.exePath) !== null) {
       throw new ComputerError(
         "APP_COORDINATE_STRUCTURAL",
         `computer: hwnd ${info.hwnd} resolves to a vault/LOLBIN binary "${info.exePath}" — coordinate operation is structurally denied`,

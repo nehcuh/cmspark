@@ -61,6 +61,35 @@ export type ToolPregateDeps = {
 }
 
 /**
+ * ADR-015 Q4: tab leases are Chrome/Chromium-family tabs. Pixel CU on a vault
+ * browser window races the CDP holder. Match **params.app only** (not task
+ * text — "knowledge" must not trip "edge").
+ */
+const VAULT_BROWSER_APP_NEEDLES = [
+  "chrome",
+  "chromium",
+  "safari",
+  "msedge",
+  "edgemac",
+  "microsoft edge",
+  "brave",
+  "firefox",
+  "mozilla",
+  "opera",
+  "vivaldi",
+  "thebrowser",
+] as const
+
+export function hostComputerAppHintsVaultBrowser(params: Record<string, unknown> | null | undefined): boolean {
+  const app = String(params?.app ?? "").toLowerCase()
+  if (!app) return false
+  if (VAULT_BROWSER_APP_NEEDLES.some((n) => app.includes(n))) return true
+  if (/(^|[._\s-])arc($|[._\s-])/.test(app)) return true
+  if (/(^|[._\s-])edge($|[._\s-])/.test(app)) return true
+  return false
+}
+
+/**
  * ADR-015 multi-agent gates before cookie/L2/dispatch:
  * - sweepExpired tab leases
  * - sidePanelWinsReleaseOutboundLease
@@ -221,19 +250,13 @@ export async function runMultiAgentToolPregate(
         }
       }
     }
-    // host_computer vs any tab lease (Q4): block Chrome window ops while tabs leased
+    // host_computer vs any tab lease (Q4): block vault-browser window ops while tabs leased
     if (toolName === "host_computer" && anyHeld()) {
-      const blob = JSON.stringify(finalParams || {}).toLowerCase()
-      const chromeHint =
-        blob.includes("chrome") ||
-        blob.includes("chromium") ||
-        blob.includes("google chrome") ||
-        blob.includes("com.google.chrome")
-      if (chromeHint) {
+      if (hostComputerAppHintsVaultBrowser(finalParams)) {
         const result = {
           success: false as const,
           error:
-            "host_computer blocked on Chrome while tab leases are held — force-release tab leases first (ADR-015 Q4)",
+            "host_computer blocked on a browser window while tab leases are held — force-release tab leases first (ADR-015 Q4)",
           data: { error_code: "HOST_CHROME_TAB_LEASE" },
         }
         logToolFinish(toolCallId, toolName, startedAt, result)

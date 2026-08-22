@@ -1,0 +1,29 @@
+{
+  "batch": "chrome-cu-oneshot",
+  "timestamp": "20260822",
+  "blast": "T3 Trust",
+  "commits": ["85cd7a5", "204429e"],
+  "machine": {
+    "post_fold": "95 pass",
+    "tsc": 0
+  },
+  "adversaries": {
+    "trust": "REJECT then fold",
+    "product": "APPROVE_WITH_NITS",
+    "runtime": "APPROVE_WITH_NITS"
+  },
+  "dual": {
+    "claude": "APPROVE_WITH_NITS",
+    "kimi": "APPROVE_WITH_NITS"
+  },
+  "both_approve": true,
+  "fold": [
+    "canEverCoordinate persist deny mac Chrome bundleId",
+    "normalizeAppEntry force-clear bundleId browsers",
+    "skip G1/unattended algebra for one-shot",
+    "preview leadLines first",
+    "catalog app token description",
+    "no session-trust checkbox for vault browser",
+    "no critical_api_waived log when one-shot forces L2"
+  ]
+}

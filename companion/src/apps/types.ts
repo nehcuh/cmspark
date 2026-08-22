@@ -292,8 +292,20 @@ export function normalizeAppEntry(entry: AppEntry): AppEntry {
   let coordinateAllowed = entry.coordinateAllowed
   let uiaCapable = entry.uiaCapable
   let uiaProbedAt = entry.uiaProbedAt
-  if ((coordinateAllowed === true || uiaCapable !== undefined || uiaProbedAt !== undefined) && entry.exe?.path) {
-    if (isLolbinPath(entry.exe.path) || basenameToVault(entry.exe.path) !== null) {
+  if (coordinateAllowed === true || uiaCapable !== undefined || uiaProbedAt !== undefined) {
+    let structural = false
+    if (entry.exe?.path && (isLolbinPath(entry.exe.path) || basenameToVault(entry.exe.path) !== null)) {
+      structural = true
+    }
+    if (!structural) {
+      try {
+        const { canEverCoordinate } = require("../computer/policy") as typeof import("../computer/policy")
+        if (!canEverCoordinate(entry)) structural = true
+      } catch {
+        /* policy import unavailable in isolated tests — path/lolbin check above still runs */
+      }
+    }
+    if (structural) {
       console.error(
         `[cmspark-agent] apps entry "${entry.token}" has coordinate/UIA hints on a vault/LOLBIN binary — force-cleared (structural exclusion, A10/Y5)`,
       )
