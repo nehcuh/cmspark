@@ -889,7 +889,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       userFullAutonomy,
       vaultBrowserOneShot,
     })
-    if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy && !acpForceConfirm) {
+    if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy && !acpForceConfirm && !vaultBrowserOneShot) {
       logger.info("security.critical_api_waived", {
         tool_call_id: toolCallId,
         tool_name: toolName,
@@ -1295,7 +1295,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             // panel can show "本会话自动同意同类操作" (session trust opt-in,
             // NOT ThreadApprovals / not write-biometric skip).
             relevantApps: hostComputerGated
-              ? (finalParams.app ? [String(finalParams.app)] : [])
+              ? (vaultBrowserOneShot ? [] : (finalParams.app ? [String(finalParams.app)] : []))
               : hostApp
                 ? (hostApp.policy === "ai" ? [hostApp.token] : [])
                 : (relevantApp ? [relevantApp] : []),

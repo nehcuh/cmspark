@@ -1399,7 +1399,7 @@
           },
           "app": {
             "type": "string",
-            "description": "Whitelisted app token (win.app.<slug> on Windows, mac.app.<slug> on macOS) with coordinateAllowed=true."
+            "description": "Whitelisted app token (win.app.<slug> / mac.app.<slug>). Native apps need coordinateAllowed=true. Browsers (Chrome/Safari) cannot persist that bit — host_computer still works as a one-shot L2 confirm that 无人值守 will not skip."
           },
           "actions": {
             "type": "array",
