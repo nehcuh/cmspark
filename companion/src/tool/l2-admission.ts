@@ -528,7 +528,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         // isTrusted() already enforces idle expiry (30 min, anchored to last
         // interactive approve) and credential latch — those need no separate
         // check here.
-        if (sessionId && finalParams.app) {
+        if (!vaultBrowserOneShot && sessionId && finalParams.app) {
           const {
             getComputerSessionTrust,
             resolveComputerTrustKey,
@@ -636,7 +636,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
               })
             }
           }
-        } else if (finalParams.app) {
+        } else if (!vaultBrowserOneShot && finalParams.app) {
           // No sessionId — G1 needs session; unattended is process-global (ADR-021).
           const {
             evaluateUnattendedHostComputerSkipDetail,
@@ -677,8 +677,8 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           }
         }
         if (vaultBrowserOneShot) {
-          // Persistent coordinateAllowed is never set on browsers. Unattended /
-          // G1 / 三旗 must not inherit a skip from a non-browser grant.
+          // Do not compute skip then wipe — never pass coordinateAllowed:true for
+          // a one-shot browser (Trust REJECT + runtime P1).
           hostComputerTrustSkip = false
           hostComputerTrustSkipReason = null
         }
@@ -688,14 +688,12 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           appToken: entryC.token,
           budget: budgetN,
           actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
-          extraLines: [
-            limiter.statusLine(),
-            ...(vaultBrowserOneShot
-              ? [
-                  "⚠️ 浏览器像素点击：将绕过页面 CDP，直接操作浏览器窗口。必须你点「允许」。无人值守 / 三旗巡航 / 会话信任都不会跳过本次确认。本次授权不写入 Apps 坐标开关。",
-                ]
-              : []),
-          ],
+          leadLines: vaultBrowserOneShot
+            ? [
+                "⚠️ 浏览器像素点击：将绕过页面 CDP，直接操作浏览器窗口。必须你点「允许」。无人值守 / 三旗巡航 / 会话信任都不会跳过本次确认。本次授权不写入 Apps 坐标开关。",
+              ]
+            : undefined,
+          extraLines: [limiter.statusLine()],
         })
         // WP4 (护栏 a,对抗裁决定案):L2 标注截图 helper 的调用点固定在这
         // 里——全部廉价前门(assertCoordinateAllowed / COMPUTER_TASK_BUSY /

@@ -47,7 +47,7 @@
 
 2. **Apps 功能打开** 且目标 App 在白名单内（`apps.enabled` + 对应 `AppEntry`）。
 
-3. **该 App 已显式允许坐标** `AppEntry.coordinateAllowed === true`（逐应用，不是全局一开全放）。
+3. **该 App 已显式允许坐标** `AppEntry.coordinateAllowed === true`（逐应用，不是全局一开全放）。**例外：浏览器**不能打开这个开关；Chrome 像素点击走 `host_computer` 一次性确认台，不写这个 bit。
 
 4. **结构排除**：密码管理器、终端、钱包、LOLBIN **永远不能** 开坐标。**浏览器**不能把 Apps「允许坐标」打开（防止无人值守静默注入），但 `host_computer` 可以对 Chrome/Safari 等走 **一次性确认**：确认台弹出后必须点允许；无人值守 / 三旗 / 会话信任都不会跳过。
 

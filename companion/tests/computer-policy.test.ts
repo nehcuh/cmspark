@@ -276,6 +276,24 @@ test("policy: hwnd with no exePath -> HWND_NOT_OWNED", () => {
 
 // --- normalizeAppEntry: A10.3 force-clear --------------------------------------
 
+test("policy: normalizeAppEntry force-clears coordinateAllowed on mac Chrome bundleId (no exe path)", () => {
+  const tampered = makeEntry({
+    bundleId: "com.google.Chrome",
+    exe: undefined,
+    coordinateAllowed: true,
+  })
+  const errors: string[] = []
+  const origError = console.error
+  console.error = (msg: unknown) => errors.push(String(msg))
+  try {
+    const out = normalizeAppEntry(tampered)
+    assert.equal(out.coordinateAllowed, false)
+    assert.ok(errors.some((m) => m.includes("force-cleared")))
+  } finally {
+    console.error = origError
+  }
+})
+
 test("policy: normalizeAppEntry force-clears coordinateAllowed on a vault binary (chrome)", () => {
   const tampered = makeEntry({ exe: { path: CHROME_EXE, user_writable_dir: false }, coordinateAllowed: true })
   const errors: string[] = []

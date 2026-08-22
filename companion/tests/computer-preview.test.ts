@@ -69,6 +69,18 @@ test("L2 preview: type corpus enumerated with JSON.stringify; empty corpus says 
   assert.ok(without.includes("本任务不包含文本输入动作。"))
 })
 
+test("L2 preview: leadLines appear before 任务 so 1200-char slice cannot hide vault-browser warning", () => {
+  const warn = "⚠️ 浏览器像素点击"
+  const out = buildComputerL2Preview({
+    ...BASE,
+    task: "x".repeat(2000),
+    actions: [{ action: "click", x: 1, y: 1 } as ComputerAction],
+    leadLines: [warn],
+  })
+  assert.ok(out.startsWith(warn))
+  assert.ok(out.slice(0, 1200).includes(warn))
+})
+
 test("L2 preview: extraLines (C6 rate counters) append verbatim", () => {
   const out = buildComputerL2Preview({
     ...BASE,

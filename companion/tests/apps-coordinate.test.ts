@@ -101,6 +101,27 @@ test("apps.set_coordinate_allowed: unknown token -> NOT_FOUND", async () => {
   assert.equal(r.code, "NOT_FOUND")
 })
 
+test("apps.set_coordinate_allowed: mac Chrome bundleId-only -> COORDINATE_STRUCTURAL_DENY (Trust REJECT fold)", async () => {
+  reset()
+  replaceAppsEntries({
+    "mac.app.google_chrome": seedEntry({
+      token: "mac.app.google_chrome",
+      bundleId: "com.google.Chrome",
+      exe: undefined,
+      display_name: "Google Chrome",
+    }),
+  })
+  const gateCalls = { calls: 0 }
+  const r: any = await handleAppsMessage(
+    { type: "apps.set_coordinate_allowed", token: "mac.app.google_chrome", allowed: true },
+    { requestConfirmation: approveChannel },
+    deps({ platform: "darwin", gate: fakeGate("approve", gateCalls) }),
+  )
+  assert.equal(r.code, "COORDINATE_STRUCTURAL_DENY")
+  assert.equal(gateCalls.calls, 0)
+  assert.equal(getConfig().apps?.entries["mac.app.google_chrome"]?.coordinateAllowed, undefined)
+})
+
 test("apps.set_coordinate_allowed: chrome exe -> COORDINATE_STRUCTURAL_DENY, gate never runs (A10.3)", async () => {
   reset()
   replaceAppsEntries({ "win.app.test": seedEntry({ exe: { path: CHROME_EXE, user_writable_dir: false } }) })

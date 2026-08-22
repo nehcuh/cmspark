@@ -444,10 +444,12 @@ const cap = maxPolicyForEntry(entry)
       const entry = existing[token]
       if (!entry) return appsError(`App "${token}" not found`, { code: "NOT_FOUND" })
       // A10.3 — structural exclusion: vault-mapped / LOLBIN binaries can never
-      // opt into coordinate injection, no matter the gate outcome.
-      if (rest.allowed === true && entry.exe?.path) {
-        if (isLolbinPath(entry.exe.path) || basenameToVault(entry.exe.path) !== null) {
-          logger.warn("apps.coordinate_structural_deny", { token, exe: entry.exe.path })
+      // persist coordinateAllowed (macOS Chrome is bundleId-only — path basename
+      // "Google Chrome" is NOT in the Windows vault table). Trust adversary 2026-08-22.
+      if (rest.allowed === true) {
+        const { canEverCoordinate } = await import("../computer/policy")
+        if (!canEverCoordinate(entry)) {
+          logger.warn("apps.coordinate_structural_deny", { token, bundleId: entry.bundleId, exe: entry.exe?.path })
           return appsError(
             `"${token}" maps to a vault/LOLBIN binary — coordinate operation is structurally denied (A10)`,
             { code: "COORDINATE_STRUCTURAL_DENY" },

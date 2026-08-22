@@ -94,6 +94,8 @@ export interface ComputerL2PreviewInput {
   appToken: string
   budget: number
   actions: ComputerAction[]
+  /** Shown FIRST so Cockpit's 1200-char slice cannot hide a vault-browser warning. */
+  leadLines?: string[]
   /** C6: extra status lines (e.g. injection rate counters) appended verbatim. */
   extraLines?: string[]
 }
@@ -102,6 +104,7 @@ export function buildComputerL2Preview(input: ComputerL2PreviewInput): string {
   const actions = Array.isArray(input.actions) ? input.actions : []
   const corpus = corpusOf(actions)
   const lines = [
+    ...(input.leadLines ?? []),
     `任务: ${JSON.stringify(input.task)}`,
     `目标应用: ${input.appDisplayName} (${input.appToken})`,
     `动作预算: ${input.budget} 个注入动作（共 ${actions.length} 个草案动作）`,
