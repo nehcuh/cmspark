@@ -48,6 +48,7 @@ export type SummonerTokenCmd = { cmd: "summoner.token" } & SummonerTokenPayload
 export type SummonerDoneCmd = { cmd: "summoner.done" }
 export type SummonerErrorCmd = { cmd: "summoner.error" } & SummonerErrorPayload
 export type SummonerHotkeyPromptCmd = { cmd: "summoner.hotkey.prompt" }
+export type SummonerHotkeySetCmd = { cmd: "summoner.hotkey.set"; combo: string }
 
 export type SummonerOutboundCmd =
   | SummonerOpenCmd
@@ -57,6 +58,7 @@ export type SummonerOutboundCmd =
   | SummonerDoneCmd
   | SummonerErrorCmd
   | SummonerHotkeyPromptCmd
+  | SummonerHotkeySetCmd
 
 // ── Swift → Companion events ────────────────────────────────────────────────
 
@@ -118,6 +120,10 @@ export function encodeSummonerError(p: SummonerErrorPayload): SummonerErrorCmd {
 
 export function encodeSummonerHotkeyPrompt(): SummonerHotkeyPromptCmd {
   return { cmd: "summoner.hotkey.prompt" }
+}
+
+export function encodeSummonerHotkeySet(p: { combo: string }): SummonerHotkeySetCmd {
+  return { cmd: "summoner.hotkey.set", combo: p.combo }
 }
 
 export function encodeSummonerReady(): SummonerReadyEvt {
@@ -245,6 +251,9 @@ export function decodeSummonerOutbound(raw: unknown): SummonerOutboundCmd | null
       )
     case "summoner.hotkey.prompt":
       return encodeSummonerHotkeyPrompt()
+    case "summoner.hotkey.set":
+      if (!isString(o.combo) || o.combo.length === 0) return null
+      return encodeSummonerHotkeySet({ combo: o.combo })
     default:
       return null
   }

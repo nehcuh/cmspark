@@ -495,6 +495,23 @@ describe("saveConfig prototype-pollution defense", { concurrency: 1 }, () => {
   })
 })
 
+describe("summoner.hotkey (S11 opt-in, no default)", { concurrency: 1 }, () => {
+  test("default config has no summoner hotkey", async () => {
+    await resetConfigFile()
+    const cfg = getConfig()
+    assert.equal(cfg.summoner?.hotkey, undefined)
+    assert.equal(readSavedConfig().summoner?.hotkey, undefined)
+  })
+
+  test("persists chosen combo in config.json summoner.hotkey", async () => {
+    await resetConfigFile()
+    saveConfig({ summoner: { hotkey: "ctrl+alt+space" } })
+    clearConfigCache()
+    assert.equal(getConfig().summoner?.hotkey, "ctrl+alt+space")
+    assert.equal(readSavedConfig().summoner.hotkey, "ctrl+alt+space")
+  })
+})
+
 describe("computer 模型下载字段 normalize（WP5 I1 / ADR-010）", { concurrency: 1 }, () => {
   test("modelMirror 非字符串/空串 → coerce 为未配置 + loud log", async () => {
     await resetConfigFile()

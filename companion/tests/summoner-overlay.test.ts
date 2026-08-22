@@ -83,6 +83,7 @@ test("Tray.swift stdin handles summoner.open/hydrate/token/done/error/close", ()
     "summoner.error",
     "summoner.close",
     "summoner.hotkey.prompt",
+    "summoner.hotkey.set",
   ]) {
     assert.ok(src.includes(`"${cmd}"`), `missing stdin cmd ${cmd}`)
   }
@@ -104,10 +105,23 @@ test("menu-bar-agent inbound close does not chat.abort", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
   const start = src.indexOf("export function handleSummonerInbound")
   assert.ok(start >= 0)
-  const body = src.slice(start, start + 1200)
+  const body = src.slice(start, start + 1800)
   assert.match(body, /summoner\.closed/)
   assert.doesNotMatch(body, /chat\.abort/)
   assert.match(body, /handleSummonerAttach/)
   assert.match(body, /handleSummonerContinue/)
   assert.match(body, /handleSummonerSubmit/)
+  assert.match(body, /summoner\.hotkey\.chosen/)
+  assert.match(body, /persistSummonerHotkeyChosen/)
+  assert.match(body, /syncSummonerHotkeyToTray/)
+})
+
+test("menu-bar-agent persists summoner.hotkey via saveConfig, not overlay config.set", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const persist = src.slice(
+    src.indexOf("export function persistSummonerHotkeyChosen"),
+    src.indexOf("export function persistSummonerHotkeyChosen") + 700,
+  )
+  assert.match(persist, /saveConfig\(\{ summoner: \{ hotkey: accepted \} \}\)/)
+  assert.doesNotMatch(persist, /config\.set/)
 })

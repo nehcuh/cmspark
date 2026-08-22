@@ -43,7 +43,8 @@ swiftc \
   -o "${OUTPUT_BIN}" \
   "${SCRIPT_DIR}/Tray.swift" \
   -framework AppKit \
-  -framework Foundation
+  -framework Foundation \
+  -framework Carbon
 
 # Verify
 if [[ ! -f "${OUTPUT_BIN}" ]]; then

@@ -15,14 +15,15 @@
 //   {"type":"click","action":"start|stop|restart|status|logs|chrome|settings|autostart|quit"}
 //   {"type":"click","action":"quick-action","id":"read-page"}
 //   {"type":"click","action":"recent-thread","id":"abc"}
-//   {"type":"summoner.ready|closed|submit|search|attach_chrome|continue|composing"}
+//   {"type":"summoner.ready|closed|submit|search|attach_chrome|continue|composing|hotkey.chosen"}
 //   {"type":"exit","code":0}
 //
 // Summoner stdin (Companion → Swift):
-//   {"cmd":"summoner.open|hydrate|token|done|error|close|hotkey.prompt", ...}
+//   {"cmd":"summoner.open|hydrate|token|done|error|close|hotkey.prompt|hotkey.set", ...}
 
 import AppKit
 import Foundation
+import Carbon
 
 // ---------------------------------------------------------------------------
 // JSON helpers
@@ -549,8 +550,12 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
     summonerController.hide()
 
   case "summoner.hotkey.prompt":
-    // Task 10 owns the picker. Swallow so an early stdin line is not a hard miss.
-    break
+    summonerController.showHotkeyPicker()
+
+  case "summoner.hotkey.set":
+    let combo = (json["combo"] as? String) ?? ""
+    _ = registerSummonerHotKey(combo: combo)
+    summonerController.noteHotkeyConfigured()
 
   case "quit":
     delegate.shutdown()
@@ -1250,6 +1255,96 @@ extension HudController: NSWindowDelegate {
 let hudController = HudController()
 
 // ---------------------------------------------------------------------------
+// Summoner hotkey (S11) — opt-in RegisterEventHotKey, no stolen defaults.
+// Candidates never include Cmd+Space, ⌥Space / Alt+Space, ⌃⇧Space.
+// ---------------------------------------------------------------------------
+
+struct SummonerHotKeyCandidate {
+  let combo: String
+  let label: String
+  let keyCode: UInt32
+  let mods: UInt32
+}
+
+let summonerHotKeyCandidates: [SummonerHotKeyCandidate] = [
+  SummonerHotKeyCandidate(combo: "ctrl+alt+space", label: "⌃⌥Space", keyCode: 0x31, mods: UInt32(controlKey | optionKey)),
+  SummonerHotKeyCandidate(combo: "ctrl+alt+cmd+space", label: "⌃⌥⌘Space", keyCode: 0x31, mods: UInt32(controlKey | optionKey | cmdKey)),
+  SummonerHotKeyCandidate(combo: "ctrl+alt+c", label: "⌃⌥C", keyCode: 0x08, mods: UInt32(controlKey | optionKey)),
+  SummonerHotKeyCandidate(combo: "ctrl+alt+k", label: "⌃⌥K", keyCode: 0x28, mods: UInt32(controlKey | optionKey)),
+  SummonerHotKeyCandidate(combo: "ctrl+alt+s", label: "⌃⌥S", keyCode: 0x01, mods: UInt32(controlKey | optionKey)),
+  SummonerHotKeyCandidate(combo: "ctrl+alt+cmd+period", label: "⌃⌥⌘.", keyCode: 0x2F, mods: UInt32(controlKey | optionKey | cmdKey)),
+]
+
+let summonerHotKeyStolenCopy =
+  "已占用（不可选）：⌘Space Spotlight · ⌥Space / Alt+Space Raycast/uTools · ⌃⇧Space 输入法"
+
+let kSummonerHotKeySignature: OSType = 0x434D5355 // 'CMSU'
+let kSummonerHotKeyId: UInt32 = 1
+var summonerHotKeyRef: EventHotKeyRef?
+var summonerHotKeyHandlerRef: EventHandlerRef?
+
+func summonerCarbonHotKeyHandler(
+  _ nextHandler: EventHandlerCallRef?,
+  _ event: EventRef?,
+  _ userData: UnsafeMutableRawPointer?
+) -> OSStatus {
+  DispatchQueue.main.async {
+    handleSummonerHotKeyPressed()
+  }
+  return noErr
+}
+
+func installSummonerHotKeyMonitor() {
+  var spec = EventTypeSpec(
+    eventClass: OSType(kEventClassKeyboard),
+    eventKind: UInt32(kEventHotKeyPressed)
+  )
+  InstallEventHandler(
+    GetApplicationEventTarget(),
+    summonerCarbonHotKeyHandler,
+    1,
+    &spec,
+    nil,
+    &summonerHotKeyHandlerRef
+  )
+}
+
+func unregisterSummonerHotKey() {
+  if let ref = summonerHotKeyRef {
+    UnregisterEventHotKey(ref)
+    summonerHotKeyRef = nil
+  }
+}
+
+/// Best-effort Carbon registration. False = combo persisted but not armed.
+@discardableResult
+func registerSummonerHotKey(combo: String) -> Bool {
+  unregisterSummonerHotKey()
+  guard let cand = summonerHotKeyCandidates.first(where: { $0.combo == combo }) else {
+    return false
+  }
+  let hotKeyID = EventHotKeyID(signature: kSummonerHotKeySignature, id: kSummonerHotKeyId)
+  let status = RegisterEventHotKey(
+    cand.keyCode,
+    cand.mods,
+    hotKeyID,
+    GetApplicationEventTarget(),
+    0,
+    &summonerHotKeyRef
+  )
+  return status == noErr
+}
+
+func handleSummonerHotKeyPressed() {
+  // IME composing in the overlay: ignore hotkey (and Return-to-send lives in NSTextViewDelegate).
+  if summonerController.composingNow {
+    jsonLine(["type": "summoner.composing", "on": true])
+    return
+  }
+  summonerController.openFromHotKey()
+}
+
+// ---------------------------------------------------------------------------
 // SummonerController — P0 capture overlay (same process as tray; third window).
 // Lazy NSPanel (.nonactivatingPanel + .floating). Close ≠ chat.abort.
 // Look: two-phase capture + 看山 white tokens. History is plaintext, never bubbles.
@@ -1289,6 +1384,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var hits: [RecentThread] = []
   private var selectedHit = 0
   private var searchTimer: Timer?
+  private var hotkeyConfigured = false
 
   private var badgeField: NSTextField?
   private var hintField: NSTextField?
@@ -1305,6 +1401,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var sendButton: NSButton?
   private var continueButton: NSButton?
   private var sideNote: NSTextField?
+  private var pickerBox: NSView?
+
+  var overlayVisible: Bool { isOpen && window?.isVisible == true }
+  var composingNow: Bool { composer?.hasMarkedText() == true }
 
   func open(threadId: String) {
     self.threadId = threadId
@@ -1316,6 +1416,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     if window == nil { window = makeWindow() }
     guard let window = window else { return }
     isOpen = true
+    if !hotkeyConfigured { showHotkeyPicker() }
     applyPhase()
     NSApp.activate(ignoringOtherApps: true)
     window.center()
@@ -1383,6 +1484,42 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     if isOpen && threadId.isEmpty {
       refreshHits()
     }
+  }
+
+  func showHotkeyPicker() {
+    if window == nil { window = makeWindow() }
+    pickerBox?.isHidden = false
+    relayout()
+  }
+
+  func noteHotkeyConfigured() {
+    hotkeyConfigured = true
+    pickerBox?.isHidden = true
+    relayout()
+  }
+
+  func openFromHotKey() {
+    if overlayVisible {
+      guard let window = window else { return }
+      NSApp.activate(ignoringOtherApps: true)
+      window.makeKeyAndOrderFront(nil)
+      window.orderFrontRegardless()
+      window.makeFirstResponder(composer)
+      return
+    }
+    open(threadId: threadId)
+  }
+
+  @objc func hotkeyCandidateClicked(_ sender: NSButton) {
+    let combo = sender.identifier?.rawValue ?? ""
+    chooseHotkey(combo)
+  }
+
+  private func chooseHotkey(_ combo: String) {
+    guard summonerHotKeyCandidates.contains(where: { $0.combo == combo }) else { return }
+    _ = registerSummonerHotKey(combo: combo)
+    jsonLine(["type": "summoner.hotkey.chosen", "combo": combo])
+    noteHotkeyConfigured()
   }
 
   @objc func windowWillClose(_ notification: Notification) {
@@ -1600,6 +1737,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private func relayout() {
     guard let window = window else { return }
     var h: CGFloat = 108
+    if pickerBox?.isHidden == false { h += 248 }
     if hitsStack?.isHidden == false { h += 8 + CGFloat(min(hits.count, 6)) * 36 }
     if logBox?.isHidden == false { h += 168 }
     if ctaBox?.isHidden == false { h += 96 }
@@ -1664,6 +1802,49 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     header.translatesAutoresizingMaskIntoConstraints = false
     header.widthAnchor.constraint(equalToConstant: 396).isActive = true
     stack.addArrangedSubview(header)
+
+    let pickerBox = NSView()
+    pickerBox.translatesAutoresizingMaskIntoConstraints = false
+    pickerBox.wantsLayer = true
+    pickerBox.layer?.backgroundColor = SummonerTokens.indigoSoft.cgColor
+    pickerBox.layer?.cornerRadius = 12
+    pickerBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    pickerBox.isHidden = true
+    self.pickerBox = pickerBox
+    let pickerStack = NSStackView()
+    pickerStack.orientation = .vertical
+    pickerStack.alignment = .leading
+    pickerStack.spacing = 6
+    pickerStack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+    pickerStack.translatesAutoresizingMaskIntoConstraints = false
+    let pickerTitle = NSTextField(labelWithString: "首次使用：选一个召唤热键")
+    pickerTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+    pickerTitle.textColor = SummonerTokens.text
+    pickerStack.addArrangedSubview(pickerTitle)
+    let pickerHint = NSTextField(wrappingLabelWithString: "菜单「召唤器（实验）…」始终可用，不必等热键。")
+    pickerHint.font = .systemFont(ofSize: 11)
+    pickerHint.textColor = SummonerTokens.secondary
+    pickerHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    pickerStack.addArrangedSubview(pickerHint)
+    let stolen = NSTextField(wrappingLabelWithString: summonerHotKeyStolenCopy)
+    stolen.font = .systemFont(ofSize: 11)
+    stolen.textColor = SummonerTokens.warnFg
+    stolen.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    pickerStack.addArrangedSubview(stolen)
+    for cand in summonerHotKeyCandidates {
+      let btn = makePlainButton(title: cand.label, action: #selector(hotkeyCandidateClicked(_:)))
+      btn.identifier = NSUserInterfaceItemIdentifier(cand.combo)
+      btn.widthAnchor.constraint(equalToConstant: 372).isActive = true
+      pickerStack.addArrangedSubview(btn)
+    }
+    pickerBox.addSubview(pickerStack)
+    NSLayoutConstraint.activate([
+      pickerStack.topAnchor.constraint(equalTo: pickerBox.topAnchor),
+      pickerStack.bottomAnchor.constraint(equalTo: pickerBox.bottomAnchor),
+      pickerStack.leadingAnchor.constraint(equalTo: pickerBox.leadingAnchor),
+      pickerStack.trailingAnchor.constraint(equalTo: pickerBox.trailingAnchor),
+    ])
+    stack.addArrangedSubview(pickerBox)
 
     let fieldBox = NSView()
     fieldBox.translatesAutoresizingMaskIntoConstraints = false
@@ -1890,6 +2071,7 @@ app.setActivationPolicy(.accessory)
 
 let delegate = TrayDelegate()
 delegate.setup()
+installSummonerHotKeyMonitor()
 startStdinReader(delegate: delegate)
 
 // Notify parent that tray is ready

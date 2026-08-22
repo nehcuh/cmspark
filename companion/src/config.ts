@@ -334,6 +334,14 @@ export interface CompanionConfig {
       allowlist_commands?: string[]
     }
   >
+  /**
+   * OS summoner overlay (macOS spike, S11). No default hotkey — first overlay
+   * open prompts a picker. Persist a canonical combo (`ctrl+alt+space`).
+   * Omitted / empty = unset (tray menu still opens the overlay).
+   */
+  summoner?: {
+    hotkey?: string
+  }
 }
 
 function getEnvApiKey(): string {

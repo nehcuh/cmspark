@@ -9,7 +9,7 @@ import * as path from "path"
 import * as fs from "fs"
 
 import { isProcessRunning, readPidFile } from "./daemon"
-import { getConfigDir, getPidFilePath } from "./config"
+import { getConfig, getConfigDir, getPidFilePath, saveConfig } from "./config"
 import { getChromeOpener, openLogDirectory, getPlatform } from "./platform"
 import {
   createTray,
@@ -30,7 +30,8 @@ import {
   filterThreadsByTitle,
   mapChatMessageToSummonerCmd,
 } from "./summoner/client"
-import type { SummonerInboundEvt } from "./summoner/protocol"
+import { encodeSummonerHotkeySet, type SummonerInboundEvt } from "./summoner/protocol"
+import { acceptedSummonerHotkey, nextSummonerHotkeyCmd } from "./summoner/hotkey"
 
 // node-notifier does not ship TypeScript declarations
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -608,6 +609,27 @@ export function setSummonerThreadId(id: string | null): void {
   summonerThreadId = id
 }
 
+/** Re-arm a persisted combo on Swift. Empty config waits for first overlay open. */
+export function armSummonerHotkeyOnTrayStart(): void {
+  const cmd = nextSummonerHotkeyCmd(getConfig().summoner?.hotkey)
+  if (cmd.cmd !== "summoner.hotkey.set") return
+  trayInstance?.sendSummoner?.(cmd)
+}
+
+/** First overlay open with empty config → picker; else re-arm RegisterEventHotKey. */
+export function syncSummonerHotkeyToTray(): void {
+  trayInstance?.sendSummoner?.(nextSummonerHotkeyCmd(getConfig().summoner?.hotkey))
+}
+
+/** Persist picker choice (S11). Rejects stolen defaults. Returns canonical combo or null. */
+export function persistSummonerHotkeyChosen(combo: string): string | null {
+  const accepted = acceptedSummonerHotkey(combo)
+  if (!accepted) return null
+  saveConfig({ summoner: { hotkey: accepted } })
+  trayInstance?.sendSummoner?.(encodeSummonerHotkeySet({ combo: accepted }))
+  return accepted
+}
+
 /**
  * Swift overlay → Node. Close is summoner.closed only — never chat.abort.
  */
@@ -626,9 +648,14 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       handleSummonerContinue()
       return
     case "summoner.ready":
+      // First overlay open with empty config → picker; else re-arm RegisterEventHotKey.
+      syncSummonerHotkeyToTray()
+      return
+    case "summoner.hotkey.chosen":
+      persistSummonerHotkeyChosen(evt.combo)
+      return
     case "summoner.closed":
     case "summoner.composing":
-    case "summoner.hotkey.chosen":
       return
   }
 }
@@ -817,6 +844,9 @@ export async function startMenuBarAgent(): Promise<void> {
           console.error("[menu-bar] summoner event error:", err)
         }
       })
+
+      // Re-arm persisted hotkey on tray spawn. Empty config: wait for overlay open.
+      armSummonerHotkeyOnTrayStart()
 
       // Push initial state
       trayInstance.updateStatus(state.companionStatus, state.wsConnected, state.pid)

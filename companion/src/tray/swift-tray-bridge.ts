@@ -54,8 +54,8 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-// Updated 2026-08-22 after Task 9 SummonerController overlay rebuild
-const SWIFT_TRAY_SHA256 = "7fe4494a6d643c449b1a92d997c5774100cd8816fdde1e4513045bdb568b73c6"
+// Updated 2026-08-22 after Task 10 summoner hotkey picker rebuild
+const SWIFT_TRAY_SHA256 = "4f7ce9d99c547cf28a95e1ffadb545fe635345fc6a618dd1b370de6b609c44b1"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

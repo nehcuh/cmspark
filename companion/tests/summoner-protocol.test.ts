@@ -9,6 +9,7 @@ import {
   encodeSummonerDone,
   encodeSummonerError,
   encodeSummonerHotkeyPrompt,
+  encodeSummonerHotkeySet,
   encodeSummonerReady,
   encodeSummonerClosed,
   encodeSummonerSubmit,
@@ -107,6 +108,13 @@ test("remaining outbound cmds round-trip", () => {
     error_code: "OVERLAY_STANDBY",
   }))
   roundTripOutbound(encodeSummonerHotkeyPrompt())
+  roundTripOutbound(encodeSummonerHotkeySet({ combo: "ctrl+alt+space" }))
+})
+
+test("summoner.hotkey.set requires a non-empty combo", () => {
+  assert.equal(decodeSummonerOutbound({ cmd: "summoner.hotkey.set" }), null)
+  assert.equal(decodeSummonerOutbound({ cmd: "summoner.hotkey.set", combo: "" }), null)
+  assert.equal(decodeSummonerOutbound({ cmd: "summoner.hotkey.set", combo: 1 }), null)
 })
 
 test("remaining inbound events round-trip", () => {
@@ -160,6 +168,7 @@ test("encoded messages never carry Allow/Deny confirm chrome", () => {
     encodeSummonerDone(),
     encodeSummonerError({ message: "e" }),
     encodeSummonerHotkeyPrompt(),
+    encodeSummonerHotkeySet({ combo: "ctrl+alt+k" }),
   ]
   const inbound = [
     encodeSummonerReady(),
