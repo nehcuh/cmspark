@@ -4,6 +4,27 @@ import { createContext, useContext, useReducer, type ReactNode, type Dispatch } 
 import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
+/** S20: Side Panel composer is read-only while overlay holds the lease. */
+export type OverlayStandbyFromError = { standby: boolean; label: string }
+
+export function overlayStandbyLabel(holder?: unknown): string {
+  return holder === "panel" ? "正在侧栏输入" : "正在召唤器输入"
+}
+
+/** Parse chat.error payload for overlay composer standby (P0 dual-open). */
+export function overlayStandbyFromError(msg: {
+  error?: unknown
+  data?: { error_code?: unknown; holder?: unknown } | null
+} | null | undefined): OverlayStandbyFromError {
+  if (!msg || typeof msg !== "object") return { standby: false, label: "" }
+  const code = typeof msg.data?.error_code === "string" ? msg.data.error_code : ""
+  const error = typeof msg.error === "string" ? msg.error : ""
+  if (code !== "OVERLAY_STANDBY" && !error.startsWith("OVERLAY_STANDBY")) {
+    return { standby: false, label: "" }
+  }
+  return { standby: true, label: overlayStandbyLabel(msg.data?.holder) }
+}
+
 /** Live ACP coding handoff session (Composition). */
 export type CodingSessionState = {
   sessionId: string
@@ -154,6 +175,11 @@ export interface AgentState {
   pendingUploads: Record<string, { messageId: string; composerText: string }>
   /** One-shot: App restores composer text after a failed upload, then clears. */
   composerRestore: { text: string; token: number } | null
+  /**
+   * S20: overlay holds composer.lease — Side Panel textarea is read-only.
+   * Cleared on thread switch, non-standby chat.error, panel-origin send, or lease → panel.
+   */
+  overlayStandby: { label: string } | null
   obsidianProfileStatus: { ok: boolean; message: string } | null
   /** Status of the last companion-side folder import (null = idle). */
   knowledgeImportStatus: { ok: boolean; message: string } | null
@@ -336,6 +362,9 @@ export type AgentAction =
   | { type: "CLEAR_PENDING_UPLOAD"; threadId: string }
   | { type: "REQUEST_COMPOSER_RESTORE"; text: string }
   | { type: "CLEAR_COMPOSER_RESTORE" }
+  | { type: "SET_OVERLAY_STANDBY"; label: string }
+  | { type: "CLEAR_OVERLAY_STANDBY" }
+  | { type: "APPLY_COMPOSER_LEASE"; holder: "overlay" | "panel"; threadId?: string }
   | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_KNOWLEDGE_IMPORT_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
@@ -480,6 +509,7 @@ export const initialState: AgentState = {
   composerUploadClearSeq: 0,
   pendingUploads: {},
   composerRestore: null,
+  overlayStandby: null,
   obsidianProfileStatus: null,
   knowledgeImportStatus: null,
   summarizingThreadId: null,
@@ -534,6 +564,20 @@ export function isTempUserMessageId(id: string, threadId: string): boolean {
     return true
   }
   return false
+}
+
+/** Panel-origin chat.user: optimistic temp id (or persist echo of that id). */
+export function isPanelOriginUserMessage(message: {
+  id: string
+  thread_id: string
+  role: string
+  client_message_id?: string
+}): boolean {
+  if (message.role !== "user") return false
+  const tid = message.thread_id || ""
+  if (isTempUserMessageId(message.id, tid)) return true
+  const clientId = message.client_message_id
+  return !!clientId && isTempUserMessageId(clientId, tid)
 }
 
 function escapeRegExp(s: string): string {
@@ -752,16 +796,34 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         knowledgeSelectionMode: activeThread?.knowledge_selection_mode || "auto",
         mcpSelectionMode: activeThread?.mcp_selection_mode || "auto",
         activeMcpServerIds: activeThread?.active_mcp_server_ids || [],
+        overlayStandby: null,
       }
     }
-    case "ADD_MESSAGE":
+    case "SET_OVERLAY_STANDBY":
+      return { ...state, overlayStandby: { label: action.label } }
+    case "CLEAR_OVERLAY_STANDBY":
+      return state.overlayStandby ? { ...state, overlayStandby: null } : state
+    case "APPLY_COMPOSER_LEASE": {
+      if (action.holder === "panel") {
+        return state.overlayStandby ? { ...state, overlayStandby: null } : state
+      }
+      const label = overlayStandbyLabel("overlay")
+      if (state.overlayStandby?.label === label) return state
+      return { ...state, overlayStandby: { label } }
+    }
+    case "ADD_MESSAGE": {
       // Dedup by id: Side Panel optimistic add + SW `chat.user` broadcast (Cockpit
       // / multi-surface) must not double-append the same user turn.
       // Same-id echo may carry companion attachments — merge them onto the row.
       // Companion persist uses a new message_id; adopt it onto the optimistic
       // bubble matched by client_message_id (F1), falling back to the last temp
       // user bubble for pre-F1 companions (DoD #13).
-      return reduceAddMessage(state, action.message)
+      const next = reduceAddMessage(state, action.message)
+      if (next.overlayStandby && isPanelOriginUserMessage(action.message)) {
+        return { ...next, overlayStandby: null }
+      }
+      return next
+    }
     case "REMOVE_MESSAGE":
       return {
         ...state,

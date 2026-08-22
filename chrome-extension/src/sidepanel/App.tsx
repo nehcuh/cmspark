@@ -874,6 +874,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model" })
   }, [closePanel, dispatch, voice])
 
+  const overlayStandby = state.overlayStandby
+
   // Disable send while dictating — mid-listen send would ship base snapshot only
   const canSend =
     composerMode !== "l2_task" &&
@@ -881,7 +883,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     hasContent &&
     !!state.activeThreadId &&
     state.connectionState === "connected" &&
-    !voice.listening
+    !voice.listening &&
+    !overlayStandby
 
   const ingestBlocked =
     needsThread ||
@@ -889,7 +892,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     threadBusy ||
     composerMode === "l2_task" ||
     voice.liveOverlay !== null ||
-    voice.listening
+    voice.listening ||
+    !!overlayStandby
   const ingestBlockedRef = useRef(ingestBlocked)
   ingestBlockedRef.current = ingestBlocked
 
@@ -937,6 +941,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   }, [uploadClearSeq])
 
   const getPlaceholder = () => {
+    if (overlayStandby) return overlayStandby.label
     if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
     if (voice.processing) return sttEngine === "local" ? "正在本机识别…" : "正在识别…"
@@ -1168,7 +1173,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       composerMode !== "thread_busy" &&
       !!state.activeThreadId &&
       state.connectionState === "connected" &&
-      !voice.listening
+      !voice.listening &&
+      !state.overlayStandby
     if (!sendAllowed || sendingRef.current) return
     if (!trimmed && files.length === 0) return
     // Defense in depth: never dual-conduct while L2 task is active
@@ -1747,7 +1753,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               onClick={() => fileInputRef.current?.click()}
               // l2_task: ingest is blocked for an active computer task — don't
               // present a clickable affordance whose selection is silently dropped.
-              disabled={needsThread || needsConnection || threadBusy || composerMode === "l2_task"}
+              disabled={needsThread || needsConnection || threadBusy || composerMode === "l2_task" || !!overlayStandby}
               title="添加文件或图片"
               aria-label="添加文件或图片"
             >
@@ -1766,7 +1772,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               needsThread ||
               needsConnection ||
               threadBusy ||
-              voice.liveOverlay !== null
+              voice.liveOverlay !== null ||
+              !!overlayStandby
             }
             onChange={handleChange}
             onKeyDown={handleKeyDown}
@@ -1809,15 +1816,17 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               onClick={() => handleSend()}
               disabled={!canSend}
               title={
-                needsThread
-                  ? "请先创建线程"
-                  : needsConnection
-                    ? "Companion 未连接"
-                    : taskActive
-                      ? "任务进行中，请在确认台发送"
-                      : threadBusy
-                        ? "本对话处理中"
-                        : "发送"
+                overlayStandby
+                  ? overlayStandby.label
+                  : needsThread
+                    ? "请先创建线程"
+                    : needsConnection
+                      ? "Companion 未连接"
+                      : taskActive
+                        ? "任务进行中，请在确认台发送"
+                        : threadBusy
+                          ? "本对话处理中"
+                          : "发送"
               }
             >
               <IconSend size={15} />
