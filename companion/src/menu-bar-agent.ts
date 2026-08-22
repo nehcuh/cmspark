@@ -581,6 +581,16 @@ function openChromeSidePanel(): void {
   }
 }
 
+/** Lazy require: lifecycle already imports this module; load-time import would cycle. */
+function summonerBrowserAttached(): boolean {
+  try {
+    const { pickAuthenticatedClientWs } = require("./ws/lifecycle") as typeof import("./ws/lifecycle")
+    return pickAuthenticatedClientWs() != null
+  } catch {
+    return false
+  }
+}
+
 /** Overlay attach CTA — Chrome only. Never openSidePanel (that copy lies). */
 export function handleSummonerAttach(): void {
   try {
@@ -628,7 +638,7 @@ export async function handleSummonerSubmit(thread_id: string, text: string): Pro
       trayInstance?.hydrateSummoner?.({
         thread_id: id,
         lines,
-        browser: "detached",
+        browser: summonerBrowserAttached() ? "attached" : "detached",
         search_hint: SUMMONER_SEARCH_HINT,
       })
     },

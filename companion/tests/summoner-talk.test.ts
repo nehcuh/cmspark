@@ -157,6 +157,8 @@ test("menu-bar-agent empty submit resolves last/new thread then claims overlay l
   assert.match(body, /composer\.lease|claimLease|claimOverlay/)
   assert.match(body, /sendChatCreate/)
   assert.match(body, /hydrate/)
+  assert.match(src, /summonerBrowserAttached/)
+  assert.match(src, /pickAuthenticatedClientWs/)
 })
 
 test("SummonerController has press-hold mic that emits summoner.mic", () => {
