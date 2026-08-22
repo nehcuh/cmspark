@@ -1,7 +1,20 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import * as fs from "node:fs"
+import * as path from "node:path"
 import { assertSummonerAllowed } from "../src/ws/summoner-acl"
 import { validateWsMessage } from "../src/ws/validate"
+
+function srcFile(...parts: string[]): string {
+  const candidates = [
+    path.join(__dirname, "..", "src", ...parts),
+    path.join(__dirname, "..", "..", "src", ...parts),
+  ]
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p
+  }
+  return candidates[0]
+}
 
 test("summoner allows chat.create and ping", () => {
   assert.equal(assertSummonerAllowed("summoner", "chat.create").ok, true)
@@ -39,8 +52,26 @@ test("summoner allows remaining S21 methods", () => {
     "composer.lease.claim",
     "composer.lease.release",
     "composer.lease.get",
+    "voice.stt.start",
+    "voice.stt.chunk",
+    "voice.stt.end",
+    "voice.stt.abort",
+    "voice.stt.partial_request",
   ]) {
     assert.equal(assertSummonerAllowed("summoner", t).ok, true, t)
+  }
+})
+
+test("summoner denies voice.model.* (STT origin does not open model control)", () => {
+  for (const t of [
+    "voice.model.get_state",
+    "voice.model.download",
+    "voice.model.set_engine",
+    "voice.model.set_active",
+  ]) {
+    const r = assertSummonerAllowed("summoner", t)
+    assert.equal(r.ok, false, t)
+    assert.equal(r.error_code, "SUMMONER_ACL")
   }
 })
 
@@ -62,6 +93,13 @@ test("auth.handshake accepts optional surface tray|summoner", () => {
     validateWsMessage({ type: "auth.handshake", proof, surface: "summoner" }).valid,
     true,
   )
+})
+
+test("voice.stt handler ctx receives lifecycle surface from wsAuth", () => {
+  const life = fs.readFileSync(srcFile("ws", "lifecycle.ts"), "utf8")
+  const router = fs.readFileSync(srcFile("message-router.ts"), "utf8")
+  assert.match(life, /surface:\s*wsAuth\.get\(ws\)\?\.surface/)
+  assert.match(router, /surface:\s*session\?\.surface/)
 })
 
 test("auth.handshake rejects surface other than tray|summoner", () => {

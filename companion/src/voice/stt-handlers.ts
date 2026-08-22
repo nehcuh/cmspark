@@ -21,6 +21,8 @@ import {
 export interface VoiceSttHandlerContext {
   /** WS Origin header captured at connection time. */
   origin?: string
+  /** Handshake surface from wsAuth (summoner overlay vs tray menus). */
+  surface?: string
   /** Connection identity (server panelId). */
   peerId?: string
   /** Unicast to origin socket (partial status). */
@@ -40,11 +42,23 @@ export interface VoiceSttHandlerDeps {
 
 /**
  * ADR-023 L6 / §7.2: voice.stt.* only from chrome-extension:// peers.
- * Tray (`cmspark-tray://local`) and missing origin are refused.
+ * Tray (`cmspark-tray://local`) and missing origin are refused unless the
+ * overlay handshake surface is summoner (narrow amend).
  */
 export function isChromeExtensionOrigin(origin: string | undefined | null): boolean {
   if (typeof origin !== "string") return false
   return /^chrome-extension:\/\/[A-Za-z0-9_-]+$/i.test(origin)
+}
+
+const TRAY_ORIGIN = "cmspark-tray://local"
+
+/** Extension origin always. Tray origin only when surface === "summoner". */
+export function isVoiceSttOriginAllowed(
+  origin: string | undefined | null,
+  surface?: string,
+): boolean {
+  if (isChromeExtensionOrigin(origin)) return true
+  return origin === TRAY_ORIGIN && surface === "summoner"
 }
 
 // --- response helpers ---------------------------------------------------------
@@ -123,7 +137,9 @@ export async function handleVoiceSttMessage(
   const { type, ...rest } = msg ?? {}
   const sessionId = typeof rest.sessionId === "string" ? rest.sessionId : undefined
 
-  const originOk = (deps.isExtensionOrigin ?? isChromeExtensionOrigin)(ctx.origin)
+  const originOk = deps.isExtensionOrigin
+    ? deps.isExtensionOrigin(ctx.origin)
+    : isVoiceSttOriginAllowed(ctx.origin, ctx.surface)
   if (!originOk) {
     logger.warn("voice.stt.refused", {
       type: typeof type === "string" ? type : undefined,

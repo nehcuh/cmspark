@@ -17,6 +17,11 @@ const SUMMONER_ALLOW = new Set([
   "composer.lease.claim",
   "composer.lease.release",
   "composer.lease.get",
+  "voice.stt.start",
+  "voice.stt.chunk",
+  "voice.stt.end",
+  "voice.stt.abort",
+  "voice.stt.partial_request",
 ])
 
 export function assertSummonerAllowed(

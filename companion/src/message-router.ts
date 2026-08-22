@@ -233,9 +233,12 @@ interface SessionCallbacks {
   panelId?: string
   /**
    * Path B M1: WS Origin at connection time (chrome-extension:// vs tray).
-   * voice.stt.* handlers refuse non-extension peers (ADR-023 §7.2).
+   * voice.stt.* handlers refuse non-extension peers (ADR-023 §7.2)
+   * except summoner surface + cmspark-tray://local.
    */
   origin?: string
+  /** Handshake surface from wsAuth. Summoner overlay may run local STT. */
+  surface?: "tray" | "summoner"
 }
 
 export async function handleMessage(
@@ -1945,7 +1948,7 @@ export async function handleMessage(
         broadcast: session?.broadcast,
         origin: session?.origin,
       })
-    // Path B M1 — voice.stt.* (origin chrome-extension:// fence; NOT source:settings)
+    // Path B M1 — voice.stt.* (chrome-extension:// or summoner+tray origin)
     case "voice.stt.start":
     case "voice.stt.chunk":
     case "voice.stt.partial_request":
@@ -1955,6 +1958,7 @@ export async function handleMessage(
         origin: session?.origin,
         peerId: session?.panelId,
         send: session?.sendToExtension,
+        surface: session?.surface,
       })
     // Dictation+ D1b — ASR Refiner (text-only; chrome-extension origin fence)
     case "voice.refine.request":

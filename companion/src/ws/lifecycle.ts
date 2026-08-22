@@ -1310,6 +1310,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               panelId,
               // Path B M1: origin class for voice.stt.* (chrome-extension vs tray).
               origin: peerOrigin,
+              surface: wsAuth.get(ws)?.surface,
             },
           )
         } catch (handlerErr: any) {
