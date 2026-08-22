@@ -153,7 +153,7 @@ export async function handleVoiceSttMessage(
               : "other"
           : "missing",
     })
-    return sttError(sessionId, "origin_denied", "voice.stt.* requires chrome-extension:// origin", {
+    return sttError(sessionId, "origin_denied", "voice.stt.* requires chrome-extension:// origin or summoner surface", {
       family: "voice.stt",
     })
   }
