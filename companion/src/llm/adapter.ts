@@ -1435,7 +1435,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               }
             } catch { /* best-effort stale detection */ }
 
-            const errorLevel = classifyError(toolResult.error || "", { toolName })
+            const errorLevel = classifyError(toolResult.error || "", {
+              toolName,
+              error_code: (toolResult as { error_code?: string }).error_code,
+            })
             logger.info("llm.error_classified", {
               tool_call_id: tc.id,
               tool_name: toolName,
