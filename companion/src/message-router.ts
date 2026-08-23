@@ -452,6 +452,7 @@ export async function handleMessage(
           executeTool: session.executeTool,
           signal: controller.signal,
           contextRefsSegment,
+          hostname: currentHostname,
         })
       } catch (e: any) {
         // Only emit aborted UI if this generation is still current (SEC-D)
@@ -883,6 +884,7 @@ export async function handleMessage(
           sendToExtension: session.sendToExtension,
           executeTool: session.executeTool,
           signal: uploadController.signal,
+          hostname: uploadHostname,
         })
         logger.info("file.upload.chat_done", { thread_id })
       } catch (e: any) {
@@ -1176,6 +1178,7 @@ export async function handleMessage(
           executeTool: session.executeTool,
           signal: controller.signal,
           skipUserMessage: true,
+          hostname: currentHostname,
         })
       } catch (e: any) {
         if (llmLoopGeneration.get(thread_id) === myGeneration) {
