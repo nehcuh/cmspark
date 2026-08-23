@@ -342,12 +342,13 @@ export class CompanionClient {
   }
 
   /** get then claim overlay with CAS rev. Overlay chat.create is denied until this lands. */
-  async claimOverlayComposerLease(threadId: string): Promise<void> {
-    if (this._state !== "connected") return
+  async claimOverlayComposerLease(threadId: string): Promise<boolean> {
+    if (this._state !== "connected") return false
     try {
-      await claimOverlayLeaseCas(threadId, (type, body) => this.sendRequest(type, body))
+      const result = await claimOverlayLeaseCas(threadId, (type, body) => this.sendRequest(type, body))
+      return result.ok === true
     } catch {
-      // chat.create may still return OVERLAY_STANDBY; caller continues
+      return false
     }
   }
 

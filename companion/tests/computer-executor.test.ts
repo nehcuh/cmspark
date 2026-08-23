@@ -1260,6 +1260,30 @@ test("executor S23: Darwin com.cmspark.agent bundle id FG yield must re-L2", asy
   assert.ok(confirm.captured[0].details.dangerousApis.includes("computer.foreground_yielded"))
 })
 
+test("executor S23: Darwin com.cmspark.host bundle id FG yield must re-L2", async () => {
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  injector.foreground = 999999
+  const info = winInfo()
+  const windows: WindowEnumerator = {
+    async enumerateByExe() { return [info] },
+    async infoForHwnd(h: number) {
+      return h === 999999
+        ? winInfo({ hwnd: 999999, exePath: "com.cmspark.host" })
+        : info
+    },
+  }
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    windows,
+    config: testConfig({ companionUiBasenames: ["chrome", "cmspark-agent"] }),
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED")
+  assert.equal(confirm.captured.length, 1)
+})
+
 test("executor UX-spike: self-UI yield WITH a large pixel change still pauses (real dialog)", async () => {
   // The allow-list must NOT mask a real task-induced dialog. When the foreign
   // foreground is chrome.exe BUT a large whole-window change also fired, the

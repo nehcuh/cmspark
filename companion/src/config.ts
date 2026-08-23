@@ -1163,7 +1163,10 @@ function stripCompanionUiProcessContinueDeny(cfg: CompanionConfig): CompanionCon
   cfg.security.companion_ui_exe_basenames = names.filter((n) => {
     const s = String(n || "").toLowerCase().replace(/\\/g, "/")
     const last = (s.split("/").pop() || s).replace(/\.exe$/, "")
-    return last !== "cmspark-tray"
+    return last !== "cmspark-tray" &&
+      s !== "com.cmspark.agent" && !s.startsWith("com.cmspark.agent.") &&
+      s !== "com.cmspark.host" && !s.startsWith("com.cmspark.host.") &&
+      s !== "com.cmspark.tray" && !s.startsWith("com.cmspark.tray.")
   })
   return cfg
 }

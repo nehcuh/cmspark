@@ -56,6 +56,22 @@ test("close during claim releases the overlay lease it just took", async () => {
   assert.equal(released, 1)
 })
 
+test("hydrateOverlayIfLive abandons when claimLease returns false", async () => {
+  invalidateOverlaySession()
+  const token = beginOverlaySession()
+  const result = await hydrateOverlayIfLive({
+    id: "t1",
+    token,
+    selectMessages: async () => [{ role: "user", content: "x" }],
+    applyHydrate: () => {},
+    claimLease: async () => false,
+    releaseAllLeases: async () => {
+      assert.fail("failed claim must not releaseAll")
+    },
+  })
+  assert.equal(result, "abandoned")
+})
+
 test("live hydrate claims once", async () => {
   invalidateOverlaySession()
   const token = beginOverlaySession()

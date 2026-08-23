@@ -37,13 +37,14 @@ export async function hydrateOverlayIfLive(args: {
   token: number
   selectMessages: (id: string) => Promise<OverlayHydrateMessage[]>
   applyHydrate: (id: string, messages: OverlayHydrateMessage[]) => void
-  claimLease: (id: string) => Promise<void>
+  claimLease: (id: string) => Promise<boolean | void>
   releaseAllLeases: () => Promise<void>
 }): Promise<"claimed" | "abandoned"> {
   const messages = await args.selectMessages(args.id)
   if (!overlaySessionIsLive(args.token)) return "abandoned"
   args.applyHydrate(args.id, messages)
-  await args.claimLease(args.id)
+  const claimed = await args.claimLease(args.id)
+  if (claimed === false) return "abandoned"
   if (overlaySessionIsLive(args.token)) return "claimed"
   if (live) return "abandoned"
   await args.releaseAllLeases()
@@ -52,11 +53,12 @@ export async function hydrateOverlayIfLive(args: {
 
 export async function claimOverlayIfLive(args: {
   token: number
-  claim: () => Promise<void>
+  claim: () => Promise<boolean | void>
   releaseAll: () => Promise<void>
 }): Promise<boolean> {
   if (!overlaySessionIsLive(args.token)) return false
-  await args.claim()
+  const claimed = await args.claim()
+  if (claimed === false) return false
   if (overlaySessionIsLive(args.token)) return true
   if (live) return false
   await args.releaseAll()

@@ -43,6 +43,31 @@ test("hidden surface does not hit; pairing/hud/tray do", () => {
   assert.equal(assertClickClearsCompanionUi(0, 0), undefined)
 })
 
+test("summoner surface cannot apply hud rects; huge rects are rejected", () => {
+  const { applyCompanionUiRectEvent, getCompanionUiRects, clearCompanionUiRects } =
+    require("../src/computer/companion-ui-rects") as typeof import("../src/computer/companion-ui-rects")
+  clearCompanionUiRects()
+  assert.equal(
+    applyCompanionUiRectEvent(
+      { type: "companion.ui.rect", surface: "hud", x: 0, y: 0, width: 10, height: 10 },
+      { allowSurfaces: new Set(["overlay"]) },
+    ),
+    false,
+  )
+  assert.equal(getCompanionUiRects().length, 0)
+  assert.equal(
+    applyCompanionUiRectEvent({
+      type: "companion.ui.rect",
+      surface: "overlay",
+      x: 0,
+      y: 0,
+      width: 9000,
+      height: 10,
+    }),
+    false,
+  )
+})
+
 test("companion.ui.rect is a known WS type for daemon apply", () => {
   const { validateWsMessage } = require("../src/ws/validate") as typeof import("../src/ws/validate")
   assert.equal(

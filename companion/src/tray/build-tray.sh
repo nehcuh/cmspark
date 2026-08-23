@@ -42,6 +42,7 @@ swiftc \
   -O \
   -o "${OUTPUT_BIN}" \
   "${SCRIPT_DIR}/Tray.swift" \
+  "${SCRIPT_DIR}/SummonerOverlay.swift" \
   -framework AppKit \
   -framework Foundation \
   -framework Carbon \

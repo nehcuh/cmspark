@@ -68,5 +68,6 @@ test("Darwin bundle ids com.cmspark.agent/host never self-UI continue (S23 landm
   const allow = [...ALLOW, "cmspark-agent", "com.cmspark.agent"]
   assert.equal(isCompanionUiOwner("com.cmspark.agent", allow), false)
   assert.equal(isCompanionUiOwner("com.cmspark.host", allow), false)
+  assert.equal(isCompanionUiOwner("com.cmspark.tray", allow), false)
   assert.equal(isCompanionUiOwner("com.google.Chrome", allow), true)
 })

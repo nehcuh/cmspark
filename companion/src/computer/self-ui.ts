@@ -99,5 +99,6 @@ function isDeniedCompanionUiProcess(raw: string, base: string): boolean {
   }
   if (raw === "com.cmspark.agent" || raw.startsWith("com.cmspark.agent.")) return true
   if (raw === "com.cmspark.host" || raw.startsWith("com.cmspark.host.")) return true
+  if (raw === "com.cmspark.tray" || raw.startsWith("com.cmspark.tray.")) return true
   return false
 }
