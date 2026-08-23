@@ -40,7 +40,6 @@ import {
   type HudConfirmResolvedPayload,
 } from "../hud/protocol"
 import type { HudShellRouter } from "../hud/shell-router"
-import { applyCompanionUiRectEvent } from "../computer/companion-ui-rects"
 import {
   encodeSummonerOpen,
   encodeSummonerHydrate,
@@ -55,8 +54,8 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-// Updated 2026-08-23 after reject-fold rect IPC + search cancel
-const SWIFT_TRAY_SHA256 = "a88b5aa2fabf48ee4b0b00928ee7184286555afa8685bc7eedc98af6bcf402a0"
+// Updated 2026-08-24 after nits fold (SummonerOverlay.swift split)
+const SWIFT_TRAY_SHA256 = "896822ceddfa8f800632dd76c35ee0eb384a5f355252d60d0fed08722b0dd6a4"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")
@@ -540,7 +539,6 @@ export class SwiftTrayAdapter implements UnifiedTray {
         }
 
         try {
-          applyCompanionUiRectEvent(event)
           if (event?.type === "companion.ui.rect") {
             this.companionUiRectCallback?.(event)
           }

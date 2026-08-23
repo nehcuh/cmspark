@@ -411,6 +411,40 @@ test("broadcastOverlayLeasesOnSocketClose emits composer.lease per released hold
   assert.equal(broadcastOverlayLeasesOnSocketClose("tray", () => {}, r), 0)
 })
 
+test("claim holder must match handshake surface", () => {
+  const r = new ComposerLeaseRegistry()
+  const panelOnSummoner = handleComposerLeaseFamily(
+    "composer.lease.claim",
+    { thread_id: "t1", holder: "panel", rev: 0 },
+    r,
+    "summoner",
+  )
+  assert.equal(panelOnSummoner.error_code, "LEASE_HOLDER_SURFACE_MISMATCH")
+  const overlayOnTray = handleComposerLeaseFamily(
+    "composer.lease.claim",
+    { thread_id: "t1", holder: "overlay", rev: 0 },
+    r,
+    "tray",
+  )
+  assert.equal(overlayOnTray.error_code, "LEASE_HOLDER_SURFACE_MISMATCH")
+  const ok = handleComposerLeaseFamily(
+    "composer.lease.claim",
+    { thread_id: "t1", holder: "overlay", rev: 0 },
+    r,
+    "summoner",
+  )
+  assert.equal(ok.type, "composer.lease")
+  assert.equal(ok.holder, "overlay")
+})
+
+test("gateChatCreateOnLease is the mutate gate used by chat.create and chat.regenerate", () => {
+  const r = new ComposerLeaseRegistry()
+  r.claim({ thread_id: "t1", holder: "overlay", rev: 0 })
+  const err = gateChatCreateOnLease("t1", "tray", r)
+  assert.equal(err?.data.error_code, OVERLAY_STANDBY)
+  assert.equal(gateChatCreateOnLease("t1", "summoner", r), null)
+})
+
 test("panel chat.create is OVERLAY_STANDBY on old thread until exclusive switch", () => {
   const r = new ComposerLeaseRegistry()
   r.claim({ thread_id: "old", holder: "overlay", rev: 0 })

@@ -24,6 +24,14 @@ function srcFile(...parts: string[]): string {
   return candidates[0]
 }
 
+function traySwiftSrc(): string {
+  return (
+    fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8") +
+    "\n" +
+    fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  )
+}
+
 const THREADS = [
   { id: "old", title: "Old notes", updated_at: "2026-08-01T00:00:00Z" },
   { id: "mid", title: "Browser tab", updated_at: "2026-08-10T00:00:00Z" },
@@ -146,7 +154,7 @@ test("submitSummonerTalk refuses blank text and does not create", async () => {
 })
 
 test("SummonerController v2 empty state talks, not title-search", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   assert.match(src, /说点什么/)
   assert.doesNotMatch(src, /说点什么，或按住说话/)
   assert.match(src, /回车发送到当前线程，输入 # 搜标题/)
@@ -164,7 +172,7 @@ test("SummonerController v2 empty state talks, not title-search", () => {
 })
 
 test("SummonerController placeholder does not advertise hidden press-to-talk", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   const line = src.split("\n").find((l) => l.includes("summonerTalkPlaceholder"))
   assert.ok(line, "summonerTalkPlaceholder missing")
   assert.doesNotMatch(line!, /按住说话/)
@@ -172,7 +180,7 @@ test("SummonerController placeholder does not advertise hidden press-to-talk", (
 })
 
 test("SummonerController applyHydrate does not reopen a closed overlay", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   const start = src.indexOf("  func applyHydrate(_ json: [String: Any]) {")
   // SummonerController's applyHydrate is the second (HUD has one first)
   const summoner = src.indexOf("  func applyHydrate(_ json: [String: Any]) {", start + 10)
@@ -183,12 +191,12 @@ test("SummonerController applyHydrate does not reopen a closed overlay", () => {
 })
 
 test("hidden mic tooltip does not advertise press-to-talk", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   assert.doesNotMatch(src, /mic\.toolTip = ".*按住说话/)
 })
 
 test("SummonerController send stays visible when detached or empty", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   const apply = src.slice(src.indexOf("private func applyPhase()"), src.indexOf("private func relayout()"))
   assert.match(apply, /sendButton\?\.isHidden = false/)
   assert.doesNotMatch(apply, /footRow\?\.isHidden = searching \|\| !hasTranscript \|\| detached/)
@@ -211,7 +219,7 @@ test("menu-bar-agent empty submit resolves last/new thread then claims overlay l
 })
 
 test("SummonerController has press-hold mic that emits summoner.mic", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   assert.match(src, /🎙/)
   assert.match(src, /summoner\.mic\.start/)
   assert.match(src, /summoner\.mic\.(wav|end)/)

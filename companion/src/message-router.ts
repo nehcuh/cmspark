@@ -1036,7 +1036,10 @@ export async function handleMessage(
     }
 
     case "companion.ui.rect": {
-      applyCompanionUiRectEvent({ type: "companion.ui.rect", ...rest })
+      const allowSurfaces = stampedSurface === "summoner"
+        ? new Set(["overlay"])
+        : undefined
+      applyCompanionUiRectEvent({ type: "companion.ui.rect", ...rest }, { allowSurfaces })
       return { type: "companion.ui.rect.ok" }
     }
 
@@ -1044,7 +1047,7 @@ export async function handleMessage(
     case "composer.lease.claim":
     case "composer.lease.release":
     case "composer.lease.release_overlay": {
-      const leaseResult = handleComposerLeaseFamily(type, rest)
+      const leaseResult = handleComposerLeaseFamily(type, rest, undefined, stampedSurface)
       if (leaseResult !== null) {
         if (shouldBroadcastLease(type, leaseResult)) {
           if (leaseResult.type === "composer.lease.released") {

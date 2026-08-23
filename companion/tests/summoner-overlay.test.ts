@@ -21,14 +21,29 @@ function srcFile(...parts: string[]): string {
   return candidates[0]
 }
 
+function traySwiftSrc(): string {
+  return (
+    fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8") +
+    "\n" +
+    fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  )
+}
+
 function summonerControllerBody(): string {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   const start = src.indexOf("private let summonerWindowTitle")
   const end = src.indexOf("let summonerController = SummonerController()")
   assert.ok(start >= 0, "summoner window title constant missing")
   assert.ok(end > start, "summonerController singleton missing")
   return src.slice(start, end)
 }
+
+test("Summoner overlay is extracted out of the Tray.swift god-file", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  const tray = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  assert.match(overlay, /class SummonerController/)
+  assert.doesNotMatch(tray, /class SummonerController/)
+})
 
 test("SummonerController title is 召唤器（实验） and never 主界面", () => {
   const body = summonerControllerBody()
@@ -67,7 +82,7 @@ test("SummonerController copy lock: badge, hint, CTA, buttons", () => {
 })
 
 test("SummonerController hotkey toggles hide when overlay is already visible", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   const start = src.indexOf("func openFromHotKey()")
   assert.ok(start >= 0)
   const fn = src.slice(start, start + 500)
@@ -91,7 +106,7 @@ test("SummonerController renders plaintext transcript and new-thread control", (
 })
 
 test("SummonerController title search uses companion hits then select hydrates", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   assert.match(src, /summoner\.hits/)
   assert.match(src, /func applyHits/)
   assert.match(src, /summoner\.select/)
@@ -103,7 +118,7 @@ test("SummonerController title search uses companion hits then select hydrates",
 })
 
 test("SummonerController treats chat.token as snapshot not delta", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   const start = src.indexOf("func appendToken(")
   const end = src.indexOf("func markDone(")
   assert.ok(start >= 0 && end > start)
@@ -114,7 +129,7 @@ test("SummonerController treats chat.token as snapshot not delta", () => {
 })
 
 test("SummonerController emits companion.ui.rect and renders assistant markdown", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   assert.match(src, /emitCompanionUiRect\("overlay"/)
   assert.match(src, /companion\.ui\.rect/)
   assert.match(src, /AttributedString\(markdown:/)
@@ -123,7 +138,7 @@ test("SummonerController emits companion.ui.rect and renders assistant markdown"
 })
 
 test("SummonerController hotkey is a header + tray-menu entry", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   assert.match(src, /NSButton\(title: "快捷键"/)
   assert.match(src, /召唤器快捷键…/)
   assert.match(src, /func toggleHotkeyPicker/)
@@ -152,7 +167,7 @@ test("SummonerController IME: composing Return is not bound as a button keyEquiv
 })
 
 test("Tray.swift stdin handles summoner.open/hydrate/token/done/error/close", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   for (const cmd of [
     "summoner.open",
     "summoner.hydrate",
@@ -224,7 +239,7 @@ test("menu-bar-agent forwards companion.ui.rect to the daemon", () => {
 })
 
 test("SummonerController search Return with zero hits does not send chat", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   const start = src.indexOf("func textView(_ textView: NSTextView, doCommandBy")
   const body = src.slice(start, start + 1400)
   assert.match(body, /isSearchQuery\(composerText\)/)
@@ -232,7 +247,7 @@ test("SummonerController search Return with zero hits does not send chat", () =>
 })
 
 test("SummonerController hide cancels pending title search", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   const hide = src.slice(src.indexOf("  func hide() {"), src.indexOf("  func hide() {") + 280)
   assert.match(hide, /searchTimer\?\.invalidate/)
 })
@@ -302,7 +317,7 @@ test("SummonerController first paint does not hardcode 未连接 before hydrate"
 })
 
 test("SummonerController hotkey picker lists occupied chords as labels not buttons", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src = traySwiftSrc()
   assert.match(src, /summonerHotKeyStolen/)
   assert.match(src, /已被 .* 占用/)
   const start = src.indexOf("private func chooseHotkey")

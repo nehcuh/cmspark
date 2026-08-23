@@ -94,7 +94,9 @@ function srcFile(...parts: string[]): string {
 }
 
 test("Tray.swift candidate table matches TS and registers Carbon hotkey", () => {
-  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const src =
+    fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8") +
+    fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
   assert.match(src, /RegisterEventHotKey/)
   assert.match(src, /installSummonerHotKeyMonitor/)
   assert.match(src, /summoner\.hotkey\.set/)

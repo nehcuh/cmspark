@@ -152,6 +152,7 @@ export function handleComposerLeaseFamily(
   type: string,
   rest: any,
   registry: ComposerLeaseRegistry = composerLeases,
+  surface?: unknown,
 ): any | null {
   switch (type) {
     case "composer.lease.get": {
@@ -164,6 +165,16 @@ export function handleComposerLeaseFamily(
       }
       if (typeof rest.rev !== "number" || !Number.isInteger(rest.rev)) {
         return { type: "error", error: "composer.lease.claim requires rev number" }
+      }
+      if (surface === "summoner" || surface === "tray") {
+        const expected = incomingHolderFromSurface(surface)
+        if (holder !== expected) {
+          return {
+            type: "error",
+            error: "LEASE_HOLDER_SURFACE_MISMATCH",
+            error_code: "LEASE_HOLDER_SURFACE_MISMATCH",
+          }
+        }
       }
       const result = registry.claim({
         thread_id: String(rest.thread_id),
