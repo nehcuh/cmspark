@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S77 END (2026-08-23) [OS summoner overlay polish · 独立分支 · #213 on main]
+- **Ship（overlay）**：`feat/os-agent-shell` `c48aded` 跟踪 `origin/feat/os-agent-shell` = 当前 `origin/main` + **21** summoner commits（`rebase --onto origin/main e63bf87`）。live UX：长回复 markdown（流完再 parse）、新对话、麦 hold/click、hotkey 可关、idle 超时新开、Chrome 默认静默、`mcp.list` 状态行 + 确认改道 Panel。
+- **Ship（plugin / main）**：`feat/site-op-memory` 已合 **#213** `fc18725`（浏览器负知识：locator 跨「继续」ban）。与 overlay **无关**。
+- **分支锁**：`main` = 最新 Chrome 插件形态；`feat/os-agent-shell` = 插件 + 独立召唤窗，**未合 main、勿合**。workspace 现停在 overlay 分支。
+- **未 commit**：journeys spec/tests + agentStore / composer-lease / Tray.swift 等脏文件 — **session-end 不得 scoop**。
+- **未做**：8+5 用户证伪；GOAL.md/ADR-020 一句话仍冻；worktree daemon 已退，本机 23401 多半是官方 CMspark.app tray。
+- Recorded: yes — STT last-error 掩盖、流式 flicker、stash 须先 reset、`pkill -f` 自杀、overlay≠第二 Side Panel、MCP 确认 N5 改道、rebase --onto 隔离大功能
+
 ### 折 nits HEAD be52585 对抗 (2026-08-21)
 - S1 ASCII 门改 POSIX `[\200-\377]`（去掉 grep -P fail-open）
 - S2–S6 `scripts/win-vendor-bins.sh`：`-f`、MSYS 才用 `C:/`、解压/压缩共用 7-Zip 探针；Bin 路径有 gate
@@ -799,12 +807,19 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### Companion-canon Side Panel（S74 · #196 OPEN）
+### OS summoner overlay（S77 · `feat/os-agent-shell`）
 - status: **active**
-- context: 消费级助手空态 + 320 栏；C″/D″；外部 PR dual AWN；CI 4/4 绿。S76 已重打 0.5.1 DMG（含 #203 安全，**仍可能不含** #196 UI）
-- next_action: (1) 合 #196（实现者不得自放行）(2) 重载 `chrome-extension/build/chrome-mv3-prod/` 验侧栏 (3) #196 合后再打 DMG
-- resume_doc: PR #196 · `docs/audit/reviews/companion-canon-ui-pr-verdict-20260818-172531.json`
-- updated: 2026-08-20
+- context: P0 spike + live polish 已 push `c48aded`。薄 L0 捕获窗，Chrome 按需 L1。identity 2；A 结构 + C 看山白。**勿合 main**。脏 WIP：`summoner-journeys.test.ts` + user-journeys spec。
+- next_action: (1) 提交或丢弃 journeys WIP（别混进无关 commit）(2) 8+5 用户证伪 (3) Swift SHA256 与 tray 锁步 (4) 稳定后再谈合 main
+- resume_doc: `docs/decisions/os-agent-shell-brief-2026-08-22.md` · `docs/superpowers/plans/2026-08-22-os-agent-shell-p0-spike.md` · `docs/design/os-summoner-p0-chosen.html`
+- updated: 2026-08-23
+
+### Companion-canon Side Panel（S74 · #196 MERGED）
+- status: **done**
+- context: 消费级助手空态 + 320 栏；2026-08-18 合 main
+- next_action: 无；canon 已在当前 origin/main
+- resume_doc: PR #196
+- updated: 2026-08-23
 
 ### 会话卫生 #193 真机 dogfood（S73 · #193 MERGED）
 - status: **active**

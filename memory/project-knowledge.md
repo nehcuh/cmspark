@@ -2,6 +2,12 @@
 
 ## Process Patterns
 
+### 大功能隔离：独立分支 + `rebase --onto` 接到当前 main（2026-08-23 · S77）
+- **场景**：overlay 在旧 tip 上长了 20+ commit，同时 main 合了 #213 等插件修。用户要「main=插件最新、overlay 独立」。
+- **做法**：`git rebase --onto origin/main <pre-feature-base> feat/os-agent-shell`（本轮 `e63bf87`）。drop 与 main 重复的 commit（site-op 副本、session-end docs）。push 前确认 `origin/main..HEAD` 只剩本功能。
+- **不要**：把 WIP 大功能合进 main「先占坑」；`git stash` 含已 staged `A` 文件会失败——先 `git reset` 再 stash。
+- **4 行 case**：动作=隔离 summoner；成功=main 干净插件、overlay 21 commit 可独立推；归责=功能与产品面混在同一 HEAD；保护=合 main 变成显式决定
+
 ### 站点负知识：继续会重置同工具失败闸（2026-08-21 · qg44es）
 - **现象**：WAVE-1 已类型化仍 `click` 9 败 / `get_element_info` 8 败；知乎写作。体积封顶打到了 osascript/shell，然后 hop 到 click。
 - **根因**：`MAX_SAME_TOOL_RECOVERABLE_FAILURES` 在每个 chatCreate /「继续」清零；换工具名再点同一 locator；`record_experience` 要 LLM 自觉写；同一 tab `CDP_ATTACH_FAILED` 后仍对同一 tabId 发 CDP
@@ -67,6 +73,28 @@
 - **Outbound 应用**: `docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md`
 
 ## Technical Pitfalls
+
+### overlay STT：start 失败后 fire-and-forget chunk/end 会盖掉真错误（2026-08-23 · S77）
+- **现象**：麦报 `no matching session`。config `localModelId=small`，盘上只有 medium/large；start 已 `model_missing`。
+- **根因**：(1) 模型 id 不回退；(2) start 失败后仍异步发 chunk/end，后到的「无 session」盖掉 start 错误；(3) click 只送 44 字节 WAV 头。
+- **修**：`resolveSummonerSttModelId` 回退已装模型；`handleSummonerMic` **await start**；太短给文案；click-to-toggle。
+- **纪律**：STT 多段协议里 **start 必须是门**；失败路径禁止再发 chunk/end。
+
+### Swift overlay 流式 flicker：勿每 token 拆泡 + 半截 markdown + 改窗尺寸（2026-08-23 · S77）
+- **坑**：每个 delta 毁掉全部 bubble、对不完整 markdown 再 parse、`setContentSize` → 闪。
+- **修**：流中只 patch 最后一条 **纯文本**；`markDone` 再 markdown；流中禁止 resize；`CATransaction.setDisableActions`。
+- **纪律**：流式 UI 与终态渲染分相；AppKit 布局动画默认开。
+
+### `pkill -f cmspark-tray` 会匹配到自己的 bash（2026-08-23）
+- **坑**：命令行含 pattern，bash 先进进程表，`pkill -f` 先杀自己。
+- **修**：按 PID 杀；或 pattern 写得不可能匹配当前 argv。
+
+### 改 `Tray.swift` 必须重编并钉 `SWIFT_TRAY_SHA256`（S77 仍有效）
+- launcher 启动校验哈希，不匹配则自动重编。rebase 改写 commit SHA **不等于** 二进制 SHA——二进制变了才改 pin。
+- 编：`bash companion/src/tray/build-tray.sh` → 更新 `swift-tray-bridge.ts`。
+
+### worktree 测 companion 缺 `node_modules` 会假红（2026-08-23）
+- 新 worktree 默认没有依赖。测前 `ln -s` 或 `npm ci`。`dist/index.js` 也要 `npm run build`，否则 daemon 起不来。
 
 ### `formatChatErrorLine` 不得把硬闸/批准后失败说成拒窗（2026-08-20 · #203）
 - **坑**：`errorLevel==="security"` 无分流 → scheme/cage/批准后 regex 都带「若你已拒绝弹窗」
@@ -963,6 +991,15 @@
 - 教训：JS 单线程下，**全同步**的 read-modify-write 天然原子，不存在交错竞态——只有 caller「读 → await → 用陈旧快照写」才有竞态。审计/评审提"竞态"时先确认是否有 await 间隙，别为不存在的竞态加锁（cargo-cult）。kimi 终审也独立验证了所有 caller无 await 间隙，确认非 bug。
 
 ## Architecture Decisions
+
+### OS summoner overlay = 薄 L0，不是第二 Side Panel（2026-08-23 · S77 · WIP）
+- **身份**：本机 Agent 全局召唤（identity 2）。Chrome 关着也能聊；Chrome 是 **按需 L1 执行器**（`pickAuthenticatedClientWs` 只认 extension；`BROWSER_UNAVAILABLE` 不可恢复）。
+- **不是**：Raycast 克隆；第二套 Side Panel 家；overlay 上 Allow/Deny（N5 单写者仍是 Panel/HUD）。
+- **插件故事**：Pack / Skill / MCP。MCP 工具已在 Companion `chat.create` 目录；overlay 只 `mcp.list` 可见性，**禁** `mcp.add`。需确认时 `resolveMcpConfirmTarget` 改道 extension WS。
+- **合同**：`surface=summoner` ACL（S21）；`composer.lease` CAS overlay vs panel（S20）；无 LLM `openChrome` 工具。
+- **默认**：Chrome `open -ga` 静默；idle `resume_idle_minutes` 超时新开，历史走 `#`。
+- **分支**：只活在 `feat/os-agent-shell`，**勿合 main** 直到稳定。GOAL.md/ADR-020 一句话冻到 P0 证伪。
+- **SoT**：`docs/decisions/os-agent-shell-brief-2026-08-22.md` · plan `docs/superpowers/plans/2026-08-22-os-agent-shell-p0-spike.md`
 
 ### 会话卫生：无意义=无 user；C′ 闭枚举；D 薄 husk 预勾（2026-08-17 · #193 MERGED）
 - **SoT**：`docs/superpowers/specs/2026-08-17-thread-hygiene-adversarial-design.md`
