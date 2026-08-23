@@ -2,17 +2,17 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { hydratePlaintext } from "../src/summoner/hydrate"
 
-/** Overlay transcript: role-prefixed plaintext (Swift may render bubbles). */
+/** Overlay transcript: role-prefixed plaintext. Swift must not wrap chat bubbles. */
 
-test("50 user messages truncate to last 40 lines", () => {
+test("50 user messages truncate to last 20 lines", () => {
   const messages = Array.from({ length: 50 }, (_, i) => ({
     role: "user",
     content: `msg-${i + 1}`,
   }))
   const lines = hydratePlaintext(messages)
-  assert.equal(lines.length, 40)
-  assert.equal(lines[0], "你: msg-11")
-  assert.equal(lines[39], "你: msg-50")
+  assert.equal(lines.length, 20)
+  assert.equal(lines[0], "你: msg-31")
+  assert.equal(lines[19], "你: msg-50")
 })
 
 test("tool role line starts with [工具]", () => {

@@ -18,6 +18,7 @@ const SUMMONER_ALLOW = new Set([
   "history.query",
   "composer.lease.claim",
   "composer.lease.release",
+  "composer.lease.release_overlay",
   "composer.lease.get",
   "voice.stt.start",
   "voice.stt.chunk",
@@ -25,6 +26,7 @@ const SUMMONER_ALLOW = new Set([
   "voice.stt.abort",
   "voice.stt.partial_request",
   "mcp.list",
+  "companion.ui.rect",
 ])
 
 export function assertSummonerAllowed(

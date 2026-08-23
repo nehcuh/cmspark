@@ -141,6 +141,8 @@ export interface UnifiedTray {
   hydrateSummoner?(payload: import("../summoner/protocol").SummonerHydratePayload): void
   /** Swift overlay → Node. Non-Swift backends omit (callers use optional chaining). */
   onSummonerEvent?(callback: (evt: import("../summoner/protocol").SummonerInboundEvt) => void): void
+  /** Forward Swift companion.ui.rect into the companion daemon (S23). */
+  onCompanionUiRect?(callback: (raw: unknown) => void): void
   stop(): Promise<void>
 }
 

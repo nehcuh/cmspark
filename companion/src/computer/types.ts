@@ -161,6 +161,7 @@ export type ComputerErrorCode =
   | "DESKTOP_DENIED" // OpenInputDesktop name != "Default" (UAC/secure desktop)
   | "OUT_OF_BOUNDS" // coordinates outside target window rect — reject, never clamp
   | "CLICK_OCCLUDED" // X2: landing point owned by another (overlay) window — fail-closed
+  | "COMPANION_UI_CLICK_DENIED" // S23: click screen-point hits overlay/HUD/tray/pairing — hard-reject, not continue
   | "FOCUS_LOST" // foreground hwnd changed mid-type batch (A1.4)
   | "FOREGROUND_RAISE_FAILED" // WP-foreground (2026-07-23): osascript activate failed to raise target to frontmost — distinct from FOCUS_LOST (which is mid-batch drift) and from ForegroundProbeBrokenError (which is binary-side probe failure). Precondition guard failed → inject must NOT proceed.
   | "OCR_LANGUAGE_MISSING" // honest layer skip (plan §B.2 L1)

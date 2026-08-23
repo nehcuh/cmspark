@@ -59,7 +59,9 @@ export interface SecurityConfig {
   /**
    * Basenames (no extension, lowercased) of the companion's OWN UI host
    * processes — the browser that renders the sidepanel, plus the packaged
-   * companion binary and the Swift tray (`cmspark-tray`). When the computer-use
+   * companion binary. The Swift tray overlay is **not** on this list (S23:
+   * process-level continue would skip re-L2 when CU yields to the overlay;
+   * window-rect hit-test hard-rejects clicks on companion UI instead). When the computer-use
    * FOREGROUND-YIELD detector finds the foreground was taken over by one of
    * these (the user just clicked "Allow" in the sidepanel, so the browser
    * briefly became frontmost), the executor silently re-raises the target
@@ -67,7 +69,7 @@ export interface SecurityConfig {
    * by basename only (multiple Chrome windows share one exe), so this is a UX
    * heuristic, NOT a security boundary — the initial task L2 still gates every
    * task. Defaults cover the browsers CMspark supports plus the packaged agent
-   * exe and the Swift tray overlay.
+   * exe. Overlay/tray clicks are denied by companion-ui rects, not this list.
    */
   companion_ui_exe_basenames: string[]
 }
@@ -443,8 +445,6 @@ const defaultConfig: CompanionConfig = {
     // app frontmost while authorizing in Chrome.
     companion_ui_exe_basenames: [
       "chrome", "msedge", "msedge_proxy", "firefox", "brave", "arc", "opera", "cmspark-agent",
-      // Swift tray / summoner overlay (unbundled Darwin exe; same basename on disk)
-      "cmspark-tray",
       // macOS bundle-id last segments / full ids also accepted by isCompanionUiOwner
       "com.google.chrome", "com.microsoft.edgemac", "org.mozilla.firefox",
       "company.thebrowser.browser", "com.brave.browser",
@@ -656,7 +656,7 @@ function loadConfigFile(configPath: string): CompanionConfig {
     }
   }
   // P1 SEC-06: re-filter domain wildcards on load (hand-edited config.json bypass)
-  return sanitizeDomainPatternsOnLoad(merged)
+  return stripCompanionUiProcessContinueDeny(sanitizeDomainPatternsOnLoad(merged))
 }
 
 export function getConfig(): CompanionConfig {
@@ -1156,6 +1156,18 @@ function filterDomainPatterns(
   return kept
 }
 
+/** S23: overlay binary must not silently continue computer-use FG yield. */
+function stripCompanionUiProcessContinueDeny(cfg: CompanionConfig): CompanionConfig {
+  const names = cfg.security?.companion_ui_exe_basenames
+  if (!Array.isArray(names)) return cfg
+  cfg.security.companion_ui_exe_basenames = names.filter((n) => {
+    const s = String(n || "").toLowerCase().replace(/\\/g, "/")
+    const last = (s.split("/").pop() || s).replace(/\.exe$/, "")
+    return last !== "cmspark-tray"
+  })
+  return cfg
+}
+
 /** P1 SEC-06: drop dangerous wildcards when loading hand-edited config.json. */
 function sanitizeDomainPatternsOnLoad(cfg: CompanionConfig): CompanionConfig {
   if (Array.isArray(cfg.trusted_domains)) {
@@ -1219,7 +1231,7 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // function without first adding serialization — otherwise the whitelist
   // append and concurrent settings writes will silently lose data.
   const current = getConfig()
-  const updated = deepMerge(current, config) as CompanionConfig
+  const updated = stripCompanionUiProcessContinueDeny(deepMerge(current, config) as CompanionConfig)
 
   // ACP: re-sanitize after deepMerge so hand-edited/partial writes cannot skip
   // profile coercion (review_readonly) that load-time sanitize already enforces.

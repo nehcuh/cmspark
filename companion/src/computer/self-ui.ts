@@ -28,16 +28,7 @@ const MAC_COMPANION_BUNDLE_IDS = [
   "company.thebrowser.browser", // Arc
   "com.brave.browser",
   "com.operasoftware.opera",
-  "com.cmspark.agent",
-  "com.cmspark.host",
 ]
-
-/**
- * Unbundled companion UI process names (Windows ProcessName / Darwin exe).
- * Swift tray (`dist/cmspark-tray`) has no CFBundleIdentifier — matching is
- * process-level only; window-rect hit-test is P1.
- */
-const COMPANION_UI_PROCESS_BASENAMES = ["cmspark-tray"]
 
 /**
  * True when `fgOwner` is CMspark's own UI host (browser side panel or agent).
@@ -58,13 +49,14 @@ export function isCompanionUiOwner(
   // Empty allow-list = operator disabled self-UI recovery (fail closed to re-L2).
   if (allow.size === 0) return false
   const raw = String(fgOwner).toLowerCase().replace(/\\/g, "/")
+  const base = exeBasename(fgOwner)
+  // S23: overlay/tray/host process is gated by window-rect hit-test, never silent FG continue.
+  if (isDeniedCompanionUiProcess(raw, base)) {
+    return false
+  }
 
   // Exact allow-list hit (path basename or full string).
-  const base = exeBasename(fgOwner)
   if (allow.has(base) || allow.has(raw)) return true
-  // Known companion UI binaries (Swift tray overlay) even when the operator
-  // customized the browser allow-list and omitted the tray name.
-  if (COMPANION_UI_PROCESS_BASENAMES.includes(base)) return true
 
   // macOS / reverse-DNS bundle id: last segment often matches basename
   // (com.google.chrome → "chrome"; com.brave.browser → "browser" — weaker).
@@ -93,5 +85,19 @@ export function isCompanionUiOwner(
     }
   }
 
+  return false
+}
+
+function isDeniedCompanionUiProcess(raw: string, base: string): boolean {
+  if (
+    base === "cmspark-tray" ||
+    raw === "cmspark-tray" ||
+    raw.endsWith("/cmspark-tray") ||
+    raw.endsWith("/cmspark-tray.exe")
+  ) {
+    return true
+  }
+  if (raw === "com.cmspark.agent" || raw.startsWith("com.cmspark.agent.")) return true
+  if (raw === "com.cmspark.host" || raw.startsWith("com.cmspark.host.")) return true
   return false
 }

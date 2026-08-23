@@ -14,6 +14,8 @@ import {
   encodeSummonerClosed,
   encodeSummonerSubmit,
   encodeSummonerSearch,
+  encodeSummonerHits,
+  encodeSummonerSelect,
   encodeSummonerAttachChrome,
   encodeSummonerContinue,
   encodeSummonerHotkeyChosen,
@@ -70,7 +72,7 @@ test("round-trip summoner.hydrate", () => {
   })
   assert.equal(msg.cmd, "summoner.hydrate")
   assert.equal(msg.browser, "attached")
-  assert.equal(msg.search_hint, "P0 不搜正文")
+  assert.equal(msg.search_hint, SUMMONER_SEARCH_HINT)
   assert.deepEqual(msg.lines, ["你: hello", "助手: world"])
   roundTripOutbound(msg)
 
@@ -78,9 +80,28 @@ test("round-trip summoner.hydrate", () => {
     thread_id: "thr-hyd-2",
     lines: [],
     browser: "detached",
-    search_hint: "P0 不搜正文",
+    search_hint: SUMMONER_SEARCH_HINT,
   })
   roundTripOutbound(detached)
+})
+
+test("round-trip summoner.hits and summoner.select", () => {
+  const hits = encodeSummonerHits({
+    hits: [
+      { id: "t1", title: "投研纪要 · 宁德时代", when: "2026-08-20T12:00:00Z" },
+      { id: "t2", title: "年报对比", when: "2026-08-17T00:00:00Z" },
+    ],
+  })
+  assert.equal(hits.cmd, "summoner.hits")
+  assert.equal(hits.hits.length, 2)
+  roundTripOutbound(hits)
+  const sel = encodeSummonerSelect({ thread_id: "t1" })
+  assert.equal(sel.type, "summoner.select")
+  assert.equal(sel.thread_id, "t1")
+  roundTripInbound(sel)
+  assert.equal(decodeSummonerOutbound({ cmd: "summoner.hits" }), null)
+  assert.equal(decodeSummonerOutbound({ cmd: "summoner.hits", hits: [{ id: "x" }] }), null)
+  assert.equal(decodeSummonerInbound({ type: "summoner.select" }), null)
 })
 
 test("round-trip summoner.submit", () => {

@@ -13,6 +13,7 @@ import {
   isSafeSummonerHotkey,
   acceptedSummonerHotkey,
   nextSummonerHotkeyCmd,
+  summonerHotkeyPickerRows,
 } from "../src/summoner/hotkey"
 
 const STOLEN_INPUTS = [
@@ -101,7 +102,7 @@ test("Tray.swift candidate table matches TS and registers Carbon hotkey", () => 
   assert.match(src, /composingNow/)
   assert.match(src, /hasMarkedText/)
   const start = src.indexOf("let summonerHotKeyCandidates")
-  const end = src.indexOf("let summonerHotKeyStolenCopy")
+  const end = src.indexOf("struct SummonerHotKeyStolen")
   assert.ok(start >= 0 && end > start)
   const table = src.slice(start, end)
   for (const c of SUMMONER_HOTKEY_CANDIDATES) {
@@ -111,6 +112,26 @@ test("Tray.swift candidate table matches TS and registers Carbon hotkey", () => 
   assert.equal(table.includes('"cmd+space"'), false)
   assert.equal(table.includes('"alt+space"'), false)
   assert.equal(table.includes('"ctrl+shift+space"'), false)
+  const stolen = src.slice(end, src.indexOf("let summonerHotKeyStolenCopy"))
+  assert.ok(stolen.includes('"cmd+space"'))
+  assert.ok(stolen.includes('"alt+space"'))
+  assert.ok(stolen.includes('"ctrl+shift+space"'))
   assert.match(src, /召唤器（实验）…/)
   assert.match(src, /keyEquivalent: ""/)
+})
+
+test("picker rows mark stolen combos occupied and not selectable", () => {
+  const rows = summonerHotkeyPickerRows()
+  const occupied = rows.filter((r) => r.kind === "occupied")
+  const candidates = rows.filter((r) => r.kind === "candidate")
+  assert.equal(occupied.length, 3)
+  assert.ok(occupied.every((r) => r.selectable === false))
+  assert.ok(candidates.every((r) => r.selectable === true))
+  assert.deepEqual(occupied.map((r) => r.combo).sort(), [
+    "alt+space",
+    "cmd+space",
+    "ctrl+shift+space",
+  ])
+  assert.equal(acceptedSummonerHotkey("Cmd+Space"), null)
+  assert.equal(acceptedSummonerHotkey("ctrl+alt+space"), "ctrl+alt+space")
 })

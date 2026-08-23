@@ -14,6 +14,31 @@ export function browserUnavailableResult(): {
   }
 }
 
+/** Overlay CTA keys off top-level error_code; never drop it from chat.error. */
+export function toolChatErrorPayload(args: {
+  thread_id: string
+  error: string
+  error_code?: string
+  error_level?: string
+  suggested_action?: unknown
+}): {
+  type: "chat.error"
+  thread_id: string
+  error: string
+  error_code?: string
+  error_level?: string
+  suggested_action?: unknown
+} {
+  return {
+    type: "chat.error",
+    thread_id: args.thread_id,
+    error: args.error,
+    ...(args.error_code ? { error_code: args.error_code } : {}),
+    ...(args.error_level ? { error_level: args.error_level } : {}),
+    ...(args.suggested_action !== undefined ? { suggested_action: args.suggested_action } : {}),
+  }
+}
+
 export type L1ActuatorDeps = {
   getAuth: (ws: WebSocket) => { origin?: string; authenticated?: boolean } | undefined
   pickExtensionWs: () => WebSocket | null

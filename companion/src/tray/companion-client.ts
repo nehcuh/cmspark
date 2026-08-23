@@ -18,6 +18,11 @@ import * as crypto from "crypto"
 import WebSocket from "ws"
 import { QuickActionItem, RecentThreadItem } from "./tray-adapter"
 import { getOrCreateSharedSecret, AUTH_TIMEOUT_MS } from "../ws-auth"
+import {
+  claimOverlayLeaseCas,
+  releaseAllOverlayLeases,
+  releaseOverlayLeaseCas,
+} from "../ws/composer-lease"
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -340,22 +345,28 @@ export class CompanionClient {
   async claimOverlayComposerLease(threadId: string): Promise<void> {
     if (this._state !== "connected") return
     try {
-      const got = await this.sendRequest("composer.lease.get", { thread_id: threadId })
-      const rev = typeof got?.rev === "number" ? got.rev : 0
-      const claim = await this.sendRequest("composer.lease.claim", {
-        thread_id: threadId,
-        holder: "overlay",
-        rev,
-      })
-      if (claim?.error_code === "LEASE_REV_MISMATCH" && typeof claim.rev === "number") {
-        await this.sendRequest("composer.lease.claim", {
-          thread_id: threadId,
-          holder: "overlay",
-          rev: claim.rev,
-        })
-      }
+      await claimOverlayLeaseCas(threadId, (type, body) => this.sendRequest(type, body))
     } catch {
       // chat.create may still return OVERLAY_STANDBY; caller continues
+    }
+  }
+
+  async releaseOverlayComposerLease(threadId: string): Promise<void> {
+    if (this._state !== "connected") return
+    try {
+      await releaseOverlayLeaseCas(threadId, (type, body) => this.sendRequest(type, body))
+    } catch {
+      // close still must not abort chat
+    }
+  }
+
+  /** Close overlay: drop every overlay-held lease so Side Panel is not stuck on a leaked thread. */
+  async releaseAllOverlayComposerLeases(): Promise<void> {
+    if (this._state !== "connected") return
+    try {
+      await releaseAllOverlayLeases((type, body) => this.sendRequest(type, body))
+    } catch {
+      // close still must not abort chat
     }
   }
 

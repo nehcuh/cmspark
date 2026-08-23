@@ -889,11 +889,49 @@ describe("default companion_ui_exe_basenames", { concurrency: 1 }, () => {
     await resetConfigFile()
   })
 
-  test("first-run defaults include cmspark-tray (Swift tray overlay)", () => {
+  test("first-run defaults do not treat cmspark-tray as self-UI continue (S23)", () => {
     const names = getConfig().security.companion_ui_exe_basenames
-    assert.ok(
+    assert.equal(
       names.includes("cmspark-tray"),
-      `expected cmspark-tray in ${JSON.stringify(names)}`,
+      false,
+      `cmspark-tray must not be in ${JSON.stringify(names)}`,
     )
+    assert.ok(names.includes("chrome"), "browser side panel still recovers")
+  })
+
+  test("load strips cmspark-tray from persisted companion_ui_exe_basenames", () => {
+    const p = path.join(tempHome, "config.json")
+    const raw = JSON.parse(fs.readFileSync(p, "utf8"))
+    raw.security = raw.security || {}
+    raw.security.companion_ui_exe_basenames = ["chrome", "cmspark-tray", "cmspark-agent"]
+    fs.writeFileSync(p, JSON.stringify(raw))
+    clearConfigCache()
+    const names = getConfig().security.companion_ui_exe_basenames
+    assert.equal(names.includes("cmspark-tray"), false)
+    assert.ok(names.includes("chrome"))
+    assert.ok(names.includes("cmspark-agent"))
+  })
+
+  test("saveConfig strips cmspark-tray from companion_ui_exe_basenames", () => {
+    saveConfig({
+      security: { companion_ui_exe_basenames: ["chrome", "cmspark-tray", "cmspark-tray.exe"] },
+    } as any)
+    clearConfigCache()
+    const names = getConfig().security.companion_ui_exe_basenames
+    assert.equal(names.includes("cmspark-tray"), false)
+    assert.equal(names.some((n) => String(n).toLowerCase().replace(/\.exe$/, "") === "cmspark-tray"), false)
+    assert.ok(names.includes("chrome"))
+  })
+
+  test("saveConfig strips full-path cmspark-tray.exe", () => {
+    saveConfig({
+      security: {
+        companion_ui_exe_basenames: ["chrome", "C:\\\\Program Files\\\\CMspark\\\\cmspark-tray.exe"],
+      },
+    } as any)
+    clearConfigCache()
+    const names = getConfig().security.companion_ui_exe_basenames
+    assert.equal(names.some((n) => String(n).toLowerCase().includes("cmspark-tray")), false)
+    assert.ok(names.includes("chrome"))
   })
 })

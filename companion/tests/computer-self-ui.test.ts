@@ -41,18 +41,32 @@ test("null / empty never match", () => {
   assert.equal(isCompanionUiOwner("com.google.Chrome", []), false)
 })
 
-test("cmspark-tray (Swift tray overlay) is companion UI", () => {
-  // S23 / Task 12: summoner overlay lives in dist/cmspark-tray. When it
-  // becomes frontmost, FOREGROUND-YIELD must treat that as our UI (process-
-  // level; window-rect hit-test is P1). Empty allow-list still fail-closes.
-  assert.equal(isCompanionUiOwner("cmspark-tray", ALLOW), true)
+test("cmspark-tray is NOT process-level self-UI continue (S23 window-rect instead)", () => {
+  assert.equal(isCompanionUiOwner("cmspark-tray", ALLOW), false)
   assert.equal(
     isCompanionUiOwner("/Applications/CMspark.app/Contents/MacOS/cmspark-tray", ALLOW),
-    true,
+    false,
   )
   assert.equal(
     isCompanionUiOwner("C:\\Program Files\\CMspark\\cmspark-tray.exe", ALLOW),
-    true,
+    false,
   )
-  assert.equal(isCompanionUiOwner("cmspark-tray", []), false)
+})
+
+test("cmspark-tray never self-UI continues even if present on the allow-list", () => {
+  const allow = [...ALLOW, "cmspark-tray"]
+  assert.equal(isCompanionUiOwner("cmspark-tray", allow), false)
+  assert.equal(
+    isCompanionUiOwner("/Applications/CMspark.app/Contents/MacOS/cmspark-tray", allow),
+    false,
+  )
+  assert.equal(isCompanionUiOwner("C:\\Program Files\\CMspark\\cmspark-tray.exe", allow), false)
+  assert.equal(isCompanionUiOwner("chrome", allow), true)
+})
+
+test("Darwin bundle ids com.cmspark.agent/host never self-UI continue (S23 landmine)", () => {
+  const allow = [...ALLOW, "cmspark-agent", "com.cmspark.agent"]
+  assert.equal(isCompanionUiOwner("com.cmspark.agent", allow), false)
+  assert.equal(isCompanionUiOwner("com.cmspark.host", allow), false)
+  assert.equal(isCompanionUiOwner("com.google.Chrome", allow), true)
 })

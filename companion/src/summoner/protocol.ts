@@ -11,8 +11,8 @@
  * Plan: docs/superpowers/plans/2026-08-22-os-agent-shell-p0-spike.md Task 7
  */
 
-/** P0 search empty-state copy. Overlay title-search only — never message body. */
-export const SUMMONER_SEARCH_HINT = "P0 不搜正文" as const
+/** Title-search capability copy. Overlay never searches message body. */
+export const SUMMONER_SEARCH_HINT = "只搜标题，不搜正文" as const
 export type SummonerSearchHint = typeof SUMMONER_SEARCH_HINT
 
 export type SummonerBrowser = "attached" | "detached"
@@ -57,6 +57,9 @@ export type SummonerSettingsPayload = {
 export type SummonerSettingsCmd = { cmd: "summoner.settings" } & SummonerSettingsPayload
 export type SummonerToolCmd = { cmd: "summoner.tool"; name: string }
 export type SummonerMcpCmd = { cmd: "summoner.mcp"; names: string[] }
+export type SummonerHit = { id: string; title: string; when: string }
+export type SummonerHitsPayload = { hits: SummonerHit[] }
+export type SummonerHitsCmd = { cmd: "summoner.hits" } & SummonerHitsPayload
 
 export type SummonerOutboundCmd =
   | SummonerOpenCmd
@@ -71,6 +74,7 @@ export type SummonerOutboundCmd =
   | SummonerSettingsCmd
   | SummonerToolCmd
   | SummonerMcpCmd
+  | SummonerHitsCmd
 
 // ── Swift → Companion events ────────────────────────────────────────────────
 
@@ -78,6 +82,7 @@ export type SummonerReadyEvt = { type: "summoner.ready" }
 export type SummonerClosedEvt = { type: "summoner.closed" }
 export type SummonerSubmitEvt = { type: "summoner.submit"; thread_id: string; text: string }
 export type SummonerSearchEvt = { type: "summoner.search"; query: string }
+export type SummonerSelectEvt = { type: "summoner.select"; thread_id: string }
 export type SummonerAttachChromeEvt = { type: "summoner.attach_chrome"; foreground?: boolean }
 export type SummonerContinueEvt = { type: "summoner.continue" }
 export type SummonerHotkeyChosenEvt = { type: "summoner.hotkey.chosen"; combo: string }
@@ -94,6 +99,7 @@ export type SummonerInboundEvt =
   | SummonerClosedEvt
   | SummonerSubmitEvt
   | SummonerSearchEvt
+  | SummonerSelectEvt
   | SummonerAttachChromeEvt
   | SummonerContinueEvt
   | SummonerHotkeyChosenEvt
@@ -164,6 +170,14 @@ export function encodeSummonerSubmit(p: { thread_id: string; text: string }): Su
 
 export function encodeSummonerSearch(p: { query: string }): SummonerSearchEvt {
   return { type: "summoner.search", query: p.query }
+}
+
+export function encodeSummonerHits(p: SummonerHitsPayload): SummonerHitsCmd {
+  return { cmd: "summoner.hits", hits: p.hits }
+}
+
+export function encodeSummonerSelect(p: { thread_id: string }): SummonerSelectEvt {
+  return { type: "summoner.select", thread_id: p.thread_id }
 }
 
 export function encodeSummonerAttachChrome(p?: { foreground?: boolean }): SummonerAttachChromeEvt {
@@ -282,6 +296,16 @@ function isStringArray(v: unknown): v is string[] {
   return Array.isArray(v) && v.every((x) => typeof x === "string")
 }
 
+function isSummonerHit(v: unknown): v is SummonerHit {
+  if (!v || typeof v !== "object") return false
+  const o = v as Record<string, unknown>
+  return isString(o.id) && isString(o.title) && isString(o.when)
+}
+
+function isSummonerHitArray(v: unknown): v is SummonerHit[] {
+  return Array.isArray(v) && v.every(isSummonerHit)
+}
+
 function isBrowser(v: unknown): v is SummonerBrowser {
   return v === "attached" || v === "detached"
 }
@@ -347,6 +371,9 @@ export function decodeSummonerOutbound(raw: unknown): SummonerOutboundCmd | null
     case "summoner.mcp":
       if (!isStringArray(o.names)) return null
       return encodeSummonerMcp({ names: o.names })
+    case "summoner.hits":
+      if (!isSummonerHitArray(o.hits)) return null
+      return encodeSummonerHits({ hits: o.hits })
     default:
       return null
   }
@@ -373,6 +400,9 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
     case "summoner.search":
       if (!isString(o.query)) return null
       return encodeSummonerSearch({ query: o.query })
+    case "summoner.select":
+      if (!isString(o.thread_id) || !o.thread_id) return null
+      return encodeSummonerSelect({ thread_id: o.thread_id })
     case "summoner.attach_chrome":
       if (o.foreground !== undefined && typeof o.foreground !== "boolean") return null
       return encodeSummonerAttachChrome(o.foreground === true ? { foreground: true } : undefined)

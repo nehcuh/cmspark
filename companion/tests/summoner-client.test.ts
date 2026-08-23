@@ -13,6 +13,7 @@ import {
   ATTACH_NOTIFY_COPY,
   filterThreadsByTitle,
   mapChatMessageToSummonerCmd,
+  overlayAssistantSnapshot,
   mapVoiceSttToSummonerCmd,
   micWavToSttFrames,
   micWavTooShort,
@@ -22,6 +23,8 @@ import {
   buildContinueChatCreate,
   shouldStartNewSummonerThread,
   normalizeResumeIdleMinutes,
+  summonerBrowserBadge,
+  resolveSummonerOpenTarget,
 } from "../src/summoner/client"
 import { SUMMONER_SEARCH_HINT } from "../src/summoner/protocol"
 
@@ -63,7 +66,7 @@ test("ATTACH_NOTIFY_COPY tells the user we cannot open the side panel", () => {
 
 test("filterThreadsByTitle empty query returns the most recent thread", () => {
   const r = filterThreadsByTitle(THREADS, "")
-  assert.equal(r.searchHint, "P0 不搜正文")
+  assert.equal(r.searchHint, SUMMONER_SEARCH_HINT)
   assert.equal(r.searchHint, SUMMONER_SEARCH_HINT)
   assert.equal(r.matches.length, 1)
   assert.equal(r.matches[0].id, "new")
@@ -78,22 +81,31 @@ test("filterThreadsByTitle whitespace query is treated as empty (last thread)", 
 test("filterThreadsByTitle matches title or alias includes query", () => {
   const byTitle = filterThreadsByTitle(THREADS, "Browser")
   assert.deepEqual(byTitle.matches.map((t) => t.id), ["mid"])
-  assert.equal(byTitle.searchHint, "P0 不搜正文")
+  assert.equal(byTitle.searchHint, SUMMONER_SEARCH_HINT)
 
   const byAlias = filterThreadsByTitle(THREADS, "notes")
   assert.deepEqual(byAlias.matches.map((t) => t.id), ["old"])
 })
 
-test("filterThreadsByTitle empty-state copy is P0 不搜正文 even with no matches", () => {
+test("filterThreadsByTitle empty-state copy is title-only hint even with no matches", () => {
   const r = filterThreadsByTitle(THREADS, "zzzz-no-such")
   assert.deepEqual(r.matches, [])
-  assert.equal(r.searchHint, "P0 不搜正文")
+  assert.equal(r.searchHint, SUMMONER_SEARCH_HINT)
 })
 
 test("filterThreadsByTitle empty list + empty query yields no match + hint", () => {
   const r = filterThreadsByTitle([], "")
   assert.deepEqual(r.matches, [])
-  assert.equal(r.searchHint, "P0 不搜正文")
+  assert.equal(r.searchHint, SUMMONER_SEARCH_HINT)
+})
+
+test("overlayAssistantSnapshot replaces accumulated chat.token instead of concatenating", () => {
+  const a = overlayAssistantSnapshot([], "Hello")
+  assert.deepEqual(a, ["助手: Hello"])
+  const b = overlayAssistantSnapshot(a, "Hello world")
+  assert.deepEqual(b, ["助手: Hello world"])
+  const c = overlayAssistantSnapshot(["你: hi", "助手: He"], "Hello\n\n- item")
+  assert.deepEqual(c, ["你: hi", "助手: Hello\n\n- item"])
 })
 
 test("mapChatMessageToSummonerCmd: chat.token → summoner.token", () => {
@@ -277,17 +289,45 @@ test("shouldStartNewSummonerThread: 0 always new, -1 always resume, 10min idle",
     now: 10 * 60_000,
     lastActivityAt: 0,
     resumeIdleMinutes: 10,
-  }), false)
+  }), true)
   assert.equal(shouldStartNewSummonerThread({
-    now: 10 * 60_000 + 1,
+    now: 9 * 60_000,
     lastActivityAt: 0,
     resumeIdleMinutes: 10,
-  }), true)
+  }), false)
   assert.equal(shouldStartNewSummonerThread({
     now: 1,
     lastActivityAt: null,
     resumeIdleMinutes: 10,
-  }), true)
+  }), false)
+  assert.equal(shouldStartNewSummonerThread({
+    now: 1,
+    lastActivityAt: undefined,
+    resumeIdleMinutes: 10,
+  }), false)
+})
+
+test("resolveSummonerOpenTarget hydrates last or newest; create only if empty or forceNew", () => {
+  assert.deepEqual(
+    resolveSummonerOpenTarget({ forceNew: true, lastThreadId: "old", threads: THREADS }),
+    { action: "create" },
+  )
+  assert.deepEqual(
+    resolveSummonerOpenTarget({ forceNew: false, lastThreadId: "old", threads: THREADS }),
+    { action: "hydrate", threadId: "old" },
+  )
+  assert.deepEqual(
+    resolveSummonerOpenTarget({ forceNew: false, lastThreadId: "ghost", threads: THREADS }),
+    { action: "hydrate", threadId: "new" },
+  )
+  assert.deepEqual(
+    resolveSummonerOpenTarget({ forceNew: false, lastThreadId: null, threads: THREADS }),
+    { action: "hydrate", threadId: "new" },
+  )
+  assert.deepEqual(
+    resolveSummonerOpenTarget({ forceNew: false, lastThreadId: null, threads: [] }),
+    { action: "create" },
+  )
 })
 
 test("attachChromeOnly silent by default, foreground opt-in, never openSidePanel", () => {
@@ -334,4 +374,9 @@ test("CompanionClient.sendChatCreate is fire-and-forget (no sendRequest)", () =>
   const method = src.slice(start, next > start ? next : start + 280)
   assert.match(method, /sendAppMessage/)
   assert.doesNotMatch(method, /sendRequest/)
+})
+
+test("summonerBrowserBadge stays probing until hydrate known", () => {
+  assert.equal(summonerBrowserBadge({ known: false, attached: false }), "检测浏览器…")
+  assert.doesNotMatch(summonerBrowserBadge({ known: false, attached: false }), /未连接/)
 })

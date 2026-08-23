@@ -38,6 +38,25 @@ func jsonLine(_ dict: [String: Any]) {
   }
 }
 
+/// Quartz-top-left screen rect so S23 matches host.swift kCGWindowBounds.
+func emitCompanionUiRect(_ surface: String, window: NSWindow?) {
+  guard let window, window.isVisible else {
+    jsonLine(["type": "companion.ui.rect", "surface": surface, "hidden": true])
+    return
+  }
+  let f = window.frame
+  let screenH = (NSScreen.main ?? NSScreen.screens.first)?.frame.height ?? f.maxY
+  let yTop = screenH - f.maxY
+  jsonLine([
+    "type": "companion.ui.rect",
+    "surface": surface,
+    "x": f.origin.x,
+    "y": yTop,
+    "width": f.size.width,
+    "height": f.size.height,
+  ])
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -123,6 +142,7 @@ enum MenuTag: Int {
   case settings = 202
   case pairing = 203
   case summoner = 204
+  case summonerHotkey = 205
   case autostart = 300
   case quit = 999
   // Dynamic ranges
@@ -250,6 +270,11 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   summonerItem.tag = MenuTag.summoner.rawValue
   menu.addItem(summonerItem)
 
+  let summonerHotkeyItem = NSMenuItem(title: "召唤器快捷键…", action: action, keyEquivalent: "")
+  summonerHotkeyItem.target = target
+  summonerHotkeyItem.tag = MenuTag.summonerHotkey.rawValue
+  menu.addItem(summonerHotkeyItem)
+
   let chromeItem = NSMenuItem(title: "🌐 打开 Chrome", action: action, keyEquivalent: "c")
   chromeItem.target = target
   chromeItem.tag = MenuTag.chrome.rawValue
@@ -349,6 +374,9 @@ class TrayDelegate: NSObject {
     } else if tag == MenuTag.summoner.rawValue {
       // Overlay opens locally; stdout summoner.ready lets Node hydrate. Not a confirm surface.
       summonerController.open(threadId: "")
+    } else if tag == MenuTag.summonerHotkey.rawValue {
+      summonerController.open(threadId: "")
+      summonerController.showHotkeyPicker()
     } else if tag == MenuTag.settings.rawValue {
       jsonLine(["type": "click", "action": "settings"])
     } else if tag == MenuTag.autostart.rawValue {
@@ -573,6 +601,9 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
     let names = (json["names"] as? [String]) ?? []
     summonerController.applyMcp(names)
 
+  case "summoner.hits":
+    summonerController.applyHits(json)
+
   case "quit":
     delegate.shutdown()
     jsonLine(["type": "exit", "code": 0])
@@ -623,9 +654,11 @@ class PairingController: NSObject, NSWindowDelegate {
     window.center()
     window.makeKeyAndOrderFront(nil)
     window.orderFrontRegardless()
+    emitCompanionUiRect("pairing", window: window)
   }
 
   func windowWillClose(_ notification: Notification) {
+    emitCompanionUiRect("pairing", window: nil)
     // Drop floating level and return to menu-bar agent policy so we don't steal
     // Dock space after the user dismisses the pairing window.
     if let window = notification.object as? NSWindow {
@@ -831,6 +864,7 @@ class ConfirmController: NSObject {
     window.center()
     window.makeKeyAndOrderFront(nil)
     window.orderFrontRegardless()
+    emitCompanionUiRect("tray", window: window)
   }
 
   /// Companion resolved the confirmation elsewhere (Side Panel / disconnect).
@@ -839,6 +873,7 @@ class ConfirmController: NSObject {
     guard id == pendingId else { return }
     cleanup()
     window?.close()
+    emitCompanionUiRect("tray", window: nil)
   }
 
   private func updateCountdown() {
@@ -1017,6 +1052,7 @@ class HudController: NSObject {
     window.orderFrontRegardless()
     startHeartbeat()
     jsonLine(["type": "hud.ready"])
+    emitCompanionUiRect("hud", window: window)
   }
 
   func applyHydrate(_ json: [String: Any]) {
@@ -1101,6 +1137,7 @@ class HudController: NSObject {
     stopHeartbeat()
     window?.orderOut(nil)
     jsonLine(["type": "hud.closed", "reason": reason])
+    emitCompanionUiRect("hud", window: nil)
     // N4: do not terminate NSApplication
   }
 
@@ -1291,6 +1328,18 @@ let summonerHotKeyCandidates: [SummonerHotKeyCandidate] = [
   SummonerHotKeyCandidate(combo: "ctrl+alt+cmd+period", label: "⌃⌥⌘.", keyCode: 0x2F, mods: UInt32(controlKey | optionKey | cmdKey)),
 ]
 
+struct SummonerHotKeyStolen {
+  let combo: String
+  let label: String
+  let occupiedBy: String
+}
+
+let summonerHotKeyStolen: [SummonerHotKeyStolen] = [
+  SummonerHotKeyStolen(combo: "cmd+space", label: "⌘Space / Cmd+Space", occupiedBy: "Spotlight"),
+  SummonerHotKeyStolen(combo: "alt+space", label: "⌥Space / Alt+Space", occupiedBy: "Raycast / uTools"),
+  SummonerHotKeyStolen(combo: "ctrl+shift+space", label: "⌃⇧Space", occupiedBy: "输入法"),
+]
+
 let summonerHotKeyStolenCopy =
   "已占用（不可选）：⌘Space Spotlight · ⌥Space / Alt+Space Raycast/uTools · ⌃⇧Space 输入法"
 
@@ -1363,7 +1412,7 @@ func handleSummonerHotKeyPressed() {
 // ---------------------------------------------------------------------------
 // SummonerController — P0 capture overlay (same process as tray; third window).
 // Lazy NSPanel (.nonactivatingPanel + .floating). Close ≠ chat.abort.
-// Look: two-phase capture + 看山 white tokens. Transcript is role bubbles + markdown.
+// Look: two-phase capture + 看山 white tokens. Transcript is plaintext 你: / 助手: lines, not bubbles.
 // Overlay is capture-only — not an L2 gate surface.
 // ---------------------------------------------------------------------------
 
@@ -1384,9 +1433,10 @@ enum SummonerTokens {
 }
 
 private let summonerWindowTitle = "CMspark 召唤器（实验）"
-private let summonerTalkPlaceholder = "说点什么，或按住说话…"
-private let summonerTalkHint = "回车发送到当前线程 · 输入 # 搜标题 · 不搜文件"
+private let summonerTalkPlaceholder = "说点什么，按回车发送…"
+private let summonerTalkHint = "回车发送到当前线程，输入 # 搜标题"
 private let summonerCtaCopy = "我们不能替你打开侧栏。可激活 Google Chrome，然后点工具栏 CMspark（没有就拼图 🧩 钉上）。"
+private let summonerDetachedInfo = "浏览器未连接 · 网页操作请点工具栏图标（不能替你打开侧栏）"
 
 private func wavFromPcmS16le(_ pcm: Data, sampleRate: Int, channels: Int) -> Data {
   var d = Data()
@@ -1501,6 +1551,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var isOpen = false
   private var threadId: String = ""
   private var browserAttached = false
+  private var browserKnown = false
   private var sawBrowserUnavailable = false
   private var lines: [String] = []
   private var streamingAssistant = false
@@ -1508,6 +1559,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var hits: [RecentThread] = []
   private var selectedHit = 0
   private var searchTimer: Timer?
+  private var streamRenderTimer: Timer?
   private var hotkeyConfigured = false
 
   private var badgeField: NSTextField?
@@ -1517,10 +1569,9 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var composer: NSTextView?
   private var hitsStack: NSStackView?
   private var logBox: NSView?
-  private var logStack: NSStackView?
+  private var logView: NSTextView?
   private var logScroll: NSScrollView?
   private var logHeightConstraint: NSLayoutConstraint?
-  private var streamingField: NSTextField?
   private var ctaBox: NSView?
   private var ctaLabel: NSTextField?
   private var attachButton: NSButton?
@@ -1555,7 +1606,6 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     if window == nil { window = makeWindow() }
     guard let window = window else { return }
     isOpen = true
-    if !hotkeyConfigured { showHotkeyPicker() }
     applyPhase()
     NSApp.activate(ignoringOtherApps: true)
     window.center()
@@ -1563,60 +1613,77 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     window.orderFrontRegardless()
     window.makeFirstResponder(composer)
     jsonLine(["type": "summoner.ready"])
+    emitCompanionUiRect("overlay", window: window)
   }
 
   func hide() {
+    searchTimer?.invalidate()
+    searchTimer = nil
     window?.orderOut(nil)
+    emitCompanionUiRect("overlay", window: nil)
     emitClosedIfOpen()
   }
 
   func applyHydrate(_ json: [String: Any]) {
+    guard isOpen else { return }
     if let tid = json["thread_id"] as? String {
       threadId = tid
     }
     if let rawLines = json["lines"] as? [String] {
-      lines = Array(rawLines.suffix(40))
+      lines = Array(rawLines.suffix(20))
     }
     let browser = (json["browser"] as? String) ?? "detached"
     browserAttached = (browser == "attached")
+    browserKnown = true
     streamingAssistant = false
     applyPhase()
-    if window?.isVisible != true {
-      open(threadId: threadId)
-    } else {
+    if window?.isVisible == true {
       window?.makeFirstResponder(composer)
     }
   }
 
   func appendToken(_ text: String) {
     if text.isEmpty { return }
-    if streamingAssistant, let last = lines.last, last.hasPrefix("助手") {
-      lines[lines.count - 1] = last + text
-      capLines()
-      patchStreamingBubble(dropLogPrefix(lines.last ?? ""), markdown: false)
-      return
+    // chat.token.content is a full snapshot, not a delta.
+    let rendered = "助手: " + text
+    let first = !(streamingAssistant && (lines.last?.hasPrefix("助手:") == true))
+    if !first {
+      lines[lines.count - 1] = rendered
+    } else {
+      lines.append(rendered)
+      streamingAssistant = true
     }
-    lines.append("助手　" + text)
-    streamingAssistant = true
     capLines()
-    appendStreamingBubble(lines.last ?? "")
+    if first {
+      refreshLog()
+    } else {
+      scheduleStreamRender()
+    }
   }
 
   func markDone() {
+    streamRenderTimer?.invalidate()
+    streamRenderTimer = nil
     streamingAssistant = false
-    if let last = lines.last, last.hasPrefix("助手") {
-      patchStreamingBubble(dropLogPrefix(last), markdown: true)
+    refreshLog()
+  }
+
+  private func scheduleStreamRender() {
+    if streamRenderTimer != nil { return }
+    streamRenderTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
+      self?.streamRenderTimer = nil
+      self?.refreshLog()
     }
-    streamingField = nil
   }
 
   func appendTool(_ name: String) {
     let label = name.isEmpty ? "工具" : name
+    streamRenderTimer?.invalidate()
+    streamRenderTimer = nil
     streamingAssistant = false
-    streamingField = nil
     lines.append("[工具] \(label)")
     capLines()
-    appendStreamingBubble(lines.last ?? "")
+    refreshLog()
   }
 
   func applyMcp(_ names: [String]) {
@@ -1625,20 +1692,23 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     } else {
       mcpField?.stringValue = "MCP · " + names.joined(separator: "、")
     }
-    mcpField?.isHidden = false
+    mcpField?.isHidden = true
     relayout()
   }
 
   func applyError(message: String, errorCode: String?) {
+    streamRenderTimer?.invalidate()
+    streamRenderTimer = nil
     streamingAssistant = false
     let code = errorCode ?? ""
     if code == "BROWSER_UNAVAILABLE" {
       sawBrowserUnavailable = true
       browserAttached = false
-      lines.append("系统　BROWSER_UNAVAILABLE")
+      browserKnown = true
+      lines.append("系统: BROWSER_UNAVAILABLE")
     } else {
       let shown = message.isEmpty ? (code.isEmpty ? "出错了" : code) : message
-      lines.append("系统　\(shown)")
+      lines.append("系统: \(shown)")
     }
     capLines()
     applyPhase()
@@ -1656,6 +1726,13 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   func showHotkeyPicker() {
     if window == nil { window = makeWindow() }
     pickerBox?.isHidden = false
+    relayout()
+  }
+
+  func toggleHotkeyPicker() {
+    if window == nil { window = makeWindow() }
+    let hidden = pickerBox?.isHidden ?? true
+    pickerBox?.isHidden = !hidden
     relayout()
   }
 
@@ -1678,8 +1755,13 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     chooseHotkey(combo)
   }
 
+  @objc func hotkeyEntryClicked(_ sender: NSButton) {
+    toggleHotkeyPicker()
+  }
+
   private func chooseHotkey(_ combo: String) {
     guard summonerHotKeyCandidates.contains(where: { $0.combo == combo }) else { return }
+    if summonerHotKeyStolen.contains(where: { $0.combo == combo }) { return }
     _ = registerSummonerHotKey(combo: combo)
     jsonLine(["type": "summoner.hotkey.chosen", "combo": combo])
     noteHotkeyConfigured()
@@ -1687,6 +1769,14 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
 
   @objc func windowWillClose(_ notification: Notification) {
     emitClosedIfOpen()
+  }
+
+  func windowDidMove(_ notification: Notification) {
+    if isOpen { emitCompanionUiRect("overlay", window: window) }
+  }
+
+  func windowDidResize(_ notification: Notification) {
+    if isOpen { emitCompanionUiRect("overlay", window: window) }
   }
 
   private func emitClosedIfOpen() {
@@ -1697,8 +1787,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   private func capLines() {
-    if lines.count > 40 {
-      lines = Array(lines.suffix(40))
+    if lines.count > 20 {
+      lines = Array(lines.suffix(20))
     }
   }
 
@@ -1756,8 +1846,6 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
         if !hits.isEmpty {
           let i = min(max(0, selectedHit), hits.count - 1)
           selectThread(hits[i])
-        } else {
-          submitComposer()
         }
         return true
       }
@@ -1772,6 +1860,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   private func emitSearch() {
+    guard isOpen else { return }
     jsonLine(["type": "summoner.search", "query": searchNeedle(composerText)])
   }
 
@@ -1789,13 +1878,28 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     updatePlaceholder()
     applyPhase()
     window?.makeFirstResponder(composer)
+    jsonLine(["type": "summoner.select", "thread_id": thread.id])
+  }
+
+  func applyHits(_ json: [String: Any]) {
+    let raw = json["hits"] as? [[String: Any]] ?? []
+    hits = raw.compactMap { row in
+      guard let id = row["id"] as? String, let title = row["title"] as? String, !id.isEmpty else { return nil }
+      let when = row["when"] as? String ?? ""
+      let day = when.count >= 10 ? String(when.prefix(10)) : when
+      let label = day.isEmpty ? title : "\(title)  \(day)"
+      return RecentThread(id: id, title: label)
+    }
+    selectedHit = 0
+    refreshHits(filterAgain: false)
+    relayout()
   }
 
   private func submitComposer() {
     let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return }
     if composer?.hasMarkedText() == true { return }
-    lines.append("你　\(text)")
+    lines.append("你: \(text)")
     capLines()
     refreshLog()
     composer?.string = ""
@@ -1932,15 +2036,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
 
   private func refreshHits(filterAgain: Bool = true) {
     if filterAgain {
-      if !isSearchQuery(composerText) {
+      if !isSearchQuery(composerText) || searchNeedle(composerText).isEmpty {
         hits = []
-      } else {
-        let q = searchNeedle(composerText)
-        if q.isEmpty {
-          hits = []
-        } else {
-          hits = recentThreads.filter { $0.title.contains(q) }
-        }
       }
       if selectedHit >= hits.count { selectedHit = 0 }
     }
@@ -1970,61 +2067,38 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   private func refreshLog() {
-    guard let stack = logStack else { return }
-    CATransaction.begin()
-    CATransaction.setDisableActions(true)
-    streamingField = nil
-    while let v = stack.arrangedSubviews.first {
-      stack.removeArrangedSubview(v)
-      v.removeFromSuperview()
-    }
+    guard let tv = logView else { return }
+    let out = NSMutableAttributedString()
     for (i, line) in lines.enumerated() {
-      let streaming = streamingAssistant && i == lines.count - 1 && line.hasPrefix("助手")
-      stack.addArrangedSubview(makeBubble(line, streaming: streaming))
+      let streaming = streamingAssistant && i == lines.count - 1 && line.hasPrefix("助手:")
+      if streaming {
+        out.append(plainAttrs(line))
+      } else {
+        out.append(attributedLine(line))
+      }
+      if i < lines.count - 1 {
+        out.append(plainAttrs("\n\n"))
+      }
     }
-    CATransaction.commit()
+    tv.textStorage?.setAttributedString(out)
     logBox?.isHidden = lines.isEmpty
     maybeGrowLogHeight(resizeWindow: true)
     scrollLogToEnd()
   }
 
-  private func appendStreamingBubble(_ line: String) {
-    guard let stack = logStack else {
-      refreshLog()
-      return
-    }
-    CATransaction.begin()
-    CATransaction.setDisableActions(true)
-    stack.addArrangedSubview(makeBubble(line, streaming: true))
-    CATransaction.commit()
-    logBox?.isHidden = false
-    maybeGrowLogHeight(resizeWindow: true)
-    scrollLogToEnd()
-  }
-
-  private func patchStreamingBubble(_ body: String, markdown: Bool) {
-    guard let field = streamingField else {
-      refreshLog()
-      return
-    }
-    CATransaction.begin()
-    CATransaction.setDisableActions(true)
-    if markdown {
-      field.attributedStringValue = markdownAttributed(body, color: SummonerTokens.text)
-    } else {
-      field.stringValue = body
-      field.textColor = SummonerTokens.text
-      field.font = .systemFont(ofSize: 13)
-    }
-    CATransaction.commit()
-    maybeGrowLogHeight(resizeWindow: markdown)
-    scrollLogToEnd()
+  private func patchStreamingLine(_ body: String) {
+    guard let tv = logView else { return }
+    tv.string = lines.joined(separator: "\n")
+    logBox?.isHidden = lines.isEmpty
+    tv.scrollToEndOfDocument(nil)
   }
 
   private func maybeGrowLogHeight(resizeWindow: Bool) {
-    guard let stack = logStack else { return }
-    stack.layoutSubtreeIfNeeded()
-    let target = min(320, max(180, stack.fittingSize.height + 16))
+    guard let tv = logView, let container = tv.textContainer, let lm = tv.layoutManager else { return }
+    lm.ensureLayout(for: container)
+    let used = lm.usedRect(for: container).height + 24
+    let estimated = max(used, CGFloat(max(1, lines.count)) * 20 + 16)
+    let target = min(360, max(180, estimated))
     let current = logHeightConstraint?.constant ?? 0
     if abs(current - target) >= 8 {
       logHeightConstraint?.constant = target
@@ -2033,103 +2107,59 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   private func scrollLogToEnd() {
-    guard let scroll = logScroll, let doc = scroll.documentView else { return }
-    let y = max(0, doc.frame.height - scroll.contentView.bounds.height)
-    scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
-    scroll.reflectScrolledClipView(scroll.contentView)
+    guard let tv = logView else { return }
+    tv.scrollToEndOfDocument(nil)
   }
 
-  private enum SummonerLogKind { case user, assistant, system, tool }
-
-  private func parseSummonerLogLine(_ line: String) -> (kind: SummonerLogKind, body: String, bg: NSColor, fg: NSColor) {
-    if line.hasPrefix("你:") || line.hasPrefix("你：") || line.hasPrefix("你　") {
-      return (.user, dropLogPrefix(line), SummonerTokens.indigoSoft, SummonerTokens.text)
-    }
-    if line.hasPrefix("助手:") || line.hasPrefix("助手：") || line.hasPrefix("助手　") {
-      return (.assistant, dropLogPrefix(line), NSColor.white, SummonerTokens.text)
-    }
-    if line.hasPrefix("系统") {
-      return (.system, dropLogPrefix(line), SummonerTokens.warnBg, SummonerTokens.warnFg)
-    }
-    if line.hasPrefix("[工具]") {
-      return (.tool, line, SummonerTokens.muted, SummonerTokens.secondary)
-    }
-    return (.assistant, line, SummonerTokens.muted, SummonerTokens.text)
-  }
-
-  private func dropLogPrefix(_ line: String) -> String {
-    if let idx = line.firstIndex(where: { $0 == ":" || $0 == "：" || $0 == "　" }) {
-      return String(line[line.index(after: idx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    return line
-  }
-
-  private func markdownAttributed(_ text: String, color: NSColor) -> NSAttributedString {
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    let fallback = NSAttributedString(string: trimmed, attributes: [
-      .font: NSFont.systemFont(ofSize: 13),
-      .foregroundColor: color,
+  private func plainAttrs(_ text: String) -> NSAttributedString {
+    let font = NSFont.systemFont(ofSize: 13)
+    return NSAttributedString(string: text, attributes: [
+      .font: font,
+      .foregroundColor: SummonerTokens.text,
     ])
-    guard !trimmed.isEmpty else { return fallback }
-    if #available(macOS 12.0, *) {
-      do {
-        return try NSAttributedString(markdown: trimmed, options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .full))
-      } catch {
-        return fallback
+  }
+
+  private func attributedLine(_ line: String) -> NSAttributedString {
+    let font = NSFont.systemFont(ofSize: 13)
+    if line.hasPrefix("系统") || line.hasPrefix("[工具]") {
+      return NSAttributedString(string: line, attributes: [
+        .font: font,
+        .foregroundColor: SummonerTokens.secondary,
+      ])
+    }
+    let prefix: String
+    if line.hasPrefix("你: ") {
+      prefix = "你: "
+    } else if line.hasPrefix("助手: ") {
+      prefix = "助手: "
+    } else {
+      prefix = ""
+    }
+    let body = prefix.isEmpty ? line : String(line.dropFirst(prefix.count))
+    let headColor = prefix == "你: " ? SummonerTokens.secondary : SummonerTokens.text
+    let out = NSMutableAttributedString(string: prefix, attributes: [
+      .font: font,
+      .foregroundColor: headColor,
+    ])
+    // CommonMark collapses a single \n to a space. Chat needs visible breaks.
+    let mdSource = body.replacingOccurrences(of: "\r\n", with: "\n")
+      .replacingOccurrences(of: "\n", with: "  \n")
+    let opts = AttributedString.MarkdownParsingOptions(
+      interpretedSyntax: .full
+    )
+    if let parsed = try? AttributedString(markdown: mdSource, options: opts) {
+      let md = NSMutableAttributedString(parsed)
+      if md.length > 0 {
+        md.addAttribute(.foregroundColor, value: SummonerTokens.text, range: NSRange(location: 0, length: md.length))
       }
+      out.append(md)
+      return out
     }
-    return fallback
-  }
-
-  private func makeBubble(_ line: String, streaming: Bool = false) -> NSView {
-    let parsed = parseSummonerLogLine(line)
-    let row = NSStackView()
-    row.orientation = .horizontal
-    row.alignment = .top
-    row.translatesAutoresizingMaskIntoConstraints = false
-    row.widthAnchor.constraint(equalToConstant: 372).isActive = true
-
-    let bubble = NSView()
-    bubble.translatesAutoresizingMaskIntoConstraints = false
-    bubble.wantsLayer = true
-    bubble.layer?.cornerRadius = 10
-    bubble.layer?.backgroundColor = parsed.bg.cgColor
-
-    let field = NSTextField(labelWithString: "")
-    field.translatesAutoresizingMaskIntoConstraints = false
-    field.allowsEditingTextAttributes = true
-    if streaming {
-      field.stringValue = parsed.body
-      field.textColor = parsed.fg
-      field.font = .systemFont(ofSize: 13)
-      streamingField = field
-    } else {
-      field.attributedStringValue = markdownAttributed(parsed.body, color: parsed.fg)
-    }
-    field.lineBreakMode = .byWordWrapping
-    field.maximumNumberOfLines = 0
-    field.preferredMaxLayoutWidth = parsed.kind == .user ? 260 : 300
-    field.drawsBackground = false
-    bubble.addSubview(field)
-    NSLayoutConstraint.activate([
-      field.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 6),
-      field.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -6),
-      field.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 8),
-      field.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -8),
-      bubble.widthAnchor.constraint(lessThanOrEqualToConstant: parsed.kind == .user ? 280 : 320),
-    ])
-
-    let spacer = NSView()
-    spacer.translatesAutoresizingMaskIntoConstraints = false
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    if parsed.kind == .user {
-      row.addArrangedSubview(spacer)
-      row.addArrangedSubview(bubble)
-    } else {
-      row.addArrangedSubview(bubble)
-      row.addArrangedSubview(spacer)
-    }
-    return row
+    out.append(NSAttributedString(string: body, attributes: [
+      .font: font,
+      .foregroundColor: SummonerTokens.text,
+    ]))
+    return out
   }
 
   private func lastThreadCaption() -> String? {
@@ -2165,14 +2195,22 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private func applyPhase() {
     let searching = isSearchQuery(composerText)
     let hasTranscript = !lines.isEmpty || !threadId.isEmpty
-    let detached = !browserAttached
+    let detached = browserKnown && !browserAttached
 
-    badgeField?.stringValue = browserAttached ? "浏览器已连接" : "浏览器未连接"
+    if !browserKnown {
+      badgeField?.stringValue = "检测浏览器…"
+    } else {
+      badgeField?.stringValue = browserAttached ? "浏览器已连接" : "浏览器未连接"
+    }
     if let badge = badgeField {
       badge.wantsLayer = true
       badge.layer?.cornerRadius = 999
       badge.layer?.masksToBounds = true
-      if browserAttached {
+      if !browserKnown {
+        badge.backgroundColor = SummonerTokens.muted
+        badge.textColor = SummonerTokens.secondary
+        badge.layer?.borderColor = NSColor(white: 0.09, alpha: 0.10).cgColor
+      } else if browserAttached {
         badge.backgroundColor = SummonerTokens.okBg
         badge.textColor = SummonerTokens.okFg
         badge.layer?.borderColor = SummonerTokens.okBorder.cgColor
@@ -2183,7 +2221,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       }
     }
 
-    hintField?.stringValue = summonerTalkHint
+    hintField?.stringValue = searching ? "只搜标题，不搜正文" : summonerTalkHint
 
     if searching {
       refreshHits()
@@ -2193,13 +2231,20 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     }
     logBox?.isHidden = !hasTranscript
     refreshLog()
-    ctaBox?.isHidden = !(detached && hasTranscript)
-    attachButton?.isHidden = !(detached && hasTranscript)
-    silentAttachButton?.isHidden = !(detached && hasTranscript)
-    footRow?.isHidden = false
+    ctaBox?.isHidden = true
+    attachButton?.isHidden = true
+    silentAttachButton?.isHidden = true
+    footRow?.isHidden = searching
     sendButton?.isHidden = false
     continueButton?.isHidden = !(hasTranscript && browserAttached && sawBrowserUnavailable)
-    sideNote?.isHidden = !hasTranscript
+    if detached {
+      sideNote?.stringValue = summonerDetachedInfo
+      sideNote?.isHidden = searching
+    } else {
+      sideNote?.stringValue = "完整格式在侧栏"
+      sideNote?.isHidden = searching || !hasTranscript
+    }
+    micButton?.isHidden = true
     updateLastThreadLabel()
     updatePlaceholder()
     relayout()
@@ -2208,16 +2253,17 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private func relayout() {
     guard let window = window else { return }
     var h: CGFloat = 108
-    if pickerBox?.isHidden == false { h += 248 }
+    if pickerBox?.isHidden == false { h += 310 }
     if settingsBox?.isHidden == false { h += 118 }
     if lastThreadField?.isHidden == false { h += 18 }
     if mcpField?.isHidden == false { h += 18 }
     if hitsStack?.isHidden == false { h += 8 + CGFloat(min(hits.count, 6)) * 36 }
     if logBox?.isHidden == false { h += (logHeightConstraint?.constant ?? 220) + 8 }
-    if ctaBox?.isHidden == false { h += 140 }
+    if ctaBox?.isHidden == false { h += 36 }
     if footRow?.isHidden == false { h += 48 }
     if sideNote?.isHidden == false { h += 22 }
     window.setContentSize(NSSize(width: 420, height: max(140, h)))
+    if isOpen { emitCompanionUiRect("overlay", window: window) }
   }
 
   private func makeWindow() -> NSPanel? {
@@ -2246,7 +2292,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     header.orientation = .horizontal
     header.alignment = .centerY
     header.spacing = 8
-    let badge = NSTextField(labelWithString: "浏览器未连接")
+    let badge = NSTextField(labelWithString: "检测浏览器…")
     badge.font = .systemFont(ofSize: 11)
     badge.alignment = .center
     badge.drawsBackground = true
@@ -2273,22 +2319,17 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     newChat.contentTintColor = SummonerTokens.indigo
     newChat.toolTip = "开始一段新对话"
     newChat.keyEquivalent = ""
-    let exp = NSTextField(labelWithString: "召唤器 · 实验")
-    exp.font = .systemFont(ofSize: 11)
-    exp.textColor = SummonerTokens.faint
-    exp.alignment = .right
-    let settings = NSButton(title: "设置", target: self, action: #selector(settingsClicked))
-    settings.bezelStyle = .inline
-    settings.isBordered = false
-    settings.font = .systemFont(ofSize: 11, weight: .semibold)
-    settings.contentTintColor = SummonerTokens.secondary
-    settings.toolTip = "打开策略 · Chrome 前台/后台"
-    settings.keyEquivalent = ""
+    let hotkeyBtn = NSButton(title: "快捷键", target: self, action: #selector(hotkeyEntryClicked(_:)))
+    hotkeyBtn.bezelStyle = .inline
+    hotkeyBtn.isBordered = false
+    hotkeyBtn.font = .systemFont(ofSize: 11, weight: .medium)
+    hotkeyBtn.contentTintColor = SummonerTokens.secondary
+    hotkeyBtn.toolTip = "设置召唤器快捷键"
+    hotkeyBtn.keyEquivalent = ""
     header.addArrangedSubview(badgeWrap)
     header.addArrangedSubview(NSView())
-    header.addArrangedSubview(settings)
+    header.addArrangedSubview(hotkeyBtn)
     header.addArrangedSubview(newChat)
-    header.addArrangedSubview(exp)
     header.translatesAutoresizingMaskIntoConstraints = false
     header.widthAnchor.constraint(equalToConstant: 396).isActive = true
     stack.addArrangedSubview(header)
@@ -2307,11 +2348,11 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     pickerStack.spacing = 6
     pickerStack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
     pickerStack.translatesAutoresizingMaskIntoConstraints = false
-    let pickerTitle = NSTextField(labelWithString: "首次使用：选一个召唤热键")
+    let pickerTitle = NSTextField(labelWithString: "选一个召唤热键")
     pickerTitle.font = .systemFont(ofSize: 13, weight: .semibold)
     pickerTitle.textColor = SummonerTokens.text
     pickerStack.addArrangedSubview(pickerTitle)
-    let pickerHint = NSTextField(wrappingLabelWithString: "菜单「召唤器（实验）…」始终可用，不必等热键。")
+    let pickerHint = NSTextField(wrappingLabelWithString: "选完即关。菜单也可打开召唤器，不必等热键。")
     pickerHint.font = .systemFont(ofSize: 11)
     pickerHint.textColor = SummonerTokens.secondary
     pickerHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -2321,6 +2362,13 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     stolen.textColor = SummonerTokens.warnFg
     stolen.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     pickerStack.addArrangedSubview(stolen)
+    for occ in summonerHotKeyStolen {
+      let row = NSTextField(labelWithString: "\(occ.label) · 已被 \(occ.occupiedBy) 占用")
+      row.font = .systemFont(ofSize: 11)
+      row.textColor = SummonerTokens.faint
+      row.isSelectable = false
+      pickerStack.addArrangedSubview(row)
+    }
     for cand in summonerHotKeyCandidates {
       let btn = makePlainButton(title: cand.label, action: #selector(hotkeyCandidateClicked(_:)))
       btn.identifier = NSUserInterfaceItemIdentifier(cand.combo)
@@ -2451,7 +2499,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     mic.bezelStyle = .inline
     mic.isBordered = false
     mic.font = .systemFont(ofSize: 14)
-    mic.toolTip = "点一下开始，再点结束；也可按住说话"
+    mic.toolTip = "听写暂未开放"
     mic.keyEquivalent = ""
     mic.sendAction(on: [.leftMouseDown, .leftMouseUp])
     mic.translatesAutoresizingMaskIntoConstraints = false
@@ -2514,26 +2562,24 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     logBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
     logBox.isHidden = true
     self.logBox = logBox
-    let logScroll = NSScrollView()
+    let logScroll = NSTextView.scrollableTextView()
     logScroll.translatesAutoresizingMaskIntoConstraints = false
     logScroll.hasVerticalScroller = true
     logScroll.borderType = .noBorder
     logScroll.drawsBackground = false
     logScroll.autohidesScrollers = true
-    let logStack = NSStackView()
-    logStack.orientation = .vertical
-    logStack.alignment = .leading
-    logStack.spacing = 8
-    logStack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
-    logStack.translatesAutoresizingMaskIntoConstraints = false
-    logScroll.documentView = logStack
-    NSLayoutConstraint.activate([
-      logStack.topAnchor.constraint(equalTo: logScroll.contentView.topAnchor),
-      logStack.leadingAnchor.constraint(equalTo: logScroll.contentView.leadingAnchor),
-      logStack.trailingAnchor.constraint(equalTo: logScroll.contentView.trailingAnchor),
-      logStack.widthAnchor.constraint(equalTo: logScroll.contentView.widthAnchor),
-    ])
-    self.logStack = logStack
+    let logView = logScroll.documentView as! NSTextView
+    logView.isEditable = false
+    logView.isSelectable = true
+    logView.isRichText = true
+    logView.drawsBackground = false
+    logView.font = .systemFont(ofSize: 13)
+    logView.textColor = SummonerTokens.text
+    logView.textContainerInset = NSSize(width: 8, height: 8)
+    logView.isVerticallyResizable = true
+    logView.textContainer?.widthTracksTextView = true
+    logView.textContainer?.lineFragmentPadding = 4
+    self.logView = logView
     self.logScroll = logScroll
     logBox.addSubview(logScroll)
     NSLayoutConstraint.activate([

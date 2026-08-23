@@ -60,7 +60,7 @@ import { allowInboundLogEvent } from "../log-event-gate"
 import { pendingToolCalls, handleToolResult } from "./tool-forward"
 import { validateWsMessage } from "./validate"
 import { assertSummonerAllowed } from "./summoner-acl"
-import { stampCmsparkSurface } from "./composer-lease"
+import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 
 // ---------------------------------------------------------------------------
@@ -1350,6 +1350,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         clearTimeout(closedAuth.timer)
         wsAuth.delete(ws)
       }
+      broadcastOverlayLeasesOnSocketClose(closedAuth?.surface, (msg) => broadcastToClients(msg))
       // P0 CORR-02: abort in-flight LLM/tool loops owned by this panel
       try {
         const panelId = (ws as any).__cmsparkPanelId as string | undefined

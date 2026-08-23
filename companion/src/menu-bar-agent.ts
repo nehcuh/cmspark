@@ -27,8 +27,6 @@ import { OSASCRIPT_BIN } from "./process-path"
 import {
   attachChromeOnly,
   buildContinueChatCreate,
-  filterThreadsByTitle,
-  isSummonerSearchQuery,
   mapChatMessageToSummonerCmd,
   mapVoiceSttToSummonerCmd,
   micPcmStartFrame,
@@ -36,8 +34,9 @@ import {
   resolveSummonerSttModelId,
   sendMicWavToStt,
   shouldStartNewSummonerThread,
+  resolveSummonerOpenTarget,
+  summonerHitsFromQuery,
   submitSummonerTalk,
-  summonerSearchNeedle,
   type SummonerSttModelId,
   type VoiceSttFrame,
 } from "./summoner/client"
@@ -51,6 +50,14 @@ import {
 } from "./summoner/protocol"
 import { connectedMcpServerNames } from "./mcp/confirm-target"
 import { hydratePlaintext } from "./summoner/hydrate"
+import {
+  beginOverlaySession,
+  claimOverlayIfLive,
+  currentOverlaySession,
+  hydrateOverlayIfLive,
+  invalidateOverlaySession,
+  overlaySessionIsLive,
+} from "./summoner/overlay-session"
 import { acceptedSummonerHotkey, nextSummonerHotkeyCmd } from "./summoner/hotkey"
 
 // node-notifier does not ship TypeScript declarations
@@ -625,17 +632,28 @@ function pushSummonerSettings(): void {
   }))
 }
 
-async function hydrateSummonerThread(id: string): Promise<void> {
+async function hydrateSummonerThread(id: string, sessionToken?: number): Promise<boolean> {
   const client = summonerClient
-  if (!client) return
-  summonerThreadId = id
-  const messages = await client.selectThreadMessages(id)
-  trayInstance?.hydrateSummoner?.({
-    thread_id: id,
-    lines: hydratePlaintext(messages),
-    browser: summonerBrowserAttached() ? "attached" : "detached",
-    search_hint: SUMMONER_SEARCH_HINT,
+  if (!client) return false
+  const token = sessionToken ?? beginOverlaySession()
+  const result = await hydrateOverlayIfLive({
+    id,
+    token,
+    selectMessages: (tid) => client.selectThreadMessages(tid),
+    applyHydrate: (tid, messages) => {
+      trayInstance?.hydrateSummoner?.({
+        thread_id: tid,
+        lines: hydratePlaintext(messages),
+        browser: summonerBrowserAttached() ? "attached" : "detached",
+        search_hint: SUMMONER_SEARCH_HINT,
+      })
+    },
+    claimLease: (tid) => client.claimOverlayComposerLease(tid),
+    releaseAllLeases: () => client.releaseAllOverlayComposerLeases(),
   })
+  if (result !== "claimed") return false
+  summonerThreadId = id
+  return true
 }
 
 async function pushSummonerMcp(): Promise<void> {
@@ -651,21 +669,39 @@ async function pushSummonerMcp(): Promise<void> {
 }
 
 export async function handleSummonerReady(): Promise<void> {
+  const token = beginOverlaySession()
   syncSummonerHotkeyToTray()
   pushSummonerSettings()
   void pushSummonerMcp()
+  const client = summonerClient
   const s = readSummonerCfg()
-  const startNew = shouldStartNewSummonerThread({
+  const forceNew = shouldStartNewSummonerThread({
     now: Date.now(),
     lastActivityAt: typeof s.last_activity_at === "number" ? s.last_activity_at : null,
     resumeIdleMinutes: normalizeResumeIdleMinutes(s.resume_idle_minutes),
   })
-  if (startNew) {
-    await handleSummonerNewThread()
-  } else if (typeof s.last_thread_id === "string" && s.last_thread_id) {
-    await hydrateSummonerThread(s.last_thread_id)
+  const threads = (await client?.listThreads()) ?? []
+  const target = resolveSummonerOpenTarget({
+    forceNew,
+    lastThreadId: typeof s.last_thread_id === "string" ? s.last_thread_id : null,
+    threads,
+  })
+  if (target.action === "create") {
+    await handleSummonerNewThread(token)
+  } else {
+    await hydrateSummonerThread(target.threadId, token)
   }
-  touchSummonerActivity(summonerThreadId)
+  if (overlaySessionIsLive(currentOverlaySession()) && summonerThreadId) {
+    touchSummonerActivity(summonerThreadId)
+  }
+}
+
+export async function handleSummonerClosed(): Promise<void> {
+  invalidateOverlaySession()
+  summonerThreadId = null
+  const client = summonerClient
+  if (!client) return
+  await client.releaseAllOverlayComposerLeases()
 }
 
 /** Overlay attach CTA — Chrome only. Never openSidePanel (that copy lies). */
@@ -690,13 +726,20 @@ export function handleSummonerContinue(): boolean {
 export async function handleSummonerSubmit(thread_id: string, text: string): Promise<boolean> {
   const client = summonerClient
   if (!client) return false
+  const token = currentOverlaySession()
   const result = await submitSummonerTalk(thread_id, text, {
     listThreads: () => client.listThreads(),
     createThread: () => client.createThread(),
-    claimLease: (id) => client.claimOverlayComposerLease(id),
+    claimLease: (id) =>
+      claimOverlayIfLive({
+        token,
+        claim: () => client.claimOverlayComposerLease(id),
+        releaseAll: () => client.releaseAllOverlayComposerLeases(),
+      }),
     sendChatCreate: (args) => client.sendChatCreate(args),
     selectMessages: (id) => client.selectThreadMessages(id),
     hydrate: ({ thread_id: id, messages }) => {
+      if (!overlaySessionIsLive(token)) return
       summonerThreadId = id
       const prior = messages as Array<{
         role: string
@@ -720,7 +763,7 @@ export async function handleSummonerSubmit(thread_id: string, text: string): Pro
       })
     },
   })
-  if (result.threadId) {
+  if (result.ok && result.threadId) {
     summonerThreadId = result.threadId
     touchSummonerActivity(result.threadId)
   }
@@ -728,13 +771,21 @@ export async function handleSummonerSubmit(thread_id: string, text: string): Pro
 }
 
 export async function handleSummonerSearch(query: string) {
-  const needle = isSummonerSearchQuery(query) ? summonerSearchNeedle(query) : query
   const threads = (await summonerClient?.listThreads()) ?? []
-  const result = filterThreadsByTitle(threads, needle)
-  if (result.matches.length === 1) {
-    summonerThreadId = result.matches[0].id
+  const cmd = summonerHitsFromQuery(threads, query)
+  trayInstance?.sendSummoner?.(cmd)
+  if (cmd.hits.length === 1) {
+    const claimed = await hydrateSummonerThread(cmd.hits[0].id)
+    if (claimed) touchSummonerActivity(cmd.hits[0].id)
   }
-  return result
+  return cmd
+}
+
+export async function handleSummonerSelect(threadId: string): Promise<void> {
+  const id = threadId.trim()
+  if (!id) return
+  const claimed = await hydrateSummonerThread(id)
+  if (claimed) touchSummonerActivity(id)
 }
 
 export function setSummonerThreadId(id: string | null): void {
@@ -918,23 +969,33 @@ export function handleSummonerMic(
   }
 }
 
-export async function handleSummonerNewThread(): Promise<boolean> {
+export async function handleSummonerNewThread(sessionToken?: number): Promise<boolean> {
   const client = summonerClient
   if (!client) return false
+  const token = sessionToken ?? beginOverlaySession()
   const created = await client.createThread()
   if (!created) {
     trayInstance?.sendSummoner?.(encodeSummonerError({ message: "无法创建新对话" }))
     return false
   }
-  summonerThreadId = created.id
-  touchSummonerActivity(created.id)
-  trayInstance?.hydrateSummoner?.({
-    thread_id: created.id,
-    lines: [],
-    browser: summonerBrowserAttached() ? "attached" : "detached",
-    search_hint: SUMMONER_SEARCH_HINT,
+  const claimed = await claimOverlayIfLive({
+    token,
+    claim: async () => {
+      trayInstance?.hydrateSummoner?.({
+        thread_id: created.id,
+        lines: [],
+        browser: summonerBrowserAttached() ? "attached" : "detached",
+        search_hint: SUMMONER_SEARCH_HINT,
+      })
+      await client.claimOverlayComposerLease(created.id)
+    },
+    releaseAll: () => client.releaseAllOverlayComposerLeases(),
   })
-  return true
+  if (claimed) {
+    summonerThreadId = created.id
+    touchSummonerActivity(created.id)
+  }
+  return claimed
 }
 
 export function handleSummonerInbound(evt: SummonerInboundEvt): void {
@@ -944,6 +1005,9 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       return
     case "summoner.search":
       void handleSummonerSearch(evt.query)
+      return
+    case "summoner.select":
+      void handleSummonerSelect(evt.thread_id)
       return
     case "summoner.attach_chrome":
       handleSummonerAttach(evt.foreground === true)
@@ -974,6 +1038,8 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       void handleSummonerNewThread()
       return
     case "summoner.closed":
+      void handleSummonerClosed()
+      return
     case "summoner.composing":
       return
   }
@@ -1161,6 +1227,16 @@ export async function startMenuBarAgent(): Promise<void> {
           handleSummonerInbound(evt)
         } catch (err) {
           console.error("[menu-bar] summoner event error:", err)
+        }
+      })
+
+      trayInstance.onCompanionUiRect?.((raw) => {
+        try {
+          if (!raw || typeof raw !== "object") return
+          const o = raw as Record<string, unknown>
+          summonerClient?.sendAppMessage("companion.ui.rect", o)
+        } catch (err) {
+          console.error("[menu-bar] companion.ui.rect forward error:", err)
         }
       })
 

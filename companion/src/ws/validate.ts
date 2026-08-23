@@ -77,6 +77,13 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "composer.lease.release_overlay": () => ({ valid: true }),
+    "companion.ui.rect": (m) => {
+      if (typeof m.surface !== "string" || !m.surface) {
+        return { valid: false, error: "companion.ui.rect requires surface" }
+      }
+      return { valid: true }
+    },
     "thread.create": (m) => {
       if (m.alias !== undefined && typeof m.alias !== "string") return { valid: false, error: "alias must be a string" }
       if (m.id !== undefined && typeof m.id !== "string") return { valid: false, error: "id must be a string" }

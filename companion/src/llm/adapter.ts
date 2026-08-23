@@ -7,6 +7,7 @@ import type { HistoryStore } from "../history/store"
 import { getToolDefinitions, getMcpMetaToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
 import { tryParseToolArgs } from "../bridge/tool-schemas"
 import { classifyError } from "../security"
+import { toolChatErrorPayload } from "../ws/l1-actuator"
 import { logger } from "../logger"
 import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
 import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
@@ -1449,13 +1450,18 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             if (errorLevel === "security" || errorLevel === "non_recoverable") {
               shouldStop = true
               const { formatChatErrorLine } = await import("../capability/user-gate-copy")
-              sendToExtension({
-                type: "chat.error",
+              const code =
+                (toolResult as { error_code?: string }).error_code ||
+                (typeof (toolResult as { data?: { error_code?: string } }).data?.error_code === "string"
+                  ? (toolResult as { data?: { error_code?: string } }).data?.error_code
+                  : undefined)
+              sendToExtension(toolChatErrorPayload({
                 thread_id: threadId,
                 error: formatChatErrorLine(errorLevel, toolResult.error || ""),
+                error_code: code,
                 error_level: errorLevel,
                 suggested_action: (toolResult as any)?.data?.suggested_action,
-              })
+              }))
               break
             }
 

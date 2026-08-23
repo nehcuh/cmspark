@@ -15,21 +15,21 @@ test("overlayStandbyFromError: error_code OVERLAY_STANDBY with overlay holder", 
     error: "OVERLAY_STANDBY: composer is on the other surface",
     data: { error_code: "OVERLAY_STANDBY", holder: "overlay" },
   })
-  assert.deepEqual(got, { standby: true, label: "正在召唤器输入" })
+  assert.deepEqual(got, { standby: true, label: "这边暂时打不了字，正在召唤器里说" })
 })
 
 test("overlayStandbyFromError: holder panel names the Side Panel", () => {
   const got = overlayStandbyFromError({
     data: { error_code: "OVERLAY_STANDBY", holder: "panel" },
   })
-  assert.deepEqual(got, { standby: true, label: "正在侧栏输入" })
+  assert.deepEqual(got, { standby: true, label: "这边暂时打不了字，正在侧栏里说" })
 })
 
 test("overlayStandbyFromError: error string prefix without data still standbys (overlay default)", () => {
   const got = overlayStandbyFromError({
     error: "OVERLAY_STANDBY: composer is on the other surface",
   })
-  assert.deepEqual(got, { standby: true, label: "正在召唤器输入" })
+  assert.deepEqual(got, { standby: true, label: "这边暂时打不了字，正在召唤器里说" })
 })
 
 test("overlayStandbyFromError: other chat.error is not standby", () => {
@@ -46,16 +46,16 @@ test("overlayStandbyFromError: null/empty payload is not standby", () => {
   assert.deepEqual(overlayStandbyFromError({}), { standby: false, label: "" })
 })
 
-function withStandby(label = "正在召唤器输入"): AgentState {
+function withStandby(label = "这边暂时打不了字，正在召唤器里说"): AgentState {
   return { ...initialState, overlayStandby: { label }, activeThreadId: "thread-a" }
 }
 
 test("SET_OVERLAY_STANDBY disables composer with holder label", () => {
   const next = agentReducer(initialState, {
     type: "SET_OVERLAY_STANDBY",
-    label: "正在召唤器输入",
+    label: "这边暂时打不了字，正在召唤器里说",
   })
-  assert.deepEqual(next.overlayStandby, { label: "正在召唤器输入" })
+  assert.deepEqual(next.overlayStandby, { label: "这边暂时打不了字，正在召唤器里说" })
 })
 
 test("CLEAR_OVERLAY_STANDBY re-enables composer", () => {
@@ -73,7 +73,7 @@ test("SET_ACTIVE_THREAD same id keeps overlay standby", () => {
   const base = withStandby()
   const next = agentReducer(base, { type: "SET_ACTIVE_THREAD", threadId: "thread-a" })
   assert.equal(next, base)
-  assert.deepEqual(next.overlayStandby, { label: "正在召唤器输入" })
+  assert.deepEqual(next.overlayStandby, { label: "这边暂时打不了字，正在召唤器里说" })
 })
 
 test("panel-origin ADD_MESSAGE (temp user id) clears overlay standby", () => {
@@ -103,7 +103,7 @@ test("assistant ADD_MESSAGE does not clear overlay standby", () => {
       created_at: "2026-08-22T00:00:00.000Z",
     },
   })
-  assert.deepEqual(next.overlayStandby, { label: "正在召唤器输入" })
+  assert.deepEqual(next.overlayStandby, { label: "这边暂时打不了字，正在召唤器里说" })
 })
 
 test("panel persist echo (client_message_id temp id) clears overlay standby", () => {
@@ -133,7 +133,7 @@ test("overlay-origin user ADD_MESSAGE (persisted id) keeps overlay standby", () 
       created_at: "2026-08-22T00:00:00.000Z",
     },
   })
-  assert.deepEqual(next.overlayStandby, { label: "正在召唤器输入" })
+  assert.deepEqual(next.overlayStandby, { label: "这边暂时打不了字，正在召唤器里说" })
   assert.equal(next.messages.length, 1)
 })
 
@@ -146,13 +146,13 @@ test("APPLY_COMPOSER_LEASE holder panel clears standby", () => {
   assert.equal(next.overlayStandby, null)
 })
 
-test("APPLY_COMPOSER_LEASE holder overlay sets 正在召唤器输入", () => {
+test("APPLY_COMPOSER_LEASE holder overlay sets summoner standby copy", () => {
   const next = agentReducer(initialState, {
     type: "APPLY_COMPOSER_LEASE",
     holder: "overlay",
     threadId: "thread-a",
   })
-  assert.deepEqual(next.overlayStandby, { label: "正在召唤器输入" })
+  assert.deepEqual(next.overlayStandby, { label: "这边暂时打不了字，正在召唤器里说" })
 })
 
 test("chat.error OVERLAY_STANDBY sets standby and skips error bubble", () => {

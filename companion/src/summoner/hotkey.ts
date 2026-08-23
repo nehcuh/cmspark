@@ -141,3 +141,31 @@ export function nextSummonerHotkeyCmd(hotkey: string | undefined | null): Summon
   if (accepted) return encodeSummonerHotkeySet({ combo: accepted })
   return encodeSummonerHotkeyPrompt()
 }
+
+
+export type SummonerHotkeyPickerRow =
+  | { kind: "occupied"; combo: string; label: string; occupiedBy: string; selectable: false }
+  | { kind: "candidate"; combo: string; label: string; selectable: true }
+
+/** First-open picker: stolen chords listed as occupied (not selectable), then candidates. */
+export function summonerHotkeyPickerRows(): SummonerHotkeyPickerRow[] {
+  return [
+    ...SUMMONER_HOTKEY_STOLEN.map((s) => ({
+      kind: "occupied" as const,
+      combo: s.combo,
+      label: s.label,
+      occupiedBy: s.occupiedBy,
+      selectable: false as const,
+    })),
+    ...SUMMONER_HOTKEY_CANDIDATES.map((c) => ({
+      kind: "candidate" as const,
+      combo: c.combo,
+      label: c.label,
+      selectable: true as const,
+    })),
+  ]
+}
+
+export function isOccupiedHotkeyRow(row: SummonerHotkeyPickerRow): boolean {
+  return row.selectable === false
+}

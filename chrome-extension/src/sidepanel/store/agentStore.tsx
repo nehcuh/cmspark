@@ -8,7 +8,9 @@ import { reduceComputerTaskEvent } from "../utils/computer-utils"
 export type OverlayStandbyFromError = { standby: boolean; label: string }
 
 export function overlayStandbyLabel(holder?: unknown): string {
-  return holder === "panel" ? "正在侧栏输入" : "正在召唤器输入"
+  return holder === "panel"
+    ? "这边暂时打不了字，正在侧栏里说"
+    : "这边暂时打不了字，正在召唤器里说"
 }
 
 /** Parse chat.error payload for overlay composer standby (P0 dual-open). */

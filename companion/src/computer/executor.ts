@@ -57,6 +57,7 @@ import {
   normalizeExePath,
 } from "./policy"
 import { isCompanionUiOwner } from "./self-ui"
+import { assertClickClearsCompanionUi } from "./companion-ui-rects"
 import { getComputerSessionTrust, reL2ShouldPrompt } from "./session-trust"
 import { maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
 import {
@@ -1366,10 +1367,19 @@ export async function runComputerTask(
       } else if (action.action === "key") {
         await deps.injector.keyChord(hwnd, action.keys.map((k) => k.toLowerCase()))
       } else if (action.action === "scroll") {
+        if (pointClient) {
+          assertClickClearsCompanionUi(infoLive.rect.x + pointClient.x, infoLive.rect.y + pointClient.y)
+        }
         await deps.injector.scroll(hwnd, pointClient!.x, pointClient!.y, action.delta)
       } else if (action.action === "drag") {
+        if (pointClient) {
+          assertClickClearsCompanionUi(infoLive.rect.x + pointClient.x, infoLive.rect.y + pointClient.y)
+        }
         await deps.injector.drag(hwnd, pointClient!.x, pointClient!.y, action.x2, action.y2)
       } else {
+        if (pointClient) {
+          assertClickClearsCompanionUi(infoLive.rect.x + pointClient.x, infoLive.rect.y + pointClient.y)
+        }
         await deps.injector.click(hwnd, pointClient!.x, pointClient!.y, action.action)
       }
       budget -= 1

@@ -73,8 +73,11 @@ import {
 import {
   gateChatCreateOnLease,
   handleComposerLeaseFamily,
+  shouldBroadcastLease,
   stripCmsparkSurface,
 } from "./ws/composer-lease"
+import { gateChatCreateOnConductor } from "./ws/l2-conductor"
+import { applyCompanionUiRectEvent } from "./computer/companion-ui-rects"
 // Residual extract: MCP redaction used by lifecycle
 export { redactMcpServersForBroadcast } from "./message-router/handlers/mcp"
 
@@ -302,6 +305,8 @@ export async function handleMessage(
       {
         const leaseErr = gateChatCreateOnLease(rest.thread_id, stampedSurface)
         if (leaseErr) return leaseErr
+        const conductorErr = gateChatCreateOnConductor(rest.thread_id, stampedSurface)
+        if (conductorErr) return conductorErr
       }
       const config = getConfig()
 
@@ -1030,11 +1035,46 @@ export async function handleMessage(
       return { type: "chat.aborted", thread_id: rest.thread_id }
     }
 
+    case "companion.ui.rect": {
+      applyCompanionUiRectEvent({ type: "companion.ui.rect", ...rest })
+      return { type: "companion.ui.rect.ok" }
+    }
+
     case "composer.lease.get":
     case "composer.lease.claim":
-    case "composer.lease.release": {
+    case "composer.lease.release":
+    case "composer.lease.release_overlay": {
       const leaseResult = handleComposerLeaseFamily(type, rest)
-      if (leaseResult !== null) return leaseResult
+      if (leaseResult !== null) {
+        if (shouldBroadcastLease(type, leaseResult)) {
+          if (leaseResult.type === "composer.lease.released") {
+            for (const sibling of leaseResult.released ?? []) {
+              session?.broadcast?.({
+                type: "composer.lease",
+                thread_id: sibling.thread_id,
+                holder: sibling.holder,
+                rev: sibling.rev,
+              })
+            }
+          } else {
+            session?.broadcast?.({
+              type: "composer.lease",
+              thread_id: leaseResult.thread_id,
+              holder: leaseResult.holder,
+              rev: leaseResult.rev,
+            })
+            for (const sibling of leaseResult.released_siblings ?? []) {
+              session?.broadcast?.({
+                type: "composer.lease",
+                thread_id: sibling.thread_id,
+                holder: sibling.holder,
+                rev: sibling.rev,
+              })
+            }
+          }
+        }
+        return leaseResult
+      }
       return { type: "error", error: `Unhandled composer.lease type: ${type}` }
     }
 
@@ -1062,6 +1102,12 @@ export async function handleMessage(
             data: { error_code: "thread_paused" },
           }
         }
+      }
+      {
+        const leaseErr = gateChatCreateOnLease(thread_id, stampedSurface)
+        if (leaseErr) return leaseErr
+        const conductorErr = gateChatCreateOnConductor(thread_id, stampedSurface)
+        if (conductorErr) return conductorErr
       }
 
       // Merge thread-level config_override with global config

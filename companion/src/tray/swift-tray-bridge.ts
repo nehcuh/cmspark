@@ -40,6 +40,7 @@ import {
   type HudConfirmResolvedPayload,
 } from "../hud/protocol"
 import type { HudShellRouter } from "../hud/shell-router"
+import { applyCompanionUiRectEvent } from "../computer/companion-ui-rects"
 import {
   encodeSummonerOpen,
   encodeSummonerHydrate,
@@ -54,8 +55,8 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-// Updated 2026-08-22 after summoner v2 talk + press-hold mic
-const SWIFT_TRAY_SHA256 = "267e24b256459ad0386a2054f710f672fd65994d81b0441437094dbbe310f483"
+// Updated 2026-08-23 after reject-fold rect IPC + search cancel
+const SWIFT_TRAY_SHA256 = "a88b5aa2fabf48ee4b0b00928ee7184286555afa8685bc7eedc98af6bcf402a0"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")
@@ -186,6 +187,7 @@ export class SwiftTrayAdapter implements UnifiedTray {
   private hudClosedCallback: ((reason: string) => void) | null = null
   private hudWindowOpen = false
   private summonerEventCallback: ((evt: SummonerInboundEvt) => void) | null = null
+  private companionUiRectCallback: ((raw: unknown) => void) | null = null
 
   // Cached state for auto-restart
   private lastStatus: { status: string; wsConnected: boolean; pid: number | null } = {
@@ -436,6 +438,10 @@ export class SwiftTrayAdapter implements UnifiedTray {
     this.summonerEventCallback = callback
   }
 
+  onCompanionUiRect(callback: (raw: unknown) => void): void {
+    this.companionUiRectCallback = callback
+  }
+
   async stop(): Promise<void> {
     this.shuttingDown = true
     this.kill()
@@ -531,6 +537,15 @@ export class SwiftTrayAdapter implements UnifiedTray {
             /* never break line loop */
           }
           // N4: close ≠ stop — do not kill process
+        }
+
+        try {
+          applyCompanionUiRectEvent(event)
+          if (event?.type === "companion.ui.rect") {
+            this.companionUiRectCallback?.(event)
+          }
+        } catch {
+          /* never break line loop */
         }
 
         const summonerEvt = decodeSummonerInbound(event)

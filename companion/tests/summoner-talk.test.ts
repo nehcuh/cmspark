@@ -113,6 +113,22 @@ test("submitSummonerTalk hydrates after resolve when hydrate is provided", async
   assert.deepEqual(hydrated?.messages, [{ role: "user", content: "prior" }])
 })
 
+test("submitSummonerTalk skips chat.create when claimLease returns false", async () => {
+  let sent = false
+  const r = await submitSummonerTalk("", "hello", {
+    listThreads: async () => THREADS,
+    createThread: async () => ({ id: "x" }),
+    claimLease: async () => false,
+    sendChatCreate: () => {
+      sent = true
+      return true
+    },
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.threadId, null)
+  assert.equal(sent, false)
+})
+
 test("submitSummonerTalk refuses blank text and does not create", async () => {
   let created = false
   const r = await submitSummonerTalk("", "   ", {
@@ -131,8 +147,9 @@ test("submitSummonerTalk refuses blank text and does not create", async () => {
 
 test("SummonerController v2 empty state talks, not title-search", () => {
   const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
-  assert.match(src, /说点什么，或按住说话…/)
-  assert.match(src, /回车发送到当前线程 · 输入 # 搜标题 · 不搜文件/)
+  assert.match(src, /说点什么/)
+  assert.doesNotMatch(src, /说点什么，或按住说话/)
+  assert.match(src, /回车发送到当前线程，输入 # 搜标题/)
   assert.match(src, /继续 · /)
   assert.doesNotMatch(src, /输入线程标题/)
   // Send stays visible in talk (including detached)
@@ -144,6 +161,38 @@ test("SummonerController v2 empty state talks, not title-search", () => {
   const submit = src.slice(src.indexOf("private func submitComposer()"), src.indexOf("@objc func sendClicked()"))
   assert.doesNotMatch(submit, /!threadId\.isEmpty/)
   assert.match(submit, /summoner\.submit/)
+})
+
+test("SummonerController placeholder does not advertise hidden press-to-talk", () => {
+  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const line = src.split("\n").find((l) => l.includes("summonerTalkPlaceholder"))
+  assert.ok(line, "summonerTalkPlaceholder missing")
+  assert.doesNotMatch(line!, /按住说话/)
+  assert.match(line!, /说点什么/)
+})
+
+test("SummonerController applyHydrate does not reopen a closed overlay", () => {
+  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const start = src.indexOf("  func applyHydrate(_ json: [String: Any]) {")
+  // SummonerController's applyHydrate is the second (HUD has one first)
+  const summoner = src.indexOf("  func applyHydrate(_ json: [String: Any]) {", start + 10)
+  assert.ok(summoner > start, "SummonerController applyHydrate missing")
+  const body = src.slice(summoner, summoner + 900)
+  assert.match(body, /guard isOpen else \{ return \}/)
+  assert.doesNotMatch(body, /open\(threadId/)
+})
+
+test("hidden mic tooltip does not advertise press-to-talk", () => {
+  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  assert.doesNotMatch(src, /mic\.toolTip = ".*按住说话/)
+})
+
+test("SummonerController send stays visible when detached or empty", () => {
+  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const apply = src.slice(src.indexOf("private func applyPhase()"), src.indexOf("private func relayout()"))
+  assert.match(apply, /sendButton\?\.isHidden = false/)
+  assert.doesNotMatch(apply, /footRow\?\.isHidden = searching \|\| !hasTranscript \|\| detached/)
+  assert.match(apply, /footRow\?\.isHidden = searching/)
 })
 
 test("menu-bar-agent empty submit resolves last/new thread then claims overlay lease", () => {

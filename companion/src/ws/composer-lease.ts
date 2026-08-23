@@ -16,7 +16,7 @@ export type ComposerLeaseState = {
 }
 
 export type LeaseMutationResult =
-  | { ok: true; state: ComposerLeaseState }
+  | { ok: true; state: ComposerLeaseState; released_siblings: ComposerLeaseState[] }
   | { ok: false; state: ComposerLeaseState; error_code: typeof LEASE_REV_MISMATCH }
 
 export type ComposerLeaseGateOk = { ok: true }
@@ -52,7 +52,9 @@ export class ComposerLeaseRegistry {
       rev: current.rev + 1,
     }
     this.leases.set(args.thread_id, next)
-    return { ok: true, state: next }
+    const released_siblings =
+      args.holder === "overlay" ? this.releaseAllOverlay(args.thread_id) : []
+    return { ok: true, state: next, released_siblings }
   }
 
   /** Optional: return holder to panel and bump rev when incoming rev matches. */
@@ -67,7 +69,24 @@ export class ComposerLeaseRegistry {
       rev: current.rev + 1,
     }
     this.leases.set(args.thread_id, next)
-    return { ok: true, state: next }
+    return { ok: true, state: next, released_siblings: [] }
+  }
+
+  /** Overlay is a singleton composer: at most one thread may hold it. */
+  releaseAllOverlay(exceptThreadId?: string): ComposerLeaseState[] {
+    const released: ComposerLeaseState[] = []
+    for (const [id, state] of this.leases) {
+      if (state.holder !== "overlay") continue
+      if (exceptThreadId && id === exceptThreadId) continue
+      const next: ComposerLeaseState = {
+        thread_id: id,
+        holder: "panel",
+        rev: state.rev + 1,
+      }
+      this.leases.set(id, next)
+      released.push(next)
+    }
+    return released
   }
 }
 
@@ -159,7 +178,11 @@ export function handleComposerLeaseFamily(
           ...leasePayload(result.state),
         }
       }
-      return { type: "composer.lease", ...leasePayload(result.state) }
+      return {
+        type: "composer.lease",
+        ...leasePayload(result.state),
+        released_siblings: result.released_siblings,
+      }
     }
     case "composer.lease.release": {
       if (typeof rest.rev !== "number" || !Number.isInteger(rest.rev)) {
@@ -179,7 +202,175 @@ export function handleComposerLeaseFamily(
       }
       return { type: "composer.lease", ...leasePayload(result.state) }
     }
+    case "composer.lease.release_overlay": {
+      const released = registry.releaseAllOverlay()
+      return { type: "composer.lease.released", released }
+    }
     default:
       return null
   }
+}
+
+
+export type LeaseRpc = (
+  type:
+    | "composer.lease.get"
+    | "composer.lease.claim"
+    | "composer.lease.release"
+    | "composer.lease.release_overlay",
+  body: Record<string, unknown>,
+) => Promise<any>
+
+/**
+ * Overlay claim with CAS retry. A concurrent panel claim between get and
+ * claim returns LEASE_REV_MISMATCH + current rev; retry with that rev.
+ */
+export function shouldBroadcastLease(type: string, result: unknown): boolean {
+  if (!result || typeof result !== "object") return false
+  const resultType = (result as { type?: string }).type
+  if (type === "composer.lease.release_overlay") return resultType === "composer.lease.released"
+  if (type !== "composer.lease.claim" && type !== "composer.lease.release") return false
+  return resultType === "composer.lease"
+}
+
+export async function releaseOverlayLeaseCas(
+  threadId: string,
+  rpc: LeaseRpc,
+  attempts = 3,
+): Promise<{ ok: boolean; state?: ComposerLeaseState; error_code?: string }> {
+  let rev: number | undefined
+  for (let i = 0; i < attempts; i++) {
+    if (rev == null) {
+      const got = await rpc("composer.lease.get", { thread_id: threadId })
+      if (got?.holder !== "overlay") {
+        return {
+          ok: true,
+          state: {
+            thread_id: String(got?.thread_id ?? threadId),
+            holder: "panel",
+            rev: typeof got?.rev === "number" ? got.rev : 0,
+          },
+        }
+      }
+      rev = typeof got?.rev === "number" ? got.rev : 0
+    }
+    const released = await rpc("composer.lease.release", {
+      thread_id: threadId,
+      rev,
+    })
+    if (released?.error_code === "LEASE_REV_MISMATCH") {
+      rev = typeof released.rev === "number" ? released.rev : undefined
+      continue
+    }
+    if (typeof released?.rev === "number" && released.holder === "panel") {
+      return {
+        ok: true,
+        state: {
+          thread_id: String(released.thread_id ?? threadId),
+          holder: "panel",
+          rev: released.rev,
+        },
+      }
+    }
+    return {
+      ok: false,
+      error_code: typeof released?.error_code === "string" ? released.error_code : "LEASE_RELEASE_FAILED",
+    }
+  }
+  return { ok: false, error_code: LEASE_REV_MISMATCH }
+}
+
+export async function applySummonerComposerVisibility(args: {
+  visible: boolean
+  threadId: string
+  rpc: LeaseRpc
+}): Promise<{ ok: boolean; state?: ComposerLeaseState; error_code?: string }> {
+  if (!args.visible) return releaseAllOverlayLeases(args.rpc)
+  const threadId = args.threadId.trim()
+  if (!threadId) return { ok: false, error_code: "LEASE_NO_THREAD" }
+  return claimOverlayLeaseCas(threadId, args.rpc)
+}
+
+/** Summoner socket death drops every overlay hold so Side Panel is not stuck. */
+export function overlayLeasesOnSummonerDisconnect(
+  surface: string | undefined,
+  registry: ComposerLeaseRegistry = composerLeases,
+): ComposerLeaseState[] {
+  if (surface !== "summoner") return []
+  return registry.releaseAllOverlay()
+}
+
+export function broadcastOverlayLeasesOnSocketClose(
+  surface: string | undefined,
+  broadcast: (msg: {
+    type: "composer.lease"
+    thread_id: string
+    holder: ComposerHolder
+    rev: number
+  }) => void,
+  registry: ComposerLeaseRegistry = composerLeases,
+): number {
+  const released = overlayLeasesOnSummonerDisconnect(surface, registry)
+  for (const state of released) {
+    broadcast({
+      type: "composer.lease",
+      thread_id: state.thread_id,
+      holder: state.holder,
+      rev: state.rev,
+    })
+  }
+  return released.length
+}
+
+export async function releaseAllOverlayLeases(
+  rpc: LeaseRpc,
+): Promise<{ ok: boolean; state?: ComposerLeaseState; error_code?: string }> {
+  const released = await rpc("composer.lease.release_overlay", {})
+  if (released?.type === "composer.lease.released" && Array.isArray(released.released)) {
+    const last = released.released[released.released.length - 1] as ComposerLeaseState | undefined
+    return {
+      ok: true,
+      state: last ?? { thread_id: "", holder: "panel", rev: 0 },
+    }
+  }
+  return {
+    ok: false,
+    error_code:
+      typeof released?.error_code === "string" ? released.error_code : "LEASE_RELEASE_FAILED",
+  }
+}
+
+export async function claimOverlayLeaseCas(
+  threadId: string,
+  rpc: LeaseRpc,
+  attempts = 3,
+): Promise<{ ok: boolean; state?: ComposerLeaseState; error_code?: string }> {
+  let rev: number | undefined
+  for (let i = 0; i < attempts; i++) {
+    if (rev == null) {
+      const got = await rpc("composer.lease.get", { thread_id: threadId })
+      rev = typeof got?.rev === "number" ? got.rev : 0
+    }
+    const claim = await rpc("composer.lease.claim", {
+      thread_id: threadId,
+      holder: "overlay",
+      rev,
+    })
+    if (claim?.error_code === "LEASE_REV_MISMATCH") {
+      rev = typeof claim.rev === "number" ? claim.rev : undefined
+      continue
+    }
+    if (typeof claim?.rev === "number" && claim.holder === "overlay") {
+      return {
+        ok: true,
+        state: {
+          thread_id: String(claim.thread_id ?? threadId),
+          holder: "overlay",
+          rev: claim.rev,
+        },
+      }
+    }
+    return { ok: false, error_code: typeof claim?.error_code === "string" ? claim.error_code : "LEASE_CLAIM_FAILED" }
+  }
+  return { ok: false, error_code: LEASE_REV_MISMATCH }
 }

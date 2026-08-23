@@ -1,8 +1,8 @@
 /** Overlay hydrate: last N role-prefixed plaintext messages.
- *  Preserve markdown newlines so Swift can render them. Never wrap HTML.
+ *  Preserve newlines. Never wrap HTML or chat bubbles.
  */
 
-const HYDRATE_CAP = 40
+const HYDRATE_CAP = 20
 const HYDRATE_CHARS = 4000
 
 export function hydratePlaintext(

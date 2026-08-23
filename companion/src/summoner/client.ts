@@ -14,8 +14,11 @@ import {
   encodeSummonerError,
   encodeSummonerDictate,
   encodeSummonerTool,
+  encodeSummonerHits,
   type SummonerOutboundCmd,
   type SummonerSearchHint,
+  type SummonerHit,
+  type SummonerHitsCmd,
 } from "./protocol"
 
 /** Continue CTA: new user message, never a server-side L1 replay. */
@@ -36,7 +39,7 @@ export type ThreadTitleRecord = {
 
 export type TitleSearchResult = {
   matches: ThreadTitleRecord[]
-  /** Empty-state / capability copy — P0 never searches message body. */
+  /** Empty-state / capability copy — never searches message body. */
   searchHint: SummonerSearchHint
 }
 
@@ -50,7 +53,7 @@ function sortRecentFirst(threads: ThreadTitleRecord[]): ThreadTitleRecord[] {
 
 /**
  * Title/alias search over `thread.list`. Empty query → most recent thread.
- * Never searches message body (hint is always `P0 不搜正文`).
+ * Never searches message body (hint is always `只搜标题，不搜正文`).
  */
 export function filterThreadsByTitle(
   threads: ThreadTitleRecord[],
@@ -68,6 +71,21 @@ export function filterThreadsByTitle(
     return title.includes(q) || alias.includes(q)
   })
   return { matches, searchHint }
+}
+
+export function hitsFromTitleSearch(threads: ThreadTitleRecord[]): SummonerHit[] {
+  return threads.map((t) => ({
+    id: t.id,
+    title: (t.title || t.alias || t.id).trim() || t.id,
+    when: t.updated_at || t.created_at || "",
+  }))
+}
+
+/** `#` title search → stdin `summoner.hits` over the full thread.list, not a tray cache. */
+export function summonerHitsFromQuery(threads: ThreadTitleRecord[], query: string): SummonerHitsCmd {
+  const needle = isSummonerSearchQuery(query) ? summonerSearchNeedle(query) : query.trim()
+  if (!needle) return encodeSummonerHits({ hits: [] })
+  return encodeSummonerHits({ hits: hitsFromTitleSearch(filterThreadsByTitle(threads, needle).matches) })
 }
 
 /** v2 empty-state: `#` prefix is title search; anything else is talk. */
@@ -98,7 +116,7 @@ export function resolveSubmitThread(args: {
 export type SubmitSummonerTalkDeps = {
   listThreads: () => Promise<ThreadTitleRecord[]>
   createThread: () => Promise<{ id: string } | null>
-  claimLease: (threadId: string) => Promise<void>
+  claimLease: (threadId: string) => Promise<boolean | void>
   sendChatCreate: (args: { thread_id: string; message: string }) => boolean
   selectMessages?: (threadId: string) => Promise<unknown[]>
   hydrate?: (args: { thread_id: string; messages: unknown[] }) => void
@@ -129,7 +147,8 @@ export async function submitSummonerTalk(
   }
   if (!id) return { ok: false, threadId: null }
 
-  await deps.claimLease(id)
+  const claimed = await deps.claimLease(id)
+  if (claimed === false) return { ok: false, threadId: null }
   const ok = deps.sendChatCreate({ thread_id: id, message })
   if (deps.hydrate) {
     const messages = (await deps.selectMessages?.(id)) ?? []
@@ -148,6 +167,13 @@ export function buildContinueChatCreate(thread_id: string): {
 export const ATTACH_SILENT_COPY =
   "已在后台启动 Google Chrome。要看窗口时点「激活 Google Chrome」。我们不能替你打开侧栏。" as const
 
+
+/** Badge before hydrate must not claim 未连接 (pair may already be attached). */
+export function summonerBrowserBadge(args: { known: boolean; attached: boolean }): string {
+  if (!args.known) return "检测浏览器…"
+  return args.attached ? "浏览器已连接" : "浏览器未连接"
+}
+
 export const DEFAULT_RESUME_IDLE_MINUTES = 10
 
 export function normalizeResumeIdleMinutes(value: unknown): number {
@@ -155,7 +181,9 @@ export function normalizeResumeIdleMinutes(value: unknown): number {
   return DEFAULT_RESUME_IDLE_MINUTES
 }
 
-/** After idle timeout, the next overlay open starts a new thread. 0=always new, -1=always resume. */
+/** After idle timeout, the next overlay open starts a new thread. 0=always new, -1=always resume.
+ *  Missing lastActivityAt (first install) resumes the latest thread — never auto-create.
+ */
 export function shouldStartNewSummonerThread(args: {
   now: number
   lastActivityAt?: number | null
@@ -163,8 +191,28 @@ export function shouldStartNewSummonerThread(args: {
 }): boolean {
   if (args.resumeIdleMinutes === 0) return true
   if (args.resumeIdleMinutes < 0) return false
-  if (args.lastActivityAt == null || !Number.isFinite(args.lastActivityAt)) return true
-  return args.now - args.lastActivityAt > args.resumeIdleMinutes * 60_000
+  if (args.lastActivityAt == null) return false
+  return args.now - args.lastActivityAt >= args.resumeIdleMinutes * 60 * 1000
+}
+
+export type SummonerOpenTarget =
+  | { action: "create" }
+  | { action: "hydrate"; threadId: string }
+
+/** First-open / resume: hydrate last or newest thread. Create only if none exist or forceNew. */
+export function resolveSummonerOpenTarget(args: {
+  forceNew: boolean
+  lastThreadId?: string | null
+  threads: ThreadTitleRecord[]
+}): SummonerOpenTarget {
+  if (args.forceNew) return { action: "create" }
+  const last = typeof args.lastThreadId === "string" ? args.lastThreadId.trim() : ""
+  if (last && args.threads.some((t) => t.id === last)) {
+    return { action: "hydrate", threadId: last }
+  }
+  const newest = sortRecentFirst(args.threads)[0]
+  if (newest) return { action: "hydrate", threadId: newest.id }
+  return { action: "create" }
 }
 
 /**
@@ -179,6 +227,21 @@ export function attachChromeOnly(
   else if (opener.openChromeSilent) opener.openChromeSilent()
   else opener.openChrome()
   return foreground ? ATTACH_NOTIFY_COPY : ATTACH_SILENT_COPY
+}
+
+/**
+ * chat.token.content is a full snapshot (adapter sends assistantContent),
+ * not a delta. Overlay must replace the last 助手: line, not append.
+ */
+export function overlayAssistantSnapshot(lines: string[], snapshot: string): string[] {
+  const rendered = `助手: ${snapshot}`
+  const next = lines.slice()
+  if (next.length > 0 && next[next.length - 1].startsWith("助手:")) {
+    next[next.length - 1] = rendered
+  } else {
+    next.push(rendered)
+  }
+  return next
 }
 
 function asRecord(msg: unknown): Record<string, unknown> | null {
