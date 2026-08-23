@@ -22,6 +22,7 @@ import {
   securityConfirmations,
   handleSecurityConfirmationResponse,
   applyTabNavigated,
+  seedExtensionWsAuthForTests,
 } from "../../src/server.js"
 import { detectDangerousApis, detectCriticalApis, isPrivateOrLoopbackIp, isCloudMetadataIp } from "../../src/security.js"
 import { saveConfig, getConfig, getConfigDir } from "../../src/config.js"
@@ -69,6 +70,7 @@ beforeEach(async () => {
     wss.once("connection", (ws) => {
       clearTimeout(timeout)
       serverSideWs = ws
+      seedExtensionWsAuthForTests(ws)
       // Swallow close/abort errors so afterEach teardown doesn't leak an uncaught
       // "WebSocket was closed before the connection was established" (node:test flags that
       // as the file failing even when every assertion passed).

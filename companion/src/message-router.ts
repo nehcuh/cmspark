@@ -70,6 +70,14 @@ import { releaseMultiAgentLlmLoop } from "./orchestrator/llm-loop-gate"
 import {
   handleConfigFamily,
 } from "./message-router/handlers/config"
+import {
+  gateChatCreateOnLease,
+  handleComposerLeaseFamily,
+  shouldBroadcastLease,
+  stripCmsparkSurface,
+} from "./ws/composer-lease"
+import { gateChatCreateOnConductor } from "./ws/l2-conductor"
+import { applyCompanionUiRectEvent } from "./computer/companion-ui-rects"
 // Residual extract: MCP redaction used by lifecycle
 export { redactMcpServersForBroadcast } from "./message-router/handlers/mcp"
 
@@ -228,9 +236,12 @@ interface SessionCallbacks {
   panelId?: string
   /**
    * Path B M1: WS Origin at connection time (chrome-extension:// vs tray).
-   * voice.stt.* handlers refuse non-extension peers (ADR-023 §7.2).
+   * voice.stt.* handlers refuse non-extension peers (ADR-023 §7.2)
+   * except summoner surface + cmspark-tray://local.
    */
   origin?: string
+  /** Handshake surface from wsAuth. Summoner overlay may run local STT. */
+  surface?: "tray" | "summoner"
 }
 
 export async function handleMessage(
@@ -239,6 +250,9 @@ export async function handleMessage(
   session?: SessionCallbacks,
 ): Promise<any> {
   const { type, ...rest } = msg
+  // S20: lifecycle stamped this from auth; never forward a client-spoofable field to LLM.
+  const stampedSurface = stripCmsparkSurface(rest)
+  stripCmsparkSurface(msg)
   const { threadManager, skillEngine, historyStore } = services
 
   switch (type) {
@@ -287,6 +301,12 @@ export async function handleMessage(
             data: { error_code: "thread_paused" },
           }
         }
+      }
+      {
+        const leaseErr = gateChatCreateOnLease(rest.thread_id, stampedSurface)
+        if (leaseErr) return leaseErr
+        const conductorErr = gateChatCreateOnConductor(rest.thread_id, stampedSurface)
+        if (conductorErr) return conductorErr
       }
       const config = getConfig()
 
@@ -1015,6 +1035,49 @@ export async function handleMessage(
       return { type: "chat.aborted", thread_id: rest.thread_id }
     }
 
+    case "companion.ui.rect": {
+      applyCompanionUiRectEvent({ type: "companion.ui.rect", ...rest })
+      return { type: "companion.ui.rect.ok" }
+    }
+
+    case "composer.lease.get":
+    case "composer.lease.claim":
+    case "composer.lease.release":
+    case "composer.lease.release_overlay": {
+      const leaseResult = handleComposerLeaseFamily(type, rest)
+      if (leaseResult !== null) {
+        if (shouldBroadcastLease(type, leaseResult)) {
+          if (leaseResult.type === "composer.lease.released") {
+            for (const sibling of leaseResult.released ?? []) {
+              session?.broadcast?.({
+                type: "composer.lease",
+                thread_id: sibling.thread_id,
+                holder: sibling.holder,
+                rev: sibling.rev,
+              })
+            }
+          } else {
+            session?.broadcast?.({
+              type: "composer.lease",
+              thread_id: leaseResult.thread_id,
+              holder: leaseResult.holder,
+              rev: leaseResult.rev,
+            })
+            for (const sibling of leaseResult.released_siblings ?? []) {
+              session?.broadcast?.({
+                type: "composer.lease",
+                thread_id: sibling.thread_id,
+                holder: sibling.holder,
+                rev: sibling.rev,
+              })
+            }
+          }
+        }
+        return leaseResult
+      }
+      return { type: "error", error: `Unhandled composer.lease type: ${type}` }
+    }
+
     case "chat.regenerate": {
       if (!session) return { type: "error", error: "No session" }
       const config = getConfig()
@@ -1039,6 +1102,12 @@ export async function handleMessage(
             data: { error_code: "thread_paused" },
           }
         }
+      }
+      {
+        const leaseErr = gateChatCreateOnLease(thread_id, stampedSurface)
+        if (leaseErr) return leaseErr
+        const conductorErr = gateChatCreateOnConductor(thread_id, stampedSurface)
+        if (conductorErr) return conductorErr
       }
 
       // Merge thread-level config_override with global config
@@ -1925,7 +1994,7 @@ export async function handleMessage(
         broadcast: session?.broadcast,
         origin: session?.origin,
       })
-    // Path B M1 — voice.stt.* (origin chrome-extension:// fence; NOT source:settings)
+    // Path B M1 — voice.stt.* (chrome-extension:// or summoner+tray origin)
     case "voice.stt.start":
     case "voice.stt.chunk":
     case "voice.stt.partial_request":
@@ -1935,6 +2004,7 @@ export async function handleMessage(
         origin: session?.origin,
         peerId: session?.panelId,
         send: session?.sendToExtension,
+        surface: session?.surface,
       })
     // Dictation+ D1b — ASR Refiner (text-only; chrome-extension origin fence)
     case "voice.refine.request":

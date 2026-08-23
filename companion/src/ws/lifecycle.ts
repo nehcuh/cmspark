@@ -59,6 +59,8 @@ import {
 import { allowInboundLogEvent } from "../log-event-gate"
 import { pendingToolCalls, handleToolResult } from "./tool-forward"
 import { validateWsMessage } from "./validate"
+import { assertSummonerAllowed } from "./summoner-acl"
+import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 
 // ---------------------------------------------------------------------------
@@ -83,17 +85,16 @@ let outboundRunnerWs: WebSocket | null = null
 // message is rejected (and the connection terminated) until then, so a local
 // process that forged the Origin header still cannot drive the agent without the
 // shared secret. See ws-auth.ts and docs for the threat model.
-const wsAuth = new WeakMap<
-  WebSocket,
-  { nonce: string; authenticated: boolean; timer: NodeJS.Timeout; origin?: string }
->()
-
 export type WsAuthState = {
   nonce: string
   authenticated: boolean
   timer: NodeJS.Timeout
   origin?: string
+  /** Handshake surface. Omitted / non-summoner → tray (not ACL-gated). */
+  surface?: "tray" | "summoner"
 }
+
+const wsAuth = new WeakMap<WebSocket, WsAuthState>()
 
 /** Accessor for createToolExecutor / L2 admission (server-owned orchestration). */
 export function getWsClients(): Set<WebSocket> {
@@ -363,6 +364,36 @@ export function broadcastToClients(data: any): void {
   }
 }
 
+/** Origin used when tests seed an authenticated Chrome extension peer. */
+export const TEST_EXTENSION_ORIGIN = "chrome-extension://test"
+
+/**
+ * Seed wsAuth so createToolExecutor L1 dispatch treats `ws` as an authenticated
+ * Chrome extension peer. Tests must not rely on missing-origin fallback
+ * (that would re-break tray: missing origin stays BROWSER_UNAVAILABLE).
+ */
+export function seedExtensionWsAuthForTests(
+  ws: WebSocket,
+  opts?: { origin?: string; authenticated?: boolean },
+): void {
+  const prev = wsAuth.get(ws)
+  if (prev?.timer) {
+    try {
+      clearTimeout(prev.timer)
+    } catch {
+      /* ignore */
+    }
+  }
+  const timer = setTimeout(() => {}, 60_000)
+  timer.unref()
+  wsAuth.set(ws, {
+    nonce: prev?.nonce ?? "test-nonce",
+    authenticated: opts?.authenticated !== false,
+    timer,
+    origin: opts?.origin ?? TEST_EXTENSION_ORIGIN,
+  })
+}
+
 /**
  * Exported for integration tests (X3): aim broadcastToClients at a test
  * WebSocketServer and seed wsAuth entries (both states), so the REAL
@@ -376,13 +407,11 @@ export function setupBroadcastAuthForTests(
   unauthenticatedClients: WebSocket[] = [],
 ): void {
   wss = server as WebSocketServer
-  for (const [client, authenticated] of [
-    ...authenticatedClients.map((c): [WebSocket, boolean] => [c, true]),
-    ...unauthenticatedClients.map((c): [WebSocket, boolean] => [c, false]),
-  ]) {
-    const timer = setTimeout(() => {}, 60000)
-    timer.unref()
-    wsAuth.set(client, { nonce: "test-nonce", authenticated, timer })
+  for (const client of authenticatedClients) {
+    seedExtensionWsAuthForTests(client)
+  }
+  for (const client of unauthenticatedClients) {
+    seedExtensionWsAuthForTests(client, { authenticated: false, origin: "" })
   }
 }
 
@@ -958,8 +987,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               return
             }
             st.authenticated = true
+            const rawSurface = (msg as { surface?: unknown }).surface
+            st.surface = rawSurface === "summoner" ? "summoner" : "tray"
             clearTimeout(st.timer)
-            logger.info("ws.authenticated", { protocol_version: nego.negotiated })
+            logger.info("ws.authenticated", { protocol_version: nego.negotiated, surface: st.surface })
             // Record (idempotently) that some peer has paired, so the tray can stop
             // auto-surfacing the pairing secret. Best-effort; never blocks auth.
             markPaired()
@@ -1002,6 +1033,17 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           try { ws.terminate() } catch { /* closing */ }
           return
         }
+        // S21: per-connection ACL keyed off handshake surface. Do not origin-cleave
+        // (tray skill.list must keep working). auth.handshake already returned above.
+        const gate = assertSummonerAllowed(authState.surface, msg.type)
+        if (!gate.ok) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "error", error: gate.error, error_code: gate.error_code }))
+          }
+          return
+        }
+        // S20: overwrite always after ACL. Never trust a client-supplied field.
+        stampCmsparkSurface(msg, authState.surface)
         if (msg.type !== "system.ping") {
           logger.debug("ws.message.received", summarizeMessage(msg))
         }
@@ -1268,6 +1310,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               panelId,
               // Path B M1: origin class for voice.stt.* (chrome-extension vs tray).
               origin: peerOrigin,
+              surface: wsAuth.get(ws)?.surface,
             },
           )
         } catch (handlerErr: any) {
@@ -1307,6 +1350,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         clearTimeout(closedAuth.timer)
         wsAuth.delete(ws)
       }
+      broadcastOverlayLeasesOnSocketClose(closedAuth?.surface, (msg) => broadcastToClients(msg))
       // P0 CORR-02: abort in-flight LLM/tool loops owned by this panel
       try {
         const panelId = (ws as any).__cmsparkPanelId as string | undefined

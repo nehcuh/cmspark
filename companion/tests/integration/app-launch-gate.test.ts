@@ -32,6 +32,7 @@ import {
   securityConfirmations,
   handleSecurityConfirmationResponse,
   getSessionIdForTests,
+  seedExtensionWsAuthForTests,
 } from "../../src/server.js"
 import { saveConfig, getConfig, replaceAppsEntries } from "../../src/config.js"
 import { getThreadApprovals } from "../../src/host-use/thread-approvals.js"
@@ -101,6 +102,7 @@ beforeEach(async () => {
     wss.once("connection", (ws) => {
       clearTimeout(timeout)
       serverSideWs = ws
+      seedExtensionWsAuthForTests(ws)
       ws.on("error", () => { /* expected during teardown */ })
       ws.on("message", (raw) => {
         try {

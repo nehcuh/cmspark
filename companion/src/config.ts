@@ -59,14 +59,17 @@ export interface SecurityConfig {
   /**
    * Basenames (no extension, lowercased) of the companion's OWN UI host
    * processes — the browser that renders the sidepanel, plus the packaged
-   * companion binary. When the computer-use FOREGROUND-YIELD detector finds
-   * the foreground was taken over by one of these (the user just clicked
-   * "Allow" in the sidepanel, so the browser briefly became frontmost), the
-   * executor silently re-raises the target window and continues instead of
-   * pausing for a redundant re-L2. Matching is by basename only (multiple
-   * Chrome windows share one exe), so this is a UX heuristic, NOT a security
-   * boundary — the initial task L2 still gates every task. Defaults cover the
-   * browsers CMspark supports plus the packaged agent exe.
+   * companion binary. The Swift tray overlay is **not** on this list (S23:
+   * process-level continue would skip re-L2 when CU yields to the overlay;
+   * window-rect hit-test hard-rejects clicks on companion UI instead). When the computer-use
+   * FOREGROUND-YIELD detector finds the foreground was taken over by one of
+   * these (the user just clicked "Allow" in the sidepanel, so the browser
+   * briefly became frontmost), the executor silently re-raises the target
+   * window and continues instead of pausing for a redundant re-L2. Matching is
+   * by basename only (multiple Chrome windows share one exe), so this is a UX
+   * heuristic, NOT a security boundary — the initial task L2 still gates every
+   * task. Defaults cover the browsers CMspark supports plus the packaged agent
+   * exe. Overlay/tray clicks are denied by companion-ui rects, not this list.
    */
   companion_ui_exe_basenames: string[]
 }
@@ -334,6 +337,20 @@ export interface CompanionConfig {
       allowlist_commands?: string[]
     }
   >
+  /**
+   * OS summoner overlay (macOS spike, S11). No default hotkey — first overlay
+   * open prompts a picker. Persist a canonical combo (`ctrl+alt+space`).
+   * Omitted / empty = unset (tray menu still opens the overlay).
+   */
+  summoner?: {
+    hotkey?: string
+    /** Minutes of overlay idle before the next open starts a new thread. 0=always new, -1=always resume. Default 10. */
+    resume_idle_minutes?: number
+    /** When true, attach CTA activates Chrome. Default false = silent background launch. */
+    chrome_foreground?: boolean
+    last_activity_at?: number
+    last_thread_id?: string
+  }
 }
 
 function getEnvApiKey(): string {
@@ -639,7 +656,7 @@ function loadConfigFile(configPath: string): CompanionConfig {
     }
   }
   // P1 SEC-06: re-filter domain wildcards on load (hand-edited config.json bypass)
-  return sanitizeDomainPatternsOnLoad(merged)
+  return stripCompanionUiProcessContinueDeny(sanitizeDomainPatternsOnLoad(merged))
 }
 
 export function getConfig(): CompanionConfig {
@@ -857,6 +874,22 @@ export function getConfig(): CompanionConfig {
         )
         delete voice.modelRootDir
       }
+    }
+  }
+  if (cachedConfig.summoner && typeof cachedConfig.summoner === "object") {
+    const s = cachedConfig.summoner
+    const idle = s.resume_idle_minutes
+    if (idle !== undefined && idle !== -1 && idle !== 0 && idle !== 5 && idle !== 10 && idle !== 30) {
+      s.resume_idle_minutes = 10
+    }
+    if (s.chrome_foreground !== undefined && typeof s.chrome_foreground !== "boolean") {
+      s.chrome_foreground = false
+    }
+    if (s.last_activity_at !== undefined && (typeof s.last_activity_at !== "number" || !Number.isFinite(s.last_activity_at))) {
+      delete s.last_activity_at
+    }
+    if (s.last_thread_id !== undefined && (typeof s.last_thread_id !== "string" || !s.last_thread_id)) {
+      delete s.last_thread_id
     }
   }
   return cachedConfig
@@ -1123,6 +1156,18 @@ function filterDomainPatterns(
   return kept
 }
 
+/** S23: overlay binary must not silently continue computer-use FG yield. */
+function stripCompanionUiProcessContinueDeny(cfg: CompanionConfig): CompanionConfig {
+  const names = cfg.security?.companion_ui_exe_basenames
+  if (!Array.isArray(names)) return cfg
+  cfg.security.companion_ui_exe_basenames = names.filter((n) => {
+    const s = String(n || "").toLowerCase().replace(/\\/g, "/")
+    const last = (s.split("/").pop() || s).replace(/\.exe$/, "")
+    return last !== "cmspark-tray"
+  })
+  return cfg
+}
+
 /** P1 SEC-06: drop dangerous wildcards when loading hand-edited config.json. */
 function sanitizeDomainPatternsOnLoad(cfg: CompanionConfig): CompanionConfig {
   if (Array.isArray(cfg.trusted_domains)) {
@@ -1186,7 +1231,7 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // function without first adding serialization — otherwise the whitelist
   // append and concurrent settings writes will silently lose data.
   const current = getConfig()
-  const updated = deepMerge(current, config) as CompanionConfig
+  const updated = stripCompanionUiProcessContinueDeny(deepMerge(current, config) as CompanionConfig)
 
   // ACP: re-sanitize after deepMerge so hand-edited/partial writes cannot skip
   // profile coercion (review_readonly) that load-time sanitize already enforces.

@@ -26,6 +26,7 @@ import {
   applyConnectionCloseGracePeriod,
   pendingToolCalls,
   TOOL_EXECUTION_TIMEOUT_MS,
+  seedExtensionWsAuthForTests,
 } from "../../src/server.js"
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-wsrt-"))
@@ -65,6 +66,7 @@ beforeEach(async () => {
     wss.once("connection", (ws) => {
       clearTimeout(timeout)
       serverSideWs = ws
+      seedExtensionWsAuthForTests(ws)
       ws.on("message", (raw) => {
         try {
           const msg = JSON.parse(raw.toString())

@@ -18,6 +18,11 @@ import * as crypto from "crypto"
 import WebSocket from "ws"
 import { QuickActionItem, RecentThreadItem } from "./tray-adapter"
 import { getOrCreateSharedSecret, AUTH_TIMEOUT_MS } from "../ws-auth"
+import {
+  claimOverlayLeaseCas,
+  releaseAllOverlayLeases,
+  releaseOverlayLeaseCas,
+} from "../ws/composer-lease"
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -36,6 +41,8 @@ export interface CompanionClientOptions {
   maxReconnectAttempts: number
   /** Override the WS Origin header (defaults to the trusted tray origin). */
   origin?: string
+  /** Handshake surface. Tray menus default to "tray"; overlay uses "summoner". */
+  surface?: "tray" | "summoner"
   /** Override the shared-secret source (defaults to getOrCreateSharedSecret).
    *  Mainly a test seam for simulating the unpaired (no-secret) state. */
   secretLoader?: () => string
@@ -193,6 +200,8 @@ export class CompanionClient {
   // --- Data fetching ---
 
   async fetchQuickActions(): Promise<QuickActionItem[]> {
+    // Summoner ACL forbids skill.list — overlay never drives tray quick-actions.
+    if (this.options.surface === "summoner") return this.cachedQuickActions
     if (this._state !== "connected") return DEFAULT_QUICK_ACTIONS
 
     try {
@@ -247,6 +256,40 @@ export class CompanionClient {
     return []
   }
 
+  /**
+   * Raw `thread.list` for overlay title search (alias + title). Unlike
+   * fetchRecentThreads this is not capped at 5 and does not collapse alias→title.
+   */
+  async listThreads(): Promise<Array<{
+    id: string
+    title?: string
+    alias?: string
+    updated_at?: string
+    created_at?: string
+  }>> {
+    if (this._state !== "connected") return []
+    try {
+      const resp = await this.sendRequest("thread.list")
+      if (resp?.threads && Array.isArray(resp.threads)) {
+        return resp.threads.filter((t: any) => t && typeof t.id === "string")
+      }
+    } catch {
+      // ignore
+    }
+    return []
+  }
+
+  /**
+   * Fire-and-forget chat.create. MUST NOT use sendRequest (5s RPC) — tokens
+   * stream back as chat.token / chat.done / chat.error on this socket.
+   */
+  sendChatCreate(params: { thread_id: string; message: string }): boolean {
+    return this.sendAppMessage("chat.create", {
+      thread_id: params.thread_id,
+      message: params.message,
+    })
+  }
+
   async executeQuickAction(id: string): Promise<any> {
     if (this._state !== "connected") {
       console.warn(`[companion-client] 未连接，无法执行快速操作: ${id}`)
@@ -269,6 +312,61 @@ export class CompanionClient {
       await this.sendRequest("thread.select", { thread_id: id })
     } catch {
       // ignore
+    }
+  }
+
+  /** Overlay empty-state: create a thread when the user has none. */
+  async createThread(): Promise<{ id: string } | null> {
+    if (this._state !== "connected") return null
+    try {
+      const resp = await this.sendRequest("thread.create")
+      const id = resp?.thread?.id
+      return typeof id === "string" && id ? { id } : null
+    } catch {
+      return null
+    }
+  }
+
+  async selectThreadMessages(threadId: string): Promise<Array<{
+    role: string
+    content?: string
+    tool_calls?: Array<{ function?: { name?: string } }>
+  }>> {
+    if (this._state !== "connected") return []
+    try {
+      const resp = await this.sendRequest("thread.select", { thread_id: threadId })
+      return Array.isArray(resp?.messages) ? resp.messages : []
+    } catch {
+      return []
+    }
+  }
+
+  /** get then claim overlay with CAS rev. Overlay chat.create is denied until this lands. */
+  async claimOverlayComposerLease(threadId: string): Promise<void> {
+    if (this._state !== "connected") return
+    try {
+      await claimOverlayLeaseCas(threadId, (type, body) => this.sendRequest(type, body))
+    } catch {
+      // chat.create may still return OVERLAY_STANDBY; caller continues
+    }
+  }
+
+  async releaseOverlayComposerLease(threadId: string): Promise<void> {
+    if (this._state !== "connected") return
+    try {
+      await releaseOverlayLeaseCas(threadId, (type, body) => this.sendRequest(type, body))
+    } catch {
+      // close still must not abort chat
+    }
+  }
+
+  /** Close overlay: drop every overlay-held lease so Side Panel is not stuck on a leaked thread. */
+  async releaseAllOverlayComposerLeases(): Promise<void> {
+    if (this._state !== "connected") return
+    try {
+      await releaseAllOverlayLeases((type, body) => this.sendRequest(type, body))
+    } catch {
+      // close still must not abort chat
     }
   }
 
@@ -302,6 +400,14 @@ export class CompanionClient {
     } catch {
       return false
     }
+  }
+
+  /**
+   * Request/response app message. Overlay STT start must bind before chunk/end
+   * or the server replies "no matching session".
+   */
+  sendAppRequest(type: string, params?: Record<string, any>, timeoutMs?: number): Promise<any> {
+    return this.sendRequest(type, params, timeoutMs)
   }
 
   // --- Accessors for cached data ---
@@ -364,7 +470,10 @@ export class CompanionClient {
       this.debug("authenticated")
       this.settleConnect()
       this.connectedCbs.forEach(cb => cb())
-      this.refreshAll().catch(() => {})
+      // Summoner ACL forbids skill.list; overlay fetches threads on demand.
+      if (this.options.surface !== "summoner") {
+        this.refreshAll().catch(() => {})
+      }
       return
     }
     // auth.failed / handshake timeout → companion terminates the socket; the
@@ -445,7 +554,12 @@ export class CompanionClient {
       const proof = crypto.createHmac("sha256", secret).update(String(nonce)).digest("hex")
       if (this.ws?.readyState === WebSocket.OPEN) {
         // protocol_version lock-step with companion/src/protocol.ts
-        this.ws.send(JSON.stringify({ type: "auth.handshake", proof, protocol_version: 1 }))
+        this.ws.send(JSON.stringify({
+          type: "auth.handshake",
+          proof,
+          protocol_version: 1,
+          surface: this.options.surface ?? "tray",
+        }))
       }
     } catch (err) {
       this.debug(`auth handshake failed: ${(err as Error).message}`)

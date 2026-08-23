@@ -915,7 +915,12 @@ export type ErrorLevel = "recoverable" | "non_recoverable" | "security"
 /**
  * Classify an error to determine the response strategy.
  */
-export function classifyError(errorMessage: string, context?: { toolName?: string; domain?: string }): ErrorLevel {
+export function classifyError(
+  errorMessage: string,
+  context?: { toolName?: string; domain?: string; error_code?: string },
+): ErrorLevel {
+  // Typed missing-peer must not retry even if the message contains timeout/disconnected/not found.
+  if (context?.error_code === "BROWSER_UNAVAILABLE") return "non_recoverable"
   const msg = errorMessage.toLowerCase()
 
   if (msg.includes("security block")) {

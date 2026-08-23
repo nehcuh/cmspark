@@ -1,7 +1,7 @@
 // WebSocket hook for Side Panel — communicates with background service worker
 
 import { useEffect, useRef } from "react"
-import { useAgentStore } from "../store/agentStore"
+import { overlayStandbyFromError, useAgentStore } from "../store/agentStore"
 import type { ComputerTaskEventView, LLMConfig, Message, MessageAttachment } from "../types"
 import { isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
@@ -448,6 +448,12 @@ export function useWebSocket() {
           dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
           {
+            const parsed = overlayStandbyFromError(msg)
+            if (parsed.standby) {
+              dispatch({ type: "SET_OVERLAY_STANDBY", label: parsed.label })
+              break
+            }
+            dispatch({ type: "CLEAR_OVERLAY_STANDBY" })
             // Soften god-mode-orthogonal gates (workspace / scene) — never show
             // raw "安全阻断/不可恢复" for setup steps the user can fix in UI.
             const raw = typeof msg.error === "string" ? msg.error : "出错了"
@@ -463,6 +469,15 @@ export function useWebSocket() {
               },
             })
           }
+          break
+        }
+
+        case "composer.lease": {
+          const holder = msg.holder === "overlay" || msg.holder === "panel" ? msg.holder : null
+          if (!holder) break
+          const leaseTid = typeof msg.thread_id === "string" ? msg.thread_id : ""
+          if (leaseTid && !shouldApplyStreamEvent(leaseTid, activeThreadRef.current)) break
+          dispatch({ type: "APPLY_COMPOSER_LEASE", holder, threadId: leaseTid })
           break
         }
 

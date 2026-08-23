@@ -40,14 +40,23 @@ import {
   type HudConfirmResolvedPayload,
 } from "../hud/protocol"
 import type { HudShellRouter } from "../hud/shell-router"
+import { applyCompanionUiRectEvent } from "../computer/companion-ui-rects"
+import {
+  encodeSummonerOpen,
+  encodeSummonerHydrate,
+  decodeSummonerInbound,
+  type SummonerOutboundCmd,
+  type SummonerHydratePayload,
+  type SummonerInboundEvt,
+} from "../summoner/protocol"
 
 // ---------------------------------------------------------------------------
 // Binary management
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-// Updated 2026-07-28 after P3a HUD source rebuild (HudController in Tray.swift)
-const SWIFT_TRAY_SHA256 = "ebd1ee4a6ba5d05840c23716368aec8b67a79905466e8a9fc4a26c8c38b589c7"
+// Updated 2026-08-23 after reject-fold rect IPC + search cancel
+const SWIFT_TRAY_SHA256 = "a88b5aa2fabf48ee4b0b00928ee7184286555afa8685bc7eedc98af6bcf402a0"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")
@@ -177,6 +186,8 @@ export class SwiftTrayAdapter implements UnifiedTray {
   private hudAbortCallback: ((ev: { thread_id?: string; task_id?: string }) => void) | null = null
   private hudClosedCallback: ((reason: string) => void) | null = null
   private hudWindowOpen = false
+  private summonerEventCallback: ((evt: SummonerInboundEvt) => void) | null = null
+  private companionUiRectCallback: ((raw: unknown) => void) | null = null
 
   // Cached state for auto-restart
   private lastStatus: { status: string; wsConnected: boolean; pid: number | null } = {
@@ -409,6 +420,28 @@ export class SwiftTrayAdapter implements UnifiedTray {
     }))
   }
 
+  // --- Summoner overlay (Task 9) ---
+
+  sendSummoner(cmd: SummonerOutboundCmd): void {
+    this.send(cmd)
+  }
+
+  openSummoner(threadId: string): void {
+    this.send(encodeSummonerOpen({ thread_id: threadId }))
+  }
+
+  hydrateSummoner(payload: SummonerHydratePayload): void {
+    this.send(encodeSummonerHydrate(payload))
+  }
+
+  onSummonerEvent(callback: (evt: SummonerInboundEvt) => void): void {
+    this.summonerEventCallback = callback
+  }
+
+  onCompanionUiRect(callback: (raw: unknown) => void): void {
+    this.companionUiRectCallback = callback
+  }
+
   async stop(): Promise<void> {
     this.shuttingDown = true
     this.kill()
@@ -504,6 +537,24 @@ export class SwiftTrayAdapter implements UnifiedTray {
             /* never break line loop */
           }
           // N4: close ≠ stop — do not kill process
+        }
+
+        try {
+          applyCompanionUiRectEvent(event)
+          if (event?.type === "companion.ui.rect") {
+            this.companionUiRectCallback?.(event)
+          }
+        } catch {
+          /* never break line loop */
+        }
+
+        const summonerEvt = decodeSummonerInbound(event)
+        if (summonerEvt) {
+          try {
+            this.summonerEventCallback?.(summonerEvt)
+          } catch {
+            /* never break line loop */
+          }
         }
 
         if (event.type === "exit") {

@@ -91,6 +91,11 @@ export class ReadlineTrayAdapter implements UnifiedTray {
   showConfirmDialog(): Promise<never> { return new Promise(() => {}) }
   cancelConfirm(_id: string): void { /* no-op */ }
 
+  // Summoner overlay is Swift-only (Task 9). No-op here so Node can still stream.
+  sendSummoner(_cmd: import("../summoner/protocol").SummonerOutboundCmd): void { /* no-op */ }
+  openSummoner(_threadId: string): void { /* no-op */ }
+  hydrateSummoner(_payload: import("../summoner/protocol").SummonerHydratePayload): void { /* no-op */ }
+
   async stop(): Promise<void> {
     if (this.rl) {
       this.rl.close()

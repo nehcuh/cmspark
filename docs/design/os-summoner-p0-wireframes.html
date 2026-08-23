@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CMspark 召唤器 P0 线稿</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #f3f1ea; color: #111; font: 13px/1.4 "SF Pro Text", "PingFang SC", sans-serif; }
+    .page { padding: 28px 32px 48px; max-width: 1480px; margin: 0 auto; }
+    h1 { font-size: 18px; font-weight: 650; margin: 0 0 4px; letter-spacing: -.02em; }
+    .sub { color: #555; margin: 0 0 22px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 36px; }
+    .cell { position: relative; }
+    .label { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #666; margin-bottom: 8px; }
+    .desk {
+      background: repeating-linear-gradient(-45deg, #eceae3, #eceae3 8px, #e7e4db 8px, #e7e4db 16px);
+      border: 1px dashed #bbb;
+      padding: 36px 24px 40px;
+      min-height: 430px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+    }
+    .ov {
+      width: 360px;
+      background: #fff;
+      border: 1.5px solid #111;
+      border-radius: 4px;
+      position: relative;
+    }
+    .ov::before {
+      content: "";
+      position: absolute;
+      inset: 6px -6px -6px 6px;
+      border: 1.5px solid #111;
+      border-radius: 4px;
+      z-index: -1;
+      background: transparent;
+    }
+    .row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; }
+    .line { border-bottom: 1.5px solid #111; }
+    .pill { border: 1.5px solid #111; border-radius: 999px; padding: 2px 8px; font-size: 10px; }
+    .pill.x { background: repeating-linear-gradient(45deg, #fff, #fff 2px, #ddd 2px, #ddd 4px); }
+    .right { margin-left: auto; font-size: 10px; }
+    .box { margin: 8px 10px; border: 1.5px solid #111; border-radius: 3px; min-height: 34px; display: flex; align-items: center; padding: 0 10px; gap: 8px; }
+    .cursor { width: 1.5px; height: 14px; background: #111; }
+    .hint { padding: 0 12px 8px; font-size: 10px; color: #444; }
+    .item { margin: 0 10px 6px; border: 1.5px solid #111; padding: 7px 8px; display: flex; justify-content: space-between; font-size: 12px; }
+    .item.hi { background: #111; color: #fff; }
+    .log { margin: 8px 10px; border: 1.5px dashed #111; padding: 8px 10px; font-size: 12px; min-height: 92px; }
+    .log div { margin: 4px 0; }
+    .note { margin: 8px 10px; border: 1.5px solid #111; padding: 8px 10px; font-size: 11px; }
+    .note b { display: block; margin-bottom: 4px; font-size: 10px; letter-spacing: .08em; }
+    .btns { display: flex; gap: 8px; margin: 8px 10px 10px; }
+    .btns span { flex: 1; border: 1.5px solid #111; text-align: center; padding: 7px 4px; font-size: 12px; }
+    .btns span.fill { background: #111; color: #fff; }
+    .foot { text-align: center; font-size: 10px; padding: 0 10px 10px; color: #333; }
+    .call {
+      position: absolute;
+      font-size: 11px;
+      color: #111;
+      max-width: 140px;
+      line-height: 1.3;
+    }
+    .call::before { content: "→ "; }
+    .c1 { top: 52px; right: 0; }
+    .c2 { bottom: 28px; left: 4px; }
+    .anno { margin-top: 10px; font-size: 12px; color: #333; }
+    .anno code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>召唤器 P0 线稿 · 两段式捕获 × 看山结构</h1>
+    <p class="sub">420×浮动层 · 无气泡 · 无 Allow · 四态是实现必须画出来的全部。阴影框表示桌面，实线框是 overlay。</p>
+    <div class="grid">
+
+      <div class="cell">
+        <div class="label">01 空场 — 热键刚弹起</div>
+        <div class="desk">
+          <div class="ov">
+            <div class="row line">
+              <span class="pill x">浏览器已连接 | 未连接</span>
+              <span class="right">召唤器 · 实验</span>
+            </div>
+            <div class="box"><span class="cursor"></span><span style="color:#888">输入线程标题</span></div>
+            <div class="hint">不搜文件和应用 · P0 不搜正文</div>
+          </div>
+        </div>
+        <p class="anno">焦点在唯一输入框。没有历史、没有问候大标题。回车在组字中 = 不发送。</p>
+      </div>
+
+      <div class="cell">
+        <div class="label">02 检索 — 打字滤标题</div>
+        <div class="desk">
+          <div class="ov">
+            <div class="row line">
+              <span class="pill">浏览器已连接</span>
+              <span class="right">召唤器 · 实验</span>
+            </div>
+            <div class="box">⌕　投研纪要<span class="cursor"></span></div>
+            <div class="hint">P0 不搜正文 · 标题 / 别名 / 时间</div>
+            <div class="item hi"><span>投研纪要 · 宁德时代</span><span>昨天</span></div>
+            <div class="item"><span>投研 · 年报对比</span><span>3 天前</span></div>
+            <div style="height:8px"></div>
+          </div>
+        </div>
+        <p class="anno">高亮行 = 键盘选中。Enter 选中线程，不发送给模型。结果 0 条时只留 hint，不装空状态插画。</p>
+      </div>
+
+      <div class="cell">
+        <div class="label">03 续聊 — 同一 thread</div>
+        <div class="desk">
+          <div class="ov">
+            <div class="row line">
+              <span class="pill">浏览器已连接</span>
+              <span class="right">召唤器 · 实验</span>
+            </div>
+            <div class="box">和比亚迪比呢？<span class="cursor"></span></div>
+            <div class="log">
+              <div>你　把上次结论再压缩成三条。</div>
+              <div>助手　1) 产能 2) 海外毛利 3) Q3 指引</div>
+              <div>你　那和比亚迪比呢？</div>
+            </div>
+            <div class="btns"><span>发送</span><span class="fill">已连接，继续对话</span></div>
+            <div class="foot">完整格式在侧栏</div>
+          </div>
+        </div>
+        <p class="anno">虚线框 = 截断纯文本（≤20 行），<b>不是气泡</b>。发送用看山靛紫在实现里上色；线稿只区分主/次按钮。</p>
+      </div>
+
+      <div class="cell">
+        <div class="label">04 未连接 — L1 失败后</div>
+        <div class="desk">
+          <div class="ov">
+            <div class="row line">
+              <span class="pill x">浏览器未连接</span>
+              <span class="right">召唤器 · 实验</span>
+            </div>
+            <div class="box">打开宁德时代官网<span class="cursor"></span></div>
+            <div class="log">
+              <div>你　打开宁德时代官网</div>
+              <div>系统　BROWSER_UNAVAILABLE</div>
+            </div>
+            <div class="note">
+              <b>不能打开侧栏</b>
+              可激活 Google Chrome，然后点工具栏 CMspark（没有就拼图钉上）。
+            </div>
+            <div class="btns"><span class="fill">激活 Google Chrome</span></div>
+          </div>
+        </div>
+        <p class="anno">主按钮只有「激活 Google Chrome」。禁止单独写「打开侧栏并继续」。连上后才出现「已连接，继续对话」（态 03）。</p>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

@@ -37,6 +37,7 @@ import {
   createToolExecutor,
   pendingToolCalls,
   securityConfirmations,
+  seedExtensionWsAuthForTests,
 } from "../../src/server.js"
 import { CRITICAL_MCP_META_TOOLS } from "../../src/security.js"
 import { getMcpManager, getMcpConfirmCache } from "../../src/mcp/index.js"
@@ -88,6 +89,7 @@ beforeEach(async () => {
     wss.once("connection", (ws) => {
       clearTimeout(timeout)
       serverSideWs = ws
+      seedExtensionWsAuthForTests(ws)
       ws.on("error", () => { /* expected during teardown */ })
       ws.on("message", (raw) => {
         try {

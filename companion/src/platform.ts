@@ -108,6 +108,8 @@ export function getServiceCommands(): ServiceCommands {
 export interface ChromeOpener {
   /** Open Chrome and focus it (best effort) */
   openChrome(): void
+  /** Launch Chrome without stealing focus (`open -ga` on macOS). */
+  openChromeSilent(): void
   /** Open Chrome extension management page */
   openExtensions(): void
   /** Open Chrome side panel for CMspark (best effort) */
@@ -130,6 +132,10 @@ class MacOSChromeOpener implements ChromeOpener {
       "-e",
       'tell application "Google Chrome" to activate',
     ])
+  }
+
+  openChromeSilent(): void {
+    runSilent("open", ["-ga", "Google Chrome"])
   }
 
   openExtensions(): void {
@@ -158,6 +164,10 @@ class WindowsChromeOpener implements ChromeOpener {
     } catch {
       console.warn("[platform] Failed to open Chrome. Is Chrome installed and in PATH?")
     }
+  }
+
+  openChromeSilent(): void {
+    this.openChrome()
   }
 
   openExtensions(): void {
@@ -194,6 +204,10 @@ class WindowsChromeOpener implements ChromeOpener {
 class LinuxChromeOpener implements ChromeOpener {
   openChrome(): void {
     runSilent("xdg-open", ["chrome://newtab/"])
+  }
+
+  openChromeSilent(): void {
+    this.openChrome()
   }
 
   openExtensions(): void {

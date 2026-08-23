@@ -28,8 +28,6 @@ const MAC_COMPANION_BUNDLE_IDS = [
   "company.thebrowser.browser", // Arc
   "com.brave.browser",
   "com.operasoftware.opera",
-  "com.cmspark.agent",
-  "com.cmspark.host",
 ]
 
 /**
@@ -51,9 +49,13 @@ export function isCompanionUiOwner(
   // Empty allow-list = operator disabled self-UI recovery (fail closed to re-L2).
   if (allow.size === 0) return false
   const raw = String(fgOwner).toLowerCase().replace(/\\/g, "/")
+  const base = exeBasename(fgOwner)
+  // S23: overlay/tray/host process is gated by window-rect hit-test, never silent FG continue.
+  if (isDeniedCompanionUiProcess(raw, base)) {
+    return false
+  }
 
   // Exact allow-list hit (path basename or full string).
-  const base = exeBasename(fgOwner)
   if (allow.has(base) || allow.has(raw)) return true
 
   // macOS / reverse-DNS bundle id: last segment often matches basename
@@ -83,5 +85,19 @@ export function isCompanionUiOwner(
     }
   }
 
+  return false
+}
+
+function isDeniedCompanionUiProcess(raw: string, base: string): boolean {
+  if (
+    base === "cmspark-tray" ||
+    raw === "cmspark-tray" ||
+    raw.endsWith("/cmspark-tray") ||
+    raw.endsWith("/cmspark-tray.exe")
+  ) {
+    return true
+  }
+  if (raw === "com.cmspark.agent" || raw.startsWith("com.cmspark.agent.")) return true
+  if (raw === "com.cmspark.host" || raw.startsWith("com.cmspark.host.")) return true
   return false
 }

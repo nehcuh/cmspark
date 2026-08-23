@@ -495,6 +495,23 @@ describe("saveConfig prototype-pollution defense", { concurrency: 1 }, () => {
   })
 })
 
+describe("summoner.hotkey (S11 opt-in, no default)", { concurrency: 1 }, () => {
+  test("default config has no summoner hotkey", async () => {
+    await resetConfigFile()
+    const cfg = getConfig()
+    assert.equal(cfg.summoner?.hotkey, undefined)
+    assert.equal(readSavedConfig().summoner?.hotkey, undefined)
+  })
+
+  test("persists chosen combo in config.json summoner.hotkey", async () => {
+    await resetConfigFile()
+    saveConfig({ summoner: { hotkey: "ctrl+alt+space" } })
+    clearConfigCache()
+    assert.equal(getConfig().summoner?.hotkey, "ctrl+alt+space")
+    assert.equal(readSavedConfig().summoner.hotkey, "ctrl+alt+space")
+  })
+})
+
 describe("computer 模型下载字段 normalize（WP5 I1 / ADR-010）", { concurrency: 1 }, () => {
   test("modelMirror 非字符串/空串 → coerce 为未配置 + loud log", async () => {
     await resetConfigFile()
@@ -863,5 +880,58 @@ describe("saveConfig vision inherit does not persist env-sourced keys", { concur
     // Disk must not store the environment secret under vision either
     assert.equal(readSavedConfig().vision?.api_key, "")
     assert.equal(readSavedConfig().llm?.api_key, "")
+  })
+})
+
+describe("default companion_ui_exe_basenames", { concurrency: 1 }, () => {
+  before(async () => {
+    delete process.env.DEEPSEEK_API_KEY
+    await resetConfigFile()
+  })
+
+  test("first-run defaults do not treat cmspark-tray as self-UI continue (S23)", () => {
+    const names = getConfig().security.companion_ui_exe_basenames
+    assert.equal(
+      names.includes("cmspark-tray"),
+      false,
+      `cmspark-tray must not be in ${JSON.stringify(names)}`,
+    )
+    assert.ok(names.includes("chrome"), "browser side panel still recovers")
+  })
+
+  test("load strips cmspark-tray from persisted companion_ui_exe_basenames", () => {
+    const p = path.join(tempHome, "config.json")
+    const raw = JSON.parse(fs.readFileSync(p, "utf8"))
+    raw.security = raw.security || {}
+    raw.security.companion_ui_exe_basenames = ["chrome", "cmspark-tray", "cmspark-agent"]
+    fs.writeFileSync(p, JSON.stringify(raw))
+    clearConfigCache()
+    const names = getConfig().security.companion_ui_exe_basenames
+    assert.equal(names.includes("cmspark-tray"), false)
+    assert.ok(names.includes("chrome"))
+    assert.ok(names.includes("cmspark-agent"))
+  })
+
+  test("saveConfig strips cmspark-tray from companion_ui_exe_basenames", () => {
+    saveConfig({
+      security: { companion_ui_exe_basenames: ["chrome", "cmspark-tray", "cmspark-tray.exe"] },
+    } as any)
+    clearConfigCache()
+    const names = getConfig().security.companion_ui_exe_basenames
+    assert.equal(names.includes("cmspark-tray"), false)
+    assert.equal(names.some((n) => String(n).toLowerCase().replace(/\.exe$/, "") === "cmspark-tray"), false)
+    assert.ok(names.includes("chrome"))
+  })
+
+  test("saveConfig strips full-path cmspark-tray.exe", () => {
+    saveConfig({
+      security: {
+        companion_ui_exe_basenames: ["chrome", "C:\\\\Program Files\\\\CMspark\\\\cmspark-tray.exe"],
+      },
+    } as any)
+    clearConfigCache()
+    const names = getConfig().security.companion_ui_exe_basenames
+    assert.equal(names.some((n) => String(n).toLowerCase().includes("cmspark-tray")), false)
+    assert.ok(names.includes("chrome"))
   })
 })

@@ -181,7 +181,8 @@ Channel:      community; default engine=browser; local = explicit opt-in after p
 
 ### 7.2 门禁
 
-1. 必须先 **WS auth**；`voice.stt.*` **仅** `Origin` 类 `chrome-extension://`（tray 等其他已认证 peer **拒绝**）。  
+1. 必须先 **WS auth**；`voice.stt.*` 允许 `Origin` 类 `chrome-extension://`，**或**（`Origin` = `cmspark-tray://local` **且** handshake `surface` = `summoner`）。tray surface（含缺省）**仍拒绝**。`voice.model.*` 不从此门放行。`privacy_ack_v2` 不放松。  
+   `surface` 是 handshake 上的客户端声明（HMAC 才是真门；tray 自称 summoner 只多本地 STT，弱于 tray 已有全权）。overlay **按下麦克风** 视为 `privacy_ack_v2` 的用户手势。  
 2. 未知 `v` → error，禁止静默忽略。  
 3. 分片强制；单片与会话聚合字节 cap（建议 raw ≤ **2.5MB** / 对齐 45s PCM）；超限 `payload_too_large`。  
 4. `modelId` ∈ 服务端已安装 allowlist；路径 **仅服务端解析**，禁止客户端任意 path。  

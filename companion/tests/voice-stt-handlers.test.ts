@@ -1,10 +1,10 @@
-// Path B M1 Task 4 â€?voice.stt.* handlers + WS validation + origin fence
+// Path B M1 Task 4 ï¿½?voice.stt.* handlers + WS validation + origin fence
 
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 
-// DATA_DIR fixed at config load â€?set before any src import.
+// DATA_DIR fixed at config load ï¿½?set before any src import.
 process.env.CMSPARK_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-voice-stt-handlers-"))
 delete process.env.DEEPSEEK_API_KEY
 delete process.env.CMSPARK_API_KEY
@@ -19,6 +19,7 @@ import { setVoiceFields } from "../src/config"
 import {
   handleVoiceSttMessage,
   isChromeExtensionOrigin,
+  isVoiceSttOriginAllowed,
   _resetVoiceSttHandlersForTests,
 } from "../src/voice/stt-handlers"
 import {
@@ -123,6 +124,17 @@ test("isChromeExtensionOrigin accepts extension only", () => {
   assert.equal(isChromeExtensionOrigin("https://evil.example"), false)
 })
 
+test("isVoiceSttOriginAllowed: extension always; tray only with summoner surface", () => {
+  assert.equal(isVoiceSttOriginAllowed(EXT_ORIGIN), true)
+  assert.equal(isVoiceSttOriginAllowed(EXT_ORIGIN, "summoner"), true)
+  assert.equal(isVoiceSttOriginAllowed(TRAY_ORIGIN), false)
+  assert.equal(isVoiceSttOriginAllowed(TRAY_ORIGIN, "tray"), false)
+  assert.equal(isVoiceSttOriginAllowed(TRAY_ORIGIN, undefined), false)
+  assert.equal(isVoiceSttOriginAllowed(TRAY_ORIGIN, "summoner"), true)
+  assert.equal(isVoiceSttOriginAllowed(undefined, "summoner"), false)
+  assert.equal(isVoiceSttOriginAllowed("https://evil.example", "summoner"), false)
+})
+
 // --- validateWsMessage (layer 1) ----------------------------------------------
 
 test("validateWsMessage: voice.stt.start shape", () => {
@@ -139,7 +151,7 @@ test("validateWsMessage: voice.stt.start shape", () => {
   assert.equal(validateWsMessage(ok).valid, true)
   assert.equal(validateWsMessage({ ...ok, lang: "zh", maxMs: 45000 }).valid, true)
 
-  // NOT source:settings â€?must still be valid without it
+  // NOT source:settings ï¿½?must still be valid without it
   assert.equal(validateWsMessage(ok).valid, true)
 
   // P1: privacy_ack_v2 required
@@ -248,6 +260,45 @@ test("handler rejects non-extension origin (tray)", async () => {
   assert.equal(svc.getActive(), null)
 })
 
+test("handler rejects tray origin when surface is tray (not summoner)", async () => {
+  const svc = makeService()
+  const r = await handleVoiceSttMessage(
+    {
+      type: "voice.stt.start",
+      v: 1,
+      sessionId: "s-tray-surface",
+      modelId: "small",
+      format: "wav",
+      sampleRate: 16000,
+      channels: 1,
+      privacy_ack_v2: true,
+    },
+    { origin: TRAY_ORIGIN, peerId: "tray-1", surface: "tray" },
+    { service: svc },
+  )
+  assert.equal(r.type, "voice.stt.error")
+  assert.equal(r.code, "origin_denied")
+})
+
+test("handler does not origin_denied tray origin on summoner surface", async () => {
+  const svc = makeService()
+  const r = await handleVoiceSttMessage(
+    {
+      type: "voice.stt.start",
+      v: 1,
+      sessionId: "s-summoner-stt",
+      modelId: "small",
+      format: "wav",
+      sampleRate: 16000,
+      channels: 1,
+      privacy_ack_v2: true,
+    },
+    { origin: TRAY_ORIGIN, peerId: "summoner-1", surface: "summoner" },
+    { service: svc },
+  )
+  assert.notEqual(r.code, "origin_denied")
+})
+
 test("handler rejects missing origin", async () => {
   const svc = makeService()
   const r = await handleVoiceSttMessage(
@@ -268,7 +319,7 @@ test("handler rejects missing origin", async () => {
   assert.equal(r.code, "origin_denied")
 })
 
-test("happy path: start â†?chunk â†?end with injected service", async () => {
+test("happy path: start ï¿½?chunk ï¿½?end with injected service", async () => {
   const sent: any[] = []
   const svc = makeService({
     runWhisper: async () => ({ text: "fixture å¬å†™", ms: 12 }),

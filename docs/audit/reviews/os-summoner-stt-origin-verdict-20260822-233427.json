@@ -1,0 +1,8 @@
+{
+  "batch": "os-summoner-stt-origin",
+  "timestamp": "20260822-233427",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/.grok/worktrees/projects-cmspark/subagent-01a02969-31cc-7bf0-8eb0-0aa555160e9b/docs/audit/reviews/os-summoner-stt-origin-claude-20260822-233427.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/.grok/worktrees/projects-cmspark/subagent-01a02969-31cc-7bf0-8eb0-0aa555160e9b/docs/audit/reviews/os-summoner-stt-origin-pi-20260822-233427.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/.grok/worktrees/projects-cmspark/subagent-01a02969-31cc-7bf0-8eb0-0aa555160e9b/docs/audit/reviews/os-summoner-stt-origin-diff-20260822-233427.patch"
+}

@@ -1,0 +1,29 @@
+{
+  "batch": "os-agent-shell-v2",
+  "timestamp": "20260822-172434",
+  "brief": "docs/decisions/os-agent-shell-brief-2026-08-22.md",
+  "adversary_synthesis": "docs/audit/reviews/os-agent-shell-adversary-synthesis-20260822.md",
+  "internal_adversary": {
+    "architecture": "REJECT",
+    "correctness": "REJECT",
+    "security": "REJECT",
+    "product_ux": "REJECT",
+    "note": "v1 REJECT was correct; folded into v2 before external review"
+  },
+  "claude": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/os-agent-shell-v2-claude-20260822-172434.md"
+  },
+  "pi": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/os-agent-shell-v2-pi-20260822-172436.md"
+  },
+  "kimi": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/os-agent-shell-v2-kimi-20260822-172436.md"
+  },
+  "all_approve_star": true,
+  "nits_folded": true,
+  "next": "spike plan only; no ADR-020 one-liner rewrite until P0 falsification passes",
+  "blast_tier": "T3"
+}

@@ -9,7 +9,7 @@ import * as path from "path"
 import * as fs from "fs"
 
 import { isProcessRunning, readPidFile } from "./daemon"
-import { getConfigDir, getPidFilePath } from "./config"
+import { getConfig, getConfigDir, getPidFilePath, saveConfig } from "./config"
 import { getChromeOpener, openLogDirectory, getPlatform } from "./platform"
 import {
   createTray,
@@ -24,6 +24,41 @@ import {
 import { CompanionClient } from "./tray/companion-client"
 import { readPairingSecret, hasPaired, resolveClipboardCommand } from "./tray/pairing"
 import { OSASCRIPT_BIN } from "./process-path"
+import {
+  attachChromeOnly,
+  buildContinueChatCreate,
+  mapChatMessageToSummonerCmd,
+  mapVoiceSttToSummonerCmd,
+  micPcmStartFrame,
+  normalizeResumeIdleMinutes,
+  resolveSummonerSttModelId,
+  sendMicWavToStt,
+  shouldStartNewSummonerThread,
+  resolveSummonerOpenTarget,
+  summonerHitsFromQuery,
+  submitSummonerTalk,
+  type SummonerSttModelId,
+  type VoiceSttFrame,
+} from "./summoner/client"
+import {
+  encodeSummonerError,
+  encodeSummonerHotkeySet,
+  encodeSummonerMcp,
+  encodeSummonerSettings,
+  SUMMONER_SEARCH_HINT,
+  type SummonerInboundEvt,
+} from "./summoner/protocol"
+import { connectedMcpServerNames } from "./mcp/confirm-target"
+import { hydratePlaintext } from "./summoner/hydrate"
+import {
+  beginOverlaySession,
+  claimOverlayIfLive,
+  currentOverlaySession,
+  hydrateOverlayIfLive,
+  invalidateOverlaySession,
+  overlaySessionIsLive,
+} from "./summoner/overlay-session"
+import { acceptedSummonerHotkey, nextSummonerHotkeyCmd } from "./summoner/hotkey"
 
 // node-notifier does not ship TypeScript declarations
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -109,6 +144,11 @@ export function getTrayInstance(): UnifiedTray | null {
 
 let activeBackend: TrayBackend | null = null
 let companionClient: CompanionClient | null = null
+/** Second WS: overlay chat (`surface: "summoner"`). Tray menus stay on companionClient. */
+let summonerClient: CompanionClient | null = null
+let summonerThreadId: string | null = null
+let summonerMicSessionId: string | null = null
+let summonerMicSeq = 0
 let pollTimer: NodeJS.Timeout | null = null
 let lastNotifiedStatus: CompanionStatus | null = null
 // Auto-surface the pairing popup at most once per launcher session — only while the
@@ -559,6 +599,452 @@ function openChromeSidePanel(): void {
   }
 }
 
+/** Lazy require: lifecycle already imports this module; load-time import would cycle. */
+function summonerBrowserAttached(): boolean {
+  try {
+    const { pickAuthenticatedClientWs } = require("./ws/lifecycle") as typeof import("./ws/lifecycle")
+    return pickAuthenticatedClientWs() != null
+  } catch {
+    return false
+  }
+}
+
+function readSummonerCfg() {
+  return getConfig().summoner ?? {}
+}
+
+function persistSummonerPatch(patch: Record<string, unknown>): void {
+  saveConfig({ summoner: { ...readSummonerCfg(), ...patch } })
+}
+
+function touchSummonerActivity(threadId?: string | null): void {
+  persistSummonerPatch({
+    last_activity_at: Date.now(),
+    ...(threadId ? { last_thread_id: threadId } : {}),
+  })
+}
+
+function pushSummonerSettings(): void {
+  const s = readSummonerCfg()
+  trayInstance?.sendSummoner?.(encodeSummonerSettings({
+    resume_idle_minutes: normalizeResumeIdleMinutes(s.resume_idle_minutes),
+    chrome_foreground: s.chrome_foreground === true,
+  }))
+}
+
+async function hydrateSummonerThread(id: string, sessionToken?: number): Promise<boolean> {
+  const client = summonerClient
+  if (!client) return false
+  const token = sessionToken ?? beginOverlaySession()
+  const result = await hydrateOverlayIfLive({
+    id,
+    token,
+    selectMessages: (tid) => client.selectThreadMessages(tid),
+    applyHydrate: (tid, messages) => {
+      trayInstance?.hydrateSummoner?.({
+        thread_id: tid,
+        lines: hydratePlaintext(messages),
+        browser: summonerBrowserAttached() ? "attached" : "detached",
+        search_hint: SUMMONER_SEARCH_HINT,
+      })
+    },
+    claimLease: (tid) => client.claimOverlayComposerLease(tid),
+    releaseAllLeases: () => client.releaseAllOverlayComposerLeases(),
+  })
+  if (result !== "claimed") return false
+  summonerThreadId = id
+  return true
+}
+
+async function pushSummonerMcp(): Promise<void> {
+  const client = summonerClient
+  if (!client) return
+  try {
+    const resp = await client.sendAppRequest("mcp.list", {}, 4000)
+    const servers = Array.isArray(resp?.servers) ? resp.servers : []
+    trayInstance?.sendSummoner?.(encodeSummonerMcp({ names: connectedMcpServerNames(servers) }))
+  } catch {
+    trayInstance?.sendSummoner?.(encodeSummonerMcp({ names: [] }))
+  }
+}
+
+export async function handleSummonerReady(): Promise<void> {
+  const token = beginOverlaySession()
+  syncSummonerHotkeyToTray()
+  pushSummonerSettings()
+  void pushSummonerMcp()
+  const client = summonerClient
+  const s = readSummonerCfg()
+  const forceNew = shouldStartNewSummonerThread({
+    now: Date.now(),
+    lastActivityAt: typeof s.last_activity_at === "number" ? s.last_activity_at : null,
+    resumeIdleMinutes: normalizeResumeIdleMinutes(s.resume_idle_minutes),
+  })
+  const threads = (await client?.listThreads()) ?? []
+  const target = resolveSummonerOpenTarget({
+    forceNew,
+    lastThreadId: typeof s.last_thread_id === "string" ? s.last_thread_id : null,
+    threads,
+  })
+  if (target.action === "create") {
+    await handleSummonerNewThread(token)
+  } else {
+    await hydrateSummonerThread(target.threadId, token)
+  }
+  if (overlaySessionIsLive(currentOverlaySession()) && summonerThreadId) {
+    touchSummonerActivity(summonerThreadId)
+  }
+}
+
+export async function handleSummonerClosed(): Promise<void> {
+  invalidateOverlaySession()
+  summonerThreadId = null
+  const client = summonerClient
+  if (!client) return
+  await client.releaseAllOverlayComposerLeases()
+}
+
+/** Overlay attach CTA — Chrome only. Never openSidePanel (that copy lies). */
+export function handleSummonerAttach(foreground = false): void {
+  try {
+    const copy = attachChromeOnly(getChromeOpener(), { foreground })
+    trayDebugLog(copy)
+    safeNotify({ title: "CMspark 召唤器", message: copy, timeout: 5 })
+  } catch (err: any) {
+    const copy = `打开 Chrome 失败: ${err?.message || err}。我们不能替你打开侧栏。`
+    trayDebugLog(copy)
+    safeNotify({ title: "CMspark 召唤器", message: copy, timeout: 5 })
+  }
+}
+
+/** Overlay continue CTA — new user message, no L1 replay. */
+export function handleSummonerContinue(): boolean {
+  if (!summonerClient || !summonerThreadId) return false
+  return summonerClient.sendChatCreate(buildContinueChatCreate(summonerThreadId))
+}
+
+export async function handleSummonerSubmit(thread_id: string, text: string): Promise<boolean> {
+  const client = summonerClient
+  if (!client) return false
+  const token = currentOverlaySession()
+  const result = await submitSummonerTalk(thread_id, text, {
+    listThreads: () => client.listThreads(),
+    createThread: () => client.createThread(),
+    claimLease: (id) =>
+      claimOverlayIfLive({
+        token,
+        claim: () => client.claimOverlayComposerLease(id),
+        releaseAll: () => client.releaseAllOverlayComposerLeases(),
+      }),
+    sendChatCreate: (args) => client.sendChatCreate(args),
+    selectMessages: (id) => client.selectThreadMessages(id),
+    hydrate: ({ thread_id: id, messages }) => {
+      if (!overlaySessionIsLive(token)) return
+      summonerThreadId = id
+      const prior = messages as Array<{
+        role: string
+        content?: string
+        tool_calls?: Array<{ function?: { name?: string } }>
+      }>
+      const trimmed = text.trim()
+      const last = prior[prior.length - 1]
+      const already =
+        !!trimmed &&
+        last?.role === "user" &&
+        String(last.content || "").includes(trimmed)
+      const lines = hydratePlaintext(
+        already || !trimmed ? prior : [...prior, { role: "user", content: trimmed }],
+      )
+      trayInstance?.hydrateSummoner?.({
+        thread_id: id,
+        lines,
+        browser: summonerBrowserAttached() ? "attached" : "detached",
+        search_hint: SUMMONER_SEARCH_HINT,
+      })
+    },
+  })
+  if (result.ok && result.threadId) {
+    summonerThreadId = result.threadId
+    touchSummonerActivity(result.threadId)
+  }
+  return result.ok
+}
+
+export async function handleSummonerSearch(query: string) {
+  const threads = (await summonerClient?.listThreads()) ?? []
+  const cmd = summonerHitsFromQuery(threads, query)
+  trayInstance?.sendSummoner?.(cmd)
+  if (cmd.hits.length === 1) {
+    const claimed = await hydrateSummonerThread(cmd.hits[0].id)
+    if (claimed) touchSummonerActivity(cmd.hits[0].id)
+  }
+  return cmd
+}
+
+export async function handleSummonerSelect(threadId: string): Promise<void> {
+  const id = threadId.trim()
+  if (!id) return
+  const claimed = await hydrateSummonerThread(id)
+  if (claimed) touchSummonerActivity(id)
+}
+
+export function setSummonerThreadId(id: string | null): void {
+  summonerThreadId = id
+}
+
+/** Re-arm a persisted combo on Swift. Empty config waits for first overlay open. */
+export function armSummonerHotkeyOnTrayStart(): void {
+  const cmd = nextSummonerHotkeyCmd(getConfig().summoner?.hotkey)
+  if (cmd.cmd !== "summoner.hotkey.set") return
+  trayInstance?.sendSummoner?.(cmd)
+}
+
+/** First overlay open with empty config → picker; else re-arm RegisterEventHotKey. */
+export function syncSummonerHotkeyToTray(): void {
+  trayInstance?.sendSummoner?.(nextSummonerHotkeyCmd(getConfig().summoner?.hotkey))
+}
+
+/** Persist picker choice (S11). Rejects stolen defaults. Returns canonical combo or null. */
+export function persistSummonerHotkeyChosen(combo: string): string | null {
+  const accepted = acceptedSummonerHotkey(combo)
+  if (!accepted) return null
+  saveConfig({ summoner: { hotkey: accepted } })
+  trayInstance?.sendSummoner?.(encodeSummonerHotkeySet({ combo: accepted }))
+  return accepted
+}
+
+/**
+ * Swift overlay → Node. Close is summoner.closed only — never chat.abort.
+ */
+function summonerSttModelId(): SummonerSttModelId {
+  const id = getConfig().voice?.localModelId
+  if (id === "small" || id === "medium" || id === "large-v3-turbo") return id
+  return "medium"
+}
+
+/** Cheap dir-exists check — start() still probes hash. Avoid hashing every family on click. */
+function presentWhisperModelIds(): string[] {
+  try {
+    const { resolveWhisperRoot } = require("./voice/whisper-download") as typeof import("./voice/whisper-download")
+    const root = resolveWhisperRoot()
+    return (["medium", "small", "large-v3-turbo"] as const).filter((id) => {
+      try {
+        return fs.existsSync(path.join(root, id))
+      } catch {
+        return false
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
+function sendSummonerSttFrame(frame: VoiceSttFrame): boolean {
+  const { type, ...params } = frame
+  return summonerClient?.sendAppMessage(type, params) ?? false
+}
+
+function emitSummonerSttError(code?: string, message?: string): void {
+  const cmd = mapVoiceSttToSummonerCmd({
+    type: "voice.stt.error",
+    code,
+    message: message || code || "听写失败",
+  })
+  if (cmd) trayInstance?.sendSummoner?.(cmd)
+}
+
+async function startVoiceStt(frame: VoiceSttFrame): Promise<boolean> {
+  const client = summonerClient
+  if (!client) return false
+  const { type, ...params } = frame
+  try {
+    const resp = await client.sendAppRequest(type, params, 20_000)
+    if (resp?.type === "voice.stt.error") {
+      emitSummonerSttError(
+        typeof resp.code === "string" ? resp.code : undefined,
+        typeof resp.message === "string" ? resp.message : undefined,
+      )
+      return false
+    }
+    return true
+  } catch (err) {
+    emitSummonerSttError(undefined, err instanceof Error ? err.message : String(err))
+    return false
+  }
+}
+
+/** Overlay mic gesture → local STT (privacy_ack_v2: user pressed the mic). */
+export function handleSummonerMic(
+  evt:
+    | { type: "summoner.mic.start" }
+    | { type: "summoner.mic.chunk"; seq: number; data: string }
+    | { type: "summoner.mic.end" }
+    | { type: "summoner.mic.wav"; data: string },
+): void {
+  if (!summonerClient) return
+  switch (evt.type) {
+    case "summoner.mic.start":
+      summonerMicSessionId = null
+      summonerMicSeq = 0
+      return
+    case "summoner.mic.chunk": {
+      void (async () => {
+        if (!summonerMicSessionId) {
+          const modelId = resolveSummonerSttModelId(summonerSttModelId(), presentWhisperModelIds())
+          if (!modelId) {
+            emitSummonerSttError("model_missing")
+            return
+          }
+          summonerMicSessionId = `summoner-mic-${Date.now()}`
+          const ok = await startVoiceStt(micPcmStartFrame({
+            sessionId: summonerMicSessionId,
+            modelId,
+          }))
+          if (!ok) {
+            summonerMicSessionId = null
+            return
+          }
+        }
+        if (!summonerMicSessionId) return
+        sendSummonerSttFrame({
+          type: "voice.stt.chunk",
+          v: 1,
+          sessionId: summonerMicSessionId,
+          seq: evt.seq,
+          data: evt.data,
+        })
+        summonerMicSeq = evt.seq + 1
+      })()
+      return
+    }
+    case "summoner.mic.end": {
+      if (!summonerMicSessionId) return
+      sendSummonerSttFrame({
+        type: "voice.stt.end",
+        v: 1,
+        sessionId: summonerMicSessionId,
+        totalSeq: summonerMicSeq,
+      })
+      summonerMicSessionId = null
+      return
+    }
+    case "summoner.mic.wav": {
+      summonerMicSessionId = null
+      const modelId = resolveSummonerSttModelId(summonerSttModelId(), presentWhisperModelIds())
+      if (!modelId) {
+        emitSummonerSttError("model_missing")
+        return
+      }
+      void sendMicWavToStt({
+        sessionId: `summoner-mic-${Date.now()}`,
+        modelId,
+        data: evt.data,
+        transport: {
+          start: async (frame) => {
+            const client = summonerClient
+            if (!client) return { ok: false, message: "召唤器未连接" }
+            const { type, ...params } = frame
+            try {
+              const resp = await client.sendAppRequest(type, params, 20_000)
+              if (resp?.type === "voice.stt.error") {
+                return {
+                  ok: false,
+                  code: typeof resp.code === "string" ? resp.code : undefined,
+                  message: typeof resp.message === "string" ? resp.message : "听写失败",
+                }
+              }
+              return { ok: true }
+            } catch (err) {
+              return { ok: false, message: err instanceof Error ? err.message : String(err) }
+            }
+          },
+          chunk: (frame) => { sendSummonerSttFrame(frame) },
+          end: (frame) => { sendSummonerSttFrame(frame) },
+        },
+      }).then((result) => {
+        if (!result.ok) emitSummonerSttError(result.code, result.message)
+      })
+      return
+    }
+  }
+}
+
+export async function handleSummonerNewThread(sessionToken?: number): Promise<boolean> {
+  const client = summonerClient
+  if (!client) return false
+  const token = sessionToken ?? beginOverlaySession()
+  const created = await client.createThread()
+  if (!created) {
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: "无法创建新对话" }))
+    return false
+  }
+  const claimed = await claimOverlayIfLive({
+    token,
+    claim: async () => {
+      trayInstance?.hydrateSummoner?.({
+        thread_id: created.id,
+        lines: [],
+        browser: summonerBrowserAttached() ? "attached" : "detached",
+        search_hint: SUMMONER_SEARCH_HINT,
+      })
+      await client.claimOverlayComposerLease(created.id)
+    },
+    releaseAll: () => client.releaseAllOverlayComposerLeases(),
+  })
+  if (claimed) {
+    summonerThreadId = created.id
+    touchSummonerActivity(created.id)
+  }
+  return claimed
+}
+
+export function handleSummonerInbound(evt: SummonerInboundEvt): void {
+  switch (evt.type) {
+    case "summoner.submit":
+      void handleSummonerSubmit(evt.thread_id, evt.text)
+      return
+    case "summoner.search":
+      void handleSummonerSearch(evt.query)
+      return
+    case "summoner.select":
+      void handleSummonerSelect(evt.thread_id)
+      return
+    case "summoner.attach_chrome":
+      handleSummonerAttach(evt.foreground === true)
+      return
+    case "summoner.continue":
+      handleSummonerContinue()
+      return
+    case "summoner.ready":
+      void handleSummonerReady()
+      return
+    case "summoner.settings.set":
+      persistSummonerPatch({
+        resume_idle_minutes: evt.resume_idle_minutes,
+        chrome_foreground: evt.chrome_foreground,
+      })
+      pushSummonerSettings()
+      return
+    case "summoner.hotkey.chosen":
+      persistSummonerHotkeyChosen(evt.combo)
+      return
+    case "summoner.mic.start":
+    case "summoner.mic.chunk":
+    case "summoner.mic.end":
+    case "summoner.mic.wav":
+      handleSummonerMic(evt)
+      return
+    case "summoner.new_thread":
+      void handleSummonerNewThread()
+      return
+    case "summoner.closed":
+      void handleSummonerClosed()
+      return
+    case "summoner.composing":
+      return
+  }
+}
+
 async function handleQuickAction(id: string): Promise<void> {
   if (!companionClient) {
     safeNotify({ title: "CMspark Agent", message: "Companion 未运行，无法执行操作", timeout: 3 })
@@ -687,6 +1173,10 @@ function cleanup(): void {
     companionClient.disconnect()
     companionClient = null
   }
+  if (summonerClient) {
+    summonerClient.disconnect()
+    summonerClient = null
+  }
   try {
     if (fs.existsSync(STATUS_FILE)) fs.unlinkSync(STATUS_FILE)
   } catch { /* ignore */ }
@@ -732,6 +1222,27 @@ export async function startMenuBarAgent(): Promise<void> {
         })
       })
 
+      trayInstance.onSummonerEvent?.((evt) => {
+        try {
+          handleSummonerInbound(evt)
+        } catch (err) {
+          console.error("[menu-bar] summoner event error:", err)
+        }
+      })
+
+      trayInstance.onCompanionUiRect?.((raw) => {
+        try {
+          if (!raw || typeof raw !== "object") return
+          const o = raw as Record<string, unknown>
+          summonerClient?.sendAppMessage("companion.ui.rect", o)
+        } catch (err) {
+          console.error("[menu-bar] companion.ui.rect forward error:", err)
+        }
+      })
+
+      // Re-arm persisted hotkey on tray spawn. Empty config: wait for overlay open.
+      armSummonerHotkeyOnTrayStart()
+
       // Push initial state
       trayInstance.updateStatus(state.companionStatus, state.wsConnected, state.pid)
       const autoStart = await checkAutoStart()
@@ -771,6 +1282,28 @@ export async function startMenuBarAgent(): Promise<void> {
 
   // Connect (non-blocking — data arrives via callbacks)
   companionClient.connect().catch(() => {})
+
+  // Second WS: overlay chat. Same origin; handshake surface=summoner (ACL).
+  summonerClient = new CompanionClient({
+    host: WS_HOST,
+    port: WS_PORT,
+    reconnectInterval: 5000,
+    maxReconnectAttempts: -1,
+    surface: "summoner",
+  })
+  summonerClient.onAppMessage((msg) => {
+    const sttCmd = mapVoiceSttToSummonerCmd(msg)
+    if (sttCmd) {
+      // voice.stt.result → summoner.dictate (fill composer; user hits send)
+      trayInstance?.sendSummoner?.(sttCmd)
+      return
+    }
+    const cmd = mapChatMessageToSummonerCmd(msg)
+    if (!cmd) return
+    // Task 9 wires Swift stdin; non-Swift / pre-rebuild adapters no-op.
+    trayInstance?.sendSummoner?.(cmd)
+  })
+  summonerClient.connect().catch(() => {})
 
   // P3a HUD spike (dual-process): tray owns Swift UI; server owns manager.
   // Requires CMSPARK_HUD_SPIKE=1 on BOTH tray and companion processes.
@@ -960,6 +1493,10 @@ export async function stopMenuBarAgent(): Promise<void> {
   if (companionClient) {
     companionClient.disconnect()
     companionClient = null
+  }
+  if (summonerClient) {
+    summonerClient.disconnect()
+    summonerClient = null
   }
   cleanup()
   console.log("[tray] CMspark Agent menu bar stopped")
