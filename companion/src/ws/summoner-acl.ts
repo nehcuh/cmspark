@@ -1,7 +1,9 @@
 /** Per-connection method ACL keyed off handshake `surface` (S21).
  *
  * Origin stays `cmspark-tray://local`. Summoner is a second tray-origin WS
- * that must not run trust-elevation / settings / pack / MCP / confirm.
+ * that must not run trust-elevation / settings / pack / MCP mutate / confirm.
+ * Overlay chat.create already sees companion MCP tools; `mcp.list` is read-only
+ * so the overlay can show connected servers. `mcp.add` stays denied.
  * Tray (`surface !== "summoner"`, including omitted/undefined) is not gated —
  * origin-cleaving would break tray `skill.list`.
  */
@@ -22,6 +24,7 @@ const SUMMONER_ALLOW = new Set([
   "voice.stt.end",
   "voice.stt.abort",
   "voice.stt.partial_request",
+  "mcp.list",
 ])
 
 export function assertSummonerAllowed(

@@ -32,13 +32,24 @@ import {
   mapChatMessageToSummonerCmd,
   mapVoiceSttToSummonerCmd,
   micPcmStartFrame,
-  micWavToSttFrames,
+  normalizeResumeIdleMinutes,
+  resolveSummonerSttModelId,
+  sendMicWavToStt,
+  shouldStartNewSummonerThread,
   submitSummonerTalk,
   summonerSearchNeedle,
   type SummonerSttModelId,
   type VoiceSttFrame,
 } from "./summoner/client"
-import { encodeSummonerHotkeySet, SUMMONER_SEARCH_HINT, type SummonerInboundEvt } from "./summoner/protocol"
+import {
+  encodeSummonerError,
+  encodeSummonerHotkeySet,
+  encodeSummonerMcp,
+  encodeSummonerSettings,
+  SUMMONER_SEARCH_HINT,
+  type SummonerInboundEvt,
+} from "./summoner/protocol"
+import { connectedMcpServerNames } from "./mcp/confirm-target"
 import { hydratePlaintext } from "./summoner/hydrate"
 import { acceptedSummonerHotkey, nextSummonerHotkeyCmd } from "./summoner/hotkey"
 
@@ -591,10 +602,76 @@ function summonerBrowserAttached(): boolean {
   }
 }
 
-/** Overlay attach CTA — Chrome only. Never openSidePanel (that copy lies). */
-export function handleSummonerAttach(): void {
+function readSummonerCfg() {
+  return getConfig().summoner ?? {}
+}
+
+function persistSummonerPatch(patch: Record<string, unknown>): void {
+  saveConfig({ summoner: { ...readSummonerCfg(), ...patch } })
+}
+
+function touchSummonerActivity(threadId?: string | null): void {
+  persistSummonerPatch({
+    last_activity_at: Date.now(),
+    ...(threadId ? { last_thread_id: threadId } : {}),
+  })
+}
+
+function pushSummonerSettings(): void {
+  const s = readSummonerCfg()
+  trayInstance?.sendSummoner?.(encodeSummonerSettings({
+    resume_idle_minutes: normalizeResumeIdleMinutes(s.resume_idle_minutes),
+    chrome_foreground: s.chrome_foreground === true,
+  }))
+}
+
+async function hydrateSummonerThread(id: string): Promise<void> {
+  const client = summonerClient
+  if (!client) return
+  summonerThreadId = id
+  const messages = await client.selectThreadMessages(id)
+  trayInstance?.hydrateSummoner?.({
+    thread_id: id,
+    lines: hydratePlaintext(messages),
+    browser: summonerBrowserAttached() ? "attached" : "detached",
+    search_hint: SUMMONER_SEARCH_HINT,
+  })
+}
+
+async function pushSummonerMcp(): Promise<void> {
+  const client = summonerClient
+  if (!client) return
   try {
-    const copy = attachChromeOnly(getChromeOpener())
+    const resp = await client.sendAppRequest("mcp.list", {}, 4000)
+    const servers = Array.isArray(resp?.servers) ? resp.servers : []
+    trayInstance?.sendSummoner?.(encodeSummonerMcp({ names: connectedMcpServerNames(servers) }))
+  } catch {
+    trayInstance?.sendSummoner?.(encodeSummonerMcp({ names: [] }))
+  }
+}
+
+export async function handleSummonerReady(): Promise<void> {
+  syncSummonerHotkeyToTray()
+  pushSummonerSettings()
+  void pushSummonerMcp()
+  const s = readSummonerCfg()
+  const startNew = shouldStartNewSummonerThread({
+    now: Date.now(),
+    lastActivityAt: typeof s.last_activity_at === "number" ? s.last_activity_at : null,
+    resumeIdleMinutes: normalizeResumeIdleMinutes(s.resume_idle_minutes),
+  })
+  if (startNew) {
+    await handleSummonerNewThread()
+  } else if (typeof s.last_thread_id === "string" && s.last_thread_id) {
+    await hydrateSummonerThread(s.last_thread_id)
+  }
+  touchSummonerActivity(summonerThreadId)
+}
+
+/** Overlay attach CTA — Chrome only. Never openSidePanel (that copy lies). */
+export function handleSummonerAttach(foreground = false): void {
+  try {
+    const copy = attachChromeOnly(getChromeOpener(), { foreground })
     trayDebugLog(copy)
     safeNotify({ title: "CMspark 召唤器", message: copy, timeout: 5 })
   } catch (err: any) {
@@ -643,7 +720,10 @@ export async function handleSummonerSubmit(thread_id: string, text: string): Pro
       })
     },
   })
-  if (result.threadId) summonerThreadId = result.threadId
+  if (result.threadId) {
+    summonerThreadId = result.threadId
+    touchSummonerActivity(result.threadId)
+  }
   return result.ok
 }
 
@@ -691,9 +771,55 @@ function summonerSttModelId(): SummonerSttModelId {
   return "medium"
 }
 
+/** Cheap dir-exists check — start() still probes hash. Avoid hashing every family on click. */
+function presentWhisperModelIds(): string[] {
+  try {
+    const { resolveWhisperRoot } = require("./voice/whisper-download") as typeof import("./voice/whisper-download")
+    const root = resolveWhisperRoot()
+    return (["medium", "small", "large-v3-turbo"] as const).filter((id) => {
+      try {
+        return fs.existsSync(path.join(root, id))
+      } catch {
+        return false
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
 function sendSummonerSttFrame(frame: VoiceSttFrame): boolean {
   const { type, ...params } = frame
   return summonerClient?.sendAppMessage(type, params) ?? false
+}
+
+function emitSummonerSttError(code?: string, message?: string): void {
+  const cmd = mapVoiceSttToSummonerCmd({
+    type: "voice.stt.error",
+    code,
+    message: message || code || "听写失败",
+  })
+  if (cmd) trayInstance?.sendSummoner?.(cmd)
+}
+
+async function startVoiceStt(frame: VoiceSttFrame): Promise<boolean> {
+  const client = summonerClient
+  if (!client) return false
+  const { type, ...params } = frame
+  try {
+    const resp = await client.sendAppRequest(type, params, 20_000)
+    if (resp?.type === "voice.stt.error") {
+      emitSummonerSttError(
+        typeof resp.code === "string" ? resp.code : undefined,
+        typeof resp.message === "string" ? resp.message : undefined,
+      )
+      return false
+    }
+    return true
+  } catch (err) {
+    emitSummonerSttError(undefined, err instanceof Error ? err.message : String(err))
+    return false
+  }
 }
 
 /** Overlay mic gesture → local STT (privacy_ack_v2: user pressed the mic). */
@@ -711,21 +837,33 @@ export function handleSummonerMic(
       summonerMicSeq = 0
       return
     case "summoner.mic.chunk": {
-      if (!summonerMicSessionId) {
-        summonerMicSessionId = `summoner-mic-${Date.now()}`
-        sendSummonerSttFrame(micPcmStartFrame({
+      void (async () => {
+        if (!summonerMicSessionId) {
+          const modelId = resolveSummonerSttModelId(summonerSttModelId(), presentWhisperModelIds())
+          if (!modelId) {
+            emitSummonerSttError("model_missing")
+            return
+          }
+          summonerMicSessionId = `summoner-mic-${Date.now()}`
+          const ok = await startVoiceStt(micPcmStartFrame({
+            sessionId: summonerMicSessionId,
+            modelId,
+          }))
+          if (!ok) {
+            summonerMicSessionId = null
+            return
+          }
+        }
+        if (!summonerMicSessionId) return
+        sendSummonerSttFrame({
+          type: "voice.stt.chunk",
+          v: 1,
           sessionId: summonerMicSessionId,
-          modelId: summonerSttModelId(),
-        }))
-      }
-      sendSummonerSttFrame({
-        type: "voice.stt.chunk",
-        v: 1,
-        sessionId: summonerMicSessionId,
-        seq: evt.seq,
-        data: evt.data,
-      })
-      summonerMicSeq = evt.seq + 1
+          seq: evt.seq,
+          data: evt.data,
+        })
+        summonerMicSeq = evt.seq + 1
+      })()
       return
     }
     case "summoner.mic.end": {
@@ -741,15 +879,62 @@ export function handleSummonerMic(
     }
     case "summoner.mic.wav": {
       summonerMicSessionId = null
-      const frames = micWavToSttFrames({
+      const modelId = resolveSummonerSttModelId(summonerSttModelId(), presentWhisperModelIds())
+      if (!modelId) {
+        emitSummonerSttError("model_missing")
+        return
+      }
+      void sendMicWavToStt({
         sessionId: `summoner-mic-${Date.now()}`,
-        modelId: summonerSttModelId(),
+        modelId,
         data: evt.data,
+        transport: {
+          start: async (frame) => {
+            const client = summonerClient
+            if (!client) return { ok: false, message: "召唤器未连接" }
+            const { type, ...params } = frame
+            try {
+              const resp = await client.sendAppRequest(type, params, 20_000)
+              if (resp?.type === "voice.stt.error") {
+                return {
+                  ok: false,
+                  code: typeof resp.code === "string" ? resp.code : undefined,
+                  message: typeof resp.message === "string" ? resp.message : "听写失败",
+                }
+              }
+              return { ok: true }
+            } catch (err) {
+              return { ok: false, message: err instanceof Error ? err.message : String(err) }
+            }
+          },
+          chunk: (frame) => { sendSummonerSttFrame(frame) },
+          end: (frame) => { sendSummonerSttFrame(frame) },
+        },
+      }).then((result) => {
+        if (!result.ok) emitSummonerSttError(result.code, result.message)
       })
-      for (const frame of frames) sendSummonerSttFrame(frame)
       return
     }
   }
+}
+
+export async function handleSummonerNewThread(): Promise<boolean> {
+  const client = summonerClient
+  if (!client) return false
+  const created = await client.createThread()
+  if (!created) {
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: "无法创建新对话" }))
+    return false
+  }
+  summonerThreadId = created.id
+  touchSummonerActivity(created.id)
+  trayInstance?.hydrateSummoner?.({
+    thread_id: created.id,
+    lines: [],
+    browser: summonerBrowserAttached() ? "attached" : "detached",
+    search_hint: SUMMONER_SEARCH_HINT,
+  })
+  return true
 }
 
 export function handleSummonerInbound(evt: SummonerInboundEvt): void {
@@ -761,14 +946,20 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       void handleSummonerSearch(evt.query)
       return
     case "summoner.attach_chrome":
-      handleSummonerAttach()
+      handleSummonerAttach(evt.foreground === true)
       return
     case "summoner.continue":
       handleSummonerContinue()
       return
     case "summoner.ready":
-      // First overlay open with empty config → picker; else re-arm RegisterEventHotKey.
-      syncSummonerHotkeyToTray()
+      void handleSummonerReady()
+      return
+    case "summoner.settings.set":
+      persistSummonerPatch({
+        resume_idle_minutes: evt.resume_idle_minutes,
+        chrome_foreground: evt.chrome_foreground,
+      })
+      pushSummonerSettings()
       return
     case "summoner.hotkey.chosen":
       persistSummonerHotkeyChosen(evt.combo)
@@ -778,6 +969,9 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
     case "summoner.mic.end":
     case "summoner.mic.wav":
       handleSummonerMic(evt)
+      return
+    case "summoner.new_thread":
+      void handleSummonerNewThread()
       return
     case "summoner.closed":
     case "summoner.composing":

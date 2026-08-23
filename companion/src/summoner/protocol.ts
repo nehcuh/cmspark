@@ -50,6 +50,13 @@ export type SummonerErrorCmd = { cmd: "summoner.error" } & SummonerErrorPayload
 export type SummonerHotkeyPromptCmd = { cmd: "summoner.hotkey.prompt" }
 export type SummonerHotkeySetCmd = { cmd: "summoner.hotkey.set"; combo: string }
 export type SummonerDictateCmd = { cmd: "summoner.dictate"; text: string }
+export type SummonerSettingsPayload = {
+  resume_idle_minutes: number
+  chrome_foreground: boolean
+}
+export type SummonerSettingsCmd = { cmd: "summoner.settings" } & SummonerSettingsPayload
+export type SummonerToolCmd = { cmd: "summoner.tool"; name: string }
+export type SummonerMcpCmd = { cmd: "summoner.mcp"; names: string[] }
 
 export type SummonerOutboundCmd =
   | SummonerOpenCmd
@@ -61,6 +68,9 @@ export type SummonerOutboundCmd =
   | SummonerHotkeyPromptCmd
   | SummonerHotkeySetCmd
   | SummonerDictateCmd
+  | SummonerSettingsCmd
+  | SummonerToolCmd
+  | SummonerMcpCmd
 
 // ── Swift → Companion events ────────────────────────────────────────────────
 
@@ -68,7 +78,7 @@ export type SummonerReadyEvt = { type: "summoner.ready" }
 export type SummonerClosedEvt = { type: "summoner.closed" }
 export type SummonerSubmitEvt = { type: "summoner.submit"; thread_id: string; text: string }
 export type SummonerSearchEvt = { type: "summoner.search"; query: string }
-export type SummonerAttachChromeEvt = { type: "summoner.attach_chrome" }
+export type SummonerAttachChromeEvt = { type: "summoner.attach_chrome"; foreground?: boolean }
 export type SummonerContinueEvt = { type: "summoner.continue" }
 export type SummonerHotkeyChosenEvt = { type: "summoner.hotkey.chosen"; combo: string }
 export type SummonerComposingEvt = { type: "summoner.composing"; on: boolean }
@@ -76,6 +86,8 @@ export type SummonerMicStartEvt = { type: "summoner.mic.start" }
 export type SummonerMicChunkEvt = { type: "summoner.mic.chunk"; seq: number; data: string }
 export type SummonerMicEndEvt = { type: "summoner.mic.end" }
 export type SummonerMicWavEvt = { type: "summoner.mic.wav"; data: string }
+export type SummonerNewThreadEvt = { type: "summoner.new_thread" }
+export type SummonerSettingsSetEvt = { type: "summoner.settings.set" } & SummonerSettingsPayload
 
 export type SummonerInboundEvt =
   | SummonerReadyEvt
@@ -90,6 +102,8 @@ export type SummonerInboundEvt =
   | SummonerMicChunkEvt
   | SummonerMicEndEvt
   | SummonerMicWavEvt
+  | SummonerNewThreadEvt
+  | SummonerSettingsSetEvt
 
 export type SummonerWireMessage = SummonerOutboundCmd | SummonerInboundEvt
 
@@ -152,7 +166,8 @@ export function encodeSummonerSearch(p: { query: string }): SummonerSearchEvt {
   return { type: "summoner.search", query: p.query }
 }
 
-export function encodeSummonerAttachChrome(): SummonerAttachChromeEvt {
+export function encodeSummonerAttachChrome(p?: { foreground?: boolean }): SummonerAttachChromeEvt {
+  if (p?.foreground === true) return { type: "summoner.attach_chrome", foreground: true }
   return { type: "summoner.attach_chrome" }
 }
 
@@ -186,6 +201,38 @@ export function encodeSummonerMicEnd(): SummonerMicEndEvt {
 
 export function encodeSummonerMicWav(p: { data: string }): SummonerMicWavEvt {
   return { type: "summoner.mic.wav", data: p.data }
+}
+
+export function encodeSummonerNewThread(): SummonerNewThreadEvt {
+  return { type: "summoner.new_thread" }
+}
+
+function isResumeIdleMinutes(n: unknown): n is number {
+  return n === -1 || n === 0 || n === 5 || n === 10 || n === 30
+}
+
+export function encodeSummonerSettings(p: SummonerSettingsPayload): SummonerSettingsCmd {
+  return {
+    cmd: "summoner.settings",
+    resume_idle_minutes: p.resume_idle_minutes,
+    chrome_foreground: p.chrome_foreground,
+  }
+}
+
+export function encodeSummonerSettingsSet(p: SummonerSettingsPayload): SummonerSettingsSetEvt {
+  return {
+    type: "summoner.settings.set",
+    resume_idle_minutes: p.resume_idle_minutes,
+    chrome_foreground: p.chrome_foreground,
+  }
+}
+
+export function encodeSummonerTool(p: { name: string }): SummonerToolCmd {
+  return { cmd: "summoner.tool", name: p.name }
+}
+
+export function encodeSummonerMcp(p: { names: string[] }): SummonerMcpCmd {
+  return { cmd: "summoner.mcp", names: p.names }
 }
 
 /** One stdin/stdout JSON line (no trailing newline). */
@@ -287,6 +334,19 @@ export function decodeSummonerOutbound(raw: unknown): SummonerOutboundCmd | null
     case "summoner.dictate":
       if (!isString(o.text)) return null
       return encodeSummonerDictate({ text: o.text })
+    case "summoner.settings":
+      if (!isResumeIdleMinutes(o.resume_idle_minutes)) return null
+      if (typeof o.chrome_foreground !== "boolean") return null
+      return encodeSummonerSettings({
+        resume_idle_minutes: o.resume_idle_minutes,
+        chrome_foreground: o.chrome_foreground,
+      })
+    case "summoner.tool":
+      if (!isString(o.name) || !o.name) return null
+      return encodeSummonerTool({ name: o.name })
+    case "summoner.mcp":
+      if (!isStringArray(o.names)) return null
+      return encodeSummonerMcp({ names: o.names })
     default:
       return null
   }
@@ -314,7 +374,8 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
       if (!isString(o.query)) return null
       return encodeSummonerSearch({ query: o.query })
     case "summoner.attach_chrome":
-      return encodeSummonerAttachChrome()
+      if (o.foreground !== undefined && typeof o.foreground !== "boolean") return null
+      return encodeSummonerAttachChrome(o.foreground === true ? { foreground: true } : undefined)
     case "summoner.continue":
       return encodeSummonerContinue()
     case "summoner.hotkey.chosen":
@@ -334,6 +395,15 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
     case "summoner.mic.wav":
       if (!isString(o.data)) return null
       return encodeSummonerMicWav({ data: o.data })
+    case "summoner.new_thread":
+      return encodeSummonerNewThread()
+    case "summoner.settings.set":
+      if (!isResumeIdleMinutes(o.resume_idle_minutes)) return null
+      if (typeof o.chrome_foreground !== "boolean") return null
+      return encodeSummonerSettingsSet({
+        resume_idle_minutes: o.resume_idle_minutes,
+        chrome_foreground: o.chrome_foreground,
+      })
     default:
       return null
   }

@@ -391,6 +391,14 @@ export class CompanionClient {
     }
   }
 
+  /**
+   * Request/response app message. Overlay STT start must bind before chunk/end
+   * or the server replies "no matching session".
+   */
+  sendAppRequest(type: string, params?: Record<string, any>, timeoutMs?: number): Promise<any> {
+    return this.sendRequest(type, params, timeoutMs)
+  }
+
   // --- Accessors for cached data ---
 
   get quickActions(): QuickActionItem[] { return this.cachedQuickActions }

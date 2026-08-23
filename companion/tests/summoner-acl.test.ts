@@ -57,6 +57,7 @@ test("summoner allows remaining S21 methods", () => {
     "voice.stt.end",
     "voice.stt.abort",
     "voice.stt.partial_request",
+    "mcp.list",
   ]) {
     assert.equal(assertSummonerAllowed("summoner", t).ok, true, t)
   }

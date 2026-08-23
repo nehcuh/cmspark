@@ -866,6 +866,8 @@ function bindMcpDispatchFromServerLocals(): void {
     getThreadManager: () => threadManager,
     securityConfirmations,
     broadcastToClients,
+    pickExtensionWs: pickAuthenticatedClientWs,
+    getWsSurface: (w) => getWsAuthState(w)?.surface,
   })
 }
 

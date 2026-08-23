@@ -562,6 +562,17 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
     let text = (json["text"] as? String) ?? ""
     summonerController.applyDictate(text)
 
+  case "summoner.settings":
+    summonerController.applySettings(json)
+
+  case "summoner.tool":
+    let name = (json["name"] as? String) ?? "工具"
+    summonerController.appendTool(name)
+
+  case "summoner.mcp":
+    let names = (json["names"] as? [String]) ?? []
+    summonerController.applyMcp(names)
+
   case "quit":
     delegate.shutdown()
     jsonLine(["type": "exit", "code": 0])
@@ -1352,7 +1363,7 @@ func handleSummonerHotKeyPressed() {
 // ---------------------------------------------------------------------------
 // SummonerController — P0 capture overlay (same process as tray; third window).
 // Lazy NSPanel (.nonactivatingPanel + .floating). Close ≠ chat.abort.
-// Look: two-phase capture + 看山 white tokens. History is plaintext, never bubbles.
+// Look: two-phase capture + 看山 white tokens. Transcript is role bubbles + markdown.
 // Overlay is capture-only — not an L2 gate surface.
 // ---------------------------------------------------------------------------
 
@@ -1506,7 +1517,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var composer: NSTextView?
   private var hitsStack: NSStackView?
   private var logBox: NSView?
-  private var logView: NSTextView?
+  private var logStack: NSStackView?
+  private var logScroll: NSScrollView?
+  private var logHeightConstraint: NSLayoutConstraint?
+  private var streamingField: NSTextField?
   private var ctaBox: NSView?
   private var ctaLabel: NSTextField?
   private var attachButton: NSButton?
@@ -1516,9 +1530,17 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var sideNote: NSTextField?
   private var pickerBox: NSView?
   private var lastThreadField: NSTextField?
+  private var mcpField: NSTextField?
   private var micButton: NSButton?
+  private var settingsBox: NSView?
+  private var settingsIdleButtons: [NSButton] = []
+  private var settingsChromeButtons: [NSButton] = []
+  private var silentAttachButton: NSButton?
+  private var resumeIdleMinutes = 10
+  private var chromeForeground = false
   private let micCapture = SummonerMicCapture()
   private var micDown = false
+  private var micStartedAt: TimeInterval = 0
 
   var overlayVisible: Bool { isOpen && window?.isVisible == true }
   var composingNow: Bool { composer?.hasMarkedText() == true }
@@ -1553,7 +1575,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       threadId = tid
     }
     if let rawLines = json["lines"] as? [String] {
-      lines = Array(rawLines.suffix(20))
+      lines = Array(rawLines.suffix(40))
     }
     let browser = (json["browser"] as? String) ?? "detached"
     browserAttached = (browser == "attached")
@@ -1570,16 +1592,41 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     if text.isEmpty { return }
     if streamingAssistant, let last = lines.last, last.hasPrefix("助手") {
       lines[lines.count - 1] = last + text
-    } else {
-      lines.append("助手　" + text)
-      streamingAssistant = true
+      capLines()
+      patchStreamingBubble(dropLogPrefix(lines.last ?? ""), markdown: false)
+      return
     }
+    lines.append("助手　" + text)
+    streamingAssistant = true
     capLines()
-    refreshLog()
+    appendStreamingBubble(lines.last ?? "")
   }
 
   func markDone() {
     streamingAssistant = false
+    if let last = lines.last, last.hasPrefix("助手") {
+      patchStreamingBubble(dropLogPrefix(last), markdown: true)
+    }
+    streamingField = nil
+  }
+
+  func appendTool(_ name: String) {
+    let label = name.isEmpty ? "工具" : name
+    streamingAssistant = false
+    streamingField = nil
+    lines.append("[工具] \(label)")
+    capLines()
+    appendStreamingBubble(lines.last ?? "")
+  }
+
+  func applyMcp(_ names: [String]) {
+    if names.isEmpty {
+      mcpField?.stringValue = "MCP 未连接 · 去侧栏配置后这里可直接调用"
+    } else {
+      mcpField?.stringValue = "MCP · " + names.joined(separator: "、")
+    }
+    mcpField?.isHidden = false
+    relayout()
   }
 
   func applyError(message: String, errorCode: String?) {
@@ -1620,11 +1667,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
 
   func openFromHotKey() {
     if overlayVisible {
-      guard let window = window else { return }
-      NSApp.activate(ignoringOtherApps: true)
-      window.makeKeyAndOrderFront(nil)
-      window.orderFrontRegardless()
-      window.makeFirstResponder(composer)
+      hide()
       return
     }
     open(threadId: threadId)
@@ -1654,8 +1697,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   private func capLines() {
-    if lines.count > 20 {
-      lines = Array(lines.suffix(20))
+    if lines.count > 40 {
+      lines = Array(lines.suffix(40))
     }
   }
 
@@ -1769,27 +1812,112 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
 
   @objc func micHoldChanged(_ sender: NSButton) {
     let down = (NSEvent.pressedMouseButtons & (1 << 0)) != 0
-    if down && !micDown {
+    if down {
+      if micCapture.isRunning {
+        finishMicCapture()
+        return
+      }
       micDown = true
+      micStartedAt = ProcessInfo.processInfo.systemUptime
+      setMicRecording(true)
       jsonLine(["type": "summoner.mic.start"])
       micCapture.start {
         self.micDown = false
+        self.setMicRecording(false)
+        self.applyError(message: "麦克风不可用", errorCode: "mic_denied")
       }
-    } else if !down && micDown {
-      micDown = false
-      let wav = micCapture.stop()
-      if wav.isEmpty {
-        jsonLine(["type": "summoner.mic.end"])
-      } else {
-        jsonLine(["type": "summoner.mic.wav", "data": wav.base64EncodedString()])
-      }
+      return
     }
+    if !micDown { return }
+    micDown = false
+    let held = ProcessInfo.processInfo.systemUptime - micStartedAt
+    if held < 0.35 && micCapture.isRunning {
+      return
+    }
+    finishMicCapture()
+  }
+
+  private func finishMicCapture() {
+    setMicRecording(false)
+    let wav = micCapture.stop()
+    if wav.isEmpty {
+      jsonLine(["type": "summoner.mic.end"])
+    } else {
+      jsonLine(["type": "summoner.mic.wav", "data": wav.base64EncodedString()])
+    }
+  }
+
+  private func setMicRecording(_ on: Bool) {
+    micButton?.contentTintColor = on ? NSColor.systemRed : SummonerTokens.text
+  }
+
+  @objc func newThreadClicked() {
+    threadId = ""
+    lines = []
+    streamingAssistant = false
+    sawBrowserUnavailable = false
+    composer?.string = ""
+    updatePlaceholder()
+    applyPhase()
+    jsonLine(["type": "summoner.new_thread"])
   }
 
   @objc func sendClicked() { submitComposer() }
 
   @objc func attachClicked() {
     jsonLine(["type": "summoner.attach_chrome"])
+  }
+
+  @objc func attachForegroundClicked() {
+    jsonLine(["type": "summoner.attach_chrome", "foreground": true])
+  }
+
+  @objc func settingsClicked() {
+    settingsBox?.isHidden.toggle()
+    relayout()
+  }
+
+  func applySettings(_ json: [String: Any]) {
+    if let minutes = json["resume_idle_minutes"] as? Int {
+      resumeIdleMinutes = minutes
+    }
+    if let flag = json["chrome_foreground"] as? Bool {
+      chromeForeground = flag
+    }
+    refreshSettingsButtons()
+  }
+
+  private func emitSettings() {
+    jsonLine([
+      "type": "summoner.settings.set",
+      "resume_idle_minutes": resumeIdleMinutes,
+      "chrome_foreground": chromeForeground,
+    ])
+  }
+
+  private func refreshSettingsButtons() {
+    for btn in settingsIdleButtons {
+      let on = btn.tag == resumeIdleMinutes
+      btn.font = .systemFont(ofSize: 11, weight: on ? .semibold : .regular)
+      btn.contentTintColor = on ? SummonerTokens.indigo : SummonerTokens.secondary
+    }
+    for btn in settingsChromeButtons {
+      let on = (btn.tag == 1) == chromeForeground
+      btn.font = .systemFont(ofSize: 11, weight: on ? .semibold : .regular)
+      btn.contentTintColor = on ? SummonerTokens.indigo : SummonerTokens.secondary
+    }
+  }
+
+  @objc func resumePolicyClicked(_ sender: NSButton) {
+    resumeIdleMinutes = sender.tag
+    emitSettings()
+    refreshSettingsButtons()
+  }
+
+  @objc func chromePolicyClicked(_ sender: NSButton) {
+    chromeForeground = sender.tag == 1
+    emitSettings()
+    refreshSettingsButtons()
   }
 
   @objc func continueClicked() {
@@ -1842,10 +1970,166 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   private func refreshLog() {
-    logView?.string = lines.joined(separator: "\n")
-    if let tv = logView {
-      tv.scrollToEndOfDocument(nil)
+    guard let stack = logStack else { return }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    streamingField = nil
+    while let v = stack.arrangedSubviews.first {
+      stack.removeArrangedSubview(v)
+      v.removeFromSuperview()
     }
+    for (i, line) in lines.enumerated() {
+      let streaming = streamingAssistant && i == lines.count - 1 && line.hasPrefix("助手")
+      stack.addArrangedSubview(makeBubble(line, streaming: streaming))
+    }
+    CATransaction.commit()
+    logBox?.isHidden = lines.isEmpty
+    maybeGrowLogHeight(resizeWindow: true)
+    scrollLogToEnd()
+  }
+
+  private func appendStreamingBubble(_ line: String) {
+    guard let stack = logStack else {
+      refreshLog()
+      return
+    }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    stack.addArrangedSubview(makeBubble(line, streaming: true))
+    CATransaction.commit()
+    logBox?.isHidden = false
+    maybeGrowLogHeight(resizeWindow: true)
+    scrollLogToEnd()
+  }
+
+  private func patchStreamingBubble(_ body: String, markdown: Bool) {
+    guard let field = streamingField else {
+      refreshLog()
+      return
+    }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    if markdown {
+      field.attributedStringValue = markdownAttributed(body, color: SummonerTokens.text)
+    } else {
+      field.stringValue = body
+      field.textColor = SummonerTokens.text
+      field.font = .systemFont(ofSize: 13)
+    }
+    CATransaction.commit()
+    maybeGrowLogHeight(resizeWindow: markdown)
+    scrollLogToEnd()
+  }
+
+  private func maybeGrowLogHeight(resizeWindow: Bool) {
+    guard let stack = logStack else { return }
+    stack.layoutSubtreeIfNeeded()
+    let target = min(320, max(180, stack.fittingSize.height + 16))
+    let current = logHeightConstraint?.constant ?? 0
+    if abs(current - target) >= 8 {
+      logHeightConstraint?.constant = target
+      if resizeWindow { relayout() }
+    }
+  }
+
+  private func scrollLogToEnd() {
+    guard let scroll = logScroll, let doc = scroll.documentView else { return }
+    let y = max(0, doc.frame.height - scroll.contentView.bounds.height)
+    scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+    scroll.reflectScrolledClipView(scroll.contentView)
+  }
+
+  private enum SummonerLogKind { case user, assistant, system, tool }
+
+  private func parseSummonerLogLine(_ line: String) -> (kind: SummonerLogKind, body: String, bg: NSColor, fg: NSColor) {
+    if line.hasPrefix("你:") || line.hasPrefix("你：") || line.hasPrefix("你　") {
+      return (.user, dropLogPrefix(line), SummonerTokens.indigoSoft, SummonerTokens.text)
+    }
+    if line.hasPrefix("助手:") || line.hasPrefix("助手：") || line.hasPrefix("助手　") {
+      return (.assistant, dropLogPrefix(line), NSColor.white, SummonerTokens.text)
+    }
+    if line.hasPrefix("系统") {
+      return (.system, dropLogPrefix(line), SummonerTokens.warnBg, SummonerTokens.warnFg)
+    }
+    if line.hasPrefix("[工具]") {
+      return (.tool, line, SummonerTokens.muted, SummonerTokens.secondary)
+    }
+    return (.assistant, line, SummonerTokens.muted, SummonerTokens.text)
+  }
+
+  private func dropLogPrefix(_ line: String) -> String {
+    if let idx = line.firstIndex(where: { $0 == ":" || $0 == "：" || $0 == "　" }) {
+      return String(line[line.index(after: idx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return line
+  }
+
+  private func markdownAttributed(_ text: String, color: NSColor) -> NSAttributedString {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let fallback = NSAttributedString(string: trimmed, attributes: [
+      .font: NSFont.systemFont(ofSize: 13),
+      .foregroundColor: color,
+    ])
+    guard !trimmed.isEmpty else { return fallback }
+    if #available(macOS 12.0, *) {
+      do {
+        return try NSAttributedString(markdown: trimmed, options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .full))
+      } catch {
+        return fallback
+      }
+    }
+    return fallback
+  }
+
+  private func makeBubble(_ line: String, streaming: Bool = false) -> NSView {
+    let parsed = parseSummonerLogLine(line)
+    let row = NSStackView()
+    row.orientation = .horizontal
+    row.alignment = .top
+    row.translatesAutoresizingMaskIntoConstraints = false
+    row.widthAnchor.constraint(equalToConstant: 372).isActive = true
+
+    let bubble = NSView()
+    bubble.translatesAutoresizingMaskIntoConstraints = false
+    bubble.wantsLayer = true
+    bubble.layer?.cornerRadius = 10
+    bubble.layer?.backgroundColor = parsed.bg.cgColor
+
+    let field = NSTextField(labelWithString: "")
+    field.translatesAutoresizingMaskIntoConstraints = false
+    field.allowsEditingTextAttributes = true
+    if streaming {
+      field.stringValue = parsed.body
+      field.textColor = parsed.fg
+      field.font = .systemFont(ofSize: 13)
+      streamingField = field
+    } else {
+      field.attributedStringValue = markdownAttributed(parsed.body, color: parsed.fg)
+    }
+    field.lineBreakMode = .byWordWrapping
+    field.maximumNumberOfLines = 0
+    field.preferredMaxLayoutWidth = parsed.kind == .user ? 260 : 300
+    field.drawsBackground = false
+    bubble.addSubview(field)
+    NSLayoutConstraint.activate([
+      field.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 6),
+      field.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -6),
+      field.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 8),
+      field.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -8),
+      bubble.widthAnchor.constraint(lessThanOrEqualToConstant: parsed.kind == .user ? 280 : 320),
+    ])
+
+    let spacer = NSView()
+    spacer.translatesAutoresizingMaskIntoConstraints = false
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    if parsed.kind == .user {
+      row.addArrangedSubview(spacer)
+      row.addArrangedSubview(bubble)
+    } else {
+      row.addArrangedSubview(bubble)
+      row.addArrangedSubview(spacer)
+    }
+    return row
   }
 
   private func lastThreadCaption() -> String? {
@@ -1911,6 +2195,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     refreshLog()
     ctaBox?.isHidden = !(detached && hasTranscript)
     attachButton?.isHidden = !(detached && hasTranscript)
+    silentAttachButton?.isHidden = !(detached && hasTranscript)
     footRow?.isHidden = false
     sendButton?.isHidden = false
     continueButton?.isHidden = !(hasTranscript && browserAttached && sawBrowserUnavailable)
@@ -1924,10 +2209,12 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     guard let window = window else { return }
     var h: CGFloat = 108
     if pickerBox?.isHidden == false { h += 248 }
+    if settingsBox?.isHidden == false { h += 118 }
     if lastThreadField?.isHidden == false { h += 18 }
+    if mcpField?.isHidden == false { h += 18 }
     if hitsStack?.isHidden == false { h += 8 + CGFloat(min(hits.count, 6)) * 36 }
-    if logBox?.isHidden == false { h += 168 }
-    if ctaBox?.isHidden == false { h += 96 }
+    if logBox?.isHidden == false { h += (logHeightConstraint?.constant ?? 220) + 8 }
+    if ctaBox?.isHidden == false { h += 140 }
     if footRow?.isHidden == false { h += 48 }
     if sideNote?.isHidden == false { h += 22 }
     window.setContentSize(NSSize(width: 420, height: max(140, h)))
@@ -1979,12 +2266,28 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       badgeWrap.heightAnchor.constraint(equalToConstant: 22),
     ])
     badgeField = badge
+    let newChat = NSButton(title: "新对话", target: self, action: #selector(newThreadClicked))
+    newChat.bezelStyle = .inline
+    newChat.isBordered = false
+    newChat.font = .systemFont(ofSize: 11, weight: .semibold)
+    newChat.contentTintColor = SummonerTokens.indigo
+    newChat.toolTip = "开始一段新对话"
+    newChat.keyEquivalent = ""
     let exp = NSTextField(labelWithString: "召唤器 · 实验")
     exp.font = .systemFont(ofSize: 11)
     exp.textColor = SummonerTokens.faint
     exp.alignment = .right
+    let settings = NSButton(title: "设置", target: self, action: #selector(settingsClicked))
+    settings.bezelStyle = .inline
+    settings.isBordered = false
+    settings.font = .systemFont(ofSize: 11, weight: .semibold)
+    settings.contentTintColor = SummonerTokens.secondary
+    settings.toolTip = "打开策略 · Chrome 前台/后台"
+    settings.keyEquivalent = ""
     header.addArrangedSubview(badgeWrap)
     header.addArrangedSubview(NSView())
+    header.addArrangedSubview(settings)
+    header.addArrangedSubview(newChat)
     header.addArrangedSubview(exp)
     header.translatesAutoresizingMaskIntoConstraints = false
     header.widthAnchor.constraint(equalToConstant: 396).isActive = true
@@ -2032,6 +2335,72 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       pickerStack.trailingAnchor.constraint(equalTo: pickerBox.trailingAnchor),
     ])
     stack.addArrangedSubview(pickerBox)
+
+    let settingsBox = NSView()
+    settingsBox.translatesAutoresizingMaskIntoConstraints = false
+    settingsBox.wantsLayer = true
+    settingsBox.layer?.backgroundColor = SummonerTokens.muted.cgColor
+    settingsBox.layer?.cornerRadius = 12
+    settingsBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    settingsBox.isHidden = true
+    self.settingsBox = settingsBox
+    let settingsStack = NSStackView()
+    settingsStack.orientation = .vertical
+    settingsStack.alignment = .leading
+    settingsStack.spacing = 6
+    settingsStack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+    settingsStack.translatesAutoresizingMaskIntoConstraints = false
+    let idleTitle = NSTextField(labelWithString: "再打开 · 超时后新对话")
+    idleTitle.font = .systemFont(ofSize: 12, weight: .semibold)
+    idleTitle.textColor = SummonerTokens.text
+    settingsStack.addArrangedSubview(idleTitle)
+    let idleHint = NSTextField(wrappingLabelWithString: "输入 # 搜历史标题即可继续旧对话。")
+    idleHint.font = .systemFont(ofSize: 11)
+    idleHint.textColor = SummonerTokens.secondary
+    idleHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    settingsStack.addArrangedSubview(idleHint)
+    let idleRow = NSStackView()
+    idleRow.orientation = .horizontal
+    idleRow.spacing = 6
+    let idleSpecs: [(String, Int)] = [("始终新开", 0), ("10分钟", 10), ("30分钟", 30), ("始终继续", -1)]
+    for spec in idleSpecs {
+      let btn = NSButton(title: spec.0, target: self, action: #selector(resumePolicyClicked(_:)))
+      btn.tag = spec.1
+      btn.bezelStyle = .inline
+      btn.isBordered = false
+      btn.font = .systemFont(ofSize: 11, weight: .medium)
+      btn.keyEquivalent = ""
+      idleRow.addArrangedSubview(btn)
+      settingsIdleButtons.append(btn)
+    }
+    settingsStack.addArrangedSubview(idleRow)
+    let chromeTitle = NSTextField(labelWithString: "需要 Chrome 时")
+    chromeTitle.font = .systemFont(ofSize: 12, weight: .semibold)
+    chromeTitle.textColor = SummonerTokens.text
+    settingsStack.addArrangedSubview(chromeTitle)
+    let chromeRow = NSStackView()
+    chromeRow.orientation = .horizontal
+    chromeRow.spacing = 6
+    let chromeSpecs: [(String, Int)] = [("后台静默", 0), ("前台激活", 1)]
+    for spec in chromeSpecs {
+      let btn = NSButton(title: spec.0, target: self, action: #selector(chromePolicyClicked(_:)))
+      btn.tag = spec.1
+      btn.bezelStyle = .inline
+      btn.isBordered = false
+      btn.font = .systemFont(ofSize: 11, weight: .medium)
+      btn.keyEquivalent = ""
+      chromeRow.addArrangedSubview(btn)
+      settingsChromeButtons.append(btn)
+    }
+    settingsStack.addArrangedSubview(chromeRow)
+    settingsBox.addSubview(settingsStack)
+    NSLayoutConstraint.activate([
+      settingsStack.topAnchor.constraint(equalTo: settingsBox.topAnchor),
+      settingsStack.bottomAnchor.constraint(equalTo: settingsBox.bottomAnchor),
+      settingsStack.leadingAnchor.constraint(equalTo: settingsBox.leadingAnchor),
+      settingsStack.trailingAnchor.constraint(equalTo: settingsBox.trailingAnchor),
+    ])
+    stack.addArrangedSubview(settingsBox)
 
     let fieldBox = NSView()
     fieldBox.translatesAutoresizingMaskIntoConstraints = false
@@ -2082,7 +2451,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     mic.bezelStyle = .inline
     mic.isBordered = false
     mic.font = .systemFont(ofSize: 14)
-    mic.toolTip = "按住说话"
+    mic.toolTip = "点一下开始，再点结束；也可按住说话"
     mic.keyEquivalent = ""
     mic.sendAction(on: [.leftMouseDown, .leftMouseUp])
     mic.translatesAutoresizingMaskIntoConstraints = false
@@ -2117,6 +2486,13 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     lastThreadField = lastThread
     stack.addArrangedSubview(lastThread)
 
+    let mcp = NSTextField(labelWithString: "MCP 未连接 · 去侧栏配置后这里可直接调用")
+    mcp.font = .systemFont(ofSize: 11)
+    mcp.textColor = SummonerTokens.faint
+    mcp.isHidden = true
+    mcpField = mcp
+    stack.addArrangedSubview(mcp)
+
     let hits = NSStackView()
     hits.orientation = .vertical
     hits.alignment = .leading
@@ -2132,7 +2508,9 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     logBox.wantsLayer = true
     logBox.layer?.backgroundColor = SummonerTokens.muted.cgColor
     logBox.layer?.cornerRadius = 12
-    logBox.heightAnchor.constraint(equalToConstant: 160).isActive = true
+    let logH = logBox.heightAnchor.constraint(equalToConstant: 220)
+    logH.isActive = true
+    logHeightConstraint = logH
     logBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
     logBox.isHidden = true
     self.logBox = logBox
@@ -2141,19 +2519,22 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     logScroll.hasVerticalScroller = true
     logScroll.borderType = .noBorder
     logScroll.drawsBackground = false
-    let logTv = NSTextView()
-    logTv.isEditable = false
-    logTv.isSelectable = true
-    logTv.isRichText = false
-    logTv.font = .systemFont(ofSize: 13)
-    logTv.textColor = NSColor(calibratedRed: 51/255, green: 65/255, blue: 85/255, alpha: 1)
-    logTv.backgroundColor = .clear
-    logTv.drawsBackground = false
-    logTv.textContainerInset = NSSize(width: 10, height: 8)
-    logTv.autoresizingMask = [.width]
-    logTv.textContainer?.widthTracksTextView = true
-    logScroll.documentView = logTv
-    logView = logTv
+    logScroll.autohidesScrollers = true
+    let logStack = NSStackView()
+    logStack.orientation = .vertical
+    logStack.alignment = .leading
+    logStack.spacing = 8
+    logStack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+    logStack.translatesAutoresizingMaskIntoConstraints = false
+    logScroll.documentView = logStack
+    NSLayoutConstraint.activate([
+      logStack.topAnchor.constraint(equalTo: logScroll.contentView.topAnchor),
+      logStack.leadingAnchor.constraint(equalTo: logScroll.contentView.leadingAnchor),
+      logStack.trailingAnchor.constraint(equalTo: logScroll.contentView.trailingAnchor),
+      logStack.widthAnchor.constraint(equalTo: logScroll.contentView.widthAnchor),
+    ])
+    self.logStack = logStack
+    self.logScroll = logScroll
     logBox.addSubview(logScroll)
     NSLayoutConstraint.activate([
       logScroll.topAnchor.constraint(equalTo: logBox.topAnchor),
@@ -2185,7 +2566,11 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     cta.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     ctaLabel = cta
     ctaStack.addArrangedSubview(cta)
-    let attach = makeIndigoButton(title: "激活 Google Chrome", action: #selector(attachClicked))
+    let silent = makeIndigoButton(title: "后台使用 Chrome", action: #selector(attachClicked))
+    silent.widthAnchor.constraint(equalToConstant: 372).isActive = true
+    silentAttachButton = silent
+    ctaStack.addArrangedSubview(silent)
+    let attach = makePlainButton(title: "激活 Google Chrome", action: #selector(attachForegroundClicked))
     attach.widthAnchor.constraint(equalToConstant: 372).isActive = true
     attachButton = attach
     ctaStack.addArrangedSubview(attach)

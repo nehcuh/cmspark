@@ -54,11 +54,44 @@ test("SummonerController copy lock: badge, hint, CTA, buttons", () => {
   assert.match(body, /浏览器已连接/)
   assert.match(body, /浏览器未连接/)
   assert.match(body, /回车发送到当前线程 · 输入 # 搜标题 · 不搜文件/)
-  assert.match(body, /说点什么，或按住说话…/)
+  assert.match(body, /说点什么/)
   assert.match(body, /我们不能替你打开侧栏/)
   assert.match(body, /发送/)
   assert.match(body, /激活 Google Chrome/)
+  assert.match(body, /后台使用 Chrome/)
   assert.match(body, /已连接，继续对话/)
+  assert.match(body, /新对话/)
+  assert.match(body, /设置/)
+  assert.match(body, /MCP · /)
+})
+
+test("SummonerController hotkey toggles hide when overlay is already visible", () => {
+  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const start = src.indexOf("func openFromHotKey()")
+  assert.ok(start >= 0)
+  const fn = src.slice(start, start + 500)
+  assert.match(fn, /overlayVisible/)
+  assert.match(fn, /hide\(\)/)
+})
+
+test("SummonerController renders markdown transcript and new-thread control", () => {
+  const body = summonerControllerBody()
+  assert.match(body, /summoner\.new_thread/)
+  assert.match(body, /NSAttributedString\(markdown/)
+  assert.match(body, /makeBubble|bubble/)
+})
+
+test("SummonerController streams tokens without rebuilding the whole log", () => {
+  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const appendStart = src.indexOf("func appendToken(")
+  const doneStart = src.indexOf("func markDone(")
+  const errStart = src.indexOf("func applyError(")
+  assert.ok(appendStart >= 0 && doneStart > appendStart && errStart > doneStart)
+  const append = src.slice(appendStart, doneStart)
+  const done = src.slice(doneStart, errStart)
+  assert.doesNotMatch(append, /refreshLog\(\)/)
+  assert.match(append, /patchStreamingBubble|appendStreamingBubble/)
+  assert.match(done, /patchStreamingBubble|markdownAttributed|refreshLog/)
 })
 
 test("SummonerController close emits summoner.closed and not chat.abort", () => {
@@ -86,6 +119,9 @@ test("Tray.swift stdin handles summoner.open/hydrate/token/done/error/close", ()
     "summoner.hotkey.prompt",
     "summoner.hotkey.set",
     "summoner.dictate",
+    "summoner.settings",
+    "summoner.tool",
+    "summoner.mcp",
   ]) {
     assert.ok(src.includes(`"${cmd}"`), `missing stdin cmd ${cmd}`)
   }
@@ -115,7 +151,7 @@ test("menu-bar-agent inbound close does not chat.abort", () => {
   assert.match(body, /handleSummonerSubmit/)
   assert.match(body, /summoner\.hotkey\.chosen/)
   assert.match(body, /persistSummonerHotkeyChosen/)
-  assert.match(body, /syncSummonerHotkeyToTray/)
+  assert.match(body, /handleSummonerReady/)
 })
 
 test("menu-bar-agent persists summoner.hotkey via saveConfig, not overlay config.set", () => {

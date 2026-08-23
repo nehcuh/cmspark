@@ -1,0 +1,1095 @@
+# Dual external review context
+batch: os-summoner-stt-origin
+base: HEAD
+time: 20260822-233427
+
+b0f7642
+
+ M chrome-extension/src/background/browser-bridge.ts
+ M companion/src/bridge/tool-definitions-catalog.json
+ M companion/src/bridge/tool-schemas.ts
+ M companion/src/computer/executor.ts
+ M companion/src/computer/policy.ts
+ M companion/src/llm/adapter.ts
+ M companion/src/security.ts
+ M companion/src/tool/l2-admission.ts
+ M companion/tests/bridge.test.ts
+ M companion/tests/computer-policy.test.ts
+ M companion/tests/l2-admission-pure.test.ts
+ M companion/tests/security-thread.test.ts
+ M companion/tests/tool-schemas.test.ts
+ M companion/tests/web-act-loop-wave1.test.ts
+ M docs/adr/017-computer-use.md
+ A docs/audit/reviews/os-agent-shell-20260822-prompt.md
+ A docs/audit/reviews/os-agent-shell-adversary-synthesis-20260822.md
+ A docs/audit/reviews/os-summoner-stt-origin-20260822-prompt.md
+ M docs/computer-use-user-guide.md
+?? chrome-extension/src/background/wait-for-mode.ts
+?? chrome-extension/tests/wait-for-mode.test.ts
+?? companion/src/tool/wait-for-params.ts
+?? companion/tests/wait-for-params.test.ts
+?? docs/audit/reviews/head-d1e505c-batch2-diff-20260820-111515.patch
+?? docs/audit/reviews/head-d1e505c-batch2-diff-20260820.patch
+?? docs/audit/reviews/head-d1e505c-residuals-claude-20260820.md
+?? docs/audit/reviews/head-d1e505c-residuals-diff-20260820.patch
+?? docs/audit/reviews/head-d1e505c-residuals-dual-prompt-20260820.md
+?? docs/audit/reviews/head-d1e505c-residuals-kimi-20260820.md
+?? docs/audit/reviews/head-d1e505c-residuals-verdict-20260820.json
+?? docs/audit/reviews/os-agent-shell-v2-claude-20260822-172434.md
+?? docs/audit/reviews/os-agent-shell-v2-kimi-20260822-172436.md
+?? docs/audit/reviews/os-agent-shell-v2-pi-20260822-172436.md
+?? docs/audit/reviews/os-agent-shell-v2-verdict-20260822-172434.json
+?? docs/audit/reviews/os-summoner-stt-origin-diff-20260822-233427.patch
+?? docs/audit/reviews/windows-nsis-official-diff-20260820.patch
+?? docs/audit/reviews/windows-nsis-official-review-body-20260820.md
+?? docs/design/
+?? docs/superpowers/plans/2026-08-22-os-agent-shell-p0-spike.md
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/browser-bridge.ts  |  73 +++++++-------
+ companion/src/bridge/tool-definitions-catalog.json |  10 +-
+ companion/src/bridge/tool-schemas.ts               |  12 +++
+ companion/src/computer/executor.ts                 |  22 ++--
+ companion/src/computer/policy.ts                   |  97 +++++++++++++++---
+ companion/src/llm/adapter.ts                       |  15 +--
+ companion/src/security.ts                          |   3 +
+ companion/src/tool/l2-admission.ts                 |  27 ++++-
+ companion/tests/bridge.test.ts                     |   4 +
+ companion/tests/computer-policy.test.ts            |  55 ++++++++++
+ companion/tests/l2-admission-pure.test.ts          |  23 +++++
+ companion/tests/security-thread.test.ts            |  11 ++
+ companion/tests/tool-schemas.test.ts               |  13 +++
+ companion/tests/web-act-loop-wave1.test.ts         |   7 +-
+ docs/adr/017-computer-use.md                       |   2 +-
+ .../reviews/os-agent-shell-20260822-prompt.md      |  65 ++++++++++++
+ .../os-agent-shell-adversary-synthesis-20260822.md | 112 +++++++++++++++++++++
+ .../os-summoner-stt-origin-20260822-prompt.md      |  31 ++++++
+ docs/computer-use-user-guide.md                    |   2 +-
+ 19 files changed, 513 insertions(+), 71 deletions(-)
+
+diff --git a/chrome-extension/src/background/browser-bridge.ts b/chrome-extension/src/background/browser-bridge.ts
+index 9cfe0b1..ad89966 100644
+--- a/chrome-extension/src/background/browser-bridge.ts
++++ b/chrome-extension/src/background/browser-bridge.ts
+@@ -37,6 +37,8 @@ import {
+ } from "./cdp-keys"
+ export { runWithDownloadBusyBeforeQueue, isBrowserDownloadToolName } from "./download-busy-entry"
+ export { resolveEvaluateExecution } from "./evaluate-code-policy"
++import { resolveWaitForMode } from "./wait-for-mode"
++export { resolveWaitForMode } from "./wait-for-mode"
+ 
+ interface ToolResult {
+   success: boolean
+@@ -478,6 +480,13 @@ export class BrowserBridge {
+       url: params.url || "about:blank",
+       active: params.active !== false,
+     })
++    // chrome.tabs.create often returns before navigation finishes (thread 1snvlv:
++    // {id, url:"", title:""} → model called wait_for({tabId}) and hit schema/runtime mismatch).
++    if (params.wait_for_load !== false && tab.id) {
++      await this.waitForTabLoad(tab.id)
++      const updated = await chrome.tabs.get(tab.id)
++      return { success: true, data: { id: updated.id, url: updated.url, title: updated.title } }
++    }
+     return { success: true, data: { id: tab.id, url: tab.url, title: tab.title } }
+   }
+ 
+@@ -505,26 +514,31 @@ export class BrowserBridge {
+   }
+ 
+   /** Wait for a tab to finish loading */
+-  private waitForTabLoad(tabId: number): Promise<void> {
++  private waitForTabLoad(tabId: number, timeoutMs = 30000): Promise<void> {
+     return new Promise((resolve) => {
+       const start = Date.now()
+-      const maxWait = 30000 // 30s max
++      const maxWait = timeoutMs > 0 ? timeoutMs : 30000
++      let done = false
++      const finish = () => {
++        if (done) return
++        done = true
++        chrome.tabs.onUpdated.removeListener(listener)
++        resolve()
++      }
+ 
+       const check = async () => {
++        if (done) return
+         try {
+           const tab = await chrome.tabs.get(tabId)
+-          if (tab.status === "complete") return resolve()
+-        } catch { return resolve() } // tab closed
+-        if (Date.now() - start > maxWait) return resolve()
++          if (tab.status === "complete") return finish()
++        } catch { return finish() } // tab closed
++        if (Date.now() - start > maxWait) return finish()
+         setTimeout(check, 300)
+       }
+ 
+       // Also listen for onUpdated in case the tab hasn't started loading yet
+       const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+-        if (updatedTabId === tabId && changeInfo.status === "complete") {
+-          chrome.tabs.onUpdated.removeListener(listener)
+-          resolve()
+-        }
++        if (updatedTabId === tabId && changeInfo.status === "complete") finish()
+       }
+       chrome.tabs.onUpdated.addListener(listener)
+ 
+@@ -532,10 +546,7 @@ export class BrowserBridge {
+       setTimeout(check, 300)
+ 
+       // Cleanup listener after maxWait
+-      setTimeout(() => {
+-        chrome.tabs.onUpdated.removeListener(listener)
+-        resolve()
+-      }, maxWait)
++      setTimeout(finish, maxWait)
+     })
+   }
+ 
+@@ -1508,41 +1519,35 @@ export class BrowserBridge {
+ 
+   private async waitFor(params: Record<string, any>): Promise<ToolResult> {
+     const tabId = this.getTabId(params)
+-    const timeout = params.timeout || 15000
+-    const interval = params.interval || 500
+-    const selector = params.selector
++    const mode = resolveWaitForMode(params)
++    if (mode.kind === "invalid") {
++      return codedToolError("WAIT_CONDITION_REQUIRED", mode.error, {
++        suggested_action: "wait_for_network_idle",
++      })
++    }
+ 
+-    if (selector) {
+-      const expectVisible = params.state !== "hidden"
++    if (mode.kind === "selector") {
++      const timeout = typeof params.timeout === "number" && params.timeout > 0 ? params.timeout : 15000
++      const interval = params.interval || 500
+       const start = Date.now()
+       while (Date.now() - start < timeout) {
+         try {
+           const result = await this.sendCdp(tabId, "Runtime.evaluate", {
+             // Safe interpolation: JSON.stringify produces a valid JS string literal.
+-            expression: `!!document.querySelector(${JSON.stringify(selector)})`,
++            expression: `!!document.querySelector(${JSON.stringify(mode.selector)})`,
+             returnByValue: true,
+           })
+           const exists = result.result?.value === true
+-          if (exists === expectVisible) return { success: true, data: { elapsed_ms: Date.now() - start } }
++          if (exists === mode.expectVisible) return { success: true, data: { elapsed_ms: Date.now() - start } }
+         } catch { /* ignore */ }
+         await new Promise(r => setTimeout(r, interval))
+       }
+-      throw new Error(`Timeout waiting for selector "${selector}" (${expectVisible ? "visible" : "hidden"})`)
+-    }
+-
+-    if (params.network_idle) {
+-      // Wait for page load to complete, then settle period for dynamic content
+-      await this.waitForTabLoad(tabId)
+-      // Extra settle time for async content (SPA rendering, lazy loading)
+-      const settleMs = params.settle_ms || 2000
+-      await new Promise(r => setTimeout(r, settleMs))
+-      return { success: true }
+-      // Wait for network to settle
+-      await new Promise(r => setTimeout(r, 2000))
+-      return { success: true }
++      throw new Error(`Timeout waiting for selector "${mode.selector}" (${mode.expectVisible ? "visible" : "hidden"})`)
+     }
+ 
+-    throw new Error("selector or network_idle is required")
++    await this.waitForTabLoad(tabId, mode.timeoutMs)
++    await new Promise(r => setTimeout(r, mode.settleMs))
++    return { success: true, data: { mode: "network_idle", settle_ms: mode.settleMs } }
+   }
+ 
+   private async evaluate(params: Record<string, any>): Promise<ToolResult> {
+diff --git a/companion/src/bridge/tool-definitions-catalog.json b/companion/src/bridge/tool-definitions-catalog.json
+index 2c532cc..d8efd9b 100644
+--- a/companion/src/bridge/tool-definitions-catalog.json
++++ b/companion/src/bridge/tool-definitions-catalog.json
+@@ -510,7 +510,7 @@
+     "type": "function",
+     "function": {
+       "name": "wait_for",
+-      "description": "等待条件满足（选择器出现/消失或网络空闲）",
++      "description": "等待页面加载或元素出现。只传 tabId（或 tabId+timeout）视为等待加载完成（network_idle）。也可传 selector 等指定元素，或显式 network_idle:true。",
+       "parameters": {
+         "type": "object",
+         "properties": {
+@@ -519,7 +519,7 @@
+           },
+           "selector": {
+             "type": "string",
+-            "description": "等待的 CSS 选择器"
++            "description": "等待的 CSS 选择器。与 network_idle 二选一；都不传则默认 network_idle"
+           },
+           "state": {
+             "type": "string",
+@@ -535,7 +535,11 @@
+           },
+           "network_idle": {
+             "type": "boolean",
+-            "description": "等待网络空闲"
++            "description": "等待页面加载完成后再短暂 settle。不传 selector 时默认 true"
++          },
++          "settle_ms": {
++            "type": "number",
++            "description": "network_idle 时加载完成后的额外等待毫秒，默认 2000"
+           }
+         },
+         "required": [
+diff --git a/companion/src/bridge/tool-schemas.ts b/companion/src/bridge/tool-schemas.ts
+index a7561e1..7b67c14 100644
+--- a/companion/src/bridge/tool-schemas.ts
++++ b/companion/src/bridge/tool-schemas.ts
+@@ -140,6 +140,18 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
+     modifiers: z.number().int().optional(),
+   }),
+ 
++  // TabId-only is valid (thread 1snvlv). Do NOT refine selector|network_idle —
++  // companion + extension default missing condition to network_idle.
++  wait_for: z.object({
++    tabId: tabIdSchema,
++    selector: z.string().min(1).optional(),
++    state: z.enum(["visible", "hidden"]).optional(),
++    timeout: z.number().positive().optional(),
++    network_idle: z.boolean().optional(),
++    settle_ms: z.number().nonnegative().optional(),
++    interval: z.number().positive().optional(),
++  }),
++
+   // --- browser_download (P1.0: click/text → chrome.downloads complete) ---
+   // At least one of selector|text required (refine). downloadPath optional; companion
+   // re-validates with assertDownloadPathAllowed (LLM path never trusted raw).
+diff --git a/companion/src/computer/executor.ts b/companion/src/computer/executor.ts
+index 02b72cb..f58fd4a 100644
+--- a/companion/src/computer/executor.ts
++++ b/companion/src/computer/executor.ts
+@@ -49,7 +49,13 @@ import {
+ } from "./gui-action-parse"
+ import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
+ import { sanitizeComputerCaption } from "./preview"
+-import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
++import {
++  assertCoordinateAllowed,
++  assertExeNotDrifted,
++  assertHwndOwnedByEntry,
++  isVaultBrowserEntry,
++  normalizeExePath,
++} from "./policy"
+ import { isCompanionUiOwner } from "./self-ui"
+ import { getComputerSessionTrust, reL2ShouldPrompt } from "./session-trust"
+ import { maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
+@@ -443,8 +449,10 @@ export async function runComputerTask(
+ 
+   // A10 + §E.2 gate (executor-side belt; the server gate already checked).
+   let entry
++  let vaultBrowserOneShot = false
+   try {
+-    entry = assertCoordinateAllowed(deps.config, params.app)
++    entry = assertCoordinateAllowed(deps.config, params.app, { allowVaultBrowserOneShot: true })
++    vaultBrowserOneShot = isVaultBrowserEntry(entry)
+     // WP2: exe sha256 drift vs the add-time record (§E.2.1) — computed once,
+     // fail-closed; the per-action path + vault/LOLBIN rechecks stay fresh.
+     const hashFile =
+@@ -489,7 +497,7 @@ export async function runComputerTask(
+     wins.sort((a, b) => score(b) - score(a))
+     hwnd = wins[0].hwnd
+     targetPid = wins[0].pid
+-    assertHwndOwnedByEntry(wins[0], entry)
++    assertHwndOwnedByEntry(wins[0], entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
+   } catch (err) {
+     return fail(err instanceof ComputerError ? err : new ComputerError("APP_WINDOW_NOT_FOUND", String((err as Error)?.message ?? err)))
+   }
+@@ -645,7 +653,7 @@ export async function runComputerTask(
+     // 否则「值守中仍逐步弹窗」与 JTBD 矛盾。硬拒绝仍走 throw，不经 reL2。
+     try {
+       const { isUnattendedArmed } = require("./unattended-grant") as typeof import("./unattended-grant")
+-      if (isUnattendedArmed()) {
++      if (isUnattendedArmed() && !vaultBrowserOneShot) {
+         log("computer.task.reconfirm.auto_approved", {
+           taskId,
+           reason,
+@@ -667,7 +675,7 @@ export async function runComputerTask(
+     // Full autonomy cruise (网页+企业+协议三旗全开): skip mid-task re-L2 for
+     // non-force tags only (product 2026-08). Never short-circuit PROMPT_ALWAYS
+     // unless unattended (handled above).
+-    if (!forceInteractive && !reL2ShouldPrompt(dangerous)) {
++    if (!forceInteractive && !reL2ShouldPrompt(dangerous) && !vaultBrowserOneShot) {
+       try {
+         const { getConfig } = require("../config") as typeof import("../config")
+         const sec = getConfig().security
+@@ -692,7 +700,7 @@ export async function runComputerTask(
+     // UX-spike 2026-07-23: per-session re-L2 suppression (G1 session-trust).
+     // Budget / uncross / task_induced_dialog auto-approve under trust;
+     // foreground_yielded / danger / experimental still prompt without unattended.
+-    if (deps.sessionId && params.app && !forceInteractive) {
++    if (deps.sessionId && params.app && !forceInteractive && !vaultBrowserOneShot) {
+       const trust = deps.sessionTrust ?? getComputerSessionTrust()
+       if (trust.isTrusted(deps.sessionId, params.app) && !reL2ShouldPrompt(dangerous)) {
+         log("computer.task.reconfirm.auto_approved", { taskId, reason, tags: dangerous, app: params.app })
+@@ -814,7 +822,7 @@ export async function runComputerTask(
+     try {
+       // Per-action revalidation (§E.2.4/B5): hwnd still owned by the whitelisted exe.
+       const info = await deps.windows.infoForHwnd(hwnd)
+-      assertHwndOwnedByEntry(info, entry)
++      assertHwndOwnedByEntry(info, entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
+ 
+       // WP2 (§T5-8): IL + input desktop re-probe — the app may have been
+       // relaunched elevated (hwnd ownership still matches, but SendInput
+diff --git a/companion/src/computer/policy.ts b/companion/src/computer/policy.ts
+index 0bce556..c0139f5 100644
+--- a/companion/src/computer/policy.ts
++++ b/companion/src/computer/policy.ts
+@@ -18,8 +18,30 @@ import { ComputerError, type WindowInfo } from "./types"
+ 
+ /**
+  * macOS vault bundle IDs — structural exclusion set (WP3 + adversarial review H6).
+- * Apps whose bundle ID matches any entry here can NEVER carry coordinateAllowed.
++ * Apps whose bundle ID matches any entry here can NEVER carry coordinateAllowed
++ * as a persistent Apps bit. Browsers may still take a one-shot L2 path
++ * (`allowVaultBrowserOneShot`); LOLBIN / password-managers / terminals / wallets
++ * remain impossible even with L2.
+  */
++export const MAC_BROWSER_VAULT_BUNDLE_IDS: ReadonlySet<string> = new Set([
++  "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox",
++  "company.thebrowser.Browser",     // Arc
++  "com.brave.Browser",              // Brave
++  "com.microsoft.edgemac",          // Edge
++  "com.operasoftware.Opera",
++  "com.vivaldi.Vivaldi",
++  "org.chromium.Chromium",
++])
++
++export const WIN_BROWSER_VAULT_TOKENS: ReadonlySet<string> = new Set([
++  "win.chrome",
++  "win.edge",
++  "win.firefox",
++  "win.brave",
++  "win.arc",
++  "win.opera",
++])
++
+ const MAC_VAULT_BUNDLE_IDS = new Set([
+   // 密码管理器
+   "com.agilebits.onepassword7",
+@@ -28,14 +50,8 @@ const MAC_VAULT_BUNDLE_IDS = new Set([
+   "com.lastpass.lastpassmacdesktop",
+   "com.dashlane.dashlanephonefinal",
+   "com.keepassxc.keepassxc",
+-  // 浏览器
+-  "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox",
+-  "company.thebrowser.Browser",     // Arc
+-  "com.brave.Browser",              // Brave
+-  "com.microsoft.edgemac",          // Edge
+-  "com.operasoftware.Opera",
+-  "com.vivaldi.Vivaldi",
+-  "org.chromium.Chromium",
++  // 浏览器 (persistent coordinateAllowed still denied; one-shot L2 is separate)
++  ...MAC_BROWSER_VAULT_BUNDLE_IDS,
+   // 终端 + 编辑器
+   "com.apple.Terminal", "com.googlecode.iterm2",
+   "dev.warp.Warp-Stable",
+@@ -55,6 +71,39 @@ const MAC_VAULT_BUNDLE_IDS = new Set([
+   "com.maxgoedjen.secretive.Secretive",
+ ])
+ 
++/** True when the AppEntry is a browser vault surface (Chrome/Safari/…). */
++export function isVaultBrowserEntry(entry: AppEntry): boolean {
++  if (entry.bundleId && MAC_BROWSER_VAULT_BUNDLE_IDS.has(entry.bundleId)) return true
++  if (entry.exe?.path) {
++    try {
++      const tok = basenameToVault(entry.exe.path)
++      if (tok && WIN_BROWSER_VAULT_TOKENS.has(tok)) return true
++    } catch {
++      return false
++    }
++  }
++  return false
++}
++
++export function isBrowserVaultExePath(p: string): boolean {
++  try {
++    const tok = basenameToVault(p)
++    return tok != null && WIN_BROWSER_VAULT_TOKENS.has(tok)
++  } catch {
++    return false
++  }
++}
++
++export type CoordinateAssertOpts = {
++  /**
++   * host_computer admission only. Lets a vault *browser* through without the
++   * persistent coordinateAllowed bit. Unattended/cruise/G1 MUST still not skip
++   * the task L2 (enforced in l2-admission + executor). Never used by
++   * apps.set_coordinate_allowed.
++   */
++  allowVaultBrowserOneShot?: boolean
++}
++
+ /**
+  * Structural eligibility — vault-mapped (browser/password-manager/terminal/
+  * wallet) and LOLBIN exes can NEVER carry coordinateAllowed (A10.3).
+@@ -80,7 +129,11 @@ export function canEverCoordinate(entry: AppEntry): boolean {
+  * The full A10 + whitelist gate. Returns the entry on success; throws a typed
+  * ComputerError otherwise. Pure over the passed config — injectable in tests.
+  */
+-export function assertCoordinateAllowed(cfg: CompanionConfig, token: string): AppEntry {
++export function assertCoordinateAllowed(
++  cfg: CompanionConfig,
++  token: string,
++  opts?: CoordinateAssertOpts,
++): AppEntry {
+   if (!APP_TOKEN_PATTERN.test(token)) {
+     throw new ComputerError("APP_NOT_WHITELISTED", `computer: invalid app token "${token}"`)
+   }
+@@ -115,7 +168,12 @@ export function assertCoordinateAllowed(cfg: CompanionConfig, token: string): Ap
+   }
+   // Structural exclusion is re-checked here even though the bit cannot be set
+   // through any handler — a hand-edited config must not smuggle it in.
++  // Vault browsers: persistent bit still denied (canEverCoordinate false);
++  // host_computer may pass allowVaultBrowserOneShot and skip the bit (L2 required).
+   if (!canEverCoordinate(entry)) {
++    if (opts?.allowVaultBrowserOneShot === true && isVaultBrowserEntry(entry)) {
++      return entry
++    }
+     throw new ComputerError(
+       "APP_COORDINATE_STRUCTURAL",
+       `computer: "${token}" maps to a vault/LOLBIN binary — coordinate operation is structurally denied`,
+@@ -145,7 +203,11 @@ export function normalizeExePath(p: string): string {
+  * process (config tamper, path swap) is denied at execution time, same as
+  * `win/adapter.ts`'s vacuous recheck philosophy (§E.2.2).
+  */
+-export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void {
++export function assertHwndOwnedByEntry(
++  info: WindowInfo,
++  entry: AppEntry,
++  opts?: CoordinateAssertOpts,
++): void {
+   if (!info.alive) {
+     throw new ComputerError("HWND_DEAD", `computer: hwnd ${info.hwnd} is no longer a live window`)
+   }
+@@ -168,7 +230,18 @@ export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void
+   // recorded entry config) — the coordinate path re-denies vault/LOLBIN at
+   // the moment of truth. macOS entries (bundleId) skip this Windows-only path.
+   if (!isMacEntry && info.exePath) {
+-    if (isLolbinPath(info.exePath) || basenameToVault(info.exePath) !== null) {
++    if (isLolbinPath(info.exePath)) {
++      throw new ComputerError(
++        "APP_COORDINATE_STRUCTURAL",
++        `computer: hwnd ${info.hwnd} resolves to a vault/LOLBIN binary "${info.exePath}" — coordinate operation is structurally denied`,
++        { hwnd: info.hwnd, actual: info.exePath },
++      )
++    }
++    const browserHwnd =
++      opts?.allowVaultBrowserOneShot === true &&
++      isVaultBrowserEntry(entry) &&
++      isBrowserVaultExePath(info.exePath)
++    if (!browserHwnd && basenameToVault(info.exePath) !== null) {
+       throw new ComputerError(
+         "APP_COORDINATE_STRUCTURAL",
+         `computer: hwnd ${info.hwnd} resolves to a vault/LOLBIN binary "${info.exePath}" — coordinate operation is structurally denied`,
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index ae84b3c..b9420fe 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -44,6 +44,7 @@ import {
+   cappedDomScriptResult,
+ } from "../tool/dom-script-budget"
+ import { getCachedTabUrl } from "../ws/tab-url-cache"
++import { normalizeWaitForParams } from "../tool/wait-for-params"
+ import {
+   peekSiteOpBan,
+   recordSiteOpFailure,
+@@ -434,8 +435,8 @@ export async function chatCreate(params: ChatCreateParams) {
+   // Rule 12 (host_use) is platform-aware (Phase 1 W8-windows): win32 describes
+   // classic-Outlook read / OneNote create / allowlisted file move + Windows
+   // Hello; darwin keeps the original Mail/Notes/Finder text. The "ask the
+-  // user first per thread" and "NEVER for browser-DOM" sentences are verbatim
+-  // on both platforms.
++  // user first per thread" sentences are verbatim on both platforms.
++  // Browser-DOM: never *default* to host_computer; Chrome one-shot L2 is allowed.
+   const hostPlat = os.platform()
+   const hostUseRule12 = hostPlat === "win32"
+     ? `12. Windows host_use tools (computer-use, Phase 1):
+@@ -449,7 +450,7 @@ export async function chatCreate(params: ChatCreateParams) {
+      - 文件 / move file / 归类 → host_write move
+      - 启动 / 打开 an app that appears in the Whitelisted apps section → host_app launch
+    host_read and host_write require user confirmation (L2 gate); writes additionally require Windows Hello verification per call, or a 6-char manually typed code when Hello hardware is unavailable. The first time per thread, ASK the user explicitly before calling — e.g. "这个任务需要读取你的 Outlook 收件箱（只读第一封）。可以吗？". Respect denial; do not retry without user re-prompting.
+-   NEVER use host_read/host_write/host_computer for browser-DOM tasks — use get_page_text / click({text}) / type / evaluate. NEVER propose host_computer as the default way to operate a web page.
++   NEVER default to host_computer for browser-DOM — use get_page_text / click({text}) / type / evaluate first. After CDP attach freeze / DOM-script cap, OR when the user explicitly asks for 模拟点击/像素点击, you MAY call host_computer on the Chrome app token. That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). Password managers / terminals / LOLBIN remain impossible.
+    NEVER propose these tools speculatively — only when the user's task cannot be accomplished via browser alone.`
+     : hostPlat === "darwin"
+     ? `12. macOS host_use — prefer SEMANTIC tools over coordinate host_computer (grill 2026-07-26):
+@@ -458,7 +459,7 @@ export async function chatCreate(params: ChatCreateParams) {
+    - host_computer: LAST RESORT pixel/OCR inject. Prefer host_read/host_write for Mail/Notes. Aggregate ALL same-app actions in ONE host_computer call (do not split one user goal into many tasks). Results may have posted=true,verified=false — NEVER say "已发送/已完成" unless verified===true or verified_steps covers the write. For reading on-screen text use action describe (host Vision OCR, spatial lines) or screenshot — NEVER shell_exec screencapture / swift Vision / ad-hoc OCR scripts as a substitute (bypasses evidence + estop). Optional experimental on-device Qwen3-VL may help locate click targets by natural-language anchor; it is NOT a general image-chat / captcha API (see rule 9). See rule 12b for observe→act playbook.
+    ONLY propose host_read/host_write when the user EXPLICITLY mentions Mail/邮件/Notes/备忘录/Finder file move.
+    Both require L2 confirmation. First time per thread, ASK the user before calling. Respect denial.
+-   NEVER use host_read/host_write/host_computer for browser-DOM — use get_page_text / click({text}) / type / evaluate. NEVER propose host_computer as the default way to operate a web page. NEVER propose speculatively.`
++   NEVER default to host_computer for browser-DOM — use get_page_text / click({text}) / type / evaluate first. After CDP attach freeze / DOM-script cap, OR when the user explicitly asks for 模拟点击/像素点击, you MAY call host_computer on the Chrome app token. That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). Password managers / terminals / LOLBIN remain impossible. NEVER propose speculatively.`
+     : `12. host_computer is NOT available on this platform (Linux). NEVER propose it — not for native UI and NEVER for browser-DOM. Use get_page_text / click({text}) / type / evaluate. If CDP_ATTACH_FAILED, list_tabs or stop; there is no third JS injection path.`
+ 
+   // App tab (WP5, design §5): compact host_app index injected right after
+@@ -472,7 +473,7 @@ export async function chatCreate(params: ChatCreateParams) {
+ 12b. host_computer is not available here. NEVER propose it for browser-DOM or native UI.`
+     : `
+ 12b. host_computer playbook (when coordinate CU is enabled and required):
+-   - Prefer structure first: browser CDP for web; host_read/host_write when semantic APIs exist; host_computer is LAST RESORT pixel/OCR inject for native apps — NEVER for browser-DOM (use click({text}) / type / get_page_text / evaluate).
++   - Prefer structure first: browser CDP for web; host_read/host_write when semantic APIs exist; host_computer is LAST RESORT pixel/OCR inject for native apps. For browser-DOM do NOT default to host_computer; after CDP freeze/volume cap or an explicit user ask, Chrome pixel CU is allowed and ALWAYS confirms (never skipped by 无人值守).
+    - Aggregate ALL same-app injective steps in ONE host_computer call; put a short plan in the task string; type texts must be the exact strings the user will see in L2.
+    - Observe→act→observe: after uncertain UI changes use wait / describe / screenshot before more clicks — do not spray blind coordinates.
+    - Optional experimental on-device vision may propose click anchors only; it is NOT free-form image chat. Humans may 急停 or re-confirm at any time — never claim "已完成" unless verified===true or the tool result says so.`
+@@ -486,7 +487,7 @@ CRITICAL RULES:
+ 3. For create_tab, always pass the full URL parameter. Use http(s) URLs. Do NOT use create_tab/navigate/set_tab_url with file: to *read* a document (especially PDF) — ask the user to drag the file into the chat. Only use file: if the user explicitly asked to open a local file in the browser. Listing local files is mcp__filesystem__* (rule 10), a different gate from opening a tab.
+ 4. Use navigate(tabId, url) to change a tab's URL — check list_tabs for existing tabs first.
+ 5. Before calling screenshot or page tools, ensure the tab is on a real website (not chrome:// or about:blank).
+-6. Wait for pages to load before extracting content.
++6. Wait for pages to load before extracting content. After create_tab/navigate, wait_for({tabId}) or wait_for({tabId, network_idle:true}) waits for load (tabId-only is treated as network_idle). Use wait_for({tabId, selector}) when waiting for a specific element.
+ 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate. For clicking visible labels use click({text}) or click({selector}) — text is exclusive when provided. If a tool returns CDP_ATTACH_FAILED, call list_tabs / ask the user to focus the tab; do NOT retry via evaluate or host_computer (same debugger / not a web fallback).
+ 8. ${
+   os.platform() === "darwin"
+@@ -1167,7 +1168,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+             }
+           }
+           const execParams = {
+-            ...params,
++            ...normalizeWaitForParams(toolName, params as Record<string, unknown>),
+             tabId: resolvedTabId,
+             // Grill Q1: computer session-trust keys off chat thread, not WS uuid.
+             __thread_id: threadId,
+diff --git a/companion/src/security.ts b/companion/src/security.ts
+index 03d8fe7..3039278 100644
+--- a/companion/src/security.ts
++++ b/companion/src/security.ts
+@@ -1043,6 +1043,9 @@ export function classifyError(
+     "path is outside",
+     // Web act-loop W1/W3′/W4 coded errors (default is non_recoverable)
+     "selector_or_text_required",
++    "wait_condition_required",
++    "selector or network_idle",
++    "network_idle is required",
+     "element_not_found",
+     "element_ambiguous",
+     "invalid_selector",
+diff --git a/companion/src/tool/l2-admission.ts b/companion/src/tool/l2-admission.ts
+index f156241..835056c 100644
+--- a/companion/src/tool/l2-admission.ts
++++ b/companion/src/tool/l2-admission.ts
+@@ -84,8 +84,11 @@ export function resolveL2ForceConfirm(opts: {
+   capabilityForceConfirm: boolean
+   hostComputerGated?: boolean
+   userFullAutonomy: boolean
++  /** Chrome/Safari one-shot pixel CU — never waived by 三旗巡航. */
++  vaultBrowserOneShot?: boolean
+ }): boolean {
+   if (isAcpL2ForceTool(opts.toolName)) return true
++  if (opts.vaultBrowserOneShot && opts.hostComputerGated) return true
+   return (
+     (opts.capabilityForceConfirm || !!opts.hostComputerGated) && !opts.userFullAutonomy
+   )
+@@ -480,8 +483,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+     /** ADR-021 audit: "session_trust_corpus_subset" | "unattended_session_grant" */
+     let hostComputerTrustSkipReason: "session_trust_corpus_subset" | "unattended_session_grant" | null =
+       null
++    let vaultBrowserOneShot = false
+     if (hostComputerGated) {
+-      const { assertCoordinateAllowed } = await import("../computer/policy")
++      const { assertCoordinateAllowed, isVaultBrowserEntry } = await import("../computer/policy")
+       // Y3 (WP2): the preview text comes from the PURE builder — task text
+       // JSON-escaped against layout spoofing, every injectable action
+       // enumerated verbatim; unit-tested in computer-preview.test.ts.
+@@ -492,7 +496,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+         return result
+       }
+       try {
+-        const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""))
++        const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""), {
++          allowVaultBrowserOneShot: true,
++        })
++        vaultBrowserOneShot = isVaultBrowserEntry(entryC)
+         const budgetN = Math.min(Math.max(1, Number(finalParams.budget) || 15), 30)
+         // R1 (§E.6.2): global single-task invariant — a second computer
+         // task is refused BEFORE the L2 dialog while one is executing (no
+@@ -669,13 +676,26 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+             })
+           }
+         }
++        if (vaultBrowserOneShot) {
++          // Persistent coordinateAllowed is never set on browsers. Unattended /
++          // G1 / 三旗 must not inherit a skip from a non-browser grant.
++          hostComputerTrustSkip = false
++          hostComputerTrustSkipReason = null
++        }
+         computerPreview = buildComputerL2Preview({
+           task: String(finalParams.task || ""),
+           appDisplayName: entryC.display_name,
+           appToken: entryC.token,
+           budget: budgetN,
+           actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
+-          extraLines: [limiter.statusLine()],
++          extraLines: [
++            limiter.statusLine(),
++            ...(vaultBrowserOneShot
++              ? [
++                  "⚠️ 浏览器像素点击：将绕过页面 CDP，直接操作浏览器窗口。必须你点「允许」。无人值守 / 三旗巡航 / 会话信任都不会跳过本次确认。本次授权不写入 Apps 坐标开关。",
++                ]
++              : []),
++          ],
+         })
+         // WP4 (护栏 a,对抗裁决定案):L2 标注截图 helper 的调用点固定在这
+         // 里——全部廉价前门(assertCoordinateAllowed / COMPUTER_TASK_BUSY /
+@@ -869,6 +889,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+       capabilityForceConfirm,
+       hostComputerGated,
+       userFullAutonomy,
++      vaultBrowserOneShot,
+     })
+     if ((capabilityForceConfirm || hostComputerGated) && userFullAutonomy && !acpForceConfirm) {
+       logger.info("security.critical_api_waived", {
+diff --git a/companion/tests/bridge.test.ts b/companion/tests/bridge.test.ts
+index d3bf2ad..be4b751 100644
+--- a/companion/tests/bridge.test.ts
++++ b/companion/tests/bridge.test.ts
+@@ -422,6 +422,10 @@ test("tool-definitions: wait_for has enum for state parameter", () => {
+ 
+   assert.ok(waitFor)
+   assert.deepEqual(waitFor.function.parameters.properties.state.enum, ["visible", "hidden"])
++  assert.equal(waitFor.function.parameters.required.includes("selector"), false)
++  assert.equal(waitFor.function.parameters.required.includes("network_idle"), false)
++  assert.ok(waitFor.function.parameters.properties.settle_ms)
++  assert.match(waitFor.function.description, /tabId/)
+ })
+ 
+ test("tool-definitions: record_experience has enum for target and category", () => {
+diff --git a/companion/tests/computer-policy.test.ts b/companion/tests/computer-policy.test.ts
+index d4c0210..aaeb910 100644
+--- a/companion/tests/computer-policy.test.ts
++++ b/companion/tests/computer-policy.test.ts
+@@ -10,6 +10,7 @@ import {
+   assertExeNotDrifted,
+   assertHwndOwnedByEntry,
+   canEverCoordinate,
++  isVaultBrowserEntry,
+   normalizeExePath,
+ } from "../src/computer/policy"
+ import { ComputerError, type WindowInfo } from "../src/computer/types"
+@@ -133,6 +134,60 @@ test("policy: chrome exe + coordinateAllowed=true (hand-edited config) -> APP_CO
+   )
+ })
+ 
++test("policy: chrome one-shot L2 path does not persist the bit and skips STRUCTURAL", () => {
++  const chrome = makeEntry({
++    exe: { path: CHROME_EXE, user_writable_dir: false },
++    coordinateAllowed: false,
++  })
++  assert.equal(canEverCoordinate(chrome), false)
++  assert.equal(isVaultBrowserEntry(chrome), true)
++  const got = assertCoordinateAllowed(makeConfig({ entry: chrome }), "win.app.test", {
++    allowVaultBrowserOneShot: true,
++  })
++  assert.equal(got.token, "win.app.test")
++  assert.equal(got.coordinateAllowed, false)
++})
++
++test("policy: mac Chrome bundle one-shot L2 path", () => {
++  const chrome = makeEntry({
++    bundleId: "com.google.Chrome",
++    coordinateAllowed: false,
++    exe: undefined,
++  })
++  assert.equal(isVaultBrowserEntry(chrome), true)
++  assert.equal(canEverCoordinate(chrome), false)
++  const got = assertCoordinateAllowed(makeConfig({ entry: chrome }), "win.app.test", {
++    allowVaultBrowserOneShot: true,
++  })
++  assert.equal(got.bundleId, "com.google.Chrome")
++})
++
++test("policy: powershell cannot use vault-browser one-shot", () => {
++  const ps = makeEntry({ exe: { path: POWERSHELL_EXE, user_writable_dir: false }, coordinateAllowed: false })
++  assertComputerError(
++    () =>
++      assertCoordinateAllowed(makeConfig({ entry: ps }), "win.app.test", { allowVaultBrowserOneShot: true }),
++    "APP_COORDINATE_STRUCTURAL",
++  )
++})
++
++test("policy: hwnd chrome allowed only on one-shot browser entry", () => {
++  const chrome = makeEntry({
++    exe: { path: CHROME_EXE, user_writable_dir: false },
++    coordinateAllowed: false,
++  })
++  const info = {
++    hwnd: 1,
++    pid: 2,
++    exePath: CHROME_EXE,
++    title: "Zhihu",
++    alive: true,
++    rect: { x: 0, y: 0, width: 100, height: 100 },
++  }
++  assertComputerError(() => assertHwndOwnedByEntry(info as any, chrome), "APP_COORDINATE_STRUCTURAL")
++  assertHwndOwnedByEntry(info as any, chrome, { allowVaultBrowserOneShot: true })
++})
++
+ test("policy: powershell exe + coordinateAllowed=true (hand-edited) -> APP_COORDINATE_STRUCTURAL", () => {
+   const tampered = makeEntry({ exe: { path: POWERSHELL_EXE, user_writable_dir: false }, coordinateAllowed: true })
+   assertComputerError(
+diff --git a/companion/tests/l2-admission-pure.test.ts b/companion/tests/l2-admission-pure.test.ts
+index c89a319..6b8617c 100644
+--- a/companion/tests/l2-admission-pure.test.ts
++++ b/companion/tests/l2-admission-pure.test.ts
+@@ -122,6 +122,29 @@ describe("ACP L2 forceConfirm (cruise cannot skip)", () => {
+     }
+   })
+ 
++  it("vault-browser host_computer one-shot never waives under full autonomy cruise", () => {
++    assert.equal(
++      resolveL2ForceConfirm({
++        toolName: "host_computer",
++        capabilityForceConfirm: false,
++        hostComputerGated: true,
++        userFullAutonomy: true,
++        vaultBrowserOneShot: true,
++      }),
++      true,
++    )
++    assert.equal(
++      resolveL2ForceConfirm({
++        toolName: "host_computer",
++        capabilityForceConfirm: false,
++        hostComputerGated: true,
++        userFullAutonomy: true,
++        vaultBrowserOneShot: false,
++      }),
++      false,
++    )
++  })
++
+   it("non-ACP capability tools waive under full autonomy cruise", () => {
+     assert.equal(
+       resolveL2ForceConfirm({
+diff --git a/companion/tests/security-thread.test.ts b/companion/tests/security-thread.test.ts
+index ff58089..91d471f 100644
+--- a/companion/tests/security-thread.test.ts
++++ b/companion/tests/security-thread.test.ts
+@@ -443,6 +443,17 @@ test("classifyError ENOENT / no such file is recoverable (workspace missing path
+   )
+ })
+ 
++test("classifyError wait_for missing selector/network_idle is recoverable (thread 1snvlv)", () => {
++  assert.equal(
++    classifyError("selector or network_idle is required", { toolName: "wait_for" }),
++    "recoverable",
++  )
++  assert.equal(
++    classifyError("WAIT_CONDITION_REQUIRED: selector or network_idle is required", { toolName: "wait_for" }),
++    "recoverable",
++  )
++})
++
+ test("classifyError osascript missing url/expression is recoverable (not chat-killing)", () => {
+   // Regression l74du8: LLM often omitted url; runtime error was default non_recoverable
+   // → "不可恢复错误: url and expression required" and the whole turn stopped.
+diff --git a/companion/tests/tool-schemas.test.ts b/companion/tests/tool-schemas.test.ts
+index 5298dc8..2ba7336 100644
+--- a/companion/tests/tool-schemas.test.ts
++++ b/companion/tests/tool-schemas.test.ts
+@@ -249,6 +249,19 @@ test("unknown tool accepts any shape including edge cases", () => {
+   assert.deepEqual(parseToolArgs("some_unknown_tool", wild), wild)
+ })
+ 
++test("wait_for tabId-only (thread 1snvlv) parses — do not require selector/network_idle", () => {
++  const out = parseToolArgs("wait_for", { tabId: 1492094196 })
++  assert.equal(out.tabId, 1492094196)
++  assert.equal(out.selector, undefined)
++  assert.equal(out.network_idle, undefined)
++})
++
++test("wait_for accepts selector or network_idle or timeout", () => {
++  assert.equal(tryParseToolArgs("wait_for", { tabId: 1, selector: "#app" }).ok, true)
++  assert.equal(tryParseToolArgs("wait_for", { tabId: 1, network_idle: true, settle_ms: 3000 }).ok, true)
++  assert.equal(tryParseToolArgs("wait_for", { tabId: 1, timeout: 5000 }).ok, true)
++})
++
+ // =============================================================================
+ // tryParseToolArgs — Result-style variant
+ // =============================================================================
+diff --git a/companion/tests/web-act-loop-wave1.test.ts b/companion/tests/web-act-loop-wave1.test.ts
+index 663e994..c45660a 100644
+--- a/companion/tests/web-act-loop-wave1.test.ts
++++ b/companion/tests/web-act-loop-wave1.test.ts
+@@ -56,6 +56,7 @@ test("classifyError: new act-loop codes are recoverable", () => {
+     "DOM_SCRIPT_VOLUME_CAPPED: stop",
+     "TYPE_UNSUPPORTED_EDITOR: ce",
+     "ELEMENT_NOT_FOUND: no visible element",
++    "WAIT_CONDITION_REQUIRED: selector or network_idle is required",
+   ]
+   for (const c of codes) {
+     assert.equal(classifyError(c), "recoverable", c)
+@@ -76,10 +77,10 @@ test("click is not L2; evaluate/osascript still are", () => {
+   assert.equal(L2_GATE_TOOLS.includes("osascript_eval"), true)
+ })
+ 
+-test("W5 Rule 12/7/12b never host_computer for browser-DOM (source lock)", () => {
++test("W5 Rule 12/7/12b never default host_computer for browser-DOM (source lock)", () => {
+   const src = readFileSync(join(process.cwd(), "src/llm/adapter.ts"), "utf8")
+-  assert.match(src, /NEVER use host_read\/host_write\/host_computer for browser-DOM/)
++  assert.match(src, /NEVER default to host_computer for browser-DOM/)
+   assert.match(src, /do NOT retry via evaluate or host_computer/)
+-  assert.match(src, /NEVER for browser-DOM \(use click\(\{text\}\)/)
++  assert.match(src, /ALWAYS pops a confirm/)
+   assert.match(src, /host_computer is NOT available on this platform \(Linux\)/)
+ })
+diff --git a/docs/adr/017-computer-use.md b/docs/adr/017-computer-use.md
+index ac2fe77..c3aa8b5 100644
+--- a/docs/adr/017-computer-use.md
++++ b/docs/adr/017-computer-use.md
+@@ -20,7 +20,7 @@
+ 1. **工具入口**：`host_computer`（任务描述 + app token + actions[] + budget）。  
+ 2. **双开关 fail-closed**：  
+    - 全局 `computer.coordinateEnabled`（默认 false）。**0.5.0 用户路径**：Side Panel **Apps 面板**「坐标操作」调用 `computer.set_enabled`（可走生物识别/确认台）；亦可写 `config.json`。  
+-   - 每应用 `AppEntry.coordinateAllowed`（vault/浏览器/终端/钱包/LOLBIN **结构排除**，永远不可开）。  
++   - 每应用 `AppEntry.coordinateAllowed`（密码箱/终端/钱包/LOLBIN **结构排除**，永远不可开）。**浏览器**同样不能把该位置成 true（无人值守不得静默注入）；但 `host_computer` 可走 **一次性 L2**（确认台弹出，必须真人点允许；无人值守 / 三旗 / G1 **永不跳过**；授权不落盘）。  
+ 3. **任务级 L2 强制**：枚举 task、app、全部 type 文本、预算。  
+    - **全局 bool**（`allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools`）**永不**单独跳过任务级 initial L2（1–2 旗）。三旗全开巡航可 waive `forceConfirm`（含 host initial）——与值守 grant 分列。  
+    - **例外（[ADR-021](021-unattended-desktop-session.md)，2026-08-09 修订）**：用户经短语+双勾选**显式武装**的进程内 **无人值守 grant** 可静默 **initial L2 与 mid-task re-L2**（含危险/实验/前台让出；仅 `coordinateAllowed` App；open_within_app；8h 墙钟）。硬拒绝仍 throw 无对话框。G1/巡航无 grant 时 PROMPT_ALWAYS 仍强制确认。  
+diff --git a/docs/audit/reviews/os-agent-shell-20260822-prompt.md b/docs/audit/reviews/os-agent-shell-20260822-prompt.md
+new file mode 100644
+index 0000000..09ac021
+--- /dev/null
++++ b/docs/audit/reviews/os-agent-shell-20260822-prompt.md
+@@ -0,0 +1,65 @@
++# External triple review — OS Agent Shell brief v2
++
++You are an independent senior product+architecture reviewer for CMspark.
++
++READ the files. Use tools. Do not rubber-stamp. Do not edit the repo.
++
++## Capability declaration
++
++```text
++Surface:      L0 capture overlay (macOS, Chrome-absent same-thread chat); full L0/L1 = Side Panel; L2 = HUD/Cockpit
++L2-classes:   none new
++Compose:      Pack/Skill/MCP/Knowledge index only; no trust elevation from overlay
++Autonomy:     single-thread; no auto-spawn
++Trust:        same SHA256 tray binary; overlay is NOT a confirm writer; Chrome launch = real user-gesture UI RPC; BROWSER_* non-retryable
++Channel:      community
++```
++
++## What to review
++
++1. `docs/decisions/os-agent-shell-brief-2026-08-22.md` (**v2 post-adversary**)
++2. `docs/audit/reviews/os-agent-shell-adversary-synthesis-20260822.md`
++3. Cross-check claims against live code if the brief asserts facts:
++   - `companion/src/ws/lifecycle.ts` (`pickAuthenticatedClientWs`, per-ws `createToolExecutor`)
++   - `companion/src/ws/tool-forward.ts`
++   - `companion/src/platform.ts` (`openSidePanel`)
++   - HUD N1–N10: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
++   - ADR-020, ADR-022 L8/L9
++
++## Locked (do not re-litigate)
++
++- Owner wants Chrome-optional same-thread L0 from OS (not a Raycast clone, not Electron).
++- Four internal lanes independently REJECTED v1. v2 folded those BLOCKs.
++
++## Your job
++
++Confirm or reject the **fold**. Hunt leftover BLOCK-class holes:
++
++1. Does v2 still call the overlay a product home in any remaining sentence?
++2. Is S19 actually sufficient vs today's `createToolExecutor(originatingWs)`?
++3. S21 hybrid (stdin window + tray WS chat + ACL) — does it recreate the WS superuser?
++4. S6 vs N2 — any remaining overlay Allow?
++5. P0 falsification — still theater?
++6. S10 OPEN (IME×CU process) — is shipping P0 spike acceptable?
++7. ADR-020 copy freeze until P0 pass — good or a docs split?
++8. Any v1 sentence that survived unamended and still contradicts v2 laws?
++
++Apply ADR-020 checklist: `docs/audit/reviews/_templates/dual-review-capability-checklist.md`.
++
++Score three layers: outcome (can this be a spike without lying) / trajectory (fold vs ignore adversary) / component (which law/file).
++
++## Output
++
++- Findings BLOCK / MAJOR / NIT with path citations
++- S1–S24: LOCK / AMEND / OPEN only where you disagree with v2
++- Residual before spike plan
++- Final line EXACTLY one of:
++
++VERDICT: APPROVE
++VERDICT: APPROVE_WITH_NITS
++VERDICT: REJECT
++
++REJECT if any BLOCK remains (unenforceable Trust, identity lie, or P0 not landable).
++APPROVE_WITH_NITS = foldable nits only.
++
++Do not award length. Do not APPROVE because the synthesis is long.
+diff --git a/docs/audit/reviews/os-agent-shell-adversary-synthesis-20260822.md b/docs/audit/reviews/os-agent-shell-adversary-synthesis-20260822.md
+new file mode 100644
+index 0000000..bcc42e1
+--- /dev/null
++++ b/docs/audit/reviews/os-agent-shell-adversary-synthesis-20260822.md
+@@ -0,0 +1,112 @@
++# OS Agent Shell — 四通道独立对抗合成（2026-08-22）
++
++| Field | Value |
++|-------|--------|
++| Input | `docs/decisions/os-agent-shell-brief-2026-08-22.md` v1（pre-adversary） |
++| Lanes | ARCHITECTURE · CORRECTNESS · SECURITY · PRODUCT-UX（并行、互不可见） |
++| 四路 VERDICT | 全部 **REJECT** |
++| 本文件角色 | 折回 BLOCK/MAJOR → brief v2；再送 Pi / Claude / Kimi |
++| 证据 | `[inspected]` 代码 + 四路报告；无 `[executed]` |
++
++四路原文（会话内完整；本合成不替代原文）：
++
++- Architecture: subagent `01a028be-2f8d-7371-8e0b-834579c6eb42`
++- Correctness: `01a028be-2f8e-7cc3-a41f-b52a1935fc68`
++- Security: `01a028be-2f8e-7cc3-a41f-b53ddc14fc6e`
++- Product-UX: `01a028be-2f8e-7cc3-a41f-b54871eb6572`
++
++---
++
++## 1. 交叉共识（独立出现 ≥3 路 → 视为真）
++
++| ID | 共识 | 路 |
++|----|------|-----|
++| X1 | **「不改 N1–N10」为假**：S6 overlay MinimalConfirm 改 N2；S10 扩 N1。必须显式 AMEND 或收回。 | A, S, P |
++| X2 | **会话 origin ⊥ 执行器 origin 不存在**：`chat.create` 的 `createToolExecutor(ws)` 把 L1 打到**发起 socket**；`pickAuthenticatedClientWs` 只服务 outbound MCP。召唤器聊 → L1 会 15s timeout，不是 `BROWSER_UNAVAILABLE`。 | A, C, S |
++| X3 | **薄 overlay 不能叫「家」**：S2 与 S7 互斥。关 Chrome 若只能 3 行装饰，身份 2 在 UX 上失败。 | A, P |
++| X4 | **§5.1 五态不可测**：今日只有「有无已鉴权 extension WS」。无 macOS Chrome 进程探针、无 SW 滞回。 | C（主），A 附和 attach 夸大 |
++| X5 | **P0 不是「加一扇已有窗」**：无热键、无 composer、无 IME、无 overlay stdin cmd。HUD spike 是 label。 | C, P |
++| X6 | **召唤器不得成为全权 WS 超户**：tray origin 鉴权后几乎无方法 ACL。overlay 走 WS 可 `pack.apply`+`user_gesture`、`unattended.arm`、确认 response。 | S（主），C M5 |
++| X7 | **Attach CTA「打开 Chrome 并继续」骗人**：`openSidePanel` 只能 activate。 | C, P |
++| X8 | **`BROWSER_*` 不是现成家族**；timeout/`disconnected` 被当成 recoverable → 模型重试 ≈ 禁止的自动重放。 | C, S |
++| X9 | **P0 证伪指标是剧场**。 | P（主），A S18 |
++
++---
++
++## 2. BLOCK 处置（必须折进 v2，否则不得外审当 APPROVE 候选）
++
++| BLOCK | 来源 | 折回 |
++|-------|------|------|
++| A1 静默改 N1–N10 | Arch | v2 **废止**「不改 N1–N10」。N2 **不改**（MinimalConfirm 仍 Panel-only）。N1 二进制 LOCK、进程模型 OPEN。HUD §1.3 改为：召唤器是 L0 **捕获面**，不是废止 Panel 完整聊天。 |
++| A2 / C-B1 执行器绑错 socket | Arch+Corr | 新锁 **S19**：L1 只经 `pickAuthenticatedClientWs()`；发起 origin 是 tray-class 时 **禁止** `tool.execute` 打回该 socket；缺 peer → 非 recoverable `BROWSER_UNAVAILABLE`。 |
++| A3 双 composer 无 SoT | Arch | 新锁 **S20**：Companion `composer.lease`；Q1 锁为 overlay 可见则可写、关掉则 Panel 可写（拒「后聚焦」）。 |
++| P-B1/B2/B3 家/CTA/证伪 | Product | S2 AMEND：对外不称 overlay 为「主界面」。能力锁仍是「关 Chrome 能继续同一 thread」。P0 指标改可观察清单。CTA 文案禁止暗示侧栏已打开。 |
++| P-B4 冷启动仍在浏览器 | Product | P0 不宣称「家已迁移」。首次安装路径保持扩展+配对；召唤器是配对之后的捕获面。 |
++| P-B5 抢 HUD | Product | 排期锁 **S24**：HUD ConfirmElevated/急停仍是 L2 P0。召唤器 P0 = spike，不得改写 GOAL 一句话定位直到证伪通过。 |
++| S-BLOCK-1 假 UI 超户 | Sec | **S21**：overlay 控制面 = stdin 白名单（`chat.create` 流式 / `thread.list` / `history.query`）。禁止 overlay/tray origin：`pack.apply`+`allowTrust`、`config.set`、`unattended.arm`、`security.confirmation.response`（非 outbound）。确认只走既有 stdin `respond()`。 |
++| S-BLOCK-2 CU 点 Allow | Sec | **S22**：LIVE CU 或 pending L2 时 overlay **不画** Allow。**S23**：self-ui 命中召唤器/HUD/tray 窗口坐标 → **硬拒该次点击**（不是让出前台继续）。 |
++
++Architecture A4（IME×CU 单进程）保持 **S10 OPEN**，P0 spike 用非激活面板 + 输入时临时 regular；未 spike 不得锁单进程。
++
++---
++
++## 3. MAJOR 折回（v2 写入；外审可降 NIT）
++
++- A5：L0 走现有 WS `chat.*`（tray origin + ACL），stdin 只管窗口/热键/HUD。禁止把 token 流绑死 stdin。  
++- A6：OS 一级入口 = 1（召唤器）；overlay 常驻控件 ≤ composer + 检索 + 缺浏览器徽章。场景仍 Pack。  
++- A7：一句话定位 **macOS-scoped**；禁止用「本机 Agent」冒充 L2。Win 安装器诚实降级（S15）。  
++- A8：ADR-022 L9 赢家改 **人机会话**（Panel ∪ summoner-origin thread），MCP 仍排队。L8 确认面仍是 tray/HUD，不假设 overlay 在前台。  
++- C-M2：P0 文案承认 Panel 关闭后 SW 可能睡；`attached` 会抖；CTA 含「点工具栏图标/拼图」。  
++- C-M7：P0 证伪 **不要**把 IME 当唯一闸（仍是 P0 体验门，失败则 overlay 不可对中国用户发货，但不等于身份 2 战略失败）。  
++- S-MAJOR-1：无 `openChrome` tool schema；`BROWSER_*` 禁止进 `classifyError` recoverable。  
++- S-MAJOR-3：检索默认 id+标题；纳入 LLM 要第二次手势。  
++- S-MAJOR-4：tray/overlay origin 硬拒 `allowTrust`。  
++- S-MAJOR-5：配对只复用 `show-pairing-window`。  
++- P-M3：UI 禁用「插件」二字。  
++- P-M2：首次强制热键选择器；默认不抢 ⌃⇧Space。  
++
++---
++
++## 4. 身份 2 怎么折才不骗用户
++
++Owner 锁的是 **能力**：关浏览器仍能在同一 thread 上说话，需要网页再 attach。
++
++四路共同否定的是 **营销**：把薄 overlay 叫「家 / 主界面 / 取代 Side Panel」。
++
++v2 锁定的产品句：
++
++> **能力**：macOS 上，Chrome 缺席时用户仍能通过召唤器继续当前线程（截断 hydrate + 发送 + 短流式）。  
++> **完整工作面**：Chrome 在场时仍是 Side Panel（页感知 L0/L1）。  
++> **L2 宽面**：仍是 HUD/Cockpit。  
++> **召唤器**：OS 捕获 / 检索 / 缺浏览器续聊。对外文案不使用「主界面」。  
++> **GOAL 一句话**：P0 证伪通过前 **不改**；最多加「实验：菜单栏召唤」。
++
++若证伪失败（用户总是立刻开 Chrome，或觉得这不是对话）→ 退回身份 1（召唤器 = 捷径），**不**滑向 Electron 主窗。
++
++---
++
++## 5. Q1–Q7 合成锁
++
++| Q | 锁 |
++|---|-----|
++| Q1 | overlay 可见 ⇒ overlay 持 `composer.lease`；关掉 ⇒ Panel。拒后聚焦。LIVE 仍 N6。 |
++| Q2 | 首次强制热键选择器；预填检测后的空闲组合；不默认 ⌃⇧Space。 |
++| Q3 | v1 忽略 Profile；失败文案提「当前 Chrome 用户」。 |
++| Q4 | 显式按钮「已连接，继续对话」= 新 user 消息，服务器禁止重放上一 L1 tool。 |
++| Q5 | P0：标题+时间+别名；空态写「不搜正文」。 |
++| Q6 | P0：输入框 + **hydrate 的截断线程**（纯文本，可滚动上限 N 条，N 建议 20 不是 3）+「完整格式在侧栏」。拒绝装饰性 3 气泡。 |
++| Q7 | Win/Linux 诚实降级，安装器写明。 |
++
++---
++
++## 6. 外审应盯的残余
++
++1. S10 进程 vs IME×CU 仍 OPEN — 外审可要求 P0 用 nonactivating 降级 IME 或把 IME 移出 P0 门。  
++2. `composer.lease` 协议尚未画帧 — 外审可要求补最小字段再 ADR。  
++3. 身份措辞是否仍过满（「本机 Agent」）。  
++4. stdin 白名单 vs L0 走 WS：两路都出现过，v2 采取 **混合**（窗口 stdin + chat WS + 方法 ACL）。外审应打这个混合是否又变回超户。  
++5. 排期 S24 与 owner「先把边界谈清」不冲突；若外审认为 spike 都不应写进 ADR-020，应尊重。
++
++---
++
++**合成者 VERDICT（实现/设计会话，非正式闸门）**: v1 **REJECT 成立**。v2 折回后才具备送 Pi/Claude/Kimi 的资格。
+diff --git a/docs/audit/reviews/os-summoner-stt-origin-20260822-prompt.md b/docs/audit/reviews/os-summoner-stt-origin-20260822-prompt.md
+new file mode 100644
+index 0000000..b0d3456
+--- /dev/null
++++ b/docs/audit/reviews/os-summoner-stt-origin-20260822-prompt.md
+@@ -0,0 +1,31 @@
++# Dual review — summoner surface local STT origin (ADR-023 narrow amend)
++
++READ-ONLY. Inspect the worktree code. Do not edit.
++
++## Capability
++
++```
++Surface: L0 overlay (macOS summoner); STT is composition on L0, not L2
++L2-classes: none
++Compose: local whisper STT only
++Trust: origin gate — chrome-extension OR (cmspark-tray://local AND surface=summoner)
++Channel: community
++```
++
++## What changed
++
++`voice.stt.*` was extension-only. Overlay v2 adds press-hold mic. Gate is now:
++- chrome-extension:// allowed
++- cmspark-tray://local AND handshake surface===summoner allowed
++- tray surface without summoner still origin_denied
++- voice.model.* still extension-only
++- privacy_ack_v2 still required (mic press counts as gesture)
++
++Hunt:
++1. Can cmspark-tray://local with surface=tray run STT? Must NO.
++2. Can client spoof surface=summoner on a tray connection? Handshake stamps server-side from auth message — check overwrite.
++3. ACL vs handler: denied tools vs origin_denied double gate.
++4. Audio/base64 logging.
++5. God-mode / auto_approve skipping privacy ack.
++
++VERDICT must be last line: APPROVE | APPROVE_WITH_NITS | REJECT
+diff --git a/docs/computer-use-user-guide.md b/docs/computer-use-user-guide.md
+index 8686272..5aea743 100644
+--- a/docs/computer-use-user-guide.md
++++ b/docs/computer-use-user-guide.md
+@@ -49,7 +49,7 @@
+ 
+ 3. **该 App 已显式允许坐标** `AppEntry.coordinateAllowed === true`（逐应用，不是全局一开全放）。
+ 
+-4. **目标不是结构排除类**：密码管理器、浏览器本体、终端、钱包、LOLBIN 等 **永远不能** 开坐标（见 ADR-017 / 代码 `canEverCoordinate`）。
++4. **结构排除**：密码管理器、终端、钱包、LOLBIN **永远不能** 开坐标。**浏览器**不能把 Apps「允许坐标」打开（防止无人值守静默注入），但 `host_computer` 可以对 Chrome/Safari 等走 **一次性确认**：确认台弹出后必须点允许；无人值守 / 三旗 / 会话信任都不会跳过。
+ 
+ 5. **任务级 L2**：`host_computer` 任务在确认台/红条展示任务描述、目标 App、**逐字 type 文本**、动作预算。  
+    - **全局开关**（协议解锁 / 自动批准危险 / 企业自动批准）**不能单独**跳过任务级 initial L2。  

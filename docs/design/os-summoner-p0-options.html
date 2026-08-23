@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CMspark 召唤器 P0 — 三套前端方向</title>
+  <style>
+    :root {
+      --ink: #171717;
+      --mute: #737373;
+      --line: rgba(23,23,23,.12);
+      --paper: #f6f5f2;
+      --indigo: #4f46e5;
+      --indigo-soft: #eef2ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--paper); color: var(--ink);
+      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; }
+    .page { max-width: 1280px; margin: 0 auto; padding: 28px 24px 80px; }
+    h1 { font-size: 22px; font-weight: 620; letter-spacing: -.02em; margin: 0 0 6px; }
+    .lede { color: var(--mute); max-width: 62ch; margin: 0 0 22px; }
+    .locks { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
+    .locks span { font-size: 12px; color: #444; background: #fff; border: 1px solid var(--line);
+      border-radius: 999px; padding: 4px 10px; }
+    .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    @media (max-width: 1080px) { .board { grid-template-columns: 1fr; } }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+      display: flex; flex-direction: column; min-height: 100%; }
+    .card header { padding: 16px 16px 12px; border-bottom: 1px solid var(--line); }
+    .card header .kicker { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); }
+    .card header h2 { font-size: 16px; margin: 4px 0 6px; font-weight: 620; }
+    .card header p { margin: 0; color: var(--mute); font-size: 13px; }
+    .stage { background: #cfd6cf url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.8' /%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.07'/%3E%3C/svg%3E");
+      padding: 28px 16px 32px; min-height: 520px; display: flex; align-items: flex-start; justify-content: center; }
+    .meta { padding: 14px 16px 16px; font-size: 13px; color: #444; }
+    .meta ul { margin: 8px 0 0; padding-left: 18px; }
+    .meta li { margin: 4px 0; }
+    .risk { color: #9a3412; }
+    .pick { margin: 12px 16px 16px; }
+    .pick button { width: 100%; border: 0; background: var(--indigo); color: #fff; font: inherit; font-weight: 600;
+      padding: 10px 12px; border-radius: 10px; cursor: pointer; }
+    .pick button.ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+    .states { display: flex; gap: 6px; padding: 0 16px 12px; }
+    .states button { flex: 1; font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fafafa;
+      border-radius: 8px; padding: 6px 4px; cursor: pointer; color: #444; }
+    .states button.on { background: var(--indigo-soft); border-color: #c7d2fe; color: #3730a3; font-weight: 600; }
+
+    /* Shared overlay chrome */
+    .ov { width: min(100%, 420px); border-radius: 14px; overflow: hidden; box-shadow:
+      0 24px 60px rgba(15,23,42,.28), 0 0 0 1px rgba(255,255,255,.18); }
+
+    /* A — spotlight two-phase */
+    .a { background: rgba(246,246,248,.86); backdrop-filter: blur(22px); color: #111;
+      border: 1px solid rgba(255,255,255,.55); }
+    .a .top { display: flex; align-items: center; gap: 8px; padding: 10px 12px 0; }
+    .a .badge { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: #fffbeb; color: #92400e;
+      border: 1px solid #fde68a; white-space: nowrap; }
+    .a .badge.ok { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+    .a .exp { font-size: 11px; color: #737373; margin-left: auto; }
+    .a .field { margin: 10px 12px; display: flex; align-items: center; gap: 8px;
+      background: #fff; border: 1px solid rgba(23,23,23,.12); border-radius: 12px; padding: 10px 12px; }
+    .a .field input { flex: 1; border: 0; outline: 0; font: inherit; font-size: 15px; background: transparent; }
+    .a .hint { padding: 0 14px 10px; font-size: 11px; color: #a3a3a3; }
+    .a .hits { padding: 0 8px 8px; }
+    .a .hit { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 8px; }
+    .a .hit:hover, .a .hit.sel { background: var(--indigo-soft); }
+    .a .hit b { font-weight: 600; font-size: 13px; }
+    .a .hit span { font-size: 11px; color: #737373; }
+    .a .thread { margin: 0 12px 12px; background: #fff; border-radius: 10px; border: 1px solid var(--line); padding: 10px 12px;
+      max-height: 180px; overflow: auto; font-size: 12.5px; color: #334155; }
+    .a .thread .who { color: #737373; }
+    .a .cta { margin: 0 12px 12px; padding: 10px 12px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; font-size: 12.5px; }
+    .a .cta button { margin-top: 8px; width: 100%; border: 0; background: #171717; color: #fff; border-radius: 8px; padding: 8px; font: inherit; font-weight: 600; }
+    .a .foot { display: none; margin: 0 12px 12px; }
+    .a .foot.show { display: flex; gap: 8px; }
+    .a .foot button { flex: 1; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px; font: inherit; }
+    .a .foot button.pri { background: var(--indigo); color: #fff; border-color: transparent; }
+
+    /* B — split-flap board */
+    .b { background: #111214; color: #f1f5f9; border: 1px solid #2a2c31; width: min(100%, 460px); }
+    .b .mast { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 14px 8px;
+      font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+    .b .mast .brand { font-size: 11px; color: #a3a3a3; text-transform: uppercase; }
+    .b .lamp { width: 8px; height: 8px; border-radius: 50%; background: #fbbf24; display: inline-block; margin-right: 6px; box-shadow: 0 0 8px #fbbf24; }
+    .b .lamp.ok { background: #34d399; box-shadow: 0 0 8px #34d399; }
+    .b table { width: 100%; border-collapse: collapse; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+    .b th { text-align: left; color: #737373; font-weight: 500; padding: 4px 14px; font-size: 10px; letter-spacing: .12em; }
+    .b td { padding: 8px 14px; border-top: 1px solid #26272b; }
+    .b tr.sel td { background: #1c1e24; }
+    .b .dest { font-weight: 650; letter-spacing: .02em; }
+    .b .preview { padding: 10px 14px; color: #94a3b8; font-size: 12px; border-top: 1px solid #26272b; min-height: 72px; }
+    .b .amber { margin: 10px 14px; padding: 10px; background: #422006; color: #fde68a; font-size: 12px; border-radius: 4px; }
+    .b .amber button { margin-top: 8px; width: 100%; background: #fbbf24; color: #111; border: 0; padding: 8px; font: inherit; font-weight: 700; }
+    .b .compose { display: flex; gap: 8px; padding: 12px 14px 14px; border-top: 1px solid #26272b; }
+    .b .compose input { flex: 1; background: #0b0d12; color: #f1f5f9; border: 1px solid #3f3f46; border-radius: 2px; padding: 8px 10px; font: inherit; }
+    .b .compose button { background: #f1f5f9; color: #111; border: 0; padding: 8px 12px; font: inherit; font-weight: 700; }
+
+    /* C — companion continuation */
+    .c { background: #fff; color: #171717; width: min(100%, 380px); }
+    .c .bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+    .c .dot { width: 7px; height: 7px; border-radius: 50%; background: #d97706; }
+    .c .dot.ok { background: #059669; }
+    .c .title { font-size: 13px; font-weight: 620; }
+    .c .sub { font-size: 11px; color: #a3a3a3; margin-left: auto; }
+    .c .greet { padding: 18px 16px 8px; font-size: 18px; font-weight: 560; letter-spacing: -.02em; line-height: 1.3; }
+    .c .log { padding: 8px 16px 12px; font-size: 13px; color: #334155; max-height: 200px; overflow: auto; }
+    .c .log .u { background: var(--indigo); color: #fff; display: inline-block; padding: 6px 10px; border-radius: 14px 14px 4px 14px; margin: 6px 0 6px auto; max-width: 90%; }
+    .c .log .s { background: #f4f4f5; padding: 6px 10px; border-radius: 14px 14px 14px 4px; margin: 6px 0; max-width: 92%; }
+    .c .warn { margin: 0 16px 10px; padding: 10px 12px; background: #fffbeb; border-radius: 12px; font-size: 12.5px; color: #92400e; }
+    .c .warn button { margin-top: 8px; width: 100%; background: var(--indigo); color: #fff; border: 0; border-radius: 10px; padding: 8px; font: inherit; font-weight: 600; }
+    .c .comp { margin: 8px 12px 14px; border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; background: #fafafa; }
+    .c .comp textarea { width: 100%; border: 0; resize: none; font: inherit; background: transparent; outline: 0; height: 48px; }
+    .c .comp .row { display: flex; justify-content: space-between; align-items: center; }
+    .c .comp .row button { background: var(--indigo); color: #fff; border: 0; border-radius: 999px; padding: 6px 14px; font: inherit; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>召唤器 P0 · 三套前端方向</h1>
+    <p class="lede">
+      这是 macOS 浮动层，不是主界面。三套共用同一套产品锁：无 Allow、不搜正文、不能程序打开侧栏、未连接必须诚实。
+      结构不同，请选一套（或指出要混哪几块）。打开本文件即可对照。
+    </p>
+    <div class="locks">
+      <span>标题：召唤器（实验）</span>
+      <span>禁止「主界面 / 插件」</span>
+      <span>hydrate ≤ 20 行纯文本</span>
+      <span>无确认按钮</span>
+      <span>CTA 必须写「不能打开侧栏」</span>
+    </div>
+
+    <div class="board">
+      <!-- A -->
+      <article class="card" id="dir-a">
+        <header>
+          <div class="kicker">方向 A · 两段式捕获</div>
+          <h2>先检索，再续聊</h2>
+          <p>空场只有一条输入。打字先滤线程标题；选中后才展开历史。最不像「第二个 ChatGPT」。</p>
+        </header>
+        <div class="states" data-target="a">
+          <button class="on" data-st="search">检索</button>
+          <button data-st="chat">续聊</button>
+          <button data-st="off">未连接</button>
+        </div>
+        <div class="stage">
+          <div class="ov a" id="mock-a">
+            <div class="top">
+              <span class="badge" id="a-badge">浏览器未连接</span>
+              <span class="exp">召唤器 · 实验</span>
+            </div>
+            <div class="field">
+              <span aria-hidden="true">⌕</span>
+              <input id="a-q" value="投研纪要" readonly />
+            </div>
+            <div class="hint">P0 不搜正文 · 标题 / 别名 / 时间</div>
+            <div class="hits" id="a-hits">
+              <div class="hit sel"><b>投研纪要 · 宁德时代</b><span>昨天</span></div>
+              <div class="hit"><b>投研 · 年报对比</b><span>3 天前</span></div>
+            </div>
+            <div class="thread" id="a-thread" hidden>
+              <div><span class="who">你</span> 把上次结论再压缩成三条。</div>
+              <div><span class="who">助手</span> 1) 产能仍是瓶颈 2) 海外毛利承压 3) 等 Q3 指引。</div>
+              <div><span class="who">你</span> 那和比亚迪比呢？</div>
+            </div>
+            <div class="cta" id="a-cta" hidden>
+              我们不能替你打开侧栏。可激活 Google Chrome，然后点工具栏 CMspark（没有就拼图 🧩 钉上）。
+              <button type="button">激活 Google Chrome</button>
+            </div>
+            <div class="foot" id="a-foot">
+              <button type="button">发送</button>
+              <button class="pri" type="button">已连接，继续对话</button>
+            </div>
+          </div>
+        </div>
+        <div class="meta">
+          <b>适合</b>：关着 Chrome 找旧线程、问一句、离开。
+          <ul>
+            <li>空态几乎没有聊天气泡，符合「捕获壳」</li>
+            <li>检索和发送共用一框，IME 要小心（组字中回车不发送）</li>
+            <li class="risk">风险：用户会以为这是启动器，要在空态写「不搜文件和应用」</li>
+          </ul>
+        </div>
+      </article>
+
+      <!-- B -->
+      <article class="card" id="dir-b">
+        <header>
+          <div class="kicker">方向 B · 行车时刻表</div>
+          <h2>线程是车次，输入是下一站</h2>
+          <p>暗色等宽行。浏览器状态是灯，不是徽章文学。流式像翻牌，不像聊天气泡。</p>
+        </header>
+        <div class="states" data-target="b">
+          <button class="on" data-st="list">车次</button>
+          <button data-st="off">黄灯</button>
+          <button data-st="live">在跑</button>
+        </div>
+        <div class="stage">
+          <div class="ov b" id="mock-b">
+            <div class="mast">
+              <span class="brand">CMspark 召唤器 · 实验</span>
+              <span><i class="lamp" id="b-lamp"></i><span id="b-st">未连接</span></span>
+            </div>
+            <table>
+              <thead><tr><th>线程</th><th>最近</th></tr></thead>
+              <tbody>
+                <tr class="sel"><td class="dest">投研纪要 · 宁德时代</td><td>昨天 21:14</td></tr>
+                <tr><td class="dest">AppSec 黑盒</td><td>周一</td></tr>
+                <tr><td class="dest">会议纪要 · 周三</td><td>8 月 19</td></tr>
+              </tbody>
+            </table>
+            <div class="preview" id="b-prev">
+              你: 把上次结论再压缩成三条。<br>
+              助手: 产能 / 海外毛利 / Q3 指引。
+            </div>
+            <div class="amber" id="b-amber">
+              侧栏无法被程序打开。激活 Google Chrome 后，请点工具栏图标。
+              <button type="button">激活 Google Chrome</button>
+            </div>
+            <div class="compose">
+              <input value="和比亚迪比呢？" readonly />
+              <button type="button">发车</button>
+            </div>
+          </div>
+        </div>
+        <div class="meta">
+          <b>适合</b>：看状态、挑线程、发指令；和确认台暗色 HUD 同一夜班气质。
+          <ul>
+            <li>一眼能扫线程，不像残缺 ChatGPT</li>
+            <li>黄灯 CTA 很难被理解成「侧栏已经开了」</li>
+            <li class="risk">风险：和 Side Panel 看山白底是两套皮肤；L0 捕获面可能显得过「仪表」</li>
+          </ul>
+        </div>
+      </article>
+
+      <!-- C -->
+      <article class="card" id="dir-c">
+        <header>
+          <div class="kicker">方向 C · 续聊匣</div>
+          <h2>缩小的侧栏切片</h2>
+          <p>白底、靛紫发送、邀请式输入。看起来最像现在的 CMspark，也最容易被当成主界面。</p>
+        </header>
+        <div class="states" data-target="c">
+          <button class="on" data-st="on">已连接</button>
+          <button data-st="off">未连接</button>
+          <button data-st="empty">空</button>
+        </div>
+        <div class="stage">
+          <div class="ov c" id="mock-c">
+            <div class="bar">
+              <span class="dot ok" id="c-dot"></span>
+              <span class="title">召唤器（实验）</span>
+              <span class="sub" id="c-sub">浏览器已连接</span>
+            </div>
+            <div class="greet" id="c-greet" hidden>从上次停下的地方继续</div>
+            <div class="log" id="c-log">
+              <div class="u">把上次结论再压缩成三条。</div>
+              <div class="s">1) 产能仍是瓶颈 2) 海外毛利承压 3) 等 Q3 指引。</div>
+            </div>
+            <div class="warn" id="c-warn" hidden>
+              我们不能替你打开侧栏。可激活 Google Chrome，再点工具栏 CMspark。
+              <button type="button">激活 Google Chrome</button>
+            </div>
+            <div class="comp">
+              <textarea readonly>和比亚迪比呢？</textarea>
+              <div class="row">
+                <span style="font-size:11px;color:#a3a3a3">完整格式在侧栏</span>
+                <button type="button">发送</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="meta">
+          <b>适合</b>：已经熟悉 Side Panel 的人，热键只想「接着聊」。
+          <ul>
+            <li>视觉零学习成本，和 320px 侧栏同一套 token</li>
+            <li>「完整格式在侧栏」把家的位置说清楚</li>
+            <li class="risk">风险：对抗打过的「薄 overlay 装家」——气泡一出来就像第二个产品窗</li>
+          </ul>
+        </div>
+      </article>
+    </div>
+  </div>
+  <script>
+    const setA = (st) => {
+      const badge = document.getElementById("a-badge");
+      const hits = document.getElementById("a-hits");
+      const thread = document.getElementById("a-thread");
+      const cta = document.getElementById("a-cta");
+      const foot = document.getElementById("a-foot");
+      const q = document.getElementById("a-q");
+      badge.className = "badge" + (st === "off" ? "" : " ok");
+      badge.textContent = st === "off" ? "浏览器未连接" : "浏览器已连接";
+      hits.hidden = st !== "search";
+      thread.hidden = st === "search";
+      cta.hidden = st !== "off";
+      foot.classList.toggle("show", st === "chat");
+      q.value = st === "search" ? "投研纪要" : "和比亚迪比呢？";
+    };
+    const setB = (st) => {
+      const lamp = document.getElementById("b-lamp");
+      const lab = document.getElementById("b-st");
+      const amber = document.getElementById("b-amber");
+      lamp.className = "lamp" + (st === "off" ? "" : " ok");
+      lab.textContent = st === "off" ? "未连接" : st === "live" ? "对话进行中" : "已连接";
+      amber.hidden = st !== "off";
+    };
+    const setC = (st) => {
+      const dot = document.getElementById("c-dot");
+      const sub = document.getElementById("c-sub");
+      const greet = document.getElementById("c-greet");
+      const log = document.getElementById("c-log");
+      const warn = document.getElementById("c-warn");
+      dot.className = "dot" + (st === "off" ? "" : " ok");
+      sub.textContent = st === "off" ? "浏览器未连接" : "浏览器已连接";
+      greet.hidden = st !== "empty";
+      log.hidden = st === "empty";
+      warn.hidden = st !== "off";
+    };
+    document.querySelectorAll(".states").forEach((row) => {
+      row.addEventListener("click", (e) => {
+        const btn = e.target.closest("button");
+        if (!btn) return;
+        row.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b === btn));
+        const t = row.dataset.target, st = btn.dataset.st;
+        if (t === "a") setA(st);
+        if (t === "b") setB(st);
+        if (t === "c") setC(st);
+      });
+    });
+  </script>
+</body>
+</html>

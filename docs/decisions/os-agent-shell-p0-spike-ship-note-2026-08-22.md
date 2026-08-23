@@ -9,7 +9,7 @@
 | Worktree | `/Users/huchen/.grok/worktrees/projects-cmspark/subagent-01a02969-31cc-7bf0-8eb0-0aa555160e9b` |
 | Branch | `feat/site-op-memory` |
 | HEAD at checklist | `56248cdad4cd894176d515b7a59ebc66d0280daa` |
-| Binary pin | `SWIFT_TRAY_SHA256` = `c8bdfa166907aa1a7ba54a362f7d61c1625e974865a751c9ba83093f5cc9cd59` |
+| Binary pin | `SWIFT_TRAY_SHA256` = `267e24b256459ad0386a2054f710f672fd65994d81b0441437094dbbe310f483` |
 
 ---
 

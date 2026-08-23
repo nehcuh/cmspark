@@ -1,10 +1,13 @@
-/** Overlay hydrate: last ≤20 plaintext lines for the dashed-box transcript.
- *  UI lock: these lines are the wireframe dashed box, NOT chat bubbles.
+/** Overlay hydrate: last N role-prefixed plaintext messages.
+ *  Preserve markdown newlines so Swift can render them. Never wrap HTML.
  */
+
+const HYDRATE_CAP = 40
+const HYDRATE_CHARS = 4000
 
 export function hydratePlaintext(
   messages: Array<{ role: string; content?: string; tool_calls?: Array<{ function?: { name?: string } }> }>,
-  cap = 20,
+  cap = HYDRATE_CAP,
 ): string[] {
   const lines: string[] = []
   for (const m of messages) {
@@ -13,10 +16,10 @@ export function hydratePlaintext(
       lines.push(name ? `[工具] ${name}` : "[工具]")
       continue
     }
-    const text = String(m.content || "").replace(/\s+/g, " ").trim()
+    const text = String(m.content || "").replace(/\r\n/g, "\n").trim()
     if (!text) continue
     const who = m.role === "user" ? "你" : m.role === "assistant" ? "助手" : m.role
-    lines.push(`${who}: ${text.slice(0, 240)}`)
+    lines.push(`${who}: ${text.slice(0, HYDRATE_CHARS)}`)
   }
   return lines.slice(-cap)
 }

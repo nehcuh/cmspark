@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CMspark 召唤器 P0 · 选定稿 A结构 × C看山</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --muted: #f4f4f5;
+      --text: #171717;
+      --secondary: #737373;
+      --faint: #a3a3a3;
+      --border: rgba(23,23,23,.10);
+      --border-strong: rgba(23,23,23,.14);
+      --accent: #4f46e5;
+      --accent-soft: #eef2ff;
+      --accent-text: #3730a3;
+      --warn: #d97706;
+      --warn-bg: #fffbeb;
+      --warn-border: #fde68a;
+      --ok: #059669;
+      --ok-bg: #ecfdf5;
+      --desk: #d7ddd6;
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--desk); color: var(--text); font: 14px/1.45 var(--font); }
+    .page { max-width: 880px; margin: 0 auto; padding: 28px 20px 72px; }
+    h1 { font-size: 20px; font-weight: 620; letter-spacing: -.02em; margin: 0 0 6px; }
+    .lede { color: var(--secondary); margin: 0 0 18px; max-width: 64ch; }
+    .contract { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; font-size: 13px; margin-bottom: 18px; color: #444; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .tabs button { font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--border); background: #fff; cursor: pointer; }
+    .tabs button.on { background: var(--accent-soft); border-color: #c7d2fe; color: var(--accent-text); font-weight: 600; }
+    .desk { min-height: 560px; display: flex; align-items: flex-start; justify-content: center; padding: 40px 12px; }
+    .ov { width: 420px; background: var(--bg); border-radius: 16px; box-shadow: 0 28px 70px rgba(15,23,42,.22), 0 0 0 1px var(--border);
+      overflow: hidden; }
+    .bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; }
+    .badge { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--warn-border); background: var(--warn-bg); color: #92400e; }
+    .badge.ok { background: var(--ok-bg); border-color: #a7f3d0; color: #047857; }
+    .exp { margin-left: auto; font-size: 11px; color: var(--faint); }
+    .field { margin: 0 12px; display: flex; align-items: center; gap: 8px; background: var(--muted); border: 1px solid var(--border);
+      border-radius: 16px; padding: 10px 12px; }
+    .field:focus-within { background: #fff; border-color: #c7d2fe; box-shadow: 0 0 0 3px var(--accent-soft); }
+    .field input { flex: 1; border: 0; outline: 0; font: inherit; font-size: 15px; background: transparent; }
+    .hint { padding: 8px 16px 6px; font-size: 11px; color: var(--faint); }
+    .hits { padding: 0 8px 10px; }
+    .hit { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 10px; cursor: default; }
+    .hit:hover, .hit.sel { background: var(--accent-soft); }
+    .hit b { font-size: 13px; font-weight: 600; }
+    .hit span { font-size: 11px; color: var(--secondary); }
+    .thread { margin: 0 12px 8px; padding: 10px 12px; background: var(--muted); border-radius: 12px; max-height: 196px; overflow: auto; font-size: 13px; color: #334155; }
+    .thread div { margin: 6px 0; }
+    .who { color: var(--secondary); font-size: 12px; }
+    .cta { margin: 8px 12px; padding: 10px 12px; background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 12px; font-size: 12.5px; color: #92400e; }
+    .cta button { margin-top: 8px; width: 100%; border: 0; background: var(--accent); color: #fff; border-radius: 10px; padding: 8px; font: inherit; font-weight: 600; }
+    .foot { display: flex; gap: 8px; margin: 0 12px 12px; }
+    .foot button { flex: 1; border: 1px solid var(--border); background: #fff; border-radius: 10px; padding: 8px; font: inherit; }
+    .foot .pri { background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
+    .side { font-size: 11px; color: var(--faint); text-align: center; padding: 0 12px 12px; }
+  </style>
+</head>
+<body>
+  <!--
+    THESIS: OS capture is a two-phase field (search titles, then continue a thread), not a second chat home.
+    OWN-WORLD: Side Panel 看山 — white paper, indigo send only, 16px composer radius, SF/PingFang; no instrument chrome.
+    STORY: User finds a thread without opening Chrome, types, and knows the full workspace still lives in the Side Panel.
+    FIRST VIEWPORT: Floating 420px card; badge + experimental label; one invitation field; results or ≤20 plaintext lines; honest Chrome CTA when detached.
+    FORM: Assigned two-phase capture (seed da4092d4 cand.3) fused with 看山 tokens (user mix A+C).
+    FINISH: unreviewed and undocumented is unfinished; this file is the choice record, not the Swift build.
+  -->
+  <div class="page">
+    <h1>选定稿 · 两段式捕获 × 看山白底</h1>
+    <p class="lede">你选的混合。历史是纯文本行，不是气泡，避免再做成主界面。下面四个状态是 P0 必须能画出来的。</p>
+    <div class="contract">
+      <b>锁</b>：不搜文件/应用/正文 · 无 Allow · 文案「召唤器（实验）」· CTA 写明不能打开侧栏 · 完整格式在侧栏
+    </div>
+    <div class="tabs">
+      <button class="on" data-st="search">1 检索</button>
+      <button data-st="chat">2 续聊</button>
+      <button data-st="off">3 未连接</button>
+      <button data-st="empty">4 空场</button>
+    </div>
+    <div class="desk">
+      <div class="ov" id="ov">
+        <div class="bar">
+          <span class="badge" id="badge">浏览器已连接</span>
+          <span class="exp">召唤器 · 实验</span>
+        </div>
+        <div class="field">
+          <span aria-hidden="true">⌕</span>
+          <input id="q" value="投研纪要" readonly />
+        </div>
+        <div class="hint" id="hint">P0 不搜正文 · 也不搜文件和应用</div>
+        <div class="hits" id="hits">
+          <div class="hit sel"><b>投研纪要 · 宁德时代</b><span>昨天</span></div>
+          <div class="hit"><b>投研 · 年报对比</b><span>3 天前</span></div>
+        </div>
+        <div class="thread" id="thread" hidden>
+          <div><span class="who">你</span> 把上次结论再压缩成三条。</div>
+          <div><span class="who">助手</span> 1) 产能仍是瓶颈 2) 海外毛利承压 3) 等 Q3 指引。</div>
+          <div><span class="who">你</span> 那和比亚迪比呢？</div>
+        </div>
+        <div class="cta" id="cta" hidden>
+          我们不能替你打开侧栏。可激活 Google Chrome，然后点工具栏 CMspark（没有就拼图 🧩 钉上）。
+          <button type="button">激活 Google Chrome</button>
+        </div>
+        <div class="foot" id="foot" hidden>
+          <button type="button">发送</button>
+          <button class="pri" type="button">已连接，继续对话</button>
+        </div>
+        <div class="side" id="side" hidden>完整格式在侧栏</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const apply = (st) => {
+      const connected = st !== "off";
+      $("badge").className = "badge" + (connected ? " ok" : "");
+      $("badge").textContent = connected ? "浏览器已连接" : "浏览器未连接";
+      $("hits").hidden = st !== "search";
+      $("thread").hidden = st !== "chat" && st !== "off";
+      $("cta").hidden = st !== "off";
+      $("foot").hidden = st !== "chat";
+      $("side").hidden = st === "search" || st === "empty";
+      $("hint").textContent = st === "empty"
+        ? "输入线程标题 · 不搜文件和应用 · P0 不搜正文"
+        : "P0 不搜正文 · 也不搜文件和应用";
+      $("q").value = st === "search" ? "投研纪要" : st === "empty" ? "" : "和比亚迪比呢？";
+    };
+    document.querySelector(".tabs").addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x === b));
+      apply(b.dataset.st);
+    });
+  </script>
+</body>
+</html>

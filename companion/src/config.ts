@@ -342,6 +342,12 @@ export interface CompanionConfig {
    */
   summoner?: {
     hotkey?: string
+    /** Minutes of overlay idle before the next open starts a new thread. 0=always new, -1=always resume. Default 10. */
+    resume_idle_minutes?: number
+    /** When true, attach CTA activates Chrome. Default false = silent background launch. */
+    chrome_foreground?: boolean
+    last_activity_at?: number
+    last_thread_id?: string
   }
 }
 
@@ -868,6 +874,22 @@ export function getConfig(): CompanionConfig {
         )
         delete voice.modelRootDir
       }
+    }
+  }
+  if (cachedConfig.summoner && typeof cachedConfig.summoner === "object") {
+    const s = cachedConfig.summoner
+    const idle = s.resume_idle_minutes
+    if (idle !== undefined && idle !== -1 && idle !== 0 && idle !== 5 && idle !== 10 && idle !== 30) {
+      s.resume_idle_minutes = 10
+    }
+    if (s.chrome_foreground !== undefined && typeof s.chrome_foreground !== "boolean") {
+      s.chrome_foreground = false
+    }
+    if (s.last_activity_at !== undefined && (typeof s.last_activity_at !== "number" || !Number.isFinite(s.last_activity_at))) {
+      delete s.last_activity_at
+    }
+    if (s.last_thread_id !== undefined && (typeof s.last_thread_id !== "string" || !s.last_thread_id)) {
+      delete s.last_thread_id
     }
   }
   return cachedConfig

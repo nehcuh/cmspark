@@ -15,8 +15,13 @@ import {
   mapChatMessageToSummonerCmd,
   mapVoiceSttToSummonerCmd,
   micWavToSttFrames,
+  micWavTooShort,
+  resolveSummonerSttModelId,
+  sendMicWavToStt,
   attachChromeOnly,
   buildContinueChatCreate,
+  shouldStartNewSummonerThread,
+  normalizeResumeIdleMinutes,
 } from "../src/summoner/client"
 import { SUMMONER_SEARCH_HINT } from "../src/summoner/protocol"
 
@@ -101,6 +106,14 @@ test("mapChatMessageToSummonerCmd: chat.done → summoner.done", () => {
   assert.deepEqual(cmd, { cmd: "summoner.done" })
 })
 
+test("mapChatMessageToSummonerCmd: tool.start → summoner.tool", () => {
+  const cmd = mapChatMessageToSummonerCmd({
+    type: "tool.start",
+    tool_name: "mcp__filesystem__read_text_file",
+  })
+  assert.deepEqual(cmd, { cmd: "summoner.tool", name: "mcp__filesystem__read_text_file" })
+})
+
 test("mapChatMessageToSummonerCmd: chat.error passes error_code", () => {
   const fromData = mapChatMessageToSummonerCmd({
     type: "chat.error",
@@ -122,6 +135,81 @@ test("mapChatMessageToSummonerCmd: chat.error passes error_code", () => {
   assert.equal(fromTop?.cmd, "summoner.error")
   if (fromTop?.cmd === "summoner.error") {
     assert.equal(fromTop.error_code, "BROWSER_UNAVAILABLE")
+  }
+})
+
+test("resolveSummonerSttModelId uses preferred only when ready, else first ready fallback", () => {
+  assert.equal(resolveSummonerSttModelId("small", ["medium", "large-v3-turbo"]), "medium")
+  assert.equal(resolveSummonerSttModelId("small", ["small", "medium"]), "small")
+  assert.equal(resolveSummonerSttModelId("medium", ["large-v3-turbo"]), "large-v3-turbo")
+  assert.equal(resolveSummonerSttModelId("nope", []), null)
+  assert.equal(resolveSummonerSttModelId(undefined, ["large-v3-turbo"]), "large-v3-turbo")
+})
+
+test("micWavTooShort rejects header-only WAV (click with no speech)", () => {
+  // 44-byte empty PCM WAV header, base64.
+  const headerOnly = Buffer.alloc(44).toString("base64")
+  assert.equal(micWavTooShort(headerOnly), true)
+  const halfSecond = Buffer.alloc(44 + 16000).toString("base64")
+  assert.equal(micWavTooShort(halfSecond), false)
+})
+
+test("sendMicWavToStt does not send chunk/end when start fails", async () => {
+  const sent: string[] = []
+  const result = await sendMicWavToStt({
+    sessionId: "summoner-mic-1",
+    modelId: "medium",
+    data: Buffer.alloc(44 + 16000).toString("base64"),
+    transport: {
+      start: async () => {
+        sent.push("start")
+        return { ok: false, code: "model_missing", message: "model not ready" }
+      },
+      chunk: () => { sent.push("chunk") },
+      end: () => { sent.push("end") },
+    },
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.code, "model_missing")
+  assert.deepEqual(sent, ["start"])
+})
+
+test("sendMicWavToStt skips STT entirely for too-short wav", async () => {
+  const sent: string[] = []
+  const result = await sendMicWavToStt({
+    sessionId: "summoner-mic-1",
+    modelId: "medium",
+    data: Buffer.alloc(44).toString("base64"),
+    transport: {
+      start: async () => { sent.push("start"); return { ok: true } },
+      chunk: () => { sent.push("chunk") },
+      end: () => { sent.push("end") },
+    },
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.code, "too_short")
+  assert.deepEqual(sent, [])
+})
+
+test("mapVoiceSttToSummonerCmd rewrites session_unknown / model_missing to Chinese", () => {
+  const unknown = mapVoiceSttToSummonerCmd({
+    type: "voice.stt.error",
+    code: "session_unknown",
+    message: "no matching session",
+  })
+  assert.equal(unknown?.cmd, "summoner.error")
+  if (unknown?.cmd === "summoner.error") {
+    assert.notEqual(unknown.message, "no matching session")
+    assert.match(unknown.message, /听写|会话/)
+  }
+  const missing = mapVoiceSttToSummonerCmd({
+    type: "voice.stt.error",
+    code: "model_missing",
+    message: "model not ready",
+  })
+  assert.equal(missing?.cmd, "summoner.error")
+  if (missing?.cmd === "summoner.error") {
+    assert.match(missing.message, /Whisper|模型/)
   }
 })
 
@@ -172,15 +260,50 @@ test("mapChatMessageToSummonerCmd ignores unrelated / confirm frames", () => {
   assert.equal(mapChatMessageToSummonerCmd(null), null)
 })
 
-test("attachChromeOnly calls openChrome and never openSidePanel", () => {
+test("shouldStartNewSummonerThread: 0 always new, -1 always resume, 10min idle", () => {
+  assert.equal(normalizeResumeIdleMinutes(99), 10)
+  assert.equal(normalizeResumeIdleMinutes(-1), -1)
+  assert.equal(shouldStartNewSummonerThread({
+    now: 1_000_000,
+    lastActivityAt: 900_000,
+    resumeIdleMinutes: 0,
+  }), true)
+  assert.equal(shouldStartNewSummonerThread({
+    now: 1_000_000,
+    lastActivityAt: 1,
+    resumeIdleMinutes: -1,
+  }), false)
+  assert.equal(shouldStartNewSummonerThread({
+    now: 10 * 60_000,
+    lastActivityAt: 0,
+    resumeIdleMinutes: 10,
+  }), false)
+  assert.equal(shouldStartNewSummonerThread({
+    now: 10 * 60_000 + 1,
+    lastActivityAt: 0,
+    resumeIdleMinutes: 10,
+  }), true)
+  assert.equal(shouldStartNewSummonerThread({
+    now: 1,
+    lastActivityAt: null,
+    resumeIdleMinutes: 10,
+  }), true)
+})
+
+test("attachChromeOnly silent by default, foreground opt-in, never openSidePanel", () => {
   const calls: string[] = []
   const opener = {
     openChrome: () => { calls.push("openChrome") },
+    openChromeSilent: () => { calls.push("openChromeSilent") },
     openSidePanel: () => { calls.push("openSidePanel") },
   }
-  const copy = attachChromeOnly(opener)
+  const silent = attachChromeOnly(opener)
+  assert.deepEqual(calls, ["openChromeSilent"])
+  assert.match(silent, /我们不能替你打开侧栏/)
+  calls.length = 0
+  const front = attachChromeOnly(opener, { foreground: true })
   assert.deepEqual(calls, ["openChrome"])
-  assert.match(copy, /我们不能替你打开侧栏/)
+  assert.match(front, /我们不能替你打开侧栏/)
 })
 
 test("menu-bar-agent constructs a second CompanionClient with surface=summoner", () => {
@@ -192,7 +315,7 @@ test("menu-bar-agent constructs a second CompanionClient with surface=summoner",
 
 test("menu-bar-agent attach path uses openChrome, not openSidePanel", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
-  assert.match(src, /attachChromeOnly|getChromeOpener\(\)\.openChrome\(\)/)
+  assert.match(src, /attachChromeOnly/)
   // The summoner attach handler must not open the side panel.
   const attachBlock = src.includes("handleSummonerAttach")
     ? src.slice(src.indexOf("handleSummonerAttach"), src.indexOf("handleSummonerAttach") + 800)

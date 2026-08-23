@@ -2,17 +2,17 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { hydratePlaintext } from "../src/summoner/hydrate"
 
-/** Wireframe dashed-box transcript: plaintext lines, not chat bubbles. */
+/** Overlay transcript: role-prefixed plaintext (Swift may render bubbles). */
 
-test("25 user messages truncate to last 20 lines", () => {
-  const messages = Array.from({ length: 25 }, (_, i) => ({
+test("50 user messages truncate to last 40 lines", () => {
+  const messages = Array.from({ length: 50 }, (_, i) => ({
     role: "user",
     content: `msg-${i + 1}`,
   }))
   const lines = hydratePlaintext(messages)
-  assert.equal(lines.length, 20)
-  assert.equal(lines[0], "你: msg-6")
-  assert.equal(lines[19], "你: msg-25")
+  assert.equal(lines.length, 40)
+  assert.equal(lines[0], "你: msg-11")
+  assert.equal(lines[39], "你: msg-50")
 })
 
 test("tool role line starts with [工具]", () => {
@@ -46,6 +46,25 @@ test("user/assistant prefixes 你/助手", () => {
     { role: "assistant", content: "world" },
   ])
   assert.deepEqual(lines, ["你: hello", "助手: world"])
+})
+
+test("preserves markdown newlines instead of flattening to one line", () => {
+  const lines = hydratePlaintext([
+    { role: "assistant", content: "## 标题\n\n- a\n- b\n\n`code`" },
+  ])
+  assert.equal(lines.length, 1)
+  assert.ok(lines[0].startsWith("助手: "))
+  assert.ok(lines[0].includes("\n"))
+  assert.ok(lines[0].includes("## 标题"))
+  assert.doesNotMatch(lines[0], /标题 - a/)
+})
+
+test("long assistant markdown is not sliced to 240 chars", () => {
+  const body = `${"x".repeat(500)}\n\n${"y".repeat(500)}`
+  const lines = hydratePlaintext([{ role: "assistant", content: body }])
+  assert.equal(lines.length, 1)
+  assert.ok(lines[0].length > 240 + 4)
+  assert.ok(lines[0].includes("\n"))
 })
 
 test("no mermaid/html wrapping — plaintext only", () => {

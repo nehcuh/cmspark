@@ -23,6 +23,11 @@ import {
   encodeSummonerMicChunk,
   encodeSummonerMicEnd,
   encodeSummonerMicWav,
+  encodeSummonerNewThread,
+  encodeSummonerSettings,
+  encodeSummonerSettingsSet,
+  encodeSummonerTool,
+  encodeSummonerMcp,
   summonerLine,
   parseSummonerLine,
   decodeSummonerOutbound,
@@ -90,6 +95,27 @@ test("round-trip summoner.attach_chrome", () => {
   const msg = encodeSummonerAttachChrome()
   assert.equal(msg.type, "summoner.attach_chrome")
   roundTripInbound(msg)
+  const front = encodeSummonerAttachChrome({ foreground: true })
+  assert.equal(front.foreground, true)
+  roundTripInbound(front)
+})
+
+test("round-trip summoner.tool and summoner.mcp", () => {
+  const tool = encodeSummonerTool({ name: "mcp__filesystem__read_text_file" })
+  assert.equal(tool.cmd, "summoner.tool")
+  roundTripOutbound(tool)
+  const mcp = encodeSummonerMcp({ names: ["filesystem"] })
+  assert.equal(mcp.cmd, "summoner.mcp")
+  roundTripOutbound(mcp)
+})
+
+test("round-trip summoner.settings", () => {
+  const out = encodeSummonerSettings({ resume_idle_minutes: 10, chrome_foreground: false })
+  assert.equal(out.cmd, "summoner.settings")
+  roundTripOutbound(out)
+  const set = encodeSummonerSettingsSet({ resume_idle_minutes: -1, chrome_foreground: true })
+  assert.equal(set.type, "summoner.settings.set")
+  roundTripInbound(set)
 })
 
 test("round-trip summoner.composing", () => {
@@ -108,6 +134,12 @@ test("round-trip summoner.dictate fills composer (no auto-submit)", () => {
   assert.equal(msg.cmd, "summoner.dictate")
   assert.equal(msg.text, "你好世界")
   roundTripOutbound(msg)
+})
+
+test("round-trip summoner.new_thread", () => {
+  const msg = encodeSummonerNewThread()
+  assert.equal(msg.type, "summoner.new_thread")
+  roundTripInbound(msg)
 })
 
 test("round-trip summoner.mic start/chunk/end/wav", () => {

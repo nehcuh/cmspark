@@ -173,10 +173,27 @@ test("SummonerController has press-hold mic that emits summoner.mic", () => {
 test("menu-bar-agent maps summoner.mic to voice.stt and dictate on result", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
   assert.match(src, /summoner\.mic/)
-  assert.match(src, /micWavToSttFrames|voice\.stt\.start/)
+  assert.match(src, /sendMicWavToStt/)
+  assert.match(src, /resolveSummonerSttModelId/)
   assert.match(src, /privacy_ack_v2/)
   assert.match(src, /mapVoiceSttToSummonerCmd/)
   assert.match(src, /summoner\.dictate/)
+})
+
+test("menu-bar-agent new_thread creates a thread and hydrates empty overlay", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  assert.match(src, /summoner\.new_thread/)
+  assert.match(src, /handleSummonerNewThread/)
+  assert.match(src, /createThread/)
+})
+
+test("menu-bar-agent ready applies resume idle policy", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  assert.match(src, /shouldStartNewSummonerThread/)
+  assert.match(src, /summoner\.settings\.set/)
+  assert.match(src, /handleSummonerReady/)
+  assert.match(src, /mcp\.list/)
+  assert.match(src, /encodeSummonerMcp/)
 })
 
 test("CompanionClient.createThread sends thread.create", () => {
@@ -186,4 +203,10 @@ test("CompanionClient.createThread sends thread.create", () => {
   const method = src.slice(start, start + 500)
   assert.match(method, /thread\.create/)
   assert.match(method, /sendRequest/)
+})
+
+test("CompanionClient.sendAppRequest is a public request/response seam for STT start", () => {
+  const src = fs.readFileSync(srcFile("tray", "companion-client.ts"), "utf8")
+  assert.match(src, /sendAppRequest\(/)
+  assert.match(src, /return this\.sendRequest\(/)
 })
