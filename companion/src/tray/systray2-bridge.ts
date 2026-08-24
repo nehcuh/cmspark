@@ -175,7 +175,18 @@ export class SysTray2Adapter implements UnifiedTray {
 
   // Summoner overlay is Swift-only (Task 9). No-op here so Node can still stream.
   sendSummoner(_cmd: import("../summoner/protocol").SummonerOutboundCmd): void { /* no-op */ }
-  openSummoner(_threadId: string): void { /* no-op */ }
+  openSummoner(_threadId: string): void {
+    const message =
+      "Windows/Linux 请用 Chrome 侧栏对话（含附件）。跨平台召唤窗开发中，不会再静默忽略。"
+    console.log(`[systray2] ${message}`)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const notifier = require("node-notifier") as { notify: (opts: object) => void }
+      notifier.notify({ title: "CMspark", message, timeout: 8 })
+    } catch {
+      /* console already printed */
+    }
+  }
   hydrateSummoner(_payload: import("../summoner/protocol").SummonerHydratePayload): void { /* no-op */ }
 
   async stop(): Promise<void> {

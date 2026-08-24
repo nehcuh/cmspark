@@ -400,6 +400,12 @@ test("message-router: enqueue while busy rejects empty and reports queue_full", 
       session,
     )
     assert.equal(stillBusy.error, "queue_full", "run_active must not drop the live controller")
+    const occupiedUpload = await handleMessage(
+      { type: "file.upload", thread_id: tid, files: [] },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+      session,
+    )
+    assert.equal(occupiedUpload.error, "run_active", "busy file.upload must not supersede")
     abortThreadChat(tid)
     const idleQ = await handleMessage(
       { type: "chat.create", thread_id: tid, message: "queued while idle", enqueue: true },
@@ -412,6 +418,29 @@ test("message-router: enqueue while busy rejects empty and reports queue_full", 
   } finally {
     __testSetLlmActiveForTests(tid, false)
     _resetRunQueuesForTests()
+  }
+})
+
+test("message-router: file.upload is lease-gated like chat.create", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Upload Lease" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  const tid = created.thread.id
+  const { composerLeases } = await import("../../src/ws/composer-lease")
+  const before = composerLeases.get(tid)
+  composerLeases.claim({ thread_id: tid, holder: "overlay", rev: before.rev })
+  try {
+    const response = await handleMessage(
+      { type: "file.upload", thread_id: tid, files: [], __cmspark_surface: "tray" },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+      { sendToExtension: () => {}, executeTool: async () => ({ success: true }) } as any,
+    )
+    assert.equal(response.data?.error_code, "OVERLAY_STANDBY")
+  } finally {
+    const cur = composerLeases.get(tid)
+    composerLeases.release({ thread_id: tid, rev: cur.rev })
   }
 })
 

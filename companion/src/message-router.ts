@@ -599,6 +599,18 @@ export async function handleMessage(
       if (!session) return { type: "error", error: "No session" }
 
       const { thread_id, files } = rest
+      if (typeof thread_id !== "string" || !thread_id) {
+        return { type: "error", error: "file.upload requires thread_id" }
+      }
+      {
+        const leaseErr = gateChatCreateOnLease(thread_id, stampedSurface)
+        if (leaseErr) return leaseErr
+        const conductorErr = gateChatCreateOnConductor(thread_id, stampedSurface)
+        if (conductorErr) return conductorErr
+      }
+      if (abortControllers.has(thread_id)) {
+        return { type: "error", error: "run_active", thread_id }
+      }
       const config = getConfig()
       const fileConfig = config.file_upload || { max_file_size: 10 * 1024 * 1024, allowed_types: [] as string[], max_embedded_images: 20, enable_vision_analysis: true, max_file_tokens: 50000 }
 
@@ -818,12 +830,8 @@ export async function handleMessage(
           return uploadError("thread_paused")
         }
       }
-      const existingUpload = abortControllers.get(thread_id)
-      if (existingUpload) {
-        logger.info("llm.thread_request_superseded", { thread_id })
-        existingUpload.abort()
-        await drainThreadOnSupersede(thread_id, `file.upload.supersede:${thread_id}`)
-      }
+      // Occupied upload is rejected at the top of this case (run_active).
+      // Do not abort a live loop.
       const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop: releaseUploadLlm } =
         await import("./orchestrator/llm-loop-gate")
       const threadForUploadCap = services.threadManager.get(thread_id)

@@ -1,0 +1,12 @@
+{
+  "batch": "workbench-next-direction",
+  "date": "2026-08-24",
+  "product": "D (freeze overlay) APPROVE_WITH_NITS",
+  "platform": "C APPROVE_WITH_NITS",
+  "trust": "C APPROVE_WITH_NITS",
+  "synthesis": "C-thin",
+  "claude": "C-thin APPROVE_WITH_NITS",
+  "kimi": "C-thin APPROVE_WITH_NITS",
+  "implement": "YES",
+  "p0_this_slice": "file.upload run_active+lease+conductor; honest systray2/readline openSummoner; freeze AppKit; no file.upload ACL yet"
+}

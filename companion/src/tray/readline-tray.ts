@@ -93,7 +93,9 @@ export class ReadlineTrayAdapter implements UnifiedTray {
 
   // Summoner overlay is Swift-only (Task 9). No-op here so Node can still stream.
   sendSummoner(_cmd: import("../summoner/protocol").SummonerOutboundCmd): void { /* no-op */ }
-  openSummoner(_threadId: string): void { /* no-op */ }
+  openSummoner(_threadId: string): void {
+    console.log("CMspark: 无图形召唤窗时请用 Chrome 侧栏对话（含附件）。")
+  }
   hydrateSummoner(_payload: import("../summoner/protocol").SummonerHydratePayload): void { /* no-op */ }
 
   async stop(): Promise<void> {
