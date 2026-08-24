@@ -356,6 +356,29 @@ test("S52 N3: retainMidLoopRollingSummary no-ops on pre_loop / already m2", () =
   assert.match(String(already.messages.find(isOmitNotice)!.content), /fresh this pass/)
 })
 
+test("S52: shrink-only droppedCount 0 keeps Earlier N and does not write Earlier 0", () => {
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    buildOmitNotice(4),
+    user("do it"),
+  ]
+  const retained = retainMidLoopRollingSummary({
+    phase: "mid_loop",
+    mode: "m1",
+    messages: msgs,
+    droppedCount: 0,
+    prevMeta: {
+      rolling_summary: "did X; pending Y",
+      dropped_count: 4,
+    },
+  })
+  const notice = retained.messages.find(isOmitNotice)
+  assert.ok(notice)
+  assert.match(String(notice!.content), /Earlier 4/)
+  assert.doesNotMatch(String(notice!.content), /Earlier 0/)
+  assert.match(String(notice!.content), /did X/)
+})
+
 test("shouldRunM2 gates (tuned strategy)", () => {
   // 2 msgs alone insufficient unless tokens high
   assert.equal(

@@ -1,7 +1,34 @@
 // Heal unpaired assistant.tool_calls on disk so the next rebuild is schema-valid
 // without stripping successful tools. Pure helpers + a duck-typed persist.
 
+import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
+
 export const INTERRUPTED_ERROR_CODE = "INTERRUPTED"
+
+export function createToolResultMessage(
+  threadId: string,
+  toolCall: any,
+  result: { success?: boolean; data?: any; error?: string; error_code?: string },
+  params: any = {},
+) {
+  const toolName = String(toolCall.function?.name || toolCall.name || "")
+  const { params: safeParams, result: safeResult } = redactToolPayloadForPersistence(
+    toolName,
+    params,
+    result,
+  )
+  return {
+    thread_id: threadId,
+    role: "tool" as const,
+    content: JSON.stringify(safeResult),
+    tool_calls: [{
+      id: toolCall.id,
+      tool_name: toolName,
+      params: safeParams,
+      result: safeResult,
+    }],
+  }
+}
 
 export type DiskToolCall = {
   id?: string
@@ -127,19 +154,13 @@ export function persistHealedToolRows(
   if (idx < 0 || history[idx].role !== "assistant") return 0
   const missing = unpairedToolCallsFromAssistant(history[idx], history.slice(idx + 1))
   if (missing.length === 0) return 0
-  let rowFor: (m: MissingToolCall) => DiskMessage
-  try {
-    const { createToolResultMessage } = require("./adapter") as typeof import("./adapter")
-    rowFor = (m) =>
-      createToolResultMessage(
-        threadId,
-        { id: m.id, function: { name: m.toolName, arguments: m.args } },
-        { success: false, error: error || "interrupted", error_code: INTERRUPTED_ERROR_CODE },
-        {},
-      ) as DiskMessage
-  } catch {
-    rowFor = (m) => buildInterruptedDiskRow(threadId, m, error)
-  }
+  const rowFor = (m: MissingToolCall): DiskMessage =>
+    createToolResultMessage(
+      threadId,
+      { id: m.id, function: { name: m.toolName, arguments: m.args } },
+      { success: false, error: error || "interrupted", error_code: INTERRUPTED_ERROR_CODE },
+      {},
+    ) as DiskMessage
   const assistantIdResolved = history[idx].id
   let insertAt = toolBlockInsertIndex(history, idx)
   for (const m of missing) {

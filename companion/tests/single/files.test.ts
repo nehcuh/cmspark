@@ -301,6 +301,20 @@ test("message-router: thread.select returns messages for thread", async () => {
   assert.equal(response.run_status, "idle")
 })
 
+test("message-router: thread.select omits run_status for summoner surface", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Summoner Select" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  const response = await handleMessage(
+    { type: "thread.select", thread_id: created.thread.id, __cmspark_surface: "summoner" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  assert.equal(response.type, "thread.messages")
+  assert.equal(response.run_status, undefined)
+})
+
 test("message-router: thread.select does not persist INTERRUPTED heal rows", async () => {
   const threadManager = new ThreadManager()
   const created = await handleMessage(

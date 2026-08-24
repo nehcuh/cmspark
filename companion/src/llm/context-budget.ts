@@ -349,6 +349,7 @@ export function shrinkToolBodiesToFit(msgs: CanonicalChatMessage[], budget: numb
  * - mid_loop: never drop the live suffix after that last user (pin current round)
  * - If still over after pin, shrink tool bodies instead of dropping ids
  * - Inserts exactly one omit notice after leading systems when dropped > 0
+ *   or a prior omit/summary/handoff notice was already on the request
  * - Returns droppedMessages for optional M2 rolling summary
  */
 export function compactMessagesTurnSafe(
@@ -518,8 +519,16 @@ export type MidLoopRetainInput = {
     rolling_summary?: string
     summary_sha256?: string
     summary_bytes?: number
+    dropped_count?: number
     handoff?: unknown
   } | null
+}
+
+/** Prefer this-pass drop count; shrink-only mid_loop must not clobber a prior N with 0. */
+export function effectiveDroppedCount(thisPass: number, prior?: number): number {
+  if (thisPass > 0) return thisPass
+  if (typeof prior === "number" && prior > 0) return prior
+  return thisPass
 }
 
 export type MidLoopRetainResult = {
@@ -590,10 +599,11 @@ export function retainMidLoopRollingSummary(input: MidLoopRetainInput): MidLoopR
   let summaryBytes = bytesIn
   let handoff: unknown = handoffIn || null
   let reattached = false
+  const noticeDropped = effectiveDroppedCount(droppedCount, prevMeta?.dropped_count)
 
   // Prefer [context_handoff] re-attach when prior mode was h1 or handoff present.
   if (phase === "mid_loop" && mode === "m1" && (keepHandoff || prevMeta?.mode === "h1") && priorHandoffFmt) {
-    messages = attachHandoffNoticeToMessages(messages, droppedCount, priorHandoffFmt)
+    messages = attachHandoffNoticeToMessages(messages, noticeDropped, priorHandoffFmt)
     mode = "h1"
     handoff = keepHandoff
     rollingSummary = priorHandoffFmt
@@ -601,7 +611,7 @@ export function retainMidLoopRollingSummary(input: MidLoopRetainInput): MidLoopR
     if (typeof keepBytes === "number" && keepBytes > 0) summaryBytes = keepBytes
     reattached = true
   } else if (phase === "mid_loop" && keepSummary && mode === "m1") {
-    messages = attachRollingSummaryToMessages(messages, droppedCount, keepSummary)
+    messages = attachRollingSummaryToMessages(messages, noticeDropped, keepSummary)
     mode = "m2"
     rollingSummary = keepSummary
     if (keepSha) summarySha = keepSha

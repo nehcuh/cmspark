@@ -24,6 +24,7 @@ import {
   attachRollingSummaryToMessages,
   attachHandoffNoticeToMessages,
   appendRecallHintToNotices,
+  effectiveDroppedCount,
   estimateTokens,
   retainMidLoopRollingSummary,
 } from "./context-budget"
@@ -33,13 +34,15 @@ import {
   shouldRunH1,
   type ThreadHandoff,
 } from "./context-handoff"
-import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
 import {
   INTERRUPTED_ERROR_CODE,
+  createToolResultMessage,
   persistHealedToolRows,
   toolBlockInsertIndex,
   unpairedToolCallsFromAssistant,
 } from "./tool-batch-heal"
+
+export { createToolResultMessage }
 import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
 import { hydrateUserImageParts } from "./image-parts"
 import { resolveNativeVision, visionConfigForAnalyze } from "./likely-multimodal"
@@ -185,28 +188,6 @@ interface ToolExecutionResult {
   data?: any
   error?: string
   error_code?: string
-}
-
-export function createToolResultMessage(threadId: string, toolCall: any, result: ToolExecutionResult, params: any = {}) {
-  // SEC-C: redact before durable thread JSON (history.db already redacts separately).
-  // In-flight LLM tool rows use the raw `result` from the tool loop, not this helper.
-  const toolName = String(toolCall.function?.name || toolCall.name || "")
-  const { params: safeParams, result: safeResult } = redactToolPayloadForPersistence(
-    toolName,
-    params,
-    result,
-  )
-  return {
-    thread_id: threadId,
-    role: "tool" as const,
-    content: JSON.stringify(safeResult),
-    tool_calls: [{
-      id: toolCall.id,
-      tool_name: toolName,
-      params: safeParams,
-      result: safeResult,
-    }],
-  }
 }
 
 /**
@@ -781,11 +762,15 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
     // S51 P0 / S52 N2 + Wave B: retain prior pre_loop H1/M2 on mid_loop **before** meta I/O.
     // mode "h1"|"m2" after re-attach = request carries prior notice (N7), not a new gen.
+    const droppedForMeta = effectiveDroppedCount(
+      compact.droppedCount,
+      typeof prevMeta?.dropped_count === "number" ? prevMeta.dropped_count : undefined,
+    )
     const retained = retainMidLoopRollingSummary({
       phase,
       mode,
       messages,
-      droppedCount: compact.droppedCount,
+      droppedCount: droppedForMeta,
       rollingSummary,
       summarySha: summarySha || undefined,
       summaryBytes,
@@ -818,7 +803,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         runtime_context_budget: {
           last_at: new Date().toISOString(),
           mode,
-          dropped_count: compact.droppedCount,
+          dropped_count: droppedForMeta,
           tokens_before: compact.tokensBefore,
           tokens_after: compact.tokensAfter,
           rolling_summary: keepSummary || rollingSummary,
@@ -841,7 +826,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         mode,
         setting: "auto",
         phase,
-        dropped_count: compact.droppedCount,
+        dropped_count: droppedForMeta,
         tokens_before: compact.tokensBefore,
         tokens_after: compact.tokensAfter,
         user_notified: true,
@@ -858,7 +843,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       sendToExtension({
         type: "thread.context_compacted",
         thread_id: threadId,
-        dropped_count: compact.droppedCount,
+        dropped_count: droppedForMeta,
         tokens_before: compact.tokensBefore,
         tokens_after: compact.tokensAfter,
         mode,

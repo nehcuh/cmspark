@@ -1,0 +1,12 @@
+{
+  "batch": "pr218-r3-nits",
+  "pr": 218,
+  "blast_tier": "T2",
+  "date": "2026-08-24",
+  "machine": "PASS",
+  "machine_notes": "related suite 146 pass",
+  "adversary": "APPROVE",
+  "pi_rereview": "APPROVE",
+  "merge": "YES",
+  "reason": "r2 nits folded: effectiveDroppedCount, createToolResultMessage moved out of adapter, summoner run_status omit tested"
+}
