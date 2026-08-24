@@ -298,6 +298,7 @@ test("message-router: thread.select returns messages for thread", async () => {
   assert.equal(response.type, "thread.messages")
   assert.equal(response.messages.length, 1)
   assert.equal(response.messages[0].content, "Hello")
+  assert.equal(response.run_status, "idle")
 })
 
 test("message-router: thread.update updates thread properties", async () => {

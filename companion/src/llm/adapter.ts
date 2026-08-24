@@ -34,6 +34,11 @@ import {
   type ThreadHandoff,
 } from "./context-handoff"
 import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
+import {
+  INTERRUPTED_ERROR_CODE,
+  persistHealedToolRows,
+  unpairedToolCallsFromAssistant,
+} from "./tool-batch-heal"
 import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
 import { hydrateUserImageParts } from "./image-parts"
 import { resolveNativeVision, visionConfigForAnalyze } from "./likely-multimodal"
@@ -178,6 +183,7 @@ interface ToolExecutionResult {
   success: boolean
   data?: any
   error?: string
+  error_code?: string
 }
 
 export function createToolResultMessage(threadId: string, toolCall: any, result: ToolExecutionResult, params: any = {}) {
@@ -544,6 +550,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     .filter(Boolean)
     .join("\n\n")
 
+  // Crash / abort leftovers: fill missing tool ids on disk so rebuild pairs
+  // instead of stripping a round that already mutated the world.
+  persistHealedToolRows(threadManager, threadId)
+
   // Build messages array (canonical OpenAI chat shape; providers convert wire format)
   const history = threadManager.getMessages(threadId)
   let messages: CanonicalChatMessage[] = []
@@ -635,7 +645,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
   async function runContextBudgetPass(phase: "pre_loop" | "mid_loop"): Promise<void> {
     if (compactionSetting === "off") return
-    const compact = applyContextBudget(messages, params.config.context_window, tools)
+    const compact = applyContextBudget(messages, params.config.context_window, tools, { phase })
     if (compactionSetting === "prompt") {
       if (compact.compacted) {
         try {
@@ -861,6 +871,37 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
   await runContextBudgetPass("pre_loop")
 
+  function persistInterruptedRemainder(savedAssistantId: string | undefined, reason: string): void {
+    if (!savedAssistantId) return
+    const disk = threadManager.getMessages(threadId)
+    const idx = disk.findIndex((m: { id?: string }) => m.id === savedAssistantId)
+    if (idx < 0) return
+    const missing = unpairedToolCallsFromAssistant(disk[idx], disk.slice(idx + 1))
+    for (const m of missing) {
+      const result: ToolExecutionResult = {
+        success: false,
+        error: reason,
+        error_code: INTERRUPTED_ERROR_CODE,
+      }
+      threadManager.addMessage(
+        threadId,
+        createToolResultMessage(
+          threadId,
+          { id: m.id, function: { name: m.toolName, arguments: m.args } },
+          result,
+          {},
+        ),
+      )
+      sendToExtension({
+        type: "tool.result",
+        tool_call_id: m.id,
+        thread_id: threadId,
+        tool_name: m.toolName,
+        result,
+      })
+    }
+  }
+
   // Tool calling loop
   let round = 0
   let continuousFailures = 0
@@ -1074,8 +1115,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       let shouldStop = false
 
       for (const tc of assistantMsg) {
-        // P0-B: inter-tool abort must roll back via deleteMessagesFrom (same as
-        // mid-tool AbortError), not quiet-break with partial tool tape on disk.
+        // Inter-tool abort: keep completed rows, fill remaining as interrupted
+        // (schema-valid). Do not deleteMessagesFrom a round that already ran.
         if (signal?.aborted) {
           const err = new Error("aborted")
           err.name = "AbortError"
@@ -1323,7 +1364,25 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             }
           }
 
+          const assistantStillOnDisk = threadManager
+            .getMessages(threadId)
+            .some((m: { id?: string }) => m.id === savedAssistantId)
+          if (!assistantStillOnDisk) {
+            // Regenerated/truncated this round — do not append a late tool row.
+            if (signal?.aborted) {
+              const err = new Error("aborted")
+              err.name = "AbortError"
+              throw err
+            }
+            shouldStop = true
+            break
+          }
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, toolResult, params))
+          if (signal?.aborted) {
+            const err = new Error("aborted")
+            err.name = "AbortError"
+            throw err
+          }
 
           if (toolResult.success) {
             // Reset failure counters on success
@@ -1497,7 +1556,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             content: resultContent,
           })
         } catch (e: any) {
-          // Propagate abort so the round-loop handler can roll back and emit chat.aborted
+          // Propagate abort so the round-loop handler can fill interrupted ids
           if (e.name === "AbortError" || signal?.aborted) throw e
 
           logger.error("llm.tool_execution_exception", {
@@ -1519,12 +1578,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
 
       if (shouldStop) {
-        // P0-B: terminal chat.error already sent — roll back this round's assistant
-        // + any partial tool results on disk so the next turn has no unpaired
-        // tool_calls. Do NOT chat.done-commit a partial stream as complete.
-        if (savedAssistantId) {
-          threadManager.deleteMessagesFrom(threadId, savedAssistantId)
-        } else {
+        // Terminal chat.error already sent. Keep completed/failed tool rows and
+        // fill remaining tool_call ids as interrupted so the next turn pairs.
+        // Do NOT chat.done-commit a partial stream as complete.
+        persistInterruptedRemainder(savedAssistantId, "interrupted")
+        if (!savedAssistantId) {
           messages.pop()
         }
         return
@@ -1538,10 +1596,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
     } catch (e: any) {
       if (e.name === "AbortError" || signal?.aborted) {
-        // Roll back any assistant message and partial tool results persisted this round
-        if (savedAssistantId) {
-          threadManager.deleteMessagesFrom(threadId, savedAssistantId)
-        }
+        persistInterruptedRemainder(savedAssistantId, "aborted")
         // If we aborted during streaming before the assistant message was persisted,
         // keep any non-empty streamed text as a text-only message so the user doesn't
         // see their partial reply vanish on reload.

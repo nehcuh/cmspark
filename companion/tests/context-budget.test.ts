@@ -437,3 +437,87 @@ test("shouldRunM2 gates (tuned strategy)", () => {
     false,
   )
 })
+
+function assistantTools(ids: string[]): CanonicalChatMessage {
+  return {
+    role: "assistant",
+    content: "calling",
+    tool_calls: ids.map((id) => ({
+      id,
+      type: "function" as const,
+      function: { name: "get_page_text", arguments: "{}" },
+    })),
+  }
+}
+
+function toolMsg(id: string, content: string): CanonicalChatMessage {
+  return { role: "tool", tool_call_id: id, content }
+}
+
+test("mid_loop pin: live assistant+tools after last user are undroppable", () => {
+  const huge = "x".repeat(8000)
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    buildOmitNotice(4),
+    user("do it"),
+    assistantTools(["c1"]),
+    toolMsg("c1", huge),
+  ]
+  const r = compactMessagesTurnSafe(msgs, 80, { phase: "mid_loop" })
+  assert.ok(
+    r.messages.some((m) => m.role === "assistant" && (m as any).tool_calls?.length === 1),
+    "live assistant tool_calls must stay",
+  )
+  assert.ok(
+    r.messages.some((m) => m.role === "tool" && (m as any).tool_call_id === "c1"),
+    "live tool row must stay",
+  )
+  const realUsers = r.messages.filter((m) => m.role === "user" && !isOmitNotice(m))
+  assert.equal(realUsers.length, 1)
+  assert.equal(realUsers[0].content, "do it")
+})
+
+test("mid_loop pin: older turns before last user still drop", () => {
+  const huge = "x".repeat(8000)
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    user("first"),
+    assistant("old"),
+    user("do it"),
+    assistantTools(["c2"]),
+    toolMsg("c2", huge),
+  ]
+  const r = compactMessagesTurnSafe(msgs, 80, { phase: "mid_loop" })
+  assert.ok(r.compacted)
+  assert.ok(!r.messages.some((m) => m.role === "user" && (m as any).content === "first"))
+  assert.ok(r.messages.some((m) => m.role === "assistant" && (m as any).tool_calls?.length === 1))
+  assert.ok(r.messages.some((m) => m.role === "tool" && (m as any).tool_call_id === "c2"))
+})
+
+test("pre_loop default: single-user live suffix remains droppable (not a pin)", () => {
+  const huge = "x".repeat(8000)
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    user("do it"),
+    assistantTools(["c1"]),
+    toolMsg("c1", huge),
+  ]
+  const r = compactMessagesTurnSafe(msgs, 80)
+  assert.ok(r.compacted)
+  assert.ok(!r.messages.some((m) => m.role === "tool"), "pre_loop may drop completed suffix")
+})
+
+test("mid_loop pin: shrink tool bodies when suffix still over budget", () => {
+  const huge = "x".repeat(20000)
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    user("do it"),
+    assistantTools(["c1"]),
+    toolMsg("c1", huge),
+  ]
+  const r = compactMessagesTurnSafe(msgs, 80, { phase: "mid_loop" })
+  const tool = r.messages.find((m) => m.role === "tool") as { content: string } | undefined
+  assert.ok(tool, "tool row kept")
+  assert.ok(tool!.content.length < huge.length, "pinned tool body must shrink")
+  assert.ok(r.tokensAfter <= 80 || tool!.content.length <= 120, "under budget or at min shrink")
+})

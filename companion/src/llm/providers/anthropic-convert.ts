@@ -229,7 +229,9 @@ export function convertMessagesToAnthropic(messages: CanonicalChatMessage[]): {
     }
 
     if (msg.role === "tool") {
-      // Merge contiguous tool results into one user message
+      // Merge contiguous tool results into one user message, then any following
+      // canonical user turns (abort-keep + next chatCreate would otherwise emit
+      // consecutive users → Anthropic 400).
       const toolResults: AnthropicContentBlock[] = []
       while (i < messages.length && messages[i].role === "tool") {
         const t = messages[i] as Extract<CanonicalChatMessage, { role: "tool" }>
@@ -240,7 +242,16 @@ export function convertMessagesToAnthropic(messages: CanonicalChatMessage[]): {
         })
         i++
       }
-      out.push({ role: "user", content: toolResults })
+      const extra: AnthropicContentBlock[] = []
+      while (i < messages.length && messages[i].role === "user") {
+        const next = messages[i] as Extract<CanonicalChatMessage, { role: "user" }>
+        extra.push(...userContentToAnthropicBlocks(next.content))
+        i++
+      }
+      out.push({
+        role: "user",
+        content: extra.length > 0 ? [...toolResults, ...extra] : toolResults,
+      })
       continue
     }
 

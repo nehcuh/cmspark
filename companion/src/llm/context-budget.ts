@@ -304,18 +304,57 @@ function dropBlockAt(
   return 1
 }
 
+function lastRealUserIndex(msgs: CanonicalChatMessage[]): number {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === "user" && !isOmitNotice(msgs[i])) return i
+  }
+  return -1
+}
+
+const MIN_SHRUNK_TOOL_CHARS = 80
+
+/** Shrink longest tool bodies until under budget. Never drops rows / ids. */
+export function shrinkToolBodiesToFit(msgs: CanonicalChatMessage[], budget: number): boolean {
+  let changed = false
+  while (estimateMessagesTokens(msgs) > budget) {
+    let best = -1
+    let bestLen = MIN_SHRUNK_TOOL_CHARS
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i]
+      if (m.role !== "tool") continue
+      const len = typeof m.content === "string" ? m.content.length : 0
+      if (len > bestLen) {
+        best = i
+        bestLen = len
+      }
+    }
+    if (best < 0) break
+    const m = msgs[best]
+    if (m.role !== "tool") break
+    const next = Math.max(MIN_SHRUNK_TOOL_CHARS, Math.floor(bestLen / 2))
+    const body = `${m.content.slice(0, next)}…`
+    // Ellipsis can make length stick at MIN+1; stop if we cannot actually shrink.
+    if (body.length >= bestLen) break
+    msgs[best] = { ...m, content: body }
+    changed = true
+  }
+  return changed
+}
+
 /**
  * Turn-safe head-drop until under budget.
  * - Keeps leading system messages
  * - Drops oldest non-system blocks; assistant+tool pairs removed together
  * - Never drops the last user message (excluding omit notices)
+ * - mid_loop: never drop the live suffix after that last user (pin current round)
+ * - If still over after pin, shrink tool bodies instead of dropping ids
  * - Inserts exactly one omit notice after leading systems when dropped > 0
  * - Returns droppedMessages for optional M2 rolling summary
  */
 export function compactMessagesTurnSafe(
   messages: CanonicalChatMessage[],
   budget: number,
-  opts?: { rollingSummary?: string },
+  opts?: { rollingSummary?: string; phase?: "pre_loop" | "mid_loop" },
 ): CompactResult {
   const tokensBefore = estimateMessagesTokens(messages)
   if (tokensBefore <= budget || messages.length <= 2) {
@@ -332,29 +371,36 @@ export function compactMessagesTurnSafe(
   const msgs = messages.map((m) => ({ ...m })) as CanonicalChatMessage[]
   const droppedMessages: CanonicalChatMessage[] = []
   let dropped = 0
+  const pinLiveSuffix = opts?.phase === "mid_loop"
 
   const canDrop = (): boolean => {
-    const nonSystem = msgs.filter((m) => m.role !== "system" && !isOmitNotice(m))
-    const users = nonSystem.filter((m) => m.role === "user")
-    return users.length > 1 || (users.length === 1 && nonSystem.length > 1)
+    const pinFrom = pinLiveSuffix ? lastRealUserIndex(msgs) : -1
+    const nonSystem = msgs.filter((m, i) => {
+      if (m.role === "system" || isOmitNotice(m)) return false
+      if (pinFrom >= 0 && i >= pinFrom) return false
+      return true
+    })
+    if (nonSystem.length === 0) return false
+    const users = msgs.filter((m) => m.role === "user" && !isOmitNotice(m))
+    return users.length > 1 || (users.length === 1 && nonSystem.length > 0)
   }
 
   while (estimateMessagesTokens(msgs) > budget && canDrop()) {
-    const idx = msgs.findIndex((m) => m.role !== "system" && !isOmitNotice(m))
+    const pinFrom = pinLiveSuffix ? lastRealUserIndex(msgs) : Number.POSITIVE_INFINITY
+    const idx = msgs.findIndex((m, i) => {
+      if (m.role === "system" || isOmitNotice(m)) return false
+      if (i >= pinFrom) return false
+      return true
+    })
     if (idx < 0) break
 
-    let lastUserIdx = -1
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role === "user" && !isOmitNotice(msgs[i])) {
-        lastUserIdx = i
-        break
-      }
-    }
+    let lastUserIdx = lastRealUserIndex(msgs)
     if (idx === lastUserIdx) {
       let found = -1
       for (let i = 0; i < msgs.length; i++) {
         if (msgs[i].role === "system" || isOmitNotice(msgs[i])) continue
         if (i === lastUserIdx) continue
+        if (i >= pinFrom) continue
         found = i
         break
       }
@@ -376,6 +422,11 @@ export function compactMessagesTurnSafe(
     msgs.splice(insertAt, 0, buildOmitNotice(dropped, opts?.rollingSummary))
   }
 
+  const shrunk =
+    pinLiveSuffix && estimateMessagesTokens(msgs) > budget
+      ? shrinkToolBodiesToFit(msgs, budget)
+      : false
+
   const tokensAfter = estimateMessagesTokens(msgs)
   return {
     messages: msgs,
@@ -383,7 +434,7 @@ export function compactMessagesTurnSafe(
     droppedMessages,
     tokensBefore,
     tokensAfter,
-    compacted: dropped > 0,
+    compacted: dropped > 0 || shrunk,
   }
 }
 
@@ -392,7 +443,7 @@ export function applyContextBudget(
   messages: CanonicalChatMessage[],
   contextWindow: number,
   tools: unknown,
-  opts?: { rollingSummary?: string },
+  opts?: { rollingSummary?: string; phase?: "pre_loop" | "mid_loop" },
 ): CompactResult {
   const systemPromptTokens = messages
     .filter((m) => m.role === "system")
