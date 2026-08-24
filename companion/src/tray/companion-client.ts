@@ -298,6 +298,32 @@ export class CompanionClient {
     })
   }
 
+  async listPacks(): Promise<Array<{ id: string; name: string; overlay_eligible?: boolean }>> {
+    if (this._state !== "connected") return []
+    try {
+      const resp = await this.sendRequest("pack.list")
+      if (resp?.packs && Array.isArray(resp.packs)) {
+        return resp.packs.filter((p: any) => p && typeof p.id === "string")
+      }
+    } catch {
+      /* ignore */
+    }
+    return []
+  }
+
+  async applyPack(packId: string, threadId: string): Promise<any> {
+    if (this._state !== "connected") return { type: "error", error: "未连接" }
+    try {
+      return await this.sendRequest(
+        "pack.apply",
+        { pack_id: packId, thread_id: threadId, user_gesture: true },
+        30_000,
+      )
+    } catch (err: any) {
+      return { type: "error", error: err?.message || "pack.apply failed" }
+    }
+  }
+
   async isRunActive(threadId: string): Promise<boolean> {
     if (this._state !== "connected" || !threadId) return false
     try {

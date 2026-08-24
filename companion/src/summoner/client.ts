@@ -278,6 +278,46 @@ export function mapChatMessageToSummonerCmd(msg: unknown): SummonerOutboundCmd |
   if (type === "chat.done") {
     return encodeSummonerDone()
   }
+  if (type === "chat.enqueued") {
+    const depth = typeof m.depth === "number" ? m.depth : 0
+    return encodeSummonerError({
+      message: `已排队（${depth}）`,
+      error_code: "enqueued",
+    })
+  }
+  if (type === "error") {
+    const code = typeof m.error === "string" ? m.error : ""
+    const known = [
+      "run_active",
+      "queue_full",
+      "steer_queue_full",
+      "idle_enqueue",
+      "empty_steer",
+      "empty_enqueue",
+      "no_active_run",
+      "OVERLAY_STANDBY",
+      "pack_not_overlay_eligible",
+      "pack_trust_cookie_present",
+      "pack_run_active",
+    ]
+    if (known.includes(code) || known.includes(String(m.error_code || ""))) {
+      const labels: Record<string, string> = {
+        run_active: "本轮还在跑 · 回车纠偏或排队",
+        queue_full: "排队已满（最多 8 条）",
+        steer_queue_full: "纠偏队列已满",
+        idle_enqueue: "空闲时直接发送，不必排队",
+        empty_steer: "纠偏内容为空",
+        empty_enqueue: "排队内容为空",
+        no_active_run: "没有进行中的一轮",
+        OVERLAY_STANDBY: "侧栏占用了输入",
+        pack_not_overlay_eligible: "这个场景要去侧栏确认",
+        pack_trust_cookie_present: "当前对话有 Trust 快照，去侧栏换场景",
+        pack_run_active: "等本轮结束后再套场景",
+      }
+      const key = known.includes(code) ? code : String(m.error_code || "")
+      return encodeSummonerError({ message: labels[key] || code, error_code: key })
+    }
+  }
   if (type === "chat.error") {
     const message =
       typeof m.error === "string"

@@ -211,7 +211,7 @@ test("SummonerController v2 empty state talks, not title-search", () => {
   const src = traySwiftSrc()
   assert.match(src, /说点什么/)
   assert.doesNotMatch(src, /说点什么，或按住说话/)
-  assert.match(src, /回车发送到当前线程，输入 # 搜标题/)
+  assert.match(src, /回车发送\/纠偏 · Shift\+Enter 排队 · # 搜标题/)
   assert.match(src, /继续 · /)
   assert.doesNotMatch(src, /输入线程标题/)
   // Send stays visible in talk (including detached)

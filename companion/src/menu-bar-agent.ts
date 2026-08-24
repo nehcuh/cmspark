@@ -36,6 +36,7 @@ import {
   shouldStartNewSummonerThread,
   resolveSummonerOpenTarget,
   summonerHitsFromQuery,
+  hitsFromTitleSearch,
   submitSummonerTalk,
   type SummonerSttModelId,
   type VoiceSttFrame,
@@ -44,7 +45,9 @@ import {
   encodeSummonerError,
   encodeSummonerHotkeySet,
   encodeSummonerMcp,
+  encodeSummonerPacks,
   encodeSummonerSettings,
+  encodeSummonerThreads,
   SUMMONER_SEARCH_HINT,
   type SummonerInboundEvt,
 } from "./summoner/protocol"
@@ -694,6 +697,54 @@ export async function handleSummonerReady(): Promise<void> {
   if (overlaySessionIsLive(currentOverlaySession()) && summonerThreadId) {
     touchSummonerActivity(summonerThreadId)
   }
+  void pushSummonerRail()
+}
+
+async function pushSummonerRail(): Promise<void> {
+  const client = summonerClient
+  if (!client) return
+  try {
+    const threads = await client.listThreads()
+    trayInstance?.sendSummoner?.(
+      encodeSummonerThreads({ threads: hitsFromTitleSearch(threads).slice(0, 8) }),
+    )
+  } catch {
+    trayInstance?.sendSummoner?.(encodeSummonerThreads({ threads: [] }))
+  }
+  try {
+    const packs = await client.listPacks()
+    trayInstance?.sendSummoner?.(
+      encodeSummonerPacks({
+        packs: packs.map((p) => ({
+          id: p.id,
+          name: (p.name || p.id).trim() || p.id,
+          overlay_eligible: p.overlay_eligible === true,
+        })),
+      }),
+    )
+  } catch {
+    trayInstance?.sendSummoner?.(encodeSummonerPacks({ packs: [] }))
+  }
+}
+
+async function handleSummonerPackApply(packId: string): Promise<void> {
+  const client = summonerClient
+  const tid = summonerThreadId
+  if (!client || !tid || !packId) {
+    trayInstance?.sendSummoner?.(
+      encodeSummonerError({ message: "没有当前对话，无法套场景", error_code: "pack_no_thread" }),
+    )
+    return
+  }
+  const r = await client.applyPack(packId, tid)
+  if (r?.type === "error" || r?.error) {
+    const code = typeof r.error === "string" ? r.error : "pack.apply failed"
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: code, error_code: code }))
+    return
+  }
+  trayInstance?.sendSummoner?.(
+    encodeSummonerError({ message: "已套到当前对话（技能/提示）", error_code: "pack_applied" }),
+  )
 }
 
 export async function handleSummonerClosed(): Promise<void> {
@@ -1053,6 +1104,9 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       return
     case "summoner.new_thread":
       void handleSummonerNewThread()
+      return
+    case "summoner.pack.apply":
+      void handleSummonerPackApply(evt.pack_id)
       return
     case "summoner.closed":
       void handleSummonerClosed()
