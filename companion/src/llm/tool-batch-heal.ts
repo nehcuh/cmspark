@@ -159,8 +159,31 @@ export function persistHealedToolRows(
   const missing = unpairedToolCallsFromAssistant(history[idx], history.slice(idx + 1))
   if (missing.length === 0) return 0
   const assistantIdResolved = history[idx].id
-  let insertAt = toolBlockInsertIndex(history, idx)
+  let persisted = 0
   for (const m of missing) {
+    // Re-read before EVERY insert: insertMessageAt cap-trim can shift indexes (so a
+    // cached insertAt+1 could land after a later user), and under supersede the old
+    // run's real tool result may have landed after `missing` was computed above.
+    const now = tm.getMessages(threadId) as DiskMessage[]
+    const asstNow = assistantIdResolved
+      ? now.findIndex((row) => row.id === assistantIdResolved)
+      : newestUnpairedAssistantIndex(now)
+    if (asstNow < 0) {
+      // The healed assistant itself was cap-trimmed between inserts. Remaining
+      // fillers would land at EOF with no assistant to pair against (permanent
+      // orphan — rebuild skips unpaired tool rows), so stop healing this batch.
+      break
+    }
+    // Never write an INTERRUPTED filler for an id already on disk (a real result
+    // from the old run, or a filler from a concurrent heal) — a duplicate id row
+    // would orphan one of the two at rebuild.
+    if (
+      now.some(
+        (row) => row.role === "tool" && (row.tool_calls || []).some((tc) => tc.id === m.id),
+      )
+    ) {
+      continue
+    }
     const result = {
       success: false as const,
       error: error || "interrupted",
@@ -168,7 +191,7 @@ export function persistHealedToolRows(
     }
     tm.insertMessageAt(
       threadId,
-      insertAt,
+      toolBlockInsertIndex(now, asstNow),
       createToolResultMessage(
         threadId,
         { id: m.id, function: { name: m.toolName, arguments: m.args } },
@@ -177,12 +200,52 @@ export function persistHealedToolRows(
       ) as DiskMessage,
     )
     onPersisted?.(m, result)
-    // Re-read: cap-trim can shift indexes so insertAt++ would land after a later user.
-    const now = tm.getMessages(threadId) as DiskMessage[]
-    const asstNow = assistantIdResolved
-      ? now.findIndex((row) => row.id === assistantIdResolved)
-      : newestUnpairedAssistantIndex(now)
-    insertAt = asstNow < 0 ? now.length : toolBlockInsertIndex(now, asstNow)
+    persisted++
   }
-  return missing.length
+  return persisted
+}
+
+/**
+ * Supersede race closer (entry heal vs in-process tool): the successor run's entry
+ * heal may have persisted an INTERRUPTED filler for this tool_call_id while the old
+ * run was still blocked in executeTool. Appending the real result at EOF would
+ * orphan it (rebuild skips non-contiguous tool rows) and tell the model the call
+ * was interrupted — inviting duplicate side effects. Replace the filler in place
+ * instead (keeps the row id + position right after its assistant).
+ * Returns true when a filler was found and replaced.
+ */
+export function replaceInterruptedFillerIfPresent(
+  tm: {
+    getMessages: (threadId: string) => DiskMessage[]
+    updateMessage: (threadId: string, messageId: string, updates: Record<string, unknown>) => unknown
+  },
+  threadId: string,
+  toolCallId: string,
+  realRow: { content?: string | null; tool_calls?: unknown[] },
+  assistantId?: string,
+): boolean {
+  const history = tm.getMessages(threadId) as DiskMessage[]
+  let from = 0
+  let until = history.length
+  if (assistantId) {
+    const asst = history.findIndex((m) => m.id === assistantId)
+    if (asst < 0) return false
+    from = asst + 1
+    until = from
+    while (until < history.length && history[until].role === "tool") until++
+  }
+  const filler = history.slice(from, until).find(
+    (m) =>
+      m.role === "tool" &&
+      typeof m.id === "string" &&
+      (m.tool_calls || []).some(
+        (tc) => tc.id === toolCallId && tc.result?.error_code === INTERRUPTED_ERROR_CODE,
+      ),
+  )
+  if (!filler || typeof filler.id !== "string") return false
+  tm.updateMessage(threadId, filler.id, {
+    content: realRow.content,
+    tool_calls: realRow.tool_calls,
+  })
+  return true
 }

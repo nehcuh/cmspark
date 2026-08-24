@@ -271,6 +271,53 @@ export function followUpCreateFromQueue(
   }
 }
 
+/**
+ * Shared nextRun drain for the run paths (chat.create / file.upload /
+ * chat.regenerate) and for post-abort queue pickup.
+ *
+ * - `myGeneration` guard: a superseded/aborted predecessor must not steal the
+ *   queue and chat.create the successor (that reintroduces supersede). Pass
+ *   null to skip the guard (chat.abort owns no generation of its own).
+ * - Lease/conductor gates are pre-checked BEFORE takeNextRun: on reject the
+ *   message STAYS queued (the client already holds chat.enqueued) and the
+ *   gate error frame is returned instead of recursing.
+ * - Returns null when nothing drained (or the recursive run finished clean);
+ *   a gate rejection returns its error frame.
+ */
+async function drainNextRun(
+  threadId: string,
+  myGeneration: number | null,
+  services: Services,
+  session?: SessionCallbacks,
+): Promise<any> {
+  if (myGeneration !== null && llmLoopGeneration.get(threadId) !== myGeneration) return null
+  if (!threadId || peekNextRunCount(threadId) === 0) return null
+  if (abortControllers.has(threadId)) return null
+  // Pre-check the gates the recursive chat.create will hit, with the surface
+  // stamp the followUp frame will carry (drain keeps this session's surface —
+  // unstamped create is treated as panel and OVERLAY_STANDBY-kills
+  // overlay-held nextRun, PR219 adversary M1).
+  const surface = session?.surface === "summoner" ? "summoner" : "tray"
+  const leaseErr = gateChatCreateOnLease(threadId, surface)
+  if (leaseErr) return leaseErr
+  const conductorErr = gateChatCreateOnConductor(threadId, surface)
+  if (conductorErr) return conductorErr
+  const queued = takeNextRun(threadId)
+  if (!queued) return null
+  return handleMessage(
+    followUpCreateFromQueue(threadId, queued, session?.surface),
+    services,
+    session,
+  )
+}
+
+/** Gate rejection is an error frame, not a successor run. Callers must ack the original RPC. */
+function isDrainGateError(frame: unknown): boolean {
+  if (!frame || typeof frame !== "object") return false
+  const t = (frame as { type?: unknown }).type
+  return t === "error" || t === "chat.error"
+}
+
 export async function handleMessage(
   msg: any,
   services: Services,
@@ -391,17 +438,15 @@ export async function handleMessage(
       }
 
       // P0 CORR-01: claim slot SYNCHRONOUSLY before any await so dual WS handlers
-      // cannot both install controllers (orphan double LLM).
+      // cannot both install controllers (orphan double LLM). The run_active
+      // early-return above already rejected occupied threads and no await sits
+      // between that check and this set, so no existing controller can be here
+      // (chat.regenerate is the only superseding path; it aborts + drains
+      // explicitly).
       const myGeneration = nextLlmGeneration(rest.thread_id)
       const controller = new AbortController()
-      const existing = abortControllers.get(rest.thread_id)
       abortControllers.set(rest.thread_id, controller)
       if (session?.panelId) llmLoopOwnerPanel.set(rest.thread_id, session.panelId)
-      if (existing) {
-        logger.info("llm.thread_request_superseded", { thread_id: rest.thread_id })
-        existing.abort()
-        await drainThreadOnSupersede(rest.thread_id, `chat.supersede:${rest.thread_id}`)
-      }
 
       // ADR-015: cap concurrent multi-agent LLM loops (workers + orchestrators)
       const threadForLlmCap = services.threadManager.get(rest.thread_id)
@@ -550,19 +595,16 @@ export async function handleMessage(
       }
       // Only the generation that still owns the thread may drain nextRun.
       // A superseded/aborted predecessor must not steal the queue and
-      // chat.create the successor (that reintroduces supersede).
-      if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
-        const queued = takeNextRun(rest.thread_id)
-        if (queued) {
-          // Drain must keep the same surface stamp as this session.
-          // Unstamped create is treated as panel and OVERLAY_STANDBY-kills
-          // overlay-held nextRun (PR219 adversary M1).
-          return handleMessage(
-            followUpCreateFromQueue(rest.thread_id, queued, session?.surface),
-            services,
-            session,
-          )
+      // chat.create the successor (that reintroduces supersede). Gates are
+      // pre-checked inside drainNextRun so a rejected drain keeps the message
+      // queued instead of dropping it after chat.enqueued.
+      const drained = await drainNextRun(rest.thread_id, myGeneration, services, session)
+      if (drained) {
+        if (isDrainGateError(drained)) {
+          session.sendToExtension(drained)
+          return null
         }
+        return drained
       }
       return null // chatCreate handles streaming internally
     }
@@ -584,7 +626,13 @@ export async function handleMessage(
         const conductorErr = gateChatCreateOnConductor(rest.thread_id, stampedSurface)
         if (conductorErr) return conductorErr
       }
-      if (!enqueueSteer(rest.thread_id, steerText)) {
+      // D6: pass the extension optimistic-bubble id through to the steer queue
+      // (echoed as chat.user client_message_id when the steer lands — F1 adopt).
+      const steerClientMessageId =
+        typeof rest.client_message_id === "string" && rest.client_message_id
+          ? rest.client_message_id
+          : undefined
+      if (!enqueueSteer(rest.thread_id, steerText, steerClientMessageId)) {
         return {
           type: "error",
           error: "steer_queue_full",
@@ -592,7 +640,11 @@ export async function handleMessage(
           max: MAX_STEER,
         }
       }
-      return { type: "chat.steered", thread_id: rest.thread_id }
+      return {
+        type: "chat.steered",
+        thread_id: rest.thread_id,
+        ...(steerClientMessageId ? { client_message_id: steerClientMessageId } : {}),
+      }
     }
 
     case "file.upload": {
@@ -611,12 +663,39 @@ export async function handleMessage(
       if (abortControllers.has(thread_id)) {
         return { type: "error", error: "run_active", thread_id }
       }
+      // P1 TOCTOU: claim the slot SYNCHRONOUSLY at entry — before parseFile /
+      // analyzeImage awaits open a multi-second window in which a chat.create
+      // would pass its own run_active check and start a full LLM run that a
+      // late abortControllers.set() would then silently overwrite (orphan
+      // double stream; chat.abort could only stop one). No await between the
+      // check above and this set. Keep the pre-#219 supersede (abort + drain)
+      // as defense-in-depth for any controller that still slips in.
+      const uploadGeneration = nextLlmGeneration(thread_id)
+      const uploadController = new AbortController()
+      const existingUpload = abortControllers.get(thread_id)
+      abortControllers.set(thread_id, uploadController)
+      if (existingUpload) {
+        logger.info("llm.thread_request_superseded", { thread_id })
+        existingUpload.abort()
+        await drainThreadOnSupersede(thread_id, `file.upload.supersede:${thread_id}`)
+      }
       const config = getConfig()
       const fileConfig = config.file_upload || { max_file_size: 10 * 1024 * 1024, allowed_types: [] as string[], max_embedded_images: 20, enable_vision_analysis: true, max_file_tokens: 50000 }
 
       // S45: persist parse/type failures so mid-upload thread switch still shows
       // the error when the user returns (UI gates ADD_MESSAGE for foreign threads).
       const uploadError = (error: string) => {
+        // The slot was claimed at entry: every early return routed through here
+        // (parse/size/type/cap/paused/gate failures) must free it or the thread
+        // stays run_active forever. SEC-D CAS: never delete a successor's
+        // controller; the gate release is a no-op when never acquired.
+        if (
+          llmLoopGeneration.get(thread_id) === uploadGeneration &&
+          abortControllers.get(thread_id) === uploadController
+        ) {
+          abortControllers.delete(thread_id)
+          releaseMultiAgentLlmLoop(thread_id)
+        }
         try {
           if (typeof thread_id === "string" && thread_id) {
             services.threadManager.addMessage(thread_id, {
@@ -830,8 +909,8 @@ export async function handleMessage(
           return uploadError("thread_paused")
         }
       }
-      // Occupied upload is rejected at the top of this case (run_active).
-      // Do not abort a live loop.
+      // The slot was claimed at entry (TOCTOU fix); only the multi-agent LLM
+      // cap is left to acquire here — a reject frees the claim via uploadError.
       const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop: releaseUploadLlm } =
         await import("./orchestrator/llm-loop-gate")
       const threadForUploadCap = services.threadManager.get(thread_id)
@@ -839,9 +918,6 @@ export async function handleMessage(
       if (!uploadLoopGate.ok) {
         return uploadError(uploadLoopGate.error)
       }
-      const uploadGeneration = nextLlmGeneration(thread_id)
-      const uploadController = new AbortController()
-      abortControllers.set(thread_id, uploadController)
 
       // Hoisted so chatCreate failure can clean up already-written sidecars
       // (only when the user message was never persisted — F9).
@@ -1061,6 +1137,15 @@ export async function handleMessage(
         thread_id,
         files: uploadedNames,
       })
+      // P1: drain one queued nextRun now that the slot is free (parity with
+      // chat.create) — generation-guarded + gate-pre-checked inside, so a
+      // rejected drain keeps the message queued.
+      const drainedAfterUpload = await drainNextRun(thread_id, uploadGeneration, services, session)
+      if (drainedAfterUpload && isDrainGateError(drainedAfterUpload)) {
+        session.sendToExtension(drainedAfterUpload)
+      } else if (drainedAfterUpload) {
+        return drainedAfterUpload
+      }
       return { type: "file.uploaded", thread_id, files: uploadedNames }
     }
 
@@ -1139,6 +1224,30 @@ export async function handleMessage(
         })
       } catch {
         /* best-effort */
+      }
+      // P2: nextRun survives abort by design, but the aborted run's own drain
+      // is generation-guarded off (abortThreadChat bumped the generation), so
+      // a queued message would stall until an unrelated chat.create. Pick one
+      // up here. Deferred a tick: the aborted run's finally may not have
+      // settled yet (its generation CAS skips cleanup, and a fresh chat.create
+      // landing first makes the slot check inside drainNextRun a no-op).
+      // No session (test/tooling callers) → skip: the recursive chat.create
+      // needs one and would just drop the message.
+      if (session && typeof rest.thread_id === "string" && peekNextRunCount(rest.thread_id) > 0) {
+        const abortDrainThreadId = rest.thread_id
+        setImmediate(() => {
+          void drainNextRun(abortDrainThreadId, null, services, session)
+            .then((drained) => {
+              // Gate-rejected: message stays queued — surface the reason.
+              if (drained) session?.sendToExtension?.(drained)
+            })
+            .catch((e: any) => {
+              logger.warn("chat.abort.nextRun_drain_failed", {
+                thread_id: abortDrainThreadId,
+                error: e?.message || String(e),
+              })
+            })
+        })
       }
       return { type: "chat.aborted", thread_id: rest.thread_id }
     }
@@ -1376,7 +1485,15 @@ export async function handleMessage(
           releaseRegenLlm(thread_id)
         }
       }
-      return null
+      // P1: drain one queued nextRun now that the slot is free (parity with
+      // chat.create) — generation-guarded + gate-pre-checked inside, so a
+      // rejected drain keeps the message queued.
+      const drainedAfterRegen = await drainNextRun(thread_id, myGeneration, services, session)
+      if (drainedAfterRegen && isDrainGateError(drainedAfterRegen)) {
+        session.sendToExtension(drainedAfterRegen)
+        return null
+      }
+      return drainedAfterRegen
     }
 
     // --- Threads ---

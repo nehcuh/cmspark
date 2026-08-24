@@ -1350,7 +1350,25 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         clearTimeout(closedAuth.timer)
         wsAuth.delete(ws)
       }
-      broadcastOverlayLeasesOnSocketClose(closedAuth?.surface, (msg) => broadcastToClients(msg))
+      // #219: tray Swift overlay and C-thin web shell can both be online as
+      // surface=summoner. clients/wsAuth already dropped this socket above, so
+      // count the REMAINING authenticated summoners and only drop overlay
+      // holds when the last one dies.
+      let survivingSummoners = 0
+      if (closedAuth?.surface === "summoner") {
+        for (const client of clients) {
+          const auth = wsAuth.get(client)
+          if (auth?.authenticated === true && auth.surface === "summoner") {
+            survivingSummoners += 1
+          }
+        }
+      }
+      broadcastOverlayLeasesOnSocketClose(
+        closedAuth?.surface,
+        (msg) => broadcastToClients(msg),
+        undefined,
+        survivingSummoners,
+      )
       // P0 CORR-02: abort in-flight LLM/tool loops owned by this panel
       try {
         const panelId = (ws as any).__cmsparkPanelId as string | undefined

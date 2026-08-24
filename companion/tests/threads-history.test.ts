@@ -351,6 +351,34 @@ describe("ThreadManager - Abnormal/Boundary Paths", () => {
     assert.equal(kept[0].content, "u1")
   })
 
+  test("trimMessagesTurnSafe: all-tool suffix with no assistant owner keeps the anchor side", () => {
+    // [user, tool, tool, tool] max=3 — the tool block has no assistant owner
+    // anywhere; the old fallback re-applied the raw cut and returned a
+    // tool-leading window [tool, tool, tool]. Must instead keep the anchor
+    // (owner-side) row plus the block, over-cap.
+    const msgs = [
+      { role: "user", content: "u0" },
+      { role: "tool", content: "t0" },
+      { role: "tool", content: "t1" },
+      { role: "tool", content: "t2" },
+    ]
+    const kept = trimMessagesTurnSafe(msgs, 3)
+    assert.ok(kept[0].role !== "tool", "window must not start on a tool row")
+    assert.equal(kept[0].content, "u0", "anchor side (user row + block) is kept")
+    assert.equal(kept.length, 4, "over-cap is preferred over a broken window")
+  })
+
+  test("trimMessagesTurnSafe: system-anchored all-tool suffix also keeps the anchor", () => {
+    const msgs = [
+      { role: "system", content: "s0" },
+      { role: "tool", content: "t0" },
+      { role: "tool", content: "t1" },
+    ]
+    const kept = trimMessagesTurnSafe(msgs, 2)
+    assert.ok(kept[0].role !== "tool", "window must not start on a tool row")
+    assert.equal(kept[0].content, "s0")
+  })
+
   test("trimMessagesTurnSafe never returns empty for a non-empty tape", () => {
     const msgs = [
       { role: "assistant", tool_calls: [{ id: "a" }] },

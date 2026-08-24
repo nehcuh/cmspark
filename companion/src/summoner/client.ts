@@ -265,18 +265,36 @@ function asRecord(msg: unknown): Record<string, unknown> | null {
 /**
  * Map companion WS stream frames → summoner stdin cmds.
  * chat.create itself stays on the summoner WS.
+ *
+ * chat.token / chat.done keep their `thread_id` so the forwarder (and the
+ * Swift overlay) can drop frames from a thread the overlay is not showing.
  */
-export function mapChatMessageToSummonerCmd(msg: unknown): SummonerOutboundCmd | null {
+export type SummonerStreamCmd = SummonerOutboundCmd & { thread_id?: string }
+
+/** Stream cmd thread filter: untagged cmds pass; tagged cmds must match the shown thread. */
+export function summonerCmdMatchesThread(
+  cmd: { thread_id?: string },
+  currentThreadId: string | null,
+): boolean {
+  return typeof cmd.thread_id !== "string" || cmd.thread_id === currentThreadId
+}
+
+export function mapChatMessageToSummonerCmd(msg: unknown): SummonerStreamCmd | null {
   const m = asRecord(msg)
   if (!m) return null
   const type = m.type
+  const threadId = typeof m.thread_id === "string" ? m.thread_id : undefined
   if (type === "chat.token") {
     const text =
       typeof m.content === "string" ? m.content : typeof m.text === "string" ? m.text : ""
-    return encodeSummonerToken({ text })
+    const cmd: SummonerStreamCmd = encodeSummonerToken({ text })
+    if (threadId !== undefined) cmd.thread_id = threadId
+    return cmd
   }
   if (type === "chat.done") {
-    return encodeSummonerDone()
+    const cmd: SummonerStreamCmd = encodeSummonerDone()
+    if (threadId !== undefined) cmd.thread_id = threadId
+    return cmd
   }
   if (type === "chat.enqueued") {
     const depth = typeof m.depth === "number" ? m.depth : 0
@@ -349,6 +367,30 @@ export function mapChatMessageToSummonerCmd(msg: unknown): SummonerOutboundCmd |
 }
 
 export type SummonerSttModelId = "small" | "medium" | "large-v3-turbo"
+
+/**
+ * S23 click-guard routing for Swift-reported companion.ui.rect. The daemon
+ * pins allowSurfaces=["overlay"] on the summoner socket, so Tray.swift's
+ * pairing/tray/hud rects sent there are silently dropped — they must ride the
+ * tray socket. Overlay rects prefer the summoner socket and fall back to the
+ * tray socket (which accepts any surface) when summoner is down.
+ */
+export type RectForwardClients = {
+  summoner: { sendAppMessage: (type: string, params: Record<string, unknown>) => boolean } | null
+  companion: { sendAppMessage: (type: string, params: Record<string, unknown>) => boolean } | null
+}
+
+export function forwardCompanionUiRect(
+  rect: Record<string, unknown>,
+  clients: RectForwardClients,
+): boolean {
+  const send = (client: RectForwardClients["summoner"]): boolean =>
+    client?.sendAppMessage("companion.ui.rect", rect) === true
+  if (rect.surface === "overlay") {
+    return send(clients.summoner) || send(clients.companion)
+  }
+  return send(clients.companion)
+}
 
 export type VoiceSttStartFrame = {
   type: "voice.stt.start"

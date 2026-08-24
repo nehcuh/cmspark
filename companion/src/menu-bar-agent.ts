@@ -27,6 +27,7 @@ import { OSASCRIPT_BIN } from "./process-path"
 import {
   attachChromeOnly,
   buildContinueChatCreate,
+  forwardCompanionUiRect,
   mapChatMessageToSummonerCmd,
   mapVoiceSttToSummonerCmd,
   micPcmStartFrame,
@@ -35,6 +36,7 @@ import {
   sendMicWavToStt,
   shouldStartNewSummonerThread,
   resolveSummonerOpenTarget,
+  summonerCmdMatchesThread,
   summonerHitsFromQuery,
   hitsFromTitleSearch,
   submitSummonerTalk,
@@ -60,7 +62,15 @@ import {
   hydrateOverlayIfLive,
   invalidateOverlaySession,
   overlaySessionIsLive,
+  shouldReclaimLiveOverlayThread,
+  type OverlayClaimResult,
+  type OverlayLeaseState,
 } from "./summoner/overlay-session"
+import {
+  claimOverlayLeaseCas,
+  releaseOverlayLeaseAtRev,
+  type LeaseRpc,
+} from "./ws/composer-lease"
 import { acceptedSummonerHotkey, nextSummonerHotkeyCmd } from "./summoner/hotkey"
 
 // node-notifier does not ship TypeScript declarations
@@ -150,6 +160,18 @@ let companionClient: CompanionClient | null = null
 /** Second WS: overlay chat (`surface: "summoner"`). Tray menus stay on companionClient. */
 let summonerClient: CompanionClient | null = null
 let summonerThreadId: string | null = null
+/** Overlay session generation captured when summonerThreadId was bound. */
+let summonerThreadSessionToken: number | null = null
+
+function bindSummonerThread(id: string, token?: number): void {
+  summonerThreadId = id
+  summonerThreadSessionToken = token ?? currentOverlaySession()
+}
+
+function clearSummonerThread(): void {
+  summonerThreadId = null
+  summonerThreadSessionToken = null
+}
 let summonerMicSessionId: string | null = null
 let summonerMicSeq = 0
 let pollTimer: NodeJS.Timeout | null = null
@@ -635,6 +657,51 @@ function pushSummonerSettings(): void {
   }))
 }
 
+/** Lease request/response over the summoner socket (sendAppRequest, 5s default). */
+function summonerLeaseRpc(client: CompanionClient): LeaseRpc {
+  return (type, body) => client.sendAppRequest(type, body)
+}
+
+/**
+ * Overlay claim that keeps the claim rev + released siblings so a stale claim
+ * can unwind itself (CAS release) and repair the live session's demoted hold.
+ */
+async function claimOverlayLeaseDetailed(
+  client: CompanionClient,
+  threadId: string,
+): Promise<OverlayClaimResult | false> {
+  try {
+    const r = await claimOverlayLeaseCas(threadId, summonerLeaseRpc(client))
+    if (!r.ok) return false
+    return { ok: true, rev: r.state?.rev, released_siblings: r.released_siblings ?? [] }
+  } catch {
+    return false
+  }
+}
+
+/**
+ * A stale session's claim demoted the live overlay thread as a sibling
+ * (composer.lease.claim releases other overlay holds atomically). Claim it
+ * back so the live session keeps its composer lease.
+ */
+async function reclaimLiveSummonerThread(
+  client: CompanionClient,
+  siblings: OverlayLeaseState[],
+): Promise<void> {
+  if (!shouldReclaimLiveOverlayThread({
+    liveThreadId: summonerThreadId,
+    liveSessionToken: summonerThreadSessionToken,
+    siblings,
+  })) return
+  const liveId = summonerThreadId
+  if (!liveId) return
+  try {
+    await claimOverlayLeaseCas(liveId, summonerLeaseRpc(client))
+  } catch {
+    /* best-effort repair — the next user action re-claims anyway */
+  }
+}
+
 async function hydrateSummonerThread(id: string, sessionToken?: number): Promise<boolean> {
   const client = summonerClient
   if (!client) return false
@@ -651,11 +718,14 @@ async function hydrateSummonerThread(id: string, sessionToken?: number): Promise
         search_hint: SUMMONER_SEARCH_HINT,
       })
     },
-    claimLease: (tid) => client.claimOverlayComposerLease(tid),
+    claimLease: (tid) => claimOverlayLeaseDetailed(client, tid),
+    releaseClaimedLease: (tid, rev) =>
+      releaseOverlayLeaseAtRev(tid, rev, summonerLeaseRpc(client)).then(() => {}),
     releaseAllLeases: () => client.releaseAllOverlayComposerLeases(),
+    onStaleClaim: (siblings) => reclaimLiveSummonerThread(client, siblings),
   })
   if (result !== "claimed") return false
-  summonerThreadId = id
+  bindSummonerThread(id, token)
   return true
 }
 
@@ -749,7 +819,7 @@ async function handleSummonerPackApply(packId: string): Promise<void> {
 
 export async function handleSummonerClosed(): Promise<void> {
   invalidateOverlaySession()
-  summonerThreadId = null
+  clearSummonerThread()
   const client = summonerClient
   if (!client) return
   await client.releaseAllOverlayComposerLeases()
@@ -796,8 +866,11 @@ export async function handleSummonerSubmit(
     claimLease: (id) =>
       claimOverlayIfLive({
         token,
-        claim: () => client.claimOverlayComposerLease(id),
+        claim: () => claimOverlayLeaseDetailed(client, id),
+        releaseClaim: (rev) =>
+          releaseOverlayLeaseAtRev(id, rev, summonerLeaseRpc(client)).then(() => {}),
         releaseAll: () => client.releaseAllOverlayComposerLeases(),
+        onStaleClaim: (siblings) => reclaimLiveSummonerThread(client, siblings),
       }),
     sendChatCreate: (args) => client.sendChatCreate(args),
     sendSteer: (args) => client.sendSteer(args),
@@ -806,7 +879,7 @@ export async function handleSummonerSubmit(
     selectMessages: (id) => client.selectThreadMessages(id),
     hydrate: ({ thread_id: id, messages }) => {
       if (!overlaySessionIsLive(token)) return
-      summonerThreadId = id
+      bindSummonerThread(id, token)
       const prior = messages as Array<{
         role: string
         content?: string
@@ -832,7 +905,7 @@ export async function handleSummonerSubmit(
     { enqueue },
   )
   if (result.ok && result.threadId) {
-    summonerThreadId = result.threadId
+    bindSummonerThread(result.threadId, token)
     touchSummonerActivity(result.threadId)
   }
   return result.ok
@@ -857,7 +930,8 @@ export async function handleSummonerSelect(threadId: string): Promise<void> {
 }
 
 export function setSummonerThreadId(id: string | null): void {
-  summonerThreadId = id
+  if (id) bindSummonerThread(id)
+  else clearSummonerThread()
 }
 
 /** Re-arm a persisted combo on Swift. Empty config waits for first overlay open. */
@@ -1055,12 +1129,15 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
         browser: summonerBrowserAttached() ? "attached" : "detached",
         search_hint: SUMMONER_SEARCH_HINT,
       })
-      await client.claimOverlayComposerLease(created.id)
+      return claimOverlayLeaseDetailed(client, created.id)
     },
+    releaseClaim: (rev) =>
+      releaseOverlayLeaseAtRev(created.id, rev, summonerLeaseRpc(client)).then(() => {}),
     releaseAll: () => client.releaseAllOverlayComposerLeases(),
+    onStaleClaim: (siblings) => reclaimLiveSummonerThread(client, siblings),
   })
   if (claimed) {
-    summonerThreadId = created.id
+    bindSummonerThread(created.id, token)
     touchSummonerActivity(created.id)
   }
   return claimed
@@ -1069,7 +1146,16 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
 export function handleSummonerInbound(evt: SummonerInboundEvt): void {
   switch (evt.type) {
     case "summoner.submit":
-      void handleSummonerSubmit(evt.thread_id, evt.text, evt.enqueue === true)
+      void handleSummonerSubmit(evt.thread_id, evt.text, evt.enqueue === true).then((ok) => {
+        // Swift already appended "你：…" to its local transcript; when the
+        // submit never left the tray (client down / lease claim failed), tell
+        // the overlay instead of dropping the message silently.
+        if (!ok) {
+          trayInstance?.sendSummoner?.(
+            encodeSummonerError({ message: "未送达，请重试", error_code: "submit_failed" }),
+          )
+        }
+      })
       return
     case "summoner.search":
       void handleSummonerSearch(evt.query)
@@ -1357,8 +1443,13 @@ export async function startMenuBarAgent(): Promise<void> {
       trayInstance.onCompanionUiRect?.((raw) => {
         try {
           if (!raw || typeof raw !== "object") return
-          const o = raw as Record<string, unknown>
-          summonerClient?.sendAppMessage("companion.ui.rect", o)
+          // Route by rect surface: "overlay" rides the summoner socket, while
+          // pairing/tray/hud must use the tray socket (the daemon drops any
+          // non-overlay rect arriving on a summoner-surface connection).
+          forwardCompanionUiRect(raw as Record<string, unknown>, {
+            summoner: summonerClient,
+            companion: companionClient,
+          })
         } catch (err) {
           console.error("[menu-bar] companion.ui.rect forward error:", err)
         }
@@ -1430,6 +1521,9 @@ export async function startMenuBarAgent(): Promise<void> {
     }
     const cmd = mapChatMessageToSummonerCmd(msg)
     if (!cmd) return
+    // Drop stream frames from threads the overlay is not showing — a stale or
+    // parallel run's tokens must not overwrite the visible transcript.
+    if (!summonerCmdMatchesThread(cmd, summonerThreadId)) return
     // Task 9 wires Swift stdin; non-Swift / pre-rebuild adapters no-op.
     trayInstance?.sendSummoner?.(cmd)
   })

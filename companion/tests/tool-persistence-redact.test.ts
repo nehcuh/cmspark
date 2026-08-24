@@ -59,6 +59,41 @@ test("createToolResultMessage applies redact for cookies", () => {
   assert.ok(!JSON.stringify(msg.tool_calls).includes("LEAKME"))
 })
 
+test("Authorization / Bearer / apiKey keys are redacted on generic tools", () => {
+  const { params } = redactToolPayloadForPersistence(
+    "mcp__http__fetch",
+    { Authorization: "Bearer super-secret", Bearer: "abc", apiKey: "k-1", url: "https://example.com" },
+    { success: true },
+  )
+  const p = params as any
+  assert.ok(String(p.Authorization).startsWith("<redacted:"))
+  assert.ok(String(p.Bearer).startsWith("<redacted:"))
+  assert.ok(String(p.apiKey).startsWith("<redacted:"))
+  assert.equal(p.url, "https://example.com")
+  assert.ok(!JSON.stringify(params).includes("super-secret"))
+})
+
+test("evaluate data payload is always collapsed (even under 200 chars)", () => {
+  const { result } = redactToolPayloadForPersistence(
+    "evaluate",
+    { code: "1+1" },
+    { success: true, data: "short secret" },
+  )
+  const r = result as any
+  assert.equal(r.data.redacted, true)
+  assert.ok(!JSON.stringify(result).includes("short secret"))
+})
+
+test("plainErrorResult drops extra keys next to INTERRUPTED", () => {
+  const { result } = redactToolPayloadForPersistence(
+    "shell_exec",
+    {},
+    { success: false, error: "interrupted", error_code: "INTERRUPTED", stdout: "SECRET_ENV=1", stack: "trace" },
+  )
+  assert.deepEqual(result, { success: false, error: "interrupted", error_code: "INTERRUPTED" })
+  assert.ok(!JSON.stringify(result).includes("SECRET_ENV"))
+})
+
 test("benign get_page_text still persists text", () => {
   const msg = createToolResultMessage(
     "abc123",
@@ -67,4 +102,80 @@ test("benign get_page_text still persists text", () => {
     { tabId: 1 },
   )
   assert.ok(msg.content.includes("hello page"))
+})
+
+// --- INTERRUPTED passthrough (heal fillers must keep error_code on disk) ---
+
+test("shell_exec INTERRUPTED filler keeps error_code and error verbatim", () => {
+  const { params, result } = redactToolPayloadForPersistence(
+    "shell_exec",
+    {},
+    { success: false, error: "interrupted", error_code: "INTERRUPTED" },
+  )
+  assert.deepEqual(result, { success: false, error: "interrupted", error_code: "INTERRUPTED" })
+  assert.deepEqual(params, {})
+})
+
+test("host_computer INTERRUPTED filler is not collapsed", () => {
+  const { result } = redactToolPayloadForPersistence(
+    "host_computer",
+    {},
+    { success: false, error: "aborted", error_code: "INTERRUPTED" },
+  )
+  const r = result as any
+  assert.equal(r.success, false)
+  assert.equal(r.error, "aborted")
+  assert.equal(r.error_code, "INTERRUPTED")
+  assert.equal(r.redacted, undefined)
+})
+
+test("thread_recall INTERRUPTED filler keeps error_code while query param stays redacted", () => {
+  const { params, result } = redactToolPayloadForPersistence(
+    "thread_recall",
+    { query: "my secret plans" },
+    { success: false, error: "interrupted", error_code: "INTERRUPTED" },
+  )
+  const r = result as any
+  assert.equal(r.error_code, "INTERRUPTED")
+  assert.equal(r.redacted, undefined)
+  const p = params as any
+  assert.ok(String(p.query).startsWith("<redacted:"))
+  assert.ok(!JSON.stringify(params).includes("my secret plans"))
+})
+
+test("mcp sensitive-name INTERRUPTED filler keeps error_code", () => {
+  const { result } = redactToolPayloadForPersistence(
+    "mcp__fs__read_file",
+    {},
+    { success: false, error: "interrupted", error_code: "INTERRUPTED" },
+  )
+  const r = result as any
+  assert.equal(r.error_code, "INTERRUPTED")
+  assert.equal(r.redacted, undefined)
+})
+
+test("data-bearing sensitive error results still get redacted (no passthrough)", () => {
+  const big = "x".repeat(500)
+  const { result } = redactToolPayloadForPersistence(
+    "evaluate",
+    { code: "1+1" },
+    { success: false, error: "boom", error_code: "EVAL_FAILED", data: big },
+  )
+  const r = result as any
+  assert.equal(r.success, false)
+  assert.equal(r.error, "boom")
+  assert.equal(r.error_code, undefined, "rebuild path still drops unknown codes")
+  assert.equal(r.data.redacted, true)
+  assert.ok(!JSON.stringify(result).includes(big))
+})
+
+test("createToolResultMessage persists INTERRUPTED marker for sensitive tools", () => {
+  const msg = createToolResultMessage(
+    "abc123",
+    { id: "c9", function: { name: "shell_exec" } },
+    { success: false, error: "interrupted", error_code: "INTERRUPTED" },
+    {},
+  )
+  assert.ok(msg.content.includes("INTERRUPTED"))
+  assert.equal((msg.tool_calls[0].result as any).error_code, "INTERRUPTED")
 })

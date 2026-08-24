@@ -3,22 +3,29 @@
  * steer dies on abort; nextRun survives abort (lost only on process death).
  */
 
-const steerByThread = new Map<string, string[]>()
+/** Steer queue entry: text + optional extension optimistic bubble id (F1 adopt). */
+export type SteerItem = {
+  text: string
+  /** chat.steer frame's clientMessageId, echoed as chat.user client_message_id. */
+  clientMessageId?: string
+}
+
+const steerByThread = new Map<string, SteerItem[]>()
 const nextRunByThread = new Map<string, string[]>()
 
 export const MAX_STEER = 8
 
-export function enqueueSteer(threadId: string, text: string): boolean {
+export function enqueueSteer(threadId: string, text: string, clientMessageId?: string): boolean {
   const t = String(text || "").trim()
   if (!threadId || !t) return false
   const q = steerByThread.get(threadId) || []
   if (q.length >= MAX_STEER) return false
-  q.push(t)
+  q.push(clientMessageId ? { text: t, clientMessageId } : { text: t })
   steerByThread.set(threadId, q)
   return true
 }
 
-export function takeSteer(threadId: string): string[] {
+export function takeSteer(threadId: string): SteerItem[] {
   const q = steerByThread.get(threadId) || []
   steerByThread.delete(threadId)
   return q
