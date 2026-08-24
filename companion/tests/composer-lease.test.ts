@@ -52,6 +52,18 @@ test("assertComposerLease denies non-holder incoming", () => {
   assert.equal(assertComposerLease("overlay", "overlay").ok, true)
 })
 
+test("followUpCreateFromQueue stamps summoner so overlay nextRun drain keeps the lease", async () => {
+  const { followUpCreateFromQueue } = await import("../src/message-router")
+  const overlayMsg = followUpCreateFromQueue("t1", "queued", "summoner")
+  assert.equal(overlayMsg.__cmspark_surface, "summoner")
+  const r = new ComposerLeaseRegistry()
+  r.claim({ thread_id: "t1", holder: "overlay", rev: 0 })
+  assert.equal(gateChatCreateOnLease("t1", overlayMsg.__cmspark_surface, r), null)
+  const panelMsg = followUpCreateFromQueue("t1", "queued", "tray")
+  assert.equal(panelMsg.__cmspark_surface, "tray")
+  assert.equal(gateChatCreateOnLease("t1", panelMsg.__cmspark_surface, r)?.data.error_code, OVERLAY_STANDBY)
+})
+
 test("chat.create gate OVERLAY_STANDBY when overlay holds and panel incoming", () => {
   const r = new ComposerLeaseRegistry()
   r.claim({ thread_id: "t1", holder: "overlay", rev: 0 })

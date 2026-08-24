@@ -394,6 +394,12 @@ test("message-router: enqueue while busy rejects empty and reports queue_full", 
       session,
     )
     assert.equal(occupied.error, "run_active")
+    const stillBusy = await handleMessage(
+      { type: "chat.create", thread_id: tid, message: "still there", enqueue: true },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+      session,
+    )
+    assert.equal(stillBusy.error, "queue_full", "run_active must not drop the live controller")
     abortThreadChat(tid)
     const idleQ = await handleMessage(
       { type: "chat.create", thread_id: tid, message: "queued while idle", enqueue: true },

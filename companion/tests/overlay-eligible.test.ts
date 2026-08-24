@@ -29,6 +29,17 @@ test("trust block is not overlay eligible", () => {
   assert.equal(isOverlayEligiblePack(base({ trust: { origin: "user" } as any })), false)
 })
 
+test("osascript_eval and spawn_worker are not overlay eligible", () => {
+  assert.equal(
+    isOverlayEligiblePack(base({ tools: { mode: "allowlist", allow: ["osascript_eval"], deny: [] } })),
+    false,
+  )
+  assert.equal(
+    isOverlayEligiblePack(base({ tools: { mode: "allowlist", allow: ["spawn_worker"], deny: [] } })),
+    false,
+  )
+})
+
 test("L1 / navigate / coding-handoff / mcp_servers denied", () => {
   assert.equal(isOverlayEligiblePack(base({ min_capability: "L1" })), false)
   assert.equal(

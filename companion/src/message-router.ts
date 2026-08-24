@@ -257,6 +257,20 @@ interface SessionCallbacks {
   surface?: "tray" | "summoner"
 }
 
+/** Internal nextRun drain: preserve overlay/panel lease identity. */
+export function followUpCreateFromQueue(
+  threadId: string,
+  message: string,
+  surface: unknown,
+): { type: "chat.create"; thread_id: string; message: string; __cmspark_surface: "summoner" | "tray" } {
+  return {
+    type: "chat.create",
+    thread_id: threadId,
+    message,
+    __cmspark_surface: surface === "summoner" ? "summoner" : "tray",
+  }
+}
+
 export async function handleMessage(
   msg: any,
   services: Services,
@@ -540,8 +554,11 @@ export async function handleMessage(
       if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
         const queued = takeNextRun(rest.thread_id)
         if (queued) {
+          // Drain must keep the same surface stamp as this session.
+          // Unstamped create is treated as panel and OVERLAY_STANDBY-kills
+          // overlay-held nextRun (PR219 adversary M1).
           return handleMessage(
-            { type: "chat.create", thread_id: rest.thread_id, message: queued },
+            followUpCreateFromQueue(rest.thread_id, queued, session?.surface),
             services,
             session,
           )
