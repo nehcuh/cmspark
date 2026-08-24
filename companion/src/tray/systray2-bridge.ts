@@ -173,9 +173,11 @@ export class SysTray2Adapter implements UnifiedTray {
   showConfirmDialog(): Promise<never> { return new Promise(() => {}) }
   cancelConfirm(_id: string): void { /* no-op */ }
 
-  // Summoner overlay is Swift-only (Task 9). No-op here so Node can still stream.
+  // Native overlay chrome is Swift-only. C-thin HTML shell is opened via menu action "summoner".
   sendSummoner(_cmd: import("../summoner/protocol").SummonerOutboundCmd): void { /* no-op */ }
-  openSummoner(_threadId: string): void { /* no-op */ }
+  openSummoner(_threadId: string): void {
+    this.actionCallback?.({ type: "summoner" })
+  }
   hydrateSummoner(_payload: import("../summoner/protocol").SummonerHydratePayload): void { /* no-op */ }
 
   async stop(): Promise<void> {
@@ -252,6 +254,7 @@ export class SysTray2Adapter implements UnifiedTray {
     push("打开日志目录", { type: "logs" })
     push("打开 Chrome", { type: "chrome" })
     push("显示配对码", { type: "show-pairing" })
+    push("召唤器（实验）…", { type: "summoner" })
     push("设置", { type: "settings" })
 
     items.push(SEP)

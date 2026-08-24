@@ -57,6 +57,15 @@ test("SummonerController has zero Allow/Deny/确认 chrome", () => {
   assert.doesNotMatch(body, /showConfirm|allowClicked|denyClicked/)
 })
 
+test("SummonerController left rail and 640pt window", () => {
+  const body = summonerControllerBody()
+  assert.match(body, /width: 640/)
+  assert.match(body, /makeRail/)
+  assert.match(body, /summoner\.pack\.apply/)
+  assert.match(body, /applyThreads/)
+  assert.match(body, /applyPacks/)
+})
+
 test("SummonerController uses NSTextView composer + nonactivatingPanel + floating", () => {
   const body = summonerControllerBody()
   assert.match(body, /NSTextView/)
@@ -68,7 +77,7 @@ test("SummonerController copy lock: badge, hint, CTA, buttons", () => {
   const body = summonerControllerBody()
   assert.match(body, /浏览器已连接/)
   assert.match(body, /浏览器未连接/)
-  assert.match(body, /回车发送到当前线程，输入 # 搜标题/)
+  assert.match(body, /回车发送\/纠偏 · Shift\+Enter 排队 · # 搜标题/)
   assert.match(body, /说点什么/)
   assert.match(body, /不能替你打开侧栏/)
   assert.match(body, /发送/)

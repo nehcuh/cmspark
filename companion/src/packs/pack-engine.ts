@@ -10,6 +10,7 @@ import { SkillEngine } from "../skills/skill-engine"
 import { ThreadManager } from "../threads/thread-manager"
 import { appendCapabilityAudit } from "./audit-log"
 import { validatePackDir } from "./validator"
+import { isOverlayEligiblePack } from "./overlay-eligible"
 import {
   MAX_PACK_TOTAL_BYTES,
   MAX_SYSTEM_PROMPT_APPEND,
@@ -801,7 +802,7 @@ function installAssetsFromValidated(
   return { skillIds, knowledgeIds }
 }
 
-function readInstalledManifest(packId: string): { dir: string; result: ReturnType<typeof validatePackDir> } {
+export function readInstalledManifest(packId: string): { dir: string; result: ReturnType<typeof validatePackDir> } {
   const dir = path.join(packsInstalledDir(), packId)
   return { dir, result: validatePackDir(dir) }
 }
@@ -826,6 +827,7 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
         requires_modules: [],
         apply_blocked: `invalid: ${v.error}`,
         installed_path: dir,
+        overlay_eligible: false,
       })
       continue
     }
@@ -852,6 +854,7 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
       editable: origin === "user",
       has_trust: hasTrust,
       trust_skip_l2: trust?.skip_l2 === true,
+      overlay_eligible: isOverlayEligiblePack(v.manifest),
     })
   }
   return items.sort((a, b) => a.id.localeCompare(b.id))

@@ -121,6 +121,60 @@ test("submitSummonerTalk hydrates after resolve when hydrate is provided", async
   assert.deepEqual(hydrated?.messages, [{ role: "user", content: "prior" }])
 })
 
+test("submitSummonerTalk busy path steers without claiming lease", async () => {
+  const calls: string[] = []
+  const r = await submitSummonerTalk(
+    "new",
+    "dont click that",
+    {
+      listThreads: async () => THREADS,
+      createThread: async () => ({ id: "x" }),
+      claimLease: async () => {
+        calls.push("claim")
+        return true
+      },
+      sendChatCreate: () => {
+        calls.push("create")
+        return true
+      },
+      sendSteer: ({ message }) => {
+        calls.push(`steer:${message}`)
+        return true
+      },
+      isRunActive: () => true,
+    },
+    { enqueue: false },
+  )
+  assert.equal(r.ok, true)
+  assert.deepEqual(calls, ["steer:dont click that"])
+})
+
+test("submitSummonerTalk busy enqueue does not chat.create", async () => {
+  const calls: string[] = []
+  await submitSummonerTalk(
+    "new",
+    "next turn",
+    {
+      listThreads: async () => THREADS,
+      createThread: async () => ({ id: "x" }),
+      claimLease: async () => {
+        calls.push("claim")
+      },
+      sendChatCreate: () => {
+        calls.push("create")
+        return true
+      },
+      sendEnqueue: ({ message }) => {
+        calls.push(`enq:${message}`)
+        return true
+      },
+      isRunActive: () => true,
+    },
+    { enqueue: true },
+  )
+  assert.deepEqual(calls, ["enq:next turn"])
+})
+
 test("submitSummonerTalk skips chat.create when claimLease returns false", async () => {
   let sent = false
   const r = await submitSummonerTalk("", "hello", {
@@ -157,7 +211,7 @@ test("SummonerController v2 empty state talks, not title-search", () => {
   const src = traySwiftSrc()
   assert.match(src, /说点什么/)
   assert.doesNotMatch(src, /说点什么，或按住说话/)
-  assert.match(src, /回车发送到当前线程，输入 # 搜标题/)
+  assert.match(src, /回车发送\/纠偏 · Shift\+Enter 排队 · # 搜标题/)
   assert.match(src, /继续 · /)
   assert.doesNotMatch(src, /输入线程标题/)
   // Send stays visible in talk (including detached)
@@ -166,7 +220,7 @@ test("SummonerController v2 empty state talks, not title-search", () => {
   // Search only on # prefix
   assert.match(src, /isSummonerSearchQuery|hasPrefix\("#"\)|startsWith\("#"\)/)
   // submitComposer allows empty threadId
-  const submit = src.slice(src.indexOf("private func submitComposer()"), src.indexOf("@objc func sendClicked()"))
+  const submit = src.slice(src.indexOf("private func submitComposer("), src.indexOf("@objc func sendClicked()"))
   assert.doesNotMatch(submit, /!threadId\.isEmpty/)
   assert.match(submit, /summoner\.submit/)
 })

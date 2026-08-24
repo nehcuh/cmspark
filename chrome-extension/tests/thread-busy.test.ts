@@ -366,7 +366,7 @@ test("isIntentOnlyRunBusy", () => {
 test("composerBusyPlaceholder thread_busy", () => {
   assert.equal(
     composerBusyPlaceholder("thread_busy"),
-    "本对话处理中 · 停止后再指挥",
+    "回车纠偏 · Shift+Enter 排队",
   )
   assert.match(composerBusyPlaceholder("run_busy", { lockCount: 2 }) || "", /锁仍活跃/)
 })

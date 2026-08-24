@@ -55,7 +55,7 @@ import {
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
 // Updated 2026-08-24 after nits fold (SummonerOverlay.swift split)
-const SWIFT_TRAY_SHA256 = "896822ceddfa8f800632dd76c35ee0eb384a5f355252d60d0fed08722b0dd6a4"
+const SWIFT_TRAY_SHA256 = "77139e17cd5f48d6c25aa0268806e9ba7275a30b535c2dc82749f4621f53291f"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

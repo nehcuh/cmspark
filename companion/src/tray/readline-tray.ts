@@ -91,9 +91,11 @@ export class ReadlineTrayAdapter implements UnifiedTray {
   showConfirmDialog(): Promise<never> { return new Promise(() => {}) }
   cancelConfirm(_id: string): void { /* no-op */ }
 
-  // Summoner overlay is Swift-only (Task 9). No-op here so Node can still stream.
+  // Native overlay chrome is Swift-only. C-thin HTML shell is opened via menu action "summoner".
   sendSummoner(_cmd: import("../summoner/protocol").SummonerOutboundCmd): void { /* no-op */ }
-  openSummoner(_threadId: string): void { /* no-op */ }
+  openSummoner(_threadId: string): void {
+    this.emit("summoner")
+  }
   hydrateSummoner(_payload: import("../summoner/protocol").SummonerHydratePayload): void { /* no-op */ }
 
   async stop(): Promise<void> {
@@ -143,6 +145,7 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     console.log(`[${idx++}] 打开日志目录`)
     console.log(`[${idx++}] 打开 Chrome`)
     console.log(`[${idx++}] 显示配对码`)
+    console.log(`[${idx++}] 召唤器（实验）…`)
     console.log(`[${idx}] 退出（停止服务）`)
 
     console.log("")
@@ -181,6 +184,7 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     if (this.parseInt(choice) === idx++) { this.emit("logs"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("chrome"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("show-pairing"); this.pause(); return }
+    if (this.parseInt(choice) === idx++) { this.emit("summoner"); this.pause(); return }
     if (this.parseInt(choice) === idx || choice === "q" || choice === "quit") {
       this.emit("quit")
       return

@@ -109,6 +109,8 @@ export interface PackListItem {
   has_trust?: boolean
   /** Trust shorthand: full three-flag cruise on apply. */
   trust_skip_l2?: boolean
+  /** Server SoT: overlay may one-click apply (allowTrust still forced false). */
+  overlay_eligible?: boolean
 }
 
 /** Payload for creating/updating a user-authored scene template. */

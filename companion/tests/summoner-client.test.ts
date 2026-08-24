@@ -126,6 +126,25 @@ test("mapChatMessageToSummonerCmd: tool.start → summoner.tool", () => {
   assert.deepEqual(cmd, { cmd: "summoner.tool", name: "mcp__filesystem__read_text_file" })
 })
 
+test("mapChatMessageToSummonerCmd: chat.enqueued and run_active become summoner.error", () => {
+  const queued = mapChatMessageToSummonerCmd({
+    type: "chat.enqueued",
+    thread_id: "t",
+    queue: "next_run",
+    depth: 2,
+  })
+  assert.equal(queued?.cmd, "summoner.error")
+  if (queued?.cmd === "summoner.error") {
+    assert.equal(queued.error_code, "enqueued")
+    assert.match(queued.message, /已排队/)
+  }
+  const active = mapChatMessageToSummonerCmd({ type: "error", error: "run_active", thread_id: "t" })
+  assert.equal(active?.cmd, "summoner.error")
+  if (active?.cmd === "summoner.error") {
+    assert.equal(active.error_code, "run_active")
+  }
+})
+
 test("mapChatMessageToSummonerCmd: chat.error passes error_code", () => {
   const fromData = mapChatMessageToSummonerCmd({
     type: "chat.error",
@@ -370,7 +389,7 @@ test("CompanionClient.sendChatCreate is fire-and-forget (no sendRequest)", () =>
   const src = fs.readFileSync(srcFile("tray", "companion-client.ts"), "utf8")
   const start = src.indexOf("sendChatCreate(")
   assert.ok(start >= 0)
-  const next = src.indexOf("\n  async executeQuickAction", start)
+  const next = src.indexOf("\n  sendSteer", start)
   const method = src.slice(start, next > start ? next : start + 280)
   assert.match(method, /sendAppMessage/)
   assert.doesNotMatch(method, /sendRequest/)

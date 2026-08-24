@@ -23,7 +23,6 @@ test("summoner allows chat.create and ping", () => {
 
 test("summoner denies trust elevation", () => {
   for (const t of [
-    "pack.apply",
     "config.set",
     "security.unattended.arm",
     "security.confirmation.response",
@@ -46,6 +45,8 @@ test("summoner allows remaining S21 methods", () => {
   for (const t of [
     "chat.abort",
     "chat.steer",
+    "pack.list",
+    "pack.apply",
     "thread.list",
     "thread.select",
     "thread.create",
@@ -61,6 +62,7 @@ test("summoner allows remaining S21 methods", () => {
     "voice.stt.abort",
     "voice.stt.partial_request",
     "mcp.list",
+    "file.upload",
   ]) {
     assert.equal(assertSummonerAllowed("summoner", t).ok, true, t)
   }

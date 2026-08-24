@@ -305,7 +305,7 @@ test("message-router: thread.select returns messages for thread", async () => {
   assert.equal(response.run_status, "idle")
 })
 
-test("message-router: thread.select omits run_status for summoner surface", async () => {
+test("message-router: thread.select includes run_status for summoner surface", async () => {
   const threadManager = new ThreadManager()
   const created = await handleMessage(
     { type: "thread.create", alias: "Summoner Select" },
@@ -316,7 +316,7 @@ test("message-router: thread.select omits run_status for summoner surface", asyn
     { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
   )
   assert.equal(response.type, "thread.messages")
-  assert.equal(response.run_status, undefined)
+  assert.equal(response.run_status, "idle")
   assert.equal(response.pending_tools, undefined)
 })
 
@@ -387,12 +387,60 @@ test("message-router: enqueue while busy rejects empty and reports queue_full", 
       session,
     )
     assert.equal(full.error, "queue_full")
+    assert.equal(typeof full.depth === "number" || full.depth === undefined, true)
+    const occupied = await handleMessage(
+      { type: "chat.create", thread_id: tid, message: "should not supersede", enqueue: false },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+      session,
+    )
+    assert.equal(occupied.error, "run_active")
+    const stillBusy = await handleMessage(
+      { type: "chat.create", thread_id: tid, message: "still there", enqueue: true },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+      session,
+    )
+    assert.equal(stillBusy.error, "queue_full", "run_active must not drop the live controller")
+    const occupiedUpload = await handleMessage(
+      { type: "file.upload", thread_id: tid, files: [] },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+      session,
+    )
+    assert.equal(occupiedUpload.error, "run_active", "busy file.upload must not supersede")
     abortThreadChat(tid)
+    const idleQ = await handleMessage(
+      { type: "chat.create", thread_id: tid, message: "queued while idle", enqueue: true },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+      session,
+    )
+    assert.equal(idleQ.error, "idle_enqueue")
     const { peekNextRunCount } = await import("../../src/llm/run-queues")
     assert.equal(peekNextRunCount(tid), MAX_NEXT_RUN, "abort must not drain nextRun")
   } finally {
     __testSetLlmActiveForTests(tid, false)
     _resetRunQueuesForTests()
+  }
+})
+
+test("message-router: file.upload is lease-gated like chat.create", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Upload Lease" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  const tid = created.thread.id
+  const { composerLeases } = await import("../../src/ws/composer-lease")
+  const before = composerLeases.get(tid)
+  composerLeases.claim({ thread_id: tid, holder: "overlay", rev: before.rev })
+  try {
+    const response = await handleMessage(
+      { type: "file.upload", thread_id: tid, files: [], __cmspark_surface: "tray" },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+      { sendToExtension: () => {}, executeTool: async () => ({ success: true }) } as any,
+    )
+    assert.equal(response.data?.error_code, "OVERLAY_STANDBY")
+  } finally {
+    const cur = composerLeases.get(tid)
+    composerLeases.release({ thread_id: tid, rev: cur.rev })
   }
 })
 

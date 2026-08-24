@@ -604,6 +604,12 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
   case "summoner.hits":
     summonerController.applyHits(json)
 
+  case "summoner.threads":
+    summonerController.applyThreads(json)
+
+  case "summoner.packs":
+    summonerController.applyPacks(json)
+
   case "quit":
     delegate.shutdown()
     jsonLine(["type": "exit", "code": 0])

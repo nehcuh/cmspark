@@ -60,6 +60,9 @@ export type SummonerMcpCmd = { cmd: "summoner.mcp"; names: string[] }
 export type SummonerHit = { id: string; title: string; when: string }
 export type SummonerHitsPayload = { hits: SummonerHit[] }
 export type SummonerHitsCmd = { cmd: "summoner.hits" } & SummonerHitsPayload
+export type SummonerThreadsCmd = { cmd: "summoner.threads"; threads: SummonerHit[] }
+export type SummonerPackRow = { id: string; name: string; overlay_eligible: boolean }
+export type SummonerPacksCmd = { cmd: "summoner.packs"; packs: SummonerPackRow[] }
 
 export type SummonerOutboundCmd =
   | SummonerOpenCmd
@@ -75,12 +78,19 @@ export type SummonerOutboundCmd =
   | SummonerToolCmd
   | SummonerMcpCmd
   | SummonerHitsCmd
+  | SummonerThreadsCmd
+  | SummonerPacksCmd
 
 // ── Swift → Companion events ────────────────────────────────────────────────
 
 export type SummonerReadyEvt = { type: "summoner.ready" }
 export type SummonerClosedEvt = { type: "summoner.closed" }
-export type SummonerSubmitEvt = { type: "summoner.submit"; thread_id: string; text: string }
+export type SummonerSubmitEvt = {
+  type: "summoner.submit"
+  thread_id: string
+  text: string
+  enqueue?: boolean
+}
 export type SummonerSearchEvt = { type: "summoner.search"; query: string }
 export type SummonerSelectEvt = { type: "summoner.select"; thread_id: string }
 export type SummonerAttachChromeEvt = { type: "summoner.attach_chrome"; foreground?: boolean }
@@ -92,6 +102,7 @@ export type SummonerMicChunkEvt = { type: "summoner.mic.chunk"; seq: number; dat
 export type SummonerMicEndEvt = { type: "summoner.mic.end" }
 export type SummonerMicWavEvt = { type: "summoner.mic.wav"; data: string }
 export type SummonerNewThreadEvt = { type: "summoner.new_thread" }
+export type SummonerPackApplyEvt = { type: "summoner.pack.apply"; pack_id: string }
 export type SummonerSettingsSetEvt = { type: "summoner.settings.set" } & SummonerSettingsPayload
 
 export type SummonerInboundEvt =
@@ -109,6 +120,7 @@ export type SummonerInboundEvt =
   | SummonerMicEndEvt
   | SummonerMicWavEvt
   | SummonerNewThreadEvt
+  | SummonerPackApplyEvt
   | SummonerSettingsSetEvt
 
 export type SummonerWireMessage = SummonerOutboundCmd | SummonerInboundEvt
@@ -164,8 +176,17 @@ export function encodeSummonerClosed(): SummonerClosedEvt {
   return { type: "summoner.closed" }
 }
 
-export function encodeSummonerSubmit(p: { thread_id: string; text: string }): SummonerSubmitEvt {
-  return { type: "summoner.submit", thread_id: p.thread_id, text: p.text }
+export function encodeSummonerSubmit(p: {
+  thread_id: string
+  text: string
+  enqueue?: boolean
+}): SummonerSubmitEvt {
+  return {
+    type: "summoner.submit",
+    thread_id: p.thread_id,
+    text: p.text,
+    ...(p.enqueue ? { enqueue: true } : {}),
+  }
 }
 
 export function encodeSummonerSearch(p: { query: string }): SummonerSearchEvt {
@@ -174,6 +195,18 @@ export function encodeSummonerSearch(p: { query: string }): SummonerSearchEvt {
 
 export function encodeSummonerHits(p: SummonerHitsPayload): SummonerHitsCmd {
   return { cmd: "summoner.hits", hits: p.hits }
+}
+
+export function encodeSummonerThreads(p: { threads: SummonerHit[] }): SummonerThreadsCmd {
+  return { cmd: "summoner.threads", threads: p.threads }
+}
+
+export function encodeSummonerPacks(p: { packs: SummonerPackRow[] }): SummonerPacksCmd {
+  return { cmd: "summoner.packs", packs: p.packs }
+}
+
+export function encodeSummonerPackApply(p: { pack_id: string }): SummonerPackApplyEvt {
+  return { type: "summoner.pack.apply", pack_id: p.pack_id }
 }
 
 export function encodeSummonerSelect(p: { thread_id: string }): SummonerSelectEvt {
@@ -306,6 +339,17 @@ function isSummonerHitArray(v: unknown): v is SummonerHit[] {
   return Array.isArray(v) && v.every(isSummonerHit)
 }
 
+function isSummonerPackArray(v: unknown): v is SummonerPackRow[] {
+  return (
+    Array.isArray(v) &&
+    v.every((row) => {
+      if (!row || typeof row !== "object") return false
+      const o = row as Record<string, unknown>
+      return isString(o.id) && isString(o.name) && typeof o.overlay_eligible === "boolean"
+    })
+  )
+}
+
 function isBrowser(v: unknown): v is SummonerBrowser {
   return v === "attached" || v === "detached"
 }
@@ -374,6 +418,12 @@ export function decodeSummonerOutbound(raw: unknown): SummonerOutboundCmd | null
     case "summoner.hits":
       if (!isSummonerHitArray(o.hits)) return null
       return encodeSummonerHits({ hits: o.hits })
+    case "summoner.threads":
+      if (!isSummonerHitArray(o.threads)) return null
+      return encodeSummonerThreads({ threads: o.threads })
+    case "summoner.packs":
+      if (!isSummonerPackArray(o.packs)) return null
+      return encodeSummonerPacks({ packs: o.packs })
     default:
       return null
   }
@@ -396,7 +446,12 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
       return encodeSummonerClosed()
     case "summoner.submit":
       if (!isString(o.thread_id) || !isString(o.text)) return null
-      return encodeSummonerSubmit({ thread_id: o.thread_id, text: o.text })
+      if (o.enqueue !== undefined && typeof o.enqueue !== "boolean") return null
+      return encodeSummonerSubmit({
+        thread_id: o.thread_id,
+        text: o.text,
+        enqueue: o.enqueue === true,
+      })
     case "summoner.search":
       if (!isString(o.query)) return null
       return encodeSummonerSearch({ query: o.query })
@@ -427,6 +482,9 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
       return encodeSummonerMicWav({ data: o.data })
     case "summoner.new_thread":
       return encodeSummonerNewThread()
+    case "summoner.pack.apply":
+      if (!isString(o.pack_id) || !o.pack_id) return null
+      return encodeSummonerPackApply({ pack_id: o.pack_id })
     case "summoner.settings.set":
       if (!isResumeIdleMinutes(o.resume_idle_minutes)) return null
       if (typeof o.chrome_foreground !== "boolean") return null

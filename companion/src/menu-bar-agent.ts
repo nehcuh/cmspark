@@ -36,6 +36,7 @@ import {
   shouldStartNewSummonerThread,
   resolveSummonerOpenTarget,
   summonerHitsFromQuery,
+  hitsFromTitleSearch,
   submitSummonerTalk,
   type SummonerSttModelId,
   type VoiceSttFrame,
@@ -44,7 +45,9 @@ import {
   encodeSummonerError,
   encodeSummonerHotkeySet,
   encodeSummonerMcp,
+  encodeSummonerPacks,
   encodeSummonerSettings,
+  encodeSummonerThreads,
   SUMMONER_SEARCH_HINT,
   type SummonerInboundEvt,
 } from "./summoner/protocol"
@@ -694,6 +697,54 @@ export async function handleSummonerReady(): Promise<void> {
   if (overlaySessionIsLive(currentOverlaySession()) && summonerThreadId) {
     touchSummonerActivity(summonerThreadId)
   }
+  void pushSummonerRail()
+}
+
+async function pushSummonerRail(): Promise<void> {
+  const client = summonerClient
+  if (!client) return
+  try {
+    const threads = await client.listThreads()
+    trayInstance?.sendSummoner?.(
+      encodeSummonerThreads({ threads: hitsFromTitleSearch(threads).slice(0, 8) }),
+    )
+  } catch {
+    trayInstance?.sendSummoner?.(encodeSummonerThreads({ threads: [] }))
+  }
+  try {
+    const packs = await client.listPacks()
+    trayInstance?.sendSummoner?.(
+      encodeSummonerPacks({
+        packs: packs.map((p) => ({
+          id: p.id,
+          name: (p.name || p.id).trim() || p.id,
+          overlay_eligible: p.overlay_eligible === true,
+        })),
+      }),
+    )
+  } catch {
+    trayInstance?.sendSummoner?.(encodeSummonerPacks({ packs: [] }))
+  }
+}
+
+async function handleSummonerPackApply(packId: string): Promise<void> {
+  const client = summonerClient
+  const tid = summonerThreadId
+  if (!client || !tid || !packId) {
+    trayInstance?.sendSummoner?.(
+      encodeSummonerError({ message: "没有当前对话，无法套场景", error_code: "pack_no_thread" }),
+    )
+    return
+  }
+  const r = await client.applyPack(packId, tid)
+  if (r?.type === "error" || r?.error) {
+    const code = typeof r.error === "string" ? r.error : "pack.apply failed"
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: code, error_code: code }))
+    return
+  }
+  trayInstance?.sendSummoner?.(
+    encodeSummonerError({ message: "已套到当前对话（技能/提示）", error_code: "pack_applied" }),
+  )
 }
 
 export async function handleSummonerClosed(): Promise<void> {
@@ -720,14 +771,26 @@ export function handleSummonerAttach(foreground = false): void {
 /** Overlay continue CTA — new user message, no L1 replay. */
 export function handleSummonerContinue(): boolean {
   if (!summonerClient || !summonerThreadId) return false
-  return summonerClient.sendChatCreate(buildContinueChatCreate(summonerThreadId))
+  // Busy continue is a no-op (must not supersede).
+  void summonerClient.isRunActive(summonerThreadId).then((busy) => {
+    if (busy || !summonerClient || !summonerThreadId) return
+    summonerClient.sendChatCreate(buildContinueChatCreate(summonerThreadId))
+  })
+  return true
 }
 
-export async function handleSummonerSubmit(thread_id: string, text: string): Promise<boolean> {
+export async function handleSummonerSubmit(
+  thread_id: string,
+  text: string,
+  enqueue = false,
+): Promise<boolean> {
   const client = summonerClient
   if (!client) return false
   const token = currentOverlaySession()
-  const result = await submitSummonerTalk(thread_id, text, {
+  const result = await submitSummonerTalk(
+    thread_id,
+    text,
+    {
     listThreads: () => client.listThreads(),
     createThread: () => client.createThread(),
     claimLease: (id) =>
@@ -737,6 +800,9 @@ export async function handleSummonerSubmit(thread_id: string, text: string): Pro
         releaseAll: () => client.releaseAllOverlayComposerLeases(),
       }),
     sendChatCreate: (args) => client.sendChatCreate(args),
+    sendSteer: (args) => client.sendSteer(args),
+    sendEnqueue: (args) => client.sendChatCreate({ ...args, enqueue: true }),
+    isRunActive: (id) => client.isRunActive(id),
     selectMessages: (id) => client.selectThreadMessages(id),
     hydrate: ({ thread_id: id, messages }) => {
       if (!overlaySessionIsLive(token)) return
@@ -762,7 +828,9 @@ export async function handleSummonerSubmit(thread_id: string, text: string): Pro
         search_hint: SUMMONER_SEARCH_HINT,
       })
     },
-  })
+    },
+    { enqueue },
+  )
   if (result.ok && result.threadId) {
     summonerThreadId = result.threadId
     touchSummonerActivity(result.threadId)
@@ -1001,7 +1069,7 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
 export function handleSummonerInbound(evt: SummonerInboundEvt): void {
   switch (evt.type) {
     case "summoner.submit":
-      void handleSummonerSubmit(evt.thread_id, evt.text)
+      void handleSummonerSubmit(evt.thread_id, evt.text, evt.enqueue === true)
       return
     case "summoner.search":
       void handleSummonerSearch(evt.query)
@@ -1036,6 +1104,9 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       return
     case "summoner.new_thread":
       void handleSummonerNewThread()
+      return
+    case "summoner.pack.apply":
+      void handleSummonerPackApply(evt.pack_id)
       return
     case "summoner.closed":
       void handleSummonerClosed()
@@ -1119,6 +1190,52 @@ async function openSettingsUI(): Promise<void> {
   }
 }
 
+function dispatchSummonerWeb(
+  client: CompanionClient,
+  msg: Record<string, unknown>,
+): Promise<unknown> {
+  const type = String(msg.type || "")
+  const params = { ...msg }
+  delete params.type
+  if (
+    type === "chat.create" ||
+    type === "chat.steer" ||
+    type === "chat.abort" ||
+    type === "file.upload"
+  ) {
+    const ok = client.sendAppMessage(type, params)
+    return Promise.resolve(ok ? { type: "accepted" } : { type: "error", error: "未连接" })
+  }
+  const timeout = type === "pack.apply" || type === "file.upload" ? 30_000 : 8_000
+  return client.sendAppRequest(type, params, timeout)
+}
+
+async function openSummonerWebShell(): Promise<void> {
+  const client = summonerClient
+  if (!client) {
+    safeNotify({ title: "CMspark 召唤器", message: "Companion 未连接，无法打开召唤器", timeout: 5 })
+    return
+  }
+  try {
+    const {
+      startSummonerWebServer,
+      summonerWebPageUrl,
+      openLoopbackPage,
+    } = require("./summoner-web") as typeof import("./summoner-web")
+    const { port, token } = await startSummonerWebServer({
+      dispatch: (msg) => dispatchSummonerWeb(client, msg),
+    })
+    openLoopbackPage(summonerWebPageUrl(port, token))
+    safeNotify({ title: "CMspark 召唤器", message: "已在浏览器打开召唤器（实验）", timeout: 3 })
+  } catch (err: any) {
+    safeNotify({
+      title: "CMspark 召唤器",
+      message: `打开召唤器失败: ${err?.message || err}`,
+      timeout: 5,
+    })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Action dispatch — routes tray clicks to handlers
 // ---------------------------------------------------------------------------
@@ -1135,6 +1252,9 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
     case "show-pairing": showPairingCode(); break
     case "settings":
       await openSettingsUI()
+      break
+    case "summoner":
+      await openSummonerWebShell()
       break
     case "autostart": await toggleAutoStart(); break
     case "quick-action":
@@ -1177,6 +1297,10 @@ function cleanup(): void {
     summonerClient.disconnect()
     summonerClient = null
   }
+  try {
+    const { stopSummonerWebServer } = require("./summoner-web") as typeof import("./summoner-web")
+    stopSummonerWebServer()
+  } catch { /* ignore */ }
   try {
     if (fs.existsSync(STATUS_FILE)) fs.unlinkSync(STATUS_FILE)
   } catch { /* ignore */ }
@@ -1292,6 +1416,12 @@ export async function startMenuBarAgent(): Promise<void> {
     surface: "summoner",
   })
   summonerClient.onAppMessage((msg) => {
+    try {
+      const { pushSummonerWebEvent } = require("./summoner-web") as typeof import("./summoner-web")
+      pushSummonerWebEvent(msg)
+    } catch {
+      /* HTML shell not started */
+    }
     const sttCmd = mapVoiceSttToSummonerCmd(msg)
     if (sttCmd) {
       // voice.stt.result → summoner.dictate (fill composer; user hits send)

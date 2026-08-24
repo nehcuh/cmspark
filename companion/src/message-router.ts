@@ -37,6 +37,7 @@ import {
   dropSteer,
   enqueueNextRun,
   enqueueSteer,
+  peekNextRunCount,
   takeNextRun,
 } from "./llm/run-queues"
 import { listPendingToolsForThread } from "./ws/tool-forward"
@@ -256,6 +257,20 @@ interface SessionCallbacks {
   surface?: "tray" | "summoner"
 }
 
+/** Internal nextRun drain: preserve overlay/panel lease identity. */
+export function followUpCreateFromQueue(
+  threadId: string,
+  message: string,
+  surface: unknown,
+): { type: "chat.create"; thread_id: string; message: string; __cmspark_surface: "summoner" | "tray" } {
+  return {
+    type: "chat.create",
+    thread_id: threadId,
+    message,
+    __cmspark_surface: surface === "summoner" ? "summoner" : "tray",
+  }
+}
+
 export async function handleMessage(
   msg: any,
   services: Services,
@@ -363,7 +378,16 @@ export async function handleMessage(
           type: "chat.enqueued",
           thread_id: rest.thread_id,
           queue: "next_run",
+          depth: peekNextRunCount(rest.thread_id),
         }
+      }
+
+      if (abortControllers.has(rest.thread_id)) {
+        return { type: "error", error: "run_active", thread_id: rest.thread_id }
+      }
+
+      if (rest.enqueue === true) {
+        return { type: "error", error: "idle_enqueue", thread_id: rest.thread_id }
       }
 
       // P0 CORR-01: claim slot SYNCHRONOUSLY before any await so dual WS handlers
@@ -530,8 +554,11 @@ export async function handleMessage(
       if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
         const queued = takeNextRun(rest.thread_id)
         if (queued) {
+          // Drain must keep the same surface stamp as this session.
+          // Unstamped create is treated as panel and OVERLAY_STANDBY-kills
+          // overlay-held nextRun (PR219 adversary M1).
           return handleMessage(
-            { type: "chat.create", thread_id: rest.thread_id, message: queued },
+            followUpCreateFromQueue(rest.thread_id, queued, session?.surface),
             services,
             session,
           )
@@ -572,6 +599,18 @@ export async function handleMessage(
       if (!session) return { type: "error", error: "No session" }
 
       const { thread_id, files } = rest
+      if (typeof thread_id !== "string" || !thread_id) {
+        return { type: "error", error: "file.upload requires thread_id" }
+      }
+      {
+        const leaseErr = gateChatCreateOnLease(thread_id, stampedSurface)
+        if (leaseErr) return leaseErr
+        const conductorErr = gateChatCreateOnConductor(thread_id, stampedSurface)
+        if (conductorErr) return conductorErr
+      }
+      if (abortControllers.has(thread_id)) {
+        return { type: "error", error: "run_active", thread_id }
+      }
       const config = getConfig()
       const fileConfig = config.file_upload || { max_file_size: 10 * 1024 * 1024, allowed_types: [] as string[], max_embedded_images: 20, enable_vision_analysis: true, max_file_tokens: 50000 }
 
@@ -791,12 +830,8 @@ export async function handleMessage(
           return uploadError("thread_paused")
         }
       }
-      const existingUpload = abortControllers.get(thread_id)
-      if (existingUpload) {
-        logger.info("llm.thread_request_superseded", { thread_id })
-        existingUpload.abort()
-        await drainThreadOnSupersede(thread_id, `file.upload.supersede:${thread_id}`)
-      }
+      // Occupied upload is rejected at the top of this case (run_active).
+      // Do not abort a live loop.
       const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop: releaseUploadLlm } =
         await import("./orchestrator/llm-loop-gate")
       const threadForUploadCap = services.threadManager.get(thread_id)
@@ -1792,14 +1827,9 @@ export async function handleMessage(
       // Block switching into chat loop for trashed threads from normal select is product-side;
       // companion returns messages + trashed so extension can refuse activation.
       // Do not persist INTERRUPTED on GET. Crash leftovers heal on next chatCreate.
-      // In-memory only. Summoner must not see run_status (ACL hydrate).
-      // After WS close / process death abortControllers is empty → idle (honest).
-      const run_status =
-        stampedSurface === "summoner"
-          ? undefined
-          : abortControllers.has(rest.thread_id)
-            ? "llm"
-            : "idle"
+      // In-memory only. run_status is abortControllers SoT (overlay maps submit).
+      // pending_tools still omitted for summoner. After WS close → idle.
+      const run_status = abortControllers.has(rest.thread_id) ? "llm" : "idle"
       let pending_tools:
         | Array<{ tool_call_id: string; tool_name: string; status: "running" }>
         | undefined
@@ -2725,23 +2755,51 @@ export async function handleMessage(
       if (rest.user_gesture !== true) {
         return {
           type: "error",
-          error: "pack.apply requires user_gesture:true (apply only from Side Panel)",
+          error: "pack.apply requires user_gesture:true (UI gesture only)",
           code: "user_gesture_required",
         }
       }
-      const { applyPack } = await import("./packs/pack-engine")
+      const { applyPack, readInstalledManifest } = await import("./packs/pack-engine")
+      const { isOverlayEligiblePack } = await import("./packs/overlay-eligible")
       if (!rest.pack_id || !rest.thread_id) {
         return { type: "error", error: "pack_id and thread_id required" }
       }
-      // allowTrust: only Side Panel user_gesture may write global Trust B.
-      // force_takeover: only after UI conflict confirm (still requires user_gesture).
-      const forceTakeover = rest.force_takeover === true
+      const overlayApply = stampedSurface === "summoner"
+      if (overlayApply) {
+        if (rest.workspace_path || rest.force_takeover || rest.confirmation_phrase) {
+          return {
+            type: "error",
+            error: "pack_overlay_forbidden_fields",
+            code: "pack_overlay_forbidden_fields",
+          }
+        }
+        if (abortControllers.has(rest.thread_id)) {
+          return { type: "error", error: "pack_run_active", code: "pack_run_active" }
+        }
+        const inst = readInstalledManifest(rest.pack_id)
+        if (!inst.result.ok || !isOverlayEligiblePack(inst.result.manifest)) {
+          return {
+            type: "error",
+            error: "pack_not_overlay_eligible",
+            code: "pack_not_overlay_eligible",
+          }
+        }
+        const thrSnap = threadManager.get(rest.thread_id)
+        if (thrSnap?.mission_pack_trust_snapshot) {
+          return {
+            type: "error",
+            error: "pack_trust_cookie_present",
+            code: "pack_trust_cookie_present",
+          }
+        }
+      }
+      // allowTrust: Side Panel may write Trust B; summoner is forced false.
+      const forceTakeover = overlayApply ? false : rest.force_takeover === true
       const r = applyPack(rest.pack_id, rest.thread_id, threadManager, skillEngine, {
-        workspace_path: rest.workspace_path,
-        allowTrust: true,
+        workspace_path: overlayApply ? undefined : rest.workspace_path,
+        allowTrust: !overlayApply,
         forceTakeoverTrust: forceTakeover,
-        // C5: phrase required when pack Trust writes cruise flags
-        confirmation_phrase: rest.confirmation_phrase,
+        confirmation_phrase: overlayApply ? undefined : rest.confirmation_phrase,
       })
       if (!r.ok) {
         return {
