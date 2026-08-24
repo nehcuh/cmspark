@@ -8,6 +8,10 @@
 import * as http from "http"
 import * as crypto from "crypto"
 import * as child_process from "child_process"
+import {
+  planSummonerShellOpen,
+  resolveSummonerBrowserPath,
+} from "./summoner/shell-open"
 
 export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
 
@@ -220,18 +224,22 @@ function closeSseClients(): void {
 }
 
 export function openLoopbackPage(url: string): void {
-  const platform = process.platform
-  if (platform === "darwin") {
-    child_process.spawn("open", [url], { detached: true, stdio: "ignore" }).unref()
-  } else if (platform === "linux") {
-    child_process.spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref()
-  } else if (platform === "win32") {
-    child_process.spawn("cmd", ["/c", "start", "", url], {
+  const plan = planSummonerShellOpen(url, {
+    platform: process.platform,
+    browserPath: resolveSummonerBrowserPath(process.platform),
+  })
+  if ("error" in plan) {
+    console.error(`[summoner-web] ${plan.error}`)
+    return
+  }
+  child_process
+    .spawn(plan.command, plan.args, {
       detached: true,
       stdio: "ignore",
-      shell: true,
-    }).unref()
-  }
+      windowsHide: true,
+      ...(plan.shell ? { shell: true } : {}),
+    })
+    .unref()
 }
 
 export async function startSummonerWebServer(opts: {

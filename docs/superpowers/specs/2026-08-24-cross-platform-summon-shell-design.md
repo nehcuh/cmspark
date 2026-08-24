@@ -1,7 +1,7 @@
 # Cross-platform summon shell (C-thin)
 
 > **日期**: 2026-08-24  
-> **状态**: Implementing P2 event stream (honest send)  
+> **状态**: Implementing P3 Chromium app-window host  
 > **方向**: 三路对抗 + Claude/Kimi dual **C-thin APPROVE_WITH_NITS**  
 > **相关**: ADR-020 · #219 · systray2 summoner no-op  
 
@@ -43,9 +43,16 @@ P0 is **C-thin**, not more Swift, not Electron.
 - `accepted` is not painted as 已发送; HTML waits for `chat.user` / `error` (run_active).
 - Lease claim failure surfaces 「侧栏占用了输入」.
 
+## P3 this slice (code now)
+
+- Same HTML, dedicated Chromium/Edge `--app=` window when a browser binary is found (no Electron, no new Swift overlay).
+- Only `http://127.0.0.1|localhost` URLs with a token may open.
+- No binary → honest degrade to `open` / `xdg-open` / `cmd start` (system tab).
+- Native WKWebView / WebView2 / GTK wrapping the same HTML remains a later host.
+
 ## Next slices
 
-- OS webview host (WKWebView / WebView2 / GTK) wrapping the same HTML instead of the system browser.
+- Native WKWebView / WebView2 / GTK host for the same HTML (optional; app-window is the cross-platform wrap).
 
 ## Non-goals
 
