@@ -301,6 +301,33 @@ test("message-router: thread.select returns messages for thread", async () => {
   assert.equal(response.run_status, "idle")
 })
 
+test("message-router: thread.select does not persist INTERRUPTED heal rows", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Heal Select" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  const tid = created.thread.id
+  threadManager.addMessage(tid, { thread_id: tid, role: "user", content: "go" })
+  threadManager.addMessage(tid, {
+    thread_id: tid,
+    role: "assistant",
+    content: "calling",
+    tool_calls: [
+      { id: "call_A", type: "function", function: { name: "list_tabs", arguments: "{}" } },
+      { id: "call_B", type: "function", function: { name: "list_tabs", arguments: "{}" } },
+    ],
+  } as any)
+  const before = threadManager.getMessages(tid).length
+  const response = await handleMessage(
+    { type: "thread.select", thread_id: tid },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  assert.equal(response.type, "thread.messages")
+  assert.equal(threadManager.getMessages(tid).length, before, "select must not write heal rows")
+  assert.equal(response.messages.length, before)
+})
+
 test("message-router: thread.update updates thread properties", async () => {
   const threadManager = new ThreadManager()
   const created = await handleMessage(

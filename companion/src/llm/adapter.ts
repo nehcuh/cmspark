@@ -37,6 +37,7 @@ import { redactToolPayloadForPersistence } from "../security/tool-persistence-re
 import {
   INTERRUPTED_ERROR_CODE,
   persistHealedToolRows,
+  toolBlockInsertIndex,
   unpairedToolCallsFromAssistant,
 } from "./tool-batch-heal"
 import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
@@ -351,6 +352,10 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, knowledgeIds, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage, contextRefsSegment, hostname } = params
 
+  // Crash leftovers: splice INTERRUPTED after the unpaired assistant BEFORE
+  // appending this turn's user row (pairing is contiguous tools after assistant).
+  persistHealedToolRows(threadManager, threadId)
+
   // Create user message (skip for regenerate)
   if (!skipUserMessage) {
     // Q5 clear: real user turns only (not tool results / regenerate)
@@ -549,10 +554,6 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   ]
     .filter(Boolean)
     .join("\n\n")
-
-  // Crash / abort leftovers: fill missing tool ids on disk so rebuild pairs
-  // instead of stripping a round that already mutated the world.
-  persistHealedToolRows(threadManager, threadId)
 
   // Build messages array (canonical OpenAI chat shape; providers convert wire format)
   const history = threadManager.getMessages(threadId)
@@ -877,14 +878,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     const idx = disk.findIndex((m: { id?: string }) => m.id === savedAssistantId)
     if (idx < 0) return
     const missing = unpairedToolCallsFromAssistant(disk[idx], disk.slice(idx + 1))
+    let insertAt = toolBlockInsertIndex(disk, idx)
     for (const m of missing) {
       const result: ToolExecutionResult = {
         success: false,
         error: reason,
         error_code: INTERRUPTED_ERROR_CODE,
       }
-      threadManager.addMessage(
+      threadManager.insertMessageAt(
         threadId,
+        insertAt,
         createToolResultMessage(
           threadId,
           { id: m.id, function: { name: m.toolName, arguments: m.args } },
@@ -892,6 +895,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           {},
         ),
       )
+      const now = threadManager.getMessages(threadId)
+      const asstNow = now.findIndex((row: { id?: string }) => row.id === savedAssistantId)
+      insertAt = asstNow < 0 ? now.length : toolBlockInsertIndex(now, asstNow)
       sendToExtension({
         type: "tool.result",
         tool_call_id: m.id,

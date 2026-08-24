@@ -31,7 +31,7 @@ import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, isMaskedApiKey, DATA_DIR } from "./config"
 import { chatCreate, generateThreadTitle } from "./llm/adapter"
-import { persistHealedToolRows } from "./llm/tool-batch-heal"
+
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
@@ -1719,8 +1719,8 @@ export async function handleMessage(
       // Soft-deleted: still allow reading messages in trash view, but flag so UI can warn.
       // Block switching into chat loop for trashed threads from normal select is product-side;
       // companion returns messages + trashed so extension can refuse activation.
-      persistHealedToolRows(threadManager, rest.thread_id)
-      // In-memory only. Summoner/tray must not see run_status (ACL hydrate).
+      // Do not persist INTERRUPTED on GET. Crash leftovers heal on next chatCreate.
+      // In-memory only. Summoner must not see run_status (ACL hydrate).
       // After WS close / process death abortControllers is empty → idle (honest).
       const run_status =
         stampedSurface === "summoner"

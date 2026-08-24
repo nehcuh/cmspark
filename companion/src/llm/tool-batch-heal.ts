@@ -72,41 +72,61 @@ export function buildInterruptedDiskRow(
   }
 }
 
-export function newestAssistantWithToolCallsIndex(messages: DiskMessage[]): number {
+export function newestUnpairedAssistantIndex(messages: DiskMessage[]): number {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant" && (messages[i].tool_calls?.length || 0) > 0) {
-      return i
-    }
+    if (messages[i].role !== "assistant" || !(messages[i].tool_calls?.length)) continue
+    if (unpairedToolCallsFromAssistant(messages[i], messages.slice(i + 1)).length > 0) return i
   }
   return -1
 }
 
+/** First index after the assistant and its contiguous following tool rows. */
+export function toolBlockInsertIndex(messages: DiskMessage[], assistantIdx: number): number {
+  let i = assistantIdx + 1
+  while (i < messages.length && messages[i].role === "tool") i++
+  return i
+}
+
 export function healNewestUnpairedAssistant(
   messages: DiskMessage[],
-  opts?: { threadId?: string; error?: string },
+  opts?: { threadId?: string; error?: string; assistantId?: string },
 ): { messages: DiskMessage[]; healed: number } {
-  const idx = newestAssistantWithToolCallsIndex(messages)
+  const idx =
+    opts?.assistantId
+      ? messages.findIndex((m) => m.id === opts.assistantId)
+      : newestUnpairedAssistantIndex(messages)
   if (idx < 0) return { messages: [...messages], healed: 0 }
+  if (messages[idx].role !== "assistant") return { messages: [...messages], healed: 0 }
   const missing = unpairedToolCallsFromAssistant(messages[idx], messages.slice(idx + 1))
   if (missing.length === 0) return { messages: [...messages], healed: 0 }
   const threadId = opts?.threadId || ""
   const extra = missing.map((m) => buildInterruptedDiskRow(threadId, m, opts?.error))
-  return { messages: [...messages, ...extra], healed: extra.length }
+  const insertAt = toolBlockInsertIndex(messages, idx)
+  return {
+    messages: [...messages.slice(0, insertAt), ...extra, ...messages.slice(insertAt)],
+    healed: extra.length,
+  }
 }
 
 type ThreadTape = {
   getMessages: (threadId: string) => DiskMessage[]
-  addMessage: (threadId: string, message: any) => unknown
+  insertMessageAt: (threadId: string, index: number, message: any) => unknown
 }
 
-/** Persist interrupted rows for the newest unpaired assistant. Returns count appended. */
-export function persistHealedToolRows(tm: ThreadTape, threadId: string, error?: string): number {
+/** Persist interrupted rows immediately after the unpaired assistant's tool block. */
+export function persistHealedToolRows(
+  tm: ThreadTape,
+  threadId: string,
+  error?: string,
+  assistantId?: string,
+): number {
   const history = tm.getMessages(threadId) as DiskMessage[]
-  const idx = newestAssistantWithToolCallsIndex(history)
-  if (idx < 0) return 0
+  const idx = assistantId
+    ? history.findIndex((m) => m.id === assistantId)
+    : newestUnpairedAssistantIndex(history)
+  if (idx < 0 || history[idx].role !== "assistant") return 0
   const missing = unpairedToolCallsFromAssistant(history[idx], history.slice(idx + 1))
   if (missing.length === 0) return 0
-  // Lazy: adapter.createToolResultMessage redacts; avoid import cycle at load.
   let rowFor: (m: MissingToolCall) => DiskMessage
   try {
     const { createToolResultMessage } = require("./adapter") as typeof import("./adapter")
@@ -120,8 +140,16 @@ export function persistHealedToolRows(tm: ThreadTape, threadId: string, error?: 
   } catch {
     rowFor = (m) => buildInterruptedDiskRow(threadId, m, error)
   }
+  const assistantIdResolved = history[idx].id
+  let insertAt = toolBlockInsertIndex(history, idx)
   for (const m of missing) {
-    tm.addMessage(threadId, rowFor(m))
+    tm.insertMessageAt(threadId, insertAt, rowFor(m))
+    // Re-read: cap-trim can shift indexes so insertAt++ would land after a later user.
+    const now = tm.getMessages(threadId) as DiskMessage[]
+    const asstNow = assistantIdResolved
+      ? now.findIndex((row) => row.id === assistantIdResolved)
+      : newestUnpairedAssistantIndex(now)
+    insertAt = asstNow < 0 ? now.length : toolBlockInsertIndex(now, asstNow)
   }
   return missing.length
 }

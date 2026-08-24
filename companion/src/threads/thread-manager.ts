@@ -926,9 +926,16 @@ export class ThreadManager {
   }
 
   addMessage(threadId: string, message: Omit<Message, "id" | "created_at"> & { id?: string }): Message {
-    // Fail closed: never create files outside threads/ via crafted thread_id
+    return this.insertMessageAt(threadId, Number.MAX_SAFE_INTEGER, message)
+  }
+
+  /** Insert a message at `index` (clamped to [0, length]). addMessage is append. */
+  insertMessageAt(
+    threadId: string,
+    index: number,
+    message: Omit<Message, "id" | "created_at"> & { id?: string },
+  ): Message {
     this.assertSafeThreadId(threadId)
-    // Reserved id lets file.upload write sidecars before chatCreate (Task 7).
     const requested = typeof message.id === "string" ? message.id : ""
     const id = /^[a-zA-Z0-9_-]{1,128}$/.test(requested)
       ? requested
@@ -954,12 +961,11 @@ export class ThreadManager {
       data = { messages: [] }
     }
 
-    data.messages.push(msg)
+    const at = Math.max(0, Math.min(index, data.messages.length))
+    data.messages.splice(at, 0, msg)
 
-    // Soft cap enforcement
     if (data.messages.length > MAX_MESSAGES_PER_THREAD) {
       const dropped = data.messages.slice(0, data.messages.length - MAX_MESSAGES_PER_THREAD)
-      // Cap-trim: unlink sidecars of dropped oldest rows (same helper as deleteMessagesFrom).
       deleteSidecarsForMessages(threadId, dropped)
       data.messages = data.messages.slice(-MAX_MESSAGES_PER_THREAD)
       if (!_capWarnedThreads.has(threadId)) {
@@ -970,7 +976,6 @@ export class ThreadManager {
 
     atomicWriteJSON(filePath, data)
 
-    // Update thread timestamp
     const thread = this.index.threads.find(t => t.id === threadId)
     if (thread) {
       thread.updated_at = monotonicTimestamp()

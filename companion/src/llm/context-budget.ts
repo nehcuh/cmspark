@@ -412,14 +412,19 @@ export function compactMessagesTurnSafe(
     dropped += dropBlockAt(msgs, idx, droppedMessages)
   }
 
+  const priorNotices = msgs.filter(isOmitNotice)
   for (let i = msgs.length - 1; i >= 0; i--) {
     if (isOmitNotice(msgs[i])) msgs.splice(i, 1)
   }
 
-  if (dropped > 0) {
+  if (dropped > 0 || priorNotices.length > 0) {
     let insertAt = 0
     while (insertAt < msgs.length && msgs[insertAt].role === "system") insertAt++
-    msgs.splice(insertAt, 0, buildOmitNotice(dropped, opts?.rollingSummary))
+    const notice =
+      dropped > 0
+        ? buildOmitNotice(dropped, opts?.rollingSummary)
+        : priorNotices[0]
+    msgs.splice(insertAt, 0, notice)
   }
 
   const shrunk =

@@ -475,6 +475,9 @@ test("mid_loop pin: live assistant+tools after last user are undroppable", () =>
   const realUsers = r.messages.filter((m) => m.role === "user" && !isOmitNotice(m))
   assert.equal(realUsers.length, 1)
   assert.equal(realUsers[0].content, "do it")
+  const omit = r.messages.find((m) => isOmitNotice(m))
+  assert.ok(omit, "shrink-only mid_loop must keep the sticky omit notice")
+  assert.match(String((omit as { content?: string }).content), /Earlier 4/)
 })
 
 test("mid_loop pin: older turns before last user still drop", () => {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   buildInterruptedDiskRow,
   healNewestUnpairedAssistant,
+  persistHealedToolRows,
   unpairedToolCallsFromAssistant,
 } from "../src/llm/tool-batch-heal"
 import { rebuildMessagesFromHistory } from "../src/llm/adapter"
@@ -98,6 +99,66 @@ test("rebuildMessagesFromHistory still strips unpaired history that was not heal
   const rebuilt = rebuildMessagesFromHistory(history)
   assert.equal(rebuilt.length, 2)
   assert.ok(!(rebuilt[1] as any).tool_calls)
+})
+
+test("healNewestUnpairedAssistant: splices INTERRUPTED before a following user (not EOF)", () => {
+  const history = [
+    { role: "user", content: "go" },
+    {
+      role: "assistant",
+      content: "calling",
+      tool_calls: [
+        { id: "call_A", function: { name: "list_tabs", arguments: "{}" } },
+        { id: "call_B", function: { name: "list_tabs", arguments: "{}" } },
+      ],
+    },
+    { role: "user", content: "continue" },
+  ]
+  const { messages, healed } = healNewestUnpairedAssistant(history, { threadId: "t1" })
+  assert.equal(healed, 2)
+  assert.equal(messages[2].role, "tool")
+  assert.equal(messages[3].role, "tool")
+  assert.equal(messages[4].role, "user")
+  assert.equal(messages[4].content, "continue")
+  const rebuilt = rebuildMessagesFromHistory(messages)
+  assert.equal(rebuilt.length, 5)
+  assert.equal(rebuilt[1].role, "assistant")
+  assert.equal((rebuilt[1] as any).tool_calls.length, 2)
+  assert.equal(rebuilt[4].role, "user")
+})
+
+test("persistHealedToolRows: inserts after the unpaired assistant, not after a later user", () => {
+  const tape: any[] = [
+    { id: "u1", role: "user", content: "go" },
+    {
+      id: "a1",
+      role: "assistant",
+      content: "calling",
+      tool_calls: [
+        { id: "call_A", function: { name: "list_tabs", arguments: "{}" } },
+        { id: "call_B", function: { name: "list_tabs", arguments: "{}" } },
+      ],
+    },
+    { id: "u2", role: "user", content: "next" },
+  ]
+  const tm = {
+    getMessages: () => tape,
+    insertMessageAt: (_id: string, index: number, msg: any) => {
+      tape.splice(index, 0, { ...msg, id: `ins-${tape.length}` })
+    },
+    addMessage: (_id: string, msg: any) => {
+      tape.push({ ...msg, id: `eof-${tape.length}` })
+      return tape[tape.length - 1]
+    },
+  }
+  const n = persistHealedToolRows(tm, "t1")
+  assert.equal(n, 2)
+  assert.equal(tape[2].role, "tool")
+  assert.equal(tape[3].role, "tool")
+  assert.equal(tape[4].id, "u2")
+  assert.ok(!tape.some((m) => String(m.id || "").startsWith("eof-")), "must not append at EOF")
+  const rebuilt = rebuildMessagesFromHistory(tape)
+  assert.equal((rebuilt[1] as any).tool_calls.length, 2)
 })
 
 test("buildInterruptedDiskRow uses createToolResultMessage disk shape", () => {
