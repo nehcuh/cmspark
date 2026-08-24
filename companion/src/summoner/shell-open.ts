@@ -22,7 +22,7 @@ export type SummonerShellOpenOpts = {
   browserPath?: string | null
 }
 
-const TOKEN_LEN_MIN = 16
+const TOKEN_HEX = /^[0-9a-f]{64}$/i
 
 export function isSummonerLoopbackUrl(url: string): boolean {
   if (typeof url !== "string" || !url) return false
@@ -31,9 +31,10 @@ export function isSummonerLoopbackUrl(url: string): boolean {
     if (u.protocol !== "http:") return false
     const host = u.hostname.toLowerCase()
     if (host !== "127.0.0.1" && host !== "localhost") return false
+    const keys = [...u.searchParams.keys()]
+    if (keys.length !== 1 || keys[0] !== "token") return false
     const token = u.searchParams.get("token") || ""
-    if (token.length < TOKEN_LEN_MIN) return false
-    return true
+    return TOKEN_HEX.test(token)
   } catch {
     return false
   }
@@ -61,7 +62,7 @@ export function planSummonerShellOpen(
     return { kind: "browser-tab", command: "xdg-open", args: [url] }
   }
   if (opts.platform === "win32") {
-    return { kind: "browser-tab", command: "cmd", args: ["/c", "start", "", url], shell: true }
+    return { kind: "browser-tab", command: "cmd.exe", args: ["/c", "start", "", url] }
   }
   return { error: `unsupported platform: ${opts.platform}` }
 }

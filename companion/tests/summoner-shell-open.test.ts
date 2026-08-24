@@ -11,6 +11,7 @@ import {
   planSummonerShellOpen,
   resolveSummonerBrowserPath,
 } from "../src/summoner/shell-open"
+import { openLoopbackPage } from "../src/summoner-web"
 
 const ROOT = path.resolve(__dirname, "..", "..")
 function srcFile(...parts: string[]): string {
@@ -33,14 +34,28 @@ test("isSummonerLoopbackUrl accepts only http loopback with token", () => {
   assert.equal(isSummonerLoopbackUrl("https://127.0.0.1:23403/?token=" + "ab".repeat(32)), false)
   assert.equal(isSummonerLoopbackUrl("http://127.0.0.1:23403/"), false)
   assert.equal(isSummonerLoopbackUrl("file:///tmp/x.html"), false)
+  assert.equal(isSummonerLoopbackUrl("http://127.0.0.1:23403/?token=" + "aa".repeat(8)), false)
+  assert.equal(
+    isSummonerLoopbackUrl("http://127.0.0.1:23403/?token=" + "aa".repeat(32) + "&x"),
+    false,
+  )
+  assert.equal(
+    isSummonerLoopbackUrl("http://127.0.0.1:23403/?token=" + "gg".repeat(32)),
+    false,
+  )
 })
 
 test("planSummonerShellOpen rejects non-loopback even if chrome exists", () => {
-  const r = planSummonerShellOpen("http://evil.example/?token=aa", {
+  const r = planSummonerShellOpen("http://evil.example/?token=" + "ab".repeat(32), {
     platform: "darwin",
     browserPath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   })
   assert.equal("error" in r, true)
+  const https = planSummonerShellOpen("https://127.0.0.1:23403/?token=" + "ab".repeat(32), {
+    platform: "linux",
+    browserPath: "/usr/bin/google-chrome",
+  })
+  assert.equal("error" in https, true)
 })
 
 test("planSummonerShellOpen uses --app window when browser path is known", () => {
@@ -74,7 +89,9 @@ test("planSummonerShellOpen falls back to system browser without chrome", () => 
   assert.equal("error" in win, false)
   if ("error" in win) return
   assert.equal(win.kind, "browser-tab")
-  assert.equal(win.command, "cmd")
+  assert.equal(win.command, "cmd.exe")
+  assert.deepEqual(win.args, ["/c", "start", "", LOOP])
+  assert.equal(win.shell, undefined)
 })
 
 test("resolveSummonerBrowserPath picks first existing candidate", () => {
@@ -90,6 +107,35 @@ test("openLoopbackPage uses the planner (not raw open only)", () => {
   const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
   assert.match(src, /planSummonerShellOpen/)
   assert.match(src, /resolveSummonerBrowserPath/)
+})
+
+test("openLoopbackPage spawns --app for loopback and skips evil URLs", () => {
+  const calls: Array<{ command: string; args: string[]; shell?: boolean }> = []
+  const spawn = (command: string, args: string[], opts: { shell?: boolean }) => {
+    calls.push({ command, args, shell: opts.shell })
+    return { unref() {} }
+  }
+  assert.equal(
+    openLoopbackPage("http://evil.example/?token=" + "ab".repeat(32), {
+      platform: "linux",
+      browserPath: "/usr/bin/google-chrome",
+      spawn,
+    }),
+    false,
+  )
+  assert.equal(calls.length, 0)
+  assert.equal(
+    openLoopbackPage(LOOP, {
+      platform: "linux",
+      browserPath: "/usr/bin/google-chrome",
+      spawn,
+    }),
+    true,
+  )
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].command, "/usr/bin/google-chrome")
+  assert.ok(calls[0].args.includes(`--app=${LOOP}`))
+  assert.equal(calls[0].shell, undefined)
 })
 
 test("P3 does not grow Swift SummonerOverlay", () => {

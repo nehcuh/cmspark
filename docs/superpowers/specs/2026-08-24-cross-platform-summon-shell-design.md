@@ -1,7 +1,7 @@
 # Cross-platform summon shell (C-thin)
 
 > **日期**: 2026-08-24  
-> **状态**: Implementing P3 Chromium app-window host  
+> **状态**: P3 landed + open-gate nits (hex token, no cmd shell)  
 > **方向**: 三路对抗 + Claude/Kimi dual **C-thin APPROVE_WITH_NITS**  
 > **相关**: ADR-020 · #219 · systray2 summoner no-op  
 

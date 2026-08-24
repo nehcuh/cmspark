@@ -223,23 +223,33 @@ function closeSseClients(): void {
   sseClients.clear()
 }
 
-export function openLoopbackPage(url: string): void {
-  const plan = planSummonerShellOpen(url, {
-    platform: process.platform,
-    browserPath: resolveSummonerBrowserPath(process.platform),
-  })
+export type OpenLoopbackPageDeps = {
+  platform?: NodeJS.Platform
+  browserPath?: string | null
+  spawn?: (
+    command: string,
+    args: string[],
+    options: { detached?: boolean; stdio?: "ignore"; windowsHide?: boolean; shell?: boolean },
+  ) => { unref: () => void }
+}
+
+/** Returns false when the URL is rejected (no spawn). */
+export function openLoopbackPage(url: string, deps: OpenLoopbackPageDeps = {}): boolean {
+  const platform = deps.platform ?? process.platform
+  const browserPath =
+    deps.browserPath !== undefined ? deps.browserPath : resolveSummonerBrowserPath(platform)
+  const plan = planSummonerShellOpen(url, { platform, browserPath })
   if ("error" in plan) {
     console.error(`[summoner-web] ${plan.error}`)
-    return
+    return false
   }
-  child_process
-    .spawn(plan.command, plan.args, {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-      ...(plan.shell ? { shell: true } : {}),
-    })
-    .unref()
+  const spawn = deps.spawn ?? ((cmd, args, opts) => child_process.spawn(cmd, args, opts))
+  spawn(plan.command, plan.args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  }).unref()
+  return true
 }
 
 export async function startSummonerWebServer(opts: {
