@@ -1,170 +1,141 @@
 # steer/nextRun UI + 悬浮窗 L0 工作台
 
 > **日期**: 2026-08-24  
-> **状态**: Design (awaiting user spec review)  
+> **状态**: Design r2 (folded 3-lane REJECT)  
 > **分支**: `feat/steer-nextrun-overlay-hub`  
-> **触发**: harness-v2 remainder 已合 main（#218）；Companion 有 `chat.steer` / `enqueue`，UI 仍把第二次发送当 supersede；召唤器捕获窗只有明文转录。  
-> **相关**: #218 · ADR-014 Pack · ADR-020 · summoner ACL（S21）· composer.lease（S20）  
-> **能力坐标**:
->
-> ```text
-> Surface:      L0 (composer send semantics + overlay chrome)
-> L2-classes:   (none) — overlay still not an Allow/Deny surface
-> Compose:      pack.apply from overlay with allowTrust:false only
-> Autonomy:     single-thread steer / nextRun (already in companion)
-> Trust:        monotonic — overlay MUST NOT write Trust B
-> Channel:      summoner ACL expand pack.list + pack.apply; mcp.add stays denied
-> ```
+> **对抗**: security REJECT · product REJECT · correctness REJECT → 本文吸收 BLOCK；产品「反转 Enter=steer」**不吸收**（grill 已锁，异议记 §8）  
+> **相关**: #218 · ADR-014 · ADR-020 · S20 lease · S21 ACL · S46 trust cookie  
+
+```text
+Surface:      L0
+L2-classes:   none — overlay never Allow/Deny
+Compose:      overlay pack.apply allowTrust FORCED false by surface, not client
+Autonomy:     existing steer/nextRun
+Trust:        monotonic — overlay cannot write Trust B; refuse apply if thread holds trust cookie
+Channel:      summoner ACL +pack.list +pack.apply; mcp.add denied
+```
 
 ---
 
 ## 0. 问题陈述
 
-| 用户感受 | 系统实际 |
-|----------|----------|
-| 进行中再说话 = 打断重来 | `chat.create` 在忙时 **supersede**（换 AbortController） |
-| 想说「别点那个 / 先测再改」 | Companion 已有 `chat.steer`，没有任何表面发送 |
-| 想把下一句排到这轮结束 | Companion 已有 `enqueue:true` nextRun，UI 没有 |
-| 悬浮窗太简陋 | Swift 捕获窗：明文 `你:`/`助手:`、`#` 搜标题、MCP 名字条；对话/场景/MCP 管理都在 Side Panel |
-| 会议纪要不必开 Chrome | Pack apply 被锁成 Side Panel `user_gesture` + 默认可 `allowTrust` |
+Companion 已有 `chat.steer` / `enqueue` nextRun，但：
 
-**目标一句话**：忙时说话是**纠偏**而不是杀掉当前轮；悬浮窗能管**对话 / 已连接 MCP / L0 场景**，且**不能**在捕获窗里升 Trust 或点 Allow/Deny。
+- Side Panel **忙时锁输入**（Stop 换发送），并不是 supersede。
+- 悬浮窗 `summoner.submit` → 永远 `sendChatCreate` → **会 supersede**。
+- `chat.create` 在 occupied 且无 `enqueue` 时服务端仍 abort 前任。
+
+目标：忙时能纠偏/排队；服务端 occupied 无 enqueue **拒绝而非 abort**；悬浮窗能管对话 / 已连接 MCP / L0 场景且 **不能升 Trust**。
 
 ---
 
 ## 1. 非目标
 
-- Continue / Abandon 按钮、persist `running=true`、confirm 快照、originWs 重绑
-- 渗透测试 / AppSec / 任何以 L1 网页或 L2 宿主为主的 Pack 在 overlay 一键套用
-- overlay 渲染 Allow/Deny（现锁不变）
-- overlay `mcp.add` / `mcp.remove` / `config.set`
-- Windows/Linux 召唤器壳（systray2 overlay 仍 no-op）；PR1 的 Side Panel 行为两边都有
-- 把 overlay 改成 WKWebView / 共享 React 壳（可另开第三刀）
-- 恢复「忙时第二次发送 = supersede」。Stop 后再发才是新一轮 `chat.create`
+- Continue/Abandon、persist running=true、confirm 快照、Allow/Deny 进 overlay
+- overlay `mcp.add/remove`、`config.set`、`pack.install`
+- 渗透/AppSec/L1/L2 Pack 一键套用
+- WKWebView 跨平台壳；Windows/Linux overlay 工作台（PR1 的 **Side Panel** 两边都有）
+- 会议 **工作台 UI**（录音/发言人）——overlay apply 只套 composition，完整工作台仍在侧栏
+- 恢复 occupied `chat.create` supersede
 
 ---
 
-## 2. 切分（两个 PR，连做）
+## 2. PR1 — 发送语义 + 服务端禁 supersede（T2）
 
-### PR1 — 发送语义（T2）
+### 2.1 服务端（BLOCK 折叠，必先于 UI）
 
-Busy + 有正文：
-
-| 动作 | 协议 |
+| 条件 | 行为 |
 |------|------|
-| Enter / 主按钮「纠偏」 | `chat.steer` |
-| 「排队」按钮 / Shift+Enter | `chat.create` + `enqueue: true` |
-| Stop | `chat.abort`（丢未消费 steer；nextRun 保留） |
-| 空闲 Enter | 现有 `chat.create`（不 enqueue） |
+| occupied 且 `enqueue !== true` | **reject** `{error:"run_active"}`，**不 abort** |
+| occupied 且 `enqueue:true` + 非空 | `enqueueNextRun`；满 → `queue_full`；空 → `empty_enqueue` |
+| idle 且 `enqueue:true` | reject `idle_enqueue`（闲时没有排队按钮） |
+| `chat.steer` | 现逻辑（需 active run；lease/conductor） |
+| `chat.abort` | 现逻辑（dropSteer；nextRun 保留；CAS） |
 
-文案（Side Panel + 悬浮窗 hint 对齐）：
+`file.upload` / `chat.regenerate` occupied：本 PR **保持今日 supersede**（非 composer 文本路径）；spec 不把它们改成 steer。
 
-- 忙：`回车纠偏 · Shift+Enter 排队`
-- 主按钮忙时改称「纠偏」
-- 旁一颗「排队」
-- 成功排队：可见条数（cap 8）；`empty_steer` / `empty_enqueue` / `queue_full` / `OVERLAY_STANDBY` 用现有 error 字符串，UI 可读化
-- steer 已由 companion `chat.user` echo 进转录，UI 不必再插假气泡
+### 2.2 Busy SoT
 
-**Side Panel**：`InputArea` / composer 用 `threadBusy`（已有 `SET_THREAD_BUSY` ← `run_status`）。禁止再走 supersede `chat.create`。
+- **权威**：`abortControllers.has(threadId)`（含 nextRun drain 已 claim 的新 generation）。
+- `chat.done` **不得**在 drain 前把 UI 标 idle。router 在 drain 递归 `chat.create` **完成 claim** 之后，若仍 occupied 则发 `run_status: llm`；队列空且 loop 结束才 `idle`。
+- **Summoner `thread.select` 恢复带 `run_status: idle|llm`**（#218 对 summoner 省略的决定在本 PR 撤回）。`pending_tools` 仍省略。overlay 用它映射 submit，不是猜事件。
+- Panel `SET_THREAD_BUSY` 继续听 `run_status` + 流式事件；Stop 后保持 busy 直到 `chat.aborted` / `idle`。
 
-**悬浮窗**：`summoner.submit` 在 companion 侧看该 thread 是否 LLM-busy（`abortControllers` / 与 panel 同一 SoT）。忙 → steer 或 enqueue（modifier）；闲 → `chat.create`。lease/conductor 失败原样返回，Swift 用 `summoner.error`。
+### 2.3 Side Panel
 
-### PR2 — macOS 悬浮窗左栏 L0 工作台（T2）
+- **忙时解开 textarea**（今日 disabled 必须改）。附件按钮仍可关。
+- 忙：主按钮「纠偏」= `chat.steer`；「排队」+ **Shift+Enter** = enqueue。Enter = steer。
+- 闲：隐藏纠偏/排队；Enter = `chat.create`；Shift+Enter = **换行**（与现设置一致）。
+- 若用户设置发送键为 Cmd/Ctrl+Enter：忙时该组合 = 纠偏；Shift+Enter 仍 = 排队；闲时行为不变。
+- hint 忙：`回车纠偏 · Shift+Enter 排队`。
+- 队列深度：`chat.enqueued` 带 `depth`（router 用 `peekNextRunCount`）。
 
-在现有捕获窗左侧加约 **200pt** 栏：
+### 2.4 悬浮窗
 
-1. **对话** — `thread.list` 最近序；保留 `#` 只搜标题；新建 `thread.create` + lease.claim。
-2. **MCP** — `mcp.list` 只读芯片（可复用已有 `summoner.mcp` 名字条，放进栏内）。无 add/删。
-3. **场景** — `pack.list`；**overlay-eligible** 可一键 `pack.apply`（`user_gesture: true`，**服务端强制 `allowTrust: false`**，忽略客户端乱传）。非 eligible：灰、文案「去侧栏确认」。
-
-Windows/Linux：本 PR 不画 overlay 壳。
-
----
-
-## 3. Overlay-eligible Pack
-
-列表仍展示全部已安装 Pack，但 **可点 apply 的**必须同时：
-
-- pack.yaml **没有** `trust:` 块（有则「去侧栏」——写 Trust 只能 Side Panel `allowTrust: true`）
-- `tool_whitelist`（若有）不含 L1 浏览器工具、host/computer、`shell_exec`、`netsec_*`
-- 不把「渗透 / AppSec / 网页审查」类内置 Pack 标 eligible（即使 whitelist 空，只要 id/前缀约定是 appsec/netsec/shell 也灰掉）
-
-会议纪要 Pack（L0 技能+提示）应 eligible。套用效果：当前线程 composition（skills / prompt append / knowledge），**不**改全局 Trust。
-
-engine 已有 `allowTrust: false` → `pack.trust_skipped` 审计；overlay 路径必须走这条，且 router 在 `stampedSurface === "summoner"` 时 **无视** `allowTrust: true`。
+- `SummonerSubmitEvt` 加可选 `enqueue?: boolean`。Swift：忙时 Return → enqueue false；⇧Return → true。
+- Node **禁止**再走 `sendChatCreate` 当 composer。映射进 router：`steer` | `enqueue` | `create`。
+- submit **不** `claimLease`。无 overlay lease → `OVERLAY_STANDBY`（「侧栏占用了输入」）。
+- `chat.enqueued` / `queue_full` / `steer_queue_full` / `run_active` / `idle_enqueue` 必须进 `summoner.error` 或专用 cmd（今日 mapper 只认 `chat.error`）。
+- 左栏 / pack / submit **只走 handshake `surface:summoner` 的 WS**，禁止 overlay 用 tray client 调 `pack.apply`（tray 仍是旧的 panel 级 Trust 路径）。
+- `summoner.continue`：闲 = 今日 `chat.create` CTA；忙 = no-op（不 create、不 supersede）。
+- TOCTOU：busy 判断与发送同在 router 一拍，不在 Swift 先看一眼再发。
+- enqueue 成功不要乐观插入 `你:`（那会像已发送）；steer 用已有 `chat.user` echo，overlay 行可标 `纠偏:`。
 
 ---
 
-## 4. ACL / 协议
+## 3. PR2 — macOS 左栏（T2）
 
-Summoner allowlist **只加**：
+窗口 **加宽**：默认宽 ≥ 640pt（左栏 200 + 捕获 ≥ 420）。不挤死 composer。
 
-- `pack.list`
-- `pack.apply`（validate 仍要 `user_gesture: true`；router：summoner ⇒ `allowTrust` 强制 false）
+左栏常驻：
 
-**不加**：`mcp.add`、`pack.install`、`pack.unapply`（第一版不需要卸）、`config.*`、`security.confirmation.response`。
+1. 对话：`thread.list` + `#` 标题搜 + 新建。
+2. MCP：**已连接**只读芯片（不是「管理」）。无 add。
+3. 场景：见 §4。非 eligible 灰 +「去侧栏确认」。
 
-Swift stdin 增量（示意，实现时可合并）：
-
-- out: `summoner.threads` / `summoner.packs` / 现有 `summoner.mcp`
-- in: `summoner.pack.apply` `{ pack_id }`；submit 已有，busy 映射在 Node 不在 Swift
-
-`pack.apply` 文案从「Side Panel only」改为「UI gesture only」——overlay 也是人点的，但 Trust 仍仅 panel。
+文案诚实：套 Pack =「技能/提示套到当前对话」；不声称打开会议工作台或 Windows 也有本窗。
 
 ---
 
-## 5. 错误与边界
+## 4. Pack apply（服务端强制，不靠 UI 灰）
 
-| 情况 | 行为 |
-|------|------|
-| 无正文 steer/enqueue | 不发送；validate/router `empty_steer` / `empty_enqueue` |
-| nextRun 已 8 条 | `queue_full`，UI 提示稍后再排 |
-| 闲时点排队 | **闲时隐藏**「纠偏」「排队」，只留发送。Shift+Enter 闲时 = 换行（Side Panel 现有）或忽略（悬浮窗单行） |
-| overlay 无 lease | `OVERLAY_STANDBY`；提示「侧栏占用了输入」 |
-| 跑着套 Pack | 允许 composition-only apply；不 abort 当前轮 |
-| Stop | 与今日 abort 相同；nextRun 不在 abort 时自动开跑（#218 CAS） |
+Router `stampedSurface === "summoner"` 时：
 
----
+- `allowTrust` **恒 false**（`allowTrust = surface !== "summoner"`）。无视 `rest.allowTrust` / 仅靠 `user_gesture`。
+- 拒绝：`workspace_path`、`force_takeover`、`confirmation_phrase` 非空。
+- **`isOverlayEligiblePack(manifest)` 失败 → 404/error `pack_not_overlay_eligible`**（不是只灰按钮）。
+- 线程已有 `mission_pack_trust_snapshot` → refuse `pack_trust_cookie_present`（避免 S46 cookie 孤儿：allowTrust false 会清 snapshot 而不 restore globals）。
+- 直播 LLM loop 期间：只允许改 skills/prompt/knowledge；**禁止改 `tool_whitelist`**（否则 live `isToolAllowed` 与 offer 快照分叉）。whitelist 变更留给 idle apply 或下一轮。
 
-## 6. 测试与闸门
+Eligible 当且仅当：
 
-**PR1 MACHINE**
+- 无 `trust:` 块
+- 无 `min_capability: enterprise`、无 `mcp_servers` 要求、无 `board_mode: true`
+- whitelist 空或仅 L0/companion 安全工具（无 navigate/evaluate/click/host/computer/shell/netsec/acp_*/workspace_*）
+- pack id 不以 `appsec`/`netsec`/`shell`/`coding-handoff` 为前缀
 
-- companion：busy submit → `chat.steer`；Shift 路径 → `enqueue`；idle → `chat.create`；不调用 supersede
-- extension：busy Enter 不 `chat.create`；点排队才 enqueue
-- 现有 `empty_steer` / `queue_full` / lease 单测保持绿
+`pack.list` 给每条加 `overlay_eligible: boolean`（overlay 用来灰按钮；**拒绝仍以 router 为准**）。
 
-**PR2 MACHINE**
-
-- summoner-acl：`pack.list`/`pack.apply` ok；`mcp.add` 仍 deny
-- router：summoner `pack.apply` 即使 `allowTrust: true` 也不写 Trust（审计 `allowTrust_false` / 无 trust snapshot）
-- overlay-eligible 纯函数单测（有 trust 块 / 含 navigate → 不可 apply）
-
-**对抗**
-
-- PR1：二次发送不得 abort 当前轮；abort 丢 steer；nextRun 仍 generation-CAS
-- PR2：Trust 单调；overlay 无 confirm 方言；非 eligible Pack 不能 apply
-
-都不 auto-merge。T2：对抗 + Pi `APPROVE*` 后需人点 Merge。
+ACL 只加 `pack.list`、`pack.apply`。`user_gesture: true` 仍要（防 LLM 自 apply）。
 
 ---
 
-## 7. 实现锚点（[inspected]）
+## 5. 测试
 
-- `companion/src/message-router.ts` — `chat.steer` / enqueue / `pack.apply` allowTrust
-- `companion/src/ws/summoner-acl.ts` — allowlist
-- `companion/src/summoner/client.ts` + tray `CompanionClient.sendChatCreate`
-- `companion/src/tray/SummonerOverlay.swift` — 捕获窗 + 将加左栏
-- `chrome-extension/src/sidepanel/` InputArea / App `canSend` / `SET_THREAD_BUSY`
-- `companion/src/packs/pack-engine.ts` `allowTrust` 分支（已有 skip）
+PR1：occupied `chat.create` 无 enqueue → `run_active` 且 controller 仍在；enqueue/steer 测保持；idle enqueue → `idle_enqueue`；InputArea 忙时可输入；Shift+Enter 忙=enqueue 闲=换行；overlay submit enqueue 位。
+
+PR2：summoner `allowTrust:true` 仍不写 Trust；eligible 函数单测（meeting ok，appsec/coding-handoff/navigate 否）；cookie 线程 refuse；ACL mcp.add deny。
+
+闸门 T2，不 auto-merge。对抗查：supersede 洞、Trust 单调、eligible 服务端拒绝。
 
 ---
 
-## 8. 决策记录（grill）
+## 6. 决策（grill + 对抗吸收）
 
-1. 两片都要，**两个 PR 连做**（先发送语义，再左栏）。
-2. 忙时默认 **steer**；排队 = 按钮 + Shift+Enter。
-3. 骨架 = **协议扩展 + 各表面自绘**（不改 WKWebView）。
-4. 左栏常驻 ~200pt：对话 / MCP 只读 / 场景。
-5. 场景 apply **不写全局 Trust**；需 Trust 的 Pack → 「去侧栏确认」。
-6. 闸门 PR1/PR2 均为 **T2**（因 overlay apply 强制 `allowTrust: false`）。
+1. 两 PR 连做；骨架各表面自绘。
+2. **忙时默认 steer**（用户锁）。产品对抗要求改 enqueue——**不改**；改为解开输入 + 服务端禁 supersede。
+3. Shift+Enter：忙=排队，闲=换行。
+4. 左栏 200pt，窗口加宽，不压缩捕获区。
+5. Trust：surface 强制 false；eligible 服务端拒绝；有 trust cookie 则拒绝 overlay apply。
+6. MCP 只读「已连接」。会议工作台 ≠ pack composition。
+7. occupied 无 enqueue 的 `chat.create` **reject**。

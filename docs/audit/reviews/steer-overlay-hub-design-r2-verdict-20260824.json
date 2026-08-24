@@ -1,0 +1,16 @@
+{
+  "batch": "steer-overlay-hub-design-r2",
+  "date": "2026-08-24",
+  "blast_tier": "T2",
+  "lanes": {
+    "security": "REJECT",
+    "product": "REJECT",
+    "correctness": "REJECT"
+  },
+  "spec_r2_folds": "yes",
+  "pi": "APPROVE_WITH_NITS",
+  "kimi": "APPROVE_WITH_NITS",
+  "claude": "APPROVE_WITH_NITS",
+  "implement": "YES",
+  "reason": "r1 BLOCKs folded; product Enter=steer residual user-locked with unlock+run_active mitigations; remaining nits folded into spec r2.1"
+}
