@@ -879,7 +879,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   // Disable send while dictating — mid-listen send would ship base snapshot only
   const canSend =
     composerMode !== "l2_task" &&
-    composerMode !== "thread_busy" &&
     hasContent &&
     !!state.activeThreadId &&
     state.connectionState === "connected" &&
@@ -1159,24 +1158,45 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       shouldSend = e.key === "Enter" && e.ctrlKey && !e.metaKey
     }
 
+    if (threadBusy && e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey && canSend) {
+      e.preventDefault()
+      handleSend(undefined, { enqueue: true })
+      return
+    }
+
     if (shouldSend && canSend) {
       e.preventDefault()
       handleSend()
     }
   }
 
-  const handleSend = (overrideFiles?: FileAttachment[]) => {
+  const handleSend = (overrideFiles?: FileAttachment[], opts?: { enqueue?: boolean }) => {
     const files = Array.isArray(overrideFiles) ? overrideFiles : selectedFilesRef.current
     const trimmed = textRef.current.trim()
     const sendAllowed =
       composerMode !== "l2_task" &&
-      composerMode !== "thread_busy" &&
       !!state.activeThreadId &&
       state.connectionState === "connected" &&
       !voice.listening &&
       !state.overlayStandby
     if (!sendAllowed || sendingRef.current) return
     if (!trimmed && files.length === 0) return
+    if (threadBusy) {
+      if (files.length > 0) return
+      sendingRef.current = true
+      try {
+        chrome.runtime.sendMessage({
+          type: "chat.send",
+          threadId: state.activeThreadId,
+          message: trimmed,
+          ...(opts?.enqueue ? { enqueue: true } : { steer: true }),
+        })
+        setText("")
+      } finally {
+        sendingRef.current = false
+      }
+      return
+    }
     // Defense in depth: never dual-conduct while L2 task is active
     if (
       isComputer &&
@@ -1420,9 +1440,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     dispatch({ type: "SET_STREAMING_REASONING", content: "" })
     dispatch({ type: "SET_PROCESSING_STATUS", status: null })
     dispatch({ type: "SET_PROCESSING", isProcessing: false })
-    if (state.activeThreadId) {
-      dispatch({ type: "SET_THREAD_BUSY", threadId: state.activeThreadId, busy: false })
-    }
   }
 
   const readFileAsBase64 = (blob: Blob): Promise<string> =>
@@ -1771,7 +1788,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             disabled={
               needsThread ||
               needsConnection ||
-              threadBusy ||
               voice.liveOverlay !== null ||
               !!overlayStandby
             }
@@ -1789,6 +1805,28 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               liveStatus={voiceMicLiveStatus}
               onClick={() => voice.toggle()}
             />
+          )}
+          {showStop && threadBusy && !taskActive && (
+            <button
+              type="button"
+              style={styles.sendBtn}
+              onClick={() => handleSend()}
+              disabled={!canSend}
+              title="纠偏当前这一轮"
+            >
+              纠偏
+            </button>
+          )}
+          {showStop && threadBusy && !taskActive && (
+            <button
+              type="button"
+              style={styles.attachBtn}
+              onClick={() => handleSend(undefined, { enqueue: true })}
+              disabled={!canSend}
+              title="排队到本轮结束后"
+            >
+              排队
+            </button>
           )}
           {showStop ? (
             <button

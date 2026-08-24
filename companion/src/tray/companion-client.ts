@@ -283,11 +283,29 @@ export class CompanionClient {
    * Fire-and-forget chat.create. MUST NOT use sendRequest (5s RPC) — tokens
    * stream back as chat.token / chat.done / chat.error on this socket.
    */
-  sendChatCreate(params: { thread_id: string; message: string }): boolean {
+  sendChatCreate(params: { thread_id: string; message: string; enqueue?: boolean }): boolean {
     return this.sendAppMessage("chat.create", {
       thread_id: params.thread_id,
       message: params.message,
+      ...(params.enqueue ? { enqueue: true } : {}),
     })
+  }
+
+  sendSteer(params: { thread_id: string; message: string }): boolean {
+    return this.sendAppMessage("chat.steer", {
+      thread_id: params.thread_id,
+      message: params.message,
+    })
+  }
+
+  async isRunActive(threadId: string): Promise<boolean> {
+    if (this._state !== "connected" || !threadId) return false
+    try {
+      const resp = await this.sendRequest("thread.select", { thread_id: threadId })
+      return resp?.run_status === "llm"
+    } catch {
+      return false
+    }
   }
 
   async executeQuickAction(id: string): Promise<any> {

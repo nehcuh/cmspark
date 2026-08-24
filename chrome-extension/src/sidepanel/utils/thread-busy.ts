@@ -54,7 +54,7 @@ export function composerBusyPlaceholder(
     case "l2_task":
       return "任务进行中 — 请在确认台发送指令或先急停"
     case "thread_busy":
-      return "本对话处理中 · 停止后再指挥"
+      return "回车纠偏 · Shift+Enter 排队"
     case "run_busy": {
       const locks =
         opts?.lockCount && opts.lockCount > 0 ? ` · ${opts.lockCount} 锁仍活跃` : ""

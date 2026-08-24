@@ -37,6 +37,7 @@ import {
   dropSteer,
   enqueueNextRun,
   enqueueSteer,
+  peekNextRunCount,
   takeNextRun,
 } from "./llm/run-queues"
 import { listPendingToolsForThread } from "./ws/tool-forward"
@@ -363,7 +364,16 @@ export async function handleMessage(
           type: "chat.enqueued",
           thread_id: rest.thread_id,
           queue: "next_run",
+          depth: peekNextRunCount(rest.thread_id),
         }
+      }
+
+      if (abortControllers.has(rest.thread_id)) {
+        return { type: "error", error: "run_active", thread_id: rest.thread_id }
+      }
+
+      if (rest.enqueue === true) {
+        return { type: "error", error: "idle_enqueue", thread_id: rest.thread_id }
       }
 
       // P0 CORR-01: claim slot SYNCHRONOUSLY before any await so dual WS handlers
@@ -1792,14 +1802,9 @@ export async function handleMessage(
       // Block switching into chat loop for trashed threads from normal select is product-side;
       // companion returns messages + trashed so extension can refuse activation.
       // Do not persist INTERRUPTED on GET. Crash leftovers heal on next chatCreate.
-      // In-memory only. Summoner must not see run_status (ACL hydrate).
-      // After WS close / process death abortControllers is empty → idle (honest).
-      const run_status =
-        stampedSurface === "summoner"
-          ? undefined
-          : abortControllers.has(rest.thread_id)
-            ? "llm"
-            : "idle"
+      // In-memory only. run_status is abortControllers SoT (overlay maps submit).
+      // pending_tools still omitted for summoner. After WS close → idle.
+      const run_status = abortControllers.has(rest.thread_id) ? "llm" : "idle"
       let pending_tools:
         | Array<{ tool_call_id: string; tool_name: string; status: "running" }>
         | undefined

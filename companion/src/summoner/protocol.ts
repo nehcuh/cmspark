@@ -80,7 +80,12 @@ export type SummonerOutboundCmd =
 
 export type SummonerReadyEvt = { type: "summoner.ready" }
 export type SummonerClosedEvt = { type: "summoner.closed" }
-export type SummonerSubmitEvt = { type: "summoner.submit"; thread_id: string; text: string }
+export type SummonerSubmitEvt = {
+  type: "summoner.submit"
+  thread_id: string
+  text: string
+  enqueue?: boolean
+}
 export type SummonerSearchEvt = { type: "summoner.search"; query: string }
 export type SummonerSelectEvt = { type: "summoner.select"; thread_id: string }
 export type SummonerAttachChromeEvt = { type: "summoner.attach_chrome"; foreground?: boolean }
@@ -164,8 +169,17 @@ export function encodeSummonerClosed(): SummonerClosedEvt {
   return { type: "summoner.closed" }
 }
 
-export function encodeSummonerSubmit(p: { thread_id: string; text: string }): SummonerSubmitEvt {
-  return { type: "summoner.submit", thread_id: p.thread_id, text: p.text }
+export function encodeSummonerSubmit(p: {
+  thread_id: string
+  text: string
+  enqueue?: boolean
+}): SummonerSubmitEvt {
+  return {
+    type: "summoner.submit",
+    thread_id: p.thread_id,
+    text: p.text,
+    ...(p.enqueue ? { enqueue: true } : {}),
+  }
 }
 
 export function encodeSummonerSearch(p: { query: string }): SummonerSearchEvt {
@@ -396,7 +410,12 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
       return encodeSummonerClosed()
     case "summoner.submit":
       if (!isString(o.thread_id) || !isString(o.text)) return null
-      return encodeSummonerSubmit({ thread_id: o.thread_id, text: o.text })
+      if (o.enqueue !== undefined && typeof o.enqueue !== "boolean") return null
+      return encodeSummonerSubmit({
+        thread_id: o.thread_id,
+        text: o.text,
+        enqueue: o.enqueue === true,
+      })
     case "summoner.search":
       if (!isString(o.query)) return null
       return encodeSummonerSearch({ query: o.query })

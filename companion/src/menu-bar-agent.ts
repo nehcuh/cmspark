@@ -720,14 +720,26 @@ export function handleSummonerAttach(foreground = false): void {
 /** Overlay continue CTA — new user message, no L1 replay. */
 export function handleSummonerContinue(): boolean {
   if (!summonerClient || !summonerThreadId) return false
-  return summonerClient.sendChatCreate(buildContinueChatCreate(summonerThreadId))
+  // Busy continue is a no-op (must not supersede).
+  void summonerClient.isRunActive(summonerThreadId).then((busy) => {
+    if (busy || !summonerClient || !summonerThreadId) return
+    summonerClient.sendChatCreate(buildContinueChatCreate(summonerThreadId))
+  })
+  return true
 }
 
-export async function handleSummonerSubmit(thread_id: string, text: string): Promise<boolean> {
+export async function handleSummonerSubmit(
+  thread_id: string,
+  text: string,
+  enqueue = false,
+): Promise<boolean> {
   const client = summonerClient
   if (!client) return false
   const token = currentOverlaySession()
-  const result = await submitSummonerTalk(thread_id, text, {
+  const result = await submitSummonerTalk(
+    thread_id,
+    text,
+    {
     listThreads: () => client.listThreads(),
     createThread: () => client.createThread(),
     claimLease: (id) =>
@@ -737,6 +749,9 @@ export async function handleSummonerSubmit(thread_id: string, text: string): Pro
         releaseAll: () => client.releaseAllOverlayComposerLeases(),
       }),
     sendChatCreate: (args) => client.sendChatCreate(args),
+    sendSteer: (args) => client.sendSteer(args),
+    sendEnqueue: (args) => client.sendChatCreate({ ...args, enqueue: true }),
+    isRunActive: (id) => client.isRunActive(id),
     selectMessages: (id) => client.selectThreadMessages(id),
     hydrate: ({ thread_id: id, messages }) => {
       if (!overlaySessionIsLive(token)) return
@@ -762,7 +777,9 @@ export async function handleSummonerSubmit(thread_id: string, text: string): Pro
         search_hint: SUMMONER_SEARCH_HINT,
       })
     },
-  })
+    },
+    { enqueue },
+  )
   if (result.ok && result.threadId) {
     summonerThreadId = result.threadId
     touchSummonerActivity(result.threadId)
@@ -1001,7 +1018,7 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
 export function handleSummonerInbound(evt: SummonerInboundEvt): void {
   switch (evt.type) {
     case "summoner.submit":
-      void handleSummonerSubmit(evt.thread_id, evt.text)
+      void handleSummonerSubmit(evt.thread_id, evt.text, evt.enqueue === true)
       return
     case "summoner.search":
       void handleSummonerSearch(evt.query)

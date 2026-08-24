@@ -118,6 +118,9 @@ export type SubmitSummonerTalkDeps = {
   createThread: () => Promise<{ id: string } | null>
   claimLease: (threadId: string) => Promise<boolean | void>
   sendChatCreate: (args: { thread_id: string; message: string }) => boolean
+  sendSteer?: (args: { thread_id: string; message: string }) => boolean
+  sendEnqueue?: (args: { thread_id: string; message: string }) => boolean
+  isRunActive?: (threadId: string) => boolean | Promise<boolean>
   selectMessages?: (threadId: string) => Promise<unknown[]>
   hydrate?: (args: { thread_id: string; messages: unknown[] }) => void
 }
@@ -135,6 +138,7 @@ export async function submitSummonerTalk(
   requestedId: string,
   text: string,
   deps: SubmitSummonerTalkDeps,
+  opts?: { enqueue?: boolean },
 ): Promise<SubmitSummonerTalkResult> {
   const message = text.trim()
   if (!message) return { ok: false, threadId: null }
@@ -146,6 +150,15 @@ export async function submitSummonerTalk(
     id = created?.id ?? null
   }
   if (!id) return { ok: false, threadId: null }
+
+  const busy = deps.isRunActive ? await deps.isRunActive(id) : false
+  if (busy) {
+    // Do not claimLease (no steal). Router lease-gates steer/enqueue.
+    const ok = opts?.enqueue
+      ? (deps.sendEnqueue?.({ thread_id: id, message }) ?? false)
+      : (deps.sendSteer?.({ thread_id: id, message }) ?? false)
+    return { ok, threadId: ok ? id : null }
+  }
 
   const claimed = await deps.claimLease(id)
   if (claimed === false) return { ok: false, threadId: null }

@@ -535,20 +535,27 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             })
         }
         const sendCreate = (hostname?: string) => {
-          const sent = wsClient.send({
-            type: "chat.create",
-            thread_id: message.threadId,
-            message: message.message,
-            skill_ids: message.skillIds,
-            // F1: companion echoes this back as chat.user client_message_id so
-            // panels can adopt the persisted id onto the exact optimistic bubble.
-            clientMessageId,
-            ...(hostname ? { hostname } : {}),
-            ...(Array.isArray(message.context_refs) ? { context_refs: message.context_refs } : {}),
-          })
+          const frame =
+            message.steer === true
+              ? {
+                  type: "chat.steer" as const,
+                  thread_id: message.threadId,
+                  message: message.message,
+                }
+              : {
+                  type: "chat.create" as const,
+                  thread_id: message.threadId,
+                  message: message.message,
+                  skill_ids: message.skillIds,
+                  clientMessageId,
+                  ...(message.enqueue === true ? { enqueue: true } : {}),
+                  ...(hostname ? { hostname } : {}),
+                  ...(Array.isArray(message.context_refs) ? { context_refs: message.context_refs } : {}),
+                }
+          const sent = wsClient.send(frame)
           if (!sent) {
             chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
-          } else {
+          } else if (message.enqueue !== true) {
             echoUser(true)
           }
           sendResponse({ ok: sent })

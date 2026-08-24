@@ -450,7 +450,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     }
     if commandSelector == #selector(NSResponder.insertNewline(_:)) {
       if textView.hasMarkedText() { return false }
-      submitComposer()
+      let enqueue = NSEvent.modifierFlags.contains(.shift)
+      submitComposer(enqueue: enqueue)
       return true
     }
     return false
@@ -492,16 +493,20 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     relayout()
   }
 
-  private func submitComposer() {
+  private func submitComposer(enqueue: Bool = false) {
     let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return }
     if composer?.hasMarkedText() == true { return }
-    lines.append("你: \(text)")
-    capLines()
-    refreshLog()
+    if !enqueue {
+      lines.append("你: \(text)")
+      capLines()
+      refreshLog()
+    }
     composer?.string = ""
     updatePlaceholder()
-    jsonLine(["type": "summoner.submit", "thread_id": threadId, "text": text])
+    var payload: [String: Any] = ["type": "summoner.submit", "thread_id": threadId, "text": text]
+    if enqueue { payload["enqueue"] = true }
+    jsonLine(payload)
   }
 
   func applyDictate(_ text: String) {
