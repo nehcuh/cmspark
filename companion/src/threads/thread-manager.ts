@@ -240,9 +240,12 @@ export function trimMessagesTurnSafe<T extends { role: string; tool_calls?: unkn
       // Prefer over-cap (keep assistant+tools) over an empty tape.
       start = k < messages.length ? k : a
     } else {
+      // No assistant owner behind the block (orphan tool rows): scan forward
+      // for a non-tool boundary; when the whole suffix is tool rows keep the
+      // anchor side (a + block, over-cap) instead of a tool-leading window.
       let k = start
       while (k < messages.length && messages[k].role === "tool") k++
-      start = k < messages.length ? k : Math.max(0, messages.length - max)
+      start = k < messages.length ? k : a
     }
   }
   const kept = messages.slice(Math.max(0, start))

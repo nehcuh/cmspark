@@ -32,7 +32,7 @@ const SENSITIVE_CODE_TOOLS = new Set([
 
 const MCP_TOOL_PREFIX = "mcp__"
 const MCP_SENSITIVE_RESULT_RE = /(read|file|secret|token|key|env|credential|ssh|aws)/i
-const SENSITIVE_KEY_RE = /(secret|token|password|api[_-]?key|credential|private[_-]?key)/i
+const SENSITIVE_KEY_RE = /(secret|token|password|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)/i
 
 function shortHash(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex").slice(0, 12)
@@ -136,6 +136,30 @@ function collapseResult(result: unknown): { success?: boolean; redacted: true; l
 }
 
 /**
+ * Data-less error rows ({success:false, error, error_code?} — the shape of the
+ * INTERRUPTED heal fillers from tool-batch-heal) carry no sensitive payload.
+ * Sensitive branches below would rebuild the row without error_code (codeish) or
+ * collapse away error entirely (collapseResult), destroying the INTERRUPTED
+ * marker the heal/rebuild flow keys on. Returns the row verbatim, else null.
+ */
+function plainErrorResult(
+  result: unknown,
+): { success: false; error: string; error_code?: string } | null {
+  if (!result || typeof result !== "object") return null
+  const r = result as Record<string, unknown>
+  if (r.success !== false || typeof r.error !== "string") return null
+  if (r.data !== undefined) return null
+  // Reconstruct — never return the original object (extra keys like
+  // stdout / env / stack would otherwise persist next to INTERRUPTED).
+  const out: { success: false; error: string; error_code?: string } = {
+    success: false,
+    error: r.error,
+  }
+  if (typeof r.error_code === "string") out.error_code = r.error_code
+  return out
+}
+
+/**
  * Returns params + result safe for durable thread JSON (and content string).
  * Non-sensitive tools pass through (params deep-key scan only for MCP).
  */
@@ -156,7 +180,7 @@ export function redactToolPayloadForPersistence(
       ...(typeof p.max_hits === "number" ? { max_hits: p.max_hits } : {}),
       query: `<redacted:len=${q.length}:sha256=${shortHash(q)}>`,
     }
-    safeResult = collapseResult(result)
+    safeResult = plainErrorResult(result) ?? collapseResult(result)
     return { params: safeParams, result: safeResult }
   }
 
@@ -185,7 +209,7 @@ export function redactToolPayloadForPersistence(
     if (params && typeof params === "object") {
       safeParams = redactComputerParams(params as Record<string, unknown>)
     }
-    safeResult = collapseResult(result)
+    safeResult = plainErrorResult(result) ?? collapseResult(result)
     return { params: safeParams, result: safeResult }
   }
 
@@ -195,17 +219,25 @@ export function redactToolPayloadForPersistence(
     }
     // Keep success/error structure; collapse large data
     if (result && typeof result === "object") {
-      const r = result as Record<string, unknown>
-      const dataStr = r.data !== undefined ? JSON.stringify(r.data) : ""
-      safeResult = {
-        success: r.success,
-        error: typeof r.error === "string" && r.error.length > 200
-          ? r.error.slice(0, 200) + "…"
-          : r.error,
-        data:
-          dataStr.length > 200
-            ? { redacted: true, len: dataStr.length, sha256: shortHash(dataStr) }
-            : r.data,
+      const plainError = plainErrorResult(result)
+      if (plainError) {
+        // INTERRUPTED-style row: no data payload — keep error_code + error verbatim.
+        safeResult = plainError
+      } else {
+        const r = result as Record<string, unknown>
+        const dataStr = r.data !== undefined ? JSON.stringify(r.data) : ""
+        safeResult = {
+          success: r.success,
+          error: typeof r.error === "string" && r.error.length > 200
+            ? r.error.slice(0, 200) + "…"
+            : r.error,
+          // Always collapse payload for evaluate/shell/host_* — a 200-char
+          // cookie/source snippet is still a secret on disk.
+          data:
+            r.data !== undefined
+              ? { redacted: true, len: dataStr.length, sha256: shortHash(dataStr) }
+              : undefined,
+        }
       }
     }
     return { params: safeParams, result: safeResult }
@@ -216,7 +248,7 @@ export function redactToolPayloadForPersistence(
       safeParams = redactSensitiveKeysDeep(params)
     }
     if (MCP_SENSITIVE_RESULT_RE.test(name)) {
-      safeResult = collapseResult(result)
+      safeResult = plainErrorResult(result) ?? collapseResult(result)
     } else {
       safeResult = redactSensitiveKeysDeep(result)
     }

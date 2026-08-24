@@ -335,3 +335,33 @@ test("SummonerController hotkey picker lists occupied chords as labels not butto
   assert.match(choose, /summonerHotKeyStolen/)
   assert.match(choose, /return/)
 })
+
+test("summoner.submit failure is reported back to the overlay (no silent drop)", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const start = src.indexOf('case "summoner.submit"')
+  assert.ok(start >= 0, "summoner.submit branch missing")
+  const body = src.slice(start, start + 800)
+  // Swift appends "你：…" to its local transcript before sending; a failed
+  // submit (client down / lease claim failed) must produce summoner.error.
+  assert.match(body, /handleSummonerSubmit\(evt\.thread_id, evt\.text, evt\.enqueue === true\)/)
+  assert.match(body, /\.then\(\(ok\)/)
+  assert.match(body, /error_code: "submit_failed"/)
+  assert.match(body, /encodeSummonerError/)
+})
+
+test("menu-bar-agent drops stream cmds from threads the overlay is not showing", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const start = src.indexOf("summonerClient.onAppMessage")
+  assert.ok(start >= 0, "summonerClient.onAppMessage missing")
+  const body = src.slice(start, start + 1200)
+  assert.match(body, /mapChatMessageToSummonerCmd/)
+  assert.match(body, /summonerCmdMatchesThread\(cmd, summonerThreadId\)/)
+})
+
+test("menu-bar-agent stale overlay claims self-release and repair the live thread", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  assert.match(src, /releaseOverlayLeaseAtRev/)
+  assert.match(src, /onStaleClaim/)
+  assert.match(src, /reclaimLiveSummonerThread/)
+  assert.match(src, /released_siblings/)
+})

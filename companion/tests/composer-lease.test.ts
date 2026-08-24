@@ -10,6 +10,7 @@ import {
   stampCmsparkSurface,
   OVERLAY_STANDBY,
   claimOverlayLeaseCas,
+  releaseOverlayLeaseAtRev,
   releaseOverlayLeaseCas,
   shouldBroadcastLease,
   applySummonerComposerVisibility,
@@ -191,7 +192,11 @@ test("validate composer.lease.claim/release/get", () => {
 })
 
 test("message-router chat.create uses composer lease gate", () => {
-  const router = path.resolve(__dirname, "..", "..", "src", "message-router.ts")
+  const candidates = [
+    path.resolve(__dirname, "..", "src", "message-router.ts"),
+    path.resolve(__dirname, "..", "..", "src", "message-router.ts"),
+  ]
+  const router = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
   const src = fs.readFileSync(router, "utf8")
   assert.match(src, /gateChatCreateOnLease/)
   assert.match(src, /case "composer.lease.claim":/)
@@ -203,7 +208,11 @@ test("message-router chat.create uses composer lease gate", () => {
 })
 
 test("lifecycle stamps __cmspark_surface from auth after ACL", () => {
-  const life = path.resolve(__dirname, "..", "..", "src", "ws", "lifecycle.ts")
+  const candidates = [
+    path.resolve(__dirname, "..", "src", "ws", "lifecycle.ts"),
+    path.resolve(__dirname, "..", "..", "src", "ws", "lifecycle.ts"),
+  ]
+  const life = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
   const src = fs.readFileSync(life, "utf8")
   assert.match(src, /assertSummonerAllowed/)
   assert.match(src, /stampCmsparkSurface\s*\(/)
@@ -464,4 +473,91 @@ test("panel chat.create is OVERLAY_STANDBY on old thread until exclusive switch"
   r.claim({ thread_id: "neu", holder: "overlay", rev: 0 })
   assert.equal(gateChatCreateOnLease("old", "tray", r), null)
   assert.equal(gateChatCreateOnLease("neu", "tray", r)?.data.error_code, OVERLAY_STANDBY)
+})
+
+test("claimOverlayLeaseCas surfaces released_siblings so stale claims can repair them", async () => {
+  const r = new ComposerLeaseRegistry()
+  r.claim({ thread_id: "live", holder: "overlay", rev: 0 })
+  const result = await claimOverlayLeaseCas("stale", async (type, body) => {
+    return handleComposerLeaseFamily(type, { ...body, thread_id: body.thread_id ?? "stale" }, r)
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.state?.rev, 1)
+  // release bumps the demoted sibling's rev (claim at rev 0 → rev 1 → released rev 2)
+  assert.deepEqual(result.released_siblings, [{ thread_id: "live", holder: "panel", rev: 2 }])
+  // No sibling damage → empty list, still defined (fresh registry: the first
+  // claim above still holds "stale" as overlay, so "solo" would demote it)
+  const r2 = new ComposerLeaseRegistry()
+  const clean = await claimOverlayLeaseCas("solo", async (type, body) => {
+    return handleComposerLeaseFamily(type, { ...body, thread_id: body.thread_id ?? "solo" }, r2)
+  })
+  assert.equal(clean.ok, true)
+  assert.deepEqual(clean.released_siblings, [])
+})
+
+test("releaseOverlayLeaseAtRev returns the just-claimed thread to panel; stale rev is a safe no-op", async () => {
+  const r = new ComposerLeaseRegistry()
+  r.claim({ thread_id: "t1", holder: "overlay", rev: 0 }) // rev=1 overlay
+  const stale = await releaseOverlayLeaseAtRev("t1", 0, async (type, body) =>
+    handleComposerLeaseFamily(type, { ...body, thread_id: "t1" }, r),
+  )
+  assert.equal(stale.ok, false)
+  assert.equal(stale.error_code, "LEASE_REV_MISMATCH")
+  assert.equal(r.get("t1").holder, "overlay")
+  const ok = await releaseOverlayLeaseAtRev("t1", 1, async (type, body) =>
+    handleComposerLeaseFamily(type, { ...body, thread_id: "t1" }, r),
+  )
+  assert.equal(ok.ok, true)
+  assert.equal(r.get("t1").holder, "panel")
+  assert.equal(r.get("t1").rev, 2)
+})
+
+test("#219 dual summoner: closing one socket keeps overlay holds; closing the last releases", () => {
+  const r = new ComposerLeaseRegistry()
+  r.claim({ thread_id: "ov", holder: "overlay", rev: 0 })
+  // One authenticated summoner still online → nothing is released
+  assert.deepEqual(overlayLeasesOnSummonerDisconnect("summoner", r, 1), [])
+  assert.equal(r.get("ov").holder, "overlay")
+  // Last summoner gone → overlay holds drop back to panel
+  const released = overlayLeasesOnSummonerDisconnect("summoner", r, 0)
+  assert.equal(released.length, 1)
+  assert.equal(released[0].thread_id, "ov")
+  assert.equal(r.get("ov").holder, "panel")
+})
+
+test("#219 broadcastOverlayLeasesOnSocketClose skips release while a summoner survives", () => {
+  const r = new ComposerLeaseRegistry()
+  r.claim({ thread_id: "ov", holder: "overlay", rev: 0 })
+  const sentWhileSurviving: string[] = []
+  const n = broadcastOverlayLeasesOnSocketClose(
+    "summoner",
+    (msg) => sentWhileSurviving.push(msg.thread_id),
+    r,
+    2,
+  )
+  assert.equal(n, 0)
+  assert.deepEqual(sentWhileSurviving, [])
+  assert.equal(r.get("ov").holder, "overlay")
+  const sentAfterLast: string[] = []
+  const m = broadcastOverlayLeasesOnSocketClose(
+    "summoner",
+    (msg) => sentAfterLast.push(msg.thread_id),
+    r,
+    0,
+  )
+  assert.equal(m, 1)
+  assert.deepEqual(sentAfterLast, ["ov"])
+})
+
+test("#219 lifecycle close handler counts surviving authenticated summoner clients", () => {
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "src", "ws", "lifecycle.ts"),
+    path.resolve(__dirname, "..", "src", "ws", "lifecycle.ts"),
+  ]
+  const life = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
+  const src = fs.readFileSync(life, "utf8")
+  const close = src.slice(src.indexOf('ws.on("close"'), src.indexOf('ws.on("pong"'))
+  assert.match(close, /survivingSummoners/)
+  assert.match(close, /auth\?\.authenticated === true && auth\.surface === "summoner"/)
+  assert.match(close, /broadcastOverlayLeasesOnSocketClose\([\s\S]*survivingSummoners/)
 })

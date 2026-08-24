@@ -76,6 +76,25 @@ test("companion.ui.rect is a known WS type for daemon apply", () => {
   )
 })
 
+test("menu-bar-agent routes Swift rects by surface (pairing/tray/hud off the summoner socket)", () => {
+  const fs = require("node:fs") as typeof import("node:fs")
+  const path = require("node:path") as typeof import("node:path")
+  const candidates = [
+    path.resolve(__dirname, "..", "src", "menu-bar-agent.ts"),
+    path.resolve(__dirname, "..", "..", "src", "menu-bar-agent.ts"),
+  ]
+  const srcPath = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
+  const src = fs.readFileSync(srcPath, "utf8")
+  const start = src.indexOf("onCompanionUiRect?.(")
+  assert.ok(start >= 0, "onCompanionUiRect wiring missing")
+  const body = src.slice(start, start + 800)
+  // S23: Tray.swift's pairing/tray/hud rects are silently dropped by the
+  // daemon's summoner-surface allowSurfaces gate — they must be routed by
+  // surface instead of blindly forwarded over the summoner socket.
+  assert.match(body, /forwardCompanionUiRect/)
+  assert.doesNotMatch(body, /summonerClient\?\.sendAppMessage\("companion\.ui\.rect"/)
+})
+
 test("applyCompanionUiRectEvent updates and hides surfaces", () => {
   clearCompanionUiRects()
   assert.equal(

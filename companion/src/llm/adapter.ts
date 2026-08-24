@@ -37,9 +37,10 @@ import {
 import {
   createToolResultMessage,
   persistHealedToolRows,
+  replaceInterruptedFillerIfPresent,
 } from "./tool-batch-heal"
-import { isContextOverflowError, isTruncatedToolBatch } from "./overflow"
-import { dropSteer, takeSteer } from "./run-queues"
+import { isContextOverflowError, isLengthStop, isTruncatedToolBatch } from "./overflow"
+import { enqueueNextRun, takeSteer } from "./run-queues"
 
 export { createToolResultMessage }
 import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
@@ -901,7 +902,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
       const steered = takeSteer(threadId)
       if (steered.length) {
-        const steerText = steered.join("\n")
+        const steerText = steered.map((s) => s.text).join("\n")
+        // F1 adopt parity with the chat.create main path: the persisted user row
+        // keeps the companion id, and the chat.user echo carries client_message_id
+        // so the panel adopts it onto the optimistic bubble. Several steers join
+        // into one row — the first clientMessageId wins.
+        const steerClientMessageId = steered.find((s) => s.clientMessageId)?.clientMessageId
         const steerMsg = threadManager.addMessage(threadId, {
           thread_id: threadId,
           role: "user",
@@ -912,6 +918,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           type: "chat.user",
           thread_id: threadId,
           message_id: steerMsg.id,
+          ...(steerClientMessageId ? { client_message_id: steerClientMessageId } : {}),
           content: steerText,
         })
       }
@@ -985,11 +992,20 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         toolCalls.some((tc) => tc != null),
       )
       if (truncatedToolBatch) {
-        if (!lengthRecoveryUsed) {
+        // Byte-level retry only makes sense in auto mode; prompt never rewrites the
+        // request and off skips budgeting, so the retry would resend an identical
+        // oversized request and fail again — skip straight to mode semantics.
+        if (!lengthRecoveryUsed && compactionSetting === "auto") {
           lengthRecoveryUsed = true
           round--
-          await runContextBudgetPass("pre_loop")
+          // Mid-loop retry must compact with the live round pinned (mid_loop
+          // shrink); pre_loop could drop this round's rows instead.
+          await runContextBudgetPass("mid_loop")
           continue
+        }
+        if (compactionSetting === "prompt") {
+          // Notify-only pass (thread.context_compact_prompt); messages untouched.
+          await runContextBudgetPass("mid_loop")
         }
         sendToExtension({
           type: "chat.error",
@@ -1079,7 +1095,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           sendToExtension({
             type: "chat.token",
             thread_id: threadId,
-            content: `\n\n${TOOL_FORMAT_LEAK_USER_HINT_ZH}`,
+            // chat.token content is a full snapshot (the overlay chain assumes
+            // cumulative text), so send accumulated content + hint — not just the
+            // hint fragment, which would visually replace the reply.
+            content: `${assistantContent}\n\n${TOOL_FORMAT_LEAK_USER_HINT_ZH}`,
           })
           sendToExtension({
             type: "chat.tool_format_warning",
@@ -1099,6 +1118,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           message_id: savedAssistant.id,
           ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
           ...(leak ? { tool_format_leak: true } : {}),
+          // Length-stop with no tool_call deltas = pure-text truncation. The reply
+          // is kept as-is but flagged (optional, backward-compatible) so the UI can
+          // hint the answer was cut off instead of looking complete.
+          ...(isLengthStop(finishReason) ? { truncated: true } : {}),
         })
         // Best-effort auto-alias: generate a short title if thread has no alias yet
         generateThreadTitle({ threadId, threadManager, config, sendToExtension })
@@ -1383,7 +1406,15 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             shouldStop = true
             break
           }
-          threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, toolResult, params))
+          const realResultRow = createToolResultMessage(threadId, tc, toolResult, params)
+          // Supersede race: the successor run's entry heal may have persisted an
+          // INTERRUPTED filler for this id while we were blocked in executeTool.
+          // Replace the filler in place — an EOF append would orphan the real row
+          // (rebuild skips it) and tell the model the call was interrupted, which
+          // can trigger a duplicate of an already-successful side effect.
+          if (!replaceInterruptedFillerIfPresent(threadManager, threadId, tc.id, realResultRow, savedAssistantId)) {
+            threadManager.addMessage(threadId, realResultRow)
+          }
           if (signal?.aborted) {
             const err = new Error("aborted")
             err.name = "AbortError"
@@ -1572,7 +1603,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             stack: e.stack,
           })
           const result = { success: false, error: e.message || String(e) }
-          threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, result, params))
+          // Same supersede-filler race as the success path above: replace, not append.
+          const exceptionRow = createToolResultMessage(threadId, tc, result, params)
+          if (!replaceInterruptedFillerIfPresent(threadManager, threadId, tc.id, exceptionRow, savedAssistantId)) {
+            threadManager.addMessage(threadId, exceptionRow)
+          }
           sendToExtension({
             type: "chat.error",
             thread_id: threadId,
@@ -1618,17 +1653,26 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
       const errorMsg = e.message || String(e)
       if (isContextOverflowError(errorMsg)) {
-        if (!overflowRecoveryUsed) {
+        // Byte-level retry only makes sense in auto mode (see truncated-batch path).
+        if (!overflowRecoveryUsed && compactionSetting === "auto") {
           overflowRecoveryUsed = true
           logger.warn("llm.overflow_retry", { thread_id: threadId, error: errorMsg.slice(0, 200) })
           round--
-          await runContextBudgetPass("pre_loop")
+          // Mid-loop retry must compact with the live round pinned (mid_loop
+          // shrink); pre_loop could drop this round's rows instead.
+          await runContextBudgetPass("mid_loop")
           continue
+        }
+        if (compactionSetting === "prompt") {
+          // Notify-only pass (thread.context_compact_prompt); messages untouched.
+          await runContextBudgetPass("mid_loop")
         }
         sendToExtension({
           type: "chat.error",
           thread_id: threadId,
-          error: "上下文溢出，压缩重试后仍失败，已停止。",
+          error: compactionSetting === "auto"
+            ? "上下文溢出，压缩重试后仍失败，已停止。"
+            : "上下文溢出，已停止（当前上下文压缩模式不会自动压缩请求）。",
         })
         return
       }
@@ -1702,9 +1746,31 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     error: `达到最大工具调用轮次 (${MAX_TOOL_CALL_ROUNDS})，已暂停。`,
   })
   } finally {
+    if (!signal?.aborted) {
+      // Normal (non-abort) finish: steers that arrived during the final streaming
+      // round were already acked (chat.steered) but are never consumed — dropping
+      // them here would silently lose user messages. Convert the remainder into a
+      // queued next run instead: the router drains nextRun right after chatCreate
+      // returns, and this finally runs before that drain.
+      // Queue full (MAX_NEXT_RUN): warn + drop — bounded loss beats an unbounded
+      // in-memory queue, and the steer queue itself is likewise capped.
+      const leftover = takeSteer(threadId)
+      if (leftover.length) {
+        const text = leftover.map((s) => s.text).join("\n")
+        if (!enqueueNextRun(threadId, text)) {
+          logger.warn("llm.steer_leftover_dropped", {
+            thread_id: threadId,
+            count: leftover.length,
+            reason: "next_run_queue_full",
+          })
+          // leftover is already off the steer queue (takeSteer). Do not
+          // dropSteer: that would wipe steers enqueued after the take
+          // (successor / concurrent chat.steer). Bounded loss = this leftover.
+        }
+      }
+    }
     // Abort/supersede: abortThreadChat drops all steers. Skip here so a
     // superseded predecessor cannot wipe successor steers enqueued during drain.
-    if (!signal?.aborted) dropSteer(threadId)
   }
 }
 

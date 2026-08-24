@@ -302,12 +302,41 @@ export async function applySummonerComposerVisibility(args: {
   return claimOverlayLeaseCas(threadId, args.rpc)
 }
 
-/** Summoner socket death drops every overlay hold so Side Panel is not stuck. */
+/**
+ * Single-shot CAS release with a known rev: a stale overlay claim unwinds the
+ * lease it just took. Rev mismatch (a newer claim landed meanwhile) is a safe
+ * no-op, never a steal.
+ */
+export async function releaseOverlayLeaseAtRev(
+  threadId: string,
+  rev: number,
+  rpc: LeaseRpc,
+): Promise<{ ok: boolean; error_code?: string }> {
+  try {
+    const released = await rpc("composer.lease.release", { thread_id: threadId, rev })
+    if (released?.type === "composer.lease" && released.holder === "panel") {
+      return { ok: true }
+    }
+    return {
+      ok: false,
+      error_code: typeof released?.error_code === "string" ? released.error_code : "LEASE_RELEASE_FAILED",
+    }
+  } catch {
+    return { ok: false, error_code: "LEASE_RELEASE_FAILED" }
+  }
+}
+
+/** Summoner socket death drops every overlay hold so Side Panel is not stuck.
+ *  #219: the Swift overlay and the C-thin web shell can both be online as
+ *  surface=summoner — while another summoner survives, one socket's death
+ *  must not kill the other's leases. */
 export function overlayLeasesOnSummonerDisconnect(
   surface: string | undefined,
   registry: ComposerLeaseRegistry = composerLeases,
+  survivingSummoners = 0,
 ): ComposerLeaseState[] {
   if (surface !== "summoner") return []
+  if (survivingSummoners > 0) return []
   return registry.releaseAllOverlay()
 }
 
@@ -320,8 +349,9 @@ export function broadcastOverlayLeasesOnSocketClose(
     rev: number
   }) => void,
   registry: ComposerLeaseRegistry = composerLeases,
+  survivingSummoners = 0,
 ): number {
-  const released = overlayLeasesOnSummonerDisconnect(surface, registry)
+  const released = overlayLeasesOnSummonerDisconnect(surface, registry, survivingSummoners)
   for (const state of released) {
     broadcast({
       type: "composer.lease",
@@ -355,7 +385,13 @@ export async function claimOverlayLeaseCas(
   threadId: string,
   rpc: LeaseRpc,
   attempts = 3,
-): Promise<{ ok: boolean; state?: ComposerLeaseState; error_code?: string }> {
+): Promise<{
+  ok: boolean
+  state?: ComposerLeaseState
+  /** Sibling overlay holds this claim demoted — stale claims must repair them. */
+  released_siblings?: ComposerLeaseState[]
+  error_code?: string
+}> {
   let rev: number | undefined
   for (let i = 0; i < attempts; i++) {
     if (rev == null) {
@@ -379,6 +415,9 @@ export async function claimOverlayLeaseCas(
           holder: "overlay",
           rev: claim.rev,
         },
+        released_siblings: Array.isArray(claim.released_siblings)
+          ? (claim.released_siblings as ComposerLeaseState[])
+          : [],
       }
     }
     return { ok: false, error_code: typeof claim?.error_code === "string" ? claim.error_code : "LEASE_CLAIM_FAILED" }

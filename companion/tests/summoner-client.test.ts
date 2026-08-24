@@ -12,6 +12,7 @@ import {
   CONTINUE_MESSAGE,
   ATTACH_NOTIFY_COPY,
   filterThreadsByTitle,
+  forwardCompanionUiRect,
   mapChatMessageToSummonerCmd,
   overlayAssistantSnapshot,
   mapVoiceSttToSummonerCmd,
@@ -24,6 +25,7 @@ import {
   shouldStartNewSummonerThread,
   normalizeResumeIdleMinutes,
   summonerBrowserBadge,
+  summonerCmdMatchesThread,
   resolveSummonerOpenTarget,
 } from "../src/summoner/client"
 import { SUMMONER_SEARCH_HINT } from "../src/summoner/protocol"
@@ -108,14 +110,80 @@ test("overlayAssistantSnapshot replaces accumulated chat.token instead of concat
   assert.deepEqual(c, ["你: hi", "助手: Hello\n\n- item"])
 })
 
-test("mapChatMessageToSummonerCmd: chat.token → summoner.token", () => {
+// Semantics change: token/done cmds now carry thread_id (they used to drop
+// it) so the Node forwarder and the Swift overlay can filter cross-thread
+// stream frames.
+test("mapChatMessageToSummonerCmd: chat.token → summoner.token keeps thread_id", () => {
   const cmd = mapChatMessageToSummonerCmd({ type: "chat.token", thread_id: "t", content: "hello" })
-  assert.deepEqual(cmd, { cmd: "summoner.token", text: "hello" })
+  assert.deepEqual(cmd, { cmd: "summoner.token", text: "hello", thread_id: "t" })
 })
 
-test("mapChatMessageToSummonerCmd: chat.done → summoner.done", () => {
+test("mapChatMessageToSummonerCmd: chat.done → summoner.done keeps thread_id", () => {
   const cmd = mapChatMessageToSummonerCmd({ type: "chat.done", thread_id: "t", message_id: "m1" })
-  assert.deepEqual(cmd, { cmd: "summoner.done" })
+  assert.deepEqual(cmd, { cmd: "summoner.done", thread_id: "t" })
+})
+
+test("mapChatMessageToSummonerCmd: frames without thread_id stay untagged", () => {
+  assert.deepEqual(mapChatMessageToSummonerCmd({ type: "chat.token", content: "x" }), {
+    cmd: "summoner.token",
+    text: "x",
+  })
+  assert.deepEqual(mapChatMessageToSummonerCmd({ type: "chat.done" }), { cmd: "summoner.done" })
+})
+
+test("summonerCmdMatchesThread drops tagged cmds for other threads, passes untagged", () => {
+  assert.equal(summonerCmdMatchesThread({ thread_id: "a" }, "a"), true)
+  assert.equal(summonerCmdMatchesThread({ thread_id: "a" }, "b"), false)
+  assert.equal(summonerCmdMatchesThread({ thread_id: "a" }, null), false)
+  assert.equal(summonerCmdMatchesThread({}, null), true)
+  assert.equal(summonerCmdMatchesThread({}, "a"), true)
+})
+
+test("forwardCompanionUiRect: pairing/tray/hud ride the tray socket, never the summoner socket", () => {
+  const sent: string[] = []
+  const clients = (summonerOk: boolean, companionOk: boolean) => ({
+    summoner: {
+      sendAppMessage: (type: string) => {
+        sent.push(`summoner:${type}`)
+        return summonerOk
+      },
+    },
+    companion: {
+      sendAppMessage: (type: string) => {
+        sent.push(`companion:${type}`)
+        return companionOk
+      },
+    },
+  })
+  // Tray.swift's native windows are dropped by the daemon's summoner-surface
+  // allowSurfaces=["overlay"] gate — they must go over the tray socket.
+  sent.length = 0
+  assert.equal(
+    forwardCompanionUiRect({ type: "companion.ui.rect", surface: "hud", x: 0, y: 0 }, clients(true, true)),
+    true,
+  )
+  assert.deepEqual(sent, ["companion:companion.ui.rect"])
+  // …even when the tray socket is down (summoner would silently drop it)
+  sent.length = 0
+  assert.equal(
+    forwardCompanionUiRect({ type: "companion.ui.rect", surface: "pairing" }, clients(true, false)),
+    false,
+  )
+  assert.deepEqual(sent, ["companion:companion.ui.rect"]) // no summoner attempt
+  // overlay prefers the summoner socket (its ACL gate allows surface=overlay)
+  sent.length = 0
+  assert.equal(
+    forwardCompanionUiRect({ type: "companion.ui.rect", surface: "overlay", x: 1, y: 2 }, clients(true, true)),
+    true,
+  )
+  assert.deepEqual(sent, ["summoner:companion.ui.rect"])
+  // overlay falls back to the tray socket when the summoner socket is down
+  sent.length = 0
+  assert.equal(
+    forwardCompanionUiRect({ type: "companion.ui.rect", surface: "overlay" }, clients(false, true)),
+    true,
+  )
+  assert.deepEqual(sent, ["summoner:companion.ui.rect", "companion:companion.ui.rect"])
 })
 
 test("mapChatMessageToSummonerCmd: tool.start → summoner.tool", () => {

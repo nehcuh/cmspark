@@ -35,7 +35,7 @@ test("enqueueSteer trims and ignores empty/whitespace", () => {
   enqueueSteer("t1", "   ")
   enqueueSteer("t1", "")
   enqueueSteer("t1", "  focus tests  ")
-  assert.deepEqual(takeSteer("t1"), ["focus tests"])
+  assert.deepEqual(takeSteer("t1"), [{ text: "focus tests" }])
 })
 
 test("steer caps at MAX_STEER and reports false when full", () => {
@@ -55,4 +55,27 @@ test("nextRun survives dropSteer (abort analog)", () => {
   assert.equal(peekNextRunCount("t1"), 1)
   assert.equal(takeNextRun("t1"), "after this run")
   assert.equal(takeNextRun("t1"), undefined)
+})
+
+test("steer entries carry clientMessageId through enqueue/take (D6)", () => {
+  _resetRunQueuesForTests()
+  enqueueSteer("t1", "first", "cm-1")
+  enqueueSteer("t1", "second")
+  enqueueSteer("t1", "third", "cm-3")
+  assert.deepEqual(takeSteer("t1"), [
+    { text: "first", clientMessageId: "cm-1" },
+    { text: "second" },
+    { text: "third", clientMessageId: "cm-3" },
+  ])
+  // Queue fully drained by takeSteer.
+  assert.deepEqual(takeSteer("t1"), [])
+})
+
+test("enqueueSteer without clientMessageId stores text-only entries", () => {
+  _resetRunQueuesForTests()
+  enqueueSteer("t1", "plain")
+  const items = takeSteer("t1")
+  assert.equal(items.length, 1)
+  assert.equal(items[0].text, "plain")
+  assert.equal("clientMessageId" in items[0], false)
 })

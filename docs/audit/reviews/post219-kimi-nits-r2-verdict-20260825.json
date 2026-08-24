@@ -1,0 +1,20 @@
+{
+  "batch": "post219-kimi-nits-r2",
+  "date": "2026-08-25",
+  "blast_tier": "T2",
+  "head": "c5b4242",
+  "machine": "PASS",
+  "machine_notes": "tsc --noEmit 0; adapter-steer-overflow 13/13; nextrun-drain 11/11; r2 lanes re-ran suites green",
+  "adversary_r1": "A REJECT, B APPROVE_WITH_NITS, C REJECT, D REJECT",
+  "adversary_r2": {
+    "A": "APPROVE_WITH_NITS",
+    "B": "APPROVE",
+    "C": "APPROVE_WITH_NITS",
+    "D": "APPROVE_WITH_NITS"
+  },
+  "pi_rereview": "APPROVE_WITH_NITS",
+  "kimi_rereview": "SKIPPED",
+  "kimi_notes": "kimi.exe 403 usage limit this billing cycle",
+  "merge": "YES_ON_BRANCH",
+  "reason": "T2: r2 all APPROVE* and Pi APPROVE_WITH_NITS. Residuals documented nits only. Do not commit to main; branch per batch."
+}
