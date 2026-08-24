@@ -80,6 +80,23 @@ export type PendingToolCall = {
 // and double-resolution behavior. Production code uses the Map directly.
 export const pendingToolCalls = new Map<string, PendingToolCall>()
 
+/** Snapshot DTO: names/ids only — never args, originWs, or confirm nonce. */
+export function listPendingToolsForThread(
+  threadId: string,
+): Array<{ tool_call_id: string; tool_name: string; status: "running" }> {
+  const out: Array<{ tool_call_id: string; tool_name: string; status: "running" }> = []
+  if (!threadId) return out
+  for (const [id, pending] of pendingToolCalls) {
+    if (pending.thread_id !== threadId) continue
+    out.push({
+      tool_call_id: id,
+      tool_name: pending.tool_name || "",
+      status: "running",
+    })
+  }
+  return out
+}
+
 /** Reject in-flight extension tools owned by a thread (worker-cancel / lease drain). */
 export function rejectPendingForThread(
   threadId: string,

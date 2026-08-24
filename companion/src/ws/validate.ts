@@ -36,6 +36,18 @@ export function validateWsMessage(msg: any): WsValidationResult {
         if (!Array.isArray(m.context_refs)) return { valid: false, error: "context_refs must be an array" }
         if (m.context_refs.length > 8) return { valid: false, error: "context_refs max 8" }
       }
+      if (m.enqueue !== undefined && typeof m.enqueue !== "boolean") {
+        return { valid: false, error: "enqueue must be a boolean" }
+      }
+      return { valid: true }
+    },
+    "chat.steer": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "chat.steer requires thread_id" }
+      }
+      if (typeof m.message !== "string" || !m.message.trim()) {
+        return { valid: false, error: "empty_steer" }
+      }
       return { valid: true }
     },
     "chat.abort": (m) => {

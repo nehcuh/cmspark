@@ -12,6 +12,7 @@ const SUMMONER_ALLOW = new Set([
   "system.ping",
   "chat.create",
   "chat.abort",
+  "chat.steer",
   "thread.list",
   "thread.select",
   "thread.create",

@@ -31,6 +31,15 @@ import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, isMaskedApiKey, DATA_DIR } from "./config"
 import { chatCreate, generateThreadTitle } from "./llm/adapter"
+import {
+  MAX_NEXT_RUN,
+  MAX_STEER,
+  dropSteer,
+  enqueueNextRun,
+  enqueueSteer,
+  takeNextRun,
+} from "./llm/run-queues"
+import { listPendingToolsForThread } from "./ws/tool-forward"
 
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
@@ -145,8 +154,10 @@ export function abortThreadChat(threadId: string): boolean {
     llmLoopGeneration.set(threadId, (llmLoopGeneration.get(threadId) || 0) + 1)
     // Free gate here: finally will CAS-skip release after generation bump.
     releaseMultiAgentLlmLoop(threadId)
+    dropSteer(threadId)
     return true
   }
+  dropSteer(threadId)
   return false
 }
 
@@ -335,6 +346,26 @@ export async function handleMessage(
         }
       }
 
+      if (rest.enqueue === true && abortControllers.has(rest.thread_id)) {
+        const text = typeof rest.message === "string" ? rest.message.trim() : ""
+        if (!text) {
+          return { type: "error", error: "empty_enqueue", thread_id: rest.thread_id }
+        }
+        if (!enqueueNextRun(rest.thread_id, text)) {
+          return {
+            type: "error",
+            error: "queue_full",
+            thread_id: rest.thread_id,
+            max: MAX_NEXT_RUN,
+          }
+        }
+        return {
+          type: "chat.enqueued",
+          thread_id: rest.thread_id,
+          queue: "next_run",
+        }
+      }
+
       // P0 CORR-01: claim slot SYNCHRONOUSLY before any await so dual WS handlers
       // cannot both install controllers (orphan double LLM).
       const myGeneration = nextLlmGeneration(rest.thread_id)
@@ -493,7 +524,48 @@ export async function handleMessage(
           releaseMultiAgentLlmLoop(rest.thread_id)
         }
       }
+      // Only the generation that still owns the thread may drain nextRun.
+      // A superseded/aborted predecessor must not steal the queue and
+      // chat.create the successor (that reintroduces supersede).
+      if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
+        const queued = takeNextRun(rest.thread_id)
+        if (queued) {
+          return handleMessage(
+            { type: "chat.create", thread_id: rest.thread_id, message: queued },
+            services,
+            session,
+          )
+        }
+      }
       return null // chatCreate handles streaming internally
+    }
+
+    case "chat.steer": {
+      if (!rest.thread_id || typeof rest.message !== "string") {
+        return { type: "error", error: "chat.steer requires thread_id and message" }
+      }
+      const steerText = rest.message.trim()
+      if (!steerText) {
+        return { type: "error", error: "empty_steer", thread_id: rest.thread_id }
+      }
+      if (!abortControllers.has(rest.thread_id)) {
+        return { type: "error", error: "no_active_run", thread_id: rest.thread_id }
+      }
+      {
+        const leaseErr = gateChatCreateOnLease(rest.thread_id, stampedSurface)
+        if (leaseErr) return leaseErr
+        const conductorErr = gateChatCreateOnConductor(rest.thread_id, stampedSurface)
+        if (conductorErr) return conductorErr
+      }
+      if (!enqueueSteer(rest.thread_id, steerText)) {
+        return {
+          type: "error",
+          error: "steer_queue_full",
+          thread_id: rest.thread_id,
+          max: MAX_STEER,
+        }
+      }
+      return { type: "chat.steered", thread_id: rest.thread_id }
     }
 
     case "file.upload": {
@@ -1728,12 +1800,19 @@ export async function handleMessage(
           : abortControllers.has(rest.thread_id)
             ? "llm"
             : "idle"
+      let pending_tools:
+        | Array<{ tool_call_id: string; tool_name: string; status: "running" }>
+        | undefined
+      if (stampedSurface !== "summoner") {
+        pending_tools = listPendingToolsForThread(rest.thread_id)
+      }
       return {
         type: "thread.messages",
         messages: threadManager.getMessages(rest.thread_id),
         thread_id: rest.thread_id,
         trashed: !!thr.trashed_at,
         ...(run_status ? { run_status } : {}),
+        ...(pending_tools ? { pending_tools } : {}),
       }
     }
     case "thread.fork": {

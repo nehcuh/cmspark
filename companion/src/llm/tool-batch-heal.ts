@@ -146,6 +146,10 @@ export function persistHealedToolRows(
   threadId: string,
   error?: string,
   assistantId?: string,
+  onPersisted?: (
+    missing: MissingToolCall,
+    result: { success: false; error: string; error_code: string },
+  ) => void,
 ): number {
   const history = tm.getMessages(threadId) as DiskMessage[]
   const idx = assistantId
@@ -154,17 +158,25 @@ export function persistHealedToolRows(
   if (idx < 0 || history[idx].role !== "assistant") return 0
   const missing = unpairedToolCallsFromAssistant(history[idx], history.slice(idx + 1))
   if (missing.length === 0) return 0
-  const rowFor = (m: MissingToolCall): DiskMessage =>
-    createToolResultMessage(
-      threadId,
-      { id: m.id, function: { name: m.toolName, arguments: m.args } },
-      { success: false, error: error || "interrupted", error_code: INTERRUPTED_ERROR_CODE },
-      {},
-    ) as DiskMessage
   const assistantIdResolved = history[idx].id
   let insertAt = toolBlockInsertIndex(history, idx)
   for (const m of missing) {
-    tm.insertMessageAt(threadId, insertAt, rowFor(m))
+    const result = {
+      success: false as const,
+      error: error || "interrupted",
+      error_code: INTERRUPTED_ERROR_CODE,
+    }
+    tm.insertMessageAt(
+      threadId,
+      insertAt,
+      createToolResultMessage(
+        threadId,
+        { id: m.id, function: { name: m.toolName, arguments: m.args } },
+        result,
+        {},
+      ) as DiskMessage,
+    )
+    onPersisted?.(m, result)
     // Re-read: cap-trim can shift indexes so insertAt++ would land after a later user.
     const now = tm.getMessages(threadId) as DiskMessage[]
     const asstNow = assistantIdResolved

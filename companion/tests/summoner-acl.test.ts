@@ -45,6 +45,7 @@ test("tray surface does not use summoner allowlist", () => {
 test("summoner allows remaining S21 methods", () => {
   for (const t of [
     "chat.abort",
+    "chat.steer",
     "thread.list",
     "thread.select",
     "thread.create",

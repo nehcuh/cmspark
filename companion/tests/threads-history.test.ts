@@ -8,6 +8,7 @@ import * as path from "node:path"
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-threads-history-"))
 
 let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
+let trimMessagesTurnSafe: typeof import("../src/threads/thread-manager").trimMessagesTurnSafe
 let HistoryStore: typeof import("../src/history/store").HistoryStore
 let getConfigDir: typeof import("../src/config").getConfigDir
 let initDataDir: typeof import("../src/config").initDataDir
@@ -21,6 +22,7 @@ before(async () => {
   const configMod = await import("../src/config")
 
   ThreadManager = threadManagerMod.ThreadManager
+  trimMessagesTurnSafe = threadManagerMod.trimMessagesTurnSafe
   HistoryStore = historyMod.HistoryStore
   getConfigDir = configMod.getConfigDir
   initDataDir = configMod.initDataDir
@@ -319,6 +321,44 @@ describe("ThreadManager - Abnormal/Boundary Paths", () => {
     const msg = tm.addMessage(thread.id, { thread_id: thread.id, role: "user", content: "hello" })
     assert.ok(msg.id, "should still create message")
     assert.ok(fs.existsSync(threadFile), "should recreate file")
+  })
+
+  test("trimMessagesTurnSafe does not start on a tool row", () => {
+    const msgs = [
+      { role: "user", content: "u0" },
+      { role: "assistant", tool_calls: [{ id: "a" }] },
+      { role: "tool", content: "t0" },
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "ok" },
+    ]
+    const kept = trimMessagesTurnSafe(msgs, 3)
+    assert.ok(kept[0].role !== "tool", "must not start mid tool-block")
+    assert.ok(
+      !(kept[0].role === "assistant" && kept[1]?.role !== "tool" && (kept[0] as any).tool_calls?.length),
+    )
+  })
+
+  test("trimMessagesTurnSafe skips orphan tool rows at the cut", () => {
+    const msgs = [
+      { role: "user", content: "u0" },
+      { role: "tool", content: "orphan" },
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "u2" },
+    ]
+    const kept = trimMessagesTurnSafe(msgs, 4)
+    assert.ok(kept[0].role !== "tool", "orphan tool at cut must be dropped")
+    assert.equal(kept[0].content, "u1")
+  })
+
+  test("trimMessagesTurnSafe never returns empty for a non-empty tape", () => {
+    const msgs = [
+      { role: "assistant", tool_calls: [{ id: "a" }] },
+      ...Array.from({ length: 5 }, (_, i) => ({ role: "tool", content: `t${i}` })),
+    ]
+    const kept = trimMessagesTurnSafe(msgs, 3)
+    assert.ok(kept.length > 0, "must not persist an empty thread")
+    assert.equal(kept[0].role, "assistant")
   })
 
   test("addMessage trims messages when exceeding cap", () => {

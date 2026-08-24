@@ -14,6 +14,8 @@ let getConfig: typeof import("../../src/config").getConfig
 let saveConfig: typeof import("../../src/config").saveConfig
 let ThreadManager: typeof import("../../src/threads/thread-manager").ThreadManager
 let handleMessage: typeof import("../../src/message-router").handleMessage
+let __testSetLlmActiveForTests: typeof import("../../src/message-router").__testSetLlmActiveForTests
+let abortThreadChat: typeof import("../../src/message-router").abortThreadChat
 let isTrustedDomain: typeof import("../../src/security").isTrustedDomain
 let checkHighRiskExecution: typeof import("../../src/security").checkHighRiskExecution
 let detectDangerousApis: typeof import("../../src/security").detectDangerousApis
@@ -61,6 +63,8 @@ before(async () => {
   saveConfig = config.saveConfig
   ThreadManager = threadManager.ThreadManager
   handleMessage = messageRouter.handleMessage
+  __testSetLlmActiveForTests = messageRouter.__testSetLlmActiveForTests
+  abortThreadChat = messageRouter.abortThreadChat
   isTrustedDomain = security.isTrustedDomain
   checkHighRiskExecution = security.checkHighRiskExecution
   detectDangerousApis = security.detectDangerousApis
@@ -313,6 +317,121 @@ test("message-router: thread.select omits run_status for summoner surface", asyn
   )
   assert.equal(response.type, "thread.messages")
   assert.equal(response.run_status, undefined)
+  assert.equal(response.pending_tools, undefined)
+})
+
+test("message-router: chat.steer without active run is rejected", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Steer Idle" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  const response = await handleMessage(
+    { type: "chat.steer", thread_id: created.thread.id, message: "focus tests" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  assert.equal(response.error, "no_active_run")
+})
+
+test("message-router: chat.steer whitespace is rejected", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Steer Space" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  const tid = created.thread.id
+  __testSetLlmActiveForTests(tid, true)
+  try {
+    const response = await handleMessage(
+      { type: "chat.steer", thread_id: tid, message: "   " },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+    )
+    assert.equal(response.error, "empty_steer")
+  } finally {
+    __testSetLlmActiveForTests(tid, false)
+  }
+})
+
+test("message-router: enqueue while busy rejects empty and reports queue_full", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Enqueue Caps" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  const tid = created.thread.id
+  const { MAX_NEXT_RUN, _resetRunQueuesForTests } = await import("../../src/llm/run-queues")
+  _resetRunQueuesForTests()
+  __testSetLlmActiveForTests(tid, true)
+  const session = {
+    sendToExtension: () => {},
+    executeTool: async () => ({ success: true }),
+  } as any
+  try {
+    const empty = await handleMessage(
+      { type: "chat.create", thread_id: tid, message: "  ", enqueue: true },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+      session,
+    )
+    assert.equal(empty.error, "empty_enqueue")
+    for (let i = 0; i < MAX_NEXT_RUN; i++) {
+      const ok = await handleMessage(
+        { type: "chat.create", thread_id: tid, message: `m${i}`, enqueue: true },
+        { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+        session,
+      )
+      assert.equal(ok.type, "chat.enqueued")
+    }
+    const full = await handleMessage(
+      { type: "chat.create", thread_id: tid, message: "one too many", enqueue: true },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+      session,
+    )
+    assert.equal(full.error, "queue_full")
+    abortThreadChat(tid)
+    const { peekNextRunCount } = await import("../../src/llm/run-queues")
+    assert.equal(peekNextRunCount(tid), MAX_NEXT_RUN, "abort must not drain nextRun")
+  } finally {
+    __testSetLlmActiveForTests(tid, false)
+    _resetRunQueuesForTests()
+  }
+})
+
+test("message-router: chat.steer is lease-gated like chat.create", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Steer Lease" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  const tid = created.thread.id
+  const { composerLeases } = await import("../../src/ws/composer-lease")
+  const before = composerLeases.get(tid)
+  composerLeases.claim({ thread_id: tid, holder: "overlay", rev: before.rev })
+  __testSetLlmActiveForTests(tid, true)
+  try {
+    const response = await handleMessage(
+      { type: "chat.steer", thread_id: tid, message: "focus tests", __cmspark_surface: "tray" },
+      { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+    )
+    assert.equal(response.data?.error_code, "OVERLAY_STANDBY")
+  } finally {
+    const cur = composerLeases.get(tid)
+    composerLeases.release({ thread_id: tid, rev: cur.rev })
+    __testSetLlmActiveForTests(tid, false)
+  }
+})
+
+test("message-router: thread.select pending_tools is an array for panel", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Pending Tools" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  const response = await handleMessage(
+    { type: "thread.select", thread_id: created.thread.id },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  assert.ok(Array.isArray(response.pending_tools))
+  assert.equal(response.pending_tools.length, 0)
 })
 
 test("message-router: thread.select does not persist INTERRUPTED heal rows", async () => {

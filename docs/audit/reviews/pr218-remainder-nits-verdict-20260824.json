@@ -1,0 +1,13 @@
+{
+  "batch": "pr218-remainder-nits",
+  "pr": 218,
+  "blast_tier": "T2",
+  "date": "2026-08-24",
+  "machine": "PASS",
+  "machine_notes": "tsc --noEmit 0; related suite 216 pass / 0 fail",
+  "adversary": "APPROVE_WITH_NITS",
+  "adversary_r2": "APPROVE_WITH_NITS",
+  "pi_rereview": "APPROVE_WITH_NITS",
+  "merge": "NO",
+  "reason": "T2: adversary+Pi APPROVE_WITH_NITS; human must click-merge. Remainder: overflow retry-once, steer/nextRun CAS, turn-safe trim, pending_tools DTO, nits folded. Residuals: N9 length compact may not help, R2-N2 over-cap, R2-N3 finish_reason-only, R2-N4 no adapter-loop test. Not in slice: Continue UI, persist running=true, pending_confirms, lanes/op-log."
+}
