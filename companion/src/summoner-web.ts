@@ -163,6 +163,35 @@ export function summonerWebPageUrl(port: number, token: string): string {
   return `http://127.0.0.1:${port}/?token=${token}`
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  run_active: "本轮还在跑 · 回车纠偏或排队",
+  queue_full: "排队已满（最多 8 条）",
+  steer_queue_full: "纠偏队列已满",
+  idle_enqueue: "空闲时直接发送，不必排队",
+  OVERLAY_STANDBY: "侧栏占用了输入",
+  LEASE_REV_MISMATCH: "侧栏占用了输入",
+  LEASE_HOLDER_SURFACE_MISMATCH: "侧栏占用了输入",
+}
+
+/** Map router/SSE errors to overlay copy. Keys `data.error_code`, not the English `error` sentence. */
+export function summonerWebEventStatus(msg: unknown): string {
+  if (!msg || typeof msg !== "object" || Array.isArray(msg)) return "出错了"
+  const m = msg as Record<string, unknown>
+  const data = m.data && typeof m.data === "object" && !Array.isArray(m.data)
+    ? (m.data as Record<string, unknown>)
+    : {}
+  const raw = String(m.error_code || data.error_code || m.error || "")
+  const code = raw.includes("OVERLAY_STANDBY")
+    ? "OVERLAY_STANDBY"
+    : raw.includes("LEASE_REV_MISMATCH")
+      ? "LEASE_REV_MISMATCH"
+      : raw
+  if (STATUS_LABELS[code]) return STATUS_LABELS[code]
+  if (typeof m.error === "string" && m.error.trim()) return m.error
+  if (typeof m.message === "string" && m.message.trim()) return m.message
+  return "出错了"
+}
+
 export function pushSummonerWebEvent(msg: unknown): boolean {
   if (!msg || typeof msg !== "object" || Array.isArray(msg)) return false
   const type = (msg as { type?: unknown }).type
@@ -624,8 +653,8 @@ input[type=file]{font-size:12px;color:#9aa0b4}
     renderThreads($("text").value.charAt(0)==="#"?$("text").value.slice(1):"");
     return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:id})})
       .then(function(d){
-        if(d && (d.error || d.error_code==="OVERLAY_STANDBY" || d.type==="error" || d.type==="chat.error")){
-          setStatus(d.error || "侧栏占用了输入");
+        if(d && (d.error || d.error_code || (d.data&&d.data.error_code) || d.type==="error" || d.type==="chat.error" || d.type==="composer.lease.error")){
+          setStatus(statusFromEvent(d));
         }
         return api("/api/thread?id="+encodeURIComponent(id));
       })
@@ -734,21 +763,29 @@ input[type=file]{font-size:12px;color:#9aa0b4}
     }catch(e){}
   }
   window.addEventListener("pagehide", releaseLease);
-  var labels={
-    run_active:"本轮还在跑 · 回车纠偏或排队",
-    queue_full:"排队已满（最多 8 条）",
-    steer_queue_full:"纠偏队列已满",
-    idle_enqueue:"空闲时直接发送，不必排队",
-    OVERLAY_STANDBY:"侧栏占用了输入"
-  };
+  function statusFromEvent(d){
+    if(!d||typeof d!=="object") return "出错了";
+    var data=d.data&&typeof d.data==="object"?d.data:{};
+    var raw=String(d.error_code||data.error_code||d.error||"");
+    var code=raw.indexOf("OVERLAY_STANDBY")>=0?"OVERLAY_STANDBY": raw.indexOf("LEASE_REV_MISMATCH")>=0?"LEASE_REV_MISMATCH": raw;
+    var labels={
+      run_active:"本轮还在跑 · 回车纠偏或排队",
+      queue_full:"排队已满（最多 8 条）",
+      steer_queue_full:"纠偏队列已满",
+      idle_enqueue:"空闲时直接发送，不必排队",
+      OVERLAY_STANDBY:"侧栏占用了输入",
+      LEASE_REV_MISMATCH:"侧栏占用了输入",
+      LEASE_HOLDER_SURFACE_MISMATCH:"侧栏占用了输入"
+    };
+    return labels[code]||d.error||d.message||"出错了";
+  }
   try{
     var es=new EventSource(url("/api/events"));
     es.onmessage=function(ev){
       var d; try{d=JSON.parse(ev.data)}catch(e){return}
       var t=d&&d.type;
-      var code=d&&(d.error||d.error_code);
       if(t==="error"||t==="chat.error"){
-        setStatus(labels[code]||d.error||d.message||"出错了");
+        setStatus(statusFromEvent(d));
         return;
       }
       if(t==="chat.user"||t==="chat.steered"||t==="chat.enqueued"){

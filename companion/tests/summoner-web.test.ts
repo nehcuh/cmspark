@@ -12,6 +12,7 @@ import {
   stopSummonerWebServer,
   summonerWebPageUrl,
   pushSummonerWebEvent,
+  summonerWebEventStatus,
   SUMMONER_WEB_DISPATCH_ALLOW,
   SUMMONER_WEB_EVENT_ALLOW,
 } from "../src/summoner-web"
@@ -122,6 +123,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /\/api\/events/)
     assert.match(r.body, /已提交/)
     assert.match(r.body, /侧栏占用了输入/)
+    assert.match(r.body, /data\.error_code/)
+    assert.match(r.body, /statusFromEvent/)
     assert.doesNotMatch(r.body, /mode==="enqueue"\?"已排队"/)
     assert.doesNotMatch(r.body, /允许|拒绝|Allow|Deny|确认/)
     assert.doesNotMatch(r.body, /ws:\/\//)
@@ -403,6 +406,29 @@ describe("summoner-web server", { concurrency: 1 }, () => {
   after(() => {
     stopSummonerWebServer()
   })
+})
+
+test("summonerWebEventStatus maps router OVERLAY_STANDBY and claim mismatch", () => {
+  assert.equal(
+    summonerWebEventStatus({
+      type: "chat.error",
+      error: "OVERLAY_STANDBY: composer is on the other surface",
+      data: { error_code: "OVERLAY_STANDBY", holder: "panel" },
+    }),
+    "侧栏占用了输入",
+  )
+  assert.equal(
+    summonerWebEventStatus({
+      type: "composer.lease.error",
+      error: "LEASE_REV_MISMATCH",
+      error_code: "LEASE_REV_MISMATCH",
+    }),
+    "侧栏占用了输入",
+  )
+  assert.equal(
+    summonerWebEventStatus({ type: "error", error: "run_active" }),
+    "本轮还在跑 · 回车纠偏或排队",
+  )
 })
 
 test("WS origin allowlist is not weakened for loopback HTML", () => {
