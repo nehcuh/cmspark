@@ -24,6 +24,7 @@ import {
   attachRollingSummaryToMessages,
   attachHandoffNoticeToMessages,
   appendRecallHintToNotices,
+  effectiveDroppedCount,
   estimateTokens,
   retainMidLoopRollingSummary,
 } from "./context-budget"
@@ -33,7 +34,14 @@ import {
   shouldRunH1,
   type ThreadHandoff,
 } from "./context-handoff"
-import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
+import {
+  createToolResultMessage,
+  persistHealedToolRows,
+} from "./tool-batch-heal"
+import { isContextOverflowError, isTruncatedToolBatch } from "./overflow"
+import { dropSteer, takeSteer } from "./run-queues"
+
+export { createToolResultMessage }
 import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
 import { hydrateUserImageParts } from "./image-parts"
 import { resolveNativeVision, visionConfigForAnalyze } from "./likely-multimodal"
@@ -178,28 +186,7 @@ interface ToolExecutionResult {
   success: boolean
   data?: any
   error?: string
-}
-
-export function createToolResultMessage(threadId: string, toolCall: any, result: ToolExecutionResult, params: any = {}) {
-  // SEC-C: redact before durable thread JSON (history.db already redacts separately).
-  // In-flight LLM tool rows use the raw `result` from the tool loop, not this helper.
-  const toolName = String(toolCall.function?.name || toolCall.name || "")
-  const { params: safeParams, result: safeResult } = redactToolPayloadForPersistence(
-    toolName,
-    params,
-    result,
-  )
-  return {
-    thread_id: threadId,
-    role: "tool" as const,
-    content: JSON.stringify(safeResult),
-    tool_calls: [{
-      id: toolCall.id,
-      tool_name: toolName,
-      params: safeParams,
-      result: safeResult,
-    }],
-  }
+  error_code?: string
 }
 
 /**
@@ -344,6 +331,10 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, knowledgeIds, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage, contextRefsSegment, hostname } = params
+
+  // Crash leftovers: splice INTERRUPTED after the unpaired assistant BEFORE
+  // appending this turn's user row (pairing is contiguous tools after assistant).
+  persistHealedToolRows(threadManager, threadId)
 
   // Create user message (skip for regenerate)
   if (!skipUserMessage) {
@@ -635,7 +626,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
   async function runContextBudgetPass(phase: "pre_loop" | "mid_loop"): Promise<void> {
     if (compactionSetting === "off") return
-    const compact = applyContextBudget(messages, params.config.context_window, tools)
+    const compact = applyContextBudget(messages, params.config.context_window, tools, { phase })
     if (compactionSetting === "prompt") {
       if (compact.compacted) {
         try {
@@ -770,11 +761,15 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
     // S51 P0 / S52 N2 + Wave B: retain prior pre_loop H1/M2 on mid_loop **before** meta I/O.
     // mode "h1"|"m2" after re-attach = request carries prior notice (N7), not a new gen.
+    const droppedForMeta = effectiveDroppedCount(
+      compact.droppedCount,
+      typeof prevMeta?.dropped_count === "number" ? prevMeta.dropped_count : undefined,
+    )
     const retained = retainMidLoopRollingSummary({
       phase,
       mode,
       messages,
-      droppedCount: compact.droppedCount,
+      droppedCount: droppedForMeta,
       rollingSummary,
       summarySha: summarySha || undefined,
       summaryBytes,
@@ -807,7 +802,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         runtime_context_budget: {
           last_at: new Date().toISOString(),
           mode,
-          dropped_count: compact.droppedCount,
+          dropped_count: droppedForMeta,
           tokens_before: compact.tokensBefore,
           tokens_after: compact.tokensAfter,
           rolling_summary: keepSummary || rollingSummary,
@@ -830,7 +825,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         mode,
         setting: "auto",
         phase,
-        dropped_count: compact.droppedCount,
+        dropped_count: droppedForMeta,
         tokens_before: compact.tokensBefore,
         tokens_after: compact.tokensAfter,
         user_notified: true,
@@ -847,7 +842,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       sendToExtension({
         type: "thread.context_compacted",
         thread_id: threadId,
-        dropped_count: compact.droppedCount,
+        dropped_count: droppedForMeta,
         tokens_before: compact.tokensBefore,
         tokens_after: compact.tokensAfter,
         mode,
@@ -859,13 +854,27 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     }
   }
 
-  await runContextBudgetPass("pre_loop")
+  function persistInterruptedRemainder(savedAssistantId: string | undefined, reason: string): void {
+    persistHealedToolRows(threadManager, threadId, reason, savedAssistantId, (m, result) => {
+      sendToExtension({
+        type: "tool.result",
+        tool_call_id: m.id,
+        thread_id: threadId,
+        tool_name: m.toolName,
+        result,
+      })
+    })
+  }
 
   // Tool calling loop
   let round = 0
   let continuousFailures = 0
+  let overflowRecoveryUsed = false
+  let lengthRecoveryUsed = false
   const recoverableFailureCounts = new Map<string, number>()
 
+  try {
+  await runContextBudgetPass("pre_loop")
   while (round < MAX_TOOL_CALL_ROUNDS) {
     round++
 
@@ -880,6 +889,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         function: { name: string; arguments: string }
       }
       const toolCalls: StreamToolCall[] = []
+      let finishReason: string | null | undefined
       let finalUsage:
         | {
             prompt_tokens?: number
@@ -888,6 +898,23 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             reasoning_tokens?: number
           }
         | undefined
+
+      const steered = takeSteer(threadId)
+      if (steered.length) {
+        const steerText = steered.join("\n")
+        const steerMsg = threadManager.addMessage(threadId, {
+          thread_id: threadId,
+          role: "user",
+          content: steerText,
+        })
+        messages.push({ role: "user", content: steerText })
+        sendToExtension({
+          type: "chat.user",
+          thread_id: threadId,
+          message_id: steerMsg.id,
+          content: steerText,
+        })
+      }
 
       // Consume CanonicalStreamEvent from provider (token | tool_call_delta | reasoning | usage | done)
       for await (const ev of provider.streamChat({
@@ -948,8 +975,28 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             total_tokens: ev.total_tokens,
             reasoning_tokens: ev.reasoning_tokens,
           }
+        } else if (ev.type === "done") {
+          finishReason = ev.finish_reason
         }
-        // "done" is terminal; finish_reason unused by tool loop today
+      }
+
+      const truncatedToolBatch = isTruncatedToolBatch(
+        finishReason,
+        toolCalls.some((tc) => tc != null),
+      )
+      if (truncatedToolBatch) {
+        if (!lengthRecoveryUsed) {
+          lengthRecoveryUsed = true
+          round--
+          await runContextBudgetPass("pre_loop")
+          continue
+        }
+        sendToExtension({
+          type: "chat.error",
+          thread_id: threadId,
+          error: "输出被截断（工具调用不完整），已停止。",
+        })
+        return
       }
 
       // Log usage for the completed LLM round (provider yields usage event when available).
@@ -1074,8 +1121,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       let shouldStop = false
 
       for (const tc of assistantMsg) {
-        // P0-B: inter-tool abort must roll back via deleteMessagesFrom (same as
-        // mid-tool AbortError), not quiet-break with partial tool tape on disk.
+        // Inter-tool abort: keep completed rows, fill remaining as interrupted
+        // (schema-valid). Do not deleteMessagesFrom a round that already ran.
         if (signal?.aborted) {
           const err = new Error("aborted")
           err.name = "AbortError"
@@ -1323,7 +1370,25 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             }
           }
 
+          const assistantStillOnDisk = threadManager
+            .getMessages(threadId)
+            .some((m: { id?: string }) => m.id === savedAssistantId)
+          if (!assistantStillOnDisk) {
+            // Regenerated/truncated this round — do not append a late tool row.
+            if (signal?.aborted) {
+              const err = new Error("aborted")
+              err.name = "AbortError"
+              throw err
+            }
+            shouldStop = true
+            break
+          }
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, toolResult, params))
+          if (signal?.aborted) {
+            const err = new Error("aborted")
+            err.name = "AbortError"
+            throw err
+          }
 
           if (toolResult.success) {
             // Reset failure counters on success
@@ -1497,7 +1562,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             content: resultContent,
           })
         } catch (e: any) {
-          // Propagate abort so the round-loop handler can roll back and emit chat.aborted
+          // Propagate abort so the round-loop handler can fill interrupted ids
           if (e.name === "AbortError" || signal?.aborted) throw e
 
           logger.error("llm.tool_execution_exception", {
@@ -1519,12 +1584,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
 
       if (shouldStop) {
-        // P0-B: terminal chat.error already sent — roll back this round's assistant
-        // + any partial tool results on disk so the next turn has no unpaired
-        // tool_calls. Do NOT chat.done-commit a partial stream as complete.
-        if (savedAssistantId) {
-          threadManager.deleteMessagesFrom(threadId, savedAssistantId)
-        } else {
+        // Terminal chat.error already sent. Keep completed/failed tool rows and
+        // fill remaining tool_call ids as interrupted so the next turn pairs.
+        // Do NOT chat.done-commit a partial stream as complete.
+        persistInterruptedRemainder(savedAssistantId, "interrupted")
+        if (!savedAssistantId) {
           messages.pop()
         }
         return
@@ -1538,10 +1602,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
     } catch (e: any) {
       if (e.name === "AbortError" || signal?.aborted) {
-        // Roll back any assistant message and partial tool results persisted this round
-        if (savedAssistantId) {
-          threadManager.deleteMessagesFrom(threadId, savedAssistantId)
-        }
+        persistInterruptedRemainder(savedAssistantId, "aborted")
         // If we aborted during streaming before the assistant message was persisted,
         // keep any non-empty streamed text as a text-only message so the user doesn't
         // see their partial reply vanish on reload.
@@ -1556,6 +1617,21 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
 
       const errorMsg = e.message || String(e)
+      if (isContextOverflowError(errorMsg)) {
+        if (!overflowRecoveryUsed) {
+          overflowRecoveryUsed = true
+          logger.warn("llm.overflow_retry", { thread_id: threadId, error: errorMsg.slice(0, 200) })
+          round--
+          await runContextBudgetPass("pre_loop")
+          continue
+        }
+        sendToExtension({
+          type: "chat.error",
+          thread_id: threadId,
+          error: "上下文溢出，压缩重试后仍失败，已停止。",
+        })
+        return
+      }
       const isAuthError = errorMsg.includes("401") || errorMsg.includes("403") || errorMsg.includes("Incorrect API key")
       const isStructuralError = errorMsg.includes("400") && errorMsg.includes("tool")
 
@@ -1625,6 +1701,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     thread_id: threadId,
     error: `达到最大工具调用轮次 (${MAX_TOOL_CALL_ROUNDS})，已暂停。`,
   })
+  } finally {
+    // Abort/supersede: abortThreadChat drops all steers. Skip here so a
+    // superseded predecessor cannot wipe successor steers enqueued during drain.
+    if (!signal?.aborted) dropSteer(threadId)
+  }
 }
 
 /**

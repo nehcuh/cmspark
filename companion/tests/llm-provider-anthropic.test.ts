@@ -191,6 +191,33 @@ test("convertMessagesToAnthropic: merges omit notice + image user as blocks", ()
   assert.equal(img.source.data, "AAA")
 })
 
+test("convertMessagesToAnthropic: merges tool_result user with the following user (abort-keep next turn)", () => {
+  const { messages } = convertMessagesToAnthropic([
+    { role: "user", content: "do it" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "call_A",
+          type: "function",
+          function: { name: "list_tabs", arguments: "{}" },
+        },
+      ],
+    },
+    { role: "tool", tool_call_id: "call_A", content: "{\"success\":false,\"error_code\":\"INTERRUPTED\"}" },
+    { role: "user", content: "ok continue" },
+  ])
+  assert.equal(messages.length, 3, `roles: ${messages.map((m) => m.role).join(",")}`)
+  assert.equal(messages[0].role, "user")
+  assert.equal(messages[1].role, "assistant")
+  assert.equal(messages[2].role, "user")
+  assert.ok(Array.isArray(messages[2].content))
+  const blocks = messages[2].content as Array<{ type: string; text?: string; tool_use_id?: string }>
+  assert.ok(blocks.some((b) => b.type === "tool_result" && b.tool_use_id === "call_A"))
+  assert.ok(blocks.some((b) => b.type === "text" && /ok continue/.test(b.text || "")))
+})
+
 test("convertMessagesToAnthropic: assistant tool_calls → tool_use blocks", () => {
   const { messages } = convertMessagesToAnthropic([
     { role: "user", content: "Read tab" },
@@ -705,7 +732,8 @@ test("cross-protocol resume: openai-shaped tool_calls + tool rows rebuild anthro
 
   const wire = convertMessagesToAnthropic(openaiThread)
   assert.equal(wire.system, "sys")
-  assert.equal(wire.messages.length, 4) // user, asst, tool-user, user
+  // tool_result user is merged with the following canonical user (no consecutive users).
+  assert.equal(wire.messages.length, 3)
 
   const asst = wire.messages[1]
   assert.equal(asst.role, "assistant")
@@ -718,11 +746,11 @@ test("cross-protocol resume: openai-shaped tool_calls + tool rows rebuild anthro
 
   const toolUser = wire.messages[2]
   assert.equal(toolUser.role, "user")
-  const result = (
-    toolUser.content as Array<{ type: string; tool_use_id?: string }>
-  ).find((b) => b.type === "tool_result")
+  const blocks = toolUser.content as Array<{ type: string; tool_use_id?: string; text?: string }>
+  const result = blocks.find((b) => b.type === "tool_result")
   assert.ok(result)
   assert.equal(result!.tool_use_id, use!.id)
+  assert.ok(blocks.some((b) => b.type === "text" && /now screenshot/.test(b.text || "")))
 
   // reasoning must not leak
   assert.equal(JSON.stringify(wire).includes("I should click"), false)

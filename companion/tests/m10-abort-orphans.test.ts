@@ -1,12 +1,10 @@
-// Integration test for P2-2 M10 — abort orphan messages.
-// See docs/p2-2-m10-abort-orphans-rfc-2026-07-13.md.
+// Integration test for abort / shouldStop tool-batch pairing.
 //
 // Mirrors the m2-untrusted-marker fake-server pattern: the OpenAI SDK (v4)
 // resolves fetch from node-fetch (captured at module load), so we stand up a
 // real local HTTP server at base_url that returns crafted SSE to drive
-// chatCreate through real tool-call rounds. We then abort a real
-// AbortController and assert the persisted thread is left consistent (no
-// assistant tool_calls without matching tool results).
+// chatCreate through real tool-call rounds. Abort must leave a schema-valid
+// tape: assistant.tool_calls fully paired (completed rows kept, rest interrupted).
 
 import test, { before, after } from "node:test"
 import assert from "node:assert/strict"
@@ -94,7 +92,7 @@ function chatParams(manager: any, thread: any, controller: AbortController, exec
   }
 }
 
-test("abort during tool execution rolls back the partial round (no dangling tool_calls)", async () => {
+test("abort during tool execution keeps assistant and fills interrupted rows", async () => {
   mode = "two-tool-calls"
   const { manager, thread } = makeManager("m10-rollback")
   const controller = new AbortController()
@@ -115,13 +113,22 @@ test("abort during tool execution rolls back the partial round (no dangling tool
   await chatCreate(chatParams(manager, thread, controller, executeTool)).catch(() => "aborted")
 
   const msgs = manager.getMessages(thread.id)
-  // Rollback via deleteMessagesFrom(savedAssistantId) must have removed the
-  // persisted assistant message (2 tool_calls) and any partial tool result,
-  // leaving only the user message — so the next turn won't 400.
-  assert.equal(msgs.length, 1, `expected only the user message after rollback, got ${msgs.length}: ${JSON.stringify(msgs.map((m: any) => m.role))}`)
+  // Keep the assistant + interrupted fillers for both calls (no rollback of the round).
   assert.equal(msgs[0].role, "user")
-  assert.ok(!msgs.some((m: any) => m.role === "assistant" && m.tool_calls?.length), "no assistant message with dangling tool_calls should remain")
-  assert.ok(!msgs.some((m: any) => m.role === "tool"), "no orphan tool-result message should remain")
+  const asst = msgs.find((m: any) => m.role === "assistant" && m.tool_calls?.length)
+  assert.ok(asst, "assistant with tool_calls stays")
+  const toolIds = msgs
+    .filter((m: any) => m.role === "tool")
+    .flatMap((m: any) => (m.tool_calls || []).map((tc: any) => tc.id))
+  for (const tc of asst!.tool_calls as Array<{ id: string }>) {
+    assert.ok(toolIds.includes(tc.id), `missing interrupted row for ${tc.id}`)
+  }
+  assert.ok(
+    msgs
+      .filter((m: any) => m.role === "tool")
+      .every((m: any) => m.tool_calls?.[0]?.result?.success === false),
+    "all fillers are failed/interrupted",
+  )
 })
 
 test("abort during streaming persists non-empty partial reply as text-only", async () => {
@@ -168,10 +175,8 @@ test("abort before any streamed content persists nothing extra", async () => {
   assert.equal(msgs[0].role, "user")
 })
 
-// P0-B: inter-tool abort (signal already aborted before next tool runs) must
-// rethrow AbortError and roll back via deleteMessagesFrom — not quiet-break
-// leaving a partial assistant+tool tape on disk.
-test("P0-B: inter-tool abort between tools rolls back the round (no partial push)", async () => {
+// Inter-tool abort: keep the successful first tool, fill the rest as interrupted.
+test("P0-B: inter-tool abort between tools keeps success and fills interrupted", async () => {
   mode = "two-tool-calls"
   const { manager, thread } = makeManager("m10-inter-tool")
   const controller = new AbortController()
@@ -190,19 +195,20 @@ test("P0-B: inter-tool abort between tools rolls back the round (no partial push
   await chatCreate(chatParams(manager, thread, controller, executeTool)).catch(() => "aborted")
 
   const msgs = manager.getMessages(thread.id)
-  assert.equal(
-    msgs.length,
-    1,
-    `expected only user message after inter-tool rollback, got ${msgs.length}: ${JSON.stringify(msgs.map((m: any) => ({ role: m.role, tc: m.tool_calls?.length })))}`,
-  )
   assert.equal(msgs[0].role, "user")
-  assert.ok(!msgs.some((m: any) => m.role === "assistant" && m.tool_calls?.length), "no dangling tool_calls")
-  assert.ok(!msgs.some((m: any) => m.role === "tool"), "no orphan tool rows")
+  const asst = msgs.find((m: any) => m.role === "assistant" && m.tool_calls?.length)
+  assert.ok(asst)
+  const tools = msgs.filter((m: any) => m.role === "tool")
+  assert.equal(tools.length, 2, `expected 2 tool rows, got ${tools.length}`)
+  const byId = new Map<string, any>(tools.flatMap((m: any) => (m.tool_calls || []).map((tc: any) => [tc.id, tc])))
+  assert.equal(byId.get("call_A")?.result?.success, true)
+  assert.equal(byId.get("call_B")?.result?.success, false)
+  assert.equal(byId.get("call_B")?.result?.error_code, "INTERRUPTED")
 })
 
-// P0-B: multi-tool shouldStop (non_recoverable) → deleteMessagesFrom; wire
-// emits chat.error without a subsequent chat.done committing partial stream.
-test("P0-B: multi-tool shouldStop/non_recoverable → deleteMessagesFrom; no chat.done after chat.error", async () => {
+// P0-B: multi-tool shouldStop (non_recoverable) keeps the failed row, fills the
+// rest, and still must not emit chat.done after chat.error.
+test("P0-B: multi-tool shouldStop/non_recoverable → keep failed row; no chat.done after chat.error", async () => {
   mode = "two-tool-calls"
   const { manager, thread } = makeManager("m10-shouldstop")
   const controller = new AbortController()
@@ -223,14 +229,14 @@ test("P0-B: multi-tool shouldStop/non_recoverable → deleteMessagesFrom; no cha
   await chatCreate(params)
 
   const msgs = manager.getMessages(thread.id)
-  assert.equal(
-    msgs.length,
-    1,
-    `expected only user after shouldStop rollback, got ${msgs.length}: ${JSON.stringify(msgs.map((m: any) => ({ role: m.role, tc: m.tool_calls?.length })))}`,
-  )
   assert.equal(msgs[0].role, "user")
-  assert.ok(!msgs.some((m: any) => m.role === "assistant" && m.tool_calls?.length), "no dangling tool_calls on disk")
-  assert.ok(!msgs.some((m: any) => m.role === "tool"), "no orphan tool rows on disk")
+  const asst = msgs.find((m: any) => m.role === "assistant" && m.tool_calls?.length)
+  assert.ok(asst, "assistant with tool_calls stays after shouldStop")
+  const tools = msgs.filter((m: any) => m.role === "tool")
+  assert.equal(tools.length, 2)
+  const byId = new Map<string, any>(tools.flatMap((m: any) => (m.tool_calls || []).map((tc: any) => [tc.id, tc])))
+  assert.equal(byId.get("call_A")?.result?.success, false)
+  assert.equal(byId.get("call_B")?.result?.error_code, "INTERRUPTED")
 
   const errors = wire.filter((m) => m.type === "chat.error")
   const dones = wire.filter((m) => m.type === "chat.done")

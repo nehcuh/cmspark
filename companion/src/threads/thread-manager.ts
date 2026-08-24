@@ -222,7 +222,32 @@ function stampAttachments(msgId: string, atts: ImageAttachmentMeta[]): ImageAtta
     }))
 }
 
-const MAX_MESSAGES_PER_THREAD = 1000
+export const MAX_MESSAGES_PER_THREAD = 1000
+
+/** Drop oldest rows but never start mid tool-block (assistant + following tools). */
+export function trimMessagesTurnSafe<T extends { role: string; tool_calls?: unknown[] }>(
+  messages: T[],
+  max: number,
+): T[] {
+  if (max < 1 || messages.length <= max) return messages
+  let start = messages.length - max
+  if (messages[start]?.role === "tool") {
+    let a = start
+    while (a > 0 && messages[a].role === "tool") a--
+    if (messages[a]?.role === "assistant") {
+      let k = a + 1
+      while (k < messages.length && messages[k].role === "tool") k++
+      // Prefer over-cap (keep assistant+tools) over an empty tape.
+      start = k < messages.length ? k : a
+    } else {
+      let k = start
+      while (k < messages.length && messages[k].role === "tool") k++
+      start = k < messages.length ? k : Math.max(0, messages.length - max)
+    }
+  }
+  const kept = messages.slice(Math.max(0, start))
+  return kept.length > 0 ? kept : messages.slice(-Math.max(1, max))
+}
 
 // Monotonic timestamp: Date only has ms precision, so two creates/updates in the same tick get
 // identical ISO strings — which breaks reverse-creation-order listing and "updated_at is newer"
@@ -926,9 +951,16 @@ export class ThreadManager {
   }
 
   addMessage(threadId: string, message: Omit<Message, "id" | "created_at"> & { id?: string }): Message {
-    // Fail closed: never create files outside threads/ via crafted thread_id
+    return this.insertMessageAt(threadId, Number.MAX_SAFE_INTEGER, message)
+  }
+
+  /** Insert a message at `index` (clamped to [0, length]). addMessage is append. */
+  insertMessageAt(
+    threadId: string,
+    index: number,
+    message: Omit<Message, "id" | "created_at"> & { id?: string },
+  ): Message {
     this.assertSafeThreadId(threadId)
-    // Reserved id lets file.upload write sidecars before chatCreate (Task 7).
     const requested = typeof message.id === "string" ? message.id : ""
     const id = /^[a-zA-Z0-9_-]{1,128}$/.test(requested)
       ? requested
@@ -954,14 +986,14 @@ export class ThreadManager {
       data = { messages: [] }
     }
 
-    data.messages.push(msg)
+    const at = Math.max(0, Math.min(index, data.messages.length))
+    data.messages.splice(at, 0, msg)
 
-    // Soft cap enforcement
     if (data.messages.length > MAX_MESSAGES_PER_THREAD) {
-      const dropped = data.messages.slice(0, data.messages.length - MAX_MESSAGES_PER_THREAD)
-      // Cap-trim: unlink sidecars of dropped oldest rows (same helper as deleteMessagesFrom).
+      const kept = trimMessagesTurnSafe(data.messages, MAX_MESSAGES_PER_THREAD)
+      const dropped = data.messages.slice(0, data.messages.length - kept.length)
       deleteSidecarsForMessages(threadId, dropped)
-      data.messages = data.messages.slice(-MAX_MESSAGES_PER_THREAD)
+      data.messages = kept
       if (!_capWarnedThreads.has(threadId)) {
         _capWarnedThreads.add(threadId)
         console.warn(`[Thread ${threadId}] Message cap reached, trimmed oldest messages`)
@@ -970,7 +1002,6 @@ export class ThreadManager {
 
     atomicWriteJSON(filePath, data)
 
-    // Update thread timestamp
     const thread = this.index.threads.find(t => t.id === threadId)
     if (thread) {
       thread.updated_at = monotonicTimestamp()

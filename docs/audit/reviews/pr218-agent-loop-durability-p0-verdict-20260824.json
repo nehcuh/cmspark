@@ -1,0 +1,16 @@
+{
+  "batch": "pr218-agent-loop-durability-p0",
+  "pr": 218,
+  "head": "working-tree-r2",
+  "base": "origin/main",
+  "blast_tier": "T2",
+  "date": "2026-08-24",
+  "machine": "PASS",
+  "machine_notes": "related suite 139 pass exit 0",
+  "adversary_r1": "REJECT",
+  "adversary_r2": "APPROVE_WITH_NITS",
+  "pi_rereview_r1": "REJECT",
+  "pi_rereview_r2": "APPROVE_WITH_NITS",
+  "merge": "YES",
+  "reason": "B1 splice-after-assistant, B2 select no-write, B3 omit retain; nits owned (dropped_count 0 meta, require cycle)"
+}

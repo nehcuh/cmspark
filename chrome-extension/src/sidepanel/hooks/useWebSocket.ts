@@ -1179,6 +1179,14 @@ export function useWebSocket() {
                 : ""
           if (!shouldApplyStreamEvent(histTid, activeThreadRef.current)) break
           dispatch({ type: "SET_MESSAGES", messages: sanitizeHydratedMessages(msg.messages) })
+          // In-memory companion snapshot only. Omitted by summoner / old companions.
+          if (msg.run_status === "llm" || msg.run_status === "idle") {
+            dispatch({
+              type: "SET_THREAD_BUSY",
+              threadId: histTid,
+              busy: msg.run_status === "llm",
+            })
+          }
           break
         }
 

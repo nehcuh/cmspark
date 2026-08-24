@@ -15,6 +15,7 @@ import {
   rejectPendingForTab,
   dispatchToExtension,
   bindToolForwardRuntime,
+  listPendingToolsForThread,
 } from "../src/ws/tool-forward"
 
 function mockWs(opts: { open?: boolean; id?: string } = {}): any {
@@ -79,6 +80,27 @@ test("handleToolResult origin mismatch ignores wrong peer", () => {
   handleToolResult({ tool_call_id: "t-origin", result: { success: true, data: 1 } }, owner)
   assert.deepEqual(resolved, { success: true, data: 1 })
   assert.equal(pendingToolCalls.has("t-origin"), false)
+})
+
+test("listPendingToolsForThread is names/ids only — no originWs or extra keys", () => {
+  clearPending()
+  const owner = mockWs({ id: "owner" })
+  pendingToolCalls.set("call_secret", {
+    resolve: () => {},
+    reject: () => {},
+    timer: setTimeout(() => {}, 60_000),
+    thread_id: "t-dto",
+    tool_name: "evaluate",
+    originWs: owner,
+    tabId: 7,
+  })
+  const snap = listPendingToolsForThread("t-dto")
+  assert.deepEqual(snap, [
+    { tool_call_id: "call_secret", tool_name: "evaluate", status: "running" },
+  ])
+  assert.equal("originWs" in snap[0], false)
+  assert.equal("tabId" in snap[0], false)
+  clearPending()
 })
 
 test("rejectPendingForThread counts matching thread", () => {

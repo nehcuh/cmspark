@@ -356,6 +356,29 @@ test("S52 N3: retainMidLoopRollingSummary no-ops on pre_loop / already m2", () =
   assert.match(String(already.messages.find(isOmitNotice)!.content), /fresh this pass/)
 })
 
+test("S52: shrink-only droppedCount 0 keeps Earlier N and does not write Earlier 0", () => {
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    buildOmitNotice(4),
+    user("do it"),
+  ]
+  const retained = retainMidLoopRollingSummary({
+    phase: "mid_loop",
+    mode: "m1",
+    messages: msgs,
+    droppedCount: 0,
+    prevMeta: {
+      rolling_summary: "did X; pending Y",
+      dropped_count: 4,
+    },
+  })
+  const notice = retained.messages.find(isOmitNotice)
+  assert.ok(notice)
+  assert.match(String(notice!.content), /Earlier 4/)
+  assert.doesNotMatch(String(notice!.content), /Earlier 0/)
+  assert.match(String(notice!.content), /did X/)
+})
+
 test("shouldRunM2 gates (tuned strategy)", () => {
   // 2 msgs alone insufficient unless tokens high
   assert.equal(
@@ -436,4 +459,91 @@ test("shouldRunM2 gates (tuned strategy)", () => {
     ),
     false,
   )
+})
+
+function assistantTools(ids: string[]): CanonicalChatMessage {
+  return {
+    role: "assistant",
+    content: "calling",
+    tool_calls: ids.map((id) => ({
+      id,
+      type: "function" as const,
+      function: { name: "get_page_text", arguments: "{}" },
+    })),
+  }
+}
+
+function toolMsg(id: string, content: string): CanonicalChatMessage {
+  return { role: "tool", tool_call_id: id, content }
+}
+
+test("mid_loop pin: live assistant+tools after last user are undroppable", () => {
+  const huge = "x".repeat(8000)
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    buildOmitNotice(4),
+    user("do it"),
+    assistantTools(["c1"]),
+    toolMsg("c1", huge),
+  ]
+  const r = compactMessagesTurnSafe(msgs, 80, { phase: "mid_loop" })
+  assert.ok(
+    r.messages.some((m) => m.role === "assistant" && (m as any).tool_calls?.length === 1),
+    "live assistant tool_calls must stay",
+  )
+  assert.ok(
+    r.messages.some((m) => m.role === "tool" && (m as any).tool_call_id === "c1"),
+    "live tool row must stay",
+  )
+  const realUsers = r.messages.filter((m) => m.role === "user" && !isOmitNotice(m))
+  assert.equal(realUsers.length, 1)
+  assert.equal(realUsers[0].content, "do it")
+  const omit = r.messages.find((m) => isOmitNotice(m))
+  assert.ok(omit, "shrink-only mid_loop must keep the sticky omit notice")
+  assert.match(String((omit as { content?: string }).content), /Earlier 4/)
+})
+
+test("mid_loop pin: older turns before last user still drop", () => {
+  const huge = "x".repeat(8000)
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    user("first"),
+    assistant("old"),
+    user("do it"),
+    assistantTools(["c2"]),
+    toolMsg("c2", huge),
+  ]
+  const r = compactMessagesTurnSafe(msgs, 80, { phase: "mid_loop" })
+  assert.ok(r.compacted)
+  assert.ok(!r.messages.some((m) => m.role === "user" && (m as any).content === "first"))
+  assert.ok(r.messages.some((m) => m.role === "assistant" && (m as any).tool_calls?.length === 1))
+  assert.ok(r.messages.some((m) => m.role === "tool" && (m as any).tool_call_id === "c2"))
+})
+
+test("pre_loop default: single-user live suffix remains droppable (not a pin)", () => {
+  const huge = "x".repeat(8000)
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    user("do it"),
+    assistantTools(["c1"]),
+    toolMsg("c1", huge),
+  ]
+  const r = compactMessagesTurnSafe(msgs, 80)
+  assert.ok(r.compacted)
+  assert.ok(!r.messages.some((m) => m.role === "tool"), "pre_loop may drop completed suffix")
+})
+
+test("mid_loop pin: shrink tool bodies when suffix still over budget", () => {
+  const huge = "x".repeat(20000)
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    user("do it"),
+    assistantTools(["c1"]),
+    toolMsg("c1", huge),
+  ]
+  const r = compactMessagesTurnSafe(msgs, 80, { phase: "mid_loop" })
+  const tool = r.messages.find((m) => m.role === "tool") as { content: string } | undefined
+  assert.ok(tool, "tool row kept")
+  assert.ok(tool!.content.length < huge.length, "pinned tool body must shrink")
+  assert.ok(r.tokensAfter <= 80 || tool!.content.length <= 120, "under budget or at min shrink")
 })
