@@ -74,6 +74,16 @@
 
 ## Technical Pitfalls
 
+### overlay HTML 不得直连 companion WS；`accepted` ≠ 已发送（2026-08-24 · #219 C-thin）
+- **坑**：系统浏览器 Origin 是 `http://127.0.0.1`，`isAllowedWsOrigin` 只放 `chrome-extension://` 与 `cmspark-tray://local`。给 loopback 开 WS 等于拆 HMAC 前门。
+- **修**：HTML 走 settings-web 同款 loopback+token HTTP；tray `surface=summoner` 客户端代发。chat.create 是 fire-and-forget → HTTP 只回 `{type:accepted}`；忙时 `run_active` 是随后的 `{type:error,error:run_active}` 推送。页面把 accepted 画成「已发送」会撒谎。
+- **纪律**：SSE `/api/events` 白名单转发；`security.confirmation.request` 禁止下发。打开 URL 只允许 `http://127.0.0.1|localhost` + **唯一** query `token=` 且 **64 hex**；Win32 `cmd.exe /c start "" url` **禁止** `shell:true`。
+
+### `OVERLAY_STANDBY` 的 SoT 是 `data.error_code`，不是英文 `error` 整句（2026-08-24 · #219 SSE r1 REJECT）
+- **坑**：router `gateChatCreateOnLease` 返回 `error: "OVERLAY_STANDBY: composer is on the other surface"` + `data.error_code: "OVERLAY_STANDBY"`。UI `labels[d.error]` 永远 miss，用户看见英文；单测只 grep HTML 里有「侧栏占用了输入」= 戏台。
+- **修**：`summonerWebEventStatus` / HTML `statusFromEvent` 用 `error_code || data.error_code`，前缀含 `OVERLAY_STANDBY` / `LEASE_REV_MISMATCH` 都映射中文。测必须喂真实 router 形状。
+- **同类**：lease claim 失败是 `composer.lease.error` / `LEASE_REV_MISMATCH`，不是 OVERLAY_STANDBY。
+
 ### overlay STT：start 失败后 fire-and-forget chunk/end 会盖掉真错误（2026-08-23 · S77）
 - **现象**：麦报 `no matching session`。config `localModelId=small`，盘上只有 medium/large；start 已 `model_missing`。
 - **根因**：(1) 模型 id 不回退；(2) start 失败后仍异步发 chunk/end，后到的「无 session」盖掉 start 错误；(3) click 只送 44 字节 WAV 头。
@@ -751,6 +761,13 @@
 
 ## Reusable Patterns
 
+### C-thin 召唤壳：loopback HTML + SSE + Chromium `--app`，冻 AppKit（2026-08-24 · #219）
+- **产品**：企业工作台 = 一 loop 三 surface（L0 召唤 / L1 Side Panel / L2 Cockpit）。跨平台不是 Mac-only Swift。
+- **壳**：同一份 HTML；token/Host/Origin 抄 settings-web；tray 代发 summoner ACL。有 Chrome/Edge → `--app=` 640×720；否则 `open`/`xdg-open`/`cmd start` 诚实降级。
+- **禁止**：Electron；给 `isAllowedWsOrigin` 加 loopback；overlay Allow/Deny；再给 `SummonerOverlay.swift` 加功能（Mac NSPanel 冻结）。
+- **闸门**：T2 独立对抗 → Pi；REJECT 折 nits 再 r2；用户说「CI 绿再合」才 squash。原生 WKWebView/WebView2/GTK 仍可选。
+- **SoT**：`docs/superpowers/specs/2026-08-24-cross-platform-summon-shell-design.md`
+
 ### 五路独立对抗 → 用户拍两叉 → 落地三路 REJECT → 修 → CI 合（2026-08-17 · #193）
 - **设计**：A JTBD / B 呈现 / C 起名 / D 清理 / E 安全 互不看见；合成后只让用户裁 1–2 个真分歧（本轮 C′ 写库 + D 预勾）
 - **落地**：H1 呈现+召回可单独验收；H2 起名写口防新 husk；实现后再开独立对抗，**禁止同会话自 APPROVE**
@@ -992,13 +1009,20 @@
 
 ## Architecture Decisions
 
+### OS summoner = 薄 L0；跨平台是 C-thin HTML，不是第二 Side Panel（2026-08-24 · #219 MERGED）
+- **身份**：本机 Agent 全局召唤。Chrome 是按需 L1。overlay **永不** Allow/Deny。
+- **合同**：`surface=summoner` ACL（S21，含 `file.upload`）；`composer.lease` overlay vs panel（S20）；busy `chat.create`/`file.upload` → `run_active` 不 supersede；pack.apply `allowTrust` 由 surface 强制 false。
+- **宿主**：Mac 仍可 Swift NSPanel（冻增长）。Win/Linux + 跨平台路径 = loopback HTML + SSE + Chromium `--app`。页面不升级 companion WS。
+- **Ship**：PR **#219** squash `daf8bc9`。原生 WKWebView/WebView2/GTK 未做。
+- **SoT**：`docs/superpowers/specs/2026-08-24-steer-nextrun-overlay-hub-design.md` · `docs/superpowers/specs/2026-08-24-cross-platform-summon-shell-design.md`
+
 ### OS summoner overlay = 薄 L0，不是第二 Side Panel（2026-08-23 · S77 · WIP）
 - **身份**：本机 Agent 全局召唤（identity 2）。Chrome 关着也能聊；Chrome 是 **按需 L1 执行器**（`pickAuthenticatedClientWs` 只认 extension；`BROWSER_UNAVAILABLE` 不可恢复）。
 - **不是**：Raycast 克隆；第二套 Side Panel 家；overlay 上 Allow/Deny（N5 单写者仍是 Panel/HUD）。
 - **插件故事**：Pack / Skill / MCP。MCP 工具已在 Companion `chat.create` 目录；overlay 只 `mcp.list` 可见性，**禁** `mcp.add`。需确认时 `resolveMcpConfirmTarget` 改道 extension WS。
 - **合同**：`surface=summoner` ACL（S21）；`composer.lease` CAS overlay vs panel（S20）；无 LLM `openChrome` 工具。
 - **默认**：Chrome `open -ga` 静默；idle `resume_idle_minutes` 超时新开，历史走 `#`。
-- **分支**：只活在 `feat/os-agent-shell`，**勿合 main** 直到稳定。GOAL.md/ADR-020 一句话冻到 P0 证伪。
+- **分支（已过时）**：曾只活在 `feat/os-agent-shell`。**#219 已合 main**（见上条）。GOAL.md/ADR-020 一句话冻到 P0 证伪。
 - **SoT**：`docs/decisions/os-agent-shell-brief-2026-08-22.md` · plan `docs/superpowers/plans/2026-08-22-os-agent-shell-p0-spike.md`
 
 ### 会话卫生：无意义=无 user；C′ 闭枚举；D 薄 husk 预勾（2026-08-17 · #193 MERGED）

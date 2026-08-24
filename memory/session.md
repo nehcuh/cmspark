@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S78 END (2026-08-24 ~17:23) [#219 MERGED · steer/nextRun + overlay hub + C-thin]
+- **Ship**：**PR #219 squash MERGED** `daf8bc9`。CI build + 3 smoke 绿。本地 `main` == `origin/main`。
+- **产品**：忙时纠偏/排队（occupied `chat.create`/`file.upload` → `run_active`）；overlay-eligible pack 不写 Trust；跨平台召唤壳 = loopback HTML + SSE + Chromium `--app`（非 Electron，冻 Swift 增长）。
+- **闸门**：T2 独立对抗 → Pi；SSE r1 REJECT（OVERLAY_STANDBY 文案死）折完 r2+Pi AWN；打开闸门 hex token / 禁 cmd shell AWN。用户「CI 绿再合」后 squash。
+- **下次（可选）**：真机打开托盘「召唤器（实验）」验 Win/Linux `--app` 窗；原生 WKWebView/WebView2/GTK 仍非目标；勿给 `isAllowedWsOrigin` 加 loopback。
+- Recorded: yes — HTML 不直连 WS；accepted≠已发送；error_code SoT；C-thin 开窗闸门
+
 ### S77 END (2026-08-23) [OS summoner overlay polish · 独立分支 · #213 on main]
 - **Ship（overlay）**：`feat/os-agent-shell` `c48aded` 跟踪 `origin/feat/os-agent-shell` = 当前 `origin/main` + **21** summoner commits（`rebase --onto origin/main e63bf87`）。live UX：长回复 markdown（流完再 parse）、新对话、麦 hold/click、hotkey 可关、idle 超时新开、Chrome 默认静默、`mcp.list` 状态行 + 确认改道 Panel。
 - **Ship（plugin / main）**：`feat/site-op-memory` 已合 **#213** `fc18725`（浏览器负知识：locator 跨「继续」ban）。与 overlay **无关**。
@@ -807,12 +814,12 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### OS summoner overlay（S77 · `feat/os-agent-shell`）
-- status: **active**
-- context: P0 spike + live polish 已 push `c48aded`。薄 L0 捕获窗，Chrome 按需 L1。identity 2；A 结构 + C 看山白。**勿合 main**。脏 WIP：`summoner-journeys.test.ts` + user-journeys spec。
-- next_action: (1) 提交或丢弃 journeys WIP（别混进无关 commit）(2) 8+5 用户证伪 (3) Swift SHA256 与 tray 锁步 (4) 稳定后再谈合 main
-- resume_doc: `docs/decisions/os-agent-shell-brief-2026-08-22.md` · `docs/superpowers/plans/2026-08-22-os-agent-shell-p0-spike.md` · `docs/design/os-summoner-p0-chosen.html`
-- updated: 2026-08-23
+### OS summoner overlay（S77–S78 · #219 MERGED）
+- status: **done**
+- context: 薄 L0 + C-thin HTML 壳已合 main `daf8bc9`。Mac NSPanel 冻结增长；Win/Linux 走 `--app`/系统浏览器。
+- next_action: 真机 dogfood 托盘「召唤器（实验）」；原生 WKWebView 不做除非另开
+- resume_doc: PR #219 · `docs/superpowers/specs/2026-08-24-cross-platform-summon-shell-design.md`
+- updated: 2026-08-24
 
 ### Companion-canon Side Panel（S74 · #196 MERGED）
 - status: **done**

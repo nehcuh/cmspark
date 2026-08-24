@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-23 (S77 · overlay isolated on `feat/os-agent-shell` · #213 on main)
+**Updated**: 2026-08-24 (S78 · #219 on main · overlay + C-thin)
 
 ## CMspark — 产品 0.5.2
 
@@ -19,26 +19,26 @@
 | **编程接力 / Mode C** | **on main**（#190 / #191） |
 | Thread hygiene | **on main**（#193） |
 | 站点负知识 site-op-memory | **on main**（**#213**） |
-| OS summoner overlay（L0） | **WIP** `feat/os-agent-shell` — **勿合 main** |
+| OS summoner overlay（L0） | **on main**（**#219** C-thin HTML + Mac NSPanel） |
+| steer/nextRun busy composer | **on main**（#218 remainder + #219 UI） |
 
-## Branch lock (S77)
+## Branch lock (S78)
 
-- **`main`**: 最新 Chrome 插件形态。tip `fc18725` = merge **#213** site-op-memory。
-- **`feat/os-agent-shell`**: 插件 + 独立召唤窗（Raycast/uTools 形态，**不是**第二 Side Panel）。`c48aded` = `origin/main` + 21 summoner commits。跟踪 origin。稳定前不合。
-- **不要**：把 overlay 当插件家；overlay 上 Allow/Deny；LLM `openChrome` 工具；把 journeys WIP 混进 memory commit。
+- **`main`**: tip `daf8bc9` = squash **#219** steer/nextRun + overlay L0 hub + C-thin summon shell。前一 tip `5425da0` = **#218** durable loop。
+- **不要**：overlay Allow/Deny；给 `isAllowedWsOrigin` 加 `http://127.0.0.1`；再给 Swift SummonerOverlay 加功能；Electron。
 
 ## Next (optional backlog)
 
-- Overlay：journeys spec/tests 仍脏；8+5 用户证伪；GOAL.md/ADR-020 一句话仍冻到 P0 证伪
-- Overlay 稳定后再谈合 main / 打含召唤窗的包
-- 本机 23401 可能是官方 CMspark.app tray（worktree daemon 已退）
+- 真机：托盘「召唤器（实验）」Win/Linux `--app` 窗 + Mac NSPanel
+- 原生 WKWebView/WebView2/GTK 仍可选（非本线）
 - residual：login-shell 失败重试；WS progress throttle；message-router 续拆；Whisper multi-arch pins；codesign
 
 ## Docs SoT
 
 - User / arch: `docs/README.md`
+- Overlay / C-thin: `docs/superpowers/specs/2026-08-24-cross-platform-summon-shell-design.md`
+- steer/nextRun hub: `docs/superpowers/specs/2026-08-24-steer-nextrun-overlay-hub-design.md`
 - Overlay brief: `docs/decisions/os-agent-shell-brief-2026-08-22.md`
-- Overlay plan: `docs/superpowers/plans/2026-08-22-os-agent-shell-p0-spike.md`
 - 编程接力: `docs/coding-handoff-user-guide.md`
 - MCP: `docs/mcp.md`
 - Meeting/dictation: `docs/meeting-and-dictation-user-guide.md`
