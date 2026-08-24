@@ -78,6 +78,9 @@ describe("summoner-web server", { concurrency: 1 }, () => {
         if (msg.type === "composer.lease.claim") {
           return { type: "composer.lease", thread_id: msg.thread_id, holder: msg.holder, rev: 4 }
         }
+        if (msg.type === "composer.lease.release") {
+          return { type: "composer.lease", thread_id: msg.thread_id, holder: "panel", rev: 5 }
+        }
         if (msg.type === "chat.create" || msg.type === "chat.steer") {
           return { type: "chat.started", thread_id: msg.thread_id }
         }
@@ -111,8 +114,11 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /回车发送\/纠偏/)
     assert.match(r.body, /Shift\+Enter 排队/)
     assert.match(r.body, /去侧栏处理/)
+    assert.match(r.body, /pagehide|visibilitychange/)
+    assert.match(r.body, /\/api\/lease\/release/)
     assert.doesNotMatch(r.body, /允许|拒绝|Allow|Deny|确认/)
     assert.doesNotMatch(r.body, /ws:\/\//)
+    assert.equal(r.headers["referrer-policy"], "no-referrer")
   })
 
   test("POST with bad Origin → 403", async () => {
@@ -252,6 +258,26 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(dispatched[1].rev, 3)
     const data = JSON.parse(r.body)
     assert.equal(data.holder, "overlay")
+  })
+
+  test("POST /api/lease/release returns holder to panel from get rev", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/lease/release?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ thread_id: "t1" }),
+    })
+    assert.equal(r.status, 200, r.body)
+    const types = dispatched.map((d) => d.type)
+    assert.deepEqual(types, ["composer.lease.get", "composer.lease.release"])
+    assert.equal(dispatched[1].rev, 3)
+    const data = JSON.parse(r.body)
+    assert.equal(data.holder, "panel")
   })
 
   test("POST /api/packs/apply forces user_gesture and strips allowTrust", async () => {

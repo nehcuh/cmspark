@@ -134,7 +134,7 @@ async function dispatchAllowed(type: string, payload: Record<string, unknown>): 
     throw Object.assign(new Error(`not allowed: ${type}`), { status: 403 })
   }
   if (!activeDispatch) throw Object.assign(new Error("summoner dispatch unavailable"), { status: 503 })
-  return activeDispatch({ type, ...payload })
+  return activeDispatch({ ...payload, type })
 }
 
 export function summonerWebPageUrl(port: number, token: string): string {
@@ -244,7 +244,14 @@ async function handleRequest(
 
   try {
     if ((pathOnly === "/" || pathOnly === "/summoner") && req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Content-Security-Policy":
+          "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'",
+      })
       res.end(SUMMONER_HTML)
       return
     }
@@ -333,6 +340,21 @@ async function handleRequest(
         res,
         await dispatchAllowed("pack.apply", { pack_id, thread_id, user_gesture: true }),
       )
+      return
+    }
+
+    if (pathOnly === "/api/lease/release" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX))
+      const thread_id = typeof body.thread_id === "string" ? body.thread_id : ""
+      if (!thread_id) {
+        jsonResponse(res, { type: "error", error: "thread_id required" }, 400)
+        return
+      }
+      const got = (await dispatchAllowed("composer.lease.get", { thread_id })) as {
+        rev?: number
+      }
+      const rev = typeof got?.rev === "number" ? got.rev : 0
+      jsonResponse(res, await dispatchAllowed("composer.lease.release", { thread_id, rev }))
       return
     }
 
@@ -628,6 +650,14 @@ input[type=file]{font-size:12px;color:#9aa0b4}
       renderMcp(arr[2].servers||[]);
     });
   }
+  function releaseLease(){
+    if(!threadId) return;
+    try{
+      var body=new Blob([JSON.stringify({thread_id:threadId})],{type:"application/json"});
+      navigator.sendBeacon(url("/api/lease/release"), body);
+    }catch(e){}
+  }
+  window.addEventListener("pagehide", releaseLease);
   refresh().then(function(){
     if(threads[0]) return selectThread(threads[0].id);
   }).catch(function(e){setStatus(String(e&&e.message||e))});
