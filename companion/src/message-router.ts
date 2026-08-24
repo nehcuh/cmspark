@@ -2730,23 +2730,51 @@ export async function handleMessage(
       if (rest.user_gesture !== true) {
         return {
           type: "error",
-          error: "pack.apply requires user_gesture:true (apply only from Side Panel)",
+          error: "pack.apply requires user_gesture:true (UI gesture only)",
           code: "user_gesture_required",
         }
       }
-      const { applyPack } = await import("./packs/pack-engine")
+      const { applyPack, readInstalledManifest } = await import("./packs/pack-engine")
+      const { isOverlayEligiblePack } = await import("./packs/overlay-eligible")
       if (!rest.pack_id || !rest.thread_id) {
         return { type: "error", error: "pack_id and thread_id required" }
       }
-      // allowTrust: only Side Panel user_gesture may write global Trust B.
-      // force_takeover: only after UI conflict confirm (still requires user_gesture).
-      const forceTakeover = rest.force_takeover === true
+      const overlayApply = stampedSurface === "summoner"
+      if (overlayApply) {
+        if (rest.workspace_path || rest.force_takeover || rest.confirmation_phrase) {
+          return {
+            type: "error",
+            error: "pack_overlay_forbidden_fields",
+            code: "pack_overlay_forbidden_fields",
+          }
+        }
+        if (abortControllers.has(rest.thread_id)) {
+          return { type: "error", error: "pack_run_active", code: "pack_run_active" }
+        }
+        const inst = readInstalledManifest(rest.pack_id)
+        if (!inst.result.ok || !isOverlayEligiblePack(inst.result.manifest)) {
+          return {
+            type: "error",
+            error: "pack_not_overlay_eligible",
+            code: "pack_not_overlay_eligible",
+          }
+        }
+        const thrSnap = threadManager.get(rest.thread_id)
+        if (thrSnap?.mission_pack_trust_snapshot) {
+          return {
+            type: "error",
+            error: "pack_trust_cookie_present",
+            code: "pack_trust_cookie_present",
+          }
+        }
+      }
+      // allowTrust: Side Panel may write Trust B; summoner is forced false.
+      const forceTakeover = overlayApply ? false : rest.force_takeover === true
       const r = applyPack(rest.pack_id, rest.thread_id, threadManager, skillEngine, {
-        workspace_path: rest.workspace_path,
-        allowTrust: true,
+        workspace_path: overlayApply ? undefined : rest.workspace_path,
+        allowTrust: !overlayApply,
         forceTakeoverTrust: forceTakeover,
-        // C5: phrase required when pack Trust writes cruise flags
-        confirmation_phrase: rest.confirmation_phrase,
+        confirmation_phrase: overlayApply ? undefined : rest.confirmation_phrase,
       })
       if (!r.ok) {
         return {

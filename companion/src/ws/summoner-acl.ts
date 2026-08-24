@@ -4,6 +4,7 @@
  * that must not run trust-elevation / settings / pack / MCP mutate / confirm.
  * Overlay chat.create already sees companion MCP tools; `mcp.list` is read-only
  * so the overlay can show connected servers. `mcp.add` stays denied.
+ * `pack.apply` is allowed but router forces allowTrust=false + overlay-eligible.
  * Tray (`surface !== "summoner"`, including omitted/undefined) is not gated —
  * origin-cleaving would break tray `skill.list`.
  */
@@ -27,6 +28,8 @@ const SUMMONER_ALLOW = new Set([
   "voice.stt.abort",
   "voice.stt.partial_request",
   "mcp.list",
+  "pack.list",
+  "pack.apply",
   "companion.ui.rect",
 ])
 
