@@ -1190,6 +1190,52 @@ async function openSettingsUI(): Promise<void> {
   }
 }
 
+function dispatchSummonerWeb(
+  client: CompanionClient,
+  msg: Record<string, unknown>,
+): Promise<unknown> {
+  const type = String(msg.type || "")
+  const params = { ...msg }
+  delete params.type
+  if (
+    type === "chat.create" ||
+    type === "chat.steer" ||
+    type === "chat.abort" ||
+    type === "file.upload"
+  ) {
+    const ok = client.sendAppMessage(type, params)
+    return Promise.resolve(ok ? { type: "accepted" } : { type: "error", error: "未连接" })
+  }
+  const timeout = type === "pack.apply" || type === "file.upload" ? 30_000 : 8_000
+  return client.sendAppRequest(type, params, timeout)
+}
+
+async function openSummonerWebShell(): Promise<void> {
+  const client = summonerClient
+  if (!client) {
+    safeNotify({ title: "CMspark 召唤器", message: "Companion 未连接，无法打开召唤器", timeout: 5 })
+    return
+  }
+  try {
+    const {
+      startSummonerWebServer,
+      summonerWebPageUrl,
+      openLoopbackPage,
+    } = require("./summoner-web") as typeof import("./summoner-web")
+    const { port, token } = await startSummonerWebServer({
+      dispatch: (msg) => dispatchSummonerWeb(client, msg),
+    })
+    openLoopbackPage(summonerWebPageUrl(port, token))
+    safeNotify({ title: "CMspark 召唤器", message: "已在浏览器打开召唤器（实验）", timeout: 3 })
+  } catch (err: any) {
+    safeNotify({
+      title: "CMspark 召唤器",
+      message: `打开召唤器失败: ${err?.message || err}`,
+      timeout: 5,
+    })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Action dispatch — routes tray clicks to handlers
 // ---------------------------------------------------------------------------
@@ -1206,6 +1252,9 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
     case "show-pairing": showPairingCode(); break
     case "settings":
       await openSettingsUI()
+      break
+    case "summoner":
+      await openSummonerWebShell()
       break
     case "autostart": await toggleAutoStart(); break
     case "quick-action":
@@ -1248,6 +1297,10 @@ function cleanup(): void {
     summonerClient.disconnect()
     summonerClient = null
   }
+  try {
+    const { stopSummonerWebServer } = require("./summoner-web") as typeof import("./summoner-web")
+    stopSummonerWebServer()
+  } catch { /* ignore */ }
   try {
     if (fs.existsSync(STATUS_FILE)) fs.unlinkSync(STATUS_FILE)
   } catch { /* ignore */ }

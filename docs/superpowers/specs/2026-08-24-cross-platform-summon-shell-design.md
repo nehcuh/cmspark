@@ -1,7 +1,7 @@
 # Cross-platform summon shell (C-thin)
 
 > **日期**: 2026-08-24  
-> **状态**: Implementing P0 slice  
+> **状态**: Implementing P1 HTML shell  
 > **方向**: 三路对抗 + Claude/Kimi dual **C-thin APPROVE_WITH_NITS**  
 > **相关**: ADR-020 · #219 · systray2 summoner no-op  
 
@@ -23,18 +23,22 @@ Enterprise workbench = **one loop**, three **surfaces**:
 
 P0 is **C-thin**, not more Swift, not Electron.
 
-## P0 this slice (code now)
+## P0 this slice (landed)
 
 1. `file.upload` gets the same occupied/lease/conductor gates as `chat.create`. Occupied → `run_active`, **no supersede**.
-2. Do **not** add `file.upload` to `SUMMONER_ALLOW` until a summoner-stamped client exists (next slice).
-3. systray2 / readline `openSummoner` must not be silent: notify/print that Win/Linux use Chrome Side Panel for talk+attachments; native shell is the follow-up.
-4. Freeze further AppKit-only features.
+2. systray2 / readline `openSummoner` must not be silent.
+3. Freeze further AppKit-only features.
 
-## Next slices (not this commit)
+## P1 this slice (code now)
 
-- Local HTML overlay + OS webview (WKWebView / WebView2 / GTK or visible degrade)
-- Then ACL `file.upload` + overlay file input (bytes on WS, ignore hostname)
-- Menu 「打开召唤器」 on systray2 opens the shell
+- Local HTML overlay at loopback + token (`summoner-web.ts`, settings-web pattern). Page **never** talks companion WS — Origin allowlist unchanged.
+- Tray `surface:summoner` client dispatches allowlisted methods (chat / pack / mcp.list / file.upload / lease).
+- ACL `file.upload` now that a summoner-stamped client exists. Overlay file input sends bytes; **hostname ignored**.
+- systray2 / readline menu 「召唤器（实验）…」 opens the HTML shell in the system browser (honest degrade of WKWebView/WebView2). macOS Swift NSPanel stays; no further AppKit growth.
+
+## Next slices
+
+- OS webview host (WKWebView / WebView2 / GTK) wrapping the same HTML instead of the system browser.
 
 ## Non-goals
 

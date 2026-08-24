@@ -20,6 +20,7 @@ export type TrayActionType =
   | "autostart" | "quit"
   | "quick-action" | "recent-thread"
   | "show-pairing"
+  | "summoner"
 
 export interface TrayMenuAction {
   type: TrayActionType

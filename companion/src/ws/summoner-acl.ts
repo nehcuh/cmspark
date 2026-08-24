@@ -30,6 +30,7 @@ const SUMMONER_ALLOW = new Set([
   "mcp.list",
   "pack.list",
   "pack.apply",
+  "file.upload",
   "companion.ui.rect",
 ])
 
