@@ -31,8 +31,8 @@ let OpenAIProvider: typeof import("../src/llm/providers/openai").OpenAIProvider
 
 const logEvents: Array<{ level: string; event: string; data: Record<string, unknown> }> = []
 
-let originalStreamChat: OpenAIProvider["streamChat"] | undefined
-let originalComplete: OpenAIProvider["complete"] | undefined
+let originalStreamChat: InstanceType<typeof OpenAIProvider>["streamChat"] | undefined
+let originalComplete: InstanceType<typeof OpenAIProvider>["complete"] | undefined
 
 type CreateHandler = (params: StreamChatParams) => AsyncIterable<CanonicalStreamEvent>
 let createHandlers: CreateHandler[] = []
