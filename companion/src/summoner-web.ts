@@ -28,6 +28,28 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "composer.lease.release",
 ])
 
+/** Fan-out to HTML EventSource. Confirm / Trust / config frames stay off this list. */
+export const SUMMONER_WEB_EVENT_ALLOW = new Set([
+  "chat.token",
+  "chat.done",
+  "chat.error",
+  "chat.user",
+  "chat.steered",
+  "chat.enqueued",
+  "chat.aborted",
+  "error",
+  "file.upload_status",
+  "file.upload_error",
+  "file.uploaded",
+  "run_status",
+  "composer.lease",
+  "tool.start",
+  "mcp.confirm.pending",
+])
+
+const MAX_SSE_CLIENTS = 4
+const sseClients = new Set<http.ServerResponse>()
+
 const FILE_BODY_MAX = 15 * 1024 * 1024
 const JSON_BODY_MAX = 64 * 1024
 
@@ -141,6 +163,33 @@ export function summonerWebPageUrl(port: number, token: string): string {
   return `http://127.0.0.1:${port}/?token=${token}`
 }
 
+export function pushSummonerWebEvent(msg: unknown): boolean {
+  if (!msg || typeof msg !== "object" || Array.isArray(msg)) return false
+  const type = (msg as { type?: unknown }).type
+  if (typeof type !== "string" || !SUMMONER_WEB_EVENT_ALLOW.has(type)) return false
+  if (/confirm/i.test(type) && type !== "mcp.confirm.pending") return false
+  const line = `data: ${JSON.stringify(msg)}\n\n`
+  for (const res of sseClients) {
+    try {
+      res.write(line)
+    } catch {
+      sseClients.delete(res)
+    }
+  }
+  return true
+}
+
+function closeSseClients(): void {
+  for (const res of sseClients) {
+    try {
+      res.end()
+    } catch {
+      /* ignore */
+    }
+  }
+  sseClients.clear()
+}
+
 export function openLoopbackPage(url: string): void {
   const platform = process.platform
   if (platform === "darwin") {
@@ -199,6 +248,7 @@ export function stopSummonerWebServer(): void {
     autoCloseTimer = null
   }
   if (activeServer) {
+    closeSseClients()
     activeServer.close()
     activeServer = null
     activePort = null
@@ -213,12 +263,18 @@ async function handleRequest(
   port: number,
   token: string,
 ): Promise<void> {
-  const raw = req.url || "/"
-  const qIdx = raw.indexOf("?")
-  const pathOnly = (qIdx < 0 ? raw : raw.slice(0, qIdx)) || "/"
-  const query = qIdx < 0 ? new Map<string, string>() : parseQuery(raw.slice(qIdx + 1))
-
-  if (!tokenOk(req, token)) {
+  let pathOnly = "/"
+  let query = new Map<string, string>()
+  try {
+    const raw = req.url || "/"
+    const qIdx = raw.indexOf("?")
+    pathOnly = (qIdx < 0 ? raw : raw.slice(0, qIdx)) || "/"
+    query = qIdx < 0 ? new Map<string, string>() : parseQuery(raw.slice(qIdx + 1))
+    if (!tokenOk(req, token)) {
+      forbidden(res, "missing or invalid session token")
+      return
+    }
+  } catch {
     forbidden(res, "missing or invalid session token")
     return
   }
@@ -258,6 +314,26 @@ async function handleRequest(
 
     if (pathOnly === "/api/health" && req.method === "GET") {
       jsonResponse(res, { status: "ok", uptime: process.uptime() })
+      return
+    }
+
+    if (pathOnly === "/api/events" && req.method === "GET") {
+      if (sseClients.size >= MAX_SSE_CLIENTS) {
+        jsonResponse(res, { type: "error", error: "too many listeners" }, 429)
+        return
+      }
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+      })
+      res.write(":\n\n")
+      sseClients.add(res)
+      req.on("close", () => {
+        sseClients.delete(res)
+      })
       return
     }
 
@@ -547,7 +623,12 @@ input[type=file]{font-size:12px;color:#9aa0b4}
     threadId=id;
     renderThreads($("text").value.charAt(0)==="#"?$("text").value.slice(1):"");
     return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:id})})
-      .then(function(){return api("/api/thread?id="+encodeURIComponent(id))})
+      .then(function(d){
+        if(d && (d.error || d.error_code==="OVERLAY_STANDBY" || d.type==="error" || d.type==="chat.error")){
+          setStatus(d.error || "侧栏占用了输入");
+        }
+        return api("/api/thread?id="+encodeURIComponent(id));
+      })
       .then(function(d){
         renderMsgs(d.messages||[]);
         busy=d.run_status==="llm";
@@ -603,12 +684,7 @@ input[type=file]{font-size:12px;color:#9aa0b4}
       : api("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,message:text,mode:mode|| (busy?"steer":"create")})});
     go.then(function(d){
       if(d.error||d.type==="error"){setStatus(d.error||"发送失败");return}
-      $("text").value="";
-      fileEl.value="";
-      setStatus(mode==="enqueue"?"已排队": (mode==="steer"||busy)?"已纠偏":"已发送");
-      busy=mode!=="enqueue"?true:busy;
-      syncBusyUi();
-      startPoll();
+      setStatus("已提交");
     }).catch(function(e){setStatus(String(e&&e.message||e))});
   }
   $("send").onclick=function(){send(busy?"steer":"create")};
@@ -658,6 +734,51 @@ input[type=file]{font-size:12px;color:#9aa0b4}
     }catch(e){}
   }
   window.addEventListener("pagehide", releaseLease);
+  var labels={
+    run_active:"本轮还在跑 · 回车纠偏或排队",
+    queue_full:"排队已满（最多 8 条）",
+    steer_queue_full:"纠偏队列已满",
+    idle_enqueue:"空闲时直接发送，不必排队",
+    OVERLAY_STANDBY:"侧栏占用了输入"
+  };
+  try{
+    var es=new EventSource(url("/api/events"));
+    es.onmessage=function(ev){
+      var d; try{d=JSON.parse(ev.data)}catch(e){return}
+      var t=d&&d.type;
+      var code=d&&(d.error||d.error_code);
+      if(t==="error"||t==="chat.error"){
+        setStatus(labels[code]||d.error||d.message||"出错了");
+        return;
+      }
+      if(t==="chat.user"||t==="chat.steered"||t==="chat.enqueued"){
+        $("text").value="";
+        $("files").value="";
+        setStatus(t==="chat.enqueued"?"已排队": t==="chat.steered"?"已纠偏":"已发送");
+        busy=t!=="chat.enqueued"?true:busy;
+        syncBusyUi();
+        startPoll();
+        return;
+      }
+      if(t==="mcp.confirm.pending"){
+        setStatus(d.message||"MCP 工具需在 Chrome 侧栏批准");
+        return;
+      }
+      if(t==="run_status"){
+        busy=d.status==="llm";
+        syncBusyUi();
+        if(!busy) stopPoll(); else startPoll();
+      }
+      if(t==="chat.done"||t==="chat.aborted"){
+        busy=false;
+        syncBusyUi();
+        stopPoll();
+      }
+      if(threadId && (t==="chat.token"||t==="chat.done"||t==="chat.user"||t==="file.uploaded")){
+        api("/api/thread?id="+encodeURIComponent(threadId)).then(function(x){renderMsgs(x.messages||[])});
+      }
+    };
+  }catch(e){}
   refresh().then(function(){
     if(threads[0]) return selectThread(threads[0].id);
   }).catch(function(e){setStatus(String(e&&e.message||e))});

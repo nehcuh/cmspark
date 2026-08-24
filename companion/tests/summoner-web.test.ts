@@ -11,7 +11,9 @@ import {
   startSummonerWebServer,
   stopSummonerWebServer,
   summonerWebPageUrl,
+  pushSummonerWebEvent,
   SUMMONER_WEB_DISPATCH_ALLOW,
+  SUMMONER_WEB_EVENT_ALLOW,
 } from "../src/summoner-web"
 import { isAllowedWsOrigin } from "../src/ws/lifecycle"
 
@@ -116,9 +118,19 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /去侧栏处理/)
     assert.match(r.body, /pagehide|visibilitychange/)
     assert.match(r.body, /\/api\/lease\/release/)
+    assert.match(r.body, /EventSource/)
+    assert.match(r.body, /\/api\/events/)
+    assert.match(r.body, /已提交/)
+    assert.match(r.body, /侧栏占用了输入/)
+    assert.doesNotMatch(r.body, /mode==="enqueue"\?"已排队"/)
     assert.doesNotMatch(r.body, /允许|拒绝|Allow|Deny|确认/)
     assert.doesNotMatch(r.body, /ws:\/\//)
     assert.equal(r.headers["referrer-policy"], "no-referrer")
+  })
+
+  test("GET / with malformed token percent → 403 not hang", async () => {
+    const r = await request({ method: "GET", port, path: "/?token=%" })
+    assert.equal(r.status, 403)
   })
 
   test("POST with bad Origin → 403", async () => {
@@ -330,6 +342,64 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("security.confirmation.response"), false)
   })
 
+  test("GET /api/events without token → 403", async () => {
+    const r = await request({ method: "GET", port, path: "/api/events" })
+    assert.equal(r.status, 403)
+  })
+
+  test("SSE forwards run_active and drops confirmation chrome", async () => {
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("error"), true)
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("security.confirmation.request"), false)
+    const buf = await new Promise<string>((resolve, reject) => {
+      const req = http.request(
+        {
+          method: "GET",
+          host: "127.0.0.1",
+          port,
+          path: `/api/events?token=${token}`,
+        },
+        (res) => {
+          assert.equal(res.statusCode, 200)
+          assert.match(String(res.headers["content-type"] || ""), /text\/event-stream/)
+          let acc = ""
+          const timer = setTimeout(() => {
+            req.destroy()
+            reject(new Error("sse timeout: " + acc))
+          }, 2000)
+          res.on("data", (c) => {
+            acc += c.toString()
+            if (acc.includes("run_active")) {
+              clearTimeout(timer)
+              req.destroy()
+              resolve(acc)
+            }
+          })
+        },
+      )
+      req.on("error", (err) => {
+        if ((err as NodeJS.ErrnoException).message === "socket hang up") return
+      })
+      req.end()
+      setTimeout(() => {
+        assert.equal(
+          pushSummonerWebEvent({
+            type: "security.confirmation.request",
+            toolName: "evaluate",
+            summary: "Allow this?",
+          }),
+          false,
+        )
+        assert.equal(
+          pushSummonerWebEvent({ type: "error", error: "run_active", thread_id: "t1" }),
+          true,
+        )
+      }, 40)
+    })
+    assert.match(buf, /run_active/)
+    assert.doesNotMatch(buf, /security.confirmation.request/)
+    assert.doesNotMatch(buf, /Allow this/)
+  })
+
   after(() => {
     stopSummonerWebServer()
   })
@@ -367,4 +437,5 @@ test("menu-bar-agent opens summoner-web from summoner action", () => {
   assert.match(src, /startSummonerWebServer/)
   assert.match(src, /case "summoner"/)
   assert.match(src, /surface:\s*"summoner"/)
+  assert.match(src, /pushSummonerWebEvent/)
 })

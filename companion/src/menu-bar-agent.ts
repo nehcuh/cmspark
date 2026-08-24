@@ -1416,6 +1416,12 @@ export async function startMenuBarAgent(): Promise<void> {
     surface: "summoner",
   })
   summonerClient.onAppMessage((msg) => {
+    try {
+      const { pushSummonerWebEvent } = require("./summoner-web") as typeof import("./summoner-web")
+      pushSummonerWebEvent(msg)
+    } catch {
+      /* HTML shell not started */
+    }
     const sttCmd = mapVoiceSttToSummonerCmd(msg)
     if (sttCmd) {
       // voice.stt.result → summoner.dictate (fill composer; user hits send)

@@ -1,7 +1,7 @@
 # Cross-platform summon shell (C-thin)
 
 > **日期**: 2026-08-24  
-> **状态**: Implementing P1 HTML shell  
+> **状态**: Implementing P2 event stream (honest send)  
 > **方向**: 三路对抗 + Claude/Kimi dual **C-thin APPROVE_WITH_NITS**  
 > **相关**: ADR-020 · #219 · systray2 summoner no-op  
 
@@ -35,6 +35,13 @@ P0 is **C-thin**, not more Swift, not Electron.
 - Tray `surface:summoner` client dispatches allowlisted methods (chat / pack / mcp.list / file.upload / lease).
 - ACL `file.upload` now that a summoner-stamped client exists. Overlay file input sends bytes; **hostname ignored**.
 - systray2 / readline menu 「召唤器（实验）…」 opens the HTML shell in the system browser (honest degrade of WKWebView/WebView2). macOS Swift NSPanel stays; no further AppKit growth.
+
+## P2 this slice (code now)
+
+- Loopback SSE `/api/events` fans companion pushes to the HTML shell.
+- Allowlist drops confirm / Trust chrome (`security.confirmation.request` never forwarded).
+- `accepted` is not painted as 已发送; HTML waits for `chat.user` / `error` (run_active).
+- Lease claim failure surfaces 「侧栏占用了输入」.
 
 ## Next slices
 
