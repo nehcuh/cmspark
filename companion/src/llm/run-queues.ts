@@ -68,9 +68,17 @@ export function takeNextRun(threadId: string): NextRunItem | undefined {
  * round) become one nextRun. Queue-full drops only this leftover — never
  * dropSteer, which would wipe steers enqueued after the take.
  */
+let afterLeftoverTakeForTests: ((threadId: string) => void) | undefined
+
+/** Test-only: run after takeSteer inside convertLeftover, before enqueue/drop. */
+export function _setAfterLeftoverTakeForTests(fn?: (threadId: string) => void): void {
+  afterLeftoverTakeForTests = fn
+}
+
 export function convertLeftoverSteerToNextRun(threadId: string): { converted: number; dropped: number } {
   const leftover = takeSteer(threadId)
   if (!leftover.length) return { converted: 0, dropped: 0 }
+  afterLeftoverTakeForTests?.(threadId)
   const text = leftover.map((s) => s.text).join("\n")
   const clientMessageId = leftover.find((s) => s.clientMessageId)?.clientMessageId
   if (enqueueNextRun(threadId, text, clientMessageId)) {
@@ -86,4 +94,5 @@ export function peekNextRunCount(threadId: string): number {
 export function _resetRunQueuesForTests(): void {
   steerByThread.clear()
   nextRunByThread.clear()
+  afterLeftoverTakeForTests = undefined
 }

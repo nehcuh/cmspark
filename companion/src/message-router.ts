@@ -77,7 +77,7 @@ import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
 } from "./security-confirmation"
-import { releaseMultiAgentLlmLoop } from "./orchestrator/llm-loop-gate"
+import { canAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop } from "./orchestrator/llm-loop-gate"
 import {
   handleConfigFamily,
 } from "./message-router/handlers/config"
@@ -332,6 +332,15 @@ async function drainNextRun(
   if (leaseErr) return leaseErr
   const conductorErr = gateChatCreateOnConductor(threadId, surface)
   if (conductorErr) return conductorErr
+  const capPeek = canAcquireMultiAgentLlmLoop(thrGate, threadId)
+  if (!capPeek.ok) {
+    return {
+      type: "chat.error",
+      thread_id: threadId,
+      error: capPeek.error,
+      data: { error_code: "MULTI_AGENT_LLM_CAP", active: capPeek.active, cap: capPeek.cap },
+    }
+  }
   const queued = takeNextRun(threadId)
   if (!queued) return null
   return handleMessage(
@@ -1521,11 +1530,10 @@ export async function handleMessage(
       // chat.create) — generation-guarded + gate-pre-checked inside, so a
       // rejected drain keeps the message queued.
       const drainedAfterRegen = await drainNextRun(thread_id, myGeneration, services, session)
-      if (drainedAfterRegen && isDrainGateError(drainedAfterRegen)) {
+      if (drainedAfterRegen) {
         session.sendToExtension(drainedAfterRegen)
-        return null
       }
-      return drainedAfterRegen
+      return null
     }
 
     // --- Threads ---

@@ -63,13 +63,13 @@ function redactSensitiveLeaf(v: unknown): unknown {
     return `<redacted:len=${s.length}:sha256=${shortHash(s)}>`
   }
   if (Array.isArray(v)) {
-    return v.map((item) =>
-      typeof item === "string" || typeof item === "number" || typeof item === "boolean"
-        ? redactSensitiveLeaf(item)
-        : redactSensitiveKeysDeep(item),
-    )
+    return v.map((item) => redactSensitiveLeaf(item))
   }
-  return redactSensitiveKeysDeep(v)
+  if (v && typeof v === "object") {
+    const s = JSON.stringify(v)
+    return { redacted: true, len: s.length, sha256: shortHash(s) }
+  }
+  return v
 }
 
 function redactSensitiveKeysDeep(value: unknown): unknown {
@@ -179,6 +179,11 @@ function redactForStorage(
       const redactedSummary = rewriteJson(result_summary, redactSensitiveKeysDeep)
       if (redactedSummary !== null) result_summary = redactedSummary
     }
+  } else {
+    const redactedParams = rewriteJson(params, redactSensitiveKeysDeep)
+    if (redactedParams !== null) params = redactedParams
+    const redactedSummary = rewriteJson(result_summary, redactSensitiveKeysDeep)
+    if (redactedSummary !== null) result_summary = redactedSummary
   }
 
   return { params, result_summary }
@@ -187,16 +192,13 @@ function redactForStorage(
 function redactCookieParams(raw: string): string {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>
-    const redacted: Record<string, unknown> = { ...parsed }
-    // Cookie params typically have `domain`, `url`, sometimes `name`. None of
-    // these are secret — the cookie VALUE comes back in the result, not the params.
-    // If a value somehow leaks into params (e.g. set_cookie), redact it.
-    if ("value" in redacted && typeof redacted.value === "string") {
-      redacted.value = `<redacted:hash=${shortHash(redacted.value)}>`
+    const originalValue = parsed.value
+    const redacted = redactSensitiveKeysDeep({ ...parsed }) as Record<string, unknown>
+    if (typeof originalValue === "string") {
+      redacted.value = `<redacted:hash=${shortHash(originalValue)}>`
     }
     return JSON.stringify(redacted)
   } catch {
-    // Malformed params JSON — can't safely introspect, blank it.
     return "{}"
   }
 }

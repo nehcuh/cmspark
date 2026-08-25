@@ -94,6 +94,18 @@ test("passwd key and non-string Authorization/apiKey are redacted (S-D1/D2)", ()
   assert.ok(!JSON.stringify(params).includes("123456789"))
 })
 
+test("object-valued Authorization bags are collapsed (N-D3)", () => {
+  const { params } = redactToolPayloadForPersistence(
+    "mcp__http__fetch",
+    { Authorization: { scheme: "Bearer", value: "object-secret-LEAK" }, url: "https://example.com" },
+    { success: true },
+  )
+  const p = params as any
+  assert.equal(p.Authorization.redacted, true)
+  assert.equal(p.url, "https://example.com")
+  assert.ok(!JSON.stringify(params).includes("object-secret-LEAK"))
+})
+
 test("generic tool value keys stay (not a blanket secret name)", () => {
   const { params } = redactToolPayloadForPersistence(
     "get_page_text",

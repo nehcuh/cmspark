@@ -367,6 +367,7 @@ test("menu-bar-agent stale overlay claims self-release and repair the live threa
   const reclaim = src.slice(src.indexOf("async function reclaimLiveSummonerThread"), src.indexOf("async function hydrateSummonerThread"))
   assert.match(reclaim, /claimOverlayIfLive/, "reclaim must re-check generation after the RPC (S-C2)")
   assert.doesNotMatch(reclaim, /claimOverlayLeaseCas\(/)
+  assert.match(reclaim, /onStaleClaim/, "generation-die-during-await must repair demoted live siblings")
 })
 
 test("menu-bar-agent submit-ok bind is live-gated and setSummonerThreadId is gone (S-C1/C2)", () => {
@@ -374,4 +375,6 @@ test("menu-bar-agent submit-ok bind is live-gated and setSummonerThreadId is gon
   assert.doesNotMatch(src, /export function setSummonerThreadId/)
   const submit = src.slice(src.indexOf("export async function handleSummonerSubmit"), src.indexOf("export async function handleSummonerSearch"))
   assert.match(submit, /if \(result\.ok && result\.threadId && overlaySessionIsLive\(token\)\)/)
+  assert.match(src, /function bindSummonerThread\(id: string, token: number\)/)
+  assert.doesNotMatch(src, /token \?\? currentOverlaySession\(\)/)
 })

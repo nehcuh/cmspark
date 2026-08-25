@@ -11,6 +11,7 @@ import {
   peekNextRunCount,
   takeNextRun,
   takeSteer,
+  _setAfterLeftoverTakeForTests,
 } from "../src/llm/run-queues"
 
 test("steer drains; abort dropSteer does not keep items", () => {
@@ -90,22 +91,26 @@ test("convertLeftoverSteerToNextRun does not dropSteer on queue-full (S-A3)", ()
     assert.equal(enqueueNextRun("t1", `q${i}`), true)
   }
   assert.equal(enqueueSteer("t1", "leftover", "cm-left"), true)
+  // Occupy the take→enqueue window so a dropSteer on the full path would wipe
+  // a concurrent steer enqueued after takeSteer (N-A3).
+  _setAfterLeftoverTakeForTests((id) => {
+    assert.equal(enqueueSteer(id, "concurrent after take", "cm-conc"), true)
+  })
   const r = convertLeftoverSteerToNextRun("t1")
   assert.equal(r.dropped, 1)
   assert.equal(r.converted, 0)
-  assert.equal(enqueueSteer("t1", "concurrent after take", "cm-conc"), true)
   assert.deepEqual(takeSteer("t1"), [{ text: "concurrent after take", clientMessageId: "cm-conc" }])
 })
 
 test("convertLeftoverSteerToNextRun keeps first clientMessageId (S-A1)", () => {
   _resetRunQueuesForTests()
   enqueueSteer("t1", "a", "cm-a")
-  enqueueSteer("t1", "b")
+  enqueueSteer("t1", "b", "cm-b")
   const r = convertLeftoverSteerToNextRun("t1")
   assert.equal(r.converted, 2)
   const item = takeNextRun("t1")
   assert.equal(item?.text, "a\nb")
-  assert.equal(item?.clientMessageId, "cm-a")
+  assert.equal(item?.clientMessageId, "cm-a", "first present id wins; last-present mutation must fail")
 })
 
 test("enqueueSteer without clientMessageId stores text-only entries", () => {

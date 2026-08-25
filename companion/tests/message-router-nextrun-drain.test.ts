@@ -442,6 +442,37 @@ test("P1 drain gate: overlay-rejected upload drain still returns file.uploaded",
   }
 })
 
+test("P1 drain gate: trashed thread keeps nextRun queued (S-B1)", async () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("", "drain-trashed")
+  const sent: any[] = []
+
+  holdStreams = true
+  const createPromise = handleMessage(
+    { type: "chat.create", thread_id: thread.id, message: "first" },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  await waitFor(() => streamCalls === 1, "first run streaming")
+
+  const enq = await handleMessage(
+    { type: "chat.create", thread_id: thread.id, message: "queued then trashed", enqueue: true },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  assert.equal(enq.type, "chat.enqueued")
+
+  tm.trash(thread.id)
+  releaseHeldStreams()
+  const resp = await createPromise
+  assert.equal(resp, null)
+  const pushed = sent.find((m) => m?.data?.error_code === "thread_trashed")
+  assert.ok(pushed, "trash gate must be pushed, not silent")
+  assert.equal(pushed.thread_id, thread.id)
+  assert.equal(peekNextRunCount(thread.id), 1, "trashed drain must not take the queued turn")
+  assert.equal(streamCalls, 1)
+})
+
 test("P1 drain gate: paused thread keeps nextRun queued (S-B1)", async () => {
   const tm = new ThreadManager()
   const thread = tm.create("", "drain-paused")
@@ -887,4 +918,20 @@ test("P2 wire: thread-domain rejection frames all carry thread_id", async () => 
     const cur = composerLeases.get(thread.id)
     composerLeases.release({ thread_id: thread.id, rev: cur.rev })
   }
+})
+
+test("upload and regen drain never return the drain frame as the RPC (S-B3/N3)", () => {
+  const candidates = [
+    path.resolve(__dirname, "..", "src", "message-router.ts"),
+    path.resolve(__dirname, "..", "..", "src", "message-router.ts"),
+  ]
+  const srcPath = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
+  const src = fs.readFileSync(srcPath, "utf8")
+  assert.doesNotMatch(src, /return drainedAfterUpload/)
+  assert.doesNotMatch(src, /return drainedAfterRegen/)
+  assert.match(src, /canAcquireMultiAgentLlmLoop/)
+  const drain = src.slice(src.indexOf("async function drainNextRun"), src.indexOf("function isDrainGateError"))
+  const takeAt = drain.indexOf("const queued = takeNextRun")
+  const capAt = drain.indexOf("canAcquireMultiAgentLlmLoop")
+  assert.ok(capAt >= 0 && takeAt >= 0 && capAt < takeAt, "MULTI_AGENT_LLM_CAP peek must run before takeNextRun (N-B4)")
 })

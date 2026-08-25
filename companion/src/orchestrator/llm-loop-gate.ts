@@ -16,7 +16,7 @@ export type LlmLoopGateResult =
  * Non multi-agent threads always succeed without counting.
  * Re-entrant for the same threadId (no double-count).
  */
-export function tryAcquireMultiAgentLlmLoop(thread: unknown, threadId: string): LlmLoopGateResult {
+function multiAgentLlmLoopGate(thread: unknown, threadId: string, acquire: boolean): LlmLoopGateResult {
   if (!isMultiAgentThread(thread as any)) {
     return { ok: true }
   }
@@ -32,9 +32,20 @@ export function tryAcquireMultiAgentLlmLoop(thread: unknown, threadId: string): 
       cap,
     }
   }
-  activeMultiAgentLoops++
-  holders.add(threadId)
+  if (acquire) {
+    activeMultiAgentLoops++
+    holders.add(threadId)
+  }
   return { ok: true }
+}
+
+export function tryAcquireMultiAgentLlmLoop(thread: unknown, threadId: string): LlmLoopGateResult {
+  return multiAgentLlmLoopGate(thread, threadId, true)
+}
+
+/** Peek without taking a slot — drain pre-check before takeNextRun (N-B4). */
+export function canAcquireMultiAgentLlmLoop(thread: unknown, threadId: string): LlmLoopGateResult {
+  return multiAgentLlmLoopGate(thread, threadId, false)
 }
 
 export function releaseMultiAgentLlmLoop(threadId: string): void {

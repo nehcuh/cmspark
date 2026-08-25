@@ -1,10 +1,12 @@
 /**
  * Redact sensitive tool params/results before durable thread JSON persistence.
  *
- * Mirrors history/store.ts policy (audit SEC-C / item 3): cookies, evaluate/shell/
- * host_*, MCP secrets must not land in ~/.cmspark-agent/threads/*.json even though
- * history.db already redacts. In-flight LLM tool rows use the unredacted result
- * from adapter.ts; only createToolResultMessage → addMessage goes through here.
+ * Thread JSON redaction (audit SEC-C / item 3): cookies, evaluate/shell/host_*,
+ * MCP secrets, and sensitive keys (incl. passwd / Authorization) must not land
+ * in ~/.cmspark-agent/threads/*.json. history.db has a parallel redactor in
+ * history/store.ts (same SENSITIVE_KEY_RE + leaf; cookie/generic call sites
+ * lock-step as of post-#220 nits). In-flight LLM tool rows stay unredacted;
+ * only createToolResultMessage → addMessage goes through here.
  */
 import * as crypto from "crypto"
 
@@ -47,13 +49,13 @@ function redactSensitiveLeaf(v: unknown): unknown {
     return `<redacted:len=${s.length}:sha256=${shortHash(s)}>`
   }
   if (Array.isArray(v)) {
-    return v.map((item) =>
-      typeof item === "string" || typeof item === "number" || typeof item === "boolean"
-        ? redactSensitiveLeaf(item)
-        : redactSensitiveKeysDeep(item),
-    )
+    return v.map((item) => redactSensitiveLeaf(item))
   }
-  return redactSensitiveKeysDeep(v)
+  if (v && typeof v === "object") {
+    const s = JSON.stringify(v)
+    return { redacted: true, len: s.length, sha256: shortHash(s) }
+  }
+  return v
 }
 
 function redactSensitiveKeysDeep(value: unknown): unknown {
@@ -159,7 +161,8 @@ function collapseResult(result: unknown): { success?: boolean; redacted: true; l
  * INTERRUPTED heal fillers from tool-batch-heal) carry no sensitive payload.
  * Sensitive branches below would rebuild the row without error_code (codeish) or
  * collapse away error entirely (collapseResult), destroying the INTERRUPTED
- * marker the heal/rebuild flow keys on. Returns the row verbatim, else null.
+ * marker the heal/rebuild flow keys on. Reconstructs a fresh object (no extra
+ * keys), else null.
  */
 function plainErrorResult(
   result: unknown,

@@ -163,9 +163,9 @@ let summonerThreadId: string | null = null
 /** Overlay session generation captured when summonerThreadId was bound. */
 let summonerThreadSessionToken: number | null = null
 
-function bindSummonerThread(id: string, token?: number): void {
+function bindSummonerThread(id: string, token: number): void {
   summonerThreadId = id
-  summonerThreadSessionToken = token ?? currentOverlaySession()
+  summonerThreadSessionToken = token
 }
 
 function clearSummonerThread(): void {
@@ -703,6 +703,7 @@ async function reclaimLiveSummonerThread(
       releaseClaim: (rev) =>
         releaseOverlayLeaseAtRev(liveId, rev, summonerLeaseRpc(client)).then(() => {}),
       releaseAll: () => client.releaseAllOverlayComposerLeases(),
+      onStaleClaim: (released) => reclaimLiveSummonerThread(client, released),
     })
   } catch {
     /* best-effort repair — the next user action re-claims anyway */

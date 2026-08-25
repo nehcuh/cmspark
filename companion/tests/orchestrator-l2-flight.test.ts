@@ -15,6 +15,7 @@ import {
 } from "../src/orchestrator/single-flight"
 import {
   tryAcquireMultiAgentLlmLoop,
+  canAcquireMultiAgentLlmLoop,
   releaseMultiAgentLlmLoop,
   multiAgentLlmLoopSnapshot,
   _resetMultiAgentLlmLoopsForTests,
@@ -106,6 +107,22 @@ test("multi-agent LLM loop gate: process cap", () => {
   for (let i = 1; i < cap; i++) releaseMultiAgentLlmLoop(`w${i}`)
   releaseMultiAgentLlmLoop("w-overflow")
   assert.equal(multiAgentLlmLoopSnapshot().active, 0)
+})
+
+test("canAcquireMultiAgentLlmLoop peeks without taking a slot (N-B4)", () => {
+  _resetMultiAgentLlmLoopsForTests()
+  const worker = { agent_role: "worker", parent_thread_id: "p", orchestrator_run_id: "r" }
+  const cap = ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops
+  for (let i = 0; i < cap; i++) {
+    assert.equal(tryAcquireMultiAgentLlmLoop(worker, `w${i}`).ok, true)
+  }
+  const peek = canAcquireMultiAgentLlmLoop(worker, "w-overflow")
+  assert.equal(peek.ok, false)
+  assert.equal(multiAgentLlmLoopSnapshot().active, cap, "peek must not increment")
+  const reentrant = canAcquireMultiAgentLlmLoop(worker, "w0")
+  assert.equal(reentrant.ok, true, "holder thread still peeks ok")
+  assert.equal(multiAgentLlmLoopSnapshot().active, cap)
+  for (let i = 0; i < cap; i++) releaseMultiAgentLlmLoop(`w${i}`)
 })
 
 test("multi-agent LLM loop gate: re-entrant same thread", () => {
