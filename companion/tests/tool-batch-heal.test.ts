@@ -216,6 +216,46 @@ test("persistHealedToolRows: skips filler when the real result landed after the 
   assert.deepEqual(fillerIds.sort(), ["call_A:INTERRUPTED", "call_B:real"])
 })
 
+test("persistHealedToolRows: skip is scoped to the in-flight assistant block (S-A2)", () => {
+  // Older round already has a real call_A. Newest unpaired assistant reuses the
+  // same id (adversary probe). Global first-id skip would persist 0 fillers and
+  // leave a-new unpaired; scoped skip must still heal a-new.
+  const tape: any[] = [
+    {
+      id: "a-old",
+      role: "assistant",
+      content: "old",
+      tool_calls: [{ id: "call_A", function: { name: "list_tabs", arguments: "{}" } }],
+    },
+    {
+      id: "t-old",
+      role: "tool",
+      content: "{}",
+      tool_calls: [{ id: "call_A", tool_name: "list_tabs", params: {}, result: { success: true } }],
+    },
+    {
+      id: "a-new",
+      role: "assistant",
+      content: "new",
+      tool_calls: [{ id: "call_A", function: { name: "list_tabs", arguments: "{}" } }],
+    },
+  ]
+  const tm = {
+    getMessages: () => tape,
+    insertMessageAt: (_id: string, index: number, msg: any) => {
+      tape.splice(index, 0, { ...msg, id: "heal-new" })
+    },
+  }
+  const n = persistHealedToolRows(tm, "t1")
+  assert.equal(n, 1, "newest unpaired call_A must still get a filler")
+  const newBlock = tape.slice(tape.findIndex((m) => m.id === "a-new") + 1)
+  assert.equal(newBlock.length, 1)
+  assert.equal(newBlock[0].id, "heal-new")
+  assert.equal(newBlock[0].tool_calls[0].id, "call_A")
+  assert.equal(newBlock[0].tool_calls[0].result.error_code, "INTERRUPTED")
+  assert.equal(tape.find((m) => m.id === "t-old").tool_calls[0].result.success, true)
+})
+
 test("persistHealedToolRows: stops when the healed assistant was cap-trimmed (no EOF orphan)", () => {
   const tape: any[] = [
     { id: "u1", role: "user", content: "go" },

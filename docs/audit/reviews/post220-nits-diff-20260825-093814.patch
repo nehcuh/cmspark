@@ -1,0 +1,906 @@
+# Dual external review context
+batch: post220-nits
+base: origin/main
+time: 20260825-093814
+
+9deff00
+
+?? docs/audit/reviews/_prompts/post220-merged-adversary-20260825.md
+?? docs/audit/reviews/_prompts/post220-nits-adversary-20260825.md
+?? docs/audit/reviews/_prompts/post220-nits-dual-20260825.md
+?? docs/audit/reviews/post220-merged-adversary-synthesis-20260825.md
+?? docs/audit/reviews/post220-merged-diff-20260825-085108.patch
+?? docs/audit/reviews/post220-merged-lane-a-llm-20260825.md
+?? docs/audit/reviews/post220-merged-lane-b-drain-20260825.md
+?? docs/audit/reviews/post220-merged-lane-c-lease-20260825.md
+?? docs/audit/reviews/post220-merged-lane-d-redact-20260825.md
+?? docs/audit/reviews/post220-merged-verdict-20260825.json
+?? docs/audit/reviews/post220-nits-adversary-synthesis-20260825.md
+?? docs/audit/reviews/post220-nits-diff-20260825-092457.patch
+?? docs/audit/reviews/post220-nits-diff-20260825-093814.patch
+?? docs/audit/reviews/post220-nits-lane-a-llm-20260825.md
+?? docs/audit/reviews/post220-nits-lane-b-drain-20260825.md
+?? docs/audit/reviews/post220-nits-lane-c-lease-20260825.md
+?? docs/audit/reviews/post220-nits-lane-d-redact-20260825.md
+?? docs/audit/reviews/pr218-remainder-nits-diff-20260824.patch
+
+## Diff (git diff + staged)
+ companion/src/history/store.ts                     |  24 +++-
+ companion/src/llm/adapter.ts                       |  25 ++--
+ companion/src/llm/run-queues.ts                    |  32 ++++-
+ companion/src/llm/tool-batch-heal.ts               |  12 +-
+ companion/src/menu-bar-agent.ts                    |  24 ++--
+ companion/src/message-router.ts                    |  46 ++++++-
+ companion/src/security/tool-persistence-redact.ts  |  38 ++++--
+ companion/tests/adapter-steer-overflow.test.ts     |  17 ++-
+ companion/tests/history.test.ts                    |  33 +++++
+ .../tests/message-router-nextrun-drain.test.ts     | 146 +++++++++++++++++++++
+ companion/tests/run-queues.test.ts                 |  41 +++++-
+ companion/tests/summoner-overlay.test.ts           |  10 ++
+ companion/tests/tool-batch-heal.test.ts            |  40 ++++++
+ companion/tests/tool-persistence-redact.test.ts    |  45 +++++++
+ 14 files changed, 477 insertions(+), 56 deletions(-)
+
+diff --git a/companion/src/history/store.ts b/companion/src/history/store.ts
+index fb282e9..cff69c5 100644
+--- a/companion/src/history/store.ts
++++ b/companion/src/history/store.ts
+@@ -46,7 +46,7 @@ const SENSITIVE_CODE_TOOLS = new Set([
+ // both params and result_summary.
+ const MCP_TOOL_PREFIX = "mcp__"
+ const MCP_SENSITIVE_RESULT_RE = /(read|file|secret|token|key|env|credential|ssh|aws)/i
+-const SENSITIVE_KEY_RE = /(secret|token|password|api[_-]?key|credential|private[_-]?key)/i
++const SENSITIVE_KEY_RE = /(secret|token|password|passwd|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)/i
+ 
+ function shortHash(input: string): string {
+   return crypto.createHash("sha256").update(input).digest("hex").slice(0, 12)
+@@ -54,6 +54,24 @@ function shortHash(input: string): string {
+ 
+ // Walks a parsed JSON value (object or array) and replaces values of keys
+ // matching SENSITIVE_KEY_RE with a redacted marker. Returns a new structure.
++function redactSensitiveLeaf(v: unknown): unknown {
++  if (typeof v === "string") {
++    return `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
++  }
++  if (typeof v === "number" || typeof v === "boolean") {
++    const s = String(v)
++    return `<redacted:len=${s.length}:sha256=${shortHash(s)}>`
++  }
++  if (Array.isArray(v)) {
++    return v.map((item) =>
++      typeof item === "string" || typeof item === "number" || typeof item === "boolean"
++        ? redactSensitiveLeaf(item)
++        : redactSensitiveKeysDeep(item),
++    )
++  }
++  return redactSensitiveKeysDeep(v)
++}
++
+ function redactSensitiveKeysDeep(value: unknown): unknown {
+   if (Array.isArray(value)) {
+     return value.map(redactSensitiveKeysDeep)
+@@ -63,8 +81,8 @@ function redactSensitiveKeysDeep(value: unknown): unknown {
+     const out: Record<string, unknown> = {}
+     for (const k of Object.keys(obj)) {
+       const v = obj[k]
+-      if (SENSITIVE_KEY_RE.test(k) && typeof v === "string") {
+-        out[k] = `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
++      if (SENSITIVE_KEY_RE.test(k)) {
++        out[k] = redactSensitiveLeaf(v)
+       } else {
+         out[k] = redactSensitiveKeysDeep(v)
+       }
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index 83326f9..2f6c7b8 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -40,7 +40,7 @@ import {
+   replaceInterruptedFillerIfPresent,
+ } from "./tool-batch-heal"
+ import { isContextOverflowError, isLengthStop, isTruncatedToolBatch } from "./overflow"
+-import { enqueueNextRun, takeSteer } from "./run-queues"
++import { convertLeftoverSteerToNextRun, takeSteer } from "./run-queues"
+ 
+ export { createToolResultMessage }
+ import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
+@@ -1754,19 +1754,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+       // returns, and this finally runs before that drain.
+       // Queue full (MAX_NEXT_RUN): warn + drop — bounded loss beats an unbounded
+       // in-memory queue, and the steer queue itself is likewise capped.
+-      const leftover = takeSteer(threadId)
+-      if (leftover.length) {
+-        const text = leftover.map((s) => s.text).join("\n")
+-        if (!enqueueNextRun(threadId, text)) {
+-          logger.warn("llm.steer_leftover_dropped", {
+-            thread_id: threadId,
+-            count: leftover.length,
+-            reason: "next_run_queue_full",
+-          })
+-          // leftover is already off the steer queue (takeSteer). Do not
+-          // dropSteer: that would wipe steers enqueued after the take
+-          // (successor / concurrent chat.steer). Bounded loss = this leftover.
+-        }
++      const leftover = convertLeftoverSteerToNextRun(threadId)
++      if (leftover.dropped) {
++        logger.warn("llm.steer_leftover_dropped", {
++          thread_id: threadId,
++          count: leftover.dropped,
++          reason: "next_run_queue_full",
++        })
++        // leftover is already off the steer queue. convertLeftover must not
++        // wipe the live steer queue: successor / concurrent chat.steer would
++        // vanish. Bounded loss = this leftover only.
+       }
+     }
+     // Abort/supersede: abortThreadChat drops all steers. Skip here so a
+diff --git a/companion/src/llm/run-queues.ts b/companion/src/llm/run-queues.ts
+index cb9c2e7..9400fd0 100644
+--- a/companion/src/llm/run-queues.ts
++++ b/companion/src/llm/run-queues.ts
+@@ -11,7 +11,14 @@ export type SteerItem = {
+ }
+ 
+ const steerByThread = new Map<string, SteerItem[]>()
+-const nextRunByThread = new Map<string, string[]>()
++
++/** nextRun entry: leftover steers keep the first clientMessageId (F1 adopt). */
++export type NextRunItem = {
++  text: string
++  clientMessageId?: string
++}
++
++const nextRunByThread = new Map<string, NextRunItem[]>()
+ 
+ export const MAX_STEER = 8
+ 
+@@ -37,17 +44,18 @@ export function dropSteer(threadId: string): void {
+ 
+ export const MAX_NEXT_RUN = 8
+ 
+-export function enqueueNextRun(threadId: string, text: string): boolean {
++export function enqueueNextRun(threadId: string, text: string, clientMessageId?: string): boolean {
+   const t = String(text || "").trim()
+   if (!threadId || !t) return false
+   const q = nextRunByThread.get(threadId) || []
+   if (q.length >= MAX_NEXT_RUN) return false
+-  q.push(t)
++  const id = typeof clientMessageId === "string" && clientMessageId.trim() ? clientMessageId : undefined
++  q.push(id ? { text: t, clientMessageId: id } : { text: t })
+   nextRunByThread.set(threadId, q)
+   return true
+ }
+ 
+-export function takeNextRun(threadId: string): string | undefined {
++export function takeNextRun(threadId: string): NextRunItem | undefined {
+   const q = nextRunByThread.get(threadId) || []
+   const next = q.shift()
+   if (!q.length) nextRunByThread.delete(threadId)
+@@ -55,6 +63,22 @@ export function takeNextRun(threadId: string): string | undefined {
+   return next
+ }
+ 
++/**
++ * Adapter finally: leftover steers (acked but unconsumed on the last stream
++ * round) become one nextRun. Queue-full drops only this leftover — never
++ * dropSteer, which would wipe steers enqueued after the take.
++ */
++export function convertLeftoverSteerToNextRun(threadId: string): { converted: number; dropped: number } {
++  const leftover = takeSteer(threadId)
++  if (!leftover.length) return { converted: 0, dropped: 0 }
++  const text = leftover.map((s) => s.text).join("\n")
++  const clientMessageId = leftover.find((s) => s.clientMessageId)?.clientMessageId
++  if (enqueueNextRun(threadId, text, clientMessageId)) {
++    return { converted: leftover.length, dropped: 0 }
++  }
++  return { converted: 0, dropped: leftover.length }
++}
++
+ export function peekNextRunCount(threadId: string): number {
+   return nextRunByThread.get(threadId)?.length || 0
+ }
+diff --git a/companion/src/llm/tool-batch-heal.ts b/companion/src/llm/tool-batch-heal.ts
+index 4190f4d..0256090 100644
+--- a/companion/src/llm/tool-batch-heal.ts
++++ b/companion/src/llm/tool-batch-heal.ts
+@@ -174,11 +174,15 @@ export function persistHealedToolRows(
+       // orphan — rebuild skips unpaired tool rows), so stop healing this batch.
+       break
+     }
+-    // Never write an INTERRUPTED filler for an id already on disk (a real result
+-    // from the old run, or a filler from a concurrent heal) — a duplicate id row
+-    // would orphan one of the two at rebuild.
++    // Never write an INTERRUPTED filler for an id already in THIS assistant's
++    // contiguous tool block (a real result from the old run, or a filler from a
++    // concurrent heal). A duplicate id in the same block would orphan one of
++    // the two at rebuild. Scan only the in-flight block — an older round that
++    // reused the same call_* must not skip healing the newest unpaired assistant.
++    let blockUntil = asstNow + 1
++    while (blockUntil < now.length && now[blockUntil].role === "tool") blockUntil++
+     if (
+-      now.some(
++      now.slice(asstNow + 1, blockUntil).some(
+         (row) => row.role === "tool" && (row.tool_calls || []).some((tc) => tc.id === m.id),
+       )
+     ) {
+diff --git a/companion/src/menu-bar-agent.ts b/companion/src/menu-bar-agent.ts
+index c8dc5b0..4e73685 100644
+--- a/companion/src/menu-bar-agent.ts
++++ b/companion/src/menu-bar-agent.ts
+@@ -688,15 +688,22 @@ async function reclaimLiveSummonerThread(
+   client: CompanionClient,
+   siblings: OverlayLeaseState[],
+ ): Promise<void> {
++  const liveId = summonerThreadId
++  const token = summonerThreadSessionToken
+   if (!shouldReclaimLiveOverlayThread({
+-    liveThreadId: summonerThreadId,
+-    liveSessionToken: summonerThreadSessionToken,
++    liveThreadId: liveId,
++    liveSessionToken: token,
+     siblings,
+   })) return
+-  const liveId = summonerThreadId
+-  if (!liveId) return
++  if (!liveId || token == null) return
+   try {
+-    await claimOverlayLeaseCas(liveId, summonerLeaseRpc(client))
++    await claimOverlayIfLive({
++      token,
++      claim: () => claimOverlayLeaseDetailed(client, liveId),
++      releaseClaim: (rev) =>
++        releaseOverlayLeaseAtRev(liveId, rev, summonerLeaseRpc(client)).then(() => {}),
++      releaseAll: () => client.releaseAllOverlayComposerLeases(),
++    })
+   } catch {
+     /* best-effort repair — the next user action re-claims anyway */
+   }
+@@ -904,7 +911,7 @@ export async function handleSummonerSubmit(
+     },
+     { enqueue },
+   )
+-  if (result.ok && result.threadId) {
++  if (result.ok && result.threadId && overlaySessionIsLive(token)) {
+     bindSummonerThread(result.threadId, token)
+     touchSummonerActivity(result.threadId)
+   }
+@@ -929,11 +936,6 @@ export async function handleSummonerSelect(threadId: string): Promise<void> {
+   if (claimed) touchSummonerActivity(id)
+ }
+ 
+-export function setSummonerThreadId(id: string | null): void {
+-  if (id) bindSummonerThread(id)
+-  else clearSummonerThread()
+-}
+-
+ /** Re-arm a persisted combo on Swift. Empty config waits for first overlay open. */
+ export function armSummonerHotkeyOnTrayStart(): void {
+   const cmd = nextSummonerHotkeyCmd(getConfig().summoner?.hotkey)
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index d57f175..70a862b 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -262,11 +262,19 @@ export function followUpCreateFromQueue(
+   threadId: string,
+   message: string,
+   surface: unknown,
+-): { type: "chat.create"; thread_id: string; message: string; __cmspark_surface: "summoner" | "tray" } {
++  clientMessageId?: string,
++): {
++  type: "chat.create"
++  thread_id: string
++  message: string
++  clientMessageId?: string
++  __cmspark_surface: "summoner" | "tray"
++} {
+   return {
+     type: "chat.create",
+     thread_id: threadId,
+     message,
++    ...(clientMessageId ? { clientMessageId } : {}),
+     __cmspark_surface: surface === "summoner" ? "summoner" : "tray",
+   }
+ }
+@@ -296,7 +304,29 @@ async function drainNextRun(
+   // Pre-check the gates the recursive chat.create will hit, with the surface
+   // stamp the followUp frame will carry (drain keeps this session's surface —
+   // unstamped create is treated as panel and OVERLAY_STANDBY-kills
+-  // overlay-held nextRun, PR219 adversary M1).
++  // overlay-held nextRun, PR219 adversary M1). Pause/trash must run BEFORE
++  // takeNextRun so a finishing run cannot dequeue a turn the client still
++  // holds as chat.enqueued (S-B1).
++  const thrGate = services.threadManager.get(threadId)
++  if (!thrGate) {
++    return { type: "chat.error", thread_id: threadId, error: "Thread not found" }
++  }
++  if (thrGate.trashed_at) {
++    return {
++      type: "chat.error",
++      thread_id: threadId,
++      error: "thread_trashed",
++      data: { error_code: "thread_trashed" },
++    }
++  }
++  if (thrGate.paused) {
++    return {
++      type: "chat.error",
++      thread_id: threadId,
++      error: "thread_paused",
++      data: { error_code: "thread_paused" },
++    }
++  }
+   const surface = session?.surface === "summoner" ? "summoner" : "tray"
+   const leaseErr = gateChatCreateOnLease(threadId, surface)
+   if (leaseErr) return leaseErr
+@@ -305,7 +335,7 @@ async function drainNextRun(
+   const queued = takeNextRun(threadId)
+   if (!queued) return null
+   return handleMessage(
+-    followUpCreateFromQueue(threadId, queued, session?.surface),
++    followUpCreateFromQueue(threadId, queued.text, session?.surface, queued.clientMessageId),
+     services,
+     session,
+   )
+@@ -413,7 +443,11 @@ export async function handleMessage(
+         if (!text) {
+           return { type: "error", error: "empty_enqueue", thread_id: rest.thread_id }
+         }
+-        if (!enqueueNextRun(rest.thread_id, text)) {
++        const enqueueId =
++          typeof rest.clientMessageId === "string" && rest.clientMessageId
++            ? rest.clientMessageId
++            : undefined
++        if (!enqueueNextRun(rest.thread_id, text, enqueueId)) {
+           return {
+             type: "error",
+             error: "queue_full",
+@@ -1141,10 +1175,8 @@ export async function handleMessage(
+       // chat.create) — generation-guarded + gate-pre-checked inside, so a
+       // rejected drain keeps the message queued.
+       const drainedAfterUpload = await drainNextRun(thread_id, uploadGeneration, services, session)
+-      if (drainedAfterUpload && isDrainGateError(drainedAfterUpload)) {
++      if (drainedAfterUpload) {
+         session.sendToExtension(drainedAfterUpload)
+-      } else if (drainedAfterUpload) {
+-        return drainedAfterUpload
+       }
+       return { type: "file.uploaded", thread_id, files: uploadedNames }
+     }
+diff --git a/companion/src/security/tool-persistence-redact.ts b/companion/src/security/tool-persistence-redact.ts
+index da5764b..eb86b96 100644
+--- a/companion/src/security/tool-persistence-redact.ts
++++ b/companion/src/security/tool-persistence-redact.ts
+@@ -32,12 +32,30 @@ const SENSITIVE_CODE_TOOLS = new Set([
+ 
+ const MCP_TOOL_PREFIX = "mcp__"
+ const MCP_SENSITIVE_RESULT_RE = /(read|file|secret|token|key|env|credential|ssh|aws)/i
+-const SENSITIVE_KEY_RE = /(secret|token|password|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)/i
++const SENSITIVE_KEY_RE = /(secret|token|password|passwd|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)/i
+ 
+ function shortHash(input: string): string {
+   return crypto.createHash("sha256").update(input).digest("hex").slice(0, 12)
+ }
+ 
++function redactSensitiveLeaf(v: unknown): unknown {
++  if (typeof v === "string") {
++    return `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
++  }
++  if (typeof v === "number" || typeof v === "boolean") {
++    const s = String(v)
++    return `<redacted:len=${s.length}:sha256=${shortHash(s)}>`
++  }
++  if (Array.isArray(v)) {
++    return v.map((item) =>
++      typeof item === "string" || typeof item === "number" || typeof item === "boolean"
++        ? redactSensitiveLeaf(item)
++        : redactSensitiveKeysDeep(item),
++    )
++  }
++  return redactSensitiveKeysDeep(v)
++}
++
+ function redactSensitiveKeysDeep(value: unknown): unknown {
+   if (Array.isArray(value)) {
+     return value.map(redactSensitiveKeysDeep)
+@@ -47,8 +65,8 @@ function redactSensitiveKeysDeep(value: unknown): unknown {
+     const out: Record<string, unknown> = {}
+     for (const k of Object.keys(obj)) {
+       const v = obj[k]
+-      if (SENSITIVE_KEY_RE.test(k) && typeof v === "string") {
+-        out[k] = `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
++      if (SENSITIVE_KEY_RE.test(k)) {
++        out[k] = redactSensitiveLeaf(v)
+       } else {
+         out[k] = redactSensitiveKeysDeep(v)
+       }
+@@ -75,6 +93,9 @@ function redactOneCookie(cookie: unknown): unknown {
+   const c = cookie as Record<string, unknown>
+   const { name, domain, path: cookiePath, hostOnly, secure, httpOnly, value, ...rest } = c
+   const valueStr = typeof value === "string" ? value : ""
++  const restRedacted = redactSensitiveKeysDeep(
++    Object.fromEntries(Object.entries(rest).filter(([k]) => k !== "value")),
++  ) as Record<string, unknown>
+   return {
+     name,
+     domain,
+@@ -82,9 +103,7 @@ function redactOneCookie(cookie: unknown): unknown {
+     hostOnly,
+     secure,
+     httpOnly,
+-    ...Object.fromEntries(
+-      Object.entries(rest).filter(([k]) => k !== "value"),
+-    ),
++    ...restRedacted,
+     ...(valueStr
+       ? { value_hash: shortHash(valueStr), value_length: valueStr.length }
+       : {}),
+@@ -186,9 +205,10 @@ export function redactToolPayloadForPersistence(
+ 
+   if (SENSITIVE_COOKIE_TOOLS.has(name)) {
+     if (params && typeof params === "object") {
+-      const p = { ...(params as Record<string, unknown>) }
+-      if (typeof p.value === "string") {
+-        p.value = `<redacted:hash=${shortHash(p.value)}>`
++      const original = params as Record<string, unknown>
++      const p = redactSensitiveKeysDeep({ ...original }) as Record<string, unknown>
++      if (typeof original.value === "string") {
++        p.value = `<redacted:hash=${shortHash(original.value)}>`
+       }
+       safeParams = p
+     }
+diff --git a/companion/tests/adapter-steer-overflow.test.ts b/companion/tests/adapter-steer-overflow.test.ts
+index 73e7c6b..91a40e3 100644
+--- a/companion/tests/adapter-steer-overflow.test.ts
++++ b/companion/tests/adapter-steer-overflow.test.ts
+@@ -179,12 +179,14 @@ test("steer arriving during the final streaming round converts to nextRun (not d
+   const params = buildMockParams("test-sn-leftover")
+   createHandlers = [
+     textStreamHandler("回答", "stop", () => {
+-      runQueues.enqueueSteer(params.threadId, "请再补充测试")
++      runQueues.enqueueSteer(params.threadId, "请再补充测试", "cm-leftover")
+     }),
+   ]
+   await chatCreate(params)
+ 
+-  assert.equal(runQueues.takeNextRun(params.threadId), "请再补充测试")
++  const leftover = runQueues.takeNextRun(params.threadId)
++  assert.equal(leftover?.text, "请再补充测试")
++  assert.equal(leftover?.clientMessageId, "cm-leftover")
+   assert.deepEqual(runQueues.takeSteer(params.threadId), [])
+   const users = params.threadManager.getMessages(params.threadId).filter((m) => m.role === "user")
+   assert.equal(users.length, 1)
+@@ -412,3 +414,14 @@ test("tool-format-leak hint chat.token carries accumulated content + hint", asyn
+   const done = params.getSentMessages().find((m) => m.type === "chat.done")
+   assert.equal(done?.tool_format_leak, true)
+ })
++
++test("adapter leftover path does not import dropSteer (S-A3)", () => {
++  const candidates = [
++    path.resolve(__dirname, "..", "src", "llm", "adapter.ts"),
++    path.resolve(__dirname, "..", "..", "src", "llm", "adapter.ts"),
++  ]
++  const srcPath = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
++  const src = fs.readFileSync(srcPath, "utf8")
++  assert.match(src, /convertLeftoverSteerToNextRun/)
++  assert.doesNotMatch(src, /\bdropSteer\b/)
++})
+diff --git a/companion/tests/history.test.ts b/companion/tests/history.test.ts
+index f4b00b3..a86ce59 100644
+--- a/companion/tests/history.test.ts
++++ b/companion/tests/history.test.ts
+@@ -1007,6 +1007,39 @@ test("HistoryStore.record() redacts sensitive keys in mcp__shell__exec params bu
+   }
+ })
+ 
++test("HistoryStore.record() redacts Authorization / passwd / numeric apiKey (S-D3)", async () => {
++  const store = new HistoryStore()
++  await store.waitReady()
++  try {
++    await store.record({
++      thread_id: "t-mcp-auth",
++      tool_name: "mcp__http__fetch",
++      params: JSON.stringify({
++        Authorization: "Bearer hist-secret",
++        passwd: "hunter2-hist",
++        apiKey: 987654321,
++        url: "https://example.com",
++      }),
++      result_summary: JSON.stringify({ ok: true }),
++      error: null,
++      success: 1,
++      duration_ms: 10,
++      created_at: new Date().toISOString(),
++    })
++    const rows = await store.query({ thread_id: "t-mcp-auth" })
++    assert.equal(rows.length, 1)
++    const stored = rows[0]
++    assert.ok(!stored.params.includes("hist-secret"))
++    assert.ok(!stored.params.includes("hunter2-hist"))
++    assert.ok(!stored.params.includes("987654321"))
++    assert.match(stored.params, /"Authorization":\s*"<redacted:len=\d+:sha256=[a-f0-9]{12}>"/)
++    assert.match(stored.params, /"passwd":\s*"<redacted:len=\d+:sha256=[a-f0-9]{12}>"/)
++    assert.match(stored.params, /"url":\s*"https:\/\/example.com"/)
++  } finally {
++    store.close()
++  }
++})
++
+ test("HistoryStore.record() redacts set_cookie single-object result_summary", async () => {
+   const store = new HistoryStore()
+   await store.waitReady()
+diff --git a/companion/tests/message-router-nextrun-drain.test.ts b/companion/tests/message-router-nextrun-drain.test.ts
+index 8f5004d..314b505 100644
+--- a/companion/tests/message-router-nextrun-drain.test.ts
++++ b/companion/tests/message-router-nextrun-drain.test.ts
+@@ -47,6 +47,7 @@ let _resetRunQueuesForTests: typeof import("../src/llm/run-queues")._resetRunQue
+ let MAX_NEXT_RUN: typeof import("../src/llm/run-queues").MAX_NEXT_RUN
+ let MAX_STEER: typeof import("../src/llm/run-queues").MAX_STEER
+ let composerLeases: typeof import("../src/ws/composer-lease").composerLeases
++let getComputerTaskAbortRegistry: typeof import("../src/computer/task-abort-registry").getComputerTaskAbortRegistry
+ 
+ // deepseek-chat trips the non-multimodal name heuristic, so standalone upload
+ // images take the vision rail (analyzeImage) instead of native vision.
+@@ -97,6 +98,7 @@ before(async () => {
+   const cfg = await import("../src/config")
+   const queues = await import("../src/llm/run-queues")
+   const lease = await import("../src/ws/composer-lease")
++  const abortReg = await import("../src/computer/task-abort-registry")
+   handleMessage = mr.handleMessage
+   listLlmActiveThreadIds = mr.listLlmActiveThreadIds
+   __testSetLlmActiveForTests = mr.__testSetLlmActiveForTests
+@@ -110,6 +112,7 @@ before(async () => {
+   MAX_NEXT_RUN = queues.MAX_NEXT_RUN
+   MAX_STEER = queues.MAX_STEER
+   composerLeases = lease.composerLeases
++  getComputerTaskAbortRegistry = abortReg.getComputerTaskAbortRegistry
+   await cfg.initDataDir()
+ 
+   saveConfig({
+@@ -439,6 +442,149 @@ test("P1 drain gate: overlay-rejected upload drain still returns file.uploaded",
+   }
+ })
+ 
++test("P1 drain gate: paused thread keeps nextRun queued (S-B1)", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "drain-paused")
++  const sent: any[] = []
++
++  holdStreams = true
++  const createPromise = handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "first" },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  await waitFor(() => streamCalls === 1, "first run streaming")
++
++  const enq = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "queued then paused", enqueue: true },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(enq.type, "chat.enqueued")
++
++  tm.update(thread.id, { paused: true })
++  releaseHeldStreams()
++  const resp = await createPromise
++  assert.equal(resp, null)
++  const pushed = sent.find((m) => m?.data?.error_code === "thread_paused")
++  assert.ok(pushed, "pause gate must be pushed, not silent")
++  assert.equal(pushed.thread_id, thread.id)
++  assert.equal(peekNextRunCount(thread.id), 1, "paused drain must not take the queued turn")
++  assert.equal(streamCalls, 1)
++})
++
++test("P1 drain gate: overlay-rejected regenerate keeps the queue (S-B2)", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "regen-drain-gate")
++  const sent: any[] = []
++  tm.addMessage(thread.id, { thread_id: thread.id, role: "user", content: "original question" })
++  const a1 = tm.addMessage(thread.id, { thread_id: thread.id, role: "assistant", content: "original answer" })
++
++  holdStreams = true
++  const regenPromise = handleMessage(
++    { type: "chat.regenerate", thread_id: thread.id, message_id: a1.id },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  await waitFor(() => streamCalls === 1, "regenerate run streaming")
++
++  const enq = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "queued during regen", enqueue: true },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(enq.type, "chat.enqueued")
++
++  const beforeClaim = composerLeases.get(thread.id)
++  composerLeases.claim({ thread_id: thread.id, holder: "overlay", rev: beforeClaim.rev })
++  try {
++    releaseHeldStreams()
++    const resp = await regenPromise
++    assert.equal(resp, null, "regen RPC stays null; overlay gate is pushed")
++    assert.ok(sent.some((m) => m?.data?.error_code === "OVERLAY_STANDBY"))
++    assert.equal(peekNextRunCount(thread.id), 1)
++    assert.equal(streamCalls, 1)
++  } finally {
++    const cur = composerLeases.get(thread.id)
++    composerLeases.release({ thread_id: thread.id, rev: cur.rev })
++  }
++})
++
++test("P1 drain gate: conductor-rejected overlay drain keeps the queue (S-B2)", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "drain-conductor")
++  const sent: any[] = []
++  const session = makeSession(sent, "summoner")
++  const registry = getComputerTaskAbortRegistry()
++  registry.clear()
++
++  const beforeClaim = composerLeases.get(thread.id)
++  composerLeases.claim({ thread_id: thread.id, holder: "overlay", rev: beforeClaim.rev })
++  try {
++  holdStreams = true
++  const createPromise = handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "first", __cmspark_surface: "summoner" },
++    makeServices(tm),
++    session,
++  )
++  await waitFor(() => streamCalls === 1, "first run streaming")
++
++  const enq = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "queued under CU", enqueue: true, __cmspark_surface: "summoner" },
++    makeServices(tm),
++    session,
++  )
++  assert.equal(enq.type, "chat.enqueued")
++
++  registry.set("cu-live", true)
++    releaseHeldStreams()
++    const resp = await createPromise
++    assert.equal(resp, null)
++    const pushed = sent.find((m) => m?.data?.error_code === "L2_CONDUCTOR_ELSEWHERE")
++    assert.ok(pushed, "conductor gate must be pushed")
++    assert.equal(peekNextRunCount(thread.id), 1)
++    assert.equal(streamCalls, 1)
++  } finally {
++    registry.clear()
++    const cur = composerLeases.get(thread.id)
++    composerLeases.release({ thread_id: thread.id, rev: cur.rev })
++  }
++})
++
++test("enqueue nextRun preserves clientMessageId into drained chat.create (S-A1)", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "enqueue-cmid")
++  const sent: any[] = []
++
++  holdStreams = true
++  const createPromise = handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "first" },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  await waitFor(() => streamCalls === 1, "first run streaming")
++
++  const enq = await handleMessage(
++    {
++      type: "chat.create",
++      thread_id: thread.id,
++      message: "queued with bubble",
++      enqueue: true,
++      clientMessageId: "cm-enq-1",
++    },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(enq.type, "chat.enqueued")
++
++  releaseHeldStreams()
++  await createPromise
++  const users = sent.filter((m) => m.type === "chat.user")
++  const drained = users.find((m) => m.content === "queued with bubble")
++  assert.ok(drained, "drained turn must echo chat.user")
++  assert.equal(drained.client_message_id, "cm-enq-1")
++})
++
+ test("P1 drain parity: file.upload completion drains one queued nextRun", async () => {
+   const tm = new ThreadManager()
+   const thread = tm.create("", "upload-drain")
+diff --git a/companion/tests/run-queues.test.ts b/companion/tests/run-queues.test.ts
+index f82fd0c..dd3ac75 100644
+--- a/companion/tests/run-queues.test.ts
++++ b/companion/tests/run-queues.test.ts
+@@ -4,6 +4,7 @@ import {
+   MAX_NEXT_RUN,
+   MAX_STEER,
+   _resetRunQueuesForTests,
++  convertLeftoverSteerToNextRun,
+   dropSteer,
+   enqueueNextRun,
+   enqueueSteer,
+@@ -27,7 +28,7 @@ test("nextRun caps at MAX_NEXT_RUN and reports false when full", () => {
+   }
+   assert.equal(enqueueNextRun("t1", "overflow"), false)
+   assert.equal(peekNextRunCount("t1"), MAX_NEXT_RUN)
+-  assert.equal(takeNextRun("t1"), "m0")
++  assert.equal(takeNextRun("t1")?.text, "m0")
+ })
+ 
+ test("enqueueSteer trims and ignores empty/whitespace", () => {
+@@ -53,7 +54,7 @@ test("nextRun survives dropSteer (abort analog)", () => {
+   enqueueNextRun("t1", "after this run")
+   dropSteer("t1")
+   assert.equal(peekNextRunCount("t1"), 1)
+-  assert.equal(takeNextRun("t1"), "after this run")
++  assert.equal(takeNextRun("t1")?.text, "after this run")
+   assert.equal(takeNextRun("t1"), undefined)
+ })
+ 
+@@ -71,6 +72,42 @@ test("steer entries carry clientMessageId through enqueue/take (D6)", () => {
+   assert.deepEqual(takeSteer("t1"), [])
+ })
+ 
++test("nextRun entries carry clientMessageId through enqueue/take (S-A1)", () => {
++  _resetRunQueuesForTests()
++  assert.equal(enqueueNextRun("t1", "queued", "cm-nr-1"), true)
++  assert.equal(enqueueNextRun("t1", "plain"), true)
++  const first = takeNextRun("t1")
++  assert.equal(first?.text, "queued")
++  assert.equal(first?.clientMessageId, "cm-nr-1")
++  const second = takeNextRun("t1")
++  assert.equal(second?.text, "plain")
++  assert.equal(second && "clientMessageId" in second, false)
++})
++
++test("convertLeftoverSteerToNextRun does not dropSteer on queue-full (S-A3)", () => {
++  _resetRunQueuesForTests()
++  for (let i = 0; i < MAX_NEXT_RUN; i++) {
++    assert.equal(enqueueNextRun("t1", `q${i}`), true)
++  }
++  assert.equal(enqueueSteer("t1", "leftover", "cm-left"), true)
++  const r = convertLeftoverSteerToNextRun("t1")
++  assert.equal(r.dropped, 1)
++  assert.equal(r.converted, 0)
++  assert.equal(enqueueSteer("t1", "concurrent after take", "cm-conc"), true)
++  assert.deepEqual(takeSteer("t1"), [{ text: "concurrent after take", clientMessageId: "cm-conc" }])
++})
++
++test("convertLeftoverSteerToNextRun keeps first clientMessageId (S-A1)", () => {
++  _resetRunQueuesForTests()
++  enqueueSteer("t1", "a", "cm-a")
++  enqueueSteer("t1", "b")
++  const r = convertLeftoverSteerToNextRun("t1")
++  assert.equal(r.converted, 2)
++  const item = takeNextRun("t1")
++  assert.equal(item?.text, "a\nb")
++  assert.equal(item?.clientMessageId, "cm-a")
++})
++
+ test("enqueueSteer without clientMessageId stores text-only entries", () => {
+   _resetRunQueuesForTests()
+   enqueueSteer("t1", "plain")
+diff --git a/companion/tests/summoner-overlay.test.ts b/companion/tests/summoner-overlay.test.ts
+index ae55ab7..41b9ca8 100644
+--- a/companion/tests/summoner-overlay.test.ts
++++ b/companion/tests/summoner-overlay.test.ts
+@@ -364,4 +364,14 @@ test("menu-bar-agent stale overlay claims self-release and repair the live threa
+   assert.match(src, /onStaleClaim/)
+   assert.match(src, /reclaimLiveSummonerThread/)
+   assert.match(src, /released_siblings/)
++  const reclaim = src.slice(src.indexOf("async function reclaimLiveSummonerThread"), src.indexOf("async function hydrateSummonerThread"))
++  assert.match(reclaim, /claimOverlayIfLive/, "reclaim must re-check generation after the RPC (S-C2)")
++  assert.doesNotMatch(reclaim, /claimOverlayLeaseCas\(/)
++})
++
++test("menu-bar-agent submit-ok bind is live-gated and setSummonerThreadId is gone (S-C1/C2)", () => {
++  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
++  assert.doesNotMatch(src, /export function setSummonerThreadId/)
++  const submit = src.slice(src.indexOf("export async function handleSummonerSubmit"), src.indexOf("export async function handleSummonerSearch"))
++  assert.match(submit, /if \(result\.ok && result\.threadId && overlaySessionIsLive\(token\)\)/)
+ })
+diff --git a/companion/tests/tool-batch-heal.test.ts b/companion/tests/tool-batch-heal.test.ts
+index 9d33744..3870c22 100644
+--- a/companion/tests/tool-batch-heal.test.ts
++++ b/companion/tests/tool-batch-heal.test.ts
+@@ -216,6 +216,46 @@ test("persistHealedToolRows: skips filler when the real result landed after the
+   assert.deepEqual(fillerIds.sort(), ["call_A:INTERRUPTED", "call_B:real"])
+ })
+ 
++test("persistHealedToolRows: skip is scoped to the in-flight assistant block (S-A2)", () => {
++  // Older round already has a real call_A. Newest unpaired assistant reuses the
++  // same id (adversary probe). Global first-id skip would persist 0 fillers and
++  // leave a-new unpaired; scoped skip must still heal a-new.
++  const tape: any[] = [
++    {
++      id: "a-old",
++      role: "assistant",
++      content: "old",
++      tool_calls: [{ id: "call_A", function: { name: "list_tabs", arguments: "{}" } }],
++    },
++    {
++      id: "t-old",
++      role: "tool",
++      content: "{}",
++      tool_calls: [{ id: "call_A", tool_name: "list_tabs", params: {}, result: { success: true } }],
++    },
++    {
++      id: "a-new",
++      role: "assistant",
++      content: "new",
++      tool_calls: [{ id: "call_A", function: { name: "list_tabs", arguments: "{}" } }],
++    },
++  ]
++  const tm = {
++    getMessages: () => tape,
++    insertMessageAt: (_id: string, index: number, msg: any) => {
++      tape.splice(index, 0, { ...msg, id: "heal-new" })
++    },
++  }
++  const n = persistHealedToolRows(tm, "t1")
++  assert.equal(n, 1, "newest unpaired call_A must still get a filler")
++  const newBlock = tape.slice(tape.findIndex((m) => m.id === "a-new") + 1)
++  assert.equal(newBlock.length, 1)
++  assert.equal(newBlock[0].id, "heal-new")
++  assert.equal(newBlock[0].tool_calls[0].id, "call_A")
++  assert.equal(newBlock[0].tool_calls[0].result.error_code, "INTERRUPTED")
++  assert.equal(tape.find((m) => m.id === "t-old").tool_calls[0].result.success, true)
++})
++
+ test("persistHealedToolRows: stops when the healed assistant was cap-trimmed (no EOF orphan)", () => {
+   const tape: any[] = [
+     { id: "u1", role: "user", content: "go" },
+diff --git a/companion/tests/tool-persistence-redact.test.ts b/companion/tests/tool-persistence-redact.test.ts
+index 689ebae..4dc970a 100644
+--- a/companion/tests/tool-persistence-redact.test.ts
++++ b/companion/tests/tool-persistence-redact.test.ts
+@@ -73,6 +73,51 @@ test("Authorization / Bearer / apiKey keys are redacted on generic tools", () =>
+   assert.ok(!JSON.stringify(params).includes("super-secret"))
+ })
+ 
++test("passwd key and non-string Authorization/apiKey are redacted (S-D1/D2)", () => {
++  const { params } = redactToolPayloadForPersistence(
++    "mcp__http__fetch",
++    {
++      passwd: "hunter2-secret",
++      headers: { Authorization: ["Bearer array-secret"] },
++      apiKey: 123456789,
++      url: "https://example.com",
++    },
++    { success: true },
++  )
++  const p = params as any
++  assert.ok(String(p.passwd).startsWith("<redacted:"))
++  assert.ok(String(p.headers.Authorization[0]).startsWith("<redacted:"))
++  assert.ok(String(p.apiKey).startsWith("<redacted:"))
++  assert.equal(p.url, "https://example.com")
++  assert.ok(!JSON.stringify(params).includes("hunter2-secret"))
++  assert.ok(!JSON.stringify(params).includes("array-secret"))
++  assert.ok(!JSON.stringify(params).includes("123456789"))
++})
++
++test("generic tool value keys stay (not a blanket secret name)", () => {
++  const { params } = redactToolPayloadForPersistence(
++    "get_page_text",
++    { value: "visible-field", passwd: "hide-me" },
++    { success: true },
++  )
++  const p = params as any
++  assert.equal(p.value, "visible-field")
++  assert.ok(String(p.passwd).startsWith("<redacted:"))
++})
++
++test("set_cookie extra Authorization param is redacted (S-D1 cookie branch)", () => {
++  const { params } = redactToolPayloadForPersistence(
++    "set_cookie",
++    { name: "sid", value: "cookie-secret", Authorization: "Bearer extra" },
++    { success: true },
++  )
++  const p = params as any
++  assert.ok(String(p.value).startsWith("<redacted:"))
++  assert.ok(String(p.Authorization).startsWith("<redacted:"))
++  assert.ok(!JSON.stringify(params).includes("cookie-secret"))
++  assert.ok(!JSON.stringify(params).includes("Bearer extra"))
++})
++
+ test("evaluate data payload is always collapsed (even under 200 chars)", () => {
+   const { result } = redactToolPayloadForPersistence(
+     "evaluate",

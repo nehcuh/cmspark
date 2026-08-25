@@ -179,12 +179,14 @@ test("steer arriving during the final streaming round converts to nextRun (not d
   const params = buildMockParams("test-sn-leftover")
   createHandlers = [
     textStreamHandler("回答", "stop", () => {
-      runQueues.enqueueSteer(params.threadId, "请再补充测试")
+      runQueues.enqueueSteer(params.threadId, "请再补充测试", "cm-leftover")
     }),
   ]
   await chatCreate(params)
 
-  assert.equal(runQueues.takeNextRun(params.threadId), "请再补充测试")
+  const leftover = runQueues.takeNextRun(params.threadId)
+  assert.equal(leftover?.text, "请再补充测试")
+  assert.equal(leftover?.clientMessageId, "cm-leftover")
   assert.deepEqual(runQueues.takeSteer(params.threadId), [])
   const users = params.threadManager.getMessages(params.threadId).filter((m) => m.role === "user")
   assert.equal(users.length, 1)
@@ -411,4 +413,15 @@ test("tool-format-leak hint chat.token carries accumulated content + hint", asyn
   assert.ok(params.getSentMessages().some((m) => m.type === "chat.tool_format_warning"))
   const done = params.getSentMessages().find((m) => m.type === "chat.done")
   assert.equal(done?.tool_format_leak, true)
+})
+
+test("adapter leftover path does not import dropSteer (S-A3)", () => {
+  const candidates = [
+    path.resolve(__dirname, "..", "src", "llm", "adapter.ts"),
+    path.resolve(__dirname, "..", "..", "src", "llm", "adapter.ts"),
+  ]
+  const srcPath = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
+  const src = fs.readFileSync(srcPath, "utf8")
+  assert.match(src, /convertLeftoverSteerToNextRun/)
+  assert.doesNotMatch(src, /\bdropSteer\b/)
 })

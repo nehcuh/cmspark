@@ -163,9 +163,9 @@ let summonerThreadId: string | null = null
 /** Overlay session generation captured when summonerThreadId was bound. */
 let summonerThreadSessionToken: number | null = null
 
-function bindSummonerThread(id: string, token?: number): void {
+function bindSummonerThread(id: string, token: number): void {
   summonerThreadId = id
-  summonerThreadSessionToken = token ?? currentOverlaySession()
+  summonerThreadSessionToken = token
 }
 
 function clearSummonerThread(): void {
@@ -688,15 +688,23 @@ async function reclaimLiveSummonerThread(
   client: CompanionClient,
   siblings: OverlayLeaseState[],
 ): Promise<void> {
+  const liveId = summonerThreadId
+  const token = summonerThreadSessionToken
   if (!shouldReclaimLiveOverlayThread({
-    liveThreadId: summonerThreadId,
-    liveSessionToken: summonerThreadSessionToken,
+    liveThreadId: liveId,
+    liveSessionToken: token,
     siblings,
   })) return
-  const liveId = summonerThreadId
-  if (!liveId) return
+  if (!liveId || token == null) return
   try {
-    await claimOverlayLeaseCas(liveId, summonerLeaseRpc(client))
+    await claimOverlayIfLive({
+      token,
+      claim: () => claimOverlayLeaseDetailed(client, liveId),
+      releaseClaim: (rev) =>
+        releaseOverlayLeaseAtRev(liveId, rev, summonerLeaseRpc(client)).then(() => {}),
+      releaseAll: () => client.releaseAllOverlayComposerLeases(),
+      onStaleClaim: (released) => reclaimLiveSummonerThread(client, released),
+    })
   } catch {
     /* best-effort repair — the next user action re-claims anyway */
   }
@@ -904,7 +912,7 @@ export async function handleSummonerSubmit(
     },
     { enqueue },
   )
-  if (result.ok && result.threadId) {
+  if (result.ok && result.threadId && overlaySessionIsLive(token)) {
     bindSummonerThread(result.threadId, token)
     touchSummonerActivity(result.threadId)
   }
@@ -927,11 +935,6 @@ export async function handleSummonerSelect(threadId: string): Promise<void> {
   if (!id) return
   const claimed = await hydrateSummonerThread(id)
   if (claimed) touchSummonerActivity(id)
-}
-
-export function setSummonerThreadId(id: string | null): void {
-  if (id) bindSummonerThread(id)
-  else clearSummonerThread()
 }
 
 /** Re-arm a persisted combo on Swift. Empty config waits for first overlay open. */

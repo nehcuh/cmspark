@@ -1007,6 +1007,111 @@ test("HistoryStore.record() redacts sensitive keys in mcp__shell__exec params bu
   }
 })
 
+test("HistoryStore.record() redacts Authorization / passwd / numeric apiKey (S-D3)", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    await store.record({
+      thread_id: "t-mcp-auth",
+      tool_name: "mcp__http__fetch",
+      params: JSON.stringify({
+        Authorization: "Bearer hist-secret",
+        passwd: "hunter2-hist",
+        apiKey: 987654321,
+        url: "https://example.com",
+      }),
+      result_summary: JSON.stringify({ ok: true }),
+      error: null,
+      success: 1,
+      duration_ms: 10,
+      created_at: new Date().toISOString(),
+    })
+    const rows = await store.query({ thread_id: "t-mcp-auth" })
+    assert.equal(rows.length, 1)
+    const stored = rows[0]
+    assert.ok(!stored.params.includes("hist-secret"))
+    assert.ok(!stored.params.includes("hunter2-hist"))
+    assert.ok(!stored.params.includes("987654321"))
+    assert.match(stored.params, /"Authorization":\s*"<redacted:len=\d+:sha256=[a-f0-9]{12}>"/)
+    assert.match(stored.params, /"passwd":\s*"<redacted:len=\d+:sha256=[a-f0-9]{12}>"/)
+    assert.match(stored.params, /"url":\s*"https:\/\/example.com"/)
+  } finally {
+    store.close()
+  }
+})
+
+test("HistoryStore.record() redacts cookie extra keys and generic-tool passwd (N-D1)", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    await store.record({
+      thread_id: "t-cookie-extra",
+      tool_name: "set_cookie",
+      params: JSON.stringify({
+        name: "sid",
+        value: "cookie-secret",
+        Authorization: "Bearer cookie-extra",
+        passwd: "cookie-passwd-hist",
+      }),
+      result_summary: JSON.stringify({ ok: true }),
+      error: null,
+      success: 1,
+      duration_ms: 5,
+      created_at: new Date().toISOString(),
+    })
+    const cookieRows = await store.query({ thread_id: "t-cookie-extra" })
+    assert.ok(!cookieRows[0].params.includes("cookie-secret"))
+    assert.ok(!cookieRows[0].params.includes("Bearer cookie-extra"))
+    assert.ok(!cookieRows[0].params.includes("cookie-passwd-hist"))
+
+    await store.record({
+      thread_id: "t-generic-passwd",
+      tool_name: "get_page_text",
+      params: JSON.stringify({
+        value: "visible-field",
+        passwd: "generic-passwd-hist",
+        Authorization: "Bearer generic-auth",
+      }),
+      result_summary: JSON.stringify({ text: "hello" }),
+      error: null,
+      success: 1,
+      duration_ms: 5,
+      created_at: new Date().toISOString(),
+    })
+    const generic = await store.query({ thread_id: "t-generic-passwd" })
+    assert.ok(generic[0].params.includes("visible-field"))
+    assert.ok(!generic[0].params.includes("generic-passwd-hist"))
+    assert.ok(!generic[0].params.includes("Bearer generic-auth"))
+  } finally {
+    store.close()
+  }
+})
+
+test("HistoryStore.record() redacts array Authorization on MCP tools (S-D3)", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    await store.record({
+      thread_id: "t-mcp-arr",
+      tool_name: "mcp__http__fetch",
+      params: JSON.stringify({
+        headers: { Authorization: ["Bearer hist-array"] },
+        url: "https://example.com",
+      }),
+      result_summary: JSON.stringify({ ok: true }),
+      error: null,
+      success: 1,
+      duration_ms: 5,
+      created_at: new Date().toISOString(),
+    })
+    const rows = await store.query({ thread_id: "t-mcp-arr" })
+    assert.ok(!rows[0].params.includes("hist-array"))
+    assert.match(rows[0].params, /"url":\s*"https:\/\/example.com"/)
+  } finally {
+    store.close()
+  }
+})
+
 test("HistoryStore.record() redacts set_cookie single-object result_summary", async () => {
   const store = new HistoryStore()
   await store.waitReady()

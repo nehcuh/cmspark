@@ -73,6 +73,63 @@ test("Authorization / Bearer / apiKey keys are redacted on generic tools", () =>
   assert.ok(!JSON.stringify(params).includes("super-secret"))
 })
 
+test("passwd key and non-string Authorization/apiKey are redacted (S-D1/D2)", () => {
+  const { params } = redactToolPayloadForPersistence(
+    "mcp__http__fetch",
+    {
+      passwd: "hunter2-secret",
+      headers: { Authorization: ["Bearer array-secret"] },
+      apiKey: 123456789,
+      url: "https://example.com",
+    },
+    { success: true },
+  )
+  const p = params as any
+  assert.ok(String(p.passwd).startsWith("<redacted:"))
+  assert.ok(String(p.headers.Authorization[0]).startsWith("<redacted:"))
+  assert.ok(String(p.apiKey).startsWith("<redacted:"))
+  assert.equal(p.url, "https://example.com")
+  assert.ok(!JSON.stringify(params).includes("hunter2-secret"))
+  assert.ok(!JSON.stringify(params).includes("array-secret"))
+  assert.ok(!JSON.stringify(params).includes("123456789"))
+})
+
+test("object-valued Authorization bags are collapsed (N-D3)", () => {
+  const { params } = redactToolPayloadForPersistence(
+    "mcp__http__fetch",
+    { Authorization: { scheme: "Bearer", value: "object-secret-LEAK" }, url: "https://example.com" },
+    { success: true },
+  )
+  const p = params as any
+  assert.equal(p.Authorization.redacted, true)
+  assert.equal(p.url, "https://example.com")
+  assert.ok(!JSON.stringify(params).includes("object-secret-LEAK"))
+})
+
+test("generic tool value keys stay (not a blanket secret name)", () => {
+  const { params } = redactToolPayloadForPersistence(
+    "get_page_text",
+    { value: "visible-field", passwd: "hide-me" },
+    { success: true },
+  )
+  const p = params as any
+  assert.equal(p.value, "visible-field")
+  assert.ok(String(p.passwd).startsWith("<redacted:"))
+})
+
+test("set_cookie extra Authorization param is redacted (S-D1 cookie branch)", () => {
+  const { params } = redactToolPayloadForPersistence(
+    "set_cookie",
+    { name: "sid", value: "cookie-secret", Authorization: "Bearer extra" },
+    { success: true },
+  )
+  const p = params as any
+  assert.ok(String(p.value).startsWith("<redacted:"))
+  assert.ok(String(p.Authorization).startsWith("<redacted:"))
+  assert.ok(!JSON.stringify(params).includes("cookie-secret"))
+  assert.ok(!JSON.stringify(params).includes("Bearer extra"))
+})
+
 test("evaluate data payload is always collapsed (even under 200 chars)", () => {
   const { result } = redactToolPayloadForPersistence(
     "evaluate",
