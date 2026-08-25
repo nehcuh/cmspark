@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S81 (2026-08-25) [pull main · 四路对抗 REJECT · P1 fold · r2 全 AWN]
+- **Pull**: `fix/post219-kimi-nits-r2-fold` → `main` `6ce291db`（#220+#221+#222）
+- **对抗**: `1d16b0ed..6ce291db` 四路独立 → **REJECT**（B P1×3）。产物 `head-6ce291db-post220-adversary-synthesis-20260825.md`
+- **折**: 分支 `fix/post220-head-p1-fold` — F-I-5 去掉 `taken.delete`；PEM 无 4000 cap；F-S-1 `wrapKnowledgeBlock`
+- **r2**: A/B/C/D **全 APPROVE_WITH_NITS**（B 重放+MUT 杀新测；A/C/D exclusive diff 空）。合成 `head-6ce291db-post220-p1-r2-synthesis-20260825.md`
+- **机核**: companion tsc 0；skill-engine+distill+sanitizer 56/56；files+identity 77/77
+- **状态**: 折完待 commit/PR。未 Pi。nits 未进本刀（C-thin / folder 无预览 / chip 死点击 / history 200 字）
+
 ### S80 END (2026-08-25 ~13:40) [knowledge honesty Wave 0–2 · DMG 换装]
 - **Ship（本机）**：`feat/knowledge-honesty-wave0` 落地 Wave 0/0b/1/2。`make package-macos` → `dist-package/CMspark-v0.5.2-macOS.dmg`；替换 `/Applications/CMspark.app`（备份 `~/CMspark.app.bak-20260825-133708`）；daemon `127.0.0.1:23401`。
 - **闸门**：设计 dual AWN `102532`；Wave 0 impl AWN `105843`；0b+1 r3 both AWN `114735`；Wave 2 对抗四路 AWN（Product r1 REJECT 图谱名词后折）+ Claude/Pi AWN `132009`。
