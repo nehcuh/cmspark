@@ -74,6 +74,13 @@
 
 ## Technical Pitfalls
 
+### overlay 新 WS 类型必须 background relay + 未跟踪文件必须 stage（2026-08-25 · knowledge honesty）
+- **坑 1**：Side Panel `chrome.runtime.sendMessage({type:"knowledge.preview"})` 若 `background/index.ts` 无 `case`，companion 永远收不到。Wave 0b r1 Pi **REJECT**。同类：`knowledge.related` / `thread.distill_preview` 必须同时进 validate、router、background、useWebSocket。
+- **坑 2**：`DATA_DIR` 若在 `config.ts` **import-time** 快照，`initDataDir()`/`saveIndex` 用 live `getConfigDir()` 会 ENOENT（P1 D8）。测须 `getConfigDir` live + `modulesToClear`。
+- **坑 3**：`scripts/dual-external-review.sh` 只 `git diff HEAD` + `--cached`。**未跟踪** 的 `knowledge-related.ts` / `distill.ts` 不进 patch → 外审漏看。审前 `git add` 新文件，不要 `git add .`。
+- **坑 4**：F-UX-NOUN-1 禁「图谱」。Wave 2 在 ThreadList 加「话题」时 overflow 仍写「关联图谱 / 类 Obsidian」→ Product **REJECT**。同面板改名词必须扫可见 copy。
+- **4 行 case**：动作=Wave 0b/2 接线+dual；失败=preview 不到 companion / patch 无新文件 / 图谱卡话题夹；归责=relay 漏 case + 评审脚本不收 untracked + 名词锁未扫旧菜单；保护=overlay ACL 零增长、知识确认导入、话题夹不是 Project
+
 ### leftover / drain / redact 测钉窗口（2026-08-25 · #221）
 - **take→drop 窗**：`convertLeftoverSteerToNextRun` 先 `takeSteer` 再 enqueue。测若在 helper **返回后** 才 `enqueueSteer` concurrent，往 full 路径塞 `dropSteer` 仍绿（队列已被 take 掏空）。必须 `_setAfterLeftoverTakeForTests` 打在 take 与 enqueue 之间。
 - **drain 先闸再 take**：pause/trash/`MULTI_AGENT_LLM_CAP` 若在 `takeNextRun` 之后，客户端已持 `chat.enqueued` 的回合会被丢掉。upload/regen **不得** `return drainedAfter*`（推 frame，原 RPC 恒 `file.uploaded` / regen `null`）。
@@ -768,6 +775,15 @@
 
 ## Reusable Patterns
 
+### Knowledge Honesty 波浪：身份三分 + ledger 芯片 + 话题夹字符串（2026-08-25）
+- **定位**：日常浏览器+本机知识助手；不是 Codex / Raycast / Project / 图谱 DB。
+- **身份**：`{id, filename, title}`；CJK title 可入库；filename `k-<sha10>` 防 `--.md` 互撞；写盘统一 helper。
+- **诚实**：RAG/truncate/entries/search 都 sanitize；`retrieved_sources` 挂 assistant 消息；芯片 ⊆ companion ledger，禁模型脚注。
+- **导入**：preview + `user_gesture`；overlay **禁** `knowledge.*`；提炼=`thread.distill_preview` 脱敏后走同一确认 modal，永不自动写盘。
+- **相关 ≤3**：query-time 抄 `threads/related.ts`，不落边。话题夹=`Thread.topic_folder` 标签，`thread.update` **allowlist 必须含该 key** 否则 UI 更新被丢。
+- **闸门**：Wave 0 / 0b+1 r3 / Wave 2 dual 均 both AWN。本机已 `make package-macos` 换装 `/Applications/CMspark.app`（备份 `~/CMspark.app.bak-20260825-133708`）。
+- **SoT**：`docs/superpowers/specs/2026-08-25-daily-assistant-knowledge-honesty-design.md`
+
 ### 合后独立复验 squash ≠ WIP r2（2026-08-25 · #220→#221）
 - **坑**：合前四路 r2 打的是 `c5b4242` **未提交工作区**；squash `1d16b0e` 是另一份树。r2 AWN 不能当 live main 证据。
 - **做法**：`git pull` → freeze `base..HEAD` SHA256 → 四路 **worktree** 独立对抗（重放原 BLOCK + 变异杀死）→ 合成 → `dual-external-review.sh` Claude+Pi（先 stash 脏 `session.md`，否则 diff 掺记忆层）→ 折 nits 再 PR → CI 绿 squash。
@@ -1022,6 +1038,12 @@
 - 教训：JS 单线程下，**全同步**的 read-modify-write 天然原子，不存在交错竞态——只有 caller「读 → await → 用陈旧快照写」才有竞态。审计/评审提"竞态"时先确认是否有 await 间隙，别为不存在的竞态加锁（cargo-cult）。kimi 终审也独立验证了所有 caller无 await 间隙，确认非 bug。
 
 ## Architecture Decisions
+
+### Daily assistant · Knowledge Honesty（2026-08-25 · Wave 0–2 on `feat/knowledge-honesty-wave0`）
+- **禁**：Project 实体、graph DB、分类表、远程 KB、overlay 知识管理、companion `sidePanel.open`、对话自动入库、Perplexity `[n]`、Raycast 重做。
+- **Wave 0**：identity + 全路径 sanitize + CJK。**0b**：确认导入。**1**：本轮附带 ledger。**2**：相关≤3、distill+confirm、话题夹、召唤器瘦身、启动器仅分发文档。
+- **Trust**：知识仍是 untrusted retrieved data；overlay ACL 不涨。
+- **未合 main**：分支 `feat/knowledge-honesty-wave0`；真机 0.5.2 DMG 已换。Chrome 扩展需重载 `chrome-extension/build/chrome-mv3-prod/`。
 
 ### OS summoner = 薄 L0；跨平台是 C-thin HTML，不是第二 Side Panel（2026-08-24 · #219 MERGED）
 - **身份**：本机 Agent 全局召唤。Chrome 是按需 L1。overlay **永不** Allow/Deny。

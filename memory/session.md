@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S80 END (2026-08-25 ~13:40) [knowledge honesty Wave 0–2 · DMG 换装]
+- **Ship（本机）**：`feat/knowledge-honesty-wave0` 落地 Wave 0/0b/1/2。`make package-macos` → `dist-package/CMspark-v0.5.2-macOS.dmg`；替换 `/Applications/CMspark.app`（备份 `~/CMspark.app.bak-20260825-133708`）；daemon `127.0.0.1:23401`。
+- **闸门**：设计 dual AWN `102532`；Wave 0 impl AWN `105843`；0b+1 r3 both AWN `114735`；Wave 2 对抗四路 AWN（Product r1 REJECT 图谱名词后折）+ Claude/Pi AWN `132009`。
+- **产品**：CJK identity；确认导入；本轮附带芯片；相关≤3；提炼脱敏+HITL；话题夹字符串；召唤器去工作台化；Raycast 仅分发文档。
+- **下次**：开 PR（未合 main）；Chrome 重载解压扩展；overlay `pack.apply` peek / `user_gesture` 服务端 400 仍停住。
+- Recorded: yes — overlay 新类型须 background relay；DATA_DIR 快照 vs getConfigDir；dual patch 须 stage 新文件；F-UX-NOUN 同面板扫旧「图谱」
+
 ### S79 END (2026-08-25 ~10:05) [#221 MERGED · post-#220 nits]
 - **Ship**：**PR #221 squash MERGED** `ac0a3be`。CI build + 3 smoke 绿。本地 `main` == `origin/main`。
 - **流程**：拉 `c5b4242..1d16b0e`（#220）→ 四路合后独立对抗 AWN → 折 nits → 再四路+Claude/Pi AWN → 折 dual 残留 → PR → CI → squash。
@@ -846,6 +853,13 @@
 - Recorded: yes 鈥?瑙?project-knowledge.md銆孧ermaid 鍥捐〃娓叉煋鐨勪笁涓潙銆? docs/adr/009
 
 ## In-Flight Tasks (Cross-Session)
+
+### Daily assistant · Knowledge Honesty（S80 · Wave 0–2 landed, not on main）
+- status: **active**
+- context: `feat/knowledge-honesty-wave0` 相对 `5a38149`。Wave 0–2 dual both AWN。本机 0.5.2 DMG 已换装。
+- next_action: (1) Chrome 重载 `chrome-extension/build/chrome-mv3-prod/` (2) 开 PR 合 main（用户未要求本轮 push）(3) 勿 overlay 知识 ACL / Project / graph DB
+- resume_doc: `docs/superpowers/specs/2026-08-25-daily-assistant-knowledge-honesty-design.md` · `docs/audit/reviews/knowledge-honesty-wave2-verdict-20260825-132009.json`
+- updated: 2026-08-25
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**
