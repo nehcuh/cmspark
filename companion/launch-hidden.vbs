@@ -22,12 +22,12 @@ End If
 ' Priority 1: SEA standalone exe (Node.js Single Executable Application)
 If objFSO.FileExists(strHere & "\cmspark-agent.exe") Then
     strCmd = """" & strHere & "\cmspark-agent.exe" & """ tray"
-' Priority 2: Bundled node.exe + cmspark-agent.js (legacy package)
+' Priority 2: Bundled node.exe + cmspark-agent.js (legacy package) with NODE_PATH
 ElseIf objFSO.FileExists(strHere & "\node.exe") And objFSO.FileExists(strHere & "\cmspark-agent.js") Then
-    strCmd = """" & strHere & "\node.exe" & """ """ & strHere & "\cmspark-agent.js" & """ tray"
-' Priority 3: System node + local cmspark-agent.js
+    strCmd = "cmd /c "" set NODE_PATH=" & strHere & " && """ & strHere & "\node.exe"" """ & strHere & "\cmspark-agent.js"" tray """
+' Priority 3: System node + local cmspark-agent.js with NODE_PATH
 ElseIf objFSO.FileExists(strHere & "\cmspark-agent.js") Then
-    strCmd = "node """ & strHere & "\cmspark-agent.js" & """ tray"
+    strCmd = "cmd /c "" set NODE_PATH=" & strHere & " && node """ & strHere & "\cmspark-agent.js"" tray """
 Else
     Dim ts
     Set ts = objFSO.OpenTextFile(strLogFile, 8, True)
