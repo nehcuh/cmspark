@@ -68,7 +68,7 @@ test("planSummonerShellOpen uses --app window when browser path is known", () =>
   assert.equal(r.kind, "app-window")
   assert.equal(r.command, "/usr/bin/google-chrome")
   assert.ok(r.args.some((a) => a === `--app=${LOOP}`))
-  assert.ok(r.args.some((a) => a.startsWith("--window-size=640")))
+  assert.ok(r.args.some((a) => a === "--window-size=720,120"))
 })
 
 test("planSummonerShellOpen falls back to system browser without chrome", () => {

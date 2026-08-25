@@ -631,8 +631,8 @@ body{
   color:var(--text);background:var(--canvas);
 }
 .hud{height:100%;display:flex;flex-direction:column;background:var(--paper)}
-.body{display:grid;grid-template-columns:var(--rail) var(--list) 1fr;flex:1;min-height:0;border-bottom:1px solid var(--line)}
-.hud:not(.expanded) .body{display:none}
+.body{display:none;grid-template-columns:var(--rail) var(--list) minmax(0,1fr);flex:1;min-height:0;border-bottom:1px solid var(--line)}
+.hud.expanded .body{display:grid}
 .rail{
   background:var(--rail-bg);border-right:1px solid var(--line);
   display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;
@@ -699,16 +699,12 @@ body{
 .ghost:hover{background:var(--canvas);color:var(--text)}
 .hint{padding:0 16px 10px;font-size:11px;color:var(--faint)}
 .status{padding:0 16px 12px;font-size:12px;color:#92400e;min-height:16px}
-@media (max-width:720px){
-  .body{grid-template-columns:var(--rail) 1fr}
-  .list{display:none}
-  .hud.list-open .list{display:flex}
-  .hud.list-open .main{display:none}
-}
+.hud:not(.expanded) .ghosts,.hud:not(.expanded) .status:empty{display:none}
+.hud:not(.expanded) .hint{padding-bottom:8px}
 </style>
 </head>
 <body>
-<div class="hud expanded" id="hud">
+<div class="hud" id="hud">
   <div class="body">
     <nav class="rail" id="secs" aria-label="组合面">
       <button class="rail-btn" data-sec="threads" aria-current="true" type="button" title="对话" aria-label="对话">
@@ -752,8 +748,8 @@ body{
       <button class="icon-btn" id="mic" type="button" disabled title="听写/知识配置/批准去侧栏处理" aria-label="听写去侧栏处理">
         <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
       </button>
-      <button class="icon-btn" id="chev" type="button" aria-pressed="true" title="展开 / 收起工作台" aria-label="展开或收起">
-        <svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>
+      <button class="icon-btn" id="chev" type="button" aria-pressed="false" title="展开工作台" aria-label="展开工作台">
+        <svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>
       </button>
     </div>
   </div>
@@ -777,6 +773,24 @@ body{
   function $(id){return document.getElementById(id)}
   function setStatus(t){$("status").textContent=t||""}
   function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})}
+  function placeWindow(expanded){
+    var w=720,h=expanded?520:120;
+    var sw=screen.availWidth||screen.width||w;
+    var sh=screen.availHeight||screen.height||h;
+    var x=Math.max(0, ((sw-w)/2)|0);
+    var y=expanded?Math.max(0, ((sh-h)/2)|0):Math.max(24, ((sh*0.28)-(h/2))|0);
+    try{window.resizeTo(w,h);window.moveTo(x,y)}catch(e){}
+  }
+  function setExpanded(on){
+    $("hud").classList.toggle("expanded", !!on);
+    $("chev").setAttribute("aria-pressed", on?"true":"false");
+    $("chev").setAttribute("title", on?"收起工作台":"展开工作台");
+    $("chev").setAttribute("aria-label", on?"收起工作台":"展开工作台");
+    $("chev").innerHTML=on
+      ?'<svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>'
+      :'<svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>';
+    placeWindow(!!on);
+  }
   function api(path, opts){
     return fetch(url(path), opts).then(function(r){return r.json().catch(function(){return {error:r.statusText}})})
   }
@@ -932,9 +946,7 @@ body{
     api("/api/abort",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})});
   };
   $("chev").onclick=function(){
-    $("hud").classList.toggle("expanded");
-    var on=$("hud").classList.contains("expanded");
-    $("chev").setAttribute("aria-pressed", on?"true":"false");
+    setExpanded(!$("hud").classList.contains("expanded"));
   };
   $("newThreadBar").onclick=function(){$("newThread").click()};
   $("newThread").onclick=function(){
@@ -972,7 +984,7 @@ body{
       if(b.getAttribute("data-sec")===name) b.setAttribute("aria-current","true");
       else b.removeAttribute("aria-current");
     });
-    $("hud").classList.toggle("list-open", name!=="threads");
+    if(!$("hud").classList.contains("expanded")) setExpanded(true);
     var heads={threads:"对话",packs:"场景",knowledge:"知识",skills:"技能",mcp:"MCP"};
     $("secHead").textContent=heads[name]||name;
     $("newThread").style.display=name==="threads"?"":"none";
@@ -984,6 +996,13 @@ body{
   function loadCompose(name){
     var box=$("composeList");
     box.innerHTML="";
+    function markEmpty(){
+      if(box.children.length) return;
+      var p=document.createElement("div");
+      p.className="row muted";
+      p.innerHTML="<strong>这一栏是空的</strong><small>没有可显示的项目</small>";
+      box.appendChild(p);
+    }
     if(name==="packs"){
       return api("/api/packs").then(function(d){
         (d.packs||[]).forEach(function(p){
@@ -999,7 +1018,7 @@ body{
           };
           box.appendChild(b);
         });
-      });
+      }).catch(function(e){setStatus(String(e&&e.message||e))}).then(markEmpty);
     }
     if(name==="mcp"){
       return api("/api/mcp").then(function(d){
@@ -1013,7 +1032,7 @@ body{
           };
           box.appendChild(b);
         });
-      });
+      }).catch(function(e){setStatus(String(e&&e.message||e))}).then(markEmpty);
     }
     if(name==="skills"){
       return Promise.all([api("/api/skills"), threadId?api("/api/thread?id="+encodeURIComponent(threadId)):Promise.resolve({})]).then(function(pair){
@@ -1029,7 +1048,7 @@ body{
           };
           box.appendChild(b);
         });
-      });
+      }).catch(function(e){setStatus(String(e&&e.message||e))}).then(markEmpty);
     }
     if(name==="knowledge"){
       return Promise.all([api("/api/knowledge"), threadId?api("/api/thread?id="+encodeURIComponent(threadId)):Promise.resolve({})]).then(function(pair){
@@ -1047,7 +1066,7 @@ body{
           };
           box.appendChild(b);
         });
-      });
+      }).catch(function(e){setStatus(String(e&&e.message||e))}).then(markEmpty);
     }
   }
   document.querySelectorAll("#secs [data-sec]").forEach(function(b){
@@ -1115,6 +1134,7 @@ body{
       }
     };
   }catch(e){}
+  placeWindow(false);
   refresh().then(function(){
     if(threads[0]) return selectThread(threads[0].id);
   }).catch(function(e){setStatus(String(e&&e.message||e))});
