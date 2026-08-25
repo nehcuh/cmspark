@@ -1,0 +1,3361 @@
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index 636dbbe..83326f9 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -37,9 +37,10 @@ import {
+ import {
+   createToolResultMessage,
+   persistHealedToolRows,
++  replaceInterruptedFillerIfPresent,
+ } from "./tool-batch-heal"
+-import { isContextOverflowError, isTruncatedToolBatch } from "./overflow"
+-import { dropSteer, takeSteer } from "./run-queues"
++import { isContextOverflowError, isLengthStop, isTruncatedToolBatch } from "./overflow"
++import { enqueueNextRun, takeSteer } from "./run-queues"
+ 
+ export { createToolResultMessage }
+ import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
+@@ -901,7 +902,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+ 
+       const steered = takeSteer(threadId)
+       if (steered.length) {
+-        const steerText = steered.join("\n")
++        const steerText = steered.map((s) => s.text).join("\n")
++        // F1 adopt parity with the chat.create main path: the persisted user row
++        // keeps the companion id, and the chat.user echo carries client_message_id
++        // so the panel adopts it onto the optimistic bubble. Several steers join
++        // into one row — the first clientMessageId wins.
++        const steerClientMessageId = steered.find((s) => s.clientMessageId)?.clientMessageId
+         const steerMsg = threadManager.addMessage(threadId, {
+           thread_id: threadId,
+           role: "user",
+@@ -912,6 +918,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+           type: "chat.user",
+           thread_id: threadId,
+           message_id: steerMsg.id,
++          ...(steerClientMessageId ? { client_message_id: steerClientMessageId } : {}),
+           content: steerText,
+         })
+       }
+@@ -985,12 +992,21 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+         toolCalls.some((tc) => tc != null),
+       )
+       if (truncatedToolBatch) {
+-        if (!lengthRecoveryUsed) {
++        // Byte-level retry only makes sense in auto mode; prompt never rewrites the
++        // request and off skips budgeting, so the retry would resend an identical
++        // oversized request and fail again — skip straight to mode semantics.
++        if (!lengthRecoveryUsed && compactionSetting === "auto") {
+           lengthRecoveryUsed = true
+           round--
+-          await runContextBudgetPass("pre_loop")
++          // Mid-loop retry must compact with the live round pinned (mid_loop
++          // shrink); pre_loop could drop this round's rows instead.
++          await runContextBudgetPass("mid_loop")
+           continue
+         }
++        if (compactionSetting === "prompt") {
++          // Notify-only pass (thread.context_compact_prompt); messages untouched.
++          await runContextBudgetPass("mid_loop")
++        }
+         sendToExtension({
+           type: "chat.error",
+           thread_id: threadId,
+@@ -1079,7 +1095,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+           sendToExtension({
+             type: "chat.token",
+             thread_id: threadId,
+-            content: `\n\n${TOOL_FORMAT_LEAK_USER_HINT_ZH}`,
++            // chat.token content is a full snapshot (the overlay chain assumes
++            // cumulative text), so send accumulated content + hint — not just the
++            // hint fragment, which would visually replace the reply.
++            content: `${assistantContent}\n\n${TOOL_FORMAT_LEAK_USER_HINT_ZH}`,
+           })
+           sendToExtension({
+             type: "chat.tool_format_warning",
+@@ -1099,6 +1118,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+           message_id: savedAssistant.id,
+           ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+           ...(leak ? { tool_format_leak: true } : {}),
++          // Length-stop with no tool_call deltas = pure-text truncation. The reply
++          // is kept as-is but flagged (optional, backward-compatible) so the UI can
++          // hint the answer was cut off instead of looking complete.
++          ...(isLengthStop(finishReason) ? { truncated: true } : {}),
+         })
+         // Best-effort auto-alias: generate a short title if thread has no alias yet
+         generateThreadTitle({ threadId, threadManager, config, sendToExtension })
+@@ -1383,7 +1406,15 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+             shouldStop = true
+             break
+           }
+-          threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, toolResult, params))
++          const realResultRow = createToolResultMessage(threadId, tc, toolResult, params)
++          // Supersede race: the successor run's entry heal may have persisted an
++          // INTERRUPTED filler for this id while we were blocked in executeTool.
++          // Replace the filler in place — an EOF append would orphan the real row
++          // (rebuild skips it) and tell the model the call was interrupted, which
++          // can trigger a duplicate of an already-successful side effect.
++          if (!replaceInterruptedFillerIfPresent(threadManager, threadId, tc.id, realResultRow, savedAssistantId)) {
++            threadManager.addMessage(threadId, realResultRow)
++          }
+           if (signal?.aborted) {
+             const err = new Error("aborted")
+             err.name = "AbortError"
+@@ -1572,7 +1603,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+             stack: e.stack,
+           })
+           const result = { success: false, error: e.message || String(e) }
+-          threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, result, params))
++          // Same supersede-filler race as the success path above: replace, not append.
++          const exceptionRow = createToolResultMessage(threadId, tc, result, params)
++          if (!replaceInterruptedFillerIfPresent(threadManager, threadId, tc.id, exceptionRow, savedAssistantId)) {
++            threadManager.addMessage(threadId, exceptionRow)
++          }
+           sendToExtension({
+             type: "chat.error",
+             thread_id: threadId,
+@@ -1618,17 +1653,26 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+ 
+       const errorMsg = e.message || String(e)
+       if (isContextOverflowError(errorMsg)) {
+-        if (!overflowRecoveryUsed) {
++        // Byte-level retry only makes sense in auto mode (see truncated-batch path).
++        if (!overflowRecoveryUsed && compactionSetting === "auto") {
+           overflowRecoveryUsed = true
+           logger.warn("llm.overflow_retry", { thread_id: threadId, error: errorMsg.slice(0, 200) })
+           round--
+-          await runContextBudgetPass("pre_loop")
++          // Mid-loop retry must compact with the live round pinned (mid_loop
++          // shrink); pre_loop could drop this round's rows instead.
++          await runContextBudgetPass("mid_loop")
+           continue
+         }
++        if (compactionSetting === "prompt") {
++          // Notify-only pass (thread.context_compact_prompt); messages untouched.
++          await runContextBudgetPass("mid_loop")
++        }
+         sendToExtension({
+           type: "chat.error",
+           thread_id: threadId,
+-          error: "上下文溢出，压缩重试后仍失败，已停止。",
++          error: compactionSetting === "auto"
++            ? "上下文溢出，压缩重试后仍失败，已停止。"
++            : "上下文溢出，已停止（当前上下文压缩模式不会自动压缩请求）。",
+         })
+         return
+       }
+@@ -1702,9 +1746,31 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+     error: `达到最大工具调用轮次 (${MAX_TOOL_CALL_ROUNDS})，已暂停。`,
+   })
+   } finally {
++    if (!signal?.aborted) {
++      // Normal (non-abort) finish: steers that arrived during the final streaming
++      // round were already acked (chat.steered) but are never consumed — dropping
++      // them here would silently lose user messages. Convert the remainder into a
++      // queued next run instead: the router drains nextRun right after chatCreate
++      // returns, and this finally runs before that drain.
++      // Queue full (MAX_NEXT_RUN): warn + drop — bounded loss beats an unbounded
++      // in-memory queue, and the steer queue itself is likewise capped.
++      const leftover = takeSteer(threadId)
++      if (leftover.length) {
++        const text = leftover.map((s) => s.text).join("\n")
++        if (!enqueueNextRun(threadId, text)) {
++          logger.warn("llm.steer_leftover_dropped", {
++            thread_id: threadId,
++            count: leftover.length,
++            reason: "next_run_queue_full",
++          })
++          // leftover is already off the steer queue (takeSteer). Do not
++          // dropSteer: that would wipe steers enqueued after the take
++          // (successor / concurrent chat.steer). Bounded loss = this leftover.
++        }
++      }
++    }
+     // Abort/supersede: abortThreadChat drops all steers. Skip here so a
+     // superseded predecessor cannot wipe successor steers enqueued during drain.
+-    if (!signal?.aborted) dropSteer(threadId)
+   }
+ }
+ 
+diff --git a/companion/src/llm/run-queues.ts b/companion/src/llm/run-queues.ts
+index 90cc25f..cb9c2e7 100644
+--- a/companion/src/llm/run-queues.ts
++++ b/companion/src/llm/run-queues.ts
+@@ -3,22 +3,29 @@
+  * steer dies on abort; nextRun survives abort (lost only on process death).
+  */
+ 
+-const steerByThread = new Map<string, string[]>()
++/** Steer queue entry: text + optional extension optimistic bubble id (F1 adopt). */
++export type SteerItem = {
++  text: string
++  /** chat.steer frame's clientMessageId, echoed as chat.user client_message_id. */
++  clientMessageId?: string
++}
++
++const steerByThread = new Map<string, SteerItem[]>()
+ const nextRunByThread = new Map<string, string[]>()
+ 
+ export const MAX_STEER = 8
+ 
+-export function enqueueSteer(threadId: string, text: string): boolean {
++export function enqueueSteer(threadId: string, text: string, clientMessageId?: string): boolean {
+   const t = String(text || "").trim()
+   if (!threadId || !t) return false
+   const q = steerByThread.get(threadId) || []
+   if (q.length >= MAX_STEER) return false
+-  q.push(t)
++  q.push(clientMessageId ? { text: t, clientMessageId } : { text: t })
+   steerByThread.set(threadId, q)
+   return true
+ }
+ 
+-export function takeSteer(threadId: string): string[] {
++export function takeSteer(threadId: string): SteerItem[] {
+   const q = steerByThread.get(threadId) || []
+   steerByThread.delete(threadId)
+   return q
+diff --git a/companion/src/llm/tool-batch-heal.ts b/companion/src/llm/tool-batch-heal.ts
+index a023018..4190f4d 100644
+--- a/companion/src/llm/tool-batch-heal.ts
++++ b/companion/src/llm/tool-batch-heal.ts
+@@ -159,8 +159,31 @@ export function persistHealedToolRows(
+   const missing = unpairedToolCallsFromAssistant(history[idx], history.slice(idx + 1))
+   if (missing.length === 0) return 0
+   const assistantIdResolved = history[idx].id
+-  let insertAt = toolBlockInsertIndex(history, idx)
++  let persisted = 0
+   for (const m of missing) {
++    // Re-read before EVERY insert: insertMessageAt cap-trim can shift indexes (so a
++    // cached insertAt+1 could land after a later user), and under supersede the old
++    // run's real tool result may have landed after `missing` was computed above.
++    const now = tm.getMessages(threadId) as DiskMessage[]
++    const asstNow = assistantIdResolved
++      ? now.findIndex((row) => row.id === assistantIdResolved)
++      : newestUnpairedAssistantIndex(now)
++    if (asstNow < 0) {
++      // The healed assistant itself was cap-trimmed between inserts. Remaining
++      // fillers would land at EOF with no assistant to pair against (permanent
++      // orphan — rebuild skips unpaired tool rows), so stop healing this batch.
++      break
++    }
++    // Never write an INTERRUPTED filler for an id already on disk (a real result
++    // from the old run, or a filler from a concurrent heal) — a duplicate id row
++    // would orphan one of the two at rebuild.
++    if (
++      now.some(
++        (row) => row.role === "tool" && (row.tool_calls || []).some((tc) => tc.id === m.id),
++      )
++    ) {
++      continue
++    }
+     const result = {
+       success: false as const,
+       error: error || "interrupted",
+@@ -168,7 +191,7 @@ export function persistHealedToolRows(
+     }
+     tm.insertMessageAt(
+       threadId,
+-      insertAt,
++      toolBlockInsertIndex(now, asstNow),
+       createToolResultMessage(
+         threadId,
+         { id: m.id, function: { name: m.toolName, arguments: m.args } },
+@@ -177,12 +200,52 @@ export function persistHealedToolRows(
+       ) as DiskMessage,
+     )
+     onPersisted?.(m, result)
+-    // Re-read: cap-trim can shift indexes so insertAt++ would land after a later user.
+-    const now = tm.getMessages(threadId) as DiskMessage[]
+-    const asstNow = assistantIdResolved
+-      ? now.findIndex((row) => row.id === assistantIdResolved)
+-      : newestUnpairedAssistantIndex(now)
+-    insertAt = asstNow < 0 ? now.length : toolBlockInsertIndex(now, asstNow)
++    persisted++
++  }
++  return persisted
++}
++
++/**
++ * Supersede race closer (entry heal vs in-process tool): the successor run's entry
++ * heal may have persisted an INTERRUPTED filler for this tool_call_id while the old
++ * run was still blocked in executeTool. Appending the real result at EOF would
++ * orphan it (rebuild skips non-contiguous tool rows) and tell the model the call
++ * was interrupted — inviting duplicate side effects. Replace the filler in place
++ * instead (keeps the row id + position right after its assistant).
++ * Returns true when a filler was found and replaced.
++ */
++export function replaceInterruptedFillerIfPresent(
++  tm: {
++    getMessages: (threadId: string) => DiskMessage[]
++    updateMessage: (threadId: string, messageId: string, updates: Record<string, unknown>) => unknown
++  },
++  threadId: string,
++  toolCallId: string,
++  realRow: { content?: string | null; tool_calls?: unknown[] },
++  assistantId?: string,
++): boolean {
++  const history = tm.getMessages(threadId) as DiskMessage[]
++  let from = 0
++  let until = history.length
++  if (assistantId) {
++    const asst = history.findIndex((m) => m.id === assistantId)
++    if (asst < 0) return false
++    from = asst + 1
++    until = from
++    while (until < history.length && history[until].role === "tool") until++
+   }
+-  return missing.length
++  const filler = history.slice(from, until).find(
++    (m) =>
++      m.role === "tool" &&
++      typeof m.id === "string" &&
++      (m.tool_calls || []).some(
++        (tc) => tc.id === toolCallId && tc.result?.error_code === INTERRUPTED_ERROR_CODE,
++      ),
++  )
++  if (!filler || typeof filler.id !== "string") return false
++  tm.updateMessage(threadId, filler.id, {
++    content: realRow.content,
++    tool_calls: realRow.tool_calls,
++  })
++  return true
+ }
+diff --git a/companion/src/menu-bar-agent.ts b/companion/src/menu-bar-agent.ts
+index 54e0797..c8dc5b0 100644
+--- a/companion/src/menu-bar-agent.ts
++++ b/companion/src/menu-bar-agent.ts
+@@ -27,6 +27,7 @@ import { OSASCRIPT_BIN } from "./process-path"
+ import {
+   attachChromeOnly,
+   buildContinueChatCreate,
++  forwardCompanionUiRect,
+   mapChatMessageToSummonerCmd,
+   mapVoiceSttToSummonerCmd,
+   micPcmStartFrame,
+@@ -35,6 +36,7 @@ import {
+   sendMicWavToStt,
+   shouldStartNewSummonerThread,
+   resolveSummonerOpenTarget,
++  summonerCmdMatchesThread,
+   summonerHitsFromQuery,
+   hitsFromTitleSearch,
+   submitSummonerTalk,
+@@ -60,7 +62,15 @@ import {
+   hydrateOverlayIfLive,
+   invalidateOverlaySession,
+   overlaySessionIsLive,
++  shouldReclaimLiveOverlayThread,
++  type OverlayClaimResult,
++  type OverlayLeaseState,
+ } from "./summoner/overlay-session"
++import {
++  claimOverlayLeaseCas,
++  releaseOverlayLeaseAtRev,
++  type LeaseRpc,
++} from "./ws/composer-lease"
+ import { acceptedSummonerHotkey, nextSummonerHotkeyCmd } from "./summoner/hotkey"
+ 
+ // node-notifier does not ship TypeScript declarations
+@@ -150,6 +160,18 @@ let companionClient: CompanionClient | null = null
+ /** Second WS: overlay chat (`surface: "summoner"`). Tray menus stay on companionClient. */
+ let summonerClient: CompanionClient | null = null
+ let summonerThreadId: string | null = null
++/** Overlay session generation captured when summonerThreadId was bound. */
++let summonerThreadSessionToken: number | null = null
++
++function bindSummonerThread(id: string, token?: number): void {
++  summonerThreadId = id
++  summonerThreadSessionToken = token ?? currentOverlaySession()
++}
++
++function clearSummonerThread(): void {
++  summonerThreadId = null
++  summonerThreadSessionToken = null
++}
+ let summonerMicSessionId: string | null = null
+ let summonerMicSeq = 0
+ let pollTimer: NodeJS.Timeout | null = null
+@@ -635,6 +657,51 @@ function pushSummonerSettings(): void {
+   }))
+ }
+ 
++/** Lease request/response over the summoner socket (sendAppRequest, 5s default). */
++function summonerLeaseRpc(client: CompanionClient): LeaseRpc {
++  return (type, body) => client.sendAppRequest(type, body)
++}
++
++/**
++ * Overlay claim that keeps the claim rev + released siblings so a stale claim
++ * can unwind itself (CAS release) and repair the live session's demoted hold.
++ */
++async function claimOverlayLeaseDetailed(
++  client: CompanionClient,
++  threadId: string,
++): Promise<OverlayClaimResult | false> {
++  try {
++    const r = await claimOverlayLeaseCas(threadId, summonerLeaseRpc(client))
++    if (!r.ok) return false
++    return { ok: true, rev: r.state?.rev, released_siblings: r.released_siblings ?? [] }
++  } catch {
++    return false
++  }
++}
++
++/**
++ * A stale session's claim demoted the live overlay thread as a sibling
++ * (composer.lease.claim releases other overlay holds atomically). Claim it
++ * back so the live session keeps its composer lease.
++ */
++async function reclaimLiveSummonerThread(
++  client: CompanionClient,
++  siblings: OverlayLeaseState[],
++): Promise<void> {
++  if (!shouldReclaimLiveOverlayThread({
++    liveThreadId: summonerThreadId,
++    liveSessionToken: summonerThreadSessionToken,
++    siblings,
++  })) return
++  const liveId = summonerThreadId
++  if (!liveId) return
++  try {
++    await claimOverlayLeaseCas(liveId, summonerLeaseRpc(client))
++  } catch {
++    /* best-effort repair — the next user action re-claims anyway */
++  }
++}
++
+ async function hydrateSummonerThread(id: string, sessionToken?: number): Promise<boolean> {
+   const client = summonerClient
+   if (!client) return false
+@@ -651,11 +718,14 @@ async function hydrateSummonerThread(id: string, sessionToken?: number): Promise
+         search_hint: SUMMONER_SEARCH_HINT,
+       })
+     },
+-    claimLease: (tid) => client.claimOverlayComposerLease(tid),
++    claimLease: (tid) => claimOverlayLeaseDetailed(client, tid),
++    releaseClaimedLease: (tid, rev) =>
++      releaseOverlayLeaseAtRev(tid, rev, summonerLeaseRpc(client)).then(() => {}),
+     releaseAllLeases: () => client.releaseAllOverlayComposerLeases(),
++    onStaleClaim: (siblings) => reclaimLiveSummonerThread(client, siblings),
+   })
+   if (result !== "claimed") return false
+-  summonerThreadId = id
++  bindSummonerThread(id, token)
+   return true
+ }
+ 
+@@ -749,7 +819,7 @@ async function handleSummonerPackApply(packId: string): Promise<void> {
+ 
+ export async function handleSummonerClosed(): Promise<void> {
+   invalidateOverlaySession()
+-  summonerThreadId = null
++  clearSummonerThread()
+   const client = summonerClient
+   if (!client) return
+   await client.releaseAllOverlayComposerLeases()
+@@ -796,8 +866,11 @@ export async function handleSummonerSubmit(
+     claimLease: (id) =>
+       claimOverlayIfLive({
+         token,
+-        claim: () => client.claimOverlayComposerLease(id),
++        claim: () => claimOverlayLeaseDetailed(client, id),
++        releaseClaim: (rev) =>
++          releaseOverlayLeaseAtRev(id, rev, summonerLeaseRpc(client)).then(() => {}),
+         releaseAll: () => client.releaseAllOverlayComposerLeases(),
++        onStaleClaim: (siblings) => reclaimLiveSummonerThread(client, siblings),
+       }),
+     sendChatCreate: (args) => client.sendChatCreate(args),
+     sendSteer: (args) => client.sendSteer(args),
+@@ -806,7 +879,7 @@ export async function handleSummonerSubmit(
+     selectMessages: (id) => client.selectThreadMessages(id),
+     hydrate: ({ thread_id: id, messages }) => {
+       if (!overlaySessionIsLive(token)) return
+-      summonerThreadId = id
++      bindSummonerThread(id, token)
+       const prior = messages as Array<{
+         role: string
+         content?: string
+@@ -832,7 +905,7 @@ export async function handleSummonerSubmit(
+     { enqueue },
+   )
+   if (result.ok && result.threadId) {
+-    summonerThreadId = result.threadId
++    bindSummonerThread(result.threadId, token)
+     touchSummonerActivity(result.threadId)
+   }
+   return result.ok
+@@ -857,7 +930,8 @@ export async function handleSummonerSelect(threadId: string): Promise<void> {
+ }
+ 
+ export function setSummonerThreadId(id: string | null): void {
+-  summonerThreadId = id
++  if (id) bindSummonerThread(id)
++  else clearSummonerThread()
+ }
+ 
+ /** Re-arm a persisted combo on Swift. Empty config waits for first overlay open. */
+@@ -1055,12 +1129,15 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
+         browser: summonerBrowserAttached() ? "attached" : "detached",
+         search_hint: SUMMONER_SEARCH_HINT,
+       })
+-      await client.claimOverlayComposerLease(created.id)
++      return claimOverlayLeaseDetailed(client, created.id)
+     },
++    releaseClaim: (rev) =>
++      releaseOverlayLeaseAtRev(created.id, rev, summonerLeaseRpc(client)).then(() => {}),
+     releaseAll: () => client.releaseAllOverlayComposerLeases(),
++    onStaleClaim: (siblings) => reclaimLiveSummonerThread(client, siblings),
+   })
+   if (claimed) {
+-    summonerThreadId = created.id
++    bindSummonerThread(created.id, token)
+     touchSummonerActivity(created.id)
+   }
+   return claimed
+@@ -1069,7 +1146,16 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
+ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
+   switch (evt.type) {
+     case "summoner.submit":
+-      void handleSummonerSubmit(evt.thread_id, evt.text, evt.enqueue === true)
++      void handleSummonerSubmit(evt.thread_id, evt.text, evt.enqueue === true).then((ok) => {
++        // Swift already appended "你：…" to its local transcript; when the
++        // submit never left the tray (client down / lease claim failed), tell
++        // the overlay instead of dropping the message silently.
++        if (!ok) {
++          trayInstance?.sendSummoner?.(
++            encodeSummonerError({ message: "未送达，请重试", error_code: "submit_failed" }),
++          )
++        }
++      })
+       return
+     case "summoner.search":
+       void handleSummonerSearch(evt.query)
+@@ -1357,8 +1443,13 @@ export async function startMenuBarAgent(): Promise<void> {
+       trayInstance.onCompanionUiRect?.((raw) => {
+         try {
+           if (!raw || typeof raw !== "object") return
+-          const o = raw as Record<string, unknown>
+-          summonerClient?.sendAppMessage("companion.ui.rect", o)
++          // Route by rect surface: "overlay" rides the summoner socket, while
++          // pairing/tray/hud must use the tray socket (the daemon drops any
++          // non-overlay rect arriving on a summoner-surface connection).
++          forwardCompanionUiRect(raw as Record<string, unknown>, {
++            summoner: summonerClient,
++            companion: companionClient,
++          })
+         } catch (err) {
+           console.error("[menu-bar] companion.ui.rect forward error:", err)
+         }
+@@ -1430,6 +1521,9 @@ export async function startMenuBarAgent(): Promise<void> {
+     }
+     const cmd = mapChatMessageToSummonerCmd(msg)
+     if (!cmd) return
++    // Drop stream frames from threads the overlay is not showing — a stale or
++    // parallel run's tokens must not overwrite the visible transcript.
++    if (!summonerCmdMatchesThread(cmd, summonerThreadId)) return
+     // Task 9 wires Swift stdin; non-Swift / pre-rebuild adapters no-op.
+     trayInstance?.sendSummoner?.(cmd)
+   })
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 62088d8..d57f175 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -271,6 +271,53 @@ export function followUpCreateFromQueue(
+   }
+ }
+ 
++/**
++ * Shared nextRun drain for the run paths (chat.create / file.upload /
++ * chat.regenerate) and for post-abort queue pickup.
++ *
++ * - `myGeneration` guard: a superseded/aborted predecessor must not steal the
++ *   queue and chat.create the successor (that reintroduces supersede). Pass
++ *   null to skip the guard (chat.abort owns no generation of its own).
++ * - Lease/conductor gates are pre-checked BEFORE takeNextRun: on reject the
++ *   message STAYS queued (the client already holds chat.enqueued) and the
++ *   gate error frame is returned instead of recursing.
++ * - Returns null when nothing drained (or the recursive run finished clean);
++ *   a gate rejection returns its error frame.
++ */
++async function drainNextRun(
++  threadId: string,
++  myGeneration: number | null,
++  services: Services,
++  session?: SessionCallbacks,
++): Promise<any> {
++  if (myGeneration !== null && llmLoopGeneration.get(threadId) !== myGeneration) return null
++  if (!threadId || peekNextRunCount(threadId) === 0) return null
++  if (abortControllers.has(threadId)) return null
++  // Pre-check the gates the recursive chat.create will hit, with the surface
++  // stamp the followUp frame will carry (drain keeps this session's surface —
++  // unstamped create is treated as panel and OVERLAY_STANDBY-kills
++  // overlay-held nextRun, PR219 adversary M1).
++  const surface = session?.surface === "summoner" ? "summoner" : "tray"
++  const leaseErr = gateChatCreateOnLease(threadId, surface)
++  if (leaseErr) return leaseErr
++  const conductorErr = gateChatCreateOnConductor(threadId, surface)
++  if (conductorErr) return conductorErr
++  const queued = takeNextRun(threadId)
++  if (!queued) return null
++  return handleMessage(
++    followUpCreateFromQueue(threadId, queued, session?.surface),
++    services,
++    session,
++  )
++}
++
++/** Gate rejection is an error frame, not a successor run. Callers must ack the original RPC. */
++function isDrainGateError(frame: unknown): boolean {
++  if (!frame || typeof frame !== "object") return false
++  const t = (frame as { type?: unknown }).type
++  return t === "error" || t === "chat.error"
++}
++
+ export async function handleMessage(
+   msg: any,
+   services: Services,
+@@ -391,17 +438,15 @@ export async function handleMessage(
+       }
+ 
+       // P0 CORR-01: claim slot SYNCHRONOUSLY before any await so dual WS handlers
+-      // cannot both install controllers (orphan double LLM).
++      // cannot both install controllers (orphan double LLM). The run_active
++      // early-return above already rejected occupied threads and no await sits
++      // between that check and this set, so no existing controller can be here
++      // (chat.regenerate is the only superseding path; it aborts + drains
++      // explicitly).
+       const myGeneration = nextLlmGeneration(rest.thread_id)
+       const controller = new AbortController()
+-      const existing = abortControllers.get(rest.thread_id)
+       abortControllers.set(rest.thread_id, controller)
+       if (session?.panelId) llmLoopOwnerPanel.set(rest.thread_id, session.panelId)
+-      if (existing) {
+-        logger.info("llm.thread_request_superseded", { thread_id: rest.thread_id })
+-        existing.abort()
+-        await drainThreadOnSupersede(rest.thread_id, `chat.supersede:${rest.thread_id}`)
+-      }
+ 
+       // ADR-015: cap concurrent multi-agent LLM loops (workers + orchestrators)
+       const threadForLlmCap = services.threadManager.get(rest.thread_id)
+@@ -550,19 +595,16 @@ export async function handleMessage(
+       }
+       // Only the generation that still owns the thread may drain nextRun.
+       // A superseded/aborted predecessor must not steal the queue and
+-      // chat.create the successor (that reintroduces supersede).
+-      if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
+-        const queued = takeNextRun(rest.thread_id)
+-        if (queued) {
+-          // Drain must keep the same surface stamp as this session.
+-          // Unstamped create is treated as panel and OVERLAY_STANDBY-kills
+-          // overlay-held nextRun (PR219 adversary M1).
+-          return handleMessage(
+-            followUpCreateFromQueue(rest.thread_id, queued, session?.surface),
+-            services,
+-            session,
+-          )
++      // chat.create the successor (that reintroduces supersede). Gates are
++      // pre-checked inside drainNextRun so a rejected drain keeps the message
++      // queued instead of dropping it after chat.enqueued.
++      const drained = await drainNextRun(rest.thread_id, myGeneration, services, session)
++      if (drained) {
++        if (isDrainGateError(drained)) {
++          session.sendToExtension(drained)
++          return null
+         }
++        return drained
+       }
+       return null // chatCreate handles streaming internally
+     }
+@@ -584,7 +626,13 @@ export async function handleMessage(
+         const conductorErr = gateChatCreateOnConductor(rest.thread_id, stampedSurface)
+         if (conductorErr) return conductorErr
+       }
+-      if (!enqueueSteer(rest.thread_id, steerText)) {
++      // D6: pass the extension optimistic-bubble id through to the steer queue
++      // (echoed as chat.user client_message_id when the steer lands — F1 adopt).
++      const steerClientMessageId =
++        typeof rest.client_message_id === "string" && rest.client_message_id
++          ? rest.client_message_id
++          : undefined
++      if (!enqueueSteer(rest.thread_id, steerText, steerClientMessageId)) {
+         return {
+           type: "error",
+           error: "steer_queue_full",
+@@ -592,7 +640,11 @@ export async function handleMessage(
+           max: MAX_STEER,
+         }
+       }
+-      return { type: "chat.steered", thread_id: rest.thread_id }
++      return {
++        type: "chat.steered",
++        thread_id: rest.thread_id,
++        ...(steerClientMessageId ? { client_message_id: steerClientMessageId } : {}),
++      }
+     }
+ 
+     case "file.upload": {
+@@ -611,12 +663,39 @@ export async function handleMessage(
+       if (abortControllers.has(thread_id)) {
+         return { type: "error", error: "run_active", thread_id }
+       }
++      // P1 TOCTOU: claim the slot SYNCHRONOUSLY at entry — before parseFile /
++      // analyzeImage awaits open a multi-second window in which a chat.create
++      // would pass its own run_active check and start a full LLM run that a
++      // late abortControllers.set() would then silently overwrite (orphan
++      // double stream; chat.abort could only stop one). No await between the
++      // check above and this set. Keep the pre-#219 supersede (abort + drain)
++      // as defense-in-depth for any controller that still slips in.
++      const uploadGeneration = nextLlmGeneration(thread_id)
++      const uploadController = new AbortController()
++      const existingUpload = abortControllers.get(thread_id)
++      abortControllers.set(thread_id, uploadController)
++      if (existingUpload) {
++        logger.info("llm.thread_request_superseded", { thread_id })
++        existingUpload.abort()
++        await drainThreadOnSupersede(thread_id, `file.upload.supersede:${thread_id}`)
++      }
+       const config = getConfig()
+       const fileConfig = config.file_upload || { max_file_size: 10 * 1024 * 1024, allowed_types: [] as string[], max_embedded_images: 20, enable_vision_analysis: true, max_file_tokens: 50000 }
+ 
+       // S45: persist parse/type failures so mid-upload thread switch still shows
+       // the error when the user returns (UI gates ADD_MESSAGE for foreign threads).
+       const uploadError = (error: string) => {
++        // The slot was claimed at entry: every early return routed through here
++        // (parse/size/type/cap/paused/gate failures) must free it or the thread
++        // stays run_active forever. SEC-D CAS: never delete a successor's
++        // controller; the gate release is a no-op when never acquired.
++        if (
++          llmLoopGeneration.get(thread_id) === uploadGeneration &&
++          abortControllers.get(thread_id) === uploadController
++        ) {
++          abortControllers.delete(thread_id)
++          releaseMultiAgentLlmLoop(thread_id)
++        }
+         try {
+           if (typeof thread_id === "string" && thread_id) {
+             services.threadManager.addMessage(thread_id, {
+@@ -830,8 +909,8 @@ export async function handleMessage(
+           return uploadError("thread_paused")
+         }
+       }
+-      // Occupied upload is rejected at the top of this case (run_active).
+-      // Do not abort a live loop.
++      // The slot was claimed at entry (TOCTOU fix); only the multi-agent LLM
++      // cap is left to acquire here — a reject frees the claim via uploadError.
+       const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop: releaseUploadLlm } =
+         await import("./orchestrator/llm-loop-gate")
+       const threadForUploadCap = services.threadManager.get(thread_id)
+@@ -839,9 +918,6 @@ export async function handleMessage(
+       if (!uploadLoopGate.ok) {
+         return uploadError(uploadLoopGate.error)
+       }
+-      const uploadGeneration = nextLlmGeneration(thread_id)
+-      const uploadController = new AbortController()
+-      abortControllers.set(thread_id, uploadController)
+ 
+       // Hoisted so chatCreate failure can clean up already-written sidecars
+       // (only when the user message was never persisted — F9).
+@@ -1061,6 +1137,15 @@ export async function handleMessage(
+         thread_id,
+         files: uploadedNames,
+       })
++      // P1: drain one queued nextRun now that the slot is free (parity with
++      // chat.create) — generation-guarded + gate-pre-checked inside, so a
++      // rejected drain keeps the message queued.
++      const drainedAfterUpload = await drainNextRun(thread_id, uploadGeneration, services, session)
++      if (drainedAfterUpload && isDrainGateError(drainedAfterUpload)) {
++        session.sendToExtension(drainedAfterUpload)
++      } else if (drainedAfterUpload) {
++        return drainedAfterUpload
++      }
+       return { type: "file.uploaded", thread_id, files: uploadedNames }
+     }
+ 
+@@ -1140,6 +1225,30 @@ export async function handleMessage(
+       } catch {
+         /* best-effort */
+       }
++      // P2: nextRun survives abort by design, but the aborted run's own drain
++      // is generation-guarded off (abortThreadChat bumped the generation), so
++      // a queued message would stall until an unrelated chat.create. Pick one
++      // up here. Deferred a tick: the aborted run's finally may not have
++      // settled yet (its generation CAS skips cleanup, and a fresh chat.create
++      // landing first makes the slot check inside drainNextRun a no-op).
++      // No session (test/tooling callers) → skip: the recursive chat.create
++      // needs one and would just drop the message.
++      if (session && typeof rest.thread_id === "string" && peekNextRunCount(rest.thread_id) > 0) {
++        const abortDrainThreadId = rest.thread_id
++        setImmediate(() => {
++          void drainNextRun(abortDrainThreadId, null, services, session)
++            .then((drained) => {
++              // Gate-rejected: message stays queued — surface the reason.
++              if (drained) session?.sendToExtension?.(drained)
++            })
++            .catch((e: any) => {
++              logger.warn("chat.abort.nextRun_drain_failed", {
++                thread_id: abortDrainThreadId,
++                error: e?.message || String(e),
++              })
++            })
++        })
++      }
+       return { type: "chat.aborted", thread_id: rest.thread_id }
+     }
+ 
+@@ -1376,7 +1485,15 @@ export async function handleMessage(
+           releaseRegenLlm(thread_id)
+         }
+       }
+-      return null
++      // P1: drain one queued nextRun now that the slot is free (parity with
++      // chat.create) — generation-guarded + gate-pre-checked inside, so a
++      // rejected drain keeps the message queued.
++      const drainedAfterRegen = await drainNextRun(thread_id, myGeneration, services, session)
++      if (drainedAfterRegen && isDrainGateError(drainedAfterRegen)) {
++        session.sendToExtension(drainedAfterRegen)
++        return null
++      }
++      return drainedAfterRegen
+     }
+ 
+     // --- Threads ---
+diff --git a/companion/src/security/tool-persistence-redact.ts b/companion/src/security/tool-persistence-redact.ts
+index 27984c7..da5764b 100644
+--- a/companion/src/security/tool-persistence-redact.ts
++++ b/companion/src/security/tool-persistence-redact.ts
+@@ -32,7 +32,7 @@ const SENSITIVE_CODE_TOOLS = new Set([
+ 
+ const MCP_TOOL_PREFIX = "mcp__"
+ const MCP_SENSITIVE_RESULT_RE = /(read|file|secret|token|key|env|credential|ssh|aws)/i
+-const SENSITIVE_KEY_RE = /(secret|token|password|api[_-]?key|credential|private[_-]?key)/i
++const SENSITIVE_KEY_RE = /(secret|token|password|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)/i
+ 
+ function shortHash(input: string): string {
+   return crypto.createHash("sha256").update(input).digest("hex").slice(0, 12)
+@@ -135,6 +135,30 @@ function collapseResult(result: unknown): { success?: boolean; redacted: true; l
+   }
+ }
+ 
++/**
++ * Data-less error rows ({success:false, error, error_code?} — the shape of the
++ * INTERRUPTED heal fillers from tool-batch-heal) carry no sensitive payload.
++ * Sensitive branches below would rebuild the row without error_code (codeish) or
++ * collapse away error entirely (collapseResult), destroying the INTERRUPTED
++ * marker the heal/rebuild flow keys on. Returns the row verbatim, else null.
++ */
++function plainErrorResult(
++  result: unknown,
++): { success: false; error: string; error_code?: string } | null {
++  if (!result || typeof result !== "object") return null
++  const r = result as Record<string, unknown>
++  if (r.success !== false || typeof r.error !== "string") return null
++  if (r.data !== undefined) return null
++  // Reconstruct — never return the original object (extra keys like
++  // stdout / env / stack would otherwise persist next to INTERRUPTED).
++  const out: { success: false; error: string; error_code?: string } = {
++    success: false,
++    error: r.error,
++  }
++  if (typeof r.error_code === "string") out.error_code = r.error_code
++  return out
++}
++
+ /**
+  * Returns params + result safe for durable thread JSON (and content string).
+  * Non-sensitive tools pass through (params deep-key scan only for MCP).
+@@ -156,7 +180,7 @@ export function redactToolPayloadForPersistence(
+       ...(typeof p.max_hits === "number" ? { max_hits: p.max_hits } : {}),
+       query: `<redacted:len=${q.length}:sha256=${shortHash(q)}>`,
+     }
+-    safeResult = collapseResult(result)
++    safeResult = plainErrorResult(result) ?? collapseResult(result)
+     return { params: safeParams, result: safeResult }
+   }
+ 
+@@ -185,7 +209,7 @@ export function redactToolPayloadForPersistence(
+     if (params && typeof params === "object") {
+       safeParams = redactComputerParams(params as Record<string, unknown>)
+     }
+-    safeResult = collapseResult(result)
++    safeResult = plainErrorResult(result) ?? collapseResult(result)
+     return { params: safeParams, result: safeResult }
+   }
+ 
+@@ -195,17 +219,25 @@ export function redactToolPayloadForPersistence(
+     }
+     // Keep success/error structure; collapse large data
+     if (result && typeof result === "object") {
+-      const r = result as Record<string, unknown>
+-      const dataStr = r.data !== undefined ? JSON.stringify(r.data) : ""
+-      safeResult = {
+-        success: r.success,
+-        error: typeof r.error === "string" && r.error.length > 200
+-          ? r.error.slice(0, 200) + "…"
+-          : r.error,
+-        data:
+-          dataStr.length > 200
+-            ? { redacted: true, len: dataStr.length, sha256: shortHash(dataStr) }
+-            : r.data,
++      const plainError = plainErrorResult(result)
++      if (plainError) {
++        // INTERRUPTED-style row: no data payload — keep error_code + error verbatim.
++        safeResult = plainError
++      } else {
++        const r = result as Record<string, unknown>
++        const dataStr = r.data !== undefined ? JSON.stringify(r.data) : ""
++        safeResult = {
++          success: r.success,
++          error: typeof r.error === "string" && r.error.length > 200
++            ? r.error.slice(0, 200) + "…"
++            : r.error,
++          // Always collapse payload for evaluate/shell/host_* — a 200-char
++          // cookie/source snippet is still a secret on disk.
++          data:
++            r.data !== undefined
++              ? { redacted: true, len: dataStr.length, sha256: shortHash(dataStr) }
++              : undefined,
++        }
+       }
+     }
+     return { params: safeParams, result: safeResult }
+@@ -216,7 +248,7 @@ export function redactToolPayloadForPersistence(
+       safeParams = redactSensitiveKeysDeep(params)
+     }
+     if (MCP_SENSITIVE_RESULT_RE.test(name)) {
+-      safeResult = collapseResult(result)
++      safeResult = plainErrorResult(result) ?? collapseResult(result)
+     } else {
+       safeResult = redactSensitiveKeysDeep(result)
+     }
+diff --git a/companion/src/summoner/client.ts b/companion/src/summoner/client.ts
+index 5be200e..57f60ce 100644
+--- a/companion/src/summoner/client.ts
++++ b/companion/src/summoner/client.ts
+@@ -265,18 +265,36 @@ function asRecord(msg: unknown): Record<string, unknown> | null {
+ /**
+  * Map companion WS stream frames → summoner stdin cmds.
+  * chat.create itself stays on the summoner WS.
++ *
++ * chat.token / chat.done keep their `thread_id` so the forwarder (and the
++ * Swift overlay) can drop frames from a thread the overlay is not showing.
+  */
+-export function mapChatMessageToSummonerCmd(msg: unknown): SummonerOutboundCmd | null {
++export type SummonerStreamCmd = SummonerOutboundCmd & { thread_id?: string }
++
++/** Stream cmd thread filter: untagged cmds pass; tagged cmds must match the shown thread. */
++export function summonerCmdMatchesThread(
++  cmd: { thread_id?: string },
++  currentThreadId: string | null,
++): boolean {
++  return typeof cmd.thread_id !== "string" || cmd.thread_id === currentThreadId
++}
++
++export function mapChatMessageToSummonerCmd(msg: unknown): SummonerStreamCmd | null {
+   const m = asRecord(msg)
+   if (!m) return null
+   const type = m.type
++  const threadId = typeof m.thread_id === "string" ? m.thread_id : undefined
+   if (type === "chat.token") {
+     const text =
+       typeof m.content === "string" ? m.content : typeof m.text === "string" ? m.text : ""
+-    return encodeSummonerToken({ text })
++    const cmd: SummonerStreamCmd = encodeSummonerToken({ text })
++    if (threadId !== undefined) cmd.thread_id = threadId
++    return cmd
+   }
+   if (type === "chat.done") {
+-    return encodeSummonerDone()
++    const cmd: SummonerStreamCmd = encodeSummonerDone()
++    if (threadId !== undefined) cmd.thread_id = threadId
++    return cmd
+   }
+   if (type === "chat.enqueued") {
+     const depth = typeof m.depth === "number" ? m.depth : 0
+@@ -350,6 +368,30 @@ export function mapChatMessageToSummonerCmd(msg: unknown): SummonerOutboundCmd |
+ 
+ export type SummonerSttModelId = "small" | "medium" | "large-v3-turbo"
+ 
++/**
++ * S23 click-guard routing for Swift-reported companion.ui.rect. The daemon
++ * pins allowSurfaces=["overlay"] on the summoner socket, so Tray.swift's
++ * pairing/tray/hud rects sent there are silently dropped — they must ride the
++ * tray socket. Overlay rects prefer the summoner socket and fall back to the
++ * tray socket (which accepts any surface) when summoner is down.
++ */
++export type RectForwardClients = {
++  summoner: { sendAppMessage: (type: string, params: Record<string, unknown>) => boolean } | null
++  companion: { sendAppMessage: (type: string, params: Record<string, unknown>) => boolean } | null
++}
++
++export function forwardCompanionUiRect(
++  rect: Record<string, unknown>,
++  clients: RectForwardClients,
++): boolean {
++  const send = (client: RectForwardClients["summoner"]): boolean =>
++    client?.sendAppMessage("companion.ui.rect", rect) === true
++  if (rect.surface === "overlay") {
++    return send(clients.summoner) || send(clients.companion)
++  }
++  return send(clients.companion)
++}
++
+ export type VoiceSttStartFrame = {
+   type: "voice.stt.start"
+   v: 1
+diff --git a/companion/src/summoner/overlay-session.ts b/companion/src/summoner/overlay-session.ts
+index fbccfb7..5841c16 100644
+--- a/companion/src/summoner/overlay-session.ts
++++ b/companion/src/summoner/overlay-session.ts
+@@ -32,35 +32,112 @@ export type OverlayHydrateMessage = {
+   tool_calls?: Array<{ function?: { name?: string } }>
+ }
+ 
++/** Lease row as reported by composer.lease.claim (`released_siblings`). */
++export type OverlayLeaseState = {
++  thread_id: string
++  holder: string
++  rev: number
++}
++
++/**
++ * Stale-claim repair must not exclusive-claim a lagged thread id after
++ * beginOverlaySession() has already moved generation (the new session may
++ * already hold a different overlay lease). Bind token at hydrate/submit
++ * success; reclaim only while that token is still live.
++ */
++export function shouldReclaimLiveOverlayThread(args: {
++  liveThreadId: string | null | undefined
++  liveSessionToken: number | null | undefined
++  siblings: OverlayLeaseState[]
++}): boolean {
++  if (!args.liveThreadId || args.liveSessionToken == null) return false
++  if (!overlaySessionIsLive(args.liveSessionToken)) return false
++  return args.siblings.some((s) => s.thread_id === args.liveThreadId)
++}
++
++/**
++ * Outcome of an overlay lease claim. `rev` backs the CAS self-release when the
++ * claim turns out stale; `released_siblings` lists the threads this claim
++ * demoted so the caller can repair a live session's hold.
++ */
++export type OverlayClaimResult = {
++  ok: boolean
++  rev?: number
++  released_siblings?: OverlayLeaseState[]
++}
++
++function claimOk(claimed: OverlayClaimResult | false): claimed is OverlayClaimResult {
++  return claimed !== false && claimed.ok !== false
++}
++
++/**
++ * Stale-claim unwind: release ONLY the lease this session just took (CAS on the
++ * claim rev — a newer claim on the same thread bumps the rev and is never
++ * touched), then hand the demoted siblings to the caller for compensating
++ * re-claim. Never releaseAll here: a newer overlay session is live and holds
++ * its own thread.
++ */
++async function unwindStaleClaim(args: {
++  claimed: OverlayClaimResult
++  releaseSelf: (rev: number) => Promise<void>
++  onStaleClaim?: (releasedSiblings: OverlayLeaseState[]) => void | Promise<void>
++}): Promise<void> {
++  if (typeof args.claimed.rev === "number") {
++    await args.releaseSelf(args.claimed.rev)
++  }
++  const siblings = args.claimed.released_siblings ?? []
++  if (siblings.length > 0) {
++    await args.onStaleClaim?.(siblings)
++  }
++}
++
+ export async function hydrateOverlayIfLive(args: {
+   id: string
+   token: number
+   selectMessages: (id: string) => Promise<OverlayHydrateMessage[]>
+   applyHydrate: (id: string, messages: OverlayHydrateMessage[]) => void
+-  claimLease: (id: string) => Promise<boolean | void>
++  claimLease: (id: string) => Promise<OverlayClaimResult | false>
++  releaseClaimedLease: (id: string, rev: number) => Promise<void>
+   releaseAllLeases: () => Promise<void>
++  onStaleClaim?: (releasedSiblings: OverlayLeaseState[]) => void | Promise<void>
+ }): Promise<"claimed" | "abandoned"> {
+   const messages = await args.selectMessages(args.id)
+   if (!overlaySessionIsLive(args.token)) return "abandoned"
+   args.applyHydrate(args.id, messages)
+   const claimed = await args.claimLease(args.id)
+-  if (claimed === false) return "abandoned"
++  if (!claimOk(claimed)) return "abandoned"
+   if (overlaySessionIsLive(args.token)) return "claimed"
+-  if (live) return "abandoned"
++  if (live) {
++    await unwindStaleClaim({
++      claimed,
++      releaseSelf: (rev) => args.releaseClaimedLease(args.id, rev),
++      onStaleClaim: args.onStaleClaim,
++    })
++    return "abandoned"
++  }
+   await args.releaseAllLeases()
+   return "abandoned"
+ }
+ 
+ export async function claimOverlayIfLive(args: {
+   token: number
+-  claim: () => Promise<boolean | void>
++  claim: () => Promise<OverlayClaimResult | false>
++  releaseClaim: (rev: number) => Promise<void>
+   releaseAll: () => Promise<void>
++  onStaleClaim?: (releasedSiblings: OverlayLeaseState[]) => void | Promise<void>
+ }): Promise<boolean> {
+   if (!overlaySessionIsLive(args.token)) return false
+   const claimed = await args.claim()
+-  if (claimed === false) return false
++  if (!claimOk(claimed)) return false
+   if (overlaySessionIsLive(args.token)) return true
+-  if (live) return false
++  if (live) {
++    await unwindStaleClaim({
++      claimed,
++      releaseSelf: args.releaseClaim,
++      onStaleClaim: args.onStaleClaim,
++    })
++    return false
++  }
+   await args.releaseAll()
+   return false
+ }
+diff --git a/companion/src/threads/thread-manager.ts b/companion/src/threads/thread-manager.ts
+index 46a3abf..faa2f31 100644
+--- a/companion/src/threads/thread-manager.ts
++++ b/companion/src/threads/thread-manager.ts
+@@ -240,9 +240,12 @@ export function trimMessagesTurnSafe<T extends { role: string; tool_calls?: unkn
+       // Prefer over-cap (keep assistant+tools) over an empty tape.
+       start = k < messages.length ? k : a
+     } else {
++      // No assistant owner behind the block (orphan tool rows): scan forward
++      // for a non-tool boundary; when the whole suffix is tool rows keep the
++      // anchor side (a + block, over-cap) instead of a tool-leading window.
+       let k = start
+       while (k < messages.length && messages[k].role === "tool") k++
+-      start = k < messages.length ? k : Math.max(0, messages.length - max)
++      start = k < messages.length ? k : a
+     }
+   }
+   const kept = messages.slice(Math.max(0, start))
+diff --git a/companion/src/ws/composer-lease.ts b/companion/src/ws/composer-lease.ts
+index 81edc85..af8852c 100644
+--- a/companion/src/ws/composer-lease.ts
++++ b/companion/src/ws/composer-lease.ts
+@@ -302,12 +302,41 @@ export async function applySummonerComposerVisibility(args: {
+   return claimOverlayLeaseCas(threadId, args.rpc)
+ }
+ 
+-/** Summoner socket death drops every overlay hold so Side Panel is not stuck. */
++/**
++ * Single-shot CAS release with a known rev: a stale overlay claim unwinds the
++ * lease it just took. Rev mismatch (a newer claim landed meanwhile) is a safe
++ * no-op, never a steal.
++ */
++export async function releaseOverlayLeaseAtRev(
++  threadId: string,
++  rev: number,
++  rpc: LeaseRpc,
++): Promise<{ ok: boolean; error_code?: string }> {
++  try {
++    const released = await rpc("composer.lease.release", { thread_id: threadId, rev })
++    if (released?.type === "composer.lease" && released.holder === "panel") {
++      return { ok: true }
++    }
++    return {
++      ok: false,
++      error_code: typeof released?.error_code === "string" ? released.error_code : "LEASE_RELEASE_FAILED",
++    }
++  } catch {
++    return { ok: false, error_code: "LEASE_RELEASE_FAILED" }
++  }
++}
++
++/** Summoner socket death drops every overlay hold so Side Panel is not stuck.
++ *  #219: the Swift overlay and the C-thin web shell can both be online as
++ *  surface=summoner — while another summoner survives, one socket's death
++ *  must not kill the other's leases. */
+ export function overlayLeasesOnSummonerDisconnect(
+   surface: string | undefined,
+   registry: ComposerLeaseRegistry = composerLeases,
++  survivingSummoners = 0,
+ ): ComposerLeaseState[] {
+   if (surface !== "summoner") return []
++  if (survivingSummoners > 0) return []
+   return registry.releaseAllOverlay()
+ }
+ 
+@@ -320,8 +349,9 @@ export function broadcastOverlayLeasesOnSocketClose(
+     rev: number
+   }) => void,
+   registry: ComposerLeaseRegistry = composerLeases,
++  survivingSummoners = 0,
+ ): number {
+-  const released = overlayLeasesOnSummonerDisconnect(surface, registry)
++  const released = overlayLeasesOnSummonerDisconnect(surface, registry, survivingSummoners)
+   for (const state of released) {
+     broadcast({
+       type: "composer.lease",
+@@ -355,7 +385,13 @@ export async function claimOverlayLeaseCas(
+   threadId: string,
+   rpc: LeaseRpc,
+   attempts = 3,
+-): Promise<{ ok: boolean; state?: ComposerLeaseState; error_code?: string }> {
++): Promise<{
++  ok: boolean
++  state?: ComposerLeaseState
++  /** Sibling overlay holds this claim demoted — stale claims must repair them. */
++  released_siblings?: ComposerLeaseState[]
++  error_code?: string
++}> {
+   let rev: number | undefined
+   for (let i = 0; i < attempts; i++) {
+     if (rev == null) {
+@@ -379,6 +415,9 @@ export async function claimOverlayLeaseCas(
+           holder: "overlay",
+           rev: claim.rev,
+         },
++        released_siblings: Array.isArray(claim.released_siblings)
++          ? (claim.released_siblings as ComposerLeaseState[])
++          : [],
+       }
+     }
+     return { ok: false, error_code: typeof claim?.error_code === "string" ? claim.error_code : "LEASE_CLAIM_FAILED" }
+diff --git a/companion/src/ws/lifecycle.ts b/companion/src/ws/lifecycle.ts
+index 7cfdea6..dea3dea 100644
+--- a/companion/src/ws/lifecycle.ts
++++ b/companion/src/ws/lifecycle.ts
+@@ -1350,7 +1350,25 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+         clearTimeout(closedAuth.timer)
+         wsAuth.delete(ws)
+       }
+-      broadcastOverlayLeasesOnSocketClose(closedAuth?.surface, (msg) => broadcastToClients(msg))
++      // #219: tray Swift overlay and C-thin web shell can both be online as
++      // surface=summoner. clients/wsAuth already dropped this socket above, so
++      // count the REMAINING authenticated summoners and only drop overlay
++      // holds when the last one dies.
++      let survivingSummoners = 0
++      if (closedAuth?.surface === "summoner") {
++        for (const client of clients) {
++          const auth = wsAuth.get(client)
++          if (auth?.authenticated === true && auth.surface === "summoner") {
++            survivingSummoners += 1
++          }
++        }
++      }
++      broadcastOverlayLeasesOnSocketClose(
++        closedAuth?.surface,
++        (msg) => broadcastToClients(msg),
++        undefined,
++        survivingSummoners,
++      )
+       // P0 CORR-02: abort in-flight LLM/tool loops owned by this panel
+       try {
+         const panelId = (ws as any).__cmsparkPanelId as string | undefined
+diff --git a/companion/tests/adapter-steer-overflow.test.ts b/companion/tests/adapter-steer-overflow.test.ts
+new file mode 100644
+index 0000000..73e7c6b
+--- /dev/null
++++ b/companion/tests/adapter-steer-overflow.test.ts
+@@ -0,0 +1,414 @@
++/**
++ * Run-loop regression tests:
++ * - leftover steers on normal finish convert to nextRun (not silently dropped)
++ * - steer entries carry clientMessageId into the chat.user echo (D6/F1 adopt)
++ * - supersede entry-heal INTERRUPTED filler is replaced in place by the real result
++ * - overflow/length retries compact with phase mid_loop and only in auto mode
++ * - pure-text length stop flags chat.done with truncated:true
++ * - tool-format-leak hint chat.token is a full snapshot
++ *
++ * Mock seam: OpenAIProvider.prototype.streamChat (CanonicalStreamEvent).
++ * Patching openai Completions.create on a dummy client misses the provider
++ * class under tsx (dual package instance) — Lane A REJECT 2026-08-25.
++ */
++import test, { after, before } from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as os from "node:os"
++import * as path from "node:path"
++import type { CanonicalStreamEvent, StreamChatParams } from "../src/llm/provider"
++
++const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-steer-overflow-"))
++
++let chatCreate: typeof import("../src/llm/adapter").chatCreate
++let rebuildMessagesFromHistory: typeof import("../src/llm/adapter").rebuildMessagesFromHistory
++let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
++let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
++let persistHealedToolRows: typeof import("../src/llm/tool-batch-heal").persistHealedToolRows
++let runQueues: typeof import("../src/llm/run-queues")
++let leakHint: string
++let OpenAIProvider: typeof import("../src/llm/providers/openai").OpenAIProvider
++
++const logEvents: Array<{ level: string; event: string; data: Record<string, unknown> }> = []
++
++let originalStreamChat: InstanceType<typeof OpenAIProvider>["streamChat"] | undefined
++let originalComplete: InstanceType<typeof OpenAIProvider>["complete"] | undefined
++
++type CreateHandler = (params: StreamChatParams) => AsyncIterable<CanonicalStreamEvent>
++let createHandlers: CreateHandler[] = []
++let streamParams: StreamChatParams[] = []
++
++function textStreamHandler(text: string, finishReason = "stop", hook?: () => void): CreateHandler {
++  return async function* () {
++    hook?.()
++    yield { type: "token", text }
++    yield { type: "done", finish_reason: finishReason }
++  }
++}
++
++function toolCallStreamHandler(
++  id: string,
++  name: string,
++  args: string,
++  finishReason = "tool_calls",
++): CreateHandler {
++  return async function* () {
++    yield { type: "tool_call_delta", index: 0, id, name, arguments: args }
++    yield { type: "done", finish_reason: finishReason }
++  }
++}
++
++function overflowThrowHandler(): CreateHandler {
++  return (() => {
++    throw new Error("context_length_exceeded: this model's maximum context length is 300 tokens")
++  }) as unknown as CreateHandler
++}
++
++before(async () => {
++  process.env.HOME = tempHome
++  process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
++  delete process.env.DEEPSEEK_API_KEY
++
++  const adapter = await import("../src/llm/adapter")
++  const threadManager = await import("../src/threads/thread-manager")
++  const config = await import("../src/config")
++  const skillEngine = await import("../src/skills/skill-engine")
++  const heal = await import("../src/llm/tool-batch-heal")
++  const openaiProv = await import("../src/llm/providers/openai")
++  runQueues = await import("../src/llm/run-queues")
++  leakHint = (await import("../src/llm/tool-format-leak")).TOOL_FORMAT_LEAK_USER_HINT_ZH
++
++  chatCreate = adapter.chatCreate
++  rebuildMessagesFromHistory = adapter.rebuildMessagesFromHistory
++  ThreadManager = threadManager.ThreadManager
++  SkillEngine = skillEngine.SkillEngine
++  persistHealedToolRows = heal.persistHealedToolRows
++  OpenAIProvider = openaiProv.OpenAIProvider
++
++  await config.initDataDir()
++
++  const loggerMod = await import("../src/logger")
++  const originalLogger = {
++    log: loggerMod.logger.log,
++    info: loggerMod.logger.info,
++    warn: loggerMod.logger.warn,
++    error: loggerMod.logger.error,
++  }
++  loggerMod.logger.log = (level: string, event: string, data: Record<string, unknown> = {}, source?: string) => {
++    logEvents.push({ level, event, data })
++    originalLogger.log(level as any, event, data, source || "test")
++  }
++  loggerMod.logger.info = (event: string, data?: Record<string, unknown>, source?: string) => {
++    logEvents.push({ level: "info", event, data: data || {} })
++    originalLogger.info(event, data, source || "test")
++  }
++  loggerMod.logger.warn = (event: string, data?: Record<string, unknown>, source?: string) => {
++    logEvents.push({ level: "warn", event, data: data || {} })
++    originalLogger.warn(event, data, source || "test")
++  }
++  loggerMod.logger.error = (event: string, data?: Record<string, unknown>, source?: string) => {
++    logEvents.push({ level: "error", event, data: data || {} })
++    originalLogger.error(event, data, source || "test")
++  }
++
++  originalStreamChat = OpenAIProvider.prototype.streamChat
++  originalComplete = OpenAIProvider.prototype.complete
++  OpenAIProvider.prototype.streamChat = async function* (params: StreamChatParams) {
++    streamParams.push(params)
++    const h = createHandlers.shift()
++    if (!h) throw new Error("unexpected streamChat call (no handler queued)")
++    yield* h(params)
++  }
++  OpenAIProvider.prototype.complete = async function () {
++    return { content: "标题" }
++  }
++})
++
++after(() => {
++  if (originalStreamChat) OpenAIProvider.prototype.streamChat = originalStreamChat
++  if (originalComplete) OpenAIProvider.prototype.complete = originalComplete
++  fs.rmSync(tempHome, { recursive: true, force: true })
++})
++
++function resetState() {
++  logEvents.length = 0
++  createHandlers = []
++  streamParams = []
++  runQueues._resetRunQueuesForTests()
++}
++
++function buildMockParams(threadId: string, overrides: {
++  executeTool?: (id: string, name: string, params: any) => Promise<any>
++  contextCompaction?: "auto" | "prompt" | "off"
++  contextWindow?: number
++  signal?: AbortSignal
++  manager?: InstanceType<typeof ThreadManager>
++} = {}) {
++  const manager = overrides.manager ?? new ThreadManager()
++  const thread = manager.get(threadId) ?? manager.create("test", threadId)
++  const skillEngine = new SkillEngine()
++
++  const sentMessages: any[] = []
++
++  return {
++    threadId: thread.id,
++    message: "hello",
++    skillIds: [],
++    config: {
++      base_url: "http://localhost:9999",
++      api_key: "sk-test",
++      model_name: "test-model",
++      temperature: 0.5,
++      context_window: overrides.contextWindow ?? 4000,
++      ...(overrides.contextCompaction ? { context_compaction: overrides.contextCompaction } : {}),
++    },
++    threadManager: manager,
++    skillEngine,
++    historyStore: { record: () => 0 } as any,
++    sendToExtension: (data: any) => {
++      sentMessages.push(data)
++    },
++    executeTool: overrides.executeTool || (async () => ({ success: true, data: {} })),
++    ...(overrides.signal ? { signal: overrides.signal } : {}),
++    getSentMessages: () => sentMessages,
++  }
++}
++
++test("steer arriving during the final streaming round converts to nextRun (not dropped)", async () => {
++  resetState()
++  const params = buildMockParams("test-sn-leftover")
++  createHandlers = [
++    textStreamHandler("回答", "stop", () => {
++      runQueues.enqueueSteer(params.threadId, "请再补充测试")
++    }),
++  ]
++  await chatCreate(params)
++
++  assert.equal(runQueues.takeNextRun(params.threadId), "请再补充测试")
++  assert.deepEqual(runQueues.takeSteer(params.threadId), [])
++  const users = params.threadManager.getMessages(params.threadId).filter((m) => m.role === "user")
++  assert.equal(users.length, 1)
++})
++
++test("abort finish leaves steer queue to the router and does not create nextRun", async () => {
++  resetState()
++  const controller = new AbortController()
++  const params = buildMockParams("test-sn-abort", { signal: controller.signal })
++  createHandlers = [
++    async function* () {
++      runQueues.enqueueSteer(params.threadId, "abort 期间的 steer")
++      controller.abort()
++      const err = new Error("aborted")
++      err.name = "AbortError"
++      throw err
++    },
++  ]
++  try {
++    await chatCreate(params)
++  } catch {
++    /* adapter may swallow AbortError */
++  }
++
++  assert.equal(runQueues.peekNextRunCount(params.threadId), 0)
++  assert.equal(runQueues.takeSteer(params.threadId).length, 1)
++})
++
++test("leftover steer with full nextRun queue logs a warning and drops", async () => {
++  resetState()
++  const params = buildMockParams("test-sn-full")
++  for (let i = 0; i < runQueues.MAX_NEXT_RUN; i++) {
++    runQueues.enqueueNextRun(params.threadId, `queued-${i}`)
++  }
++  createHandlers = [
++    textStreamHandler("回答", "stop", () => {
++      runQueues.enqueueSteer(params.threadId, "塞不下的 steer")
++    }),
++  ]
++  await chatCreate(params)
++
++  const warn = logEvents.find((e) => e.event === "llm.steer_leftover_dropped")
++  assert.ok(warn, "queue-full drop must be observable")
++  assert.equal(warn!.level, "warn")
++  assert.equal(warn!.data.count, 1)
++  assert.equal(runQueues.peekNextRunCount(params.threadId), runQueues.MAX_NEXT_RUN)
++  assert.deepEqual(runQueues.takeSteer(params.threadId), [])
++})
++
++test("steer consumed mid-run persists joined text and echoes first client_message_id", async () => {
++  resetState()
++  const params = buildMockParams("test-sn-cmid")
++  runQueues.enqueueSteer(params.threadId, "先跑测试", "cm-steer-1")
++  runQueues.enqueueSteer(params.threadId, "再跑 lint")
++  createHandlers = [textStreamHandler("好的", "stop")]
++  await chatCreate(params)
++
++  const users = params.threadManager
++    .getMessages(params.threadId)
++    .filter((m) => m.role === "user")
++    .map((m) => m.content)
++  assert.deepEqual(users, ["hello", "先跑测试\n再跑 lint"])
++
++  const echoes = params.getSentMessages().filter((m) => m.type === "chat.user")
++  assert.equal(echoes.length, 2)
++  assert.equal("client_message_id" in echoes[0], false, "main path without clientMessageId")
++  assert.equal(echoes[1].content, "先跑测试\n再跑 lint")
++  assert.equal(echoes[1].client_message_id, "cm-steer-1")
++  assert.ok(echoes[1].message_id, "persisted companion id present")
++
++  const reqUsers = streamParams[0].messages.filter((m) => m.role === "user")
++  assert.ok(reqUsers.some((m) => typeof m.content === "string" && m.content === "先跑测试\n再跑 lint"))
++})
++
++test("real tool result replaces the successor's INTERRUPTED filler in place (no EOF orphan)", async () => {
++  resetState()
++  const manager = new ThreadManager()
++  const thread = manager.create("test", "test-sn-filler")
++  const params = buildMockParams(thread.id, {
++    manager,
++    executeTool: async () => {
++      persistHealedToolRows(manager, thread.id)
++      return { success: true, data: { tabs: [1, 2] } }
++    },
++  })
++  createHandlers = [
++    toolCallStreamHandler("call_A", "list_tabs", "{}"),
++    textStreamHandler("完成", "stop"),
++  ]
++  await chatCreate(params)
++
++  const disk = manager.getMessages(thread.id)
++  const rowsForA = disk.filter((m) =>
++    (m.tool_calls || []).some((tc: any) => tc.id === "call_A" && m.role === "tool"),
++  )
++  assert.equal(rowsForA.length, 1, "exactly one tool row for call_A — filler replaced, not appended")
++
++  const asstIdx = disk.findIndex((m) => m.role === "assistant" && (m.tool_calls || []).length > 0)
++  const toolIdx = disk.findIndex((m) => m === rowsForA[0])
++  assert.ok(asstIdx >= 0)
++  assert.equal(toolIdx, asstIdx + 1, "real row stays right after its assistant (in place)")
++
++  const result = rowsForA[0].tool_calls![0].result as any
++  assert.equal(result.success, true, "real result won")
++  assert.notEqual(result.error_code, "INTERRUPTED")
++
++  const rebuilt = rebuildMessagesFromHistory(disk)
++  const rebuiltAsst = rebuilt.find((m) => m.role === "assistant" && (m as any).tool_calls)
++  assert.ok(rebuiltAsst, "assistant round survives rebuild")
++  assert.ok(
++    rebuilt.some((m) => m.role === "tool" && (m as any).tool_call_id === "call_A"),
++    "tool row pairs at rebuild",
++  )
++})
++
++test("overflow retry uses mid_loop pin: live assistant+tool rows survive into the retry request", async () => {
++  resetState()
++  const params = buildMockParams("test-sn-ovf-auto", { contextWindow: 300 })
++  createHandlers = [
++    toolCallStreamHandler("call_A", "list_tabs", "{}"),
++    overflowThrowHandler(),
++    textStreamHandler("ok", "stop"),
++  ]
++  const bigExecuteTool = async () => ({ success: true, data: { blob: "x".repeat(4000) } })
++  await chatCreate({ ...params, executeTool: bigExecuteTool })
++
++  assert.equal(streamParams.length, 3, "one overflow retry happened")
++  const retryMessages = streamParams[2].messages
++  assert.ok(
++    retryMessages.some(
++      (m) =>
++        m.role === "assistant" &&
++        Array.isArray((m as any).tool_calls) &&
++        (m as any).tool_calls.some((tc: any) => tc.id === "call_A"),
++    ),
++    "mid_loop pin keeps the live assistant tool_calls row (pre_loop would drop it)",
++  )
++  assert.ok(
++    retryMessages.some((m) => m.role === "tool" && (m as any).tool_call_id === "call_A"),
++    "mid_loop pin keeps the live tool row",
++  )
++  const done = params.getSentMessages().find((m) => m.type === "chat.done")
++  assert.ok(done, "run completes after the retry")
++})
++
++test("overflow with compaction=prompt skips the byte-level retry", async () => {
++  resetState()
++  const params = buildMockParams("test-sn-ovf-prompt", { contextCompaction: "prompt" })
++  createHandlers = [overflowThrowHandler()]
++  await chatCreate(params)
++
++  assert.equal(streamParams.length, 1, "no retry — prompt mode never shrinks the request")
++  const err = params.getSentMessages().find((m) => m.type === "chat.error")
++  assert.ok(err && /上下文溢出/.test(err.error))
++})
++
++test("overflow with compaction=off skips the byte-level retry", async () => {
++  resetState()
++  const params = buildMockParams("test-sn-ovf-off", { contextCompaction: "off" })
++  createHandlers = [overflowThrowHandler()]
++  await chatCreate(params)
++
++  assert.equal(streamParams.length, 1, "no retry — off mode never compacts")
++  const err = params.getSentMessages().find((m) => m.type === "chat.error")
++  assert.ok(err && /上下文溢出/.test(err.error))
++})
++
++test("length-truncated tool batch retries once in auto mode", async () => {
++  resetState()
++  const params = buildMockParams("test-sn-len-auto")
++  createHandlers = [
++    toolCallStreamHandler("call_A", "list_tabs", "{}", "length"),
++    textStreamHandler("ok", "stop"),
++  ]
++  await chatCreate(params)
++
++  assert.equal(streamParams.length, 2, "truncated tool batch retried once")
++  assert.ok(params.getSentMessages().find((m) => m.type === "chat.done"))
++})
++
++test("length-truncated tool batch in prompt mode errors without retry", async () => {
++  resetState()
++  const params = buildMockParams("test-sn-len-prompt", { contextCompaction: "prompt" })
++  createHandlers = [toolCallStreamHandler("call_A", "list_tabs", "{}", "length")]
++  await chatCreate(params)
++
++  assert.equal(streamParams.length, 1, "no byte-level retry in prompt mode")
++  const err = params.getSentMessages().find((m) => m.type === "chat.error")
++  assert.ok(err && /输出被截断/.test(err.error))
++})
++
++test("chat.done carries truncated:true on pure-text length stop", async () => {
++  resetState()
++  const params = buildMockParams("test-sn-truncated")
++  createHandlers = [textStreamHandler("被截断的长回答", "length")]
++  await chatCreate(params)
++
++  const done = params.getSentMessages().find((m) => m.type === "chat.done")
++  assert.ok(done)
++  assert.equal(done.truncated, true)
++})
++
++test("chat.done omits truncated on normal stop", async () => {
++  resetState()
++  const params = buildMockParams("test-sn-not-truncated")
++  createHandlers = [textStreamHandler("完整回答", "stop")]
++  await chatCreate(params)
++
++  const done = params.getSentMessages().find((m) => m.type === "chat.done")
++  assert.ok(done)
++  assert.equal("truncated" in done, false)
++})
++
++test("tool-format-leak hint chat.token carries accumulated content + hint", async () => {
++  resetState()
++  const leaked = "我将调用 list_tabs() 来获取标签页"
++  const params = buildMockParams("test-sn-leak")
++  createHandlers = [textStreamHandler(leaked, "stop")]
++  await chatCreate(params)
++
++  const tokens = params.getSentMessages().filter((m) => m.type === "chat.token")
++  const last = tokens[tokens.length - 1]
++  assert.equal(last.content, `${leaked}\n\n${leakHint}`, "full snapshot, not just the hint fragment")
++  assert.ok(params.getSentMessages().some((m) => m.type === "chat.tool_format_warning"))
++  const done = params.getSentMessages().find((m) => m.type === "chat.done")
++  assert.equal(done?.tool_format_leak, true)
++})
+diff --git a/companion/tests/companion-ui-rects.test.ts b/companion/tests/companion-ui-rects.test.ts
+index f30e973..7cd39f9 100644
+--- a/companion/tests/companion-ui-rects.test.ts
++++ b/companion/tests/companion-ui-rects.test.ts
+@@ -76,6 +76,25 @@ test("companion.ui.rect is a known WS type for daemon apply", () => {
+   )
+ })
+ 
++test("menu-bar-agent routes Swift rects by surface (pairing/tray/hud off the summoner socket)", () => {
++  const fs = require("node:fs") as typeof import("node:fs")
++  const path = require("node:path") as typeof import("node:path")
++  const candidates = [
++    path.resolve(__dirname, "..", "src", "menu-bar-agent.ts"),
++    path.resolve(__dirname, "..", "..", "src", "menu-bar-agent.ts"),
++  ]
++  const srcPath = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
++  const src = fs.readFileSync(srcPath, "utf8")
++  const start = src.indexOf("onCompanionUiRect?.(")
++  assert.ok(start >= 0, "onCompanionUiRect wiring missing")
++  const body = src.slice(start, start + 800)
++  // S23: Tray.swift's pairing/tray/hud rects are silently dropped by the
++  // daemon's summoner-surface allowSurfaces gate — they must be routed by
++  // surface instead of blindly forwarded over the summoner socket.
++  assert.match(body, /forwardCompanionUiRect/)
++  assert.doesNotMatch(body, /summonerClient\?\.sendAppMessage\("companion\.ui\.rect"/)
++})
++
+ test("applyCompanionUiRectEvent updates and hides surfaces", () => {
+   clearCompanionUiRects()
+   assert.equal(
+diff --git a/companion/tests/composer-lease.test.ts b/companion/tests/composer-lease.test.ts
+index 1c41c6a..34b9e53 100644
+--- a/companion/tests/composer-lease.test.ts
++++ b/companion/tests/composer-lease.test.ts
+@@ -10,6 +10,7 @@ import {
+   stampCmsparkSurface,
+   OVERLAY_STANDBY,
+   claimOverlayLeaseCas,
++  releaseOverlayLeaseAtRev,
+   releaseOverlayLeaseCas,
+   shouldBroadcastLease,
+   applySummonerComposerVisibility,
+@@ -191,7 +192,11 @@ test("validate composer.lease.claim/release/get", () => {
+ })
+ 
+ test("message-router chat.create uses composer lease gate", () => {
+-  const router = path.resolve(__dirname, "..", "..", "src", "message-router.ts")
++  const candidates = [
++    path.resolve(__dirname, "..", "src", "message-router.ts"),
++    path.resolve(__dirname, "..", "..", "src", "message-router.ts"),
++  ]
++  const router = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
+   const src = fs.readFileSync(router, "utf8")
+   assert.match(src, /gateChatCreateOnLease/)
+   assert.match(src, /case "composer.lease.claim":/)
+@@ -203,7 +208,11 @@ test("message-router chat.create uses composer lease gate", () => {
+ })
+ 
+ test("lifecycle stamps __cmspark_surface from auth after ACL", () => {
+-  const life = path.resolve(__dirname, "..", "..", "src", "ws", "lifecycle.ts")
++  const candidates = [
++    path.resolve(__dirname, "..", "src", "ws", "lifecycle.ts"),
++    path.resolve(__dirname, "..", "..", "src", "ws", "lifecycle.ts"),
++  ]
++  const life = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
+   const src = fs.readFileSync(life, "utf8")
+   assert.match(src, /assertSummonerAllowed/)
+   assert.match(src, /stampCmsparkSurface\s*\(/)
+@@ -465,3 +474,90 @@ test("panel chat.create is OVERLAY_STANDBY on old thread until exclusive switch"
+   assert.equal(gateChatCreateOnLease("old", "tray", r), null)
+   assert.equal(gateChatCreateOnLease("neu", "tray", r)?.data.error_code, OVERLAY_STANDBY)
+ })
++
++test("claimOverlayLeaseCas surfaces released_siblings so stale claims can repair them", async () => {
++  const r = new ComposerLeaseRegistry()
++  r.claim({ thread_id: "live", holder: "overlay", rev: 0 })
++  const result = await claimOverlayLeaseCas("stale", async (type, body) => {
++    return handleComposerLeaseFamily(type, { ...body, thread_id: body.thread_id ?? "stale" }, r)
++  })
++  assert.equal(result.ok, true)
++  assert.equal(result.state?.rev, 1)
++  // release bumps the demoted sibling's rev (claim at rev 0 → rev 1 → released rev 2)
++  assert.deepEqual(result.released_siblings, [{ thread_id: "live", holder: "panel", rev: 2 }])
++  // No sibling damage → empty list, still defined (fresh registry: the first
++  // claim above still holds "stale" as overlay, so "solo" would demote it)
++  const r2 = new ComposerLeaseRegistry()
++  const clean = await claimOverlayLeaseCas("solo", async (type, body) => {
++    return handleComposerLeaseFamily(type, { ...body, thread_id: body.thread_id ?? "solo" }, r2)
++  })
++  assert.equal(clean.ok, true)
++  assert.deepEqual(clean.released_siblings, [])
++})
++
++test("releaseOverlayLeaseAtRev returns the just-claimed thread to panel; stale rev is a safe no-op", async () => {
++  const r = new ComposerLeaseRegistry()
++  r.claim({ thread_id: "t1", holder: "overlay", rev: 0 }) // rev=1 overlay
++  const stale = await releaseOverlayLeaseAtRev("t1", 0, async (type, body) =>
++    handleComposerLeaseFamily(type, { ...body, thread_id: "t1" }, r),
++  )
++  assert.equal(stale.ok, false)
++  assert.equal(stale.error_code, "LEASE_REV_MISMATCH")
++  assert.equal(r.get("t1").holder, "overlay")
++  const ok = await releaseOverlayLeaseAtRev("t1", 1, async (type, body) =>
++    handleComposerLeaseFamily(type, { ...body, thread_id: "t1" }, r),
++  )
++  assert.equal(ok.ok, true)
++  assert.equal(r.get("t1").holder, "panel")
++  assert.equal(r.get("t1").rev, 2)
++})
++
++test("#219 dual summoner: closing one socket keeps overlay holds; closing the last releases", () => {
++  const r = new ComposerLeaseRegistry()
++  r.claim({ thread_id: "ov", holder: "overlay", rev: 0 })
++  // One authenticated summoner still online → nothing is released
++  assert.deepEqual(overlayLeasesOnSummonerDisconnect("summoner", r, 1), [])
++  assert.equal(r.get("ov").holder, "overlay")
++  // Last summoner gone → overlay holds drop back to panel
++  const released = overlayLeasesOnSummonerDisconnect("summoner", r, 0)
++  assert.equal(released.length, 1)
++  assert.equal(released[0].thread_id, "ov")
++  assert.equal(r.get("ov").holder, "panel")
++})
++
++test("#219 broadcastOverlayLeasesOnSocketClose skips release while a summoner survives", () => {
++  const r = new ComposerLeaseRegistry()
++  r.claim({ thread_id: "ov", holder: "overlay", rev: 0 })
++  const sentWhileSurviving: string[] = []
++  const n = broadcastOverlayLeasesOnSocketClose(
++    "summoner",
++    (msg) => sentWhileSurviving.push(msg.thread_id),
++    r,
++    2,
++  )
++  assert.equal(n, 0)
++  assert.deepEqual(sentWhileSurviving, [])
++  assert.equal(r.get("ov").holder, "overlay")
++  const sentAfterLast: string[] = []
++  const m = broadcastOverlayLeasesOnSocketClose(
++    "summoner",
++    (msg) => sentAfterLast.push(msg.thread_id),
++    r,
++    0,
++  )
++  assert.equal(m, 1)
++  assert.deepEqual(sentAfterLast, ["ov"])
++})
++
++test("#219 lifecycle close handler counts surviving authenticated summoner clients", () => {
++  const candidates = [
++    path.resolve(__dirname, "..", "..", "src", "ws", "lifecycle.ts"),
++    path.resolve(__dirname, "..", "src", "ws", "lifecycle.ts"),
++  ]
++  const life = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
++  const src = fs.readFileSync(life, "utf8")
++  const close = src.slice(src.indexOf('ws.on("close"'), src.indexOf('ws.on("pong"'))
++  assert.match(close, /survivingSummoners/)
++  assert.match(close, /auth\?\.authenticated === true && auth\.surface === "summoner"/)
++  assert.match(close, /broadcastOverlayLeasesOnSocketClose\([\s\S]*survivingSummoners/)
++})
+diff --git a/companion/tests/message-router-nextrun-drain.test.ts b/companion/tests/message-router-nextrun-drain.test.ts
+new file mode 100644
+index 0000000..8f5004d
+--- /dev/null
++++ b/companion/tests/message-router-nextrun-drain.test.ts
+@@ -0,0 +1,744 @@
++/**
++ * Regression tests for the nextRun drain / file.upload slot-claim fixes:
++ *
++ *  - P1 TOCTOU: file.upload claims the LLM slot synchronously at entry, so a
++ *    chat.create arriving during the parse/vision phase is rejected with
++ *    run_active instead of starting a parallel orphan stream.
++ *  - P1 cleanup: early returns after the entry claim (size/type/parse/paused/
++ *    gate failures) free the slot again.
++ *  - P1 drain gates: the post-run nextRun drain pre-checks the lease/conductor
++ *    gates BEFORE takeNextRun — a rejected drain returns the gate error and
++ *    leaves the message queued (the client already holds chat.enqueued).
++ *  - P1 drain parity: file.upload and chat.regenerate drain one queued
++ *    nextRun on completion, like chat.create already did.
++ *  - P2 abort drain: chat.abort picks up a queued nextRun (deferred a tick) —
++ *    the aborted run's own drain is generation-guarded off.
++ *  - P2 D6: chat.steer passes client_message_id through to the steer queue and
++ *    echoes it in the chat.steered ack.
++ *  - P2 wire: thread-domain rejection frames all carry thread_id.
++ *
++ * The OpenAI completions prototype is patched (same seam as
++ * client-message-id-passthrough): stream:true calls drive the main chat loop,
++ * the vision model call drives analyzeImage, everything else (titles) resolves
++ * immediately.
++ */
++import test, { after, before, beforeEach } from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as os from "node:os"
++import * as path from "node:path"
++import { createRequire } from "node:module"
++
++const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-nextrun-drain-"))
++process.env.HOME = tempHome
++process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
++delete process.env.DEEPSEEK_API_KEY
++
++let handleMessage: typeof import("../src/message-router").handleMessage
++let listLlmActiveThreadIds: typeof import("../src/message-router").listLlmActiveThreadIds
++let __testSetLlmActiveForTests: typeof import("../src/message-router").__testSetLlmActiveForTests
++let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
++let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
++let saveConfig: typeof import("../src/config").saveConfig
++let getConfigDir: typeof import("../src/config").getConfigDir
++let peekNextRunCount: typeof import("../src/llm/run-queues").peekNextRunCount
++let takeSteer: typeof import("../src/llm/run-queues").takeSteer
++let _resetRunQueuesForTests: typeof import("../src/llm/run-queues")._resetRunQueuesForTests
++let MAX_NEXT_RUN: typeof import("../src/llm/run-queues").MAX_NEXT_RUN
++let MAX_STEER: typeof import("../src/llm/run-queues").MAX_STEER
++let composerLeases: typeof import("../src/ws/composer-lease").composerLeases
++
++// deepseek-chat trips the non-multimodal name heuristic, so standalone upload
++// images take the vision rail (analyzeImage) instead of native vision.
++const MAIN_MODEL = "deepseek-chat"
++const VISION_MODEL = "vision-mock-model"
++
++const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
++
++let originalCreate: any = undefined
++let completionsProto: any = undefined
++
++// --- mock control knobs (reset per test) ---
++let streamCalls = 0
++let visionCalls = 0
++let holdStreams = false
++let holdVision = false
++let streamReleases: Array<() => void> = []
++let visionReleases: Array<() => void> = []
++
++function abortError(): Error {
++  const e = new Error("mock stream aborted")
++  e.name = "AbortError"
++  return e
++}
++
++function makeStream(signal?: AbortSignal): AsyncIterable<any> {
++  return (async function* () {
++    streamCalls++
++    if (holdStreams) {
++      await new Promise<void>((resolve, reject) => {
++        streamReleases.push(resolve)
++        if (signal) {
++          if (signal.aborted) reject(abortError())
++          else signal.addEventListener("abort", () => reject(abortError()), { once: true })
++        }
++      })
++    }
++    if (signal?.aborted) throw abortError()
++    yield { choices: [{ index: 0, delta: { content: "mock reply" }, finish_reason: null }] }
++    yield { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
++  })()
++}
++
++before(async () => {
++  const mr = await import("../src/message-router")
++  const tm = await import("../src/threads/thread-manager")
++  const se = await import("../src/skills/skill-engine")
++  const cfg = await import("../src/config")
++  const queues = await import("../src/llm/run-queues")
++  const lease = await import("../src/ws/composer-lease")
++  handleMessage = mr.handleMessage
++  listLlmActiveThreadIds = mr.listLlmActiveThreadIds
++  __testSetLlmActiveForTests = mr.__testSetLlmActiveForTests
++  ThreadManager = tm.ThreadManager
++  SkillEngine = se.SkillEngine
++  saveConfig = cfg.saveConfig
++  getConfigDir = cfg.getConfigDir
++  peekNextRunCount = queues.peekNextRunCount
++  takeSteer = queues.takeSteer
++  _resetRunQueuesForTests = queues._resetRunQueuesForTests
++  MAX_NEXT_RUN = queues.MAX_NEXT_RUN
++  MAX_STEER = queues.MAX_STEER
++  composerLeases = lease.composerLeases
++  await cfg.initDataDir()
++
++  saveConfig({
++    llm: {
++      base_url: "http://127.0.0.1:9",
++      api_key: "sk-test",
++      model_name: MAIN_MODEL,
++      temperature: 0.5,
++      context_window: 4000,
++    },
++    vision: {
++      enabled: true,
++      base_url: "http://127.0.0.1:9",
++      api_key: "sk-test",
++      model_name: VISION_MODEL,
++    },
++  } as any)
++
++  // Patch OpenAI completions.create to avoid real network calls. The same
++  // prototype serves the main provider (stream:true), analyzeImage (vision
++  // model), and title generation (everything else). Load openai through
++  // createRequire so we patch the CJS instance the providers actually use
++  // (a bare `await import("openai")` can resolve the ESM build under tsx —
++  // dual-package hazard — which is a different module record).
++  const cjsRequire = createRequire(__filename)
++  const openaiMod = cjsRequire("openai")
++  const OpenAI = openaiMod?.default || openaiMod
++  const dummyClient = new OpenAI({ baseURL: "http://127.0.0.1:9", apiKey: "sk-test" })
++  completionsProto = Object.getPrototypeOf(dummyClient.chat.completions)
++  originalCreate = completionsProto.create
++  completionsProto.create = async function (params: any, options?: any) {
++    if (params?.stream === true) return makeStream(options?.signal)
++    if (params?.model === VISION_MODEL) {
++      visionCalls++
++      if (holdVision) {
++        await new Promise<void>((resolve) => {
++          visionReleases.push(resolve)
++        })
++      }
++      return { choices: [{ index: 0, message: { content: "vision description" }, finish_reason: "stop" }] }
++    }
++    return { choices: [{ index: 0, message: { content: "title" }, finish_reason: "stop" }] }
++  }
++})
++
++after(() => {
++  if (completionsProto && originalCreate) {
++    completionsProto.create = originalCreate
++  }
++  fs.rmSync(tempHome, { recursive: true, force: true })
++})
++
++beforeEach(() => {
++  streamCalls = 0
++  visionCalls = 0
++  holdStreams = false
++  holdVision = false
++  streamReleases = []
++  visionReleases = []
++  _resetRunQueuesForTests()
++  const threadsDir = path.join(getConfigDir(), "threads")
++  if (fs.existsSync(threadsDir)) {
++    for (const f of fs.readdirSync(threadsDir)) {
++      try {
++        fs.rmSync(path.join(threadsDir, f), { recursive: true, force: true })
++      } catch {
++        /* ignore */
++      }
++    }
++  }
++})
++
++function makeSession(sent: any[], surface?: "tray" | "summoner") {
++  return {
++    sendToExtension: (data: any) => sent.push(data),
++    executeTool: async () => ({ success: true, data: {} }),
++    ...(surface ? { surface } : {}),
++  } as any
++}
++
++function makeServices(tm: InstanceType<typeof ThreadManager>) {
++  return { threadManager: tm, skillEngine: new SkillEngine(), historyStore: { record: () => 0 } as any }
++}
++
++function uploadMsg(threadId: string, tag: number) {
++  // tag varies the bytes so the vision description cache never short-circuits
++  // a hold with a cross-test cache hit.
++  const buf = Buffer.concat([PNG, Buffer.from([tag & 0xff])])
++  return {
++    type: "file.upload",
++    thread_id: threadId,
++    message: "看下这张图",
++    files: [{ name: "a.png", type: "image/png", content: buf.toString("base64") }],
++  }
++}
++
++async function waitFor(cond: () => boolean, label: string, timeoutMs = 5000): Promise<void> {
++  const t0 = Date.now()
++  while (!cond()) {
++    if (Date.now() - t0 > timeoutMs) throw new Error(`timeout waiting for ${label}`)
++    await new Promise((r) => setTimeout(r, 10))
++  }
++}
++
++function releaseHeldStreams(): void {
++  holdStreams = false
++  streamReleases.forEach((r) => r())
++  streamReleases = []
++}
++
++function releaseHeldVision(): void {
++  holdVision = false
++  visionReleases.forEach((r) => r())
++  visionReleases = []
++}
++
++test("P1 TOCTOU: chat.create during file.upload parse is run_active, no orphan stream", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "toctou-entry")
++  const sent: any[] = []
++
++  holdVision = true
++  const uploadPromise = handleMessage(
++    uploadMsg(thread.id, 1),
++    makeServices(tm),
++    makeSession(sent),
++  )
++  await waitFor(() => visionCalls === 1, "vision analysis started (parse phase)")
++
++  // The slot must be claimed while the upload is still in its parse/vision phase.
++  assert.ok(
++    listLlmActiveThreadIds().includes(thread.id),
++    "file.upload must claim the LLM slot at entry, before parse awaits",
++  )
++  const midCreate = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "concurrent create" },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(midCreate.type, "error")
++  assert.equal(midCreate.error, "run_active")
++  assert.equal(midCreate.thread_id, thread.id)
++  const midUpload = await handleMessage(
++    { type: "file.upload", thread_id: thread.id, files: [] },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(midUpload.error, "run_active")
++  assert.equal(streamCalls, 0, "no parallel LLM stream may start during upload parse")
++
++  releaseHeldVision()
++  const resp = await uploadPromise
++  assert.equal(resp.type, "file.uploaded")
++  assert.equal(streamCalls, 1, "only the upload's own chatCreate ran")
++  assert.ok(!listLlmActiveThreadIds().includes(thread.id), "slot freed after upload")
++})
++
++test("P1 cleanup: early return after entry claim frees the slot", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "toctou-cleanup")
++  const sent: any[] = []
++
++  // Tiny max_file_size forces the size-check uploadError after the entry claim.
++  saveConfig({
++    file_upload: {
++      max_file_size: 8,
++      allowed_types: [],
++      max_embedded_images: 20,
++      enable_vision_analysis: true,
++      max_file_tokens: 50000,
++    },
++  } as any)
++  try {
++    const resp = await handleMessage(
++      {
++        type: "file.upload",
++        thread_id: thread.id,
++        files: [
++          {
++            name: "big.txt",
++            type: "text/plain",
++            content: Buffer.from("definitely larger than eight bytes").toString("base64"),
++          },
++        ],
++      },
++      makeServices(tm),
++      makeSession(sent),
++    )
++    assert.equal(resp.type, "file.upload_error")
++    assert.ok(
++      !listLlmActiveThreadIds().includes(thread.id),
++      "early return must free the entry claim (thread not stuck run_active)",
++    )
++
++    // The thread accepts a fresh chat.create immediately after.
++    const follow = await handleMessage(
++      { type: "chat.create", thread_id: thread.id, message: "after failed upload" },
++      makeServices(tm),
++      makeSession(sent),
++    )
++    assert.equal(follow, null, "chat.create after failed upload must run, not run_active")
++    assert.equal(streamCalls, 1)
++  } finally {
++    saveConfig({
++      file_upload: {
++        max_file_size: 10 * 1024 * 1024,
++        allowed_types: [],
++        max_embedded_images: 20,
++        enable_vision_analysis: true,
++        max_file_tokens: 50000,
++      },
++    } as any)
++  }
++})
++
++test("P1 drain gate: lease-rejected drain keeps the message queued", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "drain-gate")
++  const sent: any[] = []
++
++  holdStreams = true
++  const createPromise = handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "first" },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  await waitFor(() => streamCalls === 1, "first run streaming")
++
++  const enq = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "second", enqueue: true },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(enq.type, "chat.enqueued")
++  assert.equal(enq.depth, 1)
++
++  // Flip the composer lease to overlay: a panel/tray-surface drain is rejected.
++  const beforeClaim = composerLeases.get(thread.id)
++  composerLeases.claim({ thread_id: thread.id, holder: "overlay", rev: beforeClaim.rev })
++  try {
++    releaseHeldStreams()
++    const resp = await createPromise
++    assert.equal(resp, null, "occupied create RPC still succeeds; drain gate is pushed not returned")
++    const pushed = sent.find((m) => m?.data?.error_code === "OVERLAY_STANDBY")
++    assert.ok(pushed, "gate error must be pushed on the session")
++    assert.equal(pushed.thread_id, thread.id)
++    assert.equal(
++      peekNextRunCount(thread.id),
++      1,
++      "rejected drain must leave the message queued (client holds chat.enqueued)",
++    )
++    assert.equal(streamCalls, 1, "queued run must not start while gate-rejected")
++  } finally {
++    const cur = composerLeases.get(thread.id)
++    composerLeases.release({ thread_id: thread.id, rev: cur.rev })
++  }
++})
++
++test("P1 drain: overlay-held lease drains when session.surface is summoner", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "overlay-drain-ok")
++  const sent: any[] = []
++  const session = makeSession(sent, "summoner")
++
++  const beforeClaim = composerLeases.get(thread.id)
++  composerLeases.claim({ thread_id: thread.id, holder: "overlay", rev: beforeClaim.rev })
++  try {
++    holdStreams = true
++    const createPromise = handleMessage(
++      { type: "chat.create", thread_id: thread.id, message: "first", __cmspark_surface: "summoner" },
++      makeServices(tm),
++      session,
++    )
++    await waitFor(() => streamCalls === 1, "first run streaming")
++
++    const enq = await handleMessage(
++      { type: "chat.create", thread_id: thread.id, message: "second", enqueue: true, __cmspark_surface: "summoner" },
++      makeServices(tm),
++      session,
++    )
++    assert.equal(enq.type, "chat.enqueued")
++
++    releaseHeldStreams()
++    const resp = await createPromise
++    assert.equal(resp, null)
++    assert.equal(streamCalls, 2, "overlay nextRun drain must run as summoner, not OVERLAY_STANDBY")
++    assert.equal(peekNextRunCount(thread.id), 0, "queue empty because it ran")
++    assert.ok(!sent.some((m) => m?.data?.error_code === "OVERLAY_STANDBY"))
++  } finally {
++    const cur = composerLeases.get(thread.id)
++    composerLeases.release({ thread_id: thread.id, rev: cur.rev })
++  }
++})
++
++test("P1 drain gate: overlay-rejected upload drain still returns file.uploaded", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "upload-drain-gate")
++  const sent: any[] = []
++
++  holdVision = true
++  const uploadPromise = handleMessage(
++    uploadMsg(thread.id, 9),
++    makeServices(tm),
++    makeSession(sent),
++  )
++  await waitFor(() => visionCalls === 1, "vision analysis started (parse phase)")
++
++  const enq = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "queued during upload", enqueue: true },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(enq.type, "chat.enqueued")
++
++  const beforeClaim = composerLeases.get(thread.id)
++  composerLeases.claim({ thread_id: thread.id, holder: "overlay", rev: beforeClaim.rev })
++  try {
++    releaseHeldVision()
++    const resp = await uploadPromise
++    assert.equal(resp.type, "file.uploaded", "upload ack must not be replaced by OVERLAY_STANDBY")
++    assert.ok(sent.some((m) => m?.data?.error_code === "OVERLAY_STANDBY"))
++    assert.equal(peekNextRunCount(thread.id), 1, "rejected drain keeps the queued turn")
++    assert.equal(streamCalls, 1, "queued run must not start")
++  } finally {
++    const cur = composerLeases.get(thread.id)
++    composerLeases.release({ thread_id: thread.id, rev: cur.rev })
++  }
++})
++
++test("P1 drain parity: file.upload completion drains one queued nextRun", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "upload-drain")
++  const sent: any[] = []
++
++  holdVision = true
++  const uploadPromise = handleMessage(
++    uploadMsg(thread.id, 2),
++    makeServices(tm),
++    makeSession(sent),
++  )
++  await waitFor(() => visionCalls === 1, "vision analysis started (parse phase)")
++
++  const enq = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "queued during upload", enqueue: true },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(enq.type, "chat.enqueued")
++  assert.equal(enq.depth, 1)
++
++  releaseHeldVision()
++  const resp = await uploadPromise
++  assert.equal(resp.type, "file.uploaded")
++  assert.equal(streamCalls, 2, "upload chatCreate + drained queued run both executed")
++  assert.equal(peekNextRunCount(thread.id), 0, "queue drained")
++  assert.equal(sent.filter((m) => m.type === "chat.user").length, 2)
++  assert.equal(sent.filter((m) => m.type === "chat.done").length, 2)
++})
++
++test("P1 drain parity: chat.regenerate completion drains one queued nextRun", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "regen-drain")
++  const sent: any[] = []
++  tm.addMessage(thread.id, { thread_id: thread.id, role: "user", content: "original question" })
++  const a1 = tm.addMessage(thread.id, { thread_id: thread.id, role: "assistant", content: "original answer" })
++
++  holdStreams = true
++  const regenPromise = handleMessage(
++    { type: "chat.regenerate", thread_id: thread.id, message_id: a1.id },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  await waitFor(() => streamCalls === 1, "regenerate run streaming")
++
++  const enq = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "queued during regen", enqueue: true },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(enq.type, "chat.enqueued")
++
++  releaseHeldStreams()
++  const resp = await regenPromise
++  assert.ok(resp == null, "regenerate returns null after a clean drain")
++  assert.equal(streamCalls, 2, "regenerate + drained queued run both executed")
++  assert.equal(peekNextRunCount(thread.id), 0, "queue drained")
++  assert.equal(sent.filter((m) => m.type === "chat.done").length, 2)
++})
++
++test("P2 abort drain: chat.abort picks up the queued nextRun", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "abort-drain")
++  const sent: any[] = []
++
++  holdStreams = true
++  const createPromise = handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "first" },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  await waitFor(() => streamCalls === 1, "first run streaming")
++
++  const enq = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "queued before abort", enqueue: true },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(enq.type, "chat.enqueued")
++
++  // The drained run must complete immediately once it starts.
++  holdStreams = false
++  const abortResp = await handleMessage(
++    { type: "chat.abort", thread_id: thread.id },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(abortResp.type, "chat.aborted")
++  assert.equal(abortResp.thread_id, thread.id)
++  // Deferred drain: the pickup must not have started synchronously.
++  assert.equal(streamCalls, 1, "drain is deferred (setImmediate), not inline in chat.abort")
++  await createPromise
++
++  // Deferred (setImmediate) drain picks up the queued message after the abort.
++  await waitFor(() => streamCalls === 2, "post-abort drain starts the queued run")
++  await waitFor(
++    () => sent.filter((m) => m.type === "chat.done").length === 1,
++    "drained run completes",
++  )
++  assert.equal(peekNextRunCount(thread.id), 0, "queue drained by the post-abort pickup")
++  assert.equal(
++    sent.filter((m) => m.type === "chat.aborted").length,
++    0,
++    "aborted run stays silent (SEC-D generation mismatch) — only the WS ack is chat.aborted",
++  )
++})
++
++test("P2 abort drain: gate-rejected pickup keeps the message queued and pushes the error", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "abort-drain-gated")
++  const sent: any[] = []
++
++  holdStreams = true
++  const createPromise = handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "first" },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  await waitFor(() => streamCalls === 1, "first run streaming")
++
++  const enq = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "queued before abort", enqueue: true },
++    makeServices(tm),
++    makeSession(sent),
++  )
++  assert.equal(enq.type, "chat.enqueued")
++
++  // Overlay takes the composer before the abort: the deferred drain must be
++  // lease-rejected, keep the message queued, and surface the gate error.
++  const beforeClaim = composerLeases.get(thread.id)
++  composerLeases.claim({ thread_id: thread.id, holder: "overlay", rev: beforeClaim.rev })
++  try {
++    holdStreams = false
++    const abortResp = await handleMessage(
++      { type: "chat.abort", thread_id: thread.id },
++      makeServices(tm),
++      makeSession(sent),
++    )
++    assert.equal(abortResp.type, "chat.aborted")
++    await createPromise
++
++    await waitFor(
++      () => sent.some((m) => m.type === "chat.error" && m.data?.error_code === "OVERLAY_STANDBY"),
++      "gate error pushed to the extension",
++    )
++    assert.equal(peekNextRunCount(thread.id), 1, "rejected pickup leaves the message queued")
++    assert.equal(streamCalls, 1, "queued run must not start while gate-rejected")
++  } finally {
++    const cur = composerLeases.get(thread.id)
++    composerLeases.release({ thread_id: thread.id, rev: cur.rev })
++  }
++})
++
++test("P2 D6: chat.steer passes client_message_id through and echoes it in the ack", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "steer-cmid")
++
++  __testSetLlmActiveForTests(thread.id, true)
++  try {
++    const ok = await handleMessage(
++      {
++        type: "chat.steer",
++        thread_id: thread.id,
++        message: "focus tests",
++        client_message_id: "csm-1",
++      },
++      makeServices(tm),
++    )
++    assert.equal(ok.type, "chat.steered")
++    assert.equal(ok.thread_id, thread.id)
++    assert.equal(ok.client_message_id, "csm-1", "ack must echo client_message_id")
++    assert.deepEqual(takeSteer(thread.id), [{ text: "focus tests", clientMessageId: "csm-1" }])
++
++    const noId = await handleMessage(
++      { type: "chat.steer", thread_id: thread.id, message: "no id here" },
++      makeServices(tm),
++    )
++    assert.equal(noId.type, "chat.steered")
++    assert.ok(!("client_message_id" in noId), "ack omits client_message_id when absent")
++    assert.deepEqual(takeSteer(thread.id), [{ text: "no id here" }])
++
++    const badId = await handleMessage(
++      {
++        type: "chat.steer",
++        thread_id: thread.id,
++        message: "bad id",
++        client_message_id: 123,
++      },
++      makeServices(tm),
++    )
++    assert.equal(badId.type, "chat.steered")
++    assert.ok(!("client_message_id" in badId), "non-string client_message_id must not be echoed")
++    assert.deepEqual(takeSteer(thread.id), [{ text: "bad id" }])
++  } finally {
++    __testSetLlmActiveForTests(thread.id, false)
++  }
++})
++
++test("P2 wire: thread-domain rejection frames all carry thread_id", async () => {
++  const tm = new ThreadManager()
++  const thread = tm.create("", "reject-thread-id")
++  const sent: any[] = []
++  const services = () => makeServices(tm)
++
++  // no_active_run
++  const steerIdle = await handleMessage(
++    { type: "chat.steer", thread_id: thread.id, message: "hi" },
++    services(),
++  )
++  assert.equal(steerIdle.error, "no_active_run")
++  assert.equal(steerIdle.thread_id, thread.id)
++
++  // idle_enqueue
++  const idleEnq = await handleMessage(
++    { type: "chat.create", thread_id: thread.id, message: "hi", enqueue: true },
++    services(),
++    makeSession(sent),
++  )
++  assert.equal(idleEnq.error, "idle_enqueue")
++  assert.equal(idleEnq.thread_id, thread.id)
++
++  __testSetLlmActiveForTests(thread.id, true)
++  try {
++    // run_active
++    const active = await handleMessage(
++      { type: "chat.create", thread_id: thread.id, message: "hi" },
++      services(),
++      makeSession(sent),
++    )
++    assert.equal(active.error, "run_active")
++    assert.equal(active.thread_id, thread.id)
++
++    // queue_full
++    for (let i = 0; i < MAX_NEXT_RUN; i++) {
++      const enq = await handleMessage(
++        { type: "chat.create", thread_id: thread.id, message: `q${i}`, enqueue: true },
++        services(),
++        makeSession(sent),
++      )
++      assert.equal(enq.type, "chat.enqueued")
++    }
++    const full = await handleMessage(
++      { type: "chat.create", thread_id: thread.id, message: "overflow", enqueue: true },
++      services(),
++      makeSession(sent),
++    )
++    assert.equal(full.error, "queue_full")
++    assert.equal(full.thread_id, thread.id)
++
++    // empty_enqueue
++    const emptyEnq = await handleMessage(
++      { type: "chat.create", thread_id: thread.id, message: "   ", enqueue: true },
++      services(),
++      makeSession(sent),
++    )
++    assert.equal(emptyEnq.error, "empty_enqueue")
++    assert.equal(emptyEnq.thread_id, thread.id)
++
++    // steer_queue_full
++    for (let i = 0; i < MAX_STEER; i++) {
++      const s = await handleMessage(
++        { type: "chat.steer", thread_id: thread.id, message: `s${i}` },
++        services(),
++      )
++      assert.equal(s.type, "chat.steered")
++    }
++    const steerFull = await handleMessage(
++      { type: "chat.steer", thread_id: thread.id, message: "overflow" },
++      services(),
++    )
++    assert.equal(steerFull.error, "steer_queue_full")
++    assert.equal(steerFull.thread_id, thread.id)
++
++    // file.upload run_active also carries thread_id
++    const busyUpload = await handleMessage(
++      { type: "file.upload", thread_id: thread.id, files: [] },
++      services(),
++      makeSession(sent),
++    )
++    assert.equal(busyUpload.error, "run_active")
++    assert.equal(busyUpload.thread_id, thread.id)
++  } finally {
++    __testSetLlmActiveForTests(thread.id, false)
++    _resetRunQueuesForTests()
++  }
++
++  // OVERLAY_STANDBY lease rejection (chat.error) carries thread_id
++  const beforeClaim = composerLeases.get(thread.id)
++  composerLeases.claim({ thread_id: thread.id, holder: "overlay", rev: beforeClaim.rev })
++  try {
++    const gated = await handleMessage(
++      { type: "chat.create", thread_id: thread.id, message: "hi", __cmspark_surface: "tray" },
++      services(),
++      makeSession(sent),
++    )
++    assert.equal(gated.type, "chat.error")
++    assert.equal(gated.data?.error_code, "OVERLAY_STANDBY")
++    assert.equal(gated.thread_id, thread.id)
++  } finally {
++    const cur = composerLeases.get(thread.id)
++    composerLeases.release({ thread_id: thread.id, rev: cur.rev })
++  }
++})
+diff --git a/companion/tests/overlay-session.test.ts b/companion/tests/overlay-session.test.ts
+index 466c39f..1b01b3b 100644
+--- a/companion/tests/overlay-session.test.ts
++++ b/companion/tests/overlay-session.test.ts
+@@ -7,6 +7,8 @@ import {
+   hydrateOverlayIfLive,
+   claimOverlayIfLive,
+   currentOverlaySession,
++  shouldReclaimLiveOverlayThread,
++  type OverlayLeaseState,
+ } from "../src/summoner/overlay-session"
+ 
+ test("close during thread.select does not claim overlay lease", async () => {
+@@ -25,7 +27,9 @@ test("close during thread.select does not claim overlay lease", async () => {
+     },
+     claimLease: async () => {
+       claimed = true
++      return { ok: true, rev: 1 }
+     },
++    releaseClaimedLease: async () => {},
+     releaseAllLeases: async () => {},
+   })
+   assert.equal(result, "abandoned")
+@@ -46,7 +50,9 @@ test("close during claim releases the overlay lease it just took", async () => {
+     claimLease: async () => {
+       claimed += 1
+       invalidateOverlaySession()
++      return { ok: true, rev: 1 }
+     },
++    releaseClaimedLease: async () => {},
+     releaseAllLeases: async () => {
+       released += 1
+     },
+@@ -65,6 +71,9 @@ test("hydrateOverlayIfLive abandons when claimLease returns false", async () =>
+     selectMessages: async () => [{ role: "user", content: "x" }],
+     applyHydrate: () => {},
+     claimLease: async () => false,
++    releaseClaimedLease: async () => {
++      assert.fail("failed claim must not self-release")
++    },
+     releaseAllLeases: async () => {
+       assert.fail("failed claim must not releaseAll")
+     },
+@@ -83,7 +92,10 @@ test("live hydrate claims once", async () => {
+     applyHydrate: (id) => {
+       hydrates.push(id)
+     },
+-    claimLease: async () => {},
++    claimLease: async () => ({ ok: true, rev: 1 }),
++    releaseClaimedLease: async () => {
++      assert.fail("live session must not self-release")
++    },
+     releaseAllLeases: async () => {
+       assert.fail("live session must not release")
+     },
+@@ -110,7 +122,9 @@ test("submit-style claimOverlayIfLive no-ops after close", async () => {
+     token,
+     claim: async () => {
+       claimed = true
++      return { ok: true, rev: 1 }
+     },
++    releaseClaim: async () => {},
+     releaseAll: async () => {},
+   })
+   assert.equal(ok, false)
+@@ -123,28 +137,146 @@ test("after close, currentOverlaySession token is not live", () => {
+   assert.equal(overlaySessionIsLive(currentOverlaySession()), false)
+ })
+ 
+-test("stale hydrate does not releaseAll while a newer overlay session is live", async () => {
++// Semantics change: a stale claim while a NEWER overlay session is live used
++// to just return "abandoned" — leaking its own fresh lease AND leaving the
++// newer session's thread demoted (the claim atomically released it as a
++// sibling). Now the stale claim must (a) CAS-release ONLY the lease it just
++// took (never releaseAll — that would kill the live session's hold), and
++// (b) report the demoted siblings so the caller can re-claim the live thread.
++test("stale claim releases only its own lease and reports demoted siblings (never releaseAll)", async () => {
+   invalidateOverlaySession()
+   const first = beginOverlaySession()
+-  let released = 0
+-  const newer = beginOverlaySession()
++  let releaseAll = 0
++  const selfReleased: Array<{ id: string; rev: number }> = []
++  let reported: OverlayLeaseState[] | undefined
++  let newer = 0
+   const result = await hydrateOverlayIfLive({
+     id: "old",
+     token: first,
+     selectMessages: async () => [{ role: "user", content: "x" }],
+-    applyHydrate: () => {
+-      assert.fail("stale token must not hydrate")
++    applyHydrate: () => {},
++    claimLease: async () => {
++      // A newer overlay session goes live while this claim is in flight.
++      newer = beginOverlaySession()
++      return {
++        ok: true,
++        rev: 3,
++        released_siblings: [{ thread_id: "live-thread", holder: "panel", rev: 2 }],
++      }
++    },
++    releaseClaimedLease: async (id, rev) => {
++      selfReleased.push({ id, rev })
+     },
+-    claimLease: async () => {},
+     releaseAllLeases: async () => {
+-      released += 1
++      releaseAll += 1
++    },
++    onStaleClaim: (siblings) => {
++      reported = siblings
+     },
+   })
+   assert.equal(result, "abandoned")
+-  assert.equal(released, 0)
++  // (a) released exactly its own claim, via the claim rev — not releaseAll
++  assert.deepEqual(selfReleased, [{ id: "old", rev: 3 }])
++  assert.equal(releaseAll, 0)
++  // (b) the demoted sibling (live session's thread) is reported for repair
++  assert.deepEqual(reported, [{ thread_id: "live-thread", holder: "panel", rev: 2 }])
+   assert.equal(overlaySessionIsLive(newer), true)
+ })
+ 
++test("stale claim without a rev skips self-release but still reports siblings", async () => {
++  invalidateOverlaySession()
++  const first = beginOverlaySession()
++  let selfReleased = 0
++  let reported = 0
++  const result = await hydrateOverlayIfLive({
++    id: "old",
++    token: first,
++    selectMessages: async () => [{ role: "user", content: "x" }],
++    applyHydrate: () => {},
++    claimLease: async () => {
++      beginOverlaySession() // newer session goes live mid-claim
++      return {
++        ok: true,
++        released_siblings: [{ thread_id: "live-thread", holder: "panel", rev: 2 }],
++      }
++    },
++    releaseClaimedLease: async () => {
++      selfReleased += 1
++    },
++    releaseAllLeases: async () => {
++      assert.fail("newer session live: must not releaseAll")
++    },
++    onStaleClaim: () => {
++      reported += 1
++    },
++  })
++  assert.equal(result, "abandoned")
++  assert.equal(selfReleased, 0)
++  assert.equal(reported, 1)
++})
++
++test("claimOverlayIfLive stale-with-live self-releases and reports; closed path still releaseAll", async () => {
++  invalidateOverlaySession()
++  const token = beginOverlaySession()
++  const selfReleased: number[] = []
++  let reported: OverlayLeaseState[] | undefined
++  let releaseAll = 0
++  const ok = await claimOverlayIfLive({
++    token,
++    claim: async () => {
++      beginOverlaySession() // newer session goes live mid-claim
++      return {
++        ok: true,
++        rev: 5,
++        released_siblings: [{ thread_id: "live-thread", holder: "panel", rev: 4 }],
++      }
++    },
++    releaseClaim: async (rev) => {
++      selfReleased.push(rev)
++    },
++    releaseAll: async () => {
++      releaseAll += 1
++    },
++    onStaleClaim: (siblings) => {
++      reported = siblings
++    },
++  })
++  assert.equal(ok, false)
++  assert.deepEqual(selfReleased, [5])
++  assert.equal(releaseAll, 0)
++  assert.deepEqual(reported, [{ thread_id: "live-thread", holder: "panel", rev: 4 }])
++})
++
++test("shouldReclaimLiveOverlayThread no-ops after beginOverlaySession (lagged thread id)", () => {
++  invalidateOverlaySession()
++  const liveToken = beginOverlaySession()
++  const siblings: OverlayLeaseState[] = [{ thread_id: "A", holder: "panel", rev: 2 }]
++  assert.equal(
++    shouldReclaimLiveOverlayThread({ liveThreadId: "A", liveSessionToken: liveToken, siblings }),
++    true,
++    "bound token still live → reclaim the demoted live thread",
++  )
++  beginOverlaySession()
++  assert.equal(
++    shouldReclaimLiveOverlayThread({ liveThreadId: "A", liveSessionToken: liveToken, siblings }),
++    false,
++    "new overlay session must not exclusive-claim lagged A (would demote C)",
++  )
++})
++
++test("shouldReclaimLiveOverlayThread ignores siblings that are not the bound thread", () => {
++  invalidateOverlaySession()
++  const token = beginOverlaySession()
++  assert.equal(
++    shouldReclaimLiveOverlayThread({
++      liveThreadId: "C",
++      liveSessionToken: token,
++      siblings: [{ thread_id: "A", holder: "panel", rev: 1 }],
++    }),
++    false,
++  )
++})
++
+ test("claimOverlayIfLive close-during-claim releases", async () => {
+   invalidateOverlaySession()
+   const token = beginOverlaySession()
+@@ -155,6 +287,10 @@ test("claimOverlayIfLive close-during-claim releases", async () => {
+     claim: async () => {
+       claimed += 1
+       invalidateOverlaySession()
++      return { ok: true, rev: 1 }
++    },
++    releaseClaim: async () => {
++      assert.fail("closed (no live session): releaseAll covers the self-release")
+     },
+     releaseAll: async () => {
+       released += 1
+diff --git a/companion/tests/run-queues.test.ts b/companion/tests/run-queues.test.ts
+index 2072431..f82fd0c 100644
+--- a/companion/tests/run-queues.test.ts
++++ b/companion/tests/run-queues.test.ts
+@@ -35,7 +35,7 @@ test("enqueueSteer trims and ignores empty/whitespace", () => {
+   enqueueSteer("t1", "   ")
+   enqueueSteer("t1", "")
+   enqueueSteer("t1", "  focus tests  ")
+-  assert.deepEqual(takeSteer("t1"), ["focus tests"])
++  assert.deepEqual(takeSteer("t1"), [{ text: "focus tests" }])
+ })
+ 
+ test("steer caps at MAX_STEER and reports false when full", () => {
+@@ -56,3 +56,26 @@ test("nextRun survives dropSteer (abort analog)", () => {
+   assert.equal(takeNextRun("t1"), "after this run")
+   assert.equal(takeNextRun("t1"), undefined)
+ })
++
++test("steer entries carry clientMessageId through enqueue/take (D6)", () => {
++  _resetRunQueuesForTests()
++  enqueueSteer("t1", "first", "cm-1")
++  enqueueSteer("t1", "second")
++  enqueueSteer("t1", "third", "cm-3")
++  assert.deepEqual(takeSteer("t1"), [
++    { text: "first", clientMessageId: "cm-1" },
++    { text: "second" },
++    { text: "third", clientMessageId: "cm-3" },
++  ])
++  // Queue fully drained by takeSteer.
++  assert.deepEqual(takeSteer("t1"), [])
++})
++
++test("enqueueSteer without clientMessageId stores text-only entries", () => {
++  _resetRunQueuesForTests()
++  enqueueSteer("t1", "plain")
++  const items = takeSteer("t1")
++  assert.equal(items.length, 1)
++  assert.equal(items[0].text, "plain")
++  assert.equal("clientMessageId" in items[0], false)
++})
+diff --git a/companion/tests/summoner-client.test.ts b/companion/tests/summoner-client.test.ts
+index e27e311..83f7c18 100644
+--- a/companion/tests/summoner-client.test.ts
++++ b/companion/tests/summoner-client.test.ts
+@@ -12,6 +12,7 @@ import {
+   CONTINUE_MESSAGE,
+   ATTACH_NOTIFY_COPY,
+   filterThreadsByTitle,
++  forwardCompanionUiRect,
+   mapChatMessageToSummonerCmd,
+   overlayAssistantSnapshot,
+   mapVoiceSttToSummonerCmd,
+@@ -24,6 +25,7 @@ import {
+   shouldStartNewSummonerThread,
+   normalizeResumeIdleMinutes,
+   summonerBrowserBadge,
++  summonerCmdMatchesThread,
+   resolveSummonerOpenTarget,
+ } from "../src/summoner/client"
+ import { SUMMONER_SEARCH_HINT } from "../src/summoner/protocol"
+@@ -108,14 +110,80 @@ test("overlayAssistantSnapshot replaces accumulated chat.token instead of concat
+   assert.deepEqual(c, ["你: hi", "助手: Hello\n\n- item"])
+ })
+ 
+-test("mapChatMessageToSummonerCmd: chat.token → summoner.token", () => {
++// Semantics change: token/done cmds now carry thread_id (they used to drop
++// it) so the Node forwarder and the Swift overlay can filter cross-thread
++// stream frames.
++test("mapChatMessageToSummonerCmd: chat.token → summoner.token keeps thread_id", () => {
+   const cmd = mapChatMessageToSummonerCmd({ type: "chat.token", thread_id: "t", content: "hello" })
+-  assert.deepEqual(cmd, { cmd: "summoner.token", text: "hello" })
++  assert.deepEqual(cmd, { cmd: "summoner.token", text: "hello", thread_id: "t" })
+ })
+ 
+-test("mapChatMessageToSummonerCmd: chat.done → summoner.done", () => {
++test("mapChatMessageToSummonerCmd: chat.done → summoner.done keeps thread_id", () => {
+   const cmd = mapChatMessageToSummonerCmd({ type: "chat.done", thread_id: "t", message_id: "m1" })
+-  assert.deepEqual(cmd, { cmd: "summoner.done" })
++  assert.deepEqual(cmd, { cmd: "summoner.done", thread_id: "t" })
++})
++
++test("mapChatMessageToSummonerCmd: frames without thread_id stay untagged", () => {
++  assert.deepEqual(mapChatMessageToSummonerCmd({ type: "chat.token", content: "x" }), {
++    cmd: "summoner.token",
++    text: "x",
++  })
++  assert.deepEqual(mapChatMessageToSummonerCmd({ type: "chat.done" }), { cmd: "summoner.done" })
++})
++
++test("summonerCmdMatchesThread drops tagged cmds for other threads, passes untagged", () => {
++  assert.equal(summonerCmdMatchesThread({ thread_id: "a" }, "a"), true)
++  assert.equal(summonerCmdMatchesThread({ thread_id: "a" }, "b"), false)
++  assert.equal(summonerCmdMatchesThread({ thread_id: "a" }, null), false)
++  assert.equal(summonerCmdMatchesThread({}, null), true)
++  assert.equal(summonerCmdMatchesThread({}, "a"), true)
++})
++
++test("forwardCompanionUiRect: pairing/tray/hud ride the tray socket, never the summoner socket", () => {
++  const sent: string[] = []
++  const clients = (summonerOk: boolean, companionOk: boolean) => ({
++    summoner: {
++      sendAppMessage: (type: string) => {
++        sent.push(`summoner:${type}`)
++        return summonerOk
++      },
++    },
++    companion: {
++      sendAppMessage: (type: string) => {
++        sent.push(`companion:${type}`)
++        return companionOk
++      },
++    },
++  })
++  // Tray.swift's native windows are dropped by the daemon's summoner-surface
++  // allowSurfaces=["overlay"] gate — they must go over the tray socket.
++  sent.length = 0
++  assert.equal(
++    forwardCompanionUiRect({ type: "companion.ui.rect", surface: "hud", x: 0, y: 0 }, clients(true, true)),
++    true,
++  )
++  assert.deepEqual(sent, ["companion:companion.ui.rect"])
++  // …even when the tray socket is down (summoner would silently drop it)
++  sent.length = 0
++  assert.equal(
++    forwardCompanionUiRect({ type: "companion.ui.rect", surface: "pairing" }, clients(true, false)),
++    false,
++  )
++  assert.deepEqual(sent, ["companion:companion.ui.rect"]) // no summoner attempt
++  // overlay prefers the summoner socket (its ACL gate allows surface=overlay)
++  sent.length = 0
++  assert.equal(
++    forwardCompanionUiRect({ type: "companion.ui.rect", surface: "overlay", x: 1, y: 2 }, clients(true, true)),
++    true,
++  )
++  assert.deepEqual(sent, ["summoner:companion.ui.rect"])
++  // overlay falls back to the tray socket when the summoner socket is down
++  sent.length = 0
++  assert.equal(
++    forwardCompanionUiRect({ type: "companion.ui.rect", surface: "overlay" }, clients(false, true)),
++    true,
++  )
++  assert.deepEqual(sent, ["summoner:companion.ui.rect", "companion:companion.ui.rect"])
+ })
+ 
+ test("mapChatMessageToSummonerCmd: tool.start → summoner.tool", () => {
+diff --git a/companion/tests/summoner-overlay.test.ts b/companion/tests/summoner-overlay.test.ts
+index 71fc642..ae55ab7 100644
+--- a/companion/tests/summoner-overlay.test.ts
++++ b/companion/tests/summoner-overlay.test.ts
+@@ -335,3 +335,33 @@ test("SummonerController hotkey picker lists occupied chords as labels not butto
+   assert.match(choose, /summonerHotKeyStolen/)
+   assert.match(choose, /return/)
+ })
++
++test("summoner.submit failure is reported back to the overlay (no silent drop)", () => {
++  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
++  const start = src.indexOf('case "summoner.submit"')
++  assert.ok(start >= 0, "summoner.submit branch missing")
++  const body = src.slice(start, start + 800)
++  // Swift appends "你：…" to its local transcript before sending; a failed
++  // submit (client down / lease claim failed) must produce summoner.error.
++  assert.match(body, /handleSummonerSubmit\(evt\.thread_id, evt\.text, evt\.enqueue === true\)/)
++  assert.match(body, /\.then\(\(ok\)/)
++  assert.match(body, /error_code: "submit_failed"/)
++  assert.match(body, /encodeSummonerError/)
++})
++
++test("menu-bar-agent drops stream cmds from threads the overlay is not showing", () => {
++  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
++  const start = src.indexOf("summonerClient.onAppMessage")
++  assert.ok(start >= 0, "summonerClient.onAppMessage missing")
++  const body = src.slice(start, start + 1200)
++  assert.match(body, /mapChatMessageToSummonerCmd/)
++  assert.match(body, /summonerCmdMatchesThread\(cmd, summonerThreadId\)/)
++})
++
++test("menu-bar-agent stale overlay claims self-release and repair the live thread", () => {
++  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
++  assert.match(src, /releaseOverlayLeaseAtRev/)
++  assert.match(src, /onStaleClaim/)
++  assert.match(src, /reclaimLiveSummonerThread/)
++  assert.match(src, /released_siblings/)
++})
+diff --git a/companion/tests/threads-history.test.ts b/companion/tests/threads-history.test.ts
+index 6659d08..b643ff7 100644
+--- a/companion/tests/threads-history.test.ts
++++ b/companion/tests/threads-history.test.ts
+@@ -351,6 +351,34 @@ describe("ThreadManager - Abnormal/Boundary Paths", () => {
+     assert.equal(kept[0].content, "u1")
+   })
+ 
++  test("trimMessagesTurnSafe: all-tool suffix with no assistant owner keeps the anchor side", () => {
++    // [user, tool, tool, tool] max=3 — the tool block has no assistant owner
++    // anywhere; the old fallback re-applied the raw cut and returned a
++    // tool-leading window [tool, tool, tool]. Must instead keep the anchor
++    // (owner-side) row plus the block, over-cap.
++    const msgs = [
++      { role: "user", content: "u0" },
++      { role: "tool", content: "t0" },
++      { role: "tool", content: "t1" },
++      { role: "tool", content: "t2" },
++    ]
++    const kept = trimMessagesTurnSafe(msgs, 3)
++    assert.ok(kept[0].role !== "tool", "window must not start on a tool row")
++    assert.equal(kept[0].content, "u0", "anchor side (user row + block) is kept")
++    assert.equal(kept.length, 4, "over-cap is preferred over a broken window")
++  })
++
++  test("trimMessagesTurnSafe: system-anchored all-tool suffix also keeps the anchor", () => {
++    const msgs = [
++      { role: "system", content: "s0" },
++      { role: "tool", content: "t0" },
++      { role: "tool", content: "t1" },
++    ]
++    const kept = trimMessagesTurnSafe(msgs, 2)
++    assert.ok(kept[0].role !== "tool", "window must not start on a tool row")
++    assert.equal(kept[0].content, "s0")
++  })
++
+   test("trimMessagesTurnSafe never returns empty for a non-empty tape", () => {
+     const msgs = [
+       { role: "assistant", tool_calls: [{ id: "a" }] },
+diff --git a/companion/tests/tool-batch-heal.test.ts b/companion/tests/tool-batch-heal.test.ts
+index 4454498..9d33744 100644
+--- a/companion/tests/tool-batch-heal.test.ts
++++ b/companion/tests/tool-batch-heal.test.ts
+@@ -4,6 +4,7 @@ import {
+   buildInterruptedDiskRow,
+   healNewestUnpairedAssistant,
+   persistHealedToolRows,
++  replaceInterruptedFillerIfPresent,
+   unpairedToolCallsFromAssistant,
+ } from "../src/llm/tool-batch-heal"
+ import { rebuildMessagesFromHistory } from "../src/llm/adapter"
+@@ -173,3 +174,180 @@ test("buildInterruptedDiskRow uses createToolResultMessage disk shape", () => {
+   assert.equal(row.tool_calls?.[0]?.result?.success, false)
+   assert.equal(row.tool_calls?.[0]?.result?.error_code, "INTERRUPTED")
+ })
++
++test("persistHealedToolRows: skips filler when the real result landed after the snapshot (supersede race)", () => {
++  // Snapshot says call_A + call_B are unpaired. While heal is mid-loop, the old
++  // run's real result for call_B lands (simulated inside insertMessageAt, which
++  // is where the in-process race interleaves). Heal must not write a second row
++  // for call_B — a duplicate id would orphan one of the two at rebuild.
++  const tape: any[] = [
++    { id: "u1", role: "user", content: "go" },
++    {
++      id: "a1",
++      role: "assistant",
++      content: "calling",
++      tool_calls: [
++        { id: "call_A", function: { name: "list_tabs", arguments: "{}" } },
++        { id: "call_B", function: { name: "shell_exec", arguments: "{}" } },
++      ],
++    },
++  ]
++  const realB = {
++    id: "real-b",
++    role: "tool",
++    content: JSON.stringify({ success: true, data: { ok: 1 } }),
++    tool_calls: [{ id: "call_B", tool_name: "shell_exec", params: {}, result: { success: true, data: { ok: 1 } } }],
++  }
++  let inserted = 0
++  const tm = {
++    getMessages: () => tape,
++    insertMessageAt: (_id: string, index: number, msg: any) => {
++      tape.splice(index, 0, { ...msg, id: `heal-${inserted}` })
++      inserted++
++      // Race: the superseded run's real call_B result lands after the first filler.
++      if (inserted === 1) tape.push(realB)
++    },
++  }
++  const n = persistHealedToolRows(tm, "t1")
++  assert.equal(n, 1, "only call_A gets a filler")
++  const fillerIds = tape
++    .filter((m) => m.role === "tool")
++    .flatMap((m) => (m.tool_calls || []).map((tc: any) => `${tc.id}:${tc.result?.error_code || "real"}`))
++  assert.deepEqual(fillerIds.sort(), ["call_A:INTERRUPTED", "call_B:real"])
++})
++
++test("persistHealedToolRows: stops when the healed assistant was cap-trimmed (no EOF orphan)", () => {
++  const tape: any[] = [
++    { id: "u1", role: "user", content: "go" },
++    {
++      id: "a1",
++      role: "assistant",
++      content: "calling",
++      tool_calls: [
++        { id: "call_A", function: { name: "list_tabs", arguments: "{}" } },
++        { id: "call_B", function: { name: "list_tabs", arguments: "{}" } },
++      ],
++    },
++    { id: "u2", role: "user", content: "next" },
++  ]
++  let inserted = 0
++  const tm = {
++    getMessages: () => tape,
++    insertMessageAt: (_id: string, index: number, msg: any) => {
++      tape.splice(index, 0, { ...msg, id: `heal-${inserted}` })
++      inserted++
++      // Simulate cap-trim removing the healed assistant between inserts.
++      if (inserted === 1) {
++        const at = tape.findIndex((m) => m.id === "a1")
++        tape.splice(at, 1)
++      }
++    },
++  }
++  const n = persistHealedToolRows(tm, "t1")
++  assert.equal(n, 1, "second filler must be abandoned, not appended")
++  const toolRows = tape.filter((m) => m.role === "tool")
++  assert.equal(toolRows.length, 1)
++  assert.equal(toolRows[0].tool_calls[0].id, "call_A")
++  // No filler for call_B anywhere — especially not at EOF.
++  assert.ok(!tape.some((m) => (m.tool_calls || []).some((tc: any) => tc.id === "call_B")))
++  assert.equal(tape[tape.length - 1].id, "u2")
++})
++
++test("replaceInterruptedFillerIfPresent: swaps the filler in place, keeping row id and position", () => {
++  const fillerResult = { success: false, error: "interrupted", error_code: "INTERRUPTED" }
++  const tape: any[] = [
++    { id: "u1", role: "user", content: "go" },
++    {
++      id: "a1",
++      role: "assistant",
++      content: "calling",
++      tool_calls: [{ id: "call_A", function: { name: "shell_exec", arguments: "{}" } }],
++    },
++    {
++      id: "f1",
++      role: "tool",
++      content: JSON.stringify(fillerResult),
++      tool_calls: [{ id: "call_A", tool_name: "shell_exec", params: {}, result: fillerResult }],
++    },
++    { id: "u2", role: "user", content: "next" },
++  ]
++  const tm = {
++    getMessages: () => tape,
++    updateMessage: (_id: string, messageId: string, updates: Record<string, unknown>) => {
++      const m = tape.find((row) => row.id === messageId)
++      if (m) Object.assign(m, updates)
++    },
++  }
++  const realRow = {
++    role: "tool" as const,
++    content: JSON.stringify({ success: true, data: { ok: 1 } }),
++    tool_calls: [{ id: "call_A", tool_name: "shell_exec", params: {}, result: { success: true, data: { ok: 1 } } }],
++  }
++  const replaced = replaceInterruptedFillerIfPresent(tm, "t1", "call_A", realRow)
++  assert.equal(replaced, true)
++  assert.equal(tape.length, 4, "no row appended")
++  assert.equal(tape[2].id, "f1", "same persisted row id")
++  assert.equal(tape[2].tool_calls[0].result.success, true, "real result now in place")
++  assert.equal(tape[3].id, "u2", "position unchanged — still before the next user")
++  const rebuilt = rebuildMessagesFromHistory(tape)
++  assert.equal((rebuilt[1] as any).tool_calls.length, 1, "rebuild keeps the paired round")
++  assert.equal((rebuilt[2] as any).tool_call_id, "call_A")
++  assert.match(String((rebuilt[2] as any).content), /"success":true/)
++})
++
++test("replaceInterruptedFillerIfPresent: assistantId scopes to that round (does not rewrite an older filler)", () => {
++  const filler = { success: false, error: "interrupted", error_code: "INTERRUPTED" }
++  const tape: any[] = [
++    { id: "a-old", role: "assistant", content: "old", tool_calls: [{ id: "call_A", function: { name: "list_tabs", arguments: "{}" } }] },
++    {
++      id: "f-old",
++      role: "tool",
++      content: JSON.stringify(filler),
++      tool_calls: [{ id: "call_A", tool_name: "list_tabs", params: {}, result: filler }],
++    },
++    { id: "a-new", role: "assistant", content: "new", tool_calls: [{ id: "call_A", function: { name: "list_tabs", arguments: "{}" } }] },
++    {
++      id: "f-new",
++      role: "tool",
++      content: JSON.stringify(filler),
++      tool_calls: [{ id: "call_A", tool_name: "list_tabs", params: {}, result: filler }],
++    },
++  ]
++  const tm = {
++    getMessages: () => tape,
++    updateMessage: (_id: string, messageId: string, updates: Record<string, unknown>) => {
++      const m = tape.find((row) => row.id === messageId)
++      if (m) Object.assign(m, updates)
++    },
++  }
++  const realRow = {
++    content: JSON.stringify({ success: true, data: { ok: 1 } }),
++    tool_calls: [{ id: "call_A", result: { success: true, data: { ok: 1 } } }],
++  }
++  const replaced = replaceInterruptedFillerIfPresent(tm, "t1", "call_A", realRow, "a-new")
++  assert.equal(replaced, true)
++  assert.equal(tape.find((m) => m.id === "f-old").tool_calls[0].result.error_code, "INTERRUPTED")
++  assert.equal(tape.find((m) => m.id === "f-new").tool_calls[0].result.success, true)
++})
++
++test("replaceInterruptedFillerIfPresent: returns false without an INTERRUPTED filler", () => {
++  const tape: any[] = [
++    {
++      id: "t-real",
++      role: "tool",
++      content: "{}",
++      tool_calls: [{ id: "call_A", tool_name: "list_tabs", params: {}, result: { success: true } }],
++    },
++  ]
++  const tm = {
++    getMessages: () => tape,
++    updateMessage: () => {
++      throw new Error("must not be called")
++    },
++  }
++  const replaced = replaceInterruptedFillerIfPresent(tm, "t1", "call_A", {
++    content: "{}",
++    tool_calls: [{ id: "call_A" }],
++  })
++  assert.equal(replaced, false)
++})
+diff --git a/companion/tests/tool-persistence-redact.test.ts b/companion/tests/tool-persistence-redact.test.ts
+index 009ebe2..689ebae 100644
+--- a/companion/tests/tool-persistence-redact.test.ts
++++ b/companion/tests/tool-persistence-redact.test.ts
+@@ -59,6 +59,41 @@ test("createToolResultMessage applies redact for cookies", () => {
+   assert.ok(!JSON.stringify(msg.tool_calls).includes("LEAKME"))
+ })
+ 
++test("Authorization / Bearer / apiKey keys are redacted on generic tools", () => {
++  const { params } = redactToolPayloadForPersistence(
++    "mcp__http__fetch",
++    { Authorization: "Bearer super-secret", Bearer: "abc", apiKey: "k-1", url: "https://example.com" },
++    { success: true },
++  )
++  const p = params as any
++  assert.ok(String(p.Authorization).startsWith("<redacted:"))
++  assert.ok(String(p.Bearer).startsWith("<redacted:"))
++  assert.ok(String(p.apiKey).startsWith("<redacted:"))
++  assert.equal(p.url, "https://example.com")
++  assert.ok(!JSON.stringify(params).includes("super-secret"))
++})
++
++test("evaluate data payload is always collapsed (even under 200 chars)", () => {
++  const { result } = redactToolPayloadForPersistence(
++    "evaluate",
++    { code: "1+1" },
++    { success: true, data: "short secret" },
++  )
++  const r = result as any
++  assert.equal(r.data.redacted, true)
++  assert.ok(!JSON.stringify(result).includes("short secret"))
++})
++
++test("plainErrorResult drops extra keys next to INTERRUPTED", () => {
++  const { result } = redactToolPayloadForPersistence(
++    "shell_exec",
++    {},
++    { success: false, error: "interrupted", error_code: "INTERRUPTED", stdout: "SECRET_ENV=1", stack: "trace" },
++  )
++  assert.deepEqual(result, { success: false, error: "interrupted", error_code: "INTERRUPTED" })
++  assert.ok(!JSON.stringify(result).includes("SECRET_ENV"))
++})
++
+ test("benign get_page_text still persists text", () => {
+   const msg = createToolResultMessage(
+     "abc123",
+@@ -68,3 +103,79 @@ test("benign get_page_text still persists text", () => {
+   )
+   assert.ok(msg.content.includes("hello page"))
+ })
++
++// --- INTERRUPTED passthrough (heal fillers must keep error_code on disk) ---
++
++test("shell_exec INTERRUPTED filler keeps error_code and error verbatim", () => {
++  const { params, result } = redactToolPayloadForPersistence(
++    "shell_exec",
++    {},
++    { success: false, error: "interrupted", error_code: "INTERRUPTED" },
++  )
++  assert.deepEqual(result, { success: false, error: "interrupted", error_code: "INTERRUPTED" })
++  assert.deepEqual(params, {})
++})
++
++test("host_computer INTERRUPTED filler is not collapsed", () => {
++  const { result } = redactToolPayloadForPersistence(
++    "host_computer",
++    {},
++    { success: false, error: "aborted", error_code: "INTERRUPTED" },
++  )
++  const r = result as any
++  assert.equal(r.success, false)
++  assert.equal(r.error, "aborted")
++  assert.equal(r.error_code, "INTERRUPTED")
++  assert.equal(r.redacted, undefined)
++})
++
++test("thread_recall INTERRUPTED filler keeps error_code while query param stays redacted", () => {
++  const { params, result } = redactToolPayloadForPersistence(
++    "thread_recall",
++    { query: "my secret plans" },
++    { success: false, error: "interrupted", error_code: "INTERRUPTED" },
++  )
++  const r = result as any
++  assert.equal(r.error_code, "INTERRUPTED")
++  assert.equal(r.redacted, undefined)
++  const p = params as any
++  assert.ok(String(p.query).startsWith("<redacted:"))
++  assert.ok(!JSON.stringify(params).includes("my secret plans"))
++})
++
++test("mcp sensitive-name INTERRUPTED filler keeps error_code", () => {
++  const { result } = redactToolPayloadForPersistence(
++    "mcp__fs__read_file",
++    {},
++    { success: false, error: "interrupted", error_code: "INTERRUPTED" },
++  )
++  const r = result as any
++  assert.equal(r.error_code, "INTERRUPTED")
++  assert.equal(r.redacted, undefined)
++})
++
++test("data-bearing sensitive error results still get redacted (no passthrough)", () => {
++  const big = "x".repeat(500)
++  const { result } = redactToolPayloadForPersistence(
++    "evaluate",
++    { code: "1+1" },
++    { success: false, error: "boom", error_code: "EVAL_FAILED", data: big },
++  )
++  const r = result as any
++  assert.equal(r.success, false)
++  assert.equal(r.error, "boom")
++  assert.equal(r.error_code, undefined, "rebuild path still drops unknown codes")
++  assert.equal(r.data.redacted, true)
++  assert.ok(!JSON.stringify(result).includes(big))
++})
++
++test("createToolResultMessage persists INTERRUPTED marker for sensitive tools", () => {
++  const msg = createToolResultMessage(
++    "abc123",
++    { id: "c9", function: { name: "shell_exec" } },
++    { success: false, error: "interrupted", error_code: "INTERRUPTED" },
++    {},
++  )
++  assert.ok(msg.content.includes("INTERRUPTED"))
++  assert.equal((msg.tool_calls[0].result as any).error_code, "INTERRUPTED")
++})

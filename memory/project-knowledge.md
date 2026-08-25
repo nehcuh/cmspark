@@ -74,6 +74,13 @@
 
 ## Technical Pitfalls
 
+### leftover / drain / redact 测钉窗口（2026-08-25 · #221）
+- **take→drop 窗**：`convertLeftoverSteerToNextRun` 先 `takeSteer` 再 enqueue。测若在 helper **返回后** 才 `enqueueSteer` concurrent，往 full 路径塞 `dropSteer` 仍绿（队列已被 take 掏空）。必须 `_setAfterLeftoverTakeForTests` 打在 take 与 enqueue 之间。
+- **drain 先闸再 take**：pause/trash/`MULTI_AGENT_LLM_CAP` 若在 `takeNextRun` 之后，客户端已持 `chat.enqueued` 的回合会被丢掉。upload/regen **不得** `return drainedAfter*`（推 frame，原 RPC 恒 `file.uploaded` / regen `null`）。
+- **redact 调用点 ≠ 正则**：thread-JSON 与 `history/store.ts` 即使 `SENSITIVE_KEY_RE`+leaf 字节相同，cookie params / 通用工具分支仍可跳过扫描。`{Authorization:{value:"…" }}` 对象袋：内层 `value` 不是敏感 **键名**，须整袋 collapse，不能只 recurse。
+- **不要**全局 redact 裸 `value`（误杀 get_page_text 等字段）。
+- **4 行 case**：动作=折 #220 对抗残留；成功=#221 CI 绿合；归责=测钉错窗口 + history 调用点漏扫；保护=F1 adopt / 排队不丢 / threads.json+history.db 不落 Authorization 袋
+
 ### overlay HTML 不得直连 companion WS；`accepted` ≠ 已发送（2026-08-24 · #219 C-thin）
 - **坑**：系统浏览器 Origin 是 `http://127.0.0.1`，`isAllowedWsOrigin` 只放 `chrome-extension://` 与 `cmspark-tray://local`。给 loopback 开 WS 等于拆 HMAC 前门。
 - **修**：HTML 走 settings-web 同款 loopback+token HTTP；tray `surface=summoner` 客户端代发。chat.create 是 fire-and-forget → HTTP 只回 `{type:accepted}`；忙时 `run_active` 是随后的 `{type:error,error:run_active}` 推送。页面把 accepted 画成「已发送」会撒谎。
@@ -760,6 +767,13 @@
 - 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
 
 ## Reusable Patterns
+
+### 合后独立复验 squash ≠ WIP r2（2026-08-25 · #220→#221）
+- **坑**：合前四路 r2 打的是 `c5b4242` **未提交工作区**；squash `1d16b0e` 是另一份树。r2 AWN 不能当 live main 证据。
+- **做法**：`git pull` → freeze `base..HEAD` SHA256 → 四路 **worktree** 独立对抗（重放原 BLOCK + 变异杀死）→ 合成 → `dual-external-review.sh` Claude+Pi（先 stash 脏 `session.md`，否则 diff 掺记忆层）→ 折 nits 再 PR → CI 绿 squash。
+- **worktree**：子仓无 `node_modules`；`NODE_PATH=` 主仓 `companion/node_modules` 或临时 symlink，跑完拆。`js-yaml`/`openai` ENOENT 是环境，不是产品红。
+- **本轮**：#220 合后复验 AWN → 折 nits → 再四路+Claude/Pi AWN → #221 `ac0a3be`。
+- **4 行 case**：动作=拉取 #220 开对抗；成功=live HEAD 独立 HOLD + nits PR 合；归责=WIP r2 被当成合入证明；保护=T2 确认序（对抗→Pi/Claude，实现不得自评）
 
 ### C-thin 召唤壳：loopback HTML + SSE + Chromium `--app`，冻 AppKit（2026-08-24 · #219）
 - **产品**：企业工作台 = 一 loop 三 surface（L0 召唤 / L1 Side Panel / L2 Cockpit）。跨平台不是 Mac-only Swift。

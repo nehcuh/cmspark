@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-24 (S78 · #219 on main · overlay + C-thin)
+**Updated**: 2026-08-25 (S79 · #221 on main · post-#220 nits)
 
 ## CMspark — 产品 0.5.2
 
@@ -20,12 +20,12 @@
 | Thread hygiene | **on main**（#193） |
 | 站点负知识 site-op-memory | **on main**（**#213**） |
 | OS summoner overlay（L0） | **on main**（**#219** C-thin HTML + Mac NSPanel） |
-| steer/nextRun busy composer | **on main**（#218 remainder + #219 UI） |
+| steer/nextRun busy composer | **on main**（#218 + #219 UI + **#220/#221** nits） |
 
-## Branch lock (S78)
+## Branch lock (S79)
 
-- **`main`**: tip `daf8bc9` = squash **#219** steer/nextRun + overlay L0 hub + C-thin summon shell。前一 tip `5425da0` = **#218** durable loop。
-- **不要**：overlay Allow/Deny；给 `isAllowedWsOrigin` 加 `http://127.0.0.1`；再给 Swift SummonerOverlay 加功能；Electron。
+- **`main`**: tip `ac0a3be` = squash **#221** post-#220 residual nits。前序 `1d16b0e` = **#220**；`daf8bc9` = **#219** overlay hub + C-thin。
+- **不要**：overlay Allow/Deny；给 `isAllowedWsOrigin` 加 `http://127.0.0.1`；再给 Swift SummonerOverlay 加功能；Electron；全局 redact 裸 `value`。
 
 ## Next (optional backlog)
 
