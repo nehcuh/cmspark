@@ -39,6 +39,15 @@ test("redactSecrets PEM through END has no 4000-char cap and does not leak body"
   assert.equal(preview.markdown.includes("BEGIN RSA PRIVATE KEY"), false)
 })
 
+test("redactSecrets covers DSA PRIVATE KEY", () => {
+  const r = redactSecrets(
+    "-----BEGIN DSA PRIVATE KEY-----\nMIIEAAA_DSA\n-----END DSA PRIVATE KEY-----",
+  )
+  assert.ok(r.hits >= 1)
+  assert.equal(r.text.includes("MIIEAAA_DSA"), false)
+  assert.equal(r.text.includes("BEGIN DSA PRIVATE KEY"), false)
+})
+
 test("distillThreadMarkdown uses digest and redacts body secrets", () => {
   const out = distillThreadMarkdown({
     alias: "SSO 排障",

@@ -913,29 +913,34 @@ input[type=file]{font-size:12px;color:#9aa0b4}
       });
     }
     if(name==="skills"){
-      return api("/api/skills").then(function(d){
-        (d.skills||[]).forEach(function(s){
+      return Promise.all([api("/api/skills"), threadId?api("/api/thread?id="+encodeURIComponent(threadId)):Promise.resolve({})]).then(function(pair){
+        var ids=pair[1].active_skill_ids||[];
+        (pair[0].skills||[]).forEach(function(s){
+          var on=ids.indexOf(s.name)>=0;
           var b=document.createElement("button");
           b.className="item";
-          b.textContent=s.title||s.name;
+          b.textContent=(on?"● ":"○ ")+(s.title||s.name);
           b.onclick=function(){
             if(!threadId){setStatus("没有当前对话");return}
-            api("/api/skills/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,skill_name:s.name,on:true})}).then(function(){setStatus("已切换技能")});
+            api("/api/skills/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,skill_name:s.name,on:!on})}).then(function(){loadCompose("skills")});
           };
           box.appendChild(b);
         });
       });
     }
     if(name==="knowledge"){
-      return api("/api/knowledge").then(function(d){
-        (d.docs||[]).forEach(function(k){
+      return Promise.all([api("/api/knowledge"), threadId?api("/api/thread?id="+encodeURIComponent(threadId)):Promise.resolve({})]).then(function(pair){
+        var cur=pair[1].active_knowledge_ids||[];
+        (pair[0].docs||[]).forEach(function(k){
           var id=k.name||k.id;
+          var on=cur.indexOf(id)>=0;
           var b=document.createElement("button");
           b.className="item";
-          b.textContent=k.title||id;
+          b.textContent=(on?"● ":"○ ")+(k.title||id);
           b.onclick=function(){
             if(!threadId){setStatus("没有当前对话");return}
-            api("/api/knowledge/active",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,ids:[id]})}).then(function(){setStatus("已挂到当前对话")});
+            var next=on?cur.filter(function(x){return x!==id}):cur.concat([id]);
+            api("/api/knowledge/active",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,ids:next})}).then(function(){loadCompose("knowledge")});
           };
           box.appendChild(b);
         });

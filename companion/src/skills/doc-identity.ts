@@ -8,7 +8,7 @@ import * as path from "path"
 export const FILENAME_STEM_MAX = 80
 export const TITLE_MAX = 200
 
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i
 const UNSAFE_CHARS = /[<>:"/\\|?*\u0000]/
 
 export type DocIdentity = {

@@ -201,7 +201,19 @@ export function ContextPanelHostProvider({
       loadPanelData(raw, activeThreadId, dispatch)
     }
     window.addEventListener("cmspark:open-context-panel", onOpen as EventListener)
-    return () => window.removeEventListener("cmspark:open-context-panel", onOpen as EventListener)
+    const onKnowledge = (e: Event) => {
+      const id = (e as CustomEvent<{ id?: string }>).detail?.id
+      setActivePanel("knowledge")
+      loadPanelData("knowledge", activeThreadId, dispatch)
+      if (id) {
+        window.dispatchEvent(new CustomEvent("cmspark:focus-knowledge", { detail: { id } }))
+      }
+    }
+    window.addEventListener("cmspark:open-knowledge", onKnowledge as EventListener)
+    return () => {
+      window.removeEventListener("cmspark:open-context-panel", onOpen as EventListener)
+      window.removeEventListener("cmspark:open-knowledge", onKnowledge as EventListener)
+    }
   }, [activeThreadId, dispatch])
 
   // Esc collapses any open context panel (priority stack §4.9 layer 2)

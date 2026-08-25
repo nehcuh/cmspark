@@ -1851,7 +1851,7 @@ export function useWebSocket() {
           if (typeof msg.error === "string" && /knowledge|预览|parseFile|fetch knowledge/i.test(msg.error)) {
             dispatch({
               type: "SET_KNOWLEDGE_PREVIEW",
-              preview: { preview: `预览失败：${msg.error}`, payload: {} },
+              preview: { preview: `预览失败：${msg.error}` },
             })
           }
           // WP5-I4: computer.model.* 错误(family:"computer.model")→ 设置页实验区

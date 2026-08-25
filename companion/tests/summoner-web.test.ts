@@ -527,3 +527,16 @@ test("menu-bar-agent opens summoner-web from summoner action", () => {
   assert.match(src, /surface:\s*"summoner"/)
   assert.match(src, /pushSummonerWebEvent/)
 })
+
+test("C-thin HTML skills toggle and knowledge attach are not activate-only / replace-all", () => {
+  const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(src, /skill_name:s\.name,on:!on/)
+  assert.match(src, /ids:next/)
+  assert.doesNotMatch(src, /skill_name:s\.name,on:true/)
+  assert.doesNotMatch(src, /ids:\[id\]/)
+})
+
+test("HTML mcp.toggle rides tray companionClient (no overlay L2 stall)", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  assert.match(src, /type === "mcp\.toggle_server" && companionClient/)
+})

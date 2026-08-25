@@ -196,36 +196,6 @@ async function drainThreadOnSupersede(threadId: string, reason: string): Promise
   }
 }
 
-/**
- * Inject (or override) the `name:` field in a knowledge doc's YAML frontmatter.
- * Used by directory import to guarantee each file lands at a unique filename —
- * importKnowledge sanitizes the name to a safe filename, and two files sharing
- * the same first-#-heading would otherwise overwrite each other.
- *
- * - If content has no frontmatter, prepend `---\nname: <name>\n---\n`.
- * - If content has frontmatter but no `name:` field, inject it as the first key.
- * - If content already has a `name:` field, replace its value.
- */
-function injectKnowledgeName(content: string, name: string): string {
-  const startsWithFm = content.startsWith("---")
-  if (startsWithFm) {
-    const endIdx = content.indexOf("\n---", 3)
-    if (endIdx !== -1) {
-      const fm = content.slice(0, endIdx)
-      const rest = content.slice(endIdx)
-      // Replace existing name line, or inject as first key after the opening ---
-      if (/^name:.*$/m.test(fm)) {
-        const updated = fm.replace(/^name:.*$/m, `name: ${name}`)
-        return updated + rest
-      }
-      // No existing name — insert right after the opening "---"
-      return `---\nname: ${name}` + fm.slice(3) + rest
-    }
-  }
-  // No frontmatter at all — wrap the content
-  return `---\nname: ${name}\n---\n${content}`
-}
-
 interface Services {
   threadManager: ThreadManager
   skillEngine: SkillEngine
@@ -2093,6 +2063,8 @@ export async function handleMessage(
         messages: threadManager.getMessages(rest.thread_id),
         thread_id: rest.thread_id,
         trashed: !!thr.trashed_at,
+        active_skill_ids: thr.active_skill_ids || [],
+        active_knowledge_ids: thr.active_knowledge_ids || [],
         ...(run_status ? { run_status } : {}),
         ...(pending_tools ? { pending_tools } : {}),
       }
@@ -2663,6 +2635,9 @@ export async function handleMessage(
       return { type: "knowledge.preview", ...preview }
     }
     case "knowledge.import": {
+      if (stampedSurface === "summoner") {
+        return { type: "error", error: "SUMMONER_ACL: knowledge.import not allowed on summoner surface", error_code: "SUMMONER_ACL" }
+      }
       const loaded = await loadKnowledgePayload(rest)
       if ("error" in loaded) return { type: "error", error: loaded.error }
       const overrides = {
@@ -2675,14 +2650,17 @@ export async function handleMessage(
         const tid = String(rest.pin_thread_id)
         const t = threadManager.get(tid)
         if (t) {
-          const ids = Array.from(new Set([...(t.active_knowledge_ids || []), imported.id]))
-          threadManager.update(tid, { active_knowledge_ids: ids })
+          const ids = Array.from(new Set([...(t.active_knowledge_ids || []), imported.id])).slice(0, 32)
+          threadManager.update(tid, { active_knowledge_ids: ids, knowledge_selection_mode: "manual" })
         }
       }
       skillEngine.refresh()
       return { type: "knowledge.list", docs: skillEngine.listKnowledge(), imported }
     }
     case "knowledge.import_directory": {
+      if (stampedSurface === "summoner") {
+        return { type: "error", error: "SUMMONER_ACL: knowledge.import_directory not allowed on summoner surface", error_code: "SUMMONER_ACL" }
+      }
       // Companion-side bulk import. The extension-side <input webkitdirectory>
       // crashes Chromium 149's main process (SIGSEGV at 0x38 on CrBrowserMain)
       // when the user picks an iCloud-synced folder with many nested entries —
@@ -2747,12 +2725,8 @@ export async function handleMessage(
               }
 
               const baseName = entry.name.replace(/\.[^.]+$/, "")
-              // Pass the vault-relative path as nameOverride so importKnowledge
-              // uses it instead of the first-#-heading. Without this, two files
-              // sharing the same heading (common in Obsidian vaults — daily notes,
-              // per-folder READMEs) would sanitize to the same filename and
-              // silently overwrite each other. 笨牛棚: 79 .md files collapsed to
-              // 5 unique docs without this override.
+              // nameOverride = vault-relative path so same heading in two folders
+              // still allocate distinct stems (allocator suffixes; no overwrite).
               const relPath = path.relative(vaultPath, full).replace(/\.[^.]+$/, "")
 
               if (TEXT_EXTS.has(ext)) {

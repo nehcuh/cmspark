@@ -246,6 +246,7 @@ export class SkillEngine {
   private loadFromDir(dir: string, builtin: boolean): void {
     try {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (isSymlinkOrJunction(dir, entry)) continue
         const entryPath = path.join(dir, entry.name)
 
         if (entry.isDirectory()) {

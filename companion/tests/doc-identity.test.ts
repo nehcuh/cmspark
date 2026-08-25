@@ -62,6 +62,10 @@ test("allocateDocIdentity: CON and ../x hash; never slug to x.md", () => {
   const traversal = allocateDocIdentity({ title: "../x" })
   assert.notEqual(traversal.filenameStem, "x")
   assert.match(traversal.filenameStem, /^k-[0-9a-f]{10}$/)
+  assert.equal(isUnsafePathComponent("COM0"), true)
+  assert.equal(isUnsafePathComponent("LPT0"), true)
+  const com0 = allocateDocIdentity({ title: "COM0" })
+  assert.notEqual(com0.filenameStem.toLowerCase(), "com0")
 })
 
 test("writeRestrictedFile: posix mode 0o600", () => {

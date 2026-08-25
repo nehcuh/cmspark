@@ -1625,6 +1625,10 @@ function dispatchSummonerWeb(
     const ok = client.sendAppMessage(type, params)
     return Promise.resolve(ok ? { type: "accepted" } : { type: "error", error: "未连接" })
   }
+  if (type === "mcp.toggle_server" && companionClient) {
+    // HTML C-thin cannot answer overlay L2; ride tray client like the Swift HUD.
+    return companionClient.sendAppRequest(type, params, 60_000)
+  }
   const timeout = type === "pack.apply" || type === "file.upload" ? 30_000 : 8_000
   return client.sendAppRequest(type, params, timeout)
 }

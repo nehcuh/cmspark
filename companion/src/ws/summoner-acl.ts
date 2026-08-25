@@ -122,5 +122,24 @@ export function applySummonerPayloadPolicy(
     msg.ids = ids
     return { ok: true }
   }
+  if (type === "pack.apply") {
+    delete msg.allowTrust
+    delete msg.workspace_path
+    delete msg.force_takeover
+    delete msg.confirmation_phrase
+    const packId = typeof msg.pack_id === "string" ? msg.pack_id.trim() : ""
+    const threadId = typeof msg.thread_id === "string" ? msg.thread_id.trim() : ""
+    if (!packId || !threadId) {
+      return {
+        ok: false,
+        error_code: "SUMMONER_ACL",
+        error: "SUMMONER_ACL: pack.apply requires pack_id and thread_id",
+      }
+    }
+    msg.pack_id = packId
+    msg.thread_id = threadId
+    msg.user_gesture = true
+    return { ok: true }
+  }
   return { ok: true }
 }
