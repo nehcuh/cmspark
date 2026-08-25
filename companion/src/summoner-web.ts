@@ -618,13 +618,14 @@ const SUMMONER_HTML = `<!DOCTYPE html>
 <title>CMspark 召唤器（实验）</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#12141c;color:#e8e8ef;height:100vh;display:flex;flex-direction:column}
-header{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #2a2d3a;background:#1a1d27}
+html,body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#12141c;color:#e8e8ef;height:100%;width:100%;overflow:hidden}
+body{display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #2a2d3a;background:#1a1d27;flex-shrink:0}
 header h1{font-size:14px;font-weight:600}
 .badge{font-size:11px;color:#9aa0b4;margin-left:auto}
-.shell{flex:1;display:flex;min-height:0}
-.rail{width:220px;border-right:1px solid #2a2d3a;display:flex;flex-direction:column;background:#161822;overflow:auto}
-.rail h2{font-size:11px;letter-spacing:.04em;color:#8b90a5;padding:10px 12px 4px;text-transform:uppercase}
+.shell{flex:1;display:flex;min-height:0;overflow:hidden}
+.rail{width:220px;border-right:1px solid #2a2d3a;display:flex;flex-direction:column;background:#161822;overflow:auto;flex-shrink:0}
+.rail h2{font-size:11px;letter-spacing:.04em;color:#8b90a5;padding:10px 12px 4px;text-transform:uppercase;flex-shrink:0}
 .item{display:block;width:calc(100% - 16px);margin:2px 8px;padding:7px 8px;border:0;border-radius:6px;background:transparent;color:#d5d7e2;text-align:left;font:inherit;cursor:pointer}
 .trow{display:flex;align-items:center;gap:0;width:calc(100% - 8px);margin:0 4px}
 .trow .item{flex:1;width:auto;margin:2px 0}
@@ -632,12 +633,12 @@ header h1{font-size:14px;font-weight:600}
 .item:hover{background:#252836}
 .item.active{background:#2f3650;color:#fff}
 .item.muted{opacity:.45;cursor:not-allowed}
-.main{flex:1;display:flex;flex-direction:column;min-width:0}
-.log{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.log{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:0}
 .msg{max-width:92%;padding:8px 10px;border-radius:8px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
 .msg.user{align-self:flex-end;background:#2b4a7a}
 .msg.assistant{align-self:flex-start;background:#222533}
-.composer{border-top:1px solid #2a2d3a;padding:10px 12px;background:#1a1d27}
+.composer{border-top:1px solid #2a2d3a;padding:10px 12px;background:#1a1d27;flex-shrink:0}
 .hint{font-size:11px;color:#8b90a5;margin-bottom:6px}
 textarea{width:100%;min-height:72px;resize:vertical;border:1px solid #33384a;border-radius:8px;background:#12141c;color:#e8e8ef;padding:8px;font:inherit}
 .row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
