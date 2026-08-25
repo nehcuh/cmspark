@@ -55,7 +55,8 @@ export function KnowledgeSubPanel() {
       setQuery("")
       setFocusId(id)
       requestAnimationFrame(() => {
-        const safe = id.replace(/["\\]/g, "")
+        const safe = id.replace(/[^a-zA-Z0-9._:-]/g, "")
+        if (!safe) return
         document.querySelector(`[data-knowledge-id="${safe}"]`)?.scrollIntoView({ block: "nearest" })
       })
     }

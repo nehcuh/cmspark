@@ -1,0 +1,990 @@
+# Dual external review context
+batch: post220-nits-hud
+base: d4cbbfae
+time: 20260825-213602
+
+8f5c94c6
+
+?? .tmp-adapter-r2.txt
+?? .tmp-adapter-test-out.txt
+?? .tmp-ci-jobs.json
+?? .tmp-ci-jobs2.json
+?? .tmp-ci-log.txt
+?? .tmp-diagnosis-report.json
+?? .tmp-drain-test-out.txt
+?? .tmp-redact-probe-r2.json
+?? .tmp-redact-probe.json
+?? docs/audit/reviews/_prompts/post220-nits-hud-adversary-20260825.md
+?? docs/audit/reviews/_prompts/post220-nits-hud-dual-20260825.md
+?? docs/audit/reviews/au4dch-ux-wave123-kimi-20260801-091913.md
+?? docs/audit/reviews/au4dch-ux-wave123-kimi-20260801-091926.md
+?? docs/audit/reviews/au4dch-ux-wave123-kimi-20260801-091932.md
+?? docs/audit/reviews/post219-kimi-nits-wip-20260825.patch
+?? docs/audit/reviews/post220-nits-hud-adversary-synthesis-20260825.md
+?? docs/audit/reviews/post220-nits-hud-diff-20260825-213602.patch
+?? docs/audit/reviews/post220-nits-hud-diff-20260825.patch
+?? docs/audit/reviews/post220-nits-hud-lane-a-overlay-20260825.md
+?? docs/audit/reviews/post220-nits-hud-lane-b-knowledge-20260825.md
+?? docs/audit/reviews/post220-nits-hud-lane-c-sidepanel-20260825.md
+?? docs/audit/reviews/post220-nits-hud-lane-d-loop-20260825.md
+
+## Diff (git diff + staged)
+ .../src/sidepanel/components/ChatView.tsx          |  11 +-
+ .../src/sidepanel/components/ContextPanelHost.tsx  |  14 +-
+ .../src/sidepanel/components/KnowledgeSubPanel.tsx |  34 ++-
+ .../src/sidepanel/hooks/useWebSocket.ts            |   2 +-
+ .../src/sidepanel/utils/markdown-gfm.ts            |   3 +
+ chrome-extension/tests/markdown-breaks.test.ts     |  11 +-
+ companion/src/history/store.ts                     |   7 +-
+ companion/src/menu-bar-agent.ts                    |   4 +
+ companion/src/message-router.ts                    |  50 +---
+ companion/src/skills/doc-identity.ts               |   2 +-
+ companion/src/skills/skill-engine.ts               |   1 +
+ companion/src/skills/skill-install.ts              |   3 +-
+ companion/src/summoner-web.ts                      | 268 +++++++++++++++------
+ companion/src/threads/distill.ts                   |   2 +-
+ companion/src/tray/swift-tray-bridge.ts            |   2 +-
+ companion/src/ws/summoner-acl.ts                   |  19 ++
+ companion/tests/distill.test.ts                    |   9 +
+ companion/tests/doc-identity.test.ts               |   4 +
+ companion/tests/history.test.ts                    |  23 ++
+ companion/tests/summoner-acl.test.ts               |  34 ++-
+ companion/tests/summoner-web.test.ts               |  17 ++
+ 21 files changed, 381 insertions(+), 139 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/components/ChatView.tsx b/chrome-extension/src/sidepanel/components/ChatView.tsx
+index 87162e27..34288d08 100644
+--- a/chrome-extension/src/sidepanel/components/ChatView.tsx
++++ b/chrome-extension/src/sidepanel/components/ChatView.tsx
+@@ -40,6 +40,7 @@ import {
+   type IconProps,
+ } from "../ui/icons"
+ import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
++import { CHAT_MARKED_OPTIONS } from "../utils/markdown-gfm"
+ // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
+ import "katex/dist/katex.min.css"
+ 
+@@ -53,7 +54,7 @@ import "katex/dist/katex.min.css"
+ //                      them before the katex inline tokenizer runs.
+ //   - throwOnError   → invalid LaTeX degrades to inline text instead of throwing.
+ marked.use(markedKatex({ throwOnError: false, output: "html", nonStandard: true }))
+-marked.use({ gfm: true, breaks: true })
++marked.use(CHAT_MARKED_OPTIONS)
+ 
+ // Harden markdown links: open in a new tab with noopener, and intercept clicks
+ // inside the extension side panel so external origins cannot navigate the panel.
+@@ -620,6 +621,12 @@ function KnowledgeImportModal() {
+           <button type="button" onClick={() => dispatch({ type: "CLEAR_KNOWLEDGE_PREVIEW" })}>取消</button>
+           <button
+             type="button"
++            disabled={
++              p.preview === "正在解析…" ||
++              p.preview === "正在抓取…" ||
++              (p.preview || "").startsWith("预览失败") ||
++              !(p.payload && (p.payload.file || p.payload.url || p.payload.content))
++            }
+             onClick={() => {
+               chrome.runtime.sendMessage({
+                 ...p.payload,
+@@ -1532,7 +1539,7 @@ function MarkdownRenderer({ content, renderMermaid = false }: { content: string;
+   const { html, error } = useMemo(() => {
+     if (!content) return { html: "", error: false }
+     try {
+-      const rawHtml = marked.parse(content, { async: false, breaks: true, gfm: true }) as string
++      const rawHtml = marked.parse(content, { async: false, ...CHAT_MARKED_OPTIONS }) as string
+       const sanitized = DOMPurify.sanitize(rawHtml, {
+         ALLOWED_TAGS: [
+           "p", "br", "strong", "em", "u", "s", "del", "ins",
+diff --git a/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx b/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
+index 2b933e75..243ae761 100644
+--- a/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
++++ b/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
+@@ -201,7 +201,19 @@ export function ContextPanelHostProvider({
+       loadPanelData(raw, activeThreadId, dispatch)
+     }
+     window.addEventListener("cmspark:open-context-panel", onOpen as EventListener)
+-    return () => window.removeEventListener("cmspark:open-context-panel", onOpen as EventListener)
++    const onKnowledge = (e: Event) => {
++      const id = (e as CustomEvent<{ id?: string }>).detail?.id
++      setActivePanel("knowledge")
++      loadPanelData("knowledge", activeThreadId, dispatch)
++      if (id) {
++        window.dispatchEvent(new CustomEvent("cmspark:focus-knowledge", { detail: { id } }))
++      }
++    }
++    window.addEventListener("cmspark:open-knowledge", onKnowledge as EventListener)
++    return () => {
++      window.removeEventListener("cmspark:open-context-panel", onOpen as EventListener)
++      window.removeEventListener("cmspark:open-knowledge", onKnowledge as EventListener)
++    }
+   }, [activeThreadId, dispatch])
+ 
+   // Esc collapses any open context panel (priority stack §4.9 layer 2)
+diff --git a/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx b/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+index 90f9a70b..d29aba21 100644
+--- a/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+@@ -18,6 +18,7 @@ export function KnowledgeSubPanel() {
+   const [manageMode, setManageMode] = useState(false)
+   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set())
+   const [relatedById, setRelatedById] = useState<Record<string, Array<{ id: string; title: string }>>>({})
++  const [focusId, setFocusId] = useState<string | null>(null)
+   const menuRef = useRef<HTMLDivElement>(null)
+   const fileInputRef = useRef<HTMLInputElement>(null)
+ 
+@@ -48,7 +49,21 @@ export function KnowledgeSubPanel() {
+       setRelatedById((prev) => ({ ...prev, [d.id]: d.related }))
+     }
+     window.addEventListener("cmspark:knowledge_related", h as EventListener)
+-    return () => window.removeEventListener("cmspark:knowledge_related", h as EventListener)
++    const onFocus = (e: Event) => {
++      const id = (e as CustomEvent<{ id?: string }>).detail?.id
++      if (!id) return
++      setQuery("")
++      setFocusId(id)
++      requestAnimationFrame(() => {
++        const safe = id.replace(/["\\]/g, "")
++        document.querySelector(`[data-knowledge-id="${safe}"]`)?.scrollIntoView({ block: "nearest" })
++      })
++    }
++    window.addEventListener("cmspark:focus-knowledge", onFocus as EventListener)
++    return () => {
++      window.removeEventListener("cmspark:knowledge_related", h as EventListener)
++      window.removeEventListener("cmspark:focus-knowledge", onFocus as EventListener)
++    }
+   }, [])
+ 
+   // Close dropdown when clicking outside
+@@ -282,9 +297,12 @@ export function KnowledgeSubPanel() {
+     // when picking iCloud-synced folders like 笨牛棚 — the crash is in native code
+     // BEFORE our JS runs, so any extension-side guard (file count, size, try/catch)
+     // is too late. Companion walks the dir safely (skips dotfiles, caps at 200 files,
+-    // 6MB per file) and imports each note directly to the knowledge store.
++    // 6MB per file). Confirm first — native picker is not per-note extracted preview.
++    if (!window.confirm("将用系统对话框选择文件夹并导入其中的笔记（每篇不单独预览，最多 200 个文件）。继续？")) {
++      return
++    }
+     showStatus("正在打开文件夹选择器…")
+-    chrome.runtime.sendMessage({ type: "knowledge.import_directory" })
++    chrome.runtime.sendMessage({ type: "knowledge.import_directory", user_gesture: true })
+   }
+ 
+   const filteredDocs = useMemo(() => {
+@@ -490,7 +508,15 @@ export function KnowledgeSubPanel() {
+                 ? tokens.bgActive
+                 : "transparent"
+             return (
+-              <div key={doc.name} style={{ ...styles.docRow, background: rowBg }}>
++              <div
++                key={doc.name}
++                data-knowledge-id={doc.id || doc.name}
++                style={{
++                  ...styles.docRow,
++                  background: rowBg,
++                  outline: focusId && (focusId === doc.id || focusId === doc.name) ? `2px solid ${tokens.accent}` : undefined,
++                }}
++              >
+                 {manageMode ? (
+                   <input
+                     type="checkbox"
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index bb742d8c..b15bd079 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -1851,7 +1851,7 @@ export function useWebSocket() {
+           if (typeof msg.error === "string" && /knowledge|预览|parseFile|fetch knowledge/i.test(msg.error)) {
+             dispatch({
+               type: "SET_KNOWLEDGE_PREVIEW",
+-              preview: { preview: `预览失败：${msg.error}`, payload: {} },
++              preview: { preview: `预览失败：${msg.error}` },
+             })
+           }
+           // WP5-I4: computer.model.* 错误(family:"computer.model")→ 设置页实验区
+diff --git a/chrome-extension/src/sidepanel/utils/markdown-gfm.ts b/chrome-extension/src/sidepanel/utils/markdown-gfm.ts
+new file mode 100644
+index 00000000..03527ee9
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/utils/markdown-gfm.ts
+@@ -0,0 +1,3 @@
++/** Shared GFM+breaks options for chat markdown. Tests import this so a single
++ *  `breaks:true` site cannot go stale (Lane C N4). */
++export const CHAT_MARKED_OPTIONS = { gfm: true, breaks: true } as const
+diff --git a/chrome-extension/tests/markdown-breaks.test.ts b/chrome-extension/tests/markdown-breaks.test.ts
+index 0299b3db..7b6edd4e 100644
+--- a/chrome-extension/tests/markdown-breaks.test.ts
++++ b/chrome-extension/tests/markdown-breaks.test.ts
+@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
+ import * as fs from "node:fs"
+ import * as path from "node:path"
+ import { marked } from "marked"
++import { CHAT_MARKED_OPTIONS } from "../src/sidepanel/utils/markdown-gfm"
+ 
+ const chatView = fs.readFileSync(
+   path.join(process.cwd(), "src/sidepanel/components/ChatView.tsx"),
+@@ -14,10 +15,12 @@ const packs = fs.readFileSync(
+ )
+ 
+ test("ChatView marked uses GFM breaks (single newline → hard break)", () => {
+-  assert.match(chatView, /breaks:\s*true/)
+-  assert.match(chatView, /gfm:\s*true/)
+-  marked.use({ gfm: true, breaks: true })
+-  const html = String(marked.parse("行1\n行2", { async: false, breaks: true, gfm: true }))
++  assert.equal(CHAT_MARKED_OPTIONS.breaks, true)
++  assert.equal(CHAT_MARKED_OPTIONS.gfm, true)
++  assert.match(chatView, /CHAT_MARKED_OPTIONS/)
++  assert.match(chatView, /from ["']\.\.\/utils\/markdown-gfm["']/)
++  marked.use({ ...CHAT_MARKED_OPTIONS })
++  const html = String(marked.parse("行1\n行2", { async: false, ...CHAT_MARKED_OPTIONS }))
+   assert.match(html, /<br\s*\/?>/)
+ })
+ 
+diff --git a/companion/src/history/store.ts b/companion/src/history/store.ts
+index d5765966..b44c4056 100644
+--- a/companion/src/history/store.ts
++++ b/companion/src/history/store.ts
+@@ -158,10 +158,9 @@ function redactForStorage(
+     result_summary = `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
+   } else if (SENSITIVE_CODE_TOOLS.has(toolName)) {
+     params = redactCodeParams(params)
+-    // result_summary for evaluate/osascript typically contains the tool result
+-    // (e.g. return value of the eval) which is less sensitive than the code
+-    // itself; keep it but cap length to limit blast radius.
+-    if (result_summary.length > 200) result_summary = result_summary.slice(0, 200) + "…"
++    // Match thread-JSON collapse: evaluate/osascript results are still secrets
++    // even under 200 chars (Lane D D-N1).
++    result_summary = `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
+   } else if (toolName.startsWith(MCP_TOOL_PREFIX)) {
+     // Audit item C-MCP-2: MCP tool params always get key-based redaction so
+     // secrets/tokens/keys passed in as args never land in history.db.
+diff --git a/companion/src/menu-bar-agent.ts b/companion/src/menu-bar-agent.ts
+index a80ab91a..96498fe2 100644
+--- a/companion/src/menu-bar-agent.ts
++++ b/companion/src/menu-bar-agent.ts
+@@ -1625,6 +1625,10 @@ function dispatchSummonerWeb(
+     const ok = client.sendAppMessage(type, params)
+     return Promise.resolve(ok ? { type: "accepted" } : { type: "error", error: "未连接" })
+   }
++  if (type === "mcp.toggle_server" && companionClient) {
++    // HTML C-thin cannot answer overlay L2; ride tray client like the Swift HUD.
++    return companionClient.sendAppRequest(type, params, 60_000)
++  }
+   const timeout = type === "pack.apply" || type === "file.upload" ? 30_000 : 8_000
+   return client.sendAppRequest(type, params, timeout)
+ }
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index d4feb77f..27182087 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -196,36 +196,6 @@ async function drainThreadOnSupersede(threadId: string, reason: string): Promise
+   }
+ }
+ 
+-/**
+- * Inject (or override) the `name:` field in a knowledge doc's YAML frontmatter.
+- * Used by directory import to guarantee each file lands at a unique filename —
+- * importKnowledge sanitizes the name to a safe filename, and two files sharing
+- * the same first-#-heading would otherwise overwrite each other.
+- *
+- * - If content has no frontmatter, prepend `---\nname: <name>\n---\n`.
+- * - If content has frontmatter but no `name:` field, inject it as the first key.
+- * - If content already has a `name:` field, replace its value.
+- */
+-function injectKnowledgeName(content: string, name: string): string {
+-  const startsWithFm = content.startsWith("---")
+-  if (startsWithFm) {
+-    const endIdx = content.indexOf("\n---", 3)
+-    if (endIdx !== -1) {
+-      const fm = content.slice(0, endIdx)
+-      const rest = content.slice(endIdx)
+-      // Replace existing name line, or inject as first key after the opening ---
+-      if (/^name:.*$/m.test(fm)) {
+-        const updated = fm.replace(/^name:.*$/m, `name: ${name}`)
+-        return updated + rest
+-      }
+-      // No existing name — insert right after the opening "---"
+-      return `---\nname: ${name}` + fm.slice(3) + rest
+-    }
+-  }
+-  // No frontmatter at all — wrap the content
+-  return `---\nname: ${name}\n---\n${content}`
+-}
+-
+ interface Services {
+   threadManager: ThreadManager
+   skillEngine: SkillEngine
+@@ -2093,6 +2063,8 @@ export async function handleMessage(
+         messages: threadManager.getMessages(rest.thread_id),
+         thread_id: rest.thread_id,
+         trashed: !!thr.trashed_at,
++        active_skill_ids: thr.active_skill_ids || [],
++        active_knowledge_ids: thr.active_knowledge_ids || [],
+         ...(run_status ? { run_status } : {}),
+         ...(pending_tools ? { pending_tools } : {}),
+       }
+@@ -2663,6 +2635,9 @@ export async function handleMessage(
+       return { type: "knowledge.preview", ...preview }
+     }
+     case "knowledge.import": {
++      if (stampedSurface === "summoner") {
++        return { type: "error", error: "SUMMONER_ACL: knowledge.import not allowed on summoner surface", error_code: "SUMMONER_ACL" }
++      }
+       const loaded = await loadKnowledgePayload(rest)
+       if ("error" in loaded) return { type: "error", error: loaded.error }
+       const overrides = {
+@@ -2675,14 +2650,17 @@ export async function handleMessage(
+         const tid = String(rest.pin_thread_id)
+         const t = threadManager.get(tid)
+         if (t) {
+-          const ids = Array.from(new Set([...(t.active_knowledge_ids || []), imported.id]))
+-          threadManager.update(tid, { active_knowledge_ids: ids })
++          const ids = Array.from(new Set([...(t.active_knowledge_ids || []), imported.id])).slice(0, 32)
++          threadManager.update(tid, { active_knowledge_ids: ids, knowledge_selection_mode: "manual" })
+         }
+       }
+       skillEngine.refresh()
+       return { type: "knowledge.list", docs: skillEngine.listKnowledge(), imported }
+     }
+     case "knowledge.import_directory": {
++      if (stampedSurface === "summoner") {
++        return { type: "error", error: "SUMMONER_ACL: knowledge.import_directory not allowed on summoner surface", error_code: "SUMMONER_ACL" }
++      }
+       // Companion-side bulk import. The extension-side <input webkitdirectory>
+       // crashes Chromium 149's main process (SIGSEGV at 0x38 on CrBrowserMain)
+       // when the user picks an iCloud-synced folder with many nested entries —
+@@ -2747,12 +2725,8 @@ export async function handleMessage(
+               }
+ 
+               const baseName = entry.name.replace(/\.[^.]+$/, "")
+-              // Pass the vault-relative path as nameOverride so importKnowledge
+-              // uses it instead of the first-#-heading. Without this, two files
+-              // sharing the same heading (common in Obsidian vaults — daily notes,
+-              // per-folder READMEs) would sanitize to the same filename and
+-              // silently overwrite each other. 笨牛棚: 79 .md files collapsed to
+-              // 5 unique docs without this override.
++              // nameOverride = vault-relative path so same heading in two folders
++              // still allocate distinct stems (allocator suffixes; no overwrite).
+               const relPath = path.relative(vaultPath, full).replace(/\.[^.]+$/, "")
+ 
+               if (TEXT_EXTS.has(ext)) {
+diff --git a/companion/src/skills/doc-identity.ts b/companion/src/skills/doc-identity.ts
+index 465ccd7d..9f571a0b 100644
+--- a/companion/src/skills/doc-identity.ts
++++ b/companion/src/skills/doc-identity.ts
+@@ -8,7 +8,7 @@ import * as path from "path"
+ export const FILENAME_STEM_MAX = 80
+ export const TITLE_MAX = 200
+ 
+-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i
++const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i
+ const UNSAFE_CHARS = /[<>:"/\\|?*\u0000]/
+ 
+ export type DocIdentity = {
+diff --git a/companion/src/skills/skill-engine.ts b/companion/src/skills/skill-engine.ts
+index 6db7c5aa..bbdc9b55 100644
+--- a/companion/src/skills/skill-engine.ts
++++ b/companion/src/skills/skill-engine.ts
+@@ -246,6 +246,7 @@ export class SkillEngine {
+   private loadFromDir(dir: string, builtin: boolean): void {
+     try {
+       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
++        if (isSymlinkOrJunction(dir, entry)) continue
+         const entryPath = path.join(dir, entry.name)
+ 
+         if (entry.isDirectory()) {
+diff --git a/companion/src/skills/skill-install.ts b/companion/src/skills/skill-install.ts
+index 42f90aec..ced1f409 100644
+--- a/companion/src/skills/skill-install.ts
++++ b/companion/src/skills/skill-install.ts
+@@ -23,7 +23,7 @@ import AdmZip from "adm-zip"
+ import { getConfigDir } from "../config"
+ import { SkillEngine } from "./skill-engine"
+ import { appendCapabilityAudit } from "../packs/audit-log"
+-import { allocateDocIdentity, isLegacySafeId } from "./doc-identity"
++import { allocateDocIdentity, isLegacySafeId, isSymlinkOrJunction } from "./doc-identity"
+ 
+ export type SkillInstallParams = {
+   /** Local directory containing SKILL.md */
+@@ -317,6 +317,7 @@ export function skillInstallOverwritePreview(
+ 
+ function assertDirBudget(dir: string, acc = { bytes: 0, files: 0 }): void {
+   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
++    if (isSymlinkOrJunction(dir, ent)) continue
+     const full = path.join(dir, ent.name)
+     if (ent.isDirectory()) {
+       assertDirBudget(full, acc)
+diff --git a/companion/src/summoner-web.ts b/companion/src/summoner-web.ts
+index cec5bc09..d7371cb9 100644
+--- a/companion/src/summoner-web.ts
++++ b/companion/src/summoner-web.ts
+@@ -617,72 +617,154 @@ const SUMMONER_HTML = `<!DOCTYPE html>
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <title>CMspark 召唤器（实验）</title>
+ <style>
++:root{
++  --paper:#fff;--canvas:#f4f4f5;--rail-bg:#fafafa;--text:#171717;--secondary:#525252;
++  --faint:#737373;--line:rgba(23,23,23,.08);--indigo:#4f46e5;--indigo-soft:#eef2ff;
++  --radius:16px;--radius-sm:10px;--rail:52px;--list:216px;
++  --focus:0 0 0 2px #fff,0 0 0 4px var(--indigo);
++  --shadow:0 1px 0 var(--line),0 18px 40px rgba(23,23,23,.10);
++}
+ *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#12141c;color:#e8e8ef;height:100vh;display:flex;flex-direction:column}
+-header{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #2a2d3a;background:#1a1d27}
+-header h1{font-size:14px;font-weight:600}
+-.badge{font-size:11px;color:#9aa0b4;margin-left:auto}
+-.shell{flex:1;display:flex;min-height:0}
+-.rail{width:220px;border-right:1px solid #2a2d3a;display:flex;flex-direction:column;background:#161822;overflow:auto}
+-.rail h2{font-size:11px;letter-spacing:.04em;color:#8b90a5;padding:10px 12px 4px;text-transform:uppercase}
+-.item{display:block;width:calc(100% - 16px);margin:2px 8px;padding:7px 8px;border:0;border-radius:6px;background:transparent;color:#d5d7e2;text-align:left;font:inherit;cursor:pointer}
+-.trow{display:flex;align-items:center;gap:0;width:calc(100% - 8px);margin:0 4px}
+-.trow .item{flex:1;width:auto;margin:2px 0}
+-.trow .mini{flex:0 0 auto;width:auto;margin:2px 0;padding:7px 6px;font-size:11px;color:#8b90a5}
+-.item:hover{background:#252836}
+-.item.active{background:#2f3650;color:#fff}
+-.item.muted{opacity:.45;cursor:not-allowed}
+-.main{flex:1;display:flex;flex-direction:column;min-width:0}
+-.log{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+-.msg{max-width:92%;padding:8px 10px;border-radius:8px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+-.msg.user{align-self:flex-end;background:#2b4a7a}
+-.msg.assistant{align-self:flex-start;background:#222533}
+-.composer{border-top:1px solid #2a2d3a;padding:10px 12px;background:#1a1d27}
+-.hint{font-size:11px;color:#8b90a5;margin-bottom:6px}
+-textarea{width:100%;min-height:72px;resize:vertical;border:1px solid #33384a;border-radius:8px;background:#12141c;color:#e8e8ef;padding:8px;font:inherit}
+-.row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+-.btn{padding:6px 12px;border-radius:7px;border:0;background:#3d6df2;color:#fff;font-size:12px;cursor:pointer}
+-.btn.ghost{background:#2a2d3a;color:#d5d7e2}
+-.btn:disabled{opacity:.4;cursor:not-allowed}
+-.status{font-size:12px;color:#c9a227;min-height:16px}
+-input[type=file]{font-size:12px;color:#9aa0b4}
++html,body{height:100%;}
++body{
++  font:13px/1.45 "Segoe UI","Microsoft YaHei UI","PingFang SC","Noto Sans SC",sans-serif;
++  color:var(--text);background:var(--canvas);
++}
++.hud{height:100%;display:flex;flex-direction:column;background:var(--paper)}
++.body{display:grid;grid-template-columns:var(--rail) var(--list) 1fr;flex:1;min-height:0;border-bottom:1px solid var(--line)}
++.hud:not(.expanded) .body{display:none}
++.rail{
++  background:var(--rail-bg);border-right:1px solid var(--line);
++  display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;
++}
++.rail-btn{
++  width:44px;height:44px;border:0;background:transparent;border-radius:var(--radius-sm);
++  color:var(--secondary);cursor:pointer;display:grid;place-items:center;
++}
++.rail-btn svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
++.rail-btn:hover{background:var(--canvas);color:var(--text)}
++.rail-btn[aria-current="true"]{background:var(--indigo-soft);color:var(--indigo)}
++.rail-btn:focus-visible{outline:none;box-shadow:var(--focus)}
++.list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;background:var(--paper)}
++.list-head{padding:14px 14px 8px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--faint)}
++.list-scroll{overflow:auto;flex:1;padding:0 6px 10px}
++.item,.row{
++  display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:10px;
++  padding:10px;cursor:pointer;min-height:44px;font:inherit;color:var(--text);
++}
++.item:hover,.row:hover{background:var(--canvas)}
++.item.active,.row[aria-current="true"],.item.active{background:var(--indigo-soft);color:var(--indigo)}
++.item:focus-visible,.row:focus-visible{outline:none;box-shadow:var(--focus)}
++.item.muted,.row.muted{opacity:.45;cursor:not-allowed}
++.row strong,.item strong{display:block;font-weight:500;font-size:13px}
++.row small,.item small{display:block;margin-top:2px;font-size:11px;color:var(--faint)}
++.trow{display:flex;align-items:stretch;gap:2px}
++.trow .item{flex:1;min-width:0}
++.icon-mini{
++  flex:none;width:36px;height:44px;border:0;background:transparent;color:var(--faint);cursor:pointer;
++  border-radius:8px;display:grid;place-items:center;
++}
++.icon-mini svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
++.icon-mini:hover{background:var(--canvas);color:var(--text)}
++.main{display:flex;flex-direction:column;min-width:0;background:var(--paper)}
++.log{flex:1;overflow:auto;padding:20px 22px;display:flex;flex-direction:column;gap:16px}
++.msg{max-width:36rem;font-size:14px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
++.msg.user{align-self:flex-end;background:var(--canvas);padding:8px 12px;border-radius:12px 12px 4px 12px}
++.msg.assistant{align-self:flex-start;color:var(--text)}
++.empty{margin:auto;color:var(--secondary);font-size:14px;line-height:1.6}
++.empty strong{display:block;font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px}
++.composer{display:flex;align-items:center;gap:6px;padding:10px 12px 8px}
++.icon-btn{
++  width:44px;height:44px;border:0;background:transparent;border-radius:var(--radius-sm);
++  cursor:pointer;color:var(--text);display:grid;place-items:center;flex:none;
++}
++.icon-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
++.icon-btn:hover{background:var(--canvas)}
++.icon-btn:focus-visible{outline:none;box-shadow:var(--focus)}
++.icon-btn:disabled{opacity:.35;cursor:not-allowed}
++.field{
++  flex:1;display:flex;align-items:flex-end;gap:4px;min-height:48px;padding:4px 8px 4px 14px;
++  background:var(--canvas);border-radius:14px;
++}
++.field:focus-within{box-shadow:inset 0 0 0 1.5px rgba(79,70,229,.45);background:var(--paper)}
++.field textarea{
++  flex:1;border:0;background:transparent;outline:none;resize:none;min-height:36px;max-height:120px;
++  font:15px/1.35 inherit;color:var(--text);padding:8px 0;
++}
++.field textarea::placeholder{color:#a3a3a3}
++.ghosts{display:flex;gap:4px;padding:0 12px 4px}
++.ghost{
++  border:0;background:transparent;color:var(--faint);font:11px inherit;padding:6px 8px;border-radius:8px;cursor:pointer;min-height:32px;
++}
++.ghost:hover{background:var(--canvas);color:var(--text)}
++.hint{padding:0 16px 10px;font-size:11px;color:var(--faint)}
++.status{padding:0 16px 12px;font-size:12px;color:#92400e;min-height:16px}
++@media (max-width:720px){
++  .body{grid-template-columns:var(--rail) 1fr}
++  .list{display:none}
++  .hud.list-open .list{display:flex}
++  .hud.list-open .main{display:none}
++}
+ </style>
+ </head>
+ <body>
+-<header>
+-  <h1>CMspark 召唤器（实验）</h1>
+-  <span class="badge" id="badge">快捷提问 · 批准在侧栏</span>
+-</header>
+-<div class="shell">
+-  <aside class="rail">
+-    <div class="trow" id="secs">
+-      <button class="item mini active" data-sec="threads">对话</button>
+-      <button class="item mini" data-sec="packs">场景</button>
+-      <button class="item mini" data-sec="knowledge">知识</button>
+-      <button class="item mini" data-sec="skills">技能</button>
+-      <button class="item mini" data-sec="mcp">MCP</button>
+-    </div>
+-    <h2 id="secHead">对话</h2>
+-    <button class="item" id="newThread">＋ 新建对话</button>
+-    <div id="threads"></div>
+-    <div id="composeList"></div>
+-  </aside>
+-  <section class="main">
+-    <div class="log" id="log"></div>
+-    <div class="composer">
+-      <div class="hint" id="hint">回车发送/纠偏 · Shift+Enter 排队 · # 搜标题 · 听写/知识配置/批准去侧栏处理</div>
+-      <textarea id="text" placeholder="说一句，或 # 搜标题"></textarea>
+-      <div class="row">
+-        <label class="btn ghost" for="files" title="添加附件">📎</label>
+-        <input type="file" id="files" multiple hidden>
+-        <button class="btn" id="send">发送</button>
+-        <button class="btn ghost" id="steer">纠偏</button>
+-        <button class="btn ghost" id="queue">排队</button>
+-        <button class="btn ghost" id="stop">停止</button>
++<div class="hud expanded" id="hud">
++  <div class="body">
++    <nav class="rail" id="secs" aria-label="组合面">
++      <button class="rail-btn" data-sec="threads" aria-current="true" type="button" title="对话" aria-label="对话">
++        <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h10M5 17h7"/></svg>
++      </button>
++      <button class="rail-btn" data-sec="packs" type="button" title="场景" aria-label="场景">
++        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.4"/><rect x="13" y="4" width="7" height="7" rx="1.4"/><rect x="4" y="13" width="7" height="7" rx="1.4"/><rect x="13" y="13" width="7" height="7" rx="1.4"/></svg>
++      </button>
++      <button class="rail-btn" data-sec="knowledge" type="button" title="知识" aria-label="知识">
++        <svg viewBox="0 0 24 24"><path d="M5 5.5h9.2A2.3 2.3 0 0 1 16.5 7.8V19H7.4A2.4 2.4 0 0 1 5 16.6V5.5z"/><path d="M16.5 8h1.4A2.1 2.1 0 0 1 20 10.1V19h-3.5"/></svg>
++      </button>
++      <button class="rail-btn" data-sec="skills" type="button" title="技能" aria-label="技能">
++        <svg viewBox="0 0 24 24"><path d="M8 15.2 4.8 12 8 8.8M16 8.8 19.2 12 16 15.2M13.1 6.8 10.9 17.2"/></svg>
++      </button>
++      <button class="rail-btn" data-sec="mcp" type="button" title="MCP" aria-label="MCP">
++        <svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1.2"/><path d="M12 4.6v3.2M12 16.2v3.2M4.6 12H8M16 12h3.4"/></svg>
++      </button>
++    </nav>
++    <aside class="list">
++      <div class="list-head" id="secHead">对话</div>
++      <div class="list-scroll">
++        <button class="item" id="newThread" type="button"><strong>新对话</strong><small>快捷提问</small></button>
++        <div id="threads"></div>
++        <div id="composeList"></div>
+       </div>
+-      <div class="status" id="status"></div>
++    </aside>
++    <section class="main">
++      <div class="log" id="log"></div>
++    </section>
++  </div>
++  <div class="composer">
++    <button class="icon-btn" id="newThreadBar" type="button" title="新对话" aria-label="新对话">
++      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
++    </button>
++    <div class="field">
++      <textarea id="text" rows="1" placeholder="说点什么，回车发送" aria-label="发送到当前对话"></textarea>
++      <label class="icon-btn" for="files" title="📎 添加附件" aria-label="添加附件">
++        <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
++      </label>
++      <input type="file" id="files" multiple hidden>
++      <button class="icon-btn" id="mic" type="button" disabled title="听写/知识配置/批准去侧栏处理" aria-label="听写去侧栏处理">
++        <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
++      </button>
++      <button class="icon-btn" id="chev" type="button" aria-pressed="true" title="展开 / 收起工作台" aria-label="展开或收起">
++        <svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>
++      </button>
+     </div>
+-  </section>
++  </div>
++  <div class="ghosts">
++    <button class="ghost" id="send" type="button">发送</button>
++    <button class="ghost" id="steer" type="button">纠偏</button>
++    <button class="ghost" id="queue" type="button">排队</button>
++    <button class="ghost" id="stop" type="button">停止</button>
++  </div>
++  <div class="hint" id="hint">回车发送/纠偏 · Shift+Enter 排队 · # 搜标题 · 听写/知识配置/批准去侧栏处理</div>
++  <div class="status" id="status"></div>
+ </div>
+ <script>
+ (function(){
+@@ -694,6 +776,7 @@ input[type=file]{font-size:12px;color:#9aa0b4}
+   var poll=null;
+   function $(id){return document.getElementById(id)}
+   function setStatus(t){$("status").textContent=t||""}
++  function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})}
+   function api(path, opts){
+     return fetch(url(path), opts).then(function(r){return r.json().catch(function(){return {error:r.statusText}})})
+   }
+@@ -708,11 +791,13 @@ input[type=file]{font-size:12px;color:#9aa0b4}
+       row.className="trow";
+       var b=document.createElement("button");
+       b.className="item"+(t.id===threadId?" active":"");
+-      b.textContent=title;
++      b.innerHTML="<strong>"+esc(title)+"</strong>";
+       b.onclick=function(){selectThread(t.id)};
+       var rn=document.createElement("button");
+-      rn.className="item mini";
+-      rn.textContent="重命名";
++      rn.className="icon-mini";
++      rn.title="重命名";
++      rn.setAttribute("aria-label","重命名");
++      rn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4z"/></svg>';
+       rn.onclick=function(ev){
+         ev.stopPropagation();
+         var alias=window.prompt("重命名", title);
+@@ -723,8 +808,10 @@ input[type=file]{font-size:12px;color:#9aa0b4}
+         });
+       };
+       var tr=document.createElement("button");
+-      tr.className="item mini";
+-      tr.textContent="移到回收站";
++      tr.className="icon-mini";
++      tr.title="移到回收站";
++      tr.setAttribute("aria-label","移到回收站");
++      tr.innerHTML='<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M8 7l1 12h6l1-12"/></svg>';
+       tr.onclick=function(ev){
+         ev.stopPropagation();
+         if(!window.confirm("把「"+title+"」移到回收站？")) return;
+@@ -747,13 +834,21 @@ input[type=file]{font-size:12px;color:#9aa0b4}
+   function renderMsgs(messages){
+     var log=$("log");
+     log.innerHTML="";
++    var n=0;
+     (messages||[]).forEach(function(m){
+       if(!m||(m.role!=="user"&&m.role!=="assistant")) return;
++      n++;
+       var d=document.createElement("div");
+       d.className="msg "+m.role;
+       d.textContent=typeof m.content==="string"?m.content:(m.content&&m.content[0]&&m.content[0].text)||"";
+       log.appendChild(d);
+     });
++    if(!n){
++      var empty=document.createElement("div");
++      empty.className="empty";
++      empty.innerHTML="<strong>要对这页做什么？</strong>回车发送。⌘/Ctrl 不在这扇窗。听写、知识配置、批准去侧栏处理。";
++      log.appendChild(empty);
++    }
+     log.scrollTop=log.scrollHeight;
+   }
+   function syncBusyUi(){
+@@ -836,6 +931,12 @@ input[type=file]{font-size:12px;color:#9aa0b4}
+     if(!threadId) return;
+     api("/api/abort",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})});
+   };
++  $("chev").onclick=function(){
++    $("hud").classList.toggle("expanded");
++    var on=$("hud").classList.contains("expanded");
++    $("chev").setAttribute("aria-pressed", on?"true":"false");
++  };
++  $("newThreadBar").onclick=function(){$("newThread").click()};
+   $("newThread").onclick=function(){
+     api("/api/threads",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(d){
+       var id=d.thread&&d.thread.id;
+@@ -868,8 +969,10 @@ input[type=file]{font-size:12px;color:#9aa0b4}
+   function showSec(name){
+     sec=name;
+     document.querySelectorAll("#secs [data-sec]").forEach(function(b){
+-      b.className="item mini"+(b.getAttribute("data-sec")===name?" active":"");
++      if(b.getAttribute("data-sec")===name) b.setAttribute("aria-current","true");
++      else b.removeAttribute("aria-current");
+     });
++    $("hud").classList.toggle("list-open", name!=="threads");
+     var heads={threads:"对话",packs:"场景",knowledge:"知识",skills:"技能",mcp:"MCP"};
+     $("secHead").textContent=heads[name]||name;
+     $("newThread").style.display=name==="threads"?"":"none";
+@@ -885,8 +988,8 @@ input[type=file]{font-size:12px;color:#9aa0b4}
+       return api("/api/packs").then(function(d){
+         (d.packs||[]).forEach(function(p){
+           var b=document.createElement("button");
+-          b.className="item"+(p.overlay_eligible?"":" muted");
+-          b.textContent=p.name||p.id;
++          b.className="row"+(p.overlay_eligible?"":" muted");
++          b.innerHTML="<strong>"+esc(p.name||p.id)+"</strong><small>"+(p.overlay_eligible?"套到当前对话":"召唤器不可用")+"</small>";
+           b.onclick=function(){
+             if(!threadId){setStatus("没有当前对话");return}
+             if(!p.overlay_eligible){setStatus("这个场景不能在召唤器套用");return}
+@@ -903,8 +1006,8 @@ input[type=file]{font-size:12px;color:#9aa0b4}
+         (d.servers||[]).forEach(function(s){
+           var b=document.createElement("button");
+           var on=s.enabled!==false;
+-          b.className="item";
+-          b.textContent=(on?"● ":"○ ")+(s.name||"");
++          b.className="row";
++          b.innerHTML="<strong>"+esc(s.name||"")+"</strong><small>"+(on?"已开":"已关")+"</small>";
+           b.onclick=function(){
+             api("/api/mcp/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:s.name,enabled:!on})}).then(function(){loadCompose("mcp")});
+           };
+@@ -913,29 +1016,34 @@ input[type=file]{font-size:12px;color:#9aa0b4}
+       });
+     }
+     if(name==="skills"){
+-      return api("/api/skills").then(function(d){
+-        (d.skills||[]).forEach(function(s){
++      return Promise.all([api("/api/skills"), threadId?api("/api/thread?id="+encodeURIComponent(threadId)):Promise.resolve({})]).then(function(pair){
++        var ids=pair[1].active_skill_ids||[];
++        (pair[0].skills||[]).forEach(function(s){
++          var on=ids.indexOf(s.name)>=0;
+           var b=document.createElement("button");
+-          b.className="item";
+-          b.textContent=s.title||s.name;
++          b.className="row";
++          b.innerHTML="<strong>"+esc(s.title||s.name)+"</strong><small>"+(on?"已用于本对话":"未用")+"</small>";
+           b.onclick=function(){
+             if(!threadId){setStatus("没有当前对话");return}
+-            api("/api/skills/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,skill_name:s.name,on:true})}).then(function(){setStatus("已切换技能")});
++            api("/api/skills/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,skill_name:s.name,on:!on})}).then(function(){loadCompose("skills")});
+           };
+           box.appendChild(b);
+         });
+       });
+     }
+     if(name==="knowledge"){
+-      return api("/api/knowledge").then(function(d){
+-        (d.docs||[]).forEach(function(k){
++      return Promise.all([api("/api/knowledge"), threadId?api("/api/thread?id="+encodeURIComponent(threadId)):Promise.resolve({})]).then(function(pair){
++        var cur=pair[1].active_knowledge_ids||[];
++        (pair[0].docs||[]).forEach(function(k){
+           var id=k.name||k.id;
++          var on=cur.indexOf(id)>=0;
+           var b=document.createElement("button");
+-          b.className="item";
+-          b.textContent=k.title||id;
++          b.className="row";
++          b.innerHTML="<strong>"+esc(k.title||id)+"</strong><small>"+(on?"已挂到本对话":"点击挂上")+"</small>";
+           b.onclick=function(){
+             if(!threadId){setStatus("没有当前对话");return}
+-            api("/api/knowledge/active",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,ids:[id]})}).then(function(){setStatus("已挂到当前对话")});
++            var next=on?cur.filter(function(x){return x!==id}):cur.concat([id]);
++            api("/api/knowledge/active",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,ids:next})}).then(function(){loadCompose("knowledge")});
+           };
+           box.appendChild(b);
+         });
+diff --git a/companion/src/threads/distill.ts b/companion/src/threads/distill.ts
+index daf5632f..b1f22eb6 100644
+--- a/companion/src/threads/distill.ts
++++ b/companion/src/threads/distill.ts
+@@ -5,7 +5,7 @@ import type { ThreadDigest } from "./digest"
+ 
+ /** PEM: BEGIN through END with no char cap. Missing END eats to EOS so a BEGIN-only alt cannot leave key material. */
+ const PEM_BODY_RE =
+-  /-----BEGIN (?:RSA |OPENSSH |EC |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |OPENSSH |EC |ENCRYPTED )?PRIVATE KEY-----|$)/gi
++  /-----BEGIN (?:RSA |DSA |OPENSSH |EC |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |DSA |OPENSSH |EC |ENCRYPTED )?PRIVATE KEY-----|$)/gi
+ 
+ const SENSITIVE_TOKEN_RE =
+   /(?:sk-[a-zA-Z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{8,}|AKIA[A-Z0-9]{16}|bearer\s+[a-zA-Z0-9._-]+|(?:api[_-]?key|password)\s*[=:]\s*\S+)/gi
+diff --git a/companion/src/tray/swift-tray-bridge.ts b/companion/src/tray/swift-tray-bridge.ts
+index e937a394..43ecc8ce 100644
+--- a/companion/src/tray/swift-tray-bridge.ts
++++ b/companion/src/tray/swift-tray-bridge.ts
+@@ -54,7 +54,7 @@ import {
+ // ---------------------------------------------------------------------------
+ 
+ /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
+-// Updated 2026-08-25 B0.5 — overlay rename/trash; collapse HUD still borderless
++// Updated 2026-08-25 B1–B4 — overlay workbench rails (packs / MCP / skills / knowledge)
+ /** Mac 快捷提问 = native HUD（收起一条；展开工作台 + 对话管理）+ 📎/🎙. */
+ const SWIFT_TRAY_SHA256 = "ed4dbfa0e0eae5490bb0b18f477b416039c13e722a7e3f2750797b7e659a5fda"
+ 
+diff --git a/companion/src/ws/summoner-acl.ts b/companion/src/ws/summoner-acl.ts
+index 0ab87a92..051d362c 100644
+--- a/companion/src/ws/summoner-acl.ts
++++ b/companion/src/ws/summoner-acl.ts
+@@ -122,5 +122,24 @@ export function applySummonerPayloadPolicy(
+     msg.ids = ids
+     return { ok: true }
+   }
++  if (type === "pack.apply") {
++    delete msg.allowTrust
++    delete msg.workspace_path
++    delete msg.force_takeover
++    delete msg.confirmation_phrase
++    const packId = typeof msg.pack_id === "string" ? msg.pack_id.trim() : ""
++    const threadId = typeof msg.thread_id === "string" ? msg.thread_id.trim() : ""
++    if (!packId || !threadId) {
++      return {
++        ok: false,
++        error_code: "SUMMONER_ACL",
++        error: "SUMMONER_ACL: pack.apply requires pack_id and thread_id",
++      }
++    }
++    msg.pack_id = packId
++    msg.thread_id = threadId
++    msg.user_gesture = true
++    return { ok: true }
++  }
+   return { ok: true }
+ }
+diff --git a/companion/tests/distill.test.ts b/companion/tests/distill.test.ts
+index 8189b6a8..75de1d13 100644
+--- a/companion/tests/distill.test.ts
++++ b/companion/tests/distill.test.ts
+@@ -39,6 +39,15 @@ test("redactSecrets PEM through END has no 4000-char cap and does not leak body"
+   assert.equal(preview.markdown.includes("BEGIN RSA PRIVATE KEY"), false)
+ })
+ 
++test("redactSecrets covers DSA PRIVATE KEY", () => {
++  const r = redactSecrets(
++    "-----BEGIN DSA PRIVATE KEY-----\nMIIEAAA_DSA\n-----END DSA PRIVATE KEY-----",
++  )
++  assert.ok(r.hits >= 1)
++  assert.equal(r.text.includes("MIIEAAA_DSA"), false)
++  assert.equal(r.text.includes("BEGIN DSA PRIVATE KEY"), false)
++})
++
+ test("distillThreadMarkdown uses digest and redacts body secrets", () => {
+   const out = distillThreadMarkdown({
+     alias: "SSO 排障",
+diff --git a/companion/tests/doc-identity.test.ts b/companion/tests/doc-identity.test.ts
+index 073e9944..fa01ff87 100644
+--- a/companion/tests/doc-identity.test.ts
++++ b/companion/tests/doc-identity.test.ts
+@@ -62,6 +62,10 @@ test("allocateDocIdentity: CON and ../x hash; never slug to x.md", () => {
+   const traversal = allocateDocIdentity({ title: "../x" })
+   assert.notEqual(traversal.filenameStem, "x")
+   assert.match(traversal.filenameStem, /^k-[0-9a-f]{10}$/)
++  assert.equal(isUnsafePathComponent("COM0"), true)
++  assert.equal(isUnsafePathComponent("LPT0"), true)
++  const com0 = allocateDocIdentity({ title: "COM0" })
++  assert.notEqual(com0.filenameStem.toLowerCase(), "com0")
+ })
+ 
+ test("writeRestrictedFile: posix mode 0o600", () => {
+diff --git a/companion/tests/history.test.ts b/companion/tests/history.test.ts
+index 35bc0e63..5684e2e4 100644
+--- a/companion/tests/history.test.ts
++++ b/companion/tests/history.test.ts
+@@ -864,6 +864,29 @@ test("HistoryStore.record() redacts evaluate code body", async () => {
+   }
+ })
+ 
++test("HistoryStore.record() collapses evaluate result_summary even under 200 chars", async () => {
++  const store = new HistoryStore()
++  await store.waitReady()
++  try {
++    await store.record({
++      thread_id: "t-eval-result",
++      tool_name: "evaluate",
++      params: JSON.stringify({ tabId: 1, code: "1" }),
++      result_summary: "short-eval-secret",
++      error: null,
++      success: 1,
++      duration_ms: 10,
++      created_at: new Date().toISOString(),
++    })
++    const rows = await store.query({ thread_id: "t-eval-result", tool_name: "evaluate" })
++    assert.equal(rows.length, 1)
++    assert.equal(rows[0].result_summary.includes("short-eval-secret"), false)
++    assert.match(rows[0].result_summary, /<redacted:len=\d+:sha256=[a-f0-9]+>/)
++  } finally {
++    store.close()
++  }
++})
++
+ test("HistoryStore.record() redacts set_cookie value param", async () => {
+   const store = new HistoryStore()
+   await store.waitReady()
+diff --git a/companion/tests/summoner-acl.test.ts b/companion/tests/summoner-acl.test.ts
+index 6c75f170..0b63fdaa 100644
+--- a/companion/tests/summoner-acl.test.ts
++++ b/companion/tests/summoner-acl.test.ts
+@@ -2,7 +2,7 @@ import test from "node:test"
+ import assert from "node:assert/strict"
+ import * as fs from "node:fs"
+ import * as path from "node:path"
+-import { assertSummonerAllowed } from "../src/ws/summoner-acl"
++import { assertSummonerAllowed, applySummonerPayloadPolicy } from "../src/ws/summoner-acl"
+ import { validateWsMessage } from "../src/ws/validate"
+ 
+ function srcFile(...parts: string[]): string {
+@@ -120,3 +120,35 @@ test("auth.handshake rejects surface other than tray|summoner", () => {
+     assert.equal(r.valid, false, `surface=${JSON.stringify(surface)} should reject`)
+   }
+ })
++
++test("overlay pack.apply strips Trust extras (A-N2)", () => {
++  const msg: Record<string, unknown> = {
++    type: "pack.apply",
++    pack_id: "meeting-minutes",
++    thread_id: "t1",
++    allowTrust: true,
++    workspace_path: "/tmp/x",
++    force_takeover: true,
++    confirmation_phrase: "I UNDERSTAND",
++  }
++  const r = applySummonerPayloadPolicy("summoner", msg)
++  assert.equal(r.ok, true)
++  assert.equal(msg.allowTrust, undefined)
++  assert.equal(msg.workspace_path, undefined)
++  assert.equal(msg.force_takeover, undefined)
++  assert.equal(msg.confirmation_phrase, undefined)
++  assert.equal(msg.user_gesture, true)
++  assert.equal(msg.pack_id, "meeting-minutes")
++})
++
++test("tray pack.apply is not rewritten", () => {
++  const msg: Record<string, unknown> = {
++    type: "pack.apply",
++    pack_id: "meeting-minutes",
++    thread_id: "t1",
++    allowTrust: true,
++  }
++  const r = applySummonerPayloadPolicy("tray", msg)
++  assert.equal(r.ok, true)
++  assert.equal(msg.allowTrust, true)
++})
+diff --git a/companion/tests/summoner-web.test.ts b/companion/tests/summoner-web.test.ts
+index 4537709a..342c5a62 100644
+--- a/companion/tests/summoner-web.test.ts
++++ b/companion/tests/summoner-web.test.ts
+@@ -115,6 +115,10 @@ describe("summoner-web server", { concurrency: 1 }, () => {
+     assert.match(r.headers["content-type"] || "", /text\/html/)
+     assert.match(r.body, /CMspark 召唤器（实验）/)
+     assert.doesNotMatch(r.body, /主界面/)
++    assert.match(r.body, /--paper:#fff/)
++    assert.match(r.body, /--indigo:#4f46e5/)
++    assert.match(r.body, /class="rail-btn"/)
++    assert.doesNotMatch(r.body, /#12141c/)
+     assert.match(r.body, /type="file"/)
+     assert.match(r.body, /📎/)
+     assert.match(r.body, /for="files"/)
+@@ -527,3 +531,16 @@ test("menu-bar-agent opens summoner-web from summoner action", () => {
+   assert.match(src, /surface:\s*"summoner"/)
+   assert.match(src, /pushSummonerWebEvent/)
+ })
++
++test("C-thin HTML skills toggle and knowledge attach are not activate-only / replace-all", () => {
++  const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
++  assert.match(src, /skill_name:s\.name,on:!on/)
++  assert.match(src, /ids:next/)
++  assert.doesNotMatch(src, /skill_name:s\.name,on:true/)
++  assert.doesNotMatch(src, /ids:\[id\]/)
++})
++
++test("HTML mcp.toggle rides tray companionClient (no overlay L2 stall)", () => {
++  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
++  assert.match(src, /type === "mcp\.toggle_server" && companionClient/)
++})

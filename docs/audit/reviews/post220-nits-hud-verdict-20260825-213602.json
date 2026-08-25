@@ -1,0 +1,8 @@
+{
+  "batch": "post220-nits-hud",
+  "timestamp": "20260825-213602",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/post220-nits-hud-claude-20260825-213602.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/post220-nits-hud-pi-20260825-213602.md" },
+  "both_approve": true,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/post220-nits-hud-diff-20260825-213602.patch"
+}

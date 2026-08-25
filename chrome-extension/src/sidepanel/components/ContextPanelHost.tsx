@@ -148,6 +148,7 @@ export function ContextPanelHostProvider({
   children: ReactNode
 }) {
   const [activePanel, setActivePanel] = useState<ContextPanelId | null>(null)
+  const pendingKnowledgeFocus = useRef<string | null>(null)
   const { state, dispatch } = useAgentStore()
   const activeThreadId = state.activeThreadId
 
@@ -203,11 +204,9 @@ export function ContextPanelHostProvider({
     window.addEventListener("cmspark:open-context-panel", onOpen as EventListener)
     const onKnowledge = (e: Event) => {
       const id = (e as CustomEvent<{ id?: string }>).detail?.id
+      if (id) pendingKnowledgeFocus.current = id
       setActivePanel("knowledge")
       loadPanelData("knowledge", activeThreadId, dispatch)
-      if (id) {
-        window.dispatchEvent(new CustomEvent("cmspark:focus-knowledge", { detail: { id } }))
-      }
     }
     window.addEventListener("cmspark:open-knowledge", onKnowledge as EventListener)
     return () => {
@@ -215,6 +214,14 @@ export function ContextPanelHostProvider({
       window.removeEventListener("cmspark:open-knowledge", onKnowledge as EventListener)
     }
   }, [activeThreadId, dispatch])
+
+  useEffect(() => {
+    if (activePanel !== "knowledge") return
+    const id = pendingKnowledgeFocus.current
+    if (!id) return
+    pendingKnowledgeFocus.current = null
+    window.dispatchEvent(new CustomEvent("cmspark:focus-knowledge", { detail: { id } }))
+  }, [activePanel])
 
   // Esc collapses any open context panel (priority stack §4.9 layer 2)
   useEffect(() => {
