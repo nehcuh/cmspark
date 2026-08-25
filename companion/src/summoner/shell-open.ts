@@ -52,7 +52,7 @@ export function planSummonerShellOpen(
     return {
       kind: "app-window",
       command: browserPath,
-      args: [`--app=${url}`, "--window-size=720,120"],
+      args: [`--app=${url}`, "--window-size=800,720"],
     }
   }
   if (opts.platform === "darwin") {
