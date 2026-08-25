@@ -537,11 +537,10 @@ header h1{font-size:14px;font-weight:600}
 .shell{flex:1;display:flex;min-height:0}
 .rail{width:220px;border-right:1px solid #2a2d3a;display:flex;flex-direction:column;background:#161822;overflow:auto}
 .rail h2{font-size:11px;letter-spacing:.04em;color:#8b90a5;padding:10px 12px 4px;text-transform:uppercase}
-.item,.chip,button.pack{display:block;width:calc(100% - 16px);margin:2px 8px;padding:7px 8px;border:0;border-radius:6px;background:transparent;color:#d5d7e2;text-align:left;font:inherit;cursor:pointer}
-.item:hover,.chip:hover,button.pack:hover{background:#252836}
+.item{display:block;width:calc(100% - 16px);margin:2px 8px;padding:7px 8px;border:0;border-radius:6px;background:transparent;color:#d5d7e2;text-align:left;font:inherit;cursor:pointer}
+.item:hover{background:#252836}
 .item.active{background:#2f3650;color:#fff}
-.item.muted,button.pack:disabled{opacity:.45;cursor:not-allowed}
-.chip{font-size:12px;color:#a8b0c8;cursor:default}
+.item.muted{opacity:.45;cursor:not-allowed}
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .log{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
 .msg{max-width:92%;padding:8px 10px;border-radius:8px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
@@ -561,22 +560,18 @@ input[type=file]{font-size:12px;color:#9aa0b4}
 <body>
 <header>
   <h1>CMspark 召唤器（实验）</h1>
-  <span class="badge" id="badge">本页不代替侧栏批准</span>
+  <span class="badge" id="badge">快捷提问 · 批准在侧栏</span>
 </header>
 <div class="shell">
   <aside class="rail">
     <h2>对话</h2>
     <button class="item" id="newThread">＋ 新建对话</button>
     <div id="threads"></div>
-    <h2>MCP</h2>
-    <div id="mcp"><div class="chip muted">无已连接服务器</div></div>
-    <h2>场景</h2>
-    <div id="packs"></div>
   </aside>
   <section class="main">
     <div class="log" id="log"></div>
     <div class="composer">
-      <div class="hint" id="hint">回车发送/纠偏 · Shift+Enter 排队 · # 搜标题</div>
+      <div class="hint" id="hint">回车发送/纠偏 · Shift+Enter 排队 · # 搜标题 · 技能/MCP/设置去侧栏处理</div>
       <textarea id="text" placeholder="说一句，或 # 搜标题"></textarea>
       <div class="row">
         <input type="file" id="files" multiple>
@@ -616,39 +611,6 @@ input[type=file]{font-size:12px;color:#9aa0b4}
       box.appendChild(b);
     });
   }
-  function renderMcp(servers){
-    var box=$("mcp");
-    box.innerHTML="";
-    var list=(servers||[]).filter(function(s){return s && (s.connected || s.enabled)});
-    if(!list.length){box.innerHTML='<div class="chip">无已连接服务器</div>';return}
-    list.forEach(function(s){
-      var d=document.createElement("div");
-      d.className="chip";
-      d.textContent=s.name||s.id||"mcp";
-      box.appendChild(d);
-    });
-  }
-  function renderPacks(packs){
-    var box=$("packs");
-    box.innerHTML="";
-    (packs||[]).forEach(function(p){
-      var b=document.createElement("button");
-      b.className="pack";
-      var ok=p.overlay_eligible===true;
-      b.disabled=!ok;
-      b.textContent=(p.name||p.id)+(ok?"":" · 去侧栏处理");
-      b.title=ok?"技能/提示套到当前对话":"这个场景要去侧栏处理";
-      b.onclick=function(){
-        if(!threadId){setStatus("没有当前对话，无法套场景");return}
-        api("/api/packs/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pack_id:p.id,thread_id:threadId})})
-          .then(function(d){
-            if(d.error||d.type==="error") setStatus(d.error||d.code||"套用失败");
-            else setStatus("已套到当前对话（技能/提示）");
-          });
-      };
-      box.appendChild(b);
-    });
-  }
   function renderMsgs(messages){
     var log=$("log");
     log.innerHTML="";
@@ -663,8 +625,8 @@ input[type=file]{font-size:12px;color:#9aa0b4}
   }
   function syncBusyUi(){
     $("hint").textContent=busy
-      ?"回车发送/纠偏 · Shift+Enter 排队 · 忙时附件请等本轮结束"
-      :"回车发送/纠偏 · Shift+Enter 排队 · # 搜标题";
+      ?"回车发送/纠偏 · Shift+Enter 排队 · 忙时附件请等本轮结束 · 技能/MCP/设置去侧栏处理"
+      :"回车发送/纠偏 · Shift+Enter 排队 · # 搜标题 · 技能/MCP/设置去侧栏处理";
   }
   function selectThread(id){
     threadId=id;
@@ -762,15 +724,9 @@ input[type=file]{font-size:12px;color:#9aa0b4}
     if(v.trim().charAt(0)==="#") renderThreads(v.trim().slice(1));
   });
   function refresh(){
-    return Promise.all([
-      api("/api/threads"),
-      api("/api/packs"),
-      api("/api/mcp")
-    ]).then(function(arr){
-      threads=arr[0].threads||[];
+    return api("/api/threads").then(function(d){
+      threads=d.threads||[];
       renderThreads();
-      renderPacks(arr[1].packs||[]);
-      renderMcp(arr[2].servers||[]);
     });
   }
   function releaseLease(){

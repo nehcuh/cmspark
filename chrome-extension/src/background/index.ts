@@ -899,6 +899,25 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
       }
 
+      case "knowledge.related": {
+        wsClient.send({
+          type: "knowledge.related",
+          id: message.id,
+          limit: 3,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
+      case "thread.distill_preview": {
+        wsClient.send({
+          type: "thread.distill_preview",
+          thread_id: message.thread_id,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
       case "thread.cleanup_empty":
         wsClient.send({
           type: "thread.cleanup_empty",
@@ -1180,6 +1199,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "skill.delete":
       case "knowledge.list":
       case "knowledge.import":
+      case "knowledge.preview":
       case "knowledge.import_directory":
       case "knowledge.delete":
       case "pack.list":

@@ -7,6 +7,7 @@ import { atomicWriteJSON } from "../io"
 import type { MissionBoard } from "../board/schema"
 import type { ThreadDigest } from "./digest"
 import { isDigestStale, sanitizeDigest } from "./digest"
+import { sanitizeTopicFolder } from "./distill"
 import { inspectThreadMessages } from "./thread-inspect"
 import {
   sanitizeRuntimeContextBudget,
@@ -108,6 +109,8 @@ interface Thread {
    * P1.5 recycle bin; hard delete clears file + index entry.
    */
   trashed_at?: string | null
+  /** Wave 2 话题夹 — user folder label, not Project/Pack. */
+  topic_folder?: string | null
 }
 
 // Allowed config_override keys and their expected types
@@ -186,6 +189,8 @@ interface Message {
   created_at: string
   /** Image attachments (metadata only; bytes live in `threads/<id>.files/`). */
   attachments?: ImageAttachmentMeta[]
+  /** Companion-attached knowledge ledger for this assistant turn (Wave 1). */
+  retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number }>
 }
 
 const RASTER_MIMES = new Set<RasterMime>([
@@ -471,6 +476,7 @@ export class ThreadManager {
     } catch {
       /* best-effort merge; still write our memory snapshot */
     }
+    fs.mkdirSync(path.dirname(this.indexPath), { recursive: true, mode: 0o700 })
     atomicWriteJSON(this.indexPath, this.index)
   }
 
@@ -782,6 +788,9 @@ export class ThreadManager {
     }
     if (updates.alias !== undefined) {
       updates = { ...updates, alias: this.sanitizeAlias(String(updates.alias)) }
+    }
+    if (updates.topic_folder !== undefined) {
+      updates = { ...updates, topic_folder: sanitizeTopicFolder(updates.topic_folder) }
     }
     // Validate skill_selection_mode if being updated
     if (updates.skill_selection_mode !== undefined) {

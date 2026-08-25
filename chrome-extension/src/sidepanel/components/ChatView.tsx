@@ -564,6 +564,78 @@ export function ChatView() {
           </div>
         )}
       </div>
+      <KnowledgeImportModal />
+    </div>
+  )
+}
+
+function KnowledgeImportModal() {
+  const { state, dispatch } = useAgentStore()
+  const p = state.knowledgePreview
+  const [title, setTitle] = useState("")
+  const [description, setDescription] = useState("")
+  const [tags, setTags] = useState("")
+  const [pin, setPin] = useState(false)
+  useEffect(() => {
+    if (!p) return
+    setTitle(p.title || "")
+    setDescription(p.description || "")
+    setTags("")
+    setPin(false)
+  }, [p])
+  if (!p) return null
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="确认导入知识"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.35)",
+        zIndex: 11000,
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+      }}
+    >
+      <div style={{ background: tokens.bg, width: "100%", maxHeight: "80%", overflow: "auto", padding: 12, borderRadius: "12px 12px 0 0" }}>
+        <strong style={{ fontSize: 13 }}>确认导入知识库</strong>
+        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>标题</label>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ width: "100%", fontSize: 12, padding: 6 }} />
+        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>说明</label>
+        <input value={description} onChange={(e) => setDescription(e.target.value)} style={{ width: "100%", fontSize: 12, padding: 6 }} />
+        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>标签（逗号分隔）</label>
+        <input value={tags} onChange={(e) => setTags(e.target.value)} style={{ width: "100%", fontSize: 12, padding: 6 }} />
+        <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, marginTop: 8 }}>
+          <input type="checkbox" checked={pin} onChange={(e) => setPin(e.target.checked)} />
+          钉到本对话
+        </label>
+        <pre style={{ fontSize: 11, whiteSpace: "pre-wrap", maxHeight: 160, overflow: "auto", background: tokens.bgElevated, padding: 8, marginTop: 8 }}>
+          {p.preview || "（无预览）"}
+          {p.char_count > (p.preview || "").length ? "\n…" : ""}
+        </pre>
+        <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
+          <button type="button" onClick={() => dispatch({ type: "CLEAR_KNOWLEDGE_PREVIEW" })}>取消</button>
+          <button
+            type="button"
+            onClick={() => {
+              chrome.runtime.sendMessage({
+                ...p.payload,
+                type: "knowledge.import",
+                user_gesture: true,
+                title,
+                description,
+                tags: tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
+                pin_thread_id: pin ? state.activeThreadId : undefined,
+              })
+              dispatch({ type: "CLEAR_KNOWLEDGE_PREVIEW" })
+            }}
+          >
+            确认导入
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -708,6 +780,31 @@ const MessageRow = memo(function MessageRow({
                 <ToolCallCard key={tc.id} tc={tc} />
               ))}
             </div>
+            {!isUser && Array.isArray(msg.retrieved_sources) && msg.retrieved_sources.length > 0 ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }} aria-label="本轮附带">
+                {msg.retrieved_sources.map((s: { id: string; title: string }) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    title={s.id}
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent("cmspark:open-knowledge", { detail: { id: s.id } }))
+                    }}
+                    style={{
+                      border: `1px solid ${tokens.border}`,
+                      background: tokens.bgElevated,
+                      color: tokens.textSecondary,
+                      borderRadius: 10,
+                      fontSize: 11,
+                      padding: "2px 8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    本轮附带 · {s.title || s.id}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {isUser && Array.isArray(msg.attachments) && msg.attachments.length > 0 ? (
               <>
               <div style={styles.thumbRow} aria-label="附图">
@@ -739,6 +836,32 @@ const MessageRow = memo(function MessageRow({
                   aria-label="编辑并重新生成"
                 >
                   <IconEdit size={13} />
+                </button>
+              )}
+              {isUser && /<document filename=/.test(msg.content || "") && (
+                <button
+                  type="button"
+                  style={styles.actionBtn}
+                  title="收入知识库"
+                  aria-label="收入知识库"
+                  onClick={() => {
+                    const m = /<document filename="([^"]+)">\n?([\s\S]*?)\n?<\/document>/.exec(msg.content || "")
+                    if (!m) return
+                    const filename = m[1]
+                    const body = m[2] || ""
+                    dispatch({
+                      type: "SET_KNOWLEDGE_PREVIEW",
+                      preview: {
+                        title: filename.replace(/\.[^.]+$/, ""),
+                        description: "",
+                        preview: body.slice(0, 4000),
+                        char_count: body.length,
+                        payload: { content: body },
+                      },
+                    })
+                  }}
+                >
+                  入知识
                 </button>
               )}
               {!isUser && (

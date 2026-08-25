@@ -117,6 +117,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /回车发送\/纠偏/)
     assert.match(r.body, /Shift\+Enter 排队/)
     assert.match(r.body, /去侧栏处理/)
+    assert.match(r.body, /快捷提问/)
+    assert.doesNotMatch(r.body, /Raycast|uTools|启动器|第二大脑|图谱|双链/)
     assert.match(r.body, /pagehide|visibilitychange/)
     assert.match(r.body, /\/api\/lease\/release/)
     assert.match(r.body, /EventSource/)
@@ -343,6 +345,10 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("config.set"), false)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.add"), false)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("security.confirmation.response"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.import"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.preview"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.related"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("thread.distill_preview"), false)
   })
 
   test("GET /api/events without token → 403", async () => {
@@ -441,6 +447,9 @@ test("summoner ACL allows file.upload after HTML client exists", async () => {
   const { assertSummonerAllowed } = await import("../src/ws/summoner-acl")
   assert.equal(assertSummonerAllowed("summoner", "file.upload").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "mcp.add").ok, false)
+  assert.equal(assertSummonerAllowed("summoner", "knowledge.related").ok, false)
+  assert.equal(assertSummonerAllowed("summoner", "thread.distill_preview").ok, false)
+  assert.equal(assertSummonerAllowed("summoner", "knowledge.import").ok, false)
   for (const t of SUMMONER_WEB_DISPATCH_ALLOW) {
     assert.equal(assertSummonerAllowed("summoner", t).ok, true, t)
   }

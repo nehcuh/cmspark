@@ -66,6 +66,8 @@ export interface Thread {
     agent_id?: string
     goal_preview?: string
   } | null
+  /** Wave 2 话题夹 — not Project */
+  topic_folder?: string | null
   /** P1: short searchable index from extract_digest */
   digest?: {
     extracted_at?: string
@@ -294,6 +296,8 @@ export interface Message {
    * store adopt the persisted id by exact match instead of positional guessing.
    */
   client_message_id?: string
+  /** Companion-attached knowledge ledger (Wave 1). Never model-authored. */
+  retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number }>
 }
 
 export interface SecurityConfirmationRequest {
@@ -454,6 +458,8 @@ export interface SkillMeta {
 
 export interface KnowledgeMeta {
   name: string
+  id?: string
+  title?: string
   description: string
   type: "site_knowledge" | "domain_knowledge"
   site?: string

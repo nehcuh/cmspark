@@ -530,6 +530,91 @@ test("message-router: thread.update updates thread properties", async () => {
   assert.deepEqual(response.thread.pinned_tabs, [101, 202])
 })
 
+test("message-router: thread.update persists sanitized topic_folder", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Folder" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+
+  const response = await handleMessage(
+    {
+      type: "thread.update",
+      thread_id: created.thread.id,
+      updates: { topic_folder: " 竞品/夹 " },
+    },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+
+  assert.equal(response.type, "thread.updated")
+  assert.equal(response.thread.topic_folder, "竞品夹")
+  assert.equal(new ThreadManager().get(created.thread.id)?.topic_folder, "竞品夹")
+})
+
+test("message-router: thread.distill_preview redacts and does not write knowledge", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Distill" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  threadManager.addMessage(created.thread.id, {
+    thread_id: created.thread.id,
+    role: "user",
+    content: "token ghp_abcdefghijklmnopqrstuvwxyz012345",
+  })
+  const knowledgeDir = path.join(tempHome, ".cmspark-agent", "knowledge", "global")
+  fs.mkdirSync(knowledgeDir, { recursive: true })
+  const before = fs.readdirSync(knowledgeDir).length
+
+  const response = await handleMessage(
+    { type: "thread.distill_preview", thread_id: created.thread.id },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+
+  assert.equal(response.type, "thread.distill_preview")
+  assert.ok(!String(response.markdown).includes("ghp_"))
+  assert.ok(response.redacted_hits >= 1)
+  assert.equal(fs.readdirSync(knowledgeDir).length, before)
+})
+
+test("message-router: knowledge.related caps at 3", async () => {
+  const docs = Array.from({ length: 6 }, (_, i) => ({
+    id: `k${i}`,
+    name: `k${i}`,
+    title: `sso ${i}`,
+    tags: ["sso"],
+  }))
+  const se = { ...mockSkillEngine, listKnowledge: () => docs }
+  const response = await handleMessage(
+    { type: "knowledge.related", id: "k0" },
+    { threadManager: new ThreadManager(), skillEngine: se, historyStore: mockHistoryStore },
+  )
+  assert.equal(response.type, "knowledge.related")
+  assert.equal(response.related.length, 3)
+  assert.ok(response.related.every((h: { id: string }) => h.id !== "k0"))
+})
+
+test("message-router: knowledge.related honors clamped limit", async () => {
+  const docs = Array.from({ length: 6 }, (_, i) => ({
+    id: `k${i}`,
+    name: `k${i}`,
+    title: `sso ${i}`,
+    tags: ["sso"],
+  }))
+  const se = { ...mockSkillEngine, listKnowledge: () => docs }
+  const two = await handleMessage(
+    { type: "knowledge.related", id: "k0", limit: 2 },
+    { threadManager: new ThreadManager(), skillEngine: se, historyStore: mockHistoryStore },
+  )
+  assert.equal(two.type, "knowledge.related")
+  assert.equal(two.related.length, 2)
+  const huge = await handleMessage(
+    { type: "knowledge.related", id: "k0", limit: 99 },
+    { threadManager: new ThreadManager(), skillEngine: se, historyStore: mockHistoryStore },
+  )
+  assert.equal(huge.related.length, 3)
+})
+
 test("message-router: thread.update rejects invalid keys", async () => {
   const threadManager = new ThreadManager()
   const created = await handleMessage(

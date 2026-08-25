@@ -20,6 +20,8 @@ import {
   isDigestStale,
 } from "./threads/digest"
 import { findRelatedThreads } from "./threads/related"
+import { distillThreadMarkdown } from "./threads/distill"
+import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT } from "./skills/knowledge-related"
 import { suggestCleanupRules } from "./threads/cleanup-rules"
 import { buildContextRefsSystemSegment, type ContextRefInput } from "./threads/context-refs"
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
@@ -27,6 +29,7 @@ import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "
 import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
 import { pickFolderNative } from "./obsidian/folder-picker"
 import type { SkillEngine } from "./skills/skill-engine"
+import { isSymlinkOrJunction } from "./skills/doc-identity"
 import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, isMaskedApiKey, DATA_DIR } from "./config"
@@ -355,6 +358,61 @@ function isDrainGateError(frame: unknown): boolean {
   if (!frame || typeof frame !== "object") return false
   const t = (frame as { type?: unknown }).type
   return t === "error" || t === "chat.error"
+}
+
+async function loadKnowledgePayload(rest: Record<string, any>): Promise<
+  { text: string; fallback: string } | { error: string }
+> {
+  if (rest.file) {
+    const { name, content } = rest.file
+    if (!name || !content) return { error: "knowledge file requires 'name' and 'content'" }
+    const buffer = Buffer.from(String(content), "base64")
+    const parsed = await parseFile(buffer, String(name), "application/octet-stream")
+    if (!parsed.success) return { error: parsed.error }
+    return { text: parsed.text, fallback: String(name).replace(/\.[^.]+$/, "") }
+  }
+  if (rest.url) {
+    const urlStr = String(rest.url)
+    const { assertOutboundFetchUrlAllowed } = await import("./security")
+    const ssrf = assertOutboundFetchUrlAllowed(urlStr)
+    if (ssrf) return { error: ssrf }
+    let parsed: URL
+    try {
+      parsed = new URL(urlStr)
+    } catch {
+      return { error: "Invalid URL" }
+    }
+    const controller = new AbortController()
+    const fetchTimeout = setTimeout(() => controller.abort(), 30000)
+    let response: Response
+    try {
+      response = await fetch(urlStr, {
+        signal: controller.signal,
+        redirect: "manual",
+      })
+    } finally {
+      clearTimeout(fetchTimeout)
+    }
+    if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+      return { error: "Redirects are not allowed for knowledge imports" }
+    }
+    if (!response.ok) return { error: `Failed to fetch knowledge: ${response.status}` }
+    const maxSize = 10 * 1024 * 1024
+    const contentLength = response.headers.get("content-length")
+    if (contentLength && parseInt(contentLength, 10) > maxSize) {
+      return { error: `Knowledge file too large: ${contentLength} bytes (max ${maxSize})` }
+    }
+    const body = await response.text()
+    if (body.length > maxSize) {
+      return { error: `Knowledge file too large: ${body.length} bytes (max ${maxSize})` }
+    }
+    const urlFallback = path.basename(parsed.pathname || "url-import").replace(/\.[^.]+$/, "") || "url-import"
+    return { text: body, fallback: urlFallback }
+  }
+  if (typeof rest.content === "string") {
+    return { text: rest.content, fallback: "未命名知识库" }
+  }
+  return { error: "knowledge.import requires 'content', 'url', or 'file'" }
 }
 
 export async function handleMessage(
@@ -1977,6 +2035,43 @@ export async function handleMessage(
       }
     }
 
+    case "knowledge.related": {
+      const seedId = typeof rest.id === "string" ? rest.id : ""
+      if (!seedId) return { type: "error", error: "knowledge.related requires id" }
+      const docs = skillEngine.listKnowledge().map((d) => ({
+        id: d.id || d.name,
+        name: d.name,
+        title: d.title,
+        description: d.description,
+        tags: d.tags,
+      }))
+      const limit =
+        typeof rest.limit === "number" && Number.isFinite(rest.limit)
+          ? Math.max(1, Math.min(KNOWLEDGE_RELATED_LIMIT, Math.floor(rest.limit)))
+          : KNOWLEDGE_RELATED_LIMIT
+      const related = findRelatedKnowledge(seedId, docs, limit)
+      return { type: "knowledge.related", id: seedId, related }
+    }
+
+    case "thread.distill_preview": {
+      const tid = typeof rest.thread_id === "string" ? rest.thread_id : ""
+      if (!tid) return { type: "error", error: "thread.distill_preview requires thread_id" }
+      const thr = threadManager.get(tid)
+      if (!thr) return { type: "error", error: `Thread not found: ${tid}` }
+      const distilled = distillThreadMarkdown({
+        alias: thr.alias,
+        digest: thr.digest,
+        messages: threadManager.getMessages(tid),
+      })
+      return {
+        type: "thread.distill_preview",
+        thread_id: tid,
+        title: distilled.title,
+        markdown: distilled.markdown,
+        redacted_hits: distilled.hits,
+      }
+    }
+
     case "thread.select": {
       const thr = threadManager.get(rest.thread_id)
       if (!thr) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
@@ -2104,6 +2199,7 @@ export async function handleMessage(
         "mcp_selection_mode",
         "active_mcp_server_ids",
         "digest",
+        "topic_folder",
       ]) {
         if (Object.prototype.hasOwnProperty.call(updates, key)) {
           allowedUpdates[key] = updates[key]
@@ -2545,63 +2641,31 @@ export async function handleMessage(
     case "knowledge.list":
       // listKnowledge() → ensureFresh() (same fingerprint path as skills)
       return { type: "knowledge.list", docs: skillEngine.listKnowledge() }
+    case "knowledge.preview": {
+      const loaded = await loadKnowledgePayload(rest)
+      if ("error" in loaded) return { type: "error", error: loaded.error }
+      const preview = skillEngine.previewKnowledge(loaded.text, loaded.fallback)
+      return { type: "knowledge.preview", ...preview }
+    }
     case "knowledge.import": {
-      if (rest.file) {
-        // Import from binary file (docx/pdf/xlsx/etc.) — parse to markdown first
-        const { name, content } = rest.file
-        if (!name || !content) throw new Error("knowledge.import file requires 'name' and 'content'")
-        const buffer = Buffer.from(String(content), "base64")
-        const parsed = await parseFile(buffer, String(name), "application/octet-stream")
-        if (!parsed.success) {
-          return { type: "error", error: parsed.error }
+      const loaded = await loadKnowledgePayload(rest)
+      if ("error" in loaded) return { type: "error", error: loaded.error }
+      const overrides = {
+        title: typeof rest.title === "string" ? rest.title : undefined,
+        description: typeof rest.description === "string" ? rest.description : undefined,
+        tags: Array.isArray(rest.tags) ? rest.tags.map((t: unknown) => String(t)) : undefined,
+      }
+      const imported = skillEngine.importKnowledge(loaded.text, loaded.fallback, undefined, overrides)
+      if (rest.pin_thread_id && imported.id) {
+        const tid = String(rest.pin_thread_id)
+        const t = threadManager.get(tid)
+        if (t) {
+          const ids = Array.from(new Set([...(t.active_knowledge_ids || []), imported.id]))
+          threadManager.update(tid, { active_knowledge_ids: ids })
         }
-        const baseName = String(name).replace(/\.[^.]+$/, "")
-        // Pass parsed text + fallback name; importKnowledge auto-generates frontmatter
-        skillEngine.importKnowledge(parsed.text, baseName)
-      } else if (rest.url) {
-        const urlStr = String(rest.url)
-        const { assertOutboundFetchUrlAllowed } = await import("./security")
-        const ssrf = assertOutboundFetchUrlAllowed(urlStr)
-        if (ssrf) return { type: "error", error: ssrf }
-        let parsed: URL
-        try {
-          parsed = new URL(urlStr)
-        } catch {
-          return { type: "error", error: "Invalid URL" }
-        }
-        const controller = new AbortController()
-        const fetchTimeout = setTimeout(() => controller.abort(), 30000)
-        let response: Response
-        try {
-          response = await fetch(urlStr, {
-            signal: controller.signal,
-            redirect: "manual",
-          })
-        } finally {
-          clearTimeout(fetchTimeout)
-        }
-        if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
-          throw new Error("Redirects are not allowed for knowledge imports")
-        }
-        if (!response.ok) throw new Error(`Failed to fetch knowledge: ${response.status}`)
-        const contentLength = response.headers.get("content-length")
-        const maxSize = 10 * 1024 * 1024
-        if (contentLength && parseInt(contentLength, 10) > maxSize) {
-          throw new Error(`Knowledge file too large: ${contentLength} bytes (max ${maxSize})`)
-        }
-        const body = await response.text()
-        if (body.length > maxSize) {
-          throw new Error(`Knowledge file too large: ${body.length} bytes (max ${maxSize})`)
-        }
-        const urlFallback = path.basename(parsed.pathname || "url-import").replace(/\.[^.]+$/, "") || "url-import"
-        skillEngine.importKnowledge(body, urlFallback)
-      } else if (rest.content) {
-        skillEngine.importKnowledge(rest.content)
-      } else {
-        throw new Error("knowledge.import requires 'content', 'url', or 'file'")
       }
       skillEngine.refresh()
-      return { type: "knowledge.list", docs: skillEngine.listKnowledge() }
+      return { type: "knowledge.list", docs: skillEngine.listKnowledge(), imported }
     }
     case "knowledge.import_directory": {
       // Companion-side bulk import. The extension-side <input webkitdirectory>
@@ -2646,6 +2710,7 @@ export async function handleMessage(
         }
         for (const entry of entries) {
           if (entry.name.startsWith(".")) continue
+          if (isSymlinkOrJunction(dir, entry)) continue
           const full = path.join(dir, entry.name)
           if (entry.isDirectory()) {
             stack.push(full)

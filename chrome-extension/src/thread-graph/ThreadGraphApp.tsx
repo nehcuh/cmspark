@@ -141,7 +141,7 @@ export function ThreadGraphApp() {
         const s = res[THREAD_GRAPH_SNAPSHOT_KEY] as ThreadGraphSnapshot | undefined
         if (cancelled) return
         if (!s || !Array.isArray(s.threads)) {
-          setLoadError("请从 Side Panel ☰ → 关联图谱 打开（需先准备会话数据）。")
+          setLoadError("请从 Side Panel ☰ → 会话关系图 打开（需先准备会话数据）。")
           setSnap(null)
           return
         }
@@ -150,7 +150,7 @@ export function ThreadGraphApp() {
         setFocusId(fid)
         if (fid) setPanelOpen(true) // deep-link: show focus panel (transient)
         if (!isSnapshotFresh(s)) {
-          setStatus("快照可能已过期（>5 分钟）。可在侧栏重新打开图谱以刷新。")
+          setStatus("快照可能已过期（>5 分钟）。可在侧栏重新打开会话关系图以刷新。")
         }
       } catch (e: any) {
         if (!cancelled) setLoadError(e?.message || String(e))
@@ -304,7 +304,7 @@ export function ThreadGraphApp() {
         void chrome.runtime.lastError
       },
     )
-    setStatus("已请求打开会话（图谱保持打开）")
+    setStatus("已请求打开会话（本页保持打开）")
   }, [])
 
   const requestExtractUntagged = useCallback(() => {
@@ -322,7 +322,7 @@ export function ThreadGraphApp() {
           return
         }
         setStatus(
-          `已请求为 ${ids.length} 个未标注会话提取要点。完成后请从侧栏重新打开图谱刷新。`,
+          `已请求为 ${ids.length} 个未标注会话提取要点。完成后请从侧栏重新打开会话关系图刷新。`,
         )
       },
     )
@@ -670,7 +670,7 @@ export function ThreadGraphApp() {
     return (
       <div style={styles.page}>
         <div ref={barRef} style={styles.floatBar}>
-          <strong style={styles.barTitle}>关联图谱</strong>
+          <strong style={styles.barTitle}>会话关系图</strong>
         </div>
         <div style={styles.empty}>{loadError}</div>
       </div>
@@ -687,8 +687,8 @@ export function ThreadGraphApp() {
 
   return (
     <div style={styles.page}>
-      <div ref={barRef} style={styles.floatBar} role="toolbar" aria-label="图谱工具栏">
-        <strong style={styles.barTitle}>关联图谱</strong>
+      <div ref={barRef} style={styles.floatBar} role="toolbar" aria-label="会话关系图工具栏">
+        <strong style={styles.barTitle}>会话关系图</strong>
         <input
           style={styles.search}
           placeholder="搜索会话 / 标签"
@@ -748,7 +748,7 @@ export function ThreadGraphApp() {
           type="button"
           style={styles.barBtnGhost}
           onClick={() => window.close()}
-          title="关闭图谱标签"
+          title="关闭此标签页"
         >
           关闭
         </button>
@@ -894,7 +894,7 @@ export function ThreadGraphApp() {
                   打开会话
                 </button>
                 <div style={{ fontSize: 10, color: tokens.darkMuted, marginTop: 6 }}>
-                  双击节点 / Enter 打开 · 图谱保持打开
+                  双击节点 / Enter 打开 · 本页保持打开
                 </div>
               </>
             ) : (
@@ -929,7 +929,7 @@ export function ThreadGraphApp() {
               {threads.length === 0
                 ? "暂无会话"
                 : !hasEdges
-                  ? "还没有关联边（或节点均为孤立）。请先为会话生成标签，再重新打开图谱；也可勾选「孤立点」查看全部会话。"
+                  ? "还没有关联边（或节点均为孤立）。请先为会话生成标签，再重新打开会话关系图；也可勾选「孤立点」查看全部会话。"
                   : "没有可显示的节点。试试开启「孤立点」，或降低强度阈值 / 清空搜索。"}
               {needsExtract && (
                 <div style={{ marginTop: 14 }}>
@@ -964,7 +964,7 @@ export function ThreadGraphApp() {
           style={styles.canvas}
           role="img"
           tabIndex={0}
-          aria-label="会话关联图谱。方向键切换节点，Enter 打开会话，Esc 取消焦点，0 适应画布。标签默认隐藏，悬停或放大后显示。"
+          aria-label="会话关系图。方向键切换节点，Enter 打开会话，Esc 取消焦点，0 适应画布。标签默认隐藏，悬停或放大后显示。"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}

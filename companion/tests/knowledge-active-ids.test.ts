@@ -100,6 +100,18 @@ test("thread.update allowlist keys include active_knowledge_ids (static contract
   )
   assert.ok(m, "thread.update allowlist not found")
   assert.match(m![1], /"active_knowledge_ids"/)
+  assert.match(m![1], /"topic_folder"/)
+})
+
+test("topic_folder persists sanitized and is not a Project entity", () => {
+  const tm = new ThreadManager()
+  const th = tm.create("folder-seed")
+  tm.update(th.id, { topic_folder: " 竞品/分析 " })
+  assert.equal(tm.get(th.id)?.topic_folder, "竞品分析")
+  const reloaded = new ThreadManager()
+  assert.equal(reloaded.get(th.id)?.topic_folder, "竞品分析")
+  reloaded.update(th.id, { topic_folder: null })
+  assert.equal(reloaded.get(th.id)?.topic_folder, null)
 })
 
 test("apply pack knowledge file activates active_knowledge_ids; unapply restores", () => {

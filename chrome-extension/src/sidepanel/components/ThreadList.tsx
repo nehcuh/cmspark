@@ -107,7 +107,7 @@ function saveExpandState(state: ThreadListExpandState) {
   }
 }
 
-type ListView = "time" | "tags"
+type ListView = "time" | "tags" | "topics"
 
 export function ThreadList() {
   const { state, dispatch } = useAgentStore()
@@ -832,7 +832,7 @@ export function ThreadList() {
     beginExtractBatch(ids, force)
   }
 
-  const panelMaxHeight = selectMode || view === "tags" ? 480 : 360
+  const panelMaxHeight = selectMode || view === "tags" || view === "topics" ? 480 : 360
 
   useEffect(() => {
     if (!open) {
@@ -944,6 +944,11 @@ export function ThreadList() {
             </div>
           )}
           {rel && <div style={styles.relTime}>{rel}</div>}
+          {t.topic_folder ? (
+            <div style={styles.relTime} title="话题夹">
+              夹 · {t.topic_folder}
+            </div>
+          ) : null}
         </div>
         {!selectMode && (
           <>
@@ -953,7 +958,7 @@ export function ThreadList() {
                 e.stopPropagation()
                 setRelatedSeedId((prev) => (prev === t.id ? null : t.id))
               }}
-              title="相关会话"
+              title="列表内相关"
             >
               🔗
             </button>
@@ -966,6 +971,42 @@ export function ThreadList() {
               title="提取要点 / 标签"
             >
               🏷
+            </button>
+            <button
+              style={styles.iconBtn}
+              onClick={(e) => {
+                e.stopPropagation()
+                setOpen(false)
+                chrome.runtime.sendMessage({ type: "thread.distill_preview", thread_id: t.id })
+              }}
+              title="提炼为知识（需确认）"
+            >
+              知识
+            </button>
+            <button
+              style={styles.iconBtn}
+              onClick={(e) => {
+                e.stopPropagation()
+                const name = window.prompt("话题夹名称（空则移出）", t.topic_folder || "")
+                if (name === null) return
+                const folder = name
+                  .normalize("NFC")
+                  .replace(/[\x00-\x1F\x7F\\/]/g, "")
+                  .trim()
+                  .slice(0, 40) || null
+                chrome.runtime.sendMessage({
+                  type: "thread.update",
+                  thread_id: t.id,
+                  updates: { topic_folder: folder },
+                })
+                dispatch({
+                  type: "UPSERT_THREAD",
+                  thread: { ...t, topic_folder: folder },
+                })
+              }}
+              title="移入话题夹"
+            >
+              夹
             </button>
             <button
               style={styles.iconBtn}
@@ -1238,6 +1279,45 @@ export function ThreadList() {
     )
   }
 
+  const renderTopicsView = () => {
+    const groups = new Map<string, Thread[]>()
+    for (const t of filtered as Thread[]) {
+      const key = t.topic_folder || "未分组"
+      const arr = groups.get(key) || []
+      arr.push(t)
+      groups.set(key, arr)
+    }
+    const keys = [...groups.keys()].sort((a, b) => {
+      if (a === "未分组") return 1
+      if (b === "未分组") return -1
+      return a.localeCompare(b, "zh")
+    })
+    return (
+      <>
+        {keys.map((key) => (
+          <div key={key}>
+            <div style={styles.groupHeader}>
+              <span style={styles.groupLabel}>
+                {key} · {groups.get(key)!.length}
+              </span>
+            </div>
+            {groups.get(key)!.map((t) => renderThreadRow(t))}
+          </div>
+        ))}
+        {keys.length === 1 && keys[0] === "未分组" && filtered.length > 0 && (
+          <div style={{ color: tokens.textMuted, fontSize: 11, padding: "8px 12px" }}>
+            点行上的「夹」把会话放进话题夹
+          </div>
+        )}
+        {filtered.length === 0 && (
+          <div style={{ color: tokens.textSecondary, fontSize: 12, padding: 12, textAlign: "center" }}>
+            无匹配线程
+          </div>
+        )}
+      </>
+    )
+  }
+
   return (
     <div style={{ position: "relative" }}>
       <button
@@ -1295,6 +1375,13 @@ export function ThreadList() {
                   onClick={() => setView("tags")}
                 >
                   标签
+                </button>
+                <button
+                  type="button"
+                  style={view === "topics" ? styles.viewBtnActive : styles.viewBtn}
+                  onClick={() => setView("topics")}
+                >
+                  话题
                 </button>
               </div>
               <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
@@ -1395,9 +1482,9 @@ export function ThreadList() {
                           type="button"
                           style={styles.menuItem}
                           onClick={openThreadGraph}
-                          title="在新标签页打开力导向关联图（类 Obsidian）"
+                          title="在新标签页打开会话关系图"
                         >
-                          🕸 关联图谱
+                          会话关系图
                         </button>
                         <button
                           type="button"
@@ -1511,7 +1598,7 @@ export function ThreadList() {
             </div>
 
             <div style={styles.list}>
-              {view === "time" ? renderTimeline() : renderTagsView()}
+              {view === "time" ? renderTimeline() : view === "tags" ? renderTagsView() : renderTopicsView()}
             </div>
 
             {selectMode && (

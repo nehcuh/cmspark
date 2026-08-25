@@ -13,6 +13,23 @@ import { ThreadManager } from "../threads/thread-manager"
 import { matchSite } from "./site-matcher"
 import { sanitizeKnowledgeContent } from "./content-sanitizer"
 import { chunkFile, searchChunks, type FileChunk } from "../file-chunker"
+import {
+  allocateDocIdentity,
+  cleanTitle,
+  isLegacySafeId,
+  isSymlinkOrJunction,
+  isUnsafePathComponent,
+  listStemSet,
+  writeRestrictedFile,
+} from "./doc-identity"
+import { validateWildcardPattern } from "../security"
+
+export type RetrievedSource = {
+  id: string
+  title: string
+  chunk_index?: number
+  chars: number
+}
 
 interface ExperienceEntry {
   id: string
@@ -27,6 +44,10 @@ interface ExperienceEntry {
 
 interface SkillMeta {
   name: string
+  /** Stable id when distinct from name (new CJK docs). */
+  id?: string
+  /** Display heading; CJK allowed. Falls back to name. */
+  title?: string
   description: string
   type: "prompt_template" | "tool_chain" | "sub_agent" | "site_knowledge" | "domain_knowledge"
   site?: string
@@ -181,6 +202,25 @@ export class SkillEngine {
     return !this.isKnowledgeDoc(skill)
   }
 
+  /** Stems already used as skill/knowledge id or filename (F-I-6). */
+  private collectTakenStems(): Set<string> {
+    this.ensureFresh()
+    const taken = new Set<string>()
+    for (const dir of [
+      this.skillsDir,
+      this.builtinDir,
+      path.join(this.knowledgeDir, "global"),
+      path.join(this.knowledgeDir, "sites"),
+    ]) {
+      for (const stem of listStemSet(dir)) taken.add(stem)
+    }
+    for (const s of this.skillsCache) {
+      if (s.name) taken.add(s.name.toLowerCase())
+      if (s.id) taken.add(s.id.toLowerCase())
+    }
+    return taken
+  }
+
   private rebuildKnowledgeChunks(): void {
     this.knowledgeChunks.clear()
     for (const skill of this.skillsCache) {
@@ -189,6 +229,9 @@ export class SkillEngine {
       // Only store chunks if the doc is actually large enough to need splitting
       if (chunked.chunks.length > 1 || chunked.totalTokens > KNOWLEDGE_SEARCH_THRESHOLD_TOKENS) {
         this.knowledgeChunks.set(skill.name, chunked.chunks)
+        if (skill.id && skill.id !== skill.name) {
+          this.knowledgeChunks.set(skill.id, chunked.chunks)
+        }
       }
     }
   }
@@ -213,6 +256,8 @@ export class SkillEngine {
               const raw = fs.readFileSync(skillMdPath, "utf-8")
               const parsed = matter(raw)
               const name = parsed.data.name || entry.name
+              const id = typeof parsed.data.id === "string" ? parsed.data.id : undefined
+              const title = typeof parsed.data.title === "string" ? parsed.data.title : undefined
               const description = parsed.data.description || ""
               const type = parsed.data.type || "prompt_template"
               const site = parsed.data.site
@@ -230,6 +275,8 @@ export class SkillEngine {
 
               this.skillsCache.push({
                 name,
+                id,
+                title,
                 description,
                 type,
                 builtin,
@@ -252,6 +299,8 @@ export class SkillEngine {
             const raw = fs.readFileSync(entryPath, "utf-8")
             const parsed = matter(raw)
             const name = parsed.data.name || entry.name.replace(".md", "")
+            const id = typeof parsed.data.id === "string" ? parsed.data.id : undefined
+            const title = typeof parsed.data.title === "string" ? parsed.data.title : undefined
             const description = parsed.data.description || ""
             const type = parsed.data.type || "prompt_template"
             const site = parsed.data.site
@@ -261,6 +310,8 @@ export class SkillEngine {
 
             this.skillsCache.push({
               name,
+              id,
+              title,
               description,
               type,
               builtin,
@@ -288,6 +339,8 @@ export class SkillEngine {
       .filter(s => this.isSkillDoc(s))
       .map(s => ({
         name: s.name,
+        id: s.id,
+        title: s.title,
         description: s.description,
         type: s.type,
         site: s.site,
@@ -302,7 +355,7 @@ export class SkillEngine {
 
   get(name: string): Skill | undefined {
     this.ensureFresh()
-    return this.skillsCache.find(s => s.name === name)
+    return this.skillsCache.find(s => s.name === name || s.id === name)
   }
 
   getBySite(hostname: string): Skill[] {
@@ -359,10 +412,11 @@ export class SkillEngine {
     return active.map(name => this.get(name)).filter(Boolean) as Skill[]
   }
 
-  /** Return full content of a skill by name. */
+  /** Return full content of a skill by name. Files under knowledge/ are not use_skill (F-I-6). */
   loadContent(name: string): string | null {
     const skill = this.get(name)
-    return skill?.content || null
+    if (!skill || this.isUnderKnowledgeDir(skill.source_file)) return null
+    return skill.content || null
   }
 
   /** LLM semantic re-ranking for low-confidence TF-IDF matches.
@@ -578,12 +632,31 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     knowledgeIds?: string[],
     query?: string,
   ): string {
+    return this.buildSystemPromptWithSources(threadId, hostname, skillIds, knowledgeIds, query).prompt
+  }
+
+  buildSystemPromptWithSources(
+    threadId: string,
+    hostname?: string,
+    skillIds?: string[],
+    knowledgeIds?: string[],
+    query?: string,
+  ): { prompt: string; retrieved_sources: RetrievedSource[] } {
     const skills = skillIds
       ? skillIds.map(id => this.get(id)).filter(Boolean) as Skill[]
       : this.getActiveForThread(threadId)
 
     const parts: string[] = []
     const injectedNames = new Set<string>()
+    const retrieved_sources: RetrievedSource[] = []
+
+    const pushKnowledge = (k: Skill, summary: string, chunkIndex?: number) => {
+      const id = k.id || k.name
+      const title = sanitizeKnowledgeContent(k.title || k.name)
+      injectedNames.add(k.name)
+      retrieved_sources.push({ id, title, chunk_index: chunkIndex, chars: summary.length })
+      parts.push(`## Knowledge: ${title} [${id}]\n${summary}`)
+    }
 
     // --- Safety Guard: ALWAYS inject security skills (immutable, builtin) ---
     const securitySkills = this.getSecuritySkills()
@@ -598,11 +671,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     // Experience skills: inject entry summaries directly (no use_skill needed)
     for (const s of experienceSkills) {
       const summary = this.getEntriesSummary(s.name)
-      if (summary) {
-        injectedNames.add(s.name)
-        const label = s.type === "site_knowledge" ? `Site: ${s.site}` : `Domain: ${s.name}`
-        parts.push(`## ${label}\n${summary}`)
-      }
+      if (summary) pushKnowledge(s, summary)
     }
 
     // Knowledge IDs filtering: if knowledgeIds provided, only include matching knowledge
@@ -611,49 +680,30 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       : undefined
 
     if (knowledgeToInject) {
-      // Inject only the specified knowledge docs
       for (const k of knowledgeToInject) {
         if (injectedNames.has(k.name)) continue
         if (!this.isKnowledgeDoc(k)) continue
         const summary = this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k, query)
-        if (summary) {
-          injectedNames.add(k.name)
-          const label =
-            k.type === "site_knowledge"
-              ? `Site: ${k.site || k.name}`
-              : k.type === "domain_knowledge"
-                ? `Domain: ${k.name}`
-                : `Knowledge: ${k.name}`
-          parts.push(`## ${label}\n${summary}`)
-        }
+        if (summary) pushKnowledge(k, summary)
       }
     } else {
-      // Global knowledge: always inject if present
       const globalKnowledge = this.getGlobalKnowledge()
       for (const k of globalKnowledge) {
         if (injectedNames.has(k.name)) continue
         const summary = this.getKnowledgeSummary(k, query)
-        if (summary) {
-          injectedNames.add(k.name)
-          parts.push(`## Global Knowledge: ${k.name}\n${summary}`)
-        }
+        if (summary) pushKnowledge(k, summary)
       }
 
-      // Site knowledge: inject if hostname is provided and matches
       if (hostname) {
         const siteKnowledge = this.getBySite(hostname)
         for (const k of siteKnowledge) {
           if (injectedNames.has(k.name)) continue
           const summary = this.getKnowledgeSummary(k, query)
-          if (summary) {
-            injectedNames.add(k.name)
-            parts.push(`## Site Knowledge: ${k.site}\n${summary}`)
-          }
+          if (summary) pushKnowledge(k, summary)
         }
       }
     }
 
-    // Regular skills: compact index, use_skill on demand
     if (promptSkills.length > 0) {
       const index = promptSkills.map(s =>
         `- \`${s.name}\`: ${s.description || "(no description)"}`
@@ -661,7 +711,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       parts.push(`Available skills (call use_skill(name) to load full instructions when relevant):\n${index}`)
     }
 
-    return parts.join("\n\n")
+    return { prompt: parts.join("\n\n"), retrieved_sources }
   }
 
   /** Get all global knowledge docs from knowledge/global/ directory. */
@@ -680,11 +730,14 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
   private getKnowledgeSummary(skill: Skill, query?: string): string {
     const chunks = this.knowledgeChunks.get(skill.name)
 
-    // Large doc + query → RAG chunk retrieval
+    // Large doc + query → RAG chunk retrieval (tags + description in the query bag)
     if (chunks && chunks.length > 0 && query && query.trim()) {
-      const matched = searchChunks(chunks, query.trim(), KNOWLEDGE_SEARCH_TOPK)
+      const bag = [query.trim(), skill.title || "", skill.description || "", ...(skill.tags || [])]
+        .filter(Boolean)
+        .join(" ")
+      const matched = searchChunks(chunks, bag, KNOWLEDGE_SEARCH_TOPK)
       if (matched.length) {
-        return matched.map(c => c.text).join("\n\n---\n\n").trim()
+        return matched.map(c => sanitizeKnowledgeContent(c.text)).join("\n\n---\n\n").trim()
       }
       // If no chunks matched the query, fall through to truncated summary
     }
@@ -722,7 +775,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         parts.push(`  [${e.category}] ${e.content} — ${e.stale_reason}`)
       }
     }
-    return parts.join("\n")
+    return sanitizeKnowledgeContent(parts.join("\n"))
   }
 
   /** Add an entry to a skill and persist to disk. */
@@ -759,6 +812,8 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       description: skill.description,
       type: skill.type,
     }
+    if (skill.id) frontmatter.id = skill.id
+    if (skill.title) frontmatter.title = skill.title
     if (skill.site) frontmatter.site = skill.site
     if (skill.tags?.length) frontmatter.tags = skill.tags
     if (skill.priority) frontmatter.priority = skill.priority
@@ -776,7 +831,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     }
     const yamlStr = yaml.dump(frontmatter, { lineWidth: -1, noRefs: true, quotingType: '"' })
     const md = `---\n${yamlStr}---\n\n${body}`
-    fs.writeFileSync(skill.source_file, md)
+    writeRestrictedFile(skill.source_file, md)
   }
 
   /** Build human-readable markdown from entries. */
@@ -851,14 +906,13 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const name = parsed.data.name
     if (!name) throw new Error("Skill must have a 'name' field in frontmatter (e.g. ---\\nname: my-skill\\n---)")
 
-    // Ensure unique filename
-    const safeName = name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
-    if (!safeName || safeName === "-") {
-      throw new Error(`Skill name '${name}' results in an invalid filename after sanitization. Use alphanumeric characters.`)
-    }
-    const filePath = path.join(this.skillsDir, `${safeName}.md`)
-
-    fs.writeFileSync(filePath, content)
+    const ident = allocateDocIdentity({
+      title: String(name),
+      preferredId: isLegacySafeId(String(name)) ? String(name) : undefined,
+      takenStems: listStemSet(this.skillsDir),
+    })
+    const filePath = path.join(this.skillsDir, `${ident.filenameStem}.md`)
+    writeRestrictedFile(filePath, content)
     this.refresh()
     return { name: String(name), destPath: filePath }
   }
@@ -954,15 +1008,12 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const raw = zip.readAsText(skillMdEntry)
     const parsed = matter(raw)
     const skillName = parsed.data.name || folderName
-    const safeName = String(skillName)
-      .replace(/[^a-zA-Z0-9-]/g, "-")
-      .toLowerCase()
-    if (!safeName || safeName === "-") {
-      throw new Error(
-        `Skill name '${skillName}' results in an invalid directory name after sanitization`,
-      )
-    }
-
+    const ident = allocateDocIdentity({
+      title: String(skillName),
+      preferredId: isLegacySafeId(String(skillName)) ? String(skillName) : undefined,
+      takenStems: listStemSet(this.skillsDir),
+    })
+    const safeName = ident.filenameStem
     const destDir = path.join(this.skillsDir, safeName)
     // Atomic overwrite: extract to tmp under skills root, then rename into place.
     // On failure only tmp is removed — existing skill at destDir is preserved.
@@ -1047,6 +1098,11 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         ) {
           throw new Error(`Security Violation: Invalid zip entry path: ${entry.entryName}`)
         }
+        const zipBase = path.basename(relativePath)
+        const zipStem = zipBase.replace(/\.[^.]+$/, "") || zipBase
+        if (isUnsafePathComponent(zipStem) || isUnsafePathComponent(zipBase)) {
+          throw new Error(`Security Violation: Reserved or unsafe zip entry name: ${entry.entryName}`)
+        }
 
         const resolvedPath = path.resolve(tmpDir, relativePath)
         const normalizedTmp = path.resolve(tmpDir)
@@ -1091,7 +1147,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         if (relativePath.includes("/")) {
           fs.mkdirSync(path.join(tmpDir, path.dirname(relativePath)), { recursive: true })
         }
-        fs.writeFileSync(resolvedPath, data)
+        writeRestrictedFile(resolvedPath, data)
       }
 
       // Commit without rm-then-rename gap: dest → bak, tmp → dest, then drop bak.
@@ -1206,6 +1262,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const fullPath = path.join(dir, entry.name)
       const relPath = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (isSymlinkOrJunction(dir, entry)) continue
       if (entry.isDirectory()) {
         results.push(...this.readDirectoryFiles(fullPath, relPath))
       } else if (entry.isFile()) {
@@ -1224,8 +1281,12 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const name = parsed.data.name
     if (!name) throw new Error("SKILL.md must have a 'name' field in frontmatter")
 
-    const safeName = name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
-    const destDir = path.join(this.skillsDir, safeName)
+    const ident = allocateDocIdentity({
+      title: String(name),
+      preferredId: isLegacySafeId(String(name)) ? String(name) : undefined,
+      takenStems: listStemSet(this.skillsDir),
+    })
+    const destDir = path.join(this.skillsDir, ident.filenameStem)
 
     if (fs.existsSync(destDir)) {
       fs.rmSync(destDir, { recursive: true })
@@ -1252,7 +1313,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
           fs.mkdirSync(path.join(destDir, subDir), { recursive: true })
         }
       }
-      fs.writeFileSync(resolvedPath, file.content)
+      writeRestrictedFile(resolvedPath, file.content)
     }
 
     this.refresh()
@@ -1280,6 +1341,8 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       .filter(s => this.isKnowledgeDoc(s))
       .map(s => ({
         name: s.name,
+        id: s.id,
+        title: s.title,
         description: s.description,
         type: s.type,
         site: s.site,
@@ -1292,7 +1355,31 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       }))
   }
 
-  importKnowledge(content: string, fallbackName?: string, nameOverride?: string): void {
+  previewKnowledge(content: string, fallbackName?: string): { title: string; description: string; preview: string; char_count: number } {
+    const stamped = this.ensureKnowledgeFrontmatter(content, fallbackName)
+    let parsed: { data: Record<string, unknown>; content: string }
+    try {
+      parsed = matter(stamped)
+    } catch {
+      parsed = { data: {}, content: content.trimStart() }
+    }
+    const title = String(parsed.data.title || parsed.data.name || fallbackName || "未命名")
+    const description = typeof parsed.data.description === "string" ? parsed.data.description : ""
+    const body = parsed.content || ""
+    return {
+      title,
+      description,
+      preview: body.slice(0, 4000),
+      char_count: body.length,
+    }
+  }
+
+  importKnowledge(
+    content: string,
+    fallbackName?: string,
+    nameOverride?: string,
+    overrides?: { title?: string; description?: string; tags?: string[] },
+  ): { id: string; title: string } {
     content = this.ensureKnowledgeFrontmatter(content, fallbackName, nameOverride)
 
     let parsed: { data: { name?: string; site?: string; type?: string }; content: string }
@@ -1304,20 +1391,56 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const name = parsed.data.name
     if (!name) throw new Error("Knowledge doc must have a 'name' field")
 
-    const safeName = name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
-    if (!safeName || safeName === "-") {
-      throw new Error(`Knowledge name '${name}' results in an invalid filename after sanitization. Use alphanumeric characters.`)
-    }
-
-    // Determine subdirectory: site_knowledge with site field → sites/, otherwise global/
+    const title = String((parsed.data as { title?: string }).title || name)
     const isSiteKnowledge = parsed.data.type === "site_knowledge" || parsed.data.site
     const subDir = isSiteKnowledge ? "sites" : "global"
     const targetDir = path.join(this.knowledgeDir, subDir)
-    fs.mkdirSync(targetDir, { recursive: true })
-    const filePath = path.join(targetDir, `${safeName}.md`)
+    fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 })
 
-    fs.writeFileSync(filePath, content)
+    const taken = this.collectTakenStems()
+    const preferred = isLegacySafeId(String(name)) ? String(name) : undefined
+    if (preferred) {
+      const existingKnowledge = path.join(targetDir, `${preferred}.md`)
+      if (fs.existsSync(existingKnowledge)) taken.delete(preferred.toLowerCase())
+    }
+    let ident = allocateDocIdentity({
+      title,
+      preferredId: preferred,
+      seed: nameOverride || title,
+      takenStems: taken,
+    })
+
+    const data = this.allowlistKnowledgeFrontmatter(parsed.data as Record<string, unknown>)
+    if (overrides?.title) ident = { ...ident, title: cleanTitle(overrides.title) }
+    if (overrides?.description) data.description = String(overrides.description).slice(0, 500)
+    if (overrides?.tags) data.tags = overrides.tags.map((t) => String(t)).filter(Boolean).slice(0, 8)
+    data.name = ident.id
+    data.id = ident.id
+    data.title = ident.title
+    const yamlStr = yaml.dump(data, { lineWidth: -1, noRefs: true, quotingType: '"' })
+    const stamped = `---\n${yamlStr}---\n\n${parsed.content.trimStart()}`
+
+    const filePath = path.join(targetDir, `${ident.filenameStem}.md`)
+    writeRestrictedFile(filePath, stamped)
     this.refresh()
+    return { id: ident.id, title: ident.title }
+  }
+
+  /** F-S-4: untrusted ingest may only keep a small allowlist of frontmatter keys. */
+  private allowlistKnowledgeFrontmatter(raw: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = {}
+    if (typeof raw.description === "string") out.description = raw.description.slice(0, 500)
+    const type = raw.type
+    if (type === "site_knowledge" || type === "domain_knowledge") out.type = type
+    else out.type = "domain_knowledge"
+    if (typeof raw.site === "string" && raw.site.trim()) {
+      const check = validateWildcardPattern(raw.site.trim())
+      if (check.ok) out.site = raw.site.trim()
+    }
+    if (Array.isArray(raw.tags)) {
+      out.tags = raw.tags.map((t) => String(t)).filter(Boolean).slice(0, 8)
+    }
+    return out
   }
 
   /** Auto-generate frontmatter for knowledge docs that lack it.
@@ -1424,7 +1547,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const matched = searchChunks(allChunks, query, topK)
     if (!matched.length) return ""
 
-    return matched.map(c => c.text).join("\n\n---\n\n")
+    return matched.map(c => sanitizeKnowledgeContent(c.text)).join("\n\n---\n\n")
   }
 
   /** Create a new site_knowledge or domain_knowledge skill with initial entry. */
@@ -1435,8 +1558,12 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     tags?: string[],
     entry?: ExperienceEntry,
   ): void {
-    const safeName = name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
-    const filePath = path.join(this.skillsDir, `${safeName}.md`)
+    const ident = allocateDocIdentity({
+      title: name,
+      preferredId: isLegacySafeId(name) ? name : undefined,
+      takenStems: listStemSet(this.skillsDir),
+    })
+    const filePath = path.join(this.skillsDir, `${ident.filenameStem}.md`)
     if (fs.existsSync(filePath)) {
       // Skill already exists, just add entry
       const existing = this.get(name)
@@ -1474,7 +1601,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       md += `\n# 记录列表\n\n- ${icon} ${entry.content}`
     }
 
-    fs.writeFileSync(filePath, md)
+    writeRestrictedFile(filePath, md)
     this.refresh()
   }
 }

@@ -1346,7 +1346,7 @@ export function PacksPanel() {
               {(state.knowledgeDocs || []).length === 0 && (
                 <div style={styles.empty}>暂无知识文档，可到「知识」面板导入</div>
               )}
-              {(state.knowledgeDocs || []).map((d: { name: string; description?: string }) => (
+              {(state.knowledgeDocs || []).map((d: { name: string; title?: string; description?: string }) => (
                 <label key={d.name} style={styles.checkRow}>
                   <input
                     type="checkbox"
@@ -1354,7 +1354,7 @@ export function PacksPanel() {
                     onChange={() => toggleKnowledge(d.name)}
                   />
                   <span>
-                    <strong>{d.name}</strong>
+                    <strong>{d.title || d.name}</strong>
                     {d.description ? (
                       <span style={{ color: tokens.textMuted, display: "block", fontSize: 10 }}>
                         {d.description.slice(0, 80)}
