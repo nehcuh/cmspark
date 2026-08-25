@@ -26,6 +26,7 @@ import {
   encodeSummonerMicEnd,
   encodeSummonerMicWav,
   encodeSummonerNewThread,
+  encodeSummonerFiles,
   encodeSummonerSettings,
   encodeSummonerSettingsSet,
   encodeSummonerTool,
@@ -161,6 +162,17 @@ test("round-trip summoner.new_thread", () => {
   const msg = encodeSummonerNewThread()
   assert.equal(msg.type, "summoner.new_thread")
   roundTripInbound(msg)
+})
+
+test("round-trip summoner.files", () => {
+  const msg = encodeSummonerFiles({
+    type: "summoner.files",
+    thread_id: "t1",
+    files: [{ name: "a.txt", type: "text/plain", content: "YQ==" }],
+  })
+  roundTripInbound(msg)
+  assert.equal(decodeSummonerInbound({ type: "summoner.files", thread_id: "t1", files: [] }), null)
+  assert.equal(decodeSummonerInbound({ type: "summoner.files", files: [{ name: "a", content: "YQ==" }] }), null)
 })
 
 test("round-trip summoner.mic start/chunk/end/wav", () => {

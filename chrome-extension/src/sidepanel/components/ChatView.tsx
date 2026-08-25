@@ -53,6 +53,7 @@ import "katex/dist/katex.min.css"
 //                      them before the katex inline tokenizer runs.
 //   - throwOnError   → invalid LaTeX degrades to inline text instead of throwing.
 marked.use(markedKatex({ throwOnError: false, output: "html", nonStandard: true }))
+marked.use({ gfm: true, breaks: true })
 
 // Harden markdown links: open in a new tab with noopener, and intercept clicks
 // inside the extension side panel so external origins cannot navigate the panel.
@@ -1531,7 +1532,7 @@ function MarkdownRenderer({ content, renderMermaid = false }: { content: string;
   const { html, error } = useMemo(() => {
     if (!content) return { html: "", error: false }
     try {
-      const rawHtml = marked.parse(content, { async: false }) as string
+      const rawHtml = marked.parse(content, { async: false, breaks: true, gfm: true }) as string
       const sanitized = DOMPurify.sanitize(rawHtml, {
         ALLOWED_TAGS: [
           "p", "br", "strong", "em", "u", "s", "del", "ins",
@@ -1700,7 +1701,7 @@ const markdownCSS = `
   .markdown-body h1 { font-size: 16px; border-bottom: 1px solid ${tokens.border}; padding-bottom: 4px; }
   .markdown-body h2 { font-size: 14px; }
   .markdown-body h3 { font-size: 13px; }
-  .markdown-body p { margin: 4px 0; line-height: 1.5; }
+  .markdown-body p { margin: 8px 0; line-height: 1.55; }
   .markdown-body ul, .markdown-body ol { margin: 4px 0; padding-left: 18px; }
   .markdown-body li { margin: 2px 0; }
   .markdown-body a { color: ${tokens.accent}; text-decoration: none; }

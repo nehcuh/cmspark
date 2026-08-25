@@ -372,7 +372,7 @@ class TrayDelegate: NSObject {
     } else if tag == MenuTag.pairing.rawValue {
       jsonLine(["type": "click", "action": "show-pairing"])
     } else if tag == MenuTag.summoner.rawValue {
-      // Overlay opens locally; stdout summoner.ready lets Node hydrate. Not a confirm surface.
+      // Mac 快捷提问 = native HUD（无标题条、无左轨），不是 Chromium --app。
       summonerController.open(threadId: "")
     } else if tag == MenuTag.summonerHotkey.rawValue {
       summonerController.open(threadId: "")
@@ -609,6 +609,15 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
 
   case "summoner.packs":
     summonerController.applyPacks(json)
+
+  case "summoner.mcp.servers":
+    summonerController.applyMcpServers(json)
+
+  case "summoner.skills":
+    summonerController.applySkills(json)
+
+  case "summoner.knowledge":
+    summonerController.applyKnowledge(json)
 
   case "quit":
     delegate.shutdown()
@@ -1407,7 +1416,6 @@ func registerSummonerHotKey(combo: String) -> Bool {
 }
 
 func handleSummonerHotKeyPressed() {
-  // IME composing in the overlay: ignore hotkey (and Return-to-send lives in NSTextViewDelegate).
   if summonerController.composingNow {
     jsonLine(["type": "summoner.composing", "on": true])
     return

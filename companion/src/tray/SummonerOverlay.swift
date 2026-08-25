@@ -8,9 +8,17 @@ import AVFoundation
 // ---------------------------------------------------------------------------
 // SummonerController — P0 capture overlay (same process as tray; third window).
 // Lazy NSPanel (.nonactivatingPanel + .floating). Close ≠ chat.abort.
-// Look: two-phase capture + 看山 white tokens. Transcript is plaintext 你: / 助手: lines, not bubbles.
+// Look: one-bar HUD that expands into icon-rail + one list + transcript. Composer stays at the bottom.
 // Overlay is capture-only — not an L2 gate surface.
 // ---------------------------------------------------------------------------
+
+/// Borderless NSPanel cannot become key unless overridden (NSWindow default:
+/// no title bar → canBecomeKey == false). Without this, the HUD composer
+/// never focuses, NSOpenPanel.begin is silent, and mic TCC/engine fail.
+final class SummonerPanel: NSPanel {
+  override var canBecomeKey: Bool { true }
+  override var canBecomeMain: Bool { false }
+}
 
 enum SummonerTokens {
   static let paper = NSColor.white
@@ -31,8 +39,27 @@ enum SummonerTokens {
 private let summonerWindowTitle = "CMspark 召唤器（实验）"
 private let summonerTalkPlaceholder = "说点什么，按回车发送…"
 private let summonerTalkHint = "回车发送/纠偏 · Shift+Enter 排队 · # 搜标题"
-private let summonerCtaCopy = "我们不能替你打开侧栏。可激活 Google Chrome，然后点工具栏 CMspark（没有就拼图 🧩 钉上）。"
-private let summonerDetachedInfo = "浏览器未连接 · 网页操作请点工具栏图标（不能替你打开侧栏）"
+private let summonerExpandHint = "回车发送 · Shift+Enter 排队 · # 搜标题 · ⌃ 收起"
+private let summonerHudWidth: CGFloat = 720
+private let summonerWorkbenchHeight: CGFloat = 428
+private let summonerCtaCopy = "可激活 Google Chrome，然后点工具栏 CMspark（没有就拼图 🧩 钉上）。"
+private let summonerDetachedInfo = "浏览器未连接 · 网页操作请点工具栏图标"
+private let summonerFileMaxBytes = 6 * 1024 * 1024
+private let summonerHudInnerWidth: CGFloat = 696
+
+private func mimeTypeForAttach(url: URL) -> String {
+  switch url.pathExtension.lowercased() {
+  case "txt", "md", "csv", "log": return "text/plain"
+  case "json": return "application/json"
+  case "pdf": return "application/pdf"
+  case "png": return "image/png"
+  case "jpg", "jpeg": return "image/jpeg"
+  case "gif": return "image/gif"
+  case "webp": return "image/webp"
+  case "html", "htm": return "text/html"
+  default: return "application/octet-stream"
+  }
+}
 
 private func wavFromPcmS16le(_ pcm: Data, sampleRate: Int, channels: Int) -> Data {
   var d = Data()
@@ -177,12 +204,21 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var sideNote: NSTextField?
   private var pickerBox: NSView?
   private var lastThreadField: NSTextField?
-  private var mcpField: NSTextField?
-  private var railBox: NSView?
-  private var railThreadStack: NSStackView?
-  private var railPackStack: NSStackView?
-  private var railMcpField: NSTextField?
   private var micButton: NSButton?
+  private var clipButton: NSButton?
+  private var plusButton: NSButton?
+  private var expandButton: NSButton?
+  private var workbenchBox: NSView?
+  private var threadListStack: NSStackView?
+  private var listHeadField: NSTextField?
+  private var expanded = false
+  private var railSection = 0
+  private var threadRows: [RecentThread] = []
+  private var packRows: [[String: Any]] = []
+  private var mcpRows: [[String: Any]] = []
+  private var skillRows: [[String: Any]] = []
+  private var knowledgeRows: [[String: Any]] = []
+  private var workbenchHeightConstraint: NSLayoutConstraint?
   private var settingsBox: NSView?
   private var settingsIdleButtons: [NSButton] = []
   private var settingsChromeButtons: [NSButton] = []
@@ -205,6 +241,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     }
     if window == nil { window = makeWindow() }
     guard let window = window else { return }
+    expanded = false
+    railSection = 0
     isOpen = true
     applyPhase()
     NSApp.activate(ignoringOtherApps: true)
@@ -219,6 +257,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   func hide() {
     searchTimer?.invalidate()
     searchTimer = nil
+    expanded = false
+    railSection = 0
     window?.orderOut(nil)
     emitCompanionUiRect("overlay", window: nil)
     emitClosedIfOpen()
@@ -288,81 +328,396 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   func applyMcp(_ names: [String]) {
-    let copy = names.isEmpty
-      ? "未连接 · 去侧栏添加"
-      : names.joined(separator: "、")
-    mcpField?.stringValue = "MCP · " + copy
-    railMcpField?.stringValue = copy
-    mcpField?.isHidden = true
-    railMcpField?.isHidden = false
-    relayout()
+    _ = names
+  }
+
+  func applyMcpServers(_ json: [String: Any]) {
+    mcpRows = json["servers"] as? [[String: Any]] ?? []
+    if railSection == 4 { refreshMcpList() }
+  }
+
+  func applySkills(_ json: [String: Any]) {
+    skillRows = json["skills"] as? [[String: Any]] ?? []
+    if railSection == 3 { refreshSkillList() }
+  }
+
+  func applyKnowledge(_ json: [String: Any]) {
+    knowledgeRows = json["docs"] as? [[String: Any]] ?? []
+    if railSection == 2 { refreshKnowledgeList() }
   }
 
   func applyThreads(_ json: [String: Any]) {
     let raw = json["threads"] as? [[String: Any]] ?? []
-    guard let stack = railThreadStack else { return }
-    stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-    let rows = raw.prefix(8)
-    if rows.isEmpty {
-      let empty = NSTextField(labelWithString: "暂无对话")
-      empty.font = .systemFont(ofSize: 11)
-      empty.textColor = SummonerTokens.faint
-      stack.addArrangedSubview(empty)
-    } else {
-      for row in rows {
-        guard let id = row["id"] as? String, let title = row["title"] as? String, !id.isEmpty else { continue }
-        let btn = NSButton(title: title, target: self, action: #selector(railThreadClicked(_:)))
-        btn.bezelStyle = .inline
-        btn.isBordered = false
-        btn.font = .systemFont(ofSize: 11)
-        btn.alignment = .left
-        btn.identifier = NSUserInterfaceItemIdentifier(id)
-        btn.toolTip = title
-        stack.addArrangedSubview(btn)
-      }
+    threadRows = raw.compactMap { row in
+      guard let id = row["id"] as? String, let title = row["title"] as? String, !id.isEmpty else { return nil }
+      return RecentThread(id: id, title: title)
     }
-    relayout()
+    if railSection == 0 { refreshThreadList() }
   }
 
-  func applyPacks(_ json: [String: Any]) {
-    let raw = json["packs"] as? [[String: Any]] ?? []
-    guard let stack = railPackStack else { return }
+  private func refreshThreadList() {
+    guard let stack = threadListStack else { return }
     stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-    let rows = raw.prefix(8)
-    if rows.isEmpty {
-      let empty = NSTextField(wrappingLabelWithString: "没有可套场景")
-      empty.font = .systemFont(ofSize: 11)
+    if threadRows.isEmpty {
+      let empty = NSTextField(wrappingLabelWithString: "还没有对话")
+      empty.font = .systemFont(ofSize: 13)
       empty.textColor = SummonerTokens.faint
+      empty.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
       stack.addArrangedSubview(empty)
-    } else {
-      for row in rows {
-        guard let id = row["id"] as? String, let name = row["name"] as? String, !id.isEmpty else { continue }
-        let eligible = (row["overlay_eligible"] as? Bool) ?? false
-        let btn = NSButton(title: name, target: self, action: #selector(railPackClicked(_:)))
-        btn.bezelStyle = .inline
-        btn.isBordered = false
-        btn.font = .systemFont(ofSize: 11)
-        btn.alignment = .left
-        btn.identifier = NSUserInterfaceItemIdentifier(id)
-        btn.isEnabled = eligible
-        btn.toolTip = eligible ? "套到当前对话（技能/提示）" : "去侧栏处理"
-        btn.contentTintColor = eligible ? SummonerTokens.indigo : SummonerTokens.faint
-        stack.addArrangedSubview(btn)
-      }
+      return
     }
-    relayout()
+    for row in threadRows.prefix(12) {
+      stack.addArrangedSubview(makeThreadRow(row))
+    }
   }
 
-  @objc func railThreadClicked(_ sender: NSButton) {
+  private func makeThreadRow(_ row: RecentThread) -> NSView {
+    let wrap = NSStackView()
+    wrap.orientation = .horizontal
+    wrap.alignment = .centerY
+    wrap.spacing = 0
+    wrap.translatesAutoresizingMaskIntoConstraints = false
+    wrap.widthAnchor.constraint(equalToConstant: 200).isActive = true
+    wrap.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+    wrap.identifier = NSUserInterfaceItemIdentifier(row.id)
+    if row.id == threadId {
+      wrap.wantsLayer = true
+      wrap.layer?.backgroundColor = SummonerTokens.indigo.withAlphaComponent(0.12).cgColor
+      wrap.layer?.cornerRadius = 8
+    }
+
+    let btn = NSButton(title: row.title, target: self, action: #selector(threadRowClicked(_:)))
+    btn.bezelStyle = .inline
+    btn.isBordered = false
+    btn.font = .systemFont(ofSize: 13, weight: row.id == threadId ? .medium : .regular)
+    btn.alignment = .left
+    btn.identifier = NSUserInterfaceItemIdentifier(row.id)
+    btn.toolTip = row.title
+    btn.contentTintColor = row.id == threadId ? SummonerTokens.indigo : SummonerTokens.text
+    btn.keyEquivalent = ""
+    btn.sendAction(on: [.leftMouseUp, .rightMouseDown])
+    btn.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    btn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    btn.translatesAutoresizingMaskIntoConstraints = false
+    btn.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+
+    let more = NSButton(title: "⋯", target: self, action: #selector(threadMoreClicked(_:)))
+    more.bezelStyle = .inline
+    more.isBordered = false
+    more.font = .systemFont(ofSize: 14)
+    more.toolTip = "对话管理"
+    more.identifier = NSUserInterfaceItemIdentifier(row.id)
+    more.contentTintColor = SummonerTokens.faint
+    more.keyEquivalent = ""
+    more.translatesAutoresizingMaskIntoConstraints = false
+    more.widthAnchor.constraint(equalToConstant: 28).isActive = true
+    more.heightAnchor.constraint(equalToConstant: 44).isActive = true
+
+    wrap.addArrangedSubview(btn)
+    wrap.addArrangedSubview(more)
+    return wrap
+  }
+
+  private func threadTitle(id: String) -> String {
+    threadRows.first(where: { $0.id == id })?.title ?? id
+  }
+
+  private func popThreadMenu(id: String, view: NSView) {
+    guard !id.isEmpty else { return }
+    let menu = NSMenu()
+    let rename = NSMenuItem(title: "重命名", action: #selector(threadRenameClicked(_:)), keyEquivalent: "")
+    rename.target = self
+    rename.representedObject = id
+    let trash = NSMenuItem(title: "移到回收站", action: #selector(threadTrashClicked(_:)), keyEquivalent: "")
+    trash.target = self
+    trash.representedObject = id
+    menu.addItem(rename)
+    menu.addItem(trash)
+    menu.popUp(positioning: nil, at: NSPoint(x: view.bounds.maxX - 8, y: 0), in: view)
+  }
+
+  private func promptRename(id: String) {
+    NSApp.activate(ignoringOtherApps: true)
+    window?.makeKeyAndOrderFront(nil)
+    let alert = NSAlert()
+    alert.messageText = "重命名"
+    alert.informativeText = "给这条对话一个名字"
+    alert.addButton(withTitle: "重命名")
+    alert.addButton(withTitle: "取消")
+    let field = NSTextField(string: threadTitle(id: id))
+    field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+    alert.accessoryView = field
+    alert.window.initialFirstResponder = field
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    let alias = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !alias.isEmpty else { return }
+    jsonLine(["type": "summoner.thread.rename", "thread_id": id, "alias": alias])
+  }
+
+  private func promptTrash(id: String) {
+    NSApp.activate(ignoringOtherApps: true)
+    window?.makeKeyAndOrderFront(nil)
+    let alert = NSAlert()
+    alert.messageText = "移到回收站"
+    alert.informativeText = "「\(threadTitle(id: id))」会离开当前列表。"
+    alert.addButton(withTitle: "移到回收站")
+    alert.addButton(withTitle: "取消")
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    jsonLine(["type": "summoner.thread.trash", "thread_id": id])
+  }
+
+  @objc func threadRowClicked(_ sender: NSButton) {
     let id = sender.identifier?.rawValue ?? ""
     guard !id.isEmpty else { return }
+    if NSApp.currentEvent?.type == .rightMouseDown {
+      popThreadMenu(id: id, view: sender)
+      return
+    }
     selectThread(RecentThread(id: id, title: sender.title))
   }
 
-  @objc func railPackClicked(_ sender: NSButton) {
+  @objc func threadMoreClicked(_ sender: NSButton) {
+    let id = sender.identifier?.rawValue ?? ""
+    popThreadMenu(id: id, view: sender)
+  }
+
+  @objc func threadRenameClicked(_ sender: NSMenuItem) {
+    let id = sender.representedObject as? String ?? ""
+    guard !id.isEmpty else { return }
+    promptRename(id: id)
+  }
+
+  @objc func threadTrashClicked(_ sender: NSMenuItem) {
+    let id = sender.representedObject as? String ?? ""
+    guard !id.isEmpty else { return }
+    promptTrash(id: id)
+  }
+
+  @objc func toggleExpandClicked() {
+    expanded.toggle()
+    applyPhase()
+  }
+
+  @objc func railSectionClicked(_ sender: NSButton) {
+    railSection = sender.tag
+    tintRailButtons()
+    refreshCurrentList()
+  }
+
+  private func refreshCurrentList() {
+    switch railSection {
+    case 1:
+      listHeadField?.stringValue = "场景"
+      refreshPackList()
+    case 2:
+      listHeadField?.stringValue = "知识"
+      refreshKnowledgeList()
+    case 3:
+      listHeadField?.stringValue = "技能"
+      refreshSkillList()
+    case 4:
+      listHeadField?.stringValue = "MCP"
+      refreshMcpList()
+    default:
+      listHeadField?.stringValue = "对话"
+      refreshThreadList()
+    }
+  }
+
+  private func clearListStack() {
+    threadListStack?.arrangedSubviews.forEach { $0.removeFromSuperview() }
+  }
+
+  private func addListEmpty(_ text: String) {
+    let empty = NSTextField(wrappingLabelWithString: text)
+    empty.font = .systemFont(ofSize: 13)
+    empty.textColor = SummonerTokens.faint
+    empty.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    threadListStack?.addArrangedSubview(empty)
+  }
+
+  private func addPlainRow(id: String, title: String, dimmed: Bool, action: Selector) {
+    guard let stack = threadListStack else { return }
+    let btn = NSButton(title: title, target: self, action: action)
+    btn.bezelStyle = .inline
+    btn.isBordered = false
+    btn.font = .systemFont(ofSize: 13)
+    btn.alignment = .left
+    btn.identifier = NSUserInterfaceItemIdentifier(id)
+    btn.toolTip = title
+    btn.contentTintColor = dimmed ? SummonerTokens.faint : SummonerTokens.text
+    btn.keyEquivalent = ""
+    btn.translatesAutoresizingMaskIntoConstraints = false
+    btn.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+    stack.addArrangedSubview(btn)
+  }
+
+  private func refreshPackList() {
+    clearListStack()
+    let rows = packRows.filter { ($0["id"] as? String)?.isEmpty == false }
+    if rows.isEmpty {
+      addListEmpty("还没有场景包")
+      return
+    }
+    for row in rows.prefix(12) {
+      let id = row["id"] as? String ?? ""
+      let name = row["name"] as? String ?? id
+      let ok = row["overlay_eligible"] as? Bool ?? false
+      addPlainRow(id: id, title: ok ? name : "\(name) · 不可套", dimmed: !ok, action: #selector(packRowClicked(_:)))
+    }
+  }
+
+  private func refreshMcpList() {
+    clearListStack()
+    addPlainRow(id: "__add__", title: "＋ 添加 MCP", dimmed: false, action: #selector(mcpAddClicked(_:)))
+    if mcpRows.isEmpty {
+      addListEmpty("还没有 MCP 服务器")
+      return
+    }
+    for row in mcpRows.prefix(12) {
+      let name = row["name"] as? String ?? ""
+      let enabled = row["enabled"] as? Bool ?? false
+      addPlainRow(
+        id: name,
+        title: enabled ? "● \(name)" : "○ \(name)",
+        dimmed: !enabled,
+        action: #selector(mcpRowClicked(_:)),
+      )
+    }
+  }
+
+  private func refreshSkillList() {
+    clearListStack()
+    if skillRows.isEmpty {
+      addListEmpty("还没有技能")
+      return
+    }
+    for row in skillRows.prefix(12) {
+      let name = row["name"] as? String ?? ""
+      let title = row["title"] as? String ?? name
+      let on = row["on"] as? Bool ?? false
+      addPlainRow(
+        id: name,
+        title: on ? "● \(title)" : title,
+        dimmed: false,
+        action: #selector(skillRowClicked(_:)),
+      )
+    }
+  }
+
+  private func refreshKnowledgeList() {
+    clearListStack()
+    addPlainRow(id: "__import__", title: "＋ 导入知识", dimmed: false, action: #selector(knowledgeImportClicked(_:)))
+    if knowledgeRows.isEmpty {
+      addListEmpty("还没有知识文档")
+      return
+    }
+    for row in knowledgeRows.prefix(12) {
+      let id = row["id"] as? String ?? ""
+      let title = row["title"] as? String ?? id
+      let attached = row["attached"] as? Bool ?? false
+      addPlainRow(
+        id: id,
+        title: attached ? "● \(title)" : title,
+        dimmed: false,
+        action: #selector(knowledgeRowClicked(_:)),
+      )
+    }
+  }
+
+  private func tintRailButtons() {
+    guard let wb = workbenchBox as? NSStackView, let rail = wb.arrangedSubviews.first as? NSStackView else { return }
+    for (i, view) in rail.arrangedSubviews.enumerated() {
+      (view as? NSButton)?.contentTintColor = i == railSection ? SummonerTokens.indigo : SummonerTokens.secondary
+    }
+  }
+
+  func applyPacks(_ json: [String: Any]) {
+    packRows = json["packs"] as? [[String: Any]] ?? []
+    if railSection == 1 { refreshPackList() }
+  }
+
+  @objc func packRowClicked(_ sender: NSButton) {
     let id = sender.identifier?.rawValue ?? ""
     guard !id.isEmpty else { return }
+    let eligible = packRows.contains { ($0["id"] as? String) == id && ($0["overlay_eligible"] as? Bool) == true }
+    if !eligible {
+      applyError(message: "这个场景不能在召唤器套用", errorCode: "pack_not_overlay_eligible")
+      return
+    }
     jsonLine(["type": "summoner.pack.apply", "pack_id": id])
+  }
+
+  @objc func mcpRowClicked(_ sender: NSButton) {
+    let name = sender.identifier?.rawValue ?? ""
+    guard !name.isEmpty, name != "__add__" else { return }
+    let enabled = mcpRows.first { ($0["name"] as? String) == name }.flatMap { $0["enabled"] as? Bool } ?? false
+    jsonLine(["type": "summoner.mcp.toggle", "name": name, "enabled": !enabled])
+  }
+
+  @objc func mcpAddClicked(_ sender: NSButton) {
+    NSApp.activate(ignoringOtherApps: true)
+    window?.makeKeyAndOrderFront(nil)
+    let alert = NSAlert()
+    alert.messageText = "添加 MCP"
+    alert.informativeText = "名字和启动命令（stdio）"
+    alert.addButton(withTitle: "添加")
+    alert.addButton(withTitle: "取消")
+    let box = NSStackView()
+    box.orientation = .vertical
+    box.spacing = 6
+    box.frame = NSRect(x: 0, y: 0, width: 260, height: 56)
+    let nameField = NSTextField(string: "")
+    nameField.placeholderString = "名字"
+    let cmdField = NSTextField(string: "")
+    cmdField.placeholderString = "命令"
+    box.addArrangedSubview(nameField)
+    box.addArrangedSubview(cmdField)
+    alert.accessoryView = box
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let command = cmdField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, !command.isEmpty else { return }
+    jsonLine(["type": "summoner.mcp.add", "name": name, "command": command])
+  }
+
+  @objc func skillRowClicked(_ sender: NSButton) {
+    let name = sender.identifier?.rawValue ?? ""
+    guard !name.isEmpty else { return }
+    let on = skillRows.first { ($0["name"] as? String) == name }.flatMap { $0["on"] as? Bool } ?? false
+    jsonLine(["type": "summoner.skill.toggle", "name": name, "on": !on])
+  }
+
+  @objc func knowledgeRowClicked(_ sender: NSButton) {
+    let id = sender.identifier?.rawValue ?? ""
+    guard !id.isEmpty, id != "__import__" else { return }
+    jsonLine(["type": "summoner.knowledge.attach", "id": id])
+  }
+
+  @objc func knowledgeImportClicked(_ sender: NSButton) {
+    NSApp.activate(ignoringOtherApps: true)
+    window?.makeKeyAndOrderFront(nil)
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = false
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    let alert = NSAlert()
+    alert.messageText = "导入知识"
+    alert.informativeText = "把「\(url.lastPathComponent)」加进知识库。"
+    alert.addButton(withTitle: "导入")
+    alert.addButton(withTitle: "取消")
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    guard let data = try? Data(contentsOf: url), data.count <= summonerFileMaxBytes else {
+      applyError(message: "文件太大或无法读取（不超过 6MB）", errorCode: "upload_failed")
+      return
+    }
+    jsonLine([
+      "type": "summoner.knowledge.import",
+      "name": url.lastPathComponent,
+      "mime": mimeTypeForAttach(url: url),
+      "content": String(data: data, encoding: .utf8) ?? data.base64EncodedString(),
+    ])
   }
 
   func applyError(message: String, errorCode: String?) {
@@ -595,6 +950,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
         finishMicCapture()
         return
       }
+      NSApp.activate(ignoringOtherApps: true)
+      window?.makeKeyAndOrderFront(nil)
       micDown = true
       micStartedAt = ProcessInfo.processInfo.systemUptime
       setMicRecording(true)
@@ -641,6 +998,47 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   @objc func sendClicked() { submitComposer() }
+
+  @objc func attachFilesClicked() {
+    NSApp.activate(ignoringOtherApps: true)
+    window?.makeKeyAndOrderFront(nil)
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = true
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    // runModal: begin() on a non-key/borderless HUD is often silent.
+    guard panel.runModal() == .OK else { return }
+    var files: [[String: String]] = []
+    var skipped = false
+    for url in panel.urls.prefix(8) {
+      guard let data = try? Data(contentsOf: url) else {
+        skipped = true
+        continue
+      }
+      if data.count > summonerFileMaxBytes {
+        skipped = true
+        continue
+      }
+      files.append([
+        "name": url.lastPathComponent,
+        "type": mimeTypeForAttach(url: url),
+        "content": data.base64EncodedString(),
+      ])
+    }
+    if panel.urls.count > 8 { skipped = true }
+    guard !files.isEmpty else {
+      applyError(message: "附件太大或无法读取（单文件不超过 6MB）", errorCode: "upload_failed")
+      return
+    }
+    if skipped {
+      applyError(message: "部分附件已跳过（单文件不超过 6MB，最多 8 个）", errorCode: "upload_failed")
+    }
+    jsonLine(["type": "summoner.files", "thread_id": threadId, "files": files])
+    let names = files.compactMap { $0["name"] }.joined(separator: "、")
+    lines.append("你: 📎 \(names)")
+    capLines()
+    applyPhase()
+  }
 
   @objc func attachClicked() {
     jsonLine(["type": "summoner.attach_chrome"])
@@ -755,7 +1153,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       }
     }
     tv.textStorage?.setAttributedString(out)
-    logBox?.isHidden = lines.isEmpty
+    logBox?.isHidden = expanded ? false : lines.isEmpty
     maybeGrowLogHeight(resizeWindow: true)
     scrollLogToEnd()
   }
@@ -768,6 +1166,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   private func maybeGrowLogHeight(resizeWindow: Bool) {
+    if expanded {
+      logHeightConstraint?.constant = summonerWorkbenchHeight
+      return
+    }
     guard let tv = logView, let container = tv.textContainer, let lm = tv.layoutManager else { return }
     lm.ensureLayout(for: container)
     let used = lm.usedRect(for: container).height + 24
@@ -785,21 +1187,27 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     tv.scrollToEndOfDocument(nil)
   }
 
-  private func plainAttrs(_ text: String) -> NSAttributedString {
+  private func chatParagraphStyle() -> NSParagraphStyle {
+    let p = NSMutableParagraphStyle()
+    p.lineBreakMode = .byWordWrapping
+    p.lineSpacing = 2
+    p.paragraphSpacing = 6
+    return p
+  }
+
+  private func plainAttrs(_ text: String, color: NSColor = SummonerTokens.text) -> NSAttributedString {
     let font = NSFont.systemFont(ofSize: 13)
     return NSAttributedString(string: text, attributes: [
       .font: font,
-      .foregroundColor: SummonerTokens.text,
+      .foregroundColor: color,
+      .paragraphStyle: chatParagraphStyle(),
     ])
   }
 
   private func attributedLine(_ line: String) -> NSAttributedString {
     let font = NSFont.systemFont(ofSize: 13)
     if line.hasPrefix("系统") || line.hasPrefix("[工具]") {
-      return NSAttributedString(string: line, attributes: [
-        .font: font,
-        .foregroundColor: SummonerTokens.secondary,
-      ])
+      return plainAttrs(line, color: SummonerTokens.secondary)
     }
     let prefix: String
     if line.hasPrefix("你: ") {
@@ -814,25 +1222,29 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     let out = NSMutableAttributedString(string: prefix, attributes: [
       .font: font,
       .foregroundColor: headColor,
+      .paragraphStyle: chatParagraphStyle(),
     ])
-    // CommonMark collapses a single \n to a space. Chat needs visible breaks.
-    let mdSource = body.replacingOccurrences(of: "\r\n", with: "\n")
-      .replacingOccurrences(of: "\n", with: "  \n")
-    let opts = AttributedString.MarkdownParsingOptions(
-      interpretedSyntax: .full
-    )
-    if let parsed = try? AttributedString(markdown: mdSource, options: opts) {
-      let md = NSMutableAttributedString(parsed)
-      if md.length > 0 {
-        md.addAttribute(.foregroundColor, value: SummonerTokens.text, range: NSRange(location: 0, length: md.length))
+    // Foundation CommonMark turns a single \n into a space. Parse each visual
+    // line as inline markdown so chat breaks stay visible.
+    let chunks = body.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+    let opts = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+    for (i, chunk) in chunks.enumerated() {
+      if i > 0 {
+        out.append(plainAttrs("\n"))
       }
-      out.append(md)
-      return out
+      if let parsed = try? AttributedString(markdown: chunk, options: opts) {
+        let md = NSMutableAttributedString(parsed)
+        if md.length > 0 {
+          md.addAttributes([
+            .foregroundColor: SummonerTokens.text,
+            .paragraphStyle: chatParagraphStyle(),
+          ], range: NSRange(location: 0, length: md.length))
+        }
+        out.append(md)
+      } else {
+        out.append(plainAttrs(chunk))
+      }
     }
-    out.append(NSAttributedString(string: body, attributes: [
-      .font: font,
-      .foregroundColor: SummonerTokens.text,
-    ]))
     return out
   }
 
@@ -868,7 +1280,6 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
 
   private func applyPhase() {
     let searching = isSearchQuery(composerText)
-    let hasTranscript = !lines.isEmpty || !threadId.isEmpty
     let detached = browserKnown && !browserAttached
 
     if !browserKnown {
@@ -895,7 +1306,9 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       }
     }
 
-    hintField?.stringValue = searching ? "只搜标题，不搜正文" : summonerTalkHint
+    hintField?.stringValue = searching
+      ? "只搜标题，不搜正文"
+      : (expanded ? summonerExpandHint : summonerTalkHint)
 
     if searching {
       refreshHits()
@@ -903,22 +1316,32 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       hits = []
       hitsStack?.isHidden = true
     }
-    logBox?.isHidden = !hasTranscript
+    workbenchBox?.isHidden = !expanded || searching
+    logBox?.isHidden = false
     refreshLog()
+    if railSection == 0 {
+      listHeadField?.stringValue = "对话"
+      refreshThreadList()
+    }
     ctaBox?.isHidden = true
     attachButton?.isHidden = true
     silentAttachButton?.isHidden = true
-    footRow?.isHidden = searching
-    sendButton?.isHidden = false
-    continueButton?.isHidden = !(hasTranscript && browserAttached && sawBrowserUnavailable)
+    sendButton?.isHidden = true
+    continueButton?.isHidden = true
+    footRow?.isHidden = true
+    lastThreadField?.isHidden = true
     if detached {
       sideNote?.stringValue = summonerDetachedInfo
-      sideNote?.isHidden = searching
+      sideNote?.isHidden = searching || expanded
     } else {
-      sideNote?.stringValue = "完整格式在侧栏"
-      sideNote?.isHidden = searching || !hasTranscript
+      sideNote?.isHidden = true
     }
-    micButton?.isHidden = true
+    expandButton?.toolTip = expanded ? "收起工作台" : "展开工作台"
+    expandButton?.title = expanded ? "⌃" : "⌄"
+    micButton?.isHidden = searching
+    clipButton?.isHidden = searching
+    plusButton?.isHidden = searching
+    expandButton?.isHidden = searching
     updateLastThreadLabel()
     updatePlaceholder()
     relayout()
@@ -926,93 +1349,34 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
 
   private func relayout() {
     guard let window = window else { return }
-    var h: CGFloat = 108
+    var h: CGFloat = 72
     if pickerBox?.isHidden == false { h += 310 }
     if settingsBox?.isHidden == false { h += 118 }
+    if expanded && (workbenchBox?.isHidden == false) { h += summonerWorkbenchHeight }
     if lastThreadField?.isHidden == false { h += 18 }
-    if mcpField?.isHidden == false { h += 18 }
     if hitsStack?.isHidden == false { h += 8 + CGFloat(min(hits.count, 6)) * 36 }
-    if logBox?.isHidden == false { h += (logHeightConstraint?.constant ?? 220) + 8 }
     if ctaBox?.isHidden == false { h += 36 }
     if footRow?.isHidden == false { h += 48 }
     if sideNote?.isHidden == false { h += 22 }
-    window.setContentSize(NSSize(width: 640, height: max(180, h)))
+    window.setContentSize(NSSize(width: summonerHudWidth, height: max(72, h)))
     if isOpen { emitCompanionUiRect("overlay", window: window) }
   }
 
-  private func makeRail() -> NSView {
-    let rail = NSView()
-    rail.translatesAutoresizingMaskIntoConstraints = false
-    rail.wantsLayer = true
-    rail.layer?.backgroundColor = SummonerTokens.muted.cgColor
-    rail.widthAnchor.constraint(equalToConstant: 200).isActive = true
-    let col = NSStackView()
-    col.orientation = .vertical
-    col.alignment = .leading
-    col.spacing = 6
-    col.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
-    col.translatesAutoresizingMaskIntoConstraints = false
-    let tLabel = NSTextField(labelWithString: "对话")
-    tLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-    tLabel.textColor = SummonerTokens.secondary
-    col.addArrangedSubview(tLabel)
-    let tStack = NSStackView()
-    tStack.orientation = .vertical
-    tStack.alignment = .leading
-    tStack.spacing = 2
-    tStack.translatesAutoresizingMaskIntoConstraints = false
-    tStack.widthAnchor.constraint(equalToConstant: 180).isActive = true
-    railThreadStack = tStack
-    col.addArrangedSubview(tStack)
-    let mLabel = NSTextField(labelWithString: "MCP")
-    mLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-    mLabel.textColor = SummonerTokens.secondary
-    col.addArrangedSubview(mLabel)
-    let mcp = NSTextField(wrappingLabelWithString: "未连接 · 去侧栏添加")
-    mcp.font = .systemFont(ofSize: 11)
-    mcp.textColor = SummonerTokens.faint
-    mcp.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    railMcpField = mcp
-    col.addArrangedSubview(mcp)
-    let pLabel = NSTextField(labelWithString: "场景")
-    pLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-    pLabel.textColor = SummonerTokens.secondary
-    col.addArrangedSubview(pLabel)
-    let pHint = NSTextField(wrappingLabelWithString: "套到当前对话，不升 Trust")
-    pHint.font = .systemFont(ofSize: 10)
-    pHint.textColor = SummonerTokens.faint
-    pHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    col.addArrangedSubview(pHint)
-    let pStack = NSStackView()
-    pStack.orientation = .vertical
-    pStack.alignment = .leading
-    pStack.spacing = 2
-    pStack.translatesAutoresizingMaskIntoConstraints = false
-    pStack.widthAnchor.constraint(equalToConstant: 180).isActive = true
-    railPackStack = pStack
-    col.addArrangedSubview(pStack)
-    col.addArrangedSubview(NSView())
-    rail.addSubview(col)
-    NSLayoutConstraint.activate([
-      col.topAnchor.constraint(equalTo: rail.topAnchor),
-      col.bottomAnchor.constraint(equalTo: rail.bottomAnchor),
-      col.leadingAnchor.constraint(equalTo: rail.leadingAnchor),
-      col.trailingAnchor.constraint(equalTo: rail.trailingAnchor),
-    ])
-    railBox = rail
-    return rail
-  }
-
   private func makeWindow() -> NSPanel? {
-    let contentRect = NSRect(x: 0, y: 0, width: 640, height: 180)
-    let style: NSWindow.StyleMask = [.titled, .closable, .nonactivatingPanel]
-    let panel = NSPanel(contentRect: contentRect, styleMask: style, backing: .buffered, defer: false)
+    let contentRect = NSRect(x: 0, y: 0, width: summonerHudWidth, height: 72)
+    let style: NSWindow.StyleMask = [.borderless, .fullSizeContentView, .nonactivatingPanel]
+    let panel = SummonerPanel(contentRect: contentRect, styleMask: style, backing: .buffered, defer: false)
     panel.title = summonerWindowTitle
+    panel.titleVisibility = .hidden
+    panel.titlebarAppearsTransparent = true
+    panel.isMovableByWindowBackground = true
     panel.isReleasedWhenClosed = false
     panel.becomesKeyOnlyIfNeeded = false
     panel.hidesOnDeactivate = false
+    panel.hasShadow = true
+    panel.isOpaque = true
     panel.level = .floating
-    panel.minSize = NSSize(width: 640, height: 140)
+    panel.minSize = NSSize(width: summonerHudWidth, height: 72)
     panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient]
     panel.delegate = self
     panel.appearance = NSAppearance(named: .aqua)
@@ -1025,58 +1389,12 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 12, right: 12)
     stack.translatesAutoresizingMaskIntoConstraints = false
 
-    let header = NSStackView()
-    header.orientation = .horizontal
-    header.alignment = .centerY
-    header.spacing = 8
-    let badge = NSTextField(labelWithString: "检测浏览器…")
-    badge.font = .systemFont(ofSize: 11)
-    badge.alignment = .center
-    badge.drawsBackground = true
-    badge.wantsLayer = true
-    badge.layer?.cornerRadius = 999
-    badge.layer?.borderWidth = 1
-    badge.layer?.masksToBounds = true
-    badge.translatesAutoresizingMaskIntoConstraints = false
-    let badgeWrap = NSView()
-    badgeWrap.translatesAutoresizingMaskIntoConstraints = false
-    badgeWrap.addSubview(badge)
-    NSLayoutConstraint.activate([
-      badge.leadingAnchor.constraint(equalTo: badgeWrap.leadingAnchor, constant: 8),
-      badge.trailingAnchor.constraint(equalTo: badgeWrap.trailingAnchor, constant: -8),
-      badge.topAnchor.constraint(equalTo: badgeWrap.topAnchor, constant: 3),
-      badge.bottomAnchor.constraint(equalTo: badgeWrap.bottomAnchor, constant: -3),
-      badgeWrap.heightAnchor.constraint(equalToConstant: 22),
-    ])
-    badgeField = badge
-    let newChat = NSButton(title: "新对话", target: self, action: #selector(newThreadClicked))
-    newChat.bezelStyle = .inline
-    newChat.isBordered = false
-    newChat.font = .systemFont(ofSize: 11, weight: .semibold)
-    newChat.contentTintColor = SummonerTokens.indigo
-    newChat.toolTip = "开始一段新对话"
-    newChat.keyEquivalent = ""
-    let hotkeyBtn = NSButton(title: "快捷键", target: self, action: #selector(hotkeyEntryClicked(_:)))
-    hotkeyBtn.bezelStyle = .inline
-    hotkeyBtn.isBordered = false
-    hotkeyBtn.font = .systemFont(ofSize: 11, weight: .medium)
-    hotkeyBtn.contentTintColor = SummonerTokens.secondary
-    hotkeyBtn.toolTip = "设置召唤器快捷键"
-    hotkeyBtn.keyEquivalent = ""
-    header.addArrangedSubview(badgeWrap)
-    header.addArrangedSubview(NSView())
-    header.addArrangedSubview(hotkeyBtn)
-    header.addArrangedSubview(newChat)
-    header.translatesAutoresizingMaskIntoConstraints = false
-    header.widthAnchor.constraint(equalToConstant: 396).isActive = true
-    stack.addArrangedSubview(header)
-
     let pickerBox = NSView()
     pickerBox.translatesAutoresizingMaskIntoConstraints = false
     pickerBox.wantsLayer = true
     pickerBox.layer?.backgroundColor = SummonerTokens.indigoSoft.cgColor
     pickerBox.layer?.cornerRadius = 12
-    pickerBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    pickerBox.widthAnchor.constraint(equalToConstant: summonerHudInnerWidth).isActive = true
     pickerBox.isHidden = true
     self.pickerBox = pickerBox
     let pickerStack = NSStackView()
@@ -1126,7 +1444,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     settingsBox.wantsLayer = true
     settingsBox.layer?.backgroundColor = SummonerTokens.muted.cgColor
     settingsBox.layer?.cornerRadius = 12
-    settingsBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    settingsBox.widthAnchor.constraint(equalToConstant: summonerHudInnerWidth).isActive = true
     settingsBox.isHidden = true
     self.settingsBox = settingsBox
     let settingsStack = NSStackView()
@@ -1187,6 +1505,19 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     ])
     stack.addArrangedSubview(settingsBox)
 
+    let workbench = NSStackView()
+    workbench.orientation = .horizontal
+    workbench.alignment = .top
+    workbench.spacing = 0
+    workbench.translatesAutoresizingMaskIntoConstraints = false
+    workbench.widthAnchor.constraint(equalToConstant: summonerHudInnerWidth).isActive = true
+    let wbH = workbench.heightAnchor.constraint(equalToConstant: summonerWorkbenchHeight)
+    wbH.isActive = true
+    workbenchHeightConstraint = wbH
+    workbench.isHidden = true
+    workbenchBox = workbench
+    stack.addArrangedSubview(workbench)
+
     let fieldBox = NSView()
     fieldBox.translatesAutoresizingMaskIntoConstraints = false
     fieldBox.wantsLayer = true
@@ -1194,8 +1525,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     fieldBox.layer?.cornerRadius = 16
     fieldBox.layer?.borderWidth = 1
     fieldBox.layer?.borderColor = NSColor(white: 0.09, alpha: 0.10).cgColor
-    fieldBox.heightAnchor.constraint(equalToConstant: 40).isActive = true
-    fieldBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    fieldBox.heightAnchor.constraint(equalToConstant: 48).isActive = true
+    fieldBox.widthAnchor.constraint(equalToConstant: summonerHudInnerWidth).isActive = true
     self.fieldBox = fieldBox
 
     let scroll = NSScrollView()
@@ -1232,37 +1563,78 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     placeholderField = placeholder
     fieldBox.addSubview(placeholder)
 
+    let plus = NSButton(title: "+", target: self, action: #selector(newThreadClicked))
+    plus.bezelStyle = .inline
+    plus.isBordered = false
+    plus.font = .systemFont(ofSize: 16, weight: .medium)
+    plus.toolTip = "新对话"
+    plus.keyEquivalent = ""
+    plus.translatesAutoresizingMaskIntoConstraints = false
+    plus.contentTintColor = SummonerTokens.secondary
+    plusButton = plus
+    fieldBox.addSubview(plus)
+
     let mic = NSButton(title: "🎙", target: self, action: #selector(micHoldChanged(_:)))
     mic.bezelStyle = .inline
     mic.isBordered = false
     mic.font = .systemFont(ofSize: 14)
-    mic.toolTip = "听写暂未开放"
+    mic.toolTip = "按住听写"
     mic.keyEquivalent = ""
     mic.sendAction(on: [.leftMouseDown, .leftMouseUp])
     mic.translatesAutoresizingMaskIntoConstraints = false
     micButton = mic
     fieldBox.addSubview(mic)
 
+    let clip = NSButton(title: "📎", target: self, action: #selector(attachFilesClicked))
+    clip.bezelStyle = .inline
+    clip.isBordered = false
+    clip.font = .systemFont(ofSize: 14)
+    clip.toolTip = "添加附件"
+    clip.keyEquivalent = ""
+    clip.translatesAutoresizingMaskIntoConstraints = false
+    clipButton = clip
+    fieldBox.addSubview(clip)
+
+    let expand = NSButton(title: "⌄", target: self, action: #selector(toggleExpandClicked))
+    expand.bezelStyle = .inline
+    expand.isBordered = false
+    expand.font = .systemFont(ofSize: 14)
+    expand.toolTip = "展开工作台"
+    expand.keyEquivalent = ""
+    expand.translatesAutoresizingMaskIntoConstraints = false
+    expandButton = expand
+    fieldBox.addSubview(expand)
+
     NSLayoutConstraint.activate([
-      mic.trailingAnchor.constraint(equalTo: fieldBox.trailingAnchor, constant: -8),
+      plus.leadingAnchor.constraint(equalTo: fieldBox.leadingAnchor, constant: 6),
+      plus.centerYAnchor.constraint(equalTo: fieldBox.centerYAnchor),
+      plus.widthAnchor.constraint(equalToConstant: 44),
+      plus.heightAnchor.constraint(equalToConstant: 44),
+      expand.trailingAnchor.constraint(equalTo: fieldBox.trailingAnchor, constant: -6),
+      expand.centerYAnchor.constraint(equalTo: fieldBox.centerYAnchor),
+      expand.widthAnchor.constraint(equalToConstant: 44),
+      expand.heightAnchor.constraint(equalToConstant: 44),
+      mic.trailingAnchor.constraint(equalTo: expand.leadingAnchor, constant: -2),
       mic.centerYAnchor.constraint(equalTo: fieldBox.centerYAnchor),
-      mic.widthAnchor.constraint(equalToConstant: 28),
-      mic.heightAnchor.constraint(equalToConstant: 28),
-      scroll.leadingAnchor.constraint(equalTo: fieldBox.leadingAnchor, constant: 12),
-      scroll.trailingAnchor.constraint(equalTo: mic.leadingAnchor, constant: -6),
+      mic.widthAnchor.constraint(equalToConstant: 44),
+      mic.heightAnchor.constraint(equalToConstant: 44),
+      clip.trailingAnchor.constraint(equalTo: mic.leadingAnchor, constant: -2),
+      clip.centerYAnchor.constraint(equalTo: fieldBox.centerYAnchor),
+      clip.widthAnchor.constraint(equalToConstant: 44),
+      clip.heightAnchor.constraint(equalToConstant: 44),
+      scroll.leadingAnchor.constraint(equalTo: plus.trailingAnchor, constant: 4),
+      scroll.trailingAnchor.constraint(equalTo: clip.leadingAnchor, constant: -6),
       scroll.topAnchor.constraint(equalTo: fieldBox.topAnchor, constant: 6),
       scroll.bottomAnchor.constraint(equalTo: fieldBox.bottomAnchor, constant: -6),
       placeholder.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
       placeholder.centerYAnchor.constraint(equalTo: fieldBox.centerYAnchor),
     ])
-    stack.addArrangedSubview(fieldBox)
 
     let hint = NSTextField(labelWithString: summonerTalkHint)
     hint.font = .systemFont(ofSize: 11)
     hint.textColor = SummonerTokens.faint
     hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     hintField = hint
-    stack.addArrangedSubview(hint)
 
     let lastThread = NSTextField(labelWithString: "")
     lastThread.font = .systemFont(ofSize: 12, weight: .medium)
@@ -1271,33 +1643,26 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     lastThreadField = lastThread
     stack.addArrangedSubview(lastThread)
 
-    let mcp = NSTextField(labelWithString: "MCP 未连接 · 去侧栏配置后这里可直接调用")
-    mcp.font = .systemFont(ofSize: 11)
-    mcp.textColor = SummonerTokens.faint
-    mcp.isHidden = true
-    mcpField = mcp
-    stack.addArrangedSubview(mcp)
-
     let hits = NSStackView()
     hits.orientation = .vertical
     hits.alignment = .leading
     hits.spacing = 4
     hits.translatesAutoresizingMaskIntoConstraints = false
-    hits.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    hits.widthAnchor.constraint(equalToConstant: summonerHudInnerWidth).isActive = true
     hits.isHidden = true
     hitsStack = hits
     stack.addArrangedSubview(hits)
+    stack.addArrangedSubview(fieldBox)
+    stack.addArrangedSubview(hint)
 
     let logBox = NSView()
     logBox.translatesAutoresizingMaskIntoConstraints = false
     logBox.wantsLayer = true
-    logBox.layer?.backgroundColor = SummonerTokens.muted.cgColor
-    logBox.layer?.cornerRadius = 12
-    let logH = logBox.heightAnchor.constraint(equalToConstant: 220)
+    logBox.layer?.backgroundColor = SummonerTokens.paper.cgColor
+    logBox.layer?.cornerRadius = 0
+    let logH = logBox.heightAnchor.constraint(equalToConstant: summonerWorkbenchHeight)
     logH.isActive = true
     logHeightConstraint = logH
-    logBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
-    logBox.isHidden = true
     self.logBox = logBox
     let logScroll = NSTextView.scrollableTextView()
     logScroll.translatesAutoresizingMaskIntoConstraints = false
@@ -1314,7 +1679,9 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     logView.textColor = SummonerTokens.text
     logView.textContainerInset = NSSize(width: 8, height: 8)
     logView.isVerticallyResizable = true
+    logView.isHorizontallyResizable = false
     logView.textContainer?.widthTracksTextView = true
+    logView.textContainer?.lineBreakMode = .byWordWrapping
     logView.textContainer?.lineFragmentPadding = 4
     self.logView = logView
     self.logScroll = logScroll
@@ -1325,7 +1692,63 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       logScroll.leadingAnchor.constraint(equalTo: logBox.leadingAnchor),
       logScroll.trailingAnchor.constraint(equalTo: logBox.trailingAnchor),
     ])
-    stack.addArrangedSubview(logBox)
+
+    let railCol = NSStackView()
+    railCol.orientation = .vertical
+    railCol.alignment = .centerX
+    railCol.spacing = 4
+    railCol.edgeInsets = NSEdgeInsets(top: 10, left: 4, bottom: 10, right: 4)
+    railCol.translatesAutoresizingMaskIntoConstraints = false
+    railCol.widthAnchor.constraint(equalToConstant: 52).isActive = true
+    railCol.wantsLayer = true
+    railCol.layer?.backgroundColor = SummonerTokens.muted.cgColor
+    let railSpecs: [(String, String, Int)] = [
+      ("text.alignleft", "对话", 0),
+      ("square.grid.2x2", "场景", 1),
+      ("book", "知识", 2),
+      ("chevron.left.forwardslash.chevron.right", "技能", 3),
+      ("app.connected.to.app.below.fill", "MCP", 4),
+    ]
+    for spec in railSpecs {
+      let img = NSImage(systemSymbolName: spec.0, accessibilityDescription: spec.1)
+      let btn = NSButton(image: img ?? NSImage(), target: self, action: #selector(railSectionClicked(_:)))
+      btn.bezelStyle = .regularSquare
+      btn.isBordered = false
+      btn.imagePosition = .imageOnly
+      btn.toolTip = spec.1
+      btn.tag = spec.2
+      btn.keyEquivalent = ""
+      btn.contentTintColor = spec.2 == 0 ? SummonerTokens.indigo : SummonerTokens.secondary
+      btn.translatesAutoresizingMaskIntoConstraints = false
+      btn.widthAnchor.constraint(equalToConstant: 44).isActive = true
+      btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
+      railCol.addArrangedSubview(btn)
+    }
+    let listCol = NSStackView()
+    listCol.orientation = .vertical
+    listCol.alignment = .leading
+    listCol.spacing = 4
+    listCol.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+    listCol.translatesAutoresizingMaskIntoConstraints = false
+    listCol.widthAnchor.constraint(equalToConstant: 216).isActive = true
+    let listHead = NSTextField(labelWithString: "对话")
+    listHead.font = .systemFont(ofSize: 11, weight: .semibold)
+    listHead.textColor = SummonerTokens.faint
+    listHeadField = listHead
+    listCol.addArrangedSubview(listHead)
+    let tStack = NSStackView()
+    tStack.orientation = .vertical
+    tStack.alignment = .leading
+    tStack.spacing = 2
+    tStack.translatesAutoresizingMaskIntoConstraints = false
+    tStack.widthAnchor.constraint(equalToConstant: 200).isActive = true
+    threadListStack = tStack
+    listCol.addArrangedSubview(tStack)
+    logBox.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    logBox.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    workbench.addArrangedSubview(railCol)
+    workbench.addArrangedSubview(listCol)
+    workbench.addArrangedSubview(logBox)
 
     let ctaBox = NSView()
     ctaBox.translatesAutoresizingMaskIntoConstraints = false
@@ -1334,7 +1757,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     ctaBox.layer?.borderColor = SummonerTokens.warnBorder.cgColor
     ctaBox.layer?.borderWidth = 1
     ctaBox.layer?.cornerRadius = 12
-    ctaBox.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    ctaBox.widthAnchor.constraint(equalToConstant: summonerHudInnerWidth).isActive = true
     ctaBox.isHidden = true
     self.ctaBox = ctaBox
     let ctaStack = NSStackView()
@@ -1371,7 +1794,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     foot.spacing = 8
     foot.distribution = .fillEqually
     foot.translatesAutoresizingMaskIntoConstraints = false
-    foot.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    foot.widthAnchor.constraint(equalToConstant: summonerHudInnerWidth).isActive = true
     foot.heightAnchor.constraint(equalToConstant: 36).isActive = true
     let send = makePlainButton(title: "发送", action: #selector(sendClicked))
     let cont = makeIndigoButton(title: "已连接，继续对话", action: #selector(continueClicked))
@@ -1391,26 +1814,20 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     side.isHidden = true
     sideNote = side
     side.translatesAutoresizingMaskIntoConstraints = false
-    side.widthAnchor.constraint(equalToConstant: 396).isActive = true
+    side.widthAnchor.constraint(equalToConstant: summonerHudInnerWidth).isActive = true
     stack.addArrangedSubview(side)
 
     guard let cv = panel.contentView else { return panel }
     cv.wantsLayer = true
+    cv.layer?.cornerRadius = 16
+    cv.layer?.masksToBounds = true
     cv.layer?.backgroundColor = SummonerTokens.paper.cgColor
-    let root = NSStackView()
-    root.orientation = .horizontal
-    root.alignment = .top
-    root.spacing = 0
-    root.translatesAutoresizingMaskIntoConstraints = false
-    let rail = makeRail()
-    root.addArrangedSubview(rail)
-    root.addArrangedSubview(stack)
-    cv.addSubview(root)
+    cv.addSubview(stack)
     NSLayoutConstraint.activate([
-      root.topAnchor.constraint(equalTo: cv.topAnchor),
-      root.bottomAnchor.constraint(equalTo: cv.bottomAnchor),
-      root.leadingAnchor.constraint(equalTo: cv.leadingAnchor),
-      root.trailingAnchor.constraint(equalTo: cv.trailingAnchor),
+      stack.topAnchor.constraint(equalTo: cv.topAnchor),
+      stack.bottomAnchor.constraint(equalTo: cv.bottomAnchor),
+      stack.leadingAnchor.constraint(equalTo: cv.leadingAnchor),
+      stack.trailingAnchor.constraint(equalTo: cv.trailingAnchor),
     ])
     return panel
   }

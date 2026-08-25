@@ -1,0 +1,171 @@
+/**
+ * Overlay B1–B4 — packs / MCP toggle / skills / knowledge USE+import.
+ * Companion-owned; overlay WS does not grow mcp.add or knowledge.import.
+ */
+import test from "node:test"
+import assert from "node:assert/strict"
+import * as fs from "node:fs"
+import * as path from "node:path"
+import { assertSummonerAllowed, applySummonerPayloadPolicy } from "../src/ws/summoner-acl"
+import {
+  encodeSummonerPackApply,
+  encodeSummonerMcpToggle,
+  encodeSummonerMcpAdd,
+  encodeSummonerSkillToggle,
+  encodeSummonerKnowledgeAttach,
+  encodeSummonerKnowledgeImport,
+  encodeSummonerMcpServers,
+  encodeSummonerSkills,
+  encodeSummonerKnowledge,
+  decodeSummonerInbound,
+  decodeSummonerOutbound,
+} from "../src/summoner/protocol"
+import { SUMMONER_WEB_DISPATCH_ALLOW } from "../src/summoner-web"
+
+const ROOT = path.resolve(__dirname, "..", "..")
+function srcFile(...parts: string[]): string {
+  const candidates = [
+    path.join(ROOT, "src", ...parts),
+    path.join(__dirname, "..", "src", ...parts),
+  ]
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p
+  }
+  return candidates[0]
+}
+
+test("summoner ACL allows composition reads + overlay-safe writes; T3 mutates stay off WS", () => {
+  for (const t of [
+    "pack.list",
+    "pack.apply",
+    "mcp.list",
+    "mcp.toggle_server",
+    "skill.list",
+    "skill.activate",
+    "skill.deactivate",
+    "knowledge.list",
+    "knowledge.set_active",
+  ]) {
+    assert.equal(assertSummonerAllowed("summoner", t).ok, true, t)
+  }
+  for (const t of ["mcp.add", "knowledge.import", "knowledge.preview", "config.set", "skill.delete"]) {
+    const r = assertSummonerAllowed("summoner", t)
+    assert.equal(r.ok, false, t)
+    assert.equal(r.error_code, "SUMMONER_ACL")
+  }
+})
+
+test("knowledge.set_active overlay policy keeps only thread_id + string ids", () => {
+  const msg: Record<string, unknown> = {
+    type: "knowledge.set_active",
+    thread_id: "t1",
+    ids: ["k1", 2, "k2"],
+    tool_whitelist: null,
+  }
+  const ok = applySummonerPayloadPolicy("summoner", msg)
+  assert.equal(ok.ok, true)
+  assert.deepEqual(msg.ids, ["k1", "k2"])
+  assert.equal(Object.prototype.hasOwnProperty.call(msg, "tool_whitelist"), false)
+
+  assert.equal(
+    applySummonerPayloadPolicy("summoner", { type: "knowledge.set_active", ids: ["k1"] }).ok,
+    false,
+  )
+})
+
+test("workbench inbound events round-trip; mcp.add/knowledge.import are stdin-only", () => {
+  const pack = encodeSummonerPackApply({ pack_id: "p1" })
+  assert.deepEqual(decodeSummonerInbound(pack), pack)
+
+  const tog = encodeSummonerMcpToggle({ name: "fs", enabled: false })
+  assert.deepEqual(decodeSummonerInbound(tog), tog)
+
+  const add = encodeSummonerMcpAdd({ name: "demo", command: "npx" })
+  assert.deepEqual(decodeSummonerInbound(add), add)
+  assert.equal(decodeSummonerInbound({ type: "summoner.mcp.add", name: "", command: "x" }), null)
+
+  const sk = encodeSummonerSkillToggle({ name: "demo", on: true })
+  assert.deepEqual(decodeSummonerInbound(sk), sk)
+
+  const kn = encodeSummonerKnowledgeAttach({ id: "doc-1" })
+  assert.deepEqual(decodeSummonerInbound(kn), kn)
+
+  const imp = encodeSummonerKnowledgeImport({
+    name: "note.md",
+    mime: "text/plain",
+    content: "YQ==",
+  })
+  assert.deepEqual(decodeSummonerInbound(imp), imp)
+})
+
+test("workbench outbound lists round-trip", () => {
+  const mcp = encodeSummonerMcpServers({
+    servers: [{ name: "fs", enabled: true, transport: "stdio" }],
+  })
+  assert.deepEqual(decodeSummonerOutbound(mcp), mcp)
+  const skills = encodeSummonerSkills({ skills: [{ name: "s1", title: "S1", on: false }] })
+  assert.deepEqual(decodeSummonerOutbound(skills), skills)
+  const docs = encodeSummonerKnowledge({
+    docs: [{ id: "k1", title: "K1", attached: true }],
+  })
+  assert.deepEqual(decodeSummonerOutbound(docs), docs)
+})
+
+test("menu-bar maps compose stdin to overlay-safe / tray-origin paths", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  assert.match(src, /handleSummonerPackApply/)
+  assert.match(src, /handleSummonerMcpToggle/)
+  assert.match(src, /handleSummonerMcpAdd/)
+  assert.match(src, /handleSummonerSkillToggle/)
+  assert.match(src, /handleSummonerKnowledgeAttach/)
+  assert.match(src, /listThreads\(\)/)
+  assert.match(src, /active_skill_ids/)
+  assert.match(src, /active_knowledge_ids/)
+  assert.match(src, /security.confirmation.request/)
+  assert.match(src, /showConfirmDialog/)
+  assert.match(src, /handleSummonerKnowledgeImport/)
+  assert.match(src, /companionClient\.sendAppRequest\(\s*"mcp\.add"/)
+  assert.match(src, /companionClient\.sendAppRequest\("knowledge\.import"/)
+  const imp = src.slice(src.indexOf("handleSummonerKnowledgeImport"), src.indexOf("handleSummonerKnowledgeImport") + 900)
+  assert.match(imp, /content,/)
+  assert.doesNotMatch(imp, /file:\s*\{/)
+  assert.doesNotMatch(src, /summonerClient\.sendAppRequest\("mcp\.add"/)
+  assert.doesNotMatch(src, /summonerClient\.sendAppRequest\("knowledge\.import"/)
+})
+
+test("HUD workbench rails are live for packs/mcp/skills/knowledge", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  const tray = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  assert.match(overlay, /summoner\.pack\.apply/)
+  assert.match(overlay, /summoner\.mcp\.toggle/)
+  assert.match(overlay, /summoner\.skill\.toggle/)
+  assert.match(overlay, /summoner\.knowledge\.attach/)
+  assert.match(overlay, /summoner\.knowledge\.import/)
+  assert.match(overlay, /summoner\.mcp\.add/)
+  assert.match(overlay, /func applyPacks/)
+  assert.match(overlay, /func applyMcpServers|applyMcp\(/)
+  assert.doesNotMatch(overlay, /这一类下一刀开放/)
+  assert.doesNotMatch(overlay, /允许|拒绝|Allow|Deny|确认/)
+  assert.match(tray, /summoner\.mcp\.servers/)
+  assert.match(tray, /summoner\.skills/)
+  assert.match(tray, /summoner\.knowledge/)
+})
+
+test("C-thin HTML compose endpoints stay off mcp.add/knowledge.import", () => {
+  assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("pack.apply"))
+  assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.toggle_server"))
+  assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("skill.list"))
+  assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.list"))
+  assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.set_active"))
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.add"), false)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.import"), false)
+  const web = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(web, /mcp\.toggle_server/)
+  assert.match(web, /knowledge\.set_active/)
+  assert.match(web, /skill\.activate/)
+  assert.match(web, /data-sec="packs"/)
+  assert.match(web, /\/api\/packs/)
+  assert.match(web, /\/api\/mcp/)
+  assert.match(web, /\/api\/skills/)
+  assert.match(web, /\/api\/knowledge/)
+})

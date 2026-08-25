@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CMspark HUD · 高保真</title>
+  <style>
+    :root {
+      --paper: #ffffff;
+      --canvas: #f4f4f5;
+      --rail-bg: #fafafa;
+      --text: #171717;
+      --secondary: #525252;
+      --faint: #737373;
+      --line: rgba(23, 23, 23, 0.08);
+      --indigo: #4f46e5;
+      --indigo-soft: #eef2ff;
+      --ok: #047857;
+      --ok-bg: #ecfdf5;
+      --warn: #92400e;
+      --warn-bg: #fffbeb;
+      --radius: 16px;
+      --radius-sm: 10px;
+      --space: 8px;
+      --rail: 52px;
+      --list: 216px;
+      --hud-w: 720px;
+      --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+      --shadow: 0 1px 0 var(--line), 0 22px 48px rgba(23, 23, 23, 0.14);
+      --focus: 0 0 0 2px #fff, 0 0 0 4px var(--indigo);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(900px 420px at 18% -10%, #eef2ff 0%, transparent 50%),
+        linear-gradient(180deg, #ecece8 0%, #e4e4e0 100%);
+    }
+    .stage { max-width: 960px; margin: 0 auto; padding: 40px 24px 72px; }
+    .kicker-off { /* craft-floor: no eyebrow */ }
+    h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.03em; margin: 0 0 6px; }
+    .lede { margin: 0 0 20px; color: var(--secondary); max-width: 62ch; font-size: 14px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+    .chip {
+      appearance: none; border: 1px solid var(--line); background: var(--paper);
+      color: var(--text); padding: 8px 12px; border-radius: 999px; font: inherit;
+      min-height: 36px; cursor: pointer;
+    }
+    .chip:hover { background: var(--canvas); }
+    .chip[aria-pressed="true"] { background: var(--text); color: #fff; border-color: var(--text); }
+    .chip:focus-visible { outline: none; box-shadow: var(--focus); }
+
+    .hud {
+      width: min(var(--hud-w), 100%);
+      background: var(--paper);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .body {
+      display: grid;
+      grid-template-columns: var(--rail) var(--list) 1fr;
+      height: 0;
+      opacity: 0;
+      pointer-events: none;
+      border-bottom: 0 solid var(--line);
+    }
+    .hud.expanded .body {
+      height: 428px;
+      opacity: 1;
+      pointer-events: auto;
+      border-bottom-width: 1px;
+      transition: height 180ms var(--ease), opacity 160ms var(--ease);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .hud.expanded .body { transition: none; }
+    }
+
+    .rail {
+      background: var(--rail-bg);
+      border-right: 1px solid var(--line);
+      display: flex; flex-direction: column; align-items: center;
+      padding: 10px 0; gap: 4px;
+    }
+    .rail-btn {
+      width: 44px; height: 44px; border: 0; background: transparent;
+      border-radius: var(--radius-sm); color: var(--secondary); cursor: pointer;
+      display: grid; place-items: center;
+    }
+    .rail-btn svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .rail-btn:hover { background: var(--canvas); color: var(--text); }
+    .rail-btn[aria-current="true"] { background: var(--indigo-soft); color: var(--indigo); }
+    .rail-btn:focus-visible { outline: none; box-shadow: var(--focus); }
+
+    .list { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+    .list-head {
+      padding: 14px 14px 8px;
+      font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+      color: var(--faint);
+    }
+    .list-scroll { overflow: auto; flex: 1; padding: 0 6px 10px; }
+    .row {
+      width: 100%; text-align: left; border: 0; background: transparent;
+      border-radius: 10px; padding: 10px 10px; cursor: pointer;
+      min-height: 44px; font: inherit; color: var(--text);
+    }
+    .row:hover { background: var(--canvas); }
+    .row[aria-current="true"] { background: var(--indigo-soft); color: var(--indigo); }
+    .row:focus-visible { outline: none; box-shadow: var(--focus); }
+    .row strong { display: block; font-weight: 500; font-size: 13px; }
+    .row small { display: block; margin-top: 2px; font-size: 11px; color: var(--faint); }
+    .row[aria-current="true"] small { color: #6366f1; }
+
+    .main { display: flex; flex-direction: column; min-width: 0; background: var(--paper); }
+    .log { flex: 1; overflow: auto; padding: 20px 22px; }
+    .turn { max-width: 36rem; margin: 0 0 16px; }
+    .turn.me { margin-left: auto; }
+    .meta { font-size: 11px; color: var(--faint); margin-bottom: 4px; }
+    .turn p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text); }
+    .turn.me p {
+      background: var(--canvas); padding: 8px 12px;
+      border-radius: 12px 12px 4px 12px;
+    }
+    .empty {
+      height: 100%; display: flex; flex-direction: column; justify-content: center;
+      color: var(--secondary); font-size: 14px; line-height: 1.6;
+    }
+    .empty strong { display: block; font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+
+    .composer { display: flex; align-items: center; gap: 6px; padding: 10px 12px 8px; }
+    .icon-btn {
+      width: 44px; height: 44px; border: 0; background: transparent;
+      border-radius: var(--radius-sm); cursor: pointer; color: var(--text);
+      display: grid; place-items: center; flex: none;
+    }
+    .icon-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .icon-btn:hover { background: var(--canvas); }
+    .icon-btn:focus-visible { outline: none; box-shadow: var(--focus); }
+    .icon-btn[aria-pressed="true"] { color: var(--indigo); background: var(--indigo-soft); }
+    .field {
+      flex: 1; display: flex; align-items: center; gap: 4px;
+      min-height: 48px; padding: 0 8px 0 14px;
+      background: var(--canvas); border-radius: 14px;
+    }
+    .field:focus-within { box-shadow: inset 0 0 0 1.5px rgba(79, 70, 229, 0.45); background: var(--paper); }
+    .field input {
+      flex: 1; border: 0; background: transparent; outline: none;
+      font: 15px/1.35 inherit; color: var(--text); min-height: 44px;
+    }
+    .field input::placeholder { color: #a3a3a3; }
+    .hint { padding: 0 16px 12px; font-size: 11px; color: var(--faint); }
+
+    .notes {
+      margin-top: 36px; display: grid; grid-template-columns: 1fr 1fr;
+      gap: 16px 28px; color: var(--secondary); font-size: 13px;
+    }
+    .notes h2 { margin: 0 0 8px; font-size: 13px; color: var(--text); font-weight: 600; }
+    .notes ul { margin: 0; padding-left: 18px; }
+    .notes li { margin: 4px 0; }
+    code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+
+    @media (max-width: 720px) {
+      .notes { grid-template-columns: 1fr; }
+      .body { grid-template-columns: 48px 1fr; }
+      .list { display: none; }
+      .hud.expanded .list.show-mobile { display: flex; }
+    }
+  </style>
+</head>
+<body>
+  <!--
+    THESIS: HUD is a paper summon bar that grows into a Companion workbench; refuses titled mini-Side-Panel + stacked 200pt rails.
+    OWN-WORLD: 看山 paper — white, zinc type, one indigo for selection only; 16px card, 8px rhythm, outline SVG icons.
+    STORY: Type immediately; expand only to manage threads/packs/knowledge/skills/MCP without Chrome.
+    FIRST VIEWPORT: Floating 720 card, composer bottom, chevron on the field; expanded = 52 icon rail + 216 list + transcript.
+    FORM: Operate · established 看山 world · Codex/Qwen/WorkBuddy topology.
+    FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+  -->
+  <div class="stage">
+    <h1>召唤条，不是迷你插件</h1>
+    <p class="lede">看山纸面 + Codex / 千问办公 / WorkBuddy 的分区：输入永远在底，左边一次只打开一类。这是给 AppKit 对照的高保真，不是又一个 HTML 产品窗。</p>
+    <div class="toolbar" role="toolbar" aria-label="预览状态">
+      <button class="chip" id="bFold" type="button" aria-pressed="false">收起</button>
+      <button class="chip" id="bOpen" type="button" aria-pressed="true">展开 · 对话</button>
+      <button class="chip" id="bEmpty" type="button" aria-pressed="false">空对话</button>
+    </div>
+
+    <div class="hud expanded" id="hud">
+      <div class="body" id="body">
+        <nav class="rail" aria-label="组合面">
+          <button class="rail-btn" data-sec="talk" aria-current="true" type="button" aria-label="对话" title="对话">
+            <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h10M5 17h7"/></svg>
+          </button>
+          <button class="rail-btn" data-sec="pack" type="button" aria-label="场景" title="场景">
+            <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.4"/><rect x="13" y="4" width="7" height="7" rx="1.4"/><rect x="4" y="13" width="7" height="7" rx="1.4"/><rect x="13" y="13" width="7" height="7" rx="1.4"/></svg>
+          </button>
+          <button class="rail-btn" data-sec="know" type="button" aria-label="知识" title="知识">
+            <svg viewBox="0 0 24 24"><path d="M5 5.5h9.2A2.3 2.3 0 0 1 16.5 7.8V19H7.4A2.4 2.4 0 0 1 5 16.6V5.5z"/><path d="M16.5 8h1.4A2.1 2.1 0 0 1 20 10.1V19h-3.5"/></svg>
+          </button>
+          <button class="rail-btn" data-sec="skill" type="button" aria-label="技能" title="技能">
+            <svg viewBox="0 0 24 24"><path d="M8 15.2 4.8 12 8 8.8M16 8.8 19.2 12 16 15.2M13.1 6.8 10.9 17.2"/></svg>
+          </button>
+          <button class="rail-btn" data-sec="mcp" type="button" aria-label="MCP" title="MCP">
+            <svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1.2"/><path d="M12 4.6v3.2M12 16.2v3.2M4.6 12H8M16 12h3.4"/></svg>
+          </button>
+        </nav>
+        <aside class="list">
+          <div class="list-head" id="listHead">对话</div>
+          <div class="list-scroll" id="listBody"></div>
+        </aside>
+        <section class="main">
+          <div class="log" id="log"></div>
+        </section>
+      </div>
+      <div class="composer">
+        <button class="icon-btn" type="button" aria-label="新对话" title="新对话">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <div class="field">
+          <input id="q" type="text" placeholder="说点什么，回车发送" aria-label="发送到当前对话" />
+          <button class="icon-btn" type="button" aria-label="添加附件" title="添加附件">
+            <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
+          </button>
+          <button class="icon-btn" type="button" aria-label="按住听写" title="按住听写">
+            <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
+          </button>
+          <button class="icon-btn" id="chev" type="button" aria-label="收起工作台" aria-pressed="true" title="展开 / 收起">
+            <svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="hint" id="hint">回车发送 · Shift+Enter 排队 · # 搜标题 · ⌃ 收起</div>
+    </div>
+
+    <div class="notes">
+      <div>
+        <h2>视觉合同（看山 · Operate）</h2>
+        <ul>
+          <li>纸面白 + 锌灰字 + 靛蓝只用于选中/焦点</li>
+          <li>8px 节奏；轨钮 / 列表行 / 底栏按钮 ≥ 44px</li>
+          <li>图标全 SVG 描边，不用 emoji 当导航</li>
+          <li>焦点：白底上 2px 靛蓝环；尊重 <code>prefers-reduced-motion</code></li>
+        </ul>
+      </div>
+      <div>
+        <h2>交互</h2>
+        <ul>
+          <li>⌄ 展开，⌃ 收起，Esc 关窗</li>
+          <li>轨一次一类；列表只渲染该类</li>
+          <li>空态教用法，不放插画角色（HUD 是工具条）</li>
+          <li>批准不进此窗；网页 CDP 仍走扩展</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <script>
+    const copy = {
+      talk: { head: "对话", hint: "回车发送 · Shift+Enter 排队 · # 搜标题 · ⌃ 收起",
+        rows: [["今日站会纪要", "12 分钟前", true], ["知识库诚实 Wave 2", "昨天"], ["Windows 安装器", "周一"]],
+        log: `<div class="turn me"><div class="meta">你</div><p>把今天的站会收成纪要，待办单列。</p></div>
+              <div class="turn"><div class="meta">助手</div><p>先按时间线收三点结论，再列出待办。完整格式可以之后导出，不必停在这条召唤条里排版。</p></div>` },
+      pack: { head: "场景", hint: "点一项套到当前对话 · 不升 Trust",
+        rows: [["会议记录", "套到当前对话", true], ["代码审查", "技能 + 提示"], ["调研摘要", "只读"]],
+        log: `<div class="turn"><div class="meta">场景</div><p>场景是装配，不是更深的 Agent。需要确认的套用走托盘原生窗，不经过 Chrome 侧栏。</p></div>` },
+      know: { head: "知识", hint: "勾选挂到本对话 · 导入用系统文件框",
+        rows: [["ADR-020 能力三轴", "已挂", true], ["产品 0.5.2 说明", ""], ["会议模板", ""]],
+        log: `<div class="turn"><div class="meta">知识</div><p>USE 是把文档挂到当前对话。导入仍要你点一次确认——只是确认窗在托盘，不在侧栏。</p></div>` },
+      skill: { head: "技能", hint: "列表来自本机 Companion",
+        rows: [["browse", "内置", true], ["writing-skills", "内置"], ["grill-me", ""]],
+        log: `<div class="turn"><div class="meta">技能</div><p>开关和安装在这里完成。不把技能画成第三套 runtime。</p></div>` },
+      mcp: { head: "MCP", hint: "已连接的服务器可直接给本轮用",
+        rows: [["filesystem", "已连接", true], ["github", "未启用"]],
+        log: `<div class="turn"><div class="meta">MCP</div><p>添加服务器用原生表单。危险连接走托盘确认，HUD 里不画 Allow / Deny。</p></div>` },
+    };
+    const emptyLog = `<div class="empty"><strong>还没有对话</strong>打字就开始。或点 + 开一条新的。组合面在左侧，用完可以收起。</div>`;
+
+    const hud = document.getElementById("hud");
+    const listHead = document.getElementById("listHead");
+    const listBody = document.getElementById("listBody");
+    const log = document.getElementById("log");
+    const hint = document.getElementById("hint");
+    const chev = document.getElementById("chev");
+    const q = document.getElementById("q");
+    let empty = false;
+
+    function render(sec) {
+      const c = copy[sec];
+      listHead.textContent = c.head;
+      listBody.innerHTML = c.rows.map(([t, s, on]) =>
+        `<button class="row" type="button" ${on ? 'aria-current="true"' : ""}><strong>${t}</strong>${s ? `<small>${s}</small>` : ""}</button>`
+      ).join("");
+      log.innerHTML = empty && sec === "talk" ? emptyLog : c.log;
+      hint.textContent = c.hint;
+    }
+    function setExpanded(on) {
+      hud.classList.toggle("expanded", on);
+      chev.setAttribute("aria-pressed", on);
+      chev.setAttribute("aria-label", on ? "收起工作台" : "展开工作台");
+      chev.innerHTML = on
+        ? '<svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>'
+        : '<svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>';
+      document.getElementById("bOpen").setAttribute("aria-pressed", on && !empty);
+      document.getElementById("bFold").setAttribute("aria-pressed", !on);
+      document.getElementById("bEmpty").setAttribute("aria-pressed", empty);
+    }
+    document.querySelectorAll(".rail-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".rail-btn").forEach((b) => b.removeAttribute("aria-current"));
+        btn.setAttribute("aria-current", "true");
+        empty = false;
+        render(btn.dataset.sec);
+        setExpanded(true);
+      });
+    });
+    document.getElementById("bFold").onclick = () => { empty = false; setExpanded(false); };
+    document.getElementById("bOpen").onclick = () => {
+      empty = false; render("talk");
+      document.querySelectorAll(".rail-btn").forEach((b) => b.toggleAttribute("aria-current", b.dataset.sec === "talk"));
+      setExpanded(true);
+    };
+    document.getElementById("bEmpty").onclick = () => { empty = true; render("talk"); setExpanded(true); };
+    chev.onclick = () => setExpanded(!hud.classList.contains("expanded"));
+    q.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") setExpanded(false);
+    });
+    render("talk");
+    setExpanded(true);
+  </script>
+</body>
+</html>

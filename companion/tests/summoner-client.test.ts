@@ -353,6 +353,21 @@ test("mapVoiceSttToSummonerCmd result fills composer via dictate", () => {
   assert.equal(mapVoiceSttToSummonerCmd({ type: "chat.token", content: "x" }), null)
 })
 
+test("mapChatMessageToSummonerCmd: file.upload_error → summoner.error", () => {
+  const cmd = mapChatMessageToSummonerCmd({
+    type: "file.upload_error",
+    thread_id: "t",
+    error: "每个文件需要 name, type, content 字段",
+  })
+  assert.equal(cmd?.cmd, "summoner.error")
+  if (cmd?.cmd === "summoner.error") {
+    assert.equal(cmd.error_code, "upload_failed")
+    assert.match(cmd.message, /每个文件需要 name, type, content 字段/)
+    assert.equal(cmd.thread_id, "t")
+  }
+  assert.equal(mapChatMessageToSummonerCmd({ type: "file.uploaded", thread_id: "t", files: ["a.txt"] }), null)
+})
+
 test("mapChatMessageToSummonerCmd ignores unrelated / confirm frames", () => {
   assert.equal(mapChatMessageToSummonerCmd({ type: "thread.list" }), null)
   assert.equal(mapChatMessageToSummonerCmd({ cmd: "summoner.confirm.allow" }), null)

@@ -2641,6 +2641,21 @@ export async function handleMessage(
     case "knowledge.list":
       // listKnowledge() → ensureFresh() (same fingerprint path as skills)
       return { type: "knowledge.list", docs: skillEngine.listKnowledge() }
+    case "knowledge.set_active": {
+      if (!rest.thread_id) return { type: "error", error: "thread_id required" }
+      const thread = threadManager.get(rest.thread_id)
+      if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+      const ids = Array.isArray(rest.ids)
+        ? rest.ids.filter((id: unknown) => typeof id === "string" && id.trim()).slice(0, 32)
+        : []
+      const known = new Set(skillEngine.listKnowledge().map((d) => d.name || d.id).filter(Boolean))
+      const next = ids.filter((id: string) => known.has(id))
+      threadManager.update(rest.thread_id, {
+        active_knowledge_ids: next,
+        knowledge_selection_mode: "manual",
+      })
+      return { type: "knowledge.active", thread_id: rest.thread_id, ids: next }
+    }
     case "knowledge.preview": {
       const loaded = await loadKnowledgePayload(rest)
       if ("error" in loaded) return { type: "error", error: loaded.error }

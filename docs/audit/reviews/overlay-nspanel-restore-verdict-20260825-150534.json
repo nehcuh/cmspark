@@ -1,0 +1,8 @@
+{
+  "batch": "overlay-nspanel-restore",
+  "timestamp": "20260825-150534",
+  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-nspanel-restore-claude-20260825-150534.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-nspanel-restore-pi-20260825-150534.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-nspanel-restore-diff-20260825-150534.patch"
+}

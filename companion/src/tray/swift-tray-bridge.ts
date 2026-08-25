@@ -54,8 +54,9 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-// Updated 2026-08-24 after nits fold (SummonerOverlay.swift split)
-const SWIFT_TRAY_SHA256 = "77139e17cd5f48d6c25aa0268806e9ba7275a30b535c2dc82749f4621f53291f"
+// Updated 2026-08-25 B0.5 — overlay rename/trash; collapse HUD still borderless
+/** Mac 快捷提问 = native HUD（收起一条；展开工作台 + 对话管理）+ 📎/🎙. */
+const SWIFT_TRAY_SHA256 = "ed4dbfa0e0eae5490bb0b18f477b416039c13e722a7e3f2750797b7e659a5fda"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

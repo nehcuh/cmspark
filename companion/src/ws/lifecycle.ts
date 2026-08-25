@@ -59,7 +59,7 @@ import {
 import { allowInboundLogEvent } from "../log-event-gate"
 import { pendingToolCalls, handleToolResult } from "./tool-forward"
 import { validateWsMessage } from "./validate"
-import { assertSummonerAllowed } from "./summoner-acl"
+import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 
@@ -1039,6 +1039,13 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         if (!gate.ok) {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "error", error: gate.error, error_code: gate.error_code }))
+          }
+          return
+        }
+        const payloadGate = applySummonerPayloadPolicy(authState.surface, msg)
+        if (!payloadGate.ok) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "error", error: payloadGate.error, error_code: payloadGate.error_code }))
           }
           return
         }

@@ -1,0 +1,8 @@
+{
+  "batch": "overlay-hud-expand-b0",
+  "timestamp": "20260825-161538",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-hud-expand-b0-claude-20260825-161538.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-hud-expand-b0-pi-20260825-161538.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-hud-expand-b0-diff-20260825-161538.patch"
+}

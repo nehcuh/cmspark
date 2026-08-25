@@ -46,9 +46,12 @@ import {
 import {
   encodeSummonerError,
   encodeSummonerHotkeySet,
+  encodeSummonerKnowledge,
   encodeSummonerMcp,
+  encodeSummonerMcpServers,
   encodeSummonerPacks,
   encodeSummonerSettings,
+  encodeSummonerSkills,
   encodeSummonerThreads,
   SUMMONER_SEARCH_HINT,
   type SummonerInboundEvt,
@@ -781,8 +784,9 @@ export async function handleSummonerReady(): Promise<void> {
 async function pushSummonerRail(): Promise<void> {
   const client = summonerClient
   if (!client) return
+  let threads: Awaited<ReturnType<NonNullable<typeof client>["listThreads"]>> = []
   try {
-    const threads = await client.listThreads()
+    threads = await client.listThreads()
     trayInstance?.sendSummoner?.(
       encodeSummonerThreads({ threads: hitsFromTitleSearch(threads).slice(0, 8) }),
     )
@@ -802,6 +806,67 @@ async function pushSummonerRail(): Promise<void> {
     )
   } catch {
     trayInstance?.sendSummoner?.(encodeSummonerPacks({ packs: [] }))
+  }
+  try {
+    const mcp = await client.sendAppRequest("mcp.list")
+    const servers = Array.isArray(mcp?.servers)
+      ? mcp.servers
+          .filter((s: any) => s && typeof s.name === "string")
+          .map((s: any) => ({
+            name: s.name,
+            enabled: s.enabled !== false,
+            transport: typeof s.transport === "string" ? s.transport : "stdio",
+          }))
+      : []
+    trayInstance?.sendSummoner?.(encodeSummonerMcpServers({ servers }))
+  } catch {
+    trayInstance?.sendSummoner?.(encodeSummonerMcpServers({ servers: [] }))
+  }
+  const current = threads.find((t) => t.id === summonerThreadId) as
+    | { active_skill_ids?: unknown; active_knowledge_ids?: unknown }
+    | undefined
+  try {
+    const listed = await client.sendAppRequest("skill.list")
+    const activeSkills = new Set(
+      Array.isArray(current?.active_skill_ids)
+        ? current.active_skill_ids.filter((id: unknown): id is string => typeof id === "string")
+        : [],
+    )
+    const skills = Array.isArray(listed?.skills)
+      ? listed.skills
+          .filter((s: any) => s && typeof s.name === "string")
+          .map((s: any) => ({
+            name: s.name,
+            title: String(s.title || s.name),
+            on: activeSkills.has(s.name),
+          }))
+      : []
+    trayInstance?.sendSummoner?.(encodeSummonerSkills({ skills }))
+  } catch {
+    trayInstance?.sendSummoner?.(encodeSummonerSkills({ skills: [] }))
+  }
+  try {
+    const listed = await client.sendAppRequest("knowledge.list")
+    const attached = new Set(
+      Array.isArray(current?.active_knowledge_ids)
+        ? current.active_knowledge_ids.filter((id: unknown): id is string => typeof id === "string")
+        : [],
+    )
+    const docs = Array.isArray(listed?.docs)
+      ? listed.docs
+          .filter((d: any) => d && (typeof d.name === "string" || typeof d.id === "string"))
+          .map((d: any) => {
+            const id = String(d.name || d.id)
+            return {
+              id,
+              title: String(d.title || id),
+              attached: attached.has(id),
+            }
+          })
+      : []
+    trayInstance?.sendSummoner?.(encodeSummonerKnowledge({ docs }))
+  } catch {
+    trayInstance?.sendSummoner?.(encodeSummonerKnowledge({ docs: [] }))
   }
 }
 
@@ -823,6 +888,132 @@ async function handleSummonerPackApply(packId: string): Promise<void> {
   trayInstance?.sendSummoner?.(
     encodeSummonerError({ message: "已套到当前对话（技能/提示）", error_code: "pack_applied" }),
   )
+}
+
+async function handleSummonerMcpToggle(name: string, enabled: boolean): Promise<void> {
+  if (!companionClient || !name) return
+  try {
+    const resp = await companionClient.sendAppRequest("mcp.toggle_server", { name, enabled })
+    if (resp?.type === "error" || resp?.error) {
+      trayInstance?.sendSummoner?.(
+        encodeSummonerError({
+          message: typeof resp?.error === "string" ? resp.error : "无法开关 MCP",
+        }),
+      )
+    }
+  } catch (err) {
+    trayInstance?.sendSummoner?.(
+      encodeSummonerError({ message: err instanceof Error ? err.message : "无法开关 MCP" }),
+    )
+  }
+  await pushSummonerRail()
+}
+
+async function handleSummonerMcpAdd(name: string, command: string): Promise<void> {
+  if (!companionClient || !name || !command) return
+  try {
+    const resp = await companionClient.sendAppRequest(
+      "mcp.add",
+      {
+        name,
+        server: { transport: "stdio", command, enabled: true, trust_level: "manual" },
+      },
+      60_000,
+    )
+    if (resp?.type === "error" || resp?.error) {
+      trayInstance?.sendSummoner?.(
+        encodeSummonerError({
+          message: typeof resp?.error === "string" ? resp.error : "无法添加 MCP",
+        }),
+      )
+    }
+  } catch (err) {
+    trayInstance?.sendSummoner?.(
+      encodeSummonerError({ message: err instanceof Error ? err.message : "无法添加 MCP" }),
+    )
+  }
+  await pushSummonerRail()
+}
+
+async function handleSummonerSkillToggle(name: string, on: boolean): Promise<void> {
+  const client = summonerClient
+  const tid = summonerThreadId
+  if (!client || !tid || !name) {
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: "没有当前对话" }))
+    return
+  }
+  try {
+    const resp = await client.sendAppRequest(on ? "skill.activate" : "skill.deactivate", {
+      thread_id: tid,
+      skill_name: name,
+    })
+    if (resp?.type === "error" || resp?.error) {
+      trayInstance?.sendSummoner?.(
+        encodeSummonerError({
+          message: typeof resp?.error === "string" ? resp.error : "无法切换技能",
+        }),
+      )
+    }
+  } catch (err) {
+    trayInstance?.sendSummoner?.(
+      encodeSummonerError({ message: err instanceof Error ? err.message : "无法切换技能" }),
+    )
+  }
+  await pushSummonerRail()
+}
+
+async function handleSummonerKnowledgeAttach(id: string): Promise<void> {
+  const client = summonerClient
+  const tid = summonerThreadId
+  if (!client || !tid || !id) {
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: "没有当前对话" }))
+    return
+  }
+  try {
+    const listed = await client.listThreads()
+    const row = listed.find((t) => t.id === tid) as { active_knowledge_ids?: unknown } | undefined
+    const current = Array.isArray(row?.active_knowledge_ids)
+      ? row.active_knowledge_ids.filter((x: unknown): x is string => typeof x === "string")
+      : []
+    const next = current.includes(id) ? current.filter((x: string) => x !== id) : [...current, id]
+    const resp = await client.sendAppRequest("knowledge.set_active", { thread_id: tid, ids: next })
+    if (resp?.type === "error" || resp?.error) {
+      trayInstance?.sendSummoner?.(
+        encodeSummonerError({
+          message: typeof resp?.error === "string" ? resp.error : "无法挂知识",
+        }),
+      )
+    }
+  } catch (err) {
+    trayInstance?.sendSummoner?.(
+      encodeSummonerError({ message: err instanceof Error ? err.message : "无法挂知识" }),
+    )
+  }
+  await pushSummonerRail()
+}
+
+async function handleSummonerKnowledgeImport(name: string, mime: string, content: string): Promise<void> {
+  if (!companionClient || !name || !content) return
+  try {
+    // Overlay sends UTF-8 text (not base64). Router `file.content` is base64 —
+    // pass `content` so markdown is imported as written.
+    const resp = await companionClient.sendAppRequest("knowledge.import", {
+      content,
+      title: name.replace(/\.[^.]+$/, "") || name,
+    })
+    if (resp?.type === "error" || resp?.error) {
+      trayInstance?.sendSummoner?.(
+        encodeSummonerError({
+          message: typeof resp?.error === "string" ? resp.error : "无法导入知识",
+        }),
+      )
+    }
+  } catch (err) {
+    trayInstance?.sendSummoner?.(
+      encodeSummonerError({ message: err instanceof Error ? err.message : "无法导入知识" }),
+    )
+  }
+  await pushSummonerRail()
 }
 
 export async function handleSummonerClosed(): Promise<void> {
@@ -1114,6 +1305,120 @@ export function handleSummonerMic(
   }
 }
 
+async function handleSummonerFiles(
+  thread_id: string,
+  files: Array<{ name: string; type: string; content: string }>,
+): Promise<void> {
+  const client = summonerClient
+  if (!client || files.length === 0) return
+  const normalized = files.map((f) => ({
+    name: f.name,
+    type: f.type && f.type.trim() ? f.type : "application/octet-stream",
+    content: f.content,
+  }))
+  const token = currentOverlaySession() ?? beginOverlaySession()
+  let tid = thread_id
+  let createdFresh = false
+  if (!tid) {
+    const created = await client.createThread()
+    if (!created?.id) {
+      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "无法创建新对话" }))
+      return
+    }
+    tid = created.id
+    createdFresh = true
+  }
+  const claimed = await claimOverlayIfLive({
+    token,
+    claim: async () => {
+      if (createdFresh) {
+        trayInstance?.hydrateSummoner?.({
+          thread_id: tid,
+          lines: [],
+          browser: summonerBrowserAttached() ? "attached" : "detached",
+          search_hint: SUMMONER_SEARCH_HINT,
+        })
+      }
+      return claimOverlayLeaseDetailed(client, tid)
+    },
+    releaseClaim: (rev) =>
+      releaseOverlayLeaseAtRev(tid, rev, summonerLeaseRpc(client)).then(() => {}),
+    releaseAll: () => client.releaseAllOverlayComposerLeases(),
+    onStaleClaim: (siblings) => reclaimLiveSummonerThread(client, siblings),
+  })
+  if (!claimed) {
+    trayInstance?.sendSummoner?.(
+      encodeSummonerError({ message: "侧栏占用了输入", error_code: "OVERLAY_STANDBY" }),
+    )
+    return
+  }
+  bindSummonerThread(tid, token)
+  touchSummonerActivity(tid)
+  const ok = client.sendAppMessage("file.upload", { thread_id: tid, files: normalized })
+  if (!ok) {
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: "附件未送达", error_code: "upload_failed" }))
+  }
+}
+
+async function handleSummonerThreadRename(threadId: string, alias: string): Promise<void> {
+  const client = summonerClient
+  const trimmed = alias.replace(/[\x00-\x1F\x7F]/g, "").trim().slice(0, 200)
+  if (!client || !threadId || !trimmed) return
+  try {
+    const resp = await client.sendAppRequest("thread.update", {
+      thread_id: threadId,
+      updates: { alias: trimmed },
+    })
+    if (resp?.type === "error" || resp?.error) {
+      trayInstance?.sendSummoner?.(
+        encodeSummonerError({
+          message: typeof resp?.error === "string" ? resp.error : "无法重命名",
+        }),
+      )
+      return
+    }
+  } catch (err) {
+    trayInstance?.sendSummoner?.(
+      encodeSummonerError({ message: err instanceof Error ? err.message : "无法重命名" }),
+    )
+    return
+  }
+  await pushSummonerRail()
+}
+
+async function handleSummonerThreadTrash(threadId: string): Promise<void> {
+  const client = summonerClient
+  if (!client || !threadId) return
+  try {
+    const resp = await client.sendAppRequest("thread.delete", {
+      thread_id: threadId,
+      mode: "trash",
+    })
+    if (resp?.type === "error" || resp?.error) {
+      const busy = resp?.error === "thread_busy" || resp?.data?.error_code === "thread_busy"
+      trayInstance?.sendSummoner?.(
+        encodeSummonerError({
+          message: busy ? "这条对话还在跑" : String(resp?.error || "无法移到回收站"),
+          ...(busy ? { error_code: "thread_busy" } : {}),
+        }),
+      )
+      return
+    }
+  } catch (err) {
+    trayInstance?.sendSummoner?.(
+      encodeSummonerError({ message: err instanceof Error ? err.message : "无法移到回收站" }),
+    )
+    return
+  }
+  const wasCurrent = summonerThreadId === threadId
+  await pushSummonerRail()
+  if (!wasCurrent) return
+  const remaining = await client.listThreads()
+  const next = hitsFromTitleSearch(remaining)[0]
+  if (next) await handleSummonerSelect(next.id)
+  else await handleSummonerNewThread()
+}
+
 export async function handleSummonerNewThread(sessionToken?: number): Promise<boolean> {
   const client = summonerClient
   if (!client) return false
@@ -1142,6 +1447,7 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
   if (claimed) {
     bindSummonerThread(created.id, token)
     touchSummonerActivity(created.id)
+    void pushSummonerRail()
   }
   return claimed
 }
@@ -1194,8 +1500,32 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
     case "summoner.new_thread":
       void handleSummonerNewThread()
       return
+    case "summoner.thread.rename":
+      void handleSummonerThreadRename(evt.thread_id, evt.alias)
+      return
+    case "summoner.thread.trash":
+      void handleSummonerThreadTrash(evt.thread_id)
+      return
+    case "summoner.files":
+      void handleSummonerFiles(evt.thread_id, evt.files)
+      return
     case "summoner.pack.apply":
       void handleSummonerPackApply(evt.pack_id)
+      return
+    case "summoner.mcp.toggle":
+      void handleSummonerMcpToggle(evt.name, evt.enabled)
+      return
+    case "summoner.mcp.add":
+      void handleSummonerMcpAdd(evt.name, evt.command)
+      return
+    case "summoner.skill.toggle":
+      void handleSummonerSkillToggle(evt.name, evt.on)
+      return
+    case "summoner.knowledge.attach":
+      void handleSummonerKnowledgeAttach(evt.id)
+      return
+    case "summoner.knowledge.import":
+      void handleSummonerKnowledgeImport(evt.name, evt.mime, evt.content)
       return
     case "summoner.closed":
       void handleSummonerClosed()
@@ -1493,6 +1823,26 @@ export async function startMenuBarAgent(): Promise<void> {
     if (!trayInstance || !companionClient) return
     trayInstance.setQuickActions(companionClient.quickActions)
     trayInstance.setRecentThreads(companionClient.recentThreads)
+  })
+  companionClient.onAppMessage((msg: any) => {
+    if (!msg || msg.type !== "security.confirmation.request") return
+    const id = String(msg.confirmation_id || "")
+    if (!id || !trayInstance || !companionClient) return
+    void trayInstance
+      .showConfirmDialog({
+        id,
+        toolName: String(msg.tool_name || "mcp"),
+        riskLevel: (msg.risk_level || "high") as "low" | "medium" | "high" | "critical",
+        summary: String(msg.full_preview || msg.code_preview || ""),
+        criticalApis: Array.isArray(msg.critical_apis) ? msg.critical_apis.map(String) : [],
+        timeoutMs: typeof msg.timeout_ms === "number" ? msg.timeout_ms : 45_000,
+      })
+      .then((r) => {
+        companionClient?.sendAppMessage("security.confirmation.response", {
+          confirmation_id: r.id,
+          approved: r.approved,
+        })
+      })
   })
 
   // Set default quick actions immediately

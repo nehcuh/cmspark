@@ -12,6 +12,7 @@ import {
   planSummonerShellOpen,
   resolveSummonerBrowserPath,
 } from "./summoner/shell-open"
+import { applySummonerPayloadPolicy } from "./ws/summoner-acl"
 
 export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
 
@@ -23,9 +24,17 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "thread.list",
   "thread.select",
   "thread.create",
+  "thread.delete",
+  "thread.update",
   "mcp.list",
+  "mcp.toggle_server",
   "pack.list",
   "pack.apply",
+  "skill.list",
+  "skill.activate",
+  "skill.deactivate",
+  "knowledge.list",
+  "knowledge.set_active",
   "file.upload",
   "composer.lease.get",
   "composer.lease.claim",
@@ -159,8 +168,13 @@ async function dispatchAllowed(type: string, payload: Record<string, unknown>): 
   if (!SUMMONER_WEB_DISPATCH_ALLOW.has(type)) {
     throw Object.assign(new Error(`not allowed: ${type}`), { status: 403 })
   }
+  const msg: Record<string, unknown> = { ...payload, type }
+  const gate = applySummonerPayloadPolicy("summoner", msg)
+  if (!gate.ok) {
+    throw Object.assign(new Error(gate.error), { status: 403, error_code: gate.error_code })
+  }
   if (!activeDispatch) throw Object.assign(new Error("summoner dispatch unavailable"), { status: 503 })
-  return activeDispatch({ ...payload, type })
+  return activeDispatch(msg)
 }
 
 export function summonerWebPageUrl(port: number, token: string): string {
@@ -333,14 +347,17 @@ async function handleRequest(
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": `http://127.0.0.1:${port}`,
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     })
     res.end()
     return
   }
 
-  if (req.method === "POST" && !originOk(req, port)) {
+  if (
+    (req.method === "POST" || req.method === "PATCH" || req.method === "DELETE") &&
+    !originOk(req, port)
+  ) {
     forbidden(res, `unexpected Origin header "${req.headers.origin || ""}"`)
     return
   }
@@ -404,6 +421,28 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/thread" && req.method === "PATCH") {
+      const id = query.get("id") || ""
+      if (!id) {
+        jsonResponse(res, { type: "error", error: "id required" }, 400)
+        return
+      }
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX))
+      const alias = typeof body.alias === "string" ? body.alias : ""
+      jsonResponse(res, await dispatchAllowed("thread.update", { thread_id: id, updates: { alias } }))
+      return
+    }
+
+    if (pathOnly === "/api/thread" && req.method === "DELETE") {
+      const id = query.get("id") || ""
+      if (!id) {
+        jsonResponse(res, { type: "error", error: "id required" }, 400)
+        return
+      }
+      jsonResponse(res, await dispatchAllowed("thread.delete", { thread_id: id, mode: "trash" }))
+      return
+    }
+
     if (pathOnly === "/api/packs" && req.method === "GET") {
       jsonResponse(res, await dispatchAllowed("pack.list", {}))
       return
@@ -411,6 +450,55 @@ async function handleRequest(
 
     if (pathOnly === "/api/mcp" && req.method === "GET") {
       jsonResponse(res, await dispatchAllowed("mcp.list", {}))
+      return
+    }
+
+    if (pathOnly === "/api/mcp/toggle" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX))
+      const name = typeof body.name === "string" ? body.name : ""
+      if (!name || typeof body.enabled !== "boolean") {
+        jsonResponse(res, { type: "error", error: "name and enabled required" }, 400)
+        return
+      }
+      jsonResponse(res, await dispatchAllowed("mcp.toggle_server", { name, enabled: body.enabled }))
+      return
+    }
+
+    if (pathOnly === "/api/skills" && req.method === "GET") {
+      jsonResponse(res, await dispatchAllowed("skill.list", {}))
+      return
+    }
+
+    if (pathOnly === "/api/skills/toggle" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX))
+      const thread_id = typeof body.thread_id === "string" ? body.thread_id : ""
+      const skill_name = typeof body.skill_name === "string" ? body.skill_name : ""
+      const on = body.on !== false
+      if (!thread_id || !skill_name) {
+        jsonResponse(res, { type: "error", error: "thread_id and skill_name required" }, 400)
+        return
+      }
+      jsonResponse(
+        res,
+        await dispatchAllowed(on ? "skill.activate" : "skill.deactivate", { thread_id, skill_name }),
+      )
+      return
+    }
+
+    if (pathOnly === "/api/knowledge" && req.method === "GET") {
+      jsonResponse(res, await dispatchAllowed("knowledge.list", {}))
+      return
+    }
+
+    if (pathOnly === "/api/knowledge/active" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX))
+      const thread_id = typeof body.thread_id === "string" ? body.thread_id : ""
+      const ids = Array.isArray(body.ids) ? body.ids : []
+      if (!thread_id) {
+        jsonResponse(res, { type: "error", error: "thread_id required" }, 400)
+        return
+      }
+      jsonResponse(res, await dispatchAllowed("knowledge.set_active", { thread_id, ids }))
       return
     }
 
@@ -538,6 +626,9 @@ header h1{font-size:14px;font-weight:600}
 .rail{width:220px;border-right:1px solid #2a2d3a;display:flex;flex-direction:column;background:#161822;overflow:auto}
 .rail h2{font-size:11px;letter-spacing:.04em;color:#8b90a5;padding:10px 12px 4px;text-transform:uppercase}
 .item{display:block;width:calc(100% - 16px);margin:2px 8px;padding:7px 8px;border:0;border-radius:6px;background:transparent;color:#d5d7e2;text-align:left;font:inherit;cursor:pointer}
+.trow{display:flex;align-items:center;gap:0;width:calc(100% - 8px);margin:0 4px}
+.trow .item{flex:1;width:auto;margin:2px 0}
+.trow .mini{flex:0 0 auto;width:auto;margin:2px 0;padding:7px 6px;font-size:11px;color:#8b90a5}
 .item:hover{background:#252836}
 .item.active{background:#2f3650;color:#fff}
 .item.muted{opacity:.45;cursor:not-allowed}
@@ -564,17 +655,26 @@ input[type=file]{font-size:12px;color:#9aa0b4}
 </header>
 <div class="shell">
   <aside class="rail">
-    <h2>对话</h2>
+    <div class="trow" id="secs">
+      <button class="item mini active" data-sec="threads">对话</button>
+      <button class="item mini" data-sec="packs">场景</button>
+      <button class="item mini" data-sec="knowledge">知识</button>
+      <button class="item mini" data-sec="skills">技能</button>
+      <button class="item mini" data-sec="mcp">MCP</button>
+    </div>
+    <h2 id="secHead">对话</h2>
     <button class="item" id="newThread">＋ 新建对话</button>
     <div id="threads"></div>
+    <div id="composeList"></div>
   </aside>
   <section class="main">
     <div class="log" id="log"></div>
     <div class="composer">
-      <div class="hint" id="hint">回车发送/纠偏 · Shift+Enter 排队 · # 搜标题 · 技能/MCP/设置去侧栏处理</div>
+      <div class="hint" id="hint">回车发送/纠偏 · Shift+Enter 排队 · # 搜标题 · 听写/知识配置/批准去侧栏处理</div>
       <textarea id="text" placeholder="说一句，或 # 搜标题"></textarea>
       <div class="row">
-        <input type="file" id="files" multiple>
+        <label class="btn ghost" for="files" title="添加附件">📎</label>
+        <input type="file" id="files" multiple hidden>
         <button class="btn" id="send">发送</button>
         <button class="btn ghost" id="steer">纠偏</button>
         <button class="btn ghost" id="queue">排队</button>
@@ -604,11 +704,44 @@ input[type=file]{font-size:12px;color:#9aa0b4}
     threads.forEach(function(t){
       var title=(t.title||t.alias||t.id||"").trim()||t.id;
       if(q && title.indexOf(q)<0 && String(t.alias||"").indexOf(q)<0) return;
+      var row=document.createElement("div");
+      row.className="trow";
       var b=document.createElement("button");
       b.className="item"+(t.id===threadId?" active":"");
       b.textContent=title;
       b.onclick=function(){selectThread(t.id)};
-      box.appendChild(b);
+      var rn=document.createElement("button");
+      rn.className="item mini";
+      rn.textContent="重命名";
+      rn.onclick=function(ev){
+        ev.stopPropagation();
+        var alias=window.prompt("重命名", title);
+        if(!alias||!String(alias).trim()) return;
+        api("/api/thread?id="+encodeURIComponent(t.id),{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({alias:String(alias).trim()})}).then(function(d){
+          if(d&&(d.error||d.type==="error")){setStatus(d.error||"无法重命名");return}
+          return refresh();
+        });
+      };
+      var tr=document.createElement("button");
+      tr.className="item mini";
+      tr.textContent="移到回收站";
+      tr.onclick=function(ev){
+        ev.stopPropagation();
+        if(!window.confirm("把「"+title+"」移到回收站？")) return;
+        api("/api/thread?id="+encodeURIComponent(t.id),{method:"DELETE"}).then(function(d){
+          if(d&&(d.error||d.type==="error")){setStatus(d.error||"无法移到回收站");return}
+          var gone=threadId===t.id;
+          return refresh().then(function(){
+            if(!gone) return;
+            if(threads[0]) return selectThread(threads[0].id);
+            $("newThread").click();
+          });
+        });
+      };
+      row.appendChild(b);
+      row.appendChild(rn);
+      row.appendChild(tr);
+      box.appendChild(row);
     });
   }
   function renderMsgs(messages){
@@ -625,8 +758,8 @@ input[type=file]{font-size:12px;color:#9aa0b4}
   }
   function syncBusyUi(){
     $("hint").textContent=busy
-      ?"回车发送/纠偏 · Shift+Enter 排队 · 忙时附件请等本轮结束 · 技能/MCP/设置去侧栏处理"
-      :"回车发送/纠偏 · Shift+Enter 排队 · # 搜标题 · 技能/MCP/设置去侧栏处理";
+      ?"回车发送/纠偏 · Shift+Enter 排队 · 忙时附件请等本轮结束 · 听写/知识配置/批准去侧栏处理"
+      :"回车发送/纠偏 · Shift+Enter 排队 · # 搜标题 · 听写/知识配置/批准去侧栏处理";
   }
   function selectThread(id){
     threadId=id;
@@ -725,10 +858,94 @@ input[type=file]{font-size:12px;color:#9aa0b4}
   });
   function refresh(){
     return api("/api/threads").then(function(d){
-      threads=d.threads||[];
+      threads=(d.threads||[]).slice().sort(function(a,b){
+        return String(b.updated_at||b.created_at||"").localeCompare(String(a.updated_at||a.created_at||""));
+      });
       renderThreads();
     });
   }
+  var sec="threads";
+  function showSec(name){
+    sec=name;
+    document.querySelectorAll("#secs [data-sec]").forEach(function(b){
+      b.className="item mini"+(b.getAttribute("data-sec")===name?" active":"");
+    });
+    var heads={threads:"对话",packs:"场景",knowledge:"知识",skills:"技能",mcp:"MCP"};
+    $("secHead").textContent=heads[name]||name;
+    $("newThread").style.display=name==="threads"?"":"none";
+    $("threads").style.display=name==="threads"?"":"none";
+    $("composeList").style.display=name==="threads"?"none":"";
+    if(name==="threads") return refresh();
+    loadCompose(name);
+  }
+  function loadCompose(name){
+    var box=$("composeList");
+    box.innerHTML="";
+    if(name==="packs"){
+      return api("/api/packs").then(function(d){
+        (d.packs||[]).forEach(function(p){
+          var b=document.createElement("button");
+          b.className="item"+(p.overlay_eligible?"":" muted");
+          b.textContent=p.name||p.id;
+          b.onclick=function(){
+            if(!threadId){setStatus("没有当前对话");return}
+            if(!p.overlay_eligible){setStatus("这个场景不能在召唤器套用");return}
+            api("/api/packs/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pack_id:p.id,thread_id:threadId})}).then(function(r){
+              setStatus((r&&r.error)||"已套到当前对话");
+            });
+          };
+          box.appendChild(b);
+        });
+      });
+    }
+    if(name==="mcp"){
+      return api("/api/mcp").then(function(d){
+        (d.servers||[]).forEach(function(s){
+          var b=document.createElement("button");
+          var on=s.enabled!==false;
+          b.className="item";
+          b.textContent=(on?"● ":"○ ")+(s.name||"");
+          b.onclick=function(){
+            api("/api/mcp/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:s.name,enabled:!on})}).then(function(){loadCompose("mcp")});
+          };
+          box.appendChild(b);
+        });
+      });
+    }
+    if(name==="skills"){
+      return api("/api/skills").then(function(d){
+        (d.skills||[]).forEach(function(s){
+          var b=document.createElement("button");
+          b.className="item";
+          b.textContent=s.title||s.name;
+          b.onclick=function(){
+            if(!threadId){setStatus("没有当前对话");return}
+            api("/api/skills/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,skill_name:s.name,on:true})}).then(function(){setStatus("已切换技能")});
+          };
+          box.appendChild(b);
+        });
+      });
+    }
+    if(name==="knowledge"){
+      return api("/api/knowledge").then(function(d){
+        (d.docs||[]).forEach(function(k){
+          var id=k.name||k.id;
+          var b=document.createElement("button");
+          b.className="item";
+          b.textContent=k.title||id;
+          b.onclick=function(){
+            if(!threadId){setStatus("没有当前对话");return}
+            api("/api/knowledge/active",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,ids:[id]})}).then(function(){setStatus("已挂到当前对话")});
+          };
+          box.appendChild(b);
+        });
+      });
+    }
+  }
+  document.querySelectorAll("#secs [data-sec]").forEach(function(b){
+    b.onclick=function(){showSec(b.getAttribute("data-sec"))};
+  });
+  $("composeList").style.display="none";
   function releaseLease(){
     if(!threadId) return;
     try{

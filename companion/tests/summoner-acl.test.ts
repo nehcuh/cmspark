@@ -27,7 +27,6 @@ test("summoner denies trust elevation", () => {
     "security.unattended.arm",
     "security.confirmation.response",
     "mcp.add",
-    "skill.list",
     "executeQuickAction",
   ]) {
     const r = assertSummonerAllowed("summoner", t)
@@ -62,6 +61,12 @@ test("summoner allows remaining S21 methods", () => {
     "voice.stt.abort",
     "voice.stt.partial_request",
     "mcp.list",
+    "mcp.toggle_server",
+    "skill.list",
+    "skill.activate",
+    "skill.deactivate",
+    "knowledge.list",
+    "knowledge.set_active",
     "file.upload",
   ]) {
     assert.equal(assertSummonerAllowed("summoner", t).ok, true, t)

@@ -1066,6 +1066,13 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "knowledge.list": () => ({ valid: true }),
+    "knowledge.set_active": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "knowledge.set_active requires thread_id" }
+      }
+      if (!Array.isArray(m.ids)) return { valid: false, error: "knowledge.set_active requires ids array" }
+      return { valid: true }
+    },
     "knowledge.preview": (m) => {
       if (!m.url && !m.content && !m.file) {
         return { valid: false, error: "knowledge.preview requires url, content, or file" }

@@ -1,0 +1,8 @@
+{
+  "batch": "overlay-dogfood-slice-ab",
+  "timestamp": "20260825-140045",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-dogfood-slice-ab-claude-20260825-140045.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-dogfood-slice-ab-pi-20260825-140045.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-dogfood-slice-ab-diff-20260825-140045.patch"
+}

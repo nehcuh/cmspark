@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CMspark HUD Expand — 清爽稿</title>
+  <style>
+    :root {
+      --paper: #ffffff;
+      --muted: #f4f4f5;
+      --line: rgba(23, 23, 23, 0.08);
+      --text: #171717;
+      --secondary: #737373;
+      --faint: #a3a3a3;
+      --indigo: #4f46e5;
+      --indigo-soft: #eef2ff;
+      --ok: #047857;
+      --radius: 16px;
+      --rail: 52px;
+      --list: 220px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; min-height: 100%;
+      font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 20% 0%, #eef2ff 0%, transparent 55%),
+        linear-gradient(#e8e8ec, #ececf1);
+    }
+    .page { max-width: 880px; margin: 0 auto; padding: 48px 24px 80px; }
+    h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 6px; }
+    .lede { color: var(--secondary); margin: 0 0 28px; font-size: 13px; }
+    .row { display: flex; gap: 10px; margin-bottom: 18px; }
+    button.tog {
+      border: 0; background: var(--paper); color: var(--text);
+      padding: 7px 12px; border-radius: 999px; cursor: pointer;
+      box-shadow: 0 1px 0 var(--line);
+      font: inherit;
+    }
+    button.tog[aria-pressed="true"] { background: var(--indigo); color: #fff; }
+
+    /* HUD card */
+    .hud {
+      width: 720px;
+      background: var(--paper);
+      border-radius: var(--radius);
+      box-shadow:
+        0 0 0 1px var(--line),
+        0 18px 50px rgba(23, 23, 23, 0.12);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .hud.collapsed { height: auto; }
+
+    .body {
+      display: none;
+      height: 420px;
+      border-bottom: 1px solid var(--line);
+    }
+    .hud.expanded .body { display: flex; }
+
+    .rail {
+      width: var(--rail);
+      flex: none;
+      background: #fafafa;
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 10px 0;
+      gap: 4px;
+    }
+    .ico {
+      width: 36px; height: 36px; border: 0; background: transparent;
+      border-radius: 10px; cursor: pointer; color: var(--secondary);
+      display: grid; place-items: center;
+    }
+    .ico svg { width: 18px; height: 18px; }
+    .ico[aria-current="true"] { background: var(--indigo-soft); color: var(--indigo); }
+    .ico:hover { background: var(--muted); }
+
+    .list {
+      width: var(--list);
+      flex: none;
+      border-right: 1px solid var(--line);
+      display: flex; flex-direction: column;
+      background: var(--paper);
+    }
+    .list h2 {
+      margin: 0; padding: 14px 14px 8px;
+      font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+      color: var(--faint); text-transform: uppercase;
+    }
+    .item {
+      display: block; width: 100%; text-align: left;
+      border: 0; background: transparent; cursor: pointer;
+      padding: 8px 14px; font: inherit; color: var(--text);
+    }
+    .item small { display: block; color: var(--faint); font-size: 11px; margin-top: 2px; }
+    .item[aria-current="true"] { background: var(--indigo-soft); color: var(--indigo); }
+    .item[aria-current="true"] small { color: #818cf8; }
+    .item:hover { background: var(--muted); }
+    .scroll { overflow: auto; flex: 1; }
+
+    .main {
+      flex: 1; min-width: 0;
+      display: flex; flex-direction: column;
+      background: var(--paper);
+    }
+    .log { flex: 1; overflow: auto; padding: 18px 20px; }
+    .bubble { max-width: 92%; margin: 0 0 14px; }
+    .bubble .who { font-size: 11px; color: var(--faint); margin-bottom: 4px; }
+    .bubble p { margin: 0; font-size: 14px; color: var(--text); }
+    .bubble.me { margin-left: auto; }
+    .bubble.me p {
+      background: var(--muted); border-radius: 12px 12px 4px 12px;
+      padding: 8px 12px;
+    }
+
+    .composer {
+      display: flex; align-items: center; gap: 6px;
+      padding: 10px 12px 12px;
+    }
+    .field {
+      flex: 1; display: flex; align-items: center; gap: 8px;
+      height: 44px; padding: 0 12px;
+      background: var(--muted); border-radius: 12px;
+    }
+    .field input {
+      flex: 1; border: 0; background: transparent; outline: none;
+      font: 15px/1.3 inherit; color: var(--text);
+    }
+    .ghost {
+      border: 0; background: transparent; cursor: pointer;
+      width: 28px; height: 28px; border-radius: 8px; color: var(--text);
+      font-size: 16px;
+    }
+    .ghost:hover { background: rgba(23,23,23,0.06); }
+    .hint { padding: 0 16px 10px; color: var(--faint); font-size: 11px; }
+
+    .notes { margin-top: 36px; color: var(--secondary); font-size: 12px; }
+    .notes li { margin: 6px 0; }
+    kbd { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--muted); padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>展开不是迷你侧栏</h1>
+    <p class="lede">参考 Codex / 千问办公 / WorkBuddy：一条底栏输入，图标轨而不是堆标签，中间只放当前这件事。</p>
+    <div class="row">
+      <button class="tog" id="tFold" aria-pressed="false" type="button">收起</button>
+      <button class="tog" id="tOpen" aria-pressed="true" type="button">展开</button>
+    </div>
+
+    <div class="hud expanded" id="hud">
+      <div class="body">
+        <nav class="rail" aria-label="组合面">
+          <button class="ico" data-sec="talk" aria-current="true" title="对话" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6.5h14M5 12h10M5 17.5h7"/></svg>
+          </button>
+          <button class="ico" data-sec="pack" title="场景" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+          </button>
+          <button class="ico" data-sec="know" title="知识" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5.5h9.5A2.5 2.5 0 0 1 17 8v11H7.5A2.5 2.5 0 0 1 5 16.5V5.5z"/><path d="M17 8h1.5A2.5 2.5 0 0 1 21 10.5V19H17"/></svg>
+          </button>
+          <button class="ico" data-sec="skill" title="技能" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 15.5 4.5 12 8 8.5M16 8.5 19.5 12 16 15.5M13.2 6.5 10.8 17.5"/></svg>
+          </button>
+          <button class="ico" data-sec="mcp" title="MCP" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 8h8v8H8z"/><path d="M12 4.5v3.5M12 16v3.5M4.5 12H8M16 12h3.5"/></svg>
+          </button>
+        </nav>
+        <aside class="list">
+          <h2 id="listTitle">对话</h2>
+          <div class="scroll" id="listBody"></div>
+        </aside>
+        <section class="main">
+          <div class="log" id="log"></div>
+        </section>
+      </div>
+      <div class="composer">
+        <button class="ghost" title="新对话" type="button">+</button>
+        <div class="field">
+          <input value="" placeholder="说点什么，回车发送" />
+          <button class="ghost" title="附件" type="button">📎</button>
+          <button class="ghost" title="按住听写" type="button">🎙</button>
+          <button class="ghost" id="chev" title="展开 / 收起" type="button">⌃</button>
+        </div>
+      </div>
+      <div class="hint">回车发送 · # 搜标题 · 组合面在展开后管理，不经过 Chrome 侧栏</div>
+    </div>
+
+    <ul class="notes">
+      <li>收起 = 只要底栏。展开 = 图标轨 + 一类列表 + 正文。没有「对话 / MCP / 场景」三块同时堆在 200pt 里。</li>
+      <li>输入永远在底（Codex / WorkBuddy / 千问办公同构）。HUD 身份是这条栏，不是标题窗。</li>
+      <li>选中只用靛蓝浅底，无大按钮、无「去侧栏」、无浏览器徽章。</li>
+    </ul>
+  </div>
+  <script>
+    const lists = {
+      talk: [
+        ["今日站会纪要", "12 分钟前", true],
+        ["知识库诚实 Wave 2", "昨天"],
+        ["Windows 安装器", "周一"],
+      ],
+      pack: [
+        ["会议记录", "套到当前对话", true],
+        ["代码审查", "技能 + 提示"],
+        ["调研摘要", "只读"],
+      ],
+      know: [
+        ["CMspark ADR-020", "已挂"],
+        ["产品 0.5.2 说明", ""],
+        ["会议模板", ""],
+      ],
+      skill: [
+        ["browse", "内置"],
+        ["writing-skills", "内置"],
+        ["grill-me", ""],
+      ],
+      mcp: [
+        ["filesystem", "已连接", true],
+        ["github", "未启用"],
+      ],
+    };
+    const titles = { talk: "对话", pack: "场景", know: "知识", skill: "技能", mcp: "MCP" };
+    const logHtml = {
+      talk: `<div class="bubble me"><div class="who">你</div><p>把今天的站会收成纪要，待办单列。</p></div>
+             <div class="bubble"><div class="who">助手</div><p>好。先按时间线收三点结论，再列出待办。完整格式仍可之后导出。</p></div>`,
+      pack: `<div class="bubble"><div class="who">场景</div><p>点左侧一项即套到当前对话。不升 Trust。需要确认的场景走托盘原生窗，不经过 Chrome。</p></div>`,
+      know: `<div class="bubble"><div class="who">知识</div><p>勾选挂到本对话（USE）。导入用系统文件框 + 确认，不经过侧栏。</p></div>`,
+      skill: `<div class="bubble"><div class="who">技能</div><p>列表来自 Companion。安装/开关在这里完成。</p></div>`,
+      mcp: `<div class="bubble"><div class="who">MCP</div><p>已连接的服务器可直接给本轮用。添加服务器用原生表单。</p></div>`,
+    };
+
+    const hud = document.getElementById("hud");
+    const listBody = document.getElementById("listBody");
+    const listTitle = document.getElementById("listTitle");
+    const log = document.getElementById("log");
+    const chev = document.getElementById("chev");
+
+    function renderList(sec) {
+      listTitle.textContent = titles[sec];
+      listBody.innerHTML = lists[sec].map(([t, s, on]) =>
+        `<button class="item" ${on ? 'aria-current="true"' : ""} type="button">${t}${s ? `<small>${s}</small>` : ""}</button>`
+      ).join("");
+      log.innerHTML = logHtml[sec];
+    }
+    renderList("talk");
+
+    document.querySelectorAll(".ico").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".ico").forEach((b) => b.removeAttribute("aria-current"));
+        btn.setAttribute("aria-current", "true");
+        renderList(btn.dataset.sec);
+      });
+    });
+
+    function setExpanded(on) {
+      hud.classList.toggle("expanded", on);
+      hud.classList.toggle("collapsed", !on);
+      chev.textContent = on ? "⌃" : "⌄";
+      document.getElementById("tOpen").setAttribute("aria-pressed", on);
+      document.getElementById("tFold").setAttribute("aria-pressed", !on);
+    }
+    document.getElementById("tOpen").onclick = () => setExpanded(true);
+    document.getElementById("tFold").onclick = () => setExpanded(false);
+    chev.onclick = () => setExpanded(!hud.classList.contains("expanded"));
+  </script>
+</body>
+</html>
