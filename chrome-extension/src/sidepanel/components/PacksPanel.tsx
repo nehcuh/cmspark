@@ -905,7 +905,12 @@ export function PacksPanel() {
       {/* Zone: 会议 — 装配 › 场景 › 会议（独立工作台，非仅 /meeting） */}
       <section style={styles.zone} data-testid="scene-meeting-zone">
         <div style={styles.zoneTitle}>会议</div>
-        <div style={styles.meetingCard}>
+        <div
+          style={{
+            ...styles.meetingCard,
+            ...(activePackId === "meeting-minutes" ? styles.meetingCardActive : null),
+          }}
+        >
           <div style={styles.meetingTitle}>会议记录工作台</div>
           <div style={styles.desc}>
             粘贴转写或本机录制 → 可编辑转写 → 结构化纪要（TL;DR / 决议 / 待办）。应用场景不会自动开麦。
@@ -992,7 +997,13 @@ export function PacksPanel() {
             const copy = sceneCopy(p)
             const isUser = p.editable || p.origin === "user"
             return (
-              <li key={p.id} style={styles.item}>
+              <li
+                key={p.id}
+                style={{
+                  ...styles.item,
+                  ...(isActive ? styles.itemActive : null),
+                }}
+              >
                 <div style={styles.row}>
                   <strong style={styles.name}>
                     {p.name}
@@ -1346,7 +1357,7 @@ export function PacksPanel() {
               {(state.knowledgeDocs || []).length === 0 && (
                 <div style={styles.empty}>暂无知识文档，可到「知识」面板导入</div>
               )}
-              {(state.knowledgeDocs || []).map((d: { name: string; description?: string }) => (
+              {(state.knowledgeDocs || []).map((d: { name: string; title?: string; description?: string }) => (
                 <label key={d.name} style={styles.checkRow}>
                   <input
                     type="checkbox"
@@ -1354,7 +1365,7 @@ export function PacksPanel() {
                     onChange={() => toggleKnowledge(d.name)}
                   />
                   <span>
-                    <strong>{d.name}</strong>
+                    <strong>{d.title || d.name}</strong>
                     {d.description ? (
                       <span style={{ color: tokens.textMuted, display: "block", fontSize: 10 }}>
                         {d.description.slice(0, 80)}
@@ -1576,7 +1587,14 @@ const styles: Record<string, import("react").CSSProperties> = {
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusMd,
     padding: 10,
+    background: tokens.bg,
+  },
+  meetingCardActive: {
     background: tokens.accentSoft || tokens.bgActive,
+  },
+  itemActive: {
+    background: tokens.accentSoft || tokens.bgActive,
+    border: `1px solid ${tokens.borderStrong}`,
   },
   meetingTitle: { fontWeight: 650, fontSize: 12, marginBottom: 4 },
   linkBtn: {

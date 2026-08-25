@@ -51,7 +51,10 @@ function resetMockDirs() {
   const modulesToClear = [
     "../src/config",
     "../src/skills/skill-engine",
+    "../src/skills/doc-identity",
+    "../src/skills/content-sanitizer",
     "../src/skills/semantic-match",
+    "../src/file-chunker",
     "../src/threads/thread-manager",
   ]
   for (const mod of modulesToClear) {
@@ -468,7 +471,8 @@ test("skill-engine: buildSystemPrompt includes site_knowledge entries directly",
   engine.activate("thread-site", "site-skill")
 
   const prompt = engine.buildSystemPrompt("thread-site")
-  assert.ok(prompt.includes("Site: example.com"), "should include site label")
+  assert.ok(prompt.includes("Knowledge:"), "Wave 1 knowledge heading")
+  assert.ok(prompt.includes("site-skill"), "should include knowledge id")
   assert.ok(prompt.includes("Always check the header"), "should include entry content")
 })
 
@@ -582,19 +586,18 @@ test("skill-engine: importSkill throws if no name in frontmatter", async () => {
   )
 })
 
-test("skill-engine: importSkill throws for invalid sanitized name", async () => {
+test("skill-engine: importSkill hashes unsafe names instead of throwing", async () => {
   resetMockDirs()
   process.env.HOME = tempHome
 
-  // Using just @ results in '-' after sanitization (single @ -> empty -> -)
+  // `@` used to sanitize to `-` and throw; Wave 0 hashes to k-<sha>.
   const md = ["---", "name: '@'", "---", "# Bad Name"].join("\n")
 
   const { SkillEngine } = await import("../src/skills/skill-engine")
   const engine = new SkillEngine()
-  assert.throws(
-    () => engine.importSkill(md),
-    /invalid filename after sanitization/,
-  )
+  const result = engine.importSkill(md)
+  assert.match(path.basename(result.destPath), /^k-[0-9a-f]{10}\.md$/)
+  assert.ok(fs.existsSync(result.destPath))
 })
 
 test("skill-engine: exportSkill outputs markdown for flat skill", async () => {

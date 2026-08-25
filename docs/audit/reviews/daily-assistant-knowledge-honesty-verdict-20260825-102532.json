@@ -1,0 +1,8 @@
+{
+  "batch": "daily-assistant-knowledge-honesty",
+  "timestamp": "20260825-102532",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/daily-assistant-knowledge-honesty-claude-20260825-102532.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/daily-assistant-knowledge-honesty-pi-20260825-102532.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/daily-assistant-knowledge-honesty-diff-20260825-102532.patch"
+}

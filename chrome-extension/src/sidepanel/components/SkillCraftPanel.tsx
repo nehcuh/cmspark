@@ -81,8 +81,8 @@ export function SkillCraftPanel({ onClose }: { onClose: () => void }) {
 
   const handleSave = useCallback(() => {
     // Validate name
-    const safeName = editName.trim().replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
-    if (!safeName) {
+    const trimmedName = editName.trim()
+    if (!trimmedName) {
       setError("请输入有效的技能名称")
       return
     }
@@ -98,8 +98,8 @@ export function SkillCraftPanel({ onClose }: { onClose: () => void }) {
 
     const markdown = [
       "---",
-      `name: ${editName}`,
-      `description: ${editDesc}`,
+      `name: ${JSON.stringify(trimmedName)}`,
+      `description: ${JSON.stringify(editDesc)}`,
       `type: ${editType}`,
       paramsYaml,
       "---",

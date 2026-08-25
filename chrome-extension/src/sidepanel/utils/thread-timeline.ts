@@ -645,14 +645,14 @@ export function selectLazyDigestCandidates(
   return { ids, force: ids.length > 0 }
 }
 
-/** Show digest stale badge: tags view always; time view only non-today (B-3). */
+/** Show digest stale badge: tags/topics always; time view only non-today (B-3). */
 export function showDigestStaleBadge(
   t: TimelineThread,
-  view: "time" | "tags",
+  view: "time" | "tags" | "topics",
   now: Date = new Date(),
 ): boolean {
   if (!t.digest?.stale) return false
-  if (view === "tags") return true
+  if (view === "tags" || view === "topics") return true
   const updated = t.updated_at || t.created_at
   if (!updated) return true
   try {

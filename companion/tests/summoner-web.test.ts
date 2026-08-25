@@ -73,6 +73,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
       dispatch: async (msg) => {
         dispatched.push(msg)
         if (msg.type === "thread.list") return { type: "thread.list", threads: [{ id: "t1", title: "One" }] }
+        if (msg.type === "thread.update") return { type: "thread.updated", thread: { id: msg.thread_id, alias: (msg.updates as any)?.alias } }
+        if (msg.type === "thread.delete") return { type: "thread.trashed", thread_id: msg.thread_id, mode: msg.mode }
         if (msg.type === "file.upload") return { type: "file.uploaded", thread_id: msg.thread_id, files: ["a.txt"] }
         if (msg.type === "pack.apply") return { type: "pack.applied", pack_id: msg.pack_id }
         if (msg.type === "composer.lease.get") {
@@ -114,9 +116,16 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /CMspark 召唤器（实验）/)
     assert.doesNotMatch(r.body, /主界面/)
     assert.match(r.body, /type="file"/)
+    assert.match(r.body, /📎/)
+    assert.match(r.body, /for="files"/)
+    assert.match(r.body, /听写\/知识配置\/批准去侧栏处理/)
     assert.match(r.body, /回车发送\/纠偏/)
     assert.match(r.body, /Shift\+Enter 排队/)
     assert.match(r.body, /去侧栏处理/)
+    assert.match(r.body, /快捷提问/)
+    assert.match(r.body, /重命名/)
+    assert.match(r.body, /移到回收站/)
+    assert.doesNotMatch(r.body, /Raycast|uTools|启动器|第二大脑|图谱|双链/)
     assert.match(r.body, /pagehide|visibilitychange/)
     assert.match(r.body, /\/api\/lease\/release/)
     assert.match(r.body, /EventSource/)
@@ -170,6 +179,50 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(data.type, "thread.list")
     assert.equal(dispatched.length, 1)
     assert.equal(dispatched[0].type, "thread.list")
+  })
+
+  test("PATCH /api/thread renames via alias-only thread.update", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "PATCH",
+      port,
+      path: `/api/thread?token=${token}&id=t1`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ alias: "周报", tool_whitelist: null }),
+    })
+    assert.equal(r.status, 200, r.body)
+    const data = JSON.parse(r.body)
+    assert.equal(data.type, "thread.updated")
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "thread.update")
+    assert.equal(dispatched[0].thread_id, "t1")
+    assert.deepEqual(dispatched[0].updates, { alias: "周报" })
+  })
+
+  test("DELETE /api/thread always trashes and ignores hard", async () => {
+    dispatched.length = 0
+    const body = JSON.stringify({ mode: "hard", thread_id: "other" })
+    const r = await request({
+      method: "DELETE",
+      port,
+      path: `/api/thread?token=${token}&id=t1&mode=hard`,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body,
+    })
+    assert.equal(r.status, 200, r.body)
+    const data = JSON.parse(r.body)
+    assert.equal(data.type, "thread.trashed")
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "thread.delete")
+    assert.equal(dispatched[0].thread_id, "t1")
+    assert.equal(dispatched[0].mode, "trash")
   })
 
   test("POST /api/chat create strips hostname and does not enqueue", async () => {
@@ -343,6 +396,12 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("config.set"), false)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.add"), false)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("security.confirmation.response"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.import"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.preview"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.related"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("thread.distill_preview"), false)
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.list"))
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.start"), false)
   })
 
   test("GET /api/events without token → 403", async () => {
@@ -441,6 +500,9 @@ test("summoner ACL allows file.upload after HTML client exists", async () => {
   const { assertSummonerAllowed } = await import("../src/ws/summoner-acl")
   assert.equal(assertSummonerAllowed("summoner", "file.upload").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "mcp.add").ok, false)
+  assert.equal(assertSummonerAllowed("summoner", "knowledge.related").ok, false)
+  assert.equal(assertSummonerAllowed("summoner", "thread.distill_preview").ok, false)
+  assert.equal(assertSummonerAllowed("summoner", "knowledge.import").ok, false)
   for (const t of SUMMONER_WEB_DISPATCH_ALLOW) {
     assert.equal(assertSummonerAllowed("summoner", t).ok, true, t)
   }

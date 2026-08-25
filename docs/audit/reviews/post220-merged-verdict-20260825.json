@@ -1,0 +1,21 @@
+{
+  "batch": "post220-merged",
+  "date": "2026-08-25",
+  "blast_tier": "T2",
+  "base": "c5b4242",
+  "head": "1d16b0e",
+  "frozen_patch": "docs/audit/reviews/post220-merged-diff-20260825-085108.patch",
+  "sha256": "b5e936cbf1dc66afc3fc7aef5898fb417692ed63325b9a4ed8bb11caf5c86021",
+  "machine": "PASS",
+  "machine_notes": "A 32/32 tsc0; B 11/11 + mutation-kill; C 117/117; D 72/72 + 13/13 + 36/36 + auth mutation 0/2",
+  "adversary": {
+    "A": "APPROVE_WITH_NITS",
+    "B": "APPROVE_WITH_NITS",
+    "C": "APPROVE_WITH_NITS",
+    "D": "APPROVE_WITH_NITS"
+  },
+  "pi_rereview": "N/A",
+  "pi_notes": "pre-merge r2 Pi was APPROVE_WITH_NITS; no BLOCK this round so Pi not re-run",
+  "merge": "ALREADY_ON_MAIN",
+  "reason": "Post-merge independent re-verify of #220. All six r1 BLOCK/High refuted with mutation-kill. Residuals are nits/P2 only. Do not revert; do not self-APPROVE new work from this session."
+}

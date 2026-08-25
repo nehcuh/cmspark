@@ -467,5 +467,9 @@ test("showDigestStaleBadge: time view only non-today", () => {
     showDigestStaleBadge({ id: "c", digest: { stale: true }, updated_at: today }, "tags", now),
     true,
   )
+  assert.equal(
+    showDigestStaleBadge({ id: "e", digest: { stale: true }, updated_at: today }, "topics", now),
+    true,
+  )
   assert.equal(showDigestStaleBadge({ id: "d", digest: { tags: ["x"] } }, "tags", now), false)
 })

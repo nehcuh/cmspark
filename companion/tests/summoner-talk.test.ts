@@ -249,12 +249,11 @@ test("hidden mic tooltip does not advertise press-to-talk", () => {
   assert.doesNotMatch(src, /mic\.toolTip = ".*按住说话/)
 })
 
-test("SummonerController send stays visible when detached or empty", () => {
+test("SummonerController HUD hides send; Return submits", () => {
   const src = traySwiftSrc()
   const apply = src.slice(src.indexOf("private func applyPhase()"), src.indexOf("private func relayout()"))
-  assert.match(apply, /sendButton\?\.isHidden = false/)
-  assert.doesNotMatch(apply, /footRow\?\.isHidden = searching \|\| !hasTranscript \|\| detached/)
-  assert.match(apply, /footRow\?\.isHidden = searching/)
+  assert.match(apply, /sendButton\?\.isHidden = true/)
+  assert.match(apply, /footRow\?\.isHidden = true/)
 })
 
 test("menu-bar-agent empty submit resolves last/new thread then claims overlay lease", () => {

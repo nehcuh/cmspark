@@ -23,6 +23,7 @@ import AdmZip from "adm-zip"
 import { getConfigDir } from "../config"
 import { SkillEngine } from "./skill-engine"
 import { appendCapabilityAudit } from "../packs/audit-log"
+import { allocateDocIdentity, isLegacySafeId } from "./doc-identity"
 
 export type SkillInstallParams = {
   /** Local directory containing SKILL.md */
@@ -183,7 +184,10 @@ const MAX_DIR_FILES = 2000
 export const MAX_CONTENT_BYTES = 256 * 1024
 
 function safeSkillName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
+  return allocateDocIdentity({
+    title: name,
+    preferredId: isLegacySafeId(name) ? name : undefined,
+  }).filenameStem
 }
 
 export type SkillInstallOverwritePreview = {

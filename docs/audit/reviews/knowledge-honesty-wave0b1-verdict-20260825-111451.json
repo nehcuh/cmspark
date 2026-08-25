@@ -1,0 +1,8 @@
+{
+  "batch": "knowledge-honesty-wave0b1",
+  "timestamp": "20260825-111451",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/knowledge-honesty-wave0b1-claude-20260825-111451.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/knowledge-honesty-wave0b1-pi-20260825-111451.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/knowledge-honesty-wave0b1-diff-20260825-111451.patch"
+}

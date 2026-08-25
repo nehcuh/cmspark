@@ -74,7 +74,7 @@ export function filterThreadsByTitle(
 }
 
 export function hitsFromTitleSearch(threads: ThreadTitleRecord[]): SummonerHit[] {
-  return threads.map((t) => ({
+  return sortRecentFirst(threads).map((t) => ({
     id: t.id,
     title: (t.title || t.alias || t.id).trim() || t.id,
     when: t.updated_at || t.created_at || "",
@@ -362,6 +362,17 @@ export function mapChatMessageToSummonerCmd(msg: unknown): SummonerStreamCmd | n
         ? m.message
         : "MCP 工具需在 Chrome 侧栏批准"
     return encodeSummonerError({ message, error_code: "MCP_CONFIRM_PENDING" })
+  }
+  if (type === "file.upload_error") {
+    const message =
+      typeof m.error === "string" && m.error
+        ? m.error
+        : typeof m.message === "string" && m.message
+          ? m.message
+          : "附件失败"
+    const cmd: SummonerStreamCmd = encodeSummonerError({ message, error_code: "upload_failed" })
+    if (threadId !== undefined) cmd.thread_id = threadId
+    return cmd
   }
   return null
 }

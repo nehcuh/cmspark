@@ -17,6 +17,7 @@ export function KnowledgeSubPanel() {
   /** Bulk-delete mode: checkboxes select docs to remove (not inject) */
   const [manageMode, setManageMode] = useState(false)
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set())
+  const [relatedById, setRelatedById] = useState<Record<string, Array<{ id: string; title: string }>>>({})
   const menuRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -39,6 +40,16 @@ export function KnowledgeSubPanel() {
       }
     })
   }, [state.tabList])
+
+  useEffect(() => {
+    const h = (e: Event) => {
+      const d = (e as CustomEvent).detail
+      if (!d?.id || !Array.isArray(d.related)) return
+      setRelatedById((prev) => ({ ...prev, [d.id]: d.related }))
+    }
+    window.addEventListener("cmspark:knowledge_related", h as EventListener)
+    return () => window.removeEventListener("cmspark:knowledge_related", h as EventListener)
+  }, [])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -64,8 +75,10 @@ export function KnowledgeSubPanel() {
   }
 
   const handleDelete = (name: string) => {
-    if (confirm(`确定删除知识文档 "${name}"？`)) {
-      showStatus(`正在删除 "${name}"...`)
+    const doc = state.knowledgeDocs.find((d) => d.name === name)
+    const label = doc?.title || name
+    if (confirm(`确定删除知识文档 "${label}"？`)) {
+      showStatus(`正在删除 "${label}"...`)
       chrome.runtime.sendMessage({ type: "knowledge.delete", name })
     }
     setMenuOpen(null)
@@ -169,7 +182,7 @@ export function KnowledgeSubPanel() {
       })
 
       // Build the user-facing status *before* we start so they see what's happening.
-      const pieces: string[] = [`正在导入 ${list.length} 个文件`]
+      const pieces: string[] = [`已选 ${list.length} 个文件，请确认第一篇（其余请再次导入）`]
       if (oversized.length > 0) pieces.push(`跳过 ${oversized.length} 个 >6MB（如 ${oversized[0]}）`)
       showStatus(pieces.join(" · "))
 
@@ -202,11 +215,22 @@ export function KnowledgeSubPanel() {
               const slice = bytes.subarray(i, Math.min(i + CHUNK, bytes.length))
               base64 += btoa(String.fromCharCode.apply(null, Array.from(slice) as unknown as number[]))
             }
+            dispatch({
+              type: "SET_KNOWLEDGE_PREVIEW",
+              preview: {
+                title: file.name.replace(/\.[^.]+$/, ""),
+                description: "",
+                preview: "正在解析…",
+                char_count: 0,
+                payload: { file: { name: file.name, content: base64 } },
+              },
+            })
             chrome.runtime.sendMessage({
-              type: "knowledge.import",
+              type: "knowledge.preview",
               file: { name: file.name, content: base64 },
             })
             imported += 1
+            queue.length = 0
           } catch (err) {
             console.error("[KnowledgeSubPanel] import failed for", file.name, err)
             failed += 1
@@ -231,8 +255,18 @@ export function KnowledgeSubPanel() {
 
   const handleUrlImport = () => {
     if (importUrl.trim()) {
-      showStatus("正在从 URL 导入...")
-      chrome.runtime.sendMessage({ type: "knowledge.import", url: importUrl.trim() })
+      showStatus("正在预览 URL…")
+      dispatch({
+        type: "SET_KNOWLEDGE_PREVIEW",
+        preview: {
+          title: "",
+          description: "",
+          preview: "正在抓取…",
+          char_count: 0,
+          payload: { url: importUrl.trim() },
+        },
+      })
+      chrome.runtime.sendMessage({ type: "knowledge.preview", url: importUrl.trim() })
       setImportUrl("")
       setShowUrlImport(false)
     }
@@ -257,7 +291,7 @@ export function KnowledgeSubPanel() {
     const q = query.trim().toLowerCase()
     if (!q) return state.knowledgeDocs
     return state.knowledgeDocs.filter((d) => {
-      const bag = [d.name, d.description || "", d.site || ""].join(" ").toLowerCase()
+      const bag = [d.title || "", d.name, d.description || "", d.site || ""].join(" ").toLowerCase()
       return bag.includes(q)
     })
   }, [state.knowledgeDocs, query])
@@ -501,7 +535,7 @@ export function KnowledgeSubPanel() {
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>
-                    {doc.name}
+                    {doc.title || doc.name}
                     {doc.site && <span style={styles.siteBadge}>{doc.site}</span>}
                   </div>
                   <div
@@ -515,8 +549,25 @@ export function KnowledgeSubPanel() {
                   >
                     {doc.description}
                   </div>
+                  {(relatedById[doc.name] || relatedById[doc.id || ""] || []).length > 0 && (
+                    <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 2 }}>
+                      相关：{(relatedById[doc.name] || relatedById[doc.id || ""] || []).slice(0, 3).map((r) => r.title).join(" · ")}
+                    </div>
+                  )}
                 </div>
                 {doc.builtin && <span style={styles.badge}>内置</span>}
+                {!manageMode && (
+                  <button
+                    type="button"
+                    style={{ ...styles.menuBtn, fontSize: 10, padding: "2px 6px" }}
+                    onClick={() =>
+                      chrome.runtime.sendMessage({ type: "knowledge.related", id: doc.id || doc.name })
+                    }
+                    title="查询相关知识（最多 3 条）"
+                  >
+                    相关
+                  </button>
+                )}
                 {!doc.builtin && !manageMode && (
                   <div style={{ position: "relative" }} ref={menuOpen === doc.name ? menuRef : undefined}>
                     <button

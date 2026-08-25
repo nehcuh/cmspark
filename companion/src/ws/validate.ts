@@ -154,6 +154,21 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "knowledge.related": (m) => {
+      if (typeof m.id !== "string" || !m.id) {
+        return { valid: false, error: "knowledge.related requires id" }
+      }
+      if (m.limit !== undefined && (typeof m.limit !== "number" || m.limit < 1 || m.limit > 3)) {
+        return { valid: false, error: "knowledge.related limit must be 1–3" }
+      }
+      return { valid: true }
+    },
+    "thread.distill_preview": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "thread.distill_preview requires thread_id" }
+      }
+      return { valid: true }
+    },
     "thread.related": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) {
         return { valid: false, error: "thread.related requires thread_id" }
@@ -1051,9 +1066,22 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "knowledge.list": () => ({ valid: true }),
+    "knowledge.set_active": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "knowledge.set_active requires thread_id" }
+      }
+      if (!Array.isArray(m.ids)) return { valid: false, error: "knowledge.set_active requires ids array" }
+      return { valid: true }
+    },
+    "knowledge.preview": (m) => {
+      if (!m.url && !m.content && !m.file) {
+        return { valid: false, error: "knowledge.preview requires url, content, or file" }
+      }
+      return { valid: true }
+    },
     "knowledge.import": (m) => {
-      if (!m.url && !m.content && !m.path) {
-        return { valid: false, error: "knowledge.import requires url, content, or path" }
+      if (!m.url && !m.content && !m.file && !m.path) {
+        return { valid: false, error: "knowledge.import requires url, content, or file" }
       }
       return { valid: true }
     },

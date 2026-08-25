@@ -185,6 +185,13 @@ export interface AgentState {
   obsidianProfileStatus: { ok: boolean; message: string } | null
   /** Status of the last companion-side folder import (null = idle). */
   knowledgeImportStatus: { ok: boolean; message: string } | null
+  knowledgePreview: {
+    title: string
+    description: string
+    preview: string
+    char_count: number
+    payload: { file?: { name: string; content: string }; content?: string; url?: string }
+  } | null
   /** P3: thread currently being summarized (null when idle). Drives the 🧠 button spinner. */
   summarizingThreadId: string | null
   /** Vault folder-picker state (P3.5): picking + last error. */
@@ -369,6 +376,17 @@ export type AgentAction =
   | { type: "APPLY_COMPOSER_LEASE"; holder: "overlay" | "panel"; threadId?: string }
   | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_KNOWLEDGE_IMPORT_STATUS"; status: { ok: boolean; message: string } | null }
+  | {
+      type: "SET_KNOWLEDGE_PREVIEW"
+      preview: {
+        title?: string
+        description?: string
+        preview?: string
+        char_count?: number
+        payload?: { file?: { name: string; content: string }; content?: string; url?: string }
+      }
+    }
+  | { type: "CLEAR_KNOWLEDGE_PREVIEW" }
   | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
   | { type: "SET_VAULT_PICKER"; picking: boolean; error: string | null }
   | { type: "SET_MCP_SERVERS"; servers: McpServerMeta[] }
@@ -514,6 +532,7 @@ export const initialState: AgentState = {
   overlayStandby: null,
   obsidianProfileStatus: null,
   knowledgeImportStatus: null,
+  knowledgePreview: null,
   summarizingThreadId: null,
   vaultPicker: { picking: false, error: null },
   mcpServers: [],
@@ -899,6 +918,27 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, obsidianProfileStatus: action.status }
     case "SET_KNOWLEDGE_IMPORT_STATUS":
       return { ...state, knowledgeImportStatus: action.status }
+    case "SET_KNOWLEDGE_PREVIEW": {
+      const prev = state.knowledgePreview || {
+        title: "",
+        description: "",
+        preview: "",
+        char_count: 0,
+        payload: {},
+      }
+      return {
+        ...state,
+        knowledgePreview: {
+          ...prev,
+          ...action.preview,
+          payload: Object.prototype.hasOwnProperty.call(action.preview, "payload")
+            ? action.preview.payload || {}
+            : prev.payload,
+        },
+      }
+    }
+    case "CLEAR_KNOWLEDGE_PREVIEW":
+      return { ...state, knowledgePreview: null }
     case "SET_SUMMARIZING_THREAD":
       return { ...state, summarizingThreadId: action.threadId }
     case "SET_VAULT_PICKER":

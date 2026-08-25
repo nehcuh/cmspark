@@ -535,21 +535,22 @@ function configFileMtimeMs(): number | null {
 }
 
 export async function initDataDir(): Promise<void> {
+  const root = getConfigDir()
   const dirs = [
-    DATA_DIR,
-    path.join(DATA_DIR, "skills"),
-    path.join(DATA_DIR, "builtin-skills"),
-    path.join(DATA_DIR, "threads"),
-    path.join(DATA_DIR, "logs"),
-    path.join(DATA_DIR, "cache"),
-    path.join(DATA_DIR, "knowledge", "global"),
-    path.join(DATA_DIR, "knowledge", "sites"),
-    path.join(DATA_DIR, "builtin-skills", "security"),
-    path.join(DATA_DIR, "mcp"),
-    path.join(DATA_DIR, "mcp", "logs"),
-    path.join(DATA_DIR, "obsidian"),
-    path.join(DATA_DIR, "packs", "installed"),
-    path.join(DATA_DIR, "cache"),
+    root,
+    path.join(root, "skills"),
+    path.join(root, "builtin-skills"),
+    path.join(root, "threads"),
+    path.join(root, "logs"),
+    path.join(root, "cache"),
+    path.join(root, "knowledge", "global"),
+    path.join(root, "knowledge", "sites"),
+    path.join(root, "builtin-skills", "security"),
+    path.join(root, "mcp"),
+    path.join(root, "mcp", "logs"),
+    path.join(root, "obsidian"),
+    path.join(root, "packs", "installed"),
+    path.join(root, "cache"),
   ]
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -585,7 +586,13 @@ export async function initDataDir(): Promise<void> {
     for (const file of fs.readdirSync(builtinSkillsSrc)) {
       const dest = path.join(builtinSkillsDest, file)
       if (file.endsWith(".md")) {
-        fs.copyFileSync(path.join(builtinSkillsSrc, file), dest)
+        const src = path.join(builtinSkillsSrc, file)
+        try {
+          if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue
+          fs.copyFileSync(src, dest)
+        } catch {
+          /* skip missing/unreadable builtin copies — tests isolate HOME */
+        }
       }
     }
   }
@@ -1388,7 +1395,9 @@ function deepMerge(target: any, source: any): any {
 }
 
 export function getConfigDir(): string {
-  return DATA_DIR
+  // Honor live CMSPARK_DATA_DIR so tests can retarget without reloading this module.
+  // Production sets the env before process start; DATA_DIR remains the import-time default.
+  return process.env.CMSPARK_DATA_DIR || DATA_DIR
 }
 
 export function getLogDir(): string {

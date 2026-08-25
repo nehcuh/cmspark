@@ -63,6 +63,12 @@ export type SummonerHitsCmd = { cmd: "summoner.hits" } & SummonerHitsPayload
 export type SummonerThreadsCmd = { cmd: "summoner.threads"; threads: SummonerHit[] }
 export type SummonerPackRow = { id: string; name: string; overlay_eligible: boolean }
 export type SummonerPacksCmd = { cmd: "summoner.packs"; packs: SummonerPackRow[] }
+export type SummonerMcpServerRow = { name: string; enabled: boolean; transport: string }
+export type SummonerMcpServersCmd = { cmd: "summoner.mcp.servers"; servers: SummonerMcpServerRow[] }
+export type SummonerSkillRow = { name: string; title: string; on: boolean }
+export type SummonerSkillsCmd = { cmd: "summoner.skills"; skills: SummonerSkillRow[] }
+export type SummonerKnowledgeRow = { id: string; title: string; attached: boolean }
+export type SummonerKnowledgeCmd = { cmd: "summoner.knowledge"; docs: SummonerKnowledgeRow[] }
 
 export type SummonerOutboundCmd =
   | SummonerOpenCmd
@@ -80,6 +86,9 @@ export type SummonerOutboundCmd =
   | SummonerHitsCmd
   | SummonerThreadsCmd
   | SummonerPacksCmd
+  | SummonerMcpServersCmd
+  | SummonerSkillsCmd
+  | SummonerKnowledgeCmd
 
 // ── Swift → Companion events ────────────────────────────────────────────────
 
@@ -102,7 +111,24 @@ export type SummonerMicChunkEvt = { type: "summoner.mic.chunk"; seq: number; dat
 export type SummonerMicEndEvt = { type: "summoner.mic.end" }
 export type SummonerMicWavEvt = { type: "summoner.mic.wav"; data: string }
 export type SummonerNewThreadEvt = { type: "summoner.new_thread" }
+export type SummonerThreadRenameEvt = { type: "summoner.thread.rename"; thread_id: string; alias: string }
+export type SummonerThreadTrashEvt = { type: "summoner.thread.trash"; thread_id: string }
+export type SummonerFilesEvt = {
+  type: "summoner.files"
+  thread_id: string
+  files: Array<{ name: string; type: string; content: string }>
+}
 export type SummonerPackApplyEvt = { type: "summoner.pack.apply"; pack_id: string }
+export type SummonerMcpToggleEvt = { type: "summoner.mcp.toggle"; name: string; enabled: boolean }
+export type SummonerMcpAddEvt = { type: "summoner.mcp.add"; name: string; command: string }
+export type SummonerSkillToggleEvt = { type: "summoner.skill.toggle"; name: string; on: boolean }
+export type SummonerKnowledgeAttachEvt = { type: "summoner.knowledge.attach"; id: string }
+export type SummonerKnowledgeImportEvt = {
+  type: "summoner.knowledge.import"
+  name: string
+  mime: string
+  content: string
+}
 export type SummonerSettingsSetEvt = { type: "summoner.settings.set" } & SummonerSettingsPayload
 
 export type SummonerInboundEvt =
@@ -120,7 +146,15 @@ export type SummonerInboundEvt =
   | SummonerMicEndEvt
   | SummonerMicWavEvt
   | SummonerNewThreadEvt
+  | SummonerThreadRenameEvt
+  | SummonerThreadTrashEvt
+  | SummonerFilesEvt
   | SummonerPackApplyEvt
+  | SummonerMcpToggleEvt
+  | SummonerMcpAddEvt
+  | SummonerSkillToggleEvt
+  | SummonerKnowledgeAttachEvt
+  | SummonerKnowledgeImportEvt
   | SummonerSettingsSetEvt
 
 export type SummonerWireMessage = SummonerOutboundCmd | SummonerInboundEvt
@@ -209,6 +243,42 @@ export function encodeSummonerPackApply(p: { pack_id: string }): SummonerPackApp
   return { type: "summoner.pack.apply", pack_id: p.pack_id }
 }
 
+export function encodeSummonerMcpServers(p: { servers: SummonerMcpServerRow[] }): SummonerMcpServersCmd {
+  return { cmd: "summoner.mcp.servers", servers: p.servers }
+}
+
+export function encodeSummonerSkills(p: { skills: SummonerSkillRow[] }): SummonerSkillsCmd {
+  return { cmd: "summoner.skills", skills: p.skills }
+}
+
+export function encodeSummonerKnowledge(p: { docs: SummonerKnowledgeRow[] }): SummonerKnowledgeCmd {
+  return { cmd: "summoner.knowledge", docs: p.docs }
+}
+
+export function encodeSummonerMcpToggle(p: { name: string; enabled: boolean }): SummonerMcpToggleEvt {
+  return { type: "summoner.mcp.toggle", name: p.name, enabled: p.enabled }
+}
+
+export function encodeSummonerMcpAdd(p: { name: string; command: string }): SummonerMcpAddEvt {
+  return { type: "summoner.mcp.add", name: p.name, command: p.command }
+}
+
+export function encodeSummonerSkillToggle(p: { name: string; on: boolean }): SummonerSkillToggleEvt {
+  return { type: "summoner.skill.toggle", name: p.name, on: p.on }
+}
+
+export function encodeSummonerKnowledgeAttach(p: { id: string }): SummonerKnowledgeAttachEvt {
+  return { type: "summoner.knowledge.attach", id: p.id }
+}
+
+export function encodeSummonerKnowledgeImport(p: {
+  name: string
+  mime: string
+  content: string
+}): SummonerKnowledgeImportEvt {
+  return { type: "summoner.knowledge.import", name: p.name, mime: p.mime, content: p.content }
+}
+
 export function encodeSummonerSelect(p: { thread_id: string }): SummonerSelectEvt {
   return { type: "summoner.select", thread_id: p.thread_id }
 }
@@ -252,6 +322,21 @@ export function encodeSummonerMicWav(p: { data: string }): SummonerMicWavEvt {
 
 export function encodeSummonerNewThread(): SummonerNewThreadEvt {
   return { type: "summoner.new_thread" }
+}
+
+export function encodeSummonerThreadRename(p: {
+  thread_id: string
+  alias: string
+}): SummonerThreadRenameEvt {
+  return { type: "summoner.thread.rename", thread_id: p.thread_id, alias: p.alias }
+}
+
+export function encodeSummonerThreadTrash(p: { thread_id: string }): SummonerThreadTrashEvt {
+  return { type: "summoner.thread.trash", thread_id: p.thread_id }
+}
+
+export function encodeSummonerFiles(p: SummonerFilesEvt): SummonerFilesEvt {
+  return { type: "summoner.files", thread_id: p.thread_id, files: p.files }
 }
 
 function isResumeIdleMinutes(n: unknown): n is number {
@@ -350,6 +435,39 @@ function isSummonerPackArray(v: unknown): v is SummonerPackRow[] {
   )
 }
 
+function isSummonerMcpServerArray(v: unknown): v is SummonerMcpServerRow[] {
+  return (
+    Array.isArray(v) &&
+    v.every((row) => {
+      if (!row || typeof row !== "object") return false
+      const o = row as Record<string, unknown>
+      return isString(o.name) && typeof o.enabled === "boolean" && isString(o.transport)
+    })
+  )
+}
+
+function isSummonerSkillArray(v: unknown): v is SummonerSkillRow[] {
+  return (
+    Array.isArray(v) &&
+    v.every((row) => {
+      if (!row || typeof row !== "object") return false
+      const o = row as Record<string, unknown>
+      return isString(o.name) && isString(o.title) && typeof o.on === "boolean"
+    })
+  )
+}
+
+function isSummonerKnowledgeArray(v: unknown): v is SummonerKnowledgeRow[] {
+  return (
+    Array.isArray(v) &&
+    v.every((row) => {
+      if (!row || typeof row !== "object") return false
+      const o = row as Record<string, unknown>
+      return isString(o.id) && isString(o.title) && typeof o.attached === "boolean"
+    })
+  )
+}
+
 function isBrowser(v: unknown): v is SummonerBrowser {
   return v === "attached" || v === "detached"
 }
@@ -424,6 +542,15 @@ export function decodeSummonerOutbound(raw: unknown): SummonerOutboundCmd | null
     case "summoner.packs":
       if (!isSummonerPackArray(o.packs)) return null
       return encodeSummonerPacks({ packs: o.packs })
+    case "summoner.mcp.servers":
+      if (!isSummonerMcpServerArray(o.servers)) return null
+      return encodeSummonerMcpServers({ servers: o.servers })
+    case "summoner.skills":
+      if (!isSummonerSkillArray(o.skills)) return null
+      return encodeSummonerSkills({ skills: o.skills })
+    case "summoner.knowledge":
+      if (!isSummonerKnowledgeArray(o.docs)) return null
+      return encodeSummonerKnowledge({ docs: o.docs })
     default:
       return null
   }
@@ -482,9 +609,52 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
       return encodeSummonerMicWav({ data: o.data })
     case "summoner.new_thread":
       return encodeSummonerNewThread()
+    case "summoner.thread.rename":
+      if (!isString(o.thread_id) || !o.thread_id) return null
+      if (!isString(o.alias) || !o.alias) return null
+      return encodeSummonerThreadRename({ thread_id: o.thread_id, alias: o.alias })
+    case "summoner.thread.trash":
+      if (!isString(o.thread_id) || !o.thread_id) return null
+      return encodeSummonerThreadTrash({ thread_id: o.thread_id })
+    case "summoner.files": {
+      if (!isString(o.thread_id)) return null
+      if (!Array.isArray(o.files) || o.files.length < 1 || o.files.length > 8) return null
+      const files: SummonerFilesEvt["files"] = []
+      for (const raw of o.files) {
+        if (!raw || typeof raw !== "object") return null
+        const f = raw as Record<string, unknown>
+        if (!isString(f.name) || !f.name || !isString(f.content) || !f.content) return null
+        files.push({
+          name: f.name,
+          type: isString(f.type) ? f.type : "",
+          content: f.content,
+        })
+      }
+      return encodeSummonerFiles({ type: "summoner.files", thread_id: o.thread_id, files })
+    }
     case "summoner.pack.apply":
       if (!isString(o.pack_id) || !o.pack_id) return null
       return encodeSummonerPackApply({ pack_id: o.pack_id })
+    case "summoner.mcp.toggle":
+      if (!isString(o.name) || !o.name) return null
+      if (typeof o.enabled !== "boolean") return null
+      return encodeSummonerMcpToggle({ name: o.name, enabled: o.enabled })
+    case "summoner.mcp.add":
+      if (!isString(o.name) || !o.name) return null
+      if (!isString(o.command) || !o.command) return null
+      return encodeSummonerMcpAdd({ name: o.name, command: o.command })
+    case "summoner.skill.toggle":
+      if (!isString(o.name) || !o.name) return null
+      if (typeof o.on !== "boolean") return null
+      return encodeSummonerSkillToggle({ name: o.name, on: o.on })
+    case "summoner.knowledge.attach":
+      if (!isString(o.id) || !o.id) return null
+      return encodeSummonerKnowledgeAttach({ id: o.id })
+    case "summoner.knowledge.import":
+      if (!isString(o.name) || !o.name) return null
+      if (!isString(o.mime)) return null
+      if (!isString(o.content) || !o.content) return null
+      return encodeSummonerKnowledgeImport({ name: o.name, mime: o.mime, content: o.content })
     case "summoner.settings.set":
       if (!isResumeIdleMinutes(o.resume_idle_minutes)) return null
       if (typeof o.chrome_foreground !== "boolean") return null

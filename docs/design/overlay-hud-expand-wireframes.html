@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CMspark HUD Expand 线稿</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #f3f1ea; color: #111; font: 13px/1.4 "SF Pro Text", "PingFang SC", sans-serif; }
+    .page { padding: 28px 32px 64px; max-width: 1480px; margin: 0 auto; }
+    h1 { font-size: 18px; font-weight: 650; margin: 0 0 4px; letter-spacing: -.02em; }
+    .sub { color: #555; margin: 0 0 22px; max-width: 72ch; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 36px; }
+    .grid.wide { grid-template-columns: 1fr; }
+    .label { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #666; margin-bottom: 8px; }
+    .desk {
+      background: repeating-linear-gradient(-45deg, #eceae3, #eceae3 8px, #e7e4db 8px, #e7e4db 16px);
+      border: 1px dashed #bbb;
+      padding: 28px 20px 32px;
+      min-height: 280px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      position: relative;
+    }
+    .ov {
+      background: #fff;
+      border: 1.5px solid #111;
+      border-radius: 4px;
+      position: relative;
+    }
+    .ov::before {
+      content: "";
+      position: absolute;
+      inset: 6px -6px -6px 6px;
+      border: 1.5px solid #111;
+      border-radius: 4px;
+      z-index: -1;
+    }
+    .ov.bar { width: 520px; }
+    .ov.full { width: 680px; }
+    .bar-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px;
+    }
+    .box {
+      flex: 1; border: 1.5px solid #111; border-radius: 3px;
+      min-height: 34px; display: flex; align-items: center; padding: 0 10px; gap: 8px;
+    }
+    .cursor { width: 1.5px; height: 14px; background: #111; }
+    .ico { width: 22px; text-align: center; font-size: 12px; }
+    .hint { padding: 0 12px 8px; font-size: 10px; color: #444; }
+    .split { display: flex; border-bottom: 1.5px solid #111; height: 280px; }
+    .rail {
+      width: 44px; border-right: 1.5px solid #111;
+      display: flex; flex-direction: column; align-items: center;
+      padding: 8px 0; gap: 8px;
+    }
+    .sq {
+      width: 26px; height: 26px; border: 1.5px solid #111;
+      display: grid; place-items: center; font-size: 10px;
+    }
+    .sq.on { background: #111; color: #fff; }
+    .list {
+      width: 168px; border-right: 1.5px solid #111;
+      display: flex; flex-direction: column;
+    }
+    .list .cap {
+      padding: 8px 10px 4px; font-size: 10px; letter-spacing: .1em;
+      text-transform: uppercase; color: #666;
+    }
+    .item { margin: 0 8px 6px; border: 1.5px solid #111; padding: 6px 8px; font-size: 12px; }
+    .item.hi { background: #111; color: #fff; }
+    .item span { display: block; font-size: 10px; color: #666; margin-top: 2px; }
+    .item.hi span { color: #ccc; }
+    .main { flex: 1; padding: 10px 12px; font-size: 12px; overflow: hidden; }
+    .who { font-size: 10px; color: #666; margin: 8px 0 2px; }
+    .me { text-align: right; }
+    .dash { border: 1.5px dashed #111; padding: 8px 10px; margin-top: 8px; min-height: 48px; }
+    .anno { margin-top: 10px; font-size: 12px; color: #333; }
+    .call {
+      position: absolute; font-size: 11px; color: #111; max-width: 150px; line-height: 1.3;
+    }
+    .call::before { content: "→ "; }
+    .legend {
+      margin-top: 36px; border-top: 1.5px solid #111; padding-top: 16px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; font-size: 12px;
+    }
+    .legend b { display: inline-block; min-width: 72px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>HUD Expand 线稿 · 收起一条 / 展开工作台</h1>
+    <p class="sub">
+      实线框 = 悬浮窗。斜线底 = 桌面。输入永远在底栏。展开后是「图标轨 + 一类列表 + 正文」，
+      不是 200pt 里同时堆对话 / MCP / 场景。对标 Codex / 千问办公 / WorkBuddy 的分区，不抄皮肤。
+    </p>
+
+    <div class="grid">
+      <div>
+        <div class="label">01 收起 — 热键刚弹起</div>
+        <div class="desk">
+          <div class="ov bar">
+            <div class="bar-row">
+              <span class="ico">+</span>
+              <div class="box"><span class="cursor"></span><span style="color:#888">说点什么</span></div>
+              <span class="ico">📎</span>
+              <span class="ico">🎙</span>
+              <span class="ico">⌄</span>
+            </div>
+            <div class="hint">回车发送 · # 搜标题</div>
+          </div>
+          <div class="call" style="top: 18px; right: 12px;">只这一条<br>⌄ 展开</div>
+        </div>
+        <p class="anno">无标题栏、无发送大按钮、无浏览器徽章。Esc / 热键关窗。</p>
+      </div>
+
+      <div>
+        <div class="label">02 收起 — # 搜标题</div>
+        <div class="desk">
+          <div class="ov bar">
+            <div class="bar-row">
+              <span class="ico">+</span>
+              <div class="box"># 站会<span class="cursor"></span></div>
+              <span class="ico">⌄</span>
+            </div>
+            <div class="hint">只搜标题</div>
+            <div class="item hi" style="margin: 0 10px 6px;">今日站会纪要<span>12 分钟前</span></div>
+            <div class="item" style="margin: 0 10px 10px;">站会模板<span>上周</span></div>
+          </div>
+        </div>
+        <p class="anno">检索仍掉在条下，不必先展开。Enter 选线程，不发给模型。</p>
+      </div>
+    </div>
+
+    <div class="grid wide" style="margin-top: 28px;">
+      <div>
+        <div class="label">03 展开 — 对话（默认）</div>
+        <div class="desk">
+          <div class="ov full">
+            <div class="split">
+              <div class="rail">
+                <div class="sq on">言</div>
+                <div class="sq">场</div>
+                <div class="sq">知</div>
+                <div class="sq">技</div>
+                <div class="sq">连</div>
+              </div>
+              <div class="list">
+                <div class="cap">对话</div>
+                <div class="item hi">今日站会纪要<span>12 分钟前</span></div>
+                <div class="item">知识库诚实<span>昨天</span></div>
+                <div class="item">Windows 安装器<span>周一</span></div>
+              </div>
+              <div class="main">
+                <div class="who me">你</div>
+                <div>把今天的站会收成纪要。</div>
+                <div class="who">助手</div>
+                <div class="dash">三点结论 + 待办。完整格式可随后导出。</div>
+              </div>
+            </div>
+            <div class="bar-row">
+              <span class="ico">+</span>
+              <div class="box"><span class="cursor"></span><span style="color:#888">说点什么</span></div>
+              <span class="ico">📎</span>
+              <span class="ico">🎙</span>
+              <span class="ico">⌃</span>
+            </div>
+            <div class="hint">⌃ 收起 · Esc 关窗 · 不经过 Chrome 侧栏</div>
+          </div>
+          <div class="call" style="top: 40px; left: 16px;">图标轨<br>一次一类</div>
+          <div class="call" style="bottom: 18px; right: 16px;">输入永远在底</div>
+        </div>
+        <p class="anno">轨约 44–52pt，只高亮当前类。列表只渲染「对话」。主列是当前线程全文。</p>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top: 8px;">
+      <div>
+        <div class="label">04 展开 — 场景</div>
+        <div class="desk">
+          <div class="ov full" style="width: 640px;">
+            <div class="split" style="height: 220px;">
+              <div class="rail">
+                <div class="sq">言</div>
+                <div class="sq on">场</div>
+                <div class="sq">知</div>
+                <div class="sq">技</div>
+                <div class="sq">连</div>
+              </div>
+              <div class="list">
+                <div class="cap">场景</div>
+                <div class="item hi">会议记录<span>套到当前对话</span></div>
+                <div class="item">代码审查<span>技能 + 提示</span></div>
+                <div class="item">调研摘要<span>只读</span></div>
+              </div>
+              <div class="main">
+                <div class="who">场景</div>
+                <div>点左侧一项即套用。不升 Trust。要确认的走托盘原生窗。</div>
+              </div>
+            </div>
+            <div class="bar-row">
+              <span class="ico">+</span>
+              <div class="box" style="color:#888">说点什么</div>
+              <span class="ico">⌃</span>
+            </div>
+          </div>
+        </div>
+        <p class="anno">切轨 = 换列表，不新开窗。主列保持简单说明，不做第三栏设置页。</p>
+      </div>
+
+      <div>
+        <div class="label">05 明确不画</div>
+        <div class="desk">
+          <div class="ov" style="width: 480px; opacity: .85;">
+            <div class="bar-row" style="border-bottom: 1.5px solid #111;">
+              <span style="font-size:11px">● ● ●</span>
+              <span style="margin-left:auto;font-size:11px">CMspark 召唤器（实验）</span>
+            </div>
+            <div style="display:flex;height:160px;">
+              <div style="width:140px;border-right:1.5px solid #111;padding:8px;font-size:11px;">
+                <b>对话</b><br>线程1<br>线程2<br><br><b>MCP</b><br>未连接 · 去侧栏<br><br><b>场景</b><br>会议记录
+              </div>
+              <div style="flex:1;padding:8px;font-size:11px;color:#666;">
+                顶栏输入<br><br>发送　　已连接继续
+              </div>
+            </div>
+          </div>
+          <div class="call" style="top: 24px; right: 8px;">已否：标题窗<br>+ 竖堆左轨</div>
+        </div>
+        <p class="anno">旧展开态。线稿 03/04 就是为了不再画这个。</p>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div><b>01→02</b> 收起即可搜历史，不必展开</div>
+      <div><b>03</b> 展开默认落在「对话」</div>
+      <div><b>04</b> 知识 / 技能 / MCP 同构：换轨换列表</div>
+      <div><b>Esc</b> 关整窗；⌃ 只收起</div>
+      <div><b>Chrome</b> 只服务网页 CDP，不出现在这张图里</div>
+      <div><b>批准</b> 仍走托盘确认窗，线稿不画 Allow/Deny</div>
+    </div>
+  </div>
+</body>
+</html>

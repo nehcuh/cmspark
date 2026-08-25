@@ -7,6 +7,7 @@ import * as yaml from "js-yaml"
 import { getConfigDir, getConfig, saveConfig, type CompanionConfig } from "../config"
 import { atomicWriteJSON } from "../io"
 import { SkillEngine } from "../skills/skill-engine"
+import { allocateDocIdentity, isUnsafePathComponent, writeRestrictedFile } from "../skills/doc-identity"
 import { ThreadManager } from "../threads/thread-manager"
 import { appendCapabilityAudit } from "./audit-log"
 import { validatePackDir } from "./validator"
@@ -706,7 +707,13 @@ export function computeWhitelist(
 }
 
 function skillFileName(packId: string, originalName: string): string {
-  const safe = originalName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^\.+/, "")
+  // ASCII-only names keep dots (legacy pack--id--owasp-baseline.md). Mixed/CJK → hash.
+  const asciiOnly = /^[a-zA-Z0-9._-]+$/.test(originalName)
+  let safe = asciiOnly ? originalName.replace(/^\.+/, "") : ""
+  const stemNoExt = safe.replace(/\.[^.]+$/, "") || safe
+  if (!safe || isUnsafePathComponent(safe) || isUnsafePathComponent(stemNoExt)) {
+    safe = allocateDocIdentity({ title: originalName }).filenameStem
+  }
   return `pack--${packId}--${safe}.md`
 }
 
@@ -735,7 +742,7 @@ function rewriteSkillWithNamespacedName(srcPath: string, destPath: string, names
   if (!data.type) data.type = "prompt_template"
   const body = parsed.content || ""
   const out = `---\n${yaml.dump(data, { lineWidth: -1 }).trim()}\n---\n${body.startsWith("\n") ? body : "\n" + body}`
-  fs.writeFileSync(destPath, out, { mode: 0o600 })
+  writeRestrictedFile(destPath, out)
 }
 
 function copyKnowledge(srcPath: string, destPath: string, namespacedName: string): void {
@@ -745,7 +752,7 @@ function copyKnowledge(srcPath: string, destPath: string, namespacedName: string
   if (!data.type) data.type = "domain_knowledge"
   const body = parsed.content || ""
   const out = `---\n${yaml.dump(data, { lineWidth: -1 }).trim()}\n---\n${body.startsWith("\n") ? body : "\n" + body}`
-  fs.writeFileSync(destPath, out, { mode: 0o600 })
+  writeRestrictedFile(destPath, out)
 }
 
 function removeNamespacedAssets(packId: string): void {

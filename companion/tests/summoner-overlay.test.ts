@@ -49,6 +49,8 @@ test("SummonerController title is 召唤器（实验） and never 主界面", ()
   const body = summonerControllerBody()
   assert.match(body, /CMspark 召唤器（实验）/)
   assert.doesNotMatch(body, /主界面/)
+  assert.match(body, /borderless/)
+  assert.match(body, /titleVisibility = \.hidden|titlebarAppearsTransparent/)
 })
 
 test("SummonerController has zero Allow/Deny/确认 chrome", () => {
@@ -57,13 +59,39 @@ test("SummonerController has zero Allow/Deny/确认 chrome", () => {
   assert.doesNotMatch(body, /showConfirm|allowClicked|denyClicked/)
 })
 
-test("SummonerController left rail and 640pt window", () => {
+test("SummonerController is a one-bar HUD: 720pt, no stacked makeRail, Esc hides", () => {
   const body = summonerControllerBody()
-  assert.match(body, /width: 640/)
-  assert.match(body, /makeRail/)
-  assert.match(body, /summoner\.pack\.apply/)
-  assert.match(body, /applyThreads/)
-  assert.match(body, /applyPacks/)
+  assert.match(body, /summonerHudWidth/)
+  assert.match(body, /720/)
+  assert.doesNotMatch(body, /func makeRail/)
+  assert.doesNotMatch(body, /railPackClicked/)
+  assert.match(body, /cancelOperation/)
+  const hide = body.slice(body.indexOf("func hide()"), body.indexOf("func hide()") + 280)
+  assert.match(hide, /orderOut/)
+})
+
+test("HUD expand B0: chevron, workbench above composer, threads from applyThreads", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  assert.match(overlay, /toggleExpandClicked/)
+  assert.match(overlay, /workbenchBox/)
+  assert.match(overlay, /func applyThreads/)
+  assert.match(overlay, /threadListStack/)
+  assert.match(overlay, /text\.alignleft/)
+  const make = overlay.slice(overlay.indexOf("private func makeWindow()"), overlay.indexOf("private func makeIndigoButton"))
+  const workbenchAt = make.indexOf("workbenchBox")
+  const fieldAt = make.lastIndexOf("stack.addArrangedSubview(fieldBox)")
+  assert.ok(workbenchAt >= 0 && fieldAt > workbenchAt, "workbench must be assembled before composer is pinned to the stack")
+  const apply = overlay.slice(overlay.indexOf("func applyThreads"), overlay.indexOf("func applyPacks"))
+  assert.match(apply, /threadListStack|refreshThreadList/)
+  assert.doesNotMatch(apply, /_ = json/)
+})
+
+test("borderless HUD panel overrides canBecomeKey so composer/OpenPanel/mic work", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  assert.match(overlay, /class SummonerPanel: NSPanel/)
+  assert.match(overlay, /override var canBecomeKey: Bool \{ true \}/)
+  assert.match(overlay, /SummonerPanel\(/)
+  assert.match(overlay, /runModal\(\)/)
 })
 
 test("SummonerController uses NSTextView composer + nonactivatingPanel + floating", () => {
@@ -78,16 +106,18 @@ test("SummonerController copy lock: badge, hint, CTA, buttons", () => {
   assert.match(body, /浏览器已连接/)
   assert.match(body, /浏览器未连接/)
   assert.match(body, /回车发送\/纠偏 · Shift\+Enter 排队 · # 搜标题/)
+  assert.doesNotMatch(body, /知识配置去侧栏/)
+  assert.match(body, /展开工作台/)
   assert.match(body, /说点什么/)
-  assert.match(body, /不能替你打开侧栏/)
-  assert.match(body, /发送/)
+  assert.match(body, /工具栏图标/)
+  assert.doesNotMatch(body, /去侧栏/)
   assert.match(body, /已连接，继续对话/)
   assert.match(body, /新对话/)
-  assert.match(body, /快捷键/)
   assert.doesNotMatch(body, /NSButton\(title: "设置"/)
   assert.doesNotMatch(body, /召唤器 · 实验/)
   assert.doesNotMatch(body, /P0 /)
-  assert.match(body, /MCP · /)
+  assert.doesNotMatch(body, /Raycast|uTools/)
+  assert.doesNotMatch(body, /MCP · /)
 })
 
 test("SummonerController hotkey toggles hide when overlay is already visible", () => {
@@ -142,20 +172,24 @@ test("SummonerController emits companion.ui.rect and renders assistant markdown"
   assert.match(src, /emitCompanionUiRect\("overlay"/)
   assert.match(src, /companion\.ui\.rect/)
   assert.match(src, /AttributedString\(markdown:/)
-  assert.match(src, /replacingOccurrences\(of: "\\n", with: "  \\n"\)/)
+  assert.match(src, /components\(separatedBy: "\\n"\)/)
+  assert.match(src, /inlineOnlyPreservingWhitespace/)
   assert.match(src, /suffix\(20\)/)
 })
 
-test("SummonerController hotkey is a header + tray-menu entry", () => {
+test("SummonerController hotkey picker is tray-menu, not HUD chrome", () => {
   const src = traySwiftSrc()
-  assert.match(src, /NSButton\(title: "快捷键"/)
   assert.match(src, /召唤器快捷键…/)
   assert.match(src, /func toggleHotkeyPicker/)
+  assert.match(src, /func showHotkeyPicker/)
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  assert.doesNotMatch(overlay, /NSButton\(title: "快捷键"/)
 })
 
 test("detached browser copy is faint info, not a warn CTA panel", () => {
   const body = summonerControllerBody()
-  assert.match(body, /不能替你打开侧栏/)
+  assert.match(body, /工具栏图标/)
+  assert.doesNotMatch(body, /去侧栏/)
   assert.match(body, /summonerDetachedInfo/)
   const apply = body.slice(body.indexOf("private func applyPhase()"), body.indexOf("private func relayout()"))
   assert.match(apply, /ctaBox\?\.isHidden = true/)
@@ -173,6 +207,31 @@ test("SummonerController IME: composing Return is not bound as a button keyEquiv
   const body = summonerControllerBody()
   assert.match(body, /hasMarkedText/)
   assert.match(body, /btn\.keyEquivalent = ""/)
+})
+
+test("Tray.swift menu and hotkey open native NSPanel 悬浮窗", () => {
+  const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
+  const click = src.indexOf("tag == MenuTag.summoner.rawValue")
+  assert.ok(click >= 0)
+  const menu = src.slice(click, click + 420)
+  assert.match(menu, /summonerController\.open\(threadId/)
+  assert.doesNotMatch(menu, /"action": "summoner"/)
+  const hotAt = src.indexOf("func handleSummonerHotKeyPressed()")
+  assert.ok(hotAt >= 0)
+  const hot = src.slice(hotAt, hotAt + 320)
+  assert.match(hot, /openFromHotKey/)
+})
+
+test("Summoner overlay composer exposes file clip and hold-to-talk mic", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  assert.match(overlay, /attachFilesClicked/)
+  assert.match(overlay, /NSOpenPanel/)
+  assert.match(overlay, /summoner\.files/)
+  assert.match(overlay, /按住听写/)
+  assert.match(overlay, /micButton\?\.isHidden = searching/)
+  assert.match(overlay, /application\/octet-stream/)
+  assert.doesNotMatch(overlay, /"type": ""/)
+  assert.match(overlay, /summonerFileMaxBytes/)
 })
 
 test("Tray.swift stdin handles summoner.open/hydrate/token/done/error/close", () => {
@@ -292,11 +351,22 @@ test("message-router broadcasts exclusive-claim siblings as composer.lease", () 
   assert.match(src, /composer\.lease\.release_overlay/)
 })
 
+test("handleSummonerFiles claims overlay lease and coerces empty MIME", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const start = src.indexOf("async function handleSummonerFiles")
+  assert.ok(start >= 0, "handleSummonerFiles missing")
+  const next = src.indexOf("\nexport ", start + 10)
+  const body = src.slice(start, next > start ? next : start + 2200)
+  assert.match(body, /claimOverlayIfLive/)
+  assert.match(body, /application\/octet-stream/)
+  assert.match(body, /OVERLAY_STANDBY/)
+})
+
 test("menu-bar-agent inbound close does not chat.abort", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
   const start = src.indexOf("export function handleSummonerInbound")
   assert.ok(start >= 0)
-  const body = src.slice(start, start + 1800)
+  const body = src.slice(start, start + 2800)
   assert.match(body, /summoner\.closed/)
   assert.doesNotMatch(body, /chat\.abort/)
   assert.match(body, /handleSummonerClosed/)

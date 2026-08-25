@@ -375,7 +375,7 @@ export function useWebSocket() {
           dispatch({ type: "SET_STREAMING_REASONING", content: "" })
           dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          if (doneThreadId && (content || reasoning)) {
+          if (doneThreadId && (content || reasoning || (Array.isArray(msg.retrieved_sources) && msg.retrieved_sources.length > 0))) {
             dispatch({
               type: "ADD_MESSAGE",
               message: {
@@ -388,6 +388,7 @@ export function useWebSocket() {
                 role: "assistant",
                 content: content || "",
                 ...(reasoning ? { reasoning_content: reasoning } : {}),
+                ...(Array.isArray(msg.retrieved_sources) ? { retrieved_sources: msg.retrieved_sources } : {}),
                 created_at: new Date().toISOString(),
               },
             })
@@ -955,6 +956,42 @@ export function useWebSocket() {
           }
           break
         }
+        case "knowledge.related":
+          try {
+            window.dispatchEvent(
+              new CustomEvent("cmspark:knowledge_related", {
+                detail: {
+                  id: msg.id,
+                  related: Array.isArray(msg.related) ? msg.related : [],
+                },
+              }),
+            )
+          } catch {
+            /* ignore */
+          }
+          break
+
+        case "thread.distill_preview": {
+          const md = typeof msg.markdown === "string" ? msg.markdown : ""
+          const title = typeof msg.title === "string" ? msg.title : "对话提炼"
+          const hits = typeof msg.redacted_hits === "number" ? msg.redacted_hits : 0
+          if (md) {
+            dispatch({
+              type: "SET_KNOWLEDGE_PREVIEW",
+              preview: {
+                title,
+                description: "",
+                preview:
+                  (hits > 0 ? `⚠ 已脱敏 ${hits} 处密钥形态。核对后再确认导入。\n\n` : "") +
+                  md.slice(0, 4000),
+                char_count: md.length,
+                payload: { content: md },
+              },
+            })
+          }
+          break
+        }
+
         case "thread.related": {
           // Wave C: optional companion related ranking (UI also has local mirror for instant paint)
           try {
@@ -1602,6 +1639,18 @@ export function useWebSocket() {
           dispatch({ type: "SET_KNOWLEDGE_DOCS", docs: msg.docs })
           break
 
+        case "knowledge.preview":
+          dispatch({
+            type: "SET_KNOWLEDGE_PREVIEW",
+            preview: {
+              title: String(msg.title || ""),
+              description: String(msg.description || ""),
+              preview: String(msg.preview || ""),
+              char_count: typeof msg.char_count === "number" ? msg.char_count : 0,
+            },
+          })
+          break
+
         case "knowledge.import_directory_result": {
           if (msg.error) {
             const message = msg.error === "cancelled" ? "已取消选择文件夹" : `导入失败：${msg.error}`
@@ -1799,6 +1848,12 @@ export function useWebSocket() {
         }
 
         case "error":
+          if (typeof msg.error === "string" && /knowledge|预览|parseFile|fetch knowledge/i.test(msg.error)) {
+            dispatch({
+              type: "SET_KNOWLEDGE_PREVIEW",
+              preview: { preview: `预览失败：${msg.error}`, payload: {} },
+            })
+          }
           // WP5-I4: computer.model.* 错误(family:"computer.model")→ 设置页实验区
           // 错误位;判定先于 apps(family 无歧义,code 回退集含共享 BIOMETRIC_DENIED)。
           if (isComputerModelErrorMessage(msg)) {

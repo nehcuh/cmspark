@@ -2,6 +2,46 @@
 
 ## Current Session
 
+### S80 END (2026-08-25 ~13:40) [knowledge honesty Wave 0–2 · DMG 换装]
+- **Ship（本机）**：`feat/knowledge-honesty-wave0` 落地 Wave 0/0b/1/2。`make package-macos` → `dist-package/CMspark-v0.5.2-macOS.dmg`；替换 `/Applications/CMspark.app`（备份 `~/CMspark.app.bak-20260825-133708`）；daemon `127.0.0.1:23401`。
+- **闸门**：设计 dual AWN `102532`；Wave 0 impl AWN `105843`；0b+1 r3 both AWN `114735`；Wave 2 对抗四路 AWN（Product r1 REJECT 图谱名词后折）+ Claude/Pi AWN `132009`。
+- **产品**：CJK identity；确认导入；本轮附带芯片；相关≤3；提炼脱敏+HITL；话题夹字符串；召唤器去工作台化；Raycast 仅分发文档。
+- **下次**：开 PR（未合 main）；Chrome 重载解压扩展；overlay `pack.apply` peek / `user_gesture` 服务端 400 仍停住。
+- Recorded: yes — overlay 新类型须 background relay；DATA_DIR 快照 vs getConfigDir；dual patch 须 stage 新文件；F-UX-NOUN 同面板扫旧「图谱」
+
+### S79 END (2026-08-25 ~10:05) [#221 MERGED · post-#220 nits]
+- **Ship**：**PR #221 squash MERGED** `ac0a3be`。CI build + 3 smoke 绿。本地 `main` == `origin/main`。
+- **流程**：拉 `c5b4242..1d16b0e`（#220）→ 四路合后独立对抗 AWN → 折 nits → 再四路+Claude/Pi AWN → 折 dual 残留 → PR → CI → squash。
+- **产品/工程**：nextRun 带 `clientMessageId`；heal skip 限定 in-flight 块；drain pause/trash/cap 先于 take；upload/regen 不替换 ack；overlay bind 显式 token；passwd/object 袋 + history 调用点 redact。
+- **下次（可选）**：裸 `value` 勿全局 redact；M3 pack.apply 路由测、N1 idle flash、N9 length budget 仍 out of slice；真机召唤器 dogfood 仍开放。
+- Recorded: yes — squash≠WIP r2；take→drop 测钉窗口；drain 先闸再 take；redact 调用点≠正则
+
+### S79 START (2026-08-25) [post-#220 多路独立复验]
+- **Pull**: `c5b4242` → `1d16b0e` (PR #220 squash: fold post-#219 kimi nits)
+- **方法**: 四路独立 worktree 对抗（不信任合前 r2 APPROVE）；frozen patch `docs/audit/reviews/post220-merged-diff-20260825-085108.patch` SHA256 `b5e936cbf1dc66afc3fc7aef5898fb417692ed63325b9a4ed8bb11caf5c86021`
+- **范围**: `c5b4242..1d16b0e` 生产+测试 22 files (+2514/-109)
+- **裁决**: A/B/C/D 全 **APPROVE_WITH_NITS**；r1 六条 BLOCK/High 均独立重放关闭（含变异杀死）
+- **产物**: `docs/audit/reviews/post220-merged-adversary-synthesis-20260825.md` + 四路报告 + verdict JSON
+- **未做**: Pi 复审（合前 r2 已 AWN；本轮无 BLOCK）；未 commit 评审文档
+- **状态**: 合成完成；残留折完后 **PR #221 squash MERGED** `ac0a3be`
+
+### S79 nits slice (2026-08-25) [post-#220 残留]
+- **Branch**: `fix/post220-residual-nits`
+- **Folded**: S-A1 nextRun 保留 clientMessageId；S-A2 persist skip 限定 assistant block；S-A3 leftover 不 wipe steer 队列；S-B1 pause 先于 takeNextRun；S-B2 regen overlay + conductor 测；S-B3 upload 恒返回 file.uploaded；S-C1 删除 setSummonerThreadId；S-C2 submit-ok live-gate + reclaim 走 claimOverlayIfLive；S-D1 passwd；S-D2 非 string 敏感 key；S-D3 history.db 正则对齐
+- **未做**: 裸 `value` 全局 redact（误杀字段）；M3 pack.apply / N1 idle / N9 length；独立对抗 + Pi
+- **机核**: companion tsc 0 + tsconfig.test 0；定向 235 pass
+- **Ship**：PR #221 squash MERGED `ac0a3be`。CI build + 3 smoke 绿。本地 `main` == `origin/main`。
+- Recorded: yes — leftover cmid；heal skip 限定块；drain pause/trash/cap 先于 take；upload/regen 不替换 ack；overlay token bind；passwd/object 袋 redact
+
+### S79 dual (2026-08-25) [post-#220 nits 对抗 + Claude/Pi]
+- **对象**: `1d16b0e..9deff00` frozen `post220-nits-diff-20260825-092457.patch`
+- **SHA256**: `2625238075ef8720b4dc8ca73124742b068b54c8b7d721b1dfd2d4c793274b51`
+- **对抗**: A/B/C/D 全 **AWN**，无 BLOCK。合成 `post220-nits-adversary-synthesis-20260825.md`
+- **双路**: `dual-external-review.sh post220-nits` Claude **AWN** + Pi **AWN**，`both_ok=true`（自跑 tsc 0 + 167/167）
+- **闸门**: MACHINE PASS + 对抗 AWN + Claude/Pi AWN → **YES_ON_BRANCH**
+- **PR**: https://github.com/nehcuh/cmspark/pull/221 squash MERGED `ac0a3be`
+- **残留**: S-A3 测钉窗口、trash 无 in-tree 测、history cookie/generic 调用点、grep 型 C 测 — 非阻断
+
 ### S78 END (2026-08-24 ~17:23) [#219 MERGED · steer/nextRun + overlay hub + C-thin]
 - **Ship**：**PR #219 squash MERGED** `daf8bc9`。CI build + 3 smoke 绿。本地 `main` == `origin/main`。
 - **产品**：忙时纠偏/排队（occupied `chat.create`/`file.upload` → `run_active`）；overlay-eligible pack 不写 Trust；跨平台召唤壳 = loopback HTML + SSE + Chromium `--app`（非 Electron，冻 Swift 增长）。
@@ -813,6 +853,20 @@
 - Recorded: yes 鈥?瑙?project-knowledge.md銆孧ermaid 鍥捐〃娓叉煋鐨勪笁涓潙銆? docs/adr/009
 
 ## In-Flight Tasks (Cross-Session)
+
+### Daily assistant · Knowledge Honesty（S80 · Wave 0–2 landed, not on main）
+- status: **active**
+- context: `feat/knowledge-honesty-wave0` 相对 `5a38149`。Wave 0–2 dual both AWN。本机 0.5.2 DMG 已换装。
+- next_action: (1) Chrome 重载 `chrome-extension/build/chrome-mv3-prod/` (2) 开 PR 合 main（用户未要求本轮 push）(3) 勿 overlay 知识 ACL / Project / graph DB
+- resume_doc: `docs/superpowers/specs/2026-08-25-daily-assistant-knowledge-honesty-design.md` · `docs/audit/reviews/knowledge-honesty-wave2-verdict-20260825-132009.json`
+- updated: 2026-08-25
+
+### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
+- status: **done**
+- context: #220 kimi nits 合 main 后独立复验 → #221 折残留（cmid / drain 先闸 / redact 调用点）。tip `ac0a3be`。
+- next_action: 无阻塞；可选真机召唤器 dogfood。勿全局 redact `value`。
+- resume_doc: PR #221 · #220 · `docs/audit/reviews/post220-nits-adversary-synthesis-20260825.md`
+- updated: 2026-08-25
 
 ### OS summoner overlay（S77–S78 · #219 MERGED）
 - status: **done**
