@@ -625,17 +625,17 @@ const SUMMONER_HTML = `<!DOCTYPE html>
   --shadow:0 1px 0 var(--line),0 18px 40px rgba(23,23,23,.10);
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;}
+html,body{height:100%;overflow:hidden}
 body{
   font:13px/1.45 "Segoe UI","Microsoft YaHei UI","PingFang SC","Noto Sans SC",sans-serif;
-  color:var(--text);background:var(--canvas);
+  color:var(--text);background:var(--paper);
 }
-.hud{height:100%;display:flex;flex-direction:column;background:var(--paper)}
-.body{display:none;grid-template-columns:var(--rail) var(--list) minmax(0,1fr);flex:1;min-height:0;border-bottom:1px solid var(--line)}
+.hud{height:100%;display:flex;flex-direction:column;background:var(--paper);overflow:hidden}
+.body{display:none;grid-template-columns:var(--rail) var(--list) minmax(0,1fr);flex:1;min-height:0;border-bottom:1px solid var(--line);overflow:hidden}
 .hud.expanded .body{display:grid}
 .rail{
   background:var(--rail-bg);border-right:1px solid var(--line);
-  display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;
+  display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;overflow:hidden
 }
 .rail-btn{
   width:44px;height:44px;border:0;background:transparent;border-radius:var(--radius-sm);
@@ -645,9 +645,9 @@ body{
 .rail-btn:hover{background:var(--canvas);color:var(--text)}
 .rail-btn[aria-current="true"]{background:var(--indigo-soft);color:var(--indigo)}
 .rail-btn:focus-visible{outline:none;box-shadow:var(--focus)}
-.list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;background:var(--paper)}
+.list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;background:var(--paper);overflow:hidden}
 .list-head{padding:14px 14px 8px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--faint)}
-.list-scroll{overflow:auto;flex:1;padding:0 6px 10px}
+.list-scroll{overflow-y:auto;overflow-x:hidden;flex:1;padding:0 6px 10px}
 .item,.row{
   display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:10px;
   padding:10px;cursor:pointer;min-height:44px;font:inherit;color:var(--text);
@@ -666,14 +666,15 @@ body{
 }
 .icon-mini svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .icon-mini:hover{background:var(--canvas);color:var(--text)}
-.main{display:flex;flex-direction:column;min-width:0;background:var(--paper)}
-.log{flex:1;overflow:auto;padding:20px 22px;display:flex;flex-direction:column;gap:16px}
+.main{display:flex;flex-direction:column;min-width:0;background:var(--paper);overflow:hidden}
+.log{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px 22px;display:flex;flex-direction:column;gap:16px}
 .msg{max-width:36rem;font-size:14px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
 .msg.user{align-self:flex-end;background:var(--canvas);padding:8px 12px;border-radius:12px 12px 4px 12px}
 .msg.assistant{align-self:flex-start;color:var(--text)}
 .empty{margin:auto;color:var(--secondary);font-size:14px;line-height:1.6}
 .empty strong{display:block;font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px}
-.composer{display:flex;align-items:center;gap:6px;padding:10px 12px 8px}
+.composer{display:flex;flex-direction:column;gap:6px;padding:10px 12px 8px;background:var(--paper)}
+.composer-row{display:flex;align-items:center;gap:6px;min-width:0}
 .icon-btn{
   width:44px;height:44px;border:0;background:transparent;border-radius:var(--radius-sm);
   cursor:pointer;color:var(--text);display:grid;place-items:center;flex:none;
@@ -697,10 +698,11 @@ body{
   border:0;background:transparent;color:var(--faint);font:11px inherit;padding:6px 8px;border-radius:8px;cursor:pointer;min-height:32px;
 }
 .ghost:hover{background:var(--canvas);color:var(--text)}
-.hint{padding:0 16px 10px;font-size:11px;color:var(--faint)}
+.hint{padding:0 16px 10px;font-size:11px;color:var(--faint);line-height:1.4}
 .status{padding:0 16px 12px;font-size:12px;color:#92400e;min-height:16px}
-.hud:not(.expanded) .ghosts,.hud:not(.expanded) .status:empty{display:none}
-.hud:not(.expanded) .hint{padding-bottom:8px}
+.hud:not(.expanded) .ghosts{display:none}
+.hud:not(.expanded) .hint{padding:8px 16px}
+.hud:not(.expanded) .status{padding:0 16px 8px}
 </style>
 </head>
 <body>
@@ -736,21 +738,26 @@ body{
     </section>
   </div>
   <div class="composer">
-    <button class="icon-btn" id="newThreadBar" type="button" title="新对话" aria-label="新对话">
-      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-    </button>
-    <div class="field">
-      <textarea id="text" rows="1" placeholder="说点什么，回车发送" aria-label="发送到当前对话"></textarea>
-      <label class="icon-btn" for="files" title="📎 添加附件" aria-label="添加附件">
-        <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
-      </label>
-      <input type="file" id="files" multiple hidden>
-      <button class="icon-btn" id="mic" type="button" disabled title="听写/知识配置/批准去侧栏处理" aria-label="听写去侧栏处理">
-        <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
+    <div class="composer-row">
+      <button class="icon-btn" id="newThreadBar" type="button" title="新对话" aria-label="新对话">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
-      <button class="icon-btn" id="chev" type="button" aria-pressed="false" title="展开工作台" aria-label="展开工作台">
-        <svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>
-      </button>
+      <div class="field">
+        <textarea id="text" rows="1" placeholder="说点什么，回车发送" aria-label="发送到当前对话"></textarea>
+        <label class="icon-btn" for="files" title="📎 添加附件" aria-label="添加附件">
+          <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
+        </label>
+        <input type="file" id="files" multiple hidden>
+        <button class="icon-btn" id="mic" type="button" disabled title="听写/知识配置/批准去侧栏处理" aria-label="听写去侧栏处理">
+          <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
+        </button>
+        <button class="icon-btn" id="chev" type="button" aria-pressed="false" title="展开工作台" aria-label="展开工作台">
+          <svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>
+        </button>
+        <button class="icon-btn" id="settings" type="button" title="设置（快捷键等）" aria-label="设置">
+          <svg viewBox="0 0 24 24"><path d="M12.2 2.2a.8.8 0 0 1 .8.8v2.6a.8.8 0 0 1-.8.8H11.8a.8.8 0 0 1-.8-.8V3a.8.8 0 0 1 .8-.8zm0 16a.8.8 0 0 1 .8.8v2.6a.8.8 0 0 1-.8.8H11.8a.8.8 0 0 1-.8-.8V19a.8.8 0 0 1 .8-.8zM19.1 7.4a.8.8 0 0 1 1.1 0l1.9 1.9a.8.8 0 0 1 0 1.1l-2.6 2.6a.8.8 0 0 1-1.1 0 .8.8 0 0 1 0-1.1l1.5-1.5-1.5-1.5a.8.8 0 0 1 0-1.1zM4.9 16.6a.8.8 0 0 1 0-1.1l2.6-2.6a.8.8 0 0 1 1.1 0 .8.8 0 0 1 0 1.1L7.1 15.5l1.5 1.5a.8.8 0 0 1 0 1.1l-1.9 1.9a.8.8 0 0 1-1.1 0zm0-9.2a.8.8 0 0 1 1.1 0l1.9 1.9a.8.8 0 0 1 0 1.1L7.3 13l2.6 2.6a.8.8 0 0 1-1.1 0l-1.9-1.9a.8.8 0 0 1 0-1.1l1.5-1.5-1.5-1.5a.8.8 0 0 1 0-1.1zm14.2 9.2a.8.8 0 0 1 0-1.1l-2.6-2.6a.8.8 0 0 1-1.1 0 .8.8 0 0 1 0 1.1l1.5 1.5-1.5 1.5a.8.8 0 0 1 0 1.1l1.9 1.9a.8.8 0 0 1 1.1 0z"/></svg>
+        </button>
+      </div>
     </div>
   </div>
   <div class="ghosts">
@@ -759,7 +766,7 @@ body{
     <button class="ghost" id="queue" type="button">排队</button>
     <button class="ghost" id="stop" type="button">停止</button>
   </div>
-  <div class="hint" id="hint">回车发送/纠偏 · Shift+Enter 排队 · # 搜标题 · 听写/知识配置/批准去侧栏处理</div>
+  <div class="hint" id="hint">回车发送 · Shift+Enter 排队 · 点击右上角 ⋮ 设置快捷键</div>
   <div class="status" id="status"></div>
 </div>
 <script>
@@ -774,11 +781,11 @@ body{
   function setStatus(t){$("status").textContent=t||""}
   function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})}
   function placeWindow(expanded){
-    var w=720,h=expanded?520:120;
+    var w=expanded?720:500,h=expanded?520:140;
     var sw=screen.availWidth||screen.width||w;
     var sh=screen.availHeight||screen.height||h;
     var x=Math.max(0, ((sw-w)/2)|0);
-    var y=expanded?Math.max(0, ((sh-h)/2)|0):Math.max(24, ((sh*0.28)-(h/2))|0);
+    var y=expanded?Math.max(0, ((sh-h)/2)|0):Math.max(24, ((sh*0.25)-(h/2))|0);
     try{window.resizeTo(w,h);window.moveTo(x,y)}catch(e){}
   }
   function setExpanded(on){
@@ -867,8 +874,8 @@ body{
   }
   function syncBusyUi(){
     $("hint").textContent=busy
-      ?"回车发送/纠偏 · Shift+Enter 排队 · 忙时附件请等本轮结束 · 听写/知识配置/批准去侧栏处理"
-      :"回车发送/纠偏 · Shift+Enter 排队 · # 搜标题 · 听写/知识配置/批准去侧栏处理";
+      ?"回车纠偏 · Shift+Enter 排队 · 忙时附件请等本轮结束 · 点击右上角 ⋮ 设置快捷键"
+      :"回车发送 · Shift+Enter 排队 · # 搜标题 · 点击右上角 ⋮ 设置快捷键";
   }
   function selectThread(id){
     threadId=id;
@@ -947,6 +954,9 @@ body{
   };
   $("chev").onclick=function(){
     setExpanded(!$("hud").classList.contains("expanded"));
+  };
+  $("settings").onclick=function(){
+    alert("快捷键设置需要在 Chrome 侧栏的设置面板中配置。\n\n请打开 Chrome 侧栏，点击设置图标，在「模型与推理」部分找到「发送快捷键」设置。\n\n召唤器使用相同的快捷键配置。");
   };
   $("newThreadBar").onclick=function(){$("newThread").click()};
   $("newThread").onclick=function(){
@@ -1093,7 +1103,8 @@ body{
       idle_enqueue:"空闲时直接发送，不必排队",
       OVERLAY_STANDBY:"侧栏占用了输入",
       LEASE_REV_MISMATCH:"侧栏占用了输入",
-      LEASE_HOLDER_SURFACE_MISMATCH:"侧栏占用了输入"
+      LEASE_HOLDER_SURFACE_MISMATCH:"侧栏占用了输入",
+      settings_hint:"点击右上角 ⋮ 设置快捷键"
     };
     return labels[code]||d.error||d.message||"出错了";
   }
