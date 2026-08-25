@@ -3,13 +3,13 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-25 ~13:40 (S80 · knowledge honesty Wave 0–2 · DMG)
-- **Workspace**: `feat/knowledge-honesty-wave0`（base `5a38149` / main `ac0a3be`）。**未合 main、未开 PR**。
-- **Ship（本机）**：Wave 0 identity+sanitize；0b 确认导入；1 本轮附带；2 相关≤3 / distill HITL / 话题夹 / 召唤器瘦身。Dual Wave 2 both AWN `132009`。`CMspark-v0.5.2-macOS.dmg` 已替换 `/Applications`（备份 `~/CMspark.app.bak-20260825-133708`）。
-- **Next**：Chrome 重载解压扩展；用户点头后再 PR。overlay `pack.apply` peek / import 服务端 `user_gesture` 仍停住。
-- **Do not**：Project / graph DB / overlay `knowledge.*`；`isAllowedWsOrigin` 加 loopback；`git add .`；提交 `pr218-remainder-nits-diff-*.patch`。
+### 2026-08-25 (S81 · PR #223 · Win C-thin dogfood)
+- **Workspace**: `fix/post220-head-p1-fold` tracking origin；**PR #223** vs main `6ce291db` (#222)。末笔 `ec4975fc` 折叠居中召唤条（未全部 push 除非 session-end 后 push）。
+- **Ship**：post-#222 P1（F-I-5 / PEM / F-S-1）+ nits + 纸面 HUD；dual both_ok。本机 NSIS `%LOCALAPPDATA%\CMspark` 已换装，23401 在听。
+- **Next**：CI 绿合 #223；重载 `Local\CMspark\chrome-extension`；关旧 `--app` 再开召唤器（应先见 720×120 条）。
+- **Do not**：overlay Allow/Deny；summoner WS `knowledge.import`；`isAllowedWsOrigin` 加 loopback；`git add .` 扫进 `.tmp-*`。
 
-### 2026-08-25 ~10:05 (S79 · #221 MERGED)
-- **当时**：`main` `ac0a3be` = #221 post-#220 nits。本会话已切到 knowledge-honesty 分支。
-- **仍有效**：勿全局 redact 裸 `value`；overlay 禁 Allow/Deny。
+### 2026-08-25 ~13:40 (S80 · knowledge honesty Wave 0–2)
+- **当时**：Wave 0–2 在 feat 分支；随后合为 **#222**。Mac DMG 换装是那次会话。
+- **仍有效**：勿 Project / graph DB；overlay 知识导入仍走 tray 非 overlay WS。
 <!-- handoff:end -->

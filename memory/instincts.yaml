@@ -28,7 +28,21 @@ instincts:
     confidence: 0.88
     source_session: "2026-08-09 S61 #160 · S62 #161 · S72 #191"
     tags: [review, adversarial, dual-review, ci, merge]
-    applications: 3
+    applications: 4
+
+  - id: cthin-window-size-must-match-css
+    pattern: "C-thin Chromium --app：window-size 必须 ≥ 工作台 CSS 栅格（轨+列表+主列）。640 宽配 max-width:720px 藏列表 = 知识/MCP 看起来点不开。默认折叠居中小条（720x120），展开再 resizeTo 720x520。禁止默认 class=expanded。"
+    confidence: 0.88
+    source_session: "2026-08-25 S81 Win summoner dogfood"
+    tags: [summoner, c-thin, windows, css, ux]
+    applications: 1
+
+  - id: windows-official-install-is-nsis-not-sea
+    pattern: "替换本机官方 Windows 安装：package.sh windows-x64 → CMspark-Setup-v*.exe /S → %LOCALAPPDATA%\\CMspark（node.exe+cmspark-agent.js）。先 daemon stop + 杀 INSTDIR 下进程。不要用 SEA cmspark-agent.exe 覆盖 NSIS 树（installer 会 Delete leftover SEA）。装完重载 chrome-extension 目录。"
+    confidence: 0.9
+    source_session: "2026-08-25 S81 NSIS silent replace"
+    tags: [windows, nsis, packaging, deploy]
+    applications: 1
 
   - id: windows-npm-shim-spawn-unwrap
     pattern: "Windows 启动 npm 全局 CLI（claude/pi/codex）：where 先返回无扩展 shebang（ENOENT），spawn(.cmd) 无 shell 为 EINVAL。发现优先 .exe/.cmd；unwrap %dp0%/%~dp0 到 PE 或 sibling node.exe+script；禁止 shell:true 送 prompt；禁止用打包 cmspark-agent.exe 当 node。"
@@ -49,7 +63,7 @@ instincts:
     confidence: 0.9
     source_session: "2026-08-09 S59–S60 health-fanout #159 dual r1 REJECT / r2 both_ok"
     tags: [dual-review, npm-test, windows, git-bash, ci]
-    applications: 2
+    applications: 3
 
   - id: handlemessage-session-is-third-arg
     pattern: "companion handleMessage(msg, services, session?)：L2 requestConfirmation / origin 必须作为第 3 参 session；第 2 参是 services。改 require_grant 默认 true 后 e2e 须用 cmg_ grant，不能假设 ws_secret 仍是默认 happy path。"

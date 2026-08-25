@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-25 (S80 · knowledge honesty Wave 0–2 on feat branch · 0.5.2 DMG 换装)
+**Updated**: 2026-08-25 (S81 · #222 on main · PR #223 P1/nits/Win HUD · NSIS 换装)
 
 ## CMspark — 产品 0.5.2
 
@@ -21,20 +21,20 @@
 | 站点负知识 site-op-memory | **on main**（**#213**） |
 | OS summoner overlay（L0） | **on main**（**#219** C-thin HTML + Mac NSPanel） |
 | steer/nextRun busy composer | **on main**（#218 + #219 UI + **#220/#221** nits） |
-| Daily assistant · 本机知识诚实 | **本机 Wave 0–2**（`feat/knowledge-honesty-wave0`，未合 main） |
+| Daily assistant · 本机知识诚实 | **on main**（**#222**）；P1/nits/Win HUD 在 **PR #223** |
 
-## Branch lock (S80)
+## Branch lock (S81)
 
-- **`main`**: tip `ac0a3be` = squash **#221**（相对本会话未变）。
-- **`feat/knowledge-honesty-wave0`**: Wave 0/0b/1/2 实现 + dual AWN。本机 `/Applications/CMspark.app` 已换 0.5.2 DMG。
-- **不要**：overlay Allow/Deny / `knowledge.*` ACL；Project / graph DB；给 `isAllowedWsOrigin` 加 loopback；Electron；全局 redact 裸 `value`。
+- **`main`**: tip `6ce291db` = squash **#222**（knowledge honesty Wave 0–2 + overlay HUD compose）。
+- **`fix/post220-head-p1-fold`**: **PR #223** — post-#222 P1（F-I-5 / PEM / F-S-1）+ residual nits + Win C-thin 折叠居中条。本机 `%LOCALAPPDATA%\CMspark` 已 NSIS 静默换装。
+- **不要**：overlay Allow/Deny；summoner WS 上 `knowledge.import`；Project / graph DB；`isAllowedWsOrigin` 加 loopback；Electron；全局 redact 裸 `value`。
 
 ## Next (optional backlog)
 
-- Knowledge honesty：开 PR；Chrome 重载扩展；overlay `pack.apply` peek 另票
-- 真机：托盘「召唤器（实验）」Win/Linux `--app` 窗 + Mac NSPanel
-- 原生 WKWebView/WebView2/GTK 仍可选（非本线）
-- residual：login-shell 失败重试；WS progress throttle；message-router 续拆；Whisper multi-arch pins；codesign
+- CI 绿合 **#223**；Chrome 重载 `Local\CMspark\chrome-extension`；再开召唤器验折叠条
+- overlay `pack.apply` peek / import `user_gesture` 服务端 400 仍停住
+- 原生 WKWebView/WebView2/GTK 另票
+- residual：login-shell 失败重试；WS progress throttle；message-router 续拆
 
 ## Docs SoT
 
