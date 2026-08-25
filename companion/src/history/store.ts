@@ -46,7 +46,7 @@ const SENSITIVE_CODE_TOOLS = new Set([
 // both params and result_summary.
 const MCP_TOOL_PREFIX = "mcp__"
 const MCP_SENSITIVE_RESULT_RE = /(read|file|secret|token|key|env|credential|ssh|aws)/i
-const SENSITIVE_KEY_RE = /(secret|token|password|api[_-]?key|credential|private[_-]?key)/i
+const SENSITIVE_KEY_RE = /(secret|token|password|passwd|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)/i
 
 function shortHash(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex").slice(0, 12)
@@ -54,6 +54,24 @@ function shortHash(input: string): string {
 
 // Walks a parsed JSON value (object or array) and replaces values of keys
 // matching SENSITIVE_KEY_RE with a redacted marker. Returns a new structure.
+function redactSensitiveLeaf(v: unknown): unknown {
+  if (typeof v === "string") {
+    return `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
+  }
+  if (typeof v === "number" || typeof v === "boolean") {
+    const s = String(v)
+    return `<redacted:len=${s.length}:sha256=${shortHash(s)}>`
+  }
+  if (Array.isArray(v)) {
+    return v.map((item) =>
+      typeof item === "string" || typeof item === "number" || typeof item === "boolean"
+        ? redactSensitiveLeaf(item)
+        : redactSensitiveKeysDeep(item),
+    )
+  }
+  return redactSensitiveKeysDeep(v)
+}
+
 function redactSensitiveKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(redactSensitiveKeysDeep)
@@ -63,8 +81,8 @@ function redactSensitiveKeysDeep(value: unknown): unknown {
     const out: Record<string, unknown> = {}
     for (const k of Object.keys(obj)) {
       const v = obj[k]
-      if (SENSITIVE_KEY_RE.test(k) && typeof v === "string") {
-        out[k] = `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
+      if (SENSITIVE_KEY_RE.test(k)) {
+        out[k] = redactSensitiveLeaf(v)
       } else {
         out[k] = redactSensitiveKeysDeep(v)
       }

@@ -1007,6 +1007,39 @@ test("HistoryStore.record() redacts sensitive keys in mcp__shell__exec params bu
   }
 })
 
+test("HistoryStore.record() redacts Authorization / passwd / numeric apiKey (S-D3)", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    await store.record({
+      thread_id: "t-mcp-auth",
+      tool_name: "mcp__http__fetch",
+      params: JSON.stringify({
+        Authorization: "Bearer hist-secret",
+        passwd: "hunter2-hist",
+        apiKey: 987654321,
+        url: "https://example.com",
+      }),
+      result_summary: JSON.stringify({ ok: true }),
+      error: null,
+      success: 1,
+      duration_ms: 10,
+      created_at: new Date().toISOString(),
+    })
+    const rows = await store.query({ thread_id: "t-mcp-auth" })
+    assert.equal(rows.length, 1)
+    const stored = rows[0]
+    assert.ok(!stored.params.includes("hist-secret"))
+    assert.ok(!stored.params.includes("hunter2-hist"))
+    assert.ok(!stored.params.includes("987654321"))
+    assert.match(stored.params, /"Authorization":\s*"<redacted:len=\d+:sha256=[a-f0-9]{12}>"/)
+    assert.match(stored.params, /"passwd":\s*"<redacted:len=\d+:sha256=[a-f0-9]{12}>"/)
+    assert.match(stored.params, /"url":\s*"https:\/\/example.com"/)
+  } finally {
+    store.close()
+  }
+})
+
 test("HistoryStore.record() redacts set_cookie single-object result_summary", async () => {
   const store = new HistoryStore()
   await store.waitReady()

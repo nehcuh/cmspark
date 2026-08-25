@@ -174,11 +174,15 @@ export function persistHealedToolRows(
       // orphan — rebuild skips unpaired tool rows), so stop healing this batch.
       break
     }
-    // Never write an INTERRUPTED filler for an id already on disk (a real result
-    // from the old run, or a filler from a concurrent heal) — a duplicate id row
-    // would orphan one of the two at rebuild.
+    // Never write an INTERRUPTED filler for an id already in THIS assistant's
+    // contiguous tool block (a real result from the old run, or a filler from a
+    // concurrent heal). A duplicate id in the same block would orphan one of
+    // the two at rebuild. Scan only the in-flight block — an older round that
+    // reused the same call_* must not skip healing the newest unpaired assistant.
+    let blockUntil = asstNow + 1
+    while (blockUntil < now.length && now[blockUntil].role === "tool") blockUntil++
     if (
-      now.some(
+      now.slice(asstNow + 1, blockUntil).some(
         (row) => row.role === "tool" && (row.tool_calls || []).some((tc) => tc.id === m.id),
       )
     ) {

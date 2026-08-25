@@ -40,7 +40,7 @@ import {
   replaceInterruptedFillerIfPresent,
 } from "./tool-batch-heal"
 import { isContextOverflowError, isLengthStop, isTruncatedToolBatch } from "./overflow"
-import { enqueueNextRun, takeSteer } from "./run-queues"
+import { convertLeftoverSteerToNextRun, takeSteer } from "./run-queues"
 
 export { createToolResultMessage }
 import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
@@ -1754,19 +1754,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       // returns, and this finally runs before that drain.
       // Queue full (MAX_NEXT_RUN): warn + drop — bounded loss beats an unbounded
       // in-memory queue, and the steer queue itself is likewise capped.
-      const leftover = takeSteer(threadId)
-      if (leftover.length) {
-        const text = leftover.map((s) => s.text).join("\n")
-        if (!enqueueNextRun(threadId, text)) {
-          logger.warn("llm.steer_leftover_dropped", {
-            thread_id: threadId,
-            count: leftover.length,
-            reason: "next_run_queue_full",
-          })
-          // leftover is already off the steer queue (takeSteer). Do not
-          // dropSteer: that would wipe steers enqueued after the take
-          // (successor / concurrent chat.steer). Bounded loss = this leftover.
-        }
+      const leftover = convertLeftoverSteerToNextRun(threadId)
+      if (leftover.dropped) {
+        logger.warn("llm.steer_leftover_dropped", {
+          thread_id: threadId,
+          count: leftover.dropped,
+          reason: "next_run_queue_full",
+        })
+        // leftover is already off the steer queue. convertLeftover must not
+        // wipe the live steer queue: successor / concurrent chat.steer would
+        // vanish. Bounded loss = this leftover only.
       }
     }
     // Abort/supersede: abortThreadChat drops all steers. Skip here so a

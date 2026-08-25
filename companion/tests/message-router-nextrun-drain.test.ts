@@ -47,6 +47,7 @@ let _resetRunQueuesForTests: typeof import("../src/llm/run-queues")._resetRunQue
 let MAX_NEXT_RUN: typeof import("../src/llm/run-queues").MAX_NEXT_RUN
 let MAX_STEER: typeof import("../src/llm/run-queues").MAX_STEER
 let composerLeases: typeof import("../src/ws/composer-lease").composerLeases
+let getComputerTaskAbortRegistry: typeof import("../src/computer/task-abort-registry").getComputerTaskAbortRegistry
 
 // deepseek-chat trips the non-multimodal name heuristic, so standalone upload
 // images take the vision rail (analyzeImage) instead of native vision.
@@ -97,6 +98,7 @@ before(async () => {
   const cfg = await import("../src/config")
   const queues = await import("../src/llm/run-queues")
   const lease = await import("../src/ws/composer-lease")
+  const abortReg = await import("../src/computer/task-abort-registry")
   handleMessage = mr.handleMessage
   listLlmActiveThreadIds = mr.listLlmActiveThreadIds
   __testSetLlmActiveForTests = mr.__testSetLlmActiveForTests
@@ -110,6 +112,7 @@ before(async () => {
   MAX_NEXT_RUN = queues.MAX_NEXT_RUN
   MAX_STEER = queues.MAX_STEER
   composerLeases = lease.composerLeases
+  getComputerTaskAbortRegistry = abortReg.getComputerTaskAbortRegistry
   await cfg.initDataDir()
 
   saveConfig({
@@ -437,6 +440,149 @@ test("P1 drain gate: overlay-rejected upload drain still returns file.uploaded",
     const cur = composerLeases.get(thread.id)
     composerLeases.release({ thread_id: thread.id, rev: cur.rev })
   }
+})
+
+test("P1 drain gate: paused thread keeps nextRun queued (S-B1)", async () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("", "drain-paused")
+  const sent: any[] = []
+
+  holdStreams = true
+  const createPromise = handleMessage(
+    { type: "chat.create", thread_id: thread.id, message: "first" },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  await waitFor(() => streamCalls === 1, "first run streaming")
+
+  const enq = await handleMessage(
+    { type: "chat.create", thread_id: thread.id, message: "queued then paused", enqueue: true },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  assert.equal(enq.type, "chat.enqueued")
+
+  tm.update(thread.id, { paused: true })
+  releaseHeldStreams()
+  const resp = await createPromise
+  assert.equal(resp, null)
+  const pushed = sent.find((m) => m?.data?.error_code === "thread_paused")
+  assert.ok(pushed, "pause gate must be pushed, not silent")
+  assert.equal(pushed.thread_id, thread.id)
+  assert.equal(peekNextRunCount(thread.id), 1, "paused drain must not take the queued turn")
+  assert.equal(streamCalls, 1)
+})
+
+test("P1 drain gate: overlay-rejected regenerate keeps the queue (S-B2)", async () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("", "regen-drain-gate")
+  const sent: any[] = []
+  tm.addMessage(thread.id, { thread_id: thread.id, role: "user", content: "original question" })
+  const a1 = tm.addMessage(thread.id, { thread_id: thread.id, role: "assistant", content: "original answer" })
+
+  holdStreams = true
+  const regenPromise = handleMessage(
+    { type: "chat.regenerate", thread_id: thread.id, message_id: a1.id },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  await waitFor(() => streamCalls === 1, "regenerate run streaming")
+
+  const enq = await handleMessage(
+    { type: "chat.create", thread_id: thread.id, message: "queued during regen", enqueue: true },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  assert.equal(enq.type, "chat.enqueued")
+
+  const beforeClaim = composerLeases.get(thread.id)
+  composerLeases.claim({ thread_id: thread.id, holder: "overlay", rev: beforeClaim.rev })
+  try {
+    releaseHeldStreams()
+    const resp = await regenPromise
+    assert.equal(resp, null, "regen RPC stays null; overlay gate is pushed")
+    assert.ok(sent.some((m) => m?.data?.error_code === "OVERLAY_STANDBY"))
+    assert.equal(peekNextRunCount(thread.id), 1)
+    assert.equal(streamCalls, 1)
+  } finally {
+    const cur = composerLeases.get(thread.id)
+    composerLeases.release({ thread_id: thread.id, rev: cur.rev })
+  }
+})
+
+test("P1 drain gate: conductor-rejected overlay drain keeps the queue (S-B2)", async () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("", "drain-conductor")
+  const sent: any[] = []
+  const session = makeSession(sent, "summoner")
+  const registry = getComputerTaskAbortRegistry()
+  registry.clear()
+
+  const beforeClaim = composerLeases.get(thread.id)
+  composerLeases.claim({ thread_id: thread.id, holder: "overlay", rev: beforeClaim.rev })
+  try {
+  holdStreams = true
+  const createPromise = handleMessage(
+    { type: "chat.create", thread_id: thread.id, message: "first", __cmspark_surface: "summoner" },
+    makeServices(tm),
+    session,
+  )
+  await waitFor(() => streamCalls === 1, "first run streaming")
+
+  const enq = await handleMessage(
+    { type: "chat.create", thread_id: thread.id, message: "queued under CU", enqueue: true, __cmspark_surface: "summoner" },
+    makeServices(tm),
+    session,
+  )
+  assert.equal(enq.type, "chat.enqueued")
+
+  registry.set("cu-live", true)
+    releaseHeldStreams()
+    const resp = await createPromise
+    assert.equal(resp, null)
+    const pushed = sent.find((m) => m?.data?.error_code === "L2_CONDUCTOR_ELSEWHERE")
+    assert.ok(pushed, "conductor gate must be pushed")
+    assert.equal(peekNextRunCount(thread.id), 1)
+    assert.equal(streamCalls, 1)
+  } finally {
+    registry.clear()
+    const cur = composerLeases.get(thread.id)
+    composerLeases.release({ thread_id: thread.id, rev: cur.rev })
+  }
+})
+
+test("enqueue nextRun preserves clientMessageId into drained chat.create (S-A1)", async () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("", "enqueue-cmid")
+  const sent: any[] = []
+
+  holdStreams = true
+  const createPromise = handleMessage(
+    { type: "chat.create", thread_id: thread.id, message: "first" },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  await waitFor(() => streamCalls === 1, "first run streaming")
+
+  const enq = await handleMessage(
+    {
+      type: "chat.create",
+      thread_id: thread.id,
+      message: "queued with bubble",
+      enqueue: true,
+      clientMessageId: "cm-enq-1",
+    },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  assert.equal(enq.type, "chat.enqueued")
+
+  releaseHeldStreams()
+  await createPromise
+  const users = sent.filter((m) => m.type === "chat.user")
+  const drained = users.find((m) => m.content === "queued with bubble")
+  assert.ok(drained, "drained turn must echo chat.user")
+  assert.equal(drained.client_message_id, "cm-enq-1")
 })
 
 test("P1 drain parity: file.upload completion drains one queued nextRun", async () => {

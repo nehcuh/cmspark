@@ -262,11 +262,19 @@ export function followUpCreateFromQueue(
   threadId: string,
   message: string,
   surface: unknown,
-): { type: "chat.create"; thread_id: string; message: string; __cmspark_surface: "summoner" | "tray" } {
+  clientMessageId?: string,
+): {
+  type: "chat.create"
+  thread_id: string
+  message: string
+  clientMessageId?: string
+  __cmspark_surface: "summoner" | "tray"
+} {
   return {
     type: "chat.create",
     thread_id: threadId,
     message,
+    ...(clientMessageId ? { clientMessageId } : {}),
     __cmspark_surface: surface === "summoner" ? "summoner" : "tray",
   }
 }
@@ -296,7 +304,29 @@ async function drainNextRun(
   // Pre-check the gates the recursive chat.create will hit, with the surface
   // stamp the followUp frame will carry (drain keeps this session's surface —
   // unstamped create is treated as panel and OVERLAY_STANDBY-kills
-  // overlay-held nextRun, PR219 adversary M1).
+  // overlay-held nextRun, PR219 adversary M1). Pause/trash must run BEFORE
+  // takeNextRun so a finishing run cannot dequeue a turn the client still
+  // holds as chat.enqueued (S-B1).
+  const thrGate = services.threadManager.get(threadId)
+  if (!thrGate) {
+    return { type: "chat.error", thread_id: threadId, error: "Thread not found" }
+  }
+  if (thrGate.trashed_at) {
+    return {
+      type: "chat.error",
+      thread_id: threadId,
+      error: "thread_trashed",
+      data: { error_code: "thread_trashed" },
+    }
+  }
+  if (thrGate.paused) {
+    return {
+      type: "chat.error",
+      thread_id: threadId,
+      error: "thread_paused",
+      data: { error_code: "thread_paused" },
+    }
+  }
   const surface = session?.surface === "summoner" ? "summoner" : "tray"
   const leaseErr = gateChatCreateOnLease(threadId, surface)
   if (leaseErr) return leaseErr
@@ -305,7 +335,7 @@ async function drainNextRun(
   const queued = takeNextRun(threadId)
   if (!queued) return null
   return handleMessage(
-    followUpCreateFromQueue(threadId, queued, session?.surface),
+    followUpCreateFromQueue(threadId, queued.text, session?.surface, queued.clientMessageId),
     services,
     session,
   )
@@ -413,7 +443,11 @@ export async function handleMessage(
         if (!text) {
           return { type: "error", error: "empty_enqueue", thread_id: rest.thread_id }
         }
-        if (!enqueueNextRun(rest.thread_id, text)) {
+        const enqueueId =
+          typeof rest.clientMessageId === "string" && rest.clientMessageId
+            ? rest.clientMessageId
+            : undefined
+        if (!enqueueNextRun(rest.thread_id, text, enqueueId)) {
           return {
             type: "error",
             error: "queue_full",
@@ -1141,10 +1175,8 @@ export async function handleMessage(
       // chat.create) — generation-guarded + gate-pre-checked inside, so a
       // rejected drain keeps the message queued.
       const drainedAfterUpload = await drainNextRun(thread_id, uploadGeneration, services, session)
-      if (drainedAfterUpload && isDrainGateError(drainedAfterUpload)) {
+      if (drainedAfterUpload) {
         session.sendToExtension(drainedAfterUpload)
-      } else if (drainedAfterUpload) {
-        return drainedAfterUpload
       }
       return { type: "file.uploaded", thread_id, files: uploadedNames }
     }

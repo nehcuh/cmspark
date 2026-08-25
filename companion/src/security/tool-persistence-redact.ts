@@ -32,10 +32,28 @@ const SENSITIVE_CODE_TOOLS = new Set([
 
 const MCP_TOOL_PREFIX = "mcp__"
 const MCP_SENSITIVE_RESULT_RE = /(read|file|secret|token|key|env|credential|ssh|aws)/i
-const SENSITIVE_KEY_RE = /(secret|token|password|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)/i
+const SENSITIVE_KEY_RE = /(secret|token|password|passwd|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)/i
 
 function shortHash(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex").slice(0, 12)
+}
+
+function redactSensitiveLeaf(v: unknown): unknown {
+  if (typeof v === "string") {
+    return `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
+  }
+  if (typeof v === "number" || typeof v === "boolean") {
+    const s = String(v)
+    return `<redacted:len=${s.length}:sha256=${shortHash(s)}>`
+  }
+  if (Array.isArray(v)) {
+    return v.map((item) =>
+      typeof item === "string" || typeof item === "number" || typeof item === "boolean"
+        ? redactSensitiveLeaf(item)
+        : redactSensitiveKeysDeep(item),
+    )
+  }
+  return redactSensitiveKeysDeep(v)
 }
 
 function redactSensitiveKeysDeep(value: unknown): unknown {
@@ -47,8 +65,8 @@ function redactSensitiveKeysDeep(value: unknown): unknown {
     const out: Record<string, unknown> = {}
     for (const k of Object.keys(obj)) {
       const v = obj[k]
-      if (SENSITIVE_KEY_RE.test(k) && typeof v === "string") {
-        out[k] = `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
+      if (SENSITIVE_KEY_RE.test(k)) {
+        out[k] = redactSensitiveLeaf(v)
       } else {
         out[k] = redactSensitiveKeysDeep(v)
       }
@@ -75,6 +93,9 @@ function redactOneCookie(cookie: unknown): unknown {
   const c = cookie as Record<string, unknown>
   const { name, domain, path: cookiePath, hostOnly, secure, httpOnly, value, ...rest } = c
   const valueStr = typeof value === "string" ? value : ""
+  const restRedacted = redactSensitiveKeysDeep(
+    Object.fromEntries(Object.entries(rest).filter(([k]) => k !== "value")),
+  ) as Record<string, unknown>
   return {
     name,
     domain,
@@ -82,9 +103,7 @@ function redactOneCookie(cookie: unknown): unknown {
     hostOnly,
     secure,
     httpOnly,
-    ...Object.fromEntries(
-      Object.entries(rest).filter(([k]) => k !== "value"),
-    ),
+    ...restRedacted,
     ...(valueStr
       ? { value_hash: shortHash(valueStr), value_length: valueStr.length }
       : {}),
@@ -186,9 +205,10 @@ export function redactToolPayloadForPersistence(
 
   if (SENSITIVE_COOKIE_TOOLS.has(name)) {
     if (params && typeof params === "object") {
-      const p = { ...(params as Record<string, unknown>) }
-      if (typeof p.value === "string") {
-        p.value = `<redacted:hash=${shortHash(p.value)}>`
+      const original = params as Record<string, unknown>
+      const p = redactSensitiveKeysDeep({ ...original }) as Record<string, unknown>
+      if (typeof original.value === "string") {
+        p.value = `<redacted:hash=${shortHash(original.value)}>`
       }
       safeParams = p
     }
