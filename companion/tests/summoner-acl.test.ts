@@ -2,7 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { assertSummonerAllowed } from "../src/ws/summoner-acl"
+import { assertSummonerAllowed, applySummonerPayloadPolicy } from "../src/ws/summoner-acl"
 import { validateWsMessage } from "../src/ws/validate"
 
 function srcFile(...parts: string[]): string {
@@ -119,4 +119,36 @@ test("auth.handshake rejects surface other than tray|summoner", () => {
     const r = validateWsMessage({ type: "auth.handshake", proof, surface })
     assert.equal(r.valid, false, `surface=${JSON.stringify(surface)} should reject`)
   }
+})
+
+test("overlay pack.apply strips Trust extras (A-N2)", () => {
+  const msg: Record<string, unknown> = {
+    type: "pack.apply",
+    pack_id: "meeting-minutes",
+    thread_id: "t1",
+    allowTrust: true,
+    workspace_path: "/tmp/x",
+    force_takeover: true,
+    confirmation_phrase: "I UNDERSTAND",
+  }
+  const r = applySummonerPayloadPolicy("summoner", msg)
+  assert.equal(r.ok, true)
+  assert.equal(msg.allowTrust, undefined)
+  assert.equal(msg.workspace_path, undefined)
+  assert.equal(msg.force_takeover, undefined)
+  assert.equal(msg.confirmation_phrase, undefined)
+  assert.equal(msg.user_gesture, true)
+  assert.equal(msg.pack_id, "meeting-minutes")
+})
+
+test("tray pack.apply is not rewritten", () => {
+  const msg: Record<string, unknown> = {
+    type: "pack.apply",
+    pack_id: "meeting-minutes",
+    thread_id: "t1",
+    allowTrust: true,
+  }
+  const r = applySummonerPayloadPolicy("tray", msg)
+  assert.equal(r.ok, true)
+  assert.equal(msg.allowTrust, true)
 })

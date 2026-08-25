@@ -158,10 +158,9 @@ function redactForStorage(
     result_summary = `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
   } else if (SENSITIVE_CODE_TOOLS.has(toolName)) {
     params = redactCodeParams(params)
-    // result_summary for evaluate/osascript typically contains the tool result
-    // (e.g. return value of the eval) which is less sensitive than the code
-    // itself; keep it but cap length to limit blast radius.
-    if (result_summary.length > 200) result_summary = result_summary.slice(0, 200) + "…"
+    // Match thread-JSON collapse: evaluate/osascript results are still secrets
+    // even under 200 chars (Lane D D-N1).
+    result_summary = `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
   } else if (toolName.startsWith(MCP_TOOL_PREFIX)) {
     // Audit item C-MCP-2: MCP tool params always get key-based redaction so
     // secrets/tokens/keys passed in as args never land in history.db.

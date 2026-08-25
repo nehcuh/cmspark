@@ -74,6 +74,12 @@
 
 ## Technical Pitfalls
 
+### C-thin 召唤器：窗口像素必须和 CSS 布局同宽（2026-08-25 · Win dogfood）
+- **现象**：用户说知识/MCP「没法点开」。窗是 `--window-size=640,720`，HTML 却 `@media (max-width:720px){ .list{display:none} }`，轨钮改的是看不见的列表。
+- **产品第一眼**：默认必须是**居中小条**（composer only），不要一开就是展开工作台。展开后再露出 52+216+主列。
+- **纪律**：(1) `--window-size` 与 `placeWindow`/`resizeTo` 用同一套折叠/展开尺寸（720×120 / 720×520）；(2) 禁止用「窄于工作台」的 media 把列表藏掉；(3) 官方 Windows 换装走 `package.sh windows-x64` + `CMspark-Setup-v*.exe /S`（`node.exe`+`cmspark-agent.js`），**不是** SEA `cmspark-agent.exe`——LOCALAPPDATA 现网是 NSIS。
+- **4 行 case**：动作=640 宽 `--app` + 点知识轨；失败=列表 display:none；归责=窗口规格与 CSS 各写各的；保护=召唤条先出现、展开后三栏都可点
+
 ### overlay 新 WS 类型必须 background relay + 未跟踪文件必须 stage（2026-08-25 · knowledge honesty）
 - **坑 1**：Side Panel `chrome.runtime.sendMessage({type:"knowledge.preview"})` 若 `background/index.ts` 无 `case`，companion 永远收不到。Wave 0b r1 Pi **REJECT**。同类：`knowledge.related` / `thread.distill_preview` 必须同时进 validate、router、background、useWebSocket。
 - **坑 2**：`DATA_DIR` 若在 `config.ts` **import-time** 快照，`initDataDir()`/`saveIndex` 用 live `getConfigDir()` 会 ENOENT（P1 D8）。测须 `getConfigDir` live + `modulesToClear`。

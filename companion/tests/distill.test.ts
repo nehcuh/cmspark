@@ -19,6 +19,35 @@ test("redactSecrets strips github tokens and pem", () => {
   assert.ok(!slack.text.includes("1234567890"))
 })
 
+test("redactSecrets PEM through END has no 4000-char cap and does not leak body", () => {
+  const marker = "MIIEAAA_UNIQUE_PEM_BODY"
+  const pem =
+    "-----BEGIN RSA PRIVATE KEY-----\n" +
+    marker +
+    "A".repeat(4200) +
+    "\n-----END RSA PRIVATE KEY-----"
+  const r = redactSecrets("keep " + pem + " after")
+  assert.ok(r.hits >= 1)
+  assert.equal(r.text.includes(marker), false)
+  assert.equal(r.text.includes("BEGIN RSA PRIVATE KEY"), false)
+  assert.ok(r.text.includes("keep"))
+  assert.ok(r.text.includes("after"))
+  const preview = distillThreadMarkdown({
+    messages: [{ role: "user", content: pem }],
+  })
+  assert.equal(preview.markdown.includes(marker), false)
+  assert.equal(preview.markdown.includes("BEGIN RSA PRIVATE KEY"), false)
+})
+
+test("redactSecrets covers DSA PRIVATE KEY", () => {
+  const r = redactSecrets(
+    "-----BEGIN DSA PRIVATE KEY-----\nMIIEAAA_DSA\n-----END DSA PRIVATE KEY-----",
+  )
+  assert.ok(r.hits >= 1)
+  assert.equal(r.text.includes("MIIEAAA_DSA"), false)
+  assert.equal(r.text.includes("BEGIN DSA PRIVATE KEY"), false)
+})
+
 test("distillThreadMarkdown uses digest and redacts body secrets", () => {
   const out = distillThreadMarkdown({
     alias: "SSO 排障",

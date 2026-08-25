@@ -11,7 +11,7 @@ import { getConfigDir, type LlmConfig as CompanionLlmConfig } from "../config"
 import { createProvider } from "../llm/provider"
 import { ThreadManager } from "../threads/thread-manager"
 import { matchSite } from "./site-matcher"
-import { sanitizeKnowledgeContent } from "./content-sanitizer"
+import { sanitizeKnowledgeContent, wrapKnowledgeBlock } from "./content-sanitizer"
 import { chunkFile, searchChunks, type FileChunk } from "../file-chunker"
 import {
   allocateDocIdentity,
@@ -246,6 +246,7 @@ export class SkillEngine {
   private loadFromDir(dir: string, builtin: boolean): void {
     try {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (isSymlinkOrJunction(dir, entry)) continue
         const entryPath = path.join(dir, entry.name)
 
         if (entry.isDirectory()) {
@@ -655,7 +656,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       const title = sanitizeKnowledgeContent(k.title || k.name)
       injectedNames.add(k.name)
       retrieved_sources.push({ id, title, chunk_index: chunkIndex, chars: summary.length })
-      parts.push(`## Knowledge: ${title} [${id}]\n${summary}`)
+      parts.push(wrapKnowledgeBlock(id, title, summary))
     }
 
     // --- Safety Guard: ALWAYS inject security skills (immutable, builtin) ---
@@ -1399,10 +1400,8 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
     const taken = this.collectTakenStems()
     const preferred = isLegacySafeId(String(name)) ? String(name) : undefined
-    if (preferred) {
-      const existingKnowledge = path.join(targetDir, `${preferred}.md`)
-      if (fs.existsSync(existingKnowledge)) taken.delete(preferred.toLowerCase())
-    }
+    // F-I-5: never drop an occupied stem. Re-import of the same ASCII heading
+    // must allocate a suffix (`notes-2`), not silently overwrite notes.md.
     let ident = allocateDocIdentity({
       title,
       preferredId: preferred,

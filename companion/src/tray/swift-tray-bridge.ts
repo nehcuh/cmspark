@@ -54,7 +54,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-// Updated 2026-08-25 B0.5 — overlay rename/trash; collapse HUD still borderless
+// Updated 2026-08-25 B1–B4 — overlay workbench rails (packs / MCP / skills / knowledge)
 /** Mac 快捷提问 = native HUD（收起一条；展开工作台 + 对话管理）+ 📎/🎙. */
 const SWIFT_TRAY_SHA256 = "ed4dbfa0e0eae5490bb0b18f477b416039c13e722a7e3f2750797b7e659a5fda"
 

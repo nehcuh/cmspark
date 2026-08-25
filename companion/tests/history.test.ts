@@ -864,6 +864,29 @@ test("HistoryStore.record() redacts evaluate code body", async () => {
   }
 })
 
+test("HistoryStore.record() collapses evaluate result_summary even under 200 chars", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    await store.record({
+      thread_id: "t-eval-result",
+      tool_name: "evaluate",
+      params: JSON.stringify({ tabId: 1, code: "1" }),
+      result_summary: "short-eval-secret",
+      error: null,
+      success: 1,
+      duration_ms: 10,
+      created_at: new Date().toISOString(),
+    })
+    const rows = await store.query({ thread_id: "t-eval-result", tool_name: "evaluate" })
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].result_summary.includes("short-eval-secret"), false)
+    assert.match(rows[0].result_summary, /<redacted:len=\d+:sha256=[a-f0-9]+>/)
+  } finally {
+    store.close()
+  }
+})
+
 test("HistoryStore.record() redacts set_cookie value param", async () => {
   const store = new HistoryStore()
   await store.waitReady()

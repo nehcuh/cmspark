@@ -2,6 +2,17 @@
 
 ## Current Session
 
+### S81 END (2026-08-25) [post-#222 P1+nits · Win HUD dogfood · PR #223]
+- **Ship**：`fix/post220-head-p1-fold` → **PR #223**。P1：F-I-5 冲突后缀、PEM through END、F-S-1 untrusted wrap。nits + Windows C-thin 纸面 HUD。本机 NSIS 静默换装 `%LOCALAPPDATA%\CMspark`，23401 LISTENING。
+- **闸门**：P1 四路 r2 AWN；nits+HUD 四路 AWN；Claude+Pi dual **both_ok**。用户狗食后：默认必须折叠居中小条；640×720 + media 藏列表 = 知识/MCP 点不开 → 已折 `720×120`/`placeWindow`。
+- **下次**：CI 绿再合 #223；Chrome 重载 `Local\CMspark\chrome-extension`；再开召唤器应先见一条细条，⌄ 再展开。WebView2 仍非本线。
+- Recorded: yes — C-thin 窗宽必须配 CSS；官方 Win 换装是 NSIS 不是 SEA
+
+### S81 (2026-08-25) [pull main · 四路对抗 REJECT · P1 fold · r2 全 AWN]
+- **Pull**: `fix/post219-kimi-nits-r2-fold` → `main` `6ce291db`（#220+#221+#222）
+- **对抗**: `1d16b0ed..6ce291db` 四路独立 → **REJECT**（B P1×3）
+- **折 / r2**: P1 三条 FOLDED；四路 AWN。后续 nits+HUD+PR 见 S81 END。
+
 ### S80 END (2026-08-25 ~13:40) [knowledge honesty Wave 0–2 · DMG 换装]
 - **Ship（本机）**：`feat/knowledge-honesty-wave0` 落地 Wave 0/0b/1/2。`make package-macos` → `dist-package/CMspark-v0.5.2-macOS.dmg`；替换 `/Applications/CMspark.app`（备份 `~/CMspark.app.bak-20260825-133708`）；daemon `127.0.0.1:23401`。
 - **闸门**：设计 dual AWN `102532`；Wave 0 impl AWN `105843`；0b+1 r3 both AWN `114735`；Wave 2 对抗四路 AWN（Product r1 REJECT 图谱名词后折）+ Claude/Pi AWN `132009`。
@@ -854,11 +865,11 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### Daily assistant · Knowledge Honesty（S80 · Wave 0–2 landed, not on main）
+### Daily assistant · Knowledge Honesty（S80–S81 · #222 on main · #223 P1/nits OPEN）
 - status: **active**
-- context: `feat/knowledge-honesty-wave0` 相对 `5a38149`。Wave 0–2 dual both AWN。本机 0.5.2 DMG 已换装。
-- next_action: (1) Chrome 重载 `chrome-extension/build/chrome-mv3-prod/` (2) 开 PR 合 main（用户未要求本轮 push）(3) 勿 overlay 知识 ACL / Project / graph DB
-- resume_doc: `docs/superpowers/specs/2026-08-25-daily-assistant-knowledge-honesty-design.md` · `docs/audit/reviews/knowledge-honesty-wave2-verdict-20260825-132009.json`
+- context: Wave 0–2 已 squash **#222** `6ce291db`。本会话 `fix/post220-head-p1-fold` = P1+nits+Win HUD → **PR #223**。Win NSIS 已换装。
+- next_action: (1) CI 绿合 #223 (2) 重载 `Local\CMspark\chrome-extension` (3) 托盘召唤器验折叠条+知识/MCP 列表 (4) 勿 overlay Allow/Deny、勿 knowledge.import 上 summoner WS
+- resume_doc: PR #223 · #222 · `docs/audit/reviews/post220-nits-hud-adversary-synthesis-20260825.md`
 - updated: 2026-08-25
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
@@ -868,12 +879,12 @@
 - resume_doc: PR #221 · #220 · `docs/audit/reviews/post220-nits-adversary-synthesis-20260825.md`
 - updated: 2026-08-25
 
-### OS summoner overlay（S77–S78 · #219 MERGED）
-- status: **done**
-- context: 薄 L0 + C-thin HTML 壳已合 main `daf8bc9`。Mac NSPanel 冻结增长；Win/Linux 走 `--app`/系统浏览器。
-- next_action: 真机 dogfood 托盘「召唤器（实验）」；原生 WKWebView 不做除非另开
-- resume_doc: PR #219 · `docs/superpowers/specs/2026-08-24-cross-platform-summon-shell-design.md`
-- updated: 2026-08-24
+### OS summoner overlay（S77–S81 · #219 on main · Win C-thin dogfood in #223）
+- status: **active**
+- context: Mac NSPanel 工作台在 #222。Win 仍 Chromium `--app`。S81 把 C-thin 改纸面、默认 720×120 居中折叠；展开 720×520 三栏。知识/MCP 列表不再被 640 宽 media 藏掉。
+- next_action: 关旧 `--app` 窗再开召唤器；验折叠条与轨钮。WebView2 另票。
+- resume_doc: PR #223 · `companion/src/summoner-web.ts` · `companion/src/summoner/shell-open.ts`
+- updated: 2026-08-25
 
 ### Companion-canon Side Panel（S74 · #196 MERGED）
 - status: **done**

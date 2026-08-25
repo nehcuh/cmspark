@@ -23,7 +23,7 @@ import AdmZip from "adm-zip"
 import { getConfigDir } from "../config"
 import { SkillEngine } from "./skill-engine"
 import { appendCapabilityAudit } from "../packs/audit-log"
-import { allocateDocIdentity, isLegacySafeId } from "./doc-identity"
+import { allocateDocIdentity, isLegacySafeId, isSymlinkOrJunction } from "./doc-identity"
 
 export type SkillInstallParams = {
   /** Local directory containing SKILL.md */
@@ -317,6 +317,7 @@ export function skillInstallOverwritePreview(
 
 function assertDirBudget(dir: string, acc = { bytes: 0, files: 0 }): void {
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (isSymlinkOrJunction(dir, ent)) continue
     const full = path.join(dir, ent.name)
     if (ent.isDirectory()) {
       assertDirBudget(full, acc)

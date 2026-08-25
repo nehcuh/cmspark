@@ -40,6 +40,7 @@ import {
   type IconProps,
 } from "../ui/icons"
 import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
+import { CHAT_MARKED_OPTIONS } from "../utils/markdown-gfm"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
 import "katex/dist/katex.min.css"
 
@@ -53,7 +54,7 @@ import "katex/dist/katex.min.css"
 //                      them before the katex inline tokenizer runs.
 //   - throwOnError   → invalid LaTeX degrades to inline text instead of throwing.
 marked.use(markedKatex({ throwOnError: false, output: "html", nonStandard: true }))
-marked.use({ gfm: true, breaks: true })
+marked.use(CHAT_MARKED_OPTIONS)
 
 // Harden markdown links: open in a new tab with noopener, and intercept clicks
 // inside the extension side panel so external origins cannot navigate the panel.
@@ -620,6 +621,12 @@ function KnowledgeImportModal() {
           <button type="button" onClick={() => dispatch({ type: "CLEAR_KNOWLEDGE_PREVIEW" })}>取消</button>
           <button
             type="button"
+            disabled={
+              p.preview === "正在解析…" ||
+              p.preview === "正在抓取…" ||
+              (p.preview || "").startsWith("预览失败") ||
+              !(p.payload && (p.payload.file || p.payload.url || p.payload.content))
+            }
             onClick={() => {
               chrome.runtime.sendMessage({
                 ...p.payload,
@@ -1532,7 +1539,7 @@ function MarkdownRenderer({ content, renderMermaid = false }: { content: string;
   const { html, error } = useMemo(() => {
     if (!content) return { html: "", error: false }
     try {
-      const rawHtml = marked.parse(content, { async: false, breaks: true, gfm: true }) as string
+      const rawHtml = marked.parse(content, { async: false, ...CHAT_MARKED_OPTIONS }) as string
       const sanitized = DOMPurify.sanitize(rawHtml, {
         ALLOWED_TAGS: [
           "p", "br", "strong", "em", "u", "s", "del", "ins",

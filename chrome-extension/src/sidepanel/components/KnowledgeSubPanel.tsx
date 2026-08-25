@@ -18,6 +18,7 @@ export function KnowledgeSubPanel() {
   const [manageMode, setManageMode] = useState(false)
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set())
   const [relatedById, setRelatedById] = useState<Record<string, Array<{ id: string; title: string }>>>({})
+  const [focusId, setFocusId] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -48,7 +49,22 @@ export function KnowledgeSubPanel() {
       setRelatedById((prev) => ({ ...prev, [d.id]: d.related }))
     }
     window.addEventListener("cmspark:knowledge_related", h as EventListener)
-    return () => window.removeEventListener("cmspark:knowledge_related", h as EventListener)
+    const onFocus = (e: Event) => {
+      const id = (e as CustomEvent<{ id?: string }>).detail?.id
+      if (!id) return
+      setQuery("")
+      setFocusId(id)
+      requestAnimationFrame(() => {
+        const safe = id.replace(/[^a-zA-Z0-9._:-]/g, "")
+        if (!safe) return
+        document.querySelector(`[data-knowledge-id="${safe}"]`)?.scrollIntoView({ block: "nearest" })
+      })
+    }
+    window.addEventListener("cmspark:focus-knowledge", onFocus as EventListener)
+    return () => {
+      window.removeEventListener("cmspark:knowledge_related", h as EventListener)
+      window.removeEventListener("cmspark:focus-knowledge", onFocus as EventListener)
+    }
   }, [])
 
   // Close dropdown when clicking outside
@@ -282,9 +298,12 @@ export function KnowledgeSubPanel() {
     // when picking iCloud-synced folders like 笨牛棚 — the crash is in native code
     // BEFORE our JS runs, so any extension-side guard (file count, size, try/catch)
     // is too late. Companion walks the dir safely (skips dotfiles, caps at 200 files,
-    // 6MB per file) and imports each note directly to the knowledge store.
+    // 6MB per file). Confirm first — native picker is not per-note extracted preview.
+    if (!window.confirm("将用系统对话框选择文件夹并导入其中的笔记（每篇不单独预览，最多 200 个文件）。继续？")) {
+      return
+    }
     showStatus("正在打开文件夹选择器…")
-    chrome.runtime.sendMessage({ type: "knowledge.import_directory" })
+    chrome.runtime.sendMessage({ type: "knowledge.import_directory", user_gesture: true })
   }
 
   const filteredDocs = useMemo(() => {
@@ -490,7 +509,15 @@ export function KnowledgeSubPanel() {
                 ? tokens.bgActive
                 : "transparent"
             return (
-              <div key={doc.name} style={{ ...styles.docRow, background: rowBg }}>
+              <div
+                key={doc.name}
+                data-knowledge-id={doc.id || doc.name}
+                style={{
+                  ...styles.docRow,
+                  background: rowBg,
+                  outline: focusId && (focusId === doc.id || focusId === doc.name) ? `2px solid ${tokens.accent}` : undefined,
+                }}
+              >
                 {manageMode ? (
                   <input
                     type="checkbox"
