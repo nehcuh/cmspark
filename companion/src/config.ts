@@ -586,7 +586,13 @@ export async function initDataDir(): Promise<void> {
     for (const file of fs.readdirSync(builtinSkillsSrc)) {
       const dest = path.join(builtinSkillsDest, file)
       if (file.endsWith(".md")) {
-        fs.copyFileSync(path.join(builtinSkillsSrc, file), dest)
+        const src = path.join(builtinSkillsSrc, file)
+        try {
+          if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue
+          fs.copyFileSync(src, dest)
+        } catch {
+          /* skip missing/unreadable builtin copies — tests isolate HOME */
+        }
       }
     }
   }
