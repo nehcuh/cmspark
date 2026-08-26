@@ -62,6 +62,12 @@ import { validateWsMessage } from "./validate"
 import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
+import {
+  bindExtensionPeerPicker,
+  notifyExtensionPeerAuthenticated,
+} from "./extension-peer"
+
+export { waitForExtensionPeer } from "./extension-peer"
 
 // ---------------------------------------------------------------------------
 // Constants + module state
@@ -265,6 +271,8 @@ export function pickAuthenticatedClientWs(): WebSocket | null {
   }
   return null
 }
+
+bindExtensionPeerPicker(pickAuthenticatedClientWs)
 
 /**
  * Ensure outbound HTTP runner is wired to createToolExecutor(extensionWs).
@@ -1018,6 +1026,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                 coordinateEnabled: cfg.computer?.coordinateEnabled === true,
               }))
             }
+            // PR-B Task 8: wake waitForExtensionPeer on extension auth.ok only.
+            // pickAuthenticatedClientWs already requires chrome-extension:// +
+            // authenticated; notify no-ops if pick() would still fail.
+            if (/^chrome-extension:\/\//i.test(st.origin || "")) {
+              notifyExtensionPeerAuthenticated(ws)
+            }
           } else {
             logger.warn("ws.auth_failed", {})
             try { ws.terminate() } catch { /* closing */ }
@@ -1397,9 +1411,11 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       }
       applyConnectionCloseGracePeriod(ws)
       requireRt().securityConfirmations.rejectAll("disconnect", ws)
-      // C-P0-6: cancel any tray dialogs that were racing this WS. Without this,
-      // the Swift dialog stays modal until its own timeout. cancelConfirm is
-      // a no-op if the id isn't pending (race already resolved).
+      // C-P0-6: cancel tray dialogs racing THIS socket only. Overlay close
+      // still rejectAll(overlay) + cancelConfirm ids on the overlay key
+      // (empty after Task 7 — tray map is keyed by trayOwnerWs, never overlay).
+      // Do NOT cancelConfirm the extension peer's set; operator confirms live.
+      // cancelConfirm is a no-op if the id isn't pending (race already resolved).
       const tray = getTrayInstance()
       if (tray) {
         const activeIds = requireRt().activeTrayConfirmsByWs.get(ws)
