@@ -507,10 +507,13 @@ export class SecurityConfirmationManager {
 
   /**
    * Reject pending confirmations. If `ws` is provided, only entries whose
-   * originWs matches (or is undefined — broadcast-style) are rejected; entries
-   * owned by a different socket survive — closes [C-SRV-1] where a disconnect
-   * on one connection would reject prompts on other connections. If `ws` is
-   * undefined, all pending entries are rejected (backward-compatible).
+   * originWs === that socket are rejected. Unbound entries (originWs undefined)
+   * survive a single-peer close — overlay disconnect must not kill outbound
+   * L8 or retargeted overlay confirms; the 45s timeout remains the reaper.
+   * Entries owned by a different socket also survive — closes [C-SRV-1]
+   * where a disconnect on one connection would reject prompts on other
+   * connections. If `ws` is omitted, all pending entries are rejected
+   * (shutdown / backward-compatible drain).
    */
   rejectAll(reason: "disconnect" | "timeout" = "disconnect", ws?: WebSocket) {
     if (ws === undefined) {
@@ -530,7 +533,7 @@ export class SecurityConfirmationManager {
     }
 
     for (const [confirmationId, pending] of this.pending) {
-      if (pending.originWs !== undefined && pending.originWs !== ws) continue
+      if (pending.originWs !== ws) continue
       clearTimeout(pending.timer)
       pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved: false })
       const decision: SecurityConfirmationDecision = {
