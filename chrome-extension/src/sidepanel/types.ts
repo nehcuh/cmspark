@@ -456,15 +456,36 @@ export interface SkillMeta {
   }>
 }
 
+export interface KnowledgeRelatedHit {
+  id: string
+  title: string
+}
+
 export interface KnowledgeMeta {
   name: string
   id?: string
   title?: string
   description: string
-  type: "site_knowledge" | "domain_knowledge"
+  type: "site_knowledge" | "domain_knowledge" | string
+  site?: string
+  tags?: string[]
+  builtin: boolean
+  related?: KnowledgeRelatedHit[]
+}
+
+export interface KnowledgeDocView {
+  id: string
+  name: string
+  title: string
+  tags?: string[]
+  description: string
+  type: string
   site?: string
   builtin: boolean
-  source_file?: string
+  body: string
+  char_count: number
+  truncated: boolean
+  related?: KnowledgeRelatedHit[]
 }
 
 export interface OperationRecord {

@@ -23,6 +23,45 @@ import {
   writeRestrictedFile,
 } from "./doc-identity"
 import { validateWildcardPattern } from "../security"
+import { redactSecrets } from "../threads/distill"
+import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT, type RelatedKnowledgeInput } from "./knowledge-related"
+
+export const KNOWLEDGE_BODY_WIRE_CAP = 512 * 1024
+export const KNOWLEDGE_FILE_CAP = 6 * 1024 * 1024
+
+export type KnowledgeUpdatePatch = {
+  title?: string
+  tags?: string[]
+  description?: string
+  body?: string
+}
+
+export type KnowledgeListItem = {
+  name: string
+  id?: string
+  title?: string
+  description: string
+  type: Skill["type"]
+  site?: string
+  tags?: string[]
+  builtin: boolean
+  related?: Array<{ id: string; title: string }>
+}
+
+export type KnowledgeDocView = {
+  id: string
+  name: string
+  title: string
+  tags?: string[]
+  description: string
+  type: Skill["type"]
+  site?: string
+  builtin: boolean
+  body: string
+  char_count: number
+  truncated: boolean
+  related: Array<{ id: string; title: string }>
+}
 
 export type RetrievedSource = {
   id: string
@@ -855,6 +894,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
   exportSkill(name: string): { content: string; format: "markdown" | "zip"; skill_name: string } {
     const skill = this.get(name)
     if (!skill) throw new Error(`Skill not found: ${name}`)
+    if (this.isKnowledgeDoc(skill)) throw new Error(`'${name}' is knowledge; use knowledge.export`)
 
     if (skill.dir) {
       // Folder-based skill: zip the entire directory
@@ -1336,7 +1376,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
   // --- Knowledge management (operates on knowledge/ directory) ---
 
-  listKnowledge(): SkillMeta[] {
+  listKnowledge(): KnowledgeListItem[] {
     this.ensureFresh()
     return this.skillsCache
       .filter(s => this.isKnowledgeDoc(s))
@@ -1348,12 +1388,100 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         type: s.type,
         site: s.site,
         tags: s.tags,
-        entries: s.entries,
         builtin: s.builtin,
-        source_file: s.source_file,
-        dir: s.dir,
-        resources: s.resources,
       }))
+  }
+
+  private knowledgeMeta(skill: Skill): RelatedKnowledgeInput & { id: string; name: string; title: string; description: string; type: Skill["type"]; site?: string; tags?: string[]; builtin: boolean } {
+    const id = skill.id || skill.name
+    return {
+      name: skill.name,
+      id,
+      title: skill.title || skill.name,
+      description: skill.description,
+      type: skill.type,
+      site: skill.site,
+      tags: skill.tags,
+      builtin: skill.builtin,
+    }
+  }
+
+  getKnowledge(id: string): KnowledgeDocView | undefined {
+    const skill = this.get(id)
+    if (!skill || !this.isKnowledgeDoc(skill)) return undefined
+    const body = skill.content || ""
+    const bodyBytes = Buffer.byteLength(body, "utf8")
+    const truncated = bodyBytes > KNOWLEDGE_BODY_WIRE_CAP
+    const metas = this.listKnowledge().map((d) => ({
+      id: d.id || d.name,
+      name: d.name,
+      title: d.title,
+      description: d.description,
+      tags: d.tags,
+    }))
+    const seed = skill.id || skill.name
+    const related = findRelatedKnowledge(seed, metas, KNOWLEDGE_RELATED_LIMIT).map((h) => ({
+      id: h.id,
+      title: h.title,
+    }))
+    const meta = this.knowledgeMeta(skill)
+    return {
+      ...meta,
+      body: truncated ? Buffer.from(body, "utf8").subarray(0, KNOWLEDGE_BODY_WIRE_CAP).toString("utf8") : body,
+      char_count: body.length,
+      truncated,
+      related,
+    }
+  }
+
+  updateKnowledge(id: string, patch: KnowledgeUpdatePatch): { id: string; title: string } {
+    const skill = this.get(id)
+    if (!skill || !this.isKnowledgeDoc(skill)) throw new Error(`Knowledge not found: ${id}`)
+    if (skill.builtin) throw new Error(`Cannot update builtin knowledge: ${id}`)
+    const ident = skill.id || skill.name
+    const title = patch.title !== undefined ? cleanTitle(patch.title) : (skill.title || skill.name)
+    const description = patch.description !== undefined
+      ? String(patch.description).slice(0, 500)
+      : skill.description
+    const tags = patch.tags !== undefined
+      ? patch.tags.map((t) => String(t)).filter(Boolean).slice(0, 8)
+      : skill.tags
+    const body = patch.body !== undefined ? String(patch.body) : (skill.content || "")
+    if (Buffer.byteLength(body, "utf8") > KNOWLEDGE_FILE_CAP) {
+      throw new Error("Knowledge body exceeds 6MB")
+    }
+    const data = this.allowlistKnowledgeFrontmatter({
+      description,
+      type: skill.type,
+      site: skill.site,
+      tags,
+    })
+    // F-I-1/9: keep legacy name when it differs from id. Title is display only.
+    data.name = skill.name
+    data.id = ident
+    data.title = title
+    const yamlStr = yaml.dump(data, { lineWidth: -1, noRefs: true, quotingType: '"' })
+    const stamped = `---\n${yamlStr}---\n\n${body.trimStart()}`
+    writeRestrictedFile(skill.source_file, stamped)
+    this.refresh()
+    return { id: ident, title }
+  }
+
+  exportKnowledge(id: string): { format: "markdown"; filename: string; content: string; redacted_hits: number } {
+    const skill = this.get(id)
+    if (!skill) throw new Error(`Knowledge not found: ${id}`)
+    if (!this.isKnowledgeDoc(skill)) throw new Error(`'${id}' is a skill; use skill.export`)
+    const raw = fs.readFileSync(skill.source_file, "utf8")
+    if (Buffer.byteLength(raw, "utf8") > KNOWLEDGE_BODY_WIRE_CAP) {
+      throw new Error("正文超过 512KiB，无法下载")
+    }
+    const redacted = redactSecrets(raw)
+    return {
+      format: "markdown",
+      filename: path.basename(skill.source_file),
+      content: redacted.text,
+      redacted_hits: redacted.hits,
+    }
   }
 
   previewKnowledge(content: string, fallbackName?: string): { title: string; description: string; preview: string; char_count: number } {

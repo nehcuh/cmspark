@@ -62,6 +62,19 @@ export function scoreRelatedKnowledge(
   }
 }
 
+export function attachRelatedTitles<T extends RelatedKnowledgeInput>(
+  docs: T[],
+): Array<T & { related: Array<{ id: string; title: string }> }> {
+  return docs.map((d) => {
+    const seed = d.id || d.name || ""
+    const hits = seed ? findRelatedKnowledge(seed, docs, KNOWLEDGE_RELATED_LIMIT) : []
+    return {
+      ...d,
+      related: hits.map((h) => ({ id: h.id, title: h.title })),
+    }
+  })
+}
+
 export function findRelatedKnowledge(
   seedId: string,
   docs: RelatedKnowledgeInput[],

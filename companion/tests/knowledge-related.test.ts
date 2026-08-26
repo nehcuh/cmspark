@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { findRelatedKnowledge } from "../src/skills/knowledge-related"
+import { attachRelatedTitles, findRelatedKnowledge } from "../src/skills/knowledge-related"
 
 test("findRelatedKnowledge returns at most 3 co-tag hits", () => {
   const docs = [
@@ -28,6 +28,20 @@ test("findRelatedKnowledge hard-caps at 3 even when limit is huge", () => {
 
 test("findRelatedKnowledge empty seed", () => {
   assert.deepEqual(findRelatedKnowledge("missing", [{ id: "a", title: "x" }]), [])
+})
+
+test("attachRelatedTitles caps at 3 and skips self", () => {
+  const docs = [
+    { id: "a", title: "SSO", tags: ["sso"] },
+    { id: "b", title: "登录", tags: ["sso"] },
+    { id: "c", title: "排障", tags: ["sso"] },
+    { id: "d", title: "Okta", tags: ["sso"] },
+    { id: "e", title: "HR", tags: ["hr"] },
+  ]
+  const out = attachRelatedTitles(docs)
+  assert.ok(out[0].related.length <= 3)
+  assert.ok(out[0].related.every((h) => h.id !== "a"))
+  assert.equal(out[4].related.length, 0)
 })
 
 test("findRelatedKnowledge resolves legacy name when id differs", () => {

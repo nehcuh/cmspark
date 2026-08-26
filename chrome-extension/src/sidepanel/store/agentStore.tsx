@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
+import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
 /** S20: Side Panel composer is read-only while overlay holds the lease. */
@@ -192,6 +192,7 @@ export interface AgentState {
     char_count: number
     payload: { file?: { name: string; content: string }; content?: string; url?: string }
   } | null
+  knowledgeViewer: KnowledgeDocView | null
   /** P3: thread currently being summarized (null when idle). Drives the 🧠 button spinner. */
   summarizingThreadId: string | null
   /** Vault folder-picker state (P3.5): picking + last error. */
@@ -387,6 +388,7 @@ export type AgentAction =
       }
     }
   | { type: "CLEAR_KNOWLEDGE_PREVIEW" }
+  | { type: "SET_KNOWLEDGE_VIEWER"; doc: KnowledgeDocView | null }
   | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
   | { type: "SET_VAULT_PICKER"; picking: boolean; error: string | null }
   | { type: "SET_MCP_SERVERS"; servers: McpServerMeta[] }
@@ -533,6 +535,7 @@ export const initialState: AgentState = {
   obsidianProfileStatus: null,
   knowledgeImportStatus: null,
   knowledgePreview: null,
+  knowledgeViewer: null,
   summarizingThreadId: null,
   vaultPicker: { picking: false, error: null },
   mcpServers: [],
@@ -939,6 +942,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     }
     case "CLEAR_KNOWLEDGE_PREVIEW":
       return { ...state, knowledgePreview: null }
+    case "SET_KNOWLEDGE_VIEWER":
+      return { ...state, knowledgeViewer: action.doc }
     case "SET_SUMMARIZING_THREAD":
       return { ...state, summarizingThreadId: action.threadId }
     case "SET_VAULT_PICKER":

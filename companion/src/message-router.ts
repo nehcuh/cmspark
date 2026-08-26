@@ -22,6 +22,7 @@ import {
 import { findRelatedThreads } from "./threads/related"
 import { distillThreadMarkdown } from "./threads/distill"
 import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT } from "./skills/knowledge-related"
+import { handleKnowledgeCrud, knowledgeListDocs } from "./message-router/handlers/knowledge"
 import { suggestCleanupRules } from "./threads/cleanup-rules"
 import { buildContextRefsSystemSegment, type ContextRefInput } from "./threads/context-refs"
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
@@ -2610,9 +2611,16 @@ export async function handleMessage(
       return { type: "skill.deleted", skill_name: rest.skill_name }
 
     // --- Knowledge ---
+    case "knowledge.get":
+    case "knowledge.update":
+    case "knowledge.export": {
+      const crud = handleKnowledgeCrud(type, rest, skillEngine, stampedSurface)
+      if (crud) return crud
+      return { type: "error", error: `Unhandled knowledge type: ${type}` }
+    }
     case "knowledge.list":
       // listKnowledge() → ensureFresh() (same fingerprint path as skills)
-      return { type: "knowledge.list", docs: skillEngine.listKnowledge() }
+      return { type: "knowledge.list", docs: knowledgeListDocs(skillEngine, stampedSurface) }
     case "knowledge.set_active": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       const thread = threadManager.get(rest.thread_id)
@@ -2620,7 +2628,11 @@ export async function handleMessage(
       const ids = Array.isArray(rest.ids)
         ? rest.ids.filter((id: unknown) => typeof id === "string" && id.trim()).slice(0, 32)
         : []
-      const known = new Set(skillEngine.listKnowledge().map((d) => d.name || d.id).filter(Boolean))
+      const known = new Set<string>()
+      for (const d of skillEngine.listKnowledge()) {
+        if (d.id) known.add(d.id)
+        if (d.name) known.add(d.name)
+      }
       const next = ids.filter((id: string) => known.has(id))
       const dropped = ids.filter((id: string) => !known.has(id))
       threadManager.update(rest.thread_id, {
@@ -2656,7 +2668,7 @@ export async function handleMessage(
         }
       }
       skillEngine.refresh()
-      return { type: "knowledge.list", docs: skillEngine.listKnowledge(), imported }
+      return { type: "knowledge.list", docs: knowledgeListDocs(skillEngine, stampedSurface), imported }
     }
     case "knowledge.import_directory": {
       if (stampedSurface === "summoner") {
@@ -2766,12 +2778,21 @@ export async function handleMessage(
         truncated: totalScanned >= MAX_FILES,
         maxFiles: MAX_FILES,
         errors,
-        docs: skillEngine.listKnowledge(),
+        docs: knowledgeListDocs(skillEngine, stampedSurface),
       }
     }
     case "knowledge.delete":
-      skillEngine.deleteKnowledge(rest.name)
-      return { type: "knowledge.deleted", name: rest.name }
+      if (stampedSurface === "summoner") {
+        return { type: "error", error: "SUMMONER_ACL: knowledge.delete not allowed on summoner surface", error_code: "SUMMONER_ACL" }
+      }
+      if (rest.user_gesture !== true) {
+        return { type: "error", error: "knowledge.delete requires user_gesture:true (Side Panel only)" }
+      }
+      if (typeof rest.id !== "string" || !rest.id) {
+        return { type: "error", error: "knowledge.delete requires id" }
+      }
+      skillEngine.deleteKnowledge(rest.id)
+      return { type: "knowledge.deleted", id: rest.id }
 
     // --- Mission Packs (P0) ---
     case "fleet.status": {

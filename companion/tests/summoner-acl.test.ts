@@ -28,6 +28,9 @@ test("summoner denies trust elevation", () => {
     "security.confirmation.response",
     "mcp.add",
     "executeQuickAction",
+    "knowledge.get",
+    "knowledge.update",
+    "knowledge.export",
   ]) {
     const r = assertSummonerAllowed("summoner", t)
     assert.equal(r.ok, false)
