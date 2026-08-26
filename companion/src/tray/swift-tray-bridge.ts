@@ -54,9 +54,9 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-// Updated 2026-08-25 B1–B4 — overlay workbench rails (packs / MCP / skills / knowledge)
+// Updated 2026-08-26 overlay-post222-residual-fix — I3 UTF-8 fail-close + I5 list scroll
 /** Mac 快捷提问 = native HUD（收起一条；展开工作台 + 对话管理）+ 📎/🎙. */
-const SWIFT_TRAY_SHA256 = "ed4dbfa0e0eae5490bb0b18f477b416039c13e722a7e3f2750797b7e659a5fda"
+const SWIFT_TRAY_SHA256 = "34ed53a00eba5ca129f7803ca5c373bb146bba9a5078e8ba074b77024a777b7c"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

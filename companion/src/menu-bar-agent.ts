@@ -53,6 +53,7 @@ import {
   encodeSummonerSettings,
   encodeSummonerSkills,
   encodeSummonerThreads,
+  SUMMONER_RAIL_LIST_CAP,
   SUMMONER_SEARCH_HINT,
   type SummonerInboundEvt,
 } from "./summoner/protocol"
@@ -788,7 +789,7 @@ async function pushSummonerRail(): Promise<void> {
   try {
     threads = await client.listThreads()
     trayInstance?.sendSummoner?.(
-      encodeSummonerThreads({ threads: hitsFromTitleSearch(threads).slice(0, 8) }),
+      encodeSummonerThreads({ threads: hitsFromTitleSearch(threads).slice(0, SUMMONER_RAIL_LIST_CAP) }),
     )
   } catch {
     trayInstance?.sendSummoner?.(encodeSummonerThreads({ threads: [] }))

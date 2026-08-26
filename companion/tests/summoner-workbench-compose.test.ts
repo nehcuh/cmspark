@@ -21,6 +21,7 @@ import {
   decodeSummonerOutbound,
 } from "../src/summoner/protocol"
 import { SUMMONER_WEB_DISPATCH_ALLOW } from "../src/summoner-web"
+import { SUMMONER_RAIL_LIST_CAP } from "../src/summoner/protocol"
 
 const ROOT = path.resolve(__dirname, "..", "..")
 function srcFile(...parts: string[]): string {
@@ -149,6 +150,30 @@ test("HUD workbench rails are live for packs/mcp/skills/knowledge", () => {
   assert.match(tray, /summoner\.mcp\.servers/)
   assert.match(tray, /summoner\.skills/)
   assert.match(tray, /summoner\.knowledge/)
+})
+
+test("HUD list rail scrolls and shares SUMMONER_RAIL_LIST_CAP with tray push", () => {
+  assert.equal(SUMMONER_RAIL_LIST_CAP, 64)
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  const agent = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  assert.match(overlay, /listScroll\.documentView = tStack/)
+  assert.match(overlay, /hasVerticalScroller = true/)
+  assert.match(overlay, /listCol\.heightAnchor\.constraint\(equalTo: workbench\.heightAnchor\)/)
+  assert.doesNotMatch(overlay, /prefix\(12\)/)
+  assert.match(overlay, /prefix\(64\)/)
+  assert.match(agent, /SUMMONER_RAIL_LIST_CAP/)
+  assert.doesNotMatch(agent, /hitsFromTitleSearch\(threads\)\.slice\(0,\s*8\)/)
+})
+
+test("Swift knowledge import fail-closes on non-UTF-8 (no base64 body)", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  const start = overlay.indexOf("func knowledgeImportClicked")
+  assert.ok(start >= 0, "knowledgeImportClicked missing")
+  const next = overlay.indexOf("\n  func ", start + 1)
+  const body = overlay.slice(start, next > start ? next : start + 1200)
+  assert.match(body, /只支持文本知识（md\/txt）/)
+  assert.match(body, /String\(data: data, encoding: \.utf8\)/)
+  assert.doesNotMatch(body, /base64EncodedString/)
 })
 
 test("C-thin HTML compose endpoints stay off mcp.add/knowledge.import", () => {

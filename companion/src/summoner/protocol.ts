@@ -15,6 +15,9 @@
 export const SUMMONER_SEARCH_HINT = "只搜标题，不搜正文" as const
 export type SummonerSearchHint = typeof SUMMONER_SEARCH_HINT
 
+/** Overlay workbench list cap (threads / packs / MCP / skills / knowledge). */
+export const SUMMONER_RAIL_LIST_CAP = 64
+
 export type SummonerBrowser = "attached" | "detached"
 
 // ── Companion → Swift payloads ──────────────────────────────────────────────
