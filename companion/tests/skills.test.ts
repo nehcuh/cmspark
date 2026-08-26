@@ -1882,6 +1882,136 @@ test("skill-engine: resolveSkillIdsForThread auto mode deduplicates skills", asy
   assert.equal(occurrences, 1, "should not duplicate skills")
 })
 
+// --- slash-skill pin (`/技能` → 按需 / manual). Overlay skill.activate must not flip mode. ---
+
+test("slash-skill pin: pinSlashSkill flips auto thread to manual and includes named skill", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "browse.md", {
+    name: "browse",
+    description: "Browse websites",
+    type: "prompt_template",
+  }, "# Browse")
+  writeSkillFile(skillsDir, "code.md", {
+    name: "code",
+    description: "Write code zxqvcodewrite programming",
+    tags: ["programming", "zxqvcodewrite"],
+    type: "prompt_template",
+  }, "# Code")
+
+  const skillMod = await import("../src/skills/skill-engine") as any
+  const pinSlashSkill = skillMod.pinSlashSkill
+  const { SkillEngine } = skillMod
+  assert.equal(typeof pinSlashSkill, "function", "pinSlashSkill must be exported")
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("slash-pin")
+  assert.equal(thread.skill_selection_mode, "auto")
+
+  const engine = new SkillEngine()
+  const pin = pinSlashSkill(thread, "/browse how do I …", engine.list())
+  assert.ok(pin, "leading /browse must pin the browse skill")
+  assert.equal(pin.skillName, "browse")
+  assert.equal(pin.skill_selection_mode, "manual")
+  assert.ok(pin.active_skill_ids.includes("browse"))
+
+  const updated = tm.update(thread.id, {
+    skill_selection_mode: pin.skill_selection_mode,
+    active_skill_ids: pin.active_skill_ids,
+  })
+  engine.setActiveSkillsForThread(thread.id, pin.active_skill_ids)
+  assert.equal(updated?.skill_selection_mode, "manual")
+  assert.ok(updated?.active_skill_ids.includes("browse"))
+
+  // Next resolve must not union matchSkills (manual path). Query would match `code` in auto.
+  const next = await engine.resolveSkillIdsForThread(
+    thread.id,
+    updated?.skill_selection_mode,
+    "how do I write code zxqvcodewrite programming",
+  )
+  assert.ok(next.includes("browse"), "manual resolve returns the pinned skill")
+  assert.ok(!next.includes("code"), "manual must not union matchSkills")
+})
+
+test("slash-skill pin: unknown slash token does not pin", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "browse.md", {
+    name: "browse",
+    description: "Browse websites",
+    type: "prompt_template",
+  }, "# Browse")
+
+  const skillMod = await import("../src/skills/skill-engine") as any
+  const pinSlashSkill = skillMod.pinSlashSkill
+  const { SkillEngine } = skillMod
+  assert.equal(typeof pinSlashSkill, "function", "pinSlashSkill must be exported")
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("slash-unknown")
+  const engine = new SkillEngine()
+  assert.equal(pinSlashSkill(thread, "/not-a-skill hello", engine.list()), null)
+  assert.equal(pinSlashSkill(thread, "browse how do I", engine.list()), null)
+  assert.equal(thread.skill_selection_mode, "auto")
+})
+
+test("slash-skill pin: match is case-insensitive among skill docs", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "browse.md", {
+    name: "browse",
+    description: "Browse websites",
+    type: "prompt_template",
+  }, "# Browse")
+
+  const skillMod = await import("../src/skills/skill-engine") as any
+  const pinSlashSkill = skillMod.pinSlashSkill
+  const { SkillEngine } = skillMod
+  assert.equal(typeof pinSlashSkill, "function", "pinSlashSkill must be exported")
+  const engine = new SkillEngine()
+  const pin = pinSlashSkill(
+    { skill_selection_mode: "auto", active_skill_ids: [] },
+    "/Browse how do I",
+    engine.list(),
+  )
+  assert.ok(pin)
+  assert.equal(pin.skillName, "browse")
+})
+
+test("slash-skill pin: chat.create wires pinSlashSkill before resolveSkillIdsForThread", () => {
+  const routerSrc = fs.readFileSync(path.join(process.cwd(), "src/message-router.ts"), "utf-8")
+  const createStart = routerSrc.indexOf('case "chat.create"')
+  const createEnd = routerSrc.indexOf('case "chat.steer"')
+  assert.ok(createStart >= 0 && createEnd > createStart, "chat.create case must exist")
+  const createBlock = routerSrc.slice(createStart, createEnd)
+  assert.match(
+    createBlock,
+    /applySlashSkillPin|pinSlashSkill/,
+    "chat.create must pin via pinSlashSkill (not rest.skill_ids as the pin door)",
+  )
+  const pinAt = createBlock.search(/applySlashSkillPin|pinSlashSkill/)
+  const resolveAt = createBlock.search(/resolveSkillIdsForThread/)
+  assert.ok(pinAt < resolveAt, "slash pin must run before resolveSkillIdsForThread so this turn is manual")
+  assert.match(routerSrc, /function applySlashSkillPin/)
+  assert.match(routerSrc, /pinSlashSkill\(/)
+})
+
+test("skill.activate handler does not write skill_selection_mode", () => {
+  const routerSrc = fs.readFileSync(path.join(process.cwd(), "src/message-router.ts"), "utf-8")
+  const start = routerSrc.indexOf('case "skill.activate"')
+  const end = routerSrc.indexOf('case "skill.deactivate"')
+  assert.ok(start >= 0 && end > start, "skill.activate case must exist")
+  const block = routerSrc.slice(start, end)
+  assert.doesNotMatch(
+    block,
+    /skill_selection_mode/,
+    "overlay skill.activate must not flip skill_selection_mode (Trust freeze)",
+  )
+})
+
 test("skill-engine: buildSystemPrompt filters by provided skillIds", async () => {
   resetMockDirs()
   process.env.HOME = tempHome

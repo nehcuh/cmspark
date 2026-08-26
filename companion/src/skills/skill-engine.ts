@@ -106,6 +106,42 @@ interface Skill extends SkillMeta {
 /** Accept full companion llm config so protocol/profile reach createProvider. */
 type LlmConfig = CompanionLlmConfig
 
+/** Result of Side Panel `/技能` pin (`/^\/(\S+)/` on this-turn message). */
+export type SlashSkillPin = {
+  skillName: string
+  skill_selection_mode: "manual"
+  active_skill_ids: string[]
+}
+
+/**
+ * Matching-honesty pin door: a leading `/name` token in the user message that
+ * matches a skill doc (case-insensitive) switches the thread to 按需 (`manual`)
+ * and ensures that skill is in `active_skill_ids`.
+ *
+ * Detect from `rest.message`, NOT `rest.skill_ids` (the extension always sends
+ * activeSkillIds). Overlay `skill.activate` must not call this — it must not
+ * write `skill_selection_mode`.
+ */
+export function pinSlashSkill(
+  thread: { skill_selection_mode?: "auto" | "all" | "manual"; active_skill_ids?: string[] } | null | undefined,
+  message: string,
+  skills: Array<{ name: string }>,
+): SlashSkillPin | null {
+  if (!thread || typeof message !== "string") return null
+  const m = message.match(/^\/(\S+)/)
+  if (!m) return null
+  const token = m[1].toLowerCase()
+  const skill = skills.find((s) => typeof s.name === "string" && s.name.toLowerCase() === token)
+  if (!skill) return null
+  const active = Array.isArray(thread.active_skill_ids) ? [...thread.active_skill_ids] : []
+  if (!active.includes(skill.name)) active.push(skill.name)
+  return {
+    skillName: skill.name,
+    skill_selection_mode: "manual",
+    active_skill_ids: active,
+  }
+}
+
 const KNOWLEDGE_SEARCH_THRESHOLD_TOKENS = 1000
 const KNOWLEDGE_SEARCH_TOPK = 3
 

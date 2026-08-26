@@ -714,6 +714,28 @@ test("message-router: skill.activate activates skill for thread", async () => {
   assert.equal(response.skill_name, "browse")
 })
 
+test("message-router: skill.activate on auto thread does not set skill_selection_mode", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "Activate Freeze" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  assert.equal(created.thread.skill_selection_mode, "auto")
+
+  await handleMessage(
+    { type: "skill.activate", thread_id: created.thread.id, skill_name: "browse" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+
+  const after = threadManager.get(created.thread.id)
+  assert.equal(
+    after?.skill_selection_mode,
+    "auto",
+    "overlay skill.activate must not flip skill_selection_mode (stays auto)",
+  )
+  assert.ok(after?.active_skill_ids?.includes("browse"))
+})
+
 test("message-router: skill.deactivate deactivates skill for thread", async () => {
   const skillEngine = mockSkillEngine
   skillEngine.activate("thread-1", "browse")

@@ -29,7 +29,7 @@ import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "
 import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
 import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
 import { pickFolderNative } from "./obsidian/folder-picker"
-import type { SkillEngine } from "./skills/skill-engine"
+import { pinSlashSkill, type SkillEngine } from "./skills/skill-engine"
 import { isSymlinkOrJunction } from "./skills/doc-identity"
 import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
@@ -114,6 +114,37 @@ function normalizeChatHostname(hostname?: unknown, url?: unknown): string | unde
     }
   }
   return undefined
+}
+
+/**
+ * `/技能` pin door (slice 6 PR-A): leading `/name` in this-turn message flips
+ * the thread to 按需 (`manual`) and activates that skill. Broadcast
+ * `thread.updated` so SkillsPanel reflects the mode. Overlay `skill.activate`
+ * must not write `skill_selection_mode` — do not call this from that handler.
+ */
+function applySlashSkillPin(
+  threadId: string,
+  message: unknown,
+  services: Services,
+  session?: SessionCallbacks,
+): void {
+  const thread = services.threadManager.get(threadId)
+  if (!thread) return
+  const pin = pinSlashSkill(
+    thread,
+    typeof message === "string" ? message : "",
+    services.skillEngine.list(),
+  )
+  if (!pin) return
+  const updated = services.threadManager.update(threadId, {
+    skill_selection_mode: pin.skill_selection_mode,
+    active_skill_ids: pin.active_skill_ids,
+  })
+  services.skillEngine.setActiveSkillsForThread(threadId, pin.active_skill_ids)
+  if (!updated) return
+  const payload = { type: "thread.updated", thread: updated }
+  session?.broadcast?.(payload)
+  session?.sendToExtension?.(payload)
 }
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
@@ -539,6 +570,8 @@ export async function handleMessage(
       }
 
       try {
+        // `/技能` pin before resolve so this turn is already manual (no matchSkills union).
+        applySlashSkillPin(rest.thread_id, rest.message, services, session)
         // Get thread to determine skill and knowledge selection modes
         const thread = services.threadManager.get(rest.thread_id)
         const skillMode = thread?.skill_selection_mode || "auto"
@@ -1110,8 +1143,10 @@ export async function handleMessage(
         }
 
         // Same skill/knowledge auto-load as chat.create (include site knowledge when hostname set)
-        const skillMode = threadForConfig?.skill_selection_mode || "auto"
-        const knowledgeMode = threadForConfig?.knowledge_selection_mode || "auto"
+        applySlashSkillPin(thread_id, userMessage, services, session)
+        const threadAfterPin = services.threadManager.get(thread_id)
+        const skillMode = threadAfterPin?.skill_selection_mode || "auto"
+        const knowledgeMode = threadAfterPin?.knowledge_selection_mode || threadForConfig?.knowledge_selection_mode || "auto"
         const uploadHostname = normalizeChatHostname(rest.hostname, rest.url)
         const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
           thread_id,
@@ -1491,6 +1526,8 @@ export async function handleMessage(
       }
 
       try {
+        // `/技能` pin shares resolve with chat.create (leading /name on last user msg).
+        applySlashSkillPin(thread_id, userMsg.content, services, session)
         // Get thread to determine skill and knowledge selection modes
         const thread = services.threadManager.get(thread_id)
         const skillMode = thread?.skill_selection_mode || "auto"
