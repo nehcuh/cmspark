@@ -23,6 +23,12 @@ import {
   fileOpenCageError,
   fileOpenInvalidError,
 } from "./file-url-admission"
+import {
+  resolveConfirmBinding,
+  fanOutConfirmRequest,
+  pickExtensionWsFromAuth,
+  type ConfirmPeerAuth,
+} from "../mcp/confirm-fanout"
 
 export const COOKIE_TOOLS = [
   "get_cookies",
@@ -122,7 +128,7 @@ export type UrlAdmissionCtx = {
   logToolFinish: (id: string, name: string, startedAt: number, result: any) => void
   securityConfirmations: SecurityConfirmationManager
   clients: Iterable<WebSocket>
-  wsAuthGet: (ws: WebSocket) => { authenticated?: boolean } | undefined
+  wsAuthGet: (ws: WebSocket) => ConfirmPeerAuth | undefined
 }
 
 /**
@@ -147,6 +153,31 @@ export async function runUrlNavigateAdmission(
 
   if (!(URL_GATE_TOOLS as readonly string[]).includes(toolName)) {
     return { ok: true }
+  }
+
+  // Overlay / outbound: never bind originWs to summoner; fan-out Allow/Deny
+  // to authenticated non-summoner peers. Overlay gets mcp.confirm.pending only.
+  const originatingSurface = wsAuthGet(ws)?.surface
+  const extensionWs = pickExtensionWsFromAuth(clients, wsAuthGet)
+  const confirmBinding = resolveConfirmBinding({
+    originatingWs: ws,
+    originatingSurface,
+    isOutboundMcpCall,
+    extensionWs,
+  })
+  const confirmOriginOpts = confirmBinding.originWs
+    ? { originWs: confirmBinding.originWs }
+    : {}
+  const sendConfirm = (data: unknown) => {
+    fanOutConfirmRequest({
+      data,
+      originatingWs: ws,
+      originatingSurface,
+      isOutboundMcpCall,
+      overlayNotice: confirmBinding.overlayNotice,
+      clients,
+      wsAuthGet,
+    })
   }
 
   // Audit item 12: navigate / create_tab trust-domain gate. Agents can otherwise
@@ -226,15 +257,7 @@ export async function runUrlNavigateAdmission(
       path: offer.realPath,
     })
     const decision = await securityConfirmations.request(
-      (data) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          try {
-            ws.send(JSON.stringify(data))
-          } catch {
-            /* ignore */
-          }
-        }
-      },
+      sendConfirm,
       {
         toolName: "打开本地文件（仅这一次）",
         dangerousApis: ["local-file"],
@@ -245,7 +268,7 @@ export async function runUrlNavigateAdmission(
         riskLevel: "medium",
         autoConfirmEligible: false,
       },
-      isOutboundMcpCall ? {} : { originWs: ws },
+      confirmOriginOpts,
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
@@ -319,42 +342,18 @@ export async function runUrlNavigateAdmission(
       host,
       outbound: isOutboundMcpCall,
     })
-    // S42 P1: outbound navigate must not depend on a single Side Panel focus
-    // (L8). Fan-out + unbound origin for outbound; Side Panel path stays
-    // origin-bound so another peer cannot cross-approve.
+    // S42 P1 + overlay L8: outbound / summoner fan-out Allow/Deny to
+    // authenticated non-summoner peers; overlay gets mcp.confirm.pending only.
+    // Panel path stays origin-bound so another peer cannot cross-approve.
     const decision = await securityConfirmations.request(
-      (data) => {
-        const payload = JSON.stringify(data)
-        if (isOutboundMcpCall) {
-          for (const c of clients) {
-            if (c.readyState === WebSocket.OPEN && wsAuthGet(c)?.authenticated === true) {
-              try {
-                c.send(payload)
-              } catch {
-                /* best-effort fan-out */
-              }
-            }
-          }
-          // Always notify the executor-bound socket (extension peer / tests).
-          // Fan-out alone misses peers not in `clients` (integration harness).
-          if (ws.readyState === WebSocket.OPEN) {
-            try {
-              ws.send(payload)
-            } catch {
-              /* ignore */
-            }
-          }
-        } else if (ws.readyState === WebSocket.OPEN) {
-          ws.send(payload)
-        }
-      },
+      sendConfirm,
       {
         toolName: isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName,
         dangerousApis: [],
         code: `navigate(${rawUrl})`,
         relevantDomains: [host],
       },
-      isOutboundMcpCall ? {} : { originWs: ws },
+      confirmOriginOpts,
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason

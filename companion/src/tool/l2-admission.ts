@@ -44,6 +44,13 @@ import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
 import { resolveAcpThreadId } from "../acp/thread-id"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
+import {
+  resolveConfirmBinding,
+  fanOutConfirmRequest,
+  pickExtensionWsFromAuth,
+  isSummonerSurface,
+  type ConfirmPeerAuth,
+} from "../mcp/confirm-fanout"
 
 /** Tools that require L2 security_token issuance (or evaluate token revalidate). */
 export const L2_GATE_TOOLS: readonly string[] = [
@@ -180,8 +187,8 @@ export type L2AdmissionContext = {
   activeTrayConfirmsByWs: WeakMap<WebSocket, Set<string>>
   /** Live WS peers for outbound MCP confirm fan-out */
   clients: Set<WebSocket>
-  /** Auth lookup for fan-out (authenticated peers only) */
-  wsAuthGet: (ws: WebSocket) => { authenticated?: boolean; origin?: string } | undefined
+  /** Auth lookup for fan-out (authenticated peers only). `surface` drives overlay bind. */
+  wsAuthGet: (ws: WebSocket) => ConfirmPeerAuth | undefined
 }
 
 export type L2AdmissionResult =
@@ -1173,13 +1180,25 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             .catch(() => null as null | { source: "tray"; approved: boolean })
           : null
 
-        // C-P0-6: register this sharedConfirmId against the active ws so
-        // ws.on("close") can cancel the tray dialog if the WS dies first.
-        if (trayPromise) {
-          let set = activeTrayConfirmsByWs.get(ws)
+        // Overlay/outbound: bind via resolveConfirmBinding so overlay is never
+        // originWs and tray map is never keyed by the summoner socket.
+        const originatingSurface = wsAuth.get(ws)?.surface
+        const extensionWs = pickExtensionWsFromAuth(clients, (w) => wsAuth.get(w))
+        const confirmBinding = resolveConfirmBinding({
+          originatingWs: ws,
+          originatingSurface,
+          isOutboundMcpCall,
+          extensionWs,
+        })
+        const trayOwnerWs = confirmBinding.trayOwnerWs
+
+        // C-P0-6: register this sharedConfirmId against trayOwnerWs (never
+        // overlay) so ws.on("close") can cancel the tray dialog if that owner dies.
+        if (trayPromise && trayOwnerWs) {
+          let set = activeTrayConfirmsByWs.get(trayOwnerWs)
           if (!set) {
             set = new Set()
-            activeTrayConfirmsByWs.set(ws, set)
+            activeTrayConfirmsByWs.set(trayOwnerWs, set)
           }
           set.add(sharedConfirmId)
         }
@@ -1234,41 +1253,29 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           }
         }
 
-        // ADR-022 L8: outbound MCP must not depend on Side Panel focus alone.
-        // Fan-out confirm to every authenticated panel; leave origin unbound
-        // (any authenticated peer may respond). Nonce/host_computer still
-        // origin-bound when NOT outbound (A1).
+        // ADR-022 L8 + overlay L8: outbound / summoner fan-out Allow/Deny to
+        // authenticated non-summoner peers (确认台 / tray). Overlay gets
+        // mcp.confirm.pending only. Panel origin stays origin-bound (A1).
         const sendConfirm = (data: any) => {
-          const payload = JSON.stringify(data)
-          if (isOutboundMcpCall) {
-            for (const c of clients) {
-              if (c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true) {
-                try {
-                  c.send(payload)
-                } catch {
-                  /* best-effort fan-out */
-                }
-              }
-            }
-            // Executor-bound socket always (extension peer; tests without clients set)
-            if (ws.readyState === WebSocket.OPEN) {
-              try {
-                ws.send(payload)
-              } catch {
-                /* ignore */
-              }
-            }
-          } else if (ws.readyState === WebSocket.OPEN) {
-            ws.send(payload)
-          }
-        }
-        if (isOutboundMcpCall) {
-          logger.info("outbound_mcp.confirm_fanout", {
-            tool_call_id: toolCallId,
-            tool_name: toolName,
-            caller: String((finalParams as any).__outbound_caller_id || ""),
-            tray: !!trayEligible,
+          fanOutConfirmRequest({
+            data,
+            originatingWs: ws,
+            originatingSurface,
+            isOutboundMcpCall,
+            overlayNotice: confirmBinding.overlayNotice,
+            clients,
+            wsAuthGet: (w) => wsAuth.get(w),
           })
+        }
+        if (isOutboundMcpCall || isSummonerSurface(originatingSurface)) {
+          if (isOutboundMcpCall) {
+            logger.info("outbound_mcp.confirm_fanout", {
+              tool_call_id: toolCallId,
+              tool_name: toolName,
+              caller: String((finalParams as any).__outbound_caller_id || ""),
+              tray: !!trayEligible,
+            })
+          }
           try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const notifier = require("node-notifier") as {
@@ -1276,7 +1283,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             }
             notifier.notify({
               title: "CMspark 需要确认",
-              message: `Outbound MCP 请求: ${toolName} — 请在托盘或 Side Panel 批准/拒绝`,
+              message: isOutboundMcpCall
+                ? `Outbound MCP 请求: ${toolName} — 请在确认台或托盘里批准`
+                : `请在确认台或托盘里批准`,
               sound: true,
             })
           } catch {
@@ -1284,13 +1293,11 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           }
         }
 
-        // P1 SEC-04: default L2 binds originWs so only the requesting peer
-        // (or tray race winner) can resolve. Outbound MCP keeps L8: any
-        // authenticated peer + tray may resolve (operator surface).
-        const confirmOriginOpts =
-          isOutboundMcpCall
-            ? undefined
-            : { originWs: ws }
+        // Overlay binds extension (or unbound); outbound stays unbound; panel
+        // stays origin-bound. Never bind originWs to the summoner socket.
+        const confirmOriginOpts = confirmBinding.originWs
+          ? { originWs: confirmBinding.originWs }
+          : {}
 
         const wsPromise = securityConfirmations.request(
           sendConfirm,
@@ -1359,9 +1366,11 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             trayPromise,
           ])
         // C-P0-6: confirmation resolved (one way or another) — drop from
-        // activeTrayConfirmsByWs so ws.close doesn't try to cancel a dialog
-        // that's already gone.
-        activeTrayConfirmsByWs.get(ws)?.delete(sharedConfirmId)
+        // activeTrayConfirmsByWs so owner close doesn't try to cancel a dialog
+        // that's already gone. Key is trayOwnerWs (never overlay).
+        if (trayOwnerWs) {
+          activeTrayConfirmsByWs.get(trayOwnerWs)?.delete(sharedConfirmId)
+        }
 
         if (winner === null) {
           // Tray rejected — fall back to WS-only path. wsPromise still races
