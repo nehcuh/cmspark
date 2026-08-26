@@ -44,6 +44,7 @@
 | [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.5.0** 对齐；扩展目标带轴标注） |
 | [../PRODUCT.md](../PRODUCT.md) | 产品一句话 / 四面（Capture·Operate·Confirm·租手）；家 = 已登录 Chrome + 硬闸 |
 | [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md) | **形态深化 SoT**（定位、文案合同、L8、五分钟租手、切片 DoD） |
+| [2026-08-26-post-226-status.md](superpowers/specs/2026-08-26-post-226-status.md) | **#226 后现状**：切片 1–3 + 知识 Wave 3 已合；下一刀 T1 → 侧栏看山 |
 | [../CHANGELOG.md](../CHANGELOG.md) | 版本变更记录 |
 | [DESIGN.md](DESIGN.md) | UI / 设计 token 约定；Mode badge = Surface；召唤器默认收起条 |
 | [security-design-tiered-gates-2026-07-11.md](security-design-tiered-gates-2026-07-11.md) | 分层门禁设计说明 |

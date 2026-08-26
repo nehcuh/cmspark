@@ -2,6 +2,12 @@
 
 ## Current Session
 
+### S82 END (2026-08-26) [#226 MERGED · 残枝清掉 · 现状快照]
+- **Ship**：**PR #226 MERGED** `5d096a7`。知识 Wave 3 + 产品切片 1–3（租手钥匙 / L8 confirm / 召唤器诚实）。PR CI + main CI 全绿。
+- **清**：本地枝/stash/未跟踪评审 patch 已删；远程已合残枝已删。`origin` 只剩 `main`。
+- **诊断**：`docs/superpowers/specs/2026-08-26-post-226-status.md`。下一刀 = **切片 4 T1 真人 bake-off**，然后切片 5 侧栏看山。图谱 / overlay Allow/Deny / 第二扩展仍禁。
+- Recorded: yes — 代码 DoD 绿 ≠ 五分钟租手真人验收；T1 没跑就扩 profile 违 SoT
+
 ### Task 8 hole (2026-08-26) [await extension peer before overlay-origin HITL]
 - **Ship**: `fix(confirm): await extension peer before overlay-origin HITL`
 - **Hole**: `waitForExtensionPeer` existed and auth.ok notified it, but no production confirm path awaited it.

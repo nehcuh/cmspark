@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 项目目标
 
-> 版本: 1.7.2 | 日期: 2026-08-20 | 当前阶段：安全稳定化 MVP（核心已完成）→ **产品 0.5.2**（Windows 官方 NSIS Setup.exe；0.5.1 附图切点仍在）
+> 版本: 1.7.3 | 日期: 2026-08-26 | 当前阶段：安全稳定化 MVP（核心已完成）→ **产品 0.5.2**（Windows 官方 NSIS Setup.exe；0.5.1 附图切点仍在）。#226 切片 1–3 + 知识 Wave 3 已合；下一刀 = T1 真人 bake-off → 侧栏看山。快照：[post-226-status](superpowers/specs/2026-08-26-post-226-status.md)
 
 ---
 
@@ -8,7 +8,7 @@
 
 一个对着 **已登录 Chrome** 真干活的本机 Agent。热键召唤开口；人在 Chrome 里用侧栏操作；人在 Codex 里**租同一只手**（Outbound MCP）；危险走确认台。Side Panel 是 Operate 面之一，**不是家**。家是 **已登录的 Chrome + 硬闸**。
 
-形态 SoT：[2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md)。
+形态 SoT：[2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md)。合后现状：[2026-08-26-post-226-status.md](superpowers/specs/2026-08-26-post-226-status.md)。
 
 通过 CDP/Chrome APIs 操作浏览器，通过本地 Companion 进程管理 LLM 调用、对话状态和技能系统。
 
