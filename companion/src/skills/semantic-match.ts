@@ -75,6 +75,29 @@ export function tokensToVec(tokens: string[]): Record<string, number> {
   return vec
 }
 
+/** Smoothed IDF from a corpus of tokenized documents. */
+export function idfFromDocs(docs: string[][]): Record<string, number> {
+  const df: Record<string, number> = {}
+  const n = Math.max(1, docs.length)
+  for (const doc of docs) {
+    for (const t of new Set(doc)) df[t] = (df[t] || 0) + 1
+  }
+  const idf: Record<string, number> = {}
+  for (const [t, c] of Object.entries(df)) {
+    // Smoothed IDF: a term in every doc must score **below** an unseen term (unseen → 1).
+    idf[t] = Math.log((n + 1) / (c + 1))
+  }
+  return idf
+}
+
+/** TF-IDF vector: normalized TF multiplied by corpus IDF (unseen terms → 1). */
+export function tfidfVec(tokens: string[], idf: Record<string, number>): Record<string, number> {
+  const tf = tokensToVec(tokens)
+  const vec: Record<string, number> = {}
+  for (const [t, v] of Object.entries(tf)) vec[t] = v * (idf[t] ?? 1)
+  return vec
+}
+
 /** Cosine similarity between two token frequency vectors. */
 export function cosineSimilarity(
   vec1: Record<string, number>,

@@ -221,6 +221,23 @@ test("semantic-match: cosineSimilarity handles partial overlap", () => {
   assert.ok(result > 0 && result < 1)
 })
 
+test("tfidfVec ranks a rare in-corpus token above a token in every document", () => {
+  const { idfFromDocs, tfidfVec, cosineSimilarity } = require("../src/skills/semantic-match")
+  const docs = [
+    ["web", "alpha"],
+    ["web", "beta"],
+    ["web", "gamma"],
+    ["web", "rareterm"],
+  ]
+  const idf = idfFromDocs(docs)
+  const q = tfidfVec(["web", "rareterm"], idf)
+  const commonOnly = tfidfVec(["web"], idf)
+  const rareOnly = tfidfVec(["rareterm"], idf)
+  assert.ok(cosineSimilarity(q, rareOnly) > cosineSimilarity(q, commonOnly))
+  const { tokensToVec } = require("../src/skills/semantic-match")
+  assert.deepEqual(tokensToVec(["a", "a", "b"]), { a: 2 / 3, b: 1 / 3 })
+})
+
 // --- Tests for skill-engine.ts ---
 
 before(async () => {
