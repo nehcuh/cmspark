@@ -64,6 +64,16 @@ test("handleOutboundGrantCli --allow-page-export sets grant flag not disclosure 
   assert.match(stdout, /已允许 c 把页文\/截图发给其云模型（可在设置里撤销这把钥匙）。/)
 })
 
+test("handleOutboundGrantCli --allow-page-export=false does not persist true", async () => {
+  const { stdout, code } = await runGrantCli([
+    "issue", "--caller-id", "c", "--allow-page-export=false",
+  ])
+  assert.equal(code, 0)
+  assert.equal(grantAllowsPageExport("c"), false)
+  assert.equal(hasOutboundDisclosure("c"), false)
+  assert.match(stdout, /未允许页文\/截图外泄/)
+})
+
 test("unknown subcommand exits 1", async () => {
   const { code, stderr, stdout } = await runGrantCli(["explode"])
   assert.equal(code, 1)
@@ -77,6 +87,8 @@ test("grant-cli.ts must not import acceptOutboundDisclosure or open a server", (
   assert.doesNotMatch(src, /listen\(/)
   assert.doesNotMatch(src, /createServer\(/)
   assert.doesNotMatch(src, /fetch\(/)
+  assert.doesNotMatch(src, /http\.request/)
+  assert.doesNotMatch(src, /net\.createServer/)
 })
 
 test("handleOutboundGrantCli revoke by id", async () => {
@@ -110,8 +122,13 @@ test("outboundMcpLaunchSpec is platform-honest", () => {
   assert.deepEqual(darwin.args, ["mcp-outbound"])
 
   const win = outboundMcpLaunchSpec("win32")
-  assert.equal(win.command, "%LOCALAPPDATA%\\CMspark\\node.exe")
-  assert.ok(win.args.includes("cmspark-agent.js"))
+  assert.match(win.command, /CMspark\\node\.exe$/)
+  assert.match(
+    win.args[0] || "",
+    /CMspark\\cmspark-agent\.js|CMspark\/cmspark-agent\.js/,
+    "win32 args[0] must be the full cmspark-agent.js path, not a bare filename",
+  )
+  assert.notEqual(win.args[0], "cmspark-agent.js")
   assert.ok(win.args.includes("mcp-outbound"))
 
   const linux = outboundMcpLaunchSpec("linux")

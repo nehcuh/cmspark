@@ -42,6 +42,15 @@ function flagString(flags: Map<string, string | true>, key: string): string | un
   return s || undefined
 }
 
+/** Bare `--flag` or value true/1/yes (case-insensitive). false/0/no and unknown values are off. */
+function flagEnabled(flags: Map<string, string | true>, key: string): boolean {
+  if (!flags.has(key)) return false
+  const v = flags.get(key)
+  if (v === true) return true
+  const s = String(v).trim().toLowerCase()
+  return s === "true" || s === "1" || s === "yes"
+}
+
 function parseArgv(argv: string[]): {
   sub: string | undefined
   flags: Map<string, string | true>
@@ -79,9 +88,15 @@ export function outboundMcpLaunchSpec(
     }
   }
   if (platform === "win32") {
+    // MCP hosts spawn with client cwd and often do not expand env. Prefer a
+    // real LOCALAPPDATA path when we are actually on Windows; otherwise keep
+    // the documented %LOCALAPPDATA% template (never a bare cmspark-agent.js).
+    const envLocal = (process.env.LOCALAPPDATA || "").trim()
+    const localAppData = getPlatform() === "win32" && envLocal ? envLocal : "%LOCALAPPDATA%"
+    const dir = `${localAppData}\\CMspark`
     return {
-      command: "%LOCALAPPDATA%\\CMspark\\node.exe",
-      args: ["cmspark-agent.js", "mcp-outbound"],
+      command: `${dir}\\node.exe`,
+      args: [`${dir}\\cmspark-agent.js`, "mcp-outbound"],
     }
   }
   // linux / unknown: PATH binary — never a fake Mac DMG path
@@ -150,7 +165,7 @@ function issue(flags: Map<string, string | true>, io: GrantCliIo): number {
     }
     ttl_ms = n
   }
-  const allowPageExport = flags.has("allow-page-export")
+  const allowPageExport = flagEnabled(flags, "allow-page-export")
   const issued = issueOutboundGrant({
     caller_id: callerId,
     label: label || callerId,
