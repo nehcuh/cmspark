@@ -688,6 +688,7 @@ body{
 .rail-btn:hover{background:var(--canvas);color:var(--text)}
 .rail-btn[aria-current="true"]{background:var(--indigo-soft);color:var(--indigo)}
 .rail-btn:focus-visible{outline:none;box-shadow:var(--focus)}
+.rail-btn[hidden]{display:none}
 .list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;background:var(--paper);overflow:hidden}
 .list-head{padding:14px 14px 8px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--faint)}
 .list-scroll{overflow-y:auto;overflow-x:hidden;flex:1;padding:0 6px 10px}
@@ -777,7 +778,7 @@ body{
       <button class="rail-btn" data-sec="skills" type="button" title="技能" aria-label="技能">
         <svg viewBox="0 0 24 24"><path d="M8 15.2 4.8 12 8 8.8M16 8.8 19.2 12 16 15.2M13.1 6.8 10.9 17.2"/></svg>
       </button>
-      <button class="rail-btn" data-sec="mcp" type="button" title="MCP" aria-label="MCP">
+      <button class="rail-btn" data-sec="mcp" type="button" title="MCP" aria-label="MCP" hidden>
         <svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1.2"/><path d="M12 4.6v3.2M12 16.2v3.2M4.6 12H8M16 12h3.4"/></svg>
       </button>
     </nav>

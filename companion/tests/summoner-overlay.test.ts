@@ -71,6 +71,29 @@ test("SummonerController is a one-bar HUD: 720pt, no stacked makeRail, Esc hides
   assert.match(hide, /orderOut/)
 })
 
+test("PR-C: expand chrome hides MCP icon via isHidden; default section is 对话", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  const railStart = overlay.indexOf("let railSpecs")
+  const railEnd = overlay.indexOf("let listCol")
+  assert.ok(railStart >= 0 && railEnd > railStart)
+  const rail = overlay.slice(railStart, railEnd)
+  assert.match(rail, /"对话", 0/)
+  assert.match(rail, /"MCP", 4/)
+  assert.match(rail, /isHidden/)
+  assert.match(overlay, /summoner\.mcp\.add/)
+  assert.match(overlay, /summoner\.mcp\.toggle/)
+  assert.match(overlay, /private var railSection = 0/)
+  const mcpList = overlay.slice(overlay.indexOf("func refreshMcpList"), overlay.indexOf("func refreshSkillList"))
+  const knList = overlay.slice(
+    overlay.indexOf("func refreshKnowledgeList"),
+    overlay.indexOf("func tintRailButtons"),
+  )
+  assert.match(mcpList, /＋ 添加 MCP/)
+  assert.match(mcpList, /isHidden\s*=\s*true/)
+  assert.match(knList, /＋ 导入知识/)
+  assert.match(knList, /isHidden\s*=\s*true/)
+})
+
 test("HUD expand B0: chevron, workbench above composer, threads from applyThreads", () => {
   const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
   assert.match(overlay, /toggleExpandClicked/)

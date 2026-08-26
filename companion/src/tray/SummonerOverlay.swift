@@ -589,6 +589,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private func refreshMcpList() {
     clearListStack()
     addPlainRow(id: "__add__", title: "＋ 添加 MCP", dimmed: false, action: #selector(mcpAddClicked(_:)))
+    threadListStack?.arrangedSubviews.last?.isHidden = true // freeze CONFIGURE chrome
     if mcpRows.isEmpty {
       addListEmpty("还没有 MCP 服务器")
       layoutListDocument()
@@ -631,6 +632,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private func refreshKnowledgeList() {
     clearListStack()
     addPlainRow(id: "__import__", title: "＋ 导入知识", dimmed: false, action: #selector(knowledgeImportClicked(_:)))
+    threadListStack?.arrangedSubviews.last?.isHidden = true // freeze CONFIGURE chrome
     if knowledgeRows.isEmpty {
       addListEmpty("还没有知识文档")
       layoutListDocument()
@@ -1764,6 +1766,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       btn.translatesAutoresizingMaskIntoConstraints = false
       btn.widthAnchor.constraint(equalToConstant: 44).isActive = true
       btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
+      btn.isHidden = spec.2 == 4 // freeze MCP rail icon; keep sixth rail + stdin
       railCol.addArrangedSubview(btn)
     }
     let listCol = NSStackView()
