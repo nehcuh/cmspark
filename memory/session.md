@@ -2,6 +2,12 @@
 
 ## Current Session
 
+### S83 (2026-08-26) [标准流程续 · T1 预检 BLOCK · 切片 6 计划]
+- **T1 预检** `docs/audit/reviews/outbound-mcp-p0d-preflight-20260826.md`：daemon 在跑但是旧 0.5.2、无 `outbound-grant`；盘上 `require_grant=false` + `auto_approve_dangerous=true`。未签发钥匙、未打 live 工具。
+- **切片 5**：机核已在 main（CompanionMark + 22px + 句子邀请 + 作曲区）。不重开。
+- **切片 6 计划**：`docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md`。下一步 = 计划四路对抗 + dual，**不要**未审就写码。
+- Recorded: yes — T1 假分禁条；live 配置不是代码默认
+
 ### S82 END (2026-08-26) [#226 MERGED · 残枝清掉 · 现状快照]
 - **Ship**：**PR #226 MERGED** `5d096a7`。知识 Wave 3 + 产品切片 1–3（租手钥匙 / L8 confirm / 召唤器诚实）。PR CI + main CI 全绿。
 - **清**：本地枝/stash/未跟踪评审 patch 已删；远程已合残枝已删。`origin` 只剩 `main`。
