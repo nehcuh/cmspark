@@ -2622,11 +2622,12 @@ export async function handleMessage(
         : []
       const known = new Set(skillEngine.listKnowledge().map((d) => d.name || d.id).filter(Boolean))
       const next = ids.filter((id: string) => known.has(id))
+      const dropped = ids.filter((id: string) => !known.has(id))
       threadManager.update(rest.thread_id, {
         active_knowledge_ids: next,
         knowledge_selection_mode: "manual",
       })
-      return { type: "knowledge.active", thread_id: rest.thread_id, ids: next }
+      return { type: "knowledge.active", thread_id: rest.thread_id, ids: next, dropped }
     }
     case "knowledge.preview": {
       const loaded = await loadKnowledgePayload(rest)

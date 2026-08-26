@@ -210,6 +210,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var expandButton: NSButton?
   private var workbenchBox: NSView?
   private var threadListStack: NSStackView?
+  private var listScrollView: NSScrollView?
   private var listHeadField: NSTextField?
   private var expanded = false
   private var railSection = 0
@@ -364,11 +365,13 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       empty.textColor = SummonerTokens.faint
       empty.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
       stack.addArrangedSubview(empty)
+      layoutListDocument()
       return
     }
-    for row in threadRows.prefix(12) {
+    for row in threadRows.prefix(64) { // SUMMONER_RAIL_LIST_CAP
       stack.addArrangedSubview(makeThreadRow(row))
     }
+    layoutListDocument()
   }
 
   private func makeThreadRow(_ row: RecentThread) -> NSView {
@@ -528,6 +531,14 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     threadListStack?.arrangedSubviews.forEach { $0.removeFromSuperview() }
   }
 
+  private func layoutListDocument() {
+    guard let stack = threadListStack, let scroll = listScrollView else { return }
+    stack.layoutSubtreeIfNeeded()
+    let width = max(scroll.contentSize.width, 200)
+    let height = max(stack.fittingSize.height, 1)
+    stack.frame = NSRect(x: 0, y: 0, width: width, height: height)
+  }
+
   private func addListEmpty(_ text: String) {
     let empty = NSTextField(wrappingLabelWithString: text)
     empty.font = .systemFont(ofSize: 13)
@@ -557,14 +568,16 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     let rows = packRows.filter { ($0["id"] as? String)?.isEmpty == false }
     if rows.isEmpty {
       addListEmpty("还没有场景包")
+      layoutListDocument()
       return
     }
-    for row in rows.prefix(12) {
+    for row in rows.prefix(64) { // SUMMONER_RAIL_LIST_CAP
       let id = row["id"] as? String ?? ""
       let name = row["name"] as? String ?? id
       let ok = row["overlay_eligible"] as? Bool ?? false
       addPlainRow(id: id, title: ok ? name : "\(name) · 不可套", dimmed: !ok, action: #selector(packRowClicked(_:)))
     }
+    layoutListDocument()
   }
 
   private func refreshMcpList() {
@@ -572,9 +585,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     addPlainRow(id: "__add__", title: "＋ 添加 MCP", dimmed: false, action: #selector(mcpAddClicked(_:)))
     if mcpRows.isEmpty {
       addListEmpty("还没有 MCP 服务器")
+      layoutListDocument()
       return
     }
-    for row in mcpRows.prefix(12) {
+    for row in mcpRows.prefix(64) { // SUMMONER_RAIL_LIST_CAP
       let name = row["name"] as? String ?? ""
       let enabled = row["enabled"] as? Bool ?? false
       addPlainRow(
@@ -584,15 +598,17 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
         action: #selector(mcpRowClicked(_:)),
       )
     }
+    layoutListDocument()
   }
 
   private func refreshSkillList() {
     clearListStack()
     if skillRows.isEmpty {
       addListEmpty("还没有技能")
+      layoutListDocument()
       return
     }
-    for row in skillRows.prefix(12) {
+    for row in skillRows.prefix(64) { // SUMMONER_RAIL_LIST_CAP
       let name = row["name"] as? String ?? ""
       let title = row["title"] as? String ?? name
       let on = row["on"] as? Bool ?? false
@@ -603,6 +619,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
         action: #selector(skillRowClicked(_:)),
       )
     }
+    layoutListDocument()
   }
 
   private func refreshKnowledgeList() {
@@ -610,9 +627,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     addPlainRow(id: "__import__", title: "＋ 导入知识", dimmed: false, action: #selector(knowledgeImportClicked(_:)))
     if knowledgeRows.isEmpty {
       addListEmpty("还没有知识文档")
+      layoutListDocument()
       return
     }
-    for row in knowledgeRows.prefix(12) {
+    for row in knowledgeRows.prefix(64) { // SUMMONER_RAIL_LIST_CAP
       let id = row["id"] as? String ?? ""
       let title = row["title"] as? String ?? id
       let attached = row["attached"] as? Bool ?? false
@@ -623,6 +641,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
         action: #selector(knowledgeRowClicked(_:)),
       )
     }
+    layoutListDocument()
   }
 
   private func tintRailButtons() {
@@ -712,11 +731,15 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       applyError(message: "文件太大或无法读取（不超过 6MB）", errorCode: "upload_failed")
       return
     }
+    guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+      applyError(message: "只支持文本知识（md/txt）", errorCode: "upload_failed")
+      return
+    }
     jsonLine([
       "type": "summoner.knowledge.import",
       "name": url.lastPathComponent,
       "mime": mimeTypeForAttach(url: url),
-      "content": String(data: data, encoding: .utf8) ?? data.base64EncodedString(),
+      "content": text,
     ])
   }
 
@@ -1727,6 +1750,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     let listCol = NSStackView()
     listCol.orientation = .vertical
     listCol.alignment = .leading
+    listCol.distribution = .fill
     listCol.spacing = 4
     listCol.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
     listCol.translatesAutoresizingMaskIntoConstraints = false
@@ -1734,21 +1758,38 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     let listHead = NSTextField(labelWithString: "对话")
     listHead.font = .systemFont(ofSize: 11, weight: .semibold)
     listHead.textColor = SummonerTokens.faint
+    listHead.setContentHuggingPriority(.required, for: .vertical)
     listHeadField = listHead
     listCol.addArrangedSubview(listHead)
     let tStack = NSStackView()
     tStack.orientation = .vertical
     tStack.alignment = .leading
     tStack.spacing = 2
-    tStack.translatesAutoresizingMaskIntoConstraints = false
-    tStack.widthAnchor.constraint(equalToConstant: 200).isActive = true
+    tStack.translatesAutoresizingMaskIntoConstraints = true
+    tStack.autoresizingMask = [.width]
     threadListStack = tStack
-    listCol.addArrangedSubview(tStack)
+    let listScroll = NSScrollView()
+    listScroll.translatesAutoresizingMaskIntoConstraints = false
+    listScroll.hasVerticalScroller = true
+    listScroll.hasHorizontalScroller = false
+    listScroll.autohidesScrollers = true
+    listScroll.borderType = .noBorder
+    listScroll.drawsBackground = false
+    listScroll.documentView = tStack
+    listScroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+    listScroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+    listScrollView = listScroll
+    listCol.addArrangedSubview(listScroll)
     logBox.setContentHuggingPriority(.defaultLow, for: .horizontal)
     logBox.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     workbench.addArrangedSubview(railCol)
     workbench.addArrangedSubview(listCol)
     workbench.addArrangedSubview(logBox)
+    NSLayoutConstraint.activate([
+      railCol.heightAnchor.constraint(equalTo: workbench.heightAnchor),
+      listCol.heightAnchor.constraint(equalTo: workbench.heightAnchor),
+      logBox.heightAnchor.constraint(equalTo: workbench.heightAnchor),
+    ])
 
     let ctaBox = NSView()
     ctaBox.translatesAutoresizingMaskIntoConstraints = false

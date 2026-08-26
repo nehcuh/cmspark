@@ -1,0 +1,49 @@
+{
+  "batch": "overlay-post222-residual-fix",
+  "timestamp": "20260826",
+  "base": "a58b78f",
+  "branch": "fix/overlay-post222-residual",
+  "machine": {
+    "commands": [
+      "npx --offline tsx --test tests/summoner-web.test.ts tests/summoner-shell-open.test.ts tests/summoner-workbench-compose.test.ts tests/summoner-acl.test.ts tests/knowledge-active-ids.test.ts tests/summoner-overlay.test.ts tests/summoner-thread-manage.test.ts tests/swift-tray-integrity.test.ts",
+      "shasum -a 256 companion/dist/cmspark-tray"
+    ],
+    "tests": "118 pass / 0 fail",
+    "sha256_pin": "34ed53a00eba5ca129f7803ca5c373bb146bba9a5078e8ba074b77024a777b7c",
+    "sha256_binary": "34ed53a00eba5ca129f7803ca5c373bb146bba9a5078e8ba074b77024a777b7c",
+    "result": "PASS"
+  },
+  "adversaries": {
+    "security": { "verdict": "APPROVE_WITH_NITS", "path": "docs/audit/reviews/overlay-post222-residual-fix-adversary-security-20260826.md" },
+    "product": { "verdict": "APPROVE_WITH_NITS", "path": "docs/audit/reviews/overlay-post222-residual-fix-adversary-product-20260826.md" },
+    "impl": { "verdict": "APPROVE_WITH_NITS", "path": "docs/audit/reviews/overlay-post222-residual-fix-adversary-impl-20260826.md" },
+    "external": { "verdict": "APPROVE_WITH_NITS", "path": "docs/audit/reviews/overlay-post222-residual-fix-adversary-external-20260826.md" }
+  },
+  "all_approve_star": true,
+  "any_reject": false,
+  "pi_rereview": "N/A — not run this turn",
+  "i1_i8": {
+    "I1": "CLOSED",
+    "I2": "CLOSED",
+    "I3": "CLOSED",
+    "I4": "CLOSED",
+    "I5": "CLOSED",
+    "I6": "CLOSED",
+    "I7": "CLOSED",
+    "I8": "CLOSED"
+  },
+  "post_adversary_nits_folded": [
+    "C-thin placeWindow collapsed 500x140 → 720x120 (match shell-open lock)",
+    "Mac listCol/railCol/logBox height pinned to workbench (NSScrollView gets a clip height; AppKit has no NSStackView.alignment = .fill)"
+  ],
+  "remaining_nits": [
+    "Win/Linux systray2 never-promise L2 dead click (I4 residual; Darwin tray ride intact)",
+    "knowledge.set_active dropped not toasted in HUD/C-thin",
+    "I3 copy says md/txt; any non-empty UTF-8 is accepted",
+    "list cap 64 still silent; # search still hits.prefix(6)",
+    "I7/I5 not pixel-run",
+    "I8 still no wrapKnowledgeBlock unit test",
+    "Swift prefix(64) magic vs TS SUMMONER_RAIL_LIST_CAP"
+  ],
+  "merge": "NO — MACHINE PASS + 4-lane APPROVE* but Pi rereview not run"
+}

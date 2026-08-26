@@ -256,3 +256,20 @@ test("saveUserPack knowledge_ids → knowledge_refs; apply activates", () => {
   assert.ok((t2.active_knowledge_ids || []).includes("scene-kb"))
   packEngine.deleteUserPack(saved.id, tm, se)
 })
+
+test("knowledge.set_active drops unknown ids fail-closed and reports dropped", async () => {
+  seedKnowledgeDoc("known-kb")
+  const se = new SkillEngine()
+  se.refresh()
+  const tm = new ThreadManager()
+  const th = tm.create("k-unknown")
+  const { handleMessage } = await import("../src/message-router")
+  const resp = await handleMessage(
+    { type: "knowledge.set_active", thread_id: th.id, ids: ["known-kb", "ghost-id", ""] },
+    { threadManager: tm, skillEngine: se, historyStore: { record: () => 0 } } as any,
+  )
+  assert.equal(resp.type, "knowledge.active")
+  assert.deepEqual(resp.ids, ["known-kb"])
+  assert.deepEqual(resp.dropped, ["ghost-id"])
+  assert.deepEqual(tm.get(th.id)?.active_knowledge_ids, ["known-kb"])
+})

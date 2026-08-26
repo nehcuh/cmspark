@@ -1,0 +1,28 @@
+# Dual external review context
+batch: overlay-post222-residual
+base: HEAD
+time: 20260826-093708
+
+a58b78f
+
+?? docs/audit/reviews/overlay-dogfood-slice-ab-diff-20260825-140045.patch
+?? docs/audit/reviews/overlay-dogfood-slice-ab-impl-diff-20260825-142137.patch
+?? docs/audit/reviews/overlay-hud-a-impl-diff-20260825-152555.patch
+?? docs/audit/reviews/overlay-hud-expand-b0-diff-20260825-161538.patch
+?? docs/audit/reviews/overlay-hud-expand-b05-diff-20260825-174045.patch
+?? docs/audit/reviews/overlay-hud-expand-b1b4-diff-20260825-185345.patch
+?? docs/audit/reviews/overlay-hud-expand-b1b4-r2-diff-20260825-191444.patch
+?? docs/audit/reviews/overlay-nspanel-restore-diff-20260825-150534.patch
+?? docs/audit/reviews/overlay-post222-residual-20260826.diff
+?? docs/audit/reviews/overlay-post222-residual-adversary-external-20260826.md
+?? docs/audit/reviews/overlay-post222-residual-adversary-impl-20260826.md
+?? docs/audit/reviews/overlay-post222-residual-adversary-product-20260826.md
+?? docs/audit/reviews/overlay-post222-residual-adversary-security-20260826.md
+?? docs/audit/reviews/overlay-post222-residual-claude-20260826-090501.md
+?? docs/audit/reviews/overlay-post222-residual-diff-20260826-090501.patch
+?? docs/audit/reviews/overlay-post222-residual-diff-20260826-093708.patch
+?? docs/audit/reviews/overlay-post222-residual-dual-review-prompt-20260826.md
+?? docs/audit/reviews/pr218-remainder-nits-diff-20260824.patch
+
+## Diff (git diff + staged)
+

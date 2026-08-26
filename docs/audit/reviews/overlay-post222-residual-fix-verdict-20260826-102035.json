@@ -1,0 +1,8 @@
+{
+  "batch": "overlay-post222-residual-fix",
+  "timestamp": "20260826-102035",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-post222-residual-fix-claude-20260826-102035.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-post222-residual-fix-pi-20260826-102035.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/overlay-post222-residual-fix-diff-20260826-102035.patch"
+}
