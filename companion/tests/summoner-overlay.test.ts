@@ -226,9 +226,11 @@ test("detached browser copy unhides honesty CTAs", () => {
   assert.match(body, /打开浏览器/)
   assert.match(body, /打开并前置浏览器/)
   const apply = body.slice(body.indexOf("private func applyPhase()"), body.indexOf("private func relayout()"))
-  assert.match(apply, /ctaBox\?\.isHidden = !detached/)
-  assert.match(apply, /silentAttachButton\?\.isHidden = !detached/)
-  assert.match(apply, /attachButton\?\.isHidden = !detached/)
+  assert.match(apply, /let showCta = detached \|\| confirmPending/)
+  assert.match(apply, /ctaBox\?\.isHidden = !showCta/)
+  assert.match(body, /打开确认台/)
+  assert.match(body, /需要确认才能继续/)
+  assert.match(body, /MCP_CONFIRM_PENDING/)
 })
 
 test("SummonerController close emits summoner.closed and not chat.abort", () => {

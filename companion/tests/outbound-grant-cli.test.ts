@@ -48,7 +48,7 @@ test("handleOutboundGrantCli issue prints cmg_ once and env snippet", async () =
   assert.match(stdout, /CMSPARK_OUTBOUND_CALLER_ID/)
   assert.match(stdout, /CMSPARK_OUTBOUND_PORT=23401/)
   assert.match(stdout, /这把钥匙只出现一次。它不是扩展配对码。/)
-  assert.match(stdout, /未允许页文\/截图外泄。首次读取页面或截图仍会在确认台询问你。/)
+  assert.match(stdout, /未允许页文\/截图外泄。编程助手读取页面或截图会被拒绝/)
   assert.match(stdout, /mcp-outbound/)
   assert.doesNotMatch(stderr, /cmg_/)
   const listed = listOutboundGrants()
@@ -61,7 +61,8 @@ test("handleOutboundGrantCli --allow-page-export sets grant flag not disclosure 
   assert.equal(code, 0)
   assert.equal(grantAllowsPageExport("c"), true)
   assert.equal(hasOutboundDisclosure("c"), false)
-  assert.match(stdout, /已允许 c 把页文\/截图发给其云模型（可在设置里撤销这把钥匙）。/)
+  assert.match(stdout, /已允许 c 把页文\/截图发给其云模型/)
+  assert.match(stdout, /首次外泄仍须在确认台批准/)
 })
 
 test("handleOutboundGrantCli --allow-page-export=false does not persist true", async () => {

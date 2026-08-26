@@ -12,6 +12,7 @@ import {
   type OutboundCallRequest,
   type OutboundCallResult,
 } from "./facade"
+import { outboundToInternalName } from "./profile"
 import { makeOutboundMcpOrigin, type OutboundMcpOrigin } from "./origin"
 import { appendOutboundMcpAudit } from "./audit"
 
@@ -58,12 +59,16 @@ export async function invokeOutboundTool(
   dispatcher: OutboundDispatcher | null | undefined = defaultDispatcher,
 ): Promise<InvokeOutboundResult> {
   const gate = gateOutboundCall(req)
-  if (!gate.ok) {
+  // HITL must wait on Companion HTTP (confirm center), not fail in the stdio
+  // child. Local NOT_GRANTED / PROFILE_FORBIDDEN still fail-closed here.
+  const passHitlToHttp =
+    !gate.ok && gate.error_code === "DISCLOSURE_HITL_REQUIRED" && !!dispatcher
+  if (!gate.ok && !passHitlToHttp) {
     return gate
   }
 
   const origin = makeOutboundMcpOrigin(req.caller_id)
-  const internal = gate.internal_tool
+  const internal = gate.internal_tool || outboundToInternalName(req.tool)
   if (!internal) {
     appendOutboundMcpAudit({
       caller_id: req.caller_id || "unknown",
@@ -98,9 +103,9 @@ export async function invokeOutboundTool(
     }
   }
 
-  // Defense in depth: re-check grant flag ∧ operator HITL before dispatch
+  // Defense in depth: re-check grant flag. HITL_REQUIRED still goes to HTTP.
   const exfilDeny = denyOutboundExfilIfNeeded(req.caller_id, req.tool)
-  if (exfilDeny) {
+  if (exfilDeny && !(passHitlToHttp && exfilDeny.error_code === "DISCLOSURE_HITL_REQUIRED")) {
     return { ...exfilDeny, origin }
   }
 

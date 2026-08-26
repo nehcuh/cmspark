@@ -39,6 +39,8 @@ export const SUMMONER_RENTER_CHROME_DOWN =
   "编程助手要看你的页面，但浏览器没在。" as const
 export const SUMMONER_ATTACH_PRIMARY = "打开浏览器" as const
 export const SUMMONER_ATTACH_SECONDARY = "打开并前置浏览器" as const
+export const SUMMONER_CONFIRM_NEED = "需要确认才能继续。" as const
+export const SUMMONER_OPEN_CONFIRM = "打开确认台" as const
 export const SUMMONER_ATTACH_FOOTNOTE =
   "我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。" as const
 export const SUMMONER_MIC_SIDEBAR = "听写在侧栏" as const

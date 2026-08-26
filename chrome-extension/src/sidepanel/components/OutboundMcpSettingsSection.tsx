@@ -205,7 +205,7 @@ export function OutboundMcpSettingsSection() {
         <label style={{ ...styles.label, flex: 1, marginBottom: 0 }}>
           强制 require_grant
           <div style={{ ...styles.helpText, marginTop: 2 }}>
-            开启后 loopback 只接受 grant，拒绝 ws_secret（P1 发货门；bake-off 可保持关闭）
+            默认开启：loopback 只接受租手钥匙（cmg_），拒绝扩展配对码 ws_secret。关闭仅供调试回退，不是 MCP 配对。
           </div>
         </label>
         <button

@@ -188,6 +188,25 @@ test("invoke with dispatcher runs and binds origin (M4/M6)", async () => {
   assert.equal(d.origin.synthetic_origin, "outbound_mcp:agent-a")
 })
 
+test("invoke HITL_REQUIRED with dispatcher still reaches companion HTTP", async () => {
+  issueOutboundGrant({
+    label: "hitl",
+    caller_id: "hitl-pass",
+    allow_page_export: true,
+  })
+  let called = false
+  setOutboundDispatcher(async () => {
+    called = true
+    return { success: true, data: { ok: true } }
+  })
+  const r = await invokeOutboundTool({
+    caller_id: "hitl-pass",
+    tool: "cmspark__get_page_text",
+  })
+  assert.equal(called, true)
+  assert.equal(r.ok, true)
+})
+
 test("invoke exfil without session never reaches dispatcher", async () => {
   let called = false
   setOutboundDispatcher(async () => {

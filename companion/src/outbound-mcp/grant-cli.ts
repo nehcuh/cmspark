@@ -131,10 +131,13 @@ function printIssue(
   if (allowPageExport) {
     writeln(
       io.stdout,
-      `已允许 ${issued.caller_id} 把页文/截图发给其云模型（可在设置里撤销这把钥匙）。`,
+      `已允许 ${issued.caller_id} 把页文/截图发给其云模型（可在设置里撤销这把钥匙）。首次外泄仍须在确认台批准；Windows/Linux 请打开 Chrome 确认台。`,
     )
   } else {
-    writeln(io.stdout, "未允许页文/截图外泄。首次读取页面或截图仍会在确认台询问你。")
+    writeln(
+      io.stdout,
+      "未允许页文/截图外泄。编程助手读取页面或截图会被拒绝（不会弹出确认台）。需要外泄请加 --allow-page-export。",
+    )
   }
   writeln(io.stdout)
   writeln(io.stdout, "把它贴进编程助手的 MCP 配置（env）：")

@@ -49,6 +49,8 @@ private let summonerCdpNeeded = "网页操作需要浏览器（扩展已配对�
 private let summonerRenterChromeDown = "编程助手要看你的页面，但浏览器没在。"
 private let summonerAttachPrimary = "打开浏览器"
 private let summonerAttachSecondary = "打开并前置浏览器"
+private let summonerConfirmNeed = "需要确认才能继续。"
+private let summonerOpenConfirm = "打开确认台"
 private let summonerAttachFootnote = "我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。"
 private let summonerFileMaxBytes = 6 * 1024 * 1024
 private let summonerHudInnerWidth: CGFloat = 696
@@ -182,6 +184,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var browserAttached = false
   private var browserKnown = false
   private var sawBrowserUnavailable = false
+  private var confirmPending = false
   private var lines: [String] = []
   private var streamingAssistant = false
   private var lastComposing = false
@@ -756,6 +759,13 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     streamRenderTimer = nil
     streamingAssistant = false
     let code = errorCode ?? ""
+    if code == "MCP_CONFIRM_PENDING" {
+      confirmPending = true
+      lines.append("系统: \(summonerConfirmNeed)")
+      capLines()
+      applyPhase()
+      return
+    }
     if code == "BROWSER_UNAVAILABLE" {
       sawBrowserUnavailable = true
       browserAttached = false
@@ -1358,15 +1368,22 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       listHeadField?.stringValue = "对话"
       refreshThreadList()
     }
-    ctaBox?.isHidden = !detached
-    attachButton?.isHidden = !detached
-    silentAttachButton?.isHidden = !detached
+    let showCta = detached || confirmPending
+    ctaBox?.isHidden = !showCta
+    attachButton?.isHidden = !showCta
+    silentAttachButton?.isHidden = confirmPending ? true : !detached
     sendButton?.isHidden = true
     continueButton?.isHidden = true
     footRow?.isHidden = true
     lastThreadField?.isHidden = true
-    if detached {
+    if confirmPending {
+      ctaLabel?.stringValue = summonerConfirmNeed
+      attachButton?.title = summonerOpenConfirm
+      attachButton?.toolTip = summonerOpenConfirm
+    } else if detached {
       ctaLabel?.stringValue = sawBrowserUnavailable ? summonerCdpNeeded : summonerCtaCopy
+      attachButton?.title = summonerAttachSecondary
+      attachButton?.toolTip = summonerAttachSecondary
       sideNote?.isHidden = true
     } else {
       sideNote?.isHidden = true

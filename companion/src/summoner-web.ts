@@ -19,6 +19,8 @@ import {
   SUMMONER_ATTACH_FOOTNOTE,
   SUMMONER_ATTACH_PRIMARY,
   SUMMONER_ATTACH_SECONDARY,
+  SUMMONER_CONFIRM_NEED,
+  SUMMONER_OPEN_CONFIRM,
   SUMMONER_CDP_NEEDED,
   SUMMONER_CHEVRON_COLLAPSE,
   SUMMONER_CHEVRON_EXPAND,
@@ -756,6 +758,7 @@ body{
 }
 #attachSilent{background:var(--indigo);color:#fff}
 #attachFront{background:var(--canvas);color:var(--text)}
+#openConfirm{background:var(--indigo);color:#fff}
 .cta-foot{font-size:11px;color:var(--faint)!important;line-height:1.4}
 .hud:not(.expanded) .ghosts{display:none}
 .hud:not(.expanded) .hint{padding:8px 16px}
@@ -821,6 +824,7 @@ body{
       <div class="cta-actions">
         <button type="button" id="attachSilent" title="${SUMMONER_ATTACH_PRIMARY}" aria-label="${SUMMONER_ATTACH_PRIMARY}">${SUMMONER_ATTACH_PRIMARY}</button>
         <button type="button" id="attachFront" title="${SUMMONER_ATTACH_SECONDARY}" aria-label="${SUMMONER_ATTACH_SECONDARY}">${SUMMONER_ATTACH_SECONDARY}</button>
+        <button type="button" id="openConfirm" hidden title="${SUMMONER_OPEN_CONFIRM}" aria-label="${SUMMONER_OPEN_CONFIRM}">${SUMMONER_OPEN_CONFIRM}</button>
       </div>
       <p class="cta-foot">${SUMMONER_ATTACH_FOOTNOTE}</p>
     </div>
@@ -853,6 +857,17 @@ body{
     var box=$("ctaBox"); if(!box) return;
     box.hidden=false;
     $("ctaCopy").textContent=kind==="renter"?CHROME_DOWN.renter:kind==="cdp"?CHROME_DOWN.cdp:CHROME_DOWN.l0;
+    $("attachSilent").hidden=false;
+    $("attachFront").hidden=false;
+    $("openConfirm").hidden=true;
+  }
+  function showConfirmCta(){
+    var box=$("ctaBox"); if(!box) return;
+    box.hidden=false;
+    $("ctaCopy").textContent=${JSON.stringify(SUMMONER_CONFIRM_NEED)};
+    $("attachSilent").hidden=true;
+    $("attachFront").hidden=true;
+    $("openConfirm").hidden=false;
   }
   function hideChromeCta(){ var box=$("ctaBox"); if(box) box.hidden=true; }
   function attachChrome(foreground){
@@ -1038,6 +1053,7 @@ body{
   };
   $("attachSilent").onclick=function(){attachChrome(false)};
   $("attachFront").onclick=function(){attachChrome(true)};
+  $("openConfirm").onclick=function(){attachChrome(true)};
   $("settings").onclick=function(){
     alert("快捷键设置需要在 Chrome 侧栏的设置面板中配置。\n\n请打开 Chrome 侧栏，点击设置图标，在「模型与推理」部分找到「发送快捷键」设置。\n\n召唤器使用相同的快捷键配置。");
   };
@@ -1215,7 +1231,8 @@ body{
         return;
       }
       if(t==="mcp.confirm.pending"){
-        setStatus(d.message||${JSON.stringify(MCP_OVERLAY_CONFIRM_NOTICE)});
+        setStatus(${JSON.stringify(SUMMONER_CONFIRM_NEED)});
+        showConfirmCta();
         return;
       }
       if(t==="run_status"){

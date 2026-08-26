@@ -56,7 +56,7 @@ import {
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
 // Updated 2026-08-26 Task 12 — hide MCP rail icon (protocol stays)
 /** Mac 快捷提问 = native HUD（收起一条；展开对话 + 对话管理）+ 📎/🎙. */
-const SWIFT_TRAY_SHA256 = "31a7f3e072525afb3d9f1dcdc962b95e37bee9ea35593f597e64537ec4b8aa2b"
+const SWIFT_TRAY_SHA256 = "d73d9e06de31fe803c960071da92b4030c0667a4b2aef53e7ee355654674bdfa"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")
