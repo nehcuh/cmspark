@@ -79,7 +79,7 @@ Channel:      community | enterprise unchanged
 - **F-ID-1** 默认空态仍是「这页 / 这轮会话」，不是仓库路径或 diff。ACP `acp.enabled` 默认 false；工作区在场景后。
 - **F-UX-NOUN-1** UI 禁：Project/项目（容器义）、图谱/双链、Raycast/uTools/启动器、第二大脑/wiki、`[1]` 脚注（直到有可见 retrieve tool）。
 - **F-UX-NOUN-2** 保留：场景、知识、本轮附带、召唤器、快捷提问、相关（≤3）。
-- **F-UX-OVERLAY-1** Overlay 不新增 `knowledge.*` / `config.*` / `mcp.add` / confirm。不把「展开」实现成假装打开侧栏。
+- **F-UX-OVERLAY-1** Overlay 是 Capture + 这轮 USE，不是 Confirm、不是 CONFIGURE。USE：`knowledge.list` / `set_active`、overlay-eligible `pack.apply`、`skill.list`、`mcp.list`。CONFIGURE 不在 overlay WS：`knowledge.get/import/update`、`mcp.add`、`config.set`、grant。Overlay **永不** Allow/Deny。批准文案 **「打开确认台」**，不假装 `sidePanel.open`（F-I-4）。Mac HUD stdin `mcp.add`/`knowledge.import` 冻结，不是许可证。`mcp.toggle_server` / `skill.activate` 冻结，票 `overlay-acl-rollback`。完整替换句见 [product-form-deepening §10](./2026-08-26-product-form-deepening-design.md)。
 
 ### 3.2 数据 F-I
 
@@ -97,12 +97,12 @@ Channel:      community | enterprise unchanged
 - **F-S-2** **写时与检索时都 sanitize**（全文、RAG chunk、entries）。今天 RAG 跳过 sanitizer 是 BLOCK，本切片修。
 - **F-S-3** 持久化入库必须 **`user_gesture` + 抽出正文预览**。选文件 ≠ 确认。
 - **F-S-4** 不信任导入 strip/allowlist frontmatter：`site`/`tags`/`type`/`entries` 攻击者可写。`site` 走 `validateWildcardPattern`，拒 `*.com`。默认 **不设 site**。
-- **F-S-5** Overlay ACL 不涨（见 F-UX-OVERLAY-1）。
+- **F-S-5** Overlay ACL 不涨（见 F-UX-OVERLAY-1）。冻结残留（`mcp.toggle_server` / `skill.activate`）不是先例。F-S-10 用 Confirm L8 修，不用 overlay 管 MCP。
 - **F-S-6** UI 不得把模型口中的文件名当来源。
 - **F-S-7** AI 写的 tags/description 是 **草稿**，用户保存前不作检索过滤器、不作自动激活。
 - **F-S-8** 永不自动把 `file.upload` 或整段对话晋升为知识。提炼=确认 + **正文**密钥扫描（`SENSITIVE_TAG_RE` 不够）。
 - **F-S-9** 远程 KB / URL 导入加强 DNS-pin：本 Wave **不交付远程连接器**；若碰 URL import，按 LLM endpoint 级 DNS-pin，禁止 overlay。
-- **F-S-10** Overlay 工具环既有「不能确认却仍跑 `mcp__*`」是 **预存在洞**。本切片 **不恶化**；不在本 bet 修完（另票）。禁止用「overlay 上管理 MCP」掩盖它。
+- **F-S-10** Overlay 工具环既有「不能确认却仍跑 `mcp__*`」是 **预存在洞**。知识切片 **不恶化**。修理 = Confirm L8 fan-out（[形态深化 §7](./2026-08-26-product-form-deepening-design.md)），与五分钟租手同一里程碑。禁止用「overlay 上管理 MCP」掩盖它。
 
 ### 3.4 外部 F-E（反膨胀）
 

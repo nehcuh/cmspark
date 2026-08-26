@@ -2,7 +2,21 @@
 
 > **Consumer assistant canon**（看山质量杠 · Comp A 角色居中）— Operate.  
 > 白底陪伴空态：填色角色印记 + 22px 招呼 + 句子行 + 安静输入。SVG 图标；emoji 仅用于消息内容。  
-> Direction SoT: `.impeccable/mocks/comp-a-centered.png` · Product: [PRODUCT.md](../PRODUCT.md)
+> Direction SoT: `.impeccable/mocks/comp-a-centered.png` · Product: [PRODUCT.md](../PRODUCT.md)  
+> Form SoT: [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md)
+
+## Product surfaces (2026-08-26)
+
+Home is **logged-in Chrome + hard gates**, not the Side Panel. Tokens below still govern Side Panel / Cockpit craft.
+
+| Surface | Design job |
+|---------|------------|
+| 召唤器 | Default = collapsed composer bar (fast). Expand = **展开对话** (thread + list). Not a five-rail WorkBuddy. Same 看山 paper as Operate; no Allow/Deny. |
+| Side Panel | Operate when watching the page. Empty/composer = 看山 canon. ~320px density budget unchanged. |
+| 确认台 / Cockpit | Confirm. Night-world of the same craft. Overlay never borrows this dialect. |
+| 租手 | No new visual chrome in coding agents. Confirm still lands on 确认台 / Mac tray. |
+
+Copy contract (Chinese chrome): `展开对话` / `打开浏览器` / `打开确认台`. Forbidden: `展开工作台`, `去侧栏批准`.
 
 ## Colors
 

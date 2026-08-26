@@ -1,0 +1,23 @@
+{
+  "batch": "product-form-deepening",
+  "ts": "20260826-144035",
+  "blast": "T0",
+  "adversary": {
+    "product": "APPROVE_WITH_NITS",
+    "impl": "APPROVE_WITH_NITS",
+    "security": "APPROVE_WITH_NITS",
+    "external": "APPROVE_WITH_NITS",
+    "synthesis": "docs/audit/reviews/product-form-deepening-adversary-synthesis-20260826.md"
+  },
+  "dual": {
+    "claude_product": "APPROVE_WITH_NITS",
+    "claude_impl": "APPROVE_WITH_NITS",
+    "claude_security": "APPROVE_WITH_NITS",
+    "pi": "APPROVE_WITH_NITS",
+    "aggregate": "both_ok"
+  },
+  "sot": "docs/superpowers/specs/2026-08-26-product-form-deepening-design.md",
+  "nits_folded": true,
+  "implementation": "blocked_until_user_reviews_spec",
+  "notes": "User-facing fourth form = 租手 not Handoff. L8 is DoD of 5-min rent. HUD MCP rail hide-not-delete. Grant CLI not overlay. L3+ disclosure = user HITL."
+}

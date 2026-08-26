@@ -42,8 +42,10 @@
 | [architecture.md](architecture.md) | 活架构：双层拓扑 + 桌面面、MCP/CU/Host/编排/Board/Packs |
 | **[ADR-020 能力三轴](adr/020-capability-model-three-axes.md)** | **Surface · Composition · Autonomy** 本体（能力叠加与防「杂」纪律） |
 | [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.5.0** 对齐；扩展目标带轴标注） |
+| [../PRODUCT.md](../PRODUCT.md) | 产品一句话 / 四面（Capture·Operate·Confirm·租手）；家 = 已登录 Chrome + 硬闸 |
+| [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md) | **形态深化 SoT**（定位、文案合同、L8、五分钟租手、切片 DoD） |
 | [../CHANGELOG.md](../CHANGELOG.md) | 版本变更记录 |
-| [DESIGN.md](DESIGN.md) | UI / 设计 token 约定；Mode badge = Surface |
+| [DESIGN.md](DESIGN.md) | UI / 设计 token 约定；Mode badge = Surface；召唤器默认收起条 |
 | [security-design-tiered-gates-2026-07-11.md](security-design-tiered-gates-2026-07-11.md) | 分层门禁设计说明 |
 
 ---

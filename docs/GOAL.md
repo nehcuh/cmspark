@@ -6,7 +6,11 @@
 
 ## 定位
 
-一个**浏览器内的 AI Agent**，通过 Chrome Side Panel 与用户交互，通过 CDP/Chrome APIs 操作浏览器，通过本地 Companion 进程管理 LLM 调用、对话状态和技能系统。
+一个对着 **已登录 Chrome** 真干活的本机 Agent。热键召唤开口；人在 Chrome 里用侧栏操作；人在 Codex 里**租同一只手**（Outbound MCP）；危险走确认台。Side Panel 是 Operate 面之一，**不是家**。家是 **已登录的 Chrome + 硬闸**。
+
+形态 SoT：[2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md)。
+
+通过 CDP/Chrome APIs 操作浏览器，通过本地 Companion 进程管理 LLM 调用、对话状态和技能系统。
 
 **能力本体（2026-07-29）** — 规范见 **[ADR-020](adr/020-capability-model-three-axes.md)**：
 
