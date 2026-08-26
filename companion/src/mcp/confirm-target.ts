@@ -4,10 +4,10 @@
  */
 
 export const MCP_OVERLAY_CONFIRM_NOTICE =
-  "MCP 工具需在 Chrome 侧栏批准。召唤器不能代替侧栏点批准。" as const
+  "MCP 工具需要在确认台批准。召唤器不能代替确认台点批准。" as const
 
 export const MCP_OVERLAY_CONFIRM_UNAVAILABLE =
-  "MCP 工具需要批准。请打开 Chrome 侧栏（CMspark）完成一次批准；侧栏里已配置的 MCP，召唤器对话可以直接调用。" as const
+  "MCP 工具需要批准。请打开 Chrome 让确认台出现后批准；召唤器不能点允许或拒绝。" as const
 
 export function resolveMcpConfirmTarget(args: {
   originatingSurface?: string

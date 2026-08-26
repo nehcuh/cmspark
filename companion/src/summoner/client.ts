@@ -20,6 +20,7 @@ import {
   type SummonerHit,
   type SummonerHitsCmd,
 } from "./protocol"
+import { MCP_OVERLAY_CONFIRM_NOTICE } from "../mcp/confirm-target"
 
 /** Continue CTA: new user message, never a server-side L1 replay. */
 export const CONTINUE_MESSAGE =
@@ -328,8 +329,8 @@ export function mapChatMessageToSummonerCmd(msg: unknown): SummonerStreamCmd | n
         empty_enqueue: "排队内容为空",
         no_active_run: "没有进行中的一轮",
         OVERLAY_STANDBY: "侧栏占用了输入",
-        pack_not_overlay_eligible: "这个场景要去侧栏确认",
-        pack_trust_cookie_present: "当前对话有 Trust 快照，去侧栏换场景",
+        pack_not_overlay_eligible: "这个场景需要确认台批准",
+        pack_trust_cookie_present: "当前对话有信任快照，请在侧栏装配里换场景",
         pack_run_active: "等本轮结束后再套场景",
       }
       const key = known.includes(code) ? code : String(m.error_code || "")
@@ -360,7 +361,7 @@ export function mapChatMessageToSummonerCmd(msg: unknown): SummonerStreamCmd | n
     const message =
       typeof m.message === "string" && m.message
         ? m.message
-        : "MCP 工具需在 Chrome 侧栏批准"
+        : MCP_OVERLAY_CONFIRM_NOTICE
     return encodeSummonerError({ message, error_code: "MCP_CONFIRM_PENDING" })
   }
   if (type === "file.upload_error") {

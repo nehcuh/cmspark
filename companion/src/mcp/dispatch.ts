@@ -20,7 +20,17 @@ import type { SecurityConfirmationManager } from "../security-confirmation"
 import type { ThreadManager } from "../threads/thread-manager"
 import { getMcpManager } from "./manager"
 import { getMcpConfirmCache } from "./confirm-cache"
-import { resolveMcpConfirmTarget } from "./confirm-target"
+import {
+  resolveMcpConfirmTarget,
+  MCP_OVERLAY_CONFIRM_NOTICE,
+  MCP_OVERLAY_CONFIRM_UNAVAILABLE,
+} from "./confirm-target"
+import {
+  fanOutConfirmRequest,
+  pickExtensionWsFromAuth,
+  resolveConfirmBinding,
+  type ConfirmPeerAuth,
+} from "./confirm-fanout"
 
 /**
  * Audit item 8: tool-name patterns that signal destructive operations. Matching
@@ -39,6 +49,8 @@ export type McpDispatchRuntime = {
   broadcastToClients: (data: any) => void
   pickExtensionWs?: () => WebSocket | null
   getWsSurface?: (ws: WebSocket) => string | undefined
+  getClients?: () => Iterable<WebSocket>
+  wsAuthGet?: (ws: WebSocket) => ConfirmPeerAuth | undefined
 }
 
 let _rt: McpDispatchRuntime | null = null
@@ -56,28 +68,60 @@ function requireRt(): McpDispatchRuntime {
   return _rt
 }
 
-/** Overlay cannot confirm (N5). Retarget to the Chrome panel when surface=summoner. */
-function confirmChannel(originatingWs: WebSocket): { ws: WebSocket } | { error: string } {
+/**
+ * Overlay cannot confirm (N5). Fail closed without an extension peer
+ * (UNAVAILABLE copy). When the panel is up, bind originWs to the extension
+ * and fan out Allow/Deny like L2 — overlay gets mcp.confirm.pending only.
+ */
+function confirmChannel(originatingWs: WebSocket):
+  | { originWs: WebSocket; send: (data: unknown) => void }
+  | { error: string } {
   const rt = requireRt()
   const ext = rt.pickExtensionWs?.() ?? null
+  const originatingSurface = rt.getWsSurface?.(originatingWs)
   const decided = resolveMcpConfirmTarget({
-    originatingSurface: rt.getWsSurface?.(originatingWs),
+    originatingSurface,
     originatingOpen: originatingWs.readyState === WebSocket.OPEN,
     extensionOpen: ext != null && ext.readyState === WebSocket.OPEN,
   })
   if ("error" in decided) return decided
-  const ws = decided.target === "extension" && ext ? ext : originatingWs
-  if (decided.overlayNotice && originatingWs.readyState === WebSocket.OPEN) {
-    try {
-      originatingWs.send(JSON.stringify({
-        type: "mcp.confirm.pending",
-        message: decided.overlayNotice,
-      }))
-    } catch {
-      /* overlay notice is best-effort */
-    }
+
+  const wsAuthGet = rt.wsAuthGet ?? (() => undefined)
+  const clients = new Set<WebSocket>(rt.getClients?.() ?? [])
+  const extensionWs =
+    ext != null && ext.readyState === WebSocket.OPEN
+      ? ext
+      : pickExtensionWsFromAuth(clients, wsAuthGet)
+  const binding = resolveConfirmBinding({
+    originatingWs,
+    originatingSurface,
+    isOutboundMcpCall: false,
+    extensionWs,
+  })
+
+  // Overlay never becomes originWs. No extension → do not skip; fail closed.
+  const originWs =
+    originatingSurface === "summoner"
+      ? binding.originWs
+      : (binding.originWs ?? originatingWs)
+  if (!originWs) {
+    return { error: MCP_OVERLAY_CONFIRM_UNAVAILABLE }
   }
-  return { ws }
+  clients.add(originWs)
+
+  const send = (data: unknown) => {
+    fanOutConfirmRequest({
+      data,
+      originatingWs,
+      originatingSurface,
+      isOutboundMcpCall: false,
+      overlayNotice: binding.overlayNotice,
+      clients,
+      wsAuthGet,
+      overlayNoticeMessage: decided.overlayNotice ?? MCP_OVERLAY_CONFIRM_NOTICE,
+    })
+  }
+  return { originWs, send }
 }
 
 /**
@@ -196,7 +240,6 @@ export async function executeMcpTool(
     if ("error" in channel) {
       return { success: false, error: `Security Block: ${channel.error}` }
     }
-    const confirmWs = channel.ws
     const securityConfig = getConfig().security
     logger.info("mcp.confirm.requested", {
       server: route.serverName,
@@ -208,11 +251,7 @@ export async function executeMcpTool(
       force_confirm: forceMcpConfirm,
     })
     const decision = await securityConfirmations.request(
-      (data) => {
-        if (confirmWs.readyState === WebSocket.OPEN) {
-          confirmWs.send(JSON.stringify(data))
-        }
-      },
+      channel.send,
       {
         toolName,
         dangerousApis: mcpCaps,
@@ -220,8 +259,8 @@ export async function executeMcpTool(
         riskLevel: "medium",
         ...(forceMcpConfirm ? { criticalApis: mcpCaps, riskLevel: "high" as const, autoConfirmEligible: false } : {}),
       },
-      // Overlay chat retargets origin to the panel WS (N5). Panel stays self-origin.
-      { originWs: confirmWs },
+      // Overlay chat retargets origin to the extension WS (N5). Panel stays self-origin.
+      { originWs: channel.originWs },
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
@@ -382,7 +421,6 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
         `MCP path denied (${pre.dir}); ${channel.error} Underlying: ${opts.rawErr}`,
     }
   }
-  const confirmWs = channel.ws
 
   logger.info("mcp.allow_dir.propose", {
     server: opts.route.serverName,
@@ -391,9 +429,7 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
   })
 
   const decision = await securityConfirmations.request(
-    (data) => {
-      if (confirmWs.readyState === WebSocket.OPEN) confirmWs.send(JSON.stringify(data))
-    },
+    channel.send,
     {
       toolName: opts.toolName,
       dangerousApis: ["mcp-allow-dir-expand"],
@@ -404,7 +440,7 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
       autoConfirmEligible: false,
       criticalApis: ["mcp-allow-dir-expand"],
     },
-    { originWs: confirmWs },
+    { originWs: channel.originWs },
   )
 
   if (!decision.approved) {
@@ -557,7 +593,6 @@ export async function executeMcpMetaTool(
     if ("error" in channel) {
       return { success: false, error: `Security Block: ${channel.error}` }
     }
-    const confirmWs = channel.ws
     const securityConfig = securityConfigMeta
     // Capability label for the audit/UI (the meta-tool's operation kind).
     const metaCap = toolName === "mcp_read_resource" ? "resource-read" : "prompt-injection"
@@ -566,7 +601,7 @@ export async function executeMcpMetaTool(
       session: sessionId, force_confirm: forceMetaConfirm,
     })
     const decision = await securityConfirmations.request(
-      (data) => { if (confirmWs.readyState === WebSocket.OPEN) confirmWs.send(JSON.stringify(data)) },
+      channel.send,
       {
         toolName,
         dangerousApis: forceMetaConfirm ? [metaCap] : [],
@@ -574,7 +609,7 @@ export async function executeMcpMetaTool(
         riskLevel: forceMetaConfirm ? "high" : "medium",
         ...(forceMetaConfirm ? { criticalApis: [metaCap], autoConfirmEligible: false } : {}),
       },
-      { originWs: confirmWs },
+      { originWs: channel.originWs },
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason

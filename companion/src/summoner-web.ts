@@ -13,6 +13,7 @@ import {
   resolveSummonerBrowserPath,
 } from "./summoner/shell-open"
 import { applySummonerPayloadPolicy } from "./ws/summoner-acl"
+import { MCP_OVERLAY_CONFIRM_NOTICE } from "./mcp/confirm-target"
 
 export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
 
@@ -1127,7 +1128,7 @@ body{
         return;
       }
       if(t==="mcp.confirm.pending"){
-        setStatus(d.message||"MCP 工具需在 Chrome 侧栏批准");
+        setStatus(d.message||${JSON.stringify(MCP_OVERLAY_CONFIRM_NOTICE)});
         return;
       }
       if(t==="run_status"){

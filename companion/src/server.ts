@@ -870,6 +870,8 @@ function bindMcpDispatchFromServerLocals(): void {
     broadcastToClients,
     pickExtensionWs: pickAuthenticatedClientWs,
     getWsSurface: (w) => getWsAuthState(w)?.surface,
+    getClients: getWsClients,
+    wsAuthGet: (w) => getWsAuthState(w),
   })
 }
 
