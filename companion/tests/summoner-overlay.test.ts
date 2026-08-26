@@ -53,9 +53,10 @@ test("SummonerController title is 召唤器（实验） and never 主界面", ()
   assert.match(body, /titleVisibility = \.hidden|titlebarAppearsTransparent/)
 })
 
-test("SummonerController has zero Allow/Deny/确认 chrome", () => {
+test("SummonerController has zero Allow/Deny action chrome", () => {
   const body = summonerControllerBody()
-  assert.doesNotMatch(body, /允许|拒绝|Allow|Deny|确认/)
+  // Status copy 确认台 / 需要确认 / 打开确认台 is allowed; action buttons are not.
+  assert.doesNotMatch(body, /允许|拒绝|Allow|Deny/)
   assert.doesNotMatch(body, /showConfirm|allowClicked|denyClicked/)
 })
 
@@ -107,12 +108,21 @@ test("SummonerController copy lock: badge, hint, CTA, buttons", () => {
   assert.match(body, /浏览器未连接/)
   assert.match(body, /回车发送\/纠偏 · Shift\+Enter 排队 · # 搜标题/)
   assert.doesNotMatch(body, /知识配置去侧栏/)
-  assert.match(body, /展开工作台/)
+  assert.match(body, /展开对话/)
+  assert.match(body, /收起对话/)
+  assert.doesNotMatch(body, /展开工作台|收起工作台/)
   assert.match(body, /说点什么/)
-  assert.match(body, /工具栏图标/)
+  assert.match(body, /工具栏的 CMspark/)
   assert.doesNotMatch(body, /去侧栏/)
   assert.match(body, /已连接，继续对话/)
   assert.match(body, /新对话/)
+  assert.match(body, /打开浏览器/)
+  assert.match(body, /打开并前置浏览器/)
+  assert.match(body, /可以继续聊。要操作网页，需要打开浏览器。/)
+  assert.match(body, /网页操作需要浏览器（扩展已配对的 Chrome）。/)
+  assert.match(body, /编程助手要看你的页面，但浏览器没在。/)
+  assert.match(body, /我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。/)
+  assert.doesNotMatch(body, /系统: BROWSER_UNAVAILABLE/)
   assert.doesNotMatch(body, /NSButton\(title: "设置"/)
   assert.doesNotMatch(body, /召唤器 · 实验/)
   assert.doesNotMatch(body, /P0 /)
@@ -186,14 +196,16 @@ test("SummonerController hotkey picker is tray-menu, not HUD chrome", () => {
   assert.doesNotMatch(overlay, /NSButton\(title: "快捷键"/)
 })
 
-test("detached browser copy is faint info, not a warn CTA panel", () => {
+test("detached browser copy unhides honesty CTAs", () => {
   const body = summonerControllerBody()
-  assert.match(body, /工具栏图标/)
+  assert.match(body, /工具栏的 CMspark/)
   assert.doesNotMatch(body, /去侧栏/)
-  assert.match(body, /summonerDetachedInfo/)
+  assert.match(body, /打开浏览器/)
+  assert.match(body, /打开并前置浏览器/)
   const apply = body.slice(body.indexOf("private func applyPhase()"), body.indexOf("private func relayout()"))
-  assert.match(apply, /ctaBox\?\.isHidden = true/)
-  assert.match(apply, /sideNote\?\.stringValue = summonerDetachedInfo/)
+  assert.match(apply, /ctaBox\?\.isHidden = !detached/)
+  assert.match(apply, /silentAttachButton\?\.isHidden = !detached/)
+  assert.match(apply, /attachButton\?\.isHidden = !detached/)
 })
 
 test("SummonerController close emits summoner.closed and not chat.abort", () => {

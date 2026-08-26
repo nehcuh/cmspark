@@ -146,7 +146,11 @@ test("HUD workbench rails are live for packs/mcp/skills/knowledge", () => {
   assert.match(overlay, /func applyPacks/)
   assert.match(overlay, /func applyMcpServers|applyMcp\(/)
   assert.doesNotMatch(overlay, /这一类下一刀开放/)
-  assert.doesNotMatch(overlay, /允许|拒绝|Allow|Deny|确认/)
+  // Allow/Deny as *actions* only. Status copy 确认台 / 需要确认 / 打开确认台 is chrome-ok.
+  assert.doesNotMatch(overlay, /允许|拒绝|Allow|Deny/)
+  for (const allowed of ["确认台", "需要确认", "打开确认台"]) {
+    assert.equal(/允许|拒绝|Allow|Deny/.test(allowed), false, allowed)
+  }
   assert.match(tray, /summoner\.mcp\.servers/)
   assert.match(tray, /summoner\.skills/)
   assert.match(tray, /summoner\.knowledge/)

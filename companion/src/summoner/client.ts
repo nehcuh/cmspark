@@ -26,9 +26,26 @@ import { MCP_OVERLAY_CONFIRM_NOTICE } from "../mcp/confirm-target"
 export const CONTINUE_MESSAGE =
   "浏览器已连接。请等待我的下一条指令；不要重试刚才失败的网页操作。" as const
 
-/** Attach CTA: open Chrome only. Must include this phrase (S8 / UI lock). */
+/** Chevron: title / aria-label / tooltip are the same sentence (both shells). */
+export const SUMMONER_CHEVRON_EXPAND = "展开对话" as const
+export const SUMMONER_CHEVRON_COLLAPSE = "收起对话" as const
+
+/** Chrome-down honesty copy (both shells). */
+export const SUMMONER_L0_CHROME_DOWN =
+  "可以继续聊。要操作网页，需要打开浏览器。" as const
+export const SUMMONER_CDP_NEEDED =
+  "网页操作需要浏览器（扩展已配对的 Chrome）。" as const
+export const SUMMONER_RENTER_CHROME_DOWN =
+  "编程助手要看你的页面，但浏览器没在。" as const
+export const SUMMONER_ATTACH_PRIMARY = "打开浏览器" as const
+export const SUMMONER_ATTACH_SECONDARY = "打开并前置浏览器" as const
+export const SUMMONER_ATTACH_FOOTNOTE =
+  "我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。" as const
+export const SUMMONER_MIC_SIDEBAR = "听写在侧栏" as const
+
+/** Attach CTA: open Chrome only. Must include the honesty footnote (S8 / UI lock). */
 export const ATTACH_NOTIFY_COPY =
-  "已激活 Google Chrome。我们不能替你打开侧栏。" as const
+  `已打开并前置浏览器。${SUMMONER_ATTACH_FOOTNOTE}` as const
 
 export type ThreadTitleRecord = {
   id: string
@@ -179,7 +196,7 @@ export function buildContinueChatCreate(thread_id: string): {
 }
 
 export const ATTACH_SILENT_COPY =
-  "已在后台启动 Google Chrome。要看窗口时点「激活 Google Chrome」。我们不能替你打开侧栏。" as const
+  `已在后台打开浏览器。${SUMMONER_ATTACH_FOOTNOTE}` as const
 
 
 /** Badge before hydrate must not claim 未连接 (pair may already be attached). */
