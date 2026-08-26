@@ -1,11 +1,12 @@
 # 召唤器与编程面策略重审 — 多路对抗合成
 
 > **日期**: 2026-08-26  
-> **状态**: **DRAFT · 待 Claude+Pi dual-review**  
+> **状态**: **LOCKED · design dual both AWN** `summoner-strategy-rethink-verdict-20260826-133900`  
 > **方法**: Product · Impl · Security · External 独立对抗 → 吸收 BLOCK  
 > **触发**: 用户 9 点产品评论  
 > **前序锁（不得削弱）**: ADR-020 / 022 / 025 / 016 · Honesty F-UX-OVERLAY-1 · Knowledge CRUD 2026-08-26 · C-thin 召唤壳  
-> **对抗原文**: [synthesis](../../audit/reviews/summoner-strategy-rethink-adversary-synthesis-20260826.md)
+> **对抗原文**: [synthesis](../../audit/reviews/summoner-strategy-rethink-adversary-synthesis-20260826.md)  
+> **双审**: [claude](../../audit/reviews/summoner-strategy-rethink-claude-20260826-133900.md) · [pi](../../audit/reviews/summoner-strategy-rethink-pi-20260826-133900.md) · [verdict](../../audit/reviews/summoner-strategy-rethink-verdict-20260826-133900.json)
 
 ```text
 Surface:      L0 summoner = capture bar ; Side Panel = operate home ; L1 stays CDP in Chrome
@@ -73,7 +74,7 @@ Impl 关键澄清：`chat.create` 已经在召唤器里跑 **完整 tool-loop**�
 
 ```text
 claude mcp add cmspark -- cmspark-agent mcp-outbound
-# Codex / Grok config.toml 同形
+# Codex JSON / Grok config.toml 形态同类（stdio + grant）；以 docs/mcp.md 当时片段为准
 ```
 
 加一篇 **adoption skill**（何时用我们 vs Playwright vs DevTools MCP）。**不要** CWS「CMspark for Codex」。Raycast/uTools/WorkBuddy 热键只当分发（已有 `docs/summoner-launcher-plugins.md`）。
@@ -91,7 +92,7 @@ PRODUCT.md 已锁看山 canon。Gemini 赢的是 **Chrome 原生铬**（工具�
 - **他们 → 我们**：Outbound MCP（ADR-022），策展 L1，`require_grant` 默认开  
 - **我们 → 他们**：ACP（ADR-025），`acp.enabled` 默认关，apply 走 L2  
 
-更深 = 安装 5 分钟内完成 + 任务包（当前 GitHub/Jira **页** → 本地审查）+ 观察芯片，不是 Side Panel IDE。先跑 **T1 bake-off**（已登录 SSO vs Playwright）。失败则 pivot 只读，禁止用「更深集成」硬上。
+更深 = 安装 5 分钟内完成 + 任务包（当前 GitHub/Jira **页** → 本地审查）+ 现有编程接力状态条，不是 Side Panel IDE。先跑 **T1 bake-off**（已登录 SSO vs Playwright）。失败则 pivot 只读，禁止用「更深集成」硬上。T1 未跑时 adoption 文档若先发，必须标 **实验 / 非产品 ship**（ADR-022）。
 
 ### 6 Jira/GitHub 双向 — MAJOR_REVISE
 
@@ -132,7 +133,7 @@ PRODUCT.md 已锁看山 canon。Gemini 赢的是 **Chrome 原生铬**（工具�
 | 不要 | 要 |
 |------|-----|
 | 把 ADR-016 Mission Board 当个人 todo（L2 complete、信任徽章、默认关） | L0 **RunProgress**：聊天列可见 |
-| 模型自己打勾当完成（ThreadDigest 空壳） | 完成绑定 tool_result / 用户确认 |
+| 模型自己打勾当完成（ThreadDigest 空壳） | 完成绑定 tool_result / **L0 UI 手势**（不是新的 security.confirmation 方言） |
 | 新 `thread.todo` SoT | 可从 H1 `open_todos` 做种子；模型新增行 = **草稿**，执行需手势 |
 
 召唤器最多 **展示** 当前条数，不拥有清单编辑。
@@ -161,8 +162,8 @@ PRODUCT.md 已锁看山 canon。Gemini 赢的是 **Chrome 原生铬**（工具�
 
 ---
 
-## 4. 开放（外审可降 nit）
+## 4. 开放（外审可降 nit；不可重开已锁）
 
-- Overlay 已允许的 `mcp.toggle_server` / `skill.activate` 是回滚还是冻结。  
-- RunProgress 是否复用 H1 `open_todos` 字段。  
-- T1 仍未跑时，adoption 文档能否先发「实验」。  
+- Overlay 已允许的 `mcp.toggle_server` / `skill.activate`：**默认冻结**；回滚另开票 `overlay-acl-rollback`（Security 倾向删，本 SoT 不在本季扩）。  
+- RunProgress 是否复用 H1 `open_todos` 字段（切片时钉）。  
+- 预存在 **F-S-10**（overlay 不能确认却仍跑 `mcp__*`）：本重审 **不恶化、本季不修完**；另票 `overlay-mcp-without-confirm`。T1/adoption 不依赖先修完它，但 **禁止** 用 overlay 管 MCP 来掩盖。  
