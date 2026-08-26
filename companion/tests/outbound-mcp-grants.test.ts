@@ -15,11 +15,16 @@ import {
   isOutboundGrantTokenShape,
   OUTBOUND_GRANT_TOKEN_PREFIX,
   DEFAULT_GRANT_TTL_MS,
+  grantAllowsPageExport,
 } from "../src/outbound-mcp/outbound-grants"
 import {
   authorizeOutboundRequest,
   extractBearerToken,
 } from "../src/outbound-mcp/companion-http"
+import {
+  hasOutboundDisclosure,
+  clearAllOutboundDisclosureSessions,
+} from "../src/outbound-mcp/disclosure-session"
 import {
   resolveOutboundHttpBearer,
   GRANT_ENV,
@@ -160,4 +165,40 @@ test("DEFAULT_GRANT_TTL_MS is 30d", () => {
 
 test("extractBearerToken still works", () => {
   assert.equal(extractBearerToken(fakeReq("Bearer xyz")), "xyz")
+})
+
+test("issueOutboundGrant default allow_page_export is false and listed without token", () => {
+  const issued = issueOutboundGrant({ label: "t", caller_id: "agent-a" })
+  assert.match(issued.token, /^cmg_/)
+  const listed = listOutboundGrants()
+  assert.equal(listed[0].allow_page_export, false)
+  assert.equal((listed[0] as { token?: string }).token, undefined)
+})
+
+test("issueOutboundGrant allow_page_export persists on disk and does not set disclosure Map", () => {
+  clearAllOutboundDisclosureSessions() // BEFORE issue — if issue wrongly arms the Map, this test must catch it
+  issueOutboundGrant({ label: "t", caller_id: "exfil-caller", allow_page_export: true })
+  const rec = listOutboundGrants().find((g) => g.caller_id === "exfil-caller")
+  assert.equal(rec?.allow_page_export, true)
+  assert.equal(hasOutboundDisclosure("exfil-caller"), false)
+})
+
+test("revoked grant cannot exfil even if allow_page_export was true", () => {
+  const issued = issueOutboundGrant({
+    label: "t",
+    caller_id: "revoked-exfil",
+    allow_page_export: true,
+  })
+  assert.equal(grantAllowsPageExport("revoked-exfil"), true)
+  assert.equal(revokeOutboundGrant(issued.id), true)
+  assert.equal(grantAllowsPageExport("revoked-exfil"), false)
+
+  issueOutboundGrant({
+    label: "t",
+    caller_id: "expired-exfil",
+    allow_page_export: true,
+    ttl_ms: 1,
+  })
+  sleepMs(15)
+  assert.equal(grantAllowsPageExport("expired-exfil"), false)
 })
