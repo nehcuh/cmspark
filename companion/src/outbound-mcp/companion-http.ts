@@ -105,10 +105,9 @@ const NOOP_ORIGIN_WS = {
   },
 } as unknown as WebSocket
 
+/** First-exfil HITL fans out over WS only (确认台 / Side Panel). No Swift tray race. */
 function outboundConfirmTrayHint(): string {
-  return process.platform === "darwin"
-    ? "approve via macOS tray dialog (if CMspark tray is Swift) and/or any open Side Panel"
-    : "open CMspark Side Panel and approve (Windows/Linux tray has no native confirm dialog)"
+  return "open CMspark 确认台 (Side Panel) and approve; first-exfil HITL is not a Swift tray dialog and cannot be answered in the summoner overlay"
 }
 
 /**
