@@ -551,6 +551,55 @@ test("skill-engine: matchSkills returns relevant skills sorted", async () => {
   assert.ok(matches[0].confidence >= matches[matches.length - 1].confidence, "should be sorted by confidence")
 })
 
+test("skill-engine: matchSkills ranks rare in-corpus token above common web/browse", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  // Generic: name/description/tags packed with common "web"/"browse" so TF cosine
+  // against a web-heavy query outranks the rare skill. Rare also mentions web but
+  // is the only in-corpus holder of zxqvskill. Query mixes both.
+  writeSkillFile(skillsDir, "web-browse.md", {
+    name: "web-browse",
+    description: "web browse web browse web browse web browse web browse web browse web browse",
+    tags: ["web", "browse", "web", "browse", "web", "browse"],
+    type: "prompt_template",
+  }, "# Browse")
+  writeSkillFile(skillsDir, "zxqvskill.md", {
+    name: "zxqvskill",
+    description: "web browse zxqvskill",
+    tags: ["web"],
+    type: "prompt_template",
+  }, "# Rare")
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  const matches = await engine.matchSkills("web browse web browse web browse web browse zxqvskill")
+
+  assert.ok(matches.length > 0, "should return at least one match")
+  assert.equal(matches[0].name, "zxqvskill")
+  // SkillEngine() has no llmConfig: llmRerank would flatten every candidate to 50.
+  // Fixtures keep TF and IDF topScore >= 70 so the fast path's ranking is what we assert.
+  assert.ok(
+    matches[0].confidence >= 70,
+    `IDF fast path should fire (topScore>=70); got ${matches[0].confidence}`,
+  )
+
+  const engineSrc = fs.readFileSync(path.join(process.cwd(), "src/skills/skill-engine.ts"), "utf-8")
+  const matchBlock = engineSrc.slice(
+    engineSrc.indexOf("async matchSkills"),
+    engineSrc.indexOf("async resolveSkillIdsForThread"),
+  )
+  const claimsTfIdf = /TF-IDF/.test(matchBlock)
+  const usesOnlyTf = matchBlock.includes("tokensToVec") && !matchBlock.includes("tfidfVec")
+  assert.ok(
+    !(claimsTfIdf && usesOnlyTf),
+    "comments must not claim TF-IDF while matchSkills only calls tokensToVec",
+  )
+  assert.match(matchBlock, /tfidfVec/)
+  assert.match(matchBlock, /idfFromDocs/)
+  assert.match(matchBlock, /IDF is live/)
+})
+
 test("skill-engine: matchSkills returns empty for irrelevant query", async () => {
   resetMockDirs()
   process.env.HOME = tempHome
