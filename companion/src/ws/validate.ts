@@ -907,6 +907,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.caller_id !== "string" || !m.caller_id.trim()) {
         return { valid: false, error: "outbound_mcp.grants.issue requires caller_id" }
       }
+      if (m.allow_page_export !== undefined && typeof m.allow_page_export !== "boolean") {
+        return { valid: false, error: "outbound_mcp.grants.issue allow_page_export must be a boolean" }
+      }
       return { valid: true }
     },
     "outbound_mcp.grants.revoke": (m) => {

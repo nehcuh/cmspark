@@ -3308,7 +3308,12 @@ export async function handleMessage(
         ttl_ms = n
       }
       try {
-        const issued = issueOutboundGrant({ label, caller_id, ttl_ms })
+        const issued = issueOutboundGrant({
+          label,
+          caller_id,
+          ttl_ms,
+          allow_page_export: rest.allow_page_export === true,
+        })
         const { listOutboundGrants } = await import("./outbound-mcp/outbound-grants")
         return {
           type: "outbound_mcp.grants.issued",

@@ -10,6 +10,8 @@
 
 **编程接力**：把浏览器里已有的真相（staging 复现、PR 页、AppSec 发现等）打成任务，**外派**给本机编程助手（Claude Code / Gemini CLI / Codex / Pi / Grok / Kimi Code / OpenCode 等），再把摘要/发现 **handback** 回对话。
 
+> **两扇门**：本指南是 **编程接力**（我们当 ACP client，外派给本机写码助手）。编程助手要操作你**已登录的 Chrome**，走另一扇门：**租手（Outbound MCP）**，见 [mcp.md · 5 分钟租手](mcp.md#outbound-mcp)。不要把两扇门当成同一件事。
+
 | 一句话 | |
 |--------|--|
 | **做** | 页上证据 → 本机写码助手 → 摘要回侧栏 |

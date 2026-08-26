@@ -90,8 +90,8 @@ server 没连上或没声明 `tools` capability。先解决上面的连接问题
 
 <a id="outbound-mcp"></a>
 
-> 完整配置见 [`docs/mcp.md` · Outbound MCP](./mcp.md#outbound-mcp)（含 **Grok `config.toml`**）。  
-> 与上文 **Inbound** MCP（Companion 拉外部 server）方向相反。
+> 完整配置见 [`docs/mcp.md` · 5 分钟租手](./mcp.md#outbound-mcp)（含 **Grok `config.toml`**）。  
+> 与上文 **Inbound** MCP（Companion 拉外部 server）方向相反。租手钥匙是 `CMSPARK_OUTBOUND_GRANT`，不是 `ws_secret`。
 
 ### `grok mcp doctor` 绿，但对话里没有 `cmspark__*` 工具
 
@@ -106,15 +106,14 @@ server 没连上或没声明 `tools` capability。先解决上面的连接问题
 **解决：** 使用 `make package-macos` 正规产物（esbuild **内联** SDK），或开发树 `node companion/dist/index.js mcp-outbound`。Grok 的 `command` 指向  
 `/Applications/CMspark.app/Contents/Resources/cmspark-agent`。
 
-### `ACK_REQUIRED` / `DISCLOSURE_REQUIRED`
+### `DISCLOSURE_NOT_GRANTED` / `DISCLOSURE_HITL_REQUIRED`
 
-读页面正文/截图前须先：
+读页面正文/截图（外泄给调用方云模型）不是编程助手自己 `acknowledge` 就能过：
 
-```text
-cmspark__accept_data_disclosure  { "acknowledge": true }
-```
+- **`DISCLOSURE_NOT_GRANTED`**：这把 `cmg_` 钥匙没有 `allow_page_export`。重新签发并勾选「允许该 caller 把页文/截图发给其云模型」，或 CLI `--allow-page-export`。
+- **`DISCLOSURE_HITL_REQUIRED`**：钥匙已允许外泄，但**首次仍须人批**。**打开 Chrome 确认台**（macOS 也可托盘）。调用方 `cmspark__accept_data_disclosure` **不够**，也不表示用户已同意云端外泄。
 
-缺 `acknowledge: true` → `ACK_REQUIRED`；Companion 侧无 disclosure 会话 → `DISCLOSURE_REQUIRED`。
+Windows / Linux 没有原生 tray 确认。
 
 ### `PROFILE_FORBIDDEN`（如 `cmspark__scroll`）
 
@@ -126,11 +125,11 @@ cmspark__accept_data_disclosure  { "acknowledge": true }
 Companion 在跑但 **没有已鉴权的 Chrome 扩展**（Side Panel 未开或未配对）。
 
 **解决：** 打开 Side Panel 至「已连接」；`curl` 检查  
-`GET http://127.0.0.1:23401/outbound-mcp/v1/health` 应返回 `"runner":"wired"`（需 Bearer `ws_secret`）。
+`GET http://127.0.0.1:23401/outbound-mcp/v1/health` 应返回 `"runner":"wired"`（需 Bearer `CMSPARK_OUTBOUND_GRANT`，不是 `ws_secret`）。
 
 ### `OUTBOUND_CONFIRM_REQUIRED`
 
-危险工具等 L2 确认超时或未在托盘/确认台处理。Outbound 确认会 fan-out 面板 + 托盘，不只看编程 Agent 窗口。
+危险工具等 L2 确认超时或未在确认台处理。Outbound 确认会 fan-out 到 Side Panel / 确认台；macOS 还可 Swift 托盘。Windows / Linux **没有原生 tray 确认** — **打开 Chrome 确认台**，不要只盯编程 Agent 窗口。
 
 ### command not found / doctor 找不到 `cmspark-agent`
 

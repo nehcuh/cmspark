@@ -221,48 +221,51 @@ tail -f ~/.cmspark-agent/logs/companion-$(date +%Y-%m-%d).log | grep -i mcp
 
 ---
 
-## Outbound MCP（编程 Agent 调用 CMspark 浏览器 · ADR-022）
+## 5 分钟租手（Outbound MCP · 实验）
 
 <a id="outbound-mcp"></a>
 
-> **方向**：Companion 作为 **MCP server**，把 curated **L1** 工具以 `cmspark__*` 导出给 Claude Code / Cursor / **Grok Build** 等。  
-> **规范**：[ADR-022](adr/022-outbound-mcp-server.md) · 场景 [Daily Content Loop](decisions/daily-content-loop-brief-2026-08-04.md)  
-> **P0d 手测**：[Outbound MCP P0d bake-off checklist](superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md)（T1–T3 vs Playwright）  
-> **排错**：[TROUBLESHOOTING.md · Outbound MCP](./TROUBLESHOOTING.md#outbound-mcp)
+> CMspark **租手（Outbound MCP）目前是实验能力**：非 default-on、**非产品 ship**（ADR-022）。「已登录 Chrome 相对 Playwright 不可替代」的 T1 真人 bake-off **尚未跑**。配置成功、工具列表出现 `cmspark__*`，只说明桥通了，**不**证明这个任务只能用我们。
 
-这与上文 **Inbound MCP**（`~/.cmspark-agent/config.json` 里配置 *外部* server 给 Side Panel 用）方向相反：Outbound 是 **CMspark 导出浏览器面** 给 *外部* 编程 Agent。
+**规范**：[ADR-022](adr/022-outbound-mcp-server.md) · **P0d 手测**：[bake-off checklist](superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md) · **排错**：[TROUBLESHOOTING.md](./TROUBLESHOOTING.md#outbound-mcp)
 
-### 前置条件（所有编程 Agent 共用）
+这与上文 **Inbound MCP**（把外部 server 配进 Side Panel）方向相反：租手是 **CMspark 当 MCP server**，把策展 L1 以 `cmspark__*` 租给外部编程助手。
 
-1. **Companion 在跑**：tray / `cmspark-agent daemon start` / 打开 CMspark.app  
-2. **Chrome 扩展已配对**（Side Panel 绿 / 已连接），否则 `list_tabs` 等会 `EXTENSION_UNAVAILABLE` 或超时  
-3. 编程 Agent 侧 **显式配置** `mcp-outbound`（**非** default-on：`daemon start` **不会**自动拉起 stdio MCP）
+### 两扇门（不要混）
 
-### 启动（显式 opt-in）
+| 门 | 方向 | 说明 |
+|----|------|------|
+| **租手**（本页） | 他们 → 我们的已登录 Chrome | 编程助手当 MCP client，调 `cmspark__*`。钥匙 `cmg_`。 |
+| **编程接力** | 我们 → 本机编程 Agent | CMspark 当 ACP client，外派写码。见 [编程接力用户指南](coding-handoff-user-guide.md)。不是租手。 |
+
+入站 MCP（Jira / filesystem 接进侧栏）是第三件事，不要画进这两扇门。
+
+### 什么时候用我们
+
+已登录 / SSO / 已经打开的页 → **CMspark**。CI / 干净浏览器 / 无头 → **Playwright**。看网络面板 / 性能 → **Chrome DevTools MCP**。
+
+### 诚实前提
+
+1. Companion 在跑（托盘 / CMspark.app / `cmspark-agent daemon start`）。**`daemon start` 不会拉起 `mcp-outbound`。**
+2. Chrome 扩展曾经配对（`.paired`）。要用页时 Chrome 得在（可最小化）。
+3. 一把 **`cmg_…` 租手钥匙**（不是扩展配对码 `ws_secret`）。`require_grant` 默认 true。
+4. 人能批确认：**macOS** 可用 Swift 托盘；**Windows / Linux 没有原生托盘确认**，必须 **打开 Chrome 确认台**。超时 `OUTBOUND_CONFIRM_REQUIRED`，不会自动过。
+
+### 1. 拿钥匙（主路 = CLI）
 
 ```bash
-# 开发树：需已 build companion；PATH 上有 cmspark-agent 时：
-cmspark-agent mcp-outbound
-
-# DMG /Applications 安装（推荐写绝对路径，避免 IDE 找不到 PATH）：
-/Applications/CMspark.app/Contents/Resources/cmspark-agent mcp-outbound
+cmspark-agent outbound-grant issue --caller-id codex --label Codex
 ```
 
-stdio 进程会连本机 Companion：`POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`，`Authorization: Bearer …`：
+stdout 只印一次 `cmg_…`，以及 `CMSPARK_OUTBOUND_GRANT` / `CMSPARK_OUTBOUND_CALLER_ID` / `CMSPARK_OUTBOUND_PORT` 和本机 `command` / `args`。这把钥匙不是扩展配对码。
 
-| 模式 | Bearer | 说明 |
-|------|--------|------|
-| **默认**（`outbound_mcp.require_grant=true`，`config.ts` SoT） | **仅** `CMSPARK_OUTBOUND_GRANT`（`cmg_…`） | **禁止**用 Extension `ws_secret` 作 Bearer；须 Side Panel 签发 grant |
-| **兼容关闭**（`require_grant=false`，非默认） | `ws_secret` 或 `cmg_…` | 仅 bake-off/迁移；生产保持 require_grant=true |
+可选：`--allow-page-export` 把「允许该 caller 把页文/截图发给其云模型」写在钥匙上（可撤销）。**这不跳过确认台**：首次外泄仍须操作者 HITL。编程助手自己 `acknowledge` **不够**。
 
-签发 grant：
+**备用与撤销**：Side Panel → 设置 → Outbound MCP 调用方授权。钥匙丢了来这里撤销。
 
-1. **Side Panel → 设置 → Outbound MCP 调用方授权**（推荐）：填 label / caller_id / TTL →「签发 grant」→ 复制 token 或 env 片段  
-2. 或 Companion API：`issueOutboundGrant({ label, caller_id })`  
+### 2. 接到编程助手（每份片段都必须带 grant）
 
-写入 IDE：`CMSPARK_OUTBOUND_GRANT=cmg_…` 与 `CMSPARK_OUTBOUND_CALLER_ID=<caller_id>`。
-
-### 通用编程 Agent 配置示例（JSON / Claude Code 风格）
+**macOS（DMG）**
 
 ```json
 {
@@ -271,7 +274,8 @@ stdio 进程会连本机 Companion：`POST http://127.0.0.1:<port>/outbound-mcp/
       "command": "/Applications/CMspark.app/Contents/Resources/cmspark-agent",
       "args": ["mcp-outbound"],
       "env": {
-        "CMSPARK_OUTBOUND_CALLER_ID": "my-coding-agent",
+        "CMSPARK_OUTBOUND_GRANT": "cmg_粘贴刚才那把钥匙",
+        "CMSPARK_OUTBOUND_CALLER_ID": "codex",
         "CMSPARK_OUTBOUND_PORT": "23401"
       }
     }
@@ -279,79 +283,116 @@ stdio 进程会连本机 Companion：`POST http://127.0.0.1:<port>/outbound-mcp/
 }
 ```
 
-开发机也可把 `command` 换成 `cmspark-agent` 或 `node …/companion/dist/index.js`（需本机 PATH / node_modules 可用）。
+**Windows（NSIS）** — `%LOCALAPPDATA%\CMspark\node.exe` + `cmspark-agent.js`：
 
-### Grok Build 配置（`config.toml`）
+```json
+{
+  "mcpServers": {
+    "cmspark": {
+      "command": "%LOCALAPPDATA%\\CMspark\\node.exe",
+      "args": [
+        "%LOCALAPPDATA%\\CMspark\\cmspark-agent.js",
+        "mcp-outbound"
+      ],
+      "env": {
+        "CMSPARK_OUTBOUND_GRANT": "cmg_粘贴刚才那把钥匙",
+        "CMSPARK_OUTBOUND_CALLER_ID": "codex",
+        "CMSPARK_OUTBOUND_PORT": "23401"
+      }
+    }
+  }
+}
+```
 
-Grok 读 **TOML**，不是 JSON。用户级与项目级均可：
+**Linux**（PATH 上有 `cmspark-agent`）：
 
-| 范围 | 路径 |
-|------|------|
-| 用户级 | `~/.grok/config.toml` |
-| 项目级 | 仓库内 `.grok/config.toml`（需 folder trust） |
+```json
+{
+  "mcpServers": {
+    "cmspark": {
+      "command": "cmspark-agent",
+      "args": ["mcp-outbound"],
+      "env": {
+        "CMSPARK_OUTBOUND_GRANT": "cmg_粘贴刚才那把钥匙",
+        "CMSPARK_OUTBOUND_CALLER_ID": "codex",
+        "CMSPARK_OUTBOUND_PORT": "23401"
+      }
+    }
+  }
+}
+```
 
-推荐（DMG 安装后）：
+开发树可把 `command` 换成 `node …/companion/dist/index.js`，`args` 仍以 `mcp-outbound` 结尾，**env 仍须含 GRANT**。
+
+#### Grok Build（`config.toml`）
+
+Grok 读 **TOML**。用户级 `~/.grok/config.toml`；项目级仓库内 `.grok/config.toml`（需 folder trust）。
 
 ```toml
-# CMspark Outbound MCP — L1 浏览器面（ADR-022）
-# 前置：CMspark.app / daemon 运行 + Chrome 扩展 Side Panel 已配对
+# CMspark 租手 — L1 浏览器面（ADR-022 · 实验）
+# 前置：Companion 在跑 + 扩展曾配对 + 已签发 cmg_ 钥匙
 [mcp_servers.cmspark]
 command = "/Applications/CMspark.app/Contents/Resources/cmspark-agent"
 args = ["mcp-outbound"]
 enabled = true
 startup_timeout_sec = 45
 tool_timeout_sec = 120
-env = { CMSPARK_OUTBOUND_CALLER_ID = "grok-build", CMSPARK_OUTBOUND_PORT = "23401" }
+env = { CMSPARK_OUTBOUND_GRANT = "cmg_粘贴刚才那把钥匙", CMSPARK_OUTBOUND_CALLER_ID = "grok-build", CMSPARK_OUTBOUND_PORT = "23401" }
 ```
+
+Windows 把 `command` / `args` 换成上面 NSIS 的 `node.exe` + `cmspark-agent.js`，**不要漏 GRANT**。
 
 验证：
 
 ```bash
 grok mcp list
 grok mcp doctor cmspark
-# 期望：command found · handshake OK · 10 tools discovered · healthy
+# 期望：command found · handshake OK · 工具 discovered · healthy
 ```
 
-**配置 vs 会话（重要）：**
+**配置 ≠ 会话。** `doctor` 绿 **≠** 当前这轮已挂上 `cmspark__*`。改 config 后请退出并**新开一轮**。
 
-| 层 | 含义 |
-|----|------|
-| 配置 | 磁盘上已写 `[mcp_servers.cmspark]`；`doctor` 可单独拉起进程并握手 |
-| 会话 | **当前这一次** Grok 对话是否已把 `cmspark__*` 注册进工具表 |
+#### Claude Code
 
-`doctor` 绿 **≠** 当前会话一定已挂载。改 config / 修好 Companion 后若工具仍只有 `tasks`/`voice` 等，请：
-
-1. **退出并新开 Grok 会话**（最稳），或  
-2. 使用 TUI 的 MCP reconnect / reload（若有）
-
-成功时会话内应能发现 `cmspark__list_tabs` 等；调用外泄类工具前须先：
-
-```text
-cmspark__accept_data_disclosure  arguments: { "acknowledge": true }
+```bash
+claude mcp add --env CMSPARK_OUTBOUND_GRANT=cmg_粘贴刚才那把钥匙 \
+  --env CMSPARK_OUTBOUND_CALLER_ID=claude-code \
+  --env CMSPARK_OUTBOUND_PORT=23401 \
+  --transport stdio cmspark \
+  -- /Applications/CMspark.app/Contents/Resources/cmspark-agent mcp-outbound
 ```
 
-未带 `acknowledge: true` 会返回 `ACK_REQUIRED`。
+`--env` 解析因 CLI 版本而异。失败时把上面同一份 JSON（仍须含 `CMSPARK_OUTBOUND_GRANT`）写入 Claude 的 MCP 配置。
+
+### 3. 用起来
+
+新开一轮，问「用 cmspark 列出我的 Chrome 标签」。要动未批准的站：看 **确认台**（macOS 也可看托盘），不要盯 IDE。Windows / Linux：**打开 Chrome 确认台**。超时则失败并停，不会跳过。
+
+页文 / 截图交给第三方云模型前：
+
+1. 签发钥匙时勾过「允许该 caller 把页文/截图发给其云模型」（否则 `DISCLOSURE_NOT_GRANTED`）。
+2. **首次外泄仍走确认台**（`DISCLOSURE_HITL_REQUIRED`）。调用方 `cmspark__accept_data_disclosure` / HTTP `acknowledge` **不是**操作者同意，也不表示「用户已同意云端外泄」。
+
+`cmspark-agent daemon start` **不会** spawn `mcp-outbound`。stdio 由编程助手按需拉起，且必须带 grant env。
 
 ### 关键工具（默认 outbound L1 profile）
 
 | 工具 | 说明 |
 |------|------|
-| `cmspark__accept_data_disclosure` | **先调用**（**必须** `acknowledge: true`）— Companion **服务端** disclosure 会话；`get_page_text` / `screenshot` 依赖它。**注意**：当前为编程 Agent 自确认（无人类 HITL），不表示终端用户已同意云端外泄；P1 grant 前勿用「用户已同意」话术 |
 | `cmspark__list_outbound_profile` | 列出当前策展 L1 工具名 |
 | `cmspark__list_tabs` | 列标签（建议其它工具前先调） |
 | `cmspark__navigate` / `click` / `type` / `wait_for` / `downloads_find` | 策展 L1 交互 / 只读 Downloads |
-| `cmspark__get_page_text` / `screenshot` | 外泄类；无服务端 disclosure 则拒 |
+| `cmspark__get_page_text` / `screenshot` | 外泄类。无 `allow_page_export` → `DISCLOSURE_NOT_GRANTED`；有旗无操作者会话 → `DISCLOSURE_HITL_REQUIRED`（确认台）。调用方自签不够 |
+| `cmspark__accept_data_disclosure` | **不是**人类同意。不能代替钥匙上的 `allow_page_export`，也不能跳过确认台 HITL |
 
 **不在默认 L1（调用会 `PROFILE_FORBIDDEN`）：**  
 `scroll`、`evaluate`、cookies、host/CU、shell、netsec 等。  
-长页翻读：用 `navigate` 到目标 URL + `get_page_text`，或在 Side Panel 内用完整工具面；不要假设 Outbound 有 `cmspark__scroll`。
+长页翻读：用 `navigate` 到目标 URL + `get_page_text`，或在 Side Panel 内用完整工具面；不要假设租手有 `cmspark__scroll`。
 
-### 现状（P0c 进度）
+### 桥与限制
 
-- 门禁 / disclosure / audit / synthetic origin：**已实现**  
-- **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <cmg_… grant>`；默认 `require_grant=true`，勿用 ws_secret）→ Companion `createToolExecutor` → Extension CDP  
-- 先 `cmspark-agent start`（或 tray/daemon）并打开扩展配对；再由编程 Agent **按需 spawn** `mcp-outbound`  
-- 无扩展连接时：`EXTENSION_UNAVAILABLE`（**仅** Chrome 扩展 peer 可做 CDP runner；tray 不会再被绑成 runner）  
-- **L8 确认**：Outbound L2 / URL-gate 确认 **fan-out** 到所有已鉴权 Side Panel；**macOS Swift tray** 可弹原生确认窗；**Windows/Linux** 无原生 tray 确认（仅 Side Panel + 通知），超时 `OUTBOUND_CONFIRM_REQUIRED`（勿只盯 IDE）  
-- **L9 tab lease**：交互工具须显式 `tabId`；holder=`outbound_mcp:<caller>`；与 Side Panel 冲突时 **Side Panel 赢**，MCP 得 `TAB_LOCKED` + `queue_disclosure_zh`  
-- **租约上限**：同一 caller 默认最多 **2** 个 tab lease（与 multi-agent worker 同 cap）
+- **真桥**：编程助手 spawn `mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`，Bearer = `CMSPARK_OUTBOUND_GRANT`（`cmg_…`）。默认 `require_grant=true`，勿用 `ws_secret`。
+- 无扩展连接：`EXTENSION_UNAVAILABLE`（**仅** Chrome 扩展 peer 可做 CDP runner）。
+- **L8 确认**：fan-out 到已鉴权 Side Panel；**macOS Swift 托盘**可弹原生确认；**Windows/Linux 须打开 Chrome 确认台**，没有原生 tray 确认。超时 `OUTBOUND_CONFIRM_REQUIRED`。
+- **L9 tab lease**：交互工具须显式 `tabId`；holder=`outbound_mcp:<caller>`；与 Side Panel 冲突时 **Side Panel 赢**，MCP 得 `TAB_LOCKED`。
+- **租约上限**：同一 caller 默认最多 **2** 个 tab lease。
