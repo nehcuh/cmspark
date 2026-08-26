@@ -13,18 +13,27 @@
 
 import type { IncomingMessage, ServerResponse } from "http"
 import { timingSafeEqual } from "crypto"
+import { WebSocket } from "ws"
 import { getConfig } from "../config"
 import {
   acceptOutboundDisclosure,
   clearAllOutboundDisclosureSessions,
 } from "./disclosure-session"
+import type { SecurityConfirmationManager } from "../security-confirmation"
+import {
+  fanOutConfirmRequest,
+  pickExtensionWsFromAuth,
+  resolveConfirmBinding,
+  type ConfirmPeerAuth,
+} from "../mcp/confirm-fanout"
+import { logger } from "../logger"
 import {
   gateOutboundCall,
   denyOutboundExfilIfNeeded,
   type OutboundCallRequest,
   type OutboundCallResult,
 } from "./facade"
-import { outboundToInternalName } from "./profile"
+import { outboundToInternalName, OUTBOUND_DISCLOSURE_ZH } from "./profile"
 import { makeOutboundMcpOrigin } from "./origin"
 import { appendOutboundMcpAudit } from "./audit"
 import {
@@ -66,10 +75,164 @@ export function setOutboundRunnerRefresh(fn: (() => void) | null): void {
   refreshRunner = fn
 }
 
+/**
+ * Operator HITL confirmer for first-exfil (Task 10). Injected from server.ts /
+ * startServer — same pattern as setOutboundToolRunner. Absent in unit tests so
+ * gateOutboundCall's DISCLOSURE_HITL_REQUIRED still surfaces immediately.
+ */
+export type OutboundExfilConfirmDeps = {
+  securityConfirmations: SecurityConfirmationManager
+  getClients: () => Iterable<WebSocket>
+  wsAuthGet: (ws: WebSocket) => ConfirmPeerAuth | undefined
+  getOriginatingWs?: () => WebSocket | null | undefined
+}
+
+let exfilConfirmer: OutboundExfilConfirmDeps | null = null
+
+export function setOutboundExfilConfirmer(deps: OutboundExfilConfirmDeps | null): void {
+  exfilConfirmer = deps
+}
+
+export function getOutboundExfilConfirmer(): OutboundExfilConfirmDeps | null {
+  return exfilConfirmer
+}
+
+/** Closed stub so fan-out originatingWs is never overlay / never undefined. */
+const NOOP_ORIGIN_WS = {
+  readyState: WebSocket.CLOSED,
+  send() {
+    /* no-op */
+  },
+} as unknown as WebSocket
+
+function outboundConfirmTrayHint(): string {
+  return process.platform === "darwin"
+    ? "approve via macOS tray dialog (if CMspark tray is Swift) and/or any open Side Panel"
+    : "open CMspark Side Panel and approve (Windows/Linux tray has no native confirm dialog)"
+}
+
+/**
+ * First-exfil operator HITL (Task 10). Fans out like L8: unbound origin (or
+ * extension), never overlay. Approve arms the in-process disclosure Map only —
+ * does not persist the grant page-export flag.
+ */
+async function waitFirstExfilOperatorConfirm(
+  caller_id: string,
+  tool: string,
+  grant_id?: string,
+): Promise<OutboundCallResult> {
+  const deps = exfilConfirmer
+  if (!deps) {
+    return {
+      ok: false,
+      error: "operator HITL required for page export",
+      error_code: "DISCLOSURE_HITL_REQUIRED",
+      disclosure_required: true,
+      disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
+    }
+  }
+
+  const clients = deps.getClients()
+  const extensionWs = pickExtensionWsFromAuth(clients, deps.wsAuthGet)
+  const originatingWs = deps.getOriginatingWs?.() || extensionWs || NOOP_ORIGIN_WS
+  const originatingSurface = deps.wsAuthGet(originatingWs)?.surface
+  const confirmBinding = resolveConfirmBinding({
+    originatingWs,
+    originatingSurface,
+    isOutboundMcpCall: true,
+    extensionWs,
+  })
+  const confirmOriginOpts = confirmBinding.originWs
+    ? { originWs: confirmBinding.originWs }
+    : {}
+
+  const sendConfirm = (data: unknown) => {
+    fanOutConfirmRequest({
+      data,
+      originatingWs,
+      originatingSurface,
+      isOutboundMcpCall: true,
+      overlayNotice: confirmBinding.overlayNotice,
+      clients,
+      wsAuthGet: deps.wsAuthGet,
+    })
+  }
+
+  const internal = outboundToInternalName(tool) || tool
+  logger.info("outbound_mcp.confirm_fanout", {
+    tool_name: internal,
+    caller: caller_id,
+    first_exfil: true,
+  })
+
+  let decision: Awaited<ReturnType<SecurityConfirmationManager["request"]>>
+  try {
+    decision = await deps.securityConfirmations.request(
+      sendConfirm,
+      {
+        toolName: `[Outbound] ${internal}`,
+        dangerousApis: [],
+        code: OUTBOUND_DISCLOSURE_ZH,
+        riskLevel: "high",
+        autoConfirmEligible: false,
+      },
+      confirmOriginOpts,
+    )
+  } catch (e: any) {
+    appendOutboundMcpAudit({
+      caller_id,
+      tool,
+      ok: false,
+      error_code: "OUTBOUND_CONFIRM_REQUIRED",
+      confirm_outcome: "denied",
+      grant_id,
+    })
+    return {
+      ok: false,
+      error: `${e?.message || String(e)} — L8: ${outboundConfirmTrayHint()}`,
+      error_code: "OUTBOUND_CONFIRM_REQUIRED",
+      disclosure_required: true,
+      disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
+    }
+  }
+
+  if (!decision.approved) {
+    const outcome =
+      decision.reason === "timeout" ? ("timeout" as const) : ("denied" as const)
+    appendOutboundMcpAudit({
+      caller_id,
+      tool,
+      ok: false,
+      error_code: "OUTBOUND_CONFIRM_REQUIRED",
+      confirm_outcome: outcome,
+      grant_id,
+    })
+    return {
+      ok: false,
+      error: `operator HITL ${decision.reason} for page export — L8: ${outboundConfirmTrayHint()}`,
+      error_code: "OUTBOUND_CONFIRM_REQUIRED",
+      disclosure_required: true,
+      disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
+    }
+  }
+
+  // Session Map only — never persist the grant page-export flag (session ≠ 30d consent).
+  acceptOutboundDisclosure(caller_id)
+  appendOutboundMcpAudit({
+    caller_id,
+    tool,
+    ok: true,
+    confirm_outcome: "approved",
+    grant_id,
+  })
+  return { ok: true }
+}
+
 /** Test helper */
 export function resetOutboundCompanionHttpForTests(): void {
   toolRunner = null
   refreshRunner = null
+  exfilConfirmer = null
   clearAllOutboundDisclosureSessions()
 }
 
@@ -276,9 +439,18 @@ export async function companionInvokeOutbound(
     domain: body.domain,
   }
 
-  const gate = gateOutboundCall(req)
+  let gate = gateOutboundCall(req)
   if (!gate.ok) {
-    return gate
+    // HTTP invoke waits on first-exfil HITL when a confirmer is injected.
+    // Facade unit tests without a manager still see DISCLOSURE_HITL_REQUIRED.
+    if (gate.error_code === "DISCLOSURE_HITL_REQUIRED" && exfilConfirmer) {
+      const hitl = await waitFirstExfilOperatorConfirm(caller_id, tool, grant_id)
+      if (!hitl.ok) return hitl
+      gate = gateOutboundCall(req)
+      if (!gate.ok) return gate
+    } else {
+      return gate
+    }
   }
 
   // Defense in depth for exfil (grant flag ∧ operator HITL; HTTP ack is not consent)

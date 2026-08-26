@@ -23,16 +23,29 @@ import {
   securityConfirmations,
   seedThreadManagerForTests,
   seedExtensionWsAuthForTests,
+  getWsAuthState,
 } from "../../src/server.js"
 import { ThreadManager } from "../../src/threads/thread-manager.js"
 import { getConfigDir } from "../../src/config.js"
 import {
   setOutboundToolRunner,
+  setOutboundExfilConfirmer,
   resetOutboundCompanionHttpForTests,
   companionInvokeOutbound,
   companionAcceptDisclosure,
+  handleOutboundMcpHttp,
+  OUTBOUND_DISCLOSURE_PATH,
 } from "../../src/outbound-mcp/companion-http.js"
-import { issueOutboundGrant, resetOutboundGrantsForTests } from "../../src/outbound-mcp/outbound-grants.js"
+import {
+  issueOutboundGrant,
+  resetOutboundGrantsForTests,
+  listOutboundGrants,
+  grantAllowsPageExport,
+  revokeOutboundGrant,
+} from "../../src/outbound-mcp/outbound-grants.js"
+import { hasOutboundDisclosure } from "../../src/outbound-mcp/disclosure-session.js"
+import { assertSummonerAllowed } from "../../src/ws/summoner-acl.js"
+import http from "node:http"
 import {
   _resetTabLeasesForTests,
   registerTabLeasePendingHooks,
@@ -426,4 +439,311 @@ test("S42 P0: untrusted runner (no trustedOutbound) still denies synthetic outbo
       /tool_not_allowed|not allowed/i.test(String(r.error || "")),
     `expected whitelist deny after strip, got ${JSON.stringify(r)}`,
   )
+})
+
+function wireExfilConfirmer(authExtra?: Map<WebSocket, { authenticated?: boolean; origin?: string; surface?: string }>): void {
+  setOutboundExfilConfirmer({
+    securityConfirmations,
+    getClients: () => wss.clients,
+    wsAuthGet: (w: WebSocket) => authExtra?.get(w) ?? getWsAuthState(w),
+    getOriginatingWs: () => serverSideWs,
+  })
+}
+
+async function connectPeer(): Promise<{ server: WebSocket; client: WebSocket }> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("peer connect timeout")), 2000)
+    wss.once("connection", (ws) => {
+      clearTimeout(timeout)
+      ws.on("error", () => {
+        /* teardown */
+      })
+      resolve({ server: ws, client })
+    })
+    const client = new WebSocket(`ws://127.0.0.1:${serverPort}`)
+    client.on("error", () => {
+      /* teardown */
+    })
+  })
+}
+
+async function postDisclosureAck(token: string, caller_id: string): Promise<{
+  status: number
+  json: any
+}> {
+  const server = http.createServer((req, res) => {
+    void handleOutboundMcpHttp(req, res, "unused-ws-secret").catch((err) => {
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json" })
+        res.end(JSON.stringify({ ok: false, error: String(err) }))
+      }
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const addr = server.address()
+  assert.ok(addr && typeof addr === "object" && "port" in addr)
+  const port = (addr as { port: number }).port
+  const body = Buffer.from(JSON.stringify({ caller_id, acknowledge: true }), "utf8")
+  try {
+    return await new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: OUTBOUND_DISCLOSURE_PATH,
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            "Content-Length": body.length,
+          },
+        },
+        (res) => {
+          const chunks: Buffer[] = []
+          res.on("data", (c) => chunks.push(c))
+          res.on("end", () => {
+            const raw = Buffer.concat(chunks).toString("utf8")
+            let json: any = null
+            try {
+              json = raw ? JSON.parse(raw) : null
+            } catch {
+              json = { _raw: raw }
+            }
+            resolve({ status: res.statusCode || 0, json })
+          })
+        },
+      )
+      req.on("error", reject)
+      req.write(body)
+      req.end()
+    })
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+}
+
+test("first screenshot with allow_page_export queues confirm and does not accept via HTTP ack", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  wireTrustedOutboundRunner(executeTool)
+  wireExfilConfirmer()
+  const issued = issueOutboundGrant({
+    label: "stack-hitl",
+    caller_id: "stack-hitl",
+    allow_page_export: true,
+  })
+  const grantBefore = listOutboundGrants().find((g) => g.id === issued.id)
+  assert.ok(grantBefore)
+
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+  const invokeP = companionInvokeOutbound({
+    caller_id: "stack-hitl",
+    tool: "cmspark__screenshot",
+    args: { tabId: 1 },
+  })
+  const confirmation = await confirmationPromise
+  assert.match(String(confirmation.tool_name || ""), /screenshot|Outbound/i)
+  assert.equal(hasOutboundDisclosure("stack-hitl"), false)
+  assert.equal(securityConfirmations.isPending(String(confirmation.confirmation_id)), true)
+
+  const disc = await postDisclosureAck(issued.token, "stack-hitl")
+  assert.equal(disc.json.ok, false)
+  assert.equal(disc.json.error_code, "ACK_NOT_OPERATOR")
+  assert.equal(hasOutboundDisclosure("stack-hitl"), false)
+  assert.equal(securityConfirmations.isPending(String(confirmation.confirmation_id)), true)
+
+  const grantMid = listOutboundGrants().find((g) => g.id === issued.id)
+  assert.equal(grantMid?.allow_page_export, true)
+  assert.equal(grantMid?.allow_page_export_at, grantBefore!.allow_page_export_at)
+
+  clientSideWs.send(
+    JSON.stringify({
+      type: "security.confirmation.response",
+      confirmation_id: confirmation.confirmation_id,
+      approved: false,
+    }),
+  )
+  const r = await invokeP
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "OUTBOUND_CONFIRM_REQUIRED")
+  assert.equal(hasOutboundDisclosure("stack-hitl"), false)
+  assert.equal(grantAllowsPageExport("stack-hitl"), true)
+})
+
+test("after operator confirm, second exfil in session passes hasOutboundDisclosure", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  wireTrustedOutboundRunner(executeTool)
+  wireExfilConfirmer()
+  issueOutboundGrant({
+    label: "stack-sess",
+    caller_id: "stack-sess",
+    allow_page_export: true,
+  })
+  armAutoToolResult({ png: "xx" })
+
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+  const firstP = companionInvokeOutbound({
+    caller_id: "stack-sess",
+    tool: "cmspark__screenshot",
+    args: { tabId: 1 },
+  })
+  const confirmation = await confirmationPromise
+  clientSideWs.send(
+    JSON.stringify({
+      type: "security.confirmation.response",
+      confirmation_id: confirmation.confirmation_id,
+      approved: true,
+    }),
+  )
+  const first = await firstP
+  assert.equal(first.ok, true, `first exfil: ${JSON.stringify(first)}`)
+  assert.equal(hasOutboundDisclosure("stack-sess"), true)
+
+  let secondConfirm = false
+  const sneak = (raw: any) => {
+    try {
+      const msg = JSON.parse(raw.toString())
+      if (msg.type === "security.confirmation.request") secondConfirm = true
+    } catch {
+      /* ignore */
+    }
+  }
+  clientSideWs.on("message", sneak)
+  const second = await companionInvokeOutbound({
+    caller_id: "stack-sess",
+    tool: "cmspark__screenshot",
+    args: { tabId: 1 },
+  })
+  clientSideWs.off("message", sneak)
+  assert.equal(second.ok, true, `second exfil: ${JSON.stringify(second)}`)
+  assert.equal(hasOutboundDisclosure("stack-sess"), true)
+  assert.equal(secondConfirm, false, "session disclosure must skip second HITL")
+})
+
+test("overlay socket cannot resolve exfil confirm", async () => {
+  // Pin ACL at lifecycle: summoner never reaches respondFrom.
+  const lifeSrc = fs.readFileSync(
+    path.join(process.cwd(), "src", "ws", "lifecycle.ts"),
+    "utf8",
+  )
+  const aclIdx = lifeSrc.indexOf("assertSummonerAllowed")
+  const respIdx = lifeSrc.indexOf('msg.type === "security.confirmation.response"')
+  assert.ok(aclIdx >= 0 && respIdx >= 0 && aclIdx < respIdx, "lifecycle must ACL-gate before confirm.response")
+  assert.equal(assertSummonerAllowed("summoner", "security.confirmation.response").ok, false)
+
+  const httpSrc = fs.readFileSync(
+    path.join(process.cwd(), "src", "outbound-mcp", "companion-http.ts"),
+    "utf8",
+  )
+  assert.match(httpSrc, /fanOutConfirmRequest/)
+  assert.match(httpSrc, /resolveConfirmBinding/)
+  assert.match(httpSrc, /isOutboundMcpCall:\s*true/)
+  assert.doesNotMatch(httpSrc, /allow_page_export\s*=\s*true/)
+
+  const overlay = await connectPeer()
+  const overlayAuth = new Map<WebSocket, { authenticated?: boolean; origin?: string; surface?: string }>([
+    [serverSideWs, { authenticated: true, origin: "chrome-extension://test", surface: "tray" }],
+    [overlay.server, { authenticated: true, origin: "cmspark-tray://local", surface: "summoner" }],
+  ])
+  overlay.server.on("message", (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString())
+      if (msg.type === "security.confirmation.response") {
+        const gate = assertSummonerAllowed("summoner", msg.type)
+        if (!gate.ok) {
+          overlay.server.send(JSON.stringify({ type: "error", error: gate.error, error_code: gate.error_code }))
+          return
+        }
+        // Must not be reached in production — summoner is not on SUMMONER_ALLOW.
+        securityConfirmations.respondFrom(String(msg.confirmation_id || ""), msg.approved === true, overlay.server)
+      }
+    } catch {
+      /* ignore */
+    }
+  })
+
+  const executeTool = createToolExecutor(serverSideWs)
+  wireTrustedOutboundRunner(executeTool)
+  wireExfilConfirmer(overlayAuth)
+  issueOutboundGrant({
+    label: "overlay-exfil",
+    caller_id: "overlay-exfil",
+    allow_page_export: true,
+  })
+
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+  const invokeP = companionInvokeOutbound({
+    caller_id: "overlay-exfil",
+    tool: "cmspark__screenshot",
+    args: { tabId: 1 },
+  })
+  const confirmation = await confirmationPromise
+  const confirmId = String(confirmation.confirmation_id)
+  assert.equal(securityConfirmations.isPending(confirmId), true)
+
+  const overlayErr = new Promise<any>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("timeout waiting for overlay ACL error")), 3000)
+    const handler = (raw: any) => {
+      try {
+        const msg = JSON.parse(raw.toString())
+        if (msg.type === "error" || msg.error_code === "SUMMONER_ACL") {
+          clearTimeout(timeout)
+          overlay.client.off("message", handler)
+          resolve(msg)
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    overlay.client.on("message", handler)
+  })
+  overlay.client.send(
+    JSON.stringify({
+      type: "security.confirmation.response",
+      confirmation_id: confirmId,
+      approved: true,
+    }),
+  )
+  const err = await overlayErr
+  assert.equal(err.error_code, "SUMMONER_ACL")
+  assert.equal(securityConfirmations.isPending(confirmId), true)
+  assert.equal(hasOutboundDisclosure("overlay-exfil"), false)
+
+  // Unbound origin: a non-extension tray socket can still respondFrom.
+  // Binding originWs to the extension just to fail overlay would break this.
+  const trayPeer = { id: "tray-unbound" } as unknown as WebSocket
+  const fromTray = securityConfirmations.respondFrom(confirmId, true, trayPeer)
+  assert.equal(fromTray.outcome, "resolved")
+  armAutoToolResult({ png: "xx" })
+  const r = await invokeP
+  assert.equal(r.ok, true, `tray/unbound resolve: ${JSON.stringify(r)}`)
+  assert.equal(hasOutboundDisclosure("overlay-exfil"), true)
+
+  try {
+    overlay.client.terminate()
+    overlay.server.terminate()
+  } catch {
+    /* */
+  }
+})
+
+test("revoke grant after HITL session still denies exfil", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  wireTrustedOutboundRunner(executeTool)
+  const issued = issueOutboundGrant({
+    label: "rev-exec",
+    caller_id: "rev-exec",
+    allow_page_export: true,
+  })
+  await companionAcceptDisclosure("rev-exec")
+  assert.equal(hasOutboundDisclosure("rev-exec"), true)
+  assert.equal(revokeOutboundGrant(issued.id), true)
+  assert.equal(grantAllowsPageExport("rev-exec"), false)
+  assert.equal(hasOutboundDisclosure("rev-exec"), true)
+  const r = await companionInvokeOutbound({
+    caller_id: "rev-exec",
+    tool: "cmspark__screenshot",
+    args: { tabId: 1 },
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "DISCLOSURE_NOT_GRANTED")
 })

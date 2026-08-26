@@ -38,6 +38,7 @@ export {
   handleOutboundMcpHttp,
   companionInvokeOutbound,
   setOutboundToolRunner,
+  setOutboundExfilConfirmer,
   authorizeOutboundRequest,
   authorizeOutboundHttp,
   OUTBOUND_INVOKE_PATH,

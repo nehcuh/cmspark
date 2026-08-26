@@ -533,9 +533,17 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
 
   // Outbound MCP: refresh tool runner before each HTTP invoke
   try {
-    const { setOutboundRunnerRefresh } = require("../outbound-mcp/companion-http") as typeof import("../outbound-mcp/companion-http")
+    const { setOutboundRunnerRefresh, setOutboundExfilConfirmer } = require("../outbound-mcp/companion-http") as typeof import("../outbound-mcp/companion-http")
     setOutboundRunnerRefresh(() => {
       ensureOutboundToolRunnerWired()
+    })
+    // First-exfil operator HITL (Task 10): same singleton as L8, injected so
+    // companion-http does not import server.ts.
+    setOutboundExfilConfirmer({
+      securityConfirmations: requireRt().securityConfirmations,
+      getClients: getWsClients,
+      wsAuthGet: (w) => getWsAuthState(w),
+      getOriginatingWs: pickAuthenticatedClientWs,
     })
   } catch (e: any) {
     logger.warn("outbound_mcp.refresh_hook_failed", { error: e?.message || String(e) })
