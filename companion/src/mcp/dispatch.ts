@@ -31,6 +31,7 @@ import {
   resolveConfirmBinding,
   type ConfirmPeerAuth,
 } from "./confirm-fanout"
+import { ensureExtensionPeerForOverlayConfirm } from "../ws/extension-peer"
 
 /**
  * Audit item 8: tool-name patterns that signal destructive operations. Matching
@@ -55,7 +56,7 @@ export type McpDispatchRuntime = {
 
 let _rt: McpDispatchRuntime | null = null
 
-export function bindMcpDispatchRuntime(rt: McpDispatchRuntime): void {
+export function bindMcpDispatchRuntime(rt: McpDispatchRuntime | null): void {
   _rt = rt
 }
 
@@ -72,13 +73,26 @@ function requireRt(): McpDispatchRuntime {
  * Overlay cannot confirm (N5). Fail closed without an extension peer
  * (UNAVAILABLE copy). When the panel is up, bind originWs to the extension
  * and fan out Allow/Deny like L2 — overlay gets mcp.confirm.pending only.
+ * Overlay with no peer: attachChromeOnly + waitForExtensionPeer; timeout
+ * stays UNAVAILABLE (never approved).
  */
-function confirmChannel(originatingWs: WebSocket):
+export async function confirmChannel(originatingWs: WebSocket): Promise<
   | { originWs: WebSocket; send: (data: unknown) => void }
-  | { error: string } {
+  | { error: string }
+> {
   const rt = requireRt()
-  const ext = rt.pickExtensionWs?.() ?? null
+  let ext = rt.pickExtensionWs?.() ?? null
   const originatingSurface = rt.getWsSurface?.(originatingWs)
+  if (originatingSurface === "summoner") {
+    const extOpen = ext != null && ext.readyState === WebSocket.OPEN
+    if (!extOpen) {
+      try {
+        ext = await ensureExtensionPeerForOverlayConfirm({ existing: ext })
+      } catch {
+        return { error: MCP_OVERLAY_CONFIRM_UNAVAILABLE }
+      }
+    }
+  }
   const decided = resolveMcpConfirmTarget({
     originatingSurface,
     originatingOpen: originatingWs.readyState === WebSocket.OPEN,
@@ -236,7 +250,7 @@ export async function executeMcpTool(
       reason: "full_autonomy_cruise",
     })
   } else if (needsConfirm || forceMcpConfirm) {
-    const channel = confirmChannel(ws)
+    const channel = await confirmChannel(ws)
     if ("error" in channel) {
       return { success: false, error: `Security Block: ${channel.error}` }
     }
@@ -412,7 +426,7 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
     return { retried: true, ok: true }
   }
 
-  const channel = confirmChannel(opts.ws)
+  const channel = await confirmChannel(opts.ws)
   if ("error" in channel) {
     return {
       retried: true,
@@ -589,7 +603,7 @@ export async function executeMcpMetaTool(
       reason: "full_autonomy_cruise",
     })
   } else if (needsConfirm) {
-    const channel = confirmChannel(ws)
+    const channel = await confirmChannel(ws)
     if ("error" in channel) {
       return { success: false, error: `Security Block: ${channel.error}` }
     }

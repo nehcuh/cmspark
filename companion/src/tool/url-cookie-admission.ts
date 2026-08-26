@@ -27,8 +27,10 @@ import {
   resolveConfirmBinding,
   fanOutConfirmRequest,
   pickExtensionWsFromAuth,
+  isSummonerSurface,
   type ConfirmPeerAuth,
 } from "../mcp/confirm-fanout"
+import { ensureExtensionPeerForOverlayConfirm } from "../ws/extension-peer"
 
 export const COOKIE_TOOLS = [
   "get_cookies",
@@ -158,26 +160,52 @@ export async function runUrlNavigateAdmission(
   // Overlay / outbound: never bind originWs to summoner; fan-out Allow/Deny
   // to authenticated non-summoner peers. Overlay gets mcp.confirm.pending only.
   const originatingSurface = wsAuthGet(ws)?.surface
-  const extensionWs = pickExtensionWsFromAuth(clients, wsAuthGet)
-  const confirmBinding = resolveConfirmBinding({
-    originatingWs: ws,
-    originatingSurface,
-    isOutboundMcpCall,
-    extensionWs,
-  })
-  const confirmOriginOpts = confirmBinding.originWs
-    ? { originWs: confirmBinding.originWs }
-    : {}
-  const sendConfirm = (data: unknown) => {
-    fanOutConfirmRequest({
-      data,
+
+  async function bindOverlayConfirmChannel(rawUrlForError: string): Promise<
+    | {
+        ok: true
+        confirmOriginOpts: { originWs?: WebSocket }
+        sendConfirm: (data: unknown) => void
+      }
+    | { ok: false; result: { success: false; error: string } }
+  > {
+    let extensionWs = pickExtensionWsFromAuth(clients, wsAuthGet)
+    if (
+      isSummonerSurface(originatingSurface) &&
+      !(extensionWs && extensionWs.readyState === WebSocket.OPEN)
+    ) {
+      try {
+        extensionWs = await ensureExtensionPeerForOverlayConfirm({ existing: extensionWs })
+      } catch {
+        const result = {
+          success: false as const,
+          error: `Security Block: ${toolName} to "${rawUrlForError}" was unavailable.`,
+        }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return { ok: false, result }
+      }
+    }
+    const confirmBinding = resolveConfirmBinding({
       originatingWs: ws,
       originatingSurface,
       isOutboundMcpCall,
-      overlayNotice: confirmBinding.overlayNotice,
-      clients,
-      wsAuthGet,
+      extensionWs,
     })
+    const confirmOriginOpts = confirmBinding.originWs
+      ? { originWs: confirmBinding.originWs }
+      : {}
+    const sendConfirm = (data: unknown) => {
+      fanOutConfirmRequest({
+        data,
+        originatingWs: ws,
+        originatingSurface,
+        isOutboundMcpCall,
+        overlayNotice: confirmBinding.overlayNotice,
+        clients,
+        wsAuthGet,
+      })
+    }
+    return { ok: true, confirmOriginOpts, sendConfirm }
   }
 
   // Audit item 12: navigate / create_tab trust-domain gate. Agents can otherwise
@@ -256,8 +284,10 @@ export async function runUrlNavigateAdmission(
       tool_name: toolName,
       path: offer.realPath,
     })
+    const bound = await bindOverlayConfirmChannel(rawUrl)
+    if (!bound.ok) return { ok: false, result: bound.result }
     const decision = await securityConfirmations.request(
-      sendConfirm,
+      bound.sendConfirm,
       {
         toolName: "打开本地文件（仅这一次）",
         dangerousApis: ["local-file"],
@@ -268,7 +298,7 @@ export async function runUrlNavigateAdmission(
         riskLevel: "medium",
         autoConfirmEligible: false,
       },
-      confirmOriginOpts,
+      bound.confirmOriginOpts,
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
@@ -345,15 +375,17 @@ export async function runUrlNavigateAdmission(
     // S42 P1 + overlay L8: outbound / summoner fan-out Allow/Deny to
     // authenticated non-summoner peers; overlay gets mcp.confirm.pending only.
     // Panel path stays origin-bound so another peer cannot cross-approve.
+    const bound = await bindOverlayConfirmChannel(rawUrl)
+    if (!bound.ok) return { ok: false, result: bound.result }
     const decision = await securityConfirmations.request(
-      sendConfirm,
+      bound.sendConfirm,
       {
         toolName: isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName,
         dangerousApis: [],
         code: `navigate(${rawUrl})`,
         relevantDomains: [host],
       },
-      confirmOriginOpts,
+      bound.confirmOriginOpts,
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason

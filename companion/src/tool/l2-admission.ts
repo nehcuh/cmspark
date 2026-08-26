@@ -51,6 +51,7 @@ import {
   isSummonerSurface,
   type ConfirmPeerAuth,
 } from "../mcp/confirm-fanout"
+import { ensureExtensionPeerForOverlayConfirm } from "../ws/extension-peer"
 
 /** Tools that require L2 security_token issuance (or evaluate token revalidate). */
 export const L2_GATE_TOOLS: readonly string[] = [
@@ -1126,6 +1127,18 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
 
       try {
       decision = await (async () => {
+        // Overlay HITL without an extension peer: attachChromeOnly + wait.
+        // Timeout is denied / not approved (never skip-confirm).
+        const originatingSurface = wsAuth.get(ws)?.surface
+        let extensionWs = pickExtensionWsFromAuth(clients, (w) => wsAuth.get(w))
+        if (isSummonerSurface(originatingSurface) && !(extensionWs && extensionWs.readyState === WebSocket.OPEN)) {
+          try {
+            extensionWs = await ensureExtensionPeerForOverlayConfirm({ existing: extensionWs })
+          } catch {
+            return { confirmationId: "", approved: false, reason: "timeout" as const }
+          }
+        }
+
         // P0a — pre-generate confirmationId so WS + tray channels share it.
         // Whichever resolves first wins (manager.pending is keyed by id, first
         // responder claims it). See capability-token-round1-synthesis §P0a.
@@ -1182,8 +1195,6 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
 
         // Overlay/outbound: bind via resolveConfirmBinding so overlay is never
         // originWs and tray map is never keyed by the summoner socket.
-        const originatingSurface = wsAuth.get(ws)?.surface
-        const extensionWs = pickExtensionWsFromAuth(clients, (w) => wsAuth.get(w))
         const confirmBinding = resolveConfirmBinding({
           originatingWs: ws,
           originatingSurface,

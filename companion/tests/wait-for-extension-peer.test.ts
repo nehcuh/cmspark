@@ -8,9 +8,11 @@ import test, { afterEach } from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import type { WebSocket } from "ws"
+import { WebSocket } from "ws"
 import {
   bindExtensionPeerPicker,
+  bindOverlayConfirmPeerForTests,
+  ensureExtensionPeerForOverlayConfirm,
   notifyExtensionPeerAuthenticated,
   resetExtensionPeerWaitersForTests,
   waitForExtensionPeer,
@@ -27,8 +29,8 @@ function companionSrc(rel: string): string {
   throw new Error(`missing src/${rel}`)
 }
 
-function fakeWs(id: string): WebSocket {
-  return { id } as unknown as WebSocket
+function fakeWs(id: string, readyState: number = WebSocket.OPEN): WebSocket {
+  return { id, readyState } as unknown as WebSocket
 }
 
 function sleep(ms: number): Promise<void> {
@@ -113,6 +115,98 @@ test("source: auth.ok notifies extension peer waiters after authenticated", () =
     src,
     /\^chrome-extension:\\\/\\\/[\s\S]{0,120}notifyExtensionPeerAuthenticated\(ws\)/,
   )
+})
+
+test("ensureExtensionPeerForOverlayConfirm attaches then waits; timeout never approved", async () => {
+  let attached = 0
+  bindOverlayConfirmPeerForTests({
+    attach: () => {
+      attached += 1
+    },
+  })
+  bindExtensionPeerPicker(() => null)
+
+  let resolved: unknown
+  try {
+    resolved = await ensureExtensionPeerForOverlayConfirm({ timeoutMs: 25 })
+    assert.fail("timeout must reject, not resolve")
+  } catch (err: unknown) {
+    assert.ok(err, "timeout must reject")
+    if (err && typeof err === "object" && "approved" in err) {
+      assert.notEqual(
+        (err as { approved: unknown }).approved,
+        true,
+        "timeout must never approved: true",
+      )
+    }
+  }
+  assert.equal(resolved, undefined, "must reject, not resolve (including approved: true)")
+  assert.equal(attached, 1, "must attachChromeOnly before waiting")
+})
+
+test("ensureExtensionPeerForOverlayConfirm skips attach when peer already open", async () => {
+  let attached = 0
+  bindOverlayConfirmPeerForTests({
+    attach: () => {
+      attached += 1
+    },
+  })
+  const ext = fakeWs("ext")
+  const ws = await ensureExtensionPeerForOverlayConfirm({ existing: ext, timeoutMs: 25 })
+  assert.equal(ws, ext)
+  assert.equal(attached, 0)
+})
+
+test("ensureExtensionPeerForOverlayConfirm resolves on auth.ok after attach", async () => {
+  let attached = 0
+  bindOverlayConfirmPeerForTests({
+    attach: () => {
+      attached += 1
+    },
+  })
+  const ext = fakeWs("ext")
+  let peer: WebSocket | null = null
+  bindExtensionPeerPicker(() => peer)
+
+  const pending = ensureExtensionPeerForOverlayConfirm({ timeoutMs: 1500 })
+  assert.equal(attached, 1)
+  peer = ext
+  notifyExtensionPeerAuthenticated(ext)
+  assert.equal(await pending, ext)
+})
+
+test("source: overlay confirm helper never sidePanel.open or approved:true", () => {
+  const src = companionSrc("ws/extension-peer.ts")
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")
+  assert.match(src, /export async function ensureExtensionPeerForOverlayConfirm/)
+  assert.match(src, /attachChromeOnly/)
+  assert.match(src, /waitForExtensionPeer/)
+  assert.doesNotMatch(code, /sidePanel\.open/)
+  assert.doesNotMatch(code, /openSidePanel/)
+  assert.doesNotMatch(code, /approved:\s*true/)
+  assert.doesNotMatch(code, /skip-confirm|skipConfirm|auto-approve/)
+})
+
+test("source: dispatch/l2/url-cookie await ensureExtensionPeerForOverlayConfirm", () => {
+  const dispatch = companionSrc("mcp/dispatch.ts")
+  const l2 = companionSrc("tool/l2-admission.ts")
+  const url = companionSrc("tool/url-cookie-admission.ts")
+  for (const [name, src] of [
+    ["dispatch", dispatch],
+    ["l2", l2],
+    ["url-cookie", url],
+  ] as const) {
+    assert.match(
+      src,
+      /await\s+ensureExtensionPeerForOverlayConfirm/,
+      `${name} must await ensureExtensionPeerForOverlayConfirm`,
+    )
+    assert.doesNotMatch(src, /sidePanel\.open/, `${name} must not open sidePanel`)
+    assert.doesNotMatch(src, /openSidePanel/, `${name} must not call openSidePanel`)
+  }
+  assert.match(dispatch, /async function confirmChannel/)
+  const confirmAwaits = dispatch.match(/await confirmChannel\(/g)
+  assert.equal(confirmAwaits?.length, 3, "all confirmChannel call sites must await")
 })
 
 test("source: overlay close cancelConfirm uses closing ws key, not extension set", () => {

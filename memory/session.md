@@ -2,6 +2,30 @@
 
 ## Current Session
 
+### Task 8 hole (2026-08-26) [await extension peer before overlay-origin HITL]
+- **Ship**: `fix(confirm): await extension peer before overlay-origin HITL`
+- **Hole**: `waitForExtensionPeer` existed and auth.ok notified it, but no production confirm path awaited it.
+- **TDD**: RED tsc (missing `ensureExtensionPeerForOverlayConfirm` / `confirmChannel` export). Then wrapper + dispatch/l2/url-cookie wire. GREEN 51 tests.
+- **Wire**: overlay/inbound without extension → `attachChromeOnly` (never `sidePanel.open`) → `await waitForExtensionPeer`. Timeout → UNAVAILABLE / `approved: false`, never `approved: true`. Attach injected in tests.
+- **Sites**: `mcp/dispatch.ts` confirmChannel (async), `l2-admission.ts`, `url-cookie-admission.ts` navigate + file-open.
+- Recorded: yes — no skip-confirm / auto-approve / overlay Allow/Deny
+
+### Task 12 (2026-08-26) [Hide MCP rail, freeze CONFIGURE chrome · PR-C]
+- **Ship**: `fix(summoner): hide MCP rail without deleting protocol`
+- **TDD**: failing hide assertions first (rail `isHidden`, HTML `data-sec="mcp" hidden`, add/import rows `isHidden = true`). Then chrome.
+- **Chrome**: Swift MCP icon `btn.isHidden = spec.2 == 4`; rows `＋ 添加 MCP` / `＋ 导入知识` hidden; HTML `hidden` + `.rail-btn[hidden]{display:none}`. Default section remains 对话 (`railSection = 0` / `data-sec="threads"`).
+- **Kept**: `summoner.mcp.toggle` / `summoner.mcp.add` / stdin handlers / sixth rail / `mcp.toggle_server` + `skill.activate` on SUMMONER_ALLOW. No ACL rollback. No overlay Allow/Deny. No HUD stdin grant.
+- **Swift rebuild**: `build-tray.sh` ok. `SWIFT_TRAY_SHA256=31a7f3e072525afb3d9f1dcdc962b95e37bee9ea35593f597e64537ec4b8aa2b`
+- Recorded: yes — hide-not-delete; compose source-regex still finds mcp.toggle/add
+
+### Task 11 (2026-08-26) [Summoner copy + attach CTAs · PR-C]
+- **Ship**: `fix(summoner): 展开对话 and 打开浏览器 honesty CTAs`
+- **TDD**: flipped overlay/web/client/compose tests first (6 red: 展开对话, ctaBox `!detached`, 听写在侧栏, `/api/attach` 404, footnote). Then chrome.
+- **Chrome**: both shells 展开对话/收起对话; detached unhides 打开浏览器 + 打开并前置浏览器; footnote 不能替你打开侧栏; HTML POST `/api/attach` → attachChromeOnly, never openSidePanel.
+- **Swift rebuild**: `build-tray.sh` ok. `SWIFT_TRAY_SHA256=bd25914764d3ebea23e075d76b058b11458b4071508c0298eda27053f041f581`
+- **Not this PR**: MCP rail still visible (Task 12). No overlay Allow/Deny.
+- Recorded: yes — HTML mic 听写在侧栏; Mac HUD mic stays 按住听写
+
 ### S81 END (2026-08-25) [post-#222 P1+nits · Win HUD dogfood · PR #223]
 - **Ship**：`fix/post220-head-p1-fold` → **PR #223**。P1：F-I-5 冲突后缀、PEM through END、F-S-1 untrusted wrap。nits + Windows C-thin 纸面 HUD。本机 NSIS 静默换装 `%LOCALAPPDATA%\CMspark`，23401 LISTENING。
 - **闸门**：P1 四路 r2 AWN；nits+HUD 四路 AWN；Claude+Pi dual **both_ok**。用户狗食后：默认必须折叠居中小条；640×720 + media 藏列表 = 知识/MCP 点不开 → 已折 `720×120`/`placeWindow`。

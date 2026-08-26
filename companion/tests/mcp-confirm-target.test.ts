@@ -1,13 +1,20 @@
-import test from "node:test"
+import test, { afterEach } from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { WebSocket } from "ws"
 import {
   connectedMcpServerNames,
   resolveMcpConfirmTarget,
   MCP_OVERLAY_CONFIRM_NOTICE,
   MCP_OVERLAY_CONFIRM_UNAVAILABLE,
 } from "../src/mcp/confirm-target"
+import { bindMcpDispatchRuntime, confirmChannel } from "../src/mcp/dispatch"
+import {
+  bindExtensionPeerPicker,
+  bindOverlayConfirmPeerForTests,
+  resetExtensionPeerWaitersForTests,
+} from "../src/ws/extension-peer"
 
 function companionSrc(rel: string): string {
   const candidates = [
@@ -19,6 +26,11 @@ function companionSrc(rel: string): string {
   }
   throw new Error(`missing src/${rel}`)
 }
+
+afterEach(() => {
+  resetExtensionPeerWaitersForTests()
+  bindMcpDispatchRuntime(null)
+})
 
 test("summoner MCP confirm retargets to extension when panel is up", () => {
   const r = resolveMcpConfirmTarget({
@@ -85,8 +97,45 @@ test("source: dispatch fans out via resolveConfirmBinding, never binds overlay a
   assert.match(dispatch, /resolveConfirmBinding/)
   assert.match(dispatch, /fanOutConfirmRequest/)
   assert.match(dispatch, /resolveMcpConfirmTarget/)
+  assert.match(dispatch, /await\s+ensureExtensionPeerForOverlayConfirm/)
+  assert.match(dispatch, /async function confirmChannel/)
   assert.doesNotMatch(dispatch, /\{\s*originWs:\s*ws\s*\}/)
   assert.doesNotMatch(dispatch, /SUMMONER_ALLOW/)
+  assert.doesNotMatch(dispatch, /sidePanel\.open/)
+  assert.doesNotMatch(dispatch, /openSidePanel/)
+})
+
+test("overlay confirmChannel waits then fail-closes; timeout never approved", async () => {
+  let attached = 0
+  bindOverlayConfirmPeerForTests({
+    attach: () => {
+      attached += 1
+    },
+    waitMs: 25,
+  })
+  bindExtensionPeerPicker(() => null)
+  const overlay = {
+    readyState: WebSocket.OPEN,
+    send: () => {},
+  } as unknown as WebSocket
+  bindMcpDispatchRuntime({
+    getThreadManager: () => null,
+    securityConfirmations: {} as any,
+    broadcastToClients: () => {},
+    pickExtensionWs: () => null,
+    getWsSurface: () => "summoner",
+    getClients: () => [],
+    wsAuthGet: () => ({ authenticated: true, surface: "summoner", origin: "cmspark-tray://local" }),
+  })
+  const r = await confirmChannel(overlay)
+  assert.equal("error" in r, true, "timeout must fail-closed")
+  if ("error" in r) {
+    assert.match(r.error, /确认台/)
+    assert.doesNotMatch(r.error, /侧栏/)
+  }
+  assert.equal(attached, 1)
+  assert.doesNotMatch(JSON.stringify(r), /"approved"\s*:\s*true/)
+  assert.equal(!("approved" in r && (r as { approved?: unknown }).approved === true), true)
 })
 
 test("source: summoner MCP/pack notices say 确认台; keep 侧栏占用了输入", () => {

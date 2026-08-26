@@ -6,7 +6,30 @@
  * Pick is injected (lifecycle binds pickAuthenticatedClientWs) so this module
  * stays free of the WS server singleton. Fail path is a single timer.
  */
-import type { WebSocket } from "ws"
+import { WebSocket } from "ws"
+
+/** Chrome launch + extension auth.ok budget before overlay HITL fail-closes. */
+export const DEFAULT_EXTENSION_PEER_WAIT_MS = 15_000
+
+type OverlayAttachFn = () => void
+
+function defaultOverlayAttach(): void {
+  // Lazy require: tests stub attach so this must not spawn Chrome at import.
+  const { attachChromeOnly } = require("../summoner/client") as typeof import("../summoner/client")
+  const { getChromeOpener } = require("../platform") as typeof import("../platform")
+  attachChromeOnly(getChromeOpener())
+}
+
+let overlayAttach: OverlayAttachFn = defaultOverlayAttach
+let overlayPeerWaitMs = DEFAULT_EXTENSION_PEER_WAIT_MS
+
+export function bindOverlayConfirmPeerForTests(opts: {
+  attach?: OverlayAttachFn
+  waitMs?: number
+}): void {
+  if (opts.attach) overlayAttach = opts.attach
+  if (opts.waitMs != null) overlayPeerWaitMs = opts.waitMs
+}
 
 export const EXTENSION_PEER_TIMEOUT_CODE = "EXTENSION_UNAVAILABLE" as const
 
@@ -38,6 +61,28 @@ function makeTimeoutError(): ExtensionPeerTimeoutError {
   err.approved = false
   err.error_code = EXTENSION_PEER_TIMEOUT_CODE
   return err
+}
+
+/**
+ * Overlay/inbound HITL without an extension peer: attachChromeOnly (never
+ * sidePanel.open), then wait for auth.ok. Timeout never approved.
+ */
+export async function ensureExtensionPeerForOverlayConfirm(opts?: {
+  existing?: WebSocket | null
+  timeoutMs?: number
+}): Promise<WebSocket> {
+  const existing = opts?.existing ?? null
+  if (existing && existing.readyState === WebSocket.OPEN) return existing
+  const already = pickAuthenticated()
+  if (already) return already
+  try {
+    overlayAttach()
+  } catch {
+    throw makeTimeoutError()
+  }
+  return waitForExtensionPeer({
+    timeoutMs: opts?.timeoutMs ?? overlayPeerWaitMs,
+  })
 }
 
 /**
@@ -93,6 +138,8 @@ export function resetExtensionPeerWaitersForTests(): void {
   const pending = [...waiters]
   waiters.clear()
   pickAuthenticated = () => null
+  overlayAttach = defaultOverlayAttach
+  overlayPeerWaitMs = DEFAULT_EXTENSION_PEER_WAIT_MS
   for (const w of pending) {
     clearTimeout(w.timer)
   }

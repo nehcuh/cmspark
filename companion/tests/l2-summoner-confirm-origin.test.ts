@@ -17,7 +17,7 @@ process.on("exit", () => {
   }
 })
 
-import test from "node:test"
+import test, { afterEach } from "node:test"
 import assert from "node:assert/strict"
 import { WebSocket } from "ws"
 import {
@@ -30,6 +30,11 @@ import {
 } from "../src/mcp/confirm-fanout"
 import { runUrlNavigateAdmission } from "../src/tool/url-cookie-admission"
 import { initDataDir, getConfig, saveConfig } from "../src/config"
+import {
+  bindExtensionPeerPicker,
+  bindOverlayConfirmPeerForTests,
+  resetExtensionPeerWaitersForTests,
+} from "../src/ws/extension-peer"
 
 function companionSrc(rel: string): string {
   const candidates = [
@@ -41,6 +46,10 @@ function companionSrc(rel: string): string {
   }
   throw new Error(`missing src/${rel}`)
 }
+
+afterEach(() => {
+  resetExtensionPeerWaitersForTests()
+})
 
 function fakeWs(id: string, sent: string[]): WebSocket {
   return {
@@ -57,8 +66,14 @@ test("source: summoner path does not bind { originWs: ws } blindly", () => {
   const url = companionSrc("tool/url-cookie-admission.ts")
   assert.match(l2, /resolveConfirmBinding/)
   assert.match(url, /resolveConfirmBinding/)
+  assert.match(l2, /await\s+ensureExtensionPeerForOverlayConfirm/)
+  assert.match(url, /await\s+ensureExtensionPeerForOverlayConfirm/)
   assert.doesNotMatch(l2, /\{\s*originWs:\s*ws\s*\}/)
   assert.doesNotMatch(url, /\{\s*originWs:\s*ws\s*\}/)
+  assert.doesNotMatch(l2, /sidePanel\.open/)
+  assert.doesNotMatch(url, /sidePanel\.open/)
+  assert.doesNotMatch(l2, /openSidePanel/)
+  assert.doesNotMatch(url, /openSidePanel/)
 })
 
 test("source: notifier says 确认台 not Side Panel", () => {
@@ -299,4 +314,109 @@ test("url admission: summoner file-open does not bind overlay origin", async () 
   assert.equal(originOpt?.originWs, ext)
   assert.ok(overlaySent.every((s) => !s.includes("security.confirmation.request")))
   assert.ok(overlaySent.some((s) => s.includes("mcp.confirm.pending")))
+})
+
+test("url admission: summoner without extension attaches, timeout never approved", async () => {
+  await initDataDir()
+  saveConfig({
+    auto_approved_domains: [],
+    security: {
+      ...getConfig().security,
+      auto_approve_dangerous: false,
+      allow_all_schemes: false,
+    },
+  })
+  let attached = 0
+  let requestCalled = false
+  bindOverlayConfirmPeerForTests({
+    attach: () => {
+      attached += 1
+    },
+    waitMs: 25,
+  })
+  bindExtensionPeerPicker(() => null)
+  const overlaySent: string[] = []
+  const overlay = fakeWs("overlay", overlaySent)
+  const auth = new Map<WebSocket, ConfirmPeerAuth>([
+    [overlay, { authenticated: true, surface: "summoner", origin: "cmspark-tray://local" }],
+  ])
+  const r = await runUrlNavigateAdmission({
+    toolName: "navigate",
+    finalParams: { url: "https://evil.example/x" },
+    toolCallId: "summoner-nav-no-ext",
+    startedAt: Date.now(),
+    ws: overlay,
+    isOutboundMcpCall: false,
+    logToolFinish: () => {},
+    securityConfirmations: {
+      request: async () => {
+        requestCalled = true
+        return { approved: true, reason: "approved" }
+      },
+    } as any,
+    clients: [overlay],
+    wsAuthGet: (w) => auth.get(w),
+  })
+  assert.equal(attached, 1, "must attachChromeOnly when overlay has no extension peer")
+  assert.equal(requestCalled, false, "must not reach confirm request as approved")
+  assert.equal(r.ok, false, "timeout must fail-closed")
+  if (r.ok === false) {
+    assert.equal(r.result.success, false)
+    assert.doesNotMatch(JSON.stringify(r.result), /"approved"\s*:\s*true/)
+  }
+})
+
+test("url admission: summoner file-open without extension timeout never approved", async () => {
+  await initDataDir()
+  const downloads = path.join(os.homedir(), "Downloads")
+  fs.mkdirSync(downloads, { recursive: true })
+  const pdf = path.join(downloads, "invoice-summoner-no-ext.pdf")
+  fs.writeFileSync(pdf, "pdf")
+  saveConfig({
+    auto_approved_domains: [],
+    security: {
+      ...getConfig().security,
+      auto_approve_dangerous: false,
+      allow_all_schemes: false,
+    },
+  })
+  let attached = 0
+  let requestCalled = false
+  bindOverlayConfirmPeerForTests({
+    attach: () => {
+      attached += 1
+    },
+    waitMs: 25,
+  })
+  bindExtensionPeerPicker(() => null)
+  const overlaySent: string[] = []
+  const overlay = fakeWs("overlay", overlaySent)
+  const auth = new Map<WebSocket, ConfirmPeerAuth>([
+    [overlay, { authenticated: true, surface: "summoner", origin: "cmspark-tray://local" }],
+  ])
+  const { pathToFileURL } = await import("node:url")
+  const r = await runUrlNavigateAdmission({
+    toolName: "create_tab",
+    finalParams: { url: pathToFileURL(pdf).href },
+    toolCallId: "summoner-file-no-ext",
+    startedAt: Date.now(),
+    ws: overlay,
+    isOutboundMcpCall: false,
+    logToolFinish: () => {},
+    securityConfirmations: {
+      request: async () => {
+        requestCalled = true
+        return { approved: true, reason: "approved" }
+      },
+    } as any,
+    clients: [overlay],
+    wsAuthGet: (w) => auth.get(w),
+  })
+  assert.equal(attached, 1)
+  assert.equal(requestCalled, false)
+  assert.equal(r.ok, false)
+  if (r.ok === false) {
+    assert.equal(r.result.success, false)
+    assert.doesNotMatch(JSON.stringify(r.result), /"approved"\s*:\s*true/)
+  }
 })
