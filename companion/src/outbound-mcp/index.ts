@@ -8,7 +8,7 @@ export {
   isOutboundForbidden,
   outboundToInternalName,
 } from "./profile"
-export { gateOutboundCall, listOutboundTools } from "./facade"
+export { gateOutboundCall, listOutboundTools, denyOutboundExfilIfNeeded } from "./facade"
 export type { OutboundCallRequest, OutboundCallResult } from "./facade"
 export {
   acceptOutboundDisclosure,
@@ -38,6 +38,7 @@ export {
   handleOutboundMcpHttp,
   companionInvokeOutbound,
   setOutboundToolRunner,
+  setOutboundExfilConfirmer,
   authorizeOutboundRequest,
   authorizeOutboundHttp,
   OUTBOUND_INVOKE_PATH,
@@ -50,6 +51,7 @@ export {
   revokeAllOutboundGrants,
   listOutboundGrants,
   resetOutboundGrantsForTests,
+  grantAllowsPageExport,
   DEFAULT_GRANT_TTL_MS,
   OUTBOUND_GRANT_TOKEN_PREFIX,
 } from "./outbound-grants"

@@ -54,9 +54,9 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-// Updated 2026-08-26 overlay-post222-residual-fix — I3 UTF-8 fail-close + I5 list scroll
-/** Mac 快捷提问 = native HUD（收起一条；展开工作台 + 对话管理）+ 📎/🎙. */
-const SWIFT_TRAY_SHA256 = "34ed53a00eba5ca129f7803ca5c373bb146bba9a5078e8ba074b77024a777b7c"
+// Updated 2026-08-26 Task 12 — hide MCP rail icon (protocol stays)
+/** Mac 快捷提问 = native HUD（收起一条；展开对话 + 对话管理）+ 📎/🎙. */
+const SWIFT_TRAY_SHA256 = "d73d9e06de31fe803c960071da92b4030c0667a4b2aef53e7ee355654674bdfa"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

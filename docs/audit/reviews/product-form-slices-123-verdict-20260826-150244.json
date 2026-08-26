@@ -1,0 +1,22 @@
+{
+  "batch": "product-form-slices-123",
+  "ts": "20260826-150244",
+  "kind": "implementation-plan",
+  "blast": "T3-plan",
+  "adversary": {
+    "product": "APPROVE_WITH_NITS",
+    "impl": "APPROVE_WITH_NITS",
+    "security": "APPROVE_WITH_NITS",
+    "external": "APPROVE_WITH_NITS"
+  },
+  "dual": {
+    "claude_product": "APPROVE_WITH_NITS",
+    "claude_impl": "APPROVE_WITH_NITS",
+    "claude_security": "APPROVE_WITH_NITS",
+    "pi": "APPROVE",
+    "aggregate": "both_ok"
+  },
+  "plan": "docs/superpowers/plans/2026-08-26-product-form-slices-123.md",
+  "nits_folded": true,
+  "implementation": "blocked_until_user_picks_execution_mode"
+}

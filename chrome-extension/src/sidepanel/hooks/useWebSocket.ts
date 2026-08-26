@@ -1639,6 +1639,34 @@ export function useWebSocket() {
           dispatch({ type: "SET_KNOWLEDGE_DOCS", docs: msg.docs })
           break
 
+        case "knowledge.doc":
+          if (msg.doc && typeof msg.doc === "object") {
+            dispatch({ type: "SET_KNOWLEDGE_VIEWER", doc: msg.doc })
+          }
+          break
+
+        case "knowledge.updated":
+          chrome.runtime.sendMessage({ type: "knowledge.list" })
+          dispatch({
+            type: "SET_KNOWLEDGE_IMPORT_STATUS",
+            status: { ok: true, message: "已保存" },
+          })
+          break
+
+        case "knowledge.exported": {
+          const { content, filename } = msg
+          if (typeof content === "string") {
+            const blob = new Blob([new TextEncoder().encode(content)], { type: "text/markdown" })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            a.href = url
+            a.download = typeof filename === "string" && filename ? filename : "knowledge.md"
+            a.click()
+            URL.revokeObjectURL(url)
+          }
+          break
+        }
+
         case "knowledge.preview":
           dispatch({
             type: "SET_KNOWLEDGE_PREVIEW",

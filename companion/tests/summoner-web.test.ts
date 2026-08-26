@@ -66,10 +66,19 @@ describe("summoner-web server", { concurrency: 1 }, () => {
   let port = 0
   let token = ""
 
+  const attachCalls: Array<{ foreground?: boolean }> = []
+
   test("start with dispatch", async () => {
     dispatched.length = 0
+    attachCalls.length = 0
     const started = await startSummonerWebServer({
       preferredPort: 23510,
+      attachChrome: (opts) => {
+        attachCalls.push({ foreground: opts?.foreground })
+        return opts?.foreground
+          ? "已打开并前置浏览器。我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。"
+          : "已在后台打开浏览器。我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。"
+      },
       dispatch: async (msg) => {
         dispatched.push(msg)
         if (msg.type === "thread.list") return { type: "thread.list", threads: [{ id: "t1", title: "One" }] }
@@ -118,6 +127,9 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /--paper:#fff/)
     assert.match(r.body, /--indigo:#4f46e5/)
     assert.match(r.body, /class="rail-btn"/)
+    assert.match(r.body, /data-sec="threads"[^>]*aria-current="true"/)
+    assert.match(r.body, /data-sec="mcp"[^>]*\bhidden\b/)
+    assert.doesNotMatch(r.body, /＋ 添加 MCP|＋ 导入知识/)
     assert.match(r.body, /html,body\{height:100%;width:100%;overflow:hidden\}/)
     assert.match(r.body, /class="list-scroll"/)
     assert.match(r.body, /\.composer\{[^}]*flex-shrink:0/)
@@ -129,11 +141,24 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /type="file"/)
     assert.match(r.body, /📎/)
     assert.match(r.body, /for="files"/)
-    assert.match(r.body, /听写\/知识配置\/批准去侧栏处理/)
+    assert.match(r.body, /听写在侧栏/)
+    assert.doesNotMatch(r.body, /去侧栏处理/)
+    assert.match(r.body, /展开对话/)
+    assert.doesNotMatch(r.body, /展开工作台|收起工作台/)
+    assert.match(r.body, /打开浏览器/)
+    assert.match(r.body, /打开并前置浏览器/)
+    assert.match(r.body, /打开确认台/)
+    assert.match(r.body, /需要确认才能继续/)
+    assert.match(r.body, /id="openConfirm"/)
+    assert.match(r.body, /可以继续聊。要操作网页，需要打开浏览器。/)
+    assert.match(r.body, /网页操作需要浏览器（扩展已配对的 Chrome）。/)
+    assert.match(r.body, /编程助手要看你的页面，但浏览器没在。/)
+    assert.match(r.body, /我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。/)
+    assert.match(r.body, /\/api\/attach/)
+    assert.match(r.body, /id="attachSilent"|id="attachFront"/)
     assert.match(r.body, /回车发送 · Shift\+Enter 排队/)
     assert.match(r.body, /点击右上角 ⋮ 设置快捷键/)
     assert.match(r.body, /id="settings"/)
-    assert.match(r.body, /去侧栏处理/)
     assert.match(r.body, /快捷提问/)
     assert.match(r.body, /重命名/)
     assert.match(r.body, /移到回收站/)
@@ -147,7 +172,9 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /data\.error_code/)
     assert.match(r.body, /statusFromEvent/)
     assert.doesNotMatch(r.body, /mode==="enqueue"\?"已排队"/)
-    assert.doesNotMatch(r.body, /允许|拒绝|Allow|Deny|确认/)
+    assert.doesNotMatch(r.body, /允许|拒绝|Allow|Deny/)
+    assert.match(r.body, /确认台/)
+    assert.doesNotMatch(r.body, /confirmation_id/)
     assert.doesNotMatch(r.body, /ws:\/\//)
     assert.equal(r.headers["referrer-policy"], "no-referrer")
   })
@@ -386,6 +413,43 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(dispatched[0].force_takeover, undefined)
   })
 
+  test("POST /api/attach silent uses attachChromeOnly path, never openSidePanel", async () => {
+    attachCalls.length = 0
+    const silent = await request({
+      method: "POST",
+      port,
+      path: `/api/attach?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ foreground: false }),
+    })
+    assert.equal(silent.status, 200, silent.body)
+    const silentData = JSON.parse(silent.body)
+    assert.match(String(silentData.message || silentData.copy || ""), /我们不能替你打开侧栏/)
+    assert.deepEqual(attachCalls, [{ foreground: false }])
+    assert.doesNotMatch(silent.body, /openSidePanel|sidePanel\.open/)
+
+    attachCalls.length = 0
+    const front = await request({
+      method: "POST",
+      port,
+      path: `/api/attach?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ foreground: true }),
+    })
+    assert.equal(front.status, 200, front.body)
+    const frontData = JSON.parse(front.body)
+    assert.match(String(frontData.message || frontData.copy || ""), /我们不能替你打开侧栏/)
+    assert.deepEqual(attachCalls, [{ foreground: true }])
+    assert.doesNotMatch(front.body, /openSidePanel|sidePanel\.open/)
+    assert.equal(dispatched.some((d) => String(d.type).includes("sidePanel")), false)
+  })
+
   test("unknown / config.set is not dispatched", async () => {
     dispatched.length = 0
     const r = await request({
@@ -411,6 +475,9 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.import"), false)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.preview"), false)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.related"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.get"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.update"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.export"), false)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("thread.distill_preview"), false)
     assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.list"))
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.start"), false)

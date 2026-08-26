@@ -29,6 +29,9 @@ export type OutboundGrantRecord = {
   expires_at: string | null
   revoked_at: string | null
   last_used_at: string | null
+  /** Durable page-export consent on the grant file (not the in-process disclosure Map). */
+  allow_page_export: boolean
+  allow_page_export_at: string | null
 }
 
 type GrantsFile = { grants: OutboundGrantRecord[] }
@@ -39,6 +42,8 @@ export type IssueGrantOpts = {
   /** TTL ms; default 30d; 0 = no expiry */
   ttl_ms?: number
   profile?: string
+  /** Persist page-export consent on the grant; default false. Does not arm disclosure. */
+  allow_page_export?: boolean
 }
 
 export type IssueGrantResult = {
@@ -86,12 +91,20 @@ function safeEqualHex(a: string, b: string): boolean {
   }
 }
 
+function normalizeGrant(raw: OutboundGrantRecord): OutboundGrantRecord {
+  return {
+    ...raw,
+    allow_page_export: raw.allow_page_export === true,
+    allow_page_export_at: raw.allow_page_export_at ?? null,
+  }
+}
+
 function loadFile(): GrantsFile {
   try {
     const raw = fs.readFileSync(GRANTS_PATH, "utf8")
     const parsed = JSON.parse(raw) as GrantsFile
     if (!parsed || !Array.isArray(parsed.grants)) return { grants: [] }
-    return { grants: parsed.grants }
+    return { grants: parsed.grants.map(normalizeGrant) }
   } catch {
     return { grants: [] }
   }
@@ -144,6 +157,7 @@ export function issueOutboundGrant(opts: IssueGrantOpts): IssueGrantResult {
 
   const token = generateOutboundGrantToken()
   const id = "gr_" + crypto.randomBytes(12).toString("hex")
+  const allow_page_export = !!opts.allow_page_export
   const rec: OutboundGrantRecord = {
     id,
     label,
@@ -154,6 +168,8 @@ export function issueOutboundGrant(opts: IssueGrantOpts): IssueGrantResult {
     expires_at,
     revoked_at: null,
     last_used_at: null,
+    allow_page_export,
+    allow_page_export_at: allow_page_export ? created_at : null,
   }
 
   const file = loadFile()
@@ -165,6 +181,7 @@ export function issueOutboundGrant(opts: IssueGrantOpts): IssueGrantResult {
     label,
     profile,
     expires_at,
+    allow_page_export,
   })
 
   return {
@@ -306,6 +323,23 @@ export function revokeAllOutboundGrants(): number {
 /** Public list without token hashes. */
 export function listOutboundGrants(): Omit<OutboundGrantRecord, "token_hash">[] {
   return loadFile().grants.map(({ token_hash: _h, ...rest }) => rest)
+}
+
+/**
+ * True iff a live (not revoked, not expired) grant for caller_id has
+ * `allow_page_export === true`. Reloads JSON; does not consult the disclosure Map.
+ */
+export function grantAllowsPageExport(callerId: string): boolean {
+  const id = (callerId || "").trim()
+  if (!id) return false
+  const t = Date.now()
+  return loadFile().grants.some(
+    (g) =>
+      g.caller_id === id &&
+      g.allow_page_export === true &&
+      !g.revoked_at &&
+      !(g.expires_at && Date.parse(g.expires_at) <= t),
+  )
 }
 
 /** Test helper: wipe grants file path under current DATA_DIR. */

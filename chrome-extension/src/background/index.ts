@@ -909,6 +909,46 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
       }
 
+      case "knowledge.get": {
+        wsClient.send({ type: "knowledge.get", id: message.id })
+        sendResponse({ ok: true })
+        return true
+      }
+
+      case "knowledge.update": {
+        wsClient.send({
+          type: "knowledge.update",
+          id: message.id,
+          user_gesture: true,
+          title: message.title,
+          description: message.description,
+          tags: message.tags,
+          body: message.body,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
+      case "knowledge.export": {
+        wsClient.send({
+          type: "knowledge.export",
+          id: message.id,
+          user_gesture: true,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
+      case "knowledge.delete": {
+        wsClient.send({
+          type: "knowledge.delete",
+          id: message.id,
+          user_gesture: true,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
       case "thread.distill_preview": {
         wsClient.send({
           type: "thread.distill_preview",
@@ -1201,7 +1241,6 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "knowledge.import":
       case "knowledge.preview":
       case "knowledge.import_directory":
-      case "knowledge.delete":
       case "pack.list":
       case "pack.install":
       case "pack.apply":

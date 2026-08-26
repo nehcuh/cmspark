@@ -1,0 +1,8 @@
+{
+  "batch": "knowledge-crud-honesty",
+  "timestamp": "20260826-111617",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/knowledge-crud-honesty-claude-20260826-111617.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/knowledge-crud-honesty-pi-20260826-111617.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/knowledge-crud-honesty-diff-20260826-111617.patch"
+}

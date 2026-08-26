@@ -14,9 +14,32 @@ type GrantRow = {
   expires_at: string | null
   revoked_at: string | null
   last_used_at: string | null
+  allow_page_export?: boolean
 }
 
 type IssuedGrant = GrantRow & { token: string }
+
+type HostOs = "mac" | "win" | "linux"
+
+/** Mirror of companion grant-cli outboundMcpLaunchSpec — do not import companion. */
+function outboundMcpLaunchSpec(os: HostOs): { command: string; args: string[] } {
+  if (os === "mac") {
+    return {
+      command: "/Applications/CMspark.app/Contents/Resources/cmspark-agent",
+      args: ["mcp-outbound"],
+    }
+  }
+  if (os === "win") {
+    return {
+      command: "%LOCALAPPDATA%\\CMspark\\node.exe",
+      args: ["%LOCALAPPDATA%\\CMspark\\cmspark-agent.js", "mcp-outbound"],
+    }
+  }
+  return {
+    command: "cmspark-agent",
+    args: ["mcp-outbound"],
+  }
+}
 
 const TTL_OPTIONS: { label: string; ttl_ms: number }[] = [
   { label: "1 小时", ttl_ms: 60 * 60 * 1000 },
@@ -43,8 +66,10 @@ export function OutboundMcpSettingsSection() {
   const [label, setLabel] = useState("grok-build")
   const [callerId, setCallerId] = useState("grok-build")
   const [ttlMs, setTtlMs] = useState(30 * 24 * 60 * 60 * 1000)
+  const [allowPageExport, setAllowPageExport] = useState(false)
   const [issued, setIssued] = useState<IssuedGrant | null>(null)
   const [copyOk, setCopyOk] = useState(false)
+  const [hostOs, setHostOs] = useState<HostOs>("linux")
 
   const flash = (msg: string, ms = 4000) => {
     setStatus(msg)
@@ -53,6 +78,18 @@ export function OutboundMcpSettingsSection() {
 
   const refresh = useCallback(() => {
     chrome.runtime.sendMessage({ type: "outbound_mcp.grants.list" })
+  }, [])
+
+  useEffect(() => {
+    try {
+      chrome.runtime.getPlatformInfo((info) => {
+        if (info.os === "mac") setHostOs("mac")
+        else if (info.os === "win") setHostOs("win")
+        else setHostOs("linux")
+      })
+    } catch {
+      setHostOs("linux")
+    }
   }, [])
 
   useEffect(() => {
@@ -100,6 +137,7 @@ export function OutboundMcpSettingsSection() {
       label: label.trim() || cid,
       caller_id: cid,
       ttl_ms: ttlMs,
+      allow_page_export: allowPageExport === true,
     })
   }
 
@@ -136,9 +174,15 @@ export function OutboundMcpSettingsSection() {
 
   const copyEnvSnippet = async () => {
     if (!issued?.token) return
+    const launch = outboundMcpLaunchSpec(hostOs)
     const snippet =
       `CMSPARK_OUTBOUND_GRANT=${issued.token}\n` +
-      `CMSPARK_OUTBOUND_CALLER_ID=${issued.caller_id}\n`
+      `CMSPARK_OUTBOUND_CALLER_ID=${issued.caller_id}\n` +
+      `CMSPARK_OUTBOUND_PORT=23401\n` +
+      `\n` +
+      `command: ${launch.command}\n` +
+      `args: ${JSON.stringify(launch.args)}\n` +
+      `# 命令行 cmspark-agent outbound-grant issue 也会打印 command / args\n`
     try {
       await navigator.clipboard.writeText(snippet)
       setCopyOk(true)
@@ -152,15 +196,16 @@ export function OutboundMcpSettingsSection() {
     <div>
       <SectionHeader title="Outbound MCP 调用方授权" />
       <div style={styles.helpText}>
-        把浏览器能力导出给 Grok / Claude Code 等时使用。Grant 与扩展配对密钥（ws_secret）分离（ADR-022 L4+）。
-        Token 只在签发时显示一次；请写入 IDE 的 <code>CMSPARK_OUTBOUND_GRANT</code>。
+        推荐命令行签发（五分钟主路）。这里是备用与撤销。
+        <code>cmspark-agent outbound-grant issue --caller-id …</code> 会打印钥匙、env 和 command / args。
+        钥匙与扩展配对码（ws_secret）分离。写入 IDE 的 <code>CMSPARK_OUTBOUND_GRANT</code>。
       </div>
 
       <div style={{ ...styles.row, marginTop: 10, alignItems: "flex-start" }}>
         <label style={{ ...styles.label, flex: 1, marginBottom: 0 }}>
           强制 require_grant
           <div style={{ ...styles.helpText, marginTop: 2 }}>
-            开启后 loopback 只接受 grant，拒绝 ws_secret（P1 发货门；bake-off 可保持关闭）
+            默认开启：loopback 只接受租手钥匙（cmg_），拒绝扩展配对码 ws_secret。关闭仅供调试回退，不是 MCP 配对。
           </div>
         </label>
         <button
@@ -203,6 +248,20 @@ export function OutboundMcpSettingsSection() {
             </option>
           ))}
         </select>
+        <label style={{ ...styles.helpText, display: "flex", gap: 6, marginTop: 8, alignItems: "flex-start" }}>
+          <input
+            type="checkbox"
+            checked={allowPageExport}
+            onChange={(e) => setAllowPageExport(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span>
+            允许 {callerId.trim() || "<caller>"} 把页文/截图发给其云模型
+            <div style={{ marginTop: 2 }}>
+              勾选写在这把钥匙上，可撤销。首次外泄仍走确认台，不跳过 HITL。
+            </div>
+          </span>
+        </label>
         <button
           type="button"
           style={{ ...styles.primaryBtn, marginTop: 8 }}
@@ -216,7 +275,7 @@ export function OutboundMcpSettingsSection() {
       {issued?.token && (
         <div style={styles.issuedBox}>
           <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>
-            一次性 token（关闭面板后无法再看）
+            这把钥匙只出现一次。它不是扩展配对码。
           </div>
           <code style={styles.tokenCode}>{issued.token}</code>
           <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
@@ -237,6 +296,11 @@ export function OutboundMcpSettingsSection() {
           <div style={{ ...styles.helpText, marginTop: 6 }}>
             caller_id=<code>{issued.caller_id}</code>
             {issued.expires_at ? ` · 过期 ${fmtTime(issued.expires_at)}` : " · 不过期"}
+            {allowPageExport ? " · 已允许页文/截图外泄（首次仍确认台）" : " · 未允许页文/截图外泄"}
+          </div>
+          <div style={{ ...styles.helpText, marginTop: 4 }}>
+            复制 env 含 GRANT / CALLER_ID / PORT 和本机 command / args。CLI{" "}
+            <code>outbound-grant issue</code> 也会打印 command。
           </div>
         </div>
       )}
@@ -277,6 +341,7 @@ export function OutboundMcpSettingsSection() {
                   {g.id.slice(0, 12)}… · 创建于 {fmtTime(g.created_at)}
                   {g.expires_at ? ` · 过期 ${fmtTime(g.expires_at)}` : " · 不过期"}
                   {g.last_used_at ? ` · 最近使用 ${fmtTime(g.last_used_at)}` : ""}
+                  {g.allow_page_export ? " · 页文/截图已允许" : ""}
                 </div>
               </div>
               <button

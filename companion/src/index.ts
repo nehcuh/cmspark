@@ -52,7 +52,13 @@ Usage:
 
   cmspark-agent menu-bar                   启动菜单栏（已弃用，请使用 tray）
 
-  cmspark-agent mcp-outbound               启动 Outbound MCP stdio 服务（非 default-on；编程 Agent 对接）`)
+  cmspark-agent mcp-outbound               启动 Outbound MCP stdio 服务（非 default-on；编程 Agent 对接）
+
+  cmspark-agent outbound-grant issue --caller-id <id> [--label <name>] [--allow-page-export] [--ttl-ms N]
+                                           签发租手钥匙（一次性 token；不是扩展配对码）
+  cmspark-agent outbound-grant revoke --grant-id <id>
+                                           撤销租手钥匙
+  cmspark-agent outbound-grant list        列出已签发的租手钥匙（不含 token）`)
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +369,13 @@ async function main() {
       const { runOutboundMcpStdioServer } = await import("./outbound-mcp/stdio-server")
       await runOutboundMcpStdioServer()
       break
+    }
+
+    case "outbound-grant": {
+      await initDataDir()
+      const { handleOutboundGrantCli } = await import("./outbound-mcp/grant-cli")
+      const code = await handleOutboundGrantCli(process.argv.slice(3))
+      process.exit(code)
     }
 
     case "settings": {

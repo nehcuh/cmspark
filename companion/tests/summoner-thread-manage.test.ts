@@ -145,7 +145,11 @@ test("HUD thread rows expose rename + trash without overlay Allow/Deny", () => {
   assert.match(overlay, /重命名/)
   assert.match(overlay, /移到回收站/)
   assert.match(overlay, /NSAlert/)
-  assert.doesNotMatch(overlay, /允许|拒绝|Allow|Deny|确认/)
+  // Allow/Deny as *actions* only. Status copy 确认台 / 需要确认 / 打开确认台 is chrome-ok.
+  assert.doesNotMatch(overlay, /允许|拒绝|Allow|Deny/)
+  for (const allowed of ["确认台", "需要确认", "打开确认台"]) {
+    assert.equal(/允许|拒绝|Allow|Deny/.test(allowed), false, allowed)
+  }
   assert.doesNotMatch(overlay, /mode:\s*"hard"/)
 })
 

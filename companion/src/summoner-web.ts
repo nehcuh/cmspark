@@ -13,8 +13,25 @@ import {
   resolveSummonerBrowserPath,
 } from "./summoner/shell-open"
 import { applySummonerPayloadPolicy } from "./ws/summoner-acl"
+import { MCP_OVERLAY_CONFIRM_NOTICE } from "./mcp/confirm-target"
+import {
+  attachChromeOnly,
+  SUMMONER_ATTACH_FOOTNOTE,
+  SUMMONER_ATTACH_PRIMARY,
+  SUMMONER_ATTACH_SECONDARY,
+  SUMMONER_CONFIRM_NEED,
+  SUMMONER_OPEN_CONFIRM,
+  SUMMONER_CDP_NEEDED,
+  SUMMONER_CHEVRON_COLLAPSE,
+  SUMMONER_CHEVRON_EXPAND,
+  SUMMONER_L0_CHROME_DOWN,
+  SUMMONER_MIC_SIDEBAR,
+  SUMMONER_RENTER_CHROME_DOWN,
+} from "./summoner/client"
+import { getChromeOpener } from "./platform"
 
 export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
+export type SummonerWebAttachChrome = (opts?: { foreground?: boolean }) => string
 
 export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "system.ping",
@@ -70,8 +87,13 @@ let activeServer: http.Server | null = null
 let activePort: number | null = null
 let sessionToken: string | null = null
 let activeDispatch: SummonerWebDispatch | null = null
+let activeAttachChrome: SummonerWebAttachChrome | null = null
 let lastAccessTime = Date.now()
 let autoCloseTimer: ReturnType<typeof setInterval> | null = null
+
+function defaultAttachChrome(opts?: { foreground?: boolean }): string {
+  return attachChromeOnly(getChromeOpener(), opts)
+}
 
 async function findAvailablePort(startPort: number): Promise<number> {
   for (let port = startPort; port < startPort + 10; port++) {
@@ -189,6 +211,7 @@ const STATUS_LABELS: Record<string, string> = {
   OVERLAY_STANDBY: "侧栏占用了输入",
   LEASE_REV_MISMATCH: "侧栏占用了输入",
   LEASE_HOLDER_SURFACE_MISMATCH: "侧栏占用了输入",
+  BROWSER_UNAVAILABLE: SUMMONER_CDP_NEEDED,
 }
 
 /** Map router/SSE errors to overlay copy. Keys `data.error_code`, not the English `error` sentence. */
@@ -203,7 +226,9 @@ export function summonerWebEventStatus(msg: unknown): string {
     ? "OVERLAY_STANDBY"
     : raw.includes("LEASE_REV_MISMATCH")
       ? "LEASE_REV_MISMATCH"
-      : raw
+      : raw.includes("BROWSER_UNAVAILABLE")
+        ? "BROWSER_UNAVAILABLE"
+        : raw
   if (STATUS_LABELS[code]) return STATUS_LABELS[code]
   if (typeof m.error === "string" && m.error.trim()) return m.error
   if (typeof m.message === "string" && m.message.trim()) return m.message
@@ -269,8 +294,10 @@ export function openLoopbackPage(url: string, deps: OpenLoopbackPageDeps = {}): 
 export async function startSummonerWebServer(opts: {
   preferredPort?: number
   dispatch: SummonerWebDispatch
+  attachChrome?: SummonerWebAttachChrome
 }): Promise<{ port: number; token: string }> {
   activeDispatch = opts.dispatch
+  activeAttachChrome = opts.attachChrome ?? defaultAttachChrome
   if (activeServer && activePort && sessionToken) {
     lastAccessTime = Date.now()
     return { port: activePort, token: sessionToken }
@@ -315,6 +342,7 @@ export function stopSummonerWebServer(): void {
     activePort = null
     sessionToken = null
     activeDispatch = null
+    activeAttachChrome = null
   }
 }
 
@@ -602,6 +630,23 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/attach" && req.method === "POST") {
+      let foreground = false
+      try {
+        const raw = await readBody(req, JSON_BODY_MAX)
+        if (raw.trim()) {
+          const parsed = JSON.parse(raw) as { foreground?: unknown }
+          foreground = parsed.foreground === true
+        }
+      } catch {
+        foreground = false
+      }
+      const attach = activeAttachChrome ?? defaultAttachChrome
+      const message = attach({ foreground })
+      jsonResponse(res, { type: "ok", message })
+      return
+    }
+
     res.writeHead(404)
     res.end("Not found")
   } catch (e: any) {
@@ -645,6 +690,7 @@ body{
 .rail-btn:hover{background:var(--canvas);color:var(--text)}
 .rail-btn[aria-current="true"]{background:var(--indigo-soft);color:var(--indigo)}
 .rail-btn:focus-visible{outline:none;box-shadow:var(--focus)}
+.rail-btn[hidden]{display:none}
 .list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;background:var(--paper);overflow:hidden}
 .list-head{padding:14px 14px 8px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--faint)}
 .list-scroll{overflow-y:auto;overflow-x:hidden;flex:1;padding:0 6px 10px}
@@ -700,6 +746,20 @@ body{
 .ghost:hover{background:var(--canvas);color:var(--text)}
 .hint{padding:0 16px 10px;font-size:11px;color:var(--faint);line-height:1.4}
 .status{padding:0 16px 12px;font-size:12px;color:#92400e;min-height:16px}
+.cta-box{
+  margin:0 12px 8px;padding:10px 12px;border-radius:12px;
+  background:#fffbeb;border:1px solid #fde68a;color:#92400e;
+}
+.cta-box[hidden]{display:none}
+.cta-box p{font-size:12.5px;line-height:1.45}
+.cta-actions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.cta-actions button{
+  min-height:36px;padding:6px 12px;border-radius:8px;border:0;cursor:pointer;font:inherit;
+}
+#attachSilent{background:var(--indigo);color:#fff}
+#attachFront{background:var(--canvas);color:var(--text)}
+#openConfirm{background:var(--indigo);color:#fff}
+.cta-foot{font-size:11px;color:var(--faint)!important;line-height:1.4}
 .hud:not(.expanded) .ghosts{display:none}
 .hud:not(.expanded) .hint{padding:8px 16px}
 .hud:not(.expanded) .status{padding:0 16px 8px}
@@ -721,7 +781,7 @@ body{
       <button class="rail-btn" data-sec="skills" type="button" title="技能" aria-label="技能">
         <svg viewBox="0 0 24 24"><path d="M8 15.2 4.8 12 8 8.8M16 8.8 19.2 12 16 15.2M13.1 6.8 10.9 17.2"/></svg>
       </button>
-      <button class="rail-btn" data-sec="mcp" type="button" title="MCP" aria-label="MCP">
+      <button class="rail-btn" data-sec="mcp" type="button" title="MCP" aria-label="MCP" hidden>
         <svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1.2"/><path d="M12 4.6v3.2M12 16.2v3.2M4.6 12H8M16 12h3.4"/></svg>
       </button>
     </nav>
@@ -748,16 +808,25 @@ body{
           <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
         </label>
         <input type="file" id="files" multiple hidden>
-        <button class="icon-btn" id="mic" type="button" disabled title="听写/知识配置/批准去侧栏处理" aria-label="听写去侧栏处理">
+        <button class="icon-btn" id="mic" type="button" disabled title="${SUMMONER_MIC_SIDEBAR}" aria-label="${SUMMONER_MIC_SIDEBAR}">
           <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
         </button>
-        <button class="icon-btn" id="chev" type="button" aria-pressed="false" title="展开工作台" aria-label="展开工作台">
+        <button class="icon-btn" id="chev" type="button" aria-pressed="false" title="${SUMMONER_CHEVRON_EXPAND}" aria-label="${SUMMONER_CHEVRON_EXPAND}">
           <svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>
         </button>
         <button class="icon-btn" id="settings" type="button" title="设置（快捷键等）" aria-label="设置">
           <svg viewBox="0 0 24 24"><path d="M12.2 2.2a.8.8 0 0 1 .8.8v2.6a.8.8 0 0 1-.8.8H11.8a.8.8 0 0 1-.8-.8V3a.8.8 0 0 1 .8-.8zm0 16a.8.8 0 0 1 .8.8v2.6a.8.8 0 0 1-.8.8H11.8a.8.8 0 0 1-.8-.8V19a.8.8 0 0 1 .8-.8zM19.1 7.4a.8.8 0 0 1 1.1 0l1.9 1.9a.8.8 0 0 1 0 1.1l-2.6 2.6a.8.8 0 0 1-1.1 0 .8.8 0 0 1 0-1.1l1.5-1.5-1.5-1.5a.8.8 0 0 1 0-1.1zM4.9 16.6a.8.8 0 0 1 0-1.1l2.6-2.6a.8.8 0 0 1 1.1 0 .8.8 0 0 1 0 1.1L7.1 15.5l1.5 1.5a.8.8 0 0 1 0 1.1l-1.9 1.9a.8.8 0 0 1-1.1 0zm0-9.2a.8.8 0 0 1 1.1 0l1.9 1.9a.8.8 0 0 1 0 1.1L7.3 13l2.6 2.6a.8.8 0 0 1-1.1 0l-1.9-1.9a.8.8 0 0 1 0-1.1l1.5-1.5-1.5-1.5a.8.8 0 0 1 0-1.1zm14.2 9.2a.8.8 0 0 1 0-1.1l-2.6-2.6a.8.8 0 0 1-1.1 0 .8.8 0 0 1 0 1.1l1.5 1.5-1.5 1.5a.8.8 0 0 1 0 1.1l1.9 1.9a.8.8 0 0 1 1.1 0z"/></svg>
         </button>
       </div>
+    </div>
+    <div class="cta-box" id="ctaBox" hidden>
+      <p id="ctaCopy">${SUMMONER_L0_CHROME_DOWN}</p>
+      <div class="cta-actions">
+        <button type="button" id="attachSilent" title="${SUMMONER_ATTACH_PRIMARY}" aria-label="${SUMMONER_ATTACH_PRIMARY}">${SUMMONER_ATTACH_PRIMARY}</button>
+        <button type="button" id="attachFront" title="${SUMMONER_ATTACH_SECONDARY}" aria-label="${SUMMONER_ATTACH_SECONDARY}">${SUMMONER_ATTACH_SECONDARY}</button>
+        <button type="button" id="openConfirm" hidden title="${SUMMONER_OPEN_CONFIRM}" aria-label="${SUMMONER_OPEN_CONFIRM}">${SUMMONER_OPEN_CONFIRM}</button>
+      </div>
+      <p class="cta-foot">${SUMMONER_ATTACH_FOOTNOTE}</p>
     </div>
   </div>
   <div class="ghosts">
@@ -779,6 +848,33 @@ body{
   var poll=null;
   function $(id){return document.getElementById(id)}
   function setStatus(t){$("status").textContent=t||""}
+  var CHROME_DOWN={
+    l0:${JSON.stringify(SUMMONER_L0_CHROME_DOWN)},
+    cdp:${JSON.stringify(SUMMONER_CDP_NEEDED)},
+    renter:${JSON.stringify(SUMMONER_RENTER_CHROME_DOWN)}
+  };
+  function showChromeCta(kind){
+    var box=$("ctaBox"); if(!box) return;
+    box.hidden=false;
+    $("ctaCopy").textContent=kind==="renter"?CHROME_DOWN.renter:kind==="cdp"?CHROME_DOWN.cdp:CHROME_DOWN.l0;
+    $("attachSilent").hidden=false;
+    $("attachFront").hidden=false;
+    $("openConfirm").hidden=true;
+  }
+  function showConfirmCta(){
+    var box=$("ctaBox"); if(!box) return;
+    box.hidden=false;
+    $("ctaCopy").textContent=${JSON.stringify(SUMMONER_CONFIRM_NEED)};
+    $("attachSilent").hidden=true;
+    $("attachFront").hidden=true;
+    $("openConfirm").hidden=false;
+  }
+  function hideChromeCta(){ var box=$("ctaBox"); if(box) box.hidden=true; }
+  function attachChrome(foreground){
+    api("/api/attach",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({foreground:!!foreground})}).then(function(d){
+      setStatus(d&&(d.message||d.error)||"");
+    });
+  }
   function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})}
   function placeWindow(expanded){
     var w=720,h=expanded?520:120;
@@ -791,8 +887,8 @@ body{
   function setExpanded(on){
     $("hud").classList.toggle("expanded", !!on);
     $("chev").setAttribute("aria-pressed", on?"true":"false");
-    $("chev").setAttribute("title", on?"收起工作台":"展开工作台");
-    $("chev").setAttribute("aria-label", on?"收起工作台":"展开工作台");
+    $("chev").setAttribute("title", on?${JSON.stringify(SUMMONER_CHEVRON_COLLAPSE)}:${JSON.stringify(SUMMONER_CHEVRON_EXPAND)});
+    $("chev").setAttribute("aria-label", on?${JSON.stringify(SUMMONER_CHEVRON_COLLAPSE)}:${JSON.stringify(SUMMONER_CHEVRON_EXPAND)});
     $("chev").innerHTML=on
       ?'<svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>'
       :'<svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>';
@@ -867,7 +963,7 @@ body{
     if(!n){
       var empty=document.createElement("div");
       empty.className="empty";
-      empty.innerHTML="<strong>要对这页做什么？</strong>回车发送。⌘/Ctrl 不在这扇窗。听写、知识配置、批准去侧栏处理。";
+      empty.innerHTML="<strong>要对这页做什么？</strong>回车发送。⌘/Ctrl 不在这扇窗。${SUMMONER_MIC_SIDEBAR}。";
       log.appendChild(empty);
     }
     log.scrollTop=log.scrollHeight;
@@ -955,6 +1051,9 @@ body{
   $("chev").onclick=function(){
     setExpanded(!$("hud").classList.contains("expanded"));
   };
+  $("attachSilent").onclick=function(){attachChrome(false)};
+  $("attachFront").onclick=function(){attachChrome(true)};
+  $("openConfirm").onclick=function(){attachChrome(true)};
   $("settings").onclick=function(){
     alert("快捷键设置需要在 Chrome 侧栏的设置面板中配置。\n\n请打开 Chrome 侧栏，点击设置图标，在「模型与推理」部分找到「发送快捷键」设置。\n\n召唤器使用相同的快捷键配置。");
   };
@@ -1104,8 +1203,13 @@ body{
       OVERLAY_STANDBY:"侧栏占用了输入",
       LEASE_REV_MISMATCH:"侧栏占用了输入",
       LEASE_HOLDER_SURFACE_MISMATCH:"侧栏占用了输入",
+      BROWSER_UNAVAILABLE:CHROME_DOWN.cdp,
       settings_hint:"点击右上角 ⋮ 设置快捷键"
     };
+    if(code==="BROWSER_UNAVAILABLE"||String(raw).indexOf("BROWSER_UNAVAILABLE")>=0){
+      showChromeCta("cdp");
+      return CHROME_DOWN.cdp;
+    }
     return labels[code]||d.error||d.message||"出错了";
   }
   try{
@@ -1127,7 +1231,8 @@ body{
         return;
       }
       if(t==="mcp.confirm.pending"){
-        setStatus(d.message||"MCP 工具需在 Chrome 侧栏批准");
+        setStatus(${JSON.stringify(SUMMONER_CONFIRM_NEED)});
+        showConfirmCta();
         return;
       }
       if(t==="run_status"){

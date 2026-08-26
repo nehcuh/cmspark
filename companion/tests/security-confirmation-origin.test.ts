@@ -161,6 +161,76 @@ test("[C-SRV-1] rejectAll('disconnect') with no ws filter rejects everything (ba
   assert.equal(d2.reason, "disconnect")
 })
 
+// --- PR-B Task 6: rejectAll(ws) must not kill unbound / other-origin entries --
+// Overlay disconnect used to reject originWs === undefined (broadcast-style).
+// That kills outbound L8 and retargeted overlay confirms. With a ws argument,
+// only pending.originWs === ws may be rejected; unbound survives until the
+// 45s timeout reaper or a no-arg rejectAll() shutdown drain.
+
+test("rejectAll(disconnect, overlay) does not kill unbound", async () => {
+  const manager = new SecurityConfirmationManager(60_000)
+  const overlay = mockWs("overlay")
+
+  const unbound = manager.request(
+    () => { /* discard */ },
+    { toolName: "evaluate", dangerousApis: [], code: "unbound-l8" },
+  )
+
+  manager.rejectAll("disconnect", overlay)
+
+  let unboundResolved = false
+  unbound.then(() => { unboundResolved = true })
+  await new Promise((r) => setTimeout(r, 5))
+  assert.equal(unboundResolved, false, "unbound confirmation must survive overlay disconnect")
+
+  // Shutdown drain still works (no-arg rejectAll rejects remaining).
+  manager.rejectAll("disconnect")
+  const decision = await unbound
+  assert.equal(decision.approved, false)
+  assert.equal(decision.reason, "disconnect")
+})
+
+test("rejectAll(disconnect, overlay) does not kill originWs=extension", async () => {
+  const manager = new SecurityConfirmationManager(60_000)
+  const overlay = mockWs("overlay")
+  const extension = mockWs("extension")
+
+  const bound = manager.request(
+    () => { /* discard */ },
+    { toolName: "evaluate", dangerousApis: [], code: "ext-bound" },
+    { originWs: extension },
+  )
+
+  manager.rejectAll("disconnect", overlay)
+
+  let boundResolved = false
+  bound.then(() => { boundResolved = true })
+  await new Promise((r) => setTimeout(r, 5))
+  assert.equal(boundResolved, false, "extension-bound confirmation must survive overlay disconnect")
+
+  manager.rejectAll("disconnect", extension)
+  const decision = await bound
+  assert.equal(decision.approved, false)
+  assert.equal(decision.reason, "disconnect")
+})
+
+test("rejectAll(disconnect, extension) does kill originWs=extension", async () => {
+  const manager = new SecurityConfirmationManager(60_000)
+  const extension = mockWs("extension")
+
+  const bound = manager.request(
+    () => { /* discard */ },
+    { toolName: "evaluate", dangerousApis: [], code: "ext-kill" },
+    { originWs: extension },
+  )
+
+  manager.rejectAll("disconnect", extension)
+
+  const decision = await bound
+  assert.equal(decision.approved, false)
+  assert.equal(decision.reason, "disconnect")
+})
+
 // --- P1-2: navigate + MCP-style toolNames also origin-bind --------------------
 // Manager already enforces origin on any request with originWs; these cases
 // lock the toolName surface that server.ts now binds (navigate / MCP tool /

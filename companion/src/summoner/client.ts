@@ -20,14 +20,34 @@ import {
   type SummonerHit,
   type SummonerHitsCmd,
 } from "./protocol"
+import { MCP_OVERLAY_CONFIRM_NOTICE } from "../mcp/confirm-target"
 
 /** Continue CTA: new user message, never a server-side L1 replay. */
 export const CONTINUE_MESSAGE =
   "浏览器已连接。请等待我的下一条指令；不要重试刚才失败的网页操作。" as const
 
-/** Attach CTA: open Chrome only. Must include this phrase (S8 / UI lock). */
+/** Chevron: title / aria-label / tooltip are the same sentence (both shells). */
+export const SUMMONER_CHEVRON_EXPAND = "展开对话" as const
+export const SUMMONER_CHEVRON_COLLAPSE = "收起对话" as const
+
+/** Chrome-down honesty copy (both shells). */
+export const SUMMONER_L0_CHROME_DOWN =
+  "可以继续聊。要操作网页，需要打开浏览器。" as const
+export const SUMMONER_CDP_NEEDED =
+  "网页操作需要浏览器（扩展已配对的 Chrome）。" as const
+export const SUMMONER_RENTER_CHROME_DOWN =
+  "编程助手要看你的页面，但浏览器没在。" as const
+export const SUMMONER_ATTACH_PRIMARY = "打开浏览器" as const
+export const SUMMONER_ATTACH_SECONDARY = "打开并前置浏览器" as const
+export const SUMMONER_CONFIRM_NEED = "需要确认才能继续。" as const
+export const SUMMONER_OPEN_CONFIRM = "打开确认台" as const
+export const SUMMONER_ATTACH_FOOTNOTE =
+  "我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。" as const
+export const SUMMONER_MIC_SIDEBAR = "听写在侧栏" as const
+
+/** Attach CTA: open Chrome only. Must include the honesty footnote (S8 / UI lock). */
 export const ATTACH_NOTIFY_COPY =
-  "已激活 Google Chrome。我们不能替你打开侧栏。" as const
+  `已打开并前置浏览器。${SUMMONER_ATTACH_FOOTNOTE}` as const
 
 export type ThreadTitleRecord = {
   id: string
@@ -178,7 +198,7 @@ export function buildContinueChatCreate(thread_id: string): {
 }
 
 export const ATTACH_SILENT_COPY =
-  "已在后台启动 Google Chrome。要看窗口时点「激活 Google Chrome」。我们不能替你打开侧栏。" as const
+  `已在后台打开浏览器。${SUMMONER_ATTACH_FOOTNOTE}` as const
 
 
 /** Badge before hydrate must not claim 未连接 (pair may already be attached). */
@@ -328,8 +348,8 @@ export function mapChatMessageToSummonerCmd(msg: unknown): SummonerStreamCmd | n
         empty_enqueue: "排队内容为空",
         no_active_run: "没有进行中的一轮",
         OVERLAY_STANDBY: "侧栏占用了输入",
-        pack_not_overlay_eligible: "这个场景要去侧栏确认",
-        pack_trust_cookie_present: "当前对话有 Trust 快照，去侧栏换场景",
+        pack_not_overlay_eligible: "这个场景需要确认台批准",
+        pack_trust_cookie_present: "当前对话有信任快照，请在侧栏装配里换场景",
         pack_run_active: "等本轮结束后再套场景",
       }
       const key = known.includes(code) ? code : String(m.error_code || "")
@@ -360,7 +380,7 @@ export function mapChatMessageToSummonerCmd(msg: unknown): SummonerStreamCmd | n
     const message =
       typeof m.message === "string" && m.message
         ? m.message
-        : "MCP 工具需在 Chrome 侧栏批准"
+        : MCP_OVERLAY_CONFIRM_NOTICE
     return encodeSummonerError({ message, error_code: "MCP_CONFIRM_PENDING" })
   }
   if (type === "file.upload_error") {

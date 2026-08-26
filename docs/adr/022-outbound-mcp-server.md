@@ -42,7 +42,7 @@ CMspark 已有稳定 **L1 浏览器 Agent**（Extension + Companion + 域确认 
 > **不要**交付通用「更好的 Browser MCP」。  
 > 若对外导出：为编程 Agent 提供 **可租用、可拒绝、可审计的 L1 浏览器面**——补 Playwright（无状态自动化）与 DevTools MCP（调试环）——且 **仅在 Phase 0 证明「已登录会话不可替代」之后才扩面**。
 
-**产品主叙事仍是 Side Panel Agent。** Outbound MCP 是 **Composition 对 Surface L1 的导出门面**，不是第二产品身份，不是新 runtime，禁止写成「中层 Agent」。
+**产品主叙事是已登录 Chrome + 硬闸**（2026-08-26 形态深化：Side Panel 是 Operate 面，不是家；用户面称 Outbound 为 **租手**，勿与 ACP「编程接力 / Coding Handoff」混名）。Outbound MCP 仍是 **Composition 对 Surface L1 的导出门面**，不是第二产品身份，不是新 runtime，禁止写成「中层 Agent」。L3–L9 物理不因叙事句改写而放宽。
 
 ### 2. ADR-020 坐标（能力声明模板）
 
@@ -67,7 +67,7 @@ Channel:      community 默认；enterprise 模块不进 default outbound set
 | ID | 锁 |
 |----|-----|
 | **L1** | 无 Phase 0 对「已登录不可替代」的证伪，**不做** all-in 通用 Browser MCP。 |
-| **L2** | 主叙事 = Side Panel Agent；outbound = Composition 导出 only。 |
+| **L2** | 主叙事 = 已登录 Chrome + 硬闸（Side Panel = Operate；Outbound = 租手 / Composition 导出 only）。**不是**第二产品身份。 |
 | **L3** | 默认 outbound profile = **策展 L1 子集**。默认禁止：cookies、evaluate、L2（host/CU）、shell、netsec。 |
 | **L3+** | 返回 **页面正文 / 截图 / DOM 快照** 给第三方 LLM 的工具属 **数据外泄类**。默认拒绝或要求 **按会话/任务 disclosure** 后才启用。隐私文案不得在此类工具向云模型流式传输时宣称「仅本地」。 |
 | **L4** | **MCP caller 不可信。** 门禁按 **操作风险**，从不按「来自 MCP 即放行」。 |

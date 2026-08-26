@@ -624,6 +624,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       computerRateLimiter,
       activeTrayConfirmsByWs,
       clients: getWsClients(),
+      // surface rides on getWsAuthState — overlay-origin L2 fans out via confirm-fanout
       wsAuthGet: (w) => getWsAuthState(w),
     })
     if (!l2Outcome.ok) {
@@ -644,6 +645,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       logToolFinish,
       securityConfirmations,
       clients: getWsClients(),
+      // surface rides on getWsAuthState — overlay-origin URL confirms use confirm-fanout
       wsAuthGet: (w) => getWsAuthState(w),
     })
     if (!urlOutcome.ok) return urlOutcome.result
@@ -868,6 +870,8 @@ function bindMcpDispatchFromServerLocals(): void {
     broadcastToClients,
     pickExtensionWs: pickAuthenticatedClientWs,
     getWsSurface: (w) => getWsAuthState(w)?.surface,
+    getClients: getWsClients,
+    wsAuthGet: (w) => getWsAuthState(w),
   })
 }
 

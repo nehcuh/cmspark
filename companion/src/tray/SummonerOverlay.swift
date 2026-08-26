@@ -42,8 +42,16 @@ private let summonerTalkHint = "回车发送/纠偏 · Shift+Enter 排队 · # �
 private let summonerExpandHint = "回车发送 · Shift+Enter 排队 · # 搜标题 · ⌃ 收起"
 private let summonerHudWidth: CGFloat = 720
 private let summonerWorkbenchHeight: CGFloat = 428
-private let summonerCtaCopy = "可激活 Google Chrome，然后点工具栏 CMspark（没有就拼图 🧩 钉上）。"
-private let summonerDetachedInfo = "浏览器未连接 · 网页操作请点工具栏图标"
+private let summonerChevronExpand = "展开对话"
+private let summonerChevronCollapse = "收起对话"
+private let summonerCtaCopy = "可以继续聊。要操作网页，需要打开浏览器。"
+private let summonerCdpNeeded = "网页操作需要浏览器（扩展已配对的 Chrome）。"
+private let summonerRenterChromeDown = "编程助手要看你的页面，但浏览器没在。"
+private let summonerAttachPrimary = "打开浏览器"
+private let summonerAttachSecondary = "打开并前置浏览器"
+private let summonerConfirmNeed = "需要确认才能继续。"
+private let summonerOpenConfirm = "打开确认台"
+private let summonerAttachFootnote = "我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。"
 private let summonerFileMaxBytes = 6 * 1024 * 1024
 private let summonerHudInnerWidth: CGFloat = 696
 
@@ -176,6 +184,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var browserAttached = false
   private var browserKnown = false
   private var sawBrowserUnavailable = false
+  private var confirmPending = false
   private var lines: [String] = []
   private var streamingAssistant = false
   private var lastComposing = false
@@ -583,6 +592,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private func refreshMcpList() {
     clearListStack()
     addPlainRow(id: "__add__", title: "＋ 添加 MCP", dimmed: false, action: #selector(mcpAddClicked(_:)))
+    threadListStack?.arrangedSubviews.last?.isHidden = true // freeze CONFIGURE chrome
     if mcpRows.isEmpty {
       addListEmpty("还没有 MCP 服务器")
       layoutListDocument()
@@ -625,6 +635,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private func refreshKnowledgeList() {
     clearListStack()
     addPlainRow(id: "__import__", title: "＋ 导入知识", dimmed: false, action: #selector(knowledgeImportClicked(_:)))
+    threadListStack?.arrangedSubviews.last?.isHidden = true // freeze CONFIGURE chrome
     if knowledgeRows.isEmpty {
       addListEmpty("还没有知识文档")
       layoutListDocument()
@@ -748,11 +759,22 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     streamRenderTimer = nil
     streamingAssistant = false
     let code = errorCode ?? ""
+    if code == "MCP_CONFIRM_PENDING" {
+      confirmPending = true
+      lines.append("系统: \(summonerConfirmNeed)")
+      capLines()
+      applyPhase()
+      return
+    }
     if code == "BROWSER_UNAVAILABLE" {
       sawBrowserUnavailable = true
       browserAttached = false
       browserKnown = true
-      lines.append("系统: BROWSER_UNAVAILABLE")
+      let renter = message.localizedCaseInsensitiveContains("mcp")
+        || message.localizedCaseInsensitiveContains("outbound")
+        || message.localizedCaseInsensitiveContains("grant")
+        || message.contains("编程")
+      lines.append("系统: \(renter ? summonerRenterChromeDown : summonerCdpNeeded)")
     } else {
       let shown = message.isEmpty ? (code.isEmpty ? "出错了" : code) : message
       lines.append("系统: \(shown)")
@@ -1346,20 +1368,27 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       listHeadField?.stringValue = "对话"
       refreshThreadList()
     }
-    ctaBox?.isHidden = true
-    attachButton?.isHidden = true
-    silentAttachButton?.isHidden = true
+    let showCta = detached || confirmPending
+    ctaBox?.isHidden = !showCta
+    attachButton?.isHidden = !showCta
+    silentAttachButton?.isHidden = confirmPending ? true : !detached
     sendButton?.isHidden = true
     continueButton?.isHidden = true
     footRow?.isHidden = true
     lastThreadField?.isHidden = true
-    if detached {
-      sideNote?.stringValue = summonerDetachedInfo
-      sideNote?.isHidden = searching || expanded
+    if confirmPending {
+      ctaLabel?.stringValue = summonerConfirmNeed
+      attachButton?.title = summonerOpenConfirm
+      attachButton?.toolTip = summonerOpenConfirm
+    } else if detached {
+      ctaLabel?.stringValue = sawBrowserUnavailable ? summonerCdpNeeded : summonerCtaCopy
+      attachButton?.title = summonerAttachSecondary
+      attachButton?.toolTip = summonerAttachSecondary
+      sideNote?.isHidden = true
     } else {
       sideNote?.isHidden = true
     }
-    expandButton?.toolTip = expanded ? "收起工作台" : "展开工作台"
+    setExpandChrome(expanded: expanded)
     expandButton?.title = expanded ? "⌃" : "⌄"
     micButton?.isHidden = searching
     clipButton?.isHidden = searching
@@ -1370,6 +1399,13 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     relayout()
   }
 
+  private func setExpandChrome(expanded: Bool) {
+    let copy = expanded ? summonerChevronCollapse : summonerChevronExpand
+    expandButton?.toolTip = copy
+    expandButton?.setAccessibilityLabel(copy)
+    expandButton?.setAccessibilityTitle(copy)
+  }
+
   private func relayout() {
     guard let window = window else { return }
     var h: CGFloat = 72
@@ -1378,7 +1414,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     if expanded && (workbenchBox?.isHidden == false) { h += summonerWorkbenchHeight }
     if lastThreadField?.isHidden == false { h += 18 }
     if hitsStack?.isHidden == false { h += 8 + CGFloat(min(hits.count, 6)) * 36 }
-    if ctaBox?.isHidden == false { h += 36 }
+    if ctaBox?.isHidden == false { h += 118 }
     if footRow?.isHidden == false { h += 48 }
     if sideNote?.isHidden == false { h += 22 }
     window.setContentSize(NSSize(width: summonerHudWidth, height: max(72, h)))
@@ -1622,7 +1658,9 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     expand.bezelStyle = .inline
     expand.isBordered = false
     expand.font = .systemFont(ofSize: 14)
-    expand.toolTip = "展开工作台"
+    expand.toolTip = summonerChevronExpand
+    expand.setAccessibilityLabel(summonerChevronExpand)
+    expand.setAccessibilityTitle(summonerChevronExpand)
     expand.keyEquivalent = ""
     expand.translatesAutoresizingMaskIntoConstraints = false
     expandButton = expand
@@ -1745,6 +1783,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       btn.translatesAutoresizingMaskIntoConstraints = false
       btn.widthAnchor.constraint(equalToConstant: 44).isActive = true
       btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
+      btn.isHidden = spec.2 == 4 // freeze MCP rail icon; keep sixth rail + stdin
       railCol.addArrangedSubview(btn)
     }
     let listCol = NSStackView()
@@ -1813,14 +1852,25 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     cta.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     ctaLabel = cta
     ctaStack.addArrangedSubview(cta)
-    let silent = makeIndigoButton(title: "后台使用 Chrome", action: #selector(attachClicked))
+    let silent = makeIndigoButton(title: summonerAttachPrimary, action: #selector(attachClicked))
     silent.widthAnchor.constraint(equalToConstant: 372).isActive = true
+    silent.toolTip = summonerAttachPrimary
+    silent.setAccessibilityLabel(summonerAttachPrimary)
+    silent.setAccessibilityTitle(summonerAttachPrimary)
     silentAttachButton = silent
     ctaStack.addArrangedSubview(silent)
-    let attach = makePlainButton(title: "激活 Google Chrome", action: #selector(attachForegroundClicked))
+    let attach = makePlainButton(title: summonerAttachSecondary, action: #selector(attachForegroundClicked))
     attach.widthAnchor.constraint(equalToConstant: 372).isActive = true
+    attach.toolTip = summonerAttachSecondary
+    attach.setAccessibilityLabel(summonerAttachSecondary)
+    attach.setAccessibilityTitle(summonerAttachSecondary)
     attachButton = attach
     ctaStack.addArrangedSubview(attach)
+    let ctaFoot = NSTextField(wrappingLabelWithString: summonerAttachFootnote)
+    ctaFoot.font = .systemFont(ofSize: 11)
+    ctaFoot.textColor = SummonerTokens.faint
+    ctaFoot.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    ctaStack.addArrangedSubview(ctaFoot)
     ctaBox.addSubview(ctaStack)
     NSLayoutConstraint.activate([
       ctaStack.topAnchor.constraint(equalTo: ctaBox.topAnchor),

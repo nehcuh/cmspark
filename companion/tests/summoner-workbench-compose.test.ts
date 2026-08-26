@@ -146,7 +146,11 @@ test("HUD workbench rails are live for packs/mcp/skills/knowledge", () => {
   assert.match(overlay, /func applyPacks/)
   assert.match(overlay, /func applyMcpServers|applyMcp\(/)
   assert.doesNotMatch(overlay, /这一类下一刀开放/)
-  assert.doesNotMatch(overlay, /允许|拒绝|Allow|Deny|确认/)
+  // Allow/Deny as *actions* only. Status copy 确认台 / 需要确认 / 打开确认台 is chrome-ok.
+  assert.doesNotMatch(overlay, /允许|拒绝|Allow|Deny/)
+  for (const allowed of ["确认台", "需要确认", "打开确认台"]) {
+    assert.equal(/允许|拒绝|Allow|Deny/.test(allowed), false, allowed)
+  }
   assert.match(tray, /summoner\.mcp\.servers/)
   assert.match(tray, /summoner\.skills/)
   assert.match(tray, /summoner\.knowledge/)
@@ -193,4 +197,32 @@ test("C-thin HTML compose endpoints stay off mcp.add/knowledge.import", () => {
   assert.match(web, /\/api\/mcp/)
   assert.match(web, /\/api\/skills/)
   assert.match(web, /\/api\/knowledge/)
+})
+
+test("PR-C: MCP rail icon isHidden without deleting summoner.mcp.add", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  const web = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(overlay, /summoner\.mcp\.toggle/)
+  assert.match(overlay, /summoner\.mcp\.add/)
+  assert.match(overlay, /mcpAddClicked/)
+  const railStart = overlay.indexOf("let railSpecs")
+  const railEnd = overlay.indexOf("let listCol")
+  assert.ok(railStart >= 0 && railEnd > railStart, "railSpecs loop missing")
+  const rail = overlay.slice(railStart, railEnd)
+  assert.match(rail, /"MCP", 4/)
+  assert.match(rail, /isHidden/)
+  const mcpList = overlay.slice(overlay.indexOf("func refreshMcpList"), overlay.indexOf("func refreshSkillList"))
+  const knList = overlay.slice(
+    overlay.indexOf("func refreshKnowledgeList"),
+    overlay.indexOf("func tintRailButtons"),
+  )
+  assert.match(mcpList, /＋ 添加 MCP/)
+  assert.match(mcpList, /isHidden\s*=\s*true/)
+  assert.match(knList, /＋ 导入知识/)
+  assert.match(knList, /isHidden\s*=\s*true/)
+  assert.match(overlay, /railSection = 0/)
+  assert.match(web, /data-sec="mcp"[^>]*\bhidden\b/)
+  assert.match(web, /data-sec="threads"[^>]*aria-current="true"/)
+  assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.toggle_server"))
+  assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("skill.activate"))
 })

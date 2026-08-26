@@ -6,11 +6,15 @@
  * (stdio still lists tools; coding agents get an actionable error).
  */
 
-import { gateOutboundCall, type OutboundCallRequest, type OutboundCallResult } from "./facade"
+import {
+  gateOutboundCall,
+  denyOutboundExfilIfNeeded,
+  type OutboundCallRequest,
+  type OutboundCallResult,
+} from "./facade"
+import { outboundToInternalName } from "./profile"
 import { makeOutboundMcpOrigin, type OutboundMcpOrigin } from "./origin"
 import { appendOutboundMcpAudit } from "./audit"
-import { OUTBOUND_MCP_EXFIL_CLASS } from "./profile"
-import { hasOutboundDisclosure } from "./disclosure-session"
 
 export type OutboundDispatchRequest = {
   internal_tool: string
@@ -48,19 +52,23 @@ export function getOutboundDispatcher(): OutboundDispatcher | null {
 
 /**
  * Gate then dispatch. Does not trust caller disclosure_accepted —
- * facade checks server-side disclosure session.
+ * facade checks grant allow_page_export ∧ operator HITL session.
  */
 export async function invokeOutboundTool(
   req: OutboundCallRequest,
   dispatcher: OutboundDispatcher | null | undefined = defaultDispatcher,
 ): Promise<InvokeOutboundResult> {
   const gate = gateOutboundCall(req)
-  if (!gate.ok) {
+  // HITL must wait on Companion HTTP (confirm center), not fail in the stdio
+  // child. Local NOT_GRANTED / PROFILE_FORBIDDEN still fail-closed here.
+  const passHitlToHttp =
+    !gate.ok && gate.error_code === "DISCLOSURE_HITL_REQUIRED" && !!dispatcher
+  if (!gate.ok && !passHitlToHttp) {
     return gate
   }
 
   const origin = makeOutboundMcpOrigin(req.caller_id)
-  const internal = gate.internal_tool
+  const internal = gate.internal_tool || outboundToInternalName(req.tool)
   if (!internal) {
     appendOutboundMcpAudit({
       caller_id: req.caller_id || "unknown",
@@ -95,21 +103,10 @@ export async function invokeOutboundTool(
     }
   }
 
-  // Defense in depth: re-check disclosure before dispatch for exfil tools
-  if (OUTBOUND_MCP_EXFIL_CLASS.has(req.tool) && !hasOutboundDisclosure(req.caller_id)) {
-    appendOutboundMcpAudit({
-      caller_id: req.caller_id || "unknown",
-      tool: req.tool,
-      ok: false,
-      error_code: "DISCLOSURE_REQUIRED",
-    })
-    return {
-      ok: false,
-      error: "disclosure_required",
-      error_code: "DISCLOSURE_REQUIRED",
-      disclosure_required: true,
-      origin,
-    }
+  // Defense in depth: re-check grant flag. HITL_REQUIRED still goes to HTTP.
+  const exfilDeny = denyOutboundExfilIfNeeded(req.caller_id, req.tool)
+  if (exfilDeny && !(passHitlToHttp && exfilDeny.error_code === "DISCLOSURE_HITL_REQUIRED")) {
+    return { ...exfilDeny, origin }
   }
 
   try {

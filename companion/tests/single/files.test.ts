@@ -594,6 +594,71 @@ test("message-router: knowledge.related caps at 3", async () => {
   assert.ok(response.related.every((h: { id: string }) => h.id !== "k0"))
 })
 
+test("message-router: knowledge.update/export/delete require user_gesture in router", async () => {
+  const se = {
+    ...mockSkillEngine,
+    updateKnowledge: () => ({ id: "a", title: "t" }),
+    exportKnowledge: () => ({ format: "markdown", filename: "a.md", content: "x", redacted_hits: 0 }),
+    deleteKnowledge: () => {
+      throw new Error("deleteKnowledge should not run")
+    },
+  }
+  const svc = { threadManager: new ThreadManager(), skillEngine: se, historyStore: mockHistoryStore }
+  const upd = await handleMessage({ type: "knowledge.update", id: "a" }, svc)
+  assert.match(String(upd.error), /user_gesture/)
+  const exp = await handleMessage({ type: "knowledge.export", id: "a" }, svc)
+  assert.match(String(exp.error), /user_gesture/)
+  const del = await handleMessage({ type: "knowledge.delete", id: "a" }, svc)
+  assert.match(String(del.error), /user_gesture/)
+})
+
+test("message-router: knowledge.get denied on summoner; list strips related", async () => {
+  const docs = [
+    { id: "a", name: "a", title: "alpha sso", tags: ["sso"], description: "d", builtin: false, type: "domain_knowledge" },
+    { id: "b", name: "b", title: "beta sso", tags: ["sso"], description: "d", builtin: false, type: "domain_knowledge" },
+  ]
+  const se = {
+    ...mockSkillEngine,
+    listKnowledge: () => docs,
+    getKnowledge: (id: string) => ({ id, name: id, title: id, body: "x", char_count: 1, truncated: false, related: [] }),
+  }
+  const denied = await handleMessage(
+    { type: "knowledge.get", id: "a", __cmspark_surface: "summoner" },
+    { threadManager: new ThreadManager(), skillEngine: se, historyStore: mockHistoryStore },
+  )
+  assert.equal(denied.error_code, "SUMMONER_ACL")
+  const listed = await handleMessage(
+    { type: "knowledge.list", __cmspark_surface: "summoner" },
+    { threadManager: new ThreadManager(), skillEngine: se, historyStore: mockHistoryStore },
+  )
+  assert.equal(listed.type, "knowledge.list")
+  assert.equal(listed.docs[0].related, undefined)
+  const panel = await handleMessage(
+    { type: "knowledge.list" },
+    { threadManager: new ThreadManager(), skillEngine: se, historyStore: mockHistoryStore },
+  )
+  assert.ok(Array.isArray(panel.docs[0].related))
+})
+
+test("message-router: knowledge.set_active accepts id when name differs", async () => {
+  const threadManager = new ThreadManager()
+  const created = await handleMessage(
+    { type: "thread.create", alias: "K" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  const se = {
+    ...mockSkillEngine,
+    listKnowledge: () => [{ id: "k-hash", name: "legacy-name", title: "T", description: "", builtin: false, type: "domain_knowledge" }],
+  }
+  const response = await handleMessage(
+    { type: "knowledge.set_active", thread_id: created.thread.id, ids: ["k-hash"] },
+    { threadManager, skillEngine: se, historyStore: mockHistoryStore },
+  )
+  assert.equal(response.type, "knowledge.active")
+  assert.deepEqual(response.ids, ["k-hash"])
+  assert.deepEqual(response.dropped, [])
+})
+
 test("message-router: knowledge.related honors clamped limit", async () => {
   const docs = Array.from({ length: 6 }, (_, i) => ({
     id: `k${i}`,

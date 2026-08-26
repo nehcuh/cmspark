@@ -21,7 +21,7 @@
 |---|------|------|---|
 | E1 | Companion / CMspark.app 在跑 | `cmspark-agent daemon status` → running · `ws://127.0.0.1:23401` | ☐ |
 | E2 | Chrome 扩展 Side Panel **已连接** | 顶栏绿 / 已配对 | ☐ |
-| E3 | Outbound health | `GET /outbound-mcp/v1/health` + Bearer `ws_secret` → `"status":"ok","runner":"wired"` | ☐ |
+| E3 | Outbound health | `GET /outbound-mcp/v1/health` + Bearer `CMSPARK_OUTBOUND_GRANT`（`cmg_…`，不是 `ws_secret`） → `"status":"ok","runner":"wired"` | ☐ |
 | E4 | Grok（或其它编程 Agent）MCP 配置 | 见 [mcp.md](../../mcp.md#outbound-mcp)；DMG 路径 `…/cmspark-agent` + `mcp-outbound` | ☐ |
 | E5 | `grok mcp doctor cmspark`（或等价） | handshake OK · **10 tools** · healthy | ☐ |
 | E6 | **新开** Grok 会话（配置 ≠ 会话挂载） | 工具列表出现 `cmspark__list_tabs` 等 | ☐ |
@@ -34,9 +34,8 @@
 # Companion
 /Applications/CMspark.app/Contents/Resources/cmspark-agent daemon status
 
-# Outbound runner
-SECRET=$(cat ~/.cmspark-agent/ws_secret | tr -d '\n')
-curl -sS -H "Authorization: Bearer $SECRET" \
+# Outbound runner — grant, not Extension ws_secret
+curl -sS -H "Authorization: Bearer $CMSPARK_OUTBOUND_GRANT" \
   http://127.0.0.1:23401/outbound-mcp/v1/health
 # → {"status":"ok","runner":"wired",...}
 
@@ -48,7 +47,7 @@ grok mcp doctor cmspark
 
 | 规则 | 说明 |
 |------|------|
-| 外泄类先 disclosure | `cmspark__accept_data_disclosure` 且 **`acknowledge: true`** |
+| 外泄类 | 钥匙须 `allow_page_export`；首次 `get_page_text` / `screenshot` 仍走 **确认台 HITL**。调用方 `acknowledge` **不够** |
 | 先 `list_tabs` | 使用真实 `tabId`，禁止硬编码 |
 | 无 `cmspark__scroll` | L1 无 scroll；翻页用 `navigate` 到 URL / 或 Side Panel 全工具面 |
 | 禁工具不得成功 | cookies / evaluate / shell / host / CU 等应 `PROFILE_FORBIDDEN` 或未暴露 |
@@ -106,13 +105,12 @@ grok mcp doctor cmspark
 复制给编程 Agent 或逐步执行：
 
 ```text
-1. cmspark__accept_data_disclosure  { "acknowledge": true }
-2. cmspark__list_tabs
-3. 若目标页未打开：cmspark__navigate { tabId, url }
-4. cmspark__wait_for { tabId, network_idle: true }  （或合理 selector）
-5. cmspark__get_page_text { tabId }
-6. 根据文本回答任务；不足则 navigate 到更具体 URL 再 get_page_text
-7. 禁止：evaluate / scroll / cookies / shell（应失败或不可用）
+1. cmspark__list_tabs
+2. 若目标页未打开：cmspark__navigate { tabId, url }
+3. cmspark__wait_for { tabId, network_idle: true }  （或合理 selector）
+4. cmspark__get_page_text { tabId }
+5. 根据文本回答任务；不足则 navigate 到更具体 URL 再 get_page_text
+6. 禁止：evaluate / scroll / cookies / shell（应失败或不可用）
 ```
 
 **可选负面探针（每会话至少 1 次）**：
@@ -120,7 +118,8 @@ grok mcp doctor cmspark
 | 探针 | 期望 |
 |------|------|
 | 调用不在 L1 的工具名（若 Agent 可见） | `PROFILE_FORBIDDEN` 或工具不存在 |
-| 不带 disclosure 直接 `get_page_text` | `DISCLOSURE_REQUIRED` / `ACK_REQUIRED` |
+| 无 `allow_page_export` 直接 `get_page_text` | `DISCLOSURE_NOT_GRANTED` |
+| 有旗、无人在确认台批过 | `DISCLOSURE_HITL_REQUIRED` |
 | Side Panel 与 MCP 同 tab 冲突（T1 可选） | MCP `TAB_LOCKED` 或排队披露；**Side Panel 赢** |
 
 **无 Side Panel 聚焦时的确认（T1 若触发 L2）**：
@@ -180,7 +179,7 @@ tail -20 ~/.cmspark-agent/logs/capability-audit.jsonl 2>/dev/null
 | 检查 | 期望 | ☑ |
 |------|------|---|
 | 每次 outbound 调用有 caller / tool / outcome | 有 | ☐ |
-| disclosure 接受有记录（或会话内 accept 成功） | 有 | ☐ |
+| 外泄路径有 `allow_page_export` 审计和/或确认台 HITL（不是 caller `acknowledge`） | 有 | ☐ |
 | 失败路径有 error_code（非空 hang） | 有 | ☐ |
 
 ---
@@ -191,7 +190,8 @@ tail -20 ~/.cmspark-agent/logs/capability-audit.jsonl 2>/dev/null
 |------|------|
 | doctor 绿但会话无 `cmspark__*` | **新开 Grok 会话** |
 | `runner` 非 `wired` | 打开 Side Panel 配对 |
-| `DISCLOSURE_REQUIRED` | `accept_data_disclosure` + `acknowledge: true` |
+| `DISCLOSURE_NOT_GRANTED` | 签发钥匙时勾 `allow_page_export` / `--allow-page-export`（调用方 `acknowledge` 不够） |
+| `DISCLOSURE_HITL_REQUIRED` | **打开 Chrome 确认台**（macOS 也可托盘）；首次外泄仍须人批 |
 | `PROFILE_FORBIDDEN`（scroll） | 用 `navigate` + `get_page_text` |
 | `EXTENSION_UNAVAILABLE` / list_tabs 超时 | Companion + 扩展；优先 chrome-extension WS |
 | `OUTBOUND_CONFIRM_REQUIRED` | 看托盘/确认台，勿只盯 IDE |

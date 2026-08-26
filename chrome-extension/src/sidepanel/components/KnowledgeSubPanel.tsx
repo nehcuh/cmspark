@@ -17,7 +17,6 @@ export function KnowledgeSubPanel() {
   /** Bulk-delete mode: checkboxes select docs to remove (not inject) */
   const [manageMode, setManageMode] = useState(false)
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set())
-  const [relatedById, setRelatedById] = useState<Record<string, Array<{ id: string; title: string }>>>({})
   const [focusId, setFocusId] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -43,17 +42,12 @@ export function KnowledgeSubPanel() {
   }, [state.tabList])
 
   useEffect(() => {
-    const h = (e: Event) => {
-      const d = (e as CustomEvent).detail
-      if (!d?.id || !Array.isArray(d.related)) return
-      setRelatedById((prev) => ({ ...prev, [d.id]: d.related }))
-    }
-    window.addEventListener("cmspark:knowledge_related", h as EventListener)
     const onFocus = (e: Event) => {
       const id = (e as CustomEvent<{ id?: string }>).detail?.id
       if (!id) return
       setQuery("")
       setFocusId(id)
+      chrome.runtime.sendMessage({ type: "knowledge.get", id })
       requestAnimationFrame(() => {
         const safe = id.replace(/[^a-zA-Z0-9._:-]/g, "")
         if (!safe) return
@@ -62,7 +56,6 @@ export function KnowledgeSubPanel() {
     }
     window.addEventListener("cmspark:focus-knowledge", onFocus as EventListener)
     return () => {
-      window.removeEventListener("cmspark:knowledge_related", h as EventListener)
       window.removeEventListener("cmspark:focus-knowledge", onFocus as EventListener)
     }
   }, [])
@@ -90,14 +83,19 @@ export function KnowledgeSubPanel() {
     }
   }
 
-  const handleDelete = (name: string) => {
-    const doc = state.knowledgeDocs.find((d) => d.name === name)
-    const label = doc?.title || name
+  const handleDelete = (doc: { id?: string; name: string; title?: string }) => {
+    const id = doc.id || doc.name
+    const label = doc.title || doc.name
     if (confirm(`确定删除知识文档 "${label}"？`)) {
       showStatus(`正在删除 "${label}"...`)
-      chrome.runtime.sendMessage({ type: "knowledge.delete", name })
+      chrome.runtime.sendMessage({ type: "knowledge.delete", id, user_gesture: true })
     }
     setMenuOpen(null)
+  }
+
+  const openDoc = (id: string) => {
+    setFocusId(id)
+    chrome.runtime.sendMessage({ type: "knowledge.get", id })
   }
 
   const exitManageMode = () => {
@@ -130,12 +128,12 @@ export function KnowledgeSubPanel() {
     let skippedBuiltin = 0
     let queued = 0
     for (const name of names) {
-      const doc = state.knowledgeDocs.find((d) => d.name === name)
+      const doc = state.knowledgeDocs.find((d) => d.name === name || d.id === name)
       if (doc?.builtin) {
         skippedBuiltin += 1
         continue
       }
-      chrome.runtime.sendMessage({ type: "knowledge.delete", name })
+      chrome.runtime.sendMessage({ type: "knowledge.delete", id: doc?.id || name, user_gesture: true })
       queued += 1
     }
     const parts = [`已请求删除 ${queued} 篇`]
@@ -500,7 +498,8 @@ export function KnowledgeSubPanel() {
         <div key={groupName}>
           <SectionHeader title={groupName} meta={docs.length} />
           {docs.map((doc) => {
-            const active = state.activeKnowledgeIds.includes(doc.name)
+            const key = doc.id || doc.name
+            const active = state.activeKnowledgeIds.includes(key) || state.activeKnowledgeIds.includes(doc.name)
             const rowBg = manageMode
               ? selectedForDelete.has(doc.name)
                 ? tokens.dangerSoft
@@ -508,14 +507,20 @@ export function KnowledgeSubPanel() {
               : isManual && active
                 ? tokens.bgActive
                 : "transparent"
+            const related = (doc.related || []).slice(0, 3)
+            const tags = (doc.tags || []).slice(0, 4)
             return (
               <div
-                key={doc.name}
-                data-knowledge-id={doc.id || doc.name}
+                key={key}
+                data-knowledge-id={key}
                 style={{
                   ...styles.docRow,
                   background: rowBg,
                   outline: focusId && (focusId === doc.id || focusId === doc.name) ? `2px solid ${tokens.accent}` : undefined,
+                  cursor: manageMode ? "default" : "pointer",
+                }}
+                onClick={() => {
+                  if (!manageMode) openDoc(key)
                 }}
               >
                 {manageMode ? (
@@ -525,17 +530,20 @@ export function KnowledgeSubPanel() {
                     disabled={!!doc.builtin}
                     title={doc.builtin ? "内置文档不可删除" : "勾选以批量删除"}
                     onChange={() => toggleDeleteSelect(doc.name)}
+                    onClick={(e) => e.stopPropagation()}
                     style={{ marginRight: 8, flexShrink: 0 }}
                   />
                 ) : isManual ? (
                   <input
                     type="checkbox"
                     checked={active}
+                    onClick={(e) => e.stopPropagation()}
                     onChange={() => {
+                      const pin = key
                       const activeKnowledgeIds = active
-                        ? state.activeKnowledgeIds.filter((id) => id !== doc.name)
-                        : [...state.activeKnowledgeIds, doc.name]
-                      dispatch({ type: "TOGGLE_KNOWLEDGE", knowledgeId: doc.name })
+                        ? state.activeKnowledgeIds.filter((id) => id !== pin && id !== doc.name)
+                        : [...state.activeKnowledgeIds, pin]
+                      dispatch({ type: "TOGGLE_KNOWLEDGE", knowledgeId: pin })
                       if (state.activeThreadId) {
                         chrome.runtime.sendMessage({
                           type: "thread.update",
@@ -561,9 +569,12 @@ export function KnowledgeSubPanel() {
                   </span>
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>
+                  <div style={{ fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                     {doc.title || doc.name}
                     {doc.site && <span style={styles.siteBadge}>{doc.site}</span>}
+                    {tags.map((t: string) => (
+                      <span key={t} style={styles.siteBadge}>{t}</span>
+                    ))}
                   </div>
                   <div
                     style={{
@@ -576,30 +587,34 @@ export function KnowledgeSubPanel() {
                   >
                     {doc.description}
                   </div>
-                  {(relatedById[doc.name] || relatedById[doc.id || ""] || []).length > 0 && (
-                    <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 2 }}>
-                      相关：{(relatedById[doc.name] || relatedById[doc.id || ""] || []).slice(0, 3).map((r) => r.title).join(" · ")}
+                  {related.length > 0 && (
+                    <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 2, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      相关
+                      {related.map((r: { id: string; title: string }) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          style={styles.relatedChip}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openDoc(r.id)
+                          }}
+                        >
+                          {r.title}
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>
                 {doc.builtin && <span style={styles.badge}>内置</span>}
-                {!manageMode && (
-                  <button
-                    type="button"
-                    style={{ ...styles.menuBtn, fontSize: 10, padding: "2px 6px" }}
-                    onClick={() =>
-                      chrome.runtime.sendMessage({ type: "knowledge.related", id: doc.id || doc.name })
-                    }
-                    title="查询相关知识（最多 3 条）"
-                  >
-                    相关
-                  </button>
-                )}
                 {!doc.builtin && !manageMode && (
                   <div style={{ position: "relative" }} ref={menuOpen === doc.name ? menuRef : undefined}>
                     <button
                       style={styles.menuBtn}
-                      onClick={() => setMenuOpen(menuOpen === doc.name ? null : doc.name)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setMenuOpen(menuOpen === doc.name ? null : doc.name)
+                      }}
                       title="更多操作"
                     >
                       ···
@@ -607,8 +622,21 @@ export function KnowledgeSubPanel() {
                     {menuOpen === doc.name && (
                       <div style={styles.menuDropdown}>
                         <button
+                          style={styles.menuItem}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            chrome.runtime.sendMessage({ type: "knowledge.export", id: key, user_gesture: true })
+                            setMenuOpen(null)
+                          }}
+                        >
+                          下载 .md
+                        </button>
+                        <button
                           style={{ ...styles.menuItem, color: tokens.danger }}
-                          onClick={() => handleDelete(doc.name)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDelete(doc)
+                          }}
                         >
                           删除
                         </button>
@@ -628,6 +656,122 @@ export function KnowledgeSubPanel() {
       {state.knowledgeDocs.length > 0 && filteredDocs.length === 0 && (
         <div style={styles.emptyText}>无匹配「{query}」的知识</div>
       )}
+      <KnowledgeReaderSheet />
+    </div>
+  )
+}
+
+function KnowledgeReaderSheet() {
+  const { state, dispatch } = useAgentStore()
+  const doc = state.knowledgeViewer
+  const [title, setTitle] = useState("")
+  const [description, setDescription] = useState("")
+  const [tags, setTags] = useState("")
+  const [body, setBody] = useState("")
+  useEffect(() => {
+    if (!doc) return
+    setTitle(doc.title || "")
+    setDescription(doc.description || "")
+    setTags((doc.tags || []).join(", "))
+    setBody(doc.body || "")
+  }, [doc])
+  if (!doc) return null
+  const tooBigToExport = doc.truncated || doc.char_count > 512 * 1024
+  const readOnly = !!doc.builtin
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="查看知识"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.35)",
+        zIndex: 11000,
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+      }}
+      onClick={() => dispatch({ type: "SET_KNOWLEDGE_VIEWER", doc: null })}
+    >
+      <div
+        style={{
+          background: tokens.bg,
+          width: "100%",
+          maxHeight: "85%",
+          overflow: "auto",
+          padding: 12,
+          borderRadius: "12px 12px 0 0",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <strong style={{ fontSize: 13 }}>正文</strong>
+        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>标题</label>
+        <input value={title} disabled={readOnly} onChange={(e) => setTitle(e.target.value)} style={{ width: "100%", fontSize: 12, padding: 6 }} />
+        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>说明</label>
+        <input value={description} disabled={readOnly} onChange={(e) => setDescription(e.target.value)} style={{ width: "100%", fontSize: 12, padding: 6 }} />
+        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>标签（逗号分隔）</label>
+        <input value={tags} disabled={readOnly} onChange={(e) => setTags(e.target.value)} style={{ width: "100%", fontSize: 12, padding: 6 }} />
+        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>正文</label>
+        {readOnly ? (
+          <pre style={{ fontSize: 11, whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto", background: tokens.bgElevated, padding: 8 }}>
+            {body}
+          </pre>
+        ) : (
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            style={{ width: "100%", minHeight: 160, fontSize: 11, fontFamily: tokens.fontMono, padding: 8 }}
+          />
+        )}
+        {tooBigToExport && (
+          <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 6 }}>正文超过 512KiB，无法下载</div>
+        )}
+        {(doc.related || []).length > 0 && (
+          <div style={{ fontSize: 11, marginTop: 8, display: "flex", flexWrap: "wrap", gap: 4 }}>
+            相关
+            {(doc.related || []).slice(0, 3).map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                style={styles.relatedChip}
+                onClick={() => chrome.runtime.sendMessage({ type: "knowledge.get", id: r.id })}
+              >
+                {r.title}
+              </button>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          <button type="button" onClick={() => dispatch({ type: "SET_KNOWLEDGE_VIEWER", doc: null })}>关闭</button>
+          <button
+            type="button"
+            disabled={tooBigToExport}
+            onClick={() => chrome.runtime.sendMessage({ type: "knowledge.export", id: doc.id, user_gesture: true })}
+          >
+            下载 .md
+          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!confirm("确认保存对这篇知识的修改？")) return
+                chrome.runtime.sendMessage({
+                  type: "knowledge.update",
+                  id: doc.id,
+                  user_gesture: true,
+                  title,
+                  description,
+                  tags: tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
+                  body,
+                })
+              }}
+            >
+              保存
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -796,6 +940,16 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "0px 4px",
     borderRadius: 3,
     fontWeight: 400,
+  },
+  relatedChip: {
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgElevated,
+    color: tokens.textSecondary,
+    borderRadius: 10,
+    fontSize: 10,
+    padding: "1px 7px",
+    cursor: "pointer",
+    fontFamily: tokens.font,
   },
   menuBtn: {
     background: "none",

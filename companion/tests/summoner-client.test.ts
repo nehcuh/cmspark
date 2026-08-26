@@ -11,6 +11,7 @@ import * as path from "node:path"
 import {
   CONTINUE_MESSAGE,
   ATTACH_NOTIFY_COPY,
+  ATTACH_SILENT_COPY,
   filterThreadsByTitle,
   forwardCompanionUiRect,
   mapChatMessageToSummonerCmd,
@@ -63,7 +64,13 @@ test("buildContinueChatCreate uses CONTINUE_MESSAGE and the given thread", () =>
 })
 
 test("ATTACH_NOTIFY_COPY tells the user we cannot open the side panel", () => {
-  assert.match(ATTACH_NOTIFY_COPY, /我们不能替你打开侧栏/)
+  assert.match(ATTACH_NOTIFY_COPY, /我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。/)
+  assert.doesNotMatch(ATTACH_NOTIFY_COPY, /侧栏批准|去侧栏/)
+})
+
+test("ATTACH_SILENT_COPY uses the same honesty footnote", () => {
+  assert.match(ATTACH_SILENT_COPY, /我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。/)
+  assert.doesNotMatch(ATTACH_SILENT_COPY, /侧栏批准|去侧栏|openSidePanel/)
 })
 
 test("filterThreadsByTitle empty query returns the most recent thread", () => {

@@ -907,6 +907,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.caller_id !== "string" || !m.caller_id.trim()) {
         return { valid: false, error: "outbound_mcp.grants.issue requires caller_id" }
       }
+      if (m.allow_page_export !== undefined && typeof m.allow_page_export !== "boolean") {
+        return { valid: false, error: "outbound_mcp.grants.issue allow_page_export must be a boolean" }
+      }
       return { valid: true }
     },
     "outbound_mcp.grants.revoke": (m) => {
@@ -1085,15 +1088,45 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "knowledge.get": (m) => {
+      if (typeof m.id !== "string" || !m.id) {
+        return { valid: false, error: "knowledge.get requires id" }
+      }
+      return { valid: true }
+    },
+    "knowledge.update": (m) => {
+      if (typeof m.id !== "string" || !m.id) {
+        return { valid: false, error: "knowledge.update requires id" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.update requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
+    "knowledge.export": (m) => {
+      if (typeof m.id !== "string" || !m.id) {
+        return { valid: false, error: "knowledge.export requires id" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.export requires user_gesture:true (Side Panel only)" }
+      }
+      if (m.ids !== undefined) {
+        return { valid: false, error: "knowledge.export v1 rejects id[]" }
+      }
+      return { valid: true }
+    },
     "knowledge.import_directory": (m) => {
-      if (typeof m.path !== "string" || !m.path) {
-        return { valid: false, error: "knowledge.import_directory requires path" }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.import_directory requires user_gesture:true (Side Panel only)" }
       }
       return { valid: true }
     },
     "knowledge.delete": (m) => {
       if (typeof m.id !== "string" || !m.id) {
         return { valid: false, error: "knowledge.delete requires id" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.delete requires user_gesture:true (Side Panel only)" }
       }
       return { valid: true }
     },

@@ -582,3 +582,16 @@ it("outbound navigate fans out and leaves origin unbound", async () => {
   assert.ok(fanout.length >= 1, "fan-out should send to authenticated peer")
 })
 
+it("source: summoner origin awaits extension peer before HITL", () => {
+  const candidates = [
+    path.join(__dirname, "..", "..", "src", "tool", "url-cookie-admission.ts"),
+    path.join(process.cwd(), "src", "tool", "url-cookie-admission.ts"),
+  ]
+  const srcPath = candidates.find((p) => fs.existsSync(p))
+  assert.ok(srcPath, "url-cookie-admission.ts")
+  const url = fs.readFileSync(srcPath!, "utf8")
+  assert.match(url, /await\s+ensureExtensionPeerForOverlayConfirm/)
+  assert.doesNotMatch(url, /sidePanel\.open/)
+  assert.doesNotMatch(url, /openSidePanel/)
+})
+

@@ -1,0 +1,8 @@
+{
+  "batch": "summoner-strategy-rethink",
+  "timestamp": "20260826-133900",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/summoner-strategy-rethink-claude-20260826-133900.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/summoner-strategy-rethink-pi-20260826-133900.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/summoner-strategy-rethink-diff-20260826-133900.patch"
+}
