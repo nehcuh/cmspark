@@ -1,7 +1,7 @@
 /**
  * Outbound MCP façade (Phase 0c).
  *
- * Enforces curated L1 profile + server-side L3+ disclosure + audit.
+ * Enforces curated L1 profile + grant-file page-export flag + operator HITL + audit.
  * Live Companion dispatch lives in bridge.ts (injectable).
  */
 
@@ -12,8 +12,9 @@ import {
   isOutboundAllowed,
   outboundToInternalName,
 } from "./profile"
-import { appendOutboundMcpAudit } from "./audit"
+import { appendOutboundMcpAudit, type OutboundAuditEvent } from "./audit"
 import { hasOutboundDisclosure } from "./disclosure-session"
+import { grantAllowsPageExport } from "./outbound-grants"
 
 export type OutboundCallRequest = {
   caller_id: string
@@ -21,7 +22,8 @@ export type OutboundCallRequest = {
   args?: Record<string, unknown>
   /**
    * @deprecated Ignored for authorization. Kept for API compatibility only.
-   * Use acceptOutboundDisclosure(caller_id) so the server holds session state.
+   * Exfil requires grantAllowsPageExport(caller_id) AND an operator HITL session
+   * (acceptOutboundDisclosure). Caller HTTP/stdio acknowledge is not consent.
    */
   disclosure_accepted?: boolean
   domain?: string
@@ -45,8 +47,60 @@ export function listOutboundTools(): string[] {
 }
 
 /**
+ * Exfil gate algebra (PR-A):
+ *   grant.allow_page_export !== true → DISCLOSURE_NOT_GRANTED
+ *   flag true, no operator HITL session → DISCLOSURE_HITL_REQUIRED
+ *
+ * Caller `disclosure_accepted` and HTTP/stdio acknowledge MUST NOT satisfy this.
+ * Returns a deny result, or null if the tool is not exfil / both checks pass.
+ */
+export function denyOutboundExfilIfNeeded(
+  caller_id: string,
+  tool: string,
+  extraAudit?: Pick<OutboundAuditEvent, "domain" | "grant_id">,
+): OutboundCallResult | null {
+  if (!OUTBOUND_MCP_EXFIL_CLASS.has(tool)) return null
+  const cid = (caller_id || "").trim() || "unknown"
+  if (!grantAllowsPageExport(cid)) {
+    appendOutboundMcpAudit({
+      caller_id: cid,
+      tool,
+      ok: false,
+      error_code: "DISCLOSURE_NOT_GRANTED",
+      confirm_outcome: "n/a",
+      ...extraAudit,
+    })
+    return {
+      ok: false,
+      error: "page export not granted for this caller",
+      error_code: "DISCLOSURE_NOT_GRANTED",
+      disclosure_required: true,
+      disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
+    }
+  }
+  if (!hasOutboundDisclosure(cid)) {
+    appendOutboundMcpAudit({
+      caller_id: cid,
+      tool,
+      ok: false,
+      error_code: "DISCLOSURE_HITL_REQUIRED",
+      confirm_outcome: "n/a",
+      ...extraAudit,
+    })
+    return {
+      ok: false,
+      error: "operator HITL required for page export",
+      error_code: "DISCLOSURE_HITL_REQUIRED",
+      disclosure_required: true,
+      disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
+    }
+  }
+  return null
+}
+
+/**
  * Gate a tool call before any Companion dispatch.
- * Fail-closed on forbidden tools and missing **server-side** disclosure for exfil-class tools.
+ * Fail-closed on forbidden tools and missing grant flag / operator HITL for exfil.
  */
 export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
   const tool = (req.tool || "").trim()
@@ -76,24 +130,11 @@ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
     }
   }
 
-  // M3: server session only — caller disclosure_accepted is intentionally ignored
-  if (OUTBOUND_MCP_EXFIL_CLASS.has(tool) && !hasOutboundDisclosure(req.caller_id)) {
-    appendOutboundMcpAudit({
-      caller_id: req.caller_id || "unknown",
-      tool,
-      domain: req.domain,
-      ok: false,
-      error_code: "DISCLOSURE_REQUIRED",
-      confirm_outcome: "n/a",
-    })
-    return {
-      ok: false,
-      error: "disclosure_required",
-      error_code: "DISCLOSURE_REQUIRED",
-      disclosure_required: true,
-      disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
-    }
-  }
+  // Caller disclosure_accepted is intentionally ignored
+  const exfilDeny = denyOutboundExfilIfNeeded(req.caller_id, tool, {
+    domain: req.domain,
+  })
+  if (exfilDeny) return exfilDeny
 
   const internal = outboundToInternalName(tool)
   appendOutboundMcpAudit({

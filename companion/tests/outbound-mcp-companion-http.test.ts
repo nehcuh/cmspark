@@ -1,3 +1,4 @@
+import "./_outbound-grants-setup.js"
 import test from "node:test"
 import assert from "node:assert/strict"
 import {
@@ -8,7 +9,11 @@ import {
   resetOutboundCompanionHttpForTests,
   extractBearerToken,
 } from "../src/outbound-mcp/companion-http"
-import { clearAllOutboundDisclosureSessions } from "../src/outbound-mcp/disclosure-session"
+import { clearAllOutboundDisclosureSessions, hasOutboundDisclosure } from "../src/outbound-mcp/disclosure-session"
+import {
+  issueOutboundGrant,
+  resetOutboundGrantsForTests,
+} from "../src/outbound-mcp/outbound-grants"
 import type { IncomingMessage } from "http"
 
 function fakeReq(auth?: string): IncomingMessage {
@@ -18,6 +23,7 @@ function fakeReq(auth?: string): IncomingMessage {
 test.beforeEach(() => {
   resetOutboundCompanionHttpForTests()
   clearAllOutboundDisclosureSessions()
+  resetOutboundGrantsForTests()
 })
 
 test("authorizeOutboundHttp requires matching bearer", () => {
@@ -43,7 +49,7 @@ test("companion invoke refuses exfil without disclosure even with runner", async
     tool: "cmspark__get_page_text",
   })
   assert.equal(r.ok, false)
-  assert.equal(r.error_code, "DISCLOSURE_REQUIRED")
+  assert.equal(r.error_code, "DISCLOSURE_NOT_GRANTED")
 })
 
 test("companion invoke EXTENSION_UNAVAILABLE without runner", async () => {
@@ -77,7 +83,33 @@ test("companion invoke dispatches via runner after gate", async () => {
   assert.equal(calls[0].params.__outbound_caller_id, "agent")
 })
 
-test("companion exfil after acceptDisclosure reaches runner", async () => {
+test("companionAcceptDisclosure without allow_page_export does not arm exfil", async () => {
+  await companionAcceptDisclosure("d1")
+  setOutboundToolRunner(async () => ({ success: true, data: { ok: true } }))
+  const r = await companionInvokeOutbound({
+    caller_id: "d1",
+    tool: "cmspark__screenshot",
+    args: { tabId: 1 },
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "DISCLOSURE_NOT_GRANTED")
+})
+
+test("grant allow_page_export still DISCLOSURE_HITL_REQUIRED without operator session", async () => {
+  issueOutboundGrant({ label: "t", caller_id: "d1", allow_page_export: true })
+  setOutboundToolRunner(async () => ({ success: true, data: { ok: true } }))
+  const r = await companionInvokeOutbound({
+    caller_id: "d1",
+    tool: "cmspark__screenshot",
+    args: { tabId: 1 },
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "DISCLOSURE_HITL_REQUIRED")
+  assert.equal(hasOutboundDisclosure("d1"), false)
+})
+
+test("companion exfil after grant flag plus operator session reaches runner", async () => {
+  issueOutboundGrant({ label: "t", caller_id: "d1", allow_page_export: true })
   await companionAcceptDisclosure("d1")
   setOutboundToolRunner(async (_id, tool) => {
     assert.equal(tool, "screenshot")

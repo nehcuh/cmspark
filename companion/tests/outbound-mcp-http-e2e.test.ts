@@ -21,14 +21,13 @@ import {
   OUTBOUND_INVOKE_PATH,
   OUTBOUND_DISCLOSURE_PATH,
 } from "../src/outbound-mcp/companion-http"
-import { clearAllOutboundDisclosureSessions } from "../src/outbound-mcp/disclosure-session"
+import { clearAllOutboundDisclosureSessions, hasOutboundDisclosure } from "../src/outbound-mcp/disclosure-session"
 import {
   createHttpOutboundDispatcher,
   companionPostDisclosure,
   companionOutboundHealth,
 } from "../src/outbound-mcp/http-client"
 import { setOutboundDispatcher, invokeOutboundTool } from "../src/outbound-mcp/bridge"
-import { acceptOutboundDisclosure } from "../src/outbound-mcp/disclosure-session"
 import {
   issueOutboundGrant,
   resetOutboundGrantsForTests,
@@ -214,7 +213,7 @@ test("e2e: EXTENSION_UNAVAILABLE when no runner (auth ok)", async () => {
   }
 })
 
-test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
+test("HTTP POST /disclosure with acknowledge does not arm exfil", async () => {
   const server = createOutboundTestServer()
   const port = await listen(server)
   const token = grantToken("e2e-agent")
@@ -230,13 +229,13 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
     return { success: false, error: "unexpected tool " + tool }
   })
   try {
-    // Exfil without disclosure
+    // Exfil without allow_page_export
     const denied = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
       token,
       body: { caller_id: "e2e-agent", tool: "cmspark__get_page_text", args: { tabId: 7 } },
     })
     assert.equal(denied.status, 422)
-    assert.equal(denied.json.error_code, "DISCLOSURE_REQUIRED")
+    assert.equal(denied.json.error_code, "DISCLOSURE_NOT_GRANTED")
     assert.equal(calls.length, 0)
 
     // Disclosure without acknowledge
@@ -247,16 +246,17 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
     assert.equal(badAck.status, 400)
     assert.equal(badAck.json.error_code, "ACK_REQUIRED")
 
-    // Accept disclosure
+    // Caller ack is not operator consent — must not arm the Map
     const disc = await requestJson(port, "POST", OUTBOUND_DISCLOSURE_PATH, {
       token,
       body: { caller_id: "e2e-agent", acknowledge: true },
     })
-    assert.equal(disc.status, 200)
-    assert.equal(disc.json.ok, true)
-    assert.equal(disc.json.caller_id, "e2e-agent")
+    assert.equal(disc.json.ok, false)
+    assert.equal(disc.json.error_code, "ACK_NOT_OPERATOR")
+    assert.notEqual(disc.status, 200)
+    assert.equal(hasOutboundDisclosure("e2e-agent"), false)
 
-    // list_tabs
+    // list_tabs (non-exfil) still works
     const tabs = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
       token,
       body: { caller_id: "e2e-agent", tool: "cmspark__list_tabs" },
@@ -267,7 +267,7 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
     assert.equal(tabs.json.internal_tool, "list_tabs")
     assert.equal(tabs.json.origin?.synthetic_origin, "outbound_mcp:e2e-agent")
 
-    // get_page_text after disclosure (L9 tabId required)
+    // get_page_text still fail-closed after HTTP ack
     const text = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
       token,
       body: {
@@ -276,10 +276,52 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
         args: { tabId: 7 },
       },
     })
-    assert.equal(text.status, 200)
-    assert.equal(text.json.ok, true)
-    assert.deepEqual(text.json.data, { text: "hello e2e" })
-    assert.deepEqual(calls, ["list_tabs", "get_page_text"])
+    assert.equal(text.status, 422)
+    assert.equal(text.json.ok, false)
+    assert.equal(text.json.error_code, "DISCLOSURE_NOT_GRANTED")
+    assert.deepEqual(calls, ["list_tabs"])
+  } finally {
+    await close(server)
+  }
+})
+
+test("grant allow_page_export still DISCLOSURE_HITL_REQUIRED without operator session", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  const token = issueOutboundGrant({
+    label: "e2e-hitl",
+    caller_id: "hitl-agent",
+    allow_page_export: true,
+  }).token
+  let hit = false
+  setOutboundToolRunner(async () => {
+    hit = true
+    return { success: true, data: { text: "nope" } }
+  })
+  try {
+    const denied = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token,
+      body: { caller_id: "hitl-agent", tool: "cmspark__get_page_text", args: { tabId: 7 } },
+    })
+    assert.equal(denied.status, 422)
+    assert.equal(denied.json.error_code, "DISCLOSURE_HITL_REQUIRED")
+    assert.equal(hit, false)
+
+    const disc = await requestJson(port, "POST", OUTBOUND_DISCLOSURE_PATH, {
+      token,
+      body: { caller_id: "hitl-agent", acknowledge: true },
+    })
+    assert.equal(disc.json.ok, false)
+    assert.equal(disc.json.error_code, "ACK_NOT_OPERATOR")
+    assert.equal(hasOutboundDisclosure("hitl-agent"), false)
+
+    const still = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token,
+      body: { caller_id: "hitl-agent", tool: "cmspark__screenshot", args: { tabId: 7 } },
+    })
+    assert.equal(still.status, 422)
+    assert.equal(still.json.error_code, "DISCLOSURE_HITL_REQUIRED")
+    assert.equal(hit, false)
   } finally {
     await close(server)
   }
@@ -321,13 +363,16 @@ test("e2e: http-client dispatcher + companionPostDisclosure end-to-end", async (
     assert.equal(health.ok, true)
     assert.equal(health.runner, "wired")
 
-    // Local gate also needs disclosure for invokeOutboundTool path
-    acceptOutboundDisclosure("client-agent")
     const remote = await companionPostDisclosure(
       { port, token },
       "client-agent",
     )
-    assert.equal(remote.ok, true)
+    assert.equal(remote.ok, false)
+    assert.match(
+      String(remote.error || ""),
+      /ACK_NOT_OPERATOR|not operator consent/i,
+    )
+    assert.equal(hasOutboundDisclosure("client-agent"), false)
 
     setOutboundDispatcher(
       createHttpOutboundDispatcher({ port, token, timeout_ms: 10_000 }),
@@ -337,8 +382,8 @@ test("e2e: http-client dispatcher + companionPostDisclosure end-to-end", async (
       tool: "cmspark__screenshot",
       args: { tabId: 3 },
     })
-    assert.equal(r.ok, true)
-    assert.deepEqual(r.dispatch?.data, { png: "base64" })
+    assert.equal(r.ok, false)
+    assert.equal(r.error_code, "DISCLOSURE_NOT_GRANTED")
   } finally {
     await close(server)
   }
@@ -367,6 +412,21 @@ test("e2e: unknown outbound path under prefix → 404 JSON", async () => {
   try {
     const r = await requestJson(port, "GET", "/outbound-mcp/v1/nope", {
       token: grantToken("x"),
+    })
+    assert.equal(r.status, 404)
+    assert.equal(r.json.error_code, "NOT_FOUND")
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e: /outbound-mcp/v1/grants stays 404", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  try {
+    const r = await requestJson(port, "POST", "/outbound-mcp/v1/grants", {
+      token: grantToken("x"),
+      body: { caller_id: "x", allow_page_export: true },
     })
     assert.equal(r.status, 404)
     assert.equal(r.json.error_code, "NOT_FOUND")

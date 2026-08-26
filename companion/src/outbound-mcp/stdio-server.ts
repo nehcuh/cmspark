@@ -12,16 +12,9 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js"
 import { OUTBOUND_MCP_ALLOWLIST, OUTBOUND_DISCLOSURE_ZH } from "./profile"
-import {
-  acceptOutboundDisclosure,
-  revokeOutboundDisclosure,
-} from "./disclosure-session"
 import { invokeOutboundTool, setOutboundDispatcher } from "./bridge"
 import { listOutboundTools } from "./facade"
-import {
-  companionPostDisclosure,
-  createHttpOutboundDispatcher,
-} from "./http-client"
+import { createHttpOutboundDispatcher } from "./http-client"
 import { getOrCreateSharedSecret } from "../ws-auth"
 import { getConfig } from "../config"
 
@@ -48,7 +41,7 @@ function toolDescription(name: string): string {
     cmspark__wait_for: "Wait for selector/condition",
     cmspark__downloads_find: "Find files in Downloads sandbox (read-only)",
     [META_ACCEPT]:
-      "Accept that page text/screenshots may enter this coding agent context (server-side session)",
+      "Caller acknowledge is not operator consent (ACK_NOT_OPERATOR). Page export requires grant --allow-page-export and Confirm Center HITL.",
     [META_PROFILE]: "List default outbound L1 tool names (curated profile)",
   }
   return base[name] || `CMspark outbound tool ${name}`
@@ -150,65 +143,21 @@ export function createOutboundMcpServer(): Server {
           isError: true,
         }
       }
-      // Companion process is execute-time SoT for disclosure (ADR-022 M3).
-      // Dual-write: local gate + companion. S42 P1: body `ok` must match remote
-      // success so agents parsing JSON text do not proceed on a false accept.
-      const config = getConfig()
-      const port = Number(process.env[PORT_ENV]) || Number(config.port) || 23401
-      let token: string
-      try {
-        token = resolveOutboundHttpBearer().token
-      } catch (e: any) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                ok: false,
-                error_code: "GRANT_REQUIRED",
-                error: e?.message || String(e),
-              }),
-            },
-          ],
-          isError: true,
-        }
-      }
-      const remote = await companionPostDisclosure({ port, token }, cid)
-      if (!remote.ok) {
-        revokeOutboundDisclosure(cid)
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                ok: false,
-                error_code: "COMPANION_DISCLOSURE_FAILED",
-                caller_id: cid,
-                companion_disclosure: remote.error || "failed",
-                disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
-                hint_zh:
-                  "Companion 未确认披露（未启动 / 未配对 / Bearer 错误）。请先启动 Companion 与扩展后再 accept。",
-              }),
-            },
-          ],
-          isError: true,
-        }
-      }
-      const sess = acceptOutboundDisclosure(cid)
+      // Caller ack is not operator HITL (Task 10 Confirm Center). Do not arm execute.
       return {
         content: [
           {
             type: "text" as const,
             text: JSON.stringify({
-              ok: true,
-              caller_id: sess.caller_id,
-              accepted_at: sess.accepted_at,
-              companion_disclosure: "ok",
+              ok: false,
+              error_code: "ACK_NOT_OPERATOR",
+              error: "caller acknowledge is not operator consent",
+              caller_id: cid,
               disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
             }),
           },
         ],
-        isError: false,
+        isError: true,
       }
     }
 

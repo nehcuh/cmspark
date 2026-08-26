@@ -1,8 +1,10 @@
 /**
  * Server-side L3+ disclosure sessions for outbound MCP (ADR-022 L3+ / P0c M3).
  *
- * Caller-supplied `disclosure_accepted` MUST NOT authorize exfil tools.
- * Only an in-process session marked via acceptOutboundDisclosure() counts.
+ * Caller-supplied `disclosure_accepted` and HTTP/stdio acknowledge MUST NOT
+ * authorize exfil tools. Only an in-process session marked via
+ * acceptOutboundDisclosure() (operator HITL) counts, and only together with
+ * grantAllowsPageExport.
  */
 
 export type DisclosureSession = {

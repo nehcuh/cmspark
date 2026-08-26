@@ -6,8 +6,9 @@
  *   - P0 default: Bearer ws_secret (Extension pairing) OR cmg_ grant token
  *   - P1 require_grant=true: grant only (never fall back to ws_secret) — L4+ lock
  *
- * Disclosure sessions for this path live in-process on Companion (source of
- * truth for execute). The stdio mcp-outbound process dual-writes accept.
+ * Disclosure sessions for this path live in-process on Companion (operator HITL
+ * via acceptOutboundDisclosure). HTTP POST /disclosure caller ack is NOT consent
+ * and must not arm the Map that gateOutboundCall reads.
  */
 
 import type { IncomingMessage, ServerResponse } from "http"
@@ -15,15 +16,15 @@ import { timingSafeEqual } from "crypto"
 import { getConfig } from "../config"
 import {
   acceptOutboundDisclosure,
-  hasOutboundDisclosure,
   clearAllOutboundDisclosureSessions,
 } from "./disclosure-session"
 import {
   gateOutboundCall,
+  denyOutboundExfilIfNeeded,
   type OutboundCallRequest,
   type OutboundCallResult,
 } from "./facade"
-import { OUTBOUND_MCP_EXFIL_CLASS, outboundToInternalName } from "./profile"
+import { outboundToInternalName } from "./profile"
 import { makeOutboundMcpOrigin } from "./origin"
 import { appendOutboundMcpAudit } from "./audit"
 import {
@@ -280,22 +281,9 @@ export async function companionInvokeOutbound(
     return gate
   }
 
-  // Defense in depth for exfil (session is companion-process truth)
-  if (OUTBOUND_MCP_EXFIL_CLASS.has(tool) && !hasOutboundDisclosure(caller_id)) {
-    appendOutboundMcpAudit({
-      caller_id,
-      tool,
-      ok: false,
-      error_code: "DISCLOSURE_REQUIRED",
-      grant_id,
-    })
-    return {
-      ok: false,
-      error: "disclosure_required",
-      error_code: "DISCLOSURE_REQUIRED",
-      disclosure_required: true,
-    }
-  }
+  // Defense in depth for exfil (grant flag ∧ operator HITL; HTTP ack is not consent)
+  const exfilDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id })
+  if (exfilDeny) return exfilDeny
 
   const internal = gate.internal_tool || outboundToInternalName(tool)
   if (!internal) {
@@ -492,8 +480,15 @@ export async function handleOutboundMcpHttp(
         })
         return true
       }
-      const out = await companionAcceptDisclosure(caller_id)
-      json(res, 200, { ...out, auth_mode: auth.mode, grant_id: auth.grant_id })
+      // Caller acknowledge is not operator HITL (Task 10 Confirm Center).
+      // Must not arm the disclosure Map that gateOutboundCall reads.
+      json(res, 403, {
+        ok: false,
+        error_code: "ACK_NOT_OPERATOR",
+        error: "caller acknowledge is not operator consent",
+        auth_mode: auth.mode,
+        grant_id: auth.grant_id,
+      })
     } catch (e: any) {
       json(res, 400, { ok: false, error_code: "BAD_BODY", error: e?.message || String(e) })
     }

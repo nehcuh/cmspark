@@ -8,7 +8,7 @@ export {
   isOutboundForbidden,
   outboundToInternalName,
 } from "./profile"
-export { gateOutboundCall, listOutboundTools } from "./facade"
+export { gateOutboundCall, listOutboundTools, denyOutboundExfilIfNeeded } from "./facade"
 export type { OutboundCallRequest, OutboundCallResult } from "./facade"
 export {
   acceptOutboundDisclosure,

@@ -32,6 +32,7 @@ import {
   companionInvokeOutbound,
   companionAcceptDisclosure,
 } from "../../src/outbound-mcp/companion-http.js"
+import { issueOutboundGrant, resetOutboundGrantsForTests } from "../../src/outbound-mcp/outbound-grants.js"
 import {
   _resetTabLeasesForTests,
   registerTabLeasePendingHooks,
@@ -65,6 +66,7 @@ beforeEach(async () => {
   }
   securityConfirmations.rejectAll("disconnect")
   resetOutboundCompanionHttpForTests()
+  resetOutboundGrantsForTests()
   _resetTabLeasesForTests()
   registerTabLeasePendingHooks({ hasPendingForTab: () => false })
   // B1 path only runs when threadManager is live (production always is)
@@ -377,8 +379,22 @@ test("companionInvokeOutbound screenshot needs disclosure then CDP", async () =>
     args: { tabId: 1 },
   })
   assert.equal(denied.ok, false)
-  assert.equal(denied.error_code, "DISCLOSURE_REQUIRED")
+  assert.equal(denied.error_code, "DISCLOSURE_NOT_GRANTED")
 
+  issueOutboundGrant({
+    label: "stack",
+    caller_id: "stack-agent",
+    allow_page_export: true,
+  })
+  const hitl = await companionInvokeOutbound({
+    caller_id: "stack-agent",
+    tool: "cmspark__screenshot",
+    args: { tabId: 1 },
+  })
+  assert.equal(hitl.ok, false)
+  assert.equal(hitl.error_code, "DISCLOSURE_HITL_REQUIRED")
+
+  // Operator session (Task 10 Confirm Center) — not HTTP/stdio caller ack
   await companionAcceptDisclosure("stack-agent")
   armAutoToolResult({ png: "xx" })
 
