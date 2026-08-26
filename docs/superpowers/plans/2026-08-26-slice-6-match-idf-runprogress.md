@@ -192,15 +192,17 @@ export type RunProgressItem = {
   text: string
   done: boolean
   source: "seed" | "model_draft" | "user"
+  /** Exact internal tool name for evidence ticks. Omit on drafts. */
+  tool?: string
 }
 export type RunProgress = { items: RunProgressItem[] }
 ```
 
 Rules:
 - Seed from `thread.runtime_context_budget?.handoff?.open_todos` (H1, cap 8×120). Else empty. **Not** `thread.open_todos`.
-- Model-proposed rows = `source: "model_draft"`, `done: false` via a **named companion ingest** (not overlay, not LLM tool that sets done). Completing them requires **L0 click only** until the user (or a later seed) binds `tool?: string` on that row. `applyToolResult` **never** ticks `model_draft`.
-- `applyToolResult(progress, { tool, ok })`: `ok===true` only; match `item.tool === tool` (exact internal name); at most one oldest undone seed/user row. No substring on `text`.
-- Wire in `adapter.ts` after successful `tool.result`.
+- **v1 ingest = seed-only** from H1 `open_todos`. Do **not** implement `model_draft` ingest this slice (dead UI otherwise). Schema may keep the source tag for later; writers must not set `done` from model JSON.
+- `applyToolResult(progress, { tool, success })`: `success===true` only (`toolResult.success` at `adapter.ts` success-path send ~1296, not error/abort sends). Match `item.tool === tool` (exact internal name) on `source:"seed"|"user"`; at most one oldest undone row. No substring on `text`. Never tick `model_draft`.
+- Detect `/技能` from a **leading `/name` token in `rest.message`**, not from `rest.skill_ids` presence (extension always sends `activeSkillIds`).
 - Overlay does not get write verbs. Toggle not on `SUMMONER_ALLOW`.
 
 - [ ] Steps: failing tests → implement → pass → commit `feat(thread): run_progress seed and evidence ticks`

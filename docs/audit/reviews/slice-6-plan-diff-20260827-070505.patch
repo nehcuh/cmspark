@@ -1,0 +1,424 @@
+# Dual external review context
+batch: slice-6-plan
+base: bf03318
+time: 20260827-070505
+
+e5d86a5
+
+?? docs/audit/reviews/slice-6-plan-diff-20260827-070505.patch
+?? docs/audit/reviews/slice-6-plan-dual-prompt-20260826.md
+
+## Diff (git diff + staged)
+ docs/README.md                                     |   3 +-
+ .../reviews/outbound-mcp-p0d-preflight-20260826.md |  51 +++++
+ .../slice-6-plan-adversary-synthesis-20260826.md   |  14 ++
+ ...026-08-04-outbound-mcp-p0d-bakeoff-checklist.md |   4 +-
+ .../2026-08-26-slice-6-match-idf-runprogress.md    | 251 +++++++++++++++++++++
+ .../specs/2026-08-26-post-226-status.md            |   6 +-
+ memory/session.md                                  |   6 +
+ 7 files changed, 329 insertions(+), 6 deletions(-)
+
+diff --git a/docs/README.md b/docs/README.md
+index 054e9ef..744b515 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -44,7 +44,8 @@
+ | [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.5.0** 对齐；扩展目标带轴标注） |
+ | [../PRODUCT.md](../PRODUCT.md) | 产品一句话 / 四面（Capture·Operate·Confirm·租手）；家 = 已登录 Chrome + 硬闸 |
+ | [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md) | **形态深化 SoT**（定位、文案合同、L8、五分钟租手、切片 DoD） |
+-| [2026-08-26-post-226-status.md](superpowers/specs/2026-08-26-post-226-status.md) | **#226 后现状**：切片 1–3 + 知识 Wave 3 已合；下一刀 T1 → 侧栏看山 |
++| [2026-08-26-post-226-status.md](superpowers/specs/2026-08-26-post-226-status.md) | **#226 后现状**：切片 1–3 + 知识 Wave 3 已合；T1 预检 BLOCK；切片 5 已在 main |
++| [2026-08-26-slice-6-match-idf-runprogress.md](superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md) | **切片 6 计划**（IDF + RunProgress）— 须 dual 后再实现 |
+ | [../CHANGELOG.md](../CHANGELOG.md) | 版本变更记录 |
+ | [DESIGN.md](DESIGN.md) | UI / 设计 token 约定；Mode badge = Surface；召唤器默认收起条 |
+ | [security-design-tiered-gates-2026-07-11.md](security-design-tiered-gates-2026-07-11.md) | 分层门禁设计说明 |
+diff --git a/docs/audit/reviews/outbound-mcp-p0d-preflight-20260826.md b/docs/audit/reviews/outbound-mcp-p0d-preflight-20260826.md
+new file mode 100644
+index 0000000..a3758b2
+--- /dev/null
++++ b/docs/audit/reviews/outbound-mcp-p0d-preflight-20260826.md
+@@ -0,0 +1,51 @@
++# Outbound MCP — T1 自动预检（post-#226 · 2026-08-26）
++
++| Field | Value |
++|-------|--------|
++| Operator | Grok Build (automated) |
++| Host | macOS · repo `main` `bf03318` |
++| Live Companion | PID 40169 · `ws://127.0.0.1:23401` · **packaged 0.5.2 CLI，无 `outbound-grant` 子命令** |
++| Live `~/.cmspark-agent/config.json` | `outbound_mcp.require_grant=false` · `security.auto_approve_dangerous=true` |
++| Full T1–T3 | **Not run** — 真人 SSO 任务 + Playwright 对照臂仍缺；本机配置也不允许诚实记分 |
++
++---
++
++## 0. Environment
++
++| # | Check | Result | Evidence |
++|---|--------|--------|----------|
++| E1 | Companion 23401 | **PASS（旧二进制）** | `cmspark-agent daemon status` → running；`lsof` LISTEN 23401 |
++| E2 | Side Panel 已连接 | **UNCHECKED** | 未读扩展；health `runner:"wired"` 只说明 HTTP 桥有 runner，不等于侧栏绿点 |
++| E3 | Outbound health | **PASS 但配置偏航** | `GET /outbound-mcp/v1/health` → `200 {"status":"ok","runner":"wired","require_grant":false}` |
++| E3b | 仓库 grant CLI | **PASS（源码）** | `npx tsx src/index.ts outbound-grant list` → `（没有租手钥匙）` |
++| E3c | PATH/`CMspark.app` grant CLI | **FAIL** | `cmspark-agent outbound-grant` → `Unknown command: outbound-grant` |
++| E4–E6 | Grok MCP / doctor / 新会话 | **SKIP** | 真人 / IDE |
++| E7 | Playwright 对照 | **SKIP** | 真人 |
++| E8 | 记分卡 | 本文件 | — |
++
++代码默认仍是 `config.ts` `outbound_mcp.require_grant: true`。盘上被改成 `false`，所以 live health 与默认不一致。
++
++---
++
++## BLOCK（开 T1 记分前必须折）
++
++1. **跑 #226 的 Companion**，不要用当前缺 `outbound-grant` 的 0.5.2 安装器。否则测的不是刚合的租手钥匙路径。
++2. **bake-off 会话**把 `outbound_mcp.require_grant` 设回 `true`（测完可改回）。`false` 会让 `ws_secret` 当钥匙，违 ADR-022 / 切片 1。
++3. **bake-off 会话**把 `security.auto_approve_dangerous` 设为 `false`。`true` 会跳过确认台，T1 的「确认台出现」条目无法证伪。
++4. 操作者指定 **已登录非敏感（或已披露）SSO URL + 一句话任务**。Agent 不得编造目标站。
++
++未折以上四条就填 T1 赢/输 = 假分。
++
++---
++
++## 不测什么（本预检）
++
++- 不签发 `cmg_`（避免在旧 daemon / `require_grant=false` 下留下钥匙）
++- 不调用 `get_page_text` / `navigate`（live `auto_approve_dangerous=true` 会污染确认路径）
++- 不改用户 `config.json`
++
++---
++
++## 切片 5 机核（顺带）
++
++Empty state **已在 main**：`ChatView.tsx` `EmptyState` = `CompanionMark` + `tokens.emptyTitle`（22）+ `emptyStateCopy` 句子邀请；作曲区 textarea 常驻；computer 空态有「打开确认台」。不把切片 5 再当未开工功能。
+diff --git a/docs/audit/reviews/slice-6-plan-adversary-synthesis-20260826.md b/docs/audit/reviews/slice-6-plan-adversary-synthesis-20260826.md
+new file mode 100644
+index 0000000..401dbf7
+--- /dev/null
++++ b/docs/audit/reviews/slice-6-plan-adversary-synthesis-20260826.md
+@@ -0,0 +1,14 @@
++# 切片 6 计划对抗合成
++
++> **日期**: 2026-08-26  
++> **对象**: `docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md` r1  
++> **HEAD**: `3b79965`
++
++| 路 | r1 | 一句话 |
++|----|----|--------|
++| Security | **REJECT** | `applyToolResult` 子串自勾；overlay 可涨 toggle；activate→manual 抬升冻结 overlay 动词 |
++| Product | **REJECT** | 匹配诚实打错门（`skill.activate` 不是 `/技能` / 按需）；种子字段不存在 → 清单永远空 |
++| Impl | **REJECT** | IDF 红测假红；tool_result 未接线；validate/SW/ACL 不在 file map；`thread.open_todos` 不存在 |
++| External | **AWN** | 不声称 T1 完成、不扩 outbound；须改 G17 文案、勿用「进行中」撞任务板 |
++
++**合门**: r1 不合。折 BLOCK 后再 dual。实现禁开。
+diff --git a/docs/superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md b/docs/superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md
+index 64b6eec..8dd523b 100644
+--- a/docs/superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md
++++ b/docs/superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md
+@@ -2,8 +2,8 @@
+ 
+ | Field | Value |
+ |-------|--------|
+-| Date | 2026-08-04 |
+-| Status | **Ready to run**（P0c 已合 main · #115/#116 · S42 #118 · #117）· **自动 preflight 已跑** → [outbound-mcp-p0d-preflight-20260804.md](../../audit/reviews/outbound-mcp-p0d-preflight-20260804.md) · **T1–T3 仍待真人** |
++| Date | 2026-08-04 · **refresh 2026-08-26** |
++| Status | **Not ready to score** on this host until BLOCK 折完。#226 已合 main；自动预检 → [outbound-mcp-p0d-preflight-20260826.md](../../audit/reviews/outbound-mcp-p0d-preflight-20260826.md)。**T1–T3 仍待真人**。 |
+ | SoT | [ADR-022](../../adr/022-outbound-mcp-server.md) §6–7 · [P0c eval gates](2026-08-04-outbound-mcp-p0c-eval-gates.md) |
+ | User config | [mcp.md · Outbound / Grok](../../mcp.md#outbound-mcp) |
+ | Goal | **证伪 L7**：已登录/SSO 任务上 CMspark 是否不可替代；公网/localhost 可输给 Playwright |
+diff --git a/docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md b/docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md
+new file mode 100644
+index 0000000..89b5264
+--- /dev/null
++++ b/docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md
+@@ -0,0 +1,251 @@
++# Slice 6 — 匹配诚实 IDF + RunProgress Implementation Plan
++
++> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
++
++> **Plan dual:** r1 四路对抗 **3× REJECT + External AWN** → 下列 r2 针已折。未 dual 不得实现。合成：[slice-6-plan-adversary-synthesis-20260826.md](../../audit/reviews/slice-6-plan-adversary-synthesis-20260826.md)
++
++**Goal:** Skill auto-match uses real IDF; an explicit pin (`/技能` this turn or 按需勾选) stops `matchSkills` union; the chat column shows a running checklist whose checks bind to `tool_result` (item id / declared tool) or an L0 Side Panel click — never model self-tick, never Mission Board, never overlay write.
++
++**Architecture:** Keep `semantic-match.ts` as the only matcher; add corpus IDF for **skills only**. Matching honesty is **chat.create + resolveSkillIdsForThread**, not overlay `skill.activate`. RunProgress persists on thread `run_progress`, **seeded from `runtime_context_budget.handoff.open_todos`**. Mount only in `ChatView` (do not touch EmptyState / composer stack). Tick hook is `adapter.ts` after real `tool.result` `ok===true`. Overlay ACL does not grow.
++
++**Tech Stack:** Companion Node/TS, Side Panel React, existing `node:test` + chrome-extension tests.
++
++**SoT:** [product-form-deepening §11 slice 6](../specs/2026-08-26-product-form-deepening-design.md) · [summoner-strategy-rethink §8–9](../specs/2026-08-26-summoner-strategy-rethink-design.md)
++
++```text
++Surface:      L0 chat column RunProgress ; no overlay edit
++L2-classes:   none
++Compose:      existing SkillEngine + thread meta ; no Python matcher ; no thread.todo SoT
++Autonomy:     n/a
++Trust:        checks require tool_result or user gesture ; no security.confirmation dialect
++Channel:      community
++```
++
++**Blast:** T2. Dual-review the **plan** before implement. Do **not** expand outbound profile. T1 bake-off remains a separate P0 process ([preflight 20260826](../../audit/reviews/outbound-mcp-p0d-preflight-20260826.md)).
++
++**How tests run:** `cd companion && npx tsc -p tsconfig.test.json && node --test .test-dist/tests/<file>.js`. Extension: `cd chrome-extension && npm test`.
++
++**PR split:**
++
++| PR | Scope |
++|----|--------|
++| **A** | IDF in `semantic-match` + `matchSkills` + **`/技能` / 按需 pin 后不再 union matchSkills** + GOAL/architecture/CLAUDE matching copy |
++| **B** | `run_progress` + ChatView list + adapter `tool.result` hook + `thread.run_progress.toggle` lockstep (**denied** on summoner) |
++
++**BLOCK:** Python / sentence-transformers；新 `thread.todo` SoT；模型 JSON 自勾或 `applyToolResult` 子串勾 `model_draft`；Mission Board 当 todo；overlay 编辑清单 / 把 toggle 加进 `SUMMONER_ALLOW`；改 outbound default profile；用 overlay `skill.activate` 当匹配诚实的门；动 EmptyState / `empty-state-copy` / `tokens.emptyTitle`；声称 T1 已跑。
++
++**r2 pins (fold REJECT):**
++
++1. **匹配诚实门** = Side Panel `/技能` 本轮 + `skill_selection_mode==="manual"` 的 `resolveSkillIdsForThread` **不得**再 union `matchSkills`。`chat.create` 也不得把 `rest.skill_ids` 当永久 auto 并集的借口：本轮 `/技能` 只并这一次，随后线程若仍是 auto，下一轮仍可 match（诚实：toast 必须说「本轮加了 X，自动匹配仍可能带入其他技能」）——**更好的产品针**：`/技能` 将线程切到 `manual` 并只激活该技能（与 按需勾选同一扇门）。**禁止** overlay `skill.activate` 写 `skill_selection_mode`（冻结 Trust；`surface==="summoner"` 不得 flip mode）。
++2. **种子** = `thread.runtime_context_budget.handoff.open_todos`（H1），不是虚构的 `thread.open_todos`。无 handoff → 空列表可隐藏。草稿行须有 **具名 ingest**（companion 从模型 proposed 列表写入 `source:"model_draft"` 且 `done` 强制 false）；禁止 overlay ingest。
++3. **`applyToolResult`** 只勾 `source:"seed"|"user"` 且 **item 声明了 `tool` 或 id 绑定**，永不对 `model_draft` 勾；永不 `text.includes(toolName)`。接线：`companion/src/llm/adapter.ts` 在 `tool.result` `ok===true` 之后。
++4. **WS** `thread.run_progress.toggle`：`validate.ts` + router handler + `background/index.ts` case + lockstep 测。**不得**加入 `SUMMONER_ALLOW` / `SUMMONER_WEB_DISPATCH_ALLOW` / `thread.update` allowlist。summoner-acl 测：overlay → `SUMMONER_ACL`。
++5. **UI** 只改 `ChatView` 消息列；空态保持切片 5。铬文案 **「本轮步骤」**，不用「进行中」（撞 Mission Board / HUD）。
++6. **IDF 测** 必须让 overlap 计数相同、稀有词 **在语料内**；`idf` 对全文档词须 **小于** 未见词。`tokensToVec` 行为不变（Obsidian / related 回归测）。
++7. **文档同 commit**：`docs/GOAL.md` G17 改为知识=站点匹配、技能 matchSkills=本 PR 后 TF-IDF、related/Obsidian 仍纯 TF；`docs/architecture.md` Skill Engine 行；`CLAUDE.md` A5。`docs/multi-agent-user-guide.md` 一句：聊天列步骤 ≠ 任务板。不改 `docs/mcp.md` T1 横幅。
++
++---
++
++## File map
++
++| File | PR | Role |
++|------|----|------|
++| `companion/src/skills/semantic-match.ts` | A | `idfWeights`, `tfidfVec`, keep tokenize |
++| `companion/src/skills/skill-engine.ts` | A | `matchSkills` uses IDF over skill corpus |
++| `companion/src/message-router.ts` | A | `/技能` 与 按需：`manual` 后 resolve 不再 union matchSkills；**summoner `skill.activate` 不写 mode** |
++| `companion/src/ws/validate.ts` + `summoner-acl.ts` + `background/index.ts` | B | toggle 注册；overlay **拒绝** |
++| `companion/src/llm/adapter.ts` | B | `tool.result` ok 后 `applyToolResult` |
++| `companion/tests/skills.test.ts` | A | IDF 稀有词在语料内；`tokensToVec` 回归 |
++| `companion/src/threads/thread-manager.ts` | B | `run_progress` sanitize-on-read；cap 8×120 同 H1 |
++| `companion/src/threads/run-progress.ts` | B | **Create.** seed from handoff.open_todos / applyToolResult / userToggle |
++| `chrome-extension/src/sidepanel/components/RunProgress.tsx` | B | **Create.** ChatView only |
++| `chrome-extension/src/sidepanel/components/ChatView.tsx` | B | 消息列；不碰 EmptyState |
++| `docs/GOAL.md` `architecture.md` `CLAUDE.md` `multi-agent-user-guide.md` `DESIGN.md` | A/B | 匹配诚实文案 + 步骤≠任务板 |
++
++---
++
++### Task 1: IDF vectors (PR-A)
++
++**Files:**
++- Modify: `companion/src/skills/semantic-match.ts`
++- Test: `companion/tests/skills.test.ts`
++
++- [ ] **Step 1: Write the failing tests**
++
++```ts
++test("tfidfVec ranks a rare in-corpus token above a token in every document", () => {
++  const { idfFromDocs, tfidfVec, cosineSimilarity } = require("../src/skills/semantic-match")
++  const docs = [
++    ["web", "alpha"],
++    ["web", "beta"],
++    ["web", "gamma"],
++    ["web", "rareterm"],
++  ]
++  const idf = idfFromDocs(docs)
++  const q = tfidfVec(["web", "rareterm"], idf)
++  const commonOnly = tfidfVec(["web"], idf)
++  const rareOnly = tfidfVec(["rareterm"], idf)
++  assert.ok(cosineSimilarity(q, rareOnly) > cosineSimilarity(q, commonOnly))
++  const { tokensToVec } = require("../src/skills/semantic-match")
++  assert.deepEqual(tokensToVec(["a", "a", "b"]), { a: 2 / 3, b: 1 / 3 })
++})
++```
++
++- [ ] **Step 2: Run tests to verify they fail**
++
++Run: `cd companion && npx tsc -p tsconfig.test.json && node --test .test-dist/tests/skills.test.js --test-name-pattern "tfidfVec"`
++
++Expected: FAIL — `idfFromDocs` / `tfidfVec` missing.
++
++- [ ] **Step 3: Minimal implementation**
++
++```ts
++export function idfFromDocs(docs: string[][]): Record<string, number> {
++  const df: Record<string, number> = {}
++  const n = Math.max(1, docs.length)
++  for (const doc of docs) {
++    for (const t of new Set(doc)) df[t] = (df[t] || 0) + 1
++  }
++  const idf: Record<string, number> = {}
++  for (const [t, c] of Object.entries(df)) {
++    // Smoothed IDF: a term in every doc must score **below** an unseen term (unseen → 1).
++    idf[t] = Math.log((n + 1) / (c + 1))
++  }
++  return idf
++}
++
++export function tfidfVec(tokens: string[], idf: Record<string, number>): Record<string, number> {
++  const tf = tokensToVec(tokens)
++  const vec: Record<string, number> = {}
++  for (const [t, v] of Object.entries(tf)) vec[t] = v * (idf[t] ?? 1)
++  return vec
++}
++```
++
++Keep `tokensToVec` (pure TF) for Obsidian export / related which must stay no-IDF.
++
++- [ ] **Step 4: Run tests to verify they pass**
++
++Same command. Expected: PASS.
++
++- [ ] **Step 5: Commit**
++
++```bash
++git add companion/src/skills/semantic-match.ts companion/tests/skills.test.ts
++git commit -m "feat(skills): add IDF weights next to existing TF cosine"
++```
++
++---
++
++### Task 2: matchSkills uses IDF (PR-A)
++
++**Files:**
++- Modify: `companion/src/skills/skill-engine.ts` `matchSkills`
++- Test: `companion/tests/skills.test.ts`
++
++- [ ] **Step 1: Failing test** — two skills share "web"; only one has a rare token from the query; rare skill ranks higher.
++
++- [ ] **Step 2: Run** — expect FAIL (TF-only ranks the generic skill).
++
++- [ ] **Step 3:** In `matchSkills`, build `idfFromDocs` from skill name+description+tags token lists once per call; compare `tfidfVec(query)` vs `tfidfVec(skillText)`. Comment must say TF-IDF (IDF live), not a lie.
++
++- [ ] **Step 4: PASS**
++
++- [ ] **Step 5: Commit** `fix(skills): matchSkills uses corpus IDF`
++
++---
++
++### Task 3: pin door is `/技能` + 按需, not overlay activate (PR-A)
++
++**Files:**
++- Modify: `companion/src/skills/skill-engine.ts` `resolveSkillIdsForThread`
++- Modify: `companion/src/message-router.ts` `chat.create` slash-skill path (or the handler that sees `/技能`)
++- Modify: Side Panel only if 按需 already writes `skill_selection_mode` (it does via `thread.update`)
++- **Do not** make overlay `skill.activate` write `skill_selection_mode`
++
++- [ ] **Step 1:** Tests:
++  1. `mode==="manual"` → result is active only (already exists; keep).
++  2. `chat.create` with leading `/browse …` while mode auto → this turn includes `browse`, **and** thread becomes `manual` with `active_skill_ids` containing browse; **next** `resolveSkillIdsForThread` does not union `matchSkills`.
++  3. overlay/`surface==="summoner"` `skill.activate` does **not** change `skill_selection_mode`.
++
++- [ ] **Step 2: FAIL** (`/技能` today only unions `skill_ids` for one send).
++
++- [ ] **Step 3:** Implement 2–3. Broadcast `thread.updated` so SkillsPanel shows 按需.
++
++- [ ] **Step 4: PASS**
++
++- [ ] **Step 5: Commit** `fix(skills): slash-skill pin switches thread to manual`
++
++---
++
++### Task 4: run_progress helper (PR-B)
++
++**Files:**
++- Create: `companion/src/threads/run-progress.ts`
++- Test: `companion/tests/run-progress.test.ts`
++
++Schema (pin now):
++
++```ts
++export type RunProgressItem = {
++  id: string
++  text: string
++  done: boolean
++  source: "seed" | "model_draft" | "user"
++}
++export type RunProgress = { items: RunProgressItem[] }
++```
++
++Rules:
++- Seed from `thread.runtime_context_budget?.handoff?.open_todos` (H1, cap 8×120). Else empty. **Not** `thread.open_todos`.
++- Model-proposed rows = `source: "model_draft"`, `done: false` via a **named companion ingest** (not overlay, not LLM tool that sets done). Completing them requires **L0 click only** until the user (or a later seed) binds `tool?: string` on that row. `applyToolResult` **never** ticks `model_draft`.
++- `applyToolResult(progress, { tool, ok })`: `ok===true` only; match `item.tool === tool` (exact internal name); at most one oldest undone seed/user row. No substring on `text`.
++- Wire in `adapter.ts` after successful `tool.result`.
++- Overlay does not get write verbs. Toggle not on `SUMMONER_ALLOW`.
++
++- [ ] Steps: failing tests → implement → pass → commit `feat(thread): run_progress seed and evidence ticks`
++
++---
++
++### Task 5: ChatView list (PR-B)
++
++**Files:**
++- Create: `chrome-extension/src/sidepanel/components/RunProgress.tsx`
++- Modify: `ChatView.tsx` **only** — list in the **chat column** when `items.length>0`. Do not edit EmptyState, `empty-state-copy.ts`, `tokens.emptyTitle`, or App composer stack.
++- Test: source-scan (this repo has no RTL) that ChatView mounts RunProgress and that `summoner-acl` denies the toggle.
++
++Copy: 「本轮步骤」；empty hidden；draft rows 「草稿」. **Not** 「进行中」.
++
++Summoner: no new badge, no edit, no count chrome unless a number already exists (today: none → add nothing).
++
++- [ ] TDD the toggle WS type through validate + router.
++- [ ] Commit `feat(ui): RunProgress in chat column`
++
++---
++
++### Task 6: Docs + never Mission Board (PR-B)
++
++- [ ] `DESIGN.md` one paragraph.
++- [ ] Test or comment: `BoardPanel` is not imported from `RunProgress.tsx`.
++- [ ] Commit `docs(design): RunProgress is L0 chat chrome`
++
++---
++
++## Self-review
++
++| Spec | Task |
++|------|------|
++| IDF port 进现有 TS | 1–2 |
++| 技能 activate 诚实 | 3 |
++| 清单聊天列 L0 | 5 |
++| 勾选绑 tool_result 或手势 | 4 |
++| 不嵌 Python / 不用 Board / 无 thread.todo | BLOCK + 6 |
++
++No TBD. `open_todos` seed is optional: missing field → empty list.
++
++---
++
++Plan complete and saved to `docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md`. Dual-review this plan before implement. Two execution options after APPROVE*:
++
++1. Subagent-Driven (recommended)
++2. Inline Execution
+diff --git a/docs/superpowers/specs/2026-08-26-post-226-status.md b/docs/superpowers/specs/2026-08-26-post-226-status.md
+index adee782..765d9e1 100644
+--- a/docs/superpowers/specs/2026-08-26-post-226-status.md
++++ b/docs/superpowers/specs/2026-08-26-post-226-status.md
+@@ -1,7 +1,7 @@
+ # 现状诊断 — post #226
+ 
+ > **日期**: 2026-08-26  
+-> **HEAD**: `5d096a7` `Merge pull request #226` = `origin/main`  
++> **HEAD**: `bf03318` `docs(status): post-#226 diagnosis` on `origin/main`  
+ > **性质**: T0 状态快照（不改行为）  
+ > **形态 SoT**: [2026-08-26-product-form-deepening-design.md](./2026-08-26-product-form-deepening-design.md) §11  
+ > **知识 SoT**: [2026-08-26-knowledge-crud-honesty-design.md](./2026-08-26-knowledge-crud-honesty-design.md)
+@@ -45,8 +45,8 @@ Blast:        本文件 T0 ；下一刀切片 4 = T0 过程 ；切片 5–6 = T2
+ 
+ | 优先级 | 工作 | Blast | 用户能看见的完成 | 未完成时禁止假装 |
+ |--------|------|-------|------------------|------------------|
+-| **P0 · 切片 4** | T1 真人 bake-off | T0 过程 | 已登录任务记分卡有结果。门的是工具面宽窄，不门「租手算不算形态」 | T1 没跑就扩 profile；对外声称护城河；T1 失败就删租手 |
+-| **P1 · 切片 5** | 侧栏空态 / 作曲区看山 | T2 | 打开侧栏：角色 + 22px 招呼 + 句子邀请 + 能打字。确认/急停不藏 | 变成 Chrome Gemini；新视觉世界压过 stream |
++| **P0 · 切片 4** | T1 真人 bake-off | T0 过程 | 已登录任务记分卡有结果。门的是工具面宽窄，不门「租手算不算形态」 | T1 没跑就扩 profile；对外声称护城河；T1 失败就删租手。**2026-08-26 预检 BLOCK**：live Companion 无 `outbound-grant`；盘上 `require_grant=false` 且 `auto_approve_dangerous=true` |
++| **P1 · 切片 5** | 侧栏空态 / 作曲区看山 | T2 | **已在 main**（`EmptyState` = CompanionMark + 22px 招呼 + 句子邀请 + 作曲区；computer 空态「打开确认台」）。不重开 | 变成 Chrome Gemini；新视觉世界压过 stream |
+ | **P1 · 切片 6** | 匹配诚实（TS IDF）+ RunProgress | T2 | IDF port 进现有 TS；清单 = 聊天列 L0；勾选绑 `tool_result` 或人手势 | 宣称语义匹配已修好；Mission Board 当 todo；模型自勾 |
+ | **P2 召唤器** | 只修快与淡 | T2 | 不完成 WorkBuddy 五轨。HUD 导入/MCP 添加继续藏 | 展开工作台；第六轨当产品 |
+ 
+diff --git a/memory/session.md b/memory/session.md
+index 0677a9c..11a3f18 100644
+--- a/memory/session.md
++++ b/memory/session.md
+@@ -2,6 +2,12 @@
+ 
+ ## Current Session
+ 
++### S83 (2026-08-26) [标准流程续 · T1 预检 BLOCK · 切片 6 计划]
++- **T1 预检** `docs/audit/reviews/outbound-mcp-p0d-preflight-20260826.md`：daemon 在跑但是旧 0.5.2、无 `outbound-grant`；盘上 `require_grant=false` + `auto_approve_dangerous=true`。未签发钥匙、未打 live 工具。
++- **切片 5**：机核已在 main（CompanionMark + 22px + 句子邀请 + 作曲区）。不重开。
++- **切片 6 计划**：r1 四路 **3 REJECT + External AWN**；r2 针已折进计划。下一步 = **计划 dual（Claude+Pi）**，通过后再实现。**不要**未 dual 写码。
++- Recorded: yes — T1 假分禁条；live 配置不是代码默认
++
+ ### S82 END (2026-08-26) [#226 MERGED · 残枝清掉 · 现状快照]
+ - **Ship**：**PR #226 MERGED** `5d096a7`。知识 Wave 3 + 产品切片 1–3（租手钥匙 / L8 confirm / 召唤器诚实）。PR CI + main CI 全绿。
+ - **清**：本地枝/stash/未跟踪评审 patch 已删；远程已合残枝已删。`origin` 只剩 `main`。
