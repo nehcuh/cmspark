@@ -114,7 +114,10 @@ export function waitForExtensionPeer(opts: { timeoutMs: number }): Promise<WebSo
         reject(makeTimeoutError())
       }, timeoutMs),
     }
-    waiter.timer.unref?.()
+    // Production: overlay wait must not pin process.exit. Tests: keep the
+    // timer ref'd — Node 22 `node --test` cancels pending cases once the
+    // event loop is only unref'd handles (CI: 13 cancelled, 0 fail).
+    if (!process.env.NODE_TEST_CONTEXT) waiter.timer.unref?.()
     waiters.add(waiter)
   })
 }

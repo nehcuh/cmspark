@@ -93,6 +93,8 @@ test("source: wait helper has no setInterval poll", () => {
   const src = companionSrc("ws/extension-peer.ts")
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")
   assert.match(src, /export function waitForExtensionPeer/)
+  assert.match(src, /NODE_TEST_CONTEXT/)
+  assert.match(src, /\.unref/)
   assert.doesNotMatch(code, /setInterval\s*\(/)
   assert.doesNotMatch(code, /while\s*\(\s*!?\s*pick/)
   assert.doesNotMatch(code, /await\s+sleep\s*\(/)
