@@ -479,7 +479,7 @@ export function ChatView() {
                       <div style={{ fontWeight: 600, marginBottom: 2 }}>【{label}】</div>
                       <ul style={{ margin: 0, paddingLeft: 18 }}>
                         {items.map((t, i) => (
-                          <li key={i}>{t}</li>
+                          <li key={i}>{typeof t === "string" ? t : t && typeof t === "object" && "text" in t ? String((t as { text?: string }).text ?? "") : ""}</li>
                         ))}
                       </ul>
                     </div>

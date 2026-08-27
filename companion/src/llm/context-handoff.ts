@@ -20,13 +20,16 @@ export const HANDOFF_CAPS = {
 
 export type HandoffField = keyof typeof HANDOFF_CAPS
 
+/** Optional exact internal tool name on a H1 todo (lowercase [a-z][a-z0-9_]*). */
+export type HandoffTodo = { text: string; tool?: string }
+
 /** Session-end style hot core (runtime request path only). */
 export interface ThreadHandoff {
   updated_at: string
   goals: string[]
   decisions: string[]
   constraints: string[]
-  open_todos: string[]
+  open_todos: HandoffTodo[]
   artifacts: string[]
 }
 
@@ -76,6 +79,41 @@ function capList(raw: unknown, max: number, len: number): string[] {
   return out
 }
 
+function scrubToolName(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined
+  const t = raw.trim()
+  if (!/^[a-z][a-z0-9_]{0,79}$/.test(t)) return undefined
+  return t
+}
+
+function capTodos(raw: unknown, max: number, len: number): HandoffTodo[] {
+  if (!Array.isArray(raw)) return []
+  const out: HandoffTodo[] = []
+  for (const item of raw) {
+    let text: string | null = null
+    let tool: string | undefined
+    if (typeof item === "string" || typeof item === "number") {
+      text = scrubLine(String(item))
+    } else if (item && typeof item === "object" && !Array.isArray(item)) {
+      const o = item as Record<string, unknown>
+      if (typeof o.text !== "string") continue
+      text = scrubLine(o.text)
+      tool = scrubToolName(o.tool)
+    }
+    if (!text) continue
+    const row: HandoffTodo = { text: text.slice(0, len) }
+    if (tool) row.tool = tool
+    out.push(row)
+    if (out.length >= max) break
+  }
+  return out
+}
+
+function linesFor(field: HandoffField, handoff: ThreadHandoff): string[] {
+  if (field === "open_todos") return handoff.open_todos.map((t) => t.text)
+  return handoff[field] as string[]
+}
+
 /** Sanitize / normalize handoff; null if empty of all lists. */
 export function sanitizeThreadHandoff(raw: unknown): ThreadHandoff | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
@@ -92,7 +130,7 @@ export function sanitizeThreadHandoff(raw: unknown): ThreadHandoff | null {
       HANDOFF_CAPS.constraints.max,
       HANDOFF_CAPS.constraints.len,
     ),
-    open_todos: capList(o.open_todos, HANDOFF_CAPS.open_todos.max, HANDOFF_CAPS.open_todos.len),
+    open_todos: capTodos(o.open_todos, HANDOFF_CAPS.open_todos.max, HANDOFF_CAPS.open_todos.len),
     artifacts: capList(o.artifacts, HANDOFF_CAPS.artifacts.max, HANDOFF_CAPS.artifacts.len),
   }
   const total =
@@ -115,7 +153,7 @@ export function formatHandoffForNotice(
 ): string {
   const sections: string[] = []
   for (const field of FORMAT_ORDER) {
-    const items = handoff[field]
+    const items = linesFor(field, handoff)
     if (!items.length) continue
     const label = HANDOFF_LABELS_ZH[field]
     const block = [`【${label}】`, ...items.map((x) => `- ${x}`)].join("\n")
@@ -150,6 +188,7 @@ Rules:
 - Merge PRIOR_HANDOFF with NEW_DROPPED facts; drop stale completed todos; keep hard constraints.
 - Same language as content (Chinese if Chinese).
 - Caps: goals≤5 (≤120 chars each), decisions≤8 (≤160), constraints≤8 (≤120), open_todos≤8 (≤120), artifacts≤8 (≤80).
+- open_todos items may be strings or {"text":"...","tool":"navigate"}. tool is optional exact internal name (lowercase [a-z][a-z0-9_]*). Omit if unknown. Never guess from Chinese. Never put secrets in text.
 - decisions may include a short why; artifacts = file/URL/tab names only.
 - NEVER reproduce secrets, API keys, cookies, passwords, tokens, shell secrets, or full code dumps.
 - Prefer user constraints + tool outcomes over speculative reasoning slices.

@@ -33,6 +33,26 @@ test("sanitizeThreadHandoff trims caps and drops secrets", () => {
   assert.deepEqual(h!.artifacts, ["file.ts"])
 })
 
+test("#237 sanitize open_todos accepts {text,tool} and keeps string todos", () => {
+  const h = sanitizeThreadHandoff({
+    open_todos: [
+      "plain",
+      { text: "go", tool: "navigate" },
+      { text: "bad", tool: "not a tool!!" },
+      { tool: "click" },
+    ],
+  })
+  assert.ok(h)
+  assert.equal(h!.open_todos.length, 3)
+  assert.deepEqual(h!.open_todos[0], { text: "plain" })
+  assert.deepEqual(h!.open_todos[1], { text: "go", tool: "navigate" })
+  assert.deepEqual(h!.open_todos[2], { text: "bad" })
+  const notice = formatHandoffForNotice(h!, 2000)
+  assert.match(notice, /- plain/)
+  assert.match(notice, /- go/)
+  assert.doesNotMatch(notice, /navigate/)
+})
+
 test("sanitize empty → null", () => {
   assert.equal(sanitizeThreadHandoff({ goals: [], decisions: [] }), null)
   assert.equal(sanitizeThreadHandoff(null), null)
