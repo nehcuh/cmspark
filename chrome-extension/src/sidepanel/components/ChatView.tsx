@@ -1685,7 +1685,35 @@ function inviteIcon(it: EmptyInvite): (p: IconProps) => JSX.Element {
 }
 
 function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
-  const { title, hint, items } = emptyStateCopy(level)
+  const [pageTitle, setPageTitle] = useState<string | null>(null)
+  const [omitPage, setOmitPage] = useState(false)
+
+  useEffect(() => {
+    const refresh = () => {
+      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+        if (chrome.runtime.lastError) {
+          setPageTitle(null)
+          return
+        }
+        setPageTitle(tabs[0]?.title ?? null)
+      })
+    }
+    refresh()
+    const onActivated = () => refresh()
+    const onUpdated = (_tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (changeInfo.status === "complete" || changeInfo.title || changeInfo.url) {
+        refresh()
+      }
+    }
+    chrome.tabs.onActivated.addListener(onActivated)
+    chrome.tabs.onUpdated.addListener(onUpdated)
+    return () => {
+      chrome.tabs.onActivated.removeListener(onActivated)
+      chrome.tabs.onUpdated.removeListener(onUpdated)
+    }
+  }, [])
+
+  const { title, hint, items, pageChip } = emptyStateCopy(level, omitPage ? null : pageTitle)
   const rows: SuggestItem[] = items.map((it) =>
     it.kind === "fill"
       ? { label: it.label, fill: it.fill, Icon: inviteIcon(it) }
@@ -1698,8 +1726,21 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
     <div style={styles.empty} data-testid={testId}>
       <CompanionMark size={92} />
       <div style={styles.emptyTitle}>{title}</div>
-      <div style={styles.emptyHint}>{hint}</div>
-      <InvitationRows items={rows} />
+      {hint ? <div style={styles.emptyHint}>{hint}</div> : null}
+      {rows.length > 0 ? <InvitationRows items={rows} /> : null}
+      {pageChip ? (
+        <div style={styles.pageChip} data-testid="empty-page-chip">
+          <span style={styles.pageChipText}>{pageChip}</span>
+          <button
+            type="button"
+            style={styles.pageChipHide}
+            aria-label="隐藏当前页"
+            onClick={() => setOmitPage(true)}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -1825,6 +1866,40 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.5,
     maxWidth: 260,
     margin: "0 0 28px",
+  },
+  pageChip: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 20,
+    maxWidth: 260,
+    width: "100%",
+    padding: "6px 8px 6px 12px",
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusPill,
+    background: tokens.bgMuted,
+    color: tokens.textSecondary,
+    fontSize: 12,
+    fontFamily: tokens.font,
+    boxSizing: "border-box" as const,
+  },
+  pageChipText: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
+    flex: 1,
+    textAlign: "left" as const,
+  },
+  pageChipHide: {
+    flexShrink: 0,
+    border: "none",
+    background: "transparent",
+    cursor: "pointer",
+    color: tokens.textMuted,
+    fontSize: 14,
+    lineHeight: 1,
+    padding: "0 4px",
+    fontFamily: tokens.font,
   },
   inviteCol: {
     display: "flex",
