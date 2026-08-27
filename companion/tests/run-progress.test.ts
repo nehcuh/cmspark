@@ -91,6 +91,31 @@ test("run_progress seed copies handoff.open_todos into items source:seed done:fa
   assert.notEqual(progress.items[0]!.id, progress.items[1]!.id)
 })
 
+test("#237 seed copies tool from H1 object todos; strings have no tool", () => {
+  const progress = seedRunProgress({
+    runtime_context_budget: {
+      handoff: {
+        open_todos: [
+          { text: "打开已登录页", tool: "navigate" },
+          "摘前五条标题",
+          { text: "读正文", tool: "get_page_text" },
+          { text: "忽略坏名", tool: "Navigate" },
+        ],
+      },
+    },
+  })
+  assert.equal(progress.items.length, 4)
+  assert.equal(progress.items[0]!.tool, "navigate")
+  assert.equal(progress.items[0]!.source, "seed")
+  assert.equal(progress.items[1]!.tool, undefined)
+  assert.equal(progress.items[2]!.tool, "get_page_text")
+  assert.equal(progress.items[3]!.tool, undefined, "case-sensitive; Navigate dropped")
+  const ticked = applyToolResult(progress, { tool: "navigate", success: true })
+  assert.equal(ticked.items[0]!.done, true)
+  assert.equal(ticked.items[1]!.done, false)
+  assert.equal(ticked.items[2]!.done, false)
+})
+
 test("run_progress seed missing handoff → empty", () => {
   assert.deepEqual(seedRunProgress({}).items, [])
   assert.deepEqual(seedRunProgress({ runtime_context_budget: null }).items, [])
@@ -257,6 +282,32 @@ test("thread-manager persist handoff.open_todos hydrates run_progress for ChatVi
   assert.equal(updated!.run_progress!.items[0]!.done, false)
   const got = tm.get(th.id)
   assert.equal(got!.run_progress!.items.length, 2)
+})
+
+test("#237 persist object todos hydrate run_progress.tool", () => {
+  const tm = new ThreadManager()
+  const th = tm.create("run-progress-object-todo-tool")
+  const updated = tm.update(th.id, {
+    runtime_context_budget: {
+      last_at: new Date().toISOString(),
+      mode: "h1",
+      dropped_count: 0,
+      tokens_before: 0,
+      tokens_after: 0,
+      handoff: {
+        updated_at: new Date().toISOString(),
+        goals: [],
+        decisions: [],
+        constraints: [],
+        open_todos: [{ text: "打开页", tool: "navigate" }] as unknown as string[],
+        artifacts: [],
+      },
+    },
+  })
+  assert.equal(updated!.run_progress!.items[0]!.tool, "navigate")
+  assert.equal(updated!.run_progress!.items[0]!.text, "打开页")
+  const got = tm.get(th.id)
+  assert.equal(got!.run_progress!.items[0]!.tool, "navigate")
 })
 
 test("thread-manager does not overwrite existing run_progress when hydrating", () => {
