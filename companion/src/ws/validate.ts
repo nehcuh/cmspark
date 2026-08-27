@@ -193,6 +193,15 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (!m.updates || typeof m.updates !== "object") return { valid: false, error: "thread.update requires updates object" }
       return { valid: true }
     },
+    "thread.run_progress.toggle": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "thread.run_progress.toggle requires thread_id" }
+      }
+      if (typeof m.item_id !== "string" || !m.item_id) {
+        return { valid: false, error: "thread.run_progress.toggle requires item_id" }
+      }
+      return { valid: true }
+    },
     "skill.activate": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "skill.activate requires thread_id" }
       if (typeof m.skill_name !== "string" || !m.skill_name) return { valid: false, error: "skill.activate requires skill_name" }

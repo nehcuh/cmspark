@@ -40,6 +40,7 @@ import {
   type IconProps,
 } from "../ui/icons"
 import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
+import { RunProgress } from "./RunProgress"
 import { CHAT_MARKED_OPTIONS } from "../utils/markdown-gfm"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
 import "katex/dist/katex.min.css"
@@ -90,6 +91,7 @@ export function ChatView() {
     activeThreadId && contextCompactedByThreadId[activeThreadId]
       ? contextCompactedByThreadId[activeThreadId]
       : null
+  const runItems = threads.find((t) => t.id === activeThreadId)?.run_progress?.items
   const [summaryOpen, setSummaryOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   /** Inner content grows with messages; ResizeObserver watches this for stick-to-bottom. */
@@ -504,6 +506,9 @@ export function ChatView() {
             </div>
           </div>
         )}
+        {runItems && runItems.length > 0 && activeThreadId ? (
+          <RunProgress threadId={activeThreadId} items={runItems} />
+        ) : null}
         {messages.length === 0 && !streamingContent && !streamingReasoning && !processingLabel && (
           <EmptyState level={level} />
         )}

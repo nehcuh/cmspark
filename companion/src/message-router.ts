@@ -85,6 +85,7 @@ import { canAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop } from "./orchest
 import {
   handleConfigFamily,
 } from "./message-router/handlers/config"
+import { handleRunProgressToggle } from "./message-router/handlers/run-progress"
 import {
   gateChatCreateOnLease,
   handleComposerLeaseFamily,
@@ -2244,6 +2245,9 @@ export async function handleMessage(
         return { type: "error", error: e.message || String(e) }
       }
     }
+
+    case "thread.run_progress.toggle":
+      return handleRunProgressToggle(rest, threadManager)
 
     // --- Skills ---
     case "skill.list":

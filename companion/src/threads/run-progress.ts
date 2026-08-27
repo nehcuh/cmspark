@@ -1,7 +1,7 @@
 // L0 RunProgress — chat-column checklist seeded from H1 handoff.open_todos.
-// Spec: docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md Task 4
+// Spec: docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md Task 4–5
 // v1 ingest = seed-only. Evidence ticks bind to exact item.tool, never model_draft,
-// never text.substring. Overlay write verbs live in Task 5.
+// never text.substring. User toggle is Side Panel only (not SUMMONER_ALLOW).
 
 /** Lockstep with HANDOFF_CAPS.open_todos (H1). */
 export const RUN_PROGRESS_CAPS = { max: 8, len: 120 } as const
@@ -113,5 +113,24 @@ export function applyToolResult(
   if (idx < 0) return progress
   const next = items.slice()
   next[idx] = { ...next[idx]!, done: true }
+  return { items: next }
+}
+
+/**
+ * Side Panel user gesture: flip done on seed|user by exact id.
+ * Never ticks model_draft (sanitize would force done=false anyway).
+ * Missing id → same object.
+ */
+export function userToggle(progress: RunProgress, itemId: string): RunProgress {
+  const id = typeof itemId === "string" ? itemId : ""
+  if (!id) return progress
+  const items = progress?.items
+  if (!Array.isArray(items) || items.length === 0) return progress
+  const idx = items.findIndex((it) => it && it.id === id)
+  if (idx < 0) return progress
+  const cur = items[idx]!
+  if (cur.source === "model_draft") return progress
+  const next = items.slice()
+  next[idx] = { ...cur, done: !cur.done }
   return { items: next }
 }

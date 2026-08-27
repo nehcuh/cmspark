@@ -15,6 +15,9 @@ import {
   type RunProgress,
   type RunProgressItem,
 } from "../src/threads/run-progress"
+import { validateWsMessage } from "../src/ws/validate"
+import { assertSummonerAllowed } from "../src/ws/summoner-acl"
+import { SUMMONER_WEB_DISPATCH_ALLOW } from "../src/summoner-web"
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-run-progress-"))
 process.env.HOME = tmp
@@ -22,12 +25,30 @@ process.env.CMSPARK_DATA_DIR = tmp
 
 let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
 let initDataDir: typeof import("../src/config").initDataDir
+let handleMessage: typeof import("../src/message-router").handleMessage
+
+const mockSkillEngine = {
+  activate: () => {},
+  deactivate: () => {},
+  getActiveForThread: () => [],
+  matchSkills: () => [],
+  get: () => undefined,
+  list: () => [],
+  refresh: () => {},
+} as any
+
+const mockHistoryStore = {
+  query: async () => [],
+  exportJSON: async () => ({ operations: [] }),
+  record: async () => 0,
+} as any
 
 before(async () => {
   const config = await import("../src/config")
   initDataDir = config.initDataDir
   await initDataDir()
   ThreadManager = (await import("../src/threads/thread-manager")).ThreadManager
+  handleMessage = (await import("../src/message-router")).handleMessage
 })
 
 after(() => {
@@ -257,4 +278,96 @@ test("adapter source: applyToolResult on toolResult.success send, not abort/pars
   const afterSend = windowAfter("Send tool result to extension for UI display", 1600)
   assert.match(afterSend, /toolResult\.success/)
   assert.match(afterSend, /applyToolResult/)
+})
+
+test("userToggle flips seed/user done (toggle) and is a no-op on model_draft", () => {
+  const rp = require("../src/threads/run-progress") as typeof import("../src/threads/run-progress") & {
+    userToggle?: (progress: RunProgress, itemId: string) => RunProgress
+  }
+  assert.equal(typeof rp.userToggle, "function", "userToggle must exist on run-progress")
+  const progress: RunProgress = {
+    items: [
+      item({ id: "s", text: "seed", source: "seed", done: false }),
+      item({ id: "u", text: "user", source: "user", done: true }),
+      item({ id: "d", text: "draft", source: "model_draft", done: false }),
+    ],
+  }
+  const t1 = rp.userToggle!(progress, "s")
+  assert.equal(t1.items[0]!.done, true)
+  assert.equal(t1.items[1]!.done, true)
+  const t2 = rp.userToggle!(t1, "u")
+  assert.equal(t2.items[1]!.done, false)
+  const t3 = rp.userToggle!(t2, "d")
+  assert.equal(t3.items[2]!.done, false)
+  assert.equal(t3.items[2]!.source, "model_draft")
+  const missing = rp.userToggle!(progress, "nope")
+  assert.equal(missing, progress)
+})
+
+test("validate thread.run_progress.toggle requires thread_id and item_id", () => {
+  assert.equal(
+    validateWsMessage({ type: "thread.run_progress.toggle", thread_id: "t1", item_id: "i1" }).valid,
+    true,
+  )
+  const missingItem = validateWsMessage({ type: "thread.run_progress.toggle", thread_id: "t1" })
+  assert.equal(missingItem.valid, false)
+  assert.match(String(missingItem.error), /item_id/)
+  const missingThread = validateWsMessage({ type: "thread.run_progress.toggle", item_id: "i1" })
+  assert.equal(missingThread.valid, false)
+  assert.match(String(missingThread.error), /thread_id/)
+  assert.equal(
+    validateWsMessage({ type: "thread.run_progress.toggle", thread_id: "", item_id: "i1" }).valid,
+    false,
+  )
+})
+
+test("message-router thread.run_progress.toggle flips item and returns thread.updated", async () => {
+  const tm = new ThreadManager()
+  const th = tm.create("run-progress-toggle")
+  tm.update(th.id, {
+    run_progress: {
+      items: [item({ id: "seed:0", text: "navigate", source: "seed", done: false, tool: "navigate" })],
+    },
+  })
+  const response = await handleMessage(
+    { type: "thread.run_progress.toggle", thread_id: th.id, item_id: "seed:0" },
+    { threadManager: tm, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  assert.equal(response.type, "thread.updated")
+  assert.equal(response.thread.run_progress.items[0].done, true)
+  const again = await handleMessage(
+    { type: "thread.run_progress.toggle", thread_id: th.id, item_id: "seed:0" },
+    { threadManager: tm, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  assert.equal(again.thread.run_progress.items[0].done, false)
+})
+
+test("message-router thread.run_progress.toggle errors on missing thread", async () => {
+  const tm = new ThreadManager()
+  const response = await handleMessage(
+    { type: "thread.run_progress.toggle", thread_id: "missing", item_id: "x" },
+    { threadManager: tm, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  assert.equal(response.type, "error")
+  assert.match(String(response.error), /not found/i)
+})
+
+test("summoner surface thread.run_progress.toggle is denied SUMMONER_ACL", () => {
+  const r = assertSummonerAllowed("summoner", "thread.run_progress.toggle")
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "SUMMONER_ACL")
+  assert.match(r.error, /thread\.run_progress\.toggle/)
+  assert.equal(assertSummonerAllowed("tray", "thread.run_progress.toggle").ok, true)
+})
+
+test("thread.run_progress.toggle is not on overlay allowlists or thread.update keys", () => {
+  const acl = readSrc("ws", "summoner-acl.ts")
+  const allowBlock = acl.slice(acl.indexOf("const SUMMONER_ALLOW"), acl.indexOf("export function assertSummonerAllowed"))
+  assert.doesNotMatch(allowBlock, /thread\.run_progress\.toggle/)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("thread.run_progress.toggle"), false)
+
+  const routerSrc = readSrc("message-router.ts")
+  const m = routerSrc.match(/case "thread\.update":[\s\S]*?for \(const key of \[([\s\S]*?)\]\)/)
+  assert.ok(m, "thread.update allowlist not found")
+  assert.doesNotMatch(m![1], /run_progress/)
 })
