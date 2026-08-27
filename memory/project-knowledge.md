@@ -74,6 +74,23 @@
 
 ## Technical Pitfalls
 
+### T1 Playwright 干净 profile 打不开门户 ≠ 撞上 SSO 登录墙（2026-08-27）
+- **现象**：日常 Chrome 已打开 OA 可读邮件；bundled Chromium / Chrome channel / 空 user-data-dir GUI Chrome 对 `oa`/`home.cmschina.com.cn` 均 `ERR_EMPTY_RESPONSE`（~150ms，198.18 fake-ip，MacPacket `127.0.0.1:1082` 同样 empty reply）。curl 亦然。
+- **纪律**：对照臂必须是**新用户目录**，禁止 Chrome DevTools MCP（挂着已登录 Chrome）。没见到登录表单就**不得**对外说「证伪 SSO」。L7 可 PASS 带 nit：CMspark 完成、干净浏览器打不开；**仍禁**扩 outbound profile。
+- **4 行 case**：动作=同一任务 Playwright 空 profile；失败=打不开而非登录墙；归责=TUN/fake-ip + 已打开标签 vs 新连接；保护=ADR-022 L7 诚实、不扩 cookies/evaluate/L2
+
+### Capture 召唤器「淡不掉」= `NSApp.activate` 抢前台（2026-08-27 · #229）
+- **坑**：HUD 已是 `.nonactivatingPanel` + `canBecomeKey`，但 `open()` 仍 `NSApp.activate(ignoringOtherApps: true)`。关条 `orderOut` 后用户停在 CMspark，不是 Chrome。Confirm HUD 注释已写 do NOT activate。
+- **修**：Capture `open(threadId:)` 只 `makeKeyAndOrderFront` + `orderFrontRegardless`。测禁 `NSApp.activate(`（带括号，避免吃到注释）。🎙/📎 模态仍可 activate（残留）。
+- **测**：regex 看不见 Dock；DoD 1 须对着 Chrome 热键狗食。改 Swift 必 `build-tray.sh` + 更新 `SWIFT_TRAY_SHA256`。安装包不会自动含新 tray。
+- **4 行 case**：动作=#229 热键开条；失败=前台被抢走；归责=activate 与 nonactivating 打架；保护=L0 Capture 不抢 Chrome/Codex
+
+### H1 `open_todos` 改成对象会炸「查看摘要」（2026-08-27 · #237）
+- **坑**：`ChatView` `<li>{t}</li>` 假定 string[]。persist `{text, tool}` 后 React *Objects are not valid as a React child*。
+- **修**：sanitize 接受 string | `{text, tool?}`；notice/摘要只渲染 `.text`；hash JSON **含** `tool`。`tool` 仅 `^[a-z][a-z0-9_]{0,79}$`，不 `.toLowerCase()`（`Navigate` 丢 tool）。无 tool 的 seed 仍只能点。
+- **测**：`docs/mcp.md` 曾钉死「尚未跑」——改 T1 叙事必须同步 `outbound-mcp-docs-grant.test.ts`。
+- **4 行 case**：动作=H1 待办带 tool；失败=摘要崩溃 / 契约测红；归责=UI 类型与 SoT 分叉 + 文档被测锁；保护=不按中文猜工具、不 tick model_draft
+
 ### C-thin 召唤器：窗口像素必须和 CSS 布局同宽（2026-08-25 · Win dogfood）
 - **现象**：用户说知识/MCP「没法点开」。窗是 `--window-size=640,720`，HTML 却 `@media (max-width:720px){ .list{display:none} }`，轨钮改的是看不见的列表。
 - **产品第一眼**：默认必须是**居中小条**（composer only），不要一开就是展开工作台。展开后再露出 52+216+主列。
@@ -781,6 +798,12 @@
 
 ## Reusable Patterns
 
+### 需求设计 Issue-first；冻结清单禁止「继续」整票做（2026-08-27）
+- **坑**：SoT 只活在 `docs/superpowers/specs/` → 下场会话当没发生过。#230 是追踪+禁区，说「继续」容易把 F-S-10 / overlay-acl 当主线。
+- **做法**：新产品行为先 `gh issue create`（模板 `.github/ISSUE_TEMPLATE/design.md`），spec 头 `GitHub: #N`，PR `Closes/Refs`。冻结票拆**子 Issue** 再动（#235 grant-cli、#237 RunProgress tool）。T2 仍计划 dual → 实现 dual；T1 CLI 校验可机核后合。
+- **本季**：#228 T1（CMspark 臂 + Playwright nit）关；#229 召唤器快/淡关；#235/#237 关；#230 仍开着冻 F-S-10。
+- **4 行 case**：动作=用户说继续；失败=差点做 T3 冻结项；归责=追踪票当实现票；保护=CONTRIBUTING Issue-first + #230 自己的「未开子项不许顺便」
+
 ### Knowledge Honesty 波浪：身份三分 + ledger 芯片 + 话题夹字符串（2026-08-25）
 - **定位**：日常浏览器+本机知识助手；不是 Codex / Raycast / Project / 图谱 DB。
 - **身份**：`{id, filename, title}`；CJK title 可入库；filename `k-<sha10>` 防 `--.md` 互撞；写盘统一 helper。
@@ -1044,6 +1067,13 @@
 - 教训：JS 单线程下，**全同步**的 read-modify-write 天然原子，不存在交错竞态——只有 caller「读 → await → 用陈旧快照写」才有竞态。审计/评审提"竞态"时先确认是否有 await 间隙，别为不存在的竞态加锁（cargo-cult）。kimi 终审也独立验证了所有 caller无 await 间隙，确认非 bug。
 
 ## Architecture Decisions
+
+### 产品 0.5.3 形态切点：租手实验，T1 PASS 带 nit，不扩 profile（2026-08-27）
+- **版本**：companion/extension/NSIS **0.5.3**。切片 1–3/5/6 + 知识诚实 on main。本机 `/Applications/CMspark.app` 已换 0.5.3 DMG（#229 Swift 快/淡**未**打进该包）。
+- **T1**：CMspark 臂 OA「我的邮件」完成 + HITL；Playwright 干净 profile 打不开门户。L7 **PASS 带 nit**。`require_grant`/`auto_approve_dangerous` bake-off 后已改回盘上原值。
+- **禁**：扩 outbound 默认工具面；overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；不经确认改 live `config.json`。
+- **活票**：#230 冻结残留（F-S-10 / overlay-acl）。正交 #69/#70/#71。
+- **SoT**：`docs/superpowers/specs/2026-08-27-post-227-status.md` · CHANGELOG 0.5.3
 
 ### Daily assistant · Knowledge Honesty（2026-08-25 · Wave 0–2 on `feat/knowledge-honesty-wave0`）
 - **禁**：Project 实体、graph DB、分类表、远程 KB、overlay 知识管理、companion `sidePanel.open`、对话自动入库、Perplexity `[n]`、Raycast 重做。

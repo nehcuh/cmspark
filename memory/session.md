@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S85 END (2026-08-27 ~14:02) [0.5.3 切点收口 · T1/召唤器/grant-cli/RunProgress tool]
+- **Ship on main**：#231 0.5.3+Issue-first；#232 T1 CMspark 臂记分；#233 Playwright 对照 nit；#234 召唤器不抢前台；#236 grant-cli 未知 flag 失败；#238 H1 todo `{text,tool}` 精确勾。tip `ed22223`。残枝 `feat/slice-6-*` 已删。
+- **T1**：OA 门户前 5 封（对话里核对，不入库）。PW 空 profile `ERR_EMPTY_RESPONSE`，**不是**登录墙。L7 PASS 带 nit。禁扩 profile。
+- **本机**：`/Applications/CMspark.app` 0.5.3 DMG；#229 Swift 未打进该包。盘上 `require_grant=false` / `auto_approve_dangerous=true`（bake-off 后改回）。
+- **下次**：#230 仍冻 F-S-10 / overlay-acl。形态主线用户可见项已完。要对着 Chrome 热键验 #229 须重启仓库 tray 或重打 DMG。
+- Recorded: yes — Issue-first；PW≠SSO 墙；activate=淡不掉；H1 对象炸摘要；#230 须拆子票
+
 ### S84 (2026-08-27) [0.5.3 lockstep · Issue-first]
 - **版本**：companion / extension / NSIS / CLI banners **0.5.2 → 0.5.3**。CHANGELOG 记录 #222–#227；诚实写明 T1 未跑。
 - **Issue-first**：CONTRIBUTING / CLAUDE / AGENTS / PR 模板 / `.github/ISSUE_TEMPLATE/design.md`。新需求必须先开 GitHub Issue。
@@ -908,12 +915,12 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### Daily assistant · Knowledge Honesty（S80–S81 · #222 on main · #223 P1/nits OPEN）
-- status: **active**
-- context: Wave 0–2 已 squash **#222** `6ce291db`。本会话 `fix/post220-head-p1-fold` = P1+nits+Win HUD → **PR #223**。Win NSIS 已换装。
-- next_action: (1) CI 绿合 #223 (2) 重载 `Local\CMspark\chrome-extension` (3) 托盘召唤器验折叠条+知识/MCP 列表 (4) 勿 overlay Allow/Deny、勿 knowledge.import 上 summoner WS
-- resume_doc: PR #223 · #222 · `docs/audit/reviews/post220-nits-hud-adversary-synthesis-20260825.md`
-- updated: 2026-08-25
+### 形态深化 0.5.3 切点（S84–S85 · main `ed22223`）
+- status: **active**（主线用户可见项 done；冻结残留仍开）
+- context: 切片 1–6、T1（#228 关，L7 PASS 带 nit）、#229 快/淡、#235 grant-cli、#237 RunProgress tool 均 on main。#230 冻 F-S-10 / overlay-acl。
+- next_action: 勿扩 outbound profile。#229 体感需重启仓库 tray 或重打 DMG。#230 禁止整票「继续」。
+- resume_doc: `docs/superpowers/specs/2026-08-27-post-227-status.md` · #230
+- updated: 2026-08-27
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**
@@ -922,12 +929,12 @@
 - resume_doc: PR #221 · #220 · `docs/audit/reviews/post220-nits-adversary-synthesis-20260825.md`
 - updated: 2026-08-25
 
-### OS summoner overlay（S77–S81 · #219 on main · Win C-thin dogfood in #223）
-- status: **active**
-- context: Mac NSPanel 工作台在 #222。Win 仍 Chromium `--app`。S81 把 C-thin 改纸面、默认 720×120 居中折叠；展开 720×520 三栏。知识/MCP 列表不再被 640 宽 media 藏掉。
-- next_action: 关旧 `--app` 窗再开召唤器；验折叠条与轨钮。WebView2 另票。
-- resume_doc: PR #223 · `companion/src/summoner-web.ts` · `companion/src/summoner/shell-open.ts`
-- updated: 2026-08-25
+### OS summoner overlay（S77–S85 · #219/#229 on main）
+- status: **active**（快/淡代码在 main，安装包未含）
+- context: Mac NSPanel Capture `open()` 不再 `NSApp.activate`（#234）。Win 仍 C-thin `--app`。MCP 轨 hide-not-delete。
+- next_action: 狗食热键对着 Chrome（前台应仍是 Chrome）。要装进 App 须重打 DMG。WebView2 另票。
+- resume_doc: PR #234 · #229
+- updated: 2026-08-27
 
 ### Companion-canon Side Panel（S74 · #196 MERGED）
 - status: **done**
