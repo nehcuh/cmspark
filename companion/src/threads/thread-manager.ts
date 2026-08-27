@@ -13,7 +13,7 @@ import {
   sanitizeRuntimeContextBudget,
   type RuntimeContextBudgetMeta,
 } from "./runtime-context-budget"
-import { sanitizeRunProgress, type RunProgress } from "./run-progress"
+import { sanitizeRunProgress, seedRunProgress, type RunProgress } from "./run-progress"
 import type { ImageAttachmentMeta } from "../llm/image-parts"
 import { sniffedExt, type RasterMime } from "../llm/image-sniff"
 import {
@@ -757,6 +757,13 @@ export class ThreadManager {
     if (thread && thread.run_progress != null) {
       thread.run_progress = sanitizeRunProgress(thread.run_progress)
     }
+    if (thread && (!thread.run_progress || thread.run_progress.items.length === 0)) {
+      const seeded = seedRunProgress(thread)
+      if (seeded.items.length > 0) {
+        thread.run_progress = seeded
+        this.saveIndex()
+      }
+    }
     return thread
   }
 
@@ -855,6 +862,12 @@ export class ThreadManager {
       throw new Error("board_mode must be a boolean")
     }
     Object.assign(thread, updates, { updated_at: monotonicTimestamp() })
+    if (!thread.run_progress || thread.run_progress.items.length === 0) {
+      const seeded = seedRunProgress(thread)
+      if (seeded.items.length > 0) {
+        thread.run_progress = seeded
+      }
+    }
     this.saveIndex()
     return thread
   }

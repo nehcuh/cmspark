@@ -230,6 +230,65 @@ test("run_progress sanitize caps 8×120 and forces model_draft done=false", () =
   assert.ok(s.items.every((it) => it.source === "seed" || it.source === "model_draft" || it.source === "user"))
 })
 
+test("thread-manager persist handoff.open_todos hydrates run_progress for ChatView", () => {
+  const tm = new ThreadManager()
+  const th = tm.create("run-progress-handoff-hydrate")
+  const updated = tm.update(th.id, {
+    runtime_context_budget: {
+      last_at: new Date().toISOString(),
+      mode: "h1",
+      dropped_count: 0,
+      tokens_before: 0,
+      tokens_after: 0,
+      handoff: {
+        updated_at: new Date().toISOString(),
+        goals: [],
+        decisions: [],
+        constraints: [],
+        open_todos: ["打开已登录的页", "摘前五条标题"],
+        artifacts: [],
+      },
+    },
+  })
+  assert.ok(updated?.run_progress)
+  assert.equal(updated!.run_progress!.items.length, 2)
+  assert.equal(updated!.run_progress!.items[0]!.text, "打开已登录的页")
+  assert.equal(updated!.run_progress!.items[0]!.source, "seed")
+  assert.equal(updated!.run_progress!.items[0]!.done, false)
+  const got = tm.get(th.id)
+  assert.equal(got!.run_progress!.items.length, 2)
+})
+
+test("thread-manager does not overwrite existing run_progress when hydrating", () => {
+  const tm = new ThreadManager()
+  const th = tm.create("run-progress-no-clobber")
+  tm.update(th.id, {
+    run_progress: {
+      items: [{ id: "keep", text: "already", done: true, source: "user" }],
+    },
+  })
+  tm.update(th.id, {
+    runtime_context_budget: {
+      last_at: new Date().toISOString(),
+      mode: "h1",
+      dropped_count: 0,
+      tokens_before: 0,
+      tokens_after: 0,
+      handoff: {
+        updated_at: new Date().toISOString(),
+        goals: [],
+        decisions: [],
+        constraints: [],
+        open_todos: ["should-not-replace"],
+        artifacts: [],
+      },
+    },
+  })
+  const got = tm.get(th.id)
+  assert.equal(got!.run_progress!.items.length, 1)
+  assert.equal(got!.run_progress!.items[0]!.id, "keep")
+})
+
 test("thread-manager run_progress sanitize-on-read + cap", () => {
   const tm = new ThreadManager()
   const th = tm.create("run-progress-seed")
