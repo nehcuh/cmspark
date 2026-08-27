@@ -1634,10 +1634,18 @@ function dispatchSummonerWeb(
   return client.sendAppRequest(type, params, timeout)
 }
 
+function reportOverlayShellUnavailable(): void {
+  companionClient?.sendAppMessage("error", {
+    error_code: "OVERLAY_SHELL_UNAVAILABLE",
+    error: "无法弹出对话框",
+  })
+}
+
 async function openSummonerWebShell(threadId: string): Promise<void> {
   const client = summonerClient
   if (!client) {
     safeNotify({ title: "CMspark 召唤器", message: "Companion 未连接，无法打开召唤器", timeout: 5 })
+    reportOverlayShellUnavailable()
     return
   }
   try {
@@ -1658,6 +1666,7 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
         message: "打开召唤器失败: 无法打开召唤器页面",
         timeout: 5,
       })
+      reportOverlayShellUnavailable()
       return
     }
     safeNotify({ title: "CMspark 召唤器", message: "已在浏览器打开召唤器（实验）", timeout: 3 })
@@ -1667,6 +1676,7 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
       message: `打开召唤器失败: ${err?.message || err}`,
       timeout: 5,
     })
+    reportOverlayShellUnavailable()
   }
 }
 

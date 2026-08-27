@@ -90,7 +90,7 @@ test("planSummonerShellOpen uses --app window when browser path is known", () =>
   assert.equal(r.kind, "app-window")
   assert.equal(r.command, "/usr/bin/google-chrome")
   assert.ok(r.args.some((a) => a === `--app=${LOOP}`))
-  assert.ok(r.args.some((a) => a === "--window-size=720,120"))
+  assert.ok(r.args.some((a) => a === "--window-size=720,520"))
 })
 
 test("planSummonerShellOpen falls back to system browser without chrome", () => {
@@ -129,6 +129,7 @@ test("openLoopbackPage uses the planner (not raw open only)", () => {
   const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
   assert.match(src, /planSummonerShellOpen/)
   assert.match(src, /resolveSummonerBrowserPath/)
+  assert.match(src, /h=expanded\?520:120/)
 })
 
 test("openLoopbackPage spawns --app for loopback and skips evil URLs", () => {

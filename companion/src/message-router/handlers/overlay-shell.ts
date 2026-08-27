@@ -33,5 +33,6 @@ export async function handleOverlayShellOpen(
     return overlayError("OVERLAY_SHELL_UNAVAILABLE")
   }
   session.broadcast({ type: "overlay.shell.open", thread_id: threadId })
-  return { type: "overlay.shell.opened", thread_id: threadId }
+  // Request accepted, not opened — tray may still fail to spawn.
+  return { type: "overlay.shell.accepted", thread_id: threadId }
 }

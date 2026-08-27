@@ -70,7 +70,7 @@ test("new overlay-shell handler never sidePanel.open", () => {
   assert.doesNotMatch(src, /sidePanel\.open/)
 })
 
-test("handler with chrome-extension origin broadcasts type+thread_id without id and returns opened", async () => {
+test("handler with chrome-extension origin broadcasts type+thread_id without id and returns accepted", async () => {
   const { handleOverlayShellOpen } = require("../src/message-router/handlers/overlay-shell")
   const sent: Record<string, unknown>[] = []
   const r = await handleOverlayShellOpen(
@@ -80,7 +80,8 @@ test("handler with chrome-extension origin broadcasts type+thread_id without id 
       broadcast: (p: Record<string, unknown>) => sent.push(p),
     },
   )
-  assert.equal(r.type, "overlay.shell.opened")
+  assert.equal(r.type, "overlay.shell.accepted")
+  assert.notEqual(r.type, "overlay.shell.opened")
   assert.equal(sent.length, 1)
   assert.equal(sent[0].type, "overlay.shell.open")
   assert.equal(sent[0].thread_id, "abc123")
@@ -127,7 +128,7 @@ test("overlay.shell.open stays off summoner web dispatch and SSE allow", () => {
 
 test("tray companionClient opens overlay.shell.open; summonerClient does not", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
-  const fn = src.slice(src.indexOf("async function openSummonerWebShell"), src.indexOf("async function handleAction"))
+  const fn = src.slice(src.indexOf("function reportOverlayShellUnavailable"), src.indexOf("async function handleAction"))
   assert.match(fn, /"&thread=" \+ encodeURIComponent\(threadId\)/)
   assert.match(fn, /if\s*\(\s*threadId\s*\)/)
   assert.doesNotMatch(
@@ -139,6 +140,12 @@ test("tray companionClient opens overlay.shell.open; summonerClient does not", (
   assert.ok(opened >= 0 && success > opened, "success notify must follow openLoopbackPage")
   assert.match(fn, /if\s*\(\s*!/)
   assert.match(fn, /打开召唤器失败/)
+  assert.match(fn, /sendAppMessage\(\s*["']error["']/)
+  assert.match(fn, /OVERLAY_SHELL_UNAVAILABLE/)
+  assert.match(fn, /无法弹出对话框/)
+  const fail = fn.indexOf("if (!opened)")
+  const report = fn.indexOf("reportOverlayShellUnavailable()", fail)
+  assert.ok(fail >= 0 && report > fail, "openLoopbackPage false must send OVERLAY_SHELL_UNAVAILABLE")
   const companionStart = src.indexOf("companionClient.onAppMessage")
   assert.ok(companionStart >= 0, "companionClient.onAppMessage missing")
   const companionBlock = src.slice(companionStart, src.indexOf("summonerClient = new CompanionClient"))
@@ -149,4 +156,12 @@ test("tray companionClient opens overlay.shell.open; summonerClient does not", (
   const summonerBlock = src.slice(summonerStart, src.indexOf("summonerClient.connect"))
   assert.doesNotMatch(summonerBlock, /openSummonerWebShell/)
   assert.doesNotMatch(summonerBlock, /overlay\.shell\.open/)
+})
+
+test("lifecycle relays tray OVERLAY_SHELL_ error to authenticated clients", () => {
+  const src = fs.readFileSync(srcFile("ws", "lifecycle.ts"), "utf8")
+  assert.match(src, /msg\??\.type === ["']error["']/)
+  assert.match(src, /OVERLAY_SHELL_/)
+  assert.match(src, /auth\?\.surface === ["']tray["']/)
+  assert.match(src, /broadcastToClients/)
 })

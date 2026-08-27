@@ -930,6 +930,23 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           try { ws.terminate() } catch { /* closing */ }
           return
         }
+        // #239: tray reports overlay spawn failure. "error" is a response type,
+        // not a request — relay before validateWsMessage so Side Panel toasts.
+        if (
+          msg?.type === "error" &&
+          typeof msg.error_code === "string" &&
+          msg.error_code.startsWith("OVERLAY_SHELL_")
+        ) {
+          const auth = wsAuth.get(ws)
+          if (auth?.surface === "tray") {
+            broadcastToClients({
+              type: "error",
+              error_code: msg.error_code,
+              error: typeof msg.error === "string" && msg.error ? msg.error : "无法弹出对话框",
+            })
+          }
+          return
+        }
         // Stricter message validation (P2)
         const validation = validateWsMessage(msg)
         if (!validation.valid) {

@@ -278,7 +278,7 @@ export function useWebSocket() {
         msg.type === "config.set" ||
         msg.type === "config.get" ||
         // #239: companion no-id broadcast of overlay.shell.open echoes back to
-        // the originating Side Panel. Ignore — only opened / OVERLAY_SHELL_* error.
+        // the originating Side Panel. Ignore — only accepted / OVERLAY_SHELL_* error.
         msg.type === "overlay.shell.open"
       ) {
         return false
@@ -1878,8 +1878,8 @@ export function useWebSocket() {
           break
         }
 
-        case "overlay.shell.opened":
-          // Silent ack — tray opened HTML ChatShell. Echo already ignored.
+        case "overlay.shell.accepted":
+          // Silent ack — request accepted, not opened. Spawn failure toasts via error.
           break
 
         case "error": {

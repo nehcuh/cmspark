@@ -331,8 +331,10 @@ export function ChatView() {
 
   const handlePopout = useCallback(() => {
     if (!activeThreadId) return
-    chrome.runtime.sendMessage({ type: "overlay.shell.open", thread_id: activeThreadId }, () => {
-      void chrome.runtime.lastError
+    chrome.runtime.sendMessage({ type: "overlay.shell.open", thread_id: activeThreadId }, (response) => {
+      if (chrome.runtime.lastError || response?.ok === false) {
+        window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: "无法弹出对话框" }))
+      }
     })
   }, [activeThreadId])
 

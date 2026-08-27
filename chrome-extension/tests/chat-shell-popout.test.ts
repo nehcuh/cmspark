@@ -23,11 +23,20 @@ test("ChatView click sends overlay.shell.open with thread_id; no sidePanel.open"
   assert.doesNotMatch(chat, /sidePanel\.open/)
 })
 
+test("ChatView handlePopout toasts on lastError or ok === false", () => {
+  const chat = src("src/sidepanel/components/ChatView.tsx")
+  const pop = chat.slice(chat.indexOf("const handlePopout"), chat.indexOf("const handleExport"))
+  assert.match(pop, /lastError/)
+  assert.match(pop, /ok\s*===\s*false/)
+  assert.match(pop, /cmspark:toast/)
+  assert.match(pop, /无法弹出对话框/)
+})
+
 test("useWebSocket ignores overlay.shell.open echo and toasts OVERLAY_SHELL_ errors", () => {
   const ws = src("src/sidepanel/hooks/useWebSocket.ts")
   assert.match(ws, /msg\.type === ["']overlay\.shell\.open["']/)
   const overlayBlock = ws.slice(
-    ws.indexOf('case "overlay.shell.opened"'),
+    ws.indexOf('case "overlay.shell.accepted"'),
     ws.indexOf("/knowledge|预览|parseFile|fetch knowledge/"),
   )
   assert.match(overlayBlock, /OVERLAY_SHELL_/)
