@@ -1,0 +1,8 @@
+{
+  "batch": "chat-shell-same-face-spec-r2",
+  "timestamp": "20260827-153041",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/chat-shell-same-face-spec-r2-claude-20260827-153041.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/chat-shell-same-face-spec-r2-pi-20260827-153041.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/chat-shell-same-face-spec-r2-diff-20260827-153041.patch"
+}

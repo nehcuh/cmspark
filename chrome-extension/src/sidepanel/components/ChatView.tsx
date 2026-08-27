@@ -329,6 +329,15 @@ export function ChatView() {
     })
   }, [activeThreadId])
 
+  const handlePopout = useCallback(() => {
+    if (!activeThreadId) return
+    chrome.runtime.sendMessage({ type: "overlay.shell.open", thread_id: activeThreadId }, (response) => {
+      if (chrome.runtime.lastError || response?.ok === false) {
+        window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: "无法弹出对话框" }))
+      }
+    })
+  }, [activeThreadId])
+
   // Export the Q&A pair containing this message as Markdown (UI-side download).
   const handleExport = useCallback((messageId: string) => {
     if (!activeThreadId) return
@@ -344,7 +353,23 @@ export function ChatView() {
   }, [activeThreadId, exportIncludeReasoning])
 
   return (
-    <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
+    <div style={styles.shell}>
+      <div style={styles.popoutBar}>
+        <span aria-hidden style={styles.popoutDots}>⋯</span>
+        <button
+          type="button"
+          disabled={!activeThreadId}
+          onClick={handlePopout}
+          style={{
+            ...styles.popoutBtn,
+            opacity: activeThreadId ? 1 : 0.45,
+            cursor: activeThreadId ? "pointer" : "not-allowed",
+          }}
+        >
+          弹出对话框
+        </button>
+      </div>
+      <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
       <div ref={contentRef} style={styles.contentInner}>
         {showCompactBanner && (
           <div
@@ -572,6 +597,7 @@ export function ChatView() {
         )}
       </div>
       <KnowledgeImportModal />
+      </div>
     </div>
   )
 }
@@ -1685,7 +1711,35 @@ function inviteIcon(it: EmptyInvite): (p: IconProps) => JSX.Element {
 }
 
 function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
-  const { title, hint, items } = emptyStateCopy(level)
+  const [pageTitle, setPageTitle] = useState<string | null>(null)
+  const [omitPage, setOmitPage] = useState(false)
+
+  useEffect(() => {
+    const refresh = () => {
+      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+        if (chrome.runtime.lastError) {
+          setPageTitle(null)
+          return
+        }
+        setPageTitle(tabs[0]?.title ?? null)
+      })
+    }
+    refresh()
+    const onActivated = () => refresh()
+    const onUpdated = (_tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (changeInfo.status === "complete" || changeInfo.title || changeInfo.url) {
+        refresh()
+      }
+    }
+    chrome.tabs.onActivated.addListener(onActivated)
+    chrome.tabs.onUpdated.addListener(onUpdated)
+    return () => {
+      chrome.tabs.onActivated.removeListener(onActivated)
+      chrome.tabs.onUpdated.removeListener(onUpdated)
+    }
+  }, [])
+
+  const { title, hint, items, pageChip } = emptyStateCopy(level, omitPage ? null : pageTitle)
   const rows: SuggestItem[] = items.map((it) =>
     it.kind === "fill"
       ? { label: it.label, fill: it.fill, Icon: inviteIcon(it) }
@@ -1698,8 +1752,21 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
     <div style={styles.empty} data-testid={testId}>
       <CompanionMark size={92} />
       <div style={styles.emptyTitle}>{title}</div>
-      <div style={styles.emptyHint}>{hint}</div>
-      <InvitationRows items={rows} />
+      {hint ? <div style={styles.emptyHint}>{hint}</div> : null}
+      {rows.length > 0 ? <InvitationRows items={rows} /> : null}
+      {pageChip ? (
+        <div style={styles.pageChip} data-testid="empty-page-chip">
+          <span style={styles.pageChipText}>{pageChip}</span>
+          <button
+            type="button"
+            style={styles.pageChipHide}
+            aria-label="隐藏当前页"
+            onClick={() => setOmitPage(true)}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -1783,6 +1850,40 @@ const markdownCSS = `
 
 
 const styles: Record<string, React.CSSProperties> = {
+  shell: {
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+    background: "transparent",
+  },
+  popoutBar: {
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "6px 12px",
+    borderBottom: `1px solid ${tokens.border}`,
+    background: tokens.bg,
+  },
+  popoutDots: {
+    color: tokens.textMuted,
+    fontSize: 14,
+    letterSpacing: 1,
+    userSelect: "none" as const,
+    lineHeight: 1,
+  },
+  popoutBtn: {
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgMuted,
+    color: tokens.text,
+    borderRadius: tokens.radiusPill,
+    fontSize: 12,
+    padding: "4px 10px",
+    fontFamily: tokens.font,
+    lineHeight: 1.3,
+  },
   container: {
     flex: 1,
     overflowY: "auto",
@@ -1825,6 +1926,40 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.5,
     maxWidth: 260,
     margin: "0 0 28px",
+  },
+  pageChip: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 20,
+    maxWidth: 260,
+    width: "100%",
+    padding: "6px 8px 6px 12px",
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusPill,
+    background: tokens.bgMuted,
+    color: tokens.textSecondary,
+    fontSize: 12,
+    fontFamily: tokens.font,
+    boxSizing: "border-box" as const,
+  },
+  pageChipText: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
+    flex: 1,
+    textAlign: "left" as const,
+  },
+  pageChipHide: {
+    flexShrink: 0,
+    border: "none",
+    background: "transparent",
+    cursor: "pointer",
+    color: tokens.textMuted,
+    fontSize: 14,
+    lineHeight: 1,
+    padding: "0 4px",
+    fontFamily: tokens.font,
   },
   inviteCol: {
     display: "flex",

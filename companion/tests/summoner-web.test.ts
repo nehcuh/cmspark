@@ -135,7 +135,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /\.composer\{[^}]*flex-shrink:0/)
     assert.doesNotMatch(r.body, /#12141c/)
     assert.doesNotMatch(r.body, /class="hud expanded"/)
-    assert.match(r.body, /placeWindow\(false\)/)
+    assert.match(r.body, /setExpanded\(true\)/)
+    assert.doesNotMatch(r.body, /placeWindow\(false\);/)
     assert.match(r.body, /var w=720,h=expanded\?520:120/)
     assert.doesNotMatch(r.body, /max-width:720px/)
     assert.match(r.body, /type="file"/)
@@ -613,6 +614,29 @@ test("C-thin HTML skills toggle and knowledge attach are not activate-only / rep
   assert.match(src, /ids:next/)
   assert.doesNotMatch(src, /skill_name:s\.name,on:true/)
   assert.doesNotMatch(src, /ids:\[id\]/)
+})
+
+test("HTML empty uses ChatShell NO-PAGE title", () => {
+  const html = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(html, /CHAT_SHELL_TITLE_NONE/)
+  assert.doesNotMatch(html, /要对这页做什么/)
+  assert.doesNotMatch(html, /当前页：/)
+  assert.doesNotMatch(html, /正在看/)
+  assert.doesNotMatch(html, /正在分享/)
+  assert.match(html, /SUMMONER_ATTACH_FOOTNOTE/)
+  assert.match(html, /SUMMONER_OPEN_CONFIRM/)
+})
+
+test("HTML default expands the face (not 120px bar)", () => {
+  const html = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(html, /setExpanded\(true\)/)
+  assert.doesNotMatch(html, /placeWindow\(false\);/)
+})
+
+test("MCP rail stays hide-not-delete", () => {
+  const html = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(html, /data-sec="mcp"[^>]*\bhidden\b|hidden[^>]*data-sec="mcp"/)
+  assert.match(html, /mcp.toggle_server/)
 })
 
 test("HTML mcp.toggle rides tray companionClient (no overlay L2 stall)", () => {

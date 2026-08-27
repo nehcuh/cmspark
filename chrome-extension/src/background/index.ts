@@ -1380,7 +1380,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "meeting.import_text":
       case "meeting.auto_diarize":
       case "meeting.generate_minutes":
-      case "meeting.set_status": {
+      case "meeting.set_status":
+      case "overlay.shell.open": {
         // Forward to companion. Always call sendResponse so Side Panel callbacks
         // never see "The message port closed before a response was received"
         // (that lastError fires when no listener answers — default used to return

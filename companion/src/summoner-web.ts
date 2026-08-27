@@ -27,6 +27,7 @@ import {
   SUMMONER_L0_CHROME_DOWN,
   SUMMONER_MIC_SIDEBAR,
   SUMMONER_RENTER_CHROME_DOWN,
+  CHAT_SHELL_TITLE_NONE,
 } from "./summoner/client"
 import { getChromeOpener } from "./platform"
 
@@ -772,13 +773,13 @@ body{
       <button class="rail-btn" data-sec="threads" aria-current="true" type="button" title="对话" aria-label="对话">
         <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h10M5 17h7"/></svg>
       </button>
-      <button class="rail-btn" data-sec="packs" type="button" title="场景" aria-label="场景">
+      <button class="rail-btn" data-sec="packs" type="button" title="场景" aria-label="场景" hidden>
         <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.4"/><rect x="13" y="4" width="7" height="7" rx="1.4"/><rect x="4" y="13" width="7" height="7" rx="1.4"/><rect x="13" y="13" width="7" height="7" rx="1.4"/></svg>
       </button>
-      <button class="rail-btn" data-sec="knowledge" type="button" title="知识" aria-label="知识">
+      <button class="rail-btn" data-sec="knowledge" type="button" title="知识" aria-label="知识" hidden>
         <svg viewBox="0 0 24 24"><path d="M5 5.5h9.2A2.3 2.3 0 0 1 16.5 7.8V19H7.4A2.4 2.4 0 0 1 5 16.6V5.5z"/><path d="M16.5 8h1.4A2.1 2.1 0 0 1 20 10.1V19h-3.5"/></svg>
       </button>
-      <button class="rail-btn" data-sec="skills" type="button" title="技能" aria-label="技能">
+      <button class="rail-btn" data-sec="skills" type="button" title="技能" aria-label="技能" hidden>
         <svg viewBox="0 0 24 24"><path d="M8 15.2 4.8 12 8 8.8M16 8.8 19.2 12 16 15.2M13.1 6.8 10.9 17.2"/></svg>
       </button>
       <button class="rail-btn" data-sec="mcp" type="button" title="MCP" aria-label="MCP" hidden>
@@ -841,6 +842,8 @@ body{
 <script>
 (function(){
   var token=(location.search.match(/[?&]token=([^&]+)/)||[])[1]||"";
+  var wanted=(location.search.match(/[?&]thread=([^&]+)/)||[])[1]||"";
+  try{if(wanted) wanted=decodeURIComponent(wanted)}catch(e){}
   function url(path){return path+(path.indexOf("?")>=0?"&":"?")+"token="+encodeURIComponent(token)}
   var threadId="";
   var busy=false;
@@ -963,7 +966,7 @@ body{
     if(!n){
       var empty=document.createElement("div");
       empty.className="empty";
-      empty.innerHTML="<strong>要对这页做什么？</strong>回车发送。⌘/Ctrl 不在这扇窗。${SUMMONER_MIC_SIDEBAR}。";
+      empty.innerHTML="<strong>${CHAT_SHELL_TITLE_NONE}</strong>回车发送。⌘/Ctrl 不在这扇窗。${SUMMONER_MIC_SIDEBAR}。";
       log.appendChild(empty);
     }
     log.scrollTop=log.scrollHeight;
@@ -1250,8 +1253,9 @@ body{
       }
     };
   }catch(e){}
-  placeWindow(false);
+  setExpanded(true);
   refresh().then(function(){
+    if(wanted) return selectThread(wanted);
     if(threads[0]) return selectThread(threads[0].id);
   }).catch(function(e){setStatus(String(e&&e.message||e))});
 })();

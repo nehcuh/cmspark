@@ -450,6 +450,11 @@ export async function handleMessage(
       return handleLlmOneshot(rest)
     }
 
+    case "overlay.shell.open": {
+      const { handleOverlayShellOpen } = await import("./message-router/handlers/overlay-shell")
+      return handleOverlayShellOpen(rest, session)
+    }
+
     // --- Chat ---
     case "chat.create": {
       if (!session) return { type: "error", error: "No session" }

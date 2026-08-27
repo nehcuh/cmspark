@@ -1634,10 +1634,18 @@ function dispatchSummonerWeb(
   return client.sendAppRequest(type, params, timeout)
 }
 
-async function openSummonerWebShell(): Promise<void> {
+function reportOverlayShellUnavailable(): void {
+  companionClient?.sendAppMessage("error", {
+    error_code: "OVERLAY_SHELL_UNAVAILABLE",
+    error: "无法弹出对话框",
+  })
+}
+
+async function openSummonerWebShell(threadId: string): Promise<void> {
   const client = summonerClient
   if (!client) {
     safeNotify({ title: "CMspark 召唤器", message: "Companion 未连接，无法打开召唤器", timeout: 5 })
+    reportOverlayShellUnavailable()
     return
   }
   try {
@@ -1649,7 +1657,18 @@ async function openSummonerWebShell(): Promise<void> {
     const { port, token } = await startSummonerWebServer({
       dispatch: (msg) => dispatchSummonerWeb(client, msg),
     })
-    openLoopbackPage(summonerWebPageUrl(port, token))
+    let url = summonerWebPageUrl(port, token)
+    if (threadId) url = url + "&thread=" + encodeURIComponent(threadId)
+    const opened = openLoopbackPage(url)
+    if (!opened) {
+      safeNotify({
+        title: "CMspark 召唤器",
+        message: "打开召唤器失败: 无法打开召唤器页面",
+        timeout: 5,
+      })
+      reportOverlayShellUnavailable()
+      return
+    }
     safeNotify({ title: "CMspark 召唤器", message: "已在浏览器打开召唤器（实验）", timeout: 3 })
   } catch (err: any) {
     safeNotify({
@@ -1657,6 +1676,7 @@ async function openSummonerWebShell(): Promise<void> {
       message: `打开召唤器失败: ${err?.message || err}`,
       timeout: 5,
     })
+    reportOverlayShellUnavailable()
   }
 }
 
@@ -1678,7 +1698,7 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       await openSettingsUI()
       break
     case "summoner":
-      await openSummonerWebShell()
+      await openSummonerWebShell("")
       break
     case "autostart": await toggleAutoStart(); break
     case "quick-action":
@@ -1848,6 +1868,10 @@ export async function startMenuBarAgent(): Promise<void> {
           approved: r.approved,
         })
       })
+  })
+  companionClient.onAppMessage((msg: any) => {
+    if (!msg || msg.type !== "overlay.shell.open") return
+    void openSummonerWebShell(typeof msg.thread_id === "string" ? msg.thread_id : "")
   })
 
   // Set default quick actions immediately

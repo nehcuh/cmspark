@@ -45,6 +45,28 @@ test("isSummonerLoopbackUrl accepts only http loopback with token", () => {
   )
 })
 
+test("isSummonerLoopbackUrl allows optional non-empty thread query", () => {
+  const id = "abc123"
+  assert.equal(isSummonerLoopbackUrl(LOOP + "&thread=" + id), true)
+  assert.equal(isSummonerLoopbackUrl(LOOP + "&thread=" + encodeURIComponent(id)), true)
+  assert.equal(isSummonerLoopbackUrl(LOOP + "&x"), false)
+  assert.equal(isSummonerLoopbackUrl(LOOP + "&thread="), false)
+  assert.equal(isSummonerLoopbackUrl(LOOP + "&thread=" + id + "&x=1"), false)
+  assert.equal(isSummonerLoopbackUrl("http://127.0.0.1:23403/?thread=" + id), false)
+})
+
+test("planSummonerShellOpen accepts loopback URL with thread query", () => {
+  const url = LOOP + "&thread=abc123"
+  const r = planSummonerShellOpen(url, {
+    platform: "linux",
+    browserPath: "/usr/bin/google-chrome",
+  })
+  assert.equal("error" in r, false)
+  if ("error" in r) return
+  assert.equal(r.kind, "app-window")
+  assert.ok(r.args.some((a) => a === `--app=${url}`))
+})
+
 test("planSummonerShellOpen rejects non-loopback even if chrome exists", () => {
   const r = planSummonerShellOpen("http://evil.example/?token=" + "ab".repeat(32), {
     platform: "darwin",
@@ -68,7 +90,7 @@ test("planSummonerShellOpen uses --app window when browser path is known", () =>
   assert.equal(r.kind, "app-window")
   assert.equal(r.command, "/usr/bin/google-chrome")
   assert.ok(r.args.some((a) => a === `--app=${LOOP}`))
-  assert.ok(r.args.some((a) => a === "--window-size=720,120"))
+  assert.ok(r.args.some((a) => a === "--window-size=720,520"))
 })
 
 test("planSummonerShellOpen falls back to system browser without chrome", () => {
@@ -107,6 +129,7 @@ test("openLoopbackPage uses the planner (not raw open only)", () => {
   const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
   assert.match(src, /planSummonerShellOpen/)
   assert.match(src, /resolveSummonerBrowserPath/)
+  assert.match(src, /h=expanded\?520:120/)
 })
 
 test("openLoopbackPage spawns --app for loopback and skips evil URLs", () => {

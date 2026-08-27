@@ -30,8 +30,8 @@
 
 | Surface | Mode | Notes |
 |---------|------|--------|
-| 召唤器 | **Capture** | Default = collapsed composer bar. Expand = **展开对话**, not a five-rail workbench |
-| Side Panel | **Operate** | When the human is watching Chrome. ~320px redesign focus (看山 empty/composer) |
+| 召唤器 | **Capture** | Mac hotkey still collapsed bar (旧壳; expand = **展开对话**, not a five-rail workbench). Win/Linux HTML float = same ChatShell copy, whole face, **no** page chip. Entry = toolbar C, **not** a tab-strip pill. Never claim CMspark sits beside the tab bar. |
+| Side Panel | **Operate** | ChatShell empty: **要对这页做什么** / **当前页：** / 3 template chips. Top bar **弹出对话框** opens the HTML float. 装配 stays outside the shell. Watching Chrome; ~320px. |
 | Background CDP | **Operate** | When the human is in summoner or a coding agent; extension must be connected |
 | 确认台 / Cockpit + Mac tray | **Confirm** | Allow/Deny lives here. Overlay never. Win/Linux: open Chrome 确认台, never skip |
 | Outbound MCP | **租手** | They → our Chrome. Tools `cmspark__*` · grant `cmg_`. Experimental, not default-on |
