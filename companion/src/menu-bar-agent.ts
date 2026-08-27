@@ -1649,7 +1649,17 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
     const { port, token } = await startSummonerWebServer({
       dispatch: (msg) => dispatchSummonerWeb(client, msg),
     })
-    openLoopbackPage(summonerWebPageUrl(port, token) + "&thread=" + encodeURIComponent(threadId))
+    let url = summonerWebPageUrl(port, token)
+    if (threadId) url = url + "&thread=" + encodeURIComponent(threadId)
+    const opened = openLoopbackPage(url)
+    if (!opened) {
+      safeNotify({
+        title: "CMspark 召唤器",
+        message: "打开召唤器失败: 无法打开召唤器页面",
+        timeout: 5,
+      })
+      return
+    }
     safeNotify({ title: "CMspark 召唤器", message: "已在浏览器打开召唤器（实验）", timeout: 3 })
   } catch (err: any) {
     safeNotify({

@@ -127,10 +127,18 @@ test("overlay.shell.open stays off summoner web dispatch and SSE allow", () => {
 
 test("tray companionClient opens overlay.shell.open; summonerClient does not", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
-  assert.match(
-    src,
-    /summonerWebPageUrl\(port, token\) \+ "&thread=" \+ encodeURIComponent\(threadId\)/,
+  const fn = src.slice(src.indexOf("async function openSummonerWebShell"), src.indexOf("async function handleAction"))
+  assert.match(fn, /"&thread=" \+ encodeURIComponent\(threadId\)/)
+  assert.match(fn, /if\s*\(\s*threadId\s*\)/)
+  assert.doesNotMatch(
+    fn,
+    /openLoopbackPage\(summonerWebPageUrl\(port, token\) \+ "&thread=" \+ encodeURIComponent\(threadId\)\)/,
   )
+  const opened = fn.indexOf("openLoopbackPage")
+  const success = fn.indexOf("已在浏览器打开召唤器")
+  assert.ok(opened >= 0 && success > opened, "success notify must follow openLoopbackPage")
+  assert.match(fn, /if\s*\(\s*!/)
+  assert.match(fn, /打开召唤器失败/)
   const companionStart = src.indexOf("companionClient.onAppMessage")
   assert.ok(companionStart >= 0, "companionClient.onAppMessage missing")
   const companionBlock = src.slice(companionStart, src.indexOf("summonerClient = new CompanionClient"))

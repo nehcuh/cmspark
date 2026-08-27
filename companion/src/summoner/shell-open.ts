@@ -32,9 +32,16 @@ export function isSummonerLoopbackUrl(url: string): boolean {
     const host = u.hostname.toLowerCase()
     if (host !== "127.0.0.1" && host !== "localhost") return false
     const keys = [...u.searchParams.keys()]
-    if (keys.length !== 1 || keys[0] !== "token") return false
+    const unique = [...new Set(keys)]
+    if (keys.length !== unique.length) return false
     const token = u.searchParams.get("token") || ""
-    return TOKEN_HEX.test(token)
+    if (!TOKEN_HEX.test(token)) return false
+    if (unique.length === 1 && unique[0] === "token") return true
+    if (unique.length === 2 && unique.includes("token") && unique.includes("thread")) {
+      const thread = u.searchParams.get("thread") || ""
+      return thread.length > 0
+    }
+    return false
   } catch {
     return false
   }
