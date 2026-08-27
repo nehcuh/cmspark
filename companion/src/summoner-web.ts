@@ -842,6 +842,8 @@ body{
 <script>
 (function(){
   var token=(location.search.match(/[?&]token=([^&]+)/)||[])[1]||"";
+  var wanted=(location.search.match(/[?&]thread=([^&]+)/)||[])[1]||"";
+  try{if(wanted) wanted=decodeURIComponent(wanted)}catch(e){}
   function url(path){return path+(path.indexOf("?")>=0?"&":"?")+"token="+encodeURIComponent(token)}
   var threadId="";
   var busy=false;
@@ -1253,6 +1255,7 @@ body{
   }catch(e){}
   setExpanded(true);
   refresh().then(function(){
+    if(wanted) return selectThread(wanted);
     if(threads[0]) return selectThread(threads[0].id);
   }).catch(function(e){setStatus(String(e&&e.message||e))});
 })();

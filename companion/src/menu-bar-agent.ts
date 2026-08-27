@@ -1634,7 +1634,7 @@ function dispatchSummonerWeb(
   return client.sendAppRequest(type, params, timeout)
 }
 
-async function openSummonerWebShell(): Promise<void> {
+async function openSummonerWebShell(threadId: string): Promise<void> {
   const client = summonerClient
   if (!client) {
     safeNotify({ title: "CMspark 召唤器", message: "Companion 未连接，无法打开召唤器", timeout: 5 })
@@ -1649,7 +1649,7 @@ async function openSummonerWebShell(): Promise<void> {
     const { port, token } = await startSummonerWebServer({
       dispatch: (msg) => dispatchSummonerWeb(client, msg),
     })
-    openLoopbackPage(summonerWebPageUrl(port, token))
+    openLoopbackPage(summonerWebPageUrl(port, token) + "&thread=" + encodeURIComponent(threadId))
     safeNotify({ title: "CMspark 召唤器", message: "已在浏览器打开召唤器（实验）", timeout: 3 })
   } catch (err: any) {
     safeNotify({
@@ -1678,7 +1678,7 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       await openSettingsUI()
       break
     case "summoner":
-      await openSummonerWebShell()
+      await openSummonerWebShell("")
       break
     case "autostart": await toggleAutoStart(); break
     case "quick-action":
@@ -1848,6 +1848,10 @@ export async function startMenuBarAgent(): Promise<void> {
           approved: r.approved,
         })
       })
+  })
+  companionClient.onAppMessage((msg: any) => {
+    if (!msg || msg.type !== "overlay.shell.open") return
+    void openSummonerWebShell(typeof msg.thread_id === "string" ? msg.thread_id : "")
   })
 
   // Set default quick actions immediately
