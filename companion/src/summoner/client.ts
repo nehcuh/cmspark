@@ -45,6 +45,16 @@ export const SUMMONER_ATTACH_FOOTNOTE =
   "我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。" as const
 export const SUMMONER_MIC_SIDEBAR = "听写在侧栏" as const
 
+/** ChatShell empty copy — lockstep with chrome-extension/src/sidepanel/chat-shell-copy.ts (#239). */
+export const CHAT_SHELL_TITLE_PAGE = "要对这页做什么？"
+export const CHAT_SHELL_TITLE_NONE = "要我帮你做什么？"
+export const CHAT_SHELL_PAGE_CHIP_PREFIX = "当前页："
+export const CHAT_SHELL_CHIPS = [
+  { label: "总结这一页", fill: "请总结当前页面的要点" },
+  { label: "用更简单的话讲这一页", fill: "用更简单的话讲这一页在干什么" },
+  { label: "列出我能在这页替你做的操作", fill: "列出当前页我可以替你执行的操作" },
+] as const
+
 /** Attach CTA: open Chrome only. Must include the honesty footnote (S8 / UI lock). */
 export const ATTACH_NOTIFY_COPY =
   `已打开并前置浏览器。${SUMMONER_ATTACH_FOOTNOTE}` as const

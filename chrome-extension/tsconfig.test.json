@@ -55,6 +55,7 @@
     "src/sidepanel/hooks/useModalDialog.ts",
     "src/sidepanel/ui/tokens.ts",
     "src/sidepanel/empty-state-copy.ts",
+    "src/sidepanel/chat-shell-copy.ts",
     "src/sidepanel/utils/thread-related.ts",
     "src/sidepanel/utils/thread-timeline.ts",
     "src/thread-graph/force-layout.ts",
