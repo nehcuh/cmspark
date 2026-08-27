@@ -3,15 +3,14 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-27 ~14:02 (S85 END · 0.5.3 收口)
-- **Workspace**: `main` = `origin/main` `ed22223`。干净。
-- **Ship**：0.5.3 lockstep + Issue-first；T1 CMspark 臂 + Playwright nit（#228 关）；召唤器不抢前台（#229/#234）；grant-cli 未知 flag（#235/#236）；RunProgress H1 `{text,tool}`（#237/#238）。
-- **T1 诚实**：OA 邮件前 5 封只在对话核对。PW 空 profile `ERR_EMPTY_RESPONSE`，不是登录墙。禁扩 outbound profile。
-- **本机**：`/Applications/CMspark.app` 0.5.3；#229 Swift 未进该 DMG。`require_grant=false` / `auto_approve_dangerous=true`（bake-off 后改回）。
-- **Next**：#230 冻 F-S-10 / overlay-acl，勿整票继续。热键验快/淡须重启 tray 或重打 DMG。新需求先开 GitHub Issue。
-- **Do not**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；不经确认改 `config.json`。
+### 2026-08-27 ~20:03 (S86 END · ChatShell PR #240)
+- **Workspace**：parent `main` 仍 ahead 1。实现在隔离 clone `feat/slice-239-chat-shell` → **PR https://github.com/nehcuh/cmspark/pull/240**（`Closes #239`）。
+- **Ship**：侧栏 ChatShell 空态（当前页+3 芯片填作曲）+「弹出对话框」开 overlay HTML（无页、720×520）。Mac 热键仍 Swift 旧条。失败 toast「无法弹出对话框」。
+- **Next**：审/CI/合 #240。#230 冻 F-S-10。勿扩 outbound profile。狗食弹出须 Companion+tray 在跑。
+- **Do not**：overlay Allow/Deny；`list_tabs` 进 summoner ACL；实心贴回；声称标签栏药丸或四处已换脸。
 
-### 2026-08-25 (S81 · PR #223 · Win C-thin dogfood)
-- **当时**：P1+nits+纸面 HUD → #223。随后已合 main。
-- **仍有效**：勿 overlay Allow/Deny；summoner WS 无 `knowledge.import`；勿 `git add .`。
+### 2026-08-27 ~14:02 (S85 END · 0.5.3 收口)
+- **Ship**：0.5.3 + Issue-first；T1 PASS 带 nit（#228）；#229/#234 不抢前台；#235/#236 grant-cli；#237/#238 RunProgress tool。
+- **T1**：PW 空 profile `ERR_EMPTY_RESPONSE` ≠ 登录墙。禁扩 profile。
+- **本机**：0.5.3 DMG 无 #229 Swift。`require_grant=false` / `auto_approve_dangerous=true`（bake-off 后改回）。
 <!-- handoff:end -->

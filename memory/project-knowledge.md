@@ -79,6 +79,31 @@
 - **纪律**：对照臂必须是**新用户目录**，禁止 Chrome DevTools MCP（挂着已登录 Chrome）。没见到登录表单就**不得**对外说「证伪 SSO」。L7 可 PASS 带 nit：CMspark 完成、干净浏览器打不开；**仍禁**扩 outbound profile。
 - **4 行 case**：动作=同一任务 Playwright 空 profile；失败=打不开而非登录墙；归责=TUN/fake-ip + 已打开标签 vs 新连接；保护=ADR-022 L7 诚实、不扩 cookies/evaluate/L2
 
+### C-thin loopback URL 只许 `token`：加 `&thread=` 会静默打不开（2026-08-27 · #239）
+- **坑**：`isSummonerLoopbackUrl` 曾要求 query **恰好一个** key=`token`。`openLoopbackPage(url+"&thread="+id)` 被拒，`planSummonerShellOpen` error，不 spawn。测试只锁字符串拼接，绿了但窗没开。
+- **修**：keys = `token` 或 `token`+非空 `thread`；其它 key 仍拒。空 `threadId` 不追加。`openLoopbackPage===false` 不得 success notify。
+- **4 行 case**：动作=弹出对话框带 thread；失败=URL 门拒双 query；归责=安全门与产品 query 没一起测；保护=HTML 壳只能开 loopback token URL
+
+### `placeWindow(true)` ≠ 展开脸（2026-08-27 · #239）
+- **坑**：`.body{display:none}`，`.hud.expanded .body{display:grid}`。只改窗口高度仍是收起条。测 `/placeWindow\(true\)/` 会绿错实现，且 `setExpanded(true)` 源码是 `placeWindow(!!on)` 对不上字面量。
+- **修**：默认 `setExpanded(true)`。spawn `--window-size=720,520`（否则先画 120px 条）。
+- **4 行 case**：动作=HTML 空态整张脸；失败=高了但没内容；归责=高度≠ CSS expanded；保护=L0 浮动空态真看见招呼
+
+### tray `onAppMessage` 滤确认 ≠ 已订阅 overlay 推送（2026-08-27 · #239）
+- **坑**：`companion-client` 会 fan-out 无 `id` 的 push。`menu-bar-agent` 现有 cb 只处理 `security.confirmation.request` 然后 `return`。broadcast `overlay.shell.open` 到 tray 等于没人开窗。带 `id` 的 broadcast 还会被当成 RPC 响应吃掉。
+- **修**：**另**挂一条 `companionClient.onAppMessage`。payload 仅 `{type,thread_id}` 无 id。不要挂 `summonerClient`（防双开）。
+- **4 行 case**：动作=companion broadcast 开壳；失败=tray 当空气；归责=fan-out≠订阅；保护=扩展起源弹出必须有人 openLoopbackPage
+
+### Overlay HTML 无 `chrome.tabs.query`；浮窗「当前页」会逼 ACL 涨（2026-08-27 · #239）
+- **坑**：Gemini「正在分享标签」是 Chrome 一等。扩展 Side Panel 可以 `tabs.query`。C-thin HTML 要标题就得 `list_tabs` / SSE `tab.*` → F-S-5。标签栏药丸扩展做不到。
+- **纪律**：芯片只在 Side Panel。Overlay HTML = 无页变体。禁止 `list_tabs`/`tab.*`/`ui.dock` 进 `SUMMONER_ALLOW` / C-thin dispatch / overlay SSE。
+- **4 行 case**：动作=四处同一张脸含正在看；失败=不可信 HTML 要 tab API；归责=把 Gemini 手抄进 Capture；保护=overlay ACL 不涨
+
+### `SET_PROCESSING_STATUS` 当 toast 会拆掉空态（2026-08-27 · #239）
+- **坑**：ChatView 有 processingLabel 就藏 EmptyState，画出带 `...` 的思考泡。弹出失败走这条像模型在想，且不清。
+- **修**：`cmspark:toast` → App `showToast` 4s。文案 `无法弹出对话框`。SW `{ok:false}` / `lastError` 也 toast。业务码走 companion `error` 帧（bulk-forward 立刻 `{ok:true}`）。
+- **4 行 case**：动作=Companion 没开点弹出；失败=空态消失变思考中；归责=错用 processing 通道；保护=失败可看见招呼+toast
+
 ### Capture 召唤器「淡不掉」= `NSApp.activate` 抢前台（2026-08-27 · #229）
 - **坑**：HUD 已是 `.nonactivatingPanel` + `canBecomeKey`，但 `open()` 仍 `NSApp.activate(ignoringOtherApps: true)`。关条 `orderOut` 后用户停在 CMspark，不是 Chrome。Confirm HUD 注释已写 do NOT activate。
 - **修**：Capture `open(threadId:)` 只 `makeKeyAndOrderFront` + `orderFrontRegardless`。测禁 `NSApp.activate(`（带括号，避免吃到注释）。🎙/📎 模态仍可 activate（残留）。
@@ -801,7 +826,7 @@
 ### 需求设计 Issue-first；冻结清单禁止「继续」整票做（2026-08-27）
 - **坑**：SoT 只活在 `docs/superpowers/specs/` → 下场会话当没发生过。#230 是追踪+禁区，说「继续」容易把 F-S-10 / overlay-acl 当主线。
 - **做法**：新产品行为先 `gh issue create`（模板 `.github/ISSUE_TEMPLATE/design.md`），spec 头 `GitHub: #N`，PR `Closes/Refs`。冻结票拆**子 Issue** 再动（#235 grant-cli、#237 RunProgress tool）。T2 仍计划 dual → 实现 dual；T1 CLI 校验可机核后合。
-- **本季**：#228 T1（CMspark 臂 + Playwright nit）关；#229 召唤器快/淡关；#235/#237 关；#230 仍开着冻 F-S-10。
+- **本季**：#228 T1 关；#229 快/淡关；#235/#237 关；**#239 ChatShell PR #240**（未合）；#230 仍冻 F-S-10。
 - **4 行 case**：动作=用户说继续；失败=差点做 T3 冻结项；归责=追踪票当实现票；保护=CONTRIBUTING Issue-first + #230 自己的「未开子项不许顺便」
 
 ### Knowledge Honesty 波浪：身份三分 + ledger 芯片 + 话题夹字符串（2026-08-25）
@@ -1068,11 +1093,17 @@
 
 ## Architecture Decisions
 
+### ChatShell 同一张脸：copy 合同 + 扩展起源弹出 HTML（2026-08-27 · #239 · PR #240）
+- **产品**：侧栏空态 = 招呼 + `当前页：` + 3 模板填作曲。「弹出对话框」开 overlay HTML 同一 copy（整张脸、**无页**）。Mac 热键仍 Swift 收起条。入口=工具栏 C，不是标签栏药丸。不画实心贴回。
+- **协议**：`overlay.shell.open` 仅 `chrome-extension://`；不进 `SUMMONER_ALLOW`。broadcast `{type,thread_id}` 无 id。tray 另挂 `onAppMessage` → `openLoopbackPage`。RPC = `accepted` 不是 `opened`。失败 toast。
+- **闸门**：spec/plan 对抗 REJECT→r2 → Claude+Pi 均 AWN。实现 subagent-driven + 终审 I1–I3 已折。
+- **未合 main**。SoT：`docs/superpowers/specs/2026-08-27-chat-shell-same-face-design.md`
+
 ### 产品 0.5.3 形态切点：租手实验，T1 PASS 带 nit，不扩 profile（2026-08-27）
 - **版本**：companion/extension/NSIS **0.5.3**。切片 1–3/5/6 + 知识诚实 on main。本机 `/Applications/CMspark.app` 已换 0.5.3 DMG（#229 Swift 快/淡**未**打进该包）。
 - **T1**：CMspark 臂 OA「我的邮件」完成 + HITL；Playwright 干净 profile 打不开门户。L7 **PASS 带 nit**。`require_grant`/`auto_approve_dangerous` bake-off 后已改回盘上原值。
 - **禁**：扩 outbound 默认工具面；overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；不经确认改 live `config.json`。
-- **活票**：#230 冻结残留（F-S-10 / overlay-acl）。正交 #69/#70/#71。
+- **活票**：#239 ChatShell **PR #240**；#230 冻结残留（F-S-10 / overlay-acl）。正交 #69/#70/#71。
 - **SoT**：`docs/superpowers/specs/2026-08-27-post-227-status.md` · CHANGELOG 0.5.3
 
 ### Daily assistant · Knowledge Honesty（2026-08-25 · Wave 0–2 on `feat/knowledge-honesty-wave0`）

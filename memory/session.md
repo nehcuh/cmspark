@@ -2,6 +2,12 @@
 
 ## Current Session
 
+### S86 END (2026-08-27 ~20:03) [ChatShell 同一张脸 · #239 · PR #240]
+- **Ship**：Gemini 对照 → Issue #239 → spec r2（三路 REJECT 已折）→ plan r2 → subagent-driven 实现 → **PR #240** `feat/slice-239-chat-shell`。未合 main。
+- **产品**：侧栏空态当前页+3 芯片填作曲；弹出 → overlay HTML 无页整张脸；Mac 热键仍旧条。失败 toast「无法弹出对话框」。
+- **下次**：PR #240 审/CI/合。#230 仍冻。勿扩 outbound profile。隔离 clone 在 `~/.grok/worktrees/projects-cmspark/subagent-01a04243-0d83-74d2-8780-ea2a855243f5`。
+- Recorded: yes — loopback URL 双 query；placeWindow≠expanded；tray fan-out≠订阅；浮窗当前页会涨 ACL；processing 当 toast 拆空态
+
 ### S85 END (2026-08-27 ~14:02) [0.5.3 切点收口 · T1/召唤器/grant-cli/RunProgress tool]
 - **Ship on main**：#231 0.5.3+Issue-first；#232 T1 CMspark 臂记分；#233 Playwright 对照 nit；#234 召唤器不抢前台；#236 grant-cli 未知 flag 失败；#238 H1 todo `{text,tool}` 精确勾。tip `ed22223`。残枝 `feat/slice-6-*` 已删。
 - **T1**：OA 门户前 5 封（对话里核对，不入库）。PW 空 profile `ERR_EMPTY_RESPONSE`，**不是**登录墙。L7 PASS 带 nit。禁扩 profile。
@@ -915,11 +921,18 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+### ChatShell 同一张脸（S86 · #239 · PR #240）
+- status: **active**（PR 开着，未合）
+- context: spec/plan dual AWN；实现在 `feat/slice-239-chat-shell`。侧栏 ChatShell + 弹出 HTML；Mac HUD 旧壳。
+- next_action: 审 PR #240 / CI。合前勿声称四处已换脸。#230 勿整票继续。
+- resume_doc: https://github.com/nehcuh/cmspark/pull/240 · `docs/superpowers/specs/2026-08-27-chat-shell-same-face-design.md`
+- updated: 2026-08-27
+
 ### 形态深化 0.5.3 切点（S84–S85 · main `ed22223`）
 - status: **active**（主线用户可见项 done；冻结残留仍开）
-- context: 切片 1–6、T1（#228 关，L7 PASS 带 nit）、#229 快/淡、#235 grant-cli、#237 RunProgress tool 均 on main。#230 冻 F-S-10 / overlay-acl。
-- next_action: 勿扩 outbound profile。#229 体感需重启仓库 tray 或重打 DMG。#230 禁止整票「继续」。
-- resume_doc: `docs/superpowers/specs/2026-08-27-post-227-status.md` · #230
+- context: 切片 1–6、T1（#228 关）、#229 快/淡、#235/#237 on main。#239 弹出在 PR #240。#230 冻 F-S-10 / overlay-acl。
+- next_action: 勿扩 outbound profile。#229 体感需重启 tray 或重打 DMG。#230 禁止整票「继续」。
+- resume_doc: `docs/superpowers/specs/2026-08-27-post-227-status.md` · #230 · PR #240
 - updated: 2026-08-27
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
@@ -929,11 +942,11 @@
 - resume_doc: PR #221 · #220 · `docs/audit/reviews/post220-nits-adversary-synthesis-20260825.md`
 - updated: 2026-08-25
 
-### OS summoner overlay（S77–S85 · #219/#229 on main）
-- status: **active**（快/淡代码在 main，安装包未含）
-- context: Mac NSPanel Capture `open()` 不再 `NSApp.activate`（#234）。Win 仍 C-thin `--app`。MCP 轨 hide-not-delete。
-- next_action: 狗食热键对着 Chrome（前台应仍是 Chrome）。要装进 App 须重打 DMG。WebView2 另票。
-- resume_doc: PR #234 · #229
+### OS summoner overlay（S77–S86 · #219/#229 on main · #239 PR）
+- status: **active**（快/淡在 main 未进 DMG；HTML ChatShell 在 PR #240）
+- context: Mac `open()` 不 `NSApp.activate`（#234）。HTML 空态 `setExpanded(true)` + 无页 copy。弹出走 `overlay.shell.open`。
+- next_action: 合 #240 后 Win/Linux 托盘点开即 ChatShell。Mac 热键仍旧条。狗食弹出+热键。
+- resume_doc: PR #240 · PR #234 · #229
 - updated: 2026-08-27
 
 ### Companion-canon Side Panel（S74 · #196 MERGED）
