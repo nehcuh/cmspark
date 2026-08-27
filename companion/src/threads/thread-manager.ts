@@ -13,6 +13,7 @@ import {
   sanitizeRuntimeContextBudget,
   type RuntimeContextBudgetMeta,
 } from "./runtime-context-budget"
+import { sanitizeRunProgress, seedRunProgress, type RunProgress } from "./run-progress"
 import type { ImageAttachmentMeta } from "../llm/image-parts"
 import { sniffedExt, type RasterMime } from "../llm/image-sniff"
 import {
@@ -104,6 +105,11 @@ interface Thread {
    * Rolling summary is redacted, for UI "查看摘要"; not injected cross-thread.
    */
   runtime_context_budget?: RuntimeContextBudgetMeta | null
+  /**
+   * L0 chat-column RunProgress (slice 6). Seeded from H1 handoff.open_todos;
+   * ticks bind to tool_result or a later user gesture — not model JSON.
+   */
+  run_progress?: RunProgress | null
   /**
    * Soft-delete timestamp (ISO). null/undefined = active.
    * P1.5 recycle bin; hard delete clears file + index entry.
@@ -748,6 +754,16 @@ export class ThreadManager {
       const sanitized = sanitizeRuntimeContextBudget(thread.runtime_context_budget)
       thread.runtime_context_budget = sanitized
     }
+    if (thread && thread.run_progress != null) {
+      thread.run_progress = sanitizeRunProgress(thread.run_progress)
+    }
+    if (thread && (!thread.run_progress || thread.run_progress.items.length === 0)) {
+      const seeded = seedRunProgress(thread)
+      if (seeded.items.length > 0) {
+        thread.run_progress = seeded
+        this.saveIndex()
+      }
+    }
     return thread
   }
 
@@ -784,6 +800,14 @@ export class ThreadManager {
           throw new Error("Invalid runtime_context_budget payload")
         }
         updates = { ...updates, runtime_context_budget: sanitized }
+      }
+    }
+    // L0 RunProgress — cap 8×120; model_draft done forced false
+    if (updates.run_progress !== undefined) {
+      if (updates.run_progress === null) {
+        // ok — clear
+      } else {
+        updates = { ...updates, run_progress: sanitizeRunProgress(updates.run_progress) }
       }
     }
     if (updates.alias !== undefined) {
@@ -838,6 +862,12 @@ export class ThreadManager {
       throw new Error("board_mode must be a boolean")
     }
     Object.assign(thread, updates, { updated_at: monotonicTimestamp() })
+    if (!thread.run_progress || thread.run_progress.items.length === 0) {
+      const seeded = seedRunProgress(thread)
+      if (seeded.items.length > 0) {
+        thread.run_progress = seeded
+      }
+    }
     this.saveIndex()
     return thread
   }

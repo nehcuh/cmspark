@@ -96,6 +96,13 @@ test("summoner denies anything else not on the allowlist", () => {
   assert.match(r.error, /config.get/)
 })
 
+test("summoner surface thread.run_progress.toggle is denied SUMMONER_ACL", () => {
+  const r = assertSummonerAllowed("summoner", "thread.run_progress.toggle")
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "SUMMONER_ACL")
+  assert.match(r.error, /thread\.run_progress\.toggle/)
+})
+
 test("auth.handshake accepts optional surface tray|summoner", () => {
   const proof = "a".repeat(64)
   assert.equal(validateWsMessage({ type: "auth.handshake", proof }).valid, true)

@@ -80,6 +80,16 @@ export interface Thread {
     /** Client-computed when list marks fingerprint mismatch */
     stale?: boolean
   } | null
+  /** L0 chat-column RunProgress (slice 6). Seeded from H1 open_todos. */
+  run_progress?: {
+    items: Array<{
+      id: string
+      text: string
+      done: boolean
+      source: "seed" | "model_draft" | "user"
+      tool?: string
+    }>
+  } | null
   /** Runtime context budget meta (M1/M2) — distinct from digest */
   runtime_context_budget?: {
     last_at?: string

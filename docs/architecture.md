@@ -128,7 +128,7 @@ User Input → companion → LLM streaming
 Side Panel (React) ──WS──▶ Companion (Core Engine)
                               │
                               ├─ Thread Manager: 加载消息历史，构建 LLM context
-                              ├─ Skill Engine: 双轨技能匹配（TF-IDF 快路径 + LLM 语义精排）→ inject 相关 skill prompt
+                              ├─ Skill Engine: 双轨技能匹配（TF-IDF 快路径，IDF 按技能语料；低分 LLM 精排）→ inject 相关 skill prompt
                               ├─ LLM Adapter: 构建请求，发送到 LLM API
                               │
                               ▼  LLM Response (streaming)

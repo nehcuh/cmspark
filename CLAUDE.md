@@ -86,7 +86,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
   - ⑤ **关键实现要点**：`osascript_eval` 因属宿主执行（任意 shell）**不走域白名单**，只能由全局开关放行；`tabUrlCache` 在 `list_tabs`/`navigate`/`set_tab_url`/`create_tab` 后同步刷新，避免跨域自动批准；`respondFrom` 必须先于 `saveConfig` 完成，且白名单持久化以 `responded === true` 为前提。
   - 配合 `security-policy.ts`（token 颁发 + HMAC 服务端校验，constant-time）、`security-confirmation.ts`（45s 超时的 Promise-based 确认队列 + origin 绑定）、`page-sanitizer`（extension 端 ~11 模式 prompt-injection 过滤）、错误三级分类、越狱检测。
   - 注：原设计的 risk-engine / privilege-manager / page-scanner 三层在 2026-06-16 审计后删除（dead code，runtime 零调用）。
-- **A5. Skill 格式**：Markdown + YAML frontmatter，支持内置技能、Skill Crafting、TF-IDF + 语义匹配
+- **A5. Skill 格式**：Markdown + YAML frontmatter，支持内置技能、Skill Crafting、技能匹配 **TF-IDF**（`semantic-match` 的 IDF 仅用于 skills；知识 related / Obsidian 仍纯 TF）+ 低分 LLM 精排
 - **A6. Obsidian 对话导出**（2026-06-30，详见 [ADR-008](docs/adr/008-obsidian-export.md)）— 把对话导出成贴合 vault 约定的 markdown 笔记：
   - **UI 下载（v1）**：companion 生成 markdown → 浏览器 Blob 下载；**不写宿主文件、无路径沙箱**。
   - **四档导出**：单条 `single`（📥 per-message）/ 整 thread（📥 header）/ 🧠 NotebookLM 摘要（LLM 结构化 TL;DR·关键主题·结论·决策·待办 + 折叠完整对话附录）。

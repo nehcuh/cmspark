@@ -221,6 +221,23 @@ test("semantic-match: cosineSimilarity handles partial overlap", () => {
   assert.ok(result > 0 && result < 1)
 })
 
+test("tfidfVec ranks a rare in-corpus token above a token in every document", () => {
+  const { idfFromDocs, tfidfVec, cosineSimilarity } = require("../src/skills/semantic-match")
+  const docs = [
+    ["web", "alpha"],
+    ["web", "beta"],
+    ["web", "gamma"],
+    ["web", "rareterm"],
+  ]
+  const idf = idfFromDocs(docs)
+  const q = tfidfVec(["web", "rareterm"], idf)
+  const commonOnly = tfidfVec(["web"], idf)
+  const rareOnly = tfidfVec(["rareterm"], idf)
+  assert.ok(cosineSimilarity(q, rareOnly) > cosineSimilarity(q, commonOnly))
+  const { tokensToVec } = require("../src/skills/semantic-match")
+  assert.deepEqual(tokensToVec(["a", "a", "b"]), { a: 2 / 3, b: 1 / 3 })
+})
+
 // --- Tests for skill-engine.ts ---
 
 before(async () => {
@@ -532,6 +549,55 @@ test("skill-engine: matchSkills returns relevant skills sorted", async () => {
   assert.ok(matches.length > 0, "should return at least one match")
   assert.ok(matches.length <= 3, "should return max 3 matches")
   assert.ok(matches[0].confidence >= matches[matches.length - 1].confidence, "should be sorted by confidence")
+})
+
+test("skill-engine: matchSkills ranks rare in-corpus token above common web/browse", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  // Generic: name/description/tags packed with common "web"/"browse" so TF cosine
+  // against a web-heavy query outranks the rare skill. Rare also mentions web but
+  // is the only in-corpus holder of zxqvskill. Query mixes both.
+  writeSkillFile(skillsDir, "web-browse.md", {
+    name: "web-browse",
+    description: "web browse web browse web browse web browse web browse web browse web browse",
+    tags: ["web", "browse", "web", "browse", "web", "browse"],
+    type: "prompt_template",
+  }, "# Browse")
+  writeSkillFile(skillsDir, "zxqvskill.md", {
+    name: "zxqvskill",
+    description: "web browse zxqvskill",
+    tags: ["web"],
+    type: "prompt_template",
+  }, "# Rare")
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  const matches = await engine.matchSkills("web browse web browse web browse web browse zxqvskill")
+
+  assert.ok(matches.length > 0, "should return at least one match")
+  assert.equal(matches[0].name, "zxqvskill")
+  // SkillEngine() has no llmConfig: llmRerank would flatten every candidate to 50.
+  // Fixtures keep TF and IDF topScore >= 70 so the fast path's ranking is what we assert.
+  assert.ok(
+    matches[0].confidence >= 70,
+    `IDF fast path should fire (topScore>=70); got ${matches[0].confidence}`,
+  )
+
+  const engineSrc = fs.readFileSync(path.join(process.cwd(), "src/skills/skill-engine.ts"), "utf-8")
+  const matchBlock = engineSrc.slice(
+    engineSrc.indexOf("async matchSkills"),
+    engineSrc.indexOf("async resolveSkillIdsForThread"),
+  )
+  const claimsTfIdf = /TF-IDF/.test(matchBlock)
+  const usesOnlyTf = matchBlock.includes("tokensToVec") && !matchBlock.includes("tfidfVec")
+  assert.ok(
+    !(claimsTfIdf && usesOnlyTf),
+    "comments must not claim TF-IDF while matchSkills only calls tokensToVec",
+  )
+  assert.match(matchBlock, /tfidfVec/)
+  assert.match(matchBlock, /idfFromDocs/)
+  assert.match(matchBlock, /IDF is live/)
 })
 
 test("skill-engine: matchSkills returns empty for irrelevant query", async () => {
@@ -1814,6 +1880,136 @@ test("skill-engine: resolveSkillIdsForThread auto mode deduplicates skills", asy
   const result = await engine.resolveSkillIdsForThread("thread-dedup", "auto", "how do I browse the web")
   const occurrences = result.filter(name => name === "browse-skill").length
   assert.equal(occurrences, 1, "should not duplicate skills")
+})
+
+// --- slash-skill pin (`/技能` → 按需 / manual). Overlay skill.activate must not flip mode. ---
+
+test("slash-skill pin: pinSlashSkill flips auto thread to manual and includes named skill", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "browse.md", {
+    name: "browse",
+    description: "Browse websites",
+    type: "prompt_template",
+  }, "# Browse")
+  writeSkillFile(skillsDir, "code.md", {
+    name: "code",
+    description: "Write code zxqvcodewrite programming",
+    tags: ["programming", "zxqvcodewrite"],
+    type: "prompt_template",
+  }, "# Code")
+
+  const skillMod = await import("../src/skills/skill-engine") as any
+  const pinSlashSkill = skillMod.pinSlashSkill
+  const { SkillEngine } = skillMod
+  assert.equal(typeof pinSlashSkill, "function", "pinSlashSkill must be exported")
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("slash-pin")
+  assert.equal(thread.skill_selection_mode, "auto")
+
+  const engine = new SkillEngine()
+  const pin = pinSlashSkill(thread, "/browse how do I …", engine.list())
+  assert.ok(pin, "leading /browse must pin the browse skill")
+  assert.equal(pin.skillName, "browse")
+  assert.equal(pin.skill_selection_mode, "manual")
+  assert.ok(pin.active_skill_ids.includes("browse"))
+
+  const updated = tm.update(thread.id, {
+    skill_selection_mode: pin.skill_selection_mode,
+    active_skill_ids: pin.active_skill_ids,
+  })
+  engine.setActiveSkillsForThread(thread.id, pin.active_skill_ids)
+  assert.equal(updated?.skill_selection_mode, "manual")
+  assert.ok(updated?.active_skill_ids.includes("browse"))
+
+  // Next resolve must not union matchSkills (manual path). Query would match `code` in auto.
+  const next = await engine.resolveSkillIdsForThread(
+    thread.id,
+    updated?.skill_selection_mode,
+    "how do I write code zxqvcodewrite programming",
+  )
+  assert.ok(next.includes("browse"), "manual resolve returns the pinned skill")
+  assert.ok(!next.includes("code"), "manual must not union matchSkills")
+})
+
+test("slash-skill pin: unknown slash token does not pin", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "browse.md", {
+    name: "browse",
+    description: "Browse websites",
+    type: "prompt_template",
+  }, "# Browse")
+
+  const skillMod = await import("../src/skills/skill-engine") as any
+  const pinSlashSkill = skillMod.pinSlashSkill
+  const { SkillEngine } = skillMod
+  assert.equal(typeof pinSlashSkill, "function", "pinSlashSkill must be exported")
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("slash-unknown")
+  const engine = new SkillEngine()
+  assert.equal(pinSlashSkill(thread, "/not-a-skill hello", engine.list()), null)
+  assert.equal(pinSlashSkill(thread, "browse how do I", engine.list()), null)
+  assert.equal(thread.skill_selection_mode, "auto")
+})
+
+test("slash-skill pin: match is case-insensitive among skill docs", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "browse.md", {
+    name: "browse",
+    description: "Browse websites",
+    type: "prompt_template",
+  }, "# Browse")
+
+  const skillMod = await import("../src/skills/skill-engine") as any
+  const pinSlashSkill = skillMod.pinSlashSkill
+  const { SkillEngine } = skillMod
+  assert.equal(typeof pinSlashSkill, "function", "pinSlashSkill must be exported")
+  const engine = new SkillEngine()
+  const pin = pinSlashSkill(
+    { skill_selection_mode: "auto", active_skill_ids: [] },
+    "/Browse how do I",
+    engine.list(),
+  )
+  assert.ok(pin)
+  assert.equal(pin.skillName, "browse")
+})
+
+test("slash-skill pin: chat.create wires pinSlashSkill before resolveSkillIdsForThread", () => {
+  const routerSrc = fs.readFileSync(path.join(process.cwd(), "src/message-router.ts"), "utf-8")
+  const createStart = routerSrc.indexOf('case "chat.create"')
+  const createEnd = routerSrc.indexOf('case "chat.steer"')
+  assert.ok(createStart >= 0 && createEnd > createStart, "chat.create case must exist")
+  const createBlock = routerSrc.slice(createStart, createEnd)
+  assert.match(
+    createBlock,
+    /applySlashSkillPin|pinSlashSkill/,
+    "chat.create must pin via pinSlashSkill (not rest.skill_ids as the pin door)",
+  )
+  const pinAt = createBlock.search(/applySlashSkillPin|pinSlashSkill/)
+  const resolveAt = createBlock.search(/resolveSkillIdsForThread/)
+  assert.ok(pinAt < resolveAt, "slash pin must run before resolveSkillIdsForThread so this turn is manual")
+  assert.match(routerSrc, /function applySlashSkillPin/)
+  assert.match(routerSrc, /pinSlashSkill\(/)
+})
+
+test("skill.activate handler does not write skill_selection_mode", () => {
+  const routerSrc = fs.readFileSync(path.join(process.cwd(), "src/message-router.ts"), "utf-8")
+  const start = routerSrc.indexOf('case "skill.activate"')
+  const end = routerSrc.indexOf('case "skill.deactivate"')
+  assert.ok(start >= 0 && end > start, "skill.activate case must exist")
+  const block = routerSrc.slice(start, end)
+  assert.doesNotMatch(
+    block,
+    /skill_selection_mode/,
+    "overlay skill.activate must not flip skill_selection_mode (Trust freeze)",
+  )
 })
 
 test("skill-engine: buildSystemPrompt filters by provided skillIds", async () => {

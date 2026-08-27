@@ -66,6 +66,7 @@ import {
   shouldThawAfterSuccess,
   shouldPersistSiteOpExperience,
 } from "../tool/site-op-memory"
+import { applyToolResult, seedRunProgress } from "../threads/run-progress"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -1300,6 +1301,30 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             tool_name: toolName,
             result: toolResult,
           })
+
+          // Slice 6: evidence tick on real success only (not parse/validation/abort sends).
+          if (toolResult.success) {
+            try {
+              const th = threadManager.get(threadId)
+              if (th) {
+                const current =
+                  th.run_progress && th.run_progress.items.length > 0
+                    ? th.run_progress
+                    : seedRunProgress(th)
+                const next = applyToolResult(current, { tool: toolName, success: true })
+                const shouldWrite =
+                  next !== current || (!th.run_progress && next.items.length > 0)
+                if (shouldWrite) {
+                  const updated = threadManager.update(threadId, { run_progress: next })
+                  if (updated) {
+                    sendToExtension({ type: "thread.updated", thread: updated })
+                  }
+                }
+              }
+            } catch {
+              /* non-fatal run_progress tick */
+            }
+          }
 
           // Vision pipeline: intercept image-carrying tool results for local analysis
           const VISION_TOOLS = ["screenshot", "analyze_image"]

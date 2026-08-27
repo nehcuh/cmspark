@@ -12,11 +12,11 @@ Home is **logged-in Chrome + hard gates**, not the Side Panel. Tokens below stil
 | Surface | Design job |
 |---------|------------|
 | 召唤器 | Default = collapsed composer bar (fast). Expand = **展开对话** (thread + list). Not a five-rail WorkBuddy. Same 看山 paper as Operate; no Allow/Deny. |
-| Side Panel | Operate when watching the page. Empty/composer = 看山 canon. ~320px density budget unchanged. |
+| Side Panel | Operate when watching the page. Empty/composer = 看山 canon. ~320px density budget unchanged. Chat column **本轮步骤** is L0 RunProgress (H1 seed + tool_result / click), **not** Mission Board. |
 | 确认台 / Cockpit | Confirm. Night-world of the same craft. Overlay never borrows this dialect. |
 | 租手 | No new visual chrome in coding agents. Confirm still lands on 确认台 / Mac tray. |
 
-Copy contract (Chinese chrome): `展开对话` / `打开浏览器` / `打开确认台`. Forbidden: `展开工作台`, `去侧栏批准`.
+Copy contract (Chinese chrome): `展开对话` / `打开浏览器` / `打开确认台` / `本轮步骤`. Forbidden: `展开工作台`, `去侧栏批准`. Do not label RunProgress `进行中` (collides with Mission Board intents).
 
 ## Colors
 

@@ -815,6 +815,15 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         sendResponse({ ok: true })
         return true
 
+      case "thread.run_progress.toggle":
+        wsClient.send({
+          type: "thread.run_progress.toggle",
+          thread_id: message.thread_id || message.threadId,
+          item_id: message.item_id,
+        })
+        sendResponse({ ok: true })
+        return true
+
       case "thread.delete":
         // Align with companion: omit/unknown → hard; only explicit "trash" soft-deletes.
         wsClient.send({

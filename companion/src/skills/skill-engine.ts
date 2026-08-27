@@ -3,7 +3,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
-import { tokenize, tokensToVec, cosineSimilarity } from "./semantic-match"
+import { tokenize, tfidfVec, idfFromDocs, cosineSimilarity } from "./semantic-match"
 import matter from "gray-matter"
 import AdmZip from "adm-zip"
 import * as yaml from "js-yaml"
@@ -105,6 +105,42 @@ interface Skill extends SkillMeta {
 
 /** Accept full companion llm config so protocol/profile reach createProvider. */
 type LlmConfig = CompanionLlmConfig
+
+/** Result of Side Panel `/技能` pin (`/^\/(\S+)/` on this-turn message). */
+export type SlashSkillPin = {
+  skillName: string
+  skill_selection_mode: "manual"
+  active_skill_ids: string[]
+}
+
+/**
+ * Matching-honesty pin door: a leading `/name` token in the user message that
+ * matches a skill doc (case-insensitive) switches the thread to 按需 (`manual`)
+ * and ensures that skill is in `active_skill_ids`.
+ *
+ * Detect from `rest.message`, NOT `rest.skill_ids` (the extension always sends
+ * activeSkillIds). Overlay `skill.activate` must not call this — it must not
+ * write `skill_selection_mode`.
+ */
+export function pinSlashSkill(
+  thread: { skill_selection_mode?: "auto" | "all" | "manual"; active_skill_ids?: string[] } | null | undefined,
+  message: string,
+  skills: Array<{ name: string }>,
+): SlashSkillPin | null {
+  if (!thread || typeof message !== "string") return null
+  const m = message.match(/^\/(\S+)/)
+  if (!m) return null
+  const token = m[1].toLowerCase()
+  const skill = skills.find((s) => typeof s.name === "string" && s.name.toLowerCase() === token)
+  if (!skill) return null
+  const active = Array.isArray(thread.active_skill_ids) ? [...thread.active_skill_ids] : []
+  if (!active.includes(skill.name)) active.push(skill.name)
+  return {
+    skillName: skill.name,
+    skill_selection_mode: "manual",
+    active_skill_ids: active,
+  }
+}
 
 const KNOWLEDGE_SEARCH_THRESHOLD_TOKENS = 1000
 const KNOWLEDGE_SEARCH_TOPK = 3
@@ -523,46 +559,48 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
   }
 
   /** Match user message against all skill descriptions using dual-track strategy:
-   * - High confidence (>= 70%): TF-IDF fast path (millisecond-level)
+   * - High confidence (>= 70%): TF-IDF fast path (corpus IDF is live; millisecond-level)
    * - Low confidence (< 70%): LLM semantic re-ranking (precise, one-shot) */
   async matchSkills(message: string): Promise<Array<{ name: string; confidence: number }>> {
     this.ensureFresh()
     const queryTokens = tokenize(message)
-    const queryVec = tokensToVec(queryTokens)
     // Only match real skills — vault/knowledge notes must not rank into skill auto-match
     const skillPool = this.skillsCache.filter(s => this.isSkillDoc(s))
 
-    const results: Array<{ name: string; confidence: number }> = []
-    for (const skill of skillPool) {
+    const skillTokenLists = skillPool.map(skill => {
       const skillText = `${skill.name} ${skill.description || ""} ${(skill.tags || []).join(" ")}`
-      const skillTokens = tokenize(skillText)
-      const skillVec = tokensToVec(skillTokens)
+      return tokenize(skillText)
+    })
+    const idf = idfFromDocs(skillTokenLists)
+    const queryVec = tfidfVec(queryTokens, idf)
+
+    const results: Array<{ name: string; confidence: number }> = []
+    for (let i = 0; i < skillPool.length; i++) {
+      const skillVec = tfidfVec(skillTokenLists[i], idf)
       const score = cosineSimilarity(queryVec, skillVec)
       if (score > 0.1) {
-        results.push({ name: skill.name, confidence: Math.round(score * 100) })
+        results.push({ name: skillPool[i].name, confidence: Math.round(score * 100) })
       }
     }
     results.sort((a, b) => b.confidence - a.confidence)
 
     const topScore = results[0]?.confidence || 0
 
-    // Dual-track: high confidence → TF-IDF fast path
+    // Dual-track: high confidence → TF-IDF fast path (IDF is live)
     if (topScore >= 70) {
       return results.slice(0, 3)
     }
 
     // Low confidence → LLM semantic re-ranking (precise)
-    const candidates = skillPool.filter(s => {
-      const skillText = `${s.name} ${s.description || ""} ${(s.tags || []).join(" ")}`
-      const skillTokens = tokenize(skillText)
-      const skillVec = tokensToVec(skillTokens)
+    const candidates = skillPool.filter((_, i) => {
+      const skillVec = tfidfVec(skillTokenLists[i], idf)
       const score = cosineSimilarity(queryVec, skillVec)
       return score > 0.05
     })
 
     const llmResults = await this.llmRerank(message, candidates)
 
-    // If LLM returned results, use them; otherwise fall back to TF-IDF
+    // If LLM returned results, use them; otherwise fall back to TF-IDF (IDF is live)
     return llmResults.length > 0 ? llmResults : results.slice(0, 3)
   }
 

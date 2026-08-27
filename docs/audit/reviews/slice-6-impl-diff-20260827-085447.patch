@@ -1,0 +1,1835 @@
+# Dual external review context
+batch: slice-6-impl
+base: origin/main
+time: 20260827-085447
+
+bbfd687
+
+?? docs/audit/reviews/slice-6-impl-adversary-synthesis-20260827.md
+?? docs/audit/reviews/slice-6-impl-diff-20260827-085447.patch
+?? docs/audit/reviews/slice-6-impl-diff-20260827.patch
+?? docs/audit/reviews/slice-6-impl-dual-prompt-20260827.md
+
+## Diff (git diff + staged)
+ CLAUDE.md                                          |   2 +-
+ chrome-extension/src/background/index.ts           |   9 +
+ .../src/sidepanel/components/ChatView.tsx          |   5 +
+ .../src/sidepanel/components/RunProgress.tsx       | 124 ++++++
+ chrome-extension/src/sidepanel/types.ts            |  10 +
+ chrome-extension/tests/run-progress-ui.test.ts     |  34 ++
+ companion/src/llm/adapter.ts                       |  25 ++
+ companion/src/message-router.ts                    |  47 ++-
+ .../src/message-router/handlers/run-progress.ts    |  28 ++
+ companion/src/skills/semantic-match.ts             |  23 ++
+ companion/src/skills/skill-engine.ts               |  66 +++-
+ companion/src/threads/run-progress.ts              | 136 +++++++
+ companion/src/threads/thread-manager.ts            |  30 ++
+ companion/src/ws/validate.ts                       |   9 +
+ companion/tests/run-progress.test.ts               | 432 +++++++++++++++++++++
+ companion/tests/single/files.test.ts               |  22 ++
+ companion/tests/skills.test.ts                     | 196 ++++++++++
+ companion/tests/slash-skill-pin.test.ts            | 209 ++++++++++
+ companion/tests/summoner-acl.test.ts               |   7 +
+ docs/DESIGN.md                                     |   4 +-
+ docs/GOAL.md                                       |   3 +-
+ docs/architecture.md                               |   2 +-
+ docs/multi-agent-user-guide.md                     |   2 +
+ 23 files changed, 1403 insertions(+), 22 deletions(-)
+
+diff --git a/CLAUDE.md b/CLAUDE.md
+index fce3e2c..842d8b2 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -86,7 +86,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
+   - ⑤ **关键实现要点**：`osascript_eval` 因属宿主执行（任意 shell）**不走域白名单**，只能由全局开关放行；`tabUrlCache` 在 `list_tabs`/`navigate`/`set_tab_url`/`create_tab` 后同步刷新，避免跨域自动批准；`respondFrom` 必须先于 `saveConfig` 完成，且白名单持久化以 `responded === true` 为前提。
+   - 配合 `security-policy.ts`（token 颁发 + HMAC 服务端校验，constant-time）、`security-confirmation.ts`（45s 超时的 Promise-based 确认队列 + origin 绑定）、`page-sanitizer`（extension 端 ~11 模式 prompt-injection 过滤）、错误三级分类、越狱检测。
+   - 注：原设计的 risk-engine / privilege-manager / page-scanner 三层在 2026-06-16 审计后删除（dead code，runtime 零调用）。
+-- **A5. Skill 格式**：Markdown + YAML frontmatter，支持内置技能、Skill Crafting、TF-IDF + 语义匹配
++- **A5. Skill 格式**：Markdown + YAML frontmatter，支持内置技能、Skill Crafting、技能匹配 **TF-IDF**（`semantic-match` 的 IDF 仅用于 skills；知识 related / Obsidian 仍纯 TF）+ 低分 LLM 精排
+ - **A6. Obsidian 对话导出**（2026-06-30，详见 [ADR-008](docs/adr/008-obsidian-export.md)）— 把对话导出成贴合 vault 约定的 markdown 笔记：
+   - **UI 下载（v1）**：companion 生成 markdown → 浏览器 Blob 下载；**不写宿主文件、无路径沙箱**。
+   - **四档导出**：单条 `single`（📥 per-message）/ 整 thread（📥 header）/ 🧠 NotebookLM 摘要（LLM 结构化 TL;DR·关键主题·结论·决策·待办 + 折叠完整对话附录）。
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index fe317b8..4076858 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -815,6 +815,15 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+         sendResponse({ ok: true })
+         return true
+ 
++      case "thread.run_progress.toggle":
++        wsClient.send({
++          type: "thread.run_progress.toggle",
++          thread_id: message.thread_id || message.threadId,
++          item_id: message.item_id,
++        })
++        sendResponse({ ok: true })
++        return true
++
+       case "thread.delete":
+         // Align with companion: omit/unknown → hard; only explicit "trash" soft-deletes.
+         wsClient.send({
+diff --git a/chrome-extension/src/sidepanel/components/ChatView.tsx b/chrome-extension/src/sidepanel/components/ChatView.tsx
+index 34288d0..e7ad2c0 100644
+--- a/chrome-extension/src/sidepanel/components/ChatView.tsx
++++ b/chrome-extension/src/sidepanel/components/ChatView.tsx
+@@ -40,6 +40,7 @@ import {
+   type IconProps,
+ } from "../ui/icons"
+ import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
++import { RunProgress } from "./RunProgress"
+ import { CHAT_MARKED_OPTIONS } from "../utils/markdown-gfm"
+ // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
+ import "katex/dist/katex.min.css"
+@@ -90,6 +91,7 @@ export function ChatView() {
+     activeThreadId && contextCompactedByThreadId[activeThreadId]
+       ? contextCompactedByThreadId[activeThreadId]
+       : null
++  const runItems = threads.find((t) => t.id === activeThreadId)?.run_progress?.items
+   const [summaryOpen, setSummaryOpen] = useState(false)
+   const containerRef = useRef<HTMLDivElement>(null)
+   /** Inner content grows with messages; ResizeObserver watches this for stick-to-bottom. */
+@@ -504,6 +506,9 @@ export function ChatView() {
+             </div>
+           </div>
+         )}
++        {runItems && runItems.length > 0 && activeThreadId ? (
++          <RunProgress threadId={activeThreadId} items={runItems} />
++        ) : null}
+         {messages.length === 0 && !streamingContent && !streamingReasoning && !processingLabel && (
+           <EmptyState level={level} />
+         )}
+diff --git a/chrome-extension/src/sidepanel/components/RunProgress.tsx b/chrome-extension/src/sidepanel/components/RunProgress.tsx
+new file mode 100644
+index 0000000..86b6510
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/components/RunProgress.tsx
+@@ -0,0 +1,124 @@
++// L0 chat-column checklist. Copy: 「本轮步骤」; draft rows 「草稿」.
++// Spec: docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md Task 5
++// Overlay has no edit. Not Mission Board.
++
++import type { CSSProperties } from "react"
++import { tokens } from "../ui/tokens"
++
++export type RunProgressItem = {
++  id: string
++  text: string
++  done: boolean
++  source: "seed" | "model_draft" | "user"
++  tool?: string
++}
++
++export function RunProgress({
++  threadId,
++  items,
++}: {
++  threadId: string
++  items: RunProgressItem[]
++}) {
++  if (!items || items.length === 0) return null
++
++  const toggle = (itemId: string, source: RunProgressItem["source"]) => {
++    if (source === "model_draft") return
++    chrome.runtime.sendMessage({
++      type: "thread.run_progress.toggle",
++      thread_id: threadId,
++      item_id: itemId,
++    })
++  }
++
++  return (
++    <section aria-label="本轮步骤" style={styles.wrap}>
++      <div style={styles.title}>本轮步骤</div>
++      <ul style={styles.list}>
++        {items.map((it) => {
++          const draft = it.source === "model_draft"
++          return (
++            <li key={it.id} style={styles.row}>
++              <label style={styles.label}>
++                <input
++                  type="checkbox"
++                  checked={it.done === true}
++                  disabled={draft}
++                  onChange={() => toggle(it.id, it.source)}
++                  style={styles.box}
++                />
++                <span
++                  style={{
++                    ...styles.text,
++                    textDecoration: it.done ? "line-through" : "none",
++                    color: it.done ? tokens.textMuted : tokens.text,
++                  }}
++                >
++                  {it.text}
++                </span>
++                {draft ? <span style={styles.draft}>草稿</span> : null}
++              </label>
++            </li>
++          )
++        })}
++      </ul>
++    </section>
++  )
++}
++
++const styles: Record<string, CSSProperties> = {
++  wrap: {
++    margin: "0 0 10px",
++    padding: "8px 10px",
++    borderRadius: tokens.radiusMd,
++    border: `1px solid ${tokens.border}`,
++    background: tokens.bgMuted,
++    fontFamily: tokens.font,
++  },
++  title: {
++    fontSize: 11,
++    fontWeight: 600,
++    color: tokens.textSecondary,
++    marginBottom: 6,
++    letterSpacing: "0.02em",
++  },
++  list: {
++    listStyle: "none",
++    margin: 0,
++    padding: 0,
++    display: "flex",
++    flexDirection: "column",
++    gap: 4,
++  },
++  row: {
++    margin: 0,
++    padding: 0,
++  },
++  label: {
++    display: "flex",
++    alignItems: "flex-start",
++    gap: 8,
++    cursor: "pointer",
++    fontSize: 12,
++    lineHeight: 1.4,
++  },
++  box: {
++    marginTop: 2,
++    flexShrink: 0,
++  },
++  text: {
++    flex: 1,
++    minWidth: 0,
++    wordBreak: "break-word",
++  },
++  draft: {
++    flexShrink: 0,
++    fontSize: 10,
++    color: tokens.textMuted,
++    background: tokens.bgElevated,
++    border: `1px solid ${tokens.border}`,
++    borderRadius: tokens.radiusSm,
++    padding: "0 5px",
++    lineHeight: "16px",
++  },
++}
+diff --git a/chrome-extension/src/sidepanel/types.ts b/chrome-extension/src/sidepanel/types.ts
+index 7360c18..606de66 100644
+--- a/chrome-extension/src/sidepanel/types.ts
++++ b/chrome-extension/src/sidepanel/types.ts
+@@ -80,6 +80,16 @@ export interface Thread {
+     /** Client-computed when list marks fingerprint mismatch */
+     stale?: boolean
+   } | null
++  /** L0 chat-column RunProgress (slice 6). Seeded from H1 open_todos. */
++  run_progress?: {
++    items: Array<{
++      id: string
++      text: string
++      done: boolean
++      source: "seed" | "model_draft" | "user"
++      tool?: string
++    }>
++  } | null
+   /** Runtime context budget meta (M1/M2) — distinct from digest */
+   runtime_context_budget?: {
+     last_at?: string
+diff --git a/chrome-extension/tests/run-progress-ui.test.ts b/chrome-extension/tests/run-progress-ui.test.ts
+new file mode 100644
+index 0000000..e38fce9
+--- /dev/null
++++ b/chrome-extension/tests/run-progress-ui.test.ts
+@@ -0,0 +1,34 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import { readFileSync } from "node:fs"
++import { join } from "node:path"
++
++const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
++
++test("ChatView imports and mounts RunProgress when items.length>0", () => {
++  const chat = src("src/sidepanel/components/ChatView.tsx")
++  assert.match(chat, /from ["']\.\/RunProgress["']/)
++  assert.match(chat, /<RunProgress/)
++  assert.match(chat, /items\.length\s*>\s*0/)
++  const emptyFn = chat.slice(chat.indexOf("function EmptyState"), chat.indexOf("const markdownCSS"))
++  // node-shims Assert has no doesNotMatch
++  assert.ok(!/RunProgress/.test(emptyFn))
++})
++
++test("RunProgress copy is 本轮步骤 and drafts 草稿, not 进行中", () => {
++  const rp = src("src/sidepanel/components/RunProgress.tsx")
++  assert.match(rp, /本轮步骤/)
++  assert.match(rp, /草稿/)
++  assert.ok(!/进行中/.test(rp))
++})
++
++test("RunProgress does not import BoardPanel", () => {
++  const rp = src("src/sidepanel/components/RunProgress.tsx")
++  assert.ok(!/BoardPanel/.test(rp))
++})
++
++test("background forwards thread.run_progress.toggle for RunProgress", () => {
++  const bg = src("src/background/index.ts")
++  assert.match(bg, /case "thread\.run_progress\.toggle"/)
++  assert.match(bg, /type:\s*["']thread\.run_progress\.toggle["']/)
++})
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index 589eb91..9fd516e 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -66,6 +66,7 @@ import {
+   shouldThawAfterSuccess,
+   shouldPersistSiteOpExperience,
+ } from "../tool/site-op-memory"
++import { applyToolResult, seedRunProgress } from "../threads/run-progress"
+ 
+ // Jailbreak patterns to detect in LLM output
+ const JAILBREAK_OUTPUT_PATTERNS = [
+@@ -1301,6 +1302,30 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+             result: toolResult,
+           })
+ 
++          // Slice 6: evidence tick on real success only (not parse/validation/abort sends).
++          if (toolResult.success) {
++            try {
++              const th = threadManager.get(threadId)
++              if (th) {
++                const current =
++                  th.run_progress && th.run_progress.items.length > 0
++                    ? th.run_progress
++                    : seedRunProgress(th)
++                const next = applyToolResult(current, { tool: toolName, success: true })
++                const shouldWrite =
++                  next !== current || (!th.run_progress && next.items.length > 0)
++                if (shouldWrite) {
++                  const updated = threadManager.update(threadId, { run_progress: next })
++                  if (updated) {
++                    sendToExtension({ type: "thread.updated", thread: updated })
++                  }
++                }
++              }
++            } catch {
++              /* non-fatal run_progress tick */
++            }
++          }
++
+           // Vision pipeline: intercept image-carrying tool results for local analysis
+           const VISION_TOOLS = ["screenshot", "analyze_image"]
+           if (VISION_TOOLS.includes(toolName) && toolResult.success && toolResult.data?.image_base64) {
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 89e889d..b1a1032 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -29,7 +29,7 @@ import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "
+ import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
+ import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
+ import { pickFolderNative } from "./obsidian/folder-picker"
+-import type { SkillEngine } from "./skills/skill-engine"
++import { pinSlashSkill, type SkillEngine } from "./skills/skill-engine"
+ import { isSymlinkOrJunction } from "./skills/doc-identity"
+ import { normalizeHostname } from "./skills/site-matcher"
+ import type { HistoryStore } from "./history/store"
+@@ -85,6 +85,7 @@ import { canAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop } from "./orchest
+ import {
+   handleConfigFamily,
+ } from "./message-router/handlers/config"
++import { handleRunProgressToggle } from "./message-router/handlers/run-progress"
+ import {
+   gateChatCreateOnLease,
+   handleComposerLeaseFamily,
+@@ -116,6 +117,37 @@ function normalizeChatHostname(hostname?: unknown, url?: unknown): string | unde
+   return undefined
+ }
+ 
++/**
++ * `/技能` pin door (slice 6 PR-A): leading `/name` in this-turn message flips
++ * the thread to 按需 (`manual`) and activates that skill. Broadcast
++ * `thread.updated` so SkillsPanel reflects the mode. Overlay `skill.activate`
++ * must not write `skill_selection_mode` — do not call this from that handler.
++ */
++function applySlashSkillPin(
++  threadId: string,
++  message: unknown,
++  services: Services,
++  session?: SessionCallbacks,
++): void {
++  const thread = services.threadManager.get(threadId)
++  if (!thread) return
++  const pin = pinSlashSkill(
++    thread,
++    typeof message === "string" ? message : "",
++    services.skillEngine.list(),
++  )
++  if (!pin) return
++  const updated = services.threadManager.update(threadId, {
++    skill_selection_mode: pin.skill_selection_mode,
++    active_skill_ids: pin.active_skill_ids,
++  })
++  services.skillEngine.setActiveSkillsForThread(threadId, pin.active_skill_ids)
++  if (!updated) return
++  const payload = { type: "thread.updated", thread: updated }
++  session?.broadcast?.(payload)
++  session?.sendToExtension?.(payload)
++}
++
+ // Per-thread abort controllers for cancelling in-flight LLM requests
+ const abortControllers = new Map<string, AbortController>()
+ /**
+@@ -539,6 +571,8 @@ export async function handleMessage(
+       }
+ 
+       try {
++        // `/技能` pin before resolve so this turn is already manual (no matchSkills union).
++        applySlashSkillPin(rest.thread_id, rest.message, services, session)
+         // Get thread to determine skill and knowledge selection modes
+         const thread = services.threadManager.get(rest.thread_id)
+         const skillMode = thread?.skill_selection_mode || "auto"
+@@ -1110,8 +1144,10 @@ export async function handleMessage(
+         }
+ 
+         // Same skill/knowledge auto-load as chat.create (include site knowledge when hostname set)
+-        const skillMode = threadForConfig?.skill_selection_mode || "auto"
+-        const knowledgeMode = threadForConfig?.knowledge_selection_mode || "auto"
++        applySlashSkillPin(thread_id, userMessage, services, session)
++        const threadAfterPin = services.threadManager.get(thread_id)
++        const skillMode = threadAfterPin?.skill_selection_mode || "auto"
++        const knowledgeMode = threadAfterPin?.knowledge_selection_mode || threadForConfig?.knowledge_selection_mode || "auto"
+         const uploadHostname = normalizeChatHostname(rest.hostname, rest.url)
+         const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
+           thread_id,
+@@ -1491,6 +1527,8 @@ export async function handleMessage(
+       }
+ 
+       try {
++        // `/技能` pin shares resolve with chat.create (leading /name on last user msg).
++        applySlashSkillPin(thread_id, userMsg.content, services, session)
+         // Get thread to determine skill and knowledge selection modes
+         const thread = services.threadManager.get(thread_id)
+         const skillMode = thread?.skill_selection_mode || "auto"
+@@ -2208,6 +2246,9 @@ export async function handleMessage(
+       }
+     }
+ 
++    case "thread.run_progress.toggle":
++      return handleRunProgressToggle(rest, threadManager)
++
+     // --- Skills ---
+     case "skill.list":
+       // list() → ensureFresh(): cheap mtime/size fingerprint; full re-parse only when
+diff --git a/companion/src/message-router/handlers/run-progress.ts b/companion/src/message-router/handlers/run-progress.ts
+new file mode 100644
+index 0000000..d62eaa4
+--- /dev/null
++++ b/companion/src/message-router/handlers/run-progress.ts
+@@ -0,0 +1,28 @@
++// L0 RunProgress toggle (slice 6 PR-B Task 5). Thin family so message-router
++// keeps only the case label for ws-router-validator-lockstep.
++// Overlay write is denied by SUMMONER_ALLOW (do not add this type there).
++
++import type { ThreadManager } from "../../threads/thread-manager"
++import { userToggle } from "../../threads/run-progress"
++
++export function handleRunProgressToggle(
++  rest: Record<string, unknown>,
++  threadManager: ThreadManager,
++): Record<string, unknown> {
++  const threadId = typeof rest.thread_id === "string" ? rest.thread_id : ""
++  const itemId = typeof rest.item_id === "string" ? rest.item_id : ""
++  if (!threadId) return { type: "error", error: "thread_id required" }
++  if (!itemId) return { type: "error", error: "item_id required" }
++  const thread = threadManager.get(threadId)
++  if (!thread) return { type: "error", error: `Thread not found: ${threadId}` }
++  const current = thread.run_progress ?? { items: [] }
++  const next = userToggle(current, itemId)
++  try {
++    const updated = threadManager.update(threadId, { run_progress: next })
++    if (!updated) return { type: "error", error: `Thread not found: ${threadId}` }
++    return { type: "thread.updated", thread: updated }
++  } catch (e: unknown) {
++    const message = e instanceof Error ? e.message : String(e)
++    return { type: "error", error: message }
++  }
++}
+diff --git a/companion/src/skills/semantic-match.ts b/companion/src/skills/semantic-match.ts
+index 84a144d..cc6d671 100644
+--- a/companion/src/skills/semantic-match.ts
++++ b/companion/src/skills/semantic-match.ts
+@@ -75,6 +75,29 @@ export function tokensToVec(tokens: string[]): Record<string, number> {
+   return vec
+ }
+ 
++/** Smoothed IDF from a corpus of tokenized documents. */
++export function idfFromDocs(docs: string[][]): Record<string, number> {
++  const df: Record<string, number> = {}
++  const n = Math.max(1, docs.length)
++  for (const doc of docs) {
++    for (const t of new Set(doc)) df[t] = (df[t] || 0) + 1
++  }
++  const idf: Record<string, number> = {}
++  for (const [t, c] of Object.entries(df)) {
++    // Smoothed IDF: a term in every doc must score **below** an unseen term (unseen → 1).
++    idf[t] = Math.log((n + 1) / (c + 1))
++  }
++  return idf
++}
++
++/** TF-IDF vector: normalized TF multiplied by corpus IDF (unseen terms → 1). */
++export function tfidfVec(tokens: string[], idf: Record<string, number>): Record<string, number> {
++  const tf = tokensToVec(tokens)
++  const vec: Record<string, number> = {}
++  for (const [t, v] of Object.entries(tf)) vec[t] = v * (idf[t] ?? 1)
++  return vec
++}
++
+ /** Cosine similarity between two token frequency vectors. */
+ export function cosineSimilarity(
+   vec1: Record<string, number>,
+diff --git a/companion/src/skills/skill-engine.ts b/companion/src/skills/skill-engine.ts
+index 02d3a07..590848e 100644
+--- a/companion/src/skills/skill-engine.ts
++++ b/companion/src/skills/skill-engine.ts
+@@ -3,7 +3,7 @@
+ import * as fs from "fs"
+ import * as path from "path"
+ import * as os from "os"
+-import { tokenize, tokensToVec, cosineSimilarity } from "./semantic-match"
++import { tokenize, tfidfVec, idfFromDocs, cosineSimilarity } from "./semantic-match"
+ import matter from "gray-matter"
+ import AdmZip from "adm-zip"
+ import * as yaml from "js-yaml"
+@@ -106,6 +106,42 @@ interface Skill extends SkillMeta {
+ /** Accept full companion llm config so protocol/profile reach createProvider. */
+ type LlmConfig = CompanionLlmConfig
+ 
++/** Result of Side Panel `/技能` pin (`/^\/(\S+)/` on this-turn message). */
++export type SlashSkillPin = {
++  skillName: string
++  skill_selection_mode: "manual"
++  active_skill_ids: string[]
++}
++
++/**
++ * Matching-honesty pin door: a leading `/name` token in the user message that
++ * matches a skill doc (case-insensitive) switches the thread to 按需 (`manual`)
++ * and ensures that skill is in `active_skill_ids`.
++ *
++ * Detect from `rest.message`, NOT `rest.skill_ids` (the extension always sends
++ * activeSkillIds). Overlay `skill.activate` must not call this — it must not
++ * write `skill_selection_mode`.
++ */
++export function pinSlashSkill(
++  thread: { skill_selection_mode?: "auto" | "all" | "manual"; active_skill_ids?: string[] } | null | undefined,
++  message: string,
++  skills: Array<{ name: string }>,
++): SlashSkillPin | null {
++  if (!thread || typeof message !== "string") return null
++  const m = message.match(/^\/(\S+)/)
++  if (!m) return null
++  const token = m[1].toLowerCase()
++  const skill = skills.find((s) => typeof s.name === "string" && s.name.toLowerCase() === token)
++  if (!skill) return null
++  const active = Array.isArray(thread.active_skill_ids) ? [...thread.active_skill_ids] : []
++  if (!active.includes(skill.name)) active.push(skill.name)
++  return {
++    skillName: skill.name,
++    skill_selection_mode: "manual",
++    active_skill_ids: active,
++  }
++}
++
+ const KNOWLEDGE_SEARCH_THRESHOLD_TOKENS = 1000
+ const KNOWLEDGE_SEARCH_TOPK = 3
+ 
+@@ -523,46 +559,48 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+   }
+ 
+   /** Match user message against all skill descriptions using dual-track strategy:
+-   * - High confidence (>= 70%): TF-IDF fast path (millisecond-level)
++   * - High confidence (>= 70%): TF-IDF fast path (corpus IDF is live; millisecond-level)
+    * - Low confidence (< 70%): LLM semantic re-ranking (precise, one-shot) */
+   async matchSkills(message: string): Promise<Array<{ name: string; confidence: number }>> {
+     this.ensureFresh()
+     const queryTokens = tokenize(message)
+-    const queryVec = tokensToVec(queryTokens)
+     // Only match real skills — vault/knowledge notes must not rank into skill auto-match
+     const skillPool = this.skillsCache.filter(s => this.isSkillDoc(s))
+ 
+-    const results: Array<{ name: string; confidence: number }> = []
+-    for (const skill of skillPool) {
++    const skillTokenLists = skillPool.map(skill => {
+       const skillText = `${skill.name} ${skill.description || ""} ${(skill.tags || []).join(" ")}`
+-      const skillTokens = tokenize(skillText)
+-      const skillVec = tokensToVec(skillTokens)
++      return tokenize(skillText)
++    })
++    const idf = idfFromDocs(skillTokenLists)
++    const queryVec = tfidfVec(queryTokens, idf)
++
++    const results: Array<{ name: string; confidence: number }> = []
++    for (let i = 0; i < skillPool.length; i++) {
++      const skillVec = tfidfVec(skillTokenLists[i], idf)
+       const score = cosineSimilarity(queryVec, skillVec)
+       if (score > 0.1) {
+-        results.push({ name: skill.name, confidence: Math.round(score * 100) })
++        results.push({ name: skillPool[i].name, confidence: Math.round(score * 100) })
+       }
+     }
+     results.sort((a, b) => b.confidence - a.confidence)
+ 
+     const topScore = results[0]?.confidence || 0
+ 
+-    // Dual-track: high confidence → TF-IDF fast path
++    // Dual-track: high confidence → TF-IDF fast path (IDF is live)
+     if (topScore >= 70) {
+       return results.slice(0, 3)
+     }
+ 
+     // Low confidence → LLM semantic re-ranking (precise)
+-    const candidates = skillPool.filter(s => {
+-      const skillText = `${s.name} ${s.description || ""} ${(s.tags || []).join(" ")}`
+-      const skillTokens = tokenize(skillText)
+-      const skillVec = tokensToVec(skillTokens)
++    const candidates = skillPool.filter((_, i) => {
++      const skillVec = tfidfVec(skillTokenLists[i], idf)
+       const score = cosineSimilarity(queryVec, skillVec)
+       return score > 0.05
+     })
+ 
+     const llmResults = await this.llmRerank(message, candidates)
+ 
+-    // If LLM returned results, use them; otherwise fall back to TF-IDF
++    // If LLM returned results, use them; otherwise fall back to TF-IDF (IDF is live)
+     return llmResults.length > 0 ? llmResults : results.slice(0, 3)
+   }
+ 
+diff --git a/companion/src/threads/run-progress.ts b/companion/src/threads/run-progress.ts
+new file mode 100644
+index 0000000..170d86c
+--- /dev/null
++++ b/companion/src/threads/run-progress.ts
+@@ -0,0 +1,136 @@
++// L0 RunProgress — chat-column checklist seeded from H1 handoff.open_todos.
++// Spec: docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md Task 4–5
++// v1 ingest = seed-only. Evidence ticks bind to exact item.tool, never model_draft,
++// never text.substring. User toggle is Side Panel only (not SUMMONER_ALLOW).
++
++/** Lockstep with HANDOFF_CAPS.open_todos (H1). */
++export const RUN_PROGRESS_CAPS = { max: 8, len: 120 } as const
++
++export type RunProgressItem = {
++  id: string
++  text: string
++  done: boolean
++  source: "seed" | "model_draft" | "user"
++  /** Exact internal tool name for evidence ticks. Omit on drafts. */
++  tool?: string
++}
++
++export type RunProgress = { items: RunProgressItem[] }
++
++const SOURCES = new Set<RunProgressItem["source"]>(["seed", "model_draft", "user"])
++
++function scrubText(raw: unknown, len: number): string {
++  return String(raw ?? "")
++    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "")
++    .replace(/\s+/g, " ")
++    .trim()
++    .slice(0, len)
++}
++
++function scrubId(raw: unknown, fallback: string): string {
++  const id = String(raw ?? "")
++    .replace(/[^a-zA-Z0-9:_-]/g, "")
++    .slice(0, 64)
++  return id || fallback
++}
++
++function scrubTool(raw: unknown): string | undefined {
++  if (typeof raw !== "string") return undefined
++  const t = raw.replace(/[\x00-\x1F\x7F]/g, "").trim().slice(0, 80)
++  return t || undefined
++}
++
++/** Cap 8×120; force model_draft done=false; drop junk sources. */
++export function sanitizeRunProgress(raw: unknown): RunProgress {
++  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { items: [] }
++  const list = (raw as { items?: unknown }).items
++  if (!Array.isArray(list)) return { items: [] }
++  const items: RunProgressItem[] = []
++  const seen = new Set<string>()
++  for (let i = 0; i < list.length && items.length < RUN_PROGRESS_CAPS.max; i++) {
++    const row = list[i]
++    if (!row || typeof row !== "object" || Array.isArray(row)) continue
++    const o = row as Record<string, unknown>
++    const source = SOURCES.has(o.source as RunProgressItem["source"])
++      ? (o.source as RunProgressItem["source"])
++      : null
++    if (!source) continue
++    const text = scrubText(o.text, RUN_PROGRESS_CAPS.len)
++    if (!text) continue
++    let id = scrubId(o.id, `rp:${i}`)
++    if (seen.has(id)) id = `${id}:${i}`
++    seen.add(id)
++    const tool = scrubTool(o.tool)
++    const done = source === "model_draft" ? false : o.done === true
++    const item: RunProgressItem = { id, text, done, source }
++    if (tool) item.tool = tool
++    items.push(item)
++  }
++  return { items }
++}
++
++/**
++ * Seed from thread.runtime_context_budget.handoff.open_todos only.
++ * Missing handoff → empty. Never reads thread.open_todos.
++ */
++export function seedRunProgress(thread: {
++  runtime_context_budget?: {
++    handoff?: { open_todos?: unknown } | null
++  } | null
++} | null | undefined): RunProgress {
++  const todos = thread?.runtime_context_budget?.handoff?.open_todos
++  if (!Array.isArray(todos)) return { items: [] }
++  return sanitizeRunProgress({
++    items: todos.map((t, i) => ({
++      id: `seed:${i}`,
++      text: t,
++      done: false,
++      source: "seed" as const,
++    })),
++  })
++}
++
++/**
++ * Tick at most one oldest undone seed|user row whose item.tool === tool (exact).
++ * success===true only. Never ticks model_draft. Never matches text.
++ */
++export function applyToolResult(
++  progress: RunProgress,
++  ev: { tool: string; success: boolean },
++): RunProgress {
++  if (ev.success !== true) return progress
++  const tool = typeof ev.tool === "string" ? ev.tool : ""
++  if (!tool) return progress
++  const items = progress?.items
++  if (!Array.isArray(items) || items.length === 0) return progress
++  const idx = items.findIndex(
++    (it) =>
++      it &&
++      it.done !== true &&
++      (it.source === "seed" || it.source === "user") &&
++      it.tool === tool,
++  )
++  if (idx < 0) return progress
++  const next = items.slice()
++  next[idx] = { ...next[idx]!, done: true }
++  return { items: next }
++}
++
++/**
++ * Side Panel user gesture: flip done on seed|user by exact id.
++ * Never ticks model_draft (sanitize would force done=false anyway).
++ * Missing id → same object.
++ */
++export function userToggle(progress: RunProgress, itemId: string): RunProgress {
++  const id = typeof itemId === "string" ? itemId : ""
++  if (!id) return progress
++  const items = progress?.items
++  if (!Array.isArray(items) || items.length === 0) return progress
++  const idx = items.findIndex((it) => it && it.id === id)
++  if (idx < 0) return progress
++  const cur = items[idx]!
++  if (cur.source === "model_draft") return progress
++  const next = items.slice()
++  next[idx] = { ...cur, done: !cur.done }
++  return { items: next }
++}
+diff --git a/companion/src/threads/thread-manager.ts b/companion/src/threads/thread-manager.ts
+index f1d2f31..8ad7cd5 100644
+--- a/companion/src/threads/thread-manager.ts
++++ b/companion/src/threads/thread-manager.ts
+@@ -13,6 +13,7 @@ import {
+   sanitizeRuntimeContextBudget,
+   type RuntimeContextBudgetMeta,
+ } from "./runtime-context-budget"
++import { sanitizeRunProgress, seedRunProgress, type RunProgress } from "./run-progress"
+ import type { ImageAttachmentMeta } from "../llm/image-parts"
+ import { sniffedExt, type RasterMime } from "../llm/image-sniff"
+ import {
+@@ -104,6 +105,11 @@ interface Thread {
+    * Rolling summary is redacted, for UI "查看摘要"; not injected cross-thread.
+    */
+   runtime_context_budget?: RuntimeContextBudgetMeta | null
++  /**
++   * L0 chat-column RunProgress (slice 6). Seeded from H1 handoff.open_todos;
++   * ticks bind to tool_result or a later user gesture — not model JSON.
++   */
++  run_progress?: RunProgress | null
+   /**
+    * Soft-delete timestamp (ISO). null/undefined = active.
+    * P1.5 recycle bin; hard delete clears file + index entry.
+@@ -748,6 +754,16 @@ export class ThreadManager {
+       const sanitized = sanitizeRuntimeContextBudget(thread.runtime_context_budget)
+       thread.runtime_context_budget = sanitized
+     }
++    if (thread && thread.run_progress != null) {
++      thread.run_progress = sanitizeRunProgress(thread.run_progress)
++    }
++    if (thread && (!thread.run_progress || thread.run_progress.items.length === 0)) {
++      const seeded = seedRunProgress(thread)
++      if (seeded.items.length > 0) {
++        thread.run_progress = seeded
++        this.saveIndex()
++      }
++    }
+     return thread
+   }
+ 
+@@ -786,6 +802,14 @@ export class ThreadManager {
+         updates = { ...updates, runtime_context_budget: sanitized }
+       }
+     }
++    // L0 RunProgress — cap 8×120; model_draft done forced false
++    if (updates.run_progress !== undefined) {
++      if (updates.run_progress === null) {
++        // ok — clear
++      } else {
++        updates = { ...updates, run_progress: sanitizeRunProgress(updates.run_progress) }
++      }
++    }
+     if (updates.alias !== undefined) {
+       updates = { ...updates, alias: this.sanitizeAlias(String(updates.alias)) }
+     }
+@@ -838,6 +862,12 @@ export class ThreadManager {
+       throw new Error("board_mode must be a boolean")
+     }
+     Object.assign(thread, updates, { updated_at: monotonicTimestamp() })
++    if (!thread.run_progress || thread.run_progress.items.length === 0) {
++      const seeded = seedRunProgress(thread)
++      if (seeded.items.length > 0) {
++        thread.run_progress = seeded
++      }
++    }
+     this.saveIndex()
+     return thread
+   }
+diff --git a/companion/src/ws/validate.ts b/companion/src/ws/validate.ts
+index 74ad549..4852e95 100644
+--- a/companion/src/ws/validate.ts
++++ b/companion/src/ws/validate.ts
+@@ -193,6 +193,15 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       if (!m.updates || typeof m.updates !== "object") return { valid: false, error: "thread.update requires updates object" }
+       return { valid: true }
+     },
++    "thread.run_progress.toggle": (m) => {
++      if (typeof m.thread_id !== "string" || !m.thread_id) {
++        return { valid: false, error: "thread.run_progress.toggle requires thread_id" }
++      }
++      if (typeof m.item_id !== "string" || !m.item_id) {
++        return { valid: false, error: "thread.run_progress.toggle requires item_id" }
++      }
++      return { valid: true }
++    },
+     "skill.activate": (m) => {
+       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "skill.activate requires thread_id" }
+       if (typeof m.skill_name !== "string" || !m.skill_name) return { valid: false, error: "skill.activate requires skill_name" }
+diff --git a/companion/tests/run-progress.test.ts b/companion/tests/run-progress.test.ts
+new file mode 100644
+index 0000000..0d93dde
+--- /dev/null
++++ b/companion/tests/run-progress.test.ts
+@@ -0,0 +1,432 @@
++/**
++ * Slice 6 PR-B Task 4: run_progress seed (H1 open_todos) + evidence ticks.
++ * v1 ingest = seed-only. No model_draft ingest. No overlay write verbs.
++ */
++import test, { after, before } from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as os from "node:os"
++import * as path from "node:path"
++
++import {
++  applyToolResult,
++  sanitizeRunProgress,
++  seedRunProgress,
++  type RunProgress,
++  type RunProgressItem,
++} from "../src/threads/run-progress"
++import { validateWsMessage } from "../src/ws/validate"
++import { assertSummonerAllowed } from "../src/ws/summoner-acl"
++import { SUMMONER_WEB_DISPATCH_ALLOW } from "../src/summoner-web"
++
++const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-run-progress-"))
++process.env.HOME = tmp
++process.env.CMSPARK_DATA_DIR = tmp
++
++let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
++let initDataDir: typeof import("../src/config").initDataDir
++let handleMessage: typeof import("../src/message-router").handleMessage
++
++const mockSkillEngine = {
++  activate: () => {},
++  deactivate: () => {},
++  getActiveForThread: () => [],
++  matchSkills: () => [],
++  get: () => undefined,
++  list: () => [],
++  refresh: () => {},
++} as any
++
++const mockHistoryStore = {
++  query: async () => [],
++  exportJSON: async () => ({ operations: [] }),
++  record: async () => 0,
++} as any
++
++before(async () => {
++  const config = await import("../src/config")
++  initDataDir = config.initDataDir
++  await initDataDir()
++  ThreadManager = (await import("../src/threads/thread-manager")).ThreadManager
++  handleMessage = (await import("../src/message-router")).handleMessage
++})
++
++after(() => {
++  fs.rmSync(tmp, { recursive: true, force: true })
++})
++
++function readSrc(...parts: string[]): string {
++  const candidates = [
++    path.join(__dirname, "..", "src", ...parts),
++    path.join(__dirname, "../src", ...parts),
++    path.join(process.cwd(), "src", ...parts),
++  ]
++  for (const p of candidates) {
++    if (fs.existsSync(p)) return fs.readFileSync(p, "utf8")
++  }
++  throw new Error("src not found: " + parts.join("/"))
++}
++
++function item(over: Partial<RunProgressItem> & Pick<RunProgressItem, "id" | "text" | "source">): RunProgressItem {
++  return { done: false, ...over }
++}
++
++test("run_progress seed copies handoff.open_todos into items source:seed done:false", () => {
++  const progress = seedRunProgress({
++    runtime_context_budget: {
++      handoff: {
++        open_todos: ["navigate example.com", "get_page_text on article"],
++      },
++    },
++  })
++  assert.equal(progress.items.length, 2)
++  assert.equal(progress.items[0]!.text, "navigate example.com")
++  assert.equal(progress.items[1]!.text, "get_page_text on article")
++  for (const it of progress.items) {
++    assert.equal(it.source, "seed")
++    assert.equal(it.done, false)
++    assert.equal(typeof it.id, "string")
++    assert.ok(it.id.length > 0)
++  }
++  assert.notEqual(progress.items[0]!.id, progress.items[1]!.id)
++})
++
++test("run_progress seed missing handoff → empty", () => {
++  assert.deepEqual(seedRunProgress({}).items, [])
++  assert.deepEqual(seedRunProgress({ runtime_context_budget: null }).items, [])
++  assert.deepEqual(
++    seedRunProgress({ runtime_context_budget: { handoff: null } }).items,
++    [],
++  )
++  assert.deepEqual(
++    seedRunProgress({
++      runtime_context_budget: { handoff: { open_todos: undefined } },
++    }).items,
++    [],
++  )
++})
++
++test("run_progress seed ignores thread.open_todos (not SoT)", () => {
++  const progress = seedRunProgress({
++    open_todos: ["should-not-appear"],
++    runtime_context_budget: {
++      handoff: { open_todos: ["from-handoff"] },
++    },
++  } as { runtime_context_budget?: { handoff?: { open_todos?: string[] } | null } | null })
++  assert.deepEqual(
++    progress.items.map((i) => i.text),
++    ["from-handoff"],
++  )
++  const empty = seedRunProgress({
++    open_todos: ["should-not-appear"],
++  } as { runtime_context_budget?: { handoff?: { open_todos?: string[] } | null } | null })
++  assert.deepEqual(empty.items, [])
++})
++
++test("run_progress seed caps 8×120 same as H1", () => {
++  const todos = Array.from({ length: 12 }, (_, i) => `${"x".repeat(200)}-${i}`)
++  const progress = seedRunProgress({
++    runtime_context_budget: { handoff: { open_todos: todos } },
++  })
++  assert.equal(progress.items.length, 8)
++  for (const it of progress.items) {
++    assert.ok(it.text.length <= 120)
++  }
++})
++
++test("applyToolResult ticks oldest matching tool on seed/user", () => {
++  const progress: RunProgress = {
++    items: [
++      item({ id: "a", text: "first navigate", source: "seed", tool: "navigate" }),
++      item({ id: "b", text: "second navigate", source: "user", tool: "navigate" }),
++      item({ id: "c", text: "page text", source: "seed", tool: "get_page_text" }),
++    ],
++  }
++  const next = applyToolResult(progress, { tool: "navigate", success: true })
++  assert.equal(next.items[0]!.done, true)
++  assert.equal(next.items[1]!.done, false)
++  assert.equal(next.items[2]!.done, false)
++
++  const next2 = applyToolResult(next, { tool: "navigate", success: true })
++  assert.equal(next2.items[0]!.done, true)
++  assert.equal(next2.items[1]!.done, true)
++})
++
++test("applyToolResult never ticks model_draft even when tool matches", () => {
++  const progress: RunProgress = {
++    items: [
++      item({ id: "d", text: "draft nav", source: "model_draft", tool: "navigate" }),
++      item({ id: "s", text: "seed nav", source: "seed", tool: "navigate" }),
++    ],
++  }
++  const next = applyToolResult(progress, { tool: "navigate", success: true })
++  assert.equal(next.items[0]!.done, false)
++  assert.equal(next.items[0]!.source, "model_draft")
++  assert.equal(next.items[1]!.done, true)
++})
++
++test("applyToolResult does not tick on success:false", () => {
++  const progress: RunProgress = {
++    items: [item({ id: "a", text: "nav", source: "seed", tool: "navigate" })],
++  }
++  const next = applyToolResult(progress, { tool: "navigate", success: false })
++  assert.equal(next.items[0]!.done, false)
++  assert.equal(next, progress)
++})
++
++test("applyToolResult never substring-match text", () => {
++  const progress: RunProgress = {
++    items: [
++      item({
++        id: "t",
++        text: "please navigate to example.com then screenshot",
++        source: "seed",
++      }),
++      item({
++        id: "u",
++        text: "navigate is in the text",
++        source: "user",
++        tool: "get_page_text",
++      }),
++    ],
++  }
++  const next = applyToolResult(progress, { tool: "navigate", success: true })
++  assert.equal(next.items[0]!.done, false)
++  assert.equal(next.items[1]!.done, false)
++  assert.equal(next, progress)
++})
++
++test("applyToolResult requires exact item.tool === tool", () => {
++  const progress: RunProgress = {
++    items: [
++      item({ id: "a", text: "nav", source: "seed", tool: "navigate_page" }),
++      item({ id: "b", text: "nav", source: "seed", tool: "Navigate" }),
++      item({ id: "c", text: "nav", source: "seed", tool: "navigate" }),
++    ],
++  }
++  const next = applyToolResult(progress, { tool: "navigate", success: true })
++  assert.equal(next.items[0]!.done, false)
++  assert.equal(next.items[1]!.done, false)
++  assert.equal(next.items[2]!.done, true)
++})
++
++test("run_progress sanitize caps 8×120 and forces model_draft done=false", () => {
++  const raw = {
++    items: [
++      ...Array.from({ length: 10 }, (_, i) => ({
++        id: `i${i}`,
++        text: "y".repeat(200),
++        done: true,
++        source: i === 0 ? "model_draft" : "seed",
++      })),
++      { id: "junk", text: "x", done: true, source: "llm" },
++    ],
++  }
++  const s = sanitizeRunProgress(raw)
++  assert.equal(s.items.length, 8)
++  assert.equal(s.items[0]!.source, "model_draft")
++  assert.equal(s.items[0]!.done, false)
++  assert.ok(s.items.every((it) => it.text.length <= 120))
++  assert.ok(s.items.every((it) => it.source === "seed" || it.source === "model_draft" || it.source === "user"))
++})
++
++test("thread-manager persist handoff.open_todos hydrates run_progress for ChatView", () => {
++  const tm = new ThreadManager()
++  const th = tm.create("run-progress-handoff-hydrate")
++  const updated = tm.update(th.id, {
++    runtime_context_budget: {
++      last_at: new Date().toISOString(),
++      mode: "h1",
++      dropped_count: 0,
++      tokens_before: 0,
++      tokens_after: 0,
++      handoff: {
++        updated_at: new Date().toISOString(),
++        goals: [],
++        decisions: [],
++        constraints: [],
++        open_todos: ["打开已登录的页", "摘前五条标题"],
++        artifacts: [],
++      },
++    },
++  })
++  assert.ok(updated?.run_progress)
++  assert.equal(updated!.run_progress!.items.length, 2)
++  assert.equal(updated!.run_progress!.items[0]!.text, "打开已登录的页")
++  assert.equal(updated!.run_progress!.items[0]!.source, "seed")
++  assert.equal(updated!.run_progress!.items[0]!.done, false)
++  const got = tm.get(th.id)
++  assert.equal(got!.run_progress!.items.length, 2)
++})
++
++test("thread-manager does not overwrite existing run_progress when hydrating", () => {
++  const tm = new ThreadManager()
++  const th = tm.create("run-progress-no-clobber")
++  tm.update(th.id, {
++    run_progress: {
++      items: [{ id: "keep", text: "already", done: true, source: "user" }],
++    },
++  })
++  tm.update(th.id, {
++    runtime_context_budget: {
++      last_at: new Date().toISOString(),
++      mode: "h1",
++      dropped_count: 0,
++      tokens_before: 0,
++      tokens_after: 0,
++      handoff: {
++        updated_at: new Date().toISOString(),
++        goals: [],
++        decisions: [],
++        constraints: [],
++        open_todos: ["should-not-replace"],
++        artifacts: [],
++      },
++    },
++  })
++  const got = tm.get(th.id)
++  assert.equal(got!.run_progress!.items.length, 1)
++  assert.equal(got!.run_progress!.items[0]!.id, "keep")
++})
++
++test("thread-manager run_progress sanitize-on-read + cap", () => {
++  const tm = new ThreadManager()
++  const th = tm.create("run-progress-seed")
++  tm.update(th.id, {
++    run_progress: {
++      items: [
++        {
++          id: "m",
++          text: "z".repeat(300),
++          done: true,
++          source: "model_draft",
++          tool: "navigate",
++        },
++        {
++          id: "s",
++          text: "ok",
++          done: false,
++          source: "seed",
++          tool: "navigate",
++        },
++      ],
++    },
++  })
++  const got = tm.get(th.id)
++  assert.ok(got?.run_progress)
++  assert.equal(got!.run_progress!.items[0]!.done, false)
++  assert.ok(got!.run_progress!.items[0]!.text.length <= 120)
++  assert.equal(got!.run_progress!.items[1]!.text, "ok")
++})
++
++test("adapter source: applyToolResult on toolResult.success send, not abort/parse/validation", () => {
++  const src = readSrc("llm", "adapter.ts")
++  assert.match(src, /from ["']\.\.\/threads\/run-progress["']/)
++  assert.match(src, /applyToolResult\(/)
++
++  function windowAfter(marker: string, size = 900): string {
++    const i = src.indexOf(marker)
++    assert.ok(i >= 0, `missing marker: ${marker}`)
++    return src.slice(i, i + size)
++  }
++
++  assert.doesNotMatch(windowAfter("function persistInterruptedRemainder"), /applyToolResult/)
++  assert.doesNotMatch(windowAfter("Invalid JSON in tool arguments"), /applyToolResult/)
++  assert.doesNotMatch(windowAfter("llm.tool_arg_validation_failed"), /applyToolResult/)
++
++  const afterSend = windowAfter("Send tool result to extension for UI display", 1600)
++  assert.match(afterSend, /toolResult\.success/)
++  assert.match(afterSend, /applyToolResult/)
++})
++
++test("userToggle flips seed/user done (toggle) and is a no-op on model_draft", () => {
++  const rp = require("../src/threads/run-progress") as typeof import("../src/threads/run-progress") & {
++    userToggle?: (progress: RunProgress, itemId: string) => RunProgress
++  }
++  assert.equal(typeof rp.userToggle, "function", "userToggle must exist on run-progress")
++  const progress: RunProgress = {
++    items: [
++      item({ id: "s", text: "seed", source: "seed", done: false }),
++      item({ id: "u", text: "user", source: "user", done: true }),
++      item({ id: "d", text: "draft", source: "model_draft", done: false }),
++    ],
++  }
++  const t1 = rp.userToggle!(progress, "s")
++  assert.equal(t1.items[0]!.done, true)
++  assert.equal(t1.items[1]!.done, true)
++  const t2 = rp.userToggle!(t1, "u")
++  assert.equal(t2.items[1]!.done, false)
++  const t3 = rp.userToggle!(t2, "d")
++  assert.equal(t3.items[2]!.done, false)
++  assert.equal(t3.items[2]!.source, "model_draft")
++  const missing = rp.userToggle!(progress, "nope")
++  assert.equal(missing, progress)
++})
++
++test("validate thread.run_progress.toggle requires thread_id and item_id", () => {
++  assert.equal(
++    validateWsMessage({ type: "thread.run_progress.toggle", thread_id: "t1", item_id: "i1" }).valid,
++    true,
++  )
++  const missingItem = validateWsMessage({ type: "thread.run_progress.toggle", thread_id: "t1" })
++  assert.equal(missingItem.valid, false)
++  assert.match(String(missingItem.error), /item_id/)
++  const missingThread = validateWsMessage({ type: "thread.run_progress.toggle", item_id: "i1" })
++  assert.equal(missingThread.valid, false)
++  assert.match(String(missingThread.error), /thread_id/)
++  assert.equal(
++    validateWsMessage({ type: "thread.run_progress.toggle", thread_id: "", item_id: "i1" }).valid,
++    false,
++  )
++})
++
++test("message-router thread.run_progress.toggle flips item and returns thread.updated", async () => {
++  const tm = new ThreadManager()
++  const th = tm.create("run-progress-toggle")
++  tm.update(th.id, {
++    run_progress: {
++      items: [item({ id: "seed:0", text: "navigate", source: "seed", done: false, tool: "navigate" })],
++    },
++  })
++  const response = await handleMessage(
++    { type: "thread.run_progress.toggle", thread_id: th.id, item_id: "seed:0" },
++    { threadManager: tm, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
++  )
++  assert.equal(response.type, "thread.updated")
++  assert.equal(response.thread.run_progress.items[0].done, true)
++  const again = await handleMessage(
++    { type: "thread.run_progress.toggle", thread_id: th.id, item_id: "seed:0" },
++    { threadManager: tm, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
++  )
++  assert.equal(again.thread.run_progress.items[0].done, false)
++})
++
++test("message-router thread.run_progress.toggle errors on missing thread", async () => {
++  const tm = new ThreadManager()
++  const response = await handleMessage(
++    { type: "thread.run_progress.toggle", thread_id: "missing", item_id: "x" },
++    { threadManager: tm, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
++  )
++  assert.equal(response.type, "error")
++  assert.match(String(response.error), /not found/i)
++})
++
++test("summoner surface thread.run_progress.toggle is denied SUMMONER_ACL", () => {
++  const r = assertSummonerAllowed("summoner", "thread.run_progress.toggle")
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "SUMMONER_ACL")
++  assert.match(r.error, /thread\.run_progress\.toggle/)
++  assert.equal(assertSummonerAllowed("tray", "thread.run_progress.toggle").ok, true)
++})
++
++test("thread.run_progress.toggle is not on overlay allowlists or thread.update keys", () => {
++  const acl = readSrc("ws", "summoner-acl.ts")
++  const allowBlock = acl.slice(acl.indexOf("const SUMMONER_ALLOW"), acl.indexOf("export function assertSummonerAllowed"))
++  assert.doesNotMatch(allowBlock, /thread\.run_progress\.toggle/)
++  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("thread.run_progress.toggle"), false)
++
++  const routerSrc = readSrc("message-router.ts")
++  const m = routerSrc.match(/case "thread\.update":[\s\S]*?for \(const key of \[([\s\S]*?)\]\)/)
++  assert.ok(m, "thread.update allowlist not found")
++  assert.doesNotMatch(m![1], /run_progress/)
++})
+diff --git a/companion/tests/single/files.test.ts b/companion/tests/single/files.test.ts
+index e92e692..c92dda6 100644
+--- a/companion/tests/single/files.test.ts
++++ b/companion/tests/single/files.test.ts
+@@ -714,6 +714,28 @@ test("message-router: skill.activate activates skill for thread", async () => {
+   assert.equal(response.skill_name, "browse")
+ })
+ 
++test("message-router: skill.activate on auto thread does not set skill_selection_mode", async () => {
++  const threadManager = new ThreadManager()
++  const created = await handleMessage(
++    { type: "thread.create", alias: "Activate Freeze" },
++    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
++  )
++  assert.equal(created.thread.skill_selection_mode, "auto")
++
++  await handleMessage(
++    { type: "skill.activate", thread_id: created.thread.id, skill_name: "browse" },
++    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
++  )
++
++  const after = threadManager.get(created.thread.id)
++  assert.equal(
++    after?.skill_selection_mode,
++    "auto",
++    "overlay skill.activate must not flip skill_selection_mode (stays auto)",
++  )
++  assert.ok(after?.active_skill_ids?.includes("browse"))
++})
++
+ test("message-router: skill.deactivate deactivates skill for thread", async () => {
+   const skillEngine = mockSkillEngine
+   skillEngine.activate("thread-1", "browse")
+diff --git a/companion/tests/skills.test.ts b/companion/tests/skills.test.ts
+index 9afc595..b7f4133 100644
+--- a/companion/tests/skills.test.ts
++++ b/companion/tests/skills.test.ts
+@@ -221,6 +221,23 @@ test("semantic-match: cosineSimilarity handles partial overlap", () => {
+   assert.ok(result > 0 && result < 1)
+ })
+ 
++test("tfidfVec ranks a rare in-corpus token above a token in every document", () => {
++  const { idfFromDocs, tfidfVec, cosineSimilarity } = require("../src/skills/semantic-match")
++  const docs = [
++    ["web", "alpha"],
++    ["web", "beta"],
++    ["web", "gamma"],
++    ["web", "rareterm"],
++  ]
++  const idf = idfFromDocs(docs)
++  const q = tfidfVec(["web", "rareterm"], idf)
++  const commonOnly = tfidfVec(["web"], idf)
++  const rareOnly = tfidfVec(["rareterm"], idf)
++  assert.ok(cosineSimilarity(q, rareOnly) > cosineSimilarity(q, commonOnly))
++  const { tokensToVec } = require("../src/skills/semantic-match")
++  assert.deepEqual(tokensToVec(["a", "a", "b"]), { a: 2 / 3, b: 1 / 3 })
++})
++
+ // --- Tests for skill-engine.ts ---
+ 
+ before(async () => {
+@@ -534,6 +551,55 @@ test("skill-engine: matchSkills returns relevant skills sorted", async () => {
+   assert.ok(matches[0].confidence >= matches[matches.length - 1].confidence, "should be sorted by confidence")
+ })
+ 
++test("skill-engine: matchSkills ranks rare in-corpus token above common web/browse", async () => {
++  resetMockDirs()
++  process.env.HOME = tempHome
++
++  // Generic: name/description/tags packed with common "web"/"browse" so TF cosine
++  // against a web-heavy query outranks the rare skill. Rare also mentions web but
++  // is the only in-corpus holder of zxqvskill. Query mixes both.
++  writeSkillFile(skillsDir, "web-browse.md", {
++    name: "web-browse",
++    description: "web browse web browse web browse web browse web browse web browse web browse",
++    tags: ["web", "browse", "web", "browse", "web", "browse"],
++    type: "prompt_template",
++  }, "# Browse")
++  writeSkillFile(skillsDir, "zxqvskill.md", {
++    name: "zxqvskill",
++    description: "web browse zxqvskill",
++    tags: ["web"],
++    type: "prompt_template",
++  }, "# Rare")
++
++  const { SkillEngine } = await import("../src/skills/skill-engine")
++  const engine = new SkillEngine()
++  const matches = await engine.matchSkills("web browse web browse web browse web browse zxqvskill")
++
++  assert.ok(matches.length > 0, "should return at least one match")
++  assert.equal(matches[0].name, "zxqvskill")
++  // SkillEngine() has no llmConfig: llmRerank would flatten every candidate to 50.
++  // Fixtures keep TF and IDF topScore >= 70 so the fast path's ranking is what we assert.
++  assert.ok(
++    matches[0].confidence >= 70,
++    `IDF fast path should fire (topScore>=70); got ${matches[0].confidence}`,
++  )
++
++  const engineSrc = fs.readFileSync(path.join(process.cwd(), "src/skills/skill-engine.ts"), "utf-8")
++  const matchBlock = engineSrc.slice(
++    engineSrc.indexOf("async matchSkills"),
++    engineSrc.indexOf("async resolveSkillIdsForThread"),
++  )
++  const claimsTfIdf = /TF-IDF/.test(matchBlock)
++  const usesOnlyTf = matchBlock.includes("tokensToVec") && !matchBlock.includes("tfidfVec")
++  assert.ok(
++    !(claimsTfIdf && usesOnlyTf),
++    "comments must not claim TF-IDF while matchSkills only calls tokensToVec",
++  )
++  assert.match(matchBlock, /tfidfVec/)
++  assert.match(matchBlock, /idfFromDocs/)
++  assert.match(matchBlock, /IDF is live/)
++})
++
+ test("skill-engine: matchSkills returns empty for irrelevant query", async () => {
+   resetMockDirs()
+   process.env.HOME = tempHome
+@@ -1816,6 +1882,136 @@ test("skill-engine: resolveSkillIdsForThread auto mode deduplicates skills", asy
+   assert.equal(occurrences, 1, "should not duplicate skills")
+ })
+ 
++// --- slash-skill pin (`/技能` → 按需 / manual). Overlay skill.activate must not flip mode. ---
++
++test("slash-skill pin: pinSlashSkill flips auto thread to manual and includes named skill", async () => {
++  resetMockDirs()
++  process.env.HOME = tempHome
++
++  writeSkillFile(skillsDir, "browse.md", {
++    name: "browse",
++    description: "Browse websites",
++    type: "prompt_template",
++  }, "# Browse")
++  writeSkillFile(skillsDir, "code.md", {
++    name: "code",
++    description: "Write code zxqvcodewrite programming",
++    tags: ["programming", "zxqvcodewrite"],
++    type: "prompt_template",
++  }, "# Code")
++
++  const skillMod = await import("../src/skills/skill-engine") as any
++  const pinSlashSkill = skillMod.pinSlashSkill
++  const { SkillEngine } = skillMod
++  assert.equal(typeof pinSlashSkill, "function", "pinSlashSkill must be exported")
++  const { ThreadManager } = await import("../src/threads/thread-manager")
++  const tm = new ThreadManager()
++  const thread = tm.create("slash-pin")
++  assert.equal(thread.skill_selection_mode, "auto")
++
++  const engine = new SkillEngine()
++  const pin = pinSlashSkill(thread, "/browse how do I …", engine.list())
++  assert.ok(pin, "leading /browse must pin the browse skill")
++  assert.equal(pin.skillName, "browse")
++  assert.equal(pin.skill_selection_mode, "manual")
++  assert.ok(pin.active_skill_ids.includes("browse"))
++
++  const updated = tm.update(thread.id, {
++    skill_selection_mode: pin.skill_selection_mode,
++    active_skill_ids: pin.active_skill_ids,
++  })
++  engine.setActiveSkillsForThread(thread.id, pin.active_skill_ids)
++  assert.equal(updated?.skill_selection_mode, "manual")
++  assert.ok(updated?.active_skill_ids.includes("browse"))
++
++  // Next resolve must not union matchSkills (manual path). Query would match `code` in auto.
++  const next = await engine.resolveSkillIdsForThread(
++    thread.id,
++    updated?.skill_selection_mode,
++    "how do I write code zxqvcodewrite programming",
++  )
++  assert.ok(next.includes("browse"), "manual resolve returns the pinned skill")
++  assert.ok(!next.includes("code"), "manual must not union matchSkills")
++})
++
++test("slash-skill pin: unknown slash token does not pin", async () => {
++  resetMockDirs()
++  process.env.HOME = tempHome
++
++  writeSkillFile(skillsDir, "browse.md", {
++    name: "browse",
++    description: "Browse websites",
++    type: "prompt_template",
++  }, "# Browse")
++
++  const skillMod = await import("../src/skills/skill-engine") as any
++  const pinSlashSkill = skillMod.pinSlashSkill
++  const { SkillEngine } = skillMod
++  assert.equal(typeof pinSlashSkill, "function", "pinSlashSkill must be exported")
++  const { ThreadManager } = await import("../src/threads/thread-manager")
++  const tm = new ThreadManager()
++  const thread = tm.create("slash-unknown")
++  const engine = new SkillEngine()
++  assert.equal(pinSlashSkill(thread, "/not-a-skill hello", engine.list()), null)
++  assert.equal(pinSlashSkill(thread, "browse how do I", engine.list()), null)
++  assert.equal(thread.skill_selection_mode, "auto")
++})
++
++test("slash-skill pin: match is case-insensitive among skill docs", async () => {
++  resetMockDirs()
++  process.env.HOME = tempHome
++
++  writeSkillFile(skillsDir, "browse.md", {
++    name: "browse",
++    description: "Browse websites",
++    type: "prompt_template",
++  }, "# Browse")
++
++  const skillMod = await import("../src/skills/skill-engine") as any
++  const pinSlashSkill = skillMod.pinSlashSkill
++  const { SkillEngine } = skillMod
++  assert.equal(typeof pinSlashSkill, "function", "pinSlashSkill must be exported")
++  const engine = new SkillEngine()
++  const pin = pinSlashSkill(
++    { skill_selection_mode: "auto", active_skill_ids: [] },
++    "/Browse how do I",
++    engine.list(),
++  )
++  assert.ok(pin)
++  assert.equal(pin.skillName, "browse")
++})
++
++test("slash-skill pin: chat.create wires pinSlashSkill before resolveSkillIdsForThread", () => {
++  const routerSrc = fs.readFileSync(path.join(process.cwd(), "src/message-router.ts"), "utf-8")
++  const createStart = routerSrc.indexOf('case "chat.create"')
++  const createEnd = routerSrc.indexOf('case "chat.steer"')
++  assert.ok(createStart >= 0 && createEnd > createStart, "chat.create case must exist")
++  const createBlock = routerSrc.slice(createStart, createEnd)
++  assert.match(
++    createBlock,
++    /applySlashSkillPin|pinSlashSkill/,
++    "chat.create must pin via pinSlashSkill (not rest.skill_ids as the pin door)",
++  )
++  const pinAt = createBlock.search(/applySlashSkillPin|pinSlashSkill/)
++  const resolveAt = createBlock.search(/resolveSkillIdsForThread/)
++  assert.ok(pinAt < resolveAt, "slash pin must run before resolveSkillIdsForThread so this turn is manual")
++  assert.match(routerSrc, /function applySlashSkillPin/)
++  assert.match(routerSrc, /pinSlashSkill\(/)
++})
++
++test("skill.activate handler does not write skill_selection_mode", () => {
++  const routerSrc = fs.readFileSync(path.join(process.cwd(), "src/message-router.ts"), "utf-8")
++  const start = routerSrc.indexOf('case "skill.activate"')
++  const end = routerSrc.indexOf('case "skill.deactivate"')
++  assert.ok(start >= 0 && end > start, "skill.activate case must exist")
++  const block = routerSrc.slice(start, end)
++  assert.doesNotMatch(
++    block,
++    /skill_selection_mode/,
++    "overlay skill.activate must not flip skill_selection_mode (Trust freeze)",
++  )
++})
++
+ test("skill-engine: buildSystemPrompt filters by provided skillIds", async () => {
+   resetMockDirs()
+   process.env.HOME = tempHome
+diff --git a/companion/tests/slash-skill-pin.test.ts b/companion/tests/slash-skill-pin.test.ts
+new file mode 100644
+index 0000000..0662aa3
+--- /dev/null
++++ b/companion/tests/slash-skill-pin.test.ts
+@@ -0,0 +1,209 @@
++/**
++ * Slice 6 PR-A Task 3: `/技能` this turn pins the named skill and flips the
++ * thread to skill_selection_mode=manual (按需). Overlay skill.activate must
++ * not write mode. Drive chat.create through handleMessage (AbortError LLM).
++ */
++import test, { after, before, beforeEach } from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as os from "node:os"
++import * as path from "node:path"
++
++const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-slash-skill-pin-"))
++process.env.HOME = tempHome
++process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
++delete process.env.DEEPSEEK_API_KEY
++
++let handleMessage: typeof import("../src/message-router").handleMessage
++let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
++let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
++let saveConfig: typeof import("../src/config").saveConfig
++let getConfigDir: typeof import("../src/config").getConfigDir
++
++let originalCreate: any = undefined
++let completionsProto: any = undefined
++let createImpl: () => Promise<never> = async () => {
++  throw new Error("unset mock")
++}
++
++function writeSkillFile(dir: string, filename: string, frontmatter: Record<string, unknown>, content: string) {
++  const lines = ["---"]
++  for (const [k, v] of Object.entries(frontmatter)) {
++    if (Array.isArray(v)) {
++      lines.push(`${k}:`)
++      for (const item of v) lines.push(`  - ${item}`)
++    } else {
++      lines.push(`${k}: ${v}`)
++    }
++  }
++  lines.push("---", "", content)
++  fs.mkdirSync(dir, { recursive: true })
++  fs.writeFileSync(path.join(dir, filename), lines.join("\n"))
++}
++
++before(async () => {
++  const mr = await import("../src/message-router")
++  const tm = await import("../src/threads/thread-manager")
++  const se = await import("../src/skills/skill-engine")
++  const cfg = await import("../src/config")
++  handleMessage = mr.handleMessage
++  ThreadManager = tm.ThreadManager
++  SkillEngine = se.SkillEngine
++  saveConfig = cfg.saveConfig
++  getConfigDir = cfg.getConfigDir
++  await cfg.initDataDir()
++
++  saveConfig({
++    llm: {
++      base_url: "http://localhost:9999",
++      api_key: "sk-test",
++      model_name: "gpt-4o",
++      temperature: 0.5,
++      context_window: 4000,
++    },
++  } as any)
++
++  const openaiMod = await import("openai")
++  const OpenAI = (openaiMod as any).default || openaiMod
++  const dummyClient = new OpenAI({ baseURL: "http://localhost:9999", apiKey: "sk-test" })
++  completionsProto = Object.getPrototypeOf(dummyClient.chat.completions)
++  originalCreate = completionsProto.create
++  completionsProto.create = async function () {
++    return createImpl()
++  }
++})
++
++after(() => {
++  if (completionsProto && originalCreate) {
++    completionsProto.create = originalCreate
++  }
++  fs.rmSync(tempHome, { recursive: true, force: true })
++})
++
++beforeEach(() => {
++  createImpl = async () => {
++    const e = new Error("simulated abort after user-message echo")
++    e.name = "AbortError"
++    throw e
++  }
++  const threadsDir = path.join(getConfigDir(), "threads")
++  if (fs.existsSync(threadsDir)) {
++    for (const f of fs.readdirSync(threadsDir)) {
++      try {
++        fs.rmSync(path.join(threadsDir, f), { recursive: true, force: true })
++      } catch {
++        /* ignore */
++      }
++    }
++  }
++  const skillsDir = path.join(getConfigDir(), "skills")
++  if (fs.existsSync(skillsDir)) {
++    for (const f of fs.readdirSync(skillsDir)) {
++      try {
++        fs.rmSync(path.join(skillsDir, f), { recursive: true, force: true })
++      } catch {
++        /* ignore */
++      }
++    }
++  }
++})
++
++function makeSession(sent: any[]) {
++  return {
++    sendToExtension: (data: any) => sent.push(data),
++    executeTool: async () => ({ success: true, data: {} }),
++    broadcast: (data: any) => sent.push(data),
++  } as any
++}
++
++test("slash-skill pin: chat.create /browse while auto flips manual and next resolve is active-only", async () => {
++  const skillsDir = path.join(getConfigDir(), "skills")
++  writeSkillFile(skillsDir, "browse.md", {
++    name: "browse",
++    description: "Browse websites",
++    type: "prompt_template",
++  }, "# Browse")
++  writeSkillFile(skillsDir, "code.md", {
++    name: "code",
++    description: "Write code zxqvcodewrite programming",
++    tags: ["programming", "zxqvcodewrite"],
++    type: "prompt_template",
++  }, "# Code")
++
++  const tm = new ThreadManager()
++  const thread = tm.create("", "slash-chat-create")
++  assert.equal(thread.skill_selection_mode, "auto")
++
++  const engine = new SkillEngine()
++  const origResolve = engine.resolveSkillIdsForThread.bind(engine)
++  let thisTurn: string[] | undefined
++  engine.resolveSkillIdsForThread = async function (...args: Parameters<typeof origResolve>) {
++    thisTurn = await origResolve(...args)
++    return thisTurn
++  }
++
++  const sent: any[] = []
++  await handleMessage(
++    {
++      type: "chat.create",
++      thread_id: thread.id,
++      message: "/browse how do I zxqvcodewrite",
++      skill_ids: thread.active_skill_ids,
++    },
++    { threadManager: tm, skillEngine: engine, historyStore: { record: () => 0 } as any },
++    makeSession(sent),
++  )
++
++  const after = tm.get(thread.id)
++  assert.equal(after?.skill_selection_mode, "manual")
++  assert.ok(after?.active_skill_ids.includes("browse"))
++  assert.ok(thisTurn?.includes("browse"), "this turn must include the slash-named skill")
++  assert.ok(
++    !thisTurn?.includes("code"),
++    "this turn must not union matchSkills after slash pin (manual)",
++  )
++
++  const updated = sent.find((m) => m.type === "thread.updated" && m.thread?.id === thread.id)
++  assert.ok(updated, "must broadcast thread.updated so SkillsPanel shows 按需")
++  assert.equal(updated.thread.skill_selection_mode, "manual")
++
++  const next = await origResolve(
++    thread.id,
++    after?.skill_selection_mode,
++    "how do I write code zxqvcodewrite programming",
++  )
++  assert.ok(next.includes("browse"))
++  assert.ok(!next.includes("code"), "next resolveSkillIdsForThread must not union matchSkills")
++})
++
++test("slash-skill pin: rest.skill_ids without leading slash does not flip mode", async () => {
++  const skillsDir = path.join(getConfigDir(), "skills")
++  writeSkillFile(skillsDir, "browse.md", {
++    name: "browse",
++    description: "Browse websites",
++    type: "prompt_template",
++  }, "# Browse")
++
++  const tm = new ThreadManager()
++  const thread = tm.create("", "slash-skill-ids-not-a-pin")
++  assert.equal(thread.skill_selection_mode, "auto")
++
++  const sent: any[] = []
++  await handleMessage(
++    {
++      type: "chat.create",
++      thread_id: thread.id,
++      message: "how do I browse the web",
++      skill_ids: ["browse"],
++    },
++    { threadManager: tm, skillEngine: new SkillEngine(), historyStore: { record: () => 0 } as any },
++    makeSession(sent),
++  )
++
++  const after = tm.get(thread.id)
++  assert.equal(
++    after?.skill_selection_mode,
++    "auto",
++    "extension always sends skill_ids; that must not be the pin door",
++  )
++})
+diff --git a/companion/tests/summoner-acl.test.ts b/companion/tests/summoner-acl.test.ts
+index 9302ab4..b4101a9 100644
+--- a/companion/tests/summoner-acl.test.ts
++++ b/companion/tests/summoner-acl.test.ts
+@@ -96,6 +96,13 @@ test("summoner denies anything else not on the allowlist", () => {
+   assert.match(r.error, /config.get/)
+ })
+ 
++test("summoner surface thread.run_progress.toggle is denied SUMMONER_ACL", () => {
++  const r = assertSummonerAllowed("summoner", "thread.run_progress.toggle")
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "SUMMONER_ACL")
++  assert.match(r.error, /thread\.run_progress\.toggle/)
++})
++
+ test("auth.handshake accepts optional surface tray|summoner", () => {
+   const proof = "a".repeat(64)
+   assert.equal(validateWsMessage({ type: "auth.handshake", proof }).valid, true)
+diff --git a/docs/DESIGN.md b/docs/DESIGN.md
+index 62072e4..3cc200e 100644
+--- a/docs/DESIGN.md
++++ b/docs/DESIGN.md
+@@ -12,11 +12,11 @@ Home is **logged-in Chrome + hard gates**, not the Side Panel. Tokens below stil
+ | Surface | Design job |
+ |---------|------------|
+ | 召唤器 | Default = collapsed composer bar (fast). Expand = **展开对话** (thread + list). Not a five-rail WorkBuddy. Same 看山 paper as Operate; no Allow/Deny. |
+-| Side Panel | Operate when watching the page. Empty/composer = 看山 canon. ~320px density budget unchanged. |
++| Side Panel | Operate when watching the page. Empty/composer = 看山 canon. ~320px density budget unchanged. Chat column **本轮步骤** is L0 RunProgress (H1 seed + tool_result / click), **not** Mission Board. |
+ | 确认台 / Cockpit | Confirm. Night-world of the same craft. Overlay never borrows this dialect. |
+ | 租手 | No new visual chrome in coding agents. Confirm still lands on 确认台 / Mac tray. |
+ 
+-Copy contract (Chinese chrome): `展开对话` / `打开浏览器` / `打开确认台`. Forbidden: `展开工作台`, `去侧栏批准`.
++Copy contract (Chinese chrome): `展开对话` / `打开浏览器` / `打开确认台` / `本轮步骤`. Forbidden: `展开工作台`, `去侧栏批准`. Do not label RunProgress `进行中` (collides with Mission Board intents).
+ 
+ ## Colors
+ 
+diff --git a/docs/GOAL.md b/docs/GOAL.md
+index 5f65aa0..e58272d 100644
+--- a/docs/GOAL.md
++++ b/docs/GOAL.md
+@@ -251,7 +251,8 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作
+ ### G17. Knowledge 知识库系统 ✅ 已实现
+ 
+ - 三级知识体系: global (全局) → site (站点) → skill (技能)
+-- 站点自动匹配 (`site-matcher.ts`) + TF-IDF 语义匹配 (`semantic-match.ts`)
++- 知识 auto = **站点匹配**（`site-matcher.ts`）；相关/Obsidian 链接 = **纯 TF**（`tokensToVec`，不加 IDF）
++- 技能 `matchSkills` = **TF-IDF**（`idfFromDocs` + `tfidfVec`，语料为技能 name/description/tags）+ 低分时 LLM 精排
+ - `record_experience` 工具记录操作经验到知识库
+ - Extension 端 `KnowledgeSubPanel` 知识选择 UI
+ 
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 5fbe64c..dbf0712 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -128,7 +128,7 @@ User Input → companion → LLM streaming
+ Side Panel (React) ──WS──▶ Companion (Core Engine)
+                               │
+                               ├─ Thread Manager: 加载消息历史，构建 LLM context
+-                              ├─ Skill Engine: 双轨技能匹配（TF-IDF 快路径 + LLM 语义精排）→ inject 相关 skill prompt
++                              ├─ Skill Engine: 双轨技能匹配（TF-IDF 快路径，IDF 按技能语料；低分 LLM 精排）→ inject 相关 skill prompt
+                               ├─ LLM Adapter: 构建请求，发送到 LLM API
+                               │
+                               ▼  LLM Response (streaming)
+diff --git a/docs/multi-agent-user-guide.md b/docs/multi-agent-user-guide.md
+index 3864b68..5c30957 100644
+--- a/docs/multi-agent-user-guide.md
++++ b/docs/multi-agent-user-guide.md
+@@ -80,6 +80,8 @@ Orchestrator **默认不能**直接 mutate 浏览器 / shell / host；执行细
+ 
+ ## 5. Mission Board（任务板）
+ 
++侧栏聊天列的 **「本轮步骤」**（RunProgress，H1 `open_todos` 种子）**不是** Mission Board：无 Fact/Intent/Hint，无 L2 `board_complete`，召唤器不能勾选。
++
+ ### 5.1 概念
+ 
+ 线程作用域内的可变 run 状态（P0 已交付）：

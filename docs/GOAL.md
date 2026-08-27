@@ -251,7 +251,8 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 ### G17. Knowledge 知识库系统 ✅ 已实现
 
 - 三级知识体系: global (全局) → site (站点) → skill (技能)
-- 站点自动匹配 (`site-matcher.ts`) + TF-IDF 语义匹配 (`semantic-match.ts`)
+- 知识 auto = **站点匹配**（`site-matcher.ts`）；相关/Obsidian 链接 = **纯 TF**（`tokensToVec`，不加 IDF）
+- 技能 `matchSkills` = **TF-IDF**（`idfFromDocs` + `tfidfVec`，语料为技能 name/description/tags）+ 低分时 LLM 精排
 - `record_experience` 工具记录操作经验到知识库
 - Extension 端 `KnowledgeSubPanel` 知识选择 UI
 
