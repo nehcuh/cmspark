@@ -203,6 +203,15 @@ function AppContent() {
     setToast(msg)
     setTimeout(() => setToast(""), 4000)
   }, [])
+  useEffect(() => {
+    const onToast = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail
+      if (typeof detail !== "string" || !detail) return
+      showToast(detail)
+    }
+    window.addEventListener("cmspark:toast", onToast as EventListener)
+    return () => window.removeEventListener("cmspark:toast", onToast as EventListener)
+  }, [showToast])
   const { level, badgeLabel } = useCapabilityMode(onEscalate)
   const isComputer = level === "computer"
 

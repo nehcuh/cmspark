@@ -1890,10 +1890,7 @@ export function useWebSocket() {
             overlayCode === "OVERLAY_SHELL_ACL" ||
             /OVERLAY_SHELL_ORIGIN|OVERLAY_SHELL_UNAVAILABLE|OVERLAY_SHELL_ACL/.test(overlayErr)
           ) {
-            dispatch({
-              type: "SET_PROCESSING_STATUS",
-              status: overlayErr || overlayCode || "无法弹出对话框",
-            })
+            window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: "无法弹出对话框" }))
             break
           }
           if (typeof msg.error === "string" && /knowledge|预览|parseFile|fetch knowledge/i.test(msg.error)) {

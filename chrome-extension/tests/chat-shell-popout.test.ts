@@ -26,8 +26,17 @@ test("ChatView click sends overlay.shell.open with thread_id; no sidePanel.open"
 test("useWebSocket ignores overlay.shell.open echo and toasts OVERLAY_SHELL_ errors", () => {
   const ws = src("src/sidepanel/hooks/useWebSocket.ts")
   assert.match(ws, /msg\.type === ["']overlay\.shell\.open["']/)
-  assert.match(ws, /OVERLAY_SHELL_/)
-  assert.match(ws, /SET_PROCESSING_STATUS/)
+  const overlayBlock = ws.slice(
+    ws.indexOf('case "overlay.shell.opened"'),
+    ws.indexOf("/knowledge|预览|parseFile|fetch knowledge/"),
+  )
+  assert.match(overlayBlock, /OVERLAY_SHELL_/)
+  assert.match(overlayBlock, /cmspark:toast/)
+  assert.match(overlayBlock, /无法弹出对话框/)
+  assert.doesNotMatch(overlayBlock, /SET_PROCESSING_STATUS/)
+  const app = src("src/sidepanel/App.tsx")
+  assert.match(app, /cmspark:toast/)
+  assert.match(app, /showToast/)
 })
 
 test("background bulk-forwards overlay.shell.open; handleCompanionMessage does not special-case it", () => {
