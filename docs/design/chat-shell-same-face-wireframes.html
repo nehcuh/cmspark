@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CMspark ChatShell 同一张脸 · 线稿</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #f3f1ea; color: #111; font: 13px/1.45 "SF Pro Text", "PingFang SC", sans-serif; }
+    .page { padding: 28px 32px 72px; max-width: 1480px; margin: 0 auto; }
+    h1 { font-size: 18px; font-weight: 650; margin: 0 0 4px; letter-spacing: -.02em; }
+    .sub { color: #555; margin: 0 0 8px; max-width: 82ch; }
+    .meta { font-size: 11px; color: #666; margin: 0 0 28px; }
+    .meta a { color: #111; }
+    h2 { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: #666; font-weight: 600; margin: 36px 0 12px; border-top: 1.5px solid #111; padding-top: 16px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 36px; }
+    .grid.wide { grid-template-columns: 1fr; }
+    .grid.three { grid-template-columns: 1fr 1fr 1fr; }
+    .label { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #666; margin-bottom: 8px; }
+    .desk {
+      background: repeating-linear-gradient(-45deg, #eceae3, #eceae3 8px, #e7e4db 8px, #e7e4db 16px);
+      border: 1px dashed #bbb;
+      padding: 24px 18px 28px;
+      min-height: 280px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      position: relative;
+    }
+    .ov {
+      background: #fff;
+      border: 1.5px solid #111;
+      border-radius: 4px;
+      position: relative;
+      width: 320px;
+    }
+    .ov::before {
+      content: "";
+      position: absolute;
+      inset: 6px -6px -6px 6px;
+      border: 1.5px solid #111;
+      border-radius: 4px;
+      z-index: -1;
+    }
+    .ov.wide { width: 420px; }
+    .ov.chrome { width: 640px; }
+    .ov.float { width: 300px; }
+    .top {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 10px; border-bottom: 1.5px solid #111; font-size: 12px;
+    }
+    .dots { letter-spacing: .2em; }
+    .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+    .btn { border: 1.5px solid #111; border-radius: 3px; padding: 2px 8px; font-size: 11px; }
+    .btn.fill { background: #111; color: #fff; }
+    .x { width: 16px; height: 16px; border: 1.5px solid #111; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+    .body { padding: 28px 16px 12px; min-height: 210px; display: flex; flex-direction: column; }
+    .mark {
+      width: 48px; height: 48px; border: 1.5px solid #111; border-radius: 50%;
+      margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;
+      font-size: 11px; letter-spacing: .04em;
+    }
+    .hi { text-align: center; font-size: 18px; font-weight: 650; letter-spacing: -.02em; line-height: 1.25; }
+    .hi em { font-style: normal; text-decoration: underline; text-underline-offset: 3px; }
+    .ask { text-align: center; font-size: 15px; margin: 6px 0 18px; }
+    .chips { display: flex; flex-direction: column; gap: 8px; margin: 0 8px 16px; }
+    .chip { border: 1.5px solid #111; border-radius: 999px; padding: 7px 12px; font-size: 12px; }
+    .pagechip {
+      margin: auto 0 8px; border: 1.5px dashed #111; border-radius: 8px;
+      padding: 7px 10px; display: flex; align-items: center; gap: 8px; font-size: 11px;
+    }
+    .pagechip .t { flex: 1; overflow: hidden; white-space: nowrap; }
+    .composer {
+      border: 1.5px solid #111; border-radius: 10px; min-height: 44px;
+      display: flex; align-items: center; padding: 0 10px; gap: 8px; font-size: 12px; color: #444;
+    }
+    .composer .cursor { width: 1.5px; height: 14px; background: #111; }
+    .composer .clip { margin-left: auto; border: 1.5px solid #111; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 11px; }
+    .outside {
+      margin-top: 8px; border: 1.5px dashed #888; padding: 8px 10px; font-size: 11px; color: #555;
+      background: repeating-linear-gradient(45deg, #f7f5ee, #f7f5ee 4px, #efece3 4px, #efece3 8px);
+    }
+    .outside b { display: block; font-size: 10px; letter-spacing: .08em; margin-bottom: 4px; color: #333; }
+    .anno { margin-top: 10px; font-size: 12px; color: #333; }
+    .anno code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+    .call {
+      position: absolute; font-size: 11px; color: #111; max-width: 150px; line-height: 1.3;
+    }
+    .call::before { content: "→ "; }
+    .stream { padding: 12px 14px; font-size: 12px; min-height: 160px; }
+    .bubble { border: 1.5px solid #111; padding: 8px 10px; margin: 8px 0; }
+    .bubble.me { margin-left: 40px; background: #111; color: #fff; }
+    .bubble.ai { margin-right: 24px; }
+    .menu {
+      position: absolute; top: 40px; left: 10px; width: 160px; background: #fff;
+      border: 1.5px solid #111; z-index: 2; font-size: 12px;
+    }
+    .menu div { padding: 7px 10px; border-bottom: 1px solid #111; }
+    .menu div:last-child { border-bottom: 0; }
+    .menu .no { color: #999; text-decoration: line-through; }
+    .chrome-bar {
+      display: flex; align-items: center; gap: 6px; padding: 8px 10px;
+      border-bottom: 1.5px solid #111; font-size: 11px;
+    }
+    .tab { border: 1.5px solid #111; border-bottom: 0; padding: 5px 12px; border-radius: 4px 4px 0 0; }
+    .ghost {
+      border: 1.5px dashed #999; color: #999; padding: 4px 10px; border-radius: 999px;
+      text-decoration: line-through; margin-left: auto;
+    }
+    .ext { margin-left: 8px; width: 22px; height: 22px; border: 1.5px solid #111; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; font-weight: 700; }
+    .ext.on { background: #111; color: #fff; }
+    .menubar {
+      display: flex; gap: 10px; align-items: center; padding: 6px 12px;
+      border-bottom: 1.5px solid #111; font-size: 12px;
+    }
+    .flow {
+      background: #fff; border: 1.5px solid #111; padding: 18px 12px 8px;
+      overflow-x: auto;
+    }
+    svg.flowsvg { width: 100%; max-width: 1100px; display: block; margin: 0 auto; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; }
+    .fork { border: 1.5px solid #111; background: #fff; padding: 12px; font-size: 12px; }
+    .fork h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+    .no-box { border: 1.5px solid #111; padding: 10px; position: relative; }
+    .no-box::after {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(to top left, transparent calc(50% - 1px), #111 0, #111 calc(50% + 1px), transparent 0),
+                  linear-gradient(to top right, transparent calc(50% - 1px), #111 0, #111 calc(50% + 1px), transparent 0);
+      pointer-events: none;
+    }
+    .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px; margin: 0 0 12px; }
+    .legend span { display: flex; align-items: center; gap: 6px; }
+    .sw { width: 18px; height: 12px; border: 1.5px solid #111; }
+    .sw.face { background: #fff; }
+    .sw.out { background: repeating-linear-gradient(45deg, #f7f5ee, #f7f5ee 3px, #efece3 3px, #efece3 6px); }
+    .sw.no { background: #ddd; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>ChatShell 同一张脸 · 线稿 + 流程</h1>
+    <p class="sub">四处同一张薄聊天脸。钉在 Chrome 里是侧栏，弹出来是悬浮，托盘点开也是它。招呼、当前页、三条建议、作曲。装配和批准不在这张脸上。</p>
+    <p class="meta">#239 · spec <code>docs/superpowers/specs/2026-08-27-chat-shell-same-face-design.md</code> · 黑实线 = ChatShell · 斜线虚框 = 壳外仪表 · 删去线 = 不做</p>
+
+    <div class="legend">
+      <span><i class="sw face"></i> ChatShell（同一张脸）</span>
+      <span><i class="sw out"></i> 壳外：装配 / 确认台</span>
+      <span><i class="sw no"></i> 不做（标签栏药丸 / Allow-Deny）</span>
+    </div>
+
+    <h2>01 进出流程</h2>
+    <div class="flow">
+      <svg class="flowsvg" viewBox="0 0 1080 420" xmlns="http://www.w3.org/2000/svg" aria-label="ChatShell 进出流程">
+        <style>
+          .n { font: 12px/1.3 "SF Pro Text", "PingFang SC", sans-serif; fill: #111; }
+          .s { font: 10px/1.3 "SF Pro Text", "PingFang SC", sans-serif; fill: #444; }
+          .box { fill: #fff; stroke: #111; stroke-width: 1.5; }
+          .dash { fill: #fff; stroke: #111; stroke-width: 1.5; stroke-dasharray: 4 3; }
+          .ghost { fill: #f3f1ea; stroke: #999; stroke-width: 1.5; stroke-dasharray: 4 3; }
+          .arr { stroke: #111; stroke-width: 1.5; fill: none; marker-end: url(#a); }
+        </style>
+        <defs>
+          <marker id="a" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <polygon points="0 0, 7 3.5, 0 7" fill="#111" />
+          </marker>
+        </defs>
+
+        <!-- entries -->
+        <rect class="box" x="20" y="24" width="150" height="48" />
+        <text class="n" x="95" y="44" text-anchor="middle">工具栏 C</text>
+        <text class="s" x="95" y="60" text-anchor="middle">能做的入口</text>
+
+        <rect class="ghost" x="20" y="92" width="150" height="48" />
+        <line x1="28" y1="100" x2="162" y2="132" stroke="#999" stroke-width="1.5" />
+        <text class="n" x="95" y="112" text-anchor="middle" fill="#888">标签栏药丸</text>
+        <text class="s" x="95" y="128" text-anchor="middle">Chrome 一等 · 不做</text>
+
+        <rect class="box" x="20" y="200" width="150" height="48" />
+        <text class="n" x="95" y="220" text-anchor="middle">热键</text>
+        <text class="s" x="95" y="236" text-anchor="middle">开浮动，不开侧栏</text>
+
+        <rect class="box" x="20" y="268" width="150" height="48" />
+        <text class="n" x="95" y="288" text-anchor="middle">菜单栏托盘</text>
+        <text class="s" x="95" y="304" text-anchor="middle">点击 = 同一浮动脸</text>
+
+        <!-- docked -->
+        <rect class="box" x="280" y="40" width="200" height="88" />
+        <text class="n" x="380" y="68" text-anchor="middle">钉住 ChatShell</text>
+        <text class="s" x="380" y="86" text-anchor="middle">侧栏聊天列</text>
+        <text class="s" x="380" y="102" text-anchor="middle">顶栏：⋯  弹出对话框</text>
+
+        <rect class="dash" x="280" y="140" width="200" height="52" />
+        <text class="n" x="380" y="162" text-anchor="middle">壳外仪表</text>
+        <text class="s" x="380" y="178" text-anchor="middle">装配 / BottomBar · 不进浮窗</text>
+
+        <!-- float -->
+        <rect class="box" x="280" y="230" width="200" height="88" />
+        <text class="n" x="380" y="258" text-anchor="middle">浮动 ChatShell</text>
+        <text class="s" x="380" y="276" text-anchor="middle">同一张脸 · 无装配</text>
+        <text class="s" x="380" y="292" text-anchor="middle">顶栏：⋯  × · 无实心贴回</text>
+
+        <!-- confirm -->
+        <rect class="dash" x="280" y="340" width="200" height="52" />
+        <text class="n" x="380" y="362" text-anchor="middle">确认台 / 托盘确认</text>
+        <text class="s" x="380" y="378" text-anchor="middle">浮窗永不 Allow / Deny</text>
+
+        <!-- attach fork -->
+        <rect class="box" x="600" y="220" width="200" height="44" />
+        <text class="n" x="700" y="247" text-anchor="middle">盯页：请点工具栏 C</text>
+
+        <rect class="box" x="860" y="160" width="200" height="72" />
+        <text class="n" x="960" y="186" text-anchor="middle">若 Chrome 窗引擎</text>
+        <text class="s" x="960" y="204" text-anchor="middle">用户手势 → sidePanel.open</text>
+        <text class="s" x="960" y="220" text-anchor="middle">关小窗 · 真贴回</text>
+
+        <rect class="box" x="860" y="260" width="200" height="72" />
+        <text class="n" x="960" y="286" text-anchor="middle">若 OS HUD 引擎</text>
+        <text class="s" x="960" y="304" text-anchor="middle">不能一键（F-I-4）</text>
+        <text class="s" x="960" y="320" text-anchor="middle">请点工具栏的 CMspark</text>
+
+        <text class="s" x="960" y="70" text-anchor="middle">引擎本票不锁</text>
+        <rect class="ghost" x="860" y="40" width="200" height="36" />
+        <text class="n" x="960" y="62" text-anchor="middle">另开引擎票</text>
+
+        <!-- arrows -->
+        <path class="arr" d="M170 48 H270" />
+        <path class="arr" d="M170 224 C 220 224, 230 274, 280 274" />
+        <path class="arr" d="M170 292 H280" />
+        <path class="arr" d="M380 128 V140" />
+        <path class="arr" d="M480 84 H 520 V 274 H 480" />
+        <text class="s" x="528" y="170">弹出对话框</text>
+        <path class="arr" d="M480 274 H600" />
+        <path class="arr" d="M800 242 H860" />
+        <path class="arr" d="M800 242 C 830 242, 840 196, 860 196" />
+        <path class="arr" d="M800 242 C 830 242, 840 296, 860 296" />
+      </svg>
+    </div>
+    <p class="anno">热键 / 托盘永远开<strong>浮动</strong>，不替你弹出侧栏。工具栏 C 才是钉住态的入口。标签栏药丸画了叉，避免和 Gemini 截图 1 混为一谈。</p>
+
+    <h2>02 四处挂脸</h2>
+    <div class="grid">
+
+      <div>
+        <div class="label">A 工具栏 C · 能做的入口（诚实版截图 1）</div>
+        <div class="desk">
+          <div class="ov chrome">
+            <div class="chrome-bar">
+              <span class="tab">OA 门户</span>
+              <span class="tab">文档</span>
+              <span class="ghost">问问 Gemini</span>
+              <span class="ext on">C</span>
+            </div>
+            <div class="body" style="min-height:120px;justify-content:center;align-items:center;color:#555;">
+              网页 · 已登录 Chrome
+            </div>
+          </div>
+        </div>
+        <p class="anno">白药丸是 Chrome 的，<strong>不是我们</strong>。我们的入口是工具栏圆 C。点 C → 钉住 ChatShell。</p>
+      </div>
+
+      <div>
+        <div class="label">B 钉住 · 有页空态（截图 2 的 IA，看山印记）</div>
+        <div class="desk">
+          <div class="ov">
+            <div class="top">
+              <span class="dots">⋯</span>
+              <span class="right"><span class="btn">弹出对话框</span></span>
+            </div>
+            <div class="body">
+              <div class="mark">C</div>
+              <div class="hi"><em>chen</em>，你好</div>
+              <div class="ask">要对这页做什么？</div>
+              <div class="chips">
+                <div class="chip">总结这一页</div>
+                <div class="chip">用更简单的话讲这一页</div>
+                <div class="chip">我能对这一页做什么</div>
+              </div>
+              <div class="pagechip"><span class="t">当前页：vibesop 交互报告</span><span class="x">×</span></div>
+              <div class="composer"><span class="cursor"></span> 说一句，或点上面的建议 <span class="clip">📎</span></div>
+            </div>
+            <div class="outside">
+              <b>壳外 · 不进浮窗</b>
+              装配 · 任务包 · Mode · 确认条
+            </div>
+          </div>
+        </div>
+        <p class="anno">斜线区是 Operate 仪表，钉住时可以有。浮窗不许克隆这块。</p>
+      </div>
+
+      <div>
+        <div class="label">C 钉住 · 无页空态</div>
+        <div class="desk">
+          <div class="ov">
+            <div class="top">
+              <span class="dots">⋯</span>
+              <span class="right"><span class="btn">弹出对话框</span></span>
+            </div>
+            <div class="body">
+              <div class="mark">C</div>
+              <div class="hi">你好</div>
+              <div class="ask">要我帮你做什么？</div>
+              <div class="composer" style="margin-top:auto;"><span class="cursor"></span> 说一句 <span class="clip">📎</span></div>
+            </div>
+          </div>
+        </div>
+        <p class="anno">无 tab / 无扩展 = 无「当前页」、无三条建议。不回退成两套静态邀请。</p>
+      </div>
+
+      <div>
+        <div class="label">D 浮动 · 同一张脸（截图 3–4）</div>
+        <div class="desk">
+          <div class="ov float">
+            <div class="top">
+              <span class="dots">⋯</span>
+              <span class="right">
+                <span class="x">×</span>
+              </span>
+            </div>
+            <div class="body">
+              <div class="mark">C</div>
+              <div class="ask">要我帮你做什么？</div>
+              <div class="composer" style="margin-top:auto;"><span class="cursor"></span> 说一句 <span class="clip">📎</span></div>
+            </div>
+          </div>
+        </div>
+        <p class="anno">r2：浮动 HTML <strong>不</strong>画实心贴回。盯页用「请点工具栏的 CMspark」。没有装配、没有允许/拒绝。无页则无三条建议。</p>
+      </div>
+
+      <div>
+        <div class="label">E 托盘 · 截图 5</div>
+        <div class="desk">
+          <div class="ov wide">
+            <div class="menubar">
+              <span>○</span><span>􀉭</span><span class="btn fill">C</span><span>微信</span>
+              <span style="margin-left:auto;font-size:11px;">菜单栏</span>
+            </div>
+            <div style="padding:16px;display:flex;justify-content:center;">
+              <div class="ov float" style="position:relative;">
+                <div class="top">
+                  <span class="dots">⋯</span>
+                  <span class="right"><span class="x">×</span></span>
+                </div>
+                <div class="body" style="min-height:120px;">
+                  <div class="mark">C</div>
+                  <div class="hi">你好</div>
+                  <div class="ask">要我帮你做什么？</div>
+                  <div class="composer" style="margin-top:auto;"><span class="cursor"></span> 说一句 <span class="clip">📎</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="anno">r2：Win/Linux 托盘走 HTML ChatShell。Mac 热键/托盘仍是 Swift 旧壳，不假装已换脸。无实心贴回。</p>
+      </div>
+
+      <div>
+        <div class="label">F 有消息后 · 招呼和芯片收起</div>
+        <div class="desk">
+          <div class="ov">
+            <div class="top">
+              <span class="dots">⋯</span>
+              <span class="right"><span class="btn">弹出对话框</span></span>
+            </div>
+            <div class="stream">
+              <div class="bubble me">总结这一页</div>
+              <div class="bubble ai">（流式回复）这一页是 VibeSOP 交互报告……</div>
+            </div>
+            <div class="pagechip" style="margin:0 12px 8px;"><span class="t">当前页：vibesop 交互报告</span><span class="x">×</span></div>
+            <div class="composer" style="margin:0 12px 12px;"><span class="cursor"></span> <span class="clip">📎</span></div>
+          </div>
+        </div>
+        <p class="anno">印记 / 招呼 / 三条建议消失。侧栏「当前页」可留在作曲区上方。</p>
+      </div>
+    </div>
+
+    <h2>03 点芯片 / ⋯ / 贴回分叉</h2>
+    <div class="grid">
+      <div>
+        <div class="label">G 点建议 = 填入待发（默认）</div>
+        <div class="desk">
+          <div class="ov">
+            <div class="top"><span class="dots">⋯</span><span class="right"><span class="btn">弹出对话框</span></span></div>
+            <div class="body">
+              <div class="chip" style="background:#111;color:#fff;">总结这一页</div>
+              <div class="chip">用更简单的话讲这一页</div>
+              <div class="chip">我能对这一页做什么</div>
+              <div class="pagechip"><span class="t">当前页：vibesop 交互报告</span><span class="x">×</span></div>
+              <div class="composer">总结这一页<span class="cursor"></span><span class="clip">📎</span></div>
+            </div>
+          </div>
+        </div>
+        <p class="anno">v1 模板，不 LLM 现算。填入作曲区，不直接发送、不是工具批准。</p>
+      </div>
+
+      <div>
+        <div class="label">H ⋯ 最低菜单</div>
+        <div class="desk">
+          <div class="ov" style="overflow:visible;">
+            <div class="top"><span class="dots">⋯</span><span class="right"><span class="btn">弹出对话框</span></span></div>
+            <div class="menu">
+              <div>新对话</div>
+              <div>对话列表</div>
+              <div class="no">添加 MCP</div>
+              <div class="no">允许 / 拒绝</div>
+              <div class="no">知识正文</div>
+            </div>
+            <div class="body" style="min-height:140px;"></div>
+          </div>
+        </div>
+        <p class="anno">删去线三项是 NEVER。脸和手必须对齐：看起来能点的，就能点；不能点的，不画。</p>
+      </div>
+    </div>
+
+    <h2>04 「贴回」两套引擎（本票不锁，线稿先画诚实）</h2>
+    <div class="split">
+      <div class="fork">
+        <h3>Chrome 窗引擎</h3>
+        <p>弹出 = 扩展 <code>windows.create</code> 小窗，里面仍是 ChatShell。</p>
+        <p>贴回 = 用户点按钮（手势）→ <code>sidePanel.open</code> + 关小窗。真贴回。</p>
+        <p>托盘要点这只窗，Chrome 必须在跑。热键在 Chrome 没焦点时变弱。</p>
+      </div>
+      <div class="fork">
+        <h3>OS HUD 引擎</h3>
+        <p>弹出 = 打开已挂 ChatShell 的 overlay HTML / Swift HUD。</p>
+        <p>贴回 <strong>不能一键</strong>（F-I-4：Companion 打不开侧栏）。文案：「请点工具栏的 CMspark」。</p>
+        <p>托盘 / 热键原生。看起来更像截图 5，但不像 Gemini 的装卸。</p>
+      </div>
+    </div>
+
+    <h2>05 NEVER 线稿</h2>
+    <div class="grid three">
+      <div>
+        <div class="label">标签栏药丸</div>
+        <div class="desk"><div class="no-box ov" style="width:220px;padding:18px;text-align:center;">问问 CMspark</div></div>
+      </div>
+      <div>
+        <div class="label">浮窗 Allow / Deny</div>
+        <div class="desk">
+          <div class="no-box ov" style="width:220px;padding:18px;">
+            <div class="btn">允许</div>
+            <div class="btn" style="margin-top:8px;">拒绝</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="label">正在分享标签页</div>
+        <div class="desk"><div class="no-box ov" style="width:220px;padding:18px;text-align:center;">正在分享「…」标签页</div></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
