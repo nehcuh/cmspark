@@ -80,6 +80,8 @@ Orchestrator **默认不能**直接 mutate 浏览器 / shell / host；执行细�
 
 ## 5. Mission Board（任务板）
 
+侧栏聊天列的 **「本轮步骤」**（RunProgress，H1 `open_todos` 种子）**不是** Mission Board：无 Fact/Intent/Hint，无 L2 `board_complete`，召唤器不能勾选。
+
 ### 5.1 概念
 
 线程作用域内的可变 run 状态（P0 已交付）：
