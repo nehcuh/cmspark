@@ -36,8 +36,9 @@ function scrubId(raw: unknown, fallback: string): string {
 
 function scrubTool(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined
-  const t = raw.replace(/[\x00-\x1F\x7F]/g, "").trim().slice(0, 80)
-  return t || undefined
+  const t = raw.replace(/[\x00-\x1F\x7F]/g, "").trim()
+  if (!/^[a-z][a-z0-9_]{0,79}$/.test(t)) return undefined
+  return t
 }
 
 /** Cap 8×120; force model_draft done=false; drop junk sources. */
@@ -81,12 +82,24 @@ export function seedRunProgress(thread: {
   const todos = thread?.runtime_context_budget?.handoff?.open_todos
   if (!Array.isArray(todos)) return { items: [] }
   return sanitizeRunProgress({
-    items: todos.map((t, i) => ({
-      id: `seed:${i}`,
-      text: t,
-      done: false,
-      source: "seed" as const,
-    })),
+    items: todos.map((t, i) => {
+      if (t && typeof t === "object" && !Array.isArray(t)) {
+        const o = t as Record<string, unknown>
+        return {
+          id: `seed:${i}`,
+          text: o.text ?? "",
+          done: false,
+          source: "seed" as const,
+          tool: o.tool,
+        }
+      }
+      return {
+        id: `seed:${i}`,
+        text: t,
+        done: false,
+        source: "seed" as const,
+      }
+    }),
   })
 }
 

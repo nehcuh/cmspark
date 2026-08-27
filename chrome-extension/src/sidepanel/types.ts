@@ -107,7 +107,7 @@ export interface Thread {
       goals?: string[]
       decisions?: string[]
       constraints?: string[]
-      open_todos?: string[]
+      open_todos?: Array<string | { text: string; tool?: string }>
       artifacts?: string[]
     }
   } | null
