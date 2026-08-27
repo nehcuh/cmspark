@@ -329,6 +329,13 @@ export function ChatView() {
     })
   }, [activeThreadId])
 
+  const handlePopout = useCallback(() => {
+    if (!activeThreadId) return
+    chrome.runtime.sendMessage({ type: "overlay.shell.open", thread_id: activeThreadId }, () => {
+      void chrome.runtime.lastError
+    })
+  }, [activeThreadId])
+
   // Export the Q&A pair containing this message as Markdown (UI-side download).
   const handleExport = useCallback((messageId: string) => {
     if (!activeThreadId) return
@@ -344,7 +351,23 @@ export function ChatView() {
   }, [activeThreadId, exportIncludeReasoning])
 
   return (
-    <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
+    <div style={styles.shell}>
+      <div style={styles.popoutBar}>
+        <span aria-hidden style={styles.popoutDots}>⋯</span>
+        <button
+          type="button"
+          disabled={!activeThreadId}
+          onClick={handlePopout}
+          style={{
+            ...styles.popoutBtn,
+            opacity: activeThreadId ? 1 : 0.45,
+            cursor: activeThreadId ? "pointer" : "not-allowed",
+          }}
+        >
+          弹出对话框
+        </button>
+      </div>
+      <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
       <div ref={contentRef} style={styles.contentInner}>
         {showCompactBanner && (
           <div
@@ -572,6 +595,7 @@ export function ChatView() {
         )}
       </div>
       <KnowledgeImportModal />
+      </div>
     </div>
   )
 }
@@ -1824,6 +1848,40 @@ const markdownCSS = `
 
 
 const styles: Record<string, React.CSSProperties> = {
+  shell: {
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+    background: "transparent",
+  },
+  popoutBar: {
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "6px 12px",
+    borderBottom: `1px solid ${tokens.border}`,
+    background: tokens.bg,
+  },
+  popoutDots: {
+    color: tokens.textMuted,
+    fontSize: 14,
+    letterSpacing: 1,
+    userSelect: "none" as const,
+    lineHeight: 1,
+  },
+  popoutBtn: {
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgMuted,
+    color: tokens.text,
+    borderRadius: tokens.radiusPill,
+    fontSize: 12,
+    padding: "4px 10px",
+    fontFamily: tokens.font,
+    lineHeight: 1.3,
+  },
   container: {
     flex: 1,
     overflowY: "auto",

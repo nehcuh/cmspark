@@ -276,7 +276,10 @@ export function useWebSocket() {
         msg.type === "security.unattended.disarm" ||
         msg.type === "security.unattended.status" ||
         msg.type === "config.set" ||
-        msg.type === "config.get"
+        msg.type === "config.get" ||
+        // #239: companion no-id broadcast of overlay.shell.open echoes back to
+        // the originating Side Panel. Ignore — only opened / OVERLAY_SHELL_* error.
+        msg.type === "overlay.shell.open"
       ) {
         return false
       }
@@ -1875,7 +1878,24 @@ export function useWebSocket() {
           break
         }
 
-        case "error":
+        case "overlay.shell.opened":
+          // Silent ack — tray opened HTML ChatShell. Echo already ignored.
+          break
+
+        case "error": {
+          const overlayCode = typeof msg.error_code === "string" ? msg.error_code : ""
+          const overlayErr = typeof msg.error === "string" ? msg.error : ""
+          if (
+            overlayCode.startsWith("OVERLAY_SHELL_") ||
+            overlayCode === "OVERLAY_SHELL_ACL" ||
+            /OVERLAY_SHELL_ORIGIN|OVERLAY_SHELL_UNAVAILABLE|OVERLAY_SHELL_ACL/.test(overlayErr)
+          ) {
+            dispatch({
+              type: "SET_PROCESSING_STATUS",
+              status: overlayErr || overlayCode || "无法弹出对话框",
+            })
+            break
+          }
           if (typeof msg.error === "string" && /knowledge|预览|parseFile|fetch knowledge/i.test(msg.error)) {
             dispatch({
               type: "SET_KNOWLEDGE_PREVIEW",
@@ -1958,6 +1978,7 @@ export function useWebSocket() {
           // P3: a failed summary export surfaces as an error chat message \u2014 clear its spinner.
           dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: null })
           break
+        }
 
         case "history.result":
           dispatch({ type: "SET_OPERATIONS", operations: msg.operations })
