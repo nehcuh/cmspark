@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | Date | 2026-08-04 · **refresh 2026-08-26** |
-| Status | **Not ready to score** on this host until BLOCK 折完。#226 已合 main；自动预检 → [outbound-mcp-p0d-preflight-20260826.md](../../audit/reviews/outbound-mcp-p0d-preflight-20260826.md)。**T1–T3 仍待真人**。 |
+| Status | **T1 scored 2026-08-27**（CMspark Y / Playwright N · L7 PASS 带 nit）。预检 → [outbound-mcp-p0d-preflight-20260826.md](../../audit/reviews/outbound-mcp-p0d-preflight-20260826.md)。记分 → [outbound-mcp-p0d-t1-20260827.md](../../audit/reviews/outbound-mcp-p0d-t1-20260827.md)。**T2/T3 未跑**（不阻塞 T1）。 |
 | SoT | [ADR-022](../../adr/022-outbound-mcp-server.md) §6–7 · [P0c eval gates](2026-08-04-outbound-mcp-p0c-eval-gates.md) |
 | User config | [mcp.md · Outbound / Grok](../../mcp.md#outbound-mcp) |
 | Goal | **证伪 L7**：已登录/SSO 任务上 CMspark 是否不可替代；公网/localhost 可输给 Playwright |

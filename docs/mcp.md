@@ -225,7 +225,7 @@ tail -f ~/.cmspark-agent/logs/companion-$(date +%Y-%m-%d).log | grep -i mcp
 
 <a id="outbound-mcp"></a>
 
-> CMspark **租手（Outbound MCP）目前是实验能力**：非 default-on、**非产品 ship**（ADR-022）。「已登录 Chrome 相对 Playwright 不可替代」的 T1 真人 bake-off **尚未跑**。配置成功、工具列表出现 `cmspark__*`，只说明桥通了，**不**证明这个任务只能用我们。
+> CMspark **租手（Outbound MCP）目前是实验能力**：非 default-on、**非产品 ship**（ADR-022）。T1 真人 bake-off（2026-08-27）：CMspark 臂在已登录 OA 读到邮件 widget；干净 Playwright/Chrome **打不开**同一门户（`ERR_EMPTY_RESPONSE`），**不是** SSO 登录墙对照。配置成功、工具列表出现 `cmspark__*`，只说明桥通了，**不**证明这个任务只能用我们。**仍禁止**扩默认 outbound profile。记分：[outbound-mcp-p0d-t1-20260827.md](audit/reviews/outbound-mcp-p0d-t1-20260827.md)。
 
 **规范**：[ADR-022](adr/022-outbound-mcp-server.md) · **P0d 手测**：[bake-off checklist](superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md) · **排错**：[TROUBLESHOOTING.md](./TROUBLESHOOTING.md#outbound-mcp)
 

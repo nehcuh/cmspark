@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 项目目标
 
-> 版本: 1.7.4 | 日期: 2026-08-27 | 当前阶段：安全稳定化 MVP（核心已完成）→ **产品 0.5.3**（0.5.2 Windows NSIS 之上：知识诚实 + 形态切片 1–3/5/6）。**下一刀 = [#228](https://github.com/nehcuh/cmspark/issues/228) T1 真人 bake-off**（召唤器 P2 [#229](https://github.com/nehcuh/cmspark/issues/229)；残留 [#230](https://github.com/nehcuh/cmspark/issues/230)）。快照：[post-227-status](superpowers/specs/2026-08-27-post-227-status.md)。需求设计必须先开 GitHub Issue。
+> 版本: 1.7.5 | 日期: 2026-08-27 | 当前阶段：安全稳定化 MVP（核心已完成）→ **产品 0.5.3**。T1 bake-off **CMspark 臂完成 / Playwright 干净 profile 打不开门户**（L7 PASS 带 nit，[#228](https://github.com/nehcuh/cmspark/issues/228)）。下一刀 = 召唤器 P2 [#229](https://github.com/nehcuh/cmspark/issues/229)；残留 [#230](https://github.com/nehcuh/cmspark/issues/230)。快照：[post-227-status](superpowers/specs/2026-08-27-post-227-status.md)。需求设计必须先开 GitHub Issue。
 
 ---
 

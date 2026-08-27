@@ -37,7 +37,8 @@ test("docs/mcp.md outbound snippets all include CMSPARK_OUTBOUND_GRANT", () => {
   const outbound = md.slice(heading)
 
   assert.match(outbound, /5 分钟租手/)
-  assert.match(outbound, /尚未跑/)
+  assert.match(outbound, /ERR_EMPTY_RESPONSE/)
+  assert.doesNotMatch(outbound, /尚未跑/)
   assert.match(
     outbound,
     /LOCALAPPDATA|Local\\\\CMspark|Local\\CMspark|CMspark\\node\.exe/,
