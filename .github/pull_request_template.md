@@ -2,6 +2,12 @@
 
 <!-- 用完整句子说明改了什么、为什么。 -->
 
+## 关联 Issue
+
+<!-- 需求设计 / 新行为必须有票：Closes #N 或 Refs #N。没有票先去建，模板 .github/ISSUE_TEMPLATE/design.md。纯 typo/bugfix 可写 n/a。 -->
+
+- Closes / Refs #
+
 ## 能力声明（ADR-020）
 
 > 规范：[docs/adr/020-capability-model-three-axes.md](../docs/adr/020-capability-model-three-axes.md)  

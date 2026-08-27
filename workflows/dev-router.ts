@@ -21,8 +21,8 @@ const WORKFLOW_TEMPLATES = {
   feature: {
     name: "bridge-triple-insurance-fix",
     pattern: /feat|feature|add|implement|support|enable|new/i,
-    description: "功能型任务：设计实现，多 agent 并行，对抗验证",
-    phases: ["Design", "Implement", "Adversarial Review", "Skeptic Review"],
+    description: "功能型任务：先 GitHub Issue，再设计实现，多 agent 并行，对抗验证",
+    phases: ["GitHub Issue", "Design", "Implement", "Adversarial Review", "Skeptic Review"],
   },
   refactor: {
     name: "bridge-review-fix",

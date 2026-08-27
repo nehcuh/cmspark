@@ -5,7 +5,8 @@
 > **脊柱**: [2026-08-26-user-first-product-form-design.md](./2026-08-26-user-first-product-form-design.md)（LOCKED；本文件是**可实现**的身体）  
 > **对抗**: [synthesis](../../audit/reviews/product-form-deepening-adversary-synthesis-20260826.md)  
 > **不推翻**: ADR-020 · ADR-022 L3/L4/L5/L8/L9 · ADR-025 · overlay 无 Allow/Deny · 无第二 Chrome 扩展 · `cmg_` ≠ `ws_secret`  
-> **本文件不写代码。** 实现另开切片，须 dual-review 通过且用户审过本 SoT。
+> **本文件不写代码。** 实现另开切片，须 dual-review 通过且用户审过本 SoT。  
+> **GitHub 追踪（2026-08-27 补）**：已合 #226 切片 1–3、#227 切片 6。余项 **[#228](https://github.com/nehcuh/cmspark/issues/228) T1** · **[#229](https://github.com/nehcuh/cmspark/issues/229) 召唤器 P2** · **[#230](https://github.com/nehcuh/cmspark/issues/230) 残留**。新切片必须先有 Issue。
 
 ```text
 Surface:      Capture=召唤器 ; Operate=侧栏或后台 CDP ; Confirm=确认台/托盘 ; 租手=Outbound MCP

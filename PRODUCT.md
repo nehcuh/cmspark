@@ -1,7 +1,8 @@
 # CMspark — Product Context (Impeccable)
 
 > Written 2026-08-11 for design harnesses. **Refreshed 2026-08-26**: home is logged-in Chrome + hard gates, not the Side Panel.  
-> Version lock: companion/extension **0.5.2**.  
+> Version lock: companion/extension **0.5.3**.  
+> Remaining work is GitHub Issues: [#228](https://github.com/nehcuh/cmspark/issues/228) T1 bake-off · [#229](https://github.com/nehcuh/cmspark/issues/229) summoner P2 · [#230](https://github.com/nehcuh/cmspark/issues/230) residuals. New requirement designs **must** open an Issue first.
 > Form SoT: [docs/superpowers/specs/2026-08-26-product-form-deepening-design.md](docs/superpowers/specs/2026-08-26-product-form-deepening-design.md)
 
 ## One sentence

@@ -10,6 +10,16 @@ All non-trivial tasks are routed through the `workflows/` directory:
 2.  **Match** against available Workflow templates in `workflows/`
 3.  **Execute** the matched Workflow following its phases
 
+### 需求设计 Issue-first（锁定 · 2026-08-27）
+
+任何**需求设计**（新产品行为、形态切片、能力边界、用户可见流程）必须**先**在 GitHub 建 Issue，再写 spec/plan，再实现。禁止只在 `docs/superpowers/specs/` 里写完设计——下场会话会忘。
+
+- 模板：[`.github/ISSUE_TEMPLATE/design.md`](.github/ISSUE_TEMPLATE/design.md)
+- spec/plan 文件头写 `GitHub: #N`
+- 实现 PR：`Closes #N` 或 `Refs #N`
+- 例外：无新需求的 typo/文档；已有行为的 bugfix
+- 本季余项：[#228](https://github.com/nehcuh/cmspark/issues/228) T1 · [#229](https://github.com/nehcuh/cmspark/issues/229) 召唤器 P2 · [#230](https://github.com/nehcuh/cmspark/issues/230) 残留
+
 Available Workflow categories:
 - `workflows/bridge-*.ts` — bridge/ module fixes and reviews
 - `workflows/dev-router.ts` — development task routing (bug-fix / feature / refactor / review)
@@ -24,7 +34,7 @@ CMspark — 浏览器内 AI Agent。通过 Chrome Side Panel 与用户交互，�
 
 双层拓扑：Chrome Extension (Plasmo + React) ↔ WebSocket ↔ Companion (Node.js + TypeScript)
 
-当前阶段：**产品 0.5.2**（0.5.1 附图切点之后的 Windows 官方 NSIS 安装器）。Side Panel ↔ Companion 闭环、线程持久化、确认台、Pack/MCP/Multi-agent、CU（实验定位仅 **Qwen3-VL**）已交付。**听写+ / 本机 Whisper（含 M2 渐进假设）/ 会议工作台** 已交付（[用户指南](docs/meeting-and-dictation-user-guide.md)，ADR-023/024）。**对话框用户附图**（粘贴 / 点选 / 拖入；主模型多模态则原生看图）。**Obsidian 导出**（[ADR-008](docs/adr/008-obsidian-export.md)）· **Mermaid**（[ADR-009](docs/adr/009-mermaid-rendering.md)）· **Mission Pack**（[ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)）见既有文档。
+当前阶段：**产品 0.5.3**（0.5.2 Windows NSIS 之上：知识 CRUD 诚实、租手钥匙 CLI + L8、召唤器诚实文案、侧栏空态看山、技能 TF-IDF + 本轮步骤）。**不是**召唤器/租手完成里程碑——T1 真人 bake-off 仍待（[#228](https://github.com/nehcuh/cmspark/issues/228)）。Side Panel ↔ Companion 闭环、线程持久化、确认台、Pack/MCP/Multi-agent、CU（实验定位仅 **Qwen3-VL**）已交付。**听写+ / 本机 Whisper（含 M2 渐进假设）/ 会议工作台** 已交付（[用户指南](docs/meeting-and-dictation-user-guide.md)，ADR-023/024）。**对话框用户附图**（粘贴 / 点选 / 拖入；主模型多模态则原生看图）。**Obsidian 导出**（[ADR-008](docs/adr/008-obsidian-export.md)）· **Mermaid**（[ADR-009](docs/adr/009-mermaid-rendering.md)）· **Mission Pack**（[ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)）见既有文档。
 
 ## Quick Start
 
@@ -123,6 +133,8 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 ## Related Docs
 
 - docs/README.md — 文档导航（用户 / 架构 / ADR / 工程 / 归档）
+- CONTRIBUTING.md — 需求设计 **Issue-first**（新行为必须先开 GitHub Issue）
+- docs/superpowers/specs/2026-08-27-post-227-status.md — 0.5.3 活状态；余项 #228–#230
 - docs/GOAL.md — 项目目标与阶段规划
 - docs/architecture.md — 完整架构文档（§0 能力三轴 · §7 Packs · §8–11 MCP/CU·Host·Apps/Orchestrator·Board）
 - docs/adr/020-capability-model-three-axes.md — Surface · Composition · Autonomy 本体（能力叠加纪律）

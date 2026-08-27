@@ -7,7 +7,8 @@
 > **前序 SoT（不得削弱）**: [Knowledge Honesty](./2026-08-25-daily-assistant-knowledge-honesty-design.md)  
 > **对抗原文**: [adversary-synthesis](../../audit/reviews/knowledge-crud-honesty-adversary-synthesis-20260826.md)  
 > **双审**: [claude](../../audit/reviews/knowledge-crud-honesty-claude-20260826-111617.md) · [pi](../../audit/reviews/knowledge-crud-honesty-pi-20260826-111617.md) · [verdict](../../audit/reviews/knowledge-crud-honesty-verdict-20260826-111617.json)  
-> **坐标**: [ADR-020](../../adr/020-capability-model-three-axes.md)
+> **坐标**: [ADR-020](../../adr/020-capability-model-three-axes.md)  
+> **GitHub:** Wave 3 实现已合 [#226](https://github.com/nehcuh/cmspark/pull/226)。图谱 / 双链 / overlay `knowledge.get` 仍 NO-GO（无新票 = 不做）。
 
 ```text
 Surface:      L0 Side Panel knowledge sheet (reader + card/body save + Blob download)

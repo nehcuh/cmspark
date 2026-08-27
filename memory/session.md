@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S84 (2026-08-27) [0.5.3 lockstep · Issue-first]
+- **版本**：companion / extension / NSIS / CLI banners **0.5.2 → 0.5.3**。CHANGELOG 记录 #222–#227；诚实写明 T1 未跑。
+- **Issue-first**：CONTRIBUTING / CLAUDE / AGENTS / PR 模板 / `.github/ISSUE_TEMPLATE/design.md`。新需求必须先开 GitHub Issue。
+- **余项票**：[#228](https://github.com/nehcuh/cmspark/issues/228) T1 · [#229](https://github.com/nehcuh/cmspark/issues/229) 召唤器 P2 · [#230](https://github.com/nehcuh/cmspark/issues/230) 残留。
+- **活状态**：`docs/superpowers/specs/2026-08-27-post-227-status.md`
+- Recorded: yes — 设计不建票就会忘；0.5.3 ≠ 租手完成
+
 ### S83 (2026-08-26) [标准流程续 · T1 预检 BLOCK · 切片 6 计划]
 - **T1 预检** `docs/audit/reviews/outbound-mcp-p0d-preflight-20260826.md`：daemon 在跑但是旧 0.5.2、无 `outbound-grant`；盘上 `require_grant=false` + `auto_approve_dangerous=true`。未签发钥匙、未打 live 工具。
 - **切片 5**：机核已在 main（CompanionMark + 22px + 句子邀请 + 作曲区）。不重开。
