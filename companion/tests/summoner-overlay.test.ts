@@ -337,6 +337,30 @@ test("lifecycle summoner ws.close releases overlay leases", () => {
   assert.match(src, /broadcastOverlayLeasesOnSocketClose/)
 })
 
+test("#229: Capture open does not NSApp.activate; hotkey toggles hide", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  const openStart = overlay.indexOf("func open(threadId:")
+  const openEnd = overlay.indexOf("func hide()")
+  assert.ok(openStart >= 0 && openEnd > openStart, "open(threadId:) / hide() missing")
+  const openBody = overlay.slice(openStart, openEnd)
+  assert.match(openBody, /makeKeyAndOrderFront/)
+  assert.match(openBody, /makeFirstResponder\(composer\)/)
+  assert.match(openBody, /do NOT call NSApp\.activate|must not steal/)
+  assert.doesNotMatch(
+    openBody,
+    /NSApp\.activate\(/,
+    "Capture open must not steal the front app; comment may mention NSApp.activate",
+  )
+  const hkStart = overlay.indexOf("func openFromHotKey()")
+  const hkEnd = overlay.indexOf("@objc func hotkeyCandidateClicked")
+  assert.ok(hkStart >= 0 && hkEnd > hkStart)
+  const hk = overlay.slice(hkStart, hkEnd)
+  assert.match(hk, /overlayVisible/)
+  assert.match(hk, /hide\(\)/)
+  assert.doesNotMatch(hk, /NSApp\.activate\(/)
+  assert.match(overlay, /\.nonactivatingPanel/)
+})
+
 test("menu-bar-agent forwards companion.ui.rect to the daemon", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
   assert.match(src, /onCompanionUiRect/)
