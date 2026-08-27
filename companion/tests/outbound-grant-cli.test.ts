@@ -82,6 +82,27 @@ test("unknown subcommand exits 1", async () => {
   assert.doesNotMatch(stdout, /cmg_/)
 })
 
+test("#235 unknown flag exits 1 and does not issue a grant", async () => {
+  const { code, stderr, stdout } = await runGrantCli([
+    "issue", "--caller-id", "c", "--allow-page-expor",
+  ])
+  assert.equal(code, 1)
+  assert.match(stderr, /未知参数/)
+  assert.match(stderr, /--allow-page-expor/)
+  assert.doesNotMatch(stdout, /cmg_/)
+  assert.equal(listOutboundGrants().length, 0)
+})
+
+test("#235 leftover positional args exit 1", async () => {
+  const { code, stderr, stdout } = await runGrantCli([
+    "issue", "oops", "--caller-id", "c",
+  ])
+  assert.equal(code, 1)
+  assert.match(stderr, /未知参数|oops/)
+  assert.doesNotMatch(stdout, /cmg_/)
+  assert.equal(listOutboundGrants().length, 0)
+})
+
 test("grant-cli.ts must not import acceptOutboundDisclosure or open a server", () => {
   const src = companionSrc("outbound-mcp/grant-cli.ts")
   assert.doesNotMatch(src, /acceptOutboundDisclosure/)

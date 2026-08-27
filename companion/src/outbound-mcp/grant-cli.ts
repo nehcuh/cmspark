@@ -51,15 +51,31 @@ function flagEnabled(flags: Map<string, string | true>, key: string): boolean {
   return s === "true" || s === "1" || s === "yes"
 }
 
+const ISSUE_FLAGS = new Set(["caller-id", "label", "allow-page-export", "ttl-ms"])
+const REVOKE_FLAGS = new Set(["grant-id"])
+const LIST_FLAGS = new Set<string>()
+
+function allowedFlagsFor(sub: string): Set<string> | null {
+  if (sub === "issue") return ISSUE_FLAGS
+  if (sub === "revoke") return REVOKE_FLAGS
+  if (sub === "list") return LIST_FLAGS
+  return null
+}
+
 function parseArgv(argv: string[]): {
   sub: string | undefined
   flags: Map<string, string | true>
+  extras: string[]
 } {
   const [sub, ...rest] = argv
   const flags = new Map<string, string | true>()
+  const extras: string[] = []
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
-    if (!a.startsWith("--")) continue
+    if (!a.startsWith("--")) {
+      extras.push(a)
+      continue
+    }
     const eq = a.indexOf("=")
     if (eq !== -1) {
       flags.set(a.slice(2, eq), a.slice(eq + 1))
@@ -74,7 +90,23 @@ function parseArgv(argv: string[]): {
       flags.set(key, true)
     }
   }
-  return { sub, flags }
+  return { sub, flags, extras }
+}
+
+function rejectUnknownArgs(
+  sub: string,
+  flags: Map<string, string | true>,
+  extras: string[],
+  io: GrantCliIo,
+): number | null {
+  const allowed = allowedFlagsFor(sub)
+  if (!allowed) return null
+  const unknownFlags = [...flags.keys()].filter((k) => !allowed.has(k)).map((k) => `--${k}`)
+  const unknown = [...unknownFlags, ...extras]
+  if (unknown.length === 0) return null
+  writeln(io.stderr, `未知参数: ${unknown.join(" ")}`)
+  writeln(io.stderr, USAGE)
+  return 1
 }
 
 /** Platform-honest mcp-outbound launch command/args for IDE snippets. */
@@ -227,12 +259,14 @@ export async function handleOutboundGrantCli(
   argv: string[],
   io: GrantCliIo = DEFAULT_IO,
 ): Promise<number> {
-  const { sub, flags } = parseArgv(argv)
+  const { sub, flags, extras } = parseArgv(argv)
   if (!sub || sub === "-h" || sub === "--help") {
     writeln(sub ? io.stdout : io.stderr, USAGE)
     return sub ? 0 : 1
   }
   try {
+    const unknown = rejectUnknownArgs(sub, flags, extras, io)
+    if (unknown !== null) return unknown
     switch (sub) {
       case "issue":
         return issue(flags, io)
