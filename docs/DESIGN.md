@@ -5,18 +5,18 @@
 > Direction SoT: `.impeccable/mocks/comp-a-centered.png` · Product: [PRODUCT.md](../PRODUCT.md)  
 > Form SoT: [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md)
 
-## Product surfaces (2026-08-26)
+## Product surfaces (2026-08-26 · ChatShell honesty 2026-08-27 #239)
 
 Home is **logged-in Chrome + hard gates**, not the Side Panel. Tokens below still govern Side Panel / Cockpit craft.
 
 | Surface | Design job |
 |---------|------------|
-| 召唤器 | Default = collapsed composer bar (fast). Expand = **展开对话** (thread + list). Not a five-rail WorkBuddy. Same 看山 paper as Operate; no Allow/Deny. |
-| Side Panel | Operate when watching the page. Empty/composer = 看山 canon. ~320px density budget unchanged. Chat column **本轮步骤** is L0 RunProgress (H1 seed). **`tool_result` ticks only when that seed row has an exact `tool`**; otherwise click-only. Existing `run_progress` is not overwritten by a later H1. **Not** Mission Board. |
+| 召唤器 | Mac = collapsed bar + **展开对话** (thread + list; 旧壳). HTML overlay empty = ChatShell 整张脸, **no** `当前页`. No **贴回侧栏** button; footnote: 我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。 Not a five-rail WorkBuddy. Same 看山 paper as Operate; no Allow/Deny. |
+| Side Panel | Operate when watching the page. ChatShell empty + **弹出对话框**. Empty: **要对这页做什么** / **当前页：** / 3 template chips fill composer (do not send). 装配 stays outside the shell. ~320px density budget unchanged. Chat column **本轮步骤** is L0 RunProgress (H1 seed). **`tool_result` ticks only when that seed row has an exact `tool`**; otherwise click-only. Existing `run_progress` is not overwritten by a later H1. **Not** Mission Board. |
 | 确认台 / Cockpit | Confirm. Night-world of the same craft. Overlay never borrows this dialect. |
 | 租手 | No new visual chrome in coding agents. Confirm still lands on 确认台 / Mac tray. |
 
-Copy contract (Chinese chrome): `展开对话` / `打开浏览器` / `打开确认台` / `本轮步骤`. Forbidden: `展开工作台`, `去侧栏批准`. Do not label RunProgress `进行中` (collides with Mission Board intents).
+Copy contract (Chinese chrome): `弹出对话框` / `当前页：` / `打开确认台` / `打开浏览器` / `展开对话` (Mac 旧壳) / `本轮步骤`. Forbidden: `展开工作台`, `去侧栏批准`. **贴回侧栏** is not a button this ticket (footnote only: 请点工具栏的 CMspark). Do not label RunProgress `进行中` (collides with Mission Board intents).
 
 ## Colors
 
