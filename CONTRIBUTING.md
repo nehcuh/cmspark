@@ -100,12 +100,28 @@ cmspark/
 | `npm --prefix companion test` | Companion 测试 |
 | `npm --prefix chrome-extension test` | Extension 测试 |
 
+## 需求设计 Issue-first（锁定 · 2026-08-27）
+
+**所有需求设计必须先在 GitHub 创建 Issue**，再写 spec/plan，再实现。设计只活在 `docs/superpowers/specs/` 里、没有票号，下场会话就会忘。
+
+| 步骤 | 做什么 |
+|------|--------|
+| 1. Issue | `gh issue create` 用 [`.github/ISSUE_TEMPLATE/design.md`](.github/ISSUE_TEMPLATE/design.md)。正文必含：为什么、用户能看见的完成、未完成时禁止假装、blast、NEVER |
+| 2. Spec / plan | 文件头写 `GitHub: #N`。Issue 链到该文件。没有票号的新 SoT **不算**已锁定 |
+| 3. 实现 | 分支 + PR；描述里 `Closes #N` 或 `Refs #N`。不在 `main` 上直接实现 |
+
+**必须建票**：新产品行为、形态切片、能力边界、用户可见流程、冻结项（否则会「顺便」做掉）。  
+**不必建设计票**：无新需求的 typo/文档；已有行为的 bugfix（用 bug 票即可）。
+
+本季已开追踪：[#228](https://github.com/nehcuh/cmspark/issues/228) T1 bake-off · [#229](https://github.com/nehcuh/cmspark/issues/229) 召唤器 P2 · [#230](https://github.com/nehcuh/cmspark/issues/230) 形态残留。正交旧债 #69 / #70 / #71。
+
 ## 提交规范
 
 - 提交信息用中文描述变更内容
 - 功能变更前先补测试
 - 重构前确保现有测试通过
 - **产品版本**以 companion / chrome-extension `package.json` 为准（文档写 0.4.0 时勿回退叙事）
+- **新需求**必须先有 GitHub Issue（见上一节）
 
 ## PR 模板
 
@@ -125,6 +141,7 @@ dual-review（`scripts/dual-external-review.sh`）会自动附带 [capability ch
 - [ ] **新增测试？** → [TESTING.md](docs/TESTING.md) 地图是否点名？
 - [ ] **关闭了 RFC/decision？** → 状态戳记 + 计划归档（`docs/archive/`，Phase 4）？
 - [ ] **导航？** → [docs/README.md](docs/README.md) 表是否要加一行？
+- [ ] **需求设计？** → 新行为必须已有 GitHub Issue（`Closes #N` / `Refs #N`）；禁止只在 `docs/superpowers/` 里设计
 - [ ] **能力声明（ADR-020）** → PR 描述或 pack 注释中写明：
 
 ```text

@@ -1,6 +1,6 @@
 # CMspark 文档导航
 
-> 产品 **0.5.2** · 入口 README：[仓库根 README.md](../README.md)  
+> 产品 **0.5.3** · 入口 README：[仓库根 README.md](../README.md)  
 > 本页只做**导航**，不搬运正文。过程件已于 **Phase 4** 迁入 [`archive/2026-07/`](archive/2026-07/)；`user/` 物理搬家仍可选（见 [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)）。
 
 ---
@@ -41,11 +41,12 @@
 |------|------|
 | [architecture.md](architecture.md) | 活架构：双层拓扑 + 桌面面、MCP/CU/Host/编排/Board/Packs |
 | **[ADR-020 能力三轴](adr/020-capability-model-three-axes.md)** | **Surface · Composition · Autonomy** 本体（能力叠加与防「杂」纪律） |
-| [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.5.0** 对齐；扩展目标带轴标注） |
+| [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.5.3** 对齐；扩展目标带轴标注） |
 | [../PRODUCT.md](../PRODUCT.md) | 产品一句话 / 四面（Capture·Operate·Confirm·租手）；家 = 已登录 Chrome + 硬闸 |
-| [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md) | **形态深化 SoT**（定位、文案合同、L8、五分钟租手、切片 DoD） |
-| [2026-08-26-post-226-status.md](superpowers/specs/2026-08-26-post-226-status.md) | **#226 后现状**：切片 1–3 + 知识 Wave 3 已合；T1 预检 BLOCK；切片 5 已在 main |
-| [2026-08-26-slice-6-match-idf-runprogress.md](superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md) | **切片 6 计划**（IDF + RunProgress）— 须 dual 后再实现 |
+| [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md) | **形态深化 SoT**（定位、文案合同、L8、五分钟租手、切片 DoD）；余项 [#228](https://github.com/nehcuh/cmspark/issues/228)–[#230](https://github.com/nehcuh/cmspark/issues/230) |
+| [2026-08-27-post-227-status.md](superpowers/specs/2026-08-27-post-227-status.md) | **0.5.3 / #227 后现状**：切片 1–3/5/6 + 知识 Wave 3 已合；T1 仍待 |
+| [2026-08-26-post-226-status.md](superpowers/specs/2026-08-26-post-226-status.md) | **#226 后快照**（被上一行取代为活状态） |
+| [2026-08-26-slice-6-match-idf-runprogress.md](superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md) | **切片 6 计划**（IDF + RunProgress）— 已合 #227；残留 [#230](https://github.com/nehcuh/cmspark/issues/230) |
 | [../CHANGELOG.md](../CHANGELOG.md) | 版本变更记录 |
 | [DESIGN.md](DESIGN.md) | UI / 设计 token 约定；Mode badge = Surface；召唤器默认收起条 |
 | [security-design-tiered-gates-2026-07-11.md](security-design-tiered-gates-2026-07-11.md) | 分层门禁设计说明 |
@@ -92,8 +93,9 @@
 |------|------|
 | [TESTING.md](TESTING.md) | 测试地图与命令（companion + extension） |
 | [supply-chain.md](supply-chain.md) | 供应链审计姿态与 CI 门槛 |
-| [../CONTRIBUTING.md](../CONTRIBUTING.md) | 贡献、搭建、目录树、文档 checklist |
-| [../.github/pull_request_template.md](../.github/pull_request_template.md) | PR 模板（含 ADR-020 能力声明） |
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | 贡献、搭建、**需求设计 Issue-first**、目录树、文档 checklist |
+| [../.github/ISSUE_TEMPLATE/design.md](../.github/ISSUE_TEMPLATE/design.md) | 需求设计 Issue 模板（新行为必须先开票） |
+| [../.github/pull_request_template.md](../.github/pull_request_template.md) | PR 模板（含 ADR-020 能力声明 + 关联 Issue） |
 | [licenses/cairn-inspiration.md](licenses/cairn-inspiration.md) | Mission Board / Cairn 灵感与 AGPL 边界说明 |
 
 ---
@@ -111,7 +113,10 @@
 | [audit/reviews/_templates/dual-review-capability-checklist.md](audit/reviews/_templates/dual-review-capability-checklist.md) | dual-review 能力声明检查清单 |
 | [audit/reviews/_templates/eval-gate-card.md](audit/reviews/_templates/eval-gate-card.md) | Eval Engineering 放行卡片（机核 + dual + blast） |
 | [superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md](superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md) | Outbound MCP P0c 门控卡（M1–M9） |
-| [superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md](superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md) | **P0d 真人 bake-off**（T1–T3 vs Playwright · 记分表） |
+| [superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md](superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md) | **P0d 真人 bake-off**（T1–T3 vs Playwright · 记分表）→ **活票 [#228](https://github.com/nehcuh/cmspark/issues/228)** |
+| **GitHub [#228](https://github.com/nehcuh/cmspark/issues/228)** | **P0** T1 真人 bake-off（切片 4）。没跑完禁止扩 profile |
+| **GitHub [#229](https://github.com/nehcuh/cmspark/issues/229)** | 召唤器 P2：只修快与淡 |
+| **GitHub [#230](https://github.com/nehcuh/cmspark/issues/230)** | 形态残留：F-S-10 / overlay-acl-rollback / grant-cli / RunProgress 勾选 |
 | [skills/eval-engineering-gate/SKILL.md](skills/eval-engineering-gate/SKILL.md) | Eval Engineering 闸门 skill（机核 + dual + blast） |
 | [decisions/daily-content-loop-brief-2026-08-04.md](decisions/daily-content-loop-brief-2026-08-04.md) | **DIRECTION LOCKED**：每日情报环（公开站·本地模型·本机+邮件·代码+网页验证） |
 | [optimization-plan-post-v0.3.0.md](optimization-plan-post-v0.3.0.md) | 历史：v0.3.0 后 P2/P3 闭环考古（**勿再作排序权威**） |
@@ -122,8 +127,8 @@
 
 | 路径 | 说明 |
 |------|------|
-| [superpowers/specs/](superpowers/specs/) | 锁定中的产品/设计 spec（UI 三模式、Mission Pack、**Qwen3-VL 实验层**） |
-| [superpowers/plans/](superpowers/plans/) | 实施 plan / spike（含 HUD 等） |
+| [superpowers/specs/](superpowers/specs/) | 锁定中的产品/设计 spec。**新 SoT 必须先有 GitHub Issue** |
+| [superpowers/plans/](superpowers/plans/) | 实施 plan / spike（含 HUD 等）；文件头写 `GitHub: #N` |
 | [decisions/](decisions/) | 对抗评审 brief、synthesis、锁文件；**被代码注释引用的路径勿盲删** |
 | [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md) | 本文档重梳总计划（Phase 1–4） |
 

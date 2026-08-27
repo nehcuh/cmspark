@@ -2,9 +2,9 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-25 (S81 · #222 on main · PR #223 P1/nits/Win HUD · NSIS 换装)
+**Updated**: 2026-08-27 (0.5.3 lockstep · #227 on main · remaining = GitHub #228–#230)
 
-## CMspark — 产品 0.5.2
+## CMspark — 产品 0.5.3
 
 | 轴 | 状态 |
 |----|------|
@@ -21,20 +21,22 @@
 | 站点负知识 site-op-memory | **on main**（**#213**） |
 | OS summoner overlay（L0） | **on main**（**#219** C-thin HTML + Mac NSPanel） |
 | steer/nextRun busy composer | **on main**（#218 + #219 UI + **#220/#221** nits） |
-| Daily assistant · 本机知识诚实 | **on main**（**#222**）；P1/nits/Win HUD 在 **PR #223** |
+| Daily assistant · 本机知识诚实 | **on main**（**#222** / **#223** / **#226** Wave 3） |
+| 形态切片 1–3 | **on main**（**#226**）：outbound-grant + L8 + 召唤器诚实文案 |
+| 切片 5 空态看山 | **on main** |
+| 切片 6 IDF + 本轮步骤 | **on main**（**#227**）；v1 勾选基本只能点（#230） |
 
-## Branch lock (S81)
+## Branch lock (S83 · 0.5.3)
 
-- **`main`**: tip `6ce291db` = squash **#222**（knowledge honesty Wave 0–2 + overlay HUD compose）。
-- **`fix/post220-head-p1-fold`**: **PR #223** — post-#222 P1（F-I-5 / PEM / F-S-1）+ residual nits + Win C-thin 折叠居中条。本机 `%LOCALAPPDATA%\CMspark` 已 NSIS 静默换装。
-- **不要**：overlay Allow/Deny；summoner WS 上 `knowledge.import`；Project / graph DB；`isAllowedWsOrigin` 加 loopback；Electron；全局 redact 裸 `value`。
+- **`main`**: #227 已合；产品版本 **0.5.3** lockstep。
+- **活票**：[#228](https://github.com/nehcuh/cmspark/issues/228) T1 bake-off（P0）· [#229](https://github.com/nehcuh/cmspark/issues/229) 召唤器 P2 · [#230](https://github.com/nehcuh/cmspark/issues/230) 残留。正交 #69/#70/#71。
+- **不要**：overlay Allow/Deny；summoner WS 上 `knowledge.import`/`knowledge.get`；第二只 Chrome 扩展；`ws_secret` 当 grant；T1 没跑就扩 outbound profile；不经确认改 live `config.json`。
 
-## Next (optional backlog)
+## Next
 
-- CI 绿合 **#223**；Chrome 重载 `Local\CMspark\chrome-extension`；再开召唤器验折叠条
-- overlay `pack.apply` peek / import `user_gesture` 服务端 400 仍停住
-- 原生 WKWebView/WebView2/GTK 另票
-- residual：login-shell 失败重试；WS progress throttle；message-router 续拆
+- **P0** #228 T1 真人 bake-off（需操作员 SSO URL + 本机 companion 来自 main + bake-off 会话 `require_grant=true` / `auto_approve_dangerous=false`）
+- 然后 #229；#230 不挡 T1、不许顺便扩 overlay ACL
+- 需求设计必须先开 GitHub Issue（CONTRIBUTING / `.github/ISSUE_TEMPLATE/design.md`）
 
 ## Docs SoT
 

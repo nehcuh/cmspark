@@ -2,7 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Plan dual:** r1 四路对抗 **3× REJECT + External AWN** → 下列 r2 针已折。未 dual 不得实现。合成：[slice-6-plan-adversary-synthesis-20260826.md](../../audit/reviews/slice-6-plan-adversary-synthesis-20260826.md)
+> **Plan dual:** r1 四路对抗 **3× REJECT + External AWN** → 下列 r2 针已折。未 dual 不得实现。合成：[slice-6-plan-adversary-synthesis-20260826.md](../../audit/reviews/slice-6-plan-adversary-synthesis-20260826.md)  
+> **GitHub:** 实现已合 [#227](https://github.com/nehcuh/cmspark/pull/227)。v1 勾选/F-S-10/grant-cli 残留 → [#230](https://github.com/nehcuh/cmspark/issues/230)。
 
 **Goal:** Skill auto-match uses real IDF; an explicit pin (`/技能` this turn or 按需勾选) stops `matchSkills` union; the chat column shows a running checklist whose checks bind to `tool_result` (item id / declared tool) or an L0 Side Panel click — never model self-tick, never Mission Board, never overlay write.
 

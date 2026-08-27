@@ -777,8 +777,8 @@ make package
 ```bash
 make package-macos
 # 产出：
-#   dist-package/CMspark-v0.5.2-macOS.dmg   ← 安装包
-#   dist-package/cmspark-v0.5.2-macos-arm64.zip  ← 原始压缩包
+#   dist-package/CMspark-v0.5.3-macOS.dmg   ← 安装包
+#   dist-package/cmspark-v0.5.3-macos-arm64.zip  ← 原始压缩包
 ```
 
 Windows 打包流程（**官方 zip + Setup.exe / package.sh**）：
@@ -912,4 +912,4 @@ cmspark/
 
 ---
 
-> **当前阶段（0.5.2）**：MVP 与组合面已稳；**听写+ / 会议 / 本机 Whisper M2** 已交付；**对话框可粘贴/点选/拖入图片**（主模型多模态则原生看图）；**Windows 官方 NSIS Setup.exe** 随 GitHub Release 分发；CU 实验定位仅 **Qwen3-VL**（TinyClick 残留已清）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织：**L0 聊 / L1 网页 / 组合面 / L2 宿主 opt-in / 编排 Autonomy**。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（0.5.3）**：MVP 与组合面已稳；**听写+ / 会议 / 本机 Whisper M2** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe** 随 GitHub Release 分发；**知识 CRUD 诚实**（正文 / 保存 / 下载 `.md`）；**租手钥匙 CLI + L8 确认**；侧栏空态看山；技能 TF-IDF + 聊天列「本轮步骤」。**不是**召唤器/租手完成切点——T1 真人 bake-off 仍待（[#228](https://github.com/nehcuh/cmspark/issues/228)）。CU 实验定位仅 **Qwen3-VL**。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
