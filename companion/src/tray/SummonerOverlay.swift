@@ -255,7 +255,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     railSection = 0
     isOpen = true
     applyPhase()
-    NSApp.activate(ignoringOtherApps: true)
+    // CRITICAL: do NOT call NSApp.activate here. Capture bar is
+    // .nonactivatingPanel — steal front app = 慢 / 淡不掉 (#229).
     window.center()
     window.makeKeyAndOrderFront(nil)
     window.orderFrontRegardless()
