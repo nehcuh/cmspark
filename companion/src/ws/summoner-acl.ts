@@ -31,6 +31,9 @@ const SUMMONER_ALLOW = new Set([
   "voice.stt.end",
   "voice.stt.abort",
   "voice.stt.partial_request",
+  "meeting.create",
+  "meeting.start",
+  "meeting.end",
   "mcp.list",
   "mcp.toggle_server",
   "pack.list",
@@ -139,6 +142,11 @@ export function applySummonerPayloadPolicy(
     msg.pack_id = packId
     msg.thread_id = threadId
     msg.user_gesture = true
+    return { ok: true }
+  }
+  if (type === "meeting.start") {
+    msg.audio_retained = false
+    delete msg.retain_days
     return { ok: true }
   }
   return { ok: true }

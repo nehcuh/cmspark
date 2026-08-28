@@ -28,6 +28,7 @@ import {
   SUMMONER_RENTER_CHROME_DOWN,
   CHAT_SHELL_TITLE_NONE,
   VOICE_PRIVACY_ACK_V2_CLAUSES,
+  MEETING_PRIVACY_ACK_V1_CLAUSES,
 } from "./summoner/client"
 import { getChromeOpener } from "./platform"
 
@@ -62,6 +63,9 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "voice.stt.end",
   "voice.stt.abort",
   "voice.stt.partial_request",
+  "meeting.create",
+  "meeting.start",
+  "meeting.end",
 ])
 
 /** Fan-out to HTML EventSource. Confirm / Trust / config frames stay off this list. */
@@ -84,6 +88,10 @@ export const SUMMONER_WEB_EVENT_ALLOW = new Set([
   "voice.stt.partial",
   "voice.stt.result",
   "voice.stt.error",
+  "meeting.created",
+  "meeting.started",
+  "meeting.ended",
+  "meeting.error",
 ])
 
 const MAX_SSE_CLIENTS = 4
@@ -713,6 +721,27 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/meeting/start" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const payload: Record<string, unknown> = {
+        v: 1,
+        privacy_ack_v1: true,
+        audio_retained: false,
+      }
+      if (typeof body.title === "string") payload.title = body.title
+      if (typeof body.thread_id === "string") payload.thread_id = body.thread_id
+      if (typeof body.id === "string" && body.id.trim()) payload.id = body.id.trim()
+      jsonResponse(res, await dispatchAllowed("meeting.start", payload))
+      return
+    }
+
+    if (pathOnly === "/api/meeting/end" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const id = typeof body.id === "string" ? body.id : ""
+      jsonResponse(res, await dispatchAllowed("meeting.end", { v: 1, id }))
+      return
+    }
+
     res.writeHead(404)
     res.end("Not found")
   } catch (e: any) {
@@ -840,6 +869,14 @@ body{
 .privacy-sheet[hidden]{display:none}
 .privacy-sheet ol{margin:6px 0 8px;padding-left:1.3em;color:var(--text);font-size:12px;line-height:1.45}
 .privacy-sheet .cta-actions button{background:var(--indigo);color:#fff}
+.privacy-sheet p{font-size:12.5px;font-weight:600;color:var(--text)}
+#meetingVoiceSection{margin-bottom:8px}
+.capture-row{display:flex;gap:8px;padding:0 2px;flex-wrap:wrap}
+#meetingStart{
+  min-height:36px;padding:6px 12px;border-radius:8px;border:0;cursor:pointer;font:inherit;
+  background:var(--canvas);color:var(--text);
+}
+#meetingStart[aria-pressed="true"]{background:var(--indigo-soft);color:var(--indigo)}
 #mic[aria-pressed="true"]{background:var(--indigo-soft);color:var(--indigo)}
 .hud:not(.expanded) .ghosts{display:none}
 .hud.expanded .ghosts{display:none}
@@ -903,6 +940,9 @@ body{
         </button>
       </div>
     </div>
+    <div class="capture-row">
+      <button type="button" id="meetingStart" aria-pressed="false">开始会议</button>
+    </div>
     <div class="cta-box" id="ctaBox" hidden>
       <p id="ctaCopy">${SUMMONER_L0_CHROME_DOWN}</p>
       <div class="cta-actions">
@@ -919,6 +959,21 @@ body{
       </ol>
       <div class="cta-actions">
         <button type="button" id="voicePrivacyAck">我已了解</button>
+      </div>
+    </div>
+    <div class="privacy-sheet" id="meetingPrivacy" hidden>
+      <div id="meetingVoiceSection">
+        <p>本机听写</p>
+        <ol>
+          ${VOICE_PRIVACY_ACK_V2_CLAUSES.map((c) => `<li>${escHtml(c)}</li>`).join("\n          ")}
+        </ol>
+      </div>
+      <p>会议隐私说明</p>
+      <ol>
+        ${MEETING_PRIVACY_ACK_V1_CLAUSES.map((c) => `<li>${escHtml(c)}</li>`).join("\n        ")}
+      </ol>
+      <div class="cta-actions">
+        <button type="button" id="meetingPrivacyAck">我已了解</button>
       </div>
     </div>
   </div>
@@ -993,6 +1048,8 @@ body{
     return fetch(url(path), opts).then(function(r){return r.json().catch(function(){return {error:r.statusText}})})
   }
   var voiceAck=false;
+  var meetingAck=false;
+  var meetingId="";
   var sttLive=false;
   var sttSid="";
   var sttSeq=0;
@@ -1121,7 +1178,11 @@ body{
       src.connect(proc);
       proc.connect(mute);
       mute.connect(ctx.destination);
-      sttTimer=setTimeout(function(){ if(sttLive && sttSid===sid) stopStt(false); }, STT_MAX_MS);
+      sttTimer=setTimeout(function(){
+        if(!sttLive || sttSid!==sid) return;
+        stopStt(false);
+        if(meetingId) startStt();
+      }, STT_MAX_MS);
     };
     if(ctx.state==="suspended") ctx.resume().then(go).catch(go);
     else go();
@@ -1332,6 +1393,60 @@ body{
     if(sheet) sheet.hidden=true;
     startStt();
   };
+  function setMeetingUi(on){
+    var b=$("meetingStart");
+    if(!b) return;
+    b.textContent=on?"结束会议":"开始会议";
+    b.setAttribute("aria-pressed", on?"true":"false");
+  }
+  function startMeetingCapture(){
+    var payload={};
+    if(threadId) payload.thread_id=threadId;
+    api("/api/meeting/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).then(function(d){
+      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
+        setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error||"会议开始失败"));
+        return;
+      }
+      meetingId=(d&&d.meeting&&d.meeting.id)||"";
+      if(!meetingId){ setStatus("会议开始失败"); return; }
+      setMeetingUi(true);
+      if(!sttLive) startStt();
+    }).catch(function(e){setStatus(String(e&&e.message||e))});
+  }
+  function endMeetingCapture(){
+    var id=meetingId;
+    meetingId="";
+    setMeetingUi(false);
+    if(sttLive) stopStt(false);
+    if(!id){ setStatus("纪要在侧栏"); return; }
+    api("/api/meeting/end",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})}).then(function(d){
+      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
+        setStatus(d.message||d.error||"会议结束失败");
+        return;
+      }
+      setStatus("纪要在侧栏");
+    }).catch(function(e){setStatus(String(e&&e.message||e))});
+  }
+  $("meetingStart").onclick=function(){
+    if(meetingId){ endMeetingCapture(); return; }
+    if(!meetingAck){
+      var sheet=$("meetingPrivacy");
+      var vsec=$("meetingVoiceSection");
+      if(!voiceAck){
+        if(vsec) vsec.hidden=false;
+      } else if(vsec) vsec.hidden=true;
+      if(sheet) sheet.hidden=false;
+      return;
+    }
+    startMeetingCapture();
+  };
+  $("meetingPrivacyAck").onclick=function(){
+    meetingAck=true;
+    voiceAck=true;
+    var sheet=$("meetingPrivacy");
+    if(sheet) sheet.hidden=true;
+    startMeetingCapture();
+  };
   $("newThreadBar").onclick=function(){$("newThread").click()};
   $("newThread").onclick=function(){
     api("/api/threads",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(d){
@@ -1466,6 +1581,12 @@ body{
   }
   window.addEventListener("pagehide", function(){
     if(sttLive) stopStt(true);
+    if(meetingId){
+      try{
+        var body=new Blob([JSON.stringify({id:meetingId})],{type:"application/json"});
+        navigator.sendBeacon(url("/api/meeting/end"), body);
+      }catch(e){}
+    }
     releaseLease();
   });
   function statusFromEvent(d){
@@ -1511,16 +1632,28 @@ body{
       }
       if(t==="voice.stt.result"){
         var txt=typeof d.text==="string"?d.text.trim():"";
-        if(txt){
+        if(txt && !meetingId){
           var cur=$("text").value;
           $("text").value=cur&&cur.trim()?cur.replace(/\\s*$/,"")+" "+txt:txt;
         }
         if(sttLive) stopStt(false);
+        if(meetingId) startStt();
         return;
       }
       if(t==="voice.stt.error"){
         setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error));
         if(sttLive) stopStt(true);
+        return;
+      }
+      if(t==="meeting.error"){
+        setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error||"会议出错"));
+        return;
+      }
+      if(t==="meeting.ended"){
+        meetingId="";
+        setMeetingUi(false);
+        if(sttLive) stopStt(false);
+        setStatus("纪要在侧栏");
         return;
       }
       if(t==="mcp.confirm.pending"){

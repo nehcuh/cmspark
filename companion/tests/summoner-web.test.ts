@@ -139,7 +139,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /var w=400,h=expanded\?520:120/)
     assert.doesNotMatch(r.body, /grid-template-columns:var\(--rail\) var\(--list\)/)
     assert.match(r.body, /\.rail,\.list\{[^}]*display:none/)
-    assert.doesNotMatch(r.body, /id="operateOpen"|id="meetingStart"/)
+    assert.doesNotMatch(r.body, /id="operateOpen"/)
+    assert.match(r.body, /id="meetingStart"/)
     assert.doesNotMatch(r.body, /要对这页做什么|当前页：|听写在侧栏|召唤器（实验）/)
     assert.match(r.body, /问 CMspark/)
     assert.match(r.body, /附件和听写不用开浏览器/)
@@ -486,6 +487,26 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.doesNotMatch(r.body, /\/api\/dispatch/)
   })
 
+  test("HTML meeting start is hidden privacy + five clauses; v2 present if unacked", async () => {
+    const r = await request({ method: "GET", port, path: `/?token=${token}` })
+    assert.equal(r.status, 200)
+    assert.match(r.body, /id="meetingStart"/)
+    assert.match(r.body, />开始会议</)
+    assert.match(r.body, /id="meetingPrivacy"/)
+    assert.match(r.body, /id="meetingPrivacy"[^>]*\bhidden\b/)
+    assert.match(r.body, /会创建本地会话产物/)
+    assert.match(r.body, /默认结束录制后删除会议目录下音频/)
+    assert.match(r.body, /生成纪要将把转写文本发给你已配置的 LLM/)
+    assert.match(r.body, /长会 STT 仅本机/)
+    assert.match(r.body, /多方录音法律合规由你负责/)
+    assert.match(r.body, /纪要在侧栏/)
+    assert.match(r.body, /id="meetingVoiceSection"/)
+    assert.match(r.body, /id="meetingVoiceSection"[\s\S]*音频经本机 Companion/)
+    assert.match(r.body, /if\(!voiceAck\)/)
+    assert.match(r.body, /结束会议/)
+    assert.doesNotMatch(r.body, /\/api\/dispatch/)
+  })
+
   test("POST /api/stt/start with token dispatches voice.stt.start", async () => {
     dispatched.length = 0
     const r = await request({
@@ -531,6 +552,53 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(dispatched[0].sessionId, "s1")
     assert.equal(dispatched[0].seq, 0)
     assert.equal(dispatched[0].v, 1)
+  })
+
+  test("POST /api/meeting/start server fills type meeting.start and audio_retained false", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/meeting/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({
+        type: "generate_minutes",
+        audio_retained: true,
+        retain_days: 7,
+        title: "overlay meet",
+      }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "meeting.start")
+    assert.equal(dispatched[0].v, 1)
+    assert.equal(dispatched[0].privacy_ack_v1, true)
+    assert.equal(dispatched[0].audio_retained, false)
+    assert.equal(dispatched[0].retain_days, undefined)
+    assert.equal(dispatched[0].title, "overlay meet")
+    assert.equal(dispatched.some((d) => String(d.type).includes("generate_minutes")), false)
+  })
+
+  test("POST /api/meeting/end server fills type meeting.end", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/meeting/end?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ type: "generate_minutes", id: "m1" }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "meeting.end")
+    assert.equal(dispatched[0].v, 1)
+    assert.equal(dispatched[0].id, "m1")
   })
 
   test("POST /api/stt/start with type=generate_minutes still dispatches voice.stt.start", async () => {
@@ -640,6 +708,14 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("voice.stt.partial"))
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("voice.stt.result"))
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("voice.stt.error"))
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.start"), true)
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.create"))
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.end"))
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.generate_minutes"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.append_transcript"), false)
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.started"))
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.ended"))
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.error"))
   })
 
   test("GET /api/events without token → 403", async () => {

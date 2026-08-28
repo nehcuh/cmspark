@@ -2455,6 +2455,7 @@ export async function handleMessage(
           origin: session?.origin,
           peerId: session?.panelId,
           send: session?.sendToExtension,
+          surface: session?.surface,
         },
         {
           clearSttSessions: () => {

@@ -59,6 +59,15 @@ export const VOICE_PRIVACY_ACK_V2_CLAUSES: readonly string[] = [
   "此前的浏览器隐私确认（v1）不满足本机转写；使用本机转写须单独确认本说明。",
 ] as const
 
+/** Overlay HTML meeting privacy — lockstep with MeetingPanel five clauses. */
+export const MEETING_PRIVACY_ACK_V1_CLAUSES: readonly string[] = [
+  "会创建本地会话产物（转写 ± 可选音频）。",
+  "默认结束录制后删除会议目录下音频（当前 UI 不提供保留选项）。",
+  "生成纪要将把转写文本发给你已配置的 LLM。",
+  "长会 STT 仅本机；不会自动开始录音。",
+  "多方录音法律合规由你负责。",
+] as const
+
 /** ChatShell empty copy — lockstep with chrome-extension/src/sidepanel/chat-shell-copy.ts (#239). */
 export const CHAT_SHELL_TITLE_PAGE = "要对这页做什么？"
 export const CHAT_SHELL_TITLE_NONE = "要我帮你做什么？"

@@ -1,15 +1,19 @@
 /**
- * Slice #241 Task 2 — overlay HTML voice.stt ACL + v2 privacy copy lockstep.
+ * Slice #241 Task 2–3 — overlay HTML voice.stt + meeting.create/start/end ACL.
  *
  * SUMMONER_ALLOW is not exported; gate via assertSummonerAllowed.
+ * meeting-test-data-dir must load before meeting-handlers (DATA_DIR).
  */
+import "./meeting-test-data-dir"
 import test from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as path from "node:path"
 
-import { assertSummonerAllowed } from "../src/ws/summoner-acl"
+import { assertSummonerAllowed, applySummonerPayloadPolicy } from "../src/ws/summoner-acl"
 import { SUMMONER_WEB_DISPATCH_ALLOW, SUMMONER_WEB_EVENT_ALLOW } from "../src/summoner-web"
+import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
+import { deleteMeeting } from "../src/meeting/meeting-store"
 
 const ROOT = path.resolve(__dirname, "..", "..")
 
@@ -61,6 +65,83 @@ test("dispatchSummonerWeb fire-and-forgets voice.stt.chunk and abort", () => {
   assert.match(fn, /sendAppMessage\(type,\s*params\)/)
   assert.match(fn, /type:\s*["']ok["']/)
   assert.match(fn, /sendAppRequest\(type,\s*params/)
+})
+
+test("meeting.start allowed on summoner; generate_minutes is not", () => {
+  assert.equal(assertSummonerAllowed("summoner", "meeting.start").ok, true)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.end").ok, true)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.create").ok, true)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.generate_minutes").ok, false)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.auto_diarize").ok, false)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.import_text").ok, false)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.append_transcript").ok, false)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.start"), true)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.create"), true)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.end"), true)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.generate_minutes"), false)
+  assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.started"), true)
+  assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.ended"), true)
+  assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.created"), true)
+  assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.error"), true)
+})
+
+test("tray origin + summoner surface allows meeting.start", async () => {
+  const res = await handleMeetingMessage(
+    { type: "meeting.start", v: 1, privacy_ack_v1: true, title: "overlay-acl" },
+    { origin: "cmspark-tray://local", surface: "summoner" },
+  )
+  try {
+    assert.notEqual(res.code, "origin_denied")
+    assert.equal(res.type, "meeting.started")
+  } finally {
+    const id = res && res.meeting && res.meeting.id
+    if (typeof id === "string") deleteMeeting(id)
+  }
+})
+
+test("tray origin without surface is still origin_denied for meeting.start", async () => {
+  const res = await handleMeetingMessage(
+    { type: "meeting.start", v: 1, privacy_ack_v1: true },
+    { origin: "cmspark-tray://local" },
+  )
+  assert.equal(res.code, "origin_denied")
+})
+
+test("generate_minutes + summoner surface is origin_denied", async () => {
+  const res = await handleMeetingMessage(
+    { type: "meeting.generate_minutes", v: 1, text: "决定采用方案 A。" },
+    { origin: "cmspark-tray://local", surface: "summoner" },
+  )
+  assert.equal(res.code, "origin_denied")
+})
+
+test("meeting.start without privacy_ack_v1 is need_privacy_ack", async () => {
+  const res = await handleMeetingMessage(
+    { type: "meeting.start", v: 1, title: "no ack" },
+    { origin: "cmspark-tray://local", surface: "summoner" },
+  )
+  assert.equal(res.code, "need_privacy_ack")
+})
+
+test("message-router passes session surface into meeting handler", () => {
+  const src = fs.readFileSync(srcFile("message-router.ts"), "utf8")
+  const start = src.indexOf('case "meeting.create"')
+  assert.ok(start >= 0, "meeting.create case missing")
+  const next = src.indexOf("case \"skill.activate\"", start)
+  const slice = src.slice(start, next > start ? next : start + 1800)
+  assert.match(slice, /surface:\s*session\?\.surface/)
+})
+
+test("applySummonerPayloadPolicy overlay meeting.start forces audio_retained false", () => {
+  const msg: Record<string, unknown> = {
+    type: "meeting.start",
+    audio_retained: true,
+    retain_days: 7,
+  }
+  const r = applySummonerPayloadPolicy("summoner", msg)
+  assert.equal(r.ok, true)
+  assert.equal(msg.audio_retained, false)
+  assert.equal("retain_days" in msg, false)
 })
 
 test("VOICE_PRIVACY_ACK_V2_CLAUSES lockstep with chrome-extension", () => {
