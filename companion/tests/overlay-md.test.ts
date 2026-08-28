@@ -46,6 +46,8 @@ test("overlay markdown keeps fenced code escaped", () => {
 test("overlay markdown does not break out of href with quote in URL", () => {
   const renderMd = loadRender()
   const html = renderMd('[x](https://evil/"onclick="alert(1))')
+  assert.match(html, /<a href="https:\/\/evil\/&quot;onclick=&quot;alert\(1"/)
+  assert.doesNotMatch(html, /\sonclick=/i)
   assert.doesNotMatch(html, /href="https:\/\/evil\/"/)
   const href = html.match(/href="([^"]*)"/)
   if (href) assert.doesNotMatch(href[1], /"/)

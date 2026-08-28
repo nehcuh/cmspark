@@ -187,6 +187,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     const nonce = (csp.match(/script-src 'nonce-([^']+)'/) || [])[1]
     assert.ok(nonce)
     assert.match(r.body, new RegExp(`<script nonce="${nonce.replace(/[+/]/g, "\\$&")}">`))
+    assert.equal((r.body.match(/<script\b/g) || []).length, 1)
     const script = r.body.match(/<script[^>]*>([\s\S]*)<\/script>/)
     assert.ok(script, "inline script missing")
     new Function(script[1])
