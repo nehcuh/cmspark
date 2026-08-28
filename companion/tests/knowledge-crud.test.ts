@@ -190,3 +190,73 @@ test("getKnowledge truncates body over 512KiB", () => {
   assert.ok(got.char_count > 512 * 1024)
   assert.throws(() => engine.exportKnowledge(doc.id), /512KiB/i)
 })
+
+test("B1: updateKnowledge rejects body when last get would be truncated; disk unchanged", () => {
+  knowledgeDir()
+  const engine = new SkillEngine()
+  const big = "x".repeat(512 * 1024 + 50)
+  const doc = engine.importKnowledge(`# big\n\n${big}`)
+  const got = engine.getKnowledge(doc.id)
+  assert.ok(got)
+  assert.equal(got.truncated, true)
+  const skill = engine.get(doc.id)!
+  const before = fs.readFileSync(skill.source_file)
+  assert.throws(
+    () => engine.updateKnowledge(doc.id, { body: got.body }),
+    (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err)
+      assert.match(message, /截断/)
+      assert.equal(message.includes("无法下载"), false)
+      return true
+    },
+  )
+  const after = fs.readFileSync(skill.source_file)
+  assert.equal(after.equals(before), true, "truncated body save must not rewrite disk")
+})
+
+test("B1: updateKnowledge still allows title-only when truncated", () => {
+  knowledgeDir()
+  const engine = new SkillEngine()
+  const big = "x".repeat(512 * 1024 + 50)
+  const doc = engine.importKnowledge(`# big\n\n${big}`)
+  const skill = engine.get(doc.id)!
+  const beforeBytes = fs.readFileSync(skill.source_file).byteLength
+  const updated = engine.updateKnowledge(doc.id, { title: "big-revised" })
+  assert.equal(updated.title, "big-revised")
+  const got = engine.getKnowledge(doc.id)
+  assert.ok(got)
+  assert.equal(got.title, "big-revised")
+  assert.equal(got.truncated, true)
+  assert.ok(got.char_count > 512 * 1024)
+  const afterBytes = fs.readFileSync(engine.get(doc.id)!.source_file).byteLength
+  assert.ok(afterBytes >= beforeBytes - 32, "title-only must not drop the unread tail")
+})
+
+test("B1: untruncated short replacement of a short doc is still allowed", () => {
+  knowledgeDir()
+  const engine = new SkillEngine()
+  const doc = engine.importKnowledge("# short\n\nhello world")
+  const got = engine.getKnowledge(doc.id)
+  assert.ok(got)
+  assert.equal(got.truncated, false)
+  engine.updateKnowledge(doc.id, { body: "hi" })
+  const after = engine.getKnowledge(doc.id)
+  assert.ok(after)
+  assert.equal(after.truncated, false)
+  assert.ok(after.body.includes("hi"))
+  assert.equal(after.body.includes("hello world"), false)
+})
+
+test("B1: larger replacement of a truncated doc is still rejected (not byte-length compare)", () => {
+  knowledgeDir()
+  const engine = new SkillEngine()
+  const big = "x".repeat(512 * 1024 + 50)
+  const doc = engine.importKnowledge(`# big\n\n${big}`)
+  const skill = engine.get(doc.id)!
+  const before = fs.readFileSync(skill.source_file)
+  const onDiskBodyBytes = Buffer.byteLength(skill.content || "", "utf8")
+  const bigger = "y".repeat(onDiskBodyBytes + 1024)
+  assert.ok(Buffer.byteLength(bigger, "utf8") > onDiskBodyBytes)
+  assert.throws(() => engine.updateKnowledge(doc.id, { body: bigger }), /截断/)
+  assert.equal(fs.readFileSync(skill.source_file).equals(before), true)
+})

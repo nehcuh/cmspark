@@ -1,6 +1,6 @@
 // Knowledge CRUD family (Wave 3). Keep case labels in message-router.ts for lockstep.
 
-import type { SkillEngine } from "../../skills/skill-engine"
+import { KNOWLEDGE_TRUNCATED_BODY_UPDATE_ERROR, type SkillEngine } from "../../skills/skill-engine"
 import { attachRelatedTitles } from "../../skills/knowledge-related"
 
 function summonerDenied(type: string) {
@@ -48,6 +48,14 @@ export function handleKnowledgeCrud(
         description: typeof rest.description === "string" ? rest.description : undefined,
         tags: Array.isArray(rest.tags) ? rest.tags.map((t) => String(t)) : undefined,
         body: typeof rest.body === "string" ? rest.body : undefined,
+      }
+      // Pin 11 / B1: last get truncated / no full-read → refuse body. Title/tags ok.
+      if (patch.body !== undefined) {
+        const current = skillEngine.getKnowledge(id)
+        if (!current) return { type: "error", error: `Knowledge not found: ${id}` }
+        if (current.truncated) {
+          return { type: "error", error: KNOWLEDGE_TRUNCATED_BODY_UPDATE_ERROR }
+        }
       }
       const updated = skillEngine.updateKnowledge(id, patch)
       return { type: "knowledge.updated", ...updated }

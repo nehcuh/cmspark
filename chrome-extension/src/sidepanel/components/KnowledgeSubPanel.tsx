@@ -4,6 +4,11 @@ import { useState, useRef, useEffect, useMemo } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { SectionHeader } from "../ui/SectionHeader"
+import {
+  KNOWLEDGE_TOO_BIG_DOWNLOAD_COPY,
+  KNOWLEDGE_TRUNCATED_BODY_SAVE_COPY,
+  buildKnowledgeUpdateMessage,
+} from "../utils/knowledge-save"
 
 export function KnowledgeSubPanel() {
   const { state, dispatch } = useAgentStore()
@@ -713,7 +718,7 @@ function KnowledgeReaderSheet() {
         <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>标签（逗号分隔）</label>
         <input value={tags} disabled={readOnly} onChange={(e) => setTags(e.target.value)} style={{ width: "100%", fontSize: 12, padding: 6 }} />
         <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>正文</label>
-        {readOnly ? (
+        {readOnly || doc.truncated ? (
           <pre style={{ fontSize: 11, whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto", background: tokens.bgElevated, padding: 8 }}>
             {body}
           </pre>
@@ -725,7 +730,10 @@ function KnowledgeReaderSheet() {
           />
         )}
         {tooBigToExport && (
-          <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 6 }}>正文超过 512KiB，无法下载</div>
+          <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 6 }}>{KNOWLEDGE_TOO_BIG_DOWNLOAD_COPY}</div>
+        )}
+        {doc.truncated && !readOnly && (
+          <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 6 }}>{KNOWLEDGE_TRUNCATED_BODY_SAVE_COPY}</div>
         )}
         {(doc.related || []).length > 0 && (
           <div style={{ fontSize: 11, marginTop: 8, display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -756,15 +764,14 @@ function KnowledgeReaderSheet() {
               type="button"
               onClick={() => {
                 if (!confirm("确认保存对这篇知识的修改？")) return
-                chrome.runtime.sendMessage({
-                  type: "knowledge.update",
+                chrome.runtime.sendMessage(buildKnowledgeUpdateMessage({
                   id: doc.id,
-                  user_gesture: true,
+                  truncated: !!doc.truncated,
                   title,
                   description,
                   tags: tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
                   body,
-                })
+                }))
               }}
             >
               保存

@@ -28,6 +28,9 @@ import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT, type RelatedKnowledgeInp
 
 export const KNOWLEDGE_BODY_WIRE_CAP = 512 * 1024
 export const KNOWLEDGE_FILE_CAP = 6 * 1024 * 1024
+/** Body update after a truncated get — not the download copy. */
+export const KNOWLEDGE_TRUNCATED_BODY_UPDATE_ERROR =
+  "正文已截断，禁止保存覆盖未读到的尾部"
 
 export type KnowledgeUpdatePatch = {
   title?: string
@@ -1484,6 +1487,15 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const tags = patch.tags !== undefined
       ? patch.tags.map((t) => String(t)).filter(Boolean).slice(0, 8)
       : skill.tags
+    // Pin 11 / B1: reject body when a get would be truncated (no full-read).
+    // Not a patch.body-vs-disk length compare — a larger replacement of a
+    // truncated doc is still refused so a 512KiB prefix cannot clobber the tail.
+    if (patch.body !== undefined) {
+      const onDiskBytes = Buffer.byteLength(skill.content || "", "utf8")
+      if (onDiskBytes > KNOWLEDGE_BODY_WIRE_CAP) {
+        throw new Error(KNOWLEDGE_TRUNCATED_BODY_UPDATE_ERROR)
+      }
+    }
     const body = patch.body !== undefined ? String(patch.body) : (skill.content || "")
     if (Buffer.byteLength(body, "utf8") > KNOWLEDGE_FILE_CAP) {
       throw new Error("Knowledge body exceeds 6MB")
