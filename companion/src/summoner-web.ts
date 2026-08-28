@@ -25,7 +25,6 @@ import {
   SUMMONER_CHEVRON_COLLAPSE,
   SUMMONER_CHEVRON_EXPAND,
   SUMMONER_L0_CHROME_DOWN,
-  SUMMONER_MIC_SIDEBAR,
   SUMMONER_RENTER_CHROME_DOWN,
   CHAT_SHELL_TITLE_NONE,
 } from "./summoner/client"
@@ -661,7 +660,7 @@ const SUMMONER_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CMspark 召唤器（实验）</title>
+<title>CMspark</title>
 <style>
 :root{
   --paper:#fff;--canvas:#f4f4f5;--rail-bg:#fafafa;--text:#171717;--secondary:#525252;
@@ -677,11 +676,11 @@ body{
   color:var(--text);background:var(--paper);
 }
 .hud{height:100%;display:flex;flex-direction:column;background:var(--paper);overflow:hidden}
-.body{display:none;grid-template-columns:var(--rail) var(--list) minmax(0,1fr);flex:1;min-height:0;border-bottom:1px solid var(--line);overflow:hidden}
-.hud.expanded .body{display:grid}
+.body{display:none;flex:1;min-height:0;border-bottom:1px solid var(--line);overflow:hidden}
+.hud.expanded .body{display:flex;flex-direction:column}
 .rail{
   background:var(--rail-bg);border-right:1px solid var(--line);
-  display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;overflow:hidden;flex-shrink:0
+  display:none;flex-direction:column;align-items:center;padding:10px 0;gap:4px;overflow:hidden;flex-shrink:0
 }
 .rail-btn{
   width:44px;height:44px;border:0;background:transparent;border-radius:var(--radius-sm);
@@ -692,7 +691,8 @@ body{
 .rail-btn[aria-current="true"]{background:var(--indigo-soft);color:var(--indigo)}
 .rail-btn:focus-visible{outline:none;box-shadow:var(--focus)}
 .rail-btn[hidden]{display:none}
-.list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;background:var(--paper);overflow:hidden}
+.list{border-right:1px solid var(--line);display:none;flex-direction:column;min-width:0;background:var(--paper);overflow:hidden}
+.rail,.list{display:none}
 .list-head{padding:14px 14px 8px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--faint)}
 .list-scroll{overflow-y:auto;overflow-x:hidden;flex:1;padding:0 6px 10px}
 .item,.row{
@@ -713,12 +713,18 @@ body{
 }
 .icon-mini svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .icon-mini:hover{background:var(--canvas);color:var(--text)}
-.main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--paper);overflow:hidden}
+.main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;background:var(--paper);overflow:hidden}
+.brand{display:flex;align-items:center;gap:8px;padding:12px 16px 4px;font-size:14px;font-weight:600;flex-shrink:0}
+.mark{
+  width:52px;height:52px;border-radius:50%;background:#171717;color:#fff;
+  display:grid;place-items:center;font-size:20px;font-weight:600;margin:0 auto 10px;
+}
+.mark.sm{width:26px;height:26px;font-size:11px;margin:0}
 .log{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:20px 22px;display:flex;flex-direction:column;gap:16px}
 .msg{max-width:36rem;font-size:14px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
 .msg.user{align-self:flex-end;background:var(--canvas);padding:8px 12px;border-radius:12px 12px 4px 12px}
 .msg.assistant{align-self:flex-start;color:var(--text)}
-.empty{margin:auto;color:var(--secondary);font-size:14px;line-height:1.6}
+.empty{margin:auto;color:var(--secondary);font-size:14px;line-height:1.6;text-align:center;display:flex;flex-direction:column;align-items:center}
 .empty strong{display:block;font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px}
 .composer{display:flex;flex-direction:column;gap:6px;padding:10px 12px 8px;background:var(--paper);flex-shrink:0}
 .composer-row{display:flex;align-items:center;gap:6px;min-width:0}
@@ -762,6 +768,8 @@ body{
 #openConfirm{background:var(--indigo);color:#fff}
 .cta-foot{font-size:11px;color:var(--faint)!important;line-height:1.4}
 .hud:not(.expanded) .ghosts{display:none}
+.hud.expanded .ghosts{display:none}
+.hud.expanded .hint{display:none}
 .hud:not(.expanded) .hint{padding:8px 16px}
 .hud:not(.expanded) .status{padding:0 16px 8px}
 </style>
@@ -795,6 +803,7 @@ body{
       </div>
     </aside>
     <section class="main">
+      <div class="brand"><span class="mark sm" aria-hidden="true">山</span>CMspark</div>
       <div class="log" id="log"></div>
     </section>
   </div>
@@ -803,13 +812,13 @@ body{
       <button class="icon-btn" id="newThreadBar" type="button" title="新对话" aria-label="新对话">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
+      <label class="icon-btn" for="files" title="📎 添加附件" aria-label="添加附件">
+        <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
+      </label>
+      <input type="file" id="files" multiple hidden>
       <div class="field">
-        <textarea id="text" rows="1" placeholder="说点什么，回车发送" aria-label="发送到当前对话"></textarea>
-        <label class="icon-btn" for="files" title="📎 添加附件" aria-label="添加附件">
-          <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
-        </label>
-        <input type="file" id="files" multiple hidden>
-        <button class="icon-btn" id="mic" type="button" disabled title="${SUMMONER_MIC_SIDEBAR}" aria-label="${SUMMONER_MIC_SIDEBAR}">
+        <textarea id="text" rows="1" placeholder="问 CMspark…" aria-label="发送到当前对话"></textarea>
+        <button class="icon-btn" id="mic" type="button" disabled title="听写" aria-label="听写">
           <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
         </button>
         <button class="icon-btn" id="chev" type="button" aria-pressed="false" title="${SUMMONER_CHEVRON_EXPAND}" aria-label="${SUMMONER_CHEVRON_EXPAND}">
@@ -880,7 +889,7 @@ body{
   }
   function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})}
   function placeWindow(expanded){
-    var w=720,h=expanded?520:120;
+    var w=400,h=expanded?520:120;
     var sw=screen.availWidth||screen.width||w;
     var sh=screen.availHeight||screen.height||h;
     var x=Math.max(0, ((sw-w)/2)|0);
@@ -966,7 +975,7 @@ body{
     if(!n){
       var empty=document.createElement("div");
       empty.className="empty";
-      empty.innerHTML="<strong>${CHAT_SHELL_TITLE_NONE}</strong>回车发送。⌘/Ctrl 不在这扇窗。${SUMMONER_MIC_SIDEBAR}。";
+      empty.innerHTML="<div class=\\"mark\\" aria-hidden=\\"true\\">山</div><strong>${CHAT_SHELL_TITLE_NONE}</strong>回车发送。附件和听写不用开浏览器。";
       log.appendChild(empty);
     }
     log.scrollTop=log.scrollHeight;
