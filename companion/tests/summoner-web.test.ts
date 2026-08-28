@@ -474,6 +474,108 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(dispatched.length, 0)
   })
 
+  test("HTML mic is enabled with hidden v2 privacy sheet; no generic dispatch", async () => {
+    const r = await request({ method: "GET", port, path: `/?token=${token}` })
+    assert.equal(r.status, 200)
+    assert.match(r.body, /id="mic"/)
+    assert.doesNotMatch(r.body, /id="mic"[^>]*\bdisabled\b/)
+    assert.match(r.body, /privacy_ack_v2/)
+    assert.match(r.body, /音频经本机 Companion 写入临时文件/)
+    assert.match(r.body, /id="voicePrivacy"/)
+    assert.match(r.body, /id="voicePrivacy"[^>]*\bhidden\b/)
+    assert.doesNotMatch(r.body, /\/api\/dispatch/)
+  })
+
+  test("POST /api/stt/start with token dispatches voice.stt.start", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ sessionId: "s1", modelId: "medium" }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "voice.stt.start")
+    assert.equal(dispatched[0].v, 1)
+    assert.equal(dispatched[0].privacy_ack_v2, true)
+    assert.equal(dispatched[0].sessionId, "s1")
+    assert.equal(dispatched[0].modelId, "medium")
+    assert.equal(dispatched[0].format, "pcm_s16le")
+    assert.equal(dispatched[0].sampleRate, 16000)
+    assert.equal(dispatched[0].channels, 1)
+  })
+
+  test("POST /api/stt with type=list_tabs in body still cannot set type", async () => {
+    dispatched.length = 0
+    const start = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({
+        type: "list_tabs",
+        sessionId: "s-tab",
+        modelId: "medium",
+      }),
+    })
+    assert.equal(start.status, 200, start.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "voice.stt.start")
+    assert.equal(dispatched.some((d) => d.type === "list_tabs"), false)
+
+    dispatched.length = 0
+    const raw = await request({
+      method: "POST",
+      port,
+      path: `/api/stt?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ type: "list_tabs" }),
+    })
+    assert.notEqual(raw.status, 200)
+    assert.equal(dispatched.some((d) => d.type === "list_tabs"), false)
+    if (raw.status === 200) {
+      assert.notEqual(dispatched[0]?.type, "list_tabs")
+    }
+  })
+
+  test("POST unknown path and /api/dispatch are 404", async () => {
+    dispatched.length = 0
+    const unknown = await request({
+      method: "POST",
+      port,
+      path: `/api/nope?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ type: "list_tabs" }),
+    })
+    assert.equal(unknown.status, 404)
+    const dispatch = await request({
+      method: "POST",
+      port,
+      path: `/api/dispatch?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ type: "voice.stt.start" }),
+    })
+    assert.equal(dispatch.status, 404)
+    assert.equal(dispatched.length, 0)
+  })
+
   test("dispatch allowlist is summoner-safe", () => {
     assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("file.upload"))
     assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("chat.create"))
@@ -488,7 +590,14 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.export"), false)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("thread.distill_preview"), false)
     assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.list"))
-    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.start"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.start"), true)
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.chunk"))
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.end"))
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.abort"))
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.partial_request"))
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("voice.stt.partial"))
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("voice.stt.result"))
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("voice.stt.error"))
   })
 
   test("GET /api/events without token → 403", async () => {

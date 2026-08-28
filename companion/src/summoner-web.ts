@@ -27,6 +27,7 @@ import {
   SUMMONER_L0_CHROME_DOWN,
   SUMMONER_RENTER_CHROME_DOWN,
   CHAT_SHELL_TITLE_NONE,
+  VOICE_PRIVACY_ACK_V2_CLAUSES,
 } from "./summoner/client"
 import { getChromeOpener } from "./platform"
 
@@ -56,6 +57,11 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "composer.lease.get",
   "composer.lease.claim",
   "composer.lease.release",
+  "voice.stt.start",
+  "voice.stt.chunk",
+  "voice.stt.end",
+  "voice.stt.abort",
+  "voice.stt.partial_request",
 ])
 
 /** Fan-out to HTML EventSource. Confirm / Trust / config frames stay off this list. */
@@ -75,6 +81,9 @@ export const SUMMONER_WEB_EVENT_ALLOW = new Set([
   "composer.lease",
   "tool.start",
   "mcp.confirm.pending",
+  "voice.stt.partial",
+  "voice.stt.result",
+  "voice.stt.error",
 ])
 
 const MAX_SSE_CLIENTS = 4
@@ -82,6 +91,8 @@ const sseClients = new Set<http.ServerResponse>()
 
 const FILE_BODY_MAX = 15 * 1024 * 1024
 const JSON_BODY_MAX = 64 * 1024
+/** /api/stt/chunk only: JSON around base64(256KiB PCM) ≈ 342KiB + envelope. */
+const STT_CHUNK_BODY_MAX = 400 * 1024
 
 let activeServer: http.Server | null = null
 let activePort: number | null = null
@@ -647,6 +658,55 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/stt/start" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
+      const modelId =
+        body.modelId === "small" || body.modelId === "medium" || body.modelId === "large-v3-turbo"
+          ? body.modelId
+          : "medium"
+      const payload: Record<string, unknown> = {
+        v: 1,
+        sessionId,
+        modelId,
+        format: "pcm_s16le",
+        sampleRate: 16000,
+        channels: 1,
+        privacy_ack_v2: true,
+      }
+      if (typeof body.lang === "string") payload.lang = body.lang
+      if (typeof body.maxMs === "number" && Number.isFinite(body.maxMs)) payload.maxMs = body.maxMs
+      jsonResponse(res, await dispatchAllowed("voice.stt.start", payload))
+      return
+    }
+
+    if (pathOnly === "/api/stt/chunk" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, STT_CHUNK_BODY_MAX)) as Record<string, unknown>
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
+      const seq = Number.isInteger(body.seq) ? body.seq : 0
+      const data = typeof body.data === "string" ? body.data : ""
+      jsonResponse(
+        res,
+        await dispatchAllowed("voice.stt.chunk", { v: 1, sessionId, seq, data }),
+      )
+      return
+    }
+
+    if (pathOnly === "/api/stt/end" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
+      const totalSeq = Number.isInteger(body.totalSeq) ? body.totalSeq : 0
+      jsonResponse(res, await dispatchAllowed("voice.stt.end", { v: 1, sessionId, totalSeq }))
+      return
+    }
+
+    if (pathOnly === "/api/stt/abort" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
+      jsonResponse(res, await dispatchAllowed("voice.stt.abort", { v: 1, sessionId }))
+      return
+    }
+
     res.writeHead(404)
     res.end("Not found")
   } catch (e: any) {
@@ -767,6 +827,14 @@ body{
 #attachFront{background:var(--canvas);color:var(--text)}
 #openConfirm{background:var(--indigo);color:#fff}
 .cta-foot{font-size:11px;color:var(--faint)!important;line-height:1.4}
+.privacy-sheet{
+  margin:0 12px 8px;padding:10px 12px;border-radius:12px;
+  background:#fffbeb;border:1px solid #fde68a;color:#92400e;
+}
+.privacy-sheet[hidden]{display:none}
+.privacy-sheet ol{margin:6px 0 8px;padding-left:1.3em;color:var(--text);font-size:12px;line-height:1.45}
+.privacy-sheet .cta-actions button{background:var(--indigo);color:#fff}
+#mic[aria-pressed="true"]{background:var(--indigo-soft);color:var(--indigo)}
 .hud:not(.expanded) .ghosts{display:none}
 .hud.expanded .ghosts{display:none}
 .hud.expanded .hint{display:none}
@@ -818,7 +886,7 @@ body{
       <input type="file" id="files" multiple hidden>
       <div class="field">
         <textarea id="text" rows="1" placeholder="问 CMspark…" aria-label="发送到当前对话"></textarea>
-        <button class="icon-btn" id="mic" type="button" disabled title="听写" aria-label="听写">
+        <button class="icon-btn" id="mic" type="button" title="听写" aria-label="听写" aria-pressed="false">
           <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
         </button>
         <button class="icon-btn" id="chev" type="button" aria-pressed="false" title="${SUMMONER_CHEVRON_EXPAND}" aria-label="${SUMMONER_CHEVRON_EXPAND}">
@@ -837,6 +905,15 @@ body{
         <button type="button" id="openConfirm" hidden title="${SUMMONER_OPEN_CONFIRM}" aria-label="${SUMMONER_OPEN_CONFIRM}">${SUMMONER_OPEN_CONFIRM}</button>
       </div>
       <p class="cta-foot">${SUMMONER_ATTACH_FOOTNOTE}</p>
+    </div>
+    <div class="privacy-sheet" id="voicePrivacy" hidden>
+      <p>本机听写</p>
+      <ol>
+        ${VOICE_PRIVACY_ACK_V2_CLAUSES.map((c) => `<li>${c}</li>`).join("\n        ")}
+      </ol>
+      <div class="cta-actions">
+        <button type="button" id="voicePrivacyAck">我已了解</button>
+      </div>
     </div>
   </div>
   <div class="ghosts">
@@ -908,6 +985,171 @@ body{
   }
   function api(path, opts){
     return fetch(url(path), opts).then(function(r){return r.json().catch(function(){return {error:r.statusText}})})
+  }
+  var voiceAck=false;
+  var sttLive=false;
+  var sttSid="";
+  var sttSeq=0;
+  var sttBuf=new Uint8Array(0);
+  var sttStream=null;
+  var sttCtx=null;
+  var sttSrc=null;
+  var sttProc=null;
+  var sttMute=null;
+  var sttTimer=null;
+  var STT_RATE=16000;
+  var STT_FLUSH=32000;
+  var STT_CHUNK=256*1024;
+  var STT_MAX_MS=45000;
+  var STT_MIC_FAIL="请在系统设置中打开 127.0.0.1 的麦克风";
+  var STT_NEED_MODEL="侧栏 ⋯ → 设置 → 听写 → 下载组件/模型";
+  function sttUserCopy(code, fallback){
+    var c=String(code||"").toLowerCase();
+    if(c.indexOf("model")>=0 || c.indexOf("binary")>=0) return STT_NEED_MODEL;
+    return fallback || "听写失败";
+  }
+  function uint8ToB64(u8){
+    var binary="";
+    var step=0x8000;
+    for(var i=0;i<u8.length;i+=step){
+      binary+=String.fromCharCode.apply(null, Array.prototype.slice.call(u8.subarray(i, Math.min(i+step, u8.length))));
+    }
+    return btoa(binary);
+  }
+  function concatU8(a,b){
+    var o=new Uint8Array(a.length+b.length);
+    o.set(a,0); o.set(b,a.length); return o;
+  }
+  function floatToS16(input){
+    var out=new Uint8Array(input.length*2);
+    var view=new DataView(out.buffer);
+    for(var i=0;i<input.length;i++){
+      var s=input[i];
+      if(s>1)s=1; else if(s<-1)s=-1;
+      view.setInt16(i*2, s<0?Math.round(s*0x8000):Math.round(s*0x7fff), true);
+    }
+    return out;
+  }
+  function resampleMono(input, fromRate, toRate){
+    if(fromRate===toRate || !input.length) return input;
+    var outLen=Math.max(1, Math.round((input.length*toRate)/fromRate));
+    var out=new Float32Array(outLen);
+    var ratio=fromRate/toRate;
+    for(var i=0;i<outLen;i++){
+      var src=i*ratio;
+      var i0=Math.floor(src);
+      var i1=Math.min(i0+1, input.length-1);
+      var t=src-i0;
+      out[i]=input[i0]*(1-t)+input[i1]*t;
+    }
+    return out;
+  }
+  function teardownStt(){
+    sttLive=false;
+    if(sttTimer){clearTimeout(sttTimer);sttTimer=null}
+    try{ if(sttProc){sttProc.onaudioprocess=null;sttProc.disconnect()} }catch(e){}
+    try{ if(sttMute) sttMute.disconnect(); }catch(e){}
+    try{ if(sttSrc) sttSrc.disconnect(); }catch(e){}
+    try{ if(sttStream) sttStream.getTracks().forEach(function(t){t.stop()}); }catch(e){}
+    try{ if(sttCtx) sttCtx.close(); }catch(e){}
+    sttProc=sttMute=sttSrc=sttStream=sttCtx=null;
+    sttBuf=new Uint8Array(0);
+    var mic=$("mic");
+    if(mic) mic.setAttribute("aria-pressed","false");
+  }
+  function flushStt(force){
+    if(!sttSid) return;
+    var min=force?1:STT_FLUSH;
+    while(sttBuf.length>=min){
+      var n=Math.min(STT_CHUNK, sttBuf.length);
+      if(!force && n<STT_FLUSH) break;
+      var slice=sttBuf.subarray(0,n);
+      api("/api/stt/chunk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sttSid,seq:sttSeq,data:uint8ToB64(slice)})});
+      sttSeq+=1;
+      sttBuf=n===sttBuf.length?new Uint8Array(0):new Uint8Array(sttBuf.subarray(n));
+    }
+  }
+  function stopStt(abort){
+    var sid=sttSid;
+    if(abort){
+      teardownStt();
+      sttSid="";
+      sttSeq=0;
+      if(sid) api("/api/stt/abort",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid})});
+      return;
+    }
+    flushStt(true);
+    var total=sttSeq;
+    teardownStt();
+    sttSid="";
+    sttSeq=0;
+    if(sid) api("/api/stt/end",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid,totalSeq:total})});
+  }
+  function beginPcm(sid, stream){
+    var AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC){ setStatus(STT_MIC_FAIL); stopStt(true); return; }
+    var ctx=new AC();
+    sttCtx=ctx;
+    var go=function(){
+      if(!sttLive || sttSid!==sid){ teardownStt(); return; }
+      if(typeof ctx.createScriptProcessor!=="function"){ setStatus("无法捕获麦克风音频"); stopStt(true); return; }
+      var src=ctx.createMediaStreamSource(stream);
+      sttSrc=src;
+      var proc=ctx.createScriptProcessor(4096,1,1);
+      sttProc=proc;
+      var mute=ctx.createGain();
+      mute.gain.value=0;
+      sttMute=mute;
+      proc.onaudioprocess=function(ev){
+        if(!sttLive || sttSid!==sid) return;
+        var ch=ev.inputBuffer.getChannelData(0);
+        if(!ch||!ch.length) return;
+        var copy=new Float32Array(ch.length);
+        copy.set(ch);
+        var rate=ctx.sampleRate||48000;
+        var mono=rate===STT_RATE?copy:resampleMono(copy,rate,STT_RATE);
+        if(!mono.length) return;
+        sttBuf=concatU8(sttBuf, floatToS16(mono));
+        if(sttBuf.length>=STT_FLUSH) flushStt(false);
+      };
+      src.connect(proc);
+      proc.connect(mute);
+      mute.connect(ctx.destination);
+      sttTimer=setTimeout(function(){ if(sttLive && sttSid===sid) stopStt(false); }, STT_MAX_MS);
+    };
+    if(ctx.state==="suspended") ctx.resume().then(go).catch(go);
+    else go();
+  }
+  function startStt(){
+    if(sttLive){ stopStt(false); return; }
+    if(!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia!=="function"){
+      setStatus(STT_MIC_FAIL);
+      return;
+    }
+    var sid="ov-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,10);
+    sttSid=sid;
+    sttSeq=0;
+    sttBuf=new Uint8Array(0);
+    sttLive=true;
+    $("mic").setAttribute("aria-pressed","true");
+    navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}}).then(function(stream){
+      if(!sttLive || sttSid!==sid){ stream.getTracks().forEach(function(t){t.stop()}); return; }
+      sttStream=stream;
+      return api("/api/stt/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid,modelId:"medium",privacy_ack_v2:true,lang:"zh"})}).then(function(d){
+        if(!sttLive || sttSid!==sid){ teardownStt(); return; }
+        if(d && (d.type==="voice.stt.error" || d.type==="error" || d.error)){
+          setStatus(sttUserCopy(d.code||d.error_code, d.error||d.message));
+          stopStt(true);
+          return;
+        }
+        beginPcm(sid, stream);
+      });
+    }).catch(function(){
+      sttLive=false;
+      sttSid="";
+      $("mic").setAttribute("aria-pressed","false");
+      setStatus(STT_MIC_FAIL);
+    });
   }
   function renderThreads(filter){
     var q=(filter||"").trim();
@@ -1069,6 +1311,21 @@ body{
   $("settings").onclick=function(){
     alert("快捷键设置需要在 Chrome 侧栏的设置面板中配置。\n\n请打开 Chrome 侧栏，点击设置图标，在「模型与推理」部分找到「发送快捷键」设置。\n\n召唤器使用相同的快捷键配置。");
   };
+  $("mic").onclick=function(){
+    if(sttLive){ stopStt(false); return; }
+    if(!voiceAck){
+      var sheet=$("voicePrivacy");
+      if(sheet) sheet.hidden=false;
+      return;
+    }
+    startStt();
+  };
+  $("voicePrivacyAck").onclick=function(){
+    voiceAck=true;
+    var sheet=$("voicePrivacy");
+    if(sheet) sheet.hidden=true;
+    startStt();
+  };
   $("newThreadBar").onclick=function(){$("newThread").click()};
   $("newThread").onclick=function(){
     api("/api/threads",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(d){
@@ -1201,7 +1458,10 @@ body{
       navigator.sendBeacon(url("/api/lease/release"), body);
     }catch(e){}
   }
-  window.addEventListener("pagehide", releaseLease);
+  window.addEventListener("pagehide", function(){
+    if(sttLive) stopStt(true);
+    releaseLease();
+  });
   function statusFromEvent(d){
     if(!d||typeof d!=="object") return "出错了";
     var data=d.data&&typeof d.data==="object"?d.data:{};
@@ -1222,6 +1482,7 @@ body{
       showChromeCta("cdp");
       return CHROME_DOWN.cdp;
     }
+    if(/model|binary/i.test(raw)) return STT_NEED_MODEL;
     return labels[code]||d.error||d.message||"出错了";
   }
   try{
@@ -1240,6 +1501,20 @@ body{
         busy=t!=="chat.enqueued"?true:busy;
         syncBusyUi();
         startPoll();
+        return;
+      }
+      if(t==="voice.stt.result"){
+        var txt=typeof d.text==="string"?d.text.trim():"";
+        if(txt){
+          var cur=$("text").value;
+          $("text").value=cur&&cur.trim()?cur.replace(/\\s*$/,"")+" "+txt:txt;
+        }
+        if(sttLive) stopStt(false);
+        return;
+      }
+      if(t==="voice.stt.error"){
+        setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error));
+        if(sttLive) stopStt(true);
         return;
       }
       if(t==="mcp.confirm.pending"){
