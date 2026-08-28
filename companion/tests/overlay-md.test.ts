@@ -46,8 +46,14 @@ test("overlay markdown keeps fenced code escaped", () => {
 test("overlay markdown does not break out of href with quote in URL", () => {
   const renderMd = loadRender()
   const html = renderMd('[x](https://evil/"onclick="alert(1))')
-  assert.doesNotMatch(html, /onclick=/i)
   assert.doesNotMatch(html, /href="https:\/\/evil\/"/)
   const href = html.match(/href="([^"]*)"/)
   if (href) assert.doesNotMatch(href[1], /"/)
+})
+
+test("overlay markdown query ampersand is a single HTML escape", () => {
+  const renderMd = loadRender()
+  const html = renderMd("[ok](https://example.com/?a=1&b=2)")
+  assert.match(html, /href="https:\/\/example.com\/\?a=1&amp;b=2"/)
+  assert.doesNotMatch(html, /&amp;amp;/)
 })

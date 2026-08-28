@@ -31,7 +31,7 @@ export const OVERLAY_RENDER_MD_JS = [
   "    t=t.replace(new RegExp(tick+\"([^\"+tick+\"]+)\"+tick,\"g\"),\"<code>$1</code>\");",
   "    t=t.replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g,function(_m,tx,u){",
   "      if(!/^https?:\\/\\//i.test(u)) return tx;",
-  "      u=String(u).replace(/&/g,\"&amp;\").replace(/\"/g,\"&quot;\").replace(/'/g,\"&#39;\").replace(/=/g,\"&#61;\");",
+  "      u=String(u).replace(/\"/g,\"&quot;\").replace(/'/g,\"&#39;\");",
   "      return \"<a href=\\\"\"+u+\"\\\" target=\\\"_blank\\\" rel=\\\"noopener noreferrer\\\">\"+tx+\"</a>\";",
   "    });",
   "    return t;",
