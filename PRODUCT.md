@@ -1,6 +1,6 @@
 # CMspark — Product Context (Impeccable)
 
-> Written 2026-08-11 for design harnesses. **Refreshed 2026-08-26**: home is logged-in Chrome + hard gates, not the Side Panel.  
+> Written 2026-08-11 for design harnesses. **Refreshed 2026-08-26**: home is logged-in Chrome + hard gates, not the Side Panel. **#241 (2026-08-28):** HTML float is Capture 卡片 (~400×520).  
 > Version lock: companion/extension **0.5.3**.  
 > Remaining work is GitHub Issues: [#228](https://github.com/nehcuh/cmspark/issues/228) T1 bake-off · [#229](https://github.com/nehcuh/cmspark/issues/229) summoner P2 · [#230](https://github.com/nehcuh/cmspark/issues/230) residuals. New requirement designs **must** open an Issue first.
 > Form SoT: [docs/superpowers/specs/2026-08-26-product-form-deepening-design.md](docs/superpowers/specs/2026-08-26-product-form-deepening-design.md)
@@ -30,7 +30,7 @@
 
 | Surface | Mode | Notes |
 |---------|------|--------|
-| 召唤器 | **Capture** | Mac hotkey still collapsed bar (旧壳; expand = **展开对话**, not a five-rail workbench). Win/Linux HTML float = same ChatShell copy, whole face, **no** page chip. Entry = toolbar C, **not** a tab-strip pill. Never claim CMspark sits beside the tab bar. |
+| 召唤器 | **Capture** | HTML float = Capture 卡片 ~400×520: 问答、📎、听写、开始/结束会议、**打开浏览器并打开侧栏**. Fail toast **请点工具栏 C**. Mac hotkey still collapsed bar (旧壳; expand = **展开对话**, not a five-rail workbench). Side Panel visual unchanged. Companion never `chrome.sidePanel.open`; extension SW opens the panel after the overlay button. Entry = toolbar C, **not** a tab-strip pill. Never claim CMspark sits beside the tab bar. |
 | Side Panel | **Operate** | ChatShell empty: **要对这页做什么** / **当前页：** / 3 template chips. Top bar **弹出对话框** opens the HTML float. 装配 stays outside the shell. Watching Chrome; ~320px. |
 | Background CDP | **Operate** | When the human is in summoner or a coding agent; extension must be connected |
 | 确认台 / Cockpit + Mac tray | **Confirm** | Allow/Deny lives here. Overlay never. Win/Linux: open Chrome 确认台, never skip |
@@ -56,7 +56,7 @@ ACP 编程接力 is the **reverse** door (we → their coding agent). Do not cal
 - No new L2 tools from a “redesign” PR  
 - Chinese product chrome; emoji only in message content  
 - Overlay never Allow/Deny; no second Chrome extension; grant `cmg_` ≠ `ws_secret`  
-- Companion never `chrome.sidePanel.open` (F-I-4)
+- Companion never `chrome.sidePanel.open` / never `chrome.*` (F-I-4); overlay **打开浏览器并打开侧栏** → extension SW `chrome.sidePanel.open`. Fail: **请点工具栏 C**
 
 ## Success
 

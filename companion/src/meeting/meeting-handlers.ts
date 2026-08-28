@@ -1,11 +1,12 @@
 /**
  * meeting.* WS handlers (SoT meeting-minutes).
- * chrome-extension origin preferred for capture-related; generate allows extension.
+ * create/start/end: chrome-extension OR summoner + cmspark-tray://local.
+ * generate_minutes / auto_diarize / import_text / append remain extension-only.
  */
 
 import { getConfig } from "../config"
 import { logger } from "../logger"
-import { isChromeExtensionOrigin } from "../voice/stt-handlers"
+import { isChromeExtensionOrigin, isVoiceSttOriginAllowed } from "../voice/stt-handlers"
 import type { LlmExtractConfig } from "../llm/llm-extract"
 import { generateMeetingMinutes } from "./meeting-minutes"
 import {
@@ -42,6 +43,8 @@ export interface MeetingHandlerContext {
   origin?: string
   peerId?: string
   send?: (data: any) => void
+  /** Handshake surface. create/start/end allow summoner + tray origin. */
+  surface?: string
 }
 
 export interface MeetingHandlerDeps {
@@ -79,17 +82,24 @@ function err(code: string, message: string, extra?: Record<string, unknown>) {
   return { type: "meeting.error", v: 1, code, message, ...extra }
 }
 
+const OVERLAY_MEETING_TYPES = new Set(["meeting.create", "meeting.start", "meeting.end"])
+
 export async function handleMeetingMessage(
   msg: any,
   ctx: MeetingHandlerContext = {},
   deps: MeetingHandlerDeps = {},
 ): Promise<any> {
   const type = msg?.type
-  const originOk = (deps.isExtensionOrigin ?? isChromeExtensionOrigin)(ctx.origin)
+  const originOk = deps.isExtensionOrigin
+    ? deps.isExtensionOrigin(ctx.origin)
+    : typeof type === "string" && OVERLAY_MEETING_TYPES.has(type)
+      ? isVoiceSttOriginAllowed(ctx.origin, ctx.surface)
+      : isChromeExtensionOrigin(ctx.origin)
   if (!originOk) {
     logger.warn("meeting.refused", {
       type: typeof type === "string" ? type : undefined,
       origin: ctx.origin ? "present" : "missing",
+      surface: ctx.surface,
     })
     return err("origin_denied", "chrome-extension origin required")
   }

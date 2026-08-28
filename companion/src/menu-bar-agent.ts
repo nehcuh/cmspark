@@ -1626,6 +1626,11 @@ function dispatchSummonerWeb(
     const ok = client.sendAppMessage(type, params)
     return Promise.resolve(ok ? { type: "accepted" } : { type: "error", error: "未连接" })
   }
+  // voice.stt.chunk / abort have no WS ack — sendAppRequest would hang the HTTP 8s timeout.
+  if (type === "voice.stt.chunk" || type === "voice.stt.abort") {
+    client.sendAppMessage(type, params)
+    return Promise.resolve({ type: "ok" })
+  }
   if (type === "mcp.toggle_server" && companionClient) {
     // HTML C-thin cannot answer overlay L2; ride tray client like the Swift HUD.
     return companionClient.sendAppRequest(type, params, 60_000)
@@ -1656,6 +1661,11 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
     } = require("./summoner-web") as typeof import("./summoner-web")
     const { port, token } = await startSummonerWebServer({
       dispatch: (msg) => dispatchSummonerWeb(client, msg),
+      requestOpenSidePanel: () => {
+        if (!companionClient) return Promise.reject(new Error("not connected"))
+        return companionClient.sendAppRequest("ui.open_sidepanel", {}, 8_000)
+      },
+      hasExtensionPeer: summonerBrowserAttached,
     })
     let url = summonerWebPageUrl(port, token)
     if (threadId) url = url + "&thread=" + encodeURIComponent(threadId)
@@ -1872,6 +1882,10 @@ export async function startMenuBarAgent(): Promise<void> {
   companionClient.onAppMessage((msg: any) => {
     if (!msg || msg.type !== "overlay.shell.open") return
     void openSummonerWebShell(typeof msg.thread_id === "string" ? msg.thread_id : "")
+  })
+  companionClient.onAppMessage((msg: any) => {
+    if (!msg || msg.type !== "ui.open_sidepanel") return
+    // no-id broadcast echo — extension SW opens the panel; tray must not treat this as RPC
   })
 
   // Set default quick actions immediately

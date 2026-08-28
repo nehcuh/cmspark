@@ -122,7 +122,6 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     const r = await request({ method: "GET", port, path: `/?token=${token}` })
     assert.equal(r.status, 200)
     assert.match(r.headers["content-type"] || "", /text\/html/)
-    assert.match(r.body, /CMspark 召唤器（实验）/)
     assert.doesNotMatch(r.body, /主界面/)
     assert.match(r.body, /--paper:#fff/)
     assert.match(r.body, /--indigo:#4f46e5/)
@@ -137,12 +136,25 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.doesNotMatch(r.body, /class="hud expanded"/)
     assert.match(r.body, /setExpanded\(true\)/)
     assert.doesNotMatch(r.body, /placeWindow\(false\);/)
-    assert.match(r.body, /var w=720,h=expanded\?520:120/)
+    assert.match(r.body, /var w=400,h=expanded\?520:120/)
+    assert.doesNotMatch(r.body, /grid-template-columns:var\(--rail\) var\(--list\)/)
+    assert.match(r.body, /\.rail,\.list\{[^}]*display:none/)
+    assert.match(r.body, /id="operateOpen"/)
+    assert.match(r.body, /打开浏览器并打开侧栏/)
+    assert.match(r.body, /\/api\/operate/)
+    assert.match(r.body, /请点工具栏 C/)
+    assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
+    assert.match(r.body, /id="meetingStart"/)
+    assert.doesNotMatch(r.body, /要对这页做什么|当前页：|听写在侧栏|召唤器（实验）/)
+    assert.match(r.body, /问 CMspark/)
+    assert.match(r.body, /附件和听写不用开浏览器/)
+    assert.match(r.body, /<title>CMspark</)
+    assert.match(r.body, /\.hud\.expanded \.ghosts\{[^}]*display:none/)
+    assert.match(r.body, /\.hud\.expanded \.hint\{[^}]*display:none/)
     assert.doesNotMatch(r.body, /max-width:720px/)
     assert.match(r.body, /type="file"/)
     assert.match(r.body, /📎/)
     assert.match(r.body, /for="files"/)
-    assert.match(r.body, /听写在侧栏/)
     assert.doesNotMatch(r.body, /去侧栏处理/)
     assert.match(r.body, /展开对话/)
     assert.doesNotMatch(r.body, /展开工作台|收起工作台/)
@@ -467,6 +479,217 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(dispatched.length, 0)
   })
 
+  test("HTML mic is enabled with hidden v2 privacy sheet; no generic dispatch", async () => {
+    const r = await request({ method: "GET", port, path: `/?token=${token}` })
+    assert.equal(r.status, 200)
+    assert.match(r.body, /id="mic"/)
+    assert.doesNotMatch(r.body, /id="mic"[^>]*\bdisabled\b/)
+    assert.match(r.body, /privacy_ack_v2/)
+    assert.match(r.body, /音频经本机 Companion 写入临时文件/)
+    assert.match(r.body, /id="voicePrivacy"/)
+    assert.match(r.body, /id="voicePrivacy"[^>]*\bhidden\b/)
+    assert.doesNotMatch(r.body, /\/api\/dispatch/)
+  })
+
+  test("HTML meeting start is hidden privacy + five clauses; v2 present if unacked", async () => {
+    const r = await request({ method: "GET", port, path: `/?token=${token}` })
+    assert.equal(r.status, 200)
+    assert.match(r.body, /id="meetingStart"/)
+    assert.match(r.body, />开始会议</)
+    assert.match(r.body, /id="meetingPrivacy"/)
+    assert.match(r.body, /id="meetingPrivacy"[^>]*\bhidden\b/)
+    assert.match(r.body, /会创建本地会话产物/)
+    assert.match(r.body, /默认结束录制后删除会议目录下音频/)
+    assert.match(r.body, /生成纪要将把转写文本发给你已配置的 LLM/)
+    assert.match(r.body, /长会 STT 仅本机/)
+    assert.match(r.body, /多方录音法律合规由你负责/)
+    assert.match(r.body, /纪要在侧栏/)
+    assert.match(r.body, /id="meetingVoiceSection"/)
+    assert.match(r.body, /id="meetingVoiceSection"[\s\S]*音频经本机 Companion/)
+    assert.match(r.body, /if\(!voiceAck\)/)
+    assert.match(r.body, /结束会议/)
+    assert.doesNotMatch(r.body, /\/api\/dispatch/)
+  })
+
+  test("POST /api/stt/start with token dispatches voice.stt.start", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ sessionId: "s1", modelId: "medium" }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "voice.stt.start")
+    assert.equal(dispatched[0].v, 1)
+    assert.equal(dispatched[0].privacy_ack_v2, true)
+    assert.equal(dispatched[0].sessionId, "s1")
+    assert.equal(dispatched[0].modelId, "medium")
+    assert.equal(dispatched[0].format, "pcm_s16le")
+    assert.equal(dispatched[0].sampleRate, 16000)
+    assert.equal(dispatched[0].channels, 1)
+  })
+
+  test("POST /api/stt/chunk with token dispatches voice.stt.chunk quickly", async () => {
+    dispatched.length = 0
+    const t0 = Date.now()
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/chunk?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ sessionId: "s1", seq: 0, data: "AA==", type: "list_tabs" }),
+    })
+    const ms = Date.now() - t0
+    assert.equal(r.status, 200, r.body)
+    assert.ok(ms < 1500, `chunk HTTP hung ${ms}ms`)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "voice.stt.chunk")
+    assert.equal(dispatched[0].sessionId, "s1")
+    assert.equal(dispatched[0].seq, 0)
+    assert.equal(dispatched[0].v, 1)
+  })
+
+  test("POST /api/meeting/start server fills type meeting.start and audio_retained false", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/meeting/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({
+        type: "generate_minutes",
+        audio_retained: true,
+        retain_days: 7,
+        title: "overlay meet",
+      }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "meeting.start")
+    assert.equal(dispatched[0].v, 1)
+    assert.equal(dispatched[0].privacy_ack_v1, true)
+    assert.equal(dispatched[0].audio_retained, false)
+    assert.equal(dispatched[0].retain_days, undefined)
+    assert.equal(dispatched[0].title, "overlay meet")
+    assert.equal(dispatched.some((d) => String(d.type).includes("generate_minutes")), false)
+  })
+
+  test("POST /api/meeting/end server fills type meeting.end", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/meeting/end?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ type: "generate_minutes", id: "m1" }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "meeting.end")
+    assert.equal(dispatched[0].v, 1)
+    assert.equal(dispatched[0].id, "m1")
+  })
+
+  test("POST /api/stt/start with type=generate_minutes still dispatches voice.stt.start", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({
+        type: "generate_minutes",
+        sessionId: "s-min",
+        modelId: "medium",
+      }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "voice.stt.start")
+    assert.equal(dispatched.some((d) => String(d.type).includes("generate_minutes")), false)
+  })
+
+  test("POST /api/stt with type=list_tabs in body still cannot set type", async () => {
+    dispatched.length = 0
+    const start = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({
+        type: "list_tabs",
+        sessionId: "s-tab",
+        modelId: "medium",
+      }),
+    })
+    assert.equal(start.status, 200, start.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "voice.stt.start")
+    assert.equal(dispatched.some((d) => d.type === "list_tabs"), false)
+
+    dispatched.length = 0
+    const raw = await request({
+      method: "POST",
+      port,
+      path: `/api/stt?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ type: "list_tabs" }),
+    })
+    assert.notEqual(raw.status, 200)
+    assert.equal(dispatched.some((d) => d.type === "list_tabs"), false)
+  })
+
+  test("POST unknown path and /api/dispatch are 404", async () => {
+    dispatched.length = 0
+    const unknown = await request({
+      method: "POST",
+      port,
+      path: `/api/nope?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ type: "list_tabs" }),
+    })
+    assert.equal(unknown.status, 404)
+    const dispatch = await request({
+      method: "POST",
+      port,
+      path: `/api/dispatch?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ type: "voice.stt.start" }),
+    })
+    assert.equal(dispatch.status, 404)
+    assert.equal(dispatched.length, 0)
+  })
+
   test("dispatch allowlist is summoner-safe", () => {
     assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("file.upload"))
     assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("chat.create"))
@@ -481,7 +704,24 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.export"), false)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("thread.distill_preview"), false)
     assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("knowledge.list"))
-    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.start"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.start"), true)
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.chunk"))
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.end"))
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.abort"))
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("voice.stt.partial_request"))
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("voice.stt.partial"))
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("voice.stt.result"))
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("voice.stt.error"))
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.start"), true)
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.create"))
+    assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.end"))
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.generate_minutes"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.append_transcript"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("ui.open_sidepanel"), false)
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("ui.open_sidepanel"), false)
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.started"))
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.ended"))
+    assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.error"))
   })
 
   test("GET /api/events without token → 403", async () => {
@@ -540,6 +780,125 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(buf, /run_active/)
     assert.doesNotMatch(buf, /security.confirmation.request/)
     assert.doesNotMatch(buf, /Allow this/)
+  })
+
+  test("POST /api/operate without opener is 503 请点工具栏 C", async () => {
+    attachCalls.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/operate?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+    })
+    assert.equal(r.status, 503, r.body)
+    const data = JSON.parse(r.body)
+    assert.equal(data.type, "error")
+    assert.equal(data.error, "请点工具栏 C")
+    assert.equal(data.error_code, "OPERATE_SIDEPANEL_UNAVAILABLE")
+    assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
+    assert.doesNotMatch(r.body, /允许/)
+    assert.deepEqual(attachCalls, [{ foreground: true }])
+  })
+
+  test("POST /api/operate no extension peer is 503 not ok", async () => {
+    attachCalls.length = 0
+    let opened = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      attachChrome: (opts) => {
+        attachCalls.push({ foreground: opts?.foreground })
+        return "attached"
+      },
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      requestOpenSidePanel: async () => {
+        opened += 1
+        return {}
+      },
+      hasExtensionPeer: () => false,
+    })
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/operate?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+    })
+    assert.equal(r.status, 503, r.body)
+    const data = JSON.parse(r.body)
+    assert.notEqual(data.type, "ok")
+    assert.equal(data.error, "请点工具栏 C")
+    assert.equal(data.error_code, "OPERATE_SIDEPANEL_UNAVAILABLE")
+    assert.equal(opened, 0)
+    assert.deepEqual(attachCalls, [{ foreground: true }])
+  })
+
+  test("POST /api/operate sendAppRequest reject maps to 请点工具栏 C", async () => {
+    attachCalls.length = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      attachChrome: (opts) => {
+        attachCalls.push({ foreground: opts?.foreground })
+        return "attached"
+      },
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      requestOpenSidePanel: async () => {
+        throw new Error("side panel refused")
+      },
+      hasExtensionPeer: () => true,
+    })
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/operate?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+    })
+    assert.equal(r.status, 503, r.body)
+    const data = JSON.parse(r.body)
+    assert.equal(data.error, "请点工具栏 C")
+    assert.equal(data.error_code, "OPERATE_SIDEPANEL_UNAVAILABLE")
+    assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
+  })
+
+  test("POST /api/operate rebind opener succeeds after attachChrome foreground", async () => {
+    attachCalls.length = 0
+    let opened = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      attachChrome: (opts) => {
+        attachCalls.push({ foreground: opts?.foreground })
+        return "attached"
+      },
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      requestOpenSidePanel: async () => {
+        opened += 1
+        return {}
+      },
+      hasExtensionPeer: () => true,
+    })
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/operate?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+    })
+    assert.equal(r.status, 200, r.body)
+    const data = JSON.parse(r.body)
+    assert.equal(data.type, "ok")
+    assert.equal(data.message, "attached")
+    assert.equal(opened, 1)
+    assert.deepEqual(attachCalls, [{ foreground: true }])
+    assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
   })
 
   after(() => {

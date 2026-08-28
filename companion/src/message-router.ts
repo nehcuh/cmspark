@@ -455,6 +455,11 @@ export async function handleMessage(
       return handleOverlayShellOpen(rest, session)
     }
 
+    case "ui.open_sidepanel": {
+      const { handleUiOpenSidepanel } = await import("./message-router/handlers/ui-open-sidepanel")
+      return handleUiOpenSidepanel(rest, session)
+    }
+
     // --- Chat ---
     case "chat.create": {
       if (!session) return { type: "error", error: "No session" }
@@ -2455,6 +2460,7 @@ export async function handleMessage(
           origin: session?.origin,
           peerId: session?.panelId,
           send: session?.sendToExtension,
+          surface: session?.surface,
         },
         {
           clearSttSessions: () => {

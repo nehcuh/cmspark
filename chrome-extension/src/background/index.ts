@@ -311,6 +311,19 @@ const pendingLlmOneshot = new Map<
 >()
 
 async function handleCompanionMessage(msg: any) {
+  if (msg.type === "ui.open_sidepanel") {
+    try {
+      const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+      const windowId = tabs[0]?.windowId
+      if (windowId != null && chrome.sidePanel?.open) {
+        await chrome.sidePanel.open({ windowId })
+      }
+    } catch {
+      /* overlay HTML already has the fail toast */
+    }
+    return
+  }
+
   // P2 ARCH-01: oneshot LLM results for NotebookLM name suggest
   if (msg.type === "llm.oneshot_result" && typeof msg.id === "string") {
     const resolve = pendingLlmOneshot.get(msg.id)
@@ -1381,7 +1394,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "meeting.auto_diarize":
       case "meeting.generate_minutes":
       case "meeting.set_status":
-      case "overlay.shell.open": {
+      case "overlay.shell.open":
+      case "ui.open_sidepanel": {
         // Forward to companion. Always call sendResponse so Side Panel callbacks
         // never see "The message port closed before a response was received"
         // (that lastError fires when no listener answers — default used to return

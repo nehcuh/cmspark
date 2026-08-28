@@ -25,14 +25,17 @@ import {
   SUMMONER_CHEVRON_COLLAPSE,
   SUMMONER_CHEVRON_EXPAND,
   SUMMONER_L0_CHROME_DOWN,
-  SUMMONER_MIC_SIDEBAR,
   SUMMONER_RENTER_CHROME_DOWN,
   CHAT_SHELL_TITLE_NONE,
+  VOICE_PRIVACY_ACK_V2_CLAUSES,
+  MEETING_PRIVACY_ACK_V1_CLAUSES,
 } from "./summoner/client"
 import { getChromeOpener } from "./platform"
 
 export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
 export type SummonerWebAttachChrome = (opts?: { foreground?: boolean }) => string
+export type SummonerWebRequestOpenSidePanel = () => Promise<{ error_code?: string } | void>
+export type SummonerWebHasExtensionPeer = () => boolean
 
 export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "system.ping",
@@ -57,6 +60,14 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "composer.lease.get",
   "composer.lease.claim",
   "composer.lease.release",
+  "voice.stt.start",
+  "voice.stt.chunk",
+  "voice.stt.end",
+  "voice.stt.abort",
+  "voice.stt.partial_request",
+  "meeting.create",
+  "meeting.start",
+  "meeting.end",
 ])
 
 /** Fan-out to HTML EventSource. Confirm / Trust / config frames stay off this list. */
@@ -76,6 +87,13 @@ export const SUMMONER_WEB_EVENT_ALLOW = new Set([
   "composer.lease",
   "tool.start",
   "mcp.confirm.pending",
+  "voice.stt.partial",
+  "voice.stt.result",
+  "voice.stt.error",
+  "meeting.created",
+  "meeting.started",
+  "meeting.ended",
+  "meeting.error",
 ])
 
 const MAX_SSE_CLIENTS = 4
@@ -83,12 +101,22 @@ const sseClients = new Set<http.ServerResponse>()
 
 const FILE_BODY_MAX = 15 * 1024 * 1024
 const JSON_BODY_MAX = 64 * 1024
+/** /api/stt/chunk only: JSON around base64(256KiB PCM) ≈ 342KiB + envelope. */
+const STT_CHUNK_BODY_MAX = 400 * 1024
+
+function escHtml(s: string): string {
+  return String(s).replace(/[&<>"]/g, (c) =>
+    c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;",
+  )
+}
 
 let activeServer: http.Server | null = null
 let activePort: number | null = null
 let sessionToken: string | null = null
 let activeDispatch: SummonerWebDispatch | null = null
 let activeAttachChrome: SummonerWebAttachChrome | null = null
+let activeRequestOpenSidePanel: SummonerWebRequestOpenSidePanel | null = null
+let activeHasExtensionPeer: SummonerWebHasExtensionPeer | null = null
 let lastAccessTime = Date.now()
 let autoCloseTimer: ReturnType<typeof setInterval> | null = null
 
@@ -296,9 +324,13 @@ export async function startSummonerWebServer(opts: {
   preferredPort?: number
   dispatch: SummonerWebDispatch
   attachChrome?: SummonerWebAttachChrome
+  requestOpenSidePanel?: SummonerWebRequestOpenSidePanel
+  hasExtensionPeer?: SummonerWebHasExtensionPeer
 }): Promise<{ port: number; token: string }> {
   activeDispatch = opts.dispatch
   activeAttachChrome = opts.attachChrome ?? defaultAttachChrome
+  activeRequestOpenSidePanel = opts.requestOpenSidePanel ?? null
+  activeHasExtensionPeer = opts.hasExtensionPeer ?? null
   if (activeServer && activePort && sessionToken) {
     lastAccessTime = Date.now()
     return { port: activePort, token: sessionToken }
@@ -344,6 +376,8 @@ export function stopSummonerWebServer(): void {
     sessionToken = null
     activeDispatch = null
     activeAttachChrome = null
+    activeRequestOpenSidePanel = null
+    activeHasExtensionPeer = null
   }
 }
 
@@ -648,6 +682,104 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/operate" && req.method === "POST") {
+      const attach = activeAttachChrome ?? defaultAttachChrome
+      const message = attach({ foreground: true })
+      const fail = () => {
+        jsonResponse(
+          res,
+          { type: "error", error: "请点工具栏 C", error_code: "OPERATE_SIDEPANEL_UNAVAILABLE", attach: message },
+          503,
+        )
+      }
+      if (!activeRequestOpenSidePanel || !activeHasExtensionPeer || !activeHasExtensionPeer()) {
+        fail()
+        return
+      }
+      try {
+        const r = await activeRequestOpenSidePanel()
+        if (r && r.error_code) {
+          fail()
+          return
+        }
+      } catch {
+        fail()
+        return
+      }
+      jsonResponse(res, { type: "ok", message })
+      return
+    }
+
+    if (pathOnly === "/api/stt/start" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
+      const modelId =
+        body.modelId === "small" || body.modelId === "medium" || body.modelId === "large-v3-turbo"
+          ? body.modelId
+          : "medium"
+      const payload: Record<string, unknown> = {
+        v: 1,
+        sessionId,
+        modelId,
+        format: "pcm_s16le",
+        sampleRate: 16000,
+        channels: 1,
+        privacy_ack_v2: true,
+      }
+      if (typeof body.lang === "string") payload.lang = body.lang
+      if (typeof body.maxMs === "number" && Number.isFinite(body.maxMs)) payload.maxMs = body.maxMs
+      jsonResponse(res, await dispatchAllowed("voice.stt.start", payload))
+      return
+    }
+
+    if (pathOnly === "/api/stt/chunk" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, STT_CHUNK_BODY_MAX)) as Record<string, unknown>
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
+      const seq = Number.isInteger(body.seq) ? body.seq : 0
+      const data = typeof body.data === "string" ? body.data : ""
+      jsonResponse(
+        res,
+        await dispatchAllowed("voice.stt.chunk", { v: 1, sessionId, seq, data }),
+      )
+      return
+    }
+
+    if (pathOnly === "/api/stt/end" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
+      const totalSeq = Number.isInteger(body.totalSeq) ? body.totalSeq : 0
+      jsonResponse(res, await dispatchAllowed("voice.stt.end", { v: 1, sessionId, totalSeq }))
+      return
+    }
+
+    if (pathOnly === "/api/stt/abort" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
+      jsonResponse(res, await dispatchAllowed("voice.stt.abort", { v: 1, sessionId }))
+      return
+    }
+
+    if (pathOnly === "/api/meeting/start" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const payload: Record<string, unknown> = {
+        v: 1,
+        privacy_ack_v1: true,
+        audio_retained: false,
+      }
+      if (typeof body.title === "string") payload.title = body.title
+      if (typeof body.thread_id === "string") payload.thread_id = body.thread_id
+      if (typeof body.id === "string" && body.id.trim()) payload.id = body.id.trim()
+      jsonResponse(res, await dispatchAllowed("meeting.start", payload))
+      return
+    }
+
+    if (pathOnly === "/api/meeting/end" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const id = typeof body.id === "string" ? body.id : ""
+      jsonResponse(res, await dispatchAllowed("meeting.end", { v: 1, id }))
+      return
+    }
+
     res.writeHead(404)
     res.end("Not found")
   } catch (e: any) {
@@ -661,7 +793,7 @@ const SUMMONER_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CMspark 召唤器（实验）</title>
+<title>CMspark</title>
 <style>
 :root{
   --paper:#fff;--canvas:#f4f4f5;--rail-bg:#fafafa;--text:#171717;--secondary:#525252;
@@ -677,11 +809,11 @@ body{
   color:var(--text);background:var(--paper);
 }
 .hud{height:100%;display:flex;flex-direction:column;background:var(--paper);overflow:hidden}
-.body{display:none;grid-template-columns:var(--rail) var(--list) minmax(0,1fr);flex:1;min-height:0;border-bottom:1px solid var(--line);overflow:hidden}
-.hud.expanded .body{display:grid}
+.body{display:none;flex:1;min-height:0;border-bottom:1px solid var(--line);overflow:hidden}
+.hud.expanded .body{display:flex;flex-direction:column}
 .rail{
   background:var(--rail-bg);border-right:1px solid var(--line);
-  display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;overflow:hidden;flex-shrink:0
+  display:none;flex-direction:column;align-items:center;padding:10px 0;gap:4px;overflow:hidden;flex-shrink:0
 }
 .rail-btn{
   width:44px;height:44px;border:0;background:transparent;border-radius:var(--radius-sm);
@@ -692,7 +824,8 @@ body{
 .rail-btn[aria-current="true"]{background:var(--indigo-soft);color:var(--indigo)}
 .rail-btn:focus-visible{outline:none;box-shadow:var(--focus)}
 .rail-btn[hidden]{display:none}
-.list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;background:var(--paper);overflow:hidden}
+.list{border-right:1px solid var(--line);display:none;flex-direction:column;min-width:0;background:var(--paper);overflow:hidden}
+.rail,.list{display:none}
 .list-head{padding:14px 14px 8px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--faint)}
 .list-scroll{overflow-y:auto;overflow-x:hidden;flex:1;padding:0 6px 10px}
 .item,.row{
@@ -713,12 +846,18 @@ body{
 }
 .icon-mini svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .icon-mini:hover{background:var(--canvas);color:var(--text)}
-.main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--paper);overflow:hidden}
+.main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;background:var(--paper);overflow:hidden}
+.brand{display:flex;align-items:center;gap:8px;padding:12px 16px 4px;font-size:14px;font-weight:600;flex-shrink:0}
+.mark{
+  width:52px;height:52px;border-radius:50%;background:#171717;color:#fff;
+  display:grid;place-items:center;font-size:20px;font-weight:600;margin:0 auto 10px;
+}
+.mark.sm{width:26px;height:26px;font-size:11px;margin:0}
 .log{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:20px 22px;display:flex;flex-direction:column;gap:16px}
 .msg{max-width:36rem;font-size:14px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
 .msg.user{align-self:flex-end;background:var(--canvas);padding:8px 12px;border-radius:12px 12px 4px 12px}
 .msg.assistant{align-self:flex-start;color:var(--text)}
-.empty{margin:auto;color:var(--secondary);font-size:14px;line-height:1.6}
+.empty{margin:auto;color:var(--secondary);font-size:14px;line-height:1.6;text-align:center;display:flex;flex-direction:column;align-items:center}
 .empty strong{display:block;font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px}
 .composer{display:flex;flex-direction:column;gap:6px;padding:10px 12px 8px;background:var(--paper);flex-shrink:0}
 .composer-row{display:flex;align-items:center;gap:6px;min-width:0}
@@ -761,7 +900,25 @@ body{
 #attachFront{background:var(--canvas);color:var(--text)}
 #openConfirm{background:var(--indigo);color:#fff}
 .cta-foot{font-size:11px;color:var(--faint)!important;line-height:1.4}
+.privacy-sheet{
+  margin:0 12px 8px;padding:10px 12px;border-radius:12px;
+  background:#fffbeb;border:1px solid #fde68a;color:#92400e;
+}
+.privacy-sheet[hidden]{display:none}
+.privacy-sheet ol{margin:6px 0 8px;padding-left:1.3em;color:var(--text);font-size:12px;line-height:1.45}
+.privacy-sheet .cta-actions button{background:var(--indigo);color:#fff}
+.privacy-sheet p{font-size:12.5px;font-weight:600;color:var(--text)}
+#meetingVoiceSection{margin-bottom:8px}
+.capture-row{display:flex;gap:8px;padding:0 2px;flex-wrap:wrap}
+#meetingStart,#operateOpen{
+  min-height:36px;padding:6px 12px;border-radius:8px;border:0;cursor:pointer;font:inherit;
+  background:var(--canvas);color:var(--text);
+}
+#meetingStart[aria-pressed="true"]{background:var(--indigo-soft);color:var(--indigo)}
+#mic[aria-pressed="true"]{background:var(--indigo-soft);color:var(--indigo)}
 .hud:not(.expanded) .ghosts{display:none}
+.hud.expanded .ghosts{display:none}
+.hud.expanded .hint{display:none}
 .hud:not(.expanded) .hint{padding:8px 16px}
 .hud:not(.expanded) .status{padding:0 16px 8px}
 </style>
@@ -795,6 +952,7 @@ body{
       </div>
     </aside>
     <section class="main">
+      <div class="brand"><span class="mark sm" aria-hidden="true">山</span>CMspark</div>
       <div class="log" id="log"></div>
     </section>
   </div>
@@ -803,13 +961,13 @@ body{
       <button class="icon-btn" id="newThreadBar" type="button" title="新对话" aria-label="新对话">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
+      <label class="icon-btn" for="files" title="📎 添加附件" aria-label="添加附件">
+        <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
+      </label>
+      <input type="file" id="files" multiple hidden>
       <div class="field">
-        <textarea id="text" rows="1" placeholder="说点什么，回车发送" aria-label="发送到当前对话"></textarea>
-        <label class="icon-btn" for="files" title="📎 添加附件" aria-label="添加附件">
-          <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
-        </label>
-        <input type="file" id="files" multiple hidden>
-        <button class="icon-btn" id="mic" type="button" disabled title="${SUMMONER_MIC_SIDEBAR}" aria-label="${SUMMONER_MIC_SIDEBAR}">
+        <textarea id="text" rows="1" placeholder="问 CMspark…" aria-label="发送到当前对话"></textarea>
+        <button class="icon-btn" id="mic" type="button" title="听写" aria-label="听写" aria-pressed="false">
           <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
         </button>
         <button class="icon-btn" id="chev" type="button" aria-pressed="false" title="${SUMMONER_CHEVRON_EXPAND}" aria-label="${SUMMONER_CHEVRON_EXPAND}">
@@ -820,6 +978,10 @@ body{
         </button>
       </div>
     </div>
+    <div class="capture-row">
+      <button type="button" id="meetingStart" aria-pressed="false">开始会议</button>
+      <button type="button" id="operateOpen">打开浏览器并打开侧栏</button>
+    </div>
     <div class="cta-box" id="ctaBox" hidden>
       <p id="ctaCopy">${SUMMONER_L0_CHROME_DOWN}</p>
       <div class="cta-actions">
@@ -828,6 +990,30 @@ body{
         <button type="button" id="openConfirm" hidden title="${SUMMONER_OPEN_CONFIRM}" aria-label="${SUMMONER_OPEN_CONFIRM}">${SUMMONER_OPEN_CONFIRM}</button>
       </div>
       <p class="cta-foot">${SUMMONER_ATTACH_FOOTNOTE}</p>
+    </div>
+    <div class="privacy-sheet" id="voicePrivacy" hidden>
+      <p>本机听写</p>
+      <ol>
+        ${VOICE_PRIVACY_ACK_V2_CLAUSES.map((c) => `<li>${escHtml(c)}</li>`).join("\n        ")}
+      </ol>
+      <div class="cta-actions">
+        <button type="button" id="voicePrivacyAck">我已了解</button>
+      </div>
+    </div>
+    <div class="privacy-sheet" id="meetingPrivacy" hidden>
+      <div id="meetingVoiceSection">
+        <p>本机听写</p>
+        <ol>
+          ${VOICE_PRIVACY_ACK_V2_CLAUSES.map((c) => `<li>${escHtml(c)}</li>`).join("\n          ")}
+        </ol>
+      </div>
+      <p>会议隐私说明</p>
+      <ol>
+        ${MEETING_PRIVACY_ACK_V1_CLAUSES.map((c) => `<li>${escHtml(c)}</li>`).join("\n        ")}
+      </ol>
+      <div class="cta-actions">
+        <button type="button" id="meetingPrivacyAck">我已了解</button>
+      </div>
     </div>
   </div>
   <div class="ghosts">
@@ -880,7 +1066,7 @@ body{
   }
   function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})}
   function placeWindow(expanded){
-    var w=720,h=expanded?520:120;
+    var w=400,h=expanded?520:120;
     var sw=screen.availWidth||screen.width||w;
     var sh=screen.availHeight||screen.height||h;
     var x=Math.max(0, ((sw-w)/2)|0);
@@ -899,6 +1085,177 @@ body{
   }
   function api(path, opts){
     return fetch(url(path), opts).then(function(r){return r.json().catch(function(){return {error:r.statusText}})})
+  }
+  var voiceAck=false;
+  var meetingAck=false;
+  var meetingId="";
+  var sttLive=false;
+  var sttSid="";
+  var sttSeq=0;
+  var sttBuf=new Uint8Array(0);
+  var sttStream=null;
+  var sttCtx=null;
+  var sttSrc=null;
+  var sttProc=null;
+  var sttMute=null;
+  var sttTimer=null;
+  var STT_RATE=16000;
+  var STT_FLUSH=32000;
+  var STT_CHUNK=256*1024;
+  var STT_MAX_MS=45000;
+  var STT_MIC_FAIL="请在系统设置中打开 127.0.0.1 的麦克风";
+  var STT_NEED_MODEL="侧栏 ⋯ → 设置 → 听写 → 下载组件/模型";
+  function sttUserCopy(code, fallback){
+    var c=String(code||"").toLowerCase();
+    if(c.indexOf("model")>=0 || c.indexOf("binary")>=0) return STT_NEED_MODEL;
+    return fallback || "听写失败";
+  }
+  function uint8ToB64(u8){
+    var binary="";
+    var step=0x8000;
+    for(var i=0;i<u8.length;i+=step){
+      binary+=String.fromCharCode.apply(null, Array.prototype.slice.call(u8.subarray(i, Math.min(i+step, u8.length))));
+    }
+    return btoa(binary);
+  }
+  function concatU8(a,b){
+    var o=new Uint8Array(a.length+b.length);
+    o.set(a,0); o.set(b,a.length); return o;
+  }
+  function floatToS16(input){
+    var out=new Uint8Array(input.length*2);
+    var view=new DataView(out.buffer);
+    for(var i=0;i<input.length;i++){
+      var s=input[i];
+      if(s>1)s=1; else if(s<-1)s=-1;
+      view.setInt16(i*2, s<0?Math.round(s*0x8000):Math.round(s*0x7fff), true);
+    }
+    return out;
+  }
+  function resampleMono(input, fromRate, toRate){
+    if(fromRate===toRate || !input.length) return input;
+    var outLen=Math.max(1, Math.round((input.length*toRate)/fromRate));
+    var out=new Float32Array(outLen);
+    var ratio=fromRate/toRate;
+    for(var i=0;i<outLen;i++){
+      var src=i*ratio;
+      var i0=Math.floor(src);
+      var i1=Math.min(i0+1, input.length-1);
+      var t=src-i0;
+      out[i]=input[i0]*(1-t)+input[i1]*t;
+    }
+    return out;
+  }
+  function teardownStt(){
+    sttLive=false;
+    if(sttTimer){clearTimeout(sttTimer);sttTimer=null}
+    try{ if(sttProc){sttProc.onaudioprocess=null;sttProc.disconnect()} }catch(e){}
+    try{ if(sttMute) sttMute.disconnect(); }catch(e){}
+    try{ if(sttSrc) sttSrc.disconnect(); }catch(e){}
+    try{ if(sttStream) sttStream.getTracks().forEach(function(t){t.stop()}); }catch(e){}
+    try{ if(sttCtx) sttCtx.close(); }catch(e){}
+    sttProc=sttMute=sttSrc=sttStream=sttCtx=null;
+    sttBuf=new Uint8Array(0);
+    var mic=$("mic");
+    if(mic) mic.setAttribute("aria-pressed","false");
+  }
+  function flushStt(force){
+    if(!sttSid) return;
+    var min=force?1:STT_FLUSH;
+    while(sttBuf.length>=min){
+      var n=Math.min(STT_CHUNK, sttBuf.length);
+      if(!force && n<STT_FLUSH) break;
+      var slice=sttBuf.subarray(0,n);
+      api("/api/stt/chunk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sttSid,seq:sttSeq,data:uint8ToB64(slice)})});
+      sttSeq+=1;
+      sttBuf=n===sttBuf.length?new Uint8Array(0):new Uint8Array(sttBuf.subarray(n));
+    }
+  }
+  function stopStt(abort){
+    var sid=sttSid;
+    if(abort){
+      teardownStt();
+      sttSid="";
+      sttSeq=0;
+      if(sid) api("/api/stt/abort",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid})});
+      return;
+    }
+    flushStt(true);
+    var total=sttSeq;
+    teardownStt();
+    sttSid="";
+    sttSeq=0;
+    if(sid) api("/api/stt/end",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid,totalSeq:total})});
+  }
+  function beginPcm(sid, stream){
+    var AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC){ setStatus(STT_MIC_FAIL); stopStt(true); return; }
+    var ctx=new AC();
+    sttCtx=ctx;
+    var go=function(){
+      if(!sttLive || sttSid!==sid){ teardownStt(); return; }
+      if(typeof ctx.createScriptProcessor!=="function"){ setStatus("无法捕获麦克风音频"); stopStt(true); return; }
+      var src=ctx.createMediaStreamSource(stream);
+      sttSrc=src;
+      var proc=ctx.createScriptProcessor(4096,1,1);
+      sttProc=proc;
+      var mute=ctx.createGain();
+      mute.gain.value=0;
+      sttMute=mute;
+      proc.onaudioprocess=function(ev){
+        if(!sttLive || sttSid!==sid) return;
+        var ch=ev.inputBuffer.getChannelData(0);
+        if(!ch||!ch.length) return;
+        var copy=new Float32Array(ch.length);
+        copy.set(ch);
+        var rate=ctx.sampleRate||48000;
+        var mono=rate===STT_RATE?copy:resampleMono(copy,rate,STT_RATE);
+        if(!mono.length) return;
+        sttBuf=concatU8(sttBuf, floatToS16(mono));
+        if(sttBuf.length>=STT_FLUSH) flushStt(false);
+      };
+      src.connect(proc);
+      proc.connect(mute);
+      mute.connect(ctx.destination);
+      sttTimer=setTimeout(function(){
+        if(!sttLive || sttSid!==sid) return;
+        stopStt(false);
+        if(meetingId) startStt();
+      }, STT_MAX_MS);
+    };
+    if(ctx.state==="suspended") ctx.resume().then(go).catch(go);
+    else go();
+  }
+  function startStt(){
+    if(sttLive){ stopStt(false); return; }
+    if(!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia!=="function"){
+      setStatus(STT_MIC_FAIL);
+      return;
+    }
+    var sid="ov-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,10);
+    sttSid=sid;
+    sttSeq=0;
+    sttBuf=new Uint8Array(0);
+    sttLive=true;
+    $("mic").setAttribute("aria-pressed","true");
+    navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}}).then(function(stream){
+      if(!sttLive || sttSid!==sid){ stream.getTracks().forEach(function(t){t.stop()}); return; }
+      sttStream=stream;
+      return api("/api/stt/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid,modelId:"medium",privacy_ack_v2:true,lang:"zh"})}).then(function(d){
+        if(!sttLive || sttSid!==sid){ teardownStt(); return; }
+        if(d && (d.type==="voice.stt.error" || d.type==="error" || d.error)){
+          setStatus(sttUserCopy(d.code||d.error_code, d.error||d.message));
+          stopStt(true);
+          return;
+        }
+        beginPcm(sid, stream);
+      });
+    }).catch(function(){
+      sttLive=false;
+      sttSid="";
+      $("mic").setAttribute("aria-pressed","false");
+      setStatus(STT_MIC_FAIL);
+    });
   }
   function renderThreads(filter){
     var q=(filter||"").trim();
@@ -966,7 +1323,7 @@ body{
     if(!n){
       var empty=document.createElement("div");
       empty.className="empty";
-      empty.innerHTML="<strong>${CHAT_SHELL_TITLE_NONE}</strong>回车发送。⌘/Ctrl 不在这扇窗。${SUMMONER_MIC_SIDEBAR}。";
+      empty.innerHTML="<div class=\\"mark\\" aria-hidden=\\"true\\">山</div><strong>${CHAT_SHELL_TITLE_NONE}</strong>回车发送。附件和听写不用开浏览器。";
       log.appendChild(empty);
     }
     log.scrollTop=log.scrollHeight;
@@ -1059,6 +1416,84 @@ body{
   $("openConfirm").onclick=function(){attachChrome(true)};
   $("settings").onclick=function(){
     alert("快捷键设置需要在 Chrome 侧栏的设置面板中配置。\n\n请打开 Chrome 侧栏，点击设置图标，在「模型与推理」部分找到「发送快捷键」设置。\n\n召唤器使用相同的快捷键配置。");
+  };
+  $("mic").onclick=function(){
+    if(sttLive){ stopStt(false); return; }
+    if(!voiceAck){
+      var sheet=$("voicePrivacy");
+      if(sheet) sheet.hidden=false;
+      return;
+    }
+    startStt();
+  };
+  $("voicePrivacyAck").onclick=function(){
+    voiceAck=true;
+    var sheet=$("voicePrivacy");
+    if(sheet) sheet.hidden=true;
+    startStt();
+  };
+  function setMeetingUi(on){
+    var b=$("meetingStart");
+    if(!b) return;
+    b.textContent=on?"结束会议":"开始会议";
+    b.setAttribute("aria-pressed", on?"true":"false");
+  }
+  function startMeetingCapture(){
+    var payload={};
+    if(threadId) payload.thread_id=threadId;
+    api("/api/meeting/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).then(function(d){
+      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
+        setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error||"会议开始失败"));
+        return;
+      }
+      meetingId=(d&&d.meeting&&d.meeting.id)||"";
+      if(!meetingId){ setStatus("会议开始失败"); return; }
+      setMeetingUi(true);
+      if(!sttLive) startStt();
+    }).catch(function(e){setStatus(String(e&&e.message||e))});
+  }
+  function endMeetingCapture(){
+    var id=meetingId;
+    meetingId="";
+    setMeetingUi(false);
+    if(sttLive) stopStt(false);
+    if(!id){ setStatus("纪要在侧栏"); return; }
+    api("/api/meeting/end",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})}).then(function(d){
+      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
+        setStatus(d.message||d.error||"会议结束失败");
+        return;
+      }
+      setStatus("纪要在侧栏");
+    }).catch(function(e){setStatus(String(e&&e.message||e))});
+  }
+  $("meetingStart").onclick=function(){
+    if(meetingId){ endMeetingCapture(); return; }
+    if(!meetingAck){
+      var sheet=$("meetingPrivacy");
+      var vsec=$("meetingVoiceSection");
+      if(!voiceAck){
+        if(vsec) vsec.hidden=false;
+      } else if(vsec) vsec.hidden=true;
+      if(sheet) sheet.hidden=false;
+      return;
+    }
+    startMeetingCapture();
+  };
+  $("meetingPrivacyAck").onclick=function(){
+    meetingAck=true;
+    voiceAck=true;
+    var sheet=$("meetingPrivacy");
+    if(sheet) sheet.hidden=true;
+    startMeetingCapture();
+  };
+  $("operateOpen").onclick=function(){
+    api("/api/operate",{method:"POST"}).then(function(d){
+      if(d && (d.type==="error" || d.error)){
+        setStatus("请点工具栏 C");
+        return;
+      }
+      setStatus(d&&d.message||"");
+    }).catch(function(){setStatus("请点工具栏 C")});
   };
   $("newThreadBar").onclick=function(){$("newThread").click()};
   $("newThread").onclick=function(){
@@ -1192,7 +1627,16 @@ body{
       navigator.sendBeacon(url("/api/lease/release"), body);
     }catch(e){}
   }
-  window.addEventListener("pagehide", releaseLease);
+  window.addEventListener("pagehide", function(){
+    if(sttLive) stopStt(true);
+    if(meetingId){
+      try{
+        var body=new Blob([JSON.stringify({id:meetingId})],{type:"application/json"});
+        navigator.sendBeacon(url("/api/meeting/end"), body);
+      }catch(e){}
+    }
+    releaseLease();
+  });
   function statusFromEvent(d){
     if(!d||typeof d!=="object") return "出错了";
     var data=d.data&&typeof d.data==="object"?d.data:{};
@@ -1213,6 +1657,7 @@ body{
       showChromeCta("cdp");
       return CHROME_DOWN.cdp;
     }
+    if(/model|binary/i.test(raw)) return STT_NEED_MODEL;
     return labels[code]||d.error||d.message||"出错了";
   }
   try{
@@ -1231,6 +1676,32 @@ body{
         busy=t!=="chat.enqueued"?true:busy;
         syncBusyUi();
         startPoll();
+        return;
+      }
+      if(t==="voice.stt.result"){
+        var txt=typeof d.text==="string"?d.text.trim():"";
+        if(txt && !meetingId){
+          var cur=$("text").value;
+          $("text").value=cur&&cur.trim()?cur.replace(/\\s*$/,"")+" "+txt:txt;
+        }
+        if(sttLive) stopStt(false);
+        if(meetingId) startStt();
+        return;
+      }
+      if(t==="voice.stt.error"){
+        setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error));
+        if(sttLive) stopStt(true);
+        return;
+      }
+      if(t==="meeting.error"){
+        setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error||"会议出错"));
+        return;
+      }
+      if(t==="meeting.ended"){
+        meetingId="";
+        setMeetingUi(false);
+        if(sttLive) stopStt(false);
+        setStatus("纪要在侧栏");
         return;
       }
       if(t==="mcp.confirm.pending"){
