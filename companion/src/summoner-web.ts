@@ -329,12 +329,37 @@ export function defaultOverlayChromeDir(): string {
 }
 
 let overlayLaunchAt = 0
-const OVERLAY_LAUNCH_GRACE_MS = 2000
+const OVERLAY_LAUNCH_GRACE_MS_DEFAULT = 2000
+let overlayLaunchGraceMs = OVERLAY_LAUNCH_GRACE_MS_DEFAULT
+let overlayLaunchGraceTimer: ReturnType<typeof setTimeout> | null = null
 let overlaySttSessionId = ""
 let overlayMeetingId = ""
 
 function overlayLaunchInGrace(): boolean {
-  return !!(overlayLaunchAt && Date.now() - overlayLaunchAt < OVERLAY_LAUNCH_GRACE_MS)
+  return !!(overlayLaunchAt && Date.now() - overlayLaunchAt < overlayLaunchGraceMs)
+}
+
+export function __testSetOverlayLaunchGraceMs(ms: number): void {
+  overlayLaunchGraceMs =
+    Number.isFinite(ms) && ms > 0 ? ms : OVERLAY_LAUNCH_GRACE_MS_DEFAULT
+}
+
+function clearOverlayLaunchGraceTimer(): void {
+  if (overlayLaunchGraceTimer) {
+    clearTimeout(overlayLaunchGraceTimer)
+    overlayLaunchGraceTimer = null
+  }
+}
+
+function scheduleOnShellClosedAfterGrace(launchAt: number): void {
+  clearOverlayLaunchGraceTimer()
+  const delay = Math.max(0, launchAt + overlayLaunchGraceMs - Date.now())
+  overlayLaunchGraceTimer = setTimeout(() => {
+    overlayLaunchGraceTimer = null
+    if (sseClients.size > 0) return
+    if (overlayLaunchAt !== launchAt) return
+    invokeOnShellClosed()
+  }, delay)
 }
 
 function overlayDispatchFailed(result: unknown): boolean {
@@ -383,6 +408,7 @@ function abortOverlayCaptureSessions(): void {
 
 /** Hide/last-SSE/idle-stop share this path; twice is a no-throw. */
 function invokeOnShellClosed(): void {
+  clearOverlayLaunchGraceTimer()
   abortOverlayCaptureSessions()
   const cb = activeOnShellClosed
   if (!cb) return
@@ -537,6 +563,8 @@ export function stopSummonerWebServer(): void {
     activeOnShellClosed = null
     overlaySttSessionId = ""
     overlayMeetingId = ""
+    overlayLaunchGraceMs = OVERLAY_LAUNCH_GRACE_MS_DEFAULT
+    clearOverlayLaunchGraceTimer()
   }
 }
 
@@ -640,9 +668,12 @@ async function handleRequest(
       sseClients.add(res)
       req.on("close", () => {
         sseClients.delete(res)
-        if (sseClients.size === 0 && !overlayLaunchInGrace()) {
-          invokeOnShellClosed()
+        if (sseClients.size !== 0) return
+        if (overlayLaunchInGrace()) {
+          scheduleOnShellClosedAfterGrace(overlayLaunchAt)
+          return
         }
+        invokeOnShellClosed()
       })
       return
     }

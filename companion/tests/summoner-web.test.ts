@@ -17,6 +17,7 @@ import {
   summonerWebEventStatus,
   hideSummonerWebShell,
   openLoopbackPage,
+  __testSetOverlayLaunchGraceMs,
   SUMMONER_WEB_DISPATCH_ALLOW,
   SUMMONER_WEB_EVENT_ALLOW,
 } from "../src/summoner-web"
@@ -1174,6 +1175,53 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(n, 0, "launch grace must not treat last SSE drop as closed")
     hideSummonerWebShell()
     assert.ok(n >= 1, "explicit hide still closes after grace skip")
+  })
+
+  test("last SSE close during grace schedules onShellClosed after grace if still empty", async () => {
+    let n = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      onShellClosed: () => {
+        n += 1
+      },
+    })
+    __testSetOverlayLaunchGraceMs(60)
+    try {
+      const tmp = path.join(path.resolve("/tmp"), "cmspark-overlay-a2-grace-defer")
+      const opened = openLoopbackPage(`http://127.0.0.1:${port}/?token=${token}`, {
+        spawn: () => ({ unref() {} }),
+        browserPath: "/usr/bin/true",
+        userDataDir: tmp,
+      })
+      assert.equal(opened, true)
+      await new Promise<void>((resolve) => {
+        const req = http.request(
+          {
+            method: "GET",
+            host: "127.0.0.1",
+            port,
+            path: `/api/events?token=${token}`,
+          },
+          (res) => {
+            assert.equal(res.statusCode, 200)
+            res.resume()
+            req.destroy()
+          },
+        )
+        req.on("error", () => {})
+        req.on("close", () => setTimeout(resolve, 5))
+        req.end()
+      })
+      assert.equal(n, 0, "spawn-flicker guard: must not close immediately during grace")
+      const deadline = Date.now() + 400
+      while (n < 1 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 15))
+      }
+      assert.ok(n >= 1, "after launch grace with no SSE clients, last-SSE must still close")
+    } finally {
+      __testSetOverlayLaunchGraceMs(2000)
+    }
   })
 
   test("hide aborts overlay STT and ends overlay meeting without pagehide", async () => {

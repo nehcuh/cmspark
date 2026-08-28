@@ -411,7 +411,7 @@ export class CompanionClient {
     try {
       await releaseAllOverlayLeases((type, body) => this.sendRequest(type, body))
     } catch {
-      // close still must not abort chat
+      // overlay LLM abort is companion-side (release_overlay → abortLlmLoopsForPanel)
     }
   }
 

@@ -428,6 +428,14 @@ test("companion-client close path can release all overlay leases", () => {
   assert.match(src, /releaseAllOverlay|release_overlay/)
 })
 
+test("companion-client overlay release catch does not claim close must not abort chat", () => {
+  const src = fs.readFileSync(srcFile("tray", "companion-client.ts"), "utf8")
+  const start = src.indexOf("async releaseAllOverlayComposerLeases")
+  assert.ok(start >= 0, "releaseAllOverlayComposerLeases missing")
+  const body = src.slice(start, start + 450)
+  assert.doesNotMatch(body, /close still must not abort chat/)
+})
+
 test("message-router broadcasts exclusive-claim siblings as composer.lease", () => {
   const src = fs.readFileSync(srcFile("message-router.ts"), "utf8")
   assert.match(src, /released_siblings/)
