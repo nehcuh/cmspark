@@ -858,7 +858,7 @@ body{
 .msg.user{align-self:flex-end;background:var(--canvas);padding:8px 12px;border-radius:12px 12px 4px 12px}
 .msg.assistant{align-self:flex-start;color:var(--text)}
 .empty{margin:auto;color:var(--secondary);font-size:14px;line-height:1.6;text-align:center;display:flex;flex-direction:column;align-items:center}
-.empty strong{display:block;font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px}
+.empty strong{display:block;font-size:22px;font-weight:600;color:var(--text);margin-bottom:8px;letter-spacing:-.03em}
 .composer{display:flex;flex-direction:column;gap:6px;padding:10px 12px 8px;background:var(--paper);flex-shrink:0}
 .composer-row{display:flex;align-items:center;gap:6px;min-width:0}
 .icon-btn{
@@ -884,7 +884,9 @@ body{
   border:0;background:transparent;color:var(--faint);font:11px inherit;padding:6px 8px;border-radius:8px;cursor:pointer;min-height:32px;
 }
 .ghost:hover{background:var(--canvas);color:var(--text)}
-.hint{padding:0 16px 10px;font-size:11px;color:var(--faint);line-height:1.4}
+.hint{display:none;padding:0 16px 10px;font-size:11px;color:var(--faint);line-height:1.4}
+#chev{display:none}
+#settings{display:none}
 .status{padding:0 16px 12px;font-size:12px;color:#92400e;min-height:16px}
 .cta-box{
   margin:0 12px 8px;padding:10px 12px;border-radius:12px;
@@ -919,12 +921,10 @@ body{
 .hud:not(.expanded) .ghosts{display:none}
 .hud.expanded .ghosts{display:none}
 .hud.expanded .hint{display:none}
-.hud:not(.expanded) .hint{padding:8px 16px}
-.hud:not(.expanded) .status{padding:0 16px 8px}
 </style>
 </head>
 <body>
-<div class="hud" id="hud">
+<div class="hud expanded" id="hud">
   <div class="body">
     <nav class="rail" id="secs" aria-label="组合面">
       <button class="rail-btn" data-sec="threads" aria-current="true" type="button" title="对话" aria-label="对话">
@@ -953,7 +953,13 @@ body{
     </aside>
     <section class="main">
       <div class="brand"><span class="mark sm" aria-hidden="true">山</span>CMspark</div>
-      <div class="log" id="log"></div>
+      <div class="log" id="log">
+        <div class="empty" id="empty">
+          <div class="mark" aria-hidden="true">山</div>
+          <strong>${CHAT_SHELL_TITLE_NONE}</strong>
+          回车发送。附件和听写不用开浏览器。
+        </div>
+      </div>
     </section>
   </div>
   <div class="composer">
@@ -970,10 +976,10 @@ body{
         <button class="icon-btn" id="mic" type="button" title="听写" aria-label="听写" aria-pressed="false">
           <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
         </button>
-        <button class="icon-btn" id="chev" type="button" aria-pressed="false" title="${SUMMONER_CHEVRON_EXPAND}" aria-label="${SUMMONER_CHEVRON_EXPAND}">
-          <svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>
+        <button class="icon-btn" id="chev" type="button" hidden aria-pressed="true" title="${SUMMONER_CHEVRON_COLLAPSE}" aria-label="${SUMMONER_CHEVRON_COLLAPSE}">
+          <svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>
         </button>
-        <button class="icon-btn" id="settings" type="button" title="设置（快捷键等）" aria-label="设置">
+        <button class="icon-btn" id="settings" type="button" hidden title="设置（快捷键等）" aria-label="设置">
           <svg viewBox="0 0 24 24"><path d="M12.2 2.2a.8.8 0 0 1 .8.8v2.6a.8.8 0 0 1-.8.8H11.8a.8.8 0 0 1-.8-.8V3a.8.8 0 0 1 .8-.8zm0 16a.8.8 0 0 1 .8.8v2.6a.8.8 0 0 1-.8.8H11.8a.8.8 0 0 1-.8-.8V19a.8.8 0 0 1 .8-.8zM19.1 7.4a.8.8 0 0 1 1.1 0l1.9 1.9a.8.8 0 0 1 0 1.1l-2.6 2.6a.8.8 0 0 1-1.1 0 .8.8 0 0 1 0-1.1l1.5-1.5-1.5-1.5a.8.8 0 0 1 0-1.1zM4.9 16.6a.8.8 0 0 1 0-1.1l2.6-2.6a.8.8 0 0 1 1.1 0 .8.8 0 0 1 0 1.1L7.1 15.5l1.5 1.5a.8.8 0 0 1 0 1.1l-1.9 1.9a.8.8 0 0 1-1.1 0zm0-9.2a.8.8 0 0 1 1.1 0l1.9 1.9a.8.8 0 0 1 0 1.1L7.3 13l2.6 2.6a.8.8 0 0 1-1.1 0l-1.9-1.9a.8.8 0 0 1 0-1.1l1.5-1.5-1.5-1.5a.8.8 0 0 1 0-1.1zm14.2 9.2a.8.8 0 0 1 0-1.1l-2.6-2.6a.8.8 0 0 1-1.1 0 .8.8 0 0 1 0 1.1l1.5 1.5-1.5 1.5a.8.8 0 0 1 0 1.1l1.9 1.9a.8.8 0 0 1 1.1 0z"/></svg>
         </button>
       </div>
@@ -1065,23 +1071,17 @@ body{
     });
   }
   function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})}
-  function placeWindow(expanded){
-    var w=400,h=expanded?520:120;
+  function placeWindow(){
+    var w=400,h=520;
     var sw=screen.availWidth||screen.width||w;
     var sh=screen.availHeight||screen.height||h;
     var x=Math.max(0, ((sw-w)/2)|0);
-    var y=expanded?Math.max(0, ((sh-h)/2)|0):Math.max(24, ((sh*0.25)-(h/2))|0);
+    var y=Math.max(0, ((sh-h)/2)|0);
     try{window.resizeTo(w,h);window.moveTo(x,y)}catch(e){}
   }
   function setExpanded(on){
-    $("hud").classList.toggle("expanded", !!on);
-    $("chev").setAttribute("aria-pressed", on?"true":"false");
-    $("chev").setAttribute("title", on?${JSON.stringify(SUMMONER_CHEVRON_COLLAPSE)}:${JSON.stringify(SUMMONER_CHEVRON_EXPAND)});
-    $("chev").setAttribute("aria-label", on?${JSON.stringify(SUMMONER_CHEVRON_COLLAPSE)}:${JSON.stringify(SUMMONER_CHEVRON_EXPAND)});
-    $("chev").innerHTML=on
-      ?'<svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>'
-      :'<svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>';
-    placeWindow(!!on);
+    $("hud").classList.add("expanded");
+    placeWindow();
   }
   function api(path, opts){
     return fetch(url(path), opts).then(function(r){return r.json().catch(function(){return {error:r.statusText}})})
@@ -1408,9 +1408,7 @@ body{
     if(!threadId) return;
     api("/api/abort",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})});
   };
-  $("chev").onclick=function(){
-    setExpanded(!$("hud").classList.contains("expanded"));
-  };
+  $("chev").onclick=function(){ setExpanded(true); };
   $("attachSilent").onclick=function(){attachChrome(false)};
   $("attachFront").onclick=function(){attachChrome(true)};
   $("openConfirm").onclick=function(){attachChrome(true)};
@@ -1531,7 +1529,7 @@ body{
       if(b.getAttribute("data-sec")===name) b.setAttribute("aria-current","true");
       else b.removeAttribute("aria-current");
     });
-    if(!$("hud").classList.contains("expanded")) setExpanded(true);
+    setExpanded(true);
     var heads={threads:"对话",packs:"场景",knowledge:"知识",skills:"技能",mcp:"MCP"};
     $("secHead").textContent=heads[name]||name;
     $("newThread").style.display=name==="threads"?"":"none";
