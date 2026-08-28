@@ -481,6 +481,24 @@ func runMoveFile(sourcePath: String, destPath: String) throws -> String {
 
 // MARK: - Default tray launch (Scheme D product entry)
 
+/// DATA_DIR for estop socket/flag/nonce. Lockstep with companion `config.ts`
+/// (`CMSPARK_DATA_DIR` or `~/.cmspark-agent`). Must not be anonymous /tmp.
+func cmsparkDataDir() -> String {
+    if let env = ProcessInfo.processInfo.environment["CMSPARK_DATA_DIR"], !env.isEmpty {
+        return env
+    }
+    return (NSHomeDirectory() as NSString).appendingPathComponent(".cmspark-agent")
+}
+
+/// `estop.sock` → `estop.flag` / `estop.nonce`. Flag default must not fall back
+/// to anonymous /tmp (B2 / pin 12).
+func estopDerivedPath(_ socketPath: String, ext: String) -> String {
+    if socketPath.hasSuffix(".sock") {
+        return String(socketPath.dropLast(5)) + ext
+    }
+    return socketPath + ext
+}
+
 /// Resolve Resources/{node,cmspark-agent.js} relative to this executable and
 /// start the tray agent. Used when the user double-clicks CMspark.app (no args)
 /// or when first arg is `tray` / `launch`.
@@ -490,9 +508,9 @@ func runMoveFile(sourcePath: String, destPath: String) throws -> String {
 ///
 /// Estop ownership (2026-08 platform analysis): start the emergency-stop helper
 /// as a **child of this Aqua-launched CMspark Mach-O** before the Node tray.
-/// Companion only connects to `/tmp/cmspark-estop.sock` — it must not be the
-/// process that first creates the CGEventTap (daemon-spawned tap failed with
-/// code 4 while CLI estop on the same binary succeeded).
+/// Companion only connects to the DATA_DIR socket (never anonymous /tmp) — it
+/// must not be the process that first creates the CGEventTap (daemon-spawned
+/// tap failed with code 4 while CLI estop on the same binary succeeded).
 func launchAgentTrayAndExit() -> Never {
     let execPath = CommandLine.arguments[0]
     let execDir = URL(fileURLWithPath: execPath)
@@ -514,8 +532,19 @@ func launchAgentTrayAndExit() -> Never {
 
     // Best-effort tray-owned estop (same binary, product TCC identity).
     // Not detached: dies when this launcher process exits with the tray.
-    let estopSock = "/tmp/cmspark-estop.sock"
+    let dataDir = cmsparkDataDir()
+    try? FileManager.default.createDirectory(
+        atPath: dataDir,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    let estopSock = (dataDir as NSString).appendingPathComponent("estop.sock")
+    let estopFlag = (dataDir as NSString).appendingPathComponent("estop.flag")
+    let estopNonce = (dataDir as NSString).appendingPathComponent("estop.nonce")
     func estopSocketLive() -> Bool {
+        // Without a nonce file the listener is not the product helper — do not
+        // treat a pre-bound DATA_DIR socket as live (Node will fail-closed too).
+        guard FileManager.default.fileExists(atPath: estopNonce) else { return false }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { close(fd) }
@@ -538,7 +567,12 @@ func launchAgentTrayAndExit() -> Never {
         unlink(estopSock)
         let estop = Process()
         estop.executableURL = URL(fileURLWithPath: execPath)
-        estop.arguments = ["estop", "--socket-path", estopSock]
+        estop.arguments = [
+            "estop",
+            "--socket-path", estopSock,
+            "--flag-path", estopFlag,
+            "--nonce-file", estopNonce,
+        ]
         // Capture stderr to a log so TCC/tap failures are diagnosable without CMSPARK_HOST_DEBUG.
         let logPath = (NSHomeDirectory() as NSString)
             .appendingPathComponent(".cmspark-agent/logs/estop-tray.log")
@@ -699,7 +733,9 @@ do {
         // subcommand): CGEventTap hotkey + UNIX socket proof-of-life. Never
         // returns on success — it hosts a CFRunLoop until killed.
         guard let sock = argValue("--socket-path") else { fputs("estop: --socket-path required\n", stderr); exit(2) }
-        try runEstop(socketPath: sock, flagPath: argValue("--flag-path") ?? "/tmp/cmspark-estop.flag")
+        let flag = argValue("--flag-path") ?? estopDerivedPath(sock, ext: ".flag")
+        let nonceFile = argValue("--nonce-file") ?? estopDerivedPath(sock, ext: ".nonce")
+        try runEstop(socketPath: sock, flagPath: flag, nonceFile: nonceFile)
     case "self-test":
         // P2 (Pi C2/C3 + Grok blocker 2): pure-function contract for the
         // capture variance classifier. Print JSON result; exit non-zero on
@@ -1923,12 +1959,18 @@ func cuEvidenceSeal(inputPath: String, outputPath: String) -> String {
 
 final class EstopContext {
     let flagPath: String
+    let nonce: String
     private var clients: [Int32] = []
     private let lock = NSLock()
 
-    init(flagPath: String) { self.flagPath = flagPath }
+    init(flagPath: String, nonce: String) {
+        self.flagPath = flagPath
+        self.nonce = nonce
+    }
 
     func addClient(_ fd: Int32) {
+        let greeting = "cmspark-estop \(nonce)\n"
+        _ = greeting.withCString { write(fd, $0, strlen($0)) }
         lock.lock(); clients.append(fd); lock.unlock()
     }
 
@@ -1971,11 +2013,45 @@ private func estopEventTapCallback(
     return Unmanaged.passUnretained(event)
 }
 
+func generateEstopNonce() -> String {
+    var bytes = [UInt8](repeating: 0, count: 16)
+    _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+    return bytes.map { String(format: "%02x", $0) }.joined()
+}
+
+func isHexNonce(_ s: String) -> Bool {
+    return s.count == 32 && s.allSatisfy { $0.isHexDigit }
+}
+
+func loadOrCreateEstopNonce(path: String) -> String {
+    if let raw = try? String(contentsOfFile: path, encoding: .utf8) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isHexNonce(trimmed) { return trimmed }
+    }
+    let nonce = generateEstopNonce()
+    unlink(path)
+    FileManager.default.createFile(
+        atPath: path,
+        contents: nonce.data(using: .utf8),
+        attributes: [.posixPermissions: 0o600]
+    )
+    _ = chmod(path, 0o600)
+    return nonce
+}
+
 /// Bind + listen on the UNIX socket, spawn the accept loop, install the
 /// event tap, then run the run loop forever. Returns Never on success;
 /// throws (fast, with a stderr message) when setup fails.
-func runEstop(socketPath: String, flagPath: String) throws -> Never {
+func runEstop(socketPath: String, flagPath: String, nonceFile: String) throws -> Never {
     // 1. UNIX socket server (proof-of-life; accepted connections are held open)
+    let parent = (socketPath as NSString).deletingLastPathComponent
+    if !parent.isEmpty {
+        try? FileManager.default.createDirectory(
+            atPath: parent,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+    }
     unlink(socketPath)  // stale socket from a previous (killed) helper
     let serverFD = socket(AF_UNIX, SOCK_STREAM, 0)
     guard serverFD >= 0 else {
@@ -2002,12 +2078,17 @@ func runEstop(socketPath: String, flagPath: String) throws -> Never {
         let e = errno; close(serverFD)
         throw HostError(code: 3, message: "estop: bind \(socketPath) failed: errno=\(e)")
     }
+    if chmod(socketPath, 0o600) != 0 {
+        let e = errno; close(serverFD)
+        throw HostError(code: 3, message: "estop: chmod 0600 \(socketPath) failed: errno=\(e)")
+    }
     guard listen(serverFD, 8) == 0 else {
         let e = errno; close(serverFD)
         throw HostError(code: 3, message: "estop: listen failed: errno=\(e)")
     }
 
-    let ctx = EstopContext(flagPath: flagPath)
+    let nonce = loadOrCreateEstopNonce(path: nonceFile)
+    let ctx = EstopContext(flagPath: flagPath, nonce: nonce)
     gEstopCtx = ctx
 
     DispatchQueue.global().async {
