@@ -1671,6 +1671,9 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
         return companionClient.sendAppRequest("ui.open_sidepanel", {}, 8_000)
       },
       hasExtensionPeer: summonerBrowserAttached,
+      onShellClosed: () => {
+        void handleSummonerClosed()
+      },
     })
     let url = summonerWebPageUrl(port, token)
     if (threadId) url = url + "&thread=" + encodeURIComponent(threadId)

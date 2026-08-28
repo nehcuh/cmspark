@@ -174,7 +174,15 @@ export function __testSetLlmActiveForTests(threadId: string, active: boolean): v
   } else {
     abortControllers.delete(threadId)
     llmLoopGeneration.delete(threadId)
+    llmLoopOwnerPanel.delete(threadId)
   }
+}
+
+/** Test-only: stamp llmLoopOwnerPanel so abortLlmLoopsForPanel can be exercised. */
+export function __testSetLlmOwnerForTests(threadId: string, panelId: string | null): void {
+  if (!threadId) return
+  if (panelId) llmLoopOwnerPanel.set(threadId, panelId)
+  else llmLoopOwnerPanel.delete(threadId)
 }
 
 /** Abort in-flight LLM for a thread (ADR-015 worker_cancel / chat.abort). */
@@ -1380,6 +1388,9 @@ export async function handleMessage(
     case "composer.lease.claim":
     case "composer.lease.release":
     case "composer.lease.release_overlay": {
+      if (type === "composer.lease.release_overlay" && stampedSurface === "summoner" && session?.panelId) {
+        abortLlmLoopsForPanel(session.panelId)
+      }
       const leaseResult = handleComposerLeaseFamily(type, rest, undefined, stampedSurface)
       if (leaseResult !== null) {
         if (shouldBroadcastLease(type, leaseResult)) {

@@ -15,6 +15,8 @@ import {
   requestSummonerWebClose,
   summonerWebHasPage,
   summonerWebEventStatus,
+  hideSummonerWebShell,
+  openLoopbackPage,
   SUMMONER_WEB_DISPATCH_ALLOW,
   SUMMONER_WEB_EVENT_ALLOW,
 } from "../src/summoner-web"
@@ -1082,6 +1084,98 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
   })
 
+  test("hideSummonerWebShell invokes onShellClosed; twice is safe", async () => {
+    let n = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      onShellClosed: () => {
+        n += 1
+      },
+    })
+    hideSummonerWebShell()
+    hideSummonerWebShell()
+    assert.ok(n >= 1, "hide must invoke onShellClosed")
+    assert.ok(n <= 2, "hide twice must not storm closed")
+  })
+
+  test("last SSE client close invokes onShellClosed after launch grace", async () => {
+    let n = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      onShellClosed: () => {
+        n += 1
+      },
+    })
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        {
+          method: "GET",
+          host: "127.0.0.1",
+          port,
+          path: `/api/events?token=${token}`,
+        },
+        (res) => {
+          assert.equal(res.statusCode, 200)
+          res.resume()
+          setTimeout(() => req.destroy(), 40)
+        },
+      )
+      req.on("error", () => {})
+      req.end()
+      const started = Date.now()
+      const tick = () => {
+        if (n >= 1) return resolve()
+        if (Date.now() - started > 2000) {
+          return reject(new Error("last SSE close did not invoke onShellClosed"))
+        }
+        setTimeout(tick, 20)
+      }
+      setTimeout(tick, 80)
+    })
+    assert.ok(n >= 1)
+  })
+
+  test("last SSE close during overlay launch grace does not invoke onShellClosed", async () => {
+    let n = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      onShellClosed: () => {
+        n += 1
+      },
+    })
+    const tmp = path.join(path.resolve("/tmp"), "cmspark-overlay-a2-grace")
+    const opened = openLoopbackPage(`http://127.0.0.1:${port}/?token=${token}`, {
+      spawn: () => ({ unref() {} }),
+      browserPath: "/usr/bin/true",
+      userDataDir: tmp,
+    })
+    assert.equal(opened, true)
+    await new Promise<void>((resolve) => {
+      const req = http.request(
+        {
+          method: "GET",
+          host: "127.0.0.1",
+          port,
+          path: `/api/events?token=${token}`,
+        },
+        (res) => {
+          assert.equal(res.statusCode, 200)
+          res.resume()
+          setTimeout(() => req.destroy(), 40)
+        },
+      )
+      req.on("error", () => {})
+      req.on("close", () => setTimeout(resolve, 40))
+      req.end()
+    })
+    assert.equal(n, 0, "launch grace must not treat last SSE drop as closed")
+    hideSummonerWebShell()
+    assert.ok(n >= 1, "explicit hide still closes after grace skip")
+  })
+
   after(() => {
     stopSummonerWebServer()
   })
@@ -1148,6 +1242,18 @@ test("menu-bar-agent opens summoner-web from summoner action", () => {
   assert.match(src, /toggleSummonerWebShell/)
   assert.match(src, /surface:\s*"summoner"/)
   assert.match(src, /pushSummonerWebEvent/)
+})
+
+test("hideSummonerWebShell and last SSE close share onShellClosed", () => {
+  const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(src, /onShellClosed/)
+  const hideStart = src.indexOf("export function hideSummonerWebShell")
+  assert.ok(hideStart >= 0, "hideSummonerWebShell missing")
+  const hide = src.slice(hideStart, hideStart + 400)
+  assert.match(hide, /[Oo]nShellClosed/)
+  const sseClose = src.slice(src.indexOf('req.on("close"'), src.indexOf('req.on("close"') + 350)
+  assert.match(sseClose, /sseClients\.delete/)
+  assert.match(sseClose, /onShellClosed|invokeOnShellClosed|size === 0/)
 })
 
 test("C-thin HTML skills toggle and knowledge attach are not activate-only / replace-all", () => {

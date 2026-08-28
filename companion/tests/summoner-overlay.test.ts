@@ -333,6 +333,27 @@ test("handleSummonerClosed invalidates in-flight overlay session", () => {
   assert.match(body, /invalidateOverlaySession/)
 })
 
+test("HTML hide/close wires onShellClosed to handleSummonerClosed", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const start = src.indexOf("async function openSummonerWebShell")
+  assert.ok(start >= 0, "openSummonerWebShell missing")
+  const next = src.indexOf("\nasync function ", start + 10)
+  const body = src.slice(start, next > start ? next : start + 2500)
+  assert.match(body, /onShellClosed/)
+  assert.match(body, /handleSummonerClosed/)
+})
+
+test("handleSummonerClosed does not abortThreadChat by lease thread_id", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const start = src.indexOf("export async function handleSummonerClosed")
+  const next = src.indexOf("\nexport ", start + 10)
+  const body = src.slice(start, next > start ? next : start + 800)
+  assert.match(body, /invalidateOverlaySession/)
+  assert.match(body, /releaseAllOverlayComposerLeases/)
+  assert.doesNotMatch(body, /abortThreadChat/)
+  assert.doesNotMatch(body, /chat\.abort/)
+})
+
 test("lifecycle summoner ws.close releases overlay leases", () => {
   const src = fs.readFileSync(srcFile("ws", "lifecycle.ts"), "utf8")
   assert.match(src, /broadcastOverlayLeasesOnSocketClose/)

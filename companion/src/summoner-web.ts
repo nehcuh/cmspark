@@ -136,6 +136,7 @@ let activeDispatch: SummonerWebDispatch | null = null
 let activeAttachChrome: SummonerWebAttachChrome | null = null
 let activeRequestOpenSidePanel: SummonerWebRequestOpenSidePanel | null = null
 let activeHasExtensionPeer: SummonerWebHasExtensionPeer | null = null
+let activeOnShellClosed: (() => void) | null = null
 let lastAccessTime = Date.now()
 let autoCloseTimer: ReturnType<typeof setInterval> | null = null
 
@@ -330,6 +331,21 @@ export function defaultOverlayChromeDir(): string {
 let overlayLaunchAt = 0
 const OVERLAY_LAUNCH_GRACE_MS = 2000
 
+function overlayLaunchInGrace(): boolean {
+  return !!(overlayLaunchAt && Date.now() - overlayLaunchAt < OVERLAY_LAUNCH_GRACE_MS)
+}
+
+/** Hide/last-SSE/idle-stop share this path; twice is a no-throw. */
+function invokeOnShellClosed(): void {
+  const cb = activeOnShellClosed
+  if (!cb) return
+  try {
+    cb()
+  } catch {
+    /* close path must not throw */
+  }
+}
+
 export function summonerWebHasPage(): boolean {
   return sseClients.size > 0
 }
@@ -337,7 +353,7 @@ export function summonerWebHasPage(): boolean {
 /** SSE connected, or Chrome --app still coming up after spawn. */
 export function summonerWebIsShowing(): boolean {
   if (sseClients.size > 0) return true
-  if (overlayLaunchAt && Date.now() - overlayLaunchAt < OVERLAY_LAUNCH_GRACE_MS) return true
+  if (overlayLaunchInGrace()) return true
   return false
 }
 
@@ -358,6 +374,7 @@ export function requestSummonerWebClose(): boolean {
 export function hideSummonerWebShell(): void {
   requestSummonerWebClose()
   closeOverlayChrome(defaultOverlayChromeDir())
+  invokeOnShellClosed()
 }
 
 function probeScreen(platform: NodeJS.Platform): { w: number; h: number } {
@@ -415,11 +432,13 @@ export async function startSummonerWebServer(opts: {
   attachChrome?: SummonerWebAttachChrome
   requestOpenSidePanel?: SummonerWebRequestOpenSidePanel
   hasExtensionPeer?: SummonerWebHasExtensionPeer
+  onShellClosed?: () => void
 }): Promise<{ port: number; token: string }> {
   activeDispatch = opts.dispatch
   activeAttachChrome = opts.attachChrome ?? defaultAttachChrome
   activeRequestOpenSidePanel = opts.requestOpenSidePanel ?? null
   activeHasExtensionPeer = opts.hasExtensionPeer ?? null
+  activeOnShellClosed = opts.onShellClosed ?? null
   if (activeServer && activePort && sessionToken) {
     lastAccessTime = Date.now()
     return { port: activePort, token: sessionToken }
@@ -467,6 +486,8 @@ export function stopSummonerWebServer(): void {
     activeAttachChrome = null
     activeRequestOpenSidePanel = null
     activeHasExtensionPeer = null
+    invokeOnShellClosed()
+    activeOnShellClosed = null
   }
 }
 
@@ -570,6 +591,9 @@ async function handleRequest(
       sseClients.add(res)
       req.on("close", () => {
         sseClients.delete(res)
+        if (sseClients.size === 0 && !overlayLaunchInGrace()) {
+          invokeOnShellClosed()
+        }
       })
       return
     }
