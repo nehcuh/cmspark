@@ -1,0 +1,24 @@
+{
+  "batch": "opt-path-20260828",
+  "issue": 245,
+  "product": "0.5.3",
+  "time": "20260828-200200",
+  "blast": "T3",
+  "spec": "docs/superpowers/specs/2026-08-28-post-diagnosis-opt-path.md",
+  "adversary": {
+    "verdict": "PASS_WITH_CHANGES",
+    "path": "docs/audit/reviews/opt-path-adversary-synthesis-2026-08-28.md",
+    "lanes": ["security", "product", "impl", "skeptic"]
+  },
+  "claude": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/opt-path-20260828-claude-20260828-195010.md"
+  },
+  "kimi": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/opt-path-20260828-kimi-clean.md"
+  },
+  "both_ok": true,
+  "nits_folded": true,
+  "implement": "YES after user picks execution; separate PR Refs #245; TDD first"
+}
