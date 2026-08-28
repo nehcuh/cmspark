@@ -516,15 +516,16 @@ async function handleRequest(
 
   try {
     if ((pathOnly === "/" || pathOnly === "/summoner") && req.method === "GET") {
+      const nonce = crypto.randomBytes(16).toString("base64")
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Referrer-Policy": "no-referrer",
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "Content-Security-Policy":
-          "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'",
+          `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'`,
       })
-      res.end(SUMMONER_HTML)
+      res.end(SUMMONER_HTML.replace("<script>", `<script nonce="${nonce}">`))
       return
     }
 
