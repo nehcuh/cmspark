@@ -1661,6 +1661,11 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
     } = require("./summoner-web") as typeof import("./summoner-web")
     const { port, token } = await startSummonerWebServer({
       dispatch: (msg) => dispatchSummonerWeb(client, msg),
+      requestOpenSidePanel: () => {
+        if (!companionClient) return Promise.reject(new Error("not connected"))
+        return companionClient.sendAppRequest("ui.open_sidepanel", {}, 8_000)
+      },
+      hasExtensionPeer: summonerBrowserAttached,
     })
     let url = summonerWebPageUrl(port, token)
     if (threadId) url = url + "&thread=" + encodeURIComponent(threadId)
@@ -1877,6 +1882,10 @@ export async function startMenuBarAgent(): Promise<void> {
   companionClient.onAppMessage((msg: any) => {
     if (!msg || msg.type !== "overlay.shell.open") return
     void openSummonerWebShell(typeof msg.thread_id === "string" ? msg.thread_id : "")
+  })
+  companionClient.onAppMessage((msg: any) => {
+    if (!msg || msg.type !== "ui.open_sidepanel") return
+    // no-id broadcast echo — extension SW opens the panel; tray must not treat this as RPC
   })
 
   // Set default quick actions immediately

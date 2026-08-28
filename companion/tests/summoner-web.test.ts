@@ -139,7 +139,11 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /var w=400,h=expanded\?520:120/)
     assert.doesNotMatch(r.body, /grid-template-columns:var\(--rail\) var\(--list\)/)
     assert.match(r.body, /\.rail,\.list\{[^}]*display:none/)
-    assert.doesNotMatch(r.body, /id="operateOpen"/)
+    assert.match(r.body, /id="operateOpen"/)
+    assert.match(r.body, /打开浏览器并打开侧栏/)
+    assert.match(r.body, /\/api\/operate/)
+    assert.match(r.body, /请点工具栏 C/)
+    assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
     assert.match(r.body, /id="meetingStart"/)
     assert.doesNotMatch(r.body, /要对这页做什么|当前页：|听写在侧栏|召唤器（实验）/)
     assert.match(r.body, /问 CMspark/)
@@ -713,6 +717,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.end"))
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.generate_minutes"), false)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.append_transcript"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("ui.open_sidepanel"), false)
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("ui.open_sidepanel"), false)
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.started"))
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.ended"))
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.error"))
@@ -774,6 +780,125 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(buf, /run_active/)
     assert.doesNotMatch(buf, /security.confirmation.request/)
     assert.doesNotMatch(buf, /Allow this/)
+  })
+
+  test("POST /api/operate without opener is 503 请点工具栏 C", async () => {
+    attachCalls.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/operate?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+    })
+    assert.equal(r.status, 503, r.body)
+    const data = JSON.parse(r.body)
+    assert.equal(data.type, "error")
+    assert.equal(data.error, "请点工具栏 C")
+    assert.equal(data.error_code, "OPERATE_SIDEPANEL_UNAVAILABLE")
+    assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
+    assert.doesNotMatch(r.body, /允许/)
+    assert.deepEqual(attachCalls, [{ foreground: true }])
+  })
+
+  test("POST /api/operate no extension peer is 503 not ok", async () => {
+    attachCalls.length = 0
+    let opened = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      attachChrome: (opts) => {
+        attachCalls.push({ foreground: opts?.foreground })
+        return "attached"
+      },
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      requestOpenSidePanel: async () => {
+        opened += 1
+        return {}
+      },
+      hasExtensionPeer: () => false,
+    })
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/operate?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+    })
+    assert.equal(r.status, 503, r.body)
+    const data = JSON.parse(r.body)
+    assert.notEqual(data.type, "ok")
+    assert.equal(data.error, "请点工具栏 C")
+    assert.equal(data.error_code, "OPERATE_SIDEPANEL_UNAVAILABLE")
+    assert.equal(opened, 0)
+    assert.deepEqual(attachCalls, [{ foreground: true }])
+  })
+
+  test("POST /api/operate sendAppRequest reject maps to 请点工具栏 C", async () => {
+    attachCalls.length = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      attachChrome: (opts) => {
+        attachCalls.push({ foreground: opts?.foreground })
+        return "attached"
+      },
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      requestOpenSidePanel: async () => {
+        throw new Error("side panel refused")
+      },
+      hasExtensionPeer: () => true,
+    })
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/operate?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+    })
+    assert.equal(r.status, 503, r.body)
+    const data = JSON.parse(r.body)
+    assert.equal(data.error, "请点工具栏 C")
+    assert.equal(data.error_code, "OPERATE_SIDEPANEL_UNAVAILABLE")
+    assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
+  })
+
+  test("POST /api/operate rebind opener succeeds after attachChrome foreground", async () => {
+    attachCalls.length = 0
+    let opened = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      attachChrome: (opts) => {
+        attachCalls.push({ foreground: opts?.foreground })
+        return "attached"
+      },
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      requestOpenSidePanel: async () => {
+        opened += 1
+        return {}
+      },
+      hasExtensionPeer: () => true,
+    })
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/operate?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+    })
+    assert.equal(r.status, 200, r.body)
+    const data = JSON.parse(r.body)
+    assert.equal(data.type, "ok")
+    assert.equal(data.message, "attached")
+    assert.equal(opened, 1)
+    assert.deepEqual(attachCalls, [{ foreground: true }])
+    assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
   })
 
   after(() => {

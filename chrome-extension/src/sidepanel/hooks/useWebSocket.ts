@@ -279,7 +279,9 @@ export function useWebSocket() {
         msg.type === "config.get" ||
         // #239: companion no-id broadcast of overlay.shell.open echoes back to
         // the originating Side Panel. Ignore — only accepted / OVERLAY_SHELL_* error.
-        msg.type === "overlay.shell.open"
+        // #241: same for ui.open_sidepanel (SW opens the panel; this surface must not toast).
+        msg.type === "overlay.shell.open" ||
+        msg.type === "ui.open_sidepanel"
       ) {
         return false
       }

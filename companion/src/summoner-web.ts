@@ -34,6 +34,8 @@ import { getChromeOpener } from "./platform"
 
 export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
 export type SummonerWebAttachChrome = (opts?: { foreground?: boolean }) => string
+export type SummonerWebRequestOpenSidePanel = () => Promise<{ error_code?: string } | void>
+export type SummonerWebHasExtensionPeer = () => boolean
 
 export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "system.ping",
@@ -113,6 +115,8 @@ let activePort: number | null = null
 let sessionToken: string | null = null
 let activeDispatch: SummonerWebDispatch | null = null
 let activeAttachChrome: SummonerWebAttachChrome | null = null
+let activeRequestOpenSidePanel: SummonerWebRequestOpenSidePanel | null = null
+let activeHasExtensionPeer: SummonerWebHasExtensionPeer | null = null
 let lastAccessTime = Date.now()
 let autoCloseTimer: ReturnType<typeof setInterval> | null = null
 
@@ -320,9 +324,13 @@ export async function startSummonerWebServer(opts: {
   preferredPort?: number
   dispatch: SummonerWebDispatch
   attachChrome?: SummonerWebAttachChrome
+  requestOpenSidePanel?: SummonerWebRequestOpenSidePanel
+  hasExtensionPeer?: SummonerWebHasExtensionPeer
 }): Promise<{ port: number; token: string }> {
   activeDispatch = opts.dispatch
   activeAttachChrome = opts.attachChrome ?? defaultAttachChrome
+  activeRequestOpenSidePanel = opts.requestOpenSidePanel ?? null
+  activeHasExtensionPeer = opts.hasExtensionPeer ?? null
   if (activeServer && activePort && sessionToken) {
     lastAccessTime = Date.now()
     return { port: activePort, token: sessionToken }
@@ -368,6 +376,8 @@ export function stopSummonerWebServer(): void {
     sessionToken = null
     activeDispatch = null
     activeAttachChrome = null
+    activeRequestOpenSidePanel = null
+    activeHasExtensionPeer = null
   }
 }
 
@@ -672,6 +682,34 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/operate" && req.method === "POST") {
+      const attach = activeAttachChrome ?? defaultAttachChrome
+      const message = attach({ foreground: true })
+      const fail = () => {
+        jsonResponse(
+          res,
+          { type: "error", error: "请点工具栏 C", error_code: "OPERATE_SIDEPANEL_UNAVAILABLE", attach: message },
+          503,
+        )
+      }
+      if (!activeRequestOpenSidePanel || !activeHasExtensionPeer || !activeHasExtensionPeer()) {
+        fail()
+        return
+      }
+      try {
+        const r = await activeRequestOpenSidePanel()
+        if (r && r.error_code) {
+          fail()
+          return
+        }
+      } catch {
+        fail()
+        return
+      }
+      jsonResponse(res, { type: "ok", message })
+      return
+    }
+
     if (pathOnly === "/api/stt/start" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
@@ -872,7 +910,7 @@ body{
 .privacy-sheet p{font-size:12.5px;font-weight:600;color:var(--text)}
 #meetingVoiceSection{margin-bottom:8px}
 .capture-row{display:flex;gap:8px;padding:0 2px;flex-wrap:wrap}
-#meetingStart{
+#meetingStart,#operateOpen{
   min-height:36px;padding:6px 12px;border-radius:8px;border:0;cursor:pointer;font:inherit;
   background:var(--canvas);color:var(--text);
 }
@@ -942,6 +980,7 @@ body{
     </div>
     <div class="capture-row">
       <button type="button" id="meetingStart" aria-pressed="false">开始会议</button>
+      <button type="button" id="operateOpen">打开浏览器并打开侧栏</button>
     </div>
     <div class="cta-box" id="ctaBox" hidden>
       <p id="ctaCopy">${SUMMONER_L0_CHROME_DOWN}</p>
@@ -1446,6 +1485,15 @@ body{
     var sheet=$("meetingPrivacy");
     if(sheet) sheet.hidden=true;
     startMeetingCapture();
+  };
+  $("operateOpen").onclick=function(){
+    api("/api/operate",{method:"POST"}).then(function(d){
+      if(d && (d.type==="error" || d.error)){
+        setStatus("请点工具栏 C");
+        return;
+      }
+      setStatus(d&&d.message||"");
+    }).catch(function(){setStatus("请点工具栏 C")});
   };
   $("newThreadBar").onclick=function(){$("newThread").click()};
   $("newThread").onclick=function(){
