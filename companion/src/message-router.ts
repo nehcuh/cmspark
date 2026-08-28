@@ -88,6 +88,7 @@ import {
 import { handleRunProgressToggle } from "./message-router/handlers/run-progress"
 import {
   gateChatCreateOnLease,
+  gateOverlayCurrentThread,
   handleComposerLeaseFamily,
   shouldBroadcastLease,
   stripCmsparkSurface,
@@ -681,6 +682,7 @@ export async function handleMessage(
 
         await chatCreate({
           threadId: rest.thread_id,
+          surface: stampedSurface === "summoner" ? "summoner" : "tray",
           message: rest.message,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
@@ -1196,6 +1198,7 @@ export async function handleMessage(
 
         await chatCreate({
           threadId: thread_id,
+          surface: stampedSurface === "summoner" ? "summoner" : "tray",
           message: userMessage,
           fileContents: finalFileContents,
           imageAttachments: imageAttachments.length ? imageAttachments : undefined,
@@ -1585,6 +1588,7 @@ export async function handleMessage(
 
         await chatCreate({
           threadId: thread_id,
+          surface: stampedSurface === "summoner" ? "summoner" : "tray",
           message: userMsg.content,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
@@ -2484,6 +2488,8 @@ export async function handleMessage(
         },
       )
     case "skill.activate": {
+      const overlayThreadErr = gateOverlayCurrentThread(rest.thread_id, stampedSurface)
+      if (overlayThreadErr) return overlayThreadErr
       skillEngine.activate(rest.thread_id, rest.skill_name)
       const thread = threadManager.get(rest.thread_id)
       if (thread) {
@@ -2495,6 +2501,8 @@ export async function handleMessage(
       return { type: "skill.activated", skill_name: rest.skill_name }
     }
     case "skill.deactivate": {
+      const overlayThreadErr = gateOverlayCurrentThread(rest.thread_id, stampedSurface)
+      if (overlayThreadErr) return overlayThreadErr
       skillEngine.deactivate(rest.thread_id, rest.skill_name)
       const thread = threadManager.get(rest.thread_id)
       if (thread) {
@@ -2686,6 +2694,8 @@ export async function handleMessage(
       return { type: "knowledge.list", docs: knowledgeListDocs(skillEngine, stampedSurface) }
     case "knowledge.set_active": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
+      const overlayThreadErr = gateOverlayCurrentThread(rest.thread_id, stampedSurface)
+      if (overlayThreadErr) return overlayThreadErr
       const thread = threadManager.get(rest.thread_id)
       if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
       const ids = Array.isArray(rest.ids)
@@ -3062,6 +3072,8 @@ export async function handleMessage(
       }
       const overlayApply = stampedSurface === "summoner"
       if (overlayApply) {
+        const overlayThreadErr = gateOverlayCurrentThread(rest.thread_id, stampedSurface)
+        if (overlayThreadErr) return overlayThreadErr
         if (rest.workspace_path || rest.force_takeover || rest.confirmation_phrase) {
           return {
             type: "error",

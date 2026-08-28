@@ -57,7 +57,6 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "thread.delete",
   "thread.update",
   "mcp.list",
-  "mcp.toggle_server",
   "pack.list",
   "pack.apply",
   "skill.list",
@@ -730,14 +729,8 @@ async function handleRequest(
       return
     }
 
-    if (pathOnly === "/api/mcp/toggle" && req.method === "POST") {
-      const body = JSON.parse(await readBody(req, JSON_BODY_MAX))
-      const name = typeof body.name === "string" ? body.name : ""
-      if (!name || typeof body.enabled !== "boolean") {
-        jsonResponse(res, { type: "error", error: "name and enabled required" }, 400)
-        return
-      }
-      jsonResponse(res, await dispatchAllowed("mcp.toggle_server", { name, enabled: body.enabled }))
+    if (pathOnly === "/api/mcp/toggle") {
+      jsonResponse(res, { type: "error", error: "mcp toggle is not available on overlay" }, 404)
       return
     }
 

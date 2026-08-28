@@ -44,9 +44,9 @@ private let summonerHudWidth: CGFloat = 720
 private let summonerWorkbenchHeight: CGFloat = 428
 private let summonerChevronExpand = "展开对话"
 private let summonerChevronCollapse = "收起对话"
-private let summonerCtaCopy = "可以继续聊。要操作网页，需要打开浏览器。"
-private let summonerCdpNeeded = "网页操作需要浏览器（扩展已配对的 Chrome）。"
-private let summonerRenterChromeDown = "编程助手要看你的页面，但浏览器没在。"
+private let summonerCtaCopy = "可以继续聊。要操作网页，请打开侧栏。"
+private let summonerCdpNeeded = "操作网页请打开侧栏（扩展已配对的 Chrome）。"
+private let summonerRenterChromeDown = "编程助手要看页面，请打开侧栏。"
 private let summonerAttachPrimary = "打开浏览器"
 private let summonerAttachSecondary = "打开并前置浏览器"
 private let summonerConfirmNeed = "需要确认才能继续。"
@@ -680,36 +680,11 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   @objc func mcpRowClicked(_ sender: NSButton) {
-    let name = sender.identifier?.rawValue ?? ""
-    guard !name.isEmpty, name != "__add__" else { return }
-    let enabled = mcpRows.first { ($0["name"] as? String) == name }.flatMap { $0["enabled"] as? Bool } ?? false
-    jsonLine(["type": "summoner.mcp.toggle", "name": name, "enabled": !enabled])
+    // no-op: summoner.mcp.toggle is not dispatched from Capture (#245 A3)
   }
 
   @objc func mcpAddClicked(_ sender: NSButton) {
-    NSApp.activate(ignoringOtherApps: true)
-    window?.makeKeyAndOrderFront(nil)
-    let alert = NSAlert()
-    alert.messageText = "添加 MCP"
-    alert.informativeText = "名字和启动命令（stdio）"
-    alert.addButton(withTitle: "添加")
-    alert.addButton(withTitle: "取消")
-    let box = NSStackView()
-    box.orientation = .vertical
-    box.spacing = 6
-    box.frame = NSRect(x: 0, y: 0, width: 260, height: 56)
-    let nameField = NSTextField(string: "")
-    nameField.placeholderString = "名字"
-    let cmdField = NSTextField(string: "")
-    cmdField.placeholderString = "命令"
-    box.addArrangedSubview(nameField)
-    box.addArrangedSubview(cmdField)
-    alert.accessoryView = box
-    guard alert.runModal() == .alertFirstButtonReturn else { return }
-    let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    let command = cmdField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !name.isEmpty, !command.isEmpty else { return }
-    jsonLine(["type": "summoner.mcp.add", "name": name, "command": command])
+    // no-op: summoner.mcp.add is not dispatched from Capture (#245 A3)
   }
 
   @objc func skillRowClicked(_ sender: NSButton) {

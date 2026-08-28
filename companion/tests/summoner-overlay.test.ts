@@ -71,6 +71,18 @@ test("SummonerController is a one-bar HUD: 720pt, no stacked makeRail, Esc hides
   assert.match(hide, /orderOut/)
 })
 
+test("Swift mcpRowClicked / mcpAddClicked do not dispatch toggle or add", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  const rowStart = overlay.indexOf("func mcpRowClicked")
+  const addStart = overlay.indexOf("func mcpAddClicked")
+  const skillStart = overlay.indexOf("func skillRowClicked")
+  assert.ok(rowStart >= 0 && addStart > rowStart && skillStart > addStart)
+  const row = overlay.slice(rowStart, addStart)
+  const add = overlay.slice(addStart, skillStart)
+  assert.doesNotMatch(row, /jsonLine/)
+  assert.doesNotMatch(add, /jsonLine/)
+})
+
 test("PR-C: expand chrome hides MCP icon via isHidden; default section is 对话", () => {
   const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
   const railStart = overlay.indexOf("let railSpecs")
@@ -141,9 +153,11 @@ test("SummonerController copy lock: badge, hint, CTA, buttons", () => {
   assert.match(body, /新对话/)
   assert.match(body, /打开浏览器/)
   assert.match(body, /打开并前置浏览器/)
-  assert.match(body, /可以继续聊。要操作网页，需要打开浏览器。/)
-  assert.match(body, /网页操作需要浏览器（扩展已配对的 Chrome）。/)
-  assert.match(body, /编程助手要看你的页面，但浏览器没在。/)
+  assert.match(body, /可以继续聊/)
+  assert.match(body, /打开侧栏/)
+  assert.doesNotMatch(body, /可以继续聊。要操作网页，需要打开浏览器。/)
+  assert.doesNotMatch(body, /网页操作需要浏览器（扩展已配对的 Chrome）。/)
+  assert.doesNotMatch(body, /编程助手要看你的页面，但浏览器没在。/)
   assert.match(body, /我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。/)
   assert.doesNotMatch(body, /系统: BROWSER_UNAVAILABLE/)
   assert.doesNotMatch(body, /NSButton\(title: "设置"/)

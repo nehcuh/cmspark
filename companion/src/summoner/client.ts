@@ -32,11 +32,11 @@ export const SUMMONER_CHEVRON_COLLAPSE = "收起对话" as const
 
 /** Chrome-down honesty copy (both shells). */
 export const SUMMONER_L0_CHROME_DOWN =
-  "可以继续聊。要操作网页，需要打开浏览器。" as const
+  "可以继续聊。要操作网页，请打开侧栏。" as const
 export const SUMMONER_CDP_NEEDED =
-  "网页操作需要浏览器（扩展已配对的 Chrome）。" as const
+  "操作网页请打开侧栏（扩展已配对的 Chrome）。" as const
 export const SUMMONER_RENTER_CHROME_DOWN =
-  "编程助手要看你的页面，但浏览器没在。" as const
+  "编程助手要看页面，请打开侧栏。" as const
 export const SUMMONER_ATTACH_PRIMARY = "打开浏览器" as const
 export const SUMMONER_ATTACH_SECONDARY = "打开并前置浏览器" as const
 export const SUMMONER_CONFIRM_NEED = "需要确认才能继续。" as const

@@ -224,9 +224,11 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /打开确认台/)
     assert.match(r.body, /需要确认才能继续/)
     assert.match(r.body, /id="openConfirm"/)
-    assert.match(r.body, /可以继续聊。要操作网页，需要打开浏览器。/)
-    assert.match(r.body, /网页操作需要浏览器（扩展已配对的 Chrome）。/)
-    assert.match(r.body, /编程助手要看你的页面，但浏览器没在。/)
+    assert.match(r.body, /可以继续聊/)
+    assert.match(r.body, /打开侧栏/)
+    assert.doesNotMatch(r.body, /可以继续聊。要操作网页，需要打开浏览器。/)
+    assert.doesNotMatch(r.body, /网页操作需要浏览器（扩展已配对的 Chrome）。/)
+    assert.doesNotMatch(r.body, /编程助手要看你的页面，但浏览器没在。/)
     assert.match(r.body, /我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。/)
     assert.match(r.body, /\/api\/attach/)
     assert.match(r.body, /id="attachSilent"|id="attachFront"/)
@@ -863,10 +865,27 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.list_result"), true)
     assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.diarized"), true)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("ui.open_sidepanel"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.toggle_server"), false)
     assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("ui.open_sidepanel"), false)
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.started"))
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.ended"))
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.error"))
+  })
+
+  test("POST /api/mcp/toggle is 4xx and does not dispatch", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/mcp/toggle?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ name: "fs", enabled: false }),
+    })
+    assert.ok(r.status >= 400 && r.status < 500, `expected 4xx, got ${r.status} ${r.body}`)
+    assert.equal(dispatched.some((d) => d.type === "mcp.toggle_server"), false)
   })
 
   test("GET /api/events without token → 403", async () => {
@@ -1400,10 +1419,10 @@ test("HTML default expands the face (not 120px bar)", () => {
 test("MCP rail stays hide-not-delete", () => {
   const html = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
   assert.match(html, /data-sec="mcp"[^>]*\bhidden\b|hidden[^>]*data-sec="mcp"/)
-  assert.match(html, /mcp.toggle_server/)
+  assert.doesNotMatch(html, /mcp\.toggle_server/)
 })
 
-test("HTML mcp.toggle rides tray companionClient (no overlay L2 stall)", () => {
+test("HTML mcp.toggle does not ride tray companionClient", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
-  assert.match(src, /type === "mcp\.toggle_server" && companionClient/)
+  assert.doesNotMatch(src, /type === "mcp\.toggle_server" && companionClient/)
 })

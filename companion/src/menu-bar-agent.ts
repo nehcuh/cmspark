@@ -891,49 +891,12 @@ async function handleSummonerPackApply(packId: string): Promise<void> {
   )
 }
 
-async function handleSummonerMcpToggle(name: string, enabled: boolean): Promise<void> {
-  if (!companionClient || !name) return
-  try {
-    const resp = await companionClient.sendAppRequest("mcp.toggle_server", { name, enabled })
-    if (resp?.type === "error" || resp?.error) {
-      trayInstance?.sendSummoner?.(
-        encodeSummonerError({
-          message: typeof resp?.error === "string" ? resp.error : "无法开关 MCP",
-        }),
-      )
-    }
-  } catch (err) {
-    trayInstance?.sendSummoner?.(
-      encodeSummonerError({ message: err instanceof Error ? err.message : "无法开关 MCP" }),
-    )
-  }
-  await pushSummonerRail()
+async function handleSummonerMcpToggle(_name: string, _enabled: boolean): Promise<void> {
+  // Capture overlay does not mutate MCP (#245 A3). SUMMONER_ALLOW freeze is #230.
 }
 
-async function handleSummonerMcpAdd(name: string, command: string): Promise<void> {
-  if (!companionClient || !name || !command) return
-  try {
-    const resp = await companionClient.sendAppRequest(
-      "mcp.add",
-      {
-        name,
-        server: { transport: "stdio", command, enabled: true, trust_level: "manual" },
-      },
-      60_000,
-    )
-    if (resp?.type === "error" || resp?.error) {
-      trayInstance?.sendSummoner?.(
-        encodeSummonerError({
-          message: typeof resp?.error === "string" ? resp.error : "无法添加 MCP",
-        }),
-      )
-    }
-  } catch (err) {
-    trayInstance?.sendSummoner?.(
-      encodeSummonerError({ message: err instanceof Error ? err.message : "无法添加 MCP" }),
-    )
-  }
-  await pushSummonerRail()
+async function handleSummonerMcpAdd(_name: string, _command: string): Promise<void> {
+  // Capture overlay does not add MCP (#245 A3). Keep the handler as a no-op.
 }
 
 async function handleSummonerSkillToggle(name: string, on: boolean): Promise<void> {
@@ -1631,9 +1594,12 @@ function dispatchSummonerWeb(
     client.sendAppMessage(type, params)
     return Promise.resolve({ type: "ok" })
   }
-  if (type === "mcp.toggle_server" && companionClient) {
-    // HTML C-thin cannot answer overlay L2; ride tray client like the Swift HUD.
-    return companionClient.sendAppRequest(type, params, 60_000)
+  if (type === "mcp.toggle_server" || type === "mcp.add") {
+    return Promise.resolve({
+      type: "error",
+      error: `not allowed: ${type}`,
+      error_code: "SUMMONER_L0",
+    })
   }
   const timeout =
     type === "meeting.generate_minutes"
