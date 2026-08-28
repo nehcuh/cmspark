@@ -94,6 +94,12 @@ const JSON_BODY_MAX = 64 * 1024
 /** /api/stt/chunk only: JSON around base64(256KiB PCM) ≈ 342KiB + envelope. */
 const STT_CHUNK_BODY_MAX = 400 * 1024
 
+function escHtml(s: string): string {
+  return String(s).replace(/[&<>"]/g, (c) =>
+    c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;",
+  )
+}
+
 let activeServer: http.Server | null = null
 let activePort: number | null = null
 let sessionToken: string | null = null
@@ -909,7 +915,7 @@ body{
     <div class="privacy-sheet" id="voicePrivacy" hidden>
       <p>本机听写</p>
       <ol>
-        ${VOICE_PRIVACY_ACK_V2_CLAUSES.map((c) => `<li>${c}</li>`).join("\n        ")}
+        ${VOICE_PRIVACY_ACK_V2_CLAUSES.map((c) => `<li>${escHtml(c)}</li>`).join("\n        ")}
       </ol>
       <div class="cta-actions">
         <button type="button" id="voicePrivacyAck">我已了解</button>

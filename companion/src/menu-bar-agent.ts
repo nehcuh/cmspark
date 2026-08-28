@@ -1626,6 +1626,11 @@ function dispatchSummonerWeb(
     const ok = client.sendAppMessage(type, params)
     return Promise.resolve(ok ? { type: "accepted" } : { type: "error", error: "未连接" })
   }
+  // voice.stt.chunk / abort have no WS ack — sendAppRequest would hang the HTTP 8s timeout.
+  if (type === "voice.stt.chunk" || type === "voice.stt.abort") {
+    client.sendAppMessage(type, params)
+    return Promise.resolve({ type: "ok" })
+  }
   if (type === "mcp.toggle_server" && companionClient) {
     // HTML C-thin cannot answer overlay L2; ride tray client like the Swift HUD.
     return companionClient.sendAppRequest(type, params, 60_000)

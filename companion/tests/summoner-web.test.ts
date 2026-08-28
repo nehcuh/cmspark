@@ -510,6 +510,51 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(dispatched[0].channels, 1)
   })
 
+  test("POST /api/stt/chunk with token dispatches voice.stt.chunk quickly", async () => {
+    dispatched.length = 0
+    const t0 = Date.now()
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/chunk?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ sessionId: "s1", seq: 0, data: "AA==", type: "list_tabs" }),
+    })
+    const ms = Date.now() - t0
+    assert.equal(r.status, 200, r.body)
+    assert.ok(ms < 1500, `chunk HTTP hung ${ms}ms`)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "voice.stt.chunk")
+    assert.equal(dispatched[0].sessionId, "s1")
+    assert.equal(dispatched[0].seq, 0)
+    assert.equal(dispatched[0].v, 1)
+  })
+
+  test("POST /api/stt/start with type=generate_minutes still dispatches voice.stt.start", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({
+        type: "generate_minutes",
+        sessionId: "s-min",
+        modelId: "medium",
+      }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "voice.stt.start")
+    assert.equal(dispatched.some((d) => String(d.type).includes("generate_minutes")), false)
+  })
+
   test("POST /api/stt with type=list_tabs in body still cannot set type", async () => {
     dispatched.length = 0
     const start = await request({
@@ -544,9 +589,6 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     })
     assert.notEqual(raw.status, 200)
     assert.equal(dispatched.some((d) => d.type === "list_tabs"), false)
-    if (raw.status === 200) {
-      assert.notEqual(dispatched[0]?.type, "list_tabs")
-    }
   })
 
   test("POST unknown path and /api/dispatch are 404", async () => {

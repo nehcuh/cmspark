@@ -44,6 +44,25 @@ test("voice.stt.start is on HTML dispatch and ALLOW", () => {
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("list_tabs"), false)
 })
 
+test("JSON_BODY_MAX stays 64KiB; STT chunk cap is ~400KiB", () => {
+  const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(src, /JSON_BODY_MAX = 64 \* 1024/)
+  assert.match(src, /STT_CHUNK_BODY_MAX = 400 \* 1024/)
+})
+
+test("dispatchSummonerWeb fire-and-forgets voice.stt.chunk and abort", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const start = src.indexOf("function dispatchSummonerWeb")
+  assert.ok(start >= 0, "dispatchSummonerWeb missing")
+  const next = src.indexOf("\nfunction ", start + 1)
+  const fn = src.slice(start, next > start ? next : start + 2500)
+  assert.match(fn, /voice\.stt\.chunk/)
+  assert.match(fn, /voice\.stt\.abort/)
+  assert.match(fn, /sendAppMessage\(type,\s*params\)/)
+  assert.match(fn, /type:\s*["']ok["']/)
+  assert.match(fn, /sendAppRequest\(type,\s*params/)
+})
+
 test("VOICE_PRIVACY_ACK_V2_CLAUSES lockstep with chrome-extension", () => {
   const companion = fs.readFileSync(srcFile("summoner", "client.ts"), "utf8")
   const ext = fs.readFileSync(extFile("src", "sidepanel", "voice", "privacy-copy.ts"), "utf8")
