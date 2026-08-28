@@ -1,0 +1,18 @@
+{
+  "batch": "overlay-capture-card-plan-r2",
+  "ts": "20260828-104408",
+  "blast": "T3",
+  "adversary": {
+    "impl": "REJECT",
+    "trust": "APPROVE_WITH_NITS",
+    "product": "REJECT",
+    "folded": "r2 pins 16-31"
+  },
+  "claude": "APPROVE_WITH_NITS",
+  "claude_file": "docs/audit/reviews/overlay-capture-card-plan-r2-claude-20260828-104408.md",
+  "pi": "INFRA",
+  "pi_error": "pi CLI not found on this PATH",
+  "both_ok": false,
+  "nits_folded_after_claude": true,
+  "notes": "Independent three-lane adversary ran first. Claude dual AWN. Pi binary missing; do not claim both_ok. Claude nits folded: v:1, chunk cap ~350KiB wire, footnote assigned Task 4, local-stt-adapter path, Swift HUD composer side-effect."
+}
