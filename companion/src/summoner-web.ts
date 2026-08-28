@@ -330,13 +330,60 @@ export function defaultOverlayChromeDir(): string {
 
 let overlayLaunchAt = 0
 const OVERLAY_LAUNCH_GRACE_MS = 2000
+let overlaySttSessionId = ""
+let overlayMeetingId = ""
 
 function overlayLaunchInGrace(): boolean {
   return !!(overlayLaunchAt && Date.now() - overlayLaunchAt < OVERLAY_LAUNCH_GRACE_MS)
 }
 
+function overlayDispatchFailed(result: unknown): boolean {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return true
+  const t = (result as { type?: unknown }).type
+  return t === "error" || t === "voice.stt.error" || t === "meeting.error"
+}
+
+function readMeetingIdFromDispatch(result: unknown, fallback: string): string {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return fallback
+  const r = result as Record<string, unknown>
+  const meeting =
+    r.meeting && typeof r.meeting === "object" && !Array.isArray(r.meeting)
+      ? (r.meeting as Record<string, unknown>)
+      : null
+  if (typeof meeting?.id === "string" && meeting.id.trim()) return meeting.id.trim()
+  const data =
+    r.data && typeof r.data === "object" && !Array.isArray(r.data)
+      ? (r.data as Record<string, unknown>)
+      : null
+  const nested =
+    data?.meeting && typeof data.meeting === "object" && !Array.isArray(data.meeting)
+      ? (data.meeting as Record<string, unknown>)
+      : null
+  if (typeof nested?.id === "string" && nested.id.trim()) return nested.id.trim()
+  return fallback
+}
+
+/** Hide / last-SSE / idle-stop: stop overlay capture even if HTML pagehide never ran. */
+function abortOverlayCaptureSessions(): void {
+  const sid = overlaySttSessionId
+  const mid = overlayMeetingId
+  overlaySttSessionId = ""
+  overlayMeetingId = ""
+  if (sid) {
+    void dispatchAllowed("voice.stt.abort", { v: 1, sessionId: sid }).catch(() => {
+      /* close path must not throw */
+    })
+  }
+  if (mid) {
+    void dispatchAllowed("meeting.end", { v: 1, id: mid }).catch(() => {
+      /* close path must not throw */
+    })
+  }
+}
+
 /** Hide/last-SSE/idle-stop share this path; twice is a no-throw. */
 function invokeOnShellClosed(): void {
+  abortOverlayCaptureSessions()
   const cb = activeOnShellClosed
   if (!cb) return
   try {
@@ -478,6 +525,7 @@ export function stopSummonerWebServer(): void {
   }
   if (activeServer) {
     closeSseClients()
+    invokeOnShellClosed()
     activeServer.close()
     activeServer = null
     activePort = null
@@ -486,8 +534,9 @@ export function stopSummonerWebServer(): void {
     activeAttachChrome = null
     activeRequestOpenSidePanel = null
     activeHasExtensionPeer = null
-    invokeOnShellClosed()
     activeOnShellClosed = null
+    overlaySttSessionId = ""
+    overlayMeetingId = ""
   }
 }
 
@@ -869,7 +918,9 @@ async function handleRequest(
         payload.lang = "zh"
       }
       if (typeof body.maxMs === "number" && Number.isFinite(body.maxMs)) payload.maxMs = body.maxMs
-      jsonResponse(res, await dispatchAllowed("voice.stt.start", payload))
+      const started = await dispatchAllowed("voice.stt.start", payload)
+      jsonResponse(res, started)
+      if (!overlayDispatchFailed(started) && sessionId) overlaySttSessionId = sessionId
       return
     }
 
@@ -890,6 +941,7 @@ async function handleRequest(
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
       const totalSeq = Number.isInteger(body.totalSeq) ? body.totalSeq : 0
       jsonResponse(res, await dispatchAllowed("voice.stt.end", { v: 1, sessionId, totalSeq }))
+      if (sessionId && overlaySttSessionId === sessionId) overlaySttSessionId = ""
       return
     }
 
@@ -897,6 +949,7 @@ async function handleRequest(
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
       jsonResponse(res, await dispatchAllowed("voice.stt.abort", { v: 1, sessionId }))
+      if (sessionId && overlaySttSessionId === sessionId) overlaySttSessionId = ""
       return
     }
 
@@ -920,7 +973,12 @@ async function handleRequest(
       if (typeof body.title === "string") payload.title = body.title
       if (typeof body.thread_id === "string") payload.thread_id = body.thread_id
       if (typeof body.id === "string" && body.id.trim()) payload.id = body.id.trim()
-      jsonResponse(res, await dispatchAllowed("meeting.start", payload))
+      const started = await dispatchAllowed("meeting.start", payload)
+      jsonResponse(res, started)
+      if (!overlayDispatchFailed(started)) {
+        const fallback = typeof payload.id === "string" ? payload.id : ""
+        overlayMeetingId = readMeetingIdFromDispatch(started, fallback)
+      }
       return
     }
 
@@ -928,6 +986,7 @@ async function handleRequest(
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       const id = typeof body.id === "string" ? body.id : ""
       jsonResponse(res, await dispatchAllowed("meeting.end", { v: 1, id }))
+      if (id && overlayMeetingId === id) overlayMeetingId = ""
       return
     }
 

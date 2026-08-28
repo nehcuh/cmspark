@@ -1176,6 +1176,74 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.ok(n >= 1, "explicit hide still closes after grace skip")
   })
 
+  test("hide aborts overlay STT and ends overlay meeting without pagehide", async () => {
+    const seen: Record<string, unknown>[] = []
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => {
+        seen.push(msg)
+        if (msg.type === "meeting.start") {
+          return { type: "meeting.started", v: 1, meeting: { id: "mtg_hide_a2" } }
+        }
+        return { type: "ok", echo: msg.type }
+      },
+    })
+    const stt = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ sessionId: "ov-stt-hide", modelId: "medium" }),
+    })
+    assert.equal(stt.status, 200, stt.body)
+    const meet = await request({
+      method: "POST",
+      port,
+      path: `/api/meeting/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ title: "hide-meet" }),
+    })
+    assert.equal(meet.status, 200, meet.body)
+    seen.length = 0
+    hideSummonerWebShell()
+    const deadline = Date.now() + 500
+    while (Date.now() < deadline) {
+      if (
+        seen.some((m) => m.type === "voice.stt.abort") &&
+        seen.some((m) => m.type === "meeting.end")
+      ) {
+        break
+      }
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    const abort = seen.find((m) => m.type === "voice.stt.abort")
+    const ended = seen.find((m) => m.type === "meeting.end")
+    assert.ok(abort, `hide must dispatch voice.stt.abort, got ${seen.map((m) => m.type)}`)
+    assert.equal(abort?.sessionId, "ov-stt-hide")
+    assert.ok(ended, `hide must dispatch meeting.end, got ${seen.map((m) => m.type)}`)
+    assert.equal(ended?.id, "mtg_hide_a2")
+    const abortN = seen.filter((m) => m.type === "voice.stt.abort").length
+    const endN = seen.filter((m) => m.type === "meeting.end").length
+    hideSummonerWebShell()
+    await new Promise((r) => setTimeout(r, 40))
+    assert.equal(
+      seen.filter((m) => m.type === "voice.stt.abort").length,
+      abortN,
+      "second hide must not abort STT again",
+    )
+    assert.equal(
+      seen.filter((m) => m.type === "meeting.end").length,
+      endN,
+      "second hide must not end meeting again",
+    )
+  })
+
   after(() => {
     stopSummonerWebServer()
   })
