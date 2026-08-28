@@ -30,7 +30,7 @@
 
 | Surface | Mode | Notes |
 |---------|------|--------|
-| 召唤器 | **Capture** | HTML float = Capture 卡片 ~400×520: 问答、📎、听写、开始/结束会议、**打开浏览器并打开侧栏**. Fail toast **请点工具栏 C**. Mac hotkey still collapsed bar (旧壳; expand = **展开对话**, not a five-rail workbench). Side Panel visual unchanged. Companion never `chrome.sidePanel.open`; extension SW opens the panel after the overlay button. Entry = toolbar C, **not** a tab-strip pill. Never claim CMspark sits beside the tab bar. |
+| 召唤器 | **Capture** | HTML float = Capture 卡片 ~360×420: 问答、📎、听写、开始/结束会议、**打开浏览器并打开侧栏**. Fail toast **请点工具栏 C**. Mac 菜单/热键与侧栏「弹出对话框」同一张卡. Side Panel visual unchanged. Companion never `chrome.sidePanel.open`; extension SW opens the panel after the overlay button. Entry = toolbar C, **not** a tab-strip pill. Never claim CMspark sits beside the tab bar. |
 | Side Panel | **Operate** | ChatShell empty: **要对这页做什么** / **当前页：** / 3 template chips. Top bar **弹出对话框** opens the HTML float. 装配 stays outside the shell. Watching Chrome; ~320px. |
 | Background CDP | **Operate** | When the human is in summoner or a coding agent; extension must be connected |
 | 确认台 / Cockpit + Mac tray | **Confirm** | Allow/Deny lives here. Overlay never. Win/Linux: open Chrome 确认台, never skip |

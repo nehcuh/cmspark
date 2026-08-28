@@ -246,17 +246,18 @@ test("SummonerController IME: composing Return is not bound as a button keyEquiv
   assert.match(body, /btn\.keyEquivalent = ""/)
 })
 
-test("Tray.swift menu and hotkey open native NSPanel 悬浮窗", () => {
+test("Tray.swift menu and hotkey 召唤器 open HTML Capture card", () => {
   const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
   const click = src.indexOf("tag == MenuTag.summoner.rawValue")
   assert.ok(click >= 0)
-  const menu = src.slice(click, click + 420)
-  assert.match(menu, /summonerController\.open\(threadId/)
-  assert.doesNotMatch(menu, /"action": "summoner"/)
+  const menu = src.slice(click, src.indexOf("MenuTag.summonerHotkey.rawValue", click))
+  assert.match(menu, /"action": "summoner"/)
+  assert.doesNotMatch(menu, /summonerController\.open/)
   const hotAt = src.indexOf("func handleSummonerHotKeyPressed()")
   assert.ok(hotAt >= 0)
-  const hot = src.slice(hotAt, hotAt + 320)
-  assert.match(hot, /openFromHotKey/)
+  const hot = src.slice(hotAt, src.indexOf("// Summoner overlay lives", hotAt))
+  assert.match(hot, /"action": "summoner-toggle"/)
+  assert.doesNotMatch(hot, /openFromHotKey/)
 })
 
 test("Summoner overlay composer exposes file clip and hold-to-talk mic", () => {

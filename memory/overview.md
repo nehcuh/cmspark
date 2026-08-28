@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-27 (S86 · PR #240 ChatShell · 0.5.3 main 仍 `ed22223`+)
+**Updated**: 2026-08-28 (S87 · overlay Capture 卡狗食 · main 含 #240/#242)
 
 ## CMspark — 产品 0.5.3
 
@@ -18,19 +18,20 @@
 | 召唤器 P2 快/淡 | **on main**（#234）；安装包 0.5.3 DMG **未含** 此 Swift |
 | grant-cli 未知 flag | **on main**（#236） |
 | RunProgress H1 `tool` | **on main**（#238）；无 tool 仍只能点 |
-| ChatShell 同一张脸 | **PR #240**（#239）；侧栏空态+弹出 HTML；Mac HUD 旧壳 |
+| ChatShell 同一张脸 | **on main**（#240） |
+| Overlay Capture 卡 | **on main** 骨架（#242）；狗食在 `feat/overlay-card-first-paint`（录制/历史/近实时/发言人N） |
 
-## Branch lock (S85)
+## Branch lock (S87)
 
-- **`main`**: 本地 ahead 1（session-end S85）。功能在 **PR [#240](https://github.com/nehcuh/cmspark/pull/240)** `feat/slice-239-chat-shell`。
-- **活票**：[#239](https://github.com/nehcuh/cmspark/issues/239) ChatShell（PR 开着）；[#230](https://github.com/nehcuh/cmspark/issues/230) 冻 F-S-10 / overlay-acl。正交 #69/#70/#71。
-- **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；T1 nit 当 SSO 墙；不经确认改 live `config.json`；#230 整票「继续」。
+- **`main`**: 含 #240 ChatShell + #242 Capture 骨架。狗食枝 **`feat/overlay-card-first-paint`**（未开 PR）。
+- **活票**：[#243](https://github.com/nehcuh/cmspark/issues/243) 新对话+历史 · [#244](https://github.com/nehcuh/cmspark/issues/244) 会议台；[#230](https://github.com/nehcuh/cmspark/issues/230) 仍冻。#228 T1 关。
+- **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；声称像素级 Gemini。
 
 ## Next
 
-- 审/合 PR #240。勿声称四处已换脸。
+- 关旧浮窗狗食会议台。再开 PR。
 - #230 禁止整票实现。
-- #229 体感：重启仓库 tray 或重打 DMG。
+- 扩展重载后验「打开侧栏」只绑普通窗。
 
 ## Docs SoT
 

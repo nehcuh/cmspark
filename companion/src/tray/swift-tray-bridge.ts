@@ -55,8 +55,8 @@ import {
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
 // Updated 2026-08-27 #229 — Capture open without NSApp.activate
-/** Mac 快捷提问 = native HUD（收起一条；展开对话 + 对话管理）+ 📎/🎙. */
-const SWIFT_TRAY_SHA256 = "4e4d11a56edd5c3e199d6c7fd8ef271a472f6e54506be1c3db8b2b880cf77bd6"
+/** Mac 菜单/热键「召唤器」= HTML Capture 卡（与侧栏弹出对话框同一出口）。 */
+const SWIFT_TRAY_SHA256 = "d4043c9e137518c495b045e3be370c4476767d834e4efb5217b58810366b4f60"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

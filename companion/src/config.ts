@@ -350,6 +350,8 @@ export interface CompanionConfig {
     chrome_foreground?: boolean
     last_activity_at?: number
     last_thread_id?: string
+    /** Lockstep with chrome-extension SendShortcut (Enter | Cmd+Enter | Ctrl+Enter). */
+    send_shortcut?: "Enter" | "Cmd+Enter" | "Ctrl+Enter"
   }
 }
 

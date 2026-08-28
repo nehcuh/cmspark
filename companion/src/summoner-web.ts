@@ -8,7 +8,14 @@
 import * as http from "http"
 import * as crypto from "crypto"
 import * as child_process from "child_process"
+import * as fs from "fs"
+import * as os from "os"
+import * as path from "path"
 import {
+  closeOverlayChrome,
+  overlayWindowPosition,
+  OVERLAY_WINDOW_SIZE,
+  parseFinderDesktopBounds,
   planSummonerShellOpen,
   resolveSummonerBrowserPath,
 } from "./summoner/shell-open"
@@ -31,6 +38,8 @@ import {
   MEETING_PRIVACY_ACK_V1_CLAUSES,
 } from "./summoner/client"
 import { getChromeOpener } from "./platform"
+import { getConfig } from "./config"
+import { OVERLAY_RENDER_MD_JS } from "./summoner/overlay-md"
 
 export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
 export type SummonerWebAttachChrome = (opts?: { foreground?: boolean }) => string
@@ -68,6 +77,11 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "meeting.create",
   "meeting.start",
   "meeting.end",
+  "meeting.append_transcript",
+  "meeting.generate_minutes",
+  "meeting.list",
+  "meeting.get",
+  "meeting.auto_diarize",
 ])
 
 /** Fan-out to HTML EventSource. Confirm / Trust / config frames stay off this list. */
@@ -94,6 +108,11 @@ export const SUMMONER_WEB_EVENT_ALLOW = new Set([
   "meeting.started",
   "meeting.ended",
   "meeting.error",
+  "meeting.updated",
+  "meeting.minutes_result",
+  "meeting.list_result",
+  "meeting.get_result",
+  "meeting.diarized",
 ])
 
 const MAX_SSE_CLIENTS = 4
@@ -173,7 +192,7 @@ function hostOk(req: http.IncomingMessage, port: number): boolean {
 
 function originOk(req: http.IncomingMessage, port: number): boolean {
   const origin = (req.headers.origin || "").toLowerCase()
-  if (!origin) return true
+  if (!origin || origin === "null") return true
   return (
     origin === `http://127.0.0.1:${port}` ||
     origin === `http://localhost:${port}` ||
@@ -294,6 +313,8 @@ function closeSseClients(): void {
 export type OpenLoopbackPageDeps = {
   platform?: NodeJS.Platform
   browserPath?: string | null
+  userDataDir?: string
+  screen?: { w: number; h: number }
   spawn?: (
     command: string,
     args: string[],
@@ -301,16 +322,84 @@ export type OpenLoopbackPageDeps = {
   ) => { unref: () => void }
 }
 
+export function defaultOverlayChromeDir(): string {
+  const root = process.env.CMSPARK_DATA_DIR || path.join(os.homedir(), ".cmspark-agent")
+  return path.join(root, "overlay-chrome")
+}
+
+let overlayLaunchAt = 0
+const OVERLAY_LAUNCH_GRACE_MS = 2000
+
+export function summonerWebHasPage(): boolean {
+  return sseClients.size > 0
+}
+
+/** SSE connected, or Chrome --app still coming up after spawn. */
+export function summonerWebIsShowing(): boolean {
+  if (sseClients.size > 0) return true
+  if (overlayLaunchAt && Date.now() - overlayLaunchAt < OVERLAY_LAUNCH_GRACE_MS) return true
+  return false
+}
+
+export function requestSummonerWebClose(): boolean {
+  overlayLaunchAt = 0
+  if (sseClients.size === 0) return false
+  const line = `data: ${JSON.stringify({ type: "shell.close" })}\n\n`
+  for (const res of sseClients) {
+    try {
+      res.write(line)
+    } catch {
+      sseClients.delete(res)
+    }
+  }
+  return true
+}
+
+export function hideSummonerWebShell(): void {
+  requestSummonerWebClose()
+  closeOverlayChrome(defaultOverlayChromeDir())
+}
+
+function probeScreen(platform: NodeJS.Platform): { w: number; h: number } {
+  if (platform === "darwin") {
+    try {
+      const raw = child_process.execFileSync(
+        "osascript",
+        ["-e", 'tell application "Finder" to get bounds of window of desktop'],
+        { encoding: "utf8", timeout: 2000 },
+      )
+      const parsed = parseFinderDesktopBounds(raw)
+      if (parsed) return parsed
+    } catch {
+      /* fallback */
+    }
+  }
+  return { w: 1440, h: 900 }
+}
+
 /** Returns false when the URL is rejected (no spawn). */
 export function openLoopbackPage(url: string, deps: OpenLoopbackPageDeps = {}): boolean {
   const platform = deps.platform ?? process.platform
   const browserPath =
     deps.browserPath !== undefined ? deps.browserPath : resolveSummonerBrowserPath(platform)
-  const plan = planSummonerShellOpen(url, { platform, browserPath })
+  const userDataDir = deps.userDataDir || defaultOverlayChromeDir()
+  try {
+    fs.mkdirSync(userDataDir, { recursive: true })
+  } catch {
+    /* Chrome can still create the profile dir */
+  }
+  const screen = deps.screen || probeScreen(platform)
+  const plan = planSummonerShellOpen(url, {
+    platform,
+    browserPath,
+    userDataDir,
+    windowPosition: overlayWindowPosition(screen.w, screen.h),
+  })
   if ("error" in plan) {
     console.error(`[summoner-web] ${plan.error}`)
     return false
   }
+  overlayLaunchAt = Date.now()
   const spawn = deps.spawn ?? ((cmd, args, opts) => child_process.spawn(cmd, args, opts))
   spawn(plan.command, plan.args, {
     detached: true,
@@ -441,6 +530,26 @@ async function handleRequest(
 
     if (pathOnly === "/api/health" && req.method === "GET") {
       jsonResponse(res, { status: "ok", uptime: process.uptime() })
+      return
+    }
+
+    if (pathOnly === "/api/send-shortcut" && req.method === "GET") {
+      const v = getConfig().summoner?.send_shortcut
+      const send_shortcut = v === "Cmd+Enter" || v === "Ctrl+Enter" || v === "Enter" ? v : "Enter"
+      jsonResponse(res, { send_shortcut })
+      return
+    }
+
+    if (pathOnly === "/api/voice-settings" && req.method === "GET") {
+      const voice = getConfig().voice
+      const localModelId =
+        voice?.localModelId === "small" ||
+        voice?.localModelId === "medium" ||
+        voice?.localModelId === "large-v3-turbo"
+          ? voice.localModelId
+          : "medium"
+      const sttEngine = voice?.sttEngine === "local" ? "local" : "browser"
+      jsonResponse(res, { sttEngine, localModelId, lang: "zh-CN" })
       return
     }
 
@@ -713,10 +822,13 @@ async function handleRequest(
     if (pathOnly === "/api/stt/start" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
+      const cfgModel = getConfig().voice?.localModelId
       const modelId =
         body.modelId === "small" || body.modelId === "medium" || body.modelId === "large-v3-turbo"
           ? body.modelId
-          : "medium"
+          : cfgModel === "small" || cfgModel === "medium" || cfgModel === "large-v3-turbo"
+            ? cfgModel
+            : "medium"
       const payload: Record<string, unknown> = {
         v: 1,
         sessionId,
@@ -726,7 +838,11 @@ async function handleRequest(
         channels: 1,
         privacy_ack_v2: true,
       }
-      if (typeof body.lang === "string") payload.lang = body.lang
+      if (typeof body.lang === "string" && body.lang.trim()) {
+        payload.lang = body.lang.startsWith("zh") ? "zh" : body.lang
+      } else {
+        payload.lang = "zh"
+      }
       if (typeof body.maxMs === "number" && Number.isFinite(body.maxMs)) payload.maxMs = body.maxMs
       jsonResponse(res, await dispatchAllowed("voice.stt.start", payload))
       return
@@ -759,6 +875,16 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/stt/partial" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
+      jsonResponse(
+        res,
+        await dispatchAllowed("voice.stt.partial_request", { v: 1, sessionId }),
+      )
+      return
+    }
+
     if (pathOnly === "/api/meeting/start" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       const payload: Record<string, unknown> = {
@@ -777,6 +903,55 @@ async function handleRequest(
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       const id = typeof body.id === "string" ? body.id : ""
       jsonResponse(res, await dispatchAllowed("meeting.end", { v: 1, id }))
+      return
+    }
+
+    if (pathOnly === "/api/meeting/append" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const id = typeof body.id === "string" ? body.id : ""
+      const text = typeof body.text === "string" ? body.text : ""
+      jsonResponse(
+        res,
+        await dispatchAllowed("meeting.append_transcript", { v: 1, id, text, source: "stt" }),
+      )
+      return
+    }
+
+    if (pathOnly === "/api/meeting/minutes" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const id = typeof body.id === "string" ? body.id : ""
+      jsonResponse(res, await dispatchAllowed("meeting.generate_minutes", { v: 1, id }))
+      return
+    }
+
+    if (pathOnly === "/api/meetings" && req.method === "GET") {
+      jsonResponse(res, await dispatchAllowed("meeting.list", { v: 1 }))
+      return
+    }
+
+    if (pathOnly === "/api/meeting" && req.method === "GET") {
+      const raw = req.url || ""
+      const qIdx = raw.indexOf("?")
+      const query = qIdx >= 0 ? parseQuery(raw.slice(qIdx + 1)) : new Map<string, string>()
+      const id = query.get("id") || ""
+      jsonResponse(res, await dispatchAllowed("meeting.get", { v: 1, id }))
+      return
+    }
+
+    if (pathOnly === "/api/meeting/diarize" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      const id = typeof body.id === "string" ? body.id : ""
+      const mode = body.mode === "text_gap" ? "text_gap" : "audio_cluster"
+      const k = typeof body.k === "number" ? body.k : 2
+      const payload: Record<string, unknown> = {
+        v: 1,
+        id,
+        mode,
+        k,
+        privacy_ack_v1: true,
+      }
+      if (Array.isArray(body.features)) payload.features = body.features
+      jsonResponse(res, await dispatchAllowed("meeting.auto_diarize", payload))
       return
     }
 
@@ -808,7 +983,7 @@ body{
   font:13px/1.45 "Segoe UI","Microsoft YaHei UI","PingFang SC","Noto Sans SC",sans-serif;
   color:var(--text);background:var(--paper);
 }
-.hud{height:100%;display:flex;flex-direction:column;background:var(--paper);overflow:hidden}
+.hud{height:100%;display:flex;flex-direction:column;background:var(--paper);overflow:hidden;position:relative}
 .body{display:none;flex:1;min-height:0;border-bottom:1px solid var(--line);overflow:hidden}
 .hud.expanded .body{display:flex;flex-direction:column}
 .rail{
@@ -826,7 +1001,6 @@ body{
 .rail-btn[hidden]{display:none}
 .list{border-right:1px solid var(--line);display:none;flex-direction:column;min-width:0;background:var(--paper);overflow:hidden}
 .rail,.list{display:none}
-.list-head{padding:14px 14px 8px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--faint)}
 .list-scroll{overflow-y:auto;overflow-x:hidden;flex:1;padding:0 6px 10px}
 .item,.row{
   display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:10px;
@@ -847,19 +1021,121 @@ body{
 .icon-mini svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .icon-mini:hover{background:var(--canvas);color:var(--text)}
 .main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;background:var(--paper);overflow:hidden}
-.brand{display:flex;align-items:center;gap:8px;padding:12px 16px 4px;font-size:14px;font-weight:600;flex-shrink:0}
+.brand{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 16px 4px;font-size:14px;font-weight:600;flex-shrink:0}
+.brand-id{display:flex;align-items:center;gap:8px;min-width:0}
+.brand-actions{display:flex;gap:4px;flex:none}
+.brand-actions button{
+  min-height:36px;padding:6px 10px;border:0;background:var(--canvas);border-radius:8px;
+  font:12px inherit;cursor:pointer;color:var(--text);
+}
+.list-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 14px 8px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--faint)}
+.list-head button{min-height:36px;padding:6px 10px;border:0;background:var(--canvas);border-radius:8px;font:12px inherit;cursor:pointer;color:var(--text);letter-spacing:0;font-weight:500}
+.hud.history .list{
+  display:flex!important;position:absolute;inset:0;z-index:5;border-right:0;width:auto;background:var(--paper);
+}
+.meeting-desk{
+  position:absolute;inset:0;z-index:7;margin:0;
+  display:flex;flex-direction:column;background:var(--paper);color:var(--text);
+}
+.meeting-desk[hidden]{display:none!important;pointer-events:none!important}
+.meeting-head{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:10px 12px 8px;border-bottom:1px solid var(--line);flex-shrink:0;
+}
+.meeting-head strong{font-size:14px;font-weight:600}
+.meeting-back{
+  min-height:32px;padding:4px 10px;border:0;background:transparent;border-radius:8px;
+  font:12px inherit;cursor:pointer;color:var(--faint);
+}
+.meeting-back:hover{background:var(--canvas);color:var(--text)}
+.meeting-back:focus-visible{outline:none;box-shadow:var(--focus)}
+.meeting-status{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:8px 12px 0;font-size:12px;color:var(--faint);
+}
+.meeting-dot{width:8px;height:8px;border-radius:50%;background:#d4d4d4;flex:none}
+.meeting-desk.recording .meeting-dot{
+  background:#dc2626;box-shadow:0 0 0 0 rgba(220,38,38,.4);
+  animation:recPulse 1.4s ease-out infinite;
+}
+@keyframes recPulse{
+  0%{box-shadow:0 0 0 0 rgba(220,38,38,.4)}
+  70%{box-shadow:0 0 0 8px rgba(220,38,38,0)}
+  100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}
+}
+.meeting-live{
+  flex:1;min-height:0;overflow:auto;margin:8px 12px 0;
+  padding:10px 12px;background:var(--canvas);border-radius:12px;font-size:13px;line-height:1.5;
+}
+.meeting-live p{margin:0 0 8px}
+.meeting-live .empty-live{
+  color:var(--faint);font-size:12.5px;line-height:1.45;padding:22px 8px;text-align:center;
+}
+.meeting-partial{
+  min-height:1.4em;font-size:13px;color:var(--indigo);padding:4px 16px 6px;font-style:italic;
+  max-height:4.2em;overflow:auto;
+}
+.meeting-live .spk{display:inline;font-weight:600;color:var(--indigo);margin-right:4px}
+.meeting-tools{
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 12px 0;
+}
+.meeting-tools button,.meeting-tools select{
+  min-height:28px;padding:3px 8px;border-radius:8px;border:0;cursor:pointer;font:11px inherit;
+  background:var(--canvas);color:var(--text);
+}
+.meeting-tools button:focus-visible,.meeting-tools select:focus-visible{outline:none;box-shadow:var(--focus)}
+.meeting-hist{
+  position:absolute;left:12px;right:12px;top:72px;bottom:72px;z-index:8;
+  background:var(--paper);border:1px solid var(--line);border-radius:12px;
+  overflow:auto;padding:6px;box-shadow:var(--shadow);
+}
+.meeting-hist[hidden]{display:none!important}
+.meeting-hist button{
+  display:block;width:100%;text-align:left;border:0;background:transparent;
+  padding:8px 10px;border-radius:8px;cursor:pointer;font:inherit;color:var(--text);
+}
+.meeting-hist button:hover,.meeting-hist button.active{background:var(--indigo-soft);color:var(--indigo)}
+.meeting-hist button small{display:block;margin-top:2px;font-size:11px;color:var(--faint)}
+.meeting-hist-empty{padding:18px 10px;text-align:center;color:var(--faint);font-size:12.5px}
+.meeting-minutes{
+  flex:0 1 36%;min-height:0;overflow:auto;margin:0 12px 8px;
+  padding:8px 10px;background:var(--canvas);border-radius:12px;
+}
+.meeting-minutes[hidden]{display:none!important}
+.meeting-actions{
+  display:flex;flex-wrap:wrap;gap:8px;padding:8px 12px 12px;
+  border-top:1px solid var(--line);
+}
+.meeting-actions button{
+  min-height:36px;padding:6px 12px;border-radius:8px;border:0;cursor:pointer;font:inherit;
+  background:var(--canvas);color:var(--text);
+}
+.meeting-actions button:focus-visible{outline:none;box-shadow:var(--focus)}
+.meeting-actions button:disabled{opacity:.45;cursor:not-allowed}
+#meetingRec{background:var(--indigo);color:#fff;font-weight:500;flex:1}
+.meeting-desk.recording #meetingRec{background:#dc2626;color:#fff}
+#meetingMinutesBtn{background:var(--indigo-soft);color:var(--indigo)}
 .mark{
   width:52px;height:52px;border-radius:50%;background:#171717;color:#fff;
   display:grid;place-items:center;font-size:20px;font-weight:600;margin:0 auto 10px;
 }
 .mark.sm{width:26px;height:26px;font-size:11px;margin:0}
 .log{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:20px 22px;display:flex;flex-direction:column;gap:16px}
-.msg{max-width:36rem;font-size:14px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
-.msg.user{align-self:flex-end;background:var(--canvas);padding:8px 12px;border-radius:12px 12px 4px 12px}
-.msg.assistant{align-self:flex-start;color:var(--text)}
+.msg{max-width:36rem;font-size:14px;line-height:1.55;word-break:break-word}
+.msg.user{align-self:flex-end;background:var(--canvas);padding:8px 12px;border-radius:12px 12px 4px 12px;white-space:pre-wrap}
+.msg.assistant{align-self:flex-start;color:var(--text);white-space:normal}
+.msg.assistant p{margin:0 0 8px}
+.msg.assistant p:last-child{margin:0}
+.msg.assistant h1,.msg.assistant h2,.msg.assistant h3{font-size:15px;font-weight:600;margin:10px 0 6px}
+.msg.assistant ul,.msg.assistant ol{margin:6px 0 6px 1.2em}
+.msg.assistant a{color:var(--indigo)}
+.msg.assistant pre{background:var(--canvas);padding:8px 10px;border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.45}
+.msg.assistant code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+.msg.assistant :not(pre)>code{background:var(--canvas);padding:1px 4px;border-radius:4px}
+.msg.assistant blockquote{margin:6px 0;padding:0 0 0 10px;border-left:3px solid var(--line);color:var(--secondary)}
 .empty{margin:auto;color:var(--secondary);font-size:14px;line-height:1.6;text-align:center;display:flex;flex-direction:column;align-items:center}
 .empty strong{display:block;font-size:22px;font-weight:600;color:var(--text);margin-bottom:8px;letter-spacing:-.03em}
-.composer{display:flex;flex-direction:column;gap:6px;padding:10px 12px 8px;background:var(--paper);flex-shrink:0}
+.composer{display:flex;flex-direction:column;gap:6px;padding:10px 12px 8px;background:var(--paper);flex-shrink:0;position:relative;z-index:2}
 .composer-row{display:flex;align-items:center;gap:6px;min-width:0}
 .icon-btn{
   width:44px;height:44px;border:0;background:transparent;border-radius:var(--radius-sm);
@@ -871,13 +1147,14 @@ body{
 .icon-btn:disabled{opacity:.35;cursor:not-allowed}
 .field{
   flex:1;display:flex;align-items:flex-end;gap:4px;min-height:48px;padding:4px 8px 4px 14px;
-  background:var(--canvas);border-radius:14px;
+  background:var(--canvas);border-radius:14px;min-width:0;overflow:hidden;
 }
 .field:focus-within{box-shadow:inset 0 0 0 1.5px rgba(79,70,229,.45);background:var(--paper)}
 .field textarea{
-  flex:1;border:0;background:transparent;outline:none;resize:none;min-height:36px;max-height:120px;
+  flex:1;min-width:0;width:100%;border:0;background:transparent;outline:none;resize:none;min-height:36px;max-height:120px;
   font:15px/1.35 inherit;color:var(--text);padding:8px 0;
 }
+.field .icon-btn{position:relative;z-index:1}
 .field textarea::placeholder{color:#a3a3a3}
 .ghosts{display:flex;gap:4px;padding:0 12px 4px}
 .ghost{
@@ -887,7 +1164,9 @@ body{
 .hint{display:none;padding:0 16px 10px;font-size:11px;color:var(--faint);line-height:1.4}
 #chev{display:none}
 #settings{display:none}
-.status{padding:0 16px 12px;font-size:12px;color:#92400e;min-height:16px}
+#newThreadBar{display:none}
+.status:empty{display:none}
+.status{margin:0 12px 8px;padding:8px 10px;font-size:12px;color:#92400e;background:#fffbeb;border-radius:8px}
 .cta-box{
   margin:0 12px 8px;padding:10px 12px;border-radius:12px;
   background:#fffbeb;border:1px solid #fde68a;color:#92400e;
@@ -903,15 +1182,17 @@ body{
 #openConfirm{background:var(--indigo);color:#fff}
 .cta-foot{font-size:11px;color:var(--faint)!important;line-height:1.4}
 .privacy-sheet{
-  margin:0 12px 8px;padding:10px 12px;border-radius:12px;
-  background:#fffbeb;border:1px solid #fde68a;color:#92400e;
+  position:absolute;inset:0;z-index:6;margin:0;padding:16px 18px 20px;
+  overflow:auto;border-radius:0;
+  background:#fffbeb;border:0;color:#92400e;
 }
+.privacy-sheet[hidden],.cta-box[hidden]{display:none!important;pointer-events:none!important}
 .privacy-sheet[hidden]{display:none}
 .privacy-sheet ol{margin:6px 0 8px;padding-left:1.3em;color:var(--text);font-size:12px;line-height:1.45}
 .privacy-sheet .cta-actions button{background:var(--indigo);color:#fff}
 .privacy-sheet p{font-size:12.5px;font-weight:600;color:var(--text)}
 #meetingVoiceSection{margin-bottom:8px}
-.capture-row{display:flex;gap:8px;padding:0 2px;flex-wrap:wrap}
+.capture-row{display:flex;gap:8px;padding:0 2px;flex-wrap:wrap;position:relative;z-index:1}
 #meetingStart,#operateOpen{
   min-height:36px;padding:6px 12px;border-radius:8px;border:0;cursor:pointer;font:inherit;
   background:var(--canvas);color:var(--text);
@@ -944,7 +1225,7 @@ body{
       </button>
     </nav>
     <aside class="list">
-      <div class="list-head" id="secHead">对话</div>
+      <div class="list-head"><span id="secHead">历史会话</span><button type="button" id="historyClose">完成</button></div>
       <div class="list-scroll">
         <button class="item" id="newThread" type="button"><strong>新对话</strong><small>快捷提问</small></button>
         <div id="threads"></div>
@@ -952,7 +1233,13 @@ body{
       </div>
     </aside>
     <section class="main">
-      <div class="brand"><span class="mark sm" aria-hidden="true">山</span>CMspark</div>
+      <div class="brand">
+        <span class="brand-id"><span class="mark sm" aria-hidden="true">山</span>CMspark</span>
+        <span class="brand-actions">
+          <button type="button" id="historyOpen">历史</button>
+          <button type="button" id="newChat">新对话</button>
+        </span>
+      </div>
       <div class="log" id="log">
         <div class="empty" id="empty">
           <div class="mark" aria-hidden="true">山</div>
@@ -975,6 +1262,9 @@ body{
         <textarea id="text" rows="1" placeholder="问 CMspark…" aria-label="发送到当前对话"></textarea>
         <button class="icon-btn" id="mic" type="button" title="听写" aria-label="听写" aria-pressed="false">
           <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
+        </button>
+        <button class="icon-btn" id="sendGo" type="button" title="发送" aria-label="发送">
+          <svg viewBox="0 0 24 24"><path d="M5 12h12M13 6l6 6-6 6"/></svg>
         </button>
         <button class="icon-btn" id="chev" type="button" hidden aria-pressed="true" title="${SUMMONER_CHEVRON_COLLAPSE}" aria-label="${SUMMONER_CHEVRON_COLLAPSE}">
           <svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>
@@ -1030,14 +1320,64 @@ body{
   </div>
   <div class="hint" id="hint">回车发送 · Shift+Enter 排队 · 点击右上角 ⋮ 设置快捷键</div>
   <div class="status" id="status"></div>
+  <div class="meeting-desk" id="meetingDesk" hidden>
+    <div class="meeting-head">
+      <strong>会议</strong>
+      <button type="button" class="meeting-back" id="meetingBack">返回对话</button>
+    </div>
+    <div class="meeting-status">
+      <span class="meeting-dot" aria-hidden="true"></span>
+      <span id="meetingHint">未录制</span>
+      <span id="meetingVoiceMeta"></span>
+    </div>
+    <div class="meeting-tools">
+      <button type="button" id="meetingHistToggle" aria-pressed="false">历史会议</button>
+      <label>角色 <select id="meetingK" aria-label="发言人数量"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
+      <button type="button" id="meetingDiarize" title="本机声学聚类，匿名发言人N，不是身份识别">自动标说话人</button>
+    </div>
+    <div class="meeting-hist" id="meetingHistList" hidden></div>
+    <div class="meeting-live" id="meetingLive">
+      <div class="empty-live" id="meetingEmpty">点「开始录制」后约 8 秒出字。语音识别用侧栏听写设置。说话人是匿名「发言人N」，不是认人。</div>
+    </div>
+    <div class="meeting-partial" id="meetingPartial"></div>
+    <div class="meeting-minutes" id="meetingMinutes" hidden></div>
+    <div class="meeting-actions">
+      <button type="button" id="meetingRec" aria-pressed="false">开始录制</button>
+      <button type="button" id="meetingMinutesBtn" hidden>生成会议纪要</button>
+    </div>
+  </div>
 </div>
 <script>
+try{
 (function(){
   var token=(location.search.match(/[?&]token=([^&]+)/)||[])[1]||"";
   var wanted=(location.search.match(/[?&]thread=([^&]+)/)||[])[1]||"";
   try{if(wanted) wanted=decodeURIComponent(wanted)}catch(e){}
   function url(path){return path+(path.indexOf("?")>=0?"&":"?")+"token="+encodeURIComponent(token)}
   var threadId="";
+  var threadReady=null;
+  var sendShortcut="Enter";
+  api("/api/send-shortcut").then(function(d){
+    var s=d&&d.send_shortcut;
+    if(s==="Enter"||s==="Cmd+Enter"||s==="Ctrl+Enter") sendShortcut=s;
+  }).catch(function(){});
+  var voiceSettings={sttEngine:"browser",localModelId:"medium",lang:"zh-CN"};
+  function paintMeetingVoiceMeta(){
+    var el=$("meetingVoiceMeta");
+    if(!el) return;
+    var engine=voiceSettings.sttEngine==="local"?"本机":"浏览器";
+    el.textContent=engine+" · "+voiceSettings.localModelId;
+  }
+  function loadVoiceSettings(){
+    return api("/api/voice-settings").then(function(d){
+      if(!d||typeof d!=="object") return;
+      if(d.sttEngine==="browser"||d.sttEngine==="local") voiceSettings.sttEngine=d.sttEngine;
+      if(d.localModelId==="small"||d.localModelId==="medium"||d.localModelId==="large-v3-turbo") voiceSettings.localModelId=d.localModelId;
+      if(typeof d.lang==="string"&&d.lang) voiceSettings.lang=d.lang;
+      paintMeetingVoiceMeta();
+    }).catch(function(){});
+  }
+  loadVoiceSettings();
   var busy=false;
   var threads=[];
   var poll=null;
@@ -1070,9 +1410,10 @@ body{
       setStatus(d&&(d.message||d.error)||"");
     });
   }
-  function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})}
+  function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==="&"?"&amp;":c==="<"?"&lt;":"&gt;"})}
+  ${OVERLAY_RENDER_MD_JS}
   function placeWindow(){
-    var w=400,h=520;
+    var w=${OVERLAY_WINDOW_SIZE.w},h=${OVERLAY_WINDOW_SIZE.h};
     var sw=screen.availWidth||screen.width||w;
     var sh=screen.availHeight||screen.height||h;
     var x=Math.max(0, ((sw-w)/2)|0);
@@ -1089,25 +1430,32 @@ body{
   var voiceAck=false;
   var meetingAck=false;
   var meetingId="";
+  var lastMeetingId="";
   var sttLive=false;
   var sttSid="";
   var sttSeq=0;
   var sttBuf=new Uint8Array(0);
+  var sttFloat=new Float32Array(0);
   var sttStream=null;
   var sttCtx=null;
   var sttSrc=null;
   var sttProc=null;
   var sttMute=null;
   var sttTimer=null;
+  var sttPartialTimer=null;
+  var sttFeatsBySid={};
+  var meetingFeats=[];
+  var meetingLines=[];
   var STT_RATE=16000;
   var STT_FLUSH=32000;
   var STT_CHUNK=256*1024;
-  var STT_MAX_MS=45000;
+  var STT_DICTATION_MS=45000;
+  var STT_MEETING_MS=8000;
   var STT_MIC_FAIL="请在系统设置中打开 127.0.0.1 的麦克风";
   var STT_NEED_MODEL="侧栏 ⋯ → 设置 → 听写 → 下载组件/模型";
   function sttUserCopy(code, fallback){
     var c=String(code||"").toLowerCase();
-    if(c.indexOf("model")>=0 || c.indexOf("binary")>=0) return STT_NEED_MODEL;
+    if(c.indexOf("model")>=0 || c.indexOf("binary")>=0 || c.indexOf("engine")>=0) return STT_NEED_MODEL;
     return fallback || "听写失败";
   }
   function uint8ToB64(u8){
@@ -1121,6 +1469,25 @@ body{
   function concatU8(a,b){
     var o=new Uint8Array(a.length+b.length);
     o.set(a,0); o.set(b,a.length); return o;
+  }
+  function concatF32(a,b){
+    var o=new Float32Array(a.length+b.length);
+    o.set(a,0); o.set(b,a.length); return o;
+  }
+  function extractFeat(samples){
+    var n=samples.length;
+    if(!n) return [0,0,0];
+    var energy=0,zc=0,prev=samples[0]||0,diffSum=0;
+    for(var i=0;i<n;i++){
+      var x=samples[i]||0;
+      energy+=x*x;
+      if(i>0){
+        if((prev>=0&&x<0)||(prev<0&&x>=0)) zc++;
+        diffSum+=Math.abs(x-prev);
+      }
+      prev=x;
+    }
+    return [Math.log1p(energy/n), zc/n, Math.min(1, diffSum/(n*0.5+1e-9))];
   }
   function floatToS16(input){
     var out=new Uint8Array(input.length*2);
@@ -1149,6 +1516,7 @@ body{
   function teardownStt(){
     sttLive=false;
     if(sttTimer){clearTimeout(sttTimer);sttTimer=null}
+    if(sttPartialTimer){clearTimeout(sttPartialTimer);sttPartialTimer=null}
     try{ if(sttProc){sttProc.onaudioprocess=null;sttProc.disconnect()} }catch(e){}
     try{ if(sttMute) sttMute.disconnect(); }catch(e){}
     try{ if(sttSrc) sttSrc.disconnect(); }catch(e){}
@@ -1156,6 +1524,7 @@ body{
     try{ if(sttCtx) sttCtx.close(); }catch(e){}
     sttProc=sttMute=sttSrc=sttStream=sttCtx=null;
     sttBuf=new Uint8Array(0);
+    sttFloat=new Float32Array(0);
     var mic=$("mic");
     if(mic) mic.setAttribute("aria-pressed","false");
   }
@@ -1181,6 +1550,7 @@ body{
       return;
     }
     flushStt(true);
+    if(sid) sttFeatsBySid[sid]=extractFeat(sttFloat);
     var total=sttSeq;
     teardownStt();
     sttSid="";
@@ -1211,17 +1581,26 @@ body{
         var rate=ctx.sampleRate||48000;
         var mono=rate===STT_RATE?copy:resampleMono(copy,rate,STT_RATE);
         if(!mono.length) return;
+        sttFloat=concatF32(sttFloat, mono);
         sttBuf=concatU8(sttBuf, floatToS16(mono));
         if(sttBuf.length>=STT_FLUSH) flushStt(false);
       };
       src.connect(proc);
       proc.connect(mute);
       mute.connect(ctx.destination);
+      var windowMs=meetingId?STT_MEETING_MS:STT_DICTATION_MS;
       sttTimer=setTimeout(function(){
         if(!sttLive || sttSid!==sid) return;
         stopStt(false);
-        if(meetingId) startStt();
-      }, STT_MAX_MS);
+      }, windowMs);
+      if(meetingId){
+        var poll=function(){
+          if(!sttLive || sttSid!==sid) return;
+          api("/api/stt/partial",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid})});
+          sttPartialTimer=setTimeout(poll,1400);
+        };
+        sttPartialTimer=setTimeout(poll,1400);
+      }
     };
     if(ctx.state==="suspended") ctx.resume().then(go).catch(go);
     else go();
@@ -1236,12 +1615,16 @@ body{
     sttSid=sid;
     sttSeq=0;
     sttBuf=new Uint8Array(0);
+    sttFloat=new Float32Array(0);
     sttLive=true;
     $("mic").setAttribute("aria-pressed","true");
     navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}}).then(function(stream){
       if(!sttLive || sttSid!==sid){ stream.getTracks().forEach(function(t){t.stop()}); return; }
       sttStream=stream;
-      return api("/api/stt/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid,modelId:"medium",privacy_ack_v2:true,lang:"zh"})}).then(function(d){
+      var sttLang=(voiceSettings.lang||"zh-CN").indexOf("zh")===0?"zh":(voiceSettings.lang||"zh");
+      var sttModel=voiceSettings.localModelId||"medium";
+      var sttMax=meetingId?STT_MEETING_MS:STT_DICTATION_MS;
+      return api("/api/stt/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid,modelId:sttModel,privacy_ack_v2:true,lang:sttLang,maxMs:sttMax})}).then(function(d){
         if(!sttLive || sttSid!==sid){ teardownStt(); return; }
         if(d && (d.type==="voice.stt.error" || d.type==="error" || d.error)){
           setStatus(sttUserCopy(d.code||d.error_code, d.error||d.message));
@@ -1317,7 +1700,9 @@ body{
       n++;
       var d=document.createElement("div");
       d.className="msg "+m.role;
-      d.textContent=typeof m.content==="string"?m.content:(m.content&&m.content[0]&&m.content[0].text)||"";
+      var text=typeof m.content==="string"?m.content:(m.content&&m.content[0]&&m.content[0].text)||"";
+      if(m.role==="assistant") d.innerHTML=renderMd(text);
+      else d.textContent=text;
       log.appendChild(d);
     });
     if(!n){
@@ -1335,6 +1720,7 @@ body{
   }
   function selectThread(id){
     threadId=id;
+    showHistory(false);
     renderThreads($("text").value.charAt(0)==="#"?$("text").value.slice(1):"");
     return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:id})})
       .then(function(d){
@@ -1378,30 +1764,64 @@ body{
       });
     }));
   }
+  function createThread(){
+    return api("/api/threads",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(d){
+      var id=d.thread&&d.thread.id;
+      if(!id) return Promise.reject(new Error("没有当前对话"));
+      return refresh().then(function(){ return selectThread(id); }).then(function(){ return id; });
+    });
+  }
+  function ensureThread(){
+    if(threadId) return Promise.resolve(threadId);
+    var wait=threadReady||Promise.resolve();
+    return wait.then(function(){
+      if(threadId) return threadId;
+      return createThread();
+    });
+  }
+  function paintUser(text){
+    var empty=$("empty");
+    if(empty&&empty.parentNode) empty.parentNode.removeChild(empty);
+    var d=document.createElement("div");
+    d.className="msg user";
+    d.textContent=text;
+    $("log").appendChild(d);
+    $("log").scrollTop=$("log").scrollHeight;
+  }
   function send(mode){
     var text=$("text").value;
     if(text.trim().charAt(0)==="#"){
       renderThreads(text.trim().slice(1));
       return;
     }
-    if(!threadId){setStatus("没有当前对话");return}
     var fileEl=$("files");
     var hasFiles=fileEl.files&&fileEl.files.length;
-    if(hasFiles && (busy || mode==="steer" || mode==="enqueue")){
-      setStatus("忙时不能上传附件（run_active）");
-      return;
-    }
-    var go=hasFiles
-      ? filesToPayload(fileEl.files).then(function(files){
-          return api("/api/files",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,files:files,message:text})});
-        })
-      : api("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,message:text,mode:mode|| (busy?"steer":"create")})});
-    go.then(function(d){
+    if(!text.trim() && !hasFiles) return;
+    setStatus("发送中…");
+    ensureThread().then(function(){
+      if(!threadId){setStatus("没有当前对话");return}
+      if(hasFiles && (busy || mode==="steer" || mode==="enqueue")){
+        setStatus("忙时不能上传附件（run_active）");
+        return;
+      }
+      if(text.trim()) paintUser(text.trim());
+      $("text").value="";
+      return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(){
+        var go=hasFiles
+          ? filesToPayload(fileEl.files).then(function(files){
+              return api("/api/files",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,files:files,message:text})});
+            })
+          : api("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,message:text,mode:mode|| (busy?"steer":"create")})});
+        return go;
+      });
+    }).then(function(d){
+      if(!d) return;
       if(d.error||d.type==="error"){setStatus(d.error||"发送失败");return}
       setStatus("已提交");
     }).catch(function(e){setStatus(String(e&&e.message||e))});
   }
   $("send").onclick=function(){send(busy?"steer":"create")};
+  $("sendGo").onclick=function(){send(busy?"steer":"create")};
   $("steer").onclick=function(){send("steer")};
   $("queue").onclick=function(){send("enqueue")};
   $("stop").onclick=function(){
@@ -1413,7 +1833,7 @@ body{
   $("attachFront").onclick=function(){attachChrome(true)};
   $("openConfirm").onclick=function(){attachChrome(true)};
   $("settings").onclick=function(){
-    alert("快捷键设置需要在 Chrome 侧栏的设置面板中配置。\n\n请打开 Chrome 侧栏，点击设置图标，在「模型与推理」部分找到「发送快捷键」设置。\n\n召唤器使用相同的快捷键配置。");
+    alert("快捷键设置需要在 Chrome 侧栏的设置面板中配置。\\n\\n请打开 Chrome 侧栏，点击设置图标，在「模型与推理」部分找到「发送快捷键」设置。\\n\\n召唤器使用相同的快捷键配置。");
   };
   $("mic").onclick=function(){
     if(sttLive){ stopStt(false); return; }
@@ -1433,39 +1853,319 @@ body{
   function setMeetingUi(on){
     var b=$("meetingStart");
     if(!b) return;
-    b.textContent=on?"结束会议":"开始会议";
+    b.textContent=on?"会议中":"开始会议";
     b.setAttribute("aria-pressed", on?"true":"false");
   }
-  function startMeetingCapture(){
-    var payload={};
-    if(threadId) payload.thread_id=threadId;
-    api("/api/meeting/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).then(function(d){
-      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
-        setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error||"会议开始失败"));
+  var recStartedAt=0;
+  var recTimer=null;
+  function fmtElapsed(ms){
+    var s=Math.floor(ms/1000);
+    if(s<0) s=0;
+    var m=Math.floor(s/60);
+    s=s%60;
+    return (m<10?"0":"")+m+":"+(s<10?"0":"")+s;
+  }
+  function stopRecClock(){
+    if(recTimer){ clearInterval(recTimer); recTimer=null; }
+    recStartedAt=0;
+  }
+  function startRecClock(){
+    stopRecClock();
+    recStartedAt=Date.now();
+    recTimer=setInterval(function(){
+      var hint=$("meetingHint");
+      if(hint && meetingId) hint.textContent="录制中 "+fmtElapsed(Date.now()-recStartedAt);
+    },250);
+  }
+  function setRecordingUi(on){
+    var desk=$("meetingDesk");
+    var rec=$("meetingRec");
+    var mins=$("meetingMinutesBtn");
+    if(desk){
+      if(on) desk.classList.add("recording");
+      else desk.classList.remove("recording");
+    }
+    if(rec){
+      rec.textContent=on?"结束录制":"开始录制";
+      rec.setAttribute("aria-pressed", on?"true":"false");
+      rec.disabled=false;
+    }
+    if(mins){
+      if(on || lastMeetingId){
+        mins.hidden=false;
+        mins.textContent=on?"结束并生成纪要":"生成会议纪要";
+      } else {
+        mins.hidden=true;
+      }
+    }
+    setMeetingUi(!!meetingId || on);
+  }
+  function showMeetingDesk(on){
+    var d=$("meetingDesk");
+    if(!d) return;
+    if(on){
+      d.hidden=false;
+      d.removeAttribute("hidden");
+      d.style.display="flex";
+      paintMeetingVoiceMeta();
+      var hint=$("meetingHint");
+      if(hint && !meetingId) hint.textContent="未录制";
+      var empty=$("meetingEmpty");
+      var live=$("meetingLive");
+      if(empty && live && !live.querySelector("p")) empty.hidden=false;
+      loadMeetingHistory();
+    } else {
+      d.hidden=true;
+      d.style.display="none";
+      showMeetingHistory(false);
+    }
+  }
+  function diarizeK(){
+    var sel=$("meetingK");
+    var n=sel?parseInt(sel.value,10):2;
+    if(n!==3 && n!==4) n=2;
+    return n;
+  }
+  function showMeetingHistory(on){
+    var list=$("meetingHistList");
+    var btn=$("meetingHistToggle");
+    if(!list) return;
+    if(on){
+      list.hidden=false;
+      if(btn) btn.setAttribute("aria-pressed","true");
+      loadMeetingHistory();
+    } else {
+      list.hidden=true;
+      if(btn) btn.setAttribute("aria-pressed","false");
+    }
+  }
+  function fmtMeetingWhen(iso){
+    var s=String(iso||"");
+    if(s.length>=16) return s.slice(0,16).replace("T"," ");
+    return s||"";
+  }
+  function loadMeetingHistory(){
+    var list=$("meetingHistList");
+    if(!list) return;
+    api("/api/meetings").then(function(d){
+      var items=(d&&d.meetings)||[];
+      list.innerHTML="";
+      if(!items.length){
+        list.innerHTML="<div class=\\"empty-live meeting-hist-empty\\">还没有历史会议</div>";
         return;
       }
-      meetingId=(d&&d.meeting&&d.meeting.id)||"";
-      if(!meetingId){ setStatus("会议开始失败"); return; }
-      setMeetingUi(true);
-      if(!sttLive) startStt();
+      items.forEach(function(m){
+        if(!m||!m.id) return;
+        var b=document.createElement("button");
+        b.type="button";
+        if(m.id===(meetingId||lastMeetingId)) b.className="active";
+        var title=(m.title||"会议").trim()||"会议";
+        var when=fmtMeetingWhen(m.started_at);
+        var st=m.status||"";
+        b.innerHTML="<strong>"+esc(title)+"</strong><small>"+esc(when+(st?" · "+st:""))+"</small>";
+        b.onclick=function(){ openPastMeeting(m.id); };
+        list.appendChild(b);
+      });
+    }).catch(function(){});
+  }
+  function paintTranscript(lines){
+    var box=$("meetingLive");
+    if(!box) return;
+    box.innerHTML="";
+    meetingLines=[];
+    if(!lines||!lines.length){
+      box.innerHTML="<div class=\\"empty-live\\" id=\\"meetingEmpty\\">点「开始录制」后约 8 秒出字。语音识别用侧栏听写设置。说话人是匿名「发言人N」，不是认人。</div>";
+      return;
+    }
+    lines.forEach(function(l){
+      var text=typeof l==="string"?l:(l&&l.text)||"";
+      var sp=l&&typeof l.speaker==="string"?l.speaker:"";
+      if(text) appendMeetingLive(text, sp);
+    });
+  }
+  function openPastMeeting(id){
+    if(meetingId) endMeetingCapture();
+    api("/api/meeting?id="+encodeURIComponent(id)).then(function(d){
+      var m=d&&d.meeting;
+      if(!m||!m.id){ setStatus("打不开这场会议"); return; }
+      lastMeetingId=m.id;
+      meetingId="";
+      meetingFeats=[];
+      showMeetingHistory(false);
+      paintTranscript(m.transcript||[]);
+      var mins=$("meetingMinutes");
+      var md=m.minutes&&(m.minutes.raw_md||m.minutes.md);
+      if(mins){
+        if(md){ mins.hidden=false; mins.innerHTML=renderMd(md); }
+        else { mins.hidden=true; mins.innerHTML=""; }
+      }
+      var hint=$("meetingHint");
+      if(hint) hint.textContent=(m.title||"会议")+" · "+(m.status||"历史");
+      setRecordingUi(false);
+      setStatus("");
     }).catch(function(e){setStatus(String(e&&e.message||e))});
+  }
+  function paintDiarized(d){
+    var m=d&&d.meeting;
+    if(!m||!Array.isArray(m.transcript)) return;
+    paintTranscript(m.transcript);
+    var method=d.diarize&&d.diarize.method||m.diarize&&m.diarize.method;
+    setStatus(method==="text_gap"?"已弱标说话人（按行交替 · 非声学）":"已标匿名发言人（实验 · 非身份识别）");
+  }
+  function runDiarize(mode){
+    var id=meetingId||lastMeetingId;
+    if(!id){ setStatus("没有会议"); return; }
+    var payload={id:id,k:diarizeK(),privacy_ack_v1:true,mode:mode==="text_gap"?"text_gap":"audio_cluster"};
+    if(payload.mode==="audio_cluster"){
+      if(meetingFeats.length<2 || meetingFeats.length!==meetingLines.length){
+        payload.mode="text_gap";
+        setStatus("没有对齐的声学特征，改用弱标（交替）");
+      } else {
+        payload.features=meetingFeats;
+      }
+    }
+    api("/api/meeting/diarize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).then(function(d){
+      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
+        setStatus(d.message||d.error||"分角色失败");
+        return;
+      }
+      paintDiarized(d);
+    }).catch(function(e){setStatus(String(e&&e.message||e))});
+  }
+  var diarizeTimer=null;
+  function maybeDiarizeLive(){
+    if(!meetingId) return;
+    if(meetingFeats.length<2) return;
+    if(meetingFeats.length!==meetingLines.length) return;
+    if(diarizeTimer) clearTimeout(diarizeTimer);
+    diarizeTimer=setTimeout(function(){ runDiarize("audio_cluster"); },700);
+  }
+  function appendMeetingLive(text, speaker){
+    var box=$("meetingLive");
+    if(!box||!text) return;
+    var empty=$("meetingEmpty");
+    if(empty) empty.hidden=true;
+    var p=document.createElement("p");
+    if(speaker){
+      p.innerHTML="<span class=\\"spk\\">"+esc(speaker)+"</span> "+esc(text);
+    } else {
+      p.textContent=text;
+    }
+    box.appendChild(p);
+    box.scrollTop=box.scrollHeight;
+    meetingLines.push({text:text,speaker:speaker||""});
+  }
+  function startMeetingCapture(){
+    if(meetingId) return;
+    var rec=$("meetingRec");
+    if(rec) rec.disabled=true;
+    loadVoiceSettings().then(function(){
+    if(voiceSettings.sttEngine!=="local"){
+      var need=STT_NEED_MODEL;
+      setStatus(need);
+      var h0=$("meetingHint");
+      if(h0) h0.textContent="请在侧栏设置启用本机转写";
+      if(rec) rec.disabled=false;
+      return;
+    }
+    meetingFeats=[];
+    meetingLines=[];
+    sttFeatsBySid={};
+    showMeetingHistory(false);
+    var part=$("meetingPartial");
+    if(part) part.textContent="";
+    var mins=$("meetingMinutes");
+    if(mins){ mins.hidden=true; mins.innerHTML=""; }
+    var live=$("meetingLive");
+    if(live) live.innerHTML="<div class=\\"empty-live\\" id=\\"meetingEmpty\\">正在听…约 8 秒出第一段字。</div>";
+    showMeetingDesk(true);
+    var hint=$("meetingHint");
+    if(hint) hint.textContent="正在开始…";
+    var payload={};
+    if(threadId) payload.thread_id=threadId;
+    return api("/api/meeting/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).then(function(d){
+      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
+        var msg=sttUserCopy(d.code||d.error_code, d.message||d.error||"会议开始失败");
+        setStatus(msg);
+        if(hint) hint.textContent=msg;
+        if(rec) rec.disabled=false;
+        return;
+      }
+      var mid=(d&&d.meeting&&d.meeting.id)||(d&&d.data&&d.data.meeting&&d.data.meeting.id)||"";
+      if(typeof mid!=="string" || mid.indexOf("tray-")===0 || mid.indexOf("mtg_")!==0) mid="";
+      meetingId=mid;
+      if(!meetingId){
+        var fail="会议开始失败";
+        setStatus(fail);
+        if(hint) hint.textContent=fail;
+        if(rec) rec.disabled=false;
+        return;
+      }
+      lastMeetingId=meetingId;
+      setRecordingUi(true);
+      if(hint) hint.textContent="录制中 00:00";
+      startRecClock();
+      if(!sttLive) startStt();
+    }).catch(function(e){
+      var msg=String(e&&e.message||e);
+      setStatus(msg);
+      if(hint) hint.textContent=msg;
+      if(rec) rec.disabled=false;
+    });
+    }).catch(function(e){
+      var rec2=$("meetingRec");
+      if(rec2) rec2.disabled=false;
+      setStatus(String(e&&e.message||e));
+    });
   }
   function endMeetingCapture(){
     var id=meetingId;
     meetingId="";
-    setMeetingUi(false);
+    stopRecClock();
+    setRecordingUi(false);
     if(sttLive) stopStt(false);
-    if(!id){ setStatus("纪要在侧栏"); return; }
+    var hint=$("meetingHint");
+    if(hint) hint.textContent=id?"已结束 · 可生成纪要":"未录制";
+    var part=$("meetingPartial");
+    if(part) part.textContent="";
+    if(!id){ setStatus("未在录制"); return; }
+    lastMeetingId=id;
     api("/api/meeting/end",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})}).then(function(d){
       if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
-        setStatus(d.message||d.error||"会议结束失败");
+        setStatus(d.message||d.error||"结束录制失败");
         return;
       }
-      setStatus("纪要在侧栏");
+      setStatus("录制已结束");
+      if(meetingFeats.length>=2 && meetingFeats.length===meetingLines.length){
+        runDiarize("audio_cluster");
+      }
+      loadMeetingHistory();
+    }).catch(function(e){setStatus(String(e&&e.message||e))});
+  }
+  function requestMeetingMinutes(){
+    var id=meetingId||lastMeetingId;
+    if(!id){ setStatus("请先录制"); return; }
+    if(meetingId) endMeetingCapture();
+    setStatus("正在生成纪要…");
+    var hint=$("meetingHint");
+    if(hint) hint.textContent="正在生成纪要…";
+    api("/api/meeting/minutes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})}).then(function(d){
+      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
+        setStatus(d.message||d.error||"纪要生成失败");
+        return;
+      }
+      var md=(d&&d.minutes&&(d.minutes.raw_md||d.minutes.md))||(d&&d.raw_md)||"";
+      if(!md && d&&d.minutes&&typeof d.minutes==="string") md=d.minutes;
+      var box=$("meetingMinutes");
+      if(box && md){
+        box.hidden=false;
+        box.innerHTML=renderMd(md);
+      }
+      setStatus(md?"纪要已生成":"纪要已提交");
+      if(hint) hint.textContent=md?"纪要":"纪要已提交";
     }).catch(function(e){setStatus(String(e&&e.message||e))});
   }
   $("meetingStart").onclick=function(){
-    if(meetingId){ endMeetingCapture(); return; }
     if(!meetingAck){
       var sheet=$("meetingPrivacy");
       var vsec=$("meetingVoiceSection");
@@ -1475,38 +2175,68 @@ body{
       if(sheet) sheet.hidden=false;
       return;
     }
-    startMeetingCapture();
+    showMeetingDesk(true);
   };
   $("meetingPrivacyAck").onclick=function(){
     meetingAck=true;
     voiceAck=true;
     var sheet=$("meetingPrivacy");
     if(sheet) sheet.hidden=true;
+    showMeetingDesk(true);
+  };
+  $("meetingRec").onclick=function(){
+    if(meetingId){ endMeetingCapture(); return; }
     startMeetingCapture();
   };
+  $("meetingHistToggle").onclick=function(){
+    var list=$("meetingHistList");
+    showMeetingHistory(!(list && !list.hidden));
+  };
+  $("meetingDiarize").onclick=function(){ runDiarize("audio_cluster"); };
+  $("meetingMinutesBtn").onclick=function(){ requestMeetingMinutes(); };
+  $("meetingBack").onclick=function(){
+    if(meetingId) endMeetingCapture();
+    showMeetingDesk(false);
+  };
   $("operateOpen").onclick=function(){
+    setStatus("正在打开侧栏…");
     api("/api/operate",{method:"POST"}).then(function(d){
       if(d && (d.type==="error" || d.error)){
         setStatus("请点工具栏 C");
         return;
       }
-      setStatus(d&&d.message||"");
+      setStatus("已请浏览器打开侧栏");
     }).catch(function(){setStatus("请点工具栏 C")});
   };
+  function showHistory(on){
+    var hud=$("hud");
+    if(!hud) return;
+    if(on){ hud.classList.add("history"); refresh(); }
+    else hud.classList.remove("history");
+  }
+  $("historyOpen").onclick=function(){ showHistory(true); };
+  $("historyClose").onclick=function(){ showHistory(false); };
+  $("newChat").onclick=function(){ $("newThread").click(); };
   $("newThreadBar").onclick=function(){$("newThread").click()};
   $("newThread").onclick=function(){
     api("/api/threads",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(d){
       var id=d.thread&&d.thread.id;
       if(!id){setStatus("新建失败");return}
+      showHistory(false);
       return refresh().then(function(){return selectThread(id)});
     });
   };
   $("text").addEventListener("keydown",function(e){
-    if(e.key!=="Enter" || e.isComposing) return;
-    if(e.shiftKey){
+    if(e.key!=="Enter" || e.isComposing || e.keyCode===229) return;
+    if(e.shiftKey && !e.metaKey && !e.ctrlKey){
       if(busy){e.preventDefault();send("enqueue")}
       return;
     }
+    var go=false;
+    if(sendShortcut==="Enter") go=!e.shiftKey && !e.metaKey && !e.ctrlKey;
+    else if(sendShortcut==="Cmd+Enter") go=e.metaKey && !e.ctrlKey;
+    else if(sendShortcut==="Ctrl+Enter") go=e.ctrlKey && !e.metaKey;
+    if(!go) return;
     e.preventDefault();
     send(busy?"steer":"create");
   });
@@ -1663,6 +2393,10 @@ body{
     es.onmessage=function(ev){
       var d; try{d=JSON.parse(ev.data)}catch(e){return}
       var t=d&&d.type;
+      if(t==="shell.close"){
+        try{window.close()}catch(e){}
+        return;
+      }
       if(t==="error"||t==="chat.error"){
         setStatus(statusFromEvent(d));
         return;
@@ -1676,14 +2410,35 @@ body{
         startPoll();
         return;
       }
+      if(t==="voice.stt.partial"){
+        if(meetingId){
+          var pt=typeof d.text==="string"?d.text:"";
+          var mp=$("meetingPartial");
+          if(mp && pt) mp.textContent=pt;
+        }
+        return;
+      }
       if(t==="voice.stt.result"){
+        var sid=typeof d.sessionId==="string"?d.sessionId:"";
         var txt=typeof d.text==="string"?d.text.trim():"";
-        if(txt && !meetingId){
+        if(txt && meetingId){
+          var feat=sid&&sttFeatsBySid[sid];
+          if(feat) meetingFeats.push(feat);
+          else meetingFeats.push([0,0,0]);
+          appendMeetingLive(txt, "");
+          var mp2=$("meetingPartial");
+          if(mp2) mp2.textContent="";
+          api("/api/meeting/append",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:meetingId,text:txt})}).then(function(){ maybeDiarizeLive(); });
+        } else if(txt && !meetingId){
           var cur=$("text").value;
           $("text").value=cur&&cur.trim()?cur.replace(/\\s*$/,"")+" "+txt:txt;
         }
-        if(sttLive) stopStt(false);
-        if(meetingId) startStt();
+        if(sttLive && (!sid || sttSid===sid)) stopStt(false);
+        if(meetingId && !sttLive) startStt();
+        return;
+      }
+      if(t==="meeting.diarized"){
+        paintDiarized(d);
         return;
       }
       if(t==="voice.stt.error"){
@@ -1696,10 +2451,25 @@ body{
         return;
       }
       if(t==="meeting.ended"){
+        if(meetingId) lastMeetingId=meetingId;
         meetingId="";
-        setMeetingUi(false);
+        stopRecClock();
+        setRecordingUi(false);
         if(sttLive) stopStt(false);
-        setStatus("纪要在侧栏");
+        var hint=$("meetingHint");
+        if(hint) hint.textContent="已结束 · 可生成纪要";
+        setStatus("录制已结束");
+        return;
+      }
+      if(t==="meeting.minutes_result"){
+        var md=(d&&d.minutes&&(d.minutes.raw_md||d.minutes.md))||d.raw_md||"";
+        var box=$("meetingMinutes");
+        if(box && md){
+          showMeetingDesk(true);
+          box.hidden=false;
+          box.innerHTML=renderMd(md);
+        }
+        setStatus(md?"纪要已生成":"纪要已提交");
         return;
       }
       if(t==="mcp.confirm.pending"){
@@ -1723,11 +2493,12 @@ body{
     };
   }catch(e){}
   setExpanded(true);
-  refresh().then(function(){
+  threadReady=refresh().then(function(){
     if(wanted) return selectThread(wanted);
     if(threads[0]) return selectThread(threads[0].id);
   }).catch(function(e){setStatus(String(e&&e.message||e))});
 })();
+}catch(e){try{var s=document.getElementById("status");if(s)s.textContent=String(e&&e.message||e)}catch(x){}}
 </script>
 </body>
 </html>`

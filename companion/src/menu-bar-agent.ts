@@ -1635,7 +1635,12 @@ function dispatchSummonerWeb(
     // HTML C-thin cannot answer overlay L2; ride tray client like the Swift HUD.
     return companionClient.sendAppRequest(type, params, 60_000)
   }
-  const timeout = type === "pack.apply" || type === "file.upload" ? 30_000 : 8_000
+  const timeout =
+    type === "meeting.generate_minutes"
+      ? 90_000
+      : type === "pack.apply" || type === "file.upload"
+        ? 30_000
+        : 8_000
   return client.sendAppRequest(type, params, timeout)
 }
 
@@ -1690,6 +1695,15 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
   }
 }
 
+async function toggleSummonerWebShell(threadId: string): Promise<void> {
+  const { summonerWebIsShowing, hideSummonerWebShell } = require("./summoner-web") as typeof import("./summoner-web")
+  if (summonerWebIsShowing()) {
+    hideSummonerWebShell()
+    return
+  }
+  await openSummonerWebShell(threadId)
+}
+
 // ---------------------------------------------------------------------------
 // Action dispatch — routes tray clicks to handlers
 // ---------------------------------------------------------------------------
@@ -1709,6 +1723,9 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       break
     case "summoner":
       await openSummonerWebShell("")
+      break
+    case "summoner-toggle":
+      await toggleSummonerWebShell("")
       break
     case "autostart": await toggleAutoStart(); break
     case "quick-action":

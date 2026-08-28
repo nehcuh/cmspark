@@ -8,6 +8,10 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import {
   isSummonerLoopbackUrl,
+  overlayWindowPosition,
+  OVERLAY_WINDOW_SIZE,
+  parseFinderDesktopBounds,
+  parseOverlayChromePids,
   planSummonerShellOpen,
   resolveSummonerBrowserPath,
 } from "../src/summoner/shell-open"
@@ -90,7 +94,51 @@ test("planSummonerShellOpen uses --app window when browser path is known", () =>
   assert.equal(r.kind, "app-window")
   assert.equal(r.command, "/usr/bin/google-chrome")
   assert.ok(r.args.some((a) => a === `--app=${LOOP}`))
-  assert.ok(r.args.some((a) => a === "--window-size=400,520"))
+  assert.ok(r.args.some((a) => a === `--window-size=${OVERLAY_WINDOW_SIZE.w},${OVERLAY_WINDOW_SIZE.h}`))
+})
+
+test("planSummonerShellOpen pins own profile + position so Chrome-already-running honors size", () => {
+  const r = planSummonerShellOpen(LOOP, {
+    platform: "linux",
+    browserPath: "/usr/bin/google-chrome",
+    userDataDir: "/tmp/cmspark-overlay-chrome",
+    windowPosition: { x: 540, y: 226 },
+  })
+  assert.equal("error" in r, false)
+  if ("error" in r) return
+  assert.equal(r.kind, "app-window")
+  assert.ok(r.args.includes(`--app=${LOOP}`))
+  assert.ok(r.args.includes("--window-size=360,420"))
+  assert.ok(r.args.includes("--window-position=540,226"))
+  assert.ok(r.args.includes("--user-data-dir=/tmp/cmspark-overlay-chrome"))
+  assert.ok(r.args.includes("--no-first-run"))
+  assert.ok(r.args.includes("--no-default-browser-check"))
+})
+
+test("overlayWindowPosition centers inner card on the screen", () => {
+  const p = overlayWindowPosition(1440, 900)
+  assert.equal(p.x, 540)
+  assert.equal(p.y, 226)
+  const small = overlayWindowPosition(320, 400)
+  assert.equal(small.x, 0)
+  assert.equal(small.y, 0)
+})
+
+test("parseFinderDesktopBounds reads Finder desktop bounds", () => {
+  assert.deepEqual(parseFinderDesktopBounds("0, 0, 1512, 982"), { w: 1512, h: 982 })
+  assert.equal(parseFinderDesktopBounds("nope"), null)
+})
+
+test("parseOverlayChromePids matches only the overlay profile", () => {
+  const dir = "/tmp/cmspark-overlay-chrome"
+  const ps = [
+    `  123 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=${dir} --app=http://127.0.0.1:23403/`,
+    `  456 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/1/Helpers/Google Chrome Helper --user-data-dir=${dir}`,
+    `  789 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome`,
+    `  101 node cmspark-agent.js tray`,
+  ].join("\n")
+  assert.deepEqual(parseOverlayChromePids(ps, dir), [123, 456])
+  assert.deepEqual(parseOverlayChromePids(ps, "/tmp/other"), [])
 })
 
 test("planSummonerShellOpen falls back to system browser without chrome", () => {
@@ -129,7 +177,7 @@ test("openLoopbackPage uses the planner (not raw open only)", () => {
   const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
   assert.match(src, /planSummonerShellOpen/)
   assert.match(src, /resolveSummonerBrowserPath/)
-  assert.match(src, /h=expanded\?520:120/)
+  assert.match(src, /var w=\$\{OVERLAY_WINDOW_SIZE\.w\},h=\$\{OVERLAY_WINDOW_SIZE\.h\}/)
 })
 
 test("openLoopbackPage spawns --app for loopback and skips evil URLs", () => {
@@ -152,12 +200,17 @@ test("openLoopbackPage spawns --app for loopback and skips evil URLs", () => {
       platform: "linux",
       browserPath: "/usr/bin/google-chrome",
       spawn,
+      userDataDir: "/tmp/cmspark-overlay-chrome-test",
+      screen: { w: 1440, h: 900 },
     }),
     true,
   )
   assert.equal(calls.length, 1)
   assert.equal(calls[0].command, "/usr/bin/google-chrome")
   assert.ok(calls[0].args.includes(`--app=${LOOP}`))
+  assert.ok(calls[0].args.includes("--window-size=360,420"))
+  assert.ok(calls[0].args.includes("--window-position=540,226"))
+  assert.ok(calls[0].args.includes("--user-data-dir=/tmp/cmspark-overlay-chrome-test"))
   assert.equal(calls[0].shell, undefined)
 })
 
