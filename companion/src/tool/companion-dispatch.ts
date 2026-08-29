@@ -1039,6 +1039,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       }
     }
     case "osascript_eval": {
+      // Absolute first: platform fail-closed before URL/token noise (P0 / C-N1).
+      // Linux CI must see macos-only, not a missing-url error for a fragment.
+      if (!shouldL2GateOsascript(os.platform())) {
+        return { success: false, error: OSASCRIPT_MACOS_ONLY_ERROR }
+      }
       const jsExpr =
         (typeof params.expression === "string" && params.expression) ||
         (typeof params.code === "string" && params.code) ||
@@ -1096,9 +1101,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const lengthCheck = securityPolicy.checkLength("osascript_eval", jsExpr)
       if (!lengthCheck.ok) {
         return { success: false, error: lengthCheck.error }
-      }
-      if (!shouldL2GateOsascript(os.platform())) {
-        return { success: false, error: OSASCRIPT_MACOS_ONLY_ERROR }
       }
       // Use execFile with absolute OSASCRIPT_BIN + -e argv (P0 injection + PATH harden).
       // Bare "osascript" fails with spawn ENOTDIR when process PATH contains a *file*
