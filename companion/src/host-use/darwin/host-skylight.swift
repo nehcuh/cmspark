@@ -599,7 +599,9 @@ do {
         // subcommand): CGEventTap hotkey + UNIX socket proof-of-life. Never
         // returns on success — it hosts a CFRunLoop until killed.
         guard let sock = argValue("--socket-path") else { fputs("estop: --socket-path required\n", stderr); exit(2) }
-        try runEstop(socketPath: sock, flagPath: argValue("--flag-path") ?? "/tmp/cmspark-estop.flag")
+        let flag = argValue("--flag-path") ?? estopDerivedPath(sock, ext: ".flag")
+        let nonceFile = argValue("--nonce-file") ?? estopDerivedPath(sock, ext: ".nonce")
+        try runEstop(socketPath: sock, flagPath: flag, nonceFile: nonceFile)
 
     default:
         FileHandle.standardError.write("unknown subcommand: \(subcommand)\n".data(using: .utf8)!)
@@ -1308,14 +1310,55 @@ func cuEvidenceSeal(inputPath: String, outputPath: String) -> String {
 // for THIS binary. tapCreate returning nil = not trusted → exit with a clear
 // stderr message so the companion's preflight fails closed fast.
 
+/// `estop.sock` → `estop.flag` / `estop.nonce`. Flag default must not fall back
+/// to anonymous /tmp (B2 / pin 12). --socket-path remains a required CLI arg.
+func estopDerivedPath(_ socketPath: String, ext: String) -> String {
+    if socketPath.hasSuffix(".sock") {
+        return String(socketPath.dropLast(5)) + ext
+    }
+    return socketPath + ext
+}
+
+func generateEstopNonce() -> String {
+    var bytes = [UInt8](repeating: 0, count: 16)
+    _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+    return bytes.map { String(format: "%02x", $0) }.joined()
+}
+
+func isHexNonce(_ s: String) -> Bool {
+    return s.count == 32 && s.allSatisfy { $0.isHexDigit }
+}
+
+func loadOrCreateEstopNonce(path: String) -> String {
+    if let raw = try? String(contentsOfFile: path, encoding: .utf8) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isHexNonce(trimmed) { return trimmed }
+    }
+    let nonce = generateEstopNonce()
+    unlink(path)
+    FileManager.default.createFile(
+        atPath: path,
+        contents: nonce.data(using: .utf8),
+        attributes: [.posixPermissions: 0o600]
+    )
+    _ = chmod(path, 0o600)
+    return nonce
+}
+
 final class EstopContext {
     let flagPath: String
+    let nonce: String
     private var clients: [Int32] = []
     private let lock = NSLock()
 
-    init(flagPath: String) { self.flagPath = flagPath }
+    init(flagPath: String, nonce: String) {
+        self.flagPath = flagPath
+        self.nonce = nonce
+    }
 
     func addClient(_ fd: Int32) {
+        let greeting = "cmspark-estop \(nonce)\n"
+        _ = greeting.withCString { write(fd, $0, strlen($0)) }
         lock.lock(); clients.append(fd); lock.unlock()
     }
 
@@ -1361,8 +1404,16 @@ private func estopEventTapCallback(
 /// Bind + listen on the UNIX socket, spawn the accept loop, install the
 /// event tap, then run the run loop forever. Returns Never on success;
 /// throws (fast, with a stderr message) when setup fails.
-func runEstop(socketPath: String, flagPath: String) throws -> Never {
+func runEstop(socketPath: String, flagPath: String, nonceFile: String) throws -> Never {
     // 1. UNIX socket server (proof-of-life; accepted connections are held open)
+    let parent = (socketPath as NSString).deletingLastPathComponent
+    if !parent.isEmpty {
+        try? FileManager.default.createDirectory(
+            atPath: parent,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+    }
     unlink(socketPath)  // stale socket from a previous (killed) helper
     let serverFD = socket(AF_UNIX, SOCK_STREAM, 0)
     guard serverFD >= 0 else {
@@ -1389,12 +1440,17 @@ func runEstop(socketPath: String, flagPath: String) throws -> Never {
         let e = errno; close(serverFD)
         throw HostError(code: 3, message: "estop: bind \(socketPath) failed: errno=\(e)")
     }
+    if chmod(socketPath, 0o600) != 0 {
+        let e = errno; close(serverFD)
+        throw HostError(code: 3, message: "estop: chmod 0600 \(socketPath) failed: errno=\(e)")
+    }
     guard listen(serverFD, 8) == 0 else {
         let e = errno; close(serverFD)
         throw HostError(code: 3, message: "estop: listen failed: errno=\(e)")
     }
 
-    let ctx = EstopContext(flagPath: flagPath)
+    let nonce = loadOrCreateEstopNonce(path: nonceFile)
+    let ctx = EstopContext(flagPath: flagPath, nonce: nonce)
     gEstopCtx = ctx
 
     DispatchQueue.global().async {

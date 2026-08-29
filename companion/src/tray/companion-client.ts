@@ -411,7 +411,7 @@ export class CompanionClient {
     try {
       await releaseAllOverlayLeases((type, body) => this.sendRequest(type, body))
     } catch {
-      // close still must not abort chat
+      // overlay LLM abort is companion-side (release_overlay → abortLlmLoopsForPanel)
     }
   }
 
@@ -471,23 +471,29 @@ export class CompanionClient {
         return
       }
 
-      const id = `tray-${++this.requestId}`
+      const rpcId = `tray-${++this.requestId}`
       const effectiveTimeout = timeoutMs ?? 5000
       const timer = setTimeout(() => {
-        this.pendingRequests.delete(id)
+        this.pendingRequests.delete(rpcId)
         reject(new Error(`Request timeout: ${type}`))
       }, effectiveTimeout)
 
-      this.pendingRequests.set(id, { resolve, reject, timer })
+      this.pendingRequests.set(rpcId, { resolve, reject, timer })
 
-      const msg: Record<string, any> = { type, id }
+      const msg: Record<string, any> = { type, id: rpcId }
       if (params) Object.assign(msg, params)
+      // meeting.* uses `id` as meeting id (`mtg_…`). Do not let that clobber the
+      // RPC correlation id the server echoes; handlers read `meeting_id`.
+      if (type.startsWith("meeting.") && typeof params?.id === "string" && params.id) {
+        msg.meeting_id = params.id
+      }
+      msg.id = rpcId
 
       try {
         this.ws.send(JSON.stringify(msg))
       } catch (err) {
         clearTimeout(timer)
-        this.pendingRequests.delete(id)
+        this.pendingRequests.delete(rpcId)
         reject(err)
       }
     })

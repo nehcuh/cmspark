@@ -21,6 +21,7 @@ export type TrayActionType =
   | "quick-action" | "recent-thread"
   | "show-pairing"
   | "summoner"
+  | "summoner-toggle"
 
 export interface TrayMenuAction {
   type: TrayActionType

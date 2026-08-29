@@ -1085,6 +1085,14 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, testVisionResult: action.result }
     case "SET_SEND_SHORTCUT":
       chrome.storage.local.set({ sendShortcut: action.shortcut })
+      try {
+        chrome.runtime.sendMessage({
+          type: "config.set",
+          config: { summoner: { send_shortcut: action.shortcut } },
+        })
+      } catch {
+        /* overlay reads companion; local storage still wins in the side panel */
+      }
       return { ...state, sendShortcut: action.shortcut }
     case "SET_SHOW_REASONING_MODE": {
       const mode = action.mode

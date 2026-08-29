@@ -1,7 +1,8 @@
 /**
  * meeting.* WS handlers (SoT meeting-minutes).
  * create/start/end: chrome-extension OR summoner + cmspark-tray://local.
- * generate_minutes / auto_diarize / import_text / append remain extension-only.
+ * generate_minutes / append_transcript: chrome-extension OR overlay (summoner + tray).
+ * auto_diarize / import_text remain extension-only.
  */
 
 import { getConfig } from "../config"
@@ -21,6 +22,7 @@ import {
   setMeetingStatus,
   setMinutes,
   setTranscript,
+  isSafeMeetingId,
   startMeetingRecording,
   transcriptToText,
   type TranscriptLine,
@@ -82,7 +84,31 @@ function err(code: string, message: string, extra?: Record<string, unknown>) {
   return { type: "meeting.error", v: 1, code, message, ...extra }
 }
 
-const OVERLAY_MEETING_TYPES = new Set(["meeting.create", "meeting.start", "meeting.end"])
+const OVERLAY_MEETING_TYPES = new Set([
+  "meeting.create",
+  "meeting.start",
+  "meeting.end",
+  "meeting.append_transcript",
+  "meeting.generate_minutes",
+  "meeting.list",
+  "meeting.get",
+  "meeting.auto_diarize",
+])
+
+/**
+ * Overlay tray RPC stamps `id: "tray-N"` for correlation. That is not a meeting
+ * id (`mtg_…`). Prefer `meeting_id`; ignore tray request ids and unsafe paths.
+ */
+export function resolveMeetingId(msg: any): string {
+  const candidates = [msg?.meeting_id, msg?.id]
+  for (const raw of candidates) {
+    if (typeof raw !== "string" || !raw) continue
+    if (/^tray-\d+$/.test(raw)) continue
+    if (!isSafeMeetingId(raw)) continue
+    return raw
+  }
+  return ""
+}
 
 export async function handleMeetingMessage(
   msg: any,
@@ -121,7 +147,7 @@ export async function handleMeetingMessage(
     if (msg.privacy_ack_v1 !== true) {
       return err("need_privacy_ack", "meeting_privacy_ack_v1 required before start")
     }
-    let id = typeof msg.id === "string" ? msg.id : ""
+    let id = resolveMeetingId(msg)
     if (!id) {
       const session = createMeeting({
         title: typeof msg.title === "string" ? msg.title : undefined,
@@ -156,7 +182,7 @@ export async function handleMeetingMessage(
 
   /** End live capture; default delete meetings/<id>/audio when not retained. */
   if (type === "meeting.end") {
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     if (!id) return err("invalid_id", "meeting.end requires id")
     const result = endMeetingRecording(id)
     if (!result) return err("not_found", "meeting not found", { id })
@@ -178,7 +204,7 @@ export async function handleMeetingMessage(
   }
 
   if (type === "meeting.delete") {
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     if (!id) return err("invalid_id", "meeting.delete requires id")
     const ok = deleteMeeting(id)
     if (!ok) return err("not_found", "meeting not found", { id })
@@ -186,14 +212,14 @@ export async function handleMeetingMessage(
   }
 
   if (type === "meeting.get") {
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     const m = loadMeeting(id)
     if (!m) return err("not_found", "meeting not found", { id })
     return { type: "meeting.get_result", v: 1, meeting: m }
   }
 
   if (type === "meeting.set_transcript") {
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     const text = typeof msg.text === "string" ? msg.text : ""
     const source: TranscriptSource =
       msg.source === "stt" || msg.source === "paste" || msg.source === "user_edit"
@@ -215,7 +241,7 @@ export async function handleMeetingMessage(
   }
 
   if (type === "meeting.append_transcript") {
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     const text = typeof msg.text === "string" ? msg.text : ""
     if (!text.trim()) return err("empty_transcript", "empty text", { id })
     const line: TranscriptLine = {
@@ -239,7 +265,7 @@ export async function handleMeetingMessage(
    * Does NOT invent speakers.
    */
   if (type === "meeting.apply_silence_cut") {
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     let m = loadMeeting(id)
     if (!m) return err("not_found", "meeting not found", { id })
     if (typeof msg.text === "string" && msg.text.trim()) {
@@ -256,7 +282,7 @@ export async function handleMeetingMessage(
    * assignments: [{ index, speaker }] speaker null/"" clears.
    */
   if (type === "meeting.set_speakers") {
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     const m = loadMeeting(id)
     if (!m) return err("not_found", "meeting not found", { id })
     const raw = Array.isArray(msg.assignments) ? msg.assignments : []
@@ -283,7 +309,7 @@ export async function handleMeetingMessage(
    * Optional msg.text: set transcript (silence-cut) first — single round-trip, no client race.
    */
   if (type === "meeting.bulk_speaker") {
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     let m = loadMeeting(id)
     if (!m) return err("not_found", "meeting not found", { id })
     if (typeof msg.text === "string" && msg.text.trim()) {
@@ -308,7 +334,7 @@ export async function handleMeetingMessage(
     if (msg.privacy_ack_v1 !== true) {
       return err("need_privacy_ack", "meeting_privacy_ack_v1 required for auto_diarize")
     }
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     let m = loadMeeting(id)
     if (!m) return err("not_found", "meeting not found", { id })
     // Optional text: silence-cut set before diarize (text_gap path)
@@ -378,7 +404,7 @@ export async function handleMeetingMessage(
     const text = typeof msg.text === "string" ? msg.text : ""
     if (!text.trim()) return err("empty_transcript", "empty import text")
     if (text.length > 200_000) return err("too_large", "import text too long (max 200000)")
-    let id = typeof msg.id === "string" ? msg.id : ""
+    let id = resolveMeetingId(msg)
     if (!id) {
       const session = createMeeting({
         title: typeof msg.title === "string" ? msg.title : undefined,
@@ -393,7 +419,7 @@ export async function handleMeetingMessage(
   }
 
   if (type === "meeting.generate_minutes") {
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     // Optional one-shot: text without persisted meeting
     const inlineText = typeof msg.text === "string" ? msg.text : ""
     let transcriptText = inlineText.trim()
@@ -446,7 +472,7 @@ export async function handleMeetingMessage(
   }
 
   if (type === "meeting.set_status") {
-    const id = typeof msg.id === "string" ? msg.id : ""
+    const id = resolveMeetingId(msg)
     const status = msg.status
     if (
       status !== "draft" &&

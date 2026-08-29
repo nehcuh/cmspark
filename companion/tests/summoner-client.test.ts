@@ -12,6 +12,9 @@ import {
   CONTINUE_MESSAGE,
   ATTACH_NOTIFY_COPY,
   ATTACH_SILENT_COPY,
+  SUMMONER_CDP_NEEDED,
+  SUMMONER_L0_CHROME_DOWN,
+  SUMMONER_RENTER_CHROME_DOWN,
   filterThreadsByTitle,
   forwardCompanionUiRect,
   mapChatMessageToSummonerCmd,
@@ -48,6 +51,16 @@ const THREADS = [
   { id: "mid", title: "Browser tab", alias: "chrome-debug", updated_at: "2026-08-10T00:00:00Z" },
   { id: "new", title: "Latest", alias: "today", updated_at: "2026-08-20T12:00:00Z", created_at: "2026-08-19T00:00:00Z" },
 ]
+
+test("Capture L0 copy: keep chatting; Operate is open the side panel", () => {
+  assert.match(SUMMONER_L0_CHROME_DOWN, /可以继续聊/)
+  assert.match(SUMMONER_L0_CHROME_DOWN, /打开侧栏/)
+  assert.doesNotMatch(SUMMONER_L0_CHROME_DOWN, /需要打开浏览器/)
+  assert.match(SUMMONER_CDP_NEEDED, /打开侧栏/)
+  assert.match(SUMMONER_RENTER_CHROME_DOWN, /打开侧栏/)
+  const html = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(html, /id="operateOpen"/)
+})
 
 test("CONTINUE_MESSAGE is the exact non-retry user line", () => {
   assert.equal(

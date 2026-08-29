@@ -313,8 +313,9 @@ const pendingLlmOneshot = new Map<
 async function handleCompanionMessage(msg: any) {
   if (msg.type === "ui.open_sidepanel") {
     try {
-      const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
-      const windowId = tabs[0]?.windowId
+      const wins = await chrome.windows.getAll({ windowTypes: ["normal"] })
+      const focused = wins.find((w) => w.focused) || wins[0]
+      const windowId = focused?.id
       if (windowId != null && chrome.sidePanel?.open) {
         await chrome.sidePanel.open({ windowId })
       }

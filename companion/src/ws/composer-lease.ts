@@ -125,6 +125,31 @@ export function stripCmsparkSurface(msg: any): unknown {
   return stamped
 }
 
+export function gateOverlayCurrentThread(
+  thread_id: string,
+  surface: unknown,
+  registry: ComposerLeaseRegistry = composerLeases,
+): { type: "error"; error: string; error_code: "OVERLAY_THREAD_MISMATCH" } | null {
+  if (surface !== "summoner") return null
+  const id = typeof thread_id === "string" ? thread_id.trim() : ""
+  if (!id) {
+    return {
+      type: "error",
+      error: "OVERLAY_THREAD_MISMATCH: overlay compose requires the overlay-held thread",
+      error_code: "OVERLAY_THREAD_MISMATCH",
+    }
+  }
+  const lease = registry.get(id)
+  if (lease.holder !== "overlay") {
+    return {
+      type: "error",
+      error: "OVERLAY_THREAD_MISMATCH: thread is not the overlay-held lease",
+      error_code: "OVERLAY_THREAD_MISMATCH",
+    }
+  }
+  return null
+}
+
 export function gateChatCreateOnLease(
   thread_id: string,
   surface: unknown,

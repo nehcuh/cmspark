@@ -13,6 +13,7 @@ test("background bulk-forwards ui.open_sidepanel; handleCompanionMessage opens s
   )
   assert.match(companionHandlerSlice, /ui\.open_sidepanel/)
   assert.match(companionHandlerSlice, /sidePanel\.open\(\s*\{\s*windowId/)
+  assert.match(companionHandlerSlice, /windowTypes:\s*\[["']normal["']\]/)
   const bulkForwardSlice = bg.slice(
     bg.indexOf('case "voice.stt.start"'),
     bg.indexOf('case "thread_graph.prepare"'),

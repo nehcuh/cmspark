@@ -74,6 +74,38 @@
 
 ## Technical Pitfalls
 
+### tray `sendRequest` 的 `id: tray-N` 不是会议 id（2026-08-28 · overlay 会议台）
+- **现象**：浮窗点「我已了解」后会议台空、hint「meeting not found」。
+- **根因**：`CompanionClient.sendRequest` 把 RPC 相关写成 WS `id: tray-${n}`。`meeting.start` 把 `msg.id` 当会议 id → `loadMeeting("tray-5")` 失败。`meeting.end`/`append`/`minutes` 若 `Object.assign` 用会议 id 盖掉 RPC id，pending 对不上、HTTP 5s 超时。
+- **纪律**：(1) RPC 永远 `id=tray-N`；(2) 域 id 走 `meeting_id`；(3) handler `resolveMeetingId` 忽略 `/^tray-\d+$/` 和非 `isSafeMeetingId`；(4) overlay 解析响应用 `meeting.id`（`mtg_…`），不要顶层 `id`。
+- **4 行 case**：动作=overlay `meeting.start` 无会议 id；失败=not_found；归责=RPC id 与域 id 同字段；保护=无 id 则内部 create，有 `mtg_` 才 load
+
+### Chrome 已在跑时 `--app --window-size` 会被丢掉（2026-08-28）
+- **坑**：用户 Chrome 已开，CLI `--window-size=360,420` / `--window-position` 常被忽略；`window.resizeTo`/`moveTo` 对 `--app` 也经常失败。狗食看到的是默认大窗 + 折叠 HUD。
+- **修**：独立 `--user-data-dir=~/.cmspark-agent/overlay-chrome`；关窗走该 profile 的 PID，不要 `pkill -f CMspark.app`（会匹配当前 wrapper）。
+- **4 行 case**：动作=托盘开 Capture 卡；失败=巨大空白 Chrome 窗；归责=共用用户资料；保护=overlay 必须自己的 Chrome profile
+
+### Overlay 内联 JS 活在 TS 模板字符串里：转义一坏整页脚本不跑（2026-08-28）
+- **现象**：只有原生 `<label for=files>` 能点，发送/会议/麦全死。
+- **根因**：`SUMMONER_HTML` 是 TS template。`esc()` 对象字面量、`alert("a\n b")` 的 `\n` 变成真换行 → `new Function(script)` 都过不了。
+- **纪律**：改 overlay 脚本后必须用 HTML `<script>` 抽出来 `new Function`；禁止在模板里写未转义的 `` ` `` / `${` / 真实换行字符串。
+- **4 行 case**：动作=点发送；失败=静默；归责=模板把 JS 弄坏；保护=测锁 parse + 看得见的发送钮
+
+### `chrome.sidePanel.open({windowId: lastFocused})` 会开到 overlay `--app`（2026-08-28 · #244）
+- **坑**：浮窗自己就是 last focused。点「打开浏览器并打开侧栏」侧栏挂在 360×420 `--app` 上。
+- **修**：SW 只对 `chrome.windows.getAll({windowTypes:["normal"]})` 调 `sidePanel.open`。Companion 永不 `chrome.*`。
+- **4 行 case**：动作=overlay 打开侧栏；失败=侧栏进了卡片窗；归责=lastFocused=自己；保护=只绑普通窗
+
+### `pgrep -f /Applications/CMspark.app` 会杀掉正在跑的 wrapper（2026-08-28）
+- **坑**：诊断/热替换脚本的 argv 含该路径，`pgrep -f` 命中自己 → SIGTERM，命令没跑完。
+- **纪律**：按 PID 杀；`ps -ax` + 过滤；热替换：`daemon stop` → `/bin/cp -f dist/cmspark-agent.js` → `open -a CMspark`。先 `tsc` 再 `bundle:exe`（package.sh 内联 MCP，dev `bundle:exe` 的 externals 列表已够当前 .app）。
+- **4 行 case**：动作=热替换狗食；失败=脚本自杀；归责=-f 匹配 cmdline；保护=按 PID / 不用 pkill -f 包路径
+
+### Overlay 会议 45s 窗 = 「没有实时转写」（2026-08-28）
+- **坑**：侧栏近实时是 ~8s + `voice.stt.partial_request`。浮窗 ScriptProcessor 用听写 45s 硬顶，第一段字很晚才来，用户以为没转写。
+- **修**：会议 `STT_MEETING_MS=8000` + `/api/stt/partial` 轮询；听写仍 45s。说话人是本机 k-means 匿名「发言人N」，不是认人。
+- **4 行 case**：动作=开始录制；失败=空台；归责=窗长抄了听写 cap；保护=会议跟 MeetingPanel 近实时
+
 ### T1 Playwright 干净 profile 打不开门户 ≠ 撞上 SSO 登录墙（2026-08-27）
 - **现象**：日常 Chrome 已打开 OA 可读邮件；bundled Chromium / Chrome channel / 空 user-data-dir GUI Chrome 对 `oa`/`home.cmschina.com.cn` 均 `ERR_EMPTY_RESPONSE`（~150ms，198.18 fake-ip，MacPacket `127.0.0.1:1082` 同样 empty reply）。curl 亦然。
 - **纪律**：对照臂必须是**新用户目录**，禁止 Chrome DevTools MCP（挂着已登录 Chrome）。没见到登录表单就**不得**对外说「证伪 SSO」。L7 可 PASS 带 nit：CMspark 完成、干净浏览器打不开；**仍禁**扩 outbound profile。

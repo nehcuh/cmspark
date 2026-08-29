@@ -372,8 +372,8 @@ class TrayDelegate: NSObject {
     } else if tag == MenuTag.pairing.rawValue {
       jsonLine(["type": "click", "action": "show-pairing"])
     } else if tag == MenuTag.summoner.rawValue {
-      // Mac 快捷提问 = native HUD（无标题条、无左轨），不是 Chromium --app。
-      summonerController.open(threadId: "")
+      // Same Capture card as Side Panel 「弹出对话框」 (Node openSummonerWebShell).
+      jsonLine(["type": "click", "action": "summoner"])
     } else if tag == MenuTag.summonerHotkey.rawValue {
       summonerController.open(threadId: "")
       summonerController.showHotkeyPicker()
@@ -1420,7 +1420,8 @@ func handleSummonerHotKeyPressed() {
     jsonLine(["type": "summoner.composing", "on": true])
     return
   }
-  summonerController.openFromHotKey()
+  // Same Capture card as tray menu / Side Panel 「弹出对话框」, but toggle hide.
+  jsonLine(["type": "click", "action": "summoner-toggle"])
 }
 
 

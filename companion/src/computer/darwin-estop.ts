@@ -1,4 +1,5 @@
-// macOS emergency-stop (WP3 + adversarial review C2 + tray-owned ownership 2026-08).
+// macOS emergency-stop (WP3 + adversarial review C2 + tray-owned ownership 2026-08
+// + B2 DATA_DIR identity #245).
 //
 // Architecture: CGEventTap hotkey → UNIX socket proof-of-life.
 //
@@ -9,9 +10,15 @@
 //   Companion ensureEstopHelper(): CONNECT first (with grace for tray boot);
 //   daemon spawn is last-resort fallback only (logged).
 //
+// Identity (B2 / pin 12): the socket lives under DATA_DIR (never anonymous
+// /tmp/cmspark-estop.*). CONNECT-first success is NOT armed unless the helper
+// presents a 0600 nonce greeting. Pre-bind of /tmp or of a DATA_DIR socket
+// without nonce/peer is fail-closed. Proof-of-life after arm is the long-lived
+// held connection (EOF when the helper dies) — hotkey/TCC contract unchanged.
+//
 // Flow:
-//   1. tray/app owns: spawn cmspark-host/CMspark estop --socket-path …
-//   2. companion connects to socket before task start
+//   1. tray/app owns: spawn cmspark-host/CMspark estop --socket-path … --flag-path … --nonce-file …
+//   2. companion connects, verifies greeting, holds the socket
 //   3. abortCheck polls: socket dead → EMERGENCY_STOP_LOST; flag file → hotkey
 //
 // Key security property (C2 fix): a killed estop process frees the socket
@@ -20,43 +27,178 @@
 
 import { spawn, type ChildProcess } from "child_process"
 import { createConnection, type Socket } from "net"
+import { randomBytes, timingSafeEqual } from "crypto"
 import * as fs from "fs"
+import * as os from "os"
+import * as path from "path"
 import { resolveHostBinary } from "../host-use/darwin/host-bin"
 import { resolveIntegrityHostBin } from "../host-use/darwin/host-integrity"
 import { logger } from "../logger"
 
-const ESTOP_SOCK_PATH = "/tmp/cmspark-estop.sock"
-const ESTOP_FLAG_PATH = "/tmp/cmspark-estop.flag"
+/** sockaddr_un.sun_path on Darwin is 104 bytes including the terminating NUL. */
+export const ESTOP_SUN_PATH_MAX = 104
+const GREETING_PREFIX = "cmspark-estop "
 
 /** Grace period for tray/Aqua-owned estop to appear before daemon fallback spawn. */
 const TRAY_OWNED_CONNECT_ATTEMPTS = 30 // 30 * 100ms = 3s
 const SPAWN_CONNECT_ATTEMPTS = 50 // 5s after spawn
 
-export function estopSocketPath(): string { return ESTOP_SOCK_PATH }
-export function estopFlagPath(): string  { return ESTOP_FLAG_PATH }
+function estopDataDir(): string {
+  return process.env.CMSPARK_DATA_DIR || path.join(os.homedir(), ".cmspark-agent")
+}
+
+export function estopSocketPath(): string {
+  return path.join(estopDataDir(), "estop.sock")
+}
+
+export function estopFlagPath(): string {
+  return path.join(estopDataDir(), "estop.flag")
+}
+
+export function estopNoncePath(): string {
+  return path.join(estopDataDir(), "estop.nonce")
+}
+
+function connectAttempts(fallback: number): number {
+  const n = Number(process.env.CMSPARK_ESTOP_CONNECT_ATTEMPTS)
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
+function connectGapMs(): number {
+  const n = Number(process.env.CMSPARK_ESTOP_CONNECT_GAP_MS)
+  return Number.isFinite(n) && n >= 0 ? n : 100
+}
+
+function ensureEstopDir(): void {
+  fs.mkdirSync(estopDataDir(), { recursive: true, mode: 0o700 })
+}
+
+function sunPathTooLong(sockPath: string): string | null {
+  const bytes = Buffer.byteLength(sockPath, "utf8")
+  if (bytes >= ESTOP_SUN_PATH_MAX) {
+    return `estop socket path too long (${bytes} bytes; sun_path max ${ESTOP_SUN_PATH_MAX - 1})`
+  }
+  return null
+}
+
+/** Reject sockets/files that are group/other accessible (want 0600). */
+function isOwnerOnly0600(p: string): boolean {
+  try {
+    const st = fs.statSync(p)
+    if ((st.mode & 0o077) !== 0) return false
+    if (typeof process.getuid === "function" && st.uid !== process.getuid()) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
+function readNonceFile(): string {
+  const p = estopNoncePath()
+  const raw = fs.readFileSync(p, "utf8").trim()
+  if (!/^[0-9a-f]{32}$/i.test(raw)) {
+    throw new Error("estop nonce file is not a 32-hex identity")
+  }
+  if (!isOwnerOnly0600(p)) {
+    throw new Error("estop nonce file identity rejected (mode/owner)")
+  }
+  return raw.toLowerCase()
+}
+
+function writeNonceFile(): string {
+  ensureEstopDir()
+  const p = estopNoncePath()
+  const nonce = randomBytes(16).toString("hex")
+  fs.writeFileSync(p, nonce, { encoding: "utf8", mode: 0o600 })
+  try {
+    fs.chmodSync(p, 0o600)
+  } catch {
+    /* umask already 0600 */
+  }
+  return nonce
+}
+
+function greetingMatches(line: string, nonce: string): boolean {
+  if (!line.startsWith(GREETING_PREFIX)) return false
+  const got = line.slice(GREETING_PREFIX.length).trim().toLowerCase()
+  if (got.length !== nonce.length) return false
+  try {
+    return timingSafeEqual(Buffer.from(got, "utf8"), Buffer.from(nonce, "utf8"))
+  } catch {
+    return false
+  }
+}
+
+function readGreeting(sock: Socket, timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let buf = ""
+    const timer = setTimeout(() => {
+      cleanup()
+      reject(new Error("estop greeting timeout"))
+    }, timeoutMs)
+    const onData = (chunk: Buffer | string) => {
+      buf += typeof chunk === "string" ? chunk : chunk.toString("utf8")
+      const nl = buf.indexOf("\n")
+      if (nl >= 0) {
+        cleanup()
+        resolve(buf.slice(0, nl).trim())
+      }
+    }
+    const onErr = (err: Error) => {
+      cleanup()
+      reject(err)
+    }
+    const cleanup = () => {
+      clearTimeout(timer)
+      sock.off("data", onData)
+      sock.off("error", onErr)
+    }
+    sock.on("data", onData)
+    sock.on("error", onErr)
+  })
+}
 
 export interface EstopResult { ok: boolean; reason?: string }
 
 /**
- * Connect to the UNIX socket (proof of liveness). Returns an open socket
- * or rejects if the estop helper is not reachable.
+ * Connect to the UNIX socket and verify DATA_DIR identity (0600 + nonce
+ * greeting). Returns an open socket or rejects if the helper is not the
+ * product estop (CONNECT-first without identity is not armed).
  */
 async function connectToEstop(timeoutMs = 2000): Promise<Socket> {
-  return new Promise((resolve, reject) => {
-    const sock = createConnection(ESTOP_SOCK_PATH)
+  const sockPath = estopSocketPath()
+  const tooLong = sunPathTooLong(sockPath)
+  if (tooLong) throw new Error(tooLong)
+  const nonce = readNonceFile()
+  if (!isOwnerOnly0600(sockPath)) {
+    throw new Error("estop socket identity rejected (mode/owner)")
+  }
+  const sock = await new Promise<Socket>((resolve, reject) => {
+    const s = createConnection({ path: sockPath })
     const timer = setTimeout(() => {
-      sock.destroy()
+      s.destroy()
       reject(new Error("estop socket connect timeout"))
     }, timeoutMs)
-    sock.on("connect", () => {
+    s.on("connect", () => {
       clearTimeout(timer)
-      resolve(sock)
+      resolve(s)
     })
-    sock.on("error", (err) => {
+    s.on("error", (err) => {
       clearTimeout(timer)
       reject(err)
     })
   })
+  try {
+    const line = await readGreeting(sock, timeoutMs)
+    if (!greetingMatches(line, nonce)) {
+      sock.destroy()
+      throw new Error("estop greeting mismatch")
+    }
+    return sock
+  } catch (err) {
+    sock.destroy()
+    throw err
+  }
 }
 
 /**
@@ -76,7 +218,7 @@ function holdSocket(sock: Socket): void {
 
 function unlinkEstopSocket(): void {
   try {
-    fs.unlinkSync(ESTOP_SOCK_PATH)
+    fs.unlinkSync(estopSocketPath())
   } catch {
     /* not present */
   }
@@ -99,7 +241,16 @@ async function tryConnectHeld(attempts: number, gapMs: number): Promise<boolean>
  * Spawn estop once (daemon fallback). Prefer tray/Aqua ownership instead.
  */
 async function spawnEstopOnce(): Promise<EstopResult> {
+  ensureEstopDir()
+  const sockPath = estopSocketPath()
+  const flagPath = estopFlagPath()
+  const nonceFile = estopNoncePath()
+  const tooLong = sunPathTooLong(sockPath)
+  if (tooLong) return { ok: false, reason: tooLong }
+
   unlinkEstopSocket()
+  writeNonceFile()
+
   const bin = resolveHostBinary()
   // P2 residual: long-lived host spawn must pass integrity gate (same as spawnHostBin)
   let safeBin: string
@@ -109,9 +260,14 @@ async function spawnEstopOnce(): Promise<EstopResult> {
     logger.warn("computer.estop.integrity_failed", { bin, error: String(err) })
     return { ok: false, reason: (err as Error).message || "host integrity failed" }
   }
-  logger.info("computer.estop.spawn", { bin: safeBin, sock: ESTOP_SOCK_PATH, owner: "daemon-fallback" })
+  logger.info("computer.estop.spawn", { bin: safeBin, sock: sockPath, owner: "daemon-fallback" })
 
-  const child = spawn(safeBin, ["estop", "--socket-path", ESTOP_SOCK_PATH], {
+  const child = spawn(safeBin, [
+    "estop",
+    "--socket-path", sockPath,
+    "--flag-path", flagPath,
+    "--nonce-file", nonceFile,
+  ], {
     detached: false,
     stdio: ["ignore", "ignore", "pipe"],
     env: process.env,
@@ -168,14 +324,20 @@ async function spawnEstopOnce(): Promise<EstopResult> {
  * Ensure the estop helper is running.
  *
  * 1. Held socket still alive → ok
- * 2. Connect to tray/Aqua-owned helper (grace period for app boot)
+ * 2. Connect to tray/Aqua-owned helper (grace period for app boot) WITH identity
  * 3. Last resort: daemon spawns helper (may hit CGEventTap/TCC code 4)
+ *
+ * CONNECT-first without DATA_DIR nonce/0600 is not armed.
  */
 export async function ensureEstopHelper(): Promise<EstopResult> {
   if (liveSock && !liveSock.destroyed) return { ok: true }
 
+  const sockPath = estopSocketPath()
+  const tooLong = sunPathTooLong(sockPath)
+  if (tooLong) return { ok: false, reason: tooLong }
+
   // Prefer existing tray-owned helper — do not kill/rebind their socket.
-  if (await tryConnectHeld(TRAY_OWNED_CONNECT_ATTEMPTS, 100)) {
+  if (await tryConnectHeld(connectAttempts(TRAY_OWNED_CONNECT_ATTEMPTS), connectGapMs())) {
     logger.info("computer.estop.connected", { owner: "external-or-tray" })
     return { ok: true }
   }
@@ -233,10 +395,10 @@ export function startTrayOwnedEstopBestEffort(): void {
 
 export function consumeEstopFlag(): boolean {
   try {
-    const content = fs.readFileSync(ESTOP_FLAG_PATH, "utf-8")
+    const content = fs.readFileSync(estopFlagPath(), "utf-8")
     const parsed = JSON.parse(content) as { timestamp?: number }
     if (typeof parsed.timestamp === "number" && Date.now() - parsed.timestamp < 30000) {
-      fs.unlinkSync(ESTOP_FLAG_PATH)
+      fs.unlinkSync(estopFlagPath())
       return true
     }
   } catch {
@@ -246,9 +408,29 @@ export function consumeEstopFlag(): boolean {
 }
 
 export function clearEstopFlag(): void {
-  try { fs.unlinkSync(ESTOP_FLAG_PATH) } catch { /* does not exist */ }
+  try { fs.unlinkSync(estopFlagPath()) } catch { /* does not exist */ }
 }
 
 export function estopHeartbeatLost(): boolean {
   return liveSock === null || liveSock.destroyed
+}
+
+/** Test-only: drop the held proof-of-life so the next ensure is a fresh connect. */
+export function resetDarwinEstopForTests(): void {
+  if (liveSock && !liveSock.destroyed) {
+    try {
+      liveSock.destroy()
+    } catch {
+      /* */
+    }
+  }
+  liveSock = null
+  if (liveChild && liveChild.exitCode === null && !liveChild.killed) {
+    try {
+      liveChild.kill()
+    } catch {
+      /* */
+    }
+  }
+  liveChild = null
 }

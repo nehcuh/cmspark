@@ -67,22 +67,32 @@ test("dispatchSummonerWeb fire-and-forgets voice.stt.chunk and abort", () => {
   assert.match(fn, /sendAppRequest\(type,\s*params/)
 })
 
-test("meeting.start allowed on summoner; generate_minutes is not", () => {
+test("meeting.start/append/generate_minutes/list/get/diarize allowed on summoner; import is not", () => {
   assert.equal(assertSummonerAllowed("summoner", "meeting.start").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "meeting.end").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "meeting.create").ok, true)
-  assert.equal(assertSummonerAllowed("summoner", "meeting.generate_minutes").ok, false)
-  assert.equal(assertSummonerAllowed("summoner", "meeting.auto_diarize").ok, false)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.append_transcript").ok, true)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.generate_minutes").ok, true)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.list").ok, true)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.get").ok, true)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.auto_diarize").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "meeting.import_text").ok, false)
-  assert.equal(assertSummonerAllowed("summoner", "meeting.append_transcript").ok, false)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.start"), true)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.create"), true)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.end"), true)
-  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.generate_minutes"), false)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.append_transcript"), true)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.generate_minutes"), true)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.list"), true)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.get"), true)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.auto_diarize"), true)
   assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.started"), true)
   assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.ended"), true)
   assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.created"), true)
   assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.error"), true)
+  assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.minutes_result"), true)
+  assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.list_result"), true)
+  assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.get_result"), true)
+  assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.diarized"), true)
 })
 
 test("tray origin + summoner surface allows meeting.start", async () => {
@@ -99,6 +109,51 @@ test("tray origin + summoner surface allows meeting.start", async () => {
   }
 })
 
+test("meeting.start ignores tray RPC id and creates a meeting", async () => {
+  const res = await handleMeetingMessage(
+    {
+      type: "meeting.start",
+      v: 1,
+      id: "tray-12",
+      privacy_ack_v1: true,
+      title: "overlay-rpc",
+    },
+    { origin: "cmspark-tray://local", surface: "summoner" },
+  )
+  try {
+    assert.equal(res.type, "meeting.started")
+    assert.ok(typeof res.meeting?.id === "string" && res.meeting.id.indexOf("mtg_") === 0)
+    assert.notEqual(res.meeting.id, "tray-12")
+  } finally {
+    const id = res && res.meeting && res.meeting.id
+    if (typeof id === "string") deleteMeeting(id)
+  }
+})
+
+test("meeting.start honors meeting_id over tray RPC id", async () => {
+  const created = await handleMeetingMessage(
+    { type: "meeting.create", v: 1, title: "keep-id" },
+    { origin: "cmspark-tray://local", surface: "summoner" },
+  )
+  const meetingId = created.meeting.id as string
+  try {
+    const res = await handleMeetingMessage(
+      {
+        type: "meeting.start",
+        v: 1,
+        id: "tray-99",
+        meeting_id: meetingId,
+        privacy_ack_v1: true,
+      },
+      { origin: "cmspark-tray://local", surface: "summoner" },
+    )
+    assert.equal(res.type, "meeting.started")
+    assert.equal(res.meeting.id, meetingId)
+  } finally {
+    deleteMeeting(meetingId)
+  }
+})
+
 test("tray origin without surface is still origin_denied for meeting.start", async () => {
   const res = await handleMeetingMessage(
     { type: "meeting.start", v: 1, privacy_ack_v1: true },
@@ -107,12 +162,25 @@ test("tray origin without surface is still origin_denied for meeting.start", asy
   assert.equal(res.code, "origin_denied")
 })
 
-test("generate_minutes + summoner surface is origin_denied", async () => {
+test("generate_minutes + summoner surface is not origin_denied", async () => {
   const res = await handleMeetingMessage(
     { type: "meeting.generate_minutes", v: 1, text: "决定采用方案 A。" },
     { origin: "cmspark-tray://local", surface: "summoner" },
   )
-  assert.equal(res.code, "origin_denied")
+  assert.notEqual(res.code, "origin_denied")
+})
+
+test("meeting.list + auto_diarize allowed on tray summoner origin", async () => {
+  const listed = await handleMeetingMessage(
+    { type: "meeting.list", v: 1 },
+    { origin: "cmspark-tray://local", surface: "summoner" },
+  )
+  assert.equal(listed.type, "meeting.list_result")
+  const denied = await handleMeetingMessage(
+    { type: "meeting.auto_diarize", v: 1, privacy_ack_v1: true, id: "mtg_nope", mode: "text_gap" },
+    { origin: "cmspark-tray://local" },
+  )
+  assert.equal(denied.code, "origin_denied")
 })
 
 test("meeting.start without privacy_ack_v1 is need_privacy_ack", async () => {
@@ -130,6 +198,13 @@ test("message-router passes session surface into meeting handler", () => {
   const next = src.indexOf("case \"skill.activate\"", start)
   const slice = src.slice(start, next > start ? next : start + 1800)
   assert.match(slice, /surface:\s*session\?\.surface/)
+})
+
+test("tray sendRequest keeps RPC id off meeting domain id", () => {
+  const src = fs.readFileSync(srcFile("tray", "companion-client.ts"), "utf8")
+  assert.match(src, /const rpcId = `tray-\$\{/)
+  assert.match(src, /msg\.meeting_id = params\.id/)
+  assert.match(src, /msg\.id = rpcId/)
 })
 
 test("applySummonerPayloadPolicy overlay meeting.start forces audio_retained false", () => {

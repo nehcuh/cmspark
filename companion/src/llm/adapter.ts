@@ -4,7 +4,7 @@ import os from "os"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { HistoryStore } from "../history/store"
-import { getToolDefinitions, getMcpMetaToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
+import { getAllToolDefinitions, getToolDefinitions, getMcpMetaToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
 import { tryParseToolArgs } from "../bridge/tool-schemas"
 import { classifyError } from "../security"
 import { toolChatErrorPayload } from "../ws/l1-actuator"
@@ -165,6 +165,29 @@ interface ChatCreateParams {
    * Injected after base system prompt; not stored in message history.
    */
   contextRefsSegment?: string
+  /**
+   * Router-stamped handshake surface only (`stampedSurface`). Never a client field.
+   * Summoner Capture is L0: native executors are not offered and cannot execute.
+   */
+  surface?: "tray" | "summoner"
+}
+
+/** Capture overlay must not run CDP / host / shell / spawn / workspace / ACP / MCP mutate tools. */
+export const SUMMONER_L0_NATIVE_DENIED =
+  "SUMMONER_L0: native executor denied on Capture overlay" as const
+
+export function isSummonerNativeExecutorDenied(toolName: string): boolean {
+  if (typeof toolName !== "string" || !toolName) return false
+  if (/^(mcp__|host_|workspace_|acp_|mcp_)/.test(toolName)) return true
+  return getAllToolDefinitions().some((t) => t.function.name === toolName)
+}
+
+export function filterToolsForSurface(
+  tools: ToolDefinition[],
+  surface?: string,
+): ToolDefinition[] {
+  if (surface !== "summoner") return tools
+  return tools.filter((t) => !isSummonerNativeExecutorDenied(t.function.name))
 }
 
 const MAX_TOOL_CALL_ROUNDS = 100
@@ -332,7 +355,17 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 }
 
 export async function chatCreate(params: ChatCreateParams) {
-  const { threadId, message, skillIds, knowledgeIds, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage, contextRefsSegment, hostname } = params
+  const { threadId, message, skillIds, knowledgeIds, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, signal, skipUserMessage, contextRefsSegment, hostname } = params
+  const executeToolInner = params.executeTool
+  const executeTool: ChatCreateParams["executeTool"] =
+    params.surface === "summoner"
+      ? async (toolCallId, toolName, execParams, execSignal) => {
+          if (isSummonerNativeExecutorDenied(toolName)) {
+            return { success: false, error: SUMMONER_L0_NATIVE_DENIED }
+          }
+          return executeToolInner(toolCallId, toolName, execParams, execSignal)
+        }
+      : executeToolInner
 
   // Crash leftovers: splice INTERRUPTED after the unpaired assistant BEFORE
   // appending this turn's user row (pairing is contiguous tools after assistant).
@@ -621,6 +654,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   if (thread) {
     tools = tools.filter((t) => threadManager.isToolAllowed(threadId, t.function.name))
   }
+  tools = filterToolsForSurface(tools, params.surface)
 
   // M1/M2 runtime context budget (request-only; disk untouched).
   // Spec: settings-thread-compact-ux §5. Modes: auto | prompt | off; M2 optional.
@@ -1518,7 +1552,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               "tabId is required",
             ]
             const isTabIdError = tabIdErrorPatterns.some(p => toolResult.error?.includes(p))
-            if (isTabIdError) {
+            if (isTabIdError && params.surface !== "summoner") {
               logger.info("llm.tabId_hallucination_detected", {
                 tool_call_id: tc.id,
                 tool_name: toolName,

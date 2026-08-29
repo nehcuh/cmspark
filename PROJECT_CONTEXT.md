@@ -3,14 +3,13 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-27 ~20:03 (S86 END · ChatShell PR #240)
-- **Workspace**：parent `main` 仍 ahead 1。实现在隔离 clone `feat/slice-239-chat-shell` → **PR https://github.com/nehcuh/cmspark/pull/240**（`Closes #239`）。
-- **Ship**：侧栏 ChatShell 空态（当前页+3 芯片填作曲）+「弹出对话框」开 overlay HTML（无页、720×520）。Mac 热键仍 Swift 旧条。失败 toast「无法弹出对话框」。
-- **Next**：审/CI/合 #240。#230 冻 F-S-10。勿扩 outbound profile。狗食弹出须 Companion+tray 在跑。
-- **Do not**：overlay Allow/Deny；`list_tabs` 进 summoner ACL；实心贴回；声称标签栏药丸或四处已换脸。
+### 2026-08-28 ~18:18 (S87 END · overlay Capture 卡狗食)
+- **Workspace**：`feat/overlay-card-first-paint`。main 已含 #240/#242。本机 `/Applications/CMspark.app` 热替换了 `cmspark-agent.js`。
+- **Ship**：360×420 HTML 卡（独立 Chrome profile）；托盘/热键同卡可开关；发送+markdown+新对话+历史；会议台录制开关、~8s 近实时、历史会议、匿名发言人N；STT 用侧栏模型。RPC `tray-N` 不再当会议 id。
+- **Next**：关旧浮窗再狗食。未开 PR。扩展需重载才能验「打开侧栏」。#230 冻。
+- **Do not**：overlay Allow/Deny；`list_tabs`；Companion `chrome.sidePanel.open`；`pkill -f CMspark.app`；声称 Otter 级认人。
 
-### 2026-08-27 ~14:02 (S85 END · 0.5.3 收口)
-- **Ship**：0.5.3 + Issue-first；T1 PASS 带 nit（#228）；#229/#234 不抢前台；#235/#236 grant-cli；#237/#238 RunProgress tool。
-- **T1**：PW 空 profile `ERR_EMPTY_RESPONSE` ≠ 登录墙。禁扩 profile。
-- **本机**：0.5.3 DMG 无 #229 Swift。`require_grant=false` / `auto_approve_dangerous=true`（bake-off 后改回）。
+### 2026-08-27 ~20:03 (S86 END · ChatShell PR #240)
+- **Ship**：#239/#240 已合 main。侧栏 ChatShell + 弹出 HTML。后续 Capture 卡见 S87。
+- **Do not**：overlay Allow/Deny；`list_tabs` 进 summoner ACL。
 <!-- handoff:end -->

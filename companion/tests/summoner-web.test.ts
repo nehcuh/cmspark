@@ -12,7 +12,12 @@ import {
   stopSummonerWebServer,
   summonerWebPageUrl,
   pushSummonerWebEvent,
+  requestSummonerWebClose,
+  summonerWebHasPage,
   summonerWebEventStatus,
+  hideSummonerWebShell,
+  openLoopbackPage,
+  __testSetOverlayLaunchGraceMs,
   SUMMONER_WEB_DISPATCH_ALLOW,
   SUMMONER_WEB_EVENT_ALLOW,
 } from "../src/summoner-web"
@@ -133,10 +138,66 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /class="list-scroll"/)
     assert.match(r.body, /\.composer\{[^}]*flex-shrink:0/)
     assert.doesNotMatch(r.body, /#12141c/)
-    assert.doesNotMatch(r.body, /class="hud expanded"/)
+    assert.match(r.body, /class="hud expanded"/)
     assert.match(r.body, /setExpanded\(true\)/)
     assert.doesNotMatch(r.body, /placeWindow\(false\);/)
-    assert.match(r.body, /var w=400,h=expanded\?520:120/)
+    assert.match(r.body, /var w=360,h=420/)
+    assert.match(r.body, /id="empty"/)
+    assert.match(r.body, /class="mark"/)
+    assert.match(r.body, /#chev\{[^}]*display:none|#chev\[hidden\]/)
+    assert.match(r.body, /#newThreadBar\{[^}]*display:none/)
+    assert.match(r.body, /id="historyOpen"/)
+    assert.match(r.body, /id="newChat"/)
+    assert.match(r.body, />历史</)
+    assert.match(r.body, /id="newChat">新对话/)
+    assert.match(r.body, /id="historyClose"/)
+    assert.match(r.body, /\.hud\.history \.list\{[^}]*display:flex/)
+    assert.match(r.body, /function showHistory/)
+    assert.match(r.body, /id="hud"[\s\S]*id="meetingDesk"/)
+    assert.match(r.body, /id="meetingDesk"/)
+    assert.match(r.body, /id="meetingRec"/)
+    assert.match(r.body, />开始录制</)
+    assert.match(r.body, /结束录制/)
+    assert.match(r.body, /生成会议纪要/)
+    assert.match(r.body, /历史会议/)
+    assert.match(r.body, /自动标说话人/)
+    assert.match(r.body, /id="meetingHistToggle"/)
+    assert.match(r.body, /STT_MEETING_MS=8000/)
+    assert.match(r.body, /\/api\/stt\/partial/)
+    assert.match(r.body, /\/api\/meetings/)
+    assert.match(r.body, /\/api\/meeting\/diarize/)
+    assert.match(r.body, /\/api\/voice-settings/)
+    assert.match(r.body, /voiceSettings\.localModelId/)
+    assert.match(r.body, /\/api\/meeting\/append/)
+    assert.match(r.body, /\/api\/meeting\/minutes/)
+    assert.match(r.body, /function showMeetingDesk/)
+    assert.match(r.body, /\.privacy-sheet\{[^}]*position:absolute/)
+    assert.match(r.body, /\.status:empty\{[^}]*display:none/)
+    assert.match(r.body, /正在打开侧栏/)
+    assert.match(r.body, /已请浏览器打开侧栏/)
+    assert.match(r.body, /shell\.close/)
+    assert.match(r.body, /window\.close\(\)/)
+    assert.match(r.body, /id="sendGo"/)
+    assert.match(r.body, /发送中/)
+    assert.match(r.body, /function ensureThread/)
+    assert.match(r.body, /keyCode===229/)
+    assert.match(r.body, /min-width:0/)
+    assert.match(r.body, /sendShortcut==="Cmd\+Enter"/)
+    assert.match(r.body, /\/api\/send-shortcut/)
+    const csp = String(r.headers["content-security-policy"] || "")
+    assert.match(csp, /script-src 'nonce-[A-Za-z0-9+/=]+'/)
+    assert.doesNotMatch(csp, /script-src 'unsafe-inline'/)
+    const nonce = (csp.match(/script-src 'nonce-([^']+)'/) || [])[1]
+    assert.ok(nonce)
+    assert.match(r.body, new RegExp(`<script nonce="${nonce.replace(/[+/]/g, "\\$&")}">`))
+    assert.equal((r.body.match(/<script\b/g) || []).length, 1)
+    const script = r.body.match(/<script[^>]*>([\s\S]*)<\/script>/)
+    assert.ok(script, "inline script missing")
+    new Function(script[1])
+    assert.match(r.body, /function renderMd/)
+    assert.match(r.body, /\.msg\.assistant\{[^}]*white-space:normal/)
+    assert.match(r.body, /d\.innerHTML=renderMd/)
+    assert.match(r.body, /\.hint\{[^}]*display:none/)
     assert.doesNotMatch(r.body, /grid-template-columns:var\(--rail\) var\(--list\)/)
     assert.match(r.body, /\.rail,\.list\{[^}]*display:none/)
     assert.match(r.body, /id="operateOpen"/)
@@ -156,16 +217,18 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /📎/)
     assert.match(r.body, /for="files"/)
     assert.doesNotMatch(r.body, /去侧栏处理/)
-    assert.match(r.body, /展开对话/)
+    assert.match(r.body, /收起对话/)
     assert.doesNotMatch(r.body, /展开工作台|收起工作台/)
     assert.match(r.body, /打开浏览器/)
     assert.match(r.body, /打开并前置浏览器/)
     assert.match(r.body, /打开确认台/)
     assert.match(r.body, /需要确认才能继续/)
     assert.match(r.body, /id="openConfirm"/)
-    assert.match(r.body, /可以继续聊。要操作网页，需要打开浏览器。/)
-    assert.match(r.body, /网页操作需要浏览器（扩展已配对的 Chrome）。/)
-    assert.match(r.body, /编程助手要看你的页面，但浏览器没在。/)
+    assert.match(r.body, /可以继续聊/)
+    assert.match(r.body, /打开侧栏/)
+    assert.doesNotMatch(r.body, /可以继续聊。要操作网页，需要打开浏览器。/)
+    assert.doesNotMatch(r.body, /网页操作需要浏览器（扩展已配对的 Chrome）。/)
+    assert.doesNotMatch(r.body, /编程助手要看你的页面，但浏览器没在。/)
     assert.match(r.body, /我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。/)
     assert.match(r.body, /\/api\/attach/)
     assert.match(r.body, /id="attachSilent"|id="attachFront"/)
@@ -190,6 +253,22 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.doesNotMatch(r.body, /confirmation_id/)
     assert.doesNotMatch(r.body, /ws:\/\//)
     assert.equal(r.headers["referrer-policy"], "no-referrer")
+  })
+
+  test("GET /api/send-shortcut returns Enter|Cmd+Enter|Ctrl+Enter", async () => {
+    const r = await request({ method: "GET", port, path: `/api/send-shortcut?token=${token}` })
+    assert.equal(r.status, 200, r.body)
+    const data = JSON.parse(r.body)
+    assert.ok(["Enter", "Cmd+Enter", "Ctrl+Enter"].includes(data.send_shortcut))
+  })
+
+  test("GET /api/voice-settings returns extension SoT engine/model/lang", async () => {
+    const r = await request({ method: "GET", port, path: `/api/voice-settings?token=${token}` })
+    assert.equal(r.status, 200, r.body)
+    const data = JSON.parse(r.body)
+    assert.ok(data.sttEngine === "browser" || data.sttEngine === "local")
+    assert.ok(["small", "medium", "large-v3-turbo"].includes(data.localModelId))
+    assert.equal(data.lang, "zh-CN")
   })
 
   test("GET / with malformed token percent → 403 not hang", async () => {
@@ -503,11 +582,13 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /生成纪要将把转写文本发给你已配置的 LLM/)
     assert.match(r.body, /长会 STT 仅本机/)
     assert.match(r.body, /多方录音法律合规由你负责/)
-    assert.match(r.body, /纪要在侧栏/)
+    assert.match(r.body, /生成会议纪要/)
     assert.match(r.body, /id="meetingVoiceSection"/)
     assert.match(r.body, /id="meetingVoiceSection"[\s\S]*音频经本机 Companion/)
     assert.match(r.body, /if\(!voiceAck\)/)
-    assert.match(r.body, /结束会议/)
+    assert.match(r.body, /开始录制/)
+    assert.match(r.body, /结束录制/)
+    assert.match(r.body, /id="meetingRec"/)
     assert.doesNotMatch(r.body, /\/api\/dispatch/)
   })
 
@@ -530,6 +611,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(dispatched[0].privacy_ack_v2, true)
     assert.equal(dispatched[0].sessionId, "s1")
     assert.equal(dispatched[0].modelId, "medium")
+    assert.equal(dispatched[0].lang, "zh")
     assert.equal(dispatched[0].format, "pcm_s16le")
     assert.equal(dispatched[0].sampleRate, 16000)
     assert.equal(dispatched[0].channels, 1)
@@ -584,6 +666,65 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(dispatched[0].retain_days, undefined)
     assert.equal(dispatched[0].title, "overlay meet")
     assert.equal(dispatched.some((d) => String(d.type).includes("generate_minutes")), false)
+  })
+
+  test("GET /api/meetings dispatches meeting.list", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "GET",
+      port,
+      path: `/api/meetings?token=${token}`,
+      headers: { Origin: `http://127.0.0.1:${port}` },
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "meeting.list")
+    assert.equal(dispatched[0].v, 1)
+  })
+
+  test("POST /api/stt/partial dispatches voice.stt.partial_request", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/partial?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ sessionId: "s1" }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "voice.stt.partial_request")
+    assert.equal(dispatched[0].sessionId, "s1")
+    assert.equal(dispatched[0].v, 1)
+  })
+
+  test("POST /api/meeting/diarize fills auto_diarize and privacy_ack", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/meeting/diarize?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({
+        id: "mtg_abc",
+        mode: "audio_cluster",
+        k: 2,
+        features: [[1, 0, 0], [0, 1, 0]],
+      }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].type, "meeting.auto_diarize")
+    assert.equal(dispatched[0].v, 1)
+    assert.equal(dispatched[0].privacy_ack_v1, true)
+    assert.equal(dispatched[0].id, "mtg_abc")
+    assert.equal(dispatched[0].mode, "audio_cluster")
   })
 
   test("POST /api/meeting/end server fills type meeting.end", async () => {
@@ -715,13 +856,36 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.start"), true)
     assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.create"))
     assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.end"))
-    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.generate_minutes"), false)
-    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.append_transcript"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.generate_minutes"), true)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.append_transcript"), true)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.list"), true)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.get"), true)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.auto_diarize"), true)
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.minutes_result"), true)
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.list_result"), true)
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.diarized"), true)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("ui.open_sidepanel"), false)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.toggle_server"), false)
     assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("ui.open_sidepanel"), false)
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.started"))
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.ended"))
     assert.ok(SUMMONER_WEB_EVENT_ALLOW.has("meeting.error"))
+  })
+
+  test("POST /api/mcp/toggle is 4xx and does not dispatch", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/mcp/toggle?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ name: "fs", enabled: false }),
+    })
+    assert.ok(r.status >= 400 && r.status < 500, `expected 4xx, got ${r.status} ${r.body}`)
+    assert.equal(dispatched.some((d) => d.type === "mcp.toggle_server"), false)
   })
 
   test("GET /api/events without token → 403", async () => {
@@ -780,6 +944,45 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(buf, /run_active/)
     assert.doesNotMatch(buf, /security.confirmation.request/)
     assert.doesNotMatch(buf, /Allow this/)
+  })
+
+  test("requestSummonerWebClose pushes shell.close; hasPage tracks SSE", async () => {
+    const buf = await new Promise<string>((resolve, reject) => {
+      const req = http.request(
+        {
+          method: "GET",
+          host: "127.0.0.1",
+          port,
+          path: `/api/events?token=${token}`,
+        },
+        (res) => {
+          assert.equal(res.statusCode, 200)
+          let acc = ""
+          const timer = setTimeout(() => {
+            req.destroy()
+            reject(new Error("sse close timeout: " + acc))
+          }, 2000)
+          res.on("data", (c) => {
+            acc += c.toString()
+            if (acc.includes("shell.close")) {
+              clearTimeout(timer)
+              req.destroy()
+              resolve(acc)
+            }
+          })
+        },
+      )
+      req.on("error", (err) => {
+        if ((err as NodeJS.ErrnoException).message === "socket hang up") return
+      })
+      req.end()
+      setTimeout(() => {
+        assert.equal(summonerWebHasPage(), true)
+        assert.equal(requestSummonerWebClose(), true)
+      }, 40)
+    })
+    assert.match(buf, /shell\.close/)
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("shell.close"), false)
   })
 
   test("POST /api/operate without opener is 503 请点工具栏 C", async () => {
@@ -901,6 +1104,213 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
   })
 
+  test("hideSummonerWebShell invokes onShellClosed; twice is safe", async () => {
+    let n = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      onShellClosed: () => {
+        n += 1
+      },
+    })
+    hideSummonerWebShell()
+    hideSummonerWebShell()
+    assert.ok(n >= 1, "hide must invoke onShellClosed")
+    assert.ok(n <= 2, "hide twice must not storm closed")
+  })
+
+  test("last SSE client close invokes onShellClosed after launch grace", async () => {
+    let n = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      onShellClosed: () => {
+        n += 1
+      },
+    })
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        {
+          method: "GET",
+          host: "127.0.0.1",
+          port,
+          path: `/api/events?token=${token}`,
+        },
+        (res) => {
+          assert.equal(res.statusCode, 200)
+          res.resume()
+          setTimeout(() => req.destroy(), 40)
+        },
+      )
+      req.on("error", () => {})
+      req.end()
+      const started = Date.now()
+      const tick = () => {
+        if (n >= 1) return resolve()
+        if (Date.now() - started > 2000) {
+          return reject(new Error("last SSE close did not invoke onShellClosed"))
+        }
+        setTimeout(tick, 20)
+      }
+      setTimeout(tick, 80)
+    })
+    assert.ok(n >= 1)
+  })
+
+  test("last SSE close during overlay launch grace does not invoke onShellClosed", async () => {
+    let n = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      onShellClosed: () => {
+        n += 1
+      },
+    })
+    const tmp = path.join(path.resolve("/tmp"), "cmspark-overlay-a2-grace")
+    const opened = openLoopbackPage(`http://127.0.0.1:${port}/?token=${token}`, {
+      spawn: () => ({ unref() {} }),
+      browserPath: "/usr/bin/true",
+      userDataDir: tmp,
+    })
+    assert.equal(opened, true)
+    await new Promise<void>((resolve) => {
+      const req = http.request(
+        {
+          method: "GET",
+          host: "127.0.0.1",
+          port,
+          path: `/api/events?token=${token}`,
+        },
+        (res) => {
+          assert.equal(res.statusCode, 200)
+          res.resume()
+          setTimeout(() => req.destroy(), 40)
+        },
+      )
+      req.on("error", () => {})
+      req.on("close", () => setTimeout(resolve, 40))
+      req.end()
+    })
+    assert.equal(n, 0, "launch grace must not treat last SSE drop as closed")
+    hideSummonerWebShell()
+    assert.ok(n >= 1, "explicit hide still closes after grace skip")
+  })
+
+  test("last SSE close during grace schedules onShellClosed after grace if still empty", async () => {
+    let n = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      onShellClosed: () => {
+        n += 1
+      },
+    })
+    __testSetOverlayLaunchGraceMs(60)
+    try {
+      const tmp = path.join(path.resolve("/tmp"), "cmspark-overlay-a2-grace-defer")
+      const opened = openLoopbackPage(`http://127.0.0.1:${port}/?token=${token}`, {
+        spawn: () => ({ unref() {} }),
+        browserPath: "/usr/bin/true",
+        userDataDir: tmp,
+      })
+      assert.equal(opened, true)
+      await new Promise<void>((resolve) => {
+        const req = http.request(
+          {
+            method: "GET",
+            host: "127.0.0.1",
+            port,
+            path: `/api/events?token=${token}`,
+          },
+          (res) => {
+            assert.equal(res.statusCode, 200)
+            res.resume()
+            req.destroy()
+          },
+        )
+        req.on("error", () => {})
+        req.on("close", () => setTimeout(resolve, 5))
+        req.end()
+      })
+      assert.equal(n, 0, "spawn-flicker guard: must not close immediately during grace")
+      const deadline = Date.now() + 400
+      while (n < 1 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 15))
+      }
+      assert.ok(n >= 1, "after launch grace with no SSE clients, last-SSE must still close")
+    } finally {
+      __testSetOverlayLaunchGraceMs(2000)
+    }
+  })
+
+  test("hide aborts overlay STT and ends overlay meeting without pagehide", async () => {
+    const seen: Record<string, unknown>[] = []
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => {
+        seen.push(msg)
+        if (msg.type === "meeting.start") {
+          return { type: "meeting.started", v: 1, meeting: { id: "mtg_hide_a2" } }
+        }
+        return { type: "ok", echo: msg.type }
+      },
+    })
+    const stt = await request({
+      method: "POST",
+      port,
+      path: `/api/stt/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ sessionId: "ov-stt-hide", modelId: "medium" }),
+    })
+    assert.equal(stt.status, 200, stt.body)
+    const meet = await request({
+      method: "POST",
+      port,
+      path: `/api/meeting/start?token=${token}`,
+      headers: {
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ title: "hide-meet" }),
+    })
+    assert.equal(meet.status, 200, meet.body)
+    seen.length = 0
+    hideSummonerWebShell()
+    const deadline = Date.now() + 500
+    while (Date.now() < deadline) {
+      if (
+        seen.some((m) => m.type === "voice.stt.abort") &&
+        seen.some((m) => m.type === "meeting.end")
+      ) {
+        break
+      }
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    const abort = seen.find((m) => m.type === "voice.stt.abort")
+    const ended = seen.find((m) => m.type === "meeting.end")
+    assert.ok(abort, `hide must dispatch voice.stt.abort, got ${seen.map((m) => m.type)}`)
+    assert.equal(abort?.sessionId, "ov-stt-hide")
+    assert.ok(ended, `hide must dispatch meeting.end, got ${seen.map((m) => m.type)}`)
+    assert.equal(ended?.id, "mtg_hide_a2")
+    const abortN = seen.filter((m) => m.type === "voice.stt.abort").length
+    const endN = seen.filter((m) => m.type === "meeting.end").length
+    hideSummonerWebShell()
+    await new Promise((r) => setTimeout(r, 40))
+    assert.equal(
+      seen.filter((m) => m.type === "voice.stt.abort").length,
+      abortN,
+      "second hide must not abort STT again",
+    )
+    assert.equal(
+      seen.filter((m) => m.type === "meeting.end").length,
+      endN,
+      "second hide must not end meeting again",
+    )
+  })
+
   after(() => {
     stopSummonerWebServer()
   })
@@ -963,8 +1373,22 @@ test("menu-bar-agent opens summoner-web from summoner action", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
   assert.match(src, /startSummonerWebServer/)
   assert.match(src, /case "summoner"/)
+  assert.match(src, /case "summoner-toggle"/)
+  assert.match(src, /toggleSummonerWebShell/)
   assert.match(src, /surface:\s*"summoner"/)
   assert.match(src, /pushSummonerWebEvent/)
+})
+
+test("hideSummonerWebShell and last SSE close share onShellClosed", () => {
+  const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(src, /onShellClosed/)
+  const hideStart = src.indexOf("export function hideSummonerWebShell")
+  assert.ok(hideStart >= 0, "hideSummonerWebShell missing")
+  const hide = src.slice(hideStart, hideStart + 400)
+  assert.match(hide, /[Oo]nShellClosed/)
+  const sseClose = src.slice(src.indexOf('req.on("close"'), src.indexOf('req.on("close"') + 350)
+  assert.match(sseClose, /sseClients\.delete/)
+  assert.match(sseClose, /onShellClosed|invokeOnShellClosed|size === 0/)
 })
 
 test("C-thin HTML skills toggle and knowledge attach are not activate-only / replace-all", () => {
@@ -995,10 +1419,10 @@ test("HTML default expands the face (not 120px bar)", () => {
 test("MCP rail stays hide-not-delete", () => {
   const html = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
   assert.match(html, /data-sec="mcp"[^>]*\bhidden\b|hidden[^>]*data-sec="mcp"/)
-  assert.match(html, /mcp.toggle_server/)
+  assert.doesNotMatch(html, /mcp\.toggle_server/)
 })
 
-test("HTML mcp.toggle rides tray companionClient (no overlay L2 stall)", () => {
+test("HTML mcp.toggle does not ride tray companionClient", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
-  assert.match(src, /type === "mcp\.toggle_server" && companionClient/)
+  assert.doesNotMatch(src, /type === "mcp\.toggle_server" && companionClient/)
 })

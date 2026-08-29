@@ -71,6 +71,18 @@ test("SummonerController is a one-bar HUD: 720pt, no stacked makeRail, Esc hides
   assert.match(hide, /orderOut/)
 })
 
+test("Swift mcpRowClicked / mcpAddClicked do not dispatch toggle or add", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  const rowStart = overlay.indexOf("func mcpRowClicked")
+  const addStart = overlay.indexOf("func mcpAddClicked")
+  const skillStart = overlay.indexOf("func skillRowClicked")
+  assert.ok(rowStart >= 0 && addStart > rowStart && skillStart > addStart)
+  const row = overlay.slice(rowStart, addStart)
+  const add = overlay.slice(addStart, skillStart)
+  assert.doesNotMatch(row, /jsonLine/)
+  assert.doesNotMatch(add, /jsonLine/)
+})
+
 test("PR-C: expand chrome hides MCP icon via isHidden; default section is 对话", () => {
   const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
   const railStart = overlay.indexOf("let railSpecs")
@@ -141,9 +153,11 @@ test("SummonerController copy lock: badge, hint, CTA, buttons", () => {
   assert.match(body, /新对话/)
   assert.match(body, /打开浏览器/)
   assert.match(body, /打开并前置浏览器/)
-  assert.match(body, /可以继续聊。要操作网页，需要打开浏览器。/)
-  assert.match(body, /网页操作需要浏览器（扩展已配对的 Chrome）。/)
-  assert.match(body, /编程助手要看你的页面，但浏览器没在。/)
+  assert.match(body, /可以继续聊/)
+  assert.match(body, /打开侧栏/)
+  assert.doesNotMatch(body, /可以继续聊。要操作网页，需要打开浏览器。/)
+  assert.doesNotMatch(body, /网页操作需要浏览器（扩展已配对的 Chrome）。/)
+  assert.doesNotMatch(body, /编程助手要看你的页面，但浏览器没在。/)
   assert.match(body, /我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。/)
   assert.doesNotMatch(body, /系统: BROWSER_UNAVAILABLE/)
   assert.doesNotMatch(body, /NSButton\(title: "设置"/)
@@ -246,17 +260,18 @@ test("SummonerController IME: composing Return is not bound as a button keyEquiv
   assert.match(body, /btn\.keyEquivalent = ""/)
 })
 
-test("Tray.swift menu and hotkey open native NSPanel 悬浮窗", () => {
+test("Tray.swift menu and hotkey 召唤器 open HTML Capture card", () => {
   const src = fs.readFileSync(srcFile("tray", "Tray.swift"), "utf8")
   const click = src.indexOf("tag == MenuTag.summoner.rawValue")
   assert.ok(click >= 0)
-  const menu = src.slice(click, click + 420)
-  assert.match(menu, /summonerController\.open\(threadId/)
-  assert.doesNotMatch(menu, /"action": "summoner"/)
+  const menu = src.slice(click, src.indexOf("MenuTag.summonerHotkey.rawValue", click))
+  assert.match(menu, /"action": "summoner"/)
+  assert.doesNotMatch(menu, /summonerController\.open/)
   const hotAt = src.indexOf("func handleSummonerHotKeyPressed()")
   assert.ok(hotAt >= 0)
-  const hot = src.slice(hotAt, hotAt + 320)
-  assert.match(hot, /openFromHotKey/)
+  const hot = src.slice(hotAt, src.indexOf("// Summoner overlay lives", hotAt))
+  assert.match(hot, /"action": "summoner-toggle"/)
+  assert.doesNotMatch(hot, /openFromHotKey/)
 })
 
 test("Summoner overlay composer exposes file clip and hold-to-talk mic", () => {
@@ -332,6 +347,27 @@ test("handleSummonerClosed invalidates in-flight overlay session", () => {
   assert.match(body, /invalidateOverlaySession/)
 })
 
+test("HTML hide/close wires onShellClosed to handleSummonerClosed", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const start = src.indexOf("async function openSummonerWebShell")
+  assert.ok(start >= 0, "openSummonerWebShell missing")
+  const next = src.indexOf("\nasync function ", start + 10)
+  const body = src.slice(start, next > start ? next : start + 2500)
+  assert.match(body, /onShellClosed/)
+  assert.match(body, /handleSummonerClosed/)
+})
+
+test("handleSummonerClosed does not abortThreadChat by lease thread_id", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const start = src.indexOf("export async function handleSummonerClosed")
+  const next = src.indexOf("\nexport ", start + 10)
+  const body = src.slice(start, next > start ? next : start + 800)
+  assert.match(body, /invalidateOverlaySession/)
+  assert.match(body, /releaseAllOverlayComposerLeases/)
+  assert.doesNotMatch(body, /abortThreadChat/)
+  assert.doesNotMatch(body, /chat\.abort/)
+})
+
 test("lifecycle summoner ws.close releases overlay leases", () => {
   const src = fs.readFileSync(srcFile("ws", "lifecycle.ts"), "utf8")
   assert.match(src, /broadcastOverlayLeasesOnSocketClose/)
@@ -404,6 +440,14 @@ test("handleSummonerSearch 1-hit hydrates (claims exclusive overlay) instead of 
 test("companion-client close path can release all overlay leases", () => {
   const src = fs.readFileSync(srcFile("tray", "companion-client.ts"), "utf8")
   assert.match(src, /releaseAllOverlay|release_overlay/)
+})
+
+test("companion-client overlay release catch does not claim close must not abort chat", () => {
+  const src = fs.readFileSync(srcFile("tray", "companion-client.ts"), "utf8")
+  const start = src.indexOf("async releaseAllOverlayComposerLeases")
+  assert.ok(start >= 0, "releaseAllOverlayComposerLeases missing")
+  const body = src.slice(start, start + 450)
+  assert.doesNotMatch(body, /close still must not abort chat/)
 })
 
 test("message-router broadcasts exclusive-claim siblings as composer.lease", () => {

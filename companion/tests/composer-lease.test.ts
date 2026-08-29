@@ -4,6 +4,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import {
   ComposerLeaseRegistry,
+  composerLeases,
   assertComposerLease,
   gateChatCreateOnLease,
   handleComposerLeaseFamily,
@@ -560,4 +561,64 @@ test("#219 lifecycle close handler counts surviving authenticated summoner clien
   assert.match(close, /survivingSummoners/)
   assert.match(close, /auth\?\.authenticated === true && auth\.surface === "summoner"/)
   assert.match(close, /broadcastOverlayLeasesOnSocketClose\([\s\S]*survivingSummoners/)
+})
+
+test("message-router release_overlay aborts overlay panel loops before releasing leases", () => {
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "src", "message-router.ts"),
+    path.resolve(__dirname, "..", "src", "message-router.ts"),
+  ]
+  const file = candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
+  const src = fs.readFileSync(file, "utf8")
+  const start = src.indexOf('case "composer.lease.release_overlay"')
+  assert.ok(start >= 0, "release_overlay case missing")
+  const next = src.indexOf('case "chat.regenerate"', start)
+  const body = src.slice(start, next > start ? next : start + 1200)
+  assert.match(body, /abortLlmLoopsForPanel/)
+  assert.match(body, /session\?\.panelId/)
+  const abortAt = body.indexOf("abortLlmLoopsForPanel")
+  const releaseAt = body.indexOf("handleComposerLeaseFamily")
+  assert.ok(abortAt >= 0 && releaseAt > abortAt, "abort overlay loops before releasing leases")
+  assert.doesNotMatch(body, /abortThreadChat\(/)
+})
+
+test("composer.lease.release_overlay summoner panel aborts overlay-owned loops not lease-thread Operate", async () => {
+  const mr = await import("../src/message-router")
+  const overlayPanel = "overlay-panel-a2"
+  const operatePanel = "operate-panel-a2"
+  const leaseThread = "lease-thread-a2"
+  const overlayThread = "overlay-owned-thread-a2"
+  mr.__testSetLlmActiveForTests(leaseThread, true)
+  mr.__testSetLlmOwnerForTests(leaseThread, operatePanel)
+  mr.__testSetLlmActiveForTests(overlayThread, true)
+  mr.__testSetLlmOwnerForTests(overlayThread, overlayPanel)
+  const current = composerLeases.get(leaseThread)
+  handleComposerLeaseFamily(
+    "composer.lease.claim",
+    { thread_id: leaseThread, holder: "overlay", rev: current.rev },
+    undefined,
+    "summoner",
+  )
+  try {
+    const got = await mr.handleMessage(
+      { type: "composer.lease.release_overlay", __cmspark_surface: "summoner" },
+      {} as any,
+      {
+        panelId: overlayPanel,
+        sendToExtension: () => {},
+        executeTool: async () => ({ success: true }),
+      },
+    )
+    assert.equal(got.type, "composer.lease.released")
+    const active = mr.listLlmActiveThreadIds()
+    assert.ok(
+      active.includes(leaseThread),
+      "panel-owned Operate on the overlay lease thread must survive; abortThreadChat(lease.thread_id) is forbidden",
+    )
+    assert.ok(!active.includes(overlayThread), "overlay-owned loop must abort")
+    assert.equal(composerLeases.get(leaseThread).holder, "panel")
+  } finally {
+    mr.__testSetLlmActiveForTests(leaseThread, false)
+    mr.__testSetLlmActiveForTests(overlayThread, false)
+  }
 })

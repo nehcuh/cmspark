@@ -62,10 +62,10 @@ Channel:      community
 
 ## 3. 第一屏（layout）
 
-`--app` 窗约 **400×520**（`shell-open.ts` `--window-size`）。系统标题栏还在。
+`--app` 窗约 **360×420**（`shell-open.ts` `--window-size` + 独立 `--user-data-dir` 居中）。系统标题栏还在。狗食：400×520 太大，且 Chrome 已开时会丢掉 `--window-size`。
 
 ```
-[看山 26px] CMspark
+[看山 26px] CMspark          历史  新对话
             （flex）
         看山 52px
      要我帮你做什么？
@@ -74,6 +74,8 @@ Channel:      community
  [📎]  问 CMspark…              [🎙]
  开始会议          打开浏览器并打开侧栏
 ```
+
+狗食 #243：顶栏「新对话」「历史」。历史是盖层（复用隐藏 list），不是五轨。
 
 - 单栏。`.body` 不再用 `rail | list | main` 占格。rail/list **DOM 仍在、hidden**（五轨冻结）。
 - 空态**无**「这一页」芯片、无三条建议。
@@ -114,7 +116,7 @@ Channel:      community
 **本票：**
 
 1. **只**把 `meeting.create` / `start` / `end` 放入 `SUMMONER_ALLOW` **和** HTML dispatch + 对应 SSE（`meeting.created` / started / ended / `meeting.error`）。不加 list/get，除非落地时 `start` 无 id 已自建会话（现有 handler：无 id 则内部 create）。
-2. **不加** `meeting.generate_minutes` / `auto_diarize` / `import_text` 到 overlay（纪要仍在侧栏）。
+2. **#244：** overlay 会议台可 `append_transcript` + `generate_minutes`。狗食补 `meeting.list` / `get`（历史）+ `auto_diarize`（匿名发言人N，非身份）。`import_text` 仍扩展-only。近实时窗约 8 秒 + `voice.stt.partial_request`。
 3. 点「开始会议」→ 侧栏 MeetingPanel **五条原文** →「我已了解」→ `meeting.start` 且 `privacy_ack_v1: true`。voice v2 **不能**替代。
 4. 每开一扇窗确认一次。卡上随后只有「结束会议」。
 5. 未就绪与听写同一句。永不 Allow/Deny。Pack 不会自动开始录音。

@@ -1,0 +1,46 @@
+{
+  "batch": "deep-diagnosis-20260828",
+  "product": "0.5.3",
+  "branch": "feat/overlay-card-first-paint",
+  "head": "597a5827",
+  "time": "20260828-191251",
+  "blast": "T0",
+  "machine": {
+    "p0_spot_check": {
+      "overlay-xss": "confirmed",
+      "overlay-summoner-01-hide-lease": "confirmed",
+      "knowledge-loop-01-truncated-save": "confirmed",
+      "computer-host-01-estop-sock": "confirmed",
+      "x-architecture-01-overlay-L0": "confirmed_as_surface_gap_not_unauth_rce"
+    }
+  },
+  "fanout": {
+    "grade": "C+",
+    "critical": 0,
+    "high": 14,
+    "medium": 36,
+    "adversarial": "10 skeptics, 9 real, 1 refuted (computer-host-02)"
+  },
+  "claude": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/deep-diagnosis-20260828-claude-20260828-190219.md",
+    "high_after": "13-14",
+    "note": "downgrade computer-host-04 High→Medium (same-user NODE_ENV); no High+ misses"
+  },
+  "kimi": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/deep-diagnosis-20260828-kimi-clean.md",
+    "raw_path": "docs/audit/reviews/deep-diagnosis-20260828-kimi-20260828-190625.md",
+    "high_after": 14,
+    "note": "keep computer-host-04 High; overlay-token-csrf is High candidate (not forced)"
+  },
+  "both_ok": true,
+  "merge": "N/A — diagnosis only, no product patch",
+  "recalibrated": {
+    "critical": 0,
+    "high": 14,
+    "high_footnote": "Claude would count 13 if computer-host-04 drops; kimi would count 15 if overlay-token-csrf rises. Intersection of confirmed Highs = 13. Union of High claims = 15. Report keeps 14.",
+    "medium": 36,
+    "grade": "C+"
+  }
+}

@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S87 END (2026-08-28 ~18:18) [overlay Capture 卡狗食 · 会议台]
+- **枝**：`feat/overlay-card-first-paint`（`b6ac5928` + 未合 dogfood）。#241/#242 已在 main `8b71f07d`。#239/#240 ChatShell 已合。
+- **Ship（本机热替换 `/Applications/CMspark.app`）**：托盘/热键开同一张 360×420 HTML 卡（独立 overlay-chrome profile）；发送/markdown/新对话/历史；会议台：隐私 → 开始/结束录制 → ~8s 近实时 + 渐进假设；STT 跟侧栏 `voice.localModelId`；历史会议 list/get；匿名发言人N（`auto_diarize`）。打开侧栏只绑 `normal` 窗。
+- **修**：`sendRequest` RPC `tray-N` ≠ `meeting.id`；内联 JS 可 `new Function`；默认 expanded 空态。
+- **下次**：关旧浮窗再开新卡狗食。PR 未开。#230 仍冻。扩展「打开侧栏」修需重载 unpacked。T3 Pi 仍 skip。
+- Recorded: yes — tray-N 撞会议 id；Chrome 已开丢 --window-size；模板弄坏 overlay JS；lastFocused=--app；pgrep -f 自杀；45s 窗不像实时
+
 ### S86 END (2026-08-27 ~20:03) [ChatShell 同一张脸 · #239 · PR #240]
 - **Ship**：Gemini 对照 → Issue #239 → spec r2（三路 REJECT 已折）→ plan r2 → subagent-driven 实现 → **PR #240** `feat/slice-239-chat-shell`。未合 main。
 - **产品**：侧栏空态当前页+3 芯片填作曲；弹出 → overlay HTML 无页整张脸；Mac 热键仍旧条。失败 toast「无法弹出对话框」。
@@ -921,19 +928,26 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### ChatShell 同一张脸（S86 · #239 · PR #240）
-- status: **active**（PR 开着，未合）
-- context: spec/plan dual AWN；实现在 `feat/slice-239-chat-shell`。侧栏 ChatShell + 弹出 HTML；Mac HUD 旧壳。
-- next_action: 审 PR #240 / CI。合前勿声称四处已换脸。#230 勿整票继续。
-- resume_doc: https://github.com/nehcuh/cmspark/pull/240 · `docs/superpowers/specs/2026-08-27-chat-shell-same-face-design.md`
-- updated: 2026-08-27
+### Overlay Capture 卡狗食（S87 · #241–#244 · `feat/overlay-card-first-paint`）
+- status: **active**（本机热替换；未开 PR）
+- context: main 已有 #242。本枝：默认展开 360×420、托盘/热键同 HTML 卡、会议台录制/历史/近实时/发言人N。Issue #243 新对话+历史 · #244 会议台。
+- next_action: 用户关旧窗再狗食。再开 PR `Closes #243` / `Refs #244`。#230 勿整票。扩展重载后验「打开侧栏」。
+- resume_doc: `docs/superpowers/specs/2026-08-28-overlay-capture-card-design.md` · 枝 `feat/overlay-card-first-paint`
+- updated: 2026-08-28
 
-### 形态深化 0.5.3 切点（S84–S85 · main `ed22223`）
-- status: **active**（主线用户可见项 done；冻结残留仍开）
-- context: 切片 1–6、T1（#228 关）、#229 快/淡、#235/#237 on main。#239 弹出在 PR #240。#230 冻 F-S-10 / overlay-acl。
-- next_action: 勿扩 outbound profile。#229 体感需重启 tray 或重打 DMG。#230 禁止整票「继续」。
-- resume_doc: `docs/superpowers/specs/2026-08-27-post-227-status.md` · #230 · PR #240
-- updated: 2026-08-27
+### ChatShell 同一张脸（S86 · #239 · PR #240）
+- status: **done**（squash 合 main `6a3bfe23`）
+- context: 侧栏 ChatShell + 弹出 HTML。后续 overlay 卡片在 #241/#242 + 本枝狗食。
+- next_action: 无；形态续作见上条 Capture 卡。
+- resume_doc: PR #240 · `docs/superpowers/specs/2026-08-27-chat-shell-same-face-design.md`
+- updated: 2026-08-28
+
+### 形态深化 0.5.3 切点（S84–S87 · main 含 #240/#242）
+- status: **active**（主线用户可见项 done；Capture 卡狗食未合）
+- context: 切片 1–6、T1（#228 关）、ChatShell #240、Capture 骨架 #242。#230 冻 F-S-10 / overlay-acl。
+- next_action: 勿扩 outbound profile。#230 禁止整票「继续」。狗食见 Overlay Capture 卡条。
+- resume_doc: `docs/superpowers/specs/2026-08-27-post-227-status.md` · #230 · #243/#244
+- updated: 2026-08-28
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**
@@ -942,12 +956,12 @@
 - resume_doc: PR #221 · #220 · `docs/audit/reviews/post220-nits-adversary-synthesis-20260825.md`
 - updated: 2026-08-25
 
-### OS summoner overlay（S77–S86 · #219/#229 on main · #239 PR）
-- status: **active**（快/淡在 main 未进 DMG；HTML ChatShell 在 PR #240）
-- context: Mac `open()` 不 `NSApp.activate`（#234）。HTML 空态 `setExpanded(true)` + 无页 copy。弹出走 `overlay.shell.open`。
-- next_action: 合 #240 后 Win/Linux 托盘点开即 ChatShell。Mac 热键仍旧条。狗食弹出+热键。
-- resume_doc: PR #240 · PR #234 · #229
-- updated: 2026-08-27
+### OS summoner overlay（S77–S87 · #219/#229/#242 on main · 本枝狗食）
+- status: **active**（托盘/热键已改开 HTML 卡；Mac Swift HUD 条仍旧壳备用）
+- context: `summoner` / `summoner-toggle` → `openSummonerWebShell`。独立 overlay-chrome profile。会议台 overlay 已放行 list/get/auto_diarize。
+- next_action: 狗食新卡。PR 未开。DMG 未重打（热替换 `cmspark-agent.js`）。
+- resume_doc: #241/#242/#243/#244 · 枝 `feat/overlay-card-first-paint`
+- updated: 2026-08-28
 
 ### Companion-canon Side Panel（S74 · #196 MERGED）
 - status: **done**
