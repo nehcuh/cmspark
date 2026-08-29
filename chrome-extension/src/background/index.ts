@@ -312,15 +312,33 @@ const pendingLlmOneshot = new Map<
 
 async function handleCompanionMessage(msg: any) {
   if (msg.type === "ui.open_sidepanel") {
+    // True result round-trip: companion awaits ui.open_sidepanel.result by id
+    // (short timeout → honest failure in the overlay), so never swallow errors.
+    const reply = (ok: boolean, error?: string) => {
+      if (typeof msg.id !== "string" || !msg.id) return
+      try {
+        wsClient?.send({
+          type: "ui.open_sidepanel.result",
+          id: msg.id,
+          ok,
+          ...(error ? { error } : {}),
+        })
+      } catch {
+        /* ws gone — companion side times out and reports failure honestly */
+      }
+    }
     try {
       const wins = await chrome.windows.getAll({ windowTypes: ["normal"] })
       const focused = wins.find((w) => w.focused) || wins[0]
       const windowId = focused?.id
       if (windowId != null && chrome.sidePanel?.open) {
         await chrome.sidePanel.open({ windowId })
+        reply(true)
+      } else {
+        reply(false, "no normal window or sidePanel API unavailable")
       }
-    } catch {
-      /* overlay HTML already has the fail toast */
+    } catch (err: any) {
+      reply(false, err?.message || String(err))
     }
     return
   }

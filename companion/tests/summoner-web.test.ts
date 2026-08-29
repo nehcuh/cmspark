@@ -6,6 +6,7 @@ import test, { after, describe } from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as http from "node:http"
+import * as child_process from "node:child_process"
 import * as path from "node:path"
 import {
   startSummonerWebServer,
@@ -18,6 +19,7 @@ import {
   hideSummonerWebShell,
   openLoopbackPage,
   __testSetOverlayLaunchGraceMs,
+  __testSetOverlaySseReconnectGraceMs,
   SUMMONER_WEB_DISPATCH_ALLOW,
   SUMMONER_WEB_EVENT_ALLOW,
 } from "../src/summoner-web"
@@ -1170,7 +1172,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.ok(n <= 2, "hide twice must not storm closed")
   })
 
-  test("last SSE client close invokes onShellClosed after launch grace", async () => {
+  test("last SSE client close invokes onShellClosed after reconnect grace", async () => {
     let n = 0
     await startSummonerWebServer({
       preferredPort: 23510,
@@ -1179,34 +1181,39 @@ describe("summoner-web server", { concurrency: 1 }, () => {
         n += 1
       },
     })
-    await new Promise<void>((resolve, reject) => {
-      const req = http.request(
-        {
-          method: "GET",
-          host: "127.0.0.1",
-          port,
-          path: `/api/events`,
-          headers: { Cookie: `cmspark_overlay=${token}` },
-        },
-        (res) => {
-          assert.equal(res.statusCode, 200)
-          res.resume()
-          setTimeout(() => req.destroy(), 40)
-        },
-      )
-      req.on("error", () => {})
-      req.end()
-      const started = Date.now()
-      const tick = () => {
-        if (n >= 1) return resolve()
-        if (Date.now() - started > 2000) {
-          return reject(new Error("last SSE close did not invoke onShellClosed"))
+    __testSetOverlaySseReconnectGraceMs(60)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = http.request(
+          {
+            method: "GET",
+            host: "127.0.0.1",
+            port,
+            path: `/api/events`,
+            headers: { Cookie: `cmspark_overlay=${token}` },
+          },
+          (res) => {
+            assert.equal(res.statusCode, 200)
+            res.resume()
+            setTimeout(() => req.destroy(), 40)
+          },
+        )
+        req.on("error", () => {})
+        req.end()
+        const started = Date.now()
+        const tick = () => {
+          if (n >= 1) return resolve()
+          if (Date.now() - started > 2000) {
+            return reject(new Error("last SSE close did not invoke onShellClosed"))
+          }
+          setTimeout(tick, 20)
         }
-        setTimeout(tick, 20)
-      }
-      setTimeout(tick, 80)
-    })
-    assert.ok(n >= 1)
+        setTimeout(tick, 80)
+      })
+      assert.ok(n >= 1)
+    } finally {
+      __testSetOverlaySseReconnectGraceMs(8000)
+    }
   })
 
   test("last SSE close during overlay launch grace does not invoke onShellClosed", async () => {
@@ -1365,6 +1372,131 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     )
   })
 
+  test("SSE reconnect during grace cancels the pending shell close", async () => {
+    let n = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      onShellClosed: () => {
+        n += 1
+      },
+    })
+    const openSse = (): Promise<http.ClientRequest> =>
+      new Promise((resolve, reject) => {
+        const req = http.request(
+          {
+            method: "GET",
+            host: "127.0.0.1",
+            port,
+            path: `/api/events`,
+            headers: { Cookie: `cmspark_overlay=${token}` },
+          },
+          (res) => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`sse status ${res.statusCode}`))
+              return
+            }
+            res.resume()
+            resolve(req)
+          },
+        )
+        req.on("error", () => {})
+        req.end()
+      })
+    __testSetOverlaySseReconnectGraceMs(400)
+    try {
+      const first = await openSse()
+      first.destroy()
+      await new Promise((r) => setTimeout(r, 120))
+      assert.equal(n, 0, "transient SSE drop must not kill the shell")
+      const second = await openSse() // reconnect inside the grace window
+      await new Promise((r) => setTimeout(r, 600))
+      assert.equal(n, 0, "reconnect within grace must cancel the pending close")
+      second.destroy()
+      const deadline = Date.now() + 1500
+      while (n < 1 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 15))
+      }
+      assert.ok(n >= 1, "grace expiry with no clients must still close")
+    } finally {
+      __testSetOverlaySseReconnectGraceMs(8000)
+    }
+  })
+
+  test("hide with a live SSE client defers onShellClosed until the SSE drops", async () => {
+    let n = 0
+    await startSummonerWebServer({
+      preferredPort: 23510,
+      dispatch: async (msg) => ({ type: "ok", echo: msg.type }),
+      onShellClosed: () => {
+        n += 1
+      },
+    })
+    const req = await new Promise<http.ClientRequest>((resolve, reject) => {
+      const r = http.request(
+        {
+          method: "GET",
+          host: "127.0.0.1",
+          port,
+          path: `/api/events`,
+          headers: { Cookie: `cmspark_overlay=${token}` },
+        },
+        (res) => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`sse status ${res.statusCode}`))
+            return
+          }
+          res.resume()
+          resolve(r)
+        },
+      )
+      r.on("error", () => {})
+      r.end()
+    })
+    hideSummonerWebShell()
+    assert.equal(n, 0, "hide must not release leases synchronously while the page lives")
+    req.destroy()
+    const deadline = Date.now() + 2500
+    while (n < 1 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 15))
+    }
+    assert.ok(n >= 1, "SSE drop after hide must release within the close-request grace")
+  })
+
+  test("openLoopbackPage saves the spawned pid; win32 hide terminates it", async () => {
+    let spawned: import("node:child_process").ChildProcess | undefined
+    const tmp = path.join(path.resolve("/tmp"), "cmspark-overlay-win32-kill")
+    const opened = openLoopbackPage(`http://127.0.0.1:${port}/`, {
+      platform: "win32",
+      browserPath: "C:\\fake\\chrome.exe",
+      userDataDir: tmp,
+      spawn: () => {
+        const c = child_process.spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        })
+        spawned = c
+        return c
+      },
+    })
+    assert.equal(opened, true)
+    assert.ok(spawned, "spawn must be called")
+    const kid = spawned
+    assert.ok(typeof kid.pid === "number" && kid.pid > 0)
+    let exited = false
+    kid.on("exit", () => {
+      exited = true
+    })
+    hideSummonerWebShell()
+    const deadline = Date.now() + 3000
+    while (!exited && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    if (!exited) kid.kill("SIGKILL")
+    assert.ok(exited, "win32 hide must process.kill the saved overlay pid")
+  })
+
   after(() => {
     stopSummonerWebServer()
   })
@@ -1445,6 +1577,32 @@ test("hideSummonerWebShell and last SSE close share onShellClosed", () => {
   assert.match(sseClose, /onShellClosed|invokeOnShellClosed|size === 0/)
 })
 
+test("last SSE close defers onShellClosed behind a reconnect grace", () => {
+  const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(src, /OVERLAY_SSE_RECONNECT_GRACE_MS_DEFAULT = 8000/)
+  const closeStart = src.indexOf('req.on("close"')
+  assert.ok(closeStart >= 0)
+  const close = src.slice(closeStart, closeStart + 400)
+  assert.match(close, /scheduleOnShellClosed/)
+  assert.doesNotMatch(close, /^\s+invokeOnShellClosed\(\)/m)
+})
+
+test("win32 hide kills the saved overlay pid instead of ps; kill is fault-tolerant", () => {
+  const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  assert.match(src, /overlayShellPid = typeof child\.pid === "number" && child\.pid > 0 \? child\.pid : 0/)
+  const killStart = src.indexOf("function killOverlayShellPid")
+  assert.ok(killStart >= 0, "killOverlayShellPid missing")
+  const kill = src.slice(killStart, killStart + 400)
+  assert.match(kill, /overlayShellPid = 0/)
+  assert.match(kill, /process\.kill\(pid\)/)
+  assert.match(kill, /catch/)
+  const hideStart = src.indexOf("export function hideSummonerWebShell")
+  assert.ok(hideStart >= 0)
+  const hide = src.slice(hideStart, hideStart + 600)
+  assert.match(hide, /win32/)
+  assert.match(hide, /closeOverlayChrome/)
+})
+
 test("C-thin HTML skills toggle and knowledge attach are not activate-only / replace-all", () => {
   const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
   assert.match(src, /skill_name:s\.name,on:!on/)
@@ -1479,4 +1637,21 @@ test("MCP rail stays hide-not-delete", () => {
 test("HTML mcp.toggle does not ride tray companionClient", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
   assert.doesNotMatch(src, /type === "mcp\.toggle_server" && companionClient/)
+})
+
+test("W3 (F3b): send() clears the attachment input after a successful send", () => {
+  const html = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
+  const sendStart = html.indexOf("function send(mode){")
+  assert.ok(sendStart >= 0, "send(mode) missing")
+  const send = html.slice(sendStart, html.indexOf('$("send").onclick', sendStart))
+  // Reset happens only on the success branch (failure keeps the file for retry),
+  // after filesToPayload has consumed fileEl.files.
+  assert.match(send, /已提交/)
+  const okIdx = send.indexOf('setStatus("已提交")')
+  assert.ok(okIdx >= 0, "success branch missing")
+  const resetIdx = send.indexOf('fileEl.value=""')
+  assert.ok(resetIdx >= 0 && resetIdx < okIdx, "fileEl.value reset must precede 已提交 in the success branch")
+  // Failure path must NOT clear the input.
+  const failIdx = send.indexOf('setStatus(d.error||"发送失败")')
+  assert.ok(failIdx >= 0 && failIdx < resetIdx, "reset must come after the error early-return")
 })

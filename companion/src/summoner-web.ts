@@ -326,7 +326,22 @@ export type OpenLoopbackPageDeps = {
     command: string,
     args: string[],
     options: { detached?: boolean; stdio?: "ignore"; windowsHide?: boolean; shell?: boolean },
-  ) => { unref: () => void }
+  ) => { unref: () => void; pid?: number }
+}
+
+/** win32 has no ps(1); keep the spawned PID so hide can TerminateProcess it. */
+let overlayShellPid = 0
+let overlayShellPlatform: NodeJS.Platform = process.platform
+
+function killOverlayShellPid(): void {
+  const pid = overlayShellPid
+  overlayShellPid = 0
+  if (!pid) return
+  try {
+    process.kill(pid) // win32 maps to TerminateProcess
+  } catch {
+    /* ESRCH / already exited */
+  }
 }
 
 export function defaultOverlayChromeDir(): string {
@@ -337,7 +352,16 @@ export function defaultOverlayChromeDir(): string {
 let overlayLaunchAt = 0
 const OVERLAY_LAUNCH_GRACE_MS_DEFAULT = 2000
 let overlayLaunchGraceMs = OVERLAY_LAUNCH_GRACE_MS_DEFAULT
-let overlayLaunchGraceTimer: ReturnType<typeof setTimeout> | null = null
+/** EventSource auto-reconnects (~3s) after a transient drop; never kill on the first close. */
+const OVERLAY_SSE_RECONNECT_GRACE_MS_DEFAULT = 8000
+let overlaySseReconnectGraceMs = OVERLAY_SSE_RECONNECT_GRACE_MS_DEFAULT
+/** After an explicit close request, an SSE drop is the page going away, not reconnecting. */
+const OVERLAY_CLOSE_AFTER_REQUEST_MS = 1000
+/** Explicit hide but SSE never drops (close failed): bound the lease release. */
+const OVERLAY_HIDE_FALLBACK_MS = 8000
+let overlayShellCloseTimer: ReturnType<typeof setTimeout> | null = null
+let overlayShellCloseGen = 0
+let overlayCloseRequested = false
 let overlaySttSessionId = ""
 let overlayMeetingId = ""
 
@@ -350,22 +374,31 @@ export function __testSetOverlayLaunchGraceMs(ms: number): void {
     Number.isFinite(ms) && ms > 0 ? ms : OVERLAY_LAUNCH_GRACE_MS_DEFAULT
 }
 
-function clearOverlayLaunchGraceTimer(): void {
-  if (overlayLaunchGraceTimer) {
-    clearTimeout(overlayLaunchGraceTimer)
-    overlayLaunchGraceTimer = null
+export function __testSetOverlaySseReconnectGraceMs(ms: number): void {
+  overlaySseReconnectGraceMs =
+    Number.isFinite(ms) && ms > 0 ? ms : OVERLAY_SSE_RECONNECT_GRACE_MS_DEFAULT
+}
+
+function clearOverlayShellCloseTimer(): void {
+  overlayShellCloseGen += 1
+  if (overlayShellCloseTimer) {
+    clearTimeout(overlayShellCloseTimer)
+    overlayShellCloseTimer = null
   }
 }
 
-function scheduleOnShellClosedAfterGrace(launchAt: number): void {
-  clearOverlayLaunchGraceTimer()
-  const delay = Math.max(0, launchAt + overlayLaunchGraceMs - Date.now())
-  overlayLaunchGraceTimer = setTimeout(() => {
-    overlayLaunchGraceTimer = null
+/** Deferred last-SSE close; a new SSE client or a fresh launch cancels it. */
+function scheduleOnShellClosed(delayMs: number): void {
+  clearOverlayShellCloseTimer()
+  const gen = overlayShellCloseGen
+  const timer = setTimeout(() => {
+    if (gen !== overlayShellCloseGen) return
+    overlayShellCloseTimer = null
     if (sseClients.size > 0) return
-    if (overlayLaunchAt !== launchAt) return
     invokeOnShellClosed()
-  }, delay)
+  }, Math.max(0, delayMs))
+  if (typeof timer.unref === "function") timer.unref()
+  overlayShellCloseTimer = timer
 }
 
 function overlayDispatchFailed(result: unknown): boolean {
@@ -414,7 +447,8 @@ function abortOverlayCaptureSessions(): void {
 
 /** Hide/last-SSE/idle-stop share this path; twice is a no-throw. */
 function invokeOnShellClosed(): void {
-  clearOverlayLaunchGraceTimer()
+  clearOverlayShellCloseTimer()
+  overlayCloseRequested = false
   abortOverlayCaptureSessions()
   const cb = activeOnShellClosed
   if (!cb) return
@@ -438,6 +472,7 @@ export function summonerWebIsShowing(): boolean {
 
 export function requestSummonerWebClose(): boolean {
   overlayLaunchAt = 0
+  overlayCloseRequested = true
   if (sseClients.size === 0) return false
   const line = `data: ${JSON.stringify({ type: "shell.close" })}\n\n`
   for (const res of sseClients) {
@@ -452,8 +487,20 @@ export function requestSummonerWebClose(): boolean {
 
 export function hideSummonerWebShell(): void {
   requestSummonerWebClose()
-  closeOverlayChrome(defaultOverlayChromeDir())
-  invokeOnShellClosed()
+  if (overlayShellPlatform === "win32" && overlayShellPid) {
+    killOverlayShellPid()
+  } else {
+    overlayShellPid = 0
+    closeOverlayChrome(defaultOverlayChromeDir())
+  }
+  if (sseClients.size === 0) {
+    // Page already gone (or never connected): nothing to wait for.
+    invokeOnShellClosed()
+    return
+  }
+  // Page may still be dying; lease release converges on the last SSE drop.
+  // The fallback timer bounds the case where the close request failed.
+  scheduleOnShellClosed(OVERLAY_HIDE_FALLBACK_MS)
 }
 
 function probeScreen(platform: NodeJS.Platform): { w: number; h: number } {
@@ -496,12 +543,17 @@ export function openLoopbackPage(url: string, deps: OpenLoopbackPageDeps = {}): 
     return false
   }
   overlayLaunchAt = Date.now()
+  overlayCloseRequested = false
+  clearOverlayShellCloseTimer()
   const spawn = deps.spawn ?? ((cmd, args, opts) => child_process.spawn(cmd, args, opts))
-  spawn(plan.command, plan.args, {
+  const child = spawn(plan.command, plan.args, {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
-  }).unref()
+  })
+  child.unref()
+  overlayShellPid = typeof child.pid === "number" && child.pid > 0 ? child.pid : 0
+  overlayShellPlatform = platform
   return true
 }
 
@@ -570,7 +622,10 @@ export function stopSummonerWebServer(): void {
     overlaySttSessionId = ""
     overlayMeetingId = ""
     overlayLaunchGraceMs = OVERLAY_LAUNCH_GRACE_MS_DEFAULT
-    clearOverlayLaunchGraceTimer()
+    overlaySseReconnectGraceMs = OVERLAY_SSE_RECONNECT_GRACE_MS_DEFAULT
+    overlayCloseRequested = false
+    overlayShellPid = 0
+    clearOverlayShellCloseTimer()
   }
 }
 
@@ -677,15 +732,21 @@ async function handleRequest(
         "X-Content-Type-Options": "nosniff",
       })
       res.write(":\n\n")
+      // A (re)connect cancels any pending deferred close.
+      overlayCloseRequested = false
+      clearOverlayShellCloseTimer()
       sseClients.add(res)
       req.on("close", () => {
         sseClients.delete(res)
         if (sseClients.size !== 0) return
+        // Defer onShellClosed: EventSource auto-reconnects after transient drops.
         if (overlayLaunchInGrace()) {
-          scheduleOnShellClosedAfterGrace(overlayLaunchAt)
+          scheduleOnShellClosed(overlayLaunchAt + overlayLaunchGraceMs - Date.now())
           return
         }
-        invokeOnShellClosed()
+        scheduleOnShellClosed(
+          overlayCloseRequested ? OVERLAY_CLOSE_AFTER_REQUEST_MS : overlaySseReconnectGraceMs,
+        )
       })
       return
     }
@@ -1943,8 +2004,9 @@ try{
     }).then(function(d){
       if(!d) return;
       if(d.error||d.type==="error"){setStatus(d.error||"发送失败");return}
+      fileEl.value="";
       setStatus("已提交");
-    }).catch(function(e){setStatus(String(e&&e.message||e))});
+    }).catch(function(e){setStatus(String(e&&e.message||e))})
   }
   $("send").onclick=function(){send(busy?"steer":"create")};
   $("sendGo").onclick=function(){send(busy?"steer":"create")};

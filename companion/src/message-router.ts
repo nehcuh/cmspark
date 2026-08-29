@@ -145,8 +145,11 @@ function applySlashSkillPin(
   services.skillEngine.setActiveSkillsForThread(threadId, pin.active_skill_ids)
   if (!updated) return
   const payload = { type: "thread.updated", thread: updated }
+  // broadcast fans out to every authenticated client INCLUDING the
+  // originating panel socket (ws/lifecycle session.broadcast iterates all
+  // authenticated connections) — a follow-up sendToExtension would deliver a
+  // duplicate thread.updated to the initiator (R3a).
   session?.broadcast?.(payload)
-  session?.sendToExtension?.(payload)
 }
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
@@ -469,6 +472,12 @@ export async function handleMessage(
       return handleUiOpenSidepanel(rest, session)
     }
 
+    // Extension SW → companion result frame for the broadcast above.
+    case "ui.open_sidepanel.result": {
+      const { handleUiOpenSidepanelResult } = await import("./message-router/handlers/ui-open-sidepanel")
+      return handleUiOpenSidepanelResult(rest, session)
+    }
+
     // --- Chat ---
     case "chat.create": {
       if (!session) return { type: "error", error: "No session" }
@@ -716,6 +725,10 @@ export async function handleMessage(
           if (abortControllers.get(rest.thread_id) === controller) {
             abortControllers.delete(rest.thread_id)
           }
+          // R3b: drop the owner mapping on every exit of this run (success +
+          // caught failure) so no stale threadId→panel entry survives; the
+          // generation guard above keeps a successor run's mapping intact.
+          llmLoopOwnerPanel.delete(rest.thread_id)
           releaseMultiAgentLlmLoop(rest.thread_id)
         }
       }
@@ -822,6 +835,7 @@ export async function handleMessage(
           abortControllers.get(thread_id) === uploadController
         ) {
           abortControllers.delete(thread_id)
+          llmLoopOwnerPanel.delete(thread_id)
           releaseMultiAgentLlmLoop(thread_id)
         }
         try {
@@ -1256,6 +1270,9 @@ export async function handleMessage(
           if (abortControllers.get(thread_id) === uploadController) {
             abortControllers.delete(thread_id)
           }
+          // R3b: clear the owner mapping on success + failure exits alike
+          // (generation-guarded so a superseding run's mapping survives).
+          llmLoopOwnerPanel.delete(thread_id)
           releaseUploadLlm(thread_id)
         }
       }
@@ -1617,6 +1634,9 @@ export async function handleMessage(
           if (abortControllers.get(thread_id) === controller) {
             abortControllers.delete(thread_id)
           }
+          // R3b: clear the owner mapping on success + failure exits alike
+          // (generation-guarded so a superseding run's mapping survives).
+          llmLoopOwnerPanel.delete(thread_id)
           releaseRegenLlm(thread_id)
         }
       }

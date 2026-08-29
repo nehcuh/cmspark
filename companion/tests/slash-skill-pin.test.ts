@@ -109,11 +109,22 @@ beforeEach(() => {
 })
 
 function makeSession(sent: any[]) {
-  return {
-    sendToExtension: (data: any) => sent.push(data),
-    executeTool: async () => ({ success: true, data: {} }),
-    broadcast: (data: any) => sent.push(data),
-  } as any
+  const viaBroadcast: any[] = []
+  const viaDirect: any[] = []
+  return Object.assign(
+    {
+      sendToExtension: (data: any) => {
+        viaDirect.push(data)
+        sent.push(data)
+      },
+      executeTool: async () => ({ success: true, data: {} }),
+      broadcast: (data: any) => {
+        viaBroadcast.push(data)
+        sent.push(data)
+      },
+    },
+    { viaBroadcast, viaDirect },
+  ) as any
 }
 
 test("slash-skill pin: chat.create /browse while auto flips manual and next resolve is active-only", async () => {
@@ -143,6 +154,7 @@ test("slash-skill pin: chat.create /browse while auto flips manual and next reso
   }
 
   const sent: any[] = []
+  const session = makeSession(sent)
   await handleMessage(
     {
       type: "chat.create",
@@ -151,7 +163,7 @@ test("slash-skill pin: chat.create /browse while auto flips manual and next reso
       skill_ids: thread.active_skill_ids,
     },
     { threadManager: tm, skillEngine: engine, historyStore: { record: () => 0 } as any },
-    makeSession(sent),
+    session,
   )
 
   const after = tm.get(thread.id)
@@ -166,6 +178,14 @@ test("slash-skill pin: chat.create /browse while auto flips manual and next reso
   const updated = sent.find((m) => m.type === "thread.updated" && m.thread?.id === thread.id)
   assert.ok(updated, "must broadcast thread.updated so SkillsPanel shows 按需")
   assert.equal(updated.thread.skill_selection_mode, "manual")
+  // R3a: production broadcast already reaches the initiating panel socket —
+  // the same payload object must never also go through sendToExtension.
+  const doubleDelivered = session.viaBroadcast.filter((p: any) => session.viaDirect.includes(p))
+  assert.deepEqual(
+    doubleDelivered,
+    [],
+    "no payload may be delivered via both broadcast and sendToExtension (R3a double-send)",
+  )
 
   const next = await origResolve(
     thread.id,

@@ -1874,7 +1874,7 @@ export async function startMenuBarAgent(): Promise<void> {
   })
   companionClient.onAppMessage((msg: any) => {
     if (!msg || msg.type !== "ui.open_sidepanel") return
-    // no-id broadcast echo — extension SW opens the panel; tray must not treat this as RPC
+    // broadcast echo (id-addressed to the extension SW) — tray must not treat this as RPC
   })
 
   // Set default quick actions immediately

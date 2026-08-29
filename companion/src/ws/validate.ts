@@ -209,6 +209,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "ui.open_sidepanel": () => ({ valid: true }),
+    "ui.open_sidepanel.result": (m) => {
+      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "ui.open_sidepanel.result requires id" }
+      if (typeof m.ok !== "boolean") return { valid: false, error: "ui.open_sidepanel.result requires ok boolean" }
+      if (m.error !== undefined && typeof m.error !== "string") return { valid: false, error: "error must be a string" }
+      return { valid: true }
+    },
     "skill.activate": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "skill.activate requires thread_id" }
       if (typeof m.skill_name !== "string" || !m.skill_name) return { valid: false, error: "skill.activate requires skill_name" }
