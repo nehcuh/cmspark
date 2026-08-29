@@ -463,7 +463,7 @@ test("classifyError osascript missing url/expression is recoverable (not chat-ki
   )
   assert.equal(
     classifyError(
-      "osascript_eval requires url and expression. url = fragment matching the Chrome tab (e.g. 'zhihu.com'); expression = JS to run in that tab. Got url=missing, expression=set.",
+      "osascript_eval requires expression. Pass tabId from list_tabs, or the exact url list_tabs returned. Fragments like zhihu.com are rejected. Got url=missing, tabId=missing, expression=set.",
       { toolName: "osascript_eval" },
     ),
     "recoverable",

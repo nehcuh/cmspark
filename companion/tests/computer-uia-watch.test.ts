@@ -393,13 +393,17 @@ test("X2: win32 smoke — real ps1 ready handshake resolves; dispose flips dead 
   // resolveWinScript falls back to the packaged staged path under the kimi
   // runtime node — the dev-only override points it at the repo scripts.
   const prevScripts = process.env.CMSPARK_WIN_SCRIPTS
+  const prevAllow = process.env.CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE
   process.env.CMSPARK_WIN_SCRIPTS = path.resolve(__dirname, "..", "..", "src", "host-use", "win", "scripts")
+  process.env.CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE = "1"
   let watcher: UiaWatcher | null = null
   try {
     watcher = await startUiaWindowWatcher({ hwnd: 0, pid: process.pid }, { maxSeconds: 60, readyTimeoutMs: 20_000 })
   } finally {
     if (prevScripts === undefined) delete process.env.CMSPARK_WIN_SCRIPTS
     else process.env.CMSPARK_WIN_SCRIPTS = prevScripts
+    if (prevAllow === undefined) delete process.env.CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE
+    else process.env.CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE = prevAllow
   }
   assert.equal(watcher!.dead, false)
   assert.equal(watcher!.exitCode, null)

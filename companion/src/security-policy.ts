@@ -47,10 +47,11 @@ export class SecurityPolicy {
     switch (toolName) {
       case "evaluate":
         return String(params?.code || "")
-      case "osascript_eval":
-        // Same string dispatch validates/runs (expression || code). Preview
-        // must not bind a different alias (C-N3).
-        return String(params?.expression || params?.code || "")
+      case "osascript_eval": {
+        // Bind expression + canonical URL so a token cannot run against another tab.
+        const expr = String(params?.expression || params?.code || "")
+        return `osascript|${expr}|url=${String(params?.url || "")}`
+      }
       case "host_read":
         return String(params?.application || "")
       case "host_write":
@@ -91,8 +92,14 @@ export class SecurityPolicy {
         return `netsec|targets=${JSON.stringify(targets)}|ports=${JSON.stringify(ports)}`
       }
       // ADR-015: multi-agent HITL tools — bind role/question so token is not free-floating
-      case "spawn_worker":
-        return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}`
+      case "spawn_worker": {
+        const canon = (list: unknown): string => {
+          if (!Array.isArray(list)) return "null"
+          return JSON.stringify([...new Set(list.map(String))].sort())
+        }
+        const intent = String(params?.intent_id || "").trim()
+        return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}|allow=${canon(params?.tool_allow)}|deny=${canon(params?.tool_deny)}|intent=${intent}`
+      }
       case "ask_user":
         return String(params?.question || params?.prompt || "")
       // ADR-025 ACP coding handoff — bind agent/goal/mode/workspace/session (never empty default)

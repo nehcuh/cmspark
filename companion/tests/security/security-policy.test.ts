@@ -20,18 +20,25 @@ test("validateToken succeeds for matching tool and code", () => {
   assert.equal(valid, true)
 })
 
-test("osascript_eval binding payload is expression || code (C-N3)", () => {
+test("osascript_eval binding payload is expression + url (C1 / C-N3)", () => {
   const policy = new SecurityPolicy()
   assert.equal(
-    SecurityPolicy.bindingPayloadFor("osascript_eval", { expression: "fetch('/a')" }),
-    "fetch('/a')",
+    SecurityPolicy.bindingPayloadFor("osascript_eval", {
+      expression: "fetch('/a')",
+      url: "https://a.example/",
+    }),
+    "osascript|fetch('/a')|url=https://a.example/",
   )
   assert.equal(
-    SecurityPolicy.bindingPayloadFor("osascript_eval", { code: "fetch('/b')" }),
-    "fetch('/b')",
+    SecurityPolicy.bindingPayloadFor("osascript_eval", {
+      code: "fetch('/b')",
+      url: "https://b.example/",
+    }),
+    "osascript|fetch('/b')|url=https://b.example/",
   )
-  const { token } = policy.issueTokenFor("osascript_eval", { code: "fetch('/c')" })
-  assert.equal(policy.validateToken(token, "osascript_eval", "fetch('/c')"), true)
+  const params = { code: "fetch('/c')", url: "https://c.example/" }
+  const { token } = policy.issueTokenFor("osascript_eval", params)
+  assert.equal(policy.validateTokenFor(token, "osascript_eval", params), true)
 })
 
 test("validateToken fails for mismatched tool name", () => {

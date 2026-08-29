@@ -27,6 +27,10 @@ test("P0 SEC-02: MCP stdio allows explicit config.env secrets (operator intent)"
   assert.equal(env.PATH, "/custom/bin")
 })
 
+test("Batch C C2: MCP stdio rejects loader env keys by name", () => {
+  assert.throws(() => buildMcpStdioEnv({ NODE_OPTIONS: "--require ./x" }), /NODE_OPTIONS/)
+})
+
 test("MCP stdio env pins npm_config_prefix under the data dir (packaged Contents/lib)", () => {
   const env = buildMcpStdioEnv()
   assert.ok(env.npm_config_prefix, "npm_config_prefix must be set")

@@ -115,6 +115,36 @@ export function isReservedUserEnvKey(name: string): boolean {
   return isCmsparkPrefixKey(name) || USER_ENV_DENYLIST.has(name)
 }
 
+/**
+ * MCP stdio child-env loader hijack keys. Dedicated table — do NOT reuse
+ * USER_ENV_DENYLIST (that bans PATH/HOME/NODE_ENV which MCP must be able to set).
+ */
+const MCP_LOADER_ENV_EXACT = new Set(
+  [
+    "NODE_OPTIONS",
+    "NODE_PATH",
+    "ELECTRON_RUN_AS_NODE",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PYTHONINSPECT",
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "PYTHONSTARTUP",
+    "BASH_ENV",
+    "ENV",
+    "OPENSSL_CONF",
+  ].map((k) => k.toUpperCase()),
+)
+
+export function isUnsafeLoaderEnvKey(name: string): boolean {
+  if (!name) return false
+  const u = String(name).toUpperCase()
+  if (MCP_LOADER_ENV_EXACT.has(u)) return true
+  if (u.startsWith("DYLD_")) return true
+  if (u.startsWith("BASH_FUNC_")) return true
+  return false
+}
+
 export function userEnvFilePath(dataDir: string = DATA_DIR): string {
   return path.join(dataDir, USER_ENV_FILE_NAME)
 }

@@ -19,6 +19,11 @@ import {
   shouldL2GateOsascript,
 } from "../bridge/tool-definitions"
 import { OSASCRIPT_BIN } from "../process-path"
+import {
+  OSASCRIPT_TARGET_ERROR,
+  canonicalizeOsascriptUrl,
+  resolveOsascriptPageUrl,
+} from "./osascript-bind"
 import type {
   SecurityConfirmationDetails,
   SecurityConfirmationDecision,
@@ -104,7 +109,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
   const threadManager = _rt.getThreadManager()
   const skillEngine = _rt.getSkillEngine()
   const getCachedTabUrl = _rt.getCachedTabUrl
-  const tabUrlCache = _rt.getTabUrlCache()
   const computerTaskAbort = _rt.computerTaskAbort
   const securityConfirmations = _rt.securityConfirmations
   const computerEstopEnsureOverride = _rt.getComputerEstopEnsureOverride()
@@ -1035,55 +1039,37 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       }
     }
     case "osascript_eval": {
-      // Normalize evaluate-style aliases + resolve missing url from tabId / tabUrlCache.
-      // LLMs routinely call osascript_eval with only {expression} (see history t9rh1o).
-      // Adapter injects pinned tabId; we map that (or any recent cached tab) to a URL
-      // fragment so the AppleScript tab-matcher can find the tab.
-      let pageUrl = typeof params.url === "string" ? params.url.trim() : ""
-      let jsExpr =
+      // Absolute first: platform fail-closed before URL/token noise (P0 / C-N1).
+      // Linux CI must see macos-only, not a missing-url error for a fragment.
+      if (!shouldL2GateOsascript(os.platform())) {
+        return { success: false, error: OSASCRIPT_MACOS_ONLY_ERROR }
+      }
+      const jsExpr =
         (typeof params.expression === "string" && params.expression) ||
         (typeof params.code === "string" && params.code) ||
         ""
-      if (!pageUrl && typeof params.tabId === "number") {
-        pageUrl = getCachedTabUrl(params.tabId) || ""
-        if (pageUrl) {
-          logger.info("osascript_eval.url_resolved_from_tabId", {
-            tab_id: params.tabId,
-            url_prefix: pageUrl.slice(0, 80),
-          })
-        }
-      }
-      if (!pageUrl && tabUrlCache.size > 0) {
-        // Last-resort: most recently cached tab (Map insertion order). Prefer https tabs.
-        let fallback = ""
-        for (const u of tabUrlCache.values()) {
-          if (typeof u === "string" && u.startsWith("http")) fallback = u
-        }
-        if (fallback) {
-          pageUrl = fallback
-          logger.info("osascript_eval.url_resolved_from_cache_fallback", {
-            url_prefix: pageUrl.slice(0, 80),
-            cache_size: tabUrlCache.size,
-          })
-        }
-      }
       if (!jsExpr) {
         return {
           success: false,
-          error:
-            "osascript_eval requires expression (JS to run in the Chrome tab). " +
-            "Optional: url fragment (e.g. 'example.com') or tabId from list_tabs.",
+          error: OSASCRIPT_TARGET_ERROR,
         }
       }
-      if (!pageUrl) {
-        return {
-          success: false,
-          error:
-            "osascript_eval: no url and no tab URL in cache. " +
-            "Call list_tabs first, then pass url (fragment matching the tab) or tabId. " +
-            "Example: {url: 'example.com', expression: 'document.title'}",
+      // After L2, execute the bound URL. Do not re-resolve tabId (tab may have navigated).
+      let pageUrl = ""
+      if (params.security_token) {
+        const bound = canonicalizeOsascriptUrl(String(params.url || ""))
+        if (!bound) {
+          return { success: false, error: OSASCRIPT_TARGET_ERROR }
         }
+        pageUrl = bound
+      } else {
+        const resolved = resolveOsascriptPageUrl(params, getCachedTabUrl)
+        if ("error" in resolved) {
+          return { success: false, error: resolved.error }
+        }
+        pageUrl = resolved.url
       }
+      params = { ...params, url: pageUrl, expression: jsExpr }
       // P0 SEC-01: require L2 security_token (mirror shell_exec) — no tokenless path
       if (!params.security_token) {
         return {
@@ -1092,7 +1078,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         }
       }
       {
-        const valid = securityPolicy.validateToken(params.security_token, "osascript_eval", jsExpr)
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
+          "osascript_eval",
+          params,
+        )
         if (!valid) {
           return { success: false, error: "Invalid or expired security token" }
         }
@@ -1111,9 +1101,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const lengthCheck = securityPolicy.checkLength("osascript_eval", jsExpr)
       if (!lengthCheck.ok) {
         return { success: false, error: lengthCheck.error }
-      }
-      if (!shouldL2GateOsascript(os.platform())) {
-        return { success: false, error: OSASCRIPT_MACOS_ONLY_ERROR }
       }
       // Use execFile with absolute OSASCRIPT_BIN + -e argv (P0 injection + PATH harden).
       // Bare "osascript" fails with spawn ENOTDIR when process PATH contains a *file*
@@ -1136,7 +1123,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           "-e", "    set resultText to \"\"",
           "-e", "    repeat with w in windows",
           "-e", "      repeat with t in tabs of w",
-          "-e", "        if URL of t contains pageUrl then",
+          "-e", "        if URL of t is pageUrl then",
           "-e", "          set resultText to execute t javascript jsExpr",
           "-e", "          set foundTab to true",
           "-e", "          exit repeat",

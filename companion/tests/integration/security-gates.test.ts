@@ -1121,7 +1121,7 @@ test("item 2: osascript_eval with fetch APPROVE is not re-blocked by regex", asy
   const expr = "fetch('http://127.0.0.1/x')"
   if (!shouldL2GateOsascript(process.platform as NodeJS.Platform)) {
     const result = await executeTool("tc_osa_fetch_approve", "osascript_eval", {
-      url: "example.com",
+      url: "https://example.com/page",
       expression: expr,
     })
     assert.equal(result.success, false)
@@ -1130,7 +1130,7 @@ test("item 2: osascript_eval with fetch APPROVE is not re-blocked by regex", asy
   }
   const confirmationPromise = expectClientMessage("security.confirmation.request")
   const resultPromise = executeTool("tc_osa_fetch_approve", "osascript_eval", {
-    url: "example.com",
+    url: "https://example.com/page",
     expression: expr,
   })
   const confirmation = await confirmationPromise
@@ -1158,10 +1158,10 @@ test("C-N1: executeCompanionTool valid token + fetch is not regex-reblocked (any
     "../../src/bridge/tool-definitions.js"
   )
   const expr = "fetch('http://127.0.0.1/x')"
-  const { token } = securityPolicy.issueToken("osascript_eval", expr)
+  const params = { url: "https://example.com/page", expression: expr }
+  const { token } = securityPolicy.issueTokenFor("osascript_eval", params)
   const r = await executeCompanionTool("osascript_eval", {
-    url: "example.com",
-    expression: expr,
+    ...params,
     security_token: token,
   })
   assert.doesNotMatch(String(r.error || ""), /contains high-risk APIs/)

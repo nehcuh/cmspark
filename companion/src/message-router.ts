@@ -3894,35 +3894,34 @@ export async function handleMessage(
           error: OSASCRIPT_MACOS_ONLY_ERROR,
         }
       }
-      const r = rest as { url?: string; expression?: string; code?: string }
+      const r = rest as { url?: string; expression?: string; code?: string; tabId?: number }
       const pageUrl = typeof r.url === "string" ? r.url : ""
       const jsExpr =
         (typeof r.expression === "string" && r.expression) ||
         (typeof r.code === "string" && r.code) ||
         ""
-      if (!pageUrl || !jsExpr) {
+      const tabId = typeof r.tabId === "number" ? r.tabId : undefined
+      if (!jsExpr || (!pageUrl && tabId === undefined)) {
         return {
           type: "tool.result",
           id: msg.id,
           success: false,
           error:
-            "osascript_eval requires url and expression. " +
-            "url = fragment matching the Chrome tab (e.g. 'zhihu.com'); " +
-            "expression = JS to run in that tab. " +
-            `Got url=${pageUrl ? "set" : "missing"}, expression=${jsExpr ? "set" : "missing"}.`,
+            "osascript_eval requires expression. Pass tabId from list_tabs, or the exact url list_tabs returned. Fragments like zhihu.com are rejected. " +
+            `Got url=${pageUrl ? "set" : "missing"}, tabId=${tabId !== undefined ? "set" : "missing"}, expression=${jsExpr ? "set" : "missing"}.`,
         }
       }
-      // Token check only — high-risk regex is L2 preview, not a tokenless hard-block.
-      if (rest.security_token) {
-        const valid = securityPolicy.validateToken(String(rest.security_token), "osascript_eval", jsExpr)
-        if (!valid) {
-          return { type: "tool.result", id: msg.id, success: false, error: "Invalid or expired security token" }
-        }
-      }
+      // Do not validateToken here — tokens are single-use and executeCompanionTool
+      // is the sole validateTokenFor site (Batch C C1 HMAC lockstep).
       if (!session) {
         return { type: "tool.result", id: msg.id, success: false, error: "No session available for osascript_eval" }
       }
-      const result = await session.executeTool(msg.id || `osascript_${Date.now()}`, "osascript_eval", { url: pageUrl, expression: jsExpr, security_token: rest.security_token })
+      const result = await session.executeTool(msg.id || `osascript_${Date.now()}`, "osascript_eval", {
+        url: pageUrl || undefined,
+        tabId,
+        expression: jsExpr,
+        security_token: rest.security_token,
+      })
       return { type: "tool.result", id: msg.id, ...result }
     }
 
