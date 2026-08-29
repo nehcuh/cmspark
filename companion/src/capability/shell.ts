@@ -160,10 +160,51 @@ export function hasShellAllowlistMetachar(command: string): boolean {
 /** Interpreters that must not receive -c/-e when only bare name is allowlisted. */
 const BARE_INTERPRETER_DENY_FLAGS = /(?:^|\s)(?:-[ce]|--command|--eval)(?:\s|=|$)/
 
+const INTERPRETER_BASENAMES = new Set([
+  "python",
+  "python3",
+  "node",
+  "nodejs",
+  "ruby",
+  "perl",
+  "php",
+  "lua",
+  "osascript",
+])
+
+function interpreterBasename(argv0: string): string {
+  const base = String(argv0).split(/[/\\]/).pop() || String(argv0)
+  return base.toLowerCase()
+}
+
+function isKnownInterpreter(argv0: string): boolean {
+  const b = interpreterBasename(argv0)
+  if (INTERPRETER_BASENAMES.has(b)) return true
+  if (/^python\d+(\.\d+)*$/.test(b)) return true
+  return false
+}
+
+function tokenIsDeniedInterpreterFlag(token: string, clustered: boolean): boolean {
+  if (token === "-c" || token === "-e" || token === "--command" || token === "--eval") return true
+  if (token.startsWith("--command=") || token.startsWith("--eval=")) return true
+  if (/^-c./.test(token)) return true
+  if (/^-e./.test(token) && !token.startsWith("--")) return true
+  if (clustered && /^-[A-Za-z]{2,}$/.test(token) && /[ce]/i.test(token)) return true
+  return false
+}
+
+function argvHasDeniedInterpreterFlags(argv: string[]): boolean {
+  if (argv.length < 2) return false
+  for (let i = 1; i < argv.length; i++) {
+    if (tokenIsDeniedInterpreterFlag(argv[i], true)) return true
+  }
+  return false
+}
+
 /**
- * P1 SEC-07: allowlist match as argv template, not naive prefix.
- * - Exact entry or entry + args OK when entry has spaces (template prefix).
- * - Bare interpreter names (python3, node, npm, …) reject -c/-e/--eval.
+ * P1 SEC-07 + Batch C C3: allowlist match as argv template, not naive prefix.
+ * Deny -c/-e on parsed argv (quoted `python3 '-c'`). Clustered shorts (-ic)
+ * only for known interpreters so `grep -ic` / `wc -c` stay allowed.
  */
 export function commandMatchesAllowlistEntry(command: string, entry: string): boolean {
   const cmd = command.trim()
@@ -171,10 +212,19 @@ export function commandMatchesAllowlistEntry(command: string, entry: string): bo
   if (!cmd || !ent) return false
   if (cmd === ent) return true
   if (!cmd.startsWith(ent + " ")) return false
-  // Bare single-token interpreter: block code-injection flags
-  if (!/\s/.test(ent) && BARE_INTERPRETER_DENY_FLAGS.test(cmd.slice(ent.length))) {
-    return false
+  if (/\s/.test(ent)) return true
+
+  const tokens = tokenizeSimpleArgv(cmd)
+  if (tokens) {
+    let i = 0
+    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++
+    const rest = tokens.slice(i)
+    if (rest.length >= 2 && isKnownInterpreter(rest[0]) && argvHasDeniedInterpreterFlags(rest)) {
+      return false
+    }
+    return true
   }
+  if (isKnownInterpreter(ent) && BARE_INTERPRETER_DENY_FLAGS.test(cmd.slice(ent.length))) return false
   return true
 }
 
@@ -309,17 +359,14 @@ export function shellSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): {
 }
 
 /**
- * P1b: try parse a simple command into argv for spawn(..., { shell: false }).
- * Returns null if metacharacters present, empty, or unparseable.
- * Supports basic double/single quotes.
- * Backslash escapes only `\"`, `\'`, `\\` — never swallow path separators
- * (Windows `C:\Users\...` must stay intact; Pi N1 B2).
+ * Tokenize a simple command. Returns null if metacharacters, wildcards, unclosed
+ * quotes, or empty. Unlike tryParseSimpleArgv this keeps ENV= tokens so C3 can
+ * strip them and still scan deny flags.
  */
-export function tryParseSimpleArgv(command: string): string[] | null {
+export function tokenizeSimpleArgv(command: string): string[] | null {
   const cmd = (command || "").trim()
   if (!cmd) return null
   if (hasShellAllowlistMetachar(cmd)) return null
-  // Reject unquoted wildcards / env expansion residual for argv mode
   if (/[*?]/.test(cmd) || /\$\{/.test(cmd) || /\$[A-Za-z_]/.test(cmd)) return null
 
   const tokens: string[] = []
@@ -333,7 +380,6 @@ export function tryParseSimpleArgv(command: string): string[] | null {
       i++
       let buf = ""
       while (i < cmd.length && cmd[i] !== quote) {
-        // Only escape quote or backslash — leave Windows path backslashes alone
         if (
           cmd[i] === "\\" &&
           i + 1 < cmd.length &&
@@ -346,8 +392,8 @@ export function tryParseSimpleArgv(command: string): string[] | null {
         buf += cmd[i]
         i++
       }
-      if (i >= cmd.length) return null // unclosed quote
-      i++ // closing quote
+      if (i >= cmd.length) return null
+      i++
       tokens.push(buf)
     } else {
       let buf = ""
@@ -359,10 +405,20 @@ export function tryParseSimpleArgv(command: string): string[] | null {
     }
   }
   if (tokens.length === 0) return null
-  // First token must look like a program name (no empty)
   if (!tokens[0]) return null
-  // S41 multi-adv P0: ENV=value prefixes (FOO=1 cmd) and unquoted ~ need shell.
-  // Under shell:false, spawn("FOO=1", …) is ENOENT and ~ is a literal path.
+  return tokens
+}
+
+/**
+ * P1b: try parse a simple command into argv for spawn(..., { shell: false }).
+ * Returns null if metacharacters present, empty, or unparseable.
+ * Supports basic double/single quotes.
+ * Backslash escapes only `\"`, `\'`, `\\` — never swallow path separators
+ * (Windows `C:\Users\...` must stay intact; Pi N1 B2).
+ */
+export function tryParseSimpleArgv(command: string): string[] | null {
+  const tokens = tokenizeSimpleArgv(command)
+  if (!tokens) return null
   for (const t of tokens) {
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) return null
     if (t === "~" || t.startsWith("~/") || t.startsWith("~\\")) return null

@@ -55,16 +55,19 @@ export type PsRunner = (
 /**
  * Resolve a .ps1 script path. Search order: staged (packaged layout) → dist
  * (npm dev mode) → src (tsx dev / repo checkout). CMSPARK_WIN_SCRIPTS is a
- * dev-only override for tests/spikes; disabled in production like
- * CMSPARK_HOST_BIN (an env-var attacker already owns the user, but don't make
- * it easy).
+ * dual-opt-in override (CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE=1), same shape as
+ * Darwin CMSPARK_HOST_BIN. NODE_ENV is not a switch — packaged SEA often
+ * leaves it unset.
  */
 export function resolveWinScript(name: string): string {
   if (process.env.CMSPARK_WIN_SCRIPTS) {
-    if (process.env.NODE_ENV !== "production") {
+    if (process.env.CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE === "1") {
       return path.join(process.env.CMSPARK_WIN_SCRIPTS, name)
     }
-    throw new Error("host-use/win: CMSPARK_WIN_SCRIPTS override disabled in production")
+    throw new Error(
+      "host-use/win: CMSPARK_WIN_SCRIPTS override ignored. " +
+        "Set CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE=1 to enable (dev/test only).",
+    )
   }
   const candidates = [
     // 0. SEA exe layout: scripts staged next to the executable itself

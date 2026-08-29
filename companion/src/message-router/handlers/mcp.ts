@@ -8,6 +8,7 @@ import { getConfig, replaceMcpServers, setMcpEnabled } from "../../config"
 import { getMcpManager } from "../../mcp"
 import type { McpServerConfig, McpServerMeta } from "../../mcp/types"
 import { hasPrototypePollutionKey } from "./config"
+import { isUnsafeLoaderEnvKey } from "../../user-env"
 import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
@@ -46,6 +47,10 @@ async function requireMcpStdioSpawnConfirm(
   const cmd = typeof cfg.command === "string" ? cfg.command : ""
   const args = Array.isArray(cfg.args) ? cfg.args.map(String).join(" ") : ""
   const cwd = typeof cfg.cwd === "string" ? cfg.cwd : "(default)"
+  const envObj = "env" in cfg && cfg.env && typeof cfg.env === "object" ? cfg.env : undefined
+  const envKeys = envObj && Object.keys(envObj).length > 0
+    ? `env: ${Object.keys(envObj).sort().join(",")}`
+    : "env: (none)"
   const decision = await session.requestConfirmation({
     toolName: `mcp.${action}_stdio`,
     dangerousApis: ["child_process.spawn", "mcp.stdio"],
@@ -54,6 +59,7 @@ async function requireMcpStdioSpawnConfirm(
       `command: ${cmd}`,
       `args: ${args}`,
       `cwd: ${cwd}`,
+      envKeys,
       `enabled: ${cfg.enabled !== false}`,
     ].join("\n"),
     riskLevel: "high",
@@ -173,6 +179,13 @@ function validateMcpServerConfig(name: string, cfg: McpServerConfig | undefined)
     if (cfg.args !== undefined && !Array.isArray(cfg.args)) return `args must be an array`
     if (cfg.env !== undefined && (typeof cfg.env !== "object" || Array.isArray(cfg.env))) {
       return `env must be an object`
+    }
+    if (cfg.env) {
+      for (const k of Object.keys(cfg.env)) {
+        if (isUnsafeLoaderEnvKey(k)) {
+          return `MCP stdio env rejects loader key ${k}`
+        }
+      }
     }
     if (cfg.cwd !== undefined && typeof cfg.cwd !== "string") return `cwd must be a string`
   } else {

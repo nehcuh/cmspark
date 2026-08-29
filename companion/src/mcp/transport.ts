@@ -13,7 +13,7 @@ import path from "node:path"
 import os from "node:os"
 import fs from "node:fs"
 import { logger } from "../logger.js"
-import { getUserEnvVars } from "../user-env.js"
+import { getUserEnvVars, isUnsafeLoaderEnvKey } from "../user-env.js"
 import { keepOnlyDirectories, splitPathEnv } from "../process-path.js"
 import type { McpServerConfig } from "./types.js"
 
@@ -219,6 +219,9 @@ export function buildMcpStdioEnv(
   // Explicit per-server config.env only (operator-chosen secrets stay scoped)
   if (configEnv) {
     for (const [k, v] of Object.entries(configEnv)) {
+      if (isUnsafeLoaderEnvKey(k)) {
+        throw new Error(`MCP stdio env rejects loader key ${k}`)
+      }
       if (typeof v === "string") env[k] = v
     }
   }

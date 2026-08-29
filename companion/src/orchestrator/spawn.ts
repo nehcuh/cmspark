@@ -16,7 +16,7 @@ export function computeWorkerWhitelist(opts: {
   roleDeny?: string[]
 }): string[] {
   let base: string[]
-  if (opts.roleAllow && opts.roleAllow.length > 0) {
+  if (opts.roleAllow != null) {
     if (opts.parentWhitelist === null) {
       base = [...opts.roleAllow]
     } else {

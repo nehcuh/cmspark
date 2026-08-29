@@ -1090,13 +1090,17 @@
     "type": "function",
     "function": {
       "name": "osascript_eval",
-      "description": "(macOS ONLY — does NOT work on Windows/Linux) Execute JavaScript in a Chrome tab via AppleScript. Only use as LAST RESORT when both get_page_text and evaluate fail on restricted pages (e.g. X.com CSP). Prefer get_page_text / evaluate. BOTH url and expression are REQUIRED — url is a fragment used to find the Chrome tab (not optional); omitting url fails the call.",
+      "description": "(macOS ONLY — does NOT work on Windows/Linux) Execute JavaScript in a Chrome tab via AppleScript. Only use as LAST RESORT when both get_page_text and evaluate fail on restricted pages (e.g. X.com CSP). Prefer get_page_text / evaluate. expression is required. Pass tabId from list_tabs, or the exact url list_tabs returned. Fragments like zhihu.com are rejected. Both url and tabId missing fails.",
       "parameters": {
         "type": "object",
         "properties": {
           "url": {
             "type": "string",
-            "description": "REQUIRED. URL fragment to match the Chrome tab (e.g. 'zhihu.com' matches 'https://www.zhihu.com/hot'). Not a tabId."
+            "description": "Exact http(s) URL as returned by list_tabs (query kept, hash ignored). Not a hostname fragment."
+          },
+          "tabId": {
+            "type": "number",
+            "description": "Tab id from list_tabs. Used when url is omitted; resolved via the companion tab URL cache for that id only."
           },
           "expression": {
             "type": "string",
@@ -1104,7 +1108,6 @@
           }
         },
         "required": [
-          "url",
           "expression"
         ]
       }

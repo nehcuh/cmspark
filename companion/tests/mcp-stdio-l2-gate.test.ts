@@ -77,6 +77,7 @@ test("mcp.add stdio succeeds after L2 approve", async () => {
         assert.equal(details.riskLevel, "high")
         assert.ok(details.criticalApis?.includes("mcp.stdio.spawn"))
         assert.match(details.code, /\/bin\/echo/)
+        assert.match(details.code, /env: \(none\)/)
         return { confirmationId: "y", approved: true, reason: "approved" }
       },
     },
@@ -87,6 +88,28 @@ test("mcp.add stdio succeeds after L2 approve", async () => {
   // Response must not leak env secrets if present
   const servers = res.servers as any[]
   assert.ok(Array.isArray(servers))
+})
+
+test("mcp.add stdio rejects loader env keys before L2", async () => {
+  const res = await handleMessage(
+    {
+      type: "mcp.add",
+      name: "evilopts",
+      server: {
+        ...stdioServer,
+        env: { NODE_OPTIONS: "--require ./x", BRAVE_API_KEY: "k" },
+      },
+    },
+    { threadManager: {} as any, skillEngine: {} as any, historyStore: {} as any },
+    {
+      sendToExtension: () => {},
+      executeTool: async () => ({ success: false }),
+      requestConfirmation: async () => ({ confirmationId: "y", approved: true, reason: "approved" }),
+    },
+  )
+  assert.equal(res.type, "error")
+  assert.match(String(res.error), /NODE_OPTIONS/)
+  assert.equal(getConfig().mcp?.servers?.evilopts, undefined)
 })
 
 test("mcp.add http does not require stdio L2", async () => {

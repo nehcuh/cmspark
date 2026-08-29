@@ -45,6 +45,7 @@ test("P1 SEC-05: multi-tenant eTLD wildcards rejected", () => {
 
 test("P1 SEC-07: bare interpreter rejects -c / -e", () => {
   assert.equal(commandMatchesAllowlistEntry("python3 -c 'print(1)'", "python3"), false)
+  assert.equal(commandMatchesAllowlistEntry("python3 '-c' 'code'", "python3"), false)
   assert.equal(commandMatchesAllowlistEntry("node -e '1'", "node"), false)
   assert.equal(commandMatchesAllowlistEntry("python3 script.py", "python3"), true)
   assert.equal(commandMatchesAllowlistEntry("echo hello", "echo"), true)

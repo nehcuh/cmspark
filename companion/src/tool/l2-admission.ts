@@ -40,6 +40,12 @@ import {
   OSASCRIPT_MACOS_ONLY_ERROR,
   shouldL2GateOsascript,
 } from "../bridge/tool-definitions"
+import {
+  OSASCRIPT_TARGET_ERROR,
+  canonicalizeOsascriptUrl,
+  resolveOsascriptPageUrl,
+} from "./osascript-bind"
+import { getCachedTabUrl } from "../ws/tab-url-cache"
 import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
 import { resolveAcpThreadId } from "../acp/thread-id"
 import type { ThreadManager } from "../threads/thread-manager"
@@ -281,6 +287,25 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     logToolFinish(toolCallId, toolName, startedAt, result)
     return result
   }
+  if (toolName === "osascript_eval") {
+    if (finalParams.security_token) {
+      const bound = canonicalizeOsascriptUrl(String(finalParams.url || ""))
+      if (!bound) {
+        const result = { success: false, error: OSASCRIPT_TARGET_ERROR }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
+      finalParams = { ...finalParams, url: bound }
+    } else {
+      const resolved = resolveOsascriptPageUrl(finalParams, getCachedTabUrl)
+      if ("error" in resolved) {
+        const result = { success: false, error: resolved.error }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
+      finalParams = { ...finalParams, url: resolved.url }
+    }
+  }
   if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostCliGated || hostComputerGated) && !finalParams.security_token) {
     // shell_exec / netsec use command|targets for L2 preview text (not code/expression).
     // spawn_worker / ask_user use role/question summaries for the Confirm Center.
@@ -293,14 +318,14 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           ? `targets=${Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : ""} ports=${Array.isArray(finalParams.ports) ? finalParams.ports.join(",") : ""}`
           : null) ||
         (toolName === "osascript_eval"
-          ? String(finalParams.expression || finalParams.code || "")
+          ? `url=${finalParams.url || ""} tabId=${finalParams.tabId ?? ""} expr=${String(finalParams.expression || finalParams.code || "")}`
           : null) ||
       finalParams.code ||
         finalParams.expression ||
         finalParams.command ||
         (Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : "") ||
         (toolName === "spawn_worker"
-          ? `Spawn worker role=${finalParams.role_label || finalParams.roleLabel || "worker"} alias=${finalParams.alias || ""} pack=${finalParams.pack_id || "none"} allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"}`
+          ? `Spawn worker role=${finalParams.role_label || finalParams.roleLabel || "worker"} alias=${finalParams.alias || ""} pack=${finalParams.pack_id || "none"} allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"} deny=${Array.isArray(finalParams.tool_deny) ? finalParams.tool_deny.join(",") : "default"} intent=${finalParams.intent_id || ""}`
           : "") ||
         (toolName === "ask_user" ? String(finalParams.question || finalParams.prompt || "") : "") ||
         (toolName === "host_cli"
