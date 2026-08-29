@@ -553,3 +553,49 @@ test("menu-bar-agent submit-ok bind is live-gated and setSummonerThreadId is gon
   assert.match(src, /function bindSummonerThread\(id: string, token: number\)/)
   assert.doesNotMatch(src, /token \?\? currentOverlaySession\(\)/)
 })
+
+test("W4: confirmPending resets on hydrate-attach, stream resume, done, and new thread", () => {
+  // Scope to SummonerOverlay.swift only — Tray.swift has its own HudController
+  // applyHydrate that must not satisfy these assertions.
+  const src = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  const setIdx = src.indexOf('if code == "MCP_CONFIRM_PENDING"')
+  assert.ok(setIdx >= 0, "MCP_CONFIRM_PENDING branch missing")
+  assert.match(src.slice(setIdx, setIdx + 160), /confirmPending = true/)
+
+  // Attached hydrate = browser channel live again -> confirm CTA mode ends.
+  const hydrate = src.slice(src.indexOf("func applyHydrate"), src.indexOf("func appendToken"))
+  assert.match(hydrate, /if browserAttached \{\s*\n(\s*\/\/[^\n]*\n)*\s*confirmPending = false/)
+
+  // Assistant tokens flowing again = the pending confirm was resolved.
+  const append = src.slice(src.indexOf("func appendToken"), src.indexOf("func markDone"))
+  assert.match(append, /confirmPending = false/)
+  assert.match(append, /applyPhase\(\)/)
+
+  // Chat done = confirm settled one way or another.
+  const done = src.slice(src.indexOf("func markDone"), src.indexOf("func scheduleStreamRender"))
+  assert.match(done, /confirmPending = false/)
+  assert.match(done, /applyPhase\(\)/)
+
+  // Opening a fresh thread clears any stale confirm CTA from a previous thread.
+  const openBody = src.slice(src.indexOf("func open(threadId:"), src.indexOf("func hide()"))
+  const emptyBranch = openBody.slice(openBody.indexOf("if threadId.isEmpty"))
+  assert.match(emptyBranch, /confirmPending = false/)
+
+  // Switching to a different existing thread also clears the stale confirm CTA
+  // (same-thread reopen keeps it — the reset lives only in the else-if branch).
+  assert.match(openBody, /else if threadId != self\.threadId \{\s*\n(\s*\/\/[^\n]*\n)*\s*confirmPending = false/)
+
+  // Terminal chat.error ends the turn with no token/done frame — the confirm CTA
+  // must clear unless the error is a known non-terminal action rejection.
+  const errBody = src.slice(src.indexOf("func applyError"), src.indexOf("func noteThreadsChanged"))
+  assert.match(
+    errBody,
+    /if confirmPending && !Self\.nonTerminalErrorCodes\.contains\(code\) \{\s*\n(\s*\/\/[^\n]*\n)*\s*confirmPending = false/
+  )
+
+  // The non-terminal set mirrors client.ts's known action-level rejections.
+  const codeSet = src.slice(src.indexOf("nonTerminalErrorCodes: Set<String>"), src.indexOf("func open(threadId:"))
+  for (const c of ["run_active", "enqueued", "upload_failed", "OVERLAY_STANDBY"]) {
+    assert.ok(codeSet.includes(`"${c}"`), `nonTerminalErrorCodes missing ${c}`)
+  }
+})

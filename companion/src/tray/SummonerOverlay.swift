@@ -185,6 +185,19 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var browserKnown = false
   private var sawBrowserUnavailable = false
   private var confirmPending = false
+  // Action-level rejections that do NOT end the current turn — a pending confirm
+  // survives these. Mirrors the known non-terminal set in
+  // companion/src/summoner/client.ts plus local/relay action codes. Any other
+  // error reaching applyError is a terminal chat.error (the turn ends with no
+  // token/done frame), where a stale confirm CTA must clear.
+  private static let nonTerminalErrorCodes: Set<String> = [
+    "run_active", "queue_full", "steer_queue_full", "idle_enqueue",
+    "empty_steer", "empty_enqueue", "no_active_run", "enqueued",
+    "OVERLAY_STANDBY", "BROWSER_UNAVAILABLE",
+    "pack_not_overlay_eligible", "pack_trust_cookie_present", "pack_run_active",
+    "pack_no_thread", "pack_applied",
+    "upload_failed", "submit_failed", "mic_denied",
+  ]
   private var lines: [String] = []
   private var streamingAssistant = false
   private var lastComposing = false
@@ -243,12 +256,20 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   var composingNow: Bool { composer?.hasMarkedText() == true }
 
   func open(threadId: String) {
-    self.threadId = threadId
     if threadId.isEmpty {
       lines = []
       streamingAssistant = false
       sawBrowserUnavailable = false
+      // Fresh thread: any stale confirm CTA from a previous thread clears.
+      confirmPending = false
+    } else if threadId != self.threadId {
+      // Switching to a different existing thread: the pending confirm belongs to
+      // the previous thread's run, so its CTA must not carry over. Same-thread
+      // reopen (and hide()) keep confirmPending on purpose — the same run is
+      // still waiting on that confirm.
+      confirmPending = false
     }
+    self.threadId = threadId
     if window == nil { window = makeWindow() }
     guard let window = window else { return }
     expanded = false
@@ -286,6 +307,11 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     let browser = (json["browser"] as? String) ?? "detached"
     browserAttached = (browser == "attached")
     browserKnown = true
+    if browserAttached {
+      // Attached hydrate = live companion channel again; the confirm console is
+      // reachable through the normal path, so the confirm CTA mode ends.
+      confirmPending = false
+    }
     streamingAssistant = false
     sawBrowserUnavailable = false
     applyPhase()
@@ -296,6 +322,11 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
 
   func appendToken(_ text: String) {
     if text.isEmpty { return }
+    if confirmPending {
+      // Assistant streaming resumed — the pending confirm was resolved.
+      confirmPending = false
+      applyPhase()
+    }
     // chat.token.content is a full snapshot, not a delta.
     let rendered = "助手: " + text
     let first = !(streamingAssistant && (lines.last?.hasPrefix("助手:") == true))
@@ -317,6 +348,11 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     streamRenderTimer?.invalidate()
     streamRenderTimer = nil
     streamingAssistant = false
+    if confirmPending {
+      // Chat reached done — the pending confirm was settled one way or another.
+      confirmPending = false
+      applyPhase()
+    }
     refreshLog()
   }
 
@@ -741,6 +777,13 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       capLines()
       applyPhase()
       return
+    }
+    if confirmPending && !Self.nonTerminalErrorCodes.contains(code) {
+      // Terminal chat.error: the turn ends here with no token/done frame, so the
+      // confirm CTA would stick on 「需要确认」 forever — clear it. Trade-off: a
+      // codeless action-level failure (e.g. skill toggle error) also clears the
+      // CTA early; acceptable, the confirm console stays reachable in the panel.
+      confirmPending = false
     }
     if code == "BROWSER_UNAVAILABLE" {
       sawBrowserUnavailable = true

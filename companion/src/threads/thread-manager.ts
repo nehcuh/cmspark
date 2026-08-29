@@ -108,6 +108,8 @@ interface Thread {
   /**
    * L0 chat-column RunProgress (slice 6). Seeded from H1 handoff.open_todos;
    * ticks bind to tool_result or a later user gesture — not model JSON.
+   * undefined = never set (seed eligible); null = explicit clear (sticky,
+   * never reseeded).
    */
   run_progress?: RunProgress | null
   /**
@@ -766,7 +768,9 @@ export class ThreadManager {
     if (thread && thread.run_progress != null) {
       thread.run_progress = sanitizeRunProgress(thread.run_progress)
     }
-    if (thread && (!thread.run_progress || thread.run_progress.items.length === 0)) {
+    // Initial seed only when never set (undefined). An explicit clear
+    // (null) or caller-set value must not be resurrected from open_todos.
+    if (thread && thread.run_progress === undefined) {
       const seeded = seedRunProgress(thread)
       if (seeded.items.length > 0) {
         thread.run_progress = seeded
@@ -872,7 +876,10 @@ export class ThreadManager {
       throw new Error("board_mode must be a boolean")
     }
     Object.assign(thread, updates, { updated_at: monotonicTimestamp() })
-    if (!thread.run_progress || thread.run_progress.items.length === 0) {
+    // Tri-state run_progress: undefined = never set (initial seed from
+    // handoff.open_todos fires here); null = explicit clear, sticky — never
+    // reseeded by this or any unrelated update; value = caller-set, kept.
+    if (thread.run_progress === undefined) {
       const seeded = seedRunProgress(thread)
       if (seeded.items.length > 0) {
         thread.run_progress = seeded

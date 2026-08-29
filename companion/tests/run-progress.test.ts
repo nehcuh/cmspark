@@ -340,6 +340,66 @@ test("thread-manager does not overwrite existing run_progress when hydrating", (
   assert.equal(got!.run_progress!.items[0]!.id, "keep")
 })
 
+test("thread-manager explicit run_progress clear (null) is sticky — never reseeded", () => {
+  const tm = new ThreadManager()
+  const th = tm.create("run-progress-clear-sticky")
+  // Initial seed still works (run_progress never set + handoff has todos)
+  const seeded = tm.update(th.id, {
+    runtime_context_budget: {
+      last_at: new Date().toISOString(),
+      mode: "h1",
+      dropped_count: 0,
+      tokens_before: 0,
+      tokens_after: 0,
+      handoff: {
+        updated_at: new Date().toISOString(),
+        goals: [],
+        decisions: [],
+        constraints: [],
+        open_todos: [{ text: "todo-would-reseed" }],
+        artifacts: [],
+      },
+    },
+  })
+  assert.equal(seeded!.run_progress!.items.length, 1)
+  // Explicit clear must win over the handoff reseed
+  const cleared = tm.update(th.id, { run_progress: null })
+  assert.equal(cleared!.run_progress, null)
+  // Unrelated update must not resurrect the seed
+  const unrelated = tm.update(th.id, { alias: "after-clear" })
+  assert.equal(unrelated!.run_progress, null)
+  // Read path must not re-hydrate a cleared thread either
+  assert.equal(tm.get(th.id)!.run_progress, null)
+  // null survives the index.json round-trip (undefined keys would drop out)
+  const reloaded = new ThreadManager()
+  assert.equal(reloaded.get(th.id)!.run_progress, null)
+})
+
+test("thread-manager caller-set empty run_progress is not reseeded by unrelated update", () => {
+  const tm = new ThreadManager()
+  const th = tm.create("run-progress-empty-no-reseed")
+  tm.update(th.id, { run_progress: { items: [] } })
+  tm.update(th.id, {
+    runtime_context_budget: {
+      last_at: new Date().toISOString(),
+      mode: "h1",
+      dropped_count: 0,
+      tokens_before: 0,
+      tokens_after: 0,
+      handoff: {
+        updated_at: new Date().toISOString(),
+        goals: [],
+        decisions: [],
+        constraints: [],
+        open_todos: [{ text: "should-not-fill-empty" }],
+        artifacts: [],
+      },
+    },
+  })
+  const got = tm.get(th.id)
+  assert.deepEqual(got!.run_progress, { items: [] })
+})
+
 test("thread-manager run_progress sanitize-on-read + cap", () => {
   const tm = new ThreadManager()
   const th = tm.create("run-progress-seed")
