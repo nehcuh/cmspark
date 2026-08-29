@@ -24,7 +24,7 @@ function parseCidrV4(rule: string): { network: number; mask: number } | null {
   const m = rule.trim().match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/)
   if (!m) return null
   const bits = parseInt(m[2], 10)
-  if (bits < 0 || bits > 32) return null
+  if (bits < 8 || bits > 32) return null
   const parts = m[1].split(".").map((x) => parseInt(x, 10))
   if (parts.some((p) => p < 0 || p > 255)) return null
   const ip =

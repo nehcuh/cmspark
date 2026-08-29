@@ -942,7 +942,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         wsClient.send({
           type: "knowledge.update",
           id: message.id,
-          user_gesture: true,
+          user_gesture: message.user_gesture === true,
           title: message.title,
           description: message.description,
           tags: message.tags,
@@ -956,7 +956,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         wsClient.send({
           type: "knowledge.export",
           id: message.id,
-          user_gesture: true,
+          user_gesture: message.user_gesture === true,
         })
         sendResponse({ ok: true })
         return true
@@ -966,7 +966,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         wsClient.send({
           type: "knowledge.delete",
           id: message.id,
-          user_gesture: true,
+          user_gesture: message.user_gesture === true,
         })
         sendResponse({ ok: true })
         return true

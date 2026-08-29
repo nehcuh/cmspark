@@ -119,7 +119,7 @@ export function isValidNetsecAllowlistEntry(raw: string): boolean {
     const m = t.match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/)
     if (!m) return false
     const bits = parseInt(m[2], 10)
-    if (bits < 0 || bits > 32) return false
+    if (bits < 8 || bits > 32) return false
     const parts = m[1].split(".").map((x) => parseInt(x, 10))
     return parts.every((p) => p >= 0 && p <= 255)
   }

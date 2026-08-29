@@ -11,6 +11,10 @@ export type HandshakeSurface = "panel" | "tray" | "summoner"
 const EXT_ORIGIN = /^chrome-extension:\/\/[A-Za-z0-9_-]+$/i
 export const TRAY_WS_ORIGIN = "cmspark-tray://local"
 
+export function isChromeExtensionWsOrigin(origin: string | undefined | null): boolean {
+  return typeof origin === "string" && EXT_ORIGIN.test(origin)
+}
+
 export type SurfaceFromOrigin =
   | { ok: true; surface: HandshakeSurface; coerced: boolean }
   | {

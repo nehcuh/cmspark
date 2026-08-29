@@ -9,7 +9,7 @@ import { randomUUID } from "crypto"
 import os from "os"
 import { WebSocket } from "ws"
 import { getConfig } from "../config"
-import { securityPolicy } from "../security-policy"
+import { securityPolicy, SecurityPolicy } from "../security-policy"
 import { logger } from "../logger"
 import {
   checkHighRiskExecution,
@@ -1006,6 +1006,19 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     }
 
     // G1: enterpriseSkip is sibling of hostComputerTrustSkip — do not only clear forceConfirm
+    if (
+      (L2_GATE_TOOLS as readonly string[]).includes(toolName) ||
+      hostAppGated ||
+      hostCliGated ||
+      hostComputerGated
+    ) {
+      try {
+        SecurityPolicy.bindingPayloadFor(toolName, finalParams)
+      } catch (bindErr) {
+        const msg = bindErr instanceof Error ? bindErr.message : String(bindErr)
+        return { success: false, error: msg }
+      }
+    }
     if ((!skipConfirmation || forceConfirm) && !hostComputerTrustSkip && !enterpriseSkip) {
       // Audit item 2: default-deny. ALL evaluate/osascript_eval calls require
       // interactive confirmation unless whitelisted above. The regex match
@@ -1658,7 +1671,15 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // Issue a fresh token (post-approval or for auto-approved skip path).
     // Phase 1 W8 bugfix (Kimi+Pi advisor Fix C): use bindingPayloadFor via
     // issueTokenFor so issuance and validation CANNOT diverge per tool.
-    const approvedToken = securityPolicy.issueTokenFor(toolName, finalParams)
+    let approvedToken
+    try {
+      approvedToken = securityPolicy.issueTokenFor(toolName, finalParams)
+    } catch (bindErr) {
+      const msg = bindErr instanceof Error ? bindErr.message : String(bindErr)
+      const result = { success: false, error: msg }
+      logToolFinish(toolCallId, toolName, startedAt, result)
+      return result
+    }
     finalParams = { ...finalParams, security_token: approvedToken.token }
   } else if (toolName === "evaluate" && finalParams.security_token) {
     // P0-4 (audit H2): evaluate is forwarded to the extension — unlike osascript_eval

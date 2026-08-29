@@ -61,7 +61,7 @@ import { pendingToolCalls, handleToolResult } from "./tool-forward"
 import { validateWsMessage } from "./validate"
 import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
-import { surfaceFromOrigin } from "./handshake-surface"
+import { surfaceFromOrigin, isChromeExtensionWsOrigin } from "./handshake-surface"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 import {
   bindExtensionPeerPicker,
@@ -1327,6 +1327,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         // current. validateWsMessage already enforced tabId:number + url:string.
         // Fire-and-forget — no ack needed.
         if (msg.type === "tab.navigated") {
+          const origin = wsAuth.get(ws)?.origin
+          if (!isChromeExtensionWsOrigin(origin)) return
           applyTabNavigated(msg.tabId, msg.url)
           return
         }
