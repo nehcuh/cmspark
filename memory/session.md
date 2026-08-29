@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S94 END (2026-08-29) [体检 A–F 合 main · 对齐远程]
+- **Ship on main**：#246 A+B · #248 C · #250 D · #252 E · #254 F。tip **`5c4fcab0`**。工作区 `main` == `origin/main`。
+- **判断**：本地 overlay 两笔 SHA 未祖先于 main，但会议台/默认展开已在 #246 squash；勿把 overlay 枝压上后来的 main。
+- **清**：worktree 241/247/249/251/253 已删；远程只剩 `origin/main`。
+- **下次**：#228 禁扩 profile；#230 冻；残留 Medium：privacy_ack、HUD 导入、grant_id、conductor 按 thread。不宣称 Capture/CU/F-S-10 闭合。
+- Recorded: yes — squash≠cherry；`&thread=` 进 path；kimi last VERDICT；panel≠忽略名单；get() 不 saveIndex
+
 ### S87 END (2026-08-28 ~18:18) [overlay Capture 卡狗食 · 会议台]
 - **枝**：`feat/overlay-card-first-paint`（`b6ac5928` + 未合 dogfood）。#241/#242 已在 main `8b71f07d`。#239/#240 ChatShell 已合。
 - **Ship（本机热替换 `/Applications/CMspark.app`）**：托盘/热键开同一张 360×420 HTML 卡（独立 overlay-chrome profile）；发送/markdown/新对话/历史；会议台：隐私 → 开始/结束录制 → ~8s 近实时 + 渐进假设；STT 跟侧栏 `voice.localModelId`；历史会议 list/get；匿名发言人N（`auto_diarize`）。打开侧栏只绑 `normal` 窗。
@@ -928,12 +935,12 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### Overlay Capture 卡狗食（S87 · #241–#244 · `feat/overlay-card-first-paint`）
-- status: **active**（本机热替换；未开 PR）
-- context: main 已有 #242。本枝：默认展开 360×420、托盘/热键同 HTML 卡、会议台录制/历史/近实时/发言人N。Issue #243 新对话+历史 · #244 会议台。
-- next_action: 用户关旧窗再狗食。再开 PR `Closes #243` / `Refs #244`。#230 勿整票。扩展重载后验「打开侧栏」。
-- resume_doc: `docs/superpowers/specs/2026-08-28-overlay-capture-card-design.md` · 枝 `feat/overlay-card-first-paint`
-- updated: 2026-08-28
+### Overlay Capture 卡狗食（S87–S94 · #241–#246 on main）
+- status: **done**（产品随 #242+#246 在 main；本地 overlay 枝已删）
+- context: 默认展开、托盘/热键 HTML 卡、会议台录制/历史/近实时。体检 A–F 另票已合。
+- next_action: 可选重打 DMG 狗食。#230 勿整票。
+- resume_doc: `docs/superpowers/specs/2026-08-28-overlay-capture-card-design.md` · tip `5c4fcab0`
+- updated: 2026-08-29
 
 ### ChatShell 同一张脸（S86 · #239 · PR #240）
 - status: **done**（squash 合 main `6a3bfe23`）
@@ -942,12 +949,12 @@
 - resume_doc: PR #240 · `docs/superpowers/specs/2026-08-27-chat-shell-same-face-design.md`
 - updated: 2026-08-28
 
-### 形态深化 0.5.3 切点（S84–S87 · main 含 #240/#242）
-- status: **active**（主线用户可见项 done；Capture 卡狗食未合）
-- context: 切片 1–6、T1（#228 关）、ChatShell #240、Capture 骨架 #242。#230 冻 F-S-10 / overlay-acl。
-- next_action: 勿扩 outbound profile。#230 禁止整票「继续」。狗食见 Overlay Capture 卡条。
-- resume_doc: `docs/superpowers/specs/2026-08-27-post-227-status.md` · #230 · #243/#244
-- updated: 2026-08-28
+### 形态深化 0.5.3 切点（S84–S94 · main 含 #240/#242/#246–#254）
+- status: **active**（用户可见主线 + 体检 A–F on main；不宣称 Capture/CU 闭合）
+- context: 切片 1–6、ChatShell、Capture 卡、体检 P0–P2。#228 禁扩 profile；#230 冻。
+- next_action: 勿扩 outbound。残留 Medium 须新 Issue。#230 禁止整票「继续」。
+- resume_doc: `docs/superpowers/specs/2026-08-27-post-227-status.md` · #230
+- updated: 2026-08-29
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**
@@ -956,11 +963,11 @@
 - resume_doc: PR #221 · #220 · `docs/audit/reviews/post220-nits-adversary-synthesis-20260825.md`
 - updated: 2026-08-25
 
-### OS summoner overlay（S77–S87 · #219/#229/#242 on main · 本枝狗食）
-- status: **active**（托盘/热键已改开 HTML 卡；Mac Swift HUD 条仍旧壳备用）
-- context: `summoner` / `summoner-toggle` → `openSummonerWebShell`。独立 overlay-chrome profile。会议台 overlay 已放行 list/get/auto_diarize。
-- next_action: 狗食新卡。PR 未开。DMG 未重打（热替换 `cmspark-agent.js`）。
-- resume_doc: #241/#242/#243/#244 · 枝 `feat/overlay-card-first-paint`
+### OS summoner overlay（S77–S94 · HTML 卡 on main）
+- status: **done**（托盘/热键 HTML 卡 + 会议台在 main；Swift HUD 条备用）
+- context: cookie 首屏、Origin 类 handshake、L0 裁切随 A–E 合入。
+- next_action: 可选重打 DMG。勿改 SUMMONER_ALLOW。
+- resume_doc: #242/#246/#250/#252
 - updated: 2026-08-28
 
 ### Companion-canon Side Panel（S74 · #196 MERGED）

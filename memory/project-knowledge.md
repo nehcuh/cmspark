@@ -74,6 +74,26 @@
 
 ## Technical Pitfalls
 
+### squash 合入后 `git cherry` 仍会给原 commit `+`（2026-08-29 · 对齐 main）
+- **坑**：overlay 会议台/默认展开已随 #246 squash 进 main，本地 `597a5827`/`b6ac5928` 仍 `cherry +`。把 overlay 枝合进后来的 main 会倒退 A–F（XSS/cookie/HMAC Origin）。
+- **纪律**：判断「是否已在 main」看**产品字符串/文件**（`开始录制`、`hud expanded`），不要只看 SHA/`cherry`。`gh pr merge --delete-branch` 若有 worktree 占着 `main`，远程已合、本地 checkout 会失败——先 `worktree remove`。
+- **4 行 case**：动作=整理本地 vs origin/main；失败=差点把旧 overlay 压上新 main；归责=squash 改 patch-id；保护=合入以 PR SHA 为准
+
+### kimi `-p` 不能配 `--yolo`；VibeSOP hook 污染 stdout（2026-08-29）
+- **坑**：kimi CLI `-p` 与 `--yolo`/`--auto` 互斥。UserPromptSubmit hook 把整段 routing JSON 灌进 `-p` 输出，文件头不是评审。Pi 不在 PATH → 用 kimi+claude 顶 dual。
+- **纪律**：embed prompt 文件；`grep VERDICT` 取 **最后一行**；hook dump 不当评审正文。`scripts/dual-external-review.sh` 仍要 pi。
+- **4 行 case**：动作=kimi dual；失败=误读 hook 当 VERDICT；归责=stdout 不纯；保护=last VERDICT 才是门
+
+### handshake `panel` 是扩展 Origin，不是第三号忽略名单（2026-08-29 · #252/#254）
+- **坑**：Batch E 把 chrome-extension omit stamp 成 `panel`。F2 strawman「忽略 panel」会杀掉唯一合法 `tab.navigated` 发送者，evaluate 信任缓存过期。
+- **纪律**：`tab.navigated` 只认 Origin `chrome-extension://`；tray Origin 静默丢。`__cmspark_surface` 保持二元 `summoner|tray`（panel 握手 collapse 成 tray stamp = panel holder）。扩展自称 `summoner` → terminate（overlay 租约盗窃）。
+- **4 行 case**：动作=扩展推 tab.navigated；失败=按 surface 忽略 panel；归责=Origin 类与 surface 名混用；保护=evaluate 自动批准只信扩展当前页
+
+### `ThreadManager.get()` 禁止 `saveIndex`；unbound SkillEngine 勿缓存 fallback 单例（2026-08-29 · #250）
+- **坑**：`get()` 为 seed `run_progress` 写盘 → 第二份 TM 空快照盖活 index。SkillEngine `new ThreadManager()` 各持一份。测试 fallback 若模块单例，后建线程对 unbound engine 不可见。
+- **纪律**：`get()` 只内存 seed；`server.ts` `bindThreadManager` 一次；测试 `fallbackThreadManager()` **每次** `new ThreadManager()` 读盘。源码扫描测用 `srcFile()` 双候选（`.test-dist` 下 `__dirname/../src` ENOENT）。
+- **4 行 case**：动作=侧栏 get 线程；失败=index 被空快照砸；归责=读路径写盘 + 独立 TM；保护=技能目录不被 get 写坏
+
 ### tray `sendRequest` 的 `id: tray-N` 不是会议 id（2026-08-28 · overlay 会议台）
 - **现象**：浮窗点「我已了解」后会议台空、hint「meeting not found」。
 - **根因**：`CompanionClient.sendRequest` 把 RPC 相关写成 WS `id: tray-${n}`。`meeting.start` 把 `msg.id` 当会议 id → `loadMeeting("tray-5")` 失败。`meeting.end`/`append`/`minutes` 若 `Object.assign` 用会议 id 盖掉 RPC id，pending 对不上、HTTP 5s 超时。
@@ -115,6 +135,12 @@
 - **坑**：`isSummonerLoopbackUrl` 曾要求 query **恰好一个** key=`token`。`openLoopbackPage(url+"&thread="+id)` 被拒，`planSummonerShellOpen` error，不 spawn。测试只锁字符串拼接，绿了但窗没开。
 - **修**：keys = `token` 或 `token`+非空 `thread`；其它 key 仍拒。空 `threadId` 不追加。`openLoopbackPage===false` 不得 success notify。
 - **4 行 case**：动作=弹出对话框带 thread；失败=URL 门拒双 query；归责=安全门与产品 query 没一起测；保护=HTML 壳只能开 loopback token URL
+
+### token 出 argv 后 `&thread=` 会进 pathname（2026-08-29 · #250 Batch D）
+- **坑**：`summonerWebPageUrl` 不再带 `?token=`，menu-bar 仍 `url+"&thread="+id` → `http://127.0.0.1:P/&thread=X`。WHATWG 把 `&thread=` 当 **path**，query 空，`isSummonerLoopbackUrl` 曾放行 → GET 不是 `/` → 无 Set-Cookie → **403**。弹出对话框死，托盘空 thread 仍绿。
+- **纪律**：无 `?` 用 `?thread=`；pathname 只许 `/` 或 `/summoner`；测必须构造 URL 再 `isSummonerLoopbackUrl`，不能只扫源码 `"&thread="`。
+- **相关**：Cookie first-paint（EventSource 不能自定义 header；`GET /` Host 闸 + Set-Cookie，不要 Secure）。
+- **4 行 case**：动作=侧栏弹出对话框；失败=首屏 403；归责=token 出 query 后拼接没改 join；保护=overlay 钥匙不进 argv 且窗能开
 
 ### `placeWindow(true)` ≠ 展开脸（2026-08-27 · #239）
 - **坑**：`.body{display:none}`，`.hud.expanded .body{display:grid}`。只改窗口高度仍是收起条。测 `/placeWindow\(true\)/` 会绿错实现，且 `setExpanded(true)` 源码是 `placeWindow(!!on)` 对不上字面量。
@@ -855,10 +881,17 @@
 
 ## Reusable Patterns
 
+### 体检批次：Issue-first → 四路折针 → kimi+claude dual → TDD → CI → squash（2026-08-29 · #245–#254）
+- **链**：深诊 fanout → GitHub Issue → strawman → 四路独立对抗（Security/Product/Impl/Skeptic）折针进 spec → **kimi+claude** dual（Pi 不在 PATH）both AWN 才写码 → TDD 机核 → PR → 实现 dual + CI 全绿才 squash。实现 agent 不得自评放行。
+- **校准**：Critical=未认证 RCE/配对绕过；High=已认证完整性/等价 RCE。overlay 钥匙出 argv 是 T3 误标不是 unauth RCE。
+- **禁**：`SUMMONER_ALLOW` 当本季 rollback（#230 冻）；overlay Allow/Deny；拆 `message-router.ts`；宣称 Capture/CU/F-S-10 闭合；扩 #228 profile。
+- **本轮合入**：A+B #246 · C #248 · D #250 · E #252 · F #254；tip `5c4fcab0`。
+- **4 行 case**：动作=用户说继续；成功=有界票+双路 AWN+CI 才合；归责=无票设计会忘；保护=CONTRIBUTING Issue-first + eval gate
+
 ### 需求设计 Issue-first；冻结清单禁止「继续」整票做（2026-08-27）
 - **坑**：SoT 只活在 `docs/superpowers/specs/` → 下场会话当没发生过。#230 是追踪+禁区，说「继续」容易把 F-S-10 / overlay-acl 当主线。
 - **做法**：新产品行为先 `gh issue create`（模板 `.github/ISSUE_TEMPLATE/design.md`），spec 头 `GitHub: #N`，PR `Closes/Refs`。冻结票拆**子 Issue** 再动（#235 grant-cli、#237 RunProgress tool）。T2 仍计划 dual → 实现 dual；T1 CLI 校验可机核后合。
-- **本季**：#228 T1 关；#229 快/淡关；#235/#237 关；**#239 ChatShell PR #240**（未合）；#230 仍冻 F-S-10。
+- **本季**：#228 T1 关（禁扩 profile）；#229 快/淡关；#235/#237 关；#239/#240 ChatShell 合；#241/#242 Capture 卡合；体检 A–F #245–#254 合。**#230 仍冻** F-S-10 / overlay-acl。
 - **4 行 case**：动作=用户说继续；失败=差点做 T3 冻结项；归责=追踪票当实现票；保护=CONTRIBUTING Issue-first + #230 自己的「未开子项不许顺便」
 
 ### Knowledge Honesty 波浪：身份三分 + ledger 芯片 + 话题夹字符串（2026-08-25）
@@ -1125,17 +1158,23 @@
 
 ## Architecture Decisions
 
+### 0.5.3 体检 A–F 合 main；Capture/CU 仍不宣称闭合（2026-08-29）
+- **合入**：#246 XSS/hide abort/真 L0/知识截断/estop；#248 osascript URL·MCP env·shell -c·Win 脚本·spawn HMAC；#250 SkillEngine 单例·cookie 首屏·shrink closer·进度双写；#252 Origin 类 handshake·esbuild pin；#254 未知 L2 throw·tab.navigated Origin·user_gesture 转发·netsec /0·MCP 剥内部键。tip **`5c4fcab0`**。
+- **仍冻**：#228 禁扩 profile；#229 P2 已合但 DMG 未必含 Swift；#230 F-S-10 / overlay-acl。overlay **永不** Allow/Deny。
+- **残留 Medium（未做）**：overlay-privacy-ack、HUD 导入、outbound grant_id、L2 conductor 按 thread、D2 无观看者 drop nextRun。
+- **SoT**：`docs/audit/deep-diagnosis-fanout-2026-08-28.md` · 各批 `docs/superpowers/specs/2026-08-29-post-diagnosis-batch-*.md`
+
 ### ChatShell 同一张脸：copy 合同 + 扩展起源弹出 HTML（2026-08-27 · #239 · PR #240）
 - **产品**：侧栏空态 = 招呼 + `当前页：` + 3 模板填作曲。「弹出对话框」开 overlay HTML 同一 copy（整张脸、**无页**）。Mac 热键仍 Swift 收起条。入口=工具栏 C，不是标签栏药丸。不画实心贴回。
 - **协议**：`overlay.shell.open` 仅 `chrome-extension://`；不进 `SUMMONER_ALLOW`。broadcast `{type,thread_id}` 无 id。tray 另挂 `onAppMessage` → `openLoopbackPage`。RPC = `accepted` 不是 `opened`。失败 toast。
 - **闸门**：spec/plan 对抗 REJECT→r2 → Claude+Pi 均 AWN。实现 subagent-driven + 终审 I1–I3 已折。
-- **未合 main**。SoT：`docs/superpowers/specs/2026-08-27-chat-shell-same-face-design.md`
+- **已合 main** `#240`。SoT：`docs/superpowers/specs/2026-08-27-chat-shell-same-face-design.md`
 
 ### 产品 0.5.3 形态切点：租手实验，T1 PASS 带 nit，不扩 profile（2026-08-27）
 - **版本**：companion/extension/NSIS **0.5.3**。切片 1–3/5/6 + 知识诚实 on main。本机 `/Applications/CMspark.app` 已换 0.5.3 DMG（#229 Swift 快/淡**未**打进该包）。
 - **T1**：CMspark 臂 OA「我的邮件」完成 + HITL；Playwright 干净 profile 打不开门户。L7 **PASS 带 nit**。`require_grant`/`auto_approve_dangerous` bake-off 后已改回盘上原值。
 - **禁**：扩 outbound 默认工具面；overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；不经确认改 live `config.json`。
-- **活票**：#239 ChatShell **PR #240**；#230 冻结残留（F-S-10 / overlay-acl）。正交 #69/#70/#71。
+- **活票**：#228 T1 禁扩 profile；#230 冻结残留（F-S-10 / overlay-acl）。正交 #69/#70/#71。ChatShell #240 已合。
 - **SoT**：`docs/superpowers/specs/2026-08-27-post-227-status.md` · CHANGELOG 0.5.3
 
 ### Daily assistant · Knowledge Honesty（2026-08-25 · Wave 0–2 on `feat/knowledge-honesty-wave0`）
