@@ -61,6 +61,7 @@ import { pendingToolCalls, handleToolResult } from "./tool-forward"
 import { validateWsMessage } from "./validate"
 import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
+import { surfaceFromOrigin } from "./handshake-surface"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 import {
   bindExtensionPeerPicker,
@@ -96,8 +97,8 @@ export type WsAuthState = {
   authenticated: boolean
   timer: NodeJS.Timeout
   origin?: string
-  /** Handshake surface. Omitted / non-summoner → tray (not ACL-gated). */
-  surface?: "tray" | "summoner"
+  /** Handshake surface. Origin class + claimed field (Batch E #251). */
+  surface?: "panel" | "tray" | "summoner"
 }
 
 const wsAuth = new WeakMap<WebSocket, WsAuthState>()
@@ -1019,11 +1020,27 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               try { ws.terminate() } catch { /* closing */ }
               return
             }
+            const resolved = surfaceFromOrigin(st.origin, (msg as { surface?: unknown }).surface)
+            if (!resolved.ok) {
+              logger.warn("ws.surface_rejected", {
+                origin: st.origin || "<none>",
+                claimed: (msg as { surface?: unknown }).surface ?? "<omit>",
+                reason: resolved.reason,
+              })
+              try { ws.terminate() } catch { /* closing */ }
+              return
+            }
+            if (resolved.coerced) {
+              logger.info("ws.surface_coerced", {
+                origin: st.origin || "<none>",
+                claimed: "tray",
+                surface: "panel",
+              })
+            }
             st.authenticated = true
-            const rawSurface = (msg as { surface?: unknown }).surface
-            st.surface = rawSurface === "summoner" ? "summoner" : "tray"
+            st.surface = resolved.surface
             clearTimeout(st.timer)
-            logger.info("ws.authenticated", { protocol_version: nego.negotiated, surface: st.surface })
+            logger.info("ws.authenticated", { protocol_version: nego.negotiated, surface: st.surface, origin: st.origin })
             // Record (idempotently) that some peer has paired, so the tray can stop
             // auto-surfacing the pairing secret. Best-effort; never blocks auth.
             markPaired()

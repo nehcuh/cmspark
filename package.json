@@ -2,7 +2,7 @@
   "name": "cmspark",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "@types/js-yaml": "^4.0.9",

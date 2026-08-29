@@ -104,6 +104,12 @@ export class WSClient {
         return
       }
       if (msg.type === "auth.ok") {
+        // Lock-step with companion/src/protocol.ts PROTOCOL_VERSION. Missing = accept (MIN).
+        const advertised = msg.negotiated_protocol_version ?? msg.protocol_version
+        if (advertised !== undefined && advertised !== null && advertised !== 1) {
+          try { this.ws?.close() } catch { /* closing */ }
+          return
+        }
         this.authenticated = true
         this.setState("connected")
         this.flushPending()

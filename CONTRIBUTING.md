@@ -2,7 +2,7 @@
 
 ## 前提
 
-- **Node.js ≥ 20**（与 README / CI / TESTING 一致；推荐 `nvm`）
+- **Node.js ≥ 22**（与 README / CI / TESTING 一致；推荐 `nvm`）
 - Chrome 浏览器（Manifest V3）
 - npm
 

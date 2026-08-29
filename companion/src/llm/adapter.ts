@@ -169,7 +169,7 @@ interface ChatCreateParams {
    * Router-stamped handshake surface only (`stampedSurface`). Never a client field.
    * Summoner Capture is L0: native executors are not offered and cannot execute.
    */
-  surface?: "tray" | "summoner"
+  surface?: "panel" | "tray" | "summoner"
 }
 
 /** Capture overlay must not run CDP / host / shell / spawn / workspace / ACP / MCP mutate tools. */
