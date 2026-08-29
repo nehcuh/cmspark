@@ -1,0 +1,22 @@
+{
+  "batch": "pr246-impl",
+  "pr": 246,
+  "issue": 245,
+  "time": "20260829-082400",
+  "claude": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/pr246-impl-claude-20260829-081244.md",
+    "tests": "companion 3574 pass / chrome-extension 835 pass (Claude claimed executed)"
+  },
+  "kimi": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/pr246-impl-kimi-clean.md"
+  },
+  "both_ok": true,
+  "nits": [
+    "Swift host/skylight binaries not rebuilt at review time",
+    "hidden MCP rail still POST /api/mcp/toggle → 404",
+    "use_skill denied on summoner (fail-closed)",
+    "PR includes 2 overlay first-paint commits vs main"
+  ]
+}
