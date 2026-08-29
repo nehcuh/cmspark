@@ -328,6 +328,10 @@ export function listOutboundGrants(): Omit<OutboundGrantRecord, "token_hash">[] 
 /**
  * True iff a live (not revoked, not expired) grant for caller_id has
  * `allow_page_export === true`. Reloads JSON; does not consult the disclosure Map.
+ *
+ * Caller-level semantics — stdio track only (W2 dual-track): the stdio paths
+ * hold no grant credential, so any live flagged key for the caller allows.
+ * The authenticated HTTP path must use `grantAllowsPageExportById` instead.
  */
 export function grantAllowsPageExport(callerId: string): boolean {
   const id = (callerId || "").trim()
@@ -336,6 +340,24 @@ export function grantAllowsPageExport(callerId: string): boolean {
   return loadFile().grants.some(
     (g) =>
       g.caller_id === id &&
+      g.allow_page_export === true &&
+      !g.revoked_at &&
+      !(g.expires_at && Date.parse(g.expires_at) <= t),
+  )
+}
+
+/**
+ * True iff the specific grant `grantId` is live (not revoked, not expired) and
+ * has `allow_page_export === true`. HTTP per-key track (W2): sibling grants of
+ * the same caller do NOT authorize this key.
+ */
+export function grantAllowsPageExportById(grantId: string): boolean {
+  const id = (grantId || "").trim()
+  if (!id) return false
+  const t = Date.now()
+  return loadFile().grants.some(
+    (g) =>
+      g.id === id &&
       g.allow_page_export === true &&
       !g.revoked_at &&
       !(g.expires_at && Date.parse(g.expires_at) <= t),

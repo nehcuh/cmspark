@@ -106,6 +106,19 @@ test("grant allow_page_export still DISCLOSURE_HITL_REQUIRED without operator se
   assert.equal(hasOutboundDisclosure("hitl"), false)
 })
 
+test("stdio track keeps caller-level semantics with two keys same caller (W2)", () => {
+  // Regression: gateOutboundCall (stdio path) holds no grant credential —
+  // a sibling flagged key still arms the caller-level flag check.
+  issueOutboundGrant({ label: "flag", caller_id: "two-key", allow_page_export: true })
+  issueOutboundGrant({ label: "plain", caller_id: "two-key" })
+  const r = gateOutboundCall({
+    caller_id: "two-key",
+    tool: "cmspark__get_page_text",
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "DISCLOSURE_HITL_REQUIRED")
+})
+
 test("server acceptOutboundDisclosure then exfil allowed at gate", () => {
   issueOutboundGrant({ label: "t", caller_id: "legit", allow_page_export: true })
   acceptOutboundDisclosure("legit")

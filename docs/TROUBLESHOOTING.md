@@ -111,6 +111,7 @@ server 没连上或没声明 `tools` capability。先解决上面的连接问题
 读页面正文/截图（外泄给调用方云模型）不是编程助手自己 `acknowledge` 就能过：
 
 - **`DISCLOSURE_NOT_GRANTED`**：这把 `cmg_` 钥匙没有 `allow_page_export`。重新签发并勾选「允许该 caller 把页文/截图发给其云模型」，或 CLI `--allow-page-export`。
+  （HTTP 路径按这把钥匙本身判定；stdio / `mcp-outbound` 路径无钥匙凭证、按 caller 判定——同一 caller 若有另一把带旗钥匙会放行。）
 - **`DISCLOSURE_HITL_REQUIRED`**：钥匙已允许外泄，但**首次仍须人批**。**打开 Chrome 确认台**（macOS 也可托盘）。调用方 `cmspark__accept_data_disclosure` **不够**，也不表示用户已同意云端外泄。
 
 Windows / Linux 没有原生 tray 确认。

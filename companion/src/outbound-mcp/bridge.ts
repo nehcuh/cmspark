@@ -104,6 +104,9 @@ export async function invokeOutboundTool(
   }
 
   // Defense in depth: re-check grant flag. HITL_REQUIRED still goes to HTTP.
+  // stdio track (W2): no grant credential on this path — caller-level semantics
+  // (any live flagged grant for the caller allows). Per-key enforcement lives
+  // in the authenticated HTTP path (companion-http.ts).
   const exfilDeny = denyOutboundExfilIfNeeded(req.caller_id, req.tool)
   if (exfilDeny && !(passHitlToHttp && exfilDeny.error_code === "DISCLOSURE_HITL_REQUIRED")) {
     return { ...exfilDeny, origin }

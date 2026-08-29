@@ -14,7 +14,7 @@ import {
 } from "./profile"
 import { appendOutboundMcpAudit, type OutboundAuditEvent } from "./audit"
 import { hasOutboundDisclosure } from "./disclosure-session"
-import { grantAllowsPageExport } from "./outbound-grants"
+import { grantAllowsPageExport, grantAllowsPageExportById } from "./outbound-grants"
 
 export type OutboundCallRequest = {
   caller_id: string
@@ -22,8 +22,9 @@ export type OutboundCallRequest = {
   args?: Record<string, unknown>
   /**
    * @deprecated Ignored for authorization. Kept for API compatibility only.
-   * Exfil requires grantAllowsPageExport(caller_id) AND an operator HITL session
-   * (acceptOutboundDisclosure). Caller HTTP/stdio acknowledge is not consent.
+   * Exfil requires the grant-flag gate (per-key on the authenticated HTTP path,
+   * caller-level on stdio — see denyOutboundExfilIfNeeded) AND an operator HITL
+   * session (acceptOutboundDisclosure). Caller HTTP/stdio acknowledge is not consent.
    */
   disclosure_accepted?: boolean
   domain?: string
@@ -51,6 +52,18 @@ export function listOutboundTools(): string[] {
  *   grant.allow_page_export !== true → DISCLOSURE_NOT_GRANTED
  *   flag true, no operator HITL session → DISCLOSURE_HITL_REQUIRED
  *
+ * Dual-track grant-flag semantics (W2):
+ *   - HTTP track: caller passes the authenticated `grant_id` (extraAudit.grant_id)
+ *     → per-key check: only THAT grant's own allow_page_export authorizes exfil,
+ *     matching the grant-cli "这把钥匙" promise to the operator.
+ *   - stdio track (bridge.ts, gateOutboundCall below): no grant credential is
+ *     available → caller-level check: any live flagged grant for the caller allows.
+ *
+ * Intentional mismatch: the operator HITL session (hasOutboundDisclosure) stays
+ * keyed by caller_id on BOTH tracks — "grant-level flag gate + caller-level HITL
+ * session". One operator approval arms the caller's session; the durable exfil
+ * consent stays per-key on the HTTP track.
+ *
  * Caller `disclosure_accepted` and HTTP/stdio acknowledge MUST NOT satisfy this.
  * Returns a deny result, or null if the tool is not exfil / both checks pass.
  */
@@ -61,7 +74,10 @@ export function denyOutboundExfilIfNeeded(
 ): OutboundCallResult | null {
   if (!OUTBOUND_MCP_EXFIL_CLASS.has(tool)) return null
   const cid = (caller_id || "").trim() || "unknown"
-  if (!grantAllowsPageExport(cid)) {
+  const granted = extraAudit?.grant_id
+    ? grantAllowsPageExportById(extraAudit.grant_id) // HTTP track: this key only
+    : grantAllowsPageExport(cid) // stdio track: any live flagged key for caller
+  if (!granted) {
     appendOutboundMcpAudit({
       caller_id: cid,
       tool,
@@ -72,7 +88,9 @@ export function denyOutboundExfilIfNeeded(
     })
     return {
       ok: false,
-      error: "page export not granted for this caller",
+      error: extraAudit?.grant_id
+        ? "page export not granted for this grant key"
+        : "page export not granted for this caller",
       error_code: "DISCLOSURE_NOT_GRANTED",
       disclosure_required: true,
       disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
@@ -130,7 +148,9 @@ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
     }
   }
 
-  // Caller disclosure_accepted is intentionally ignored
+  // Caller disclosure_accepted is intentionally ignored.
+  // stdio track (W2): caller-level exfil gate — no grant credential here;
+  // see denyOutboundExfilIfNeeded for the dual-track semantics.
   const exfilDeny = denyOutboundExfilIfNeeded(req.caller_id, tool, {
     domain: req.domain,
   })

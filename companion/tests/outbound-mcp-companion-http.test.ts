@@ -376,6 +376,41 @@ test("after operator confirm, second exfil in session passes hasOutboundDisclosu
   )
 })
 
+test("HTTP grant track: unflagged key denied even when sibling key is flagged (W2)", async () => {
+  issueOutboundGrant({ label: "flag", caller_id: "dual", allow_page_export: true })
+  const plain = issueOutboundGrant({ label: "plain", caller_id: "dual" })
+  // Even with the operator HITL session armed for the caller, this key must not exfil.
+  await companionAcceptDisclosure("dual")
+  let runnerHit = false
+  setOutboundToolRunner(async () => {
+    runnerHit = true
+    return { success: true, data: { ok: true } }
+  })
+  const r = await companionInvokeOutbound(
+    { caller_id: "dual", tool: "cmspark__screenshot", args: { tabId: 1 } },
+    { grant_id: plain.id },
+  )
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "DISCLOSURE_NOT_GRANTED")
+  assert.equal(runnerHit, false)
+})
+
+test("HTTP grant track: flagged key passes with operator session (W2)", async () => {
+  const flagged = issueOutboundGrant({
+    label: "flag",
+    caller_id: "dual2",
+    allow_page_export: true,
+  })
+  issueOutboundGrant({ label: "plain", caller_id: "dual2" })
+  await companionAcceptDisclosure("dual2")
+  setOutboundToolRunner(async () => ({ success: true, data: { ok: true } }))
+  const r = await companionInvokeOutbound(
+    { caller_id: "dual2", tool: "cmspark__screenshot", args: { tabId: 1 } },
+    { grant_id: flagged.id },
+  )
+  assert.equal(r.ok, true, JSON.stringify(r))
+})
+
 test("revoke grant → exfil fails even if disclosure Map still has caller", async () => {
   const issued = issueOutboundGrant({
     label: "rev",

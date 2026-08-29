@@ -405,6 +405,9 @@ function readJsonBody(req: IncomingMessage, limit = 1_000_000): Promise<unknown>
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
+  // Caller already disconnected (e.g. HTTP timeout during HITL wait): nothing
+  // to send — skip the write instead of erroring on a destroyed socket.
+  if (res.destroyed || res.writableEnded) return
   const s = JSON.stringify(body)
   res.writeHead(status, {
     "Content-Type": "application/json",
@@ -423,10 +426,13 @@ export type CompanionInvokeBody = {
 /**
  * Pure invoke logic (no HTTP). Used by HTTP handler and unit tests.
  * @param opts.grant_id — set only by authenticated HTTP path (never trust body)
+ * @param opts.callerConnected — liveness probe for the caller's connection;
+ *   checked after operator HITL resolves so an approved tool is not executed
+ *   for a caller that already went away (fail-safe, R1).
  */
 export async function companionInvokeOutbound(
   body: CompanionInvokeBody,
-  opts?: { grant_id?: string },
+  opts?: { grant_id?: string; callerConnected?: () => boolean },
 ): Promise<OutboundCallResult & { data?: unknown; origin?: ReturnType<typeof makeOutboundMcpOrigin> }> {
   const caller_id = (body.caller_id || "http-unknown").trim() || "http-unknown"
   const tool = (body.tool || "").trim()
@@ -438,6 +444,15 @@ export async function companionInvokeOutbound(
     domain: body.domain,
   }
 
+  // HTTP per-key track (W2): the authenticated grant's OWN allow_page_export
+  // decides exfil. Check before the caller-level gate so an unflagged key is
+  // denied DISCLOSURE_NOT_GRANTED even when a sibling key of the same caller
+  // is flagged (otherwise the caller-level gate would misroute into HITL flow).
+  const grantTrackDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id })
+  if (grantTrackDeny && grantTrackDeny.error_code === "DISCLOSURE_NOT_GRANTED") {
+    return grantTrackDeny
+  }
+
   let gate = gateOutboundCall(req)
   if (!gate.ok) {
     // HTTP invoke waits on first-exfil HITL when a confirmer is injected.
@@ -445,6 +460,31 @@ export async function companionInvokeOutbound(
     if (gate.error_code === "DISCLOSURE_HITL_REQUIRED" && exfilConfirmer) {
       const hitl = await waitFirstExfilOperatorConfirm(caller_id, tool, grant_id)
       if (!hitl.ok) return hitl
+      // R1: the caller's HTTP client may have timed out / disconnected while
+      // the operator HITL was pending. Fail-safe: an approved tool must NOT
+      // execute when its result has nowhere to go. Distinct audit record so
+      // "approved but not executed" is distinguishable from "executed".
+      if (opts?.callerConnected && !opts.callerConnected()) {
+        logger.warn("outbound_mcp.caller_disconnected_post_hitl", {
+          tool_name: tool,
+          caller: caller_id,
+        })
+        appendOutboundMcpAudit({
+          caller_id,
+          tool,
+          domain: body.domain,
+          ok: false,
+          error_code: "CALLER_DISCONNECTED",
+          confirm_outcome: "approved",
+          grant_id,
+        })
+        return {
+          ok: false,
+          error:
+            "caller disconnected while operator HITL was pending — approved tool not executed",
+          error_code: "CALLER_DISCONNECTED",
+        }
+      }
       gate = gateOutboundCall(req)
       if (!gate.ok) return gate
     } else {
@@ -452,7 +492,8 @@ export async function companionInvokeOutbound(
     }
   }
 
-  // Defense in depth for exfil (grant flag ∧ operator HITL; HTTP ack is not consent)
+  // Defense in depth for exfil (grant flag ∧ operator HITL; HTTP ack is not consent).
+  // Recomputed after any HITL arming above; grant-level on this HTTP track (W2).
   const exfilDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id })
   if (exfilDeny) return exfilDeny
 
@@ -694,8 +735,19 @@ export async function handleOutboundMcpHttp(
         body.caller_id = auth.bound_caller_id
       }
       // N1 dual-review: pass auth grant_id into tool audit (never from client body)
+      // R1: fail-safe liveness probe — if the caller's socket dies while the
+      // operator HITL is pending, the approved tool must not execute.
+      let callerSocketGone = false
+      res.on("close", () => {
+        callerSocketGone = true
+      })
       const out = await companionInvokeOutbound(body, {
         grant_id: auth.mode === "grant" ? auth.grant_id : undefined,
+        callerConnected: () =>
+          !callerSocketGone &&
+          !req.destroyed &&
+          !res.destroyed &&
+          !res.writableEnded,
       })
       json(res, out.ok ? 200 : 422, {
         ...out,

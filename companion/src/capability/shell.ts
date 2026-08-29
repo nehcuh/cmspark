@@ -157,8 +157,114 @@ export function hasShellAllowlistMetachar(command: string): boolean {
   return SHELL_ALLOWLIST_METACHAR_RE.test(command)
 }
 
-/** Interpreters that must not receive -c/-e when only bare name is allowlisted. */
-const BARE_INTERPRETER_DENY_FLAGS = /(?:^|\s)(?:-[ce]|--command|--eval)(?:\s|=|$)/
+/**
+ * Shell families get a DEDICATED deny set — never the interpreter -e rule:
+ * `bash -e` is legitimate errexit and `bash -eu script.sh` must stay allowed.
+ * - posix (sh/bash/zsh): deny `-c` (incl. clusters like `-lc`/`-ec`)
+ * - pwsh (pwsh/powershell): deny any unique prefix of Command / EncodedCommand
+ *   in `-` / `--` / `/` flag styles (`-c`, `-com`, `/c`, `-e`, `-enc`, …,
+ *   incl. `=` glued forms)
+ * - deno (deno/bun): deny `eval` subcommand, `-e`/`--eval`, `-p`/`--print`
+ * - cmd (cmd/cmd.exe): deny `/c`, `/k` (case-insensitive — cmd flags are)
+ * Basenames are normalized (path + trailing `.exe` stripped) before lookup.
+ *
+ * DESIGN BOUNDARY (accepted residual, grok review W1c): flag denial is
+ * defense-in-depth only. A bare interpreter/shell allowlist entry inherently
+ * allows running arbitrary scripts via POSITIONAL arguments —
+ * `powershell Get-Date` (implicit -Command) is the same class as
+ * `bash evil.sh`. Operators who allowlist a bare shell accept that.
+ *
+ * CLASS BOUNDARY (grok review W1d — CLOSES this class): for bare
+ * interpreter/shell allowlist entries, exec-flag denial is best-effort
+ * defense-in-depth, NOT a complete enumeration. GTFOBins-class vectors
+ * (awk/sed/find/…) deliberately live outside this table; the real gate is
+ * the L2 confirmation. Single-point flag variants in this class are no
+ * longer tracked item-by-item unless a concrete attack path is shown.
+ */
+type ShellDenyKind = "posix" | "pwsh" | "deno" | "cmd"
+const SHELL_FAMILY_DENY: Record<string, ShellDenyKind> = {
+  sh: "posix",
+  bash: "posix",
+  zsh: "posix",
+  pwsh: "pwsh",
+  powershell: "pwsh",
+  deno: "deno",
+  bun: "deno",
+  cmd: "cmd",
+}
+
+function shellDenyKind(argv0: string): ShellDenyKind | null {
+  return SHELL_FAMILY_DENY[interpreterBasename(argv0)] ?? null
+}
+
+function tokenIsDeniedShellFlag(kind: ShellDenyKind, token: string): boolean {
+  if (kind === "posix") {
+    if (token === "-c") return true
+    // Clustered shorts containing c (`-lc`, `-ec`, `-xc`) all execute a command.
+    if (/^-[A-Za-z]{2,}$/.test(token) && token.includes("c")) return true
+    return false
+  }
+  if (kind === "pwsh") {
+    // PowerShell flags are case-insensitive, accept `-` / `--` / `/` prefixes
+    // (WinPS 5.1 takes `/c`, `/Command`, `/com`…), and resolve any UNIQUE
+    // PREFIX: `-com` = -Command, `-e`/`-enc` = -EncodedCommand. Deny any flag
+    // whose name is a prefix of "command" / "encodedcommand" (incl. `=` glued
+    // forms like `-c=Get-Date`). pwsh-only — posix `-e` (errexit) semantics
+    // differ and must NOT be caught by this rule.
+    // Path args are safe: `/tmp/x.ps1` has `/` after the name, so the `(?:=|$)`
+    // boundary below does not match.
+    const t = token.toLowerCase()
+    const m = /^(?:--?|\/)([a-z]+)(?:=|$)/.exec(t)
+    if (!m) return false
+    // `-ec` is the conventional EncodedCommand shorthand but NOT a string
+    // prefix of "encodedcommand" — deny it explicitly (all prefix styles).
+    if (m[1] === "ec") return true
+    return "command".startsWith(m[1]) || "encodedcommand".startsWith(m[1])
+  }
+  if (kind === "cmd") {
+    // cmd.exe flags are case-insensitive; /c and /k both execute a command.
+    // Exact match only — positional args like `cmd script.bat` stay allowed
+    // (declared positional boundary above). cmd does not accept `-c`.
+    const t = token.toLowerCase()
+    return t === "/c" || t === "/k"
+  }
+  // deno/bun: `eval` subcommand, `-e`/`--eval`, and bun's print-eval `-p`/`--print`.
+  return (
+    token === "eval" ||
+    token === "-e" ||
+    token === "--eval" ||
+    token.startsWith("--eval=") ||
+    token === "-p" ||
+    token === "--print" ||
+    token.startsWith("--print=")
+  )
+}
+
+function argvHasDeniedShellFlags(kind: ShellDenyKind, argv: string[]): boolean {
+  for (let i = 1; i < argv.length; i++) {
+    if (tokenIsDeniedShellFlag(kind, argv[i])) return true
+  }
+  return false
+}
+
+/**
+ * Fallback raw-argv scan per shell kind (only used when tokenizeSimpleArgv
+ * fails). Splits on whitespace and reuses tokenIsDeniedShellFlag so the
+ * fallback path stays in lock-step with the tokenized path (unique prefixes,
+ * `=` glued forms, --eval — a parallel regex set would drift).
+ *
+ * ACCEPTED RESIDUAL (grok review W1c): a QUOTED deny flag slips through here
+ * — `bash '-c' '$x'` splits to `'-c'`, which never equals `-c`. Theoretical
+ * only: tokenizeSimpleArgv fails exactly when the command contains
+ * metacharacters / `$` / wildcards, and those are rejected upstream by
+ * hasShellAllowlistMetachar under policy=allowlist before this matcher runs.
+ */
+function rawArgsHaveDeniedShellFlags(kind: ShellDenyKind, rawArgs: string): boolean {
+  for (const token of rawArgs.split(/\s+/)) {
+    if (token && tokenIsDeniedShellFlag(kind, token)) return true
+  }
+  return false
+}
 
 const INTERPRETER_BASENAMES = new Set([
   "python",
@@ -174,7 +280,10 @@ const INTERPRETER_BASENAMES = new Set([
 
 function interpreterBasename(argv0: string): string {
   const base = String(argv0).split(/[/\\]/).pop() || String(argv0)
-  return base.toLowerCase()
+  // Strip a trailing .exe so `bash.exe` / `powershell.exe` allowlist entries
+  // still hit the shell-family / interpreter deny sets. Non-family lookups
+  // (`grep.exe` → `grep`) are unaffected — `grep` is in neither set.
+  return base.toLowerCase().replace(/\.exe$/, "")
 }
 
 function isKnownInterpreter(argv0: string): boolean {
@@ -184,27 +293,64 @@ function isKnownInterpreter(argv0: string): boolean {
   return false
 }
 
-function tokenIsDeniedInterpreterFlag(token: string, clustered: boolean): boolean {
+/**
+ * Interpreter exec-flag denial. The generic rules (-c/-e/--command/--eval,
+ * clustered shorts) apply to every known interpreter; `base` (normalized
+ * basename of argv0) scopes interpreter-SPECIFIC flags so legit lookalikes
+ * on other interpreters are not caught:
+ * - node/nodejs: `-p`/`--print` (print-eval, mirrors deno/bun)
+ * - perl: `-E` (uppercase -e; the generic -e is lowercase-only)
+ * - php: `-r` (run code), `-R`/`-B` (per-line callbacks) — ruby's legit
+ *   `-r` (require) is unaffected because the check is php-scoped.
+ */
+function tokenIsDeniedInterpreterFlag(token: string, clustered: boolean, base?: string): boolean {
   if (token === "-c" || token === "-e" || token === "--command" || token === "--eval") return true
   if (token.startsWith("--command=") || token.startsWith("--eval=")) return true
   if (/^-c./.test(token)) return true
   if (/^-e./.test(token) && !token.startsWith("--")) return true
   if (clustered && /^-[A-Za-z]{2,}$/.test(token) && /[ce]/i.test(token)) return true
+  if (base === "node" || base === "nodejs") {
+    if (token === "-p" || token === "--print" || token.startsWith("--print=")) return true
+  }
+  if (base === "perl") {
+    if (token === "-E") return true
+  }
+  if (base === "php") {
+    if (token === "-r" || token === "-R" || token === "-B") return true
+  }
   return false
 }
 
 function argvHasDeniedInterpreterFlags(argv: string[]): boolean {
   if (argv.length < 2) return false
+  const base = interpreterBasename(argv[0])
   for (let i = 1; i < argv.length; i++) {
-    if (tokenIsDeniedInterpreterFlag(argv[i], true)) return true
+    if (tokenIsDeniedInterpreterFlag(argv[i], true, base)) return true
+  }
+  return false
+}
+
+/**
+ * Fallback raw-argv scan for interpreters (only when tokenizeSimpleArgv
+ * fails). Whitespace-split + tokenIsDeniedInterpreterFlag, mirroring
+ * rawArgsHaveDeniedShellFlags — a parallel regex (the old
+ * BARE_INTERPRETER_DENY_FLAGS) would drift from the token rules, e.g. it
+ * knew nothing of node -p / perl -E / php -r. Same quoted-flag residual as
+ * the shell fallback applies (metachar layer rejects upstream anyway).
+ */
+function rawArgsHaveDeniedInterpreterFlags(ent: string, rawArgs: string): boolean {
+  const base = interpreterBasename(ent)
+  for (const token of rawArgs.split(/\s+/)) {
+    if (token && tokenIsDeniedInterpreterFlag(token, true, base)) return true
   }
   return false
 }
 
 /**
  * P1 SEC-07 + Batch C C3: allowlist match as argv template, not naive prefix.
- * Deny -c/-e on parsed argv (quoted `python3 '-c'`). Clustered shorts (-ic)
- * only for known interpreters so `grep -ic` / `wc -c` stay allowed.
+ * Deny exec flags on parsed argv (quoted `python3 '-c'`). Clustered shorts
+ * (-ic) only for known interpreters / shell families so `grep -ic` / `wc -c`
+ * stay allowed. Shells use their own flag set — `bash -e` (errexit) is legal.
  */
 export function commandMatchesAllowlistEntry(command: string, entry: string): boolean {
   const cmd = command.trim()
@@ -222,9 +368,17 @@ export function commandMatchesAllowlistEntry(command: string, entry: string): bo
     if (rest.length >= 2 && isKnownInterpreter(rest[0]) && argvHasDeniedInterpreterFlags(rest)) {
       return false
     }
+    const kind = rest.length >= 2 ? shellDenyKind(rest[0]) : null
+    if (kind && argvHasDeniedShellFlags(kind, rest)) {
+      return false
+    }
     return true
   }
-  if (isKnownInterpreter(ent) && BARE_INTERPRETER_DENY_FLAGS.test(cmd.slice(ent.length))) return false
+  if (isKnownInterpreter(ent) && rawArgsHaveDeniedInterpreterFlags(ent, cmd.slice(ent.length))) {
+    return false
+  }
+  const kind = shellDenyKind(ent)
+  if (kind && rawArgsHaveDeniedShellFlags(kind, cmd.slice(ent.length))) return false
   return true
 }
 
@@ -250,7 +404,7 @@ export function commandAllowedByPolicy(command: string): { ok: true } | { ok: fa
       return {
         ok: false,
         error:
-          "command not in allowlist_commands (argv template match; bare interpreters reject -c/-e)",
+          "command not in allowlist_commands (argv template match; bare interpreters/shells reject exec flags)",
       }
     }
   }

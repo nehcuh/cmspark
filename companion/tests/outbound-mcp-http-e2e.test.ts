@@ -12,11 +12,15 @@ import "./_outbound-grants-setup.js"
 import test from "node:test"
 import assert from "node:assert/strict"
 import http from "node:http"
+import fs from "node:fs"
+import { WebSocket } from "ws"
 import {
   handleOutboundMcpHttp,
   setOutboundToolRunner,
   setOutboundRunnerRefresh,
+  setOutboundExfilConfirmer,
   resetOutboundCompanionHttpForTests,
+  companionAcceptDisclosure,
   OUTBOUND_HEALTH_PATH,
   OUTBOUND_INVOKE_PATH,
   OUTBOUND_DISCLOSURE_PATH,
@@ -32,6 +36,8 @@ import {
   issueOutboundGrant,
   resetOutboundGrantsForTests,
 } from "../src/outbound-mcp/outbound-grants"
+import { SecurityConfirmationManager } from "../src/security-confirmation"
+import { getAuditLogPath } from "../src/packs/audit-log"
 
 /** Legacy secret still accepted only when require_grant=false (not default). */
 const SECRET = "e2e-test-ws-secret-not-for-prod"
@@ -327,6 +333,46 @@ test("grant allow_page_export still DISCLOSURE_HITL_REQUIRED without operator se
   }
 })
 
+test("e2e: two keys same caller — unflagged token denied, flagged token passes (W2)", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  const flagged = issueOutboundGrant({
+    label: "flag",
+    caller_id: "dual-http",
+    allow_page_export: true,
+  })
+  const plain = issueOutboundGrant({ label: "plain", caller_id: "dual-http" })
+  setOutboundToolRunner(async () => ({ success: true, data: { png: "x" } }))
+  try {
+    // Unflagged key: denied per-key even though caller-level has a flagged sibling.
+    const denied = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: plain.token,
+      body: { caller_id: "dual-http", tool: "cmspark__screenshot", args: { tabId: 7 } },
+    })
+    assert.equal(denied.status, 422)
+    assert.equal(denied.json.error_code, "DISCLOSURE_NOT_GRANTED")
+
+    // Operator HITL session (Confirm Center) arms the caller, flagged key passes.
+    await companionAcceptDisclosure("dual-http")
+    const ok = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: flagged.token,
+      body: { caller_id: "dual-http", tool: "cmspark__screenshot", args: { tabId: 7 } },
+    })
+    assert.equal(ok.status, 200)
+    assert.equal(ok.json.ok, true)
+
+    // Unflagged key still denied with the caller HITL session armed.
+    const still = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: plain.token,
+      body: { caller_id: "dual-http", tool: "cmspark__screenshot", args: { tabId: 7 } },
+    })
+    assert.equal(still.status, 422)
+    assert.equal(still.json.error_code, "DISCLOSURE_NOT_GRANTED")
+  } finally {
+    await close(server)
+  }
+})
+
 test("e2e: refresh hook runs before HTTP invoke", async () => {
   const server = createOutboundTestServer()
   const port = await listen(server)
@@ -477,6 +523,152 @@ test("e2e: security confirmation timeout maps to OUTBOUND_CONFIRM_REQUIRED", asy
     assert.equal(r.json.error_code, "OUTBOUND_CONFIRM_REQUIRED")
     assert.match(r.json.error || "", /tray|Side Panel/i)
   } finally {
+    await close(server)
+  }
+})
+
+async function waitUntilE2E(fn: () => boolean, timeoutMs = 2000): Promise<void> {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeoutMs) {
+    if (fn()) return
+    await new Promise((r) => setTimeout(r, 10))
+  }
+  throw new Error("waitUntil timeout")
+}
+
+function lastConfirmIdFrom(sent: string[]): string {
+  for (let i = sent.length - 1; i >= 0; i--) {
+    try {
+      const m = JSON.parse(sent[i]) as { type?: string; confirmation_id?: string }
+      if (m.type === "security.confirmation.request" && m.confirmation_id) {
+        return m.confirmation_id
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  throw new Error("no security.confirmation.request fanned out")
+}
+
+// R1: caller's HTTP client times out / disconnects while the operator HITL is
+// pending → operator approves → the tool must NOT execute (fail-safe), and the
+// skip must leave a distinct audit record (approved-but-not-executed).
+test("e2e: caller disconnect during HITL wait → approved tool NOT executed (R1)", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  const token = issueOutboundGrant({
+    label: "e2e-r1",
+    caller_id: "r1-agent",
+    allow_page_export: true,
+  }).token
+  let runnerHit = false
+  setOutboundToolRunner(async () => {
+    runnerHit = true
+    return { success: true, data: { png: "must-not-happen" } }
+  })
+
+  // Real confirmation manager + fake extension WS so the test can approve
+  // the first-exfil HITL after the caller has gone away.
+  const sent: string[] = []
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send: (s: unknown) => {
+      sent.push(String(s))
+    },
+  } as unknown as WebSocket
+  const mgr = new SecurityConfirmationManager()
+  setOutboundExfilConfirmer({
+    securityConfirmations: mgr,
+    getClients: () => [ws],
+    wsAuthGet: () => ({
+      authenticated: true,
+      origin: "chrome-extension://test",
+      surface: "tray",
+    }),
+    getOriginatingWs: () => ws,
+  })
+
+  const payload = Buffer.from(
+    JSON.stringify({
+      caller_id: "r1-agent",
+      tool: "cmspark__screenshot",
+      args: { tabId: 7 },
+    }),
+    "utf8",
+  )
+  let creq!: http.ClientRequest
+  const clientDone = new Promise<{ status: number | null }>((resolve) => {
+    creq = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: OUTBOUND_INVOKE_PATH,
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Content-Length": payload.length,
+        },
+      },
+      (cres) => {
+        cres.resume()
+        cres.on("end", () => resolve({ status: cres.statusCode || 0 }))
+      },
+    )
+    // Caller-side destroy surfaces as ECONNRESET — that path is the point.
+    creq.on("error", () => resolve({ status: null }))
+    creq.write(payload)
+    creq.end()
+  })
+
+  try {
+    // Operator HITL pends (fan-out reached the "extension").
+    await waitUntilE2E(() => sent.some((s) => s.includes("security.confirmation.request")))
+    const confirmId = lastConfirmIdFrom(sent)
+    assert.equal(runnerHit, false)
+
+    // Caller HTTP client times out and hangs up mid-HITL.
+    creq.destroy()
+    await waitUntilE2E(() => creq.destroyed)
+
+    // Operator approves AFTER the caller disconnected.
+    const approved = mgr.respondFrom(confirmId, true, ws)
+    assert.equal(approved.outcome, "resolved")
+
+    const client = await clientDone
+    assert.equal(client.status, null, "caller never receives a response (socket gone)")
+    // Small settle so the post-HITL audit line is flushed before reading.
+    await waitUntilE2E(() => {
+      try {
+        return fs
+          .readFileSync(getAuditLogPath(), "utf8")
+          .includes("CALLER_DISCONNECTED")
+      } catch {
+        return false
+      }
+    })
+
+    assert.equal(runnerHit, false, "toolRunner must not run for a disconnected caller")
+
+    const events = fs
+      .readFileSync(getAuditLogPath(), "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((e) => e.type === "outbound_mcp.tool" && e.caller_id === "r1-agent")
+    // Operator approval itself is audited (distinct from the skip below).
+    assert.ok(
+      events.some((e) => e.ok === true && e.confirm_outcome === "approved"),
+      `operator approval audited: ${JSON.stringify(events)}`,
+    )
+    // Approved-but-not-executed has its own explicit record.
+    const skipped = events.find((e) => e.error_code === "CALLER_DISCONNECTED")
+    assert.ok(skipped, `CALLER_DISCONNECTED audit exists: ${JSON.stringify(events)}`)
+    assert.equal(skipped.ok, false)
+    assert.equal(skipped.confirm_outcome, "approved")
+    assert.equal(skipped.tool, "cmspark__screenshot")
+  } finally {
+    creq.destroy()
     await close(server)
   }
 })

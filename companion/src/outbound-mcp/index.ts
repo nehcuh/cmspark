@@ -52,6 +52,7 @@ export {
   listOutboundGrants,
   resetOutboundGrantsForTests,
   grantAllowsPageExport,
+  grantAllowsPageExportById,
   DEFAULT_GRANT_TTL_MS,
   OUTBOUND_GRANT_TOKEN_PREFIX,
 } from "./outbound-grants"

@@ -16,6 +16,7 @@ import {
   OUTBOUND_GRANT_TOKEN_PREFIX,
   DEFAULT_GRANT_TTL_MS,
   grantAllowsPageExport,
+  grantAllowsPageExportById,
 } from "../src/outbound-mcp/outbound-grants"
 import {
   authorizeOutboundRequest,
@@ -201,4 +202,39 @@ test("revoked grant cannot exfil even if allow_page_export was true", () => {
   })
   sleepMs(15)
   assert.equal(grantAllowsPageExport("expired-exfil"), false)
+})
+
+test("grantAllowsPageExportById is per-key (W2): sibling flagged grant does not leak", () => {
+  const flagged = issueOutboundGrant({
+    label: "flag",
+    caller_id: "byid",
+    allow_page_export: true,
+  })
+  const plain = issueOutboundGrant({ label: "plain", caller_id: "byid" })
+  // caller-level still true (stdio track), per-key distinguishes
+  assert.equal(grantAllowsPageExport("byid"), true)
+  assert.equal(grantAllowsPageExportById(flagged.id), true)
+  assert.equal(grantAllowsPageExportById(plain.id), false)
+  assert.equal(grantAllowsPageExportById(""), false)
+  assert.equal(grantAllowsPageExportById("g_no_such"), false)
+})
+
+test("grantAllowsPageExportById false after revoke / expiry", () => {
+  const revoked = issueOutboundGrant({
+    label: "t",
+    caller_id: "byid-rev",
+    allow_page_export: true,
+  })
+  assert.equal(grantAllowsPageExportById(revoked.id), true)
+  assert.equal(revokeOutboundGrant(revoked.id), true)
+  assert.equal(grantAllowsPageExportById(revoked.id), false)
+
+  const expired = issueOutboundGrant({
+    label: "t",
+    caller_id: "byid-exp",
+    allow_page_export: true,
+    ttl_ms: 1,
+  })
+  sleepMs(15)
+  assert.equal(grantAllowsPageExportById(expired.id), false)
 })

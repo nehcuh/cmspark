@@ -24,6 +24,121 @@ test("C3: quoted -c / clustered interpreter flags denied; grep -ic still allowed
   assert.equal(commandMatchesAllowlistEntry("wc -c file", "wc"), true)
 })
 
+test("W1: bare shell entries reject exec flags; errexit and non-interpreter -c stay allowed", () => {
+  // sh/bash/zsh: -c denied (incl. clustered forms), errexit allowed
+  assert.equal(commandMatchesAllowlistEntry("bash -c 'rm -rf /'", "bash"), false)
+  assert.equal(commandMatchesAllowlistEntry("sh -c 'id'", "sh"), false)
+  assert.equal(commandMatchesAllowlistEntry("zsh -c 'id'", "zsh"), false)
+  assert.equal(commandMatchesAllowlistEntry("bash -lc 'id'", "bash"), false)
+  assert.equal(commandMatchesAllowlistEntry("bash -ec 'id'", "bash"), false)
+  assert.equal(commandMatchesAllowlistEntry("bash -e script.sh", "bash"), true)
+  assert.equal(commandMatchesAllowlistEntry("bash -eu script.sh", "bash"), true)
+  assert.equal(commandMatchesAllowlistEntry("bash script.sh", "bash"), true)
+  // pwsh/powershell: -c / --command / -ec / --encodedcommand denied
+  assert.equal(commandMatchesAllowlistEntry("pwsh -c 'Get-Process'", "pwsh"), false)
+  assert.equal(commandMatchesAllowlistEntry("pwsh -Command 'x'", "pwsh"), false)
+  assert.equal(commandMatchesAllowlistEntry("pwsh -ec ZQB0AA==", "pwsh"), false)
+  assert.equal(commandMatchesAllowlistEntry("powershell --command 'x'", "powershell"), false)
+  assert.equal(commandMatchesAllowlistEntry("pwsh -File script.ps1", "pwsh"), true)
+  // deno/bun: eval / -e denied
+  assert.equal(commandMatchesAllowlistEntry("deno eval '1+1'", "deno"), false)
+  assert.equal(commandMatchesAllowlistEntry("bun -e 'x'", "bun"), false)
+  assert.equal(commandMatchesAllowlistEntry("deno run script.ts", "deno"), true)
+  // non-interpreter bare entries keep intentional relaxation
+  assert.equal(commandMatchesAllowlistEntry("grep -c pattern file", "grep"), true)
+  // interpreter behavior unchanged
+  assert.equal(commandMatchesAllowlistEntry("python3 -c 'x'", "python3"), false)
+  assert.equal(commandMatchesAllowlistEntry("node -e 'x'", "node"), false)
+  assert.equal(commandMatchesAllowlistEntry("osascript -e 'x'", "osascript"), false)
+})
+
+test("W1b: pwsh unique prefixes / .exe basenames / bun --eval denied", () => {
+  // WinPS unique-prefix resolution: -com/-co = -Command, -e/-enc = -EncodedCommand
+  assert.equal(commandMatchesAllowlistEntry("powershell -com 'Get-Date'", "powershell"), false)
+  assert.equal(commandMatchesAllowlistEntry("pwsh -co 'x'", "pwsh"), false)
+  assert.equal(commandMatchesAllowlistEntry("powershell -enc ZQB0AA==", "powershell"), false)
+  assert.equal(commandMatchesAllowlistEntry("pwsh -e ZQB0AA==", "pwsh"), false)
+  // `=` glued forms
+  assert.equal(commandMatchesAllowlistEntry("pwsh -c=Get-Date", "pwsh"), false)
+  assert.equal(commandMatchesAllowlistEntry("powershell --command=Get-Date", "powershell"), false)
+  // posix -e semantics untouched (errexit is NOT an EncodedCommand prefix)
+  assert.equal(commandMatchesAllowlistEntry("bash -e script.sh", "bash"), true)
+  assert.equal(commandMatchesAllowlistEntry("bash -eu script.sh", "bash"), true)
+  // .exe basename normalization: deny sets still apply to *.exe entries
+  assert.equal(commandMatchesAllowlistEntry("bash.exe -c id", "bash.exe"), false)
+  assert.equal(commandMatchesAllowlistEntry("powershell.exe -c id", "powershell.exe"), false)
+  assert.equal(commandMatchesAllowlistEntry("powershell.exe -com id", "powershell.exe"), false)
+  // non-family entries unaffected by .exe stripping
+  assert.equal(commandMatchesAllowlistEntry("grep.exe -c pattern file", "grep.exe"), true)
+  // deno/bun: --eval
+  assert.equal(commandMatchesAllowlistEntry("bun --eval 'x'", "bun"), false)
+  assert.equal(commandMatchesAllowlistEntry("deno --eval 'x'", "deno"), false)
+  // regressions: relaxation rules unchanged
+  assert.equal(commandMatchesAllowlistEntry("grep -c pattern file", "grep"), true)
+  assert.equal(commandMatchesAllowlistEntry("bash -C script.sh", "bash"), true) // noclobber
+})
+
+test("W1b: fallback path (unparseable argv) applies the same shell deny flags", () => {
+  // metachar `|` forces tokenizeSimpleArgv to return null
+  assert.equal(commandMatchesAllowlistEntry("bash -c 'a|b'", "bash"), false)
+  assert.equal(commandMatchesAllowlistEntry("bash -lc 'a|b'", "bash"), false)
+  assert.equal(commandMatchesAllowlistEntry("powershell -com 'a|b'", "powershell"), false)
+  assert.equal(commandMatchesAllowlistEntry("powershell.exe -c 'a|b'", "powershell.exe"), false)
+  assert.equal(commandMatchesAllowlistEntry("bun --eval 'a|b'", "bun"), false)
+  // fallback allowances mirror the tokenized path
+  assert.equal(commandMatchesAllowlistEntry("bash -e 'a|b'", "bash"), true)
+  assert.equal(commandMatchesAllowlistEntry("grep -c 'a|b'", "grep"), true)
+})
+
+test("W1c: pwsh slash flags and bun/deno print-eval denied", () => {
+  // WinPS 5.1 accepts `/` flag prefixes — same deny rules as `-`/`--`
+  assert.equal(commandMatchesAllowlistEntry("powershell /c Get-Date", "powershell"), false)
+  assert.equal(commandMatchesAllowlistEntry("powershell /Command 'x'", "powershell"), false)
+  assert.equal(commandMatchesAllowlistEntry("pwsh /com 'x'", "pwsh"), false)
+  assert.equal(commandMatchesAllowlistEntry("powershell /ec ZQB0AA==", "powershell"), false)
+  assert.equal(commandMatchesAllowlistEntry("pwsh /e ZQB0AA==", "pwsh"), false)
+  // slash PATH arguments must NOT be caught (`/tmp/…` is no command prefix)
+  assert.equal(commandMatchesAllowlistEntry("powershell /tmp/x.ps1", "powershell"), true)
+  assert.equal(commandMatchesAllowlistEntry("pwsh -File /tmp/x.ps1", "pwsh"), true)
+  // bun/deno print-eval
+  assert.equal(commandMatchesAllowlistEntry("bun -p 'x'", "bun"), false)
+  assert.equal(commandMatchesAllowlistEntry("bun --print 'x'", "bun"), false)
+  assert.equal(commandMatchesAllowlistEntry("bun --print=code", "bun"), false)
+  assert.equal(commandMatchesAllowlistEntry("deno --print 'x'", "deno"), false)
+  // regressions
+  assert.equal(commandMatchesAllowlistEntry("bash -e script.sh", "bash"), true)
+  assert.equal(commandMatchesAllowlistEntry("grep -c pattern file", "grep"), true)
+})
+
+test("W1d: node -p / perl -E / cmd family / php -r denied; class closed", () => {
+  // node print-eval (mirrors W1c deno/bun -p/--print)
+  assert.equal(commandMatchesAllowlistEntry("node -p 'x'", "node"), false)
+  assert.equal(commandMatchesAllowlistEntry("node --print 'x'", "node"), false)
+  assert.equal(commandMatchesAllowlistEntry("node --print=x", "node"), false)
+  // perl uppercase -E (generic -e rule is lowercase-only)
+  assert.equal(commandMatchesAllowlistEntry("perl -E 'say 1'", "perl"), false)
+  assert.equal(commandMatchesAllowlistEntry("perl -e 'x'", "perl"), false) // still denied
+  // cmd family: /c and /k, case-insensitive, .exe normalized
+  assert.equal(commandMatchesAllowlistEntry("cmd /c dir", "cmd"), false)
+  assert.equal(commandMatchesAllowlistEntry("cmd /C dir", "cmd"), false)
+  assert.equal(commandMatchesAllowlistEntry("cmd /k dir", "cmd"), false)
+  assert.equal(commandMatchesAllowlistEntry("cmd.exe /c dir", "cmd.exe"), false)
+  // positional-arg boundary: cmd script.bat stays allowed (documented)
+  assert.equal(commandMatchesAllowlistEntry("cmd script.bat", "cmd"), true)
+  // php code-run flags (php-scoped — ruby's legit -r require is unaffected)
+  assert.equal(commandMatchesAllowlistEntry("php -r 'echo 1'", "php"), false)
+  assert.equal(commandMatchesAllowlistEntry("php -R 'echo 1'", "php"), false)
+  assert.equal(commandMatchesAllowlistEntry("php -B 'echo 1'", "php"), false)
+  assert.equal(commandMatchesAllowlistEntry("ruby -r json x.rb", "ruby"), true)
+  // interpreter fallback path (metachar forces tokenize failure) uses same rules
+  assert.equal(commandMatchesAllowlistEntry("node -p 'a|b'", "node"), false)
+  assert.equal(commandMatchesAllowlistEntry("perl -E 'a|b'", "perl"), false)
+  assert.equal(commandMatchesAllowlistEntry("php -r 'a|b'", "php"), false)
+  // regressions
+  assert.equal(commandMatchesAllowlistEntry("bash -e script.sh", "bash"), true)
+  assert.equal(commandMatchesAllowlistEntry("grep -c pattern file", "grep"), true)
+})
+
 test("C4: WIN_SCRIPTS without ALLOW throws even when NODE_ENV is empty", () => {
   const prevScripts = process.env.CMSPARK_WIN_SCRIPTS
   const prevAllow = process.env.CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE
