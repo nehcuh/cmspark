@@ -44,13 +44,28 @@ function request(opts: {
   body?: string
 }): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
+    let path = opts.path
+    const headers: http.OutgoingHttpHeaders = { ...(opts.headers || {}) }
+    try {
+      const u = new URL(path, "http://127.0.0.1")
+      const tok = u.searchParams.get("token")
+      if (tok) {
+        headers.Cookie = headers.Cookie || `cmspark_overlay=${tok}`
+        if (!headers.Origin) headers.Origin = `http://127.0.0.1:${opts.port}`
+        u.searchParams.delete("token")
+        const q = u.searchParams.toString()
+        path = u.pathname + (q ? `?${q}` : "")
+      }
+    } catch {
+      /* keep path */
+    }
     const req = http.request(
       {
         method: opts.method,
         host: "127.0.0.1",
         port: opts.port,
-        path: opts.path,
-        headers: opts.headers || {},
+        path,
+        headers,
       },
       (res) => {
         let body = ""
@@ -110,21 +125,34 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     token = started.token
     assert.ok(port >= 23510)
     assert.equal(token.length, 64)
-    assert.match(summonerWebPageUrl(port, token), new RegExp(`http://127\\.0\\.0\\.1:${port}/\\?token=`))
+    assert.match(summonerWebPageUrl(port, token), new RegExp(`http://127\\.0\\.0\\.1:${port}/$`))
+    assert.doesNotMatch(summonerWebPageUrl(port, token), /token=/)
   })
 
-  test("GET / with no token → 403", async () => {
+  test("GET / Host-gated first paint Set-Cookie, no query token", async () => {
     const r = await request({ method: "GET", port, path: "/" })
-    assert.equal(r.status, 403)
+    assert.equal(r.status, 200)
+    assert.match(String(r.headers["set-cookie"] || ""), /cmspark_overlay=/)
+    assert.match(String(r.headers["set-cookie"] || ""), /HttpOnly/)
   })
 
-  test("GET / with wrong token → 403", async () => {
-    const r = await request({ method: "GET", port, path: "/?token=" + "ab".repeat(32) })
+  test("GET / with query token → 403", async () => {
+    const r = await new Promise<{ status: number }>((resolve, reject) => {
+      const req = http.request(
+        { method: "GET", host: "127.0.0.1", port, path: `/?token=${token}` },
+        (res) => {
+          res.resume()
+          res.on("end", () => resolve({ status: res.statusCode || 0 }))
+        },
+      )
+      req.on("error", reject)
+      req.end()
+    })
     assert.equal(r.status, 403)
   })
 
   test("GET / with token → 200 HTML workbench", async () => {
-    const r = await request({ method: "GET", port, path: `/?token=${token}` })
+    const r = await request({ method: "GET", port, path: "/" })
     assert.equal(r.status, 200)
     assert.match(r.headers["content-type"] || "", /text\/html/)
     assert.doesNotMatch(r.body, /主界面/)
@@ -272,7 +300,17 @@ describe("summoner-web server", { concurrency: 1 }, () => {
   })
 
   test("GET / with malformed token percent → 403 not hang", async () => {
-    const r = await request({ method: "GET", port, path: "/?token=%" })
+    const r = await new Promise<{ status: number }>((resolve, reject) => {
+      const req = http.request(
+        { method: "GET", host: "127.0.0.1", port, path: "/?token=%" },
+        (res) => {
+          res.resume()
+          res.on("end", () => resolve({ status: res.statusCode || 0 }))
+        },
+      )
+      req.on("error", reject)
+      req.end()
+    })
     assert.equal(r.status, 403)
   })
 
@@ -902,7 +940,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
           method: "GET",
           host: "127.0.0.1",
           port,
-          path: `/api/events?token=${token}`,
+          path: `/api/events`,
+          headers: { Cookie: `cmspark_overlay=${token}` },
         },
         (res) => {
           assert.equal(res.statusCode, 200)
@@ -953,7 +992,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
           method: "GET",
           host: "127.0.0.1",
           port,
-          path: `/api/events?token=${token}`,
+          path: `/api/events`,
+          headers: { Cookie: `cmspark_overlay=${token}` },
         },
         (res) => {
           assert.equal(res.statusCode, 200)
@@ -1134,7 +1174,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
           method: "GET",
           host: "127.0.0.1",
           port,
-          path: `/api/events?token=${token}`,
+          path: `/api/events`,
+          headers: { Cookie: `cmspark_overlay=${token}` },
         },
         (res) => {
           assert.equal(res.statusCode, 200)
@@ -1167,7 +1208,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
       },
     })
     const tmp = path.join(path.resolve("/tmp"), "cmspark-overlay-a2-grace")
-    const opened = openLoopbackPage(`http://127.0.0.1:${port}/?token=${token}`, {
+    const opened = openLoopbackPage(`http://127.0.0.1:${port}/`, {
       spawn: () => ({ unref() {} }),
       browserPath: "/usr/bin/true",
       userDataDir: tmp,
@@ -1179,7 +1220,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
           method: "GET",
           host: "127.0.0.1",
           port,
-          path: `/api/events?token=${token}`,
+          path: `/api/events`,
+          headers: { Cookie: `cmspark_overlay=${token}` },
         },
         (res) => {
           assert.equal(res.statusCode, 200)
@@ -1208,7 +1250,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     __testSetOverlayLaunchGraceMs(60)
     try {
       const tmp = path.join(path.resolve("/tmp"), "cmspark-overlay-a2-grace-defer")
-      const opened = openLoopbackPage(`http://127.0.0.1:${port}/?token=${token}`, {
+      const opened = openLoopbackPage(`http://127.0.0.1:${port}/`, {
         spawn: () => ({ unref() {} }),
         browserPath: "/usr/bin/true",
         userDataDir: tmp,
@@ -1220,7 +1262,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
             method: "GET",
             host: "127.0.0.1",
             port,
-            path: `/api/events?token=${token}`,
+            path: `/api/events`,
+          headers: { Cookie: `cmspark_overlay=${token}` },
           },
           (res) => {
             assert.equal(res.statusCode, 200)

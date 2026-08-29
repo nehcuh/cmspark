@@ -97,6 +97,7 @@ export const SUMMONER_WEB_EVENT_ALLOW = new Set([
   "file.upload_error",
   "file.uploaded",
   "run_status",
+  "thread.updated",
   "composer.lease",
   "tool.start",
   "mcp.confirm.pending",
@@ -174,14 +175,20 @@ function parseQuery(qs: string): Map<string, string> {
   return out
 }
 
+function overlayCookieToken(req: http.IncomingMessage): string | undefined {
+  const raw = String(req.headers.cookie || "")
+  const m = raw.match(/(?:^|;\s*)cmspark_overlay=([0-9a-fA-F]{64})/)
+  return m?.[1]
+}
+
+function overlayHeaderToken(req: http.IncomingMessage): string | undefined {
+  const h = req.headers["x-cmspark-overlay-token"]
+  return typeof h === "string" ? h.trim() : undefined
+}
+
 function tokenOk(req: http.IncomingMessage, expected: string): boolean {
-  const raw = req.url || ""
-  const qIdx = raw.indexOf("?")
-  if (qIdx < 0) return false
-  const query = parseQuery(raw.slice(qIdx + 1))
-  const provided = query.get("token")
-  if (!provided) return false
-  if (provided.length !== expected.length) return false
+  const provided = overlayHeaderToken(req) || overlayCookieToken(req)
+  if (!provided || provided.length !== expected.length) return false
   return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
 }
 
@@ -192,7 +199,7 @@ function hostOk(req: http.IncomingMessage, port: number): boolean {
 
 function originOk(req: http.IncomingMessage, port: number): boolean {
   const origin = (req.headers.origin || "").toLowerCase()
-  if (!origin || origin === "null") return true
+  if (!origin || origin === "null") return false
   return (
     origin === `http://127.0.0.1:${port}` ||
     origin === `http://localhost:${port}` ||
@@ -247,8 +254,8 @@ async function dispatchAllowed(type: string, payload: Record<string, unknown>): 
   return activeDispatch(msg)
 }
 
-export function summonerWebPageUrl(port: number, token: string): string {
-  return `http://127.0.0.1:${port}/?token=${token}`
+export function summonerWebPageUrl(port: number, _token?: string): string {
+  return `http://127.0.0.1:${port}/`
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -580,7 +587,12 @@ async function handleRequest(
     const qIdx = raw.indexOf("?")
     pathOnly = (qIdx < 0 ? raw : raw.slice(0, qIdx)) || "/"
     query = qIdx < 0 ? new Map<string, string>() : parseQuery(raw.slice(qIdx + 1))
-    if (!tokenOk(req, token)) {
+    if (query.has("token")) {
+      forbidden(res, "query token is not allowed")
+      return
+    }
+    const isDoc = (pathOnly === "/" || pathOnly === "/summoner") && req.method === "GET"
+    if (!isDoc && !tokenOk(req, token)) {
       forbidden(res, "missing or invalid session token")
       return
     }
@@ -597,7 +609,7 @@ async function handleRequest(
     res.writeHead(204, {
       "Access-Control-Allow-Origin": `http://127.0.0.1:${port}`,
       "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Headers": "Content-Type, X-CMspark-Overlay-Token",
     })
     res.end()
     return
@@ -617,6 +629,7 @@ async function handleRequest(
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Referrer-Policy": "no-referrer",
+        "Set-Cookie": `cmspark_overlay=${token}; HttpOnly; SameSite=Strict; Path=/`,
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "Content-Security-Policy":
@@ -688,7 +701,13 @@ async function handleRequest(
     }
 
     if (pathOnly === "/api/thread" && req.method === "GET") {
-      const id = query.get("id") || ""
+      jsonResponse(res, { type: "error", error: "use POST to select a thread" }, 405)
+      return
+    }
+
+    if (pathOnly === "/api/thread" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX))
+      const id = typeof body.thread_id === "string" ? body.thread_id : query.get("id") || ""
       if (!id) {
         jsonResponse(res, { type: "error", error: "id required" }, 400)
         return
@@ -1458,10 +1477,9 @@ body{
 <script>
 try{
 (function(){
-  var token=(location.search.match(/[?&]token=([^&]+)/)||[])[1]||"";
   var wanted=(location.search.match(/[?&]thread=([^&]+)/)||[])[1]||"";
   try{if(wanted) wanted=decodeURIComponent(wanted)}catch(e){}
-  function url(path){return path+(path.indexOf("?")>=0?"&":"?")+"token="+encodeURIComponent(token)}
+  function url(path){return path}
   var threadId="";
   var threadReady=null;
   var sendShortcut="Enter";
@@ -1835,7 +1853,7 @@ try{
         if(d && (d.error || d.error_code || (d.data&&d.data.error_code) || d.type==="error" || d.type==="chat.error" || d.type==="composer.lease.error")){
           setStatus(statusFromEvent(d));
         }
-        return api("/api/thread?id="+encodeURIComponent(id));
+        return api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:id})});
       })
       .then(function(d){
         renderMsgs(d.messages||[]);
@@ -1848,7 +1866,7 @@ try{
     if(poll) return;
     poll=setInterval(function(){
       if(!threadId) return;
-      api("/api/thread?id="+encodeURIComponent(threadId)).then(function(d){
+      api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(d){
         renderMsgs(d.messages||[]);
         var next=d.run_status==="llm";
         if(next!==busy){busy=next;syncBusyUi()}
@@ -2418,7 +2436,7 @@ try{
       }).catch(function(e){setStatus(String(e&&e.message||e))}).then(markEmpty);
     }
     if(name==="skills"){
-      return Promise.all([api("/api/skills"), threadId?api("/api/thread?id="+encodeURIComponent(threadId)):Promise.resolve({})]).then(function(pair){
+      return Promise.all([api("/api/skills"), threadId?api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}):Promise.resolve({})]).then(function(pair){
         var ids=pair[1].active_skill_ids||[];
         (pair[0].skills||[]).forEach(function(s){
           var on=ids.indexOf(s.name)>=0;
@@ -2434,7 +2452,7 @@ try{
       }).catch(function(e){setStatus(String(e&&e.message||e))}).then(markEmpty);
     }
     if(name==="knowledge"){
-      return Promise.all([api("/api/knowledge"), threadId?api("/api/thread?id="+encodeURIComponent(threadId)):Promise.resolve({})]).then(function(pair){
+      return Promise.all([api("/api/knowledge"), threadId?api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}):Promise.resolve({})]).then(function(pair){
         var cur=pair[1].active_knowledge_ids||[];
         (pair[0].docs||[]).forEach(function(k){
           var id=k.name||k.id;
@@ -2596,7 +2614,7 @@ try{
         stopPoll();
       }
       if(threadId && (t==="chat.token"||t==="chat.done"||t==="chat.user"||t==="file.uploaded")){
-        api("/api/thread?id="+encodeURIComponent(threadId)).then(function(x){renderMsgs(x.messages||[])});
+        api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(x){renderMsgs(x.messages||[])});
       }
     };
   }catch(e){}

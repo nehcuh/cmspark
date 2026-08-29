@@ -332,7 +332,19 @@ export function shrinkToolBodiesToFit(msgs: CanonicalChatMessage[], budget: numb
     const m = msgs[best]
     if (m.role !== "tool") break
     const next = Math.max(MIN_SHRUNK_TOOL_CHARS, Math.floor(bestLen / 2))
-    const body = `${m.content.slice(0, next)}…`
+    const raw = typeof m.content === "string" ? m.content : ""
+    const wrap = raw.match(
+      /^(<untrusted-([A-Za-z0-9]+)(?:\s[^>]*)?>\n?)([\s\S]*)(\n?<\/untrusted-\2>)\s*$/,
+    )
+    let body: string
+    if (wrap) {
+      const inner = wrap[3]
+      const innerNext = Math.max(8, Math.floor(inner.length / 2))
+      const shrunkInner = inner.length > innerNext ? `${inner.slice(0, innerNext)}…` : inner
+      body = `${wrap[1]}${shrunkInner}${wrap[4]}`
+    } else {
+      body = `${raw.slice(0, next)}…`
+    }
     // Ellipsis can make length stick at MIN+1; stop if we cannot actually shrink.
     if (body.length >= bestLen) break
     msgs[best] = { ...m, content: body }

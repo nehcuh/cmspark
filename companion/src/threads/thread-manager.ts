@@ -385,6 +385,18 @@ export function isFullAutonomyCruiseOpen(security?: CruiseSecurityFlags): boolea
   )
 }
 
+let fallbackThreadManagerSingleton: ThreadManager | null = null
+
+/** Test/prod fallback so SkillEngine need not `new ThreadManager()` itself. */
+export function fallbackThreadManager(): ThreadManager {
+  if (!fallbackThreadManagerSingleton) fallbackThreadManagerSingleton = new ThreadManager()
+  return fallbackThreadManagerSingleton
+}
+
+export function bindFallbackThreadManager(tm: ThreadManager): void {
+  fallbackThreadManagerSingleton = tm
+}
+
 export class ThreadManager {
   private index: ThreadIndex
   private indexPath: string
@@ -761,7 +773,8 @@ export class ThreadManager {
       const seeded = seedRunProgress(thread)
       if (seeded.items.length > 0) {
         thread.run_progress = seeded
-        this.saveIndex()
+        // Batch D D1: seed memory-only. saveIndex on get() let a second
+        // ThreadManager snapshot clobber the live index.
       }
     }
     return thread

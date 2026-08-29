@@ -1,0 +1,13 @@
+{
+  "batch": "batch-d-20260829",
+  "issue": 249,
+  "product": "0.5.3",
+  "time": "20260829-130413",
+  "blast": "T3",
+  "spec": "docs/superpowers/specs/2026-08-29-post-diagnosis-batch-d.md",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "path": "docs/audit/reviews/batch-d-20260829-claude-20260829-130413.md" },
+  "kimi": { "verdict": "APPROVE_WITH_NITS", "path": "docs/audit/reviews/batch-d-20260829-kimi-20260829-130413.md" },
+  "both_ok": true,
+  "nits_folded": true,
+  "implement": "YES"
+}

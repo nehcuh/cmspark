@@ -29,38 +29,30 @@ function srcFile(...parts: string[]): string {
   return candidates[0]
 }
 
-const LOOP = "http://127.0.0.1:23403/?token=" + "ab".repeat(32)
+const LOOP = "http://127.0.0.1:23403/"
+const TOKEN_Q = "http://127.0.0.1:23403/?token=" + "ab".repeat(32)
 
-test("isSummonerLoopbackUrl accepts only http loopback with token", () => {
+test("isSummonerLoopbackUrl accepts only http loopback without token query", () => {
   assert.equal(isSummonerLoopbackUrl(LOOP), true)
-  assert.equal(isSummonerLoopbackUrl("http://localhost:23403/?token=" + "cd".repeat(32)), true)
-  assert.equal(isSummonerLoopbackUrl("http://evil.example/?token=" + "ab".repeat(32)), false)
-  assert.equal(isSummonerLoopbackUrl("https://127.0.0.1:23403/?token=" + "ab".repeat(32)), false)
-  assert.equal(isSummonerLoopbackUrl("http://127.0.0.1:23403/"), false)
+  assert.equal(isSummonerLoopbackUrl("http://localhost:23403/"), true)
+  assert.equal(isSummonerLoopbackUrl("http://evil.example/"), false)
+  assert.equal(isSummonerLoopbackUrl("https://127.0.0.1:23403/"), false)
+  assert.equal(isSummonerLoopbackUrl(TOKEN_Q), false)
   assert.equal(isSummonerLoopbackUrl("file:///tmp/x.html"), false)
-  assert.equal(isSummonerLoopbackUrl("http://127.0.0.1:23403/?token=" + "aa".repeat(8)), false)
-  assert.equal(
-    isSummonerLoopbackUrl("http://127.0.0.1:23403/?token=" + "aa".repeat(32) + "&x"),
-    false,
-  )
-  assert.equal(
-    isSummonerLoopbackUrl("http://127.0.0.1:23403/?token=" + "gg".repeat(32)),
-    false,
-  )
 })
 
 test("isSummonerLoopbackUrl allows optional non-empty thread query", () => {
   const id = "abc123"
-  assert.equal(isSummonerLoopbackUrl(LOOP + "&thread=" + id), true)
-  assert.equal(isSummonerLoopbackUrl(LOOP + "&thread=" + encodeURIComponent(id)), true)
-  assert.equal(isSummonerLoopbackUrl(LOOP + "&x"), false)
-  assert.equal(isSummonerLoopbackUrl(LOOP + "&thread="), false)
-  assert.equal(isSummonerLoopbackUrl(LOOP + "&thread=" + id + "&x=1"), false)
-  assert.equal(isSummonerLoopbackUrl("http://127.0.0.1:23403/?thread=" + id), false)
+  assert.equal(isSummonerLoopbackUrl(LOOP + "?thread=" + id), true)
+  assert.equal(isSummonerLoopbackUrl(LOOP + "?thread=" + encodeURIComponent(id)), true)
+  assert.equal(isSummonerLoopbackUrl(LOOP + "?x"), false)
+  assert.equal(isSummonerLoopbackUrl(LOOP + "?thread="), false)
+  assert.equal(isSummonerLoopbackUrl(LOOP + "?thread=" + id + "&x=1"), false)
+  assert.equal(isSummonerLoopbackUrl(TOKEN_Q + "&thread=" + id), false)
 })
 
 test("planSummonerShellOpen accepts loopback URL with thread query", () => {
-  const url = LOOP + "&thread=abc123"
+  const url = LOOP + "?thread=abc123"
   const r = planSummonerShellOpen(url, {
     platform: "linux",
     browserPath: "/usr/bin/google-chrome",
@@ -69,6 +61,7 @@ test("planSummonerShellOpen accepts loopback URL with thread query", () => {
   if ("error" in r) return
   assert.equal(r.kind, "app-window")
   assert.ok(r.args.some((a) => a === `--app=${url}`))
+  assert.doesNotMatch(r.args.join(" "), /[?&]token=/)
 })
 
 test("planSummonerShellOpen rejects non-loopback even if chrome exists", () => {
