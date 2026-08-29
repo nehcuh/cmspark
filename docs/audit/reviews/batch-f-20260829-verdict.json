@@ -1,0 +1,13 @@
+{
+  "batch": "batch-f-20260829",
+  "issue": 253,
+  "head_baseline": "4d41f92f",
+  "kimi": "APPROVE_WITH_NITS",
+  "claude": "APPROVE_WITH_NITS",
+  "both_ok": true,
+  "machine": {
+    "tsc": 0,
+    "companion_tests": "3873/3850 pass, 0 fail, 23 skipped"
+  },
+  "implement": "YES"
+}

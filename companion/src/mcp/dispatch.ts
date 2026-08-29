@@ -44,6 +44,20 @@ import { ensureExtensionPeerForOverlayConfirm } from "../ws/extension-peer"
 export const DESTRUCTIVE_MCP_TOOL_PATTERN =
   /\b(write|delete|exec|commit|rm|remove|shell|curl|wget|spawn|fork|kill|drop|truncate|wipe|destroy)\b/i
 
+/** Strip CMspark-internal keys before MCP callTool. actingTid reads the original. */
+export function stripCmsparkInternalMcpArgs(params: unknown): Record<string, unknown> {
+  const src =
+    params && typeof params === "object" && !Array.isArray(params)
+      ? (params as Record<string, unknown>)
+      : {}
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(src)) {
+    if (k === "__thread_id" || k === "_thread_id" || k.startsWith("__cmspark_")) continue
+    out[k] = v
+  }
+  return out
+}
+
 export type McpDispatchRuntime = {
   getThreadManager: () => ThreadManager | null | undefined
   securityConfirmations: SecurityConfirmationManager
@@ -323,9 +337,10 @@ export async function executeMcpTool(
   }
 
   const callStartedAt = Date.now()
+  const mcpArgs = stripCmsparkInternalMcpArgs(params)
   const runOnce = async (): Promise<{ success: boolean; data?: any; error?: string; rawErr?: string }> => {
     try {
-      const result = await manager.callTool(route, params || {}, signal)
+      const result = await manager.callTool(route, mcpArgs, signal)
       if (result?.isError) {
         const errMsg = extractMcpError(result)
         return {

@@ -145,7 +145,9 @@ export class SecurityPolicy {
         return `skill_install|${mode}|${target}|${contentFp}|len=${typeof params?.content === "string" ? params.content.length : 0}|ow=${overwrite}`
       }
       default:
-        return ""
+        throw new Error(
+          `L2 binding payload is not defined for tool ${JSON.stringify(toolName)}`,
+        )
     }
   }
 
