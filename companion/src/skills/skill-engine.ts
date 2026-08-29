@@ -9,7 +9,7 @@ import AdmZip from "adm-zip"
 import * as yaml from "js-yaml"
 import { getConfigDir, type LlmConfig as CompanionLlmConfig } from "../config"
 import { createProvider } from "../llm/provider"
-import { ThreadManager } from "../threads/thread-manager"
+import { fallbackThreadManager, type ThreadManager } from "../threads/thread-manager"
 import { matchSite } from "./site-matcher"
 import { sanitizeKnowledgeContent, wrapKnowledgeBlock } from "./content-sanitizer"
 import { chunkFile, searchChunks, type FileChunk } from "../file-chunker"
@@ -163,12 +163,23 @@ export class SkillEngine {
    */
   private diskFingerprint: string | null = null
 
+  private boundThreads: ThreadManager | null = null
+
   constructor(llmConfig?: LlmConfig) {
     this.skillsDir = path.join(getConfigDir(), "skills")
     this.builtinDir = path.join(getConfigDir(), "builtin-skills")
     this.knowledgeDir = path.join(getConfigDir(), "knowledge")
     this.llmConfig = llmConfig
     this.refresh()
+  }
+
+  /** Batch D D1: production binds the process singleton. Tests may skip. */
+  bindThreadManager(tm: ThreadManager): void {
+    this.boundThreads = tm
+  }
+
+  private threads(): ThreadManager {
+    return this.boundThreads || fallbackThreadManager()
   }
 
   /** Roots watched for external skill/knowledge file changes. */
@@ -480,7 +491,7 @@ export class SkillEngine {
     let active = this.threadSkillMap.get(threadId)
     if (!active) {
       try {
-        const tm = new ThreadManager()
+        const tm = this.threads()
         const thread = tm.get(threadId)
         active = thread?.active_skill_ids || ["browse"]
         this.threadSkillMap.set(threadId, active)
@@ -652,7 +663,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     this.ensureFresh()
     let ids: string[] = []
     try {
-      const tm = new ThreadManager()
+      const tm = this.threads()
       const thread = tm.get(threadId)
       if (Array.isArray(thread?.active_knowledge_ids)) {
         ids = [...thread.active_knowledge_ids]

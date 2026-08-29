@@ -323,6 +323,7 @@ async function initServices() {
   await initDataDir()
   threadManager = new ThreadManager()
   skillEngine = new SkillEngine(getConfig().llm)
+  skillEngine.bindThreadManager(threadManager)
   historyStore = new HistoryStore()
   await historyStore.waitReady()
   // Path B M1: init STT session service + boot-time orphan GC under DATA_DIR/tmp/voice-stt/

@@ -92,8 +92,6 @@ export function parseFinderDesktopBounds(raw: string): { w: number; h: number } 
   return { w, h }
 }
 
-const TOKEN_HEX = /^[0-9a-f]{64}$/i
-
 export function isSummonerLoopbackUrl(url: string): boolean {
   if (typeof url !== "string" || !url) return false
   try {
@@ -101,13 +99,14 @@ export function isSummonerLoopbackUrl(url: string): boolean {
     if (u.protocol !== "http:") return false
     const host = u.hostname.toLowerCase()
     if (host !== "127.0.0.1" && host !== "localhost") return false
+    if (u.pathname !== "/" && u.pathname !== "/summoner") return false
     const keys = [...u.searchParams.keys()]
     const unique = [...new Set(keys)]
     if (keys.length !== unique.length) return false
-    const token = u.searchParams.get("token") || ""
-    if (!TOKEN_HEX.test(token)) return false
-    if (unique.length === 1 && unique[0] === "token") return true
-    if (unique.length === 2 && unique.includes("token") && unique.includes("thread")) {
+    // Batch D D3: token must not appear in --app argv / query.
+    if (unique.includes("token")) return false
+    if (unique.length === 0) return true
+    if (unique.length === 1 && unique[0] === "thread") {
       const thread = u.searchParams.get("thread") || ""
       return thread.length > 0
     }

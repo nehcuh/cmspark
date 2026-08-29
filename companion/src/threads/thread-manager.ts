@@ -385,6 +385,15 @@ export function isFullAutonomyCruiseOpen(security?: CruiseSecurityFlags): boolea
   )
 }
 
+/**
+ * Unbound SkillEngine (tests) reloads disk per call — same as the old
+ * `new ThreadManager()` at each getActive*. Production binds the process
+ * singleton so this path is unused.
+ */
+export function fallbackThreadManager(): ThreadManager {
+  return new ThreadManager()
+}
+
 export class ThreadManager {
   private index: ThreadIndex
   private indexPath: string
@@ -761,7 +770,8 @@ export class ThreadManager {
       const seeded = seedRunProgress(thread)
       if (seeded.items.length > 0) {
         thread.run_progress = seeded
-        this.saveIndex()
+        // Batch D D1: seed memory-only. saveIndex on get() let a second
+        // ThreadManager snapshot clobber the live index.
       }
     }
     return thread

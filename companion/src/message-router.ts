@@ -800,6 +800,8 @@ export async function handleMessage(
       const uploadController = new AbortController()
       const existingUpload = abortControllers.get(thread_id)
       abortControllers.set(thread_id, uploadController)
+      if (session?.panelId) llmLoopOwnerPanel.set(thread_id, session.panelId)
+      else llmLoopOwnerPanel.set(thread_id, `upload:${thread_id}`)
       if (existingUpload) {
         logger.info("llm.thread_request_superseded", { thread_id })
         existingUpload.abort()

@@ -1324,6 +1324,34 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                 if (ws.readyState === WebSocket.OPEN) {
                   ws.send(JSON.stringify(data))
                 }
+                const t = data?.type
+                if (
+                  t !== "chat.token" &&
+                  t !== "chat.user" &&
+                  t !== "chat.done" &&
+                  t !== "chat.error" &&
+                  t !== "chat.aborted" &&
+                  t !== "run_status" &&
+                  t !== "thread.updated"
+                ) {
+                  return
+                }
+                try {
+                  const { pushSummonerWebEvent } = require("../summoner-web") as typeof import("../summoner-web")
+                  const surface = wsAuth.get(ws)?.surface
+                  if (surface !== "summoner") {
+                    pushSummonerWebEvent(data)
+                  } else {
+                    const payload = JSON.stringify(data)
+                    for (const c of clients) {
+                      if (c === ws || c.readyState !== WebSocket.OPEN) continue
+                      const st = wsAuth.get(c)
+                      if (st?.authenticated && st.surface !== "summoner") c.send(payload)
+                    }
+                  }
+                } catch {
+                  /* overlay SSE optional */
+                }
               },
               executeTool,
               // App tab D2 biometric gates (apps.add/set_policy →auto): same
