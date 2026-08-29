@@ -1,0 +1,14 @@
+{
+  "batch": "batch-e-20260829",
+  "issue": 251,
+  "head_baseline": "6e17d2df",
+  "kimi": "APPROVE_WITH_NITS",
+  "claude": "APPROVE_WITH_NITS",
+  "both_ok": true,
+  "machine": {
+    "tsc": 0,
+    "companion_tests": "3867/3844 pass, 0 fail, 23 skipped",
+    "settings_web": "20/20"
+  },
+  "implement": "YES"
+}

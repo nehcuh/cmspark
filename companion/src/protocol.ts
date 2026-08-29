@@ -60,3 +60,26 @@ export function authOkProtocolFields(): {
     protocol_max: PROTOCOL_MAX,
   }
 }
+
+/**
+ * Read protocol_version from auth.ok. Missing fields = PROTOCOL_MIN so existing
+ * mocks that send `{ type: "auth.ok" }` stay green. Non-integer → NaN (reject).
+ */
+export function protocolVersionFromAuthOk(msg: {
+  protocol_version?: unknown
+  negotiated_protocol_version?: unknown
+}): number {
+  const v = msg.negotiated_protocol_version ?? msg.protocol_version
+  if (v === undefined || v === null) return PROTOCOL_MIN
+  if (typeof v !== "number" || !Number.isInteger(v)) return Number.NaN
+  return v
+}
+
+export function authOkProtocolMatchesLocal(msg: {
+  protocol_version?: unknown
+  negotiated_protocol_version?: unknown
+}): boolean {
+  const v = protocolVersionFromAuthOk(msg)
+  if (!Number.isInteger(v)) return false
+  return v >= PROTOCOL_MIN && v <= PROTOCOL_MAX
+}

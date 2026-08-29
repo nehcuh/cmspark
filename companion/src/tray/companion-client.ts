@@ -23,6 +23,7 @@ import {
   releaseAllOverlayLeases,
   releaseOverlayLeaseCas,
 } from "../ws/composer-lease"
+import { PROTOCOL_VERSION, authOkProtocolMatchesLocal } from "../protocol"
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -513,6 +514,12 @@ export class CompanionClient {
       return
     }
     if (msg.type === "auth.ok") {
+      // Missing protocol fields = MIN (mocks). Mismatch → close (honesty; MAX=1 rarely fires).
+      if (!authOkProtocolMatchesLocal(msg)) {
+        this.debug(`auth.ok protocol mismatch (local ${PROTOCOL_VERSION})`)
+        try { this.ws?.close() } catch { /* closing */ }
+        return
+      }
       // Promote to authenticated+connected. App sends are now accepted; fetch data.
       this.authenticated = true
       this._state = "connected"

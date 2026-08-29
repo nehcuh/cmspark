@@ -36,7 +36,7 @@ cd companion && npx tsc -p tsconfig.test.json \
 npm --prefix chrome-extension test
 ```
 
-要求 **Node.js ≥ 20**（与 CONTRIBUTING / CI 一致）。
+要求 **Node.js ≥ 22**（与 CONTRIBUTING / CI 一致）。
 
 ## Companion 测试地图
 

@@ -624,7 +624,7 @@ build-package.bat
 
 验证：包内 `dist-package\cmspark-windows-x64\bin\cmspark-whisper-win-x64.exe` 或设置页「本机组件：已就绪」。
 
-> 本地 SEA 构建仅要求本机有 Node.js ≥ 20。官方 Setup.exe 由 `make package-windows` / CI `package.sh` 在安装 [NSIS](https://nsis.sourceforge.io/) 后生成。
+> 本地 SEA 构建仅要求本机有 Node.js ≥ 22。官方 Setup.exe 由 `make package-windows` / CI `package.sh` 在安装 [NSIS](https://nsis.sourceforge.io/) 后生成。
 
 #### 安装（注册后台服务）
 
@@ -797,7 +797,7 @@ macOS 打包流程：
 2. esbuild bundle + 复制 Node.js 运行时、原生依赖
 3. 压缩为 zip，额外生成 DMG 安装包
 
-**Windows 前提**：本机 Node.js ≥ 20。官方 Setup.exe 需要 [NSIS](https://nsis.sourceforge.io/)（CI 钉死 Chocolatey `nsis` 3.12.0）；本机未装则 `package.sh` 跳过安装器并警告，zip 仍可用。
+**Windows 前提**：本机 Node.js ≥ 22。官方 Setup.exe 需要 [NSIS](https://nsis.sourceforge.io/)（CI 钉死 Chocolatey `nsis` 3.12.0）；本机未装则 `package.sh` 跳过安装器并警告，zip 仍可用。
 
 ### 分别启动
 

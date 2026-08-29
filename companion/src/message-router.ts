@@ -269,7 +269,7 @@ interface SessionCallbacks {
    */
   origin?: string
   /** Handshake surface from wsAuth. Summoner overlay may run local STT. */
-  surface?: "tray" | "summoner"
+  surface?: "panel" | "tray" | "summoner"
 }
 
 /** Internal nextRun drain: preserve overlay/panel lease identity. */

@@ -6,7 +6,7 @@
     "cmspark-agent": "./dist/index.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "prebuild": "node scripts/generate-tray-icons.mjs",
@@ -48,6 +48,7 @@
     "@types/adm-zip": "^0.5.8",
     "@types/node": "^20.14.0",
     "@types/ws": "^8.5.10",
+    "esbuild": "0.28.1",
     "tsx": "^4.11.0",
     "typescript": "^5.4.5"
   },
