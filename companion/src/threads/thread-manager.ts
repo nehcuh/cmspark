@@ -385,16 +385,13 @@ export function isFullAutonomyCruiseOpen(security?: CruiseSecurityFlags): boolea
   )
 }
 
-let fallbackThreadManagerSingleton: ThreadManager | null = null
-
-/** Test/prod fallback so SkillEngine need not `new ThreadManager()` itself. */
+/**
+ * Unbound SkillEngine (tests) reloads disk per call — same as the old
+ * `new ThreadManager()` at each getActive*. Production binds the process
+ * singleton so this path is unused.
+ */
 export function fallbackThreadManager(): ThreadManager {
-  if (!fallbackThreadManagerSingleton) fallbackThreadManagerSingleton = new ThreadManager()
-  return fallbackThreadManagerSingleton
-}
-
-export function bindFallbackThreadManager(tm: ThreadManager): void {
-  fallbackThreadManagerSingleton = tm
+  return new ThreadManager()
 }
 
 export class ThreadManager {

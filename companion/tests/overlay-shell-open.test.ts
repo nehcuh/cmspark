@@ -129,7 +129,8 @@ test("overlay.shell.open stays off summoner web dispatch and SSE allow", () => {
 test("tray companionClient opens overlay.shell.open; summonerClient does not", () => {
   const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
   const fn = src.slice(src.indexOf("function reportOverlayShellUnavailable"), src.indexOf("async function handleAction"))
-  assert.match(fn, /"&thread=" \+ encodeURIComponent\(threadId\)/)
+  assert.match(fn, /thread=" \+ encodeURIComponent\(threadId\)/)
+  assert.match(fn, /url\.includes\("\?"\)/)
   assert.match(fn, /if\s*\(\s*threadId\s*\)/)
   assert.doesNotMatch(
     fn,

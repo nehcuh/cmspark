@@ -1642,7 +1642,10 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
       },
     })
     let url = summonerWebPageUrl(port, token)
-    if (threadId) url = url + "&thread=" + encodeURIComponent(threadId)
+    if (threadId) {
+      const join = url.includes("?") ? "&" : "?"
+      url = url + join + "thread=" + encodeURIComponent(threadId)
+    }
     const opened = openLoopbackPage(url)
     if (!opened) {
       safeNotify({

@@ -15,6 +15,18 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-batch-d-"))
 process.env.HOME = tmp
 process.env.CMSPARK_DATA_DIR = tmp
 
+const ROOT = path.resolve(__dirname, "..", "..")
+function srcFile(...parts: string[]): string {
+  const candidates = [
+    path.join(ROOT, "src", ...parts),
+    path.join(__dirname, "..", "src", ...parts),
+  ]
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p
+  }
+  return candidates[candidates.length - 1]
+}
+
 let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
 let initDataDir: typeof import("../src/config").initDataDir
 
@@ -37,10 +49,7 @@ test("D1: ThreadManager.get does not saveIndex (second snapshot cannot clobber l
 })
 
 test("D1: skill-engine production paths do not construct ThreadManager", () => {
-  const src = fs.readFileSync(
-    path.join(__dirname, "..", "src", "skills", "skill-engine.ts"),
-    "utf8",
-  )
+  const src = fs.readFileSync(srcFile("skills", "skill-engine.ts"), "utf8")
   const hits = [...src.matchAll(/new ThreadManager\s*\(/g)]
   assert.equal(hits.length, 0, `unexpected new ThreadManager: ${hits.length}`)
 })
@@ -59,6 +68,14 @@ test("D4: shrinkToolBodiesToFit keeps matching untrusted closer", () => {
   const body = String(msgs[2]!.content)
   assert.match(body, /<untrusted-callabc123xyz/)
   assert.match(body, /<\/untrusted-callabc123xyz>/)
+})
+
+test("D3: thread query is joined with ? when URL has no token", () => {
+  const base = "http://127.0.0.1:23403/"
+  const join = base.includes("?") ? "&" : "?"
+  const url = base + join + "thread=" + encodeURIComponent("abc123")
+  assert.equal(isSummonerLoopbackUrl(url), true)
+  assert.equal(isSummonerLoopbackUrl(base + "&thread=abc123"), false)
 })
 
 test("D3: --app URL must not carry a 64-hex token query", () => {

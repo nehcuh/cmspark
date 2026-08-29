@@ -314,6 +314,17 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(r.status, 403)
   })
 
+  test("POST Origin null → 403", async () => {
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/chat?token=${token}`,
+      headers: { "Content-Type": "application/json", Origin: "null" },
+      body: JSON.stringify({ thread_id: "t1", message: "hi", mode: "create" }),
+    })
+    assert.equal(r.status, 403)
+  })
+
   test("POST with bad Origin → 403", async () => {
     const r = await request({
       method: "POST",

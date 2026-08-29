@@ -99,6 +99,7 @@ export function isSummonerLoopbackUrl(url: string): boolean {
     if (u.protocol !== "http:") return false
     const host = u.hostname.toLowerCase()
     if (host !== "127.0.0.1" && host !== "localhost") return false
+    if (u.pathname !== "/" && u.pathname !== "/summoner") return false
     const keys = [...u.searchParams.keys()]
     const unique = [...new Set(keys)]
     if (keys.length !== unique.length) return false
