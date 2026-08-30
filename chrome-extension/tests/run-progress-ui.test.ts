@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { readFileSync, existsSync } from "node:fs"
 import { join } from "node:path"
 import {
   defaultExpanded,
@@ -21,6 +21,7 @@ test("defaultExpanded: 0 false, 1–3 true, 4–8 false", () => {
 
 test("skipHeaderChrome only for a single seed|user row", () => {
   assert.equal(skipHeaderChrome([{ id: "a", text: "A", done: false, source: "seed" }]), true)
+  assert.equal(skipHeaderChrome([{ id: "u", text: "U", done: false, source: "user" }]), true)
   assert.equal(skipHeaderChrome([{ id: "d", text: "D", done: false, source: "model_draft" }]), false)
   assert.equal(
     skipHeaderChrome([
@@ -87,22 +88,17 @@ test("background forwards thread.run_progress.toggle for RunProgress", () => {
   assert.match(bg, /type:\s*["']thread\.run_progress\.toggle["']/)
 })
 
-// --- Wave 1 测试锁（spec 2026-08-30-runprogress-sticky-collapse-design.md §2.6） ---
+// --- Wave 1 r2 源码锁（spec r2 · Task 2 RED until Task 3） ---
 
-test("RunProgress defaults to collapsed; header is a button; checkboxes not in collapsed branch", () => {
+test("RunProgress uses defaultExpanded(items.length) not useState(false)", () => {
   const rp = src("src/sidepanel/components/RunProgress.tsx")
-  // 默认收起：组件内 useState(false)，不写 thread / storage
-  assert.match(rp, /useState\(false\)/)
+  assert.match(rp, /from ["']\.\/run-progress-view["']/)
+  assert.match(rp, /defaultExpanded\(/)
+  assert.ok(!/useState\(false\)/.test(rp))
   assert.ok(!/sessionStorage|localStorage/.test(rp))
-  // 标题行是 button 且带 aria-expanded / aria-controls
-  assert.match(rp, /<button/)
   assert.match(rp, /aria-expanded=\{expanded\}/)
-  assert.match(rp, /aria-controls=\{listId\}/)
-  // 收起分支不渲染勾选列表（checkbox 只出现在展开分支）
-  assert.match(rp, /!expanded\s*\?/)
-  const collapsedBranch = rp.slice(rp.indexOf("!expanded ?"), rp.indexOf(") : ("))
-  assert.ok(!/checkbox/.test(collapsedBranch))
-  assert.ok(!/<ul/.test(collapsedBranch))
+  const collapsedBranch = rp.slice(rp.indexOf("!expanded"), rp.indexOf("<ul"))
+  assert.ok(!/type=["']checkbox["']/.test(collapsedBranch))
 })
 
 test("RunProgress collapse resets per thread via key at ChatView mount", () => {
@@ -110,26 +106,29 @@ test("RunProgress collapse resets per thread via key at ChatView mount", () => {
   assert.match(chat, /<RunProgress\s+key=\{activeThreadId\}/)
 })
 
-test("RunProgress root is sticky to the scroll column top with solid bg and low z-index", () => {
+test("RunProgress wrap stays sticky; expanded ul has maxHeight", () => {
   const rp = src("src/sidepanel/components/RunProgress.tsx")
-  assert.match(rp, /position:\s*"sticky"/)
+  assert.match(rp, /position:\s*["']sticky["']/)
   assert.match(rp, /top:\s*0/)
-  assert.match(rp, /zIndex:\s*1\b/)
   assert.match(rp, /background:\s*tokens\.bgMuted/)
+  assert.match(rp, /maxHeight:\s*["']min\(40vh,\s*240px\)["']/)
+  assert.ok(!/aria-current/.test(rp))
+  assert.ok(!/当前步/.test(rp))
 })
 
-test("RunProgress exposes aria-current=step on the expanded current row", () => {
+test("RunProgress count comes from countNM not items.length denominator", () => {
   const rp = src("src/sidepanel/components/RunProgress.tsx")
-  assert.match(rp, /aria-current/)
-  assert.match(rp, /"step"/)
-  // 2px accent 左条（附加于 aria-current）
-  assert.match(rp, /borderLeft:\s*`2px solid \$\{tokens\.accent\}`/)
+  assert.match(rp, /countNM\(/)
+  assert.ok(!/doneCount\}\s*\/\s*\{total\}/.test(rp))
+})
+
+test("RunProgress skipHeaderChrome hides the chip on 1 item", () => {
+  const rp = src("src/sidepanel/components/RunProgress.tsx")
+  assert.match(rp, /skipHeaderChrome\(/)
 })
 
 test("RunProgress collapsed summary: n/m count, current-step ellipsis, draft fallback", () => {
   const rp = src("src/sidepanel/components/RunProgress.tsx")
-  // n/m 计数（草稿计入分母）
-  assert.match(rp, /doneCount\}\s*\/\s*\{total\}/)
   // 当前步 = 第一条 done!==true 且非草稿
   assert.match(rp, /it\.done\s*!==\s*true\s*&&\s*it\.source\s*!==\s*"model_draft"/)
   // 全勾完只剩草稿 → 「草稿 · {首条草稿}」
@@ -154,4 +153,37 @@ test("RunProgress never copy: no 进行中 / 任务清单 / progress %, no motio
 test("App.tsx chrome stack gains no RunProgress band", () => {
   const app = src("src/sidepanel/App.tsx")
   assert.ok(!/RunProgress/.test(app))
+})
+
+test("ChatView scrollPaddingTop is set on the scroller", () => {
+  const chat = src("src/sidepanel/components/ChatView.tsx")
+  assert.match(chat, /scrollPaddingTop/)
+})
+
+test("live density constants have not silently reverted to 44/28", () => {
+  const rail = src("src/sidepanel/components/StatusRail.tsx")
+  const scene = src("src/sidepanel/components/SceneStatusBar.tsx")
+  const fb = src("src/sidepanel/components/focus-band-priority.ts")
+  assert.match(rail, /minHeight:\s*48/)
+  assert.match(scene, /maxHeight:\s*36/)
+  assert.match(fb, /FOCUS_BAND_MAX_PX\s*=\s*80/)
+  assert.ok(!/minHeight:\s*44/.test(rail))
+})
+
+test("overlay/summoner sources do not paint 本轮步骤 checklist", () => {
+  const roots = [
+    join(process.cwd(), "..", "companion", "src", "summoner-web.ts"),
+    join(process.cwd(), "..", "companion", "src", "summoner", "client.ts"),
+  ]
+  for (const p of roots) {
+    assert.ok(existsSync(p), `missing ${p}`)
+  }
+  const found = roots
+  for (const p of found) {
+    const stripped = readFileSync(p, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "")
+    assert.ok(!/本轮步骤/.test(stripped), p)
+    assert.ok(!/run_progress/.test(stripped), p)
+  }
 })
