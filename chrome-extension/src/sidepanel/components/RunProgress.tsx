@@ -2,7 +2,7 @@
 // Spec: docs/superpowers/specs/2026-08-30-runprogress-sticky-collapse-design.md §2 (Wave 1 r2)
 // Default: ≤3 expanded, ≥4 collapsed (in-memory useState; keyed per thread at mount).
 // Wrap always sticky to the ChatView scroll column — never StatusRail / FocusBand.
-// Expanded <ul> caps at maxHeight min(40vh, 240px) + overflowY auto.
+// Expanded list caps at maxHeight min(40vh, 240px) + overflowY auto.
 // No height animation / no chevron rotation → prefers-reduced-motion safe by construction.
 // Overlay has no edit. Not Mission Board.
 

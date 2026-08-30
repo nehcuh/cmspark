@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, existsSync } from "node:fs"
+import { readFileSync, existsSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import {
   defaultExpanded,
@@ -97,8 +97,11 @@ test("RunProgress uses defaultExpanded(items.length) not useState(false)", () =>
   assert.ok(!/useState\(false\)/.test(rp))
   assert.ok(!/sessionStorage|localStorage/.test(rp))
   assert.match(rp, /aria-expanded=\{expanded\}/)
-  const collapsedBranch = rp.slice(rp.indexOf("!expanded"), rp.indexOf("<ul"))
+  const listStart = rp.indexOf("<ul id")
+  assert.ok(listStart > 0, "expanded list marker <ul id missing")
+  const collapsedBranch = rp.slice(rp.indexOf("!expanded"), listStart)
   assert.ok(!/type=["']checkbox["']/.test(collapsedBranch))
+  assert.ok(!/<ul\b/.test(collapsedBranch))
 })
 
 test("RunProgress collapse resets per thread via key at ChatView mount", () => {
@@ -112,6 +115,7 @@ test("RunProgress wrap stays sticky; expanded ul has maxHeight", () => {
   assert.match(rp, /top:\s*0/)
   assert.match(rp, /background:\s*tokens\.bgMuted/)
   assert.match(rp, /maxHeight:\s*["']min\(40vh,\s*240px\)["']/)
+  assert.match(rp, /maxHeight:\s*["']min\(40vh,\s*240px\)["'],\s*\n\s*overflowY:\s*["']auto["']/)
   assert.ok(!/aria-current/.test(rp))
   assert.ok(!/当前步/.test(rp))
 })
@@ -127,7 +131,7 @@ test("RunProgress skipHeaderChrome hides the chip on 1 item", () => {
   assert.match(rp, /skipHeaderChrome\(/)
 })
 
-test("RunProgress collapsed summary: n/m count, current-step ellipsis, draft fallback", () => {
+test("RunProgress collapsed summary: n/m count, preview ellipsis, draft fallback", () => {
   const rp = src("src/sidepanel/components/RunProgress.tsx")
   // first undone non-draft via inline find; collapsed second line via previewText()
   assert.match(rp, /it\.done\s*!==\s*true\s*&&\s*it\.source\s*!==\s*"model_draft"/)
@@ -170,15 +174,17 @@ test("live density constants have not silently reverted to 44/28", () => {
 })
 
 test("overlay/summoner sources do not paint 本轮步骤 checklist", () => {
+  const summonerDir = join(process.cwd(), "..", "companion", "src", "summoner")
   const roots = [
     join(process.cwd(), "..", "companion", "src", "summoner-web.ts"),
-    join(process.cwd(), "..", "companion", "src", "summoner", "client.ts"),
+    ...readdirSync(summonerDir)
+      .filter((f) => f.endsWith(".ts"))
+      .map((f) => join(summonerDir, f)),
   ]
   for (const p of roots) {
     assert.ok(existsSync(p), `missing ${p}`)
   }
-  const found = roots
-  for (const p of found) {
+  for (const p of roots) {
     const stripped = readFileSync(p, "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/.*$/gm, "")
