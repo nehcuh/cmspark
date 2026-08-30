@@ -95,7 +95,10 @@ export async function handleUiOpenSidepanel(
       resolve(r)
     }
     timer = setTimeout(() => settle({ ok: false, timedOut: true }), timeoutMs)
-    timer.unref?.()
+    // Production: overlay wait must not pin process.exit. Tests: keep the
+    // timer ref'd — Node 22 `node --test` cancels pending cases once the
+    // event loop is only unref'd handles (CI: 13 cancelled, 0 fail).
+    if (!process.env.NODE_TEST_CONTEXT) timer.unref?.()
     pendingResults.set(id, { settle })
     session.broadcast!({ type: "ui.open_sidepanel", id })
   })
