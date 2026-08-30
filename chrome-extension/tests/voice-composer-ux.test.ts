@@ -6,6 +6,7 @@ import assert from "node:assert/strict"
 import {
   CTA_OPEN_SETTINGS,
   CTA_SWITCH_BROWSER,
+  LOCAL_FALLBACK_BROWSER_BANNER,
   LOCAL_LISTEN_HINT,
   TOAST_SWITCHED_BROWSER,
   formatListenRemaining,
@@ -66,4 +67,9 @@ test("localSttBannerCta: disconnect/binary → browser; model_missing → settin
 test("toast residual mentions cloud vendor path (SoT §5.3)", () => {
   assert.match(TOAST_SWITCHED_BROWSER, /已改用浏览器听写/)
   assert.match(TOAST_SWITCHED_BROWSER, /浏览器|厂商|云/)
+})
+
+test("fallback banner carries the same cloud residual disclosure (ADR-023 2026-08-31)", () => {
+  assert.match(LOCAL_FALLBACK_BROWSER_BANNER, /本机模型未就绪/)
+  assert.match(LOCAL_FALLBACK_BROWSER_BANNER, /可能经浏览器厂商云端/)
 })

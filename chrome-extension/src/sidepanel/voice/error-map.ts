@@ -181,6 +181,13 @@ export const BROWSER_ENGINE_CLOUD_RESIDUAL = "可能经浏览器厂商云端"
 export const TOAST_SWITCHED_BROWSER = `已改用浏览器听写。${BROWSER_ENGINE_CLOUD_RESIDUAL}`
 
 /**
+ * Per-session auto-fallback notice (voice.autoFallbackToBrowser, default on):
+ * engine=local but the active model is not ready → this session runs on the
+ * browser engine with this visible banner. NOT a silent sttEngine config flip.
+ */
+export const LOCAL_FALLBACK_BROWSER_BANNER = `本机模型未就绪，本次使用浏览器听写。${BROWSER_ENGINE_CLOUD_RESIDUAL}`
+
+/**
  * Format remaining listen budget as m:ss (45s → "0:45"). Pure.
  * Ceils partial seconds so UI never shows "0:00" while still listening.
  */

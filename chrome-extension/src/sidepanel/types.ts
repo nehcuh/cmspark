@@ -806,6 +806,10 @@ export interface VoiceModelState {
   diskBudgetMB: number
   diskUsedMB: number
   whisperRoot?: string
+  /** engine=local 且活动模型未就绪时单次会话回退浏览器听写(默认 true;不写 sttEngine)。 */
+  autoFallbackToBrowser?: boolean
+  /** 模型下载源镜像(""/缺省 = 清单 URL 原样;可填 https://hf-mirror.com)。 */
+  modelDownloadEndpoint?: string
 }
 
 /** voice.model.progress 下行负载(单文件下载进度;非下载中 state 到达后由 reducer 清理)。 */

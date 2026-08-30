@@ -2,6 +2,8 @@
 
 **日期**: 2026-08-07 | **状态**: **Accepted**（**M0+M1+M2 shipped in 0.5.0** — 下载 + `voice.stt.*` 闭环 + progressive partial；**非** default-on local。2026-08-09：PATH fallback 仅 `CMSPARK_WHISPER_PATH_FALLBACK=1`；Tier-1 pin **fail-closed** 未 pin 架构；privacy_ack_v2 服务端强制。Win/Linux pin 哈希与自包含二进制仍为残余）  
 
+**修订（2026-08-31）**：L13 放宽为「禁止**静默**回落」而非「禁止回落」——新增 `voice.autoFallbackToBrowser`（默认 true，`voice.model.set_prefs` 双栏可关）：engine=local 且 `model_missing` 时，**当次会话**以 browser 引擎运行并显示可见横幅（非配置改写、非静默）；`binary_missing` / `companion_disconnected` 仍只允许显式 CTA。同期新增：模型下载完成自动激活 `localModelId`（不动 `sttEngine`）；`get_state` 自动修正失效的 active 模型；`voice.modelDownloadEndpoint` / `CMSPARK_HF_ENDPOINT` 下载源镜像（https 校验 fail-closed，sha256/size pin 不变）。隐私契约不变：local 的隐私门控（ack_v2）不因此放松；回退横幅即云 residual 披露。  
+
 **相关**:  
 - [ADR-001](001-extension-companion双层拓扑.md) 双层拓扑  
 - [ADR-002](002-websocket-openai-streaming协议.md) WS 协议族扩展  
@@ -135,7 +137,7 @@ Channel:      community; default engine=browser; local = explicit opt-in after p
 | **L10** | 超时：收听 **45s**（客户端+服务端）；upload idle **10s**；推理 **90s**；abort 时 SIGTERM→SIGKILL 子进程。 |
 | **L11** | tmp 仅 `DATA_DIR/tmp/voice-stt/…`，realpath containment，文件 **0o600** / 目录 **0o700**；result/error/abort/timeout/WS close/关机 + **boot GC** 必须 unlink；**永不**写入 threads/history。 |
 | **L12** | 日志/审计：允许 code、size、ms、modelId；**禁止** base64 音频与全文 transcript。 |
-| **L13** | **禁止**静默回落 browser STT。允许错误 banner **显式 CTA**「改用浏览器听写」：必须走 `voice.model.set_engine` + **`source:"settings"`** + 同行云 residual 披露 + toast。 |
+| **L13** | **禁止**静默回落 browser STT。允许错误 banner **显式 CTA**「改用浏览器听写」：必须走 `voice.model.set_engine` + **`source:"settings"`** + 同行云 residual 披露 + toast。**2026-08-31 修订**：另允许 `voice.autoFallbackToBrowser`（默认 true，可关）下的**当次会话**回落——仅限 engine=local 且 model_missing（状态镜像已水合），显示含云 residual 的可见横幅，不写配置；`binary_missing` / `companion_disconnected` 不适用。 |
 | **L14** | **`voice_privacy_ack_v2`**：local 首次或 browser→local 前强制；v1 ack **不**满足 local；未 ack 不得 `voice.stt.start`。 |
 | **L15** | Pack apply/install **剥离/拒绝** 任何 `voice*`、`sttEngine`、`localModelId`、`voice_privacy_ack*`、auto-send 类键。 |
 | **L16** | 无 `audioCapture`；mic 仅扩展文档 `getUserMedia`；Tier-1 = Google Chrome desktop · macOS / Windows x64。Linux local = Tier-2（无二进制则 Disable，禁半残）。 |

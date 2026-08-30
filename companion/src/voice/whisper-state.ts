@@ -45,6 +45,13 @@ export interface VoiceModelStatePayload {
   diskBudgetMB: number
   diskUsedMB: number
   whisperRoot: string
+  /**
+   * engine=local 且活动模型未就绪时，扩展本次会话回退浏览器听写 + 可见横幅
+   * （非静默、不写 sttEngine）。默认 true。
+   */
+  autoFallbackToBrowser: boolean
+  /** 模型下载源（HF 镜像）。"" = 按清单 URL 原样下载。env 覆盖不回显（配置值视图）。 */
+  modelDownloadEndpoint: string
 }
 
 /** Companion package root candidates (src layout / test-dist / bundle). */
@@ -139,6 +146,8 @@ export async function buildVoiceModelState(
     sttEngine: "browser" as const,
     localModelId: "medium" as const,
     modelDiskBudgetMB: DEFAULT_WHISPER_DISK_BUDGET_MB,
+    autoFallbackToBrowser: true,
+    modelDownloadEndpoint: "",
   }
   const rootDir = opts.rootDir ?? resolveWhisperRoot()
   const downloading = new Set(opts.downloadingModelIds ?? [])
@@ -186,6 +195,9 @@ export async function buildVoiceModelState(
     diskBudgetMB: budgetMB,
     diskUsedMB: Math.round((occupied / (1024 * 1024)) * 10) / 10,
     whisperRoot: rootDir,
+    autoFallbackToBrowser: cfg.autoFallbackToBrowser !== false,
+    modelDownloadEndpoint:
+      typeof cfg.modelDownloadEndpoint === "string" ? cfg.modelDownloadEndpoint : "",
   }
 }
 

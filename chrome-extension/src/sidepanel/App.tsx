@@ -635,6 +635,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     sttEngine,
     companionConnected,
     localReady: { model: localModelReady, binary: localBinaryReady },
+    localStateHydrated: state.voiceModel != null,
+    autoFallbackToBrowser: state.voiceModel?.autoFallbackToBrowser !== false,
     privacyAckV2: state.voicePrivacyAckV2 === true,
     onNeedPrivacyAckV2: () => {
       setVoicePrivacyKind("v2")

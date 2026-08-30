@@ -22,8 +22,11 @@ import {
   deleteWhisperModel,
   dirOccupiedBytes,
   downloadWhisperModel,
+  normalizeModelDownloadEndpoint,
   probeWhisperModelDir,
+  resolveModelDownloadEndpoint,
   resolveWhisperRoot,
+  rewriteWhisperFileUrl,
 } from "../src/voice/whisper-download"
 import type { WhisperManifest } from "../src/voice/whisper-manifest"
 
@@ -567,6 +570,158 @@ test("unknown model id rejects", async () => {
       (e) => (expectReason(e, "model-unknown"), true),
     )
   } finally {
+    env.cleanup()
+  }
+})
+
+// --- download endpoint (HF mirror) ------------------------------------------------
+
+test("normalizeModelDownloadEndpoint: https → origin; invalid/non-https → endpoint-invalid", () => {
+  assert.equal(normalizeModelDownloadEndpoint(""), "")
+  assert.equal(normalizeModelDownloadEndpoint("   "), "")
+  assert.equal(normalizeModelDownloadEndpoint("https://hf-mirror.com"), "https://hf-mirror.com")
+  // path/query dropped — origin only
+  assert.equal(
+    normalizeModelDownloadEndpoint("https://hf-mirror.com/some/path/"),
+    "https://hf-mirror.com",
+  )
+  assert.equal(
+    normalizeModelDownloadEndpoint("https://hf-mirror.com:8443"),
+    "https://hf-mirror.com:8443",
+  )
+  try {
+    normalizeModelDownloadEndpoint("http://hf-mirror.com")
+    assert.fail("should throw")
+  } catch (e) {
+    expectReason(e, "endpoint-invalid")
+  }
+  try {
+    normalizeModelDownloadEndpoint("not a url")
+    assert.fail("should throw")
+  } catch (e) {
+    expectReason(e, "endpoint-invalid")
+  }
+})
+
+test("resolveModelDownloadEndpoint: CMSPARK_HF_ENDPOINT env wins over config", () => {
+  process.env.CMSPARK_HF_ENDPOINT = "https://hf-mirror.com"
+  try {
+    assert.equal(resolveModelDownloadEndpoint(), "https://hf-mirror.com")
+  } finally {
+    delete process.env.CMSPARK_HF_ENDPOINT
+  }
+})
+
+test("rewriteWhisperFileUrl: rewrites only the huggingface.co host", () => {
+  const ep = "https://hf-mirror.com"
+  assert.equal(
+    rewriteWhisperFileUrl(
+      "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin?download=true",
+      ep,
+    ),
+    "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin?download=true",
+  )
+  // subdomains / other hosts untouched
+  assert.equal(
+    rewriteWhisperFileUrl("https://cdn-lfs.huggingface.co/x.bin", ep),
+    "https://cdn-lfs.huggingface.co/x.bin",
+  )
+  assert.equal(
+    rewriteWhisperFileUrl("https://models.cmspark.invalid/whisper/m.bin", ep),
+    "https://models.cmspark.invalid/whisper/m.bin",
+  )
+  // unparsable / empty endpoint → as-is (downstream https check fails closed)
+  assert.equal(rewriteWhisperFileUrl("notaurl", ep), "notaurl")
+  assert.equal(
+    rewriteWhisperFileUrl("https://huggingface.co/a.bin", ""),
+    "https://huggingface.co/a.bin",
+  )
+})
+
+const HF_FILE = contentOf(33, 1024)
+
+function makeHfManifest(): WhisperManifest {
+  return {
+    schemaVersion: 1,
+    models: {
+      medium: {
+        files: [
+          {
+            name: "ggml-medium.bin",
+            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+            sha256: sha256(HF_FILE),
+            size: HF_FILE.byteLength,
+          },
+        ],
+      },
+    },
+  }
+}
+
+test("download rewrites huggingface.co file URLs to the configured mirror origin", async () => {
+  const env = makeEnv()
+  process.env.CMSPARK_HF_ENDPOINT = "https://hf-mirror.com"
+  try {
+    const manifest = makeHfManifest()
+    const rewritten =
+      "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
+    const route: FakeRoute = { body: HF_FILE, seenRanges: [], callCount: 0 }
+    await downloadWhisperModel("medium", {
+      rootDir: env.whisperRoot,
+      manifest,
+      // Original huggingface.co URL intentionally NOT routed → 404 if rewrite missed
+      fetchImpl: makeFakeFetch({ [rewritten]: route }),
+    })
+    assert.equal(route.callCount, 1)
+    assert.deepEqual(
+      readFileSync(path.join(env.whisperRoot, "medium", "ggml-medium.bin")),
+      HF_FILE,
+    )
+  } finally {
+    delete process.env.CMSPARK_HF_ENDPOINT
+    env.cleanup()
+  }
+})
+
+test("download fails closed on non-https endpoint (endpoint-invalid, zero fetch)", async () => {
+  const env = makeEnv()
+  process.env.CMSPARK_HF_ENDPOINT = "http://hf-mirror.com"
+  try {
+    let called = 0
+    await assert.rejects(
+      () =>
+        downloadWhisperModel("medium", {
+          rootDir: env.whisperRoot,
+          manifest: makeManifest(),
+          fetchImpl: (async () => {
+            called++
+            return new Response("x")
+          }) as unknown as typeof fetch,
+        }),
+      (e) => (expectReason(e, "endpoint-invalid"), true),
+    )
+    assert.equal(called, 0)
+  } finally {
+    delete process.env.CMSPARK_HF_ENDPOINT
+    env.cleanup()
+  }
+})
+
+test("non-huggingface manifest hosts are not rewritten even with endpoint set", async () => {
+  const env = makeEnv()
+  process.env.CMSPARK_HF_ENDPOINT = "https://hf-mirror.com"
+  try {
+    const manifest = makeManifest()
+    const originalUrl = manifest.models.medium.files[0]!.url
+    const route: FakeRoute = { body: FILE_A, seenRanges: [], callCount: 0 }
+    await downloadWhisperModel("medium", {
+      rootDir: env.whisperRoot,
+      manifest,
+      fetchImpl: makeFakeFetch({ [originalUrl]: route }),
+    })
+    assert.equal(route.callCount, 1)
+  } finally {
+    delete process.env.CMSPARK_HF_ENDPOINT
     env.cleanup()
   }
 })

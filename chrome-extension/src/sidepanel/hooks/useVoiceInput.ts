@@ -1,6 +1,10 @@
 /**
  * Wire STT adapter (browser Web Speech | local Companion) + pure SM for InputArea.
  * Path B M1: engine factory; never silent-fallback local → browser.
+ * Gated exception (voice.autoFallbackToBrowser, default on): engine=local but the
+ * active model is not ready → this session runs on the browser engine with a
+ * visible banner (LOCAL_FALLBACK_BROWSER_BANNER). Per-session only — never
+ * writes sttEngine config. companion_disconnected / binary_missing unchanged.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -23,7 +27,7 @@ import {
   voiceLiveComposerText,
 } from "../voice/text-merge"
 import { initialVoiceSession, type VoiceSessionState } from "../voice/types"
-import { mapLocalSttError } from "../voice/error-map"
+import { LOCAL_FALLBACK_BROWSER_BANNER, mapLocalSttError } from "../voice/error-map"
 import { createSttAdapter, type SttEngineKind } from "../voice/stt-engine"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
 
@@ -65,8 +69,29 @@ function subscribeRuntime(handler: (msg: any) => void): () => void {
   }
 }
 
-export type UseVoiceInputOpts = {
-  /** Composer text at listen start (snapshot). */
+/**
+ * Per-session browser fallback decision (voice.autoFallbackToBrowser).
+ * Pure + exported for tests. Engages ONLY when the voice.model.state mirror
+ * is hydrated AND the active model is confirmed not ready — unknown readiness
+ * stays fail-closed (no silent cloud STT in the hydration window).
+ */
+export function resolveLocalFallbackActive(args: {
+  configuredEngine: SttEngineKind
+  autoFallbackToBrowser?: boolean
+  companionConnected?: boolean
+  localStateHydrated?: boolean
+  localModelReady?: boolean
+}): boolean {
+  return (
+    args.configuredEngine === "local" &&
+    args.autoFallbackToBrowser !== false &&
+    args.companionConnected === true &&
+    args.localStateHydrated === true &&
+    args.localModelReady === false
+  )
+}
+
+export type UseVoiceInputOpts = {  /** Composer text at listen start (snapshot). */
   getBaseText: () => string
   /** Apply merged draft (never auto-send). */
   onDraft: (text: string) => void
@@ -81,13 +106,25 @@ export type UseVoiceInputOpts = {
   onNeedPermissionBootstrap: () => void
   /**
    * STT engine from store mirror / lastKnown.
-   * When "local", never fall back to Web Speech.
+   * When "local", never fall back to Web Speech — except the gated per-session
+   * model-missing fallback below (autoFallbackToBrowser).
    */
   sttEngine?: SttEngineKind
   /** Companion WS connected. */
   companionConnected?: boolean
   /** Local model + binary readiness (from voice.model.state mirror). */
   localReady?: { model: boolean; binary: boolean }
+  /**
+   * True once the first voice.model.state mirror has arrived. The per-session
+   * browser fallback only engages when hydrated — otherwise "unknown readiness"
+   * would be misread as model_missing and silently prefer cloud STT.
+   */
+  localStateHydrated?: boolean
+  /**
+   * Companion voice.autoFallbackToBrowser (default true). When false, a missing
+   * local model keeps the fail-closed model_missing banner + 去设置 CTA.
+   */
+  autoFallbackToBrowser?: boolean
   /** Path B privacy ack v2 (required for local). */
   privacyAckV2?: boolean
   onNeedPrivacyAckV2?: () => void
@@ -116,7 +153,26 @@ export type UseVoiceInputOpts = {
 }
 
 export function useVoiceInput(opts: UseVoiceInputOpts) {
-  const engine: SttEngineKind = opts.sttEngine === "local" ? "local" : "browser"
+  const configuredEngine: SttEngineKind = opts.sttEngine === "local" ? "local" : "browser"
+  /**
+   * Gated per-session fallback: engine=local, model confirmed missing (mirrors
+   * the localGateError model_missing branch — companion connected, state mirror
+   * hydrated, model not ready; binary state irrelevant since model_missing is
+   * checked first), and the companion autoFallbackToBrowser pref not disabled.
+   * Runs the session on the browser adapter with a visible banner; never writes
+   * sttEngine config. Un-hydrated state stays fail-closed (no fallback).
+   */
+  const localFallbackActive = resolveLocalFallbackActive({
+    configuredEngine,
+    autoFallbackToBrowser: opts.autoFallbackToBrowser,
+    companionConnected: opts.companionConnected,
+    localStateHydrated: opts.localStateHydrated,
+    localModelReady: opts.localReady?.model,
+  })
+  /** Effective engine for adapter/session; configured engine otherwise. */
+  const engine: SttEngineKind = localFallbackActive ? "browser" : configuredEngine
+  const fallbackRef = useRef(localFallbackActive)
+  fallbackRef.current = localFallbackActive
 
   const browserSupport = detectSpeechRecognition(
     typeof globalThis !== "undefined" ? (globalThis as any) : {},
@@ -141,6 +197,21 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   optsRef.current = opts
   const engineRef = useRef(engine)
   engineRef.current = engine
+  /**
+   * Engine pinned for the adapter lifecycle. While a session is active
+   * (not idle/unsupported/error), a fallback flip (e.g. a model download
+   * completing mid-dictation) must NOT rebuild the adapter — that would
+   * destroy the in-flight session. Follow `engine` only when idle.
+   */
+  const sessionActive =
+    session.phase !== "idle" &&
+    session.phase !== "unsupported" &&
+    session.phase !== "error"
+  const adapterEngineRef = useRef(engine)
+  if (!sessionActive) adapterEngineRef.current = engine
+  const adapterEngine = adapterEngineRef.current
+  const adapterSupported =
+    adapterEngine === "local" ? localMediaSupport.ok : browserSupport.ok
   const modeRef = useRef<VoiceDictationMode>(
     opts.dictationMode === "continuous" ? "continuous" : "classic",
   )
@@ -312,9 +383,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     })
   }, [])
 
-  // Rebuild adapter when engine / support changes
+  // Rebuild adapter when the pinned engine / support changes (never mid-session)
   useEffect(() => {
-    if (!supported) {
+    if (!adapterSupported) {
       setSession(initialVoiceSession(false))
       adapterRef.current?.destroy()
       adapterRef.current = null
@@ -346,10 +417,10 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       optsRef.current.modelId ||
       "medium"
 
-    const adapter = createSttAdapter(engine, {
+    const adapter = createSttAdapter(adapterEngine, {
       handlers,
       local:
-        engine === "local"
+        adapterEngine === "local"
           ? {
               send: sendViaRuntime,
               onMessage: subscribeRuntime,
@@ -367,8 +438,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       adapterRef.current = null
       dispatchEv({ type: "UNMOUNT" })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount per engine/support
-  }, [supported, engine, dispatchEv])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount per pinned engine/support
+  }, [adapterSupported, adapterEngine, dispatchEv])
 
   // Thread switch — abort recording + processing
   useEffect(() => {
@@ -569,6 +640,11 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         const maxMs = maxListenMsForSession(modeNow, eng)
         maxListenMsRef.current = maxMs
         dispatchEv({ type: "USER_TOGGLE_START", sessionId: sid, baseText: base })
+        if (fallbackRef.current) {
+          // Visible per-session notice (SOFT_CAP_HINT = non-terminal info chip;
+          // applies in starting/listening). Dismissible; cleared on next start.
+          dispatchEv({ type: "SOFT_CAP_HINT", message: LOCAL_FALLBACK_BROWSER_BANNER })
+        }
         try {
           if (eng === "local") {
             const nearRt =
@@ -781,6 +857,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     /** Active dictation mode (classic | continuous). */
     dictationMode: modeRef.current,
     sttEngine: engine,
+    /** True while a local→browser per-session fallback is in effect (visible banner). */
+    localFallbackActive,
     /** Map a local gate code for external CTA (optional). */
     mapLocalError: mapLocalSttError,
     toggle,

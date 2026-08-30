@@ -405,3 +405,209 @@ test("delete active model while engine=local → force browser", async () => {
   assert.notEqual(r.type, "error")
   assert.equal(getConfig().voice?.sttEngine, "browser")
 })
+
+// --- A1: auto-activate after download -------------------------------------------
+
+function stateEchoBuildState(): (opts?: any) => Promise<any> {
+  return async () =>
+    ({
+      type: "voice.model.state",
+      sttEngine: getConfig().voice?.sttEngine ?? "browser",
+      localModelId: getConfig().voice?.localModelId ?? "medium",
+      recommendedModelId: "medium",
+      models: {},
+      binary: { status: "not_found" },
+      diskBudgetMB: 4096,
+      diskUsedMB: 0,
+      whisperRoot: "/tmp/w",
+    }) as any
+}
+
+test("download completion auto-activates localModelId when configured active not ready", async () => {
+  resetVoiceConfig({ sttEngine: "browser", localModelId: "medium" })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.download", modelId: "small", source: "settings" },
+    { broadcast: () => {} },
+    {
+      probe: () => ({ status: "absent" }),
+      downloadImpl: async () => {
+        /* success */
+      },
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.status, "started")
+  for (let i = 0; i < 8; i++) await flush()
+  // Configured active (medium) is not ready → just-downloaded small becomes active
+  assert.equal(getConfig().voice?.localModelId, "small")
+  // A1 must never touch sttEngine
+  assert.equal(getConfig().voice?.sttEngine, "browser")
+})
+
+test("download completion keeps localModelId when configured active model is ready", async () => {
+  resetVoiceConfig({ sttEngine: "local", localModelId: "medium" })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.download", modelId: "small", source: "settings" },
+    { broadcast: () => {} },
+    {
+      probe: (id: string) => (id === "medium" ? { status: "ready" } : { status: "absent" }),
+      downloadImpl: async () => {
+        /* success */
+      },
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.status, "started")
+  for (let i = 0; i < 8; i++) await flush()
+  assert.equal(getConfig().voice?.localModelId, "medium")
+  assert.equal(getConfig().voice?.sttEngine, "local")
+})
+
+test("download already-ready path also auto-activates when active not ready", async () => {
+  resetVoiceConfig({ sttEngine: "browser", localModelId: "large-v3-turbo" })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.download", modelId: "small", source: "settings" },
+    { broadcast: () => {} },
+    {
+      probe: (id: string) => (id === "small" ? { status: "ready" } : { status: "absent" }),
+      downloadImpl: async () => {
+        throw new Error("should not run (already ready)")
+      },
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.download, "already-ready")
+  assert.equal(getConfig().voice?.localModelId, "small")
+  assert.equal(getConfig().voice?.sttEngine, "browser")
+})
+
+// --- A2: get_state auto-corrects stale active model ------------------------------
+
+test("get_state auto-corrects stale localModelId when engine=local and other model ready", async () => {
+  resetVoiceConfig({ sttEngine: "local", localModelId: "medium" })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.get_state" },
+    {},
+    {
+      probe: (id: string) => (id === "medium" ? { status: "absent" } : { status: "ready" }),
+      // List order deliberately non-priority: priority medium→small→large-v3-turbo wins
+      listReady: () => ["large-v3-turbo", "small"] as WhisperModelId[],
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(getConfig().voice?.localModelId, "small")
+  assert.equal(getConfig().voice?.sttEngine, "local")
+})
+
+test("get_state does not correct when engine=browser", async () => {
+  resetVoiceConfig({ sttEngine: "browser", localModelId: "large-v3-turbo" })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.get_state" },
+    {},
+    {
+      probe: () => ({ status: "absent" }),
+      listReady: () => ["small"] as WhisperModelId[],
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(getConfig().voice?.localModelId, "large-v3-turbo")
+})
+
+test("get_state leaves config when no ready model exists", async () => {
+  resetVoiceConfig({ sttEngine: "local", localModelId: "medium" })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.get_state" },
+    {},
+    {
+      probe: () => ({ status: "absent" }),
+      listReady: () => [] as WhisperModelId[],
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(getConfig().voice?.localModelId, "medium")
+})
+
+// --- voice.model.set_prefs --------------------------------------------------------
+
+test("validateWsMessage: set_prefs fence + field shapes", () => {
+  assert.equal(
+    validateWsMessage({ type: "voice.model.set_prefs", autoFallbackToBrowser: false }).valid,
+    false,
+  )
+  assert.equal(
+    validateWsMessage({
+      type: "voice.model.set_prefs",
+      source: "settings",
+      autoFallbackToBrowser: false,
+    }).valid,
+    true,
+  )
+  assert.equal(
+    validateWsMessage({
+      type: "voice.model.set_prefs",
+      source: "settings",
+      modelDownloadEndpoint: "https://hf-mirror.com",
+    }).valid,
+    true,
+  )
+  assert.equal(
+    validateWsMessage({
+      type: "voice.model.set_prefs",
+      source: "settings",
+      modelDownloadEndpoint: 42,
+    }).valid,
+    false,
+  )
+  assert.equal(
+    validateWsMessage({ type: "voice.model.set_prefs", source: "settings" }).valid,
+    false,
+  )
+})
+
+test("belt: set_prefs missing source → INVALID_SOURCE", async () => {
+  resetVoiceConfig()
+  const r = await handleVoiceModelMessage({
+    type: "voice.model.set_prefs",
+    autoFallbackToBrowser: true,
+  })
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "INVALID_SOURCE")
+})
+
+test("set_prefs persists autoFallbackToBrowser + normalized endpoint", async () => {
+  resetVoiceConfig()
+  const r = await handleVoiceModelMessage({
+    type: "voice.model.set_prefs",
+    source: "settings",
+    autoFallbackToBrowser: false,
+    modelDownloadEndpoint: "https://hf-mirror.com/some/path/",
+  })
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(r.autoFallbackToBrowser, false)
+  assert.equal(r.modelDownloadEndpoint, "https://hf-mirror.com")
+  const v = getConfig().voice
+  assert.equal(v?.autoFallbackToBrowser, false)
+  assert.equal(v?.modelDownloadEndpoint, "https://hf-mirror.com")
+})
+
+test("set_prefs default state exposes autoFallbackToBrowser=true, endpoint empty", async () => {
+  resetVoiceConfig()
+  const r = await handleVoiceModelMessage({ type: "voice.model.get_state" })
+  assert.equal(r.autoFallbackToBrowser, true)
+  assert.equal(r.modelDownloadEndpoint, "")
+})
+
+test("set_prefs rejects non-https endpoint (fail-closed, zero write)", async () => {
+  resetVoiceConfig()
+  const r = await handleVoiceModelMessage({
+    type: "voice.model.set_prefs",
+    source: "settings",
+    modelDownloadEndpoint: "http://hf-mirror.com",
+  })
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "INVALID_ENDPOINT")
+  assert.notEqual(getConfig().voice?.modelDownloadEndpoint, "http://hf-mirror.com")
+})

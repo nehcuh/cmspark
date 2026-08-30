@@ -486,6 +486,21 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "voice.model.set_prefs": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.model.set_prefs requires source:"settings" (settings-page only)' }
+      }
+      if (m.autoFallbackToBrowser !== undefined && typeof m.autoFallbackToBrowser !== "boolean") {
+        return { valid: false, error: "voice.model.set_prefs autoFallbackToBrowser must be boolean" }
+      }
+      if (m.modelDownloadEndpoint !== undefined && typeof m.modelDownloadEndpoint !== "string") {
+        return { valid: false, error: "voice.model.set_prefs modelDownloadEndpoint must be string" }
+      }
+      if (m.autoFallbackToBrowser === undefined && m.modelDownloadEndpoint === undefined) {
+        return { valid: false, error: "voice.model.set_prefs requires at least one field" }
+      }
+      return { valid: true }
+    },
     "voice.binary.download": (m) => {
       if (m.source !== "settings") {
         return { valid: false, error: 'voice.binary.download requires source:"settings" (settings-page only)' }

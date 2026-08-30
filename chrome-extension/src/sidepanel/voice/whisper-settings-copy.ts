@@ -72,6 +72,19 @@ export const VOICE_STATUS_STARTING_DOWNLOAD = "正在开始下载…"
 export const VOICE_ERR_COMPANION_DISCONNECTED =
   "Companion 未连接。请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接。"
 
+// --- Fallback + download source (auto-fallback / HF mirror) -------------------
+
+/** Toggle: per-session browser dictation when the local model is not ready (default on). */
+export const VOICE_AUTO_FALLBACK_LABEL = "本机模型不可用时自动使用浏览器听写"
+export const VOICE_AUTO_FALLBACK_HINT =
+  "本机模型未就绪时，本次听写临时改用浏览器引擎并显示提示横幅；不会修改「听写方式」设置。"
+
+/** Download endpoint input (HF mirror). Empty = manifest URLs as-is. */
+export const VOICE_DOWNLOAD_ENDPOINT_LABEL = "模型下载源"
+export const VOICE_DOWNLOAD_ENDPOINT_PLACEHOLDER = "https://huggingface.co"
+export const VOICE_DOWNLOAD_ENDPOINT_HINT =
+  "留空使用默认源；可填镜像如 https://hf-mirror.com（仅 https 源，文件校验不变）。"
+
 /** get_state never filled voiceModel within the settings-open timeout. */
 export const VOICE_ERR_STATE_TIMEOUT =
   "未能获取本机模型状态。请确认 Companion 已连接，然后关闭并重新打开设置；若仍无效请在 chrome://extensions 重载扩展。"

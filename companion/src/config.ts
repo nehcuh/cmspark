@@ -165,6 +165,17 @@ export interface VoiceConfig {
   modelDiskBudgetMB: number
   /** Optional override root; default DATA_DIR/models/whisper. */
   modelRootDir?: string
+  /**
+   * engine=local 但活动模型未就绪时，本次听写自动改用浏览器引擎并显示横幅
+   * （per-session，不写 sttEngine；ADR-023 非静默回退）。默认 true。
+   */
+  autoFallbackToBrowser?: boolean
+  /**
+   * 模型下载源（HF 镜像）。""/缺省 = 按清单 URL 原样下载；否则须为合法
+   * https 源，仅重写 huggingface.co 主机（sha256/size 校验不变）。
+   * 环境变量 CMSPARK_HF_ENDPOINT 优先于此字段（getEnvApiKey 先例）。
+   */
+  modelDownloadEndpoint?: string
 }
 
 /** Wire protocol for chat completions. Default "openai". */
@@ -510,6 +521,8 @@ const defaultConfig: CompanionConfig = {
     sttEngine: "browser",
     localModelId: "medium",
     modelDiskBudgetMB: 4096,
+    autoFallbackToBrowser: true,
+    modelDownloadEndpoint: "",
   },
   obsidian: {
     name_template: "{{date}} {{first_user_line}}",
@@ -846,6 +859,8 @@ export function getConfig(): CompanionConfig {
       sttEngine: "browser",
       localModelId: "medium",
       modelDiskBudgetMB: 4096,
+      autoFallbackToBrowser: true,
+      modelDownloadEndpoint: "",
     }
   } else {
     const voice = cachedConfig.voice
@@ -882,6 +897,38 @@ export function getConfig(): CompanionConfig {
           `[cmspark-agent] voice.modelRootDir 非法（须为非空路径字符串）——按未配置处理 (config tampering?)`,
         )
         delete voice.modelRootDir
+      }
+    }
+    if (
+      voice.autoFallbackToBrowser !== undefined &&
+      typeof voice.autoFallbackToBrowser !== "boolean"
+    ) {
+      console.warn(
+        `[cmspark-agent] voice.autoFallbackToBrowser 非布尔——回退默认 true (config tampering?)`,
+      )
+      voice.autoFallbackToBrowser = true
+    }
+    if (voice.modelDownloadEndpoint !== undefined) {
+      const ep = voice.modelDownloadEndpoint
+      if (typeof ep !== "string") {
+        console.warn(
+          `[cmspark-agent] voice.modelDownloadEndpoint 非法（须为字符串，"" 表示默认源）——按未配置处理 (config tampering?)`,
+        )
+        delete voice.modelDownloadEndpoint
+      } else if (ep.trim() !== "") {
+        // Load-time fail-closed: 非合法 https origin 按未配置处理（下载路径另有 normalize 兜底）
+        let ok = false
+        try {
+          ok = new URL(ep.trim()).protocol === "https:"
+        } catch {
+          ok = false
+        }
+        if (!ok) {
+          console.warn(
+            `[cmspark-agent] voice.modelDownloadEndpoint 非法（须为 https 源，如 https://hf-mirror.com）——按未配置处理 (config tampering?)`,
+          )
+          delete voice.modelDownloadEndpoint
+        }
       }
     }
   }
@@ -1060,6 +1107,8 @@ export function setVoiceFields(partial: Partial<VoiceConfig>): CompanionConfig {
       sttEngine: "browser",
       localModelId: "medium",
       modelDiskBudgetMB: 4096,
+      autoFallbackToBrowser: true,
+      modelDownloadEndpoint: "",
       ...(current.voice ?? {}),
       ...partial,
     },

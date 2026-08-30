@@ -55,6 +55,7 @@ export type WhisperDownloadReason =
   | "oversize-stream"
   | "aborted"
   | "scheme-denied"
+  | "endpoint-invalid"
 
 export class WhisperDownloadError extends Error {
   readonly reason: WhisperDownloadReason
@@ -146,6 +147,74 @@ function resolveBudgetMB(opts?: WhisperDownloadOpts): number {
     /* ignore */
   }
   return DEFAULT_WHISPER_DISK_BUDGET_MB
+}
+
+// --- download endpoint (HF mirror) ----------------------------------------------
+
+/** Only manifest URLs on this host are rewritten when an endpoint is set. */
+export const HUGGINGFACE_HOST = "huggingface.co"
+
+/**
+ * Normalize a user-supplied model download endpoint. "" → "" (manifest URLs
+ * as-is). Otherwise must be a valid https URL; only its origin is used.
+ * Fail-closed: anything else throws WhisperDownloadError("endpoint-invalid").
+ */
+export function normalizeModelDownloadEndpoint(raw: string): string {
+  const trimmed = (raw ?? "").trim()
+  if (!trimmed) return ""
+  let u: URL
+  try {
+    u = new URL(trimmed)
+  } catch {
+    throw new WhisperDownloadError(
+      "endpoint-invalid",
+      `模型下载源不是合法 URL：${trimmed}（示例：https://hf-mirror.com）`,
+    )
+  }
+  if (u.protocol !== "https:") {
+    throw new WhisperDownloadError(
+      "endpoint-invalid",
+      `模型下载源必须是 https 源（收到 ${trimmed}）`,
+    )
+  }
+  return u.origin
+}
+
+/**
+ * Effective model download endpoint. Env CMSPARK_HF_ENDPOINT wins over
+ * config voice.modelDownloadEndpoint (env-override precedent: getEnvApiKey).
+ */
+export function resolveModelDownloadEndpoint(): string {
+  const env = process.env.CMSPARK_HF_ENDPOINT
+  if (typeof env === "string" && env.trim()) return normalizeModelDownloadEndpoint(env)
+  try {
+    const v = getConfig().voice?.modelDownloadEndpoint
+    if (typeof v === "string") return normalizeModelDownloadEndpoint(v)
+  } catch (err) {
+    if (err instanceof WhisperDownloadError) throw err
+    /* getConfig unavailable in some test harnesses */
+  }
+  return ""
+}
+
+/**
+ * Rewrite a manifest file URL to the endpoint origin. Only huggingface.co
+ * hosts are rewritten; anything else (incl. unparsable) is returned as-is so
+ * the existing https/scheme checks fail closed downstream.
+ */
+export function rewriteWhisperFileUrl(url: string, endpoint: string): string {
+  if (!endpoint) return url
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    return url
+  }
+  if (u.hostname !== HUGGINGFACE_HOST) return url
+  const ep = new URL(endpoint) // already normalized to an https origin
+  u.protocol = ep.protocol
+  u.host = ep.host
+  return u.href
 }
 
 // --- crypto helpers -----------------------------------------------------------
@@ -350,6 +419,14 @@ async function doDownloadWhisperModel(
       "model-unknown",
       err instanceof Error ? err.message : `manifest missing model: ${modelId}`,
     )
+  }
+
+  // Download endpoint (HF mirror): rewrite huggingface.co file URLs to the
+  // configured/env endpoint origin. sha256/size pins unchanged; invalid
+  // endpoint fails closed here, before any fs/network side effect.
+  const endpoint = resolveModelDownloadEndpoint()
+  if (endpoint) {
+    files = files.map((f) => ({ ...f, url: rewriteWhisperFileUrl(f.url, endpoint) }))
   }
 
   const rootDir = resolveWhisperRoot({ rootDir: opts.rootDir, dataDir: opts.dataDir })

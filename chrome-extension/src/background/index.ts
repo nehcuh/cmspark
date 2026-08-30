@@ -1380,6 +1380,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "voice.model.delete":
       case "voice.model.set_active":
       case "voice.model.set_engine":
+      case "voice.model.set_prefs":
       // Path B: download cmspark-whisper runtime (settings). Missing cases were
       // reported as「扩展版本过旧」via Unknown message type map — not a version skew.
       case "voice.binary.download":

@@ -68,6 +68,11 @@ import {
   OTHER_WHISPER_MODEL_IDS,
   RECOMMENDED_ROW_PREFIX,
   RECOMMENDED_WHISPER_MODEL_ID,
+  VOICE_AUTO_FALLBACK_HINT,
+  VOICE_AUTO_FALLBACK_LABEL,
+  VOICE_DOWNLOAD_ENDPOINT_HINT,
+  VOICE_DOWNLOAD_ENDPOINT_LABEL,
+  VOICE_DOWNLOAD_ENDPOINT_PLACEHOLDER,
   VOICE_ERR_DOWNLOAD_NO_PROGRESS,
   VOICE_ERR_STATE_TIMEOUT,
   VOICE_STATUS_QUERYING,
@@ -155,6 +160,8 @@ export function SettingsSlideout() {
   const [voicePendingDownload, setVoicePendingDownload] = useState<string | null>(null)
   const voicePendingDownloadRef = useRef<string | null>(null)
   voicePendingDownloadRef.current = voicePendingDownload
+  /** 模型下载源输入草稿；null = 未编辑，跟随 voiceModel 镜像。 */
+  const [voiceEndpointDraft, setVoiceEndpointDraft] = useState<string | null>(null)
   // W1 accordion: user open preferences (force rules applied in isSectionOpen).
   const [userOpenSections, setUserOpenSections] = useState<Set<SettingsSectionId>>(() => {
     try {
@@ -230,6 +237,7 @@ export function SettingsSlideout() {
     // Path B M0: mirror voice.model state on settings open (UI Task 7).
     dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
     setVoicePendingDownload(null)
+    setVoiceEndpointDraft(null)
     chrome.runtime.sendMessage({ type: "voice.model.get_state" }, (resp: unknown) => {
       const lastErr =
         typeof chrome.runtime.lastError?.message === "string"
@@ -1361,6 +1369,16 @@ export function SettingsSlideout() {
               const privacyEngine: "browser" | "local" =
                 engineDraft === "local" || committedLocal ? "local" : "browser"
 
+              /** Persist 模型下载源 via voice.model.set_prefs; store mirror re-drives input on ok. */
+              const saveVoiceEndpoint = () => {
+                const value = (voiceEndpointDraft ?? "").trim()
+                clearVoiceErr()
+                sendVoice(
+                  { type: "voice.model.set_prefs", modelDownloadEndpoint: value },
+                  { onOk: () => setVoiceEndpointDraft(null) },
+                )
+              }
+
               const renderModelRow = (modelId: WhisperSettingsModelId, isRecommended: boolean) => {
                 const entry = voiceModel?.models?.[modelId]
                 const status = entry?.status || "absent"
@@ -1674,6 +1692,62 @@ export function SettingsSlideout() {
                                 : ""}
                             </div>
                           )}
+
+                          <label
+                            style={{
+                              display: "flex",
+                              alignItems: "flex-start",
+                              gap: 8,
+                              marginTop: 10,
+                              cursor: "pointer",
+                              fontSize: 12,
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              style={{ marginTop: 2 }}
+                              checked={voiceModel.autoFallbackToBrowser !== false}
+                              onChange={(e) => {
+                                clearVoiceErr()
+                                sendVoice({
+                                  type: "voice.model.set_prefs",
+                                  autoFallbackToBrowser: e.target.checked,
+                                })
+                              }}
+                            />
+                            <span>
+                              <strong>{VOICE_AUTO_FALLBACK_LABEL}</strong>
+                              <br />
+                              <span style={{ color: tokens.textMuted, fontSize: 11 }}>
+                                {VOICE_AUTO_FALLBACK_HINT}
+                              </span>
+                            </span>
+                          </label>
+
+                          <div style={{ marginTop: 10 }}>
+                            <div style={{ marginBottom: 4, fontWeight: 500, fontSize: 12 }}>
+                              {VOICE_DOWNLOAD_ENDPOINT_LABEL}
+                            </div>
+                            <input
+                              style={styles.input}
+                              type="text"
+                              value={
+                                voiceEndpointDraft ?? voiceModel.modelDownloadEndpoint ?? ""
+                              }
+                              placeholder={VOICE_DOWNLOAD_ENDPOINT_PLACEHOLDER}
+                              onChange={(e) => setVoiceEndpointDraft(e.target.value)}
+                              onBlur={() => {
+                                if (voiceEndpointDraft != null) saveVoiceEndpoint()
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && voiceEndpointDraft != null) saveVoiceEndpoint()
+                              }}
+                            />
+                            <div style={{ ...styles.helpText, marginTop: 4 }}>
+                              {VOICE_DOWNLOAD_ENDPOINT_HINT}
+                            </div>
+                          </div>
                         </>
                       )}
 

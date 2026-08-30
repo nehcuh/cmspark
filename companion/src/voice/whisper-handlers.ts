@@ -7,6 +7,12 @@
 //   - set_engine local refuses with ZERO config write if no ready model
 //   - set_active only when probe status === ready
 //   - delete of active model while engine=local → force sttEngine browser
+//   - download completion auto-activates localModelId when configured active
+//     model is not ready (never touches sttEngine)
+//   - get_state auto-corrects a stale localModelId when engine=local and other
+//     ready models exist (priority: medium → small → large-v3-turbo)
+//   - set_prefs persists autoFallbackToBrowser / modelDownloadEndpoint
+//     (endpoint fail-closed: valid https origin only)
 //
 // No voice.stt.* here (M1+). No extension UI.
 
@@ -20,6 +26,7 @@ import {
 import {
   deleteWhisperModel,
   downloadWhisperModel,
+  normalizeModelDownloadEndpoint,
   probeWhisperModelDir,
   resolveWhisperRoot,
   WhisperDownloadError,
@@ -98,6 +105,7 @@ const SETTINGS_SOURCE_TYPES = new Set([
   "voice.model.delete",
   "voice.model.set_active",
   "voice.model.set_engine",
+  "voice.model.set_prefs",
   "voice.binary.download",
   "voice.binary.cancel",
 ])
@@ -131,6 +139,57 @@ function probeModel(
 ): { status: "ready" | "absent" | "incomplete"; error?: string } {
   const probe = deps.probe ?? probeWhisperModelDir
   return probe(modelId, deps.rootDir)
+}
+
+/** Active-model auto-selection priority (mirrors resolveSummonerSttModelId). */
+const AUTO_ACTIVE_PRIORITY: WhisperModelId[] = ["medium", "small", "large-v3-turbo"]
+
+/**
+ * A1: after a model reaches ready, point localModelId at it when the configured
+ * active model is not ready (or unset). Never touches sttEngine — engine stays
+ * whatever the user committed (browser users keep browser until explicit enable).
+ */
+function maybeAutoActivateModel(modelId: WhisperModelId, deps: VoiceModelHandlerDeps): void {
+  try {
+    const cfg = getConfig().voice
+    const activeId = cfg?.localModelId
+    const activeReady =
+      activeId != null &&
+      isWhisperModelId(activeId) &&
+      probeModel(deps, activeId).status === "ready"
+    if (activeReady) return
+    setVoiceFields({ localModelId: modelId })
+    logger.info("voice.model.auto_activated", { modelId, previous: activeId ?? null })
+  } catch (err) {
+    logger.warn("voice.model.auto_activate_failed", {
+      modelId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+/**
+ * A2: engine=local but the configured active model is not ready while other
+ * ready models exist → persist the correction (AUTO_ACTIVE_PRIORITY order).
+ * Never touches sttEngine; no ready model → leave config untouched (gates/UI
+ * surface model_missing).
+ */
+function autoCorrectActiveLocalModel(deps: VoiceModelHandlerDeps): void {
+  try {
+    const cfg = getConfig().voice
+    if (cfg?.sttEngine !== "local") return
+    const activeId = (cfg.localModelId ?? RECOMMENDED_WHISPER_MODEL) as WhisperModelId
+    if (probeModel(deps, activeId).status === "ready") return
+    const ready = readyList(deps)
+    if (ready.length === 0) return
+    const next = AUTO_ACTIVE_PRIORITY.find((id) => ready.includes(id)) ?? ready[0]!
+    setVoiceFields({ localModelId: next })
+    logger.info("voice.model.get_state.auto_corrected_active", { from: activeId, to: next })
+  } catch (err) {
+    logger.warn("voice.model.get_state.auto_correct_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
 }
 
 // --- background download ------------------------------------------------------
@@ -168,6 +227,9 @@ function startBackgroundDownload(
         },
       })
       logger.info("voice.model.download.completed", { modelId })
+      // A1: auto-activate the just-downloaded model when the configured active
+      // model is not ready (does not touch sttEngine).
+      maybeAutoActivateModel(modelId, deps)
     } catch (err) {
       if (err instanceof WhisperDownloadError) {
         // Prefer human message (includes HTTP status); reason alone is opaque in UI
@@ -250,6 +312,9 @@ export async function handleVoiceModelMessage(
 
   switch (type) {
     case "voice.model.get_state": {
+      // A2: engine=local + active model not ready + other ready models →
+      // persist localModelId correction before assembling the payload.
+      autoCorrectActiveLocalModel(deps)
       const state = await statePayload(deps)
       return state
     }
@@ -290,6 +355,8 @@ export async function handleVoiceModelMessage(
       // Already ready → no-op success (idempotent)
       const probe = probeModel(deps, modelId)
       if (probe.status === "ready") {
+        // Same A1 rule as a fresh completion: this model is ready now.
+        maybeAutoActivateModel(modelId, deps)
         const state = await statePayload(deps)
         ctx.broadcast?.(state)
         return {
@@ -493,6 +560,35 @@ export async function handleVoiceModelMessage(
 
       setVoiceFields({ sttEngine: "local", localModelId: activeId })
       logger.info("voice.model.set_engine", { engine: "local", localModelId: activeId })
+      const state = await statePayload(deps)
+      ctx.broadcast?.(state)
+      return state
+    }
+
+    case "voice.model.set_prefs": {
+      // Non-model voice prefs (auto-fallback toggle / download endpoint mirror).
+      // Same settings dual fence as other mutators; never touches sttEngine.
+      const patch: { autoFallbackToBrowser?: boolean; modelDownloadEndpoint?: string } = {}
+      if (typeof rest.autoFallbackToBrowser === "boolean") {
+        patch.autoFallbackToBrowser = rest.autoFallbackToBrowser
+      }
+      if (typeof rest.modelDownloadEndpoint === "string") {
+        try {
+          patch.modelDownloadEndpoint = normalizeModelDownloadEndpoint(rest.modelDownloadEndpoint)
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          logger.warn("voice.model.set_prefs.refused", { reason: "invalid-endpoint" })
+          return modelError(message, { code: "INVALID_ENDPOINT" })
+        }
+      }
+      if (patch.autoFallbackToBrowser === undefined && patch.modelDownloadEndpoint === undefined) {
+        return modelError(
+          "voice.model.set_prefs requires autoFallbackToBrowser or modelDownloadEndpoint",
+          { code: "EMPTY_PREFS" },
+        )
+      }
+      setVoiceFields(patch)
+      logger.info("voice.model.set_prefs", { fields: Object.keys(patch) })
       const state = await statePayload(deps)
       ctx.broadcast?.(state)
       return state

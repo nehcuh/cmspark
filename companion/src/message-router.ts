@@ -2425,6 +2425,7 @@ export async function handleMessage(
     case "voice.model.delete":
     case "voice.model.set_active":
     case "voice.model.set_engine":
+    case "voice.model.set_prefs":
     case "voice.binary.download":
     case "voice.binary.cancel":
       return handleVoiceModelMessage(msg, {

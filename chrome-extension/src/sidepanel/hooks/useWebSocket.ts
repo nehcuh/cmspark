@@ -1588,6 +1588,12 @@ export function useWebSocket() {
             diskBudgetMB: typeof msg.diskBudgetMB === "number" ? msg.diskBudgetMB : 4096,
             diskUsedMB: typeof msg.diskUsedMB === "number" ? msg.diskUsedMB : 0,
             ...(typeof msg.whisperRoot === "string" ? { whisperRoot: msg.whisperRoot } : {}),
+            ...(typeof msg.autoFallbackToBrowser === "boolean"
+              ? { autoFallbackToBrowser: msg.autoFallbackToBrowser }
+              : {}),
+            ...(typeof msg.modelDownloadEndpoint === "string"
+              ? { modelDownloadEndpoint: msg.modelDownloadEndpoint }
+              : {}),
           }
           dispatch({ type: "SET_VOICE_MODEL_STATE", modelState })
           try {

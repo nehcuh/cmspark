@@ -69,7 +69,10 @@ OS 级全局热键（失焦仍按住）属后续增强。
 | 层 | 内容 | 如何就绪 |
 |----|------|----------|
 | **本机组件** | `cmspark-whisper` + 动态库 | 安装包优先内置；若提示「未找到」→ **「安装本机听写组件」**。Windows：HTTPS 自动下载 + sha256 pin。macOS：安装包内置或从本机 **Homebrew whisper-cpp** 拷贝（需已 `brew install whisper-cpp`） |
-| **模型权重** | ggml-small / medium / large-v3-turbo | 设置页下载到 `~/.cmspark-agent/models/whisper/` |
+| **模型权重** | ggml-small / medium / large-v3-turbo | 设置页下载到 `~/.cmspark-agent/models/whisper/`；下载完成自动设为活动模型；已下载模型会被自动识别（设置页状态探测） |
+
+下载源默认 huggingface.co，网络受限时在 **设置 → 听写 → 模型下载源** 改填镜像（如 `https://hf-mirror.com`），或设环境变量 `CMSPARK_HF_ENDPOINT`（优先级更高）。
+本机模型不可用时：默认**当次会话自动改用浏览器听写**并显示横幅（非静默、不改配置）；可在设置关闭「本机模型不可用时自动使用浏览器听写」。  
 
 打包：`build-package.bat` 在缺少 `companion/dist/bin/cmspark-whisper-win-x64.exe` 时会按 `assets/whisper-binary.manifest.json` **自动拉取**（`CMSPARK_WHISPER_AUTO_FETCH=0` 可关）。  
 Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.7.6) `whisper-bin-x64.zip` 对齐。
@@ -111,7 +114,7 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
 | **Mtg0** | 粘贴转写 → 生成 TL;DR / 决议 / 待办 / 风险；复制 / 发到草稿 |
 | **Mtg1** | 显式「开始录制」本机分段 STT；结束生成纪要；`meeting_privacy_ack_v1`；默认删音频 |
 | **Mtg2** | 智能分段（静音/段落/软长度切）；默认/批量说话人；上传 `.txt/.md`；上传音频 → 本机转写 |
-| **Mtg3** | 实验：**自动标「发言人N」**（段特征 k-means，**非身份识别**）；弱标交替 |
+| **Mtg3** | 实验：**自动标「发言人N」**（段特征 k-means，**非身份识别**）；人数可选「自动」（silhouette 估计，近似）或手动 2/3/4；弱标交替 |
 | **P1 近实时** | 会议录制默认渐进假设出字 + 约 8s 窗定稿（同听写 M2；非 token 真流式；large 仅终稿） |
 | **P2 长会** | 直播录硬上限 **3 小时**（2 小时软提示）；上传音频同上限；纪要输入抬到 20 万字 |
 | **P4 纠错/分段** | 段定稿 **opt-in AI 纠错**（上文上下文 + correct_only）；段间空行分段；结束时可选自动智能分段 |
