@@ -1321,6 +1321,12 @@ body{
 .msg.assistant code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
 .msg.assistant :not(pre)>code{background:var(--canvas);padding:1px 4px;border-radius:4px}
 .msg.assistant blockquote{margin:6px 0;padding:0 0 0 10px;border-left:3px solid var(--line);color:var(--secondary)}
+.msg.assistant.streaming{white-space:pre-wrap}
+.msg.assistant.streaming::after{content:"▍";color:var(--indigo);animation:streamBlink 1s steps(2) infinite}
+@keyframes streamBlink{
+  0%,50%{opacity:1}
+  51%,100%{opacity:0}
+}
 .empty{margin:auto;color:var(--secondary);font-size:14px;line-height:1.6;text-align:center;display:flex;flex-direction:column;align-items:center}
 .empty strong{display:block;font-size:22px;font-weight:600;color:var(--text);margin-bottom:8px;letter-spacing:-.03em}
 .composer{display:flex;flex-direction:column;gap:6px;padding:10px 12px 8px;background:var(--paper);flex-shrink:0;position:relative;z-index:2}
@@ -1568,6 +1574,7 @@ try{
   var busy=false;
   var threads=[];
   var poll=null;
+  var streamMsg=null;
   function $(id){return document.getElementById(id)}
   function setStatus(t){$("status").textContent=t||""}
   var CHROME_DOWN={
@@ -1878,9 +1885,26 @@ try{
       box.appendChild(row);
     });
   }
+  function clearStreamMsg(){
+    if(streamMsg&&streamMsg.parentNode) streamMsg.parentNode.removeChild(streamMsg);
+    streamMsg=null;
+  }
+  function showStreamMsg(text){
+    var log=$("log");
+    if(!streamMsg||!streamMsg.parentNode){
+      var empty=$("empty");
+      if(empty&&empty.parentNode) empty.parentNode.removeChild(empty);
+      streamMsg=document.createElement("div");
+      streamMsg.className="msg assistant streaming";
+      log.appendChild(streamMsg);
+    }
+    streamMsg.textContent=text;
+    log.scrollTop=log.scrollHeight;
+  }
   function renderMsgs(messages){
     var log=$("log");
     log.innerHTML="";
+    streamMsg=null;
     var n=0;
     (messages||[]).forEach(function(m){
       if(!m||(m.role!=="user"&&m.role!=="assistant")) return;
@@ -1895,6 +1919,7 @@ try{
     if(!n){
       var empty=document.createElement("div");
       empty.className="empty";
+      empty.id="empty";
       empty.innerHTML="<div class=\\"mark\\" aria-hidden=\\"true\\">山</div><strong>${CHAT_SHELL_TITLE_NONE}</strong>回车发送。附件和听写不用开浏览器。";
       log.appendChild(empty);
     }
@@ -1907,6 +1932,7 @@ try{
   }
   function selectThread(id){
     threadId=id;
+    clearStreamMsg();
     showHistory(false);
     renderThreads($("text").value.charAt(0)==="#"?$("text").value.slice(1):"");
     return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:id})})
@@ -1928,8 +1954,9 @@ try{
     poll=setInterval(function(){
       if(!threadId) return;
       api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(d){
-        renderMsgs(d.messages||[]);
         var next=d.run_status==="llm";
+        // SSE 流式气泡存活期间不做整表重绘（会拆掉 streaming bubble）；轮询仅作兜底
+        if(!(streamMsg&&next)) renderMsgs(d.messages||[]);
         if(next!==busy){busy=next;syncBusyUi()}
         if(!busy) stopPoll();
       });
@@ -1991,7 +2018,7 @@ try{
         setStatus("忙时不能上传附件（run_active）");
         return;
       }
-      if(text.trim()) paintUser(text.trim());
+      if(text.trim()){clearStreamMsg();paintUser(text.trim())}
       $("text").value="";
       return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(){
         var go=hasFiles
@@ -2586,7 +2613,15 @@ try{
         return;
       }
       if(t==="error"||t==="chat.error"){
+        if(d.thread_id&&threadId&&d.thread_id!==threadId) return;
+        clearStreamMsg();
         setStatus(statusFromEvent(d));
+        return;
+      }
+      if(t==="chat.token"){
+        if(d.thread_id&&threadId&&d.thread_id!==threadId) return;
+        var tok=typeof d.content==="string"?d.content:"";
+        if(threadId&&tok) showStreamMsg(tok);
         return;
       }
       if(t==="chat.user"||t==="chat.steered"||t==="chat.enqueued"){
@@ -2671,11 +2706,13 @@ try{
         if(!busy) stopPoll(); else startPoll();
       }
       if(t==="chat.done"||t==="chat.aborted"){
+        if(d.thread_id&&threadId&&d.thread_id!==threadId) return;
+        clearStreamMsg();
         busy=false;
         syncBusyUi();
         stopPoll();
       }
-      if(threadId && (t==="chat.token"||t==="chat.done"||t==="chat.user"||t==="file.uploaded")){
+      if(threadId && (t==="chat.done"||t==="chat.user"||t==="file.uploaded")){
         api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(x){renderMsgs(x.messages||[])});
       }
     };
