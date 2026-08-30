@@ -131,7 +131,7 @@ export function MeetingPanel(props: {
   const transcriptDirtyRef = useRef(false)
   /** Mtg3: per-line acoustic features from last audio import (aligned with append order). */
   const lineFeaturesRef = useRef<number[][]>([])
-  const [diarizeK, setDiarizeK] = useState(2)
+  const [diarizeK, setDiarizeK] = useState(0)
   const [autoDiarizeAfterImport, setAutoDiarizeAfterImport] = useState(false)
   /** Optional markdown template for minutes structure (chrome.storage). */
   const [templateMd, setTemplateMd] = useState("")
@@ -1475,14 +1475,18 @@ export function MeetingPanel(props: {
               data-testid="meeting-diarize-k"
               value={diarizeK}
               disabled={busy || capturing}
-              onChange={(e) => setDiarizeK(Math.min(4, Math.max(2, Number(e.target.value) || 2)))}
+              onChange={(e) => setDiarizeK(Math.min(4, Math.max(0, Number(e.target.value) || 0)))}
               style={{ marginLeft: 4, fontSize: 12 }}
             >
+              <option value={0}>自动</option>
               <option value={2}>2</option>
               <option value={3}>3</option>
               <option value={4}>4</option>
             </select>
           </label>
+          <span style={{ fontSize: 10, color: tokens.textSecondary }}>
+            「自动」按声学特征估计人数（实验 · 近似，非身份识别）
+          </span>
           <label style={{ fontSize: 11, color: tokens.textSecondary, display: "flex", gap: 4, alignItems: "center" }}>
             <input
               type="checkbox"

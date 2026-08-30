@@ -22,9 +22,17 @@ export type DiarizeResult = {
   /** speaker per input line index (same length as lines/features) */
   speakers: Array<string | undefined>
   experimental: true
+  /** set when k was auto-selected via silhouette (input k=0/"auto") */
+  auto?: true
 }
 
+/**
+ * Normalize speaker-count input. 0 (or loosely-typed "auto") = auto-select
+ * via silhouette score; anything else is clamped to [K_MIN, K_MAX],
+ * garbage falls back to DIARIZE_K_DEFAULT (fail-closed).
+ */
 export function clampDiarizeK(k: unknown): number {
+  if (k === 0 || k === "auto") return 0
   const n = typeof k === "number" && Number.isFinite(k) ? Math.floor(k) : DIARIZE_K_DEFAULT
   return Math.min(DIARIZE_K_MAX, Math.max(DIARIZE_K_MIN, n))
 }
@@ -113,15 +121,82 @@ export function kMeansCluster(
 }
 
 /**
+ * Mean silhouette coefficient for a clustering (Euclidean, O(n²)).
+ * Singleton clusters score 0 for their member; a single-cluster
+ * assignment (nothing to compare against) scores 0 overall.
+ */
+export function meanSilhouette(features: number[][], assign: number[]): number {
+  const n = features.length
+  if (n < 2 || assign.length !== n) return 0
+  const clusters = new Map<number, number[]>()
+  for (let i = 0; i < n; i++) {
+    const c = assign[i] ?? 0
+    const list = clusters.get(c)
+    if (list) list.push(i)
+    else clusters.set(c, [i])
+  }
+  if (clusters.size < 2) return 0
+  let sum = 0
+  for (let i = 0; i < n; i++) {
+    const own = clusters.get(assign[i] ?? 0)!
+    // Singleton cluster member: silhouette defined as 0 (skip).
+    if (own.length <= 1) continue
+    let a = 0
+    for (const j of own) {
+      if (j !== i) a += dist(features[i]!, features[j]!)
+    }
+    a /= own.length - 1
+    let b = Infinity
+    for (const [cid, members] of clusters) {
+      if (cid === (assign[i] ?? 0)) continue
+      let d = 0
+      for (const j of members) d += dist(features[i]!, features[j]!)
+      d /= members.length
+      if (d < b) b = d
+    }
+    if (!Number.isFinite(b)) b = 0
+    const denom = Math.max(a, b)
+    sum += denom > 0 ? (b - a) / denom : 0
+  }
+  return sum / n
+}
+
+/**
+ * Auto speaker count: run k-means for each candidate K in
+ * [kMin..min(kMax, n-1)] and keep the one with the highest mean
+ * silhouette. Too few rows or no valid candidate → DIARIZE_K_DEFAULT.
+ */
+export function selectBestK(
+  features: number[][],
+  kMin = DIARIZE_K_MIN,
+  kMax = DIARIZE_K_MAX,
+): number {
+  const n = features.length
+  if (n < 3) return DIARIZE_K_DEFAULT
+  const hi = Math.min(kMax, n - 1)
+  let bestK = 0
+  let bestS = -Infinity
+  for (let k = Math.max(DIARIZE_K_MIN, kMin); k <= hi; k++) {
+    const s = meanSilhouette(features, kMeansCluster(features, k))
+    if (s > bestS) {
+      bestS = s
+      bestK = k
+    }
+  }
+  return bestK > 0 ? bestK : DIARIZE_K_DEFAULT
+}
+
+/**
  * Audio-cluster diarize: one feature row per transcript line.
  * features.length must equal lines.length (pad/truncate handled).
+ * kIn=0 (or "auto") → auto-select K by silhouette; result.k is the
+ * actually-chosen K and result.auto is set.
  */
 export function diarizeByAudioFeatures(
   lines: TranscriptLine[],
   features: number[][],
   kIn?: number,
 ): DiarizeResult {
-  const k = clampDiarizeK(kIn)
   const n = lines.length
   const feats: number[][] = []
   for (let i = 0; i < n; i++) {
@@ -140,6 +215,9 @@ export function diarizeByAudioFeatures(
       feats.push([0, 0, 0])
     }
   }
+  const kInN = clampDiarizeK(kIn)
+  const auto = kInN === 0
+  const k = auto ? selectBestK(feats) : kInN
   const clusters = kMeansCluster(feats, Math.min(k, Math.max(1, n)))
   const speakers = clusters.map((c) => diarizeLabel(c))
   const labels = Array.from({ length: Math.min(k, n) }, (_, i) => diarizeLabel(i))
@@ -149,15 +227,18 @@ export function diarizeByAudioFeatures(
     labels,
     speakers,
     experimental: true,
+    ...(auto ? { auto: true as const } : {}),
   }
 }
 
 /**
  * Weak text-gap mode: after silence-cut lines, alternate speakers on each line.
  * Honest: NOT acoustic diarize — only for explicit user choice.
+ * Manual only: kIn=0/"auto" has no meaning here → DIARIZE_K_DEFAULT.
  */
 export function diarizeByTextGap(lines: TranscriptLine[], kIn?: number): DiarizeResult {
-  const k = clampDiarizeK(kIn)
+  const kInN = clampDiarizeK(kIn)
+  const k = kInN === 0 ? DIARIZE_K_DEFAULT : kInN
   const speakers = lines.map((_, i) => diarizeLabel(i % k))
   const labels = Array.from({ length: k }, (_, i) => diarizeLabel(i))
   return {

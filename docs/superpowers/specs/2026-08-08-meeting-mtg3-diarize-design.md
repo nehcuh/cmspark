@@ -27,7 +27,7 @@
 
 | 项 | 锁定 |
 |----|------|
-| 引擎 | **本机 pure TS**：段级特征 + k-means（K=2..4，默认 2） |
+| 引擎 | **本机 pure TS**：段级特征 + k-means（K=2..4，默认 2；2026-08-31 起 UI 默认「自动」= silhouette 选 K，仍为实验/近似） |
 | 特征 | log-energy · zero-crossing rate · 粗 spectral centroid（Float32 mono 16k） |
 | 粒度 | **一条转写行 / 一段 STT 窗口** 一个向量（非词级） |
 | 标签 | `发言人1` … `发言人K` 固定中文前缀；**禁止**模型编造真名 |
