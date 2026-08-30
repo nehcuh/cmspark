@@ -2,8 +2,62 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import {
+  defaultExpanded,
+  skipHeaderChrome,
+  countNM,
+  previewText,
+} from "../src/sidepanel/components/run-progress-view"
 
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
+
+test("defaultExpanded: 0 false, 1–3 true, 4–8 false", () => {
+  assert.equal(defaultExpanded(0), false)
+  assert.equal(defaultExpanded(1), true)
+  assert.equal(defaultExpanded(3), true)
+  assert.equal(defaultExpanded(4), false)
+  assert.equal(defaultExpanded(8), false)
+})
+
+test("skipHeaderChrome only for a single seed|user row", () => {
+  assert.equal(skipHeaderChrome([{ id: "a", text: "A", done: false, source: "seed" }]), true)
+  assert.equal(skipHeaderChrome([{ id: "d", text: "D", done: false, source: "model_draft" }]), false)
+  assert.equal(
+    skipHeaderChrome([
+      { id: "a", text: "A", done: false, source: "seed" },
+      { id: "b", text: "B", done: false, source: "seed" },
+    ]),
+    false,
+  )
+})
+
+test("countNM excludes drafts from n and m", () => {
+  const items = [
+    { id: "a", text: "A", done: true, source: "seed" as const },
+    { id: "b", text: "B", done: false, source: "user" as const },
+    { id: "c", text: "C", done: true, source: "model_draft" as const },
+    { id: "d", text: "D", done: false, source: "model_draft" as const },
+  ]
+  assert.deepEqual(countNM(items), { n: 1, m: 2 })
+})
+
+test("previewText is first undone non-draft; drafts-only fallback", () => {
+  assert.equal(
+    previewText([
+      { id: "a", text: "done", done: true, source: "seed" },
+      { id: "b", text: "next", done: false, source: "seed" },
+    ]),
+    "next",
+  )
+  assert.equal(
+    previewText([{ id: "d", text: "hint", done: false, source: "model_draft" }]),
+    "草稿 · hint",
+  )
+  assert.equal(
+    previewText([{ id: "a", text: "done", done: true, source: "seed" }]),
+    null,
+  )
+})
 
 test("ChatView imports and mounts RunProgress when items.length>0", () => {
   const chat = src("src/sidepanel/components/ChatView.tsx")
