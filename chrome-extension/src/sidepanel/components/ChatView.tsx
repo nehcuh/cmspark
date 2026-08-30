@@ -533,7 +533,9 @@ export function ChatView() {
           </div>
         )}
         {runItems && runItems.length > 0 && activeThreadId ? (
-          <RunProgress threadId={activeThreadId} items={runItems} />
+          // key by thread: switching threads remounts → collapse state resets
+          // to the spec default (收起). Sticky/collapse styling lives in RunProgress.
+          <RunProgress key={activeThreadId} threadId={activeThreadId} items={runItems} />
         ) : null}
         {messages.length === 0 && !streamingContent && !streamingReasoning && !processingLabel && (
           <EmptyState level={level} />
