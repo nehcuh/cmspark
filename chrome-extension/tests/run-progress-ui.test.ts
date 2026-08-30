@@ -129,10 +129,9 @@ test("RunProgress skipHeaderChrome hides the chip on 1 item", () => {
 
 test("RunProgress collapsed summary: n/m count, current-step ellipsis, draft fallback", () => {
   const rp = src("src/sidepanel/components/RunProgress.tsx")
-  // 当前步 = 第一条 done!==true 且非草稿
+  // first undone non-draft via inline find; collapsed second line via previewText()
   assert.match(rp, /it\.done\s*!==\s*true\s*&&\s*it\.source\s*!==\s*"model_draft"/)
-  // 全勾完只剩草稿 → 「草稿 · {首条草稿}」
-  assert.match(rp, /草稿 · /)
+  assert.match(rp, /previewText\(/)
   // 收起第二行单行截断
   assert.match(rp, /whiteSpace:\s*"nowrap"/)
   assert.match(rp, /textOverflow:\s*"ellipsis"/)

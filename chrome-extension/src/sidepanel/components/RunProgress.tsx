@@ -1,13 +1,20 @@
 // L0 chat-column checklist. Copy: 「本轮步骤」; draft rows 「草稿」.
-// Spec: docs/superpowers/specs/2026-08-30-runprogress-sticky-collapse-design.md §2 (Wave 1)
-// Default collapsed (in-memory useState only; keyed per thread at mount site).
-// Sticky to the top of the ChatView scroll column — never StatusRail / FocusBand.
+// Spec: docs/superpowers/specs/2026-08-30-runprogress-sticky-collapse-design.md §2 (Wave 1 r2)
+// Default: ≤3 expanded, ≥4 collapsed (in-memory useState; keyed per thread at mount).
+// Wrap always sticky to the ChatView scroll column — never StatusRail / FocusBand.
+// Expanded <ul> caps at maxHeight min(40vh, 240px) + overflowY auto.
 // No height animation / no chevron rotation → prefers-reduced-motion safe by construction.
 // Overlay has no edit. Not Mission Board.
 
 import { useState } from "react"
 import type { CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
+import {
+  countNM,
+  defaultExpanded,
+  previewText,
+  skipHeaderChrome,
+} from "./run-progress-view"
 
 export type RunProgressItem = {
   id: string
@@ -17,6 +24,40 @@ export type RunProgressItem = {
   tool?: string
 }
 
+function ProgressRow({
+  it,
+  highlight,
+  onToggle,
+}: {
+  it: RunProgressItem
+  highlight: boolean
+  onToggle: (id: string, source: RunProgressItem["source"]) => void
+}) {
+  const draft = it.source === "model_draft"
+  return (
+    <label style={styles.label}>
+      <input
+        type="checkbox"
+        checked={it.done === true}
+        disabled={draft}
+        onChange={() => onToggle(it.id, it.source)}
+        style={styles.box}
+      />
+      <span
+        style={{
+          ...styles.text,
+          fontWeight: highlight ? 500 : undefined,
+          textDecoration: it.done ? "line-through" : "none",
+          color: it.done ? tokens.textMuted : tokens.text,
+        }}
+      >
+        {it.text}
+      </span>
+      {draft ? <span style={styles.draft}>草稿</span> : null}
+    </label>
+  )
+}
+
 export function RunProgress({
   threadId,
   items,
@@ -24,17 +65,15 @@ export function RunProgress({
   threadId: string
   items: RunProgressItem[]
 }) {
-  // 默认收起；换线程由挂载点的 key={threadId} 重挂回到收起。状态只存内存。
-  const [expanded, setExpanded] = useState(false)
+  const count = items?.length ?? 0
+  const [expanded, setExpanded] = useState(() => defaultExpanded(count))
+  if (!items || count === 0) return null
 
-  if (!items || items.length === 0) return null
-
-  const total = items.length
-  const doneCount = items.filter((it) => it.done === true).length
-  // 当前步 = 第一条未完成且非草稿；全勾完或只剩草稿时不伪造当前条。
-  const current = items.find((it) => it.done !== true && it.source !== "model_draft")
-  const firstDraft = items.find((it) => it.source === "model_draft")
+  const { n, m } = countNM(items)
+  const preview = previewText(items)
+  const headerless = skipHeaderChrome(items)
   const listId = `run-progress-list-${threadId}`
+  const firstUndone = items.find((it) => it.done !== true && it.source !== "model_draft")
 
   const toggle = (itemId: string, source: RunProgressItem["source"]) => {
     if (source === "model_draft") return
@@ -45,8 +84,23 @@ export function RunProgress({
     })
   }
 
+  // wrap: always sticky (styles.wrap.position = "sticky"). Expanded list caps itself.
+  const wrapStyle = styles.wrap
+
+  if (headerless) {
+    const it = items[0]!
+    const highlight = firstUndone?.id === it.id
+    return (
+      <section aria-label="本轮步骤" style={wrapStyle}>
+        <div style={highlight ? { ...styles.row, ...styles.rowCurrent } : styles.row}>
+          <ProgressRow it={it} highlight={highlight} onToggle={toggle} />
+        </div>
+      </section>
+    )
+  }
+
   return (
-    <section aria-label="本轮步骤" style={styles.wrap}>
+    <section aria-label="本轮步骤" style={wrapStyle}>
       <button
         type="button"
         aria-expanded={expanded}
@@ -56,52 +110,28 @@ export function RunProgress({
       >
         <span style={styles.title}>本轮步骤</span>
         <span style={styles.count}>
-          {doneCount}/{total}
+          {n}/{m}
         </span>
         <span aria-hidden style={styles.chevron}>
           {expanded ? "▴" : "▾"}
         </span>
       </button>
       {!expanded ? (
-        current ? (
-          <div style={styles.currentLine} title={current.text}>
-            {current.text}
-          </div>
-        ) : firstDraft ? (
-          <div style={styles.currentLine} title={firstDraft.text}>
-            草稿 · {firstDraft.text}
+        preview ? (
+          <div style={styles.currentLine} title={preview}>
+            {preview}
           </div>
         ) : null
       ) : (
         <ul id={listId} style={styles.list}>
           {items.map((it) => {
-            const draft = it.source === "model_draft"
-            const isCurrent = current?.id === it.id
+            const highlight = firstUndone?.id === it.id
             return (
               <li
                 key={it.id}
-                style={isCurrent ? { ...styles.row, ...styles.rowCurrent } : styles.row}
-                aria-current={isCurrent ? "step" : undefined}
+                style={highlight ? { ...styles.row, ...styles.rowCurrent } : styles.row}
               >
-                <label style={styles.label}>
-                  <input
-                    type="checkbox"
-                    checked={it.done === true}
-                    disabled={draft}
-                    onChange={() => toggle(it.id, it.source)}
-                    style={styles.box}
-                  />
-                  <span
-                    style={{
-                      ...styles.text,
-                      textDecoration: it.done ? "line-through" : "none",
-                      color: it.done ? tokens.textMuted : tokens.text,
-                    }}
-                  >
-                    {it.text}
-                  </span>
-                  {draft ? <span style={styles.draft}>草稿</span> : null}
-                </label>
+                <ProgressRow it={it} highlight={highlight} onToggle={toggle} />
               </li>
             )
           })}
@@ -160,7 +190,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     lineHeight: 1.4,
     color: tokens.text,
-    // 收起态当前步单行截断（companion 侧已 cap 120 字）。
+    // 收起态预览单行截断（companion 侧已 cap 120 字）。
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -172,12 +202,14 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 4,
+    maxHeight: "min(40vh, 240px)",
+    overflowY: "auto",
   },
   row: {
     margin: 0,
     padding: 0,
   },
-  // 展开态当前步：2px accent 左条（附加于 aria-current，非只靠颜色）。
+  // 展开态未勾第一条：2px accent 左条（附加于字重，非只靠颜色）。
   rowCurrent: {
     borderLeft: `2px solid ${tokens.accent}`,
     paddingLeft: 6,

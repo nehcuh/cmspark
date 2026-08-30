@@ -533,8 +533,8 @@ export function ChatView() {
           </div>
         )}
         {runItems && runItems.length > 0 && activeThreadId ? (
-          // key by thread: switching threads remounts → collapse state resets
-          // to the spec default (收起). Sticky/collapse styling lives in RunProgress.
+          // key by thread: switching threads remounts expansion to defaultExpanded(n).
+          // Sticky/collapse styling lives in RunProgress.
           <RunProgress key={activeThreadId} threadId={activeThreadId} items={runItems} />
         ) : null}
         {messages.length === 0 && !streamingContent && !streamingReasoning && !processingLabel && (
@@ -1921,6 +1921,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: "transparent",
     display: "flex",
     flexDirection: "column",
+    // Collapsed RunProgress header ~44–52px; keep anchors out from under the card.
+    scrollPaddingTop: 52,
     // Disable scroll-anchoring so late inserts (tools/markdown) cannot yank
     // long threads toward the top; stick-to-bottom is handled in JS.
     overflowAnchor: "none" as any,
