@@ -1,0 +1,1763 @@
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 7d7c8a6a..6eb06b22 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -1380,6 +1380,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+       case "voice.model.delete":
+       case "voice.model.set_active":
+       case "voice.model.set_engine":
++      case "voice.model.set_prefs":
+       // Path B: download cmspark-whisper runtime (settings). Missing cases were
+       // reported as「扩展版本过旧」via Unknown message type map — not a version skew.
+       case "voice.binary.download":
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index d9d3aa93..bcdb1147 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -635,6 +635,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+     sttEngine,
+     companionConnected,
+     localReady: { model: localModelReady, binary: localBinaryReady },
++    localStateHydrated: state.voiceModel != null,
++    autoFallbackToBrowser: state.voiceModel?.autoFallbackToBrowser !== false,
+     privacyAckV2: state.voicePrivacyAckV2 === true,
+     onNeedPrivacyAckV2: () => {
+       setVoicePrivacyKind("v2")
+diff --git a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+index d2e361ba..ce2b6876 100644
+--- a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+@@ -131,7 +131,7 @@ export function MeetingPanel(props: {
+   const transcriptDirtyRef = useRef(false)
+   /** Mtg3: per-line acoustic features from last audio import (aligned with append order). */
+   const lineFeaturesRef = useRef<number[][]>([])
+-  const [diarizeK, setDiarizeK] = useState(2)
++  const [diarizeK, setDiarizeK] = useState(0)
+   const [autoDiarizeAfterImport, setAutoDiarizeAfterImport] = useState(false)
+   /** Optional markdown template for minutes structure (chrome.storage). */
+   const [templateMd, setTemplateMd] = useState("")
+@@ -1475,14 +1475,18 @@ export function MeetingPanel(props: {
+               data-testid="meeting-diarize-k"
+               value={diarizeK}
+               disabled={busy || capturing}
+-              onChange={(e) => setDiarizeK(Math.min(4, Math.max(2, Number(e.target.value) || 2)))}
++              onChange={(e) => setDiarizeK(Math.min(4, Math.max(0, Number(e.target.value) || 0)))}
+               style={{ marginLeft: 4, fontSize: 12 }}
+             >
++              <option value={0}>自动</option>
+               <option value={2}>2</option>
+               <option value={3}>3</option>
+               <option value={4}>4</option>
+             </select>
+           </label>
++          <span style={{ fontSize: 10, color: tokens.textSecondary }}>
++            「自动」按声学特征估计人数（实验 · 近似，非身份识别）
++          </span>
+           <label style={{ fontSize: 11, color: tokens.textSecondary, display: "flex", gap: 4, alignItems: "center" }}>
+             <input
+               type="checkbox"
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index 125961d8..06e15031 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -68,6 +68,11 @@ import {
+   OTHER_WHISPER_MODEL_IDS,
+   RECOMMENDED_ROW_PREFIX,
+   RECOMMENDED_WHISPER_MODEL_ID,
++  VOICE_AUTO_FALLBACK_HINT,
++  VOICE_AUTO_FALLBACK_LABEL,
++  VOICE_DOWNLOAD_ENDPOINT_HINT,
++  VOICE_DOWNLOAD_ENDPOINT_LABEL,
++  VOICE_DOWNLOAD_ENDPOINT_PLACEHOLDER,
+   VOICE_ERR_DOWNLOAD_NO_PROGRESS,
+   VOICE_ERR_STATE_TIMEOUT,
+   VOICE_STATUS_QUERYING,
+@@ -155,6 +160,8 @@ export function SettingsSlideout() {
+   const [voicePendingDownload, setVoicePendingDownload] = useState<string | null>(null)
+   const voicePendingDownloadRef = useRef<string | null>(null)
+   voicePendingDownloadRef.current = voicePendingDownload
++  /** 模型下载源输入草稿；null = 未编辑，跟随 voiceModel 镜像。 */
++  const [voiceEndpointDraft, setVoiceEndpointDraft] = useState<string | null>(null)
+   // W1 accordion: user open preferences (force rules applied in isSectionOpen).
+   const [userOpenSections, setUserOpenSections] = useState<Set<SettingsSectionId>>(() => {
+     try {
+@@ -230,6 +237,7 @@ export function SettingsSlideout() {
+     // Path B M0: mirror voice.model state on settings open (UI Task 7).
+     dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
+     setVoicePendingDownload(null)
++    setVoiceEndpointDraft(null)
+     chrome.runtime.sendMessage({ type: "voice.model.get_state" }, (resp: unknown) => {
+       const lastErr =
+         typeof chrome.runtime.lastError?.message === "string"
+@@ -1361,6 +1369,16 @@ export function SettingsSlideout() {
+               const privacyEngine: "browser" | "local" =
+                 engineDraft === "local" || committedLocal ? "local" : "browser"
+ 
++              /** Persist 模型下载源 via voice.model.set_prefs; store mirror re-drives input on ok. */
++              const saveVoiceEndpoint = () => {
++                const value = (voiceEndpointDraft ?? "").trim()
++                clearVoiceErr()
++                sendVoice(
++                  { type: "voice.model.set_prefs", modelDownloadEndpoint: value },
++                  { onOk: () => setVoiceEndpointDraft(null) },
++                )
++              }
++
+               const renderModelRow = (modelId: WhisperSettingsModelId, isRecommended: boolean) => {
+                 const entry = voiceModel?.models?.[modelId]
+                 const status = entry?.status || "absent"
+@@ -1674,6 +1692,62 @@ export function SettingsSlideout() {
+                                 : ""}
+                             </div>
+                           )}
++
++                          <label
++                            style={{
++                              display: "flex",
++                              alignItems: "flex-start",
++                              gap: 8,
++                              marginTop: 10,
++                              cursor: "pointer",
++                              fontSize: 12,
++                              lineHeight: 1.4,
++                            }}
++                          >
++                            <input
++                              type="checkbox"
++                              style={{ marginTop: 2 }}
++                              checked={voiceModel.autoFallbackToBrowser !== false}
++                              onChange={(e) => {
++                                clearVoiceErr()
++                                sendVoice({
++                                  type: "voice.model.set_prefs",
++                                  autoFallbackToBrowser: e.target.checked,
++                                })
++                              }}
++                            />
++                            <span>
++                              <strong>{VOICE_AUTO_FALLBACK_LABEL}</strong>
++                              <br />
++                              <span style={{ color: tokens.textMuted, fontSize: 11 }}>
++                                {VOICE_AUTO_FALLBACK_HINT}
++                              </span>
++                            </span>
++                          </label>
++
++                          <div style={{ marginTop: 10 }}>
++                            <div style={{ marginBottom: 4, fontWeight: 500, fontSize: 12 }}>
++                              {VOICE_DOWNLOAD_ENDPOINT_LABEL}
++                            </div>
++                            <input
++                              style={styles.input}
++                              type="text"
++                              value={
++                                voiceEndpointDraft ?? voiceModel.modelDownloadEndpoint ?? ""
++                              }
++                              placeholder={VOICE_DOWNLOAD_ENDPOINT_PLACEHOLDER}
++                              onChange={(e) => setVoiceEndpointDraft(e.target.value)}
++                              onBlur={() => {
++                                if (voiceEndpointDraft != null) saveVoiceEndpoint()
++                              }}
++                              onKeyDown={(e) => {
++                                if (e.key === "Enter" && voiceEndpointDraft != null) saveVoiceEndpoint()
++                              }}
++                            />
++                            <div style={{ ...styles.helpText, marginTop: 4 }}>
++                              {VOICE_DOWNLOAD_ENDPOINT_HINT}
++                            </div>
++                          </div>
+                         </>
+                       )}
+ 
+diff --git a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+index cd57da6f..c7e681c8 100644
+--- a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
++++ b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+@@ -1,6 +1,10 @@
+ /**
+  * Wire STT adapter (browser Web Speech | local Companion) + pure SM for InputArea.
+  * Path B M1: engine factory; never silent-fallback local → browser.
++ * Gated exception (voice.autoFallbackToBrowser, default on): engine=local but the
++ * active model is not ready → this session runs on the browser engine with a
++ * visible banner (LOCAL_FALLBACK_BROWSER_BANNER). Per-session only — never
++ * writes sttEngine config. companion_disconnected / binary_missing unchanged.
+  */
+ 
+ import { useCallback, useEffect, useRef, useState } from "react"
+@@ -23,7 +27,7 @@ import {
+   voiceLiveComposerText,
+ } from "../voice/text-merge"
+ import { initialVoiceSession, type VoiceSessionState } from "../voice/types"
+-import { mapLocalSttError } from "../voice/error-map"
++import { LOCAL_FALLBACK_BROWSER_BANNER, mapLocalSttError } from "../voice/error-map"
+ import { createSttAdapter, type SttEngineKind } from "../voice/stt-engine"
+ import type { SpeechAdapter } from "../voice/web-speech-adapter"
+ 
+@@ -65,8 +69,29 @@ function subscribeRuntime(handler: (msg: any) => void): () => void {
+   }
+ }
+ 
+-export type UseVoiceInputOpts = {
+-  /** Composer text at listen start (snapshot). */
++/**
++ * Per-session browser fallback decision (voice.autoFallbackToBrowser).
++ * Pure + exported for tests. Engages ONLY when the voice.model.state mirror
++ * is hydrated AND the active model is confirmed not ready — unknown readiness
++ * stays fail-closed (no silent cloud STT in the hydration window).
++ */
++export function resolveLocalFallbackActive(args: {
++  configuredEngine: SttEngineKind
++  autoFallbackToBrowser?: boolean
++  companionConnected?: boolean
++  localStateHydrated?: boolean
++  localModelReady?: boolean
++}): boolean {
++  return (
++    args.configuredEngine === "local" &&
++    args.autoFallbackToBrowser !== false &&
++    args.companionConnected === true &&
++    args.localStateHydrated === true &&
++    args.localModelReady === false
++  )
++}
++
++export type UseVoiceInputOpts = {  /** Composer text at listen start (snapshot). */
+   getBaseText: () => string
+   /** Apply merged draft (never auto-send). */
+   onDraft: (text: string) => void
+@@ -81,13 +106,25 @@ export type UseVoiceInputOpts = {
+   onNeedPermissionBootstrap: () => void
+   /**
+    * STT engine from store mirror / lastKnown.
+-   * When "local", never fall back to Web Speech.
++   * When "local", never fall back to Web Speech — except the gated per-session
++   * model-missing fallback below (autoFallbackToBrowser).
+    */
+   sttEngine?: SttEngineKind
+   /** Companion WS connected. */
+   companionConnected?: boolean
+   /** Local model + binary readiness (from voice.model.state mirror). */
+   localReady?: { model: boolean; binary: boolean }
++  /**
++   * True once the first voice.model.state mirror has arrived. The per-session
++   * browser fallback only engages when hydrated — otherwise "unknown readiness"
++   * would be misread as model_missing and silently prefer cloud STT.
++   */
++  localStateHydrated?: boolean
++  /**
++   * Companion voice.autoFallbackToBrowser (default true). When false, a missing
++   * local model keeps the fail-closed model_missing banner + 去设置 CTA.
++   */
++  autoFallbackToBrowser?: boolean
+   /** Path B privacy ack v2 (required for local). */
+   privacyAckV2?: boolean
+   onNeedPrivacyAckV2?: () => void
+@@ -116,7 +153,26 @@ export type UseVoiceInputOpts = {
+ }
+ 
+ export function useVoiceInput(opts: UseVoiceInputOpts) {
+-  const engine: SttEngineKind = opts.sttEngine === "local" ? "local" : "browser"
++  const configuredEngine: SttEngineKind = opts.sttEngine === "local" ? "local" : "browser"
++  /**
++   * Gated per-session fallback: engine=local, model confirmed missing (mirrors
++   * the localGateError model_missing branch — companion connected, state mirror
++   * hydrated, model not ready; binary state irrelevant since model_missing is
++   * checked first), and the companion autoFallbackToBrowser pref not disabled.
++   * Runs the session on the browser adapter with a visible banner; never writes
++   * sttEngine config. Un-hydrated state stays fail-closed (no fallback).
++   */
++  const localFallbackActive = resolveLocalFallbackActive({
++    configuredEngine,
++    autoFallbackToBrowser: opts.autoFallbackToBrowser,
++    companionConnected: opts.companionConnected,
++    localStateHydrated: opts.localStateHydrated,
++    localModelReady: opts.localReady?.model,
++  })
++  /** Effective engine for adapter/session; configured engine otherwise. */
++  const engine: SttEngineKind = localFallbackActive ? "browser" : configuredEngine
++  const fallbackRef = useRef(localFallbackActive)
++  fallbackRef.current = localFallbackActive
+ 
+   const browserSupport = detectSpeechRecognition(
+     typeof globalThis !== "undefined" ? (globalThis as any) : {},
+@@ -141,6 +197,21 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+   optsRef.current = opts
+   const engineRef = useRef(engine)
+   engineRef.current = engine
++  /**
++   * Engine pinned for the adapter lifecycle. While a session is active
++   * (not idle/unsupported/error), a fallback flip (e.g. a model download
++   * completing mid-dictation) must NOT rebuild the adapter — that would
++   * destroy the in-flight session. Follow `engine` only when idle.
++   */
++  const sessionActive =
++    session.phase !== "idle" &&
++    session.phase !== "unsupported" &&
++    session.phase !== "error"
++  const adapterEngineRef = useRef(engine)
++  if (!sessionActive) adapterEngineRef.current = engine
++  const adapterEngine = adapterEngineRef.current
++  const adapterSupported =
++    adapterEngine === "local" ? localMediaSupport.ok : browserSupport.ok
+   const modeRef = useRef<VoiceDictationMode>(
+     opts.dictationMode === "continuous" ? "continuous" : "classic",
+   )
+@@ -312,9 +383,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+     })
+   }, [])
+ 
+-  // Rebuild adapter when engine / support changes
++  // Rebuild adapter when the pinned engine / support changes (never mid-session)
+   useEffect(() => {
+-    if (!supported) {
++    if (!adapterSupported) {
+       setSession(initialVoiceSession(false))
+       adapterRef.current?.destroy()
+       adapterRef.current = null
+@@ -346,10 +417,10 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+       optsRef.current.modelId ||
+       "medium"
+ 
+-    const adapter = createSttAdapter(engine, {
++    const adapter = createSttAdapter(adapterEngine, {
+       handlers,
+       local:
+-        engine === "local"
++        adapterEngine === "local"
+           ? {
+               send: sendViaRuntime,
+               onMessage: subscribeRuntime,
+@@ -367,8 +438,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+       adapterRef.current = null
+       dispatchEv({ type: "UNMOUNT" })
+     }
+-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount per engine/support
+-  }, [supported, engine, dispatchEv])
++    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount per pinned engine/support
++  }, [adapterSupported, adapterEngine, dispatchEv])
+ 
+   // Thread switch — abort recording + processing
+   useEffect(() => {
+@@ -569,6 +640,11 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+         const maxMs = maxListenMsForSession(modeNow, eng)
+         maxListenMsRef.current = maxMs
+         dispatchEv({ type: "USER_TOGGLE_START", sessionId: sid, baseText: base })
++        if (fallbackRef.current) {
++          // Visible per-session notice (SOFT_CAP_HINT = non-terminal info chip;
++          // applies in starting/listening). Dismissible; cleared on next start.
++          dispatchEv({ type: "SOFT_CAP_HINT", message: LOCAL_FALLBACK_BROWSER_BANNER })
++        }
+         try {
+           if (eng === "local") {
+             const nearRt =
+@@ -781,6 +857,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+     /** Active dictation mode (classic | continuous). */
+     dictationMode: modeRef.current,
+     sttEngine: engine,
++    /** True while a local→browser per-session fallback is in effect (visible banner). */
++    localFallbackActive,
+     /** Map a local gate code for external CTA (optional). */
+     mapLocalError: mapLocalSttError,
+     toggle,
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index 413ec2f6..026a39b9 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -1588,6 +1588,12 @@ export function useWebSocket() {
+             diskBudgetMB: typeof msg.diskBudgetMB === "number" ? msg.diskBudgetMB : 4096,
+             diskUsedMB: typeof msg.diskUsedMB === "number" ? msg.diskUsedMB : 0,
+             ...(typeof msg.whisperRoot === "string" ? { whisperRoot: msg.whisperRoot } : {}),
++            ...(typeof msg.autoFallbackToBrowser === "boolean"
++              ? { autoFallbackToBrowser: msg.autoFallbackToBrowser }
++              : {}),
++            ...(typeof msg.modelDownloadEndpoint === "string"
++              ? { modelDownloadEndpoint: msg.modelDownloadEndpoint }
++              : {}),
+           }
+           dispatch({ type: "SET_VOICE_MODEL_STATE", modelState })
+           try {
+diff --git a/chrome-extension/src/sidepanel/types.ts b/chrome-extension/src/sidepanel/types.ts
+index 4e0b8047..5b7daff7 100644
+--- a/chrome-extension/src/sidepanel/types.ts
++++ b/chrome-extension/src/sidepanel/types.ts
+@@ -806,6 +806,10 @@ export interface VoiceModelState {
+   diskBudgetMB: number
+   diskUsedMB: number
+   whisperRoot?: string
++  /** engine=local 且活动模型未就绪时单次会话回退浏览器听写(默认 true;不写 sttEngine)。 */
++  autoFallbackToBrowser?: boolean
++  /** 模型下载源镜像(""/缺省 = 清单 URL 原样;可填 https://hf-mirror.com)。 */
++  modelDownloadEndpoint?: string
+ }
+ 
+ /** voice.model.progress 下行负载(单文件下载进度;非下载中 state 到达后由 reducer 清理)。 */
+diff --git a/chrome-extension/src/sidepanel/voice/error-map.ts b/chrome-extension/src/sidepanel/voice/error-map.ts
+index b9c9c25f..e5874ba9 100644
+--- a/chrome-extension/src/sidepanel/voice/error-map.ts
++++ b/chrome-extension/src/sidepanel/voice/error-map.ts
+@@ -180,6 +180,13 @@ export const BROWSER_ENGINE_CLOUD_RESIDUAL = "可能经浏览器厂商云端"
+ /** Toast / banner line after successful CTA switch. */
+ export const TOAST_SWITCHED_BROWSER = `已改用浏览器听写。${BROWSER_ENGINE_CLOUD_RESIDUAL}`
+ 
++/**
++ * Per-session auto-fallback notice (voice.autoFallbackToBrowser, default on):
++ * engine=local but the active model is not ready → this session runs on the
++ * browser engine with this visible banner. NOT a silent sttEngine config flip.
++ */
++export const LOCAL_FALLBACK_BROWSER_BANNER = `本机模型未就绪，本次使用浏览器听写。${BROWSER_ENGINE_CLOUD_RESIDUAL}`
++
+ /**
+  * Format remaining listen budget as m:ss (45s → "0:45"). Pure.
+  * Ceils partial seconds so UI never shows "0:00" while still listening.
+diff --git a/chrome-extension/src/sidepanel/voice/whisper-settings-copy.ts b/chrome-extension/src/sidepanel/voice/whisper-settings-copy.ts
+index ebce95e2..4326fbef 100644
+--- a/chrome-extension/src/sidepanel/voice/whisper-settings-copy.ts
++++ b/chrome-extension/src/sidepanel/voice/whisper-settings-copy.ts
+@@ -72,6 +72,19 @@ export const VOICE_STATUS_STARTING_DOWNLOAD = "正在开始下载…"
+ export const VOICE_ERR_COMPANION_DISCONNECTED =
+   "Companion 未连接。请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接。"
+ 
++// --- Fallback + download source (auto-fallback / HF mirror) -------------------
++
++/** Toggle: per-session browser dictation when the local model is not ready (default on). */
++export const VOICE_AUTO_FALLBACK_LABEL = "本机模型不可用时自动使用浏览器听写"
++export const VOICE_AUTO_FALLBACK_HINT =
++  "本机模型未就绪时，本次听写临时改用浏览器引擎并显示提示横幅；不会修改「听写方式」设置。"
++
++/** Download endpoint input (HF mirror). Empty = manifest URLs as-is. */
++export const VOICE_DOWNLOAD_ENDPOINT_LABEL = "模型下载源"
++export const VOICE_DOWNLOAD_ENDPOINT_PLACEHOLDER = "https://huggingface.co"
++export const VOICE_DOWNLOAD_ENDPOINT_HINT =
++  "留空使用默认源；可填镜像如 https://hf-mirror.com（仅 https 源，文件校验不变）。"
++
+ /** get_state never filled voiceModel within the settings-open timeout. */
+ export const VOICE_ERR_STATE_TIMEOUT =
+   "未能获取本机模型状态。请确认 Companion 已连接，然后关闭并重新打开设置；若仍无效请在 chrome://extensions 重载扩展。"
+diff --git a/chrome-extension/tests/voice-composer-ux.test.ts b/chrome-extension/tests/voice-composer-ux.test.ts
+index aca82a95..3fe998a4 100644
+--- a/chrome-extension/tests/voice-composer-ux.test.ts
++++ b/chrome-extension/tests/voice-composer-ux.test.ts
+@@ -6,6 +6,7 @@ import assert from "node:assert/strict"
+ import {
+   CTA_OPEN_SETTINGS,
+   CTA_SWITCH_BROWSER,
++  LOCAL_FALLBACK_BROWSER_BANNER,
+   LOCAL_LISTEN_HINT,
+   TOAST_SWITCHED_BROWSER,
+   formatListenRemaining,
+@@ -67,3 +68,8 @@ test("toast residual mentions cloud vendor path (SoT §5.3)", () => {
+   assert.match(TOAST_SWITCHED_BROWSER, /已改用浏览器听写/)
+   assert.match(TOAST_SWITCHED_BROWSER, /浏览器|厂商|云/)
+ })
++
++test("fallback banner carries the same cloud residual disclosure (ADR-023 2026-08-31)", () => {
++  assert.match(LOCAL_FALLBACK_BROWSER_BANNER, /本机模型未就绪/)
++  assert.match(LOCAL_FALLBACK_BROWSER_BANNER, /可能经浏览器厂商云端/)
++})
+diff --git a/companion/src/config.ts b/companion/src/config.ts
+index f8f25338..4d5e91a4 100644
+--- a/companion/src/config.ts
++++ b/companion/src/config.ts
+@@ -165,6 +165,17 @@ export interface VoiceConfig {
+   modelDiskBudgetMB: number
+   /** Optional override root; default DATA_DIR/models/whisper. */
+   modelRootDir?: string
++  /**
++   * engine=local 但活动模型未就绪时，本次听写自动改用浏览器引擎并显示横幅
++   * （per-session，不写 sttEngine；ADR-023 非静默回退）。默认 true。
++   */
++  autoFallbackToBrowser?: boolean
++  /**
++   * 模型下载源（HF 镜像）。""/缺省 = 按清单 URL 原样下载；否则须为合法
++   * https 源，仅重写 huggingface.co 主机（sha256/size 校验不变）。
++   * 环境变量 CMSPARK_HF_ENDPOINT 优先于此字段（getEnvApiKey 先例）。
++   */
++  modelDownloadEndpoint?: string
+ }
+ 
+ /** Wire protocol for chat completions. Default "openai". */
+@@ -510,6 +521,8 @@ const defaultConfig: CompanionConfig = {
+     sttEngine: "browser",
+     localModelId: "medium",
+     modelDiskBudgetMB: 4096,
++    autoFallbackToBrowser: true,
++    modelDownloadEndpoint: "",
+   },
+   obsidian: {
+     name_template: "{{date}} {{first_user_line}}",
+@@ -846,6 +859,8 @@ export function getConfig(): CompanionConfig {
+       sttEngine: "browser",
+       localModelId: "medium",
+       modelDiskBudgetMB: 4096,
++      autoFallbackToBrowser: true,
++      modelDownloadEndpoint: "",
+     }
+   } else {
+     const voice = cachedConfig.voice
+@@ -884,6 +899,38 @@ export function getConfig(): CompanionConfig {
+         delete voice.modelRootDir
+       }
+     }
++    if (
++      voice.autoFallbackToBrowser !== undefined &&
++      typeof voice.autoFallbackToBrowser !== "boolean"
++    ) {
++      console.warn(
++        `[cmspark-agent] voice.autoFallbackToBrowser 非布尔——回退默认 true (config tampering?)`,
++      )
++      voice.autoFallbackToBrowser = true
++    }
++    if (voice.modelDownloadEndpoint !== undefined) {
++      const ep = voice.modelDownloadEndpoint
++      if (typeof ep !== "string") {
++        console.warn(
++          `[cmspark-agent] voice.modelDownloadEndpoint 非法（须为字符串，"" 表示默认源）——按未配置处理 (config tampering?)`,
++        )
++        delete voice.modelDownloadEndpoint
++      } else if (ep.trim() !== "") {
++        // Load-time fail-closed: 非合法 https origin 按未配置处理（下载路径另有 normalize 兜底）
++        let ok = false
++        try {
++          ok = new URL(ep.trim()).protocol === "https:"
++        } catch {
++          ok = false
++        }
++        if (!ok) {
++          console.warn(
++            `[cmspark-agent] voice.modelDownloadEndpoint 非法（须为 https 源，如 https://hf-mirror.com）——按未配置处理 (config tampering?)`,
++          )
++          delete voice.modelDownloadEndpoint
++        }
++      }
++    }
+   }
+   if (cachedConfig.summoner && typeof cachedConfig.summoner === "object") {
+     const s = cachedConfig.summoner
+@@ -1060,6 +1107,8 @@ export function setVoiceFields(partial: Partial<VoiceConfig>): CompanionConfig {
+       sttEngine: "browser",
+       localModelId: "medium",
+       modelDiskBudgetMB: 4096,
++      autoFallbackToBrowser: true,
++      modelDownloadEndpoint: "",
+       ...(current.voice ?? {}),
+       ...partial,
+     },
+diff --git a/companion/src/meeting/auto-diarize.ts b/companion/src/meeting/auto-diarize.ts
+index d2ca0cc8..ca51ed29 100644
+--- a/companion/src/meeting/auto-diarize.ts
++++ b/companion/src/meeting/auto-diarize.ts
+@@ -22,9 +22,17 @@ export type DiarizeResult = {
+   /** speaker per input line index (same length as lines/features) */
+   speakers: Array<string | undefined>
+   experimental: true
++  /** set when k was auto-selected via silhouette (input k=0/"auto") */
++  auto?: true
+ }
+ 
++/**
++ * Normalize speaker-count input. 0 (or loosely-typed "auto") = auto-select
++ * via silhouette score; anything else is clamped to [K_MIN, K_MAX],
++ * garbage falls back to DIARIZE_K_DEFAULT (fail-closed).
++ */
+ export function clampDiarizeK(k: unknown): number {
++  if (k === 0 || k === "auto") return 0
+   const n = typeof k === "number" && Number.isFinite(k) ? Math.floor(k) : DIARIZE_K_DEFAULT
+   return Math.min(DIARIZE_K_MAX, Math.max(DIARIZE_K_MIN, n))
+ }
+@@ -112,16 +120,83 @@ export function kMeansCluster(
+   return assign.map((a) => remap.get(a) ?? a)
+ }
+ 
++/**
++ * Mean silhouette coefficient for a clustering (Euclidean, O(n²)).
++ * Singleton clusters score 0 for their member; a single-cluster
++ * assignment (nothing to compare against) scores 0 overall.
++ */
++export function meanSilhouette(features: number[][], assign: number[]): number {
++  const n = features.length
++  if (n < 2 || assign.length !== n) return 0
++  const clusters = new Map<number, number[]>()
++  for (let i = 0; i < n; i++) {
++    const c = assign[i] ?? 0
++    const list = clusters.get(c)
++    if (list) list.push(i)
++    else clusters.set(c, [i])
++  }
++  if (clusters.size < 2) return 0
++  let sum = 0
++  for (let i = 0; i < n; i++) {
++    const own = clusters.get(assign[i] ?? 0)!
++    // Singleton cluster member: silhouette defined as 0 (skip).
++    if (own.length <= 1) continue
++    let a = 0
++    for (const j of own) {
++      if (j !== i) a += dist(features[i]!, features[j]!)
++    }
++    a /= own.length - 1
++    let b = Infinity
++    for (const [cid, members] of clusters) {
++      if (cid === (assign[i] ?? 0)) continue
++      let d = 0
++      for (const j of members) d += dist(features[i]!, features[j]!)
++      d /= members.length
++      if (d < b) b = d
++    }
++    if (!Number.isFinite(b)) b = 0
++    const denom = Math.max(a, b)
++    sum += denom > 0 ? (b - a) / denom : 0
++  }
++  return sum / n
++}
++
++/**
++ * Auto speaker count: run k-means for each candidate K in
++ * [kMin..min(kMax, n-1)] and keep the one with the highest mean
++ * silhouette. Too few rows or no valid candidate → DIARIZE_K_DEFAULT.
++ */
++export function selectBestK(
++  features: number[][],
++  kMin = DIARIZE_K_MIN,
++  kMax = DIARIZE_K_MAX,
++): number {
++  const n = features.length
++  if (n < 3) return DIARIZE_K_DEFAULT
++  const hi = Math.min(kMax, n - 1)
++  let bestK = 0
++  let bestS = -Infinity
++  for (let k = Math.max(DIARIZE_K_MIN, kMin); k <= hi; k++) {
++    const s = meanSilhouette(features, kMeansCluster(features, k))
++    if (s > bestS) {
++      bestS = s
++      bestK = k
++    }
++  }
++  return bestK > 0 ? bestK : DIARIZE_K_DEFAULT
++}
++
+ /**
+  * Audio-cluster diarize: one feature row per transcript line.
+  * features.length must equal lines.length (pad/truncate handled).
++ * kIn=0 (or "auto") → auto-select K by silhouette; result.k is the
++ * actually-chosen K and result.auto is set.
+  */
+ export function diarizeByAudioFeatures(
+   lines: TranscriptLine[],
+   features: number[][],
+   kIn?: number,
+ ): DiarizeResult {
+-  const k = clampDiarizeK(kIn)
+   const n = lines.length
+   const feats: number[][] = []
+   for (let i = 0; i < n; i++) {
+@@ -140,6 +215,9 @@ export function diarizeByAudioFeatures(
+       feats.push([0, 0, 0])
+     }
+   }
++  const kInN = clampDiarizeK(kIn)
++  const auto = kInN === 0
++  const k = auto ? selectBestK(feats) : kInN
+   const clusters = kMeansCluster(feats, Math.min(k, Math.max(1, n)))
+   const speakers = clusters.map((c) => diarizeLabel(c))
+   const labels = Array.from({ length: Math.min(k, n) }, (_, i) => diarizeLabel(i))
+@@ -149,15 +227,18 @@ export function diarizeByAudioFeatures(
+     labels,
+     speakers,
+     experimental: true,
++    ...(auto ? { auto: true as const } : {}),
+   }
+ }
+ 
+ /**
+  * Weak text-gap mode: after silence-cut lines, alternate speakers on each line.
+  * Honest: NOT acoustic diarize — only for explicit user choice.
++ * Manual only: kIn=0/"auto" has no meaning here → DIARIZE_K_DEFAULT.
+  */
+ export function diarizeByTextGap(lines: TranscriptLine[], kIn?: number): DiarizeResult {
+-  const k = clampDiarizeK(kIn)
++  const kInN = clampDiarizeK(kIn)
++  const k = kInN === 0 ? DIARIZE_K_DEFAULT : kInN
+   const speakers = lines.map((_, i) => diarizeLabel(i % k))
+   const labels = Array.from({ length: k }, (_, i) => diarizeLabel(i))
+   return {
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index d37341ff..15bfd83c 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -2425,6 +2425,7 @@ export async function handleMessage(
+     case "voice.model.delete":
+     case "voice.model.set_active":
+     case "voice.model.set_engine":
++    case "voice.model.set_prefs":
+     case "voice.binary.download":
+     case "voice.binary.cancel":
+       return handleVoiceModelMessage(msg, {
+diff --git a/companion/src/summoner-web.ts b/companion/src/summoner-web.ts
+index 8b8fe64a..f2117899 100644
+--- a/companion/src/summoner-web.ts
++++ b/companion/src/summoner-web.ts
+@@ -1321,6 +1321,12 @@ body{
+ .msg.assistant code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+ .msg.assistant :not(pre)>code{background:var(--canvas);padding:1px 4px;border-radius:4px}
+ .msg.assistant blockquote{margin:6px 0;padding:0 0 0 10px;border-left:3px solid var(--line);color:var(--secondary)}
++.msg.assistant.streaming{white-space:pre-wrap}
++.msg.assistant.streaming::after{content:"▍";color:var(--indigo);animation:streamBlink 1s steps(2) infinite}
++@keyframes streamBlink{
++  0%,50%{opacity:1}
++  51%,100%{opacity:0}
++}
+ .empty{margin:auto;color:var(--secondary);font-size:14px;line-height:1.6;text-align:center;display:flex;flex-direction:column;align-items:center}
+ .empty strong{display:block;font-size:22px;font-weight:600;color:var(--text);margin-bottom:8px;letter-spacing:-.03em}
+ .composer{display:flex;flex-direction:column;gap:6px;padding:10px 12px 8px;background:var(--paper);flex-shrink:0;position:relative;z-index:2}
+@@ -1568,6 +1574,7 @@ try{
+   var busy=false;
+   var threads=[];
+   var poll=null;
++  var streamMsg=null;
+   function $(id){return document.getElementById(id)}
+   function setStatus(t){$("status").textContent=t||""}
+   var CHROME_DOWN={
+@@ -1878,9 +1885,26 @@ try{
+       box.appendChild(row);
+     });
+   }
++  function clearStreamMsg(){
++    if(streamMsg&&streamMsg.parentNode) streamMsg.parentNode.removeChild(streamMsg);
++    streamMsg=null;
++  }
++  function showStreamMsg(text){
++    var log=$("log");
++    if(!streamMsg||!streamMsg.parentNode){
++      var empty=$("empty");
++      if(empty&&empty.parentNode) empty.parentNode.removeChild(empty);
++      streamMsg=document.createElement("div");
++      streamMsg.className="msg assistant streaming";
++      log.appendChild(streamMsg);
++    }
++    streamMsg.textContent=text;
++    log.scrollTop=log.scrollHeight;
++  }
+   function renderMsgs(messages){
+     var log=$("log");
+     log.innerHTML="";
++    streamMsg=null;
+     var n=0;
+     (messages||[]).forEach(function(m){
+       if(!m||(m.role!=="user"&&m.role!=="assistant")) return;
+@@ -1895,6 +1919,7 @@ try{
+     if(!n){
+       var empty=document.createElement("div");
+       empty.className="empty";
++      empty.id="empty";
+       empty.innerHTML="<div class=\\"mark\\" aria-hidden=\\"true\\">山</div><strong>${CHAT_SHELL_TITLE_NONE}</strong>回车发送。附件和听写不用开浏览器。";
+       log.appendChild(empty);
+     }
+@@ -1907,6 +1932,7 @@ try{
+   }
+   function selectThread(id){
+     threadId=id;
++    clearStreamMsg();
+     showHistory(false);
+     renderThreads($("text").value.charAt(0)==="#"?$("text").value.slice(1):"");
+     return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:id})})
+@@ -1928,8 +1954,9 @@ try{
+     poll=setInterval(function(){
+       if(!threadId) return;
+       api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(d){
+-        renderMsgs(d.messages||[]);
+         var next=d.run_status==="llm";
++        // SSE 流式气泡存活期间不做整表重绘（会拆掉 streaming bubble）；轮询仅作兜底
++        if(!(streamMsg&&next)) renderMsgs(d.messages||[]);
+         if(next!==busy){busy=next;syncBusyUi()}
+         if(!busy) stopPoll();
+       });
+@@ -1991,7 +2018,7 @@ try{
+         setStatus("忙时不能上传附件（run_active）");
+         return;
+       }
+-      if(text.trim()) paintUser(text.trim());
++      if(text.trim()){clearStreamMsg();paintUser(text.trim())}
+       $("text").value="";
+       return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(){
+         var go=hasFiles
+@@ -2586,9 +2613,17 @@ try{
+         return;
+       }
+       if(t==="error"||t==="chat.error"){
++        if(d.thread_id&&threadId&&d.thread_id!==threadId) return;
++        clearStreamMsg();
+         setStatus(statusFromEvent(d));
+         return;
+       }
++      if(t==="chat.token"){
++        if(d.thread_id&&threadId&&d.thread_id!==threadId) return;
++        var tok=typeof d.content==="string"?d.content:"";
++        if(threadId&&tok) showStreamMsg(tok);
++        return;
++      }
+       if(t==="chat.user"||t==="chat.steered"||t==="chat.enqueued"){
+         $("text").value="";
+         $("files").value="";
+@@ -2671,11 +2706,13 @@ try{
+         if(!busy) stopPoll(); else startPoll();
+       }
+       if(t==="chat.done"||t==="chat.aborted"){
++        if(d.thread_id&&threadId&&d.thread_id!==threadId) return;
++        clearStreamMsg();
+         busy=false;
+         syncBusyUi();
+         stopPoll();
+       }
+-      if(threadId && (t==="chat.token"||t==="chat.done"||t==="chat.user"||t==="file.uploaded")){
++      if(threadId && (t==="chat.done"||t==="chat.user"||t==="file.uploaded")){
+         api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(x){renderMsgs(x.messages||[])});
+       }
+     };
+diff --git a/companion/src/voice/whisper-download.ts b/companion/src/voice/whisper-download.ts
+index 596028b5..ac48f17e 100644
+--- a/companion/src/voice/whisper-download.ts
++++ b/companion/src/voice/whisper-download.ts
+@@ -55,6 +55,7 @@ export type WhisperDownloadReason =
+   | "oversize-stream"
+   | "aborted"
+   | "scheme-denied"
++  | "endpoint-invalid"
+ 
+ export class WhisperDownloadError extends Error {
+   readonly reason: WhisperDownloadReason
+@@ -148,6 +149,74 @@ function resolveBudgetMB(opts?: WhisperDownloadOpts): number {
+   return DEFAULT_WHISPER_DISK_BUDGET_MB
+ }
+ 
++// --- download endpoint (HF mirror) ----------------------------------------------
++
++/** Only manifest URLs on this host are rewritten when an endpoint is set. */
++export const HUGGINGFACE_HOST = "huggingface.co"
++
++/**
++ * Normalize a user-supplied model download endpoint. "" → "" (manifest URLs
++ * as-is). Otherwise must be a valid https URL; only its origin is used.
++ * Fail-closed: anything else throws WhisperDownloadError("endpoint-invalid").
++ */
++export function normalizeModelDownloadEndpoint(raw: string): string {
++  const trimmed = (raw ?? "").trim()
++  if (!trimmed) return ""
++  let u: URL
++  try {
++    u = new URL(trimmed)
++  } catch {
++    throw new WhisperDownloadError(
++      "endpoint-invalid",
++      `模型下载源不是合法 URL：${trimmed}（示例：https://hf-mirror.com）`,
++    )
++  }
++  if (u.protocol !== "https:") {
++    throw new WhisperDownloadError(
++      "endpoint-invalid",
++      `模型下载源必须是 https 源（收到 ${trimmed}）`,
++    )
++  }
++  return u.origin
++}
++
++/**
++ * Effective model download endpoint. Env CMSPARK_HF_ENDPOINT wins over
++ * config voice.modelDownloadEndpoint (env-override precedent: getEnvApiKey).
++ */
++export function resolveModelDownloadEndpoint(): string {
++  const env = process.env.CMSPARK_HF_ENDPOINT
++  if (typeof env === "string" && env.trim()) return normalizeModelDownloadEndpoint(env)
++  try {
++    const v = getConfig().voice?.modelDownloadEndpoint
++    if (typeof v === "string") return normalizeModelDownloadEndpoint(v)
++  } catch (err) {
++    if (err instanceof WhisperDownloadError) throw err
++    /* getConfig unavailable in some test harnesses */
++  }
++  return ""
++}
++
++/**
++ * Rewrite a manifest file URL to the endpoint origin. Only huggingface.co
++ * hosts are rewritten; anything else (incl. unparsable) is returned as-is so
++ * the existing https/scheme checks fail closed downstream.
++ */
++export function rewriteWhisperFileUrl(url: string, endpoint: string): string {
++  if (!endpoint) return url
++  let u: URL
++  try {
++    u = new URL(url)
++  } catch {
++    return url
++  }
++  if (u.hostname !== HUGGINGFACE_HOST) return url
++  const ep = new URL(endpoint) // already normalized to an https origin
++  u.protocol = ep.protocol
++  u.host = ep.host
++  return u.href
++}
++
+ // --- crypto helpers -----------------------------------------------------------
+ 
+ async function sha256File(filePath: string): Promise<string> {
+@@ -352,6 +421,14 @@ async function doDownloadWhisperModel(
+     )
+   }
+ 
++  // Download endpoint (HF mirror): rewrite huggingface.co file URLs to the
++  // configured/env endpoint origin. sha256/size pins unchanged; invalid
++  // endpoint fails closed here, before any fs/network side effect.
++  const endpoint = resolveModelDownloadEndpoint()
++  if (endpoint) {
++    files = files.map((f) => ({ ...f, url: rewriteWhisperFileUrl(f.url, endpoint) }))
++  }
++
+   const rootDir = resolveWhisperRoot({ rootDir: opts.rootDir, dataDir: opts.dataDir })
+   const destDir = modelDestDir(modelId, rootDir)
+   await mkdir(destDir, { recursive: true })
+diff --git a/companion/src/voice/whisper-handlers.ts b/companion/src/voice/whisper-handlers.ts
+index 9fc84a08..3f5ce4fd 100644
+--- a/companion/src/voice/whisper-handlers.ts
++++ b/companion/src/voice/whisper-handlers.ts
+@@ -7,6 +7,12 @@
+ //   - set_engine local refuses with ZERO config write if no ready model
+ //   - set_active only when probe status === ready
+ //   - delete of active model while engine=local → force sttEngine browser
++//   - download completion auto-activates localModelId when configured active
++//     model is not ready (never touches sttEngine)
++//   - get_state auto-corrects a stale localModelId when engine=local and other
++//     ready models exist (priority: medium → small → large-v3-turbo)
++//   - set_prefs persists autoFallbackToBrowser / modelDownloadEndpoint
++//     (endpoint fail-closed: valid https origin only)
+ //
+ // No voice.stt.* here (M1+). No extension UI.
+ 
+@@ -20,6 +26,7 @@ import {
+ import {
+   deleteWhisperModel,
+   downloadWhisperModel,
++  normalizeModelDownloadEndpoint,
+   probeWhisperModelDir,
+   resolveWhisperRoot,
+   WhisperDownloadError,
+@@ -98,6 +105,7 @@ const SETTINGS_SOURCE_TYPES = new Set([
+   "voice.model.delete",
+   "voice.model.set_active",
+   "voice.model.set_engine",
++  "voice.model.set_prefs",
+   "voice.binary.download",
+   "voice.binary.cancel",
+ ])
+@@ -133,6 +141,57 @@ function probeModel(
+   return probe(modelId, deps.rootDir)
+ }
+ 
++/** Active-model auto-selection priority (mirrors resolveSummonerSttModelId). */
++const AUTO_ACTIVE_PRIORITY: WhisperModelId[] = ["medium", "small", "large-v3-turbo"]
++
++/**
++ * A1: after a model reaches ready, point localModelId at it when the configured
++ * active model is not ready (or unset). Never touches sttEngine — engine stays
++ * whatever the user committed (browser users keep browser until explicit enable).
++ */
++function maybeAutoActivateModel(modelId: WhisperModelId, deps: VoiceModelHandlerDeps): void {
++  try {
++    const cfg = getConfig().voice
++    const activeId = cfg?.localModelId
++    const activeReady =
++      activeId != null &&
++      isWhisperModelId(activeId) &&
++      probeModel(deps, activeId).status === "ready"
++    if (activeReady) return
++    setVoiceFields({ localModelId: modelId })
++    logger.info("voice.model.auto_activated", { modelId, previous: activeId ?? null })
++  } catch (err) {
++    logger.warn("voice.model.auto_activate_failed", {
++      modelId,
++      error: err instanceof Error ? err.message : String(err),
++    })
++  }
++}
++
++/**
++ * A2: engine=local but the configured active model is not ready while other
++ * ready models exist → persist the correction (AUTO_ACTIVE_PRIORITY order).
++ * Never touches sttEngine; no ready model → leave config untouched (gates/UI
++ * surface model_missing).
++ */
++function autoCorrectActiveLocalModel(deps: VoiceModelHandlerDeps): void {
++  try {
++    const cfg = getConfig().voice
++    if (cfg?.sttEngine !== "local") return
++    const activeId = (cfg.localModelId ?? RECOMMENDED_WHISPER_MODEL) as WhisperModelId
++    if (probeModel(deps, activeId).status === "ready") return
++    const ready = readyList(deps)
++    if (ready.length === 0) return
++    const next = AUTO_ACTIVE_PRIORITY.find((id) => ready.includes(id)) ?? ready[0]!
++    setVoiceFields({ localModelId: next })
++    logger.info("voice.model.get_state.auto_corrected_active", { from: activeId, to: next })
++  } catch (err) {
++    logger.warn("voice.model.get_state.auto_correct_failed", {
++      error: err instanceof Error ? err.message : String(err),
++    })
++  }
++}
++
+ // --- background download ------------------------------------------------------
+ 
+ function startBackgroundDownload(
+@@ -168,6 +227,9 @@ function startBackgroundDownload(
+         },
+       })
+       logger.info("voice.model.download.completed", { modelId })
++      // A1: auto-activate the just-downloaded model when the configured active
++      // model is not ready (does not touch sttEngine).
++      maybeAutoActivateModel(modelId, deps)
+     } catch (err) {
+       if (err instanceof WhisperDownloadError) {
+         // Prefer human message (includes HTTP status); reason alone is opaque in UI
+@@ -250,6 +312,9 @@ export async function handleVoiceModelMessage(
+ 
+   switch (type) {
+     case "voice.model.get_state": {
++      // A2: engine=local + active model not ready + other ready models →
++      // persist localModelId correction before assembling the payload.
++      autoCorrectActiveLocalModel(deps)
+       const state = await statePayload(deps)
+       return state
+     }
+@@ -290,6 +355,8 @@ export async function handleVoiceModelMessage(
+       // Already ready → no-op success (idempotent)
+       const probe = probeModel(deps, modelId)
+       if (probe.status === "ready") {
++        // Same A1 rule as a fresh completion: this model is ready now.
++        maybeAutoActivateModel(modelId, deps)
+         const state = await statePayload(deps)
+         ctx.broadcast?.(state)
+         return {
+@@ -498,6 +565,35 @@ export async function handleVoiceModelMessage(
+       return state
+     }
+ 
++    case "voice.model.set_prefs": {
++      // Non-model voice prefs (auto-fallback toggle / download endpoint mirror).
++      // Same settings dual fence as other mutators; never touches sttEngine.
++      const patch: { autoFallbackToBrowser?: boolean; modelDownloadEndpoint?: string } = {}
++      if (typeof rest.autoFallbackToBrowser === "boolean") {
++        patch.autoFallbackToBrowser = rest.autoFallbackToBrowser
++      }
++      if (typeof rest.modelDownloadEndpoint === "string") {
++        try {
++          patch.modelDownloadEndpoint = normalizeModelDownloadEndpoint(rest.modelDownloadEndpoint)
++        } catch (err) {
++          const message = err instanceof Error ? err.message : String(err)
++          logger.warn("voice.model.set_prefs.refused", { reason: "invalid-endpoint" })
++          return modelError(message, { code: "INVALID_ENDPOINT" })
++        }
++      }
++      if (patch.autoFallbackToBrowser === undefined && patch.modelDownloadEndpoint === undefined) {
++        return modelError(
++          "voice.model.set_prefs requires autoFallbackToBrowser or modelDownloadEndpoint",
++          { code: "EMPTY_PREFS" },
++        )
++      }
++      setVoiceFields(patch)
++      logger.info("voice.model.set_prefs", { fields: Object.keys(patch) })
++      const state = await statePayload(deps)
++      ctx.broadcast?.(state)
++      return state
++    }
++
+     case "voice.binary.download": {
+       if (activeBinaryDownload) {
+         return {
+diff --git a/companion/src/voice/whisper-state.ts b/companion/src/voice/whisper-state.ts
+index fbb96ee2..c3fdd059 100644
+--- a/companion/src/voice/whisper-state.ts
++++ b/companion/src/voice/whisper-state.ts
+@@ -45,6 +45,13 @@ export interface VoiceModelStatePayload {
+   diskBudgetMB: number
+   diskUsedMB: number
+   whisperRoot: string
++  /**
++   * engine=local 且活动模型未就绪时，扩展本次会话回退浏览器听写 + 可见横幅
++   * （非静默、不写 sttEngine）。默认 true。
++   */
++  autoFallbackToBrowser: boolean
++  /** 模型下载源（HF 镜像）。"" = 按清单 URL 原样下载。env 覆盖不回显（配置值视图）。 */
++  modelDownloadEndpoint: string
+ }
+ 
+ /** Companion package root candidates (src layout / test-dist / bundle). */
+@@ -139,6 +146,8 @@ export async function buildVoiceModelState(
+     sttEngine: "browser" as const,
+     localModelId: "medium" as const,
+     modelDiskBudgetMB: DEFAULT_WHISPER_DISK_BUDGET_MB,
++    autoFallbackToBrowser: true,
++    modelDownloadEndpoint: "",
+   }
+   const rootDir = opts.rootDir ?? resolveWhisperRoot()
+   const downloading = new Set(opts.downloadingModelIds ?? [])
+@@ -186,6 +195,9 @@ export async function buildVoiceModelState(
+     diskBudgetMB: budgetMB,
+     diskUsedMB: Math.round((occupied / (1024 * 1024)) * 10) / 10,
+     whisperRoot: rootDir,
++    autoFallbackToBrowser: cfg.autoFallbackToBrowser !== false,
++    modelDownloadEndpoint:
++      typeof cfg.modelDownloadEndpoint === "string" ? cfg.modelDownloadEndpoint : "",
+   }
+ }
+ 
+diff --git a/companion/src/ws/validate.ts b/companion/src/ws/validate.ts
+index 3b796dab..81578130 100644
+--- a/companion/src/ws/validate.ts
++++ b/companion/src/ws/validate.ts
+@@ -486,6 +486,21 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       }
+       return { valid: true }
+     },
++    "voice.model.set_prefs": (m) => {
++      if (m.source !== "settings") {
++        return { valid: false, error: 'voice.model.set_prefs requires source:"settings" (settings-page only)' }
++      }
++      if (m.autoFallbackToBrowser !== undefined && typeof m.autoFallbackToBrowser !== "boolean") {
++        return { valid: false, error: "voice.model.set_prefs autoFallbackToBrowser must be boolean" }
++      }
++      if (m.modelDownloadEndpoint !== undefined && typeof m.modelDownloadEndpoint !== "string") {
++        return { valid: false, error: "voice.model.set_prefs modelDownloadEndpoint must be string" }
++      }
++      if (m.autoFallbackToBrowser === undefined && m.modelDownloadEndpoint === undefined) {
++        return { valid: false, error: "voice.model.set_prefs requires at least one field" }
++      }
++      return { valid: true }
++    },
+     "voice.binary.download": (m) => {
+       if (m.source !== "settings") {
+         return { valid: false, error: 'voice.binary.download requires source:"settings" (settings-page only)' }
+diff --git a/companion/tests/meeting-mtg3-diarize.test.ts b/companion/tests/meeting-mtg3-diarize.test.ts
+index 40fe8f83..04098eeb 100644
+--- a/companion/tests/meeting-mtg3-diarize.test.ts
++++ b/companion/tests/meeting-mtg3-diarize.test.ts
+@@ -17,6 +17,9 @@ import {
+   extractSegmentFeatures,
+   diarizeLabel,
+   clampDiarizeK,
++  meanSilhouette,
++  selectBestK,
++  DIARIZE_K_DEFAULT,
+ } from "../src/meeting/auto-diarize"
+ import { createMeeting, loadMeeting } from "../src/meeting/meeting-store"
+ import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
+@@ -27,6 +30,9 @@ const DATA = process.env.CMSPARK_DATA_DIR!
+ test("clampDiarizeK and labels", () => {
+   assert.equal(clampDiarizeK(1), 2)
+   assert.equal(clampDiarizeK(9), 4)
++  assert.equal(clampDiarizeK(0), 0)
++  assert.equal(clampDiarizeK("auto"), 0)
++  assert.equal(clampDiarizeK("garbage"), DIARIZE_K_DEFAULT)
+   assert.equal(diarizeLabel(0), "发言人1")
+ })
+ 
+@@ -203,3 +209,126 @@ test("applyDiarizeToLines preserveManual keeps hand labels", () => {
+   assert.equal(kept[0]!.speaker, "张三")
+   assert.equal(kept[1]!.speaker, r.speakers[1])
+ })
++
++/** n rows jittered tightly around each center (well separated). */
++function synthClusters(centers: number[][], perCluster: number): number[][] {
++  const out: number[][] = []
++  for (const c of centers) {
++    for (let i = 0; i < perCluster; i++) {
++      out.push([c[0]! + i * 0.01, c[1]! + i * 0.005, c[2]! + i * 0.002])
++    }
++  }
++  return out
++}
++
++test("selectBestK auto picks 2 for two well-separated clusters", () => {
++  const feats = synthClusters(
++    [
++      [0.1, 0.1, 0.1],
++      [2.0, 0.5, 0.8],
++    ],
++    4,
++  )
++  assert.equal(selectBestK(feats), 2)
++  const lines = feats.map((_, i) => ({ text: `l${i}`, source: "stt" as const }))
++  const r = diarizeByAudioFeatures(lines, feats, 0)
++  assert.equal(r.k, 2)
++  assert.equal(r.auto, true)
++  assert.equal(r.labels.length, 2)
++})
++
++test("selectBestK auto picks 3 for three well-separated clusters", () => {
++  const feats = synthClusters(
++    [
++      [0.1, 0.1, 0.1],
++      [2.0, 0.5, 0.8],
++      [4.0, 0.9, 0.3],
++    ],
++    4,
++  )
++  assert.equal(selectBestK(feats), 3)
++  const lines = feats.map((_, i) => ({ text: `l${i}`, source: "stt" as const }))
++  const r = diarizeByAudioFeatures(lines, feats, "auto" as unknown as number)
++  assert.equal(r.k, 3)
++  assert.equal(r.auto, true)
++})
++
++test("auto diarize degenerate input falls back to default K", () => {
++  assert.equal(selectBestK([]), DIARIZE_K_DEFAULT)
++  assert.equal(selectBestK([[0.1, 0.1, 0.1]]), DIARIZE_K_DEFAULT)
++  const lines = [
++    { text: "a", source: "stt" as const },
++    { text: "b", source: "stt" as const },
++  ]
++  const feats = [
++    [0.1, 0.1, 0.1],
++    [0.12, 0.11, 0.1],
++  ]
++  const r = diarizeByAudioFeatures(lines, feats, 0)
++  assert.equal(r.k, DIARIZE_K_DEFAULT)
++  assert.equal(r.auto, true)
++  assert.ok(r.speakers.every((s) => s && s.startsWith("发言人")))
++})
++
++test("meanSilhouette scores separated > collapsed, singleton-safe", () => {
++  const feats = synthClusters(
++    [
++      [0.1, 0.1, 0.1],
++      [2.0, 0.5, 0.8],
++    ],
++    4,
++  )
++  const good = meanSilhouette(feats, kMeansCluster(feats, 2))
++  assert.ok(good > 0.5)
++  // single-cluster assignment → 0; singleton members → 0 contribution, no crash
++  assert.equal(meanSilhouette(feats, new Array(feats.length).fill(0)), 0)
++  const singletons = feats.map((_, i) => i)
++  assert.equal(meanSilhouette(feats, singletons), 0)
++})
++
++test("diarizeByTextGap ignores auto, uses default K", () => {
++  const lines = [
++    { text: "1", source: "paste" as const },
++    { text: "2", source: "paste" as const },
++    { text: "3", source: "paste" as const },
++  ]
++  const r = diarizeByTextGap(lines, 0)
++  assert.equal(r.k, DIARIZE_K_DEFAULT)
++  assert.equal(r.auto, undefined)
++  assert.equal(r.speakers[0], "发言人1")
++  assert.equal(r.speakers[1], "发言人2")
++})
++
++test("handler auto_diarize with k=0 flows auto through", async () => {
++  const created = await handleMeetingMessage(
++    { type: "meeting.create", v: 1, title: "AutoK" },
++    { origin: EXT },
++  )
++  const id = created.meeting.id as string
++  await handleMeetingMessage(
++    {
++      type: "meeting.set_transcript",
++      v: 1,
++      id,
++      text: "一\n\n二\n\n三\n\n四\n\n五\n\n六\n\n七\n\n八",
++      silence_cut: true,
++    },
++    { origin: EXT },
++  )
++  const m = loadMeeting(id, DATA)!
++  const feats = m.transcript.map((_, i) => (i % 2 === 0 ? [0.1, 0.1, 0.1] : [2.0, 0.5, 0.8]))
++  const ok = await handleMeetingMessage(
++    {
++      type: "meeting.auto_diarize",
++      v: 1,
++      id,
++      privacy_ack_v1: true,
++      mode: "audio_cluster",
++      k: 0,
++      features: feats,
++    },
++    { origin: EXT },
++  )
++  assert.equal(ok.type, "meeting.diarized")
++  assert.equal(ok.meeting.diarize.k, 2)
++})
+diff --git a/companion/tests/summoner-web.test.ts b/companion/tests/summoner-web.test.ts
+index f5904b30..201fc044 100644
+--- a/companion/tests/summoner-web.test.ts
++++ b/companion/tests/summoner-web.test.ts
+@@ -227,6 +227,26 @@ describe("summoner-web server", { concurrency: 1 }, () => {
+     assert.match(r.body, /function renderMd/)
+     assert.match(r.body, /\.msg\.assistant\{[^}]*white-space:normal/)
+     assert.match(r.body, /d\.innerHTML=renderMd/)
++    assert.match(r.body, /function showStreamMsg/)
++    assert.match(r.body, /function clearStreamMsg/)
++    assert.match(r.body, /var streamMsg=null/)
++    assert.match(r.body, /msg assistant streaming/)
++    assert.match(r.body, /\.msg\.assistant\.streaming::after\{[^}]*animation:streamBlink/)
++    assert.match(r.body, /@keyframes streamBlink/)
++    assert.match(r.body, /streamMsg\.textContent=text/)
++    assert.match(r.body, /if\(t==="chat\.token"\)\{/)
++    assert.doesNotMatch(r.body, /t==="chat\.token"\|\|t==="chat\.done"/)
++    assert.match(r.body, /t==="chat\.done"\|\|t==="chat\.aborted"\)\{[\s\S]{0,80}?clearStreamMsg\(\)/)
++    assert.match(r.body, /t==="error"\|\|t==="chat\.error"\)\{[\s\S]{0,80}?clearStreamMsg\(\)/)
++    assert.match(r.body, /threadId && \(t==="chat\.done"\|\|t==="chat\.user"\|\|t==="file\.uploaded"\)/)
++    assert.match(r.body, /clearStreamMsg\(\);paintUser/)
++    // Review fixes (2026-08-31): cross-thread token guard, poll must not wipe the
++    // streaming bubble, thread switch clears it, recreated empty state keeps its id
++    assert.match(r.body, /if\(t==="chat\.token"\)\{\s*if\(d\.thread_id&&threadId&&d\.thread_id!==threadId\) return;/)
++    assert.match(r.body, /if\(d\.thread_id&&threadId&&d\.thread_id!==threadId\) return;\s*clearStreamMsg\(\);\s*busy=false/)
++    assert.match(r.body, /function selectThread\(id\)\{\s*threadId=id;\s*clearStreamMsg\(\)/)
++    assert.match(r.body, /if\(!\(streamMsg&&next\)\) renderMsgs/)
++    assert.match(r.body, /empty\.id="empty"/)
+     assert.match(r.body, /\.hint\{[^}]*display:none/)
+     assert.doesNotMatch(r.body, /grid-template-columns:var\(--rail\) var\(--list\)/)
+     assert.match(r.body, /\.rail,\.list\{[^}]*display:none/)
+diff --git a/companion/tests/voice-whisper-download.test.ts b/companion/tests/voice-whisper-download.test.ts
+index d7bc40df..5915f073 100644
+--- a/companion/tests/voice-whisper-download.test.ts
++++ b/companion/tests/voice-whisper-download.test.ts
+@@ -22,8 +22,11 @@ import {
+   deleteWhisperModel,
+   dirOccupiedBytes,
+   downloadWhisperModel,
++  normalizeModelDownloadEndpoint,
+   probeWhisperModelDir,
++  resolveModelDownloadEndpoint,
+   resolveWhisperRoot,
++  rewriteWhisperFileUrl,
+ } from "../src/voice/whisper-download"
+ import type { WhisperManifest } from "../src/voice/whisper-manifest"
+ 
+@@ -570,3 +573,155 @@ test("unknown model id rejects", async () => {
+     env.cleanup()
+   }
+ })
++
++// --- download endpoint (HF mirror) ------------------------------------------------
++
++test("normalizeModelDownloadEndpoint: https → origin; invalid/non-https → endpoint-invalid", () => {
++  assert.equal(normalizeModelDownloadEndpoint(""), "")
++  assert.equal(normalizeModelDownloadEndpoint("   "), "")
++  assert.equal(normalizeModelDownloadEndpoint("https://hf-mirror.com"), "https://hf-mirror.com")
++  // path/query dropped — origin only
++  assert.equal(
++    normalizeModelDownloadEndpoint("https://hf-mirror.com/some/path/"),
++    "https://hf-mirror.com",
++  )
++  assert.equal(
++    normalizeModelDownloadEndpoint("https://hf-mirror.com:8443"),
++    "https://hf-mirror.com:8443",
++  )
++  try {
++    normalizeModelDownloadEndpoint("http://hf-mirror.com")
++    assert.fail("should throw")
++  } catch (e) {
++    expectReason(e, "endpoint-invalid")
++  }
++  try {
++    normalizeModelDownloadEndpoint("not a url")
++    assert.fail("should throw")
++  } catch (e) {
++    expectReason(e, "endpoint-invalid")
++  }
++})
++
++test("resolveModelDownloadEndpoint: CMSPARK_HF_ENDPOINT env wins over config", () => {
++  process.env.CMSPARK_HF_ENDPOINT = "https://hf-mirror.com"
++  try {
++    assert.equal(resolveModelDownloadEndpoint(), "https://hf-mirror.com")
++  } finally {
++    delete process.env.CMSPARK_HF_ENDPOINT
++  }
++})
++
++test("rewriteWhisperFileUrl: rewrites only the huggingface.co host", () => {
++  const ep = "https://hf-mirror.com"
++  assert.equal(
++    rewriteWhisperFileUrl(
++      "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin?download=true",
++      ep,
++    ),
++    "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin?download=true",
++  )
++  // subdomains / other hosts untouched
++  assert.equal(
++    rewriteWhisperFileUrl("https://cdn-lfs.huggingface.co/x.bin", ep),
++    "https://cdn-lfs.huggingface.co/x.bin",
++  )
++  assert.equal(
++    rewriteWhisperFileUrl("https://models.cmspark.invalid/whisper/m.bin", ep),
++    "https://models.cmspark.invalid/whisper/m.bin",
++  )
++  // unparsable / empty endpoint → as-is (downstream https check fails closed)
++  assert.equal(rewriteWhisperFileUrl("notaurl", ep), "notaurl")
++  assert.equal(
++    rewriteWhisperFileUrl("https://huggingface.co/a.bin", ""),
++    "https://huggingface.co/a.bin",
++  )
++})
++
++const HF_FILE = contentOf(33, 1024)
++
++function makeHfManifest(): WhisperManifest {
++  return {
++    schemaVersion: 1,
++    models: {
++      medium: {
++        files: [
++          {
++            name: "ggml-medium.bin",
++            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
++            sha256: sha256(HF_FILE),
++            size: HF_FILE.byteLength,
++          },
++        ],
++      },
++    },
++  }
++}
++
++test("download rewrites huggingface.co file URLs to the configured mirror origin", async () => {
++  const env = makeEnv()
++  process.env.CMSPARK_HF_ENDPOINT = "https://hf-mirror.com"
++  try {
++    const manifest = makeHfManifest()
++    const rewritten =
++      "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
++    const route: FakeRoute = { body: HF_FILE, seenRanges: [], callCount: 0 }
++    await downloadWhisperModel("medium", {
++      rootDir: env.whisperRoot,
++      manifest,
++      // Original huggingface.co URL intentionally NOT routed → 404 if rewrite missed
++      fetchImpl: makeFakeFetch({ [rewritten]: route }),
++    })
++    assert.equal(route.callCount, 1)
++    assert.deepEqual(
++      readFileSync(path.join(env.whisperRoot, "medium", "ggml-medium.bin")),
++      HF_FILE,
++    )
++  } finally {
++    delete process.env.CMSPARK_HF_ENDPOINT
++    env.cleanup()
++  }
++})
++
++test("download fails closed on non-https endpoint (endpoint-invalid, zero fetch)", async () => {
++  const env = makeEnv()
++  process.env.CMSPARK_HF_ENDPOINT = "http://hf-mirror.com"
++  try {
++    let called = 0
++    await assert.rejects(
++      () =>
++        downloadWhisperModel("medium", {
++          rootDir: env.whisperRoot,
++          manifest: makeManifest(),
++          fetchImpl: (async () => {
++            called++
++            return new Response("x")
++          }) as unknown as typeof fetch,
++        }),
++      (e) => (expectReason(e, "endpoint-invalid"), true),
++    )
++    assert.equal(called, 0)
++  } finally {
++    delete process.env.CMSPARK_HF_ENDPOINT
++    env.cleanup()
++  }
++})
++
++test("non-huggingface manifest hosts are not rewritten even with endpoint set", async () => {
++  const env = makeEnv()
++  process.env.CMSPARK_HF_ENDPOINT = "https://hf-mirror.com"
++  try {
++    const manifest = makeManifest()
++    const originalUrl = manifest.models.medium.files[0]!.url
++    const route: FakeRoute = { body: FILE_A, seenRanges: [], callCount: 0 }
++    await downloadWhisperModel("medium", {
++      rootDir: env.whisperRoot,
++      manifest,
++      fetchImpl: makeFakeFetch({ [originalUrl]: route }),
++    })
++    assert.equal(route.callCount, 1)
++  } finally {
++    delete process.env.CMSPARK_HF_ENDPOINT
++    env.cleanup()
++  }
++})
+diff --git a/companion/tests/voice-whisper-handlers.test.ts b/companion/tests/voice-whisper-handlers.test.ts
+index da796b12..0f5d6ce6 100644
+--- a/companion/tests/voice-whisper-handlers.test.ts
++++ b/companion/tests/voice-whisper-handlers.test.ts
+@@ -405,3 +405,209 @@ test("delete active model while engine=local → force browser", async () => {
+   assert.notEqual(r.type, "error")
+   assert.equal(getConfig().voice?.sttEngine, "browser")
+ })
++
++// --- A1: auto-activate after download -------------------------------------------
++
++function stateEchoBuildState(): (opts?: any) => Promise<any> {
++  return async () =>
++    ({
++      type: "voice.model.state",
++      sttEngine: getConfig().voice?.sttEngine ?? "browser",
++      localModelId: getConfig().voice?.localModelId ?? "medium",
++      recommendedModelId: "medium",
++      models: {},
++      binary: { status: "not_found" },
++      diskBudgetMB: 4096,
++      diskUsedMB: 0,
++      whisperRoot: "/tmp/w",
++    }) as any
++}
++
++test("download completion auto-activates localModelId when configured active not ready", async () => {
++  resetVoiceConfig({ sttEngine: "browser", localModelId: "medium" })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.download", modelId: "small", source: "settings" },
++    { broadcast: () => {} },
++    {
++      probe: () => ({ status: "absent" }),
++      downloadImpl: async () => {
++        /* success */
++      },
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.status, "started")
++  for (let i = 0; i < 8; i++) await flush()
++  // Configured active (medium) is not ready → just-downloaded small becomes active
++  assert.equal(getConfig().voice?.localModelId, "small")
++  // A1 must never touch sttEngine
++  assert.equal(getConfig().voice?.sttEngine, "browser")
++})
++
++test("download completion keeps localModelId when configured active model is ready", async () => {
++  resetVoiceConfig({ sttEngine: "local", localModelId: "medium" })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.download", modelId: "small", source: "settings" },
++    { broadcast: () => {} },
++    {
++      probe: (id: string) => (id === "medium" ? { status: "ready" } : { status: "absent" }),
++      downloadImpl: async () => {
++        /* success */
++      },
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.status, "started")
++  for (let i = 0; i < 8; i++) await flush()
++  assert.equal(getConfig().voice?.localModelId, "medium")
++  assert.equal(getConfig().voice?.sttEngine, "local")
++})
++
++test("download already-ready path also auto-activates when active not ready", async () => {
++  resetVoiceConfig({ sttEngine: "browser", localModelId: "large-v3-turbo" })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.download", modelId: "small", source: "settings" },
++    { broadcast: () => {} },
++    {
++      probe: (id: string) => (id === "small" ? { status: "ready" } : { status: "absent" }),
++      downloadImpl: async () => {
++        throw new Error("should not run (already ready)")
++      },
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.download, "already-ready")
++  assert.equal(getConfig().voice?.localModelId, "small")
++  assert.equal(getConfig().voice?.sttEngine, "browser")
++})
++
++// --- A2: get_state auto-corrects stale active model ------------------------------
++
++test("get_state auto-corrects stale localModelId when engine=local and other model ready", async () => {
++  resetVoiceConfig({ sttEngine: "local", localModelId: "medium" })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.get_state" },
++    {},
++    {
++      probe: (id: string) => (id === "medium" ? { status: "absent" } : { status: "ready" }),
++      // List order deliberately non-priority: priority medium→small→large-v3-turbo wins
++      listReady: () => ["large-v3-turbo", "small"] as WhisperModelId[],
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.type, "voice.model.state")
++  assert.equal(getConfig().voice?.localModelId, "small")
++  assert.equal(getConfig().voice?.sttEngine, "local")
++})
++
++test("get_state does not correct when engine=browser", async () => {
++  resetVoiceConfig({ sttEngine: "browser", localModelId: "large-v3-turbo" })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.get_state" },
++    {},
++    {
++      probe: () => ({ status: "absent" }),
++      listReady: () => ["small"] as WhisperModelId[],
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.type, "voice.model.state")
++  assert.equal(getConfig().voice?.localModelId, "large-v3-turbo")
++})
++
++test("get_state leaves config when no ready model exists", async () => {
++  resetVoiceConfig({ sttEngine: "local", localModelId: "medium" })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.get_state" },
++    {},
++    {
++      probe: () => ({ status: "absent" }),
++      listReady: () => [] as WhisperModelId[],
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.type, "voice.model.state")
++  assert.equal(getConfig().voice?.localModelId, "medium")
++})
++
++// --- voice.model.set_prefs --------------------------------------------------------
++
++test("validateWsMessage: set_prefs fence + field shapes", () => {
++  assert.equal(
++    validateWsMessage({ type: "voice.model.set_prefs", autoFallbackToBrowser: false }).valid,
++    false,
++  )
++  assert.equal(
++    validateWsMessage({
++      type: "voice.model.set_prefs",
++      source: "settings",
++      autoFallbackToBrowser: false,
++    }).valid,
++    true,
++  )
++  assert.equal(
++    validateWsMessage({
++      type: "voice.model.set_prefs",
++      source: "settings",
++      modelDownloadEndpoint: "https://hf-mirror.com",
++    }).valid,
++    true,
++  )
++  assert.equal(
++    validateWsMessage({
++      type: "voice.model.set_prefs",
++      source: "settings",
++      modelDownloadEndpoint: 42,
++    }).valid,
++    false,
++  )
++  assert.equal(
++    validateWsMessage({ type: "voice.model.set_prefs", source: "settings" }).valid,
++    false,
++  )
++})
++
++test("belt: set_prefs missing source → INVALID_SOURCE", async () => {
++  resetVoiceConfig()
++  const r = await handleVoiceModelMessage({
++    type: "voice.model.set_prefs",
++    autoFallbackToBrowser: true,
++  })
++  assert.equal(r.type, "error")
++  assert.equal(r.code, "INVALID_SOURCE")
++})
++
++test("set_prefs persists autoFallbackToBrowser + normalized endpoint", async () => {
++  resetVoiceConfig()
++  const r = await handleVoiceModelMessage({
++    type: "voice.model.set_prefs",
++    source: "settings",
++    autoFallbackToBrowser: false,
++    modelDownloadEndpoint: "https://hf-mirror.com/some/path/",
++  })
++  assert.equal(r.type, "voice.model.state")
++  assert.equal(r.autoFallbackToBrowser, false)
++  assert.equal(r.modelDownloadEndpoint, "https://hf-mirror.com")
++  const v = getConfig().voice
++  assert.equal(v?.autoFallbackToBrowser, false)
++  assert.equal(v?.modelDownloadEndpoint, "https://hf-mirror.com")
++})
++
++test("set_prefs default state exposes autoFallbackToBrowser=true, endpoint empty", async () => {
++  resetVoiceConfig()
++  const r = await handleVoiceModelMessage({ type: "voice.model.get_state" })
++  assert.equal(r.autoFallbackToBrowser, true)
++  assert.equal(r.modelDownloadEndpoint, "")
++})
++
++test("set_prefs rejects non-https endpoint (fail-closed, zero write)", async () => {
++  resetVoiceConfig()
++  const r = await handleVoiceModelMessage({
++    type: "voice.model.set_prefs",
++    source: "settings",
++    modelDownloadEndpoint: "http://hf-mirror.com",
++  })
++  assert.equal(r.type, "error")
++  assert.equal(r.code, "INVALID_ENDPOINT")
++  assert.notEqual(getConfig().voice?.modelDownloadEndpoint, "http://hf-mirror.com")
++})
+diff --git a/docs/adr/023-voice-local-stt-path-b.md b/docs/adr/023-voice-local-stt-path-b.md
+index 03ea0afd..1463e84e 100644
+--- a/docs/adr/023-voice-local-stt-path-b.md
++++ b/docs/adr/023-voice-local-stt-path-b.md
+@@ -2,6 +2,8 @@
+ 
+ **日期**: 2026-08-07 | **状态**: **Accepted**（**M0+M1+M2 shipped in 0.5.0** — 下载 + `voice.stt.*` 闭环 + progressive partial；**非** default-on local。2026-08-09：PATH fallback 仅 `CMSPARK_WHISPER_PATH_FALLBACK=1`；Tier-1 pin **fail-closed** 未 pin 架构；privacy_ack_v2 服务端强制。Win/Linux pin 哈希与自包含二进制仍为残余）  
+ 
++**修订（2026-08-31）**：L13 放宽为「禁止**静默**回落」而非「禁止回落」——新增 `voice.autoFallbackToBrowser`（默认 true，`voice.model.set_prefs` 双栏可关）：engine=local 且 `model_missing` 时，**当次会话**以 browser 引擎运行并显示可见横幅（非配置改写、非静默）；`binary_missing` / `companion_disconnected` 仍只允许显式 CTA。同期新增：模型下载完成自动激活 `localModelId`（不动 `sttEngine`）；`get_state` 自动修正失效的 active 模型；`voice.modelDownloadEndpoint` / `CMSPARK_HF_ENDPOINT` 下载源镜像（https 校验 fail-closed，sha256/size pin 不变）。隐私契约不变：local 的隐私门控（ack_v2）不因此放松；回退横幅即云 residual 披露。  
++
+ **相关**:  
+ - [ADR-001](001-extension-companion双层拓扑.md) 双层拓扑  
+ - [ADR-002](002-websocket-openai-streaming协议.md) WS 协议族扩展  
+@@ -135,7 +137,7 @@ Channel:      community; default engine=browser; local = explicit opt-in after p
+ | **L10** | 超时：收听 **45s**（客户端+服务端）；upload idle **10s**；推理 **90s**；abort 时 SIGTERM→SIGKILL 子进程。 |
+ | **L11** | tmp 仅 `DATA_DIR/tmp/voice-stt/…`，realpath containment，文件 **0o600** / 目录 **0o700**；result/error/abort/timeout/WS close/关机 + **boot GC** 必须 unlink；**永不**写入 threads/history。 |
+ | **L12** | 日志/审计：允许 code、size、ms、modelId；**禁止** base64 音频与全文 transcript。 |
+-| **L13** | **禁止**静默回落 browser STT。允许错误 banner **显式 CTA**「改用浏览器听写」：必须走 `voice.model.set_engine` + **`source:"settings"`** + 同行云 residual 披露 + toast。 |
++| **L13** | **禁止**静默回落 browser STT。允许错误 banner **显式 CTA**「改用浏览器听写」：必须走 `voice.model.set_engine` + **`source:"settings"`** + 同行云 residual 披露 + toast。**2026-08-31 修订**：另允许 `voice.autoFallbackToBrowser`（默认 true，可关）下的**当次会话**回落——仅限 engine=local 且 model_missing（状态镜像已水合），显示含云 residual 的可见横幅，不写配置；`binary_missing` / `companion_disconnected` 不适用。 |
+ | **L14** | **`voice_privacy_ack_v2`**：local 首次或 browser→local 前强制；v1 ack **不**满足 local；未 ack 不得 `voice.stt.start`。 |
+ | **L15** | Pack apply/install **剥离/拒绝** 任何 `voice*`、`sttEngine`、`localModelId`、`voice_privacy_ack*`、auto-send 类键。 |
+ | **L16** | 无 `audioCapture`；mic 仅扩展文档 `getUserMedia`；Tier-1 = Google Chrome desktop · macOS / Windows x64。Linux local = Tier-2（无二进制则 Disable，禁半残）。 |
+diff --git a/docs/meeting-and-dictation-user-guide.md b/docs/meeting-and-dictation-user-guide.md
+index bf966c9e..5e1bb7b1 100644
+--- a/docs/meeting-and-dictation-user-guide.md
++++ b/docs/meeting-and-dictation-user-guide.md
+@@ -69,7 +69,10 @@ OS 级全局热键（失焦仍按住）属后续增强。
+ | 层 | 内容 | 如何就绪 |
+ |----|------|----------|
+ | **本机组件** | `cmspark-whisper` + 动态库 | 安装包优先内置；若提示「未找到」→ **「安装本机听写组件」**。Windows：HTTPS 自动下载 + sha256 pin。macOS：安装包内置或从本机 **Homebrew whisper-cpp** 拷贝（需已 `brew install whisper-cpp`） |
+-| **模型权重** | ggml-small / medium / large-v3-turbo | 设置页下载到 `~/.cmspark-agent/models/whisper/` |
++| **模型权重** | ggml-small / medium / large-v3-turbo | 设置页下载到 `~/.cmspark-agent/models/whisper/`；下载完成自动设为活动模型；已下载模型会被自动识别（设置页状态探测） |
++
++下载源默认 huggingface.co，网络受限时在 **设置 → 听写 → 模型下载源** 改填镜像（如 `https://hf-mirror.com`），或设环境变量 `CMSPARK_HF_ENDPOINT`（优先级更高）。
++本机模型不可用时：默认**当次会话自动改用浏览器听写**并显示横幅（非静默、不改配置）；可在设置关闭「本机模型不可用时自动使用浏览器听写」。  
+ 
+ 打包：`build-package.bat` 在缺少 `companion/dist/bin/cmspark-whisper-win-x64.exe` 时会按 `assets/whisper-binary.manifest.json` **自动拉取**（`CMSPARK_WHISPER_AUTO_FETCH=0` 可关）。  
+ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.7.6) `whisper-bin-x64.zip` 对齐。
+@@ -111,7 +114,7 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
+ | **Mtg0** | 粘贴转写 → 生成 TL;DR / 决议 / 待办 / 风险；复制 / 发到草稿 |
+ | **Mtg1** | 显式「开始录制」本机分段 STT；结束生成纪要；`meeting_privacy_ack_v1`；默认删音频 |
+ | **Mtg2** | 智能分段（静音/段落/软长度切）；默认/批量说话人；上传 `.txt/.md`；上传音频 → 本机转写 |
+-| **Mtg3** | 实验：**自动标「发言人N」**（段特征 k-means，**非身份识别**）；弱标交替 |
++| **Mtg3** | 实验：**自动标「发言人N」**（段特征 k-means，**非身份识别**）；人数可选「自动」（silhouette 估计，近似）或手动 2/3/4；弱标交替 |
+ | **P1 近实时** | 会议录制默认渐进假设出字 + 约 8s 窗定稿（同听写 M2；非 token 真流式；large 仅终稿） |
+ | **P2 长会** | 直播录硬上限 **3 小时**（2 小时软提示）；上传音频同上限；纪要输入抬到 20 万字 |
+ | **P4 纠错/分段** | 段定稿 **opt-in AI 纠错**（上文上下文 + correct_only）；段间空行分段；结束时可选自动智能分段 |
+diff --git a/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md b/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
+index 2409c83b..5d47523f 100644
+--- a/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
++++ b/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
+@@ -27,7 +27,7 @@
+ 
+ | 项 | 锁定 |
+ |----|------|
+-| 引擎 | **本机 pure TS**：段级特征 + k-means（K=2..4，默认 2） |
++| 引擎 | **本机 pure TS**：段级特征 + k-means（K=2..4，默认 2；2026-08-31 起 UI 默认「自动」= silhouette 选 K，仍为实验/近似） |
+ | 特征 | log-energy · zero-crossing rate · 粗 spectral centroid（Float32 mono 16k） |
+ | 粒度 | **一条转写行 / 一段 STT 窗口** 一个向量（非词级） |
+ | 标签 | `发言人1` … `发言人K` 固定中文前缀；**禁止**模型编造真名 |
