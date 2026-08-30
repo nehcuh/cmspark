@@ -6,6 +6,21 @@
 
 （无）
 
+## [0.5.5] — 2026-08-29
+
+侧栏对落盘脱敏桩的友好渲染（SEC-C 脱敏的 UX 补缺；两路对抗评审 + grok 复核 SHIPPABLE）。
+
+### Fixed
+
+- **重载对话后工具结果不再显示原始桩 JSON**：敏感工具（evaluate/shell/host_*/workspace_*/部分 MCP）落盘脱敏桩（`{redacted:true,len,sha256}`）改渲染友好提示——「出于安全未持久化：原始长度 · sha256。实时轮次中内容对模型与界面可见（超长会截断），重新加载后不再保留」；失败桩追加「该调用当时已失败」。
+- 同步门控三个会露出占位符的分支：shell 命令条（`<redacted:hash=…>`）、host_computer 空任务卡（「?/? 步」）、tool 消息气泡正文（桩 JSON markdown）。
+- 判定下沉为纯函数（`redacted-stub-utils.ts`：`extractRedactedStub` / `isRedactedStubContent`），13 用例钉住 A/B 形状、失败桩、len 边界、误伤面。
+- 版本字面量补齐 lockstep：index.ts 横幅 / ACP clientInfo / outbound serverInfo 三处硬编码版本（0.5.3 bump 时的历史遗漏）纳入 `version-lockstep` 测试。
+
+### Known residuals（下轮，grok 复核记录）
+
+- 复制 / `</>` 编程接力仍输出桩 JSON；generic/MCP 深键嵌套叶桩仍在 JSON 预览中原样显示；plainError（INTERRUPTED）shell 行的命令条占位符未门控；脱敏范围讨论见 [#255](https://github.com/nehcuh/cmspark/issues/255)。
+
 ## [0.5.4] — 2026-08-29
 
 四路独立对抗评审 + grok 多路验证驱动的修复批次（spec/plan：`docs/superpowers/specs|plans/2026-08-29-post-review-adversarial-fixes.md`）。全部为已有行为 bugfix，无新需求。

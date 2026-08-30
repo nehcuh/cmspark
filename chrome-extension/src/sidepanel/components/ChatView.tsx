@@ -14,6 +14,7 @@ import {
   formatShellMetaLine,
   SHELL_BODY_PREVIEW_CHARS,
 } from "../utils/shell-card-utils"
+import { extractRedactedStub, isRedactedStubContent } from "../utils/redacted-stub-utils"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
 import {
@@ -732,6 +733,11 @@ const MessageRow = memo(function MessageRow({
 }) {
   const isUser = msg.role === "user"
   const hasLongContent = (msg.content?.length || 0) > LONG_CONTENT_THRESHOLD
+  // SEC-C: a reloaded tool row's content IS the redacted-stub JSON
+  // (companion llm/tool-batch-heal.ts persists JSON.stringify(safeResult)).
+  // The ToolCallCard hint already carries the info — skip stub bubble text.
+  // Non-sensitive tool rows are unaffected: their content keeps rendering.
+  const isToolStubContent = !isUser && isRedactedStubContent(msg.content)
   const [isEditing, setIsEditing] = useState(false)
   const [editingText, setEditingText] = useState("")
   // useRef so the keydown handler always sees the latest shortcut without
@@ -810,11 +816,12 @@ const MessageRow = memo(function MessageRow({
               <ReasoningBlock content={msg.reasoning_content} mode={showReasoningMode} />
             ) : null}
             <div style={isUser ? styles.userBubble : styles.agentBubble}>
-              {hasLongContent ? (
-                <CollapsibleMarkdown content={msg.content} maxPreview={LONG_CONTENT_PREVIEW} renderMermaid />
-              ) : (
-                <MarkdownRenderer content={msg.content} renderMermaid />
-              )}
+              {!isToolStubContent &&
+                (hasLongContent ? (
+                  <CollapsibleMarkdown content={msg.content} maxPreview={LONG_CONTENT_PREVIEW} renderMermaid />
+                ) : (
+                  <MarkdownRenderer content={msg.content} renderMermaid />
+                ))}
               {msg.tool_calls?.map((tc: any) => (
                 <ToolCallCard key={tc.id} tc={tc} />
               ))}
@@ -1112,6 +1119,13 @@ function ToolCallCard({ tc }: { tc: any }) {
   const [showRawJson, setShowRawJson] = useState(false)
   const hasResult = tc.result && !tc.error
   const userHint = hasResult ? toolResultUserHint(tc.result) : null
+  // SEC-C redacted stub: a reloaded thread reads the collapsed placeholder from
+  // threads/*.json (companion security/tool-persistence-redact.ts). Render a
+  // friendly hint instead of the raw stub JSON — live turns are unaffected.
+  const redactedStub = hasResult ? extractRedactedStub(tc.result) : null
+  // collapseResult (shape B) swallows `error` on failure rows — success===false
+  // is the only surviving signal, so surface it in the hint line.
+  const stubFailed = redactedStub !== null && tc.result?.success === false
   // Avoid stringifying huge objects on every render; cap preview stringification
   const resultStr = hasResult ? JSON.stringify(tc.result, null, 2) : ""
   const isLongResult = resultStr.length > TOOL_RESULT_PREVIEW
@@ -1172,7 +1186,8 @@ function ToolCallCard({ tc }: { tc: any }) {
     derivedStatus === "running" && (progressElapsed != null || progressOut || progressErr)
 
   // Generic tools: click card to expand JSON. Shell uses its own expand control.
-  const canExpandGeneric = hasResult && isLongResult && !isShellExec
+  // Redacted stubs never expand — there is no content to reveal.
+  const canExpandGeneric = hasResult && isLongResult && !isShellExec && !redactedStub
 
   return (
     <div
@@ -1252,7 +1267,7 @@ function ToolCallCard({ tc }: { tc: any }) {
           </button>
         )}
       </div>
-      {shellCard && shellCard.commandPreview && (
+      {shellCard && !redactedStub && shellCard.commandPreview && (
         <div
           style={{
             ...styles.toolInset,
@@ -1270,7 +1285,7 @@ function ToolCallCard({ tc }: { tc: any }) {
           {shellCard.commandPreview}
         </div>
       )}
-      {shellCard && (hasResult || shellCard.body) && (
+      {shellCard && !redactedStub && (hasResult || shellCard.body) && (
         <div data-testid="shell-result-card">
           {formatShellMetaLine(shellCard) && (
             <div
@@ -1416,7 +1431,7 @@ function ToolCallCard({ tc }: { tc: any }) {
           )}
         </div>
       )}
-      {computerCard && (
+      {computerCard && !redactedStub && (
         <div
           style={{
             ...styles.toolInset,
@@ -1469,8 +1484,21 @@ function ToolCallCard({ tc }: { tc: any }) {
           {userHint}
         </div>
       )}
+      {/* SEC-C redacted stub: persisted placeholder — show hint, not raw JSON. */}
+      {redactedStub && (
+        <div
+          style={{
+            ...styles.toolResult,
+            fontFamily: "inherit",
+            color: tokens.textMuted,
+          }}
+          data-testid="redacted-stub-hint"
+        >
+          {`出于安全未持久化：原始长度 ${redactedStub.len.toLocaleString()} 字符 · sha256 ${redactedStub.sha256}。实时轮次中内容对模型与界面可见（超长会截断），重新加载后不再保留。${stubFailed ? "该调用当时已失败。" : ""}`}
+        </div>
+      )}
       {/* Generic tools keep JSON preview; shell_exec uses plain-text card above. */}
-      {hasResult && !isShellExec && (
+      {hasResult && !isShellExec && !redactedStub && (
         <pre
           style={{
             ...styles.toolResult,

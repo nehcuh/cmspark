@@ -28,7 +28,7 @@ import * as child_process from "child_process"
 applyHardenedProcessPath()
 
 function printUsage(): void {
-  console.log(`cmspark-agent v0.5.4
+  console.log(`cmspark-agent v0.5.5
 
 Usage:
   cmspark-agent start                      启动 Companion 服务器（前台）
