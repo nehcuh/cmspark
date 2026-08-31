@@ -8,6 +8,10 @@
 
 - **shell allowlist W1e（quote/join fail-closed）**：0.5.4 闭合的是执行旗标 *变体*（pwsh 前缀、`/c`、`=`、`.exe`、node `-p` 等），不是「判定 tokenizer ≠ `spawn({shell:true})` 引号语法」。本次：POSIX 相邻引号拼接（`"-"c` → `-c`）；旗标比对前去掉空引号并认 unquoted `\`；`tokenizeSimpleArgv` 失败改为 deny（删除空白 fallback 放行）。`policy=allowlist` + 裸解释器条目下，`bash '-c' … '*'`、`bash -""c`、`bash "-"c … X=1` 不再匹配。默认 `confirm_per_command` + L2 不变（非社区默认 RCE）。含 `*`/`?` 的 allowlist 命令（即便在引号内）改为 matcher deny；词中未闭合撇号（`echo don't`）同样 tokenize-null deny——需要 glob/query/撇号字面量的操作者用 `confirm_per_command`。
 
+### Fixed
+
+- **`run_progress` adapter 三态**：显式 `null`（sticky clear）不再被 tool_result 成功路径 `!th.run_progress` 当成未播种而重新 seed。抽出 `nextRunProgressAfterToolSuccess`；toggle 对 `null` 不再 `?? { items: [] }` 写成空对象。无生产写入方（潜伏契约）。
+
 ### Known residuals
 
 - 位置参数 `bash evil.sh` / GTFOBins；`$VAR` + 残留 `shell:true`；win32 `cmd.exe` 引号语法；cwd 依赖的 `bash -[c]` pathname glob；macOS bashism `-{c,}`。

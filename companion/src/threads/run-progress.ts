@@ -104,6 +104,35 @@ export function seedRunProgress(thread: {
 }
 
 /**
+ * Adapter tick after a confirmed successful tool_result.
+ * Call only on success (adapter already gates `toolResult.success`).
+ *
+ * `undefined` return = do not write.
+ * `run_progress === null` is sticky clear — never seed.
+ * Caller-set `{ items: [] }` still reseeds on this path (pre-existing adapter
+ * behavior; TM itself does not reseed empty objects).
+ */
+export function nextRunProgressAfterToolSuccess(
+  thread: {
+    run_progress?: RunProgress | null
+    runtime_context_budget?: {
+      handoff?: { open_todos?: unknown } | null
+    } | null
+  },
+  toolName: string,
+): RunProgress | undefined {
+  if (thread.run_progress === null) return undefined
+  const current =
+    thread.run_progress != null && thread.run_progress.items.length > 0
+      ? thread.run_progress
+      : seedRunProgress(thread)
+  const next = applyToolResult(current, { tool: toolName, success: true })
+  if (next !== current) return next
+  if (thread.run_progress === undefined && next.items.length > 0) return next
+  return undefined
+}
+
+/**
  * Tick at most one oldest undone seed|user row whose item.tool === tool (exact).
  * success===true only. Never ticks model_draft. Never matches text.
  */
