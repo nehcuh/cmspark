@@ -643,7 +643,11 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         if (fallbackRef.current) {
           // Visible per-session notice (SOFT_CAP_HINT = non-terminal info chip;
           // applies in starting/listening). Dismissible; cleared on next start.
-          dispatchEv({ type: "SOFT_CAP_HINT", message: LOCAL_FALLBACK_BROWSER_BANNER })
+          dispatchEv({
+            type: "SOFT_CAP_HINT",
+            message: LOCAL_FALLBACK_BROWSER_BANNER,
+            code: "local_fallback",
+          })
         }
         try {
           if (eng === "local") {

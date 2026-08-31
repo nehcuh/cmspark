@@ -18,6 +18,7 @@ import {
   mapVoiceTransportError,
   parseVoiceSettingsSendResponse,
   privacyCopyForEngine,
+  modelProbeErrorLabel,
   progressPercent,
 } from "../src/sidepanel/voice/whisper-settings-copy"
 
@@ -94,4 +95,10 @@ test("parseVoiceSettingsSendResponse surfaces SW / disconnect failures", () => {
 
 test("mapVoiceTransportError maps unknown message type to reload hint", () => {
   assert.match(mapVoiceTransportError("Unknown message type: voice.model.download"), /重载|版本/)
+})
+
+test("modelProbeErrorLabel http/network copy points at download source", () => {
+  assert.match(modelProbeErrorLabel("http-error") || "", /模型下载源|hf-mirror/)
+  assert.match(modelProbeErrorLabel("network-error") || "", /模型下载源|hf-mirror/)
+  assert.match(modelProbeErrorLabel("HTTP 403 (https://huggingface.co/x)") || "", /模型下载源|hf-mirror/)
 })

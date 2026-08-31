@@ -11,6 +11,9 @@
 ### Fixed
 
 - **`run_progress` adapter 三态**：显式 `null`（sticky clear）不再被 tool_result 成功路径 `!th.run_progress` 当成未播种而重新 seed。抽出 `nextRunProgressAfterToolSuccess`；toggle 对 `null` 不再 `?? { items: [] }` 写成空对象。无生产写入方（潜伏契约）。
+- **语音回退横幅 CTA**：本机模型未就绪改用浏览器听写时，横幅带「去设置」（`local_fallback`，不复用 fail-closed 的 `model_missing`）；听写结束后仍保留直到关掉或下次开始。
+- **Whisper 下载失败**：`get_state` 带回 `lastDownloadError`；打开设置不再先清空错误位；文案指向模型下载源（hf-mirror）。
+- **会议自动 K**：`meeting.diarized` 回显 `K=N`，下拉同步 2–4。
 
 ### Known residuals
 

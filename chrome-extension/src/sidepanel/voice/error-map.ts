@@ -234,6 +234,7 @@ export function localSttBannerCta(code: string | null | undefined): LocalBannerC
     case "hash_fail":
       return { kind: "switch_browser", label: CTA_SWITCH_BROWSER }
     case "model_missing":
+    case "local_fallback":
       return { kind: "open_settings", label: CTA_OPEN_SETTINGS }
     default:
       return null

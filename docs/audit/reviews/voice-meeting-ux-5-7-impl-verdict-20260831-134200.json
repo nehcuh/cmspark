@@ -1,0 +1,15 @@
+{
+  "batch": "voice-meeting-ux-5-7-impl",
+  "timestamp": "20260831-134200",
+  "blast": "T2",
+  "machine": {
+    "companion_whisper_handlers": "26/26",
+    "chrome_extension_targeted": "36/36",
+    "chrome_extension_full_claude": "871/871"
+  },
+  "spec_claude": "APPROVE_WITH_NITS",
+  "spec_kimi": "APPROVE_WITH_NITS",
+  "impl_claude": "APPROVE_WITH_NITS",
+  "impl_kimi": "APPROVE_WITH_NITS",
+  "both_approve": true
+}

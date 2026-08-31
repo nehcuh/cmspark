@@ -1596,6 +1596,13 @@ export function useWebSocket() {
               : {}),
           }
           dispatch({ type: "SET_VOICE_MODEL_STATE", modelState })
+          if ("lastDownloadError" in msg) {
+            const err =
+              typeof msg.lastDownloadError === "string" && msg.lastDownloadError.trim()
+                ? msg.lastDownloadError.trim()
+                : null
+            dispatch({ type: "SET_VOICE_MODEL_ERROR", error: err })
+          }
           try {
             chrome.storage.local.set({
               lastKnownVoiceEngine: sttEngine,

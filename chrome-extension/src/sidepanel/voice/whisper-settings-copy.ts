@@ -186,9 +186,9 @@ export function modelProbeErrorLabel(error: string | undefined | null): string |
     case "model-unknown":
       return "未知模型型号"
     case "http-error":
-      return "下载失败：网络/镜像返回错误（HuggingFace 需可访问）。可检查网络后重试。"
+      return "下载失败：网络/镜像返回错误（HuggingFace 需可访问）。可改设置里的模型下载源（如 hf-mirror.com）后重试。"
     case "network-error":
-      return "下载失败：网络中断。请检查网络后重试。"
+      return "下载失败：网络中断。可改设置里的模型下载源（如 hf-mirror.com），或检查网络后重试。"
     case "disk-budget-exceeded":
       return "磁盘预算不足。请在设置删除不用的模型，或增大预算后重试。"
     case "hash-mismatch":
@@ -196,7 +196,8 @@ export function modelProbeErrorLabel(error: string | undefined | null): string |
     default:
       // Prefer full HTTP message from companion when present
       if (/HTTP \d+|redirect|network/i.test(error)) {
-        return `下载失败：${error.length > 160 ? error.slice(0, 160) + "…" : error}`
+        const body = error.length > 160 ? error.slice(0, 160) + "…" : error
+        return `下载失败：${body}。可改设置里的模型下载源（如 hf-mirror.com）。`
       }
       if (error.length > 120) return error.slice(0, 120) + "…"
       return error

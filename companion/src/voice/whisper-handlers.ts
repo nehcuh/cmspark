@@ -71,6 +71,8 @@ type ActiveBinaryDownload = { controller: AbortController }
 let activeDownload: ActiveDownload | null = null
 let activeDelete: ActiveDelete | null = null
 let activeBinaryDownload: ActiveBinaryDownload | null = null
+/** Process-level; not config.json. Hydrates get_state after a failed download. */
+let lastDownloadErrorMem: { error: string; modelId: WhisperModelId } | null = null
 
 /** Test seam: clear download/delete mutex + abort any in-flight controller. */
 export function _resetVoiceModelHandlersForTests(): void {
@@ -91,12 +93,24 @@ export function _resetVoiceModelHandlersForTests(): void {
   activeDownload = null
   activeDelete = null
   activeBinaryDownload = null
+  lastDownloadErrorMem = null
 }
 
 // --- errors -------------------------------------------------------------------
 
 function modelError(error: string, extra?: Record<string, unknown>) {
   return { type: "error" as const, family: "voice.model" as const, error, ...extra }
+}
+
+function attachLastDownloadError(state: VoiceModelStatePayload): VoiceModelStatePayload & {
+  lastDownloadError: string | null
+  lastDownloadModelId?: WhisperModelId
+} {
+  return {
+    ...state,
+    lastDownloadError: lastDownloadErrorMem?.error ?? null,
+    ...(lastDownloadErrorMem ? { lastDownloadModelId: lastDownloadErrorMem.modelId } : {}),
+  }
 }
 
 const SETTINGS_SOURCE_TYPES = new Set([
@@ -227,6 +241,7 @@ function startBackgroundDownload(
         },
       })
       logger.info("voice.model.download.completed", { modelId })
+      lastDownloadErrorMem = null
       // A1: auto-activate the just-downloaded model when the configured active
       // model is not ready (does not touch sttEngine).
       maybeAutoActivateModel(modelId, deps)
@@ -253,6 +268,7 @@ function startBackgroundDownload(
       }
       const state = await statePayload(deps)
       if (downloadError && !downloadError.includes("aborted")) {
+        lastDownloadErrorMem = { error: downloadError, modelId }
         // Push machine error into family:"voice.model" so Side Panel shows it
         // (not only probe residue like unexpected-files).
         ctx.broadcast?.(
@@ -261,13 +277,12 @@ function startBackgroundDownload(
             modelId,
           }),
         )
-        ctx.broadcast?.({
-          ...state,
-          lastDownloadError: downloadError,
-          lastDownloadModelId: modelId,
-        })
+        ctx.broadcast?.(attachLastDownloadError(state))
       } else {
-        ctx.broadcast?.(state)
+        if (downloadError?.includes("aborted")) {
+          lastDownloadErrorMem = null
+        }
+        ctx.broadcast?.(attachLastDownloadError(state))
       }
     }
   })()
@@ -316,7 +331,7 @@ export async function handleVoiceModelMessage(
       // persist localModelId correction before assembling the payload.
       autoCorrectActiveLocalModel(deps)
       const state = await statePayload(deps)
-      return state
+      return attachLastDownloadError(state)
     }
 
     case "voice.model.download": {
