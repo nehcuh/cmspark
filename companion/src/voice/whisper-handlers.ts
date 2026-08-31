@@ -10,7 +10,9 @@
 //   - download completion auto-activates localModelId when configured active
 //     model is not ready (never touches sttEngine)
 //   - get_state auto-corrects a stale localModelId when engine=local and other
-//     ready models exist (priority: medium → small → large-v3-turbo)
+//     ready models exist (priority: medium → small → large-v3-turbo); the
+//     user's explicit choice is stashed in localModelAutoCorrectedFrom and
+//     restored once that model becomes ready (never silently lost)
 //   - set_prefs persists autoFallbackToBrowser / modelDownloadEndpoint
 //     (endpoint fail-closed: valid https origin only)
 //
@@ -166,6 +168,14 @@ const AUTO_ACTIVE_PRIORITY: WhisperModelId[] = ["medium", "small", "large-v3-tur
 function maybeAutoActivateModel(modelId: WhisperModelId, deps: VoiceModelHandlerDeps): void {
   try {
     const cfg = getConfig().voice
+    // A2 restore: a stashed explicit preference regains priority the moment
+    // it becomes ready (this download may be the stashed model itself).
+    const stashed = cfg?.localModelAutoCorrectedFrom
+    if (stashed && probeModel(deps, stashed).status === "ready") {
+      setVoiceFields({ localModelId: stashed, localModelAutoCorrectedFrom: undefined })
+      logger.info("voice.model.auto_correct_restored", { restored: stashed, trigger: modelId })
+      return
+    }
     const activeId = cfg?.localModelId
     const activeReady =
       activeId != null &&
@@ -186,18 +196,35 @@ function maybeAutoActivateModel(modelId: WhisperModelId, deps: VoiceModelHandler
  * A2: engine=local but the configured active model is not ready while other
  * ready models exist → persist the correction (AUTO_ACTIVE_PRIORITY order).
  * Never touches sttEngine; no ready model → leave config untouched (gates/UI
- * surface model_missing).
+ * surface model_missing). The configured localModelId is stashed in
+ * localModelAutoCorrectedFrom so a later download restores it (see
+ * maybeAutoActivateModel); an existing stash is never overwritten. Note: after
+ * config load the factory default "medium" is indistinguishable from an
+ * explicit choice, so a default may be stashed too — restoring it just returns
+ * to the recommended model (harmless).
+ * Self-heals: a stashed model that is ready again is restored here directly.
  */
 function autoCorrectActiveLocalModel(deps: VoiceModelHandlerDeps): void {
   try {
     const cfg = getConfig().voice
     if (cfg?.sttEngine !== "local") return
+    const stashed = cfg.localModelAutoCorrectedFrom
+    if (stashed && probeModel(deps, stashed).status === "ready") {
+      setVoiceFields({ localModelId: stashed, localModelAutoCorrectedFrom: undefined })
+      logger.info("voice.model.get_state.auto_correct_restored", { restored: stashed })
+      return
+    }
     const activeId = (cfg.localModelId ?? RECOMMENDED_WHISPER_MODEL) as WhisperModelId
     if (probeModel(deps, activeId).status === "ready") return
     const ready = readyList(deps)
     if (ready.length === 0) return
     const next = AUTO_ACTIVE_PRIORITY.find((id) => ready.includes(id)) ?? ready[0]!
-    setVoiceFields({ localModelId: next })
+    const explicit = cfg.localModelId
+    setVoiceFields({
+      localModelId: next,
+      // Do not overwrite an existing stash — it holds the original choice.
+      ...(explicit && !stashed ? { localModelAutoCorrectedFrom: explicit } : {}),
+    })
     logger.info("voice.model.get_state.auto_corrected_active", { from: activeId, to: next })
   } catch (err) {
     logger.warn("voice.model.get_state.auto_correct_failed", {
@@ -461,12 +488,19 @@ export async function handleVoiceModelMessage(
         const wasActive =
           cfg?.localModelId === modelId ||
           (cfg?.localModelId == null && modelId === "medium")
-        if (cfg?.sttEngine === "local" && wasActive) {
-          setVoiceFields({ sttEngine: "browser" })
-          logger.info("voice.model.delete.forced_browser", {
-            modelId,
-            reason: "deleted-active-local-model",
+        // Deleting the stashed preference voids it — nothing left to restore.
+        const clearStash = cfg?.localModelAutoCorrectedFrom === modelId
+        if ((cfg?.sttEngine === "local" && wasActive) || clearStash) {
+          setVoiceFields({
+            ...(cfg?.sttEngine === "local" && wasActive ? { sttEngine: "browser" as const } : {}),
+            ...(clearStash ? { localModelAutoCorrectedFrom: undefined } : {}),
           })
+          if (cfg?.sttEngine === "local" && wasActive) {
+            logger.info("voice.model.delete.forced_browser", {
+              modelId,
+              reason: "deleted-active-local-model",
+            })
+          }
         }
 
         logger.info("voice.model.deleted", { modelId })
@@ -508,7 +542,7 @@ export async function handleVoiceModelMessage(
           { code: "MODEL_NOT_READY", modelId, status: probe.status },
         )
       }
-      setVoiceFields({ localModelId: modelId })
+      setVoiceFields({ localModelId: modelId, localModelAutoCorrectedFrom: undefined })
       logger.info("voice.model.set_active", { modelId })
       const state = await statePayload(deps)
       ctx.broadcast?.(state)
@@ -549,8 +583,38 @@ export async function handleVoiceModelMessage(
       }
 
       const cfg = getConfig().voice
+      // Restore-first (same rule as maybeAutoActivateModel): if a stashed
+      // preference is ready now, enabling local returns to it directly —
+      // otherwise the first get_state after enabling would visibly switch
+      // models right after the user turned local on.
+      const stashedForEngine = cfg?.localModelAutoCorrectedFrom
+      if (
+        stashedForEngine &&
+        ready.includes(stashedForEngine) &&
+        probeModel(deps, stashedForEngine).status === "ready"
+      ) {
+        setVoiceFields({
+          sttEngine: "local",
+          localModelId: stashedForEngine,
+          localModelAutoCorrectedFrom: undefined,
+        })
+        logger.info("voice.model.set_engine", {
+          engine: "local",
+          localModelId: stashedForEngine,
+          restoredStash: true,
+        })
+        const state = await statePayload(deps)
+        ctx.broadcast?.(state)
+        return state
+      }
       let activeId = (cfg?.localModelId ?? RECOMMENDED_WHISPER_MODEL) as WhisperModelId
+      // Overriding an explicitly configured model stashes it (same A2 rule as
+      // get_state auto-correct) so a later download can restore the choice.
+      let overrideFrom: WhisperModelId | undefined
       if (!ready.includes(activeId)) {
+        if (cfg?.localModelId && isWhisperModelId(cfg.localModelId)) {
+          overrideFrom = cfg.localModelId
+        }
         // Prefer recommended if ready; else first ready
         if (ready.includes(RECOMMENDED_WHISPER_MODEL)) {
           activeId = RECOMMENDED_WHISPER_MODEL
@@ -573,7 +637,14 @@ export async function handleVoiceModelMessage(
         })
       }
 
-      setVoiceFields({ sttEngine: "local", localModelId: activeId })
+      setVoiceFields({
+        sttEngine: "local",
+        localModelId: activeId,
+        // Do not overwrite an existing stash — it holds the original choice.
+        ...(overrideFrom && !cfg?.localModelAutoCorrectedFrom
+          ? { localModelAutoCorrectedFrom: overrideFrom }
+          : {}),
+      })
       logger.info("voice.model.set_engine", { engine: "local", localModelId: activeId })
       const state = await statePayload(deps)
       ctx.broadcast?.(state)

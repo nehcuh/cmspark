@@ -193,6 +193,62 @@ describe("config.voice load validation", { concurrency: 1 }, () => {
     }
   })
 
+  test("localModelAutoCorrectedFrom: legal retained, illegal deleted + warn", async () => {
+    await resetConfigFile()
+    writeDiskConfig({
+      voice: {
+        sttEngine: "local",
+        localModelId: "small",
+        modelDiskBudgetMB: 4096,
+        localModelAutoCorrectedFrom: "large-v3-turbo",
+      },
+    })
+    assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
+
+    for (const bad of ["tiny", "", 0, null, {}]) {
+      writeDiskConfig({
+        voice: {
+          sttEngine: "local",
+          localModelId: "small",
+          modelDiskBudgetMB: 4096,
+          localModelAutoCorrectedFrom: bad,
+        },
+      })
+      const logs: string[] = []
+      const orig = console.warn
+      console.warn = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+      try {
+        assert.equal(
+          getConfig().voice?.localModelAutoCorrectedFrom,
+          undefined,
+          `bad=${JSON.stringify(bad)}`,
+        )
+      } finally {
+        console.warn = orig
+      }
+      assert.ok(
+        logs.some((l) => l.includes("localModelAutoCorrectedFrom")),
+        `bad=${JSON.stringify(bad)} should warn`,
+      )
+    }
+  })
+
+  test("setVoiceFields undefined-clear drops localModelAutoCorrectedFrom on disk", async () => {
+    await resetConfigFile()
+    writeDiskConfig({
+      voice: {
+        sttEngine: "local",
+        localModelId: "small",
+        modelDiskBudgetMB: 4096,
+        localModelAutoCorrectedFrom: "large-v3-turbo",
+      },
+    })
+    setVoiceFields({ localModelAutoCorrectedFrom: undefined })
+    clearConfigCache()
+    assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
+    assert.equal("localModelAutoCorrectedFrom" in (readSavedConfig().voice ?? {}), false)
+  })
+
   test("legal values retained", async () => {
     await resetConfigFile()
     writeDiskConfig({

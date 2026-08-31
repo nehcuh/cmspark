@@ -590,7 +590,296 @@ test("get_state leaves config when no ready model exists", async () => {
   assert.equal(getConfig().voice?.localModelId, "medium")
 })
 
-// --- voice.model.set_prefs --------------------------------------------------------
+// --- A2 restore: stashed explicit preference is never lost -----------------------
+
+test("get_state auto-correct stashes the explicit localModelId", async () => {
+  resetVoiceConfig({ sttEngine: "local", localModelId: "large-v3-turbo" })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.get_state" },
+    {},
+    {
+      probe: (id: string) => (id === "large-v3-turbo" ? { status: "absent" } : { status: "ready" }),
+      listReady: () => ["small"] as WhisperModelId[],
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(getConfig().voice?.localModelId, "small")
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
+})
+
+test("get_state auto-correct does not overwrite an existing stash", async () => {
+  resetVoiceConfig({
+    sttEngine: "local",
+    localModelId: "medium",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.get_state" },
+    {},
+    {
+      probe: (id: string) => (id === "small" ? { status: "ready" } : { status: "absent" }),
+      listReady: () => ["small"] as WhisperModelId[],
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(getConfig().voice?.localModelId, "small")
+  // Original explicit choice survives the second correction
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
+})
+
+test("get_state self-heals: stashed model ready again → restored, stash cleared, no re-correction", async () => {
+  resetVoiceConfig({
+    sttEngine: "local",
+    localModelId: "small",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.get_state" },
+    {},
+    {
+      // Current active (small) probes ABSENT; only the stash (and medium) are
+      // ready. If the post-restore early return were missing, the correction
+      // below would run on the stale activeId=small and overwrite the restored
+      // large-v3-turbo with priority-pick medium.
+      probe: (id: string) => (id === "small" ? { status: "absent" } : { status: "ready" }),
+      listReady: () => ["medium", "large-v3-turbo"] as WhisperModelId[],
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(getConfig().voice?.localModelId, "large-v3-turbo")
+  // Stash cleared on disk too — survives a reload (restart-survival is the
+  // stated rationale for the config.json backing).
+  clearConfigCache()
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
+})
+
+test("download completion does not restore while stashed model still probes absent", async () => {
+  resetVoiceConfig({
+    sttEngine: "local",
+    localModelId: "small",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.download", modelId: "large-v3-turbo", source: "settings" },
+    { broadcast: () => {} },
+    {
+      probe: (id: string) => (id === "large-v3-turbo" ? { status: "absent" } : { status: "ready" }),
+      downloadImpl: async () => {
+        /* success — probe is ready-bound per id below at completion time */
+      },
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.status, "started")
+  for (let i = 0; i < 8; i++) await flush()
+  // Probe still reports the stashed model absent at completion → no restore;
+  // correction and stash are kept for a later ready event.
+  assert.equal(getConfig().voice?.localModelId, "small")
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
+})
+
+test("download completion of the stashed model itself restores it", async () => {
+  resetVoiceConfig({
+    sttEngine: "local",
+    localModelId: "small",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  let largeReady = false
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.download", modelId: "large-v3-turbo", source: "settings" },
+    { broadcast: () => {} },
+    {
+      probe: (id: string) => {
+        if (id === "large-v3-turbo") return largeReady ? { status: "ready" } : { status: "absent" }
+        return { status: "ready" }
+      },
+      downloadImpl: async () => {
+        largeReady = true
+      },
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.status, "started")
+  for (let i = 0; i < 8; i++) await flush()
+  assert.equal(getConfig().voice?.localModelId, "large-v3-turbo")
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
+})
+
+test("set_active is a fresh explicit choice → clears the stash", async () => {
+  resetVoiceConfig({
+    sttEngine: "local",
+    localModelId: "small",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.set_active", modelId: "medium", source: "settings" },
+    {},
+    {
+      probe: () => ({ status: "ready" }),
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(getConfig().voice?.localModelId, "medium")
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
+})
+
+test("delete of the stashed model clears the stash", async () => {
+  resetVoiceConfig({
+    sttEngine: "local",
+    localModelId: "small",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.delete", modelId: "large-v3-turbo", source: "settings" },
+    { broadcast: () => {} },
+    {
+      deleteImpl: async () => {
+        /* success */
+      },
+      probe: () => ({ status: "ready" }),
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.deleted, true)
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
+  // Deleted model was not the active one → engine untouched
+  assert.equal(getConfig().voice?.sttEngine, "local")
+})
+
+test("set_engine local overriding an explicit model stashes it", async () => {
+  resetVoiceConfig({ sttEngine: "browser", localModelId: "large-v3-turbo" })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.set_engine", engine: "local", privacy_ack_v2: true, source: "settings" },
+    {},
+    {
+      probe: (id: string) => (id === "large-v3-turbo" ? { status: "absent" } : { status: "ready" }),
+      listReady: () => ["medium", "small"] as WhisperModelId[],
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(getConfig().voice?.sttEngine, "local")
+  assert.equal(getConfig().voice?.localModelId, "medium")
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
+})
+
+test("set_engine local restores a ready stash first (no post-enable model switch)", async () => {
+  resetVoiceConfig({
+    sttEngine: "browser",
+    localModelId: "small",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.set_engine", engine: "local", privacy_ack_v2: true, source: "settings" },
+    {},
+    {
+      probe: () => ({ status: "ready" }),
+      listReady: () => ["medium", "small", "large-v3-turbo"] as WhisperModelId[],
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(getConfig().voice?.sttEngine, "local")
+  assert.equal(getConfig().voice?.localModelId, "large-v3-turbo")
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
+})
+
+test("set_engine local with no ready model → zero write, existing stash preserved", async () => {
+  resetVoiceConfig({
+    sttEngine: "browser",
+    localModelId: "small",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.set_engine", engine: "local", privacy_ack_v2: true, source: "settings" },
+    {},
+    {
+      probe: () => ({ status: "absent" }),
+      listReady: () => [] as WhisperModelId[],
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "NO_READY_MODEL")
+  assert.equal(getConfig().voice?.sttEngine, "browser")
+  assert.equal(getConfig().voice?.localModelId, "small")
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
+})
+
+test("get_state steady state: stash pending, current active ready → no correction, stash kept", async () => {
+  resetVoiceConfig({
+    sttEngine: "local",
+    localModelId: "small",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.get_state" },
+    {},
+    {
+      probe: (id: string) => (id === "large-v3-turbo" ? { status: "absent" } : { status: "ready" }),
+      listReady: () => ["small", "medium"] as WhisperModelId[],
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.type, "voice.model.state")
+  assert.equal(getConfig().voice?.localModelId, "small")
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
+})
+
+test("download of a non-stashed model while stash exists: A1 keeps the stash", async () => {
+  resetVoiceConfig({
+    sttEngine: "local",
+    localModelId: "small",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.download", modelId: "medium", source: "settings" },
+    { broadcast: () => {} },
+    {
+      probe: (id: string) => {
+        if (id === "large-v3-turbo") return { status: "absent" }
+        if (id === "small") return { status: "ready" }
+        return { status: "absent" }
+      },
+      downloadImpl: async () => {
+        /* success */
+      },
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.status, "started")
+  for (let i = 0; i < 8; i++) await flush()
+  // Active (small) already ready → A1 no-op; stash untouched
+  assert.equal(getConfig().voice?.localModelId, "small")
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
+})
+
+test("delete of active AND stashed model: single write forces browser + clears stash", async () => {
+  resetVoiceConfig({
+    sttEngine: "local",
+    localModelId: "large-v3-turbo",
+    localModelAutoCorrectedFrom: "large-v3-turbo",
+  })
+  const r = await handleVoiceModelMessage(
+    { type: "voice.model.delete", modelId: "large-v3-turbo", source: "settings" },
+    { broadcast: () => {} },
+    {
+      deleteImpl: async () => {
+        /* success */
+      },
+      probe: () => ({ status: "absent" }),
+      buildState: stateEchoBuildState(),
+    },
+  )
+  assert.equal(r.deleted, true)
+  assert.equal(getConfig().voice?.sttEngine, "browser")
+  clearConfigCache()
+  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
+})
 
 test("validateWsMessage: set_prefs fence + field shapes", () => {
   assert.equal(

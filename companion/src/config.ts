@@ -176,6 +176,14 @@ export interface VoiceConfig {
    * 环境变量 CMSPARK_HF_ENDPOINT 优先于此字段（getEnvApiKey 先例）。
    */
   modelDownloadEndpoint?: string
+  /**
+   * A2 auto-correct 暂存：get_state/set_engine 把未就绪的 localModelId 改成
+   * 已就绪模型时，配置中的原值暂存于此；该模型一旦 ready 即恢复并
+   * 清除（maybeAutoActivateModel / get_state 自愈）。用户显式 set_active 或
+   * 删除被暂存的模型时清除。注意：load 后出厂默认 "medium" 与显式选择不可
+   * 区分，默认值也可能被暂存——其恢复效果即回到推荐模型，无害。
+   */
+  localModelAutoCorrectedFrom?: "small" | "medium" | "large-v3-turbo"
 }
 
 /** Wire protocol for chat completions. Default "openai". */
@@ -929,6 +937,15 @@ export function getConfig(): CompanionConfig {
           )
           delete voice.modelDownloadEndpoint
         }
+      }
+    }
+    if (voice.localModelAutoCorrectedFrom !== undefined) {
+      const m = voice.localModelAutoCorrectedFrom
+      if (m !== "small" && m !== "medium" && m !== "large-v3-turbo") {
+        console.warn(
+          `[cmspark-agent] voice.localModelAutoCorrectedFrom 非法（须为 "small"|"medium"|"large-v3-turbo"）——按未配置处理 (config tampering?)`,
+        )
+        delete voice.localModelAutoCorrectedFrom
       }
     }
   }

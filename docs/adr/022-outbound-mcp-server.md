@@ -78,6 +78,8 @@ Channel:      community 默认；enterprise 模块不进 default outbound set
 | **L8** | 确认 UX 是产品。凡 outbound **可写/需确认** 路径：每次需确认的调用 **必须** 在不要求 Side Panel 聚焦时暴露 allow/deny（托盘通知、全局入口、或强制聚焦）。**仅 Side Panel 确认对 IDE Agent 不足。** |
 | **L9** | 交互型 outbound profile **强制双入口 tab lease**：复用 [ADR-015](015-multi-agent-orchestrator-tab-lock.md)；Side Panel 与 MCP 不得互抢同一 tab。冲突默认：**Side Panel 赢**，MCP 排队并披露。交互 Phase 0 任务前必须具备，否则 bake-off 指标无效。 |
 
+> **L4+ 实现期细化（2026-08-31，commit `123eaf2b`）——exfil grant 双轨语义**：外泄类工具（L3+）的 grant 旗标按 transport 分轨判定。**HTTP 轨**（`companion-http.ts`）：调用方持已认证的 `grant_id`，**按钥匙本身**判定——只有该 grant 自己的 `allow_page_export` 授权外泄，与 grant-cli 对操作员承诺的「这把钥匙」一致。**stdio 轨**（`bridge.ts`/`facade.ts`）：无 grant 凭证可用，**按 caller** 判定——caller 名下任一存活带旗 grant 即放行。操作员 HITL 会话（`hasOutboundDisclosure`）在两条轨上**仍按 caller_id** 键控（有意的不对称：旗 per-key、HITL per-caller）——一次操作员批准武装该 caller 的会话，而持久外泄同意在 HTTP 轨上保持 per-key。caller 自报 `disclosure_accepted` 与 HTTP/stdio acknowledge **均不**满足此外泄门。`grant_id` 只来自认证通过的 Bearer grant，永不读请求 body；`caller_id` 与 grant 绑定（`GRANT_CALLER_MISMATCH`）。
+
 ### 4. 默认工具面（Phase 0 profile）
 
 实现权威：`companion/src/outbound-mcp/profile.ts`。概念白名单（6–8 个，可微调但不得默默塞入禁类）：
@@ -217,7 +219,7 @@ Bake-off 默认非敏感页；敏感页须显式 disclosure（L3+）。
 | Live bridge → 内部 tool 调度 | loopback HTTP + createToolExecutor | ✅ P0c |
 | Tray/全局确认（L8） | 托盘优先 + 全面板 fan-out + OS notify；超时 `OUTBOUND_CONFIRM_REQUIRED` | ✅ 代码路径 |
 | Tab lease 双入口（L9） | `outbound_mcp:<caller>` lease；Side Panel 赢 | ✅ 代码路径 |
-| Grant 模型（L4+） | P1 发货门 | **待** P1 |
+| Grant 模型（L4+） | per-key grant（`outbound-grants.ts`：32B 随机 token、sha256 存储、revoke/expiry）+ exfil 双轨判定（见 L4+ 修订注） | ✅ 代码路径（2026-08-31） |
 
 **Inbound** MCP 客户端栈（`companion/src/mcp/`）保持不变：用户仍可把外部 server 接到 Side Panel Agent。
 
@@ -232,6 +234,7 @@ Bake-off 默认非敏感页；敏感页须显式 disclosure（L3+）。
 | 2026-08-04 | **本 ADR Accepted**：brief 升格为决策 SoT；实现仍按 Phase 0→P1 门控 |
 | 2026-08-04 | 实现闸门：Eval Engineering skill + [P0c eval gates](../superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md)（M1–M9 · T3 dual） |
 | 2026-08-04 | 场景应用（非本 ADR 规范）：[Daily Content Loop brief](../decisions/daily-content-loop-brief-2026-08-04.md) — 定时情报环用 L1 采集，非 L2/值守 |
+| 2026-08-31 | L4+ grant 语义修订：exfil 判定双轨化（HTTP per-key / stdio per-caller；HITL 会话仍 per-caller），commit `123eaf2b`；补 L4+ 修订注 + 实现地图 Grant 行 |
 
 ---
 
