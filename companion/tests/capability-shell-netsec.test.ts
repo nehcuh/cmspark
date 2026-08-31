@@ -117,6 +117,29 @@ test("P1a allowlist: non-prefix still denied with not-in-allowlist", async () =>
   assert.match((r as { error: string }).error, /not in allowlist/)
 })
 
+test("W1e policy: quoted -c + glob and adjacent-quote split do not allow", async () => {
+  enableShellAllowlist(["bash"])
+  const a = shell.commandAllowedByPolicy("bash '-c' 'echo PWNED' '*'")
+  assert.equal(a.ok, false)
+  const b = shell.commandAllowedByPolicy('bash "-"c "echo PWNED" X=1')
+  assert.equal(b.ok, false)
+  enableShellAllowlist(["python3"])
+  const py = shell.commandAllowedByPolicy('python3 -""c "import os"')
+  assert.equal(py.ok, false)
+})
+
+test("W1e I5: confirm_per_command still allows glob (metachar ban allowlist-only)", async () => {
+  saveConfig({
+    capability_profile: "enterprise",
+    modules: {
+      shell: { available: true, enabled: true, policy: "confirm_per_command" },
+    },
+  } as any)
+  clearConfigCache()
+  const r = shell.commandAllowedByPolicy("echo *")
+  assert.equal(r.ok, true)
+})
+
 test("P1a confirm_per_command: metachar ban is allowlist-only (policy layer)", async () => {
   saveConfig({
     capability_profile: "enterprise",

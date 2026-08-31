@@ -174,12 +174,13 @@ export function hasShellAllowlistMetachar(command: string): boolean {
  * `powershell Get-Date` (implicit -Command) is the same class as
  * `bash evil.sh`. Operators who allowlist a bare shell accept that.
  *
- * CLASS BOUNDARY (grok review W1d — CLOSES this class): for bare
- * interpreter/shell allowlist entries, exec-flag denial is best-effort
- * defense-in-depth, NOT a complete enumeration. GTFOBins-class vectors
- * (awk/sed/find/…) deliberately live outside this table; the real gate is
- * the L2 confirmation. Single-point flag variants in this class are no
- * longer tracked item-by-item unless a concrete attack path is shown.
+ * CLASS BOUNDARY (W1d + W1e): flag-variant enumeration (W1d) plus
+ * quote/join fail-closed (W1e: POSIX adjacent-quote join, intra-token
+ * empty quotes, unquoted `\`-escape on flag compare, tokenize-null deny).
+ * When L2 is skipped (enterprise auto-approve / session trust) the matcher
+ * IS the last line for exec-flags on a bare allowlisted interpreter.
+ * GTFOBins / positional `bash evil.sh`, `$VAR` under shell:true, win32
+ * cmd grammar, and `[c]` pathname glob remain declared residuals.
  */
 type ShellDenyKind = "posix" | "pwsh" | "deno" | "cmd"
 const SHELL_FAMILY_DENY: Record<string, ShellDenyKind> = {
@@ -197,7 +198,28 @@ function shellDenyKind(argv0: string): ShellDenyKind | null {
   return SHELL_FAMILY_DENY[interpreterBasename(argv0)] ?? null
 }
 
+/**
+ * Flag-compare only (not argv rewrite). Drop `'`/`"`; unquoted `\` consumes
+ * the next char so `-\c` matches `-c`. Tokenizer already POSIX-joins adjacent
+ * quoted spans (`"-"c` → `-c`); this is belt for leftover quote/`\` in a token.
+ * Do not apply to path tokens in tokenizeSimpleArgv (Windows `C:\Users` must stay).
+ */
+function normalizeShellTokenForFlagMatch(token: string): string {
+  let out = ""
+  for (let i = 0; i < token.length; i++) {
+    const c = token[i]
+    if (c === "\\" && i + 1 < token.length) {
+      out += token[++i]
+      continue
+    }
+    if (c === "'" || c === '"') continue
+    out += c
+  }
+  return out
+}
+
 function tokenIsDeniedShellFlag(kind: ShellDenyKind, token: string): boolean {
+  token = normalizeShellTokenForFlagMatch(token)
   if (kind === "posix") {
     if (token === "-c") return true
     // Clustered shorts containing c (`-lc`, `-ec`, `-xc`) all execute a command.
@@ -247,25 +269,6 @@ function argvHasDeniedShellFlags(kind: ShellDenyKind, argv: string[]): boolean {
   return false
 }
 
-/**
- * Fallback raw-argv scan per shell kind (only used when tokenizeSimpleArgv
- * fails). Splits on whitespace and reuses tokenIsDeniedShellFlag so the
- * fallback path stays in lock-step with the tokenized path (unique prefixes,
- * `=` glued forms, --eval — a parallel regex set would drift).
- *
- * ACCEPTED RESIDUAL (grok review W1c): a QUOTED deny flag slips through here
- * — `bash '-c' '$x'` splits to `'-c'`, which never equals `-c`. Theoretical
- * only: tokenizeSimpleArgv fails exactly when the command contains
- * metacharacters / `$` / wildcards, and those are rejected upstream by
- * hasShellAllowlistMetachar under policy=allowlist before this matcher runs.
- */
-function rawArgsHaveDeniedShellFlags(kind: ShellDenyKind, rawArgs: string): boolean {
-  for (const token of rawArgs.split(/\s+/)) {
-    if (token && tokenIsDeniedShellFlag(kind, token)) return true
-  }
-  return false
-}
-
 const INTERPRETER_BASENAMES = new Set([
   "python",
   "python3",
@@ -304,6 +307,7 @@ function isKnownInterpreter(argv0: string): boolean {
  *   `-r` (require) is unaffected because the check is php-scoped.
  */
 function tokenIsDeniedInterpreterFlag(token: string, clustered: boolean, base?: string): boolean {
+  token = normalizeShellTokenForFlagMatch(token)
   if (token === "-c" || token === "-e" || token === "--command" || token === "--eval") return true
   if (token.startsWith("--command=") || token.startsWith("--eval=")) return true
   if (/^-c./.test(token)) return true
@@ -331,26 +335,11 @@ function argvHasDeniedInterpreterFlags(argv: string[]): boolean {
 }
 
 /**
- * Fallback raw-argv scan for interpreters (only when tokenizeSimpleArgv
- * fails). Whitespace-split + tokenIsDeniedInterpreterFlag, mirroring
- * rawArgsHaveDeniedShellFlags — a parallel regex (the old
- * BARE_INTERPRETER_DENY_FLAGS) would drift from the token rules, e.g. it
- * knew nothing of node -p / perl -E / php -r. Same quoted-flag residual as
- * the shell fallback applies (metachar layer rejects upstream anyway).
- */
-function rawArgsHaveDeniedInterpreterFlags(ent: string, rawArgs: string): boolean {
-  const base = interpreterBasename(ent)
-  for (const token of rawArgs.split(/\s+/)) {
-    if (token && tokenIsDeniedInterpreterFlag(token, true, base)) return true
-  }
-  return false
-}
-
-/**
  * P1 SEC-07 + Batch C C3: allowlist match as argv template, not naive prefix.
  * Deny exec flags on parsed argv (quoted `python3 '-c'`). Clustered shorts
  * (-ic) only for known interpreters / shell families so `grep -ic` / `wc -c`
  * stay allowed. Shells use their own flag set — `bash -e` (errexit) is legal.
+ * W1e: unparseable argv (tokenize null) is deny — no whitespace fallback allow.
  */
 export function commandMatchesAllowlistEntry(command: string, entry: string): boolean {
   const cmd = command.trim()
@@ -361,24 +350,17 @@ export function commandMatchesAllowlistEntry(command: string, entry: string): bo
   if (/\s/.test(ent)) return true
 
   const tokens = tokenizeSimpleArgv(cmd)
-  if (tokens) {
-    let i = 0
-    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++
-    const rest = tokens.slice(i)
-    if (rest.length >= 2 && isKnownInterpreter(rest[0]) && argvHasDeniedInterpreterFlags(rest)) {
-      return false
-    }
-    const kind = rest.length >= 2 ? shellDenyKind(rest[0]) : null
-    if (kind && argvHasDeniedShellFlags(kind, rest)) {
-      return false
-    }
-    return true
-  }
-  if (isKnownInterpreter(ent) && rawArgsHaveDeniedInterpreterFlags(ent, cmd.slice(ent.length))) {
+  if (!tokens) return false
+  let i = 0
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++
+  const rest = tokens.slice(i)
+  if (rest.length >= 2 && isKnownInterpreter(rest[0]) && argvHasDeniedInterpreterFlags(rest)) {
     return false
   }
-  const kind = shellDenyKind(ent)
-  if (kind && rawArgsHaveDeniedShellFlags(kind, cmd.slice(ent.length))) return false
+  const kind = rest.length >= 2 ? shellDenyKind(rest[0]) : null
+  if (kind && argvHasDeniedShellFlags(kind, rest)) {
+    return false
+  }
   return true
 }
 
@@ -516,6 +498,10 @@ export function shellSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): {
  * Tokenize a simple command. Returns null if metacharacters, wildcards, unclosed
  * quotes, or empty. Unlike tryParseSimpleArgv this keeps ENV= tokens so C3 can
  * strip them and still scan deny flags.
+ *
+ * W1e T-join: POSIX adjacent-quote concatenation — `"-"c` is one word `-c`,
+ * `"foo""bar"` is `foobar`. Unquoted backslash is kept (Windows `C:\Users`);
+ * flag-match `\`-consume lives in normalizeShellTokenForFlagMatch only.
  */
 export function tokenizeSimpleArgv(command: string): string[] | null {
   const cmd = (command || "").trim()
@@ -528,35 +514,33 @@ export function tokenizeSimpleArgv(command: string): string[] | null {
   while (i < cmd.length) {
     while (i < cmd.length && /\s/.test(cmd[i])) i++
     if (i >= cmd.length) break
-    const c = cmd[i]
-    if (c === '"' || c === "'") {
-      const quote = c
-      i++
-      let buf = ""
-      while (i < cmd.length && cmd[i] !== quote) {
-        if (
-          cmd[i] === "\\" &&
-          i + 1 < cmd.length &&
-          (cmd[i + 1] === quote || cmd[i + 1] === "\\")
-        ) {
-          buf += cmd[i + 1]
-          i += 2
-          continue
+    let buf = ""
+    while (i < cmd.length && !/\s/.test(cmd[i])) {
+      const c = cmd[i]
+      if (c === '"' || c === "'") {
+        const quote = c
+        i++
+        while (i < cmd.length && cmd[i] !== quote) {
+          if (
+            cmd[i] === "\\" &&
+            i + 1 < cmd.length &&
+            (cmd[i + 1] === quote || cmd[i + 1] === "\\")
+          ) {
+            buf += cmd[i + 1]
+            i += 2
+            continue
+          }
+          buf += cmd[i]
+          i++
         }
-        buf += cmd[i]
+        if (i >= cmd.length) return null
+        i++
+      } else {
+        buf += c
         i++
       }
-      if (i >= cmd.length) return null
-      i++
-      tokens.push(buf)
-    } else {
-      let buf = ""
-      while (i < cmd.length && !/\s/.test(cmd[i])) {
-        buf += cmd[i]
-        i++
-      }
-      tokens.push(buf)
     }
+    tokens.push(buf)
   }
   if (tokens.length === 0) return null
   if (!tokens[0]) return null

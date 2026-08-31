@@ -40,6 +40,10 @@ describe("tryParseSimpleArgv (P1b)", () => {
       "--flag",
     ])
   })
+  it("joins adjacent quoted spans (POSIX T-join)", () => {
+    assert.deepEqual(tryParseSimpleArgv('"foo""bar"'), ["foobar"])
+    assert.deepEqual(tryParseSimpleArgv('bash "-"c id'), ["bash", "-c", "id"])
+  })
   it("preserves Windows path backslashes inside quotes (B2)", () => {
     assert.deepEqual(tryParseSimpleArgv('python "C:\\Users\\t\\script.py" --flag'), [
       "python",
