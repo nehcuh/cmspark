@@ -725,3 +725,18 @@ test("run_progress_propose is catalog companion not L2 not outbound", () => {
   assert.ok(WORKER_HARD_DENY.has("run_progress_propose"))
   assert.ok(getAllToolDefinitions().some((t) => t.function.name === "run_progress_propose"))
 })
+
+test("adapter prompt and gate source locks", () => {
+  const ad = readSrc("llm", "adapter.ts")
+  const baseStart = ad.indexOf("const basePrompt =")
+  const baseEnd = ad.indexOf("const builtPrompt", baseStart)
+  const base = ad.slice(baseStart, baseEnd)
+  assert.doesNotMatch(base, /run_progress_propose/)
+  assert.match(ad, /run_progress_propose/)
+  assert.match(ad, /runProgressHint/)
+  assert.match(ad, /shouldBlockPageTool/)
+  assert.match(ad, /PROPOSE_REQUIRED/)
+  assert.match(ad, /ALREADY_HAS_STEPS/)
+  assert.match(ad, /proposeDenied/)
+  assert.match(ad, /error_code === "PROPOSE_REQUIRED"/)
+})
