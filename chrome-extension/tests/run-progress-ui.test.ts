@@ -7,6 +7,7 @@ import {
   skipHeaderChrome,
   countNM,
   previewText,
+  listSig,
 } from "../src/sidepanel/components/run-progress-view"
 
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
@@ -106,7 +107,8 @@ test("RunProgress uses defaultExpanded(items.length) not useState(false)", () =>
 
 test("RunProgress collapse resets per thread via key at ChatView mount", () => {
   const chat = src("src/sidepanel/components/ChatView.tsx")
-  assert.match(chat, /<RunProgress\s+key=\{activeThreadId\}/)
+  assert.match(chat, /listSig\(runItems\)/)
+  assert.match(chat, /key=\{`\$\{activeThreadId\}:\$\{listSig\(runItems\)\}`\}/)
 })
 
 test("RunProgress wrap stays sticky; expanded ul has maxHeight", () => {
@@ -171,6 +173,30 @@ test("live density constants have not silently reverted to 44/28", () => {
   assert.match(scene, /maxHeight:\s*36/)
   assert.match(fb, /FOCUS_BAND_MAX_PX\s*=\s*80/)
   assert.ok(!/minHeight:\s*44/.test(rail))
+})
+
+test("listSig changes when texts change even if ids stay live:0", () => {
+  const a = listSig([{ id: "live:0", text: "开列表" }, { id: "live:1", text: "点" }])
+  const b = listSig([
+    { id: "live:0", text: "开列表" },
+    { id: "live:1", text: "点" },
+    { id: "live:2", text: "标已读" },
+  ])
+  const c = listSig([{ id: "live:0", text: "别的" }, { id: "live:1", text: "点" }])
+  // node-shims Assert has equal/notStrictEqual, not notEqual
+  assert.notStrictEqual(a, b)
+  assert.notStrictEqual(a, c)
+  assert.equal(listSig([{ id: "live:0", text: "开列表" }]), listSig([{ id: "live:0", text: "开列表" }]))
+  const doneTrue = [{ id: "live:0", text: "开列表", done: true }]
+  const doneFalse = [{ id: "live:0", text: "开列表", done: false }]
+  assert.equal(listSig(doneTrue), listSig(doneFalse))
+})
+
+test("ChatView keys RunProgress with listSig not first id only", () => {
+  const cv = src("src/sidepanel/components/ChatView.tsx")
+  assert.match(cv, /listSig\(runItems\)/)
+  assert.doesNotMatch(cv, /<RunProgress key=\{activeThreadId\}/)
+  assert.doesNotMatch(cv, /items\[0\]\?\.id/)
 })
 
 test("overlay/summoner sources do not paint 本轮步骤 checklist", () => {

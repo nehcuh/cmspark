@@ -42,6 +42,7 @@ import {
 } from "../ui/icons"
 import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
 import { RunProgress } from "./RunProgress"
+import { listSig } from "./run-progress-view"
 import { CHAT_MARKED_OPTIONS } from "../utils/markdown-gfm"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
 import "katex/dist/katex.min.css"
@@ -533,9 +534,13 @@ export function ChatView() {
           </div>
         )}
         {runItems && runItems.length > 0 && activeThreadId ? (
-          // key by thread: switching threads remounts expansion to defaultExpanded(n).
+          // key by thread+listSig: thread switch or list identity remounts to defaultExpanded(n).
           // Sticky/collapse styling lives in RunProgress.
-          <RunProgress key={activeThreadId} threadId={activeThreadId} items={runItems} />
+          <RunProgress
+            key={`${activeThreadId}:${listSig(runItems)}`}
+            threadId={activeThreadId}
+            items={runItems}
+          />
         ) : null}
         {messages.length === 0 && !streamingContent && !streamingReasoning && !processingLabel && (
           <EmptyState level={level} />
