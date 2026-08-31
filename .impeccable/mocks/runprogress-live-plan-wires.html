@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CMspark · 当轮活计划 · 线稿对照 #265</title>
+  <style>
+    :root {
+      --ink: #111;
+      --paper: #f6f4ef;
+      --mute: #6b6b6b;
+      --red: #c23a2b;
+      --line: #111;
+      --fill: #f4f4f5;
+      --accent: #4f46e5;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; background: var(--paper); color: var(--ink);
+      font-family: "SF Pro Text", "PingFang SC", "Segoe UI", -apple-system, sans-serif;
+    }
+    body { padding: 28px 32px 48px; }
+    h1 { margin: 0 0 4px; font-size: 18px; font-weight: 650; letter-spacing: -0.03em; }
+    .sub { margin: 0 0 8px; font-size: 12px; color: var(--mute); max-width: 1080px; line-height: 1.5; }
+    .key {
+      font-size: 11px; color: var(--mute); margin: 0 0 22px; line-height: 1.5;
+    }
+    .key b { color: var(--ink); font-weight: 650; }
+    .board {
+      display: flex; flex-wrap: wrap; gap: 28px 32px; align-items: flex-start;
+    }
+    .col { width: 320px; }
+    .cap {
+      font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--mute); margin: 0 0 4px; font-weight: 650;
+    }
+    .tag {
+      display: inline-block; font-size: 10px; font-weight: 650; letter-spacing: 0.04em;
+      border: 1px solid var(--ink); padding: 1px 6px; border-radius: 999px; margin: 0 0 8px;
+    }
+    .tag.rec { background: var(--ink); color: #fff; }
+    .tag.opt { border-style: dashed; }
+    .tag.no { color: var(--red); border-color: var(--red); }
+    .note { font-size: 11px; color: var(--mute); margin: 8px 0 0; line-height: 1.45; }
+    .phone {
+      width: 320px; height: 640px; background: #fff;
+      border: 1.5px solid var(--ink); border-radius: 18px;
+      display: flex; flex-direction: column; overflow: hidden; position: relative;
+    }
+    .rail {
+      height: 48px; display: flex; align-items: center; padding: 0 8px 0 10px;
+      gap: 6px; flex-shrink: 0; border-bottom: 1px solid rgba(17,17,17,.12);
+    }
+    .mode {
+      font-size: 11px; font-weight: 650; border: 1px solid var(--ink);
+      border-radius: 999px; padding: 2px 8px;
+    }
+    .dot { width: 7px; height: 7px; background: var(--ink); border-radius: 50%; }
+    .rail-sp { flex: 1; }
+    .ghost {
+      width: 28px; height: 28px; display: grid; place-items: center;
+      font-size: 13px; line-height: 1;
+    }
+    .pop {
+      height: 32px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 12px; border-bottom: 1px solid rgba(17,17,17,.12); flex-shrink: 0;
+      font-size: 11px; color: var(--mute); letter-spacing: 1px;
+    }
+    .pop b {
+      letter-spacing: 0; font-weight: 500; color: var(--ink);
+      border: 1px solid var(--ink); border-radius: 999px; padding: 2px 8px; font-size: 11px;
+    }
+    .stream {
+      flex: 1; min-height: 0; overflow: hidden; padding: 10px 12px 8px;
+    }
+    .stream > * { margin: 0 0 8px; }
+    .stream > *:last-child { margin-bottom: 0; }
+    .msg {
+      max-width: 88%; font-size: 12px; line-height: 1.4; padding: 7px 9px;
+      border: 1px solid var(--ink); border-radius: 12px;
+    }
+    .msg.user { margin-left: auto; background: #111; color: #fff; border-color: #111; }
+    .msg.bot { margin-right: auto; }
+    .tool {
+      border: 1px dashed var(--ink); border-radius: 10px;
+      padding: 7px 9px; font-size: 11px;
+    }
+    .tool b { display: block; font-size: 11px; margin-bottom: 1px; }
+    .tool.live { border-style: solid; }
+    .dock { padding: 8px 12px 14px; flex-shrink: 0; }
+    .field {
+      min-height: 48px; border: 1.5px solid var(--ink); border-radius: 14px;
+      display: flex; align-items: flex-end; padding: 8px 8px 8px 12px; gap: 8px;
+    }
+    .ph { flex: 1; color: var(--mute); font-size: 12px; padding-bottom: 6px; }
+    .send {
+      width: 24px; height: 24px; border: 1.5px solid var(--ink); border-radius: 50%;
+      display: grid; place-items: center; font-size: 11px;
+    }
+    .chips { font-size: 11px; color: var(--mute); padding: 0 2px 6px; }
+    .rp {
+      border: 1.5px solid var(--ink); border-radius: 8px; background: var(--fill);
+      padding: 8px 10px; flex-shrink: 0;
+    }
+    .rp.head {
+      display: flex; align-items: baseline; gap: 8px; font-size: 11px; font-weight: 650;
+    }
+    .rp.head span { margin-left: auto; font-weight: 500; color: var(--mute); }
+    .rp.head i { font-style: normal; color: var(--mute); font-weight: 500; }
+    .rp .cur {
+      margin-top: 4px; font-size: 12px; line-height: 1.35; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .call {
+      font-size: 10px; color: var(--red); font-weight: 650; letter-spacing: 0.02em;
+      padding: 0 2px; display: block; width: 100%;
+    }
+    .rp ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    .rp li { font-size: 12px; line-height: 1.35; display: flex; gap: 6px; align-items: flex-start; }
+    .rp li.done { color: var(--mute); text-decoration: line-through; }
+    .rp li.now { font-weight: 500; border-left: 2px solid var(--accent); padding-left: 6px; margin-left: -2px; }
+    .rp li.dim { color: var(--mute); }
+    .rp .draft {
+      font-size: 10px; border: 1px solid var(--ink); border-radius: 4px;
+      padding: 0 5px; color: var(--mute); font-weight: 500; text-decoration: none;
+      flex-shrink: 0;
+    }
+    .confirm {
+      margin: 6px 10px 0; border: 1.5px solid var(--red); border-radius: 8px;
+      padding: 6px 8px; font-size: 11px; color: var(--red); flex-shrink: 0;
+    }
+    .confirm strong { display: block; font-size: 11px; }
+    .squeeze { flex: 1; min-height: 0; overflow: hidden; padding: 6px 12px; opacity: .55; font-size: 11px; }
+    .busy {
+      height: 22px; display: flex; align-items: center; gap: 6px;
+      padding: 0 12px; font-size: 11px; color: var(--mute);
+      border-bottom: 1px solid rgba(17,17,17,.08); flex-shrink: 0;
+    }
+    .busy i {
+      width: 6px; height: 6px; background: var(--ink); border-radius: 50%;
+      font-style: normal;
+    }
+  </style>
+</head>
+<body>
+  <h1>当轮活计划 · 清单何时出现</h1>
+  <p class="sub">同一条 320×640 侧栏、同一句「帮我把这页前五封标成已读」。#256 已锁：清单在聊天列，不进顶栏。本板只对照 <b>H1 压缩前</b> 有没有具体步骤。GitHub #265。</p>
+  <p class="key"><b>对象仍是 L0「本轮步骤」</b> · 不是任务板 · 不是确认台步骤轨 · 禁写「进行中」· 顶栏 C 仍否</p>
+
+  <div class="board">
+
+    <div class="col">
+      <p class="cap">00  现状 · 你刚踩到的</p>
+      <div class="tag">对照</div>
+      <div class="phone">
+        <div class="rail">
+          <span class="mode">网页</span>
+          <span class="dot"></span>
+          <span class="rail-sp"></span>
+          <span class="ghost">⊕</span>
+          <span class="ghost">⌄</span>
+          <span class="ghost">⋯</span>
+        </div>
+        <div class="busy"><i></i>正在操作当前页</div>
+        <div class="pop">⋯<b>弹出对话框</b></div>
+        <div class="stream">
+          <div class="call">顶栏没有清单 · 聊天列也没有</div>
+          <div class="msg user">帮我把这页前五封标成已读</div>
+          <div class="tool live"><b>read_page</b>当前标签 · 进行中</div>
+          <div class="msg bot">我先看这是不是邮件列表…</div>
+        </div>
+        <div class="dock">
+          <div class="chips">装配 · 标签</div>
+          <div class="field"><div class="ph">问这页，或描述操作…</div><div class="send">↑</div></div>
+        </div>
+      </div>
+      <p class="note">第一轮任务、还没压过 H1。Wave 1 卡不挂。顶栏仍是模式/连接/菜单，本来就没有待办。</p>
+    </div>
+
+    <div class="col">
+      <p class="cap">01  T3 当轮摊开</p>
+      <div class="tag rec">推荐</div>
+      <div class="phone">
+        <div class="rail">
+          <span class="mode">网页</span>
+          <span class="dot"></span>
+          <span class="rail-sp"></span>
+          <span class="ghost">⊕</span>
+          <span class="ghost">⌄</span>
+          <span class="ghost">⋯</span>
+        </div>
+        <div class="busy"><i></i>正在操作当前页</div>
+        <div class="pop">⋯<b>弹出对话框</b></div>
+        <div class="stream">
+          <div class="rp">
+            <div class="rp.head">本轮步骤</div>
+            <ul>
+              <li class="now">☐ 确认当前是邮件列表</li>
+              <li>☐ 打开前五封</li>
+              <li>☐ 标成已读</li>
+            </ul>
+          </div>
+          <div class="call">当轮就有 · 仍在滚动列 · 不进顶栏</div>
+          <div class="msg user">帮我把这页前五封标成已读</div>
+          <div class="tool live"><b>read_page</b>当前标签 · 进行中</div>
+        </div>
+        <div class="dock">
+          <div class="chips">装配 · 标签</div>
+          <div class="field"><div class="ph">问这页，或描述操作…</div><div class="send">↑</div></div>
+        </div>
+      </div>
+      <p class="note">不必等压缩。≤3 条直接摊开勾。铬仍是 Wave 1。模型提出具体步骤，人能对着清单盯页。</p>
+    </div>
+
+    <div class="col">
+      <p class="cap">02  T3 工具开始勾</p>
+      <div class="tag rec">同一方案</div>
+      <div class="phone">
+        <div class="rail">
+          <span class="mode">网页</span>
+          <span class="dot"></span>
+          <span class="rail-sp"></span>
+          <span class="ghost">⊕</span>
+          <span class="ghost">⌄</span>
+          <span class="ghost">⋯</span>
+        </div>
+        <div class="busy"><i></i>正在操作当前页</div>
+        <div class="pop">⋯<b>弹出对话框</b></div>
+        <div class="stream">
+          <div class="rp">
+            <div class="rp.head">本轮步骤</div>
+            <ul>
+              <li class="done">☑ 确认当前是邮件列表</li>
+              <li class="now">☐ 打开前五封</li>
+              <li>☐ 标成已读</li>
+            </ul>
+          </div>
+          <div class="msg user">帮我把这页前五封标成已读</div>
+          <div class="tool"><b>read_page</b>当前标签 · 完成</div>
+          <div class="tool live"><b>click</b>第一封 · 进行中</div>
+        </div>
+        <div class="dock">
+          <div class="chips">装配 · 标签</div>
+          <div class="field"><div class="ph">问这页，或描述操作…</div><div class="send">↑</div></div>
+        </div>
+      </div>
+      <p class="note">行上绑了精确 tool 才能跟着成功结果勾。没绑的仍手点。#230 自动勾残留不在本票修。</p>
+    </div>
+
+    <div class="col">
+      <p class="cap">03  只出草稿</p>
+      <div class="tag opt">备选 source</div>
+      <div class="phone">
+        <div class="rail">
+          <span class="mode">网页</span>
+          <span class="dot"></span>
+          <span class="rail-sp"></span>
+          <span class="ghost">⊕</span>
+          <span class="ghost">⌄</span>
+          <span class="ghost">⋯</span>
+        </div>
+        <div class="busy"><i></i>正在操作当前页</div>
+        <div class="pop">⋯<b>弹出对话框</b></div>
+        <div class="stream">
+          <div class="rp">
+            <div class="rp.head">本轮步骤 <span>0/0</span></div>
+            <ul>
+              <li class="dim">☐ 确认当前是邮件列表 <span class="draft">草稿</span></li>
+              <li class="dim">☐ 打开前五封 <span class="draft">草稿</span></li>
+              <li class="dim">☐ 标成已读 <span class="draft">草稿</span></li>
+            </ul>
+          </div>
+          <div class="call">看得见 · 勾是灰的 · 工具成功也不勾</div>
+          <div class="msg user">帮我把这页前五封标成已读</div>
+          <div class="tool live"><b>read_page</b>当前标签 · 进行中</div>
+        </div>
+        <div class="dock">
+          <div class="chips">装配 · 标签</div>
+          <div class="field"><div class="ph">问这页，或描述操作…</div><div class="send">↑</div></div>
+        </div>
+      </div>
+      <p class="note">切片 6 预留的 model_draft：当轮能看见计划，但不是可执行清单。Trust 更保守，狗食会像「假待办」。</p>
+    </div>
+
+    <div class="col">
+      <p class="cap">04  C 顶栏手风琴</p>
+      <div class="tag no">本票仍否</div>
+      <div class="phone">
+        <div class="rail">
+          <span class="mode">网页</span>
+          <span class="dot"></span>
+          <span class="rail-sp"></span>
+          <span class="ghost">⊕</span>
+          <span class="ghost">⌄</span>
+          <span class="ghost">⋯</span>
+        </div>
+        <div class="rp" style="margin: 8px 10px 0; border-radius: 8px;">
+          <div class="rp.head">本轮步骤 <span>0/3</span> <i>▴</i></div>
+          <ul>
+            <li class="now">☐ 确认当前是邮件列表</li>
+            <li>☐ 打开前五封</li>
+            <li>☐ 标成已读</li>
+          </ul>
+        </div>
+        <div class="confirm">
+          <strong>确认 click</strong>
+          急停被挤到这下面
+        </div>
+        <div class="squeeze">
+          <div class="call">聊天被铬吃掉 · #256 已 REJECT</div>
+          用户 帮我把这页前五封标成已读<br>
+          助手 只剩这么一点聊天
+        </div>
+        <div class="dock">
+          <div class="field"><div class="ph">问这页，或描述操作…</div><div class="send">↑</div></div>
+        </div>
+      </div>
+      <p class="note">当轮有清单也不进 StatusRail。T3 修的是空对象，不是把清单搬到顶栏。</p>
+    </div>
+
+  </div>
+</body>
+</html>
