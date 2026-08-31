@@ -1,10 +1,24 @@
-// L0 RunProgress — chat-column checklist seeded from H1 handoff.open_todos.
-// Spec: docs/superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md Task 4–5
-// v1 ingest = seed-only. Evidence ticks bind to exact item.tool, never model_draft,
-// never text.substring. User toggle is Side Panel only (not SUMMONER_ALLOW).
+// L0 RunProgress — chat-column checklist.
+// Seed = companion-written tickable (H1 handoff.open_todos or run_progress_propose).
+// Spec: docs/superpowers/plans/2026-08-31-runprogress-live-plan.md (#265)
+// v1 seed-only-from-H1 amended by #265. Evidence ticks bind to exact item.tool,
+// never model_draft, never text.substring. User toggle is Side Panel only
+// (not SUMMONER_ALLOW).
+
+import { TAB_LEASE_TOOLS } from "../orchestrator/constants"
 
 /** Lockstep with HANDOFF_CAPS.open_todos (H1). */
 export const RUN_PROGRESS_CAPS = { max: 8, len: 120 } as const
+
+export const RUN_PROGRESS_PROPOSE_TOOL = "run_progress_propose" as const
+
+/** Page tools that require a successful propose this request (sticky null exempt). */
+export const RUN_PROGRESS_PAGE_TOOLS = new Set<string>([
+  ...TAB_LEASE_TOOLS,
+  "create_tab",
+  "osascript_eval",
+  "host_computer",
+])
 
 export type RunProgressItem = {
   id: string
@@ -68,6 +82,63 @@ export function sanitizeRunProgress(raw: unknown): RunProgress {
     items.push(item)
   }
   return { items }
+}
+
+/**
+ * Map model propose payload into tickable seed rows.
+ * Forces id live:{i}, source seed, done false; drops writer tool name.
+ * Not a sanitize(raw) success path — model done/source/id are discarded.
+ */
+export function mapProposeItems(raw: unknown): RunProgressItem[] {
+  if (!Array.isArray(raw)) return []
+  const rows: RunProgressItem[] = []
+  for (let i = 0; i < raw.length && rows.length < RUN_PROGRESS_CAPS.max; i++) {
+    const row = raw[i]
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue
+    const o = row as Record<string, unknown>
+    const text = scrubText(o.text, RUN_PROGRESS_CAPS.len)
+    if (!text) continue
+    let tool = scrubTool(o.tool)
+    if (tool === RUN_PROGRESS_PROPOSE_TOOL) tool = undefined
+    const item: RunProgressItem = { id: `live:${rows.length}`, text, done: false, source: "seed" }
+    if (tool) item.tool = tool
+    rows.push(item)
+  }
+  return rows
+}
+
+/**
+ * Pure ingest for run_progress_propose.
+ * sticky null === null → CLEARED; mapped empty → EMPTY_ITEMS;
+ * leftover undone seed|user && !replaceOk → ALREADY_HAS_STEPS.
+ */
+export function proposeRunProgress(
+  thread: { run_progress?: RunProgress | null },
+  items: unknown,
+  opts: { replaceOk: boolean },
+): { ok: true; progress: RunProgress } | { ok: false; error_code: string } {
+  if (thread.run_progress === null) return { ok: false, error_code: "CLEARED" }
+  const mapped = mapProposeItems(items)
+  if (mapped.length === 0) return { ok: false, error_code: "EMPTY_ITEMS" }
+  const cur = thread.run_progress
+  const hasUndone =
+    cur != null &&
+    cur.items.some((it) => it.source !== "model_draft" && it.done !== true)
+  if (hasUndone && opts.replaceOk !== true) return { ok: false, error_code: "ALREADY_HAS_STEPS" }
+  return { ok: true, progress: { items: mapped } }
+}
+
+/** Adapter gate: block page tools until this request has proposed (worker / sticky null exempt). */
+export function shouldBlockPageTool(p: {
+  toolName: string
+  proposedThisRequest: boolean
+  agentRole?: string
+  runProgress: RunProgress | null | undefined
+}): boolean {
+  if (p.proposedThisRequest) return false
+  if (p.agentRole === "worker") return false
+  if (p.runProgress === null) return false
+  return RUN_PROGRESS_PAGE_TOOLS.has(p.toolName)
 }
 
 /**
