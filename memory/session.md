@@ -2,6 +2,9 @@
 
 ## Current Session
 
+### S100 (2026-08-31) [0.5.6 lockstep · push · NSIS]
+- 包装 companion/extension/NSIS fallback/CLI/ACP/outbound **0.5.6**。CHANGELOG Unreleased → [0.5.6]。
+
 ### S99 (2026-08-31) [活文档锁 0.5.5 · Unreleased 记 S98]
 - **不做**：不 bump `package.json` / NSIS / CLI 到 0.5.6。
 - **做了**：Batch 0 诚实（README/PRODUCT/CLAUDE/AGENTS/GOAL/architecture/docs README/companion README.txt）0.5.3→0.5.5；T1 = 已记分+禁扩；#228/#229 从余项拿掉；post-227 标 SNAPSHOT；Capture 尺寸 360×420；CHANGELOG Unreleased 记召唤器流式 / 语音回退镜像 / 会议自动 K + #235 补记。

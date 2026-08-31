@@ -1,7 +1,7 @@
 # CMspark — Product Context (Impeccable)
 
-> Written 2026-08-11 for design harnesses. **Refreshed 2026-08-26**: home is logged-in Chrome + hard gates, not the Side Panel. **#241:** HTML float is Capture 卡片 (**360×420** inner; code `OVERLAY_WINDOW_SIZE`). **Unreleased:** HTML 卡跟 `chat.token` 流式出字。  
-> Version lock: companion/extension **0.5.5**（Unreleased 见 [CHANGELOG](CHANGELOG.md)；打 NSIS 再 0.5.6）。  
+> Written 2026-08-11 for design harnesses. **Refreshed 2026-08-26**: home is logged-in Chrome + hard gates, not the Side Panel. **#241:** HTML float is Capture 卡片 (**360×420** inner; code `OVERLAY_WINDOW_SIZE`). HTML 卡跟 `chat.token` 流式出字。  
+> Version lock: companion/extension **0.5.6**。  
 > Remaining work: [#230](https://github.com/nehcuh/cmspark/issues/230) freeze (F-S-10 / overlay-acl) · [#258](https://github.com/nehcuh/cmspark/issues/258)–[#260](https://github.com/nehcuh/cmspark/issues/260) voice/meeting. T1 [#228](https://github.com/nehcuh/cmspark/issues/228) scored, **do not expand** outbound profile. New requirement designs **must** open an Issue first.
 > Form SoT: [docs/superpowers/specs/2026-08-26-product-form-deepening-design.md](docs/superpowers/specs/2026-08-26-product-form-deepening-design.md) · Capture 怎么用：[docs/summoner-user-guide.md](docs/summoner-user-guide.md)
 

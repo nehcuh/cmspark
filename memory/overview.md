@@ -2,9 +2,9 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-31 (S99 · 活文档锁 0.5.5；Unreleased 召唤器流式/语音回退/自动K)
+**Updated**: 2026-08-31 (S100 · lockstep 0.5.6 + NSIS)
 
-## CMspark — 产品 0.5.5
+## CMspark — 产品 0.5.6
 
 | 轴 | 状态 |
 |----|------|
@@ -20,17 +20,16 @@
 
 ## Branch lock (S99)
 
-- 包装 **0.5.5**。本地 `main` 含 Unreleased（召唤器流式 / 语音回退 / 会议自动 K），待 push。
+- 包装 **0.5.6**。召唤器流式 / 语音回退 / 会议自动 K 已进切点。
 - **活票**：#230 冻 F-S-10 / overlay-acl；#258–#260 语音/会议。T1 #228 已关，**禁扩** profile。
-- **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；宣称 Capture/CU/F-S-10 闭合；包装未打 NSIS 时写成 0.5.6。
+- **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；宣称 Capture/CU/F-S-10 闭合。
 
 ## Next
 
-- push Unreleased 四功能提交后，发版再 lockstep 0.5.6。
 - #230 禁止整票实现。
 
 ## Docs SoT
 
-- 活切点：`CHANGELOG.md` 0.5.5 + Unreleased
+- 活切点：`CHANGELOG.md` **0.5.6**
 - 0.5.3 快照：`docs/superpowers/specs/2026-08-27-post-227-status.md`（SNAPSHOT）
 - 用户 / 架构：`docs/README.md` · `PRODUCT.md`

@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 架构文档
 
-> 版本: 2.4.4 | 日期: 2026-08-31 | 状态: 已确认（同步 **0.5.5** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴** · ADR-023/024 语音（含 2026-08-31 L13 非静默回退）· Capture HTML 卡 360×420 流式 · 用户附图 · Windows NSIS · 知识诚实 · ChatShell；T1 **已记分、禁扩 profile**）
+> 版本: 2.4.5 | 日期: 2026-08-31 | 状态: 已确认（同步 **0.5.6** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴** · ADR-023/024 语音（含 2026-08-31 L13 非静默回退）· Capture HTML 卡 360×420 流式 · 用户附图 · Windows NSIS · 知识诚实 · ChatShell；T1 **已记分、禁扩 profile**）
 
 ---
 

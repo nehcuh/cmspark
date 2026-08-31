@@ -34,7 +34,7 @@ CMspark — 浏览器内 AI Agent。通过 Chrome Side Panel 与用户交互，�
 
 双层拓扑：Chrome Extension (Plasmo + React) ↔ WebSocket ↔ Companion (Node.js + TypeScript)
 
-当前阶段：**产品 0.5.5**（包装 lockstep；Unreleased 见 [CHANGELOG](CHANGELOG.md)，打 NSIS 再 0.5.6）。家 = **已登录 Chrome + 硬闸**，侧栏是 Operate 面之一。Capture HTML 卡 **360×420**（流式出字）· ChatShell「要对这页做什么 / 弹出对话框」· 租手钥匙 CLI + L8 · 知识 CRUD 诚实 · 技能 TF-IDF + 本轮步骤（r1 默收）。**不是**召唤器/租手完成里程碑——T1 已记分（CMspark 臂 Y / Playwright `ERR_EMPTY_RESPONSE`），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。Side Panel ↔ Companion 闭环、线程持久化、确认台、Pack/MCP/Multi-agent、CU（实验定位仅 **Qwen3-VL**）已交付。**听写+ / 本机 Whisper（含 M2、自动激活、当次会话回退横幅、HF 镜像）/ 会议工作台（说话人「自动」档）** 已交付（[用户指南](docs/meeting-and-dictation-user-guide.md)，ADR-023/024）。**对话框用户附图**（粘贴 / 点选 / 拖入；主模型多模态则原生看图）。**Obsidian 导出**（[ADR-008](docs/adr/008-obsidian-export.md)）· **Mermaid**（[ADR-009](docs/adr/009-mermaid-rendering.md)）· **Mission Pack**（[ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)）见既有文档。
+当前阶段：**产品 0.5.6**。家 = **已登录 Chrome + 硬闸**，侧栏是 Operate 面之一。Capture HTML 卡 **360×420**（流式出字）· ChatShell「要对这页做什么 / 弹出对话框」· 租手钥匙 CLI + L8 · 知识 CRUD 诚实 · 技能 TF-IDF + 本轮步骤（r1 默收）。**不是**召唤器/租手完成里程碑——T1 已记分（CMspark 臂 Y / Playwright `ERR_EMPTY_RESPONSE`），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。Side Panel ↔ Companion 闭环、线程持久化、确认台、Pack/MCP/Multi-agent、CU（实验定位仅 **Qwen3-VL**）已交付。**听写+ / 本机 Whisper（含 M2、自动激活、当次会话回退横幅、HF 镜像）/ 会议工作台（说话人「自动」档）** 已交付（[用户指南](docs/meeting-and-dictation-user-guide.md)，ADR-023/024）。**对话框用户附图**（粘贴 / 点选 / 拖入；主模型多模态则原生看图）。**Obsidian 导出**（[ADR-008](docs/adr/008-obsidian-export.md)）· **Mermaid**（[ADR-009](docs/adr/009-mermaid-rendering.md)）· **Mission Pack**（[ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)）见既有文档。
 
 ## Quick Start
 
@@ -134,7 +134,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 
 - docs/README.md — 文档导航（用户 / 架构 / ADR / 工程 / 归档）
 - CONTRIBUTING.md — 需求设计 **Issue-first**（新行为必须先开 GitHub Issue）
-- CHANGELOG.md — **活切点** 0.5.5 + Unreleased（召唤器流式 / 语音回退 / 会议自动 K）
+- CHANGELOG.md — **活切点** 0.5.6（召唤器流式 / 语音回退 / 会议自动 K）
 - docs/superpowers/specs/2026-08-27-post-227-status.md — **SNAPSHOT** 0.5.3 / #227；不是活状态
 - docs/GOAL.md — 项目目标与阶段规划
 - docs/architecture.md — 完整架构文档（§0 能力三轴 · §7 Packs · §8–11 MCP/CU·Host·Apps/Orchestrator·Board）

@@ -4,7 +4,11 @@
 
 ## [Unreleased]
 
-包装仍为 **0.5.5**（`companion` / `chrome-extension` `package.json`）。下列已在本地 `main` tip，待 push / 打 NSIS 时再 lockstep **0.5.6**。
+（无）
+
+## [0.5.6] — 2026-08-31
+
+召唤器 HTML 流式出字、本机 Whisper 自动激活 / 可见回退 / HF 镜像、会议说话人「自动」档。文档活切点与包装 lockstep。
 
 ### Added
 
