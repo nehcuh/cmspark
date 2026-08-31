@@ -219,6 +219,9 @@ test("F-I-4: handler and summoner-web never call chrome.sidePanel.open / openSid
   assert.doesNotMatch(web, /openSidePanel\(/)
   assert.doesNotMatch(web, /chrome\.sidePanel\.open/)
   assert.doesNotMatch(web, /ui\.open_sidepanel/)
+  // Keep the timeout timer ref'd under node:test (same pin as extension-peer).
+  assert.match(handler, /NODE_TEST_CONTEXT/)
+  assert.match(handler, /\.unref/)
 })
 
 test("ui.open_sidepanel is not a tool catalog / getToolDefinitions type", () => {
