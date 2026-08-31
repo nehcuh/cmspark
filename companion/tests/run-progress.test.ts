@@ -10,11 +10,13 @@ import * as path from "node:path"
 
 import {
   applyToolResult,
+  nextRunProgressAfterToolSuccess,
   sanitizeRunProgress,
   seedRunProgress,
   type RunProgress,
   type RunProgressItem,
 } from "../src/threads/run-progress"
+import { handleRunProgressToggle } from "../src/message-router/handlers/run-progress"
 import { validateWsMessage } from "../src/ws/validate"
 import { assertSummonerAllowed } from "../src/ws/summoner-acl"
 import { SUMMONER_WEB_DISPATCH_ALLOW } from "../src/summoner-web"
@@ -430,10 +432,83 @@ test("thread-manager run_progress sanitize-on-read + cap", () => {
   assert.equal(got!.run_progress!.items[1]!.text, "ok")
 })
 
-test("adapter source: applyToolResult on toolResult.success send, not abort/parse/validation", () => {
+function handoffThread(over: {
+  run_progress?: RunProgress | null
+  todos?: { text: string; tool?: string }[]
+}) {
+  return {
+    run_progress: over.run_progress,
+    runtime_context_budget: {
+      handoff: {
+        open_todos: over.todos ?? [{ text: "打开页", tool: "navigate" }],
+      },
+    },
+  }
+}
+
+test("nextRunProgressAfterToolSuccess: null is sticky — does not reseed on tool tick", () => {
+  const out = nextRunProgressAfterToolSuccess(
+    handoffThread({ run_progress: null, todos: [{ text: "打开页", tool: "navigate" }] }),
+    "navigate",
+  )
+  assert.equal(out, undefined)
+})
+
+test("nextRunProgressAfterToolSuccess: undefined seeds then ticks matching tool", () => {
+  const out = nextRunProgressAfterToolSuccess(
+    handoffThread({ todos: [{ text: "打开页", tool: "navigate" }] }),
+    "navigate",
+  )
+  assert.ok(out)
+  assert.equal(out!.items.length, 1)
+  assert.equal(out!.items[0]!.done, true)
+  assert.equal(out!.items[0]!.tool, "navigate")
+})
+
+test("nextRunProgressAfterToolSuccess: existing items tick without reseed", () => {
+  const current: RunProgress = {
+    items: [
+      { id: "keep", text: "打开页", done: false, source: "seed", tool: "navigate" },
+    ],
+  }
+  const out = nextRunProgressAfterToolSuccess(
+    handoffThread({
+      run_progress: current,
+      todos: [{ text: "should-not-replace", tool: "navigate" }],
+    }),
+    "navigate",
+  )
+  assert.ok(out)
+  assert.equal(out!.items[0]!.id, "keep")
+  assert.equal(out!.items[0]!.done, true)
+})
+
+test("nextRunProgressAfterToolSuccess: existing items unmatched tool → no write", () => {
+  const current: RunProgress = {
+    items: [
+      { id: "keep", text: "打开页", done: false, source: "seed", tool: "navigate" },
+    ],
+  }
+  const out = nextRunProgressAfterToolSuccess(
+    handoffThread({ run_progress: current }),
+    "get_page_text",
+  )
+  assert.equal(out, undefined)
+})
+
+test("handleRunProgressToggle: null stays null (no empty-object coerce)", () => {
+  const tm = new ThreadManager()
+  const th = tm.create("run-progress-toggle-null")
+  tm.update(th.id, { run_progress: null })
+  const r = handleRunProgressToggle({ thread_id: th.id, item_id: "x" }, tm)
+  assert.equal(r.type, "thread.updated")
+  assert.equal(tm.get(th.id)!.run_progress, null)
+})
+
+test("adapter source: nextRunProgressAfterToolSuccess on toolResult.success send, not abort/parse/validation", () => {
   const src = readSrc("llm", "adapter.ts")
   assert.match(src, /from ["']\.\.\/threads\/run-progress["']/)
-  assert.match(src, /applyToolResult\(/)
+  assert.match(src, /nextRunProgressAfterToolSuccess/)
 
   function windowAfter(marker: string, size = 900): string {
     const i = src.indexOf(marker)
@@ -441,13 +516,15 @@ test("adapter source: applyToolResult on toolResult.success send, not abort/pars
     return src.slice(i, i + size)
   }
 
-  assert.doesNotMatch(windowAfter("function persistInterruptedRemainder"), /applyToolResult/)
-  assert.doesNotMatch(windowAfter("Invalid JSON in tool arguments"), /applyToolResult/)
-  assert.doesNotMatch(windowAfter("llm.tool_arg_validation_failed"), /applyToolResult/)
+  assert.doesNotMatch(windowAfter("function persistInterruptedRemainder"), /nextRunProgressAfterToolSuccess/)
+  assert.doesNotMatch(windowAfter("Invalid JSON in tool arguments"), /nextRunProgressAfterToolSuccess/)
+  assert.doesNotMatch(windowAfter("llm.tool_arg_validation_failed"), /nextRunProgressAfterToolSuccess/)
 
   const afterSend = windowAfter("Send tool result to extension for UI display", 1600)
   assert.match(afterSend, /toolResult\.success/)
-  assert.match(afterSend, /applyToolResult/)
+  assert.match(afterSend, /nextRunProgressAfterToolSuccess/)
+  assert.doesNotMatch(afterSend, /seedRunProgress/)
+  assert.doesNotMatch(afterSend, /applyToolResult/)
 })
 
 test("userToggle flips seed/user done (toggle) and is a no-op on model_draft", () => {

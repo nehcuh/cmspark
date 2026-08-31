@@ -15,6 +15,10 @@ export function handleRunProgressToggle(
   if (!itemId) return { type: "error", error: "item_id required" }
   const thread = threadManager.get(threadId)
   if (!thread) return { type: "error", error: `Thread not found: ${threadId}` }
+  // Sticky explicit clear — do not coerce null → { items: [] }.
+  if (thread.run_progress === null) {
+    return { type: "thread.updated", thread }
+  }
   const current = thread.run_progress ?? { items: [] }
   const next = userToggle(current, itemId)
   try {

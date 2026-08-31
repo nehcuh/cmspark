@@ -1,0 +1,12 @@
+{
+  "batch": "runprogress-tristate-impl",
+  "timestamp": "20260831-131800",
+  "blast": "T2",
+  "machine": { "verdict": "PASS", "targeted": "run-progress.test.js 29/29" },
+  "claude": { "verdict": "APPROVE", "path": "docs/audit/reviews/runprogress-tristate-spec-claude-20260831-131200.md" },
+  "kimi": { "verdict": "APPROVE", "path": "docs/audit/reviews/runprogress-tristate-spec-kimi-20260831-131200.md" },
+  "impl_claude": { "verdict": "APPROVE", "path": "docs/audit/reviews/runprogress-tristate-impl-claude-20260831-131800.md" },
+  "impl_kimi": { "verdict": "APPROVE", "path": "docs/audit/reviews/runprogress-tristate-impl-kimi-20260831-131800.md" },
+  "both_approve": true,
+  "merge": "NO — PR to main"
+}

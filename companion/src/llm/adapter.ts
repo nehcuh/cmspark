@@ -66,7 +66,7 @@ import {
   shouldThawAfterSuccess,
   shouldPersistSiteOpExperience,
 } from "../tool/site-op-memory"
-import { applyToolResult, seedRunProgress } from "../threads/run-progress"
+import { nextRunProgressAfterToolSuccess } from "../threads/run-progress"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -1341,14 +1341,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             try {
               const th = threadManager.get(threadId)
               if (th) {
-                const current =
-                  th.run_progress && th.run_progress.items.length > 0
-                    ? th.run_progress
-                    : seedRunProgress(th)
-                const next = applyToolResult(current, { tool: toolName, success: true })
-                const shouldWrite =
-                  next !== current || (!th.run_progress && next.items.length > 0)
-                if (shouldWrite) {
+                const next = nextRunProgressAfterToolSuccess(th, toolName)
+                if (next) {
                   const updated = threadManager.update(threadId, { run_progress: next })
                   if (updated) {
                     sendToExtension({ type: "thread.updated", thread: updated })
