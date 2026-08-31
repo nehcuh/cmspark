@@ -2,9 +2,9 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-08-29 (S94 · 体检 A–F 合 main `5c4fcab0`)
+**Updated**: 2026-08-31 (S99 · 活文档锁 0.5.5；Unreleased 召唤器流式/语音回退/自动K)
 
-## CMspark — 产品 0.5.3
+## CMspark — 产品 0.5.5
 
 | 轴 | 状态 |
 |----|------|
@@ -18,20 +18,19 @@
 | ChatShell / Overlay Capture 卡 | **on main**（#240/#242/#246） |
 | 体检 A–F | **on main** #246/#248/#250/#252/#254 · tip `5c4fcab0` |
 
-## Branch lock (S94)
+## Branch lock (S99)
 
-- **`main` == `origin/main` `5c4fcab0`**。无其它远程枝。
-- **活票**：#228 禁扩 profile；#230 仍冻 F-S-10 / overlay-acl。
-- **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；宣称 Capture/CU/F-S-10 闭合。
+- 包装 **0.5.5**。本地 `main` 含 Unreleased（召唤器流式 / 语音回退 / 会议自动 K），待 push。
+- **活票**：#230 冻 F-S-10 / overlay-acl；#258–#260 语音/会议。T1 #228 已关，**禁扩** profile。
+- **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；宣称 Capture/CU/F-S-10 闭合；包装未打 NSIS 时写成 0.5.6。
 
 ## Next
 
-- 残留 Medium 须新 GitHub Issue（privacy_ack、HUD 导入、grant_id、conductor 按 thread）。
-- 可选重打 DMG 狗食 Capture 卡。
+- push Unreleased 四功能提交后，发版再 lockstep 0.5.6。
 - #230 禁止整票实现。
 
 ## Docs SoT
 
-- 活状态：`docs/superpowers/specs/2026-08-27-post-227-status.md`
-- 体检：`docs/audit/deep-diagnosis-fanout-2026-08-28.md`
-- 用户 / 架构：`docs/README.md`
+- 活切点：`CHANGELOG.md` 0.5.5 + Unreleased
+- 0.5.3 快照：`docs/superpowers/specs/2026-08-27-post-227-status.md`（SNAPSHOT）
+- 用户 / 架构：`docs/README.md` · `PRODUCT.md`

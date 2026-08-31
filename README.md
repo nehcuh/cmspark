@@ -1,18 +1,30 @@
 # CMspark Browser Agent
 
-> 浏览器内的 AI Agent — **默认**用自然语言做网页问答与页内操控；**按需**叠加 Skills / Knowledge / MCP / 任务包；**opt-in** 进入桌面 Computer Use 与企业模块。
+> 对着**已经登录的 Chrome** 干活的本机手：热键召唤开口，危险走**确认台**，Codex / Claude Code / Grok 可**租同一只手**（Outbound MCP）。家是 **已登录 Chrome + 硬闸**，不是 Side Panel。  
+> 能力叠加：**默认**网页问答与页内操控；**按需** Skills / Knowledge / MCP / 任务包；**opt-in** 桌面 Computer Use 与企业模块。产品句：[PRODUCT.md](PRODUCT.md)。
 
 ---
 
 ## 项目简介
 
-CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome 侧边栏（Side Panel）与用户交互，借助 Chrome DevTools Protocol (CDP) 操控浏览器，并通过本地 Companion 进程管理 LLM 调用、对话状态和技能系统。
+CMspark 是本机 Companion + Chrome 扩展（Plasmo）的双层 Agent。人盯着页面时用 Side Panel 操作；人在别的窗口或编程助手里时，用热键 **Capture 卡** 开口、后台 CDP 干活，危险只在确认台出现。不是第二套 Codex，也不是给每家 AI 再装一只扩展。
+
+四面（[PRODUCT.md](PRODUCT.md)）：
+
+| 面 | 入口 | 做什么 |
+|----|------|--------|
+| **Capture** | 热键 / 工具栏 C / 侧栏「弹出对话框」 | HTML 卡 **360×420**（流式出字、📎、听写、会议）。**永不** Allow/Deny |
+| **Operate** | Side Panel ~320px，或后台 CDP | 盯着页时聊+点；人不在侧栏时仍可动已登录 Chrome |
+| **Confirm** | 确认台 / Mac 托盘 | 高危审批与急停。Win/Linux 必须开 Chrome 确认台 |
+| **租手** | Outbound MCP + `cmg_` 钥匙 | 外部编程助手当 client，调 `cmspark__*`。实验、非 default-on |
+
+Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **请点工具栏 C**。
 
 ### 能力模型（三轴）
 
 完整规范见 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** · [architecture.md](docs/architecture.md)。工具面随模块与 MCP 动态扩展，**不以固定「N 种工具」计数**。
 
-**定位：** 默认浏览器内 Agent（对话 → 页内操控）→ 场景靠 **Mission Pack** 叠加（不是新 runtime）→ 桌面 / 企业能力 **opt-in**。
+**定位：** 家 = 已登录 Chrome + 硬闸。默认浏览器内 Agent（对话 → 页内操控）→ 场景靠 **Mission Pack** 叠加（不是新 runtime）→ 桌面 / 企业能力 **opt-in**。
 
 用户可记一条由表及里的故事线，并与架构轴对齐：
 
@@ -38,13 +50,15 @@ CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome �
 
 | 归属 | 能力 | 说明 | 文档 |
 |------|------|------|------|
-| **L0 · 主体** | 自然语言 · 多线程 · 历史 | Side Panel 驱动；线程隔离；SQLite 操作史 | 本页 [使用指南](#使用指南) |
+| **Capture** | 召唤器 HTML 卡 | 360×420；流式出字；永不审批 | 本页 [召唤器](#召唤器capture) · [PRODUCT.md](PRODUCT.md) |
+| **L0 · 主体** | 自然语言 · 多线程 · 历史 | Side Panel ChatShell（空态「要对这页做什么」/「弹出对话框」）；线程隔离；SQLite 操作史 | 本页 [使用指南](#使用指南) |
 | **L0 产品特性** | Obsidian 导出 · Mermaid · NotebookLM | 导出/渲染/导入（**非**组合原语） | [ADR-008](docs/adr/008-obsidian-export.md) · [009](docs/adr/009-mermaid-rendering.md) · [notebooklm-user-guide](docs/notebooklm-user-guide.md) |
 | **L0 输入** | 听写+ · 本机 STT · 会议记录 | classic/连续/按住热键；Whisper 渐进假设；场景「会议」工作台 | [meeting-and-dictation-user-guide](docs/meeting-and-dictation-user-guide.md) · [ADR-023](docs/adr/023-voice-local-stt-path-b.md) · [ADR-024](docs/adr/024-dictation-plus-asr-refiner-meeting.md) |
 | **L1 · 浅层** | 浏览器 CDP 操控 | 标签页、页面读写、点击/填表、截图、导航等 | 本页 [浏览器操作示例](#浏览器操作示例) |
 | **L1** | Cookie 信任域 | `trusted_domains` 门控 cookie；SSO 场景基础 | [Cookie 信任域](#cookie-信任域) · [ADR-005](docs/adr/005-cookie-trust-domain-security.md) |
 | **组合面** | Skills · Knowledge | Markdown+YAML Skills；知识注入 System Prompt | [Skills](#技能系统skills) · [Knowledge](#知识库knowledge) |
-| **组合面** | MCP | 外接 stdio/HTTP server，`mcp__<server>__<tool>` | [mcp.md](docs/mcp.md) |
+| **组合面** | MCP（入站） | 外接 stdio/HTTP server，`mcp__<server>__<tool>` | [mcp.md](docs/mcp.md) |
+| **租手** | Outbound MCP | 我们当 server：`cmspark__*` + `cmg_`（≠ `ws_secret`，≠ 编程接力） | [mcp.md 5 分钟租手](docs/mcp.md#outbound-mcp) · [ADR-022](docs/adr/022-outbound-mcp-server.md) |
 | **组合面** | Mission Pack / 企业模块 | 任务包装配线程；appsec / workspace / shell / netsec | [mission-pack-usage](docs/mission-pack-usage.md) |
 | **组合面** | 用户环境变量（Secrets） | shell/MCP 子进程密钥，不进聊天粘贴 | [user-env](docs/user-env.md) · [ADR-019](docs/adr/019-user-env-secrets.md) |
 | **横切** | 安全确认 / Confirm Center | 高危确认、域白名单、Cockpit 审批/急停 | [confirm-center-user-guide](docs/confirm-center-user-guide.md) |
@@ -86,6 +100,8 @@ CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome �
     └───────────────────────────────────────┘
 ```
 
+上图是扩展 ↔ Companion 双层拓扑。产品面上还有：**Capture HTML 卡**（独立 overlay 窗）、**确认台**（`tabs/cockpit.html`）、**租手**（Outbound MCP stdio）。图里没画不等于没有。
+
 ---
 
 ## 目录
@@ -97,12 +113,14 @@ CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome �
 - [安装](#安装)
 - [使用指南](#使用指南)
   - [快速开始](#快速开始)
+  - [召唤器（Capture）](#召唤器capture)
+  - [弹出对话框](#弹出对话框)
   - [浏览器操作示例](#浏览器操作示例)
   - [多线程使用](#多线程使用)
   - [技能系统（Skills）](#技能系统skills)
   - [知识库（Knowledge）](#知识库knowledge)
   - [安全与确认](#安全与确认)
-  - [MCP](#mcp)
+  - [MCP 与租手](#mcp-与租手不要混)
   - [任务包与企业模块](#任务包与企业模块)
   - [导出与导入](#导出与导入)
   - [桌面与宿主操控](#桌面与宿主操控)
@@ -188,11 +206,26 @@ Companion 默认在 `ws://127.0.0.1:23401` 启动 WebSocket 服务。
 
 ### 快速开始
 
-1. **打开 Side Panel**：点击浏览器工具栏上的 CMspark 图标，或从 Chrome 菜单 → 更多工具 → 打开 Side Panel
-2. **创建线程**：在侧边栏中输入你的任务，Agent 会自动创建新线程
-3. **固定标签页**（可选）：在底部 Tab 栏勾选你希望 Agent 操作的标签页
-4. **输入指令**：用自然语言描述你想完成的任务
-5. **查看结果**：Agent 会实时展示操作步骤和最终结果
+1. **装好 Companion + 扩展**（见上文 [安装](#安装)）。托盘起来后扩展要配对。
+2. **开口（Capture）**：热键、工具栏 **C**，或侧栏顶栏 **弹出对话框**，打开同一张 HTML 卡（360×420，流式出字）。失败 toast：**请点工具栏 C**。
+3. **盯着页面时（Operate）**：点工具栏 C 打开 Side Panel；空态是「要对这页做什么」+ 当前页 + 3 个芯片，不是空白聊天机器人。
+4. **危险（Confirm）**：Allow/Deny **只**在确认台 / Mac 托盘。悬浮卡上没有批准按钮。
+5. **租手**：Codex 等走 Outbound MCP（[5 分钟租手](docs/mcp.md#outbound-mcp)），钥匙 `cmg_`，**不要**把 `ws_secret` 当 grant。
+
+### 召唤器（Capture）
+
+完整步骤：[召唤器用户指南](docs/summoner-user-guide.md)。
+
+Mac 菜单/热键与侧栏「弹出对话框」是**同一张卡**。卡上：问答、📎、听写、开始/结束会议、**打开浏览器并打开侧栏**。Companion 进程不调 `chrome.*`；扩展 SW 才开侧栏。
+
+- 尺寸：**360×420**（代码 `OVERLAY_WINDOW_SIZE`）
+- **永不** Allow/Deny；确认永远在确认台
+- HTML 卡跟 `chat.token` **流式出字**（Swift 旧条本已流式）
+- 不是 WorkBuddy 五轨工作台；禁止「去侧栏批准」文案
+
+### 弹出对话框
+
+Side Panel 顶栏 **弹出对话框** = 打开上面那张 Capture 卡，不是再开一个聊天产品。装配（技能/知识/MCP/任务包）留在侧栏壳外。
 
 ### 浏览器操作示例
 
@@ -381,7 +414,7 @@ Sprint 周期两周，每周一开始。
 高危工具（如 `evaluate`、`osascript_eval`、部分 navigate/create_tab、Computer Use / shell / netsec 等）**默认不静默执行**：
 
 1. Companion 的 `SecurityConfirmationManager` 排队（约 **45s** 超时）  
-2. Side Panel 弹层 **或** **确认台（Confirm Center / Cockpit）** 人机审批  
+2. Side Panel 红条 **或** **确认台（Confirm Center / Cockpit）** 人机审批（**不是**召唤器 HTML 卡）  
 3. 批准后颁发 HMAC `security_token` 才真正执行  
 
 | 机制 | 作用 |
@@ -391,15 +424,24 @@ Sprint 周期两周，每周一开始。
 | `security.auto_approve_dangerous` | 全局 kill-switch（无人值守；默认关） |
 | Cockpit | 宽屏审批、Computer Use 步骤轨与急停 |
 
+**召唤器 / overlay 永不 Allow/Deny。** Win/Linux 没有原生托盘确认，必须打开 Chrome 确认台。
+
 详见 [confirm-center-user-guide](docs/confirm-center-user-guide.md)、[ADR-007](docs/adr/007-domain-whitelist-auto-approve.md)。
 
 ---
 
-### MCP
+### MCP 与租手（不要混）
 
-本地 Companion 可接入 [Model Context Protocol](https://modelcontextprotocol.io/) server（stdio 或 HTTP），把外部工具暴露给 LLM，命名形如 `mcp__<server>__<tool>`。支持 Resources / Prompts（按 server 能力动态暴露）、每线程 server 选择（`auto` / `all` / `manual`）、信任级别（`manual` / `first-use` / `trusted`）。
+三件不同的事：
 
-配置写在 `~/.cmspark-agent/config.json` 的 `mcp` 段；Side Panel **MCP 面板**与之同步。示例与排错见 **[docs/mcp.md](docs/mcp.md)**。
+| | 方向 | 名字 |
+|--|------|------|
+| **入站 MCP** | 外部工具 → 我们的 loop | `mcp__<server>__<tool>`（Side Panel MCP 面板） |
+| **租手**（Outbound） | 他们 → 我们的已登录 Chrome | `cmspark__*` + 钥匙 `cmg_`（≠ `ws_secret`） |
+| **编程接力** | 我们 → 本机编程 Agent | ACP client，[coding-handoff](docs/coding-handoff-user-guide.md)。**不是**租手 |
+
+入站：Companion 接 stdio/HTTP MCP server。配置 `~/.cmspark-agent/config.json` 的 `mcp` 段。  
+租手（实验、非 default-on、T1 已记分仍**禁扩** profile）：**[5 分钟租手](docs/mcp.md#outbound-mcp)** · [ADR-022](docs/adr/022-outbound-mcp-server.md)。
 
 ---
 
@@ -777,8 +819,8 @@ make package
 ```bash
 make package-macos
 # 产出：
-#   dist-package/CMspark-v0.5.3-macOS.dmg   ← 安装包
-#   dist-package/cmspark-v0.5.3-macos-arm64.zip  ← 原始压缩包
+#   dist-package/CMspark-v0.5.5-macOS.dmg   ← 安装包
+#   dist-package/cmspark-v0.5.5-macos-arm64.zip  ← 原始压缩包
 ```
 
 Windows 打包流程（**官方 zip + Setup.exe / package.sh**）：
@@ -903,13 +945,13 @@ cmspark/
 
 | 类别 | 文档 |
 |------|------|
-| **用户** | [confirm-center](docs/confirm-center-user-guide.md) · [mcp.md](docs/mcp.md) · [mission-pack-usage](docs/mission-pack-usage.md) · [computer-use](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) · [notebooklm](docs/notebooklm-user-guide.md) · [multi-agent](docs/multi-agent-user-guide.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) |
+| **用户** | [PRODUCT.md](PRODUCT.md) · [召唤器](docs/summoner-user-guide.md) · [confirm-center](docs/confirm-center-user-guide.md) · [mcp.md](docs/mcp.md) · [mission-pack-usage](docs/mission-pack-usage.md) · [meeting-and-dictation](docs/meeting-and-dictation-user-guide.md) · [computer-use](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) · [notebooklm](docs/notebooklm-user-guide.md) · [multi-agent](docs/multi-agent-user-guide.md) · [coding-handoff](docs/coding-handoff-user-guide.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) |
 | **架构 / 目标** | [architecture.md](docs/architecture.md) · [GOAL.md](docs/GOAL.md) · [DESIGN.md](docs/DESIGN.md) · **[ADR-020 能力三轴](docs/adr/020-capability-model-three-axes.md)** |
-| **ADR** | [docs/adr/](docs/adr/)（至 **024**；语音 023–024，能力三轴 020，Outbound MCP 022） |
+| **ADR** | [docs/adr/](docs/adr/)（至 **025**；语音 023–024，能力三轴 020，Outbound MCP 022，ACP 编程接力 025） |
 | **工程** | [TESTING.md](docs/TESTING.md) · [supply-chain.md](docs/supply-chain.md) · [CONTRIBUTING.md](CONTRIBUTING.md) |
 | **过程稿（非规范）** | [decisions/](docs/decisions/)（CU/host 长文等；现行见用户指南 + ADR-017/018） |
 | **Agent 上下文** | [CLAUDE.md](CLAUDE.md) · [Agents.md](Agents.md) |
 
 ---
 
-> **当前阶段（0.5.3）**：MVP 与组合面已稳；**听写+ / 会议 / 本机 Whisper M2** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe** 随 GitHub Release 分发；**知识 CRUD 诚实**（正文 / 保存 / 下载 `.md`）；**租手钥匙 CLI + L8 确认**；侧栏空态看山；技能 TF-IDF + 聊天列「本轮步骤」。**不是**召唤器/租手完成切点——T1 真人 bake-off 仍待（[#228](https://github.com/nehcuh/cmspark/issues/228)）。CU 实验定位仅 **Qwen3-VL**。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（0.5.5）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。包装 0.5.5；Unreleased（召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档）见 [CHANGELOG](CHANGELOG.md)，打 NSIS 再 0.5.6。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**；**知识 CRUD 诚实**；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 聊天列「本轮步骤」（r1 默收）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。

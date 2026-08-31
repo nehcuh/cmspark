@@ -113,7 +113,7 @@ cmspark/
 **必须建票**：新产品行为、形态切片、能力边界、用户可见流程、冻结项（否则会「顺便」做掉）。  
 **不必建设计票**：无新需求的 typo/文档；已有行为的 bugfix（用 bug 票即可）。
 
-本季已开追踪：[#228](https://github.com/nehcuh/cmspark/issues/228) T1 bake-off · [#229](https://github.com/nehcuh/cmspark/issues/229) 召唤器 P2 · [#230](https://github.com/nehcuh/cmspark/issues/230) 形态残留。正交旧债 #69 / #70 / #71。
+本季追踪：[#230](https://github.com/nehcuh/cmspark/issues/230) 冻（F-S-10 / overlay-acl）· [#258](https://github.com/nehcuh/cmspark/issues/258)–[#260](https://github.com/nehcuh/cmspark/issues/260) 语音/会议。T1 [#228](https://github.com/nehcuh/cmspark/issues/228) 已记分，**禁扩** outbound profile。正交旧债 #69 / #70 / #71。
 
 ## 提交规范
 
@@ -126,7 +126,7 @@ cmspark/
 ## PR 模板
 
 打开 PR 时使用 [`.github/pull_request_template.md`](.github/pull_request_template.md)（含 **能力声明** 块）。  
-后续工作排序见 **[docs/optimization-plan-post-adr-020.md](docs/optimization-plan-post-adr-020.md)**；安全 P1 盘点见 [docs/audit/p1-security-open-items-2026-07-29.md](docs/audit/p1-security-open-items-2026-07-29.md)。
+活票与导航见 **[docs/README.md](docs/README.md)** 后续工作；[optimization-plan-post-adr-020.md](docs/optimization-plan-post-adr-020.md) 是 0.4.0 **历史骨架**（P1 已 FIXED，勿当活排序）。安全 P1 盘点见 [docs/audit/p1-security-open-items-2026-07-29.md](docs/audit/p1-security-open-items-2026-07-29.md)。
 
 dual-review（`scripts/dual-external-review.sh`）会自动附带 [capability checklist](docs/audit/reviews/_templates/dual-review-capability-checklist.md)。
 

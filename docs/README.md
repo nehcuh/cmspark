@@ -1,6 +1,6 @@
 # CMspark 文档导航
 
-> 产品 **0.5.3** · 入口 README：[仓库根 README.md](../README.md)  
+> 产品 **0.5.5**（Unreleased 见 [CHANGELOG](../CHANGELOG.md)）· 入口 README：[仓库根 README.md](../README.md)  
 > 本页只做**导航**，不搬运正文。过程件已于 **Phase 4** 迁入 [`archive/2026-07/`](archive/2026-07/)；`user/` 物理搬家仍可选（见 [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)）。
 
 ---
@@ -11,7 +11,9 @@
 
 | 文档 | 坐标（摘要） | 说明 |
 |------|----------------|------|
-| [../README.md](../README.md) | 全景 | 安装、三轴能力矩阵、快速用、配置与托盘 |
+| [../README.md](../README.md) | 全景 | 家 = 已登录 Chrome；Capture / 租手 / 安装 |
+| [../PRODUCT.md](../PRODUCT.md) | 产品句 | 四面 Capture·Operate·Confirm·租手 |
+| [summoner-user-guide.md](summoner-user-guide.md) | **Capture** | 召唤器 HTML 卡 360×420、流式、永不审批、请点工具栏 C |
 | [confirm-center-user-guide.md](confirm-center-user-guide.md) | **横切 Trust UI**（L1/L2） | 确认台 / Cockpit、高危审批、CU 操控台 |
 | [mcp.md](mcp.md) | **Composition** | MCP server（Inbound + **Outbound ADR-022**）、Grok `config.toml`、信任级别、Resources/Prompts、排错 |
 | [user-env.md](user-env.md) | **Composition**（密钥） | skill / shell / MCP 子进程 Secrets（如 Datayes） |
@@ -22,8 +24,7 @@
 | [coding-handoff-user-guide.md](coding-handoff-user-guide.md) | **Composition** | 编程接力：任务包 / 本机 ACP 审查·起草·gated apply；≠ Outbound MCP |
 | [multi-agent-user-guide.md](multi-agent-user-guide.md) | **Autonomy**（Worker≈L1） | spawn_worker、tab 锁、Mission Board、上限 |
 | [notebooklm-user-guide.md](notebooklm-user-guide.md) | **产品特性**（非组合原语） | NotebookLM 导入器、权限、结果 |
-| [meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) | **产品特性** L0 输入 / Pack | 听写+（含按住热键）· 会议 Mtg0–3 · 真机验收清单 |
-| [coding-handoff-user-guide.md](coding-handoff-user-guide.md) | **Composition**（外派本机写码） | 编程接力 · 侧栏壳 vs 本机 Agent · 模式 C 双进程 · Stop 只杀桥 · 对照 Outbound MCP |
+| [meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) | **产品特性** L0 输入 / Pack | 听写+（含按住热键、HF 镜像、当次会话回退）· 会议 Mtg0–3（说话人「自动」档） |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | — | 常见故障速查 |
 
 ### 导出 / 图表（产品特性 · ADR 即用户向说明）
@@ -41,11 +42,11 @@
 |------|------|
 | [architecture.md](architecture.md) | 活架构：双层拓扑 + 桌面面、MCP/CU/Host/编排/Board/Packs |
 | **[ADR-020 能力三轴](adr/020-capability-model-three-axes.md)** | **Surface · Composition · Autonomy** 本体（能力叠加与防「杂」纪律） |
-| [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.5.3** 对齐；扩展目标带轴标注） |
+| [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.5.5** 对齐；扩展目标带轴标注） |
 | [../PRODUCT.md](../PRODUCT.md) | 产品一句话 / 四面（Capture·Operate·Confirm·租手）；家 = 已登录 Chrome + 硬闸 |
-| [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md) | **形态深化 SoT**（定位、文案合同、L8、五分钟租手、切片 DoD）；余项 [#228](https://github.com/nehcuh/cmspark/issues/228)–[#230](https://github.com/nehcuh/cmspark/issues/230) |
-| [2026-08-27-post-227-status.md](superpowers/specs/2026-08-27-post-227-status.md) | **0.5.3 / #227 后现状**：切片 1–3/5/6 + 知识 Wave 3 已合；T1 仍待 |
-| [2026-08-26-post-226-status.md](superpowers/specs/2026-08-26-post-226-status.md) | **#226 后快照**（被上一行取代为活状态） |
+| [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md) | **形态深化 SoT**（定位、文案合同、L8、五分钟租手、切片 DoD） |
+| [2026-08-27-post-227-status.md](superpowers/specs/2026-08-27-post-227-status.md) | **SNAPSHOT** 0.5.3 / #227（T1 已记分；**不是**活状态） |
+| [2026-08-26-post-226-status.md](superpowers/specs/2026-08-26-post-226-status.md) | **#226 后快照**（已被 post-227 取代；二者皆非活状态） |
 | [2026-08-26-slice-6-match-idf-runprogress.md](superpowers/plans/2026-08-26-slice-6-match-idf-runprogress.md) | **切片 6 计划**（IDF + RunProgress）— 已合 #227；残留 [#230](https://github.com/nehcuh/cmspark/issues/230) |
 | [../CHANGELOG.md](../CHANGELOG.md) | 版本变更记录 |
 | [DESIGN.md](DESIGN.md) | UI / 设计 token 约定；Mode badge = Surface；召唤器默认收起条 |
@@ -104,7 +105,7 @@
 
 | 文档 | 说明 |
 |------|------|
-| **[optimization-plan-post-adr-020.md](optimization-plan-post-adr-020.md)** | **排序权威**：A–E 骨架（治理 / Trust P1 / Composition / L2 / Autonomy） |
+| [optimization-plan-post-adr-020.md](optimization-plan-post-adr-020.md) | **历史骨架**（0.4.0；P1 已 FIXED，**勿当活排序**） |
 | **[optimization-plan-au4dch-ux-shell-download.md](optimization-plan-au4dch-ux-shell-download.md)** | **UX 子轨**（#au4dch）：下载去重 · 长 tool/舰队运行态 · shell 黑窗止血与网页 PTY epic |
 | **[optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)** | **Backlog**：Agent 在 Chrome 下载 skill → 安装到 `~/.cmspark-agent/skills`（一等 `skill_install`） |
 | **[optimization-plan-document-parse-vision.md](optimization-plan-document-parse-vision.md)** | **Backlog**：聊天附件文档解析 / 图文理解（P0 增强现有管道 → P1 OCR/结构 → P2 DocAI） |
@@ -113,10 +114,9 @@
 | [audit/reviews/_templates/dual-review-capability-checklist.md](audit/reviews/_templates/dual-review-capability-checklist.md) | dual-review 能力声明检查清单 |
 | [audit/reviews/_templates/eval-gate-card.md](audit/reviews/_templates/eval-gate-card.md) | Eval Engineering 放行卡片（机核 + dual + blast） |
 | [superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md](superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md) | Outbound MCP P0c 门控卡（M1–M9） |
-| [superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md](superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md) | **P0d 真人 bake-off**（T1–T3 vs Playwright · 记分表）→ **活票 [#228](https://github.com/nehcuh/cmspark/issues/228)** |
-| **GitHub [#228](https://github.com/nehcuh/cmspark/issues/228)** | **P0** T1 真人 bake-off（切片 4）。没跑完禁止扩 profile |
-| **GitHub [#229](https://github.com/nehcuh/cmspark/issues/229)** | 召唤器 P2：只修快与淡 |
-| **GitHub [#230](https://github.com/nehcuh/cmspark/issues/230)** | 形态残留：F-S-10 / overlay-acl-rollback / grant-cli / RunProgress 勾选 |
+| [superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md](superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md) | P0d 记分表：T1 **已记分**（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）；**仍禁扩** profile；T2/T3 未跑 |
+| **GitHub [#230](https://github.com/nehcuh/cmspark/issues/230)** | **冻**：F-S-10 / overlay-acl。grant-cli 未知 flag 与 H1 精确勾已不在此清单 |
+| **GitHub [#258](https://github.com/nehcuh/cmspark/issues/258)–[#260](https://github.com/nehcuh/cmspark/issues/260)** | 语音 UX Hex · Windows SAPI 兜底 · speaker embedding diarize |
 | [skills/eval-engineering-gate/SKILL.md](skills/eval-engineering-gate/SKILL.md) | Eval Engineering 闸门 skill（机核 + dual + blast） |
 | [decisions/daily-content-loop-brief-2026-08-04.md](decisions/daily-content-loop-brief-2026-08-04.md) | **DIRECTION LOCKED**：每日情报环（公开站·本地模型·本机+邮件·代码+网页验证） |
 | [optimization-plan-post-v0.3.0.md](optimization-plan-post-v0.3.0.md) | 历史：v0.3.0 后 P2/P3 闭环考古（**勿再作排序权威**） |
@@ -168,5 +168,5 @@
 ## 维护提示
 
 - 新功能 PR：更新根 README 能力矩阵一行 + 本导航表（若新增用户文档）+ 必要时 ADR + [CONTRIBUTING 文档 checklist](../CONTRIBUTING.md#文档-checklist功能-pr-合并前)。  
-- 事实以 **0.5.0 代码** 与 live ADR 为准；过程稿冲突时以 ADR / architecture / 用户指南为准。  
+- 事实以 **0.5.5 代码**（`companion`/`chrome-extension` `package.json`）与 live ADR 为准；过程稿冲突时以 ADR / architecture / 用户指南为准。Unreleased 行为以 [CHANGELOG](../CHANGELOG.md) 为准。  
 - 详细 DoD 与分阶段： [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)。

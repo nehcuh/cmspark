@@ -2,6 +2,12 @@
 
 ## Current Session
 
+### S99 (2026-08-31) [活文档锁 0.5.5 · Unreleased 记 S98]
+- **不做**：不 bump `package.json` / NSIS / CLI 到 0.5.6。
+- **做了**：Batch 0 诚实（README/PRODUCT/CLAUDE/AGENTS/GOAL/architecture/docs README/companion README.txt）0.5.3→0.5.5；T1 = 已记分+禁扩；#228/#229 从余项拿掉；post-227 标 SNAPSHOT；Capture 尺寸 360×420；CHANGELOG Unreleased 记召唤器流式 / 语音回退镜像 / 会议自动 K + #235 补记。
+- **Batch 1**：README 开篇 = PRODUCT 家/四面；使用指南 Capture + 弹出 + 租手三门。
+- **Batch 2**：`docs/summoner-user-guide.md` + TROUBLESHOOTING 召唤器节。未 bump 0.5.6。
+
 ### S98 END (2026-08-31) [召唤器流式 · 语音自动激活/回退/HF镜像 · 会议自动K · 双路复审修复]
 - **Ship（本地 main，未 push）**：`e6929948` 召唤器 HTML shell 流式渲染 · `45b417aa` 会议说话人「自动」档 · `8f8bd2fa` 语音模型自动激活+非静默回退+HF 镜像 · `ce85bc4d` 复审归档。
 - **召唤器根因**：后端一直在流式（adapter `chat.token` 累积快照）；Windows HTML shell 收到 token 只整表 refetch 而 assistant 轮末才落库——纯前端缺口。Swift overlay 本已流式未动。

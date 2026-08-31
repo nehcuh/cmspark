@@ -1,9 +1,9 @@
 # CMspark — Product Context (Impeccable)
 
-> Written 2026-08-11 for design harnesses. **Refreshed 2026-08-26**: home is logged-in Chrome + hard gates, not the Side Panel. **#241 (2026-08-28):** HTML float is Capture 卡片 (~400×520).  
-> Version lock: companion/extension **0.5.3**.  
-> Remaining work is GitHub Issues: [#228](https://github.com/nehcuh/cmspark/issues/228) T1 bake-off · [#229](https://github.com/nehcuh/cmspark/issues/229) summoner P2 · [#230](https://github.com/nehcuh/cmspark/issues/230) residuals. New requirement designs **must** open an Issue first.
-> Form SoT: [docs/superpowers/specs/2026-08-26-product-form-deepening-design.md](docs/superpowers/specs/2026-08-26-product-form-deepening-design.md)
+> Written 2026-08-11 for design harnesses. **Refreshed 2026-08-26**: home is logged-in Chrome + hard gates, not the Side Panel. **#241:** HTML float is Capture 卡片 (**360×420** inner; code `OVERLAY_WINDOW_SIZE`). **Unreleased:** HTML 卡跟 `chat.token` 流式出字。  
+> Version lock: companion/extension **0.5.5**（Unreleased 见 [CHANGELOG](CHANGELOG.md)；打 NSIS 再 0.5.6）。  
+> Remaining work: [#230](https://github.com/nehcuh/cmspark/issues/230) freeze (F-S-10 / overlay-acl) · [#258](https://github.com/nehcuh/cmspark/issues/258)–[#260](https://github.com/nehcuh/cmspark/issues/260) voice/meeting. T1 [#228](https://github.com/nehcuh/cmspark/issues/228) scored, **do not expand** outbound profile. New requirement designs **must** open an Issue first.
+> Form SoT: [docs/superpowers/specs/2026-08-26-product-form-deepening-design.md](docs/superpowers/specs/2026-08-26-product-form-deepening-design.md) · Capture 怎么用：[docs/summoner-user-guide.md](docs/summoner-user-guide.md)
 
 ## One sentence
 
@@ -30,7 +30,7 @@
 
 | Surface | Mode | Notes |
 |---------|------|--------|
-| 召唤器 | **Capture** | HTML float = Capture 卡片 ~360×420: 问答、📎、听写、开始/结束会议、**打开浏览器并打开侧栏**. Fail toast **请点工具栏 C**. Mac 菜单/热键与侧栏「弹出对话框」同一张卡. Side Panel visual unchanged. Companion never `chrome.sidePanel.open`; extension SW opens the panel after the overlay button. Entry = toolbar C, **not** a tab-strip pill. Never claim CMspark sits beside the tab bar. |
+| 召唤器 | **Capture** | HTML float = Capture 卡片 **360×420**: 问答（**流式出字**）、📎、听写、开始/结束会议、**打开浏览器并打开侧栏**. Fail toast **请点工具栏 C**. Mac 菜单/热键与侧栏「弹出对话框」同一张卡. Side Panel visual unchanged. Companion never `chrome.sidePanel.open`; extension SW opens the panel after the overlay button. Entry = toolbar C, **not** a tab-strip pill. Never claim CMspark sits beside the tab bar. |
 | Side Panel | **Operate** | ChatShell empty: **要对这页做什么** / **当前页：** / 3 template chips. Top bar **弹出对话框** opens the HTML float. 装配 stays outside the shell. Watching Chrome; ~320px. |
 | Background CDP | **Operate** | When the human is in summoner or a coding agent; extension must be connected |
 | 确认台 / Cockpit + Mac tray | **Confirm** | Allow/Deny lives here. Overlay never. Win/Linux: open Chrome 确认台, never skip |

@@ -26,7 +26,7 @@ All non-trivial tasks are routed through the `workflows/` directory:
 
 ### 需求设计 Issue-first（锁定 · 2026-08-27）
 
-任何需求设计必须**先**在 GitHub 建 Issue，再写 spec/plan。禁止只在 `docs/superpowers/` 里设计。模板：`.github/ISSUE_TEMPLATE/design.md`。本季余项：#228 T1 · #229 召唤器 P2 · #230 残留。例外：无新需求的 typo/文档；已有行为的 bugfix。
+任何需求设计必须**先**在 GitHub 建 Issue，再写 spec/plan。禁止只在 `docs/superpowers/` 里设计。模板：`.github/ISSUE_TEMPLATE/design.md`。本季余项：#230 冻（F-S-10 / overlay-acl）· #258–#260 语音/会议。T1 #228 已记分，禁扩 outbound profile。例外：无新需求的 typo/文档；已有行为的 bugfix。
 
 Available Workflow categories:
 - `workflows/bridge-*.ts` — bridge/ module fixes and reviews

@@ -1,0 +1,15 @@
+{
+  "date": "2026-08-30",
+  "subject": "docs/version/distinctive-capability audit",
+  "lanes": ["version", "distinctive", "skeptic", "discoverability", "post-053-delta"],
+  "kimi": "APPROVE_WITH_NITS",
+  "claude_cli": "HUNG",
+  "second_dual": "APPROVE_WITH_NITS",
+  "folded": "AWN",
+  "p0_survive": [
+    "version 0.5.3 vs package 0.5.5",
+    "closed #228/#229 listed as 本季余项",
+    "T1 仍待 live-ticket vs scored + 禁扩"
+  ],
+  "do_not_impl_until_user": true
+}

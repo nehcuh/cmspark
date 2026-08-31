@@ -3,7 +3,13 @@
 常见问题速查。
 
 > **文档地图**：[docs/README.md](README.md) · 能力分层见 [ADR-020](adr/020-capability-model-three-axes.md)（L0 聊 / L1 网页 / 组合面 Pack·MCP / L2 桌面）。  
-> 按场景查指南：确认台 · MCP · 任务包 · Computer Use · Host/Apps · Multi-Agent · user-env — 均在文档导航「用户指南」表。
+> 按场景查指南：召唤器 · 确认台 · MCP · 任务包 · Computer Use · Host/Apps · Multi-Agent · user-env — 均在文档导航「用户指南」表。
+
+## 召唤器 / Capture 卡
+
+- 卡没出来：Companion 未起或扩展未配对。先托盘 / `cmspark-agent daemon start`。完整说明：[召唤器用户指南](summoner-user-guide.md)。
+- Toast **请点工具栏 C**：没有用户手势，扩展开不了 Side Panel。点工具栏图标，不要等悬浮卡自己开。Companion 从不调用 `chrome.sidePanel.open`。
+- 悬浮卡上没有允许/拒绝：审批只在 [确认台](confirm-center-user-guide.md) / Mac 托盘。
 
 ## Companion 相关
 

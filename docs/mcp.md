@@ -1,5 +1,8 @@
 # CMspark MCP 支持指南
 
+本文前半是 **入站 MCP**（外部 server → 我们的 loop，`mcp__<server>__<tool>`）。  
+**租手**（我们当 server，`cmspark__*` + `cmg_`）在文末 [5 分钟租手](#outbound-mcp)。两者方向相反；编程接力（ACP）是第三扇门，见 [coding-handoff](coding-handoff-user-guide.md)。
+
 CMspark 通过本地 Companion 接入 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server，把外部工具（filesystem、brave-search、pentest-ai 等）暴露给 LLM。
 
 ### 能力坐标

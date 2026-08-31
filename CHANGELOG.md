@@ -4,7 +4,25 @@
 
 ## [Unreleased]
 
-（无）
+包装仍为 **0.5.5**（`companion` / `chrome-extension` `package.json`）。下列已在本地 `main` tip，待 push / 打 NSIS 时再 lockstep **0.5.6**。
+
+### Added
+
+- **召唤器 HTML 卡流式出字**：Windows HTML shell 跟 `chat.token` 累积快照逐 token 渲染（此前只在 assistant 轮末整表 refetch）。Swift overlay 本已流式，未改。
+- **本机 Whisper 下载完成自动激活** `localModelId`（不改 `sttEngine`）；`get_state` 自动修正失效的 active 模型。
+- **本机模型不可用时当次会话回退浏览器听写**：`voice.autoFallbackToBrowser`（默认 true）显示可见横幅（含云残留），非静默、不改配置。ADR-023 L13 2026-08-31 修订为禁止**静默**回落。
+- **模型下载源镜像**：`voice.modelDownloadEndpoint` / `CMSPARK_HF_ENDPOINT`（仅重写 huggingface.co 主机，https fail-closed；sha256/size pin 不变）。
+- **会议说话人人数「自动」档**：silhouette 选 K（`meanSilhouette` / `selectBestK`）；UI 默认「自动」。仍是 3 维特征近似，experimental。
+
+### Documented
+
+- **补记**：`cmspark-agent outbound-grant` 对未知 flag 失败且不签发（[#235](https://github.com/nehcuh/cmspark/issues/235)）。0.5.3 Honesty 段仍描述当时切点，不改历史。
+
+### Known residuals
+
+- 语音 UX Hex 式 [#258](https://github.com/nehcuh/cmspark/issues/258) · Windows SAPI 兜底 [#259](https://github.com/nehcuh/cmspark/issues/259) · speaker embedding diarize [#260](https://github.com/nehcuh/cmspark/issues/260)。
+- [#230](https://github.com/nehcuh/cmspark/issues/230) 仍冻 F-S-10 / overlay-acl；grant-cli 未知 flag 与 H1 `{text,tool}` 精确勾已不在该冻清单。
+- T1 已记分（CMspark 臂 Y / Playwright `ERR_EMPTY_RESPONSE`）；[#228](https://github.com/nehcuh/cmspark/issues/228) 已关。**仍禁止**扩默认 outbound profile。
 
 ## [0.5.5] — 2026-08-29
 
