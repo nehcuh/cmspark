@@ -2,6 +2,12 @@
 
 ## Current Session
 
+### S102 END (2026-08-31) [本机 0.5.6 DMG 换装 · 清备份]
+- **做了**：`make package-macos` → `dist-package/CMspark-v0.5.6-macOS.dmg`（57M）+ zip；停 daemon → `ditto` 换 `/Applications/CMspark.app`；用户不要备份，删 `~/CMspark.app.bak-20260828-144503` / `…145732` / `…20260831-170839`。
+- **运行中**：`cmspark-agent v0.5.6`；`ws://127.0.0.1:23401`；codesign adhoc+runtime CDHash `b6f1fa57…` A6 单哈希。本机无 `.bak`。
+- **下次**：Chrome unpacked 扩展若还是旧包，重载 `chrome-extension/build/chrome-mv3-prod/`。#230 仍冻。
+- Recorded: yes — `xattr -cr` 撞 SIP provenance；按 PID 逐杀；不留 bak
+
 ### S101 END (2026-08-31) [4 路对抗评审 → #261–#264 全闭环 · 双路质量门]
 - **评审**：pull 范围 `c39d7d3e..26949cbb` 派 4 路独立对抗子代理（ARCH/CORR/SEC/UX）→ 0 BLOCK / 7 MAJOR / ~17 NIT。CORR 与 SEC **独立命中同一 shell.ts 允许列表绕过类**（引号 `-""c` + 通配符 fallback 两向量，均实测可执行）。
 - **grok 修 5 条**（#261 shell W1e fail-closed · #262 run_progress 三态 · #263 UX CTA/错误/回显 K），我实证回放验证（`scratch/w1e-replay.ts` 14 例全 PASS，已入库作回归证据）。
@@ -1000,10 +1006,10 @@
 
 ### Overlay Capture 卡狗食（S87–S94 · #241–#246 on main）
 - status: **done**（产品随 #242+#246 在 main；本地 overlay 枝已删）
-- context: 默认展开、托盘/热键 HTML 卡、会议台录制/历史/近实时。体检 A–F 另票已合。
-- next_action: 可选重打 DMG 狗食。#230 勿整票。
+- context: 默认展开、托盘/热键 HTML 卡、会议台录制/历史/近实时。体检 A–F 另票已合。本机 `/Applications/CMspark.app` 已是 0.5.6 DMG（S102）。
+- next_action: #230 勿整票。
 - resume_doc: `docs/superpowers/specs/2026-08-28-overlay-capture-card-design.md` · tip `5c4fcab0`
-- updated: 2026-08-29
+- updated: 2026-08-31
 
 ### ChatShell 同一张脸（S86 · #239 · PR #240）
 - status: **done**（squash 合 main `6a3bfe23`）
@@ -1014,10 +1020,10 @@
 
 ### 形态深化 0.5.3 切点（S84–S94 · main 含 #240/#242/#246–#254）
 - status: **active**（用户可见主线 + 体检 A–F on main；不宣称 Capture/CU 闭合）
-- context: 切片 1–6、ChatShell、Capture 卡、体检 P0–P2。#228 禁扩 profile；#230 冻。
+- context: 切片 1–6、ChatShell、Capture 卡、体检 P0–P2。包装 **0.5.6** 已进 `/Applications`（S102）。#228 禁扩 profile；#230 冻。
 - next_action: 勿扩 outbound。残留 Medium 须新 Issue。#230 禁止整票「继续」。
 - resume_doc: `docs/superpowers/specs/2026-08-27-post-227-status.md` · #230
-- updated: 2026-08-29
+- updated: 2026-08-31
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**
@@ -1028,10 +1034,10 @@
 
 ### OS summoner overlay（S77–S94 · HTML 卡 on main）
 - status: **done**（托盘/热键 HTML 卡 + 会议台在 main；Swift HUD 条备用）
-- context: cookie 首屏、Origin 类 handshake、L0 裁切随 A–E 合入。
-- next_action: 可选重打 DMG。勿改 SUMMONER_ALLOW。
+- context: cookie 首屏、Origin 类 handshake、L0 裁切随 A–E 合入。本机 0.5.6 DMG 已换装（S102）。
+- next_action: 勿改 SUMMONER_ALLOW。
 - resume_doc: #242/#246/#250/#252
-- updated: 2026-08-28
+- updated: 2026-08-31
 
 ### Companion-canon Side Panel（S74 · #196 MERGED）
 - status: **done**

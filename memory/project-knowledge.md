@@ -126,6 +126,11 @@
 - **纪律**：按 PID 杀；`ps -ax` + 过滤；热替换：`daemon stop` → `/bin/cp -f dist/cmspark-agent.js` → `open -a CMspark`。先 `tsc` 再 `bundle:exe`（package.sh 内联 MCP，dev `bundle:exe` 的 externals 列表已够当前 .app）。
 - **4 行 case**：动作=热替换狗食；失败=脚本自杀；归责=-f 匹配 cmdline；保护=按 PID / 不用 pkill -f 包路径
 
+### `xattr -cr` 换装会撞 SIP `com.apple.provenance`（2026-08-31 · S102）
+- **坑**：项目旧纪律写「ditto 后 `xattr -cr`」。whisper / libggml 是 `r-xr-xr-x` 且带 SIP 保护的 `com.apple.provenance`，`-cr` 对它们 `Permission denied`，脚本在 `set -e` 下中断。
+- **纪律**：(1) `daemon stop` → `osascript` quit → **按 PID 逐个** `kill -9`（整表 `kill $(ps…)` 不可靠）→ `ditto` 覆盖 `/Applications/CMspark.app`；(2) 只剥 Gatekeeper：`xattr -dr com.apple.quarantine`；(3) `codesign --verify` + A6 单 CDHash；(4) `open -a CMspark`。本机换装**不要**留 `~/CMspark.app.bak-*`（用户明确不要备份）。shell 里 `du` 可能是 `dust` 别名，尺寸用 `/usr/bin/du`。
+- **4 行 case**：动作=0.5.6 DMG 换 0.5.3；失败=`xattr -cr` 权限错；归责=SIP provenance + 只读 Mach-O；保护=只剥 quarantine、按 PID 杀残进程
+
 ### Overlay 会议 45s 窗 = 「没有实时转写」（2026-08-28）
 - **坑**：侧栏近实时是 ~8s + `voice.stt.partial_request`。浮窗 ScriptProcessor 用听写 45s 硬顶，第一段字很晚才来，用户以为没转写。
 - **修**：会议 `STT_MEETING_MS=8000` + `/api/stt/partial` 轮询；听写仍 45s。说话人是本机 k-means 匿名「发言人N」，不是认人。
@@ -485,7 +490,7 @@
 
 ### dual-review / packaging：`git add` 勿吞入 audit patch 与 host-integrity 脏改（2026-08-08）
 - **坑**：工作区大量 `docs/audit/reviews/*.patch` untracked；`git add docs/` 或误加会把 5 万行噪声塞进 PR（#146 曾 force-push 清）
-- **打包**：`make package-macos` 会改 `host-integrity.ts` SHA；替换 `/Applications/CMspark.app` 用 `ditto` + `xattr -cr`，先 `daemon stop` 再备份旧 app
+- **打包**：`make package-macos` 会改 `host-integrity.ts` SHA。替换 `/Applications/CMspark.app`：先 `daemon stop`，按 PID 杀残进程，`ditto` 覆盖，**只** `xattr -dr com.apple.quarantine`（不要 `-cr`，会撞 SIP provenance）。本机不要留 `~/CMspark.app.bak-*`。
 - **纪律**：打包后单独看 `git status`；PR 只 stage 功能文件
 
 ### analyze_image `data:` 假 Security Block ≠ 授权不够（2026-08-06 S50）
