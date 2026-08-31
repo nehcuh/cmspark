@@ -1,0 +1,387 @@
+diff --git a/companion/src/config.ts b/companion/src/config.ts
+index 4d5e91a4..978065a0 100644
+--- a/companion/src/config.ts
++++ b/companion/src/config.ts
+@@ -176,6 +176,13 @@ export interface VoiceConfig {
+    * 环境变量 CMSPARK_HF_ENDPOINT 优先于此字段（getEnvApiKey 先例）。
+    */
+   modelDownloadEndpoint?: string
++  /**
++   * A2 auto-correct 暂存：get_state/set_engine 把未就绪的 localModelId 改成
++   * 已就绪模型时，用户原来的显式选择暂存于此；该模型一旦 ready 即恢复并
++   * 清除（maybeAutoActivateModel / get_state 自愈）。用户显式 set_active 或
++   * 删除被暂存的模型时清除。
++   */
++  localModelAutoCorrectedFrom?: "small" | "medium" | "large-v3-turbo"
+ }
+ 
+ /** Wire protocol for chat completions. Default "openai". */
+@@ -931,6 +938,15 @@ export function getConfig(): CompanionConfig {
+         }
+       }
+     }
++    if (voice.localModelAutoCorrectedFrom !== undefined) {
++      const m = voice.localModelAutoCorrectedFrom
++      if (m !== "small" && m !== "medium" && m !== "large-v3-turbo") {
++        console.warn(
++          `[cmspark-agent] voice.localModelAutoCorrectedFrom 非法（须为 "small"|"medium"|"large-v3-turbo"）——按未配置处理 (config tampering?)`,
++        )
++        delete voice.localModelAutoCorrectedFrom
++      }
++    }
+   }
+   if (cachedConfig.summoner && typeof cachedConfig.summoner === "object") {
+     const s = cachedConfig.summoner
+diff --git a/companion/src/voice/whisper-handlers.ts b/companion/src/voice/whisper-handlers.ts
+index f03e9258..39494dee 100644
+--- a/companion/src/voice/whisper-handlers.ts
++++ b/companion/src/voice/whisper-handlers.ts
+@@ -10,7 +10,9 @@
+ //   - download completion auto-activates localModelId when configured active
+ //     model is not ready (never touches sttEngine)
+ //   - get_state auto-corrects a stale localModelId when engine=local and other
+-//     ready models exist (priority: medium → small → large-v3-turbo)
++//     ready models exist (priority: medium → small → large-v3-turbo); the
++//     user's explicit choice is stashed in localModelAutoCorrectedFrom and
++//     restored once that model becomes ready (never silently lost)
+ //   - set_prefs persists autoFallbackToBrowser / modelDownloadEndpoint
+ //     (endpoint fail-closed: valid https origin only)
+ //
+@@ -166,6 +168,14 @@ const AUTO_ACTIVE_PRIORITY: WhisperModelId[] = ["medium", "small", "large-v3-tur
+ function maybeAutoActivateModel(modelId: WhisperModelId, deps: VoiceModelHandlerDeps): void {
+   try {
+     const cfg = getConfig().voice
++    // A2 restore: a stashed explicit preference regains priority the moment
++    // it becomes ready (this download may be the stashed model itself).
++    const stashed = cfg?.localModelAutoCorrectedFrom
++    if (stashed && probeModel(deps, stashed).status === "ready") {
++      setVoiceFields({ localModelId: stashed, localModelAutoCorrectedFrom: undefined })
++      logger.info("voice.model.auto_correct_restored", { restored: stashed, trigger: modelId })
++      return
++    }
+     const activeId = cfg?.localModelId
+     const activeReady =
+       activeId != null &&
+@@ -186,18 +196,32 @@ function maybeAutoActivateModel(modelId: WhisperModelId, deps: VoiceModelHandler
+  * A2: engine=local but the configured active model is not ready while other
+  * ready models exist → persist the correction (AUTO_ACTIVE_PRIORITY order).
+  * Never touches sttEngine; no ready model → leave config untouched (gates/UI
+- * surface model_missing).
++ * surface model_missing). The user's explicit localModelId is stashed in
++ * localModelAutoCorrectedFrom so a later download restores it (see
++ * maybeAutoActivateModel); defaults (unset localModelId) are not stashed.
++ * Self-heals: a stashed model that is ready again is restored here directly.
+  */
+ function autoCorrectActiveLocalModel(deps: VoiceModelHandlerDeps): void {
+   try {
+     const cfg = getConfig().voice
+     if (cfg?.sttEngine !== "local") return
++    const stashed = cfg.localModelAutoCorrectedFrom
++    if (stashed && probeModel(deps, stashed).status === "ready") {
++      setVoiceFields({ localModelId: stashed, localModelAutoCorrectedFrom: undefined })
++      logger.info("voice.model.get_state.auto_correct_restored", { restored: stashed })
++      return
++    }
+     const activeId = (cfg.localModelId ?? RECOMMENDED_WHISPER_MODEL) as WhisperModelId
+     if (probeModel(deps, activeId).status === "ready") return
+     const ready = readyList(deps)
+     if (ready.length === 0) return
+     const next = AUTO_ACTIVE_PRIORITY.find((id) => ready.includes(id)) ?? ready[0]!
+-    setVoiceFields({ localModelId: next })
++    const explicit = cfg.localModelId
++    setVoiceFields({
++      localModelId: next,
++      // Do not overwrite an existing stash — it holds the original choice.
++      ...(explicit && !stashed ? { localModelAutoCorrectedFrom: explicit } : {}),
++    })
+     logger.info("voice.model.get_state.auto_corrected_active", { from: activeId, to: next })
+   } catch (err) {
+     logger.warn("voice.model.get_state.auto_correct_failed", {
+@@ -461,12 +485,19 @@ export async function handleVoiceModelMessage(
+         const wasActive =
+           cfg?.localModelId === modelId ||
+           (cfg?.localModelId == null && modelId === "medium")
+-        if (cfg?.sttEngine === "local" && wasActive) {
+-          setVoiceFields({ sttEngine: "browser" })
+-          logger.info("voice.model.delete.forced_browser", {
+-            modelId,
+-            reason: "deleted-active-local-model",
++        // Deleting the stashed preference voids it — nothing left to restore.
++        const clearStash = cfg?.localModelAutoCorrectedFrom === modelId
++        if ((cfg?.sttEngine === "local" && wasActive) || clearStash) {
++          setVoiceFields({
++            ...(cfg?.sttEngine === "local" && wasActive ? { sttEngine: "browser" as const } : {}),
++            ...(clearStash ? { localModelAutoCorrectedFrom: undefined } : {}),
+           })
++          if (cfg?.sttEngine === "local" && wasActive) {
++            logger.info("voice.model.delete.forced_browser", {
++              modelId,
++              reason: "deleted-active-local-model",
++            })
++          }
+         }
+ 
+         logger.info("voice.model.deleted", { modelId })
+@@ -508,7 +539,7 @@ export async function handleVoiceModelMessage(
+           { code: "MODEL_NOT_READY", modelId, status: probe.status },
+         )
+       }
+-      setVoiceFields({ localModelId: modelId })
++      setVoiceFields({ localModelId: modelId, localModelAutoCorrectedFrom: undefined })
+       logger.info("voice.model.set_active", { modelId })
+       const state = await statePayload(deps)
+       ctx.broadcast?.(state)
+@@ -550,7 +581,13 @@ export async function handleVoiceModelMessage(
+ 
+       const cfg = getConfig().voice
+       let activeId = (cfg?.localModelId ?? RECOMMENDED_WHISPER_MODEL) as WhisperModelId
++      // Overriding an explicitly configured model stashes it (same A2 rule as
++      // get_state auto-correct) so a later download can restore the choice.
++      let overrideFrom: WhisperModelId | undefined
+       if (!ready.includes(activeId)) {
++        if (cfg?.localModelId && isWhisperModelId(cfg.localModelId)) {
++          overrideFrom = cfg.localModelId
++        }
+         // Prefer recommended if ready; else first ready
+         if (ready.includes(RECOMMENDED_WHISPER_MODEL)) {
+           activeId = RECOMMENDED_WHISPER_MODEL
+@@ -573,7 +610,14 @@ export async function handleVoiceModelMessage(
+         })
+       }
+ 
+-      setVoiceFields({ sttEngine: "local", localModelId: activeId })
++      setVoiceFields({
++        sttEngine: "local",
++        localModelId: activeId,
++        // Do not overwrite an existing stash — it holds the original choice.
++        ...(overrideFrom && !cfg?.localModelAutoCorrectedFrom
++          ? { localModelAutoCorrectedFrom: overrideFrom }
++          : {}),
++      })
+       logger.info("voice.model.set_engine", { engine: "local", localModelId: activeId })
+       const state = await statePayload(deps)
+       ctx.broadcast?.(state)
+diff --git a/companion/tests/voice-whisper-handlers.test.ts b/companion/tests/voice-whisper-handlers.test.ts
+index 073a668f..175611c4 100644
+--- a/companion/tests/voice-whisper-handlers.test.ts
++++ b/companion/tests/voice-whisper-handlers.test.ts
+@@ -590,7 +590,175 @@ test("get_state leaves config when no ready model exists", async () => {
+   assert.equal(getConfig().voice?.localModelId, "medium")
+ })
+ 
+-// --- voice.model.set_prefs --------------------------------------------------------
++// --- A2 restore: stashed explicit preference is never lost -----------------------
++
++test("get_state auto-correct stashes the explicit localModelId", async () => {
++  resetVoiceConfig({ sttEngine: "local", localModelId: "large-v3-turbo" })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.get_state" },
++    {},
++    {
++      probe: (id: string) => (id === "large-v3-turbo" ? { status: "absent" } : { status: "ready" }),
++      listReady: () => ["small"] as WhisperModelId[],
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.type, "voice.model.state")
++  assert.equal(getConfig().voice?.localModelId, "small")
++  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
++})
++
++test("get_state auto-correct does not overwrite an existing stash", async () => {
++  resetVoiceConfig({
++    sttEngine: "local",
++    localModelId: "medium",
++    localModelAutoCorrectedFrom: "large-v3-turbo",
++  })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.get_state" },
++    {},
++    {
++      probe: (id: string) => (id === "small" ? { status: "ready" } : { status: "absent" }),
++      listReady: () => ["small"] as WhisperModelId[],
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.type, "voice.model.state")
++  assert.equal(getConfig().voice?.localModelId, "small")
++  // Original explicit choice survives the second correction
++  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
++})
++
++test("get_state self-heals: stashed model ready again → restored, stash cleared", async () => {
++  resetVoiceConfig({
++    sttEngine: "local",
++    localModelId: "small",
++    localModelAutoCorrectedFrom: "large-v3-turbo",
++  })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.get_state" },
++    {},
++    {
++      probe: () => ({ status: "ready" }),
++      listReady: () => ["small", "large-v3-turbo"] as WhisperModelId[],
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.type, "voice.model.state")
++  assert.equal(getConfig().voice?.localModelId, "large-v3-turbo")
++  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
++})
++
++test("download completion restores stashed preference once that model is ready", async () => {
++  resetVoiceConfig({
++    sttEngine: "local",
++    localModelId: "small",
++    localModelAutoCorrectedFrom: "large-v3-turbo",
++  })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.download", modelId: "large-v3-turbo", source: "settings" },
++    { broadcast: () => {} },
++    {
++      probe: (id: string) => (id === "large-v3-turbo" ? { status: "absent" } : { status: "ready" }),
++      downloadImpl: async () => {
++        /* success — probe is ready-bound per id below at completion time */
++      },
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.status, "started")
++  for (let i = 0; i < 8; i++) await flush()
++  // Probe still reports the stashed model absent at completion → no restore;
++  // correction and stash are kept for a later ready event.
++  assert.equal(getConfig().voice?.localModelId, "small")
++  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
++})
++
++test("download completion of the stashed model itself restores it", async () => {
++  resetVoiceConfig({
++    sttEngine: "local",
++    localModelId: "small",
++    localModelAutoCorrectedFrom: "large-v3-turbo",
++  })
++  let largeReady = false
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.download", modelId: "large-v3-turbo", source: "settings" },
++    { broadcast: () => {} },
++    {
++      probe: (id: string) => {
++        if (id === "large-v3-turbo") return largeReady ? { status: "ready" } : { status: "absent" }
++        return { status: "ready" }
++      },
++      downloadImpl: async () => {
++        largeReady = true
++      },
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.status, "started")
++  for (let i = 0; i < 8; i++) await flush()
++  assert.equal(getConfig().voice?.localModelId, "large-v3-turbo")
++  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
++})
++
++test("set_active is a fresh explicit choice → clears the stash", async () => {
++  resetVoiceConfig({
++    sttEngine: "local",
++    localModelId: "small",
++    localModelAutoCorrectedFrom: "large-v3-turbo",
++  })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.set_active", modelId: "medium", source: "settings" },
++    {},
++    {
++      probe: () => ({ status: "ready" }),
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.type, "voice.model.state")
++  assert.equal(getConfig().voice?.localModelId, "medium")
++  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
++})
++
++test("delete of the stashed model clears the stash", async () => {
++  resetVoiceConfig({
++    sttEngine: "local",
++    localModelId: "small",
++    localModelAutoCorrectedFrom: "large-v3-turbo",
++  })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.delete", modelId: "large-v3-turbo", source: "settings" },
++    { broadcast: () => {} },
++    {
++      deleteImpl: async () => {
++        /* success */
++      },
++      probe: () => ({ status: "ready" }),
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.deleted, true)
++  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, undefined)
++  // Deleted model was not the active one → engine untouched
++  assert.equal(getConfig().voice?.sttEngine, "local")
++})
++
++test("set_engine local overriding an explicit model stashes it", async () => {
++  resetVoiceConfig({ sttEngine: "browser", localModelId: "large-v3-turbo" })
++  const r = await handleVoiceModelMessage(
++    { type: "voice.model.set_engine", engine: "local", privacy_ack_v2: true, source: "settings" },
++    {},
++    {
++      probe: (id: string) => (id === "large-v3-turbo" ? { status: "absent" } : { status: "ready" }),
++      listReady: () => ["medium", "small"] as WhisperModelId[],
++      buildState: stateEchoBuildState(),
++    },
++  )
++  assert.equal(r.type, "voice.model.state")
++  assert.equal(getConfig().voice?.sttEngine, "local")
++  assert.equal(getConfig().voice?.localModelId, "medium")
++  assert.equal(getConfig().voice?.localModelAutoCorrectedFrom, "large-v3-turbo")
++})
+ 
+ test("validateWsMessage: set_prefs fence + field shapes", () => {
+   assert.equal(
+diff --git a/docs/adr/022-outbound-mcp-server.md b/docs/adr/022-outbound-mcp-server.md
+index 17128044..fc0f9842 100644
+--- a/docs/adr/022-outbound-mcp-server.md
++++ b/docs/adr/022-outbound-mcp-server.md
+@@ -78,6 +78,8 @@ Channel:      community 默认；enterprise 模块不进 default outbound set
+ | **L8** | 确认 UX 是产品。凡 outbound **可写/需确认** 路径：每次需确认的调用 **必须** 在不要求 Side Panel 聚焦时暴露 allow/deny（托盘通知、全局入口、或强制聚焦）。**仅 Side Panel 确认对 IDE Agent 不足。** |
+ | **L9** | 交互型 outbound profile **强制双入口 tab lease**：复用 [ADR-015](015-multi-agent-orchestrator-tab-lock.md)；Side Panel 与 MCP 不得互抢同一 tab。冲突默认：**Side Panel 赢**，MCP 排队并披露。交互 Phase 0 任务前必须具备，否则 bake-off 指标无效。 |
+ 
++> **L4+ 实现期细化（2026-08-31，commit `123eaf2b`）——exfil grant 双轨语义**：外泄类工具（L3+）的 grant 旗标按 transport 分轨判定。**HTTP 轨**（`companion-http.ts`）：调用方持已认证的 `grant_id`，**按钥匙本身**判定——只有该 grant 自己的 `allow_page_export` 授权外泄，与 grant-cli 对操作员承诺的「这把钥匙」一致。**stdio 轨**（`bridge.ts`/`facade.ts`）：无 grant 凭证可用，**按 caller** 判定——caller 名下任一存活带旗 grant 即放行。操作员 HITL 会话（`hasOutboundDisclosure`）在两条轨上**仍按 caller_id** 键控（有意的不对称：旗 per-key、HITL per-caller）——一次操作员批准武装该 caller 的会话，而持久外泄同意在 HTTP 轨上保持 per-key。caller 自报 `disclosure_accepted` 与 HTTP/stdio acknowledge **均不**满足此外泄门。`grant_id` 只来自认证通过的 Bearer grant，永不读请求 body；`caller_id` 与 grant 绑定（`GRANT_CALLER_MISMATCH`）。
++
+ ### 4. 默认工具面（Phase 0 profile）
+ 
+ 实现权威：`companion/src/outbound-mcp/profile.ts`。概念白名单（6–8 个，可微调但不得默默塞入禁类）：
+@@ -217,7 +219,7 @@ Bake-off 默认非敏感页；敏感页须显式 disclosure（L3+）。
+ | Live bridge → 内部 tool 调度 | loopback HTTP + createToolExecutor | ✅ P0c |
+ | Tray/全局确认（L8） | 托盘优先 + 全面板 fan-out + OS notify；超时 `OUTBOUND_CONFIRM_REQUIRED` | ✅ 代码路径 |
+ | Tab lease 双入口（L9） | `outbound_mcp:<caller>` lease；Side Panel 赢 | ✅ 代码路径 |
+-| Grant 模型（L4+） | P1 发货门 | **待** P1 |
++| Grant 模型（L4+） | per-key grant（`outbound-grants.ts`：32B 随机 token、sha256 存储、revoke/expiry）+ exfil 双轨判定（见 L4+ 修订注） | ✅ 代码路径（2026-08-31） |
+ 
+ **Inbound** MCP 客户端栈（`companion/src/mcp/`）保持不变：用户仍可把外部 server 接到 Side Panel Agent。
+ 
+@@ -232,6 +234,7 @@ Bake-off 默认非敏感页；敏感页须显式 disclosure（L3+）。
+ | 2026-08-04 | **本 ADR Accepted**：brief 升格为决策 SoT；实现仍按 Phase 0→P1 门控 |
+ | 2026-08-04 | 实现闸门：Eval Engineering skill + [P0c eval gates](../superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md)（M1–M9 · T3 dual） |
+ | 2026-08-04 | 场景应用（非本 ADR 规范）：[Daily Content Loop brief](../decisions/daily-content-loop-brief-2026-08-04.md) — 定时情报环用 L1 采集，非 L2/值守 |
++| 2026-08-31 | L4+ grant 语义修订：exfil 判定双轨化（HTTP per-key / stdio per-caller；HITL 会话仍 per-caller），commit `123eaf2b`；补 L4+ 修订注 + 实现地图 Grant 行 |
+ 
+ ---
+ 
+diff --git a/docs/adr/023-voice-local-stt-path-b.md b/docs/adr/023-voice-local-stt-path-b.md
+index 1463e84e..0a9aa46f 100644
+--- a/docs/adr/023-voice-local-stt-path-b.md
++++ b/docs/adr/023-voice-local-stt-path-b.md
+@@ -4,6 +4,8 @@
+ 
+ **修订（2026-08-31）**：L13 放宽为「禁止**静默**回落」而非「禁止回落」——新增 `voice.autoFallbackToBrowser`（默认 true，`voice.model.set_prefs` 双栏可关）：engine=local 且 `model_missing` 时，**当次会话**以 browser 引擎运行并显示可见横幅（非配置改写、非静默）；`binary_missing` / `companion_disconnected` 仍只允许显式 CTA。同期新增：模型下载完成自动激活 `localModelId`（不动 `sttEngine`）；`get_state` 自动修正失效的 active 模型；`voice.modelDownloadEndpoint` / `CMSPARK_HF_ENDPOINT` 下载源镜像（https 校验 fail-closed，sha256/size pin 不变）。隐私契约不变：local 的隐私门控（ack_v2）不因此放松；回退横幅即云 residual 披露。  
+ 
++**修订（2026-08-31，二）**：auto-correct 由**单向**改为**可恢复**——`get_state` / `set_engine local` 把显式配置的 `localModelId` 修正为已就绪模型时，原选择暂存于 `voice.localModelAutoCorrectedFrom`；该模型一旦 ready（下载完成或 `get_state` 自愈探测）即恢复并清除暂存。用户显式 `set_active` 或删除被暂存模型时暂存清除。默认/未显式设置的 `localModelId` 不暂存（无偏好可恢复）。`sttEngine` 仍不被任何自动路径触碰。  
++
+ **相关**:  
+ - [ADR-001](001-extension-companion双层拓扑.md) 双层拓扑  
+ - [ADR-002](002-websocket-openai-streaming协议.md) WS 协议族扩展  

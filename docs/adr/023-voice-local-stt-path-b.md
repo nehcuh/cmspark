@@ -4,6 +4,8 @@
 
 **修订（2026-08-31）**：L13 放宽为「禁止**静默**回落」而非「禁止回落」——新增 `voice.autoFallbackToBrowser`（默认 true，`voice.model.set_prefs` 双栏可关）：engine=local 且 `model_missing` 时，**当次会话**以 browser 引擎运行并显示可见横幅（非配置改写、非静默）；`binary_missing` / `companion_disconnected` 仍只允许显式 CTA。同期新增：模型下载完成自动激活 `localModelId`（不动 `sttEngine`）；`get_state` 自动修正失效的 active 模型；`voice.modelDownloadEndpoint` / `CMSPARK_HF_ENDPOINT` 下载源镜像（https 校验 fail-closed，sha256/size pin 不变）。隐私契约不变：local 的隐私门控（ack_v2）不因此放松；回退横幅即云 residual 披露。  
 
+**修订（2026-08-31，二）**：auto-correct 由**单向**改为**可恢复**——`get_state` / `set_engine local` 把未就绪的 `localModelId` 修正为已就绪模型时，配置中的原值暂存于 `voice.localModelAutoCorrectedFrom`；该模型一旦 ready（下载完成或 `get_state` 自愈探测）即恢复并清除暂存。用户显式 `set_active` 或删除被暂存模型时暂存清除。注意：config load（deepMerge）后出厂默认 `"medium"` 与显式选择**不可区分**，默认值也可能被暂存——其恢复效果即回到推荐模型，无害。`sttEngine` 仍不被任何自动路径触碰。  
+
 **相关**:  
 - [ADR-001](001-extension-companion双层拓扑.md) 双层拓扑  
 - [ADR-002](002-websocket-openai-streaming协议.md) WS 协议族扩展  
@@ -153,6 +155,7 @@ Channel:      community; default engine=browser; local = explicit opt-in after p
 | `config.voice.sttEngine` | **Companion** `config.json` | `browser` \| `local`，默认 `browser` |
 | `config.voice.localModelId` | **Companion** | allowlist 模型 id |
 | `config.voice.modelDiskBudgetMB` | **Companion** | 默认 4096 |
+| `config.voice.localModelAutoCorrectedFrom` | **Companion** | A2 暂存（修订二）：auto-correct 覆盖前的原 `localModelId`，ready 即恢复并清除；load 时非 allowlist 值告警删除 |
 | 下载就绪 / 进度 / 二进制健康 | Companion FS + 进程态 | 扩展只读镜像 |
 | `lastKnownEngine` / `lastKnownModelId` | Extension 持久镜像 | 断连 fail-closed：镜像为 local 且 Companion 不可用 → **Disable mic**，禁止当 browser 静默使用 |
 
@@ -295,6 +298,7 @@ companion/src/voice/
 | 日期 | 变更 |
 |------|------|
 | 2026-08-07 | 初版 Accepted：四路对抗 + Pi nits 吸收；L1–L16；WS 族；配置所有权；波次门禁 |
+| 2026-08-31 | 修订（一）：L13 非静默回落 + 自动激活 + 下载源镜像；修订（二）：auto-correct 可恢复（`localModelAutoCorrectedFrom` 暂存/恢复/清除）；§6 配置表同步 |
 
 ---
 
