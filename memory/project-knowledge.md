@@ -74,6 +74,11 @@
 
 ## Technical Pitfalls
 
+### companion 无 `.nvmrc`：`nvm use` 静默失败 → stale `.test-dist` 假测试失败（2026-08-31 · #264 验证）
+- **坑**：`nvm use >/dev/null 2>&1 && rm -rf .test-dist && tsc …`——`nvm use` 无参时要读 `.nvmrc`，companion 没有该文件 → 非零退出 → `&&` 链整体跳过重编译，后续 `node --test .test-dist/…` 跑的是**别人（grok 1 小时前）留下的旧编译产物**，报出源码里已不存在的断言失败（假 RED）。
+- **纪律**：跑 companion 测试前先核对 `.test-dist` mtime 新于最新源码 mtime；或拆成 `;` 让 tsc 无条件执行。诊断先看产物时间戳，别先怀疑代码。
+- **4 行 case**：动作=验证 #262 修复；失败=run-progress 源扫描测假失败；归责=stale .test-dist（nvm use 跳链）；保护=mtime 对比后再信测试结果
+
 ### squash 合入后 `git cherry` 仍会给原 commit `+`（2026-08-29 · 对齐 main）
 - **坑**：overlay 会议台/默认展开已随 #246 squash 进 main，本地 `597a5827`/`b6ac5928` 仍 `cherry +`。把 overlay 枝合进后来的 main 会倒退 A–F（XSS/cookie/HMAC Origin）。
 - **纪律**：判断「是否已在 main」看**产品字符串/文件**（`开始录制`、`hud expanded`），不要只看 SHA/`cherry`。`gh pr merge --delete-branch` 若有 worktree 占着 `main`，远程已合、本地 checkout 会失败——先 `worktree remove`。

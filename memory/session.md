@@ -2,6 +2,16 @@
 
 ## Current Session
 
+### S101 END (2026-08-31) [4 路对抗评审 → #261–#264 全闭环 · 双路质量门]
+- **评审**：pull 范围 `c39d7d3e..26949cbb` 派 4 路独立对抗子代理（ARCH/CORR/SEC/UX）→ 0 BLOCK / 7 MAJOR / ~17 NIT。CORR 与 SEC **独立命中同一 shell.ts 允许列表绕过类**（引号 `-""c` + 通配符 fallback 两向量，均实测可执行）。
+- **grok 修 5 条**（#261 shell W1e fail-closed · #262 run_progress 三态 · #263 UX CTA/错误/回显 K），我实证回放验证（`scratch/w1e-replay.ts` 14 例全 PASS，已入库作回归证据）。
+- **我修剩余 2 条**：#264 voice auto-correct 单向偏好漂移 → `localModelAutoCorrectedFrom` 暂存/恢复/清除（set_engine restore-first）；ADR-022 L4+ 补 grant 双轨修订注（发货门失同步）。
+- **双路质量门**：claude + grok CLI headless 各 PASS_WITH_NITS、0 BLOCK；两路独立命中同一「撒谎测试名」。NIT 全收敛（含 grok 抓的「默认 medium 不暂存」文档 overclaim → 改文档不改代码）。
+- **基线**：companion 全量 3937/0；CI build+smoke×3 绿；main tip `18d843d1` == origin。
+- **经验**：grok headless = `grok -p/--single`（`--cwd` 指项目根）；评审包 instructions 必须写「刻意边界」防复审者重炒已裁决设计。
+- **下次**：早期评审残余 NIT（RunProgress 微 a11y、summoner 拽底等）可开 follow-up；#230 仍冻。
+- Recorded: yes — stale .test-dist 假失败（nvm use 无 .nvmrc 跳链）
+
 ### S100 (2026-08-31) [0.5.6 lockstep · push · NSIS]
 - 包装 companion/extension/NSIS fallback/CLI/ACP/outbound **0.5.6**。CHANGELOG Unreleased → [0.5.6]。
 
