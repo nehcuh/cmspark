@@ -2,6 +2,50 @@
 
 ## Current Session
 
+### S98 END (2026-08-31) [召唤器流式 · 语音自动激活/回退/HF镜像 · 会议自动K · 双路复审修复]
+- **Ship（本地 main，未 push）**：`e6929948` 召唤器 HTML shell 流式渲染 · `45b417aa` 会议说话人「自动」档 · `8f8bd2fa` 语音模型自动激活+非静默回退+HF 镜像 · `ce85bc4d` 复审归档。
+- **召唤器根因**：后端一直在流式（adapter `chat.token` 累积快照）；Windows HTML shell 收到 token 只整表 refetch 而 assistant 轮末才落库——纯前端缺口。Swift overlay 本已流式未动。
+- **语音**：下载完成自动写 `localModelId`；`get_state` 自动修正失效 active（medium→small→large）；`voice.autoFallbackToBrowser`（默认 true）当次会话回退+含云残留横幅；`voice.modelDownloadEndpoint`/`CMSPARK_HF_ENDPOINT` 镜像（仅重写 huggingface.co，https fail-closed）；新 WS `voice.model.set_prefs`（双栏）。ADR-023 L13 已补 2026-08-31 修订。
+- **会议**：`meanSilhouette`/`selectBestK`（纯 TS）；`clampDiarizeK` 透传 0/"auto"；UI 默认「自动」。仍是 3 维特征近似，experimental 保留。
+- **双路复审**：grok **REJECT** 3H2M2L（跨线程 token 泄漏 / 轮询拆气泡 / 水合窗口默认回云）+ claude **AWN** 2M1L（Enter 误清镜像源 / 空态丢 id）。9 条全修，合成 `docs/audit/reviews/summoner-voice-autok-20260831-fix-synthesis.md`。
+- **建票**：#258 Hex 式语音 UX · #259 Windows SAPI 兜底 · #260 speaker embedding diarize。
+- **基线**：companion 全量 81 失败为 main 预置（Windows symlink EPERM / 0o600 断言）；chrome-extension 858/858 全绿。
+- **下次**：push 4 commits；Windows 真机验召唤器逐 token + 回收语音失败横幅错误码（network/binary_missing/model_missing 未定）；#258/#259/#260 排期。
+- Recorded: yes — claude -p 长 prompt 走 stdin；送审先 stash 跑基线；companion 测试并发互踩 .test-dist；水合窗口≠缺失
+
+### S97 (2026-08-30) [文档/版本/特色能力 · 多路独立对抗]
+- **类**：只读审计。不改文档直到人审。
+- **对象**：用户可见 + agent 入口文档的版本号、特色能力覆盖、过时声明。
+- **路**：Version lockstep · 特色覆盖 · Skeptic 过时/夸大 · 用户入口 vs SoT · 0.5.3 后已交付未入活状态。
+- **已知苗头**：`companion`/`AGENTS.md` **0.5.5**；`docs/README` / `README` / `PRODUCT.md` / `GOAL.md` / `architecture.md` / `CLAUDE.md` 仍锁 **0.5.3**。
+- **五路 + dual AWN**（Claude CLI 挂，grok 顶第二路）。合成：`docs/audit/reviews/docs-version-capability-audit-2026-08-30.md`。P0 存活：版本分裂、#228/#229 已关仍当余项、T1「仍待」活指针。特色能力在 PRODUCT，不在 README 前门。未改文档，等人选 Batch 0/1。
+
+### S96 (2026-08-30) [本轮步骤 IA · 顶栏下拉稻草人 · 五路对抗]
+- **类**：Architectural / 设计-only。不写码。Issue-first：等人选对象再建票。
+- **对象**：现有 L0 `RunProgress`「本轮步骤」（H1 `open_todos` 种子，钉在 `ChatView` 滚动列顶，stick-to-bottom 后滚走）。**不是** Mission Board / Cockpit 步骤轨 / overlay。
+- **用户稻草人**：从 StatusRail 往下展开可收起任务清单。五路：**REJECT**（Zone A 盗窃；展开 ~207px + 最坏铬 → 流约 13%；`ComputerTaskBar` 已从 Panel 撤）。
+- **真问题两层**：① 清单滚走 + 闷卡不好扫；② 对象常空、click-only、是 compact 残待办不是当轮活计划。搬铬修不了 ②。
+- **密度漂**：StatusRail live **48**（审计 44）；Scene **36**（审计 28）；`popoutBar`「弹出对话框」审计未计。
+- **推荐**：Wave 1 = 流内收起 + sticky-in-stream（T1，不改协议）。Wave 2 = FocusBand secondary 一行 glance（T2，Confirm/急停让位）。**禁止** StatusRail 手风琴；**禁止** 新 ingest / overlay 勾 / 「进行中」。
+- **分叉**：用户若要「当轮活拆解」= 新对象 T3，另票，不在本 UI 里偷运。
+- **选定**：用户选 **2 = 先 A 后 B**。顶栏 C 否。当轮活计划另票。
+- **票**：[#256](https://github.com/nehcuh/cmspark/issues/256)
+- **spec**：`docs/superpowers/specs/2026-08-30-runprogress-sticky-collapse-design.md`（DRAFT · 等人审）。Wave 1 T1 sticky+收起；Wave 2 T2 FocusBand 24px，密度重审开门。
+- **四路**：Product PWC · Density REJECT · Trust Wave2 DENY · Skeptic SHRINK。折：≤3 默开、sticky 只收起头、禁当前步方言、Wave 2 默认 NO-GO。
+- **Node1 dual**：kimi **AWN** + Claude **AWN**（`runprogress-256-r2-verdict-20260830-182414.json`）。nits 已折进 spec r2 LOCKED。
+- **漂移**：`9d45b7c2` 已在 `origin/main`（r1 默收/`aria-current=step`/草稿进 m/展开 sticky 无上限）— **不是 SoT**。Wave 1 = 改写该铬。
+- **Node2 plan**：`docs/superpowers/plans/2026-08-30-runprogress-wave1-r2.md`。四路折永远 sticky + ul 封顶。kimi 第一轮 REJECT（文内还写 unstick）已折。r2b **kimi AWN + Claude AWN**。
+- **PR [#257](https://github.com/nehcuh/cmspark/pull/257)** `fix/256-runprogress-r2` tip `3f88eb04`（含 r2 spec/plan）。Worktree 保留。Wave 2 NO-GO。
+- **Babysit CLOSED（不合）**：CI 全绿 run `33316442690`（build 3m8s + smoke 三台）。tip **`e1ec88bb`**。`MERGEABLE`/`CLEAN`，无人审、无线程。Wave 2 仍 NO-GO。#230 不合。
+- **CI 根因**：companion TAP `fail 0` / `cancelled 15`。15 个全是 `ui-open-sidepanel.test.ts` timeout 起 `cancelledByParent`。主分支 `9d45b7c2` 同形（main 现也红）。`timer.unref()` 让 Node 22 `--test` 把只剩 unref handle 的文件当 idle。`e1ec88bb` 用与 `extension-peer.ts` 同形的 `NODE_TEST_CONTEXT` 守卫。
+
+### S95 END (2026-08-30) [评审修复 0.5.4/0.5.5 · 脱敏桩渲染 · 截断双根因]
+- **Ship on main**：两批评审修复 + 版本字面量 + lockstep 测试（123eaf2b…e0169825，0.5.4）；脱敏桩 UI 友好渲染 + 全位 0.5.5 lockstep（e9517488）。均两路对抗 + grok 复核 CLOSED/SHIPPABLE。本机 NSIS 已装 0.5.5（%LOCALAPPDATA%\CMspark）。
+- **诊断**：qx8qfd「截断」= 脱敏桩渲染层全折叠（已修）；6r9a8c「截断」= live `llm.context_window: 4000` → budget≈2600 → 每轮 mid_loop `shrinkToolBodiesToFit` 静默砍最长工具结果加「…」，模型（DeepSeek-V4-Flash）见省略号陷入截断-重试循环。日志 `thread.context_compacted` dropped_count=0。**同名症状两个根因**。
+- **建票**：[#255](https://github.com/nehcuh/cmspark/issues/255) 脱敏范围讨论（evaluate 全折叠致重载失忆）。tray 设置页定位已定：保持 LLM 快速配置现状，与扩展共享同一 config.json。
+- **下次**：用户确认后 `settings --set llm.context_window=128000`（未动，AGENTS.md 禁未确认改 live config）；可建「预算器静默收缩检测提示」票；遗留 Low 清单在 `docs/superpowers/plans/2026-08-29-post-review-adversarial-fixes.md` 回执 + CHANGELOG Known residuals。
+- Recorded: yes — 同名症状先分清机制再修；live config≠代码默认；grok -p 必须紧跟 prompt 值
+
 ### S94 END (2026-08-29) [体检 A–F 合 main · 对齐远程]
 - **Ship on main**：#246 A+B · #248 C · #250 D · #252 E · #254 F。tip **`5c4fcab0`**。工作区 `main` == `origin/main`。
 - **判断**：本地 overlay 两笔 SHA 未祖先于 main，但会议台/默认展开已在 #246 squash；勿把 overlay 枝压上后来的 main。

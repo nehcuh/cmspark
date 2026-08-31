@@ -183,3 +183,31 @@ instincts:
     source_session: "2026-07-28 windows estop detached spawn user-verified"
     tags: [windows, powershell, spawn, estop, process]
     applications: 1
+
+  - id: context-window-budget-silent-shrink
+    pattern: "用户报工具输出「截断」先查 live llm.context_window：budget=max(256, context_window-reserve)，过小时每轮 mid_loop shrinkToolBodiesToFit 静默把最长工具结果砍半加「…」，模型把「…」当截断证据陷入重试循环。日志证据=每轮 thread.context_compacted 且 dropped_count=0。config.ts 默认 128000。同名症状可能多机制（脱敏桩渲染折叠 vs 预算收缩），分开诊断再修。"
+    confidence: 0.9
+    source_session: "2026-08-30 S95 对话 6r9a8c 截断误诊"
+    tags: [context, budget, truncation, config, debugging]
+    applications: 1
+
+  - id: claude-cli-long-prompt-via-stdin
+    pattern: "claude -p 送长 prompt（如 review diff）：\"$(<file)\" 超 Windows 命令行上限 exit 126 无声失败；带工具的 -p 复审全仓探索会 30min 超时零输出。正解：纯 diff 内联 + stdin 重定向（claude -p < prompt.txt），明示禁读文件，~5min 出 verdict。grok 用 --prompt-file（与 -p 互斥）。"
+    confidence: 0.9
+    source_session: "2026-08-31 S98 双路复审 claude 两次超时"
+    tags: [claude, grok, cli, windows, review, tooling]
+    applications: 1
+
+  - id: baseline-before-blame-stash-test
+    pattern: "全量测试出现大量失败先别认领：git stash -u 后在 main 基线复跑对比失败集合。Windows 上 cmspark companion 预置 ~81 失败（symlink EPERM / 0o600 断言 438!=384）。计数一致+新增测试全过=无回归。另：companion npm test 开头 rmSync .test-dist，多 agent 并发跑会互踩——并发期只许 --noEmit。"
+    confidence: 0.9
+    source_session: "2026-08-31 S98 81 预置失败鉴别"
+    tags: [testing, windows, baseline, git-stash, concurrency]
+    applications: 1
+
+  - id: hydration-window-not-missing
+    pattern: "「状态未知」（镜像/配置未水合）≠「状态缺失」。用 !== true 判 missing 会把水合窗口误判为缺失——语音回退差点因此在水合期默认走云 STT。门控要显式分三态：hydrated && value===false 才行动。grok/claude 双路审 diff 各抓到对方漏的真问题，值得常规化。"
+    confidence: 0.85
+    source_session: "2026-08-31 S98 语音回退水合窗口 HIGH"
+    tags: [state, hydration, fail-closed, review, typescript]
+    applications: 1
