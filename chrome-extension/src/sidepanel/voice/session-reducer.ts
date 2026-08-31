@@ -219,6 +219,8 @@ export function reduceVoiceSession(
       return {
         ...state,
         banner: event.message,
+        // Code-less hint (continuous cap) must not keep a stale local_fallback CTA.
+        errorCode: typeof event.code === "string" && event.code ? event.code : null,
       }
     }
 
@@ -316,7 +318,8 @@ export function reduceVoiceSession(
         state.errorCode !== "no-speech" &&
         state.errorCode !== "empty" &&
         state.errorCode !== "timeout" &&
-        state.errorCode !== "continuous-timeout"
+        state.errorCode !== "continuous-timeout" &&
+        state.errorCode !== "local_fallback"
       ) {
         const mapped = mapVoiceError(state.errorCode)
         return resetToIdle(state, {
@@ -362,7 +365,8 @@ export function reduceVoiceSession(
         baseText: state.baseText,
         finals: state.finals,
         committed: true,
-        banner: timeoutBanner,
+        banner: timeoutBanner || (state.errorCode === "local_fallback" ? state.banner : null),
+        errorCode: timeoutBanner ? state.errorCode : state.errorCode === "local_fallback" ? "local_fallback" : null,
       })
     }
 

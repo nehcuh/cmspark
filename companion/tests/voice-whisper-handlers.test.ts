@@ -155,6 +155,7 @@ test("get_state: shape includes models/binary/budget/whisperRoot", async () => {
   assert.ok(r.models.medium)
   assert.ok(r.models["large-v3-turbo"])
   assert.equal(r.models.medium.status, "absent")
+  assert.equal(r.lastDownloadError, null)
   assert.ok(r.binary)
   assert.ok(
     r.binary.status === "ready" ||
@@ -326,6 +327,65 @@ test("download: started + progress broadcast with mock downloadImpl", async () =
   )
   release()
   for (let i = 0; i < 8; i++) await flush()
+})
+
+test("download fail: get_state hydrates lastDownloadError; success clears", async () => {
+  resetVoiceConfig()
+  const broadcasts: any[] = []
+  await handleVoiceModelMessage(
+    { type: "voice.model.download", modelId: "medium", source: "settings" },
+    { broadcast: (d: any) => broadcasts.push(d) },
+    {
+      probe: () => ({ status: "absent" }),
+      downloadImpl: async () => {
+        throw new Error("HTTP 403 huggingface.co")
+      },
+      buildState: async () =>
+        ({
+          type: "voice.model.state",
+          sttEngine: "browser",
+          localModelId: "medium",
+          recommendedModelId: "medium",
+          models: { medium: { status: "absent" } },
+          binary: { status: "not_found" },
+          diskBudgetMB: 4096,
+          diskUsedMB: 0,
+          whisperRoot: "/tmp/w",
+        }) as any,
+    },
+  )
+  for (let i = 0; i < 12; i++) await flush()
+  const failedState = broadcasts.find(
+    (b) => b.type === "voice.model.state" && b.lastDownloadError,
+  )
+  assert.ok(failedState)
+  assert.match(String(failedState.lastDownloadError), /HTTP 403/)
+  const hydrated = await handleVoiceModelMessage({ type: "voice.model.get_state" })
+  assert.match(String(hydrated.lastDownloadError), /HTTP 403/)
+
+  await handleVoiceModelMessage(
+    { type: "voice.model.download", modelId: "medium", source: "settings" },
+    { broadcast: () => {} },
+    {
+      probe: () => ({ status: "absent" }),
+      downloadImpl: async () => {},
+      buildState: async () =>
+        ({
+          type: "voice.model.state",
+          sttEngine: "browser",
+          localModelId: "medium",
+          recommendedModelId: "medium",
+          models: { medium: { status: "ready" } },
+          binary: { status: "not_found" },
+          diskBudgetMB: 4096,
+          diskUsedMB: 0,
+          whisperRoot: "/tmp/w",
+        }) as any,
+    },
+  )
+  for (let i = 0; i < 12; i++) await flush()
+  const afterOk = await handleVoiceModelMessage({ type: "voice.model.get_state" })
+  assert.equal(afterOk.lastDownloadError, null)
 })
 
 test("download refused while delete in progress", async () => {

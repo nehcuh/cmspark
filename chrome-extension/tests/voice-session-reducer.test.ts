@@ -175,6 +175,50 @@ test("SOFT_CAP_HINT keeps listening and sets banner", () => {
   })
   assert.equal(s.phase, "listening")
   assert.match(s.banner || "", /连续听写/)
+  assert.equal(s.errorCode, null)
+})
+
+test("SOFT_CAP_HINT local_fallback sets code; ENGINE_END keeps chip", () => {
+  let s = initialVoiceSession(true)
+  s = reduceVoiceSession(s, {
+    type: "USER_TOGGLE_START",
+    sessionId: "s1",
+    baseText: "",
+  })
+  s = reduceVoiceSession(s, { type: "ENGINE_START" })
+  s = reduceVoiceSession(s, {
+    type: "SOFT_CAP_HINT",
+    message: "本机模型未就绪，本次使用浏览器听写。可能经浏览器厂商云端",
+    code: "local_fallback",
+  })
+  assert.equal(s.errorCode, "local_fallback")
+  s = reduceVoiceSession(s, { type: "ENGINE_RESULT", finalChunk: "你好" })
+  s = reduceVoiceSession(s, { type: "USER_TOGGLE_STOP" })
+  s = reduceVoiceSession(s, { type: "ENGINE_END" })
+  assert.equal(s.phase, "idle")
+  assert.equal(s.errorCode, "local_fallback")
+  assert.match(s.banner || "", /本次使用浏览器听写/)
+})
+
+test("code-less SOFT_CAP_HINT clears stale local_fallback code", () => {
+  let s = initialVoiceSession(true)
+  s = reduceVoiceSession(s, {
+    type: "USER_TOGGLE_START",
+    sessionId: "s1",
+    baseText: "",
+  })
+  s = reduceVoiceSession(s, { type: "ENGINE_START" })
+  s = reduceVoiceSession(s, {
+    type: "SOFT_CAP_HINT",
+    message: "本机模型未就绪，本次使用浏览器听写。可能经浏览器厂商云端",
+    code: "local_fallback",
+  })
+  s = reduceVoiceSession(s, {
+    type: "SOFT_CAP_HINT",
+    message: "仍在连续听写，可点麦克风结束",
+  })
+  assert.equal(s.errorCode, null)
+  assert.match(s.banner || "", /连续听写/)
 })
 
 test("D1b START_REFINE → REFINE_OK keeps committed raw path", () => {

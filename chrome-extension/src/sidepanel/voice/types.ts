@@ -48,7 +48,8 @@ export type VoiceEvent =
   /** Hard cap stop. code: timeout | continuous-timeout for banner copy. */
   | { type: "TIMEOUT"; code?: string }
   /** Dictation+ continuous: soft cap hint (still listening). */
-  | { type: "SOFT_CAP_HINT"; message: string }
+  /** Dictation+ continuous: soft cap hint (still listening). Optional code for CTA (e.g. local_fallback). */
+  | { type: "SOFT_CAP_HINT"; message: string; code?: string }
   | { type: "ENGINE_START" }
   | { type: "ENGINE_RESULT"; interim?: string; finalChunk?: string }
   | { type: "ENGINE_ERROR"; code: string; message?: string }

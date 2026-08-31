@@ -235,7 +235,7 @@ export function SettingsSlideout() {
     dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
     chrome.runtime.sendMessage({ type: "computer.model.get_state" })
     // Path B M0: mirror voice.model state on settings open (UI Task 7).
-    dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
+    // Do not blank voiceModelError here — get_state / WS lastDownloadError hydrates it.
     setVoicePendingDownload(null)
     setVoiceEndpointDraft(null)
     chrome.runtime.sendMessage({ type: "voice.model.get_state" }, (resp: unknown) => {

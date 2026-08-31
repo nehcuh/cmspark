@@ -2225,7 +2225,9 @@ try{
     if(!m||!Array.isArray(m.transcript)) return;
     paintTranscript(m.transcript);
     var method=d.diarize&&d.diarize.method||m.diarize&&m.diarize.method;
-    setStatus(method==="text_gap"?"已弱标说话人（按行交替 · 非声学）":"已标匿名发言人（实验 · 非身份识别）");
+    var k=d.diarize&&d.diarize.k||m.diarize&&m.diarize.k;
+    var kPart=typeof k==="number"&&k>=1?" · K="+Math.floor(k):"";
+    setStatus((method==="text_gap"?"已弱标说话人（按行交替 · 非声学）":"已标匿名发言人（实验 · 非身份识别）")+kPart);
   }
   function runDiarize(mode){
     var id=meetingId||lastMeetingId;

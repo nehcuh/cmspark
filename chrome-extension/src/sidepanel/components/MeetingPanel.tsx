@@ -33,6 +33,7 @@ import {
   MEETING_STOP_FAILSAFE_MS,
 } from "../voice/meeting-caps"
 import { VOICE_DEFAULT_LANG } from "../voice/detect"
+import { formatMeetingDiarizeStatus } from "../voice/meeting-diarize-copy"
 import { mapLocalSttError } from "../voice/error-map"
 import {
   createSerialRefineQueue,
@@ -662,11 +663,10 @@ export function MeetingPanel(props: {
         }
         setBusy(false)
         const method = msg.diarize?.method || msg.meeting.diarize?.method
-        setImportStatus(
-          method === "text_gap"
-            ? "已弱标说话人（按行交替 · 非声学）"
-            : "已自动标匿名发言人（实验 · 非身份识别）",
-        )
+        const kRaw = msg.diarize?.k ?? msg.meeting.diarize?.k
+        const k = typeof kRaw === "number" && Number.isFinite(kRaw) ? Math.floor(kRaw) : null
+        setImportStatus(formatMeetingDiarizeStatus(method, k))
+        if (k != null && k >= 2 && k <= 4) setDiarizeK(k)
       }
       if (msg.type === "meeting.minutes_result") {
         if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)

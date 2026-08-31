@@ -62,6 +62,10 @@ test("localSttBannerCta: disconnect/binary → browser; model_missing → settin
   assert.equal(localSttBannerCta("aborted"), null)
   assert.equal(localSttBannerCta(null), null)
   assert.equal(localSttBannerCta(""), null)
+  assert.deepEqual(localSttBannerCta("local_fallback"), {
+    kind: "open_settings",
+    label: CTA_OPEN_SETTINGS,
+  })
 })
 
 test("toast residual mentions cloud vendor path (SoT §5.3)", () => {
