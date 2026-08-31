@@ -5,7 +5,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import * as path from "node:path"
-import { commandMatchesAllowlistEntry } from "../src/capability/shell"
+import { commandMatchesAllowlistEntry, tryParseSimpleArgv } from "../src/capability/shell"
 import { resolveWinScript } from "../src/host-use/win/powershell"
 import { buildMcpStdioEnv } from "../src/mcp/transport"
 import { isUnsafeLoaderEnvKey } from "../src/user-env"
@@ -78,16 +78,16 @@ test("W1b: pwsh unique prefixes / .exe basenames / bun --eval denied", () => {
   assert.equal(commandMatchesAllowlistEntry("bash -C script.sh", "bash"), true) // noclobber
 })
 
-test("W1b: fallback path (unparseable argv) applies the same shell deny flags", () => {
-  // metachar `|` forces tokenizeSimpleArgv to return null
+test("W1b: unparseable argv is deny (L-c; policy already owns `|`)", () => {
+  // metachar `|` forces tokenizeSimpleArgv to return null → matcher fail-closed
   assert.equal(commandMatchesAllowlistEntry("bash -c 'a|b'", "bash"), false)
   assert.equal(commandMatchesAllowlistEntry("bash -lc 'a|b'", "bash"), false)
   assert.equal(commandMatchesAllowlistEntry("powershell -com 'a|b'", "powershell"), false)
   assert.equal(commandMatchesAllowlistEntry("powershell.exe -c 'a|b'", "powershell.exe"), false)
   assert.equal(commandMatchesAllowlistEntry("bun --eval 'a|b'", "bun"), false)
-  // fallback allowances mirror the tokenized path
-  assert.equal(commandMatchesAllowlistEntry("bash -e 'a|b'", "bash"), true)
-  assert.equal(commandMatchesAllowlistEntry("grep -c 'a|b'", "grep"), true)
+  // no deny-flag and still unparseable → deny (do not fallback-allow)
+  assert.equal(commandMatchesAllowlistEntry("bash -e 'a|b'", "bash"), false)
+  assert.equal(commandMatchesAllowlistEntry("grep -c 'a|b'", "grep"), false)
 })
 
 test("W1c: pwsh slash flags and bun/deno print-eval denied", () => {
@@ -110,7 +110,7 @@ test("W1c: pwsh slash flags and bun/deno print-eval denied", () => {
   assert.equal(commandMatchesAllowlistEntry("grep -c pattern file", "grep"), true)
 })
 
-test("W1d: node -p / perl -E / cmd family / php -r denied; class closed", () => {
+test("W1d: node -p / perl -E / cmd family / php -r denied", () => {
   // node print-eval (mirrors W1c deno/bun -p/--print)
   assert.equal(commandMatchesAllowlistEntry("node -p 'x'", "node"), false)
   assert.equal(commandMatchesAllowlistEntry("node --print 'x'", "node"), false)
@@ -130,13 +130,38 @@ test("W1d: node -p / perl -E / cmd family / php -r denied; class closed", () => 
   assert.equal(commandMatchesAllowlistEntry("php -R 'echo 1'", "php"), false)
   assert.equal(commandMatchesAllowlistEntry("php -B 'echo 1'", "php"), false)
   assert.equal(commandMatchesAllowlistEntry("ruby -r json x.rb", "ruby"), true)
-  // interpreter fallback path (metachar forces tokenize failure) uses same rules
+  // unparseable (`|`) is deny via L-c, not fallback-allow
   assert.equal(commandMatchesAllowlistEntry("node -p 'a|b'", "node"), false)
   assert.equal(commandMatchesAllowlistEntry("perl -E 'a|b'", "perl"), false)
   assert.equal(commandMatchesAllowlistEntry("php -r 'a|b'", "php"), false)
   // regressions
   assert.equal(commandMatchesAllowlistEntry("bash -e script.sh", "bash"), true)
   assert.equal(commandMatchesAllowlistEntry("grep -c pattern file", "grep"), true)
+})
+
+test("W1e: quote-join / empty-quote / backslash / tokenize-null fail-closed", () => {
+  // A: wrapping quotes + glob poison previously fallback-allowed `'-c'`
+  assert.equal(commandMatchesAllowlistEntry("bash '-c' 'echo PWNED' '*'", "bash"), false)
+  assert.equal(commandMatchesAllowlistEntry("bash '-c' 'echo PWNED' '?'", "bash"), false)
+  // L-b: intra-token empty quotes / backslash. No `~` — that would hide L-b behind tokenize-null.
+  assert.equal(commandMatchesAllowlistEntry('bash -""c "echo pwned"', "bash"), false)
+  assert.equal(commandMatchesAllowlistEntry("bash -\\c echo pwned", "bash"), false)
+  // T-join: POSIX `"-"c` is one word `-c`. Trailing ENV= forces shell:true today.
+  assert.equal(commandMatchesAllowlistEntry('bash "-"c "echo PWNED" X=1', "bash"), false)
+  assert.equal(commandMatchesAllowlistEntry('bash "-l"c "echo PWNED" X=1', "bash"), false)
+  // Interpreter L-b / T-join without glob/`~` poison
+  assert.equal(commandMatchesAllowlistEntry('python3 -""c "import os"', "python3"), false)
+  assert.equal(commandMatchesAllowlistEntry('python3 "-"c "import os" X=1', "python3"), false)
+  assert.equal(commandMatchesAllowlistEntry('node -""e "1"', "node"), false)
+  assert.equal(commandMatchesAllowlistEntry('sh -""c "id"', "sh"), false)
+  assert.equal(commandMatchesAllowlistEntry('deno -""e "1"', "deno"), false)
+  // L-c unique: unclosed quote, no deny-flag, `echo` is in neither deny set
+  assert.equal(commandMatchesAllowlistEntry("echo 'unterminated", "echo"), false)
+  // T-join argv: adjacent quoted spans concatenate
+  assert.deepEqual(tryParseSimpleArgv('"foo""bar"'), ["foobar"])
+  // I2 regressions
+  assert.equal(commandMatchesAllowlistEntry("bash -e script.sh", "bash"), true)
+  assert.equal(commandMatchesAllowlistEntry("grep -ic pattern file", "grep"), true)
 })
 
 test("C4: WIN_SCRIPTS without ALLOW throws even when NODE_ENV is empty", () => {

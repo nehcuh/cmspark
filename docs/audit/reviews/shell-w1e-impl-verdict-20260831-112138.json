@@ -1,0 +1,19 @@
+{
+  "batch": "shell-w1e-impl",
+  "timestamp": "20260831-112138",
+  "blast": "T3",
+  "machine": { "verdict": "PASS", "targeted": "46/46", "note": "claude also reported companion full suite 3959/0" },
+  "adversary": {
+    "security": "APPROVE_WITH_NITS",
+    "correctness": "APPROVE_WITH_NITS",
+    "skeptic": "APPROVE_WITH_NITS"
+  },
+  "claude": { "verdict": "APPROVE_WITH_NITS", "path": "docs/audit/reviews/shell-w1e-impl-claude-20260831-112138.md" },
+  "kimi": { "verdict": "APPROVE", "path": "docs/audit/reviews/shell-w1e-impl-kimi-20260831-112138.md" },
+  "node1_spec": {
+    "claude": "APPROVE_WITH_NITS",
+    "kimi": "APPROVE_WITH_NITS"
+  },
+  "both_approve": true,
+  "merge": "NO — branch only; human/PR to main"
+}

@@ -1,0 +1,353 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 371a9647..ca45e4e0 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,7 +4,13 @@
+ 
+ ## [Unreleased]
+ 
+-（无）
++### Security
++
++- **shell allowlist W1e（quote/join fail-closed）**：0.5.4 闭合的是执行旗标 *变体*（pwsh 前缀、`/c`、`=`、`.exe`、node `-p` 等），不是「判定 tokenizer ≠ `spawn({shell:true})` 引号语法」。本次：POSIX 相邻引号拼接（`"-"c` → `-c`）；旗标比对前去掉空引号并认 unquoted `\`；`tokenizeSimpleArgv` 失败改为 deny（删除空白 fallback 放行）。`policy=allowlist` + 裸解释器条目下，`bash '-c' … '*'`、`bash -""c`、`bash "-"c … X=1` 不再匹配。默认 `confirm_per_command` + L2 不变（非社区默认 RCE）。含 `*`/`?` 的 allowlist 命令（即便在引号内）改为 matcher deny——需要 glob/query 的操作者用 `confirm_per_command`。
++
++### Known residuals
++
++- 位置参数 `bash evil.sh` / GTFOBins；`$VAR` + 残留 `shell:true`；win32 `cmd.exe` 引号语法；cwd 依赖的 `bash -[c]` pathname glob；macOS bashism `-{c,}`。
+ 
+ ## [0.5.6] — 2026-08-31
+ 
+diff --git a/companion/src/capability/shell.ts b/companion/src/capability/shell.ts
+index eb322688..41a69769 100644
+--- a/companion/src/capability/shell.ts
++++ b/companion/src/capability/shell.ts
+@@ -174,12 +174,13 @@ export function hasShellAllowlistMetachar(command: string): boolean {
+  * `powershell Get-Date` (implicit -Command) is the same class as
+  * `bash evil.sh`. Operators who allowlist a bare shell accept that.
+  *
+- * CLASS BOUNDARY (grok review W1d — CLOSES this class): for bare
+- * interpreter/shell allowlist entries, exec-flag denial is best-effort
+- * defense-in-depth, NOT a complete enumeration. GTFOBins-class vectors
+- * (awk/sed/find/…) deliberately live outside this table; the real gate is
+- * the L2 confirmation. Single-point flag variants in this class are no
+- * longer tracked item-by-item unless a concrete attack path is shown.
++ * CLASS BOUNDARY (W1d + W1e): flag-variant enumeration (W1d) plus
++ * quote/join fail-closed (W1e: POSIX adjacent-quote join, intra-token
++ * empty quotes, unquoted `\`-escape on flag compare, tokenize-null deny).
++ * When L2 is skipped (enterprise auto-approve / session trust) the matcher
++ * IS the last line for exec-flags on a bare allowlisted interpreter.
++ * GTFOBins / positional `bash evil.sh`, `$VAR` under shell:true, win32
++ * cmd grammar, and `[c]` pathname glob remain declared residuals.
+  */
+ type ShellDenyKind = "posix" | "pwsh" | "deno" | "cmd"
+ const SHELL_FAMILY_DENY: Record<string, ShellDenyKind> = {
+@@ -197,7 +198,28 @@ function shellDenyKind(argv0: string): ShellDenyKind | null {
+   return SHELL_FAMILY_DENY[interpreterBasename(argv0)] ?? null
+ }
+ 
++/**
++ * Flag-compare only (not argv rewrite). Drop `'`/`"`; unquoted `\` consumes
++ * the next char so `-\c` matches `-c`. Tokenizer already POSIX-joins adjacent
++ * quoted spans (`"-"c` → `-c`); this is belt for leftover quote/`\` in a token.
++ * Do not apply to path tokens in tokenizeSimpleArgv (Windows `C:\Users` must stay).
++ */
++function normalizeShellTokenForFlagMatch(token: string): string {
++  let out = ""
++  for (let i = 0; i < token.length; i++) {
++    const c = token[i]
++    if (c === "\\" && i + 1 < token.length) {
++      out += token[++i]
++      continue
++    }
++    if (c === "'" || c === '"') continue
++    out += c
++  }
++  return out
++}
++
+ function tokenIsDeniedShellFlag(kind: ShellDenyKind, token: string): boolean {
++  token = normalizeShellTokenForFlagMatch(token)
+   if (kind === "posix") {
+     if (token === "-c") return true
+     // Clustered shorts containing c (`-lc`, `-ec`, `-xc`) all execute a command.
+@@ -247,25 +269,6 @@ function argvHasDeniedShellFlags(kind: ShellDenyKind, argv: string[]): boolean {
+   return false
+ }
+ 
+-/**
+- * Fallback raw-argv scan per shell kind (only used when tokenizeSimpleArgv
+- * fails). Splits on whitespace and reuses tokenIsDeniedShellFlag so the
+- * fallback path stays in lock-step with the tokenized path (unique prefixes,
+- * `=` glued forms, --eval — a parallel regex set would drift).
+- *
+- * ACCEPTED RESIDUAL (grok review W1c): a QUOTED deny flag slips through here
+- * — `bash '-c' '$x'` splits to `'-c'`, which never equals `-c`. Theoretical
+- * only: tokenizeSimpleArgv fails exactly when the command contains
+- * metacharacters / `$` / wildcards, and those are rejected upstream by
+- * hasShellAllowlistMetachar under policy=allowlist before this matcher runs.
+- */
+-function rawArgsHaveDeniedShellFlags(kind: ShellDenyKind, rawArgs: string): boolean {
+-  for (const token of rawArgs.split(/\s+/)) {
+-    if (token && tokenIsDeniedShellFlag(kind, token)) return true
+-  }
+-  return false
+-}
+-
+ const INTERPRETER_BASENAMES = new Set([
+   "python",
+   "python3",
+@@ -304,6 +307,7 @@ function isKnownInterpreter(argv0: string): boolean {
+  *   `-r` (require) is unaffected because the check is php-scoped.
+  */
+ function tokenIsDeniedInterpreterFlag(token: string, clustered: boolean, base?: string): boolean {
++  token = normalizeShellTokenForFlagMatch(token)
+   if (token === "-c" || token === "-e" || token === "--command" || token === "--eval") return true
+   if (token.startsWith("--command=") || token.startsWith("--eval=")) return true
+   if (/^-c./.test(token)) return true
+@@ -330,27 +334,12 @@ function argvHasDeniedInterpreterFlags(argv: string[]): boolean {
+   return false
+ }
+ 
+-/**
+- * Fallback raw-argv scan for interpreters (only when tokenizeSimpleArgv
+- * fails). Whitespace-split + tokenIsDeniedInterpreterFlag, mirroring
+- * rawArgsHaveDeniedShellFlags — a parallel regex (the old
+- * BARE_INTERPRETER_DENY_FLAGS) would drift from the token rules, e.g. it
+- * knew nothing of node -p / perl -E / php -r. Same quoted-flag residual as
+- * the shell fallback applies (metachar layer rejects upstream anyway).
+- */
+-function rawArgsHaveDeniedInterpreterFlags(ent: string, rawArgs: string): boolean {
+-  const base = interpreterBasename(ent)
+-  for (const token of rawArgs.split(/\s+/)) {
+-    if (token && tokenIsDeniedInterpreterFlag(token, true, base)) return true
+-  }
+-  return false
+-}
+-
+ /**
+  * P1 SEC-07 + Batch C C3: allowlist match as argv template, not naive prefix.
+  * Deny exec flags on parsed argv (quoted `python3 '-c'`). Clustered shorts
+  * (-ic) only for known interpreters / shell families so `grep -ic` / `wc -c`
+  * stay allowed. Shells use their own flag set — `bash -e` (errexit) is legal.
++ * W1e: unparseable argv (tokenize null) is deny — no whitespace fallback allow.
+  */
+ export function commandMatchesAllowlistEntry(command: string, entry: string): boolean {
+   const cmd = command.trim()
+@@ -361,24 +350,17 @@ export function commandMatchesAllowlistEntry(command: string, entry: string): bo
+   if (/\s/.test(ent)) return true
+ 
+   const tokens = tokenizeSimpleArgv(cmd)
+-  if (tokens) {
+-    let i = 0
+-    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++
+-    const rest = tokens.slice(i)
+-    if (rest.length >= 2 && isKnownInterpreter(rest[0]) && argvHasDeniedInterpreterFlags(rest)) {
+-      return false
+-    }
+-    const kind = rest.length >= 2 ? shellDenyKind(rest[0]) : null
+-    if (kind && argvHasDeniedShellFlags(kind, rest)) {
+-      return false
+-    }
+-    return true
++  if (!tokens) return false
++  let i = 0
++  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++
++  const rest = tokens.slice(i)
++  if (rest.length >= 2 && isKnownInterpreter(rest[0]) && argvHasDeniedInterpreterFlags(rest)) {
++    return false
+   }
+-  if (isKnownInterpreter(ent) && rawArgsHaveDeniedInterpreterFlags(ent, cmd.slice(ent.length))) {
++  const kind = rest.length >= 2 ? shellDenyKind(rest[0]) : null
++  if (kind && argvHasDeniedShellFlags(kind, rest)) {
+     return false
+   }
+-  const kind = shellDenyKind(ent)
+-  if (kind && rawArgsHaveDeniedShellFlags(kind, cmd.slice(ent.length))) return false
+   return true
+ }
+ 
+@@ -516,6 +498,10 @@ export function shellSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): {
+  * Tokenize a simple command. Returns null if metacharacters, wildcards, unclosed
+  * quotes, or empty. Unlike tryParseSimpleArgv this keeps ENV= tokens so C3 can
+  * strip them and still scan deny flags.
++ *
++ * W1e T-join: POSIX adjacent-quote concatenation — `"-"c` is one word `-c`,
++ * `"foo""bar"` is `foobar`. Unquoted backslash is kept (Windows `C:\Users`);
++ * flag-match `\`-consume lives in normalizeShellTokenForFlagMatch only.
+  */
+ export function tokenizeSimpleArgv(command: string): string[] | null {
+   const cmd = (command || "").trim()
+@@ -528,35 +514,33 @@ export function tokenizeSimpleArgv(command: string): string[] | null {
+   while (i < cmd.length) {
+     while (i < cmd.length && /\s/.test(cmd[i])) i++
+     if (i >= cmd.length) break
+-    const c = cmd[i]
+-    if (c === '"' || c === "'") {
+-      const quote = c
+-      i++
+-      let buf = ""
+-      while (i < cmd.length && cmd[i] !== quote) {
+-        if (
+-          cmd[i] === "\\" &&
+-          i + 1 < cmd.length &&
+-          (cmd[i + 1] === quote || cmd[i + 1] === "\\")
+-        ) {
+-          buf += cmd[i + 1]
+-          i += 2
+-          continue
++    let buf = ""
++    while (i < cmd.length && !/\s/.test(cmd[i])) {
++      const c = cmd[i]
++      if (c === '"' || c === "'") {
++        const quote = c
++        i++
++        while (i < cmd.length && cmd[i] !== quote) {
++          if (
++            cmd[i] === "\\" &&
++            i + 1 < cmd.length &&
++            (cmd[i + 1] === quote || cmd[i + 1] === "\\")
++          ) {
++            buf += cmd[i + 1]
++            i += 2
++            continue
++          }
++          buf += cmd[i]
++          i++
+         }
+-        buf += cmd[i]
++        if (i >= cmd.length) return null
+         i++
+-      }
+-      if (i >= cmd.length) return null
+-      i++
+-      tokens.push(buf)
+-    } else {
+-      let buf = ""
+-      while (i < cmd.length && !/\s/.test(cmd[i])) {
+-        buf += cmd[i]
++      } else {
++        buf += c
+         i++
+       }
+-      tokens.push(buf)
+     }
++    tokens.push(buf)
+   }
+   if (tokens.length === 0) return null
+   if (!tokens[0]) return null
+diff --git a/companion/tests/batch-c-host-p1.test.ts b/companion/tests/batch-c-host-p1.test.ts
+index 4ec3cae9..66271031 100644
+--- a/companion/tests/batch-c-host-p1.test.ts
++++ b/companion/tests/batch-c-host-p1.test.ts
+@@ -5,7 +5,7 @@
+ import test from "node:test"
+ import assert from "node:assert/strict"
+ import * as path from "node:path"
+-import { commandMatchesAllowlistEntry } from "../src/capability/shell"
++import { commandMatchesAllowlistEntry, tryParseSimpleArgv } from "../src/capability/shell"
+ import { resolveWinScript } from "../src/host-use/win/powershell"
+ import { buildMcpStdioEnv } from "../src/mcp/transport"
+ import { isUnsafeLoaderEnvKey } from "../src/user-env"
+@@ -78,16 +78,16 @@ test("W1b: pwsh unique prefixes / .exe basenames / bun --eval denied", () => {
+   assert.equal(commandMatchesAllowlistEntry("bash -C script.sh", "bash"), true) // noclobber
+ })
+ 
+-test("W1b: fallback path (unparseable argv) applies the same shell deny flags", () => {
+-  // metachar `|` forces tokenizeSimpleArgv to return null
++test("W1b: unparseable argv is deny (L-c; policy already owns `|`)", () => {
++  // metachar `|` forces tokenizeSimpleArgv to return null → matcher fail-closed
+   assert.equal(commandMatchesAllowlistEntry("bash -c 'a|b'", "bash"), false)
+   assert.equal(commandMatchesAllowlistEntry("bash -lc 'a|b'", "bash"), false)
+   assert.equal(commandMatchesAllowlistEntry("powershell -com 'a|b'", "powershell"), false)
+   assert.equal(commandMatchesAllowlistEntry("powershell.exe -c 'a|b'", "powershell.exe"), false)
+   assert.equal(commandMatchesAllowlistEntry("bun --eval 'a|b'", "bun"), false)
+-  // fallback allowances mirror the tokenized path
+-  assert.equal(commandMatchesAllowlistEntry("bash -e 'a|b'", "bash"), true)
+-  assert.equal(commandMatchesAllowlistEntry("grep -c 'a|b'", "grep"), true)
++  // no deny-flag and still unparseable → deny (do not fallback-allow)
++  assert.equal(commandMatchesAllowlistEntry("bash -e 'a|b'", "bash"), false)
++  assert.equal(commandMatchesAllowlistEntry("grep -c 'a|b'", "grep"), false)
+ })
+ 
+ test("W1c: pwsh slash flags and bun/deno print-eval denied", () => {
+@@ -139,6 +139,31 @@ test("W1d: node -p / perl -E / cmd family / php -r denied; class closed", () =>
+   assert.equal(commandMatchesAllowlistEntry("grep -c pattern file", "grep"), true)
+ })
+ 
++test("W1e: quote-join / empty-quote / backslash / tokenize-null fail-closed", () => {
++  // A: wrapping quotes + glob poison previously fallback-allowed `'-c'`
++  assert.equal(commandMatchesAllowlistEntry("bash '-c' 'echo PWNED' '*'", "bash"), false)
++  assert.equal(commandMatchesAllowlistEntry("bash '-c' 'echo PWNED' '?'", "bash"), false)
++  // L-b: intra-token empty quotes / backslash. No `~` — that would hide L-b behind tokenize-null.
++  assert.equal(commandMatchesAllowlistEntry('bash -""c "echo pwned"', "bash"), false)
++  assert.equal(commandMatchesAllowlistEntry("bash -\\c echo pwned", "bash"), false)
++  // T-join: POSIX `"-"c` is one word `-c`. Trailing ENV= forces shell:true today.
++  assert.equal(commandMatchesAllowlistEntry('bash "-"c "echo PWNED" X=1', "bash"), false)
++  assert.equal(commandMatchesAllowlistEntry('bash "-l"c "echo PWNED" X=1', "bash"), false)
++  // Interpreter L-b / T-join without glob/`~` poison
++  assert.equal(commandMatchesAllowlistEntry('python3 -""c "import os"', "python3"), false)
++  assert.equal(commandMatchesAllowlistEntry('python3 "-"c "import os" X=1', "python3"), false)
++  assert.equal(commandMatchesAllowlistEntry('node -""e "1"', "node"), false)
++  assert.equal(commandMatchesAllowlistEntry('sh -""c "id"', "sh"), false)
++  assert.equal(commandMatchesAllowlistEntry('deno -""e "1"', "deno"), false)
++  // L-c unique: unclosed quote, no deny-flag, `echo` is in neither deny set
++  assert.equal(commandMatchesAllowlistEntry("echo 'unterminated", "echo"), false)
++  // T-join argv: adjacent quoted spans concatenate
++  assert.deepEqual(tryParseSimpleArgv('"foo""bar"'), ["foobar"])
++  // I2 regressions
++  assert.equal(commandMatchesAllowlistEntry("bash -e script.sh", "bash"), true)
++  assert.equal(commandMatchesAllowlistEntry("grep -ic pattern file", "grep"), true)
++})
++
+ test("C4: WIN_SCRIPTS without ALLOW throws even when NODE_ENV is empty", () => {
+   const prevScripts = process.env.CMSPARK_WIN_SCRIPTS
+   const prevAllow = process.env.CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE
+diff --git a/companion/tests/capability-shell-netsec.test.ts b/companion/tests/capability-shell-netsec.test.ts
+index 3bf0cfec..1d18c8ef 100644
+--- a/companion/tests/capability-shell-netsec.test.ts
++++ b/companion/tests/capability-shell-netsec.test.ts
+@@ -117,6 +117,29 @@ test("P1a allowlist: non-prefix still denied with not-in-allowlist", async () =>
+   assert.match((r as { error: string }).error, /not in allowlist/)
+ })
+ 
++test("W1e policy: quoted -c + glob and adjacent-quote split do not allow", async () => {
++  enableShellAllowlist(["bash"])
++  const a = shell.commandAllowedByPolicy("bash '-c' 'echo PWNED' '*'")
++  assert.equal(a.ok, false)
++  const b = shell.commandAllowedByPolicy('bash "-"c "echo PWNED" X=1')
++  assert.equal(b.ok, false)
++  enableShellAllowlist(["python3"])
++  const py = shell.commandAllowedByPolicy('python3 -""c "import os"')
++  assert.equal(py.ok, false)
++})
++
++test("W1e I5: confirm_per_command still allows glob (metachar ban allowlist-only)", async () => {
++  saveConfig({
++    capability_profile: "enterprise",
++    modules: {
++      shell: { available: true, enabled: true, policy: "confirm_per_command" },
++    },
++  } as any)
++  clearConfigCache()
++  const r = shell.commandAllowedByPolicy("echo *")
++  assert.equal(r.ok, true)
++})
++
+ test("P1a confirm_per_command: metachar ban is allowlist-only (policy layer)", async () => {
+   saveConfig({
+     capability_profile: "enterprise",
+diff --git a/companion/tests/shell-progress-windowsHide.test.ts b/companion/tests/shell-progress-windowsHide.test.ts
+index 6068956b..22f68976 100644
+--- a/companion/tests/shell-progress-windowsHide.test.ts
++++ b/companion/tests/shell-progress-windowsHide.test.ts
+@@ -40,6 +40,10 @@ describe("tryParseSimpleArgv (P1b)", () => {
+       "--flag",
+     ])
+   })
++  it("joins adjacent quoted spans (POSIX T-join)", () => {
++    assert.deepEqual(tryParseSimpleArgv('"foo""bar"'), ["foobar"])
++    assert.deepEqual(tryParseSimpleArgv('bash "-"c id'), ["bash", "-c", "id"])
++  })
+   it("preserves Windows path backslashes inside quotes (B2)", () => {
+     assert.deepEqual(tryParseSimpleArgv('python "C:\\Users\\t\\script.py" --flag'), [
+       "python",
