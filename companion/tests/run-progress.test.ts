@@ -711,3 +711,17 @@ test("shouldBlockPageTool: click blocked until propose; list_tabs/worker/null no
   assert.equal(shouldBlockPageTool({ toolName: "click", proposedThisRequest: false, runProgress: null }), false)
   assert.equal(shouldBlockPageTool({ toolName: "click", proposedThisRequest: true, runProgress: undefined }), false)
 })
+
+test("run_progress_propose is catalog companion not L2 not outbound", () => {
+  const { COMPANION_TOOLS } = require("../src/bridge/companion-tools")
+  assert.ok(COMPANION_TOOLS.includes("run_progress_propose"))
+  const { L2_GATE_TOOLS } = require("../src/tool/l2-admission")
+  assert.equal(L2_GATE_TOOLS.includes("run_progress_propose"), false)
+  const src = readSrc("tool", "l2-admission.ts")
+  assert.doesNotMatch(src, /run_progress_propose/)
+  const { isOutboundAllowed } = require("../src/outbound-mcp/profile")
+  assert.equal(isOutboundAllowed("cmspark__run_progress_propose"), false)
+  const { WORKER_HARD_DENY } = require("../src/orchestrator/constants")
+  assert.ok(WORKER_HARD_DENY.has("run_progress_propose"))
+  assert.ok(getAllToolDefinitions().some((t) => t.function.name === "run_progress_propose"))
+})

@@ -42,6 +42,7 @@ export const WORKER_HARD_DENY = new Set([
   "board_heartbeat_intent",
   "ask_user",
   "list_tab_locks",
+  "run_progress_propose",
 ])
 
 /** Default narrow surface for orchestrator threads. */
