@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { chatShellEmpty, CHAT_SHELL_PAGE_CHIP_PREFIX, CHAT_SHELL_CHIPS } from "../src/sidepanel/chat-shell-copy"
+import { chatShellEmpty, CHAT_SHELL_PAGE_CHIP_PREFIX, CHAT_SHELL_CHIPS, truncationHonestyChip } from "../src/sidepanel/chat-shell-copy"
 
 test("no page: title 要我帮你做什么, no chips, no pageChip", () => {
   const e = chatShellEmpty(null)
@@ -20,4 +20,24 @@ test("page: 要对这页做什么 + 当前页 prefix + 3 static fills", () => {
   for (const c of e.chips) {
     assert.ok(!c.fill.includes("vibesop"))
   }
+})
+
+test("truncationHonestyChip: empty content + reasoning vs truncated", () => {
+  assert.equal(
+    truncationHonestyChip({ content: "", reasoning_content: "thinking", truncated: true }),
+    "思考耗尽额度",
+  )
+  assert.equal(
+    truncationHonestyChip({ content: "partial", truncated: true }),
+    "输出被截断",
+  )
+  assert.equal(truncationHonestyChip({ content: "ok" }), null)
+  assert.equal(
+    truncationHonestyChip({
+      content: "",
+      reasoning_content: "thinking",
+      finish_reason: "aborted",
+    }),
+    "已停止生成",
+  )
 })

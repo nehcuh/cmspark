@@ -12,6 +12,7 @@ export type ThreadGraphSlim = {
   alias?: string
   updated_at?: string
   created_at?: string
+  last_message_at?: string | null
   agent_role?: string
   trashed_at?: string | null
   digest?: {
@@ -86,6 +87,7 @@ export function slimThreadGraphRow(raw: unknown): ThreadGraphSlim | null {
     alias: typeof t.alias === "string" ? t.alias.slice(0, 200) : undefined,
     updated_at: typeof t.updated_at === "string" ? t.updated_at : undefined,
     created_at: typeof t.created_at === "string" ? t.created_at : undefined,
+    last_message_at: typeof t.last_message_at === "string" ? t.last_message_at : undefined,
     agent_role: typeof t.agent_role === "string" ? t.agent_role : undefined,
     trashed_at:
       t.trashed_at === null
@@ -109,8 +111,8 @@ export async function prepareThreadGraphSnapshot(
     .filter((t) => t.id && !t.trashed_at)
     .filter((t) => t.agent_role !== "worker")
   live.sort((a, b) => {
-    const ta = new Date(a.updated_at || a.created_at || 0).getTime()
-    const tb = new Date(b.updated_at || b.created_at || 0).getTime()
+    const ta = new Date(a.last_message_at || a.created_at || 0).getTime()
+    const tb = new Date(b.last_message_at || b.created_at || 0).getTime()
     return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0)
   })
   let capped = live.slice(0, 300)

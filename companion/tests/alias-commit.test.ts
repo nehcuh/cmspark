@@ -48,6 +48,29 @@ test("formatAcpProvisionalAlias is closed enum", () => {
   assert.equal(classifyAlias(""), "empty")
 })
 
+test("T-alias-3: hostname leftover is not classifyAlias === user", () => {
+  assert.notEqual(classifyAlias("cruise-wl"), "user")
+  assert.equal(classifyAlias("cruise-wl"), "hostname")
+  assert.equal(classifyAlias("github.com"), "hostname")
+  // handwritten short code with a digit stays user (hygiene p1-wl)
+  assert.equal(classifyAlias("p1-wl"), "user")
+})
+
+test("T-alias-3: hostname leftover allows llm auto-title overwrite", () => {
+  const tm = new ThreadManager()
+  const t = tm.create("cruise-wl", "w2k8z9")
+  tm.addMessage(t.id, { thread_id: t.id, role: "user", content: "立项风险分析" })
+  const committed = commitThreadAlias({
+    threadManager: tm,
+    threadId: t.id,
+    next: "立项风险分析",
+    class: "llm",
+    firstUserText: "立项风险分析",
+  })
+  assert.equal(committed.ok, true)
+  assert.equal(tm.get(t.id)?.alias, "立项风险分析")
+})
+
 test("commitThreadAlias: empty → ACP; cryptic p1-wl blocked", () => {
   const tm = new ThreadManager()
   const empty = tm.create("", "rny77t")

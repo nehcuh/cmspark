@@ -34,6 +34,8 @@ export interface Thread {
   alias: string
   created_at: string
   updated_at: string
+  /** Last persisted transcript row. List recency; digest must not stamp this. */
+  last_message_at?: string | null
   config_override: LLMConfig
   tool_whitelist: string[] | null
   pinned_tabs: number[]
@@ -308,6 +310,10 @@ export interface Message {
   client_message_id?: string
   /** Companion-attached knowledge ledger (Wave 1). Never model-authored. */
   retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number }>
+  /** Length-stop / truncated-tool-batch honesty (hydrate chip). */
+  truncated?: boolean
+  incomplete_tools?: boolean
+  finish_reason?: string | null
 }
 
 export interface SecurityConfirmationRequest {

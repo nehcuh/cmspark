@@ -39,6 +39,11 @@ interface Thread {
   alias: string
   created_at: string
   updated_at: string
+  /**
+   * Human list-recency clock. Advanced only when a transcript row is inserted.
+   * Distinct from `updated_at` (metadata / cache / trash / digest).
+   */
+  last_message_at?: string | null
   config_override: Record<string, any>
   tool_whitelist: string[] | null
   pinned_tabs: number[]
@@ -199,6 +204,20 @@ interface Message {
   attachments?: ImageAttachmentMeta[]
   /** Companion-attached knowledge ledger for this assistant turn (Wave 1). */
   retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number }>
+  /** Length-stop / truncated-tool-batch honesty (hydrate chip). */
+  truncated?: boolean
+  incomplete_tools?: boolean
+  finish_reason?: string | null
+}
+
+/** Human-facing recency: last transcript row, else created_at. Never `updated_at`. */
+export function threadRecency(t: {
+  last_message_at?: string | null
+  created_at?: string
+}): string {
+  const last = typeof t.last_message_at === "string" ? t.last_message_at.trim() : ""
+  if (last) return last
+  return typeof t.created_at === "string" ? t.created_at : ""
 }
 
 const RASTER_MIMES = new Set<RasterMime>([
@@ -481,11 +500,15 @@ export class ThreadManager {
               .map((t) => [t.id, t] as const),
           )
           for (const t of this.index.threads) {
-            if (t.digest !== undefined) continue
             const d = diskById.get(t.id)
-            if (d?.digest && typeof d.digest === "object") {
+            if (t.digest === undefined && d?.digest && typeof d.digest === "object") {
               const sanitized = sanitizeDigest(d.digest)
               if (sanitized) t.digest = sanitized
+            }
+            const memLast = typeof t.last_message_at === "string" ? t.last_message_at.trim() : ""
+            const diskLast = typeof d?.last_message_at === "string" ? d.last_message_at.trim() : ""
+            if (diskLast && (!memLast || diskLast > memLast)) {
+              t.last_message_at = diskLast
             }
           }
         }
@@ -706,7 +729,8 @@ export class ThreadManager {
       acp_list: import("./thread-inspect").AcpListMeta | null
     }
   > {
-    return this.list(opts).map((t) => {
+    let fillMissing = false
+    const rows = this.list(opts).map((t) => {
       const msgs = this.getMessages(t.id)
       const first_user_preview = firstUserPreviewFromMessages(msgs, 80)
       const last_user_preview = lastUserPreviewFromMessages(msgs, 80)
@@ -716,6 +740,15 @@ export class ThreadManager {
         if (isDigestStale(digest, msgs)) {
           digest = { ...digest, stale: true } as ThreadDigest & { stale: boolean }
         }
+      }
+      const derived =
+        msgs.length > 0 && typeof msgs[msgs.length - 1]?.created_at === "string"
+          ? msgs[msgs.length - 1].created_at
+          : ""
+      const existing = typeof t.last_message_at === "string" ? t.last_message_at.trim() : ""
+      if (!existing && derived) {
+        t.last_message_at = derived
+        fillMissing = true
       }
       return {
         ...t,
@@ -727,6 +760,8 @@ export class ThreadManager {
         acp_list: inspected.acp_list,
       }
     })
+    if (fillMissing) this.saveIndex()
+    return rows
   }
 
   /**
@@ -875,7 +910,8 @@ export class ThreadManager {
     if (updates.board_mode !== undefined && typeof updates.board_mode !== "boolean") {
       throw new Error("board_mode must be a boolean")
     }
-    Object.assign(thread, updates, { updated_at: monotonicTimestamp() })
+    const { last_message_at: _ignoredListClock, ...safeUpdates } = updates
+    Object.assign(thread, safeUpdates, { updated_at: monotonicTimestamp() })
     // Tri-state run_progress: undefined = never set (initial seed from
     // handoff.open_todos fires here); null = explicit clear, sticky — never
     // reseeded by this or any unrelated update; value = caller-set, kept.
@@ -1064,6 +1100,10 @@ export class ThreadManager {
     const thread = this.index.threads.find(t => t.id === threadId)
     if (thread) {
       thread.updated_at = monotonicTimestamp()
+      const lastCreated = data.messages[data.messages.length - 1]?.created_at
+      if (typeof lastCreated === "string" && lastCreated) {
+        thread.last_message_at = lastCreated
+      }
       this.saveIndex()
     }
 

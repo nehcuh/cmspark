@@ -2464,7 +2464,7 @@ try{
   function refresh(){
     return api("/api/threads").then(function(d){
       threads=(d.threads||[]).slice().sort(function(a,b){
-        return String(b.updated_at||b.created_at||"").localeCompare(String(a.updated_at||a.created_at||""));
+        return String(b.last_message_at||b.created_at||"").localeCompare(String(a.last_message_at||a.created_at||""));
       });
       renderThreads();
     });

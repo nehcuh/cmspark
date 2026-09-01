@@ -49,15 +49,29 @@ export interface AnthropicRequestBody {
   stream?: boolean
 }
 
+/** Pinned chat output cap (not vision.max_tokens). */
+export const LLM_MAX_TOKENS_DEFAULT = 32768
+export const LLM_MAX_TOKENS_HARD_CAP = 32768
+
 /**
- * Deterministic max_tokens (Pi M4):
- * min(8192, max(256, floor(context_window / 8)))
+ * Chat output cap.
+ * Default 32768 (not min(8192, cw/8) — that starved glm-5.x thinking).
+ * Ceiling: min(requested, 32768, max(256, floor(context_window / 2))).
+ * `requested` is config.llm.max_tokens when passed; vision.max_tokens is ignored.
  *
- * Note: openai path currently omits max_tokens; anthropic requires an output cap.
+ * Note: openai path sends max_tokens only when StreamChatParams.max_tokens is set;
+ * anthropic always requires an output cap.
  */
-export function computeMaxTokens(contextWindow: number): number {
-  const cw = Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : 8192
-  return Math.min(8192, Math.max(256, Math.floor(cw / 8)))
+export function computeMaxTokens(contextWindow: number, requested?: number): number {
+  const cw =
+    Number.isFinite(contextWindow) && contextWindow > 0
+      ? contextWindow
+      : LLM_MAX_TOKENS_HARD_CAP * 2
+  const req =
+    Number.isFinite(requested) && (requested as number) > 0
+      ? Math.floor(requested as number)
+      : LLM_MAX_TOKENS_DEFAULT
+  return Math.min(req, LLM_MAX_TOKENS_HARD_CAP, Math.max(256, Math.floor(cw / 2)))
 }
 
 /**
@@ -275,11 +289,13 @@ export function buildAnthropicRequestBody(opts: {
   tools?: CanonicalToolDefinition[]
   temperature?: number
   stream?: boolean
+  /** config.llm.max_tokens or a per-call H2 bump; not vision.max_tokens. */
+  maxTokens?: number
 }): AnthropicRequestBody {
   const { system, messages } = convertMessagesToAnthropic(opts.messages)
   const body: AnthropicRequestBody = {
     model: opts.model,
-    max_tokens: computeMaxTokens(opts.contextWindow),
+    max_tokens: computeMaxTokens(opts.contextWindow, opts.maxTokens),
     messages,
     stream: opts.stream ?? false,
   }

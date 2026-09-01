@@ -85,15 +85,22 @@ const sampleTools: CanonicalToolDefinition[] = [
 
 // ── max_tokens (M4) ────────────────────────────────────────────────────────
 
-test("computeMaxTokens: min(8192, max(256, floor(cw/8)))", () => {
-  assert.equal(computeMaxTokens(128000), 8192) // floor(16000) capped
-  assert.equal(computeMaxTokens(8192), 1024)
-  assert.equal(computeMaxTokens(1000), 256) // floor(125)=125 → max 256
-  assert.equal(computeMaxTokens(2048), 256)
-  assert.equal(computeMaxTokens(4096), 512)
-  // invalid window falls back to 8192 → floor(8192/8)=1024
-  assert.equal(computeMaxTokens(0), 1024)
-  assert.equal(computeMaxTokens(-1), 1024)
+test("computeMaxTokens: default 32768; ceiling min(requested, 32768, max(256, floor(cw/2)))", () => {
+  // T-cap-1: 1e6 window pins at 32768 and must not inherit vision.max_tokens (1024)
+  assert.equal(computeMaxTokens(1e6), 32768)
+  assert.notEqual(computeMaxTokens(1e6), 1024)
+  assert.equal(computeMaxTokens(128000), 32768)
+  assert.equal(computeMaxTokens(8192), 4096) // floor(cw/2)
+  assert.equal(computeMaxTokens(1000), 500)
+  assert.equal(computeMaxTokens(2048), 1024)
+  assert.equal(computeMaxTokens(4096), 2048)
+  assert.equal(computeMaxTokens(400), 256) // floor(200) → max 256
+  // invalid window falls back to default 32768
+  assert.equal(computeMaxTokens(0), 32768)
+  assert.equal(computeMaxTokens(-1), 32768)
+  // honor llm.max_tokens when passed; still ignore vision
+  assert.equal(computeMaxTokens(1e6, 1024), 1024)
+  assert.equal(computeMaxTokens(1e6, 99999), 32768)
 })
 
 // ── tool id sanitize ───────────────────────────────────────────────────────
@@ -375,6 +382,23 @@ test("buildAnthropicRequestBody includes max_tokens and stream flag", () => {
   assert.equal(body.temperature, 0.1)
   assert.ok(body.tools && body.tools.length === 1)
   assert.equal(body.messages[0].role, "user")
+})
+
+test("buildAnthropicRequestBody honors llm maxTokens and ignores vision 1024", () => {
+  const withReq = buildAnthropicRequestBody({
+    model: "claude-test",
+    contextWindow: 1e6,
+    messages: [{ role: "user", content: "hi" }],
+    maxTokens: 4096,
+  })
+  assert.equal(withReq.max_tokens, 4096)
+  const def = buildAnthropicRequestBody({
+    model: "claude-test",
+    contextWindow: 1e6,
+    messages: [{ role: "user", content: "hi" }],
+  })
+  assert.equal(def.max_tokens, 32768)
+  assert.notEqual(def.max_tokens, 1024)
 })
 
 // ── SSE fixtures ───────────────────────────────────────────────────────────

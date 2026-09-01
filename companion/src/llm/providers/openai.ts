@@ -1,6 +1,8 @@
 /**
  * OpenAI-compatible LlmProvider (SDK wrap).
- * Mirrors adapter.ts stream + complete patterns; does not send max_tokens (parity doc).
+ * Mirrors adapter.ts stream + complete patterns. Sends max_tokens only when
+ * StreamChatParams.max_tokens is a positive number (H2 truncated-tool-batch bump
+ * and adapter-supplied chat cap). Anthropic always sends a cap.
  */
 
 import OpenAI from "openai"
@@ -46,6 +48,9 @@ export class OpenAIProvider implements LlmProvider {
       temperature,
       stream: true,
       stream_options: { include_usage: true },
+    }
+    if (typeof params.max_tokens === "number" && params.max_tokens > 0) {
+      createParams.max_tokens = params.max_tokens
     }
     if (tools && tools.length > 0) {
       createParams.tools = tools

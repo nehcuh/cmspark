@@ -75,6 +75,7 @@ export class AnthropicProvider implements LlmProvider {
       tools: params.tools,
       temperature,
       stream: true,
+      maxTokens: params.max_tokens ?? this.config.max_tokens,
     })
 
     const response = await fetch(url, {
@@ -114,6 +115,7 @@ export class AnthropicProvider implements LlmProvider {
       messages: params.messages,
       temperature,
       stream: false,
+      maxTokens: this.config.max_tokens,
     })
 
     const response = await fetch(url, {

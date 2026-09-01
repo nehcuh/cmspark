@@ -94,6 +94,15 @@ export interface AgentState {
   threads: Thread[]
   activeThreadId: string | null
   messages: Message[]
+  /**
+   * LRU transcript cache (last 2 threads). Cross-id switch restores if present;
+   * miss is hydrating, never EmptyState as settled truth, never foreign rows.
+   */
+  messagesByThreadId: Record<string, Message[]>
+  /** Most-recent-last ids for messagesByThreadId eviction. */
+  messagesCacheOrder: string[]
+  /** True while waiting for thread.messages after a cache-miss switch. */
+  hydrating: boolean
   skills: SkillMeta[]
   activeSkillIds: string[]
   operations: OperationRecord[]
@@ -312,6 +321,7 @@ export type AgentAction =
   | { type: "REMOVE_MESSAGE"; id: string }
   | { type: "UPDATE_MESSAGE"; id: string; content: string }
   | { type: "SET_MESSAGES"; messages: Message[] }
+  | { type: "HYDRATE_FAILED"; message?: string }
   | { type: "ADD_TOOL_CALL"; messageId: string; toolCall: any }
   | { type: "UPDATE_TOOL_CALL"; messageId: string; toolCallId: string; updates: any }
   | { type: "SET_SKILLS"; skills: SkillMeta[] }
@@ -467,6 +477,9 @@ export const initialState: AgentState = {
   threads: [],
   activeThreadId: null,
   messages: [],
+  messagesByThreadId: {},
+  messagesCacheOrder: [],
+  hydrating: false,
   skills: [],
   activeSkillIds: [],
   operations: [],
@@ -712,6 +725,101 @@ function reduceAddMessage(state: AgentState, incoming: Message): AgentState {
  * already accounted for by a non-temp existing row), drop the temp — do
  * not double-render.
  */
+/** Keep the current thread plus one previous transcript. */
+export const MESSAGES_BY_THREAD_LRU = 2
+
+function stashThreadMessages(
+  cache: Record<string, Message[]>,
+  order: string[],
+  threadId: string | null,
+  messages: Message[],
+  opts: { skipEmptyHydrating?: boolean } = {},
+): { cache: Record<string, Message[]>; order: string[] } {
+  if (!threadId) return { cache, order }
+  if (opts.skipEmptyHydrating && messages.length === 0) {
+    return { cache, order }
+  }
+  const nextCache = { ...cache, [threadId]: messages }
+  const nextOrder = order.filter((id) => id !== threadId)
+  nextOrder.push(threadId)
+  while (nextOrder.length > MESSAGES_BY_THREAD_LRU) {
+    const evict = nextOrder.shift()
+    if (evict && evict !== threadId) delete nextCache[evict]
+  }
+  return { cache: nextCache, order: nextOrder }
+}
+
+function touchCacheOrder(
+  cache: Record<string, Message[]>,
+  order: string[],
+  threadId: string | null,
+): { cache: Record<string, Message[]>; order: string[] } {
+  if (!threadId) return { cache, order }
+  const nextOrder = order.filter((id) => id !== threadId)
+  nextOrder.push(threadId)
+  const nextCache = { ...cache }
+  while (nextOrder.length > MESSAGES_BY_THREAD_LRU) {
+    const evict = nextOrder.shift()
+    if (evict && evict !== threadId) delete nextCache[evict]
+  }
+  return { cache: nextCache, order: nextOrder }
+}
+
+function dropCachedThreads(
+  cache: Record<string, Message[]>,
+  order: string[],
+  ids: Iterable<string>,
+): { cache: Record<string, Message[]>; order: string[] } {
+  const drop = new Set(ids)
+  if (drop.size === 0) return { cache, order }
+  const nextCache = { ...cache }
+  for (const id of drop) delete nextCache[id]
+  return { cache: nextCache, order: order.filter((id) => !drop.has(id)) }
+}
+
+function applyActiveThreadSwitch(
+  state: AgentState,
+  threadId: string | null,
+): Pick<
+  AgentState,
+  | "activeThreadId"
+  | "messages"
+  | "messagesByThreadId"
+  | "messagesCacheOrder"
+  | "hydrating"
+  | "streamingContent"
+  | "streamingReasoning"
+  | "processingStatus"
+  | "isProcessing"
+> {
+  const oldId = state.activeThreadId
+  let cache = state.messagesByThreadId
+  let order = state.messagesCacheOrder
+  if (oldId && oldId !== threadId) {
+    const stashed = stashThreadMessages(cache, order, oldId, state.messages, {
+      skipEmptyHydrating: state.hydrating,
+    })
+    cache = stashed.cache
+    order = stashed.order
+  }
+  const touched = touchCacheOrder(cache, order, threadId)
+  cache = touched.cache
+  order = touched.order
+  const hit = !!threadId && Object.prototype.hasOwnProperty.call(cache, threadId)
+  const hydrating = !!threadId && !hit
+  return {
+    activeThreadId: threadId,
+    messages: hit && threadId ? cache[threadId]! : [],
+    messagesByThreadId: cache,
+    messagesCacheOrder: order,
+    hydrating,
+    streamingContent: "",
+    streamingReasoning: "",
+    processingStatus: hydrating ? "加载中" : null,
+    isProcessing: false,
+  }
+}
+
 export function mergeHydratedMessages(
   existing: Message[],
   incoming: Message[],
@@ -803,14 +911,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
       const threads = Array.isArray(state.threads) ? state.threads : []
       const activeThread = threads.find(t => t.id === action.threadId)
+      const switched = applyActiveThreadSwitch(state, action.threadId)
       return {
         ...state,
-        activeThreadId: action.threadId,
-        messages: [],
-        streamingContent: "",
-        streamingReasoning: "",
-        processingStatus: null,
-        isProcessing: false,
+        ...switched,
         lastBrowserToolAt: null,
         modePin: null,
         pinnedTabIds: activeThread?.pinned_tabs || [],
@@ -873,10 +977,30 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           }
         }),
       }
-    case "SET_MESSAGES":
+    case "SET_MESSAGES": {
+      const merged = mergeHydratedMessages(state.messages, action.messages)
+      let cache = state.messagesByThreadId
+      let order = state.messagesCacheOrder
+      if (state.activeThreadId) {
+        const stashed = stashThreadMessages(cache, order, state.activeThreadId, merged)
+        cache = stashed.cache
+        order = stashed.order
+      }
       return {
         ...state,
-        messages: mergeHydratedMessages(state.messages, action.messages),
+        messages: merged,
+        messagesByThreadId: cache,
+        messagesCacheOrder: order,
+        hydrating: false,
+        processingStatus:
+          state.hydrating && state.processingStatus === "加载中" ? null : state.processingStatus,
+      }
+    }
+    case "HYDRATE_FAILED":
+      return {
+        ...state,
+        hydrating: false,
+        processingStatus: action.message || "加载失败",
       }
     case "SET_SKILLS":
       // Guard: skill.list / error payloads may omit skills → never leave non-iterable state
@@ -1006,15 +1130,23 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         : state.activeThreadId
       const nextThread = filtered.find(t => t.id === nextActive)
       const { [action.threadId]: _removed, ...restBusy } = state.threadBusyById
+      const dropped = dropCachedThreads(state.messagesByThreadId, state.messagesCacheOrder, [
+        action.threadId,
+      ])
       const clearingActive = state.activeThreadId === action.threadId
-      return {
+      const base: AgentState = {
         ...state,
+        messagesByThreadId: dropped.cache,
+        messagesCacheOrder: dropped.order,
+        ...(clearingActive
+          ? { activeThreadId: null, messages: [], hydrating: false }
+          : {}),
+      }
+      const switched = clearingActive ? applyActiveThreadSwitch(base, nextActive) : null
+      return {
+        ...base,
         threads: filtered,
-        activeThreadId: nextActive,
-        messages: clearingActive ? [] : state.messages,
-        streamingContent: clearingActive ? "" : state.streamingContent,
-        streamingReasoning: clearingActive ? "" : state.streamingReasoning,
-        processingStatus: clearingActive ? null : state.processingStatus,
+        ...(switched || { activeThreadId: nextActive }),
         pinnedTabIds: nextThread?.pinned_tabs || [],
         activeSkillIds: nextThread?.active_skill_ids || [],
         activeKnowledgeIds: nextThread?.active_knowledge_ids || [],
@@ -1033,14 +1165,24 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const nextThread = filtered.find(t => t.id === nextActive)
       const restBusy = { ...state.threadBusyById }
       for (const id of removeSet) delete restBusy[id]
-      return {
+      const dropped = dropCachedThreads(
+        state.messagesByThreadId,
+        state.messagesCacheOrder,
+        removeSet,
+      )
+      const base: AgentState = {
         ...state,
+        messagesByThreadId: dropped.cache,
+        messagesCacheOrder: dropped.order,
+        ...(clearingActive
+          ? { activeThreadId: null, messages: [], hydrating: false }
+          : {}),
+      }
+      const switched = clearingActive ? applyActiveThreadSwitch(base, nextActive) : null
+      return {
+        ...base,
         threads: filtered,
-        activeThreadId: nextActive,
-        messages: clearingActive ? [] : state.messages,
-        streamingContent: clearingActive ? "" : state.streamingContent,
-        streamingReasoning: clearingActive ? "" : state.streamingReasoning,
-        processingStatus: clearingActive ? null : state.processingStatus,
+        ...(switched || { activeThreadId: nextActive }),
         pinnedTabIds: nextThread?.pinned_tabs || [],
         activeSkillIds: nextThread?.active_skill_ids || [],
         activeKnowledgeIds: nextThread?.active_knowledge_ids || [],

@@ -19,8 +19,8 @@ import { isVoiceSttOriginAllowed } from "../src/voice/stt-handlers"
 import { assertSummonerAllowed } from "../src/ws/summoner-acl"
 
 const THREADS = [
-  { id: "old", title: "旧笔记", updated_at: "2026-08-01T00:00:00Z" },
-  { id: "new", title: "投研纪要", updated_at: "2026-08-20T12:00:00Z" },
+  { id: "old", title: "旧笔记", created_at: "2026-08-01T00:00:00Z", last_message_at: "2026-08-01T00:00:00Z" },
+  { id: "new", title: "投研纪要", created_at: "2026-08-20T12:00:00Z", last_message_at: "2026-08-20T12:00:00Z" },
 ]
 
 test("first-open badge is probing, not 未连接", () => {
