@@ -18,15 +18,16 @@
 | ChatShell / Overlay Capture 卡 | **on main**（#240/#242/#246） |
 | 体检 A–F | **on main** #246/#248/#250/#252/#254 · tip `5c4fcab0` |
 
-## Branch lock (S101)
+## Branch lock (S103)
 
 - 包装 **0.5.8**（#268 context_window 512000 / listen-first / zip node-first）。当轮活计划（#265）在 0.5.7。召唤器流式 / 语音回退 / 会议自动 K 已在 0.5.6。
 - **评审弧闭环**：c39d7d3e..26949cbb 四路对抗 7 MAJOR 全修（#261–#264），main tip `18d843d1`。
 - **活票**：#230 冻 F-S-10 / overlay-acl；#258–#260 语音/会议。T1 #228 已关，**禁扩** profile。
-- **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；宣称 Capture/CU/F-S-10 闭合。
+- **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；宣称 Capture/CU/F-S-10 闭合；StatusRail 手风琴 / Wave 2 FocusBand。
 
 ## Next
 
+- Chrome unpacked 扩展重载 `chrome-extension/build/chrome-mv3-prod/` 狗食本轮步骤。
 - #230 禁止整票实现。
 
 ## Docs SoT

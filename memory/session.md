@@ -2,6 +2,18 @@
 
 ## Current Session
 
+### S103 END (2026-09-01) [T3 当轮活计划 #265 · 0.5.7 lockstep · 本机换装]
+- **触发**：侧栏干活顶栏看不到具体待办。#256 Wave 1 只挂 H1 残单；空对象是真缺口。
+- **选定**：T3 当轮活计划（新 ingest）。不要 StatusRail C，不偷运 Wave 2。线稿 01+02（聊天列可勾活清单）。
+- **Ship on main**：PR [#266](https://github.com/nehcuh/cmspark/pull/266) squash `2cd41f1d` Closes [#265](https://github.com/nehcuh/cmspark/issues/265)。spec r2b LOCKED。lockstep companion/extension/NSIS/CLI/CHANGELOG/AGENTS **0.5.7**。
+- **产品**：聊天列 Wave 1 sticky「本轮步骤」；ingest = `run_progress_propose`；首个 PAGE_TOOL 无清单 → `PROPOSE_REQUIRED`。可见性靠 companion 准入，不靠 LLM 记忆。
+- **本机**：`dist-package/CMspark-v0.5.7-macOS.dmg`（54M）；`/Applications/CMspark.app` 0.5.7；daemon `ws://127.0.0.1:23401`；CDHash `83f8a886…` A6。无 bak。
+- **CI 修**：`m2-untrusted-marker` 的 `get_page_text`/`get_page_html` 撞闸 → `runChatCreate` sticky-clear `run_progress: null`。
+- **对抗**：spec r1 4×REJECT → r2 3×REJECT → r2b 3 AWN；plan Product/Trust AWN。
+- **下次**：Chrome unpacked 扩展重载 `chrome-extension/build/chrome-mv3-prod/`。#230 仍冻。#258–#260 排期。本地 session-end 未 push（S102+S103），除非用户要。
+- Recorded: yes — classifyError 默认 non_recoverable 会杀闸；PAGE_TOOLS 必须活 catalog 名；handshakeSurface 来自 WS 不是模型袋；listSig 全表
+
+
 ### S102 END (2026-08-31) [本机 0.5.6 DMG 换装 · 清备份]
 - **做了**：`make package-macos` → `dist-package/CMspark-v0.5.6-macOS.dmg`（57M）+ zip；停 daemon → `ditto` 换 `/Applications/CMspark.app`；用户不要备份，删 `~/CMspark.app.bak-20260828-144503` / `…145732` / `…20260831-170839`。
 - **运行中**：`cmspark-agent v0.5.6`；`ws://127.0.0.1:23401`；codesign adhoc+runtime CDHash `b6f1fa57…` A6 单哈希。本机无 `.bak`。
@@ -1006,10 +1018,10 @@
 
 ### Overlay Capture 卡狗食（S87–S94 · #241–#246 on main）
 - status: **done**（产品随 #242+#246 在 main；本地 overlay 枝已删）
-- context: 默认展开、托盘/热键 HTML 卡、会议台录制/历史/近实时。体检 A–F 另票已合。本机 `/Applications/CMspark.app` 已是 0.5.6 DMG（S102）。
+- context: 默认展开、托盘/热键 HTML 卡、会议台录制/历史/近实时。体检 A–F 另票已合。本机 `/Applications/CMspark.app` 已是 **0.5.7** DMG（S103）。
 - next_action: #230 勿整票。
 - resume_doc: `docs/superpowers/specs/2026-08-28-overlay-capture-card-design.md` · tip `5c4fcab0`
-- updated: 2026-08-31
+- updated: 2026-09-01
 
 ### ChatShell 同一张脸（S86 · #239 · PR #240）
 - status: **done**（squash 合 main `6a3bfe23`）
@@ -1018,12 +1030,12 @@
 - resume_doc: PR #240 · `docs/superpowers/specs/2026-08-27-chat-shell-same-face-design.md`
 - updated: 2026-08-28
 
-### 形态深化 0.5.3 切点（S84–S94 · main 含 #240/#242/#246–#254）
-- status: **active**（用户可见主线 + 体检 A–F on main；不宣称 Capture/CU 闭合）
-- context: 切片 1–6、ChatShell、Capture 卡、体检 P0–P2。包装 **0.5.6** 已进 `/Applications`（S102）。#228 禁扩 profile；#230 冻。
-- next_action: 勿扩 outbound。残留 Medium 须新 Issue。#230 禁止整票「继续」。
-- resume_doc: `docs/superpowers/specs/2026-08-27-post-227-status.md` · #230
-- updated: 2026-08-31
+### 形态深化 0.5.3 切点（S84–S103 · main 含 #240/#242/#246–#254/#265）
+- status: **active**（用户可见主线 + 体检 A–F + 当轮活计划 on main；不宣称 Capture/CU 闭合）
+- context: 切片 1–6、ChatShell、Capture 卡、体检 P0–P2、#265 当轮活计划。包装 **0.5.7** 已进 `/Applications`（S103）。origin/main tip `2cd41f1d`。#228 禁扩 profile；#230 冻。
+- next_action: Chrome unpacked 重载 `chrome-extension/build/chrome-mv3-prod/` 狗食本轮步骤。勿扩 outbound。#230 禁止整票「继续」。
+- resume_doc: `docs/superpowers/specs/2026-08-31-runprogress-live-plan-design.md` · CHANGELOG 0.5.7 · #230
+- updated: 2026-09-01
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**
@@ -1034,10 +1046,10 @@
 
 ### OS summoner overlay（S77–S94 · HTML 卡 on main）
 - status: **done**（托盘/热键 HTML 卡 + 会议台在 main；Swift HUD 条备用）
-- context: cookie 首屏、Origin 类 handshake、L0 裁切随 A–E 合入。本机 0.5.6 DMG 已换装（S102）。
-- next_action: 勿改 SUMMONER_ALLOW。
+- context: cookie 首屏、Origin 类 handshake、L0 裁切随 A–E 合入。本机 0.5.7 DMG 已换装（S103）。
+- next_action: 勿改 SUMMONER_ALLOW。overlay 写 `run_progress` fail-closed（handshakeSurface 来自 WS）。
 - resume_doc: #242/#246/#250/#252
-- updated: 2026-08-31
+- updated: 2026-09-01
 
 ### Companion-canon Side Panel（S74 · #196 MERGED）
 - status: **done**

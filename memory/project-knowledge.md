@@ -74,6 +74,26 @@
 
 ## Technical Pitfalls
 
+### `classifyError` 默认 `non_recoverable` 会杀掉准入闸（2026-09-01 · #265）
+- **坑**：page-tool 无活清单时 `PROPOSE_REQUIRED`。若先走 `classifyError`，默认 fallthrough = `non_recoverable` → **整轮对话死**。若当 recoverable 再进 `MAX_SAME_TOOL_RECOVERABLE_FAILURES=3`，三次 gated click 也会杀轮。plan dual 2× AWN 点名此序。
+- **纪律**：adapter 先认 `proposeDenied`；闸错误**绕过** classifyError 与同工具失败计数。`runChatCreate` 必须 sticky-clear `run_progress: null`，否则 leftover H1 / 上轮清单让测试（`m2-untrusted-marker` 的 `get_page_text`/`get_page_html`）撞闸、注入断言假红。
+- **4 行 case**：动作=无清单时 click；失败=整轮被非恢复错误杀掉 / CI 假红；归责=默认分类器 + 闸当普通工具错；保护=准入闸独立短路、每轮 chatCreate 清清单
+
+### PAGE_TOOLS 必须抄活 catalog 名，不是规格口语（2026-09-01 · #265）
+- **坑**：spec r1 写 `drag` / `read_page`。活工具是 `drag_and_drop` / `get_page_text`。闸名单写错 = 真页面工具漏网，或闸住不存在的名字。
+- **纪律**：`RUN_PROGRESS_PAGE_TOOLS = TAB_LEASE_TOOLS ∪ {create_tab, osascript_eval, host_computer}`。对照 `COMPANION_TOOLS` 实名，禁止凭记忆缩写。`mcp__*` 目前不在名单（已知残留）。worker 线程 HARD_DENY propose **且跳过** page-tool 闸。
+- **4 行 case**：动作=模型 `get_page_text`；失败=闸不认口语名；归责=规格名 ≠ catalog；保护=从 TAB_LEASE 集合派生
+
+### overlay 写进度只信 WS `handshakeSurface`，不信模型袋（2026-09-01 · #265）
+- **坑**：若 `run_progress_propose` 读 `params.surface`，overlay 可自报 panel 改清单（纸门）。ACL 必须从握手戳来。
+- **纪律**：`server.ts` 用 `getWsAuthState` 盖 `handshakeSurface`；dispatch 只看该戳。overlay 写 fail-closed。禁止 overlay Allow/Deny。
+- **4 行 case**：动作=overlay 带 `params.surface=panel` propose；失败=若信模型袋则越权写；归责=caller 自报 surface；保护=握手戳单一写者
+
+### `listSig` 必须哈希全表，不能 `live:0`（2026-09-01 · #265）
+- **坑**：Wave 1 sticky 残 H1 待办会挡住新任务。remount key 若只看 `live:0`，空活清单不卸旧表，用户仍看见上轮步骤。
+- **纪律**：`ChatView` `key={`${activeThreadId}:${listSig(runItems)}`}`；`listSig` 扫全表。下轮 user turn leftover **替换**（chatCreate 清）。同请求第二次 propose = `ALREADY_HAS_STEPS`。
+- **4 行 case**：动作=新任务开跑；失败=顶上仍是旧 compact 残单；归责=remount 签名太窄；保护=全表签名 + 每轮清
+
 ### companion 无 `.nvmrc`：`nvm use` 静默失败 → stale `.test-dist` 假测试失败（2026-08-31 · #264 验证）
 - **坑**：`nvm use >/dev/null 2>&1 && rm -rf .test-dist && tsc …`——`nvm use` 无参时要读 `.nvmrc`，companion 没有该文件 → 非零退出 → `&&` 链整体跳过重编译，后续 `node --test .test-dist/…` 跑的是**别人（grok 1 小时前）留下的旧编译产物**，报出源码里已不存在的断言失败（假 RED）。
 - **纪律**：跑 companion 测试前先核对 `.test-dist` mtime 新于最新源码 mtime；或拆成 `;` 让 tsc 无条件执行。诊断先看产物时间戳，别先怀疑代码。
@@ -81,7 +101,7 @@
 
 ### squash 合入后 `git cherry` 仍会给原 commit `+`（2026-08-29 · 对齐 main）
 - **坑**：overlay 会议台/默认展开已随 #246 squash 进 main，本地 `597a5827`/`b6ac5928` 仍 `cherry +`。把 overlay 枝合进后来的 main 会倒退 A–F（XSS/cookie/HMAC Origin）。
-- **纪律**：判断「是否已在 main」看**产品字符串/文件**（`开始录制`、`hud expanded`），不要只看 SHA/`cherry`。`gh pr merge --delete-branch` 若有 worktree 占着 `main`，远程已合、本地 checkout 会失败——先 `worktree remove`。
+- **纪律**：判断「是否已在 main」看**产品字符串/文件**（`开始录制`、`hud expanded`），不要只看 SHA/`cherry`。`gh pr merge --delete-branch` 若有 worktree 占着 **被删的功能枝或 `main`**，远程已合、本地 checkout/删枝会失败——先 `worktree remove`（#266 即 worktree 占着 `feat/265-runprogress-live-plan`）。
 - **4 行 case**：动作=整理本地 vs origin/main；失败=差点把旧 overlay 压上新 main；归责=squash 改 patch-id；保护=合入以 PR SHA 为准
 
 ### kimi `-p` 不能配 `--yolo`；VibeSOP hook 污染 stdout（2026-08-29）
@@ -1167,6 +1187,13 @@
 - 教训：JS 单线程下，**全同步**的 read-modify-write 天然原子，不存在交错竞态——只有 caller「读 → await → 用陈旧快照写」才有竞态。审计/评审提"竞态"时先确认是否有 await 间隙，别为不存在的竞态加锁（cargo-cult）。kimi 终审也独立验证了所有 caller无 await 间隙，确认非 bug。
 
 ## Architecture Decisions
+
+### 当轮活计划 T3：companion 准入，不是 LLM 记忆（2026-09-01 · #265 · 0.5.7）
+- **产品**：聊天列 Wave 1 sticky 可勾清单（线稿 01+02）。**不要** StatusRail 手风琴（#256 已 REJECT path C）；**不要**偷运 Wave 2 FocusBand。
+- **对象**：`thread.run_progress`；`source: seed | model_draft | user`。H1 `open_todos` 只许 seed；活计划走 `run_progress_propose`（model_draft）。禁止把 propose 写成 seed。
+- **可见性**：每 `chatCreate` 可 propose；第一个 PAGE_TOOL 无清单 → `PROPOSE_REQUIRED`。保证看见步骤的是 companion 闸，不是模型自觉。
+- **Trust**：overlay 写 fail-closed（`handshakeSurface` 来自 WS）；worker HARD_DENY propose 且跳过 page-tool 闸。
+- **Ship**：PR **#266** squash `2cd41f1d`；lockstep **0.5.7**。SoT：`docs/superpowers/specs/2026-08-31-runprogress-live-plan-design.md`（r2b LOCKED）
 
 ### 0.5.3 体检 A–F 合 main；Capture/CU 仍不宣称闭合（2026-08-29）
 - **合入**：#246 XSS/hide abort/真 L0/知识截断/estop；#248 osascript URL·MCP env·shell -c·Win 脚本·spawn HMAC；#250 SkillEngine 单例·cookie 首屏·shrink closer·进度双写；#252 Origin 类 handshake·esbuild pin；#254 未知 L2 throw·tab.navigated Origin·user_gesture 转发·netsec /0·MCP 剥内部键。tip **`5c4fcab0`**。
