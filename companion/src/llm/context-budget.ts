@@ -282,6 +282,8 @@ export type CompactResult = {
   tokensBefore: number
   tokensAfter: number
   compacted: boolean
+  /** True when shrinkToolBodiesToFit rewrote at least one tool body. */
+  shrunk?: boolean
 }
 
 function dropBlockAt(
@@ -311,14 +313,50 @@ function lastRealUserIndex(msgs: CanonicalChatMessage[]): number {
   return -1
 }
 
-const MIN_SHRUNK_TOOL_CHARS = 80
+const UNTRUSTED_WRAP_RE =
+  /^(<untrusted-([A-Za-z0-9]+)(?:\s[^>]*)?>\n?)([\s\S]*)(\n?<\/untrusted-\2>)\s*$/
+
+function isSensitiveCompactToolName(name: string): boolean {
+  if (!name) return false
+  if (COMPACT_SENSITIVE_COOKIE_TOOLS.has(name) || COMPACT_SENSITIVE_CODE_TOOLS.has(name)) return true
+  return (
+    name.startsWith("mcp__") &&
+    /(read|file|secret|token|key|env|credential|ssh|aws|download|contents)/i.test(name)
+  )
+}
+
+function resolveToolMessageName(msgs: CanonicalChatMessage[], index: number): string {
+  const m = msgs[index]
+  if (m.role !== "tool") return ""
+  if (typeof m.name === "string" && m.name) return m.name
+  const id = m.tool_call_id
+  for (let i = index - 1; i >= 0; i--) {
+    const prev = msgs[i]
+    if (prev.role !== "assistant" || !prev.tool_calls) continue
+    const tc = prev.tool_calls.find((t) => t.id === id)
+    if (tc?.function?.name) return tc.function.name
+  }
+  return ""
+}
+
+/** Replace a tool body with a non-JSON stub. Never emit a prefix of the original payload. */
+function failClosedShrinkToolContent(raw: string, name: string): string {
+  const wrap = raw.match(UNTRUSTED_WRAP_RE)
+  const inner = wrap ? wrap[3] : raw
+  const innerLen = inner.length
+  const stub = isSensitiveCompactToolName(name)
+    ? `[${name}: len=${innerLen}]`
+    : `[tool_result_truncated chars=${innerLen}]`
+  if (wrap) return `${wrap[1]}${stub}${wrap[4]}`
+  return stub
+}
 
 /** Shrink longest tool bodies until under budget. Never drops rows / ids. */
 export function shrinkToolBodiesToFit(msgs: CanonicalChatMessage[], budget: number): boolean {
   let changed = false
   while (estimateMessagesTokens(msgs) > budget) {
     let best = -1
-    let bestLen = MIN_SHRUNK_TOOL_CHARS
+    let bestLen = 0
     for (let i = 0; i < msgs.length; i++) {
       const m = msgs[i]
       if (m.role !== "tool") continue
@@ -331,21 +369,8 @@ export function shrinkToolBodiesToFit(msgs: CanonicalChatMessage[], budget: numb
     if (best < 0) break
     const m = msgs[best]
     if (m.role !== "tool") break
-    const next = Math.max(MIN_SHRUNK_TOOL_CHARS, Math.floor(bestLen / 2))
     const raw = typeof m.content === "string" ? m.content : ""
-    const wrap = raw.match(
-      /^(<untrusted-([A-Za-z0-9]+)(?:\s[^>]*)?>\n?)([\s\S]*)(\n?<\/untrusted-\2>)\s*$/,
-    )
-    let body: string
-    if (wrap) {
-      const inner = wrap[3]
-      const innerNext = Math.max(8, Math.floor(inner.length / 2))
-      const shrunkInner = inner.length > innerNext ? `${inner.slice(0, innerNext)}…` : inner
-      body = `${wrap[1]}${shrunkInner}${wrap[4]}`
-    } else {
-      body = `${raw.slice(0, next)}…`
-    }
-    // Ellipsis can make length stick at MIN+1; stop if we cannot actually shrink.
+    const body = failClosedShrinkToolContent(raw, resolveToolMessageName(msgs, best))
     if (body.length >= bestLen) break
     msgs[best] = { ...m, content: body }
     changed = true
@@ -378,6 +403,7 @@ export function compactMessagesTurnSafe(
       tokensBefore,
       tokensAfter: tokensBefore,
       compacted: false,
+      shrunk: false,
     }
   }
 
@@ -453,6 +479,7 @@ export function compactMessagesTurnSafe(
     tokensBefore,
     tokensAfter,
     compacted: dropped > 0 || shrunk,
+    shrunk,
   }
 }
 

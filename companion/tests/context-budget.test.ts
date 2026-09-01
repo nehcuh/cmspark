@@ -12,6 +12,7 @@ import {
   redactMessagesForCompaction,
   retainMidLoopRollingSummary,
   serializeMessage,
+  shrinkToolBodiesToFit,
 } from "../src/llm/context-budget"
 import { shouldRunM2 } from "../src/llm/context-budget-m2"
 import type { CanonicalChatMessage } from "../src/llm/provider"
@@ -546,4 +547,103 @@ test("mid_loop pin: shrink tool bodies when suffix still over budget", () => {
   assert.ok(tool, "tool row kept")
   assert.ok(tool!.content.length < huge.length, "pinned tool body must shrink")
   assert.ok(r.tokensAfter <= 80 || tool!.content.length <= 120, "under budget or at min shrink")
+})
+
+const SECRET_JSON = '{"success":true,"data":"SECRET_PAYLOAD"}'
+const SECRET_JSON_HUGE = `{"success":true,"data":"SECRET_PAYLOAD","pad":"${"A".repeat(4000)}"}`
+
+test("T0b: shrinkToolBodiesToFit does not emit a JSON prefix of the tool body", () => {
+  const wrapped =
+    `<untrusted-abc source="tool">\n${SECRET_JSON_HUGE}\n</untrusted-abc>`
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    user("u"),
+    { role: "tool", tool_call_id: "c1", content: wrapped },
+  ]
+  const ok = shrinkToolBodiesToFit(msgs, 40)
+  assert.equal(ok, true)
+  const body = String(msgs[2]!.content)
+  assert.equal(SECRET_JSON_HUGE.startsWith(body), false, "must not be a prefix of the original JSON")
+  assert.equal(body.includes('{"succes'), false, "must not leak mid-key JSON")
+  assert.equal(body.includes("SECRET_PAYLOAD"), false)
+  assert.match(body, /<untrusted-abc/)
+  assert.match(body, /<\/untrusted-abc>/)
+  assert.match(body, /\[tool_result_truncated chars=\d+\]/)
+})
+
+test("T0b: unwrapped JSON shrink is not a prefix and has no {\"succes", () => {
+  const msgs: CanonicalChatMessage[] = [
+    { role: "tool", tool_call_id: "c1", content: SECRET_JSON_HUGE },
+  ]
+  assert.equal(shrinkToolBodiesToFit(msgs, 20), true)
+  const body = String(msgs[0]!.content)
+  assert.equal(SECRET_JSON.startsWith(body.replace(/…$/, "")), false)
+  assert.equal(body.includes('{"succes'), false)
+  assert.match(body, /\[tool_result_truncated chars=\d+\]/)
+})
+
+function sensitiveSibling(name: string, id: string): CanonicalChatMessage {
+  return {
+    role: "assistant",
+    content: "calling",
+    tool_calls: [{ id, type: "function", function: { name, arguments: "{}" } }],
+  }
+}
+
+test("T0b: get_cookies / evaluate / shell_exec shrink to name + len only", () => {
+  for (const name of ["get_cookies", "evaluate", "shell_exec"] as const) {
+    const msgs: CanonicalChatMessage[] = [
+      system("s"),
+      user("u"),
+      sensitiveSibling(name, "c1"),
+      { role: "tool", tool_call_id: "c1", content: SECRET_JSON_HUGE },
+    ]
+    assert.equal(shrinkToolBodiesToFit(msgs, 20), true, name)
+    const body = String(msgs[3]!.content)
+    assert.equal(body.includes("SECRET_PAYLOAD"), false, name)
+    assert.equal(body.includes('{"succes'), false, name)
+    assert.match(body, new RegExp(`\\[${name}: len=\\d+\\]`))
+  }
+})
+
+test("T0b: optional name on the tool message is enough to classify sensitive", () => {
+  const msgs = [
+    {
+      role: "tool" as const,
+      tool_call_id: "c1",
+      name: "evaluate",
+      content: SECRET_JSON_HUGE,
+    },
+  ] as CanonicalChatMessage[]
+  assert.equal(shrinkToolBodiesToFit(msgs, 20), true)
+  const body = String(msgs[0]!.content)
+  assert.match(body, /\[evaluate: len=\d+\]/)
+  assert.equal(body.includes("SECRET_PAYLOAD"), false)
+})
+
+test("T0b: CompactResult.shrunk is true when only shrink happened", () => {
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    user("do it"),
+    assistantTools(["c1"]),
+    toolMsg("c1", SECRET_JSON_HUGE),
+  ]
+  const r = compactMessagesTurnSafe(msgs, 80, { phase: "mid_loop" })
+  assert.equal(r.droppedCount, 0)
+  assert.equal(r.shrunk, true)
+  assert.equal(r.compacted, true)
+  const tool = r.messages.find((m) => m.role === "tool") as { content: string }
+  assert.equal(String(tool.content).includes('{"succes'), false)
+})
+
+test("T0b: applyContextBudget surfaces shrunk when shrinkToolBodiesToFit ran", () => {
+  const msgs: CanonicalChatMessage[] = [
+    system("s"),
+    user("do it"),
+    assistantTools(["c1"]),
+    toolMsg("c1", "Y".repeat(80000)),
+  ]
+  const r = applyContextBudget(msgs, 2000, [], { phase: "mid_loop" })
+  assert.equal(r.droppedCount, 0)
+  assert.equal(r.shrunk, true)
 })

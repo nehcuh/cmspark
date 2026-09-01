@@ -748,6 +748,7 @@ export function useWebSocket() {
 
         case "config.updated":
           dispatch({ type: "SET_CONFIG", config: normalizeConfig(msg.config) })
+          dispatch({ type: "SET_CONFIG_HYDRATED", hydrated: true })
           if (msg.source === "companion" && msg.config?.llm) {
             dispatch({ type: "SET_COMPANION_CONFIG", config: normalizeConfig(msg.config) as any })
           }

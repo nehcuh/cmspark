@@ -11,7 +11,7 @@ import { toolChatErrorPayload } from "../ws/l1-actuator"
 import { logger } from "../logger"
 import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
 import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
-import { getConfig, type LlmConfig } from "../config"
+import { effectiveContextWindow, getConfig, type LlmConfig } from "../config"
 import { getMcpManager } from "../mcp"
 import type { AppsConfig } from "../apps/types"
 import {
@@ -315,6 +315,7 @@ export function rebuildMessagesFromHistory(
             tc.id,
             tc.tool_name,
           ),
+          ...(typeof tc.tool_name === "string" && tc.tool_name ? { name: tc.tool_name } : {}),
         })
       }
     }
@@ -370,6 +371,11 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, knowledgeIds, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, signal, skipUserMessage, contextRefsSegment, hostname } = params
+  const cw = effectiveContextWindow(params.config.context_window)
+  if (cw.floored) {
+    logger.warn("llm.context_window_too_small", { disk: cw.disk, effective: cw.effective })
+  }
+  const contextWindow = cw.effective
   const executeToolInner = params.executeTool
   const executeTool: ChatCreateParams["executeTool"] =
     params.surface === "summoner"
@@ -412,7 +418,7 @@ export async function chatCreate(params: ChatCreateParams) {
     }
     if (fileContents?.length) {
       const MAX_FILE_TOKENS = Math.min(
-        Math.floor(params.config.context_window * 0.4),
+        Math.floor(contextWindow * 0.4),
         50000,
       )
 
@@ -685,7 +691,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
   async function runContextBudgetPass(phase: "pre_loop" | "mid_loop"): Promise<void> {
     if (compactionSetting === "off") return
-    const compact = applyContextBudget(messages, params.config.context_window, tools, { phase })
+    const compact = applyContextBudget(messages, contextWindow, tools, { phase })
     if (compactionSetting === "prompt") {
       if (compact.compacted) {
         try {
@@ -697,6 +703,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             dropped_count: compact.droppedCount,
             tokens_before: compact.tokensBefore,
             tokens_after: compact.tokensAfter,
+            shrunk: compact.shrunk === true,
             user_notified: true,
           })
         } catch {
@@ -709,6 +716,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             dropped_count: compact.droppedCount,
             tokens_before: compact.tokensBefore,
             tokens_after: compact.tokensAfter,
+            shrunk: compact.shrunk === true,
           })
         } catch {
           /* non-fatal */
@@ -887,6 +895,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         dropped_count: droppedForMeta,
         tokens_before: compact.tokensBefore,
         tokens_after: compact.tokensAfter,
+        shrunk: compact.shrunk === true,
         user_notified: true,
         tool_pairs_preserved: true,
         summary_bytes: summaryBytes,
@@ -904,6 +913,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         dropped_count: droppedForMeta,
         tokens_before: compact.tokensBefore,
         tokens_after: compact.tokensAfter,
+        shrunk: compact.shrunk === true,
         mode,
         rolling_summary: rollingSummary || undefined,
         handoff: handoff || undefined,
@@ -974,7 +984,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   let continuousFailures = 0
   let overflowRecoveryUsed = false
   let lengthRecoveryUsed = false
-  let outputMaxTokens = computeMaxTokens(config.context_window, config.max_tokens)
+  let outputMaxTokens = computeMaxTokens(contextWindow, config.max_tokens)
   const recoverableFailureCounts = new Map<string, number>()
 
   try {
@@ -1101,7 +1111,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           // ×2 (capped) is required — input-only compact with the same cap is a no-op
           // when the prompt was not over budget. May exceed llm.max_tokens toward
           // min(32768, floor(cw/2)); never above that ceiling.
-          outputMaxTokens = computeMaxTokens(config.context_window, outputMaxTokens * 2)
+          outputMaxTokens = computeMaxTokens(contextWindow, outputMaxTokens * 2)
           // Mid-loop retry must compact with the live round pinned (mid_loop
           // shrink); pre_loop could drop this round's rows instead.
           await runContextBudgetPass("mid_loop")
@@ -1312,6 +1322,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             role: "tool" as const,
             tool_call_id: tc.id,
             content: wrapUntrusted(JSON.stringify(parseResult), tc.id, toolName),
+            name: toolName,
           })
           continue
         }
@@ -1347,6 +1358,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             role: "tool" as const,
             tool_call_id: tc.id,
             content: wrapUntrusted(JSON.stringify(validationResult), tc.id, toolName),
+            name: toolName,
           })
           continue
         }
@@ -1772,6 +1784,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             role: "tool" as const,
             tool_call_id: tc.id,
             content: resultContent,
+            name: toolName,
           })
         } catch (e: any) {
           // Propagate abort so the round-loop handler can fill interrupted ids

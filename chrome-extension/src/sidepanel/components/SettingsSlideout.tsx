@@ -25,6 +25,11 @@ import {
   toggleSectionOpen,
   type SettingsSectionId,
 } from "../utils/settings-sections"
+import {
+  contextWindowHelpText,
+  settingsSaveDisabled,
+  settingsSaveDisabledTitle,
+} from "../utils/context-window-copy"
 // WP5-I4 实验功能段:组件纯渲染,文案/判定全部来自 logic 纯函数(镜像
 // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
 import {
@@ -436,6 +441,7 @@ export function SettingsSlideout() {
   const config = state.config
 
   const handleSave = () => {
+    if (settingsSaveDisabled(state.configHydratedFromCompanion)) return
     // Probe bit is session-only; never persist native_vision_detected.
     const { native_vision_detected: _drop, ...toSave } = config
     chrome.runtime.sendMessage({ type: "config.set", config: toSave }, () => {
@@ -1855,15 +1861,13 @@ export function SettingsSlideout() {
               style={styles.input}
               type="number"
               value={config.context_window}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { context_window: parseInt(e.target.value) || 128000 } })}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { context_window: parseInt(e.target.value) || 512000 } })}
               min={1024}
               max={1000000}
               step={1024}
             />
             <div style={styles.helpText}>
-              {config.context_window >= 200000
-                ? `当前 ${config.context_window} 偏大，自动压缩较难触发。推荐 128000（或按模型真实上限 64k–128k）。`
-                : "推荐默认 128000。请按所用模型真实上下文上限填写。"}
+              {contextWindowHelpText(config.context_window)}
             </div>
           </div>
 
@@ -3906,7 +3910,17 @@ export function SettingsSlideout() {
           <button style={styles.testBtn} onClick={handleTest}>
             {config.vision_enabled ? "测试连接（含视觉）" : "测试连接"}
           </button>
-          <button style={styles.saveBtn} onClick={handleSave}>保存</button>
+          <button
+            style={{
+              ...styles.saveBtn,
+              ...(settingsSaveDisabled(state.configHydratedFromCompanion)
+                ? { opacity: 0.5, cursor: "not-allowed" }
+                : {}),
+            }}
+            onClick={handleSave}
+            disabled={settingsSaveDisabled(state.configHydratedFromCompanion)}
+            title={settingsSaveDisabledTitle(state.configHydratedFromCompanion)}
+          >保存</button>
         </div>
 
         {state.companionConfig && (

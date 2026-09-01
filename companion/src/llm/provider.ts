@@ -54,6 +54,8 @@ export type CanonicalChatMessage =
       role: "tool"
       tool_call_id: string
       content: string
+      /** Optional function name; shrink fail-closed prefers this over sibling lookup. */
+      name?: string
     }
 
 // ── Stream events (adapter consumes these) ─────────────────────────────────

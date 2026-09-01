@@ -816,7 +816,7 @@ input:focus{border-color:#4A90D9}
       modelNameEl.value=llm.model_name||"";
       tempEl.value=llm.temperature!=null?llm.temperature:0.7;
       tempValEl.textContent=tempEl.value;
-      ctxWinEl.value=llm.context_window||128000;
+      ctxWinEl.value=llm.context_window||512000;
       protocolEl.value=llm.protocol==="anthropic"?"anthropic":"openai";
       compatEl.checked=llm.client_header_profile==="claude_code_compat";
       syncProtocolUi();

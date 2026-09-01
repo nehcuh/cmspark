@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-（无）
+- **`context_window` 工厂默认 512000**：新装 Agent 工作预算，不是供应商窗口承诺。磁盘过小（`< 16000` / 非正）本轮按 **128000** 做预算，**不写** `config.json`。shrink 不再切出半截 JSON（`{"succes…`）。设置页 Save 在 companion `config.updated` 水合前禁用。512k 默认**不是**对已有 4000 磁盘文件的修复。
 
 ## [0.5.7] — 2026-09-01
 
