@@ -15,6 +15,25 @@ import { newTempUserMessageId } from "../../utils/temp-message-id"
 import { normalizeConfig } from "../utils/normalize-config"
 export { normalizeConfig }
 
+const hydrateRetryIds = new Set<string>()
+
+export function isHydrateSelectError(err: string): boolean {
+  return /Thread not found/i.test(err)
+}
+
+export function nextHydrateRetry(threadId: string, err: string): "retry" | "fail" | "ignore" {
+  if (!threadId || !isHydrateSelectError(err)) return "ignore"
+  if (!hydrateRetryIds.has(threadId)) {
+    hydrateRetryIds.add(threadId)
+    return "retry"
+  }
+  return "fail"
+}
+
+export function clearHydrateRetry(threadId: string): void {
+  hydrateRetryIds.delete(threadId)
+}
+
 function generateShortId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
   let id = ""
@@ -153,12 +172,25 @@ export function parseChatUserAttachments(raw: unknown): MessageAttachment[] | un
 export function sanitizeHydratedMessages(raw: unknown): Message[] {
   if (!Array.isArray(raw)) return []
   return raw.map((m) => {
-    if (!m || typeof m !== "object" || (m as Message).attachments == null) {
-      return m as Message
+    if (!m || typeof m !== "object") return m as Message
+    const msg = m as Message
+    const truncated = (m as { truncated?: unknown }).truncated === true
+    const incompleteTools = (m as { incomplete_tools?: unknown }).incomplete_tools === true
+    const rawFinish = (m as { finish_reason?: unknown }).finish_reason
+    const finishReason: string | null | undefined =
+      typeof rawFinish === "string" ? rawFinish : rawFinish === null ? null : undefined
+    const honesty: Partial<Pick<Message, "truncated" | "incomplete_tools" | "finish_reason">> = {
+      ...(truncated ? { truncated: true } : {}),
+      ...(incompleteTools ? { incomplete_tools: true } : {}),
+      ...(finishReason !== undefined ? { finish_reason: finishReason } : {}),
+    }
+    if (msg.attachments == null) {
+      return Object.keys(honesty).length ? { ...msg, ...honesty } : msg
     }
     return {
-      ...(m as Message),
-      attachments: parseChatUserAttachments((m as Message).attachments),
+      ...msg,
+      attachments: parseChatUserAttachments(msg.attachments),
+      ...honesty,
     }
   })
 }
@@ -380,7 +412,28 @@ export function useWebSocket() {
           dispatch({ type: "SET_STREAMING_REASONING", content: "" })
           dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          if (doneThreadId && (content || reasoning || (Array.isArray(msg.retrieved_sources) && msg.retrieved_sources.length > 0))) {
+          const truncated = msg.truncated === true
+          const incompleteTools = msg.incomplete_tools === true
+          const finishReason: string | null | undefined =
+            typeof msg.finish_reason === "string"
+              ? msg.finish_reason
+              : msg.finish_reason === null
+                ? null
+                : undefined
+          if (
+            doneThreadId &&
+            (content ||
+              reasoning ||
+              truncated ||
+              incompleteTools ||
+              finishReason !== undefined ||
+              (Array.isArray(msg.retrieved_sources) && msg.retrieved_sources.length > 0))
+          ) {
+            const honesty: Partial<Pick<Message, "truncated" | "incomplete_tools" | "finish_reason">> = {
+              ...(truncated ? { truncated: true } : {}),
+              ...(incompleteTools ? { incomplete_tools: true } : {}),
+              ...(finishReason !== undefined ? { finish_reason: finishReason } : {}),
+            }
             dispatch({
               type: "ADD_MESSAGE",
               message: {
@@ -394,6 +447,7 @@ export function useWebSocket() {
                 content: content || "",
                 ...(reasoning ? { reasoning_content: reasoning } : {}),
                 ...(Array.isArray(msg.retrieved_sources) ? { retrieved_sources: msg.retrieved_sources } : {}),
+                ...honesty,
                 created_at: new Date().toISOString(),
               },
             })
@@ -1162,7 +1216,6 @@ export function useWebSocket() {
             if (!activeThreadRef.current) {
               const first = incoming[0]
               dispatch({ type: "SET_ACTIVE_THREAD", threadId: first.id })
-              dispatch({ type: "SET_MESSAGES", messages: [] })
               chrome.runtime.sendMessage({ type: "thread.select", threadId: first.id })
             }
           }
@@ -1220,6 +1273,7 @@ export function useWebSocket() {
                 ? msg.threadId
                 : ""
           if (!shouldApplyStreamEvent(histTid, activeThreadRef.current)) break
+          clearHydrateRetry(histTid)
           dispatch({ type: "SET_MESSAGES", messages: sanitizeHydratedMessages(msg.messages) })
           // In-memory companion snapshot only. Omitted by summoner / old companions.
           if (msg.run_status === "llm" || msg.run_status === "idle") {
@@ -1899,6 +1953,15 @@ export function useWebSocket() {
 
         case "error": {
           const overlayCode = typeof msg.error_code === "string" ? msg.error_code : ""
+          const errText = typeof msg.error === "string" ? msg.error : ""
+          if (activeThreadRef.current) {
+            const action = nextHydrateRetry(activeThreadRef.current, errText)
+            if (action === "retry") {
+              chrome.runtime.sendMessage({ type: "thread.select", threadId: activeThreadRef.current })
+            } else if (action === "fail") {
+              dispatch({ type: "HYDRATE_FAILED", message: "加载失败" })
+            }
+          }
           const overlayErr = typeof msg.error === "string" ? msg.error : ""
           if (
             overlayCode.startsWith("OVERLAY_SHELL_") ||

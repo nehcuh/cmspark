@@ -18,6 +18,7 @@ import {
   displayThreadEvidence,
   displayThreadTitle,
   EXTRACT_DIGEST_MAX,
+  threadAccessibleName,
   filterThreadsByQuery,
   formatThreadIdBadge,
   formatThreadListTime,
@@ -445,6 +446,7 @@ export function ThreadList() {
       alias: t.alias,
       updated_at: t.updated_at,
       created_at: t.created_at,
+      last_message_at: t.last_message_at ?? null,
       agent_role: t.agent_role,
       trashed_at: t.trashed_at ?? null,
       digest: t.digest
@@ -857,6 +859,7 @@ export function ThreadList() {
     const isActive = t.id === activeThreadId
     const badge = roleBadge(t.agent_role)
     const title = displayThreadTitle(t)
+    const accessibleName = threadAccessibleName(t)
     const idBadge = formatThreadIdBadge(t.id)
     const rel = formatThreadListTime(t, now, aliasDupCount)
     const tags = t.digest?.tags || []
@@ -873,6 +876,7 @@ export function ThreadList() {
           background: isActive ? tokens.accentSoft : "transparent",
           opacity: selectMode && busy ? 0.45 : 1,
         }}
+        aria-label={accessibleName}
         onClick={() => {
           const sel = window.getSelection?.()
           if (sel && sel.toString().length > 0) return
@@ -888,7 +892,7 @@ export function ThreadList() {
             onClick={(e) => e.stopPropagation()}
             title={busy ? "运行中，不可选" : undefined}
             style={styles.checkbox}
-            aria-label={`选择 ${title}`}
+            aria-label={`选择 ${accessibleName}`}
           />
         )}
         <div style={{ flex: 1, minWidth: 0 }}>

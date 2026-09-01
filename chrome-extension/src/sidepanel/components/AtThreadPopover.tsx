@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useMemo, useState, useCallback } from "react"
 import type { Thread } from "../types"
-import { displayThreadTitle } from "../utils/thread-timeline"
+import { displayThreadTitle, threadRecency } from "../utils/thread-timeline"
 import { tokens } from "../ui/tokens"
 
 export type AtThreadChoice = {
@@ -38,10 +38,10 @@ export function AtThreadPopover({
     const pool = (Array.isArray(threads) ? threads : []).filter(
       (t) => t.id !== excludeId && !t.trashed_at,
     )
-    // Recent first (updated_at desc) when no query
+    // Recent first (last_message_at || created_at) when no query
     const sorted = [...pool].sort((a, b) => {
-      const ta = Date.parse(a.updated_at || a.created_at || "") || 0
-      const tb = Date.parse(b.updated_at || b.created_at || "") || 0
+      const ta = Date.parse(threadRecency(a) || "") || 0
+      const tb = Date.parse(threadRecency(b) || "") || 0
       return tb - ta
     })
     if (!query) return sorted.slice(0, 12)

@@ -212,6 +212,12 @@ export interface LlmConfig {
   temperature: number
   context_window: number
   /**
+   * Chat output cap (Anthropic always sends; OpenAI when streamChat passes it).
+   * Default 32768. Distinct from vision.max_tokens (VLM caption budget).
+   * Ceiling: min(this, 32768, max(256, floor(context_window / 2))).
+   */
+  max_tokens?: number
+  /**
    * Request-path context budget: auto=compact when over budget; prompt=warn only (no drop);
    * off=never compact. Omitted on disk → deepMerge fills "auto".
    */
@@ -387,6 +393,8 @@ const defaultConfig: CompanionConfig = {
     temperature: 0.7,
     // 128k is a realistic default so auto compaction can trigger; legacy 1e6 ≈ never.
     context_window: 128000,
+    // Chat output cap — glm-5.x thinking burns a hardcoded 8192 Anthropic cap.
+    max_tokens: 32768,
     context_compaction: "auto",
     // M2 on by default under auto; still fails closed to M1 omit if summary fails.
     context_compaction_m2: true,

@@ -183,6 +183,7 @@ export function ThreadGraphApp() {
       alias: t.alias,
       updated_at: t.updated_at,
       created_at: t.created_at,
+      last_message_at: t.last_message_at,
       agent_role: t.agent_role,
       trashed_at: t.trashed_at,
       digest: t.digest,

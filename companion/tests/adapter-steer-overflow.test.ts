@@ -141,6 +141,7 @@ function buildMockParams(threadId: string, overrides: {
   executeTool?: (id: string, name: string, params: any) => Promise<any>
   contextCompaction?: "auto" | "prompt" | "off"
   contextWindow?: number
+  maxTokens?: number
   signal?: AbortSignal
   manager?: InstanceType<typeof ThreadManager>
 } = {}) {
@@ -160,6 +161,7 @@ function buildMockParams(threadId: string, overrides: {
       model_name: "test-model",
       temperature: 0.5,
       context_window: overrides.contextWindow ?? 4000,
+      ...(overrides.maxTokens !== undefined ? { max_tokens: overrides.maxTokens } : {}),
       ...(overrides.contextCompaction ? { context_compaction: overrides.contextCompaction } : {}),
     },
     threadManager: manager,
@@ -376,6 +378,95 @@ test("length-truncated tool batch in prompt mode errors without retry", async ()
   assert.equal(streamParams.length, 1, "no byte-level retry in prompt mode")
   const err = params.getSentMessages().find((m) => m.type === "chat.error")
   assert.ok(err && /输出被截断/.test(err.error))
+})
+
+test("truncated tool batch (prompt) persists one assistant + interrupted tool, zero extra error row (T-trunc-1)", async () => {
+  resetState()
+  const params = buildMockParams("test-sn-trunc-1", { contextCompaction: "prompt" })
+  createHandlers = [
+    async function* () {
+      yield { type: "tool_call_delta", index: 0, id: "call_A", name: "list_tabs", arguments: "{" }
+      yield {
+        type: "usage",
+        prompt_tokens: 10,
+        completion_tokens: 40,
+        total_tokens: 50,
+        reasoning_tokens: 8,
+      }
+      yield { type: "done", finish_reason: "length" }
+    },
+  ]
+  await chatCreate(params)
+
+  const disk = params.threadManager.getMessages(params.threadId)
+  const assistants = disk.filter((m) => m.role === "assistant")
+  const tools = disk.filter((m) => m.role === "tool")
+  const extraErrorRows = disk.filter(
+    (m) =>
+      m.role === "assistant" &&
+      !(m.tool_calls && m.tool_calls.length) &&
+      /截断|error/i.test(m.content || ""),
+  )
+  assert.equal(assistants.length, 1, "exactly one assistant row")
+  assert.equal(assistants[0].truncated, true)
+  assert.equal(assistants[0].incomplete_tools, true)
+  assert.equal(assistants[0].finish_reason, "length")
+  assert.equal(tools.length, 1, "interrupted tool remainder paired")
+  assert.equal((tools[0].tool_calls![0].result as any).error_code, "INTERRUPTED")
+  assert.equal(extraErrorRows.length, 0, "zero extra error/assistant message")
+  const usage = logEvents.find((e) => e.event === "llm.usage")
+  assert.ok(usage, "usage logged before persist")
+  assert.equal(usage!.data.finish_reason, "length")
+  assert.equal(usage!.data.total_tokens, 50)
+  const liveErr = params.getSentMessages().filter((m) => m.type === "chat.error")
+  assert.equal(liveErr.length, 1, "live chat.error stays ephemeral")
+})
+
+test("truncated-tool-batch retry raises output cap once (T-cap-2)", async () => {
+  resetState()
+  const params = buildMockParams("test-sn-len-h2", {
+    contextWindow: 1e6,
+    maxTokens: 4096,
+  })
+  createHandlers = [
+    toolCallStreamHandler("call_A", "list_tabs", "{}", "length"),
+    textStreamHandler("ok", "stop"),
+  ]
+  await chatCreate(params)
+
+  assert.equal(streamParams.length, 2, "truncated tool batch retried once")
+  const first = streamParams[0].max_tokens
+  const second = streamParams[1].max_tokens
+  assert.equal(first, 4096)
+  assert.equal(second, 8192, "H2 must raise output cap ×2; input-only compact with same cap is not a pass")
+  assert.ok(second! > first!, "retry output cap must be strictly higher")
+  assert.ok(params.getSentMessages().find((m) => m.type === "chat.done"))
+})
+
+test("abort empty content + reasoning persists one assistant via draft helper (T-abort-1)", async () => {
+  resetState()
+  const controller = new AbortController()
+  const params = buildMockParams("test-sn-abort-reason", { signal: controller.signal })
+  createHandlers = [
+    async function* () {
+      yield { type: "reasoning", text: "思考过程……" }
+      controller.abort()
+      const err = new Error("aborted")
+      err.name = "AbortError"
+      throw err
+    },
+  ]
+  try {
+    await chatCreate(params)
+  } catch {
+    /* adapter rethrows AbortError */
+  }
+
+  const disk = params.threadManager.getMessages(params.threadId)
+  const assistants = disk.filter((m) => m.role === "assistant")
+  assert.equal(assistants.length, 1, "one assistant row via persistAssistantDraft")
+  assert.equal((assistants[0].content || "").trim(), "")
+  assert.equal(assistants[0].reasoning_content, "思考过程……")
 })
 
 test("chat.done carries truncated:true on pure-text length stop", async () => {

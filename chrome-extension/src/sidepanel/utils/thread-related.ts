@@ -13,6 +13,7 @@ export interface RelatedThreadInput {
   alias?: string
   updated_at?: string
   created_at?: string
+  last_message_at?: string | null
   digest?: {
     tldr?: string
     tags?: string[]
@@ -109,7 +110,8 @@ function textBlob(t: RelatedThreadInput): string {
 }
 
 function updatedMs(t: RelatedThreadInput): number {
-  const raw = t.updated_at || t.created_at
+  const last = typeof t.last_message_at === "string" ? t.last_message_at.trim() : ""
+  const raw = last || t.created_at
   if (!raw) return 0
   const n = new Date(raw).getTime()
   return Number.isFinite(n) ? n : 0

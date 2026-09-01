@@ -41,6 +41,7 @@ import {
 } from "./tool-batch-heal"
 import { isContextOverflowError, isLengthStop, isTruncatedToolBatch } from "./overflow"
 import { convertLeftoverSteerToNextRun, takeSteer } from "./run-queues"
+import { computeMaxTokens } from "./providers/anthropic-convert"
 
 export { createToolResultMessage }
 import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
@@ -924,11 +925,56 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     })
   }
 
+  type StreamToolCall = {
+    id: string
+    type: "function"
+    function: { name: string; arguments: string }
+  }
+
+  function persistAssistantDraft(draft: {
+    content: string
+    reasoning?: string
+    tool_calls?: StreamToolCall[]
+    truncated?: boolean
+    incomplete_tools?: boolean
+    finish_reason?: string | null
+    retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number }>
+  }) {
+    const assistantMsg: StreamToolCall[] = (draft.tool_calls || []).filter(
+      (tc): tc is StreamToolCall => tc != null,
+    )
+    const savedMsg: {
+      thread_id: string
+      role: "assistant"
+      content: string
+      tool_calls: StreamToolCall[]
+      reasoning_content?: string
+      truncated?: boolean
+      incomplete_tools?: boolean
+      finish_reason?: string | null
+      retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number }>
+    } = {
+      thread_id: threadId,
+      role: "assistant",
+      content: draft.content,
+      tool_calls: assistantMsg,
+    }
+    if (draft.reasoning) savedMsg.reasoning_content = draft.reasoning
+    if (draft.truncated) savedMsg.truncated = true
+    if (draft.incomplete_tools) savedMsg.incomplete_tools = true
+    if (draft.finish_reason !== undefined) savedMsg.finish_reason = draft.finish_reason
+    if (assistantMsg.length === 0 && draft.retrieved_sources && draft.retrieved_sources.length > 0) {
+      savedMsg.retrieved_sources = draft.retrieved_sources
+    }
+    return threadManager.addMessage(threadId, savedMsg)
+  }
+
   // Tool calling loop
   let round = 0
   let continuousFailures = 0
   let overflowRecoveryUsed = false
   let lengthRecoveryUsed = false
+  let outputMaxTokens = computeMaxTokens(config.context_window, config.max_tokens)
   const recoverableFailureCounts = new Map<string, number>()
 
   try {
@@ -938,16 +984,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
     let assistantContent = ""
     let savedAssistantId: string | undefined
+    let reasoningContent = ""
+    const toolCalls: StreamToolCall[] = []
+    let finishReason: string | null | undefined
 
     try {
-      let reasoningContent = ""
-      type StreamToolCall = {
-        id: string
-        type: "function"
-        function: { name: string; arguments: string }
-      }
-      const toolCalls: StreamToolCall[] = []
-      let finishReason: string | null | undefined
       let finalUsage:
         | {
             prompt_tokens?: number
@@ -987,6 +1028,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         temperature: config.temperature,
         model: config.model_name,
         signal,
+        max_tokens: outputMaxTokens,
       })) {
         if (ev.type === "token") {
           const incoming = ev.text
@@ -1055,6 +1097,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         if (!lengthRecoveryUsed && compactionSetting === "auto") {
           lengthRecoveryUsed = true
           round--
+          // H2: truncated-tool-batch is an OUTPUT cap hit. Raising max_tokens once
+          // ×2 (capped) is required — input-only compact with the same cap is a no-op
+          // when the prompt was not over budget. May exceed llm.max_tokens toward
+          // min(32768, floor(cw/2)); never above that ceiling.
+          outputMaxTokens = computeMaxTokens(config.context_window, outputMaxTokens * 2)
           // Mid-loop retry must compact with the live round pinned (mid_loop
           // shrink); pre_loop could drop this round's rows instead.
           await runContextBudgetPass("mid_loop")
@@ -1064,6 +1111,42 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           // Notify-only pass (thread.context_compact_prompt); messages untouched.
           await runContextBudgetPass("mid_loop")
         }
+        // Architect T1: log usage+finish_reason FIRST; persist assistant draft;
+        // interrupted remainder AFTER assistant id exists; then ephemeral chat.error.
+        // Zero extra assistant/error message (breaks persistHealedToolRows newest-unpaired).
+        logger.info("llm.usage", {
+          thread_id: threadId,
+          model: config.model_name,
+          kind: "chat",
+          round,
+          prompt_tokens: finalUsage?.prompt_tokens,
+          completion_tokens: finalUsage?.completion_tokens,
+          total_tokens: finalUsage?.total_tokens,
+          reasoning_tokens: finalUsage?.reasoning_tokens,
+          finish_reason: finishReason ?? null,
+        })
+        const truncatedCalls: StreamToolCall[] = toolCalls.filter(
+          (tc): tc is StreamToolCall => tc != null,
+        )
+        const savedTruncated = persistAssistantDraft({
+          content: assistantContent,
+          reasoning: reasoningContent,
+          tool_calls: truncatedCalls,
+          truncated: true,
+          incomplete_tools: true,
+          finish_reason: finishReason ?? null,
+        })
+        savedAssistantId = savedTruncated.id
+        persistInterruptedRemainder(savedAssistantId, "interrupted")
+        sendToExtension({
+          type: "chat.done",
+          thread_id: threadId,
+          message_id: savedTruncated.id,
+          truncated: true,
+          incomplete_tools: true,
+          finish_reason: finishReason ?? "max_tokens",
+          ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+        })
         sendToExtension({
           type: "chat.error",
           thread_id: threadId,
@@ -1090,26 +1173,14 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       const assistantMsg: StreamToolCall[] = toolCalls.filter(
         (tc): tc is StreamToolCall => tc != null,
       )
-      const savedMsg: {
-        thread_id: string
-        role: "assistant"
-        content: string
-        tool_calls: StreamToolCall[]
-        reasoning_content?: string
-        retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number }>
-      } = {
-        thread_id: threadId,
-        role: "assistant" as const,
+      const savedAssistant = persistAssistantDraft({
         content: assistantContent,
+        reasoning: reasoningContent,
         tool_calls: assistantMsg,
-      }
-      if (reasoningContent) {
-        savedMsg.reasoning_content = reasoningContent
-      }
-      if (assistantMsg.length === 0 && retrievedSources.length > 0) {
-        savedMsg.retrieved_sources = retrievedSources
-      }
-      const savedAssistant = threadManager.addMessage(threadId, savedMsg)
+        truncated: isLengthStop(finishReason) || undefined,
+        finish_reason: finishReason,
+        retrieved_sources: retrievedSources,
+      })
       savedAssistantId = savedAssistant.id
 
       // Push assistant message with tool_calls and reasoning_content to messages array
@@ -1747,17 +1818,34 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
     } catch (e: any) {
       if (e.name === "AbortError" || signal?.aborted) {
-        persistInterruptedRemainder(savedAssistantId, "aborted")
-        // If we aborted during streaming before the assistant message was persisted,
-        // keep any non-empty streamed text as a text-only message so the user doesn't
-        // see their partial reply vanish on reload.
-        if (!savedAssistantId && assistantContent && assistantContent.trim()) {
-          threadManager.addMessage(threadId, {
-            thread_id: threadId,
-            role: "assistant",
+        // Reasoning-only abort must hit disk (empty assistantContent used to skip).
+        // Do not change drainThreadOnSupersede — this catch is the flush site.
+        if (
+          !savedAssistantId &&
+          (
+            (assistantContent && assistantContent.trim()) ||
+            (reasoningContent && reasoningContent.trim()) ||
+            toolCalls.some((tc) => tc != null)
+          )
+        ) {
+          const abortedCalls: StreamToolCall[] = toolCalls.filter(
+            (tc): tc is StreamToolCall => tc != null,
+          )
+          savedAssistantId = persistAssistantDraft({
             content: assistantContent,
+            reasoning: reasoningContent,
+            tool_calls: abortedCalls,
+            finish_reason: finishReason || "aborted",
+          }).id
+          sendToExtension({
+            type: "chat.done",
+            thread_id: threadId,
+            message_id: savedAssistantId,
+            finish_reason: finishReason || "aborted",
+            ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
           })
         }
+        persistInterruptedRemainder(savedAssistantId, "aborted")
         throw e
       }
 
@@ -1935,7 +2023,14 @@ export async function generateThreadTitle(params: {
       thread.alias,
       firstUser?.content ? String(firstUser.content) : undefined,
     )
-    if (thread.alias && !force && fromClass !== "empty" && fromClass !== "provisional_user" && fromClass !== "provisional_acp") {
+    if (
+      thread.alias &&
+      !force &&
+      fromClass !== "empty" &&
+      fromClass !== "provisional_user" &&
+      fromClass !== "provisional_acp" &&
+      fromClass !== "hostname"
+    ) {
       return
     }
 

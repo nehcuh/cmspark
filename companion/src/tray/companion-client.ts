@@ -235,17 +235,22 @@ export class CompanionClient {
     try {
       const resp = await this.sendRequest("thread.list")
       if (resp?.threads && Array.isArray(resp.threads)) {
+        const recency = (t: { last_message_at?: string | null; created_at?: string }) => {
+          const last = typeof t.last_message_at === "string" ? t.last_message_at.trim() : ""
+          if (last) return last
+          return typeof t.created_at === "string" ? t.created_at : ""
+        }
         const threads: RecentThreadItem[] = resp.threads
           .sort((a: any, b: any) => {
-            const ta = a.updated_at || a.created_at || ""
-            const tb = b.updated_at || b.created_at || ""
+            const ta = recency(a)
+            const tb = recency(b)
             return tb.localeCompare(ta)
           })
           .slice(0, limit)
           .map((t: any) => ({
             id: t.id,
             title: t.alias || t.id,
-            lastActivity: t.updated_at || t.created_at,
+            lastActivity: recency(t),
           }))
         this.cachedThreads = threads
         return threads

@@ -41,6 +41,7 @@ import {
   type IconProps,
 } from "../ui/icons"
 import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
+import { truncationHonestyChip } from "../chat-shell-copy"
 import { RunProgress } from "./RunProgress"
 import { listSig } from "./run-progress-view"
 import { CHAT_MARKED_OPTIONS } from "../utils/markdown-gfm"
@@ -88,6 +89,7 @@ export function ChatView() {
     threadBusyById,
     threads,
     contextCompactedByThreadId,
+    hydrating,
   } = state
   const contextCompacted =
     activeThreadId && contextCompactedByThreadId[activeThreadId]
@@ -542,9 +544,11 @@ export function ChatView() {
             items={runItems}
           />
         ) : null}
-        {messages.length === 0 && !streamingContent && !streamingReasoning && !processingLabel && (
-          <EmptyState level={level} />
-        )}
+        {messages.length === 0 &&
+          !hydrating &&
+          !streamingContent &&
+          !streamingReasoning &&
+          !processingLabel && <EmptyState level={level} />}
         {messages.map(msg => (
           <MessageRow
             key={msg.id}
@@ -745,6 +749,7 @@ const MessageRow = memo(function MessageRow({
   // The ToolCallCard hint already carries the info — skip stub bubble text.
   // Non-sensitive tool rows are unaffected: their content keeps rendering.
   const isToolStubContent = !isUser && isRedactedStubContent(msg.content)
+  const honestyChip = !isUser ? truncationHonestyChip(msg) : null
   const [isEditing, setIsEditing] = useState(false)
   const [editingText, setEditingText] = useState("")
   // useRef so the keydown handler always sees the latest shortcut without
@@ -833,6 +838,11 @@ const MessageRow = memo(function MessageRow({
                 <ToolCallCard key={tc.id} tc={tc} />
               ))}
             </div>
+            {honestyChip ? (
+              <div style={styles.truncChip} role="status">
+                {honestyChip}
+              </div>
+            ) : null}
             {!isUser && Array.isArray(msg.retrieved_sources) && msg.retrieved_sources.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }} aria-label="本轮附带">
                 {msg.retrieved_sources.map((s: { id: string; title: string }) => (
@@ -2103,6 +2113,17 @@ const styles: Record<string, React.CSSProperties> = {
     wordBreak: "break-word" as const,
     border: `1px solid ${tokens.border}`,
     boxShadow: tokens.shadowSm,
+  },
+  truncChip: {
+    marginTop: 6,
+    alignSelf: "flex-start" as const,
+    fontSize: 11,
+    lineHeight: 1.4,
+    color: tokens.warning,
+    background: tokens.warningSoft,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: 10,
+    padding: "2px 8px",
   },
   statusBubble: {
     background: tokens.accentSoft,

@@ -88,6 +88,7 @@ export type ThreadTitleRecord = {
   alias?: string
   updated_at?: string
   created_at?: string
+  last_message_at?: string | null
 }
 
 export type TitleSearchResult = {
@@ -97,7 +98,7 @@ export type TitleSearchResult = {
 }
 
 function threadStamp(t: ThreadTitleRecord): string {
-  return t.updated_at || t.created_at || ""
+  return t.last_message_at || t.created_at || ""
 }
 
 function sortRecentFirst(threads: ThreadTitleRecord[]): ThreadTitleRecord[] {
@@ -130,7 +131,7 @@ export function hitsFromTitleSearch(threads: ThreadTitleRecord[]): SummonerHit[]
   return sortRecentFirst(threads).map((t) => ({
     id: t.id,
     title: (t.title || t.alias || t.id).trim() || t.id,
-    when: t.updated_at || t.created_at || "",
+    when: t.last_message_at || t.created_at || "",
   }))
 }
 

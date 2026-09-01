@@ -1,0 +1,22 @@
+{
+  "batch": "thread-loss-3qb5ea",
+  "date": "2026-09-01",
+  "head": "3cd70cf8",
+  "kind": "diagnosis+fix-plan",
+  "internal_adversary": {
+    "A_CORR": "PARTIAL",
+    "B_PRODUCT": "PARTIAL",
+    "C_STREAM": "CONFIRMED+PARTIAL",
+    "D_SKEPTIC": "STORY_PARTLY_HOLDS",
+    "overall": "PASS_WITH_CHANGES"
+  },
+  "dual": {
+    "kimi": "APPROVE_WITH_NITS",
+    "claude": "APPROVE_WITH_NITS",
+    "pi": null,
+    "note": "Pi not in PATH; kimi+claude dual per project-knowledge"
+  },
+  "implementation_allowed": true,
+  "implementation_started": false,
+  "synthesis": "docs/audit/reviews/thread-loss-3qb5ea-adversary-synthesis-20260901.md"
+}

@@ -1,3 +1,19 @@
+/** Hydrate + live chat.done truncation honesty (P1-2). Empty content + reasoning wins. */
+export function truncationHonestyChip(msg: {
+  content?: string
+  reasoning_content?: string
+  truncated?: boolean
+  finish_reason?: string | null
+}): string | null {
+  const content = String(msg.content || "").trim()
+  const reasoning = String(msg.reasoning_content || "").trim()
+  const reason = String(msg.finish_reason || "").toLowerCase()
+  if (reason === "aborted" || reason === "abort") return "已停止生成"
+  if (!content && reasoning) return "思考耗尽额度"
+  if (msg.truncated) return "输出被截断"
+  return null
+}
+
 export const CHAT_SHELL_TITLE_PAGE = "要对这页做什么？"
 export const CHAT_SHELL_TITLE_NONE = "要我帮你做什么？"
 export const CHAT_SHELL_PAGE_CHIP_PREFIX = "当前页："

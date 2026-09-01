@@ -2,7 +2,10 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { agentReducer, initialState, isTempUserMessageId, mergeHydratedMessages, type AgentState } from "../src/sidepanel/store/agentStore"
 import { newTempUserMessageId } from "../src/utils/temp-message-id"
-import { normalizeConfig, parseChatUserAttachments, requestInitialSidePanelData, sanitizeHydratedMessages } from "../src/sidepanel/hooks/useWebSocket"
+import { normalizeConfig, parseChatUserAttachments, requestInitialSidePanelData, sanitizeHydratedMessages, nextHydrateRetry, clearHydrateRetry } from "../src/sidepanel/hooks/useWebSocket"
+import { truncationHonestyChip } from "../src/sidepanel/chat-shell-copy"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import type { SkillMeta } from "../src/sidepanel/types"
 
 function stateWithThreads(): AgentState {
@@ -67,9 +70,68 @@ test("SET_ACTIVE_THREAD restores pinned tabs, skillSelectionMode, and knowledgeS
 
   assert.equal(next.activeThreadId, "thread-b")
   assert.deepEqual(next.pinnedTabIds, [202, 303])
+  // T-switch-3: empty is ok only as hydrating miss, not settled EmptyState
   assert.deepEqual(next.messages, [])
+  assert.equal(next.hydrating, true)
+  assert.equal(next.processingStatus, "加载中")
   assert.equal(next.skillSelectionMode, "all")
   assert.equal(next.knowledgeSelectionMode, "all")
+})
+
+const msgA = {
+  id: "a1",
+  thread_id: "thread-a",
+  role: "user" as const,
+  content: "hello A",
+  created_at: "2026-08-31T00:00:00.000Z",
+}
+const msgB = {
+  id: "b1",
+  thread_id: "thread-b",
+  role: "user" as const,
+  content: "hello B",
+  created_at: "2026-08-31T01:00:00.000Z",
+}
+
+test("T-switch-1: A→B→A delayed hydrate still shows cached A", () => {
+  let s: AgentState = { ...stateWithThreads(), messages: [msgA] }
+  s = agentReducer(s, { type: "SET_ACTIVE_THREAD", threadId: "thread-b" })
+  assert.equal(s.hydrating, true)
+  assert.deepEqual(s.messages, [])
+  s = agentReducer(s, { type: "SET_MESSAGES", messages: [msgB] })
+  assert.equal(s.hydrating, false)
+  assert.equal(s.messages[0]?.content, "hello B")
+  s = agentReducer(s, { type: "SET_ACTIVE_THREAD", threadId: "thread-a" })
+  assert.equal(s.hydrating, false)
+  assert.equal(s.messages[0]?.content, "hello A")
+  assert.ok(!s.messages.some((m) => m.content === "hello B"))
+  // delayed hydrate of A must not wipe the cached transcript
+  s = agentReducer(s, { type: "SET_MESSAGES", messages: [msgA] })
+  assert.equal(s.messages[0]?.content, "hello A")
+  assert.equal(s.hydrating, false)
+})
+
+test("T-switch-2: cache miss → hydrating sentinel, not previous thread rows", () => {
+  const s0: AgentState = { ...stateWithThreads(), messages: [msgA] }
+  const next = agentReducer(s0, { type: "SET_ACTIVE_THREAD", threadId: "thread-b" })
+  assert.equal(next.activeThreadId, "thread-b")
+  assert.deepEqual(next.messages, [])
+  assert.equal(next.hydrating, true)
+  assert.equal(next.processingStatus, "加载中")
+  assert.ok(!next.messages.some((m) => m.thread_id === "thread-a" || m.content === "hello A"))
+})
+
+test("T-switch LRU: A→B→C evicts A; return to A is a hydrating miss", () => {
+  let s: AgentState = { ...stateWithThreads(), messages: [msgA] }
+  s = agentReducer(s, { type: "SET_ACTIVE_THREAD", threadId: "thread-b" })
+  s = agentReducer(s, { type: "SET_MESSAGES", messages: [msgB] })
+  s = agentReducer(s, { type: "SET_ACTIVE_THREAD", threadId: "thread-c" })
+  assert.equal(s.hydrating, true)
+  assert.equal(s.messagesCacheOrder.includes("thread-a"), false)
+  s = agentReducer(s, { type: "SET_ACTIVE_THREAD", threadId: "thread-a" })
+  assert.equal(s.hydrating, true)
+  assert.deepEqual(s.messages, [])
+  assert.equal(s.processingStatus, "加载中")
 })
 
 test("SET_ACTIVE_THREAD defaults skillSelectionMode to auto when thread has no mode", () => {
@@ -608,6 +670,49 @@ test("parseChatUserAttachments: preview_jpeg_b64 capped at 400_000 chars (F4)", 
   assert.equal(parsedAtCap?.[0]?.preview_jpeg_b64, atCap)
 })
 
+test("T-ui-1: hydrate keeps truncated / incomplete_tools / finish_reason", () => {
+  const out = sanitizeHydratedMessages([
+    {
+      id: "m1",
+      thread_id: "t",
+      role: "assistant",
+      content: "",
+      reasoning_content: "thought",
+      created_at: "x",
+      truncated: true,
+      incomplete_tools: true,
+      finish_reason: "max_tokens",
+    },
+  ])
+  assert.equal(out[0]?.truncated, true)
+  assert.equal(out[0]?.incomplete_tools, true)
+  assert.equal(out[0]?.finish_reason, "max_tokens")
+  assert.equal(truncationHonestyChip(out[0]!), "思考耗尽额度")
+  assert.equal(
+    truncationHonestyChip({ content: "partial answer", truncated: true }),
+    "输出被截断",
+  )
+  assert.equal(truncationHonestyChip({ content: "ok" }), null)
+})
+
+test("chat.done persists truncated flags onto the assistant message", () => {
+  const src = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
+  const start = src.indexOf('case "chat.done"')
+  assert.ok(start >= 0, "chat.done case missing")
+  const nextCase = src.indexOf('case "chat.aborted"', start)
+  const body = src.slice(start, nextCase > start ? nextCase : start + 2500)
+  assert.match(body, /truncated:\s*true/)
+  assert.match(body, /incomplete_tools/)
+  assert.match(body, /finish_reason/)
+})
+
+test("ChatView hydrates truncated chip and skips EmptyState while hydrating", () => {
+  const src = readFileSync(join(process.cwd(), "src/sidepanel/components/ChatView.tsx"), "utf8")
+  assert.match(src, /truncationHonestyChip/)
+  assert.match(src, /思考耗尽额度|honestyChip/)
+  assert.match(src, /!hydrating/)
+})
+
 test("sanitizeHydratedMessages: hydrate path runs attachments through the sanitizer (F4)", () => {
   // Non-array input hydrates to an empty history (was `msg.messages || []`).
   assert.deepEqual(sanitizeHydratedMessages(undefined), [])
@@ -845,4 +950,21 @@ test("REMOVE_THREADS drops multiple ids, falls back active, clears busy", () => 
 test("reducer handles unknown action type without crashing", () => {
   const next = agentReducer(initialState, { type: "UNKNOWN_ACTION_XYZ" as any })
   assert.equal(next, initialState)
+})
+
+test("hydrate retry: Thread not found retries once then HYDRATE_FAILED", () => {
+  const tid = `hydrate-retry-${Date.now()}`
+  clearHydrateRetry(tid)
+  assert.equal(nextHydrateRetry(tid, "Thread not found: x"), "retry")
+  assert.equal(nextHydrateRetry(tid, "Thread not found: x"), "fail")
+  assert.equal(nextHydrateRetry(tid, "unrelated boom"), "ignore")
+  clearHydrateRetry(tid)
+  assert.equal(nextHydrateRetry(tid, "Thread not found: x"), "retry")
+  clearHydrateRetry(tid)
+  const next = agentReducer(
+    { ...initialState, hydrating: true, processingStatus: "加载中" },
+    { type: "HYDRATE_FAILED", message: "加载失败" },
+  )
+  assert.equal(next.hydrating, false)
+  assert.equal(next.processingStatus, "加载失败")
 })

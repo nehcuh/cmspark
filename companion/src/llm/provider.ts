@@ -90,6 +90,11 @@ export interface StreamChatParams {
   /** Override model from config for this call. */
   model?: string
   signal?: AbortSignal
+  /**
+   * Chat output cap. Anthropic always sends a cap (config.llm.max_tokens /
+   * computeMaxTokens). OpenAI sends only when this is a positive number.
+   */
+  max_tokens?: number
 }
 
 export interface CompleteParams {

@@ -12,6 +12,8 @@ export type TimelineThread = {
   alias?: string
   created_at?: string
   updated_at?: string
+  /** Last persisted transcript row. Human-facing recency; never `updated_at`. */
+  last_message_at?: string | null
   /** First user message preview (optional, from companion list enrichment). */
   first_user_preview?: string | null
   agent_role?: "normal" | "orchestrator" | "worker" | string
@@ -152,10 +154,38 @@ function parseTs(iso: string | undefined, fallbackMs: number): Date {
 }
 
 /**
+ * Human-facing recency: last transcript row, else created_at. Never `updated_at`
+ * (digest / run_progress / budget must not impersonate "recent").
+ */
+export function threadRecency(t: {
+  last_message_at?: string | null
+  created_at?: string
+}): string {
+  const last = typeof t.last_message_at === "string" ? t.last_message_at.trim() : ""
+  if (last) return last
+  return typeof t.created_at === "string" ? t.created_at : ""
+}
+
+/**
+ * Screen-reader name: (preview || alias) AND short id — never one without the other
+ * when both exist. Duplicate `cruise-wl` rows stay distinguishable.
+ */
+export function threadAccessibleName(t: TimelineThread): string {
+  const preview = (t.first_user_preview || "").trim()
+  const alias = (t.alias || "").trim()
+  const left = preview || alias
+  const shortId = String(t.id || "").trim().replace(/^#/, "")
+  if (left && shortId) return `${left} · #${shortId}`
+  if (left) return left
+  if (shortId) return `#${shortId}`
+  return displayThreadTitle(t)
+}
+
+/**
  * Group threads for the default Timeline view.
- * - "今天": local calendar day of `now`, by updated_at desc
+ * - "今天": local calendar day of `now`, by last_message_at || created_at desc
  * - "昨天": previous local calendar day (P0.5)
- * - History: month → day (updated_at), months newest-first, days newest-first
+ * - History: month → day (threadRecency), months newest-first, days newest-first
  */
 export function groupThreadsByCalendar(
   threads: TimelineThread[],
@@ -166,8 +196,8 @@ export function groupThreadsByCalendar(
   const nowMs = now.getTime()
 
   const sorted = [...threads].sort((a, b) => {
-    const ta = parseTs(a.updated_at || a.created_at, 0).getTime()
-    const tb = parseTs(b.updated_at || b.created_at, 0).getTime()
+    const ta = parseTs(threadRecency(a), 0).getTime()
+    const tb = parseTs(threadRecency(b), 0).getTime()
     return tb - ta
   })
 
@@ -176,7 +206,7 @@ export function groupThreadsByCalendar(
   const monthMap = new Map<string, Map<string, TimelineThread[]>>()
 
   for (const t of sorted) {
-    const d = parseTs(t.updated_at || t.created_at, nowMs)
+    const d = parseTs(threadRecency(t), nowMs)
     const dayKey = localDayKey(d)
     if (dayKey === todayKey) {
       today.push(t)
@@ -346,7 +376,7 @@ export function formatThreadListTime(
   aliasDupCount: Map<string, number>,
 ): string {
   const alias = (t.alias || "").trim()
-  const iso = t.updated_at || t.created_at
+  const iso = threadRecency(t)
   if (alias && (aliasDupCount.get(alias) || 0) >= 2) {
     return formatClockTime(iso, now)
   }

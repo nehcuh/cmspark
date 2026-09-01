@@ -11,6 +11,8 @@ import {
   selectionState,
   toggleGroupSelection,
   displayThreadTitle,
+  threadAccessibleName,
+  threadRecency,
   displayThreadEvidence,
   acpOutcomeChip,
   formatClockTime,
@@ -60,12 +62,12 @@ test("localYesterdayKey is previous calendar day", () => {
 test("groupThreadsByCalendar: today + yesterday + history month→day", () => {
   const now = new Date(2026, 7, 6, 18, 0, 0) // 2026-08-06
   const threads = [
-    { id: "t1", alias: "today-a", updated_at: localIso(2026, 8, 6, 10) },
-    { id: "t2", alias: "today-b", updated_at: localIso(2026, 8, 6, 16) },
-    { id: "y1", alias: "yest", updated_at: localIso(2026, 8, 5, 20) },
-    { id: "t3", alias: "july-28", updated_at: localIso(2026, 7, 28, 9) },
-    { id: "t4", alias: "july-15", updated_at: localIso(2026, 7, 15, 9) },
-    { id: "t5", alias: "june", updated_at: localIso(2026, 6, 1, 9) },
+    { id: "t1", alias: "today-a", last_message_at: localIso(2026, 8, 6, 10) },
+    { id: "t2", alias: "today-b", last_message_at: localIso(2026, 8, 6, 16) },
+    { id: "y1", alias: "yest", last_message_at: localIso(2026, 8, 5, 20) },
+    { id: "t3", alias: "july-28", last_message_at: localIso(2026, 7, 28, 9) },
+    { id: "t4", alias: "july-15", last_message_at: localIso(2026, 7, 15, 9) },
+    { id: "t5", alias: "june", last_message_at: localIso(2026, 6, 1, 9) },
   ]
   const model = groupThreadsByCalendar(threads, now)
   assert.equal(model.today.length, 2)
@@ -87,8 +89,8 @@ test("groupThreadsByCalendar: today + yesterday + history month→day", () => {
 test("groupThreadsByCalendar: cross-midnight boundary (local)", () => {
   const now = new Date(2026, 7, 6, 0, 30, 0)
   const threads = [
-    { id: "after", updated_at: localIso(2026, 8, 6, 0, 10) },
-    { id: "before", updated_at: localIso(2026, 8, 5, 23, 50) },
+    { id: "after", last_message_at: localIso(2026, 8, 6, 0, 10) },
+    { id: "before", last_message_at: localIso(2026, 8, 5, 23, 50) },
   ]
   const model = groupThreadsByCalendar(threads, now)
   assert.deepEqual(model.today.map((t) => t.id), ["after"])
@@ -96,19 +98,102 @@ test("groupThreadsByCalendar: cross-midnight boundary (local)", () => {
   assert.equal(model.months.length, 0)
 })
 
-test("groupThreadsByCalendar: prefers updated_at over created_at", () => {
+test("groupThreadsByCalendar: ignores updated_at (digest must not impersonate recency)", () => {
   const now = new Date(2026, 7, 6, 12, 0, 0)
   const threads = [
     {
-      id: "old-created-touched-today",
+      id: "old-created-digest-today",
       created_at: localIso(2026, 1, 1),
       updated_at: localIso(2026, 8, 6, 8),
+    },
+  ]
+  const model = groupThreadsByCalendar(threads, now)
+  assert.equal(model.today.length, 0)
+  assert.equal(model.yesterday.length, 0)
+  assert.ok(model.months.some((m) => m.monthKey === "2026-01"))
+})
+
+test("groupThreadsByCalendar: last_message_at wins over created_at", () => {
+  const now = new Date(2026, 7, 6, 12, 0, 0)
+  const threads = [
+    {
+      id: "old-created-messaged-today",
+      created_at: localIso(2026, 1, 1),
+      updated_at: localIso(2026, 8, 6, 8),
+      last_message_at: localIso(2026, 8, 6, 8),
     },
   ]
   const model = groupThreadsByCalendar(threads, now)
   assert.equal(model.today.length, 1)
   assert.equal(model.yesterday.length, 0)
   assert.equal(model.months.length, 0)
+})
+
+test("I-digest: old last_message_at + new digest updated_at stays in original calendar group", () => {
+  const now = new Date(2026, 8, 1, 15, 0, 0) // 2026-09-01
+  const threads = [
+    {
+      id: "w2k8z9",
+      alias: "cruise-wl",
+      created_at: localIso(2026, 8, 31, 14),
+      last_message_at: localIso(2026, 8, 31, 14),
+      updated_at: localIso(2026, 9, 1, 14),
+      digest: { tldr: "立项风险", extracted_at: localIso(2026, 9, 1, 14) },
+    },
+  ]
+  const model = groupThreadsByCalendar(threads, now)
+  assert.equal(model.today.length, 0)
+  assert.equal(model.yesterday.length, 1)
+  assert.equal(model.yesterday[0].id, "w2k8z9")
+})
+
+test("threadRecency: last_message_at || created_at, never updated_at", () => {
+  assert.equal(
+    threadRecency({ last_message_at: "2026-08-31T00:00:00.000Z", created_at: "2026-01-01T00:00:00.000Z" }),
+    "2026-08-31T00:00:00.000Z",
+  )
+  assert.equal(
+    threadRecency({ created_at: "2026-01-01T00:00:00.000Z" }),
+    "2026-01-01T00:00:00.000Z",
+  )
+  assert.equal(threadRecency({ last_message_at: "  ", created_at: "c" }), "c")
+  assert.equal(threadRecency({}), "")
+})
+
+test("formatThreadListTime uses threadRecency not updated_at", () => {
+  const now = new Date(2026, 7, 6, 15, 0, 0)
+  const t = {
+    id: "x",
+    alias: "solo",
+    created_at: localIso(2026, 8, 1),
+    updated_at: localIso(2026, 8, 6, 14),
+    last_message_at: localIso(2026, 8, 5, 10),
+  }
+  // last_message_at is ~29h ago → 1天前; updated_at would have been 1小时前
+  assert.match(formatThreadListTime(t, now, new Map()), /1天前/)
+})
+
+test("T-alias-1: accessible name is (preview || alias) AND #shortId", () => {
+  assert.equal(
+    threadAccessibleName({
+      id: "w2k8z9",
+      alias: "cruise-wl",
+      first_user_preview: "立项风险分析",
+    }),
+    "立项风险分析 · #w2k8z9",
+  )
+  assert.equal(
+    threadAccessibleName({ id: "abc123", alias: "cruise-wl" }),
+    "cruise-wl · #abc123",
+  )
+  const both = threadAccessibleName({
+    id: "w2k8z9",
+    alias: "cruise-wl",
+    first_user_preview: "立项风险分析",
+  })
+  assert.ok(both.includes("立项风险分析"))
+  assert.ok(both.includes("#w2k8z9"))
+  assert.ok(both.includes(" · #"))
 })
 
 test("parseThreadListExpand: defaults + legacy months array + object", () => {
@@ -279,13 +364,13 @@ test("acpOutcomeChip + evidence never inlines handback body", () => {
 test("duplicate alias uses clock time", () => {
   const now = new Date(2026, 7, 17, 15, 0, 0)
   const threads = [
-    { id: "a", alias: "p1-wl", updated_at: new Date(2026, 7, 17, 14, 32).toISOString() },
-    { id: "b", alias: "p1-wl", updated_at: new Date(2026, 7, 17, 11, 8).toISOString() },
+    { id: "a", alias: "p1-wl", last_message_at: new Date(2026, 7, 17, 14, 32).toISOString() },
+    { id: "b", alias: "p1-wl", last_message_at: new Date(2026, 7, 17, 11, 8).toISOString() },
   ]
   const counts = countAliases(threads)
   assert.equal(counts.get("p1-wl"), 2)
   assert.match(formatThreadListTime(threads[0], now, counts), /今天 14:32/)
-  assert.match(formatClockTime(threads[1].updated_at, now), /今天 11:08/)
+  assert.match(formatClockTime(threads[1].last_message_at, now), /今天 11:08/)
 })
 
 test("aliasFromFirstUserText strips prefixes and truncates", () => {

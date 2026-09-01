@@ -11,6 +11,7 @@ export type AliasClass =
   | "llm"
   | "create"
   | "user"
+  | "hostname"
 
 export type AcpAliasToken = "审查" | "起草" | "失败" | "部分" | "取消"
 
@@ -87,6 +88,22 @@ function legacyProvisionalTitleFromUserText(raw: string): string {
   return cleaned.slice(0, 15) + "…"
 }
 
+/**
+ * Hostname leftover (P2): tab-hostname / `{label}-wl` auto titles like `cruise-wl`.
+ * Not a handwritten short code (`p1-wl` has a digit). Must not classify as `user`
+ * so LLM auto-title can overwrite.
+ */
+export function isHostnameLeftoverAlias(alias: string | undefined): boolean {
+  const a = String(alias || "").trim()
+  if (!a) return false
+  if (/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(a)) {
+    return true
+  }
+  // `{hostname-label}-wl` (cruise-wl); exclude digit short-codes like p1-wl.
+  if (/^[a-z][a-z-]*[a-z]-wl$/i.test(a) && !/\d/.test(a)) return true
+  return false
+}
+
 export function classifyAlias(
   alias: string | undefined,
   firstUserText?: string,
@@ -109,13 +126,19 @@ export function classifyAlias(
       }
     }
   }
+  if (isHostnameLeftoverAlias(a)) return "hostname"
   return "user"
 }
 
 function canTransition(from: AliasClass, to: AliasClass, force: boolean): boolean {
   if (from === "empty") return true
   if (from === "provisional_acp" && to === "provisional_acp") return true
-  if ((from === "provisional_user" || from === "provisional_acp") && to === "llm") return true
+  if (
+    (from === "provisional_user" || from === "provisional_acp" || from === "hostname") &&
+    to === "llm"
+  ) {
+    return true
+  }
   if (to === "user") return true
   if (force && to === "llm" && from !== "create") return true
   return false
