@@ -14,6 +14,10 @@ let isMaskedApiKey: typeof import("../src/config").isMaskedApiKey
 let initDataDir: typeof import("../src/config").initDataDir
 let clearConfigCache: typeof import("../src/config").clearConfigCache
 let migrateLegacyModelName: typeof import("../src/config").migrateLegacyModelName
+let effectiveContextWindow: typeof import("../src/config").effectiveContextWindow
+let CONTEXT_WINDOW_DEFAULT: typeof import("../src/config").CONTEXT_WINDOW_DEFAULT
+let CONTEXT_WINDOW_FLOOR: typeof import("../src/config").CONTEXT_WINDOW_FLOOR
+let CONTEXT_WINDOW_TINY: typeof import("../src/config").CONTEXT_WINDOW_TINY
 
 async function resetConfigFile() {
   clearConfigCache()
@@ -41,6 +45,10 @@ before(async () => {
   initDataDir = cfg.initDataDir
   clearConfigCache = cfg.clearConfigCache
   migrateLegacyModelName = cfg.migrateLegacyModelName
+  effectiveContextWindow = cfg.effectiveContextWindow
+  CONTEXT_WINDOW_DEFAULT = cfg.CONTEXT_WINDOW_DEFAULT
+  CONTEXT_WINDOW_FLOOR = cfg.CONTEXT_WINDOW_FLOOR
+  CONTEXT_WINDOW_TINY = cfg.CONTEXT_WINDOW_TINY
 
   await initDataDir()
 })
@@ -933,5 +941,81 @@ describe("default companion_ui_exe_basenames", { concurrency: 1 }, () => {
     const names = getConfig().security.companion_ui_exe_basenames
     assert.equal(names.some((n) => String(n).toLowerCase().includes("cmspark-tray")), false)
     assert.ok(names.includes("chrome"))
+  })
+})
+
+describe("context_window factory default + runtime floor (T0)", { concurrency: 1 }, () => {
+  test("fresh initDataDir writes context_window 512000 to disk and runtime", async () => {
+    await resetConfigFile()
+    assert.equal(CONTEXT_WINDOW_DEFAULT, 512000)
+    assert.equal(CONTEXT_WINDOW_FLOOR, 128000)
+    assert.equal(CONTEXT_WINDOW_TINY, 16000)
+    assert.equal(getConfig().llm.context_window, 512000)
+    assert.equal(readSavedConfig().llm.context_window, 512000)
+  })
+
+  test("disk 4000 is returned as-is; no rewrite of config.json", async () => {
+    await resetConfigFile()
+    const configPath = path.join(tempHome, "config.json")
+    const onDisk = {
+      llm: {
+        context_window: 4000,
+        base_url: "https://api.deepseek.com/v1",
+        api_key: "",
+        model_name: "deepseek-v4-flash",
+        temperature: 0.7,
+      },
+    }
+    fs.writeFileSync(configPath, JSON.stringify(onDisk, null, 2), { mode: 0o600 })
+    clearConfigCache()
+    assert.equal(getConfig().llm.context_window, 4000)
+    assert.equal(readSavedConfig().llm.context_window, 4000)
+  })
+
+  test("effectiveContextWindow(4000) floors to 128000 without claiming disk rewrite", () => {
+    assert.deepEqual(effectiveContextWindow(4000), {
+      disk: 4000,
+      effective: 128000,
+      floored: true,
+    })
+  })
+
+  test("effectiveContextWindow(0) and negative floor to 128000", () => {
+    const zero = effectiveContextWindow(0)
+    assert.equal(zero.floored, true)
+    assert.equal(zero.effective, 128000)
+    const neg = effectiveContextWindow(-1)
+    assert.equal(neg.floored, true)
+    assert.equal(neg.effective, 128000)
+  })
+
+  test("effectiveContextWindow(128000) and 512000 are not floored", () => {
+    assert.deepEqual(effectiveContextWindow(128000), {
+      disk: 128000,
+      effective: 128000,
+      floored: false,
+    })
+    assert.deepEqual(effectiveContextWindow(512000), {
+      disk: 512000,
+      effective: 512000,
+      floored: false,
+    })
+  })
+
+  test("omitted context_window on disk fills 512000 at runtime; disk key stays absent", async () => {
+    await resetConfigFile()
+    const configPath = path.join(tempHome, "config.json")
+    const onDisk = {
+      llm: {
+        base_url: "https://api.deepseek.com/v1",
+        api_key: "",
+        model_name: "deepseek-v4-flash",
+        temperature: 0.7,
+      },
+    }
+    fs.writeFileSync(configPath, JSON.stringify(onDisk, null, 2), { mode: 0o600 })
+    clearConfigCache()
+    assert.equal(getConfig().llm.context_window, 512000)
+    assert.equal(Object.prototype.hasOwnProperty.call(readSavedConfig().llm, "context_window"), false)
   })
 })

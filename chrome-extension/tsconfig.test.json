@@ -24,6 +24,8 @@
     "src/sidepanel/utils/upload-send.ts",
     "src/sidepanel/utils/knowledge-save.ts",
     "src/utils/temp-message-id.ts",
+    "src/utils/config.ts",
+    "src/sidepanel/utils/context-window-copy.ts",
     "src/sidepanel/components/vision-reuse-logic.ts",
     "src/sidepanel/components/model-switch-logic.ts",
     "src/sidepanel/components/focus-band-priority.ts",

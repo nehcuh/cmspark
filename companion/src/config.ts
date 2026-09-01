@@ -384,6 +384,29 @@ function getEnvApiKey(): string {
   return process.env.DEEPSEEK_API_KEY || ""
 }
 
+/** Factory default: Agent working budget. Auto-compact triggers later; fill the model's real window. */
+export const CONTEXT_WINDOW_DEFAULT = 512000
+/** Disk values below this are treated as tiny at the request path. */
+export const CONTEXT_WINDOW_TINY = 16000
+/** Runtime floor only — never persist. Tiny/non-finite disk windows use this for budgeting. */
+export const CONTEXT_WINDOW_FLOOR = 128000
+
+/**
+ * Request-path window. Disk scalars stay as written; tiny/non-finite values
+ * floor to CONTEXT_WINDOW_FLOOR without rewriting config.json.
+ */
+export function effectiveContextWindow(disk: number): {
+  disk: number
+  effective: number
+  floored: boolean
+} {
+  const n = Number.isFinite(disk) ? Math.floor(disk) : disk
+  if (!Number.isFinite(n) || n <= 0 || n < CONTEXT_WINDOW_TINY) {
+    return { disk: n, effective: CONTEXT_WINDOW_FLOOR, floored: true }
+  }
+  return { disk: n, effective: n, floored: false }
+}
+
 const defaultConfig: CompanionConfig = {
   port: 23401,
   llm: {
@@ -391,8 +414,8 @@ const defaultConfig: CompanionConfig = {
     api_key: getEnvApiKey(),
     model_name: "deepseek-v4-flash",
     temperature: 0.7,
-    // 128k is a realistic default so auto compaction can trigger; legacy 1e6 ≈ never.
-    context_window: 128000,
+    // Factory default 512k is an Agent working budget; auto-compact triggers later; fill the model's real window.
+    context_window: CONTEXT_WINDOW_DEFAULT,
     // Chat output cap — glm-5.x thinking burns a hardcoded 8192 Anthropic cap.
     max_tokens: 32768,
     context_compaction: "auto",

@@ -179,6 +179,8 @@ export interface AgentState {
   activeKnowledgeIds: string[]
   securityAuditLog: SecurityAuditEntry[]
   companionConfig: LLMConfig | null
+  /** True after the first companion `config.updated`. Blocks Save of initialState defaults. */
+  configHydratedFromCompanion: boolean
   isProcessing: boolean
   /** Bumped on file.uploaded so InputArea can drop chips after companion admit. */
   composerUploadClearSeq: number
@@ -376,6 +378,7 @@ export type AgentAction =
   | { type: "TOGGLE_KNOWLEDGE"; knowledgeId: string }
   | { type: "ADD_SECURITY_AUDIT"; entry: SecurityAuditEntry }
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
+  | { type: "SET_CONFIG_HYDRATED"; hydrated: boolean }
   | { type: "SET_PROCESSING"; isProcessing: boolean }
   | { type: "BUMP_COMPOSER_UPLOAD_CLEAR" }
   | { type: "SET_PENDING_UPLOAD"; threadId: string; messageId: string; composerText: string }
@@ -488,7 +491,7 @@ export const initialState: AgentState = {
     api_key: "",
     model_name: "deepseek-v4-flash",
     temperature: 0.7,
-    context_window: 128000,
+    context_window: 512000,
     context_compaction: "auto",
     context_compaction_m2: true,
     protocol: "openai",
@@ -540,6 +543,7 @@ export const initialState: AgentState = {
   activeKnowledgeIds: [],
   securityAuditLog: [],
   companionConfig: null,
+  configHydratedFromCompanion: false,
   isProcessing: false,
   composerUploadClearSeq: 0,
   pendingUploads: {},
@@ -1327,6 +1331,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, securityAuditLog: [...state.securityAuditLog.slice(-199), action.entry] }
     case "SET_COMPANION_CONFIG":
       return { ...state, companionConfig: action.config }
+    case "SET_CONFIG_HYDRATED":
+      return { ...state, configHydratedFromCompanion: action.hydrated }
     case "SET_PROCESSING":
       return { ...state, isProcessing: action.isProcessing }
     case "BUMP_COMPOSER_UPLOAD_CLEAR":
