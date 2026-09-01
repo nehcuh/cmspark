@@ -723,6 +723,42 @@
   {
     "type": "function",
     "function": {
+      "name": "run_progress_propose",
+      "description": "在操作页面前提出本轮具体步骤（1–8 条）。每则用户消息最多成功一次。每条可附精确内部工具名（click、get_page_text、navigate），不要从中文猜。若返回 ALREADY_HAS_STEPS，不要在本则消息里重试。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "具体步骤，≤120 字"
+                },
+                "tool": {
+                  "type": "string",
+                  "description": "可选精确内部工具名"
+                }
+              },
+              "required": [
+                "text"
+              ]
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "workspace_list_dir",
       "description": "List files under the thread DevSec workspace (relative paths only). Requires modules.devsec-workspace enabled. If the thread has workspace_root set (folder-picker bind), list under that root; otherwise uses default sandbox ~/CMspark-projects (created if missing — does not auto-bind the thread). Prefer this for deliverables under the sandbox. For a real repo, ask the user to Side Panel → 场景 → 「选择工作区」. Never invent absolute paths outside the effective root. If error is default_sandbox_unavailable, sandbox create failed — ask user to fix ~/CMspark-projects or bind a folder.",
       "parameters": {

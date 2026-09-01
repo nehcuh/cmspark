@@ -1,6 +1,6 @@
 /**
  * Slice 6 PR-B Task 4: run_progress seed (H1 open_todos) + evidence ticks.
- * v1 ingest = seed-only. No model_draft ingest. No overlay write verbs.
+ * #265: seed = companion-written tickable (H1 or propose). No overlay write verbs.
  */
 import test, { after, before } from "node:test"
 import assert from "node:assert/strict"
@@ -10,12 +10,19 @@ import * as path from "node:path"
 
 import {
   applyToolResult,
+  mapProposeItems,
   nextRunProgressAfterToolSuccess,
+  proposeRunProgress,
+  RUN_PROGRESS_PAGE_TOOLS,
+  RUN_PROGRESS_PROPOSE_TOOL,
   sanitizeRunProgress,
   seedRunProgress,
+  shouldBlockPageTool,
   type RunProgress,
   type RunProgressItem,
 } from "../src/threads/run-progress"
+import { TAB_LEASE_TOOLS } from "../src/orchestrator/constants"
+import { getAllToolDefinitions } from "../src/bridge/tool-definitions"
 import { handleRunProgressToggle } from "../src/message-router/handlers/run-progress"
 import { validateWsMessage } from "../src/ws/validate"
 import { assertSummonerAllowed } from "../src/ws/summoner-acl"
@@ -617,4 +624,119 @@ test("thread.run_progress.toggle is not on overlay allowlists or thread.update k
   const m = routerSrc.match(/case "thread\.update":[\s\S]*?for \(const key of \[([\s\S]*?)\]\)/)
   assert.ok(m, "thread.update allowlist not found")
   assert.doesNotMatch(m![1], /run_progress/)
+})
+
+test("mapProposeItems forces seed live:i done false and drops writer tool", () => {
+  const items = mapProposeItems([
+    { text: "打开列表", done: true, source: "user", id: "x", tool: "run_progress_propose" },
+    { text: "  点第一封  ", tool: "click" },
+  ])
+  assert.equal(items.length, 2)
+  assert.equal(items[0]!.id, "live:0")
+  assert.equal(items[0]!.source, "seed")
+  assert.equal(items[0]!.done, false)
+  assert.equal(items[0]!.tool, undefined)
+  assert.equal(items[1]!.tool, "click")
+  assert.equal(RUN_PROGRESS_PROPOSE_TOOL, "run_progress_propose")
+})
+
+test("sanitize(rawModel) is not the propose success path", () => {
+  const sneaky = sanitizeRunProgress({
+    items: [{ id: "x", text: "hack", done: true, source: "seed" }],
+  })
+  assert.equal(sneaky.items[0]!.done, true)
+  const mapped = mapProposeItems([{ text: "hack", done: true, source: "seed", id: "x" }])
+  assert.equal(mapped[0]!.done, false)
+  assert.equal(mapped[0]!.id, "live:0")
+})
+
+test("proposeRunProgress writes when undefined or empty items", () => {
+  const a = proposeRunProgress({ run_progress: undefined }, [{ text: "一步" }], { replaceOk: true })
+  assert.equal(a.ok, true)
+  if (a.ok) assert.equal(a.progress.items[0]!.id, "live:0")
+  const b = proposeRunProgress({ run_progress: { items: [] } }, [{ text: "一步" }], { replaceOk: true })
+  assert.equal(b.ok, true)
+})
+
+test("proposeRunProgress CLEARED on sticky null using ===", () => {
+  const r = proposeRunProgress({ run_progress: null }, [{ text: "x" }], { replaceOk: true })
+  assert.equal(r.ok, false)
+  if (!r.ok) assert.equal(r.error_code, "CLEARED")
+})
+
+test("proposeRunProgress EMPTY_ITEMS when all texts empty", () => {
+  const r = proposeRunProgress({ run_progress: undefined }, [{ text: "  " }], { replaceOk: true })
+  assert.equal(r.ok, false)
+  if (!r.ok) assert.equal(r.error_code, "EMPTY_ITEMS")
+})
+
+test("proposeRunProgress replaceOk replaces leftover undone H1 seed", () => {
+  const leftover = {
+    run_progress: {
+      items: [{ id: "seed:0", text: "旧", done: false, source: "seed" as const }],
+    },
+  }
+  const denied = proposeRunProgress(leftover, [{ text: "新" }], { replaceOk: false })
+  assert.equal(denied.ok, false)
+  if (!denied.ok) assert.equal(denied.error_code, "ALREADY_HAS_STEPS")
+  const ok = proposeRunProgress(leftover, [{ text: "新" }], { replaceOk: true })
+  assert.equal(ok.ok, true)
+  if (ok.ok) assert.equal(ok.progress.items[0]!.text, "新")
+})
+
+test("RUN_PROGRESS_PAGE_TOOLS covers TAB_LEASE plus extras, no read_page/drag", () => {
+  for (const n of TAB_LEASE_TOOLS) assert.ok(RUN_PROGRESS_PAGE_TOOLS.has(n), n)
+  for (const n of ["create_tab", "osascript_eval", "host_computer", "get_page_html", "dblclick", "fill_form", "drag_and_drop"]) {
+    assert.ok(RUN_PROGRESS_PAGE_TOOLS.has(n), n)
+  }
+  assert.equal(RUN_PROGRESS_PAGE_TOOLS.has("list_tabs"), false)
+  assert.equal(RUN_PROGRESS_PAGE_TOOLS.has("read_page"), false)
+  assert.equal(RUN_PROGRESS_PAGE_TOOLS.has("drag"), false)
+  const catalog = new Set(getAllToolDefinitions().map((t) => t.function.name))
+  for (const n of RUN_PROGRESS_PAGE_TOOLS) {
+    assert.ok(catalog.has(n) || TAB_LEASE_TOOLS.has(n), "unknown page tool " + n)
+  }
+})
+
+test("applyToolResult still ticks live:0 seed with exact click", () => {
+  const p = { items: [{ id: "live:0", text: "点", done: false, source: "seed" as const, tool: "click" }] }
+  const next = applyToolResult(p, { tool: "click", success: true })
+  assert.equal(next.items[0]!.done, true)
+})
+
+test("shouldBlockPageTool: click blocked until propose; list_tabs/worker/null not", () => {
+  assert.equal(shouldBlockPageTool({ toolName: "click", proposedThisRequest: false, runProgress: undefined }), true)
+  assert.equal(shouldBlockPageTool({ toolName: "list_tabs", proposedThisRequest: false, runProgress: undefined }), false)
+  assert.equal(shouldBlockPageTool({ toolName: "click", proposedThisRequest: false, agentRole: "worker", runProgress: undefined }), false)
+  assert.equal(shouldBlockPageTool({ toolName: "click", proposedThisRequest: false, runProgress: null }), false)
+  assert.equal(shouldBlockPageTool({ toolName: "click", proposedThisRequest: true, runProgress: undefined }), false)
+})
+
+test("run_progress_propose is catalog companion not L2 not outbound", () => {
+  const { COMPANION_TOOLS } = require("../src/bridge/companion-tools")
+  assert.ok(COMPANION_TOOLS.includes("run_progress_propose"))
+  const { L2_GATE_TOOLS } = require("../src/tool/l2-admission")
+  assert.equal(L2_GATE_TOOLS.includes("run_progress_propose"), false)
+  const src = readSrc("tool", "l2-admission.ts")
+  assert.doesNotMatch(src, /run_progress_propose/)
+  const { isOutboundAllowed } = require("../src/outbound-mcp/profile")
+  assert.equal(isOutboundAllowed("cmspark__run_progress_propose"), false)
+  const { WORKER_HARD_DENY } = require("../src/orchestrator/constants")
+  assert.ok(WORKER_HARD_DENY.has("run_progress_propose"))
+  assert.ok(getAllToolDefinitions().some((t) => t.function.name === "run_progress_propose"))
+})
+
+test("adapter prompt and gate source locks", () => {
+  const ad = readSrc("llm", "adapter.ts")
+  const baseStart = ad.indexOf("const basePrompt =")
+  const baseEnd = ad.indexOf("const builtPrompt", baseStart)
+  const base = ad.slice(baseStart, baseEnd)
+  assert.doesNotMatch(base, /run_progress_propose/)
+  assert.match(ad, /run_progress_propose/)
+  assert.match(ad, /runProgressHint/)
+  assert.match(ad, /shouldBlockPageTool/)
+  assert.match(ad, /PROPOSE_REQUIRED/)
+  assert.match(ad, /ALREADY_HAS_STEPS/)
+  assert.match(ad, /proposeDenied/)
+  assert.match(ad, /error_code === "PROPOSE_REQUIRED"/)
 })

@@ -108,7 +108,7 @@ export function wireDefaultOutboundHttpDispatcher(): {
 /** Build MCP server instance (testable without connecting transport). */
 export function createOutboundMcpServer(): Server {
   const server = new Server(
-    { name: "cmspark-outbound", version: "0.5.6" },
+    { name: "cmspark-outbound", version: "0.5.7" },
     { capabilities: { tools: {} } },
   )
 

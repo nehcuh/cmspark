@@ -32,6 +32,7 @@ import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
+import { proposeRunProgress } from "../threads/run-progress"
 
 export type CompanionDispatchRuntime = {
   getThreadManager: () => ThreadManager
@@ -101,6 +102,11 @@ export interface CompanionToolExecOptions {
    * killProcessTree so stop-dialog actually stops the host command.
    */
   signal?: AbortSignal
+  /**
+   * Overlay ACL (#265). From WS handshake via createToolExecutor, NEVER from
+   * a model-claimed surface field. Missing / summoner → SUMMONER_ACL deny.
+   */
+  handshakeSurface?: "summoner" | "tray"
 }
 
 export async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
@@ -1890,6 +1896,30 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         // value is computed; delete is idempotent.
         computerTaskAbort.delete(computerTaskId)
       }
+    }
+
+    case "run_progress_propose": {
+      if (execOpts?.handshakeSurface === "summoner" || execOpts?.handshakeSurface == null) {
+        return { success: false, error: "SUMMONER_ACL: run_progress_propose denied", data: { error_code: "SUMMONER_ACL" } }
+      }
+      const tid = typeof params.__thread_id === "string" ? params.__thread_id : ""
+      if (!tid) {
+        return { success: false, error: "thread required", data: { error_code: "THREAD_REQUIRED" } }
+      }
+      const th = threadManager.get(tid)
+      if (!th) {
+        return { success: false, error: "thread required", data: { error_code: "THREAD_REQUIRED" } }
+      }
+      if (th.agent_role === "worker") {
+        return { success: false, error: "workers cannot propose run_progress", data: { error_code: "WORKER_DENIED" } }
+      }
+      const decided = proposeRunProgress(th, params.items, { replaceOk: true })
+      if (!decided.ok) {
+        return { success: false, error: decided.error_code, data: { error_code: decided.error_code } }
+      }
+      const updated = threadManager.update(tid, { run_progress: decided.progress })
+      if (updated) execOpts?.broadcast?.({ type: "thread.updated", thread: updated })
+      return { success: true, data: { written: decided.progress.items.length } }
     }
     default:
       return { success: false, error: `Unknown companion tool: ${toolName}` }

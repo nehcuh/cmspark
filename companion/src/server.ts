@@ -670,6 +670,11 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     // P2: SoT is companion/src/bridge/companion-tools.ts
     if (isCompanionTool(toolName)) {
       try {
+        // #265: overlay ACL is handshake-only. Strip model-claimed surface so
+        // dispatch cannot be spoofed even if a future case reads params.surface.
+        if (toolName === "run_progress_propose") {
+          delete (finalParams as { surface?: unknown }).surface
+        }
         // Thread id already injected by adapter as __thread_id (computer-use precedent)
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
           // Propagate chat.abort / supersede so shell_exec can killProcessTree.
@@ -720,6 +725,11 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
             } catch {
               return sessionId
             }
+          })(),
+          handshakeSurface: (() => {
+            const st = getWsAuthState(ws)
+            if (!st) return undefined
+            return st.surface === "summoner" ? "summoner" : "tray"
           })(),
         })
         logToolFinish(toolCallId, toolName, startedAt, result)

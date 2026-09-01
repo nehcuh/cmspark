@@ -362,6 +362,14 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     domain: z.string().min(1).optional(),
   }),
   list_all_cookies: z.object({}).passthrough(),
+
+  // #265 live plan — items only; .strict() so surface/done cannot ride
+  run_progress_propose: z.object({
+    items: z.array(z.object({
+      text: z.string(),
+      tool: z.string().optional(),
+    })).min(1).max(8),
+  }).strict(),
 }
 
 /** Generic fallback: accept any record shape, no constraints. */

@@ -11,6 +11,7 @@ export const COMPANION_TOOLS = [
   "host_computer",
   "use_skill",
   "thread_recall",
+  "run_progress_propose",
   "skill_install",
   "record_experience",
   "workspace_list_dir",
