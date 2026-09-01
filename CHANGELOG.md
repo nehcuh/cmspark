@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+（无）
+
+## [0.5.7] — 2026-09-01
+
+当轮活计划：侧栏本则消息里页面工具前必须 `run_progress_propose`；shell allowlist W1e fail-closed；`run_progress` sticky-clear。文档活切点与包装 lockstep。
+
+### Added
+
+- **当轮活计划**：侧栏本则消息里页面工具前必须 `run_progress_propose`，聊天列出现可勾「本轮步骤」（不必等 H1）。[#265](https://github.com/nehcuh/cmspark/issues/265) / [#266](https://github.com/nehcuh/cmspark/pull/266)
+
 ### Security
 
 - **shell allowlist W1e（quote/join fail-closed）**：0.5.4 闭合的是执行旗标 *变体*（pwsh 前缀、`/c`、`=`、`.exe`、node `-p` 等），不是「判定 tokenizer ≠ `spawn({shell:true})` 引号语法」。本次：POSIX 相邻引号拼接（`"-"c` → `-c`）；旗标比对前去掉空引号并认 unquoted `\`；`tokenizeSimpleArgv` 失败改为 deny（删除空白 fallback 放行）。`policy=allowlist` + 裸解释器条目下，`bash '-c' … '*'`、`bash -""c`、`bash "-"c … X=1` 不再匹配。默认 `confirm_per_command` + L2 不变（非社区默认 RCE）。含 `*`/`?` 的 allowlist 命令（即便在引号内）改为 matcher deny；词中未闭合撇号（`echo don't`）同样 tokenize-null deny——需要 glob/query/撇号字面量的操作者用 `confirm_per_command`。
