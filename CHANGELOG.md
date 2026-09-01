@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 - **`context_window` 工厂默认 512000**：新装 Agent 工作预算，不是供应商窗口承诺。磁盘过小（`< 16000` / 非正）本轮按 **128000** 做预算，**不写** `config.json`。shrink 不再切出半截 JSON（`{"succes…`）。设置页 Save 在 companion `config.updated` 水合前禁用。512k 默认**不是**对已有 4000 磁盘文件的修复。
+- **F1 文案诚实（#268）**：活切点不再保证聊天列总有「本轮步骤」清单——页面工具前必须 propose；成功后才挂卡；模型放弃 / 纯问答则无卡。
 
 ## [0.5.7] — 2026-09-01
 
@@ -12,7 +13,7 @@
 
 ### Added
 
-- **当轮活计划**：侧栏本则消息里页面工具前必须 `run_progress_propose`，聊天列出现可勾「本轮步骤」（不必等 H1）。[#265](https://github.com/nehcuh/cmspark/issues/265) / [#266](https://github.com/nehcuh/cmspark/pull/266)
+- **当轮活计划**：页面工具前必须 `run_progress_propose`；成功后才挂「本轮步骤」卡（不必等 H1）。模型放弃 / 纯问答则无卡。[#265](https://github.com/nehcuh/cmspark/issues/265) / [#266](https://github.com/nehcuh/cmspark/pull/266)
 
 ### Security
 
