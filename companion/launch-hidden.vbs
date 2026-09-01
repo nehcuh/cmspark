@@ -19,19 +19,19 @@ If Not objFSO.FolderExists(strLogDir) Then
 End If
 
 ' --- Resolve launch command ---
-' Priority 1: SEA standalone exe (Node.js Single Executable Application)
-If objFSO.FileExists(strHere & "\cmspark-agent.exe") Then
-    strCmd = """" & strHere & "\cmspark-agent.exe" & """ tray"
-' Priority 2: Bundled node.exe + cmspark-agent.js (legacy package) with NODE_PATH
-ElseIf objFSO.FileExists(strHere & "\node.exe") And objFSO.FileExists(strHere & "\cmspark-agent.js") Then
+' Priority 1: Bundled node.exe + cmspark-agent.js (official zip; wins over leftover SEA)
+If objFSO.FileExists(strHere & "\node.exe") And objFSO.FileExists(strHere & "\cmspark-agent.js") Then
     strCmd = "cmd /c "" set NODE_PATH=" & strHere & " && """ & strHere & "\node.exe"" """ & strHere & "\cmspark-agent.js"" tray """
-' Priority 3: System node + local cmspark-agent.js with NODE_PATH
+' Priority 2: System node + local cmspark-agent.js with NODE_PATH
 ElseIf objFSO.FileExists(strHere & "\cmspark-agent.js") Then
     strCmd = "cmd /c "" set NODE_PATH=" & strHere & " && node """ & strHere & "\cmspark-agent.js"" tray """
+' Priority 3: SEA standalone exe last resort (portable SEA-only trees)
+ElseIf objFSO.FileExists(strHere & "\cmspark-agent.exe") Then
+    strCmd = """" & strHere & "\cmspark-agent.exe" & """ tray"
 Else
     Dim ts
     Set ts = objFSO.OpenTextFile(strLogFile, 8, True)
-    ts.WriteLine Now & " [ERROR] Neither cmspark-agent.exe nor cmspark-agent.js found in " & strHere
+    ts.WriteLine Now & " [ERROR] Neither cmspark-agent.js nor cmspark-agent.exe found in " & strHere
     ts.Close
     WScript.Quit 1
 End If

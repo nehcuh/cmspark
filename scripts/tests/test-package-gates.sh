@@ -558,6 +558,77 @@ assert_file_lacks "${PACKAGE_SH}" 'tinyclick-worker missing' \
 assert_file_has "${PS1}" 'qwen-vl-worker' \
   "build-windows-exe.ps1 stages qwen-vl-worker.py"
 
+# --- Static: official zip launchers prefer node.exe+js over leftover SEA (B2 / #268)
+# Prior dynamic blocks leave set -e on; keep this section set +e so order greps can fail.
+set +e
+echo "[static] launchers prefer node.exe+cmspark-agent.js before leftover SEA"
+LAUNCH_VBS="${ROOT}/companion/launch-hidden.vbs"
+LAUNCH_BAT="${ROOT}/companion/launch.bat"
+README_TXT="${ROOT}/companion/README.txt"
+assert_file_exists "${LAUNCH_VBS}" "launch-hidden.vbs present"
+assert_file_exists "${LAUNCH_BAT}" "launch.bat present"
+assert_file_exists "${README_TXT}" "companion/README.txt present"
+
+# VBS: bundled node.exe + cmspark-agent.js FileExists must precede any cmspark-agent.exe FileExists
+VBS_NODE_LINE="$(
+  grep -nE 'FileExists\(.*\\node\.exe\"\).*FileExists\(.*\\cmspark-agent\.js\"\)' \
+    "${LAUNCH_VBS}" | head -1 | cut -d: -f1
+)"
+VBS_EXE_LINE="$(
+  grep -nE 'FileExists\(.*\\cmspark-agent\.exe\"\)' "${LAUNCH_VBS}" | head -1 | cut -d: -f1
+)"
+if [ -n "${VBS_NODE_LINE}" ] && [ -n "${VBS_EXE_LINE}" ] \
+  && [ "${VBS_NODE_LINE}" -lt "${VBS_EXE_LINE}" ]; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: launch-hidden.vbs must check node.exe+cmspark-agent.js before cmspark-agent.exe (node_line=${VBS_NODE_LINE:-missing} exe_line=${VBS_EXE_LINE:-missing})" >&2
+fi
+
+# BAT: Priority 1 is node.exe (bundled), not SEA exe; node exist-check before exe
+assert_file_has "${LAUNCH_BAT}" 'Priority 1:.*[Nn]ode' \
+  "launch.bat Priority 1 is bundled node (not SEA)"
+BAT_NODE_LINE="$(
+  grep -nE 'if exist "node\.exe"' "${LAUNCH_BAT}" | head -1 | cut -d: -f1
+)"
+BAT_EXE_LINE="$(
+  grep -nE 'if exist "cmspark-agent\.exe"' "${LAUNCH_BAT}" | head -1 | cut -d: -f1
+)"
+if [ -n "${BAT_NODE_LINE}" ] && [ -n "${BAT_EXE_LINE}" ] \
+  && [ "${BAT_NODE_LINE}" -lt "${BAT_EXE_LINE}" ]; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: launch.bat must prefer if exist \"node.exe\" before if exist \"cmspark-agent.exe\" (node_line=${BAT_NODE_LINE:-missing} exe_line=${BAT_EXE_LINE:-missing})" >&2
+fi
+
+# Port already listening → skip spawn; do not taskkill leftover SEA
+assert_file_has "${LAUNCH_BAT}" 'Already running on port 23401' \
+  "launch.bat skips spawn when 23401 LISTENING"
+assert_file_lacks "${LAUNCH_BAT}" 'taskkill' \
+  "launch.bat must not taskkill leftover SEA when port is busy"
+
+# Error / FAQ recovery must not lead with cmspark-agent.exe tray as primary path
+assert_file_lacks "${LAUNCH_BAT}" 'Try: cmspark-agent\.exe tray' \
+  "launch.bat error copy must not lead with cmspark-agent.exe tray"
+assert_file_has "${LAUNCH_BAT}" 'Try: node\.exe cmspark-agent\.js tray' \
+  "launch.bat error copy prefers node.exe cmspark-agent.js tray"
+# README FAQ: first start instruction must not be cmspark-agent.exe tray
+FIRST_START="$(
+  grep -nE 'node\.exe cmspark-agent\.js tray|wscript.*launch-hidden\.vbs|cmspark-agent\.exe tray' \
+    "${README_TXT}" | head -1
+)"
+if echo "${FIRST_START}" | grep -qE 'node\.exe cmspark-agent\.js tray|wscript.*launch-hidden\.vbs'; then
+  PASS=$((PASS + 1))
+elif [ -z "${FIRST_START}" ]; then
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: README.txt FAQ should document node.exe cmspark-agent.js tray or wscript launch-hidden.vbs" >&2
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: README.txt FAQ must not lead with cmspark-agent.exe tray as first start instruction (got: ${FIRST_START})" >&2
+fi
+set -e
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 if [ "${FAIL}" -ne 0 ]; then

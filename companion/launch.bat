@@ -6,37 +6,44 @@ cd /d "%~dp0"
 echo [launch] Current dir: %CD%
 echo [launch] Resolving launch method...
 
-:: Priority 1: SEA standalone exe
+:: Priority 1: bundled node.exe + cmspark-agent.js (official zip; wins over leftover SEA)
+set "NODE_CMD="
+if exist "node.exe" (
+    if exist "cmspark-agent.js" (
+        echo [launch] Found node.exe + cmspark-agent.js
+        set "NODE_CMD=node.exe"
+    )
+)
+
+:: Priority 2: system node + local cmspark-agent.js
+if "!NODE_CMD!"=="" (
+    if exist "cmspark-agent.js" (
+        node --version >nul 2>nul
+        if !errorlevel! equ 0 (
+            echo [launch] system node + cmspark-agent.js
+            set "NODE_CMD=node"
+        )
+    )
+)
+
+if not "!NODE_CMD!"=="" (
+    set "LAUNCH_EXE=!NODE_CMD!"
+    set "LAUNCH_ARGS=cmspark-agent.js tray"
+    echo [launch] NODE_CMD=!NODE_CMD!
+    goto :do_launch
+)
+
+:: Priority 3: SEA standalone exe last resort
 if exist "cmspark-agent.exe" (
-    echo [launch] Found cmspark-agent.exe (SEA mode)
+    echo [launch] Found cmspark-agent.exe (SEA last resort)
     set "LAUNCH_EXE=cmspark-agent.exe"
     set "LAUNCH_ARGS=tray"
     goto :do_launch
 )
 
-:: Priority 2: bundled node.exe + cmspark-agent.js
-set "NODE_CMD="
-if exist "node.exe" (
-    echo [launch] node.exe found
-    set "NODE_CMD=node.exe"
-) else (
-    node --version >nul 2>nul
-    if !errorlevel! equ 0 (
-        echo [launch] system node found
-        set "NODE_CMD=node"
-    )
-)
-
-if "!NODE_CMD!"=="" (
-    echo [ERROR] Neither cmspark-agent.exe nor Node.js found
-    pause
-    exit /b 1
-)
-
-set "LAUNCH_EXE=!NODE_CMD!"
-set "LAUNCH_ARGS=cmspark-agent.js tray"
-
-echo [launch] NODE_CMD=!NODE_CMD!
+echo [ERROR] Neither cmspark-agent.js / Node.js nor cmspark-agent.exe found
+pause
+exit /b 1
 
 :do_launch
 :: Already listening on Companion port?
@@ -46,7 +53,7 @@ if !errorlevel! equ 0 (
     goto :success
 )
 
-:: Launch via hidden VBS launcher (delegates to cmspark-agent.exe or node fallback)
+:: Launch via hidden VBS launcher (delegates to node bundle or SEA fallback)
 if exist "%~dp0launch-hidden.vbs" (
     echo [launch] Launching via launch-hidden.vbs...
     wscript.exe "%~dp0launch-hidden.vbs"
@@ -70,8 +77,9 @@ echo   Crash / diagnostics (if any):
 echo     %USERPROFILE%\.cmspark-agent\logs\crash.log
 echo     %USERPROFILE%\.cmspark-agent\logs\vbs-launcher.log
 echo     %USERPROFILE%\.cmspark-agent\logs\companion-*.log
-echo   Try: cmspark-agent.exe tray   (visible console)
-echo   Or reinstall / re-run after fixing SEA/binaries.
+echo   Try: node.exe cmspark-agent.js tray   (visible console)
+echo   Or:  wscript launch-hidden.vbs
+echo   Or reinstall / re-run after fixing binaries.
 pause
 exit /b 1
 
