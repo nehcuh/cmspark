@@ -149,6 +149,7 @@
 ### `xattr -cr` 换装会撞 SIP `com.apple.provenance`（2026-08-31 · S102）
 - **坑**：项目旧纪律写「ditto 后 `xattr -cr`」。whisper / libggml 是 `r-xr-xr-x` 且带 SIP 保护的 `com.apple.provenance`，`-cr` 对它们 `Permission denied`，脚本在 `set -e` 下中断。
 - **纪律**：(1) `daemon stop` → `osascript` quit → **按 PID 逐个** `kill -9`（整表 `kill $(ps…)` 不可靠）→ `ditto` 覆盖 `/Applications/CMspark.app`；(2) 只剥 Gatekeeper：`xattr -dr com.apple.quarantine`；(3) `codesign --verify` + A6 单 CDHash；(4) `open -a CMspark`。本机换装**不要**留 `~/CMspark.app.bak-*`（用户明确不要备份）。shell 里 `du` 可能是 `dust` 别名，尺寸用 `/usr/bin/du`。
+- **Skill**：`docs/skills/cmspark-macos-app-replace/SKILL.md`
 - **4 行 case**：动作=0.5.6 DMG 换 0.5.3；失败=`xattr -cr` 权限错；归责=SIP provenance + 只读 Mach-O；保护=只剥 quarantine、按 PID 杀残进程
 
 ### Overlay 会议 45s 窗 = 「没有实时转写」（2026-08-28）
