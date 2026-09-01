@@ -26,6 +26,7 @@ export {
   executeMcpTool,
   executeMcpMetaTool,
   enhanceMcpError,
+  gateUnofferedMcpTool,
   DESTRUCTIVE_MCP_TOOL_PATTERN,
   type McpDispatchRuntime,
 } from "./dispatch.js"
