@@ -88,6 +88,9 @@ function resetCapture() {
 async function runChatCreate(opts: { message: string; executeTool: (id: string, name: string, p: any) => Promise<any>; skipUserMessage?: boolean; threadId: string }) {
   const manager = new ThreadManager()
   const thread = manager.create("m2", opts.threadId)
+  // Sticky-clear so wrap/truncate isolate wrap, not the live-plan page-tool gate
+  // (spec: run_progress === null skips shouldBlockPageTool). Gate itself unchanged.
+  manager.update(thread.id, { run_progress: null })
   await chatCreate({
     threadId: thread.id,
     message: opts.message,
