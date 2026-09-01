@@ -424,6 +424,33 @@ export function setupBroadcastAuthForTests(
   }
 }
 
+/**
+ * Loopback accept order (B3 / #268): construct WSS (verifyClient) on the HTTP
+ * server, listen, then start MCP without awaiting start in front of listen.
+ * MCP start hang must not delay /healthz or WS upgrade. Failures stay warn-only.
+ */
+export type AttachWssListenThenStartMcpOpts = {
+  httpServer: http.Server
+  port: number
+  host?: string
+  createWss: (httpServer: http.Server) => WebSocketServer
+  startMcp: () => Promise<unknown>
+}
+
+export function attachWssListenThenStartMcp(opts: AttachWssListenThenStartMcpOpts): WebSocketServer {
+  const wssLocal = opts.createWss(opts.httpServer)
+  opts.httpServer.listen(opts.port, opts.host ?? "127.0.0.1")
+  try {
+    const starting = opts.startMcp()
+    void Promise.resolve(starting).catch((err: any) => {
+      logger.warn("mcp.manager.start_failed", { error: err?.message || String(err) })
+    })
+  } catch (err: any) {
+    logger.warn("mcp.manager.start_failed", { error: err?.message || String(err) })
+  }
+  return wssLocal
+}
+
 export async function startServer(options: { onShutdown?: () => void } = {}) {
   // Drop file-in-PATH / empty PATH before any tool spawn (osascript, shell_exec, …).
   // Packaged .app has been observed with PATH=…/cmspark-agent.js → spawn ENOTDIR.
@@ -697,47 +724,14 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       servers: redactMcpServersForBroadcast(mcpManager.listServers()),
     })
   })
-  try {
-    await mcpManager.start(config.mcp)
-  } catch (err: any) {
-    logger.warn("mcp.manager.start_failed", { error: err?.message || String(err) })
-  }
 
   // L12: share one loopback HTTP server between the healthz liveness probe and the
   // WebSocket upgrade. This is the ws-recommended pattern and keeps the loopback-only
   // trust boundary unchanged. We listen explicitly so we can close the httpServer on
   // shutdown (M9 regression guard).
+  // B3: construct WSS+verifyClient, then listen, then start MCP without awaiting
+  // start in front of listen — pairing /healthz must not wait on MCP connect.
   const httpServer = http.createServer(handleHealthzRequest)
-  httpServer.listen(port, "127.0.0.1")
-
-  wss = new WebSocketServer({
-    server: httpServer,
-    // Reject frames above MAX_WS_MESSAGE_SIZE before full buffering (handler also checks).
-    maxPayload: MAX_WS_MESSAGE_SIZE,
-    // P0-2 (audit C1): reject non-extension origins to close the web-page attack vector —
-    // HTTP pages / file:// / other browser extensions can otherwise open a loopback WS and
-    // drive the agent (config.set, list_all_cookies, evaluate, ...). Browsers set the WS Origin
-    // from the page/worker origin and page JS cannot forge it, so this is robust against web
-    // origins. MV3 Service Worker / popup / side panel all send Origin: chrome-extension://<id>,
-    // so legitimate extension connections are not blocked.
-    // NOTE: this does NOT stop a local process — a local attacker can freely set the Origin
-    // header (curl -H "Origin: chrome-extension://..."). The local-process vector needs a
-    // shared-secret handshake (P2 / P0-2B) and is intentionally out of P0 scope.
-    verifyClient: (info, cb) => {
-      const origin = info.origin
-      const ok = isAllowedWsOrigin(origin)
-      if (!ok) {
-        logger.warn("ws.rejected_origin", {
-          origin: origin || "<none>",
-          remote: info.req.socket.remoteAddress,
-        })
-        cb(false, 403, "Forbidden")
-      } else {
-        cb(true)
-      }
-    },
-  })
-
   httpServer.on("listening", () => {
     console.log(`[cmspark-agent] Companion started on ws://127.0.0.1:${port}`)
     logger.info("server.listening", { port })
@@ -766,6 +760,40 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         })()
       }, 2500)
     }
+  })
+
+  wss = attachWssListenThenStartMcp({
+    httpServer,
+    port,
+    createWss: (server) =>
+      new WebSocketServer({
+        server,
+        // Reject frames above MAX_WS_MESSAGE_SIZE before full buffering (handler also checks).
+        maxPayload: MAX_WS_MESSAGE_SIZE,
+        // P0-2 (audit C1): reject non-extension origins to close the web-page attack vector —
+        // HTTP pages / file:// / other browser extensions can otherwise open a loopback WS and
+        // drive the agent (config.set, list_all_cookies, evaluate, ...). Browsers set the WS Origin
+        // from the page/worker origin and page JS cannot forge it, so this is robust against web
+        // origins. MV3 Service Worker / popup / side panel all send Origin: chrome-extension://<id>,
+        // so legitimate extension connections are not blocked.
+        // NOTE: this does NOT stop a local process — a local attacker can freely set the Origin
+        // header (curl -H "Origin: chrome-extension://..."). The local-process vector needs a
+        // shared-secret handshake (P2 / P0-2B) and is intentionally out of P0 scope.
+        verifyClient: (info, cb) => {
+          const origin = info.origin
+          const ok = isAllowedWsOrigin(origin)
+          if (!ok) {
+            logger.warn("ws.rejected_origin", {
+              origin: origin || "<none>",
+              remote: info.req.socket.remoteAddress,
+            })
+            cb(false, 403, "Forbidden")
+          } else {
+            cb(true)
+          }
+        },
+      }),
+    startMcp: () => mcpManager.start(config.mcp),
   })
 
   // Broadcast config changes to AUTHENTICATED WebSocket clients only + apply MCP diff.

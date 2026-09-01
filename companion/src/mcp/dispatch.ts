@@ -153,6 +153,25 @@ export async function confirmChannel(originatingWs: WebSocket): Promise<
 }
 
 /**
+ * This-turn offered-catalog gate (B3 / #268). mcp__* names that were not in the
+ * snapshot after filterToolsForSurface must not execute even if a later
+ * reaggregate makes resolveToolName succeed (listen-first empty catalog + rule 10).
+ * `offeredToolNames == null` skips the gate (direct/legacy callers).
+ */
+export function gateUnofferedMcpTool(
+  toolName: string,
+  offeredToolNames: ReadonlySet<string> | undefined | null,
+): { success: false; error: string } | null {
+  if (typeof toolName !== "string" || !toolName.startsWith("mcp__")) return null
+  if (offeredToolNames == null) return null
+  if (offeredToolNames.has(toolName)) return null
+  return {
+    success: false,
+    error: `MCP tool ${toolName} was not in this turn's offered catalog (tool_not_offered)`,
+  }
+}
+
+/**
  * Execute an MCP namespaced tool (mcp__<server>__<tool>). Enforces the per-server
  * trust_level policy: manual = always prompt, first-use = prompt once per session,
  * trusted = never prompt for non-critical. Critical caps (file-write/exec/…) still
@@ -165,8 +184,11 @@ export async function executeMcpTool(
   ws: WebSocket,
   startedAt: number,
   signal?: AbortSignal,
+  offeredToolNames?: ReadonlySet<string>,
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   void startedAt // retained for call-site parity with pre-split createToolExecutor
+  const notOffered = gateUnofferedMcpTool(toolName, offeredToolNames)
+  if (notOffered) return notOffered
   const { getThreadManager, securityConfirmations, broadcastToClients } = requireRt()
   const manager = getMcpManager()
   const route = manager.resolveToolName(toolName)

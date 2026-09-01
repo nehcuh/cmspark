@@ -12,7 +12,7 @@ import { logger } from "../logger"
 import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
 import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
 import { effectiveContextWindow, getConfig, type LlmConfig } from "../config"
-import { getMcpManager } from "../mcp"
+import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
 import type { AppsConfig } from "../apps/types"
 import {
   createProvider,
@@ -377,7 +377,7 @@ export async function chatCreate(params: ChatCreateParams) {
   }
   const contextWindow = cw.effective
   const executeToolInner = params.executeTool
-  const executeTool: ChatCreateParams["executeTool"] =
+  let executeTool: ChatCreateParams["executeTool"] =
     params.surface === "summoner"
       ? async (toolCallId, toolName, execParams, execSignal) => {
           if (isSummonerNativeExecutorDenied(toolName)) {
@@ -681,6 +681,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     tools = tools.filter((t) => threadManager.isToolAllowed(threadId, t.function.name))
   }
   tools = filterToolsForSurface(tools, params.surface)
+  const offeredToolNames = new Set(tools.map((t) => t.function.name))
+  const executeToolBeforeCatalog = executeTool
+  executeTool = async (toolCallId, toolName, execParams, execSignal) => {
+    const gated = gateUnofferedMcpTool(toolName, offeredToolNames)
+    if (gated) return gated
+    return executeToolBeforeCatalog(toolCallId, toolName, execParams, execSignal)
+  }
   let proposedThisRequest = false
 
   // M1/M2 runtime context budget (request-only; disk untouched).
