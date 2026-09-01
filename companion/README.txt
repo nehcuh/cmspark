@@ -50,11 +50,13 @@ A: Companion 未起来。双击 launch.bat；若报错看
    %USERPROFILE%\.cmspark-agent\logs\crash.log
 
 Q: launch.bat 提示 port 23401 not listening
-A: 进程启动失败（SEA/依赖）。在包目录运行: cmspark-agent.exe tray
+A: 进程启动失败。在包目录运行: node.exe cmspark-agent.js tray
+   或: wscript launch-hidden.vbs
    查看控制台错误与 logs\crash.log
 
 Q: 端口 23401 被占用
-A: 任务管理器结束 cmspark-agent.exe 后重试
+A: 已有 Companion 在跑则无需再启；若需重启，任务管理器结束
+   node.exe / cmspark-agent 相关进程后重试（不要只杀 leftover SEA）
 
 Q: 如何更新？
 A: 下载新版本 zip，解压覆盖所有文件，重启 CMspark 即可
