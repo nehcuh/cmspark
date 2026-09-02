@@ -1,6 +1,6 @@
 # CMspark 文档导航
 
-> 产品 **0.5.7** · 入口 README：[仓库根 README.md](../README.md)  
+> 产品 **0.5.8** · 入口 README：[仓库根 README.md](../README.md)  
 > 本页只做**导航**，不搬运正文。过程件已于 **Phase 4** 迁入 [`archive/2026-07/`](archive/2026-07/)；`user/` 物理搬家仍可选（见 [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)）。
 
 ---
@@ -42,7 +42,7 @@
 |------|------|
 | [architecture.md](architecture.md) | 活架构：双层拓扑 + 桌面面、MCP/CU/Host/编排/Board/Packs |
 | **[ADR-020 能力三轴](adr/020-capability-model-three-axes.md)** | **Surface · Composition · Autonomy** 本体（能力叠加与防「杂」纪律） |
-| [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.5.7** 对齐；扩展目标带轴标注） |
+| [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.5.8** 对齐；扩展目标带轴标注） |
 | [../PRODUCT.md](../PRODUCT.md) | 产品一句话 / 四面（Capture·Operate·Confirm·租手）；家 = 已登录 Chrome + 硬闸 |
 | [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md) | **形态深化 SoT**（定位、文案合同、L8、五分钟租手、切片 DoD） |
 | [2026-08-27-post-227-status.md](superpowers/specs/2026-08-27-post-227-status.md) | **SNAPSHOT** 0.5.3 / #227（T1 已记分；**不是**活状态） |
@@ -168,5 +168,5 @@
 ## 维护提示
 
 - 新功能 PR：更新根 README 能力矩阵一行 + 本导航表（若新增用户文档）+ 必要时 ADR + [CONTRIBUTING 文档 checklist](../CONTRIBUTING.md#文档-checklist功能-pr-合并前)。  
-- 事实以 **0.5.7 代码**（`companion`/`chrome-extension` `package.json`）与 live ADR 为准；过程稿冲突时以 ADR / architecture / 用户指南为准。  
+- 事实以 **0.5.8 代码**（`companion`/`chrome-extension` `package.json`）与 live ADR 为准；过程稿冲突时以 ADR / architecture / 用户指南为准。  
 - 详细 DoD 与分阶段： [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)。

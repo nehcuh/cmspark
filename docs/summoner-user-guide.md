@@ -1,6 +1,6 @@
 # 召唤器（Capture 卡）— 用户指南
 
-> 产品 **0.5.7** · 产品句：[PRODUCT.md](../PRODUCT.md) · 设计：[DESIGN.md](DESIGN.md)  
+> 产品 **0.5.8** · 产品句：[PRODUCT.md](../PRODUCT.md) · 设计：[DESIGN.md](DESIGN.md)  
 > 听写/会议细节：[meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) · 外部热键：[summoner-launcher-plugins.md](summoner-launcher-plugins.md)
 
 ### 能力坐标
