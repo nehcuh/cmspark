@@ -47,7 +47,7 @@ import {
 import { listPendingToolsForThread } from "./ws/tool-forward"
 
 import { parseFile } from "./file-parser"
-import type { FileParseResult } from "./file-parser"
+import type { FileParseResponse, FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
 import { resolveNativeVision, visionConfigForAnalyze } from "./llm/likely-multimodal"
 import {
@@ -375,6 +375,30 @@ function isDrainGateError(frame: unknown): boolean {
   return t === "error" || t === "chat.error"
 }
 
+const KNOWLEDGE_PARSE_TIMEOUT_MS = 30000
+
+/**
+ * #270: parseFile can hang indefinitely on malformed office files
+ * (officeparser.convert never settling). Bound it with the same 30s
+ * Promise.race pattern the chat attachment path uses (file.upload below), so
+ * knowledge.preview / knowledge.import_directory return an honest error frame
+ * instead of leaving the side panel loading forever. Exported for tests.
+ */
+export function parseFileBounded(
+  buffer: Buffer,
+  name: string,
+  mime: string,
+  timeoutMs = KNOWLEDGE_PARSE_TIMEOUT_MS,
+  parseFn: typeof parseFile = parseFile,
+): Promise<FileParseResponse> {
+  return Promise.race([
+    parseFn(buffer, name, mime),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`文件 "${name}" 解析超时 (${Math.round(timeoutMs / 1000)}s)`)), timeoutMs)
+    ),
+  ])
+}
+
 async function loadKnowledgePayload(rest: Record<string, any>): Promise<
   { text: string; fallback: string } | { error: string }
 > {
@@ -382,7 +406,12 @@ async function loadKnowledgePayload(rest: Record<string, any>): Promise<
     const { name, content } = rest.file
     if (!name || !content) return { error: "knowledge file requires 'name' and 'content'" }
     const buffer = Buffer.from(String(content), "base64")
-    const parsed = await parseFile(buffer, String(name), "application/octet-stream")
+    let parsed: FileParseResponse
+    try {
+      parsed = await parseFileBounded(buffer, String(name), "application/octet-stream")
+    } catch (parseErr: any) {
+      return { error: parseErr?.message || `文件 "${name}" 解析失败` }
+    }
     if (!parsed.success) return { error: parsed.error }
     return { text: parsed.text, fallback: String(name).replace(/\.[^.]+$/, "") }
   }
@@ -2844,7 +2873,10 @@ export async function handleMessage(
                 imported++
               } else {
                 const buffer = fs.readFileSync(full)
-                const parsed = await parseFile(buffer, entry.name, "application/octet-stream")
+                // #270: same 30s bound as loadKnowledgePayload — one hanging
+                // office file must not stall the whole folder import; the
+                // surrounding catch counts it as failed.
+                const parsed = await parseFileBounded(buffer, entry.name, "application/octet-stream")
                 if (parsed.success) {
                   skillEngine.importKnowledge(parsed.text, baseName, relPath)
                   imported++

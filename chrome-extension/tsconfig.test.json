@@ -23,6 +23,7 @@
     "src/sidepanel/utils/image-compose.ts",
     "src/sidepanel/utils/upload-send.ts",
     "src/sidepanel/utils/knowledge-save.ts",
+    "src/sidepanel/utils/knowledge-preview.ts",
     "src/utils/temp-message-id.ts",
     "src/utils/config.ts",
     "src/sidepanel/utils/context-window-copy.ts",

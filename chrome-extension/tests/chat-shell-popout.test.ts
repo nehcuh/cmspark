@@ -37,7 +37,7 @@ test("useWebSocket ignores overlay.shell.open echo and toasts OVERLAY_SHELL_ err
   assert.match(ws, /msg\.type === ["']overlay\.shell\.open["']/)
   const overlayBlock = ws.slice(
     ws.indexOf('case "overlay.shell.accepted"'),
-    ws.indexOf("/knowledge|预览|parseFile|fetch knowledge/"),
+    ws.indexOf("knowledgePreviewErrorText(msg)"),
   )
   assert.match(overlayBlock, /OVERLAY_SHELL_/)
   assert.match(overlayBlock, /cmspark:toast/)

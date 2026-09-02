@@ -9,6 +9,10 @@ import {
   KNOWLEDGE_TRUNCATED_BODY_SAVE_COPY,
   buildKnowledgeUpdateMessage,
 } from "../utils/knowledge-save"
+import {
+  knowledgePreviewSendFailureText,
+  newKnowledgePreviewRequestId,
+} from "../utils/knowledge-preview"
 
 export function KnowledgeSubPanel() {
   const { state, dispatch } = useAgentStore()
@@ -234,8 +238,13 @@ export function KnowledgeSubPanel() {
               const slice = bytes.subarray(i, Math.min(i + CHUNK, bytes.length))
               base64 += btoa(String.fromCharCode.apply(null, Array.from(slice) as unknown as number[]))
             }
+            // #270: correlate the preview request with a unique id so the
+            // companion reply/error routes back to THIS modal, and surface a
+            // background send failure ({ok:false}) instead of spinning forever.
+            const requestId = newKnowledgePreviewRequestId()
             dispatch({
               type: "SET_KNOWLEDGE_PREVIEW",
+              pendingId: requestId,
               preview: {
                 title: file.name.replace(/\.[^.]+$/, ""),
                 description: "",
@@ -246,7 +255,23 @@ export function KnowledgeSubPanel() {
             })
             chrome.runtime.sendMessage({
               type: "knowledge.preview",
+              id: requestId,
               file: { name: file.name, content: base64 },
+            }).then((resp: unknown) => {
+              const failure = knowledgePreviewSendFailureText(resp)
+              if (failure) {
+                dispatch({
+                  type: "SET_KNOWLEDGE_PREVIEW",
+                  replyId: requestId,
+                  preview: { preview: `预览失败：${failure}` },
+                })
+              }
+            }).catch(() => {
+              dispatch({
+                type: "SET_KNOWLEDGE_PREVIEW",
+                replyId: requestId,
+                preview: { preview: "预览失败：扩展后台未响应，请重载扩展后重试" },
+              })
             })
             imported += 1
             queue.length = 0
@@ -275,8 +300,10 @@ export function KnowledgeSubPanel() {
   const handleUrlImport = () => {
     if (importUrl.trim()) {
       showStatus("正在预览 URL…")
+      const requestId = newKnowledgePreviewRequestId()
       dispatch({
         type: "SET_KNOWLEDGE_PREVIEW",
+        pendingId: requestId,
         preview: {
           title: "",
           description: "",
@@ -285,7 +312,24 @@ export function KnowledgeSubPanel() {
           payload: { url: importUrl.trim() },
         },
       })
-      chrome.runtime.sendMessage({ type: "knowledge.preview", url: importUrl.trim() })
+      chrome.runtime.sendMessage({ type: "knowledge.preview", id: requestId, url: importUrl.trim() })
+        .then((resp: unknown) => {
+          const failure = knowledgePreviewSendFailureText(resp)
+          if (failure) {
+            dispatch({
+              type: "SET_KNOWLEDGE_PREVIEW",
+              replyId: requestId,
+              preview: { preview: `预览失败：${failure}` },
+            })
+          }
+        })
+        .catch(() => {
+          dispatch({
+            type: "SET_KNOWLEDGE_PREVIEW",
+            replyId: requestId,
+            preview: { preview: "预览失败：扩展后台未响应，请重载扩展后重试" },
+          })
+        })
       setImportUrl("")
       setShowUrlImport(false)
     }
