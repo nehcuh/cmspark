@@ -585,6 +585,19 @@ else
   echo "  FAIL: launch-hidden.vbs must check node.exe+cmspark-agent.js before cmspark-agent.exe (node_line=${VBS_NODE_LINE:-missing} exe_line=${VBS_EXE_LINE:-missing})" >&2
 fi
 
+# VBS Priority 2 (js path) must probe for a usable system node before choosing it,
+# otherwise a missing bundled node.exe + no PATH node silently no-starts (leftover SEA unreachable)
+# The probe must be NESTED inside the js FileExists branch: VBScript And does not short-circuit,
+# so a top-level `... And HasSystemNode()` would probe even on SEA-only trees (hanging node shim).
+assert_file_has "${LAUNCH_VBS}" '^\s*If HasSystemNode\(\) Then' \
+  "launch-hidden.vbs Priority 2 probes for system node before choosing js path"
+# Pin the probe BODY, not just the call site: it must run node --version with waitOnReturn=True
+assert_file_has "${LAUNCH_VBS}" '^\s*intProbe = .*node --version.*True\)' \
+  "launch-hidden.vbs HasSystemNode body probes node --version with waitOnReturn=True"
+# Pin the return wiring: a gutted `HasSystemNode = True` must fail the gate
+assert_file_has "${LAUNCH_VBS}" '^\s*HasSystemNode = \(intProbe = 0\)' \
+  "launch-hidden.vbs HasSystemNode returns the probe exit-code result"
+
 # BAT: Priority 1 is node.exe (bundled), not SEA exe; node exist-check before exe
 assert_file_has "${LAUNCH_BAT}" 'Priority 1:.*[Nn]ode' \
   "launch.bat Priority 1 is bundled node (not SEA)"

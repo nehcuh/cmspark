@@ -41,7 +41,13 @@ if exist "cmspark-agent.exe" (
     goto :do_launch
 )
 
-echo [ERROR] Neither cmspark-agent.js / Node.js nor cmspark-agent.exe found
+if exist "cmspark-agent.js" (
+    echo [ERROR] cmspark-agent.js found but no Node.js runtime available.
+    echo   Restore the bundled node.exe ^(re-extract the zip / check antivirus quarantine^)
+    echo   or install Node.js from https://nodejs.org/
+) else (
+    echo [ERROR] Neither cmspark-agent.js / Node.js nor cmspark-agent.exe found
+)
 pause
 exit /b 1
 

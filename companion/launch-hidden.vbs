@@ -23,15 +23,30 @@ End If
 If objFSO.FileExists(strHere & "\node.exe") And objFSO.FileExists(strHere & "\cmspark-agent.js") Then
     strCmd = "cmd /c "" set NODE_PATH=" & strHere & " && """ & strHere & "\node.exe"" """ & strHere & "\cmspark-agent.js"" tray """
 ' Priority 2: System node + local cmspark-agent.js with NODE_PATH
+' (And does not short-circuit — nest the probe so it only runs when the js file exists)
 ElseIf objFSO.FileExists(strHere & "\cmspark-agent.js") Then
-    strCmd = "cmd /c "" set NODE_PATH=" & strHere & " && node """ & strHere & "\cmspark-agent.js"" tray """
+    If HasSystemNode() Then
+        strCmd = "cmd /c "" set NODE_PATH=" & strHere & " && node """ & strHere & "\cmspark-agent.js"" tray """
+    ' Priority 3 fallback: no usable node, but a leftover SEA may still exist
+    ElseIf objFSO.FileExists(strHere & "\cmspark-agent.exe") Then
+        strCmd = """" & strHere & "\cmspark-agent.exe" & """ tray"
+    Else
+        Set ts = objFSO.OpenTextFile(strLogFile, 8, True)
+        ts.WriteLine Now & " [ERROR] cmspark-agent.js found but no usable node runtime (restore bundled node.exe or install Node.js); no cmspark-agent.exe fallback in " & strHere
+        ts.Close
+        WScript.Quit 1
+    End If
 ' Priority 3: SEA standalone exe last resort (portable SEA-only trees)
 ElseIf objFSO.FileExists(strHere & "\cmspark-agent.exe") Then
     strCmd = """" & strHere & "\cmspark-agent.exe" & """ tray"
 Else
     Dim ts
     Set ts = objFSO.OpenTextFile(strLogFile, 8, True)
-    ts.WriteLine Now & " [ERROR] Neither cmspark-agent.js nor cmspark-agent.exe found in " & strHere
+    If objFSO.FileExists(strHere & "\cmspark-agent.js") Then
+        ts.WriteLine Now & " [ERROR] cmspark-agent.js found but no usable node runtime (restore bundled node.exe or install Node.js); no cmspark-agent.exe fallback in " & strHere
+    Else
+        ts.WriteLine Now & " [ERROR] Neither cmspark-agent.js nor cmspark-agent.exe found in " & strHere
+    End If
     ts.Close
     WScript.Quit 1
 End If
@@ -46,3 +61,13 @@ If intRet <> 0 Then
     ts.Close
     WScript.Quit intRet
 End If
+
+' Probe for a usable system node: cmd exits 9009 when node is not on PATH
+Function HasSystemNode()
+    Dim intProbe
+    intProbe = 1
+    On Error Resume Next
+    intProbe = objShell.Run("cmd /c node --version >nul 2>nul", 0, True)
+    On Error GoTo 0
+    HasSystemNode = (intProbe = 0)
+End Function
