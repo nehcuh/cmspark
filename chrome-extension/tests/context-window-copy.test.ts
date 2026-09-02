@@ -60,3 +60,16 @@ test("T1b: SET_CONFIG_HYDRATED from companion unlocks Save", () => {
   const localEdit = agentReducer(next, { type: "SET_CONFIG", config: { context_window: 64000 } })
   assert.equal(localEdit.configHydratedFromCompanion, true, "local SET_CONFIG must not clear hydration")
 })
+
+test("SET_CONTEXT_COMPACTED stores shrunk so ChatView can tell shrink-only from prompt-mode", () => {
+  const next = agentReducer(initialState, {
+    type: "SET_CONTEXT_COMPACTED",
+    threadId: "t1",
+    droppedCount: 0,
+    tokensBefore: 100,
+    tokensAfter: 80,
+    shrunk: true,
+  })
+  assert.equal(next.contextCompactedByThreadId.t1?.shrunk, true)
+  assert.equal(next.contextCompactedByThreadId.t1?.droppedCount, 0)
+})

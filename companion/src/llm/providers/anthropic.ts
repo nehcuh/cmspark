@@ -68,14 +68,20 @@ export class AnthropicProvider implements LlmProvider {
     const headers = this.buildHeaders()
     this.logRequestMeta(url, headers)
 
+    const streamMax = params.max_tokens ?? this.config.max_tokens
     const body = buildAnthropicRequestBody({
       model,
-      contextWindow: this.config.context_window,
+      // Prefer the already-computed output cap so a tiny *disk* context_window
+      // cannot recap max_tokens below adapter's effective window (#268).
+      contextWindow:
+        typeof streamMax === "number" && streamMax > 0
+          ? Math.max(this.config.context_window, streamMax * 2)
+          : this.config.context_window,
       messages: params.messages,
       tools: params.tools,
       temperature,
       stream: true,
-      maxTokens: params.max_tokens ?? this.config.max_tokens,
+      maxTokens: streamMax,
     })
 
     const response = await fetch(url, {

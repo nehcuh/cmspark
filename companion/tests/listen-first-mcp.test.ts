@@ -2,8 +2,7 @@
 //
 // Production startServer() is hard to boot (UDS lock / initServices / process.exit).
 // Order is extracted as attachWssListenThenStartMcp so a hanging startMcp can be
-// injected. Current lifecycle.ts awaits mcpManager.start before listen — this file
-// must fail until that order is flipped.
+// injected (WSS → onWss → listen → startMcp).
 
 import test from "node:test"
 import assert from "node:assert/strict"
@@ -85,6 +84,9 @@ test("hanging mcp start: listen + /healthz happen before start settles", async (
             verifyClient: (_info, cb) => cb(true),
           })
         },
+        onWss: () => {
+          events.push("onWss")
+        },
         startMcp,
       }),
     ),
@@ -99,11 +101,10 @@ test("hanging mcp start: listen + /healthz happen before start settles", async (
   try {
     assert.ok(events.includes("listen"), "listen must run while mcp start is hung")
     assert.equal(events[0], "wss", "WebSocketServer must be constructed before listen")
-    assert.equal(events[1], "listen")
-    assert.ok(events.indexOf("listen") < events.indexOf("mcp-start") || events.includes("mcp-start"))
-    if (events.includes("mcp-start")) {
-      assert.ok(events.indexOf("listen") < events.indexOf("mcp-start"))
-    }
+    assert.equal(events[1], "onWss")
+    assert.equal(events[2], "listen")
+    assert.ok(events.includes("mcp-start"))
+    assert.ok(events.indexOf("listen") < events.indexOf("mcp-start"))
     assert.equal(startSettled, false, "hung startMcp must not have settled")
 
     await new Promise<void>((resolve, reject) => {

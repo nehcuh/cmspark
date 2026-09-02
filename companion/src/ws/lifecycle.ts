@@ -435,10 +435,13 @@ export type AttachWssListenThenStartMcpOpts = {
   host?: string
   createWss: (httpServer: http.Server) => WebSocketServer
   startMcp: () => Promise<unknown>
+  /** Register `connection` (HMAC) before listen so the first accept is handled. */
+  onWss?: (wss: WebSocketServer) => void
 }
 
 export function attachWssListenThenStartMcp(opts: AttachWssListenThenStartMcpOpts): WebSocketServer {
   const wssLocal = opts.createWss(opts.httpServer)
+  opts.onWss?.(wssLocal)
   opts.httpServer.listen(opts.port, opts.host ?? "127.0.0.1")
   try {
     const starting = opts.startMcp()

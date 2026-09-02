@@ -389,7 +389,13 @@ export function ChatView() {
               color: "#7a5b00",
             }}
           >
-            {contextCompacted && contextCompacted.droppedCount === 0 ? (
+            {contextCompacted && contextCompacted.droppedCount === 0 && contextCompacted.shrunk ? (
+              <>
+                <strong>工具结果已截断</strong>
+                （自动压缩未丢掉更早轮次，但最长工具正文改成了占位，避免半截 JSON）。
+                下方消息列表仍为完整原文。
+              </>
+            ) : contextCompacted && contextCompacted.droppedCount === 0 ? (
               <>
                 <strong>上下文可能超预算</strong>
                 （当前为「仅提示」模式，未压缩）。
