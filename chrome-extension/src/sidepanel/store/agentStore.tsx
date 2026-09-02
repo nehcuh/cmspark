@@ -3,6 +3,7 @@
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
 import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
+import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 
 /** S20: Side Panel composer is read-only while overlay holds the lease. */
 export type OverlayStandbyFromError = { standby: boolean; label: string }
@@ -204,6 +205,14 @@ export interface AgentState {
     preview: string
     char_count: number
     payload: { file?: { name: string; content: string }; content?: string; url?: string }
+    /** #272 Phase 1: tags carried by the source file's own frontmatter. */
+    tags?: string[]
+    /** #272: companion signaled an async LLM draft extraction is in flight. */
+    extractPending?: boolean
+    /** #272 Phase 2: LLM draft (source "llm") — prefill non-dirty fields only. */
+    suggested?: KnowledgeDraftSuggestion
+    /** #272: extraction failed/timed out — heuristic draft stays, no hanging. */
+    extractError?: string
   } | null
   /**
    * #271: id of the in-flight knowledge.preview request. Replies carrying an id
@@ -211,6 +220,19 @@ export interface AgentState {
    * late reply can neither revive the modal nor overwrite user edits.
    */
   knowledgePreviewPendingId: string | null
+  /**
+   * #272: id of the in-flight async extraction (set when the Phase-1 reply
+   * carries extract_pending). knowledge.preview_suggested frames apply only
+   * while their id matches this; skip/cancel/confirm clears it.
+   */
+  knowledgePreviewExtractId: string | null
+  /** #272: reader-side 建议说明/标签 request state (single doc, manual). */
+  knowledgeSuggest: {
+    docId: string
+    status: "pending" | "ok" | "error"
+    suggested?: KnowledgeDraftSuggestion
+    error?: string
+  } | null
   knowledgeViewer: KnowledgeDocView | null
   /** P3: thread currently being summarized (null when idle). Drives the 🧠 button spinner. */
   summarizingThreadId: string | null
@@ -408,6 +430,10 @@ export type AgentAction =
         preview?: string
         char_count?: number
         payload?: { file?: { name: string; content: string }; content?: string; url?: string }
+        /** #272 Phase 1: source-file frontmatter tags. */
+        tags?: string[]
+        /** #272: companion started the async LLM draft extraction. */
+        extract_pending?: boolean
       }
       /** Companion reply correlation: applied only while it matches the pending request id. */
       replyId?: string
@@ -416,6 +442,22 @@ export type AgentAction =
     }
   | { type: "CLEAR_KNOWLEDGE_PREVIEW" }
   | { type: "SKIP_KNOWLEDGE_PREVIEW_PARSE" }
+  /** #272: 跳过解读 — abort waiting for the LLM draft; heuristic draft stays. */
+  | { type: "SKIP_KNOWLEDGE_PREVIEW_EXTRACT" }
+  | {
+      type: "SET_KNOWLEDGE_PREVIEW_SUGGESTED"
+      /** Correlates against knowledgePreviewExtractId; mismatches are ignored. */
+      replyId?: string
+      suggested?: KnowledgeDraftSuggestion
+      extractError?: string
+    }
+  | {
+      type: "SET_KNOWLEDGE_SUGGEST"
+      docId: string
+      status: "pending" | "ok" | "error"
+      suggested?: KnowledgeDraftSuggestion
+      error?: string
+    }
   | { type: "SET_KNOWLEDGE_VIEWER"; doc: KnowledgeDocView | null }
   | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
   | { type: "SET_VAULT_PICKER"; picking: boolean; error: string | null }
@@ -570,6 +612,8 @@ export const initialState: AgentState = {
   knowledgeImportStatus: null,
   knowledgePreview: null,
   knowledgePreviewPendingId: null,
+  knowledgePreviewExtractId: null,
+  knowledgeSuggest: null,
   knowledgeViewer: null,
   summarizingThreadId: null,
   vaultPicker: { picking: false, error: null },
@@ -1079,12 +1123,34 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       if (action.replyId && action.replyId !== state.knowledgePreviewPendingId) {
         return state
       }
+      const isNewRequest = typeof action.pendingId === "string"
       const prev = state.knowledgePreview || {
         title: "",
         description: "",
         preview: "",
         char_count: 0,
         payload: {},
+      }
+      // #272: a Phase-1 reply carrying extract_pending arms the extract-id
+      // guard so the Phase-2 knowledge.preview_suggested push (same kp- id)
+      // still applies after the pending id was consumed.
+      const { extract_pending, ...previewRest } = action.preview
+      const extractArmed = !!(action.replyId && extract_pending)
+      const next = {
+        ...prev,
+        ...previewRest,
+        payload: Object.prototype.hasOwnProperty.call(action.preview, "payload")
+          ? action.preview.payload || {}
+          : prev.payload,
+      }
+      // A fresh request must not inherit the previous attempt's suggestion state.
+      if (isNewRequest) {
+        delete next.tags
+        delete next.suggested
+        delete next.extractError
+        delete next.extractPending
+      } else if (extractArmed) {
+        next.extractPending = true
       }
       return {
         ...state,
@@ -1094,17 +1160,67 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
             : action.replyId
               ? null // matched reply consumed the pending id; a duplicate frame is ignored
               : state.knowledgePreviewPendingId,
+        knowledgePreviewExtractId: isNewRequest
+          ? null
+          : extractArmed
+            ? (action.replyId as string)
+            : state.knowledgePreviewExtractId,
+        knowledgePreview: next,
+      }
+    }
+    case "SET_KNOWLEDGE_PREVIEW_SUGGESTED": {
+      // #272 Phase-2 late-frame guard: apply only while the extract id matches.
+      if (!action.replyId || action.replyId !== state.knowledgePreviewExtractId) return state
+      const prev = state.knowledgePreview
+      if (!prev) return state
+      return {
+        ...state,
+        knowledgePreviewExtractId: null,
         knowledgePreview: {
           ...prev,
-          ...action.preview,
-          payload: Object.prototype.hasOwnProperty.call(action.preview, "payload")
-            ? action.preview.payload || {}
-            : prev.payload,
+          extractPending: false,
+          ...(action.suggested ? { suggested: action.suggested } : {}),
+          ...(action.extractError ? { extractError: action.extractError } : {}),
+        },
+      }
+    }
+    case "SKIP_KNOWLEDGE_PREVIEW_EXTRACT": {
+      // #272 跳过解读: stop waiting for the LLM draft; keep the heuristic
+      // draft and drop the extract id so a late suggested frame is ignored.
+      // (The companion-side abort goes out as knowledge.preview_cancel.)
+      if (!state.knowledgePreview) return state
+      return {
+        ...state,
+        knowledgePreviewExtractId: null,
+        knowledgePreview: { ...state.knowledgePreview, extractPending: false },
+      }
+    }
+    case "SET_KNOWLEDGE_SUGGEST": {
+      // #272 reader-side suggest: terminal states apply only to the doc that
+      // has a pending request (late-frame guard).
+      if (action.status === "pending") {
+        return { ...state, knowledgeSuggest: { docId: action.docId, status: "pending" } }
+      }
+      if (state.knowledgeSuggest?.docId !== action.docId || state.knowledgeSuggest.status !== "pending") {
+        return state
+      }
+      return {
+        ...state,
+        knowledgeSuggest: {
+          docId: action.docId,
+          status: action.status,
+          suggested: action.suggested,
+          error: action.error,
         },
       }
     }
     case "CLEAR_KNOWLEDGE_PREVIEW":
-      return { ...state, knowledgePreview: null, knowledgePreviewPendingId: null }
+      return {
+        ...state,
+        knowledgePreview: null,
+        knowledgePreviewPendingId: null,
+        knowledgePreviewExtractId: null,
+      }
     case "SKIP_KNOWLEDGE_PREVIEW_PARSE": {
       // #271 escape hatch: keep title/payload, blank the loading sentinel so the
       // form becomes editable, and drop the pending id so the late parse reply
@@ -1113,11 +1229,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return {
         ...state,
         knowledgePreviewPendingId: null,
-        knowledgePreview: { ...state.knowledgePreview, preview: "" },
+        knowledgePreviewExtractId: null,
+        knowledgePreview: { ...state.knowledgePreview, preview: "", extractPending: false },
       }
     }
     case "SET_KNOWLEDGE_VIEWER":
-      return { ...state, knowledgeViewer: action.doc }
+      // #272: switching/closing the reader drops any suggest state tied to it.
+      return { ...state, knowledgeViewer: action.doc, knowledgeSuggest: null }
     case "SET_SUMMARIZING_THREAD":
       return { ...state, summarizingThreadId: action.threadId }
     case "SET_VAULT_PICKER":

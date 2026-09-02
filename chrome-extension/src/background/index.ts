@@ -990,6 +990,24 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
       }
 
+      case "knowledge.suggest": {
+        // #272: reader-side 建议说明/标签 — draft only, no write verb.
+        wsClient.send({
+          type: "knowledge.suggest",
+          id: message.id,
+          user_gesture: message.user_gesture === true,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
+      case "knowledge.preview_cancel": {
+        // #272: 跳过解读 — abort the in-flight companion extraction.
+        wsClient.send({ type: "knowledge.preview_cancel", id: message.id })
+        sendResponse({ ok: true })
+        return true
+      }
+
       case "thread.distill_preview": {
         wsClient.send({
           type: "thread.distill_preview",

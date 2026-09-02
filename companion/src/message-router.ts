@@ -49,6 +49,9 @@ import { listPendingToolsForThread } from "./ws/tool-forward"
 import { parseFile } from "./file-parser"
 import type { FileParseResponse, FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
+import { extractKnowledgeDraft, type KnowledgeDraftSuggestion } from "./llm/knowledge-draft-extract"
+import type { LlmExtractConfig } from "./llm/llm-extract"
+import { normalizeTags } from "./threads/digest"
 import { resolveNativeVision, visionConfigForAnalyze } from "./llm/likely-multimodal"
 import {
   allocateUploadMessageId,
@@ -397,6 +400,160 @@ export function parseFileBounded(
       setTimeout(() => reject(new Error(`文件 "${name}" 解析超时 (${Math.round(timeoutMs / 1000)}s)`)), timeoutMs)
     ),
   ])
+}
+
+// --- #272: knowledge AI draft extract (single-doc, draft-only) ---
+//
+// Two-phase protocol: knowledge.preview answers immediately with the
+// heuristic draft (+ the source file's own frontmatter tags); the LLM draft
+// is extracted asynchronously and pushed as a separate
+// knowledge.preview_suggested frame carrying the same kp- request id.
+// F-S-7: nothing here touches disk / listKnowledge / the related bag.
+// Directory import and library scans never start an extraction (spy-tested).
+
+type KnowledgeExtractImpl = (params: {
+  body: string
+  signal?: AbortSignal
+}) => Promise<KnowledgeDraftSuggestion>
+
+/** LLM config for a knowledge draft extraction, or null when not configured
+ *  (no network call may happen in that case — heuristic draft only). */
+function knowledgeExtractLlmConfig(): LlmExtractConfig | null {
+  const config = getConfig()
+  const key = config.llm?.api_key
+  if (!key || isMaskedApiKey(key)) return null
+  return {
+    base_url: config.llm.base_url,
+    api_key: key,
+    model_name: config.llm.model_name,
+    temperature: config.llm.temperature ?? 0.3,
+    protocol: config.llm.protocol,
+    auth_style: config.llm.auth_style,
+    client_header_profile: config.llm.client_header_profile,
+    claude_code_compat_version: config.llm.claude_code_compat_version,
+    extra_headers: config.llm.extra_headers,
+    anthropic_version: config.llm.anthropic_version,
+    context_window: config.llm.context_window,
+  }
+}
+
+const defaultKnowledgeExtractImpl: KnowledgeExtractImpl = ({ body, signal }) => {
+  const config = knowledgeExtractLlmConfig()
+  if (!config) return Promise.reject(new Error("companion_llm_not_configured"))
+  return extractKnowledgeDraft({ body, config, signal })
+}
+
+let knowledgeExtractImpl: KnowledgeExtractImpl = defaultKnowledgeExtractImpl
+
+/** Test hook — swap the extraction impl (spy / failure injection). */
+export function __testSetKnowledgeExtractImpl(impl?: KnowledgeExtractImpl): void {
+  knowledgeExtractImpl = impl || defaultKnowledgeExtractImpl
+}
+
+/** In-flight preview extractions keyed by the kp- preview request id. */
+const knowledgePreviewExtracts = new Map<string, AbortController>()
+
+/**
+ * #272 M2: ids cancelled BEFORE their extraction started — the user hits
+ * 取消/跳过解析 during the ≤30s parse window, when the Map above is still
+ * empty. Without this tombstone the post-parse maybeStart would happily send
+ * ≤8000 chars to the LLM for a modal that's already gone. Lazy-expired on
+ * read; a cancelled id is consumed by the first start attempt.
+ */
+const knowledgePreviewCancelledIds = new Map<string, number>()
+const KNOWLEDGE_PREVIEW_CANCEL_TTL_MS = 60_000
+
+function consumeKnowledgePreviewCancelled(requestId: string): boolean {
+  const expires = knowledgePreviewCancelledIds.get(requestId)
+  if (expires === undefined) return false
+  knowledgePreviewCancelledIds.delete(requestId)
+  return expires > Date.now()
+}
+
+/**
+ * Start the async Phase-2 extraction for a knowledge.preview request.
+ * Returns true when an extraction was actually started (the Phase-1 response
+ * then carries extract_pending:true so the UI can show 正在解读… and never
+ * hangs when no frame will follow). No-op on summoner/overlay surface,
+ * missing config, missing session, empty body, or a pre-cancelled id.
+ */
+function maybeStartKnowledgePreviewExtract(
+  requestId: string,
+  body: string,
+  session: SessionCallbacks | undefined,
+  surface: unknown,
+): boolean {
+  if (!requestId || !session?.sendToExtension) return false
+  if (surface === "summoner") return false
+  if (!body.trim()) return false
+  if (!knowledgeExtractLlmConfig()) return false
+  if (consumeKnowledgePreviewCancelled(requestId)) return false
+  // A re-preview with the same id aborts the stale run.
+  const stale = knowledgePreviewExtracts.get(requestId)
+  if (stale) stale.abort()
+  const ac = new AbortController()
+  knowledgePreviewExtracts.set(requestId, ac)
+  // NOTE (F5): the impl must settle ASYNCHRONOUSLY (the production impl goes
+  // through a network fetch). A synchronously-resolving impl — tests only —
+  // would push knowledge.preview_suggested before the Phase-1 response hits
+  // the wire.
+  void (async () => {
+    try {
+      const draft = await knowledgeExtractImpl({ body, signal: ac.signal })
+      if (ac.signal.aborted) return
+      session.sendToExtension({
+        type: "knowledge.preview_suggested",
+        id: requestId,
+        // M3: defense in depth — tags pass normalizeTags (SENSITIVE_TAG_RE)
+        // again at the trust boundary, even if an impl skipped it.
+        suggested: { ...draft, tags: draft.tags ? normalizeTags(draft.tags) : undefined, source: "llm" },
+      })
+    } catch (e: any) {
+      if (ac.signal.aborted) return
+      session.sendToExtension({
+        type: "knowledge.preview_suggested",
+        id: requestId,
+        extract_error: e?.message || String(e),
+      })
+    } finally {
+      // M1: only delete OUR controller — a same-id re-preview may have
+      // already replaced it; blind delete would make the new run
+      // unreachable by preview_cancel.
+      if (knowledgePreviewExtracts.get(requestId) === ac) {
+        knowledgePreviewExtracts.delete(requestId)
+      }
+    }
+  })()
+  return true
+}
+
+/** Abort an in-flight preview extraction (跳过解读 / modal closed). Tombstones
+ *  the id ONLY when no extraction is in-flight yet (cancel during the ≤30s
+ *  parse window, M2) — with an in-flight run the abort alone is enough and a
+ *  tombstone would never be consumed again (kp- ids are one-shot uuids), so
+ *  we skip it to keep the Map bounded. Expired entries are swept on set. */
+function cancelKnowledgePreviewExtract(requestId: string): void {
+  const ac = knowledgePreviewExtracts.get(requestId)
+  if (ac) {
+    knowledgePreviewExtracts.delete(requestId)
+    ac.abort()
+    return
+  }
+  const now = Date.now()
+  for (const [id, expires] of knowledgePreviewCancelledIds) {
+    if (expires <= now) knowledgePreviewCancelledIds.delete(id)
+  }
+  knowledgePreviewCancelledIds.set(requestId, now + KNOWLEDGE_PREVIEW_CANCEL_TTL_MS)
+}
+
+// --- Directory-import folder picker: module-level indirection so tests can
+// drive knowledge.import_directory without the native OS dialog and spy that
+// the walk performs 0 LLM extractions (#272 AC-4). Behavior unchanged.
+let pickFolderNativeImpl: typeof pickFolderNative = pickFolderNative
+
+/** Test hook — swap the native folder picker. */
+export function __testSetPickFolderNative(impl?: typeof pickFolderNative): void {
+  pickFolderNativeImpl = impl || pickFolderNative
 }
 
 async function loadKnowledgePayload(rest: Record<string, any>): Promise<
@@ -2791,8 +2948,47 @@ export async function handleMessage(
     case "knowledge.preview": {
       const loaded = await loadKnowledgePayload(rest)
       if ("error" in loaded) return { type: "error", error: loaded.error }
-      const preview = skillEngine.previewKnowledge(loaded.text, loaded.fallback)
-      return { type: "knowledge.preview", ...preview }
+      // #272 Phase 1: immediate heuristic draft + source frontmatter tags.
+      // `body` stays off the wire — it only feeds the async extraction below.
+      const { body: previewBody, ...preview } = skillEngine.previewKnowledge(loaded.text, loaded.fallback)
+      // #272 Phase 2: async LLM draft pushed later as knowledge.preview_suggested
+      // with the same kp- request id. Never started for summoner/overlay.
+      const extractStarted = maybeStartKnowledgePreviewExtract(
+        typeof rest.id === "string" ? rest.id : "",
+        previewBody,
+        session,
+        stampedSurface,
+      )
+      return { type: "knowledge.preview", ...preview, ...(extractStarted ? { extract_pending: true } : {}) }
+    }
+    case "knowledge.preview_cancel": {
+      // #272: 跳过解读 — abort the in-flight extraction for this preview id.
+      const cancelId = typeof rest.id === "string" ? rest.id : ""
+      if (!cancelId) return { type: "error", error: "knowledge.preview_cancel requires id" }
+      cancelKnowledgePreviewExtract(cancelId)
+      return { type: "knowledge.preview_cancel", id: cancelId, ok: true }
+    }
+    case "knowledge.suggest": {
+      // #272 §3.2: reader-side single-doc manual re-extract (逃生口 for
+      // directory-imported docs). Returns a DRAFT only — never writes disk;
+      // saving goes through the existing knowledge.update path.
+      if (stampedSurface === "summoner") {
+        return { type: "error", error: "SUMMONER_ACL: knowledge.suggest not allowed on summoner surface", error_code: "SUMMONER_ACL" }
+      }
+      if (rest.user_gesture !== true) {
+        return { type: "error", error: "knowledge.suggest requires user_gesture:true (Side Panel only)" }
+      }
+      if (typeof rest.id !== "string" || !rest.id) {
+        return { type: "error", error: "knowledge.suggest requires id" }
+      }
+      const doc = skillEngine.getKnowledge(rest.id)
+      if (!doc) return { type: "error", error: `Knowledge not found: ${rest.id}` }
+      try {
+        const draft = await knowledgeExtractImpl({ body: doc.body })
+        return { type: "knowledge.suggest", id: rest.id, suggested: { ...draft, tags: draft.tags ? normalizeTags(draft.tags) : undefined, source: "llm" } }
+      } catch (e: any) {
+        return { type: "knowledge.suggest", id: rest.id, extract_error: e?.message || String(e) }
+      }
     }
     case "knowledge.import": {
       if (stampedSurface === "summoner") {
@@ -2828,7 +3024,7 @@ export async function handleMessage(
       // guard (file count, size, try/catch) is too late. Routing the pick
       // through companion's native OS dialog sidesteps the Chromium bug entirely
       // and lets us enforce per-file size + total-count caps server-side.
-      const pick = await pickFolderNative()
+      const pick = await pickFolderNativeImpl()
       if (pick.error) {
         return { type: "knowledge.import_directory_result", error: pick.error }
       }

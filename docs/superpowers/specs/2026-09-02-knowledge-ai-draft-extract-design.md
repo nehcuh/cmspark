@@ -8,6 +8,7 @@
 > **前置**: #270（错误可见性）、#271（跳过入口语义复用为「跳过解读」）  
 > **设计原料**: [design-grok.md 提案 1](../../.omx/artifacts/design/design-grok.md)（主）· [design-claude.md 提案 1](../../.omx/artifacts/design/design-claude.md)（补）  
 > **GitHub:** [#272](https://github.com/nehcuh/cmspark/issues/272)
+> **修订**: 2026-09-02 实现评审（grok 4 MAJOR + claude/grok NIT）收敛 —— §3.1 单段响应改为两段式（`knowledge.preview_suggested` 推帧 + `knowledge.preview_cancel`）；abort Map identity 修复与 cancel tombstone；密钥形标签三侧过滤（LLM 出口 / 弹窗 sanitize / 入库 allowlist+overrides+update）；「AI 建议」徽标改为按实际填入点亮；Phase-1 description 无 frontmatter 时回落 150 字启发式（永不为空）；UI 侧 15s 看门狗。
 
 ```text
 Surface:      L0 Side Panel 导入确认弹窗 + 阅读器按钮（既有）；
@@ -74,7 +75,7 @@ Channel:      既有 WS（knowledge.* 家族内扩展）
 
 | 做 | 不做 |
 |---|---|
-| 单篇 `knowledge.preview` 成功后，同步一次 `llmExtract`，预填说明 + 标签草稿 | 目录导入逐篇 LLM；后台批量回填存量 |
+| 单篇 `knowledge.preview` 成功后，异步一次 `llmExtract`（两段式，§3.1），预填说明 + 标签草稿 | 目录导入逐篇 LLM；后台批量回填存量 |
 | 失败 / 超时 / 无 LLM 配置 → 启发式草稿，弹窗照常可用 | 流式 LLM；把抽取做成导入必经路径 |
 | 阅读器「建议说明/标签」**单篇、手点**（目录导入后的逃生口） | 新 frontmatter 键（`key_points` / `summary` / `entities` / `core_knowledge`） |
 | 标签走 `normalizeTags`（含 `SENSITIVE_TAG_RE`、max 8） | 改写 body；自动保存；overlay / summoner 抽取入口 |
@@ -86,17 +87,35 @@ Channel:      既有 WS（knowledge.* 家族内扩展）
 
 ## 3. 协议改动
 
-### 3.1 `knowledge.preview` 响应扩展（均可缺省）
+### 3.1 `knowledge.preview` 两段式（实现收敛 2026-09-02）
+
+LLM 抽取不能阻塞弹窗（§4 时序要求解析完成即出启发式草稿），故拆成两段：
+
+**Phase 1 — `knowledge.preview` 响应**（保持即时返回，同步路径零 LLM）：
 
 ```text
-knowledge.preview 响应增加（均可缺省）:
-  suggested: { description?: string, tags?: string[], source: "llm" | "heuristic" }
-  extract_error?: string   // 超时 / 无配置 / 解析失败；供日志与 UI 静默降级，不阻断
+knowledge.preview 响应:
+  title / description / preview / char_count   // 不变；description 永不为空（frontmatter → 150 字启发式回落）
+  tags: string[]                               // 新增：源文件 frontmatter 自带 tags（normalizeTags 后）
+  extract_pending?: true                       // 新增：仅当 Phase-2 抽取真的启动时带上
 ```
 
-- 现有字段（`title` / `description` / `preview` / `char_count`）不变、行为不变；无 LLM 配置的旧客户端看到的响应逐字节兼容（新字段缺省即可）。
-- `suggested.source = "heuristic"` 表示 LLM 未产出，内容就是启发式草稿 —— UI 据此决定要不要显示「AI 建议」徽标，**禁止**把启发式包装成 AI 产出（Honesty 原则）。
+- Phase 1 响应**不带** `suggested`；无 LLM 配置 / summoner·overlay surface / 空正文 / 该 id 已被 `preview_cancel` 命中时，`extract_pending` 缺省，UI 不进入「正在解读…」。
+- 无 LLM 配置的旧客户端看到的响应逐字段向后兼容（新字段缺省或新增可忽略字段）。
+
+**Phase 2 — 新推帧 `knowledge.preview_suggested`**（异步，与 preview 请求同 kp- id）：
+
+```text
+knowledge.preview_suggested   { id, suggested?: { description?, tags?, source: "llm" }, extract_error?: string }
+```
+
+- `suggested.source` 只会是 `"llm"`；失败/超时/非 JSON → `extract_error`，**禁止**把启发式包装成 AI 产出（Honesty 原则）。
 - 未点「确认导入」前，`suggested` **不得**写入磁盘、不得进 `listKnowledge`、不得进 related 词袋（F-S-7）。
+- 帧上 tags 在 companion 出口再过一次 `normalizeTags`（SENSITIVE_TAG_RE 丢密钥形），扩展侧 sanitize 再滤一层。
+
+**取消 — 新消息 `knowledge.preview_cancel { id }`**：
+
+- abort 在途抽取（`llmExtract` 的 signal）；无在途则把 id 记入 60s tombstone——解析窗口内（≤30s）取消的 id 之后不再启动抽取。重复/未知 id 为 no-op，应答 `{ type: "knowledge.preview_cancel", id, ok: true }`。
 
 ### 3.2 阅读器手点入口：新 WS 消息 `knowledge.suggest`
 
@@ -121,12 +140,15 @@ knowledge.suggest   { id: string, user_gesture: true }
 
 ```text
 1. 选文件 / 拖入 → 现有解析（parseFileBounded，30s，message-router.ts:378, 387-400）
-2. 解析成功 → 弹窗立即出启发式草稿（永不为空）+ 源文件已有 tags 预填；
-   状态行「正在解读…」，可点「跳过解读」（复用 #271 跳过入口语义）
-3. LLM 返回（≤15s）→ 只覆盖用户尚未改过的字段；
-   用户已改过的 description / tags 保持原样
-4. 用户改完点「确认导入」→ 现有 knowledge.import + overrides（标题/说明/标签）
-5. 跳过 / 超时 / 失败 → 启发式草稿留在弹窗，确认按钮始终可用
+2. 解析成功 → Phase-1 响应即时到达：弹窗出启发式草稿（永不为空）+ 源文件已有 tags 预填；
+   若 Phase-2 抽取已启动（extract_pending）→ 状态行「正在解读…」，可点「跳过解读」
+   （复用 #271 跳过入口语义，发 knowledge.preview_cancel abort 在途请求）
+3. LLM 返回（≤15s）→ knowledge.preview_suggested 推帧到达，只覆盖用户尚未改过的字段；
+   用户已改过的 description / tags 保持原样；「AI 建议」徽标只亮在实际被建议填入的字段上
+4. 用户改完点「确认导入」→ 现有 knowledge.import + overrides（标题/说明/标签），
+   并 preview_cancel 终止仍在途的抽取
+5. 跳过 / 超时 / 失败 → 启发式草稿留在弹窗，确认按钮始终可用；
+   推帧丢失时 UI 侧 15s 看门狗兜底撤下「正在解读…」
 ```
 
 - 抽取输入 cap：**8000 字符**（正文截断，非 6MiB 解析上限）。
@@ -142,8 +164,9 @@ knowledge.suggest   { id: string, user_gesture: true }
 | 无 API key / LLM 未配置 | 不打网，直接启发式；`suggested` 缺省或 `source: "heuristic"` |
 | 超时（15s）/ 4xx / 非 JSON 返回 | 启发式兜底；`extract_error` 记录日志，UI 不阻断、可静默 |
 | LLM 返回的标签含密钥形 | `normalizeTags` + `SENSITIVE_TAG_RE` 丢弃后再进弹窗；入库前再过 `allowlistKnowledgeFrontmatter` |
-| 用户点「跳过解读」 | 取消在途请求（abort），保留启发式草稿；与 #271 跳过语义一致 |
-| 用户在解读返回前改了字段 | LLM 结果不覆盖该字段（user-dirty 优先） |
+| 用户点「跳过解读」 | 取消在途请求（abort）；解析窗口内取消的 id 记 60s tombstone，之后不再启动抽取；保留启发式草稿；与 #271 跳过语义一致 |
+| 用户在解读返回前改了字段 | LLM 结果不覆盖该字段（user-dirty 优先）；未被覆盖的字段不亮「AI 建议」徽标 |
+| 推帧丢失 / companion 中途死亡 | UI 侧 15s 看门狗撤下「正在解读…」并记 extract_error；启发式草稿保留，确认可用 |
 | 目录导入 | 全程 0 次抽取；结果文案提示手点入口 |
 
 信任边界：正文（≤8000 字符）发往**用户自配 LLM**，与聊天路径同级；无新外发通道，overlay / summoner 无入口。

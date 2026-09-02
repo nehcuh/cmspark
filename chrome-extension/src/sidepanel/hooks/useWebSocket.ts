@@ -11,7 +11,7 @@ import { rememberNativeVisionProbe } from "../components/vision-reuse-logic"
 import { normalizeInboundLogEvent } from "../log-event-normalize"
 import { humanizeSidepanelGateError } from "../utils/gate-error-copy"
 import { newTempUserMessageId } from "../../utils/temp-message-id"
-import { knowledgePreviewErrorText } from "../utils/knowledge-preview"
+import { knowledgePreviewErrorText, sanitizeKnowledgeSuggestion } from "../utils/knowledge-preview"
 
 import { normalizeConfig } from "../utils/normalize-config"
 export { normalizeConfig }
@@ -1762,7 +1762,41 @@ export function useWebSocket() {
               description: String(msg.description || ""),
               preview: String(msg.preview || ""),
               char_count: typeof msg.char_count === "number" ? msg.char_count : 0,
+              // #272 Phase 1: source-file frontmatter tags (prefill the modal).
+              tags: Array.isArray(msg.tags)
+                ? msg.tags.filter((t: unknown): t is string => typeof t === "string" && !!t.trim())
+                : undefined,
+              // #272: companion started the async LLM draft extraction.
+              extract_pending: msg.extract_pending === true,
             },
+          })
+          break
+
+        case "knowledge.preview_suggested":
+          // #272 Phase 2: async LLM draft (or its failure) for the preview modal.
+          // The store correlates msg.id against the pending extract id.
+          dispatch({
+            type: "SET_KNOWLEDGE_PREVIEW_SUGGESTED",
+            replyId: typeof msg.id === "string" && msg.id ? msg.id : undefined,
+            suggested: sanitizeKnowledgeSuggestion(msg.suggested) || undefined,
+            extractError: typeof msg.extract_error === "string" && msg.extract_error ? msg.extract_error : undefined,
+          })
+          break
+
+        case "knowledge.suggest":
+          // #272 reader-side 建议说明/标签 reply (draft only; saving goes
+          // through the existing knowledge.update path in the reader sheet).
+          dispatch({
+            type: "SET_KNOWLEDGE_SUGGEST",
+            docId: typeof msg.id === "string" ? msg.id : "",
+            status: sanitizeKnowledgeSuggestion(msg.suggested) ? "ok" : "error",
+            suggested: sanitizeKnowledgeSuggestion(msg.suggested) || undefined,
+            error:
+              typeof msg.extract_error === "string" && msg.extract_error
+                ? msg.extract_error
+                : sanitizeKnowledgeSuggestion(msg.suggested)
+                  ? undefined
+                  : "解读不可用",
           })
           break
 
@@ -1781,6 +1815,9 @@ export function useWebSocket() {
           if (msg.skippedUnsupported > 0) pieces.push(`跳过 ${msg.skippedUnsupported} 个不支持格式`)
           if (msg.failed > 0) pieces.push(`失败 ${msg.failed}`)
           if (msg.truncated) pieces.push(`(已达 ${msg.maxFiles} 上限)`)
+          // #272 §3.3: directory import runs 0 LLM extractions — say so and
+          // point at the manual per-doc escape hatch.
+          if (msg.imported > 0) pieces.push("未自动解读。打开文档可点『建议说明/标签』。")
 
           dispatch({
             type: "SET_KNOWLEDGE_IMPORT_STATUS",

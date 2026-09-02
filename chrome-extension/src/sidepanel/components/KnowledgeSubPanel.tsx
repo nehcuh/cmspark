@@ -10,6 +10,7 @@ import {
   buildKnowledgeUpdateMessage,
 } from "../utils/knowledge-save"
 import {
+  fillKnowledgeDraftFromSuggestion,
   knowledgePreviewSendFailureText,
   newKnowledgePreviewRequestId,
 } from "../utils/knowledge-preview"
@@ -748,17 +749,61 @@ export function KnowledgeSubPanel() {
 function KnowledgeReaderSheet() {
   const { state, dispatch } = useAgentStore()
   const doc = state.knowledgeViewer
+  const suggest = state.knowledgeSuggest
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
   const [tags, setTags] = useState("")
   const [body, setBody] = useState("")
+  // #272 user-dirty: 建议说明/标签 fills only fields the user hasn't edited.
+  const dirtyRef = useRef<{ description: boolean; tags: boolean }>({ description: false, tags: false })
+  // N5/F1: 「AI 建议」 badge lights only for fields the suggestion actually wrote.
+  const [aiFilled, setAiFilled] = useState<{ description: boolean; tags: boolean }>({
+    description: false,
+    tags: false,
+  })
   useEffect(() => {
     if (!doc) return
+    dirtyRef.current = { description: false, tags: false }
+    setAiFilled({ description: false, tags: false })
     setTitle(doc.title || "")
     setDescription(doc.description || "")
     setTags((doc.tags || []).join(", "))
     setBody(doc.body || "")
   }, [doc])
+  // #272: apply the suggest draft into the editable sheet (never persisted
+  // until the user hits 保存 → existing knowledge.update path).
+  const suggested = suggest?.status === "ok" && suggest.docId === (doc?.id || doc?.name) ? suggest.suggested : null
+  useEffect(() => {
+    if (!suggested) return
+    const isLlm = suggested.source === "llm"
+    const next = fillKnowledgeDraftFromSuggestion({ description, tags }, dirtyRef.current, suggested)
+    const filledDescription = isLlm && !dirtyRef.current.description && !!suggested.description
+    const filledTags = isLlm && !dirtyRef.current.tags && Array.isArray(suggested.tags) && suggested.tags.length > 0
+    setDescription(next.description)
+    setTags(next.tags)
+    if (filledDescription || filledTags) {
+      setAiFilled((cur) => ({
+        description: cur.description || filledDescription,
+        tags: cur.tags || filledTags,
+      }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dirtyRef is the guard; re-running on keystrokes would fight the user
+  }, [suggested])
+  // M4: 15s watchdog aligned with the companion extraction timeout — a suggest
+  // reply that never arrives (SW/companion died) must not pin 解读中….
+  const suggestPending = suggest?.status === "pending" ? suggest.docId : null
+  useEffect(() => {
+    if (!suggestPending) return
+    const docId = suggestPending
+    // M4: watchdog aligned with the companion 15s extraction timeout (+2s RTT
+    // margin so a late ok frame isn't preempted) — a suggest reply that never
+    // arrives (SW/companion died) must not pin 解读中….
+    const timer = setTimeout(() => {
+      // The store applies this only while the request is still pending.
+      dispatch({ type: "SET_KNOWLEDGE_SUGGEST", docId, status: "error", error: "解读超时，可手动填写" })
+    }, 17000)
+    return () => clearTimeout(timer)
+  }, [suggestPending, dispatch])
   if (!doc) return null
   const tooBigToExport = doc.truncated || doc.char_count > 512 * 1024
   const readOnly = !!doc.builtin
@@ -792,10 +837,16 @@ function KnowledgeReaderSheet() {
         <strong style={{ fontSize: 13 }}>正文</strong>
         <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>标题</label>
         <input value={title} disabled={readOnly} onChange={(e) => setTitle(e.target.value)} style={{ width: "100%", fontSize: 12, padding: 6 }} />
-        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>说明</label>
-        <input value={description} disabled={readOnly} onChange={(e) => setDescription(e.target.value)} style={{ width: "100%", fontSize: 12, padding: 6 }} />
-        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>标签（逗号分隔）</label>
-        <input value={tags} disabled={readOnly} onChange={(e) => setTags(e.target.value)} style={{ width: "100%", fontSize: 12, padding: 6 }} />
+        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>
+          说明
+          {aiFilled.description && <span style={{ marginLeft: 6, fontSize: 10, color: tokens.accent }}>AI 建议</span>}
+        </label>
+        <input value={description} disabled={readOnly} onChange={(e) => { dirtyRef.current.description = true; setAiFilled((cur) => ({ ...cur, description: false })); setDescription(e.target.value) }} style={{ width: "100%", fontSize: 12, padding: 6 }} />
+        <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>
+          标签（逗号分隔）
+          {aiFilled.tags && <span style={{ marginLeft: 6, fontSize: 10, color: tokens.accent }}>AI 建议</span>}
+        </label>
+        <input value={tags} disabled={readOnly} onChange={(e) => { dirtyRef.current.tags = true; setAiFilled((cur) => ({ ...cur, tags: false })); setTags(e.target.value) }} style={{ width: "100%", fontSize: 12, padding: 6 }} />
         <label style={{ display: "block", fontSize: 11, marginTop: 8 }}>正文</label>
         {readOnly || doc.truncated ? (
           <pre style={{ fontSize: 11, whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto", background: tokens.bgElevated, padding: 8 }}>
@@ -830,6 +881,38 @@ function KnowledgeReaderSheet() {
           </div>
         )}
         <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          {!readOnly && (
+            <>
+              <button
+                type="button"
+                disabled={suggest?.status === "pending"}
+                title="用 AI 为这篇文档起草说明与标签（草稿，保存才生效）"
+                onClick={() => {
+                  const key = doc.id || doc.name
+                  dispatch({ type: "SET_KNOWLEDGE_SUGGEST", docId: key, status: "pending" })
+                  // M4: surface a background send failure ({ok:false}) instead of
+                  // pinning 解读中… forever (#270 knowledgePreviewSendFailureText 先例).
+                  chrome.runtime.sendMessage({ type: "knowledge.suggest", id: key, user_gesture: true })
+                    .then((resp: unknown) => {
+                      const failure = knowledgePreviewSendFailureText(resp)
+                      if (failure) {
+                        dispatch({ type: "SET_KNOWLEDGE_SUGGEST", docId: key, status: "error", error: failure })
+                      }
+                    })
+                    .catch(() => {
+                      dispatch({ type: "SET_KNOWLEDGE_SUGGEST", docId: key, status: "error", error: "扩展后台未响应，请重载扩展后重试" })
+                    })
+                }}
+              >
+                {suggest?.status === "pending" ? "解读中…" : "建议说明/标签"}
+              </button>
+              {suggest?.status === "error" && suggest.docId === (doc.id || doc.name) && (
+                <span style={{ fontSize: 11, color: tokens.textMuted, alignSelf: "center" }}>
+                  {suggest.error ? `解读不可用（${suggest.error}），可手动填写` : "解读不可用，可手动填写"}
+                </span>
+              )}
+            </>
+          )}
           <button type="button" onClick={() => dispatch({ type: "SET_KNOWLEDGE_VIEWER", doc: null })}>关闭</button>
           <button
             type="button"
