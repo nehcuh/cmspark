@@ -203,6 +203,12 @@ export interface AgentState {
     char_count: number
     payload: { file?: { name: string; content: string }; content?: string; url?: string }
   } | null
+  /**
+   * #271: id of the in-flight knowledge.preview request. Replies carrying an id
+   * are applied only while it matches this; skip/cancel/confirm clears it so a
+   * late reply can neither revive the modal nor overwrite user edits.
+   */
+  knowledgePreviewPendingId: string | null
   knowledgeViewer: KnowledgeDocView | null
   /** P3: thread currently being summarized (null when idle). Drives the 🧠 button spinner. */
   summarizingThreadId: string | null
@@ -400,8 +406,13 @@ export type AgentAction =
         char_count?: number
         payload?: { file?: { name: string; content: string }; content?: string; url?: string }
       }
+      /** Companion reply correlation: applied only while it matches the pending request id. */
+      replyId?: string
+      /** Marks a new outgoing preview request; becomes the pending request id. */
+      pendingId?: string
     }
   | { type: "CLEAR_KNOWLEDGE_PREVIEW" }
+  | { type: "SKIP_KNOWLEDGE_PREVIEW_PARSE" }
   | { type: "SET_KNOWLEDGE_VIEWER"; doc: KnowledgeDocView | null }
   | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
   | { type: "SET_VAULT_PICKER"; picking: boolean; error: string | null }
@@ -554,6 +565,7 @@ export const initialState: AgentState = {
   obsidianProfileStatus: null,
   knowledgeImportStatus: null,
   knowledgePreview: null,
+  knowledgePreviewPendingId: null,
   knowledgeViewer: null,
   summarizingThreadId: null,
   vaultPicker: { picking: false, error: null },
@@ -1035,7 +1047,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
             tokensBefore: action.tokensBefore,
             tokensAfter: action.tokensAfter,
             at: Date.now(),
-            shrunk: action.shrunk === true,
+            shrunk: action.shrunk,
             mode: action.mode,
             rollingSummary: action.rollingSummary,
             handoff: action.handoff,
@@ -1053,6 +1065,12 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_KNOWLEDGE_IMPORT_STATUS":
       return { ...state, knowledgeImportStatus: action.status }
     case "SET_KNOWLEDGE_PREVIEW": {
+      // #271 late-reply guard: a companion reply carries the request id; apply
+      // it only while that request is still pending. Id-less dispatches (local
+      // sentinels, id-less fallback errors from older companions) always apply.
+      if (action.replyId && action.replyId !== state.knowledgePreviewPendingId) {
+        return state
+      }
       const prev = state.knowledgePreview || {
         title: "",
         description: "",
@@ -1062,6 +1080,12 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
       return {
         ...state,
+        knowledgePreviewPendingId:
+          typeof action.pendingId === "string"
+            ? action.pendingId
+            : action.replyId
+              ? null // matched reply consumed the pending id; a duplicate frame is ignored
+              : state.knowledgePreviewPendingId,
         knowledgePreview: {
           ...prev,
           ...action.preview,
@@ -1072,7 +1096,18 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
     }
     case "CLEAR_KNOWLEDGE_PREVIEW":
-      return { ...state, knowledgePreview: null }
+      return { ...state, knowledgePreview: null, knowledgePreviewPendingId: null }
+    case "SKIP_KNOWLEDGE_PREVIEW_PARSE": {
+      // #271 escape hatch: keep title/payload, blank the loading sentinel so the
+      // form becomes editable, and drop the pending id so the late parse reply
+      // is ignored by the guard above.
+      if (!state.knowledgePreview) return state
+      return {
+        ...state,
+        knowledgePreviewPendingId: null,
+        knowledgePreview: { ...state.knowledgePreview, preview: "" },
+      }
+    }
     case "SET_KNOWLEDGE_VIEWER":
       return { ...state, knowledgeViewer: action.doc }
     case "SET_SUMMARIZING_THREAD":

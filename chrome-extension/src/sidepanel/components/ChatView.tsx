@@ -41,6 +41,7 @@ import {
   type IconProps,
 } from "../ui/icons"
 import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
+import { compactBannerKind } from "../utils/context-window-copy"
 import { truncationHonestyChip } from "../chat-shell-copy"
 import { RunProgress } from "./RunProgress"
 import { listSig } from "./run-progress-view"
@@ -160,6 +161,9 @@ export function ChatView() {
       activeThread?.runtime_context_budget &&
       (activeThread.runtime_context_budget.dropped_count ?? 0) > 0
     )
+  // "none" falls through to the dropped-history copy, which already reads the
+  // runtime_context_budget fallback when no live event is stored.
+  const compactBanner = compactBannerKind(contextCompacted)
   const workers = fleet?.workers || []
   const busyThreadIds = Object.entries(threadBusyById)
     .filter(([, b]) => b)
@@ -389,13 +393,19 @@ export function ChatView() {
               color: "#7a5b00",
             }}
           >
-            {contextCompacted && contextCompacted.droppedCount === 0 && contextCompacted.shrunk ? (
+            {compactBanner === "shrink" ? (
               <>
                 <strong>工具结果已截断</strong>
                 （自动压缩未丢掉更早轮次，但最长工具正文改成了占位，避免半截 JSON）。
                 下方消息列表仍为完整原文。
               </>
-            ) : contextCompacted && contextCompacted.droppedCount === 0 ? (
+            ) : compactBanner === "unknown" ? (
+              <>
+                <strong>上下文可能已被压缩</strong>
+                （当前 companion 版本未报告压缩细节）。
+                下方消息列表仍为完整原文；升级 companion 到 0.5.8+ 可查看准确信息。
+              </>
+            ) : compactBanner === "prompt" ? (
               <>
                 <strong>上下文可能超预算</strong>
                 （当前为「仅提示」模式，未压缩）。
@@ -667,6 +677,14 @@ function KnowledgeImportModal() {
           {p.char_count > (p.preview || "").length ? "\n…" : ""}
         </pre>
         <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
+          {(p.preview === "正在解析…" || p.preview === "正在抓取…") && (
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "SKIP_KNOWLEDGE_PREVIEW_PARSE" })}
+            >
+              跳过解析，手动填写
+            </button>
+          )}
           <button type="button" onClick={() => dispatch({ type: "CLEAR_KNOWLEDGE_PREVIEW" })}>取消</button>
           <button
             type="button"

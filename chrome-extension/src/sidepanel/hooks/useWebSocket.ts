@@ -11,6 +11,7 @@ import { rememberNativeVisionProbe } from "../components/vision-reuse-logic"
 import { normalizeInboundLogEvent } from "../log-event-normalize"
 import { humanizeSidepanelGateError } from "../utils/gate-error-copy"
 import { newTempUserMessageId } from "../../utils/temp-message-id"
+import { knowledgePreviewErrorText } from "../utils/knowledge-preview"
 
 import { normalizeConfig } from "../utils/normalize-config"
 export { normalizeConfig }
@@ -903,7 +904,9 @@ export function useWebSocket() {
               droppedCount: Number(msg.dropped_count) || 0,
               tokensBefore: Number(msg.tokens_before) || 0,
               tokensAfter: Number(msg.tokens_after) || 0,
-              shrunk: msg.shrunk === true,
+              // Tri-state: companion ≥0.5.8 sends true/false; older companions
+              // omit the field — preserve absence so ChatView shows honest copy.
+              shrunk: msg.shrunk === true ? true : msg.shrunk === false ? false : undefined,
               mode:
                 msg.mode === "h1" ? "h1" : msg.mode === "m2" ? "m2" : "m1",
               rollingSummary:
@@ -927,6 +930,9 @@ export function useWebSocket() {
               droppedCount: 0,
               tokensBefore: Number(msg.tokens_before) || 0,
               tokensAfter: Number(msg.tokens_after) || 0,
+              // prompt mode never shrinks; pin false so the banner keeps the
+              // 「仅提示」 copy now that absent shrunk means "old companion".
+              shrunk: false,
             })
           }
           break
@@ -1744,6 +1750,9 @@ export function useWebSocket() {
         case "knowledge.preview":
           dispatch({
             type: "SET_KNOWLEDGE_PREVIEW",
+            // #270: companion echoes the request id; the store applies this only
+            // while the id is still pending (#271 late-reply guard).
+            replyId: typeof msg.id === "string" && msg.id ? msg.id : undefined,
             preview: {
               title: String(msg.title || ""),
               description: String(msg.description || ""),
@@ -1973,10 +1982,17 @@ export function useWebSocket() {
             window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: "无法弹出对话框" }))
             break
           }
-          if (typeof msg.error === "string" && /knowledge|预览|parseFile|fetch knowledge/i.test(msg.error)) {
+          // #270: route companion preview failures into the import modal. Id-ful
+          // frames are correlated against the pending request by the store;
+          // id-less frames (older companion) fall back to text matching, now
+          // including companion's Chinese parse errors (文件解析失败, Office 文件,
+          // 不支持的文件类型).
+          const knowledgePreviewErr = knowledgePreviewErrorText(msg)
+          if (knowledgePreviewErr) {
             dispatch({
               type: "SET_KNOWLEDGE_PREVIEW",
-              preview: { preview: `预览失败：${msg.error}` },
+              replyId: typeof msg.id === "string" && msg.id ? msg.id : undefined,
+              preview: { preview: `预览失败：${knowledgePreviewErr}` },
             })
           }
           // WP5-I4: computer.model.* 错误(family:"computer.model")→ 设置页实验区

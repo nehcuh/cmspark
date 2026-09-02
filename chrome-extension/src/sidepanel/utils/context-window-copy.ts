@@ -16,6 +16,26 @@ export function contextWindowHelpText(disk: number): string {
   return "新默认 512000 是 Agent 工作预算；请按模型真实上限填写。填太大则压缩来不及挡供应商 400。"
 }
 
+/**
+ * Banner branch for the compaction notice (F-UX4/F-S6). `shrunk` is tri-state:
+ * companion ≥0.5.8 reports true/false; older companions omit the field entirely,
+ * so under version skew the extension cannot tell shrink-only from prompt-mode
+ * and must render honest copy instead of guessing.
+ */
+export type CompactBannerKind = "shrink" | "unknown" | "prompt" | "dropped" | "none"
+
+export function compactBannerKind(
+  compacted: { droppedCount: number; shrunk?: boolean } | null | undefined,
+): CompactBannerKind {
+  if (!compacted) return "none"
+  if (compacted.droppedCount === 0) {
+    if (compacted.shrunk === true) return "shrink"
+    if (compacted.shrunk === false) return "prompt"
+    return "unknown"
+  }
+  return "dropped"
+}
+
 export function settingsSaveDisabled(hydratedFromCompanion: boolean): boolean {
   return !hydratedFromCompanion
 }

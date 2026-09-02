@@ -5,6 +5,7 @@ import assert from "node:assert/strict"
 import { DEFAULT_LLM_CONFIG } from "../src/utils/config"
 import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
 import {
+  compactBannerKind,
   contextWindowHelpText,
   settingsSaveDisabled,
   settingsSaveDisabledTitle,
@@ -72,4 +73,53 @@ test("SET_CONTEXT_COMPACTED stores shrunk so ChatView can tell shrink-only from 
   })
   assert.equal(next.contextCompactedByThreadId.t1?.shrunk, true)
   assert.equal(next.contextCompactedByThreadId.t1?.droppedCount, 0)
+})
+
+test("SET_CONTEXT_COMPACTED keeps shrunk tri-state: false stays false", () => {
+  const next = agentReducer(initialState, {
+    type: "SET_CONTEXT_COMPACTED",
+    threadId: "t1",
+    droppedCount: 0,
+    tokensBefore: 100,
+    tokensAfter: 100,
+    shrunk: false,
+  })
+  assert.equal(next.contextCompactedByThreadId.t1?.shrunk, false)
+})
+
+test("SET_CONTEXT_COMPACTED keeps shrunk tri-state: absent stays undefined (old companion)", () => {
+  const next = agentReducer(initialState, {
+    type: "SET_CONTEXT_COMPACTED",
+    threadId: "t1",
+    droppedCount: 0,
+    tokensBefore: 100,
+    tokensAfter: 80,
+  })
+  assert.equal(next.contextCompactedByThreadId.t1?.shrunk, undefined)
+})
+
+test("compactBannerKind: shrink / prompt / unknown / dropped / none", () => {
+  assert.equal(compactBannerKind(null), "none")
+  assert.equal(compactBannerKind(undefined), "none")
+  assert.equal(compactBannerKind({ droppedCount: 0, shrunk: true }), "shrink")
+  assert.equal(compactBannerKind({ droppedCount: 0, shrunk: false }), "prompt")
+  assert.equal(compactBannerKind({ droppedCount: 0 }), "unknown")
+  assert.equal(compactBannerKind({ droppedCount: 3, shrunk: true }), "dropped")
+  assert.equal(compactBannerKind({ droppedCount: 3 }), "dropped")
+})
+
+test("CLEAR_CONTEXT_COMPACTED clears a thread's banner; no-op when absent", () => {
+  const compacted = agentReducer(initialState, {
+    type: "SET_CONTEXT_COMPACTED",
+    threadId: "t1",
+    droppedCount: 0,
+    tokensBefore: 100,
+    tokensAfter: 80,
+    shrunk: true,
+  })
+  const cleared = agentReducer(compacted, { type: "CLEAR_CONTEXT_COMPACTED", threadId: "t1" })
+  assert.equal(cleared.contextCompactedByThreadId.t1, undefined)
+  // No-op: same state object returned when nothing to clear.
+  const again = agentReducer(cleared, { type: "CLEAR_CONTEXT_COMPACTED", threadId: "t1" })
+  assert.equal(again, cleared)
 })

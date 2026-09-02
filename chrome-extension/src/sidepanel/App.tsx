@@ -1203,6 +1203,10 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           ...(opts?.enqueue ? { enqueue: true } : { steer: true }),
         })
         setText("")
+        // New user turn: the previous compaction notice is no longer latest.
+        if (state.activeThreadId) {
+          dispatch({ type: "CLEAR_CONTEXT_COMPACTED", threadId: state.activeThreadId })
+        }
       } finally {
         sendingRef.current = false
       }
@@ -1251,6 +1255,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     }
 
     sendingRef.current = true
+    // New user turn: the previous compaction notice is no longer latest.
+    // (after all preflight early-returns, so a blocked send keeps the banner)
+    if (state.activeThreadId) {
+      dispatch({ type: "CLEAR_CONTEXT_COMPACTED", threadId: state.activeThreadId })
+    }
     try {
       // Parse slash command to auto-activate skill
       const slashMatch = trimmed.match(/^\/(\S+)/)

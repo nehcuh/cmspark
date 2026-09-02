@@ -2265,7 +2265,7 @@ export function SettingsSlideout() {
 
               <div style={styles.field}>
                 <div style={styles.helpText}>
-                  上下文窗口过大时，长对话压缩几乎不会触发（默认 1e6 ≈ 关闭自动压缩）。建议按模型真实上限设置。
+                  上下文窗口过大时，长对话压缩会来不及触发（新默认 512000 是 Agent 工作预算）。建议按模型真实上限设置。
                 </div>
               </div>
             </SettingsSection>
