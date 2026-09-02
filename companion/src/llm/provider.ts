@@ -104,6 +104,8 @@ export interface CompleteParams {
   temperature?: number
   model?: string
   signal?: AbortSignal
+  /** Optional output cap override; falls back to config.llm.max_tokens. */
+  max_tokens?: number
 }
 
 export interface CompleteUsage {

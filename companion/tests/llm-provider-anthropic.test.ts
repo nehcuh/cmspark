@@ -28,6 +28,7 @@ import {
   sseStringToStream,
 } from "../src/llm/providers/anthropic"
 import { HeaderPolicyError } from "../src/llm/providers/headers"
+import { llmExtract } from "../src/llm/llm-extract"
 import { LLM_ENDPOINT_DNS_ERROR, LLM_ENDPOINT_IMDS_ERROR } from "../src/security"
 
 const origDnsLookup = dns.promises.lookup
@@ -719,6 +720,141 @@ test("AnthropicProvider: L7 first-party + claude_code_compat refuses before fetc
       },
     )
     assert.equal(fetched, false)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+// ── complete() recap parity with streamChat (#268 follow-up) ───────────────
+
+test("complete: tiny disk context_window matches streamChat max_tokens (not cw/2)", async () => {
+  const originalFetch = globalThis.fetch
+  const capturedMaxTokens: number[] = []
+  globalThis.fetch = (async (_i: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}"))
+    capturedMaxTokens.push(body.max_tokens)
+    if (body.stream) {
+      return new Response(sseStringToStream(TEXT_SSE), { status: 200 })
+    }
+    return new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }) as typeof fetch
+
+  try {
+    // disk context_window=4000 would recap to 2000 without the effective-window guard
+    const provider = new AnthropicProvider(baseLlm({ context_window: 4000, max_tokens: 32768 }))
+    await collectEvents(provider.streamChat({ messages: [{ role: "user", content: "hi" }] }))
+    await provider.complete({ messages: [{ role: "user", content: "hi" }] })
+    assert.equal(capturedMaxTokens.length, 2)
+    assert.equal(capturedMaxTokens[0], 32768)
+    assert.equal(
+      capturedMaxTokens[1],
+      capturedMaxTokens[0],
+      "complete() must produce the same cap as streamChat, not 2000",
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("complete: params.max_tokens overrides config and drives the recap guard", async () => {
+  const originalFetch = globalThis.fetch
+  let captured: number | undefined
+  globalThis.fetch = (async (_i: string | URL | Request, init?: RequestInit) => {
+    captured = JSON.parse(String(init?.body || "{}")).max_tokens
+    return new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }) as typeof fetch
+
+  try {
+    const provider = new AnthropicProvider(baseLlm({ context_window: 4000, max_tokens: 32768 }))
+    await provider.complete({
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 4096,
+    })
+    assert.equal(captured, 4096)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("llmExtract path (M2/H1): config max_tokens is forwarded through toLlmConfig and not recapped", async () => {
+  const originalFetch = globalThis.fetch
+  let captured: number | undefined
+  globalThis.fetch = (async (_i: string | URL | Request, init?: RequestInit) => {
+    captured = JSON.parse(String(init?.body || "{}")).max_tokens
+    return new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "summary" }],
+        stop_reason: "end_turn",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }) as typeof fetch
+
+  try {
+    // Production shape: callers pass getConfig().llm (carries max_tokens) —
+    // toLlmConfig must forward it or the recap guard is skipped.
+    const out = await llmExtract({
+      systemPrompt: "sys",
+      userContent: "hi",
+      config: {
+        base_url: "https://relay.example.com/v1",
+        api_key: "test-key",
+        model_name: "claude-test",
+        temperature: 0.2,
+        context_window: 4000,
+        max_tokens: 32768,
+        protocol: "anthropic",
+      },
+    })
+    assert.equal(out, "summary")
+    assert.equal(captured, 32768, "must not recap to 2000 on the llmExtract path")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("llmExtract path: missing max_tokens still recaps at the computeMaxTokens default", async () => {
+  const originalFetch = globalThis.fetch
+  let captured: number | undefined
+  globalThis.fetch = (async (_i: string | URL | Request, init?: RequestInit) => {
+    captured = JSON.parse(String(init?.body || "{}")).max_tokens
+    return new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "summary" }],
+        stop_reason: "end_turn",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }) as typeof fetch
+
+  try {
+    // No max_tokens anywhere: computeMaxTokens assumes 32768 — the recap window
+    // must assume the same, so a tiny disk context_window cannot cut it to 2000.
+    await llmExtract({
+      systemPrompt: "sys",
+      userContent: "hi",
+      config: {
+        base_url: "https://relay.example.com/v1",
+        api_key: "test-key",
+        model_name: "claude-test",
+        temperature: 0.2,
+        context_window: 4000,
+        protocol: "anthropic",
+      },
+    })
+    assert.equal(captured, 32768, "missing max_tokens must still recap at the default, not 2000")
   } finally {
     globalThis.fetch = originalFetch
   }

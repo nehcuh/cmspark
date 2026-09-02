@@ -1,8 +1,8 @@
 /**
  * OpenAI-compatible LlmProvider (SDK wrap).
- * Mirrors adapter.ts stream + complete patterns. Sends max_tokens only when
- * StreamChatParams.max_tokens is a positive number (H2 truncated-tool-batch bump
- * and adapter-supplied chat cap). Anthropic always sends a cap.
+ * Mirrors adapter.ts stream + complete patterns. Sends max_tokens only when a
+ * positive number is supplied (StreamChatParams/CompleteParams.max_tokens or
+ * config.llm.max_tokens on the complete path). Anthropic always sends a cap.
  */
 
 import OpenAI from "openai"
@@ -39,7 +39,7 @@ export class OpenAIProvider implements LlmProvider {
     await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
-    const messages = params.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[]
+    const messages = toWireMessages(params.messages)
     const tools = params.tools as OpenAI.Chat.Completions.ChatCompletionTool[] | undefined
 
     const createParams: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
@@ -117,16 +117,22 @@ export class OpenAIProvider implements LlmProvider {
     await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
-    const messages = params.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[]
+    const messages = toWireMessages(params.messages)
 
-    const response = await this.client.chat.completions.create(
-      {
-        model,
-        temperature,
-        messages,
-      },
-      { signal: params.signal },
-    )
+    const createParams: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+      model,
+      temperature,
+      messages,
+    }
+    // Same policy as streamChat: send a cap only when explicitly requested.
+    const completeMax = params.max_tokens ?? this.config.max_tokens
+    if (typeof completeMax === "number" && completeMax > 0) {
+      createParams.max_tokens = completeMax
+    }
+
+    const response = await this.client.chat.completions.create(createParams, {
+      signal: params.signal,
+    })
 
     const choice = response.choices[0]
     const content = choice?.message?.content?.trim() || ""
@@ -156,3 +162,20 @@ export class OpenAIProvider implements LlmProvider {
 
 /** Re-export for tests that need to type-narrow messages without pulling OpenAI types. */
 export type { CanonicalChatMessage }
+
+/**
+ * Map canonical messages to OpenAI wire-safe params.
+ * The tool variant's internal `name` (fail-closed shrink labeling) is not in
+ * ChatCompletionToolMessageParam — strict OpenAI-compatible gateways 400 on it.
+ */
+function toWireMessages(
+  messages: CanonicalChatMessage[],
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  return messages.map((m) => {
+    if (m.role === "tool") {
+      const { name: _internalName, ...wire } = m
+      return wire
+    }
+    return m
+  }) as OpenAI.Chat.Completions.ChatCompletionMessageParam[]
+}

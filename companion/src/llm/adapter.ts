@@ -11,7 +11,7 @@ import { toolChatErrorPayload } from "../ws/l1-actuator"
 import { logger } from "../logger"
 import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
 import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
-import { effectiveContextWindow, getConfig, type LlmConfig } from "../config"
+import { effectiveContextWindow, getConfig, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
 import type { AppsConfig } from "../apps/types"
 import {
@@ -696,9 +696,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   // Default true when field omitted (new installs); explicit false disables.
   const m2Enabled = params.config.context_compaction_m2 !== false
 
-  async function runContextBudgetPass(phase: "pre_loop" | "mid_loop"): Promise<void> {
+  async function runContextBudgetPass(
+    phase: "pre_loop" | "mid_loop",
+    windowOverride?: number,
+  ): Promise<void> {
     if (compactionSetting === "off") return
-    const compact = applyContextBudget(messages, contextWindow, tools, { phase })
+    const compact = applyContextBudget(messages, windowOverride ?? contextWindow, tools, { phase })
     if (compactionSetting === "prompt") {
       if (compact.compacted) {
         try {
@@ -1876,9 +1879,14 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           overflowRecoveryUsed = true
           logger.warn("llm.overflow_retry", { thread_id: threadId, error: errorMsg.slice(0, 200) })
           round--
+          // The provider's real window may be smaller than the configured one:
+          // retrying with the same window would resend a byte-identical request.
+          // Halve the effective window (per-turn only; config/disk untouched) so
+          // the budget pass actually compacts.
+          const adjustedWindow = Math.max(CONTEXT_WINDOW_TINY, Math.floor(contextWindow / 2))
           // Mid-loop retry must compact with the live round pinned (mid_loop
           // shrink); pre_loop could drop this round's rows instead.
-          await runContextBudgetPass("mid_loop")
+          await runContextBudgetPass("mid_loop", adjustedWindow)
           continue
         }
         if (compactionSetting === "prompt") {

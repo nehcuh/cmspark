@@ -15,6 +15,7 @@ import type {
 } from "../provider"
 import {
   buildAnthropicRequestBody,
+  LLM_MAX_TOKENS_DEFAULT,
   resolveAnthropicMessagesUrl,
 } from "./anthropic-convert"
 import {
@@ -115,13 +116,21 @@ export class AnthropicProvider implements LlmProvider {
     const headers = this.buildHeaders()
     this.logRequestMeta(url, headers)
 
+    const completeMax = params.max_tokens ?? this.config.max_tokens
+    // Same recap guard as streamChat (#268): a tiny *disk* context_window
+    // must not recap max_tokens below the configured/requested output cap.
+    // computeMaxTokens defaults a missing cap to LLM_MAX_TOKENS_DEFAULT — the
+    // recap window must assume the same default or the guard is skipped (M2/H1
+    // path via llm-extract where max_tokens may be absent).
+    const recapMax =
+      typeof completeMax === "number" && completeMax > 0 ? completeMax : LLM_MAX_TOKENS_DEFAULT
     const body = buildAnthropicRequestBody({
       model,
-      contextWindow: this.config.context_window,
+      contextWindow: Math.max(this.config.context_window, recapMax * 2),
       messages: params.messages,
       temperature,
       stream: false,
-      maxTokens: this.config.max_tokens,
+      maxTokens: completeMax,
     })
 
     const response = await fetch(url, {

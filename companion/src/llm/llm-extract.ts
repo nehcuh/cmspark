@@ -26,6 +26,8 @@ export interface LlmExtractConfig {
   extra_headers?: Record<string, string>
   anthropic_version?: string
   context_window?: number
+  /** Output cap for the extraction call; forwarded so a tiny context_window cannot recap it. */
+  max_tokens?: number
 }
 
 function toLlmConfig(config: LlmExtractConfig): LlmConfig {
@@ -35,6 +37,7 @@ function toLlmConfig(config: LlmExtractConfig): LlmConfig {
     model_name: config.model_name,
     temperature: config.temperature,
     context_window: config.context_window ?? 100_000,
+    max_tokens: config.max_tokens,
     protocol: config.protocol ?? "openai",
     auth_style: config.auth_style,
     client_header_profile: config.client_header_profile,

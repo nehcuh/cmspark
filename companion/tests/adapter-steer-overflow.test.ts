@@ -17,6 +17,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import type { CanonicalStreamEvent, StreamChatParams } from "../src/llm/provider"
+import { estimateMessagesTokens, isOmitNotice } from "../src/llm/context-budget"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-steer-overflow-"))
 
@@ -332,6 +333,55 @@ test("overflow retry uses mid_loop pin: live assistant+tool rows survive into th
   )
   const done = params.getSentMessages().find((m) => m.type === "chat.done")
   assert.ok(done, "run completes after the retry")
+})
+
+test("overflow retry with window mismatch: halved effective window actually compacts", async () => {
+  resetState()
+  // Configured window 512000 (budget ~435k) but the provider's real window is
+  // smaller: thread at ~300k tokens passes the same-window budget pass, so a
+  // same-window retry would resend a byte-identical request. The retry must
+  // budget against max(CONTEXT_WINDOW_TINY, cw/2)=256000 (budget ~217k) and drop.
+  const params = buildMockParams("test-sn-ovf-mismatch", { contextWindow: 512000 })
+  const big = "x".repeat(300000) // 75k tokens per row → 4 rows ≈ 300k tokens
+  for (let i = 0; i < 2; i++) {
+    params.threadManager.addMessage(params.threadId, {
+      thread_id: params.threadId,
+      role: "user",
+      content: big,
+    })
+    params.threadManager.addMessage(params.threadId, {
+      thread_id: params.threadId,
+      role: "assistant",
+      content: big,
+    })
+  }
+  createHandlers = [overflowThrowHandler(), textStreamHandler("ok", "stop")]
+  await chatCreate(params)
+
+  assert.equal(streamParams.length, 2, "one overflow retry happened")
+  const firstTokens = estimateMessagesTokens(streamParams[0].messages)
+  const retryTokens = estimateMessagesTokens(streamParams[1].messages)
+  assert.ok(
+    retryTokens < firstTokens,
+    `retry must be compacted (first=${firstTokens}, retry=${retryTokens})`,
+  )
+  assert.ok(
+    streamParams[1].messages.some(isOmitNotice),
+    "retry request carries the omit notice for dropped rows",
+  )
+  const done = params.getSentMessages().find((m) => m.type === "chat.done")
+  assert.ok(done, "run completes after the compacted retry")
+})
+
+test("overflow after recovery retry stops with the terminal error message", async () => {
+  resetState()
+  const params = buildMockParams("test-sn-ovf-twice", { contextWindow: 512000 })
+  createHandlers = [overflowThrowHandler(), overflowThrowHandler()]
+  await chatCreate(params)
+
+  assert.equal(streamParams.length, 2, "single retry guard holds")
+  const err = params.getSentMessages().find((m) => m.type === "chat.error")
+  assert.ok(err && /压缩重试后仍失败/.test(err.error))
 })
 
 test("overflow with compaction=prompt skips the byte-level retry", async () => {
