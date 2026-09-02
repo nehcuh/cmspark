@@ -6,6 +6,8 @@
 
 - **`context_window` 工厂默认 512000**：新装 Agent 工作预算，不是供应商窗口承诺。磁盘过小（`< 16000` / 非正）本轮按 **128000** 做预算，**不写** `config.json`。shrink 不再切出半截 JSON（`{"succes…`）。设置页 Save 在 companion `config.updated` 水合前禁用。512k 默认**不是**对已有 4000 磁盘文件的修复。
 - **F1 文案诚实（#268）**：活切点不再保证聊天列总有「本轮步骤」清单——页面工具前必须 propose；成功后才挂卡；模型放弃 / 纯问答则无卡。
+- **F2 官方 zip 启动器**：`launch.bat` / `launch-hidden.vbs` 优先 `node.exe`+`cmspark-agent.js`，leftover SEA `cmspark-agent.exe` 垫底。
+- **F3 listen-first**：23401 不再等 MCP start；本轮未提供的 `mcp__*` 拒执行（`tool_not_offered`）。
 
 ## [0.5.7] — 2026-09-01
 

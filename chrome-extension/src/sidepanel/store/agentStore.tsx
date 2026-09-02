@@ -301,6 +301,7 @@ export interface AgentState {
       tokensBefore: number
       tokensAfter: number
       at: number
+      shrunk?: boolean
       mode?: "m1" | "m2" | "h1"
       rollingSummary?: string
       handoff?: {
@@ -462,6 +463,7 @@ export type AgentAction =
       droppedCount: number
       tokensBefore: number
       tokensAfter: number
+      shrunk?: boolean
       mode?: "m1" | "m2" | "h1"
       rollingSummary?: string
       handoff?: {
@@ -1033,6 +1035,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
             tokensBefore: action.tokensBefore,
             tokensAfter: action.tokensAfter,
             at: Date.now(),
+            shrunk: action.shrunk === true,
             mode: action.mode,
             rollingSummary: action.rollingSummary,
             handoff: action.handoff,
