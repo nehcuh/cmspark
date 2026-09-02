@@ -1158,6 +1158,21 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "knowledge.preview_cancel": (m) => {
+      if (typeof m.id !== "string" || !m.id) {
+        return { valid: false, error: "knowledge.preview_cancel requires id" }
+      }
+      return { valid: true }
+    },
+    "knowledge.suggest": (m) => {
+      if (typeof m.id !== "string" || !m.id) {
+        return { valid: false, error: "knowledge.suggest requires id" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.suggest requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
     "knowledge.delete": (m) => {
       if (typeof m.id !== "string" || !m.id) {
         return { valid: false, error: "knowledge.delete requires id" }

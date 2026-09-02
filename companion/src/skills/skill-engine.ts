@@ -24,6 +24,7 @@ import {
 } from "./doc-identity"
 import { validateWildcardPattern } from "../security"
 import { redactSecrets } from "../threads/distill"
+import { normalizeTags } from "../threads/digest"
 import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT, type RelatedKnowledgeInput } from "./knowledge-related"
 
 export const KNOWLEDGE_BODY_WIRE_CAP = 512 * 1024
@@ -171,6 +172,24 @@ export function pinSlashSkill(
 
 const KNOWLEDGE_SEARCH_THRESHOLD_TOKENS = 1000
 const KNOWLEDGE_SEARCH_TOPK = 3
+
+/**
+ * 150-char heuristic description fallback — cleans markdown (code blocks,
+ * headings, lists, bold) and truncates. Single source shared by
+ * ensureKnowledgeFrontmatter (stamping) and previewKnowledge (#272 F2: modal
+ * draft must never be empty for a non-empty body).
+ */
+function heuristicKnowledgeDescription(body: string): string {
+  const cleaned = body
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*|__/g, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/\n+/g, " ")
+    .trim()
+  return cleaned.slice(0, 150) + (cleaned.length > 150 ? "..." : "")
+}
 
 export class SkillEngine {
   private skillsDir: string
@@ -1621,7 +1640,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       ? String(patch.description).slice(0, 500)
       : skill.description
     const tags = patch.tags !== undefined
-      ? patch.tags.map((t) => String(t)).filter(Boolean).slice(0, 8)
+      ? normalizeTags(patch.tags)
       : skill.tags
     // Pin 11 / B1: reject body when a get would be truncated (no full-read).
     // Not a patch.body-vs-disk length compare — a larger replacement of a
@@ -1670,7 +1689,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     }
   }
 
-  previewKnowledge(content: string, fallbackName?: string): { title: string; description: string; preview: string; char_count: number } {
+  previewKnowledge(content: string, fallbackName?: string): { title: string; description: string; preview: string; char_count: number; tags: string[]; body: string } {
     const stamped = this.ensureKnowledgeFrontmatter(content, fallbackName)
     let parsed: { data: Record<string, unknown>; content: string }
     try {
@@ -1679,13 +1698,25 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       parsed = { data: {}, content: content.trimStart() }
     }
     const title = String(parsed.data.title || parsed.data.name || fallbackName || "未命名")
-    const description = typeof parsed.data.description === "string" ? parsed.data.description : ""
     const body = parsed.content || ""
+    // #272 F2: frontmatter with a name but no description used to surface an
+    // EMPTY description in the modal (ensureKnowledgeFrontmatter early-returns
+    // on a valid name, so its own 150-char fallback never ran). Fall back to
+    // the same heuristic here so the draft is never empty for a non-empty body.
+    const rawDescription = typeof parsed.data.description === "string" ? parsed.data.description.trim() : ""
+    const description = rawDescription || heuristicKnowledgeDescription(body)
     return {
       title,
       description,
       preview: body.slice(0, 4000),
       char_count: body.length,
+      // #272: surface the source file's own frontmatter tags so the import
+      // modal can prefill them (was silently dropped by the UI's setTags("")).
+      // Same normalizeTags pipeline as LLM-suggested tags (secret shapes dropped).
+      tags: normalizeTags(parsed.data.tags),
+      // Full parsed body — consumed by the companion-side draft extraction
+      // (capped to 8000 chars there); never spread onto the wire.
+      body,
     }
   }
 
@@ -1726,7 +1757,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const data = this.allowlistKnowledgeFrontmatter(parsed.data as Record<string, unknown>)
     if (overrides?.title) ident = { ...ident, title: cleanTitle(overrides.title) }
     if (overrides?.description) data.description = String(overrides.description).slice(0, 500)
-    if (overrides?.tags) data.tags = overrides.tags.map((t) => String(t)).filter(Boolean).slice(0, 8)
+    if (overrides?.tags) data.tags = normalizeTags(overrides.tags)
     data.name = ident.id
     data.id = ident.id
     data.title = ident.title
@@ -1751,7 +1782,10 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       if (check.ok) out.site = raw.site.trim()
     }
     if (Array.isArray(raw.tags)) {
-      out.tags = raw.tags.map((t) => String(t)).filter(Boolean).slice(0, 8)
+      // #272 M3: ingest-side tags pass normalizeTags too — secret-shaped tags
+      // (SENSITIVE_TAG_RE) are dropped, lowercase + ≤8 enforced, so nothing the
+      // LLM or a source file smuggles in reaches disk.
+      out.tags = normalizeTags(raw.tags)
     }
     return out
   }
@@ -1800,16 +1834,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     if (parsed.data.description && typeof parsed.data.description === "string") {
       inferredDescription = parsed.data.description
     } else {
-      // Clean body: remove markdown headings, bold, lists, code blocks
-      const cleaned = parsed.content
-        .replace(/```[\s\S]*?```/g, "")
-        .replace(/`([^`]+)`/g, "$1")
-        .replace(/^#{1,6}\s+/gm, "")
-        .replace(/\*\*|__/g, "")
-        .replace(/^\s*[-*+]\s+/gm, "")
-        .replace(/\n+/g, " ")
-        .trim()
-      inferredDescription = cleaned.slice(0, 150) + (cleaned.length > 150 ? "..." : "")
+      inferredDescription = heuristicKnowledgeDescription(parsed.content)
     }
 
     // --- Infer type ---

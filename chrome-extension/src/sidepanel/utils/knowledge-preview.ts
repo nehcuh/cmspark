@@ -46,3 +46,69 @@ export function knowledgePreviewSendFailureText(resp: unknown): string | null {
   if (r.ok !== false) return null
   return typeof r.error === "string" && r.error ? r.error : "发送失败"
 }
+
+// --- #272: AI draft suggestion (knowledge.preview_suggested / knowledge.suggest) ---
+
+/**
+ * Mirror of companion digest.ts SENSITIVE_TAG_RE (no cross-package import).
+ * Defense in depth: companion already runs normalizeTags at the trust
+ * boundary; this drops secret-shaped tags again before they enter the UI.
+ */
+const SENSITIVE_TAG_RE = /(sk-|api[_-]?key|password|bearer\s|secret|token)/i
+
+/**
+ * Draft suggestion from the companion. `source: "llm"` is the only value that
+ * may be presented as an AI suggestion — heuristics must never wear that badge.
+ */
+export interface KnowledgeDraftSuggestion {
+  description?: string
+  tags?: string[]
+  source: "llm" | "heuristic"
+}
+
+/** Validate an inbound suggested payload; anything off-shape is dropped. */
+export function sanitizeKnowledgeSuggestion(raw: unknown): KnowledgeDraftSuggestion | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
+  const s = raw as { description?: unknown; tags?: unknown; source?: unknown }
+  if (s.source !== "llm" && s.source !== "heuristic") return null
+  const out: KnowledgeDraftSuggestion = { source: s.source }
+  if (typeof s.description === "string" && s.description.trim()) out.description = s.description
+  if (Array.isArray(s.tags)) {
+    const tags = s.tags.filter(
+      (t): t is string => typeof t === "string" && !!t.trim() && !SENSITIVE_TAG_RE.test(t),
+    )
+    if (tags.length) out.tags = tags
+  }
+  return out.description || out.tags ? out : null
+}
+
+/** Format a tags array for the comma-separated tags input. */
+export function formatKnowledgeTagsInput(tags: unknown): string {
+  if (!Array.isArray(tags)) return ""
+  return tags.filter((t): t is string => typeof t === "string" && !!t.trim()).join(", ")
+}
+
+export interface KnowledgeDraftFields {
+  description: string
+  tags: string
+}
+
+/**
+ * #272 user-dirty rule (spec §4.3): a suggestion fills only the fields the
+ * user has NOT edited; dirty fields keep the user's text.
+ */
+export function fillKnowledgeDraftFromSuggestion(
+  current: KnowledgeDraftFields,
+  dirty: { description?: boolean; tags?: boolean },
+  suggested: KnowledgeDraftSuggestion | null | undefined,
+): KnowledgeDraftFields {
+  if (!suggested) return current
+  return {
+    description:
+      !dirty.description && typeof suggested.description === "string" && suggested.description
+        ? suggested.description
+        : current.description,
+    tags:
+      !dirty.tags && Array.isArray(suggested.tags) ? suggested.tags.join(", ") : current.tags,
+  }
+}
