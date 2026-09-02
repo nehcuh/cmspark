@@ -4,10 +4,22 @@
 
 ## [Unreleased]
 
-- **`context_window` 工厂默认 512000**：新装 Agent 工作预算，不是供应商窗口承诺。磁盘过小（`< 16000` / 非正）本轮按 **128000** 做预算，**不写** `config.json`。shrink 不再切出半截 JSON（`{"succes…`）。设置页 Save 在 companion `config.updated` 水合前禁用。512k 默认**不是**对已有 4000 磁盘文件的修复。
-- **F1 文案诚实（#268）**：活切点不再保证聊天列总有「本轮步骤」清单——页面工具前必须 propose；成功后才挂卡；模型放弃 / 纯问答则无卡。
+（无）
+
+## [0.5.8] — 2026-09-02
+
+工厂默认 `context_window` 512000；过小磁盘运行时按 128000 且不写盘；官方 zip node-first；Companion listen 不再等 MCP start。[#268](https://github.com/nehcuh/cmspark/issues/268)
+
+### Changed
+
+- **`context_window` 工厂默认 512000**：新装 Agent 工作预算，不是供应商窗口承诺。磁盘过小（`< 16000` / 非正）本轮按 **128000** 做预算，**不写** `config.json`。shrink 不再切出半截 JSON（`{"succes…`）。设置页 Save 在 companion `config.updated` 水合前禁用。shrink-only 横幅不再谎称「仅提示未压缩」。512k 默认**不是**对已有 4000 磁盘文件的修复。
+- **F1 文案诚实**：活切点不再保证聊天列总有「本轮步骤」清单——页面工具前必须 propose；成功后才挂卡；模型放弃 / 纯问答则无卡。
 - **F2 官方 zip 启动器**：`launch.bat` / `launch-hidden.vbs` 优先 `node.exe`+`cmspark-agent.js`，leftover SEA `cmspark-agent.exe` 垫底。
 - **F3 listen-first**：23401 不再等 MCP start；本轮未提供的 `mcp__*` 拒执行（`tool_not_offered`）。
+
+### Known residuals
+
+- `createToolExecutor` 未串 offered-catalog（LLM 路径已由 adapter 包一层）；tray settings-web 无三档过小窗口文案；Windows `0o600` 测试在 NTFS 上失败（预置）。
 
 ## [0.5.7] — 2026-09-01
 
