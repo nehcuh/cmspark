@@ -634,6 +634,7 @@ export async function handleMessage(
         const thread = services.threadManager.get(rest.thread_id)
         const skillMode = thread?.skill_selection_mode || "auto"
         const knowledgeMode = thread?.knowledge_selection_mode || "auto"
+        const knowledgeSmartMatch = thread?.knowledge_smart_match !== false
 
         // Resolve skill IDs based on mode
         // hostname: site_knowledge auto-load only (extension SW sets it; not a trust gate)
@@ -645,11 +646,13 @@ export async function handleMessage(
           currentHostname,
         )
 
-        // Resolve knowledge IDs based on mode
+        // Resolve knowledge IDs based on mode (#273 Wave A: query 打分 + 智能匹配开关)
         const resolvedKnowledgeIds = services.skillEngine.resolveKnowledgeIdsForThread(
           rest.thread_id,
           knowledgeMode,
           currentHostname,
+          rest.message,
+          knowledgeSmartMatch,
         )
 
         // Merge with any explicitly requested skill_ids from client
@@ -724,6 +727,9 @@ export async function handleMessage(
           message: rest.message,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
+          // #273 Wave A: 空 query + 智能匹配开的 auto → 每篇只注入 description
+          knowledgeDescriptionOnly:
+            knowledgeMode === "auto" && knowledgeSmartMatch && !(rest.message || "").trim(),
           // F1: echo back as chat.user client_message_id (optimistic-bubble adopt)
           clientMessageId:
             typeof rest.clientMessageId === "string" && rest.clientMessageId
@@ -1213,6 +1219,7 @@ export async function handleMessage(
         const threadAfterPin = services.threadManager.get(thread_id)
         const skillMode = threadAfterPin?.skill_selection_mode || "auto"
         const knowledgeMode = threadAfterPin?.knowledge_selection_mode || threadForConfig?.knowledge_selection_mode || "auto"
+        const knowledgeSmartMatch = (threadAfterPin ?? threadForConfig)?.knowledge_smart_match !== false
         const uploadHostname = normalizeChatHostname(rest.hostname, rest.url)
         const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
           thread_id,
@@ -1224,6 +1231,8 @@ export async function handleMessage(
           thread_id,
           knowledgeMode,
           uploadHostname,
+          userMessage,
+          knowledgeSmartMatch,
         )
         const allSkillIds = [...new Set([...resolvedSkillIds, ...(rest.skill_ids || [])])]
 
@@ -1255,6 +1264,9 @@ export async function handleMessage(
               : undefined,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
+          // #273 Wave A: 空 query + 智能匹配开的 auto → 每篇只注入 description
+          knowledgeDescriptionOnly:
+            knowledgeMode === "auto" && knowledgeSmartMatch && !(userMessage || "").trim(),
           config: effectiveLLMConfig,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
@@ -1605,6 +1617,7 @@ export async function handleMessage(
         const thread = services.threadManager.get(thread_id)
         const skillMode = thread?.skill_selection_mode || "auto"
         const knowledgeMode = thread?.knowledge_selection_mode || "auto"
+        const knowledgeSmartMatch = thread?.knowledge_smart_match !== false
 
         // Resolve skill IDs based on mode
         const currentHostname = normalizeChatHostname(rest.hostname, rest.url)
@@ -1615,11 +1628,13 @@ export async function handleMessage(
           currentHostname,
         )
 
-        // Resolve knowledge IDs based on mode
+        // Resolve knowledge IDs based on mode (#273 Wave A: query 打分 + 智能匹配开关)
         const resolvedKnowledgeIds = services.skillEngine.resolveKnowledgeIdsForThread(
           thread_id,
           knowledgeMode,
           currentHostname,
+          userMsg.content,
+          knowledgeSmartMatch,
         )
 
         // Merge with any explicitly requested skill_ids from client
@@ -1640,6 +1655,9 @@ export async function handleMessage(
           message: userMsg.content,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
+          // #273 Wave A: 空 query + 智能匹配开的 auto → 每篇只注入 description
+          knowledgeDescriptionOnly:
+            knowledgeMode === "auto" && knowledgeSmartMatch && !(userMsg.content || "").trim(),
           config: regenEffectiveLLMConfig,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
@@ -2237,6 +2255,9 @@ export async function handleMessage(
         ...(sourceThread.knowledge_selection_mode !== undefined
           ? { knowledge_selection_mode: sourceThread.knowledge_selection_mode }
           : {}),
+        ...(sourceThread.knowledge_smart_match !== undefined
+          ? { knowledge_smart_match: sourceThread.knowledge_smart_match }
+          : {}),
         ...(sourceThread.tool_whitelist !== undefined
           ? {
               tool_whitelist: sourceThread.tool_whitelist
@@ -2283,6 +2304,7 @@ export async function handleMessage(
         "active_knowledge_ids",
         "skill_selection_mode",
         "knowledge_selection_mode",
+        "knowledge_smart_match",
         "mcp_selection_mode",
         "active_mcp_server_ids",
         "digest",

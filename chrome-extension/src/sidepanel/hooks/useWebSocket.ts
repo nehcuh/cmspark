@@ -889,6 +889,10 @@ export function useWebSocket() {
           if (msg.thread?.id === activeThreadRef.current && msg.thread?.knowledge_selection_mode) {
             dispatch({ type: "SET_KNOWLEDGE_SELECTION_MODE", mode: msg.thread.knowledge_selection_mode })
           }
+          // Sync knowledge_smart_match if this is the active thread (undefined = on)
+          if (msg.thread?.id === activeThreadRef.current && msg.thread?.knowledge_smart_match !== undefined) {
+            dispatch({ type: "SET_KNOWLEDGE_SMART_MATCH", enabled: msg.thread.knowledge_smart_match !== false })
+          }
           break
         }
         case "thread.context_compacted": {

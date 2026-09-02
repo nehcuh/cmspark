@@ -44,6 +44,8 @@ export interface Thread {
   active_knowledge_ids?: string[]
   skill_selection_mode?: SkillSelectionMode
   knowledge_selection_mode?: "auto" | "all" | "manual"
+  /** #273 Wave A: 知识「智能匹配」开关（undefined = true）。 */
+  knowledge_smart_match?: boolean
   mcp_selection_mode?: McpSelectionMode
   active_mcp_server_ids?: string[]
   /** Mission Pack currently applied to this thread (null/undefined = none). */

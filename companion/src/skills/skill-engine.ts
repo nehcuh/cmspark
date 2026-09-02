@@ -28,6 +28,30 @@ import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT, type RelatedKnowledgeInp
 
 export const KNOWLEDGE_BODY_WIRE_CAP = 512 * 1024
 export const KNOWLEDGE_FILE_CAP = 6 * 1024 * 1024
+
+// --- Knowledge retrieval scoring constants (#273 Wave A, spec §2.4) ---
+// Centralized here; no magic numbers at call sites.
+/** auto 模式文档级 top-k。 */
+export const KNOWLEDGE_DOC_TOPK_AUTO = 5
+/** all 模式文档级 top-k。 */
+export const KNOWLEDGE_DOC_TOPK_ALL = 8
+/** 跨文档注入总字符硬预算（只记 summary 正文，不含 wrap 包装）。 */
+export const KNOWLEDGE_INJECT_BUDGET_CHARS = 8000
+/** 注入阈值：看未加 SITE_BOOST 的裸 cosine。 */
+export const KNOWLEDGE_SCORE_MIN = 0.10
+/** auto 模式当前站点加权（只改排序，不改阈值，不是硬过滤也不是硬灌）。 */
+export const KNOWLEDGE_SITE_BOOST = 0.15
+/** 空 query + 智能匹配开的 auto 退化：每篇只注入 description 的上限字符。 */
+export const KNOWLEDGE_EMPTY_QUERY_DESCRIPTION_CHARS = 500
+/**
+ * wrapKnowledgeBlock 每篇包装的固定标记字符数（AC-2 上界口径）：
+ * = 标题行骨架（"## Knowledge: " + " []" + 换行）+ fence 开闭标记（含 12 位
+ * wrapId 与 source="knowledge"）+ 免责行 + 各换行，不含 title/id 变长部分。
+ * 用空串实调 wrapKnowledgeBlock 算得；不进 8000 知识预算。
+ */
+export const KNOWLEDGE_WRAP_OVERHEAD_CHARS = wrapKnowledgeBlock("", "", "").length
+/** 预算内截断标记（与 getKnowledgeSummary 的 2000 字截断同形）。 */
+const KNOWLEDGE_TRUNC_MARK = "\n... (truncated)"
 /** Body update after a truncated get — not the download copy. */
 export const KNOWLEDGE_TRUNCATED_BODY_UPDATE_ERROR =
   "正文已截断，禁止保存覆盖未读到的尾部"
@@ -682,14 +706,21 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       .filter((s): s is Skill => !!s && this.isKnowledgeDoc(s))
   }
 
-  /** Resolve knowledge IDs for a thread based on the selection mode.
-   * - auto: activeKnowledge ∪ getBySite(hostname)  (union, deduped)
-   * - all: all knowledge docs
-   * - manual: activeKnowledge only (pure user selection) */
+  /** Resolve knowledge IDs for a thread based on the selection mode (#273 Wave A).
+   * - manual: activeKnowledge only (pure user selection, never scored/truncated)
+   * - smartMatch=false: legacy selection (auto→active∪site, all→全库), no scoring
+   * - smartMatch=true + 非空 query: TF-IDF 打分（复用 semantic-match 同套机器，
+   *   全库当次调用内 IDF；零 LLM）→ pinned 全量先入选 + 非 pinned 按
+   *   裸分≥KNOWLEDGE_SCORE_MIN 过滤、按（裸分+SITE_BOOST(auto 站点命中)）降序
+   *   取 top-k（auto=5/all=8），并列取 id（k.id||k.name）字典序最小
+   * - smartMatch=true + 空 query: 退化为 legacy 选择（auto→pinned∪site，all→全库）
+   * - 打分模块任何异常 → try/catch 整段回退 legacy（仅日志），不得半新半旧 */
   resolveKnowledgeIdsForThread(
     threadId: string,
     mode?: "auto" | "all" | "manual",
     hostname?: string,
+    query?: string,
+    smartMatch = true,
   ): string[] {
     this.ensureFresh()
     const resolvedMode = mode || "auto"
@@ -698,16 +729,76 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       return this.getActiveKnowledgeForThread(threadId).map(s => s.name)
     }
 
-    if (resolvedMode === "all") {
-      return this.skillsCache
-        .filter(s => this.isKnowledgeDoc(s))
-        .map(s => s.name)
+    // Pre-scoring selection behavior (also the byte-identical degradation target).
+    const legacyResolve = (): string[] => {
+      if (resolvedMode === "all") {
+        return this.skillsCache
+          .filter(s => this.isKnowledgeDoc(s))
+          .map(s => s.name)
+      }
+      const active = this.getActiveKnowledgeForThread(threadId).map(s => s.name)
+      const site = hostname ? this.getBySite(hostname).map(s => s.name) : []
+      return [...new Set([...active, ...site])]
     }
 
-    // auto mode (default)
-    const active = this.getActiveKnowledgeForThread(threadId).map(s => s.name)
-    const site = hostname ? this.getBySite(hostname).map(s => s.name) : []
-    return [...new Set([...active, ...site])]
+    const q = (query || "").trim()
+    if (!smartMatch || !q) return legacyResolve()
+
+    try {
+      const pinned = this.getActiveKnowledgeForThread(threadId)
+      const pinnedNames = new Set(pinned.map(s => s.name))
+      const pool = this.skillsCache.filter(s => this.isKnowledgeDoc(s))
+      const siteNames = new Set(
+        resolvedMode === "auto" && hostname
+          ? this.getBySite(hostname).map(s => s.name)
+          : [],
+      )
+      const scored = this.scoreKnowledgePool(pool, q, siteNames, pinnedNames)
+      const topk = resolvedMode === "all" ? KNOWLEDGE_DOC_TOPK_ALL : KNOWLEDGE_DOC_TOPK_AUTO
+      const picked = scored.filter(x => x.raw >= KNOWLEDGE_SCORE_MIN).slice(0, topk)
+      return [...pinned.map(s => s.name), ...picked.map(x => x.skill.name)]
+    } catch (e) {
+      console.warn("[skills] knowledge scoring failed; falling back to legacy selection:", e)
+      return legacyResolve()
+    }
+  }
+
+  /**
+   * TF-IDF 打分（#273 Wave A §2.2）：bag = title + description + tags[≤8]；
+   * IDF 当次调用内对全库 knowledge bag 计算（N≤200 毫秒级，无缓存）。
+   * 返回按排序分（裸分 + 站点加权）降序、并列取 id 字典序最小的列表；
+   * 阈值过滤（裸分 ≥ KNOWLEDGE_SCORE_MIN）在调用方做。纯本地，零 LLM。
+   */
+  private scoreKnowledgePool(
+    pool: Skill[],
+    query: string,
+    siteNames: Set<string>,
+    pinnedNames: Set<string>,
+  ): Array<{ skill: Skill; raw: number; rank: number }> {
+    // bag(doc) = title + description + tags[≤8]
+    const tokenLists = pool.map(s =>
+      tokenize(
+        `${s.title || ""} ${s.description || ""} ${(s.tags || []).slice(0, 8).join(" ")}`,
+      ),
+    )
+    const idf = idfFromDocs(tokenLists)
+    const queryVec = tfidfVec(tokenize(query), idf)
+
+    const scored: Array<{ skill: Skill; raw: number; rank: number }> = []
+    for (let i = 0; i < pool.length; i++) {
+      if (pinnedNames.has(pool[i].name)) continue
+      const raw = cosineSimilarity(queryVec, tfidfVec(tokenLists[i], idf))
+      const rank = raw + (siteNames.has(pool[i].name) ? KNOWLEDGE_SITE_BOOST : 0)
+      scored.push({ skill: pool[i], raw, rank })
+    }
+    // 排序看加权分；并列取 id 字典序最小（codepoint 序，跨平台确定）
+    scored.sort((a, b) => {
+      if (b.rank !== a.rank) return b.rank - a.rank
+      const ka = a.skill.id || a.skill.name
+      const kb = b.skill.id || b.skill.name
+      return ka < kb ? -1 : ka > kb ? 1 : 0
+    })
+    return scored
   }
 
   /** Build compact skill index for system prompt.
@@ -716,15 +807,18 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
    * Also injects global knowledge and matching site knowledge summaries.
    * If skillIds is provided, only includes those skills.
    * If knowledgeIds is provided, only includes those knowledge docs.
-   * Security skills are ALWAYS injected and cannot be disabled. */
+   * Security skills are ALWAYS injected and cannot be disabled.
+   * opts.knowledgeDescriptionOnly: 空 query + 智能匹配开的 auto 退化——
+   * 每篇只注入 description（≤KNOWLEDGE_EMPTY_QUERY_DESCRIPTION_CHARS），无 description 跳过。 */
   buildSystemPrompt(
     threadId: string,
     hostname?: string,
     skillIds?: string[],
     knowledgeIds?: string[],
     query?: string,
+    opts?: { knowledgeDescriptionOnly?: boolean },
   ): string {
-    return this.buildSystemPromptWithSources(threadId, hostname, skillIds, knowledgeIds, query).prompt
+    return this.buildSystemPromptWithSources(threadId, hostname, skillIds, knowledgeIds, query, opts).prompt
   }
 
   buildSystemPromptWithSources(
@@ -733,6 +827,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     skillIds?: string[],
     knowledgeIds?: string[],
     query?: string,
+    opts?: { knowledgeDescriptionOnly?: boolean },
   ): { prompt: string; retrieved_sources: RetrievedSource[] } {
     const skills = skillIds
       ? skillIds.map(id => this.get(id)).filter(Boolean) as Skill[]
@@ -742,12 +837,33 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const injectedNames = new Set<string>()
     const retrieved_sources: RetrievedSource[] = []
 
+    // 跨文档知识注入硬预算（#273 Wave A §2.3）：只记注入的 summary 正文字符，
+    // 不含 wrapKnowledgeBlock 包装（包装上界 = KNOWLEDGE_WRAP_OVERHEAD_CHARS×篇数
+    // + title/id 变长）。作用于所有 pushKnowledge 漏斗（含 experience skills 与
+    // legacy global+site 分支），不影响 Safety Guard / skills 索引。
+    let knowledgeBudgetLeft = KNOWLEDGE_INJECT_BUDGET_CHARS
+    let knowledgeBudgetStop = false
+
     const pushKnowledge = (k: Skill, summary: string, chunkIndex?: number) => {
+      if (knowledgeBudgetStop) return
       const id = k.id || k.name
       const title = sanitizeKnowledgeContent(k.title || k.name)
+      let body = summary
+      if (body.length > knowledgeBudgetLeft) {
+        // 剩余 = 0 直接停；剩余 > 0 截断到剩余额度（末尾加截断标记）然后停止
+        if (knowledgeBudgetLeft <= 0) {
+          knowledgeBudgetStop = true
+          return
+        }
+        body = knowledgeBudgetLeft > KNOWLEDGE_TRUNC_MARK.length
+          ? body.slice(0, knowledgeBudgetLeft - KNOWLEDGE_TRUNC_MARK.length) + KNOWLEDGE_TRUNC_MARK
+          : body.slice(0, knowledgeBudgetLeft)
+        knowledgeBudgetStop = true
+      }
+      knowledgeBudgetLeft -= body.length
       injectedNames.add(k.name)
-      retrieved_sources.push({ id, title, chunk_index: chunkIndex, chars: summary.length })
-      parts.push(wrapKnowledgeBlock(id, title, summary))
+      retrieved_sources.push({ id, title, chunk_index: chunkIndex, chars: body.length })
+      parts.push(wrapKnowledgeBlock(id, title, body))
     }
 
     // --- Safety Guard: ALWAYS inject security skills (immutable, builtin) ---
@@ -775,6 +891,15 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       for (const k of knowledgeToInject) {
         if (injectedNames.has(k.name)) continue
         if (!this.isKnowledgeDoc(k)) continue
+        if (opts?.knowledgeDescriptionOnly) {
+          // 空 query + 智能匹配开的 auto 退化：只注入 description，不灌正文；
+          // 无 description 的篇跳过不注入。
+          const desc = sanitizeKnowledgeContent(k.description || "")
+            .slice(0, KNOWLEDGE_EMPTY_QUERY_DESCRIPTION_CHARS)
+            .trim()
+          if (desc) pushKnowledge(k, desc)
+          continue
+        }
         const summary = this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k, query)
         if (summary) pushKnowledge(k, summary)
       }

@@ -78,6 +78,8 @@ export interface ThreadPackSnapshot {
   active_knowledge_ids?: string[]
   skill_selection_mode?: SelectionMode
   knowledge_selection_mode?: SelectionMode
+  /** #273 Wave A: knowledge smart-match toggle (undefined = true). */
+  knowledge_smart_match?: boolean
   mcp_selection_mode?: SelectionMode
   active_mcp_server_ids?: string[]
   system_prompt_append: string | null

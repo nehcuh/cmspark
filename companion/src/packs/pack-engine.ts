@@ -1416,6 +1416,7 @@ function snapshotFromThread(thread: any): ThreadPackSnapshot {
       : [],
     skill_selection_mode: thread.skill_selection_mode,
     knowledge_selection_mode: thread.knowledge_selection_mode,
+    knowledge_smart_match: thread.knowledge_smart_match,
     mcp_selection_mode: thread.mcp_selection_mode,
     active_mcp_server_ids: Array.isArray(thread.active_mcp_server_ids)
       ? [...thread.active_mcp_server_ids]
@@ -1441,6 +1442,7 @@ function restoreSnapshot(
     active_knowledge_ids: Array.isArray(snap.active_knowledge_ids) ? [...snap.active_knowledge_ids] : [],
     skill_selection_mode: snap.skill_selection_mode as SelectionMode | undefined,
     knowledge_selection_mode: snap.knowledge_selection_mode as SelectionMode | undefined,
+    knowledge_smart_match: snap.knowledge_smart_match,
     mcp_selection_mode: snap.mcp_selection_mode as SelectionMode | undefined,
     active_mcp_server_ids: snap.active_mcp_server_ids,
     system_prompt_append: snap.system_prompt_append,
