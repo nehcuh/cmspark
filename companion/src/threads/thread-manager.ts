@@ -29,6 +29,8 @@ interface ThreadPackSnapshot {
   active_knowledge_ids?: string[]
   skill_selection_mode?: "auto" | "all" | "manual"
   knowledge_selection_mode?: "auto" | "all" | "manual"
+  /** #273 Wave A: knowledge smart-match toggle (undefined = true). */
+  knowledge_smart_match?: boolean
   mcp_selection_mode?: "auto" | "all" | "manual"
   active_mcp_server_ids?: string[]
   system_prompt_append: string | null
@@ -52,6 +54,8 @@ interface Thread {
   active_knowledge_ids?: string[]
   skill_selection_mode?: "auto" | "all" | "manual"
   knowledge_selection_mode?: "auto" | "all" | "manual"
+  /** #273 Wave A: 知识「智能匹配」开关。undefined = true（开）。 */
+  knowledge_smart_match?: boolean
   // Audit item 7: per-thread MCP server selection. "auto" exposes every
   // connected server's tools to the LLM (legacy default). "all" exposes every
   // connected server explicitly. "manual" restricts to active_mcp_server_ids.
@@ -879,6 +883,10 @@ export class ThreadManager {
         throw new Error(`Invalid knowledge_selection_mode: ${updates.knowledge_selection_mode}. Must be one of ${validModes.join(", ")}`)
       }
     }
+    // Validate knowledge_smart_match if being updated (undefined = true)
+    if (updates.knowledge_smart_match !== undefined && typeof updates.knowledge_smart_match !== "boolean") {
+      throw new Error("knowledge_smart_match must be a boolean")
+    }
     if (updates.active_knowledge_ids !== undefined) {
       if (
         !Array.isArray(updates.active_knowledge_ids) ||
@@ -939,6 +947,7 @@ export class ThreadManager {
       active_knowledge_ids?: string[]
       skill_selection_mode?: "auto" | "all" | "manual"
       knowledge_selection_mode?: "auto" | "all" | "manual"
+      knowledge_smart_match?: boolean
       mcp_selection_mode?: "auto" | "all" | "manual"
       active_mcp_server_ids?: string[]
       system_prompt_append: string | null
@@ -974,6 +983,9 @@ export class ThreadManager {
     if (patch.knowledge_selection_mode !== undefined && !validModes.includes(patch.knowledge_selection_mode)) {
       throw new Error(`Invalid knowledge_selection_mode: ${patch.knowledge_selection_mode}`)
     }
+    if (patch.knowledge_smart_match !== undefined && typeof patch.knowledge_smart_match !== "boolean") {
+      throw new Error(`Invalid knowledge_smart_match: ${patch.knowledge_smart_match}`)
+    }
     if (patch.mcp_selection_mode !== undefined && !validModes.includes(patch.mcp_selection_mode)) {
       throw new Error(`Invalid mcp_selection_mode: ${patch.mcp_selection_mode}`)
     }
@@ -1007,6 +1019,9 @@ export class ThreadManager {
     if (patch.skill_selection_mode !== undefined) thread.skill_selection_mode = patch.skill_selection_mode
     if (patch.knowledge_selection_mode !== undefined) {
       thread.knowledge_selection_mode = patch.knowledge_selection_mode
+    }
+    if (patch.knowledge_smart_match !== undefined) {
+      thread.knowledge_smart_match = patch.knowledge_smart_match
     }
     if (patch.mcp_selection_mode !== undefined) thread.mcp_selection_mode = patch.mcp_selection_mode
     if (patch.active_mcp_server_ids !== undefined) {

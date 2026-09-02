@@ -176,6 +176,8 @@ export interface AgentState {
   knowledgeDocs: KnowledgeMeta[]
   skillSelectionMode: SkillSelectionMode
   knowledgeSelectionMode: "auto" | "all" | "manual"
+  /** #273 Wave A: 知识「智能匹配」开关（thread.knowledge_smart_match，默认开）。 */
+  knowledgeSmartMatch: boolean
   activeKnowledgeIds: string[]
   securityAuditLog: SecurityAuditEntry[]
   companionConfig: LLMConfig | null
@@ -382,6 +384,7 @@ export type AgentAction =
   | { type: "SET_KNOWLEDGE_DOCS"; docs: KnowledgeMeta[] }
   | { type: "SET_SKILL_SELECTION_MODE"; mode: SkillSelectionMode }
   | { type: "SET_KNOWLEDGE_SELECTION_MODE"; mode: "auto" | "all" | "manual" }
+  | { type: "SET_KNOWLEDGE_SMART_MATCH"; enabled: boolean }
   | { type: "TOGGLE_KNOWLEDGE"; knowledgeId: string }
   | { type: "ADD_SECURITY_AUDIT"; entry: SecurityAuditEntry }
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
@@ -553,6 +556,7 @@ export const initialState: AgentState = {
   knowledgeDocs: [],
   skillSelectionMode: "auto",
   knowledgeSelectionMode: "auto",
+  knowledgeSmartMatch: true,
   activeKnowledgeIds: [],
   securityAuditLog: [],
   companionConfig: null,
@@ -917,6 +921,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         skillSelectionMode: nextActiveThread?.skill_selection_mode || state.skillSelectionMode || "auto",
         knowledgeSelectionMode:
           nextActiveThread?.knowledge_selection_mode || state.knowledgeSelectionMode || "auto",
+        knowledgeSmartMatch:
+          // #273: 字段省略 = true；不继承上一线程的 UI 状态（开关漂移窗口）
+          nextActiveThread?.knowledge_smart_match !== false,
         mcpSelectionMode: nextActiveThread?.mcp_selection_mode || state.mcpSelectionMode || "auto",
         activeMcpServerIds: nextActiveThread?.active_mcp_server_ids || state.activeMcpServerIds || [],
       }
@@ -940,6 +947,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         activeKnowledgeIds: activeThread?.active_knowledge_ids || [],
         skillSelectionMode: activeThread?.skill_selection_mode || "auto",
         knowledgeSelectionMode: activeThread?.knowledge_selection_mode || "auto",
+        knowledgeSmartMatch: activeThread?.knowledge_smart_match !== false,
         mcpSelectionMode: activeThread?.mcp_selection_mode || "auto",
         activeMcpServerIds: activeThread?.active_mcp_server_ids || [],
         overlayStandby: null,
@@ -1250,6 +1258,12 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           knowledgeSelectionMode: isActive
             ? (action.thread.knowledge_selection_mode || state.knowledgeSelectionMode)
             : state.knowledgeSelectionMode,
+          knowledgeSmartMatch: isActive
+            // #273: UPSERT 是同线程 patch 合并语义——字段省略 = 保持当前 UI 状态
+            // （乐观更新窗口内省略字段的回显不得把开关闪回 true；gate6 NF-1）。
+            // 跨线程归一（省略 = true）由 SET_THREADS / SET_ACTIVE_THREAD 负责。
+            ? (action.thread.knowledge_smart_match ?? state.knowledgeSmartMatch)
+            : state.knowledgeSmartMatch,
         }
       }
       return {
@@ -1358,6 +1372,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, skillSelectionMode: action.mode }
     case "SET_KNOWLEDGE_SELECTION_MODE":
       return { ...state, knowledgeSelectionMode: action.mode }
+    case "SET_KNOWLEDGE_SMART_MATCH":
+      return { ...state, knowledgeSmartMatch: action.enabled }
     case "TOGGLE_KNOWLEDGE":
       return {
         ...state,

@@ -78,6 +78,62 @@ test("SET_ACTIVE_THREAD restores pinned tabs, skillSelectionMode, and knowledgeS
   assert.equal(next.knowledgeSelectionMode, "all")
 })
 
+// #273 NIT: knowledge_smart_match 归一化 = `thread.knowledge_smart_match !== false`，
+// 字段省略归一为 true，绝不继承上一线程的 UI 状态（开关漂移窗口）
+test("knowledgeSmartMatch: thread B omits the field → normalized to true, no state leak", () => {
+  const base = stateWithThreads()
+  // 当前线程 A 显式关闭过开关
+  const offState: AgentState = { ...base, knowledgeSmartMatch: false }
+
+  // SET_ACTIVE_THREAD：B 省略字段 → true
+  const viaSwitch = agentReducer(offState, { type: "SET_ACTIVE_THREAD", threadId: "thread-b" })
+  assert.equal(viaSwitch.knowledgeSmartMatch, true, "omitted field must normalize to true")
+
+  // SET_ACTIVE_THREAD：显式 false 必须被尊重
+  const withExplicitOff: AgentState = {
+    ...offState,
+    threads: base.threads.map(t =>
+      t.id === "thread-b" ? { ...t, knowledge_smart_match: false } : t),
+  }
+  const explicitOff = agentReducer(withExplicitOff, { type: "SET_ACTIVE_THREAD", threadId: "thread-b" })
+  assert.equal(explicitOff.knowledgeSmartMatch, false, "explicit false must survive")
+
+  // SET_THREADS（thread.list merge）：同样不继承旧 UI 状态
+  const viaList = agentReducer(offState, {
+    type: "SET_THREADS",
+    threads: base.threads,
+  })
+  assert.equal(viaList.activeThreadId, "thread-a")
+  assert.equal(viaList.knowledgeSmartMatch, true, "thread-a omits the field → true, not inherited false")
+})
+
+// #273 gate6 NF-1: UPSERT_THREAD 是同线程 patch 合并语义——活跃线程的回显省略字段时
+// 保持当前 UI 状态（乐观更新窗口内不得把开关闪回 true），显式值照常生效
+test("knowledgeSmartMatch: UPSERT_THREAD on active thread preserves UI state when field omitted", () => {
+  const base = stateWithThreads()
+  // 用户刚把开关关掉（乐观 false）， companion 回显尚未落地
+  const offState: AgentState = { ...base, knowledgeSmartMatch: false }
+
+  const omitted = agentReducer(offState, {
+    type: "UPSERT_THREAD",
+    thread: { ...base.threads[0] }, // thread-a（active），省略 knowledge_smart_match
+  })
+  assert.equal(omitted.knowledgeSmartMatch, false, "omitted field in same-thread upsert must preserve UI state")
+
+  const explicitOn = agentReducer(offState, {
+    type: "UPSERT_THREAD",
+    thread: { ...base.threads[0], knowledge_smart_match: true },
+  })
+  assert.equal(explicitOn.knowledgeSmartMatch, true, "explicit value must apply")
+
+  // 非活跃线程的 upsert 不动 UI
+  const otherThread = agentReducer(offState, {
+    type: "UPSERT_THREAD",
+    thread: { ...base.threads[1], knowledge_smart_match: true },
+  })
+  assert.equal(otherThread.knowledgeSmartMatch, false, "non-active upsert must not touch UI state")
+})
+
 const msgA = {
   id: "a1",
   thread_id: "thread-a",

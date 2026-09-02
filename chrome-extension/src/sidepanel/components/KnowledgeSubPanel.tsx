@@ -92,6 +92,18 @@ export function KnowledgeSubPanel() {
     }
   }
 
+  // #273 Wave A: 智能匹配开关（关 = 回到「站点+勾选」旧选择，预算仍是安全网）
+  const handleSmartMatchChange = (enabled: boolean) => {
+    dispatch({ type: "SET_KNOWLEDGE_SMART_MATCH", enabled })
+    if (state.activeThreadId) {
+      chrome.runtime.sendMessage({
+        type: "thread.update",
+        threadId: state.activeThreadId,
+        updates: { knowledge_smart_match: enabled },
+      })
+    }
+  }
+
   const handleDelete = (doc: { id?: string; name: string; title?: string }) => {
     const id = doc.id || doc.name
     const label = doc.title || doc.name
@@ -368,16 +380,24 @@ export function KnowledgeSubPanel() {
   const modeLabels: Record<string, string> = { auto: "自动", all: "全选", manual: "按需" }
   const selectionMode = state.knowledgeSelectionMode || "auto"
   const isManual = selectionMode === "manual"
+  const smartMatch = state.knowledgeSmartMatch ?? true
   const deletableFiltered = filteredDocs.filter((d) => !d.builtin)
   const allFilteredSelected =
     deletableFiltered.length > 0 && deletableFiltered.every((d) => selectedForDelete.has(d.name))
 
-  const modeHint =
-    selectionMode === "auto"
-      ? "自动：按当前站点匹配知识，列表勾选不生效。"
-      : selectionMode === "all"
-        ? "全选：注入全部知识索引，无需（也无法）单独勾选。"
-        : "按需：仅勾选的知识会参与本对话。"
+  const modeHint = (() => {
+    const base =
+      selectionMode === "auto"
+        ? "自动：按这轮问题选相关知识；已钉的优先。当前站点加权。"
+        : selectionMode === "all"
+          ? "全选：在全库里检索，仍受条数/长度上限。"
+          : "按需：只注入勾选的；超预算时从末尾截断并在芯片上可见。"
+    if (smartMatch) return base
+    // 智能匹配已关：诚实说明退回的选择行为（预算仍生效）
+    if (selectionMode === "auto") return `${base}（已关智能匹配：按当前站点+勾选注入。）`
+    if (selectionMode === "all") return `${base}（已关智能匹配：不检索，按列表序注入，超预算截断。）`
+    return base
+  })()
 
   return (
     <div style={styles.panelContent}>
@@ -393,12 +413,27 @@ export function KnowledgeSubPanel() {
               borderColor: selectionMode === mode ? tokens.accent : tokens.border,
             }}
             onClick={() => handleModeChange(mode)}
-            title={mode === "auto" ? "自动匹配当前站点" : mode === "all" ? "注入所有知识索引" : "仅使用勾选知识"}
+            title={mode === "auto" ? "按这轮问题选相关知识，当前站点加权" : mode === "all" ? "在全库里检索，有总量上限" : "仅使用勾选知识"}
           >
             {modeLabels[mode]}
           </button>
         ))}
       </div>
+      {/* #273 Wave A: 智能匹配开关（manual 模式下勾选即全部语义，不显示） */}
+      {!isManual && (
+        <label
+          style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: tokens.textSecondary, cursor: "pointer", marginBottom: 4 }}
+          title="开：按这轮问题从知识库打分选文；关：按站点+勾选（全选模式为按列表序），注入总量上限仍生效"
+        >
+          <input
+            type="checkbox"
+            checked={smartMatch}
+            onChange={(e) => handleSmartMatchChange(e.target.checked)}
+            aria-label="智能匹配"
+          />
+          智能匹配
+        </label>
+      )}
       <div style={styles.modeHint}>{modeHint}</div>
 
       {/* Search + manage */}
