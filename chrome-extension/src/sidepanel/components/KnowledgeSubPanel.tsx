@@ -23,6 +23,7 @@ import {
 import {
   KNOWLEDGE_DISTRIBUTION_HONESTY_COPY,
   KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY,
+  KNOWLEDGE_ROUTE_BY_GROUP_EXPLAIN_COPY,
   distributionChips,
   distributionFilterIds,
   distributionOverCap,
@@ -870,33 +871,38 @@ export function KnowledgeSubPanel() {
         </label>
       )}
       {/* #273 Wave B: 「按堆选文」开关（可选路由、默认关、只作用于自动模式——
-          all/按需下不显示；智能匹配关掉时禁用并注明不生效） */}
+          all/按需下不显示；智能匹配关掉时禁用并注明不生效）。
+          2026-09-03 开闸后补可读的原理说明（开关下方灰字，用户知情决定）。 */}
       {selectionMode === "auto" && (
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 12,
-            color: smartMatch ? tokens.textSecondary : tokens.textMuted,
-            cursor: smartMatch ? "pointer" : "not-allowed",
-            marginBottom: 4,
-          }}
-          title={
-            smartMatch
-              ? "开：自动模式下先按分组粗选候选、再按这轮问题选文；关：直接按问题选文"
-              : "智能匹配已关，按堆选文不生效（先打开智能匹配）"
-          }
-        >
-          <input
-            type="checkbox"
-            checked={state.knowledgeRouteByGroup === true && smartMatch}
-            disabled={!smartMatch}
-            onChange={(e) => handleRouteByGroupChange(e.target.checked)}
-            aria-label="按堆选文"
-          />
-          按堆选文
-        </label>
+        <div style={{ marginBottom: 4 }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 12,
+              color: smartMatch ? tokens.textSecondary : tokens.textMuted,
+              cursor: smartMatch ? "pointer" : "not-allowed",
+            }}
+            title={
+              smartMatch
+                ? "开：自动模式下先按分组粗选候选、再按这轮问题选文；关：直接按问题选文"
+                : "智能匹配已关，按堆选文不生效（先打开智能匹配）"
+            }
+          >
+            <input
+              type="checkbox"
+              checked={state.knowledgeRouteByGroup === true && smartMatch}
+              disabled={!smartMatch}
+              onChange={(e) => handleRouteByGroupChange(e.target.checked)}
+              aria-label="按堆选文"
+            />
+            按堆选文
+          </label>
+          <div style={{ fontSize: 10, color: tokens.textMuted, lineHeight: 1.5, marginTop: 2, paddingLeft: 20 }}>
+            {KNOWLEDGE_ROUTE_BY_GROUP_EXPLAIN_COPY}
+          </div>
+        </div>
       )}
       <div style={styles.modeHint}>{modeHint}</div>
 

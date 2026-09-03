@@ -5,7 +5,8 @@
  *       fixture  = tests/fixtures/knowledge-eval/corpus.ts（20 query × 20 文档，
  *                  含算例体制认证 query：S_pre(flat) 每篇全长 2000、尾部全长 2000）
  * 输出分栏：folder: pass|fail|absent、group: pass|fail|absent。
- * absent 与 fail 同等 ⇒ 该边保持关（出厂两只分支常数均 false）。
+ * absent 与 fail 同等 ⇒ 该边保持关。两只分支常数已于 2026-09-03 双栏 pass
+ * 后开闸为 true；之后任一栏再 fail|absent = 漂移扳机触发，回 false 重证。
  * 退出码：评测自身跑完 = 0（分栏结果是数据，供开闸决策——**默认 exit 0
  * 不是开闸依据**，开闸只能以分栏 pass 为准）；内部错误 = 1；
  * `--strict` 时任一栏 fail|absent → exit 1（CI/复审用）。

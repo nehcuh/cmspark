@@ -3,6 +3,8 @@
 **日期**: 2026-09-03 | **状态**: Accepted（Wave B）
 **相关**: [Spec: Knowledge Retrieval Scoring §6/§7](../superpowers/specs/2026-09-02-knowledge-retrieval-scoring-design.md) · [GitHub #273](https://github.com/nehcuh/cmspark/issues/273) · [ADR-026](./026-knowledge-retrieval-tfidf-no-embedding.md) · [Knowledge Honesty](../superpowers/specs/2026-08-25-daily-assistant-knowledge-honesty-design.md) · [Knowledge Folders (#274)](../superpowers/specs/2026-09-02-knowledge-folders-design.md)
 
+> **开闸记录（2026-09-03）**：诚实门评测双栏通过（`node scripts/knowledge-route-eval.mjs` → `folder: pass` / `group: pass`，`--strict` 同过），两只分支常数 `KNOWLEDGE_ROUTE_FOLDER_BRANCH` / `KNOWLEDGE_ROUTE_GROUP_BRANCH` 按 spec §6.6 开闸为 `true`；用户侧「按堆选文」开关默认仍关（`knowledge_route_by_group` undefined=false），漂移扳机不变——路由输入面任何改动 ⇒ 回 false 重跑评测重证。
+
 ---
 
 ## 决策

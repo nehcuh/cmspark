@@ -103,6 +103,25 @@ test("AC-16: 诚实句 + 「按堆选文」开关 + 超 cap 诚实文案都在�
   assert.ok(src.includes('aria-label="分布"'), "分布 chips 容器")
 })
 
+test("开闸轮（2026-09-03）: 「按堆选文」开关下方有可读的原理说明（tooltip 不够）", () => {
+  const util = readFileSync(join(SRC_ROOT, "sidepanel/utils/knowledge-distribution.ts"), "utf8")
+  // 原理说明逐字钉（禁词扫描由 AC-16 覆盖本文件）
+  assert.ok(
+    util.includes("开：先按你的文件夹与自动分组粗选候选，再按这轮问题在候选里精选"),
+    "原理说明·开",
+  )
+  assert.ok(
+    util.includes("「本轮附带」芯片会显示 N/M 与来源分组，分组概览占用注入上限并如实标注"),
+    "原理说明·芯片口径与概览占位",
+  )
+  assert.ok(
+    util.includes("关（默认）：直接按这轮问题在全库打分选文。匹配不到时自动退回普通匹配"),
+    "原理说明·关与降级",
+  )
+  // 开关下方灰字引用（不是只挂 tooltip）
+  assert.ok(src.includes("KNOWLEDGE_ROUTE_BY_GROUP_EXPLAIN_COPY"), "面板引用说明文案常量")
+})
+
 test("AC-18 copy: 分组概览两态标注与来源分组词（RetrievedSourcesChips）", () => {
   const chips = readFileSync(join(SRC_ROOT, "sidepanel/components/RetrievedSourcesChips.tsx"), "utf8")
   assert.ok(chips.includes("含分组概览"), "概览注入标注")

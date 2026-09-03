@@ -14,6 +14,14 @@ export const KNOWLEDGE_DISTRIBUTION_HONESTY_COPY = "自动分组，不准就移�
 /** 超 cap 诚实文案（§6.2 表：库超过 200 篇，未自动分组）。 */
 export const KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY = "库超过 200 篇，未自动分组"
 
+/**
+ * 「按堆选文」开关下方的原理说明（2026-09-03 开闸后补；tooltip 不够，要可读）。
+ * 只用「分组/文件夹」——AC-16 禁词全表适用（本文件被整文扫描，连注释也算）。
+ */
+export const KNOWLEDGE_ROUTE_BY_GROUP_EXPLAIN_COPY =
+  "开：先按你的文件夹与自动分组粗选候选，再按这轮问题在候选里精选；「本轮附带」芯片会显示 N/M 与来源分组，分组概览占用注入上限并如实标注。" +
+  "关（默认）：直接按这轮问题在全库打分选文。匹配不到时自动退回普通匹配。"
+
 export type DistributionGroup = {
   key: string
   label: string
