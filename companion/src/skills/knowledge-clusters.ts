@@ -29,12 +29,17 @@ export const KNOWLEDGE_INDEX_DEBOUNCE_MS = 2000
 export const KNOWLEDGE_GROUPMAP_CHARS = 2000
 
 /**
- * 诚实门分支常数（spec §6.2 表 / §6.6 / AC-14）：出厂均 false。
- * 评测对应栏 pass 才允许改 true；路由输入面任何改动 ⇒ 回 false 重证。
- * 改这两个值 = 声称该分支认证通过，必须随附最新评测分栏输出。
+ * 诚实门分支常数（spec §6.2 表 / §6.6 / AC-14）：2026-09-03 评测双栏
+ * pass（`node scripts/knowledge-route-eval.mjs` → folder: pass / group: pass，
+ * --strict 同过）后开闸为 true。
+ * **漂移扳机仍在**：路由输入面任何改动（#272 bag、MERGE_MIN、#274 bag 两字段、
+ * 注入序、常数表数值等）⇒ 对应分支常数必须回 false、重跑评测重证（spec §6.6）。
+ * 这两个值 = 声称该分支认证通过，改动必须随附最新评测分栏输出。
+ * 注意：开闸 ≠ 替用户打开——用户侧「按堆选文」开关（thread.knowledge_route_by_group）
+ * 默认仍关，undefined = false。
  */
-export const KNOWLEDGE_ROUTE_FOLDER_BRANCH = false
-export const KNOWLEDGE_ROUTE_GROUP_BRANCH = false
+export const KNOWLEDGE_ROUTE_FOLDER_BRANCH = true
+export const KNOWLEDGE_ROUTE_GROUP_BRANCH = true
 
 /**
  * 评测/测试专用 seam：覆盖分支常数（不改动出厂常量本身）。

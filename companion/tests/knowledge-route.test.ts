@@ -5,7 +5,8 @@ import * as os from "node:os"
 import * as path from "node:path"
 
 // #273 Wave B: 簇路由 + 分组概览 + 诚实门（spec §6.5/§6.6；AC-10/13/14/17/18/19）
-// 出厂两只分支常数 false；测试经 setKnowledgeRouteBranchOverrides 走通两条边。
+// 出厂两只分支常数已于 2026-09-03 评测双栏 pass 后开闸为 true（漂移扳机仍在，
+// 见 AC-14 首测）；边关闭/单边行为仍经 setKnowledgeRouteBranchOverrides seam 覆盖。
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-k-route-"))
 process.env.HOME = tempHome
@@ -101,9 +102,13 @@ function extractGroupmapBlock(prompt: string): string | null {
 
 // --- AC-14: 出厂常数 + 评测命令存在可跑 + 算例体制 ---
 
-test("AC-14: both branch constants ship false; eval command + fixture pinned in-repo", () => {
-  assert.equal(clusters.KNOWLEDGE_ROUTE_FOLDER_BRANCH, false, "folder branch factory = false")
-  assert.equal(clusters.KNOWLEDGE_ROUTE_GROUP_BRANCH, false, "group branch factory = false")
+test("AC-14: branch constants certified open (true) since 2026-09-03; eval command + fixture pinned in-repo", () => {
+  // 诚实门语义已从「出厂 false 等认证」转为「已认证开闸」：2026-09-03 评测
+  // 双栏 pass（folder/group，--strict 同过）后开闸。**漂移扳机仍在**：路由
+  // 输入面任何改动必须回 false 重跑评测重证（spec §6.6）——本测试的存在即
+  // 扳机的落点：常数被回拨/误改时这里第一个红。
+  assert.equal(clusters.KNOWLEDGE_ROUTE_FOLDER_BRANCH, true, "folder branch certified open")
+  assert.equal(clusters.KNOWLEDGE_ROUTE_GROUP_BRANCH, true, "group branch certified open")
   // 评测命令（PR 钉死）：cd companion && node scripts/knowledge-route-eval.mjs
   assert.ok(fs.existsSync(path.join(process.cwd(), "scripts", "knowledge-route-eval.mjs")), "eval launcher exists")
   assert.ok(fs.existsSync(path.join(process.cwd(), "scripts", "knowledge-route-eval.ts")), "eval impl exists")
@@ -111,19 +116,56 @@ test("AC-14: both branch constants ship false; eval command + fixture pinned in-
     fs.existsSync(path.join(process.cwd(), "tests", "fixtures", "knowledge-eval", "corpus.ts")),
     "eval fixture exists",
   )
-  // 出厂态：用户开关 ON 但两只分支常数 false → 该边 no-op + groupmap_omitted
+  // 分栏机核仍在：评测实现的计量对象（S_pre/S_post/交付谓词/recall 税）在源码可核
+  const evalSrc = fs.readFileSync(path.join(process.cwd(), "scripts", "knowledge-route-eval.ts"), "utf8")
+  for (const marker of ["S_pre(flat)", "S_pre(route)", "S_post", "delivery predicate", "recall tax"]) {
+    assert.ok(evalSrc.includes(marker), `eval keeps machine-checkable marker: ${marker}`)
+  }
+
+  // 边关闭行为仍可由 seam 复现（开关 ON ∧ 分支常数 false ⇒ no-op + groupmap_omitted）：
+  // 出厂 true 后这条路径靠 overrides 覆盖（生产漂移扳机回 false 时同款行为）。
+  clusters.setKnowledgeRouteBranchOverrides({ folder: false, group: false })
+  try {
+    resetKnowledgeDirs()
+    corpus.seedEvalCorpus(path.join(getConfigDir(), "knowledge"))
+    const se = new SkillEngine()
+    const flat = runTurn(se, "t-gate-off", corpus.EVAL_CERT_FOLDER_QUERY, { ...ROUTE_OPTS, knowledgeRouteByGroup: false })
+    const r = runTurn(se, "t-gate-off", corpus.EVAL_CERT_FOLDER_QUERY)
+    assert.equal(r.knowledge_routing?.groupmap, "omitted", "边关闭态打 groupmap_omitted")
+    assert.deepEqual(r.knowledge_routing?.s_pre, r.ids, "边关闭不扩张：S_pre(route) ≡ S_pre(flat)")
+    assert.deepEqual(
+      r.retrieved_sources.map((s) => ({ id: s.id, chars: s.chars })),
+      flat.retrieved_sources.map((s) => ({ id: s.id, chars: s.chars })),
+      "边关闭注入 = Wave A 扁平（逐篇同字符）"
+    )
+  } finally {
+    clusters.setKnowledgeRouteBranchOverrides(null)
+  }
+})
+
+test("AC-14 (开闸后出厂态): 用户开关 ON + 出厂常数 true ⇒ 路由真生效（不替用户开）", () => {
   resetKnowledgeDirs()
   corpus.seedEvalCorpus(path.join(getConfigDir(), "knowledge"))
   const se = new SkillEngine()
-  const flat = runTurn(se, "t-gate-off", corpus.EVAL_CERT_FOLDER_QUERY, { ...ROUTE_OPTS, knowledgeRouteByGroup: false })
-  const r = runTurn(se, "t-gate-off", corpus.EVAL_CERT_FOLDER_QUERY)
-  assert.equal(r.knowledge_routing?.groupmap, "omitted", "边关闭态打 groupmap_omitted")
-  assert.deepEqual(r.knowledge_routing?.s_pre, r.ids, "边关闭不扩张：S_pre(route) ≡ S_pre(flat)")
+  // 无 overrides：走出厂常数（true）。开关 ON 时认证 query 真扩张——
+  // 与 worked example 同形，但这次不经 seam，证明出厂态即认证态。
+  const r = runTurn(se, "t-gate-on", corpus.EVAL_CERT_FOLDER_QUERY)
   assert.deepEqual(
-    r.retrieved_sources.map((s) => ({ id: s.id, chars: s.chars })),
-    flat.retrieved_sources.map((s) => ({ id: s.id, chars: s.chars })),
-    "边关闭注入 = Wave A 扁平（逐篇同字符）"
+    r.knowledge_routing?.s_pre,
+    ["fa1", "fa2", "fa3", "fa4", "fa5", "fa6"],
+    "出厂开闸后夹分支真扩张（S_pre 含尾部 fa6）",
   )
+  assert.deepEqual(
+    r.retrieved_sources.map((s) => s.id),
+    ["fa1", "fa2", "fa3", "fa6"],
+    "routed = d01–d03 + t（出厂态）",
+  )
+  // 开关默认仍关（undefined = false）：不显式传 routeByGroup、thread 无记录 ⇒ 纯 Wave A
+  const off = se.buildSystemPromptWithSources("t-gate-default", undefined, [], r.ids, corpus.EVAL_CERT_FOLDER_QUERY, {
+    knowledgeMode: "auto",
+    knowledgeSmartMatch: true,
+  })
+  assert.equal(off.knowledge_routing, undefined, "用户开关默认关：开闸不替用户开")
 })
 
 test("AC-14 worked example (folder branch): routed = d01–d03 + tail, groupmap omitted; flat = d01–d04", () => {
