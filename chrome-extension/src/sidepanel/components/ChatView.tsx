@@ -730,6 +730,11 @@ function KnowledgeImportModal() {
     >
       <div style={{ background: tokens.bg, width: "100%", maxHeight: "80%", overflow: "auto", padding: 12, borderRadius: "12px 12px 0 0" }}>
         <strong style={{ fontSize: 13 }}>确认导入知识库</strong>
+        {p.duplicate_of?.title ? (
+          <div style={{ fontSize: 11, color: tokens.textSecondary, marginTop: 6 }}>
+            内容与已有文档《{p.duplicate_of.title}》完全相同
+          </div>
+        ) : null}
         {p.extractPending && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: tokens.textSecondary, marginTop: 6 }}>
             <span>正在解读…</span>

@@ -1787,6 +1787,14 @@ export function useWebSocket() {
                 : undefined,
               // #272: companion started the async LLM draft extraction.
               extract_pending: msg.extract_pending === true,
+              // #281: exact-duplicate hint (must be explicit — this handler is a whitelist).
+              duplicate_of:
+                msg.duplicate_of &&
+                typeof msg.duplicate_of === "object" &&
+                typeof msg.duplicate_of.id === "string" &&
+                typeof msg.duplicate_of.title === "string"
+                  ? { id: msg.duplicate_of.id, title: msg.duplicate_of.title }
+                  : undefined,
             },
           })
           break
@@ -1862,6 +1870,7 @@ export function useWebSocket() {
           const pieces: string[] = [`✓ 导入 ${msg.imported} 篇`]
           if (msg.skippedOversize > 0) pieces.push(`跳过 ${msg.skippedOversize} 个 >6MB`)
           if (msg.skippedUnsupported > 0) pieces.push(`跳过 ${msg.skippedUnsupported} 个不支持格式`)
+          if (msg.skippedDuplicate > 0) pieces.push(`跳过重复 ${msg.skippedDuplicate} 篇`)
           if (msg.failed > 0) pieces.push(`失败 ${msg.failed}`)
           // #274: 第 4 级被拍扁到第 3 级时如实告知（不丢文件）。
           if (msg.flattenedDepth > 0) pieces.push(`${msg.flattenedDepth} 篇原目录超过 3 层，已并入第 3 层`)

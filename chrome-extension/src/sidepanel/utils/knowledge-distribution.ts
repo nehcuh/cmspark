@@ -14,6 +14,12 @@ export const KNOWLEDGE_DISTRIBUTION_HONESTY_COPY = "自动分组，不准就移�
 /** 超 cap 诚实文案（§6.2 表：库超过 200 篇，未自动分组）。 */
 export const KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY = "库超过 200 篇，未自动分组"
 
+/** #281 单篇导入确认弹窗：正文与库中某篇完全相同（title 由调用方填入《》）。 */
+export const KNOWLEDGE_DUPLICATE_CONFIRM_PREFIX = "内容与已有文档《"
+export const KNOWLEDGE_DUPLICATE_CONFIRM_SUFFIX = "》完全相同"
+/** #281 目录导入结果句。 */
+export const KNOWLEDGE_SKIPPED_DUPLICATE_COPY = "跳过重复"
+
 /**
  * 「按堆选文」开关下方的原理说明（2026-09-03 开闸后补；tooltip 不够，要可读）。
  * 只用「分组/文件夹」——AC-16 禁词全表适用（本文件被整文扫描，连注释也算）。

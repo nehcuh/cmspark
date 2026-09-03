@@ -227,6 +227,8 @@ export interface AgentState {
     suggested?: KnowledgeDraftSuggestion
     /** #272: extraction failed/timed out — heuristic draft stays, no hanging. */
     extractError?: string
+    /** #281: exact-duplicate of an existing doc (id = id || name). */
+    duplicate_of?: { id: string; title: string }
   } | null
   /**
    * #271: id of the in-flight knowledge.preview request. Replies carrying an id
@@ -457,6 +459,8 @@ export type AgentAction =
         tags?: string[]
         /** #272: companion started the async LLM draft extraction. */
         extract_pending?: boolean
+        /** #281: exact-duplicate of an existing doc. */
+        duplicate_of?: { id: string; title: string }
       }
       /** Companion reply correlation: applied only while it matches the pending request id. */
       replyId?: string
@@ -1179,6 +1183,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         delete next.suggested
         delete next.extractError
         delete next.extractPending
+        delete next.duplicate_of
       } else if (extractArmed) {
         next.extractPending = true
       }

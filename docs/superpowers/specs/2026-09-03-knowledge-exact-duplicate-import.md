@@ -1,7 +1,7 @@
 # Knowledge Exact Duplicate Import — 导入完全重复检测（正文 sha256）
 
 > **日期**: 2026-09-03  
-> **状态**: **DRAFT**（Issue-first；待设计 dual）  
+> **状态**: **LOCKED · design dual folded**（claude AWN · kimi REJECT→折 MAJOR-1 占位正文豁免后放行）  
 > **触发**: 用户问「导入要不要 md5 查重」；Kimi 2026-09-03 判断：值得做，不做 MD5、做正文完全重复；[#281](https://github.com/nehcuh/cmspark/issues/281)  
 > **前序 SoT（不得削弱）**: [Knowledge Honesty](./2026-08-25-daily-assistant-knowledge-honesty-design.md) · [Knowledge CRUD Honesty](./2026-08-26-knowledge-crud-honesty-design.md)（F-I-5 同名加后缀 ≠ 内容重复）· [#272](https://github.com/nehcuh/cmspark/issues/272) 导入确认弹窗 · [#274](https://github.com/nehcuh/cmspark/issues/274) 文件夹  
 > **GitHub:** [#281](https://github.com/nehcuh/cmspark/issues/281)。实现另开 PR，`Closes #281`。不夹带进已合的开闸 PR #280。
@@ -31,8 +31,9 @@ Channel:      既有 WS（knowledge.preview / knowledge.import / knowledge.impor
 | 目录导入遇到完全重复 | **GO 自动跳过并计数** — 目录导入没有逐篇确认面 |
 | 把哈希写入 frontmatter 当 SoT | **NO-GO** — 每次对照现算；用户看不见哈希 |
 | overlay / summoner 新开确认面 | **NO-GO** |
-| 标题/标签改了、正文没改 | **仍判重复** — 哈希对象是剥 frontmatter 后的 body |
+| 标题/标签改了、正文没改 | **仍判重复** — 哈希对象是剥 frontmatter 后的 body（仅对 md 源；见 §2 转换类） |
 | 正文改一个字 | **不判重复** |
+| 空 body / 扫描件占位正文 | **不参与查重** — 不标记、不跳过（Gate-d281 MAJOR） |
 
 **产品句：**
 
@@ -52,16 +53,21 @@ Channel:      既有 WS（knowledge.preview / knowledge.import / knowledge.impor
 ## 2. 哈希对象（钉死）
 
 ```
-H(doc) = sha256(utf8( gray-matter(raw).content.trim() ))
+body = previewKnowledge(raw).body   // catch → 整篇当 body，与写入侧 ensureKnowledgeFrontmatter 同约定
+H(doc) = sha256(utf8( body.trim() ))
 ```
 
 - 输入 = 即将写入磁盘的 markdown 源（docx/pdf 等已转成 md 之后）。
 - **剥 frontmatter**：只哈希 body。改标题/说明/标签不改变 H。
-- `trim()` 只去首尾空白，不去正文内部空白。
-- 空 body 也有哈希；两篇空 body 算重复。
-- 对照范围 = `knowledge/global` ∪ `knowledge/sites` 全部知识 `.md`（不含 `_folder.md`、不含 skills）。桶不隔离：global 与 sites 正文相同仍算重复。
-- 多篇已有相同 H：报告 **id 字典序最小** 的那一篇（稳定、可测）。
-- N ≤ 200（既有库 cap）。导入时现算，不建持久哈希索引。
+- `trim()` 只去首尾空白，不去正文内部空白。与落盘 `parsed.content.trimStart()` 再读回 `.trim()` 对齐（Gate-d281 实测成立）。
+- **豁免（不参与查重，不标记、不跳过）**：
+  - `body.trim()` 为空
+  - 已知占位正文：`parsePdf` 在文本 <50 字时写的「已渲染 N/M 页为图片」/「扫描件或图片 PDF，无法提取文本内容」（`file-parser.ts` 340/350/354）。这些正文由**文件名 + 页数**决定，与像素无关，目录导入会静默丢掉不同扫描件。
+- **转换类导入（pdf/docx/…）**：`parseFile` 常把 `# ${filename}` 写进 body 第一行。换文件名再导入 → H 不同 → 不判重复。这是 exact-match 语义的接受项，不是 bug；§0「改标题仍判重复」只约束 md 的 frontmatter 标题。
+- 对照范围 = `listKnowledge()` 的知识文档（`isKnowledgeDoc`）。桶不隔离。
+- 多篇已有相同 H：报告 **解析 id**（`id || name`）字典序最小的那一篇。
+- 现算、不建持久哈希索引。库总量无硬 cap（200 只是单次目录导入 walk 上限 / 分布视图软上限）。
+- CSV：目录导入当纯文本、单篇走 `parseCsv` 转表，两路 body 不同，跨路不命中——写明接受（存量，不在本票修）。
 
 ---
 
@@ -70,7 +76,7 @@ H(doc) = sha256(utf8( gray-matter(raw).content.trim() ))
 `knowledge.preview` 响应增加可选：
 
 ```ts
-duplicate_of?: { id: string; title: string }
+duplicate_of?: { id: string; title: string }  // id = 已有文档的 id || name
 ```
 
 弹窗在标题上方加一行（11px，`tokens.textSecondary`），有 `duplicate_of` 才渲染：
@@ -79,14 +85,17 @@ duplicate_of?: { id: string; title: string }
 
 - **取消** = 现有取消（不写盘）。
 - **确认导入** = 现有确认，**仍导入第二份**（新 id；文件名 stem 仍走 F-I-5）。不另加复选框。
-- 解读中 / 解析中也可以先出这行（哈希不依赖 LLM）。
-- 文案禁词：不出现「MD5 / sha256 / 哈希 / 相似 / 去重合并 / 簇 / 聚类 / 图谱」。`《》` 内是已有文档 title。
+- 此行随 phase-1 `knowledge.preview` 帧出现（parseFile 完成后）。「正在解析…」阶段没有帧，改不了。解读中（extract_pending）可见。
+- 扩展端 `useWebSocket` 对 preview **逐字段白名单**——必须把 `duplicate_of` 显式写入 store，否则 companion 发了也不渲染。
+- 文案禁词（**只扫本票新增静态 copy**，勿整文件扫 sha256/相似 误伤存量）：不出现「MD5 / 哈希 / 相似 / 去重合并 / 簇 / 聚类 / 图谱」。测试名/注释可用 sha256。`《》` 内是已有文档 title。
 
 ---
 
 ## 4. 目录导入
 
 在写盘前算 H。已有相同 H → **不调用** `importKnowledge`，`skippedDuplicate++`。
+
+「已有」= **当前库状态，含本批循环里已经成功导入的篇**（`importKnowledge` 每次 `refresh()`，顺序处理天然满足；禁止循环前冻结合集导致同批两份相同 body 都写入）。豁免正文（§2）不跳过。
 
 `knowledge.import_directory_result` 增加：
 
@@ -114,13 +123,14 @@ skippedDuplicate: number
 
 ## 6. 验收
 
-1. 同一 md 单篇导入两次：第二次 preview 带 `duplicate_of` 指向第一篇；点取消后库仍 1 篇；点确认导入后库 2 篇、id 不同。
+1. 同一 md 单篇导入两次：第二次 preview 带 `duplicate_of` 指向第一篇（id = `id || name`）；点取消后库仍 1 篇；点确认导入后库 2 篇、id 不同。
 2. 第二次只改标题再 preview：仍 `duplicate_of`（body 哈希不变）。
 3. 第二次改正文一个非空白字符：无 `duplicate_of`。
-4. 目录导入两份相同 body：`imported` 含 1、`skippedDuplicate === 1`，文案出现「跳过重复 1 篇」。
-5. 文案扫描：新 copy 不含 §3 禁词表。
-6. 全仓无 `md5` / `MD5` 作为本功能标识（测试名/注释用 sha256）。
+4. 目录导入两份相同 body：`imported === 1`、`skippedDuplicate === 1`，文案出现「跳过重复 1 篇」（批内去重）。
+5. 文案扫描：本票新增静态 copy 不含 §3 禁词表（不整文件扫 sha256/相似）。
+6. 本票新增标识不含 `md5` / `MD5`（测试名/注释用 sha256）。
 7. F-I-5 回归：不同 body、同一 ASCII 标题仍分配 `notes-2`，不覆盖。
+8. 空 body 与扫描件占位正文：preview 无 `duplicate_of`；目录导入不增加 `skippedDuplicate`。
 
 ---
 
@@ -137,5 +147,5 @@ skippedDuplicate: number
 ## 8. 实现前
 
 1. Issue **先于** spec。本文件头 `GitHub: #281`。
-2. 设计 dual 过后再实现。实现 PR `Closes #281`。
+2. 设计 dual 已折（Gate-d281：claude AWN · kimi REJECT 的 MAJOR-1 占位豁免已写入 §2）。实现 PR `Closes #281`。
 3. 不在 main 直接实现。

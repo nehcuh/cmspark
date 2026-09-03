@@ -3003,6 +3003,7 @@ export async function handleMessage(
       // #272 Phase 1: immediate heuristic draft + source frontmatter tags.
       // `body` stays off the wire — it only feeds the async extraction below.
       const { body: previewBody, ...preview } = skillEngine.previewKnowledge(loaded.text, loaded.fallback)
+      const duplicate_of = skillEngine.findKnowledgeDuplicate(loaded.text, loaded.fallback) || undefined
       // #272 Phase 2: async LLM draft pushed later as knowledge.preview_suggested
       // with the same kp- request id. Never started for summoner/overlay.
       const extractStarted = maybeStartKnowledgePreviewExtract(
@@ -3011,7 +3012,12 @@ export async function handleMessage(
         session,
         stampedSurface,
       )
-      return { type: "knowledge.preview", ...preview, ...(extractStarted ? { extract_pending: true } : {}) }
+      return {
+        type: "knowledge.preview",
+        ...preview,
+        ...(duplicate_of ? { duplicate_of } : {}),
+        ...(extractStarted ? { extract_pending: true } : {}),
+      }
     }
     case "knowledge.preview_cancel": {
       // #272: 跳过解读 — abort the in-flight extraction for this preview id.
@@ -3101,6 +3107,7 @@ export async function handleMessage(
       let imported = 0
       let skippedOversize = 0
       let skippedUnsupported = 0
+      let skippedDuplicate = 0
       let failed = 0
       let totalScanned = 0
       // #274: files whose relative directory exceeded 3 levels and were
@@ -3205,10 +3212,14 @@ export async function handleMessage(
               let landedFolder = ""
               if (TEXT_EXTS.has(ext)) {
                 const content = fs.readFileSync(full, "utf-8")
-                const r = skillEngine.importKnowledge(content, baseName, relPath, undefined, destFolder || undefined)
-                importedId = r.id
-                landedFolder = r.folder
-                imported++
+                if (skillEngine.findKnowledgeDuplicate(content, baseName)) {
+                  skippedDuplicate++
+                } else {
+                  const r = skillEngine.importKnowledge(content, baseName, relPath, undefined, destFolder || undefined)
+                  importedId = r.id
+                  landedFolder = r.folder
+                  imported++
+                }
               } else {
                 const buffer = fs.readFileSync(full)
                 // #270: same 30s bound as loadKnowledgePayload — one hanging
@@ -3216,10 +3227,14 @@ export async function handleMessage(
                 // surrounding catch counts it as failed.
                 const parsed = await parseFileBounded(buffer, entry.name, "application/octet-stream")
                 if (parsed.success) {
-                  const r = skillEngine.importKnowledge(parsed.text, baseName, relPath, undefined, destFolder || undefined)
-                  importedId = r.id
-                  landedFolder = r.folder
-                  imported++
+                  if (skillEngine.findKnowledgeDuplicate(parsed.text, baseName)) {
+                    skippedDuplicate++
+                  } else {
+                    const r = skillEngine.importKnowledge(parsed.text, baseName, relPath, undefined, destFolder || undefined)
+                    importedId = r.id
+                    landedFolder = r.folder
+                    imported++
+                  }
                 } else {
                   failed++
                   if (errors.length < 5) errors.push(`${entry.name}: ${parsed.error}`)
@@ -3295,6 +3310,7 @@ export async function handleMessage(
           imported,
           skippedOversize,
           skippedUnsupported,
+          skippedDuplicate,
           failed,
           totalScanned,
           flattenedDepth,
