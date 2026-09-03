@@ -8,6 +8,10 @@ import * as path from "path"
 export const FILENAME_STEM_MAX = 80
 export const TITLE_MAX = 200
 
+/** #274: folder metadata file inside knowledge buckets — never a doc stem. */
+export const FOLDER_META_FILENAME = "_folder.md"
+export const FOLDER_META_STEM = "_folder"
+
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i
 const UNSAFE_CHARS = /[<>:"/\\|?*\u0000]/
 
@@ -106,19 +110,38 @@ export function allocateDocIdentity(opts: {
   return { id: unique, filenameStem: unique, title }
 }
 
+/**
+ * #274: stems of knowledge/skill .md files, walked recursively (folders are
+ * real directories now). Only file stems count — directory names no longer
+ * pollute the taken set, and `_folder.md` (folder metadata, not a doc) is
+ * excluded. Dotfiles/dot-dirs skipped, symlinks/junctions never followed.
+ */
 export function listStemSet(dir: string): Set<string> {
   const out = new Set<string>()
-  try {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name.startsWith(".")) continue
-      const stem = entry.name.endsWith(".md") ? entry.name.slice(0, -3) : entry.name
-      if (entry.isSymbolicLink() || entry.isFile() || entry.isDirectory()) {
-        out.add(stem.toLowerCase())
-      }
+  const walk = (d: string, depth: number) => {
+    if (depth > 6) return
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true })
+    } catch {
+      return
     }
-  } catch {
-    /* dir may not exist */
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue
+      if (isSymlinkOrJunction(d, entry)) continue
+      if (entry.isDirectory()) {
+        walk(path.join(d, entry.name), depth + 1)
+        continue
+      }
+      if (!entry.isFile()) continue
+      const m = entry.name.match(/^(.*)\.(md|markdown)$/)
+      if (!m) continue
+      const stem = m[1]
+      if (stem === FOLDER_META_STEM) continue
+      out.add(stem.toLowerCase())
+    }
   }
+  walk(dir, 0)
   return out
 }
 

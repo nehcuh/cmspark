@@ -3,6 +3,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+import * as crypto from "crypto"
 import { tokenize, tfidfVec, idfFromDocs, cosineSimilarity } from "./semantic-match"
 import matter from "gray-matter"
 import AdmZip from "adm-zip"
@@ -16,10 +17,12 @@ import { chunkFile, searchChunks, type FileChunk } from "../file-chunker"
 import {
   allocateDocIdentity,
   cleanTitle,
+  FOLDER_META_FILENAME,
   isLegacySafeId,
   isSymlinkOrJunction,
   isUnsafePathComponent,
   listStemSet,
+  nfc,
   writeRestrictedFile,
 } from "./doc-identity"
 import { validateWildcardPattern } from "../security"
@@ -29,6 +32,15 @@ import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT, type RelatedKnowledgeInp
 
 export const KNOWLEDGE_BODY_WIRE_CAP = 512 * 1024
 export const KNOWLEDGE_FILE_CAP = 6 * 1024 * 1024
+
+// --- Knowledge folders (#274): 磁盘目录 = SoT，桶内 ≤3 级 ---
+// Spec: docs/superpowers/specs/2026-09-02-knowledge-folders-design.md
+/** 用户文件夹最大级数（桶根 = 第 0 级）。 */
+export const KNOWLEDGE_FOLDER_MAX_DEPTH = 3
+/** 单层（一个父目录直下）最大条目数。 */
+export const KNOWLEDGE_FOLDER_MAX_CHILDREN = 50
+/** _folder.md 说明上限（与文档 description 同预算）。 */
+export const KNOWLEDGE_FOLDER_DESCRIPTION_MAX = 500
 
 // --- Knowledge retrieval scoring constants (#273 Wave A, spec §2.4) ---
 // Centralized here; no magic numbers at call sites.
@@ -73,7 +85,20 @@ export type KnowledgeListItem = {
   site?: string
   tags?: string[]
   builtin: boolean
+  /** #274: 相对桶根的 posix 文件夹路径（"" = 桶根）。派生自磁盘，不是 frontmatter 真相。 */
+  folder?: string
   related?: Array<{ id: string; title: string }>
+}
+
+/** #274: 桶内一个真实目录的元数据（_folder.md 已保存说明 + 过期标记）。 */
+export type KnowledgeFolderItem = {
+  bucket: "global" | "sites"
+  /** 相对桶根的 posix 路径（如 "竞品/2025"）。 */
+  path: string
+  title: string
+  description: string
+  /** 已保存说明后文件夹内容指纹又发生变化。 */
+  stale: boolean
 }
 
 export type KnowledgeDocView = {
@@ -125,6 +150,16 @@ interface SkillMeta {
   source_file: string
   dir?: string
   resources: string[]
+  /** #274: 知识文档相对桶根的 posix 文件夹路径（""/缺省 = 桶根）。loader 从 source_file 推导。 */
+  folder?: string
+}
+
+/** #274: 已加载文件夹元数据（_folder.md 落盘内容；草稿从不进这里）。 */
+interface KnowledgeFolderState {
+  title: string
+  description: string
+  /** 保存说明时的内容指纹（"" = 未记录，不标过期）。 */
+  fingerprint: string
 }
 
 interface Skill extends SkillMeta {
@@ -199,6 +234,8 @@ export class SkillEngine {
   private threadSkillMap: Map<string, string[]> = new Map() // threadId → skill names
   private llmConfig?: LlmConfig
   private knowledgeChunks: Map<string, FileChunk[]> = new Map()
+  /** #274: `${bucket}/${folderPath}` → _folder.md 落盘元数据（仅已保存内容）。 */
+  private knowledgeFolders: Map<string, KnowledgeFolderState> = new Map()
   /**
    * Cheap disk fingerprint (path|mtimeMs|size lines, sorted).
    * Used by refreshIfStale() so external drops into skills/ are picked up without
@@ -295,13 +332,16 @@ export class SkillEngine {
 
   refresh(): void {
     this.skillsCache = []
+    this.knowledgeFolders = new Map()
     // Load user skills
     this.loadFromDir(this.skillsDir, false)
     // Load builtin skills (including security/ subdirectory)
     this.loadFromDir(this.builtinDir, true)
-    // Load knowledge docs from knowledge/global/ and knowledge/sites/
-    this.loadFromDir(path.join(this.knowledgeDir, "global"), false)
-    this.loadFromDir(path.join(this.knowledgeDir, "sites"), false)
+    // #274: knowledge buckets use a dedicated RECURSIVE tree loader — never the
+    // loadFromDir SKILL.md skill-package branch (a nested knowledge/global/foo/
+    // SKILL.md is an ordinary knowledge doc and must not leak into skill.list).
+    this.loadKnowledgeTree("global", path.join(this.knowledgeDir, "global"))
+    this.loadKnowledgeTree("sites", path.join(this.knowledgeDir, "sites"))
     // Pre-chunk large knowledge docs for RAG
     this.rebuildKnowledgeChunks()
     // Capture fingerprint after load so API mutations + disk drops stay in sync
@@ -326,6 +366,8 @@ export class SkillEngine {
   }
 
   private isKnowledgeDoc(skill: Pick<Skill, "type" | "source_file">): boolean {
+    // #274: _folder.md 标记位 — 文件夹元数据永远不是知识文档（不进列表/注入/related）。
+    if ((skill as { type?: string }).type === "knowledge_folder") return false
     if (this.isUnderKnowledgeDir(skill.source_file)) return true
     return skill.type === "site_knowledge" || skill.type === "domain_knowledge"
   }
@@ -464,6 +506,280 @@ export class SkillEngine {
     } catch {
       // directory may not exist yet
     }
+  }
+
+  // --- #274: knowledge folder tree (disk directories are the SoT) ---
+
+  /**
+   * Recursive knowledge bucket loader. Distinct from loadFromDir on purpose:
+   * no SKILL.md skill-package branch (a SKILL.md inside a knowledge tree is an
+   * ordinary knowledge doc), `_folder.md` becomes folder metadata instead of a
+   * doc, and each doc gets `folder` derived from its path relative to the
+   * bucket root (frontmatter `folder:` is ignored — disk wins, F-I-防漂移).
+   */
+  private loadKnowledgeTree(bucket: "global" | "sites", root: string): void {
+    const walk = (dir: string, rel: string, depth: number) => {
+      // Scan deeper than the 3-level user cap so over-deep drops still load
+      // (aligned with the depth≤6 disk fingerprint); the UI flattens display.
+      if (depth > 6) return
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith(".")) continue
+        if (isSymlinkOrJunction(dir, entry)) continue
+        const entryPath = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          const childRel = rel ? `${rel}/${nfc(entry.name)}` : nfc(entry.name)
+          this.registerKnowledgeFolder(bucket, childRel)
+          walk(entryPath, childRel, depth + 1)
+          continue
+        }
+        if (!entry.isFile()) continue
+        if (!entry.name.endsWith(".md") && !entry.name.endsWith(".markdown")) continue
+        if (entry.name === FOLDER_META_FILENAME) {
+          // Bucket-root _folder.md is meaningless (root is not a user folder).
+          if (rel) this.loadKnowledgeFolderMeta(bucket, rel, entryPath)
+          continue
+        }
+        try {
+          const raw = fs.readFileSync(entryPath, "utf-8")
+          const parsed = matter(raw)
+          const name = parsed.data.name || entry.name.replace(/\.(md|markdown)$/, "")
+          const id = typeof parsed.data.id === "string" ? parsed.data.id : undefined
+          const title = typeof parsed.data.title === "string" ? parsed.data.title : undefined
+          this.skillsCache.push({
+            name,
+            id,
+            title,
+            description: parsed.data.description || "",
+            type: parsed.data.type || "prompt_template",
+            builtin: false,
+            source_file: entryPath,
+            content: parsed.content,
+            resources: [],
+            site: parsed.data.site,
+            tags: parsed.data.tags,
+            priority: parsed.data.priority,
+            entries: parsed.data.entries,
+            folder: rel,
+          })
+        } catch {
+          // skip malformed knowledge docs (same tolerance as loadFromDir)
+        }
+      }
+    }
+    walk(root, "", 0)
+  }
+
+  private knowledgeFolderKey(bucket: "global" | "sites", folderPath: string): string {
+    return `${bucket}/${folderPath}`
+  }
+
+  /** Every real directory under a bucket root is a folder, even without _folder.md. */
+  private registerKnowledgeFolder(bucket: "global" | "sites", folderPath: string): void {
+    const key = this.knowledgeFolderKey(bucket, folderPath)
+    if (this.knowledgeFolders.has(key)) return
+    const last = folderPath.split("/").pop() || folderPath
+    this.knowledgeFolders.set(key, { title: last, description: "", fingerprint: "" })
+  }
+
+  /** Best-effort _folder.md parse; corrupt files degrade to "folder without description". */
+  private loadKnowledgeFolderMeta(bucket: "global" | "sites", folderPath: string, filePath: string): void {
+    this.registerKnowledgeFolder(bucket, folderPath)
+    const key = this.knowledgeFolderKey(bucket, folderPath)
+    const cur = this.knowledgeFolders.get(key) as KnowledgeFolderState
+    try {
+      const parsed = matter(fs.readFileSync(filePath, "utf-8"))
+      const title = typeof parsed.data.title === "string" && parsed.data.title.trim()
+        ? parsed.data.title.trim()
+        : cur.title
+      const description = typeof parsed.data.description === "string"
+        ? parsed.data.description.slice(0, KNOWLEDGE_FOLDER_DESCRIPTION_MAX)
+        : ""
+      const fingerprint = typeof parsed.data.content_fingerprint === "string"
+        ? parsed.data.content_fingerprint
+        : ""
+      this.knowledgeFolders.set(key, { title, description, fingerprint })
+    } catch {
+      // corrupt _folder.md → folder renders without a description; docs unaffected
+    }
+  }
+
+  /** Bucket that owns a knowledge source file (null for legacy skills/ knowledge). */
+  private knowledgeBucketOf(sourceFile: string): "global" | "sites" | null {
+    try {
+      const src = path.resolve(sourceFile)
+      for (const bucket of ["global", "sites"] as const) {
+        const root = path.resolve(this.knowledgeDir, bucket)
+        if (src.startsWith(root + path.sep)) return bucket
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  /** Public bucket lookup by doc id/name (import carry-over accounting). */
+  knowledgeBucketOfDoc(id: string): "global" | "sites" | null {
+    const s = this.get(id)
+    return s ? this.knowledgeBucketOf(s.source_file) : null
+  }
+
+  /**
+   * Validate + normalize a bucket-relative posix folder path.
+   * Rejects absolute paths, drive letters, backslashes, `..`/`.`/empty
+   * segments, unsafe components, and depth > KNOWLEDGE_FOLDER_MAX_DEPTH.
+   */
+  normalizeKnowledgeFolderPath(
+    raw: unknown,
+    opts: { allowEmpty?: boolean } = {},
+  ): { ok: true; path: string } | { ok: false; error: string } {
+    if (typeof raw !== "string") return { ok: false, error: "folder path must be a string" }
+    const p = nfc(raw).trim()
+    if (!p) {
+      return opts.allowEmpty
+        ? { ok: true, path: "" }
+        : { ok: false, error: "folder path must not be empty" }
+    }
+    if (
+      p.includes("\0") ||
+      p.includes("\\") ||
+      p.startsWith("/") ||
+      /^[a-zA-Z]:/.test(p) ||
+      p.endsWith("/")
+    ) {
+      return { ok: false, error: `Invalid folder path: ${raw}` }
+    }
+    const segs = p.split("/")
+    for (const seg of segs) {
+      if (!seg || seg === "." || seg === ".." || isUnsafePathComponent(seg)) {
+        return { ok: false, error: `Invalid folder path segment: ${seg}` }
+      }
+    }
+    if (segs.length > KNOWLEDGE_FOLDER_MAX_DEPTH) {
+      return { ok: false, error: `文件夹最多 ${KNOWLEDGE_FOLDER_MAX_DEPTH} 级: ${p}` }
+    }
+    return { ok: true, path: segs.join("/") }
+  }
+
+  private knowledgeBucketRoot(bucket: "global" | "sites"): string {
+    return path.join(this.knowledgeDir, bucket)
+  }
+
+  private knowledgeFolderAbsDir(bucket: "global" | "sites", folderPath: string): string {
+    const root = this.knowledgeBucketRoot(bucket)
+    if (!folderPath) return root
+    const abs = path.resolve(root, ...folderPath.split("/"))
+    if (abs !== root && !abs.startsWith(root + path.sep)) {
+      throw new Error(`Path traversal detected in folder path: ${folderPath}`)
+    }
+    return abs
+  }
+
+  /** Entries directly under a directory (per-layer cap accounting). */
+  private countDirChildren(dir: string): number {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true })
+        .filter((e) => !e.name.startsWith("."))
+        .length
+    } catch {
+      return 0
+    }
+  }
+
+  /**
+   * Content fingerprint of a folder subtree (member docs only — `_folder.md`
+   * itself is excluded so saving a description never marks itself stale).
+   * Same shape as computeDiskFingerprint, hashed to keep _folder.md small.
+   */
+  private knowledgeFolderFingerprint(absDir: string): string {
+    const lines: string[] = []
+    const walk = (dir: string, rel: string, depth: number) => {
+      if (depth > 6) return
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      entries.sort((a, b) => a.name.localeCompare(b.name))
+      for (const ent of entries) {
+        if (ent.name.startsWith(".")) continue
+        const childRel = rel ? `${rel}/${ent.name}` : ent.name
+        if (ent.isDirectory()) {
+          walk(path.join(dir, ent.name), childRel, depth + 1)
+          continue
+        }
+        if (!ent.isFile()) continue
+        if (ent.name === FOLDER_META_FILENAME) continue
+        if (!ent.name.endsWith(".md") && !ent.name.endsWith(".markdown")) continue
+        try {
+          const st = fs.statSync(path.join(dir, ent.name))
+          lines.push(`${childRel}|${st.mtimeMs}|${st.size}`)
+        } catch {
+          /* race */
+        }
+      }
+    }
+    walk(absDir, "", 0)
+    return crypto.createHash("sha256").update(lines.join("\n"), "utf8").digest("hex").slice(0, 16)
+  }
+
+  /** Write `_folder.md` (0o600, no symlink follow) and record the content fingerprint. */
+  private writeKnowledgeFolderMeta(
+    bucket: "global" | "sites",
+    folderPath: string,
+    description: string,
+    title?: string,
+  ): void {
+    const absDir = this.knowledgeFolderAbsDir(bucket, folderPath)
+    fs.mkdirSync(absDir, { recursive: true, mode: 0o700 })
+    const last = folderPath.split("/").pop() || folderPath
+    const data: Record<string, unknown> = {
+      type: "knowledge_folder",
+      title: title || last,
+      description: description.slice(0, KNOWLEDGE_FOLDER_DESCRIPTION_MAX),
+      content_fingerprint: this.knowledgeFolderFingerprint(absDir),
+    }
+    const yamlStr = yaml.dump(data, { lineWidth: -1, noRefs: true, quotingType: '"' })
+    writeRestrictedFile(path.join(absDir, FOLDER_META_FILENAME), `---\n${yamlStr}---\n`)
+  }
+
+  /** Folder list for the panel (folders array on knowledge.list). */
+  listKnowledgeFolders(): KnowledgeFolderItem[] {
+    this.ensureFresh()
+    const out: KnowledgeFolderItem[] = []
+    for (const [key, meta] of this.knowledgeFolders) {
+      const slash = key.indexOf("/")
+      const bucket = key.slice(0, slash) as "global" | "sites"
+      const folderPath = key.slice(slash + 1)
+      const current = this.knowledgeFolderFingerprint(this.knowledgeFolderAbsDir(bucket, folderPath))
+      out.push({
+        bucket,
+        path: folderPath,
+        title: meta.title,
+        description: meta.description,
+        stale: !!meta.fingerprint && meta.fingerprint !== current,
+      })
+    }
+    out.sort((a, b) => a.bucket.localeCompare(b.bucket) || a.path.localeCompare(b.path))
+    return out
+  }
+
+  /** Ancestor-chain saved descriptions for the scoring bag (#274 §5). */
+  private ancestorFolderDescriptions(bucket: "global" | "sites" | null, folder: string): string {
+    if (!bucket || !folder) return ""
+    const segs = folder.split("/").filter(Boolean)
+    const parts: string[] = []
+    for (let i = 1; i <= segs.length; i++) {
+      const meta = this.knowledgeFolders.get(this.knowledgeFolderKey(bucket, segs.slice(0, i).join("/")))
+      if (meta?.description) parts.push(meta.description)
+    }
+    return parts.join(" ")
   }
 
   list(): SkillMeta[] {
@@ -783,7 +1099,9 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
   }
 
   /**
-   * TF-IDF 打分（#273 Wave A §2.2）：bag = title + description + tags[≤8]；
+   * TF-IDF 打分（#273 Wave A §2.2）：bag = title + description + tags[≤8]
+   * + #274 两个字段：路径段（folder 的 "/" → 空格）+ 祖先链已保存的
+   * _folder.md description（未保存草稿不落盘，天然不进 bag）。
    * IDF 当次调用内对全库 knowledge bag 计算（N≤200 毫秒级，无缓存）。
    * 返回按排序分（裸分 + 站点加权）降序、并列取 id 字典序最小的列表；
    * 阈值过滤（裸分 ≥ KNOWLEDGE_SCORE_MIN）在调用方做。纯本地，零 LLM。
@@ -794,12 +1112,14 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     siteNames: Set<string>,
     pinnedNames: Set<string>,
   ): Array<{ skill: Skill; raw: number; rank: number }> {
-    // bag(doc) = title + description + tags[≤8]
-    const tokenLists = pool.map(s =>
-      tokenize(
-        `${s.title || ""} ${s.description || ""} ${(s.tags || []).slice(0, 8).join(" ")}`,
-      ),
-    )
+    // bag(doc) = title + description + tags[≤8] + 路径段 + 祖先链已保存说明
+    const tokenLists = pool.map(s => {
+      const folderSegs = (s.folder || "").split("/").filter(Boolean).join(" ")
+      const ancestorDesc = this.ancestorFolderDescriptions(this.knowledgeBucketOf(s.source_file), s.folder || "")
+      return tokenize(
+        `${s.title || ""} ${s.description || ""} ${(s.tags || []).slice(0, 8).join(" ")} ${folderSegs} ${ancestorDesc}`,
+      )
+    })
     const idf = idfFromDocs(tokenLists)
     const queryVec = tfidfVec(tokenize(query), idf)
 
@@ -1585,6 +1905,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         site: s.site,
         tags: s.tags,
         builtin: s.builtin,
+        folder: s.folder || "",
       }))
   }
 
@@ -1725,7 +2046,8 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     fallbackName?: string,
     nameOverride?: string,
     overrides?: { title?: string; description?: string; tags?: string[] },
-  ): { id: string; title: string } {
+    destFolder?: string,
+  ): { id: string; title: string; folder: string } {
     content = this.ensureKnowledgeFrontmatter(content, fallbackName, nameOverride)
 
     let parsed: { data: { name?: string; site?: string; type?: string }; content: string }
@@ -1740,7 +2062,40 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const title = String((parsed.data as { title?: string }).title || name)
     const isSiteKnowledge = parsed.data.type === "site_knowledge" || parsed.data.site
     const subDir = isSiteKnowledge ? "sites" : "global"
-    const targetDir = path.join(this.knowledgeDir, subDir)
+    // #274: import_directory preserves the relative tree (≤3 levels). Folder is
+    // derived from the destination path only — frontmatter never carries it.
+    let folderSegs: string[] = []
+    if (destFolder) {
+      const norm = this.normalizeKnowledgeFolderPath(destFolder)
+      if (!norm.ok) throw new Error(norm.error)
+      folderSegs = norm.path ? norm.path.split("/") : []
+    }
+    // Gate8 MAJOR-5: per-layer 50 applies to imports too. A full target folder
+    // bumps the doc UP one layer (repeatedly) instead of silently writing the
+    // 51st entry — no file is lost; the router counts this as layerOverflow.
+    // The bucket root itself is exempt (the total-200 import cap guards it).
+    // F-R2-1: the same check applies to EVERY level the import would CREATE —
+    // mkdir(recursive) must not grow a full parent layer to 51 either.
+    while (folderSegs.length > 0) {
+      const candidate = path.join(this.knowledgeDir, subDir, ...folderSegs)
+      if (this.countDirChildren(candidate) >= KNOWLEDGE_FOLDER_MAX_CHILDREN) {
+        folderSegs = folderSegs.slice(0, -1)
+        continue
+      }
+      let blocked = false
+      for (let i = 1; i <= folderSegs.length; i++) {
+        const levelAbs = path.join(this.knowledgeDir, subDir, ...folderSegs.slice(0, i))
+        if (fs.existsSync(levelAbs)) continue // existing level grows nothing
+        const parentAbs = path.join(this.knowledgeDir, subDir, ...folderSegs.slice(0, i - 1))
+        if (this.countDirChildren(parentAbs) >= KNOWLEDGE_FOLDER_MAX_CHILDREN) {
+          blocked = true
+          break
+        }
+      }
+      if (!blocked) break
+      folderSegs = folderSegs.slice(0, -1)
+    }
+    const targetDir = path.join(this.knowledgeDir, subDir, ...folderSegs)
     fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 })
 
     const taken = this.collectTakenStems()
@@ -1767,7 +2122,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const filePath = path.join(targetDir, `${ident.filenameStem}.md`)
     writeRestrictedFile(filePath, stamped)
     this.refresh()
-    return { id: ident.id, title: ident.title }
+    return { id: ident.id, title: ident.title, folder: folderSegs.join("/") }
   }
 
   /** F-S-4: untrusted ingest may only keep a small allowlist of frontmatter keys. */
@@ -1866,6 +2221,403 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       fs.unlinkSync(skill.source_file)
     }
     this.refresh()
+  }
+
+  // --- #274: knowledge folders + move (same-bucket, id-stable) ---
+
+  /**
+   * Build the post-pin content in memory (id + name frontmatter added) for
+   * docs that lack an explicit id (F-I-1). Pure function over the raw text —
+   * the move transaction writes it on the TARGET side, so a failed move never
+   * rewrites the source (Gate8 grok-B1: pin-then-rename left the pin behind).
+   */
+  private pinnedKnowledgeContent(skill: Skill, raw: string): string {
+    const effectiveId = skill.id || skill.name
+    let parsed: { data: Record<string, unknown>; content: string }
+    try {
+      parsed = matter(raw)
+    } catch {
+      parsed = { data: {}, content: raw }
+    }
+    // gray-matter caches `data` BY CONTENT by default — mutating parsed.data
+    // poisons every later parse of identical bytes (fresh engines would see an
+    // id that was never written to disk). Clone before mutating.
+    const data = { ...parsed.data }
+    data.id = effectiveId
+    if (!data.name) data.name = skill.name
+    const yamlStr = yaml.dump(data, { lineWidth: -1, noRefs: true, quotingType: '"' })
+    return `---\n${yamlStr}---\n\n${parsed.content.trimStart()}`
+  }
+
+  /**
+   * Transactional same-directory-tree move of one knowledge file:
+   * collision-safe target stem → write final content (id pinned when the doc
+   * had no explicit frontmatter id) to a TARGET-side temp file → renameSync
+   * into place → unlink the source last. Any failure before the unlink leaves
+   * the source byte-identical and removes the temp/dest residue; an unlink
+   * failure drops dest (unlink is atomic — failure means the source kept its
+   * original bytes, so dest is the only correct thing to remove). Never routes
+   * through importKnowledge / allocateDocIdentity for the moved doc itself (id
+   * must not change); the allocator only picks a fresh FILENAME stem on a
+   * same-name collision. The target folder must already exist (no implicit
+   * folder creation — per-layer cap would be bypassed, Gate8 MAJOR-3).
+   */
+  private moveKnowledgeFileAbs(
+    skill: Skill,
+    bucket: "global" | "sites",
+    targetFolder: string,
+    /** Entries in the target dir to exclude from the per-layer count (the folder being deleted by move_to_parent). */
+    capExempt = 0,
+  ): string {
+    const targetDir = this.knowledgeFolderAbsDir(bucket, targetFolder)
+    if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
+      throw new Error(`目标文件夹不存在: ${targetFolder || "(桶根)"}，请先创建文件夹`)
+    }
+    if (this.countDirChildren(targetDir) - capExempt >= KNOWLEDGE_FOLDER_MAX_CHILDREN) {
+      throw new Error(`目标文件夹已满（单层最多 ${KNOWLEDGE_FOLDER_MAX_CHILDREN} 项）`)
+    }
+    const srcPath = skill.source_file
+    const ext = path.extname(srcPath)
+    const srcStem = path.basename(srcPath, ext)
+    let destName = path.basename(srcPath)
+    const firstChoice = path.join(targetDir, destName)
+    if (firstChoice !== srcPath && fs.existsSync(firstChoice)) {
+      // Same-name collision in the target folder: allocate a fresh stem.
+      const ident = allocateDocIdentity({
+        title: skill.title || skill.name,
+        preferredId: isLegacySafeId(srcStem) ? srcStem : undefined,
+        seed: `${srcStem}@${targetFolder}`,
+        takenStems: this.collectTakenStems(),
+      })
+      destName = `${ident.filenameStem}${ext}`
+    }
+    const destPath = path.join(targetDir, destName)
+    if (destPath === srcPath) return srcPath // already there
+    // Final bytes in memory: pin the id when the doc lacks one so a forced
+    // stem change can never retitle the doc's identity.
+    const raw = fs.readFileSync(srcPath, "utf-8")
+    const finalContent = skill.id ? raw : this.pinnedKnowledgeContent(skill, raw)
+    const tmpPath = path.join(targetDir, `.${destName}.move-tmp-${process.pid}-${Date.now()}`)
+    try {
+      writeRestrictedFile(tmpPath, finalContent)
+      fs.renameSync(tmpPath, destPath)
+    } catch (e) {
+      try {
+        if (fs.existsSync(tmpPath)) fs.rmSync(tmpPath, { force: true })
+        if (fs.existsSync(destPath)) fs.rmSync(destPath, { force: true })
+      } catch {
+        /* best-effort residue cleanup */
+      }
+      throw e
+    }
+    try {
+      fs.unlinkSync(srcPath)
+    } catch (e) {
+      // dest landed but source removal failed. unlink is atomic — failure means
+      // the source is STILL there with its original bytes, so the only correct
+      // rollback is dropping dest (F-R2-2: never rename dest back over src,
+      // that would clobber the original bytes with the pinned copy).
+      try {
+        if (fs.existsSync(destPath)) fs.rmSync(destPath, { force: true })
+      } catch {
+        /* best-effort: dest residue is a byte-copy; source of truth intact */
+      }
+      throw e
+    }
+    return destPath
+  }
+
+  /**
+   * knowledge.move — same-bucket rename, id unchanged (F-I-1/F-I-8).
+   * The protocol has no bucket parameter: the target folder is relative to the
+   * doc's OWN bucket, so cross-bucket moves are unrepresentable (rejected by
+   * construction); `folder: ""` moves to the bucket root.
+   */
+  moveKnowledge(id: string, folderRaw: unknown): { id: string; folder: string } {
+    const norm = this.normalizeKnowledgeFolderPath(folderRaw, { allowEmpty: true })
+    if (!norm.ok) throw new Error(norm.error)
+    const skill = this.get(id)
+    if (!skill || !this.isKnowledgeDoc(skill)) throw new Error(`Knowledge not found: ${id}`)
+    if (skill.builtin) throw new Error(`Cannot move builtin knowledge: ${id}`)
+    const bucket = this.knowledgeBucketOf(skill.source_file)
+    if (!bucket) throw new Error(`Knowledge doc is not inside a bucket: ${id}`)
+    const effectiveId = skill.id || skill.name
+    const curFolder = path
+      .dirname(path.relative(this.knowledgeBucketRoot(bucket), skill.source_file))
+      .split(path.sep).filter((s) => s && s !== ".").join("/")
+    if (curFolder === norm.path) {
+      return { id: effectiveId, folder: norm.path }
+    }
+    this.moveKnowledgeFileAbs(skill, bucket, norm.path)
+    this.refresh()
+    return { id: effectiveId, folder: norm.path }
+  }
+
+  createKnowledgeFolder(
+    bucket: "global" | "sites",
+    folderRaw: unknown,
+    description?: string,
+  ): { path: string } {
+    const norm = this.normalizeKnowledgeFolderPath(folderRaw)
+    if (!norm.ok) throw new Error(norm.error)
+    const absDir = this.knowledgeFolderAbsDir(bucket, norm.path)
+    if (fs.existsSync(absDir)) throw new Error(`文件夹已存在: ${norm.path}`)
+    // Gate8 MAJOR-3: per-layer cap applies to EVERY level this create would
+    // grow (mkdir recursive otherwise bypasses a full bucket root for a/b).
+    const segs = norm.path.split("/")
+    for (let i = 1; i <= segs.length; i++) {
+      const levelAbs = this.knowledgeFolderAbsDir(bucket, segs.slice(0, i).join("/"))
+      if (fs.existsSync(levelAbs)) continue // existing level grows nothing
+      const parentAbs = i === 1
+        ? this.knowledgeBucketRoot(bucket)
+        : this.knowledgeFolderAbsDir(bucket, segs.slice(0, i - 1).join("/"))
+      if (this.countDirChildren(parentAbs) >= KNOWLEDGE_FOLDER_MAX_CHILDREN) {
+        throw new Error(`上层文件夹已满（单层最多 ${KNOWLEDGE_FOLDER_MAX_CHILDREN} 项）`)
+      }
+    }
+    fs.mkdirSync(absDir, { recursive: true, mode: 0o700 })
+    if (typeof description === "string" && description.trim()) {
+      this.writeKnowledgeFolderMeta(bucket, norm.path, description)
+    }
+    this.refresh()
+    return { path: norm.path }
+  }
+
+  renameKnowledgeFolder(
+    bucket: "global" | "sites",
+    pathRaw: unknown,
+    newPathRaw: unknown,
+  ): { path: string; new_path: string } {
+    const norm = this.normalizeKnowledgeFolderPath(pathRaw)
+    if (!norm.ok) throw new Error(norm.error)
+    const normNew = this.normalizeKnowledgeFolderPath(newPathRaw)
+    if (!normNew.ok) throw new Error(normNew.error)
+    if (norm.path === normNew.path) return { path: norm.path, new_path: normNew.path }
+    // Renaming a parent into its own child would create a cycle.
+    if (normNew.path.startsWith(norm.path + "/")) {
+      throw new Error("不能把文件夹移动到它自己内部")
+    }
+    const srcAbs = this.knowledgeFolderAbsDir(bucket, norm.path)
+    const destAbs = this.knowledgeFolderAbsDir(bucket, normNew.path)
+    if (!fs.existsSync(srcAbs)) throw new Error(`文件夹不存在: ${norm.path}`)
+    if (fs.existsSync(destAbs)) throw new Error(`目标文件夹已存在: ${normNew.path}`)
+    const destParent = path.dirname(destAbs)
+    if (!fs.existsSync(destParent)) throw new Error(`目标上层文件夹不存在: ${path.dirname(normNew.path) || "(桶根)"}`)
+    if (this.countDirChildren(destParent) >= KNOWLEDGE_FOLDER_MAX_CHILDREN) {
+      throw new Error(`目标上层文件夹已满（单层最多 ${KNOWLEDGE_FOLDER_MAX_CHILDREN} 项）`)
+    }
+    // Gate8 F-B: renaming also MOVES the subtree — the deepest member's level
+    // after the move (new_path depth + deepest relative subtree level) must
+    // stay ≤ KNOWLEDGE_FOLDER_MAX_DEPTH.
+    const maxSubDepth = (dir: string, depth: number): number => {
+      let max = depth
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return max
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith(".")) continue
+        if (isSymlinkOrJunction(dir, entry)) continue
+        if (entry.isDirectory()) max = Math.max(max, maxSubDepth(path.join(dir, entry.name), depth + 1))
+      }
+      return max
+    }
+    const newDepth = normNew.path.split("/").length + maxSubDepth(srcAbs, 0)
+    if (newDepth > KNOWLEDGE_FOLDER_MAX_DEPTH) {
+      throw new Error(`移动后子树最深 ${newDepth} 级，超过 ${KNOWLEDGE_FOLDER_MAX_DEPTH} 级上限`)
+    }
+    fs.renameSync(srcAbs, destAbs)
+    this.refresh()
+    return { path: norm.path, new_path: normNew.path }
+  }
+
+  /** folder_update: save the user description → _folder.md (F-S-7: 保存才落盘). */
+  updateKnowledgeFolder(
+    bucket: "global" | "sites",
+    pathRaw: unknown,
+    description: string,
+  ): { path: string; description: string } {
+    const norm = this.normalizeKnowledgeFolderPath(pathRaw)
+    if (!norm.ok) throw new Error(norm.error)
+    const absDir = this.knowledgeFolderAbsDir(bucket, norm.path)
+    if (!fs.existsSync(absDir)) throw new Error(`文件夹不存在: ${norm.path}`)
+    const desc = String(description ?? "").slice(0, KNOWLEDGE_FOLDER_DESCRIPTION_MAX)
+    this.writeKnowledgeFolderMeta(bucket, norm.path, desc)
+    this.refresh()
+    return { path: norm.path, description: desc }
+  }
+
+  /**
+   * Import carry-over: a vault `_folder.md` becomes folder metadata for the
+   * bucket(s) its sibling docs landed in. Returns true when the folder ends
+   * up WITH a description on disk (written now, or a pre-existing one wins),
+   * false when nothing was carried (caller counts folderMetaDropped).
+   *
+   * opts.createIfMissing === false: only carry into folders that already
+   * exist on disk (ancestor-of-a-landed-doc carry, F-R4-1) — never mkdir.
+   */
+  applyImportedFolderMeta(
+    bucket: "global" | "sites",
+    folderRaw: string,
+    description: string,
+    opts?: { createIfMissing?: boolean },
+  ): boolean {
+    const norm = this.normalizeKnowledgeFolderPath(folderRaw)
+    if (!norm.ok || !norm.path) return false
+    const absDir = this.knowledgeFolderAbsDir(bucket, norm.path)
+    if (!fs.existsSync(absDir)) {
+      if (opts?.createIfMissing === false) return false
+      // Gate8 r3 F-R3-1 defense-in-depth: creating the folder must not grow a
+      // full parent layer either (mirror createKnowledgeFolder's per-level 50
+      // check). A blocked carry-over simply skips — the docs are imported.
+      const segs = norm.path.split("/")
+      for (let i = 1; i <= segs.length; i++) {
+        const levelAbs = this.knowledgeFolderAbsDir(bucket, segs.slice(0, i).join("/"))
+        if (fs.existsSync(levelAbs)) continue
+        const parentAbs = i === 1
+          ? this.knowledgeBucketRoot(bucket)
+          : this.knowledgeFolderAbsDir(bucket, segs.slice(0, i - 1).join("/"))
+        if (this.countDirChildren(parentAbs) >= KNOWLEDGE_FOLDER_MAX_CHILDREN) return false
+      }
+      fs.mkdirSync(absDir, { recursive: true, mode: 0o700 })
+    }
+    // An already-saved user description wins over an import carry-over.
+    const metaPath = path.join(absDir, FOLDER_META_FILENAME)
+    if (fs.existsSync(metaPath)) return true
+    // Gate8 F-F: the carry-over writes a new entry — respect the per-layer cap
+    // (a full folder skips the carry-over; nothing is overwritten or broken).
+    if (this.countDirChildren(absDir) >= KNOWLEDGE_FOLDER_MAX_CHILDREN) return false
+    this.writeKnowledgeFolderMeta(bucket, norm.path, description)
+    return true
+  }
+
+  /**
+   * folder_delete — default reject_if_docs: any knowledge doc anywhere in the
+   * subtree refuses the delete. move_to_parent lifts DIRECT member docs one
+   * level up (same atomic rename as knowledge.move, ids unchanged), then
+   * removes the empty dir + its _folder.md. Folders containing subfolders are
+   * refused in both modes (honest error, nothing moved).
+   */
+  deleteKnowledgeFolder(
+    bucket: "global" | "sites",
+    pathRaw: unknown,
+    mode: "reject_if_docs" | "move_to_parent" = "reject_if_docs",
+  ): { path: string; moved: number } {
+    const norm = this.normalizeKnowledgeFolderPath(pathRaw)
+    if (!norm.ok) throw new Error(norm.error)
+    const absDir = this.knowledgeFolderAbsDir(bucket, norm.path)
+    if (!fs.existsSync(absDir)) throw new Error(`文件夹不存在: ${norm.path}`)
+    this.ensureFresh()
+
+    const directDocs: Skill[] = []
+    let subfolderCount = 0
+    let subtreeDocs = 0
+    let otherFiles = 0
+    const scan = (dir: string, isRoot: boolean) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name.startsWith(".")) continue
+        if (isSymlinkOrJunction(dir, entry)) throw new Error(`文件夹内含链接条目，拒绝删除: ${entry.name}`)
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (isRoot) subfolderCount++
+          scan(full, false)
+          continue
+        }
+        if (!entry.isFile()) continue
+        if (entry.name === FOLDER_META_FILENAME) continue
+        if (entry.name.endsWith(".md") || entry.name.endsWith(".markdown")) {
+          subtreeDocs++
+          if (isRoot) {
+            const skill = this.skillsCache.find((s) => s.source_file === full)
+            if (skill) directDocs.push(skill)
+          }
+        } else {
+          otherFiles++
+        }
+      }
+    }
+    scan(absDir, true)
+
+    if (mode === "reject_if_docs") {
+      if (subtreeDocs > 0) throw new Error(`文件夹非空（含 ${subtreeDocs} 篇文档），拒绝删除`)
+      if (subfolderCount > 0) throw new Error("文件夹含子文件夹，拒绝删除")
+      if (otherFiles > 0) throw new Error("文件夹内还有非知识文件，拒绝删除")
+      fs.rmSync(absDir, { recursive: true })
+      this.refresh()
+      return { path: norm.path, moved: 0 }
+    }
+
+    // move_to_parent
+    if (subfolderCount > 0) throw new Error("请先移动或删除子文件夹")
+    if (otherFiles > 0) throw new Error("文件夹内还有非知识文件，拒绝删除")
+    const parentFolder = norm.path.split("/").slice(0, -1).join("/")
+    const parentAbs = this.knowledgeFolderAbsDir(bucket, parentFolder)
+    // Direct .md files that the loader skipped (unparseable) still move as files.
+    const directFiles = fs
+      .readdirSync(absDir, { withFileTypes: true })
+      .filter((e) => e.isFile() && (e.name.endsWith(".md") || e.name.endsWith(".markdown")) && e.name !== FOLDER_META_FILENAME)
+    // Gate8 MAJOR-4: the parent's child count includes the folder being
+    // deleted itself — exclude it before judging whether the lift fits.
+    if ((this.countDirChildren(parentAbs) - 1) + directFiles.length > KNOWLEDGE_FOLDER_MAX_CHILDREN) {
+      throw new Error(`上层文件夹放不下（单层最多 ${KNOWLEDGE_FOLDER_MAX_CHILDREN} 项）`)
+    }
+    const movedPairs: Array<{ from: string; to: string }> = []
+    try {
+      for (const f of directFiles) {
+        const srcPath = path.join(absDir, f.name)
+        const skill = directDocs.find((s) => s.source_file === srcPath)
+        let dest = ""
+        if (skill) {
+          // capExempt=1: the doomed subfolder still counts in the parent's
+          // child list until the final rm — exclude it per moved file too.
+          dest = this.moveKnowledgeFileAbs(skill, bucket, parentFolder, 1)
+        } else {
+          dest = path.join(parentAbs, f.name)
+          if (fs.existsSync(dest)) throw new Error(`目标位置已有同名文件: ${f.name}`)
+          fs.renameSync(srcPath, dest)
+        }
+        if (dest !== srcPath) movedPairs.push({ from: dest, to: srcPath })
+      }
+    } catch (e) {
+      // Rollback everything already moved (reverse order).
+      for (const pair of movedPairs.reverse()) {
+        try {
+          if (fs.existsSync(pair.from) && !fs.existsSync(pair.to)) fs.renameSync(pair.from, pair.to)
+        } catch {
+          /* best-effort restore */
+        }
+      }
+      throw e
+    }
+    fs.rmSync(absDir, { recursive: true })
+    this.refresh()
+    return { path: norm.path, moved: directFiles.length }
+  }
+
+  /**
+   * folder_suggest input: member (subtree) doc title+description one-liners,
+   * ≤30 docs. Router redacts + sends to the LLM; nothing is written here.
+   */
+  knowledgeFolderMemberLines(bucket: "global" | "sites", pathRaw: unknown): string[] {
+    const norm = this.normalizeKnowledgeFolderPath(pathRaw)
+    if (!norm.ok) throw new Error(norm.error)
+    const absDir = this.knowledgeFolderAbsDir(bucket, norm.path)
+    if (!fs.existsSync(absDir)) throw new Error(`文件夹不存在: ${norm.path}`)
+    const prefix = path.resolve(absDir) + path.sep
+    this.ensureFresh()
+    const members = this.skillsCache.filter((s) => {
+      if (!this.isKnowledgeDoc(s)) return false
+      try {
+        return path.resolve(s.source_file).startsWith(prefix)
+      } catch {
+        return false
+      }
+    })
+    return members.slice(0, 30).map((s) =>
+      `${(s.title || s.name).replace(/\s+/g, " ").trim()} — ${(s.description || "").replace(/\s+/g, " ").trim()}`,
+    )
   }
 
   /** Search relevant chunks from given knowledge docs based on query.

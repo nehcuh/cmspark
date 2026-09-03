@@ -33,6 +33,8 @@ const mockSkillEngine = {
   matchSkills: (message: string): Array<{ name: string; confidence: number }> => [],
   get: (name: string): any => undefined,
   list: (): any[] => [],
+  // #274: knowledge.list frame carries folder rows on non-summoner surfaces.
+  listKnowledgeFolders: (): any[] => [],
   refresh: (): void => {},
 } as any
 

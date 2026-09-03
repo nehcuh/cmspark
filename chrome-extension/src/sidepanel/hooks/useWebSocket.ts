@@ -1720,7 +1720,13 @@ export function useWebSocket() {
 
         case "knowledge.list":
           if (!Array.isArray(msg.docs)) break
-          dispatch({ type: "SET_KNOWLEDGE_DOCS", docs: msg.docs })
+          // #274: folders ride the knowledge.list frame (absent on summoner /
+          // older companions — the store keeps the previous value then).
+          dispatch({
+            type: "SET_KNOWLEDGE_DOCS",
+            docs: msg.docs,
+            folders: Array.isArray(msg.folders) ? msg.folders : undefined,
+          })
           break
 
         case "knowledge.doc":
@@ -1800,6 +1806,26 @@ export function useWebSocket() {
           })
           break
 
+        case "knowledge.folder_suggest":
+          // #274: 文件夹「建议说明」草稿 reply — 不落盘，保存走 folder_update。
+          dispatch({
+            type: "SET_KNOWLEDGE_FOLDER_SUGGEST",
+            path: typeof msg.path === "string" ? msg.path : "",
+            bucket: msg.bucket === "sites" ? "sites" : "global",
+            status: msg.suggested && typeof msg.suggested.description === "string" ? "ok" : "error",
+            description:
+              msg.suggested && typeof msg.suggested.description === "string"
+                ? msg.suggested.description
+                : undefined,
+            error:
+              typeof msg.extract_error === "string" && msg.extract_error
+                ? msg.extract_error
+                : msg.suggested
+                  ? undefined
+                  : "解读不可用",
+          })
+          break
+
         case "knowledge.import_directory_result": {
           if (msg.error) {
             const message = msg.error === "cancelled" ? "已取消选择文件夹" : `导入失败：${msg.error}`
@@ -1808,12 +1834,20 @@ export function useWebSocket() {
           }
           // Update the docs list regardless — even on partial failure, any
           // successfully imported notes should appear in the UI immediately.
-          dispatch({ type: "SET_KNOWLEDGE_DOCS", docs: msg.docs || [] })
+          dispatch({
+            type: "SET_KNOWLEDGE_DOCS",
+            docs: msg.docs || [],
+            folders: Array.isArray(msg.folders) ? msg.folders : undefined,
+          })
 
           const pieces: string[] = [`✓ 导入 ${msg.imported} 篇`]
           if (msg.skippedOversize > 0) pieces.push(`跳过 ${msg.skippedOversize} 个 >6MB`)
           if (msg.skippedUnsupported > 0) pieces.push(`跳过 ${msg.skippedUnsupported} 个不支持格式`)
           if (msg.failed > 0) pieces.push(`失败 ${msg.failed}`)
+          // #274: 第 4 级被拍扁到第 3 级时如实告知（不丢文件）。
+          if (msg.flattenedDepth > 0) pieces.push(`${msg.flattenedDepth} 篇原目录超过 3 层，已并入第 3 层`)
+          // #274 MAJOR-5: 单层 50 满了的文件夹，文档上拍一层并计数告知。
+          if (msg.layerOverflow > 0) pieces.push(`${msg.layerOverflow} 篇因目标文件夹已满（单层 50）上提到上一层`)
           if (msg.truncated) pieces.push(`(已达 ${msg.maxFiles} 上限)`)
           // #272 §3.3: directory import runs 0 LLM extractions — say so and
           // point at the manual per-doc escape hatch.
@@ -2021,6 +2055,15 @@ export function useWebSocket() {
             /OVERLAY_SHELL_ORIGIN|OVERLAY_SHELL_UNAVAILABLE|OVERLAY_SHELL_ACL/.test(overlayErr)
           ) {
             window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: "无法弹出对话框" }))
+            break
+          }
+          // #274 Gate8 M-6: folder verb rejections (family:"knowledge_folder")
+          // land in the knowledge status line — never silently swallowed.
+          if (msg.family === "knowledge_folder") {
+            dispatch({
+              type: "SET_KNOWLEDGE_IMPORT_STATUS",
+              status: { ok: false, message: typeof msg.error === "string" && msg.error ? msg.error : "文件夹操作失败" },
+            })
             break
           }
           // #270: route companion preview failures into the import modal. Id-ful

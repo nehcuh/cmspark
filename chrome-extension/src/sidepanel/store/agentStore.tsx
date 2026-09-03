@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
+import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 
@@ -175,6 +175,16 @@ export interface AgentState {
   logs: LogEntry[]
   autoSkillNames: string
   knowledgeDocs: KnowledgeMeta[]
+  /** #274: 桶内文件夹行（磁盘目录 SoT；空文件夹也在）。summoner 表面无此字段。 */
+  knowledgeFolders: KnowledgeFolderMeta[]
+  /** #274: 文件夹「建议说明」草稿请求状态（不落盘，保存走 folder_update）。 */
+  knowledgeFolderSuggest: {
+    path: string
+    bucket: "global" | "sites"
+    status: "pending" | "ok" | "error"
+    description?: string
+    error?: string
+  } | null
   skillSelectionMode: SkillSelectionMode
   knowledgeSelectionMode: "auto" | "all" | "manual"
   /** #273 Wave A: 知识「智能匹配」开关（thread.knowledge_smart_match，默认开）。 */
@@ -403,7 +413,15 @@ export type AgentAction =
   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
   | { type: "ADD_LOG"; entry: LogEntry }
   | { type: "SET_AUTO_SKILLS"; names: string }
-  | { type: "SET_KNOWLEDGE_DOCS"; docs: KnowledgeMeta[] }
+  | { type: "SET_KNOWLEDGE_DOCS"; docs: KnowledgeMeta[]; folders?: KnowledgeFolderMeta[] }
+  | {
+      type: "SET_KNOWLEDGE_FOLDER_SUGGEST"
+      path: string
+      bucket?: "global" | "sites"
+      status: "pending" | "ok" | "error"
+      description?: string
+      error?: string
+    }
   | { type: "SET_SKILL_SELECTION_MODE"; mode: SkillSelectionMode }
   | { type: "SET_KNOWLEDGE_SELECTION_MODE"; mode: "auto" | "all" | "manual" }
   | { type: "SET_KNOWLEDGE_SMART_MATCH"; enabled: boolean }
@@ -596,6 +614,8 @@ export const initialState: AgentState = {
   logs: [],
   autoSkillNames: "",
   knowledgeDocs: [],
+  knowledgeFolders: [],
+  knowledgeFolderSuggest: null,
   skillSelectionMode: "auto",
   knowledgeSelectionMode: "auto",
   knowledgeSmartMatch: true,
@@ -1485,7 +1505,26 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_AUTO_SKILLS":
       return { ...state, autoSkillNames: action.names }
     case "SET_KNOWLEDGE_DOCS":
-      return { ...state, knowledgeDocs: action.docs }
+      return {
+        ...state,
+        knowledgeDocs: action.docs,
+        // #274: folders ride the same frame; absent (older companion) = keep current.
+        knowledgeFolders: action.folders ?? state.knowledgeFolders,
+      }
+    case "SET_KNOWLEDGE_FOLDER_SUGGEST":
+      return {
+        ...state,
+        knowledgeFolderSuggest:
+          action.status === "pending" && state.knowledgeFolderSuggest?.path !== action.path
+            ? { path: action.path, bucket: action.bucket || "global", status: "pending" }
+            : {
+                path: action.path,
+                bucket: action.bucket || state.knowledgeFolderSuggest?.bucket || "global",
+                status: action.status,
+                description: action.description,
+                error: action.error,
+              },
+      }
     case "SET_SKILL_SELECTION_MODE":
       return { ...state, skillSelectionMode: action.mode }
     case "SET_KNOWLEDGE_SELECTION_MODE":
