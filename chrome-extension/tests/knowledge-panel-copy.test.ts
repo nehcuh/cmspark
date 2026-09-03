@@ -122,6 +122,18 @@ test("开闸轮（2026-09-03）: 「按堆选文」开关下方有可读的原�
   assert.ok(src.includes("KNOWLEDGE_ROUTE_BY_GROUP_EXPLAIN_COPY"), "面板引用说明文案常量")
 })
 
+test("#281: exact-duplicate copy has no banned words and is wired", () => {
+  const util = readFileSync(join(SRC_ROOT, "sidepanel/utils/knowledge-distribution.ts"), "utf8")
+  assert.ok(util.includes("内容与已有文档《"), "confirm prefix")
+  assert.ok(util.includes("》完全相同"), "confirm suffix")
+  assert.ok(util.includes("跳过重复"), "directory skip copy")
+  const chat = readFileSync(join(SRC_ROOT, "sidepanel/components/ChatView.tsx"), "utf8")
+  assert.ok(chat.includes("内容与已有文档《"), "modal renders duplicate line")
+  const ws = readFileSync(join(SRC_ROOT, "sidepanel/hooks/useWebSocket.ts"), "utf8")
+  assert.ok(ws.includes("duplicate_of"), "preview whitelist")
+  assert.ok(ws.includes("跳过重复"), "directory result sentence")
+})
+
 test("AC-18 copy: 分组概览两态标注与来源分组词（RetrievedSourcesChips）", () => {
   const chips = readFileSync(join(SRC_ROOT, "sidepanel/components/RetrievedSourcesChips.tsx"), "utf8")
   assert.ok(chips.includes("含分组概览"), "概览注入标注")

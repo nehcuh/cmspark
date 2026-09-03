@@ -29,6 +29,7 @@ import { validateWildcardPattern } from "../security"
 import { redactSecrets } from "../threads/distill"
 import { normalizeTags } from "../threads/digest"
 import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT, type RelatedKnowledgeInput } from "./knowledge-related"
+import { hashKnowledgeBody, knowledgeDuplicateExempt } from "./knowledge-duplicate"
 import {
   KNOWLEDGE_GROUPMAP_CHARS,
   buildKnowledgeDistribution,
@@ -2461,6 +2462,28 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         builtin: s.builtin,
         folder: s.folder || "",
       }))
+  }
+
+  /**
+   * #281: exact-duplicate lookup on parsed markdown body (sha256).
+   * Exempts empty / scan-placeholder bodies. Id = `id || name`.
+   */
+  findKnowledgeDuplicate(raw: string, fallbackName?: string): { id: string; title: string } | null {
+    const { body } = this.previewKnowledge(raw, fallbackName)
+    if (knowledgeDuplicateExempt(body)) return null
+    const incoming = hashKnowledgeBody(body)
+    this.ensureFresh()
+    const hits: { id: string; title: string }[] = []
+    for (const s of this.skillsCache) {
+      if (!this.isKnowledgeDoc(s)) continue
+      const existingBody = typeof s.content === "string" ? s.content : ""
+      if (knowledgeDuplicateExempt(existingBody)) continue
+      if (hashKnowledgeBody(existingBody) !== incoming) continue
+      const id = s.id || s.name
+      hits.push({ id, title: String(s.title || s.name) })
+    }
+    hits.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    return hits[0] || null
   }
 
   private knowledgeMeta(skill: Skill): RelatedKnowledgeInput & { id: string; name: string; title: string; description: string; type: Skill["type"]; site?: string; tags?: string[]; builtin: boolean } {
