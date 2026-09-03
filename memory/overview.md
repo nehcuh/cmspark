@@ -13,21 +13,22 @@
 | CU 实验定位 | **仅 Qwen3-VL** |
 | 听写+ / 本机 Whisper / 会议 | 交付（ADR-023/024）；overlay 会议台 on main |
 | Outbound MCP / 租手 | opt-in；T1 L7 **PASS 带 nit**（#228）；**禁扩**默认 profile |
-| 知识诚实 Wave 0–3 | **on main** |
+| 知识诚实 Wave 0–3 + 检索 A/B + 文件夹 + 开闸 + 查重 | **on main** #272–#274/#280/#281/#283 |
 | 形态切片 1–3 / 5 / 6 | **on main** |
 | ChatShell / Overlay Capture 卡 | **on main**（#240/#242/#246） |
-| 体检 A–F | **on main** #246/#248/#250/#252/#254 · tip `5c4fcab0` |
+| 体检 A–F | **on main** #246/#248/#250/#252/#254 |
 
-## Branch lock (S103)
+## Branch lock (S104)
 
 - 包装 **0.6.0**（侧栏 UI 重构 #321 · 自主性三件套 #325/#327/#386–#391 · 专家团队 v1 #366–#371 · CU 完整性链 #359–#362）。0.5.9 是 9-04 知识库切点（#272–#283 + Windows launcher 后续）；0.5.8 仍是 9-02 工厂切点（#268 context_window 512000 / listen-first / zip node-first）。当轮活计划（#265）在 0.5.7。召唤器流式 / 语音回退 / 会议自动 K 已在 0.5.6。
 - **评审弧闭环**：c39d7d3e..26949cbb 四路对抗 7 MAJOR 全修（#261–#264），main tip `18d843d1`。
+- S104 起 origin 已含开闸+查重（#280–#283）；评审波次（#286–#295）十张 PR 已合入，见 GATE-SUMMARY。
 - **活票**：#230 冻 F-S-10 / overlay-acl；#258–#260 语音/会议。T1 #228 已关，**禁扩** profile。
 - **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；宣称 Capture/CU/F-S-10 闭合；StatusRail 手风琴 / Wave 2 FocusBand。
 
 ## Next
 
-- Chrome unpacked 扩展重载 `chrome-extension/build/chrome-mv3-prod/` 狗食本轮步骤。
+- 重载 unpacked 扩展狗食 PDF 导入 + 「按堆选文」。再编 DMG 才有查重。
 - #230 禁止整票实现。
 
 ## Docs SoT

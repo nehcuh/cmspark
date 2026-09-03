@@ -74,6 +74,21 @@
 
 ## Technical Pitfalls
 
+### 知识库导入 concat-per-chunk `btoa` 会毁掉 PDF（2026-09-03 · #282）
+- **坑**：对话框附件 `FileReader.readAsDataURL` 整文件编码；知识库单篇导入按 `CHUNK=0x8000` 分块 `btoa` 再拼接。`0x8000 % 3 === 2`，每块被 padding，拼出的不是原字节。companion `pdf-parse` 报 `Invalid PDF structure`。解析器相同，**喂进去的字节不同**。&lt;32KiB 只有一块所以碰巧能过；「导入文件夹」走 companion 读盘也不经过这段。
+- **纪律**：浏览器侧二进制 → base64 用 `readAsDataURL` 或「拼 binary 字符串、**一次** `btoa`」（`bytesToBase64`）。禁止 `base64 += btoa(chunk)`。回归：`chrome-extension/tests/knowledge-file-base64.test.ts`。
+- **4 行 case**：动作=知识面板导入 &gt;32KiB PDF；失败=Invalid PDF structure、对话框同文件成功；归责=分块 btoa padding；保护=与 composer 同一编码
+
+### 嵌套 grok `--output-format text` 非法；`kimi -p` 不能配 `--yolo`/`--auto`（2026-09-03 · Gate10）
+- **坑**：grok CLI 只认 `plain|json|streaming-json`，`--output-format text` 立刻 exit 2。`kimi -p` 与 `--yolo`/`--auto` 互斥，立刻 exit 1。本会话 Gate10 第二路因此空转两次。
+- **纪律**：独立 grok 评审用 `grok --prompt-file … --output-format plain`。kimi headless 只用 `kimi -p "…" --output-format text`（不要 --auto/--yolo）。Pi 仍不在 PATH 时第二家族用 kimi。
+- **4 行 case**：动作=派 grok/kimi 独立评审；失败=0.4s 退出、无报告；归责=flag 抄 claude 的 text / 把 yolo 接到 -p；保护=Gate10 改 kimi -p 成功出 AWN
+
+### tmux `capture-pane` 看不到 Kimi 折叠块（2026-09-03 · 接手）
+- **坑**：Kimi TUI `ctrl+o to expand` 在 pane 里是折叠的。只读屏幕会漏掉「被打断的开闸 / 查重判断」正文。用户会说「你看下输出呢」。
+- **纪律**：接手另一窗 Kimi = `tmux list-panes` + `capture-pane` **加上** `~/.kimi-code/sessions/…/agents/main/wire.jsonl` 里 `content.part`（含 `think`）。不要把 TUI 状态条 `[+132 -48]` 当活工作树——另一 agent 可能已 commit。
+- **4 行 case**：动作=接手 kimi 优化；失败=跳过打断工作和查重判断；归责=只信可见 pane；保护=展开 wire.jsonl
+
 ### `classifyError` 默认 `non_recoverable` 会杀掉准入闸（2026-09-01 · #265）
 - **坑**：page-tool 无活清单时 `PROPOSE_REQUIRED`。若先走 `classifyError`，默认 fallthrough = `non_recoverable` → **整轮对话死**。若当 recoverable 再进 `MAX_SAME_TOOL_RECOVERABLE_FAILURES=3`，三次 gated click 也会杀轮。plan dual 2× AWN 点名此序。
 - **纪律**：adapter 先认 `proposeDenied`；闸错误**绕过** classifyError 与同工具失败计数。`runChatCreate` 必须 sticky-clear `run_progress: null`，否则 leftover H1 / 上轮清单让测试（`m2-untrusted-marker` 的 `get_page_text`/`get_page_html`）撞闸、注入断言假红。
@@ -912,6 +927,12 @@
 
 ## Reusable Patterns
 
+### 知识库 Wave A/B + 开闸 + 查重：kimi 主线、grok 接手、claude+kimi dual（2026-09-03 · #272–#283）
+- **链**：#273 Wave A #275 → #272 草稿 #276 → #274 文件夹 #277 → #273 Wave B #278 → 开闸 #280 → PDF 编码 #282 → 查重 #281/#283。Pi 不在 PATH 时第二路用 **kimi -p**，不要嵌套 grok `--output-format text`。
+- **开闸**：评测双栏 pass 才把 `KNOWLEDGE_ROUTE_*_BRANCH` 改 true；用户「按堆选文」默认仍关。漂移扳机流程性（评测不在 CI）。
+- **查重**：sha256(剥 frontmatter 的 body)；空/扫描件占位**豁免**（否则同名同页数扫描件目录导入静默丢）。单篇可强制第二份；目录跳过并计数。
+- **4 行 case**：动作=接手 kimi 未完成开闸+查重；成功=CI 绿合 main；归责=占位正文当 exact-match；保护=Gate-d281 kimi REJECT 折进 spec
+
 ### 体检批次：Issue-first → 四路折针 → kimi+claude dual → TDD → CI → squash（2026-08-29 · #245–#254）
 - **链**：深诊 fanout → GitHub Issue → strawman → 四路独立对抗（Security/Product/Impl/Skeptic）折针进 spec → **kimi+claude** dual（Pi 不在 PATH）both AWN 才写码 → TDD 机核 → PR → 实现 dual + CI 全绿才 squash。实现 agent 不得自评放行。
 - **校准**：Critical=未认证 RCE/配对绕过；High=已认证完整性/等价 RCE。overlay 钥匙出 argv 是 T3 误标不是 unauth RCE。
@@ -1188,6 +1209,11 @@
 - 教训：JS 单线程下，**全同步**的 read-modify-write 天然原子，不存在交错竞态——只有 caller「读 → await → 用陈旧快照写」才有竞态。审计/评审提"竞态"时先确认是否有 await 间隙，别为不存在的竞态加锁（cargo-cult）。kimi 终审也独立验证了所有 caller无 await 间隙，确认非 bug。
 
 ## Architecture Decisions
+
+### 知识检索开闸 + 完全重复导入（2026-09-03 · #280/#281）
+- **开闸**：诚实门评测 `folder/group: pass` 后工厂常数 true；开关 `knowledge_route_by_group` undefined=false。SoT：spec 2026-09-02 retrieval-scoring · ADR-027。
+- **查重**：`H = sha256(previewKnowledge.body.trim())`；不写 frontmatter。占位/空 body 不参与。F-I-5 仍加后缀不覆盖。SoT：`docs/superpowers/specs/2026-09-03-knowledge-exact-duplicate-import.md` LOCKED。Ship PR **#283** `7ab36063`。
+- **禁**：MD5；近似重复；静默覆盖；图谱/embedding。
 
 ### 当轮活计划 T3：companion 准入，不是 LLM 记忆（2026-09-01 · #265 · 0.5.7）
 - **产品**：聊天列 Wave 1 sticky 可勾清单（线稿 01+02）。**不要** StatusRail 手风琴（#256 已 REJECT path C）；**不要**偷运 Wave 2 FocusBand。

@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S104 END (2026-09-03) [接手 kimi 知识库主线 · 开闸 #280 · PDF #282 · 查重 #283 · 0.5.8 换装]
+- **触发**：另一 tmux 窗 kimi 被打断；用户要 grok 接手继续。
+- **Ship on main**：#280 簇路由开闸（常数 true、开关默认关）`6ddd05a4`；#282 PDF 导入 readAsDataURL `f4475b62`；#283/#281 正文 sha256 查重 `7ab36063`。tip **`7ab36063`** == origin。无开放 PR。
+- **本机**：`make package-macos` 换装 `/Applications/CMspark.app` **0.5.8**（开闸枝，**不含** #282/#283）；daemon `127.0.0.1:23401`；CDHash `63c4ed7c…583a` A6。无 bak。查重/PDF 修要再编包 + 重载扩展。
+- **对抗**：Gate10 开闸 claude+kimi AWN；Gate-d281 查重 claude AWN / kimi REJECT（扫描件占位）已折。
+- **下次**：重载 unpacked 扩展狗食 PDF 导入+按堆选文；再编 DMG 才有查重。#230 仍冻。#258–#260 排期。
+- Recorded: yes — 分块 btoa 毁 PDF；grok output-format 不是 text；kimi -p 禁 yolo；tmux 折叠块要读 wire.jsonl
+
 ### S103 END (2026-09-01) [T3 当轮活计划 #265 · 0.5.7 lockstep · 本机换装]
 - **触发**：侧栏干活顶栏看不到具体待办。#256 Wave 1 只挂 H1 残单；空对象是真缺口。
 - **选定**：T3 当轮活计划（新 ingest）。不要 StatusRail C，不偷运 Wave 2。线稿 01+02（聊天列可勾活清单）。
@@ -1030,12 +1038,12 @@
 - resume_doc: PR #240 · `docs/superpowers/specs/2026-08-27-chat-shell-same-face-design.md`
 - updated: 2026-08-28
 
-### 形态深化 0.5.3 切点（S84–S103 · main 含 #240/#242/#246–#254/#265）
-- status: **active**（用户可见主线 + 体检 A–F + 当轮活计划 on main；不宣称 Capture/CU 闭合）
-- context: 切片 1–6、ChatShell、Capture 卡、体检 P0–P2、#265 当轮活计划。包装 **0.5.7** 已进 `/Applications`（S103）。origin/main tip `2cd41f1d`。#228 禁扩 profile；#230 冻。
-- next_action: Chrome unpacked 重载 `chrome-extension/build/chrome-mv3-prod/` 狗食本轮步骤。勿扩 outbound。#230 禁止整票「继续」。
-- resume_doc: `docs/superpowers/specs/2026-08-31-runprogress-live-plan-design.md` · CHANGELOG 0.5.7 · #230
-- updated: 2026-09-01
+### 形态深化 0.5.3 切点（S84–S104 · main 含知识 Wave A/B + 开闸 + 查重）
+- status: **active**（用户可见主线 on main；不宣称 Capture/CU 闭合）
+- context: 切片 1–6、ChatShell、Capture、体检、#265 当轮活计划、#272–#274 知识、#280 开闸、#282 PDF 编码、#281/#283 查重。origin/main tip **`7ab36063`**。本机 DMG **0.5.8 开闸枝**（无 #282/#283）。#228 禁扩 profile；#230 冻。
+- next_action: 重载 unpacked 扩展狗食 PDF 导入 + 「按堆选文」。再 `make package-macos` 才有查重。#230 禁止整票。
+- resume_doc: spec 2026-09-02 retrieval-scoring · 2026-09-03 exact-duplicate · CHANGELOG 0.5.8 · #230
+- updated: 2026-09-03
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**
