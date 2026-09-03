@@ -27,7 +27,7 @@
 | 聚类 | average-link 凝聚，cosine over **纯 TF**（不用 TF-IDF，避免 IDF 漂移破坏确定性）；`MERGE_MIN=0.25`、`MIN_SIZE=3`、`DOC_CAP=200`、`MIN_DOCS=20`；确定性三钉（id 字典序进矩阵、合并平局取 min(id)、簇–簇平局取簇键 = 成员 id min） |
 | 簇标签 | 只从 title + tags 取高频词（频次并列取字典序最小），过 `normalizeTag` / `SENSITIVE_TAG_RE` + `redactSecrets`（取 `.text`）；**禁止 LLM 起名**进检索回路（可选 `llmExtract` 美化默认关、不落盘、不进检索——本实现未做） |
 | 簇路由 | 只作用 auto（all 硬排除、manual 强制 no-op、空 query no-op、智能匹配关 no-op）；打分语料 = Wave A 入选集 ∪ pinned ∪（FOLDER_BRANCH ∧ 命中夹 ? 夹全部成员）∪（GROUP_BRANCH ∧ 无命中夹 ? top-1-2 派生组成员）；第二趟不重截 k（输出扩张，由预算截）；注入序四步 pinned → 入选按分 + recall 槽（至多 displacement 末位一篇）→ 分组概览吃剩余（≤2000 含 wrap、计入 8000）→ 其余按分含尾部 |
-| 诚实门 | 两只分支常数 `KNOWLEDGE_ROUTE_FOLDER_BRANCH` / `KNOWLEDGE_ROUTE_GROUP_BRANCH` **出厂均 false**；评测（20 query × ≥20 文档，分栏 `folder|group: pass|fail|absent`，absent 与 fail 同等）该栏 pass 才允许把对应常数改 true；路由输入面任何改动 ⇒ 对应常数回 false 重证 |
+| 诚实门 | 两只分支常数 `KNOWLEDGE_ROUTE_FOLDER_BRANCH` / `KNOWLEDGE_ROUTE_GROUP_BRANCH` ~~出厂均 false~~ → **true**（2026-09-03 开闸）；评测（20 query × ≥20 文档，分栏 `folder|group: pass|fail|absent`，absent 与 fail 同等）该栏 pass 才允许把对应常数改 true；路由输入面任何改动 ⇒ 对应常数回 false 重证 |
 | 通道 | `knowledge.list` 顶层派生字段 `distribution?: { groups: [{ key, label, count, ids }] }`（key = 稳定身份键，带命名空间前缀：分组 `c:<成员 id min>`、「未分组」`u:ungrouped`；label 仅显示，碰撞加消歧后缀）；**禁** per-doc `cluster_id`；summoner 必剥、overlay 亦剥（严于 related 先例；放行谓词看 handshake `session.surface === "panel"`，不看 stamp 后值） |
 
 ### 4. 对「事实上分类树」质疑的预先反驳

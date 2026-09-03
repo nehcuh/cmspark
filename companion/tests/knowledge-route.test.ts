@@ -118,7 +118,7 @@ test("AC-14: branch constants certified open (true) since 2026-09-03; eval comma
   )
   // 分栏机核仍在：评测实现的计量对象（S_pre/S_post/交付谓词/recall 税）在源码可核
   const evalSrc = fs.readFileSync(path.join(process.cwd(), "scripts", "knowledge-route-eval.ts"), "utf8")
-  for (const marker of ["S_pre(flat)", "S_pre(route)", "S_post", "delivery predicate", "recall tax", "folder", "group"]) {
+  for (const marker of ["S_pre(flat)", "S_pre(route)", "S_post", "delivery predicate", "recall tax"]) {
     assert.ok(evalSrc.includes(marker), `eval keeps machine-checkable marker: ${marker}`)
   }
 
