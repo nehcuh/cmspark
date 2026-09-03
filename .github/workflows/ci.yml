@@ -156,3 +156,14 @@ jobs:
             tests/p2-deep-diagnosis-batch.test.ts \
             tests/security/security-policy.test.ts \
             tests/ws-router-validator-lockstep.test.ts
+
+      - name: Windows launcher runtime smoke (launch-hidden.vbs / launch.bat)
+        # Runtime proof of the VBS decision tree on a real Windows box — esp.
+        # the b09b2211 nested HasSystemNode probe (js present + no node on
+        # PATH must fall through to the SEA exe). Static shape stays pinned by
+        # scripts/tests/test-package-gates.sh on the ubuntu build job.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          & scripts/tests/win-launcher-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
