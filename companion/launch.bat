@@ -35,7 +35,7 @@ if not "!NODE_CMD!"=="" (
 
 :: Priority 3: SEA standalone exe last resort
 if exist "cmspark-agent.exe" (
-    echo [launch] Found cmspark-agent.exe (SEA last resort)
+    echo [launch] Found cmspark-agent.exe (SEA last resort^)
     set "LAUNCH_EXE=cmspark-agent.exe"
     set "LAUNCH_ARGS=tray"
     goto :do_launch

@@ -416,6 +416,40 @@ function Test-S8 {
     Write-Check $id $true 'bat: P2 node probe failed cleanly and "Found cmspark-agent.exe (SEA last resort)" was chosen'
 }
 
+function Test-S9 {
+    # Regression for the bat paren bug (450367a9): the unescaped ) in the P3
+    # echo text closed the `if exist "cmspark-agent.exe" (` block early, making
+    # the trailing set/set/goto :do_launch unconditional and the honest
+    # "Neither ..." error path dead code. On an EMPTY dir the bat must print
+    # the Neither error and must NOT reach :do_launch.
+    $id = 'S9'
+    $dir = New-State 's9'
+    Use-MinimalPath
+    Copy-Item -LiteralPath $BatSource -Destination (Join-Path $dir 'launch.bat')
+    $env:USERPROFILE = $dir
+    $batOut = Join-Path $dir '_bat-output.txt'
+    $wrapper = Join-Path $dir '_run-bat.cmd'
+    $wrapperLines = @(
+        '@echo off',
+        ('echo. | cmd /c "{0}" > "{1}" 2>&1' -f (Join-Path $dir 'launch.bat'), $batOut)
+    )
+    Set-Content -LiteralPath $wrapper -Value $wrapperLines -Encoding ascii
+    $p = Start-Process -FilePath $CmdExe -ArgumentList '/c', ('"{0}"' -f $wrapper) -WorkingDirectory $dir -PassThru
+    if (-not $p.WaitForExit(60000)) {
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+        Write-Check $id $false 'launch.bat did not finish within 60s (pause not fed?)' $dir; return
+    }
+    if (-not (Wait-ForFile $batOut 10)) { Write-Check $id $false 'bat produced no output file' $dir; return }
+    $out = Get-Content -LiteralPath $batOut -Raw
+    if ($out -notmatch 'Neither cmspark-agent\.js / Node\.js nor cmspark-agent\.exe found') {
+        Write-Check $id $false "bat must print the honest 'Neither ...' error on an empty dir; output:`n$out" $dir; return
+    }
+    if ($out -match 'Launching via launch-hidden\.vbs') {
+        Write-Check $id $false "bat reached :do_launch on an empty dir (unconditional goto -- unescaped paren regression); output:`n$out" $dir; return
+    }
+    Write-Check $id $true 'empty dir -> bat prints "Neither ..." and never reaches :do_launch'
+}
+
 # ------------------------------------------------------------------- main ---
 
 function Invoke-State {
@@ -436,6 +470,7 @@ try {
     Invoke-State 'S6' { Test-S6 }
     Invoke-State 'S7' { Test-S7 }
     Invoke-State 'S8' { Test-S8 }
+    Invoke-State 'S9' { Test-S9 }
 } finally {
     $env:PATH        = $SavedPath
     $env:USERPROFILE = $SavedUserProfile
