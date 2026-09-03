@@ -488,7 +488,18 @@ export interface KnowledgeMeta {
   site?: string
   tags?: string[]
   builtin: boolean
+  /** #274: 相对桶根的 posix 文件夹路径（""/缺省 = 桶根）。 */
+  folder?: string
   related?: KnowledgeRelatedHit[]
+}
+
+/** #274: 桶内一个真实目录（_folder.md 已保存说明 + 可能过期标记）。 */
+export interface KnowledgeFolderMeta {
+  bucket: "global" | "sites"
+  path: string
+  title: string
+  description: string
+  stale: boolean
 }
 
 export interface KnowledgeDocView {

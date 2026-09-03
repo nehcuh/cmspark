@@ -10,6 +10,7 @@ import os from "os"
 import * as fs from "fs"
 import path from "path"
 import { URL } from "url"
+import matter from "gray-matter"
 import type { ThreadManager } from "./threads/thread-manager"
 import { serializeThreadToMarkdown, serializeSummaryToMarkdown } from "./threads/markdown-export"
 import { summarizeThread } from "./threads/summary-export"
@@ -20,9 +21,9 @@ import {
   isDigestStale,
 } from "./threads/digest"
 import { findRelatedThreads } from "./threads/related"
-import { distillThreadMarkdown } from "./threads/distill"
+import { distillThreadMarkdown, redactSecrets } from "./threads/distill"
 import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT } from "./skills/knowledge-related"
-import { handleKnowledgeCrud, knowledgeListDocs } from "./message-router/handlers/knowledge"
+import { handleKnowledgeCrud, knowledgeListDocs, knowledgeListFolders } from "./message-router/handlers/knowledge"
 import { suggestCleanupRules } from "./threads/cleanup-rules"
 import { buildContextRefsSystemSegment, type ContextRefInput } from "./threads/context-refs"
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
@@ -30,7 +31,7 @@ import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "
 import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
 import { pickFolderNative } from "./obsidian/folder-picker"
 import { pinSlashSkill, type SkillEngine } from "./skills/skill-engine"
-import { isSymlinkOrJunction } from "./skills/doc-identity"
+import { isSymlinkOrJunction, isUnsafePathComponent } from "./skills/doc-identity"
 import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, isMaskedApiKey, DATA_DIR } from "./config"
@@ -448,6 +449,30 @@ let knowledgeExtractImpl: KnowledgeExtractImpl = defaultKnowledgeExtractImpl
 /** Test hook — swap the extraction impl (spy / failure injection). */
 export function __testSetKnowledgeExtractImpl(impl?: KnowledgeExtractImpl): void {
   knowledgeExtractImpl = impl || defaultKnowledgeExtractImpl
+}
+
+// --- #274: folder_suggest LLM draft (same 草稿制 pattern as #272) ---
+// Input is ONLY member title+description one-liners (≤30, redacted by the
+// caller) — never doc bodies. Returns a draft; saving goes through
+// knowledge.folder_update (user gesture). Nothing here touches disk.
+
+type FolderSuggestImpl = (params: {
+  lines: string[]
+  signal?: AbortSignal
+}) => Promise<{ description?: string }>
+
+const defaultFolderSuggestImpl: FolderSuggestImpl = async ({ lines, signal }) => {
+  const config = knowledgeExtractLlmConfig()
+  if (!config) throw new Error("companion_llm_not_configured")
+  const draft = await extractKnowledgeDraft({ body: lines.join("\n"), config, signal })
+  return { description: draft.description }
+}
+
+let folderSuggestImpl: FolderSuggestImpl = defaultFolderSuggestImpl
+
+/** Test hook — swap the folder-suggest impl (spy / failure injection). */
+export function __testSetFolderSuggestImpl(impl?: FolderSuggestImpl): void {
+  folderSuggestImpl = impl || defaultFolderSuggestImpl
 }
 
 /** In-flight preview extractions keyed by the kp- preview request id. */
@@ -2922,7 +2947,12 @@ export async function handleMessage(
     }
     case "knowledge.list":
       // listKnowledge() → ensureFresh() (same fingerprint path as skills)
-      return { type: "knowledge.list", docs: knowledgeListDocs(skillEngine, stampedSurface) }
+      return {
+        type: "knowledge.list",
+        docs: knowledgeListDocs(skillEngine, stampedSurface),
+        // #274: folder rows (withheld on summoner — field absent there)
+        ...(stampedSurface === "summoner" ? {} : { folders: knowledgeListFolders(skillEngine, stampedSurface) }),
+      }
     case "knowledge.set_active": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       const overlayThreadErr = gateOverlayCurrentThread(rest.thread_id, stampedSurface)
@@ -3043,7 +3073,35 @@ export async function handleMessage(
       let skippedUnsupported = 0
       let failed = 0
       let totalScanned = 0
+      // #274: files whose relative directory exceeded 3 levels and were
+      // flattened into level 3 (never silently dropped). Docs only — vault
+      // `_folder.md` carry-over does not count (Gate8 N-3).
+      let flattenedDepth = 0
+      // Gate8 MAJOR-5: docs bumped up a layer because the target folder was
+      // full (per-layer 50). Files are never dropped; the count is reported.
+      let layerOverflow = 0
       const errors: string[] = []
+      // Vault `_folder.md` descriptions carried into the folders their
+      // sibling docs landed in: folder → Set<bucket>.
+      const folderMetaCarry = new Map<string, { description: string; buckets: Set<"global" | "sites"> }>()
+
+      /**
+       * #274: vault-relative dir → bucket folder path (≤3 levels, flattened —
+       * the caller counts flattenedDepth for docs only). Unsafe segments
+       * degrade to the bucket root ("") so the doc itself is never lost over
+       * a weird directory name.
+       */
+      const folderForRelDir = (relDir: string): { folder: string; flattened: boolean } => {
+        if (!relDir || relDir === ".") return { folder: "", flattened: false }
+        const segs = relDir.split(path.sep).map((s) => s.trim()).filter(Boolean)
+        if (segs.some((s) => isUnsafePathComponent(s))) return { folder: "", flattened: false }
+        let flattened = false
+        while (segs.length > 3) {
+          segs.pop()
+          flattened = true
+        }
+        return { folder: segs.join("/"), flattened }
+      }
 
       // Iterative walk — same safety shape as scanVault() in obsidian/vault-profiler.ts:
       // skip dotfiles/dot-dirs (covers .DS_Store, .obsidian, .git, .icloud stubs),
@@ -3064,10 +3122,34 @@ export async function handleMessage(
           if (entry.isDirectory()) {
             stack.push(full)
           } else if (entry.isFile()) {
+            // #274: _folder.md is folder metadata, never a doc. Carry its
+            // description into the folder its sibling docs land in.
+            // Gate8 F-E: it must NOT consume a MAX_FILES scan slot (folders are
+            // already bounded by ≤50/layer and ≤3 levels) — docs only count.
+            if (entry.name === "_folder.md") {
+              try {
+                const relDir = path.dirname(path.relative(vaultPath, full))
+                const { folder } = folderForRelDir(relDir) // not counted in flattenedDepth
+                if (folder) {
+                  const parsed = matter(fs.readFileSync(full, "utf-8"))
+                  if (typeof parsed.data.description === "string" && parsed.data.description.trim()) {
+                    const cur = folderMetaCarry.get(folder) || { description: "", buckets: new Set() }
+                    cur.description = String(parsed.data.description).slice(0, 500)
+                    folderMetaCarry.set(folder, cur)
+                  }
+                }
+              } catch {
+                /* corrupt _folder.md in vault: ignore, docs still import */
+              }
+              continue
+            }
+
+            // Unsupported types still bill a scan slot (they cost the walk too).
             if (totalScanned >= MAX_FILES) continue
             totalScanned++
 
             const ext = entry.name.split(".").pop()?.toLowerCase() || ""
+
             if (!TEXT_EXTS.has(ext) && !BINARY_EXTS.has(ext)) {
               skippedUnsupported++
               continue
@@ -3084,10 +3166,18 @@ export async function handleMessage(
               // nameOverride = vault-relative path so same heading in two folders
               // still allocate distinct stems (allocator suffixes; no overwrite).
               const relPath = path.relative(vaultPath, full).replace(/\.[^.]+$/, "")
+              // #274: preserve the relative tree in the bucket (≤3 levels).
+              const dest = folderForRelDir(path.dirname(path.relative(vaultPath, full)))
+              if (dest.flattened) flattenedDepth++
+              const destFolder = dest.folder
 
+              let importedId = ""
+              let landedFolder = ""
               if (TEXT_EXTS.has(ext)) {
                 const content = fs.readFileSync(full, "utf-8")
-                skillEngine.importKnowledge(content, baseName, relPath)
+                const r = skillEngine.importKnowledge(content, baseName, relPath, undefined, destFolder || undefined)
+                importedId = r.id
+                landedFolder = r.folder
                 imported++
               } else {
                 const buffer = fs.readFileSync(full)
@@ -3096,17 +3186,72 @@ export async function handleMessage(
                 // surrounding catch counts it as failed.
                 const parsed = await parseFileBounded(buffer, entry.name, "application/octet-stream")
                 if (parsed.success) {
-                  skillEngine.importKnowledge(parsed.text, baseName, relPath)
+                  const r = skillEngine.importKnowledge(parsed.text, baseName, relPath, undefined, destFolder || undefined)
+                  importedId = r.id
+                  landedFolder = r.folder
                   imported++
                 } else {
                   failed++
                   if (errors.length < 5) errors.push(`${entry.name}: ${parsed.error}`)
                 }
               }
+              // MAJOR-5: honestly count docs bumped up by the per-layer 50 cap.
+              if (importedId && landedFolder !== destFolder) layerOverflow++
+              // Gate8 r3 F-R3-1: carry-over follows the ACTUAL landing only —
+              // a doc bumped away from destFolder (per-layer 50) must not grow
+              // the intended folder on disk. Descriptions whose docs all
+              // bumped elsewhere are dropped and counted (folderMetaDropped).
+              if (destFolder && importedId && landedFolder === destFolder) {
+                const bucket = skillEngine.knowledgeBucketOfDoc(importedId)
+                if (bucket) {
+                  const cur = folderMetaCarry.get(destFolder) || { description: "", buckets: new Set() }
+                  cur.buckets.add(bucket)
+                  folderMetaCarry.set(destFolder, cur)
+                }
+              }
             } catch (e: any) {
               failed++
               if (errors.length < 5) errors.push(`${entry.name}: ${e.message || String(e)}`)
             }
+          }
+        }
+      }
+
+      // #274: carry vault _folder.md descriptions into the folders their docs
+      // ACTUALLY landed in (same folder only — bumped docs drop the carry-over).
+      // Gate8 F-R4-2: a voted-but-not-written carry (per-layer 50 skip) counts
+      // as dropped too. Gate8 F-R4-1: a vote-less folder that is an ON-DISK
+      // ancestor of a landed folder still gets its description (the directory
+      // already exists as part of the doc path; no new entry is created).
+      let folderMetaDropped = 0
+      for (const [folder, meta] of folderMetaCarry) {
+        if (!meta.description) continue
+        if (meta.buckets.size === 0) {
+          let carried = false
+          for (const [votedFolder, votedMeta] of folderMetaCarry) {
+            if (votedMeta.buckets.size === 0) continue
+            if (votedFolder === folder || !votedFolder.startsWith(folder + "/")) continue
+            for (const bucket of votedMeta.buckets) {
+              try {
+                if (skillEngine.applyImportedFolderMeta(bucket, folder, meta.description, { createIfMissing: false })) {
+                  carried = true
+                }
+              } catch {
+                /* carry-over is best-effort; docs are already imported */
+              }
+            }
+            if (carried) break
+          }
+          if (!carried) folderMetaDropped++
+          continue
+        }
+        for (const bucket of meta.buckets) {
+          try {
+            if (!skillEngine.applyImportedFolderMeta(bucket, folder, meta.description)) {
+              folderMetaDropped++
+            }
+          } catch {
+            /* carry-over is best-effort; docs are already imported */
           }
         }
       }
@@ -3121,10 +3266,14 @@ export async function handleMessage(
         skippedUnsupported,
         failed,
         totalScanned,
+        flattenedDepth,
+        layerOverflow,
+        folderMetaDropped,
         truncated: totalScanned >= MAX_FILES,
         maxFiles: MAX_FILES,
         errors,
         docs: knowledgeListDocs(skillEngine, stampedSurface),
+        folders: knowledgeListFolders(skillEngine, stampedSurface),
       }
     }
     case "knowledge.delete":
@@ -3139,6 +3288,105 @@ export async function handleMessage(
       }
       skillEngine.deleteKnowledge(rest.id)
       return { type: "knowledge.deleted", id: rest.id }
+
+    // --- #274: knowledge folders (six verbs, all user_gesture, summoner-denied) ---
+    case "knowledge.folder_create":
+    case "knowledge.folder_rename":
+    case "knowledge.folder_update":
+    case "knowledge.folder_suggest":
+    case "knowledge.folder_delete":
+    case "knowledge.move": {
+      // Extra-deny on top of the summoner allowlist gate (same shape as
+      // knowledge.import/delete). Folders are a Side-Panel-only surface.
+      if (stampedSurface === "summoner") {
+        return { type: "error", error: `SUMMONER_ACL: ${type} not allowed on summoner surface`, error_code: "SUMMONER_ACL" }
+      }
+      if (rest.user_gesture !== true) {
+        return { type: "error", error: `${type} requires user_gesture:true (Side Panel only)`, family: "knowledge_folder" }
+      }
+      // Gate8 M-6: error frames carry family:"knowledge_folder" so the panel can
+      // surface them in the knowledge status line instead of pretending success.
+      const folderErr = (error: string) => ({ type: "error", error, family: "knowledge_folder" })
+      const knowledgeListFrame = (extra: Record<string, unknown> = {}) => ({
+        type: "knowledge.list",
+        docs: knowledgeListDocs(skillEngine, stampedSurface),
+        folders: knowledgeListFolders(skillEngine, stampedSurface),
+        ...extra,
+      })
+      try {
+        if (type === "knowledge.move") {
+          if (typeof rest.id !== "string" || !rest.id) {
+            return folderErr("knowledge.move requires id")
+          }
+          if (typeof rest.folder !== "string") {
+            return folderErr("knowledge.move requires folder (bucket-relative posix path, \"\" = 桶根)")
+          }
+          const moved = skillEngine.moveKnowledge(rest.id, rest.folder)
+          return knowledgeListFrame({ moved })
+        }
+        const bucket = rest.bucket
+        if (bucket !== "global" && bucket !== "sites") {
+          return folderErr(`${type} requires bucket: "global" | "sites"`)
+        }
+        if (typeof rest.path !== "string" || !rest.path.trim()) {
+          return folderErr(`${type} requires path (bucket-relative posix path)`)
+        }
+        switch (type) {
+          case "knowledge.folder_create": {
+            const created = skillEngine.createKnowledgeFolder(
+              bucket,
+              rest.path,
+              typeof rest.description === "string" ? rest.description : undefined,
+            )
+            return knowledgeListFrame({ created })
+          }
+          case "knowledge.folder_rename": {
+            if (typeof rest.new_path !== "string" || !rest.new_path.trim()) {
+              return folderErr("knowledge.folder_rename requires new_path")
+            }
+            const renamed = skillEngine.renameKnowledgeFolder(bucket, rest.path, rest.new_path)
+            return knowledgeListFrame({ renamed })
+          }
+          case "knowledge.folder_update": {
+            if (typeof rest.description !== "string") {
+              return folderErr("knowledge.folder_update requires description string")
+            }
+            const updated = skillEngine.updateKnowledgeFolder(bucket, rest.path, rest.description)
+            return knowledgeListFrame({ updated })
+          }
+          case "knowledge.folder_delete": {
+            const mode = rest.mode === "move_to_parent" ? "move_to_parent" : "reject_if_docs"
+            const deleted = skillEngine.deleteKnowledgeFolder(bucket, rest.path, mode)
+            return knowledgeListFrame({ deleted })
+          }
+          case "knowledge.folder_suggest": {
+            // Draft-only (F-S-7): returns suggested description, writes nothing.
+            // Input = member title+description one-liners (≤30), redacted first
+            // so a member doc's secrets never reach the LLM.
+            const lines = skillEngine
+              .knowledgeFolderMemberLines(bucket, rest.path)
+              .map((line) => redactSecrets(line).text)
+            if (lines.length === 0) {
+              return folderErr("文件夹为空，没有可参考的文档")
+            }
+            try {
+              const draft = await folderSuggestImpl({ lines })
+              return {
+                type: "knowledge.folder_suggest",
+                bucket,
+                path: rest.path,
+                suggested: { description: draft.description || "", source: "llm" },
+              }
+            } catch (e: any) {
+              return { type: "knowledge.folder_suggest", bucket, path: rest.path, extract_error: e?.message || String(e) }
+            }
+          }
+        }
+        return folderErr(`Unhandled knowledge folder type: ${type}`)
+      } catch (e: any) {
+        return folderErr(e?.message || String(e))
+      }
+    }
 
     // --- Mission Packs (P0) ---
     case "fleet.status": {

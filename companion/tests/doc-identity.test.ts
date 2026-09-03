@@ -8,6 +8,7 @@ import {
   asciiSlug,
   hashedStem,
   isUnsafePathComponent,
+  listStemSet,
   writeRestrictedFile,
 } from "../src/skills/doc-identity"
 
@@ -75,5 +76,26 @@ test("writeRestrictedFile: posix mode 0o600", () => {
   writeRestrictedFile(file, "hello")
   const mode = fs.statSync(file).mode & 0o777
   assert.equal(mode, 0o600)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+// --- #274: listStemSet 递归化（目录名不占 stem；_folder.md 不占 stem） ---
+
+test("listStemSet: recursive into subdirs; directory names are NOT stems; _folder.md excluded", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-stems-"))
+  fs.writeFileSync(path.join(dir, "root.md"), "x")
+  fs.mkdirSync(path.join(dir, "竞品", "2025"), { recursive: true })
+  fs.writeFileSync(path.join(dir, "竞品", "inner.md"), "x")
+  fs.writeFileSync(path.join(dir, "竞品", "2025", "deep.markdown"), "x")
+  fs.writeFileSync(path.join(dir, "竞品", "_folder.md"), "x")
+  fs.writeFileSync(path.join(dir, "notes.txt"), "x") // non-md never a stem
+  const stems = listStemSet(dir)
+  assert.ok(stems.has("root"))
+  assert.ok(stems.has("inner"), "nested .md stem collected")
+  assert.ok(stems.has("deep"), "nested .markdown stem collected")
+  assert.ok(!stems.has("竞品"), "directory name must not pollute the stem set")
+  assert.ok(!stems.has("2025"), "nested directory name neither")
+  assert.ok(!stems.has("_folder"), "_folder.md is folder metadata, not a doc stem")
+  assert.ok(!stems.has("notes"), "non-markdown files are not stems")
   fs.rmSync(dir, { recursive: true, force: true })
 })

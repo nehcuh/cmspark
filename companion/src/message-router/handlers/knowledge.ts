@@ -22,6 +22,16 @@ export function knowledgeListDocs(skillEngine: SkillEngine, stampedSurface: unkn
   )
 }
 
+/**
+ * #274: folder rows for the panel. Withheld on the summoner surface (same
+ * minimization as related titles); the overlay gets folders through neither
+ * this nor any new verb.
+ */
+export function knowledgeListFolders(skillEngine: SkillEngine, stampedSurface: unknown) {
+  if (stampedSurface === "summoner") return undefined
+  return skillEngine.listKnowledgeFolders()
+}
+
 export function handleKnowledgeCrud(
   type: string,
   rest: Record<string, unknown>,

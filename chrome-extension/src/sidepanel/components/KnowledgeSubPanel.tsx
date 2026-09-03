@@ -14,6 +14,12 @@ import {
   knowledgePreviewSendFailureText,
   newKnowledgePreviewRequestId,
 } from "../utils/knowledge-preview"
+import {
+  buildKnowledgeFolderTree,
+  filterKnowledgeDocs,
+  knowledgeMoveTargets,
+  type KnowledgeFolderNode,
+} from "../utils/knowledge-folders"
 
 export function KnowledgeSubPanel() {
   const { state, dispatch } = useAgentStore()
@@ -28,6 +34,24 @@ export function KnowledgeSubPanel() {
   const [manageMode, setManageMode] = useState(false)
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set())
   const [focusId, setFocusId] = useState<string | null>(null)
+  /** #274: 视图切换 站点|文件夹（默认文件夹 — 用户要的组织维度）。 */
+  const [viewMode, setViewMode] = useState<"folder" | "site">("folder")
+  /** #274: 手风琴展开状态（文件夹路径集合）。 */
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+  /** #274: 文件夹行菜单（path 标识）。 */
+  const [folderMenuOpen, setFolderMenuOpen] = useState<string | null>(null)
+  /**
+   * #274: 内联编辑行（320px 不另开 sheet）：
+   * create = 新建文件夹（path 输入）· rename = 重命名 · describe = 编辑说明
+   * （建议说明草稿也落这里，保存才写 _folder.md）· move = 文档「移到…」。
+   */
+  const [folderEdit, setFolderEdit] = useState<
+    | { mode: "create"; bucket: "global" | "sites"; value: string }
+    | { mode: "rename"; bucket: "global" | "sites"; path: string; value: string }
+    | { mode: "describe"; bucket: "global" | "sites"; path: string; value: string }
+    | { mode: "move"; docId: string; value: string }
+    | null
+  >(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -72,15 +96,106 @@ export function KnowledgeSubPanel() {
 
   // Close dropdown when clicking outside
   useEffect(() => {
-    if (!menuOpen) return
+    if (!menuOpen && !folderMenuOpen) return
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(null)
+        setFolderMenuOpen(null)
       }
     }
     document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
-  }, [menuOpen])
+  }, [menuOpen, folderMenuOpen])
+
+  // #274: folder_suggest 草稿到达 → 落进说明编辑行（用户编辑保存才写 _folder.md）。
+  // Gate8 N-8: user-dirty — 编辑行已有该夹未保存输入时不覆盖草稿。
+  const folderSuggest = state.knowledgeFolderSuggest
+  useEffect(() => {
+    if (!folderSuggest || folderSuggest.status !== "ok") return
+    setFolderEdit((prev) => {
+      // Any open editor row (esp. a describe row the user has typed into —
+      // #272 user-dirty semantics) wins over an arriving draft.
+      if (prev) return prev
+      return { mode: "describe", bucket: folderSuggest.bucket, path: folderSuggest.path, value: folderSuggest.description || "" }
+    })
+  }, [folderSuggest])
+
+  const toggleFolder = (path: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
+  // #274: 文件夹/移动操作统一出口（皆 user_gesture；companion 回 knowledge.list 刷新）。
+  // Gate8 M-6: 不乐观播报 — 先查 SW 回包（ok:false = 发送失败），companion 侧
+  // 拒绝经 family:"knowledge_folder" 错误帧落到状态条（useWebSocket）。
+  const submitFolderEdit = () => {
+    if (!folderEdit) return
+    const value = folderEdit.value.trim()
+    let msg: Record<string, unknown>
+    let successText: string
+    if (folderEdit.mode === "create") {
+      if (!value) return
+      msg = { type: "knowledge.folder_create", bucket: folderEdit.bucket, path: value, user_gesture: true }
+      successText = `已请求创建文件夹 ${value}`
+    } else if (folderEdit.mode === "rename") {
+      if (!value) return
+      msg = { type: "knowledge.folder_rename", bucket: folderEdit.bucket, path: folderEdit.path, new_path: value, user_gesture: true }
+      successText = `已请求重命名为 ${value}`
+    } else if (folderEdit.mode === "describe") {
+      msg = { type: "knowledge.folder_update", bucket: folderEdit.bucket, path: folderEdit.path, description: value, user_gesture: true }
+      successText = "已请求保存文件夹说明"
+    } else {
+      // knowledge.move 无 bucket 参数：目标文件夹相对文档自身桶解析（跨桶不可表达，F-I-8）。
+      msg = { type: "knowledge.move", id: folderEdit.docId, folder: value, user_gesture: true }
+      successText = value ? `已请求移到 ${value}` : "已请求移到桶根"
+    }
+    chrome.runtime
+      .sendMessage(msg)
+      .then((resp: unknown) => {
+        const failure = knowledgePreviewSendFailureText(resp)
+        showStatus(failure ? `操作失败：${failure}` : successText)
+      })
+      .catch(() => showStatus("操作失败：扩展后台未响应，请重载扩展后重试"))
+    setFolderEdit(null)
+  }
+
+  const handleFolderSuggest = (bucket: "global" | "sites", folderPath: string) => {
+    dispatch({ type: "SET_KNOWLEDGE_FOLDER_SUGGEST", path: folderPath, bucket, status: "pending" })
+    showStatus("正在生成建议说明…")
+    chrome.runtime
+      .sendMessage({ type: "knowledge.folder_suggest", bucket, path: folderPath, user_gesture: true })
+      .then((resp: unknown) => {
+        const failure = knowledgePreviewSendFailureText(resp)
+        if (failure) {
+          dispatch({ type: "SET_KNOWLEDGE_FOLDER_SUGGEST", path: folderPath, status: "error", error: failure })
+        }
+      })
+      .catch(() => {
+        dispatch({ type: "SET_KNOWLEDGE_FOLDER_SUGGEST", path: folderPath, status: "error", error: "扩展后台未响应，请重载扩展后重试" })
+      })
+  }
+
+  const handleFolderDelete = (bucket: "global" | "sites", folderPath: string, hasDocs: boolean) => {
+    const msg: Record<string, unknown> = hasDocs
+      ? { type: "knowledge.folder_delete", bucket, path: folderPath, mode: "move_to_parent", user_gesture: true }
+      : { type: "knowledge.folder_delete", bucket, path: folderPath, mode: "reject_if_docs", user_gesture: true }
+    if (hasDocs) {
+      if (!confirm(`文件夹 ${folderPath} 里还有文档。确定把文档上提一层并删除该文件夹？`)) return
+    } else {
+      if (!confirm(`确定删除空文件夹 ${folderPath}？`)) return
+    }
+    chrome.runtime
+      .sendMessage(msg)
+      .then((resp: unknown) => {
+        const failure = knowledgePreviewSendFailureText(resp)
+        showStatus(failure ? `删除失败：${failure}` : `已请求删除文件夹 ${folderPath}`)
+      })
+      .catch(() => showStatus("删除失败：扩展后台未响应，请重载扩展后重试"))
+  }
 
   const handleModeChange = (mode: "auto" | "all" | "manual") => {
     dispatch({ type: "SET_KNOWLEDGE_SELECTION_MODE", mode })
@@ -359,24 +474,30 @@ export function KnowledgeSubPanel() {
     // BEFORE our JS runs, so any extension-side guard (file count, size, try/catch)
     // is too late. Companion walks the dir safely (skips dotfiles, caps at 200 files,
     // 6MB per file). Confirm first — native picker is not per-note extracted preview.
-    if (!window.confirm("将用系统对话框选择文件夹并导入其中的笔记（每篇不单独预览，最多 200 个文件）。继续？")) {
+    if (!window.confirm("将保留文件夹结构（最多 3 级，200 个文件）。每篇不单独解读。继续？")) {
       return
     }
     showStatus("正在打开文件夹选择器…")
     chrome.runtime.sendMessage({ type: "knowledge.import_directory", user_gesture: true })
   }
 
-  const filteredDocs = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return state.knowledgeDocs
-    return state.knowledgeDocs.filter((d) => {
-      const bag = [d.title || "", d.name, d.description || "", d.site || ""].join(" ").toLowerCase()
-      return bag.includes(q)
-    })
-  }, [state.knowledgeDocs, query])
+  // #274 AC-10: 筛选 bag 补 tags + folder（util 与测试共用同一份实现）
+  const filteredDocs = useMemo(
+    () => filterKnowledgeDocs(state.knowledgeDocs, query),
+    [state.knowledgeDocs, query],
+  )
 
   // Group knowledge docs by site, with current site first
   const groupedDocs = groupKnowledgeBySite(filteredDocs, currentHostname)
+  // #274: 文件夹视图数据（docs 的 folder 字段 + companion folders 元数据）
+  const folderTree = useMemo(
+    () => buildKnowledgeFolderTree(filteredDocs, state.knowledgeFolders),
+    [filteredDocs, state.knowledgeFolders],
+  )
+  const moveTargets = useMemo(
+    () => knowledgeMoveTargets(state.knowledgeDocs, state.knowledgeFolders),
+    [state.knowledgeDocs, state.knowledgeFolders],
+  )
 
   const modeLabels: Record<string, string> = { auto: "自动", all: "全选", manual: "按需" }
   const selectionMode = state.knowledgeSelectionMode || "auto"
@@ -399,6 +520,285 @@ export function KnowledgeSubPanel() {
     if (selectionMode === "all") return `${base}（已关智能匹配：不检索，按列表序注入，超预算截断。）`
     return base
   })()
+
+  // #274: 文档行渲染（站点视图与文件夹手风琴共用同一份）。
+  const renderDocRow = (doc: (typeof filteredDocs)[number]) => {
+    const key = doc.id || doc.name
+    const active = state.activeKnowledgeIds.includes(key) || state.activeKnowledgeIds.includes(doc.name)
+    const rowBg = manageMode
+      ? selectedForDelete.has(doc.name)
+        ? tokens.dangerSoft
+        : "transparent"
+      : isManual && active
+        ? tokens.bgActive
+        : "transparent"
+    const related = (doc.related || []).slice(0, 3)
+    const tags = (doc.tags || []).slice(0, 4)
+    return (
+      <div
+        key={key}
+        data-knowledge-id={key}
+        style={{
+          ...styles.docRow,
+          background: rowBg,
+          outline: focusId && (focusId === doc.id || focusId === doc.name) ? `2px solid ${tokens.accent}` : undefined,
+          cursor: manageMode ? "default" : "pointer",
+        }}
+        onClick={() => {
+          if (!manageMode) openDoc(key)
+        }}
+      >
+        {manageMode ? (
+          <input
+            type="checkbox"
+            checked={selectedForDelete.has(doc.name)}
+            disabled={!!doc.builtin}
+            title={doc.builtin ? "内置文档不可删除" : "勾选以批量删除"}
+            onChange={() => toggleDeleteSelect(doc.name)}
+            onClick={(e) => e.stopPropagation()}
+            style={{ marginRight: 8, flexShrink: 0 }}
+          />
+        ) : isManual ? (
+          <input
+            type="checkbox"
+            checked={active}
+            onClick={(e) => e.stopPropagation()}
+            onChange={() => {
+              const pin = key
+              const activeKnowledgeIds = active
+                ? state.activeKnowledgeIds.filter((id) => id !== pin && id !== doc.name)
+                : [...state.activeKnowledgeIds, pin]
+              dispatch({ type: "TOGGLE_KNOWLEDGE", knowledgeId: pin })
+              if (state.activeThreadId) {
+                chrome.runtime.sendMessage({
+                  type: "thread.update",
+                  threadId: state.activeThreadId,
+                  updates: { active_knowledge_ids: activeKnowledgeIds },
+                })
+              }
+            }}
+            style={{ marginRight: 8, flexShrink: 0 }}
+            title="勾选后参与本对话"
+          />
+        ) : (
+          <span
+            style={styles.modeGlyph}
+            title={
+              selectionMode === "all"
+                ? "全选模式：全部参与索引"
+                : "自动模式：由站点匹配决定"
+            }
+            aria-hidden
+          >
+            {selectionMode === "all" ? "◎" : "◇"}
+          </span>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+            {doc.title || doc.name}
+            {doc.site && <span style={styles.siteBadge}>{doc.site}</span>}
+            {tags.map((t: string) => (
+              <span key={t} style={styles.siteBadge}>{t}</span>
+            ))}
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: tokens.textSecondary,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {doc.description}
+          </div>
+          {related.length > 0 && (
+            <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 2, display: "flex", flexWrap: "wrap", gap: 4 }}>
+              相关
+              {related.map((r: { id: string; title: string }) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  style={styles.relatedChip}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openDoc(r.id)
+                  }}
+                >
+                  {r.title}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {doc.builtin && <span style={styles.badge}>内置</span>}
+        {!doc.builtin && !manageMode && (
+          <div style={{ position: "relative" }} ref={menuOpen === doc.name ? menuRef : undefined}>
+            <button
+              style={styles.menuBtn}
+              onClick={(e) => {
+                e.stopPropagation()
+                setMenuOpen(menuOpen === doc.name ? null : doc.name)
+              }}
+              title="更多操作"
+            >
+              ···
+            </button>
+            {menuOpen === doc.name && (
+              <div style={styles.menuDropdown}>
+                {/* #274: 「移到…」是验收必须项（id 不变，同桶内移动） */}
+                <button
+                  style={styles.menuItem}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setFolderEdit({ mode: "move", docId: key, value: doc.folder || "" })
+                    setMenuOpen(null)
+                  }}
+                >
+                  移到…
+                </button>
+                <button
+                  style={styles.menuItem}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    chrome.runtime.sendMessage({ type: "knowledge.export", id: key, user_gesture: true })
+                    setMenuOpen(null)
+                  }}
+                >
+                  下载 .md
+                </button>
+                <button
+                  style={{ ...styles.menuItem, color: tokens.danger }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleDelete(doc)
+                  }}
+                >
+                  删除
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // #274: 文件夹手风琴行（3 级）。说明灰字，空则「添加说明」；指纹变化标「可能过期」。
+  const renderFolderNode = (node: KnowledgeFolderNode, depth: number): React.ReactNode => {
+    const expanded = expandedFolders.has(node.path)
+    const docCount = node.docs.length + node.children.reduce((s, c) => s + c.docs.length, 0)
+    return (
+      <div key={`${node.bucket}:${node.path}`}>
+        <div
+          style={{ ...styles.docRow, cursor: "pointer", paddingLeft: depth * 12 }}
+          onClick={() => toggleFolder(node.path)}
+          title={node.description || "添加说明"}
+        >
+          <span style={styles.modeGlyph} aria-hidden>{expanded ? "▾" : "▸"}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 500 }}>
+              📁 {node.name}
+              <span style={{ fontSize: 10, color: tokens.textMuted, marginLeft: 6 }}>{docCount} 篇</span>
+              {node.stale && <span style={{ ...styles.siteBadge, marginLeft: 6 }}>可能过期</span>}
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: tokens.textSecondary,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              onClick={(e) => {
+                if (node.description) return
+                e.stopPropagation()
+                setFolderEdit({ mode: "describe", bucket: node.bucket, path: node.path, value: "" })
+              }}
+            >
+              {node.description || "添加说明"}
+            </div>
+          </div>
+          {!manageMode && (
+            <div style={{ position: "relative" }} ref={folderMenuOpen === node.path ? menuRef : undefined}>
+              <button
+                style={styles.menuBtn}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setFolderMenuOpen(folderMenuOpen === node.path ? null : node.path)
+                }}
+                title="文件夹操作"
+              >
+                ···
+              </button>
+              {folderMenuOpen === node.path && (
+                <div style={styles.menuDropdown}>
+                  <button
+                    style={styles.menuItem}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleFolderSuggest(node.bucket, node.path)
+                      setFolderMenuOpen(null)
+                    }}
+                  >
+                    建议说明
+                  </button>
+                  <button
+                    style={styles.menuItem}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setFolderEdit({ mode: "describe", bucket: node.bucket, path: node.path, value: node.description })
+                      setFolderMenuOpen(null)
+                    }}
+                  >
+                    编辑说明
+                  </button>
+                  {node.path.split("/").length < 3 && (
+                    <button
+                      style={styles.menuItem}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setFolderEdit({ mode: "create", bucket: node.bucket, value: `${node.path}/` })
+                        setFolderMenuOpen(null)
+                      }}
+                    >
+                      新建子文件夹
+                    </button>
+                  )}
+                  <button
+                    style={styles.menuItem}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setFolderEdit({ mode: "rename", bucket: node.bucket, path: node.path, value: node.path })
+                      setFolderMenuOpen(null)
+                    }}
+                  >
+                    重命名
+                  </button>
+                  <button
+                    style={{ ...styles.menuItem, color: tokens.danger }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleFolderDelete(node.bucket, node.path, docCount > 0)
+                      setFolderMenuOpen(null)
+                    }}
+                  >
+                    删除文件夹
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        {expanded && (
+          <div>
+            {node.docs.map(renderDocRow)}
+            {node.children.map((c) => renderFolderNode(c, depth + 1))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div style={styles.panelContent}>
@@ -442,7 +842,7 @@ export function KnowledgeSubPanel() {
         <input
           style={styles.searchInput}
           type="search"
-          placeholder="筛选知识（名称 / 描述 / 站点）"
+          placeholder="筛选知识（名称 / 描述 / 站点 / 标签 / 文件夹）"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           aria-label="筛选知识文档"
@@ -533,6 +933,13 @@ export function KnowledgeSubPanel() {
         <button style={styles.toolbarBtn} onClick={() => setShowUrlImport(!showUrlImport)} title="从 URL 导入">
           导入 URL
         </button>
+        <button
+          style={styles.toolbarBtn}
+          onClick={() => setFolderEdit({ mode: "create", bucket: "global", value: "" })}
+          title="在知识库里建文件夹（用 / 分层，最多 3 级）"
+        >
+          新建文件夹
+        </button>
         <input
           ref={fileInputRef}
           type="file"
@@ -577,163 +984,93 @@ export function KnowledgeSubPanel() {
           {state.knowledgeImportStatus.message}
         </div>
       )}
+      {/* #274 Gate8 N-1: 建议说明失败如实可见，不静默 */}
+      {state.knowledgeFolderSuggest?.status === "error" && (
+        <div style={{ fontSize: 11, color: tokens.danger, marginBottom: 8, padding: "2px 4px" }}>
+          建议说明不可用{state.knowledgeFolderSuggest.error ? `（${state.knowledgeFolderSuggest.error}）` : ""}，可点「编辑说明」手动填写
+        </div>
+      )}
+
+      {/* #274: 视图切换 站点|文件夹（默认文件夹） */}
+      <div style={{ ...styles.modeSwitcher, marginBottom: 8 }}>
+        {(["folder", "site"] as const).map((v) => (
+          <button
+            key={v}
+            style={{
+              ...styles.modeBtn,
+              background: viewMode === v ? tokens.accent : tokens.bgElevated,
+              color: viewMode === v ? "#fff" : tokens.textSecondary,
+              borderColor: viewMode === v ? tokens.accent : tokens.border,
+            }}
+            onClick={() => setViewMode(v)}
+            title={v === "folder" ? "按你建的文件夹浏览（最多 3 级）" : "按来源站点浏览"}
+          >
+            {v === "folder" ? "文件夹" : "站点"}
+          </button>
+        ))}
+      </div>
+
+      {/* #274: 文件夹/移动内联编辑行 */}
+      {folderEdit && (
+        <div style={styles.bulkBar}>
+          <span style={{ fontSize: 11, color: tokens.textSecondary }}>
+            {folderEdit.mode === "create"
+              ? "新建文件夹（用 / 分层，最多 3 级）"
+              : folderEdit.mode === "rename"
+                ? `重命名 ${folderEdit.path}`
+                : folderEdit.mode === "describe"
+                  ? `说明：${folderEdit.path}`
+                  : `移到…（留空 = 桶根）`}
+          </span>
+          <input
+            style={styles.urlImportInput}
+            type="text"
+            value={folderEdit.value}
+            placeholder={folderEdit.mode === "describe" ? "这个文件夹放什么（≤500 字）" : "如 竞品/2025"}
+            onChange={(e) => setFolderEdit({ ...folderEdit, value: e.target.value })}
+            onKeyDown={(e) => e.key === "Enter" && submitFolderEdit()}
+          />
+          <button type="button" style={styles.toolbarBtn} onClick={submitFolderEdit}>确认</button>
+          <button type="button" style={styles.toolbarBtn} onClick={() => setFolderEdit(null)}>取消</button>
+          {folderEdit.mode === "move" && moveTargets.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, width: "100%" }}>
+              {moveTargets.slice(0, 12).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  style={styles.relatedChip}
+                  onClick={() => setFolderEdit({ ...folderEdit, value: t })}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Grouped knowledge list */}
-      {groupedDocs.map(([groupName, docs]) => (
-        <div key={groupName}>
-          <SectionHeader title={groupName} meta={docs.length} />
-          {docs.map((doc) => {
-            const key = doc.id || doc.name
-            const active = state.activeKnowledgeIds.includes(key) || state.activeKnowledgeIds.includes(doc.name)
-            const rowBg = manageMode
-              ? selectedForDelete.has(doc.name)
-                ? tokens.dangerSoft
-                : "transparent"
-              : isManual && active
-                ? tokens.bgActive
-                : "transparent"
-            const related = (doc.related || []).slice(0, 3)
-            const tags = (doc.tags || []).slice(0, 4)
-            return (
-              <div
-                key={key}
-                data-knowledge-id={key}
-                style={{
-                  ...styles.docRow,
-                  background: rowBg,
-                  outline: focusId && (focusId === doc.id || focusId === doc.name) ? `2px solid ${tokens.accent}` : undefined,
-                  cursor: manageMode ? "default" : "pointer",
-                }}
-                onClick={() => {
-                  if (!manageMode) openDoc(key)
-                }}
-              >
-                {manageMode ? (
-                  <input
-                    type="checkbox"
-                    checked={selectedForDelete.has(doc.name)}
-                    disabled={!!doc.builtin}
-                    title={doc.builtin ? "内置文档不可删除" : "勾选以批量删除"}
-                    onChange={() => toggleDeleteSelect(doc.name)}
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ marginRight: 8, flexShrink: 0 }}
-                  />
-                ) : isManual ? (
-                  <input
-                    type="checkbox"
-                    checked={active}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={() => {
-                      const pin = key
-                      const activeKnowledgeIds = active
-                        ? state.activeKnowledgeIds.filter((id) => id !== pin && id !== doc.name)
-                        : [...state.activeKnowledgeIds, pin]
-                      dispatch({ type: "TOGGLE_KNOWLEDGE", knowledgeId: pin })
-                      if (state.activeThreadId) {
-                        chrome.runtime.sendMessage({
-                          type: "thread.update",
-                          threadId: state.activeThreadId,
-                          updates: { active_knowledge_ids: activeKnowledgeIds },
-                        })
-                      }
-                    }}
-                    style={{ marginRight: 8, flexShrink: 0 }}
-                    title="勾选后参与本对话"
-                  />
-                ) : (
-                  <span
-                    style={styles.modeGlyph}
-                    title={
-                      selectionMode === "all"
-                        ? "全选模式：全部参与索引"
-                        : "自动模式：由站点匹配决定"
-                    }
-                    aria-hidden
-                  >
-                    {selectionMode === "all" ? "◎" : "◇"}
-                  </span>
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-                    {doc.title || doc.name}
-                    {doc.site && <span style={styles.siteBadge}>{doc.site}</span>}
-                    {tags.map((t: string) => (
-                      <span key={t} style={styles.siteBadge}>{t}</span>
-                    ))}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: tokens.textSecondary,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {doc.description}
-                  </div>
-                  {related.length > 0 && (
-                    <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 2, display: "flex", flexWrap: "wrap", gap: 4 }}>
-                      相关
-                      {related.map((r: { id: string; title: string }) => (
-                        <button
-                          key={r.id}
-                          type="button"
-                          style={styles.relatedChip}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            openDoc(r.id)
-                          }}
-                        >
-                          {r.title}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                {doc.builtin && <span style={styles.badge}>内置</span>}
-                {!doc.builtin && !manageMode && (
-                  <div style={{ position: "relative" }} ref={menuOpen === doc.name ? menuRef : undefined}>
-                    <button
-                      style={styles.menuBtn}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setMenuOpen(menuOpen === doc.name ? null : doc.name)
-                      }}
-                      title="更多操作"
-                    >
-                      ···
-                    </button>
-                    {menuOpen === doc.name && (
-                      <div style={styles.menuDropdown}>
-                        <button
-                          style={styles.menuItem}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            chrome.runtime.sendMessage({ type: "knowledge.export", id: key, user_gesture: true })
-                            setMenuOpen(null)
-                          }}
-                        >
-                          下载 .md
-                        </button>
-                        <button
-                          style={{ ...styles.menuItem, color: tokens.danger }}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleDelete(doc)
-                          }}
-                        >
-                          删除
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
+      {viewMode === "site"
+        ? groupedDocs.map(([groupName, docs]) => (
+            <div key={groupName}>
+              <SectionHeader title={groupName} meta={docs.length} />
+              {docs.map(renderDocRow)}
+            </div>
+          ))
+        : (
+          <div>
+            {folderTree.tree.map((n) => renderFolderNode(n, 0))}
+            {folderTree.rootDocs.length > 0 && (
+              <div>
+                <SectionHeader title="未归入文件夹" meta={folderTree.rootDocs.length} />
+                {folderTree.rootDocs.map(renderDocRow)}
               </div>
-            )
-          })}
-        </div>
-      ))}
+            )}
+            {folderTree.tree.length === 0 && folderTree.rootDocs.length === 0 && state.knowledgeDocs.length > 0 && (
+              <div style={styles.emptyText}>无匹配「{query}」的知识</div>
+            )}
+          </div>
+        )}
 
       {state.knowledgeDocs.length === 0 && (
         <div style={styles.emptyText}>暂无知识文档</div>

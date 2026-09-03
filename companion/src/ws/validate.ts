@@ -1182,6 +1182,91 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // --- #274: knowledge folders — all six verbs are user_gesture-only ---
+    "knowledge.folder_create": (m) => {
+      if (m.bucket !== "global" && m.bucket !== "sites") {
+        return { valid: false, error: 'knowledge.folder_create requires bucket: "global" | "sites"' }
+      }
+      if (typeof m.path !== "string" || !m.path.trim()) {
+        return { valid: false, error: "knowledge.folder_create requires path" }
+      }
+      if (m.description !== undefined && typeof m.description !== "string") {
+        return { valid: false, error: "knowledge.folder_create description must be a string" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.folder_create requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
+    "knowledge.folder_rename": (m) => {
+      if (m.bucket !== "global" && m.bucket !== "sites") {
+        return { valid: false, error: 'knowledge.folder_rename requires bucket: "global" | "sites"' }
+      }
+      if (typeof m.path !== "string" || !m.path.trim()) {
+        return { valid: false, error: "knowledge.folder_rename requires path" }
+      }
+      if (typeof m.new_path !== "string" || !m.new_path.trim()) {
+        return { valid: false, error: "knowledge.folder_rename requires new_path" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.folder_rename requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
+    "knowledge.folder_update": (m) => {
+      if (m.bucket !== "global" && m.bucket !== "sites") {
+        return { valid: false, error: 'knowledge.folder_update requires bucket: "global" | "sites"' }
+      }
+      if (typeof m.path !== "string" || !m.path.trim()) {
+        return { valid: false, error: "knowledge.folder_update requires path" }
+      }
+      if (typeof m.description !== "string") {
+        return { valid: false, error: "knowledge.folder_update requires description string" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.folder_update requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
+    "knowledge.folder_suggest": (m) => {
+      if (m.bucket !== "global" && m.bucket !== "sites") {
+        return { valid: false, error: 'knowledge.folder_suggest requires bucket: "global" | "sites"' }
+      }
+      if (typeof m.path !== "string" || !m.path.trim()) {
+        return { valid: false, error: "knowledge.folder_suggest requires path" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.folder_suggest requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
+    "knowledge.folder_delete": (m) => {
+      if (m.bucket !== "global" && m.bucket !== "sites") {
+        return { valid: false, error: 'knowledge.folder_delete requires bucket: "global" | "sites"' }
+      }
+      if (typeof m.path !== "string" || !m.path.trim()) {
+        return { valid: false, error: "knowledge.folder_delete requires path" }
+      }
+      if (m.mode !== undefined && m.mode !== "reject_if_docs" && m.mode !== "move_to_parent") {
+        return { valid: false, error: 'knowledge.folder_delete mode must be "reject_if_docs" | "move_to_parent"' }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.folder_delete requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
+    "knowledge.move": (m) => {
+      if (typeof m.id !== "string" || !m.id) {
+        return { valid: false, error: "knowledge.move requires id" }
+      }
+      if (typeof m.folder !== "string") {
+        return { valid: false, error: "knowledge.move requires folder (\"\" = 桶根)" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.move requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
     "user_env.list": () => ({ valid: true }),
     "user_env.set": (m) => {
       if (!m.entries || typeof m.entries !== "object" || Array.isArray(m.entries)) {
