@@ -52,3 +52,65 @@ test("Wave A: 智能匹配 toggle exists and is honest when off", () => {
   assert.ok(src.includes("knowledge_smart_match"), "thread.update plumbing")
   assert.ok(src.includes("已关智能匹配"), "off state gets an honest hint suffix")
 })
+
+// --- #273 Wave B（AC-16）：分布视图/簇路由新文案 copy 扫描（含 tooltip/title/aria） ---
+
+const WAVE_B_FILES = [
+  "sidepanel/components/KnowledgeSubPanel.tsx",
+  "sidepanel/components/ChatView.tsx",
+  "sidepanel/components/RetrievedSourcesChips.tsx",
+  "sidepanel/utils/knowledge-distribution.ts",
+]
+
+// 禁词 = F-UX-NOUN-1 全表（图谱/双链/相关网络/第二大脑/会话关系图/孤立点/wiki…）
+// + 「分类树 / 自动分类 / 簇 / 聚类 / 知识地图」；路由未过门不得宣称「精准匹配」。
+const WAVE_B_BANNED = [
+  "图谱",
+  "双链",
+  "相关网络",
+  "第二大脑",
+  "会话关系图",
+  "孤立点",
+  "类 Obsidian",
+  "导出到 Obsidian",
+  "分类树",
+  "自动分类",
+  "簇",
+  "聚类",
+  "知识地图",
+  "精准匹配",
+]
+
+test("AC-16: banned words absent from all Wave B knowledge UI copy (incl. tooltip/title/aria)", () => {
+  for (const rel of WAVE_B_FILES) {
+    const text = readFileSync(join(SRC_ROOT, rel), "utf8")
+    for (const word of WAVE_B_BANNED) {
+      assert.ok(!text.includes(word), `${rel} must not contain banned word 「${word}」`)
+    }
+    assert.ok(!/wiki/i.test(text), `${rel} must not contain 「wiki」`)
+  }
+})
+
+test("AC-16: 诚实句 + 「按堆选文」开关 + 超 cap 诚实文案都在面板上", () => {
+  assert.ok(src.includes("KNOWLEDGE_DISTRIBUTION_HONESTY_COPY"), "诚实句引用")
+  const util = readFileSync(join(SRC_ROOT, "sidepanel/utils/knowledge-distribution.ts"), "utf8")
+  assert.ok(util.includes("自动分组，不准就移到文件夹。"), "诚实句逐字")
+  assert.ok(util.includes("库超过 200 篇，未自动分组"), "超 cap 诚实文案逐字")
+  assert.ok(src.includes("按堆选文"), "「按堆选文」开关")
+  assert.ok(src.includes("knowledge_route_by_group"), "thread.update plumbing")
+  assert.ok(src.includes("SET_KNOWLEDGE_ROUTE_BY_GROUP"), "store action dispatch")
+  // 分布 chips 是过滤 chips（aria-pressed 切换），不是第三个视图 mode
+  assert.ok(src.includes('aria-label="分布"'), "分布 chips 容器")
+})
+
+test("AC-18 copy: 分组概览两态标注与来源分组词（RetrievedSourcesChips）", () => {
+  const chips = readFileSync(join(SRC_ROOT, "sidepanel/components/RetrievedSourcesChips.tsx"), "utf8")
+  assert.ok(chips.includes("含分组概览"), "概览注入标注")
+  assert.ok(chips.includes("未含分组概览"), "概览省略标注（groupmap_omitted 可识别）")
+  assert.ok(chips.includes("来源分组"), "group_label 用户可见词「分组」")
+  // Gate9 MAJOR-1: N/M 口径渲染（N=|S_post|、M=|S_pre|）
+  assert.ok(chips.includes("本轮附带 {sources.length}"), "N 渲染")
+  assert.ok(chips.includes("/${routing.m}"), "M 渲染")
+  const chat = readFileSync(join(SRC_ROOT, "sidepanel/components/ChatView.tsx"), "utf8")
+  assert.ok(chat.includes("RetrievedSourcesChips"), "ChatView 使用抽出的芯片组件")
+})

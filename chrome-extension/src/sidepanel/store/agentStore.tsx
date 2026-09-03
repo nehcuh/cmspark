@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
+import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 
@@ -177,6 +177,8 @@ export interface AgentState {
   knowledgeDocs: KnowledgeMeta[]
   /** #274: 桶内文件夹行（磁盘目录 SoT；空文件夹也在）。summoner 表面无此字段。 */
   knowledgeFolders: KnowledgeFolderMeta[]
+  /** #273 Wave B: 派生分布 chips（knowledge.list 顶层；frame 缺席 = 保留现值）。 */
+  knowledgeDistribution: KnowledgeDistribution | null
   /** #274: 文件夹「建议说明」草稿请求状态（不落盘，保存走 folder_update）。 */
   knowledgeFolderSuggest: {
     path: string
@@ -189,6 +191,8 @@ export interface AgentState {
   knowledgeSelectionMode: "auto" | "all" | "manual"
   /** #273 Wave A: 知识「智能匹配」开关（thread.knowledge_smart_match，默认开）。 */
   knowledgeSmartMatch: boolean
+  /** #273 Wave B: 知识「按堆选文」开关（thread.knowledge_route_by_group，默认关）。 */
+  knowledgeRouteByGroup: boolean
   activeKnowledgeIds: string[]
   securityAuditLog: SecurityAuditEntry[]
   companionConfig: LLMConfig | null
@@ -413,7 +417,7 @@ export type AgentAction =
   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
   | { type: "ADD_LOG"; entry: LogEntry }
   | { type: "SET_AUTO_SKILLS"; names: string }
-  | { type: "SET_KNOWLEDGE_DOCS"; docs: KnowledgeMeta[]; folders?: KnowledgeFolderMeta[] }
+  | { type: "SET_KNOWLEDGE_DOCS"; docs: KnowledgeMeta[]; folders?: KnowledgeFolderMeta[]; distribution?: KnowledgeDistribution | null }
   | {
       type: "SET_KNOWLEDGE_FOLDER_SUGGEST"
       path: string
@@ -425,6 +429,7 @@ export type AgentAction =
   | { type: "SET_SKILL_SELECTION_MODE"; mode: SkillSelectionMode }
   | { type: "SET_KNOWLEDGE_SELECTION_MODE"; mode: "auto" | "all" | "manual" }
   | { type: "SET_KNOWLEDGE_SMART_MATCH"; enabled: boolean }
+  | { type: "SET_KNOWLEDGE_ROUTE_BY_GROUP"; enabled: boolean }
   | { type: "TOGGLE_KNOWLEDGE"; knowledgeId: string }
   | { type: "ADD_SECURITY_AUDIT"; entry: SecurityAuditEntry }
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
@@ -615,10 +620,12 @@ export const initialState: AgentState = {
   autoSkillNames: "",
   knowledgeDocs: [],
   knowledgeFolders: [],
+  knowledgeDistribution: null,
   knowledgeFolderSuggest: null,
   skillSelectionMode: "auto",
   knowledgeSelectionMode: "auto",
   knowledgeSmartMatch: true,
+  knowledgeRouteByGroup: false,
   activeKnowledgeIds: [],
   securityAuditLog: [],
   companionConfig: null,
@@ -988,6 +995,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         knowledgeSmartMatch:
           // #273: 字段省略 = true；不继承上一线程的 UI 状态（开关漂移窗口）
           nextActiveThread?.knowledge_smart_match !== false,
+        // #273 Wave B: 字段省略 = false（默认关）；不继承上一线程的 UI 状态
+        knowledgeRouteByGroup: nextActiveThread?.knowledge_route_by_group === true,
         mcpSelectionMode: nextActiveThread?.mcp_selection_mode || state.mcpSelectionMode || "auto",
         activeMcpServerIds: nextActiveThread?.active_mcp_server_ids || state.activeMcpServerIds || [],
       }
@@ -1012,6 +1021,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         skillSelectionMode: activeThread?.skill_selection_mode || "auto",
         knowledgeSelectionMode: activeThread?.knowledge_selection_mode || "auto",
         knowledgeSmartMatch: activeThread?.knowledge_smart_match !== false,
+        knowledgeRouteByGroup: activeThread?.knowledge_route_by_group === true,
         mcpSelectionMode: activeThread?.mcp_selection_mode || "auto",
         activeMcpServerIds: activeThread?.active_mcp_server_ids || [],
         overlayStandby: null,
@@ -1402,6 +1412,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
             // 跨线程归一（省略 = true）由 SET_THREADS / SET_ACTIVE_THREAD 负责。
             ? (action.thread.knowledge_smart_match ?? state.knowledgeSmartMatch)
             : state.knowledgeSmartMatch,
+          // #273 Wave B: 同 patch 合并语义（省略 = 保持；跨线程归一省略 = false）。
+          knowledgeRouteByGroup: isActive
+            ? (action.thread.knowledge_route_by_group ?? state.knowledgeRouteByGroup)
+            : state.knowledgeRouteByGroup,
         }
       }
       return {
@@ -1510,6 +1524,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         knowledgeDocs: action.docs,
         // #274: folders ride the same frame; absent (older companion) = keep current.
         knowledgeFolders: action.folders ?? state.knowledgeFolders,
+        // #273 Wave B: distribution 同帧；frame 缺席（非 panel 面/旧 companion）= 保留现值。
+        knowledgeDistribution:
+          action.distribution !== undefined ? action.distribution : state.knowledgeDistribution,
       }
     case "SET_KNOWLEDGE_FOLDER_SUGGEST":
       return {
@@ -1531,6 +1548,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, knowledgeSelectionMode: action.mode }
     case "SET_KNOWLEDGE_SMART_MATCH":
       return { ...state, knowledgeSmartMatch: action.enabled }
+    case "SET_KNOWLEDGE_ROUTE_BY_GROUP":
+      return { ...state, knowledgeRouteByGroup: action.enabled }
     case "TOGGLE_KNOWLEDGE":
       return {
         ...state,

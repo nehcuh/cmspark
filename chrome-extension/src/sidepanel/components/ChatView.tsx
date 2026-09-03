@@ -15,6 +15,7 @@ import {
   SHELL_BODY_PREVIEW_CHARS,
 } from "../utils/shell-card-utils"
 import { extractRedactedStub, isRedactedStubContent } from "../utils/redacted-stub-utils"
+import { RetrievedSourcesChips } from "./RetrievedSourcesChips"
 import { fillKnowledgeDraftFromSuggestion, formatKnowledgeTagsInput } from "../utils/knowledge-preview"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
@@ -970,29 +971,7 @@ const MessageRow = memo(function MessageRow({
               </div>
             ) : null}
             {!isUser && Array.isArray(msg.retrieved_sources) && msg.retrieved_sources.length > 0 ? (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }} aria-label="本轮附带">
-                {msg.retrieved_sources.map((s: { id: string; title: string }) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    title={s.id}
-                    onClick={() => {
-                      window.dispatchEvent(new CustomEvent("cmspark:open-knowledge", { detail: { id: s.id } }))
-                    }}
-                    style={{
-                      border: `1px solid ${tokens.border}`,
-                      background: tokens.bgElevated,
-                      color: tokens.textSecondary,
-                      borderRadius: 10,
-                      fontSize: 11,
-                      padding: "2px 8px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    本轮附带 · {s.title || s.id}
-                  </button>
-                ))}
-              </div>
+              <RetrievedSourcesChips sources={msg.retrieved_sources} routing={msg.knowledge_routing} />
             ) : null}
             {isUser && Array.isArray(msg.attachments) && msg.attachments.length > 0 ? (
               <>

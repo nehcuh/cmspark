@@ -23,7 +23,7 @@ import {
 import { findRelatedThreads } from "./threads/related"
 import { distillThreadMarkdown, redactSecrets } from "./threads/distill"
 import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT } from "./skills/knowledge-related"
-import { handleKnowledgeCrud, knowledgeListDocs, knowledgeListFolders } from "./message-router/handlers/knowledge"
+import { attachKnowledgeListDistribution, handleKnowledgeCrud, knowledgeListDocs, knowledgeListFolders } from "./message-router/handlers/knowledge"
 import { suggestCleanupRules } from "./threads/cleanup-rules"
 import { buildContextRefsSystemSegment, type ContextRefInput } from "./threads/context-refs"
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
@@ -912,6 +912,10 @@ export async function handleMessage(
           // #273 Wave A: 空 query + 智能匹配开的 auto → 每篇只注入 description
           knowledgeDescriptionOnly:
             knowledgeMode === "auto" && knowledgeSmartMatch && !(rest.message || "").trim(),
+          // #273 Wave B: 簇路由上下文（「按堆选文」开关默认关）
+          knowledgeMode,
+          knowledgeSmartMatch,
+          knowledgeRouteByGroup: thread?.knowledge_route_by_group === true,
           // F1: echo back as chat.user client_message_id (optimistic-bubble adopt)
           clientMessageId:
             typeof rest.clientMessageId === "string" && rest.clientMessageId
@@ -1449,6 +1453,10 @@ export async function handleMessage(
           // #273 Wave A: 空 query + 智能匹配开的 auto → 每篇只注入 description
           knowledgeDescriptionOnly:
             knowledgeMode === "auto" && knowledgeSmartMatch && !(userMessage || "").trim(),
+          // #273 Wave B: 簇路由上下文
+          knowledgeMode,
+          knowledgeSmartMatch,
+          knowledgeRouteByGroup: (threadAfterPin ?? threadForConfig)?.knowledge_route_by_group === true,
           config: effectiveLLMConfig,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
@@ -1840,6 +1848,10 @@ export async function handleMessage(
           // #273 Wave A: 空 query + 智能匹配开的 auto → 每篇只注入 description
           knowledgeDescriptionOnly:
             knowledgeMode === "auto" && knowledgeSmartMatch && !(userMsg.content || "").trim(),
+          // #273 Wave B: 簇路由上下文
+          knowledgeMode,
+          knowledgeSmartMatch,
+          knowledgeRouteByGroup: thread?.knowledge_route_by_group === true,
           config: regenEffectiveLLMConfig,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
@@ -2440,6 +2452,9 @@ export async function handleMessage(
         ...(sourceThread.knowledge_smart_match !== undefined
           ? { knowledge_smart_match: sourceThread.knowledge_smart_match }
           : {}),
+        ...(sourceThread.knowledge_route_by_group !== undefined
+          ? { knowledge_route_by_group: sourceThread.knowledge_route_by_group }
+          : {}),
         ...(sourceThread.tool_whitelist !== undefined
           ? {
               tool_whitelist: sourceThread.tool_whitelist
@@ -2487,6 +2502,7 @@ export async function handleMessage(
         "skill_selection_mode",
         "knowledge_selection_mode",
         "knowledge_smart_match",
+        "knowledge_route_by_group",
         "mcp_selection_mode",
         "active_mcp_server_ids",
         "digest",
@@ -2947,12 +2963,18 @@ export async function handleMessage(
     }
     case "knowledge.list":
       // listKnowledge() → ensureFresh() (same fingerprint path as skills)
-      return {
-        type: "knowledge.list",
-        docs: knowledgeListDocs(skillEngine, stampedSurface),
-        // #274: folder rows (withheld on summoner — field absent there)
-        ...(stampedSurface === "summoner" ? {} : { folders: knowledgeListFolders(skillEngine, stampedSurface) }),
-      }
+      // #273 Wave B: 派生分布 panel-only（Gate9 BLOCK-1：谓词看 session.surface，
+      // stamp 后词汇表只有 summoner|tray，看 stamp 永远不放行）
+      return attachKnowledgeListDistribution(
+        {
+          type: "knowledge.list",
+          docs: knowledgeListDocs(skillEngine, stampedSurface),
+          // #274: folder rows (withheld on summoner — field absent there)
+          ...(stampedSurface === "summoner" ? {} : { folders: knowledgeListFolders(skillEngine, stampedSurface) }),
+        },
+        skillEngine,
+        session,
+      )
     case "knowledge.set_active": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       const overlayThreadErr = gateOverlayCurrentThread(rest.thread_id, stampedSurface)
@@ -3041,7 +3063,15 @@ export async function handleMessage(
         }
       }
       skillEngine.refresh()
-      return { type: "knowledge.list", docs: knowledgeListDocs(skillEngine, stampedSurface), imported }
+      return attachKnowledgeListDistribution(
+        {
+          type: "knowledge.list",
+          docs: knowledgeListDocs(skillEngine, stampedSurface),
+          imported,
+        },
+        skillEngine,
+        session,
+      )
     }
     case "knowledge.import_directory": {
       if (stampedSurface === "summoner") {
@@ -3258,23 +3288,27 @@ export async function handleMessage(
 
       skillEngine.refresh()
 
-      return {
-        type: "knowledge.import_directory_result",
-        path: vaultPath,
-        imported,
-        skippedOversize,
-        skippedUnsupported,
-        failed,
-        totalScanned,
-        flattenedDepth,
-        layerOverflow,
-        folderMetaDropped,
-        truncated: totalScanned >= MAX_FILES,
-        maxFiles: MAX_FILES,
-        errors,
-        docs: knowledgeListDocs(skillEngine, stampedSurface),
-        folders: knowledgeListFolders(skillEngine, stampedSurface),
-      }
+      return attachKnowledgeListDistribution(
+        {
+          type: "knowledge.import_directory_result",
+          path: vaultPath,
+          imported,
+          skippedOversize,
+          skippedUnsupported,
+          failed,
+          totalScanned,
+          flattenedDepth,
+          layerOverflow,
+          folderMetaDropped,
+          truncated: totalScanned >= MAX_FILES,
+          maxFiles: MAX_FILES,
+          errors,
+          docs: knowledgeListDocs(skillEngine, stampedSurface),
+          folders: knowledgeListFolders(skillEngine, stampedSurface),
+        },
+        skillEngine,
+        session,
+      )
     }
     case "knowledge.delete":
       if (stampedSurface === "summoner") {
@@ -3307,12 +3341,17 @@ export async function handleMessage(
       // Gate8 M-6: error frames carry family:"knowledge_folder" so the panel can
       // surface them in the knowledge status line instead of pretending success.
       const folderErr = (error: string) => ({ type: "error", error, family: "knowledge_folder" })
-      const knowledgeListFrame = (extra: Record<string, unknown> = {}) => ({
-        type: "knowledge.list",
-        docs: knowledgeListDocs(skillEngine, stampedSurface),
-        folders: knowledgeListFolders(skillEngine, stampedSurface),
-        ...extra,
-      })
+      const knowledgeListFrame = (extra: Record<string, unknown> = {}) =>
+        attachKnowledgeListDistribution(
+          {
+            type: "knowledge.list",
+            docs: knowledgeListDocs(skillEngine, stampedSurface),
+            folders: knowledgeListFolders(skillEngine, stampedSurface),
+            ...extra,
+          },
+          skillEngine,
+          session,
+        )
       try {
         if (type === "knowledge.move") {
           if (typeof rest.id !== "string" || !rest.id) {
