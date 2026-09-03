@@ -378,17 +378,13 @@ export function KnowledgeSubPanel() {
         const reader = new FileReader()
         reader.onload = () => {
           try {
-            const arrayBuffer = reader.result as ArrayBuffer
-            const bytes = new Uint8Array(arrayBuffer)
-            // Chunked base64: building a single JS string by concatenating one
-            // char per byte balloons to ~3x the file size in heap and trips V8's
-            // string-length cap on large files. Process in 64KB chunks instead.
-            const CHUNK = 0x8000
-            let base64 = ""
-            for (let i = 0; i < bytes.length; i += CHUNK) {
-              const slice = bytes.subarray(i, Math.min(i + CHUNK, bytes.length))
-              base64 += btoa(String.fromCharCode.apply(null, Array.from(slice) as unknown as number[]))
-            }
+            // Same encoding as composer attachments (App.tsx readFileAsBase64):
+            // FileReader.readAsDataURL of the whole file. Do NOT concatenate
+            // per-chunk btoa — CHUNK=0x8000 is not a multiple of 3, so each
+            // chunk is padded and the joined string is not valid PDF bytes
+            // (companion pdf-parse: "Invalid PDF structure").
+            const dataUrl = typeof reader.result === "string" ? reader.result : ""
+            const base64 = dataUrl.split(",")[1] || ""
             // #270: correlate the preview request with a unique id so the
             // companion reply/error routes back to THIS modal, and surface a
             // background send failure ({ok:false}) instead of spinning forever.
@@ -437,7 +433,7 @@ export function KnowledgeSubPanel() {
           failed += 1
           processNext()
         }
-        reader.readAsArrayBuffer(file)
+        reader.readAsDataURL(file)
       }
       processNext()
     } catch (err) {
