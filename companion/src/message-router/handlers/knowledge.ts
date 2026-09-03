@@ -32,6 +32,37 @@ export function knowledgeListFolders(skillEngine: SkillEngine, stampedSurface: u
   return skillEngine.listKnowledgeFolders()
 }
 
+/**
+ * #273 Wave B §6.4: 派生分布（knowledge.list 顶层 distribution?）。
+ * 严于 attachRelatedTitles 先例——related 只剥 summoner，分布**两面都剥**。
+ *
+ * 放行谓词看 **handshake 的 `session.surface === "panel"`**（lifecycle 从
+ * wsAuth 写入真值），不看 stamp 后的 `__cmspark_surface`——生产 stamp
+ * （composer-lease.stampCmsparkSurface）的词汇表只有 "summoner"|"tray"，
+ * "panel" 会被压成 "tray"，看 stamp 等于永远不放行（Gate9 BLOCK-1）。
+ * overlay 骑 summoner socket（surface === "summoner"，无独立 overlay
+ * token），天然被剥；tray 同样缺席。不是新 WS 动词，不进文档 SoT。
+ */
+export function knowledgeListDistribution(
+  skillEngine: SkillEngine,
+  session: unknown,
+): ReturnType<SkillEngine["getKnowledgeDistribution"]> | undefined {
+  const surface = (session as { surface?: unknown } | undefined)?.surface
+  if (surface !== "panel") return undefined
+  return skillEngine.getKnowledgeDistribution() ?? undefined
+}
+
+/** 单点附加：distribution 允许且可用时才在帧上出现该键（缺席 = 剥）。 */
+export function attachKnowledgeListDistribution<T extends Record<string, unknown>>(
+  frame: T,
+  skillEngine: SkillEngine,
+  session: unknown,
+): T {
+  const dist = knowledgeListDistribution(skillEngine, session)
+  if (dist == null) return frame
+  return { ...frame, distribution: dist }
+}
+
 export function handleKnowledgeCrud(
   type: string,
   rest: Record<string, unknown>,

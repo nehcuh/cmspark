@@ -29,6 +29,24 @@ import { validateWildcardPattern } from "../security"
 import { redactSecrets } from "../threads/distill"
 import { normalizeTags } from "../threads/digest"
 import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT, type RelatedKnowledgeInput } from "./knowledge-related"
+import {
+  KNOWLEDGE_GROUPMAP_CHARS,
+  buildKnowledgeDistribution,
+  compareCodepoint,
+  fitGroupmap,
+  knowledgeIndexPath,
+  knowledgeIndexVec,
+  knowledgeRouteFolderBranchOn,
+  knowledgeRouteGroupBranchOn,
+  readKnowledgeIndexFile,
+  toDistributionChannel,
+  writeKnowledgeIndexFile,
+  KNOWLEDGE_INDEX_DEBOUNCE_MS,
+  type GroupmapSection,
+  type KnowledgeDistributionChannel,
+  type KnowledgeIndexDoc,
+  type KnowledgeIndexFile,
+} from "./knowledge-clusters"
 
 export const KNOWLEDGE_BODY_WIRE_CAP = 512 * 1024
 export const KNOWLEDGE_FILE_CAP = 6 * 1024 * 1024
@@ -121,6 +139,58 @@ export type RetrievedSource = {
   title: string
   chunk_index?: number
   chars: number
+  /** #273 Wave B (AC-18): 路由 ON 时来源分组标签（派生、可选、不进文档 SoT）。 */
+  group_label?: string
+}
+
+/**
+ * #273 Wave B：buildSystemPromptWithSources 附带的路由元数据。
+ * 仅在「按堆选文」开关 ON 且前置满足（auto + 智能匹配开 + 非空 query +
+ * 分布可渲染）的轮次出现。s_pre = 第二趟完整候选 id 有序（预算前）；
+ * groupmap = omitted 时即 §6.5/AC-10 的 groupmap_omitted 态
+ * （标记放在 retrieved_sources 同层 sibling 而非数组元素，保 N=|S_post| 口径干净）。
+ */
+export type KnowledgeRoutingMeta = {
+  s_pre: string[]
+  groupmap: "injected" | "omitted"
+  groupmap_chars?: number
+}
+
+/** buildSystemPromptWithSources 的知识侧选项。 */
+export type BuildPromptKnowledgeOpts = {
+  /** 空 query + 智能匹配开的 auto 退化：每篇只注入 description。 */
+  knowledgeDescriptionOnly?: boolean
+  /** Wave B 路由上下文（缺省从 thread 记录推导；测试/评测可显式覆盖）。 */
+  knowledgeMode?: "auto" | "all" | "manual"
+  knowledgeSmartMatch?: boolean
+  /** 用户侧「按堆选文」开关（默认关）。 */
+  knowledgeRouteByGroup?: boolean
+}
+
+/**
+ * #273 Wave B §6.5: 簇路由计划（引擎内部）。
+ * 打分语料 = Wave A 入选集 ∪ pinned ∪（FOLDER_BRANCH ∧ 命中夹 ? 夹全部成员）
+ * ∪（GROUP_BRANCH ∧ 无命中夹 ? top-1-2 派生组成员）；第二趟不重截 k。
+ */
+interface KnowledgeRoutingPlan {
+  /** 该边分支常数 false → no-op 回 Wave A：不扩张、不灌概览，打 groupmap_omitted。 */
+  edgeClosed: boolean
+  /** ① 全部 pinned（resolve 的 pinned 顺序，不得被挤）。 */
+  pinnedDocs: Skill[]
+  /** ② Wave A 入选非 pinned，按排序分降序（并列 id 字典序最小）。 */
+  picked: Skill[]
+  /** 过阈扩张尾部（语料 \ 入选集 \ pinned，裸分 ≥ SCORE_MIN），按排序分降序。 */
+  tail: Skill[]
+  /** 第二趟完整候选 = pinned ∪ { 语料过阈 }（pinned 在前，其余按分）。 */
+  candidates: Skill[]
+  /** 分组概览小节（只列本轮实际使用的粗索引；组间序/组内序已按钉死键排好）。 */
+  sections: GroupmapSection[]
+  /** 粗索引零成员过阈 → 省略概览 + groupmap_omitted。 */
+  zeroPassing: boolean
+  /** doc name → 来源分组标签（真分组成员才有；「未分组」无标签）。 */
+  labelByName: Map<string, string>
+  /** 第二趟完整候选 id 有序（概览与 8000 前）。 */
+  sPre: string[]
 }
 
 interface ExperienceEntry {
@@ -243,6 +313,12 @@ export class SkillEngine {
    */
   private diskFingerprint: string | null = null
 
+  // --- #273 Wave B: 派生索引生命周期（§6.1） ---
+  /** 内存中的派生索引（null = 不可用/重建失败；undefined = 尚未尝试）。 */
+  private knowledgeIndex: KnowledgeIndexFile | null | undefined = undefined
+  /** 防抖重建定时器（single-flight：重建是同步的，防抖窗口合并连续触发）。 */
+  private knowledgeIndexTimer: ReturnType<typeof setTimeout> | null = null
+
   private boundThreads: ThreadManager | null = null
 
   constructor(llmConfig?: LlmConfig) {
@@ -345,7 +421,119 @@ export class SkillEngine {
     // Pre-chunk large knowledge docs for RAG
     this.rebuildKnowledgeChunks()
     // Capture fingerprint after load so API mutations + disk drops stay in sync
+    const prevFingerprint = this.diskFingerprint
     this.diskFingerprint = this.computeDiskFingerprint()
+    // #273 Wave B: WS 写路径 ∪ 指纹变化的重建触发（防抖 + single-flight）。
+    // 所有写路径（导入/保存/删除/移动/文件夹）都过 refresh()；读路径另兜
+    // 文件缺失/损坏（ensureKnowledgeIndex 立即重建）。指纹没变不排重建
+    // （Gate9 F5：无条件调度会让无变化的 refresh 也白重建一次）。
+    if (prevFingerprint !== this.diskFingerprint) {
+      this.scheduleKnowledgeIndexRebuild()
+    }
+  }
+
+  // --- #273 Wave B: 派生索引（§6.1；纯派生、可丢、可重建，SoT 仍是磁盘 .md） ---
+
+  /**
+   * 防抖重建（KNOWLEDGE_INDEX_DEBOUNCE_MS）。single-flight：重建本身同步执行，
+   * 不并发写；窗口内连续触发合并为最后一次（原子写兜底）。
+   */
+  private scheduleKnowledgeIndexRebuild(): void {
+    if (this.knowledgeIndexTimer) clearTimeout(this.knowledgeIndexTimer)
+    this.knowledgeIndexTimer = setTimeout(() => {
+      this.knowledgeIndexTimer = null
+      this.rebuildKnowledgeIndexSafe()
+    }, KNOWLEDGE_INDEX_DEBOUNCE_MS)
+    this.knowledgeIndexTimer.unref?.()
+  }
+
+  /** 聚类/索引层任何异常 → 仅日志、索引置不可用，降级 Wave A 扁平打分（§6.1/§2.5）。 */
+  private rebuildKnowledgeIndexSafe(): void {
+    try {
+      const docs = this.buildKnowledgeIndexDocs()
+      const index: KnowledgeIndexFile = {
+        version: 1,
+        built_at: new Date().toISOString(),
+        fingerprint: this.diskFingerprint || this.computeDiskFingerprint(),
+        docs,
+      }
+      writeKnowledgeIndexFile(knowledgeIndexPath(), index)
+      this.knowledgeIndex = index
+    } catch (e) {
+      console.warn("[skills] knowledge index rebuild failed; routing/distribution degraded:", e)
+      this.knowledgeIndex = null
+    }
+  }
+
+  /** 每篇文档的稀疏纯 TF 向量（title + description + tags + 首块）。 */
+  private buildKnowledgeIndexDocs(): KnowledgeIndexDoc[] {
+    const pool = this.skillsCache.filter((s) => this.isKnowledgeDoc(s))
+    const docs = pool.map((s): KnowledgeIndexDoc => {
+      const chunked = chunkFile(s.name, s.content || "", KNOWLEDGE_SEARCH_THRESHOLD_TOKENS)
+      const firstChunk = chunked.chunks[0]?.text || ""
+      const tags = Array.isArray(s.tags) ? s.tags.map(String) : []
+      const title = s.title || s.name
+      return {
+        id: s.id || s.name,
+        name: s.name,
+        title,
+        tags,
+        folder: s.folder || "",
+        bucket: this.knowledgeBucketOf(s.source_file) || "",
+        vec: knowledgeIndexVec({
+          title,
+          description: s.description || "",
+          tags,
+          firstChunk,
+        }),
+      }
+    })
+    docs.sort((a, b) => compareCodepoint(a.id, b.id))
+    return docs
+  }
+
+  /**
+   * 读路径确保索引可用：内存命中 → 磁盘文件（缺失/半截/损坏按缺失处理，
+   * 不 throw）→ 指纹漂移或缺失则立即重建（并取消挂起的防抖重建）。
+   * 重建失败返回 null —— 调用方按「无分布」降级，不阻塞注入。
+   */
+  private ensureKnowledgeIndex(): KnowledgeIndexFile | null {
+    try {
+      this.ensureFresh()
+      const fp = this.diskFingerprint || ""
+      if (this.knowledgeIndex && this.knowledgeIndex.fingerprint === fp) {
+        return this.knowledgeIndex
+      }
+      const fromDisk = readKnowledgeIndexFile(knowledgeIndexPath())
+      if (fromDisk && fromDisk.fingerprint === fp) {
+        this.knowledgeIndex = fromDisk
+        return fromDisk
+      }
+      if (this.knowledgeIndexTimer) {
+        clearTimeout(this.knowledgeIndexTimer)
+        this.knowledgeIndexTimer = null
+      }
+      this.rebuildKnowledgeIndexSafe()
+      return this.knowledgeIndex ?? null
+    } catch (e) {
+      console.warn("[skills] knowledge index unavailable; degraded:", e)
+      return null
+    }
+  }
+
+  /**
+   * 分布视图数据（knowledge.list 顶层 distribution 通道；§6.4）。
+   * null = 索引不可用（字段缺席）；非 ok 态返回 { groups: [], reason }。
+   */
+  getKnowledgeDistribution(): KnowledgeDistributionChannel | null {
+    const index = this.ensureKnowledgeIndex()
+    if (!index) return null
+    try {
+      return toDistributionChannel(buildKnowledgeDistribution(index.docs))
+    } catch (e) {
+      console.warn("[skills] knowledge distribution failed; degraded:", e)
+      return null
+    }
   }
 
   /**
@@ -1099,20 +1287,15 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
   }
 
   /**
-   * TF-IDF 打分（#273 Wave A §2.2）：bag = title + description + tags[≤8]
-   * + #274 两个字段：路径段（folder 的 "/" → 空格）+ 祖先链已保存的
-   * _folder.md description（未保存草稿不落盘，天然不进 bag）。
+   * TF-IDF 打分基（#273 Wave A §2.2 / Wave B §6.5 同基复用）：
+   * bag = title + description + tags[≤8] + #274 两字段（路径段 + 祖先链已保存说明）。
    * IDF 当次调用内对全库 knowledge bag 计算（N≤200 毫秒级，无缓存）。
-   * 返回按排序分（裸分 + 站点加权）降序、并列取 id 字典序最小的列表；
-   * 阈值过滤（裸分 ≥ KNOWLEDGE_SCORE_MIN）在调用方做。纯本地，零 LLM。
+   * 路由轮复用此全库 IDF 基（s(F) 同基），禁止语料级重算。
    */
-  private scoreKnowledgePool(
+  private knowledgeTfidfBase(
     pool: Skill[],
     query: string,
-    siteNames: Set<string>,
-    pinnedNames: Set<string>,
-  ): Array<{ skill: Skill; raw: number; rank: number }> {
-    // bag(doc) = title + description + tags[≤8] + 路径段 + 祖先链已保存说明
+  ): { tokenLists: string[][]; idf: Record<string, number>; queryVec: Record<string, number> } {
     const tokenLists = pool.map(s => {
       const folderSegs = (s.folder || "").split("/").filter(Boolean).join(" ")
       const ancestorDesc = this.ancestorFolderDescriptions(this.knowledgeBucketOf(s.source_file), s.folder || "")
@@ -1122,6 +1305,21 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     })
     const idf = idfFromDocs(tokenLists)
     const queryVec = tfidfVec(tokenize(query), idf)
+    return { tokenLists, idf, queryVec }
+  }
+
+  /**
+   * TF-IDF 打分（#273 Wave A §2.2）：返回按排序分（裸分 + 站点加权）降序、
+   * 并列取 id 字典序最小的列表；阈值过滤（裸分 ≥ KNOWLEDGE_SCORE_MIN）在
+   * 调用方做。纯本地，零 LLM。
+   */
+  private scoreKnowledgePool(
+    pool: Skill[],
+    query: string,
+    siteNames: Set<string>,
+    pinnedNames: Set<string>,
+  ): Array<{ skill: Skill; raw: number; rank: number }> {
+    const { tokenLists, idf, queryVec } = this.knowledgeTfidfBase(pool, query)
 
     const scored: Array<{ skill: Skill; raw: number; rank: number }> = []
     for (let i = 0; i < pool.length; i++) {
@@ -1140,6 +1338,203 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     return scored
   }
 
+  /**
+   * #273 Wave B §6.5 簇路由计划（「按堆选文」）。
+   * no-op 前置（公式钉死）：开关关 / 非 auto（all 硬排除、manual 强制 no-op）/
+   * 智能匹配关 / 空 query / 分布不渲染（n<20、超 cap、全离群）。
+   * 命中谓词 s(F)：cosine(tfidf(query), tfidf(F.title + 已保存 description))，
+   * 全库 IDF 基裸 cosine ≥ KNOWLEDGE_SCORE_MIN（不加 SITE_BOOST）。
+   * 夹边 no-op 不把本轮改写成「无命中夹」（不回落组臂）；边关闭 → edgeClosed
+   * 计划（不扩张、sections 空、调用方打 groupmap_omitted）。
+   * 聚类/路由层任何运行时异常 → null（降级 Wave A 扁平打分，仅日志）。
+   */
+  private planKnowledgeRouting(args: {
+    threadId: string
+    hostname?: string
+    query: string
+    knowledgeIds: string[]
+    mode: "auto" | "all" | "manual"
+    smartMatch: boolean
+    routeByGroup: boolean
+  }): KnowledgeRoutingPlan | null {
+    if (!args.routeByGroup) return null
+    if (args.mode !== "auto") return null
+    if (!args.smartMatch) return null
+    const query = args.query.trim()
+    if (!query) return null
+    try {
+      const index = this.ensureKnowledgeIndex()
+      if (!index) return null
+      const dist = buildKnowledgeDistribution(index.docs)
+      if (dist.status !== "ok") return null
+
+      const pool = this.skillsCache.filter(s => this.isKnowledgeDoc(s))
+      const byId = new Map<string, Skill>()
+      for (const s of pool) byId.set(s.id || s.name, s)
+
+      const pinnedAll = this.getActiveKnowledgeForThread(args.threadId)
+      const pinnedNames = new Set(pinnedAll.map(s => s.name))
+      const idSet = new Set(args.knowledgeIds)
+      // ① pinned（resolve 的输出顺序 = getActiveKnowledgeForThread 顺序）
+      const pinnedDocs = pinnedAll.filter(s => idSet.has(s.name) || (!!s.id && idSet.has(s.id)))
+      const picked = args.knowledgeIds
+        .map(id => this.get(id))
+        .filter((s): s is Skill => !!s && this.isKnowledgeDoc(s) && !pinnedNames.has(s.name))
+
+      // 全库 IDF 基打分（§6.5：同基复用，禁止语料级重算；pinned 也算分供组粗选）
+      const base = this.knowledgeTfidfBase(pool, query)
+      const siteNames = new Set(args.hostname ? this.getBySite(args.hostname).map(s => s.name) : [])
+      const rawByName = new Map<string, number>()
+      const rankByName = new Map<string, number>()
+      for (let i = 0; i < pool.length; i++) {
+        const raw = cosineSimilarity(base.queryVec, tfidfVec(base.tokenLists[i], base.idf))
+        rawByName.set(pool[i].name, raw)
+        rankByName.set(pool[i].name, raw + (siteNames.has(pool[i].name) ? KNOWLEDGE_SITE_BOOST : 0))
+      }
+      // 按排序分降序、并列取 id 字典序最小（阈值判定一律看裸分，SITE_BOOST 只改排序）
+      const byRankDesc = (a: Skill, b: Skill) => {
+        const ra = rankByName.get(a.name) ?? 0
+        const rb = rankByName.get(b.name) ?? 0
+        if (rb !== ra) return rb - ra
+        return compareCodepoint(a.id || a.name, b.id || b.name)
+      }
+      picked.sort(byRankDesc)
+
+      const oneLine = (s: Skill) => String(s.title || s.name).replace(/\s+/g, " ").trim()
+
+      // 命中谓词 s(F)（§6.5 钉一条；桶根 folder="" 不是夹，不参与）
+      const hitFolders = this.listKnowledgeFolders()
+        .map(F => ({
+          F,
+          s: cosineSimilarity(base.queryVec, tfidfVec(tokenize(`${F.title} ${F.description}`), base.idf)),
+        }))
+        .filter(x => x.s >= KNOWLEDGE_SCORE_MIN)
+        // 组间序：s(F) 降序、并列 path 字典序（+bucket 收尾保证全序确定）
+        .sort((a, b) => b.s - a.s || compareCodepoint(a.F.path, b.F.path) || compareCodepoint(a.F.bucket, b.F.bucket))
+
+      const labelByName = new Map<string, string>()
+      for (const g of dist.groups) {
+        for (const id of g.ids) {
+          const s = byId.get(id)
+          if (s) labelByName.set(s.name, g.label)
+        }
+      }
+
+      const folderMembers = (F: { bucket: "global" | "sites"; path: string }): Skill[] =>
+        pool.filter(s => {
+          if (this.knowledgeBucketOf(s.source_file) !== F.bucket) return false
+          const f = s.folder || ""
+          return f === F.path || f.startsWith(F.path + "/")
+        })
+
+      // 按边计算：命中夹 → 夹边；无命中夹 → 组边（边关闭则不回落另一臂）
+      let expansion: Skill[] = []
+      let sections: GroupmapSection[] = []
+      let zeroPassing = true
+      if (hitFolders.length > 0) {
+        if (!knowledgeRouteFolderBranchOn()) {
+          return this.closedRoutingPlan(pinnedDocs, picked, labelByName)
+        }
+        const memberNames = new Set<string>()
+        for (const { F } of hitFolders) {
+          for (const m of folderMembers(F)) memberNames.add(m.name)
+        }
+        expansion = pool.filter(s => memberNames.has(s.name))
+        zeroPassing = ![...memberNames].some(n => (rawByName.get(n) ?? 0) >= KNOWLEDGE_SCORE_MIN)
+        // 概览行集 = 命中夹全部成员标题（含未过阈），组内按文档分降序；
+        // 零成员命中夹（有说明但没文档）不占小节（Gate9 F2）
+        sections = hitFolders
+          .map(({ F }) => ({
+            label: F.path,
+            lines: folderMembers(F).sort(byRankDesc).map(oneLine),
+          }))
+          .filter((s) => s.lines.length > 0)
+      } else {
+        if (!knowledgeRouteGroupBranchOn()) {
+          return this.closedRoutingPlan(pinnedDocs, picked, labelByName)
+        }
+        // 组粗选：组分 = 成员元数据分 max（裸分）；top-1 恒取；第 2 组仅当
+        // 组分 ≥ SCORE_MIN；并列取簇键字典序最小；「未分组」不参与。
+        const scoredGroups = dist.groups
+          .map(g => ({
+            g,
+            score: Math.max(0, ...g.ids.map(id => {
+              const s = byId.get(id)
+              return s ? (rawByName.get(s.name) ?? 0) : 0
+            })),
+          }))
+          .sort((a, b) => b.score - a.score || compareCodepoint(a.g.key, b.g.key))
+        const selected = scoredGroups.slice(0, 1)
+        if (scoredGroups[1] && scoredGroups[1].score >= KNOWLEDGE_SCORE_MIN) {
+          selected.push(scoredGroups[1])
+        }
+        const memberNames = new Set<string>()
+        for (const { g } of selected) {
+          for (const id of g.ids) {
+            const s = byId.get(id)
+            if (s) memberNames.add(s.name)
+          }
+        }
+        expansion = pool.filter(s => memberNames.has(s.name))
+        zeroPassing = ![...memberNames].some(n => (rawByName.get(n) ?? 0) >= KNOWLEDGE_SCORE_MIN)
+        // 组间序：组分降序、并列簇键字典序；行集 = top-1-2 组全部成员标题（含未过阈）
+        sections = selected.map(({ g }) => ({
+          label: g.label,
+          lines: g.ids
+            .map(id => byId.get(id))
+            .filter((s): s is Skill => !!s)
+            .sort(byRankDesc)
+            .map(oneLine),
+        }))
+      }
+
+      // 语料 ⊇ 入选集；候选 = pinned ∪ { 语料过阈 }（第二趟不重截 k，输出扩张）
+      const corpusNames = new Set<string>([...pinnedNames, ...expansion.map(s => s.name)])
+      for (const id of args.knowledgeIds) {
+        const s = this.get(id)
+        if (s && this.isKnowledgeDoc(s)) corpusNames.add(s.name)
+      }
+      const passing = pool
+        .filter(s => corpusNames.has(s.name) && !pinnedNames.has(s.name) && (rawByName.get(s.name) ?? 0) >= KNOWLEDGE_SCORE_MIN)
+        .sort(byRankDesc)
+      const inWaveA = new Set(picked.map(s => s.name))
+      const tail = passing.filter(s => !inWaveA.has(s.name))
+      const candidates = [...pinnedDocs, ...passing]
+      const sPre: string[] = []
+      const seen = new Set<string>()
+      for (const s of candidates) {
+        const id = s.id || s.name
+        if (!seen.has(id)) {
+          seen.add(id)
+          sPre.push(id)
+        }
+      }
+      return { edgeClosed: false, pinnedDocs, picked, tail, candidates, sections, zeroPassing, labelByName, sPre }
+    } catch (e) {
+      console.warn("[skills] knowledge routing failed; degrading to flat Wave A:", e)
+      return null
+    }
+  }
+
+  /** 边关闭态计划：不扩张、不灌概览（调用方打 groupmap_omitted），S_pre 与 flat 恒等。 */
+  private closedRoutingPlan(
+    pinnedDocs: Skill[],
+    picked: Skill[],
+    labelByName: Map<string, string>,
+  ): KnowledgeRoutingPlan {
+    return {
+      edgeClosed: true,
+      pinnedDocs,
+      picked,
+      tail: [],
+      candidates: [...pinnedDocs, ...picked],
+      sections: [],
+      zeroPassing: true,
+      labelByName,
+      sPre: [...pinnedDocs, ...picked].map(s => s.id || s.name),
+    }
+  }
+
   /** Build compact skill index for system prompt.
    * LLM calls use_skill(name) to load full instructions on demand.
    * For site_knowledge/domain_knowledge, inject entries summary directly.
@@ -1149,13 +1544,14 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
    * Security skills are ALWAYS injected and cannot be disabled.
    * opts.knowledgeDescriptionOnly: 空 query + 智能匹配开的 auto 退化——
    * 每篇只注入 description（≤KNOWLEDGE_EMPTY_QUERY_DESCRIPTION_CHARS），无 description 跳过。 */
+  /** Wave B 路由上下文（缺省从 thread 记录推导；测试/评测可显式覆盖）。 */
   buildSystemPrompt(
     threadId: string,
     hostname?: string,
     skillIds?: string[],
     knowledgeIds?: string[],
     query?: string,
-    opts?: { knowledgeDescriptionOnly?: boolean },
+    opts?: BuildPromptKnowledgeOpts,
   ): string {
     return this.buildSystemPromptWithSources(threadId, hostname, skillIds, knowledgeIds, query, opts).prompt
   }
@@ -1166,8 +1562,8 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     skillIds?: string[],
     knowledgeIds?: string[],
     query?: string,
-    opts?: { knowledgeDescriptionOnly?: boolean },
-  ): { prompt: string; retrieved_sources: RetrievedSource[] } {
+    opts?: BuildPromptKnowledgeOpts,
+  ): { prompt: string; retrieved_sources: RetrievedSource[]; knowledge_routing?: KnowledgeRoutingMeta } {
     const skills = skillIds
       ? skillIds.map(id => this.get(id)).filter(Boolean) as Skill[]
       : this.getActiveForThread(threadId)
@@ -1183,7 +1579,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     let knowledgeBudgetLeft = KNOWLEDGE_INJECT_BUDGET_CHARS
     let knowledgeBudgetStop = false
 
-    const pushKnowledge = (k: Skill, summary: string, chunkIndex?: number) => {
+    const pushKnowledge = (k: Skill, summary: string, chunkIndex?: number, groupLabel?: string) => {
       if (knowledgeBudgetStop) return
       const id = k.id || k.name
       const title = sanitizeKnowledgeContent(k.title || k.name)
@@ -1201,7 +1597,13 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       }
       knowledgeBudgetLeft -= body.length
       injectedNames.add(k.name)
-      retrieved_sources.push({ id, title, chunk_index: chunkIndex, chars: body.length })
+      retrieved_sources.push({
+        id,
+        title,
+        chunk_index: chunkIndex,
+        chars: body.length,
+        ...(groupLabel ? { group_label: groupLabel } : {}),
+      })
       parts.push(wrapKnowledgeBlock(id, title, body))
     }
 
@@ -1226,21 +1628,169 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       ? knowledgeIds.map(id => this.get(id)).filter(Boolean) as Skill[]
       : undefined
 
+    let knowledgeRoutingMeta: KnowledgeRoutingMeta | undefined
+
     if (knowledgeToInject) {
-      for (const k of knowledgeToInject) {
-        if (injectedNames.has(k.name)) continue
-        if (!this.isKnowledgeDoc(k)) continue
-        if (opts?.knowledgeDescriptionOnly) {
-          // 空 query + 智能匹配开的 auto 退化：只注入 description，不灌正文；
-          // 无 description 的篇跳过不注入。
-          const desc = sanitizeKnowledgeContent(k.description || "")
-            .slice(0, KNOWLEDGE_EMPTY_QUERY_DESCRIPTION_CHARS)
-            .trim()
-          if (desc) pushKnowledge(k, desc)
-          continue
+      // #273 Wave B §6.5 簇路由：不适用返回 null（Wave A 扁平路径）；
+      // 边关闭返回 edgeClosed 计划（不扩张、不灌概览，打 groupmap_omitted）。
+      let routing: KnowledgeRoutingPlan | null = null
+      if (!opts?.knowledgeDescriptionOnly) {
+        let routingThread: {
+          knowledge_selection_mode?: "auto" | "all" | "manual"
+          knowledge_smart_match?: boolean
+          knowledge_route_by_group?: boolean
+        } | undefined
+        try {
+          routingThread = this.threads().get(threadId) as typeof routingThread
+        } catch {
+          /* no thread context — defaults apply */
         }
-        const summary = this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k, query)
-        if (summary) pushKnowledge(k, summary)
+        routing = this.planKnowledgeRouting({
+          threadId,
+          hostname,
+          query: query || "",
+          knowledgeIds: knowledgeIds || [],
+          mode: opts?.knowledgeMode ?? routingThread?.knowledge_selection_mode ?? "auto",
+          smartMatch: opts?.knowledgeSmartMatch ?? (routingThread?.knowledge_smart_match !== false),
+          routeByGroup: opts?.knowledgeRouteByGroup ?? (routingThread?.knowledge_route_by_group === true),
+        })
+      }
+
+      if (!routing || routing.edgeClosed) {
+        // Wave A 扁平路径（边关闭 = 同路径 + groupmap_omitted 标记）
+        const labelOf = (k: Skill) => routing?.labelByName.get(k.name)
+        for (const k of knowledgeToInject) {
+          if (injectedNames.has(k.name)) continue
+          if (!this.isKnowledgeDoc(k)) continue
+          if (opts?.knowledgeDescriptionOnly) {
+            // 空 query + 智能匹配开的 auto 退化：只注入 description，不灌正文；
+            // 无 description 的篇跳过不注入。
+            const desc = sanitizeKnowledgeContent(k.description || "")
+              .slice(0, KNOWLEDGE_EMPTY_QUERY_DESCRIPTION_CHARS)
+              .trim()
+            if (desc) pushKnowledge(k, desc)
+            continue
+          }
+          const summary = this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k, query)
+          if (summary) pushKnowledge(k, summary, undefined, labelOf(k))
+        }
+        if (routing?.edgeClosed) {
+          knowledgeRoutingMeta = { s_pre: routing.sPre, groupmap: "omitted" }
+        }
+      } else {
+        // 路由 ON：注入序四步（§6.5 钉死）。虚拟记账先行（与 pushKnowledge
+        // 截断语义逐字节对齐），再按序实灌——recall 槽的「让位」因此只是
+        // 计划层的末位移出，不需要实灌撤回。
+        type PlannedDoc = { k: Skill; body: string; groupLabel?: string }
+        const summaryOf = (k: Skill) => this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k, query)
+        const labelOf = (k: Skill) => routing.labelByName.get(k.name)
+        let left = knowledgeBudgetLeft
+        let stop = false
+        const plannedNames = new Set<string>()
+        const before: PlannedDoc[] = []
+        const after: PlannedDoc[] = []
+        const vPlace = (target: PlannedDoc[], k: Skill, summary: string, allowTruncate: boolean): void => {
+          if (stop || plannedNames.has(k.name) || injectedNames.has(k.name)) return
+          let body = summary
+          if (body.length > left) {
+            if (!allowTruncate) return
+            if (left <= 0) {
+              stop = true
+              return
+            }
+            body = left > KNOWLEDGE_TRUNC_MARK.length
+              ? summary.slice(0, left - KNOWLEDGE_TRUNC_MARK.length) + KNOWLEDGE_TRUNC_MARK
+              : summary.slice(0, left)
+            stop = true
+          }
+          left -= body.length
+          plannedNames.add(k.name)
+          target.push({ k, body, groupLabel: labelOf(k) })
+        }
+
+        // ① 全部 pinned（不得被挤；截断语义同 Wave A）
+        for (const p of routing.pinnedDocs) {
+          if (stop) break
+          const summary = summaryOf(p)
+          if (summary) vPlace(before, p, summary, true)
+        }
+        // ② Wave A 入选文档按分填预算（整灌，不截断占槽）
+        const placedPicked: Array<{ k: Skill; summary: string }> = []
+        const pickedPend: Array<{ k: Skill; summary: string }> = []
+        for (const k of routing.picked) {
+          if (plannedNames.has(k.name) || injectedNames.has(k.name)) continue
+          const summary = summaryOf(k)
+          if (summary) pickedPend.push({ k, summary })
+        }
+        let qi = 0
+        while (!stop && qi < pickedPend.length) {
+          const d = pickedPend[qi]
+          if (d.summary.length > left) break
+          vPlace(before, d.k, d.summary, false)
+          placedPicked.push(d)
+          qi++
+        }
+        // ② recall 槽：存在过阈扩张尾部时，最后一个文档槽让位给最佳尾部一篇
+        //（至多一篇；尾部裸 cosine ≥ SCORE_MIN 即可，不需要赢过末位）
+        if (!stop) {
+          const tailDoc = routing.tail.find(k => !plannedNames.has(k.name) && !injectedNames.has(k.name))
+          const tailSummary = tailDoc ? summaryOf(tailDoc) : ""
+          if (tailDoc && tailSummary) {
+            if (tailSummary.length <= left) {
+              // 剩余 ≥ 尾部全长 ⇒ 零 displacement 直接放进该文档槽（仍算②、在概览前）
+              vPlace(before, tailDoc, tailSummary, false)
+            } else if (
+              placedPicked.length > 0 &&
+              placedPicked[placedPicked.length - 1].summary.length + left >= tailSummary.length
+            ) {
+              // 让位 ⇔（末位完整占用 + 剩余）≥ 尾部全长：计划层移出末位、尾部整灌；
+              // 末位下放④（④ 可截断，但截断不算⑤）
+              const last = placedPicked.pop()!
+              const lastPlanned = before.pop()!
+              left += lastPlanned.body.length
+              plannedNames.delete(last.k.name)
+              vPlace(before, tailDoc, tailSummary, false)
+            }
+            // 否则不让位、不截断占 recall 槽，尾部留待④
+          }
+        }
+        // ③ 分组概览吃剩余（≤KNOWLEDGE_GROUPMAP_CHARS 含 wrap，计入 8000 总预算；
+        //    剩余不足完整最小行 / 粗索引零成员过阈 → 省略 + groupmap_omitted）
+        let groupmapChars = 0
+        let groupmapWrapped: string | null = null
+        let groupmapState: "injected" | "omitted" = "omitted"
+        if (!stop && !routing.zeroPassing && routing.sections.length > 0) {
+          const fitted = fitGroupmap(routing.sections, Math.min(left, KNOWLEDGE_GROUPMAP_CHARS))
+          if (fitted) {
+            groupmapChars = fitted.wrapped.length
+            left -= fitted.wrapped.length
+            groupmapState = "injected"
+            groupmapWrapped = fitted.wrapped
+          }
+        }
+        // ④ 仍有剩余则继续按分填（含其余尾部；照常截断填满剩余）
+        if (!stop) {
+          for (const k of routing.candidates) {
+            if (stop) break
+            if (plannedNames.has(k.name) || injectedNames.has(k.name)) continue
+            const summary = summaryOf(k)
+            if (summary) vPlace(after, k, summary, true)
+          }
+        }
+
+        // 实灌：②（含 recall 槽）→ 概览 → ④。虚拟记账与 pushKnowledge 逐字节
+        // 对齐，执行期不会再触发截断。
+        for (const d of before) pushKnowledge(d.k, d.body, undefined, d.groupLabel)
+        if (groupmapWrapped !== null) {
+          parts.push(groupmapWrapped)
+          knowledgeBudgetLeft -= groupmapChars
+        }
+        for (const d of after) pushKnowledge(d.k, d.body, undefined, d.groupLabel)
+        knowledgeRoutingMeta = {
+          s_pre: routing.sPre,
+          groupmap: groupmapState,
+          ...(groupmapChars > 0 ? { groupmap_chars: groupmapChars } : {}),
+        }
       }
     } else {
       const globalKnowledge = this.getGlobalKnowledge()
@@ -1267,7 +1817,11 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       parts.push(`Available skills (call use_skill(name) to load full instructions when relevant):\n${index}`)
     }
 
-    return { prompt: parts.join("\n\n"), retrieved_sources }
+    return {
+      prompt: parts.join("\n\n"),
+      retrieved_sources,
+      ...(knowledgeRoutingMeta ? { knowledge_routing: knowledgeRoutingMeta } : {}),
+    }
   }
 
   /** Get all global knowledge docs from knowledge/global/ directory. */

@@ -46,6 +46,8 @@ export interface Thread {
   knowledge_selection_mode?: "auto" | "all" | "manual"
   /** #273 Wave A: 知识「智能匹配」开关（undefined = true）。 */
   knowledge_smart_match?: boolean
+  /** #273 Wave B: 知识「按堆选文」开关（undefined = false，默认关）。 */
+  knowledge_route_by_group?: boolean
   mcp_selection_mode?: McpSelectionMode
   active_mcp_server_ids?: string[]
   /** Mission Pack currently applied to this thread (null/undefined = none). */
@@ -311,7 +313,9 @@ export interface Message {
    */
   client_message_id?: string
   /** Companion-attached knowledge ledger (Wave 1). Never model-authored. */
-  retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number }>
+  retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number; group_label?: string }>
+  /** #273 Wave B（AC-18）：路由元数据——分组概览两态 + 芯片口径 M=|S_pre|。 */
+  knowledge_routing?: { groupmap: "injected" | "omitted"; m: number }
   /** Length-stop / truncated-tool-batch honesty (hydrate chip). */
   truncated?: boolean
   incomplete_tools?: boolean
@@ -500,6 +504,19 @@ export interface KnowledgeFolderMeta {
   title: string
   description: string
   stale: boolean
+}
+
+/** #273 Wave B: 派生分布（knowledge.list 顶层；summoner/overlay 两面都剥，panel-only）。 */
+export interface KnowledgeDistribution {
+  groups: Array<{
+    /** 稳定身份键（带命名空间前缀：分组 = `c:<成员 id min>`，「未分组」= `u:ungrouped`）。过滤/React key 用 key，label 仅显示。 */
+    key: string
+    label: string
+    count: number
+    ids: string[]
+  }>
+  /** 不渲染原因（groups 为空时）：over_cap 由面板显示诚实文案。 */
+  reason?: "too_few" | "over_cap" | "all_ungrouped"
 }
 
 export interface KnowledgeDocView {

@@ -56,6 +56,8 @@ interface Thread {
   knowledge_selection_mode?: "auto" | "all" | "manual"
   /** #273 Wave A: 知识「智能匹配」开关。undefined = true（开）。 */
   knowledge_smart_match?: boolean
+  /** #273 Wave B: 知识「按堆选文」开关（簇路由总开关）。undefined = false（关）。 */
+  knowledge_route_by_group?: boolean
   // Audit item 7: per-thread MCP server selection. "auto" exposes every
   // connected server's tools to the LLM (legacy default). "all" exposes every
   // connected server explicitly. "manual" restricts to active_mcp_server_ids.
@@ -886,6 +888,10 @@ export class ThreadManager {
     // Validate knowledge_smart_match if being updated (undefined = true)
     if (updates.knowledge_smart_match !== undefined && typeof updates.knowledge_smart_match !== "boolean") {
       throw new Error("knowledge_smart_match must be a boolean")
+    }
+    // Validate knowledge_route_by_group if being updated (undefined = false)
+    if (updates.knowledge_route_by_group !== undefined && typeof updates.knowledge_route_by_group !== "boolean") {
+      throw new Error("knowledge_route_by_group must be a boolean")
     }
     if (updates.active_knowledge_ids !== undefined) {
       if (

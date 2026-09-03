@@ -6,6 +6,6 @@
     "declaration": false,
     "declarationMap": false
   },
-  "include": ["src/**/*", "tests/**/*"],
+  "include": ["src/**/*", "tests/**/*", "scripts/knowledge-route-eval.ts"],
   "exclude": ["node_modules", "dist", ".test-dist"]
 }

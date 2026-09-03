@@ -20,6 +20,13 @@ import {
   knowledgeMoveTargets,
   type KnowledgeFolderNode,
 } from "../utils/knowledge-folders"
+import {
+  KNOWLEDGE_DISTRIBUTION_HONESTY_COPY,
+  KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY,
+  distributionChips,
+  distributionFilterIds,
+  distributionOverCap,
+} from "../utils/knowledge-distribution"
 
 export function KnowledgeSubPanel() {
   const { state, dispatch } = useAgentStore()
@@ -40,6 +47,8 @@ export function KnowledgeSubPanel() {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   /** #274: 文件夹行菜单（path 标识）。 */
   const [folderMenuOpen, setFolderMenuOpen] = useState<string | null>(null)
+  /** #273 Wave B: 分布过滤 chip（label；null = 不过滤）。点击 = 过滤列表，纯只读。 */
+  const [distFilter, setDistFilter] = useState<string | null>(null)
   /**
    * #274: 内联编辑行（320px 不另开 sheet）：
    * create = 新建文件夹（path 输入）· rename = 重命名 · describe = 编辑说明
@@ -216,6 +225,19 @@ export function KnowledgeSubPanel() {
         type: "thread.update",
         threadId: state.activeThreadId,
         updates: { knowledge_smart_match: enabled },
+      })
+    }
+  }
+
+  // #273 Wave B: 「按堆选文」开关（可选路由，默认关；只作用于自动模式；
+  // 智能匹配关掉时同样不生效——关了智能却仍按堆选文，禁止）
+  const handleRouteByGroupChange = (enabled: boolean) => {
+    dispatch({ type: "SET_KNOWLEDGE_ROUTE_BY_GROUP", enabled })
+    if (state.activeThreadId) {
+      chrome.runtime.sendMessage({
+        type: "thread.update",
+        threadId: state.activeThreadId,
+        updates: { knowledge_route_by_group: enabled },
       })
     }
   }
@@ -482,10 +504,22 @@ export function KnowledgeSubPanel() {
   }
 
   // #274 AC-10: 筛选 bag 补 tags + folder（util 与测试共用同一份实现）
-  const filteredDocs = useMemo(
-    () => filterKnowledgeDocs(state.knowledgeDocs, query),
-    [state.knowledgeDocs, query],
+  // #273 Wave B: 分布 chip 过滤再叠一层（点击 = 过滤列表，与视图切换正交）
+  const distFilteredIds = useMemo(
+    () => distributionFilterIds(state.knowledgeDistribution, distFilter),
+    [state.knowledgeDistribution, distFilter],
   )
+  const filteredDocs = useMemo(
+    () => {
+      const base = filterKnowledgeDocs(state.knowledgeDocs, query)
+      if (!distFilteredIds) return base
+      return base.filter((d) => distFilteredIds.has(d.id || d.name))
+    },
+    [state.knowledgeDocs, query, distFilteredIds],
+  )
+  // #273 Wave B: 分布 chips（可渲染态）与超 cap 诚实文案
+  const distChips = useMemo(() => distributionChips(state.knowledgeDistribution), [state.knowledgeDistribution])
+  const distOverCap = distributionOverCap(state.knowledgeDistribution)
 
   // Group knowledge docs by site, with current site first
   const groupedDocs = groupKnowledgeBySite(filteredDocs, currentHostname)
@@ -835,6 +869,35 @@ export function KnowledgeSubPanel() {
           智能匹配
         </label>
       )}
+      {/* #273 Wave B: 「按堆选文」开关（可选路由、默认关、只作用于自动模式——
+          all/按需下不显示；智能匹配关掉时禁用并注明不生效） */}
+      {selectionMode === "auto" && (
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 12,
+            color: smartMatch ? tokens.textSecondary : tokens.textMuted,
+            cursor: smartMatch ? "pointer" : "not-allowed",
+            marginBottom: 4,
+          }}
+          title={
+            smartMatch
+              ? "开：自动模式下先按分组粗选候选、再按这轮问题选文；关：直接按问题选文"
+              : "智能匹配已关，按堆选文不生效（先打开智能匹配）"
+          }
+        >
+          <input
+            type="checkbox"
+            checked={state.knowledgeRouteByGroup === true && smartMatch}
+            disabled={!smartMatch}
+            onChange={(e) => handleRouteByGroupChange(e.target.checked)}
+            aria-label="按堆选文"
+          />
+          按堆选文
+        </label>
+      )}
       <div style={styles.modeHint}>{modeHint}</div>
 
       {/* Search + manage */}
@@ -1046,6 +1109,44 @@ export function KnowledgeSubPanel() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* #273 Wave B §6.4: 分布过滤 chips（列表上方；点击 = 过滤，不是第三个视图）。
+          诚实句强制在——没有它用户会把 chips 当成自己维护的层级分类。
+          身份用稳定 key（标签碰撞过滤不错对象），displayLabel 仅显示。 */}
+      {distChips.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: tokens.textMuted, marginBottom: 4 }}>
+            {KNOWLEDGE_DISTRIBUTION_HONESTY_COPY}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }} aria-label="分布">
+            {distChips.map((g) => {
+              const activeChip = distFilter === g.key
+              return (
+                <button
+                  key={g.key}
+                  type="button"
+                  title={activeChip ? "取消过滤" : "只看这一组"}
+                  aria-pressed={activeChip}
+                  onClick={() => setDistFilter(activeChip ? null : g.key)}
+                  style={{
+                    ...styles.relatedChip,
+                    background: activeChip ? tokens.accentSoft : tokens.bgElevated,
+                    borderColor: activeChip ? tokens.accent : tokens.border,
+                  }}
+                >
+                  {g.displayLabel} · {g.count}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+      {/* #273 Wave B: 超 cap 诚实文案（不渲染 chips，不假装有分组） */}
+      {distOverCap && (
+        <div style={{ fontSize: 10, color: tokens.textMuted, marginBottom: 8 }}>
+          {KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY}
         </div>
       )}
 

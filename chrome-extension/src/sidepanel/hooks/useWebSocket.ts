@@ -448,6 +448,10 @@ export function useWebSocket() {
                 content: content || "",
                 ...(reasoning ? { reasoning_content: reasoning } : {}),
                 ...(Array.isArray(msg.retrieved_sources) ? { retrieved_sources: msg.retrieved_sources } : {}),
+                // #273 Wave B: 分组概览两态（含分组概览 / 未注入）随消息落 store
+                ...(msg.knowledge_routing && typeof msg.knowledge_routing === "object"
+                  ? { knowledge_routing: msg.knowledge_routing }
+                  : {}),
                 ...honesty,
                 created_at: new Date().toISOString(),
               },
@@ -892,6 +896,10 @@ export function useWebSocket() {
           // Sync knowledge_smart_match if this is the active thread (undefined = on)
           if (msg.thread?.id === activeThreadRef.current && msg.thread?.knowledge_smart_match !== undefined) {
             dispatch({ type: "SET_KNOWLEDGE_SMART_MATCH", enabled: msg.thread.knowledge_smart_match !== false })
+          }
+          // Sync knowledge_route_by_group if this is the active thread (undefined = off)
+          if (msg.thread?.id === activeThreadRef.current && msg.thread?.knowledge_route_by_group !== undefined) {
+            dispatch({ type: "SET_KNOWLEDGE_ROUTE_BY_GROUP", enabled: msg.thread.knowledge_route_by_group === true })
           }
           break
         }
@@ -1722,10 +1730,15 @@ export function useWebSocket() {
           if (!Array.isArray(msg.docs)) break
           // #274: folders ride the knowledge.list frame (absent on summoner /
           // older companions — the store keeps the previous value then).
+          // #273 Wave B: distribution 同帧（panel-only；summoner/overlay 剥）。
           dispatch({
             type: "SET_KNOWLEDGE_DOCS",
             docs: msg.docs,
             folders: Array.isArray(msg.folders) ? msg.folders : undefined,
+            distribution:
+              msg.distribution && typeof msg.distribution === "object" && Array.isArray(msg.distribution.groups)
+                ? msg.distribution
+                : undefined,
           })
           break
 
@@ -1834,10 +1847,16 @@ export function useWebSocket() {
           }
           // Update the docs list regardless — even on partial failure, any
           // successfully imported notes should appear in the UI immediately.
+          // #273 Wave B（Gate9 r2 grok N1）: distribution 同帧透传——批量导入后
+          // chips 不停在旧快照（frame 缺席 = 保留现值，与 knowledge.list 同策略）。
           dispatch({
             type: "SET_KNOWLEDGE_DOCS",
             docs: msg.docs || [],
             folders: Array.isArray(msg.folders) ? msg.folders : undefined,
+            distribution:
+              msg.distribution && typeof msg.distribution === "object" && Array.isArray(msg.distribution.groups)
+                ? msg.distribution
+                : undefined,
           })
 
           const pieces: string[] = [`✓ 导入 ${msg.imported} 篇`]
