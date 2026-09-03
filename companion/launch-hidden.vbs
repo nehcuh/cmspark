@@ -12,11 +12,10 @@ strHere = objFSO.GetParentFolderName(WScript.ScriptFullName)
 strLogDir  = objShell.ExpandEnvironmentStrings("%USERPROFILE%") & "\.cmspark-agent\logs"
 strLogFile = strLogDir & "\vbs-launcher.log"
 
-If Not objFSO.FolderExists(strLogDir) Then
-    On Error Resume Next
-    objFSO.CreateFolder strLogDir
-    On Error GoTo 0
-End If
+' FSO CreateFolder is NOT recursive — on a clean profile %USERPROFILE%\.cmspark-agent
+' does not exist yet, so build the log dir level by level. Otherwise the error paths
+' below cannot write vbs-launcher.log and the unhandled error hangs wscript on a dialog.
+EnsureFolder strLogDir
 
 ' --- Resolve launch command ---
 ' Priority 1: Bundled node.exe + cmspark-agent.js (official zip; wins over leftover SEA)
@@ -71,3 +70,18 @@ Function HasSystemNode()
     On Error GoTo 0
     HasSystemNode = (intProbe = 0)
 End Function
+
+' Recursively create a folder (FSO CreateFolder only makes the last level, and
+' errors if the parent is missing). On Error is procedure-scoped in VBScript,
+' so the guards here do not leak into the main body.
+Sub EnsureFolder(strPath)
+    Dim strParent
+    If objFSO.FolderExists(strPath) Then Exit Sub
+    strParent = objFSO.GetParentFolderName(strPath)
+    If Len(strParent) > 0 And Not objFSO.FolderExists(strParent) Then
+        EnsureFolder strParent
+    End If
+    On Error Resume Next
+    objFSO.CreateFolder strPath
+    On Error GoTo 0
+End Sub

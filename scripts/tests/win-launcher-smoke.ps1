@@ -99,6 +99,24 @@ function Copy-BundledNode {
     Copy-Item -LiteralPath $node -Destination (Join-Path $StateDir 'node.exe')
 }
 
+function Find-Csc {
+    # Add-Type -OutputAssembly cannot emit an exe on pwsh 7 (.NET Core), so the
+    # SEA stub is compiled with the .NET Framework csc.exe that ships with Windows.
+    $candidates = @(
+        (Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
+        (Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\csc.exe'),
+        (Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v2.0.50727\csc.exe'),
+        (Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v2.0.50727\csc.exe')
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c) { return $c }
+    }
+    $found = Get-ChildItem -Path (Join-Path $env:SystemRoot 'Microsoft.NET\Framework*\v*\csc.exe') -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -ne $found) { return $found.FullName }
+    return $null
+}
+
 function Get-ExeStub {
     # Compile the SEA stub once per run: writes launched-exe.txt (with its
     # command-line args) next to itself and exits.
@@ -108,6 +126,9 @@ function Get-ExeStub {
     $stubDir = Join-Path $WorkRoot '_stub'
     New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
     $out = Join-Path $stubDir 'stub-agent.exe'
+    $csPath = Join-Path $stubDir 'stub-agent.cs'
+    # Kept C# 2.0-compatible (no var / expression-bodied members) so even the
+    # legacy v2.0.50727 csc.exe can build it.
     $cs = @'
 using System;
 using System.IO;
@@ -120,7 +141,16 @@ public static class StubAgent {
     }
 }
 '@
-    Add-Type -TypeDefinition $cs -OutputAssembly $out -OutputType ConsoleApplication
+    Set-Content -LiteralPath $csPath -Value $cs -Encoding ascii
+    $csc = Find-Csc
+    if ($null -eq $csc) {
+        throw "csc.exe (.NET Framework compiler) not found under $env:SystemRoot\Microsoft.NET"
+    }
+    Write-Host "compiling exe stub with $csc"
+    $compileOut = & $csc /nologo /target:exe "/out:$out" "$csPath" 2>&1
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)) {
+        throw "csc.exe failed (exit ${LASTEXITCODE}):`n$compileOut"
+    }
     $script:ExeStubSource = $out
     return $out
 }
@@ -282,7 +312,7 @@ function Test-S4 {
     if ($r.ExitCode -ne 1) { Write-Check $id $false "expected wscript exit 1, got $($r.ExitCode)" $dir; return }
     $log = Get-VbsLog $dir
     if (-not (Test-Path -LiteralPath $log)) {
-        Write-Check $id $false "expected error log at $log (note: VBS CreateFolder is not recursive -- on a clean profile .cmspark-agent\logs cannot be created)" $dir; return
+        Write-Check $id $false "expected error log at $log (log dir not created under the redirected USERPROFILE?)" $dir; return
     }
     $content = Get-Content -LiteralPath $log -Raw
     if ($content -notmatch 'no usable node runtime') {
@@ -302,7 +332,7 @@ function Test-S5 {
     if ($r.ExitCode -ne 1) { Write-Check $id $false "expected wscript exit 1, got $($r.ExitCode)" $dir; return }
     $log = Get-VbsLog $dir
     if (-not (Test-Path -LiteralPath $log)) {
-        Write-Check $id $false "expected error log at $log (note: VBS CreateFolder is not recursive -- on a clean profile .cmspark-agent\logs cannot be created)" $dir; return
+        Write-Check $id $false "expected error log at $log (log dir not created under the redirected USERPROFILE?)" $dir; return
     }
     $content = Get-Content -LiteralPath $log -Raw
     if ($content -notmatch 'Neither') {
