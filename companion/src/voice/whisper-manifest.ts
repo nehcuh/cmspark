@@ -27,7 +27,8 @@ export class WhisperManifestError extends Error {
 const SHA256_RE = /^[0-9a-f]{64}$/
 const sha256Schema = z.string().regex(SHA256_RE, "sha256 must be 64 lowercase hex")
 
-const fileEntrySchema = z
+/** Exported for the #260 diarize manifest — identical pin discipline. */
+export const fileEntrySchema = z
   .object({
     name: z.string().min(1).regex(/^[^/\\]+$/, "name must be basename only"),
     url: z.string().refine((u) => u.startsWith("https://"), {
@@ -38,7 +39,8 @@ const fileEntrySchema = z
   })
   .strict()
 
-const modelEntrySchema = z
+/** Exported for the #260 diarize manifest — identical pin discipline. */
+export const modelEntrySchema = z
   .object({
     files: z.array(fileEntrySchema).min(1),
   })

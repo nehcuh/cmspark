@@ -45,6 +45,12 @@ import {
 } from "./whisper-state"
 import { maybePrewarmWhisper, resetWhisperPrewarm } from "./whisper-prewarm"
 import { probeWinSapiSystemSpeech, resolveWinSapiHelper } from "./win-sapi"
+import {
+  DIARIZE_MODEL_ID,
+  deleteDiarizeModel,
+  downloadDiarizeModel,
+  probeDiarizeModel,
+} from "./diarize-model"
 
 // --- types --------------------------------------------------------------------
 
@@ -58,6 +64,10 @@ export interface VoiceModelHandlerContext {
 export interface VoiceModelHandlerDeps {
   downloadImpl?: typeof downloadWhisperModel
   deleteImpl?: typeof deleteWhisperModel
+  /** #260 diarize model seams. */
+  downloadDiarizeImpl?: typeof downloadDiarizeModel
+  deleteDiarizeImpl?: typeof deleteDiarizeModel
+  probeDiarizeImpl?: typeof probeDiarizeModel
   buildState?: (opts?: BuildVoiceModelStateOpts) => Promise<VoiceModelStatePayload>
   listReady?: (rootDir?: string) => WhisperModelId[]
   probe?: typeof probeWhisperModelDir
@@ -68,19 +78,22 @@ export interface VoiceModelHandlerDeps {
   platform?: NodeJS.Platform
   resolveSapi?: typeof resolveWinSapiHelper
   probeSapi?: typeof probeWinSapiSystemSpeech
+  /** Diarize root override (tests). */
+  diarizeRootDir?: string
 }
 
 // --- process-level mutex + abort ----------------------------------------------
 
-type ActiveDownload = { modelId: WhisperModelId; controller: AbortController }
-type ActiveDelete = { modelId: WhisperModelId }
+/** modelId widened to string: holds WhisperModelId or DIARIZE_MODEL_ID (#260). */
+type ActiveDownload = { modelId: string; kind: "whisper" | "diarize"; controller: AbortController }
+type ActiveDelete = { modelId: string }
 type ActiveBinaryDownload = { controller: AbortController }
 
 let activeDownload: ActiveDownload | null = null
 let activeDelete: ActiveDelete | null = null
 let activeBinaryDownload: ActiveBinaryDownload | null = null
 /** Process-level; not config.json. Hydrates get_state after a failed download. */
-let lastDownloadErrorMem: { error: string; modelId: WhisperModelId } | null = null
+let lastDownloadErrorMem: { error: string; modelId: string } | null = null
 
 /** Test seam: clear download/delete mutex + abort any in-flight controller. */
 export function _resetVoiceModelHandlersForTests(): void {
@@ -113,7 +126,8 @@ function modelError(error: string, extra?: Record<string, unknown>) {
 
 function attachLastDownloadError(state: VoiceModelStatePayload): VoiceModelStatePayload & {
   lastDownloadError: string | null
-  lastDownloadModelId?: WhisperModelId
+  /** WhisperModelId or DIARIZE_MODEL_ID (#260). */
+  lastDownloadModelId?: string
 } {
   return {
     ...state,
@@ -126,6 +140,9 @@ const SETTINGS_SOURCE_TYPES = new Set([
   "voice.model.download",
   "voice.model.cancel",
   "voice.model.delete",
+  "voice.model.diarize_download",
+  "voice.model.diarize_cancel",
+  "voice.model.diarize_delete",
   "voice.model.set_active",
   "voice.model.set_engine",
   "voice.model.set_prefs",
@@ -138,10 +155,13 @@ const SETTINGS_SOURCE_TYPES = new Set([
 async function statePayload(
   deps: VoiceModelHandlerDeps = {},
 ): Promise<VoiceModelStatePayload> {
-  const downloading = activeDownload ? [activeDownload.modelId] : []
+  const downloading =
+    activeDownload && activeDownload.kind === "whisper" ? [activeDownload.modelId] : []
   const opts: BuildVoiceModelStateOpts = {
-    downloadingModelIds: downloading,
+    ...(downloading.length ? { downloadingModelIds: downloading } : {}),
+    ...(activeDownload?.kind === "diarize" ? { downloadingDiarize: true } : {}),
     ...(deps.rootDir ? { rootDir: deps.rootDir } : {}),
+    ...(deps.diarizeRootDir ? { diarizeRootDir: deps.diarizeRootDir } : {}),
   }
   if (deps.buildState) return deps.buildState(opts)
   return buildVoiceModelState(opts)
@@ -248,7 +268,7 @@ function startBackgroundDownload(
   deps: VoiceModelHandlerDeps,
 ): void {
   const controller = new AbortController()
-  activeDownload = { modelId, controller }
+  activeDownload = { modelId, kind: "whisper", controller }
   void statePayload(deps).then((s) => ctx.broadcast?.(s))
 
   const now = deps.now ?? Date.now
@@ -309,6 +329,89 @@ function startBackgroundDownload(
           modelError(downloadError, {
             code: "DOWNLOAD_FAILED",
             modelId,
+          }),
+        )
+        ctx.broadcast?.(attachLastDownloadError(state))
+      } else {
+        if (downloadError?.includes("aborted")) {
+          lastDownloadErrorMem = null
+        }
+        ctx.broadcast?.(attachLastDownloadError(state))
+      }
+    }
+  })()
+}
+
+// --- background diarize model download (#260) ---------------------------------
+
+/**
+ * Shares the whisper activeDownload slot: one model download at a time across
+ * BOTH subtrees (they share one disk budget; parallel downloads would race it).
+ * No auto-activate — the diarize model is not an sttEngine dependency.
+ */
+function startBackgroundDiarizeDownload(
+  ctx: VoiceModelHandlerContext,
+  deps: VoiceModelHandlerDeps,
+): void {
+  const controller = new AbortController()
+  activeDownload = { modelId: DIARIZE_MODEL_ID, kind: "diarize", controller }
+  void statePayload(deps).then((s) => ctx.broadcast?.(s))
+
+  const now = deps.now ?? Date.now
+  let lastSentAt = 0
+  const download = deps.downloadDiarizeImpl ?? downloadDiarizeModel
+
+  void (async () => {
+    let downloadError: string | undefined
+    try {
+      await download({
+        signal: controller.signal,
+        ...(deps.diarizeRootDir ? { rootDir: deps.diarizeRootDir } : {}),
+        onProgress: (p) => {
+          const t = now()
+          if (t - lastSentAt < 200) return
+          lastSentAt = t
+          ctx.broadcast?.({
+            type: "voice.model.progress",
+            modelId: p.modelId,
+            file: p.file,
+            receivedBytes: p.receivedBytes,
+            totalBytes: p.totalBytes,
+          })
+        },
+      })
+      logger.info("voice.model.diarize_download.completed", { modelId: DIARIZE_MODEL_ID })
+      lastDownloadErrorMem = null
+    } catch (err) {
+      if (err instanceof WhisperDownloadError) {
+        downloadError = err.message || err.reason
+        if (err.reason === "aborted") {
+          logger.info("voice.model.diarize_download.cancelled", { modelId: DIARIZE_MODEL_ID })
+        } else {
+          logger.warn("voice.model.diarize_download.failed", {
+            modelId: DIARIZE_MODEL_ID,
+            reason: err.reason,
+            message: err.message,
+          })
+        }
+      } else {
+        downloadError = err instanceof Error ? err.message : "network-error"
+        logger.warn("voice.model.diarize_download.failed", {
+          modelId: DIARIZE_MODEL_ID,
+          reason: downloadError,
+        })
+      }
+    } finally {
+      if (activeDownload?.kind === "diarize") {
+        activeDownload = null
+      }
+      const state = await statePayload(deps)
+      if (downloadError && !downloadError.includes("aborted")) {
+        lastDownloadErrorMem = { error: downloadError, modelId: DIARIZE_MODEL_ID }
+        ctx.broadcast?.(
+          modelError(downloadError, {
+            code: "DOWNLOAD_FAILED",
+            modelId: DIARIZE_MODEL_ID,
           }),
         )
         ctx.broadcast?.(attachLastDownloadError(state))
@@ -484,6 +587,115 @@ export async function handleVoiceModelMessage(
         ok: true,
         status: "cancelling",
         modelId,
+      }
+    }
+
+    // --- #260 diarize speaker-embedding model (single pinned model) ---
+
+    case "voice.model.diarize_download": {
+      if (activeDownload) {
+        if (activeDownload.modelId === DIARIZE_MODEL_ID) {
+          return {
+            type: "voice.model.download.result" as const,
+            ok: true,
+            status: "already-running",
+            modelId: DIARIZE_MODEL_ID,
+          }
+        }
+        return modelError("另一模型下载进行中——请待完成后重试或先取消。", {
+          code: "DOWNLOAD_IN_PROGRESS",
+          modelId: activeDownload.modelId,
+        })
+      }
+      if (activeDelete) {
+        logger.warn("voice.model.diarize_download.refused", {
+          reason: "delete-in-progress",
+        })
+        return modelError("模型删除进行中——待其完成后重试下载；本次未发起任何网络请求。", {
+          code: "DELETE_IN_PROGRESS",
+        })
+      }
+
+      const probe = deps.probeDiarizeImpl ?? probeDiarizeModel
+      if (probe(deps.diarizeRootDir).status === "ready") {
+        const state = await statePayload(deps)
+        ctx.broadcast?.(state)
+        return {
+          ...state,
+          download: "already-ready" as const,
+          modelId: DIARIZE_MODEL_ID,
+        }
+      }
+
+      startBackgroundDiarizeDownload(ctx, deps)
+      logger.info("voice.model.diarize_download.started", { modelId: DIARIZE_MODEL_ID })
+      return {
+        type: "voice.model.download.result" as const,
+        ok: true,
+        status: "started",
+        modelId: DIARIZE_MODEL_ID,
+      }
+    }
+
+    case "voice.model.diarize_cancel": {
+      if (!activeDownload || activeDownload.kind !== "diarize") {
+        return {
+          type: "voice.model.cancel.result" as const,
+          ok: true,
+          status: "not-running",
+          modelId: DIARIZE_MODEL_ID,
+        }
+      }
+      activeDownload.controller.abort()
+      logger.info("voice.model.diarize_download.cancel_requested", { modelId: DIARIZE_MODEL_ID })
+      return {
+        type: "voice.model.cancel.result" as const,
+        ok: true,
+        status: "cancelling",
+        modelId: DIARIZE_MODEL_ID,
+      }
+    }
+
+    case "voice.model.diarize_delete": {
+      if (activeDownload) {
+        logger.warn("voice.model.diarize_delete.refused", {
+          reason: "download-in-progress",
+          downloading: activeDownload.modelId,
+        })
+        return modelError("模型下载进行中——请先取消下载或待其完成后再删除。", {
+          code: "DOWNLOAD_IN_PROGRESS",
+          modelId: activeDownload.modelId,
+        })
+      }
+      if (activeDelete) {
+        return modelError("另一模型删除进行中——请稍后重试。", {
+          code: "DELETE_IN_PROGRESS",
+        })
+      }
+
+      activeDelete = { modelId: DIARIZE_MODEL_ID }
+      try {
+        const del = deps.deleteDiarizeImpl ?? deleteDiarizeModel
+        await del(deps.diarizeRootDir)
+        logger.info("voice.model.diarize_deleted", { modelId: DIARIZE_MODEL_ID })
+        const state = await statePayload(deps)
+        ctx.broadcast?.(state)
+        return {
+          ...state,
+          deleted: true as const,
+          modelId: DIARIZE_MODEL_ID,
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        logger.warn("voice.model.diarize_delete.failed", { error: message })
+        const state = await statePayload(deps)
+        ctx.broadcast?.(state)
+        return modelError(`删除失败：${message}`, {
+          code: "DELETE_FAILED",
+          modelId: DIARIZE_MODEL_ID,
+        })
+      } finally {
+        if (activeDelete?.modelId === DIARIZE_MODEL_ID) activeDelete = null
       }
     }
 

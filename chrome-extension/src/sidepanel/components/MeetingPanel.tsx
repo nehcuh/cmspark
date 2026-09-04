@@ -33,7 +33,8 @@ import {
   MEETING_STOP_FAILSAFE_MS,
 } from "../voice/meeting-caps"
 import { VOICE_DEFAULT_LANG } from "../voice/detect"
-import { formatMeetingDiarizeStatus } from "../voice/meeting-diarize-copy"
+import { formatMeetingDiarizeStatus, mapMeetingDiarizeError } from "../voice/meeting-diarize-copy"
+import { diarizeViaEmbeddingUpload, wavToRawPcm } from "../voice/meeting-diarize-upload"
 import { mapLocalSttError } from "../voice/error-map"
 import {
   createSerialRefineQueue,
@@ -100,6 +101,27 @@ function subscribeVoiceStt(handler: (msg: any) => void): () => void {
   }
 }
 
+/** #260: imperative one-shot subscribe for meeting.* (upload client state machine). */
+function subscribeMeetingRuntime(handler: (msg: any) => void): () => void {
+  if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) {
+    return () => {}
+  }
+  const listener = (msg: any) => {
+    if (msg && typeof msg.type === "string" && msg.type.startsWith("meeting.")) {
+      handler(msg)
+    }
+    return false
+  }
+  chrome.runtime.onMessage.addListener(listener)
+  return () => {
+    try {
+      chrome.runtime.onMessage.removeListener(listener)
+    } catch {
+      /* */
+    }
+  }
+}
+
 const formatElapsed = formatMeetingElapsed
 
 export function MeetingPanel(props: {
@@ -130,8 +152,8 @@ export function MeetingPanel(props: {
   const importAbortRef = useRef(false)
   /** Skip server→textarea sync while user is typing (dual-review dirty-guard). */
   const transcriptDirtyRef = useRef(false)
-  /** Mtg3: per-line acoustic features from last audio import (aligned with append order). */
-  const lineFeaturesRef = useRef<number[][]>([])
+  /** #260: per-line raw s16le PCM from last audio import (aligned with append order). */
+  const linePcmRef = useRef<Uint8Array[]>([])
   const [diarizeK, setDiarizeK] = useState(0)
   const [autoDiarizeAfterImport, setAutoDiarizeAfterImport] = useState(false)
   /** Optional markdown template for minutes structure (chrome.storage). */
@@ -173,6 +195,8 @@ export function MeetingPanel(props: {
   const activeModelId = state.voiceModel?.localModelId || "medium"
   const localModelReady = state.voiceModel?.models?.[activeModelId]?.status === "ready"
   const localBinaryReady = state.voiceModel?.binary?.status === "ready"
+  /** #260: speaker-embedding diarize model (未就绪必须显式引导下载，不静默落回). */
+  const diarizeModelReady = state.voiceModel?.diarizeModel?.status === "ready"
   /** P1: near-rt defaults on; honor global voiceRealtimeStreaming toggle. */
   const nearRealtime =
     MEETING_NEAR_REALTIME_DEFAULT &&
@@ -648,7 +672,7 @@ export function MeetingPanel(props: {
           transcriptRef.current = formatted
           transcriptDirtyRef.current = false
         }
-        lineFeaturesRef.current = []
+        linePcmRef.current = []
         setBusy(false)
         setImportStatus("已导入转写文件")
       }
@@ -666,7 +690,7 @@ export function MeetingPanel(props: {
         const kRaw = msg.diarize?.k ?? msg.meeting.diarize?.k
         const k = typeof kRaw === "number" && Number.isFinite(kRaw) ? Math.floor(kRaw) : null
         setImportStatus(formatMeetingDiarizeStatus(method, k))
-        if (k != null && k >= 2 && k <= 4) setDiarizeK(k)
+        if (k != null && k >= 2 && k <= 6) setDiarizeK(k)
       }
       if (msg.type === "meeting.minutes_result") {
         if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)
@@ -972,7 +996,7 @@ export function MeetingPanel(props: {
     const total = decoded.segments.length
     let failedAt: number | null = null
     let done = 0
-    const feats: number[][] = []
+    const pcms: Uint8Array[] = []
     const texts: string[] = []
     setImportStatus(`本机转写 0/${total} 段…`)
     for (let i = 0; i < total; i++) {
@@ -993,16 +1017,16 @@ export function MeetingPanel(props: {
         break
       }
       if (r.text.trim()) {
-        // One physical line per segment so features stay aligned (dual-review nit)
+        // One physical line per segment so PCM stays aligned (dual-review nit)
         const oneLine = r.text.trim().replace(/\s*\n+\s*/g, " ")
         texts.push(oneLine)
-        feats.push(seg.features)
+        pcms.push(wavToRawPcm(seg.wav))
         // local preview (speaker optional)
         appendLocalAndRemote(oneLine, null)
       }
       done = i + 1
     }
-    lineFeaturesRef.current = feats
+    linePcmRef.current = pcms
 
     // Single set_transcript so line count == features (avoid append race before diarize)
     if (texts.length > 0 && id) {
@@ -1036,25 +1060,57 @@ export function MeetingPanel(props: {
       setImportStatus(`导入部分失败（成功 ${done}/${total} 段，失败于第 ${failedAt} 段）`)
     } else {
       setImportStatus(`音频导入完成 ${done}/${total} 段`)
-      if (autoDiarizeAfterImport && feats.length >= 2 && id && texts.length === feats.length) {
-        setBusy(true)
-        setTimeout(() => {
-          sendViaRuntime({
-            type: "meeting.auto_diarize",
-            v: 1,
-            id,
-            privacy_ack_v1: true,
-            mode: "audio_cluster",
-            k: diarizeK,
-            features: feats,
-          })
-        }, 150)
+      if (autoDiarizeAfterImport && pcms.length >= 2 && id) {
+        // embedding 引擎；模型未就绪 → 显式引导下载（#260 硬约束，不静默落回）
+        if (!diarizeModelReady) {
+          setError(mapMeetingDiarizeError("embedding_model_required"))
+        } else {
+          setBusy(true)
+          await runUploadDiarize(id, pcms, "embedding")
+        }
       }
     }
     dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
   }
 
-  const runAutoDiarize = (mode: "audio_cluster" | "text_gap") => {
+  /**
+   * #260 PCM 上传自动标说话人：embedding = companion ONNX 说话人嵌入聚类；
+   * audio_cluster = 旧版 3 维声学特征显式回退（区分度低 · 无需模型）。
+   * 成功态由 meeting.diarized 运行时处理器收尾（busy/importStatus）。
+   */
+  const runUploadDiarize = async (
+    id: string,
+    pcmSegments: Uint8Array[],
+    mode: "embedding" | "audio_cluster",
+  ): Promise<boolean> => {
+    if (mode === "embedding" && !diarizeModelReady) {
+      setError(mapMeetingDiarizeError("embedding_model_required"))
+      setBusy(false)
+      return false
+    }
+    setBusy(true)
+    setError(null)
+    const label = mode === "embedding" ? "说话人嵌入" : "旧版 3 维特征"
+    setImportStatus(`${label} 0/${pcmSegments.length} 段…`)
+    const r = await diarizeViaEmbeddingUpload({
+      meetingId: id,
+      pcmSegments,
+      k: diarizeK,
+      mode,
+      send: sendViaRuntime,
+      onMessage: subscribeMeetingRuntime,
+      onProgress: (p) => setImportStatus(`${label} ${p.done}/${p.total} 段…`),
+    })
+    if (r.ok === false) {
+      setError(mapMeetingDiarizeError(r.code, r.message))
+      setBusy(false)
+      setImportStatus(null)
+      return false
+    }
+    return true
+  }
+
+  const runAutoDiarize = (mode: "embedding" | "audio_cluster" | "text_gap") => {
     if (!ensureAck()) return
     if (!meetingId && !transcript.trim()) {
       setError("请先创建会议或导入/录制转写")
@@ -1064,24 +1120,21 @@ export function MeetingPanel(props: {
       setError("转写为空，无法标说话人")
       return
     }
-    if (mode === "audio_cluster") {
-      const feats = lineFeaturesRef.current
-      if (!feats.length) {
-        setError("暂无声学特征：请先「上传音频转写」以启用实验性自动分离（纯粘贴请用弱标）")
+    if (mode === "embedding" || mode === "audio_cluster") {
+      const pcms = linePcmRef.current
+      if (!pcms.length) {
+        setError("暂无音频段：请先「上传音频转写」以启用说话人分离（纯粘贴请用弱标）")
+        return
+      }
+      // embedding 需模型；旧版 3 维是用户显式选择，不是模型缺失的静默落回
+      if (mode === "embedding" && !diarizeModelReady) {
+        setError(mapMeetingDiarizeError("embedding_model_required"))
         return
       }
       setBusy(true)
       setError(null)
       ensureMeetingIdThen((id) => {
-        sendViaRuntime({
-          type: "meeting.auto_diarize",
-          v: 1,
-          id,
-          privacy_ack_v1: true,
-          mode: "audio_cluster",
-          k: diarizeK,
-          features: feats,
-        })
+        void runUploadDiarize(id, pcms, mode)
       })
       return
     }
@@ -1475,17 +1528,19 @@ export function MeetingPanel(props: {
               data-testid="meeting-diarize-k"
               value={diarizeK}
               disabled={busy || capturing}
-              onChange={(e) => setDiarizeK(Math.min(4, Math.max(0, Number(e.target.value) || 0)))}
+              onChange={(e) => setDiarizeK(Math.min(6, Math.max(0, Number(e.target.value) || 0)))}
               style={{ marginLeft: 4, fontSize: 12 }}
             >
               <option value={0}>自动</option>
               <option value={2}>2</option>
               <option value={3}>3</option>
               <option value={4}>4</option>
+              <option value={5}>5</option>
+              <option value={6}>6</option>
             </select>
           </label>
           <span style={{ fontSize: 10, color: tokens.textSecondary }}>
-            「自动」按声学特征估计人数（实验 · 近似，非身份识别）
+            「自动」按说话人嵌入聚类估计人数（本机 · 实验 · 只标发言人N，非身份识别）
           </span>
           <label style={{ fontSize: 11, color: tokens.textSecondary, display: "flex", gap: 4, alignItems: "center" }}>
             <input
@@ -1521,11 +1576,21 @@ export function MeetingPanel(props: {
             type="button"
             data-testid="meeting-auto-diarize-audio"
             disabled={busy || capturing || !ack}
-            onClick={() => runAutoDiarize("audio_cluster")}
+            onClick={() => runAutoDiarize("embedding")}
             style={btnStyle(true)}
-            title="基于上传音频段的声学特征 k-means；匿名发言人N"
+            title="上传音频段 → 本机 ONNX 说话人嵌入 + 聚类；只标匿名发言人N，非身份识别（需先在 设置 → 听写方式 下载说话人分离模型）"
           >
             自动标说话人
+          </button>
+          <button
+            type="button"
+            data-testid="meeting-auto-diarize-legacy"
+            disabled={busy || capturing || !ack}
+            onClick={() => runAutoDiarize("audio_cluster")}
+            style={btnStyle(false)}
+            title="旧版回退：上传音频段 → 本机 3 维声学特征 + 聚类（区分度低 · 实验性 · 无需下载模型）；只标匿名发言人N，非身份识别"
+          >
+            旧版 3 维（区分度低）
           </button>
           <button
             type="button"

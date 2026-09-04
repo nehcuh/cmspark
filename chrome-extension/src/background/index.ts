@@ -1424,6 +1424,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "voice.model.set_active":
       case "voice.model.set_engine":
       case "voice.model.set_prefs":
+      // #260 diarize speaker-embedding model (settings fence on companion side).
+      case "voice.model.diarize_download":
+      case "voice.model.diarize_cancel":
+      case "voice.model.diarize_delete":
       // Path B: download cmspark-whisper runtime (settings). Missing cases were
       // reported as「扩展版本过旧」via Unknown message type map — not a version skew.
       case "voice.binary.download":
@@ -1457,6 +1461,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "meeting.bulk_speaker":
       case "meeting.import_text":
       case "meeting.auto_diarize":
+      // #260 PCM upload pipeline for embedding diarize (in-memory only, local).
+      case "meeting.diarize.upload_start":
+      case "meeting.diarize.upload_chunk":
+      case "meeting.diarize.upload_end":
       case "meeting.generate_minutes":
       case "meeting.set_status":
       case "overlay.shell.open":

@@ -24,6 +24,12 @@ import {
   resolveWhisperRoot,
 } from "./whisper-download"
 import { getWhisperPrewarmStatus } from "./whisper-prewarm"
+import {
+  DIARIZE_MODEL_ID,
+  diarizeModelDestDir,
+  probeDiarizeModel,
+  resolveDiarizeRoot,
+} from "./diarize-model"
 
 export type WhisperModelProbeStatus = "ready" | "absent" | "incomplete" | "downloading"
 
@@ -42,10 +48,14 @@ export interface VoiceModelStatePayload {
     string,
     { status: WhisperModelProbeStatus; bytesOnDisk?: number; error?: string }
   >
+  /** #260 diarize speaker-embedding model (anonymous clustering only). */
+  diarizeModel: { modelId: string; status: WhisperModelProbeStatus; bytesOnDisk?: number; error?: string }
   binary: { status: VoiceModelBinaryStatus; path?: string; message?: string }
+  /** SHARED budget across whisper root + diarize root (#260). */
   diskBudgetMB: number
   diskUsedMB: number
   whisperRoot: string
+  diarizeRoot: string
   /**
    * engine=local 且活动模型未就绪时，扩展本次会话回退浏览器听写 + 可见横幅
    * （非静默、不写 sttEngine）。默认 true。
@@ -134,8 +144,12 @@ export function resolveBinaryForState(opts?: {
 export interface BuildVoiceModelStateOpts {
   /** Model ids currently downloading (status overlay). */
   downloadingModelIds?: Iterable<string>
+  /** #260: diarize model downloading (status overlay). */
+  downloadingDiarize?: boolean
   /** Optional whisper root override (tests). */
   rootDir?: string
+  /** Optional diarize root override (tests). */
+  diarizeRootDir?: string
   /** Inject binary result (tests). */
   binary?: VoiceModelStatePayload["binary"]
   /** Inject companion roots for binary search. */
@@ -157,6 +171,7 @@ export async function buildVoiceModelState(
     modelDownloadEndpoint: "",
   }
   const rootDir = opts.rootDir ?? resolveWhisperRoot()
+  const diarizeRootDir = opts.diarizeRootDir ?? resolveDiarizeRoot()
   const downloading = new Set(opts.downloadingModelIds ?? [])
 
   const models: VoiceModelStatePayload["models"] = {}
@@ -181,7 +196,26 @@ export async function buildVoiceModelState(
     models[id] = entry
   }
 
-  const occupied = await dirOccupiedBytes(rootDir)
+  // #260 diarize model entry (shared budget, separate subtree)
+  let diarizeModel: VoiceModelStatePayload["diarizeModel"]
+  if (opts.downloadingDiarize) {
+    diarizeModel = { modelId: DIARIZE_MODEL_ID, status: "downloading" }
+  } else {
+    const probe = probeDiarizeModel(diarizeRootDir)
+    diarizeModel = { modelId: DIARIZE_MODEL_ID, status: probe.status }
+    if (probe.error) diarizeModel.error = probe.error
+    if (probe.status === "ready" || probe.status === "incomplete") {
+      try {
+        const bytes = await dirOccupiedBytes(diarizeModelDestDir(DIARIZE_MODEL_ID, diarizeRootDir))
+        if (bytes > 0) diarizeModel.bytesOnDisk = bytes
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+
+  // Shared voice-models budget: whisper root + diarize root (sum of subtrees)
+  const occupied = (await dirOccupiedBytes(rootDir)) + (await dirOccupiedBytes(diarizeRootDir))
   const budgetMB =
     typeof cfg.modelDiskBudgetMB === "number" &&
     Number.isFinite(cfg.modelDiskBudgetMB) &&
@@ -203,10 +237,12 @@ export async function buildVoiceModelState(
     localModelId,
     recommendedModelId: RECOMMENDED_WHISPER_MODEL,
     models,
+    diarizeModel,
     binary: opts.binary ?? resolveBinaryForState({ companionRoots: opts.companionRoots }),
     diskBudgetMB: budgetMB,
     diskUsedMB: Math.round((occupied / (1024 * 1024)) * 10) / 10,
     whisperRoot: rootDir,
+    diarizeRoot: diarizeRootDir,
     autoFallbackToBrowser: cfg.autoFallbackToBrowser !== false,
     modelDownloadEndpoint:
       typeof cfg.modelDownloadEndpoint === "string" ? cfg.modelDownloadEndpoint : "",

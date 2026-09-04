@@ -55,9 +55,9 @@ test("fileToWavSegments with mock AudioContext produces segments", async () => {
   if (r.ok) {
     assert.ok(r.segments.length >= 2)
     assert.ok(r.segments[0]!.wav.length > 44)
-    // RIFF header
+    // RIFF header + 16-bit PCM body (1s segment → 44 + 32000 bytes)
     assert.equal(r.segments[0]!.wav[0], 0x52)
-    assert.ok(Array.isArray(r.segments[0]!.features))
-    assert.equal(r.segments[0]!.features.length, 3)
+    assert.equal(r.segments[0]!.wav.length, 44 + LOCAL_STT_SAMPLE_RATE * 2)
+    assert.equal(r.segments[0]!.index, 0)
   }
 })

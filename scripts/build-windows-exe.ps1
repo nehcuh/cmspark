@@ -408,8 +408,39 @@ foreach ($pkg in $Systray2Packages) {
 if ($anySystray2Ok) { Ok "node_modules/ systray2 + deps (tray support)" }
 else { Warn "systray2 not installed — tray icon will not work" }
 
-# onnxruntime-node is intentionally NOT staged. Experimental locate is Qwen3-VL
-# (Python + on-demand HF/ModelScope weights). TinyClick/ORT packaging removed.
+# onnxruntime-node (#260 speaker diarize — 本机声纹 embedding). Resolved at
+# runtime via Module.createRequire(process.execPath) (same contract as systray2),
+# so the package must sit in $StagingDir/node_modules/. Keep ONLY the win32/x64
+# napi binary — the npm package ships every os/arch (hundreds of MB); one dir
+# is enough. Missing → warn-only (diarize degrades to diarize_runtime_unavailable).
+$OrtSrc = "$CompanionDir\node_modules\onnxruntime-node"
+if (Test-Path $OrtSrc) {
+    Copy-Item $OrtSrc "$StagingDir\node_modules\onnxruntime-node" -Recurse -Force
+    $ortBin = "$StagingDir\node_modules\onnxruntime-node\bin"
+    if (Test-Path $ortBin) {
+        Get-ChildItem $ortBin -Directory | Where-Object { $_.Name -like "napi-*" } | ForEach-Object {
+            $napi = $_.FullName
+            Get-ChildItem $napi -Directory | ForEach-Object {
+                if ($_.Name -ne "win32") { Remove-Item $_.FullName -Recurse -Force }
+            }
+            $winDir = Join-Path $napi "win32"
+            if (Test-Path $winDir) {
+                Get-ChildItem $winDir -Directory | Where-Object { $_.Name -ne "x64" } | ForEach-Object {
+                    Remove-Item $_.FullName -Recurse -Force
+                }
+            }
+        }
+        $ortKept = @(Get-ChildItem $ortBin -Recurse -Directory -Filter "x64" | Where-Object { $_.Parent.Name -eq "win32" }).Count
+        if ($ortKept -ge 1) { Ok "node_modules/onnxruntime-node win32/x64 napi (#260 speaker diarize)" }
+        else { Warn "onnxruntime-node staged but no win32/x64 napi binary — speaker diarize will degrade" }
+    } else {
+        Warn "onnxruntime-node/bin missing — speaker diarize will degrade"
+    }
+} else {
+    Warn "onnxruntime-node not installed — speaker diarize will degrade (diarize_runtime_unavailable)"
+}
+# Legacy TinyClick ONNX worker is still intentionally NOT staged (product-replaced;
+# experimental locate is Qwen3-VL with on-demand weights).
 
 # Path B local STT: cmspark-whisper is a *sidecar* next to the SEA exe
 # (NOT injected into the Node SEA blob). Runtime resolve looks under:

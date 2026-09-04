@@ -2771,6 +2771,9 @@ export async function handleMessage(
     case "voice.model.download":
     case "voice.model.cancel":
     case "voice.model.delete":
+    case "voice.model.diarize_download":
+    case "voice.model.diarize_cancel":
+    case "voice.model.diarize_delete":
     case "voice.model.set_active":
     case "voice.model.set_engine":
     case "voice.model.set_prefs":
@@ -2839,6 +2842,9 @@ export async function handleMessage(
     case "meeting.set_speakers":
     case "meeting.bulk_speaker":
     case "meeting.import_text":
+    case "meeting.diarize.upload_start":
+    case "meeting.diarize.upload_chunk":
+    case "meeting.diarize.upload_end":
     case "meeting.auto_diarize":
     case "meeting.generate_minutes":
     case "meeting.set_status":

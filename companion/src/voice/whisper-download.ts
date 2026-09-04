@@ -4,8 +4,9 @@
 // sha256 verify, atomic rename, mid-stream oversize abort) — NOT coupled to
 // TinyClick / computer schema.
 //
-// Budget is scoped to the whisper root ONLY (…/models/whisper), never the
-// parent models/ tree (no double-count with Qwen / other families).
+// Budget (#260): the voice-models budget is SHARED across the whisper root and
+// the diarize root (sum of both subtrees, one 4096MB total) — never the parent
+// models/ tree (no double-count with Qwen / other families).
 //
 // No auto-start on companion boot — only explicit downloadWhisperModel() calls.
 
@@ -30,6 +31,7 @@ import {
   whisperModelDirName,
   type WhisperModelId,
 } from "./whisper-catalog"
+import { diarizeModelsRootOf } from "./models-roots"
 import {
   getWhisperModelFiles,
   loadWhisperManifest,
@@ -116,7 +118,7 @@ function modelDestDir(modelId: WhisperModelId, rootDir: string): string {
   return path.join(rootDir, whisperModelDirName(modelId))
 }
 
-// --- disk accounting (budgetDir = whisper root only) --------------------------
+// --- disk accounting (shared voice-models budget: whisper + diarize roots) -----
 
 /** Recursive byte sum under dir (missing dir → 0). Exported for unit tests. */
 export async function dirOccupiedBytes(dir: string): Promise<number> {
@@ -136,7 +138,23 @@ export async function dirOccupiedBytes(dir: string): Promise<number> {
   }
 }
 
-function resolveBudgetMB(opts?: WhisperDownloadOpts): number {
+/** #260: combined bytes across budget roots (whisper root + diarize root). */
+export async function dirOccupiedBytesMulti(roots: string[]): Promise<number> {
+  let total = 0
+  for (const r of roots) total += await dirOccupiedBytes(r)
+  return total
+}
+
+/**
+ * Budget roots for the shared voice-models budget. Whisper root always first;
+ * the diarize sibling subtree joins the SAME 4096MB total (never doubled).
+ */
+export function resolveVoiceModelBudgetRoots(whisperRoot: string, dataDir?: string): string[] {
+  return [whisperRoot, diarizeModelsRootOf(dataDir ?? DATA_DIR)]
+}
+
+/** Shared voice-models budget (whisper + diarize). Exported for #260 diarize. */
+export function resolveBudgetMB(opts?: Pick<WhisperDownloadOpts, "budgetMB">): number {
   if (opts?.budgetMB !== undefined && Number.isFinite(opts.budgetMB) && opts.budgetMB > 0) {
     return opts.budgetMB
   }
@@ -269,35 +287,15 @@ export function _resetWhisperDownloadInflightForTests(): void {
 // --- probe --------------------------------------------------------------------
 
 /**
- * Probe model directory readiness against the pinned manifest.
+ * Probe a pinned model directory for readiness (generic core, #260).
  * - ready: all files exist with matching size + sha256
  * - absent: model dir missing or empty of expected finals
  * - incomplete: partial / size or hash mismatch / only .part
- *
- * Hash check uses streaming read for correctness; for multi-GB models prefer
- * calling this off the hot path (settings get_state is infrequent).
  */
-export function probeWhisperModelDir(
-  modelId: WhisperModelId,
-  rootDir?: string,
-  manifest?: WhisperManifest,
+export function probePinnedDir(
+  destDir: string,
+  files: WhisperManifestFile[],
 ): { status: "ready" | "absent" | "incomplete"; error?: string } {
-  if (!isWhisperModelId(modelId)) {
-    return { status: "absent", error: "model-unknown" }
-  }
-  const root = rootDir ? path.resolve(rootDir) : resolveWhisperRoot()
-  const destDir = modelDestDir(modelId, root)
-
-  let files: WhisperManifestFile[]
-  try {
-    files = getWhisperModelFiles(modelId, manifest ?? loadWhisperManifest())
-  } catch (err) {
-    return {
-      status: "absent",
-      error: err instanceof Error ? err.message : String(err),
-    }
-  }
-
   if (!existsSync(destDir)) {
     return { status: "absent" }
   }
@@ -367,6 +365,34 @@ export function probeWhisperModelDir(
   return { status: "incomplete" }
 }
 
+/**
+ * Probe model directory readiness against the pinned manifest.
+ * Hash check uses streaming read for correctness; for multi-GB models prefer
+ * calling this off the hot path (settings get_state is infrequent).
+ */
+export function probeWhisperModelDir(
+  modelId: WhisperModelId,
+  rootDir?: string,
+  manifest?: WhisperManifest,
+): { status: "ready" | "absent" | "incomplete"; error?: string } {
+  if (!isWhisperModelId(modelId)) {
+    return { status: "absent", error: "model-unknown" }
+  }
+  const root = rootDir ? path.resolve(rootDir) : resolveWhisperRoot()
+  const destDir = modelDestDir(modelId, root)
+
+  let files: WhisperManifestFile[]
+  try {
+    files = getWhisperModelFiles(modelId, manifest ?? loadWhisperManifest())
+  } catch (err) {
+    return {
+      status: "absent",
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+  return probePinnedDir(destDir, files)
+}
+
 // --- delete -------------------------------------------------------------------
 
 export async function deleteWhisperModel(modelId: WhisperModelId, rootDir?: string): Promise<void> {
@@ -398,39 +424,25 @@ export async function downloadWhisperModel(
   return run
 }
 
-async function doDownloadWhisperModel(
-  modelId: WhisperModelId,
-  opts: WhisperDownloadOpts,
-): Promise<void> {
-  const fetchImpl = opts.fetchImpl ?? fetch
-  const now = opts.now ?? Date.now
-  const signal = opts.signal
-
-  if (signal?.aborted) {
-    throw new WhisperDownloadError("aborted", `download aborted before start: ${modelId}`)
-  }
-
-  const manifest = opts.manifest ?? loadWhisperManifest()
-  let files: WhisperManifestFile[]
-  try {
-    files = getWhisperModelFiles(modelId, manifest)
-  } catch (err) {
-    throw new WhisperDownloadError(
-      "model-unknown",
-      err instanceof Error ? err.message : `manifest missing model: ${modelId}`,
-    )
-  }
-
-  // Download endpoint (HF mirror): rewrite huggingface.co file URLs to the
-  // configured/env endpoint origin. sha256/size pins unchanged; invalid
-  // endpoint fails closed here, before any fs/network side effect.
-  const endpoint = resolveModelDownloadEndpoint()
-  if (endpoint) {
-    files = files.map((f) => ({ ...f, url: rewriteWhisperFileUrl(f.url, endpoint) }))
-  }
-
-  const rootDir = resolveWhisperRoot({ rootDir: opts.rootDir, dataDir: opts.dataDir })
-  const destDir = modelDestDir(modelId, rootDir)
+/**
+ * Generic pinned-file set download (#260): budget precheck (multi-root),
+ * .part.json residue cleanup, per-file idempotent-skip / Range resume /
+ * verify / atomic rename. Shared by whisper models and the diarize model.
+ * `files` must already be endpoint-rewritten; names are re-validated here.
+ */
+export async function downloadPinnedFiles(args: {
+  destDir: string
+  files: WhisperManifestFile[]
+  fetchImpl: typeof fetch
+  signal?: AbortSignal
+  onProgress?: (p: { file: string; receivedBytes: number; totalBytes: number }) => void
+  now: () => number
+  budgetMB: number
+  budgetRoots: string[]
+  /** Label for abort/error messages (e.g. model id). */
+  label: string
+}): Promise<void> {
+  const { destDir, files, fetchImpl, signal, now, label } = args
   await mkdir(destDir, { recursive: true })
 
   // If a prior cancel left only *.part.json (no .part payload), wipe residue so
@@ -450,20 +462,20 @@ async function doDownloadWhisperModel(
 
   const totalSize = files.reduce((acc, f) => acc + f.size, 0)
 
-  // Disk budget — pre-check only (fail-closed). Budget dir = whisper root, NOT models/.
-  const budgetMB = resolveBudgetMB(opts)
-  const occupied = await dirOccupiedBytes(rootDir)
+  // Disk budget — pre-check only (fail-closed). Shared budget roots (whisper
+  // + diarize subtrees), never the parent models/ tree.
+  const occupied = await dirOccupiedBytesMulti(args.budgetRoots)
   const projected = occupied + totalSize
-  if (projected > budgetMB * 1024 * 1024) {
+  if (projected > args.budgetMB * 1024 * 1024) {
     throw new WhisperDownloadError(
       "disk-budget-exceeded",
-      `磁盘预算超限：whisper 根目录占用 ${occupied} + 本次 ${totalSize} = ${projected} 字节 > 预算 ${budgetMB}MB`,
+      `磁盘预算超限：语音模型占用 ${occupied} + 本次 ${totalSize} = ${projected} 字节 > 预算 ${args.budgetMB}MB`,
     )
   }
 
   for (const f of files) {
     if (signal?.aborted) {
-      throw new WhisperDownloadError("aborted", `download aborted: ${modelId}/${f.name}`)
+      throw new WhisperDownloadError("aborted", `download aborted: ${label}/${f.name}`)
     }
 
     if (!f.url.startsWith("https://")) {
@@ -534,10 +546,9 @@ async function doDownloadWhisperModel(
           resumeFrom,
           expectedSize: f.size,
           signal,
-          onProgress: opts.onProgress
+          onProgress: args.onProgress
             ? (received, total) =>
-                opts.onProgress!({
-                  modelId,
+                args.onProgress!({
                   file: f.name,
                   receivedBytes: received,
                   totalBytes: total,
@@ -576,6 +587,55 @@ async function doDownloadWhisperModel(
     await rename(partPath, destPath)
     await rm(metaPath, { force: true })
   }
+}
+
+async function doDownloadWhisperModel(
+  modelId: WhisperModelId,
+  opts: WhisperDownloadOpts,
+): Promise<void> {
+  const fetchImpl = opts.fetchImpl ?? fetch
+  const now = opts.now ?? Date.now
+  const signal = opts.signal
+
+  if (signal?.aborted) {
+    throw new WhisperDownloadError("aborted", `download aborted before start: ${modelId}`)
+  }
+
+  const manifest = opts.manifest ?? loadWhisperManifest()
+  let files: WhisperManifestFile[]
+  try {
+    files = getWhisperModelFiles(modelId, manifest)
+  } catch (err) {
+    throw new WhisperDownloadError(
+      "model-unknown",
+      err instanceof Error ? err.message : `manifest missing model: ${modelId}`,
+    )
+  }
+
+  // Download endpoint (HF mirror): rewrite huggingface.co file URLs to the
+  // configured/env endpoint origin. sha256/size pins unchanged; invalid
+  // endpoint fails closed here, before any fs/network side effect.
+  const endpoint = resolveModelDownloadEndpoint()
+  if (endpoint) {
+    files = files.map((f) => ({ ...f, url: rewriteWhisperFileUrl(f.url, endpoint) }))
+  }
+
+  const rootDir = resolveWhisperRoot({ rootDir: opts.rootDir, dataDir: opts.dataDir })
+  const destDir = modelDestDir(modelId, rootDir)
+
+  await downloadPinnedFiles({
+    destDir,
+    files,
+    fetchImpl,
+    signal,
+    now,
+    budgetMB: resolveBudgetMB(opts),
+    budgetRoots: resolveVoiceModelBudgetRoots(rootDir, opts.dataDir),
+    label: modelId,
+    onProgress: opts.onProgress
+      ? (p) => opts.onProgress!({ modelId, ...p })
+      : undefined,
+  })
 }
 
 /**
