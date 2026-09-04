@@ -11,8 +11,9 @@
  *    leaves the message queued (the client already holds chat.enqueued).
  *  - P1 drain parity: file.upload and chat.regenerate drain one queued
  *    nextRun on completion, like chat.create already did.
- *  - P2 abort drain: chat.abort picks up a queued nextRun (deferred a tick) —
- *    the aborted run's own drain is generation-guarded off.
+ *  - #291 abort honesty: chat.abort clears the queued nextRun (no silent
+ *    revival after the user pressed stop), ACKs `stopped:false` when no
+ *    controller was found, and logs thread_id + had_controller.
  *  - P2 D6: chat.steer passes client_message_id through to the steer queue and
  *    echoes it in the chat.steered ack.
  *  - P2 wire: thread-domain rejection frames all carry thread_id.
@@ -42,12 +43,14 @@ let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
 let saveConfig: typeof import("../src/config").saveConfig
 let getConfigDir: typeof import("../src/config").getConfigDir
 let peekNextRunCount: typeof import("../src/llm/run-queues").peekNextRunCount
+let enqueueNextRun: typeof import("../src/llm/run-queues").enqueueNextRun
 let takeSteer: typeof import("../src/llm/run-queues").takeSteer
 let _resetRunQueuesForTests: typeof import("../src/llm/run-queues")._resetRunQueuesForTests
 let MAX_NEXT_RUN: typeof import("../src/llm/run-queues").MAX_NEXT_RUN
 let MAX_STEER: typeof import("../src/llm/run-queues").MAX_STEER
 let composerLeases: typeof import("../src/ws/composer-lease").composerLeases
 let getComputerTaskAbortRegistry: typeof import("../src/computer/task-abort-registry").getComputerTaskAbortRegistry
+let getLogFilePath: typeof import("../src/logger").getLogFilePath
 
 // deepseek-chat trips the non-multimodal name heuristic, so standalone upload
 // images take the vision rail (analyzeImage) instead of native vision.
@@ -99,6 +102,7 @@ before(async () => {
   const queues = await import("../src/llm/run-queues")
   const lease = await import("../src/ws/composer-lease")
   const abortReg = await import("../src/computer/task-abort-registry")
+  const log = await import("../src/logger")
   handleMessage = mr.handleMessage
   listLlmActiveThreadIds = mr.listLlmActiveThreadIds
   __testSetLlmActiveForTests = mr.__testSetLlmActiveForTests
@@ -107,12 +111,14 @@ before(async () => {
   saveConfig = cfg.saveConfig
   getConfigDir = cfg.getConfigDir
   peekNextRunCount = queues.peekNextRunCount
+  enqueueNextRun = queues.enqueueNextRun
   takeSteer = queues.takeSteer
   _resetRunQueuesForTests = queues._resetRunQueuesForTests
   MAX_NEXT_RUN = queues.MAX_NEXT_RUN
   MAX_STEER = queues.MAX_STEER
   composerLeases = lease.composerLeases
   getComputerTaskAbortRegistry = abortReg.getComputerTaskAbortRegistry
+  getLogFilePath = log.getLogFilePath
   await cfg.initDataDir()
 
   saveConfig({
@@ -676,9 +682,9 @@ test("P1 drain parity: chat.regenerate completion drains one queued nextRun", as
   assert.equal(sent.filter((m) => m.type === "chat.done").length, 2)
 })
 
-test("P2 abort drain: chat.abort picks up the queued nextRun", async () => {
+test("#291: chat.abort clears the queued nextRun — stop never silently revives", async () => {
   const tm = new ThreadManager()
-  const thread = tm.create("", "abort-drain")
+  const thread = tm.create("", "abort-clears-queue")
   const sent: any[] = []
 
   holdStreams = true
@@ -696,8 +702,6 @@ test("P2 abort drain: chat.abort picks up the queued nextRun", async () => {
   )
   assert.equal(enq.type, "chat.enqueued")
 
-  // The drained run must complete immediately once it starts.
-  holdStreams = false
   const abortResp = await handleMessage(
     { type: "chat.abort", thread_id: thread.id },
     makeServices(tm),
@@ -705,17 +709,23 @@ test("P2 abort drain: chat.abort picks up the queued nextRun", async () => {
   )
   assert.equal(abortResp.type, "chat.aborted")
   assert.equal(abortResp.thread_id, thread.id)
-  // Deferred drain: the pickup must not have started synchronously.
-  assert.equal(streamCalls, 1, "drain is deferred (setImmediate), not inline in chat.abort")
+  assert.equal(abortResp.stopped, true, "controller existed — ACK must say so")
+  assert.equal(abortResp.cancelled, 1, "queued message was cancelled by the stop")
+  assert.equal(
+    peekNextRunCount(thread.id),
+    0,
+    "stop clears the nextRun queue synchronously, before the ACK returns",
+  )
   await createPromise
 
-  // Deferred (setImmediate) drain picks up the queued message after the abort.
-  await waitFor(() => streamCalls === 2, "post-abort drain starts the queued run")
-  await waitFor(
-    () => sent.filter((m) => m.type === "chat.done").length === 1,
-    "drained run completes",
+  // No deferred pickup, no gate, no path may restart the queued run.
+  await new Promise((r) => setTimeout(r, 50))
+  assert.equal(streamCalls, 1, "aborted thread must not revive from the queue")
+  assert.equal(
+    sent.filter((m) => m.type === "chat.user" && m.content === "queued before abort").length,
+    0,
+    "cancelled queued message never becomes a run",
   )
-  assert.equal(peekNextRunCount(thread.id), 0, "queue drained by the post-abort pickup")
   assert.equal(
     sent.filter((m) => m.type === "chat.aborted").length,
     0,
@@ -723,9 +733,9 @@ test("P2 abort drain: chat.abort picks up the queued nextRun", async () => {
   )
 })
 
-test("P2 abort drain: gate-rejected pickup keeps the message queued and pushes the error", async () => {
+test("#291: chat.abort clears the queue even when the composer lease is overlay-held", async () => {
   const tm = new ThreadManager()
-  const thread = tm.create("", "abort-drain-gated")
+  const thread = tm.create("", "abort-clears-gated")
   const sent: any[] = []
 
   holdStreams = true
@@ -743,30 +753,108 @@ test("P2 abort drain: gate-rejected pickup keeps the message queued and pushes t
   )
   assert.equal(enq.type, "chat.enqueued")
 
-  // Overlay takes the composer before the abort: the deferred drain must be
-  // lease-rejected, keep the message queued, and surface the gate error.
+  // Overlay holds the composer: a revived drain would be lease-rejected and
+  // leave the message queued — a landmine for the next unrelated chat.create.
+  // An explicit user stop must clear it outright instead.
   const beforeClaim = composerLeases.get(thread.id)
   composerLeases.claim({ thread_id: thread.id, holder: "overlay", rev: beforeClaim.rev })
   try {
-    holdStreams = false
     const abortResp = await handleMessage(
       { type: "chat.abort", thread_id: thread.id },
       makeServices(tm),
       makeSession(sent),
     )
     assert.equal(abortResp.type, "chat.aborted")
+    assert.equal(abortResp.stopped, true)
+    assert.equal(abortResp.cancelled, 1)
     await createPromise
 
-    await waitFor(
-      () => sent.some((m) => m.type === "chat.error" && m.data?.error_code === "OVERLAY_STANDBY"),
-      "gate error pushed to the extension",
+    await new Promise((r) => setTimeout(r, 50))
+    assert.equal(peekNextRunCount(thread.id), 0, "stop clears the queue; no gate landmine left")
+    assert.equal(streamCalls, 1, "no post-abort revival attempt")
+    assert.ok(
+      !sent.some((m) => m.type === "chat.error" && m.data?.error_code === "OVERLAY_STANDBY"),
+      "no deferred drain → no spurious OVERLAY_STANDBY after a stop",
     )
-    assert.equal(peekNextRunCount(thread.id), 1, "rejected pickup leaves the message queued")
-    assert.equal(streamCalls, 1, "queued run must not start while gate-rejected")
   } finally {
     const cur = composerLeases.get(thread.id)
     composerLeases.release({ thread_id: thread.id, rev: cur.rev })
   }
+})
+
+test("#291: chat.abort on a thread with no running controller ACKs stopped:false", async () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("", "abort-idle")
+  const sent: any[] = []
+
+  const resp = await handleMessage(
+    { type: "chat.abort", thread_id: thread.id },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  assert.equal(resp.type, "chat.aborted")
+  assert.equal(resp.thread_id, thread.id)
+  assert.equal(resp.stopped, false, "no controller — the ACK must not claim a stop")
+  assert.equal(resp.cancelled, 0)
+
+  const noId = await handleMessage(
+    { type: "chat.abort" },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  assert.equal(noId.type, "chat.aborted")
+  assert.equal(noId.stopped, false, "missing thread_id is an honest no-op, never a fake stop")
+})
+
+test("#291: chat.abort with queued nextRun but no active run → stopped:false, queue cleared", async () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("", "abort-queued-idle")
+  const sent: any[] = []
+
+  // Queue directly: an idle chat.create enqueue is rejected (idle_enqueue), so
+  // seed the queue the way a leftover-steer conversion would.
+  assert.equal(enqueueNextRun(thread.id, "leftover one"), true)
+  assert.equal(enqueueNextRun(thread.id, "leftover two"), true)
+
+  const resp = await handleMessage(
+    { type: "chat.abort", thread_id: thread.id },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  assert.equal(resp.stopped, false, "nothing was running")
+  assert.equal(resp.cancelled, 2, "stop still cancels the user's queued messages")
+  assert.equal(peekNextRunCount(thread.id), 0)
+})
+
+test("#291: every chat.abort is logged with thread_id + had_controller", async () => {
+  const tm = new ThreadManager()
+  const running = tm.create("", "abort-log-running")
+  const idle = tm.create("", "abort-log-idle")
+  const sent: any[] = []
+
+  holdStreams = true
+  const createPromise = handleMessage(
+    { type: "chat.create", thread_id: running.id, message: "first" },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  await waitFor(() => streamCalls === 1, "run streaming")
+
+  await handleMessage({ type: "chat.abort", thread_id: running.id }, makeServices(tm), makeSession(sent))
+  await handleMessage({ type: "chat.abort", thread_id: idle.id }, makeServices(tm), makeSession(sent))
+  await createPromise
+
+  const lines = fs
+    .readFileSync(getLogFilePath(), "utf8")
+    .split("\n")
+    .filter((l) => l.includes("chat.abort"))
+    .map((l) => JSON.parse(l))
+  const forRunning = lines.find((l) => l.data?.thread_id === running.id)
+  const forIdle = lines.find((l) => l.data?.thread_id === idle.id)
+  assert.ok(forRunning, "abort of the running thread must be logged")
+  assert.equal(forRunning.data.had_controller, true)
+  assert.ok(forIdle, "abort of the idle thread must be logged")
+  assert.equal(forIdle.data.had_controller, false)
 })
 
 test("P2 D6: chat.steer passes client_message_id through and echoes it in the ack", async () => {

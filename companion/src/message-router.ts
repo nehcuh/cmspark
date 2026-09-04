@@ -39,6 +39,7 @@ import { chatCreate, generateThreadTitle } from "./llm/adapter"
 import {
   MAX_NEXT_RUN,
   MAX_STEER,
+  clearNextRun,
   dropSteer,
   enqueueNextRun,
   enqueueSteer,
@@ -1577,7 +1578,16 @@ export async function handleMessage(
     }
 
     case "chat.abort": {
-      abortThreadChat(rest.thread_id)
+      // #291: honesty — record whether a controller actually existed, clear
+      // the nextRun queue (a user stop must never silently revive the thread),
+      // and log every abort so clicks are traceable after the fact.
+      const stopped = abortThreadChat(rest.thread_id)
+      const cancelled = typeof rest.thread_id === "string" ? clearNextRun(rest.thread_id) : 0
+      logger.info("chat.abort", {
+        thread_id: rest.thread_id,
+        had_controller: stopped,
+        cancelled_next_run: cancelled,
+      })
       // ADR-016 G13: abandon worker intents on host BEFORE pending reject + lease release
       try {
         const { abandonWorkerIntents } = await import("./board")
@@ -1602,31 +1612,7 @@ export async function handleMessage(
       } catch {
         /* best-effort */
       }
-      // P2: nextRun survives abort by design, but the aborted run's own drain
-      // is generation-guarded off (abortThreadChat bumped the generation), so
-      // a queued message would stall until an unrelated chat.create. Pick one
-      // up here. Deferred a tick: the aborted run's finally may not have
-      // settled yet (its generation CAS skips cleanup, and a fresh chat.create
-      // landing first makes the slot check inside drainNextRun a no-op).
-      // No session (test/tooling callers) → skip: the recursive chat.create
-      // needs one and would just drop the message.
-      if (session && typeof rest.thread_id === "string" && peekNextRunCount(rest.thread_id) > 0) {
-        const abortDrainThreadId = rest.thread_id
-        setImmediate(() => {
-          void drainNextRun(abortDrainThreadId, null, services, session)
-            .then((drained) => {
-              // Gate-rejected: message stays queued — surface the reason.
-              if (drained) session?.sendToExtension?.(drained)
-            })
-            .catch((e: any) => {
-              logger.warn("chat.abort.nextRun_drain_failed", {
-                thread_id: abortDrainThreadId,
-                error: e?.message || String(e),
-              })
-            })
-        })
-      }
-      return { type: "chat.aborted", thread_id: rest.thread_id }
+      return { type: "chat.aborted", thread_id: rest.thread_id, stopped, cancelled }
     }
 
     case "companion.ui.rect": {
