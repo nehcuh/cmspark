@@ -29,7 +29,7 @@ import { validateWildcardPattern } from "../security"
 import { redactSecrets } from "../threads/distill"
 import { normalizeTags } from "../threads/digest"
 import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT, type RelatedKnowledgeInput } from "./knowledge-related"
-import { hashKnowledgeBody, knowledgeDuplicateExempt } from "./knowledge-duplicate"
+import { hashKnowledgeBody, knowledgeDuplicateExempt, stripPdfFilenameHeading } from "./knowledge-duplicate"
 import {
   KNOWLEDGE_GROUPMAP_CHARS,
   buildKnowledgeDistribution,
@@ -2471,14 +2471,16 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
   findKnowledgeDuplicate(raw: string, fallbackName?: string): { id: string; title: string } | null {
     const { body } = this.previewKnowledge(raw, fallbackName)
     if (knowledgeDuplicateExempt(body)) return null
-    const incoming = hashKnowledgeBody(body)
+    // #293: hash without the parsePdf `# <filename>.pdf` heading so the same
+    // file under a different name still collides (symmetric on both sides).
+    const incoming = hashKnowledgeBody(stripPdfFilenameHeading(body))
     this.ensureFresh()
     const hits: { id: string; title: string }[] = []
     for (const s of this.skillsCache) {
       if (!this.isKnowledgeDoc(s)) continue
       const existingBody = typeof s.content === "string" ? s.content : ""
       if (knowledgeDuplicateExempt(existingBody)) continue
-      if (hashKnowledgeBody(existingBody) !== incoming) continue
+      if (hashKnowledgeBody(stripPdfFilenameHeading(existingBody)) !== incoming) continue
       const id = s.id || s.name
       hits.push({ id, title: String(s.title || s.name) })
     }

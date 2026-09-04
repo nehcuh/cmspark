@@ -6,6 +6,7 @@ import * as path from "node:path"
 import {
   hashKnowledgeBody,
   knowledgeDuplicateExempt,
+  stripPdfFilenameHeading,
 } from "../src/skills/knowledge-duplicate"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-k-dup-"))
@@ -81,6 +82,28 @@ test("AC-8: empty / placeholder incoming is never a duplicate", () => {
   const placeholder = "# report.pdf\n\n[此 PDF 为扫描件或图片 PDF，无法提取文本内容。页数: 1]"
   se.importKnowledge(placeholder, "report")
   assert.equal(se.findKnowledgeDuplicate(placeholder, "report"), null)
+})
+
+test("#293: parsePdf filename heading no longer defeats the hash (same file, two names)", () => {
+  const se = new SkillEngine()
+  se.importKnowledge("# invoice-a.pdf\n\nINVOICE_BODY_UNIQUE_293 line items")
+  const hit = se.findKnowledgeDuplicate("# invoice-copy.pdf\n\nINVOICE_BODY_UNIQUE_293 line items")
+  assert.ok(hit, "same PDF text under a different filename is still an exact duplicate")
+})
+
+test("#293: a real markdown heading is not stripped (distinct docs don't collide)", () => {
+  const se = new SkillEngine()
+  se.importKnowledge("# real-heading\n\nSHARED_TAIL_BODY_293")
+  const miss = se.findKnowledgeDuplicate("# other-heading\n\nSHARED_TAIL_BODY_293")
+  assert.equal(miss, null, "non-filename headings stay in the hash")
+})
+
+test("#293: stripPdfFilenameHeading unit shape", () => {
+  assert.equal(stripPdfFilenameHeading("# a.pdf\n\nbody"), "\nbody")
+  assert.equal(stripPdfFilenameHeading("\n# a.pdf\n\nbody"), "\nbody", "loader leaves a leading newline after frontmatter")
+  assert.equal(stripPdfFilenameHeading("# a.PDF\r\nbody"), "body")
+  assert.equal(stripPdfFilenameHeading("# real heading\n\nbody"), "# real heading\n\nbody")
+  assert.equal(stripPdfFilenameHeading("# notes.md\n\nbody"), "# notes.md\n\nbody")
 })
 
 test("AC-7 F-I-5: different bodies same heading still allocate notes-2", () => {

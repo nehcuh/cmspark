@@ -17,3 +17,16 @@ export function knowledgeDuplicateExempt(body: string): boolean {
 export function hashKnowledgeBody(body: string): string {
   return createHash("sha256").update((body || "").trim(), "utf8").digest("hex")
 }
+
+/**
+ * #293: parsePdf stamps `# <filename>.pdf` as the first heading of extracted
+ * text, so the same PDF under different names hashed differently (#281 false
+ * negative). Strip that heading before hashing — applied symmetrically to
+ * the incoming body and every stored body. Real markdown headings (no .pdf
+ * suffix) are kept in the hash.
+ */
+export function stripPdfFilenameHeading(body: string): string {
+  // Leading whitespace tolerated: the skill loader leaves a residual "\n"
+  // after the frontmatter close, so the heading is not always at index 0.
+  return (body || "").replace(/^\s*#.*\.pdf[ \t]*\r?\n/i, "")
+}

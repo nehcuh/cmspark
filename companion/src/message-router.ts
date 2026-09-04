@@ -3054,6 +3054,20 @@ export async function handleMessage(
       }
       const loaded = await loadKnowledgePayload(rest)
       if ("error" in loaded) return { type: "error", error: loaded.error }
+      // #293: single-doc path runs the #281 exact-dup gate server-side.
+      // preview only HINTS at the duplicate; this is the backstop — without
+      // an explicit force the duplicate never lands and the frame names the
+      // existing doc. Directory import keeps its skip-duplicate semantics.
+      if (rest.force !== true) {
+        const dup = skillEngine.findKnowledgeDuplicate(loaded.text, loaded.fallback)
+        if (dup) {
+          return {
+            type: "knowledge.import_rejected",
+            duplicate_of: dup,
+            error: `内容与已有文档《${dup.title}》完全相同，未导入；仍要导入请显式 force:true（确认面板「仍导入」）`,
+          }
+        }
+      }
       const overrides = {
         title: typeof rest.title === "string" ? rest.title : undefined,
         description: typeof rest.description === "string" ? rest.description : undefined,

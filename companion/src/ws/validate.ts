@@ -1123,6 +1123,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (!m.url && !m.content && !m.file && !m.path) {
         return { valid: false, error: "knowledge.import requires url, content, or file" }
       }
+      // #293: force (仍导入) is optional boolean — mirrors pack.apply force_takeover.
+      if (m.force !== undefined && m.force !== true && m.force !== false) {
+        return { valid: false, error: "knowledge.import force must be boolean when set" }
+      }
       return { valid: true }
     },
     "knowledge.get": (m) => {

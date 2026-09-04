@@ -17,6 +17,10 @@ import {
 import { extractRedactedStub, isRedactedStubContent } from "../utils/redacted-stub-utils"
 import { RetrievedSourcesChips } from "./RetrievedSourcesChips"
 import { fillKnowledgeDraftFromSuggestion, formatKnowledgeTagsInput } from "../utils/knowledge-preview"
+import {
+  KNOWLEDGE_IMPORT_CONFIRM_LABEL,
+  KNOWLEDGE_IMPORT_FORCE_LABEL,
+} from "../utils/knowledge-distribution"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
 import {
@@ -807,6 +811,9 @@ function KnowledgeImportModal() {
                 ...p.payload,
                 type: "knowledge.import",
                 user_gesture: true,
+                // #293: preview flagged an exact duplicate — only an explicit
+                // 仍导入 click carries force past the server-side gate.
+                force: p.duplicate_of ? true : undefined,
                 title,
                 description,
                 tags: tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
@@ -815,7 +822,7 @@ function KnowledgeImportModal() {
               dispatch({ type: "CLEAR_KNOWLEDGE_PREVIEW" })
             }}
           >
-            确认导入
+            {p.duplicate_of ? KNOWLEDGE_IMPORT_FORCE_LABEL : KNOWLEDGE_IMPORT_CONFIRM_LABEL}
           </button>
         </div>
       </div>

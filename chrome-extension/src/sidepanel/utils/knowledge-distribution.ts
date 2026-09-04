@@ -19,6 +19,11 @@ export const KNOWLEDGE_DUPLICATE_CONFIRM_PREFIX = "内容与已有文档《"
 export const KNOWLEDGE_DUPLICATE_CONFIRM_SUFFIX = "》完全相同"
 /** #281 目录导入结果句。 */
 export const KNOWLEDGE_SKIPPED_DUPLICATE_COPY = "跳过重复"
+/** #293 弹窗主按钮：dup 时不再是「确认导入」——点下去才带 force，服务端门才放行。 */
+export const KNOWLEDGE_IMPORT_FORCE_LABEL = "仍导入"
+export const KNOWLEDGE_IMPORT_CONFIRM_LABEL = "确认导入"
+/** #293 服务端拒绝后的状态行尾巴（拼在 CONFIRM_PREFIX/SUFFIX 之后）。 */
+export const KNOWLEDGE_IMPORT_REJECTED_TAIL = "，未导入"
 
 /**
  * 「按堆选文」开关下方的原理说明（2026-09-03 开闸后补；tooltip 不够，要可读）。

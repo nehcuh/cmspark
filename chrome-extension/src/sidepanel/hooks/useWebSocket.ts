@@ -12,6 +12,11 @@ import { normalizeInboundLogEvent } from "../log-event-normalize"
 import { humanizeSidepanelGateError } from "../utils/gate-error-copy"
 import { newTempUserMessageId } from "../../utils/temp-message-id"
 import { knowledgePreviewErrorText, sanitizeKnowledgeSuggestion } from "../utils/knowledge-preview"
+import {
+  KNOWLEDGE_DUPLICATE_CONFIRM_PREFIX,
+  KNOWLEDGE_DUPLICATE_CONFIRM_SUFFIX,
+  KNOWLEDGE_IMPORT_REJECTED_TAIL,
+} from "../utils/knowledge-distribution"
 
 import { normalizeConfig } from "../utils/normalize-config"
 export { normalizeConfig }
@@ -1884,6 +1889,25 @@ export function useWebSocket() {
           dispatch({
             type: "SET_KNOWLEDGE_IMPORT_STATUS",
             status: { ok: msg.imported > 0, message: pieces.join(" · ") },
+          })
+          break
+        }
+
+        case "knowledge.import_rejected": {
+          // #293: the server-side exact-dup gate refused the import (no force).
+          // Nothing landed on disk — surface which existing doc blocks it.
+          const dupTitle =
+            msg.duplicate_of && typeof msg.duplicate_of === "object" && typeof msg.duplicate_of.title === "string"
+              ? msg.duplicate_of.title
+              : ""
+          dispatch({
+            type: "SET_KNOWLEDGE_IMPORT_STATUS",
+            status: {
+              ok: false,
+              message: dupTitle
+                ? `${KNOWLEDGE_DUPLICATE_CONFIRM_PREFIX}${dupTitle}${KNOWLEDGE_DUPLICATE_CONFIRM_SUFFIX}${KNOWLEDGE_IMPORT_REJECTED_TAIL}`
+                : `${KNOWLEDGE_DUPLICATE_CONFIRM_PREFIX}？${KNOWLEDGE_DUPLICATE_CONFIRM_SUFFIX}${KNOWLEDGE_IMPORT_REJECTED_TAIL}`,
+            },
           })
           break
         }
