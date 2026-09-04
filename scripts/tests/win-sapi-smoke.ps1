@@ -4,12 +4,14 @@
 # Runs on GitHub Actions windows-latest (pwsh). Proves on a real Windows box:
 #   1. win-sapi-helper.cs compiles with the .NET Framework csc.exe that ships
 #      with Windows (+ GAC System.Speech reference) — no SDK needed.
-#   2. The helper speaks the line-JSON protocol: {probe:true} → exactly one
-#      JSON frame on stdout, then exit.
+#   2. The helper speaks the line-JSON protocol over STDIN (the helper only
+#      reads Console.ReadLine — argv is unused): {probe:true} piped to stdin
+#      must reply one JSON frame containing "available". A protocol error
+#      frame does NOT count as success.
 #   3. A silent 1s WAV transcribes through the full helper pipeline and yields
 #      exactly one well-formed frame (text or error — NO content assertions:
 #      runner SKUs are Server without speech recognizers, and that is a legal
-#      honest-error outcome).
+#      honest-error outcome). Protocol errors, however, DO fail the gate.
 # Any failed check exits 1 with diagnostics.
 #
 # Static/protocol contract is pinned by companion voice-win-sapi tests; this
@@ -107,17 +109,17 @@ try {
         exit 1
     }
 
-    # --- probe frame -------------------------------------------------------------
+    # --- probe frame (STDIN line-JSON — the helper's only transport) -------------
 
-    # Single-quoted literal JSON — PowerShell passes the quotes through intact.
-    $probe = & $exe '{"probe":true}' 2>$null | Where-Object { $_ -match '^\s*\{' }
-    $probeLine = @($probe)[0]
+    # The helper reads ONE line from stdin (Console.ReadLine) and never looks at
+    # argv — pipe the JSON in. Protocol error frames fail this check: the probe
+    # handler always replies with an "available" boolean.
+    $probeLine = @(('{"probe":true}' | & $exe 2>$null) | Where-Object { $_ -match '^\s*\{' })[0]
     $probeJson = $null
     try { $probeJson = $probeLine | ConvertFrom-Json } catch { $probeJson = $null }
     $probeOk = $null -ne $probeJson -and
-        (($probeJson.PSObject.Properties.Name -contains 'available') -or
-         ($probeJson.PSObject.Properties.Name -contains 'error'))
-    Write-Check 'P1' $probeOk "probe replies one JSON frame (available/error): $probeLine"
+        ($probeJson.PSObject.Properties.Name -contains 'available')
+    Write-Check 'P1' $probeOk "probe frame over stdin contains 'available' (protocol error fails): $probeLine"
 
     # --- silent WAV pipeline -------------------------------------------------------
 
@@ -125,15 +127,17 @@ try {
     New-SilentWav -Path $wav
     Write-Check 'W0' ((Get-Item -LiteralPath $wav).Length -gt 44) "silent 1s WAV generated ($((Get-Item -LiteralPath $wav).Length) bytes)"
 
+    # Same stdin contract: request JSON piped in, never argv.
     $req = ('{"wav_path":"' + ($wav -replace '\\', '\\\\') + '","lang":"zh"}')
-    $transcribe = & $exe $req 2>$null | Where-Object { $_ -match '^\s*\{' }
-    $tLine = @($transcribe)[0]
+    $tLine = @(($req | & $exe 2>$null) | Where-Object { $_ -match '^\s*\{' })[0]
     $tJson = $null
     try { $tJson = $tLine | ConvertFrom-Json } catch { $tJson = $null }
-    $frameOk = $null -ne $tJson -and
-        (($tJson.PSObject.Properties.Name -contains 'text') -or
-         ($tJson.PSObject.Properties.Name -contains 'error'))
-    Write-Check 'T1' $frameOk "silent WAV yields one well-formed frame (no content assertions): $tLine"
+    $tProps = @()
+    if ($null -ne $tJson) { $tProps = $tJson.PSObject.Properties.Name }
+    $frameOk = ($null -ne $tJson) -and
+        (($tProps -contains 'text') -or ($tProps -contains 'error')) -and
+        (($tProps -notcontains 'code') -or ($tProps -contains 'code' -and [string]$tJson.code -ne 'protocol'))
+    Write-Check 'T1' $frameOk "silent WAV yields one well-formed frame over stdin (protocol errors fail): $tLine"
 
     Write-Host ""
     if ($script:Failures -gt 0) {

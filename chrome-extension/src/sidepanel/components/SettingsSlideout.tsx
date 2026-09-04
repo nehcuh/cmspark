@@ -91,15 +91,16 @@ import {
   whisperModelMetaLine,
   binaryStatusLine,
   canDownloadWhisperBinary,
+  engineChainRows,
   formatDiskUsage,
   modelProbeErrorLabel,
   modelStatusLabel,
   parseVoiceSettingsSendResponse,
   privacyCopyForEngine,
   progressPercent,
-  systemChainRows,
   type WhisperSettingsModelId,
 } from "../voice/whisper-settings-copy"
+import { detectSpeechRecognition } from "../voice/detect"
 import {
   VISION_COPY,
   applyVisionReuseFromMain,
@@ -117,6 +118,11 @@ import {
 // Alias kept as SECURITY_ARM_CONFIRM_PHRASE semantics; not a product "God" noun.
 const GODMODE_CONFIRM_PHRASE = "我了解风险"
 const SECURITY_ARM_PHRASE = GODMODE_CONFIRM_PHRASE
+
+// #259 引擎链路状态 row 2: Web Speech availability (pure feature detect; node tests → missing).
+const BROWSER_STT_SUPPORT = detectSpeechRecognition(
+  typeof window !== "undefined" ? (window as any) : {},
+)
 
 const SAFETY_SKILLS = [
   { id: "cookie_guard", label: "Cookie 守卫" },
@@ -1674,6 +1680,24 @@ export function SettingsSlideout() {
                     )}
                   </div>
 
+                  {/* #259: 引擎链路状态 — 常驻三行（本机/浏览器/系统），spec §3.3。
+                      不藏进任一引擎面板；非 win32 第三行诚实 unavailable。 */}
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500 }}>引擎链路状态</div>
+                    {engineChainRows({
+                      voiceModel,
+                      browserSupport: BROWSER_STT_SUPPORT,
+                      systemState: systemStateMirror,
+                    }).map((row) => (
+                      <div
+                        key={row.label}
+                        style={{ fontSize: 11, color: tokens.textMuted, marginTop: 2 }}
+                      >
+                        {row.ok ? "✓" : "✗"} {row.label}：{row.detail}
+                      </div>
+                    ))}
+                  </div>
+
                   {showLocalPanel && (
                     <div
                       style={{
@@ -1935,22 +1959,8 @@ export function SettingsSlideout() {
                         background: tokens.bgMuted,
                       }}
                     >
-                      <div style={{ marginBottom: 4, fontWeight: 500, fontSize: 12 }}>
-                        引擎链路状态
-                      </div>
-                      {systemChainRows(systemStateMirror).map((row) => (
-                        <div
-                          key={row.label}
-                          style={{ fontSize: 11, color: tokens.textMuted, marginTop: 2 }}
-                        >
-                          {row.ok ? "✓" : "✗"} {row.label}：{row.detail}
-                        </div>
-                      ))}
-                      {voiceModel && (
-                        <div style={{ fontSize: 11, color: tokens.textMuted, marginTop: 2 }}>
-                          {binaryStatusLine(voiceModel.binary)}
-                        </div>
-                      )}
+                      {/* 引擎链路状态三行已上移为常驻块（radios 之后）；
+                          本面板仅保留启用/停用动作。 */}
                       <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap" as const, gap: 8, alignItems: "center" }}>
                         {committedSystem ? (
                           <>

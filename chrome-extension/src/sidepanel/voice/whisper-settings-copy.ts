@@ -277,46 +277,82 @@ export function canDownloadWhisperBinary(
   return status === "not_found" || status === "hash_mismatch"
 }
 
-// --- #259 engine chain status rows (voice.system.state mirror; pure) ----------
+// --- #259 engine chain status rows — persistent 3-row block (review round-2) ----
 
-export type SystemChainRow = { label: string; ok: boolean; detail?: string }
+export type EngineChainRow = { label: string; ok: boolean; detail?: string }
 
 /**
- * 引擎链路状态 rows from the voice.system.state mirror. Pure — caller passes
- * the store mirror (or null = probe pending). Returns [] when the platform is
- * not win32 (nothing to show — the option itself is win32-only).
+ * 引擎链路状态：常驻三行（spec §3.3 AC — review round-2 MAJOR-1 fix）。
+ * 本机模型 ← voice.model.state；浏览器听写 ← Web Speech 探测 + 原因；
+ * 系统语音 ← voice.system.state 探针。非 win32 第三行诚实 unavailable，
+ * 三行永不隐藏（不藏进任一引擎 radio 面板）。Pure — caller passes mirrors.
  */
-export function systemChainRows(
-  systemState: {
-    platform?: string
-    helper?: { ok?: boolean; reason?: string; message?: string; pinned?: boolean }
-    systemSpeech?: { available?: boolean; reason?: string }
-  } | null | undefined,
-): SystemChainRow[] {
-  if (!systemState || systemState.platform !== "win32") return []
-  const helper = systemState.helper
+export function engineChainRows(input: {
+  voiceModel?:
+    | { localModelId?: string; models?: Record<string, { status?: string }> }
+    | null
+  browserSupport?:
+    | { ok: true; ctorName: string }
+    | { ok: false; reason: string }
+    | null
+  systemState?:
+    | {
+        platform?: string
+        helper?: { ok?: boolean; reason?: string; message?: string; pinned?: boolean }
+        systemSpeech?: { available?: boolean; reason?: string }
+      }
+    | null
+}): EngineChainRow[] {
+  // Row 1 — 本机模型 (active model from voice.model.state mirror)
+  const vm = input.voiceModel
+  let localRow: EngineChainRow
+  if (!vm) {
+    localRow = { label: "本机模型", ok: false, detail: "状态查询中" }
+  } else {
+    const id = vm.localModelId || "medium"
+    const status = vm.models?.[id]?.status || "absent"
+    localRow =
+      status === "ready"
+        ? { label: "本机模型", ok: true, detail: `已就绪（${id}）` }
+        : { label: "本机模型", ok: false, detail: `${modelStatusLabel(status)}（${id}）` }
+  }
+
+  // Row 2 — 浏览器听写 (Web Speech detection + reason)
+  const bs = input.browserSupport
+  const browserRow: EngineChainRow =
+    bs && bs.ok === true
+      ? { label: "浏览器听写", ok: true, detail: `可用（${bs.ctorName}）` }
+      : bs
+        ? { label: "浏览器听写", ok: false, detail: "不可用（浏览器缺少 Web Speech API）" }
+        : { label: "浏览器听写", ok: false, detail: "不可用（未探测）" }
+
+  // Row 3 — 系统语音 (win32 ∧ helper 就绪 ∧ System.Speech available；非 win32 诚实红)
+  const ss = input.systemState
+  const helper = ss?.helper
   const helperOk = helper?.ok === true
-  const speech = systemState.systemSpeech
-  const rows: SystemChainRow[] = [
-    {
-      label: "Windows 系统语音",
-      ok: speech?.available === true,
-      detail:
-        speech?.available === true
-          ? "已安装（System.Speech 本机识别）"
-          : speech?.reason
-            ? `不可用（${speech.reason}）`
-            : "不可用",
-    },
-    {
-      label: "SAPI Helper",
-      ok: helperOk,
-      detail: helperOk
-        ? helper?.pinned
-          ? "已就绪（SHA256 已校验）"
-          : "已就绪（未固定哈希）"
-        : helper?.message || helper?.reason || "未找到",
-    },
-  ]
-  return rows
+  const speech = ss?.systemSpeech
+  let systemRow: EngineChainRow
+  if (ss?.platform !== "win32") {
+    systemRow = { label: "系统语音", ok: false, detail: "不可用（仅 Windows 支持）" }
+  } else if (speech?.available !== true) {
+    systemRow = {
+      label: "系统语音",
+      ok: false,
+      detail: `不可用（${speech?.reason || "未检测到 System.Speech"}）`,
+    }
+  } else if (!helperOk) {
+    systemRow = {
+      label: "系统语音",
+      ok: false,
+      detail: `不可用（Helper 未就绪：${helper?.message || helper?.reason || "未找到"}）`,
+    }
+  } else {
+    systemRow = {
+      label: "系统语音",
+      ok: true,
+      detail: `可用（System.Speech 本机识别${helper?.pinned ? " · Helper SHA256 已校验" : ""}）`,
+    }
+  }
+
+  return [localRow, browserRow, systemRow]
 }

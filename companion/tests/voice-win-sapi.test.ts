@@ -334,3 +334,26 @@ test("probeWinSapiSystemSpeech: helper missing → available:false (never throws
   assert.equal(r.available, false)
   assert.ok(typeof r.reason === "string" && r.reason.length > 0)
 })
+
+// --- CI smoke source contract (review round-2 MAJOR-2 fix) ----------------------
+// The helper only reads ONE stdin line (Console.ReadLine; argv unused). The CI
+// smoke must feed JSON via stdin and must NOT count protocol-error frames as
+// probe success — that was the round-1 fake green.
+
+test("ci smoke feeds helper via stdin (never argv) and rejects protocol greens", () => {
+  const smoke = fs.readFileSync(
+    path.join(__dirname, "..", "..", "..", "scripts", "tests", "win-sapi-smoke.ps1"),
+    "utf8",
+  )
+  // stdin feeding: probe + transcribe both pipe into the exe
+  assert.match(smoke, /'\{"probe":true\}'\s*\|\s*&\s*\$exe/)
+  assert.match(smoke, /\$req\s*\|\s*&\s*\$exe/)
+  // never argv JSON
+  assert.doesNotMatch(smoke, /&\s*\$exe\s+'\{/)
+  assert.doesNotMatch(smoke, /&\s*\$exe\s+\$req/)
+  assert.doesNotMatch(smoke, /&\s*\$exe\s+\$probe/)
+  // probe pass requires 'available' (no error-frame fallback)
+  assert.doesNotMatch(smoke, /-contains\s+'available'\)\s*-or/)
+  // transcription frames with code=protocol fail the gate
+  assert.match(smoke, /-ne\s+'protocol'/)
+})
