@@ -6,6 +6,31 @@
 
 （无）
 
+## [0.5.9] — 2026-09-04
+
+0.5.8 工厂切点（512k / listen-first / zip node-first）之后的知识库波次：AI 草稿、检索/分布/开闸、多级文件夹、sha256 去重、PDF 导入修复；Windows launcher 后续。`[0.5.8]` 仍是 9-02 切点，不改历史。
+
+### Added
+
+- **知识 AI 草稿预填**：单篇导入两阶段 preview——先启发式草稿（含源文件 frontmatter tags），再 LLM 建议 description/tags（只填用户没改过的字段）。目录导入 / 库扫描零 LLM。[#272](https://github.com/nehcuh/cmspark/issues/272)
+- **知识检索打分（Wave A）**：query-aware TF-IDF + top-k + 8000 字跨文档预算；智能匹配默认开，关掉走站点∪勾选。无 embedding / 图谱。[#273](https://github.com/nehcuh/cmspark/issues/273)
+- **分布视图 + 可选簇路由（Wave B）**：自动分组 chips（「自动分组，不准就移到文件夹。」）；「按堆选文」默认关。[#273](https://github.com/nehcuh/cmspark/issues/273)
+- **认证簇路由分支开闸**：eval 双列通过后工厂常量打开；用户开关仍默认关——开闸 ≠ 替用户打开。[#280](https://github.com/nehcuh/cmspark/issues/280)
+- **多级文件夹**：最多 3 层，磁盘目录为 SoT（Obsidian 可读）；`knowledge.move` 保 pin。[#274](https://github.com/nehcuh/cmspark/issues/274)
+- **完全重复导入**：正文 sha256（不是 MD5）；预览标 `duplicate_of`，目录导入跳过重复。[#281](https://github.com/nehcuh/cmspark/issues/281)
+
+### Fixed
+
+- **PDF 导入**：整文件 `readAsDataURL` 编码（与对话框附件同路），修 chunked `btoa` 导致 >32KiB PDF 损坏。[#282](https://github.com/nehcuh/cmspark/issues/282)
+- **Windows launcher**：VBS 递归建 `logs` 目录（干净配置不再卡错误对话框）；`launch.bat` SEA echo 括号转义；无 bundled node 时探测系统 node 并给出诚实报错；CI `windows-latest` launcher smoke（S1–S9）。[#279](https://github.com/nehcuh/cmspark/issues/279)
+- **知识预览失败可见**：解析失败不再永远「正在解析…」；可「跳过解析，手动填写」。（#270 / #271）
+- **shrink 横幅三态**：旧 companion 省略 `shrunk` 时走 unknown 分支，不再谎称「仅提示/未压缩」。
+- **LLM `complete()` recap**：对齐 `streamChat` 预算；overflow 半窗重试一次，避免原样重发。
+
+### Known residuals
+
+- T1 已记分；[#228](https://github.com/nehcuh/cmspark/issues/228) 已关。**仍禁止**扩默认 outbound profile。
+
 ## [0.5.8] — 2026-09-02
 
 工厂默认 `context_window` 512000；过小磁盘运行时按 128000 且不写盘；官方 zip node-first；Companion listen 不再等 MCP start。[#268](https://github.com/nehcuh/cmspark/issues/268)
