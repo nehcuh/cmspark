@@ -1320,6 +1320,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "modules.list":
       case "modules.set_enabled":
       case "modules.update":
+      case "modules.set_profile":
       // Outbound MCP L4+ grants (Settings)
       case "outbound_mcp.grants.list":
       case "outbound_mcp.grants.issue":

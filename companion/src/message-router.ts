@@ -4062,6 +4062,24 @@ export async function handleMessage(
       if (!r.ok) return { type: "error", error: r.error }
       return { type: "modules.updated", modules: r.modules }
     }
+    case "modules.set_profile": {
+      // #284: settings 能力档 switch — same pack-engine persistence path; the
+      // reply reuses modules.updated (plus capability_profile) so every
+      // modules.list/modules.updated listener refreshes in place.
+      if (rest.profile !== "community" && rest.profile !== "enterprise") {
+        return { type: "error", error: "profile must be community|enterprise" }
+      }
+      const { setCapabilityProfile } = await import("./packs/pack-engine")
+      const r = setCapabilityProfile(rest.profile, rest.by || "settings.profile")
+      if (!r.ok) return { type: "error", error: r.error }
+      const config = getConfig()
+      return {
+        type: "modules.updated",
+        modules: config.modules || {},
+        capability_profile: config.capability_profile || "community",
+        modules_disabled: r.modules_disabled,
+      }
+    }
     case "modules.update": {
       const { updateModuleConfig } = await import("./capability/modules")
       if (!rest.module || typeof rest.module !== "string") {

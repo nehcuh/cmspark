@@ -59,7 +59,8 @@ export function humanizeSidepanelGateError(raw: string): string {
   if (/module_disabled|module_unavailable|enterprise_profile|本机能力未开启/i.test(body + e)) {
     return (
       "🔌 **本机能力未开启**\n\n" +
-      "侧栏 **「场景」** → **本机能力** 开启对应电源；企业能力还需 enterprise 配置。"
+      "侧栏 **「场景」** → **本机能力** 开启对应电源；若提示 enterprise_profile_required，" +
+      "去 **设置 → 能力档** 切换到 enterprise 后再开。"
     )
   }
 
