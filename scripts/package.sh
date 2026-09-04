@@ -63,9 +63,11 @@ CACHE_DIR="${ROOT_DIR}/dist-package/.cache"
 ZIP_NAME="cmspark-v${VERSION}-${PLATFORM}.zip"
 
 # Experimental locate layer is Qwen3-VL (on-demand model + Python env under
-# ~/.cmspark-agent/). Do NOT stage onnxruntime-node or the legacy TinyClick ONNX
-# worker — that path is product-replaced; leftover native ORT only bloats zips
-# and misleads release notes. See docs/qwen-vl-experimental-layer.md.
+# ~/.cmspark-agent/); the legacy TinyClick ONNX worker is product-replaced and
+# NOT staged. onnxruntime-node IS staged (#260 speaker diarize — 本机声纹
+# embedding), per-platform napi binary only (strip step [5/9]); missing target
+# binary degrades gracefully to diarize_runtime_unavailable. See
+# docs/qwen-vl-experimental-layer.md.
 
 echo "=== CMspark Package Builder ==="
 echo "Platform:  ${PLATFORM}"
@@ -203,10 +205,11 @@ fi
 # Chrome extension
 cp -r chrome-extension/build/chrome-mv3-prod "${STAGING}/chrome-extension"
 
-# External native dependencies — node-notifier and systray2 have native binaries
-# that can't be bundled, so we ship their full dependency tree
+# External native dependencies — node-notifier, systray2, and onnxruntime-node
+# (#260 diarize) have native binaries that can't be bundled, so we ship their
+# full dependency tree (ORT cross-platform napi dirs get stripped in step [5/9])
 mkdir -p "${STAGING}/node_modules"
-for pkg in node-notifier systray2; do
+for pkg in node-notifier systray2 onnxruntime-node; do
   if [ -d "companion/node_modules/${pkg}" ]; then
     cp -r "companion/node_modules/${pkg}" "${STAGING}/node_modules/"
   fi
@@ -238,13 +241,49 @@ function copyDeps(pkgName) {
     }
   } catch {}
 }
-['node-notifier', 'systray2'].forEach(copyDeps);
+['node-notifier', 'systray2', 'onnxruntime-node'].forEach(copyDeps);
 console.log('Copied ' + visited.size + ' transitive deps');
 " 2>&1
 cd "${ROOT_DIR}"
 
 # --- Step 4: Strip cross-platform binaries ---
 echo "[5/9] Stripping non-target platform binaries..."
+
+# #260: keep only the target os/arch napi binary under onnxruntime-node/bin/
+# (npm package ships darwin/linux/win32 × x64/arm64 — hundreds of MB; one
+# target dir is all loadOrtRuntime needs). Layout-agnostic: globs napi-*.
+# Missing target → warn-only (speaker diarize degrades to
+# diarize_runtime_unavailable; whisper STT etc. unaffected).
+strip_ort_napi() {
+  local os="$1" arch="$2"
+  local ort="${STAGING}/node_modules/onnxruntime-node"
+  [ -d "${ort}/bin" ] || return 0
+  local kept=0
+  shopt -s nullglob
+  for napi in "${ort}/bin"/napi-*; do
+    for osdir in "${napi}"/*/; do
+      local osname
+      osname="$(basename "${osdir}")"
+      if [ "${osname}" != "${os}" ]; then
+        rm -rf "${osdir}"
+        continue
+      fi
+      for archdir in "${osdir}"*/; do
+        if [ "$(basename "${archdir}")" != "${arch}" ]; then
+          rm -rf "${archdir}"
+        else
+          kept=$((kept + 1))
+        fi
+      done
+    done
+  done
+  shopt -u nullglob
+  if [ "${kept}" = "0" ]; then
+    echo "WARNING: no onnxruntime-node napi binary for ${os}/${arch} — speaker diarize will degrade (diarize_runtime_unavailable)" >&2
+  else
+    echo "  staged onnxruntime-node napi ${os}/${arch} (#260 speaker diarize)"
+  fi
+}
 case "${PLATFORM}" in
   macos-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_windows_release.exe"
@@ -253,6 +292,7 @@ case "${PLATFORM}" in
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
+    if [ "${PLATFORM}" = "macos-arm64" ]; then strip_ort_napi darwin arm64; else strip_ort_napi darwin x64; fi
     # Hard-gated above — copy is unconditional fail-closed.
     cp companion/dist/cmspark-host "${STAGING}/"
     mkdir -p "${STAGING}/host-scripts"
@@ -334,6 +374,7 @@ case "${PLATFORM}" in
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
+    if [ "${PLATFORM}" = "windows-arm64" ]; then strip_ort_napi win32 arm64; else strip_ort_napi win32 x64; fi
     # ARM64: systray2 has no win32-arm64 binary; tray-adapter will fallback to readline
     if [ "${PLATFORM}" = "windows-arm64" ]; then
       echo "  NOTE: Windows ARM64 has no systray2 binary — will use readline fallback"
@@ -395,6 +436,7 @@ case "${PLATFORM}" in
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
+    if [ "${PLATFORM}" = "linux-arm64" ]; then strip_ort_napi linux arm64; else strip_ort_napi linux x64; fi
     # No ORT/TinyClick stage — experimental locate is Qwen3-VL.
     # Path B: optional cmspark-whisper (linux-x64). Soft-warn if missing.
     if [ -f "companion/dist/bin/cmspark-whisper-linux-x64" ]; then

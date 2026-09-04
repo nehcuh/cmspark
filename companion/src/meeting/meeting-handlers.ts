@@ -40,6 +40,14 @@ import {
   diarizeByAudioFeatures,
   diarizeByTextGap,
 } from "./auto-diarize"
+import { diarizeByEmbeddings } from "./diarize-cluster"
+import { embedSegmentsForDiarize } from "./diarize-embed"
+import {
+  appendPcmChunk,
+  consumeFinalizedPcm,
+  createPcmSession,
+  finalizePcmSession,
+} from "./diarize-pcm-store"
 
 export interface MeetingHandlerContext {
   origin?: string
@@ -55,6 +63,8 @@ export interface MeetingHandlerDeps {
   generate?: typeof generateMeetingMinutes
   /** Best-effort: drop stale STT max-1 slot (e.g. prior dictation still inferring). */
   clearSttSessions?: () => void
+  /** #260 test seam: override speaker-embedding runtime. */
+  embedSegments?: typeof embedSegmentsForDiarize
 }
 
 function llmConfigFromCompanion(): LlmExtractConfig | null {
@@ -326,9 +336,52 @@ export async function handleMeetingMessage(
   }
 
   /**
+   * #260 PCM upload pipeline for embedding diarize. Extension-only (not in
+   * OVERLAY_MEETING_TYPES). Audio stays in memory, consumed once by
+   * meeting.auto_diarize mode:"embedding"; TTL + caps fail closed.
+   */
+  if (type === "meeting.diarize.upload_start") {
+    if (msg.privacy_ack_v1 !== true) {
+      return err("need_privacy_ack", "meeting_privacy_ack_v1 required for pcm upload")
+    }
+    const r = createPcmSession({
+      segments: msg.segments,
+      sampleRate: msg.sample_rate,
+      format: msg.format,
+    })
+    if (!r.ok) return err(r.code, r.message)
+    return { type: "meeting.diarize.upload_started", v: 1, session_id: r.value }
+  }
+
+  if (type === "meeting.diarize.upload_chunk") {
+    const r = appendPcmChunk(msg.session_id, msg.index, msg.seq, msg.data)
+    if (!r.ok) return err(r.code, r.message, { session_id: msg.session_id })
+    return {
+      type: "meeting.diarize.chunk_ok",
+      v: 1,
+      session_id: msg.session_id,
+      index: msg.index,
+      seq: msg.seq,
+    }
+  }
+
+  if (type === "meeting.diarize.upload_end") {
+    const r = finalizePcmSession(msg.session_id, msg.total_seqs)
+    if (!r.ok) return err(r.code, r.message, { session_id: msg.session_id })
+    return {
+      type: "meeting.diarize.upload_ended",
+      v: 1,
+      session_id: msg.session_id,
+      segments: r.value.segments,
+    }
+  }
+
+  /**
    * Mtg3: auto-tag speakers (anonymous 发言人N).
    * mode=audio_cluster requires features[][] aligned with transcript lines.
    * mode=text_gap is weak alternating labels (explicit; not acoustic).
+   * mode=#260 embedding: PCM uploaded via meeting.diarize.upload_*; local ONNX
+   * speaker embeddings + cosine agglomerative clustering (experimental).
    */
   if (type === "meeting.auto_diarize") {
     if (msg.privacy_ack_v1 !== true) {
@@ -344,11 +397,46 @@ export async function handleMeetingMessage(
     if (!m.transcript.length) {
       return err("empty_transcript", "empty transcript", { id })
     }
-    const mode = msg.mode === "text_gap" ? "text_gap" : "audio_cluster"
+    const mode =
+      msg.mode === "text_gap"
+        ? "text_gap"
+        : msg.mode === "embedding"
+          ? "embedding"
+          : "audio_cluster"
     const k = clampDiarizeK(msg.k)
     let result
     if (mode === "text_gap") {
       result = diarizeByTextGap(m.transcript, k)
+    } else if (mode === "embedding") {
+      const sessionId = typeof msg.pcm_session === "string" ? msg.pcm_session : ""
+      if (!sessionId) {
+        return err("pcm_session_required", "embedding requires pcm_session from upload_end", { id })
+      }
+      const pcm = consumeFinalizedPcm(sessionId)
+      if (!pcm) {
+        return err(
+          "pcm_session_not_found",
+          "pcm session not found or not finalized (upload_end first)",
+          { id },
+        )
+      }
+      if (pcm.length !== m.transcript.length) {
+        return err(
+          "pcm_mismatch",
+          `pcm segments ${pcm.length} != transcript ${m.transcript.length}`,
+          { id },
+        )
+      }
+      const embed = deps.embedSegments ?? embedSegmentsForDiarize
+      const embedResult = await embed(pcm, {
+        onProgress: (p) => {
+          ctx.send?.({ type: "meeting.diarize.progress", v: 1, id, done: p.done, total: p.total })
+        },
+      })
+      if (!embedResult.ok) {
+        return err(embedResult.code, embedResult.message, { id })
+      }
+      result = diarizeByEmbeddings(m.transcript, embedResult.embeddings, k)
     } else {
       const features = Array.isArray(msg.features) ? msg.features : null
       if (!features || features.length === 0) {

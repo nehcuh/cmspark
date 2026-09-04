@@ -2025,6 +2025,151 @@ export function SettingsSlideout() {
                     </div>
                   )}
 
+
+                  {/* #260: 说话人分离模型（会议声纹 embedding；独立于转写引擎，共享磁盘预算） */}
+                  {(() => {
+                    const entry = voiceModel?.diarizeModel
+                    const status = entry?.status || "absent"
+                    const diarizePending =
+                      entry?.modelId && voicePendingDownload === entry.modelId
+                    const downloading =
+                      status === "downloading" ||
+                      !!diarizePending ||
+                      (entry?.modelId != null &&
+                        progress?.modelId === entry.modelId &&
+                        status !== "ready")
+                    const pct =
+                      diarizePending || (downloading && progress?.modelId === entry?.modelId)
+                        ? progressPercent(progress?.receivedBytes ?? 0, progress?.totalBytes ?? 0)
+                        : null
+                    return (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          padding: "8px 8px 6px",
+                          borderRadius: 6,
+                          border: `1px solid ${tokens.border}`,
+                          background: tokens.bgElevated,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap" as const,
+                            alignItems: "center",
+                            gap: 6,
+                            fontSize: 12,
+                          }}
+                        >
+                          <span style={{ fontWeight: 500, color: tokens.text }}>
+                            说话人分离模型（会议 · 实验）
+                          </span>
+                          <span style={{ color: tokens.textMuted, fontSize: 11 }}>
+                            {diarizePending ? VOICE_STATUS_STARTING_DOWNLOAD : modelStatusLabel(status)}
+                            {typeof entry?.bytesOnDisk === "number" && entry.bytesOnDisk > 0
+                              ? ` · ${(entry.bytesOnDisk / (1024 * 1024)).toFixed(0)} MB`
+                              : ""}
+                          </span>
+                          <span style={{ flex: 1 }} />
+                          {downloading ? (
+                            <button
+                              type="button"
+                              style={styles.secondaryBtn}
+                              disabled={!!diarizePending}
+                              onClick={() => {
+                                clearVoiceErr()
+                                setVoicePendingDownload(null)
+                                sendVoice({ type: "voice.model.diarize_cancel" })
+                              }}
+                            >
+                              {BTN_CANCEL}
+                            </button>
+                          ) : status === "ready" ? (
+                            <button
+                              type="button"
+                              style={styles.secondaryBtn}
+                              onClick={() => {
+                                clearVoiceErr()
+                                sendVoice({ type: "voice.model.diarize_delete" })
+                              }}
+                            >
+                              {BTN_DELETE}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              style={styles.secondaryBtn}
+                              onClick={() => {
+                                clearVoiceErr()
+                                const modelId = entry?.modelId
+                                if (!modelId) return
+                                setVoicePendingDownload(modelId)
+                                dispatch({
+                                  type: "SET_VOICE_MODEL_PROGRESS",
+                                  progress: {
+                                    modelId,
+                                    file: "",
+                                    receivedBytes: 0,
+                                    totalBytes: 0,
+                                  },
+                                })
+                                sendVoice(
+                                  { type: "voice.model.diarize_download" },
+                                  {
+                                    onFail: () => {
+                                      setVoicePendingDownload(null)
+                                      dispatch({
+                                        type: "SET_VOICE_MODEL_PROGRESS",
+                                        progress: null,
+                                      })
+                                    },
+                                  },
+                                )
+                              }}
+                            >
+                              {BTN_DOWNLOAD}
+                            </button>
+                          )}
+                        </div>
+                        {(pct !== null || diarizePending) && (
+                          <div style={{ marginTop: 6 }}>
+                            <div
+                              style={{
+                                height: 6,
+                                borderRadius: 3,
+                                background: tokens.border,
+                                overflow: "hidden",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  height: "100%",
+                                  width: diarizePending ? "18%" : `${pct ?? 0}%`,
+                                  background: tokens.accent,
+                                  transition: "width 0.2s ease",
+                                  opacity: diarizePending ? 0.65 : 1,
+                                }}
+                              />
+                            </div>
+                            <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 2 }}>
+                              {diarizePending
+                                ? VOICE_STATUS_STARTING_DOWNLOAD
+                                : `${progress?.file ? `${progress.file} · ` : ""}${pct ?? 0}%`}
+                            </div>
+                          </div>
+                        )}
+                        {entry?.error && (
+                          <div style={{ fontSize: 11, color: tokens.danger, marginTop: 4 }}>
+                            {modelProbeErrorLabel(entry.error) || entry.error}
+                          </div>
+                        )}
+                        <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 4, lineHeight: 1.45 }}>
+                          会议「自动标说话人」用：本机 ONNX 声纹 embedding，音频不出本机；只标「发言人N」，非身份识别。与转写模型共享磁盘预算；下载后无需切换引擎。
+                        </div>
+                      </div>
+                    )
+                  })()}
+
                   <p style={{ fontSize: 11, color: tokens.textMuted, margin: "8px 0 0", lineHeight: 1.45 }}>
                     {privacyCopyForEngine(privacyEngine)}
                   </p>

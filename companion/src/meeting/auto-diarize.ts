@@ -7,13 +7,14 @@ import type { TranscriptLine } from "./meeting-store"
 
 export const DIARIZE_LABEL_PREFIX = "发言人"
 export const DIARIZE_K_MIN = 2
-export const DIARIZE_K_MAX = 4
+/** #260: K 上限 4 → 6（embedding 区分度高；legacy 3 维同享此常数） */
+export const DIARIZE_K_MAX = 6
 export const DIARIZE_K_DEFAULT = 2
 
 /** Feature vector: [logEnergy, zcr, spectralCentroidNorm] */
 export type DiarizeFeature = [number, number, number]
 
-export type DiarizeMethod = "audio_cluster" | "text_gap"
+export type DiarizeMethod = "audio_cluster" | "text_gap" | "embedding"
 
 export type DiarizeResult = {
   method: DiarizeMethod

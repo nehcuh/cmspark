@@ -37,7 +37,7 @@ export type MeetingStatus =
   | "error"
 
 export type MeetingDiarizeMeta = {
-  method: "audio_cluster" | "text_gap"
+  method: "audio_cluster" | "text_gap" | "embedding"
   k: number
   at: string
   experimental: true

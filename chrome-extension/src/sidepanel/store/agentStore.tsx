@@ -1755,10 +1755,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_COMPUTER_MODEL_ERROR":
       return { ...state, computerModelError: action.error }
     case "SET_VOICE_MODEL_STATE": {
-      // Any model still downloading → keep progress; otherwise clear stale %.
-      const anyDownloading = Object.values(action.modelState.models).some(
-        (m) => m.status === "downloading",
-      )
+      // Any model still downloading (whisper or #260 diarize) → keep progress.
+      const anyDownloading =
+        Object.values(action.modelState.models).some((m) => m.status === "downloading") ||
+        action.modelState.diarizeModel?.status === "downloading"
       const binaryReady = action.modelState.binary?.status === "ready"
       return {
         ...state,

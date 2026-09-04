@@ -29,7 +29,7 @@ const DATA = process.env.CMSPARK_DATA_DIR!
 
 test("clampDiarizeK and labels", () => {
   assert.equal(clampDiarizeK(1), 2)
-  assert.equal(clampDiarizeK(9), 4)
+  assert.equal(clampDiarizeK(9), 6)
   assert.equal(clampDiarizeK(0), 0)
   assert.equal(clampDiarizeK("auto"), 0)
   assert.equal(clampDiarizeK("garbage"), DIARIZE_K_DEFAULT)

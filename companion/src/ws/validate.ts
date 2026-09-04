@@ -470,6 +470,25 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // #260 — diarize speaker-embedding model (single pinned model, settings-page only)
+    "voice.model.diarize_download": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.model.diarize_download requires source:"settings"' }
+      }
+      return { valid: true }
+    },
+    "voice.model.diarize_cancel": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.model.diarize_cancel requires source:"settings"' }
+      }
+      return { valid: true }
+    },
+    "voice.model.diarize_delete": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.model.diarize_delete requires source:"settings"' }
+      }
+      return { valid: true }
+    },
     "voice.model.set_active": (m) => {
       if (m.source !== "settings") {
         return { valid: false, error: 'voice.model.set_active requires source:"settings" (settings-page only)' }
@@ -767,6 +786,75 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.text.length > 200_000) return { valid: false, error: "meeting.import_text text too long" }
       return { valid: true }
     },
+    // #260 — PCM upload pipeline for embedding diarize (in-memory only)
+    "meeting.diarize.upload_start": (m) => {
+      if (m.v !== 1) {
+        return { valid: false, error: "meeting.diarize.upload_start requires v:1" }
+      }
+      if (m.privacy_ack_v1 !== true) {
+        return { valid: false, error: "meeting.diarize.upload_start requires privacy_ack_v1:true" }
+      }
+      if (!Number.isInteger(m.segments) || m.segments < 1 || m.segments > 2000) {
+        return { valid: false, error: "meeting.diarize.upload_start requires segments integer 1..2000" }
+      }
+      if (m.sample_rate !== 16000) {
+        return { valid: false, error: "meeting.diarize.upload_start requires sample_rate:16000" }
+      }
+      if (m.format !== "pcm_s16le") {
+        return { valid: false, error: 'meeting.diarize.upload_start requires format:"pcm_s16le"' }
+      }
+      return { valid: true }
+    },
+    "meeting.diarize.upload_chunk": (m) => {
+      if (m.v !== 1) {
+        return { valid: false, error: "meeting.diarize.upload_chunk requires v:1" }
+      }
+      if (typeof m.session_id !== "string" || !m.session_id || m.session_id.length > 64) {
+        return { valid: false, error: "meeting.diarize.upload_chunk requires session_id string" }
+      }
+      if (!Number.isInteger(m.index) || m.index < 0 || m.index > 2000) {
+        return { valid: false, error: "meeting.diarize.upload_chunk requires index non-negative integer" }
+      }
+      if (!Number.isInteger(m.seq) || m.seq < 0) {
+        return { valid: false, error: "meeting.diarize.upload_chunk requires seq non-negative integer" }
+      }
+      if (typeof m.data !== "string" || !m.data) {
+        return { valid: false, error: "meeting.diarize.upload_chunk requires data base64 string" }
+      }
+      let decodedLen: number
+      try {
+        decodedLen = Buffer.from(m.data, "base64").length
+      } catch {
+        return { valid: false, error: "meeting.diarize.upload_chunk data is not valid base64" }
+      }
+      if (decodedLen > 2 * 1024 * 1024) {
+        return {
+          valid: false,
+          error: "meeting.diarize.upload_chunk decoded size exceeds 2MB",
+        }
+      }
+      return { valid: true }
+    },
+    "meeting.diarize.upload_end": (m) => {
+      if (m.v !== 1) {
+        return { valid: false, error: "meeting.diarize.upload_end requires v:1" }
+      }
+      if (typeof m.session_id !== "string" || !m.session_id || m.session_id.length > 64) {
+        return { valid: false, error: "meeting.diarize.upload_end requires session_id string" }
+      }
+      if (
+        !Array.isArray(m.total_seqs) ||
+        m.total_seqs.length < 1 ||
+        m.total_seqs.length > 2000 ||
+        !m.total_seqs.every((t: unknown) => Number.isInteger(t) && (t as number) >= 0)
+      ) {
+        return {
+          valid: false,
+          error: "meeting.diarize.upload_end requires total_seqs array of non-negative integers (1..2000)",
+        }
+      }
+      return { valid: true }
+    },
     "meeting.auto_diarize": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.auto_diarize requires v:1" }
       if (m.privacy_ack_v1 !== true) {
@@ -775,8 +863,24 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.id !== "string" || !m.id) {
         return { valid: false, error: "meeting.auto_diarize requires id" }
       }
-      if (m.mode != null && m.mode !== "audio_cluster" && m.mode !== "text_gap") {
-        return { valid: false, error: "meeting.auto_diarize mode must be audio_cluster|text_gap" }
+      if (
+        m.mode != null &&
+        m.mode !== "audio_cluster" &&
+        m.mode !== "text_gap" &&
+        m.mode !== "embedding"
+      ) {
+        return {
+          valid: false,
+          error: "meeting.auto_diarize mode must be audio_cluster|text_gap|embedding",
+        }
+      }
+      if (m.mode === "embedding") {
+        if (typeof m.pcm_session !== "string" || !m.pcm_session || m.pcm_session.length > 64) {
+          return { valid: false, error: "meeting.auto_diarize embedding requires pcm_session string" }
+        }
+      }
+      if (m.pcm_session != null && (typeof m.pcm_session !== "string" || m.pcm_session.length > 64)) {
+        return { valid: false, error: "meeting.auto_diarize pcm_session must be string (≤64)" }
       }
       if (m.features != null && !Array.isArray(m.features)) {
         return { valid: false, error: "meeting.auto_diarize features must be array" }

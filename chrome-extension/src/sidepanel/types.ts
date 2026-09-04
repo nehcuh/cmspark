@@ -852,6 +852,10 @@ export interface VoiceModelState {
   postprocessMap?: Array<[string, string]>
   modelPrewarm?: boolean
   prewarmStatus?: "idle" | "ok" | "fail"
+  /** #260 说话人分离（声纹 embedding）模型——未就绪时 UI 显式引导下载。 */
+  diarizeModel?: { modelId: string; status: VoiceModelStatus; bytesOnDisk?: number; error?: string }
+  /** #260 diarize 模型根目录（与 whisper 共享磁盘预算，sum-of-subtrees）。 */
+  diarizeRoot?: string
 }
 
 /**
