@@ -5,10 +5,12 @@
  *  - worker.pause (Mission Board row pause)
  *  - fleet.stop_all (Mission Board fleet bar stop)
  *  - cockpit stop_thread (confirm-response authoritative stop)
+ *  - worker_cancel (companion-dispatch orchestrator/parent cancel)
  *
  * Non-user abort paths keep their existing semantics (#306 ruling):
- *  - abortThreadChat() without clearQueue (worker_cancel / supersede shape)
+ *  - abortThreadChat() without clearQueue (supersede / panel-close shape)
  *  - abortLlmLoopsForPanel (panel close)
+ *  - drainThreadOnSupersede never touches the queue (source-pinned)
  *
  * Same OpenAI-completions prototype patch as message-router-nextrun-drain.test.ts.
  */
@@ -329,7 +331,7 @@ test("#307 non-user aborts keep nextRun: bare abortThreadChat + panel close", as
   try {
     const res = abortThreadChat(tid)
     assert.equal(res.stopped, true, "controller existed and was aborted")
-    assert.equal(res.cancelled, 0, "no clearQueue → nothing cancelled (worker_cancel / supersede shape)")
+    assert.equal(res.cancelled, 0, "no clearQueue → nothing cancelled (supersede / panel-close shape)")
     assert.equal(peekNextRunCount(tid), 2, "non-user abort keeps the queued turns")
   } finally {
     __testSetLlmActiveForTests(tid, false)
@@ -350,4 +352,52 @@ test("#307 non-user aborts keep nextRun: bare abortThreadChat + panel close", as
     __testSetLlmActiveForTests(tid2, false)
     _resetRunQueuesForTests()
   }
+})
+
+test("#307 worker_cancel clears the worker's queued nextRun and discloses the count", async () => {
+  const { executeCompanionTool, bindCompanionDispatchRuntime } = await import(
+    "../src/tool/companion-dispatch"
+  )
+  const tm = new ThreadManager()
+  const host = tm.create("", "cancel-host")
+  const worker = tm.create("", "cancel-worker")
+  tm.update(worker.id, { agent_role: "worker", parent_thread_id: host.id } as any)
+  assert.equal(enqueueNextRun(worker.id, "queued before worker_cancel"), true)
+
+  bindCompanionDispatchRuntime({
+    getThreadManager: () => tm,
+    getSkillEngine: () => new SkillEngine(),
+    getCachedTabUrl: () => undefined,
+    getTabUrlCache: () => new Map(),
+    computerTaskAbort: new Map(),
+    computerRateLimiter: async () => null as any,
+    getComputerRateLimiterSingleton: () => null,
+    securityConfirmations: new SecurityConfirmationManager(60_000),
+    getComputerEstopEnsureOverride: () => null,
+    rejectPendingForThread: () => 0,
+    hasPendingForTab: () => false,
+    rejectPendingForTab: () => 0,
+  })
+
+  const r = await executeCompanionTool("worker_cancel", {
+    worker_id: worker.id,
+    __thread_id: host.id,
+  })
+  assert.equal(r.success, true, `parent cancel accepted: ${r.error ?? ""}`)
+  assert.equal(r.data.cancelled_next_run, 1, "cancel discloses the cancelled queue depth")
+  assert.equal(peekNextRunCount(worker.id), 0, "worker_cancel clears the queue synchronously")
+})
+
+test("#307 supersede drain never touches the nextRun queue (source pin)", () => {
+  // drainThreadOnSupersede is module-private; pin its contract at source level
+  // (same style as chat-abort-ack.test.ts): the function body must contain
+  // neither clearNextRun nor abortThreadChat — supersede is a non-user path
+  // and the queue survives it (#306 ruling).
+  const src = fs.readFileSync(
+    path.join(__dirname, "..", "..", "src", "message-router.ts"),
+    "utf8",
+  )
+  const m = src.match(/async function drainThreadOnSupersede[\s\S]*?\n}/)
+  assert.ok(m, "drainThreadOnSupersede found in message-router.ts")
+  assert.ok(!/clearNextRun|clearQueue|abortThreadChat/.test(m[0]), "supersede drain keeps the queue")
 })

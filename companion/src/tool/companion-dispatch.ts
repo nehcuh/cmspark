@@ -735,6 +735,17 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           }
         }
       }
+      // #307: worker_cancel is user-initiated — abort + clear queue BEFORE any await,
+      // so a finishing chat.create finally cannot drain the queue mid-cancel.
+      let nextRunCancelled = 0
+      try {
+        const { abortThreadChat } = await import("../message-router")
+        if (typeof abortThreadChat === "function") {
+          nextRunCancelled = abortThreadChat(String(wid), { clearQueue: true }).cancelled
+        }
+      } catch {
+        /* optional */
+      }
       // G13: abandon worker intents on host BEFORE pending reject + lease release
       let intentsAbandoned = 0
       try {
@@ -755,13 +766,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         "worker_cancel",
         { hasPendingForTab, rejectPendingForTab },
       )
-      // Best-effort: message-router abortControllers if registered
-      try {
-        const { abortThreadChat } = await import("../message-router")
-        if (typeof abortThreadChat === "function") abortThreadChat(String(wid))
-      } catch {
-        /* optional */
-      }
       return {
         success: true,
         data: {
@@ -771,6 +775,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           leases_released: released,
           confirms_rejected: confirmsRejected,
           leases_drained: drained,
+          cancelled_next_run: nextRunCancelled,
         },
       }
     }

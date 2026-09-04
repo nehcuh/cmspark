@@ -196,9 +196,10 @@ export function __testSetLlmOwnerForTests(threadId: string, panelId: string | nu
 
 /**
  * Abort in-flight LLM for a thread (ADR-015 worker_cancel / chat.abort).
- * #307: user-initiated stops pass `clearQueue` so the thread's queued nextRun
- * never silently revives later; non-user paths (panel close, supersede,
- * worker_cancel) omit it and keep the queue. `cancelled` discloses how many
+ * #307: user-initiated stops (chat.abort / worker.pause / fleet.stop_all /
+ * cockpit stop_thread / worker_cancel) pass `clearQueue` so the thread's
+ * queued nextRun never silently revives later; non-user paths (panel close,
+ * supersede) omit it and keep the queue. `cancelled` discloses how many
  * queued turns the stop dropped (0 unless clearQueue).
  */
 export function abortThreadChat(
@@ -3582,7 +3583,7 @@ export async function handleMessage(
         had_controller: stopped,
         cancelled_next_run: cancelled,
       })
-      return { type: "worker.updated", worker: w }
+      return { type: "worker.updated", worker: w, cancelled_next_run: cancelled }
     }
     case "worker.resume": {
       if (!rest.worker_id) return { type: "error", error: "worker_id required" }
