@@ -11,7 +11,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { chatAbortedAckText } from "../src/sidepanel/hooks/useWebSocket"
+import { chatAbortedAckText, shouldClearBusyOnChatAborted } from "../src/sidepanel/hooks/useWebSocket"
 
 test("#291: stopped:false renders the honest 'no running task' copy", () => {
   assert.equal(
@@ -35,12 +35,29 @@ test("#291: legacy/field-less and zero-cancel acks keep the plain stop copy", ()
   assert.equal(chatAbortedAckText({ stopped: true, cancelled: "2" as any }), "⏹ 已停止生成")
 })
 
+test("#308: stopped:false ACK must not clear thread busy (Stop stays available)", () => {
+  assert.equal(shouldClearBusyOnChatAborted({ stopped: false }), false)
+  assert.equal(shouldClearBusyOnChatAborted({ stopped: false, cancelled: 1 }), false)
+})
+
+test("#308: stopped:true and field-less run-driven push still clear busy", () => {
+  assert.equal(shouldClearBusyOnChatAborted({ stopped: true }), true)
+  assert.equal(shouldClearBusyOnChatAborted({ stopped: true, cancelled: 2 }), true)
+  assert.equal(shouldClearBusyOnChatAborted({}), true)
+  assert.equal(shouldClearBusyOnChatAborted({ cancelled: 1 }), true)
+})
+
 test("#291: chat.aborted case renders chatAbortedAckText; background forwards threadId verbatim", () => {
   const ws = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
   const start = ws.indexOf('case "chat.aborted"')
   assert.ok(start >= 0, "chat.aborted case missing")
   const body = ws.slice(start, start + 2000)
   assert.match(body, /chatAbortedAckText\(msg\)/, "ack text must come from the helper")
+  assert.match(
+    body,
+    /shouldClearBusyOnChatAborted\(msg\)/,
+    "#308: busy clear must go through the helper so stopped:false keeps Stop",
+  )
 
   const bg = readFileSync(join(process.cwd(), "src/background/index.ts"), "utf8")
   const abortAt = bg.indexOf('case "chat.abort"')

@@ -167,6 +167,18 @@ export function chatAbortedAckText(msg: { stopped?: unknown; cancelled?: unknown
   return cancelled > 0 ? `⏹ 已停止生成，已取消 ${cancelled} 条排队消息` : "⏹ 已停止生成"
 }
 
+/**
+ * #308: whether `chat.aborted` should clear threadBusy (and thus hide Stop).
+ *  - ACK `stopped === false` → no controller matched; keep busy so the user
+ *    can press Stop again if the run is still going (wrong/idle threadId).
+ *  - ACK `stopped === true` or a field-less run-driven push → real stop echo;
+ *    clear busy. Distinguishes user-click ACK from companion's stop echo.
+ * Pure helper for unit tests (chat-abort-ack).
+ */
+export function shouldClearBusyOnChatAborted(msg: { stopped?: unknown; cancelled?: unknown }): boolean {
+  return msg.stopped !== false
+}
+
 /** Cap on preview thumbnail base64 (≈300KB binary); same value as companion. */
 const MAX_PREVIEW_B64_CHARS = 400_000
 
@@ -496,7 +508,9 @@ export function useWebSocket() {
         case "chat.aborted": {
           const abortTid =
             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current
-          if (abortTid) {
+          // #308: stopped:false ACK must not hide Stop while a run may still
+          // be going. Field-less run-driven echoes still clear busy.
+          if (abortTid && shouldClearBusyOnChatAborted(msg)) {
             dispatch({ type: "SET_THREAD_BUSY", threadId: abortTid, busy: false })
           }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
