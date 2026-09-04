@@ -4,6 +4,7 @@ import {
   MAX_NEXT_RUN,
   MAX_STEER,
   _resetRunQueuesForTests,
+  clearNextRun,
   convertLeftoverSteerToNextRun,
   dropSteer,
   enqueueNextRun,
@@ -57,6 +58,21 @@ test("nextRun survives dropSteer (abort analog)", () => {
   assert.equal(peekNextRunCount("t1"), 1)
   assert.equal(takeNextRun("t1")?.text, "after this run")
   assert.equal(takeNextRun("t1"), undefined)
+})
+
+test("#291: clearNextRun drops the whole queue and reports the count", () => {
+  _resetRunQueuesForTests()
+  assert.equal(clearNextRun("t1"), 0, "empty queue clears to 0")
+  enqueueNextRun("t1", "one")
+  enqueueNextRun("t1", "two", "cm-2")
+  assert.equal(clearNextRun("t1"), 2)
+  assert.equal(peekNextRunCount("t1"), 0)
+  assert.equal(takeNextRun("t1"), undefined, "cleared queue stays cleared")
+  // Steer queue is untouched — abortThreadChat already owns dropSteer.
+  enqueueSteer("t1", "steer survives clearNextRun")
+  enqueueNextRun("t1", "again")
+  assert.equal(clearNextRun("t1"), 1)
+  assert.equal(takeSteer("t1").length, 1)
 })
 
 test("steer entries carry clientMessageId through enqueue/take (D6)", () => {

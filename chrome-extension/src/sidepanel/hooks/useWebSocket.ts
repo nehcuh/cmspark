@@ -151,6 +151,22 @@ export function fileUploadedApplyToPanel(
   return shouldApplyStreamEvent(msgThreadId, activeThreadId)
 }
 
+/**
+ * #291: chat.aborted copy must reflect the companion's honest ACK.
+ *  - stopped === false → no controller matched (wrong/idle thread): say so,
+ *    never claim a stop that did not happen.
+ *  - cancelled > 0 → the stop also cleared queued nextRun messages; disclose N.
+ *  - Field-less pushes (run-driven abort echoes) keep the legacy copy.
+ * Pure helper for unit tests (chat-abort-ack).
+ */
+export function chatAbortedAckText(msg: { stopped?: unknown; cancelled?: unknown }): string {
+  if (msg.stopped === false) {
+    return "⚠️ 未找到运行中的任务（可能已停止或线程不匹配）"
+  }
+  const cancelled = typeof msg.cancelled === "number" && msg.cancelled > 0 ? msg.cancelled : 0
+  return cancelled > 0 ? `⏹ 已停止生成，已取消 ${cancelled} 条排队消息` : "⏹ 已停止生成"
+}
+
 /** Cap on preview thumbnail base64 (≈300KB binary); same value as companion. */
 const MAX_PREVIEW_B64_CHARS = 400_000
 
@@ -496,7 +512,7 @@ export function useWebSocket() {
               id: `${activeThreadRef.current}_abort_${Date.now()}`,
               thread_id: activeThreadRef.current || "",
               role: "assistant",
-              content: "⏹ 已停止生成",
+              content: chatAbortedAckText(msg),
               created_at: new Date().toISOString(),
             },
           })

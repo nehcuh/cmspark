@@ -1,6 +1,7 @@
 /**
  * Harness-v2-shaped queues, CMspark process-local.
- * steer dies on abort; nextRun survives abort (lost only on process death).
+ * steer dies on abort; nextRun survives abort only from non-user paths —
+ * an explicit user stop (chat.abort) clears it via clearNextRun (#291).
  */
 
 /** Steer queue entry: text + optional extension optimistic bubble id (F1 adopt). */
@@ -89,6 +90,18 @@ export function convertLeftoverSteerToNextRun(threadId: string): { converted: nu
 
 export function peekNextRunCount(threadId: string): number {
   return nextRunByThread.get(threadId)?.length || 0
+}
+
+/**
+ * #291: user stop (chat.abort) clears the whole nextRun queue — a stopped
+ * thread must never silently revive from queued messages. Returns the number
+ * of dropped entries so the ACK/UI can disclose it.
+ */
+export function clearNextRun(threadId: string): number {
+  const q = nextRunByThread.get(threadId)
+  if (!q?.length) return 0
+  nextRunByThread.delete(threadId)
+  return q.length
 }
 
 export function _resetRunQueuesForTests(): void {
