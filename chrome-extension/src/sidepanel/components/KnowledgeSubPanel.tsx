@@ -14,6 +14,7 @@ import {
   knowledgePreviewSendFailureText,
   newKnowledgePreviewRequestId,
 } from "../utils/knowledge-preview"
+import { knowledgeImportSelectionCopy } from "../utils/knowledge-import-copy"
 import {
   buildKnowledgeFolderTree,
   filterKnowledgeDocs,
@@ -355,10 +356,9 @@ export function KnowledgeSubPanel() {
         return true
       })
 
-      // Build the user-facing status *before* we start so they see what's happening.
-      const pieces: string[] = [`已选 ${list.length} 个文件，请确认第一篇（其余请再次导入）`]
-      if (oversized.length > 0) pieces.push(`跳过 ${oversized.length} 个 >6MB（如 ${oversized[0]}）`)
-      showStatus(pieces.join(" · "))
+      // #285: all-oversized must not say "已选 0 个请确认第一篇".
+      showStatus(knowledgeImportSelectionCopy(list.length, oversized))
+      if (list.length === 0) return
 
       // Sequential import (not concurrent) — concurrent FileReader on many
       // files spikes MV3 service-worker memory. Sequential keeps peak memory
@@ -440,7 +440,7 @@ export function KnowledgeSubPanel() {
       // Last-resort safety net — any unexpected throw above must not crash the
       // panel. Surface a short status and redirect to the safe folder-import path.
       console.error("[KnowledgeSubPanel] handleImportFiles top-level error:", err)
-      showStatus("导入失败：文件可能过大或格式不支持。请改用「导入文件夹」按钮（走 Companion 原生 picker）")
+      showStatus("导入失败：文件可能过大或格式不支持。超过 6MB 请改用「导入大文件」（Companion 原生选择，最大 10MB）。")
     }
   }
 
@@ -486,13 +486,51 @@ export function KnowledgeSubPanel() {
     fileInputRef.current?.click()
   }
 
+  const handleLargeFilePick = () => {
+    // #285: companion native single-file picker — no base64 WS round-trip, so
+    // the cap is parseFile's 10MB, not the browser 6MB frame budget.
+    const requestId = newKnowledgePreviewRequestId()
+    dispatch({
+      type: "SET_KNOWLEDGE_PREVIEW",
+      pendingId: requestId,
+      preview: {
+        title: "",
+        description: "",
+        preview: "正在打开文件选择器…",
+        char_count: 0,
+        payload: {},
+      },
+    })
+    showStatus("正在打开文件选择器…")
+    chrome.runtime.sendMessage({
+      type: "knowledge.import_local_file",
+      id: requestId,
+      user_gesture: true,
+    }).then((resp: unknown) => {
+      const failure = knowledgePreviewSendFailureText(resp)
+      if (failure) {
+        dispatch({
+          type: "SET_KNOWLEDGE_PREVIEW",
+          replyId: requestId,
+          preview: { preview: `预览失败：${failure}` },
+        })
+      }
+    }).catch(() => {
+      dispatch({
+        type: "SET_KNOWLEDGE_PREVIEW",
+        replyId: requestId,
+        preview: { preview: "预览失败：扩展后台未响应，请重载扩展后重试" },
+      })
+    })
+  }
+
   const handleFolderPick = () => {
     // Route through companion's native folder picker. The previous <input webkitdirectory>
     // approach crashed Chromium 149's main process (SIGSEGV at 0x38 on CrBrowserMain)
     // when picking iCloud-synced folders like 笨牛棚 — the crash is in native code
     // BEFORE our JS runs, so any extension-side guard (file count, size, try/catch)
     // is too late. Companion walks the dir safely (skips dotfiles, caps at 200 files,
-    // 6MB per file). Confirm first — native picker is not per-note extracted preview.
+    // 10MB per file). Confirm first — native picker is not per-note extracted preview.
     if (!window.confirm("将保留文件夹结构（最多 3 级，200 个文件）。每篇不单独解读。继续？")) {
       return
     }
@@ -985,13 +1023,20 @@ export function KnowledgeSubPanel() {
 
       {/* Import toolbar */}
       <div style={styles.toolbar}>
-        <button style={styles.toolbarBtn} onClick={handleFilePick} title="导入单个或多个文件（≤30 个）">
+        <button style={styles.toolbarBtn} onClick={handleFilePick} title="导入单个或多个文件（≤30 个，每篇 ≤6MB）">
           导入文件
         </button>
         <button
           style={styles.toolbarBtn}
+          onClick={handleLargeFilePick}
+          title="通过 Companion 原生选择器导入单个大文件（不经浏览器，最大 10MB）"
+        >
+          导入大文件
+        </button>
+        <button
+          style={styles.toolbarBtn}
           onClick={handleFolderPick}
-          title="通过 Companion 原生选择器导入整个文件夹（支持 Obsidian / iCloud vault，最多 200 篇笔记）"
+          title="通过 Companion 原生选择器导入整个文件夹（支持 Obsidian / iCloud vault，最多 200 篇笔记，每篇 ≤10MB）"
         >
           导入文件夹
         </button>

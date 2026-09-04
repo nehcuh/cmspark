@@ -1858,6 +1858,10 @@ export function useWebSocket() {
                 typeof msg.duplicate_of.title === "string"
                   ? { id: msg.duplicate_of.id, title: msg.duplicate_of.title }
                   : undefined,
+              // #285: native picker parsed on companion — import via content, not base64 file.
+              ...(typeof msg.import_content === "string"
+                ? { payload: { content: msg.import_content } }
+                : {}),
             },
           })
           break
@@ -1910,6 +1914,19 @@ export function useWebSocket() {
           })
           break
 
+        case "knowledge.import_local_file_result": {
+          if (msg.error === "cancelled") {
+            dispatch({ type: "CLEAR_KNOWLEDGE_PREVIEW" })
+            dispatch({ type: "SET_KNOWLEDGE_IMPORT_STATUS", status: { ok: false, message: "已取消选择文件" } })
+            break
+          }
+          dispatch({
+            type: "SET_KNOWLEDGE_IMPORT_STATUS",
+            status: { ok: false, message: `导入失败：${msg.error || "未知错误"}` },
+          })
+          break
+        }
+
         case "knowledge.import_directory_result": {
           if (msg.error) {
             const message = msg.error === "cancelled" ? "已取消选择文件夹" : `导入失败：${msg.error}`
@@ -1931,7 +1948,7 @@ export function useWebSocket() {
           })
 
           const pieces: string[] = [`✓ 导入 ${msg.imported} 篇`]
-          if (msg.skippedOversize > 0) pieces.push(`跳过 ${msg.skippedOversize} 个 >6MB`)
+          if (msg.skippedOversize > 0) pieces.push(`跳过 ${msg.skippedOversize} 个 >10MB`)
           if (msg.skippedUnsupported > 0) pieces.push(`跳过 ${msg.skippedUnsupported} 个不支持格式`)
           if (msg.skippedDuplicate > 0) pieces.push(`跳过重复 ${msg.skippedDuplicate} 篇`)
           if (msg.failed > 0) pieces.push(`失败 ${msg.failed}`)

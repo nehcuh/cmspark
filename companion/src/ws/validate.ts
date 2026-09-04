@@ -1162,6 +1162,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "knowledge.import_local_file": (m) => {
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "knowledge.import_local_file requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
     "knowledge.preview_cancel": (m) => {
       if (typeof m.id !== "string" || !m.id) {
         return { valid: false, error: "knowledge.preview_cancel requires id" }

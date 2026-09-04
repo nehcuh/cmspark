@@ -34,7 +34,8 @@ export interface FileParseError {
 
 export type FileParseResponse = FileParseResult | FileParseError
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+export const PARSE_FILE_MAX_BYTES = 10 * 1024 * 1024 // 10MB
+const MAX_FILE_SIZE = PARSE_FILE_MAX_BYTES
 const MAX_EMBEDDED_IMAGES = 20
 
 const EXTENSION_MIME_MAP: Record<string, string> = {
@@ -138,6 +139,22 @@ function extractEmbeddedImages(buffer: Buffer, filename: string): EmbeddedImage[
   }
 
   return images
+}
+
+/**
+ * #285: officeparser inlines images as `data:` URIs. extractEmbeddedImages
+ * already stores them as attachments — keeping the base64 in the markdown
+ * poisons TF-IDF / LLM context and inflates #281 body hashes. Strip before
+ * the text becomes the knowledge SoT.
+ */
+export function stripEmbeddedDataUris(text: string): string {
+  if (!text) return text
+  let out = text
+  out = out.replace(/!\[[^\]]*]\(\s*data:[^)]+\)/gi, "")
+  out = out.replace(/<img\b[^>]*\bsrc\s*=\s*(["'])data:[\s\S]*?\1[^>]*>/gi, "")
+  out = out.replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, "")
+  out = out.replace(/\n{3,}/g, "\n\n")
+  return out
 }
 
 function cleanHeaderFooter(text: string): string {
@@ -295,7 +312,7 @@ async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: strin
     ])
     const rawText = typeof officeResult.value === "string" ? officeResult.value : ""
 
-    const text = cleanHeaderFooter(rawText)
+    const text = stripEmbeddedDataUris(cleanHeaderFooter(rawText))
 
     const result: FileParseResult = {
       success: true,
@@ -395,7 +412,7 @@ export async function parseFile(
   if (buffer.length > MAX_FILE_SIZE) {
     return {
       success: false,
-      error: `文件 "${filename}" 过大 (${Math.round(buffer.length / 1024 / 1024)}MB)，最大支持 ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+      error: `文件 "${filename}" 过大 (${Math.round(buffer.length / 1024 / 1024)}MB)，最大支持 ${MAX_FILE_SIZE / 1024 / 1024}MB。浏览器「导入文件」上限 6MB；10MB 以内请改用「导入大文件」（Companion 原生选择）。`,
       filename,
       mimeType,
     }
