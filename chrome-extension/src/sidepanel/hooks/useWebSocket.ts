@@ -120,6 +120,18 @@ export function shouldApplyStreamEvent(
 }
 
 /**
+ * #295: mid-turn assistant rows committed from live frames must carry the
+ * tool_calls the companion already persisted (function-shaped, same as the
+ * hydrated row — Message.tool_calls tolerates both shapes at runtime), so
+ * truncationHonestyChip can tell a normal thinking-then-tool round from a
+ * true empty reply. Pass the wire array through only when non-empty.
+ * Pure helper for unit tests (chat-assistant-tool-calls).
+ */
+export function midTurnToolCalls(raw: unknown): Message["tool_calls"] | undefined {
+  return Array.isArray(raw) && raw.length > 0 ? (raw as Message["tool_calls"]) : undefined
+}
+
+/**
  * file.uploaded panel-chrome gate (F3). The composer chip clear is a global UI
  * signal with no thread ownership — the listener dispatches it unconditionally,
  * before this gate, so it fires even when the user switched threads mid-upload
@@ -561,6 +573,10 @@ export function useWebSocket() {
           // Prefer companion payload; fall back to live stream if echo omitted fields.
           const content = asstContent || streamingRef.current || ""
           const reasoning = asstReasoning || reasoningRef.current || ""
+          // #295: tool_calls ride the chat.assistant frame so the committed row
+          // matches the persisted one — without them the honesty chip mislabels
+          // this thinking-then-tool round as 模型未返回内容.
+          const asstToolCalls = midTurnToolCalls(msg.tool_calls)
           streamingRef.current = ""
           reasoningRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
@@ -576,6 +592,7 @@ export function useWebSocket() {
                 role: "assistant",
                 content,
                 ...(reasoning ? { reasoning_content: reasoning } : {}),
+                ...(asstToolCalls ? { tool_calls: asstToolCalls } : {}),
                 created_at: new Date().toISOString(),
               },
             })
@@ -613,6 +630,17 @@ export function useWebSocket() {
                   role: "assistant",
                   content: midContent,
                   ...(midReasoning ? { reasoning_content: midReasoning } : {}),
+                  // #295: a tool is starting by definition, so this fallback row
+                  // IS a tool round — mark it (function shape, same as persisted
+                  // rows) or the honesty chip mislabels it 模型未返回内容.
+                  tool_calls: midTurnToolCalls([{
+                    id: typeof msg.tool_call_id === "string" ? msg.tool_call_id : "",
+                    type: "function",
+                    function: {
+                      name: typeof msg.tool_name === "string" ? msg.tool_name : "",
+                      arguments: "{}",
+                    },
+                  }]),
                   created_at: new Date().toISOString(),
                 },
               })

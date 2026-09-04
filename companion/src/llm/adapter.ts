@@ -1307,12 +1307,17 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       // Mid-loop: tools will run next. Echo the saved assistant (incl. reasoning)
       // so Side Panel can pin thinking into history before tool.start clears the
       // live bubble. Without this, live UI only keeps shell cards (#h1yi2w).
+      // #295: carry tool_calls too — this echo only fires when tool calls exist
+      // (the no-tool path returns via chat.done above), so the live transcript
+      // row matches the persisted/hydrated row and the honesty chip can tell a
+      // normal tool round from a true empty reply.
       sendToExtension({
         type: "chat.assistant",
         thread_id: threadId,
         message_id: savedAssistant.id,
         content: assistantContent,
         ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+        tool_calls: assistantPushMsg.tool_calls,
       })
 
       // Execute tool calls via extension (async — wait for results)
