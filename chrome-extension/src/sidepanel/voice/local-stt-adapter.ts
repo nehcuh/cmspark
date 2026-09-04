@@ -46,7 +46,13 @@ export type LocalSttOnMessage = (handler: (msg: any) => void) => () => void
 export type LocalSttAdapterDeps = {
   send: LocalSttSend
   onMessage: LocalSttOnMessage
-  modelId: string
+  /**
+   * Whisper model id. #259: optional for engineKind "system" (Windows SAPI
+   * sessions carry no whisper model on the wire).
+   */
+  modelId?: string
+  /** #259: "system" stamps voice.stt.start engine:"system" (per-session SAPI). */
+  engineKind?: "local" | "system"
   startCapture?: (opts?: StartCaptureOpts) => Promise<CaptureHandle>
   startPcmStreamCapture?: (opts: PcmStreamCaptureOpts) => Promise<PcmStreamHandle>
   /**
@@ -139,7 +145,7 @@ export function createLocalSttAdapter(
   let dead = false
   let capture: CaptureHandle | null = null
   let sessionId: string | null = null
-  let modelId = deps.modelId
+  let modelId = deps.modelId ?? ""
   let unsub: (() => void) | null = null
   let phase: "idle" | "recording" | "uploading" | "waiting" = "idle"
   let aborted = false
@@ -452,7 +458,8 @@ export function createLocalSttAdapter(
       type: "voice.stt.start",
       v: 1,
       sessionId: sid,
-      modelId,
+      ...(modelId ? { modelId } : {}),
+      ...(deps.engineKind === "system" ? { engine: "system" as const } : {}),
       format: "wav",
       sampleRate: LOCAL_STT_SAMPLE_RATE,
       channels: LOCAL_STT_CHANNELS,
@@ -632,7 +639,8 @@ export function createLocalSttAdapter(
           type: "voice.stt.start",
           v: 1,
           sessionId: segSid,
-          modelId,
+          ...(modelId ? { modelId } : {}),
+          ...(deps.engineKind === "system" ? { engine: "system" as const } : {}),
           format: "pcm_s16le",
           sampleRate: LOCAL_STT_SAMPLE_RATE,
           channels: LOCAL_STT_CHANNELS,
@@ -970,6 +978,11 @@ export function createLocalSttAdapter(
           streamPartial = false
           segmentCapMs = LOCAL_STT_MAX_RECORD_MS
         }
+        // #259: SAPI is batch — no progressive hypotheses for system sessions.
+        if (deps.engineKind === "system") {
+          streamPartial = false
+          segmentCapMs = LOCAL_STT_MAX_RECORD_MS
+        }
       }
 
       if (!sid) {
@@ -980,7 +993,7 @@ export function createLocalSttAdapter(
 
       parentSessionId = sid
       sessionId = sid
-      modelId = mid || deps.modelId
+      modelId = mid || deps.modelId || ""
       ensureSub()
       phase = "recording"
       wallStart = Date.now()

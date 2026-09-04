@@ -25,6 +25,12 @@ export type SttSessionPhase = "receiving" | "ended" | "aborted"
 export interface SttSessionStart {
   sessionId: string
   modelId: string
+  /**
+   * #259: "system" = Windows SAPI session. modelId may be "" (no whisper
+   * model involved); end() routes to the SAPI helper instead of whisper.
+   * Absent = legacy local (whisper) semantics.
+   */
+  engine?: "local" | "system"
   format: "pcm_s16le" | "wav"
   sampleRate: number
   channels: number
@@ -33,7 +39,9 @@ export interface SttSessionStart {
 
 export interface SttSessionState {
   sessionId: string
-  modelId: SttModelId
+  modelId: SttModelId | ""
+  /** #259: "system" sessions skip whisper model/binary paths downstream. */
+  engine: "local" | "system"
   format: "pcm_s16le" | "wav"
   sampleRate: number
   channels: number
@@ -65,7 +73,8 @@ export class SttSessionCore {
     if (this.active && this.active.phase === "receiving") {
       return { ok: false, code: "session_busy", message: "STT session already active" }
     }
-    if (!isSttModelId(req.modelId)) {
+    const engine = req.engine === "system" ? "system" : "local"
+    if (engine === "local" && !isSttModelId(req.modelId)) {
       return { ok: false, code: "invalid_model", message: `unknown modelId: ${req.modelId}` }
     }
     if (req.format !== "pcm_s16le" && req.format !== "wav") {
@@ -81,7 +90,8 @@ export class SttSessionCore {
     this.epochCounter += 1
     this.active = {
       sessionId: req.sessionId,
-      modelId: req.modelId,
+      modelId: engine === "system" ? "" : (req.modelId as SttModelId),
+      engine,
       format: req.format,
       sampleRate: req.sampleRate,
       channels: req.channels,

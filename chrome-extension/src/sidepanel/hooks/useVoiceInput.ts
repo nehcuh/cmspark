@@ -27,8 +27,18 @@ import {
   voiceLiveComposerText,
 } from "../voice/text-merge"
 import { initialVoiceSession, type VoiceSessionState } from "../voice/types"
-import { LOCAL_FALLBACK_BROWSER_BANNER, mapLocalSttError } from "../voice/error-map"
+import {
+  LOCAL_FALLBACK_BROWSER_BANNER,
+  SYSTEM_FALLBACK_BANNER,
+  SYSTEM_UNAVAILABLE_BROWSER_BANNER,
+  mapLocalSttError,
+} from "../voice/error-map"
 import { createSttAdapter, type SttEngineKind } from "../voice/stt-engine"
+import {
+  detectChainPlatform,
+  resolveSystemEngineSelection,
+  shouldEscalateBrowserToSystem,
+} from "../voice/stt-engine-chain"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
 
 function newSessionId(): string {
@@ -152,10 +162,25 @@ export type UseVoiceInputOpts = {  /** Composer text at listen start (snapshot).
    * Browser path always has word-level interim when interimResults is on.
    */
   realtimeStreaming?: boolean
+  /**
+   * #259: voice.system.state mirror (win32 + helper pinned + System.Speech ok
+   * → system engine selectable / browser→system escalation eligible).
+   * Null/absent = probe unknown → fail-closed (no system hop).
+   */
+  systemState?: {
+    platform: "win32" | "other"
+    helper: { ok: boolean; reason?: string; message?: string; pinned?: boolean }
+    systemSpeech: { available: boolean; reason?: string }
+  } | null
 }
 
 export function useVoiceInput(opts: UseVoiceInputOpts) {
-  const configuredEngine: SttEngineKind = opts.sttEngine === "local" ? "local" : "browser"
+  const configuredEngine: SttEngineKind =
+    opts.sttEngine === "local"
+      ? "local"
+      : opts.sttEngine === "system"
+        ? "system"
+        : "browser"
   /**
    * Gated per-session fallback: engine=local, model confirmed missing (mirrors
    * the localGateError model_missing branch — companion connected, state mirror
@@ -171,8 +196,39 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     localStateHydrated: opts.localStateHydrated,
     localModelReady: opts.localReady?.model,
   })
+  /**
+   * #259 third hop. configured "system" resolves to the system engine only on
+   * win32 with the probe green (voice.system.state); otherwise fail-closed to
+   * browser. systemFallbackRef is the sticky per-session browser→system
+   * escalation (network-class browser error on win32) — visible banner, never
+   * a config write.
+   */
+  const chainPlatformRef = useRef(detectChainPlatform())
+  const systemAvailable =
+    opts.systemState?.platform === "win32" &&
+    opts.systemState?.helper?.ok === true &&
+    opts.systemState?.systemSpeech?.available === true
+  const systemAvailableRef = useRef(systemAvailable)
+  systemAvailableRef.current = systemAvailable
+  const systemFallbackRef = useRef(false)
+  const systemSelection = resolveSystemEngineSelection({
+    platform: chainPlatformRef.current,
+    configured: configuredEngine,
+    systemAvailable,
+  })
   /** Effective engine for adapter/session; configured engine otherwise. */
-  const engine: SttEngineKind = localFallbackActive ? "browser" : configuredEngine
+  const engine: SttEngineKind = systemFallbackRef.current
+    ? "system"
+    : localFallbackActive
+      ? "browser"
+      : systemSelection.engine
+  /** Configured system but probe/off-win32 degraded → browser (honest banner). */
+  const systemConfigDegraded =
+    configuredEngine === "system" &&
+    !systemFallbackRef.current &&
+    engine === "browser"
+  const systemDegradedRef = useRef(systemConfigDegraded)
+  systemDegradedRef.current = systemConfigDegraded
   const fallbackRef = useRef(localFallbackActive)
   fallbackRef.current = localFallbackActive
 
@@ -184,7 +240,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   )
 
   const supported =
-    engine === "local" ? localMediaSupport.ok : browserSupport.ok
+    engine === "browser" ? browserSupport.ok : localMediaSupport.ok
 
   const [session, setSession] = useState<VoiceSessionState>(() =>
     initialVoiceSession(supported),
@@ -213,7 +269,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   if (!sessionActive) adapterEngineRef.current = engine
   const adapterEngine = adapterEngineRef.current
   const adapterSupported =
-    adapterEngine === "local" ? localMediaSupport.ok : browserSupport.ok
+    adapterEngine === "browser" ? browserSupport.ok : localMediaSupport.ok
   const modeRef = useRef<VoiceDictationMode>(
     opts.dictationMode === "continuous" ? "continuous" : "classic",
   )
@@ -396,6 +452,17 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     })
   }, [])
 
+  /**
+   * #259: browser session died with a network-class error on win32 and the
+   * system probe is green → mark the sticky escalation. If privacy v2 is
+   * already acked, auto-restart on the system engine (banner shows on begin);
+   * otherwise pop the v2 sheet once — never run system without the ack.
+   */
+  const [pendingSystemRestart, setPendingSystemRestart] = useState(false)
+  const toggleRef = useRef<
+    ((extra?: { privacyAck?: boolean; privacyAckV2?: boolean; privacyAckV3?: boolean }) => void) | null
+  >(null)
+
   // Rebuild adapter when the pinned engine / support changes (never mid-session)
   useEffect(() => {
     if (!adapterSupported) {
@@ -422,7 +489,29 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
           finalChunk: finalChunk || undefined,
           ...(postprocessed === true ? { postprocessed: true } : {}),
         }),
-      onError: (code: string) => dispatchEv({ type: "ENGINE_ERROR", code }),
+      onError: (code: string) => {
+        if (
+          adapterEngine === "browser" &&
+          !systemFallbackRef.current &&
+          shouldEscalateBrowserToSystem({
+            platform: chainPlatformRef.current,
+            browserErrorCode: code,
+            systemAvailable: systemAvailableRef.current,
+          })
+        ) {
+          systemFallbackRef.current = true
+          // Honest terminal error for the browser session, then hop.
+          dispatchEv({ type: "ENGINE_ERROR", code })
+          const o = optsRef.current
+          if (o.privacyAckV2 !== true) {
+            o.onNeedPrivacyAckV2?.()
+            return
+          }
+          setPendingSystemRestart(true)
+          return
+        }
+        dispatchEv({ type: "ENGINE_ERROR", code })
+      },
       onEnd: () => {
         clearTimer()
         dispatchEv({ type: "ENGINE_END" })
@@ -445,13 +534,14 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     const adapter = createSttAdapter(adapterEngine, {
       handlers,
       local:
-        adapterEngine === "local"
-          ? {
+        adapterEngine === "browser"
+          ? undefined
+          : {
               send: sendViaRuntime,
               onMessage: subscribeRuntime,
-              modelId,
-            }
-          : undefined,
+              // system sessions carry no whisper model on the wire (#259)
+              ...(adapterEngine === "local" ? { modelId } : {}),
+            },
     })
 
     adapterRef.current?.destroy()
@@ -465,6 +555,15 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount per pinned engine/support
   }, [adapterSupported, adapterEngine, dispatchEv])
+
+  // #259: escalate-restart after the engine flip re-renders (adapter above is
+  // rebuilt first — declaration order — so toggle() starts on the system adapter).
+  useEffect(() => {
+    if (!pendingSystemRestart) return
+    setPendingSystemRestart(false)
+    if (engineRef.current !== "system") return
+    toggleRef.current?.()
+  }, [pendingSystemRestart])
 
   // Thread switch — abort recording + processing
   useEffect(() => {
@@ -531,7 +630,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
 
       // Stop / cancel listen
       if (s.phase === "listening" || s.phase === "starting") {
-        if (eng === "local") {
+        if (eng === "local" || eng === "system") {
           // Keep listening until capture ends → CAPTURE_STOPPED → processing.
           // Do NOT USER_TOGGLE_STOP (would go stopping and block CAPTURE_STOPPED).
           clearTimer()
@@ -544,9 +643,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       }
 
       if (s.phase === "processing") {
-        // Continuous local: stop gracefully so prior segment finals are kept
+        // Continuous local/system: stop gracefully so prior segment finals are kept
         // (USER_TOGGLE_STOP from processing marks committed and drops merge).
-        if (modeRef.current === "continuous" && eng === "local") {
+        if (modeRef.current === "continuous" && (eng === "local" || eng === "system")) {
           clearTimer()
           stopEngine("stop")
           return
@@ -577,6 +676,30 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         const gate = localGateError()
         if (gate) {
           dispatchEv({ type: "ENGINE_ERROR", code: gate })
+          return
+        }
+        const privacyOk =
+          extra?.privacyAckV2 === true ||
+          extra?.privacyAck === true ||
+          o.privacyAckV2 === true
+        if (!privacyOk) {
+          if (o.onNeedPrivacyAckV2) o.onNeedPrivacyAckV2()
+          else o.onNeedPrivacyAck()
+          return
+        }
+        if (continuousMode || wantsRefine) {
+          const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
+          if (!v3) {
+            if (o.onNeedPrivacyAckV3) o.onNeedPrivacyAckV3()
+            return
+          }
+        }
+      } else if (eng === "system") {
+        // #259: system sessions run through the companion (SAPI helper) — WS
+        // connection is the gate; no whisper model/binary, no onLine check
+        // (offline is exactly when the system engine must work).
+        if (!o.companionConnected) {
+          dispatchEv({ type: "ENGINE_ERROR", code: "companion_disconnected" })
           return
         }
         const privacyOk =
@@ -652,9 +775,15 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
             return
           }
         }
+        if (eng === "system" && !o.companionConnected) {
+          dispatchEv({ type: "ENGINE_ERROR", code: "companion_disconnected" })
+          return
+        }
         if (!adapterRef.current) {
           if (eng === "local") {
             dispatchEv({ type: "ENGINE_ERROR", code: "binary_missing" })
+          } else if (eng === "system") {
+            dispatchEv({ type: "ENGINE_ERROR", code: "system_unavailable" })
           }
           return
         }
@@ -673,6 +802,20 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
             message: LOCAL_FALLBACK_BROWSER_BANNER,
             code: "local_fallback",
           })
+        } else if (systemFallbackRef.current) {
+          // #259 third hop: visible per-session notice, same pattern as above.
+          dispatchEv({
+            type: "SOFT_CAP_HINT",
+            message: SYSTEM_FALLBACK_BANNER,
+            code: "system_fallback",
+          })
+        } else if (systemDegradedRef.current) {
+          // #259: configured system but probe/off-win32 → honest browser notice.
+          dispatchEv({
+            type: "SOFT_CAP_HINT",
+            message: SYSTEM_UNAVAILABLE_BROWSER_BANNER,
+            code: "system_unavailable",
+          })
         }
         try {
           if (eng === "local") {
@@ -688,6 +831,16 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
               segmentMs: nearRt ? LOCAL_STT_NEAR_REALTIME_SEGMENT_MS : undefined,
               // M2: progressive hypothesis via PCM stream + partial_request.
               streamPartial: nearRt === true,
+            })
+          } else if (eng === "system") {
+            // #259: same capture mechanics as local; adapter stamps
+            // engine:"system" on the wire and forces batch segments.
+            adapterRef.current.start({
+              lang: VOICE_DEFAULT_LANG,
+              sessionId: sid,
+              mode: modeNow,
+              hardCapMs: maxMs,
+              streamPartial: false,
             })
           } else {
             adapterRef.current.start({
@@ -716,7 +869,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         timerRef.current = setTimeout(() => {
           const cont = modeRef.current === "continuous"
           clearTimer()
-          if (engineRef.current === "local") {
+          if (engineRef.current === "local" || engineRef.current === "system") {
             // Stop capture → segment finalize (do not TIMEOUT→stopping).
             stopEngine("stop")
           } else {
@@ -731,6 +884,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     },
     [dispatchEv, stopEngine, supported, localGateError],
   )
+  toggleRef.current = toggle
 
   /** Call before chat.abort / Stop button. */
   const abortForChatStop = useCallback(() => {
@@ -888,6 +1042,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     sttEngine: engine,
     /** True while a local→browser per-session fallback is in effect (visible banner). */
     localFallbackActive,
+    /** #259: True after a browser→system per-session escalation (visible banner). */
+    systemFallbackActive: systemFallbackRef.current,
     /** Map a local gate code for external CTA (optional). */
     mapLocalError: mapLocalSttError,
     toggle,

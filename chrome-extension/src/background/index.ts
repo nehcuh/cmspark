@@ -1428,6 +1428,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       // reported as「扩展版本过旧」via Unknown message type map — not a version skew.
       case "voice.binary.download":
       case "voice.binary.cancel":
+      // #259: Windows SAPI probe mirror (settings 引擎链路状态 / browser→system escalation).
+      case "voice.system.state":
       // Path B M1/M2 voice.stt.* (runtime Side Panel; companion origin fence + session service).
       // M2 near-rt: partial_request must be forwarded or SW returns "Unknown message type"
       // (settings maps that to「扩展版本过旧或不匹配」— false alarm).

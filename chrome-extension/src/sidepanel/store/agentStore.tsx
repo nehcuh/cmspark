@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
+import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, VoiceSystemState, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 
@@ -301,6 +301,8 @@ export interface AgentState {
   // Path B M0 voice.model 切片——全部只读镜像,无乐观更新(设置页语音区消费;UI 见 Task 7):
   /** voice.model.state 最新镜像(null = 尚未查询;设置页打开时拉一次)。 */
   voiceModel: VoiceModelState | null
+  /** #259 voice.system.state 镜像(Windows SAPI 探针;设置页/引擎链消费)。 */
+  voiceSystemState: VoiceSystemState | null
   /** 最后一条 voice.model.progress(无 model 仍 downloading 时由 reducer 清除)。 */
   voiceModelProgress: VoiceModelProgress | null
   /** voice.binary.progress — cmspark-whisper runtime download. */
@@ -515,6 +517,7 @@ export type AgentAction =
   | { type: "SET_COMPUTER_MODEL_LICENSE_DOOR"; door: ComputerModelLicenseDoor | null }
   | { type: "SET_COMPUTER_MODEL_ERROR"; error: string | null }
   | { type: "SET_VOICE_MODEL_STATE"; modelState: VoiceModelState }
+  | { type: "SET_VOICE_SYSTEM_STATE"; systemState: VoiceSystemState | null }
   | { type: "SET_VOICE_MODEL_PROGRESS"; progress: VoiceModelProgress | null }
   | {
       type: "SET_VOICE_BINARY_PROGRESS"
@@ -674,6 +677,7 @@ export const initialState: AgentState = {
   computerModelLicenseDoor: null,
   computerModelError: null,
   voiceModel: null,
+  voiceSystemState: null,
   voiceModelProgress: null,
   voiceBinaryProgress: null,
   voiceModelError: null,
@@ -1763,6 +1767,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         voiceBinaryProgress: binaryReady ? null : state.voiceBinaryProgress,
       }
     }
+    case "SET_VOICE_SYSTEM_STATE":
+      return { ...state, voiceSystemState: action.systemState }
     case "SET_VOICE_MODEL_PROGRESS":
       return { ...state, voiceModelProgress: action.progress }
     case "SET_VOICE_BINARY_PROGRESS":

@@ -38,6 +38,13 @@ export const ENGINE_BROWSER_HINT = "无需下载；可能使用浏览器云端�
 export const ENGINE_LOCAL_LABEL = "本机转写"
 export const ENGINE_LOCAL_HINT = "需下载模型；音频在本机 Companion 临时转写"
 
+// #259 — Windows SAPI system engine (win32 only; probe-gated).
+export const ENGINE_SYSTEM_LABEL = "Windows 系统语音识别"
+export const ENGINE_SYSTEM_HINT = "仅 Windows；本机 System.Speech 离线识别，不经云端"
+export const BTN_ENABLE_SYSTEM = "启用系统语音识别"
+export const BTN_SYSTEM_ENABLED = "已启用系统语音识别"
+export const SYSTEM_UNAVAILABLE_REASON_LABEL = "当前设备不支持（仅 Windows 且需系统语音就绪）"
+
 // --- Privacy paragraphs (SoT §5 dual-engine residual) ------------------------
 
 /**
@@ -59,9 +66,21 @@ export const LOCAL_PRIVACY_COPY =
   "发送后的文字与键入相同，仍受现有确认与信任设置约束。模型需用户显式下载（HTTPS + 校验）。" +
   "与电脑控制实验模型同时使用可能占用大量内存。"
 
+/**
+ * #259 system-mode privacy (Windows SAPI). Same Companion transport as local
+ * (Ext → Companion tmp → System.Speech); recognition is fully offline.
+ */
+export const SYSTEM_PRIVACY_COPY =
+  "系统语音识别：麦克风音频经鉴权通道送至本机 Companion，写入临时文件后由 Windows 系统" +
+  "System.Speech 离线识别（不经云端），结果填入草稿（默认不自动发送）；识别后删除临时音频，" +
+  "不保证 OS 交换/崩溃转储等零痕迹。发送后的文字与键入相同，仍受现有确认与信任设置约束。" +
+  "仅 Windows 可用；不支持的语言会如实报错。"
+
 /** Return privacy paragraph for the engine the UI is presenting (draft or committed). */
-export function privacyCopyForEngine(engine: "browser" | "local"): string {
-  return engine === "local" ? LOCAL_PRIVACY_COPY : BROWSER_PRIVACY_COPY
+export function privacyCopyForEngine(engine: "browser" | "local" | "system"): string {
+  if (engine === "local") return LOCAL_PRIVACY_COPY
+  if (engine === "system") return SYSTEM_PRIVACY_COPY
+  return BROWSER_PRIVACY_COPY
 }
 
 // --- Action / status labels --------------------------------------------------
@@ -256,4 +275,48 @@ export function canDownloadWhisperBinary(
 ): boolean {
   const status = binary?.status || "not_found"
   return status === "not_found" || status === "hash_mismatch"
+}
+
+// --- #259 engine chain status rows (voice.system.state mirror; pure) ----------
+
+export type SystemChainRow = { label: string; ok: boolean; detail?: string }
+
+/**
+ * 引擎链路状态 rows from the voice.system.state mirror. Pure — caller passes
+ * the store mirror (or null = probe pending). Returns [] when the platform is
+ * not win32 (nothing to show — the option itself is win32-only).
+ */
+export function systemChainRows(
+  systemState: {
+    platform?: string
+    helper?: { ok?: boolean; reason?: string; message?: string; pinned?: boolean }
+    systemSpeech?: { available?: boolean; reason?: string }
+  } | null | undefined,
+): SystemChainRow[] {
+  if (!systemState || systemState.platform !== "win32") return []
+  const helper = systemState.helper
+  const helperOk = helper?.ok === true
+  const speech = systemState.systemSpeech
+  const rows: SystemChainRow[] = [
+    {
+      label: "Windows 系统语音",
+      ok: speech?.available === true,
+      detail:
+        speech?.available === true
+          ? "已安装（System.Speech 本机识别）"
+          : speech?.reason
+            ? `不可用（${speech.reason}）`
+            : "不可用",
+    },
+    {
+      label: "SAPI Helper",
+      ok: helperOk,
+      detail: helperOk
+        ? helper?.pinned
+          ? "已就绪（SHA256 已校验）"
+          : "已就绪（未固定哈希）"
+        : helper?.message || helper?.reason || "未找到",
+    },
+  ]
+  return rows
 }

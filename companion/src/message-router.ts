@@ -2776,6 +2776,8 @@ export async function handleMessage(
     case "voice.model.set_prefs":
     case "voice.binary.download":
     case "voice.binary.cancel":
+    // #259 — system-engine probe (read-only; origin fence inside handler)
+    case "voice.system.state":
       return handleVoiceModelMessage(msg, {
         broadcast: session?.broadcast,
         origin: session?.origin,

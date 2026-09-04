@@ -11,6 +11,7 @@ import {
   LOCAL_PRIVACY_COPY,
   OTHER_WHISPER_MODEL_IDS,
   RECOMMENDED_WHISPER_MODEL_ID,
+  SYSTEM_PRIVACY_COPY,
   VOICE_ERR_COMPANION_DISCONNECTED,
   WHISPER_SETTINGS_MODEL_IDS,
   binaryStatusLine,
@@ -20,6 +21,7 @@ import {
   privacyCopyForEngine,
   modelProbeErrorLabel,
   progressPercent,
+  systemChainRows,
 } from "../src/sidepanel/voice/whisper-settings-copy"
 
 test("recommended model id is medium (SoT primary)", () => {
@@ -101,4 +103,47 @@ test("modelProbeErrorLabel http/network copy points at download source", () => {
   assert.match(modelProbeErrorLabel("http-error") || "", /模型下载源|hf-mirror/)
   assert.match(modelProbeErrorLabel("network-error") || "", /模型下载源|hf-mirror/)
   assert.match(modelProbeErrorLabel("HTTP 403 (https://huggingface.co/x)") || "", /模型下载源|hf-mirror/)
+})
+
+// --- #259 Windows SAPI system engine copy + chain rows ---------------------------
+
+test("system privacy is local-class: Companion transport + offline claim bounded", () => {
+  // Same Companion transport as local — must NOT claim audio bypasses Companion
+  assert.equal(/不经过 Companion/.test(SYSTEM_PRIVACY_COPY), false)
+  assert.match(SYSTEM_PRIVACY_COPY, /Companion/)
+  assert.match(SYSTEM_PRIVACY_COPY, /System\.Speech|系统/)
+  assert.match(SYSTEM_PRIVACY_COPY, /临时/)
+  // Honest limits: win32-only + unsupported-language errors surface
+  assert.match(SYSTEM_PRIVACY_COPY, /仅 Windows/)
+  assert.match(SYSTEM_PRIVACY_COPY, /不支持的语言/)
+  assert.equal(privacyCopyForEngine("system"), SYSTEM_PRIVACY_COPY)
+})
+
+test("systemChainRows empty unless win32 mirror present", () => {
+  assert.deepEqual(systemChainRows(null), [])
+  assert.deepEqual(systemChainRows(undefined), [])
+  assert.deepEqual(systemChainRows({ platform: "other" }), [])
+})
+
+test("systemChainRows reflect probe truth on win32", () => {
+  const rows = systemChainRows({
+    platform: "win32",
+    helper: { ok: true, pinned: true },
+    systemSpeech: { available: true },
+  })
+  assert.equal(rows.length, 2)
+  assert.equal(rows[0]!.ok, true)
+  assert.match(rows[0]!.detail!, /已安装/)
+  assert.equal(rows[1]!.ok, true)
+  assert.match(rows[1]!.detail!, /SHA256/)
+
+  const bad = systemChainRows({
+    platform: "win32",
+    helper: { ok: false, reason: "missing", message: "helper not found" },
+    systemSpeech: { available: false, reason: "no_recognizers" },
+  })
+  assert.equal(bad[0]!.ok, false)
+  assert.match(bad[0]!.detail!, /no_recognizers/)
+  assert.equal(bad[1]!.ok, false)
+  assert.match(bad[1]!.detail!, /helper not found/)
 })

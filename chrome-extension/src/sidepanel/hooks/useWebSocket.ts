@@ -1713,10 +1713,15 @@ export function useWebSocket() {
           }
           const binaryRaw = msg.binary && typeof msg.binary === "object" ? msg.binary : {}
           const binaryObj = binaryRaw as { status?: unknown; path?: unknown; message?: unknown }
-          const sttEngine = msg.sttEngine === "local" ? "local" : "browser"
+          const sttEngine =
+            msg.sttEngine === "local"
+              ? "local"
+              : msg.sttEngine === "system"
+                ? "system"
+                : "browser"
           const localModelId = typeof msg.localModelId === "string" ? msg.localModelId : "medium"
           const modelState = {
-            sttEngine: sttEngine as "browser" | "local",
+            sttEngine: sttEngine as "browser" | "local" | "system",
             localModelId,
             recommendedModelId:
               typeof msg.recommendedModelId === "string" ? msg.recommendedModelId : "medium",
@@ -1752,6 +1757,39 @@ export function useWebSocket() {
           } catch {
             /* best-effort mirror */
           }
+          break
+        }
+
+        // #259: voice.system.state → store mirror (Windows SAPI probe; read-only).
+        case "voice.system.state": {
+          const platform = msg.platform === "win32" ? "win32" : "other"
+          const helperRaw =
+            msg.helper && typeof msg.helper === "object" ? (msg.helper as Record<string, unknown>) : {}
+          const helper =
+            helperRaw.ok === true
+              ? { ok: true as const, pinned: helperRaw.pinned === true }
+              : {
+                  ok: false as const,
+                  reason: typeof helperRaw.reason === "string" ? helperRaw.reason : "unknown",
+                  ...(typeof helperRaw.message === "string"
+                    ? { message: helperRaw.message }
+                    : {}),
+                }
+          const speechRaw =
+            msg.systemSpeech && typeof msg.systemSpeech === "object"
+              ? (msg.systemSpeech as Record<string, unknown>)
+              : {}
+          dispatch({
+            type: "SET_VOICE_SYSTEM_STATE",
+            systemState: {
+              platform,
+              helper,
+              systemSpeech: {
+                available: speechRaw.available === true,
+                ...(typeof speechRaw.reason === "string" ? { reason: speechRaw.reason } : {}),
+              },
+            },
+          })
           break
         }
 

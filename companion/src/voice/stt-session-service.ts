@@ -49,6 +49,7 @@ import {
   WhisperRunnerError,
   type WhisperRunResult,
 } from "./whisper-runner"
+import { runWinSapiTranscribe, SAPI_HELPER_TIMEOUT_MS, WinSapiError } from "./win-sapi"
 
 // --- result types -------------------------------------------------------------
 
@@ -67,6 +68,10 @@ export type SttServiceErrorCode =
   | "invalid_session_id"
   | "partial_skipped"
   | "partial_busy"
+  // #259 system engine (Windows SAPI)
+  | "system_engine_failed"
+  | "system_unavailable"
+  | "system_lang_unsupported"
 
 export type SttServiceResult =
   | { ok: true; text?: string; ms?: number; modelId?: string }
@@ -110,12 +115,16 @@ export type SttSessionServiceDeps = {
   uploadIdleMs?: number
   inferMaxMs?: number
   lang?: string
+  /** #259: override SAPI runner (tests inject fake). */
+  runSapi?: typeof runWinSapiTranscribe
 }
 
 type BoundSession = {
   peerId: string
   sessionId: string
-  modelId: SttModelId
+  /** "" for system sessions (no whisper model involved). */
+  modelId: SttModelId | ""
+  engine: "local" | "system"
   format: "pcm_s16le" | "wav"
   abortController: AbortController
   recordTimer?: ReturnType<typeof setTimeout>
@@ -169,7 +178,8 @@ export class SttSessionService {
       }
     }
 
-    if (!isSttModelId(req.modelId)) {
+    const engine = req.engine === "system" ? "system" : "local"
+    if (engine === "local" && !isSttModelId(req.modelId)) {
       return { ok: false, code: "invalid_model", message: `unknown modelId: ${req.modelId}` }
     }
 
@@ -182,11 +192,13 @@ export class SttSessionService {
       }
     }
 
-    const root = this.whisperRoot()
-    const probe = this.deps.probeModel ?? ((id, r) => probeWhisperModelDir(id, r, this.deps.manifest))
-    const p = probe(req.modelId, root)
-    if (p.status !== "ready") {
-      return { ok: false, code: "model_missing", message: "model not ready" }
+    if (engine === "local") {
+      const root = this.whisperRoot()
+      const probe = this.deps.probeModel ?? ((id, r) => probeWhisperModelDir(id, r, this.deps.manifest))
+      const p = probe(req.modelId as SttModelId, root)
+      if (p.status !== "ready") {
+        return { ok: false, code: "model_missing", message: "model not ready" }
+      }
     }
 
     const r = this.core.start(req)
@@ -198,7 +210,8 @@ export class SttSessionService {
     this.bound = {
       peerId,
       sessionId: req.sessionId,
-      modelId: req.modelId,
+      modelId: engine === "system" ? "" : (req.modelId as SttModelId),
+      engine,
       format: req.format,
       abortController: ac,
       inferring: false,
@@ -225,6 +238,10 @@ export class SttSessionService {
     const peer = this.requirePeer(peerId, sessionId)
     if (!peer.ok) return peer
     const bound = this.bound!
+    // #259: SAPI is batch — no progressive hypotheses for system sessions.
+    if (bound.engine === "system") {
+      return { ok: false, code: "partial_skipped", message: "system engine is batch (no partial)" }
+    }
     // large-v3-turbo full load ~1.6GB and 30–90s even for short audio — progressive
     // re-decode would stack with final end() and freeze/kill the host on Windows SEA.
     // Hold-to-talk continuous still works; interim hypothesis is medium/small only.
@@ -272,7 +289,7 @@ export class SttSessionService {
           binRes.reason === "hash_mismatch" ? "hash_fail" : "binary_missing"
         return { ok: false, code, message: binRes.message }
       }
-      const modelPath = this.resolveModelPath(bound.modelId)
+      const modelPath = this.resolveModelPath(bound.modelId as SttModelId)
       if (!modelPath) {
         bound.partialInferring = false
         return { ok: false, code: "model_missing", message: "model path not resolved" }
@@ -384,6 +401,26 @@ export class SttSessionService {
         return { ok: false, code: "aborted", message: "session aborted" }
       }
 
+      // #259: system engine — SAPI helper, no whisper binary/model.
+      if (bound.engine === "system") {
+        sessionDir = await createSessionDir(sessionId, this.deps.dataDir)
+        bound.sessionDir = sessionDir
+        const { body, fileName } = audioBodyForWhisper(audio, format)
+        const audioPath = await writeSessionFile(sessionDir, fileName, body)
+        const runSapi = this.deps.runSapi ?? runWinSapiTranscribe
+        const result = await runSapi({
+          wavPath: audioPath,
+          lang: this.deps.lang ?? "zh",
+          timeoutMs: SAPI_HELPER_TIMEOUT_MS,
+          signal: ac.signal,
+        })
+        await removeSessionDir(sessionDir)
+        sessionDir = undefined
+        this.core.clearIfEnded()
+        if (this.bound === bound) this.dropBound()
+        return { ok: true, text: result.text, modelId: "" }
+      }
+
       const binRes = this.resolveBinary()
       if (!binRes.ok) {
         this.core.clearIfEnded()
@@ -393,7 +430,7 @@ export class SttSessionService {
         return { ok: false, code, message: binRes.message }
       }
 
-      const modelPath = this.resolveModelPath(modelId)
+      const modelPath = this.resolveModelPath(modelId as SttModelId)
       if (!modelPath) {
         this.core.clearIfEnded()
         this.dropBound()
@@ -468,9 +505,20 @@ export class SttSessionService {
       if (this.bound === bound) this.dropBound()
       const aborted =
         ac.signal.aborted ||
-        (e instanceof WhisperRunnerError && e.code === "aborted")
+        (e instanceof WhisperRunnerError && e.code === "aborted") ||
+        (e instanceof WinSapiError && e.code === "aborted")
       if (aborted) {
         return { ok: false, code: "aborted", message: "session aborted" }
+      }
+      if (e instanceof WinSapiError) {
+        // #259: honest system-engine errors — never silently drop to browser.
+        if (e.code === "system_lang_unsupported") {
+          return { ok: false, code: "system_lang_unsupported", message: e.message }
+        }
+        if (e.code === "not_win32" || e.code === "unavailable") {
+          return { ok: false, code: "system_unavailable", message: e.message }
+        }
+        return { ok: false, code: "system_engine_failed", message: e.message }
       }
       if (e instanceof WhisperRunnerError && e.code === "timeout") {
         return { ok: false, code: "infer_timeout", message: e.message }

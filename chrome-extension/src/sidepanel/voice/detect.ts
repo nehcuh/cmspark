@@ -106,7 +106,7 @@ export function normalizeDictationMode(v: unknown): VoiceDictationMode {
 /** Max listen wall-clock for a session given mode + engine. */
 export function maxListenMsForSession(
   mode: VoiceDictationMode,
-  engine: "browser" | "local",
+  engine: "browser" | "local" | "system",
   hardCapMs: number = VOICE_CONTINUOUS_HARD_CAP_MS,
 ): number {
   // D1a/D1c: continuous (browser restart or local serial segments) uses hard cap.
