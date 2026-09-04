@@ -288,7 +288,12 @@ test("scheduleRestart: restart timer restarts with the LIVE config, not the stal
 
   try {
     ;(manager as any).scheduleRestart("fs", stdioCfg({ command: "npx" }), "start failed")
-    await sleep(200)
+    // Poll instead of a fixed sleep: on loaded CI runners a ~20ms backoff
+    // timer can land past a fixed 200ms window (observed flake, ubuntu-latest).
+    const deadline = Date.now() + 5000
+    while (startedWith === undefined && Date.now() < deadline) {
+      await sleep(10)
+    }
     assert.equal(startedWith, liveCfg,
       "restart must use the live config object (current command), not the stale startup snapshot")
   } finally {
