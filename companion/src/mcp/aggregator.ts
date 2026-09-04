@@ -45,7 +45,8 @@ function scanMetadata(tool: McpToolMeta): { description: string } | { flagged: t
 
   for (const field of fieldsToScan) {
     for (const pattern of INJECTION_PATTERNS) {
-      if (pattern.test(field)) {
+      // Clone so the shared /g regexes carry no lastIndex state across scans.
+      if (new RegExp(pattern.source, pattern.flags).test(field)) {
         return { flagged: true }
       }
     }
