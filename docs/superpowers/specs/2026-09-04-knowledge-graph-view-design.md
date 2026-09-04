@@ -31,7 +31,7 @@ ADR-027 的 F-E-3 窄豁免明文：「图谱 UI / 分类本体 / 双链 / 持�
    - n ≤ 200：节点 = 派生索引全部文档；分组键 = 分布视图同一 key（同源聚类结果，`buildKnowledgeDistribution` 已算）。
    - n > 200（over_cap）：分布视图自身不跑聚类（ADR-027 语义不变、其 chips 仍不渲染）；图谱视图截取**标题字典序前 200 篇**，对截取集用同一算法同一常数**重跑聚类**得到图谱专用分组键，并在视图顶部披露「仅前 200 篇参与分组与着色」。两组键来源不同处文案不混用「同一 key」措辞。
    - 边：每节点取 `scoreRelatedKnowledge` top-5；TF 段沿用既有 0.08 门，**不另设合成分地板**（合成分量纲 0–4.5 无校准依据——实现期用 ≥20 篇 fixture 实测密度，孤立点比例写进 PR 描述；若 >30% 再回来议地板）。平局按 id 字典序。
-2. **LLM 分组命名 + 摘要**：opt-in 开关 `knowledge_graph_llm_labels`（默认 false，持久化在扩展 `chrome.storage.local`——纯 UI 偏好，不进 companion config.json 的 L2/trust 面）。开启后：索引防抖重建完成后异步生成（写回索引文件的 `display` 派生字段——**可丢、可重建、不进检索、不进路由、不进 Obsidian 导出**），图谱视图另有「重新生成」手动按钮。每组产出：名称（≤20 字）+ 摘要（≤280 字）。LLM 调用走 #272 既有 llm-extract 通道；无配置/失败/超时回退高频词标签（ADR-027 既有逻辑）且摘要不显示，不报错不阻塞。
+2. **LLM 分组命名 + 摘要**：opt-in 开关 `knowledge_graph_llm_labels`（默认 false，持久化在扩展 `chrome.storage.local`——纯 UI 偏好，不进 companion config.json 的 L2/trust 面）。开启后：索引防抖重建完成后异步生成（写回索引文件的 `display` 派生字段——**可丢、可重建、不进检索、不进路由、不进 Obsidian 导出**），图谱视图另有「重新生成」手动按钮。**over_cap 分支**：全集聚类返回 `groups:[]`，display 缓存不会有截取集分组键——此时打开图谱视图且开关开，对截取集分组单独触发一次异步标注（同样写 display、同样回退规则）；开关关则直接高频词标签。每组产出：名称（≤ `KNOWLEDGE_GRAPH_LABEL_NAME_MAX` 20 字）+ 摘要（≤ `KNOWLEDGE_GRAPH_LABEL_SUMMARY_MAX` 280 字）。LLM 调用走 #272 既有 llm-extract 通道；无配置/失败/超时回退高频词标签（ADR-027 既有逻辑）且摘要不显示，不报错不阻塞。
 3. **与 Obsidian wikilinks 的关系**：`knowledge-related.ts` 是唯一相关度计算点。图谱边与 Obsidian 导出 wikilinks 共用 `scoreRelatedKnowledge`；只放宽各自的取边参数（图谱 top-5 / 导出沿用 `KNOWLEDGE_RELATED_LIMIT=3`），不合并 UI、不引入第二算法。
 
 ## 4. 用户能看见的完成（AC）
@@ -41,7 +41,7 @@ ADR-027 的 F-E-3 窄豁免明文：「图谱 UI / 分类本体 / 双链 / 持�
 - AC-3 n < 20：不渲染图谱，诚实文案「知识不足 20 篇，暂无图谱」（复用 `KNOWLEDGE_CLUSTER_MIN_DOCS` 语义）；n > 200：渲染截取集并在顶部披露「超过 200 篇，只画标题字典序前 200 篇；仅这 200 篇参与分组与着色」。
 - AC-4 LLM 开关默认关；开启时分组卡片显示 LLM 名称 + 摘要（带「AI 生成」标识 tooltip），失败回退高频词名称且无摘要；关闭时高频词标签。开关存 `chrome.storage.local`。
 - AC-5 索引缺失/损坏/重建中：显示「图谱索引重建中…」并在索引就绪后自动刷新（派生索引既有防抖重建）。
-- AC-6 本 PR 合入必须包含 **ADR-028**：逐格记录 §2 表的豁免扩展（图谱 UI / 新 WS 动词 / 用户可见名词），措辞与表一致；缺 ADR-028 不得合入。
+- AC-6 **实现 PR** 合入必须包含 **ADR-028**：逐格记录 §2 表的豁免扩展（图谱 UI / 新 WS 动词 / 用户可见名词），措辞与表一致；缺 ADR-028 不得合入。
 
 ## 5. 通道与数据流
 
@@ -56,12 +56,14 @@ ADR-027 的 F-E-3 窄豁免明文：「图谱 UI / 分类本体 / 双链 / 持�
 | `KNOWLEDGE_GRAPH_EDGE_TOPK` | 5 | 每节点出边上（TF 段沿用 `KNOWLEDGE_RELATED_TF_MIN=0.08` 既有门，无合成分地板） |
 | `KNOWLEDGE_GRAPH_DOC_CAP` | 200 | 复用 `KNOWLEDGE_CLUSTER_DOC_CAP`，不另设 |
 | `KNOWLEDGE_GRAPH_MIN_DOCS` | 20 | 复用 `KNOWLEDGE_CLUSTER_MIN_DOCS`，不另设 |
+| `KNOWLEDGE_GRAPH_LABEL_NAME_MAX` | 20 字 | LLM 分组名称长度上限 |
+| `KNOWLEDGE_GRAPH_LABEL_SUMMARY_MAX` | 280 字 | LLM 分组摘要长度上限 |
 
 漂移扳机：图谱只读消费派生索引，不改路由输入面——**不触发** ADR-027 的评测重证；但若改了 `scoreRelatedKnowledge` 权重/语料，则同时触发（wikilinks 与图谱边同源）。
 
 ## 7. 未完成时禁止假装
 
-- <20 篇不渲染空图谱假装有结构；>200 篇不声称「全量图谱」，不披露截取事实。
+- <20 篇不渲染空图谱假装有结构；>200 篇不声称「全量图谱」，且**必须披露**截取事实（AC-3 文案）。
 - LLM 命名/摘要不写进磁盘 SoT、不进检索/路由/导出；开关默认关；AI 生成内容必须带标识。
 - 不把图谱节点位置/边持久化（力导向每次现算，布局不存档）。
 - 「图谱」名词不出现在本视图之外的任何用户可见文案；视图内不出现「簇」。
