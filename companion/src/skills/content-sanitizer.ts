@@ -8,56 +8,56 @@ import * as crypto from "crypto"
  */
 export const INJECTION_PATTERNS = [
   // English patterns (1-16)
-  /ignore\s+(?:all\s+)?(?:previous\s+)?instructions?/i,
-  /system\s*prompt\s*override/i,
-  /new\s+role\s*:\s*you\s+are\s+now/i,
-  /you\s+are\s+now\s+(?:in\s+)?\w+\s+mode/i,
-  /disregard\s+(?:all\s+)?(?:previous\s+)?(?:instructions?|prompts?)/i,
-  /forget\s+(?:all\s+)?(?:previous\s+)?(?:instructions?|prompts?)/i,
-  /(?:user|human)\s*:\s*ignore\s+(?:all\s+)?(?:previous\s+)?instructions?/i,
-  /(?:developer|system)\s*:\s*new\s+instructions?/i,
-  /DAN\s*mode/i,
-  /jailbreak/i,
-  /ignore\s+the\s+above\s+instructions?/i,
-  /ignore\s+previous\s+prompts?/i,
-  /pretend\s+you\s+are\s+(?:an?\s+)?\w+/i,
-  /act\s+as\s+(?:an?\s+)?\w+/i,
-  /roleplay\s+as\s+(?:an?\s+)?\w+/i,
-  /simulate\s+(?:an?\s+)?\w+/i,
+  /ignore\s+(?:all\s+)?(?:previous\s+)?instructions?/gi,
+  /system\s*prompt\s*override/gi,
+  /new\s+role\s*:\s*you\s+are\s+now/gi,
+  /you\s+are\s+now\s+(?:in\s+)?\w+\s+mode/gi,
+  /disregard\s+(?:all\s+)?(?:previous\s+)?(?:instructions?|prompts?)/gi,
+  /forget\s+(?:all\s+)?(?:previous\s+)?(?:instructions?|prompts?)/gi,
+  /(?:user|human)\s*:\s*ignore\s+(?:all\s+)?(?:previous\s+)?instructions?/gi,
+  /(?:developer|system)\s*:\s*new\s+instructions?/gi,
+  /DAN\s*mode/gi,
+  /jailbreak/gi,
+  /ignore\s+the\s+above\s+instructions?/gi,
+  /ignore\s+previous\s+prompts?/gi,
+  /pretend\s+you\s+are\s+(?:an?\s+)?\w+/gi,
+  /act\s+as\s+(?:an?\s+)?\w+/gi,
+  /roleplay\s+as\s+(?:an?\s+)?\w+/gi,
+  /simulate\s+(?:an?\s+)?\w+/gi,
   // Chinese patterns (17-32)
-  /忽略\s*(?:以上|前面|之前)\s*(?:所有\s*)?指令/i,
-  /忽略\s*(?:所有\s*)?(?:之前|以前|前面)\s*(?:的\s*)?指令/i,
-  /请\s*忽略\s*(?:以上|前面|之前)\s*(?:所有\s*)?提示/i,
-  /系统\s*提示\s*覆盖/i,
-  /新\s*角色\s*[:：]\s*你现在是/i,
-  /你\s*现在\s*是\s*\w+\s*模式/i,
-  /无视\s*(?:所有\s*)?(?:之前|以前|前面)\s*(?:的\s*)?指令/i,
-  /忘记\s*(?:所有\s*)?(?:之前|以前|前面)\s*(?:的\s*)?指令/i,
-  /假装\s*你是\s*\w+/i,
-  /扮演\s*\w+/i,
-  /模拟\s*\w+/i,
-  /进入\s*\w+\s*模式/i,
-  /切换\s*到\s*\w+\s*模式/i,
-  /你\s*现在\s*是\s*\w+/i,
-  /你\s*的\s*新\s*角色\s*[:：]/i,
-  /系统\s*指令\s*[:：]/i,
+  /忽略\s*(?:以上|前面|之前)\s*(?:所有\s*)?指令/gi,
+  /忽略\s*(?:所有\s*)?(?:之前|以前|前面)\s*(?:的\s*)?指令/gi,
+  /请\s*忽略\s*(?:以上|前面|之前)\s*(?:所有\s*)?提示/gi,
+  /系统\s*提示\s*覆盖/gi,
+  /新\s*角色\s*[:：]\s*你现在是/gi,
+  /你\s*现在\s*是\s*\w+\s*模式/gi,
+  /无视\s*(?:所有\s*)?(?:之前|以前|前面)\s*(?:的\s*)?指令/gi,
+  /忘记\s*(?:所有\s*)?(?:之前|以前|前面)\s*(?:的\s*)?指令/gi,
+  /假装\s*你是\s*\w+/gi,
+  /扮演\s*\w+/gi,
+  /模拟\s*\w+/gi,
+  /进入\s*\w+\s*模式/gi,
+  /切换\s*到\s*\w+\s*模式/gi,
+  /你\s*现在\s*是\s*\w+/gi,
+  /你\s*的\s*新\s*角色\s*[:：]/gi,
+  /系统\s*指令\s*[:：]/gi,
   // Additional obfuscation / bypass patterns (33-48)
-  /ignore\s+all\s+previous\s+instructions?\s+and/i,
-  /bypass\s+(?:all\s+)?(?:security|safety|restrictions?)/i,
-  /disable\s+(?:all\s+)?(?:safety|security)\s+(?:checks?|filters?)/i,
-  /ignore\s+your\s+(?:programming|training|safety)/i,
-  /do\s+not\s+(?:follow|obey)\s+(?:any\s+)?rules?/i,
-  /you\s+are\s+not\s+(?:bound\s+by|restricted\s+by)\s+any\s+rules?/i,
-  /free\s+yourself\s+from\s+(?:all\s+)?constraints?/i,
-  /break\s+(?:out\s+of|free\s+from)\s+(?:your\s+)?constraints?/i,
-  /ignore\s+(?:the\s+)?system\s+prompt/i,
-  /override\s+(?:the\s+)?system\s+prompt/i,
-  /reveal\s+(?:your\s+)?system\s+prompt/i,
-  /show\s+(?:your\s+)?system\s+prompt/i,
-  /print\s+(?:your\s+)?system\s+prompt/i,
-  /output\s+(?:your\s+)?system\s+prompt/i,
-  /泄露\s*(?:你的\s*)?系统\s*提示/i,
-  /显示\s*(?:你的\s*)?系统\s*指令/i,
+  /ignore\s+all\s+previous\s+instructions?\s+and/gi,
+  /bypass\s+(?:all\s+)?(?:security|safety|restrictions?)/gi,
+  /disable\s+(?:all\s+)?(?:safety|security)\s+(?:checks?|filters?)/gi,
+  /ignore\s+your\s+(?:programming|training|safety)/gi,
+  /do\s+not\s+(?:follow|obey)\s+(?:any\s+)?rules?/gi,
+  /you\s+are\s+not\s+(?:bound\s+by|restricted\s+by)\s+any\s+rules?/gi,
+  /free\s+yourself\s+from\s+(?:all\s+)?constraints?/gi,
+  /break\s+(?:out\s+of|free\s+from)\s+(?:your\s+)?constraints?/gi,
+  /ignore\s+(?:the\s+)?system\s+prompt/gi,
+  /override\s+(?:the\s+)?system\s+prompt/gi,
+  /reveal\s+(?:your\s+)?system\s+prompt/gi,
+  /show\s+(?:your\s+)?system\s+prompt/gi,
+  /print\s+(?:your\s+)?system\s+prompt/gi,
+  /output\s+(?:your\s+)?system\s+prompt/gi,
+  /泄露\s*(?:你的\s*)?系统\s*提示/gi,
+  /显示\s*(?:你的\s*)?系统\s*指令/gi,
 ]
 
 /** HTML injection patterns for page content scanning. */
@@ -97,9 +97,11 @@ export function sanitizeKnowledgeContent(content: string): string {
   let detected = false
 
   for (const pattern of INJECTION_PATTERNS) {
-    if (pattern.test(sanitized)) {
+    // Clone so the shared /g regexes carry no lastIndex state across calls.
+    const re = new RegExp(pattern.source, pattern.flags)
+    if (re.test(sanitized)) {
       detected = true
-      sanitized = sanitized.replace(pattern, "[FILTERED]")
+      sanitized = sanitized.replace(re, "[FILTERED]")
     }
   }
 
@@ -138,7 +140,8 @@ export function sanitizePageContent(text: string): string {
   let sanitized = text
 
   for (const pattern of INJECTION_PATTERNS) {
-    sanitized = sanitized.replace(pattern, "[FILTERED]")
+    // Clone so the shared /g regexes carry no lastIndex state across calls.
+    sanitized = sanitized.replace(new RegExp(pattern.source, pattern.flags), "[FILTERED]")
   }
 
   return sanitized
