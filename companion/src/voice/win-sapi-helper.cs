@@ -18,6 +18,7 @@
 //   csc /nologo /target:exe /r:System.Speech.dll /out:win-sapi-helper.exe win-sapi-helper.cs
 
 using System;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -76,8 +77,8 @@ public static class WinSapiHelper
     {
         try
         {
-            RecognizerInfo[] infos = SpeechRecognitionEngine.InstalledRecognizers();
-            if (infos == null || infos.Length == 0)
+            ReadOnlyCollection<RecognizerInfo> infos = SpeechRecognitionEngine.InstalledRecognizers();
+            if (infos == null || infos.Count == 0)
             {
                 Console.WriteLine("{\"available\":false,\"reason\":\"no_recognizer_installed\"}");
                 return;
@@ -111,7 +112,7 @@ public static class WinSapiHelper
             engine.BabbleTimeout = TimeSpan.FromSeconds(4);
             engine.EndSilenceTimeout = TimeSpan.FromMilliseconds(750);
             engine.EndSilenceTimeoutAmbiguous = TimeSpan.FromSeconds(1);
-            engine.SetInputToWavFile(wavPath);
+            engine.SetInputToWaveFile(wavPath);
 
             StringBuilder text = new StringBuilder();
             Stopwatch wall = Stopwatch.StartNew();
@@ -164,8 +165,8 @@ public static class WinSapiHelper
 
     private static SpeechRecognitionEngine CreateEngineForCulture(string culture)
     {
-        RecognizerInfo[] infos = SpeechRecognitionEngine.InstalledRecognizers();
-        if (infos == null || infos.Length == 0)
+        ReadOnlyCollection<RecognizerInfo> infos = SpeechRecognitionEngine.InstalledRecognizers();
+        if (infos == null || infos.Count == 0)
         {
             return null;
         }
@@ -175,7 +176,7 @@ public static class WinSapiHelper
         string primary = wanted;
         int dash = wanted.IndexOf('-');
         if (dash > 0) primary = wanted.Substring(0, dash);
-        for (int i = 0; i < infos.Length; i++)
+        for (int i = 0; i < infos.Count; i++)
         {
             RecognizerInfo ri = infos[i];
             if (ri == null || ri.Culture == null) continue;

@@ -357,3 +357,22 @@ test("ci smoke feeds helper via stdin (never argv) and rejects protocol greens",
   // transcription frames with code=protocol fail the gate
   assert.match(smoke, /-ne\s+'protocol'/)
 })
+
+// --- helper source compiles against real .NET Framework System.Speech ----------
+// Round-1 CI caught three CS errors the local (macOS) tree cannot: InstalledRecognizers()
+// returns ReadOnlyCollection<RecognizerInfo> (not an array), and the API is
+// SetInputToWaveFile ("Wave", not "Wav"). Pin both so a rename regresses loudly.
+
+test("helper source uses .NET Framework System.Speech API shapes (CI S2 regression pin)", () => {
+  const cs = fs.readFileSync(
+    path.join(__dirname, "..", "..", "src", "voice", "win-sapi-helper.cs"),
+    "utf8",
+  )
+  // InstalledRecognizers() → ReadOnlyCollection (CS0029 round-1)
+  assert.doesNotMatch(cs, /RecognizerInfo\[\]\s+infos/)
+  assert.match(cs, /ReadOnlyCollection<RecognizerInfo>\s+infos/)
+  assert.doesNotMatch(cs, /infos\.Length/)
+  // correct method name (CS1061 round-1)
+  assert.match(cs, /SetInputToWaveFile\(/)
+  assert.doesNotMatch(cs, /SetInputToWavFile\(/)
+})
