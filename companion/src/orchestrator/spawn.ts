@@ -58,9 +58,38 @@ export function ensureOrchestratorRunId(thread: any): string {
   return `orun_${randomUUID()}`
 }
 
+export type ParentPromotionSnapshot = {
+  agent_role: AgentRole
+  tool_whitelist: string[] | null
+  orchestrator_run_id: string | null
+}
+
 export type SpawnWorkerResult =
-  | { ok: true; worker: any; orchestrator_run_id: string }
+  | { ok: true; worker: any; orchestrator_run_id: string; parent_before_promotion: ParentPromotionSnapshot | null }
   | { ok: false; error: string }
+
+/**
+ * #292: undo the parent promotion when a post-create step (pack apply /
+ * intent claim) failed and the worker was deleted — the parent must not
+ * stay narrowed to ORCHESTRATOR_TOOL_ALLOWLIST over a spawn that never
+ * happened. No-op when nothing was promoted.
+ */
+export function restoreParentAfterFailedSpawn(
+  tm: ThreadManager,
+  parentThreadId: string,
+  snapshot: ParentPromotionSnapshot | null,
+): void {
+  if (!snapshot) return
+  try {
+    tm.update(parentThreadId, {
+      agent_role: snapshot.agent_role,
+      tool_whitelist: snapshot.tool_whitelist,
+      orchestrator_run_id: snapshot.orchestrator_run_id,
+    } as any)
+  } catch {
+    /* best-effort rollback */
+  }
+}
 
 /**
  * Create a child worker thread under parent. Caller must have already obtained user confirmation.
@@ -111,20 +140,10 @@ export function spawnWorkerThread(
           : null
 
   const runId = ensureOrchestratorRunId(parent)
-  // Promote parent to orchestrator if needed (orchestrator surface only — not worker input)
-  if (parent.agent_role !== "orchestrator") {
-    tm.update(opts.parentThreadId, {
-      agent_role: "orchestrator" as AgentRole,
-      orchestrator_run_id: runId,
-      tool_whitelist:
-        parent.tool_whitelist === null
-          ? [...ORCHESTRATOR_TOOL_ALLOWLIST]
-          : parent.tool_whitelist,
-    } as any)
-  } else if (!parent.orchestrator_run_id) {
-    tm.update(opts.parentThreadId, { orchestrator_run_id: runId } as any)
-  }
 
+  // #292: everything that can fail is validated BEFORE the parent is
+  // promoted — a failed spawn must leave the parent's tool surface
+  // untouched (a normal thread keeps navigate/click, not just list_tabs).
   const workerCount = countWorkersInRun(tm, runId)
   if (workerCount >= ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run) {
     return {
@@ -140,6 +159,39 @@ export function spawnWorkerThread(
   })
   if (whitelist.length === 0) {
     return { ok: false, error: "effective worker tool_whitelist is empty after HARD_DENY" }
+  }
+
+  // Promote parent to orchestrator (orchestrator surface only — not worker input).
+  // #292: snapshot the pre-promotion state so a later rollback (pack/intent
+  // failure in the dispatcher deletes the worker) can restore it exactly.
+  const snapshotWhitelist = (): string[] | null =>
+    parent.tool_whitelist === null
+      ? null
+      : Array.isArray(parent.tool_whitelist)
+        ? [...parent.tool_whitelist]
+        : null
+  let parentBeforePromotion: ParentPromotionSnapshot | null = null
+  if (parent.agent_role !== "orchestrator") {
+    parentBeforePromotion = {
+      agent_role: (parent.agent_role || "normal") as AgentRole,
+      tool_whitelist: snapshotWhitelist(),
+      orchestrator_run_id: parent.orchestrator_run_id ?? null,
+    }
+    tm.update(opts.parentThreadId, {
+      agent_role: "orchestrator" as AgentRole,
+      orchestrator_run_id: runId,
+      tool_whitelist:
+        parent.tool_whitelist === null
+          ? [...ORCHESTRATOR_TOOL_ALLOWLIST]
+          : parent.tool_whitelist,
+    } as any)
+  } else if (!parent.orchestrator_run_id) {
+    parentBeforePromotion = {
+      agent_role: "orchestrator",
+      tool_whitelist: snapshotWhitelist(),
+      orchestrator_run_id: null,
+    }
+    tm.update(opts.parentThreadId, { orchestrator_run_id: runId } as any)
   }
 
   const intentId = opts.intentId && String(opts.intentId).trim() ? String(opts.intentId).trim() : null
@@ -177,7 +229,7 @@ export function spawnWorkerThread(
     intent_id: intentId,
   })
 
-  return { ok: true, worker: full, orchestrator_run_id: runId }
+  return { ok: true, worker: full, orchestrator_run_id: runId, parent_before_promotion: parentBeforePromotion }
 }
 
 export function listWorkers(tm: ThreadManager, orchestratorRunId: string): any[] {
