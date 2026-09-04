@@ -1739,7 +1739,7 @@ export function SettingsSlideout() {
                       {voiceModel && (
                         <>
                           <div style={{ ...styles.helpText, marginTop: 8 }}>
-                            {formatDiskUsage(voiceModel.diskUsedMB, voiceModel.diskBudgetMB)}
+                            {formatDiskUsage(voiceModel.diskUsedMB, voiceModel.diskBudgetMB)}（含说话人分离模型）
                           </div>
                           <div style={{ ...styles.helpText, marginTop: 2 }}>
                             {binaryStatusLine(voiceModel.binary)}
@@ -2026,7 +2026,7 @@ export function SettingsSlideout() {
                   )}
 
 
-                  {/* #260: 说话人分离模型（会议声纹 embedding；独立于转写引擎，共享磁盘预算） */}
+                  {/* #260: 说话人分离模型（会议说话人嵌入；独立于转写引擎，共享磁盘预算） */}
                   {(() => {
                     const entry = voiceModel?.diarizeModel
                     const status = entry?.status || "absent"
@@ -2164,7 +2164,7 @@ export function SettingsSlideout() {
                           </div>
                         )}
                         <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 4, lineHeight: 1.45 }}>
-                          会议「自动标说话人」用：本机 ONNX 声纹 embedding，音频不出本机；只标「发言人N」，非身份识别。与转写模型共享磁盘预算；下载后无需切换引擎。
+                          会议「自动标说话人」用：本机 ONNX 说话人嵌入聚类，音频不出本机；只标「发言人N」，非身份识别。与转写模型共享磁盘预算；下载后无需切换引擎。
                         </div>
                       </div>
                     )

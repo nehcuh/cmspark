@@ -216,3 +216,23 @@ test("wavToRawPcm strips the 44-byte header; short input → empty", () => {
   assert.equal(pcm[0], 0xab)
   assert.equal(wavToRawPcm(new Uint8Array(WAV_HEADER_BYTES)).length, 0)
 })
+
+test("legacy mode: mode audio_cluster sent through (explicit old-engine fallback)", async () => {
+  const port = makePort()
+  const p = diarizeViaEmbeddingUpload({
+    meetingId: MEETING,
+    pcmSegments: [new Uint8Array([1, 2])],
+    k: 0,
+    mode: "audio_cluster",
+    send: port.send,
+    onMessage: port.onMessage,
+  })
+  port.emit({ type: "meeting.diarize.upload_started", v: 1, session_id: "dpcm_fg" })
+  port.emit({ type: "meeting.diarize.upload_ended", v: 1, session_id: "dpcm_fg" })
+  const auto = port.sent.find((m: any) => m.type === "meeting.auto_diarize")
+  assert.equal(auto.mode, "audio_cluster")
+  assert.equal(auto.pcm_session, "dpcm_fg")
+  assert.equal(auto.privacy_ack_v1, true)
+  port.emit({ type: "meeting.diarized", meeting: { id: MEETING } })
+  assert.deepEqual(await p, { ok: true })
+})

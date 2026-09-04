@@ -18,8 +18,8 @@ import type { EmbedSegmentsResult } from "../src/meeting/diarize-embed"
 const EXT = "chrome-extension://abcdefghijklmnopqrstuvwxyz"
 const DATA = process.env.CMSPARK_DATA_DIR!
 
-function chunkB64(bytes = 4096): string {
-  return Buffer.alloc(bytes, 3).toString("base64")
+function chunkB64(bytes = 4096, fill = 3): string {
+  return Buffer.alloc(bytes, fill).toString("base64")
 }
 
 /** Alternating two-speaker embeddings by segment index parity (one-hot 192-dim). */
@@ -62,6 +62,7 @@ async function makeMeetingWith4Lines(): Promise<string> {
 async function uploadPcm(
   segments: number,
   chunksPerSegment: number[] = [1, 1, 1, 1],
+  fill: (segmentIndex: number) => number = () => 3,
 ): Promise<string> {
   const started = await handleMeetingMessage(
     {
@@ -85,7 +86,7 @@ async function uploadPcm(
           session_id: sessionId,
           index: i,
           seq: s,
-          data: chunkB64(),
+          data: chunkB64(4096, fill(i)),
         },
         { origin: EXT },
       )
@@ -288,4 +289,110 @@ test("upload_end total_seqs mismatch kept actionable (session stays)", async () 
     { origin: EXT },
   )
   assert.equal(ok.type, "meeting.diarize.upload_ended")
+})
+
+// --- #260 round-2 MAJOR-1: legacy 3-dim audio_cluster 显式回退（PCM 服务端提特征）---
+
+test("legacy fallback: audio_cluster + pcm_session → server-side 3-dim features, experimental stays true", async () => {
+  resetPcmSessionsForTests()
+  const id = await makeMeetingWith4Lines()
+  const n = loadMeeting(id, DATA)!.transcript.length
+  // even segments quiet / odd loud → two distinct logEnergy feature rows
+  const sessionId = await uploadPcm(n, new Array(n).fill(1), (i) => (i % 2 === 0 ? 3 : 60))
+  const r = await handleMeetingMessage(
+    {
+      type: "meeting.auto_diarize",
+      v: 1,
+      privacy_ack_v1: true,
+      id,
+      mode: "audio_cluster",
+      pcm_session: sessionId,
+      k: 2,
+    },
+    { origin: EXT },
+  )
+  assert.equal(r.type, "meeting.diarized", JSON.stringify(r))
+  assert.equal(r.diarize.method, "audio_cluster")
+  assert.equal(r.diarize.experimental, true)
+  const m = loadMeeting(id, DATA)!
+  const speakers = new Set(m.transcript.map((l) => l.speaker))
+  assert.equal(speakers.size, 2)
+  for (const sp of speakers) assert.match(sp!, /^发言人\d+$/)
+})
+
+test("audio_cluster without features or pcm_session → features_required", async () => {
+  resetPcmSessionsForTests()
+  const id = await makeMeetingWith4Lines()
+  const r = await handleMeetingMessage(
+    { type: "meeting.auto_diarize", v: 1, privacy_ack_v1: true, id, mode: "audio_cluster", k: 2 },
+    { origin: EXT },
+  )
+  assert.equal(r.type, "meeting.error")
+  assert.equal(r.code, "features_required")
+})
+
+test("audio_cluster pcm mismatch → pcm_mismatch (mirror embedding path)", async () => {
+  resetPcmSessionsForTests()
+  const id = await makeMeetingWith4Lines()
+  const n = loadMeeting(id, DATA)!.transcript.length
+  const sessionId = await uploadPcm(n + 1, new Array(n + 1).fill(1))
+  const r = await handleMeetingMessage(
+    { type: "meeting.auto_diarize", v: 1, privacy_ack_v1: true, id, mode: "audio_cluster", pcm_session: sessionId, k: 2 },
+    { origin: EXT },
+  )
+  assert.equal(r.code, "pcm_mismatch")
+})
+
+test("audio_cluster session consumed once: reuse → pcm_session_not_found", async () => {
+  resetPcmSessionsForTests()
+  const id = await makeMeetingWith4Lines()
+  const n = loadMeeting(id, DATA)!.transcript.length
+  const sessionId = await uploadPcm(n, new Array(n).fill(1), (i) => (i % 2 === 0 ? 3 : 60))
+  const first = await handleMeetingMessage(
+    { type: "meeting.auto_diarize", v: 1, privacy_ack_v1: true, id, mode: "audio_cluster", pcm_session: sessionId, k: 2 },
+    { origin: EXT },
+  )
+  assert.equal(first.type, "meeting.diarized")
+  const again = await handleMeetingMessage(
+    { type: "meeting.auto_diarize", v: 1, privacy_ack_v1: true, id, mode: "audio_cluster", pcm_session: sessionId, k: 2 },
+    { origin: EXT },
+  )
+  assert.equal(again.code, "pcm_session_not_found")
+})
+
+test("preserve_manual keeps hand labels while auto-labeling the rest", async () => {
+  resetPcmSessionsForTests()
+  const id = await makeMeetingWith4Lines()
+  const n = loadMeeting(id, DATA)!.transcript.length
+  await handleMeetingMessage(
+    {
+      type: "meeting.set_speakers",
+      v: 1,
+      id,
+      assignments: [{ index: 0, speaker: "老板" }],
+    },
+    { origin: EXT },
+  )
+  const sessionId = await uploadPcm(n, new Array(n).fill(1))
+  const r = await handleMeetingMessage(
+    {
+      type: "meeting.auto_diarize",
+      v: 1,
+      privacy_ack_v1: true,
+      id,
+      mode: "embedding",
+      pcm_session: sessionId,
+      k: 2,
+      preserve_manual: true,
+    },
+    { origin: EXT },
+    { embedSegments: fakeEmbedderTwoSpeakers() as any },
+  )
+  assert.equal(r.type, "meeting.diarized", JSON.stringify(r))
+  const m = loadMeeting(id, DATA)!
+  assert.equal(m.transcript[0]!.speaker, "老板")
+  assert.ok(
+    m.transcript.slice(1).every((l) => /^发言人\d+$/.test(l.speaker ?? "")),
+    "non-manual lines auto-labeled",
+  )
 })

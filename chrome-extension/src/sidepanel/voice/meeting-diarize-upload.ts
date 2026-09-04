@@ -1,6 +1,6 @@
 /**
  * #260 — PCM upload + embedding auto-diarize client (meeting.diarize.upload_*).
- * 音频不出本机：raw s16le PCM → companion 内存会话 → ONNX 声纹 embedding。
+ * 音频不出本机：raw s16le PCM → companion 内存会话 → ONNX 说话人嵌入。
  * 镜像 transcribeWavViaStt：有序 WS 上直接连发 chunk（不逐块等 ack）。
  */
 
@@ -23,9 +23,10 @@ export type DiarizeUploadResult =
   | { ok: false; code: string; message?: string }
 
 /**
- * 一次性上传全部段 PCM 并触发 embedding 自动标说话人。
+ * 一次性上传全部段 PCM 并触发自动标说话人（默认 embedding；mode:"audio_cluster"
+ * = 旧版 3 维特征显式回退，服务端提特征）。
  * 状态机：upload_start → (等服务器 session_id) → chunks → upload_end →
- * auto_diarize{mode:"embedding"} → 等 meeting.diarized / meeting.error。
+ * auto_diarize{mode} → 等 meeting.diarized / meeting.error。
  * 服务器缺模型时回 embedding_model_required —— 调用方必须显式引导下载，
  * 不得静默落回旧引擎（#260 硬约束）。
  */
@@ -33,6 +34,8 @@ export function diarizeViaEmbeddingUpload(opts: {
   meetingId: string
   pcmSegments: Uint8Array[]
   k: number
+  /** embedding（默认）= ONNX 说话人嵌入聚类；audio_cluster = 旧版 3 维特征回退 */
+  mode?: "embedding" | "audio_cluster"
   preserveManual?: boolean
   send: SttSend
   onMessage: SttOnMessage
@@ -43,6 +46,7 @@ export function diarizeViaEmbeddingUpload(opts: {
     meetingId,
     pcmSegments,
     k,
+    mode = "embedding",
     preserveManual = true,
     send,
     onMessage,
@@ -103,7 +107,7 @@ export function diarizeViaEmbeddingUpload(opts: {
               v: 1,
               id: meetingId,
               privacy_ack_v1: true,
-              mode: "embedding",
+              mode,
               pcm_session: sessionId,
               k,
               ...(preserveManual ? { preserve_manual: true } : {}),

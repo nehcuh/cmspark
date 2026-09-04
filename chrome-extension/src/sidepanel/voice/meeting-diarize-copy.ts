@@ -7,7 +7,7 @@ export function formatMeetingDiarizeStatus(
   const kPart =
     typeof k === "number" && Number.isFinite(k) && k >= 1 ? ` · K=${Math.floor(k)}` : ""
   if (method === "embedding") {
-    return `已自动标匿名发言人（声纹 · 本机 · 非身份识别）${kPart}`
+    return `已自动标匿名发言人（说话人嵌入 · 本机 · 非身份识别）${kPart}`
   }
   if (method === "text_gap") {
     return `已弱标说话人（按行交替 · 非声学）${kPart}`
@@ -30,7 +30,7 @@ export function mapMeetingDiarizeError(code: string, message?: string): string {
     return "说话人分离超时，请重试"
   }
   if (code === "no_segments") {
-    return "无音频段，无法做声纹分离"
+    return "无音频段，无法做说话人聚类"
   }
   if (message) {
     return `说话人分离失败（${code}）：${message}`

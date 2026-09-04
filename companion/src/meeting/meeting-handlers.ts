@@ -39,6 +39,7 @@ import {
   clampDiarizeK,
   diarizeByAudioFeatures,
   diarizeByTextGap,
+  extractSegmentFeatures,
 } from "./auto-diarize"
 import { diarizeByEmbeddings } from "./diarize-cluster"
 import { embedSegmentsForDiarize } from "./diarize-embed"
@@ -378,11 +379,12 @@ export async function handleMeetingMessage(
 
   /**
    * Mtg3: auto-tag speakers (anonymous 发言人N).
-   * mode=audio_cluster requires features[][] aligned with transcript lines.
+   * mode=audio_cluster: 旧版 3 维特征 k-means（区分度低·experimental）。接受
+   * features[][] 或（#260 round-2 起）pcm_session —— 服务端提特征。
    * mode=text_gap is weak alternating labels (explicit; not acoustic).
    * mode=#260 embedding: PCM uploaded via meeting.diarize.upload_*; local ONNX
-   * speaker embeddings + cosine agglomerative clustering (diarize-eval gate
-   * PASSED 2026-09-04; no longer flagged experimental).
+   * speaker embeddings + cosine agglomerative clustering (round-2 held-out
+   * gate FAILED 2026-09-05 → stays experimental).
    */
   if (type === "meeting.auto_diarize") {
     if (msg.privacy_ack_v1 !== true) {
@@ -439,22 +441,44 @@ export async function handleMeetingMessage(
       }
       result = diarizeByEmbeddings(m.transcript, embedResult.embeddings, k)
     } else {
+      // #260 round-2 MAJOR-1: audio_cluster 也接受 pcm_session —— 服务端从上传
+      // PCM 提 3 维特征（旧引擎显式回退；extension 新 UI 不再本地提特征）。
       const features = Array.isArray(msg.features) ? msg.features : null
-      if (!features || features.length === 0) {
-        return err(
-          "features_required",
-          "audio_cluster requires features aligned with transcript lines",
-          { id },
-        )
+      let feats = features && features.length > 0 ? features : null
+      if (!feats) {
+        const sessionId = typeof msg.pcm_session === "string" ? msg.pcm_session : ""
+        if (!sessionId) {
+          return err(
+            "features_required",
+            "audio_cluster requires features or pcm_session aligned with transcript lines",
+            { id },
+          )
+        }
+        const pcm = consumeFinalizedPcm(sessionId)
+        if (!pcm) {
+          return err(
+            "pcm_session_not_found",
+            "pcm session not found or not finalized (upload_end first)",
+            { id },
+          )
+        }
+        if (pcm.length !== m.transcript.length) {
+          return err(
+            "pcm_mismatch",
+            `pcm segments ${pcm.length} != transcript ${m.transcript.length}`,
+            { id },
+          )
+        }
+        feats = pcm.map((s) => Array.from(extractSegmentFeatures(s, 16000)))
       }
-      if (features.length !== m.transcript.length) {
+      if (feats.length !== m.transcript.length) {
         return err(
           "features_mismatch",
-          `features length ${features.length} != transcript ${m.transcript.length}`,
+          `features length ${feats.length} != transcript ${m.transcript.length}`,
           { id },
         )
       }
-      result = diarizeByAudioFeatures(m.transcript, features, k)
+      result = diarizeByAudioFeatures(m.transcript, feats, k)
     }
     const lines = applyDiarizeToLines(m.transcript, result, {
       // Default: full auto overwrite. preserve_manual keeps hand labels (Mtg2).

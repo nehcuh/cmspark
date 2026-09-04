@@ -1066,7 +1066,7 @@ export function MeetingPanel(props: {
           setError(mapMeetingDiarizeError("embedding_model_required"))
         } else {
           setBusy(true)
-          await runEmbeddingDiarize(id, pcms)
+          await runUploadDiarize(id, pcms, "embedding")
         }
       }
     }
@@ -1074,25 +1074,32 @@ export function MeetingPanel(props: {
   }
 
   /**
-   * #260 embedding 自动标说话人：PCM 上传 → companion ONNX 声纹 → 聚类。
+   * #260 PCM 上传自动标说话人：embedding = companion ONNX 说话人嵌入聚类；
+   * audio_cluster = 旧版 3 维声学特征显式回退（区分度低 · 无需模型）。
    * 成功态由 meeting.diarized 运行时处理器收尾（busy/importStatus）。
    */
-  const runEmbeddingDiarize = async (id: string, pcmSegments: Uint8Array[]): Promise<boolean> => {
-    if (!diarizeModelReady) {
+  const runUploadDiarize = async (
+    id: string,
+    pcmSegments: Uint8Array[],
+    mode: "embedding" | "audio_cluster",
+  ): Promise<boolean> => {
+    if (mode === "embedding" && !diarizeModelReady) {
       setError(mapMeetingDiarizeError("embedding_model_required"))
       setBusy(false)
       return false
     }
     setBusy(true)
     setError(null)
-    setImportStatus(`声纹分离 0/${pcmSegments.length} 段…`)
+    const label = mode === "embedding" ? "说话人嵌入" : "旧版 3 维特征"
+    setImportStatus(`${label} 0/${pcmSegments.length} 段…`)
     const r = await diarizeViaEmbeddingUpload({
       meetingId: id,
       pcmSegments,
       k: diarizeK,
+      mode,
       send: sendViaRuntime,
       onMessage: subscribeMeetingRuntime,
-      onProgress: (p) => setImportStatus(`声纹分离 ${p.done}/${p.total} 段…`),
+      onProgress: (p) => setImportStatus(`${label} ${p.done}/${p.total} 段…`),
     })
     if (r.ok === false) {
       setError(mapMeetingDiarizeError(r.code, r.message))
@@ -1103,7 +1110,7 @@ export function MeetingPanel(props: {
     return true
   }
 
-  const runAutoDiarize = (mode: "embedding" | "text_gap") => {
+  const runAutoDiarize = (mode: "embedding" | "audio_cluster" | "text_gap") => {
     if (!ensureAck()) return
     if (!meetingId && !transcript.trim()) {
       setError("请先创建会议或导入/录制转写")
@@ -1113,20 +1120,21 @@ export function MeetingPanel(props: {
       setError("转写为空，无法标说话人")
       return
     }
-    if (mode === "embedding") {
+    if (mode === "embedding" || mode === "audio_cluster") {
       const pcms = linePcmRef.current
       if (!pcms.length) {
         setError("暂无音频段：请先「上传音频转写」以启用说话人分离（纯粘贴请用弱标）")
         return
       }
-      if (!diarizeModelReady) {
+      // embedding 需模型；旧版 3 维是用户显式选择，不是模型缺失的静默落回
+      if (mode === "embedding" && !diarizeModelReady) {
         setError(mapMeetingDiarizeError("embedding_model_required"))
         return
       }
       setBusy(true)
       setError(null)
       ensureMeetingIdThen((id) => {
-        void runEmbeddingDiarize(id, pcms)
+        void runUploadDiarize(id, pcms, mode)
       })
       return
     }
@@ -1532,7 +1540,7 @@ export function MeetingPanel(props: {
             </select>
           </label>
           <span style={{ fontSize: 10, color: tokens.textSecondary }}>
-            「自动」按声纹聚类估计人数（本机 · 实验 · 只标发言人N，非身份识别）
+            「自动」按说话人嵌入聚类估计人数（本机 · 实验 · 只标发言人N，非身份识别）
           </span>
           <label style={{ fontSize: 11, color: tokens.textSecondary, display: "flex", gap: 4, alignItems: "center" }}>
             <input
@@ -1570,9 +1578,19 @@ export function MeetingPanel(props: {
             disabled={busy || capturing || !ack}
             onClick={() => runAutoDiarize("embedding")}
             style={btnStyle(true)}
-            title="上传音频段 → 本机 ONNX 声纹 embedding + 聚类；只标匿名发言人N，非身份识别（需先在 设置 → 听写方式 下载说话人分离模型）"
+            title="上传音频段 → 本机 ONNX 说话人嵌入 + 聚类；只标匿名发言人N，非身份识别（需先在 设置 → 听写方式 下载说话人分离模型）"
           >
             自动标说话人
+          </button>
+          <button
+            type="button"
+            data-testid="meeting-auto-diarize-legacy"
+            disabled={busy || capturing || !ack}
+            onClick={() => runAutoDiarize("audio_cluster")}
+            style={btnStyle(false)}
+            title="旧版回退：上传音频段 → 本机 3 维声学特征 + 聚类（区分度低 · 实验性 · 无需下载模型）；只标匿名发言人N，非身份识别"
+          >
+            旧版 3 维（区分度低）
           </button>
           <button
             type="button"
