@@ -2844,7 +2844,7 @@ export function SettingsSlideout() {
               />
               <div>
                 <div style={{ fontWeight: 500, color: tokens.danger }}>
-                  协议解锁（允许非 http(s) 协议）
+                  协议解锁（会放行 javascript: 导航且不再问）
                   {config.allow_all_schemes === true && (
                     <span style={{
                       fontSize: 10, fontWeight: 600, marginLeft: 6, padding: "1px 6px",
@@ -2853,9 +2853,10 @@ export function SettingsSlideout() {
                   )}
                 </div>
                 <div style={{ fontSize: 11, color: tokens.danger, marginTop: 4, lineHeight: 1.5 }}>
-                  ☠ 绕过协议硬阻断（L1）与部分网页 L2——<b>不等于</b>无人值守全开。
-                  <b>不含</b> shell_exec / netsec / host_computer / spawn 的 forceConfirm。
-                  曾用名 God-mode。关闭后 prompt 注入仍可能驱动 <code>data:</code> / <code>chrome://</code>。
+                  ☠ 开则跳过 L1 协议硬阻断与 URL 确认（含 <code>javascript:</code> / <code>data:</code> / <code>chrome:</code>，不再询问）。
+                  不是「只允许非 http 协议」。
+                  <b>不等于</b>无人值守全开。<b>不含</b> shell_exec / netsec / host_computer / spawn 的 forceConfirm。
+                  曾用名 God-mode。
                 </div>
               </div>
             </label>

@@ -167,7 +167,7 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 
 - **Cookie 信任域**（`trusted_domains`）：通配符匹配（`*.company.com`）；`get_cookies` / `set_cookie` / `delete_cookie` / `list_all_cookies` 域外阻断
 - **L2 确认队列**（`SecurityConfirmationManager`，约 45s 超时）：`evaluate` / `osascript_eval` 等**默认阻断**，经 Side Panel / Confirm Center（Cockpit）人机确认后，由 companion `security-policy` 颁发 HMAC `security_token`（constant-time 校验）才执行；`checkHighRiskExecution` 正则仅作风险预览升级，不单独 gate
-- **导航 URL 门**：非 `http(s)` scheme 直接阻断；hostname 不在 `trusted_domains` ∪ `auto_approved_domains` 时强制确认
+- **导航 URL 门**：非 `http(s)` scheme 直接阻断（仅 `allow_all_schemes` 可绕过 L1，含 `javascript:` 且不再问）；确认 skip = `auto_approved_domains` ∪ `auto_approve_dangerous` ∪ `allow_all_schemes`。`trusted_domains` = cookie-only，**不**跳过 URL 确认
 - **域白名单 + 全局自动批准**（[ADR-007](adr/007-domain-whitelist-auto-approve.md)）：`auto_approved_domains`（独立于信任域）跳过工具确认；`security.auto_approve_dangerous` 全局 kill-switch（默认 false，无人值守用）。`osascript_eval` **不走**域白名单，仅全局开关可放行
 - **分级特权 / God Mode**（[ADR-010](adr/010-tiered-privilege-godmode.md)）：会话级信任与能力分层，与 L2 / 企业模块协同，**不是**旧 privilege-manager 三级枚举
 - **Extension 侧**：`page-sanitizer` 在内容进入 LLM context 前做 prompt-injection 过滤

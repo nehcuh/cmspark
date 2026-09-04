@@ -1,6 +1,6 @@
 # ADR-022: Outbound MCP Server（对外编程 Agent 的 L1 浏览器面）
 
-**日期**: 2026-08-04 | **状态**: **Accepted**（方向锁定；实现按 Phase 0 → P1 门控，**未**产品 ship / 非 default-on）  
+**日期**: 2026-08-04 | **状态**: **Accepted**（已交付：实验、非 default-on；禁扩默认 outbound profile，[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）  
 **相关**: [ADR-020](020-capability-model-three-axes.md) · [ADR-015](015-multi-agent-orchestrator-tab-lock.md) tab lease · [ADR-014](014-mission-pack-enterprise-modules.md) Pack · 用户 MCP 客户端指南 [mcp.md](../mcp.md)  
 **过程 SoT（历史）**: [brief](../decisions/cmspark-as-mcp-server-brief-2026-08-03.md) · [adversary](../decisions/cmspark-as-mcp-server-adversary-synthesis-2026-08-03.md) · [dual-review](../decisions/cmspark-as-mcp-server-dual-review-synthesis-2026-08-03.md) · spike plan [2026-08-03-outbound-mcp-phase0-spike.md](../superpowers/plans/2026-08-03-outbound-mcp-phase0-spike.md)  
 **双审**: Claude + Pi **APPROVE_WITH_NITS**（`docs/audit/reviews/cmspark-mcp-server-strategy-*-20260803-150011*`）；nits 已并入本 ADR 决策 L1–L9
