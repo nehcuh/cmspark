@@ -496,7 +496,27 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.modelDownloadEndpoint !== undefined && typeof m.modelDownloadEndpoint !== "string") {
         return { valid: false, error: "voice.model.set_prefs modelDownloadEndpoint must be string" }
       }
-      if (m.autoFallbackToBrowser === undefined && m.modelDownloadEndpoint === undefined) {
+      if (m.postprocessFillers !== undefined && typeof m.postprocessFillers !== "boolean") {
+        return { valid: false, error: "voice.model.set_prefs postprocessFillers must be boolean" }
+      }
+      if (m.postprocessLowercase !== undefined && typeof m.postprocessLowercase !== "boolean") {
+        return { valid: false, error: "voice.model.set_prefs postprocessLowercase must be boolean" }
+      }
+      if (m.postprocessStripPunct !== undefined && typeof m.postprocessStripPunct !== "boolean") {
+        return { valid: false, error: "voice.model.set_prefs postprocessStripPunct must be boolean" }
+      }
+      if (m.modelPrewarm !== undefined && typeof m.modelPrewarm !== "boolean") {
+        return { valid: false, error: "voice.model.set_prefs modelPrewarm must be boolean" }
+      }
+      if (
+        m.autoFallbackToBrowser === undefined &&
+        m.modelDownloadEndpoint === undefined &&
+        m.postprocessFillers === undefined &&
+        m.postprocessLowercase === undefined &&
+        m.postprocessStripPunct === undefined &&
+        m.modelPrewarm === undefined &&
+        m.postprocessMap === undefined
+      ) {
         return { valid: false, error: "voice.model.set_prefs requires at least one field" }
       }
       return { valid: true }

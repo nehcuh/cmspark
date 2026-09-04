@@ -10,6 +10,24 @@ export type WhisperSettingsModelId = (typeof WHISPER_SETTINGS_MODEL_IDS)[number]
 /** Non-primary models shown under “其他型号”. */
 export const OTHER_WHISPER_MODEL_IDS = ["small", "large-v3-turbo"] as const
 
+/** Accuracy / speed stars (1–5). All catalog ids are multilingual. */
+export const WHISPER_MODEL_META: Record<
+  WhisperSettingsModelId,
+  { accuracy: number; speed: number; lang: "multilingual" | "en-only" }
+> = {
+  small: { accuracy: 2, speed: 5, lang: "multilingual" },
+  medium: { accuracy: 4, speed: 3, lang: "multilingual" },
+  "large-v3-turbo": { accuracy: 5, speed: 2, lang: "multilingual" },
+}
+
+export function whisperModelMetaLine(id: WhisperSettingsModelId): string {
+  const m = WHISPER_MODEL_META[id]
+  const acc = "★".repeat(m.accuracy) + "☆".repeat(5 - m.accuracy)
+  const spd = "★".repeat(m.speed) + "☆".repeat(5 - m.speed)
+  const lang = m.lang === "multilingual" ? "多语言" : "英语"
+  return `准 ${acc} · 速 ${spd} · ${lang}`
+}
+
 // --- Engine radio (SoT §6.1) -------------------------------------------------
 
 export const ENGINE_SECTION_LABEL = "听写方式"

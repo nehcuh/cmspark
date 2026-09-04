@@ -95,6 +95,8 @@ export type UseVoiceInputOpts = {  /** Composer text at listen start (snapshot).
   getBaseText: () => string
   /** Apply merged draft (never auto-send). */
   onDraft: (text: string) => void
+  /** Local capture RMS 0–1. */
+  onLevel?: (level: number) => void
   /** Active thread — switch aborts. */
   threadId: string | null
   /** SoT: no start while threadBusy. */
@@ -410,6 +412,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       },
       onSegmentContinue: () => {
         dispatchEv({ type: "SEGMENT_CONTINUE" })
+      },
+      onLevel: (level: number) => {
+        optsRef.current.onLevel?.(level)
       },
     }
 

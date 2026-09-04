@@ -455,7 +455,7 @@ export function createLocalSttAdapter(
    * Record one segment: wait segmentMs or user stop(), then return WAV.
    */
   const recordSegment = async (segmentMs: number): Promise<Uint8Array | null> => {
-    const handle = await beginCapture({ maxMs: segmentMs })
+    const handle = await beginCapture({ maxMs: segmentMs, onLevel: handlers.onLevel })
     if (dead || aborted || !wantListening) {
       try {
         handle.abort()
@@ -498,7 +498,7 @@ export function createLocalSttAdapter(
 
   const runClassic = async (sid: string) => {
     try {
-      const handle = await beginCapture({ maxMs: LOCAL_STT_MAX_RECORD_MS })
+      const handle = await beginCapture({ maxMs: LOCAL_STT_MAX_RECORD_MS, onLevel: handlers.onLevel })
       if (dead || aborted || sessionId !== sid) {
         handle.abort()
         return
@@ -563,6 +563,7 @@ export function createLocalSttAdapter(
         try {
           pcmStream = await beginPcmStream({
             maxMs: windowMs,
+            onLevel: handlers.onLevel,
             onPcmChunk: (pcm) => {
               if (dead || aborted || gen !== loopGen || sessionId !== segSid) return
               if (!sessionStarted || pcm.length === 0) return

@@ -52,6 +52,12 @@ export interface VoiceModelStatePayload {
   autoFallbackToBrowser: boolean
   /** 模型下载源（HF 镜像）。"" = 按清单 URL 原样下载。env 覆盖不回显（配置值视图）。 */
   modelDownloadEndpoint: string
+  postprocessFillers: boolean
+  postprocessLowercase: boolean
+  postprocessStripPunct: boolean
+  postprocessMap: Array<[string, string]>
+  modelPrewarm: boolean
+  prewarmStatus: "idle" | "ok" | "fail"
 }
 
 /** Companion package root candidates (src layout / test-dist / bundle). */
@@ -198,6 +204,16 @@ export async function buildVoiceModelState(
     autoFallbackToBrowser: cfg.autoFallbackToBrowser !== false,
     modelDownloadEndpoint:
       typeof cfg.modelDownloadEndpoint === "string" ? cfg.modelDownloadEndpoint : "",
+    postprocessFillers: cfg.postprocessFillers === true,
+    postprocessLowercase: cfg.postprocessLowercase === true,
+    postprocessStripPunct: cfg.postprocessStripPunct === true,
+    postprocessMap: Array.isArray(cfg.postprocessMap) ? cfg.postprocessMap : [],
+    modelPrewarm: cfg.modelPrewarm === true,
+    prewarmStatus: !cfg.modelPrewarm
+      ? "idle"
+      : models[localModelId]?.status === "ready"
+        ? "ok"
+        : "fail",
   }
 }
 

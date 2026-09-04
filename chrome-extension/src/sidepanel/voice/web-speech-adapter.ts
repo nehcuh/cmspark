@@ -25,6 +25,8 @@ export type SpeechAdapterHandlers = {
    * Local continuous D1c: segment transcribed; resume listening chrome for next window.
    */
   onSegmentContinue?: () => void
+  /** Local capture RMS 0–1 (browser Web Speech has no audio stream). */
+  onLevel?: (level: number) => void
 }
 
 /** Browser: lang string. Local: sessionId + modelId required. Dictation+ mode optional. */

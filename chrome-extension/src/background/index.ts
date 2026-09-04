@@ -1483,6 +1483,38 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
       }
 
+      case "voice.ptt.page_chord": {
+        try {
+          chrome.runtime.sendMessage({
+            type: "voice.ptt.from_page",
+            kind: message.kind === "up" ? "up" : "down",
+          })
+        } catch {
+          /* side panel may be closed */
+        }
+        sendResponse({ ok: true })
+        return true
+      }
+      case "voice.ptt.insert_text": {
+        const text = typeof message.text === "string" ? message.text : ""
+        if (!text) {
+          sendResponse({ ok: false, error: "empty" })
+          return true
+        }
+        chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+          const tabId = tabs[0]?.id
+          if (tabId == null || !browserBridge) {
+            sendResponse({ ok: false, error: "no_tab" })
+            return
+          }
+          browserBridge
+            .execute("type", { tabId, value: text })
+            .then((r) => sendResponse({ ok: r?.success === true, error: r?.error }))
+            .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
+        })
+        return true
+      }
+
       // Thread graph (Obsidian-style full-page tab) — design TG-1…TG-5
       case "thread_graph.prepare": {
         const threads = (Array.isArray(message.threads) ? message.threads : []) as ThreadGraphSlim[]
