@@ -743,7 +743,7 @@ test("T-ui-1: hydrate keeps truncated / incomplete_tools / finish_reason", () =>
   assert.equal(out[0]?.truncated, true)
   assert.equal(out[0]?.incomplete_tools, true)
   assert.equal(out[0]?.finish_reason, "max_tokens")
-  assert.equal(truncationHonestyChip(out[0]!), "思考耗尽额度")
+  assert.equal(truncationHonestyChip(out[0]!), "思考用尽输出上限")
   assert.equal(
     truncationHonestyChip({ content: "partial answer", truncated: true }),
     "输出被截断",
