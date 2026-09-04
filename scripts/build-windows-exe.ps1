@@ -470,6 +470,64 @@ if ($WhisperSrc) {
     Write-Host "  To enable: place whisper-cli as companion\dist\bin\cmspark-whisper-win-x64.exe then re-run build-package.bat" -ForegroundColor DarkYellow
 }
 
+# #259 Windows SAPI fallback helper: win-sapi-helper.exe is a *sidecar* next to
+# the whisper binary (NOT inside the SEA blob). Compiled at packaging time from
+# companion\src\voice\win-sapi-helper.cs with the .NET Framework csc.exe that
+# ships with Windows (System.Speech is a full-framework assembly — no SDK needed).
+# Runtime resolve (companion/src/voice/win-sapi.ts) looks under <exeDir>\bin\
+# and verifies the SHA256 sidecar written here (ADR-023 L5).
+function Find-Csc {
+    $candidates = @(
+        (Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
+        (Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\csc.exe'),
+        (Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v2.0.50727\csc.exe'),
+        (Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v2.0.50727\csc.exe')
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c) { return $c }
+    }
+    $found = Get-ChildItem -Path (Join-Path $env:SystemRoot 'Microsoft.NET\Framework*\v*\csc.exe') -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -ne $found) { return $found.FullName }
+    return $null
+}
+
+function Find-SystemSpeechRef {
+    # csc.exe simple-name /r: resolution only searches its own framework dir;
+    # System.Speech.dll lives in the GAC — locate it explicitly.
+    $gac = Get-ChildItem -Path (Join-Path $env:SystemRoot 'Microsoft.NET\assembly\GAC_MSIL\System.Speech') `
+        -Recurse -Filter 'System.Speech.dll' -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -ne $gac) { return $gac.FullName }
+    return $null
+}
+
+$SapiHelperCs = Join-Path $CompanionDir "src\voice\win-sapi-helper.cs"
+if (-not (Test-Path $SapiHelperCs)) {
+    Fail "win-sapi-helper.cs missing at $SapiHelperCs — #259 system STT helper source is a hard gate"
+}
+$Csc = Find-Csc
+$SpeechRef = Find-SystemSpeechRef
+if (-not $Csc -or -not $SpeechRef) {
+    Warn "csc.exe or System.Speech.dll not found — system STT (SAPI fallback) disabled in this package"
+} else {
+    $SapiBinDir = Join-Path $StagingDir "bin"
+    New-Item -ItemType Directory -Force $SapiBinDir | Out-Null
+    $SapiExe = Join-Path $SapiBinDir "win-sapi-helper.exe"
+    Write-Host "  Compiling win-sapi-helper.exe with $Csc..." -ForegroundColor DarkGray
+    $sapiOut = & $Csc /nologo /target:exe "/out:$SapiExe" "/r:$SpeechRef" "$SapiHelperCs" 2>&1
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $SapiExe)) {
+        Fail "csc.exe failed for win-sapi-helper.cs (exit ${LASTEXITCODE}):`n$sapiOut"
+    }
+    # Packaging-time pin: sidecar next to the exe (csc output hash varies by
+    # toolchain, so there is no repo constant — companion verifies at runtime).
+    $SapiHash = (Get-FileHash -LiteralPath $SapiExe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $SapiSidecar = Join-Path $SapiBinDir "win-sapi-helper.sha256"
+    [System.IO.File]::WriteAllText($SapiSidecar, $SapiHash + [System.Environment]::NewLine)
+    Ok "bin/win-sapi-helper.exe (system STT sidecar, pinned)"
+    Ok "bin/win-sapi-helper.sha256 ($($SapiHash.Substring(0,12))…)"
+}
+
 # THIRD_PARTY_NOTICES must ship with the package (W3 §5.5 MIT notice obligation;
 # generated from companion/src/computer/model-license.ts single source of truth).
 $NoticeSrc = "$CompanionDir\THIRD_PARTY_NOTICES"

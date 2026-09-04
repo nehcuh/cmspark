@@ -157,8 +157,11 @@ export interface ComputerConfig {
  * Separate from computer.model* (Qwen); default engine is browser (no auto-download).
  */
 export interface VoiceConfig {
-  /** Default browser. Companion SoT (ADR-023 L1). */
-  sttEngine: "browser" | "local"
+  /**
+   * Default browser. Companion SoT (ADR-023 L1). #259: "system" = Windows
+   * SAPI fallback (win32 only; non-win32 configs fail-close to browser at load).
+   */
+  sttEngine: "browser" | "local" | "system"
   /** Active model when engine=local; may be set only if ready (handlers enforce). */
   localModelId: "small" | "medium" | "large-v3-turbo"
   /** Whisper family disk budget MB (default 4096; scoped to whisper root only). */
@@ -910,9 +913,19 @@ export function getConfig(): CompanionConfig {
     }
   } else {
     const voice = cachedConfig.voice
-    if (voice.sttEngine !== "browser" && voice.sttEngine !== "local") {
+    // #259: "system" is win32-only — fail closed elsewhere (spec §3.1)
+    if (voice.sttEngine === "system" && process.platform !== "win32") {
       console.warn(
-        `[cmspark-agent] voice.sttEngine 非法（须为 "browser"|"local"）——回退 browser (config tampering?)`,
+        `[cmspark-agent] voice.sttEngine="system" 仅 Windows 可用——非 win32 平台回退 browser`,
+      )
+      voice.sttEngine = "browser"
+    } else if (
+      voice.sttEngine !== "browser" &&
+      voice.sttEngine !== "local" &&
+      voice.sttEngine !== "system"
+    ) {
+      console.warn(
+        `[cmspark-agent] voice.sttEngine 非法（须为 "browser"|"local"|"system"）——回退 browser (config tampering?)`,
       )
       voice.sttEngine = "browser"
     }

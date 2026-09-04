@@ -167,3 +167,13 @@ jobs:
         run: |
           & scripts/tests/win-launcher-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Windows SAPI helper smoke (#259 win-sapi-helper)
+        # Compile win-sapi-helper.cs with in-box csc.exe (+ GAC System.Speech)
+        # and prove the line-JSON protocol end-to-end with a silent WAV.
+        # No content assertions — Server SKUs may legally have no recognizers.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          & scripts/tests/win-sapi-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

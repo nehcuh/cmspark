@@ -44,6 +44,7 @@ import {
   type VoiceModelStatePayload,
 } from "./whisper-state"
 import { maybePrewarmWhisper, resetWhisperPrewarm } from "./whisper-prewarm"
+import { probeWinSapiSystemSpeech, resolveWinSapiHelper } from "./win-sapi"
 
 // --- types --------------------------------------------------------------------
 
@@ -63,6 +64,10 @@ export interface VoiceModelHandlerDeps {
   now?: () => number
   /** Whisper root override (tests). */
   rootDir?: string
+  /** #259: system-engine seams (platform / helper resolve / System.Speech probe). */
+  platform?: NodeJS.Platform
+  resolveSapi?: typeof resolveWinSapiHelper
+  probeSapi?: typeof probeWinSapiSystemSpeech
 }
 
 // --- process-level mutex + abort ----------------------------------------------
@@ -363,6 +368,41 @@ export async function handleVoiceModelMessage(
       return attachLastDownloadError(state)
     }
 
+    // #259 — system-engine probe for the settings「引擎链路状态」rows.
+    // All real probing, no cached pretending (spec §3.3).
+    case "voice.system.state": {
+      const platform = deps.platform ?? process.platform
+      const resolveSapi = deps.resolveSapi ?? resolveWinSapiHelper
+      const probeSapi = deps.probeSapi ?? probeWinSapiSystemSpeech
+      if (platform !== "win32") {
+        return {
+          type: "voice.system.state" as const,
+          v: 1 as const,
+          platform: "other" as const,
+          helper: { ok: false as const, reason: "not_win32" as const },
+          systemSpeech: { available: false, reason: "not_win32" },
+        }
+      }
+      const sapi = resolveSapi()
+      if (!sapi.ok) {
+        return {
+          type: "voice.system.state" as const,
+          v: 1 as const,
+          platform: "win32" as const,
+          helper: { ok: false as const, reason: sapi.reason, message: sapi.message },
+          systemSpeech: { available: false, reason: sapi.reason },
+        }
+      }
+      const probe = await probeSapi()
+      return {
+        type: "voice.system.state" as const,
+        v: 1 as const,
+        platform: "win32" as const,
+        helper: { ok: true as const, pinned: sapi.pinned },
+        systemSpeech: probe,
+      }
+    }
+
     case "voice.model.download": {
       const rawId = rest.modelId
       if (!isWhisperModelId(rawId)) {
@@ -553,10 +593,42 @@ export async function handleVoiceModelMessage(
 
     case "voice.model.set_engine": {
       const engine = rest.engine
-      if (engine !== "browser" && engine !== "local") {
-        return modelError('voice.model.set_engine requires engine:"browser"|"local"', {
+      if (engine !== "browser" && engine !== "local" && engine !== "system") {
+        return modelError('voice.model.set_engine requires engine:"browser"|"local"|"system"', {
           code: "INVALID_ENGINE",
         })
+      }
+
+      // #259: system engine — win32 + helper verified + privacy ack; ZERO
+      // config write unless every gate passes (same discipline as local).
+      if (engine === "system") {
+        if (rest.privacy_ack_v2 !== true) {
+          logger.warn("voice.model.set_engine.refused", { reason: "need_privacy_ack_v2", engine: "system" })
+          return modelError("切换系统语音识别前须确认隐私说明（privacy_ack_v2）。", {
+            code: "NEED_PRIVACY_ACK",
+          })
+        }
+        const platform = deps.platform ?? process.platform
+        if (platform !== "win32") {
+          logger.warn("voice.model.set_engine.refused", { reason: "system_not_win32", platform })
+          return modelError("系统语音识别仅 Windows 可用。", {
+            code: "SYSTEM_ENGINE_NOT_SUPPORTED",
+          })
+        }
+        const resolveSapi = deps.resolveSapi ?? resolveWinSapiHelper
+        const sapi = resolveSapi()
+        if (!sapi.ok) {
+          logger.warn("voice.model.set_engine.refused", { reason: "system_helper_unavailable", helper: sapi.reason })
+          return modelError(
+            `系统语音识别不可用：${sapi.message}（请重新安装或校验 win-sapi-helper）`,
+            { code: "SYSTEM_ENGINE_UNAVAILABLE" },
+          )
+        }
+        setVoiceFields({ sttEngine: "system" })
+        logger.info("voice.model.set_engine", { engine: "system" })
+        const state = await statePayload(deps)
+        ctx.broadcast?.(state)
+        return state
       }
 
       if (engine === "browser") {

@@ -3,6 +3,8 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 
 import {
   BROWSER_PRIVACY_COPY,
@@ -11,9 +13,11 @@ import {
   LOCAL_PRIVACY_COPY,
   OTHER_WHISPER_MODEL_IDS,
   RECOMMENDED_WHISPER_MODEL_ID,
+  SYSTEM_PRIVACY_COPY,
   VOICE_ERR_COMPANION_DISCONNECTED,
   WHISPER_SETTINGS_MODEL_IDS,
   binaryStatusLine,
+  engineChainRows,
   formatDiskUsage,
   mapVoiceTransportError,
   parseVoiceSettingsSendResponse,
@@ -101,4 +105,125 @@ test("modelProbeErrorLabel http/network copy points at download source", () => {
   assert.match(modelProbeErrorLabel("http-error") || "", /模型下载源|hf-mirror/)
   assert.match(modelProbeErrorLabel("network-error") || "", /模型下载源|hf-mirror/)
   assert.match(modelProbeErrorLabel("HTTP 403 (https://huggingface.co/x)") || "", /模型下载源|hf-mirror/)
+})
+
+// --- #259 Windows SAPI system engine copy + chain rows ---------------------------
+
+test("system privacy is local-class: Companion transport + offline claim bounded", () => {
+  // Same Companion transport as local — must NOT claim audio bypasses Companion
+  assert.equal(/不经过 Companion/.test(SYSTEM_PRIVACY_COPY), false)
+  assert.match(SYSTEM_PRIVACY_COPY, /Companion/)
+  assert.match(SYSTEM_PRIVACY_COPY, /System\.Speech|系统/)
+  assert.match(SYSTEM_PRIVACY_COPY, /临时/)
+  // Honest limits: win32-only + unsupported-language errors surface
+  assert.match(SYSTEM_PRIVACY_COPY, /仅 Windows/)
+  assert.match(SYSTEM_PRIVACY_COPY, /不支持的语言/)
+  assert.equal(privacyCopyForEngine("system"), SYSTEM_PRIVACY_COPY)
+})
+
+// --- #259 MAJOR-1 fix: 常驻三行引擎链路状态（spec §3.3 review round-2） -----------
+
+const CHAIN_BASE = { voiceModel: null, browserSupport: null, systemState: null } as const
+
+test("engineChainRows always returns three rows; non-win32 system row stays honest", () => {
+  const rows = engineChainRows(CHAIN_BASE)
+  assert.equal(rows.length, 3)
+  assert.deepEqual(
+    rows.map((r) => r.label),
+    ["本机模型", "浏览器听写", "系统语音"],
+  )
+  // Non-win32 (or probe pending): the third row must EXIST and say why — never hidden.
+  assert.equal(rows[2]!.ok, false)
+  assert.match(rows[2]!.detail!, /仅 Windows/)
+  assert.equal(engineChainRows({ ...CHAIN_BASE, systemState: { platform: "other" } })[2]!.ok, false)
+})
+
+test("engineChainRows local row reflects voice.model.state (ready/absent/downloading)", () => {
+  const ready = engineChainRows({
+    ...CHAIN_BASE,
+    voiceModel: { localModelId: "medium", models: { medium: { status: "ready" } } },
+  })
+  assert.equal(ready[0]!.ok, true)
+  assert.match(ready[0]!.detail!, /已就绪/)
+
+  const dl = engineChainRows({
+    ...CHAIN_BASE,
+    voiceModel: { localModelId: "medium", models: { medium: { status: "downloading" } } },
+  })
+  assert.equal(dl[0]!.ok, false)
+  assert.match(dl[0]!.detail!, /下载中/)
+
+  const absent = engineChainRows({ ...CHAIN_BASE, voiceModel: { models: {} } })
+  assert.equal(absent[0]!.ok, false)
+  assert.match(absent[0]!.detail!, /未下载/)
+
+  assert.equal(engineChainRows(CHAIN_BASE)[0]!.detail, "状态查询中")
+})
+
+test("engineChainRows browser row uses Web Speech detection + reason", () => {
+  const ok = engineChainRows({
+    ...CHAIN_BASE,
+    browserSupport: { ok: true, ctorName: "webkitSpeechRecognition" },
+  })
+  assert.equal(ok[1]!.ok, true)
+  assert.match(ok[1]!.detail!, /webkitSpeechRecognition/)
+
+  const missing = engineChainRows({
+    ...CHAIN_BASE,
+    browserSupport: { ok: false, reason: "missing_ctor" },
+  })
+  assert.equal(missing[1]!.ok, false)
+  assert.match(missing[1]!.detail!, /Web Speech/)
+  assert.equal(engineChainRows(CHAIN_BASE)[1]!.ok, false)
+})
+
+test("engineChainRows system row composes probe truth (win32 + helper pin)", () => {
+  const green = engineChainRows({
+    ...CHAIN_BASE,
+    systemState: {
+      platform: "win32",
+      helper: { ok: true, pinned: true },
+      systemSpeech: { available: true },
+    },
+  })
+  assert.equal(green[2]!.ok, true)
+  assert.match(green[2]!.detail!, /System\.Speech/)
+  assert.match(green[2]!.detail!, /SHA256/)
+
+  const noSpeech = engineChainRows({
+    ...CHAIN_BASE,
+    systemState: {
+      platform: "win32",
+      helper: { ok: true, pinned: true },
+      systemSpeech: { available: false, reason: "no_recognizer_installed" },
+    },
+  })
+  assert.equal(noSpeech[2]!.ok, false)
+  assert.match(noSpeech[2]!.detail!, /no_recognizer_installed/)
+
+  const helperBad = engineChainRows({
+    ...CHAIN_BASE,
+    systemState: {
+      platform: "win32",
+      helper: { ok: false, reason: "missing", message: "helper not found" },
+      systemSpeech: { available: true },
+    },
+  })
+  assert.equal(helperBad[2]!.ok, false)
+  assert.match(helperBad[2]!.detail!, /helper not found/)
+})
+
+test("settings renders engine chain rows persistently, not inside the system panel gate", () => {
+  const src = readFileSync(
+    join(process.cwd(), "src/sidepanel/components/SettingsSlideout.tsx"),
+    "utf8",
+  )
+  // The old two-row system-panel-only block is gone entirely.
+  assert.equal(/systemChainRows/.test(src), false)
+  assert.ok(/engineChainRows\(/.test(src), "slideout calls engineChainRows")
+  // Persistent placement: the call must come BEFORE the system panel gate.
+  const callIdx = src.indexOf("engineChainRows(")
+  const gateIdx = src.indexOf("showSystemPanel && systemProbeWin32 &&")
+  assert.ok(gateIdx > -1, "system panel gate still exists")
+  assert.ok(callIdx > -1 && callIdx < gateIdx, "chain block renders before the system panel gate")
 })

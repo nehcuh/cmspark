@@ -62,18 +62,23 @@ import {
   BTN_DELETE,
   BTN_DOWNLOAD,
   BTN_ENABLE_LOCAL,
+  BTN_ENABLE_SYSTEM,
   BTN_LOCAL_ENABLED,
   BTN_SET_ACTIVE,
   BTN_SWITCH_BROWSER,
+  BTN_SYSTEM_ENABLED,
   ENGINE_BROWSER_HINT,
   ENGINE_BROWSER_LABEL,
   ENGINE_LOCAL_HINT,
   ENGINE_LOCAL_LABEL,
   ENGINE_SECTION_LABEL,
+  ENGINE_SYSTEM_HINT,
+  ENGINE_SYSTEM_LABEL,
   OTHER_MODELS_TOGGLE,
   OTHER_WHISPER_MODEL_IDS,
   RECOMMENDED_ROW_PREFIX,
   RECOMMENDED_WHISPER_MODEL_ID,
+  SYSTEM_UNAVAILABLE_REASON_LABEL,
   VOICE_AUTO_FALLBACK_HINT,
   VOICE_AUTO_FALLBACK_LABEL,
   VOICE_DOWNLOAD_ENDPOINT_HINT,
@@ -86,6 +91,7 @@ import {
   whisperModelMetaLine,
   binaryStatusLine,
   canDownloadWhisperBinary,
+  engineChainRows,
   formatDiskUsage,
   modelProbeErrorLabel,
   modelStatusLabel,
@@ -94,6 +100,7 @@ import {
   progressPercent,
   type WhisperSettingsModelId,
 } from "../voice/whisper-settings-copy"
+import { detectSpeechRecognition } from "../voice/detect"
 import {
   VISION_COPY,
   applyVisionReuseFromMain,
@@ -111,6 +118,11 @@ import {
 // Alias kept as SECURITY_ARM_CONFIRM_PHRASE semantics; not a product "God" noun.
 const GODMODE_CONFIRM_PHRASE = "我了解风险"
 const SECURITY_ARM_PHRASE = GODMODE_CONFIRM_PHRASE
+
+// #259 引擎链路状态 row 2: Web Speech availability (pure feature detect; node tests → missing).
+const BROWSER_STT_SUPPORT = detectSpeechRecognition(
+  typeof window !== "undefined" ? (window as any) : {},
+)
 
 const SAFETY_SKILLS = [
   { id: "cookie_guard", label: "Cookie 守卫" },
@@ -161,7 +173,7 @@ export function SettingsSlideout() {
   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
   // Path B M0: engine radio is UI draft until ready model + explicit "启用本机转写".
-  const [engineDraft, setEngineDraft] = useState<"browser" | "local">("browser")
+  const [engineDraft, setEngineDraft] = useState<"browser" | "local" | "system">("browser")
   const [otherWhisperOpen, setOtherWhisperOpen] = useState(false)
   /** Local-only: modelId user clicked download on, until companion state/progress arrives. */
   const [voicePendingDownload, setVoicePendingDownload] = useState<string | null>(null)
@@ -255,6 +267,8 @@ export function SettingsSlideout() {
         dispatch({ type: "SET_VOICE_MODEL_ERROR", error: parsed.error })
       }
     })
+    // #259: Windows SAPI probe (win32 → helper/System.Speech rows; other → no-op).
+    chrome.runtime.sendMessage({ type: "voice.system.state" })
     chrome.runtime.sendMessage({ type: "ws.getPairingStatus" }, (resp: { paired?: boolean } | undefined) => {
       const paired = !!resp?.paired
       setWsPaired(paired)
@@ -280,13 +294,16 @@ export function SettingsSlideout() {
   // - companion local→browser (delete active / set_engine) → reset draft browser
   // - selecting local radio alone never writes set_engine (draft until enable)
   // - do not clobber local draft while companion still reports browser
-  const prevVoiceEngineRef = useRef<"browser" | "local" | null>(null)
+  const prevVoiceEngineRef = useRef<"browser" | "local" | "system" | null>(null)
   useEffect(() => {
     const eng = state.voiceModel?.sttEngine
     if (!eng) return
-    if (eng === "local") {
-      setEngineDraft("local")
-    } else if (prevVoiceEngineRef.current === "local" && eng === "browser") {
+    if (eng === "local" || eng === "system") {
+      setEngineDraft(eng)
+    } else if (
+      (prevVoiceEngineRef.current === "local" || prevVoiceEngineRef.current === "system") &&
+      eng === "browser"
+    ) {
       setEngineDraft("browser")
     }
     prevVoiceEngineRef.current = eng
@@ -1347,7 +1364,16 @@ export function SettingsSlideout() {
               const voiceModel = state.voiceModel
               const progress = state.voiceModelProgress
               const committedLocal = voiceModel?.sttEngine === "local"
+              const committedSystem = voiceModel?.sttEngine === "system"
               const showLocalPanel = engineDraft === "local"
+              // #259: system option only exists on win32 with the probe mirror.
+              const systemStateMirror = state.voiceSystemState
+              const systemProbeWin32 = systemStateMirror?.platform === "win32"
+              const systemProbeGreen =
+                systemProbeWin32 &&
+                systemStateMirror?.helper?.ok === true &&
+                systemStateMirror?.systemSpeech?.available === true
+              const showSystemPanel = engineDraft === "system"
               const clearVoiceErr = () =>
                 dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
               /** settings → SW → WS; always surface SW refusals into voiceModelError. */
@@ -1384,8 +1410,12 @@ export function SettingsSlideout() {
               const recReady = recEntry?.status === "ready"
               const activeReady = voiceModel?.models?.[activeId]?.status === "ready"
               const canEnableLocal = recReady || activeReady
-              const privacyEngine: "browser" | "local" =
-                engineDraft === "local" || committedLocal ? "local" : "browser"
+              const privacyEngine: "browser" | "local" | "system" =
+                engineDraft === "local" || committedLocal
+                  ? "local"
+                  : engineDraft === "system" || committedSystem
+                    ? "system"
+                    : "browser"
 
               /** Persist 模型下载源 via voice.model.set_prefs; store mirror re-drives input on ok. */
               const saveVoiceEndpoint = () => {
@@ -1586,7 +1616,7 @@ export function SettingsSlideout() {
                         checked={engineDraft === "browser"}
                         onChange={() => {
                           setEngineDraft("browser")
-                          if (committedLocal) {
+                          if (committedLocal || committedSystem) {
                             clearVoiceErr()
                             sendVoice({ type: "voice.model.set_engine", engine: "browser" })
                           }
@@ -1622,6 +1652,50 @@ export function SettingsSlideout() {
                         <span style={{ color: tokens.textMuted, fontSize: 12 }}> — {ENGINE_LOCAL_HINT}</span>
                       </span>
                     </label>
+                    {systemProbeWin32 && (
+                      <label
+                        style={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          gap: 8,
+                          cursor: "pointer",
+                          fontSize: 13,
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="voice-stt-engine"
+                          checked={engineDraft === "system"}
+                          onChange={() => {
+                            // Draft only — enable via the probe-gated button below.
+                            setEngineDraft("system")
+                          }}
+                          style={{ marginTop: 2 }}
+                        />
+                        <span>
+                          <span style={{ fontWeight: 500 }}>{ENGINE_SYSTEM_LABEL}</span>
+                          <span style={{ color: tokens.textMuted, fontSize: 12 }}> — {ENGINE_SYSTEM_HINT}</span>
+                        </span>
+                      </label>
+                    )}
+                  </div>
+
+                  {/* #259: 引擎链路状态 — 常驻三行（本机/浏览器/系统），spec §3.3。
+                      不藏进任一引擎面板；非 win32 第三行诚实 unavailable。 */}
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500 }}>引擎链路状态</div>
+                    {engineChainRows({
+                      voiceModel,
+                      browserSupport: BROWSER_STT_SUPPORT,
+                      systemState: systemStateMirror,
+                    }).map((row) => (
+                      <div
+                        key={row.label}
+                        style={{ fontSize: 11, color: tokens.textMuted, marginTop: 2 }}
+                      >
+                        {row.ok ? "✓" : "✗"} {row.label}：{row.detail}
+                      </div>
+                    ))}
                   </div>
 
                   {showLocalPanel && (
@@ -1870,6 +1944,82 @@ export function SettingsSlideout() {
                       {!committedLocal && !canEnableLocal && voiceModel && (
                         <div style={{ ...styles.helpText, marginTop: 4, color: tokens.warning }}>
                           请先下载推荐型号 medium（或就绪后启用）。选择「本机转写」仅为预览，不会立刻切换引擎。
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showSystemPanel && systemProbeWin32 && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: "10px 10px 8px",
+                        borderRadius: 8,
+                        border: `1px solid ${tokens.border}`,
+                        background: tokens.bgMuted,
+                      }}
+                    >
+                      {/* 引擎链路状态三行已上移为常驻块（radios 之后）；
+                          本面板仅保留启用/停用动作。 */}
+                      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap" as const, gap: 8, alignItems: "center" }}>
+                        {committedSystem ? (
+                          <>
+                            <span
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 600,
+                                color: tokens.success,
+                              }}
+                            >
+                              {BTN_SYSTEM_ENABLED}
+                            </span>
+                            <button
+                              type="button"
+                              style={styles.secondaryBtn}
+                              onClick={() => {
+                                clearVoiceErr()
+                                setEngineDraft("browser")
+                                sendVoice({ type: "voice.model.set_engine", engine: "browser" })
+                              }}
+                            >
+                              {BTN_SWITCH_BROWSER}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            style={{
+                              ...styles.secondaryBtn,
+                              ...(systemProbeGreen
+                                ? {
+                                    background: tokens.accent,
+                                    color: tokens.userBubbleText,
+                                    borderColor: tokens.accent as string,
+                                  }
+                                : {}),
+                            }}
+                            disabled={!systemProbeGreen}
+                            title={
+                              systemProbeGreen
+                                ? "将听写引擎切换为 Windows 系统语音识别（本机离线）"
+                                : SYSTEM_UNAVAILABLE_REASON_LABEL
+                            }
+                            onClick={() => {
+                              clearVoiceErr()
+                              sendVoice({
+                                type: "voice.model.set_engine",
+                                engine: "system",
+                                privacy_ack_v2: true,
+                              })
+                            }}
+                          >
+                            {BTN_ENABLE_SYSTEM}
+                          </button>
+                        )}
+                      </div>
+                      {!committedSystem && !systemProbeGreen && (
+                        <div style={{ ...styles.helpText, marginTop: 4, color: tokens.warning }}>
+                          {SYSTEM_UNAVAILABLE_REASON_LABEL}。选择该选项仅为预览，不会立刻切换引擎。
                         </div>
                       )}
                     </div>

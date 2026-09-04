@@ -16,6 +16,7 @@ import {
   type SttSessionServiceDeps,
 } from "./stt-session-service"
 import { applyVoicePostprocess, defaultVoicePostprocessPrefs } from "./stt-postprocess"
+import { resolveWinSapiHelper } from "./win-sapi"
 
 // --- types --------------------------------------------------------------------
 
@@ -37,6 +38,9 @@ export interface VoiceSttHandlerDeps {
   getService?: () => SttSessionService
   /** Override origin gate for pure unit tests (default: real check). */
   isExtensionOrigin?: (origin: string | undefined) => boolean
+  /** #259: platform / helper-resolve seams for the system engine gate. */
+  platform?: NodeJS.Platform
+  resolveSapi?: typeof resolveWinSapiHelper
 }
 
 // --- origin gate --------------------------------------------------------------
@@ -190,6 +194,62 @@ export async function handleVoiceSttMessage(
 
       if (typeof sessionId !== "string" || !sessionId) {
         return sttError(undefined, "invalid_session_id", "sessionId required")
+      }
+
+      // #259: engine:"system" = per-session Windows SAPI fallback. Win32 +
+      // helper verified + privacy_ack_v2 gates; NEVER writes config and never
+      // silently drops to browser (user is already on a failed path).
+      if (rest.engine === "system") {
+        const platform = deps.platform ?? process.platform
+        const resolveSapi = deps.resolveSapi ?? resolveWinSapiHelper
+        const sapi = resolveSapi()
+        const unavailable = platform !== "win32" || !sapi.ok
+        const reason = platform !== "win32" ? "not_win32" : !sapi.ok ? sapi.reason : undefined
+        if (unavailable) {
+          logger.warn("voice.stt.start.refused", {
+            reason: "system_unavailable",
+            platform,
+            helper: reason,
+          })
+          return sttError(
+            sessionId,
+            "system_unavailable",
+            "系统语音识别不可用（Windows 系统语音或 helper 未就绪）",
+            { family: "voice.stt" },
+          )
+        }
+        if (rest.privacy_ack_v2 !== true) {
+          logger.warn("voice.stt.start.refused", { reason: "need_privacy_ack_v2", engine: "system" })
+          return sttError(
+            sessionId,
+            "need_privacy_ack",
+            "privacy_ack_v2 required before system STT",
+            { family: "voice.stt" },
+          )
+        }
+        const startReq = {
+          sessionId,
+          modelId: typeof modelId === "string" ? modelId : "",
+          engine: "system" as const,
+          format: format as "pcm_s16le" | "wav",
+          sampleRate: typeof sampleRate === "number" ? sampleRate : 0,
+          channels: typeof channels === "number" ? channels : 0,
+          ...(typeof maxMs === "number" ? { maxMs } : {}),
+        }
+        const r = service.start(startReq, peerId)
+        if (!r.ok) {
+          logger.info("voice.stt.start.rejected", { sessionId, code: r.code, engine: "system" })
+          return sttError(sessionId, r.code, r.message)
+        }
+        logger.info("voice.stt.start.ok", {
+          sessionId,
+          engine: "system",
+          format: typeof format === "string" ? format : undefined,
+          lang: typeof lang === "string" ? lang : undefined,
+        })
+        const partial = sttPartial(sessionId, "receiving")
+        ctx.send?.(partial)
+        return partial
       }
 
       // P1: server-enforce engine=local + privacy_ack_v2 (client chrome.storage alone is not a gate)

@@ -35,7 +35,7 @@ export type VoiceModelBinaryStatus =
 
 export interface VoiceModelStatePayload {
   type: "voice.model.state"
-  sttEngine: "browser" | "local"
+  sttEngine: "browser" | "local" | "system"
   localModelId: WhisperModelId
   recommendedModelId: WhisperModelId
   models: Record<
@@ -190,7 +190,12 @@ export async function buildVoiceModelState(
       : DEFAULT_WHISPER_DISK_BUDGET_MB
 
   const localModelId = (cfg.localModelId ?? "medium") as WhisperModelId
-  const sttEngine = cfg.sttEngine === "local" ? "local" : "browser"
+  const sttEngine: VoiceModelStatePayload["sttEngine"] =
+    cfg.sttEngine === "local"
+      ? "local"
+      : cfg.sttEngine === "system"
+        ? "system"
+        : "browser"
 
   return {
     type: "voice.model.state",

@@ -38,6 +38,13 @@ export const ENGINE_BROWSER_HINT = "无需下载；可能使用浏览器云端�
 export const ENGINE_LOCAL_LABEL = "本机转写"
 export const ENGINE_LOCAL_HINT = "需下载模型；音频在本机 Companion 临时转写"
 
+// #259 — Windows SAPI system engine (win32 only; probe-gated).
+export const ENGINE_SYSTEM_LABEL = "Windows 系统语音识别"
+export const ENGINE_SYSTEM_HINT = "仅 Windows；本机 System.Speech 离线识别，不经云端"
+export const BTN_ENABLE_SYSTEM = "启用系统语音识别"
+export const BTN_SYSTEM_ENABLED = "已启用系统语音识别"
+export const SYSTEM_UNAVAILABLE_REASON_LABEL = "当前设备不支持（仅 Windows 且需系统语音就绪）"
+
 // --- Privacy paragraphs (SoT §5 dual-engine residual) ------------------------
 
 /**
@@ -59,9 +66,21 @@ export const LOCAL_PRIVACY_COPY =
   "发送后的文字与键入相同，仍受现有确认与信任设置约束。模型需用户显式下载（HTTPS + 校验）。" +
   "与电脑控制实验模型同时使用可能占用大量内存。"
 
+/**
+ * #259 system-mode privacy (Windows SAPI). Same Companion transport as local
+ * (Ext → Companion tmp → System.Speech); recognition is fully offline.
+ */
+export const SYSTEM_PRIVACY_COPY =
+  "系统语音识别：麦克风音频经鉴权通道送至本机 Companion，写入临时文件后由 Windows 系统" +
+  "System.Speech 离线识别（不经云端），结果填入草稿（默认不自动发送）；识别后删除临时音频，" +
+  "不保证 OS 交换/崩溃转储等零痕迹。发送后的文字与键入相同，仍受现有确认与信任设置约束。" +
+  "仅 Windows 可用；不支持的语言会如实报错。"
+
 /** Return privacy paragraph for the engine the UI is presenting (draft or committed). */
-export function privacyCopyForEngine(engine: "browser" | "local"): string {
-  return engine === "local" ? LOCAL_PRIVACY_COPY : BROWSER_PRIVACY_COPY
+export function privacyCopyForEngine(engine: "browser" | "local" | "system"): string {
+  if (engine === "local") return LOCAL_PRIVACY_COPY
+  if (engine === "system") return SYSTEM_PRIVACY_COPY
+  return BROWSER_PRIVACY_COPY
 }
 
 // --- Action / status labels --------------------------------------------------
@@ -256,4 +275,84 @@ export function canDownloadWhisperBinary(
 ): boolean {
   const status = binary?.status || "not_found"
   return status === "not_found" || status === "hash_mismatch"
+}
+
+// --- #259 engine chain status rows — persistent 3-row block (review round-2) ----
+
+export type EngineChainRow = { label: string; ok: boolean; detail?: string }
+
+/**
+ * 引擎链路状态：常驻三行（spec §3.3 AC — review round-2 MAJOR-1 fix）。
+ * 本机模型 ← voice.model.state；浏览器听写 ← Web Speech 探测 + 原因；
+ * 系统语音 ← voice.system.state 探针。非 win32 第三行诚实 unavailable，
+ * 三行永不隐藏（不藏进任一引擎 radio 面板）。Pure — caller passes mirrors.
+ */
+export function engineChainRows(input: {
+  voiceModel?:
+    | { localModelId?: string; models?: Record<string, { status?: string }> }
+    | null
+  browserSupport?:
+    | { ok: true; ctorName: string }
+    | { ok: false; reason: string }
+    | null
+  systemState?:
+    | {
+        platform?: string
+        helper?: { ok?: boolean; reason?: string; message?: string; pinned?: boolean }
+        systemSpeech?: { available?: boolean; reason?: string }
+      }
+    | null
+}): EngineChainRow[] {
+  // Row 1 — 本机模型 (active model from voice.model.state mirror)
+  const vm = input.voiceModel
+  let localRow: EngineChainRow
+  if (!vm) {
+    localRow = { label: "本机模型", ok: false, detail: "状态查询中" }
+  } else {
+    const id = vm.localModelId || "medium"
+    const status = vm.models?.[id]?.status || "absent"
+    localRow =
+      status === "ready"
+        ? { label: "本机模型", ok: true, detail: `已就绪（${id}）` }
+        : { label: "本机模型", ok: false, detail: `${modelStatusLabel(status)}（${id}）` }
+  }
+
+  // Row 2 — 浏览器听写 (Web Speech detection + reason)
+  const bs = input.browserSupport
+  const browserRow: EngineChainRow =
+    bs && bs.ok === true
+      ? { label: "浏览器听写", ok: true, detail: `可用（${bs.ctorName}）` }
+      : bs
+        ? { label: "浏览器听写", ok: false, detail: "不可用（浏览器缺少 Web Speech API）" }
+        : { label: "浏览器听写", ok: false, detail: "不可用（未探测）" }
+
+  // Row 3 — 系统语音 (win32 ∧ helper 就绪 ∧ System.Speech available；非 win32 诚实红)
+  const ss = input.systemState
+  const helper = ss?.helper
+  const helperOk = helper?.ok === true
+  const speech = ss?.systemSpeech
+  let systemRow: EngineChainRow
+  if (ss?.platform !== "win32") {
+    systemRow = { label: "系统语音", ok: false, detail: "不可用（仅 Windows 支持）" }
+  } else if (speech?.available !== true) {
+    systemRow = {
+      label: "系统语音",
+      ok: false,
+      detail: `不可用（${speech?.reason || "未检测到 System.Speech"}）`,
+    }
+  } else if (!helperOk) {
+    systemRow = {
+      label: "系统语音",
+      ok: false,
+      detail: `不可用（Helper 未就绪：${helper?.message || helper?.reason || "未找到"}）`,
+    }
+  } else {
+    systemRow = {
+      label: "系统语音",
+      ok: true,
+      detail: `可用（System.Speech 本机识别${helper?.pinned ? " · Helper SHA256 已校验" : ""}）`,
+    }
+  }
+
+  return [localRow, browserRow, systemRow]
 }

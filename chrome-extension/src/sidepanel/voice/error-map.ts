@@ -152,6 +152,22 @@ export function mapLocalSttError(code: string): LocalSttUserFacing {
         severity: "banner",
         message: "本机听写会话已断开，请再试一次",
       }
+    // #259 — system engine (Windows SAPI) honest errors
+    case "system_engine_failed":
+      return {
+        severity: "banner",
+        message: "系统语音识别失败，请重试或改用其他引擎",
+      }
+    case "system_unavailable":
+      return {
+        severity: "banner",
+        message: "系统语音识别不可用（Windows 系统语音或 helper 未就绪）",
+      }
+    case "system_lang_unsupported":
+      return {
+        severity: "banner",
+        message: "系统语音识别不支持当前语言",
+      }
     default:
       return {
         severity: "banner",
@@ -186,6 +202,20 @@ export const TOAST_SWITCHED_BROWSER = `已改用浏览器听写。${BROWSER_ENGI
  * browser engine with this visible banner. NOT a silent sttEngine config flip.
  */
 export const LOCAL_FALLBACK_BROWSER_BANNER = `本机模型未就绪，本次使用浏览器听写。${BROWSER_ENGINE_CLOUD_RESIDUAL}`
+
+/**
+ * #259 — third-hop notice: browser STT failed with a network-class error on
+ * Windows and this session escalated to the Windows system recognizer
+ * (System.Speech, fully local). Same pattern as LOCAL_FALLBACK_BROWSER_BANNER.
+ */
+export const SYSTEM_FALLBACK_BANNER = "已使用 Windows 系统语音识别（本机识别，不经云端）"
+
+/** #259 — system selected but probe failed; session stays on browser. */
+export const SYSTEM_UNAVAILABLE_BROWSER_BANNER =
+  "系统语音识别不可用，本次使用浏览器听写。请在 Windows 设备上重试或检查安装"
+
+/** #259 — short hint while system-engine listening (no cloud residual: local). */
+export const SYSTEM_LISTEN_HINT = "结束后 Windows 系统识别"
 
 /**
  * Format remaining listen budget as m:ss (45s → "0:45"). Pure.

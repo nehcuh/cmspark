@@ -14,7 +14,7 @@ import {
   type LocalSttAdapterDeps,
 } from "./local-stt-adapter"
 
-export type SttEngineKind = "browser" | "local"
+export type SttEngineKind = "browser" | "local" | "system"
 
 export type CreateSttAdapterDeps = {
   handlers: SpeechAdapterHandlers
@@ -26,6 +26,8 @@ export type CreateSttAdapterDeps = {
  * Create the STT adapter for the selected engine.
  * - browser: Web Speech; null if SpeechRecognition missing
  * - local: Companion WS path; null if local deps incomplete
+ * - system: Companion WS path with engine:"system" (Windows SAPI); modelId
+ *   optional — the wire field, not config, carries the engine (#259)
  */
 export function createSttAdapter(
   kind: SttEngineKind,
@@ -39,6 +41,15 @@ export function createSttAdapter(
       return null
     }
     return createLocalSttAdapter(deps.handlers, deps.local)
+  }
+  if (kind === "system") {
+    if (!deps.local?.send || !deps.local?.onMessage) {
+      return null
+    }
+    return createLocalSttAdapter(deps.handlers, {
+      ...deps.local,
+      engineKind: "system",
+    })
   }
   return null
 }

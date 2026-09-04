@@ -834,7 +834,7 @@ export type VoiceModelStatus = "ready" | "absent" | "incomplete" | "downloading"
 
 /** voice.model.state 下行负载(扩展纯只读镜像,无乐观更新)。 */
 export interface VoiceModelState {
-  sttEngine: "browser" | "local"
+  sttEngine: "browser" | "local" | "system"
   localModelId: string
   recommendedModelId: string
   models: Record<string, { status: VoiceModelStatus; bytesOnDisk?: number; error?: string }>
@@ -852,6 +852,19 @@ export interface VoiceModelState {
   postprocessMap?: Array<[string, string]>
   modelPrewarm?: boolean
   prewarmStatus?: "idle" | "ok" | "fail"
+}
+
+/**
+ * #259 voice.system.state 下行负载（Windows SAPI 兜底探针镜像;只读）。
+ * platform=other 时 helper/systemSpeech 均为 fail 形态（reason: not_win32）。
+ */
+export interface VoiceSystemState {
+  v?: number
+  platform: "win32" | "other"
+  helper:
+    | { ok: true; path?: string; pinned: boolean }
+    | { ok: false; reason: string; message?: string }
+  systemSpeech: { available: boolean; reason?: string }
 }
 
 /** voice.model.progress 下行负载(单文件下载进度;非下载中 state 到达后由 reducer 清理)。 */

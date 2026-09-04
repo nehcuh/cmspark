@@ -441,6 +441,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     // Path B M0 — voice.model.* (ADR-023 L7 dual fence layer 1; handler belt = layer 2)
     "voice.model.get_state": () => ({ valid: true }),
+    // #259: system-engine probe (read-only; origin fence in handler)
+    "voice.system.state": () => ({ valid: true }),
     "voice.model.download": (m) => {
       if (m.source !== "settings") {
         return { valid: false, error: 'voice.model.download requires source:"settings" (settings-page only)' }
@@ -481,8 +483,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.source !== "settings") {
         return { valid: false, error: 'voice.model.set_engine requires source:"settings" (settings-page only)' }
       }
-      if (m.engine !== "browser" && m.engine !== "local") {
-        return { valid: false, error: 'voice.model.set_engine requires engine:"browser"|"local"' }
+      if (m.engine !== "browser" && m.engine !== "local" && m.engine !== "system") {
+        return { valid: false, error: 'voice.model.set_engine requires engine:"browser"|"local"|"system"' }
       }
       return { valid: true }
     },
@@ -541,7 +543,16 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.sessionId !== "string" || !m.sessionId || m.sessionId.length > 128) {
         return { valid: false, error: "voice.stt.start requires sessionId string (1–128)" }
       }
-      if (m.modelId !== "small" && m.modelId !== "medium" && m.modelId !== "large-v3-turbo") {
+      // #259: engine, when present, must be "system" (per-session SAPI
+      // fallback); "system" makes modelId optional (no whisper model involved).
+      if (m.engine !== undefined && m.engine !== "system") {
+        return { valid: false, error: 'voice.stt.start engine must be "system" when present' }
+      }
+      if (m.engine === "system") {
+        if (m.modelId !== undefined && (typeof m.modelId !== "string" || m.modelId.length > 64)) {
+          return { valid: false, error: "voice.stt.start modelId must be a short string for system sessions" }
+        }
+      } else if (m.modelId !== "small" && m.modelId !== "medium" && m.modelId !== "large-v3-turbo") {
         return { valid: false, error: 'voice.stt.start requires modelId:"small"|"medium"|"large-v3-turbo"' }
       }
       if (m.format !== "pcm_s16le" && m.format !== "wav") {

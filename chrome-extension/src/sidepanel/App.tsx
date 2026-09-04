@@ -59,6 +59,7 @@ import {
   VOICE_PRIVACY_ACK_V3_BODY,
 } from "./voice/privacy-copy"
 import {
+  SYSTEM_LISTEN_HINT,
   TOAST_SWITCHED_BROWSER,
   formatListenRemaining,
   localListeningStatusLabel,
@@ -423,7 +424,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const [voicePrivacyKind, setVoicePrivacyKind] = useState<"v1" | "v2" | "v3">("v1")
   /** Fail-closed lastKnown engine when companion state not yet mirrored. */
   const [lastKnownVoiceEngine, setLastKnownVoiceEngine] = useState<
-    "browser" | "local" | null
+    "browser" | "local" | "system" | null
   >(null)
   /** Post-CTA residual note after「改用浏览器听写」(Task 7). */
   const [engineSwitchNote, setEngineSwitchNote] = useState<string | null>(null)
@@ -481,7 +482,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   useEffect(() => {
     try {
       chrome.storage.local.get(["lastKnownVoiceEngine"], (result) => {
-        if (result.lastKnownVoiceEngine === "local" || result.lastKnownVoiceEngine === "browser") {
+        if (
+          result.lastKnownVoiceEngine === "local" ||
+          result.lastKnownVoiceEngine === "browser" ||
+          result.lastKnownVoiceEngine === "system"
+        ) {
           setLastKnownVoiceEngine(result.lastKnownVoiceEngine)
         }
       })
@@ -493,7 +498,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   // Keep lastKnown in sync when live voice.model.state arrives
   useEffect(() => {
     const eng = state.voiceModel?.sttEngine
-    if (eng === "local" || eng === "browser") {
+    if (eng === "local" || eng === "browser" || eng === "system") {
       setLastKnownVoiceEngine(eng)
     }
   }, [state.voiceModel?.sttEngine])
@@ -586,11 +591,16 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const showStop = threadBusy || isStreaming
 
   // Path B mic matrix (plan Task 6): engine from live state or lastKnown.
-  const sttEngine: "browser" | "local" =
+  // #259: "system" passes through; useVoiceInput fail-closes it to browser
+  // off-win32 / when the helper probe is not green.
+  const sttEngine: "browser" | "local" | "system" =
     state.voiceModel?.sttEngine === "local" ||
     (state.voiceModel == null && lastKnownVoiceEngine === "local")
       ? "local"
-      : "browser"
+      : state.voiceModel?.sttEngine === "system" ||
+          (state.voiceModel == null && lastKnownVoiceEngine === "system")
+        ? "system"
+        : "browser"
   const activeModelId =
     state.voiceModel?.localModelId || "medium"
   const localModelReady =
@@ -608,6 +618,17 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       /* */
     }
   }, [sttEngine, companionConnected, state.voiceModel])
+
+  // #259: probe the Windows system recognizer once per companion connection —
+  // needed both for the configured-system chain and the browser→system escalation.
+  useEffect(() => {
+    if (!companionConnected) return
+    try {
+      chrome.runtime.sendMessage({ type: "voice.system.state" })
+    } catch {
+      /* */
+    }
+  }, [companionConnected])
 
   // threadBusy / no thread still block; local readiness is gated inside useVoiceInput
   // so a click can surface mapLocalSttError banners.
@@ -656,6 +677,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     sttEngine,
     companionConnected,
     localReady: { model: localModelReady, binary: localBinaryReady },
+    systemState: state.voiceSystemState,
     localStateHydrated: state.voiceModel != null,
     autoFallbackToBrowser: state.voiceModel?.autoFallbackToBrowser !== false,
     privacyAckV2: state.voicePrivacyAckV2 === true,
@@ -879,7 +901,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     voice.listening &&
     !voice.processing &&
     voice.listenRemainingMs != null
-  const localCapturing = sttEngine === "local" && capturing
+  const localCapturing = (sttEngine === "local" || sttEngine === "system") && capturing
   const continuousMode = state.voiceDictationMode === "continuous"
   const continuousCapturing = continuousMode && capturing
   const continuousProcessing =
@@ -897,7 +919,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         : continuousCapturing
           ? `连续听写 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
           : localCapturing
-            ? localListeningStatusLabel(voice.listenRemainingMs!)
+            ? sttEngine === "system"
+              ? `系统识别 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)} · ${SYSTEM_LISTEN_HINT}`
+              : localListeningStatusLabel(voice.listenRemainingMs!)
             : null
   const voiceMicTitle = (() => {
     if (state.meetingCaptureActive) return "会议录音进行中，请先结束会议再听写"
@@ -911,9 +935,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       return `连续听写中 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)} · 再点结束`
     }
     if (localCapturing) {
-      return localListeningStatusLabel(voice.listenRemainingMs!)
+      return sttEngine === "system"
+        ? `系统识别 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)} · ${SYSTEM_LISTEN_HINT}`
+        : localListeningStatusLabel(voice.listenRemainingMs!)
     }
     if (voice.listening) return "结束语音输入"
+    if (sttEngine === "system" && !companionConnected) {
+      return mapLocalSttError("companion_disconnected").message
+    }
     if (sttEngine === "local") {
       if (!companionConnected) return mapLocalSttError("companion_disconnected").message
       if (!localModelReady) return mapLocalSttError("model_missing").message
@@ -924,7 +953,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
   /** Banner recovery CTA (Task 7): switch browser or open settings. */
   const voiceBannerCta =
-    sttEngine === "local" && voice.banner
+    (sttEngine === "local" || sttEngine === "system") && voice.banner
       ? localSttBannerCta(voice.errorCode)
       : null
 
