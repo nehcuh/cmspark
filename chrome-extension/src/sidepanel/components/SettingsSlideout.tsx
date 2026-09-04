@@ -6,6 +6,7 @@ import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
 import { UserEnvSection } from "./UserEnvSection"
 import { NetSecSettingsSection } from "./NetSecSettingsSection"
+import { CapabilityProfileSection } from "./CapabilityProfileSection"
 import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
 import { CodingHandoffSettingsSection } from "./CodingHandoffSettingsSection"
 import { SettingsSection } from "./SettingsSection"
@@ -2980,6 +2981,10 @@ export function SettingsSlideout() {
               若工具提示「需要先绑定工作区」，请去场景页选文件夹，而不是开协议解锁或巡航。
             </div>
           </div>
+
+          <div style={styles.divider} />
+
+          <CapabilityProfileSection />
 
           <div style={styles.divider} />
 

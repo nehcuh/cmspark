@@ -939,6 +939,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (!m.patch || typeof m.patch !== "object") return { valid: false, error: "modules.update requires patch object" }
       return { valid: true }
     },
+    "modules.set_profile": (m) => {
+      if (m.profile !== "community" && m.profile !== "enterprise") {
+        return { valid: false, error: "modules.set_profile requires profile community|enterprise" }
+      }
+      return { valid: true }
+    },
     "outbound_mcp.grants.list": () => ({ valid: true }),
     "outbound_mcp.grants.issue": (m) => {
       if (typeof m.caller_id !== "string" || !m.caller_id.trim()) {

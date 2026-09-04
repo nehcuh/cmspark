@@ -242,6 +242,47 @@ export function applyUserPackTrust(
   return { ok: true }
 }
 
+/**
+ * #284: settings-driven capability_profile switch. Reuses the applyUserPackTrust
+ * persistence primitives (saveConfig / setModuleEnabled / appendCapabilityAudit)
+ * but never writes the pack-trust three flags. Downgrade to community is
+ * fail-closed: enabled shell/netsec powers are turned OFF (each flip audited as
+ * module.disable), so module state stays truthful — no "enabled but gated" zombie.
+ */
+export function setCapabilityProfile(
+  target: "community" | "enterprise",
+  by: string = "settings.profile",
+): { ok: true; profile: "community" | "enterprise"; modules_disabled: string[] } | { ok: false; error: string } {
+  if (target !== "community" && target !== "enterprise") {
+    return { ok: false, error: "invalid capability_profile — use community|enterprise" }
+  }
+  const cfg = getConfig() as any
+  const from = cfg.capability_profile === "enterprise" ? "enterprise" : "community"
+  if (from === target) return { ok: true, profile: target, modules_disabled: [] }
+
+  const modules_disabled: string[] = []
+  if (target === "community") {
+    for (const mod of ["shell", "netsec"] as const) {
+      if (cfg.modules?.[mod]?.enabled === true) {
+        const r = setModuleEnabled(mod, false, by)
+        if (!r.ok) return { ok: false, error: r.error }
+        modules_disabled.push(mod)
+      }
+    }
+  }
+
+  saveConfig({ capability_profile: target } as any)
+  appendCapabilityAudit({
+    type: "profile.change",
+    from,
+    to: target,
+    by,
+    at: new Date().toISOString(),
+    modules_disabled,
+  })
+  return { ok: true, profile: target, modules_disabled }
+}
+
 /** Restore Trust snapshot captured before pack.apply (best-effort). */
 export function restoreTrustSnapshot(snap: PackTrustSnapshot, by: string = "pack.unapply"): void {
   const cfg = getConfig() as any
