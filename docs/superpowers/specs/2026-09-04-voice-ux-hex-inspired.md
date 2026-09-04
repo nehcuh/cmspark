@@ -49,9 +49,10 @@
 ### 3.4 文本插入分级
 
 - tier-1 sidepanel 输入框：现状（`onDraft` → setText + focus），不变。
-- tier-2 页面聚焦输入框：PTT chord 在页面（content script）捕获时生效——content script 侧监听同一 chord（页面 focus 在可编辑元素：input/textarea/contenteditable），转写完成后 `Input.insertText`（background/browser-bridge.ts:1021 既有 CDP 路径）直插光标处。页面无可编辑焦点时落到 tier-1 并在胶囊提示「已插入侧栏输入框」。
+- tier-2 页面聚焦输入框：PTT chord 在页面（content script）捕获时生效——**这是新建注入面**（仓库当前无 `contents/`、Plasmo manifest 无 `content_scripts`；`host_permissions` 已有 `<all_urls>`，不新增权限，但要新增一个 content script 条目，实现 PR 必须如实声明）：content script 侧监听同一 chord（页面 focus 在可编辑元素：input/textarea/contenteditable），转写完成后 `Input.insertText`（background/browser-bridge.ts:1021 既有 CDP 路径）直插光标处。页面无可编辑焦点时落到 tier-1 并在胶囊提示「已插入侧栏输入框」。
 - 触发面判定：chord 事件发生在哪个上下文（sidepanel window vs 页面 content script）决定目标，不需要用户选择。
-- 权限：content script 捕获复用既有 content script 注入面，不新增 host 权限。
+- **开关默认**：PTT 双模式跟随既有听写热键开关 `dictationHotkeyEnabled`（默认 `false`，agentStore.tsx:617）——本票**不改默认值**，用户在设置里开启热键后双模式生效；设置项文案说明双模式语义。
+- 权限：不新增 host 权限。
 
 ### 3.5 转写后处理管线（默认全关）
 

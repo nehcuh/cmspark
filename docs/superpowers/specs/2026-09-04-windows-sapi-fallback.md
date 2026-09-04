@@ -14,7 +14,7 @@ Windows 上本机 whisper 模型未下载且浏览器 Web Speech 不可用（Goo
 
 - `SttEngineKind = "browser" | "local"` 严格二选一（whisper-handlers.ts:555 校验）。
 - `autoFallbackToBrowser`（useVoiceInput.ts:78-92）只覆盖 local→browser 的本会话回退；browser 依赖 Google 网络服务，不可达网络 100% 失败——此时语音输入完全不可用。
-- 既有原生集成先例：tray 的 systray2 外部二进制桥（tray-adapter.ts:177）、whisper win-x64 二进制下载（binary-resolve.ts:21）、launcher smoke 已在 windows-latest CI 跑 csc 编译 stub（#279）。
+- 既有原生集成先例：tray 的 systray2 外部二进制桥（tray-adapter.ts:181 注释，win32/darwin-x86/linux-x64 分支）、whisper win-x64 二进制下载（binary-resolve.ts:21）、launcher smoke 已在 windows-latest CI 用 csc 编译 stub（`scripts/tests/win-launcher-smoke.ps1`，#279）。
 
 ## 3. 设计
 
@@ -26,7 +26,7 @@ Windows 上本机 whisper 模型未下载且浏览器 Web Speech 不可用（Goo
 
 ### 3.2 companion 原生 helper（SAPI via .NET System.Speech）
 
-- 新增 `companion/src/voice/win-sapi-helper.cs`：System.Speech.Recognition（.NET Framework 自带，Windows  inbox，零下载）做批式听写——stdin/stdout 行 JSON 协议（tray `hud/protocol.ts:4` 同款）：收 `{ wav_path, lang }` → 回 `{ text }` 或 `{ error }`。
+- 新增 `companion/src/voice/win-sapi-helper.cs`：**System.Speech.Recognition**（`SpeechRecognitionEngine`，.NET Framework 自带、纯本地桌面识别，Windows inbox，零下载）做批式听写——stdin/stdout 行 JSON 协议（tray `hud/protocol.ts:4` 同款）：收 `{ wav_path, lang }` → 回 `{ text }` 或 `{ error }`。**禁用 `Windows.Media.SpeechRecognition`**（WinRT 路径部分 SKU 可走云，「音频不出本机」会变成口头承诺）。
 - 编译：打包期 `csc.exe`（Windows 自带）编译为 `win-sapi-helper.exe`，产物 sha256 记进打包清单；**不经 PATH 解析未知二进制**（ADR-023 L5 精神：helper 路径固定在 companion 安装目录，sha256 启动校验）。build-windows-exe.ps1 加编译步骤；源码进仓库，任何人可复编。
 - 运行时：companion 起子进程喂 16kHz mono WAV（audio-capture 既有产物），45s 硬顶沿用 `STT_MAX_RECORD_MS`；helper 超时/崩溃 → `voice.stt.error`（system_engine_failed）+ 诚实文案。
 - 语言：跟随听写语言设置（zh-CN / en-US 映射到 recognizer culture；系统无该 culture 时诚实报错「系统语音识别不支持当前语言」）。
