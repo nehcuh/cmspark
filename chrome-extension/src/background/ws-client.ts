@@ -56,6 +56,11 @@ export class WSClient {
   private pending: object[] = []
   /** No secret stored yet (first run, not paired). Suppress reconnect storm. */
   private unpaired = false
+  /** Socket generation (#290): bumped on every connect(). Handlers capture the
+   *  generation of their socket and ignore events once it has advanced, so an
+   *  orphan socket's late onclose/onmessage can never tear down or answer on
+   *  behalf of the current connection. */
+  private generation = 0
 
   private readonly ALARM_NAME = "cmspark-ws-reconnect"
   private readonly MAX_RECONNECT_DELAY = 30000
@@ -82,7 +87,14 @@ export class WSClient {
       return
     }
 
-    this.ws.onopen = () => {
+    const socket = this.ws
+    const gen = ++this.generation
+    // Stale-event guard: after any reconnect, events from the previous socket
+    // (queued while the worker was suspended) must be ignored (#290).
+    const stale = () => gen !== this.generation || this.ws !== socket
+
+    socket.onopen = () => {
+      if (stale()) return
       // Stay "connecting" — the companion sends auth.challenge immediately; we
       // promote to "connected" only after auth.ok. (No proactive send here: any
       // pre-auth message is terminated by the companion.)
@@ -90,7 +102,8 @@ export class WSClient {
       this.clearReconnectAlarm()
     }
 
-    this.ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (stale()) return
       let msg: any
       try {
         msg = JSON.parse(event.data)
@@ -100,14 +113,14 @@ export class WSClient {
 
       // Auth handshake messages are handled inline, never forwarded to the app.
       if (msg.type === "auth.challenge") {
-        void this.handleChallenge(msg.nonce)
+        void this.handleChallenge(msg.nonce, socket, gen)
         return
       }
       if (msg.type === "auth.ok") {
         // Lock-step with companion/src/protocol.ts PROTOCOL_VERSION. Missing = accept (MIN).
         const advertised = msg.negotiated_protocol_version ?? msg.protocol_version
         if (advertised !== undefined && advertised !== null && advertised !== 1) {
-          try { this.ws?.close() } catch { /* closing */ }
+          try { socket.close() } catch { /* closing */ }
           return
         }
         this.authenticated = true
@@ -131,7 +144,8 @@ export class WSClient {
       }
     }
 
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (stale()) return
       const wasConnected = this.state === "connected"
       this.authenticated = false
       this.pending = []
@@ -143,27 +157,32 @@ export class WSClient {
       }
     }
 
-    this.ws.onerror = () => {
+    socket.onerror = () => {
       // onclose will fire after this
     }
   }
 
   /** Respond to the companion's challenge with proof = HMAC(secret, nonce).
-   *  If no secret is stored yet, close and mark unpaired (first-run pairing). */
-  private async handleChallenge(nonce: string) {
+   *  If no secret is stored yet, close and mark unpaired (first-run pairing).
+   *  The proof is only ever sent on the socket that received the challenge,
+   *  and only while that socket is still the current generation (#290). */
+  private async handleChallenge(nonce: string, socket: WebSocket, gen: number) {
+    const stale = () => gen !== this.generation || this.ws !== socket
     const secret = await this.loadSecret()
+    if (stale()) return
     if (!secret) {
       this.unpaired = true
       this.authenticated = false
-      try { this.ws?.close() } catch { /* closing */ }
+      try { socket.close() } catch { /* closing */ }
       return
     }
     this.unpaired = false
     try {
       const proof = await hmacSha256Hex(secret, nonce)
-      if (this.ws?.readyState === WebSocket.OPEN) {
+      if (stale()) return
+      if (socket.readyState === WebSocket.OPEN) {
         // protocol_version: keep in lock-step with companion/src/protocol.ts PROTOCOL_VERSION
-        this.ws.send(
+        socket.send(
           JSON.stringify({ type: "auth.handshake", proof, protocol_version: 1 }),
         )
       }
@@ -272,13 +291,19 @@ export class WSClient {
   checkAndReconnect() {
     // No secret stored — nothing to reconnect with; wait for setSecret().
     if (this.unpaired) return
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      // Still connected — send a ping to verify liveness (queued if mid-handshake).
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+      // Live connection (#290): OPEN or still handshaking after the worker
+      // woke — never discard it, just verify liveness. Ping is a no-op while
+      // CONNECTING (send() refuses to touch a pre-auth socket).
       this.ping()
       return
     }
 
-    // Connection lost while worker was suspended — reconnect
+    // Connection lost while worker was suspended — reconnect. Close before
+    // discarding (aligned with send()/forceReconnect()) so the old socket's
+    // handlers can't crosstalk with the new connection; the generation guard
+    // then ignores its late onclose (#290).
+    try { this.ws?.close() } catch { /* ignore */ }
     this.ws = null
     this.setState("disconnected", true)
     this.connect(true)
@@ -312,6 +337,10 @@ export class WSClient {
   /**
    * Schedule reconnect using chrome.alarms (survives service worker suspension).
    * setInterval/setTimeout are NOT reliable in MV3 service workers.
+   * Known limitation (#290, accepted): chrome.alarms clamps sub-minute delays
+   * to ~30s, so the 1s/2s/4s backoff collapses to the clamp; the keep-alive
+   * ping provides the liveness floor meanwhile. Switching to setTimeout would
+   * not survive worker suspension, so alarms stay.
    */
   private scheduleReconnect() {
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.MAX_RECONNECT_DELAY)
