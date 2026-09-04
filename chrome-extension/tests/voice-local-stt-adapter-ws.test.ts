@@ -116,6 +116,50 @@ test("happy path: start → stop → voice.stt.start/chunk/end → result", asyn
   adapter.destroy()
 })
 
+test("voice.stt.result postprocessed:true is forwarded to onResult", async () => {
+  const wav = silentWav()
+  const inbox: { emit?: (m: any) => void } = {}
+  const flags: boolean[] = []
+
+  const adapter = createLocalSttAdapter(
+    {
+      onStart: () => {},
+      onResult: ({ postprocessed }) => {
+        flags.push(postprocessed === true)
+      },
+      onError: () => {},
+      onEnd: () => {},
+      onCaptureStopped: () => {},
+    },
+    {
+      send: () => {},
+      onMessage: (h) => {
+        inbox.emit = h
+        return () => {
+          inbox.emit = undefined
+        }
+      },
+      modelId: "medium",
+      startCapture: fakeCaptureFactory(wav),
+    },
+  )
+
+  adapter.start({ sessionId: "s-pp", modelId: "medium", lang: "zh-CN" })
+  await new Promise((r) => setTimeout(r, 20))
+  adapter.stop()
+  await new Promise((r) => setTimeout(r, 20))
+  inbox.emit?.({
+    type: "voice.stt.result",
+    v: 1,
+    sessionId: "s-pp",
+    text: "嗯 hello",
+    postprocessed: true,
+  })
+  await new Promise((r) => setTimeout(r, 5))
+  assert.deepEqual(flags, [true])
+  adapter.destroy()
+})
+
 test("classic: voice.stt.start is deferred until after captureStop (idle-safe)", async () => {
   const timeline: string[] = []
   const inbox: { emit?: (m: any) => void } = {}

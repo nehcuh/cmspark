@@ -51,7 +51,7 @@ export type VoiceEvent =
   /** Dictation+ continuous: soft cap hint (still listening). Optional code for CTA (e.g. local_fallback). */
   | { type: "SOFT_CAP_HINT"; message: string; code?: string }
   | { type: "ENGINE_START" }
-  | { type: "ENGINE_RESULT"; interim?: string; finalChunk?: string }
+  | { type: "ENGINE_RESULT"; interim?: string; finalChunk?: string; postprocessed?: boolean }
   | { type: "ENGINE_ERROR"; code: string; message?: string }
   | { type: "ENGINE_END" }
   /** After raw merge: enter refining (refineGen assigned). */

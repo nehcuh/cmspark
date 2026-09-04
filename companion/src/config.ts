@@ -184,6 +184,13 @@ export interface VoiceConfig {
    * 区分，默认值也可能被暂存——其恢复效果即回到推荐模型，无害。
    */
   localModelAutoCorrectedFrom?: "small" | "medium" | "large-v3-turbo"
+  /** #258 postprocess (all default off). */
+  postprocessFillers?: boolean
+  postprocessLowercase?: boolean
+  postprocessStripPunct?: boolean
+  postprocessMap?: Array<[string, string]>
+  /** #258 load model at companion start (default off). */
+  modelPrewarm?: boolean
 }
 
 /** Wire protocol for chat completions. Default "openai". */

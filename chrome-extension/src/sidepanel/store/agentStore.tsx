@@ -147,6 +147,8 @@ export interface AgentState {
   dictationHotkeyEnabled: boolean
   /** e.g. Control+Shift+Space */
   dictationHotkeyChord: string
+  /** #258 WebAudio status tones (chrome.storage.local voice_sound_effects, default on). */
+  voiceSoundEffects: boolean
   /**
    * Prefer live word/char interim in composer (browser Web Speech).
    * When on + browser engine: continuous recommended; interim → live overlay.
@@ -407,6 +409,7 @@ export type AgentAction =
   | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
   | { type: "SET_DICTATION_HOTKEY_ENABLED"; enabled: boolean }
   | { type: "SET_DICTATION_HOTKEY_CHORD"; chord: string }
+  | { type: "SET_VOICE_SOUND_EFFECTS"; enabled: boolean }
   | {
       type: "SET_VOICE_REALTIME_STREAMING"
       enabled: boolean
@@ -616,6 +619,7 @@ export const initialState: AgentState = {
   asrRefinerEnabled: false,
   dictationHotkeyEnabled: false,
   dictationHotkeyChord: "Control+Shift+Space",
+  voiceSoundEffects: true,
   voiceRealtimeStreaming: true,
   meetingCaptureActive: false,
   dictationCaptureActive: false,
@@ -1484,6 +1488,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_DICTATION_HOTKEY_ENABLED":
       chrome.storage.local.set({ dictationHotkeyEnabled: action.enabled === true })
       return { ...state, dictationHotkeyEnabled: action.enabled === true }
+    case "SET_VOICE_SOUND_EFFECTS":
+      chrome.storage.local.set({ voice_sound_effects: action.enabled !== false })
+      return { ...state, voiceSoundEffects: action.enabled !== false }
     case "SET_DICTATION_HOTKEY_CHORD": {
       const chord =
         typeof action.chord === "string" && action.chord.trim()

@@ -46,8 +46,14 @@ import {
   IconAlert,
 } from "./ui/icons"
 import { VoiceMicButton } from "./components/VoiceMicButton"
-import { parseHotkeyChord, eventMatchesChord } from "./voice/hotkey-chord"
+import { VoiceStatusCapsule } from "./components/VoiceStatusCapsule"
+import { parseHotkeyChord, eventMatchesChord, isPttReleaseEvent } from "./voice/hotkey-chord"
+import { POSTPROCESS_BADGE_LABEL } from "./voice/postprocess-badge"
 import { useVoiceInput } from "./hooks/useVoiceInput"
+import { capsuleView } from "./voice/capsule-view"
+import { initialPtt, reducePtt, type PttEffect, type PttState } from "./voice/ptt-reducer"
+import { PAGE_INSERT_FALLBACK_HINT } from "./voice/insert-target"
+import { playVoiceSfx, shouldPlayVoiceSfx, VOICE_SOUND_EFFECTS_KEY, parseVoiceSoundEffectsPref } from "./voice/voice-sfx"
 import {
   VOICE_PRIVACY_ACK_V2_BODY,
   VOICE_PRIVACY_ACK_V3_BODY,
@@ -404,6 +410,15 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const [dragOver, setDragOver] = useState(false)
   const [composeOpen, setComposeOpen] = useState(false)
   const [voicePrivacyOpen, setVoicePrivacyOpen] = useState(false)
+  const [voiceLevel, setVoiceLevel] = useState(0)
+  const [pttLocked, setPttLocked] = useState(false)
+  const [voiceCapsuleHint, setVoiceCapsuleHint] = useState<string | null>(null)
+  const [voiceSoundEffects, setVoiceSoundEffects] = useState(true)
+  const [postprocessedBadge, setPostprocessedBadge] = useState(false)
+  const insertTargetRef = useRef<"composer" | "page">("composer")
+  const pendingPageTextRef = useRef<string | null>(null)
+  const pttRef = useRef<PttState>(initialPtt)
+  const pttTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Privacy sheet: v1 browser · v2 local · v3 continuous/refiner. */
   const [voicePrivacyKind, setVoicePrivacyKind] = useState<"v1" | "v2" | "v3">("v1")
   /** Fail-closed lastKnown engine when companion state not yet mirrored. */
@@ -606,7 +621,13 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const voice = useVoiceInput({
     getBaseText: () => textRef.current,
     realtimeStreaming: state.voiceRealtimeStreaming !== false,
-    onDraft: (merged) => {
+    onLevel: (level) => setVoiceLevel(level),
+    onDraft: (merged, meta) => {
+      setPostprocessedBadge(meta?.postprocessed === true)
+      if (insertTargetRef.current === "page") {
+        pendingPageTextRef.current = merged
+        return
+      }
       setText(merged)
       requestAnimationFrame(() => {
         const el = textareaRef.current
@@ -665,8 +686,10 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   // D2 hold: keep stable refs so effect is NOT torn down every listenTick (REJECT #1).
   const holdStartRef = useRef(voice.holdStart)
   const holdStopRef = useRef(voice.holdStop)
+  const holdAbortRef = useRef(voice.abortForChatStop)
   holdStartRef.current = voice.holdStart
   holdStopRef.current = voice.holdStop
+  holdAbortRef.current = voice.abortForChatStop
   const meetingCaptureRef = useRef(state.meetingCaptureActive)
   meetingCaptureRef.current = state.meetingCaptureActive
   const voiceAllowStartRef = useRef(voiceAllowStart)
@@ -682,16 +705,52 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     v3: state.voicePrivacyAckV3 === true,
   }
 
-  // Dictation+ D2: hold hotkey (Side Panel window key capture).
-  // SoT §5.2 — default off; ban fn/Win+V; xor meeting capture.
+  // #258 PTT dual-mode on the existing hold chord (default still off).
+  useEffect(() => {
+    try {
+      chrome.storage.local.get(VOICE_SOUND_EFFECTS_KEY, (res) => {
+        setVoiceSoundEffects(parseVoiceSoundEffectsPref(res[VOICE_SOUND_EFFECTS_KEY]))
+      })
+    } catch {
+      /* */
+    }
+  }, [])
+
+  useEffect(() => {
+    if (voice.phase !== "idle") return
+    const pending = pendingPageTextRef.current
+    if (!pending || insertTargetRef.current !== "page") return
+    pendingPageTextRef.current = null
+    chrome.runtime.sendMessage({ type: "voice.ptt.insert_text", text: pending }, (res) => {
+      if (chrome.runtime.lastError || res?.ok === false) {
+        insertTargetRef.current = "composer"
+        setText(pending)
+        setVoiceCapsuleHint(PAGE_INSERT_FALLBACK_HINT)
+        return
+      }
+      insertTargetRef.current = "composer"
+    })
+  }, [voice.phase])
+
   useEffect(() => {
     if (!state.dictationHotkeyEnabled) return
     const chord = parseHotkeyChord(state.dictationHotkeyChord)
     if (!chord) return
 
-    let down = false
-    let notified = false
-    let notifyTimer: ReturnType<typeof setTimeout> | null = null
+    const play = (kind: "start" | "stop" | "cancel" | "done", accidental = false) => {
+      if (
+        !shouldPlayVoiceSfx({
+          enabled: state.voiceSoundEffects !== false,
+          privacySheetOpen: voicePrivacyOpen,
+          accidental,
+        })
+      ) {
+        return
+      }
+      playVoiceSfx(kind)
+    }
+
+    let holdNotified = false
     const notifyHold = (active: boolean) => {
       try {
         chrome.runtime.sendMessage({
@@ -705,86 +764,105 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       }
     }
 
+    const applyEffect = (effect: PttEffect, source: "sidepanel" | "page") => {
+      if (effect === "start" || effect === "lock") {
+        insertTargetRef.current = source === "page" ? "page" : "composer"
+        setPttLocked(effect === "lock")
+        const ok = holdStartRef.current({
+          privacyAck: privacyRef.current.v1,
+          privacyAckV2: privacyRef.current.v2,
+          privacyAckV3: privacyRef.current.v3,
+        })
+        if (ok) {
+          play("start")
+          holdNotified = true
+          notifyHold(true)
+        }
+        return
+      }
+      if (effect === "commit") {
+        setPttLocked(false)
+        holdStopRef.current()
+        play("stop")
+        play("done")
+        if (holdNotified) notifyHold(false)
+        holdNotified = false
+        return
+      }
+      if (effect === "discard") {
+        setPttLocked(false)
+        holdAbortRef.current()
+        if (holdNotified) notifyHold(false)
+        holdNotified = false
+      }
+    }
+
+    const armTick = (until: number | null, source: "sidepanel" | "page") => {
+      if (pttTimerRef.current) clearTimeout(pttTimerRef.current)
+      pttTimerRef.current = null
+      if (until == null) return
+      const wait = Math.max(0, until - Date.now())
+      pttTimerRef.current = setTimeout(() => {
+        const next = reducePtt(pttRef.current, { type: "tick", now: Date.now() })
+        pttRef.current = next.state
+        applyEffect(next.effect, source)
+      }, wait)
+    }
+
+    const feed = (type: "down" | "up" | "esc" | "blur", source: "sidepanel" | "page") => {
+      if (meetingCaptureRef.current) return
+      if (type === "down" && !voiceAllowStartRef.current && pttRef.current.phase === "idle") return
+      const next = reducePtt(pttRef.current, { type, now: Date.now() })
+      pttRef.current = next.state
+      setPttLocked(next.state.phase === "locked")
+      applyEffect(next.effect, source)
+      armTick(next.state.awaitUntil, source)
+    }
+
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && pttRef.current.phase === "locked") {
+        e.preventDefault()
+        feed("esc", "sidepanel")
+        return
+      }
       if (!eventMatchesChord(e, chord)) return
       if (e.repeat) return
       e.preventDefault()
       e.stopPropagation()
-      if (down) return
-      if (meetingCaptureRef.current) return
-      if (!voiceAllowStartRef.current) return
-      down = true
-      notified = false
-      const ok = holdStartRef.current({
-        privacyAck: privacyRef.current.v1,
-        privacyAckV2: privacyRef.current.v2,
-        privacyAckV3: privacyRef.current.v3,
-      })
-      if (!ok) {
-        down = false
-        return
-      }
-      // Defer notify ~400ms so privacy-sheet / failed start does not flash tray
-      if (notifyTimer) clearTimeout(notifyTimer)
-      notifyTimer = setTimeout(() => {
-        if (down && !notified) {
-          notified = true
-          notifyHold(true)
-        }
-      }, 400)
+      feed("down", "sidepanel")
     }
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (!down) return
-      const modUp =
-        (chord.ctrl && e.key === "Control") ||
-        (chord.alt && (e.key === "Alt" || e.key === "AltGraph")) ||
-        (chord.shift && e.key === "Shift") ||
-        (chord.meta && (e.key === "Meta" || e.key === "OS"))
-      const mainUp = eventMatchesChord(e, chord)
-      // Also treat keyup of the main key even if modifiers already released
-      const keyIsMain =
-        chord.key === "space"
-          ? e.key === " " || e.key === "Spacebar" || e.code === "Space"
-          : e.key.toLowerCase() === chord.key
-      if (!mainUp && !modUp && !keyIsMain) return
+      if (pttRef.current.phase === "idle") return
+      if (!isPttReleaseEvent(e, chord)) return
       e.preventDefault()
-      down = false
-      if (notifyTimer) {
-        clearTimeout(notifyTimer)
-        notifyTimer = null
-      }
-      holdStopRef.current()
-      if (notified) notifyHold(false)
-      notified = false
+      feed("up", "sidepanel")
     }
 
     const onBlur = () => {
-      if (!down) return
-      down = false
-      if (notifyTimer) {
-        clearTimeout(notifyTimer)
-        notifyTimer = null
-      }
-      holdStopRef.current()
-      if (notified) notifyHold(false)
-      notified = false
+      if (pttRef.current.phase === "idle") return
+      feed("blur", "sidepanel")
     }
+
+    const onMsg = (msg: { type?: string; kind?: string }) => {
+      if (msg?.type !== "voice.ptt.from_page") return
+      if (msg.kind === "down") feed("down", "page")
+      if (msg.kind === "up") feed("up", "page")
+    }
+    chrome.runtime.onMessage.addListener(onMsg)
 
     window.addEventListener("keydown", onKeyDown, true)
     window.addEventListener("keyup", onKeyUp, true)
     window.addEventListener("blur", onBlur)
     return () => {
+      chrome.runtime.onMessage.removeListener(onMsg)
       window.removeEventListener("keydown", onKeyDown, true)
       window.removeEventListener("keyup", onKeyUp, true)
       window.removeEventListener("blur", onBlur)
-      if (notifyTimer) clearTimeout(notifyTimer)
-      if (down) {
-        holdStopRef.current()
-        if (notified) notifyHold(false)
-      }
+      if (pttTimerRef.current) clearTimeout(pttTimerRef.current)
+      if (holdNotified) notifyHold(false)
     }
-  }, [state.dictationHotkeyEnabled, state.dictationHotkeyChord])
+  }, [state.dictationHotkeyEnabled, state.dictationHotkeyChord, state.voiceSoundEffects, voicePrivacyOpen])
 
   // Hide: feature off | unsupported for selected engine | worker | no thread.
   // Local + no gUM → voice.supported false → hide.
@@ -1769,6 +1847,17 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         anchorEl={textareaRef.current}
         onSelect={handleAtSelect}
         onDismiss={() => setAtVisible(false)}
+      />
+      <VoiceStatusCapsule
+        view={capsuleView({
+          phase: voice.phase,
+          engine: sttEngine === "local" ? "local" : "browser",
+          locked: pttLocked,
+          level: voiceLevel,
+        })}
+        level={voiceLevel}
+        extraHint={voiceCapsuleHint}
+        badge={postprocessedBadge ? POSTPROCESS_BADGE_LABEL : null}
       />
       {/* PR4: ComposerDock chips + capsule; 装配 lives on the chip, not in the field */}
       <div style={styles.inputArea}>

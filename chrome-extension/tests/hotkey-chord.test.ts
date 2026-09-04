@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   parseHotkeyChord,
   eventMatchesChord,
+  isPttReleaseEvent,
   DICTATION_HOTKEY_DEFAULT_CHORD,
   formatChord,
   chordFromKeyboardEvent,
@@ -96,5 +97,45 @@ test("chordFromKeyboardEvent rejects bare Space and pure modifiers", () => {
       metaKey: false,
     }),
     null,
+  )
+})
+
+test("isPttReleaseEvent: modifier-first release counts as up (content-script / sidepanel)", () => {
+  const c = parseHotkeyChord("Control+Shift+Space")!
+  // Human order: lift Control while Space may still be down — eventMatchesChord is false.
+  assert.equal(
+    eventMatchesChord(
+      { key: "Control", ctrlKey: false, altKey: false, shiftKey: true, metaKey: false },
+      c,
+    ),
+    false,
+  )
+  assert.equal(
+    isPttReleaseEvent(
+      { key: "Control", ctrlKey: false, altKey: false, shiftKey: true, metaKey: false },
+      c,
+    ),
+    true,
+  )
+  assert.equal(
+    isPttReleaseEvent(
+      { key: "Shift", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false },
+      c,
+    ),
+    true,
+  )
+  assert.equal(
+    isPttReleaseEvent(
+      { key: " ", code: "Space", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false },
+      c,
+    ),
+    true,
+  )
+  assert.equal(
+    isPttReleaseEvent(
+      { key: "a", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false },
+      c,
+    ),
+    false,
   )
 })

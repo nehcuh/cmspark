@@ -43,6 +43,7 @@ import {
   type BuildVoiceModelStateOpts,
   type VoiceModelStatePayload,
 } from "./whisper-state"
+import { maybePrewarmWhisper, resetWhisperPrewarm } from "./whisper-prewarm"
 
 // --- types --------------------------------------------------------------------
 
@@ -96,6 +97,7 @@ export function _resetVoiceModelHandlersForTests(): void {
   activeDelete = null
   activeBinaryDownload = null
   lastDownloadErrorMem = null
+  resetWhisperPrewarm()
 }
 
 // --- errors -------------------------------------------------------------------
@@ -654,7 +656,7 @@ export async function handleVoiceModelMessage(
     case "voice.model.set_prefs": {
       // Non-model voice prefs (auto-fallback toggle / download endpoint mirror).
       // Same settings dual fence as other mutators; never touches sttEngine.
-      const patch: { autoFallbackToBrowser?: boolean; modelDownloadEndpoint?: string } = {}
+      const patch: Partial<import("../config").VoiceConfig> = {}
       if (typeof rest.autoFallbackToBrowser === "boolean") {
         patch.autoFallbackToBrowser = rest.autoFallbackToBrowser
       }
@@ -667,7 +669,17 @@ export async function handleVoiceModelMessage(
           return modelError(message, { code: "INVALID_ENDPOINT" })
         }
       }
-      if (patch.autoFallbackToBrowser === undefined && patch.modelDownloadEndpoint === undefined) {
+      if (typeof rest.postprocessFillers === "boolean") patch.postprocessFillers = rest.postprocessFillers
+      if (typeof rest.postprocessLowercase === "boolean") patch.postprocessLowercase = rest.postprocessLowercase
+      if (typeof rest.postprocessStripPunct === "boolean") patch.postprocessStripPunct = rest.postprocessStripPunct
+      if (typeof rest.modelPrewarm === "boolean") patch.modelPrewarm = rest.modelPrewarm
+      if (Array.isArray(rest.postprocessMap)) {
+        patch.postprocessMap = rest.postprocessMap
+          .filter((p: unknown) => Array.isArray(p) && typeof p[0] === "string" && typeof p[1] === "string")
+          .slice(0, 32)
+          .map((p: [string, string]) => [p[0].slice(0, 80), p[1].slice(0, 80)])
+      }
+      if (Object.keys(patch).length === 0) {
         return modelError(
           "voice.model.set_prefs requires autoFallbackToBrowser or modelDownloadEndpoint",
           { code: "EMPTY_PREFS" },
@@ -675,6 +687,18 @@ export async function handleVoiceModelMessage(
       }
       setVoiceFields(patch)
       logger.info("voice.model.set_prefs", { fields: Object.keys(patch) })
+      if (patch.modelPrewarm === false) {
+        resetWhisperPrewarm()
+      } else if (patch.modelPrewarm === true) {
+        void maybePrewarmWhisper().then(async () => {
+          try {
+            const warmed = await statePayload(deps)
+            ctx.broadcast?.(warmed)
+          } catch {
+            /* */
+          }
+        })
+      }
       const state = await statePayload(deps)
       ctx.broadcast?.(state)
       return state

@@ -83,6 +83,7 @@ import {
   VOICE_ERR_STATE_TIMEOUT,
   VOICE_STATUS_QUERYING,
   VOICE_STATUS_STARTING_DOWNLOAD,
+  whisperModelMetaLine,
   binaryStatusLine,
   canDownloadWhisperBinary,
   formatDiskUsage,
@@ -1313,8 +1314,8 @@ export function SettingsSlideout() {
                     启用按住说话
                     <br />
                     <span style={{ color: tokens.textMuted, fontSize: 11 }}>
-                      按住组合键开始连续听写，松手结束；仅进草稿、不自动发送。需 Side Panel
-                      打开；禁止 bare Fn / Win+V。会议录音中不可用。
+                      按住 ≥300ms 松手转写；短按静默丢弃。300ms 内连按两次进入锁定（再按或 Esc 结束）。仅进草稿、不自动发送。需 Side Panel
+                      打开；页面可编辑框内同一热键会插入到该框。禁止 bare Fn / Win+V。会议录音中不可用。默认关。
                     </span>
                   </span>
                 </label>
@@ -1328,6 +1329,16 @@ export function SettingsSlideout() {
                     }
                   />
                 </div>
+                <label style={{ display: "flex", gap: 8, marginTop: 8, fontSize: 12, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={state.voiceSoundEffects !== false}
+                    onChange={(e) =>
+                      dispatch({ type: "SET_VOICE_SOUND_EFFECTS", enabled: e.target.checked })
+                    }
+                  />
+                  听写状态音效（开始/停止/完成；误触静默）
+                </label>
               </div>
             </div>
 
@@ -1428,6 +1439,14 @@ export function SettingsSlideout() {
                           </div>
                         ) : null}
                         {isActive ? " · 活动" : ""}
+                      </span>
+                      <span style={{ width: "100%", fontSize: 10, color: tokens.textMuted }}>
+                        {whisperModelMetaLine(modelId)}
+                        {voiceModel?.modelPrewarm &&
+                        voiceModel.prewarmStatus === "fail" &&
+                        isActive
+                          ? " · 预热失败"
+                          : ""}
                       </span>
                       <span style={{ color: tokens.textMuted, fontSize: 11 }}>
                         {pendingStart
@@ -1731,6 +1750,39 @@ export function SettingsSlideout() {
                               </span>
                             </span>
                           </label>
+                          <label style={{ display: "flex", gap: 8, marginTop: 8, fontSize: 12, cursor: "pointer" }}>
+                            <input
+                              type="checkbox"
+                              checked={voiceModel.modelPrewarm === true}
+                              onChange={(e) => {
+                                clearVoiceErr()
+                                sendVoice({ type: "voice.model.set_prefs", modelPrewarm: e.target.checked })
+                              }}
+                            />
+                            启动时预热活动模型（默认关；失败只显示微标）
+                          </label>
+                          <div style={{ marginTop: 8, fontSize: 11, color: tokens.textMuted }}>
+                            转写后处理（仅本机转写，默认全关）
+                          </div>
+                          {(
+                            [
+                              ["postprocessFillers", "去掉语气词"],
+                              ["postprocessLowercase", "转小写"],
+                              ["postprocessStripPunct", "去掉句尾标点"],
+                            ] as const
+                          ).map(([key, label]) => (
+                            <label key={key} style={{ display: "flex", gap: 8, marginTop: 4, fontSize: 12, cursor: "pointer" }}>
+                              <input
+                                type="checkbox"
+                                checked={voiceModel[key] === true}
+                                onChange={(e) => {
+                                  clearVoiceErr()
+                                  sendVoice({ type: "voice.model.set_prefs", [key]: e.target.checked })
+                                }}
+                              />
+                              {label}
+                            </label>
+                          ))}
 
                           <div style={{ marginTop: 10 }}>
                             <div style={{ marginBottom: 4, fontWeight: 500, fontSize: 12 }}>

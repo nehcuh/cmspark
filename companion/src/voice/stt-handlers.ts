@@ -15,6 +15,7 @@ import {
   type SttSessionService,
   type SttSessionServiceDeps,
 } from "./stt-session-service"
+import { applyVoicePostprocess, defaultVoicePostprocessPrefs } from "./stt-postprocess"
 
 // --- types --------------------------------------------------------------------
 
@@ -98,13 +99,23 @@ function sttPartial(
 }
 
 function sttResult(sessionId: string, text: string, ms: number | undefined, modelId: string | undefined) {
+  const voice = getConfig().voice
+  const prefs = {
+    ...defaultVoicePostprocessPrefs(),
+    fillers: voice?.postprocessFillers === true,
+    lowercase: voice?.postprocessLowercase === true,
+    stripPunct: voice?.postprocessStripPunct === true,
+    map: Array.isArray(voice?.postprocessMap) ? voice.postprocessMap : [],
+  }
+  const out = applyVoicePostprocess(text, prefs)
   return {
     type: "voice.stt.result" as const,
     v: 1 as const,
     sessionId,
-    text,
+    text: out.text,
     ms: ms ?? 0,
     modelId: modelId ?? "",
+    ...(out.postprocessed ? { postprocessed: true } : {}),
   }
 }
 
