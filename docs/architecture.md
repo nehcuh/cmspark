@@ -171,14 +171,18 @@ CMspark 的安全模型是**单层、默认拒绝、human-in-the-loop** 的—�
    │     【不走域白名单】，只能由全局开关放行                          │
    │                                                                  │
    ├─③ navigate / create_tab / set_tab_url URL 门 ───────────────────┤
-   │   非 http(s) scheme 直接阻断                                     │
-   │   hostname 不在 trusted_domains ∪ auto_approved_domains → 确认   │
+   │   非 http(s) scheme 直接阻断（仅 allow_all_schemes 可绕过 L1）   │
+   │   skip 确认 = auto_approved_domains ∪ auto_approve_dangerous     │
+   │             ∪ allow_all_schemes                                  │
+   │   trusted_domains = cookie-only，不跳过 URL 确认                 │
    │                                                                  │
-   ├─④ 域白名单 + 全局自动批准 ──────────────────────────────────────┤
+   ├─④ 域白名单 + 全局自动批准 + 协议解锁 ───────────────────────────┤
    │   auto_approved_domains: string[]  独立字段（≠ trusted_domains） │
    │     支持 * / 精确 / *.suffix 通配符（matchDomain 共享实现）      │
    │   security.auto_approve_dangerous: boolean  默认 false           │
-   │     全局 kill-switch，绕过所有确认（仅供无人值守工作流）         │
+   │     全局 kill-switch，跳过危险工具确认（仅供无人值守工作流）     │
+   │   allow_all_schemes（协议解锁 / god-mode，默认关，短语武装）     │
+   │     会放行 javascript: 导航且不再问；不是「只允许非 http」       │
    │                                                                  │
    └─⑤ 弹窗「添加到白名单」回路 ─────────────────────────────────────┘
        confirmation 携带 relevant_domains → 弹窗显示「精确 / *.domain」单选
@@ -199,7 +203,7 @@ CMspark 的安全模型是**单层、默认拒绝、human-in-the-loop** 的—�
 - Page-initiated 导航（`window.location`）需要 extension 端订阅 `chrome.tabs.onUpdated` 才能感知
 - 多 label TLD 通配符（`*.co.uk`）启发式漏检，需完整 PSL 才能闭环
 
-**关联 ADR**：[ADR-005](adr/005-cookie-trust-domain-security.md)（cookie 信任域）、[ADR-006](adr/006-layered-defense.md)（原设计 → 删除路径）、[ADR-007](adr/007-domain-whitelist-auto-approve.md)（域白名单 + 自动批准）。
+**关联 ADR**：[ADR-005](adr/005-cookie-trust-domain-security.md)（cookie 信任域）、[ADR-006](adr/006-layered-defense.md)（原设计 → 删除路径）、[ADR-007](adr/007-domain-whitelist-auto-approve.md)（域白名单 + 自动批准）、[ADR-010](adr/010-tiered-privilege-godmode.md)（协议解锁 / god-mode 爆炸半径）。
 
 ---
 

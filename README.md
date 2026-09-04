@@ -140,7 +140,7 @@ Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **
 
 ### 环境要求
 
-- **Node.js** ≥ 20（推荐使用 `nvm` 管理；与 CONTRIBUTING / CI 对齐）
+- **Node.js** ≥ 22（推荐使用 `nvm` 管理；与 CONTRIBUTING / CI / `engines` / `package.sh` 对齐）
 - **Chrome / Edge** 浏览器（支持 Manifest V3 扩展）
 - **LLM API Key**（默认支持 DeepSeek，也可配置其他 OpenAI-compatible 服务）
 

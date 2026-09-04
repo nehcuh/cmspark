@@ -24,8 +24,10 @@ CMspark 的 `evaluate` / `osascript_eval` / `navigate` / `create_tab` / `set_tab
 
 | 字段 | gate 范围 | 语义 |
 |---|---|---|
-| `trusted_domains` | cookie 工具 + navigate URL 门 | 「我愿意把 cookie 数据暴露给这个域」 |
-| `auto_approved_domains` | evaluate / osascript_eval / navigate / create_tab / set_tab_url | 「我愿意让 agent 在这个域上跳过确认」 |
+| `trusted_domains` | **cookie-only**（`get_cookies` / `set_cookie` / `delete_cookie` / `list_all_cookies`） | 「我愿意把 cookie 数据暴露给这个域」——**不**跳过 navigate / create_tab / set_tab_url 确认 |
+| `auto_approved_domains` | evaluate / navigate / create_tab / set_tab_url 的确认 skip（`osascript_eval` **不走**域白名单，见 H4） | 「我愿意让 agent 在这个域上跳过确认」 |
+
+URL 确认 skip 代数（`skipUrlConfirmation`，代码 SoT：`companion/src/tool/url-cookie-admission.ts`）：`auto_approved_domains` ∪ `auto_approve_dangerous` ∪ `allow_all_schemes`。**禁止**把 cookie 信任加回 URL skip。
 
 **为什么不合并**：「信任读取 cookie」≠「信任执行任意 JS」。一个用户可能愿意让 agent 读某站 cookie 做认证态保持，但不想让它在同一站点跑任意脚本。两个字段共享同一个 `matchDomain()` 实现，但写入路径完全独立。
 

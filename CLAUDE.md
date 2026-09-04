@@ -4,11 +4,11 @@
 
 ## Dynamic Workflow Routing
 
-All non-trivial tasks are routed through the `workflows/` directory:
+`workflows/*.ts`（`phase()` / `log()`）是 **playbook / 历史 DSL，不是执行器**——仓库内没有 runner。活路由是 VibeSOP 与 `.grok/workflows/*.rhai`。可保留 `workflows/` 文件当参考，不要包装成可执行运行时。
 
 1.  **Analyze** the user request to determine the task type
-2.  **Match** against available Workflow templates in `workflows/`
-3.  **Execute** the matched Workflow following its phases
+2.  **Match** against playbooks in `workflows/` (historical; not executed in-repo)
+3.  Live execution follows VibeSOP / `.grok/workflows/*.rhai`
 
 ### 需求设计 Issue-first（锁定 · 2026-08-27）
 
@@ -20,11 +20,11 @@ All non-trivial tasks are routed through the `workflows/` directory:
 - 例外：无新需求的 typo/文档；已有行为的 bugfix
 - 本季余项：[#230](https://github.com/nehcuh/cmspark/issues/230) 冻（F-S-10 / overlay-acl）· [#258](https://github.com/nehcuh/cmspark/issues/258)–[#260](https://github.com/nehcuh/cmspark/issues/260) 语音/会议。T1 [#228](https://github.com/nehcuh/cmspark/issues/228) 已记分，**禁扩** outbound profile。#229 已关。
 
-Available Workflow categories:
+Playbook categories (not executors):
 - `workflows/bridge-*.ts` — bridge/ module fixes and reviews
 - `workflows/dev-router.ts` — development task routing (bug-fix / feature / refactor / review)
 
-For custom workflows: create a new `.ts` file in `workflows/` following the `meta` + phase function pattern.
+Custom playbooks may still live as `.ts` in `workflows/` (`meta` + phase comments); they are not a runtime.
 
 ## Project-Specific Context
 
@@ -88,10 +88,10 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - **A4. 安全**：双层安全架构（实际生效）—
   - ① **Cookie 信任域**：`trusted_domains` 通配符门控 cookie 工具（`get_cookies`/`set_cookie`/`delete_cookie`/`list_all_cookies`）。
   - ② **`evaluate`/`osascript_eval` 默认阻断**：所有调用强制走 `SecurityConfirmationManager` 交互确认；`checkHighRiskExecution` 正则黑名单（~57 模式）仅作为风险预览升级提示，不再 gate WHETHER to confirm。
-  - ③ **`navigate`/`create_tab`/`set_tab_url` URL 门**：非 http(s) scheme 直接阻断；hostname 不在 `trusted_domains` ∪ `auto_approved_domains` 时强制确认。
+  - ③ **`navigate`/`create_tab`/`set_tab_url` URL 门**：非 http(s) scheme 直接阻断（仅 `allow_all_schemes` 可绕过 L1，含 `javascript:` 且不再问）。确认 skip = `auto_approved_domains` ∪ `auto_approve_dangerous` ∪ `allow_all_schemes`。`trusted_domains` = cookie-only，**不**跳过 URL 确认。
   - ④ **域白名单 + 全局自动批准**（2026-06-24 新增，详见 [ADR-007](docs/adr/007-domain-whitelist-auto-approve.md)）：
     - `auto_approved_domains: string[]` — 独立于 `trusted_domains`，专管工具执行确认的跳过（evaluate/navigate 等），支持 `*` / 精确 / `*.suffix` 通配符。
-    - `security.auto_approve_dangerous: boolean`（默认 false）— 全局 kill-switch，跳过所有危险工具确认；仅供无人值守工作流。
+    - `security.auto_approve_dangerous: boolean`（默认 false）— 全局 kill-switch，跳过危险工具确认；仅供无人值守工作流。
     - 确认弹窗支持「添加到白名单」单选（精确 / `*.domain` 通配符），由 extension 端构造 pattern；companion 端**强制校验** add_to_whitelist 必须等于 `relevant_domains[0]` 或其通配形式，防止 WS 注入。
   - ⑤ **关键实现要点**：`osascript_eval` 因属宿主执行（任意 shell）**不走域白名单**，只能由全局开关放行；`tabUrlCache` 在 `list_tabs`/`navigate`/`set_tab_url`/`create_tab` 后同步刷新，避免跨域自动批准；`respondFrom` 必须先于 `saveConfig` 完成，且白名单持久化以 `responded === true` 为前提。
   - 配合 `security-policy.ts`（token 颁发 + HMAC 服务端校验，constant-time）、`security-confirmation.ts`（45s 超时的 Promise-based 确认队列 + origin 绑定）、`page-sanitizer`（extension 端 ~11 模式 prompt-injection 过滤）、错误三级分类、越狱检测。
@@ -149,15 +149,3 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - docs/TROUBLESHOOTING.md — 常见故障
 - docs/archive/2026-07/ — 过程件归档（proposals / roadmaps / rfcs / audits）
 - docs/adr/ — 架构决策记录（含 ADR-014 Pack / 015–016 multi-agent·board / 017–018 CU·Host / 019 user-env / **020 能力三轴**）
-
-### Tech Stack
-
-### Architecture
-
-### Coding Standards
-
-### Testing
-
-### Deployment
-
--->

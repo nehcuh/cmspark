@@ -18,21 +18,21 @@ The following development tools are available on this system. Use them when work
 
 ## Routing Protocol
 
-All non-trivial tasks are routed through the `workflows/` directory:
+`workflows/*.ts`（`phase()` / `log()`）是 **playbook / 历史 DSL，不是执行器**——仓库内没有 runner。活路由是 VibeSOP 与 `.grok/workflows/*.rhai`。可保留 `workflows/` 文件当参考，不要包装成可执行运行时。
 
 1. **Analyze** the user request to determine the task type
-2. **Match** against available Workflow templates in `workflows/`
-3. **Execute** the matched Workflow following its phases
+2. **Match** against playbooks in `workflows/` (historical; not executed in-repo)
+3. Live execution follows VibeSOP / `.grok/workflows/*.rhai`
 
 ### 需求设计 Issue-first（锁定 · 2026-08-27）
 
 任何需求设计必须**先**在 GitHub 建 Issue，再写 spec/plan。禁止只在 `docs/superpowers/` 里设计。模板：`.github/ISSUE_TEMPLATE/design.md`。本季余项：#230 冻（F-S-10 / overlay-acl）· #258–#260 语音/会议。T1 #228 已记分，禁扩 outbound profile。例外：无新需求的 typo/文档；已有行为的 bugfix。
 
-Available Workflow categories:
+Playbook categories (not executors):
 - `workflows/bridge-*.ts` — bridge/ module fixes and reviews
 - `workflows/dev-router.ts` — development task routing (bug-fix / feature / refactor / review)
 
-For custom workflows: create a new `.ts` file in `workflows/` following the `meta` + phase function pattern.
+Custom playbooks may still live as `.ts` in `workflows/` (`meta` + phase comments); they are not a runtime.
 
 ## Skills
 
@@ -44,11 +44,11 @@ When the user signals session end, run `session-end`.
 
 Signals: "that's all for now", "heading out", "收工", "再见", `/session-end`.
 
-Details: read `docs/session-lifecycle.md`.
+Details: read `.claude/docs/session-lifecycle.md` (VibeSOP; not shipped in this repo).
 
 ## Quick Commands
 
-When the user types `/dev-*`, run the corresponding workflow in `workflows/`.
+When the user types `/dev-*`, map to the matching playbook in `workflows/` (historical DSL, not an executor).
 
 ## CMspark-Specific Notes
 
