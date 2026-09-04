@@ -29,7 +29,7 @@ import { buildContextRefsSystemSegment, type ContextRefInput } from "./threads/c
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
 import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
 import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
-import { pickFolderNative } from "./obsidian/folder-picker"
+import { pickFolderNative, pickFileNative } from "./obsidian/folder-picker"
 import { pinSlashSkill, type SkillEngine } from "./skills/skill-engine"
 import { isSymlinkOrJunction, isUnsafePathComponent } from "./skills/doc-identity"
 import { normalizeHostname } from "./skills/site-matcher"
@@ -48,7 +48,7 @@ import {
 } from "./llm/run-queues"
 import { listPendingToolsForThread } from "./ws/tool-forward"
 
-import { parseFile } from "./file-parser"
+import { parseFile, PARSE_FILE_MAX_BYTES } from "./file-parser"
 import type { FileParseResponse, FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
 import { extractKnowledgeDraft, type KnowledgeDraftSuggestion } from "./llm/knowledge-draft-extract"
@@ -587,10 +587,16 @@ function cancelKnowledgePreviewExtract(requestId: string): void {
 // drive knowledge.import_directory without the native OS dialog and spy that
 // the walk performs 0 LLM extractions (#272 AC-4). Behavior unchanged.
 let pickFolderNativeImpl: typeof pickFolderNative = pickFolderNative
+let pickFileNativeImpl: typeof pickFileNative = pickFileNative
 
 /** Test hook — swap the native folder picker. */
 export function __testSetPickFolderNative(impl?: typeof pickFolderNative): void {
   pickFolderNativeImpl = impl || pickFolderNative
+}
+
+/** Test hook — swap the native single-file picker (#285). */
+export function __testSetPickFileNative(impl?: typeof pickFileNative): void {
+  pickFileNativeImpl = impl || pickFileNative
 }
 
 async function loadKnowledgePayload(rest: Record<string, any>): Promise<
@@ -3089,6 +3095,71 @@ export async function handleMessage(
         session,
       )
     }
+    case "knowledge.import_local_file": {
+      // #285: companion native single-file picker — no base64 WS round-trip.
+      if (stampedSurface === "summoner") {
+        return { type: "error", error: "SUMMONER_ACL: knowledge.import_local_file not allowed on summoner surface", error_code: "SUMMONER_ACL" }
+      }
+      if (rest.user_gesture !== true) {
+        return { type: "error", error: "knowledge.import_local_file requires user_gesture:true (Side Panel only)" }
+      }
+      const requestId = typeof rest.id === "string" ? rest.id : ""
+      const failPreview = (error: string) => ({
+        type: "knowledge.preview",
+        id: requestId || undefined,
+        title: "",
+        description: "",
+        preview: `预览失败：${error}`,
+        char_count: 0,
+      })
+      const pick = await pickFileNativeImpl({
+        prompt: "选择要导入的知识文档",
+        windowsFilter:
+          "Documents|*.md;*.markdown;*.txt;*.docx;*.pdf;*.xlsx;*.pptx;*.odt;*.rtf;*.csv;*.html;*.htm|All files|*.*",
+      })
+      if (pick.error === "cancelled") {
+        return { type: "knowledge.import_local_file_result", error: "cancelled", id: requestId || undefined }
+      }
+      if (pick.error) return failPreview(pick.error)
+      if (!pick.path) return failPreview("未选择文件")
+      let st: fs.Stats
+      try {
+        st = fs.statSync(pick.path)
+      } catch (e: any) {
+        return failPreview(e?.message || "无法读取所选文件")
+      }
+      if (!st.isFile()) return failPreview("所选路径不是文件")
+      const filename = path.basename(pick.path)
+      if (st.size > PARSE_FILE_MAX_BYTES) {
+        return failPreview(
+          `文件 "${filename}" 过大 (${Math.round(st.size / 1024 / 1024)}MB)，最大支持 10MB。浏览器「导入文件」上限 6MB；10MB 以内请用「导入大文件」。`,
+        )
+      }
+      let parsed: FileParseResponse
+      try {
+        parsed = await parseFileBounded(fs.readFileSync(pick.path), filename, "application/octet-stream")
+      } catch (parseErr: any) {
+        return failPreview(parseErr?.message || `文件 "${filename}" 解析失败`)
+      }
+      if (!parsed.success) return failPreview(parsed.error)
+      const fallback = filename.replace(/\.[^.]+$/, "")
+      const { body: previewBody, ...preview } = skillEngine.previewKnowledge(parsed.text, fallback)
+      const duplicate_of = skillEngine.findKnowledgeDuplicate(parsed.text, fallback) || undefined
+      const extractStarted = maybeStartKnowledgePreviewExtract(
+        requestId,
+        previewBody,
+        session,
+        stampedSurface,
+      )
+      return {
+        type: "knowledge.preview",
+        id: requestId || undefined,
+        ...preview,
+        import_content: parsed.text,
+        ...(duplicate_of ? { duplicate_of } : {}),
+        ...(extractStarted ? { extract_pending: true } : {}),
+      }
+    }
     case "knowledge.import_directory": {
       if (stampedSurface === "summoner") {
         return { type: "error", error: "SUMMONER_ACL: knowledge.import_directory not allowed on summoner surface", error_code: "SUMMONER_ACL" }
@@ -3110,7 +3181,8 @@ export async function handleMessage(
 
       const vaultPath = pick.path
       const MAX_FILES = 200
-      const MAX_FILE_SIZE = 6 * 1024 * 1024
+      // #285: native walk has no WS base64 budget — align with parseFile 10MB.
+      const MAX_FILE_SIZE = PARSE_FILE_MAX_BYTES
       const TEXT_EXTS = new Set(["md", "markdown", "txt", "csv", "html", "htm"])
       const BINARY_EXTS = new Set(["docx", "pdf", "xlsx", "pptx", "odt", "rtf"])
 

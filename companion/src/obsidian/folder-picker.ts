@@ -99,12 +99,14 @@ export async function pickFileNative(opts?: {
   prompt?: string
   /** macOS ofi types e.g. {"public.unix-executable"} — best-effort filter */
   macTypes?: string[]
+  /** PowerShell OpenFileDialog.Filter */
+  windowsFilter?: string
 }): Promise<PickResult> {
   const prompt = opts?.prompt || "选择文件"
   try {
     if (isMacOS()) return await pickFileMacOS(prompt)
     if (isLinux()) return await pickFileLinux(prompt)
-    if (isWindows()) return await pickFileWindows(prompt)
+    if (isWindows()) return await pickFileWindows(prompt, opts?.windowsFilter)
     return { error: "当前平台不支持图形化选择文件,请手动输入路径" }
   } catch (e: any) {
     return { error: `选择文件失败: ${e.message || String(e)}` }
@@ -143,13 +145,14 @@ async function pickFileLinux(prompt: string): Promise<PickResult> {
   }
 }
 
-async function pickFileWindows(prompt: string): Promise<PickResult> {
+async function pickFileWindows(prompt: string, filter?: string): Promise<PickResult> {
   const title = prompt.replace(/'/g, "''")
+  const flt = (filter || "Executable|*.exe;python.exe;pythonw.exe|All files|*.*").replace(/'/g, "''")
   const ps =
     "Add-Type -AssemblyName System.Windows.Forms; " +
     "$d = New-Object System.Windows.Forms.OpenFileDialog; " +
     `$d.Title = '${title}'; ` +
-    "$d.Filter = 'Executable|*.exe;python.exe;pythonw.exe|All files|*.*'; " +
+    `$d.Filter = '${flt}'; ` +
     "$d.CheckFileExists = $true; " +
     "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.FileName }"
   try {

@@ -1300,6 +1300,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "knowledge.import":
       case "knowledge.preview":
       case "knowledge.import_directory":
+      case "knowledge.import_local_file":
       // #274: knowledge folders (six user_gesture verbs; forwarded verbatim —
       // companion validate + router enforce gesture/bucket/path shape).
       case "knowledge.folder_create":
