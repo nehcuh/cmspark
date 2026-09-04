@@ -209,9 +209,17 @@ export function ContextPanelHostProvider({
       loadPanelData("knowledge", activeThreadId, dispatch)
     }
     window.addEventListener("cmspark:open-knowledge", onKnowledge as EventListener)
+    const onGraphDoc = (msg: { type?: string; id?: string }) => {
+      if (msg?.type !== "knowledge_graph.doc_selected" || !msg.id) return
+      pendingKnowledgeFocus.current = msg.id
+      setActivePanel("knowledge")
+      loadPanelData("knowledge", activeThreadId, dispatch)
+    }
+    chrome.runtime.onMessage.addListener(onGraphDoc)
     return () => {
       window.removeEventListener("cmspark:open-context-panel", onOpen as EventListener)
       window.removeEventListener("cmspark:open-knowledge", onKnowledge as EventListener)
+      chrome.runtime.onMessage.removeListener(onGraphDoc)
     }
   }, [activeThreadId, dispatch])
 

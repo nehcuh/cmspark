@@ -28,6 +28,12 @@ import {
   type ThreadGraphSlim,
 } from "./thread-graph"
 import {
+  openOrFocusKnowledgeGraph,
+  writeKnowledgeGraphSnapshot,
+} from "./knowledge-graph"
+import { parseKnowledgeGraphPayload, buildKnowledgeGraphRequest } from "../knowledge-graph/wire"
+import { parseLlmLabelsPref, KNOWLEDGE_GRAPH_LLM_LABELS_KEY } from "../knowledge-graph/llm-pref"
+import {
   getHydrateSnapshot,
   noteComputerTaskEvent,
   noteSecurityConfirmationGone,
@@ -454,6 +460,13 @@ async function handleCompanionMessage(msg: any) {
     (msg.event === "started" || msg.event === "paused")
   if (anySecurityConfirm || computerTaskStart) {
     openOrFocusCockpit().catch(() => {})
+  }
+
+  if (msg.type === "knowledge.graph") {
+    const parsed = parseKnowledgeGraphPayload(msg)
+    if (parsed) {
+      writeKnowledgeGraphSnapshot(parsed).catch(() => {})
+    }
   }
 
   // Forward streaming tokens and other messages to side panel + cockpit.
@@ -1297,6 +1310,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "skill.import-path":
       case "skill.delete":
       case "knowledge.list":
+      // 注意：knowledge.graph 不在此列——无页面发该 runtime 消息（复审 NIT-4
+      // 死分支已移除）；图谱 tab 走 knowledge_graph.open/refresh 独立 case。
       case "knowledge.import":
       case "knowledge.preview":
       case "knowledge.import_directory":
@@ -1497,6 +1512,63 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
           .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
         return true
       }
+      case "knowledge_graph.open":
+      case "knowledge_graph.refresh": {
+        const llmFromMsg = message.llm_labels === true
+        const regenerate = message.regenerate === true
+        const focusId = message.focus_id || message.focusId || null
+        const run = async () => {
+          let llm = llmFromMsg
+          if (message.type === "knowledge_graph.open" && message.llm_labels == null) {
+            try {
+              const pref = await chrome.storage.local.get(KNOWLEDGE_GRAPH_LLM_LABELS_KEY)
+              llm = parseLlmLabelsPref(pref[KNOWLEDGE_GRAPH_LLM_LABELS_KEY])
+            } catch {
+              llm = false
+            }
+          }
+          if (message.type === "knowledge_graph.open") {
+            await writeKnowledgeGraphSnapshot(
+              { status: "rebuilding", truncated: false, nodes: [], edges: [], labels: {} },
+              { focus_id: focusId, llm_labels: llm },
+            )
+            await openOrFocusKnowledgeGraph(focusId)
+          }
+          // Wire 契约权威在服务端：强制重生成字段是 regen_labels（#316 复审 MAJOR-1）
+          const frame = buildKnowledgeGraphRequest({ llmLabels: llm, regenerate })
+          const sent = wsClient?.send(frame) === true
+          if (!sent && message.type === "knowledge_graph.open") {
+            // Companion 未连或尚未识别动词：保持 rebuilding，tab 会 refresh。
+          }
+          return { ok: true, sent }
+        }
+        run()
+          .then((r) => sendResponse(r))
+          .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+      case "knowledge_graph.open_doc": {
+        const id = message.id || message.doc_id || message.docId
+        if (!id || typeof id !== "string") {
+          sendResponse({ ok: false, error: "id required" })
+          return true
+        }
+        try {
+          chrome.runtime.sendMessage({ type: "knowledge_graph.doc_selected", id })
+        } catch {
+          /* no listeners */
+        }
+        if (wsClient) wsClient.send({ type: "knowledge.get", id })
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          const winId = tabs[0]?.windowId
+          if (winId != null && chrome.sidePanel?.open) {
+            chrome.sidePanel.open({ windowId: winId }).catch(() => {})
+          }
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
       case "thread_graph.open_thread": {
         const threadId = message.thread_id || message.threadId
         if (!threadId || typeof threadId !== "string") {
