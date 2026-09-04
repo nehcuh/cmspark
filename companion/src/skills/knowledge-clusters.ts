@@ -77,12 +77,17 @@ export type KnowledgeIndexDoc = {
   vec: Record<string, number>
 }
 
+/** LLM 分组展示条目（#296 display 派生字段；可丢可重建，不进检索/路由/导出）。 */
+export type KnowledgeGraphLabelEntry = { name: string; summary?: string }
+
 export type KnowledgeIndexFile = {
   version: 1
   built_at: string
   /** 构建时的磁盘指纹（与 computeDiskFingerprint 同形）；漂移即重建。 */
   fingerprint: string
   docs: KnowledgeIndexDoc[]
+  /** 可选派生缓存（spec §5）：缺失容忍；条目形状不符整体丢弃。 */
+  display?: Record<string, KnowledgeGraphLabelEntry>
 }
 
 export function knowledgeIndexPath(): string {
@@ -101,6 +106,20 @@ export function readKnowledgeIndexFile(p: string): KnowledgeIndexFile | null {
     for (const d of parsed.docs) {
       if (!d || typeof d.id !== "string" || typeof d.name !== "string") return null
       if (!d.vec || typeof d.vec !== "object") return null
+    }
+    // display 可选（#296）：形状不符整体丢弃，不连累索引本身
+    if (parsed.display !== undefined) {
+      const display = parsed.display as unknown
+      if (!display || typeof display !== "object" || Array.isArray(display)) {
+        delete parsed.display
+      } else {
+        for (const v of Object.values(display as Record<string, unknown>)) {
+          if (!v || typeof v !== "object" || typeof (v as { name?: unknown }).name !== "string") {
+            delete parsed.display
+            break
+          }
+        }
+      }
     }
     return parsed as KnowledgeIndexFile
   } catch {

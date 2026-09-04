@@ -52,7 +52,14 @@ import { parseFile, PARSE_FILE_MAX_BYTES } from "./file-parser"
 import type { FileParseResponse, FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
 import { extractKnowledgeDraft, type KnowledgeDraftSuggestion } from "./llm/knowledge-draft-extract"
-import type { LlmExtractConfig } from "./llm/llm-extract"
+import { llmExtract, type LlmExtractConfig } from "./llm/llm-extract"
+import {
+  buildGraphLabelPrompt,
+  clampKnowledgeGraphLabelEntry,
+  parseGraphLabels,
+  type KnowledgeGraphCore,
+} from "./skills/knowledge-graph"
+import type { KnowledgeGraphLabelEntry } from "./skills/knowledge-clusters"
 import { normalizeTags } from "./threads/digest"
 import { resolveNativeVision, visionConfigForAnalyze } from "./llm/likely-multimodal"
 import {
@@ -485,6 +492,75 @@ let folderSuggestImpl: FolderSuggestImpl = defaultFolderSuggestImpl
 /** Test hook — swap the folder-suggest impl (spy / failure injection). */
 export function __testSetFolderSuggestImpl(impl?: FolderSuggestImpl): void {
   folderSuggestImpl = impl || defaultFolderSuggestImpl
+}
+
+// --- #296: knowledge graph LLM 分组标签（opt-in，display 派生缓存） ---
+//
+// Spec §3.2：面板开关随请求传入（llm_labels:true）——纯 UI 偏好，不进
+// companion config.json 的 L2/trust 面；regen_labels:true 覆盖缓存强制重生成。
+// 非阻塞：本次响应先回高频词标签，异步生成写回 display 后，下次请求拿到
+// AI 版。失败/超时回退高频词且无摘要，不报错不阻塞。隐私（#274 先例）：
+// 标注输入只有成员标题 + 标签单行，从不进正文。产物不进检索/路由/导出。
+
+type KnowledgeGraphLabelImpl = (params: {
+  lines: string[]
+  signal?: AbortSignal
+}) => Promise<Record<string, { name: string; summary?: string }>>
+
+const KNOWLEDGE_GRAPH_LABEL_TIMEOUT_MS = 30_000
+
+const defaultKnowledgeGraphLabelImpl: KnowledgeGraphLabelImpl = async ({ lines, signal }) => {
+  const config = knowledgeExtractLlmConfig()
+  if (!config) throw new Error("companion_llm_not_configured")
+  const prompt = buildGraphLabelPrompt(lines)
+  const raw = await llmExtract({ ...prompt, config, timeout: KNOWLEDGE_GRAPH_LABEL_TIMEOUT_MS, signal })
+  const parsed = parseGraphLabels(raw)
+  if (!parsed) throw new Error("graph_label_parse_failed")
+  return parsed
+}
+
+let knowledgeGraphLabelImpl: KnowledgeGraphLabelImpl = defaultKnowledgeGraphLabelImpl
+
+/** Test hook — swap the graph-label impl (spy / failure injection). */
+export function __testSetKnowledgeGraphLabelImpl(impl?: KnowledgeGraphLabelImpl): void {
+  knowledgeGraphLabelImpl = impl || defaultKnowledgeGraphLabelImpl
+}
+
+/** Single-flight：同刻至多一个标注 run；regen 打断旧 run。 */
+let knowledgeGraphLabelRun: AbortController | null = null
+
+function maybeStartKnowledgeGraphLabels(
+  skillEngine: SkillEngine,
+  graph: KnowledgeGraphCore,
+  force: boolean,
+): void {
+  const targets = graph.labelTargets.filter((t) => force || !t.cached)
+  if (targets.length === 0) return
+  if (!knowledgeExtractLlmConfig()) return
+  if (knowledgeGraphLabelRun) {
+    if (!force) return
+    knowledgeGraphLabelRun.abort()
+  }
+  const ac = new AbortController()
+  knowledgeGraphLabelRun = ac
+  const lines = targets.flatMap((t) => t.lines)
+  // NOTE (F5)：impl 必须异步 settle（生产走网络）——响应帧先带回退标签返回。
+  void (async () => {
+    try {
+      const parsed = await knowledgeGraphLabelImpl({ lines, signal: ac.signal })
+      if (ac.signal.aborted) return
+      const entries: Record<string, KnowledgeGraphLabelEntry> = {}
+      for (const [key, v] of Object.entries(parsed)) {
+        const clamped = clampKnowledgeGraphLabelEntry(v)
+        if (clamped) entries[key] = clamped
+      }
+      if (Object.keys(entries).length > 0) skillEngine.setKnowledgeGraphDisplay(entries)
+    } catch {
+      // 回退规则：失败/超时静默回退（下次请求仍是高频词标签）
+    } finally {
+      if (knowledgeGraphLabelRun === ac) knowledgeGraphLabelRun = null
+    }
+  })()
 }
 
 /** In-flight preview extractions keyed by the kp- preview request id. */
@@ -2977,6 +3053,32 @@ export async function handleMessage(
         skillEngine,
         session,
       )
+    case "knowledge.graph": {
+      // #296 图谱视图（按需拉取）。panel-only 门与 distribution 同款：
+      // 谓词看 handshake 的 session.surface（stamp 词汇表只有 summoner|tray，
+      // 看 stamp 永远不放行）；summoner ACL 是另一层（默认拒，不在 allowlist）。
+      const surface = (session as { surface?: unknown } | undefined)?.surface
+      if (surface !== "panel") {
+        return { type: "error", error: "knowledge.graph is panel-only (Side Panel knowledge panel)" }
+      }
+      const graph = skillEngine.getKnowledgeGraph()
+      if (!graph) {
+        // 索引缺失/损坏/重建中：诚实态，不假装结构（AC-5）
+        return { type: "knowledge.graph", status: "rebuilding", truncated: false, nodes: [], edges: [], labels: {} }
+      }
+      if (rest.llm_labels === true || rest.regen_labels === true) {
+        maybeStartKnowledgeGraphLabels(skillEngine, graph, rest.regen_labels === true)
+      }
+      // labelTargets 不上 wire（服务端内部异步标注驱动）
+      return {
+        type: "knowledge.graph",
+        status: graph.status,
+        truncated: graph.truncated,
+        nodes: graph.nodes,
+        edges: graph.edges,
+        labels: graph.labels,
+      }
+    }
     case "knowledge.set_active": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       const overlayThreadErr = gateOverlayCurrentThread(rest.thread_id, stampedSurface)

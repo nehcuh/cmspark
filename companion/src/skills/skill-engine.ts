@@ -47,7 +47,13 @@ import {
   type KnowledgeDistributionChannel,
   type KnowledgeIndexDoc,
   type KnowledgeIndexFile,
+  type KnowledgeGraphLabelEntry,
 } from "./knowledge-clusters"
+import {
+  KNOWLEDGE_GRAPH_DISPLAY_MAX_ENTRIES,
+  buildKnowledgeGraph,
+  type KnowledgeGraphCore,
+} from "./knowledge-graph"
 
 export const KNOWLEDGE_BODY_WIRE_CAP = 512 * 1024
 export const KNOWLEDGE_FILE_CAP = 6 * 1024 * 1024
@@ -452,11 +458,16 @@ export class SkillEngine {
   private rebuildKnowledgeIndexSafe(): void {
     try {
       const docs = this.buildKnowledgeIndexDocs()
+      const prevDisplay = this.knowledgeIndex?.display
       const index: KnowledgeIndexFile = {
         version: 1,
         built_at: new Date().toISOString(),
         fingerprint: this.diskFingerprint || this.computeDiskFingerprint(),
         docs,
+        // display 是可丢派生缓存：重建时按软界携带（分组键漂移自然失效）
+        ...(prevDisplay && Object.keys(prevDisplay).length <= KNOWLEDGE_GRAPH_DISPLAY_MAX_ENTRIES
+          ? { display: prevDisplay }
+          : {}),
       }
       writeKnowledgeIndexFile(knowledgeIndexPath(), index)
       this.knowledgeIndex = index
@@ -534,6 +545,35 @@ export class SkillEngine {
     } catch (e) {
       console.warn("[skills] knowledge distribution failed; degraded:", e)
       return null
+    }
+  }
+
+  /**
+   * 图谱视图数据（#296 knowledge.graph 通道）。null = 索引不可用
+   * （handler 映射为 status:"rebuilding"，不假装结构）。
+   */
+  getKnowledgeGraph(): KnowledgeGraphCore | null {
+    const index = this.ensureKnowledgeIndex()
+    if (!index) return null
+    try {
+      return buildKnowledgeGraph(index.docs, index.display)
+    } catch (e) {
+      console.warn("[skills] knowledge graph build failed; degraded:", e)
+      return null
+    }
+  }
+
+  /** LLM 分组标签写回 display 派生缓存（内存 + 索引文件；失败仅日志，不阻塞）。 */
+  setKnowledgeGraphDisplay(entries: Record<string, KnowledgeGraphLabelEntry>): void {
+    try {
+      const index = this.ensureKnowledgeIndex()
+      if (!index) return
+      const display = { ...index.display, ...entries }
+      if (Object.keys(display).length > KNOWLEDGE_GRAPH_DISPLAY_MAX_ENTRIES) return
+      index.display = display
+      writeKnowledgeIndexFile(knowledgeIndexPath(), index)
+    } catch (e) {
+      console.warn("[skills] knowledge graph display write failed; degraded:", e)
     }
   }
 
