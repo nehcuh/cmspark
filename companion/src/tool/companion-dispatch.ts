@@ -139,7 +139,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       if (!tokenOk) {
         return { success: false, error: "Invalid or expired security token for spawn_worker" }
       }
-      const { spawnWorkerThread } = await import("../orchestrator/spawn")
+      const { spawnWorkerThread, restoreParentAfterFailedSpawn } = await import("../orchestrator/spawn")
       const intentId =
         typeof params.intent_id === "string" && params.intent_id.trim()
           ? params.intent_id.trim()
@@ -179,6 +179,9 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           } catch {
             /* best-effort rollback */
           }
+          // #292: also undo the orchestrator promotion — the spawn never happened,
+          // so a normal parent must keep its full tool surface.
+          restoreParentAfterFailedSpawn(threadManager, String(parentId), r.parent_before_promotion)
           return {
             success: false,
             error: `spawn_worker rolled back: pack apply failed — ${packApply.error}`,
@@ -211,6 +214,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           } catch {
             /* best-effort */
           }
+          // #292: also undo the orchestrator promotion — the spawn never happened.
+          restoreParentAfterFailedSpawn(threadManager, String(parentId), r.parent_before_promotion)
           return {
             success: false,
             error: `spawn_worker rolled back: intent claim failed — ${intentClaim.error}`,
