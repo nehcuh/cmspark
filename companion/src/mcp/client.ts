@@ -92,62 +92,84 @@ export class McpClient extends EventEmitter {
     }
     this._closing = false
     this.setStatus("connecting")
-    this._stderrBuffer = ""
+    // #289: do NOT clear _stderrBuffer here — the previous attempt's stderr
+    // must stay visible to the UI while the retry is connecting. last_error is
+    // likewise kept (setStatus without an error arg leaves it) and cleared
+    // only on a successful connect below.
 
-    const transport = injectedTransport ?? createTransport(this._config, {
-      onStderr: (chunk) => {
-        this._stderrBuffer += chunk
-        if (this._stderrBuffer.length > 8192) {
-          this._stderrBuffer = this._stderrBuffer.slice(-8192)
-        }
-        this.emit("stderr", chunk)
-      },
-    })
-    this.transport = transport
-
-    transport.onclose = () => {
-      if (this._closing) return
-      logger.warn("mcp.client.closed", { server: this.name })
-      this.setStatus("disconnected")
-      this.emit("disconnected", "transport closed")
-    }
-    transport.onerror = (err: Error) => {
-      logger.error("mcp.client.transport_error", { server: this.name, error: err.message })
-      this._connection.last_error = err.message
-    }
-
-    const roots = this._config.roots
-    const client = new Client(
-      { name: "cmspark-agent", version: "1.0.0" },
-      {
-        capabilities: roots !== undefined && roots.length > 0
-          ? { roots: { listChanged: true } }
-          : {},
-      },
-    )
-    this.client = client
-
-    // The official filesystem server requests initial roots during startup.
-    // Only advertise roots support when the user has configured roots, so we do not
-    // change behavior for servers that do not need them.
-    if (roots !== undefined && roots.length > 0) {
-      client.setRequestHandler(ListRootsRequestSchema, async () => {
-        return { roots }
-      })
-    }
-
-    const startupTimeout = resolveStartupTimeout(this._config)
+    // #289: transport creation (incl. `new URL` for http configs) lives INSIDE
+    // the try — a synchronous throw must land in `error`, not leak past the
+    // catch and leave this instance stuck in `connecting` forever.
     try {
+      const transport = injectedTransport ?? createTransport(this._config, {
+        onStderr: (chunk) => {
+          this._stderrBuffer += chunk
+          if (this._stderrBuffer.length > 8192) {
+            this._stderrBuffer = this._stderrBuffer.slice(-8192)
+          }
+          this.emit("stderr", chunk)
+        },
+      })
+      this.transport = transport
+
+      transport.onclose = () => {
+        if (this._closing) return
+        if (this._connection.status === "connecting") {
+          // #289: startup-failure path. connect()'s catch owns the error
+          // status and the (single) restart accounting — emitting
+          // `disconnected` here would double-count restarts and flash the
+          // UI from error to disconnected.
+          logger.warn("mcp.client.closed_during_startup", { server: this.name })
+          return
+        }
+        logger.warn("mcp.client.closed", { server: this.name })
+        this.setStatus("disconnected")
+        this.emit("disconnected", "transport closed")
+      }
+      transport.onerror = (err: Error) => {
+        logger.error("mcp.client.transport_error", { server: this.name, error: err.message })
+        this._connection.last_error = err.message
+      }
+
+      const roots = this._config.roots
+      const client = new Client(
+        { name: "cmspark-agent", version: "1.0.0" },
+        {
+          capabilities: roots !== undefined && roots.length > 0
+            ? { roots: { listChanged: true } }
+            : {},
+        },
+      )
+      this.client = client
+
+      // The official filesystem server requests initial roots during startup.
+      // Only advertise roots support when the user has configured roots, so we do not
+      // change behavior for servers that do not need them.
+      if (roots !== undefined && roots.length > 0) {
+        client.setRequestHandler(ListRootsRequestSchema, async () => {
+          return { roots }
+        })
+      }
+
+      const startupTimeout = resolveStartupTimeout(this._config)
       await withTimeout(client.connect(transport), startupTimeout, `startup > ${startupTimeout}ms`)
     } catch (err: any) {
       const baseMsg = err?.message || String(err)
       const tail = this._stderrBuffer.trim()
       const fullMsg = tail ? `${baseMsg}\nstderr: ${tail.slice(-500)}` : baseMsg
+      // #289: _closing BEFORE cleanup — transport.close() fires onclose, and
+      // without this guard it would overwrite `error` with `disconnected` and
+      // trigger a second scheduleRestart via the manager's disconnected
+      // listener (double-counting restartAttempts for a single failure).
+      this._closing = true
       this.setStatus("error", fullMsg)
       await this.cleanupTransport()
+      this.client = null
       throw err
     }
 
+    const client = this.client!
+    const transport = this.transport!
     const caps = client.getServerCapabilities()
     this._capabilities = {
       tools: !!caps?.tools,
@@ -160,6 +182,8 @@ export class McpClient extends EventEmitter {
     const pid = extractPid(transport)
     if (pid) this._connection.pid = pid
     this._connection.last_connected_at = new Date().toISOString()
+    // #289: the previous attempt's error is obsolete once a connect succeeds.
+    this._connection.last_error = undefined
     this.setStatus("connected")
 
     // Refresh metadata caches after connect (best-effort — non-fatal if a server lacks a capability)
@@ -336,6 +360,32 @@ export class McpClient extends EventEmitter {
     }
   }
 
+  /**
+   * #289: shared AbortController timeout for SDK calls that only take a
+   * per-call timeout (no external abort signal) — readResource / getPrompt.
+   * Mirrors callTool's cancellation path: on timeout the SDK removes the
+   * in-flight response handler and notifies the server, instead of leaving
+   * a dangling handler behind a naked Promise.race.
+   */
+  private async withCallTimeout<T>(
+    label: string,
+    fn: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const timeout = resolveCallTimeout(this._config)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+    try {
+      return await fn(controller.signal)
+    } catch (err: any) {
+      if (controller.signal.aborted) {
+        throw new Error(`MCP timeout: ${label} > ${timeout}ms`)
+      }
+      throw err
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   async listResources(): Promise<McpResourceMeta[]> {
     if (!this._capabilities.resources) {
       const fileTools = this._toolsCache
@@ -373,11 +423,11 @@ export class McpClient extends EventEmitter {
         ` For the official @modelcontextprotocol/server-filesystem, read files with mcp__${this.name}__read_text_file and pass {"path": "<file-path>"}.`
       )
     }
-    const timeout = resolveCallTimeout(this._config)
-    return withTimeout(
-      this.client.readResource({ uri }),
-      timeout,
-      `read_resource ${this.name} ${uri} > ${timeout}ms`,
+    // #289: AbortController timeout (same pattern as callTool) so a timed-out
+    // read does NOT leave the SDK response handler dangling, and the server
+    // gets a JSON-RPC `notifications/cancelled`.
+    return this.withCallTimeout(`read_resource ${this.name} ${uri}`, (signal) =>
+      this.client!.readResource({ uri }, { signal }),
     )
   }
 
@@ -392,11 +442,9 @@ export class McpClient extends EventEmitter {
     if (!this._capabilities.prompts) {
       throw new Error(`MCP server ${this.name} does not support prompts`)
     }
-    const timeout = resolveCallTimeout(this._config)
-    return withTimeout(
-      this.client.getPrompt({ name, arguments: args }),
-      timeout,
-      `get_prompt ${this.name}/${name} > ${timeout}ms`,
+    // #289: same AbortController alignment as readResource (see callTool).
+    return this.withCallTimeout(`get_prompt ${this.name}/${name}`, (signal) =>
+      this.client!.getPrompt({ name, arguments: args }, { signal }),
     )
   }
 
