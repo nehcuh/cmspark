@@ -163,6 +163,14 @@ export class McpManager extends EventEmitter {
 
       try {
         await client.connect()
+        // #289: if the server was disabled / removed / replaced while the
+        // handshake was in flight, this client is a ghost — close it instead
+        // of reviving it or leaking a live-but-untracked connection.
+        if (this.clients.get(name) !== client || this.currentConfig?.servers[name]?.enabled !== true) {
+          logger.warn("mcp.client.ghost_after_connect", { server: name })
+          await client.close().catch(() => {})
+          return
+        }
         // First successful connect resets the restart window
         this.restartAttempts.delete(name)
         this.deadServers.delete(name)
@@ -223,17 +231,25 @@ export class McpManager extends EventEmitter {
       const name = client.name
       logger.warn("mcp.client.disconnected", { server: name, reason })
       if (this.shuttingDown) return
-      if (!client.config.enabled) return
-      const cfg = client.config
-      this.scheduleRestart(name, cfg, reason)
+      // #289: consult the LIVE config, not client.config (the snapshot captured
+      // when this start began) — a server disabled or removed mid-connect must
+      // not be revived by the stale closure.
+      const live = this.currentConfig?.servers[name]
+      if (!live || !live.enabled) return
+      this.scheduleRestart(name, live, reason)
     })
   }
 
   private scheduleRestart(name: string, cfg: McpServerConfig, reason: string): void {
-    if (this.shuttingDown || !cfg.enabled) return
+    if (this.shuttingDown) return
+    // #289: re-read the live config — `cfg` is the stale snapshot captured when
+    // the (failed) start began. A disable/remove during connect must win over
+    // the closure, and the restart itself must use the current command/policy.
+    const live = this.currentConfig?.servers[name]
+    if (!live || !live.enabled) return
     if (this.deadServers.has(name)) return
 
-    const policy = resolveRestartPolicy(cfg)
+    const policy = resolveRestartPolicy(live)
     const now = Date.now()
     const attempts = (this.restartAttempts.get(name) ?? []).filter((t) => now - t < SLIDING_WINDOW_MS)
     attempts.push(now)
@@ -266,7 +282,8 @@ export class McpManager extends EventEmitter {
     if (existing) clearTimeout(existing)
     const timer = setTimeout(() => {
       this.restartTimers.delete(name)
-      this.startClient(name, cfg).catch((err) => {
+      // #289: restart with the live config, not the stale startup closure.
+      this.startClient(name, live).catch((err) => {
         logger.error("mcp.client.restart_failed", { server: name, error: err?.message })
       })
     }, backoff)
