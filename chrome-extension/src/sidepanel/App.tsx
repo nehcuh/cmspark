@@ -47,7 +47,8 @@ import {
 } from "./ui/icons"
 import { VoiceMicButton } from "./components/VoiceMicButton"
 import { VoiceStatusCapsule } from "./components/VoiceStatusCapsule"
-import { parseHotkeyChord, eventMatchesChord } from "./voice/hotkey-chord"
+import { parseHotkeyChord, eventMatchesChord, isPttReleaseEvent } from "./voice/hotkey-chord"
+import { POSTPROCESS_BADGE_LABEL } from "./voice/postprocess-badge"
 import { useVoiceInput } from "./hooks/useVoiceInput"
 import { capsuleView } from "./voice/capsule-view"
 import { initialPtt, reducePtt, type PttEffect, type PttState } from "./voice/ptt-reducer"
@@ -413,6 +414,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const [pttLocked, setPttLocked] = useState(false)
   const [voiceCapsuleHint, setVoiceCapsuleHint] = useState<string | null>(null)
   const [voiceSoundEffects, setVoiceSoundEffects] = useState(true)
+  const [postprocessedBadge, setPostprocessedBadge] = useState(false)
   const insertTargetRef = useRef<"composer" | "page">("composer")
   const pendingPageTextRef = useRef<string | null>(null)
   const pttRef = useRef<PttState>(initialPtt)
@@ -620,7 +622,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     getBaseText: () => textRef.current,
     realtimeStreaming: state.voiceRealtimeStreaming !== false,
     onLevel: (level) => setVoiceLevel(level),
-    onDraft: (merged) => {
+    onDraft: (merged, meta) => {
+      setPostprocessedBadge(meta?.postprocessed === true)
       if (insertTargetRef.current === "page") {
         pendingPageTextRef.current = merged
         return
@@ -747,6 +750,20 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       playVoiceSfx(kind)
     }
 
+    let holdNotified = false
+    const notifyHold = (active: boolean) => {
+      try {
+        chrome.runtime.sendMessage({
+          type: "voice.dictation.hold_state",
+          v: 1,
+          active,
+          chord: chord.label,
+        })
+      } catch {
+        /* */
+      }
+    }
+
     const applyEffect = (effect: PttEffect, source: "sidepanel" | "page") => {
       if (effect === "start" || effect === "lock") {
         insertTargetRef.current = source === "page" ? "page" : "composer"
@@ -756,7 +773,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           privacyAckV2: privacyRef.current.v2,
           privacyAckV3: privacyRef.current.v3,
         })
-        if (ok) play("start")
+        if (ok) {
+          play("start")
+          holdNotified = true
+          notifyHold(true)
+        }
         return
       }
       if (effect === "commit") {
@@ -764,15 +785,19 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         holdStopRef.current()
         play("stop")
         play("done")
+        if (holdNotified) notifyHold(false)
+        holdNotified = false
         return
       }
       if (effect === "discard") {
         setPttLocked(false)
         holdAbortRef.current()
+        if (holdNotified) notifyHold(false)
+        holdNotified = false
       }
     }
 
-    const armTick = (until: number | null) => {
+    const armTick = (until: number | null, source: "sidepanel" | "page") => {
       if (pttTimerRef.current) clearTimeout(pttTimerRef.current)
       pttTimerRef.current = null
       if (until == null) return
@@ -780,18 +805,18 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       pttTimerRef.current = setTimeout(() => {
         const next = reducePtt(pttRef.current, { type: "tick", now: Date.now() })
         pttRef.current = next.state
-        applyEffect(next.effect, "sidepanel")
+        applyEffect(next.effect, source)
       }, wait)
     }
 
-    const feed = (type: "down" | "up" | "esc", source: "sidepanel" | "page") => {
+    const feed = (type: "down" | "up" | "esc" | "blur", source: "sidepanel" | "page") => {
       if (meetingCaptureRef.current) return
       if (type === "down" && !voiceAllowStartRef.current && pttRef.current.phase === "idle") return
       const next = reducePtt(pttRef.current, { type, now: Date.now() })
       pttRef.current = next.state
       setPttLocked(next.state.phase === "locked")
       applyEffect(next.effect, source)
-      armTick(next.state.awaitUntil)
+      armTick(next.state.awaitUntil, source)
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -809,19 +834,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
     const onKeyUp = (e: KeyboardEvent) => {
       if (pttRef.current.phase === "idle") return
-      const modUp =
-        (chord.ctrl && e.key === "Control") ||
-        (chord.alt && (e.key === "Alt" || e.key === "AltGraph")) ||
-        (chord.shift && e.key === "Shift") ||
-        (chord.meta && (e.key === "Meta" || e.key === "OS"))
-      const mainUp = eventMatchesChord(e, chord)
-      const keyIsMain =
-        chord.key === "space"
-          ? e.key === " " || e.key === "Spacebar" || e.code === "Space"
-          : e.key.toLowerCase() === chord.key
-      if (!mainUp && !modUp && !keyIsMain) return
+      if (!isPttReleaseEvent(e, chord)) return
       e.preventDefault()
       feed("up", "sidepanel")
+    }
+
+    const onBlur = () => {
+      if (pttRef.current.phase === "idle") return
+      feed("blur", "sidepanel")
     }
 
     const onMsg = (msg: { type?: string; kind?: string }) => {
@@ -833,11 +853,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
     window.addEventListener("keydown", onKeyDown, true)
     window.addEventListener("keyup", onKeyUp, true)
+    window.addEventListener("blur", onBlur)
     return () => {
       chrome.runtime.onMessage.removeListener(onMsg)
       window.removeEventListener("keydown", onKeyDown, true)
       window.removeEventListener("keyup", onKeyUp, true)
+      window.removeEventListener("blur", onBlur)
       if (pttTimerRef.current) clearTimeout(pttTimerRef.current)
+      if (holdNotified) notifyHold(false)
     }
   }, [state.dictationHotkeyEnabled, state.dictationHotkeyChord, state.voiceSoundEffects, voicePrivacyOpen])
 
@@ -1834,6 +1857,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         })}
         level={voiceLevel}
         extraHint={voiceCapsuleHint}
+        badge={postprocessedBadge ? POSTPROCESS_BADGE_LABEL : null}
       />
       {/* PR4: ComposerDock chips + capsule; 装配 lives on the chip, not in the field */}
       <div style={styles.inputArea}>

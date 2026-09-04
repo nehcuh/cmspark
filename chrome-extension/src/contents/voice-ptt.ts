@@ -3,7 +3,7 @@
 // Chord on an editable page field → Side Panel PTT (tier-2 insert).
 
 import type { PlasmoCSConfig } from "plasmo"
-import { eventMatchesChord, parseHotkeyChord } from "../sidepanel/voice/hotkey-chord"
+import { eventMatchesChord, isPttReleaseEvent, parseHotkeyChord } from "../sidepanel/voice/hotkey-chord"
 import { isEditableTarget } from "../sidepanel/voice/insert-target"
 
 export const config: PlasmoCSConfig = {
@@ -43,10 +43,16 @@ try {
 function emit(kind: "down" | "up", ev: KeyboardEvent): void {
   const chord = parseHotkeyChord(chordRaw)
   if (!enabled || !chord) return
-  if (!eventMatchesChord(ev, chord)) return
   if (ev.repeat) return
-  const editable = isEditableTarget(document.activeElement as { tagName?: string; isContentEditable?: boolean } | null)
-  if (!editable) return
+  if (kind === "down") {
+    if (!eventMatchesChord(ev, chord)) return
+    const editable = isEditableTarget(document.activeElement as { tagName?: string; isContentEditable?: boolean } | null)
+    if (!editable) return
+  } else if (!isPttReleaseEvent(ev, chord)) {
+    // keyup: treat modifier release as up (same as sidepanel onKeyUp). Do not
+    // require the editable still focused — the chord started on one.
+    return
+  }
   ev.preventDefault()
   ev.stopPropagation()
   try {

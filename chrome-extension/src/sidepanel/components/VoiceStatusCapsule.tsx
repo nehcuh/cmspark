@@ -6,9 +6,10 @@ export function VoiceStatusCapsule(props: {
   view: CapsuleView
   level: number
   extraHint?: string | null
+  badge?: string | null
 }) {
-  const { view, level, extraHint } = props
-  if (!view.visible && !extraHint) return null
+  const { view, level, extraHint, badge } = props
+  if (!view.visible && !extraHint && !badge) return null
   const scale = view.useLevel ? 1 + Math.min(0.35, Math.max(0, level) * 0.35) : 1
   const opacity = view.useLevel ? 0.55 + Math.min(0.45, Math.max(0, level) * 0.45) : 1
   const bg =
@@ -54,10 +55,24 @@ export function VoiceStatusCapsule(props: {
       >
         {view.live}
         {extraHint ? ` ${extraHint}` : ""}
+        {badge ? ` ${badge}` : ""}
       </span>
       {view.visible ? <span>{view.label}</span> : null}
       {view.hint ? <span style={{ color: tokens.textMuted, fontSize: 10 }}>{view.hint}</span> : null}
       {extraHint ? <span style={{ color: tokens.textMuted, fontSize: 10 }}>{extraHint}</span> : null}
+      {badge ? (
+        <span
+          style={{
+            fontSize: 10,
+            color: tokens.textSecondary,
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 999,
+            padding: "0 6px",
+          }}
+        >
+          {badge}
+        </span>
+      ) : null}
     </div>
   )
 }

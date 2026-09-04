@@ -23,6 +23,7 @@ import {
   probeWhisperModelDir,
   resolveWhisperRoot,
 } from "./whisper-download"
+import { getWhisperPrewarmStatus } from "./whisper-prewarm"
 
 export type WhisperModelProbeStatus = "ready" | "absent" | "incomplete" | "downloading"
 
@@ -209,11 +210,8 @@ export async function buildVoiceModelState(
     postprocessStripPunct: cfg.postprocessStripPunct === true,
     postprocessMap: Array.isArray(cfg.postprocessMap) ? cfg.postprocessMap : [],
     modelPrewarm: cfg.modelPrewarm === true,
-    prewarmStatus: !cfg.modelPrewarm
-      ? "idle"
-      : models[localModelId]?.status === "ready"
-        ? "ok"
-        : "fail",
+    // Runtime status from an actual whisper load — never equate disk-ready with ok.
+    prewarmStatus: cfg.modelPrewarm === true ? getWhisperPrewarmStatus() : "idle",
   }
 }
 

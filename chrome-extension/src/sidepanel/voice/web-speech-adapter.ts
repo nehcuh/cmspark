@@ -13,7 +13,7 @@ import {
 
 export type SpeechAdapterHandlers = {
   onStart: () => void
-  onResult: (p: { interim: string; finalChunk: string }) => void
+  onResult: (p: { interim: string; finalChunk: string; postprocessed?: boolean }) => void
   onError: (code: string) => void
   onEnd: () => void
   /**

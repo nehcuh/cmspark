@@ -93,8 +93,8 @@ export function resolveLocalFallbackActive(args: {
 
 export type UseVoiceInputOpts = {  /** Composer text at listen start (snapshot). */
   getBaseText: () => string
-  /** Apply merged draft (never auto-send). */
-  onDraft: (text: string) => void
+  /** Apply merged draft (never auto-send). meta.postprocessed → 「已后处理」微标. */
+  onDraft: (text: string, meta?: { postprocessed?: boolean }) => void
   /** Local capture RMS 0–1. */
   onLevel?: (level: number) => void
   /** Active thread — switch aborts. */
@@ -253,11 +253,19 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   }, [session.phase])
 
   const refineGenCounter = useRef(0)
+  const postprocessedRef = useRef(false)
 
   const dispatchEv = useCallback((event: Parameters<typeof reduceVoiceSession>[1]) => {
     setSession((prev) => {
       const next = reduceVoiceSession(prev, event)
       const o = optsRef.current
+
+      if (event.type === "ENGINE_RESULT" && event.postprocessed === true) {
+        postprocessedRef.current = true
+      }
+      if (event.type === "ENGINE_START" || event.type === "CHAT_ABORT") {
+        postprocessedRef.current = false
+      }
 
       // Continuous local STT: flush each *new* final into draft so processing-gap
       // UI does not fall back to stale `text`. Only when reducer accepted the chunk
@@ -270,7 +278,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         next.finals.length > prev.finals.length
       ) {
         const partial = mergeFinalTranscript(next.baseText, next.finals)
-        queueMicrotask(() => o.onDraft(partial))
+        const pp = postprocessedRef.current
+        queueMicrotask(() => o.onDraft(partial, { postprocessed: pp }))
       }
 
       // Side effects after ENGINE_END commit — raw-first, then optional refine
@@ -281,8 +290,10 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         !isEmptyFinals(next.finals)
       ) {
         const merged = mergeFinalTranscript(next.baseText, next.finals)
+        const pp = postprocessedRef.current
+        postprocessedRef.current = false
         queueMicrotask(() => {
-          o.onDraft(merged)
+          o.onDraft(merged, { postprocessed: pp })
           const wantRefine =
             o.asrRefinerEnabled === true &&
             o.privacyAckV3 === true &&
@@ -396,11 +407,20 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
 
     const handlers = {
       onStart: () => dispatchEv({ type: "ENGINE_START" }),
-      onResult: ({ interim, finalChunk }: { interim: string; finalChunk: string }) =>
+      onResult: ({
+        interim,
+        finalChunk,
+        postprocessed,
+      }: {
+        interim: string
+        finalChunk: string
+        postprocessed?: boolean
+      }) =>
         dispatchEv({
           type: "ENGINE_RESULT",
           interim,
           finalChunk: finalChunk || undefined,
+          ...(postprocessed === true ? { postprocessed: true } : {}),
         }),
       onError: (code: string) => dispatchEv({ type: "ENGINE_ERROR", code }),
       onEnd: () => {

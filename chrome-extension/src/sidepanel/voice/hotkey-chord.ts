@@ -93,6 +93,24 @@ export function parseHotkeyChord(raw: string | null | undefined): HotkeyChord | 
   }
 }
 
+/** Chord keyup: main key, or any required modifier released (humans release mods first). */
+export function isPttReleaseEvent(
+  e: { key: string; code?: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean },
+  chord: HotkeyChord,
+): boolean {
+  const modUp =
+    (chord.ctrl && e.key === "Control") ||
+    (chord.alt && (e.key === "Alt" || e.key === "AltGraph")) ||
+    (chord.shift && e.key === "Shift") ||
+    (chord.meta && (e.key === "Meta" || e.key === "OS"))
+  const mainUp = eventMatchesChord(e, chord)
+  const keyIsMain =
+    chord.key === "space"
+      ? e.key === " " || e.key === "Spacebar" || e.code === "Space"
+      : (e.key || "").toLowerCase() === chord.key
+  return mainUp || modUp || keyIsMain
+}
+
 /** Match KeyboardEvent (keydown/keyup) against chord. */
 export function eventMatchesChord(
   e: { key: string; code?: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean },

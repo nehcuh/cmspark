@@ -43,6 +43,7 @@ import {
   type BuildVoiceModelStateOpts,
   type VoiceModelStatePayload,
 } from "./whisper-state"
+import { maybePrewarmWhisper, resetWhisperPrewarm } from "./whisper-prewarm"
 
 // --- types --------------------------------------------------------------------
 
@@ -96,6 +97,7 @@ export function _resetVoiceModelHandlersForTests(): void {
   activeDelete = null
   activeBinaryDownload = null
   lastDownloadErrorMem = null
+  resetWhisperPrewarm()
 }
 
 // --- errors -------------------------------------------------------------------
@@ -685,6 +687,18 @@ export async function handleVoiceModelMessage(
       }
       setVoiceFields(patch)
       logger.info("voice.model.set_prefs", { fields: Object.keys(patch) })
+      if (patch.modelPrewarm === false) {
+        resetWhisperPrewarm()
+      } else if (patch.modelPrewarm === true) {
+        void maybePrewarmWhisper().then(async () => {
+          try {
+            const warmed = await statePayload(deps)
+            ctx.broadcast?.(warmed)
+          } catch {
+            /* */
+          }
+        })
+      }
       const state = await statePayload(deps)
       ctx.broadcast?.(state)
       return state

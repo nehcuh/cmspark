@@ -127,7 +127,9 @@ export function uint8ToBase64(data: Uint8Array): string {
 
 type PendingWait = {
   sessionId: string
-  resolve: (r: { ok: true; text: string } | { ok: false; code: string }) => void
+  resolve: (
+    r: { ok: true; text: string; postprocessed?: boolean } | { ok: false; code: string },
+  ) => void
 }
 
 export function createLocalSttAdapter(
@@ -266,7 +268,9 @@ export function createLocalSttAdapter(
     stopChainInFlight = false
   }
 
-  const finishPending = (r: { ok: true; text: string } | { ok: false; code: string }) => {
+  const finishPending = (
+    r: { ok: true; text: string; postprocessed?: boolean } | { ok: false; code: string },
+  ) => {
     clearPendingTimer()
     const p = pending
     pending = null
@@ -303,7 +307,11 @@ export function createLocalSttAdapter(
     if (msg.type === "voice.stt.result") {
       const text = typeof msg.text === "string" ? msg.text : ""
       if (pending && pending.sessionId === sid) {
-        finishPending({ ok: true, text })
+        finishPending({
+          ok: true,
+          text,
+          ...(msg.postprocessed === true ? { postprocessed: true } : {}),
+        })
         return
       }
       if (aborted) {
@@ -312,7 +320,11 @@ export function createLocalSttAdapter(
         return
       }
       if (text.trim()) {
-        handlers.onResult({ interim: "", finalChunk: text })
+        handlers.onResult({
+          interim: "",
+          finalChunk: text,
+          ...(msg.postprocessed === true ? { postprocessed: true } : {}),
+        })
       }
       handlers.onEnd()
       reset()
@@ -388,7 +400,7 @@ export function createLocalSttAdapter(
   const uploadAndWait = (
     sid: string,
     wav: Uint8Array,
-  ): Promise<{ ok: true; text: string } | { ok: false; code: string }> => {
+  ): Promise<{ ok: true; text: string; postprocessed?: boolean } | { ok: false; code: string }> => {
     return new Promise((resolve) => {
       if (!sid || dead) {
         resolve({ ok: false, code: "aborted" })
@@ -701,7 +713,9 @@ export function createLocalSttAdapter(
           handlers.onSegmentContinue?.()
           continue
         }
-        const result = await new Promise<{ ok: true; text: string } | { ok: false; code: string }>(
+        const result = await new Promise<
+          { ok: true; text: string; postprocessed?: boolean } | { ok: false; code: string }
+        >(
           (resolve) => {
             pending = { sessionId: segSid, resolve }
             armPendingTimer(segSid)
@@ -756,7 +770,11 @@ export function createLocalSttAdapter(
         } else if (result.text.trim()) {
           softFailStreak = 0
           // Window commit: one finalChunk for the whole window text
-          handlers.onResult({ interim: "", finalChunk: result.text.trim() })
+          handlers.onResult({
+            interim: "",
+            finalChunk: result.text.trim(),
+            ...(result.postprocessed === true ? { postprocessed: true } : {}),
+          })
           streamStable = result.text.trim()
         } else {
           softFailStreak = 0
@@ -884,7 +902,11 @@ export function createLocalSttAdapter(
 
         softFailStreak = 0
         if (result.text.trim()) {
-          handlers.onResult({ interim: "", finalChunk: result.text })
+          handlers.onResult({
+            interim: "",
+            finalChunk: result.text,
+            ...(result.postprocessed === true ? { postprocessed: true } : {}),
+          })
         }
 
         if (!wantListening || aborted) break
@@ -1055,7 +1077,11 @@ export function createLocalSttAdapter(
               handlers.onError(errCode === "aborted" ? "aborted" : errCode)
             }
           } else if (result.text.trim()) {
-            handlers.onResult({ interim: "", finalChunk: result.text })
+            handlers.onResult({
+              interim: "",
+              finalChunk: result.text,
+              ...(result.postprocessed === true ? { postprocessed: true } : {}),
+            })
           }
           handlers.onEnd()
           reset()

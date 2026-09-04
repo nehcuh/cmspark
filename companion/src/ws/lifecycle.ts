@@ -47,6 +47,7 @@ import {
 } from "../daemon"
 import { getMcpManager, getMcpConfirmCache } from "../mcp"
 import { applyHardenedProcessPath } from "../process-path"
+import { scheduleWhisperPrewarm } from "../voice/whisper-prewarm"
 import {
   getOrCreateSharedSecret,
   consumeSecretFreshlyGenerated,
@@ -738,6 +739,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   httpServer.on("listening", () => {
     console.log(`[cmspark-agent] Companion started on ws://127.0.0.1:${port}`)
     logger.info("server.listening", { port })
+    scheduleWhisperPrewarm()
     // P3a HUD spike: if tray is co-located in this process, run full in-process
     // open→hydrate→confirm→standby. Dual-process (normal tray + server) is driven
     // from menu-bar-agent when CMSPARK_HUD_SPIKE=1 on both sides.
