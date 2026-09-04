@@ -18,6 +18,7 @@
 - **认证簇路由分支开闸**：eval 双列通过后工厂常量打开；用户开关仍默认关——开闸 ≠ 替用户打开。[#280](https://github.com/nehcuh/cmspark/issues/280)
 - **多级文件夹**：最多 3 层，磁盘目录为 SoT（Obsidian 可读）；`knowledge.move` 保 pin。[#274](https://github.com/nehcuh/cmspark/issues/274)
 - **完全重复导入**：正文 sha256（不是 MD5）；预览标 `duplicate_of`，目录导入跳过重复。[#281](https://github.com/nehcuh/cmspark/issues/281)
+- **内置技能 `cmspark-macos-app-replace`**：DMG 换装 playbook（禁 `xattr -cr` / `pgrep -f` 坑）。
 
 ### Fixed
 
@@ -26,6 +27,7 @@
 - **知识预览失败可见**：解析失败不再永远「正在解析…」；可「跳过解析，手动填写」。（#270 / #271）
 - **shrink 横幅三态**：旧 companion 省略 `shrunk` 时走 unknown 分支，不再谎称「仅提示/未压缩」。
 - **LLM `complete()` recap**：对齐 `streamChat` 预算；overflow 半窗重试一次，避免原样重发。
+- **依赖**：`npm audit fix` 清掉 fast-uri high advisory（CI 门禁恢复绿）。
 
 ### Known residuals
 
