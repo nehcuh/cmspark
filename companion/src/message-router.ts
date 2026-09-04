@@ -533,6 +533,7 @@ function maybeStartKnowledgeGraphLabels(
   skillEngine: SkillEngine,
   graph: KnowledgeGraphCore,
   force: boolean,
+  session?: SessionCallbacks,
 ): void {
   const targets = graph.labelTargets.filter((t) => force || !t.cached)
   if (targets.length === 0) return
@@ -554,7 +555,27 @@ function maybeStartKnowledgeGraphLabels(
         const clamped = clampKnowledgeGraphLabelEntry(v)
         if (clamped) entries[key] = clamped
       }
-      if (Object.keys(entries).length > 0) skillEngine.setKnowledgeGraphDisplay(entries)
+      if (Object.keys(entries).length > 0) {
+        skillEngine.setKnowledgeGraphDisplay(entries)
+        // AC-4：异步标注落地后主动推一帧更新图谱（labels 带 AI 版），否则
+        // 当次会话永远只看到回退标签。sendToExtension 只回发起面板，
+        // 不 broadcast（图谱是 panel-only，summoner/overlay 不得收到）。
+        try {
+          const updated = skillEngine.getKnowledgeGraph({ llmLabels: true })
+          if (updated && session?.sendToExtension) {
+            session.sendToExtension({
+              type: "knowledge.graph",
+              status: updated.status,
+              truncated: updated.truncated,
+              nodes: updated.nodes,
+              edges: updated.edges,
+              labels: updated.labels,
+            })
+          }
+        } catch {
+          /* best-effort push; 下次请求仍会拿到 AI 标签 */
+        }
+      }
     } catch {
       // 回退规则：失败/超时静默回退（下次请求仍是高频词标签）
     } finally {
@@ -3061,13 +3082,13 @@ export async function handleMessage(
       if (surface !== "panel") {
         return { type: "error", error: "knowledge.graph is panel-only (Side Panel knowledge panel)" }
       }
-      const graph = skillEngine.getKnowledgeGraph()
+      const graph = skillEngine.getKnowledgeGraph({ llmLabels: rest.llm_labels === true })
       if (!graph) {
         // 索引缺失/损坏/重建中：诚实态，不假装结构（AC-5）
         return { type: "knowledge.graph", status: "rebuilding", truncated: false, nodes: [], edges: [], labels: {} }
       }
       if (rest.llm_labels === true || rest.regen_labels === true) {
-        maybeStartKnowledgeGraphLabels(skillEngine, graph, rest.regen_labels === true)
+        maybeStartKnowledgeGraphLabels(skillEngine, graph, rest.regen_labels === true, session)
       }
       // labelTargets 不上 wire（服务端内部异步标注驱动）
       return {

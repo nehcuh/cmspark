@@ -60,6 +60,7 @@ export type KnowledgeGraphCore = {
 export function buildKnowledgeGraph(
   docs: KnowledgeIndexDoc[],
   display?: Record<string, KnowledgeGraphLabelEntry>,
+  opts?: { llmLabels?: boolean },
 ): KnowledgeGraphCore {
   if (docs.length < KNOWLEDGE_GRAPH_MIN_DOCS) {
     return { status: "too_few", truncated: false, nodes: [], edges: [], labels: {}, labelTargets: [] }
@@ -102,7 +103,10 @@ export function buildKnowledgeGraph(
   for (const g of groups) {
     const key = `c:${g.key}`
     if (!presentKeys.has(key)) continue
-    const clamped = display?.[key] ? clampKnowledgeGraphLabelEntry(display[key]) : null
+    // spec AC-4：开关关（llmLabels !== true）时一律高频词回退标签——display
+    // 里的 AI 缓存不得上 wire（否则 UI 关开关后仍显示 AI 名，假完成）。
+    const clamped =
+      opts?.llmLabels === true && display?.[key] ? clampKnowledgeGraphLabelEntry(display[key]) : null
     if (clamped) {
       labels[key] = { name: clamped.name, ...(clamped.summary !== undefined ? { summary: clamped.summary } : {}), ai: true }
       labelTargets.push({ key, lines: groupLabelLines(key, g, byId), cached: true })

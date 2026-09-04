@@ -470,3 +470,63 @@ test("#296 validator: knowledge.graph accepts optional booleans, rejects non-boo
   assert.equal(validateWsMessage({ type: "knowledge.graph", llm_labels: "yes" }).valid, false)
   assert.equal(validateWsMessage({ type: "knowledge.graph", regen_labels: 1 }).valid, false)
 })
+
+// --- round-2 收敛：AC-4 开关门 + 完成推送 ---
+
+test("#296 llm_labels off → cached AI labels never reach the wire (AC-4 gate)", async () => {
+  resetKnowledgeState()
+  const se = new SkillEngine()
+  seedThemed(se, 25)
+  __testSetKnowledgeGraphLabelImpl(async ({ lines }) => {
+    const out: Record<string, { name: string }> = {}
+    for (const l of lines) {
+      const m = /^GROUP (\S+)/.exec(l)
+      if (m) out[m[1]] = { name: "AI 缓存名" }
+    }
+    return out
+  })
+  // 开关开：生成并缓存 AI 标签
+  await handleMessage({ type: "knowledge.graph", llm_labels: true }, { skillEngine: se } as never, panelSession)
+  await settle()
+  const on = await handleMessage({ type: "knowledge.graph", llm_labels: true }, { skillEngine: se } as never, panelSession)
+  const aiOn = Object.values(on.labels as Record<string, { ai: boolean }>).filter((v) => v.ai)
+  assert.ok(aiOn.length > 0, "sanity: AI labels visible while the toggle is on")
+
+  // 开关关：display 缓存存在，但 wire 必须全部是高频词回退
+  const off = await handleMessage({ type: "knowledge.graph" }, { skillEngine: se } as never, panelSession)
+  const offLabels = off.labels as Record<string, { name: string; ai: boolean }>
+  assert.ok(Object.keys(offLabels).length > 0)
+  for (const v of Object.values(offLabels)) {
+    assert.equal(v.ai, false, "toggle off must never serve cached AI labels")
+    assert.notEqual(v.name, "AI 缓存名")
+  }
+})
+
+test("#296 labels completion pushes an updated knowledge.graph frame to the panel", async () => {
+  resetKnowledgeState()
+  const se = new SkillEngine()
+  seedThemed(se, 25)
+  __testSetKnowledgeGraphLabelImpl(async ({ lines }) => {
+    const out: Record<string, { name: string; summary?: string }> = {}
+    for (const l of lines) {
+      const m = /^GROUP (\S+)/.exec(l)
+      if (m) out[m[1]] = { name: "AI 推送名", summary: "推送摘要" }
+    }
+    return out
+  })
+  const sent: any[] = []
+  const sess = { surface: "panel", sendToExtension: (d: any) => sent.push(d) } as never
+  const resp = await handleMessage({ type: "knowledge.graph", llm_labels: true }, { skillEngine: se } as never, sess)
+  assert.equal(resp.status, "ok")
+  // 首次响应是回退标签（非阻塞）；异步标注完成后必须推一帧 AI 版
+  await settle()
+  const pushes = sent.filter((m) => m.type === "knowledge.graph")
+  assert.ok(pushes.length > 0, "completion push expected — otherwise the toggle-on session never sees AI labels")
+  const lastPush = pushes[pushes.length - 1]
+  const aiPushed = Object.values(lastPush.labels as Record<string, { name: string; ai: boolean; summary?: string }>).filter((v) => v.ai)
+  assert.ok(aiPushed.length > 0, "pushed frame carries AI labels")
+  for (const v of aiPushed) {
+    assert.equal(v.name, "AI 推送名")
+    assert.equal(v.summary, "推送摘要")
+  }
+})

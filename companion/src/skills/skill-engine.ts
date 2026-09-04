@@ -552,11 +552,11 @@ export class SkillEngine {
    * 图谱视图数据（#296 knowledge.graph 通道）。null = 索引不可用
    * （handler 映射为 status:"rebuilding"，不假装结构）。
    */
-  getKnowledgeGraph(): KnowledgeGraphCore | null {
+  getKnowledgeGraph(opts?: { llmLabels?: boolean }): KnowledgeGraphCore | null {
     const index = this.ensureKnowledgeIndex()
     if (!index) return null
     try {
-      return buildKnowledgeGraph(index.docs, index.display)
+      return buildKnowledgeGraph(index.docs, index.display, opts)
     } catch (e) {
       console.warn("[skills] knowledge graph build failed; degraded:", e)
       return null
