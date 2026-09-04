@@ -381,7 +381,8 @@ export async function handleMeetingMessage(
    * mode=audio_cluster requires features[][] aligned with transcript lines.
    * mode=text_gap is weak alternating labels (explicit; not acoustic).
    * mode=#260 embedding: PCM uploaded via meeting.diarize.upload_*; local ONNX
-   * speaker embeddings + cosine agglomerative clustering (experimental).
+   * speaker embeddings + cosine agglomerative clustering (diarize-eval gate
+   * PASSED 2026-09-04; no longer flagged experimental).
    */
   if (type === "meeting.auto_diarize") {
     if (msg.privacy_ack_v1 !== true) {
@@ -463,7 +464,7 @@ export async function handleMeetingMessage(
       method: result.method,
       k: result.k,
       at: new Date().toISOString(),
-      experimental: true,
+      experimental: result.experimental,
     })
     if (!updated) return err("not_found", "meeting not found", { id })
     logger.info("meeting.auto_diarize.ok", {

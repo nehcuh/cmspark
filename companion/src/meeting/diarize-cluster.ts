@@ -151,7 +151,6 @@ export function autoKByThreshold(
 /**
  * Embedding diarize: one embedding row per transcript line (anonymous labels).
  * kIn=0/"auto" → auto-K by threshold cut; result.auto set.
- * experimental stays true until the diarize-eval gate passes (spec §3.3).
  */
 export function diarizeByEmbeddings(
   lines: TranscriptLine[],
@@ -180,7 +179,9 @@ export function diarizeByEmbeddings(
     k: labels.length,
     labels,
     speakers,
-    experimental: true,
+    // Gate PASS 2026-09-04 (scripts/diarize-eval): countAcc 0.750 / purity 1.000
+    // vs legacy 0.625 / 0.919 — both +0.05 margin. spec §3.3 un-experimental.
+    experimental: false,
     ...(auto ? { auto: true as const } : {}),
   }
 }

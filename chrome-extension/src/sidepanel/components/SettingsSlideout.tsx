@@ -2062,7 +2062,7 @@ export function SettingsSlideout() {
                           }}
                         >
                           <span style={{ fontWeight: 500, color: tokens.text }}>
-                            说话人分离模型（会议 · 实验）
+                            说话人分离模型（会议）
                           </span>
                           <span style={{ color: tokens.textMuted, fontSize: 11 }}>
                             {diarizePending ? VOICE_STATUS_STARTING_DOWNLOAD : modelStatusLabel(status)}

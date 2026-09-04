@@ -1532,7 +1532,7 @@ export function MeetingPanel(props: {
             </select>
           </label>
           <span style={{ fontSize: 10, color: tokens.textSecondary }}>
-            「自动」按声纹聚类估计人数（本机 · 实验 · 只标发言人N，非身份识别）
+            「自动」按声纹聚类估计人数（本机 · 只标发言人N，非身份识别）
           </span>
           <label style={{ fontSize: 11, color: tokens.textSecondary, display: "flex", gap: 4, alignItems: "center" }}>
             <input
@@ -1541,7 +1541,7 @@ export function MeetingPanel(props: {
               disabled={busy || capturing}
               onChange={(e) => setAutoDiarizeAfterImport(e.target.checked)}
             />
-            音频导入后自动标（实验）
+            音频导入后自动标
           </label>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>

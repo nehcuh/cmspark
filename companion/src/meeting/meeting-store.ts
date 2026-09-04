@@ -40,7 +40,8 @@ export type MeetingDiarizeMeta = {
   method: "audio_cluster" | "text_gap" | "embedding"
   k: number
   at: string
-  experimental: true
+  /** legacy methods stay true; embedding false since diarize-eval gate PASS (#260) */
+  experimental: boolean
 }
 
 export type MeetingMeta = {

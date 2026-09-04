@@ -22,7 +22,8 @@ export type DiarizeResult = {
   labels: string[]
   /** speaker per input line index (same length as lines/features) */
   speakers: Array<string | undefined>
-  experimental: true
+  /** legacy paths stay true; embedding flipped false after diarize-eval gate PASS (#260) */
+  experimental: boolean
   /** set when k was auto-selected via silhouette (input k=0/"auto") */
   auto?: true
 }
