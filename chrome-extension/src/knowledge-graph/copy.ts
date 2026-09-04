@@ -6,6 +6,7 @@ export const KNOWLEDGE_GRAPH_TOO_FEW_COPY = "知识不足 20 篇，暂无图谱"
 export const KNOWLEDGE_GRAPH_OVER_CAP_COPY =
   "超过 200 篇，只画标题字典序前 200 篇；仅这 200 篇参与分组与着色"
 export const KNOWLEDGE_GRAPH_REBUILDING_COPY = "图谱索引重建中…"
+export const KNOWLEDGE_GRAPH_REBUILD_TIMEOUT_COPY = "索引重建超时，请手动刷新"
 export const KNOWLEDGE_GRAPH_AI_BADGE = "AI 生成"
 export const KNOWLEDGE_GRAPH_UNGROUPED_LABEL = "未分组"
 export const KNOWLEDGE_GRAPH_COLOR_GROUP = "按分组"

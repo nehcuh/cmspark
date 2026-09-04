@@ -8,6 +8,7 @@ import {
   KNOWLEDGE_GRAPH_COLOR_GROUP,
   KNOWLEDGE_GRAPH_ENTRY_LABEL,
   KNOWLEDGE_GRAPH_LLM_TOGGLE,
+  KNOWLEDGE_GRAPH_REBUILD_TIMEOUT_COPY,
   KNOWLEDGE_GRAPH_REGENERATE,
   graphBannerCopy,
   type KnowledgeGraphStatus,
@@ -58,8 +59,13 @@ export function KnowledgeGraphEntryButton(props: {
 export function KnowledgeGraphStatusView(props: {
   status: KnowledgeGraphStatus
   truncated: boolean
+  /** 轮询上限打满（复审 NIT-5）：重建不再自动重试，提示手动刷新。 */
+  pollExhausted?: boolean
 }) {
-  const copy = graphBannerCopy(props.status, props.truncated)
+  const copy =
+    props.pollExhausted && props.status === "rebuilding"
+      ? KNOWLEDGE_GRAPH_REBUILD_TIMEOUT_COPY
+      : graphBannerCopy(props.status, props.truncated)
   if (!copy) return null
   return (
     <div role="status" style={{ fontSize: 13, lineHeight: 1.5, padding: "12px 16px" }}>

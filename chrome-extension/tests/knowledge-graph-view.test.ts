@@ -178,7 +178,7 @@ test("buildKnowledgeGraphRequest: 默认不带 llm_labels；开时 llm_labels:tr
   assert.deepEqual(buildKnowledgeGraphRequest({ llmLabels: true, regenerate: true }), {
     type: "knowledge.graph",
     llm_labels: true,
-    regenerate: true,
+    regen_labels: true,
   })
 })
 

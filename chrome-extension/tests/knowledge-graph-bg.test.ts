@@ -42,14 +42,16 @@ test("snapshot key 独立于会话关系图，不复用 thread snapshot", () => 
   assert.ok(!KNOWLEDGE_GRAPH_SNAPSHOT_KEY.includes("thread_graph"))
 })
 
-test("SW bulk-forward 含 knowledge.graph；open/open_doc 有独立 case", () => {
+test("SW open/open_doc/refresh 有独立 case；knowledge.graph 不走 bulk-forward（无生产者）", () => {
   const bg = readFileSync(join(process.cwd(), "src/background/index.ts"), "utf8")
   const slice = bg.slice(
     bg.indexOf('case "knowledge.list"'),
     bg.indexOf('case "thread_graph.prepare"'),
   )
-  assert.ok(slice.includes('case "knowledge.graph"'), "knowledge.graph 走 bulk-forward")
+  assert.ok(!slice.includes('case "knowledge.graph"'), "knowledge.graph bulk-forward 是死分支（复审 NIT-4），不得回归")
   assert.ok(bg.includes('case "knowledge_graph.open"'), "打开 tab 独立 case")
   assert.ok(bg.includes('case "knowledge_graph.open_doc"'), "点击节点打开文档")
   assert.ok(bg.includes('case "knowledge_graph.refresh"'), "rebuilding 自动刷新")
+  // MAJOR-1 契约钉：帧构建走 buildKnowledgeGraphRequest（regen_labels 权威在服务端）
+  assert.ok(bg.includes("buildKnowledgeGraphRequest({"), "frame 由共享 helper 构建")
 })

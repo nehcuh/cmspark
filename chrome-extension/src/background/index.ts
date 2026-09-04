@@ -31,7 +31,7 @@ import {
   openOrFocusKnowledgeGraph,
   writeKnowledgeGraphSnapshot,
 } from "./knowledge-graph"
-import { parseKnowledgeGraphPayload } from "../knowledge-graph/wire"
+import { parseKnowledgeGraphPayload, buildKnowledgeGraphRequest } from "../knowledge-graph/wire"
 import { parseLlmLabelsPref, KNOWLEDGE_GRAPH_LLM_LABELS_KEY } from "../knowledge-graph/llm-pref"
 import {
   getHydrateSnapshot,
@@ -1310,7 +1310,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "skill.import-path":
       case "skill.delete":
       case "knowledge.list":
-      case "knowledge.graph":
+      // 注意：knowledge.graph 不在此列——无页面发该 runtime 消息（复审 NIT-4
+      // 死分支已移除）；图谱 tab 走 knowledge_graph.open/refresh 独立 case。
       case "knowledge.import":
       case "knowledge.preview":
       case "knowledge.import_directory":
@@ -1533,9 +1534,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             )
             await openOrFocusKnowledgeGraph(focusId)
           }
-          const frame: Record<string, unknown> = { type: "knowledge.graph" }
-          if (llm) frame.llm_labels = true
-          if (regenerate) frame.regenerate = true
+          // Wire 契约权威在服务端：强制重生成字段是 regen_labels（#316 复审 MAJOR-1）
+          const frame = buildKnowledgeGraphRequest({ llmLabels: llm, regenerate })
           const sent = wsClient?.send(frame) === true
           if (!sent && message.type === "knowledge_graph.open") {
             // Companion 未连或尚未识别动词：保持 rebuilding，tab 会 refresh。

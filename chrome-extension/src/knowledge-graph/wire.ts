@@ -115,11 +115,12 @@ export function mockKnowledgeGraphPayload(
 export function buildKnowledgeGraphRequest(opts: {
   llmLabels: boolean
   regenerate?: boolean
-}): { type: "knowledge.graph"; llm_labels?: true; regenerate?: true } {
-  const req: { type: "knowledge.graph"; llm_labels?: true; regenerate?: true } = {
+}): { type: "knowledge.graph"; llm_labels?: true; regen_labels?: true } {
+  // Wire 契约权威在服务端（#296 server lane）：强制重生成字段是 regen_labels。
+  const req: { type: "knowledge.graph"; llm_labels?: true; regen_labels?: true } = {
     type: "knowledge.graph",
   }
   if (opts.llmLabels) req.llm_labels = true
-  if (opts.regenerate) req.regenerate = true
+  if (opts.regenerate) req.regen_labels = true
   return req
 }

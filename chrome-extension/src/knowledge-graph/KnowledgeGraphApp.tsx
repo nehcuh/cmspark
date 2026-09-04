@@ -44,6 +44,8 @@ const G = {
 
 const HIT_PAD = 8
 const REBUILD_POLL_MS = 2500
+/** 重建轮询上限（复审 NIT-5）：40 × 2.5s = 100s 后停轮询，诚实提示手动刷新。 */
+const REBUILD_POLL_MAX = 40
 
 function radiusForDegree(deg: number): number {
   return Math.min(7.5, Math.max(2.8, 2.8 + Math.sqrt(deg) * 1.35))
@@ -132,10 +134,22 @@ export function KnowledgeGraphApp() {
   const status = snap?.status ?? "rebuilding"
   const truncated = snap?.truncated === true
   const showCanvas = snap ? shouldRenderGraphCanvas(status) : false
+  const [pollExhausted, setPollExhausted] = useState(false)
 
   useEffect(() => {
-    if (status !== "rebuilding") return
+    if (status !== "rebuilding") {
+      setPollExhausted(false)
+      return
+    }
+    // 复审 NIT-5：轮询加上限（40 × 2.5s = 100s），打满停轮询并诚实提示手动刷新。
+    let polls = 0
     const tick = () => {
+      polls += 1
+      if (polls > REBUILD_POLL_MAX) {
+        setPollExhausted(true)
+        clearInterval(id)
+        return
+      }
       chrome.runtime.sendMessage({ type: "knowledge_graph.refresh" }, () => {
         void chrome.runtime.lastError
       })
@@ -474,7 +488,7 @@ export function KnowledgeGraphApp() {
 
       {status !== "ok" && (
         <div style={{ ...styles.banner, top: chromeTop }}>
-          <KnowledgeGraphStatusView status={status} truncated={truncated} />
+          <KnowledgeGraphStatusView status={status} truncated={truncated} pollExhausted={pollExhausted} />
         </div>
       )}
 
