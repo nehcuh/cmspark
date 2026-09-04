@@ -138,7 +138,7 @@ test("diarizeByEmbeddings labels 发言人N by first appearance", () => {
   const res = diarizeByEmbeddings(lines, rows, 2)
   assert.equal(res.method, "embedding")
   assert.equal(res.k, 2)
-  assert.equal(res.experimental, false)
+  assert.equal(res.experimental, true) // round-2 held-out gate FAIL → experimental back on
   // speaker B talks first → 发言人1
   assert.equal(res.speakers[0], "发言人1")
   assert.equal(res.speakers[1], "发言人2")

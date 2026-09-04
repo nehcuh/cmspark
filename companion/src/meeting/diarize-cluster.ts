@@ -23,7 +23,10 @@ import type { TranscriptLine } from "./meeting-store"
  * Auto-K merge threshold on average-linkage cosine distance (spec §4).
  * Calibrated 2026-09-04 on scripts/diarize-eval synthetic set: intra-speaker
  * distance ≈ 0.03, adversarial same-gender cross-speaker ≈ 0.074, distinct
- * cross-speaker ≥ 0.2 → 0.06 splits both while never over-splitting.
+ * cross-speaker ≥ 0.2 → 0.06 splits both. NOT over-split-free: the
+ * calibration set still over-splits long alternation runs (long10-K2→4,
+ * long10-K5→6) — count accuracy pays; the round-2 held-out gate bounds
+ * this (|k−truth| ≤ 1 per fixture before experimental can come off).
  */
 export const DIARIZE_CLUSTER_THRESHOLD = 0.06
 
@@ -179,9 +182,11 @@ export function diarizeByEmbeddings(
     k: labels.length,
     labels,
     speakers,
-    // Gate PASS 2026-09-04 (scripts/diarize-eval): countAcc 0.750 / purity 1.000
-    // vs legacy 0.625 / 0.919 — both +0.05 margin. spec §3.3 un-experimental.
-    experimental: false,
+    // Round-2 held-out gate FAILED 2026-09-05 (scripts/diarize-eval): fresh
+    // speaker profiles — countAcc 0.667 < 0.75, over-split held-long12-K3 k=5
+    // (truth 3), legacy countAcc 0.833 ≥ ours. Calibration-set PASS did not
+    // generalize → experimental goes back ON until held-out gate passes.
+    experimental: true,
     ...(auto ? { auto: true as const } : {}),
   }
 }

@@ -62,3 +62,53 @@ export function significantlyBetter(
   const purityGain = embedding.purity - baseline.purity
   return countGain >= margin || purityGain >= margin
 }
+
+// --- #260 round-2: held-out 过门（防「同一套夹具又校准又过门」+ 纯度放过过拆）---
+
+/** held-out 人数正确率绝对下限（过拆/欠拆都拉低这一项）。 */
+export const DIARIZE_EVAL_HELDOUT_MIN_COUNT_ACC = 0.75
+
+/** 单夹具 K 误差界：|k − truthK| > 1 视为过拆失败（纯度置换不变救不了它）。 */
+export const DIARIZE_EVAL_MAX_K_ERROR = 1
+
+export type HeldOutGateInput = {
+  embedding: DiarizeEvalMetrics
+  baseline: DiarizeEvalMetrics
+  embeddingKs: number[]
+  truthKs: number[]
+}
+
+export type HeldOutGateVerdict = { pass: boolean; reasons: string[] }
+
+/**
+ * Held-out 门（round-2）：在未参与阈值校准的夹具上同时要求——
+ *  1) significantlyBetter（相对 baseline 两项不劣 + 至少一项 +margin）
+ *  2) countAccuracy ≥ DIARIZE_EVAL_HELDOUT_MIN_COUNT_ACC（绝对下限）
+ *  3) 每夹具 |k − truthK| ≤ DIARIZE_EVAL_MAX_K_ERROR（过拆界）
+ */
+export function heldOutGate(input: HeldOutGateInput): HeldOutGateVerdict {
+  const reasons: string[] = []
+  if (!significantlyBetter(input.embedding, input.baseline)) {
+    reasons.push("相对门未达成：未显著优于 baseline（两项不劣 + 至少一项 +margin）")
+  }
+  if (input.embedding.countAccuracy < DIARIZE_EVAL_HELDOUT_MIN_COUNT_ACC) {
+    reasons.push(
+      `countAccuracy ${input.embedding.countAccuracy.toFixed(3)} < ${DIARIZE_EVAL_HELDOUT_MIN_COUNT_ACC}（绝对下限）`,
+    )
+  }
+  const ks = input.embeddingKs
+  const ts = input.truthKs
+  if (ks.length === 0 || ks.length !== ts.length) {
+    reasons.push("held-out K 数据不完整")
+  } else {
+    for (let i = 0; i < ks.length; i++) {
+      const err = Math.abs((ks[i] ?? 0) - (ts[i] ?? 0))
+      if (err > DIARIZE_EVAL_MAX_K_ERROR) {
+        reasons.push(
+          `过拆越界：fixture[${i}] |k−truth| ${err} > ${DIARIZE_EVAL_MAX_K_ERROR}（k=${ks[i]} truth=${ts[i]}）`,
+        )
+      }
+    }
+  }
+  return { pass: reasons.length === 0, reasons }
+}

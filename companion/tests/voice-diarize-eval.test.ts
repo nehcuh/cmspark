@@ -6,6 +6,7 @@ import assert from "node:assert/strict"
 
 import {
   DIARIZE_EVAL_PURITY_MARGIN,
+  heldOutGate,
   segmentPurity,
   significantlyBetter,
   speakerCountAccuracy,
@@ -107,4 +108,72 @@ test("significantlyBetter: zero-segment runs never pass", () => {
     ),
     false,
   )
+})
+
+// --- #260 round-2: held-out 门（绝对下限 + 过拆界，不靠纯度放过 K 暴涨）---
+
+test("heldOutGate: all three criteria met → pass", () => {
+  const v = heldOutGate({
+    embedding: { countAccuracy: 0.833, purity: 0.98, segments: 57 },
+    baseline: { countAccuracy: 0.5, purity: 0.9, segments: 57 },
+    embeddingKs: [2, 3, 4, 5, 2, 3],
+    truthKs: [2, 3, 4, 5, 2, 3],
+  })
+  assert.equal(v.pass, true)
+  assert.deepEqual(v.reasons, [])
+})
+
+test("heldOutGate: relative margin not met → fail with reason", () => {
+  const v = heldOutGate({
+    embedding: { countAccuracy: 1, purity: 0.91, segments: 10 },
+    baseline: { countAccuracy: 1, purity: 0.9, segments: 10 },
+    embeddingKs: [2, 2],
+    truthKs: [2, 2],
+  })
+  assert.equal(v.pass, false)
+  assert.ok(v.reasons.some((r) => /baseline/.test(r)))
+})
+
+test("heldOutGate: over-split (|k−truth| > 1) fails even with high purity", () => {
+  const v = heldOutGate({
+    embedding: { countAccuracy: 0.5, purity: 1, segments: 10 },
+    baseline: { countAccuracy: 0, purity: 0.5, segments: 10 },
+    embeddingKs: [4, 2],
+    truthKs: [2, 2],
+  })
+  assert.equal(v.pass, false)
+  assert.ok(v.reasons.some((r) => /k=4 truth=2/.test(r)))
+})
+
+test("heldOutGate: countAccuracy below absolute floor fails", () => {
+  const v = heldOutGate({
+    embedding: { countAccuracy: 0.667, purity: 1, segments: 9 },
+    baseline: { countAccuracy: 0, purity: 0.6, segments: 9 },
+    embeddingKs: [2, 3, 2],
+    truthKs: [2, 3, 3],
+  })
+  assert.equal(v.pass, false)
+  assert.ok(v.reasons.some((r) => /0\.667 < 0\.75/.test(r)))
+})
+
+test("heldOutGate: |k−truth| = 1 (adjacent) does NOT trip the over-split bound", () => {
+  const v = heldOutGate({
+    embedding: { countAccuracy: 0.75, purity: 0.95, segments: 12 },
+    baseline: { countAccuracy: 0.25, purity: 0.7, segments: 12 },
+    embeddingKs: [3, 4, 5, 5],
+    truthKs: [2, 4, 5, 4],
+  })
+  // one exact-miss (|3-2|=1 ok) + floor 0.75 met → only relative gate decides
+  assert.equal(v.pass, true)
+})
+
+test("heldOutGate: incomplete K data fails closed", () => {
+  const v = heldOutGate({
+    embedding: { countAccuracy: 1, purity: 1, segments: 12 },
+    baseline: { countAccuracy: 0, purity: 0, segments: 12 },
+    embeddingKs: [],
+    truthKs: [],
+  })
+  assert.equal(v.pass, false)
+  assert.ok(v.reasons.some((r) => /不完整/.test(r)))
 })

@@ -82,9 +82,31 @@ const SPK_BASE: SpeakerProfile[] = [
 ]
 
 /**
+ * Held-out 说话人档案（#260 round-2）：全新 F0/共振峰/种子（301+），与
+ * SPK_BASE 零重叠 —— DIARIZE_CLUSTER_THRESHOLD=0.06 只在 SPK_BASE 夹具上校准，
+ * 这些夹具不参与调参，专供过门（防止「同一套夹具又校准又过门」）。
+ */
+const SPK_HELDOUT: SpeakerProfile[] = [
+  { f0: 105, formants: [500, 1400, 2500], seed: 301 },
+  { f0: 185, formants: [650, 1850, 2850], seed: 302 },
+  { f0: 92, formants: [470, 1200, 2300], seed: 303 },
+  { f0: 210, formants: [720, 2000, 3000], seed: 304 },
+  { f0: 148, formants: [590, 1700, 2750], seed: 305 },
+  { f0: 240, formants: [780, 2150, 3150], seed: 306 },
+]
+
+/**
  * One rand stream per fixture (seeded by its speaker set); synth in truth
  * order so same fixture → byte-identical audio (deterministic reruns).
  */
+function synthesize(fixtures: Fixture[]): Float32Array[][] {
+  return fixtures.map((f) => {
+    const rand = mulberry32(0xc0ffee + f.speakers.reduce((s, p) => s + p.seed, 0))
+    return f.truth.map((spk) => synthSegment(f.speakers[spk]!, rand))
+  })
+}
+
+/** 校准集（DIARIZE_CLUSTER_THRESHOLD 在此调参；round-2 起仅作参考分栏，不过门）。 */
 export function buildFixtures(): { fixtures: Fixture[]; segs: Float32Array[][] } {
   const fixtures: Fixture[] = [
     // spec letter: 3/5-segment known-K concatenated multi-speaker audio
@@ -148,10 +170,61 @@ export function buildFixtures(): { fixtures: Fixture[]; segs: Float32Array[][] }
       adversarial: true,
     },
   ]
+  return { fixtures, segs: synthesize(fixtures) }
+}
 
-  const segs = fixtures.map((f) => {
-    const rand = mulberry32(0xc0ffee + f.speakers.reduce((s, p) => s + p.seed, 0))
-    return f.truth.map((spk) => synthSegment(f.speakers[spk]!, rand))
-  })
-  return { fixtures, segs }
+/**
+ * Held-out 过门集（#260 round-2）：全部使用 SPK_HELDOUT / 全新对抗种子（311+），
+ * 与校准集的说话人档案、种子、随机流零重叠。评测门只看这组。
+ */
+export function buildHeldOutFixtures(): { fixtures: Fixture[]; segs: Float32Array[][] } {
+  const fixtures: Fixture[] = [
+    {
+      name: "held-segs4-K2",
+      truthK: 2,
+      truth: [0, 1, 1, 0],
+      speakers: [SPK_HELDOUT[0]!, SPK_HELDOUT[1]!],
+    },
+    {
+      name: "held-long12-K3",
+      truthK: 3,
+      truth: [0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2],
+      speakers: [SPK_HELDOUT[0]!, SPK_HELDOUT[1]!, SPK_HELDOUT[2]!],
+    },
+    {
+      name: "held-long12-K4",
+      truthK: 4,
+      truth: [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3],
+      speakers: SPK_HELDOUT.slice(0, 4),
+    },
+    {
+      name: "held-long10-K5",
+      truthK: 5,
+      truth: [0, 1, 2, 3, 4, 0, 1, 2, 3, 4],
+      speakers: SPK_HELDOUT.slice(0, 5),
+    },
+    // adversarial held-out: close F0 males, RMS equalized
+    {
+      name: "held-adv8-K2-closeF0",
+      truthK: 2,
+      truth: [0, 1, 0, 1, 0, 1, 0, 1],
+      speakers: [
+        { f0: 138, formants: [545, 1510, 2560], seed: 311 },
+        { f0: 145, formants: [570, 1580, 2630], seed: 312 },
+      ],
+      adversarial: true,
+    },
+    {
+      name: "held-adv9-K3-closeF0",
+      truthK: 3,
+      truth: [0, 1, 2, 0, 1, 2, 0, 1, 2],
+      speakers: [
+        { f0: 138, formants: [535, 1490, 2540], seed: 321 },
+        { f0: 144, formants: [560, 1560, 2610], seed: 322 },
+        { f0: 150, formants: [585, 1630, 2680], seed: 323 },
+      ],
+      adversarial: true,
+    },
+  ]
+  return { fixtures, segs: synthesize(fixtures) }
 }

@@ -183,7 +183,7 @@ test("full pipeline: upload → auto_diarize embedding → 发言人N labels + p
   assert.equal(r.type, "meeting.diarized", JSON.stringify(r))
   assert.equal(r.diarize.method, "embedding")
   assert.equal(r.diarize.k, 2)
-  assert.equal(r.diarize.experimental, false)
+  assert.equal(r.diarize.experimental, true) // round-2 held-out gate FAIL → experimental back on
   assert.equal(caps.count, n)
   // progress broadcast via ctx.send
   assert.ok(
