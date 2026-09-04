@@ -190,9 +190,13 @@ export async function handleSecurityConfirmationResponse(
           `stop_thread:${confirmationId}`,
           { hasPendingForTab, rejectPendingForTab },
         )
+        let nextRunCancelled = 0
         try {
           const { abortThreadChat } = await import("../message-router")
-          if (typeof abortThreadChat === "function") abortThreadChat(stopTarget)
+          if (typeof abortThreadChat === "function") {
+            // #307: cockpit stop is user-initiated — clear the queue, disclose the count.
+            nextRunCancelled = abortThreadChat(stopTarget, { clearQueue: true }).cancelled
+          }
         } catch {
           /* optional if router not loaded */
         }
@@ -219,6 +223,7 @@ export async function handleSecurityConfirmationResponse(
           confirms_rejected: confirmsRejected,
           leases_drained: drained,
           intents_abandoned: intentsAbandoned,
+          cancelled_next_run: nextRunCancelled,
         })
       } catch (err: any) {
         logger.warn("security.confirmation.stop_thread_failed", {

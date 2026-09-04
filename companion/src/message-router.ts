@@ -194,9 +194,18 @@ export function __testSetLlmOwnerForTests(threadId: string, panelId: string | nu
   else llmLoopOwnerPanel.delete(threadId)
 }
 
-/** Abort in-flight LLM for a thread (ADR-015 worker_cancel / chat.abort). */
-export function abortThreadChat(threadId: string): boolean {
-  if (!threadId) return false
+/**
+ * Abort in-flight LLM for a thread (ADR-015 worker_cancel / chat.abort).
+ * #307: user-initiated stops pass `clearQueue` so the thread's queued nextRun
+ * never silently revives later; non-user paths (panel close, supersede,
+ * worker_cancel) omit it and keep the queue. `cancelled` discloses how many
+ * queued turns the stop dropped (0 unless clearQueue).
+ */
+export function abortThreadChat(
+  threadId: string,
+  opts?: { clearQueue?: boolean },
+): { stopped: boolean; cancelled: number } {
+  if (!threadId) return { stopped: false, cancelled: 0 }
   const controller = abortControllers.get(threadId)
   if (controller) {
     controller.abort()
@@ -208,11 +217,12 @@ export function abortThreadChat(threadId: string): boolean {
     llmLoopGeneration.set(threadId, (llmLoopGeneration.get(threadId) || 0) + 1)
     // Free gate here: finally will CAS-skip release after generation bump.
     releaseMultiAgentLlmLoop(threadId)
-    dropSteer(threadId)
-    return true
   }
   dropSteer(threadId)
-  return false
+  return {
+    stopped: controller != null,
+    cancelled: opts?.clearQueue ? clearNextRun(threadId) : 0,
+  }
 }
 
 /**
@@ -223,7 +233,7 @@ export function abortLlmLoopsForPanel(panelId: string | undefined | null): numbe
   let n = 0
   for (const [tid, owner] of [...llmLoopOwnerPanel.entries()]) {
     if (owner === panelId) {
-      if (abortThreadChat(tid)) n++
+      if (abortThreadChat(tid).stopped) n++
     }
   }
   return n
@@ -1581,8 +1591,7 @@ export async function handleMessage(
       // #291: honesty — record whether a controller actually existed, clear
       // the nextRun queue (a user stop must never silently revive the thread),
       // and log every abort so clicks are traceable after the fact.
-      const stopped = abortThreadChat(rest.thread_id)
-      const cancelled = typeof rest.thread_id === "string" ? clearNextRun(rest.thread_id) : 0
+      const { stopped, cancelled } = abortThreadChat(rest.thread_id, { clearQueue: true })
       logger.info("chat.abort", {
         thread_id: rest.thread_id,
         had_controller: stopped,
@@ -3528,7 +3537,8 @@ export async function handleMessage(
       }
       const results: any[] = []
       for (const w of targets) {
-        abortThreadChat(w.id)
+        // #307: user stop — clear the worker's nextRun so it never drains later.
+        const { cancelled: nextRunCancelled } = abortThreadChat(w.id, { clearQueue: true })
         // G13: abandon intents on host before pending reject + lease release
         let intentsAbandoned = 0
         try {
@@ -3555,6 +3565,7 @@ export async function handleMessage(
           confirms_rejected: confirmsRejected,
           leases_drained: drained,
           intents_abandoned: intentsAbandoned,
+          cancelled_next_run: nextRunCancelled,
         })
       }
       const { buildFleetSnapshot } = await import("./orchestrator/fleet")
@@ -3564,7 +3575,13 @@ export async function handleMessage(
       if (!rest.worker_id) return { type: "error", error: "worker_id required" }
       const w = threadManager.update(String(rest.worker_id), { paused: true } as any)
       if (!w) return { type: "error", error: "worker not found" }
-      abortThreadChat(String(rest.worker_id))
+      // #307: user stop — pause must clear the queue, not defer it to a later drain.
+      const { stopped, cancelled } = abortThreadChat(String(rest.worker_id), { clearQueue: true })
+      logger.info("worker.pause", {
+        worker_id: rest.worker_id,
+        had_controller: stopped,
+        cancelled_next_run: cancelled,
+      })
       return { type: "worker.updated", worker: w }
     }
     case "worker.resume": {
