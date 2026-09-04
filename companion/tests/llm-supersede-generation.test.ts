@@ -22,7 +22,7 @@ test("abortThreadChat releases multi-agent LLM gate slot", () => {
   assert.equal(multiAgentLlmLoopSnapshot().active, 1)
   __testSetLlmActiveForTests("w1", true)
   const aborted = abortThreadChat("w1")
-  assert.equal(aborted, true)
+  assert.equal(aborted.stopped, true)
   assert.equal(multiAgentLlmLoopSnapshot().active, 0)
   assert.deepEqual(multiAgentLlmLoopSnapshot().holders, [])
   // Can acquire again after abort

@@ -171,6 +171,17 @@ export async function handleSecurityConfirmationResponse(
       clientStopThreadId
     if (stopTarget) {
       try {
+        // #307: cockpit stop is user-initiated — abort + clear queue BEFORE any await,
+        // so a finishing chat.create finally cannot drain the queue mid-stop.
+        let nextRunCancelled = 0
+        try {
+          const { abortThreadChat } = await import("../message-router")
+          if (typeof abortThreadChat === "function") {
+            nextRunCancelled = abortThreadChat(stopTarget, { clearQueue: true }).cancelled
+          }
+        } catch {
+          /* optional if router not loaded */
+        }
         // G13: abandon intents before pending reject + lease release
         let intentsAbandoned = 0
         try {
@@ -190,12 +201,6 @@ export async function handleSecurityConfirmationResponse(
           `stop_thread:${confirmationId}`,
           { hasPendingForTab, rejectPendingForTab },
         )
-        try {
-          const { abortThreadChat } = await import("../message-router")
-          if (typeof abortThreadChat === "function") abortThreadChat(stopTarget)
-        } catch {
-          /* optional if router not loaded */
-        }
         // stop_thread must also kill in-flight shell_exec (same gap as chat.abort)
         try {
           const { abortShellRunsForThread } = await import("../capability/shell")
@@ -219,6 +224,7 @@ export async function handleSecurityConfirmationResponse(
           confirms_rejected: confirmsRejected,
           leases_drained: drained,
           intents_abandoned: intentsAbandoned,
+          cancelled_next_run: nextRunCancelled,
         })
       } catch (err: any) {
         logger.warn("security.confirmation.stop_thread_failed", {
