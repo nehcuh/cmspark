@@ -29,6 +29,7 @@ import {
   distributionFilterIds,
   distributionOverCap,
 } from "../utils/knowledge-distribution"
+import { KnowledgeGraphEntryButton } from "../../knowledge-graph/chrome"
 
 export function KnowledgeSubPanel() {
   const { state, dispatch } = useAgentStore()
@@ -1161,35 +1162,43 @@ export function KnowledgeSubPanel() {
 
       {/* #273 Wave B §6.4: 分布过滤 chips（列表上方；点击 = 过滤，不是第三个视图）。
           诚实句强制在——没有它用户会把 chips 当成自己维护的层级分类。
-          身份用稳定 key（标签碰撞过滤不错对象），displayLabel 仅显示。 */}
-      {distChips.length > 0 && (
-        <div style={{ marginBottom: 8 }}>
+          身份用稳定 key（标签碰撞过滤不错对象），displayLabel 仅显示。
+          #296: chips 行右侧「分布图谱」入口（名词解禁仅此按钮）。 */}
+      <div style={{ marginBottom: 8 }}>
+        {distChips.length > 0 && (
           <div style={{ fontSize: 10, color: tokens.textMuted, marginBottom: 4 }}>
             {KNOWLEDGE_DISTRIBUTION_HONESTY_COPY}
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }} aria-label="分布">
-            {distChips.map((g) => {
-              const activeChip = distFilter === g.key
-              return (
-                <button
-                  key={g.key}
-                  type="button"
-                  title={activeChip ? "取消过滤" : "只看这一组"}
-                  aria-pressed={activeChip}
-                  onClick={() => setDistFilter(activeChip ? null : g.key)}
-                  style={{
-                    ...styles.relatedChip,
-                    background: activeChip ? tokens.accentSoft : tokens.bgElevated,
-                    borderColor: activeChip ? tokens.accent : tokens.border,
-                  }}
-                >
-                  {g.displayLabel} · {g.count}
-                </button>
-              )
-            })}
-          </div>
+        )}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }} aria-label="分布">
+          {distChips.map((g) => {
+            const activeChip = distFilter === g.key
+            return (
+              <button
+                key={g.key}
+                type="button"
+                title={activeChip ? "取消过滤" : "只看这一组"}
+                aria-pressed={activeChip}
+                onClick={() => setDistFilter(activeChip ? null : g.key)}
+                style={{
+                  ...styles.relatedChip,
+                  background: activeChip ? tokens.accentSoft : tokens.bgElevated,
+                  borderColor: activeChip ? tokens.accent : tokens.border,
+                }}
+              >
+                {g.displayLabel} · {g.count}
+              </button>
+            )
+          })}
+          <KnowledgeGraphEntryButton
+            onClick={() => {
+              chrome.runtime.sendMessage({ type: "knowledge_graph.open" }, () => {
+                void chrome.runtime.lastError
+              })
+            }}
+          />
         </div>
-      )}
+      </div>
       {/* #273 Wave B: 超 cap 诚实文案（不渲染 chips，不假装有分组） */}
       {distOverCap && (
         <div style={{ fontSize: 10, color: tokens.textMuted, marginBottom: 8 }}>

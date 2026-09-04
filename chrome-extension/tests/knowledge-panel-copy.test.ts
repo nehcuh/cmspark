@@ -85,6 +85,12 @@ test("AC-16: banned words absent from all Wave B knowledge UI copy (incl. toolti
   for (const rel of WAVE_B_FILES) {
     const text = readFileSync(join(SRC_ROOT, rel), "utf8")
     for (const word of WAVE_B_BANNED) {
+      // #296: 「图谱」仅解禁本视图入口名「分布图谱」（KnowledgeSubPanel 按钮）；其余仍禁。
+      if (word === "图谱" && rel.endsWith("KnowledgeSubPanel.tsx")) {
+        const stripped = text.split("分布图谱").join("")
+        assert.ok(!stripped.includes("图谱"), `${rel} may only contain 「图谱」 inside 「分布图谱」`)
+        continue
+      }
       assert.ok(!text.includes(word), `${rel} must not contain banned word 「${word}」`)
     }
     assert.ok(!/wiki/i.test(text), `${rel} must not contain 「wiki」`)
