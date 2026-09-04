@@ -1112,6 +1112,16 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "knowledge.list": () => ({ valid: true }),
+    // #296: llm_labels / regen_labels 是可选布尔（面板开关随请求传入）
+    "knowledge.graph": (m) => {
+      if (m.llm_labels !== undefined && typeof m.llm_labels !== "boolean") {
+        return { valid: false, error: "knowledge.graph llm_labels must be boolean when set" }
+      }
+      if (m.regen_labels !== undefined && typeof m.regen_labels !== "boolean") {
+        return { valid: false, error: "knowledge.graph regen_labels must be boolean when set" }
+      }
+      return { valid: true }
+    },
     "knowledge.set_active": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) {
         return { valid: false, error: "knowledge.set_active requires thread_id" }
