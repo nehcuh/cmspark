@@ -1,5 +1,7 @@
 // ComposerDock context chips — mode-aware, ≤3 (UIUX v2 §4.4).
 // Opens Host / 装配 / 确认台; never Abort (thumb-zone safety).
+// #321 PR-4: L0 装配 stays in the data (`primary` flag) but the fill is quiet —
+// same hairline chip as siblings; do not delete the chip.
 
 import type { CSSProperties } from "react"
 import type { CapabilityLevel } from "../types"
@@ -43,10 +45,8 @@ function ChipButton({
   return (
     <button
       type="button"
-      style={{
-        ...styles.chip,
-        ...(chip.primary ? styles.chipPrimary : null),
-      }}
+      style={styles.chip}
+      data-primary={chip.primary ? "true" : undefined}
       onClick={() => onAction(chip.action)}
       data-testid={`composer-chip-${chip.id}`}
       title={chip.label}
@@ -67,22 +67,14 @@ const styles: Record<string, CSSProperties> = {
   chip: {
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusPill,
-    background: "rgba(255, 255, 255, 0.85)",
-    color: tokens.textSecondary,
+    background: tokens.bgElevated,
+    color: tokens.textMuted,
     fontSize: 11,
-    fontWeight: 550,
-    padding: "5px 12px",
+    fontWeight: 500,
+    padding: "4px 10px",
     cursor: "pointer",
     fontFamily: tokens.font,
     lineHeight: 1.3,
     letterSpacing: "0.01em",
-    boxShadow: tokens.shadowSm,
-  },
-  chipPrimary: {
-    borderColor: "rgba(79, 70, 229, 0.22)",
-    background: tokens.accentSoft,
-    color: tokens.accentText,
-    fontWeight: 650,
-    boxShadow: "0 1px 3px rgba(79, 70, 229, 0.12)",
   },
 }

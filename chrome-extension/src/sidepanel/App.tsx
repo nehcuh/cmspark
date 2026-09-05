@@ -1894,7 +1894,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             ref={textareaRef}
             style={styles.textarea}
             placeholder={getPlaceholder()}
-            rows={2}
+            rows={1}
             value={voice.liveOverlay !== null ? voice.liveOverlay : text}
             // Disable whenever live overlay owns the value (listening + processing gaps).
             // Otherwise keystrokes are invisible and next final flush overwrites them.
@@ -1963,6 +1963,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               style={{
                 ...styles.sendBtn,
                 background: canSend ? tokens.accent : tokens.sendDisabledBg,
+                color: canSend ? tokens.userBubbleText : tokens.textMuted,
                 cursor: canSend ? "pointer" : "not-allowed",
               }}
               onClick={() => handleSend()}
@@ -2323,9 +2324,9 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusComposer,
-    padding: "10px 10px 10px 14px",
+    padding: "6px 10px 6px 12px",
     background: tokens.bgElevated,
-    minHeight: 72,
+    minHeight: 52,
     transition: `border-color ${tokens.transitionFast} ease, box-shadow ${tokens.transitionFast} ease`,
   },
   textarea: {
@@ -2335,12 +2336,12 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     border: "none",
     borderRadius: tokens.radiusMd,
-    padding: "4px 0 8px",
+    padding: "4px 0",
     fontSize: 14,
     fontFamily: "inherit",
     resize: "none" as const,
     outline: "none",
-    minHeight: 44,
+    minHeight: 32,
     maxHeight: 120,
     background: "transparent",
     color: tokens.text,

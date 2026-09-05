@@ -1,5 +1,9 @@
 // Shared visual tokens — consumer assistant canon (看山 quality bar, Comp A).
-// White companion surface, indigo spark only on character + armed send.
+// White companion surface. Indigo spark: character pupils + armed send + a
+// hairline on the user bubble. The user bubble is NOT a filled indigo slab.
+// (#321 PR-4 canon revision: the old header said "indigo only on character +
+// armed send" while userBubbleBg === accent — that contradiction is closed here,
+// not papered over as "aligning with canon".)
 // Chrome stays 11 / 12 / 13 / 15. Empty greeting is the one 22px exemption.
 
 export const tokens = {
@@ -21,7 +25,7 @@ export const tokens = {
   /** Empty-state hero only — not chrome. */
   emptyTitle: 22,
 
-  // Indigo accent — spark for CTA / focus / user bubble only
+  // Indigo accent — spark for CTA / focus / armed send / bubble hairline
   accent: "#4f46e5",
   accentSoft: "#eef2ff",
   accentText: "#3730a3",
@@ -84,8 +88,17 @@ export const tokens = {
   darkWarningBg: "#422006",
   darkSuccess: "#34d399",
 
-  // Chat bubbles
-  userBubbleBg: "#4f46e5",
+  // Chat bubbles — PR-4 shipped variant A (paper + hairline). Variant B
+  // (left indigo bar) is a screenshot alternative, not the live token.
+  userBubbleBg: "#ffffff",
+  /** User-bubble copy. Distinct from userBubbleText (on-accent/on-danger glyphs). */
+  userBubbleInk: "#171717",
+  userBubbleBorder: "rgba(79, 70, 229, 0.18)",
+  /**
+   * On-accent / on-danger glyph (send armed, filled buttons). Historical name
+   * `userBubbleText` kept so Settings/danger buttons do not silently go dark.
+   * User bubble copy uses `userBubbleInk`.
+   */
   userBubbleText: "#ffffff",
   assistantBubbleBg: "#ffffff",
   assistantBubbleText: "#0f172a",
@@ -111,7 +124,7 @@ export const tokens = {
   shadowMd: "0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.04)",
   shadowLg: "0 4px 16px rgba(15, 23, 42, 0.08), 0 12px 28px rgba(15, 23, 42, 0.05)",
   shadowFocus: "0 0 0 3px rgba(79, 70, 229, 0.16)",
-  /** User-bubble indigo glow. */
+  /** Quiet indigo glow (armed send / focus). Not a user-bubble fill. */
   shadowAccent: "0 2px 10px rgba(79, 70, 229, 0.20)",
   /** Lightweight popover/dialog elevation (summary card). */
   shadowPopover: "0 4px 16px rgba(0, 0, 0, 0.08)",
