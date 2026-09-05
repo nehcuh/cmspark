@@ -397,11 +397,11 @@ export function ChatView() {
               margin: "8px 10px 4px",
               padding: "8px 10px",
               borderRadius: 8,
-              background: tokens.warningSoft || "#fffbeb",
-              border: `1px solid ${tokens.border || "#f0e6c8"}`,
+              background: tokens.warningSoft,
+              border: `1px solid ${tokens.border}`,
               fontSize: 11,
               lineHeight: 1.45,
-              color: "#7a5b00",
+              color: tokens.warningText,
             }}
           >
             {compactBanner === "shrink" ? (
@@ -485,12 +485,12 @@ export function ChatView() {
               margin: "4px 10px 8px",
               padding: 12,
               borderRadius: 8,
-              background: "#fff",
-              border: `1px solid ${tokens.border || "#e5e7eb"}`,
-              boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
+              background: tokens.bgElevated,
+              border: `1px solid ${tokens.border}`,
+              boxShadow: tokens.shadowPopover,
               fontSize: 12,
               lineHeight: 1.5,
-              color: tokens.text || "#111",
+              color: tokens.text,
             }}
           >
             <div
@@ -730,7 +730,7 @@ function KnowledgeImportModal() {
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,0.35)",
+        background: tokens.scrimStrong,
         zIndex: 11000,
         display: "flex",
         alignItems: "flex-end",
@@ -959,7 +959,7 @@ const MessageRow = memo(function MessageRow({
                 取消
               </button>
               <button
-                style={{ ...styles.editBtn, background: tokens.accent, color: "#fff", border: "none" }}
+                style={{ ...styles.editBtn, background: tokens.accent, color: tokens.userBubbleText, border: "none" }}
                 onClick={() => { onRegenerate(msg.id, editingText); setIsEditing(false); setEditingText("") }}
               >
                 重新生成
@@ -1454,7 +1454,7 @@ function ToolCallCard({ tc }: { tc: any }) {
                   overflow: "auto",
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
-                  background: "rgba(0,0,0,0.28)",
+                  background: tokens.shellOutputBg,
                   borderRadius: 4,
                   color: tokens.text,
                 }}
@@ -1536,7 +1536,7 @@ function ToolCallCard({ tc }: { tc: any }) {
             overflow: "auto",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
-            background: "rgba(0,0,0,0.25)",
+            background: tokens.toolTailBg,
             borderRadius: 4,
             color: tokens.textMuted,
           }}
@@ -2051,7 +2051,7 @@ const markdownCSS = `
     cursor: zoom-in;
   }
   .markdown-body .mermaid-error {
-    color: #c33;
+    color: ${tokens.danger};
     font-size: 11px;
     margin-bottom: 4px;
   }
@@ -2235,7 +2235,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${tokens.border}`,
     background: tokens.bgMuted,
     color: tokens.textMuted,
-    fontSize: 9,
+    fontSize: 11,
     lineHeight: 1.2,
     display: "flex",
     alignItems: "center",
@@ -2265,7 +2265,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.5,
     wordBreak: "break-word" as const,
     whiteSpace: "pre-wrap",
-    boxShadow: "0 2px 10px rgba(79, 70, 229, 0.20)",
+    boxShadow: tokens.shadowAccent,
   },
   agentBubble: {
     background: tokens.assistantBubbleBg,
@@ -2300,14 +2300,14 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 4,
-    border: "1px solid rgba(79, 70, 229, 0.12)",
+    border: `1px solid ${tokens.accentBorderSoft}`,
   },
   reasoningWrap: {
     marginBottom: 6,
     maxWidth: "100%",
     borderRadius: tokens.radiusBubble,
     border: `1px solid ${tokens.border}`,
-    background: "rgba(15, 23, 42, 0.03)",
+    background: tokens.bgSubtle,
     overflow: "hidden" as const,
   },
   reasoningToggle: {
@@ -2356,9 +2356,9 @@ const styles: Record<string, React.CSSProperties> = {
     display: "block",
     width: "100%",
     textAlign: "left",
-    border: "1px solid #fde68a",
-    background: "#fffbeb",
-    color: "#92400e",
+    border: `1px solid ${tokens.warningBorder}`,
+    background: tokens.warningSoft,
+    color: tokens.warningText,
     borderRadius: 8,
     padding: "8px 10px",
     fontSize: 12,

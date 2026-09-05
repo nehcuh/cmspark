@@ -93,8 +93,8 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 6,
     width: "100%",
     border: "none",
-    borderBottom: `1px solid ${tokens.border || "#e5e7eb"}`,
-    background: tokens.bgMuted || "#f3f4f6",
+    borderBottom: `1px solid ${tokens.border}`,
+    background: tokens.bgMuted,
     padding: "4px 10px",
     cursor: "pointer",
     fontFamily: tokens.font,
@@ -108,7 +108,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 7,
     height: 7,
     borderRadius: 99,
-    background: "#f59e0b",
+    background: tokens.warning,
     flexShrink: 0,
   },
   text: {
@@ -117,7 +117,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    color: tokens.textMuted || "#6b7280",
+    color: tokens.textMuted,
   },
   cta: {
     color: tokens.accent,

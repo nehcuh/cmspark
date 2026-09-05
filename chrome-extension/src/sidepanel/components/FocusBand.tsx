@@ -267,7 +267,7 @@ const styles: Record<string, CSSProperties> = {
   cardConfirm: {
     ...cardShell,
     background: tokens.dangerSurface,
-    border: "1px solid rgba(220, 38, 38, 0.28)",
+    border: `1px solid ${tokens.dangerBorder}`,
   },
   cardDark: {
     ...cardShell,
@@ -315,7 +315,7 @@ const styles: Record<string, CSSProperties> = {
     gap: 3,
     background: tokens.darkDangerBg,
     color: tokens.darkDanger,
-    border: "1px solid #7f1d1d",
+    border: `1px solid ${tokens.dangerDeep}`,
     borderRadius: tokens.radiusSm,
     padding: "1px 8px",
     cursor: "pointer",
@@ -362,7 +362,7 @@ const styles: Record<string, CSSProperties> = {
     maxHeight: FOCUS_BAND_SECONDARY_MAX_PX,
     padding: "2px 10px 6px",
     fontSize: 11,
-    color: tokens.textMuted || "#888",
+    color: tokens.textMuted,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",

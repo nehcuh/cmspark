@@ -79,8 +79,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "2px 10px",
     minHeight: 24,
     maxHeight: 28,
-    borderBottom: `1px solid ${tokens.border || "#e5e7eb"}`,
-    background: tokens.bgElevated || "#fafafa",
+    borderBottom: `1px solid ${tokens.border}`,
+    background: tokens.bgElevated,
     fontFamily: tokens.font,
     fontSize: 11,
     boxSizing: "border-box",
@@ -100,6 +100,6 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    color: tokens.textMuted || "#6b7280",
+    color: tokens.textMuted,
   },
 }
