@@ -921,6 +921,9 @@ export function classifyError(
 ): ErrorLevel {
   // Typed missing-peer must not retry even if the message contains timeout/disconnected/not found.
   if (context?.error_code === "BROWSER_UNAVAILABLE") return "non_recoverable"
+  // L-5: unattended NEVER-list confirm timeout/deny is item-blocked + bypass,
+  // not HALT_SECURITY. 45s fail-closed is unchanged (the tool still denied).
+  if (context?.error_code === "UNATTENDED_CONFIRM_DENIED") return "recoverable"
   const msg = errorMessage.toLowerCase()
 
   if (msg.includes("security block")) {

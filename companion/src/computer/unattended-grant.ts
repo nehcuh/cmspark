@@ -98,6 +98,8 @@ let grant: InternalGrant | null = null
 let cruiseSnapshot: CruiseFlagsSnapshot | null = null
 /** Optional restore handler registered by message-router (getConfig/saveConfig). */
 let cruiseRestoreHandler: ((snap: CruiseFlagsSnapshot | null) => void) | null = null
+/** L-5: pause unattended loops on TTL — registered by server/lifecycle. */
+let loopExpireHandler: (() => void) | null = null
 let expireRestoreDone = false
 /** Test override for snapshot path (avoids touching real DATA_DIR). */
 let cruiseSnapshotPathOverride: string | null = null
@@ -168,6 +170,7 @@ export function resetUnattendedGrantForTests(): void {
   expireRestoreDone = false
   lastAuditSurface = undefined
   lastAuditSource = undefined
+  loopExpireHandler = null
   // Clear file while override still points at the test path (Pi r2 nit:
   // never unlink real DATA_DIR snapshot when override is active).
   clearCruiseSnapshotFile()
@@ -187,6 +190,14 @@ export function registerCruiseRestoreHandler(
   handler: ((snap: CruiseFlagsSnapshot | null) => void) | null,
 ): void {
   cruiseRestoreHandler = handler
+}
+
+/**
+ * L-5: invoked after TTL expire restores cruise. Loop must pause, not
+ * silently go impossible. Handler must not extend this grant's TTL.
+ */
+export function registerUnattendedLoopExpireHandler(handler: (() => void) | null): void {
+  loopExpireHandler = handler
 }
 
 /** Capture pre-arm cruise flags (call BEFORE dual-write). Also persists for restart reconcile. */
@@ -297,6 +308,11 @@ function expireGrantIfNeeded(now: number): void {
       include_protocol: expired.includeProtocol,
       cruise_restored: !!restored,
     })
+    try {
+      loopExpireHandler?.()
+    } catch {
+      /* loop pause must never block grant expire */
+    }
   }
 }
 

@@ -137,6 +137,19 @@ const CASES: Array<{ name: string; event: CockpitFocusEvent; arm: ArmState; want
     arm: UNATTENDED,
     want: "stay_background",
   },
+  // L-5 (#391): 值守 blocked 报告不抢焦点（tray 徽标 + Board）
+  {
+    name: "loop blocked report + 值守武装 → 不抢焦点",
+    event: { kind: "loop_blocked" },
+    arm: UNATTENDED,
+    want: "stay_background",
+  },
+  {
+    name: "loop blocked report + 未武装 → 不抢焦点",
+    event: { kind: "loop_blocked" },
+    arm: UNARMED,
+    want: "stay_background",
+  },
 ]
 
 for (const c of CASES) {
@@ -232,6 +245,16 @@ test("computer.task.event → computer_task 事件", () => {
     kind: "computer_task",
     event: "paused",
   })
+})
+
+test("task_loop.blocked_report → loop_blocked，值守下不抢焦点", () => {
+  const ev = cockpitFocusEventFromMessage({
+    type: "task_loop.blocked_report",
+    thread_id: "t1",
+    steal_focus: false,
+  })
+  assert.deepEqual(ev, { kind: "loop_blocked" })
+  assert.equal(decideCockpitFocus(ev!, UNATTENDED), "stay_background")
 })
 
 test("无关消息 → null（confirm resolved/expired 不开窗）", () => {

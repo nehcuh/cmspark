@@ -487,8 +487,18 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   try {
     const {
       registerCruiseRestoreHandler,
+      registerUnattendedLoopExpireHandler,
       reconcileUnattendedCruiseOnBoot,
     } = await import("../computer/unattended-grant")
+    registerUnattendedLoopExpireHandler(() => {
+      try {
+        const tm = requireRt().getThreadManager()
+        const { pauseUnattendedLoopsOnGrantExpire } = require("../loop/loop-kernel") as typeof import("../loop/loop-kernel")
+        pauseUnattendedLoopsOnGrantExpire(tm)
+      } catch (err: any) {
+        logger.warn("task_loop.grant_ttl_pause_failed", { error: err?.message || String(err) })
+      }
+    })
     registerCruiseRestoreHandler((snap) => {
       const cur = getConfig()
       saveConfig({
