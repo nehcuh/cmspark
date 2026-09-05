@@ -27,6 +27,7 @@ import {
   IconMore,
   IconNewChat,
   IconExternal,
+  CompanionMark,
 } from "../ui/icons"
 import { disarmAllFlags, trustStatusChip, trustStatusChipShort } from "./autopilot-tier"
 
@@ -210,11 +211,11 @@ export function StatusRail({
         onTogglePin={togglePin}
         whisper
       />
-      {!(cruiseLabel || connectionState !== "connected") && (
-      <div style={railStyles.brand}>
-        <span style={railStyles.brandText}>CMspark</span>
+      {/* Brand point (small CompanionMark) — #321 PR-3: resident, no longer hidden
+          on cruise / disconnect. Decorative (CompanionMark stays aria-hidden). */}
+      <div style={railStyles.brand} title="CMspark" aria-label="CMspark">
+        <CompanionMark size={16} />
       </div>
-      )}
       <div style={railStyles.cluster}>
       <button
         type="button"
@@ -272,28 +273,49 @@ export function StatusRail({
             }}
           />
         </span>
-      ) : (
-      <button
-        type="button"
-        aria-label={connLabel}
-        title="连接异常 — 点击打开连接与配对设置"
-        style={{
-          ...railStyles.connPill,
-          cursor: "pointer",
-        }}
-        onClick={() => {
-          dispatch({ type: "OPEN_SETTINGS_SECTION", section: "connection" })
-        }}
-      >
-        <span
+      ) : connectionState === "connecting" ? (
+        /* Connecting: no bottom banner yet — keep the rail pill as the route to
+           connection settings. */
+        <button
+          type="button"
+          aria-label={connLabel}
+          title="正在连接 Companion… 点击打开连接与配对设置"
           style={{
-            ...railStyles.statusDot,
-            background: connectionColor(connectionState),
-            boxShadow: connectionDotShadow(connectionState),
+            ...railStyles.connPill,
+            cursor: "pointer",
           }}
-        />
-        <span style={railStyles.connLabel}>{connLabel}</span>
-      </button>
+          onClick={() => {
+            dispatch({ type: "OPEN_SETTINGS_SECTION", section: "connection" })
+          }}
+        >
+          <span
+            style={{
+              ...railStyles.statusDot,
+              background: connectionColor(connectionState),
+              boxShadow: connectionDotShadow(connectionState),
+            }}
+          />
+          <span style={railStyles.connLabel}>{connLabel}</span>
+        </button>
+      ) : (
+        /* #321 PR-3: disconnected is a passive status in the rail — the single
+           recovery CTA is DisconnectedBanner at the bottom (消双喊). Pairing /
+           connection settings stay reachable via ⋯ → 设置. */
+        <span
+          role="status"
+          aria-label={connLabel}
+          title="Companion 未连接 — 在底部横幅中重新连接或查看日志"
+          style={railStyles.connPill}
+        >
+          <span
+            style={{
+              ...railStyles.statusDot,
+              background: connectionColor(connectionState),
+              boxShadow: connectionDotShadow(connectionState),
+            }}
+          />
+          <span style={railStyles.connLabel}>{connLabel}</span>
+        </span>
       )}
       <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}>
         <button
@@ -317,6 +339,10 @@ export function StatusRail({
         </button>
         {menuOpen && (
           <div style={railStyles.menu} role="menu">
+            {/* #321 PR-3: grouped IA — 会话 / 能力 / 诊断 */}
+            <div role="presentation" style={railStyles.menuGroupLabel}>
+              会话
+            </div>
             <button
               type="button"
               role="menuitem"
@@ -387,6 +413,9 @@ export function StatusRail({
                   : "导出摘要"}
               </span>
             </button>
+            <div role="presentation" style={railStyles.menuGroupLabel}>
+              能力
+            </div>
             <button
               type="button"
               role="menuitem"
@@ -411,9 +440,11 @@ export function StatusRail({
               }}
             >
               {nbState === "warning" ? <IconAlert size={14} /> : <IconSave size={14} />}
-              <span>导出当前页 (NB)</span>
+              <span>离线导出当前页</span>
             </button>
-            <div style={railStyles.menuDivider} />
+            <div role="presentation" style={railStyles.menuGroupLabel}>
+              诊断
+            </div>
             <button
               type="button"
               role="menuitem"
@@ -583,6 +614,15 @@ const railStyles: Record<string, CSSProperties> = {
   },
   menuItem: popupMenuStyles.menuItem,
   menuDivider: popupMenuStyles.menuDivider,
+  /** #321 PR-3: ⋯ menu group header (会话 / 能力 / 诊断) */
+  menuGroupLabel: {
+    fontSize: 11,
+    fontWeight: 600,
+    letterSpacing: "0.04em",
+    color: tokens.textMuted,
+    padding: "8px 11px 2px",
+    textTransform: "none" as const,
+  },
   statusDot: {
     width: 7,
     height: 7,

@@ -117,10 +117,18 @@ Helpers (dark / Cockpit): `connectionColorDark` / `connectionDotShadowDark` (+ s
 
 | Surface | Mode | Connection | Other |
 |---------|------|------------|--------|
-| **Panel** `StatusRail` | ModeBadge whisper（28px 图标，title 仍带层级）；字标左贴齿轮，巡航/断连时藏 | 已连 `role=status` 圆点；断连短标签按钮 | 新对话 + 历史 chevron · 巡航短词 `值守`/`巡航` · ⋯ |
+| **Panel** `StatusRail` | ModeBadge whisper（28px 图标，title 仍带层级）；品牌点 `CompanionMark` 小标常驻（巡航/断连不藏） | 已连 `role=status` 圆点；断连被动状态（单 CTA = 底部 `DisconnectedBanner`） | 新对话 + 历史 chevron · 巡航短词 `值守`/`巡航` · ⋯ |
 | **Cockpit** header | Chip `L2 · LIVE` / `L2` / `确认` / `工作区` (same Surface grammar) | Dot + **label text** (`connectionColorDark` + `connectionLabel`) | Thread id · fleet summary · 急停 · 收起 |
 
 Grammar must match: mode chip · connection · secondary context. Cockpit is dark; Panel is light. Type scale 11–13; rail min-height ~40–44px.
+
+**⋯ menu IA (#321 PR-3):** grouped under `会话 / 能力 / 诊断` section labels.
+- 会话：提取技能 · 导出为 Markdown · 导出摘要
+- 能力：NotebookLM 导入 · 离线导出当前页（原「导出当前页 (NB)」）
+- 诊断：日志（LogBar 入口）· 设置 · 密钥与环境
+Bottom `role=note` 保留装配/`/board` 可发现性。导出菜单点击仍发同一 `thread.export_obsidian`（scope thread / summary）。
+
+**Toast (#321 PR-3):** single queue (`ToastHost` / `useToastQueue`) with `info | warning | error` tones; renders as a bounded column (burst serialised, never piled); position DOM-anchored under the rail — no `top:52` rail-height constant. `cmspark:toast` event, 自动匹配技能与能力提升提示 all route through the one queue.
 
 ### Mode badge (P0)
 - L0 `聊` · L1 `网页` · L2 `计算机` / `计算机 · LIVE` — see `sidepanel/mode/mode-controller.ts`
