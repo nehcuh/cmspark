@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, VoiceSystemState, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
+import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, VoiceSystemState, CapabilityLevel, FleetSnapshot, UserEnvPublic, LoopStatusView } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 
@@ -364,6 +364,22 @@ export interface AgentState {
       }
     }
   >
+  /**
+   * L-4 (#390) loop status line views (per thread) — companion task_loop.status
+   * frames, rendered verbatim. LoopStatusRow backfills from thread.loop_state
+   * when no frame has arrived yet (panel reopen).
+   */
+  loopStatusByThreadId: Record<string, LoopStatusView>
+  /**
+   * L-4 (#390) suggestion card「要继续做完吗？」— non-blocking; click sends
+   * task_loop.arm (source=suggestion_card == explicit gesture).
+   */
+  loopSuggest: {
+    threadId: string
+    unticked: Array<{ id: string; text: string }>
+    budgetStopped: boolean
+    at: number
+  } | null
 }
 
 export type AgentAction =
@@ -565,6 +581,17 @@ export type AgentAction =
       }
     }
   | { type: "CLEAR_CONTEXT_COMPACTED"; threadId: string }
+  /** L-4 (#390): companion task_loop.status frame (sanitized view; verbatim render). */
+  | { type: "SET_LOOP_STATUS"; threadId: string; view: LoopStatusView }
+  /** L-4 (#390): companion task_loop.suggest (non-blocking suggestion card). */
+  | {
+      type: "SET_LOOP_SUGGEST"
+      threadId: string
+      unticked: Array<{ id: string; text: string }>
+      budgetStopped: boolean
+    }
+  /** L-4 (#390): armed / thread switch / user dismiss — drop the suggestion card. */
+  | { type: "CLEAR_LOOP_SUGGEST" }
 
 export const initialState: AgentState = {
   connectionState: "disconnected",
@@ -691,6 +718,8 @@ export const initialState: AgentState = {
   userEnvStatus: null,
   unattended: null,
   contextCompactedByThreadId: {},
+  loopStatusByThreadId: {},
+  loopSuggest: null,
 }
 
 /**
@@ -1154,6 +1183,33 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       delete next[action.threadId]
       return { ...state, contextCompactedByThreadId: next }
     }
+    case "SET_LOOP_STATUS": {
+      if (!action.threadId) return state
+      return {
+        ...state,
+        loopStatusByThreadId: {
+          ...state.loopStatusByThreadId,
+          [action.threadId]: action.view,
+        },
+      }
+    }
+    case "SET_LOOP_SUGGEST": {
+      if (!action.threadId) return state
+      // Only the ACTIVE thread's card renders; a stale frame for a background
+      // thread is dropped rather than resurrected on switch.
+      if (action.threadId !== state.activeThreadId) return state
+      return {
+        ...state,
+        loopSuggest: {
+          threadId: action.threadId,
+          unticked: action.unticked,
+          budgetStopped: action.budgetStopped === true,
+          at: Date.now(),
+        },
+      }
+    }
+    case "CLEAR_LOOP_SUGGEST":
+      return state.loopSuggest ? { ...state, loopSuggest: null } : state
     case "SET_OBSIDIAN_PROFILE_STATUS":
       return { ...state, obsidianProfileStatus: action.status }
     case "SET_KNOWLEDGE_IMPORT_STATUS":

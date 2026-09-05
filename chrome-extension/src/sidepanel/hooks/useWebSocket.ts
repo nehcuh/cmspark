@@ -1021,6 +1021,59 @@ export function useWebSocket() {
           dispatch({ type: "REMOVE_THREAD", threadId: msg.thread_id })
           break
         }
+        case "task_loop.status": {
+          // L-4 (#390): loop status line — companion is the derivation SoT;
+          // extension renders the frame verbatim (sanitized numbers only).
+          const tid = typeof msg.thread_id === "string" ? msg.thread_id : ""
+          if (
+            tid &&
+            typeof msg.label === "string" &&
+            msg.label &&
+            typeof msg.phase === "string" &&
+            msg.phase
+          ) {
+            dispatch({
+              type: "SET_LOOP_STATUS",
+              threadId: tid,
+              view: {
+                phase: msg.phase as any,
+                label: msg.label,
+                detail: typeof msg.detail === "string" ? msg.detail : "",
+                done: Number.isFinite(Number(msg.done)) ? Math.max(0, Number(msg.done)) : 0,
+                total: Number.isFinite(Number(msg.total)) ? Math.max(0, Number(msg.total)) : 0,
+                tier: typeof msg.tier === "string" ? msg.tier : "",
+                status: typeof msg.status === "string" ? msg.status : "",
+              },
+            })
+          }
+          break
+        }
+        case "task_loop.suggest": {
+          // L-4 (#390): non-blocking suggestion card「要继续做完吗？」— click
+          // (not this frame) is the arm gesture.
+          const tid = typeof msg.thread_id === "string" ? msg.thread_id : ""
+          const untickedRaw = Array.isArray(msg.unticked) ? msg.unticked : []
+          const unticked = untickedRaw
+            .filter(
+              (it: any): it is { id: string; text: string } =>
+                it && typeof it.id === "string" && typeof it.text === "string",
+            )
+            .slice(0, 8)
+          if (tid && unticked.length > 0) {
+            dispatch({
+              type: "SET_LOOP_SUGGEST",
+              threadId: tid,
+              unticked,
+              budgetStopped: msg.budget_stopped === true,
+            })
+          }
+          break
+        }
+        case "task_loop.armed": {
+          // Armed ⇒ the suggestion card has served its purpose; drop it.
+          dispatch({ type: "CLEAR_LOOP_SUGGEST" })
+          break
+        }
         case "thread.trashed": {
           // Soft-delete: remove from active list (server no longer returns it)
           dispatch({ type: "REMOVE_THREAD", threadId: msg.thread_id })

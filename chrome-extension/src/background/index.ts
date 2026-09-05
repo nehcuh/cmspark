@@ -1521,6 +1521,11 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "meeting.generate_minutes":
       case "meeting.set_status":
       case "overlay.shell.open":
+      // L-4 (#390) loop activation/stop — both are explicit user gestures from
+      // the sidepanel (suggestion-card click / 停止续跑 button); companion
+      // re-validates user_gesture.
+      case "task_loop.arm":
+      case "task_loop.stop":
       case "ui.open_sidepanel": {
         // Forward to companion. Always call sendResponse so Side Panel callbacks
         // never see "The message port closed before a response was received"

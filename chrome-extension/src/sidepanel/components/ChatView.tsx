@@ -50,6 +50,7 @@ import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
 import { compactBannerKind } from "../utils/context-window-copy"
 import { truncationHonestyChip } from "../chat-shell-copy"
 import { RunProgress } from "./RunProgress"
+import { LoopStatusRow, LoopSuggestCard, backfillLoopView } from "./LoopStatusRow"
 import { listSig } from "./run-progress-view"
 import { CHAT_MARKED_OPTIONS } from "../utils/markdown-gfm"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
@@ -97,6 +98,9 @@ export function ChatView() {
     threads,
     contextCompactedByThreadId,
     hydrating,
+    loopStatusByThreadId,
+    loopSuggest,
+    pendingSecurityConfirmations,
   } = state
   const contextCompacted =
     activeThreadId && contextCompactedByThreadId[activeThreadId]
@@ -225,6 +229,12 @@ export function ChatView() {
         ? "任务板仍有未关闭意图"
         : "编排本轮已结束 · 子任务还在跑"
       : null
+
+  // L-4 (#390): loop status line — live frame verbatim; loop_state backfill
+  // only when no frame has arrived for this thread (panel reopen).
+  const loopView = activeThreadId
+    ? loopStatusByThreadId[activeThreadId] ?? backfillLoopView(activeThread)
+    : null
 
   // Auto-scroll to bottom when transcript / stream grows.
   // Respects user scroll: if the user scrolled up to read history, stop forcing
@@ -489,6 +499,25 @@ export function ChatView() {
             </button>
           </div>
         )}
+        {loopView && activeThreadId ? (
+          <div style={styles.agentMsg}>
+            <LoopStatusRow
+              view={loopView}
+              threadId={activeThreadId}
+              pendingConfirms={pendingSecurityConfirmations.length}
+            />
+          </div>
+        ) : null}
+        {loopSuggest && loopSuggest.threadId === activeThreadId && activeThreadId ? (
+          <div style={styles.agentMsg}>
+            <LoopSuggestCard
+              threadId={activeThreadId}
+              unticked={loopSuggest.unticked}
+              budgetStopped={loopSuggest.budgetStopped}
+              onDismiss={() => dispatch({ type: "CLEAR_LOOP_SUGGEST" })}
+            />
+          </div>
+        ) : null}
       </div>
       <KnowledgeImportModal />
       </div>

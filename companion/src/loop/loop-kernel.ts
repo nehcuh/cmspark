@@ -122,6 +122,18 @@ export function armLoop(
 ): LoopState | null {
   const thread = tm.get(threadId)
   if (!thread || thread.agent_role === "worker") return null
+  // L-4 (#390) plan_readonly=loop_off 强制：#327 计划线程工具面被硬拒，
+  // loop 在此线程永不激活（armLoop 是唯一写入方=单一收口）。计划批准
+  // （execution_policy plan_readonly→default）先改策略再 arm，不受影响。
+  if (thread.execution_policy === "plan_readonly") {
+    audit(opts?.audit, {
+      type: "task_loop.arm_denied",
+      thread_id: threadId,
+      reason: "plan_readonly",
+      armed_by: source,
+    })
+    return null
+  }
   const now = opts?.nowMs ?? Date.now()
   const prev = sanitizeLoopState(thread.loop_state)
   const state: LoopState = {

@@ -96,6 +96,21 @@ export interface Thread {
       tool?: string
     }>
   } | null
+  /**
+   * L-2 (#388) loop kernel state — panel-reopen backfill only. The live status
+   * line renders companion task_loop.status frames verbatim (no re-derivation).
+   */
+  loop_state?: {
+    status:
+      | "active"
+      | "completed"
+      | "stopped_budget"
+      | "stopped_user"
+      | "halt_security"
+      | "stopped_no_checklist"
+    runs_used?: number
+    budget_stop?: "runs" | "wall_clock" | "tokens"
+  } | null
   /** Runtime context budget meta (M1/M2) — distinct from digest */
   runtime_context_budget?: {
     last_at?: string
@@ -894,4 +909,28 @@ export interface VoiceModelProgress {
   file: string
   receivedBytes: number
   totalBytes: number
+}
+
+/**
+ * L-4 (#390) loop status line view — companion task_loop.status frame body,
+ * rendered verbatim (no client re-derivation; tier label is display-tier SoT
+ * from companion deriveDisplayTier). phase awaiting_confirm is additionally
+ * elevated locally while pendingSecurityConfirmations > 0.
+ */
+export interface LoopStatusView {
+  phase:
+    | "advancing"
+    | "rerouting"
+    | "awaiting_confirm"
+    | "blocked"
+    | "done"
+    | "impossible"
+    | "stopped"
+    | "halt"
+  label: string
+  detail: string
+  done: number
+  total: number
+  tier: string
+  status: string
 }
