@@ -104,6 +104,18 @@ export type NetsecTaskAuthLike = {
 } | null | undefined
 
 /**
+ * Failure taxonomy for checkNetsecScope. module_disabled / allowlist_empty are
+ * install-level configuration gaps — those map to SETTINGS_REQUIRED (#322);
+ * the rest stay plain scope denials.
+ */
+export type NetsecScopeFailReason =
+  | "module_disabled"
+  | "allowlist_empty"
+  | "targets_denied"
+  | "task_auth_missing"
+  | "target_not_in_task_auth"
+
+/**
  * Pure pre-L2 / pre-exec scope check for netsec_port_scan (Plan A/B G2).
  * Mirrors netsecPortScan gate order without performing probes.
  */
@@ -113,10 +125,13 @@ export function checkNetsecScope(opts: {
   requireTaskAuth: boolean
   taskAuth?: NetsecTaskAuthLike
   moduleEnabled: boolean
-}): { ok: true; targets: string[]; allowlist: string[] } | { ok: false; error: string } {
+}):
+  | { ok: true; targets: string[]; allowlist: string[] }
+  | { ok: false; error: string; reason?: NetsecScopeFailReason } {
   if (!opts.moduleEnabled) {
     return {
       ok: false,
+      reason: "module_disabled",
       error: "module_disabled:netsec — enable in settings (modules.set_enabled) before use",
     }
   }
@@ -124,6 +139,7 @@ export function checkNetsecScope(opts: {
   if (allowlist.length === 0) {
     return {
       ok: false,
+      reason: "allowlist_empty",
       error: "netsec.target_allowlist is empty — configure allowlist before scanning",
     }
   }
@@ -132,13 +148,14 @@ export function checkNetsecScope(opts: {
   if (targets.length > 16) return { ok: false, error: "max 16 targets per scan" }
 
   const scope = assertTargetsAllowed(targets, allowlist)
-  if (!scope.ok) return { ok: false, error: scope.error }
+  if (!scope.ok) return { ok: false, reason: "targets_denied", error: scope.error }
 
   if (opts.requireTaskAuth) {
     const auth = opts.taskAuth
     if (!auth || auth.authorized !== true) {
       return {
         ok: false,
+        reason: "task_auth_missing",
         error:
           "task authorization required — set netsec_task_auth on thread (user must confirm ownership of targets)",
       }
@@ -148,6 +165,7 @@ export function checkNetsecScope(opts: {
       if (!authTargets.has(t.toLowerCase())) {
         return {
           ok: false,
+          reason: "target_not_in_task_auth",
           error: `target ${t} not included in netsec_task_auth.targets`,
         }
       }

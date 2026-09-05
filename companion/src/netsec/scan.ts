@@ -3,6 +3,7 @@
 import * as net from "net"
 import * as crypto from "crypto"
 import { getModule, requireModule } from "../capability/modules"
+import { settingsRequiredResult } from "../capability/settings-pointer"
 import { assertTargetsAllowed } from "./scope"
 import { appendCapabilityAudit } from "../packs/audit-log"
 
@@ -79,15 +80,26 @@ export async function netsecPortScan(opts: {
   threadId?: string
 }): Promise<{ success: boolean; data?: any; error?: string }> {
   const gate = requireModule("netsec")
-  if (!gate.ok) return { success: false, error: gate.error }
+  if (!gate.ok) {
+    // #322: module off at execute time (e.g. flipped after confirmation) —
+    // same SETTINGS_REQUIRED pointer as the pre-L2 scope check.
+    return settingsRequiredResult("netsec_port_scan", gate.error, "module_disabled") ||
+      { success: false, error: gate.error }
+  }
 
   const mod = getModule("netsec")
   const allowlist = mod?.target_allowlist || []
   if (allowlist.length === 0) {
-    return {
-      success: false,
-      error: "netsec.target_allowlist is empty — configure allowlist before scanning",
-    }
+    return (
+      settingsRequiredResult(
+        "netsec_port_scan",
+        "netsec.target_allowlist is empty — configure allowlist before scanning",
+        "allowlist_empty",
+      ) || {
+        success: false,
+        error: "netsec.target_allowlist is empty — configure allowlist before scanning",
+      }
+    )
   }
 
   const targets = (opts.targets || []).map((t) => t.trim()).filter(Boolean)

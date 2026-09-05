@@ -10,6 +10,11 @@ import DOMPurify from "dompurify"
 import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
 import { extractComputerCardData } from "../utils/computer-utils"
 import {
+  SETTINGS_POINTER_CTA,
+  extractSettingsPointer,
+  settingsPointerLine,
+} from "../utils/settings-pointer"
+import {
   extractShellCardData,
   formatShellMetaLine,
   SHELL_BODY_PREVIEW_CHARS,
@@ -1246,7 +1251,7 @@ function toolResultUserHint(result: any): string | null {
 }
 
 function ToolCallCard({ tc }: { tc: any }) {
-  const { state: agentState } = useAgentStore()
+  const { state: agentState, dispatch } = useAgentStore()
   const [expanded, setExpanded] = useState(false)
   const [visionExpanded, setVisionExpanded] = useState(false)
   const [shellExpanded, setShellExpanded] = useState(false)
@@ -1275,6 +1280,10 @@ function ToolCallCard({ tc }: { tc: any }) {
   const isComputerTask = tc.tool_name === "host_computer"
   const computerCard = isComputerTask ? extractComputerCardData(tc.result) : null
   const computerFailed = computerCard !== null && (computerCard.failed || tc.status === "error")
+
+  // #322: SETTINGS_REQUIRED pointer — restricted capability not configured.
+  // Fixed template + deep-link into the settings accordion; nothing pre-filled.
+  const settingsPointer = hasResult ? extractSettingsPointer(tc.result) : null
 
   // shell_exec: command + stdout/stderr plain text (not buried JSON headers).
   // History reload often omits status — derive from result.success / exit_code.
@@ -1602,6 +1611,44 @@ function ToolCallCard({ tc }: { tc: any }) {
               打开证据目录
             </button>
           )}
+        </div>
+      )}
+      {settingsPointer && (
+        <div
+          style={{
+            ...styles.toolInset,
+            background: tokens.accentSoft,
+            borderLeftColor: tokens.accent,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
+            fontSize: 11,
+            lineHeight: 1.45,
+          }}
+          data-testid="settings-pointer-card"
+        >
+          <span>{settingsPointerLine(settingsPointer)}</span>
+          <button
+            type="button"
+            data-testid="settings-pointer-open-btn"
+            onClick={(e) => {
+              e.stopPropagation()
+              dispatch({
+                type: "OPEN_SETTINGS_SECTION",
+                section: settingsPointer.settings_section,
+              })
+            }}
+            style={{
+              ...styles.toolLinkBtn,
+              marginLeft: "auto",
+              padding: "1px 6px",
+              borderRadius: tokens.radiusSm,
+              background: tokens.bgElevated,
+            }}
+          >
+            {SETTINGS_POINTER_CTA}
+          </button>
         </div>
       )}
       {userHint && (
