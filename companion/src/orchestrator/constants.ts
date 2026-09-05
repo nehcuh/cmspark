@@ -31,6 +31,8 @@ export const WORKER_HARD_DENY = new Set([
   "acp_apply_diff",
   // Control-plane / orchestrator surface — never inherit onto workers (incl. 2nd spawn)
   "spawn_worker",
+  "propose_expert_team",
+  "spawn_expert_team",
   "wait_workers",
   "list_workers",
   "get_worker_status",
@@ -48,6 +50,8 @@ export const WORKER_HARD_DENY = new Set([
 /** Default narrow surface for orchestrator threads. */
 export const ORCHESTRATOR_TOOL_ALLOWLIST = [
   "spawn_worker",
+  "propose_expert_team",
+  "spawn_expert_team",
   "wait_workers",
   "collect_handback",
   "board_read",

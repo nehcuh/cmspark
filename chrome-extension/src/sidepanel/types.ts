@@ -375,6 +375,23 @@ export interface SecurityConfirmationRequest {
    */
   offer_enterprise_session_trust?: boolean
   tab_id?: number
+  /**
+   * #371 spawn_expert_team Confirm Center card. Full member list + HARD_DENY
+   * effective tools + editable task slices. Presence means the sidepanel
+   * strip must send the user to 确认台 (slices must be fully visible).
+   */
+  expert_team?: {
+    will_promote_orchestrator: boolean
+    will_open_board: boolean
+    cap_note: string
+    members: Array<{
+      pack_id: string
+      name: string
+      role_label: string
+      effective_tools: string[]
+      brief: string
+    }>
+  }
 }
 
 /** ADR-015 FleetStrip snapshot from companion fleet.status */

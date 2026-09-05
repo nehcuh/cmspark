@@ -24,6 +24,8 @@ export const COMPANION_TOOLS = [
   "netsec_port_scan",
   // ADR-015 orchestrator
   "spawn_worker",
+  "propose_expert_team",
+  "spawn_expert_team",
   "list_workers",
   "get_worker_status",
   "list_tab_locks",

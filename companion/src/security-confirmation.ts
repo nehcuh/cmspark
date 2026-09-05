@@ -110,6 +110,22 @@ export interface SecurityConfirmationDetails {
     supporting_fact_ids: string[]
     status: string
   }
+  /**
+   * #371: spawn_expert_team Confirm Center card — members, HARD_DENY-effective
+   * tools, full editable task slices, orchestrator/Board promotion.
+   */
+  expertTeam?: {
+    will_promote_orchestrator: boolean
+    will_open_board: boolean
+    cap_note: string
+    members: Array<{
+      pack_id: string
+      name: string
+      role_label: string
+      effective_tools: string[]
+      brief: string
+    }>
+  }
 }
 
 export interface SecurityConfirmationDecision {
@@ -126,6 +142,11 @@ export interface SecurityConfirmationDecision {
    * Only honored when pending.enterpriseSessionTrustOffered (anti-injection G5).
    */
   addToEnterpriseSessionTrust?: boolean
+  /**
+   * #371: origin-bound edited task slices from Confirm Center. Pack ids must
+   * be a subset of the members shown on the card (anti-injection).
+   */
+  expertTeamSlices?: Array<{ pack_id: string; brief: string }>
 }
 
 export interface SecurityConfirmationRequestOptions {
@@ -176,6 +197,8 @@ interface PendingConfirmation {
    * checkbox for this confirmation (shell_exec / netsec_port_scan).
    */
   enterpriseSessionTrustOffered?: boolean
+  /** #371: pack ids shown on the spawn_expert_team card (edit allowlist). */
+  expertTeamPackIds?: string[]
 }
 
 function codePreview(code: string): string {
@@ -278,6 +301,9 @@ export class SecurityConfirmationManager {
           ? details.workerId
           : undefined,
         enterpriseSessionTrustOffered: details.offerEnterpriseSessionTrust === true,
+        expertTeamPackIds: Array.isArray(details.expertTeam?.members)
+          ? details.expertTeam.members.map((m) => String(m.pack_id || "").trim()).filter(Boolean)
+          : undefined,
       })
 
       send({
@@ -331,6 +357,9 @@ export class SecurityConfirmationManager {
         // Plan A: offer enterprise session-trust checkbox (shell/netsec only)
         ...(details.offerEnterpriseSessionTrust === true
           ? { offer_enterprise_session_trust: true }
+          : {}),
+        ...(details.expertTeam
+          ? { expert_team: details.expertTeam }
           : {}),
       })
     })
@@ -403,7 +432,11 @@ export class SecurityConfirmationManager {
     approved: boolean,
     sourceWs?: WebSocket,
     nonceResponse?: string,
-    extras?: { addToSessionTrust?: boolean; addToEnterpriseSessionTrust?: boolean },
+    extras?: {
+      addToSessionTrust?: boolean
+      addToEnterpriseSessionTrust?: boolean
+      expertTeamSlices?: Array<{ pack_id: string; brief: string }>
+    },
   ): ConfirmationRespondResult {
     const pending = this.pending.get(confirmationId)
     if (!pending) return { outcome: "unknown" }
@@ -463,6 +496,16 @@ export class SecurityConfirmationManager {
       pending.enterpriseSessionTrustOffered === true &&
       (pending.toolName === "shell_exec" || pending.toolName === "netsec_port_scan")
         ? { addToEnterpriseSessionTrust: true }
+        : {}),
+      ...(approved && pending.toolName === "spawn_expert_team" && Array.isArray(pending.expertTeamPackIds)
+        ? {
+            expertTeamSlices: (Array.isArray(extras?.expertTeamSlices) ? extras.expertTeamSlices : [])
+              .map((s) => ({
+                pack_id: String(s?.pack_id || "").trim(),
+                brief: String(s?.brief ?? ""),
+              }))
+              .filter((s) => s.pack_id && pending.expertTeamPackIds!.includes(s.pack_id)),
+          }
         : {}),
     }
     pending.resolve(decision)

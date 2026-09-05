@@ -39,6 +39,8 @@ test("C6 isToolAllowed: worker denies HARD_DENY even if whitelist includes them"
   assert.equal(tm.isToolAllowed(t.id, "shell_exec"), false)
   assert.equal(tm.isToolAllowed(t.id, "host_computer"), false)
   assert.equal(tm.isToolAllowed(t.id, "spawn_worker"), false)
+  assert.equal(tm.isToolAllowed(t.id, "spawn_expert_team"), false)
+  assert.equal(tm.isToolAllowed(t.id, "propose_expert_team"), false)
   for (const tool of WORKER_HARD_DENY) {
     assert.equal(tm.isToolAllowed(t.id, tool), false, `worker must deny ${tool}`)
   }

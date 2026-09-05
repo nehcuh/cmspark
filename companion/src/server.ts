@@ -448,7 +448,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   // Audit item 8: register the (ws, sessionId) pair so ws.on("close") can clean
   // up the per-session MCP confirm-cache. Without this, stale approvals leak.
   mcpSessionByWs.set(ws, sessionId)
-  return async (
+  const executor: ToolExecutorFn = async (
     toolCallId: string,
     toolName: string,
     params: any,
@@ -731,6 +731,32 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
             if (!st) return undefined
             return st.surface === "summoner" ? "summoner" : "tray"
           })(),
+          // #371: fire-and-forget worker loop after spawn_expert_team persists the brief.
+          // Do not await the worker LLM run (would deadlock the parent tool call).
+          kickWorkerChat: ({ threadId, message }) => {
+            void (async () => {
+              try {
+                const { chatCreate } = await import("./llm/adapter")
+                await chatCreate({
+                  threadId,
+                  message,
+                  skillIds: [],
+                  skipUserMessage: true,
+                  config: getConfig().llm,
+                  threadManager,
+                  skillEngine,
+                  historyStore,
+                  sendToExtension: broadcastToClients,
+                  executeTool: executor,
+                })
+              } catch (e: any) {
+                logger.warn("expert_team.kick_unhandled", {
+                  thread_id: threadId,
+                  error: e?.message || String(e),
+                })
+              }
+            })()
+          },
         })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
@@ -793,6 +819,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         }),
     })
   }
+  return executor
 }
 
 // --- security.confirmation.response (C10-H1: body in security/confirm-response.ts) ---
