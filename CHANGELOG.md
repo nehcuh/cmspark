@@ -6,6 +6,7 @@
 
 ### Added
 
+- **Composer 巡航档位选择器**：发送键旁芯片，四槽每次确认/网页巡航/全自动巡航/全自动+协议（无值守）。显示值现场 `deriveAutopilotTier`，升档复用设置武装 sheet（短语+后果矩阵），降档一键 `disarmAllFlags`；arm/disarm 写入 `capability-audit.jsonl`。无新 config enum / TTL。[#325](https://github.com/nehcuh/cmspark/issues/325)
 - **召唤器巡航档位只读镜像**：hydrate 下推派生 chip 文案（Swift/HTML 不解三 bool）；点击走既有「打开侧栏/确认台」深链。ACL / 确认方言 / #230 不动。[#324](https://github.com/nehcuh/cmspark/issues/324)
 
 ## [0.5.9] — 2026-09-04

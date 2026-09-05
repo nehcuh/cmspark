@@ -8,11 +8,13 @@ import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
 import { normalizeVisionBaseUrl } from "../../llm/vision-pipeline"
 import {
   findArmingSecurityFlags,
+  findDisarmingSecurityFlags,
   isValidSecurityArmPhrase,
   securityArmRejectedError,
   type SecurityArmFlag,
 } from "../../security-arm"
 import { logger } from "../../logger"
+import { appendCapabilityAudit } from "../../packs/audit-log"
 import { redactConfigForWire } from "../../config-redact"
 import { normalizeLocalTerminalApp } from "../../acp/open-local-terminal"
 
@@ -149,9 +151,14 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       // Disarm and already-true resend (handleSave snapshot) need no phrase.
       // Does not touch CU L2 / shell forceConfirm invariants (server.ts).
       let armingFlags: SecurityArmFlag[] = []
+      let disarmingFlags: SecurityArmFlag[] = []
       if (normalized.security) {
         const currentSec = getConfig().security || {}
         armingFlags = findArmingSecurityFlags(
+          normalized.security as Record<string, unknown>,
+          currentSec as unknown as Record<string, unknown>,
+        )
+        disarmingFlags = findDisarmingSecurityFlags(
           normalized.security as Record<string, unknown>,
           currentSec as unknown as Record<string, unknown>,
         )
@@ -280,6 +287,24 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         logger.warn("security.flag_armed", {
           flags: armingFlags,
           source: "ws_phrase_confirmed",
+        })
+        appendCapabilityAudit({
+          type: "security.flag_armed",
+          at: new Date().toISOString(),
+          flags: armingFlags,
+          source: "ws_config_set",
+        })
+      }
+      if (disarmingFlags.length > 0) {
+        logger.info("security.flag_disarmed", {
+          flags: disarmingFlags,
+          source: "ws_config_set",
+        })
+        appendCapabilityAudit({
+          type: "security.flag_disarmed",
+          at: new Date().toISOString(),
+          flags: disarmingFlags,
+          source: "ws_config_set",
         })
       }
       return {

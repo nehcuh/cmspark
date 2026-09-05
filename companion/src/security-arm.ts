@@ -45,6 +45,26 @@ export function findArmingSecurityFlags(
   return arming
 }
 
+/**
+ * Flags present in `proposed` that transition from true → not-true relative to `current`.
+ * Only keys present on `proposed` are considered (partial security objects).
+ */
+export function findDisarmingSecurityFlags(
+  proposed: Record<string, unknown> | null | undefined,
+  current: Record<string, unknown> | null | undefined,
+): SecurityArmFlag[] {
+  if (!proposed || typeof proposed !== "object") return []
+  const cur = current && typeof current === "object" ? current : {}
+  const disarming: SecurityArmFlag[] = []
+  for (const key of SECURITY_ARM_FLAGS) {
+    if (!(key in proposed)) continue
+    if (!isTruthyFlag(proposed[key]) && isTruthyFlag(cur[key])) {
+      disarming.push(key)
+    }
+  }
+  return disarming
+}
+
 export function isValidSecurityArmPhrase(phrase: unknown): boolean {
   return typeof phrase === "string" && phrase.trim() === SECURITY_ARM_CONFIRM_PHRASE
 }

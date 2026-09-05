@@ -230,6 +230,74 @@ test("P1-1: nested security.allow_all_schemes true without phrase → reject", a
   assert.equal(getConfig().security.allow_all_schemes, false)
 })
 
+function readCapabilityAudit(): string {
+  const p = path.join(getConfigDir(), "logs", "capability-audit.jsonl")
+  try {
+    return fs.readFileSync(p, "utf8")
+  } catch {
+    return ""
+  }
+}
+
+function resetCapabilityAudit() {
+  const p = path.join(getConfigDir(), "logs", "capability-audit.jsonl")
+  try {
+    fs.unlinkSync(p)
+  } catch {
+    /* missing is fine */
+  }
+}
+
+test("#325 config.set arm writes capability-audit.jsonl security.flag_armed", async () => {
+  resetSecurityFlags()
+  resetCapabilityAudit()
+  const r: any = await postConfigSet(
+    { auto_approve_dangerous: true },
+    { confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE },
+  )
+  assert.equal(r.type, "config.updated")
+  const lines = readCapabilityAudit()
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+  const armed = lines.filter((e: { type?: string }) => e.type === "security.flag_armed")
+  assert.equal(armed.length, 1)
+  assert.ok((armed[0].flags as string[]).includes("auto_approve_dangerous"))
+  assert.equal(armed[0].source, "ws_config_set")
+  assert.ok(typeof armed[0].at === "string" && armed[0].at.length > 0)
+})
+
+test("#325 config.set disarm writes capability-audit.jsonl security.flag_disarmed", async () => {
+  resetSecurityFlags({ auto_approve_dangerous: true, allow_all_schemes: true })
+  resetCapabilityAudit()
+  const r: any = await postConfigSet({
+    auto_approve_dangerous: false,
+    allow_all_schemes: false,
+  })
+  assert.equal(r.type, "config.updated")
+  const lines = readCapabilityAudit()
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+  const disarmed = lines.filter((e: { type?: string }) => e.type === "security.flag_disarmed")
+  assert.equal(disarmed.length, 1)
+  const flags = disarmed[0].flags as string[]
+  assert.ok(flags.includes("auto_approve_dangerous"))
+  assert.ok(flags.includes("allow_all_schemes"))
+  assert.equal(disarmed[0].source, "ws_config_set")
+})
+
+test("#325 rejected arm without phrase does not write flag_armed jsonl", async () => {
+  resetSecurityFlags()
+  resetCapabilityAudit()
+  const r: any = await postConfigSet({ auto_approve_dangerous: true })
+  assert.equal(r.type, "error")
+  const blob = readCapabilityAudit()
+  assert.equal(blob.includes("security.flag_armed"), false)
+})
+
 test("P1-1: already-true resend without phrase → success (Save snapshot)", async () => {
   resetSecurityFlags({ allow_all_schemes: true, auto_approve_dangerous: true })
   const r: any = await postConfigSet({
