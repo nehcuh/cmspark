@@ -62,7 +62,10 @@ import {
   bannedSiteOpResult,
   formatSiteOpMemoryPrompt,
   thawTabIfPresent,
-  siteOpExperienceLine,
+  autoSiteOpExperienceLine,
+  markOriginExperiencePersisted,
+  hydratePersistedSiteOpExperience,
+  collectOriginFailedLocators,
   isCdpInteractiveTool,
   shouldThawAfterSuccess,
   shouldPersistSiteOpExperience,
@@ -576,6 +579,20 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   const knowledgeRoutingWire = builtPrompt.knowledge_routing
     ? { groupmap: builtPrompt.knowledge_routing.groupmap, m: builtPrompt.knowledge_routing.s_pre.length }
     : undefined
+  // #358: restore persisted [auto] site experiences for this origin into the
+  // thread's machine bans (cross-thread dual channel together with the prompt below).
+  try {
+    if (hostname) {
+      const siteSkillName = hostname.replace(/^www\./, "").replace(/\./g, "-")
+      hydratePersistedSiteOpExperience(
+        threadId,
+        hostname,
+        (skillEngine.get(siteSkillName)?.entries || []) as Array<{ content: string; stale?: boolean }>,
+      )
+    }
+  } catch {
+    /* best-effort hydrate */
+  }
   const siteOpPrompt = formatSiteOpMemoryPrompt(threadId, hostname)
 
   // Inject safety-guard skills at the END of system prompt (highest priority)
@@ -1690,16 +1707,25 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               failCode !== "SITE_OP_ESCALATE"
             ) {
               const rec = recordSiteOpFailure(threadId, toolName, execParams, failCode, tabUrl)
-              if (rec.justBanned) {
+              // #358: persist trigger is the (thread, origin) aggregate threshold,
+              // not the per-locator ban — cross-tool/locator failure storms are the
+              // blind spot that never fired justBanned.
+              if (rec.originPersistDue) {
                 try {
                   const host = rec.origin.replace(/^https?:\/\//, "").split("/")[0] || hostname || "site"
                   const skillName = host.replace(/\./g, "-")
-                  const content = siteOpExperienceLine(rec.origin, toolName, rec.locator, failCode || "UNKNOWN")
-                  const existing = skillEngine.get(skillName)
+                  let existing = skillEngine.get(skillName)
                   const prior = (existing?.entries || []).map((e: { content?: string }) => String(e.content || ""))
-                  if (shouldPersistSiteOpExperience(prior, content)) {
+                  // MAJOR-3: persist ALL failed paths of this origin (cap'd,
+                  // per-line injection-gated), not just the threshold-crossing
+                  // call — the hgrsix form fails a fresh locator every round.
+                  const failedPaths = collectOriginFailedLocators(threadId, rec.origin)
+                  let persistedLines = 0
+                  for (const it of failedPaths) {
+                    const content = autoSiteOpExperienceLine(rec.origin, it.tool, it.locator, it.code)
+                    if (!shouldPersistSiteOpExperience(prior, content)) continue
                     const entry = {
-                      id: `ban-${content.slice(0, 48)}`,
+                      id: `auto-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
                       category: "problem" as const,
                       content,
                       recorded_at: new Date().toISOString(),
@@ -1711,8 +1737,22 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                     if (existing) {
                       skillEngine.addEntry(skillName, entry)
                     } else {
-                      skillEngine.createExperienceSkill(skillName, "site_knowledge", host, ["site-op-memory"], entry)
+                      skillEngine.createExperienceSkill(skillName, "site_knowledge", host, ["site-op-memory", "auto"], entry)
+                      existing = skillEngine.get(skillName)
                     }
+                    prior.push(content)
+                    persistedLines += 1
+                  }
+                  // one auto persist per (thread, origin) per process; a full
+                  // dedup-skip also counts — and then stays silent (no info).
+                  markOriginExperiencePersisted(threadId, rec.origin)
+                  if (persistedLines > 0) {
+                    logger.info("site_op.auto_experience_persisted", {
+                      origin: rec.origin,
+                      tool: toolName,
+                      code: failCode || "UNKNOWN",
+                      lines: persistedLines,
+                    })
                   }
                 } catch {
                   /* best-effort persist */

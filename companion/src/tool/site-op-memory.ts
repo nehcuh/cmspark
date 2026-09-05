@@ -59,6 +59,16 @@ export function shouldThawAfterSuccess(toolName: string): boolean {
 
 export const SITE_OP_EXPERIENCE_MAX = 24
 
+/**
+ * #357/#358 shared primitive: per (thread, origin) aggregated CDP-interactive
+ * failure counter (`originFails`, threshold SITE_ORIGIN_FAIL_ESCALATE).
+ * Cross-tool, cross-locator — the hgrsix blind spot where every failure had a
+ * fresh locator so per-locator bans never fired. #357 escalates the peek on it;
+ * #358 auto-persists site experience off the same counter.
+ */
+/** Max persisted entries rehydrated into a fresh thread per origin. */
+export const SITE_ORIGIN_HYDRATE_MAX = 8
+
 const ATTACH_CODES = new Set(["CDP_ATTACH_FAILED", "WRONG_ORIGIN"])
 
 export function isCdpInteractiveTool(toolName: string): boolean {
@@ -124,8 +134,56 @@ function originFailKey(origin: string): string {
 
 export function shouldPersistSiteOpExperience(existingContents: string[], content: string): boolean {
   if (!content || existingContents.includes(content)) return false
-  const n = existingContents.filter((c) => c.startsWith("DO NOT retry")).length
+  const n = existingContents.filter(
+    (c) => c.startsWith("DO NOT retry") || c.startsWith("[auto] DO NOT retry"),
+  ).length
   return n < SITE_OP_EXPERIENCE_MAX
+}
+
+/**
+ * #358: the only free dimension of a persisted auto-experience line is the
+ * locator fragment (LLM-controlled tool params). Refuse injection-style text so
+ * a poisoned locator cannot become a stored "experience" that later re-enters
+ * prompts via hydration. This is the structured-validation gate — the LLM's own
+ * prose never reaches the persist path at all (content is machine-assembled).
+ */
+const SITE_OP_LOCATOR_INJECTION_PATTERNS: RegExp[] = [
+  /ignore\s+(all\s+)?(previous|prior|above|earlier)/i,
+  /disregard\s+(all\s+)?(previous|prior|above|earlier)/i,
+  /(system|developer)\s+(prompt|message|instruction)/i,
+  /\bpretend\b.{0,24}\b(you\s+are|as\s+if)\b/i,
+  /\bnew\s+instructions?\s*:/i,
+  /\b(exfiltrat|steal|leak|send|upload)\b[^.]{0,40}\b(cookie|token|password|secret|credential|api[_-]?key)/i,
+  /\b(call|invoke|run|execute)\b\s+(shell_exec|osascript|host_computer|host_write|netsec)/i,
+]
+
+export function isSafeSiteOpLocatorText(text: string): boolean {
+  const t = String(text || "")
+  return !SITE_OP_LOCATOR_INJECTION_PATTERNS.some((re) => re.test(t))
+}
+
+/** #358: machine-assembled, [auto]-marked experience line (never LLM prose). */
+export function autoSiteOpExperienceLine(origin: string, tool: string, locator: string, code: string): string {
+  return `[auto] DO NOT retry ${tool} ${locator} on ${origin}: last ${code}`
+}
+
+const PERSISTED_LINE_RE =
+  /^\[auto\] DO NOT retry ([a-z_]+) (.+?) on (https?:\/\/[^\s]+): last ([A-Z0-9_]+)$/
+
+/**
+ * Strict inverse of autoSiteOpExperienceLine. Only exact-template [auto] lines
+ * parse — free-form text, manual experience lines, or anything a user/hand-edit
+ * mangled returns null and can never hydrate into a machine ban or a prompt.
+ */
+export function parsePersistedSiteOpLine(content: string): {
+  origin: string
+  tool: string
+  locator: string
+  code: string
+} | null {
+  const m = PERSISTED_LINE_RE.exec(String(content || "").trim())
+  if (!m) return null
+  return { tool: m[1], locator: m[2], origin: m[3], code: m[4] }
 }
 
 export type SiteOpBan =
@@ -138,13 +196,16 @@ export type SiteOpBan =
 
 export type OriginCdpFailState = { fails: number; lastCode: string }
 
-type LocatorState = { fails: number; lastCode: string }
+type LocatorState = { fails: number; lastCode: string; persisted?: boolean }
 
 type ThreadMem = {
   locators: Record<string, LocatorState>
   frozenTabs: Set<number>
-  /** #357 origin streak; #358 may persist via snapshot/hydrate. */
+  /** #357 origin streak — the single shared counter (#358 persist keys off it too). */
   originFails: Record<string, OriginCdpFailState>
+  /** #358: origins already auto-persisted this process (once per thread+origin). */
+  persistedOrigins: Set<string>
+  hydratedOrigins: Set<string>
 }
 
 const mem = new Map<string, ThreadMem>()
@@ -156,10 +217,18 @@ export function resetSiteOpMemoryForTests(): void {
 function stateFor(threadId: string): ThreadMem {
   let s = mem.get(threadId)
   if (!s) {
-    s = { locators: {}, frozenTabs: new Set(), originFails: {} }
+    s = {
+      locators: {},
+      frozenTabs: new Set(),
+      originFails: {},
+      persistedOrigins: new Set(),
+      hydratedOrigins: new Set(),
+    }
     mem.set(threadId, s)
-  } else if (!s.originFails) {
-    s.originFails = {}
+  } else {
+    if (!s.originFails) s.originFails = {}
+    if (!s.persistedOrigins) s.persistedOrigins = new Set()
+    if (!s.hydratedOrigins) s.hydratedOrigins = new Set()
   }
   return s
 }
@@ -273,10 +342,20 @@ export function recordSiteOpFailure(
   originFails: number
   /** True when this http(s) origin just reached / is at the escalate threshold. Not justBanned. */
   originEscalateDue: boolean
+  /** #358: threshold met on the shared counter and nothing persisted for this origin this process. */
+  originPersistDue: boolean
 } {
   const origin = originForSiteOp(params, tabUrl)
   const locator = locatorKeyForTool(toolName, params)
-  const empty = { justBanned: false, origin, locator, fails: 0, originFails: 0, originEscalateDue: false }
+  const empty = {
+    justBanned: false,
+    origin,
+    locator,
+    fails: 0,
+    originFails: 0,
+    originEscalateDue: false,
+    originPersistDue: false,
+  }
   if (!isCdpInteractiveTool(toolName)) return empty
   const s = stateFor(threadId)
   const tabId = typeof params.tabId === "number" ? params.tabId : undefined
@@ -284,6 +363,8 @@ export function recordSiteOpFailure(
   if (ATTACH_CODES.has(code) && tabId != null) {
     const was = s.frozenTabs.has(tabId)
     s.frozenTabs.add(tabId)
+    // Attach failure is transport, not an interaction-path failure — it never
+    // aggregates toward the origin counter (#357 peek / #358 persist inherit).
     return {
       justBanned: !was,
       origin,
@@ -291,6 +372,7 @@ export function recordSiteOpFailure(
       fails: SITE_ATTACH_FAIL_BAN,
       originFails: isAggregatableSiteOrigin(origin) ? (s.originFails[origin]?.fails || 0) : 0,
       originEscalateDue: false,
+      originPersistDue: false,
     }
   }
   const k = locatorMapKey(origin, toolName, locator)
@@ -307,6 +389,7 @@ export function recordSiteOpFailure(
   }
   let originFails = 0
   let originEscalateDue = false
+  let originPersistDue = false
   if (isAggregatableSiteOrigin(origin)) {
     const ost = s.originFails[origin] || { fails: 0, lastCode: code }
     ost.fails += 1
@@ -314,6 +397,7 @@ export function recordSiteOpFailure(
     s.originFails[origin] = ost
     originFails = ost.fails
     originEscalateDue = ost.fails >= SITE_ORIGIN_FAIL_ESCALATE
+    originPersistDue = originEscalateDue && !s.persistedOrigins.has(origin)
   }
   return {
     justBanned: prev.fails === SITE_LOCATOR_FAIL_BAN,
@@ -322,7 +406,94 @@ export function recordSiteOpFailure(
     fails: prev.fails,
     originFails,
     originEscalateDue,
+    originPersistDue,
   }
+}
+
+/** #358: call after a persist attempt (even if every line dedup-skipped) — once per thread+origin per process. */
+export function markOriginExperiencePersisted(threadId: string, origin: string): void {
+  const key = originFailKey(origin)
+  if (!isAggregatableSiteOrigin(key)) return
+  stateFor(threadId).persistedOrigins.add(key)
+}
+
+/**
+ * #358 (round-2 MAJOR-3): every distinct failed (tool, locator) path recorded for
+ * this origin, in failure order, per-line injection-gated — so the hgrsix form
+ * (fresh locator each round) persists ALL dead paths, not just the crossing one.
+ */
+export function collectOriginFailedLocators(
+  threadId: string,
+  origin: string,
+  cap = SITE_ORIGIN_HYDRATE_MAX,
+): Array<{ tool: string; locator: string; code: string; fails: number }> {
+  const key = originFailKey(origin)
+  if (!isAggregatableSiteOrigin(key)) return []
+  const s = stateFor(threadId)
+  const prefix = `${key}|`
+  const out: Array<{ tool: string; locator: string; code: string; fails: number }> = []
+  for (const [k, st] of Object.entries(s.locators)) {
+    if (!k.startsWith(prefix)) continue
+    const [o, tool, locator] = k.split("|")
+    if (o !== key || tool === "*" || !locator || locator === "none" || locator === "attach") continue
+    if (st.fails < 1) continue
+    if (!isSafeSiteOpLocatorText(locator)) continue
+    out.push({ tool, locator, code: st.lastCode, fails: st.fails })
+    if (out.length >= cap) break
+  }
+  return out
+}
+
+/**
+ * #358 cross-thread hydration: restore persisted [auto] experience entries into
+ * a fresh thread's in-memory locator bans. Only exact-template [auto] lines
+ * parse; stale (user-refuted) and off-host entries are skipped. Restored bans
+ * are per-locator (`*` tool-hop key) — never a whole-origin ban.
+ * Returns the number of restored entries (for tests/telemetry).
+ */
+export function hydratePersistedSiteOpExperience(
+  threadId: string,
+  hostname: string,
+  entries: ReadonlyArray<{ content: string; stale?: boolean }>,
+): number {
+  const host = String(hostname || "")
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./i, "")
+    .split("/")[0]
+    .toLowerCase()
+  if (!host) return 0
+  const originHint = host
+  const s = stateFor(threadId)
+  if (s.hydratedOrigins.has(originHint)) return 0
+  s.hydratedOrigins.add(originHint)
+  let restored = 0
+  for (const e of entries) {
+    if (e.stale) continue
+    const parsed = parsePersistedSiteOpLine(e.content)
+    if (!parsed) continue
+    // Round-2 MAJOR-2: disk entries are user-editable — re-run the injection gate
+    // here so a template-conformant [auto] line with a poisoned locator cannot
+    // ride past the persist-side check into a machine ban / prompt.
+    if (!isSafeSiteOpLocatorText(parsed.locator)) continue
+    const entryHost = parsed.origin
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./i, "")
+      .split("/")[0]
+      .toLowerCase()
+    if (entryHost !== originHint) continue
+    const k = locatorMapKey(parsed.origin, "*", parsed.locator)
+    const prev = s.locators[k]
+    if (!prev) {
+      s.locators[k] = {
+        fails: SITE_LOCATOR_FAIL_BAN,
+        lastCode: parsed.code,
+        persisted: true,
+      }
+      restored += 1
+      if (restored >= SITE_ORIGIN_HYDRATE_MAX) break
+    }
+  }
+  return restored
 }
 
 /** Only navigate/set_tab_url on this tabId may thaw (debugger might work again). list_tabs/create_tab must not. */
@@ -417,10 +588,18 @@ export function formatSiteOpMemoryPrompt(threadId: string, hostname?: string): s
     if (hostHint && origin && !origin.includes(hostHint) && !hostHint.includes(origin.replace(/^https?:\/\//, ""))) {
       continue
     }
-    banned.push(`- ${tool} ${locator} on ${origin} (${st.lastCode}, ${st.fails}×)`)
+    banned.push(
+      `- ${tool} ${locator} on ${origin} (${st.lastCode}${st.persisted ? ", persisted" : ""}, ${st.fails}×)`,
+    )
   }
   if (banned.length) {
-    lines.push("Do NOT retry these locators (site op-memory):\n" + banned.slice(0, 24).join("\n"))
+    lines.push(
+      "Do NOT retry these locators (site op-memory):\n" +
+        banned.slice(0, 24).join("\n") +
+        "\nPersisted failures carry over from earlier sessions. Prefer an alternative path " +
+        "(different locator, navigate to reset, host_computer under Rule 12 confirm, or osascript_eval) " +
+        "instead of re-probing the same locator.",
+    )
   }
   const originEsc: string[] = []
   for (const [origin, st] of Object.entries(s.originFails || {})) {
