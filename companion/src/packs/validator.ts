@@ -272,6 +272,11 @@ export function validatePackDir(packDir: string): ValidateResult {
     return { ok: false, error: "board_mode must be a boolean when present" }
   }
 
+  // #369: disabled is optional (absent = enabled); a present value must be boolean.
+  if (doc.disabled !== undefined && typeof doc.disabled !== "boolean") {
+    return { ok: false, error: "disabled must be a boolean when present" }
+  }
+
   // Product B: parse trust block (user origin only; already gated by scanForbidden)
   let trust: PackManifest["trust"] | undefined
   if (doc.trust !== undefined) {
@@ -302,6 +307,7 @@ export function validatePackDir(packDir: string): ValidateResult {
     version: doc.version.trim(),
     channel: doc.channel as PackManifest["channel"],
     kind: doc.kind === "mission" || doc.kind === "expert" ? doc.kind : undefined,
+    disabled: doc.disabled === true ? true : undefined,
     min_capability: doc.min_capability as PackManifest["min_capability"],
     requires_modules: requires,
     skills,

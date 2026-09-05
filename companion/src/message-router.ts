@@ -4004,6 +4004,12 @@ export async function handleMessage(
       if (!r.ok) return { type: "error", error: r.error }
       return { type: "pack.get", pack: r.pack }
     }
+    case "pack.expert_panel": {
+      // #369: kind=expert packs — HARD_DENY 后有效工具面 + spawn 用量（读审计，零新埋点）。
+      const { getExpertPanelData } = await import("./packs/expert-panel")
+      const tid = typeof rest.thread_id === "string" && rest.thread_id.trim() ? rest.thread_id.trim() : null
+      return { type: "pack.expert_panel", experts: getExpertPanelData(threadManager, tid) }
+    }
     case "pack.save_user": {
       // UI-only: user-authored scene templates (system prompt + skills + MCP)
       if (rest.user_gesture !== true) {
@@ -4047,6 +4053,9 @@ export async function handleMessage(
           description: typeof rest.description === "string" ? rest.description : undefined,
           system_prompt_append:
             typeof rest.system_prompt_append === "string" ? rest.system_prompt_append : "",
+          // #369: user experts save with kind=expert; omit preserves on update.
+          kind: rest.kind === "expert" || rest.kind === "mission" ? rest.kind : undefined,
+          disabled: typeof rest.disabled === "boolean" ? rest.disabled : undefined,
           skill_ids: Array.isArray(rest.skill_ids) ? rest.skill_ids : [],
           knowledge_ids: Array.isArray(rest.knowledge_ids) ? rest.knowledge_ids : [],
           mcp_server_ids: Array.isArray(rest.mcp_server_ids) ? rest.mcp_server_ids : [],

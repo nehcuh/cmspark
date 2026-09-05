@@ -1035,6 +1035,13 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.pack_id !== "string" || !m.pack_id) return { valid: false, error: "pack.get requires pack_id" }
       return { valid: true }
     },
+    // #369: read-only expert panel data (effective tools + usage); thread_id optional
+    "pack.expert_panel": (m) => {
+      if (m.thread_id !== undefined && typeof m.thread_id !== "string") {
+        return { valid: false, error: "pack.expert_panel thread_id must be a string when present" }
+      }
+      return { valid: true }
+    },
     "pack.save_user": (m) => {
       if (typeof m.name !== "string" || !m.name.trim()) {
         return { valid: false, error: "pack.save_user requires name" }
@@ -1044,6 +1051,13 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       if (m.user_gesture !== true) {
         return { valid: false, error: "pack.save_user requires user_gesture:true (Side Panel only)" }
+      }
+      // #369: kind/disabled optional but must be well-formed when present
+      if (m.kind !== undefined && m.kind !== "mission" && m.kind !== "expert") {
+        return { valid: false, error: "pack.save_user kind must be mission|expert" }
+      }
+      if (m.disabled !== undefined && typeof m.disabled !== "boolean") {
+        return { valid: false, error: "pack.save_user disabled must be a boolean" }
       }
       return { valid: true }
     },

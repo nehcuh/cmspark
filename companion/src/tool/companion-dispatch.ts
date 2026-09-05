@@ -147,6 +147,15 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       if (!tokenOk) {
         return { success: false, error: "Invalid or expired security token for spawn_worker" }
       }
+      // #369: operator-disabled pack — spawn_worker(pack_id) refuses with a stable code
+      // (before any worker/promotion side effects; editor stays read-only openable).
+      if (params.pack_id && typeof params.pack_id === "string") {
+        const { getPackSpawnGate } = await import("../packs/expert-panel")
+        const gate = getPackSpawnGate(String(params.pack_id))
+        if (!gate.ok) {
+          return { success: false, error: gate.error, data: { error_code: gate.code } }
+        }
+      }
       const { spawnWorkerThread, restoreParentAfterFailedSpawn } = await import("../orchestrator/spawn")
       const intentId =
         typeof params.intent_id === "string" && params.intent_id.trim()

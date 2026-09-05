@@ -1375,6 +1375,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "pack.unapply":
       case "pack.uninstall":
       case "pack.get":
+      // #369: expert segment — HARD_DENY 后有效工具面 + spawn 用量（read-only）
+      case "pack.expert_panel":
       case "pack.save_user":
       case "pack.delete_user":
       case "pack.suggest_config":

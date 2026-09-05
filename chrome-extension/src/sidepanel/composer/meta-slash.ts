@@ -216,8 +216,8 @@ export const COMPOSE_SECTIONS: ComposeSection[] = [
     id: "packs",
     panelId: "packs",
     label: "Packs",
-    titleZh: "场景",
-    hint: "场景模板 · 会议工作台 · 工作区",
+    titleZh: "场景与专家",
+    hint: "场景模板 · 专家 · 会议工作台 · 工作区",
     group: "connect",
   },
   {
