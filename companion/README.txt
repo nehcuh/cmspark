@@ -1,11 +1,11 @@
-CMspark Browser Agent v0.5.9
+CMspark Browser Agent v0.6.0
 ===============================
 
 浏览器 AI 助手 — 让 AI 帮你操作网页
 
 ## 安装
 
-1. 解压 cmspark-v0.5.9.zip 到任意文件夹
+1. 解压 cmspark-v0.6.0.zip 到任意文件夹
 2. 双击 install.bat
 3. 在 Chrome 中加载扩展（按屏幕提示操作）
 4. 完成！

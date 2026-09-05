@@ -63,6 +63,8 @@ Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **
 | **组合面** | 用户环境变量（Secrets） | shell/MCP 子进程密钥，不进聊天粘贴 | [user-env](docs/user-env.md) · [ADR-019](docs/adr/019-user-env-secrets.md) |
 | **横切** | 安全确认 / Confirm Center | 高危确认、域白名单、Cockpit 审批/急停 | [confirm-center-user-guide](docs/confirm-center-user-guide.md) |
 | **Autonomy** | Multi-Agent · Mission Board（P0） | Orchestrator + tab 锁；黑板 `board_*` | [multi-agent-user-guide](docs/multi-agent-user-guide.md) |
+| **Autonomy** | 巡航档位 · plan_readonly · 无人值守 loop | 发送键旁四档芯片（#325）；线程级只读计划帽（#327）；L-1/L-3/L-5 loop（#386–#391，**默认关**；独立 ADR 待补） | [CHANGELOG `[0.6.0]`](CHANGELOG.md) |
+| **组合面** | 专家团队（`kind: expert`） | 七个预置角色 Pack + 一张 L2 卡组队（#366–#371；persona ≠ 权限） | [CHANGELOG `[0.6.0]`](CHANGELOG.md) · [ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)/[020](docs/adr/020-capability-model-three-axes.md) 修订段 |
 | **L2 · 深层 / opt-in** | Computer Use · Host Use · Apps | 桌面操控、宿主读写/应用白名单；平台相关、默认关 | [computer-use-user-guide](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) |
 | **运维** | Daemon · 托盘 · 配对 | 开机自启；macOS 托盘 + 配对码 | 本页 [后台常驻服务](#后台常驻服务跨平台) |
 
@@ -836,8 +838,8 @@ make package
 ```bash
 make package-macos
 # 产出：
-#   dist-package/CMspark-v0.5.9-macOS.dmg   ← 安装包
-#   dist-package/cmspark-v0.5.9-macos-arm64.zip  ← 原始压缩包
+#   dist-package/CMspark-v0.6.0-macOS.dmg   ← 安装包
+#   dist-package/cmspark-v0.6.0-macos-arm64.zip  ← 原始压缩包
 ```
 
 Windows 打包流程（**官方 zip + Setup.exe / package.sh**）：
@@ -971,4 +973,4 @@ cmspark/
 
 ---
 
-> **当前阶段（0.5.9）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**；**知识 CRUD 诚实**（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（0.6.0）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**；**知识 CRUD 诚实**（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）；**侧栏 UI 重构 + 巡航档位/plan_readonly/无人值守 loop 三件套 + 专家团队 v1 + CU 完整性链**（0.6.0 主题，值守默认关）；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
