@@ -22,11 +22,16 @@
  *      (JWT / Bearer / PEM / known API-key prefixes). SENSITIVE_KEY_RE only
  *      scans key NAMES; free text had zero coverage before this ticket.
  *   2. hasExfilShape — code-exfil heuristic on the evaluate CODE
- *      (document.cookie / localStorage / password-input .value / csrf meta
- *      and similar DOM direct-read theft paths). Hardening layer, NOT a
- *      security boundary — it can be evaded by encoding.
+ *      (document.cookie — dot AND bracket notation — / localStorage /
+ *      password-input .value / csrf meta and similar DOM direct-read theft
+ *      paths), plus a cookie-shaped RESULT-value check (jar serialization /
+ *      well-known cookie name=). Hardening layer, NOT a security boundary —
+ *      it can be evaded by encoding.
  *   3. get_page_text / get_page_html results go through gate 1 too (they
  *      previously passed through unredacted — an existing inconsistency).
+ * Plus (post-review MAJOR-2): a key-NAME scan of the released payload —
+ * {password}/{token}/{Authorization}/{api_key}-style fields fail closed even
+ * when their values carry no secret shape.
  *
  * NEVER (unchanged): cookie values / tokens / Authorization headers / key
  * fields must never land on disk.
@@ -126,10 +131,12 @@ export const READ_RELEASE_MAX_CHARS = MAX_TOOL_RESULT_CHARS
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   // JWT: three base64url segments; the header segment always starts "eyJ".
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\b/,
-  // Bearer token carried in free text (Authorization-style).
-  /\bBearer\s+[A-Za-z0-9._~+\/-]{8,}={0,2}\b/i,
-  // PEM / OpenSSH armored block header (-----BEGIN ... -----).
-  /-----BEGIN [A-Z0-9 ]{2,48}-----/,
+  // Bearer token carried in free text (Authorization-style). Separator after
+  // "Bearer" is optional (`Authorization:Bearer<tok>` / `Bearer:<tok>`) —
+  // review NIT-3: whitespace-only separation missed real headers.
+  /\bBearer[:\s]?[A-Za-z0-9._~+\/-]{8,}={0,2}/i,
+  // PEM / OpenSSH armored block header (-----BEGIN ... -----), any case.
+  /-----BEGIN [A-Z0-9 ]{2,48}-----/i,
   // Well-known API key prefixes.
   /\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{8,}\b/, // Stripe
   /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}\b/, // OpenAI / Anthropic
@@ -162,6 +169,10 @@ const EXFIL_CODE_PATTERNS: readonly RegExp[] = [
   /\bdocument\.cookie\b/,
   /\b(?:localStorage|sessionStorage)\b/,
   /\bindexedDB\b/,
+  // Bracket-notation reads (review MAJOR-1): document["cookie"] /
+  // window['localStorage'] are everyday JS, not encoding evasion — the dot
+  // patterns above miss them and cookie values would land on disk verbatim.
+  /\[\s*['"`](?:cookie|localStorage|sessionStorage|indexedDB)['"`]\s*\]/,
   // password inputs: input[type=password] / type="password" (+ .value reads)
   /\btype\s*=\s*["'`]?password["'`]?/i,
   // csrf / authenticity-token meta tags and hidden fields
@@ -169,6 +180,23 @@ const EXFIL_CODE_PATTERNS: readonly RegExp[] = [
   /\bname\s*=\s*["'`](?:_?csrf|csrfmiddlewaretoken|authenticity_token|_token)["'`]/i,
   /\bquerySelector(?:All)?\s*\([^)]*(?:password|csrf|authenticity_token)/i,
 ]
+
+// evaluate RESULT-side cookie heuristic (review MAJOR-1, second half): when the
+// code shape scan misses a cookie read, the returned value itself is often a
+// cookie-jar serialization ("sid=abc; theme=light") or a well-known cookie
+// name=. Applied to evaluate results only — page prose triggers these shapes
+// too often, and fail-closed there would re-amnesia the read tier.
+const COOKIE_JAR_RE = /[A-Za-z0-9_.-]{1,64}=[^;"\s]{1,4096};\s*[A-Za-z0-9_.-]{1,64}=/
+const COOKIE_NAME_EQ_RE =
+  /\b(?:connect\.sid|sid|session|sess|auth|access_token|refresh_token|jwt|csrf)=/i
+
+// MAJOR-2: key-NAME scan for the read-tier release path. The value-track scan
+// (gate 1) only recognizes secret SHAPES; an object payload like
+// {password: "hunter2"} / {Authorization: "no-bearer-prefix"} slips through
+// unless the serialized keys are checked against SENSITIVE_KEY_RE. Matches the
+// quoted `"key":` form of JSON serialization (works on fragments too).
+const SENSITIVE_KEY_NAME_TEXT_RE =
+  /"[^"]*(?:secret|token|password|passwd|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)[^"]*"\s*:/i
 
 /**
  * Gate 2: true when evaluate code reads a DOM/storage secret directly.
@@ -200,11 +228,14 @@ export interface TruncatedPrefixEnvelope {
 export function releaseReadData(data: unknown): unknown {
   const s = JSON.stringify(data ?? null)
   if (s.length <= READ_RELEASE_MAX_CHARS) return data
+  const prefix = safeSlice(s, READ_RELEASE_MAX_CHARS)
   const env: TruncatedPrefixEnvelope = {
     truncated: true,
-    kept: READ_RELEASE_MAX_CHARS,
+    // NIT-1: kept must equal prefix.length — safeSlice may drop a dangling
+    // high surrogate at the cut, making the honest kept 7999, not 8000.
+    kept: prefix.length,
     total: s.length,
-    prefix: safeSlice(s, READ_RELEASE_MAX_CHARS),
+    prefix,
   }
   return env
 }
@@ -231,15 +262,33 @@ export function redactCodeishParams(
  * #255 三道闸 (fail-closed) for read-tier result release. `params` here are the
  * RAW in-flight params (gate 2 inspects the evaluate code before it is folded).
  * Any gate hit → caller collapses the whole row.
+ *
+ * Gate input semantics (review NIT-2): callers scan the payload THEY actually
+ * store. The thread-JSON redactor scans the full serialized data; history.db
+ * scans the adapter's pre-capped ≤500-char summary (the only bytes it will
+ * ever persist). A tail secret beyond 500 chars therefore folds the thread row
+ * while history keeps a benign prefix — a classification divergence, never a
+ * leak: the stored prefix by construction cannot contain the tail secret.
  */
 export function readReleaseBlocked(toolName: string, params: unknown, dataStr: string): boolean {
-  // Gate 2: code-exfil heuristic on the evaluate code body.
-  if (toolName === "evaluate" && params && typeof params === "object") {
-    const p = params as Record<string, unknown>
-    for (const key of ["code", "expression"]) {
-      if (typeof p[key] === "string" && hasExfilShape(p[key] as string)) return true
+  if (toolName === "evaluate") {
+    // Gate 2: code-exfil heuristic on the evaluate code body (dot AND
+    // bracket-notation DOM/storage reads — review MAJOR-1).
+    if (params && typeof params === "object") {
+      const p = params as Record<string, unknown>
+      for (const key of ["code", "expression"]) {
+        if (typeof p[key] === "string" && hasExfilShape(p[key] as string)) return true
+      }
+    }
+    // Gate 2b: cookie-shaped RESULT value (jar serialization / well-known
+    // cookie name=) — catches cookie reads the code heuristic missed.
+    if (dataStr && (COOKIE_JAR_RE.test(dataStr) || COOKIE_NAME_EQ_RE.test(dataStr))) {
+      return true
     }
   }
+  // MAJOR-2: key-NAME scan of the payload — {password}/{token}/{Authorization}/
+  // {api_key} fields must never persist, even when the value has no secret shape.
+  if (dataStr && SENSITIVE_KEY_NAME_TEXT_RE.test(dataStr)) return true
   // Gates 1+3: value-track secret scan of the result payload (get_page_text /
   // get_page_html included — they previously passed through unscanned).
   if (dataStr && hasSecretShape(dataStr)) return true

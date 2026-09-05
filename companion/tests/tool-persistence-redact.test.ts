@@ -223,6 +223,89 @@ test("evaluate data payload: secret-shaped collapses even under 200 chars, benig
   assert.equal((kept as any).data, "short benign answer")
 })
 
+// --- Post-review (grok, PR #352) NEVER-class red tests ---
+
+test("MAJOR-1: bracket-notation cookie/storage reads collapse", () => {
+  for (const code of [
+    'document["cookie"]',
+    "document['cookie']",
+    'window["localStorage"].getItem("token")',
+    "window['sessionStorage']",
+  ]) {
+    const { result } = redactToolPayloadForPersistence(
+      "evaluate",
+      { code },
+      { success: true, data: "sid=SECRETCOOKIEVALUE" },
+    )
+    assert.equal((result as any).data.redacted, true, `code should collapse: ${code}`)
+    assert.ok(!JSON.stringify(result).includes("SECRETCOOKIEVALUE"))
+  }
+})
+
+test("MAJOR-1 result side: cookie-jar / well-known cookie name= values collapse", () => {
+  for (const data of [
+    "sid=abcdef123; theme=light; cart=9",
+    "session=zzzz-not-jwt-shaped",
+    "connect.sid=s%3Aabc.def; Path=/",
+  ]) {
+    const { result } = redactToolPayloadForPersistence(
+      "evaluate",
+      { code: "document.title" },
+      { success: true, data },
+    )
+    assert.equal((result as any).data.redacted, true, `value should collapse: ${data.slice(0, 30)}`)
+  }
+})
+
+test("MAJOR-2: key-named secret fields collapse the whole read-tier row", () => {
+  const payloads: Array<[string, unknown]> = [
+    ["evaluate", { password: "hunter2" }],
+    ["evaluate", { token: "session-abc-not-jwt" }],
+    ["evaluate", { Authorization: "secret-value-no-bearer-prefix" }],
+    ["evaluate", { api_key: "not-sk-shaped-value" }],
+    ["evaluate", { nested: { credentials: "x" } }],
+    ["get_page_text", { text: "hi", Authorization: "plain-value" }],
+  ]
+  for (const [tool, data] of payloads) {
+    const { result } = redactToolPayloadForPersistence(
+      tool,
+      tool === "evaluate" ? { code: "document.title" } : { tabId: 1 },
+      { success: true, data },
+    )
+    assert.equal((result as any).data.redacted, true, `${tool} should collapse: ${JSON.stringify(data)}`)
+    assert.ok(!JSON.stringify(result).includes("hunter2"))
+  }
+})
+
+test("NIT-3: Bearer without whitespace / lowercase PEM collapse", () => {
+  for (const data of [
+    "Authorization:Bearersupersecrettoken12",
+    "header = Bearer:abcdef1234567890",
+    "-----begin rsa private key-----\nMIIE...",
+  ]) {
+    const { result } = redactToolPayloadForPersistence(
+      "evaluate",
+      { code: "document.title" },
+      { success: true, data },
+    )
+    assert.equal((result as any).data.redacted, true, `payload should collapse: ${data.slice(0, 40)}`)
+  }
+})
+
+test("NIT-1: envelope kept equals prefix.length on a surrogate boundary", () => {
+  const data = "x".repeat(7998) + "😀" + "y".repeat(100)
+  const { result } = redactToolPayloadForPersistence(
+    "evaluate",
+    { code: "document.body.innerText" },
+    { success: true, data },
+  )
+  const d = (result as any).data
+  assert.equal(d.truncated, true)
+  assert.equal(d.prefix.length, 7999)
+  assert.equal(d.kept, 7999)
+  assert.equal(d.total, JSON.stringify(data).length)
+})
+
 test("plainErrorResult drops extra keys next to INTERRUPTED", () => {
   const { result } = redactToolPayloadForPersistence(
     "shell_exec",

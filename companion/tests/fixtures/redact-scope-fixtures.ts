@@ -15,6 +15,16 @@ export interface RedactScopeFixture {
   result: { success: boolean; data?: unknown; error?: string }
   expectFold: boolean
   expectTruncated?: boolean
+  /**
+   * NIT-2 documented divergence: the history.db redactor gates on the
+   * adapter's pre-capped ≤500-char summary (the only bytes it stores), while
+   * the thread-JSON redactor gates on the full payload. A tail secret beyond
+   * 500 chars therefore folds the thread row but lets history keep a benign
+   * prefix — safe by construction (the stored prefix cannot contain the tail
+   * secret). Set expectFoldStore to override the shared expectFold for the
+   * history side only.
+   */
+  expectFoldStore?: boolean
 }
 
 const JWT =
@@ -125,6 +135,103 @@ export const REDACT_SCOPE_FIXTURES: readonly RedactScopeFixture[] = [
     params: { tabId: 2 },
     result: { success: true, data: { html: `<pre>${PEM}</pre>` } },
     expectFold: true,
+  },
+  // --- Post-review MAJOR/NIT red payloads ---
+  {
+    name: "evaluate bracket-notation document[\"cookie\"] folds (MAJOR-1)",
+    tool: "evaluate",
+    params: { code: 'document["cookie"]' },
+    result: { success: true, data: "sid=SECRETCOOKIEVALUE" },
+    expectFold: true,
+  },
+  {
+    name: "evaluate bracket-notation document['cookie'] folds (MAJOR-1)",
+    tool: "evaluate",
+    params: { code: "document['cookie']" },
+    result: { success: true, data: "sid=SECRETCOOKIEVALUE" },
+    expectFold: true,
+  },
+  {
+    name: "evaluate window[\"localStorage\"] bracket read folds (MAJOR-1)",
+    tool: "evaluate",
+    params: { code: 'window["localStorage"].getItem("token")' },
+    result: { success: true, data: "opaque" },
+    expectFold: true,
+  },
+  {
+    name: "evaluate cookie-jar result string folds (MAJOR-1 result side)",
+    tool: "evaluate",
+    params: { code: "document.title" },
+    result: { success: true, data: "sid=abcdef123; theme=light; cart=9" },
+    expectFold: true,
+  },
+  {
+    name: "evaluate single well-known cookie name= folds (MAJOR-1 result side)",
+    tool: "evaluate",
+    params: { code: "document.title" },
+    result: { success: true, data: "session=zzzz-not-jwt-shaped" },
+    expectFold: true,
+  },
+  {
+    name: "evaluate result with password key folds (MAJOR-2 key-name scan)",
+    tool: "evaluate",
+    params: { code: "window.__STATE__" },
+    result: { success: true, data: { password: "hunter2" } },
+    expectFold: true,
+  },
+  {
+    name: "evaluate result with Authorization key folds (MAJOR-2)",
+    tool: "evaluate",
+    params: { code: "window.__STATE__" },
+    result: { success: true, data: { Authorization: "secret-value-no-bearer-prefix" } },
+    expectFold: true,
+  },
+  {
+    name: "evaluate result with api_key key folds (MAJOR-2)",
+    tool: "evaluate",
+    params: { code: "window.__STATE__" },
+    result: { success: true, data: { api_key: "not-sk-shaped-value" } },
+    expectFold: true,
+  },
+  {
+    name: "get_page_text result with token key folds (MAJOR-2)",
+    tool: "get_page_text",
+    params: { tabId: 3 },
+    result: { success: true, data: { text: "hi", token: "session-abc-not-jwt" } },
+    expectFold: true,
+  },
+  {
+    name: "Bearer without whitespace separator folds (NIT-3)",
+    tool: "evaluate",
+    params: { code: "document.title" },
+    result: { success: true, data: "Authorization:Bearersupersecrettoken12" },
+    expectFold: true,
+  },
+  {
+    name: "lowercase PEM header folds (NIT-3)",
+    tool: "evaluate",
+    params: { code: "document.title" },
+    result: { success: true, data: "-----begin rsa private key-----\nMIIE..." },
+    expectFold: true,
+  },
+  {
+    name: "surrogate-boundary truncation reports honest kept (NIT-1)",
+    tool: "evaluate",
+    params: { code: "document.body.innerText" },
+    // '"' + 7998 x's puts the emoji HIGH SURROGATE exactly at index 7999 of the
+    // serialized JSON → safeSlice drops it → prefix.length 7999, kept must
+    // equal 7999, not 8000.
+    result: { success: true, data: "x".repeat(7998) + "😀" + "y".repeat(100) },
+    expectFold: false,
+    expectTruncated: true,
+  },
+  {
+    name: "tail-JWT beyond 500 chars: thread folds, history keeps benign prefix (NIT-2)",
+    tool: "evaluate",
+    params: { code: "document.body.innerText" },
+    result: { success: true, data: "a".repeat(600) + " " + JWT },
+    expectFold: true,
+    expectFoldStore: false,
   },
   // --- Exec tier: always fold (unchanged) ---
   {

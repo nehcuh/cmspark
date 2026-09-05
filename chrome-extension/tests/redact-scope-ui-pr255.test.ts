@@ -22,6 +22,9 @@ test("#255 ChatView renders the truncated-prefix hint with kept/total copy", () 
   // NOT persisted, and must not claim the content was kept in full.
   assert.match(chat, /超出部分未落盘/)
   assert.ok(!/内容已保留/.test(chat), "must not imply 内容已保留")
+  // NIT-5: 「已保留」only ever appears as the honest「已保留前」form — a future
+  // edit to「内容已安全保留」style copy fails this test.
+  assert.ok(!/已保留(?!前)/.test(chat), "已保留 must always be followed by 前")
 })
 
 test("#255 ChatView truncated prefix renders the prefix, not the envelope JSON", () => {
