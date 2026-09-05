@@ -13,7 +13,7 @@ export type SidePanelWindow = {
   tabs?: SidePanelWindowTab[]
 }
 
-/** Loopback overlay HTML (`/` or `/summoner`). Keep in lockstep with companion isSummonerLoopbackUrl. */
+/** Loopback overlay HTML. Query rules lockstep with companion isSummonerLoopbackUrl. */
 export function isOverlayShellTabUrl(url: string | undefined | null): boolean {
   if (typeof url !== "string" || !url) return false
   try {
@@ -23,7 +23,19 @@ export function isOverlayShellTabUrl(url: string | undefined | null): boolean {
     if (host !== "127.0.0.1" && host !== "localhost") return false
     const path = u.pathname === "" ? "/" : u.pathname
     if (path !== "/" && path !== "/summoner") return false
-    return true
+    const keys: string[] = []
+    u.searchParams.forEach((_v, k) => {
+      keys.push(k)
+    })
+    const unique = [...new Set(keys)]
+    if (keys.length !== unique.length) return false
+    if (unique.includes("token")) return false
+    if (unique.length === 0) return true
+    if (unique.length === 1 && unique[0] === "thread") {
+      const thread = u.searchParams.get("thread") || ""
+      return thread.length > 0
+    }
+    return false
   } catch {
     return false
   }

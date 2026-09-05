@@ -132,11 +132,10 @@ test("#244 MeetingPanel 五条隐私原文不动（overlay lockstep）", () => {
   }
 })
 
-test("#244 overlay ACL 上涨恰好 append_transcript + generate_minutes；import_text 仍扩展-only", () => {
+test("#244 overlay ACL 本票增量为零；auto_diarize 被拒（#244 NEVER）", async () => {
   const meeting = [...SUMMONER_WEB_DISPATCH_ALLOW].filter((t) => t.startsWith("meeting.")).sort()
   assert.deepEqual(meeting, [
     "meeting.append_transcript",
-    "meeting.auto_diarize",
     "meeting.create",
     "meeting.end",
     "meeting.generate_minutes",
@@ -146,20 +145,35 @@ test("#244 overlay ACL 上涨恰好 append_transcript + generate_minutes；impor
   ])
   assert.equal(assertSummonerAllowed("summoner", "meeting.append_transcript").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "meeting.generate_minutes").ok, true)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.auto_diarize").ok, false)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.auto_diarize"), false)
   assert.equal(assertSummonerAllowed("summoner", "meeting.import_text").ok, false)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.import_text"), false)
   assert.equal(assertSummonerAllowed("summoner", "ui.open_sidepanel").ok, false)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("ui.open_sidepanel"), false)
   assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.minutes_result"), true)
-  // Overlay never Allow/Deny.
   assert.doesNotMatch(overlayHtml, />允许<|>拒绝</)
   assert.doesNotMatch(overlayHtml, /Allow\/Deny/)
+  assert.doesNotMatch(overlayHtml, /id="meetingDiarize"/)
+  assert.doesNotMatch(overlayHtml, /\/api\/meeting\/diarize/)
+  assert.match(overlayHtml, /说话人标注请在侧栏会议面板使用/)
+  const denied = await handleMeetingMessage(
+    { type: "meeting.auto_diarize", v: 1, privacy_ack_v1: true, id: "mtg_nope", mode: "text_gap" },
+    { origin: "cmspark-tray://local", surface: "summoner" },
+  )
+  assert.equal(denied.code, "origin_denied")
 })
 
-test("#244 #230 freeze: this ticket does not touch mcp.toggle / skill.activate / RunProgress", () => {
-  // Pin: those methods stay as they were; we do not add them as part of #244.
-  const acl = fs.readFileSync(srcFile("ws", "summoner-acl.ts"), "utf8")
-  assert.doesNotMatch(acl, /run_progress/)
-  assert.doesNotMatch(overlayHtml, /F-S-10/)
-  assert.doesNotMatch(overlayHtml, /grant-cli/)
+test("#244 #230 freeze: overlay HTML dispatch meeting set is a snapshot (not a trivially-green regex)", () => {
+  const meeting = [...SUMMONER_WEB_DISPATCH_ALLOW].filter((t) => t.startsWith("meeting.")).sort()
+  assert.deepEqual(meeting, [
+    "meeting.append_transcript",
+    "meeting.create",
+    "meeting.end",
+    "meeting.generate_minutes",
+    "meeting.get",
+    "meeting.list",
+    "meeting.start",
+  ])
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.toggle_server"), false)
 })

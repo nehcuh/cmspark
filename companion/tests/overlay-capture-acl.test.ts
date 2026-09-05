@@ -67,7 +67,7 @@ test("dispatchSummonerWeb fire-and-forgets voice.stt.chunk and abort", () => {
   assert.match(fn, /sendAppRequest\(type,\s*params/)
 })
 
-test("meeting.start/append/generate_minutes/list/get/diarize allowed on summoner; import is not", () => {
+test("meeting.start/append/generate_minutes/list/get allowed on summoner; auto_diarize/import are not", () => {
   assert.equal(assertSummonerAllowed("summoner", "meeting.start").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "meeting.end").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "meeting.create").ok, true)
@@ -75,7 +75,7 @@ test("meeting.start/append/generate_minutes/list/get/diarize allowed on summoner
   assert.equal(assertSummonerAllowed("summoner", "meeting.generate_minutes").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "meeting.list").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "meeting.get").ok, true)
-  assert.equal(assertSummonerAllowed("summoner", "meeting.auto_diarize").ok, true)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.auto_diarize").ok, false)
   assert.equal(assertSummonerAllowed("summoner", "meeting.import_text").ok, false)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.start"), true)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.create"), true)
@@ -84,7 +84,7 @@ test("meeting.start/append/generate_minutes/list/get/diarize allowed on summoner
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.generate_minutes"), true)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.list"), true)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.get"), true)
-  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.auto_diarize"), true)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.auto_diarize"), false)
   assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.started"), true)
   assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.ended"), true)
   assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.created"), true)
@@ -170,7 +170,7 @@ test("generate_minutes + summoner surface is not origin_denied", async () => {
   assert.notEqual(res.code, "origin_denied")
 })
 
-test("meeting.list + auto_diarize allowed on tray summoner origin", async () => {
+test("meeting.list allowed on tray summoner origin; auto_diarize denied even with surface", async () => {
   const listed = await handleMeetingMessage(
     { type: "meeting.list", v: 1 },
     { origin: "cmspark-tray://local", surface: "summoner" },
@@ -178,7 +178,7 @@ test("meeting.list + auto_diarize allowed on tray summoner origin", async () => 
   assert.equal(listed.type, "meeting.list_result")
   const denied = await handleMeetingMessage(
     { type: "meeting.auto_diarize", v: 1, privacy_ack_v1: true, id: "mtg_nope", mode: "text_gap" },
-    { origin: "cmspark-tray://local" },
+    { origin: "cmspark-tray://local", surface: "summoner" },
   )
   assert.equal(denied.code, "origin_denied")
 })

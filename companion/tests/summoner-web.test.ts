@@ -190,12 +190,13 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /结束录制/)
     assert.match(r.body, /生成会议纪要/)
     assert.match(r.body, /历史会议/)
-    assert.match(r.body, /自动标说话人/)
+    assert.doesNotMatch(r.body, /自动标说话人/)
+    assert.match(r.body, /说话人标注请在侧栏会议面板使用/)
     assert.match(r.body, /id="meetingHistToggle"/)
     assert.match(r.body, /STT_MEETING_MS=8000/)
     assert.match(r.body, /\/api\/stt\/partial/)
     assert.match(r.body, /\/api\/meetings/)
-    assert.match(r.body, /\/api\/meeting\/diarize/)
+    assert.doesNotMatch(r.body, /\/api\/meeting\/diarize/)
     assert.match(r.body, /\/api\/voice-settings/)
     assert.match(r.body, /voiceSettings\.localModelId/)
     assert.match(r.body, /\/api\/meeting\/append/)
@@ -776,7 +777,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(dispatched[0].v, 1)
   })
 
-  test("POST /api/meeting/diarize fills auto_diarize and privacy_ack", async () => {
+  test("POST /api/meeting/diarize is gone — overlay auto_diarize denied", async () => {
     dispatched.length = 0
     const r = await request({
       method: "POST",
@@ -793,13 +794,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
         features: [[1, 0, 0], [0, 1, 0]],
       }),
     })
-    assert.equal(r.status, 200, r.body)
-    assert.equal(dispatched.length, 1)
-    assert.equal(dispatched[0].type, "meeting.auto_diarize")
-    assert.equal(dispatched[0].v, 1)
-    assert.equal(dispatched[0].privacy_ack_v1, true)
-    assert.equal(dispatched[0].id, "mtg_abc")
-    assert.equal(dispatched[0].mode, "audio_cluster")
+    assert.equal(r.status, 404, r.body)
+    assert.equal(dispatched.length, 0)
   })
 
   test("POST /api/meeting/end server fills type meeting.end", async () => {
@@ -935,7 +931,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.append_transcript"), true)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.list"), true)
     assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.get"), true)
-    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.auto_diarize"), true)
+    assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.auto_diarize"), false)
     assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.minutes_result"), true)
     assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.list_result"), true)
     assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.diarized"), true)
