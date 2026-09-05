@@ -12,6 +12,8 @@
 //       --screenshot="../docs/assets/321-pr2/now-band-${s}.png" \
 //       "file://$PWD/.shot-out/now-band-${s}.html"
 //   done
+// Then assert the real rendered band height (≤80px) + scene-name visibility:
+//   node scripts/measure-now-band-heights.mjs
 
 import { createRequire } from "node:module"
 import { mkdirSync, writeFileSync } from "node:fs"
@@ -57,13 +59,14 @@ const scenarios = {
           ...initialState.threads[0],
           id: "t-scene",
           title: "场景对话",
-          mission_pack_id: "appsec-prd-review",
-          workspace_root: "/Users/dev/work/api-server",
+          // Realistic long pack id (unmapped → raw id shown): the §1.1-3 stress case.
+          mission_pack_id: "appsec-prd-review-weekly-audit",
+          workspace_root: "/Users/dev/work/api-server-payment-gateway",
           tool_whitelist: ["shell_exec", "workspace_read"],
         },
       ],
     }),
-    note: "挂场景 idle — 场景/工具面/工作区 chips 成条（场景不算 idle 破坏者，绝不隐藏场景名）",
+    note: "挂场景 idle（长 pack 名）— 场景名 chip flexShrink:0 绝不被挤成「…」；工具面/工作区 chip 先让位省略",
   },
   confirm: {
     level: "chat",
@@ -114,6 +117,30 @@ body {
 }
 `
 
+// Inline measure script (NIT-① round-2): after layout, record the rendered band
+// height and — when a scene row exists — the scene-name button's effective width,
+// into <meta name="focus-band-measure">. Read by measure-now-band-heights.mjs via
+// headless Chrome --dump-dom. Old-bug signature: linkish crushed to min-content
+// (~20-40px,「场景：…」); fixed behavior: name keeps (or tail-ellipsizes at) its own cap.
+const MEASURE_SNIPPET = `<script>
+(function () {
+  function measure() {
+    var fb = document.querySelector("[data-focus-band]");
+    var row = document.querySelector('[data-testid="scene-status-bar"]');
+    var btn = row ? row.querySelector("span button") : null;
+    var h = fb ? Math.round(fb.getBoundingClientRect().height) : null;
+    var w = btn ? Math.round(btn.getBoundingClientRect().width) : null;
+    var ell = btn && btn.scrollWidth > btn.clientWidth ? 1 : 0;
+    var meta = document.createElement("meta");
+    meta.name = "focus-band-measure";
+    meta.content = "height=" + h + ";scene-name-width=" + w + ";scene-ellipsis=" + ell;
+    document.head.appendChild(meta);
+  }
+  if (document.readyState === "complete") measure();
+  else window.addEventListener("load", measure);
+})();
+</script>`
+
 for (const [name, sc] of Object.entries(scenarios)) {
   const markup = renderToStaticMarkup(
     React.createElement(
@@ -142,7 +169,7 @@ for (const [name, sc] of Object.entries(scenarios)) {
       ),
     ),
   )
-  const html = `<!doctype html><html><head><meta charset="utf-8"><style>${pageCSS}</style></head><body>${markup}</body></html>`
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>${pageCSS}</style></head><body>${markup}${MEASURE_SNIPPET}</body></html>`
   writeFileSync(join(OUT, `now-band-${name}.html`), html)
   console.log(`ok now-band-${name}.html — ${sc.note}`)
 }

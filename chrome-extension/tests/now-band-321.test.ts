@@ -157,9 +157,11 @@ test("#321 PR-2: single buildScopedRunBusyInput derivation (was three)", () => {
     if (occurrences) hits.push(...occurrences.map(() => f))
   }
   assert.deepEqual(hits, ["hooks/use-scoped-run-busy.ts"])
-  // App + FocusBand both consume the hook
+  // App + FocusBand + ChatView + FleetStrip all consume the hook (no re-fork)
   assert.match(src("src/sidepanel/App.tsx"), /useScopedRunBusy\(\)/)
   assert.match(src("src/sidepanel/components/FocusBand.tsx"), /useScopedRunBusy\(\)/)
+  assert.match(src("src/sidepanel/components/ChatView.tsx"), /useScopedRunBusy\(\)/)
+  assert.match(src("src/sidepanel/components/FleetStrip.tsx"), /useScopedRunBusy\(\)/)
 })
 
 test("#321 PR-2: no fourth horizontal band — App stack is StatusRail + FocusBand above ChatView", () => {
@@ -172,8 +174,11 @@ test("#321 PR-2: no fourth horizontal band — App stack is StatusRail + FocusBa
   const band = app.indexOf("<FocusBand")
   const chat = app.indexOf("<ChatView")
   assert.ok(rail >= 0 && band > rail && chat > band)
-  const between = app.slice(band, chat)
-  assert.doesNotMatch(between, /<[A-Z][A-Za-z]+\s*\/>/) // no self-closing component mounts
+  // Between the FocusBand opening tag and ChatView: no JSX component mount at all
+  // (self-closing OR with children — `</?[A-Z]` catches both, comments still fine)
+  const bandOpenEnd = app.indexOf("/>", band) + 2
+  const between = app.slice(bandOpenEnd, chat)
+  assert.doesNotMatch(between, /<\/?[A-Z][A-Za-z]*[\s/>]/)
   // The three old band files are gone (readFileSync must throw ENOENT)
   const gone = (rel: string) => {
     try {
@@ -241,6 +246,35 @@ test("#321 PR-2: new rows fit their tier budgets (≤56 primary / ≤24 secondar
   assert.match(worker, /maxHeight:\s*28/)
   const runBusy = fb.slice(fb.indexOf("runBusyRow:"), fb.indexOf("runBusyDot:"))
   assert.match(runBusy, /maxHeight:\s*28/)
+})
+
+test("#321 PR-2: scene-name never squeezed to bare ellipsis — pack chip yields last (§1.1-3)", () => {
+  const row = src("src/sidepanel/components/SceneStatusRow.tsx")
+  // Pack chip is the ONLY non-shrinking chip; row stays single-line (80px cap via nowrap)
+  const sceneChip = row.slice(row.indexOf("sceneChip:"), row.indexOf("surfaceChip:"))
+  assert.match(sceneChip, /flexShrink:\s*0/)
+  assert.ok(!/flexShrink:\s*1/.test(sceneChip))
+  const chip = row.slice(row.indexOf("  chip:"), row.indexOf("sceneChip:"))
+  assert.match(chip, /flexShrink:\s*1/) // generic chip (surface/ws) yields
+  assert.match(row, /flexWrap:\s*"nowrap"/) // never trade the cap for a second line
+  // Tool-surface / workspace texts shrink with ellipsis BEFORE the scene name does
+  const surfaceText = row.slice(row.indexOf("surfaceText:"), row.indexOf("linkish:"))
+  assert.match(surfaceText, /flexShrink:\s*1/)
+  assert.match(surfaceText, /minWidth:\s*0/)
+  assert.match(surfaceText, /textOverflow:\s*"ellipsis"/)
+  const ws = row.slice(row.indexOf("  ws:"), row.indexOf("},", row.indexOf("  ws:")))
+  assert.match(ws, /flexShrink:\s*1/)
+  assert.match(ws, /minWidth:\s*0/)
+  // The scene-name button keeps its own generous cap: pathological names
+  // tail-ellipsize at the button, they are never crushed by sibling chips.
+  const linkish = row.slice(row.indexOf("linkish:"), row.indexOf("exitBtn:"))
+  assert.match(linkish, /textOverflow:\s*"ellipsis"/)
+  assert.match(linkish, /whiteSpace:\s*"nowrap"/)
+  const linkishMax = Number(linkish.match(/maxWidth:\s*(\d+)/)?.[1] ?? 0)
+  const surfaceMax = Number(surfaceText.match(/maxWidth:\s*(\d+)/)?.[1] ?? 0)
+  assert.ok(linkishMax > surfaceMax, "scene-name cap must exceed yielding chips' caps")
+  // Rendered markup proof: the pack chip mounts with the dedicated style
+  assert.match(row, /style=\{styles\.sceneChip\}/)
 })
 
 test("#321 PR-2: scene visibility wiring — FocusBand derives hasScene and renders the row", () => {

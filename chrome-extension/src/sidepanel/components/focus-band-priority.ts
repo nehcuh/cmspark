@@ -188,9 +188,10 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
 
 /**
  * #321 PR-2: whether the scene chips render as the ≤24px secondary row under a
- * light primary. Attention states own the whole band (Confirm / L2 + 急停), and a
- * consumed secondary line (abort / tools) takes height precedence — scene never
- * displaces them, it rides along or waits.
+ * light primary. Decision table: attention 态场景让位（Confirm / L2 + 急停 own the
+ * whole 80px — 「绝不隐藏场景名」按 §1.1 指挂场景 idle 与轻 primary 档：scene 为主行、
+ * fleet/L1/worker/run_busy 下搭次行）；已占用的次行（abort / tools）同样优先。
+ * Scene never displaces them, it rides along or waits.
  */
 export function sceneChipsSecondary(
   slot: FocusBandSlot,

@@ -3,6 +3,9 @@
 // FocusBand (primary "scene" or secondary under a light primary). Light tone only —
 // dark chrome belongs to Confirm/急停. Legacy data-testids preserved for stability:
 // scene-status-bar (row) / tool-surface-chip (surface chip).
+// Shrink priority (§1.1-3 场景名绝不隐藏): pack chip flexShrink:0 — tool-surface /
+// workspace chips yield first (flexShrink:1 + minWidth:0 + ellipsis); the row stays
+// nowrap so the band's 80px cap is never traded for a second chip line.
 
 import type { CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
@@ -104,7 +107,7 @@ export function SceneStatusRow({ secondary = false }: { secondary?: boolean } = 
     >
       {info.packId ? (
         <span
-          style={styles.chip}
+          style={styles.sceneChip}
           title="本对话挂有场景配方（工具白名单等）。软删/恢复不会自动写回 Trust 巡航；抬升需在场景面板重新应用并确认。"
         >
           <button type="button" style={styles.linkish} onClick={openScenes}>
@@ -179,6 +182,14 @@ const styles: Record<string, CSSProperties> = {
     flexShrink: 1,
     overflow: "hidden",
   },
+  /** §1.1-3: the pack chip never yields width — siblings ellipsize first. */
+  sceneChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 0,
+    overflow: "hidden",
+  },
   surfaceChip: {
     background: tokens.warningSoft,
     borderRadius: tokens.radiusSm,
@@ -188,7 +199,9 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 10,
     fontWeight: 600,
     color: tokens.warning,
-    maxWidth: 180,
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: 120,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -202,7 +215,7 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     padding: 0,
     fontFamily: tokens.font,
-    maxWidth: 160,
+    maxWidth: 200,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -222,7 +235,9 @@ const styles: Record<string, CSSProperties> = {
   ws: {
     fontSize: 10,
     color: tokens.textMuted,
-    maxWidth: 140,
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: 120,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
