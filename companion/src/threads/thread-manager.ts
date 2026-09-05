@@ -14,6 +14,7 @@ import {
   type RuntimeContextBudgetMeta,
 } from "./runtime-context-budget"
 import { sanitizeRunProgress, seedRunProgress, type RunProgress } from "./run-progress"
+import { sanitizeLoopState, type LoopState } from "../loop/loop-state"
 import { isExecutionPolicy, type ExecutionPolicy } from "../tool/plan-readonly"
 import type { ImageAttachmentMeta } from "../llm/image-parts"
 import { sniffedExt, type RasterMime } from "../llm/image-sniff"
@@ -131,6 +132,14 @@ interface Thread {
    * never reseeded).
    */
   run_progress?: RunProgress | null
+  /**
+   * L-2 (#388) loop kernel state. Written ONLY by the kernel's explicit
+   * activation entrances (plan approval / explicit command / unattended arm /
+   * suggestion-card gesture) — a plain chatCreate never creates it
+   * (unactivated === zero behavior change). undefined = never armed;
+   * null = cleared.
+   */
+  loop_state?: LoopState | null
   /**
    * Soft-delete timestamp (ISO). null/undefined = active.
    * P1.5 recycle bin; hard delete clears file + index entry.
@@ -871,6 +880,18 @@ export class ThreadManager {
         // ok — clear
       } else {
         updates = { ...updates, run_progress: sanitizeRunProgress(updates.run_progress) }
+      }
+    }
+    // L-2 (#388) loop kernel state — sanitize; null = clear
+    if (updates.loop_state !== undefined) {
+      if (updates.loop_state === null) {
+        // ok — clear
+      } else {
+        const sanitized = sanitizeLoopState(updates.loop_state)
+        if (!sanitized) {
+          throw new Error("Invalid loop_state payload")
+        }
+        updates = { ...updates, loop_state: sanitized }
       }
     }
     if (updates.alias !== undefined) {

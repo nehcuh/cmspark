@@ -46,6 +46,7 @@ import {
   peekNextRunCount,
   takeNextRun,
 } from "./llm/run-queues"
+import type { RunStats } from "./loop/loop-state"
 import { listPendingToolsForThread } from "./ws/tool-forward"
 
 import { parseFile, PARSE_FILE_MAX_BYTES } from "./file-parser"
@@ -382,6 +383,16 @@ async function drainNextRun(
       data: { error_code: "MULTI_AGENT_LLM_CAP", active: capPeek.active, cap: capPeek.cap },
     }
   }
+  // L-2 (#388) drain gate: loop-sourced continuations drain only while the
+  // loop is active and within budget (loop 未激活不放行、预算尽不放行). Stale
+  // loop entries are dropped, never drained; user entries are untouched.
+  try {
+    const { gateLoopNextRunDrain } = await import("./loop/loop-kernel")
+    gateLoopNextRunDrain(threadId, services.threadManager)
+  } catch {
+    /* gate failure must not eat user messages */
+  }
+  if (peekNextRunCount(threadId) === 0) return null
   const queued = takeNextRun(threadId)
   if (!queued) return null
   return handleMessage(
@@ -836,6 +847,41 @@ export async function handleMessage(
         const conductorErr = gateChatCreateOnConductor(rest.thread_id, stampedSurface)
         if (conductorErr) return conductorErr
       }
+      // L-2 (#388) explicit activation entrances ②/③. Entrance ① (plan
+      // approval) lives in thread.execution_policy.set; the suggestion-card
+      // click arrives as task_loop.arm. A plain chatCreate NEVER arms the
+      // loop — unactivated === zero behavior change (red line).
+      if (rest.enqueue !== true && typeof rest.message === "string" && rest.message.trim()) {
+        try {
+          const loopKernel = await import("./loop/loop-kernel")
+          const threadForLoop = services.threadManager.get(rest.thread_id)
+          if (threadForLoop && threadForLoop.agent_role !== "worker") {
+            if (loopKernel.detectLoopIntent(rest.message)) {
+              // ② explicit command (also the explicit re-arm gesture after
+              // STOPPED_USER / STOPPED_BUDGET — a fresh budget window).
+              const { isUnattendedArmed } = await import("./computer/unattended-grant")
+              loopKernel.armLoop(services.threadManager, rest.thread_id, "explicit_command", {
+                unattended: isUnattendedArmed(),
+              })
+            } else {
+              // ③ unattended arm: activates the loop only for threads that
+              // never ran a loop — a user-stopped / halted loop is never
+              // silently re-armed by an ordinary message.
+              const cur = loopKernel.sanitizeLoopState(threadForLoop.loop_state)
+              if (!cur) {
+                const { isUnattendedArmed } = await import("./computer/unattended-grant")
+                if (isUnattendedArmed()) {
+                  loopKernel.armLoop(services.threadManager, rest.thread_id, "unattended_arm", {
+                    unattended: true,
+                  })
+                }
+              }
+            }
+          }
+        } catch {
+          /* loop activation must never break chat.create */
+        }
+      }
       const config = getConfig()
 
       // Merge priority: (1) llm_override from extension UI  > (2) thread config_override > (3) global config
@@ -924,6 +970,14 @@ export async function handleMessage(
         }
       }
 
+      // L-2 (#388): run-outcome accumulator for the loop exit check below
+      // (observation only — the adapter's behavior is unchanged).
+      const runStats: RunStats = {
+        toolCalls: 0,
+        closingTurnToolCalls: 0,
+        totalTokens: 0,
+        terminal: null,
+      }
       try {
         // `/技能` pin before resolve so this turn is already manual (no matchSkills union).
         applySlashSkillPin(rest.thread_id, rest.message, services, session)
@@ -1018,6 +1072,8 @@ export async function handleMessage(
           contextRefsSegment = buildContextRefsSystemSegment(sources) || undefined
         }
 
+        // L-2 (#388): runStats declared before this try (see above) so the
+        // catch / exit-check below can read the run outcome.
         await chatCreate({
           threadId: rest.thread_id,
           surface: stampedSurface === "summoner" ? "summoner" : "tray",
@@ -1045,8 +1101,14 @@ export async function handleMessage(
           signal: controller.signal,
           contextRefsSegment,
           hostname: currentHostname,
+          runStats,
         })
       } catch (e: any) {
+        if (e.name === "AbortError" || controller.signal.aborted) {
+          runStats.terminal = "aborted"
+        } else if (!runStats.terminal) {
+          runStats.terminal = "error"
+        }
         // Only emit aborted UI if this generation is still current (SEC-D)
         if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
           if (e.name === "AbortError" || controller.signal.aborted) {
@@ -1073,6 +1135,36 @@ export async function handleMessage(
       // chat.create the successor (that reintroduces supersede). Gates are
       // pre-checked inside drainNextRun so a rejected drain keeps the message
       // queued instead of dropping it after chat.enqueued.
+      //
+      // L-2 (#388) loop exit check (adapter-finally seam): runs after the
+      // adapter's own finally converted leftover steers (user turns queue
+      // first) and before the drain, under the same generation owner. Never
+      // throws into the run path.
+      if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
+        try {
+          const { onLoopRunFinished } = await import("./loop/loop-kernel")
+          const { listWorkers } = await import("./orchestrator/spawn")
+          onLoopRunFinished({
+            threadManager: services.threadManager,
+            threadId: rest.thread_id,
+            stats: runStats,
+            // Worker yield: the orchestrator's loop lets active workers run.
+            hasActiveWorker: () => {
+              const t = services.threadManager.get(rest.thread_id)
+              if (!t?.orchestrator_run_id) return false
+              return listWorkers(services.threadManager, t.orchestrator_run_id).some(
+                (w: any) => w?.id && w.id !== rest.thread_id && abortControllers.has(w.id),
+              )
+            },
+            sendToExtension: session.sendToExtension,
+          })
+        } catch (loopErr: any) {
+          logger.warn("task_loop.exit_check_failed", {
+            thread_id: rest.thread_id,
+            error: loopErr?.message || String(loopErr),
+          })
+        }
+      }
       const drained = await drainNextRun(rest.thread_id, myGeneration, services, session)
       if (drained) {
         if (isDrainGateError(drained)) {
@@ -1696,6 +1788,14 @@ export async function handleMessage(
       // the nextRun queue (a user stop must never silently revive the thread),
       // and log every abort so clicks are traceable after the fact.
       const { stopped, cancelled } = abortThreadChat(rest.thread_id, { clearQueue: true })
+      // L-2 (#388): user stop → STOPPED_USER; the loop never revives without
+      // an explicit re-arm gesture (#307 discipline continued).
+      try {
+        const { markLoopStoppedByUser } = await import("./loop/loop-kernel")
+        markLoopStoppedByUser(services.threadManager, rest.thread_id, "chat.abort")
+      } catch {
+        /* best-effort */
+      }
       logger.info("chat.abort", {
         thread_id: rest.thread_id,
         had_controller: stopped,
@@ -2688,7 +2788,108 @@ export async function handleMessage(
           from,
           by: "user_gesture",
         })
+        // L-2 (#388) entrance ①: plan approval — the user-gesture transition
+        // plan_readonly → default approves the plan and delegates execution;
+        // arm the loop kernel for this thread.
+        if (rest.policy === "default" && from === "plan_readonly") {
+          try {
+            const { armLoop } = await import("./loop/loop-kernel")
+            const { isUnattendedArmed } = await import("./computer/unattended-grant")
+            armLoop(threadManager, rest.thread_id, "plan_approval", {
+              unattended: isUnattendedArmed(),
+            })
+          } catch {
+            /* loop activation must never break the policy set */
+          }
+        }
         return { type: "thread.execution_policy.updated", thread }
+      } catch (e: any) {
+        return { type: "error", error: e.message || String(e) }
+      }
+    }
+
+    // --- L-2 (#388) loop kernel: explicit arm / stop. Both are user-gesture
+    // only; the suggestion-card click arrives as task_loop.arm
+    // (source=suggestion_card == entrance ② lightweight form). ---
+    case "task_loop.arm": {
+      if (stampedSurface === "summoner") {
+        return { type: "error", error: "SUMMONER_ACL: task_loop.arm not allowed on summoner surface", error_code: "SUMMONER_ACL" }
+      }
+      if (rest.user_gesture !== true) {
+        return { type: "error", error: "task_loop.arm requires user_gesture:true (user-initiated only)" }
+      }
+      if (typeof rest.thread_id !== "string" || !rest.thread_id) {
+        return { type: "error", error: "task_loop.arm requires thread_id" }
+      }
+      const targetThread = threadManager.get(rest.thread_id)
+      if (!targetThread) {
+        return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+      }
+      if (targetThread.trashed_at) {
+        return { type: "error", error: "thread_trashed", data: { error_code: "thread_trashed" } }
+      }
+      if (targetThread.agent_role === "worker") {
+        return {
+          type: "error",
+          error: "task_loop.arm: workers never run loops — arm on the orchestrator thread",
+          code: "worker_loop_denied",
+        }
+      }
+      try {
+        const loopKernel = await import("./loop/loop-kernel")
+        const { isUnattendedArmed } = await import("./computer/unattended-grant")
+        const source = rest.source === "suggestion_card" ? "suggestion_card" : "explicit_command"
+        const loopState = loopKernel.armLoop(threadManager, rest.thread_id, source, {
+          resume: rest.resume === true,
+          unattended: isUnattendedArmed(),
+        })
+        // Kick off immediately when there is a machine-verifiable remainder;
+        // the queued continuation drains through the normal gates below.
+        let started = false
+        const kickoff = loopKernel.buildLoopKickoff(threadManager, rest.thread_id)
+        if (kickoff && !abortControllers.has(rest.thread_id)) {
+          const { enqueueNextRun: enqueueLoopRun } = await import("./llm/run-queues")
+          if (enqueueLoopRun(rest.thread_id, kickoff, undefined, "loop")) {
+            const drained = await drainNextRun(rest.thread_id, null, services, session)
+            started = true
+            if (drained && isDrainGateError(drained)) {
+              session?.sendToExtension?.(drained)
+              started = false
+            }
+          }
+        }
+        return {
+          type: "task_loop.armed",
+          thread_id: rest.thread_id,
+          loop_state: loopState,
+          started,
+        }
+      } catch (e: any) {
+        return { type: "error", error: e.message || String(e) }
+      }
+    }
+
+    case "task_loop.stop": {
+      if (stampedSurface === "summoner") {
+        return { type: "error", error: "SUMMONER_ACL: task_loop.stop not allowed on summoner surface", error_code: "SUMMONER_ACL" }
+      }
+      if (rest.user_gesture !== true) {
+        return { type: "error", error: "task_loop.stop requires user_gesture:true (user-initiated only)" }
+      }
+      if (typeof rest.thread_id !== "string" || !rest.thread_id) {
+        return { type: "error", error: "task_loop.stop requires thread_id" }
+      }
+      try {
+        const { markLoopStoppedByUser } = await import("./loop/loop-kernel")
+        const stoppedLoop = markLoopStoppedByUser(threadManager, rest.thread_id, "task_loop.stop")
+        const { dropLoopNextRuns } = await import("./llm/run-queues")
+        const dropped = dropLoopNextRuns(rest.thread_id)
+        return {
+          type: "task_loop.stopped",
+          thread_id: rest.thread_id,
+          stopped: stoppedLoop,
+          cancelled: dropped,
+        }
       } catch (e: any) {
         return { type: "error", error: e.message || String(e) }
       }
@@ -3793,6 +3994,14 @@ export async function handleMessage(
       for (const w of targets) {
         // #307: user stop — clear the worker's nextRun so it never drains later.
         const { cancelled: nextRunCancelled } = abortThreadChat(w.id, { clearQueue: true })
+        // L-2 (#388): fleet.stop_all is a user stop — STOPPED_USER on any
+        // loop-armed target (workers never loop; the parent-host case can).
+        try {
+          const { markLoopStoppedByUser } = await import("./loop/loop-kernel")
+          markLoopStoppedByUser(threadManager, w.id, "fleet.stop_all")
+        } catch {
+          /* best-effort */
+        }
         // G13: abandon intents on host before pending reject + lease release
         let intentsAbandoned = 0
         try {

@@ -13,10 +13,20 @@ export type SteerItem = {
 
 const steerByThread = new Map<string, SteerItem[]>()
 
+/**
+ * L-2 (#388): who queued this turn. "user" = real user message / leftover
+ * steer / explicit enqueue (default, legacy behavior); "loop" = loop-kernel
+ * continuation. Loop items drain only while the thread's loop is active and
+ * within budget (drain gate in loop-kernel.gateLoopNextRunDrain).
+ */
+export type NextRunSource = "user" | "loop"
+
 /** nextRun entry: leftover steers keep the first clientMessageId (F1 adopt). */
 export type NextRunItem = {
   text: string
   clientMessageId?: string
+  /** Omitted === "user" (legacy entries predate the field). */
+  source?: NextRunSource
 }
 
 const nextRunByThread = new Map<string, NextRunItem[]>()
@@ -45,13 +55,16 @@ export function dropSteer(threadId: string): void {
 
 export const MAX_NEXT_RUN = 8
 
-export function enqueueNextRun(threadId: string, text: string, clientMessageId?: string): boolean {
+export function enqueueNextRun(threadId: string, text: string, clientMessageId?: string, source?: NextRunSource): boolean {
   const t = String(text || "").trim()
   if (!threadId || !t) return false
   const q = nextRunByThread.get(threadId) || []
   if (q.length >= MAX_NEXT_RUN) return false
   const id = typeof clientMessageId === "string" && clientMessageId.trim() ? clientMessageId : undefined
-  q.push(id ? { text: t, clientMessageId: id } : { text: t })
+  const item: NextRunItem = { text: t }
+  if (id) item.clientMessageId = id
+  if (source && source !== "user") item.source = source
+  q.push(item)
   nextRunByThread.set(threadId, q)
   return true
 }
@@ -90,6 +103,26 @@ export function convertLeftoverSteerToNextRun(threadId: string): { converted: nu
 
 export function peekNextRunCount(threadId: string): number {
   return nextRunByThread.get(threadId)?.length || 0
+}
+
+/** L-2 (#388) drain gate: inspect the head without dequeuing. */
+export function peekNextRun(threadId: string): NextRunItem | undefined {
+  return nextRunByThread.get(threadId)?.[0]
+}
+
+/**
+ * L-2 (#388): drop every loop-sourced entry (user stop / stale loop), keeping
+ * user entries in order. Returns the number of dropped loop items.
+ */
+export function dropLoopNextRuns(threadId: string): number {
+  const q = nextRunByThread.get(threadId)
+  if (!q?.length) return 0
+  const kept = q.filter((it) => (it.source ?? "user") !== "loop")
+  const dropped = q.length - kept.length
+  if (!dropped) return 0
+  if (!kept.length) nextRunByThread.delete(threadId)
+  else nextRunByThread.set(threadId, kept)
+  return dropped
 }
 
 /**

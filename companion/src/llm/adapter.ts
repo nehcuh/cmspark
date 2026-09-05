@@ -41,6 +41,7 @@ import {
 } from "./tool-batch-heal"
 import { isContextOverflowError, isLengthStop, isTruncatedToolBatch } from "./overflow"
 import { convertLeftoverSteerToNextRun, takeSteer } from "./run-queues"
+import type { RunStats } from "../loop/loop-state"
 import { computeMaxTokens } from "./providers/anthropic-convert"
 
 export { createToolResultMessage }
@@ -190,6 +191,13 @@ interface ChatCreateParams {
    * Summoner Capture is L0: native executors are not offered and cannot execute.
    */
   surface?: "panel" | "tray" | "summoner"
+  /**
+   * L-2 (#388): optional run-outcome accumulator for the loop kernel. When
+   * provided the adapter fills tool-call counts, token usage and the terminal
+   * classification (security halt / circuit breaker / error / abort). The
+   * adapter's own behavior is unchanged — this is observation only.
+   */
+  runStats?: RunStats
 }
 
 /** Capture overlay must not run CDP / host / shell / spawn / workspace / ACP / MCP mutate tools. */
@@ -385,6 +393,14 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, knowledgeIds, knowledgeDescriptionOnly, knowledgeMode, knowledgeSmartMatch, knowledgeRouteByGroup, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, signal, skipUserMessage, contextRefsSegment, hostname } = params
+  // L-2 (#388): reset the caller-owned run-outcome accumulator (observation only).
+  const runStats = params.runStats
+  if (runStats) {
+    runStats.toolCalls = 0
+    runStats.closingTurnToolCalls = 0
+    runStats.totalTokens = 0
+    runStats.terminal = null
+  }
   const cw = effectiveContextWindow(params.config.context_window)
   if (cw.floored) {
     logger.warn("llm.context_window_too_small", { disk: cw.disk, effective: cw.effective })
@@ -1150,6 +1166,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             total_tokens: ev.total_tokens,
             reasoning_tokens: ev.reasoning_tokens,
           }
+          if (runStats && typeof ev.total_tokens === "number") {
+            runStats.totalTokens += ev.total_tokens
+          }
         } else if (ev.type === "done") {
           finishReason = ev.finish_reason
         }
@@ -1221,6 +1240,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           thread_id: threadId,
           error: "输出被截断（工具调用不完整），已停止。",
         })
+        if (runStats) runStats.terminal = "error"
         return
       }
 
@@ -1242,6 +1262,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       const assistantMsg: StreamToolCall[] = toolCalls.filter(
         (tc): tc is StreamToolCall => tc != null,
       )
+      if (runStats) {
+        runStats.toolCalls += assistantMsg.length
+        runStats.closingTurnToolCalls = assistantMsg.length
+      }
       const savedAssistant = persistAssistantDraft({
         content: assistantContent,
         reasoning: reasoningContent,
@@ -1827,6 +1851,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
             if (errorLevel === "security" || errorLevel === "non_recoverable") {
               shouldStop = true
+              if (runStats) runStats.terminal = "security_halt"
               const { formatChatErrorLine } = await import("../capability/user-gate-copy")
               const code =
                 (toolResult as { error_code?: string }).error_code ||
@@ -1854,6 +1879,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                 last_error: toolResult.error,
               })
               shouldStop = true
+              if (runStats) runStats.terminal = "circuit_breaker"
               sendToExtension({
                 type: "chat.error",
                 thread_id: threadId,
@@ -1898,6 +1924,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             error: `Tool execution exception: ${result.error}`,
           })
           shouldStop = true
+          if (runStats) runStats.terminal = "error"
           break
         }
       }
@@ -1980,6 +2007,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             ? "上下文溢出，压缩重试后仍失败，已停止。"
             : "上下文溢出，已停止（当前上下文压缩模式不会自动压缩请求）。",
         })
+        if (runStats) runStats.terminal = "error"
         return
       }
       const isAuthError = errorMsg.includes("401") || errorMsg.includes("403") || errorMsg.includes("Incorrect API key")
@@ -2007,6 +2035,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           thread_id: threadId,
           error: "API Key 无效，请在设置中配置正确的 API Key。",
         })
+        if (runStats) runStats.terminal = "error"
         return
       }
       if (isStructuralError) {
@@ -2016,6 +2045,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           thread_id: threadId,
           error: "消息结构错误，已停止。请重试。",
         })
+        if (runStats) runStats.terminal = "error"
         return
       }
 
@@ -2035,6 +2065,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           thread_id: threadId,
           error: `连续 ${CONTINUOUS_FAILURE_LIMIT} 次失败，已暂停。请检查配置或手动介入。`,
         })
+        if (runStats) runStats.terminal = "circuit_breaker"
         return
       }
 
@@ -2051,7 +2082,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     thread_id: threadId,
     error: `达到最大工具调用轮次 (${MAX_TOOL_CALL_ROUNDS})，已暂停。`,
   })
+  if (runStats) runStats.terminal = "circuit_breaker"
   } finally {
+    if (runStats && signal?.aborted) runStats.terminal = "aborted"
     if (!signal?.aborted) {
       // Normal (non-abort) finish: steers that arrived during the final streaming
       // round were already acked (chat.steered) but are never consumed — dropping
