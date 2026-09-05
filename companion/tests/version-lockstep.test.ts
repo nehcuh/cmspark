@@ -30,3 +30,10 @@ test("version lockstep: chrome-extension package.json matches companion", () => 
   )
   assert.equal(ext.version, VERSION)
 })
+
+test("version lockstep: AGENTS.md header and footer match package.json", () => {
+  const agents = fs.readFileSync(path.join(ROOT, "..", "AGENTS.md"), "utf8")
+  const v = VERSION.replace(/\./g, "\\.")
+  assert.match(agents, new RegExp(`> \\*\\*Version\\*\\*: ${v} `), "AGENTS.md header version line")
+  assert.match(agents, new RegExp(`\\*CMspark Agent v${v}\\*`), "AGENTS.md footer")
+})
