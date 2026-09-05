@@ -68,6 +68,7 @@
     "src/background/thread-graph.ts",
     "src/background/cockpit-window.ts",
     "src/sidepanel/mode/mode-controller.ts",
+    "src/sidepanel/mode/surface-by-tool.ts",
     "src/cockpit/cockpit-status.ts",
     "tests/**/*.ts"
   ],

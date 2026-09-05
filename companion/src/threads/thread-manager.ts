@@ -14,6 +14,7 @@ import {
   type RuntimeContextBudgetMeta,
 } from "./runtime-context-budget"
 import { sanitizeRunProgress, seedRunProgress, type RunProgress } from "./run-progress"
+import { isExecutionPolicy, type ExecutionPolicy } from "../tool/plan-readonly"
 import type { ImageAttachmentMeta } from "../llm/image-parts"
 import { sniffedExt, type RasterMime } from "../llm/image-sniff"
 import {
@@ -92,6 +93,13 @@ interface Thread {
   capability_elevation_level?: string | null
   /** Pause freezes LLM loop + new tool dispatch; leases retained until TTL/cancel. */
   paused?: boolean
+  /**
+   * #327 thread execution cap: plan_readonly = deny every tool not in
+   * PLAN_READONLY_ALLOWED_TOOLS (pregate). Only settable via the
+   * user_gesture-gated thread.execution_policy.set wire message (workers
+   * inherit at spawn; generic thread.update must not carry this key).
+   */
+  execution_policy?: ExecutionPolicy | null
   /** ADR-016 Stage 3: worker bound to host-board intent id. */
   assigned_intent_id?: string | null
   /**
@@ -923,6 +931,16 @@ export class ThreadManager {
     }
     if (updates.board_mode !== undefined && typeof updates.board_mode !== "boolean") {
       throw new Error("board_mode must be a boolean")
+    }
+    // #327: shape-gate the cap here, but writes are user_gesture-only via the
+    // dedicated wire message (message-router); generic thread.update callers
+    // never legitimately pass this key.
+    if (
+      updates.execution_policy !== undefined &&
+      updates.execution_policy !== null &&
+      !isExecutionPolicy(updates.execution_policy)
+    ) {
+      throw new Error("execution_policy must be \"default\" or \"plan_readonly\"")
     }
     const { last_message_at: _ignoredListClock, ...safeUpdates } = updates
     Object.assign(thread, safeUpdates, { updated_at: monotonicTimestamp() })

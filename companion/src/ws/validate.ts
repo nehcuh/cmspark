@@ -193,6 +193,15 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (!m.updates || typeof m.updates !== "object") return { valid: false, error: "thread.update requires updates object" }
       return { valid: true }
     },
+    "thread.execution_policy.set": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "thread.execution_policy.set requires thread_id" }
+      }
+      if (m.policy !== "default" && m.policy !== "plan_readonly") {
+        return { valid: false, error: "thread.execution_policy.set requires policy: default | plan_readonly" }
+      }
+      return { valid: true }
+    },
     "thread.run_progress.toggle": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) {
         return { valid: false, error: "thread.run_progress.toggle requires thread_id" }
