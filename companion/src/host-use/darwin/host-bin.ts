@@ -18,8 +18,14 @@ export function resolveHostBinaryCandidates(fromDir: string): string[] {
     path.resolve(fromDir, "CMspark"),
     path.resolve(fromDir, "cmspark-host"),               // same-dir sibling (legacy DMG)
     path.resolve(fromDir, "../cmspark-host"),
+    // compiled __dirname = <root>/companion/dist/host-use/darwin: up 2 to the
+    // dist top level (companion/dist/cmspark-host) — dev-src __dirname misses
+    // here (companion/src has no binary) and falls through to the dist hop below.
     path.resolve(fromDir, "../../cmspark-host"),
-    path.resolve(fromDir, "../../dist/cmspark-host"),
+    // repo-root dist hop: from compiled darwin ../../../dist = <root>/companion/
+    // dist; from dev-src ../../../dist also = <root>/companion/dist (host-bin.ts
+    // always sits 3 dirs under the companion root). This is the dev-src hit and
+    // the compiled-state fallback after ../../cmspark-host.
     path.resolve(fromDir, "../../../dist/cmspark-host"),
   ]
 }
@@ -113,5 +119,8 @@ export function resolveHostBinary(): string {
   }
   // Fall back to dev-mode path (will ENOENT at execFile with clear error
   // pointing to the missing binary; better than silent wrong-path).
-  return path.resolve(__dirname, "../../dist/cmspark-host")
+  // See resolveHostBinaryCandidates: ../../../dist is the repo-root dist
+  // layout from both compiled and dev-src __dirname (host-bin.ts always sits
+  // 3 dirs under the companion root).
+  return path.resolve(__dirname, "../../../dist/cmspark-host")
 }

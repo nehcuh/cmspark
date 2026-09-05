@@ -40,6 +40,8 @@
 
 ### Fixed
 
+- **darwin host jsonEscape 覆盖全部 C0（#69 F1）**：`host.swift` runReadMessage 与 `read-mail.applescript` 的 jsonEscape handler 除补 `\b`（char id 8）/ `\f`（char id 12）分支外，新增逐字符白名单 pass——其余 C0（0x00-0x07 如 BEL、0x0B、0x0E-0x1F）统一 `\u00XX` 编码。此前含此类 C0 控制字符的邮件产生非法 JSON（TS `parseJsonSafe` fail-closed 致该邮件不可读）；现全 C0（0x00-0x1F）+ `"` `\\` 均可 JSON.parse 往返。两处 handler 保持逐字节等价（源码级 lockstep 测试钉死）。另修 host.swift 嵌入层 M3 潜伏转义 bug：换 `\"` 步骤 Swift 源层缺引号转义（会导致含引号邮件的 jsonEscape AppleScript 编译失败）——Swift 剥层后与 read-mail 逐行等价 + osascript 实跑对拍 IDENTICAL。
+- **darwin host-bin resolver 路径数学（#69 F2）**：候选列表删除永不命中的 `dist/dist` 死路径（`../../dist`），dev-mode fallback 由 `__dirname/../../dist` 改为 `../../../dist`——host-bin.ts 恒在 companion root 下 3 层，该路径在编译与 dev-src 两态都正确解析到 `companion/dist/cmspark-host`。真实目录结构测试断言无死路径、dist 可达。
 - **PDF 导入**：整文件 `readAsDataURL` 编码（与对话框附件同路），修 chunked `btoa` 导致 >32KiB PDF 损坏。[#282](https://github.com/nehcuh/cmspark/issues/282)
 - **Windows launcher**：VBS 递归建 `logs` 目录（干净配置不再卡错误对话框）；`launch.bat` SEA echo 括号转义；无 bundled node 时探测系统 node 并给出诚实报错；CI `windows-latest` launcher smoke（S1–S9）。[#279](https://github.com/nehcuh/cmspark/issues/279)
 - **知识预览失败可见**：解析失败不再永远「正在解析…」；可「跳过解析，手动填写」。（#270 / #271）
