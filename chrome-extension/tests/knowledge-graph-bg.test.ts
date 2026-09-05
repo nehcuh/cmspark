@@ -64,6 +64,26 @@ test("SW open/open_doc/refresh 有独立 case；knowledge.graph 不走 bulk-forw
 
 // --- #356: knowledge.graph error 帧 → error 态快照（不再无限「重建中」） ---
 
+test("#374: 组合语义 —— error 帧无 id 时文本兜底仍命中（老 companion / 早退帧）", () => {
+  // SW 组合是 knowledgeGraphErrorById(msg) ?? knowledgeGraphErrorPayload(msg)：
+  // 无 id 的 error 帧 → byId 返回 null → 兜底文本匹配接管（#365 行为不回退）
+  const combined = (msg: unknown) => knowledgeGraphErrorById(msg) ?? knowledgeGraphErrorPayload(msg)
+  // 无 id + 文本带动词 → 兜底命中（老 companion 不配新扩展的主路径）
+  const fb = combined({ type: "error", error: "knowledge.graph is panel-only (Side Panel knowledge panel)" })
+  assert.ok(fb)
+  assert.equal(fb!.status, "error")
+  // 无 id + 文本不带动词 → 都不命中（既有 NIT-5 边界不变）
+  assert.equal(combined({ type: "error", error: "boom" }), null)
+  // 带在途 id + 无动词文本 → byId 命中且短路（不落到文本兜底）
+  trackGraphRequest("kg.combo.1")
+  const byId = combined({ type: "error", error: "boom", id: "kg.combo.1" })
+  assert.ok(byId)
+  assert.equal(graphRequestInFlight("kg.combo.1"), false)
+  // 带未知 id + 文本带动词 → byId 不中、文本兜底命中（不因 id 在注册表外而漏网）
+  const unknownId = combined({ type: "error", error: "knowledge.graph is panel-only (Side Panel knowledge panel)", id: "kg.stale.99" })
+  assert.ok(unknownId)
+})
+
 test("#356: knowledgeGraphErrorPayload — 动词文本命中才映射，其他 error 帧不误伤", () => {
   // panel-only 门拒（message-router 原文）
   const rejected = knowledgeGraphErrorPayload({
