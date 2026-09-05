@@ -211,6 +211,22 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // L-2 (#388) loop kernel: explicit arm / stop (user_gesture enforced by the router).
+    "task_loop.arm": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "task_loop.arm requires thread_id" }
+      }
+      if (m.source !== undefined && m.source !== "suggestion_card" && m.source !== "explicit_command") {
+        return { valid: false, error: "task_loop.arm source must be suggestion_card | explicit_command" }
+      }
+      return { valid: true }
+    },
+    "task_loop.stop": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "task_loop.stop requires thread_id" }
+      }
+      return { valid: true }
+    },
     "overlay.shell.open": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) {
         return { valid: false, error: "overlay.shell.open requires thread_id" }
