@@ -1116,6 +1116,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       }
 
       let decision: Awaited<ReturnType<typeof securityConfirmations.request>> | undefined
+      let expertTeamAdmissionError: { success: false; error: string; data: { error_code: string } } | null = null
       try {
       // L2 FIFO admission FIRST (≤1 per orchestrator_run, ≤2 process-wide)
       const maForL2 = actingThreadId && threadManager
@@ -1316,6 +1317,23 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             )
             const slots =
               parent && actingThreadId ? remainingWorkerSlots(threadManager, String(actingThreadId)) : members.length
+            // N-3: do not show an empty team card when the worker cap is already full.
+            if (parent && actingThreadId && slots <= 0) {
+              expertTeamAdmissionError = {
+                success: false,
+                error: `max_workers_per_orchestrator_run reached; spawn_expert_team has no remaining slots`,
+                data: { error_code: "MAX_WORKERS" },
+              }
+              return { confirmationId: "", approved: false, reason: "denied" as const }
+            }
+            if (members.length === 0) {
+              expertTeamAdmissionError = {
+                success: false,
+                error: "spawn_expert_team requires at least one installed kind=expert member",
+                data: { error_code: "NO_ELIGIBLE_EXPERTS" },
+              }
+              return { confirmationId: "", approved: false, reason: "denied" as const }
+            }
             const shown = members.slice(0, Math.max(0, slots))
             finalParams = {
               ...finalParams,
@@ -1520,6 +1538,15 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       })()
       } finally {
         releaseL2Admission(l2AdmitKey)
+      }
+      if (expertTeamAdmissionError) {
+        if (flightReserved) {
+          const { releaseFlight } = await import("../orchestrator/single-flight")
+          releaseFlight(flightReserved, flightOwner)
+          flightReserved = null
+        }
+        logToolFinish(toolCallId, toolName, startedAt, expertTeamAdmissionError)
+        return expertTeamAdmissionError
       }
       if (!decision || !decision.approved) {
         if (flightReserved) {

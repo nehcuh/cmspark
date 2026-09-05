@@ -33,6 +33,12 @@ let WORKER_HARD_DENY: typeof import("../src/orchestrator/constants").WORKER_HARD
 let ORCHESTRATOR_TOOL_ALLOWLIST: typeof import("../src/orchestrator/constants").ORCHESTRATOR_TOOL_ALLOWLIST
 let initDataDir: typeof import("../src/config").initDataDir
 let clearConfigCache: typeof import("../src/config").clearConfigCache
+let scheduleWhenLlmSlotAvailable: typeof import("../src/orchestrator/llm-loop-gate").scheduleWhenLlmSlotAvailable
+let pendingDeferredLlmKickCount: typeof import("../src/orchestrator/llm-loop-gate").pendingDeferredLlmKickCount
+let tryAcquireMultiAgentLlmLoop: typeof import("../src/orchestrator/llm-loop-gate").tryAcquireMultiAgentLlmLoop
+let releaseMultiAgentLlmLoop: typeof import("../src/orchestrator/llm-loop-gate").releaseMultiAgentLlmLoop
+let _resetMultiAgentLlmLoopsForTests: typeof import("../src/orchestrator/llm-loop-gate")._resetMultiAgentLlmLoopsForTests
+let ORCHESTRATOR_CAPS: typeof import("../src/orchestrator/constants").ORCHESTRATOR_CAPS
 
 before(async () => {
   const configMod = await import("../src/config")
@@ -56,6 +62,13 @@ before(async () => {
   const constants = await import("../src/orchestrator/constants")
   WORKER_HARD_DENY = constants.WORKER_HARD_DENY
   ORCHESTRATOR_TOOL_ALLOWLIST = constants.ORCHESTRATOR_TOOL_ALLOWLIST
+  ORCHESTRATOR_CAPS = constants.ORCHESTRATOR_CAPS
+  const gate = await import("../src/orchestrator/llm-loop-gate")
+  scheduleWhenLlmSlotAvailable = gate.scheduleWhenLlmSlotAvailable
+  pendingDeferredLlmKickCount = gate.pendingDeferredLlmKickCount
+  tryAcquireMultiAgentLlmLoop = gate.tryAcquireMultiAgentLlmLoop
+  releaseMultiAgentLlmLoop = gate.releaseMultiAgentLlmLoop
+  _resetMultiAgentLlmLoopsForTests = gate._resetMultiAgentLlmLoopsForTests
 })
 
 after(() => {
@@ -402,4 +415,47 @@ test("fillMemberBrief: empty goal+brief stays empty; goal synthesizes a slice", 
   assert.match(filled, /fix the outage/)
   assert.match(filled, /SRE/)
   assert.match(filled, /禁止越权/)
+})
+
+test("#371 MAJOR: 6th kick queues under LLM cap; spawn still persists brief (no rollback)", async () => {
+  _resetMultiAgentLlmLoopsForTests()
+  const dummy = { agent_role: "worker", parent_thread_id: "p", orchestrator_run_id: "r" }
+  const cap = ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops
+  for (let i = 0; i < cap; i++) {
+    assert.equal(tryAcquireMultiAgentLlmLoop(dummy, `hold-${i}`).ok, true)
+  }
+
+  const { id, skillEngine } = saveExpert("并发第六kick371")
+  const tm = new ThreadManager()
+  const parent = tm.create("host-371-llmcap")
+  bindTm(tm, skillEngine)
+  const kicked: string[] = []
+  const params: Record<string, any> = {
+    __thread_id: parent.id,
+    goal: "one more under cap",
+    members: [{ pack_id: id, brief: "wait your turn" }],
+  }
+  const { token } = securityPolicy.issueTokenFor("spawn_expert_team", params)
+  params.security_token = token
+  const r = await executeCompanionTool("spawn_expert_team", params, undefined, {
+    kickWorkerChat: ({ threadId }) => {
+      const worker = tm.get(threadId)
+      scheduleWhenLlmSlotAvailable(worker, threadId, async () => {
+        kicked.push(threadId)
+      })
+    },
+  })
+  assert.equal(r.success, true, r.error)
+  assert.equal(r.data.worker_ids.length, 1)
+  const wid = r.data.worker_ids[0]
+  const msgs = tm.getMessages(wid)
+  assert.ok(msgs.some((m) => m.role === "user" && String(m.content).includes("wait your turn")))
+  assert.equal(kicked.length, 0, "6th LLM loop must not start while cap is full")
+  assert.equal(pendingDeferredLlmKickCount(), 1)
+
+  releaseMultiAgentLlmLoop("hold-0")
+  await new Promise((res) => setTimeout(res, 0))
+  assert.deepEqual(kicked, [wid])
+  assert.equal(pendingDeferredLlmKickCount(), 0)
+  _resetMultiAgentLlmLoopsForTests()
 })

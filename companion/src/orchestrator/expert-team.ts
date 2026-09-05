@@ -517,7 +517,10 @@ export async function spawnExpertTeam(opts: {
   }
 
   for (const m of toSpawn) {
-    const allow = Array.isArray(m.tools.allow) ? [...m.tools.allow] : []
+    const allow =
+      m.tools.mode === "allowlist" || m.tools.mode === "intersect"
+        ? [...(m.tools.allow || [])]
+        : null
     const deny = Array.isArray(m.tools.deny) ? [...m.tools.deny] : []
     const spawned = spawnWorkerThread(opts.tm, {
       parentThreadId: opts.parentThreadId,

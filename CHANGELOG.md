@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- **#371 round-2：组队 kick 走 `tryAcquireMultiAgentLlmLoop`（Pi MAJOR）**：`spawn_expert_team` 不再裸调 `adapter.chatCreate` 绕过 `max_concurrent_multi_agent_llm_loops=5`。满员时 kick **入队**（brief 已落盘，worker 待命），slot 释放后 FIFO drain；第 6 个 kick 不回滚组队、不超跑。N-2：`tools.mode=unchanged` 不再把 `roleAllow=[]` 打成空白名单（与 spawn_worker 的 null→安全默认一致）。N-3：已满 5 worker 时 L2 预拒 `MAX_WORKERS`，不再弹 0 成员空卡。N-1 applyPack parent∩ / N-4 异步 LLM 失败不回滚 sibling / propose 审计 / catalog 描述：不改（pre-existing 或已声明 residual）。[#371](https://github.com/nehcuh/cmspark/issues/371) / [#395](https://github.com/nehcuh/cmspark/pull/395)
 - **CDP 死磕升级建议（#357）**：同一 `(thread, origin)` 上 CDP 交互失败累计 ≥4 次（跨 locator / 工具名）后，后续 CDP 调用被 site-op-memory peek 拒执，`suggested_action=escalate_to_host_computer`，错误文本建议 `host_computer`（Chrome token，**仍走 L2 确认**）或 macOS `osascript_eval`。evaluate `success:true` 且 `result:null` 视为假成功（不重置失败计数、不消耗 DOM-script budget）。不改 `classifyError`，不自动跳过 CU 确认。Round-2：`origin:unknown`/非 http(s) 不计不拦；`justBanned` 只表示 locator 2 败；共享读面 `getOriginFailCount`（#358 rebase 对齐 `originFails`）；escalate 文案含 `list_tabs` 逃生门。[#357](https://github.com/nehcuh/cmspark/issues/357)
 
 ### Added

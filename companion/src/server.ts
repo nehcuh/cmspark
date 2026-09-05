@@ -733,8 +733,13 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           })(),
           // #371: fire-and-forget worker loop after spawn_expert_team persists the brief.
           // Do not await the worker LLM run (would deadlock the parent tool call).
+          // Round-2 (#395 MAJOR): must take tryAcquireMultiAgentLlmLoop — naked
+          // adapter.chatCreate bypassed max_concurrent_multi_agent_llm_loops=5.
+          // Cap full → queue (worker waits with brief on disk); slot free → drain.
           kickWorkerChat: ({ threadId, message }) => {
-            void (async () => {
+            const { scheduleWhenLlmSlotAvailable } = require("./orchestrator/llm-loop-gate") as typeof import("./orchestrator/llm-loop-gate")
+            const workerThread = threadManager.get(threadId)
+            scheduleWhenLlmSlotAvailable(workerThread, threadId, async () => {
               try {
                 const { chatCreate } = await import("./llm/adapter")
                 await chatCreate({
@@ -755,7 +760,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
                   error: e?.message || String(e),
                 })
               }
-            })()
+            })
           },
         })
         logToolFinish(toolCallId, toolName, startedAt, result)
