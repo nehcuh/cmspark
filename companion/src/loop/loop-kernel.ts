@@ -563,8 +563,10 @@ export function gateLoopNextRunDrain(
     if (state?.status === "active") {
       const now = opts?.nowMs ?? Date.now()
       if (typeof state.grant_expires_at_ms === "number" && now > state.grant_expires_at_ms) {
+        // markLoopPaused already dropLoopNextRuns (loop-source only). Do NOT
+        // takeNextRun — that would swallow a user message now at the head
+        // (#402 MAJOR-1). Re-peek: user items pass through, empty queue returns.
         markLoopPaused(tm, threadId, "grant_ttl", { audit: opts?.audit, nowMs: now })
-        takeNextRun(threadId)
         continue
       }
       const hit = loopBudgetExceeded(state, now)

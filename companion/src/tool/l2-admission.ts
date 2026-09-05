@@ -577,12 +577,13 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             shouldUseCuFocusLease,
             peekCuFocusHolder,
             queueCuFocusWaiter,
+            cuFocusWaiterSource,
             CU_FOCUS_LEASE_QUEUED,
           } = await import("../loop/cu-focus-lease")
           const acting = threadManager.get(actingThreadId) as any
           const other = peekCuFocusHolder()
           if (shouldUseCuFocusLease(acting) && other && other !== actingThreadId) {
-            queueCuFocusWaiter(actingThreadId)
+            queueCuFocusWaiter(actingThreadId, cuFocusWaiterSource(acting))
             const queued = {
               success: false,
               error:

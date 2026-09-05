@@ -387,3 +387,95 @@ test("unattended all-ticked close is 计划完成待复核 with digest and no cl
   assert.deepEqual(digest.blocked_ids, [])
   assert.equal(getLoop(tid)?.status, "completed")
 })
+
+// --- #402 round-2: MAJOR-1 / MAJOR-2 / MAJOR-3 ---
+
+test("MAJOR-1: TTL-pause drain gate keeps user messages (does not takeNextRun after dropLoop)", () => {
+  const now = 8_000_000
+  grant.armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE, now })
+  const tid = newThread()
+  kernel.armLoop(tm, tid, "unattended_arm", { unattended: true, nowMs: now, audit: auditSink })
+  queues.enqueueNextRun(tid, "stale loop continuation", undefined, "loop")
+  queues.enqueueNextRun(tid, "user came back")
+  assert.equal(queues.peekNextRunCount(tid), 2)
+  const later = now + grant.UNATTENDED_HARD_TTL_MS + 1
+  kernel.gateLoopNextRunDrain(tid, tm, { nowMs: later, audit: auditSink })
+  assert.equal(getLoop(tid)?.status, "paused")
+  assert.equal(getLoop(tid)?.pause_reason, "grant_ttl")
+  assert.equal(queues.peekNextRunCount(tid), 1, "user entry survives TTL pause drain")
+  assert.equal(queues.peekNextRun(tid)?.text, "user came back")
+  assert.equal(queues.peekNextRun(tid)?.source ?? "user", "user")
+})
+
+function adapterClassify(toolResult: {
+  error: string
+  error_code?: string
+  data?: { error_code?: string }
+}) {
+  // Same extraction as adapter.ts:1859–1865.
+  const error_code =
+    toolResult.error_code ||
+    (typeof toolResult.data?.error_code === "string" ? toolResult.data.error_code : undefined)
+  return classifyError(toolResult.error, { toolName: "host_computer", error_code })
+}
+
+test("MAJOR-2: l2-admission queued payload is recoverable — no security_halt — drain keeps retry", () => {
+  const queued = {
+    success: false,
+    error:
+      "host_computer waiting on CU focus lease (held by other) [CU_FOCUS_LEASE_QUEUED] — " +
+      "only one loop/worker drives CU at a time; this request is queued.",
+    error_code: lease.CU_FOCUS_LEASE_QUEUED,
+    data: { error_code: lease.CU_FOCUS_LEASE_QUEUED, holder_thread_id: "other" },
+  }
+  // Without the code the string falls to default non_recoverable (why mapping is required).
+  assert.equal(classifyError(queued.error, { toolName: "host_computer" }), "non_recoverable")
+  const level = adapterClassify(queued)
+  assert.equal(level, "recoverable")
+  assert.notEqual(level, "security")
+  assert.notEqual(level, "non_recoverable")
+
+  const a = newThread()
+  const b = newThread()
+  kernel.armLoop(tm, a, "explicit_command", { audit: auditSink })
+  kernel.armLoop(tm, b, "explicit_command", { audit: auditSink })
+  assert.equal(lease.gateHostComputerFocusLease(tm.get(a) as any, a).ok, true)
+  const gb = lease.gateHostComputerFocusLease(tm.get(b) as any, b)
+  assert.equal(gb.ok, false)
+  if (!gb.ok) {
+    const l2Shape = {
+      success: false as const,
+      error: gb.error,
+      error_code: gb.error_code,
+      data: { error_code: gb.error_code, holder_thread_id: gb.holder },
+    }
+    assert.equal(adapterClassify(l2Shape), "recoverable")
+  }
+  // Recoverable ⇒ adapter does not set security_halt; loop B stays active.
+  assert.equal(getLoop(b)?.status, "active")
+  lease.releaseCuFocusLease(a)
+  assert.equal(queues.peekNextRun(b)?.source, "loop")
+  kernel.gateLoopNextRunDrain(b, tm, { audit: auditSink })
+  assert.equal(queues.peekNextRunCount(b), 1, "retry notification survives drain while loop active")
+  assert.match(queues.peekNextRun(b)!.text, /CU focus lease is free/)
+})
+
+test("MAJOR-3: worker CU waiter uses user source so drain gate does not starve it", () => {
+  const a = newThread()
+  kernel.armLoop(tm, a, "explicit_command", { audit: auditSink })
+  const w = newThread()
+  tm.update(w, { agent_role: "worker" } as any)
+  assert.equal(lease.shouldUseCuFocusLease(tm.get(w) as any), true)
+  assert.equal(lease.cuFocusWaiterSource(tm.get(w) as any), "user")
+  assert.equal(lease.gateHostComputerFocusLease(tm.get(a) as any, a).ok, true)
+  const gw = lease.gateHostComputerFocusLease(tm.get(w) as any, w)
+  assert.equal(gw.ok, false)
+  lease.releaseCuFocusLease(a)
+  const notice = queues.peekNextRun(w)
+  assert.ok(notice)
+  assert.equal(notice!.source ?? "user", "user", "worker retry is not loop-source")
+  assert.match(notice!.text, /CU focus lease is free/)
+  // Worker has no loop_state: loop-source would be takeNextRun'd. user-source passes.
+  kernel.gateLoopNextRunDrain(w, tm, { audit: auditSink })
+  assert.equal(queues.peekNextRunCount(w), 1, "worker retry is not starved by drain gate")
+})

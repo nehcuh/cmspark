@@ -12,7 +12,7 @@
 // wait inside host_computer (that would break the single-task invariant).
 
 import { sanitizeLoopState } from "./loop-state"
-import { enqueueNextRun } from "../llm/run-queues"
+import { enqueueNextRun, type NextRunSource } from "../llm/run-queues"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { logger } from "../logger"
 
@@ -23,8 +23,17 @@ export type CuFocusLeaseSnapshot = {
   queued: string[]
 }
 
+type CuFocusWaiter = { threadId: string; source: NextRunSource }
+
 let holder: string | null = null
-const queue: string[] = []
+const queue: CuFocusWaiter[] = []
+
+/** Worker has no loop_state — drain gate drops source=loop. Use "user". */
+export function cuFocusWaiterSource(
+  thread: { agent_role?: string | null } | null | undefined,
+): NextRunSource {
+  return thread?.agent_role === "worker" ? "user" : "loop"
+}
 
 function audit(type: string, extra: Record<string, unknown>): void {
   try {
@@ -62,15 +71,16 @@ export function tryAcquireCuFocusLease(holderId: string): { ok: true } | { ok: f
 
 /**
  * Remember a waiter. Same id is not queued twice. Does not acquire.
- * On release, waiters get a loop nextRun so they retry host_computer.
+ * `source` is chosen at queue time: workers use "user" so gateLoopNextRunDrain
+ * does not starve them (#402 MAJOR-3); loops use "loop".
  */
-export function queueCuFocusWaiter(holderId: string): void {
+export function queueCuFocusWaiter(holderId: string, source: NextRunSource = "loop"): void {
   const id = String(holderId || "")
   if (!id) return
   if (holder === id) return
-  if (!queue.includes(id)) {
-    queue.push(id)
-    audit("task_loop.cu_focus_queued", { thread_id: id, holder, queued: queue.length })
+  if (!queue.some((w) => w.threadId === id)) {
+    queue.push({ threadId: id, source: source === "user" ? "user" : "loop" })
+    audit("task_loop.cu_focus_queued", { thread_id: id, holder, queued: queue.length, source })
   }
 }
 
@@ -88,7 +98,7 @@ export function gateHostComputerFocusLease(
   const id = String(threadId || "")
   const acq = tryAcquireCuFocusLease(id)
   if (acq.ok) return { ok: true, acquired: true }
-  queueCuFocusWaiter(id)
+  queueCuFocusWaiter(id, cuFocusWaiterSource(thread))
   return {
     ok: false,
     error_code: CU_FOCUS_LEASE_QUEUED,
@@ -115,23 +125,23 @@ function drainCuFocusQueue(): void {
     // and takes the lease then. Auto-acquire would idle-hold the desktop.
     try {
       enqueueNextRun(
-        next,
+        next.threadId,
         "CU focus lease is free. Retry host_computer for remaining items. Do not enable computer.use yourself.",
         undefined,
-        "loop",
+        next.source,
       )
     } catch (e: any) {
       logger.warn("task_loop.cu_focus_drain_failed", {
-        thread_id: next,
+        thread_id: next.threadId,
         error: e?.message || String(e),
       })
     }
-    audit("task_loop.cu_focus_notified", { thread_id: next })
+    audit("task_loop.cu_focus_notified", { thread_id: next.threadId, source: next.source })
   }
 }
 
 export function cuFocusLeaseSnapshot(): CuFocusLeaseSnapshot {
-  return { holder, queued: [...queue] }
+  return { holder, queued: queue.map((w) => w.threadId) }
 }
 
 export function _resetCuFocusLeaseForTests(): void {

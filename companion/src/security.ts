@@ -924,6 +924,10 @@ export function classifyError(
   // L-5: unattended NEVER-list confirm timeout/deny is item-blocked + bypass,
   // not HALT_SECURITY. 45s fail-closed is unchanged (the tool still denied).
   if (context?.error_code === "UNATTENDED_CONFIRM_DENIED") return "recoverable"
+  // L-5 (#402 MAJOR-2): CU focus lease queue is a wait, not a fatal halt.
+  // Without this mapping the queued error string falls through to the default
+  // non_recoverable bucket → adapter security_halt → drain drops the retry.
+  if (context?.error_code === "CU_FOCUS_LEASE_QUEUED") return "recoverable"
   const msg = errorMessage.toLowerCase()
 
   if (msg.includes("security block")) {
