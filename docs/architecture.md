@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 架构文档
 
-> 版本: 2.4.7 | 日期: 2026-09-04 | 状态: 已确认（同步 **0.5.9** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴** · 知识库波次（AI 草稿 / 检索 / 分布 / 文件夹）· context_window 512000 · listen-first · 当轮活计划 · ADR-023/024 语音（含 2026-08-31 L13 非静默回退）· Capture HTML 卡 360×420 流式 · 用户附图 · Windows NSIS · 知识诚实 · ChatShell；T1 **已记分、禁扩 profile**）
+> 版本: 2.4.8 | 日期: 2026-09-06 | 状态: 已确认（同步 **0.6.0** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴** · 知识库波次（AI 草稿 / 检索 / 分布 / 文件夹）· context_window 512000 · listen-first · 当轮活计划 · ADR-023/024 语音（含 2026-08-31 L13 非静默回退）· Capture HTML 卡 360×420 流式 · 用户附图 · Windows NSIS · 知识诚实 · ChatShell · 0.6.0 自主性三件套（巡航档位 / plan_readonly / loop L-1–L-5）· 专家团队 v1 · CU 完整性链（后三项索引级，详见 [CHANGELOG](../CHANGELOG.md) `[0.6.0]`，loop/专家独立 ADR 待补）；T1 **已记分、禁扩 profile**）
 
 ---
 
@@ -17,6 +17,8 @@ CMspark **不是**多套 Agent runtime，而是 **一个** Companion tool-loop�
 | **C Autonomy** | 自主度 | 单线程 → multi-worker + tab lease → Mission Board（Board **只**归本轴） |
 
 **横切标签**：Trust（随 Surface 单调变严；session-trust 见 ADR-017）· Channel（`community` | `enterprise`）。
+
+**0.6.0 增量（索引级）**：Autonomy 轴新增巡航档位选择器 / plan_readonly 线程级执行帽（#325 / #327）与无人值守 loop（`companion/src/loop/`：L-1 完成谓词 · L-3 换路引擎 · L-5 值守收官，**默认关**，#386–#391）；Composition 轴新增专家团队 v1（Pack `kind: expert`，#366–#371，见 §7.1）。两者独立 ADR 待补，决策记录见 [CHANGELOG](../CHANGELOG.md) `[0.6.0]` 与各 issue。
 
 **产品标签别名**：L0/L1/L2 ≡ UI `CapabilityLevel`：`chat` | `browser` | `computer`。
 
@@ -585,6 +587,7 @@ Mission Pack（pack.yaml → pack.apply → Thread 字段）
 
 - **Pack 非 runtime**：不新建执行引擎，只组合已有 SkillEngine / Thread / 工具策略。
 - **双通道**：`capability_profile: community | enterprise`；shell/netsec 启用要求 enterprise。
+- **`kind: mission|expert`**（0.6.0，#367）：expert 为可调度的**角色视图**（仍非 runtime，kind 只影响过滤/匹配/文案）；七个预置专家 Pack（#368）+ `propose_expert_team` / `spawn_expert_team` 一张 L2 卡组队（#371）；ADR-014/020 修订段已落，独立 ADR 待补。
 
 ### 7.2 数据流（apply）
 

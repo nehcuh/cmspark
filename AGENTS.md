@@ -1,6 +1,6 @@
 # CMspark Agent Configuration
 
-> **Version**: 0.5.9 (keep in lock-step with companion/package.json)
+> **Version**: 0.6.0 (keep in lock-step with companion/package.json)
 > **Platform**: CMspark Browser Agent
 
 ## Tool Environment

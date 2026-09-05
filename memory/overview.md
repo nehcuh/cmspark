@@ -2,9 +2,9 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-04 (lockstep 0.5.9)
+**Updated**: 2026-09-04 (lockstep 0.6.0)
 
-## CMspark — 产品 0.5.9
+## CMspark — 产品 0.6.0
 
 | 轴 | 状态 |
 |----|------|
@@ -20,7 +20,7 @@
 
 ## Branch lock (S103)
 
-- 包装 **0.5.9**（知识库波次 #272–#283 + Windows launcher 后续）。0.5.8 仍是 9-02 工厂切点（#268 context_window 512000 / listen-first / zip node-first）。当轮活计划（#265）在 0.5.7。召唤器流式 / 语音回退 / 会议自动 K 已在 0.5.6。
+- 包装 **0.6.0**（侧栏 UI 重构 #321 · 自主性三件套 #325/#327/#386–#391 · 专家团队 v1 #366–#371 · CU 完整性链 #359–#362）。0.5.9 是 9-04 知识库切点（#272–#283 + Windows launcher 后续）；0.5.8 仍是 9-02 工厂切点（#268 context_window 512000 / listen-first / zip node-first）。当轮活计划（#265）在 0.5.7。召唤器流式 / 语音回退 / 会议自动 K 已在 0.5.6。
 - **评审弧闭环**：c39d7d3e..26949cbb 四路对抗 7 MAJOR 全修（#261–#264），main tip `18d843d1`。
 - **活票**：#230 冻 F-S-10 / overlay-acl；#258–#260 语音/会议。T1 #228 已关，**禁扩** profile。
 - **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；宣称 Capture/CU/F-S-10 闭合；StatusRail 手风琴 / Wave 2 FocusBand。
@@ -32,6 +32,6 @@
 
 ## Docs SoT
 
-- 活切点：`CHANGELOG.md` **0.5.9**
+- 活切点：`CHANGELOG.md` **0.6.0**
 - 0.5.3 快照：`docs/superpowers/specs/2026-08-27-post-227-status.md`（SNAPSHOT）
 - 用户 / 架构：`docs/README.md` · `PRODUCT.md`
