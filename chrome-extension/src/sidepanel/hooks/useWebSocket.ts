@@ -856,6 +856,7 @@ export function useWebSocket() {
               worker_role_label: typeof msg.worker_role_label === "string" ? msg.worker_role_label : undefined,
               tab_id: typeof msg.tab_id === "number" ? msg.tab_id : undefined,
               offer_enterprise_session_trust: msg.offer_enterprise_session_trust === true,
+              expert_team: msg.expert_team && typeof msg.expert_team === "object" ? msg.expert_team : undefined,
             },
           })
           // Refresh fleet strip when confirms arrive (pending badge + worker map)

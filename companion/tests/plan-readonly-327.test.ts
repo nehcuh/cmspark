@@ -186,7 +186,7 @@ describe("#327 differential (SoT-derived deny)", () => {
     // appear on the allowlist even if the extension table grows.
     const l2ExtensionSurface = [
       "host_computer", "host_app", "host_read", "host_write", "host_cli",
-      "shell_exec", "netsec_port_scan", "osascript_eval", "spawn_worker",
+      "shell_exec", "netsec_port_scan", "osascript_eval", "spawn_worker", "spawn_expert_team",
       "ask_user", "board_complete", "skill_install",
     ]
     for (const t of l2ExtensionSurface) {

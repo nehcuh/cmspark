@@ -1189,7 +1189,9 @@ export class ThreadManager {
           toolName === "netsec_port_scan" ||
           toolName === "host_computer" ||
           toolName === "host_write" ||
-          toolName === "spawn_worker"
+          toolName === "spawn_worker" ||
+          toolName === "spawn_expert_team" ||
+          toolName === "propose_expert_team"
         ) {
           return false
         }

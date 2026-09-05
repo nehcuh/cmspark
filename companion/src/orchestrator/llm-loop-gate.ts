@@ -7,6 +7,19 @@ import { isMultiAgentThread } from "./spawn"
 let activeMultiAgentLoops = 0
 const holders = new Set<string>() // thread ids currently holding a slot
 
+/**
+ * #371 round-2: deferred worker kicks that could not take a slot.
+ * Semantics: fire-and-forget kick that hits MULTI_AGENT_LLM_CAP is queued
+ * (brief already persisted; worker waits). The next release drains FIFO.
+ * Same threadId is not queued twice.
+ */
+type DeferredLlmRun = {
+  threadId: string
+  thread: unknown
+  run: () => Promise<void>
+}
+const deferredKickQueue: DeferredLlmRun[] = []
+
 export type LlmLoopGateResult =
   | { ok: true }
   | { ok: false; error: string; active: number; cap: number }
@@ -52,6 +65,82 @@ export function releaseMultiAgentLlmLoop(threadId: string): void {
   if (!holders.has(threadId)) return
   holders.delete(threadId)
   if (activeMultiAgentLoops > 0) activeMultiAgentLoops--
+  drainDeferredLlmRuns()
+}
+
+/**
+ * Start `run` under the multi-agent LLM cap, or queue it if the cap is full.
+ *
+ * - started: slot taken now; `run` is fire-and-forget and releases on settle.
+ * - queued: cap full; worker stays idle with its brief until a slot frees.
+ *
+ * Missing `thread` is treated as a worker (fail-closed: still counts toward cap).
+ * Kick that cannot acquire must NOT bypass the gate by calling chatCreate naked.
+ */
+export function scheduleWhenLlmSlotAvailable(
+  thread: unknown,
+  threadId: string,
+  run: () => Promise<void>,
+): { started: boolean; queued: boolean; active: number; cap: number } {
+  const counted = thread ?? { agent_role: "worker" }
+  const id = String(threadId || "")
+  if (holders.has(id)) {
+    return {
+      started: true,
+      queued: false,
+      active: multiAgentLlmLoopSnapshot().active,
+      cap: ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops,
+    }
+  }
+  const gate = tryAcquireMultiAgentLlmLoop(counted, id)
+  if (gate.ok) {
+    startDeferredRun({ threadId: id, thread: counted, run })
+    return {
+      started: true,
+      queued: false,
+      active: multiAgentLlmLoopSnapshot().active,
+      cap: ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops,
+    }
+  }
+  if (!deferredKickQueue.some((q) => q.threadId === id)) {
+    deferredKickQueue.push({ threadId: id, thread: counted, run })
+  }
+  return {
+    started: false,
+    queued: true,
+    active: gate.active,
+    cap: gate.cap,
+  }
+}
+
+export function pendingDeferredLlmKickCount(): number {
+  return deferredKickQueue.length
+}
+
+function startDeferredRun(item: DeferredLlmRun): void {
+  void Promise.resolve()
+    .then(() => item.run())
+    .catch(() => {
+      /* caller logs; slot must still free */
+    })
+    .finally(() => {
+      releaseMultiAgentLlmLoop(item.threadId)
+    })
+}
+
+function drainDeferredLlmRuns(): void {
+  while (deferredKickQueue.length > 0) {
+    const next = deferredKickQueue[0]!
+    const peek = canAcquireMultiAgentLlmLoop(next.thread, next.threadId)
+    if (!peek.ok) break
+    deferredKickQueue.shift()
+    const acq = tryAcquireMultiAgentLlmLoop(next.thread, next.threadId)
+    if (!acq.ok) {
+      deferredKickQueue.unshift(next)
+      break
+    }
+    startDeferredRun(next)
+  }
 }
 
 export function multiAgentLlmLoopSnapshot(): {
@@ -70,4 +159,5 @@ export function multiAgentLlmLoopSnapshot(): {
 export function _resetMultiAgentLlmLoopsForTests(): void {
   activeMultiAgentLoops = 0
   holders.clear()
+  deferredKickQueue.length = 0
 }

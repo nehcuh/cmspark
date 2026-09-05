@@ -18,6 +18,8 @@ import {
   canAcquireMultiAgentLlmLoop,
   releaseMultiAgentLlmLoop,
   multiAgentLlmLoopSnapshot,
+  scheduleWhenLlmSlotAvailable,
+  pendingDeferredLlmKickCount,
   _resetMultiAgentLlmLoopsForTests,
 } from "../src/orchestrator/llm-loop-gate"
 import {
@@ -133,6 +135,41 @@ test("multi-agent LLM loop gate: re-entrant same thread", () => {
   assert.equal(multiAgentLlmLoopSnapshot().active, 1)
   releaseMultiAgentLlmLoop("same")
   assert.equal(multiAgentLlmLoopSnapshot().active, 0)
+})
+
+test("#371 kick: 6th concurrent LLM loop queues; drain starts it after a slot frees", async () => {
+  _resetMultiAgentLlmLoopsForTests()
+  const worker = { agent_role: "worker", parent_thread_id: "p", orchestrator_run_id: "r" }
+  const cap = ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops
+  for (let i = 0; i < cap; i++) {
+    assert.equal(tryAcquireMultiAgentLlmLoop(worker, `hold-${i}`).ok, true)
+  }
+  const started: string[] = []
+  let releaseHang: () => void = () => {}
+  const hang = new Promise<void>((resolve) => {
+    releaseHang = resolve
+  })
+  const sixth = scheduleWhenLlmSlotAvailable(worker, "kick-6", async () => {
+    started.push("kick-6")
+    await hang
+  })
+  assert.equal(sixth.queued, true, "6th kick must queue, not bypass the cap")
+  assert.equal(sixth.started, false)
+  assert.equal(started.length, 0, "queued kick must not start chatCreate")
+  assert.equal(pendingDeferredLlmKickCount(), 1)
+  assert.equal(multiAgentLlmLoopSnapshot().active, cap)
+
+  releaseMultiAgentLlmLoop("hold-0")
+  await new Promise((r) => setTimeout(r, 0))
+  assert.deepEqual(started, ["kick-6"])
+  assert.equal(pendingDeferredLlmKickCount(), 0)
+  assert.equal(multiAgentLlmLoopSnapshot().active, cap, "drained kick occupies the freed slot")
+
+  releaseHang()
+  await new Promise((r) => setTimeout(r, 0))
+  assert.equal(multiAgentLlmLoopSnapshot().active, cap - 1)
+  for (let i = 1; i < cap; i++) releaseMultiAgentLlmLoop(`hold-${i}`)
+  _resetMultiAgentLlmLoopsForTests()
 })
 
 test("forceReleaseTab: pending-aware FORCE_RELEASING then complete", () => {

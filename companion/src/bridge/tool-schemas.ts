@@ -216,6 +216,19 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     ports: z.array(z.number().int().min(1).max(65535)).max(32).optional(),
     security_token: z.string().optional(),
   }),
+  propose_expert_team: z.object({
+    task: z.string().min(1),
+    pack_ids: z.array(z.string()).optional(),
+  }),
+  spawn_expert_team: z.object({
+    goal: z.string().optional(),
+    members: z.array(z.object({
+      pack_id: z.string().min(1),
+      brief: z.string().optional(),
+      role_label: z.string().optional(),
+    })).min(1).max(8),
+    security_token: z.string().optional(),
+  }),
 
   // --- macOS osascript (high-risk: JS in a Chrome tab via AppleScript) ---
   // Expression is required. url is preferred but optional at the schema boundary:

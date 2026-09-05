@@ -42,3 +42,27 @@ test("trust hint only for tools Cockpit actually offers trust on", () => {
 test("plain file-open confirm keeps the one-off copy", () => {
   assert.match(minimalConfirmHint(req({ relevant_domains: [] })), /仅这一次，不加白名单/)
 })
+
+test("#371 expert team confirm points at 确认台 for editable slices", () => {
+  const hint = minimalConfirmHint(
+    req({
+      tool_name: "spawn_expert_team",
+      expert_team: {
+        will_promote_orchestrator: true,
+        will_open_board: true,
+        cap_note: "≤4",
+        members: [
+          {
+            pack_id: "expert-sre",
+            name: "SRE",
+            role_label: "SRE",
+            effective_tools: ["list_tabs"],
+            brief: "watch SLO",
+          },
+        ],
+      },
+    }),
+  )
+  assert.match(hint, /确认台/)
+  assert.match(hint, /切片/)
+})

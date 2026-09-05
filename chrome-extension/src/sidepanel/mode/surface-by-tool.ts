@@ -55,6 +55,7 @@ export const SURFACE_BY_TOOL: Readonly<Record<string, SurfaceLevel>> = {
   netsec_port_scan: "L2",
   osascript_eval: "L2",
   spawn_worker: "L2",
+  spawn_expert_team: "L2",
   ask_user: "L2",
   board_complete: "L2",
   skill_install: "L2",

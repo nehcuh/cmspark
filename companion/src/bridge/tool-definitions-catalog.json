@@ -967,6 +967,75 @@
   {
     "type": "function",
     "function": {
+      "name": "propose_expert_team",
+      "description": "Read-only match: given a task brief, return ≤4 installed kind=expert pack ids with a one-line rationale. Ids MUST be in the installed enabled set — invented or disabled ids are filtered. Does not spawn. Follow with spawn_expert_team (one L2 card) after the user wants a team.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "Task brief to match against installed expert packs"
+          },
+          "pack_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional ranking of candidate pack ids. Only ids already installed and enabled are kept (LLM may rank/reason, not invent)."
+          }
+        },
+        "required": [
+          "task"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "spawn_expert_team",
+      "description": "Spawn up to 4 expert workers in ONE L2 Confirm Center card (not N serial spawn_worker confirms). After approval: spawnWorkerThread + applyPack(allowTrust:false) + persist task slice + chat.create kick. Empty brief = failure + rollback. Do NOT invent user_confirmed or security_token. Do NOT write base_url. Workers cannot nest or chat with each other. Total workers ≤5.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Shared team goal copied into each worker task slice"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "pack_id": {
+                  "type": "string",
+                  "description": "Installed kind=expert pack id"
+                },
+                "brief": {
+                  "type": "string",
+                  "description": "Task slice for this role (goal + duties). Visible and editable on the confirm card. Empty = spawn fails."
+                },
+                "role_label": {
+                  "type": "string",
+                  "description": "Optional short role label"
+                }
+              },
+              "required": [
+                "pack_id"
+              ]
+            },
+            "description": "Expert members (invented ids filtered; >4 truncated)"
+          }
+        },
+        "required": [
+          "members"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "board_claim_intent",
       "description": "Claim an open MissionBoard intent for a worker on the host board (ADR-016 Stage 3). Max 3 intents per worker.",
       "parameters": {

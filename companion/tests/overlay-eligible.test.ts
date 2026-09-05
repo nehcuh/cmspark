@@ -38,6 +38,10 @@ test("osascript_eval and spawn_worker are not overlay eligible", () => {
     isOverlayEligiblePack(base({ tools: { mode: "allowlist", allow: ["spawn_worker"], deny: [] } })),
     false,
   )
+  assert.equal(
+    isOverlayEligiblePack(base({ tools: { mode: "allowlist", allow: ["spawn_expert_team"], deny: [] } })),
+    false,
+  )
 })
 
 test("L1 / navigate / coding-handoff / mcp_servers denied", () => {

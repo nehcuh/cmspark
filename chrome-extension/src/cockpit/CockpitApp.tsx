@@ -401,6 +401,68 @@ function StepLine({ step }: { step: ComputerStepView }) {
   )
 }
 
+function ExpertTeamConfirm({
+  digest,
+  sliceEdits,
+  onBriefChange,
+}: {
+  digest: NonNullable<SecurityConfirmationRequest["expert_team"]>
+  sliceEdits: Record<string, string>
+  onBriefChange: (packId: string, brief: string) => void
+}) {
+  return (
+    <div style={{ fontSize: 11, color: tokens.darkText, lineHeight: 1.45 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>专家组队（一张确认卡）</div>
+      <div style={{ color: tokens.darkWarning, marginBottom: 8 }}>
+        {digest.will_promote_orchestrator ? "将把本对话提升为 orchestrator。" : "本对话已是 orchestrator。"}{" "}
+        {digest.will_open_board ? "将打开 Mission Board（worker 无板权，只回 handback）。" : ""}
+      </div>
+      <div style={{ color: tokens.darkMuted, marginBottom: 8 }}>{digest.cap_note}</div>
+      {digest.members.map((m) => (
+        <div
+          key={m.pack_id}
+          style={{
+            marginBottom: 10,
+            padding: 8,
+            border: `1px solid ${tokens.darkBorder}`,
+            borderRadius: tokens.radiusSm,
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>
+            {m.name}{" "}
+            <span style={{ fontFamily: tokens.fontMono, color: tokens.darkMuted }}>({m.pack_id})</span>
+          </div>
+          <div style={{ fontSize: 10, color: tokens.darkMuted, margin: "4px 0" }}>
+            有效工具面（HARD_DENY 后）：{m.effective_tools.join(", ") || "（空）"}
+          </div>
+          <label style={{ display: "block", fontSize: 10, color: tokens.darkMuted, marginBottom: 4 }}>
+            任务切片（可编辑）
+            <textarea
+              value={sliceEdits[m.pack_id] ?? m.brief}
+              onChange={(e) => onBriefChange(m.pack_id, e.target.value)}
+              rows={6}
+              style={{
+                display: "block",
+                width: "100%",
+                marginTop: 4,
+                fontFamily: tokens.fontMono,
+                fontSize: 11,
+                lineHeight: 1.4,
+                background: tokens.darkBg,
+                color: tokens.darkText,
+                border: `1px solid ${tokens.darkBorder}`,
+                borderRadius: tokens.radiusSm,
+                padding: 6,
+                resize: "vertical",
+              }}
+            />
+          </label>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function ConfirmElevated({
   request,
   threadId,
@@ -424,6 +486,7 @@ function ConfirmElevated({
     canOfferComputerSessionTrust(request.tool_name, relevantApp),
   )
   const [enterpriseTrust, setEnterpriseTrust] = useState(false)
+  const [sliceEdits, setSliceEdits] = useState<Record<string, string>>({})
   const nonceChallenge = request.nonce_challenge
   const nonceMatches =
     !nonceChallenge || nonceInput.toUpperCase() === nonceChallenge.toUpperCase()
@@ -437,7 +500,12 @@ function ConfirmElevated({
     setNonceInput("")
     setPasteBlocked(false)
     setImgFailed(false)
-  }, [request.confirmation_id, request.tool_name, request.relevant_apps, request.offer_enterprise_session_trust])
+    const next: Record<string, string> = {}
+    for (const m of request.expert_team?.members || []) {
+      next[m.pack_id] = m.brief
+    }
+    setSliceEdits(next)
+  }, [request.confirmation_id, request.tool_name, request.relevant_apps, request.offer_enterprise_session_trust, request.expert_team])
 
   // 60s auto-deny (D14)
   useEffect(() => {
@@ -486,6 +554,13 @@ function ConfirmElevated({
       add_to_enterprise_session_trust:
         approved && !stopThread && canEnterpriseTrust && enterpriseTrust ? true : undefined,
       nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
+      expert_team_slices:
+        approved && request.expert_team?.members
+          ? request.expert_team.members.map((m) => ({
+              pack_id: m.pack_id,
+              brief: sliceEdits[m.pack_id] ?? m.brief,
+            }))
+          : undefined,
     })
     onResolved(request.confirmation_id)
     if (canStop) {
@@ -521,9 +596,19 @@ function ConfirmElevated({
         )}
         <div style={{ flex: 1, fontSize: 11, color: tokens.darkText }}>
           {request.preview_caption && <div style={{ marginBottom: 6 }}>{request.preview_caption}</div>}
-          <pre style={s.codePreview}>
-            {(request.full_preview || request.code_preview || "").slice(0, 1200)}
-          </pre>
+          {request.expert_team ? (
+            <ExpertTeamConfirm
+              digest={request.expert_team}
+              sliceEdits={sliceEdits}
+              onBriefChange={(packId, brief) =>
+                setSliceEdits((prev) => ({ ...prev, [packId]: brief }))
+              }
+            />
+          ) : (
+            <pre style={s.codePreview}>
+              {(request.full_preview || request.code_preview || "").slice(0, 1200)}
+            </pre>
+          )}
           {domain && (
             <div style={{ marginTop: 8, fontSize: 10 }}>
               <label style={{ marginRight: 8 }}>

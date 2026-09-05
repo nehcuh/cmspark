@@ -115,6 +115,12 @@ export interface CompanionToolExecOptions {
    * a model-claimed surface field. Missing / summoner → SUMMONER_ACL deny.
    */
   handshakeSurface?: "summoner" | "tray"
+  /**
+   * #371: fire-and-forget worker chat.create after spawn_expert_team persists
+   * the task slice. Bound from createToolExecutor; tests inject a recorder.
+   * MUST NOT await the worker LLM run.
+   */
+  kickWorkerChat?: (opts: { threadId: string; message: string }) => void | Promise<void>
 }
 
 export async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
@@ -254,6 +260,46 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           intent_claim: intentClaim,
         },
       }
+    }
+    case "propose_expert_team": {
+      const { proposeExpertTeam } = await import("../orchestrator/expert-team")
+      const task = String(params.task || params.goal || params.brief || "")
+      const proposedIds = Array.isArray(params.pack_ids)
+        ? params.pack_ids
+        : Array.isArray(params.experts)
+          ? params.experts.map((e: any) => String(e?.pack_id || e?.id || e || ""))
+          : undefined
+      const r = proposeExpertTeam(task, proposedIds)
+      return { success: true, data: r.data }
+    }
+    case "spawn_expert_team": {
+      const parentId = params.__thread_id || params._thread_id || params.parent_thread_id
+      if (!parentId) {
+        return { success: false, error: "spawn_expert_team requires parent thread (__thread_id)" }
+      }
+      if (!params.security_token) {
+        return {
+          success: false,
+          error:
+            "spawn_expert_team requires interactive L2 confirmation (security_token). Do not set user_confirmed yourself — the Confirm Center must approve the team (one card).",
+        }
+      }
+      const tokenOk = securityPolicy.validateTokenFor(String(params.security_token), "spawn_expert_team", params)
+      if (!tokenOk) {
+        return { success: false, error: "Invalid or expired security token for spawn_expert_team" }
+      }
+      const { spawnExpertTeam } = await import("../orchestrator/expert-team")
+      const r = await spawnExpertTeam({
+        tm: threadManager,
+        skillEngine,
+        parentThreadId: String(parentId),
+        goal: String(params.goal || params.task || ""),
+        rawMembers: params.members,
+        userConfirmed: true,
+        kickWorkerChat: execOpts?.kickWorkerChat,
+      })
+      if (!r.ok) return { success: false, error: r.error, data: r.data }
+      return { success: true, data: r.data }
     }
     case "acp_list_agents": {
       const { getAcpManager } = await import("../acp")

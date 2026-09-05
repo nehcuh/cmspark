@@ -130,9 +130,18 @@ export async function handleSecurityConfirmationResponse(
   const addToEnterpriseSessionTrust = msg.add_to_enterprise_session_trust === true
   // stop_thread always resolves as deny (even if client sent approved:true)
   const effectiveApproved = stopThread ? false : approved
+  const expertTeamSlices = Array.isArray(msg.expert_team_slices)
+    ? msg.expert_team_slices
+        .map((s: any) => ({
+          pack_id: String(s?.pack_id || "").trim(),
+          brief: String(s?.brief ?? ""),
+        }))
+        .filter((s: { pack_id: string }) => s.pack_id)
+    : undefined
   const respondResult = securityConfirmations.respondFrom(confirmationId, effectiveApproved, ws, nonceResponse, {
     addToSessionTrust: stopThread ? false : addToSessionTrust,
     addToEnterpriseSessionTrust: stopThread ? false : addToEnterpriseSessionTrust,
+    expertTeamSlices,
   })
   const responded = respondResult.outcome === "resolved"
   if (respondResult.outcome === "unknown" || respondResult.outcome === "origin_mismatch") {

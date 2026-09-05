@@ -22,6 +22,7 @@ const COMPACT_DANGER_BORDER = "#991b1b"
  */
 export function minimalConfirmHint(request: SecurityConfirmationRequest): string {
   if (request.nonce_challenge) return "此确认需要输入确认码 — 请在确认台完成。"
+  if (request.expert_team) return "组队任务切片在确认台完整可见可编辑 — 请在确认台查看后批准。"
   if (request.relevant_domains?.[0]) return "详细预览与白名单在确认台；此处可快速允许或拒绝。"
   const relevantApp = request.relevant_apps?.[0]
   if (
@@ -68,7 +69,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
       if (!request) return
       if (respondingIds.has(request.confirmation_id)) return
       const needsNonce = !!request.nonce_challenge
-      if (approved && needsNonce) return
+      if (approved && (needsNonce || request.expert_team)) return
       // F-S1: stamp-first; multi-agent without worker_id → deny-safe (no wrong abort)
       const multiAgentContext = !!(
         request.worker_id ||
@@ -144,6 +145,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
   const color = riskColorDark(request.risk_level)
   const label = riskLabel(request.risk_level)
   const needsNonce = !!request.nonce_challenge
+  const needsCockpit = needsNonce || !!request.expert_team
   const workerLabel =
     request.worker_role_label ||
     (request.worker_id ? `worker ${request.worker_id.slice(0, 8)}` : null)
@@ -159,7 +161,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
   })
   const queueLen = queue.length
   const queueTail = queue.slice(1, 4)
-  const offerEnterprise = request.offer_enterprise_session_trust === true && !needsNonce
+  const offerEnterprise = request.offer_enterprise_session_trust === true && !needsCockpit
   const familyLabel =
     request.tool_name === "netsec_port_scan"
       ? "netsec 扫描"
@@ -230,12 +232,18 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           type="button"
           style={{
             ...btnCompact,
-            background: needsNonce ? tokens.bgMuted : tokens.success,
-            color: needsNonce ? tokens.textMuted : "#fff",
-            cursor: needsNonce ? "not-allowed" : "pointer",
+            background: needsCockpit ? tokens.bgMuted : tokens.success,
+            color: needsCockpit ? tokens.textMuted : "#fff",
+            cursor: needsCockpit ? "not-allowed" : "pointer",
           }}
-          disabled={needsNonce}
-          title={needsNonce ? "请在确认台输入确认码后允许" : "允许"}
+          disabled={needsCockpit}
+          title={
+            needsNonce
+              ? "请在确认台输入确认码后允许"
+              : request.expert_team
+                ? "组队切片请在确认台查看并编辑后批准"
+                : "允许"
+          }
           onClick={() => respond(true)}
         >
           允许
@@ -366,12 +374,18 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           type="button"
           style={{
             ...btn,
-            background: needsNonce ? "#374151" : tokens.success,
-            color: needsNonce ? tokens.darkMuted : "#fff",
-            cursor: needsNonce ? "not-allowed" : "pointer",
+            background: needsCockpit ? "#374151" : tokens.success,
+            color: needsCockpit ? tokens.darkMuted : "#fff",
+            cursor: needsCockpit ? "not-allowed" : "pointer",
           }}
-          disabled={needsNonce}
-          title={needsNonce ? "请在确认台输入确认码后允许" : "允许"}
+          disabled={needsCockpit}
+          title={
+            needsNonce
+              ? "请在确认台输入确认码后允许"
+              : request.expert_team
+                ? "组队切片请在确认台查看并编辑后批准"
+                : "允许"
+          }
           onClick={() => respond(true)}
         >
           允许

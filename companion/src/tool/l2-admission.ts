@@ -70,6 +70,7 @@ export const L2_GATE_TOOLS: readonly string[] = [
   "netsec_port_scan",
   // ADR-015: real HITL — LLM cannot self-approve spawn/ask via user_confirmed flag
   "spawn_worker",
+  "spawn_expert_team",
   "ask_user",
   // ADR-016 G5/G6/G9: board_complete requires Confirm Center + canComplete
   "board_complete",
@@ -327,6 +328,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         (Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : "") ||
         (toolName === "spawn_worker"
           ? `Spawn worker role=${finalParams.role_label || finalParams.roleLabel || "worker"} alias=${finalParams.alias || ""} pack=${finalParams.pack_id || "none"} allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"} deny=${Array.isArray(finalParams.tool_deny) ? finalParams.tool_deny.join(",") : "default"} intent=${finalParams.intent_id || ""}`
+          : "") ||
+        (toolName === "spawn_expert_team"
+          ? `Spawn expert team members=${Array.isArray(finalParams.members) ? finalParams.members.map((m: any) => m?.pack_id || m?.id || "?").join(",") : ""} goal=${String(finalParams.goal || finalParams.task || "")}`
           : "") ||
         (toolName === "ask_user" ? String(finalParams.question || finalParams.prompt || "") : "") ||
         (toolName === "host_cli"
@@ -915,6 +919,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       toolName === "shell_exec" ||
       toolName === "netsec_port_scan" ||
       toolName === "spawn_worker" ||
+      toolName === "spawn_expert_team" ||
       toolName === "ask_user" ||
       toolName === "board_complete" ||
       toolName === "host_cli" || // L-CLI-9: god-mode never skips host_cli L2
@@ -1111,6 +1116,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       }
 
       let decision: Awaited<ReturnType<typeof securityConfirmations.request>> | undefined
+      let expertTeamAdmissionError: { success: false; error: string; data: { error_code: string } } | null = null
       try {
       // L2 FIFO admission FIRST (≤1 per orchestrator_run, ≤2 process-wide)
       const maForL2 = actingThreadId && threadManager
@@ -1291,6 +1297,65 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
                 }
               : {}
 
+        // #371: spawn_expert_team Confirm Center card (members + HARD_DENY tools + slices)
+        let expertTeamForConfirm: import("../orchestrator/expert-team").ExpertTeamDigest | undefined
+        let expertTeamPreview: string | undefined
+        if (toolName === "spawn_expert_team") {
+          try {
+            const {
+              listEligibleExperts,
+              normalizeTeamMembers,
+              remainingWorkerSlots,
+              buildExpertTeamConfirmCard,
+            } = await import("../orchestrator/expert-team")
+            const parent = actingThreadId && threadManager ? threadManager.get(String(actingThreadId)) : null
+            const eligible = listEligibleExperts()
+            const { members } = normalizeTeamMembers(
+              finalParams.members,
+              String(finalParams.goal || finalParams.task || ""),
+              eligible,
+            )
+            const slots =
+              parent && actingThreadId ? remainingWorkerSlots(threadManager, String(actingThreadId)) : members.length
+            // N-3: do not show an empty team card when the worker cap is already full.
+            if (parent && actingThreadId && slots <= 0) {
+              expertTeamAdmissionError = {
+                success: false,
+                error: `max_workers_per_orchestrator_run reached; spawn_expert_team has no remaining slots`,
+                data: { error_code: "MAX_WORKERS" },
+              }
+              return { confirmationId: "", approved: false, reason: "denied" as const }
+            }
+            if (members.length === 0) {
+              expertTeamAdmissionError = {
+                success: false,
+                error: "spawn_expert_team requires at least one installed kind=expert member",
+                data: { error_code: "NO_ELIGIBLE_EXPERTS" },
+              }
+              return { confirmationId: "", approved: false, reason: "denied" as const }
+            }
+            const shown = members.slice(0, Math.max(0, slots))
+            finalParams = {
+              ...finalParams,
+              members: shown.map((m) => ({
+                pack_id: m.pack_id,
+                brief: m.brief,
+                role_label: m.role_label,
+              })),
+              goal: String(finalParams.goal || finalParams.task || ""),
+            }
+            const card = buildExpertTeamConfirmCard({
+              parent,
+              members: shown,
+              goal: String(finalParams.goal || ""),
+            })
+            expertTeamForConfirm = card.expertTeam
+            expertTeamPreview = card.fullPreview
+          } catch (e: any) {
+            logger.warn("expert_team.confirm_preview_failed", { error: e?.message || String(e) })
+          }
+        }
+
         // ADR-016 G6: board_complete Confirm digest (goal, trust hist, claims, residual, empty flag)
         let boardCompleteDigestForConfirm: any = undefined
         if (toolName === "board_complete" && threadManager && actingThreadId) {
@@ -1391,7 +1456,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
               ? computerPreview
               : hostApp
                 ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
-                : code,
+                : expertTeamPreview || code,
             relevantDomains: relevantDomain ? [relevantDomain] : [],
             // App tab WP3: the thread-trust checkbox (relevantApps) is offered
             // ONLY under policy "ai". "manual" must never show it (owner
@@ -1416,6 +1481,8 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             // code_preview 的 CODE_PREVIEW_LIMIT=1200 截断(30 动作 + 2000
             // 语料的逐条枚举对人完整可见);其余工具不设置,修复面收窄。
             ...(hostComputerGated && computerPreview ? { fullPreview: computerPreview } : {}),
+            ...(expertTeamPreview ? { fullPreview: expertTeamPreview } : {}),
+            ...(expertTeamForConfirm ? { expertTeam: expertTeamForConfirm } : {}),
             // WP4 (§F.1): L2 标注截图 + 三段式非绑定 caption(best-effort,
             // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。
             ...(computerL2PreviewImage ? { previewImage: computerL2PreviewImage } : {}),
@@ -1471,6 +1538,15 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       })()
       } finally {
         releaseL2Admission(l2AdmitKey)
+      }
+      if (expertTeamAdmissionError) {
+        if (flightReserved) {
+          const { releaseFlight } = await import("../orchestrator/single-flight")
+          releaseFlight(flightReserved, flightOwner)
+          flightReserved = null
+        }
+        logToolFinish(toolCallId, toolName, startedAt, expertTeamAdmissionError)
+        return expertTeamAdmissionError
       }
       if (!decision || !decision.approved) {
         if (flightReserved) {
@@ -1537,6 +1613,13 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // Clear local flag without releaseFlight so finally does not free it.
       flightReserved = null
       logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
+      if (toolName === "spawn_expert_team" && Array.isArray(decision.expertTeamSlices) && decision.expertTeamSlices.length > 0) {
+        const { mergeEditedSlices } = await import("../orchestrator/expert-team")
+        finalParams = {
+          ...finalParams,
+          members: mergeEditedSlices(finalParams.members, decision.expertTeamSlices),
+        }
+      }
       // UX-spike 2026-07-23: record per-session re-L2 trust for computer-use.
       // The INITIAL task L2 just gated the whole task; subsequent mid-task
       // re-L2 pauses (FOREGROUND-YIELD that escaped self-UI recovery,

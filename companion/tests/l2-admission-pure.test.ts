@@ -188,6 +188,7 @@ describe("L2_GATE_TOOLS", () => {
       "shell_exec",
       "netsec_port_scan",
       "spawn_worker",
+      "spawn_expert_team",
       "ask_user",
       "board_complete",
       "skill_install",

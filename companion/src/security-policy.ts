@@ -100,6 +100,10 @@ export class SecurityPolicy {
         const intent = String(params?.intent_id || "").trim()
         return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}|allow=${canon(params?.tool_allow)}|deny=${canon(params?.tool_deny)}|intent=${intent}`
       }
+      case "spawn_expert_team": {
+        const { expertTeamBindingPayload } = require("./orchestrator/expert-team") as typeof import("./orchestrator/expert-team")
+        return expertTeamBindingPayload(params ?? {})
+      }
       case "ask_user":
         return String(params?.question || params?.prompt || "")
       // ADR-025 ACP coding handoff — bind agent/goal/mode/workspace/session (never empty default)
