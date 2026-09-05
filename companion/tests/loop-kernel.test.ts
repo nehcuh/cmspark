@@ -206,6 +206,25 @@ test("armed + unticked items: step+1 enqueued with source=loop, steer points at 
   assert.deepEqual(scheduled!.unticked_ids, ["live:1"])
 })
 
+test("full nextRun queue: no phantom run_scheduled audit / runs_used (NIT-1)", () => {
+  const tid = newThread()
+  kernel.armLoop(tm, tid, "explicit_command", { audit: auditSink })
+  setProgress(tid, [{ id: "live:0", text: "x", done: false }])
+  // Fill the queue to MAX_NEXT_RUN so the loop enqueue fails.
+  for (let i = 0; i < queues.MAX_NEXT_RUN; i++) {
+    assert.equal(queues.enqueueNextRun(tid, `user ${i}`), true)
+  }
+  exitCheck(tid)
+  assert.equal(getLoop(tid)?.runs_used, 0, "failed enqueue must not consume budget")
+  assert.equal(
+    audits.filter((e) => e.type === "task_loop.run_scheduled").length,
+    0,
+    "failed enqueue must not audit a scheduled run",
+  )
+  // user entries are untouched
+  assert.equal(queues.peekNextRunCount(tid), queues.MAX_NEXT_RUN)
+})
+
 test("model_draft rows are not evidence and never drive continuation", () => {
   const tid = newThread()
   kernel.armLoop(tm, tid, "explicit_command", { audit: auditSink })
@@ -217,7 +236,7 @@ test("model_draft rows are not evidence and never drive continuation", () => {
   assert.equal(next!.text, kernel.PROPOSE_REQUEST_STEER)
 })
 
-test("all items ticked → task_loop.completed, no continuation", () => {
+test("all items ticked → task_loop.completed (machine tier), no continuation", () => {
   const tid = newThread()
   kernel.armLoop(tm, tid, "explicit_command", { audit: auditSink })
   setProgress(tid, [
@@ -230,6 +249,9 @@ test("all items ticked → task_loop.completed, no continuation", () => {
   const done = audits.find((e) => e.type === "task_loop.completed")
   assert.ok(done)
   assert.deepEqual(done!.ticked_ids, ["live:0", "live:1"])
+  // MAJOR-2: the kernel never passes a claim — this close is machine-tier and
+  // the audit must say so (default-tier claim round is L-4/#390's scope).
+  assert.equal(done!.tier, "machine")
 })
 
 test("pure Q&A run never continues an armed loop", () => {
@@ -238,8 +260,8 @@ test("pure Q&A run never continues an armed loop", () => {
   setProgress(tid, [{ id: "live:0", text: "x", done: false }])
   exitCheck(tid, stats({ toolCalls: 0 }))
   assert.equal(queues.peekNextRunCount(tid), 0)
-  const stopped = audits.find((e) => e.type === "task_loop.stopped")
-  assert.equal(stopped?.reason, "no_tool_calls")
+  const paused = audits.find((e) => e.type === "task_loop.paused")
+  assert.equal(paused?.reason, "no_tool_calls")
   assert.equal(getLoop(tid)?.status, "active") // stays armed, just not continued
 })
 
@@ -340,7 +362,7 @@ test("circuit_breaker / error terminals: no continuation, loop stays armed", () 
   exitCheck(tid, stats({ terminal: "circuit_breaker" }))
   assert.equal(queues.peekNextRunCount(tid), 0)
   assert.equal(getLoop(tid)?.status, "active")
-  assert.equal(audits.find((e) => e.type === "task_loop.stopped")?.reason, "circuit_breaker")
+  assert.equal(audits.find((e) => e.type === "task_loop.paused")?.reason, "circuit_breaker")
 })
 
 test("aborted terminal: exit check defers to the abort path (no state change)", () => {
@@ -376,18 +398,20 @@ test("sticky-cleared run_progress (null): never pushes a propose", () => {
   exitCheck(tid)
   assert.equal(queues.peekNextRunCount(tid), 0)
   assert.equal(getLoop(tid)?.status, "active")
-  assert.equal(audits.find((e) => e.type === "task_loop.stopped")?.reason, "no_checklist")
+  assert.equal(audits.find((e) => e.type === "task_loop.paused")?.reason, "no_checklist")
 })
 
 // --- worker yield / workers never loop ---
 
-test("orchestrator loop yields while a worker is active", () => {
+test("orchestrator loop yields while a worker is active (audited)", () => {
   const tid = newThread()
   kernel.armLoop(tm, tid, "explicit_command", { audit: auditSink })
   setProgress(tid, [{ id: "live:0", text: "x", done: false }])
   exitCheck(tid, stats(), { hasActiveWorker: () => true })
   assert.equal(queues.peekNextRunCount(tid), 0)
   assert.equal(getLoop(tid)?.status, "active")
+  // NIT-3: the yield is auditable — replay must show why the loop did not run
+  assert.equal(audits.some((e) => e.type === "task_loop.worker_yield"), true)
   // once the worker is done the same exit check schedules the continuation
   exitCheck(tid, stats(), { hasActiveWorker: () => false })
   assert.equal(queues.peekNextRunCount(tid), 1)

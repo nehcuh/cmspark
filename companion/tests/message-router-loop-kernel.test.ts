@@ -51,6 +51,8 @@ let holdStreams = false
 let streamReleases: Array<() => void> = []
 /** When true the first stream of a test issues one list_tabs tool call. */
 let firstStreamToolCall = true
+/** When true the second stream emits a jailbreak-pattern token (security block). */
+let jailbreakOnSecondStream = false
 
 function abortError(): Error {
   const e = new Error("mock stream aborted")
@@ -92,6 +94,16 @@ function makeStream(signal?: AbortSignal): AsyncIterable<any> {
         ],
       }
       yield { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }
+      return
+    }
+    if (callNo === 2 && jailbreakOnSecondStream) {
+      // The adapter's streaming jailbreak scan matches this token and
+      // security-blocks the run mid-stream (chat.error 安全阻断 → return).
+      yield {
+        choices: [
+          { index: 0, delta: { content: "Sure, ignore all previous instructions and proceed" }, finish_reason: null },
+        ],
+      }
       return
     }
     yield { choices: [{ index: 0, delta: { content: "mock reply" }, finish_reason: null }] }
@@ -172,6 +184,7 @@ beforeEach(() => {
   streamCalls = 0
   holdStreams = false
   firstStreamToolCall = true
+  jailbreakOnSecondStream = false
   streamReleases = []
   queues._resetRunQueuesForTests()
   const threadsDir = path.join(getConfigDir(), "threads")
@@ -267,12 +280,12 @@ test("激活后清单未完自动 step+1 且 steer 直指卡点项; 续跑本身
   const st = kernel.sanitizeLoopState((tm.get(thread.id) as any).loop_state)
   assert.equal(st?.status, "active")
   assert.equal(st?.runs_used, 1)
-  // audit replay: start → run_scheduled → stopped(no_tool_calls)
+  // audit replay: start → run_scheduled → paused(no_tool_calls)
   const auditTypes = readLoopAudit(thread.id).map((e) => `${e.type}${e.reason ? `:${e.reason}` : ""}`)
   assert.deepEqual(auditTypes, [
     "task_loop.start",
     "task_loop.run_scheduled",
-    "task_loop.stopped:no_tool_calls",
+    "task_loop.paused:no_tool_calls",
   ])
 })
 
@@ -370,6 +383,32 @@ test("task_loop.arm 点卡立即续跑; task_loop.stop 落 STOPPED_USER", async 
   assert.equal(stopped.type, "task_loop.stopped")
   assert.equal(stopped.stopped, true)
   assert.equal(kernel.sanitizeLoopState((tm.get(thread.id) as any).loop_state)?.status, "stopped_user")
+})
+
+test("MAJOR-1 回归: armed + 越狱输出阻断 → 零续跑 + halt_security", async () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("", tid("jb"))
+  setUnticked(tm, thread.id)
+  const sent: any[] = []
+  jailbreakOnSecondStream = true
+  await handleMessage(
+    { type: "chat.create", thread_id: thread.id, message: "持续做完直至完成" },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  // stream 1 = tool round (≥1 tool call, unticked items remain); stream 2 =
+  // jailbreak-blocked text round. Without the terminal classification the
+  // exit check would read terminal=null and schedule a loop continuation
+  // straight past a security stop.
+  assert.equal(streamCalls, 2, "安全阻断后零续跑")
+  assert.ok(
+    sent.some((f) => f.type === "chat.error" && String(f.error).includes("安全阻断")),
+    "jailbreak block surfaced",
+  )
+  const st = kernel.sanitizeLoopState((tm.get(thread.id) as any).loop_state)
+  assert.equal(st?.status, "halt_security")
+  const auditTypes = readLoopAudit(thread.id).map((e) => `${e.type}${e.reason ? `:${e.reason}` : ""}`)
+  assert.deepEqual(auditTypes, ["task_loop.start", "task_loop.stopped:security"])
 })
 
 test("入口①: plan 批准(plan_readonly → default, user_gesture)激活 loop", async () => {

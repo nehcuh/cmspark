@@ -16,6 +16,11 @@
 //   workers has an active run.
 // - No capability is auto-enabled: the continuation is a plain steer text into
 //   the same chat pipeline (same tools, same L2/confirm algebra).
+// - Audit family (capability-audit.jsonl, no bodies): task_loop.start /
+//   run_scheduled / completed / stopped (state stops) / paused (run not
+//   continued, loop stays armed) / worker_yield.
+// - Completion close is MACHINE-TIER (see the evaluateCompletion call site):
+//   the default-tier claim layer is carried by L-4 (#390).
 
 import type { ThreadManager } from "../threads/thread-manager"
 import type { RunProgressItem } from "../threads/run-progress"
@@ -230,12 +235,13 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
     if (stats.terminal === "circuit_breaker" || stats.terminal === "error") {
       // Run-level breakers (100 rounds / failure limits) keep their semantics:
       // no auto-continue. The loop stays armed — a user-driven run resumes it.
+      // Event is `paused`, not `stopped`: the loop STATE did not stop (NIT-2 —
+      // replay must distinguish "this run not continued" from a state stop).
       audit(args.audit, {
-        type: "task_loop.stopped",
+        type: "task_loop.paused",
         thread_id: threadId,
         reason: stats.terminal,
         runs_used: state.runs_used,
-        final: false,
       })
       return
     }
@@ -288,21 +294,27 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
     return
   }
 
-  // Eligibility: pure Q&A (0 tool calls this run) never continues.
+  // Eligibility: pure Q&A (0 tool calls this run) never continues. Loop stays
+  // armed (task_loop.paused, not stopped — NIT-2).
   if (stats.toolCalls < 1) {
     audit(args.audit, {
-      type: "task_loop.stopped",
+      type: "task_loop.paused",
       thread_id: threadId,
       reason: "no_tool_calls",
       runs_used: next.runs_used,
-      final: false,
     })
     return
   }
 
   // Worker yield: an orchestrator's loop lets active workers run first.
+  // Audited (NIT-3) — replay must show WHY an armed loop did not continue.
   if (args.hasActiveWorker?.()) {
     logger.info("task_loop.worker_yield", { thread_id: threadId })
+    audit(args.audit, {
+      type: "task_loop.worker_yield",
+      thread_id: threadId,
+      runs_used: next.runs_used,
+    })
     return
   }
 
@@ -311,22 +323,31 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
 
   if (items.length === 0) {
     if (progress === null) {
-      // Sticky user clear — never push a propose against it.
+      // Sticky user clear — never push a propose against it. Loop stays armed
+      // (task_loop.paused, not stopped — NIT-2).
       audit(args.audit, {
-        type: "task_loop.stopped",
+        type: "task_loop.paused",
         thread_id: threadId,
         reason: "no_checklist",
         runs_used: next.runs_used,
-        final: false,
       })
       return
     }
     if (!next.propose_requested) {
       // Tools ran but no live plan: the first continuation asks the model to
       // propose the checklist (predicate bootstrap, FINAL-SYNTHESIS 分歧 4).
+      // NIT-1: enqueue FIRST — a full queue must not produce a runs_used
+      // increment / run_scheduled audit for a continuation that never happened.
+      if (!enqueueNextRun(threadId, PROPOSE_REQUEST_STEER, undefined, "loop")) {
+        logger.warn("task_loop.enqueue_failed", {
+          thread_id: threadId,
+          kind: "propose_request",
+          queue_max: "MAX_NEXT_RUN",
+        })
+        return
+      }
       next = { ...next, propose_requested: true, runs_used: next.runs_used + 1 }
       persist(tm, threadId, next)
-      enqueueNextRun(threadId, PROPOSE_REQUEST_STEER, undefined, "loop")
       audit(args.audit, {
         type: "task_loop.run_scheduled",
         thread_id: threadId,
@@ -346,8 +367,19 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
     return
   }
 
-  // Completion is machine-checked only (#387 predicate; no claim passed →
-  // model prose can never complete the loop on its own).
+  // Completion is machine-checked only (#387 predicate). The kernel NEVER
+  // passes a claim (model prose self-assessment can never complete a loop),
+  // so the verdict here is MACHINE-TIER by construction: `complete` is
+  // unreachable (it requires claim ⊆ tick) and all-ticked always lands on
+  // `request-claim`. We close that as machine-tier completion and say so in
+  // the audit (`tier:"machine"`).
+  //
+  // The DEFAULT-tier semantic layer — claim ⊆ tick cross-check, the
+  // request-claim statement round, and the "任务完成"-wording ban (FINAL-
+  // SYNTHESIS 分歧 3) — is explicitly OUT of kernel scope and is carried by
+  // L-4 (#390, tier binding + UI). The unattended tier's「计划完成待复核」
+  // wording + evidence digest is L-5 (#391). Do not "upgrade" this close to
+  // full completion semantics here.
   const verdict = evaluateCompletion({
     runProgress: progress,
     closingTurnToolCalls: stats.closingTurnToolCalls,
@@ -358,6 +390,7 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
     audit(args.audit, {
       type: "task_loop.completed",
       thread_id: threadId,
+      tier: "machine",
       ticked_ids: verdict.tickedIds,
       runs_used: next.runs_used,
       tokens_used: next.tokens_used,
@@ -367,10 +400,18 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
 
   // incomplete (claim-rejected never occurs here — the kernel passes no
   // claim): schedule the next step, steer pointing straight at the stuck items.
+  // NIT-1: enqueue FIRST (see propose path).
   const unticked = items.filter((it) => it.done !== true)
+  if (!enqueueNextRun(threadId, buildContinuationSteer(unticked), undefined, "loop")) {
+    logger.warn("task_loop.enqueue_failed", {
+      thread_id: threadId,
+      kind: "continue",
+      queue_max: "MAX_NEXT_RUN",
+    })
+    return
+  }
   next = { ...next, runs_used: next.runs_used + 1 }
   persist(tm, threadId, next)
-  enqueueNextRun(threadId, buildContinuationSteer(unticked), undefined, "loop")
   audit(args.audit, {
     type: "task_loop.run_scheduled",
     thread_id: threadId,

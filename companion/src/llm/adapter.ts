@@ -1135,6 +1135,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               thread_id: threadId,
               error: "安全阻断: 检测到越狱模式输出。对话已终止。",
             })
+            // L-2 (#388): jailbreak block is a security halt — an armed loop
+            // must never auto-continue past it (HALT_SECURITY red line).
+            if (runStats) runStats.terminal = "security_halt"
             return
           }
           sendToExtension({ type: "chat.token", thread_id: threadId, content: assistantContent })
