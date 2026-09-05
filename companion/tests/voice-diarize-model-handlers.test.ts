@@ -48,6 +48,24 @@ function tempRoots() {
 
 const flush = () => new Promise((r) => setImmediate(r))
 
+/**
+ * Deterministic async-condition wait: yields the loop repeatedly until `cond`
+ * becomes true or `timeoutMs` elapses. Fixed tick counts are racy on loaded CI
+ * when the awaited work spans real I/O (state broadcasts after a download
+ * resolve); polling to a bounded deadline is not.
+ */
+async function flushUntil(
+  cond: () => boolean,
+  timeoutMs = 2000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (cond()) return true
+    if (Date.now() >= deadline) return cond()
+    await flush()
+  }
+}
+
 // --- layer 1 validation ---------------------------------------------------------
 
 test("validateWsMessage: diarize mutators require source:settings", () => {
@@ -106,6 +124,13 @@ test("diarize_download: started → progress/completion broadcasts; state flips 
   const roots = tempRoots()
   const broadcasts: any[] = []
   let downloadCalls = 0
+  // Hold the download open until the test has observed the intermediate
+  // downloading/progress broadcasts, then release — deterministic regardless of
+  // how many event-loop turns real statePayload I/O needs on a loaded CI box.
+  let finish!: () => void
+  const completed = new Promise<void>((res) => {
+    finish = res
+  })
   const r = await handleVoiceModelMessage(
     { type: "voice.model.diarize_download", source: "settings" },
     { origin: EXT, broadcast: (d) => broadcasts.push(d) },
@@ -116,21 +141,31 @@ test("diarize_download: started → progress/completion broadcasts; state flips 
         downloadCalls++
         assert.ok(opts.signal, "abort signal wired")
         opts.onProgress?.({ modelId: DIARIZE_MODEL_ID, file: "speaker.onnx", receivedBytes: 1, totalBytes: 2 })
+        await completed
       }) as any,
     },
   )
   assert.equal(r.ok, true)
   assert.equal(r.status, "started")
   assert.equal(downloadCalls, 1)
-  for (let i = 0; i < 5; i++) await flush()
+  // While the download is still in flight: the initial downloading state and the
+  // progress broadcast must already be observable (both are sent before `completed`).
+  for (let i = 0; i < 20; i++) await flush()
+  assert.ok(
+    broadcasts.some((d) => d.type === "voice.model.state" && d.diarizeModel?.status === "downloading"),
+    "downloading state broadcast while in flight",
+  )
   assert.ok(
     broadcasts.some((d) => d.type === "voice.model.progress" && d.modelId === DIARIZE_MODEL_ID),
     "progress broadcast",
   )
-  assert.ok(
+  finish()
+  // After release the terminal (non-downloading) state broadcast is guaranteed by
+  // the implementation — poll until it lands instead of assuming a fixed tick count.
+  const terminal = await flushUntil(() =>
     broadcasts.some((d) => d.type === "voice.model.state" && d.diarizeModel?.status !== "downloading"),
-    "final state broadcast after completion",
   )
+  assert.ok(terminal, "final state broadcast after completion")
   fs.rmSync(roots.dir, { recursive: true, force: true })
 })
 
