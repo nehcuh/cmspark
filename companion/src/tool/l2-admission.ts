@@ -32,6 +32,7 @@ import {
   type EnterpriseToolFamily,
 } from "../capability/enterprise-session-trust"
 import { checkNetsecScope } from "../netsec/scope"
+import { settingsRequiredResult } from "../capability/settings-pointer"
 import { checkShellScope } from "../capability/shell"
 import { getModule, isModuleEnabled } from "../capability/modules"
 import { getThreadApprovals } from "../host-use/thread-approvals"
@@ -966,6 +967,16 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           moduleEnabled: isModuleEnabled("netsec"),
         })
         if (!scope.ok) {
+          // #322: install-level config gaps point the user (and the model) at the
+          // exact settings location. Per-target/task-auth denials stay scope denials.
+          if (scope.reason === "module_disabled" || scope.reason === "allowlist_empty") {
+            const settingsRequired = settingsRequiredResult(
+              "netsec_port_scan",
+              scope.error,
+              scope.reason,
+            )
+            if (settingsRequired) return settingsRequired
+          }
           return {
             success: false,
             error: scope.error,
