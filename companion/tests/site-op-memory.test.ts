@@ -18,6 +18,7 @@ import {
   coerceEvaluateNullResult,
   snapshotOriginCdpFails,
   hydrateOriginCdpFails,
+  getOriginFailCount,
 } from "../src/tool/site-op-memory.js"
 
 test("locatorKey prefers text over selector (combination C)", () => {
@@ -191,9 +192,12 @@ test("origin CDP fail streak: 4 different locators/tools then peek refuses 5th w
     assert.match(r.error, /ALWAYS pops a confirm|无人值守/)
   }
   if (process.platform === "darwin") assert.match(r.error, /osascript/)
+  assert.match(r.error, /list_tabs/)
   assert.doesNotMatch(r.error, /bypass L2|skip the confirm/i)
   const snap = snapshotOriginCdpFails("hgrsix")
   assert.equal(snap["https://x.com"].fails, SITE_ORIGIN_FAIL_ESCALATE)
+  assert.equal(getOriginFailCount("hgrsix", "https://x.com"), SITE_ORIGIN_FAIL_ESCALATE)
+  assert.equal(getOriginFailCount("hgrsix", "https://x.com/i/bookmarks"), SITE_ORIGIN_FAIL_ESCALATE)
 })
 
 test("origin CDP fail streak does not leak to another origin or thread", () => {
@@ -214,12 +218,62 @@ test("locator SITE_OP_BANNED envelope still never suggests host_computer", () =>
   assert.doesNotMatch(JSON.stringify(r), /host_computer/)
 })
 
+test("A1: four cold-cache (origin:unknown) failures do not escalate a 5th unrelated site", () => {
+  resetSiteOpMemoryForTests()
+  for (let i = 0; i < SITE_ORIGIN_FAIL_ESCALATE; i++) {
+    const rec = recordSiteOpFailure(
+      "cold-bucket",
+      "click",
+      { tabId: 10 + i, text: `btn${i}` },
+      "ELEMENT_NOT_FOUND",
+      undefined,
+    )
+    assert.equal(rec.origin, "origin:unknown")
+    assert.equal(rec.originFails, 0)
+    assert.equal(rec.originEscalateDue, false)
+    assert.equal(rec.justBanned, false)
+  }
+  assert.equal(getOriginFailCount("cold-bucket", "origin:unknown"), 0)
+  const fifth = peekSiteOpBan("cold-bucket", "click", { tabId: 99, text: "other" }, undefined)
+  assert.equal(fifth.banned, false, "5th cold-cache call on a different tab must not be SITE_OP_ESCALATE")
+  assert.equal(
+    peekSiteOpBan("cold-bucket", "click", { tabId: 99, text: "other" }, "https://zhihu.com/write").banned,
+    false,
+  )
+  assert.equal(formatSiteOpMemoryPrompt("cold-bucket"), "")
+})
+
+test("B1: justBanned is locator-only; origin streak uses originEscalateDue", () => {
+  resetSiteOpMemoryForTests()
+  const origin = "https://x.com/i/bookmarks"
+  const recs = [
+    recordSiteOpFailure("b1", "click", { tabId: 1, text: "a" }, "ELEMENT_NOT_FOUND", origin),
+    recordSiteOpFailure("b1", "click", { tabId: 1, text: "b" }, "ELEMENT_NOT_FOUND", origin),
+    recordSiteOpFailure("b1", "type", { tabId: 1, selector: "#x" }, "ELEMENT_NOT_FOUND", origin),
+    recordSiteOpFailure("b1", "evaluate", { tabId: 1, code: "1" }, "ELEMENT_NOT_FOUND", origin),
+  ]
+  assert.equal(recs[3].fails, 1, "4th streak hit is a fresh locator")
+  assert.equal(recs[3].justBanned, false, "must not trip leftover persist via justBanned")
+  assert.equal(recs[3].originFails, SITE_ORIGIN_FAIL_ESCALATE)
+  assert.equal(recs[3].originEscalateDue, true)
+  resetSiteOpMemoryForTests()
+  const p = { tabId: 1, text: "写文章" }
+  recordSiteOpFailure("loc", "click", p, "ELEMENT_NOT_FOUND", origin)
+  const second = recordSiteOpFailure("loc", "click", p, "ELEMENT_NOT_FOUND", origin)
+  assert.equal(second.justBanned, true)
+  assert.equal(second.originEscalateDue, false)
+  assert.equal(second.originFails, 2)
+})
+
 test("hydrateOriginCdpFails restores streak for #358 persistence hook", () => {
   resetSiteOpMemoryForTests()
   hydrateOriginCdpFails("persist", { "https://x.com": { fails: 4, lastCode: "ELEMENT_NOT_FOUND" } })
   const ban = peekSiteOpBan("persist", "click", { tabId: 9, text: "x" }, "https://x.com/i/bookmarks")
   assert.equal(ban.banned, true)
   if (ban.banned) assert.equal(ban.error_code, "SITE_OP_ESCALATE")
+  hydrateOriginCdpFails("persist-unk", { "origin:unknown": { fails: 4, lastCode: "ELEMENT_NOT_FOUND" } })
+  assert.equal(peekSiteOpBan("persist-unk", "click", { tabId: 1, text: "x" }, undefined).banned, false)
+  assert.equal(getOriginFailCount("persist-unk", "origin:unknown"), 0)
 })
 
 test("evaluate result:null is coerced to failure and does not look like success", () => {

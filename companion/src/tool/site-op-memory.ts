@@ -13,11 +13,14 @@
  *      (list_tabs/create_tab do not thaw)
  *   C. Origin CDP streak (#357): (thread, origin) CDP interactive fails
  *      SITE_ORIGIN_FAIL_ESCALATE times (cross locator + tool) → peek-refuse
- *      with suggested_action escalate_to_host_computer (L2 still required)
+ *      with suggested_action escalate_to_host_computer (L2 still required).
+ *      Only http(s) origins aggregate (origin:unknown / chrome-extension: never).
+ *      Attach freeze does not increment the origin counter.
  * Survives chatCreate / 「继续」 (in-process Map). Origin change is a new key.
  *
- * #358 persistence: snapshotOriginCdpFails / hydrateOriginCdpFails are the
- * in-memory ↔ disk seam. This ticket does not write files.
+ * Shared counter for #358 rebase: `originFails` + `getOriginFailCount`.
+ * snapshotOriginCdpFails / hydrateOriginCdpFails are the read/restore seam
+ * (this ticket does not write files; persist stays #358).
  */
 
 import { platform } from "node:os"
@@ -109,6 +112,16 @@ export function originForSiteOp(params: Record<string, unknown>, tabUrl?: string
   return "origin:unknown"
 }
 
+/** Origin streak / persist only for real http(s) sites — not origin:unknown or chrome-extension:. */
+export function isAggregatableSiteOrigin(origin: string): boolean {
+  return /^https?:\/\//i.test(origin || "")
+}
+
+function originFailKey(origin: string): string {
+  if (/^https?:\/\//i.test(origin || "")) return canonicalizeSiteOrigin(originKeyFromUrl(origin))
+  return canonicalizeSiteOrigin(origin || "")
+}
+
 export function shouldPersistSiteOpExperience(existingContents: string[], content: string): boolean {
   if (!content || existingContents.includes(content)) return false
   const n = existingContents.filter((c) => c.startsWith("DO NOT retry")).length
@@ -151,26 +164,36 @@ function stateFor(threadId: string): ThreadMem {
   return s
 }
 
-/** #358: dump per-origin CDP fail counters (no locators / frozen tabs). */
+/** Shared read face for #358 rebase — same key as record/peek (originForSiteOp / http(s) host). */
+export function getOriginFailCount(threadId: string, origin: string): number {
+  const key = originFailKey(origin)
+  if (!isAggregatableSiteOrigin(key)) return 0
+  return stateFor(threadId).originFails[key]?.fails ?? 0
+}
+
+/** #358 read seam: dump per-origin CDP fail counters (http(s) only; no locators / frozen tabs). */
 export function snapshotOriginCdpFails(threadId: string): Record<string, OriginCdpFailState> {
   const s = mem.get(threadId)
   if (!s?.originFails) return {}
   const out: Record<string, OriginCdpFailState> = {}
   for (const [k, v] of Object.entries(s.originFails)) {
+    if (!isAggregatableSiteOrigin(k)) continue
     out[k] = { fails: v.fails, lastCode: v.lastCode }
   }
   return out
 }
 
-/** #358: restore origin counters. Does not clear locators or frozen tabs. */
+/** #358 restore seam. Skips non-http(s) keys. Does not clear locators or frozen tabs. */
 export function hydrateOriginCdpFails(
   threadId: string,
   snapshot: Record<string, OriginCdpFailState>,
 ): void {
   const s = stateFor(threadId)
   for (const [k, v] of Object.entries(snapshot || {})) {
-    if (!k || !v || typeof v.fails !== "number") continue
-    s.originFails[k] = { fails: v.fails, lastCode: String(v.lastCode || "UNKNOWN") }
+    if (!k || !v || typeof v.fails !== "number" || v.fails < 0) continue
+    const key = originFailKey(k)
+    if (!isAggregatableSiteOrigin(key)) continue
+    s.originFails[key] = { fails: v.fails, lastCode: String(v.lastCode || "UNKNOWN") }
   }
 }
 
@@ -215,9 +238,11 @@ export function peekSiteOpBan(
     return { banned: true, error_code: "TAB_ATTACH_FROZEN", locator: "attach" }
   }
   const origin = originForSiteOp(params, tabUrl)
-  const originSt = s.originFails[origin]
-  if (originSt && originSt.fails >= SITE_ORIGIN_FAIL_ESCALATE) {
-    return { banned: true, error_code: "SITE_OP_ESCALATE", locator: "origin" }
+  if (isAggregatableSiteOrigin(origin)) {
+    const originSt = s.originFails[origin]
+    if (originSt && originSt.fails >= SITE_ORIGIN_FAIL_ESCALATE) {
+      return { banned: true, error_code: "SITE_OP_ESCALATE", locator: "origin" }
+    }
   }
   const locator = locatorKeyForTool(toolName, params)
   const st = s.locators[locatorMapKey(origin, toolName, locator)]
@@ -240,19 +265,33 @@ export function recordSiteOpFailure(
   params: Record<string, unknown>,
   errorCode: string | undefined,
   tabUrl?: string | null,
-): { justBanned: boolean; origin: string; locator: string; fails: number; originFails: number } {
+): {
+  justBanned: boolean
+  origin: string
+  locator: string
+  fails: number
+  originFails: number
+  /** True when this http(s) origin just reached / is at the escalate threshold. Not justBanned. */
+  originEscalateDue: boolean
+} {
   const origin = originForSiteOp(params, tabUrl)
   const locator = locatorKeyForTool(toolName, params)
-  if (!isCdpInteractiveTool(toolName)) {
-    return { justBanned: false, origin, locator, fails: 0, originFails: 0 }
-  }
+  const empty = { justBanned: false, origin, locator, fails: 0, originFails: 0, originEscalateDue: false }
+  if (!isCdpInteractiveTool(toolName)) return empty
   const s = stateFor(threadId)
   const tabId = typeof params.tabId === "number" ? params.tabId : undefined
   const code = errorCode || "UNKNOWN"
   if (ATTACH_CODES.has(code) && tabId != null) {
     const was = s.frozenTabs.has(tabId)
     s.frozenTabs.add(tabId)
-    return { justBanned: !was, origin, locator: "attach", fails: SITE_ATTACH_FAIL_BAN, originFails: s.originFails[origin]?.fails || 0 }
+    return {
+      justBanned: !was,
+      origin,
+      locator: "attach",
+      fails: SITE_ATTACH_FAIL_BAN,
+      originFails: isAggregatableSiteOrigin(origin) ? (s.originFails[origin]?.fails || 0) : 0,
+      originEscalateDue: false,
+    }
   }
   const k = locatorMapKey(origin, toolName, locator)
   const prev = s.locators[k] || { fails: 0, lastCode: code }
@@ -266,16 +305,23 @@ export function recordSiteOpFailure(
     any.lastCode = code
     s.locators[anyK] = any
   }
-  const ost = s.originFails[origin] || { fails: 0, lastCode: code }
-  ost.fails += 1
-  ost.lastCode = code
-  s.originFails[origin] = ost
+  let originFails = 0
+  let originEscalateDue = false
+  if (isAggregatableSiteOrigin(origin)) {
+    const ost = s.originFails[origin] || { fails: 0, lastCode: code }
+    ost.fails += 1
+    ost.lastCode = code
+    s.originFails[origin] = ost
+    originFails = ost.fails
+    originEscalateDue = ost.fails >= SITE_ORIGIN_FAIL_ESCALATE
+  }
   return {
-    justBanned: prev.fails === SITE_LOCATOR_FAIL_BAN || ost.fails === SITE_ORIGIN_FAIL_ESCALATE,
+    justBanned: prev.fails === SITE_LOCATOR_FAIL_BAN,
     origin,
     locator,
     fails: prev.fails,
-    originFails: ost.fails,
+    originFails,
+    originEscalateDue,
   }
 }
 
@@ -287,11 +333,13 @@ export function thawTabIfPresent(threadId: string, tabId: number | undefined): v
 
 function originEscalateError(): string {
   const plat = platform()
+  const n = SITE_ORIGIN_FAIL_ESCALATE
   const confirm =
     "That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). NEVER treat this as auto-approved CU."
+  const listTabsHint = " Run list_tabs to refresh tab origins."
   if (plat === "linux") {
     return (
-      "SITE_OP_BANNED: CDP interactive tools already failed 4+ times on this origin " +
+      `SITE_OP_BANNED: CDP interactive tools already failed ${n}+ times on this origin ` +
       "(across locators/tools) — do not retry click/type/evaluate here. " +
       "host_computer is NOT available on this platform (Linux). list_tabs or stop; there is no third JS injection path."
     )
@@ -304,8 +352,8 @@ function originEscalateError(): string {
       ? " osascript_eval is a last-resort macOS JS path after CDP+scripting both fail."
       : ""
   return (
-    "SITE_OP_BANNED: CDP interactive tools already failed 4+ times on this origin " +
-    `(across locators/tools) — do not retry click/type/evaluate here. ${cu}${osa}`
+    `SITE_OP_BANNED: CDP interactive tools already failed ${n}+ times on this origin ` +
+    `(across locators/tools) — do not retry click/type/evaluate here. ${cu}${osa}${listTabsHint}`
   )
 }
 
@@ -377,6 +425,7 @@ export function formatSiteOpMemoryPrompt(threadId: string, hostname?: string): s
   const originEsc: string[] = []
   for (const [origin, st] of Object.entries(s.originFails || {})) {
     if (st.fails < SITE_ORIGIN_FAIL_ESCALATE) continue
+    if (!isAggregatableSiteOrigin(origin)) continue
     if (hostHint && origin && !origin.includes(hostHint) && !hostHint.includes(origin.replace(/^https?:\/\//, ""))) {
       continue
     }
