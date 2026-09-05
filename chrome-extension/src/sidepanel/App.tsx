@@ -6,7 +6,7 @@
    FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md */
 // CMspark Browser Agent — Root App Component
 
-import { Component, useState, useRef, useCallback, useEffect, useMemo } from "react"
+import { Component, useState, useRef, useCallback, useEffect } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ToastHost, useToastQueue } from "./components/ToastHost"
@@ -21,19 +21,21 @@ import { CodingAgentPanel } from "./components/CodingAgentPanel"
 import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
-import { AtThreadPopover, type AtThreadChoice } from "./components/AtThreadPopover"
+import { AtThreadPopover } from "./components/AtThreadPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { StatusRail } from "./components/StatusRail"
 import { ComposerChips } from "./components/ComposerChips"
 import { ComposerCruisePicker } from "./components/ComposerCruisePicker"
+import { ComposerDock } from "./components/ComposerDock"
 import { ComposeDrawer } from "./components/ComposeDrawer"
+import { ThreadRefChips } from "./components/ThreadRefChips"
+import { UploadChips } from "./components/UploadChips"
+import { VoiceBanner } from "./components/VoiceBanner"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
-import type { CapabilityLevel, SkillMeta, FileAttachment } from "./types"
+import type { CapabilityLevel, FileAttachment } from "./types"
 import {
-  META_PANEL_SLASH,
   composerPlaceholder,
-  resolveMetaSlash,
   type ComposerChipAction,
 } from "./composer/meta-slash"
 import { tokens } from "./ui/tokens"
@@ -47,24 +49,8 @@ import {
 import { VoiceMicButton } from "./components/VoiceMicButton"
 import { VoiceStatusCapsule } from "./components/VoiceStatusCapsule"
 import { VoicePrivacySheet } from "./components/VoicePrivacySheet"
-import { parseHotkeyChord, eventMatchesChord, isPttReleaseEvent } from "./voice/hotkey-chord"
 import { POSTPROCESS_BADGE_LABEL } from "./voice/postprocess-badge"
-import { useVoiceInput } from "./hooks/useVoiceInput"
 import { capsuleView } from "./voice/capsule-view"
-import { initialPtt, reducePtt, type PttEffect, type PttState } from "./voice/ptt-reducer"
-import { PAGE_INSERT_FALLBACK_HINT } from "./voice/insert-target"
-import { playVoiceSfx, shouldPlayVoiceSfx, VOICE_SOUND_EFFECTS_KEY, parseVoiceSoundEffectsPref } from "./voice/voice-sfx"
-import {
-  type VoicePrivacyKind,
-} from "./voice/privacy-copy"
-import {
-  SYSTEM_LISTEN_HINT,
-  TOAST_SWITCHED_BROWSER,
-  formatListenRemaining,
-  localListeningStatusLabel,
-  localSttBannerCta,
-  mapLocalSttError,
-} from "./voice/error-map"
 import { collectRunningTools } from "./utils/running-tools"
 import {
   composerBusyPlaceholder,
@@ -72,21 +58,15 @@ import {
 } from "./utils/thread-busy"
 import {
   IMAGE_ACCEPT,
-  IMAGE_GIF_SHRINK_FIRST,
-  IMAGE_MAX_DECODED,
   IMAGE_PREFLIGHT_NO_VISION,
   checkComposerImageCaps,
-  classifyDrop,
-  compressImageBlob,
   defaultCaption,
-  imageTypeRefuseReason,
   isAllowlistedImageMime,
-  mimeFromName,
-  needsCompress,
-  nextFileErrorAfterIngest,
-  pasteImageDisplayName,
   visionRailOpen,
 } from "./utils/image-compose"
+import { useComposerVoice } from "./hooks/useComposerVoice"
+import { useComposerIngest } from "./hooks/useComposerIngest"
+import { useComposerMentions } from "./hooks/useComposerMentions"
 import { extractHostname, resolveNativeVision } from "./components/vision-reuse-logic"
 import { buildOptimisticUploadBubble, nextComposerText, uploadSendFailureOps, uploadSendOutcome } from "./utils/upload-send"
 import { newTempUserMessageId } from "../utils/temp-message-id"
@@ -319,77 +299,6 @@ function AppContent() {
   )
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
-}
-
-function blobUrlFromB64(b64: string, mime: string): string {
-  try {
-    const bin = atob(b64)
-    const bytes = new Uint8Array(bin.length)
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-    return URL.createObjectURL(new Blob([bytes], { type: mime || "application/octet-stream" }))
-  } catch {
-    return ""
-  }
-}
-
-function ComposerImageChip({
-  file,
-  destHost,
-  onRemove,
-}: {
-  file: FileAttachment
-  destHost: string
-  onRemove: () => void
-}) {
-  const [broken, setBroken] = useState(false)
-  const url = useMemo(() => blobUrlFromB64(file.content, file.type), [file.content, file.type])
-  useEffect(() => () => { if (url) URL.revokeObjectURL(url) }, [url])
-  return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 6,
-      padding: "2px 8px 2px 2px", background: tokens.accentSoft, borderRadius: tokens.radiusPill,
-      fontSize: 11, color: tokens.accentText, maxWidth: 220,
-    }}>
-      {url && !broken ? (
-        <img
-          src={url}
-          alt={file.name}
-          width={48}
-          height={48}
-          onError={() => setBroken(true)}
-          style={{
-            width: 48, height: 48, objectFit: "cover", borderRadius: tokens.radiusSm,
-            border: `1px solid ${tokens.border}`, background: tokens.bgMuted, display: "block", flexShrink: 0,
-          }}
-        />
-      ) : (
-        <span style={{
-          width: 48, height: 48, borderRadius: tokens.radiusSm, border: `1px solid ${tokens.border}`,
-          background: tokens.bgMuted, display: "inline-flex", alignItems: "center", justifyContent: "center",
-          fontSize: 11, color: tokens.textMuted, flexShrink: 0,
-        }}>
-          图
-        </span>
-      )}
-      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-        {file.name} ({formatFileSize(file.size)})
-        {file.compressed ? " · 已压缩" : ""}
-        {` → ${destHost}`}
-      </span>
-      <span role="button" onClick={onRemove} style={{ cursor: "pointer", marginLeft: 2, fontWeight: "bold", flexShrink: 0 }}>
-        {"\u00d7"}
-      </span>
-    </span>
-  )
-}
 
 function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityLevel }) {
   const { state, dispatch } = useAgentStore()
@@ -402,42 +311,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     setText((prev) => nextComposerText(prev, restore.text))
     dispatch({ type: "CLEAR_COMPOSER_RESTORE" })
   }, [state.composerRestore?.token])
-  const [slashVisible, setSlashVisible] = useState(false)
-  const [slashQuery, setSlashQuery] = useState("")
-  const [atVisible, setAtVisible] = useState(false)
-  const [atQuery, setAtQuery] = useState("")
-  const [threadRefs, setThreadRefs] = useState<AtThreadChoice[]>([])
-  const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([])
-  const [fileError, setFileError] = useState("")
-  const [destAck, setDestAck] = useState("")
-  const [dragOver, setDragOver] = useState(false)
   const [composeOpen, setComposeOpen] = useState(false)
-  const [voicePrivacyOpen, setVoicePrivacyOpen] = useState(false)
-  const [voiceLevel, setVoiceLevel] = useState(0)
-  const [pttLocked, setPttLocked] = useState(false)
-  const [voiceCapsuleHint, setVoiceCapsuleHint] = useState<string | null>(null)
-  const [voiceSoundEffects, setVoiceSoundEffects] = useState(true)
-  const [postprocessedBadge, setPostprocessedBadge] = useState(false)
-  const insertTargetRef = useRef<"composer" | "page">("composer")
-  const pendingPageTextRef = useRef<string | null>(null)
-  const pttRef = useRef<PttState>(initialPtt)
-  const pttTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** Privacy sheet: v1 browser · v2 local · v3 continuous/refiner. */
-  const [voicePrivacyKind, setVoicePrivacyKind] = useState<VoicePrivacyKind>("v1")
-  /** Fail-closed lastKnown engine when companion state not yet mirrored. */
-  const [lastKnownVoiceEngine, setLastKnownVoiceEngine] = useState<
-    "browser" | "local" | "system" | null
-  >(null)
-  /** Post-CTA residual note after「改用浏览器听写」(Task 7). */
-  const [engineSwitchNote, setEngineSwitchNote] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
   const textRef = useRef(text)
   textRef.current = text
-  const selectedFilesRef = useRef(selectedFiles)
-  selectedFilesRef.current = selectedFiles
-  const dragDepthRef = useRef(0)
   /** Fresh active thread for SW upload callbacks (closure state is stale after switch). */
   const activeThreadIdRef = useRef(state.activeThreadId)
   activeThreadIdRef.current = state.activeThreadId
@@ -479,32 +357,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   useEffect(() => {
     if (activePanel) setComposeOpen(false)
   }, [activePanel])
-
-  // Path B: lastKnownVoiceEngine for disconnect fail-closed (SoT §7 / ADR-023 L13).
-  useEffect(() => {
-    try {
-      chrome.storage.local.get(["lastKnownVoiceEngine"], (result) => {
-        if (
-          result.lastKnownVoiceEngine === "local" ||
-          result.lastKnownVoiceEngine === "browser" ||
-          result.lastKnownVoiceEngine === "system"
-        ) {
-          setLastKnownVoiceEngine(result.lastKnownVoiceEngine)
-        }
-      })
-    } catch {
-      /* ignore */
-    }
-  }, [])
-
-  // Keep lastKnown in sync when live voice.model.state arrives
-  useEffect(() => {
-    const eng = state.voiceModel?.sttEngine
-    if (eng === "local" || eng === "browser" || eng === "system") {
-      setLastKnownVoiceEngine(eng)
-    }
-  }, [state.voiceModel?.sttEngine])
-
   // R4: empty-state suggestion chips fill the composer
   useEffect(() => {
     const onFill = (e: Event) => {
@@ -543,9 +395,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [openCompose])
-
   const isStreaming = !!state.streamingContent
-  const hasContent = text.trim().length > 0 || selectedFiles.length > 0
   // D12′ must-fix: hard-gate Panel send while computer task is active (running/paused)
   const taskActive =
     isComputer &&
@@ -565,418 +415,25 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const needsConnection = state.connectionState !== "connected"
   const showStop = threadBusy || isStreaming
 
-  // Path B mic matrix (plan Task 6): engine from live state or lastKnown.
-  // #259: "system" passes through; useVoiceInput fail-closes it to browser
-  // off-win32 / when the helper probe is not green.
-  const sttEngine: "browser" | "local" | "system" =
-    state.voiceModel?.sttEngine === "local" ||
-    (state.voiceModel == null && lastKnownVoiceEngine === "local")
-      ? "local"
-      : state.voiceModel?.sttEngine === "system" ||
-          (state.voiceModel == null && lastKnownVoiceEngine === "system")
-        ? "system"
-        : "browser"
-  const activeModelId =
-    state.voiceModel?.localModelId || "medium"
-  const localModelReady =
-    state.voiceModel?.models?.[activeModelId]?.status === "ready"
-  const localBinaryReady = state.voiceModel?.binary?.status === "ready"
-  const companionConnected = state.connectionState === "connected"
+  const {
+    slashVisible, setSlashVisible, slashQuery,
+    atVisible, setAtVisible, atQuery,
+    threadRefs, setThreadRefs, slashSkills,
+    handleChange, handleAtSelect, handleSlashSelect, dismissThreadRef,
+  } = useComposerMentions({ text, setText, textareaRef, openCompose, setComposeOpen })
 
-  // Pull voice.model.state when engine is local so mic gates have live ready flags.
-  useEffect(() => {
-    if (sttEngine !== "local" || !companionConnected) return
-    if (state.voiceModel) return
-    try {
-      chrome.runtime.sendMessage({ type: "voice.model.get_state" })
-    } catch {
-      /* */
-    }
-  }, [sttEngine, companionConnected, state.voiceModel])
-
-  // #259: probe the Windows system recognizer once per companion connection —
-  // needed both for the configured-system chain and the browser→system escalation.
-  useEffect(() => {
-    if (!companionConnected) return
-    try {
-      chrome.runtime.sendMessage({ type: "voice.system.state" })
-    } catch {
-      /* */
-    }
-  }, [companionConnected])
-
-  // threadBusy / no thread still block; local readiness is gated inside useVoiceInput
-  // so a click can surface mapLocalSttError banners.
-  // Mtg1: meeting live capture holds global max-1 STT — block dictation start.
-  const voiceAllowStart =
-    !threadBusy &&
-    !needsThread &&
-    state.voiceInputEnabled !== false &&
-    !state.meetingCaptureActive
-
-  const voice = useVoiceInput({
-    getBaseText: () => textRef.current,
-    realtimeStreaming: state.voiceRealtimeStreaming !== false,
-    onLevel: (level) => setVoiceLevel(level),
-    onDraft: (merged, meta) => {
-      setPostprocessedBadge(meta?.postprocessed === true)
-      if (insertTargetRef.current === "page") {
-        pendingPageTextRef.current = merged
-        return
-      }
-      setText(merged)
-      requestAnimationFrame(() => {
-        const el = textareaRef.current
-        if (!el) return
-        el.focus()
-        const len = merged.length
-        el.setSelectionRange(len, len)
-      })
-    },
-    threadId: state.activeThreadId,
-    allowStart: voiceAllowStart,
-    enabled: state.voiceInputEnabled !== false,
-    privacyAck: state.voicePrivacyAckV1 === true,
-    onNeedPrivacyAck: () => {
-      setVoicePrivacyKind("v1")
-      setVoicePrivacyOpen(true)
-    },
-    onNeedPermissionBootstrap: () => {
-      try {
-        const url = chrome.runtime.getURL("tabs/voice-permission.html")
-        chrome.tabs.create({ url })
-      } catch {
-        /* ignore */
-      }
-    },
-    sttEngine,
-    companionConnected,
-    localReady: { model: localModelReady, binary: localBinaryReady },
-    systemState: state.voiceSystemState,
-    localStateHydrated: state.voiceModel != null,
-    autoFallbackToBrowser: state.voiceModel?.autoFallbackToBrowser !== false,
-    privacyAckV2: state.voicePrivacyAckV2 === true,
-    onNeedPrivacyAckV2: () => {
-      setVoicePrivacyKind("v2")
-      setVoicePrivacyOpen(true)
-    },
-    modelId: activeModelId,
-    dictationMode: state.voiceDictationMode === "continuous" ? "continuous" : "classic",
-    privacyAckV3: state.voicePrivacyAckV3 === true,
-    onNeedPrivacyAckV3: () => {
-      setVoicePrivacyKind("v3")
-      setVoicePrivacyOpen(true)
-    },
-    asrRefinerEnabled: state.asrRefinerEnabled === true,
-    getCurrentDraft: () => textRef.current,
+  const {
+    voice, voiceLevel, pttLocked, voiceCapsuleHint, postprocessedBadge,
+    voicePrivacyOpen, setVoicePrivacyOpen, voicePrivacyKind,
+    engineSwitchNote, setEngineSwitchNote, sttEngine, showVoiceMic,
+    voiceMicDisabled, voiceMicTitle, voiceMicTimerLabel, voiceMicLiveStatus,
+    voiceBannerCta, handleSwitchBrowserEngine, handleOpenVoiceSettings,
+  } = useComposerVoice({
+    textRef, setText, textareaRef, threadBusy, needsThread, isWorker,
+    closePanel, setComposeOpen,
   })
-
-  // Mirror dictation activity for MeetingPanel mutual-exclusion (SoT Mtg1).
-  useEffect(() => {
-    const active =
-      voice.listening === true ||
-      voice.processing === true ||
-      voice.refining === true
-    dispatch({ type: "SET_DICTATION_CAPTURE_ACTIVE", active })
-  }, [voice.listening, voice.processing, voice.refining, dispatch])
-
-  // D2 hold: keep stable refs so effect is NOT torn down every listenTick (REJECT #1).
-  const holdStartRef = useRef(voice.holdStart)
-  const holdStopRef = useRef(voice.holdStop)
-  const holdAbortRef = useRef(voice.abortForChatStop)
-  holdStartRef.current = voice.holdStart
-  holdStopRef.current = voice.holdStop
-  holdAbortRef.current = voice.abortForChatStop
-  const meetingCaptureRef = useRef(state.meetingCaptureActive)
-  meetingCaptureRef.current = state.meetingCaptureActive
-  const voiceAllowStartRef = useRef(voiceAllowStart)
-  voiceAllowStartRef.current = voiceAllowStart
-  const privacyRef = useRef({
-    v1: state.voicePrivacyAckV1 === true,
-    v2: state.voicePrivacyAckV2 === true,
-    v3: state.voicePrivacyAckV3 === true,
-  })
-  privacyRef.current = {
-    v1: state.voicePrivacyAckV1 === true,
-    v2: state.voicePrivacyAckV2 === true,
-    v3: state.voicePrivacyAckV3 === true,
-  }
-
-  // #258 PTT dual-mode on the existing hold chord (default still off).
-  useEffect(() => {
-    try {
-      chrome.storage.local.get(VOICE_SOUND_EFFECTS_KEY, (res) => {
-        setVoiceSoundEffects(parseVoiceSoundEffectsPref(res[VOICE_SOUND_EFFECTS_KEY]))
-      })
-    } catch {
-      /* */
-    }
-  }, [])
-
-  useEffect(() => {
-    if (voice.phase !== "idle") return
-    const pending = pendingPageTextRef.current
-    if (!pending || insertTargetRef.current !== "page") return
-    pendingPageTextRef.current = null
-    chrome.runtime.sendMessage({ type: "voice.ptt.insert_text", text: pending }, (res) => {
-      if (chrome.runtime.lastError || res?.ok === false) {
-        insertTargetRef.current = "composer"
-        setText(pending)
-        setVoiceCapsuleHint(PAGE_INSERT_FALLBACK_HINT)
-        return
-      }
-      insertTargetRef.current = "composer"
-    })
-  }, [voice.phase])
-
-  useEffect(() => {
-    if (!state.dictationHotkeyEnabled) return
-    const chord = parseHotkeyChord(state.dictationHotkeyChord)
-    if (!chord) return
-
-    const play = (kind: "start" | "stop" | "cancel" | "done", accidental = false) => {
-      if (
-        !shouldPlayVoiceSfx({
-          enabled: state.voiceSoundEffects !== false,
-          privacySheetOpen: voicePrivacyOpen,
-          accidental,
-        })
-      ) {
-        return
-      }
-      playVoiceSfx(kind)
-    }
-
-    let holdNotified = false
-    const notifyHold = (active: boolean) => {
-      try {
-        chrome.runtime.sendMessage({
-          type: "voice.dictation.hold_state",
-          v: 1,
-          active,
-          chord: chord.label,
-        })
-      } catch {
-        /* */
-      }
-    }
-
-    const applyEffect = (effect: PttEffect, source: "sidepanel" | "page") => {
-      if (effect === "start" || effect === "lock") {
-        insertTargetRef.current = source === "page" ? "page" : "composer"
-        setPttLocked(effect === "lock")
-        const ok = holdStartRef.current({
-          privacyAck: privacyRef.current.v1,
-          privacyAckV2: privacyRef.current.v2,
-          privacyAckV3: privacyRef.current.v3,
-        })
-        if (ok) {
-          play("start")
-          holdNotified = true
-          notifyHold(true)
-        }
-        return
-      }
-      if (effect === "commit") {
-        setPttLocked(false)
-        holdStopRef.current()
-        play("stop")
-        play("done")
-        if (holdNotified) notifyHold(false)
-        holdNotified = false
-        return
-      }
-      if (effect === "discard") {
-        setPttLocked(false)
-        holdAbortRef.current()
-        if (holdNotified) notifyHold(false)
-        holdNotified = false
-      }
-    }
-
-    const armTick = (until: number | null, source: "sidepanel" | "page") => {
-      if (pttTimerRef.current) clearTimeout(pttTimerRef.current)
-      pttTimerRef.current = null
-      if (until == null) return
-      const wait = Math.max(0, until - Date.now())
-      pttTimerRef.current = setTimeout(() => {
-        const next = reducePtt(pttRef.current, { type: "tick", now: Date.now() })
-        pttRef.current = next.state
-        applyEffect(next.effect, source)
-      }, wait)
-    }
-
-    const feed = (type: "down" | "up" | "esc" | "blur", source: "sidepanel" | "page") => {
-      if (meetingCaptureRef.current) return
-      if (type === "down" && !voiceAllowStartRef.current && pttRef.current.phase === "idle") return
-      const next = reducePtt(pttRef.current, { type, now: Date.now() })
-      pttRef.current = next.state
-      setPttLocked(next.state.phase === "locked")
-      applyEffect(next.effect, source)
-      armTick(next.state.awaitUntil, source)
-    }
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && pttRef.current.phase === "locked") {
-        e.preventDefault()
-        feed("esc", "sidepanel")
-        return
-      }
-      if (!eventMatchesChord(e, chord)) return
-      if (e.repeat) return
-      e.preventDefault()
-      e.stopPropagation()
-      feed("down", "sidepanel")
-    }
-
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (pttRef.current.phase === "idle") return
-      if (!isPttReleaseEvent(e, chord)) return
-      e.preventDefault()
-      feed("up", "sidepanel")
-    }
-
-    const onBlur = () => {
-      if (pttRef.current.phase === "idle") return
-      feed("blur", "sidepanel")
-    }
-
-    const onMsg = (msg: { type?: string; kind?: string }) => {
-      if (msg?.type !== "voice.ptt.from_page") return
-      if (msg.kind === "down") feed("down", "page")
-      if (msg.kind === "up") feed("up", "page")
-    }
-    chrome.runtime.onMessage.addListener(onMsg)
-
-    window.addEventListener("keydown", onKeyDown, true)
-    window.addEventListener("keyup", onKeyUp, true)
-    window.addEventListener("blur", onBlur)
-    return () => {
-      chrome.runtime.onMessage.removeListener(onMsg)
-      window.removeEventListener("keydown", onKeyDown, true)
-      window.removeEventListener("keyup", onKeyUp, true)
-      window.removeEventListener("blur", onBlur)
-      if (pttTimerRef.current) clearTimeout(pttTimerRef.current)
-      if (holdNotified) notifyHold(false)
-    }
-  }, [state.dictationHotkeyEnabled, state.dictationHotkeyChord, state.voiceSoundEffects, voicePrivacyOpen])
-
-  // Hide: feature off | unsupported for selected engine | worker | no thread.
-  // Local + no gUM → voice.supported false → hide.
-  // Browser + no SpeechRecognition → hide.
-  const showVoiceMic =
-    voice.supported &&
-    state.voiceInputEnabled !== false &&
-    !isWorker &&
-    !needsThread
-
-  // Disable only for thread/feature gates; local readiness fails open on click → banner.
-  const voiceMicDisabled = !voiceAllowStart && !voice.listening
-  const capturing =
-    voice.listening &&
-    !voice.processing &&
-    voice.listenRemainingMs != null
-  const localCapturing = (sttEngine === "local" || sttEngine === "system") && capturing
-  const continuousMode = state.voiceDictationMode === "continuous"
-  const continuousCapturing = continuousMode && capturing
-  const continuousProcessing =
-    continuousMode && voice.processing && voice.listenRemainingMs != null
-  const voiceMicTimerLabel =
-    localCapturing || continuousCapturing || continuousProcessing
-      ? formatListenRemaining(voice.listenRemainingMs!)
-      : null
-  const voiceMicLiveStatus = voice.refining
-    ? "纠错中…点击取消"
-    : continuousProcessing
-      ? `本机分段识别中… · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
-      : voice.processing
-        ? "本机识别中…点击取消"
-        : continuousCapturing
-          ? `连续听写 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
-          : localCapturing
-            ? sttEngine === "system"
-              ? `系统识别 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)} · ${SYSTEM_LISTEN_HINT}`
-              : localListeningStatusLabel(voice.listenRemainingMs!)
-            : null
-  const voiceMicTitle = (() => {
-    if (state.meetingCaptureActive) return "会议录音进行中，请先结束会议再听写"
-    if (threadBusy) return "处理中无法听写"
-    if (voice.refining) return "纠错中…点击取消"
-    if (continuousProcessing) {
-      return `本机分段识别中… · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
-    }
-    if (voice.processing) return "本机识别中…点击取消"
-    if (continuousCapturing) {
-      return `连续听写中 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)} · 再点结束`
-    }
-    if (localCapturing) {
-      return sttEngine === "system"
-        ? `系统识别 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)} · ${SYSTEM_LISTEN_HINT}`
-        : localListeningStatusLabel(voice.listenRemainingMs!)
-    }
-    if (voice.listening) return "结束语音输入"
-    if (sttEngine === "system" && !companionConnected) {
-      return mapLocalSttError("companion_disconnected").message
-    }
-    if (sttEngine === "local") {
-      if (!companionConnected) return mapLocalSttError("companion_disconnected").message
-      if (!localModelReady) return mapLocalSttError("model_missing").message
-      if (!localBinaryReady) return mapLocalSttError("binary_missing").message
-    }
-    return "语音输入（听写进草稿）"
-  })()
-
-  /** Banner recovery CTA (Task 7): switch browser or open settings. */
-  const voiceBannerCta =
-    (sttEngine === "local" || sttEngine === "system") && voice.banner
-      ? localSttBannerCta(voice.errorCode)
-      : null
-
-  const handleSwitchBrowserEngine = useCallback(() => {
-    // Write path: same dual fence as Settings (SoT §5.3).
-    try {
-      chrome.runtime.sendMessage({
-        type: "voice.model.set_engine",
-        engine: "browser",
-        source: "settings",
-      })
-    } catch {
-      /* SW missing */
-    }
-    // Optimistic: so disconnect recovery works before companion ack.
-    try {
-      chrome.storage.local.set({ lastKnownVoiceEngine: "browser" })
-    } catch {
-      /* */
-    }
-    setLastKnownVoiceEngine("browser")
-    if (state.voiceModel) {
-      dispatch({
-        type: "SET_VOICE_MODEL_STATE",
-        modelState: { ...state.voiceModel, sttEngine: "browser" },
-      })
-    }
-    voice.dismissBanner()
-    setEngineSwitchNote(TOAST_SWITCHED_BROWSER)
-  }, [dispatch, state.voiceModel, voice])
-
-  const handleOpenVoiceSettings = useCallback(() => {
-    voice.dismissBanner()
-    setComposeOpen(false)
-    closePanel()
-    dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model" })
-  }, [closePanel, dispatch, voice])
 
   const overlayStandby = state.overlayStandby
-
-  // Disable send while dictating — mid-listen send would ship base snapshot only
-  const canSend =
-    composerMode !== "l2_task" &&
-    hasContent &&
-    !!state.activeThreadId &&
-    state.connectionState === "connected" &&
-    !voice.listening &&
-    !overlayStandby
 
   const ingestBlocked =
     needsThread ||
@@ -986,8 +443,24 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     voice.liveOverlay !== null ||
     voice.listening ||
     !!overlayStandby
-  const ingestBlockedRef = useRef(ingestBlocked)
-  ingestBlockedRef.current = ingestBlocked
+
+  const {
+    selectedFiles, selectedFilesRef, fileError, setFileError,
+    destAck, setDestAck, destAckRef, dragOver, fileInputRef,
+    handleFileSelect, handleComposerPaste, handleComposerDragOver,
+    handleComposerDragEnter, handleComposerDragLeave, handleComposerDrop,
+    removeFile, gestureSendRef,
+  } = useComposerIngest({ ingestBlocked, textRef })
+
+  const hasContent = text.trim().length > 0 || selectedFiles.length > 0
+  // Disable send while dictating — mid-listen send would ship base snapshot only
+  const canSend =
+    composerMode !== "l2_task" &&
+    hasContent &&
+    !!state.activeThreadId &&
+    state.connectionState === "connected" &&
+    !voice.listening &&
+    !overlayStandby
 
   const effectiveModel =
     (activeThread?.config_override?.model_name || "").trim() ||
@@ -1008,30 +481,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const destHost = extractHostname(
     useNativeVision ? effectiveLlmBase : state.config.vision_base_url,
   )
-  const destAckRef = useRef<Record<string, string>>({})
-  useEffect(() => {
-    try {
-      chrome.storage.local.get(null, (all) => {
-        if (chrome.runtime.lastError) return
-        const next: Record<string, string> = {}
-        for (const [k, v] of Object.entries(all || {})) {
-          if (k.startsWith("cmspark.imageDestAck.")) next[k] = String(v ?? "")
-        }
-        destAckRef.current = { ...next, ...destAckRef.current }
-      })
-    } catch {
-      /* ignore */
-    }
-  }, [])
-  const uploadClearSeq = state.composerUploadClearSeq
-  const uploadClearSeen = useRef(uploadClearSeq)
-  useEffect(() => {
-    if (uploadClearSeq !== uploadClearSeen.current) {
-      uploadClearSeen.current = uploadClearSeq
-      setSelectedFiles([])
-    }
-  }, [uploadClearSeq])
-
   const getPlaceholder = () => {
     if (overlayStandby) return overlayStandby.label
     if (needsThread) return "请先创建或选择一个线程"
@@ -1056,177 +505,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     if (busyPh) return busyPh
     return composerPlaceholder(capabilityLevel)
   }
-
-  // Detect slash command: check if cursor is after a "/" at start or after space
-  const detectSlash = useCallback((value: string, cursorPos: number) => {
-    // Find the last "/" before cursor
-    const beforeCursor = value.substring(0, cursorPos)
-    const slashIdx = beforeCursor.lastIndexOf("/")
-
-    if (slashIdx === -1) {
-      setSlashVisible(false)
-      return
-    }
-
-    // Check character before "/" — must be start of string or whitespace
-    const charBefore = slashIdx === 0 ? null : value[slashIdx - 1]
-    if (charBefore !== null && charBefore !== " " && charBefore !== "\n") {
-      setSlashVisible(false)
-      return
-    }
-
-    // Extract query: everything after "/" up to cursor position (no spaces → still typing)
-    const query = beforeCursor.substring(slashIdx + 1)
-    if (query.includes(" ") || query.includes("\n")) {
-      setSlashVisible(false)
-      return
-    }
-    setSlashQuery(query)
-    setSlashVisible(true)
-    setAtVisible(false)
-  }, [])
-
-  // Detect @ thread ref (P1.5)
-  const detectAt = useCallback((value: string, cursorPos: number) => {
-    const beforeCursor = value.substring(0, cursorPos)
-    const atIdx = beforeCursor.lastIndexOf("@")
-    if (atIdx === -1) {
-      setAtVisible(false)
-      return
-    }
-    const charBefore = atIdx === 0 ? null : value[atIdx - 1]
-    if (charBefore !== null && charBefore !== " " && charBefore !== "\n") {
-      setAtVisible(false)
-      return
-    }
-    const query = beforeCursor.substring(atIdx + 1)
-    // stop if user finished the token with space
-    if (query.includes(" ") || query.includes("\n") || query.includes("」")) {
-      setAtVisible(false)
-      return
-    }
-    setAtQuery(query)
-    setAtVisible(true)
-    setSlashVisible(false)
-  }, [])
-
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newValue = e.target.value
-    setText(newValue)
-    // Dual-review residual: drop chips whose @「title」 token was deleted from text
-    setThreadRefs((prev) =>
-      prev.filter((r) => newValue.includes(`@「${r.title}」`) || newValue.includes(`@${r.id}`)),
-    )
-    const pos = e.target.selectionStart || 0
-    detectSlash(newValue, pos)
-    detectAt(newValue, pos)
-  }
-
-  const clearSlashToken = (slashIdx: number, cursorPos: number) => {
-    const afterCursor = text.substring(cursorPos)
-    const newText = (text.substring(0, slashIdx) + afterCursor).replace(/\s+$/, " ").trimStart()
-    setText(newText)
-    setSlashVisible(false)
-  }
-
-  const handleAtSelect = (choice: AtThreadChoice) => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-    const cursorPos = textarea.selectionStart || 0
-    const beforeCursor = text.substring(0, cursorPos)
-    const atIdx = beforeCursor.lastIndexOf("@")
-    if (atIdx < 0) return
-    const afterCursor = text.substring(cursorPos)
-    const insert = `@「${choice.title}」 `
-    const newText = text.substring(0, atIdx) + insert + afterCursor
-    setText(newText)
-    setAtVisible(false)
-    setThreadRefs((prev) => {
-      if (prev.some((r) => r.id === choice.id)) return prev
-      return [...prev, choice].slice(0, 8)
-    })
-    requestAnimationFrame(() => {
-      const el = textareaRef.current
-      if (!el) return
-      const pos = atIdx + insert.length
-      el.focus()
-      el.setSelectionRange(pos, pos)
-    })
-  }
-
-  const handleSlashSelect = (skill: SkillMeta) => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-
-    const cursorPos = textarea.selectionStart || 0
-    const beforeCursor = text.substring(0, cursorPos)
-
-    // Find the "/" that started this command
-    const slashIdx = beforeCursor.lastIndexOf("/")
-    if (slashIdx === -1) return
-
-    // PR4 §4.8: meta slash parity (Host / 装配 / settings / 确认台)
-    const meta = resolveMetaSlash(skill)
-    if (meta) {
-      clearSlashToken(slashIdx, cursorPos)
-      if (meta.metaKind === "compose") {
-        openCompose()
-        return
-      }
-      if (meta.metaKind === "settings") {
-        setComposeOpen(false)
-        closePanel()
-        dispatch({ type: "SET_SETTINGS_OPEN", open: true })
-        return
-      }
-      if (meta.metaKind === "cockpit") {
-        setComposeOpen(false)
-        chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
-          void chrome.runtime.lastError
-        })
-        return
-      }
-      if (meta.metaKind === "coding_handoff") {
-        setComposeOpen(false)
-        window.dispatchEvent(new CustomEvent("cmspark:open-coding-handoff", { detail: {} }))
-        return
-      }
-      if (meta.metaKind === "panel" && meta.panelId) {
-        setComposeOpen(false)
-        dispatch({ type: "SET_SETTINGS_OPEN", open: false })
-        openPanelForce(meta.panelId)
-        return
-      }
-      // Legacy site-based open
-      if (skill.site) {
-        window.dispatchEvent(
-          new CustomEvent("cmspark:open-context-panel", { detail: { panel: skill.site } }),
-        )
-      }
-      return
-    }
-
-    // Replace from "/" to cursor with "/skill-name "
-    const afterCursor = text.substring(cursorPos)
-    const newText = text.substring(0, slashIdx) + "/" + skill.name + " " + afterCursor
-    const newCursorPos = slashIdx + skill.name.length + 2 // after "/name "
-
-    setText(newText)
-    setSlashVisible(false)
-
-    // Set cursor position after the inserted text
-    setTimeout(() => {
-      textarea.focus()
-      textarea.setSelectionRange(newCursorPos, newCursorPos)
-    }, 0)
-  }
-
-  // §4.8 virtual slash entries + real skills
-  const slashSkills: SkillMeta[] = [
-    ...META_PANEL_SLASH,
-    ...(Array.isArray(state.skills) ? state.skills : []),
-  ]
-
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If popover is open and navigating/selecting, let the popover handle it
     // Dual-review B3: gate @ popover the same way as / (parity)
@@ -1544,179 +822,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     dispatch({ type: "SET_PROCESSING", isProcessing: false })
   }
 
-  const readFileAsBase64 = (blob: Blob): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const result = reader.result as string
-        resolve(result.split(",")[1] || "")
-      }
-      reader.onerror = () => reject(reader.error)
-      reader.readAsDataURL(blob)
-    })
-
-  const addIncomingFiles = async (
-    list: File[],
-    opts: { fromGesture?: boolean; fromPaste?: boolean },
-  ) => {
-    if (ingestBlockedRef.current) return
-    const maxDocSize = 10 * 1024 * 1024
-    const incoming: FileAttachment[] = []
-    let addedImages = 0
-    let refuse: string | undefined
-    // F5: first per-file rejection survives the post-loop banner merge —
-    // otherwise a mixed batch (some accepted, some refused) erases the error
-    // and the refused files vanish silently.
-    let firstErr: string | undefined
-    for (const file of list) {
-      const type = file.type || mimeFromName(file.name)
-      const refuseReason = imageTypeRefuseReason(type)
-      if (refuseReason) {
-        refuse = refuseReason
-        continue
-      }
-      const isImage = isAllowlistedImageMime(type)
-      if (!isImage && file.size > maxDocSize) {
-        if (!firstErr) firstErr = `文件 "${file.name}" 超过 10MB 限制`
-        continue
-      }
-      if (isImage && file.size > IMAGE_MAX_DECODED && /^image\/gif$/i.test(type.split(";")[0].trim())) {
-        if (!firstErr) firstErr = IMAGE_GIF_SHRINK_FIRST
-        continue
-      }
-      try {
-        let working: Blob = file
-        let workingType = type
-        let compressed = false
-        if (isImage && needsCompress(file.size)) {
-          const result = await compressImageBlob(file)
-          working = result.blob
-          workingType = result.blob.type || type
-          compressed = result.compressed
-        } else if (isImage) {
-          // Dimension-only compress when canvas can decode (no-op in node).
-          try {
-            const result = await compressImageBlob(file)
-            working = result.blob
-            workingType = result.blob.type || type
-            compressed = result.compressed
-          } catch {
-            working = file
-          }
-        }
-        const base64 = await readFileAsBase64(working)
-        const name = opts.fromPaste
-          ? pasteImageDisplayName(file.name)
-          : file.name || pasteImageDisplayName("")
-        incoming.push({
-          name,
-          type: workingType,
-          size: working.size,
-          content: base64,
-          ...(compressed ? { compressed: true } : {}),
-        })
-        if (isImage) addedImages += 1
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "添加文件失败"
-        if (!firstErr) firstErr = msg
-      }
-    }
-    if (incoming.length === 0) {
-      const err = nextFileErrorAfterIngest({ refuse, loopErr: firstErr })
-      if (err) setFileError(err)
-      return
-    }
-
-    const nextFiles = [...selectedFilesRef.current, ...incoming]
-    const capErr = checkComposerImageCaps(nextFiles.filter((f) => isAllowlistedImageMime(f.type)))
-    setFileError(nextFileErrorAfterIngest({ refuse, capErr, loopErr: firstErr }))
-    if (capErr) return
-    setSelectedFiles(nextFiles)
-    selectedFilesRef.current = nextFiles
-
-    // Mixed send: typed text + gesture-added images → send with explicit array.
-    if (opts.fromGesture && addedImages > 0 && textRef.current.trim()) {
-      handleSend(nextFiles)
-    }
-  }
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files) return
-    await addIncomingFiles(Array.from(files), { fromGesture: false })
-    e.target.value = ""
-  }
-
-  const handleComposerPaste = (e: React.ClipboardEvent) => {
-    if (e.defaultPrevented) return
-    if (ingestBlockedRef.current) return
-    const items = e.clipboardData?.items
-    if (!items) return
-    const imageFiles: File[] = []
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-      if (item.kind !== "file") continue
-      const f = item.getAsFile()
-      if (!f) continue
-      const type = item.type || mimeFromName(f.name)
-      if (isAllowlistedImageMime(type) || type.startsWith("image/")) {
-        imageFiles.push(f)
-      }
-    }
-    if (imageFiles.length === 0) return
-    // Keep typed text. Do not let the browser insert an HTML <img>.
-    e.preventDefault()
-    void addIncomingFiles(imageFiles, { fromGesture: true, fromPaste: true })
-  }
-
-  const handleComposerDragOver = (e: React.DragEvent) => {
-    e.preventDefault()
-    if (ingestBlockedRef.current) {
-      e.dataTransfer.dropEffect = "none"
-      return
-    }
-    e.dataTransfer.dropEffect = "copy"
-    setDragOver(true)
-  }
-
-  const handleComposerDragEnter = (e: React.DragEvent) => {
-    e.preventDefault()
-    if (ingestBlockedRef.current) return
-    dragDepthRef.current += 1
-    setDragOver(true)
-  }
-
-  const handleComposerDragLeave = (e: React.DragEvent) => {
-    e.preventDefault()
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
-    if (dragDepthRef.current === 0) setDragOver(false)
-  }
-
-  const handleComposerDrop = (e: React.DragEvent) => {
-    dragDepthRef.current = 0
-    setDragOver(false)
-    if (ingestBlockedRef.current) {
-      e.preventDefault()
-      return
-    }
-    e.preventDefault()
-    const types = Array.from(e.dataTransfer?.types || [])
-    const rawFiles = Array.from(e.dataTransfer?.files || [])
-    const verdict = classifyDrop(
-      types,
-      rawFiles.map((f) => ({ type: f.type, size: f.size, name: f.name })),
-    )
-    if (verdict.ok === false) {
-      setFileError(verdict.error)
-      return
-    }
-    // NEVER fetch — only local File objects from the drop.
-    void addIncomingFiles(rawFiles, { fromGesture: true })
-  }
-
-  const removeFile = useCallback((idx: number) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== idx))
-  }, [])
+  gestureSendRef.current = (files) => handleSend(files)
 
   return (
     <div
@@ -1735,114 +841,16 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         accept={IMAGE_ACCEPT}
         onChange={handleFileSelect}
       />
-      {fileError && (
-        <div style={{
-          padding: "4px 12px", background: tokens.warningSoft, color: tokens.warning,
-          fontSize: 11, display: "flex", alignItems: "center", gap: 6,
-        }}>
-          <span>{fileError}</span>
-          <span role="button" style={{ cursor: "pointer", fontWeight: "bold" }} onClick={() => setFileError("")}>×</span>
-        </div>
-      )}
-      {destAck && (
-        <div style={{
-          padding: "4px 12px", color: tokens.textSecondary,
-          fontSize: 11, display: "flex", alignItems: "center", gap: 6,
-        }}>
-          <span>{destAck}</span>
-          <span role="button" style={{ cursor: "pointer", fontWeight: "bold" }} onClick={() => setDestAck("")}>×</span>
-        </div>
-      )}
-      {selectedFiles.length > 0 && (
-        <div style={{
-          display: "flex", flexWrap: "wrap", gap: 4,
-          padding: "8px 12px 0",
-        }}>
-          {selectedFiles.map((file, idx) => (
-            isAllowlistedImageMime(file.type) ? (
-              <ComposerImageChip
-                key={`${file.name}-${idx}`}
-                file={file}
-                destHost={destHost}
-                onRemove={() => removeFile(idx)}
-              />
-            ) : (
-            <span key={idx} style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              padding: "2px 8px", background: tokens.accentSoft, borderRadius: tokens.radiusPill,
-              fontSize: 11, color: tokens.accentText, maxWidth: 200,
-            }}>
-              <span style={{
-                overflow: "hidden", textOverflow: "ellipsis",
-                whiteSpace: "nowrap", minWidth: 0,
-              }}>
-                {file.name} ({formatFileSize(file.size)})
-              </span>
-              <span
-                role="button"
-                onClick={() => removeFile(idx)}
-                style={{ cursor: "pointer", marginLeft: 2, fontWeight: "bold", flexShrink: 0 }}
-              >
-                {"\u00d7"}
-              </span>
-            </span>
-            )
-          ))}
-        </div>
-      )}
-      {threadRefs.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 4,
-            padding: "6px 12px 0",
-          }}
-          aria-label="引用的会话"
-        >
-          {threadRefs.map((r) => (
-            <span
-              key={r.id}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                padding: "2px 8px",
-                background: tokens.bgMuted,
-                borderRadius: tokens.radiusPill,
-                fontSize: 11,
-                color: tokens.textSecondary,
-                maxWidth: 180,
-              }}
-            >
-              <span
-                style={{
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                @{r.title}
-              </span>
-              <span
-                role="button"
-                onClick={() => {
-                  setThreadRefs((prev) => prev.filter((x) => x.id !== r.id))
-                  // Keep textarea token in sync when chip is dismissed
-                  setText((t) =>
-                    t
-                      .replace(new RegExp(`@「${escapeRegExp(r.title)}」\\s*`, "g"), "")
-                      .replace(new RegExp(`@${escapeRegExp(r.id)}\\s*`, "g"), ""),
-                  )
-                }}
-                style={{ cursor: "pointer", fontWeight: "bold", flexShrink: 0 }}
-              >
-                {"\u00d7"}
-              </span>
-            </span>
-          ))}
-        </div>
-      )}
+      <UploadChips
+        fileError={fileError}
+        onDismissError={() => setFileError("")}
+        destAck={destAck}
+        onDismissAck={() => setDestAck("")}
+        selectedFiles={selectedFiles}
+        destHost={destHost}
+        onRemove={removeFile}
+      />
+      <ThreadRefChips threadRefs={threadRefs} onDismiss={dismissThreadRef} />
       <AtThreadPopover
         threads={state.threads}
         excludeId={state.activeThreadId}
@@ -1864,8 +872,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         badge={postprocessedBadge ? POSTPROCESS_BADGE_LABEL : null}
       />
       {/* PR4: ComposerDock chips + capsule; 装配 lives on the chip, not in the field */}
-      <div style={styles.inputArea}>
-        <ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />
+      <ComposerDock
+        chips={<ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />}
+      >
         <div
           style={{
             ...styles.composerCapsule,
@@ -1985,99 +994,22 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               <IconSend size={15} />
             </button>
           )}
+
         </div>
-        {(voice.banner || engineSwitchNote) && (
-          <div
-            data-testid="voice-banner"
-            role="status"
-            style={{
-              marginTop: 6,
-              fontSize: 11,
-              color: tokens.textSecondary,
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 6,
-              lineHeight: 1.4,
-              flexWrap: "wrap" as const,
-            }}
-          >
-            <span style={{ flex: "1 1 140px", minWidth: 0 }}>
-              {engineSwitchNote || voice.banner}
-            </span>
-            {voice.rawSnapshot &&
-            !voice.refining &&
-            voice.banner &&
-            /纠错|识别原文/.test(voice.banner) &&
-            !engineSwitchNote ? (
-              <button
-                type="button"
-                data-testid="voice-cta-restore-raw"
-                onClick={() => {
-                  voice.restoreRaw()
-                }}
-                style={{
-                  border: "none",
-                  background: "transparent",
-                  color: tokens.accent,
-                  cursor: "pointer",
-                  fontSize: 11,
-                  padding: 0,
-                  flexShrink: 0,
-                  textDecoration: "underline",
-                }}
-              >
-                还原识别原文
-              </button>
-            ) : null}
-            {voiceBannerCta && !engineSwitchNote ? (
-              <button
-                type="button"
-                data-testid={
-                  voiceBannerCta.kind === "switch_browser"
-                    ? "voice-cta-switch-browser"
-                    : "voice-cta-open-settings"
-                }
-                onClick={() => {
-                  if (voiceBannerCta.kind === "switch_browser") {
-                    handleSwitchBrowserEngine()
-                  } else {
-                    handleOpenVoiceSettings()
-                  }
-                }}
-                style={{
-                  border: "none",
-                  background: "transparent",
-                  color: tokens.accent,
-                  cursor: "pointer",
-                  fontSize: 11,
-                  padding: 0,
-                  flexShrink: 0,
-                  textDecoration: "underline",
-                }}
-              >
-                {voiceBannerCta.label}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => {
-                voice.dismissBanner()
-                setEngineSwitchNote(null)
-              }}
-              style={{
-                border: "none",
-                background: "transparent",
-                color: tokens.textMuted,
-                cursor: "pointer",
-                fontSize: 11,
-                padding: 0,
-                flexShrink: 0,
-              }}
-            >
-              关闭
-            </button>
-          </div>
-        )}
+        <VoiceBanner
+          banner={voice.banner}
+          engineSwitchNote={engineSwitchNote}
+          rawSnapshot={voice.rawSnapshot}
+          refining={voice.refining}
+          voiceBannerCta={voiceBannerCta}
+          onRestoreRaw={() => voice.restoreRaw()}
+          onSwitchBrowser={handleSwitchBrowserEngine}
+          onOpenSettings={handleOpenVoiceSettings}
+          onDismiss={() => {
+            voice.dismissBanner()
+            setEngineSwitchNote(null)
+          }}
+        />
         <VoicePrivacySheet
           open={voicePrivacyOpen}
           kind={voicePrivacyKind}
@@ -2110,7 +1042,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         {state.messages.length === 0 && !isStreaming && (
           <div style={styles.legal}>本地 Companion · 确认后才会执行危险操作</div>
         )}
-      </div>
+      </ComposerDock>
       <ComposeDrawer
         open={composeOpen}
         onClose={closeCompose}
@@ -2257,14 +1189,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.text,
     background: tokens.bg,
     WebkitFontSmoothing: "antialiased",
-    position: "relative" as const,
-  },
-  inputArea: {
-    display: "flex",
-    flexDirection: "column",
-    padding: "8px 14px 12px",
-    background: tokens.bgElevated,
-    flexShrink: 0,
     position: "relative" as const,
   },
   composerCapsule: {
