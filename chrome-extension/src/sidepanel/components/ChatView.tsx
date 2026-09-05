@@ -19,7 +19,7 @@ import {
   formatShellMetaLine,
   SHELL_BODY_PREVIEW_CHARS,
 } from "../utils/shell-card-utils"
-import { extractRedactedStub, isRedactedStubContent } from "../utils/redacted-stub-utils"
+import { extractRedactedStub, extractTruncatedPrefix, isRedactedStubContent } from "../utils/redacted-stub-utils"
 import { RetrievedSourcesChips } from "./RetrievedSourcesChips"
 import { KnowledgeImportModal } from "./KnowledgeImportModal"
 import { SummarySheet } from "./SummarySheet"
@@ -995,11 +995,20 @@ function ToolCallCard({ tc }: { tc: any }) {
   // threads/*.json (companion security/tool-persistence-redact.ts). Render a
   // friendly hint instead of the raw stub JSON — live turns are unaffected.
   const redactedStub = hasResult ? extractRedactedStub(tc.result) : null
+  // #255 三态: read-tier tools (get_page_text / get_page_html / evaluate) may
+  // persist a truncated-prefix envelope — render the prefix with the explicit
+  // "已保留前 N/共 M 字符" copy (never implying the full content persisted).
+  const truncatedPrefix = hasResult && !redactedStub ? extractTruncatedPrefix(tc.result) : null
   // collapseResult (shape B) swallows `error` on failure rows — success===false
   // is the only surviving signal, so surface it in the hint line.
   const stubFailed = redactedStub !== null && tc.result?.success === false
-  // Avoid stringifying huge objects on every render; cap preview stringification
-  const resultStr = hasResult ? JSON.stringify(tc.result, null, 2) : ""
+  // Avoid stringifying huge objects on every render; cap preview stringification.
+  // Truncated-prefix envelopes render the persisted prefix, not the envelope JSON.
+  const resultStr = hasResult
+    ? truncatedPrefix
+      ? truncatedPrefix.prefix
+      : JSON.stringify(tc.result, null, 2)
+    : ""
   const isLongResult = resultStr.length > TOOL_RESULT_PREVIEW
 
   const isVisionTool = tc.tool_name === "screenshot" || tc.tool_name === "analyze_image"
@@ -1407,6 +1416,20 @@ function ToolCallCard({ tc }: { tc: any }) {
           data-testid="redacted-stub-hint"
         >
           {`出于安全未持久化：原始长度 ${redactedStub.len.toLocaleString()} 字符 · sha256 ${redactedStub.sha256}。实时轮次中内容对模型与界面可见（超长会截断），重新加载后不再保留。${stubFailed ? "该调用当时已失败。" : ""}`}
+        </div>
+      )}
+      {/* #255 三态之截断态：读类工具结果过闸后按 8000 字符截断落盘——明示
+          保留比例，不得暗示完整内容均已持久化。 */}
+      {truncatedPrefix && (
+        <div
+          style={{
+            ...styles.toolResult,
+            fontFamily: "inherit",
+            color: tokens.textMuted,
+          }}
+          data-testid="truncated-prefix-hint"
+        >
+          {`已保留前 ${truncatedPrefix.kept.toLocaleString()}/共 ${truncatedPrefix.total.toLocaleString()} 字符（安全截断，超出部分未落盘）。`}
         </div>
       )}
       {/* Generic tools keep JSON preview; shell_exec uses plain-text card above. */}
