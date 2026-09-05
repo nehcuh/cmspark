@@ -51,6 +51,8 @@ private let summonerAttachPrimary = "打开浏览器"
 private let summonerAttachSecondary = "打开并前置浏览器"
 private let summonerConfirmNeed = "需要确认才能继续。"
 private let summonerOpenConfirm = "打开确认台"
+private let summonerCruiseChipFallback = "每次确认"
+private let summonerCruiseChipTip = "点此打开侧栏调整档位"
 private let summonerAttachFootnote = "我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。"
 private let summonerFileMaxBytes = 6 * 1024 * 1024
 private let summonerHudInnerWidth: CGFloat = 696
@@ -208,6 +210,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var hotkeyConfigured = false
 
   private var badgeField: NSTextField?
+  private var cruiseChipButton: NSButton?
   private var hintField: NSTextField?
   private var placeholderField: NSTextField?
   private var fieldBox: NSView?
@@ -311,6 +314,15 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       // Attached hydrate = live companion channel again; the confirm console is
       // reachable through the normal path, so the confirm CTA mode ends.
       confirmPending = false
+    }
+    // #324: display-only chip. Companion derived the string; never decode three bools.
+    if let raw = json["cruise_label"] as? String {
+      let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmed.isEmpty {
+        let cap = trimmed.count <= 40 ? trimmed : String(trimmed.prefix(40))
+        cruiseChipButton?.title = cap
+        cruiseChipButton?.setAccessibilityTitle(cap)
+      }
     }
     streamingAssistant = false
     sawBrowserUnavailable = false
@@ -1112,6 +1124,11 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     jsonLine(["type": "summoner.attach_chrome", "foreground": true])
   }
 
+  /// #324 read-only cruise chip — same inbound as 「打开确认台」(no new stdin type).
+  @objc func cruiseChipClicked() {
+    jsonLine(["type": "summoner.attach_chrome", "foreground": true])
+  }
+
   @objc func settingsClicked() {
     settingsBox?.isHidden.toggle()
     relayout()
@@ -1428,6 +1445,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private func relayout() {
     guard let window = window else { return }
     var h: CGFloat = 72
+    if cruiseChipButton?.isHidden == false { h += 28 }
     if pickerBox?.isHidden == false { h += 310 }
     if settingsBox?.isHidden == false { h += 118 }
     if expanded && (workbenchBox?.isHidden == false) { h += summonerWorkbenchHeight }
@@ -1466,6 +1484,20 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     stack.spacing = 8
     stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 12, right: 12)
     stack.translatesAutoresizingMaskIntoConstraints = false
+
+    let cruise = NSButton(title: summonerCruiseChipFallback, target: self, action: #selector(cruiseChipClicked))
+    cruise.bezelStyle = .inline
+    cruise.isBordered = false
+    cruise.font = .systemFont(ofSize: 11, weight: .semibold)
+    cruise.contentTintColor = SummonerTokens.indigo
+    cruise.toolTip = summonerCruiseChipTip
+    cruise.setAccessibilityLabel(summonerCruiseChipTip)
+    cruise.setAccessibilityTitle(summonerCruiseChipFallback)
+    cruise.keyEquivalent = ""
+    cruise.translatesAutoresizingMaskIntoConstraints = false
+    cruise.widthAnchor.constraint(lessThanOrEqualToConstant: summonerHudInnerWidth).isActive = true
+    cruiseChipButton = cruise
+    stack.addArrangedSubview(cruise)
 
     let pickerBox = NSView()
     pickerBox.translatesAutoresizingMaskIntoConstraints = false

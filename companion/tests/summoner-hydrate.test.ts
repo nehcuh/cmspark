@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { hydratePlaintext } from "../src/summoner/hydrate"
+import { hydratePlaintext, buildSummonerHydratePayload } from "../src/summoner/hydrate"
+import { SUMMONER_SEARCH_HINT } from "../src/summoner/protocol"
 
 /** Overlay transcript: role-prefixed plaintext. Swift must not wrap chat bubbles. */
 
@@ -86,4 +87,22 @@ test("no mermaid/html wrapping — plaintext only", () => {
   assert.doesNotMatch(blob, /^<(?:div|p|html|body|article)\b/i)
   assert.equal(lines.some((l) => /^<div\b/i.test(l)), false)
   assert.equal(lines.some((l) => l.includes('class="chat-bubble"')), false)
+})
+
+test("#324 buildSummonerHydratePayload derives cruise_label and keeps search_hint", () => {
+  const p = buildSummonerHydratePayload({
+    thread_id: "t1",
+    lines: ["你: hi"],
+    browser: "attached",
+  })
+  assert.equal(p.thread_id, "t1")
+  assert.equal(p.search_hint, SUMMONER_SEARCH_HINT)
+  assert.equal(p.browser, "attached")
+  assert.equal(typeof p.cruise_label, "string")
+  assert.ok((p.cruise_label || "").length > 0)
+  assert.ok(
+    p.cruise_label === "每次确认" ||
+      p.cruise_label?.startsWith("巡航中 · ") ||
+      p.cruise_label === "值守中 · 桌面",
+  )
 })

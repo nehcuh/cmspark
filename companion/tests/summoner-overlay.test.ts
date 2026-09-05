@@ -60,6 +60,24 @@ test("SummonerController has zero Allow/Deny action chrome", () => {
   assert.doesNotMatch(body, /showConfirm|allowClicked|denyClicked/)
 })
 
+test("#324 Swift cruise chip is display-only and reuses attach_chrome", () => {
+  const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
+  assert.match(overlay, /cruiseChipClicked/)
+  assert.match(overlay, /cruise_label/)
+  assert.match(overlay, /summoner\.attach_chrome/)
+  assert.doesNotMatch(overlay, /auto_approve_dangerous/)
+  assert.doesNotMatch(overlay, /allow_all_schemes/)
+  assert.doesNotMatch(overlay, /auto_approve_enterprise_tools/)
+  assert.doesNotMatch(overlay, /summoner\.tier/)
+  assert.doesNotMatch(overlay, /summoner\.confirm/)
+  const click = overlay.slice(
+    overlay.indexOf("func cruiseChipClicked"),
+    overlay.indexOf("func cruiseChipClicked") + 280,
+  )
+  assert.match(click, /summoner\.attach_chrome/)
+  assert.doesNotMatch(click, /config\.set/)
+})
+
 test("SummonerController is a one-bar HUD: 720pt, no stacked makeRail, Esc hides", () => {
   const body = summonerControllerBody()
   assert.match(body, /summonerHudWidth/)
@@ -327,6 +345,14 @@ test("menu-bar-agent close releases every overlay lease, not only summonerThread
   const body = src.slice(start, next > start ? next : start + 800)
   assert.match(body, /releaseAllOverlay|release_overlay|releaseAllOverlayComposerLeases/)
   assert.doesNotMatch(body, /if \(!client \|\| !id\) return/)
+})
+
+test("#324 menu-bar hydrate uses companion-derived cruise_label helper", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  assert.match(src, /buildSummonerHydratePayload/)
+  assert.match(src, /refreshSummonerCruiseChip/)
+  assert.match(src, /setOverlayUnattendedArmed/)
+  assert.doesNotMatch(src, /summoner\.tier\.set/)
 })
 
 test("hydrateSummonerThread claims overlay after hydrate (exclusive via lease SoT)", () => {

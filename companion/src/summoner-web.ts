@@ -40,6 +40,7 @@ import {
 import { getChromeOpener } from "./platform"
 import { getConfig } from "./config"
 import { OVERLAY_RENDER_MD_JS } from "./summoner/overlay-md"
+import { currentOverlayCruiseChipLabel } from "./summoner/hydrate"
 
 export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
 export type SummonerWebAttachChrome = (opts?: { foreground?: boolean }) => string
@@ -83,8 +84,10 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "meeting.auto_diarize",
 ])
 
-/** Fan-out to HTML EventSource. Confirm / Trust / config frames stay off this list. */
+/** Fan-out to HTML EventSource. Confirm / Trust / config frames stay off this list.
+ *  overlay.cruise is a derived display string (#324), not a config dump. */
 export const SUMMONER_WEB_EVENT_ALLOW = new Set([
+  "overlay.cruise",
   "chat.token",
   "chat.done",
   "chat.error",
@@ -690,7 +693,17 @@ async function handleRequest(
         "Content-Security-Policy":
           `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'`,
       })
-      res.end(SUMMONER_HTML.replace("<script>", `<script nonce="${nonce}">`))
+      let cruise = "每次确认"
+      try {
+        cruise = currentOverlayCruiseChipLabel()
+      } catch {
+        cruise = "每次确认"
+      }
+      const html = SUMMONER_HTML.replace("<script>", `<script nonce="${nonce}">`).replace(
+        "%%CRUISE_LABEL%%",
+        escHtml(cruise),
+      )
+      res.end(html)
       return
     }
 
@@ -1216,6 +1229,10 @@ body{
   min-height:36px;padding:6px 10px;border:0;background:var(--canvas);border-radius:8px;
   font:12px inherit;cursor:pointer;color:var(--text);
 }
+.cruise-chip{
+  max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  background:var(--indigo-soft)!important;color:var(--indigo)!important;font-weight:600;
+}
 .list-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 14px 8px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--faint)}
 .list-head button{min-height:36px;padding:6px 10px;border:0;background:var(--canvas);border-radius:8px;font:12px inherit;cursor:pointer;color:var(--text);letter-spacing:0;font-weight:500}
 .hud.history .list{
@@ -1430,6 +1447,7 @@ body{
       <div class="brand">
         <span class="brand-id"><span class="mark sm" aria-hidden="true">山</span>CMspark</span>
         <span class="brand-actions">
+          <button type="button" id="cruiseChip" class="cruise-chip" title="点此打开侧栏调整档位">%%CRUISE_LABEL%%</button>
           <button type="button" id="historyOpen">历史</button>
           <button type="button" id="newChat">新对话</button>
         </span>
@@ -2415,6 +2433,7 @@ try{
     if(meetingId) endMeetingCapture();
     showMeetingDesk(false);
   };
+  $("cruiseChip").onclick=function(){ $("operateOpen").click(); };
   $("operateOpen").onclick=function(){
     setStatus("正在打开侧栏…");
     api("/api/operate",{method:"POST"}).then(function(d){
@@ -2612,6 +2631,12 @@ try{
       var t=d&&d.type;
       if(t==="shell.close"){
         try{window.close()}catch(e){}
+        return;
+      }
+      if(t==="overlay.cruise"){
+        var lab=typeof d.cruise_label==="string"?d.cruise_label.trim():"";
+        var chip=$("cruiseChip");
+        if(chip && lab){ chip.textContent=lab.slice(0,40); }
         return;
       }
       if(t==="error"||t==="chat.error"){

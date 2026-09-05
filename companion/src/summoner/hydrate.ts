@@ -1,9 +1,57 @@
 /** Overlay hydrate: last N role-prefixed plaintext messages.
  *  Preserve newlines. Never wrap HTML or chat bubbles.
+ *
+ *  GitHub: #324 — cruise_label is derived here (companion), never in Swift.
  */
+
+import { getConfig } from "../config"
+import {
+  overlayCruiseChipLabel,
+  type SecurityArmFlags,
+} from "../security/autopilot-tier"
+import { SUMMONER_SEARCH_HINT, type SummonerBrowser, type SummonerHydratePayload } from "./protocol"
 
 const HYDRATE_CAP = 20
 const HYDRATE_CHARS = 4000
+
+/** Tray-process cache of companion-daemon unattended grant (not in config.json). */
+let unattendedArmedCache = false
+
+export function setOverlayUnattendedArmed(armed: boolean): void {
+  unattendedArmedCache = armed === true
+}
+
+export function overlayUnattendedArmed(): boolean {
+  return unattendedArmedCache
+}
+
+export function currentOverlayCruiseChipLabel(
+  flags?: SecurityArmFlags,
+  unattendedArmed?: boolean,
+): string {
+  const armed = unattendedArmed ?? unattendedArmedCache
+  try {
+    const security = flags ?? getConfig().security ?? {}
+    return overlayCruiseChipLabel(security, armed)
+  } catch {
+    return overlayCruiseChipLabel(flags ?? {}, armed)
+  }
+}
+
+/** Fill hydrate payload including derived cruise chip copy. */
+export function buildSummonerHydratePayload(args: {
+  thread_id: string
+  lines: string[]
+  browser: SummonerBrowser
+}): SummonerHydratePayload {
+  return {
+    thread_id: args.thread_id,
+    lines: args.lines,
+    browser: args.browser,
+    search_hint: SUMMONER_SEARCH_HINT,
+    cruise_label: currentOverlayCruiseChipLabel(),
+  }
+}
 
 export function hydratePlaintext(
   messages: Array<{ role: string; content?: string; tool_calls?: Array<{ function?: { name?: string } }> }>,

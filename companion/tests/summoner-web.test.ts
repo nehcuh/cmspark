@@ -299,6 +299,10 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /statusFromEvent/)
     assert.doesNotMatch(r.body, /mode==="enqueue"\?"已排队"/)
     assert.doesNotMatch(r.body, /允许|拒绝|Allow|Deny/)
+    assert.match(r.body, /id="cruiseChip"/)
+    assert.doesNotMatch(r.body, /%%CRUISE_LABEL%%/)
+    assert.match(r.body, /点此打开侧栏调整档位/)
+    assert.match(r.body, /overlay\.cruise/)
     assert.match(r.body, /确认台/)
     assert.doesNotMatch(r.body, /confirmation_id/)
     assert.doesNotMatch(r.body, /ws:\/\//)
@@ -967,6 +971,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
   test("SSE forwards run_active and drops confirmation chrome", async () => {
     assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("error"), true)
     assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("security.confirmation.request"), false)
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("overlay.cruise"), true)
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("config.updated"), false)
     const buf = await new Promise<string>((resolve, reject) => {
       const req = http.request(
         {
