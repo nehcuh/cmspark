@@ -138,6 +138,23 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
   const rejectPendingForTab = _rt.rejectPendingForTab
 
   switch (toolName) {
+    case "loop_declare_blocked": {
+      const threadId = params.__thread_id || params._thread_id || params.thread_id
+      if (!threadId) return { success: false, error: "loop_declare_blocked requires __thread_id" }
+      const itemId = String(params.item_id || params.itemId || "").trim()
+      if (!itemId) return { success: false, error: "loop_declare_blocked requires item_id" }
+      const { onRouteDeclaredBlocked, onRouteTool } = await import("../loop/route-session")
+      onRouteTool(String(threadId), "loop_declare_blocked")
+      onRouteDeclaredBlocked(String(threadId), itemId)
+      return {
+        success: true,
+        data: {
+          declared: true,
+          item_id: itemId,
+          note: "Declared blocked. Loop will not secretly enable computer.use or call tools for you.",
+        },
+      }
+    }
     case "spawn_worker": {
       const parentId = params.__thread_id || params._thread_id || params.parent_thread_id
       if (!parentId) return { success: false, error: "spawn_worker requires parent thread (__thread_id)" }

@@ -12,6 +12,7 @@ export const COMPANION_TOOLS = [
   "use_skill",
   "thread_recall",
   "run_progress_propose",
+  "loop_declare_blocked",
   // #328 execution contract shadow spike — default-off (security.execution_contract_shadow);
   // adapter filters it from the offered list while the flag is off.
   "execution_contract_propose",
