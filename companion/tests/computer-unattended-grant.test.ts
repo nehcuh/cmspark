@@ -1,6 +1,7 @@
 /**
  * ADR-021 unattended desktop grant — pure gate + arm/disarm process memory.
  */
+import "./_unattended-grant-setup" // MUST be first — pins CMSPARK_DATA_DIR before config/audit-log module load.
 import { describe, it, beforeEach } from "node:test"
 import assert from "node:assert/strict"
 import {
@@ -433,5 +434,170 @@ describe("C16 unattended re-L2 silence (grant armed)", () => {
     armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE })
     assert.equal(isUnattendedArmed(), true)
     // executor.ts reL2: if (isUnattendedArmed()) return true without confirm
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #347: unattended grant arm/disarm/TTL-expire write capability-audit.jsonl
+// ---------------------------------------------------------------------------
+
+describe("#347 unattended lifecycle audits capability-audit.jsonl", () => {
+  function readAuditEvents(): any[] {
+    const { getAuditLogPath } = require("../src/packs/audit-log") as typeof import("../src/packs/audit-log")
+    const p = getAuditLogPath()
+    if (!fs.existsSync(p)) return []
+    return fs
+      .readFileSync(p, "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+  }
+  const fs = require("fs") as typeof import("fs")
+  const os = require("os") as typeof import("os")
+  const path = require("path") as typeof import("path")
+
+  it("arm → security.unattended.armed with expires/armedAt/surface, no secret material", async () => {
+    const {
+      armUnattended,
+      resetUnattendedGrantForTests,
+      setUnattendedAuditContext,
+      UNATTENDED_HARD_TTL_MS,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    setUnattendedAuditContext({ surface: "panel", source: "ws_unattended.arm" })
+    const now = 9_000_000
+    const before = readAuditEvents().filter((e) => e.type === "security.unattended.armed").length
+    const r = armUnattended({
+      confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE,
+      include_protocol: false,
+      now,
+    })
+    assert.equal(r.ok, true)
+    const armed = readAuditEvents().filter((e) => e.type === "security.unattended.armed")
+    assert.equal(armed.length, before + 1, "one armed event per successful arm")
+    const ev = armed.at(-1)!
+    assert.equal(ev.armed_at, now)
+    assert.equal(ev.expires_at, now + UNATTENDED_HARD_TTL_MS)
+    assert.equal(ev.include_protocol, false)
+    assert.equal(ev.surface, "panel")
+    assert.equal(ev.source, "ws_unattended.arm")
+    // redaction-by-construction: phrase/token/command text must never appear
+    const blob = JSON.stringify(armed)
+    assert.equal(blob.includes(SECURITY_ARM_CONFIRM_PHRASE), false, "no phrase in audit")
+    assert.equal(/token|api[_-]?key/i.test(blob), false, "no token-shaped keys")
+  })
+
+  it("disarm after arm → security.unattended.disarmed with had_grant; bare disarm no event", () => {
+    const {
+      armUnattended,
+      disarmUnattended,
+      resetUnattendedGrantForTests,
+      setUnattendedAuditContext,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    setUnattendedAuditContext({ surface: "tray", source: "ws_unattended.disarm" })
+    armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE })
+    const beforeDisarmed = readAuditEvents().filter((e) => e.type === "security.unattended.disarmed").length
+    disarmUnattended()
+    const disarmed = readAuditEvents().filter((e) => e.type === "security.unattended.disarmed")
+    assert.equal(disarmed.length, beforeDisarmed + 1, "disarm adds exactly one event")
+    assert.equal(disarmed.at(-1)!.had_grant, true)
+    assert.equal(disarmed.at(-1)!.surface, "tray")
+    assert.equal(disarmed.at(-1)!.source, "ws_unattended.disarm")
+    // MAJOR-1 regression guard: audit `at` must stay an ISO string — a numeric
+    // epoch override would break the log contract shared by every other event.
+    assert.equal(typeof disarmed.at(-1)!.at, "string", "disarmed.at is an ISO string")
+    assert.ok(
+      /^\d{4}-\d{2}-\d{2}T/.test(String(disarmed.at(-1)!.at)),
+      "disarmed.at looks like an ISO timestamp",
+    )
+    assert.ok(
+      typeof disarmed.at(-1)!.armed_at === "number" && typeof disarmed.at(-1)!.expires_at === "number",
+      "disarm event carries armed_at + expires_at (issue field requirement)",
+    )
+
+    // bare disarm (no live grant) is a no-op transition — must NOT fabricate an audit row
+    resetUnattendedGrantForTests()
+    const n = readAuditEvents().filter((e) => e.type === "security.unattended.disarmed").length
+    disarmUnattended()
+    assert.equal(
+      readAuditEvents().filter((e) => e.type === "security.unattended.disarmed").length,
+      n,
+      "bare disarm writes no disarmed event",
+    )
+  })
+
+  it("TTL expire → security.unattended.expired once; provenance forced to ttl_expire even with stale WS context (MAJOR-2)", () => {
+    const {
+      armUnattended,
+      captureCruiseSnapshot,
+      registerCruiseRestoreHandler,
+      isUnattendedArmed,
+      resetUnattendedGrantForTests,
+      setUnattendedAuditContext,
+      UNATTENDED_HARD_TTL_MS,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    let restoredSnap: any = "unset"
+    registerCruiseRestoreHandler((snap) => {
+      restoredSnap = snap
+    })
+    captureCruiseSnapshot({
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    })
+    // Prod-realistic: the arm arrived over WS so the module audit context is set
+    // and (in prod) survives until expiry — no WS caller clears it. MAJOR-2 says
+    // the expired event must still stamp surface=null/source=ttl_expire.
+    setUnattendedAuditContext({ surface: "tray", source: "ws_unattended.arm" })
+    const now = 20_000_000
+    armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE, now })
+    const before = readAuditEvents().filter((e) => e.type === "security.unattended.expired").length
+    assert.equal(isUnattendedArmed(now + UNATTENDED_HARD_TTL_MS), false, "grant expired")
+    const expired = readAuditEvents().filter((e) => e.type === "security.unattended.expired")
+    assert.equal(expired.length, before + 1, "exactly one expired event")
+    const ev = expired.at(-1)!
+    // NIT-2: cruise_restored reflects the actual restore result (snapshot existed → applied).
+    assert.ok(restoredSnap !== "unset" && restoredSnap !== null, "restore handler ran with snapshot")
+    assert.equal(ev.cruise_restored, true)
+    // MAJOR-2 regression guard: provenance is intrinsic even with stale WS context.
+    assert.equal(ev.surface, null, "expired surface forced null despite tray context")
+    assert.equal(ev.source, "ttl_expire", "expired source forced ttl_expire despite WS source")
+    // MAJOR-1 regression guard: at is ISO.
+    assert.equal(typeof ev.at, "string")
+    assert.ok(/^\d{4}-\d{2}-\d{2}T/.test(String(ev.at)))
+    registerCruiseRestoreHandler(null)
+  })
+
+  it("arm audit write failure never affects arm result (fail-safe acceptance)", async () => {
+    const {
+      armUnattended,
+      resetUnattendedGrantForTests,
+      setUnattendedAuditContext,
+    } = require("../src/computer/unattended-grant") as typeof import("../src/computer/unattended-grant")
+    resetUnattendedGrantForTests()
+    // Real failure path (NIT-1 fix — env flip was a no-op because config.ts
+    // captured DATA_DIR at module load): monkeypatch the audit-log export the
+    // grant module calls through its module object, making the append THROW.
+    // auditLifecycle's outer try/catch is the fail-safe under test.
+    const auditLog = require("../src/packs/audit-log") as {
+      appendCapabilityAudit: (...a: unknown[]) => void
+    }
+    const realAppend = auditLog.appendCapabilityAudit
+    let threw = 0
+    auditLog.appendCapabilityAudit = () => {
+      threw++
+      throw new Error("simulated audit write failure")
+    }
+    try {
+      setUnattendedAuditContext({ surface: "panel", source: "ws_unattended.arm" })
+      const r = armUnattended({ confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE })
+      assert.equal(r.ok, true, "arm succeeds even if audit append throws")
+      assert.ok(threw >= 1, "the append was actually exercised (not a false green)")
+    } finally {
+      auditLog.appendCapabilityAudit = realAppend
+      resetUnattendedGrantForTests()
+    }
   })
 })

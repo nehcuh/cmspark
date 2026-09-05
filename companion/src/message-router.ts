@@ -4469,6 +4469,7 @@ export async function handleMessage(
         armUnattended,
         captureCruiseSnapshot,
         registerCruiseRestoreHandler,
+        setUnattendedAuditContext,
       } = await import("./computer/unattended-grant")
       // Ensure TTL expire path can restore dual-write (idempotent re-register)
       registerCruiseRestoreHandler((snap) => {
@@ -4504,6 +4505,11 @@ export async function handleMessage(
         auto_approve_enterprise_tools: current.security?.auto_approve_enterprise_tools === true,
         allow_all_schemes: current.security?.allow_all_schemes === true,
       })
+      // #347: thread caller surface (redacted origin) into the lifecycle audit.
+      setUnattendedAuditContext({
+        surface: stampedSurface === "summoner" || stampedSurface === "tray" ? stampedSurface : "panel",
+        source: "ws_unattended.arm",
+      })
       const result = armUnattended({
         confirmation_phrase: rest.confirmation_phrase,
         include_protocol: includeProtocol,
@@ -4538,6 +4544,7 @@ export async function handleMessage(
         restoreCruiseFromSnapshot,
         registerCruiseRestoreHandler,
         getCruiseSnapshot,
+        setUnattendedAuditContext,
       } = await import("./computer/unattended-grant")
       const { flipAllComputerTaskAborts } = await import("./computer/task-abort-registry")
       const { securityPolicy } = await import("./security-policy")
@@ -4553,6 +4560,11 @@ export async function handleMessage(
             allow_all_schemes: snap ? snap.allow_all_schemes : false,
           },
         })
+      })
+      // #347: disarm audit origin surface (redacted).
+      setUnattendedAuditContext({
+        surface: stampedSurface === "summoner" || stampedSurface === "tray" ? stampedSurface : "panel",
+        source: "ws_unattended.disarm",
       })
       const hadSnapshot = !!getCruiseSnapshot()
       const status = disarmUnattended()

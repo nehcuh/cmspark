@@ -16,6 +16,7 @@ import * as path from "path"
 import { SECURITY_ARM_CONFIRM_PHRASE, isValidSecurityArmPhrase } from "../security-arm"
 import { logger } from "../logger"
 import { DATA_DIR } from "../config"
+import { appendCapabilityAudit } from "../packs/audit-log"
 
 /** Wall-clock hard TTL (design F14 / ADR-021). */
 export const UNATTENDED_HARD_TTL_MS = 8 * 60 * 60 * 1000 // 8h
@@ -49,6 +50,47 @@ export interface CruiseFlagsSnapshot {
   auto_approve_dangerous: boolean
   auto_approve_enterprise_tools: boolean
   allow_all_schemes: boolean
+}
+
+/** Audit metadata threaded from the caller (message-router surface) — never grant fields. */
+let lastAuditSurface: string | undefined
+let lastAuditSource: string | undefined
+
+export function setUnattendedAuditContext(opts: {
+  surface?: string | null
+  source?: string | null
+}): void {
+  lastAuditSurface = opts.surface ?? undefined
+  lastAuditSource = opts.source ?? undefined
+}
+
+/**
+ * capability-audit fail-safe write for the unattended lifecycle. Never throws:
+ * appendCapabilityAudit is internally all-caught, and we additionally guard so an
+ * audit failure can never affect arm/disarm semantics (issue #347 acceptance).
+ * Fields are redacted by construction (no phrase/tokens/command text — only
+ * booleans/ints + surface/source strings).
+ */
+function auditLifecycle(kind: "armed" | "disarmed" | "expired", fields: Record<string, unknown>): void {
+  try {
+    // expired is intrinsically TTL-driven: force surface/source so provenance is
+    // truthful even when a stale caller context survived to expiry (MAJOR-2).
+    const expiredOverride =
+      kind === "expired" ? { surface: null, source: "ttl_expire" } : {}
+    appendCapabilityAudit({
+      type: `security.unattended.${kind}`,
+      // at is always an ISO string (audit-log type contract). Field spread below
+      // must never carry its own `at` — disarm's clock (now, epoch-ms) is expressed
+      // as armed_at/expires_at only, and the outer ISO at is the event time (MAJOR-1).
+      at: new Date().toISOString(),
+      ...fields,
+      ...expiredOverride,
+      surface: "surface" in expiredOverride ? expiredOverride.surface : lastAuditSurface ?? null,
+      source: "source" in expiredOverride ? expiredOverride.source : lastAuditSource ?? null,
+    })
+  } catch {
+    /* audit must never gate the lifecycle */
+  }
 }
 
 let grant: InternalGrant | null = null
@@ -124,6 +166,8 @@ export function resetUnattendedGrantForTests(): void {
   grant = null
   cruiseSnapshot = null
   expireRestoreDone = false
+  lastAuditSurface = undefined
+  lastAuditSource = undefined
   // Clear file while override still points at the test path (Pi r2 nit:
   // never unlink real DATA_DIR snapshot when override is active).
   clearCruiseSnapshotFile()
@@ -239,10 +283,20 @@ export function reconcileUnattendedCruiseOnBoot(): {
 function expireGrantIfNeeded(now: number): void {
   if (!grant) return
   if (now < grant.expiresAt) return
+  const expired = grant
   grant = null
   // C1: TTL expire must restore dual-written cruise (once)
   if (!expireRestoreDone) {
-    restoreCruiseFromSnapshot()
+    // #347: TTL auto-expire is a lifecycle transition — audit it AFTER the restore
+    // so cruise_restored reflects what actually happened (NIT-2: was written
+    // unconditionally true before the restore ran).
+    const restored = restoreCruiseFromSnapshot()
+    auditLifecycle("expired", {
+      armed_at: expired.armedAt,
+      expires_at: expired.expiresAt,
+      include_protocol: expired.includeProtocol,
+      cruise_restored: !!restored,
+    })
   }
 }
 
@@ -316,6 +370,15 @@ export function armUnattended(opts: ArmUnattendedOpts): ArmUnattendedResult {
     max_budget_cap: maxBudgetCap,
     max_actions_cap: maxActionsCap,
   })
+  // #347: successful arm is a lifecycle transition — audit it (registration only;
+  // never an execution permit — arm does not gate any confirmation).
+  auditLifecycle("armed", {
+    armed_at: grant.armedAt,
+    expires_at: grant.expiresAt,
+    include_protocol: includeProtocol,
+    max_budget_cap: maxBudgetCap,
+    max_actions_cap: maxActionsCap,
+  })
   return { ok: true, status: getUnattendedStatus(now) }
 }
 
@@ -333,6 +396,16 @@ export function disarmUnattended(now: number = Date.now()): UnattendedGrantState
     logger.info("security.unattended_disarmed", {
       was_armed_at: grant.armedAt,
       at: now,
+    })
+    // #347: only a real transition (a live grant existed) is a lifecycle audit
+    // event — a no-op bare disarm must not fabricate an audit trail entry.
+    // Note: no `at` field here — the epoch clock (now) is carried as
+    // armed_at/expires_at, and the audit event's `at` stays the ISO string set by
+    // auditLifecycle (MAJOR-1: never let a numeric at break the log contract).
+    auditLifecycle("disarmed", {
+      armed_at: grant.armedAt,
+      expires_at: grant.expiresAt,
+      had_grant: true,
     })
   }
   grant = null
