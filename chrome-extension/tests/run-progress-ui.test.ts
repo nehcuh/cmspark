@@ -65,7 +65,7 @@ test("ChatView imports and mounts RunProgress when items.length>0", () => {
   const chat = src("src/sidepanel/components/ChatView.tsx")
   assert.match(chat, /from ["']\.\/RunProgress["']/)
   assert.match(chat, /<RunProgress/)
-  assert.match(chat, /items\.length\s*>\s*0/)
+  assert.match(chat, /runItems && runItems\.length\s*>\s*0/)
   const emptyFn = chat.slice(chat.indexOf("function EmptyState"), chat.indexOf("const markdownCSS"))
   // node-shims Assert has no doesNotMatch
   assert.ok(!/RunProgress/.test(emptyFn))

@@ -35,6 +35,7 @@ test("PR-5: ComposeDrawer / KnowledgeImportModal / VoicePrivacySheet all ride Bo
     "src/sidepanel/components/ComposeDrawer.tsx",
     "src/sidepanel/components/KnowledgeImportModal.tsx",
     "src/sidepanel/components/VoicePrivacySheet.tsx",
+    "src/sidepanel/components/SummarySheet.tsx",
   ]) {
     const s = src(f)
     assert.match(s, /from "\.\/ui\/BottomSheet"/, `${f} must import BottomSheet`)
@@ -81,6 +82,23 @@ test("PR-5: every button in KnowledgeImportModal is token-styled (no bare <butto
     assert.match(tag, /style=\{/, `unstyled button: ${tag.slice(0, 80)}…`)
   }
   assert.match(modal, /tokens\.accent/)
+})
+
+// ── Summary sheet migration (round-2 · review MAJOR-1) ──────────────────────
+
+test("PR-5 round-2: 摘要 modal migrated to SummarySheet on the shared BottomSheet", () => {
+  const chat = src("src/sidepanel/components/ChatView.tsx")
+  // No more hand-rolled inline role="dialog" card in ChatView.
+  assert.doesNotMatch(chat, /role="dialog"/)
+  assert.match(chat, /import \{ SummarySheet \} from "\.\/SummarySheet"/)
+  assert.match(chat, /<SummarySheet/)
+  assert.match(chat, /onClose=\{\(\) => setSummaryOpen\(false\)\}/)
+  const sheet = src("src/sidepanel/components/SummarySheet.tsx")
+  assert.match(sheet, /ariaLabel="上下文工作记忆"/)
+  // Copy preserved verbatim (titles + redaction footer).
+  assert.match(sheet, /工作记忆（结构化 · 脱敏）/)
+  assert.match(sheet, /压缩摘要（脱敏 · 仅供回顾）/)
+  assert.match(sheet, /工作记忆仅服务当前请求路径；不进入导出默认路径，也不跨会话注入。磁盘全文仍保留。/)
 })
 
 // ── Voice privacy sheet migration ────────────────────────────────────────────

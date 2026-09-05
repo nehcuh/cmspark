@@ -22,6 +22,7 @@ import {
 import { extractRedactedStub, isRedactedStubContent } from "../utils/redacted-stub-utils"
 import { RetrievedSourcesChips } from "./RetrievedSourcesChips"
 import { KnowledgeImportModal } from "./KnowledgeImportModal"
+import { SummarySheet } from "./SummarySheet"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
 import { deriveThreadBusy } from "../utils/thread-busy"
@@ -418,91 +419,12 @@ export function ChatView() {
             )}
           </div>
         )}
-        {summaryOpen && (rollingSummary || handoff) && (
-          <div
-            role="dialog"
-            aria-label="上下文工作记忆"
-            style={{
-              margin: "4px 10px 8px",
-              padding: 12,
-              borderRadius: 8,
-              background: tokens.bgElevated,
-              border: `1px solid ${tokens.border}`,
-              boxShadow: tokens.shadowPopover,
-              fontSize: 12,
-              lineHeight: 1.5,
-              color: tokens.text,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 8,
-              }}
-            >
-              <strong style={{ fontSize: 12 }}>
-                {handoff ? "工作记忆（结构化 · 脱敏）" : "压缩摘要（脱敏 · 仅供回顾）"}
-              </strong>
-              <button
-                type="button"
-                onClick={() => setSummaryOpen(false)}
-                style={{
-                  border: "none",
-                  background: "transparent",
-                  cursor: "pointer",
-                  fontSize: 14,
-                  color: tokens.textMuted,
-                }}
-                aria-label="关闭"
-              >
-                ✕
-              </button>
-            </div>
-            {handoff ? (
-              <div style={{ maxHeight: 260, overflow: "auto" }}>
-                {(
-                  [
-                    ["目标", handoff.goals],
-                    ["决策", handoff.decisions],
-                    ["约束", handoff.constraints],
-                    ["待办", handoff.open_todos],
-                    ["产物", handoff.artifacts],
-                  ] as const
-                ).map(([label, items]) =>
-                  items && items.length > 0 ? (
-                    <div key={label} style={{ marginBottom: 8 }}>
-                      <div style={{ fontWeight: 600, marginBottom: 2 }}>【{label}】</div>
-                      <ul style={{ margin: 0, paddingLeft: 18 }}>
-                        {items.map((t, i) => (
-                          <li key={i}>{typeof t === "string" ? t : t && typeof t === "object" && "text" in t ? String((t as { text?: string }).text ?? "") : ""}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null,
-                )}
-              </div>
-            ) : (
-              <pre
-                style={{
-                  margin: 0,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  fontFamily: "inherit",
-                  fontSize: 12,
-                  maxHeight: 220,
-                  overflow: "auto",
-                }}
-              >
-                {rollingSummary}
-              </pre>
-            )}
-            <div style={{ marginTop: 8, fontSize: 10, color: tokens.textMuted }}>
-              工作记忆仅服务当前请求路径；不进入导出默认路径，也不跨会话注入。磁盘全文仍保留。
-            </div>
-          </div>
-        )}
+        <SummarySheet
+          open={summaryOpen && !!(rollingSummary || handoff)}
+          onClose={() => setSummaryOpen(false)}
+          rollingSummary={rollingSummary}
+          handoff={handoff}
+        />
         {runItems && runItems.length > 0 && activeThreadId ? (
           // key by thread+listSig: thread switch or list identity remounts to defaultExpanded(n).
           // Sticky/collapse styling lives in RunProgress.
