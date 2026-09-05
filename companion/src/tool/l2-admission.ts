@@ -535,8 +535,11 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     let hostComputerTrustSkipReason: "session_trust_corpus_subset" | "unattended_session_grant" | null =
       null
     let vaultBrowserOneShot = false
+    // #360 (CU-B): LLM 传入的触发原因（清洗后）——进确认文案 + audit 计数。
+    let vaultBrowserTriggerReason: string | undefined
     if (hostComputerGated) {
       const { assertCoordinateAllowed, isVaultBrowserEntry } = await import("../computer/policy")
+      const { cleanVaultBrowserTriggerReason } = await import("../computer/vault-browser-oneshot")
       // Y3 (WP2): the preview text comes from the PURE builder — task text
       // JSON-escaped against layout spoofing, every injectable action
       // enumerated verbatim; unit-tested in computer-preview.test.ts.
@@ -732,6 +735,8 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           // a one-shot browser (Trust REJECT + runtime P1).
           hostComputerTrustSkip = false
           hostComputerTrustSkipReason = null
+          // #360 (CU-B): 触发原因（如「CDP 定位失败 → 坐标化升级」）进确认文案。
+          vaultBrowserTriggerReason = cleanVaultBrowserTriggerReason(finalParams.trigger_reason)
         }
         computerPreview = buildComputerL2Preview({
           task: String(finalParams.task || ""),
@@ -742,6 +747,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           leadLines: vaultBrowserOneShot
             ? [
                 "⚠️ 浏览器像素点击：将绕过页面 CDP，直接操作浏览器窗口。必须你点「允许」。无人值守 / 三旗巡航 / 会话信任都不会跳过本次确认。本次授权不写入 Apps 坐标开关。",
+                // #360 (CU-B): 定位收窄到 UIA+OCR（网页画面不喂视觉模型）+ 触发原因。
+                "定位方式：仅系统 UIA 与 OCR（网页画面不会发送给视觉模型）；找不到目标会诚实失败。",
+                ...(vaultBrowserTriggerReason ? [`触发原因: ${vaultBrowserTriggerReason}`] : []),
               ]
             : undefined,
           extraLines: [limiter.statusLine()],
@@ -1358,6 +1366,19 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         const confirmOriginOpts = confirmBinding.originWs
           ? { originWs: confirmBinding.originWs }
           : {}
+
+        // #360 (CU-B): one-shot L2 触发计数入 capability-audit（观测确认疲劳）。
+        // 浏览器 one-shot 构造上必然走到这里（trust skip 已强制清空、forceConfirm
+        // 不被三旗/值守清除）——每条 = 一次真人确认弹窗。
+        if (vaultBrowserOneShot) {
+          const { recordVaultBrowserOneShotL2 } = await import("../computer/vault-browser-oneshot")
+          recordVaultBrowserOneShotL2({
+            toolCallId,
+            app: String(finalParams.app || ""),
+            platform: os.platform(),
+            triggerReason: vaultBrowserTriggerReason,
+          })
+        }
 
         const wsPromise = securityConfirmations.request(
           sendConfirm,

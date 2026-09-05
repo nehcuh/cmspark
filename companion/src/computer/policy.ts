@@ -117,6 +117,20 @@ export function isVaultBrowserEntry(entry: AppEntry, platform: string = os.platf
   return entry.exe?.path ? vaultPathIsBrowser(entry.exe.path) : false
 }
 
+/**
+ * #360 (CU-B) platform-independent seam: is this whitelisted app token a
+ * vault browser surface RIGHT NOW? Resolves the entry and delegates to
+ * isVaultBrowserEntry — which keys off exe identity on win32 and bundleId on
+ * darwin, covering BOTH WIN_BROWSER_VAULT_TOKENS and
+ * MAC_BROWSER_VAULT_BUNDLE_IDS. Callers (dispatch / audit) must use this
+ * instead of re-implementing a Windows-tokens-only check (that would leave
+ * macOS browsers unprotected).
+ */
+export function isVaultBrowserAppToken(cfg: CompanionConfig, token: string): boolean {
+  const entry = cfg.apps?.entries?.[token]
+  return entry ? isVaultBrowserEntry(entry) : false
+}
+
 export function isBrowserVaultExePath(p: string): boolean {
   try {
     const tok = basenameToVault(p)

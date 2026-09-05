@@ -896,6 +896,10 @@ export async function runComputerTask(
             ...(deps.experimentalLocator
               ? {}
               : { experimentalSkipReason: deps.experimentalSkipReason || "model-not-admitted" }),
+            // #360 (CU-B): 浏览器 one-shot 永不调用实验层（链内记
+            // vault-browser-no-vlm skipped，证据链可见）；OSR 白名单应用
+            // （coordinateAllowed 非浏览器）不受影响仍走 Qwen。
+            vaultBrowserNoVlm: vaultBrowserOneShot,
             log: (event, data) => log(event, { taskId, seq, ...data }),
           },
           trackCapture,
@@ -1238,6 +1242,9 @@ export async function runComputerTask(
               // locate 通道产生，且该命中走上方区域复核分支，不到这里）。
               experimental: null,
               experimentalSkipReason: "refresh-no-experimental",
+              // #360 (CU-B): 浏览器 one-shot 刷新链同样标记（L3 skipped 记
+              // vault-browser-no-vlm 而非 wp6-not-implemented，证据链不失真）。
+              vaultBrowserNoVlm: vaultBrowserOneShot,
               log: (event, data) => log(event, { taskId, seq, refresh: true, ...data }),
             },
             trackCapture,
