@@ -37,7 +37,7 @@
 - Companion **会探测**：总内存、可用磁盘、NVIDIA/CUDA、Apple MPS（best-effort）。
 - **会推荐**规模（2B/4B/8B），但**不会**在资源不足时强行禁止下载（只提示 tight/insufficient）。
 - **可以启用**的条件（`canEnable`）：
-  1. 当前变体权重已在盘（`config.json` 存在）；
+  1. 当前变体已按发版钉死的 `qwen-vl.manifest.json` 通过完整性校验（`config.json` 存在 **且** 清单内每个文件 size+sha256 匹配，含全部 `*.safetensors` 权重；缺文件 `model-file-missing`，哈希错 `sha256-mismatch`，二者都拒绝启用）；
   2. Python + transformers/torch/pillow 可用；
   3. 许可证已接受且未永久拒绝；
   4. 用户在设置页打开开关（+ 生物识别门，若配置要求）。
@@ -68,6 +68,21 @@
 ~/.cmspark-agent/models/qwen3-vl-8b/
 ```
 
+发版钉死清单：`companion/assets/qwen-vl.manifest.json`（随 release 进仓库，**运行时不拉网、下载后不生成**）。HF / hf-mirror / ModelScope 只换下载 origin，sha256 与 size 不变。校验失败会把 `modelEnabled` 关掉，不会留在「已启用但权重被改过」的状态。
+
+### 5.1 4.5GB 全量哈希时延（不得退化成 stat-only）
+
+2B 权重约 4.26GB，4B/8B 分片合计更大。`probeQwenModelDir` **对清单内每个文件先比 size 再做流式 sha256**（1MiB chunk），包括全部 safetensors——没有「size 对了就跳过哈希」的捷径。
+
+| 时机 | 是否全量哈希 | 说明 |
+|------|----------------|------|
+| 设置页 `get_state` / 环境预检 | 是 | 打开实验区时一次，秒级（SSD） |
+| 下载结束 | 是 | 不过关不算下载成功 |
+| 启用 / admission / worker load | 是 | load 前再验一次（TOCTOU）；不过关拒加载、不 infer |
+| 每次点击 / 每次 locate | 否 | 已 load 进内存的权重不按点击重哈希 |
+
+故意改盘上某个 safetensors（即便文件大小不变）→ `sha256-mismatch`，实验层不得 ready。
+
 ## 6. 故障速查
 
 | 现象 | 处理 |
@@ -75,6 +90,8 @@
 | 下载按钮灰 | 看就绪清单：缺 Python / hub 包 |
 | `modelscope-missing` | `pip install modelscope` 或改 HF 镜像 |
 | `hf-hub-missing` | `pip install huggingface_hub` 或改魔搭 |
+| `model-file-missing` | 权重不完整或被删；重新下载 |
+| `sha256-mismatch` / `size-mismatch` | 文件与发版钉死清单不符（损坏或被改）；删除后换源重下。镜像只换地址，哈希不变 |
 | 开启后定位仍无实验层 | 确认 Computer Use 主开关、App 坐标权限；L2 仅在 UIA/OCR 未命中后尝试 |
 | 建议点错误 | 预期内：未校准；务必看确认台再批 |
 

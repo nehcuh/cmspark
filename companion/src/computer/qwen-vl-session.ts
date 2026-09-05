@@ -3,7 +3,11 @@
 import * as fs from "node:fs"
 import { getConfig } from "../config"
 import type { QwenVlVariant } from "./qwen-vl-catalog"
-import { qwenModelDir, probeQwenModelDir } from "./qwen-vl-download"
+import {
+  qwenModelDir,
+  probeQwenModelAt,
+  clearQwenModelEnabledOnIntegrityFailure,
+} from "./qwen-vl-download"
 import {
   isolatedPythonBin,
   resolvePythonRuntime,
@@ -52,10 +56,17 @@ export class QwenVlSession {
   async prepare(): Promise<void> {
     const variant = this.deps.variant
     const dir = this.deps.modelDir ?? qwenModelDir(variant)
-    const probe = probeQwenModelDir(variant)
+    const probe = probeQwenModelAt(dir, variant)
     if (probe.status !== "ready") {
+      clearQwenModelEnabledOnIntegrityFailure(variant, probe)
+      const code =
+        probe.error === "sha256-mismatch" ||
+        probe.error === "size-mismatch" ||
+        probe.error === "model-file-missing"
+          ? probe.error
+          : "model-not-ready"
       throw new ModelRuntimeError(
-        "model-not-ready",
+        code,
         `Qwen3-VL ${variant} 未下载或不完整（${probe.error || probe.status}）`,
       )
     }

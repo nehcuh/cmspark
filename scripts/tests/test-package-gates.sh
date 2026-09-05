@@ -107,6 +107,8 @@ assert_file_has "${PACKAGE_SH}" 'host-scripts-win' \
   "package.sh stages host-scripts-win"
 assert_file_has "${PACKAGE_SH}" 'qwen-vl-worker\.py' \
   "package.sh stages qwen-vl-worker.py (Qwen3-VL)"
+assert_file_exists "${ROOT}/companion/assets/qwen-vl.manifest.json" \
+  "qwen-vl.manifest.json present (release-pinned sha256, #359)"
 assert_file_lacks "${PACKAGE_SH}" 'stage_onnxruntime' \
   "package.sh no longer stages onnxruntime-node"
 assert_file_lacks "${PACKAGE_SH}" 'cp companion/dist/tinyclick' \
