@@ -4,6 +4,7 @@ name: 编程接力
 description: 浏览器证据 → 本机终端编程助手任务包（Composition · 非第二 runtime）
 version: 0.1.0
 channel: community
+kind: mission
 min_capability: L1
 requires_modules: []
 skills:

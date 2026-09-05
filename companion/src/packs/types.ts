@@ -6,6 +6,13 @@ export type ToolsMode = "allowlist" | "intersect" | "unchanged"
 export type SelectionMode = "auto" | "all" | "manual"
 /** Who authored the pack: builtin/installed are read-only in UI; user can edit/delete. */
 export type PackOrigin = "builtin" | "installed" | "user"
+/**
+ * #367: mission = 场景任务包 (ADR-014 default); expert = 可调度的角色视图
+ * (schedulable role view, still NOT a runtime). Pure schema addition —
+ * apply/spawn engines run identical logic for both kinds; kind only feeds
+ * list filtering/matching/UI copy. Absent field = mission (legacy packs).
+ */
+export type PackKind = "mission" | "expert"
 
 export interface PackTools {
   mode: ToolsMode
@@ -26,6 +33,8 @@ export interface PackManifest {
   description?: string
   version: string
   channel: PackChannel
+  /** #367: mission|expert; absent = mission (legacy compat). */
+  kind?: PackKind
   min_capability: MinCapability
   requires_modules: string[]
   /**
@@ -91,6 +100,8 @@ export interface PackListItem {
   description?: string
   version: string
   channel: PackChannel
+  /** #367: always present in list output; absent-on-disk = "mission". */
+  kind: PackKind
   min_capability: MinCapability
   requires_modules: string[]
   apply_blocked?: string | null
@@ -203,6 +214,8 @@ export interface PackDetail {
   description?: string
   version: string
   channel: PackChannel
+  /** #367: mission|expert; always present; absent-on-disk = "mission". */
+  kind: PackKind
   origin: PackOrigin
   editable: boolean
   system_prompt_append: string

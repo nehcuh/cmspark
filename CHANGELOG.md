@@ -10,6 +10,7 @@
 
 ### Added
 
+- **Pack `kind: mission|expert` 字段（#367，I1）**：`pack.yaml` 新增可选 `kind`（缺省 mission，旧包兼容；validator 收录——未知 kind 值校验失败不静默丢）。**expert 为可调度的角色视图，仍非 runtime**：kind 只影响列表过滤/匹配/文案，apply/spawn 引擎对两种 kind 走同一装配路径。`pack.list` / `pack.get` 返回 kind；四个 builtin 包显式标 `kind: mission`（安装保持 force refresh）；ADR-014 加修订段、ADR-020 组合面表加 Expert view 行。禁项：pack.yaml 无 model 字段、无新顶层数据目录、Trust B 边界与 skill `sub_agent` 均未动。[#367](https://github.com/nehcuh/cmspark/issues/367)
 - **浮窗会议台（#244）**：隐私「我已了解」后盖住 Capture 卡，实时转写滚动进会议台（不进草稿框）；结束 / 生成纪要 / 返回对话。`generate_minutes` 失败不写「已生成」。打开侧栏跳过 `--app` 浮窗，落普通 Chrome 窗口。**ACL 增量：零**——`append_transcript` / `generate_minutes` / list / get 等上涨发生在 [#246](https://github.com/nehcuh/cmspark/issues/246)，本票复用。本票收紧：overlay 剥 `auto_diarize`（#244 NEVER：仍扩展-only；浮窗撤「自动标说话人」）。`import_text` 仍扩展-only；overlay never Allow/Deny。[#244](https://github.com/nehcuh/cmspark/issues/244)
 
 ### Changed

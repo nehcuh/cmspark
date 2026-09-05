@@ -4,6 +4,7 @@ name: 应用安全审查
 description: 对当前页/PRD 做 STRIDE 威胁建模与页面安全 checklist
 version: 0.2.0
 channel: community
+kind: mission
 min_capability: L1
 requires_modules:
   - appsec

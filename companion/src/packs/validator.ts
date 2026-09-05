@@ -16,6 +16,7 @@ import {
 } from "./types"
 
 const VALID_CHANNELS = new Set(["community", "enterprise"])
+const VALID_KINDS = new Set(["mission", "expert"])
 const VALID_CAPS = new Set(["L0", "L1", "L2"])
 const VALID_TOOL_MODES = new Set(["allowlist", "intersect", "unchanged"])
 const VALID_SEL = new Set(["auto", "all", "manual"])
@@ -157,6 +158,11 @@ export function validatePackDir(packDir: string): ValidateResult {
   if (typeof doc.channel !== "string" || !VALID_CHANNELS.has(doc.channel)) {
     return { ok: false, error: "channel must be community|enterprise" }
   }
+  // #367: kind is optional (absent = mission for legacy packs) but a present
+  // value must be known — never silently drop an unrecognized kind.
+  if (doc.kind !== undefined && (typeof doc.kind !== "string" || !VALID_KINDS.has(doc.kind))) {
+    return { ok: false, error: "kind must be mission|expert when present" }
+  }
   if (typeof doc.min_capability !== "string" || !VALID_CAPS.has(doc.min_capability)) {
     return { ok: false, error: "min_capability must be L0|L1|L2" }
   }
@@ -295,6 +301,7 @@ export function validatePackDir(packDir: string): ValidateResult {
     description: typeof doc.description === "string" ? doc.description : undefined,
     version: doc.version.trim(),
     channel: doc.channel as PackManifest["channel"],
+    kind: doc.kind === "mission" || doc.kind === "expert" ? doc.kind : undefined,
     min_capability: doc.min_capability as PackManifest["min_capability"],
     requires_modules: requires,
     skills,

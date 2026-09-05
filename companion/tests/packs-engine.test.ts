@@ -1295,3 +1295,44 @@ test("netsec-port-survey pack.yaml validates and requires netsec module", async 
   assert.ok(v.manifest.tools.allow.includes("netsec_port_scan"))
   assert.ok(v.manifest.tools.deny.includes("shell_exec"))
 })
+
+// --- #367: Pack kind (mission|expert) — list/detail surface, zero engine branching ---
+
+test("all four builtin packs report kind=mission in list output", () => {
+  const skillEngine = new SkillEngine()
+  const installed = packEngine.ensureBuiltinPacksInstalled(skillEngine)
+  const list = packEngine.listInstalledPacks()
+  for (const id of ["appsec-prd-review", "netsec-port-survey", "meeting-minutes", "coding-handoff"]) {
+    const item = list.find((p) => p.id === id)
+    assert.ok(item, `builtin ${id} should be listed`)
+    assert.equal(item!.kind, "mission", `builtin ${id} must be kind=mission`)
+  }
+  assert.ok(installed.length >= 4, "builtin install (force refresh) keeps installing all four")
+})
+
+test("expert pack: kind survives install + rewrite, surfaces in list and pack.get", () => {
+  const skillEngine = new SkillEngine()
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "expert-pack-src-"))
+  writeMiniPack(src, "expert-qa-pack")
+  // stamp kind: expert after channel line
+  const yamlPath = path.join(src, "pack.yaml")
+  const body = fs.readFileSync(yamlPath, "utf8").replace("channel: community", "channel: community\nkind: expert")
+  fs.writeFileSync(yamlPath, body)
+
+  const inst = packEngine.installPackFromDirectory(src, skillEngine, { force: true })
+  assert.equal(inst.ok, true)
+
+  const item = packEngine.listInstalledPacks().find((p) => p.id === "expert-qa-pack")
+  assert.ok(item, "expert pack listed")
+  assert.equal(item!.kind, "expert")
+
+  const detail = packEngine.getPackDetail("expert-qa-pack", skillEngine)
+  assert.equal(detail.ok, true)
+  if (detail.ok) assert.equal(detail.pack.kind, "expert")
+
+  // force re-install keeps kind (builtin force refresh path uses the same install)
+  const again = packEngine.installPackFromDirectory(src, skillEngine, { force: true })
+  assert.equal(again.ok, true)
+  const item2 = packEngine.listInstalledPacks().find((p) => p.id === "expert-qa-pack")
+  assert.equal(item2?.kind, "expert")
+})

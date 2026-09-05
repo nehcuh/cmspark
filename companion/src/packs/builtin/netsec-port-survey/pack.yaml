@@ -4,6 +4,7 @@ name: 网络巡检
 description: 在已授权目标上做受控端口探测与结果解读（依赖 netsec 模块 + 设置白名单）
 version: 0.1.0
 channel: enterprise
+kind: mission
 min_capability: L1
 requires_modules:
   - netsec

@@ -66,6 +66,7 @@
 | **ACP Coding Client**（编程接力） | CMspark → 本机编程 Agent（任务包 + 可选 stdio 会话）— **Composition 门面，非 Side Panel IDE**（[ADR-025](025-acp-coding-agent-client.md)；`acp.enabled` 默认 false；gated apply GO） |
 | **user-env secrets** | shell/MCP 子进程密钥（[ADR-019](019-user-env-secrets.md)） |
 | **Mission Pack** | 场景配方：skills + knowledge + tool_whitelist + system_prompt_append + modules — **非 runtime**（[ADR-014](014-mission-pack-enterprise-modules.md)） |
+| **Expert view**（Pack `kind: expert`） | 可调度的角色视图标注：同一 Pack 装配原语，kind 只影响列表过滤/匹配/文案，apply/spawn 走同一逻辑 — **仍非 runtime**（#367；[ADR-014](014-mission-pack-enterprise-modules.md) 修订注） |
 | **Capability modules** | 安装级开关（appsec / workspace / shell / netsec）+ `capability_profile` |
 
 **明确不在组合原语内**（产品特性）：Obsidian 导出、NotebookLM 导入、Mermaid 渲染等 — 属聊天面导出/渲染，不参与「装配到线程」模型。
