@@ -117,8 +117,8 @@ test("I2: 工具面 — 基线必有、allow 不越界、deny 覆盖高危；无
     for (const f of FORBIDDEN_ALLOW) {
       assert.ok(!allow.has(f), `${id} must NOT allow ${f}`)
     }
-    // deny 至少覆盖 FORBIDDEN_ALLOW 中全部高危执行面
-    for (const f of ["shell_exec", "osascript_eval", "host_computer", "evaluate", "spawn_worker"]) {
+    // deny 必须覆盖 FORBIDDEN_ALLOW 全集合（复审 grok NIT-1：票面 host_*/netsec_*/acp_* 整集，非抽样）
+    for (const f of FORBIDDEN_ALLOW) {
       assert.ok(t.deny.includes(f), `${id} deny must include ${f}`)
     }
   }
@@ -177,29 +177,44 @@ test("I2: system_prompt_append 含能力边界与审计句，无越权话术", (
     if (!v.ok) continue
     const p = v.manifest.system_prompt_append
     assert.ok(p.length > 0, `${id} system_prompt_append required`)
+    // 票面 prompt 3–8 句：按非空行（语义段落）计——防写成一段说明书。
+    // （不用分号/句号切分：中文流水句会被 ; 虚高计数，非票面本意。）
+    const paras = p.split(/\n+/).map((s) => s.trim()).filter((s) => s.length > 0).length
+    assert.ok(paras >= 3 && paras <= 8, `${id} prompt should be 3-8 paragraphs, got ${paras}`)
     // 审计句：不得声称执行工具面外操作
     assert.match(p, /不得声称/, `${id} must carry 审计句 (不得声称…)`)
     assert.match(p, /persona ≠ 权限/, `${id} must state persona ≠ 权限`)
-    // 能力边界结构哨兵（防 persona 自述能跑命令/改信任的回归）：
-    // 必有「能力边界」段 + 足够否定词（不能/不得/只读）+ 工具面自我限定。
+    // 能力边界结构哨兵：必有「能力边界」段 + 足够否定词 + 工具面自我限定
     assert.match(p, /能力边界/, `${id} must have 能力边界 section`)
     assert.ok((p.match(/不能|不得|无权|只/g) || []).length >= 2, `${id} must bound capability with negations`)
     assert.match(p, /工具面/, `${id} must self-limit to 工具面`)
+    // MAJOR-1 (复审 grok): 正向禁止——persona 不得以肯定句自述能执行主机/跑命令/改信任/spawn。
+    // 限距 24 字符防「可以读页面但**不能**执行 shell」误伤（实测 7 包全 safe）。
+    assert.ok(
+      !/可以.{0,24}(执行主机|跑命令|改全局信任|spawn worker|shell)/.test(p),
+      `${id} must not affirmatively claim host/command/trust/spawn capability`,
+    )
+    // 能力边界句必须含否定式「不能执行」（防只写「只能读」而漏禁执行）
+    assert.match(p, /不能执行/, `${id} capability boundary must explicitly forbid 执行`)
   }
 })
 
 test("I2: 启动安装后 pack.list 可按 kind 滤出 7 个 expert", async () => {
   const skillEngine = new SkillEngine()
   const installed = packEngine.ensureBuiltinPacksInstalled(skillEngine)
-  // ensure 返回的 id 应含 7 个 expert
   for (const id of EXPERT_IDS) {
     assert.ok(installed.includes(id), `ensureBuiltinPacksInstalled should install ${id}`)
   }
   const list = packEngine.listInstalledPacks()
+  // NIT-5 (复审 grok): 不断言「恰好 7」永恒不变量（I3 之后会有第 8 个 user expert）——
+  // 改为断言本票 7 个都带 kind=expert 且过滤语义正确（mission 不被误标）。
+  for (const id of EXPERT_IDS) {
+    const item = list.find((p) => p.id === id)
+    assert.ok(item, `${id} should be listed`)
+    assert.equal(item!.kind, "expert", `${id} must be kind=expert`)
+  }
   const experts = list.filter((p) => p.kind === "expert")
-  assert.equal(experts.length, 7, `expected exactly 7 kind=expert in list, got ${experts.length}`)
-  const ids = experts.map((p) => p.id).sort()
-  assert.deepEqual(ids, [...EXPERT_IDS].sort(), "kind=expert list ids mismatch")
+  assert.ok(experts.length >= EXPERT_IDS.length, `expected at least ${EXPERT_IDS.length} kind=expert in list`)
   // 旧的 4 个 mission pack 不受影响
   const missions = list.filter((p) => p.kind === "mission")
   assert.ok(missions.length >= 4, "existing mission packs must remain listed")

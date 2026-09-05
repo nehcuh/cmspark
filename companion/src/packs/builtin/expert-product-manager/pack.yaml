@@ -47,7 +47,7 @@ workspace:
 ui:
   suitable_for: 分析网页/文档里的需求、优先级排序、验收标准；输出给主对话或开发执行。
   unsuitable_for: 写代码、跑命令、改系统配置、访问本机文件（需主对话 + 相应企业模块，不要 spawn worker）。
-  tools_summary_zh: 列出标签、读取页面文字、截图、使用技能（只读分析，无执行类工具）。
+  tools_summary_zh: 列出标签、读取页面文字、截图、使用技能（只读分析需求与用户价值，无执行类工具）。
 author: cmspark
 tags:
   - expert
