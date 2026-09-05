@@ -60,6 +60,8 @@
     "src/sidepanel/hooks/useModalDialog.ts",
     "src/sidepanel/ui/tokens.ts",
     "src/sidepanel/ui/toastQueue.ts",
+    "src/sidepanel/components/ui/NoticeCard.tsx",
+    "src/sidepanel/components/message-actions.ts",
     "src/sidepanel/empty-state-copy.ts",
     "src/sidepanel/chat-shell-copy.ts",
     "src/sidepanel/utils/thread-related.ts",
