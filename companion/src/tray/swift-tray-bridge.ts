@@ -56,7 +56,7 @@ import {
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
 // Updated 2026-08-27 #229 — Capture open without NSApp.activate
 /** Mac 菜单/热键「召唤器」= HTML Capture 卡（与侧栏弹出对话框同一出口）。 */
-const SWIFT_TRAY_SHA256 = "59ace3de4b8419b7ab2cf75e3d90686476c1221dc8c9a5770a62203e6b2c8daf"
+const SWIFT_TRAY_SHA256 = "a140d5c39509277cd1d95f49e3c5565a8fbf1324c6e900423f2cf67895d0cdb4"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

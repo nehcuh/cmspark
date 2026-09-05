@@ -158,14 +158,15 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   let menu = NSMenu()
   let running = currentStatus == .running
 
-  // -- Header (non-interactive status display) --
-  let statusEmoji: String
+  // -- Header (non-interactive status display). Text carries the status (#396
+  // menu copy norm: no emoji as sole semantic carrier). --
+  let statusWord: String
   switch currentStatus {
-  case .running:  statusEmoji = "🟢"
-  case .stopped:  statusEmoji = "🔴"
-  case .unknown:  statusEmoji = "🟡"
+  case .running:  statusWord = "运行中"
+  case .stopped:  statusWord = "已停止"
+  case .unknown:  statusWord = "状态未知"
   }
-  let header = NSMenuItem(title: "\(statusEmoji) CMspark Agent", action: nil, keyEquivalent: "")
+  let header = NSMenuItem(title: "CMspark Agent · \(statusWord)", action: nil, keyEquivalent: "")
   header.tag = MenuTag.header.rawValue
   header.isEnabled = false
   menu.addItem(header)
@@ -173,19 +174,19 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   menu.addItem(NSMenuItem.separator())
 
   // -- Start / Stop / Restart --
-  let startItem = NSMenuItem(title: "▶ 启动 Companion", action: action, keyEquivalent: "s")
+  let startItem = NSMenuItem(title: "启动 Companion", action: action, keyEquivalent: "s")
   startItem.target = target
   startItem.tag = MenuTag.start.rawValue
   startItem.isEnabled = !running
   menu.addItem(startItem)
 
-  let stopItem = NSMenuItem(title: "⏹ 停止 Companion", action: action, keyEquivalent: "x")
+  let stopItem = NSMenuItem(title: "停止 Companion", action: action, keyEquivalent: "x")
   stopItem.target = target
   stopItem.tag = MenuTag.stop.rawValue
   stopItem.isEnabled = running
   menu.addItem(stopItem)
 
-  let restartItem = NSMenuItem(title: "🔄 重启 Companion", action: action, keyEquivalent: "r")
+  let restartItem = NSMenuItem(title: "重启 Companion", action: action, keyEquivalent: "r")
   restartItem.target = target
   restartItem.tag = MenuTag.restart.rawValue
   restartItem.isEnabled = running
@@ -194,15 +195,14 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   menu.addItem(NSMenuItem.separator())
 
   // -- Status Details submenu --
-  let statusMenuItem = NSMenuItem(title: "📊 状态详情", action: nil, keyEquivalent: "")
+  let statusMenuItem = NSMenuItem(title: "状态详情", action: nil, keyEquivalent: "")
   let statusMenu = NSMenu()
 
   let compLabel = running ? "运行中" : "已停止"
   statusMenu.addItem(makeInfoItem("Companion: \(compLabel)"))
 
-  let wsIcon = running ? (wsConnected ? "🟢" : "🟡") : "🔴"
   let wsLabel = wsConnected ? "已连接" : "未连接"
-  statusMenu.addItem(makeInfoItem("WebSocket: \(wsIcon) \(wsLabel) :23401"))
+  statusMenu.addItem(makeInfoItem("WebSocket: \(wsLabel) :23401"))
 
   let pidStr = currentPid.map(String.init) ?? "—"
   statusMenu.addItem(makeInfoItem("PID: \(pidStr)"))
@@ -214,7 +214,7 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
 
   statusMenu.addItem(NSMenuItem.separator())
 
-  let refreshItem = NSMenuItem(title: "🔄 刷新状态", action: action, keyEquivalent: "")
+  let refreshItem = NSMenuItem(title: "刷新状态", action: action, keyEquivalent: "")
   refreshItem.target = target
   refreshItem.tag = MenuTag.statusRefresh.rawValue
   statusMenu.addItem(refreshItem)
@@ -224,7 +224,7 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
 
   // -- Quick Actions submenu --
   if !quickActions.isEmpty {
-    let qaMenuItem = NSMenuItem(title: "⚡ 快速操作", action: nil, keyEquivalent: "")
+    let qaMenuItem = NSMenuItem(title: "快速操作", action: nil, keyEquivalent: "")
     let qaMenu = NSMenu()
     for (i, qa) in quickActions.enumerated() {
       let item = NSMenuItem(title: qa.title, action: action, keyEquivalent: "")
@@ -239,10 +239,10 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
 
   // -- Recent Threads submenu --
   if !recentThreads.isEmpty {
-    let rtMenuItem = NSMenuItem(title: "💬 最近对话", action: nil, keyEquivalent: "")
+    let rtMenuItem = NSMenuItem(title: "最近对话", action: nil, keyEquivalent: "")
     let rtMenu = NSMenu()
     for (i, thread) in recentThreads.enumerated() {
-      let item = NSMenuItem(title: "📌 \(thread.title)", action: action, keyEquivalent: "")
+      let item = NSMenuItem(title: thread.title, action: action, keyEquivalent: "")
       item.target = target
       item.tag = MenuTag.recentThreadBase.rawValue + i
       item.representedObject = thread.id
@@ -255,12 +255,12 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   menu.addItem(NSMenuItem.separator())
 
   // -- Utility items --
-  let logsItem = NSMenuItem(title: "📂 打开日志目录", action: action, keyEquivalent: "l")
+  let logsItem = NSMenuItem(title: "打开日志目录", action: action, keyEquivalent: "l")
   logsItem.target = target
   logsItem.tag = MenuTag.logs.rawValue
   menu.addItem(logsItem)
 
-  let pairingItem = NSMenuItem(title: "🔑 显示配对码", action: action, keyEquivalent: "p")
+  let pairingItem = NSMenuItem(title: "显示配对码", action: action, keyEquivalent: "p")
   pairingItem.target = target
   pairingItem.tag = MenuTag.pairing.rawValue
   menu.addItem(pairingItem)
@@ -275,12 +275,12 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   summonerHotkeyItem.tag = MenuTag.summonerHotkey.rawValue
   menu.addItem(summonerHotkeyItem)
 
-  let chromeItem = NSMenuItem(title: "🌐 打开 Chrome", action: action, keyEquivalent: "c")
+  let chromeItem = NSMenuItem(title: "打开 Chrome", action: action, keyEquivalent: "c")
   chromeItem.target = target
   chromeItem.tag = MenuTag.chrome.rawValue
   menu.addItem(chromeItem)
 
-  let settingsItem = NSMenuItem(title: "⚙️ 设置", action: action, keyEquivalent: ",")
+  let settingsItem = NSMenuItem(title: "设置…", action: action, keyEquivalent: ",")
   settingsItem.target = target
   settingsItem.tag = MenuTag.settings.rawValue
   menu.addItem(settingsItem)
@@ -298,7 +298,7 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
 
   // -- Quit --
   // Quit tears down Companion daemon as well (menu-bar-agent stopCompanion force)
-  let quitItem = NSMenuItem(title: "❌ 退出（停止服务）", action: action, keyEquivalent: "q")
+  let quitItem = NSMenuItem(title: "退出（停止服务）", action: action, keyEquivalent: "q")
   quitItem.target = target
   quitItem.tag = MenuTag.quit.rawValue
   menu.addItem(quitItem)
@@ -793,6 +793,9 @@ class ConfirmController: NSObject {
   // emitting a stale response.
   private var window: NSWindow?
   private var pendingId: String?
+  private var toolField: NSTextField?
+  private var riskChip: NSTextField?
+  private var riskChipBox: NSView?
   private var summaryField: NSTextField?
   private var countdownField: NSTextField?
   private var timeoutTimer: Timer?
@@ -825,25 +828,39 @@ class ConfirmController: NSObject {
       return
     }
 
-    // Risk-level badge copy (severity conveyed via emoji + Chinese label; system
-    // colors are not directly applicable to NSWindow title without private API).
-    let badgeText: String
+    // Risk chip (#396) — mirrors tokens.ts riskColor/riskLabel: never color-only,
+    // text label + semantic surface. Warning family for low/medium, danger for
+    // high+ (coordinate_injection keeps the 不可逆操作 suffix).
+    let chipText: String
+    let chipFg: NSColor, chipBg: NSColor, chipBorder: NSColor
     switch riskLevel {
     case "critical", "high":
-      badgeText = criticalApis.contains("computer.coordinate_injection")
-        ? "⛔ 高风险 · 不可逆操作"
-        : "⚠️ 高风险"
+      chipText = criticalApis.contains("computer.coordinate_injection")
+        ? "高风险 · 不可逆操作"
+        : "高风险"
+      chipFg = SummonerTokens.danger
+      chipBg = SummonerTokens.dangerBg
+      chipBorder = SummonerTokens.dangerBorder
     case "medium":
-      badgeText = "⚠️ 中风险"
+      chipText = "中风险"
+      chipFg = SummonerTokens.warnFg
+      chipBg = SummonerTokens.warnBg
+      chipBorder = SummonerTokens.warnBorder
     default:
-      badgeText = "ℹ️ 低风险"
+      chipText = "低风险"
+      chipFg = SummonerTokens.warnFg
+      chipBg = SummonerTokens.warnBg
+      chipBorder = SummonerTokens.warnBorder
     }
 
-    // Window title shows tool + risk badge so user sees what's asking without scrolling.
-    window.title = "🔐 CMspark · \(toolName) · \(badgeText)"
+    // Header row carries tool + risk chip; window title stays plain text.
+    window.title = "CMspark · 确认操作"
+    toolField?.stringValue = toolName
+    riskChip?.stringValue = chipText
+    riskChip?.textColor = chipFg
+    riskChipBox?.layer?.backgroundColor = chipBg.cgColor
+    riskChipBox?.layer?.borderColor = chipBorder.cgColor
 
-    // Title bar color tint is not directly settable without private API; use the
-    // accessory label's color to convey risk severity.
     // Strip ASCII control chars (0x00-0x1F) and DEL (0x7F) at the Swift boundary
     // — companion truncates to 800 chars but does NOT sanitize. Defense in depth
     // against prompt injection via tool summary (e.g. embedded newlines used to
@@ -894,7 +911,7 @@ class ConfirmController: NSObject {
   private func updateCountdown() {
     let remainingMs = max(0, Int(timeoutAt.timeIntervalSinceNow * 1000))
     let displaySecs = max(1, remainingMs / 1000)
-    countdownField?.stringValue = "⏱ \(displaySecs)s 后自动拒绝"
+    countdownField?.stringValue = "\(displaySecs)s 后自动拒绝"
   }
 
   private func timeoutExpired() {
@@ -941,7 +958,7 @@ class ConfirmController: NSObject {
   }
 
   private func makeWindow() -> NSWindow? {
-    let contentRect = NSRect(x: 0, y: 0, width: 520, height: 240)
+    let contentRect = NSRect(x: 0, y: 0, width: 520, height: 268)
     // .nonactivatingPanel: panel can become key (so it receives button clicks /
     // Esc/Return key equivalents) WITHOUT activating the tray app, which would
     // steal frontmost from the target app the agent is about to act on. This
@@ -959,7 +976,7 @@ class ConfirmController: NSObject {
     // .floating keeps the confirm above normal document windows of other apps
     // even after orderFrontRegardless (e.g., target app windows raising later).
     panel.level = .floating
-    panel.minSize = NSSize(width: 480, height: 200)
+    panel.minSize = NSSize(width: 480, height: 224)
     panel.delegate = self  // windowWillClose for Esc / close-button = deny
 
     let stack = NSStackView()
@@ -969,9 +986,44 @@ class ConfirmController: NSObject {
     stack.edgeInsets = NSEdgeInsets(top: 16, left: 20, bottom: 16, right: 20)
     stack.translatesAutoresizingMaskIntoConstraints = false
 
+    // Header row: tool name (title tier) + risk chip (caption tier, color+label).
+    let header = NSStackView()
+    header.orientation = .horizontal
+    header.alignment = .centerY
+    header.spacing = 10
+    let tool = NSTextField(labelWithString: "")
+    tool.font = .systemFont(ofSize: SummonerTokens.fontTitle, weight: .semibold)
+    tool.textColor = SummonerTokens.text
+    tool.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    tool.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    toolField = tool
+    header.addArrangedSubview(tool)
+    let chip = NSTextField(labelWithString: "")
+    chip.font = .systemFont(ofSize: SummonerTokens.fontCaption, weight: .semibold)
+    chip.alignment = .center
+    riskChip = chip
+    let chipBox = NSView()
+    chipBox.wantsLayer = true
+    chipBox.layer?.cornerRadius = SummonerTokens.radiusSm
+    chipBox.layer?.borderWidth = 1
+    chipBox.layer?.masksToBounds = true
+    chipBox.translatesAutoresizingMaskIntoConstraints = false
+    chipBox.addSubview(chip)
+    NSLayoutConstraint.activate([
+      chip.topAnchor.constraint(equalTo: chipBox.topAnchor, constant: 3),
+      chip.bottomAnchor.constraint(equalTo: chipBox.bottomAnchor, constant: -3),
+      chip.leadingAnchor.constraint(equalTo: chipBox.leadingAnchor, constant: 8),
+      chip.trailingAnchor.constraint(equalTo: chipBox.trailingAnchor, constant: -8),
+    ])
+    riskChipBox = chipBox
+    header.addArrangedSubview(NSView())  // spacer pushes chip right
+    header.addArrangedSubview(chipBox)
+    stack.addArrangedSubview(header)
+
     // Summary (wraps; user content so sanitize: strip control chars, cap length).
     let summary = NSTextField(wrappingLabelWithString: "")
-    summary.font = .systemFont(ofSize: 13)
+    summary.font = .systemFont(ofSize: SummonerTokens.fontBody)
+    summary.textColor = SummonerTokens.text
     summary.isSelectable = true
     summary.isEditable = false
     summary.isBezeled = false
@@ -984,22 +1036,27 @@ class ConfirmController: NSObject {
 
     // Countdown row.
     let countdown = NSTextField(labelWithString: "")
-    countdown.font = .systemFont(ofSize: 11)
-    countdown.textColor = .secondaryLabelColor
+    countdown.font = .systemFont(ofSize: SummonerTokens.fontCaption)
+    countdown.textColor = SummonerTokens.secondary
     countdownField = countdown
     stack.addArrangedSubview(countdown)
 
-    // Buttons row (Allow on right, Deny on left per macOS HIG).
+    // Buttons row (Allow on right, Deny on left per macOS HIG). #396 hierarchy
+    // mirrors MinimalConfirm: 允许 = primary (success fill, white ink),
+    // 拒绝 = secondary (quiet chrome). Actions / key equivalents unchanged.
     let buttons = NSStackView()
     buttons.orientation = .horizontal
     buttons.spacing = 10
     let denyBtn = NSButton(title: "拒绝", target: self, action: #selector(denyClicked))
     denyBtn.keyEquivalent = "\u{1b}"  // Esc
     denyBtn.controlSize = .large
+    denyBtn.bezelStyle = .rounded
     let allowBtn = NSButton(title: "允许", target: self, action: #selector(allowClicked))
     allowBtn.keyEquivalent = "\r"  // Return
     allowBtn.controlSize = .large
-    allowBtn.bezelStyle = .push
+    allowBtn.bezelStyle = .rounded
+    allowBtn.bezelColor = SummonerTokens.success
+    allowBtn.contentTintColor = .white
     buttons.addArrangedSubview(NSView())  // spacer
     buttons.addArrangedSubview(denyBtn)
     buttons.addArrangedSubview(allowBtn)
