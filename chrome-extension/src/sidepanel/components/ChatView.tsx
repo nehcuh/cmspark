@@ -28,12 +28,8 @@ import {
 } from "../utils/knowledge-distribution"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
-import {
-  buildScopedRunBusyInput,
-  deriveRunBusy,
-  deriveThreadBusy,
-  isIntentOnlyRunBusy,
-} from "../utils/thread-busy"
+import { deriveThreadBusy } from "../utils/thread-busy"
+import { useScopedRunBusy } from "../hooks/use-scoped-run-busy"
 import { tokens, statusColor } from "../ui/tokens"
 import { captionOnlyForEdit, previewDataUrl } from "../utils/image-compose"
 import { previewImageSafe } from "../utils/computer-utils"
@@ -175,47 +171,19 @@ export function ChatView() {
   // "none" falls through to the dropped-history copy, which already reads the
   // runtime_context_budget fallback when no live event is stored.
   const compactBanner = compactBannerKind(contextCompacted)
-  const workers = fleet?.workers || []
-  const busyThreadIds = Object.entries(threadBusyById)
-    .filter(([, b]) => b)
-    .map(([id]) => id)
-  const { runBusyInput, workerCount: scopedWorkerCount, scopedWorkers } =
-    buildScopedRunBusyInput({
-      active: activeThread
-        ? {
-            id: activeThread.id,
-            agent_role: activeThread.agent_role,
-            parent_thread_id: activeThread.parent_thread_id,
-            orchestrator_run_id: activeThread.orchestrator_run_id,
-          }
-        : activeThreadId
-          ? { id: activeThreadId }
-          : null,
-      workers,
-      locks: fleet?.locks,
-      openIntentCount: fleet?.open_intent_count,
-      openIntentsByRun: fleet?.open_intents_by_run,
-      llmActiveThreadIds: fleet?.llm_active_thread_ids,
-      busyThreadIds,
-    })
-  const lockCount = runBusyInput.lockCount
-  const runBusy = deriveRunBusy(runBusyInput)
-  const intentOnly = isIntentOnlyRunBusy(runBusyInput)
+  // #321 PR-2: single scoped run-busy derivation (shared with FocusBand / App / FleetStrip).
+  const scopedRunBusy = useScopedRunBusy()
+  const lockCount = scopedRunBusy.lockCount
+  const runBusy = scopedRunBusy.runBusy
+  const intentOnly = scopedRunBusy.intentOnly
 
   const processingLabel = (() => {
     // Scope fleet processing hint to active thread — never foreign residual workers.
-    const scopedWorst = scopedWorkers.some((w) => w.status === "holding_tabs")
-      ? "holding_tabs"
-      : scopedWorkers.some((w) => w.status === "paused")
-        ? "paused"
-        : scopedWorkers.length > 0
-          ? "idle"
-          : "none"
     const fleetLabel = fleetProcessingLabel({
-      workerCount: scopedWorkerCount,
+      workerCount: scopedRunBusy.workerCount,
       lockCount,
-      openIntents: runBusyInput.openIntents,
-      worstStatus: scopedWorst,
+      openIntents: scopedRunBusy.openIntents,
+      worstStatus: scopedRunBusy.worstStatus,
     })
     // Active fleet only (not paused-only zombies) — suffix while tools/thinking.
     const fleetBit = fleetLabel ? ` · ${fleetLabel.replace(/^舰队/, "").trim()}` : ""
@@ -348,15 +316,6 @@ export function ChatView() {
     })
   }, [activeThreadId])
 
-  const handlePopout = useCallback(() => {
-    if (!activeThreadId) return
-    chrome.runtime.sendMessage({ type: "overlay.shell.open", thread_id: activeThreadId }, (response) => {
-      if (chrome.runtime.lastError || response?.ok === false) {
-        window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: "无法弹出对话框" }))
-      }
-    })
-  }, [activeThreadId])
-
   // Export the Q&A pair containing this message as Markdown (UI-side download).
   const handleExport = useCallback((messageId: string) => {
     if (!activeThreadId) return
@@ -373,21 +332,7 @@ export function ChatView() {
 
   return (
     <div style={styles.shell}>
-      <div style={styles.popoutBar}>
-        <span aria-hidden style={styles.popoutDots}>⋯</span>
-        <button
-          type="button"
-          disabled={!activeThreadId}
-          onClick={handlePopout}
-          style={{
-            ...styles.popoutBtn,
-            opacity: activeThreadId ? 1 : 0.45,
-            cursor: activeThreadId ? "pointer" : "not-allowed",
-          }}
-        >
-          弹出对话框
-        </button>
-      </div>
+      {/* #321 PR-2: popout bar removed — the 弹出对话框 affordance lives on StatusRail now. */}
       <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
       <div ref={contentRef} style={styles.contentInner}>
         {showCompactBanner && (
@@ -2066,32 +2011,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column",
     overflow: "hidden",
     background: "transparent",
-  },
-  popoutBar: {
-    flexShrink: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "6px 12px",
-    borderBottom: `1px solid ${tokens.border}`,
-    background: tokens.bg,
-  },
-  popoutDots: {
-    color: tokens.textMuted,
-    fontSize: 14,
-    letterSpacing: 1,
-    userSelect: "none" as const,
-    lineHeight: 1,
-  },
-  popoutBtn: {
-    border: `1px solid ${tokens.border}`,
-    background: tokens.bgMuted,
-    color: tokens.text,
-    borderRadius: tokens.radiusPill,
-    fontSize: 12,
-    padding: "4px 10px",
-    fontFamily: tokens.font,
-    lineHeight: 1.3,
   },
   container: {
     flex: 1,

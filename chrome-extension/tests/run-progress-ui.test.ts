@@ -167,7 +167,8 @@ test("ChatView scrollPaddingTop is set on the scroller", () => {
 
 test("live density constants have not silently reverted to 44/28", () => {
   const rail = src("src/sidepanel/components/StatusRail.tsx")
-  const scene = src("src/sidepanel/components/SceneStatusBar.tsx")
+  // #321 PR-2: scene row moved SceneStatusBar.tsx → SceneStatusRow.tsx (FocusBand slot)
+  const scene = src("src/sidepanel/components/SceneStatusRow.tsx")
   const fb = src("src/sidepanel/components/focus-band-priority.ts")
   assert.match(rail, /minHeight:\s*48/)
   assert.match(scene, /maxHeight:\s*36/)

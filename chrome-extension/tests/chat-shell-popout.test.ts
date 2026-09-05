@@ -6,29 +6,33 @@ import { join } from "node:path"
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
 
 test("popout button is not only in EmptyState and SW forwards overlay.shell.open", () => {
+  // #321 PR-2: affordance moved ChatView bar → StatusRail; EmptyState stays clean.
   const chat = src("src/sidepanel/components/ChatView.tsx")
   const emptyFn = chat.slice(chat.indexOf("function EmptyState"), chat.indexOf("const markdownCSS"))
   assert.doesNotMatch(emptyFn, /弹出对话框/)
-  assert.match(chat, /弹出对话框/)
   assert.doesNotMatch(chat, /贴回侧栏/)
+  const rail = src("src/sidepanel/components/StatusRail.tsx")
+  assert.match(rail, /弹出对话框/)
   const bg = src("src/background/index.ts")
   assert.match(bg, /overlay\.shell\.open/)
 })
 
-test("ChatView click sends overlay.shell.open with thread_id; no sidePanel.open", () => {
-  const chat = src("src/sidepanel/components/ChatView.tsx")
-  assert.match(chat, /type:\s*["']overlay\.shell\.open["']/)
-  assert.match(chat, /thread_id:\s*activeThreadId/)
-  assert.match(chat, /disabled=\{!activeThreadId\}/)
-  assert.doesNotMatch(chat, /sidePanel\.open/)
+test("App handlePopout sends overlay.shell.open with thread_id; no sidePanel.open", () => {
+  const app = src("src/sidepanel/App.tsx")
+  assert.match(app, /type:\s*\{\s*["']overlay\.shell\.open["']|type:\s*["']overlay\.shell\.open["']/)
+  assert.match(app, /thread_id:\s*threadId/)
+  const rail = src("src/sidepanel/components/StatusRail.tsx")
+  assert.match(rail, /disabled=\{!canPopout\}/)
+  assert.doesNotMatch(app, /sidePanel\.open/)
+  assert.doesNotMatch(rail, /sidePanel\.open/)
 })
 
-test("ChatView handlePopout toasts on lastError or ok === false", () => {
-  const chat = src("src/sidepanel/components/ChatView.tsx")
-  const pop = chat.slice(chat.indexOf("const handlePopout"), chat.indexOf("const handleExport"))
+test("App handlePopout toasts on lastError or ok === false", () => {
+  const app = src("src/sidepanel/App.tsx")
+  const start = app.indexOf("const handlePopout")
+  const pop = app.slice(start, start + 900)
   assert.match(pop, /lastError/)
   assert.match(pop, /ok\s*===\s*false/)
-  assert.match(pop, /cmspark:toast/)
   assert.match(pop, /无法弹出对话框/)
 })
 

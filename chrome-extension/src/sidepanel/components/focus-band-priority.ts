@@ -1,5 +1,8 @@
 // FocusBand state machine (UIUX v2 §4.3) — pure priority resolution.
 // Priority: Confirm > L2 Safety+急停 > Fleet > Thread tools (ST-4) > L1 Context > empty.
+// #321 PR-2「一条 Now」: SceneStatusBar / RunBusyChip / WorkerScopeBar merged as new
+// lowest primaries — Worker scope > Run busy > L1 Context > Scene. Scene never darkens
+// the band and never beats an attention state (Confirm / L2 own the band unchanged).
 // Hard cap: one primary (≤56px) + optional secondary (≤24px) = ≤80px total.
 
 export const FOCUS_BAND_MAX_PX = 80
@@ -13,7 +16,10 @@ export type FocusBandPrimary =
   | "coding_session"
   | "fleet"
   | "thread_tools"
+  | "worker_scope"
+  | "run_busy"
   | "l1_context"
+  | "scene"
   | "empty"
 
 export interface FocusBandInput {
@@ -48,6 +54,22 @@ export interface FocusBandInput {
    * Default true so callers that omit it keep the work-state L1 strip.
    */
   hasThreadMessages?: boolean
+  /**
+   * #321 PR-2: active thread IS a worker — breadcrumb row (返回编排 + role/status).
+   * Below thread_tools (own-thread activity), above run_busy / L1 context.
+   */
+  hasWorkerScope?: boolean
+  /**
+   * #321 PR-2: scoped run-busy (children running / locks / board intents) with
+   * nothing higher on the band. Always a light chip — dark is for Confirm/急停 only.
+   */
+  hasRunBusy?: boolean
+  /**
+   * #321 PR-2: mission pack / workspace / tool-surface attached (ambient context).
+   * Never breaks idle visually (light chip) and never beats L1 context; surfaces
+   * alone as the scene row when the band would otherwise be empty.
+   */
+  hasScene?: boolean
 }
 
 export interface FocusBandSlot {
@@ -71,7 +93,8 @@ export interface FocusBandSlot {
 
 /**
  * Resolve FocusBand single-slot priority.
- * Highest wins: Confirm → L2 Safety → Fleet → Thread tools → L1 Context → empty.
+ * Highest wins: Confirm → L2 Safety → Coding → Fleet → Thread tools →
+ * Worker scope → Run busy → L1 Context → Scene → empty.
  */
 export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
   const hasTools = input.hasThreadTools === true
@@ -121,9 +144,35 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
       secondaryTools: false,
     }
   }
+  // #321 PR-2「一条 Now」tier — ambient activity/nav, all light tone.
+  if (input.hasWorkerScope) {
+    return {
+      primary: "worker_scope",
+      secondaryAbort: false,
+      secondaryContext: false,
+      secondaryTools: false,
+    }
+  }
+  if (input.hasRunBusy) {
+    return {
+      primary: "run_busy",
+      secondaryAbort: false,
+      secondaryContext: false,
+      secondaryTools: false,
+    }
+  }
   if (showL1Context) {
     return {
       primary: "l1_context",
+      secondaryAbort: false,
+      secondaryContext: false,
+      secondaryTools: false,
+    }
+  }
+  if (input.hasScene) {
+    // Scene alone keeps the band alive as a quiet light chip (绝不隐藏场景名).
+    return {
+      primary: "scene",
       secondaryAbort: false,
       secondaryContext: false,
       secondaryTools: false,
@@ -135,6 +184,23 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
     secondaryContext: false,
     secondaryTools: false,
   }
+}
+
+/**
+ * #321 PR-2: whether the scene chips render as the ≤24px secondary row under a
+ * light primary. Attention states own the whole band (Confirm / L2 + 急停), and a
+ * consumed secondary line (abort / tools) takes height precedence — scene never
+ * displaces them, it rides along or waits.
+ */
+export function sceneChipsSecondary(
+  slot: FocusBandSlot,
+  hasScene: boolean,
+): boolean {
+  if (!hasScene) return false
+  if (slot.primary === "scene") return false
+  if (slot.primary === "confirm" || slot.primary === "l2_safety") return false
+  if (slot.secondaryAbort || slot.secondaryTools) return false
+  return true
 }
 
 /**

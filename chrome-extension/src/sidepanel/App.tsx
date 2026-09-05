@@ -17,7 +17,6 @@ import {
 } from "./components/ContextPanelHost"
 import { FocusBand } from "./components/FocusBand"
 import { CodingAgentPanel } from "./components/CodingAgentPanel"
-import { SceneStatusBar } from "./components/SceneStatusBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
@@ -67,10 +66,7 @@ import {
 } from "./voice/error-map"
 import { collectRunningTools } from "./utils/running-tools"
 import {
-  buildScopedRunBusyInput,
   composerBusyPlaceholder,
-  deriveRunBusy,
-  deriveThreadBusy,
   resolveComposerMode,
 } from "./utils/thread-busy"
 import {
@@ -94,8 +90,7 @@ import { extractHostname, resolveNativeVision } from "./components/vision-reuse-
 import { buildOptimisticUploadBubble, nextComposerText, uploadSendFailureOps, uploadSendOutcome } from "./utils/upload-send"
 import { newTempUserMessageId } from "../utils/temp-message-id"
 import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
-import { WorkerScopeBar } from "./components/WorkerScopeBar"
-import { RunBusyChip } from "./components/RunBusyChip"
+import { useScopedRunBusy } from "./hooks/use-scoped-run-busy"
 import { FleetWorkerListPortal } from "./components/FleetWorkerList"
 
 // Error Boundary — catches rendering errors to prevent white screen
@@ -209,6 +204,16 @@ function AppContent() {
     setToast(msg)
     setTimeout(() => setToast(""), 4000)
   }, [])
+  // #321 PR-2: pop the active thread into a dialog window (moved from ChatView bar → rail)
+  const handlePopout = useCallback(() => {
+    const threadId = appState.activeThreadId
+    if (!threadId) return
+    chrome.runtime.sendMessage({ type: "overlay.shell.open", thread_id: threadId }, (response) => {
+      if (chrome.runtime.lastError || response?.ok === false) {
+        showToast("无法弹出对话框")
+      }
+    })
+  }, [appState.activeThreadId, showToast])
   useEffect(() => {
     const onToast = (e: Event) => {
       const detail = (e as CustomEvent<string>).detail
@@ -242,13 +247,13 @@ function AppContent() {
         onToggleLogs={() => setShowLogs(!showLogs)}
         onOpenNotebooklmImporter={() => setNbImporterOpen(true)}
         onToast={showToast}
+        onPopout={handlePopout}
+        canPopout={!!appState.activeThreadId}
       />
-      {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px */}
+      {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px.
+          #321 PR-2「一条 Now」: SceneStatusBar / RunBusyChip / WorkerScopeBar merged
+          into FocusBand slots — no fourth band above the conversation. */}
       <FocusBand capabilityLevel={level} />
-      {/* Scene / workspace status — Mission Pack UX redesign P0 */}
-      <SceneStatusBar />
-      <RunBusyChip />
-      <WorkerScopeBar />
       <ChatView />
       <FleetWorkerListPortal />
       {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
@@ -550,38 +555,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const runningTools = collectRunningTools(state.messages)
   const activeId = state.activeThreadId
   const activeThread = state.threads.find((t) => t.id === activeId)
-  const mapBusy = !!(activeId && state.threadBusyById[activeId])
-  const threadBusy = deriveThreadBusy({
-    streaming: isStreaming,
-    isProcessing: state.isProcessing,
-    runningToolCount: runningTools.length,
-    mapBusy,
-  })
-  const fleet = state.fleet
-  const workers = fleet?.workers || []
-  const busyThreadIds = Object.entries(state.threadBusyById)
-    .filter(([, b]) => b)
-    .map(([id]) => id)
-  const { runBusyInput } = buildScopedRunBusyInput({
-    active: activeThread
-      ? {
-          id: activeThread.id,
-          agent_role: activeThread.agent_role,
-          parent_thread_id: activeThread.parent_thread_id,
-          orchestrator_run_id: activeThread.orchestrator_run_id,
-        }
-      : activeId
-        ? { id: activeId }
-        : null,
-    workers,
-    locks: fleet?.locks,
-    openIntentCount: fleet?.open_intent_count,
-    openIntentsByRun: fleet?.open_intents_by_run,
-    llmActiveThreadIds: fleet?.llm_active_thread_ids,
-    busyThreadIds,
-  })
-  const lockCount = runBusyInput.lockCount
-  const runBusy = deriveRunBusy(runBusyInput)
+  // #321 PR-2: single scoped run-busy derivation (shared with FocusBand).
+  const scopedRunBusy = useScopedRunBusy()
+  const threadBusy = scopedRunBusy.threadBusy
+  const lockCount = scopedRunBusy.lockCount
+  const runBusy = scopedRunBusy.runBusy
   const composerMode = resolveComposerMode({ taskActive, threadBusy, runBusy })
   const isWorker = activeThread?.agent_role === "worker"
   const needsThread = !state.activeThreadId
