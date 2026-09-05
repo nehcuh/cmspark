@@ -431,3 +431,45 @@ test("入口①: plan 批准(plan_readonly → default, user_gesture)激活 loop
   assert.equal(st?.armed_by, "plan_approval")
   assert.equal(streamCalls, 0, "arming itself never starts a run")
 })
+
+test("L-4 (#390): plan_readonly 线程 task_loop.arm → loop_off 错误；切回 plan_readonly 停掉进行中 loop", async () => {
+  const tm = new ThreadManager()
+  const thread = tm.create("", tid("ploff"))
+  setUnticked(tm, thread.id)
+  const sent: any[] = []
+  await handleMessage(
+    { type: "thread.execution_policy.set", thread_id: thread.id, policy: "plan_readonly", user_gesture: true },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  // 建议卡手势也拒：wire 层诚实 loop_off 错误，不落 loop_state
+  const denied = await handleMessage(
+    { type: "task_loop.arm", thread_id: thread.id, user_gesture: true, source: "suggestion_card" },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  assert.equal(denied.type, "error")
+  assert.equal(denied.code, "loop_off")
+  assert.equal(denied.data?.error_code, "loop_off")
+  assert.match(String(denied.error), /计划只读/)
+  assert.equal((tm.get(thread.id) as any).loop_state, undefined, "loop_state 不落")
+  assert.equal(streamCalls, 0, "零续跑")
+
+  // 反向强制：default 先激活，再切回 plan_readonly → loop 落 stopped_user
+  await handleMessage(
+    { type: "thread.execution_policy.set", thread_id: thread.id, policy: "default", user_gesture: true },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  assert.equal(kernel.sanitizeLoopState((tm.get(thread.id) as any).loop_state)?.status, "active")
+  await handleMessage(
+    { type: "thread.execution_policy.set", thread_id: thread.id, policy: "plan_readonly", user_gesture: true },
+    makeServices(tm),
+    makeSession(sent),
+  )
+  assert.equal(
+    kernel.sanitizeLoopState((tm.get(thread.id) as any).loop_state)?.status,
+    "stopped_user",
+    "计划模式工具面全拒，续跑只会空转——切档即停",
+  )
+})

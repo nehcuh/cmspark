@@ -69,6 +69,12 @@ export type RouteCapabilities = {
   /** computer.coordinateEnabled — READ, never written by this engine. */
   cuArmed: boolean
   osascriptAvailable: boolean
+  /**
+   * L-4 (#390) tier cap: "browser-tier" when the cruise tier (仅 L1 面) keeps
+   * the host surface out of the fan-out — unlock copy then points at 升档,
+   * not at coordinateEnabled. Null/undefined = the L-3 unarmed-CU semantics.
+   */
+  r3CapReason?: "browser-tier" | null
 }
 
 export type ItemRouteState = {
@@ -314,17 +320,23 @@ export function closeRouteRun(prev: RouteEngineState, input: CloseRunInput): Clo
 
       // Unarmed R3: do not steer into secretly enabling CU — block + unlock.
       if (!input.caps.cuArmed) {
+        const tierCapped = input.caps.r3CapReason === "browser-tier"
         const contract = buildUnlockContract({
           signal: { kind: "origin-refused" },
           itemId: it.id,
           triedRoutes: item.triedRoutes,
-          detail:
-            "Enable computer.coordinateEnabled (Settings). Loop will never flip this flag. " +
-            "Plan-approve is not CU authorize. Each host_computer call still uses existing L2/cruise.",
+          detail: tierCapped
+            ? "巡航档=网页巡航（仅 L1 面）：跨类路线（host_computer/osascript）不进本档扇出。升档巡航至全自动巡航（设置）后从 checkpoint 恢复；loop 不会替你升档。"
+            : "Enable computer.coordinateEnabled (Settings). Loop will never flip this flag. " +
+              "Plan-approve is not CU authorize. Each host_computer call still uses existing L2/cruise.",
         })
         item.blocked = contract
         newlyBlocked.push({ itemId: it.id, contract })
-        audits.push({ type: "task_loop.item_blocked", item_id: it.id, reason: "r3-unarmed" })
+        audits.push({
+          type: "task_loop.item_blocked",
+          item_id: it.id,
+          reason: tierCapped ? "r3-tier-capped" : "r3-unarmed",
+        })
         continue
       }
       if (item.crossClassCount >= ROUTE_BUDGETS.crossClassPerItem) {

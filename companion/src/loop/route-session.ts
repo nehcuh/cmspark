@@ -1,11 +1,10 @@
 // Process-wide L-3 session: pending steers, run observations, audit, checkpoint.
 // Adapter/dispatch call these. Does not start chatCreate (that's #388).
 
-import { platform } from "node:os"
-import { getConfig } from "../config"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { snapshotOriginCdpFails, SITE_ORIGIN_FAIL_ESCALATE } from "../tool/site-op-memory"
 import { computeRunDelta } from "./stall-classifier"
+import { loopRouteCaps } from "./tier-bind"
 import type { RunProgress } from "../threads/run-progress"
 import {
   beginRouteRun,
@@ -18,6 +17,7 @@ import {
   restoreAfterUnlock,
   snapshotCheckpoint,
   type ImpossibleReport,
+  type RouteCapabilities,
   type RouteCheckpoint,
   type RouteEngineState,
   type RouteSteer,
@@ -43,9 +43,11 @@ export function isOriginEscalated(threadId: string): boolean {
   return Object.values(snap).some((v) => v.fails >= SITE_ORIGIN_FAIL_ESCALATE)
 }
 
-export function routeCapsFromConfig(): { cuArmed: boolean; osascriptAvailable: boolean } {
-  const cuArmed = getConfig().computer?.coordinateEnabled === true
-  return { cuArmed, osascriptAvailable: platform() === "darwin" }
+export function routeCapsFromConfig(): RouteCapabilities {
+  // L-4 (#390) 巡航档表帽路线扇出 — caps come from the cruise tier binding
+  // (zero new enum; deriveDisplayTier reuse). off/full+/值守 keep the host
+  // surface iff coordinateEnabled; browser（仅 L1 面）caps it.
+  return loopRouteCaps()
 }
 
 /** Start of chatCreate: consume pending steers into this run (workers skip). */

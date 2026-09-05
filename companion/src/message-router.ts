@@ -409,6 +409,44 @@ function isDrainGateError(frame: unknown): boolean {
   return t === "error" || t === "chat.error"
 }
 
+/**
+ * L-4 (#390) loop status broadcast — derive the sidepanel status-line view
+ * (loop_state + run_progress + L-3 route steers/blocked + cruise tier) and
+ * push task_loop.status. Extension renders verbatim (no re-derivation).
+ * pendingConfirms=0 here: the panel elevates 等待确认 locally from its own
+ * pendingSecurityConfirmations (mid-run confirms arrive after this point).
+ */
+async function broadcastLoopStatus(
+  session: { sendToExtension?: (data: any) => void } | null | undefined,
+  threadManager: ThreadManager,
+  threadId: string,
+): Promise<void> {
+  try {
+    const thread = threadManager.get(threadId)
+    if (!thread) return
+    const { loopStateFromThread, deriveLoopStatusView, buildTaskLoopStatusFrame } = await import(
+      "./loop/loop-status"
+    )
+    const { peekPendingSteers, getImpossibleReport } = await import("./loop/route-session")
+    const { loopRouteCaps } = await import("./loop/tier-bind")
+    const { isUnattendedArmed } = await import("./computer/unattended-grant")
+    const view = deriveLoopStatusView({
+      loopState: loopStateFromThread(thread),
+      runProgress: thread.run_progress,
+      pendingSteers: peekPendingSteers(threadId),
+      impossible: getImpossibleReport(threadId),
+      pendingConfirms: 0,
+      tier: loopRouteCaps(isUnattendedArmed()).tier,
+    })
+    if (view) session?.sendToExtension?.(buildTaskLoopStatusFrame(threadId, view))
+  } catch (e: any) {
+    logger.warn("task_loop.status_broadcast_failed", {
+      thread_id: threadId,
+      error: e?.message || String(e),
+    })
+  }
+}
+
 const KNOWLEDGE_PARSE_TIMEOUT_MS = 30000
 
 /**
@@ -1164,6 +1202,10 @@ export async function handleMessage(
             error: loopErr?.message || String(loopErr),
           })
         }
+        // L-4 (#390): every run-end transition (advance/steer/blocked/stop/
+        // done) lands on the sidepanel status line. Runs after the L-3 route
+        // session close (adapter finally) so steers/blocks are current.
+        await broadcastLoopStatus(session, services.threadManager, rest.thread_id)
       }
       const drained = await drainNextRun(rest.thread_id, myGeneration, services, session)
       if (drained) {
@@ -2801,6 +2843,18 @@ export async function handleMessage(
           } catch {
             /* loop activation must never break the policy set */
           }
+          await broadcastLoopStatus(session, threadManager, rest.thread_id)
+        }
+        // L-4 (#390) plan_readonly=loop_off 强制（反向）：切回计划只读时，
+        // 该用户手势同时停掉活跃 loop（计划模式工具面全拒，续跑只会空转）。
+        if (rest.policy === "plan_readonly") {
+          try {
+            const { markLoopStoppedByUser } = await import("./loop/loop-kernel")
+            markLoopStoppedByUser(threadManager, rest.thread_id, "plan_readonly")
+          } catch {
+            /* loop stop must never break the policy set */
+          }
+          await broadcastLoopStatus(session, threadManager, rest.thread_id)
         }
         return { type: "thread.execution_policy.updated", thread }
       } catch (e: any) {
@@ -2843,6 +2897,16 @@ export async function handleMessage(
           resume: rest.resume === true,
           unattended: isUnattendedArmed(),
         })
+        if (!loopState) {
+          // L-4: plan_readonly=loop_off（armLoop 单一收口拒绝）— honest error,
+          // 线程行为零变化。
+          return {
+            type: "error",
+            error: "loop_off: 计划只读线程不激活续跑（先批准计划或切回默认执行）",
+            code: "loop_off",
+            data: { error_code: "loop_off" },
+          }
+        }
         // Kick off immediately when there is a machine-verifiable remainder;
         // the queued continuation drains through the normal gates below.
         let started = false
@@ -2858,6 +2922,7 @@ export async function handleMessage(
             }
           }
         }
+        await broadcastLoopStatus(session, threadManager, rest.thread_id)
         return {
           type: "task_loop.armed",
           thread_id: rest.thread_id,
@@ -2884,6 +2949,7 @@ export async function handleMessage(
         const stoppedLoop = markLoopStoppedByUser(threadManager, rest.thread_id, "task_loop.stop")
         const { dropLoopNextRuns } = await import("./llm/run-queues")
         const dropped = dropLoopNextRuns(rest.thread_id)
+        await broadcastLoopStatus(session, threadManager, rest.thread_id)
         return {
           type: "task_loop.stopped",
           thread_id: rest.thread_id,
