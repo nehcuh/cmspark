@@ -49,7 +49,7 @@ test("S2.6 inviteRow color lives only in CSS so hover can win", () => {
   assert.ok(!/color:/.test(block), "inline color would beat :hover")
 })
 
-test("S2 chrome: legal contrast, send arrow, filled mark, no IconPlus", () => {
+test("S2 chrome: legal contrast, send arrow, brandRed mark, no IconPlus", () => {
   const app = src("src/sidepanel/App.tsx")
   const legal = app.slice(app.indexOf("legal:"), app.indexOf("legal:") + 180)
   assert.match(legal, /fontSize:\s*11/)

@@ -28,12 +28,14 @@ export const tokens = {
   accentHover: "#4338ca",
 
   /**
-   * Brand red (terracotta / brick) — empty-state calf mark ONLY.
-   * Independent of the danger family: hue 18° vs danger 0°, lighter,
-   * lower-chroma; distinguishable for protanopia/deuteranopia. NEVER reuse
-   * danger / dangerSoft / dangerSurface as brand red.
+   * Brand red (terracotta / coral) — empty-state calf mark ONLY.
+   * Independent of the danger family: hue 15° vs danger 0°, lighter + higher
+   * chroma, so protanopia/deuteranopia simulation keeps ΔE00 ≫ 5 from
+   * danger (#c96033 previously collapsed to ~3 under deutan). NEVER reuse
+   * danger / dangerSoft / dangerSurface as brand red. Value pinned by
+   * tests/calf-mark-323.test.ts (normal ≥10 AND Machado-deutan ≥5).
    */
-  brandRed: "#c96033",
+  brandRed: "#d97757",
 
   success: "#059669",
   successSoft: "#ecfdf5",
