@@ -113,6 +113,25 @@ test("PR-6 coarse rows keep one ⋯ per message expanding the full action set", 
   assert.match(buttons, /复制/)
 })
 
+test("PR-6 round-2 NIT-1: coarse menu closes on executed action, Escape restores focus, aria-controls wired", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  const coarse = chat.slice(
+    chat.indexOf('actionMode === "coarse" ? ('),
+    chat.indexOf(") : (\n              <div\n                className="),
+  )
+  // any executed action dismisses the menu: capture-phase close on the group
+  // means every button click (复制 included) folds the menu — the named
+  // "sticky open after 复制" friction
+  assert.match(coarse, /onClickCapture=\{\(\) => setMoreOpen\(false\)\}/)
+  // keyboard close: Escape folds the menu and restores focus to the ⋯ toggle
+  assert.match(coarse, /e\.key === "Escape"/)
+  assert.match(coarse, /moreBtnRef\.current\?\.focus\(\)/)
+  // the toggle and the group are programmatically linked
+  assert.match(coarse, /aria-controls=\{`msg-more-\$\{msg\.id\}`\}/)
+  assert.match(coarse, /id=\{`msg-more-\$\{msg\.id\}`\}/)
+  assert.match(coarse, /ref=\{moreBtnRef\}/)
+})
+
 // ---------------------------------------------------------------------------
 // 4. NoticeCard primitive + red line: disclosure never default-collapses
 // ---------------------------------------------------------------------------

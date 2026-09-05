@@ -562,6 +562,7 @@ const MessageRow = memo(function MessageRow({
   const [editingText, setEditingText] = useState("")
   // #321 PR-6: coarse-pointer ⋯ expansion (touch has no hover to reveal the bar)
   const [moreOpen, setMoreOpen] = useState(false)
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null)
   // useRef so the keydown handler always sees the latest shortcut without
   // busting MessageRow's memo when the user changes the setting.
   const sendShortcutRef = useRef(sendShortcut)
@@ -764,6 +765,8 @@ const MessageRow = memo(function MessageRow({
                     title="更多操作"
                     aria-label="更多操作"
                     aria-expanded={moreOpen}
+                    aria-controls={`msg-more-${msg.id}`}
+                    ref={moreBtnRef}
                     onClick={() => setMoreOpen(v => !v)}
                   >
                     ⋯
@@ -771,6 +774,7 @@ const MessageRow = memo(function MessageRow({
                 </div>
                 {moreOpen && (
                   <div
+                    id={`msg-more-${msg.id}`}
                     style={{
                       ...styles.actionBar,
                       alignSelf: isUser ? "flex-end" : "flex-start",
@@ -778,6 +782,18 @@ const MessageRow = memo(function MessageRow({
                     }}
                     role="group"
                     aria-label="消息操作"
+                    // NIT-1 close semantics: any executed action (or tap on the
+                    // group's padding) dismisses the menu. Capture phase closes
+                    // the state while the button's own onClick still runs with
+                    // its intact closure — the action fires AND the menu folds.
+                    onClickCapture={() => setMoreOpen(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault()
+                        setMoreOpen(false)
+                        moreBtnRef.current?.focus()
+                      }
+                    }}
                   >
                     {renderActionButtons()}
                   </div>
