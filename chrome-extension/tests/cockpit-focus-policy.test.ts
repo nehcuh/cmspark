@@ -4,6 +4,7 @@ import {
   cockpitFocusEventFromMessage,
   cruiseFlagsFromConfig,
   decideCockpitFocus,
+  foldConfigUpdated,
   isArmed,
   mergeCruiseFlags,
   unattendedArmedFromStatus,
@@ -197,6 +198,31 @@ test("full_preview / preview_image → 重预览级", () => {
   )
 })
 
+// grok review NIT-3：白名单/信任勾选不算重预览——relevant_domains /
+// relevant_apps 是 MinimalConfirm 可批的轻确认（白名单勾选在确认台，但此处
+// 可快速允许/拒绝），若算重预览则几乎所有 navigate L2 仍抢桌面，票 5 空转。
+test("relevant_domains 非空 ⇒ 仍轻确认（hasHeavyPreview: false，不抢焦点）", () => {
+  const ev = cockpitFocusEventFromMessage({
+    type: "security.confirmation.request",
+    confirmation_id: "c6",
+    tool_name: "navigate",
+    relevant_domains: ["example.com"],
+  })
+  assert.deepEqual(ev, { kind: "confirmation", hasNonce: false, hasHeavyPreview: false })
+  assert.equal(decideCockpitFocus(ev!, UNARMED), "stay_background")
+})
+
+test("relevant_apps 非空 ⇒ 仍轻确认（hasHeavyPreview: false，不抢焦点）", () => {
+  const ev = cockpitFocusEventFromMessage({
+    type: "security.confirmation.request",
+    confirmation_id: "c7",
+    tool_name: "host_read",
+    relevant_apps: ["com.apple.Notes"],
+  })
+  assert.deepEqual(ev, { kind: "confirmation", hasNonce: false, hasHeavyPreview: false })
+  assert.equal(decideCockpitFocus(ev!, CRUISE_FULL), "stay_background")
+})
+
 test("computer.task.event → computer_task 事件", () => {
   assert.deepEqual(cockpitFocusEventFromMessage({ type: "computer.task.event", event: "started" }), {
     kind: "computer_task",
@@ -260,4 +286,52 @@ test("isArmed：任一巡航旗或值守即武装；默认状态不武装", () =
   assert.equal(isArmed(CRUISE_FULL_PROTOCOL), true)
   assert.equal(isArmed(UNATTENDED), true)
   assert.equal(isArmed({ cruise: { allow_all_schemes: true }, unattendedArmed: false }), true)
+})
+
+// grok review NIT-4：foldConfigUpdated belt——三旗全 false 时清陈旧值守镜像
+// （tray 跨表面 disarm + clear_cruise 的 status 回包只到 tray，SW 镜像靠
+// config.updated 全量广播纠偏）。
+test("foldConfigUpdated：三旗全 false 清掉 unattendedArmed", () => {
+  const prev: ArmState = {
+    cruise: { auto_approve_dangerous: true, auto_approve_enterprise_tools: true },
+    unattendedArmed: true,
+  }
+  const next = foldConfigUpdated(prev, {
+    security: {
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    },
+  })
+  assert.deepEqual(next, {
+    cruise: {
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    },
+    unattendedArmed: false,
+  })
+  assert.equal(isArmed(next), false)
+})
+
+test("foldConfigUpdated：任一旗仍 true 时保留 unattendedArmed", () => {
+  const prev: ArmState = { cruise: {}, unattendedArmed: true }
+  const next = foldConfigUpdated(prev, {
+    security: {
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+      allow_all_schemes: false,
+    },
+  })
+  assert.equal(next.unattendedArmed, true)
+  assert.equal(isArmed(next), true)
+})
+
+test("foldConfigUpdated：无 security 块时保留巡航旧值与值守镜像", () => {
+  const prev: ArmState = {
+    cruise: { auto_approve_dangerous: true },
+    unattendedArmed: true,
+  }
+  const next = foldConfigUpdated(prev, { llm: { model_name: "x" } })
+  assert.deepEqual(next, prev)
 })

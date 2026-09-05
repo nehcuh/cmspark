@@ -53,6 +53,12 @@ export type CockpitFocusAction = "open_focus" | "stay_background"
  * | computer.task started + 巡航/值守武装  | stay_background |
  * | computer.task started + 未武装/未知    | open_focus      |
  * | 其它 computer.task 事件                | stay_background |
+ *
+ * 注意：轻确认分支**无武装门**——未武装时轻确认也不抢焦点。这是刻意对齐
+ * FINAL-SYNTHESIS 票 5（原文无「武装下」限定；issue 首条的「巡航/值守武装下」
+ * 是窄述）与 inventory §5（轻量 = 侧栏可批）。勿按 issue 字面把武装门加回。
+ * Win/Linux 侧栏关且无托盘时，未批确认 45s 超时 deny（fail-closed）是票面
+ * 明示验收，不是本表的 bug。
  */
 export function decideCockpitFocus(
   event: CockpitFocusEvent,
@@ -125,8 +131,30 @@ export function mergeCruiseFlags(prev: CruiseFlags, next: CruiseFlags): CruiseFl
   return merged
 }
 
-/** 从 security.unattended.status 广播提取值守武装态（无字段时保持 null=未知）。 */
+/**
+ * 从 security.unattended.status 广播提取值守武装态。
+ * 非 status 消息返回 null（不触碰镜像）；status 消息缺 armed 字段时按 false
+ * （armed !== true）处理——companion 全量推送，缺字段视为未武装。
+ */
 export function unattendedArmedFromStatus(msg: any): boolean | null {
   if (!msg || msg.type !== "security.unattended.status") return null
   return msg.armed === true
+}
+
+/**
+ * 折叠一条 config.updated 进武装态镜像。
+ * Belt（grok review NIT-4）：合并后三旗**全 false** 时同时清 unattendedArmed。
+ * 场景：扩展武装值守后，tray 跨表面 disarm + clear_cruise——status 回包只到
+ * tray 那条 WS（message-router handler 返回值），SW 的值守镜像会陈旧为 true；
+ * 但 disarm 的 saveConfig 全量广播 config.updated，三旗全 false 是确定信号。
+ * 反向（值守仍 armed 时用户手动关三旗）会把 unattendedArmed 误清——方向是
+ * 「CU started 多弹一次」，与 fail-safe「未知多弹」一致，可接受。
+ */
+export function foldConfigUpdated(prev: ArmState, config: any): ArmState {
+  const cruise = mergeCruiseFlags(prev.cruise, cruiseFlagsFromConfig(config))
+  const allFlagsOff =
+    cruise.auto_approve_dangerous === false &&
+    cruise.auto_approve_enterprise_tools === false &&
+    cruise.allow_all_schemes === false
+  return { cruise, unattendedArmed: allFlagsOff ? false : prev.unattendedArmed }
 }

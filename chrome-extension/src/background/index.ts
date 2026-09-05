@@ -49,9 +49,8 @@ import { shouldRefuseWsFrame } from "./ws-frame-budget"
 import { newTempUserMessageId } from "../utils/temp-message-id"
 import {
   cockpitFocusEventFromMessage,
-  cruiseFlagsFromConfig,
   decideCockpitFocus,
-  mergeCruiseFlags,
+  foldConfigUpdated,
   unattendedArmedFromStatus,
   DEFAULT_ARM_STATE,
   type ArmState,
@@ -471,10 +470,7 @@ async function handleCompanionMessage(msg: any) {
   // cruise three-bool SoT arrives via config.updated (config.get on connect +
   // companion change broadcast); unattended grant via security.unattended.status.
   if (msg.type === "config.updated") {
-    cockpitArmState = {
-      ...cockpitArmState,
-      cruise: mergeCruiseFlags(cockpitArmState.cruise, cruiseFlagsFromConfig(msg.config)),
-    }
+    cockpitArmState = foldConfigUpdated(cockpitArmState, msg.config)
   }
   const unattendedArmed = unattendedArmedFromStatus(msg)
   if (unattendedArmed !== null) {
