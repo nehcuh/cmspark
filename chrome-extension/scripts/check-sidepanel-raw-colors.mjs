@@ -30,15 +30,15 @@ import { dirname, join } from "node:path"
 
 const EXT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 
-// PR-1 scope: chat shell + FocusBand + SceneStatusBar/RunBusyChip/WorkerScopeBar
-// (警戒芯片) + ErrorBoundary (lives in App.tsx). Widen deliberately in later PRs.
+// PR-1 scope: chat shell + FocusBand + scene/run-busy/worker rows
+// (#321 PR-2: former SceneStatusBar/RunBusyChip/WorkerScopeBar now live in
+// FocusBand.tsx + SceneStatusRow.tsx) + ErrorBoundary (lives in App.tsx).
+// Widen deliberately in later PRs.
 const SCOPE = [
   "src/sidepanel/App.tsx",
   "src/sidepanel/components/ChatView.tsx",
   "src/sidepanel/components/FocusBand.tsx",
-  "src/sidepanel/components/SceneStatusBar.tsx",
-  "src/sidepanel/components/RunBusyChip.tsx",
-  "src/sidepanel/components/WorkerScopeBar.tsx",
+  "src/sidepanel/components/SceneStatusRow.tsx",
 ]
 
 /** @type {{ file: string, lineIncludes: string, reason: string }[]} */

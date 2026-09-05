@@ -26,6 +26,7 @@ import {
   IconSpinner,
   IconMore,
   IconNewChat,
+  IconExternal,
 } from "../ui/icons"
 import { disarmAllFlags, trustStatusChip, trustStatusChipShort } from "./autopilot-tier"
 
@@ -37,6 +38,8 @@ export function StatusRail({
   onToggleLogs,
   onOpenNotebooklmImporter,
   onToast,
+  onPopout,
+  canPopout,
 }: {
   connectionState: ConnectionState
   capabilityLevel: CapabilityLevel
@@ -45,6 +48,9 @@ export function StatusRail({
   onToggleLogs: () => void
   onOpenNotebooklmImporter: () => void
   onToast?: (msg: string) => void
+  /** #321 PR-2: pop the active thread into a dialog window (former ChatView bar). */
+  onPopout: () => void
+  canPopout: boolean
 }) {
   const { state, dispatch } = useAgentStore()
   const pinned = state.modePin === capabilityLevel
@@ -218,6 +224,21 @@ export function StatusRail({
         onClick={() => createBlankThread(dispatch)}
       >
         <IconNewChat size={18} />
+      </button>
+      <button
+        type="button"
+        style={{
+          ...railStyles.ghostBtn,
+          ...(canPopout ? {} : { opacity: 0.45, cursor: "not-allowed" }),
+        }}
+        title="弹出对话框"
+        aria-label="弹出对话框"
+        onClick={() => {
+          if (canPopout) onPopout()
+        }}
+        disabled={!canPopout}
+      >
+        <IconExternal size={16} />
       </button>
       <ThreadList />
       </div>

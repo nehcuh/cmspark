@@ -1798,8 +1798,15 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
 
 const AgentContext = createContext<{ state: AgentState; dispatch: Dispatch<AgentAction> } | null>(null)
 
-export function AgentStoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(agentReducer, initialState)
+export function AgentStoreProvider({
+  children,
+  initialState: seedState,
+}: {
+  children: ReactNode
+  /** #321 PR-2: scenario seeding for the screenshot harness (tests only). */
+  initialState?: AgentState
+}) {
+  const [state, dispatch] = useReducer(agentReducer, seedState ?? initialState)
   return (
     <AgentContext.Provider value={{ state, dispatch }}>
       {children}

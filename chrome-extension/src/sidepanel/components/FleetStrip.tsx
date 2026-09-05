@@ -6,7 +6,7 @@ import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import type { FleetWorkerView } from "../types"
 import { fleetStripShouldShow } from "./focus-band-priority"
-import { buildFleetStopAllMessage, buildScopedRunBusyInput } from "../utils/thread-busy"
+import { useScopedRunBusy } from "../hooks/use-scoped-run-busy"
 
 function worstColor(status: string | undefined): string {
   if (status === "holding_tabs") return "#f59e0b"
@@ -33,44 +33,22 @@ export function FleetStrip({
   const fleet = state.fleet
   const pending = state.pendingSecurityConfirmations.length
   const activeId = state.activeThreadId
-  const activeThread = state.threads.find((t) => t.id === activeId)
-
-  const scoped = useMemo(() => {
-    const built = buildScopedRunBusyInput({
-      active: activeThread
-        ? {
-            id: activeThread.id,
-            agent_role: activeThread.agent_role,
-            parent_thread_id: activeThread.parent_thread_id,
-            orchestrator_run_id: activeThread.orchestrator_run_id,
-          }
-        : activeId
-          ? { id: activeId }
-          : null,
-      workers: fleet?.workers || [],
-      locks: fleet?.locks,
-      openIntentCount: fleet?.open_intent_count,
-      openIntentsByRun: fleet?.open_intents_by_run,
-      llmActiveThreadIds: fleet?.llm_active_thread_ids,
-    })
-    const worst = built.scopedWorkers.some((w) => w.status === "holding_tabs")
-      ? "holding_tabs"
-      : built.scopedWorkers.some((w) => w.status === "paused")
-        ? "paused"
-        : built.scopedWorkers.length > 0
-          ? "idle"
-          : "none"
-    return {
-      workerCount: built.workerCount,
-      lockCount: built.runBusyInput.lockCount,
-      openIntents: built.runBusyInput.openIntents,
-      worst,
-      workers: built.scopedWorkers as FleetWorkerView[],
-      scope: built.scope,
-      scopeKind: built.scope.kind,
-      stopAll: buildFleetStopAllMessage(built.scope),
-    }
-  }, [activeThread, activeId, fleet])
+  // #321 PR-2: single scoped run-busy derivation (shared with FocusBand / App / ChatView).
+  // busyThreadIds now included — the old local copy omitted it (classification drift).
+  const scopedRunBusy = useScopedRunBusy()
+  const scoped = useMemo(
+    () => ({
+      workerCount: scopedRunBusy.workerCount,
+      lockCount: scopedRunBusy.lockCount,
+      openIntents: scopedRunBusy.openIntents,
+      worst: scopedRunBusy.worstStatus,
+      workers: scopedRunBusy.scopedWorkers as FleetWorkerView[],
+      scope: scopedRunBusy.scope,
+      scopeKind: scopedRunBusy.scopeKind,
+      stopAll: scopedRunBusy.stopAll,
+    }),
+    [scopedRunBusy],
+  )
 
   const { workerCount, lockCount, openIntents, worst } = scoped
 

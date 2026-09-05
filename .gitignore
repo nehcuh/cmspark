@@ -83,3 +83,5 @@ tmp-*.jpg
 # Local app package staging (never commit)
 dist/
 dist-package/
+chrome-extension/.shot-dist/
+chrome-extension/.shot-out/
