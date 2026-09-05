@@ -173,7 +173,7 @@ This is a **canon fix**, not "aligning with canon". `tokens.ts` used to say indi
 - 装配 lives on the ComposerDock chip above the field (`/装配` / Cmd+K still work); do not duplicate it inside the capsule. L0 装配 chip is **quiet** (same hairline as siblings; `primary` flag kept).
 - Empty capsule = field + send; attach / 听写 appear after the first character
 - **Solid** white surface — **no** glass/`backdrop-filter`
-- Radius: `tokens.radiusComposer` (16px); send is circular; `tokens.sendDisabledBg` unarmed, `tokens.accent` when armed
+- Radius: `tokens.radiusComposer` (16px); send is circular; **unarmed SoT = `tokens.sendDisabledBg`** (not `bgMuted` — that is canvas mute); armed = `tokens.accent`
 - Empty-state placeholder: L0 `描述任务，或粘贴截图…` · L1 `问这页，或描述操作…` (`composerPlaceholder`)
 - ComposerChips stay visible on the empty stream so 装配 is not duplicated inside the capsule
 - Settings: StatusRail gear and ⋯「设置」 share the same route (disconnected → connection, else model)

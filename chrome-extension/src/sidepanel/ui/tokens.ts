@@ -135,7 +135,11 @@ export const tokens = {
   shellOutputBg: "rgba(0, 0, 0, 0.28)",
   toolTailBg: "rgba(0, 0, 0, 0.25)",
 
-  /** Disabled (unarmed) send button. */
+  /**
+   * Unarmed send button SoT (#321 PR-4). Dedicated zinc fill — not `bgMuted`
+   * (canvas mute). FINAL-SYNTHESIS said "bgMuted"; PR-1 added this token for
+   * the circular send and it remains the button-specific SoT.
+   */
   sendDisabledBg: "#e4e4e7",
 
   /** Thin, quiet global scrollbar (App global css). */

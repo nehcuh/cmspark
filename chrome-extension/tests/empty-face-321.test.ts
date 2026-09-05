@@ -84,15 +84,29 @@ test("#321 PR-4: canon revision — user bubble is not a filled indigo slab", ()
   assert.doesNotMatch(bubble, /shadowAccent/)
 })
 
-test("#321 PR-4: unarmed send is muted, armed send is indigo", () => {
+test("#321 PR-4: unarmed send SoT is sendDisabledBg, armed send is indigo", () => {
   const app = src("src/sidepanel/App.tsx")
-  assert.match(app, /canSend \? tokens\.accent : tokens\.(sendDisabledBg|bgMuted)/)
-  assert.match(app, /sendDisabledBg/)
+  assert.match(app, /canSend \? tokens\.accent : tokens\.sendDisabledBg/)
+  const tokenFile = src("src/sidepanel/ui/tokens.ts")
+  assert.match(tokenFile, /sendDisabledBg/)
+  assert.match(tokenFile, /Unarmed send button SoT/)
 })
 
-test("#321 PR-4: L0 装配 chip is quiet (primary flag kept, strong fill dropped)", () => {
+test("#321 PR-4: empty-l1 shot harness mounts real EmptyState (not a CSS mock)", () => {
+  const script = src("scripts/render-pr4-shots.mjs")
+  assert.match(script, /EmptyState/)
+  assert.match(script, /from "\.\.\/src\/sidepanel\/components\/ChatView"/)
+  assert.match(script, /esbuild/)
+})
+
+test("#321 PR-4: L0 装配 is quiet; L1/L2 primary keeps chipPrimary; ink is textSecondary", () => {
   const chips = src("src/sidepanel/components/ComposerChips.tsx")
-  assert.match(chips, /chip\.primary/) // data/flag not deleted
-  assert.doesNotMatch(chips, /chipPrimary/)
-  assert.doesNotMatch(chips, /tokens\.accentSoft/)
+  assert.match(chips, /chip\.primary/)
+  assert.match(chips, /chipPrimary/)
+  assert.match(chips, /tokens\.accentSoft/)
+  assert.match(chips, /tokens\.textSecondary/)
+  assert.doesNotMatch(chips, /tokens\.textMuted/)
+  // Ticket scope: only L0 (chat) drops the fill. L1 装配 / L2 确认台 still emphasize.
+  assert.match(chips, /capabilityLevel !== "chat"/)
+  assert.match(chips, /emphasize=\{chip\.primary === true && capabilityLevel !== "chat"\}/)
 })

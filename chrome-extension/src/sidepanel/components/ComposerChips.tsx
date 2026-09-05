@@ -1,7 +1,8 @@
 // ComposerDock context chips — mode-aware, ≤3 (UIUX v2 §4.4).
 // Opens Host / 装配 / 确认台; never Abort (thumb-zone safety).
-// #321 PR-4: L0 装配 stays in the data (`primary` flag) but the fill is quiet —
-// same hairline chip as siblings; do not delete the chip.
+// #321 PR-4: only L0 装配 drops the accentSoft fill (ticket scope). L1 装配 and
+// L2 确认台 keep chipPrimary. Chip label uses textSecondary (WCAG AA), never
+// textMuted — quiet is the missing fill, not weaker ink.
 
 import type { CSSProperties } from "react"
 import type { CapabilityLevel } from "../types"
@@ -29,7 +30,12 @@ export function ComposerChips({ capabilityLevel, onAction }: ComposerChipsProps)
       data-testid="composer-chips"
     >
       {chips.map((chip) => (
-        <ChipButton key={chip.id} chip={chip} onAction={onAction} />
+        <ChipButton
+          key={chip.id}
+          chip={chip}
+          onAction={onAction}
+          emphasize={chip.primary === true && capabilityLevel !== "chat"}
+        />
       ))}
     </div>
   )
@@ -38,14 +44,19 @@ export function ComposerChips({ capabilityLevel, onAction }: ComposerChipsProps)
 function ChipButton({
   chip,
   onAction,
+  emphasize,
 }: {
   chip: ComposerChip
   onAction: (action: ComposerChipAction) => void
+  emphasize: boolean
 }) {
   return (
     <button
       type="button"
-      style={styles.chip}
+      style={{
+        ...styles.chip,
+        ...(emphasize ? styles.chipPrimary : null),
+      }}
       data-primary={chip.primary ? "true" : undefined}
       onClick={() => onAction(chip.action)}
       data-testid={`composer-chip-${chip.id}`}
@@ -68,13 +79,19 @@ const styles: Record<string, CSSProperties> = {
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusPill,
     background: tokens.bgElevated,
-    color: tokens.textMuted,
+    color: tokens.textSecondary,
     fontSize: 11,
-    fontWeight: 500,
-    padding: "4px 10px",
+    fontWeight: 550,
+    padding: "5px 12px",
     cursor: "pointer",
     fontFamily: tokens.font,
     lineHeight: 1.3,
     letterSpacing: "0.01em",
+  },
+  chipPrimary: {
+    borderColor: tokens.accentBorderSoft,
+    background: tokens.accentSoft,
+    color: tokens.accentText,
+    fontWeight: 650,
   },
 }
