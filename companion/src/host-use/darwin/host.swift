@@ -87,23 +87,26 @@ func slPostToPid(_ pid: pid_t, _ event: CGEvent?) -> Bool {
 // synthesis.md and macos-tcc-product-identity design (Scheme D: Contents/MacOS/
 // CMspark is this Mach-O; default launch starts the tray agent).
 //
-// Subcommands (Phase 1 W5–W8):
-//   - read-mail                        — read top-1 Mail inbox (Phase 0 path, retained)
-//   - list-mail / list-notes / list-files — list TargetIds; FIXED top-100 cap
-//     script-side (audit M8: argv cannot be passed into a precompiled .scpt
-//     without NSAppleEventDescriptor handler invocation — Phase 2. The TS
-//     layer applies smaller limits itself and does not send --limit.)
+// Subcommands (Phase 1 W5–W8 + #69 Phase 2):
+//   - read-mail [--max-chars <1-5000>] — read top-1 Mail inbox. max_chars is
+//     passed into the precompiled .scpt via an 'ascr' subroutine Apple Event
+//     (#69 Phase 2 — the audit-M8 hardcoded 500 is gone; Swift validates the
+//     range, matching the TS zod host_read schema).
+//   - list-mail [--limit <1-500>] — list mail TargetIds; --limit takes the
+//     same subroutine-event path. list-notes / list-files keep their fixed
+//     top-100 script-side cap (scripts unchanged in Phase 2 — the TS layer
+//     applies smaller limits itself and does not send --limit for them).
 //   - read-message --target <TargetId> — read Mail message by stable id (W5)
 //   - create-note / move-file          — writes (W6; biometric tier in W8)
 //   - biometric-verify                 — Touch ID via LAContext (W8)
 //   - tray / launch / (no args)        — start tray agent and exit
 //
-// The list-mail and read-message paths reuse findScript() + executeAndReturnError()
-// for precompiled .scpt files. read-message constructs an AppleScript source
+// read-mail / list-mail load precompiled .scpt files and invoke a named
+// handler with positional integer args via runScriptHandler() (#69 Phase 2 —
+// subroutine Apple Event). read-message constructs an AppleScript source
 // string at runtime with the parsed TargetId args — this re-introduces ~300ms
 // runtime compile cost per call (Round 1 D3 warned about this) but keeps the
-// implementation simple. Phase 2 may refactor to NSAppleEventDescriptor handler
-// invocation if the cost becomes a problem.
+// implementation simple.
 
 struct HostError: Error {
     let code: Int32
@@ -161,6 +164,62 @@ func runCompiledScript(_ name: String) throws -> String {
     return result.stringValue ?? "{}"
 }
 
+// MARK: - Apple Event handler invocation (#69 Phase 2, audit M8 fix)
+//
+// executeAndReturnError cannot pass argv into a precompiled .scpt — the old
+// path hardcoded maxChars=500 / maxCount=100 script-side. runScriptHandler
+// invokes a named handler inside the .scpt with positional integer args via a
+// subroutine event: class 'ascr' (kASAppleScriptClass), id 'psbr'
+// (kASSubroutineEvent from AEUserTermTypes.h — NOT 'psop' or 'psn '
+// (kASNoPSN, a PSN target constant); wrong ids yield errAENoSuchAppleEvent
+// -1708, verified on-device),
+// handler name at 'snam' (keyASSubroutineName), args as a 1-based AEDescList
+// in the direct object '----'. The Carbon macros are C enum constants that
+// are not exposed to Swift, so they are declared locally as four-char-codes.
+
+private let asSubroutineEventClass = OSType(0x61736372) // 'ascr' kASAppleScriptClass
+private let asSubroutineEventID = OSType(0x70736272)    // 'psbr' kASSubroutineEvent
+private let asSubroutineNameKey = OSType(0x736E616D)    // 'snam' keyASSubroutineName
+private let aedDirectObjectKey = OSType(0x2D2D2D2D)     // '----' keyDirectObject
+
+func runScriptHandler(_ name: String, handler: String, intArgs: [Int]) throws -> String {
+    guard let scptURL = findScript(name) else {
+        throw HostError(
+            code: 3,
+            message: "\(name).scpt not found in host-scripts (next to CMspark or Contents/Resources)"
+        )
+    }
+    var initError: NSDictionary?
+    guard let script = NSAppleScript(contentsOf: scptURL, error: &initError) else {
+        let msg = initError.flatMap { $0[NSAppleScript.errorMessage] as? String } ?? "unknown"
+        throw HostError(code: 3, message: "NSAppleScript init failed: \(msg)")
+    }
+    let event = NSAppleEventDescriptor.appleEvent(
+        withEventClass: asSubroutineEventClass,
+        eventID: asSubroutineEventID,
+        targetDescriptor: NSAppleEventDescriptor.null(),
+        returnID: AEReturnID(-1),          // kAutoGenerateReturnID
+        transactionID: AETransactionID(0)  // kAnyTransactionID
+    )
+    event.setDescriptor(NSAppleEventDescriptor(string: handler), forKeyword: asSubroutineNameKey)
+    let argList = NSAppleEventDescriptor.list()
+    for (i, a) in intArgs.enumerated() {
+        argList.insert(NSAppleEventDescriptor(int32: Int32(a)), at: i + 1)
+    }
+    event.setDescriptor(argList, forKeyword: aedDirectObjectKey)
+    var execError: NSDictionary?
+    let result = script.executeAppleEvent(event, error: &execError)
+    if let err = execError {
+        let msg = (err[NSAppleScript.errorMessage] as? String) ?? "\(err)"
+        let num = (err[NSAppleScript.errorNumber] as? Int) ?? -1
+        if num == -1743 || num == -1719 {
+            throw HostError(code: 5, message: "TCC denied or sandbox blocked (oserr=\(num)): \(msg)")
+        }
+        throw HostError(code: 4, message: "AppleScript error (oserr=\(num)): \(msg)")
+    }
+    return result.stringValue ?? "{}"
+}
+
 // MARK: - read-message (Phase 1 W5: read by stable TargetId)
 //
 // TargetId format per docs/decisions/targetid-format-synthesis.md:
@@ -172,8 +231,8 @@ func runCompiledScript(_ name: String) throws -> String {
 // are the dangerous delimiters there; audit M5) — and runs via NSAppleScript.
 //
 // Cost: ~300ms per call due to runtime compilation (Round 1 D3 tradeoff).
-// Acceptable because read-by-id is NOT the hot path — Phase 0's read-mail
-// (precompiled .scpt + executeAndReturnError) handles the top-1 fast path.
+// Acceptable because read-by-id is NOT the hot path — read-mail
+// (precompiled .scpt + subroutine event) handles the top-1 fast path.
 
 func parseTargetId(_ raw: String) throws -> (account: String, messageId: Int) {
     // "macos:com.apple.mail:<account>:msg-<id>"
@@ -332,6 +391,27 @@ func argValue(_ key: String) -> String? {
         }
     }
     return nil
+}
+
+/// Parse an integer argv value with a validated range (#69 Phase 2). Typed
+/// error code 7 = invalid argument value (distinct from 2 usage / 6 TargetId
+/// parse); out-of-range fails honestly instead of silently clamping — the TS
+/// zod layer already rejects the same range, so this only fires on direct
+/// binary invocation.
+func intArgValue(
+    _ key: String, fallback: Int, min minValue: Int, max maxValue: Int, label: String
+) throws -> Int {
+    guard let raw = argValue(key) else { return fallback }
+    guard let value = Int(raw) else {
+        throw HostError(code: 7, message: "\(label): \(key) expects an integer, got \"\(raw)\"")
+    }
+    guard value >= minValue && value <= maxValue else {
+        throw HostError(
+            code: 7,
+            message: "\(label): \(key) out of range \(minValue)-\(maxValue), got \(value)"
+        )
+    }
+    return value
 }
 
 // MARK: - biometric-verify subcommand (Phase 1 W8: Touch ID via LAContext)
@@ -668,9 +748,21 @@ do {
     let out: String
     switch subcommand {
     case "read-mail":
-        out = try runCompiledScript("read-mail")
+        // #69 Phase 2 (audit M8 fix): --max-chars is validated 1...5000
+        // (matching the TS zod host_read schema) and passed into the
+        // precompiled .scpt's readMail(maxChars) via subroutine Apple Event.
+        let maxChars = try intArgValue(
+            "--max-chars", fallback: 500, min: 1, max: 5000, label: "read-mail"
+        )
+        out = try runScriptHandler("read-mail", handler: "readMail", intArgs: [maxChars])
     case "list-mail":
-        out = try runCompiledScript("list-mail")
+        // #69 Phase 2: --limit passthrough. Ceiling 500 — the script walks
+        // the inbox one Apple event per message, so the bound caps worst-case
+        // latency.
+        let mailLimit = try intArgValue(
+            "--limit", fallback: 100, min: 1, max: 500, label: "list-mail"
+        )
+        out = try runScriptHandler("list-mail", handler: "listMail", intArgs: [mailLimit])
     case "list-notes":
         out = try runCompiledScript("list-notes")
     case "list-files":

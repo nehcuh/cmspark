@@ -16,7 +16,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, writeFileSync, unlinkSync } from "node:fs"
+import { chmodSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { execFileSync } from "node:child_process"
@@ -354,7 +354,7 @@ test("M2 round-trip: list→validate→readOne hands the ORIGINAL raw id to the 
   assert.deepEqual(readArgs, ["read-message", "--target", rawMail])
 })
 
-test("listReadTargets: --limit is NOT sent to the binary; limit applied TS-side (M8)", async () => {
+test("listReadTargets(mail-inbox): --limit IS sent to the binary (#69 Phase 2, audit M8 fix)", async () => {
   const calls: string[][] = []
   const raws = Array.from({ length: 5 }, (_, i) => `macos:com.apple.mail:iCloud:msg-${i + 1}`)
   const runner: DarwinRunner = async (_bin, args) => {
@@ -363,8 +363,24 @@ test("listReadTargets: --limit is NOT sent to the binary; limit applied TS-side 
   }
   const a = makeAdapter(runner)
   const ids = await a.listReadTargets("mail-inbox", { limit: 2 })
-  assert.deepEqual(calls[0], ["list-mail"]) // no --limit argv (script caps top-100 fixed)
+  // #69 Phase 2: limit reaches listMail(maxCount) via subroutine Apple Event
+  // (binary validates 1-500). The TS slice below still applies as defense in
+  // depth (stub here ignores --limit and returns 5).
+  assert.deepEqual(calls[0], ["list-mail", "--limit", "2"])
   assert.equal(ids.length, 2)
+})
+
+test("listReadTargets(note/file): --limit NOT sent — scripts keep fixed top-100 (#69 Phase 2)", async () => {
+  const calls: string[][] = []
+  const runner: DarwinRunner = async (_bin, args) => {
+    calls.push(args)
+    return "[]"
+  }
+  const a = makeAdapter(runner)
+  await a.listReadTargets("note", { limit: 50 })
+  await a.listReadTargets("file", { limit: 50 })
+  assert.deepEqual(calls[0], ["list-notes"])
+  assert.deepEqual(calls[1], ["list-files"])
 })
 
 test("readOne: Notes/Finder ids throw NotImplementedForApp BEFORE spawning (M1, adapter level)", async () => {
@@ -507,6 +523,46 @@ test("hostRead: default/mail path proceeds to the binary (fails honestly when bi
   } finally {
     delete process.env.CMSPARK_HOST_BIN
     delete process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE
+  }
+})
+
+test("hostRead: --max-chars passthrough to the binary (#69 Phase 2)", async () => {
+  // spawnHostBin has no injectable runner; point CMSPARK_HOST_BIN at a stub
+  // node script (integrity gate skipped via the dev escape hatch) that records
+  // its argv and returns a valid read-mail payload.
+  const tmp = mkdtempSync(join(tmpdir(), "hostread-argv-"))
+  const capture = join(tmp, "argv.json")
+  const stub = join(tmp, "stub-host.js")
+  writeFileSync(
+    stub,
+    "#!/usr/bin/env node\n" +
+      `require("fs").writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2)))\n` +
+      'process.stdout.write(JSON.stringify({sender:"S",subject:"T",date_received:"D",body_preview:"x".repeat(300)}))\n',
+  )
+  chmodSync(stub, 0o755)
+  process.env.CMSPARK_HOST_BIN = stub
+  process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE = "1"
+  process.env.CMSPARK_SKIP_HOST_INTEGRITY = "1"
+  try {
+    const out = await hostRead({ application: "com.apple.mail", maxChars: 200 })
+    assert.deepEqual(JSON.parse(readFileSync(capture, "utf8")), [
+      "read-mail",
+      "--max-chars",
+      "200",
+    ])
+    // TS slice stays as defense in depth (stub ignores --max-chars, returns 300)
+    assert.equal(out.body_preview.length, 200)
+    await hostRead({})
+    assert.deepEqual(JSON.parse(readFileSync(capture, "utf8")), [
+      "read-mail",
+      "--max-chars",
+      "500",
+    ])
+  } finally {
+    delete process.env.CMSPARK_HOST_BIN
+    delete process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE
+    delete process.env.CMSPARK_SKIP_HOST_INTEGRITY
+    rmSync(tmp, { recursive: true, force: true })
   }
 })
 

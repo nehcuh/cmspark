@@ -10,6 +10,7 @@
 
 ### Changed
 
+- **host_read max_chars 真透传（#69 Phase 2，审计 M8 完整修复）**：read-mail / list-mail 预编译 .scpt 转 handler 形态，cmspark-host 经 'ascr'/'psbr' 子程序 Apple Event（kASSubroutineEvent）把 `--max-chars`（1-5000，匹配 zod）/ `--limit`（1-500）传入 readMail/listMail handler——脚本侧硬编码 500/100 移除（max_chars>500 不再被 500 硬截）。非法 argv typed exit 7（不静默 clamp）；TS 层 slice 保留为纵深；list-notes/list-files 不变（仍固定 top-100）。[#69](https://github.com/nehcuh/cmspark/issues/69)
 - **MeetingPanel 双「收起」去重（#342）**：面板内按钮改名「结束并收起」（title/aria 同步）——它与 Host header 的「收起」语义不同（前者结束录制+收起，后者纯收起面板），不再同屏同文案。[#342](https://github.com/nehcuh/cmspark/issues/342)
 - **消息行降噪（#321 PR-6）**：消息动作条（复制/编辑/分支/导出/</>接力）改 hover/focus-within 门控——隐藏态用 opacity+pointer-events（非 display:none），按钮留在 Tab 序、键盘聚焦即显整条；最后一条消息常驻。触屏/coarse pointer 每条消息保留一颗 ⋯（aria-expanded，展开同一动作组——硬验收）。四种紧凑横幅（shrink/unknown/prompt/compacted）与 ToolCallCard 内嵌指路/userHint 统一 `NoticeCard` primitive（warning token 家族；无折叠态）。ToolCallCard 纯视觉收口（radius/mono 栈进 token），cascade 逻辑零改动。红线：失败/安全披露（错误工具卡、warning userHint、SEC-C 桩提示）永不默认折叠；RunProgress 折叠语义不动。[#321](https://github.com/nehcuh/cmspark/issues/321)
 - **空态与作曲同一张脸（#321 PR-4）**：CompanionMark 空态 92→48（仍是 #323 红色小牛）；招呼 22px；三条建议回到首屏折叠线以上；作曲胶囊 minHeight 72→52；用户气泡去满铺 indigo（canon 修订：浅底+细边为交付方案，左细 indigo 条为备选截图）；未武装发送 `sendDisabledBg`，武装才 indigo；L0 装配芯片降为弱样式（不删）。[#321](https://github.com/nehcuh/cmspark/issues/321)

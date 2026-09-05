@@ -188,13 +188,15 @@ export class DarwinHostAdapter implements HostAdapter {
       }
     })()
     try {
-      // Audit M8: the list-*.scpt scripts enforce a FIXED top-100 cap
-      // script-side — the binary cannot pass argv into a precompiled .scpt
-      // without NSAppleEventDescriptor handler invocation (Phase 2). --limit
-      // is intentionally NOT sent (don't pretend it's honored); the requested
-      // limit is applied TS-side via slice. limit > 100 returns at most what
-      // the script produced (≤100).
-      const stdout = await this.runner(this.binPath, [subcommand])
+      // #69 Phase 2 (audit M8 fix): list-mail accepts --limit (binary
+      // validates 1-500, passes it into listMail(maxCount) via subroutine
+      // Apple Event — the fixed top-100 script cap is gone). list-notes /
+      // list-files keep their fixed top-100 cap (scripts unchanged in
+      // Phase 2), so --limit is intentionally NOT sent for them; the TS
+      // slice below still applies the requested limit for every kind.
+      const argv =
+        subcommand === "list-mail" ? [subcommand, "--limit", String(limit)] : [subcommand]
+      const stdout = await this.runner(this.binPath, argv)
       const parsed = parseJsonSafe<unknown[]>(stdout, subcommand)
       const raws = Array.isArray(parsed)
         ? parsed.filter((x): x is string => typeof x === "string")
