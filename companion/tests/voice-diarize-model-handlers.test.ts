@@ -148,13 +148,15 @@ test("diarize_download: started → progress/completion broadcasts; state flips 
   assert.equal(r.ok, true)
   assert.equal(r.status, "started")
   assert.equal(downloadCalls, 1)
-  // While the download is still in flight: the initial downloading state and the
-  // progress broadcast must already be observable (both are sent before `completed`).
-  for (let i = 0; i < 20; i++) await flush()
-  assert.ok(
+  // While the download is still in flight: the downloading state broadcast is
+  // async (statePayload → then → broadcast), so poll for it with the same
+  // deterministic helper as the terminal broadcast below — not a fixed tick
+  // count. The progress broadcast fires synchronously inside the fake download
+  // (before `await completed`), so it is already observable here.
+  const downloading = await flushUntil(() =>
     broadcasts.some((d) => d.type === "voice.model.state" && d.diarizeModel?.status === "downloading"),
-    "downloading state broadcast while in flight",
   )
+  assert.ok(downloading, "downloading state broadcast while in flight")
   assert.ok(
     broadcasts.some((d) => d.type === "voice.model.progress" && d.modelId === DIARIZE_MODEL_ID),
     "progress broadcast",
