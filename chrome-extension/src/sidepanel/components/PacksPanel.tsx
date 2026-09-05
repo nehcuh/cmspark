@@ -1310,7 +1310,14 @@ export function PacksPanel() {
                     ? formatEffectiveToolsLine(info.effective_tools)
                     : "有效工具面：计算中…"}
                 </div>
-                {usageLine ? <div style={styles.toolsLine}>{usageLine}</div> : null}
+                {usageLine ? (
+                  <div
+                    style={styles.toolsLine}
+                    title="按 spawn 的 role_label 与专家 id/name 匹配统计（启发式，非权威口径）"
+                  >
+                    {usageLine}
+                  </div>
+                ) : null}
                 {p.disabled ? (
                   <div style={styles.blocked}>已停用：不可派出/套用；编辑器只读可打开，启用后恢复</div>
                 ) : null}

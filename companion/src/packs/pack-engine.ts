@@ -1120,6 +1120,9 @@ export function saveUserPack(
   let existingTrust: UserPackTrustPolicy | null = null
   let existingKind: PackKind | undefined
   let existingDisabled = false
+  let existingName: string | undefined
+  let existingDescription: string | undefined
+  let existingUi: PackManifest["ui"] | undefined
   const destExisting = path.join(packsInstalledDir(), packId)
   if (fs.existsSync(destExisting)) {
     const { result } = readInstalledManifest(packId)
@@ -1128,6 +1131,9 @@ export function saveUserPack(
       existingTrust = result.manifest.trust || null
       existingKind = result.manifest.kind
       existingDisabled = result.manifest.disabled === true
+      existingName = result.manifest.name
+      existingDescription = result.manifest.description
+      existingUi = result.manifest.ui
     }
   }
   const toolsRes = resolveUserPackTools(input, existingTools)
@@ -1170,6 +1176,32 @@ export function saveUserPack(
   // #369: disabled — explicit boolean wins; update omit preserves.
   const disabled = typeof input.disabled === "boolean" ? input.disabled : existingDisabled
 
+  // #369 MAJOR-1 (PR #384 review): ui 三字段与 kind/disabled 同款「omit preserves」。
+  // 只在检测到「用户自定义过」（现值 ≠ 旧输入下的自动推导值）时保留；未自定义则按
+  // 新 name/description/tools 重新推导，避免改名/改工具面后冻结旧文案。
+  const DEFAULT_UNSUITABLE_FOR = "需要强制收窄工具面的专业模板（请用内置场景）"
+  const autoSuitableFor = (desc: string | undefined, n: string) => desc || `用户场景：${n}`
+  const suitableFor =
+    typeof input.suitable_for === "string" && input.suitable_for.trim()
+      ? input.suitable_for.trim()
+      : existingUi?.suitable_for &&
+          existingUi.suitable_for !== autoSuitableFor(existingDescription, existingName || "")
+        ? existingUi.suitable_for
+        : autoSuitableFor(description, name)
+  const unsuitableFor =
+    typeof input.unsuitable_for === "string" && input.unsuitable_for.trim()
+      ? input.unsuitable_for.trim()
+      : existingUi?.unsuitable_for && existingUi.unsuitable_for !== DEFAULT_UNSUITABLE_FOR
+        ? existingUi.unsuitable_for
+        : DEFAULT_UNSUITABLE_FOR
+  const toolsSummary =
+    customSummary ||
+    (existingUi?.tools_summary_zh &&
+    existingTools &&
+    existingUi.tools_summary_zh !== toolsSummaryZh(existingTools, undefined)
+      ? existingUi.tools_summary_zh
+      : toolsSummaryZh(tools, undefined))
+
   const manifestDoc: Record<string, unknown> = {
     schema_version: 1,
     id: packId,
@@ -1204,15 +1236,9 @@ export function saveUserPack(
     author: "user",
     tags: ["user-scene"],
     ui: {
-      suitable_for:
-        typeof input.suitable_for === "string" && input.suitable_for.trim()
-          ? input.suitable_for.trim()
-          : description || `用户场景：${name}`,
-      unsuitable_for:
-        typeof input.unsuitable_for === "string" && input.unsuitable_for.trim()
-          ? input.unsuitable_for.trim()
-          : "需要强制收窄工具面的专业模板（请用内置场景）",
-      tools_summary_zh: toolsSummaryZh(tools, customSummary),
+      suitable_for: suitableFor,
+      unsuitable_for: unsuitableFor,
+      tools_summary_zh: toolsSummary,
     },
   }
 

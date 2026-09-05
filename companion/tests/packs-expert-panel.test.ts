@@ -161,6 +161,84 @@ test("effective tools: (parent ∩ pack.allow) \\ HARD_DENY — wish list never 
   assert.deepEqual(effDeny, ["navigate"])
 })
 
+test("MAJOR-1 regression: 停用→启用（save omit ui 字段）不丢自定义 ui 三字段", () => {
+  const skillEngine = new SkillEngine()
+  const saved = packEngine.saveUserPack(
+    {
+      name: "自定义文案专家",
+      system_prompt_append: "你是专家。",
+      skill_ids: [],
+      kind: "expert",
+      suitable_for: "自定义适合：只读代码评审",
+      unsuitable_for: "自定义不适用：需要写文件的场景",
+      tools_summary_zh: "自定义工具面摘要",
+      tools: { mode: "allowlist", allow: ["list_tabs", "get_page_text"], deny: [] },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+
+  const tm = new ThreadManager()
+  // 停用（toggle-disabled 路径：save_user 只翻 disabled，省略 ui 字段）
+  const off = packEngine.saveUserPack(
+    { id: saved.id, name: "自定义文案专家", system_prompt_append: "你是专家。", skill_ids: [], disabled: true },
+    skillEngine,
+  )
+  assert.equal(off.ok, true)
+  let detail = packEngine.getPackDetail(saved.id)
+  assert.equal(detail.ok, true)
+  if (!detail.ok) return
+  assert.equal(detail.pack.disabled, true)
+  assert.equal(detail.pack.suitable_for, "自定义适合：只读代码评审", "停用不得抹掉自定义 suitable_for")
+  assert.equal(detail.pack.unsuitable_for, "自定义不适用：需要写文件的场景", "停用不得抹掉自定义 unsuitable_for")
+  assert.equal(detail.pack.tools_summary_zh, "自定义工具面摘要", "停用不得抹掉自定义 tools_summary_zh")
+
+  // 启用（同样省略 ui 字段）
+  const on = packEngine.saveUserPack(
+    { id: saved.id, name: "自定义文案专家", system_prompt_append: "你是专家。", skill_ids: [], disabled: false },
+    skillEngine,
+  )
+  assert.equal(on.ok, true)
+  detail = packEngine.getPackDetail(saved.id)
+  assert.equal(detail.ok, true)
+  if (!detail.ok) return
+  assert.equal(detail.pack.disabled, undefined)
+  assert.equal(detail.pack.suitable_for, "自定义适合：只读代码评审")
+  assert.equal(detail.pack.unsuitable_for, "自定义不适用：需要写文件的场景")
+  assert.equal(detail.pack.tools_summary_zh, "自定义工具面摘要")
+
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+})
+
+test("ui omit-preserve 不冻结自动推导值：改名后 suitable_for 重新推导", () => {
+  const skillEngine = new SkillEngine()
+  const saved = packEngine.saveUserPack(
+    { name: "旧名字", system_prompt_append: "prompt", skill_ids: [] },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+  const before = packEngine.getPackDetail(saved.id)
+  assert.equal(before.ok, true)
+  if (!before.ok) return
+  assert.equal(before.pack.suitable_for, "用户场景：旧名字")
+
+  const renamed = packEngine.saveUserPack(
+    { id: saved.id, name: "新名字", system_prompt_append: "prompt", skill_ids: [] },
+    skillEngine,
+  )
+  assert.equal(renamed.ok, true)
+  const after = packEngine.getPackDetail(saved.id)
+  assert.equal(after.ok, true)
+  if (!after.ok) return
+  // 未自定义过 → 按新 name 重新推导，不冻结旧文案
+  assert.equal(after.pack.suitable_for, "用户场景：新名字")
+
+  const tm = new ThreadManager()
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+})
+
 test("usage aggregation: spawn_worker grouped by role_label (zero new instrumentation)", () => {
   const file = path.join(tempHome, "audit-test.jsonl")
   const lines = [
