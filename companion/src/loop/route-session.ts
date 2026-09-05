@@ -3,10 +3,11 @@
 
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { snapshotOriginCdpFails, SITE_ORIGIN_FAIL_ESCALATE } from "../tool/site-op-memory"
-import { computeRunDelta } from "./stall-classifier"
+import { computeRunDelta, type UnlockContract } from "./stall-classifier"
 import { loopRouteCaps } from "./tier-bind"
 import type { RunProgress } from "../threads/run-progress"
 import {
+  applyItemBlocked,
   beginRouteRun,
   buildImpossibleReport,
   closeRouteRun,
@@ -69,6 +70,13 @@ export function onRouteTool(threadId: string, toolName: string): void {
 export function onRouteDeclaredBlocked(threadId: string, itemId: string): void {
   const s = session(threadId)
   s.state = noteDeclaredBlocked(s.state, itemId)
+}
+
+/** L-5: confirm timeout/deny blocks this item now so the loop can bypass it. */
+export function blockRouteItem(threadId: string, itemId: string, contract: UnlockContract): void {
+  const s = session(threadId)
+  s.state = applyItemBlocked(s.state, itemId, contract)
+  if (!s.state.checkpoint) s.state = { ...s.state, checkpoint: snapshotCheckpoint(s.state) }
 }
 
 /** End of chatCreate: ignore detection, maybe block, queue steers for next run. */

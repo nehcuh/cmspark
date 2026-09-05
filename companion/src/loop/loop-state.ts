@@ -17,9 +17,12 @@ export type LoopArmSource =
   | "suggestion_card"
   | "unattended_arm"
 
+export type LoopPauseReason = "grant_ttl" | "deny_storm"
+
 export type LoopStatus =
   | "active"
   | "completed"
+  | "paused" // L-5: grant TTL / deny-storm — recoverable via explicit re-arm
   | "stopped_budget" // checkpoint-resumable via explicit re-arm (resume)
   | "stopped_user" // re-arm must be an explicit gesture
   | "halt_security" // security / non_recoverable — never auto-continues
@@ -44,6 +47,15 @@ export type LoopState = {
   budget_stop?: "runs" | "wall_clock" | "tokens"
   /** First continuation already asked the model to propose a checklist. */
   propose_requested?: boolean
+  /** True when this episode armed under an unattended grant (L-5). */
+  unattended?: boolean
+  /**
+   * Snapshot of grant expiresAt at arm (L-5). Loop never extends this.
+   * Absent when the episode is unattended-flagged without a live grant.
+   */
+  grant_expires_at_ms?: number
+  /** Why status=paused (L-5 grant TTL / deny-storm). */
+  pause_reason?: LoopPauseReason
 }
 
 export const LOOP_BUDGET = {
@@ -65,6 +77,7 @@ const ARM_SOURCES = new Set<LoopArmSource>([
 const STATUSES = new Set<LoopStatus>([
   "active",
   "completed",
+  "paused",
   "stopped_budget",
   "stopped_user",
   "halt_security",
@@ -110,6 +123,12 @@ export function sanitizeLoopState(raw: unknown): LoopState | null {
     state.budget_stop = o.budget_stop
   }
   if (o.propose_requested === true) state.propose_requested = true
+  if (o.unattended === true) state.unattended = true
+  const grantExp = num(o.grant_expires_at_ms, 1, Number.MAX_SAFE_INTEGER)
+  if (grantExp !== null) state.grant_expires_at_ms = grantExp
+  if (o.pause_reason === "grant_ttl" || o.pause_reason === "deny_storm") {
+    state.pause_reason = o.pause_reason
+  }
   return state
 }
 

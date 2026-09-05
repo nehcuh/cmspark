@@ -50,6 +50,7 @@ export function blockerClassLabel(blockerClass: string): string {
 
 const STOP_LABEL: Record<LoopStatus, string> = {
   active: "",
+  paused: "已暂停（授权到期/确认风暴）",
   completed: "计划完成，待你确认",
   stopped_budget: "续跑预算已尽",
   stopped_user: "已停止续跑",

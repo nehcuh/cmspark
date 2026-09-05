@@ -1746,6 +1746,23 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           data: { error_code: "COMPUTER_TASK_BUSY" },
         }
       }
+      // L-5 focus lease: loop/worker CU drive is exclusive and queued.
+      // COMPUTER_TASK_BUSY remains the no-wait execution mutex.
+      const cuThreadId = String(params.__thread_id || params._thread_id || params.thread_id || "")
+      let cuLeaseHeld = false
+      if (cuThreadId) {
+        const { gateHostComputerFocusLease } = await import("../loop/cu-focus-lease")
+        const lease = gateHostComputerFocusLease(threadManager.get(cuThreadId) as any, cuThreadId)
+        if (!lease.ok) {
+          return {
+            success: false,
+            error: lease.error,
+            error_code: lease.error_code,
+            data: { error_code: lease.error_code, holder_thread_id: lease.holder },
+          }
+        }
+        cuLeaseHeld = lease.acquired
+      }
       computerTaskAbort.set(computerTaskId, false)
       try {
         // NOTE (2026-07-21 crash): the Windows estop preflight used to run
@@ -2010,6 +2027,14 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         // success, typed refusal, abort, or throw. Runs after the return
         // value is computed; delete is idempotent.
         computerTaskAbort.delete(computerTaskId)
+        if (cuLeaseHeld && cuThreadId) {
+          try {
+            const { releaseCuFocusLease } = await import("../loop/cu-focus-lease")
+            releaseCuFocusLease(cuThreadId)
+          } catch {
+            /* lease release is best-effort */
+          }
+        }
       }
     }
 

@@ -33,12 +33,29 @@ import {
   loopBudgetExceeded,
   sanitizeLoopState,
   type LoopArmSource,
+  type LoopPauseReason,
   type LoopState,
   type RunStats,
 } from "./loop-state"
+import {
+  UNATTENDED_REVIEW_COPY,
+  buildEvidenceDigest,
+  buildKeyList,
+  getBlockedItemIds,
+  presentBlockedReport,
+  resetDenyStorm,
+} from "./unattended-overlay"
+import { getUnattendedStatus } from "../computer/unattended-grant"
 
 export { sanitizeLoopState, loopBudgetExceeded, LOOP_BUDGET } from "./loop-state"
-export type { LoopState, LoopArmSource, LoopStatus, RunStats, RunTerminal } from "./loop-state"
+export type {
+  LoopState,
+  LoopArmSource,
+  LoopStatus,
+  LoopPauseReason,
+  RunStats,
+  RunTerminal,
+} from "./loop-state"
 
 type AuditSink = (e: CapabilityAuditEvent) => void
 
@@ -150,7 +167,15 @@ export function armLoop(
     // A checklist the model was asked to propose stays requested across a
     // budget resume; a fresh arm re-allows one propose request.
     ...(opts?.resume && prev?.propose_requested ? { propose_requested: true } : {}),
+    ...(opts?.unattended ? { unattended: true as const } : {}),
+    ...(opts?.unattended
+      ? (() => {
+          const exp = getUnattendedStatus(now).expiresAt
+          return typeof exp === "number" ? { grant_expires_at_ms: exp } : {}
+        })()
+      : {}),
   }
+  resetDenyStorm(threadId)
   tm.update(threadId, { loop_state: state } as any)
   audit(opts?.audit, {
     type: "task_loop.start",
@@ -190,6 +215,46 @@ export function markLoopStoppedByUser(
   return true
 }
 
+/**
+ * L-5: grant TTL / deny-storm pause. Recoverable via explicit re-arm.
+ * Does not extend grant TTL. Not silent impossible.
+ */
+export function markLoopPaused(
+  tm: ThreadManager,
+  threadId: string,
+  reason: LoopPauseReason,
+  opts?: { audit?: AuditSink; nowMs?: number },
+): boolean {
+  const state = sanitizeLoopState(tm.get(threadId)?.loop_state)
+  if (!state || state.status !== "active") return false
+  const dropped = dropLoopNextRuns(threadId)
+  persist(tm, threadId, { ...state, status: "paused", pause_reason: reason })
+  audit(opts?.audit, {
+    type: "task_loop.paused",
+    thread_id: threadId,
+    reason,
+    state_paused: true,
+    runs_used: state.runs_used,
+    dropped_next_run: dropped,
+  })
+  return true
+}
+
+/** Pause every active unattended loop (grant TTL expire). */
+export function pauseUnattendedLoopsOnGrantExpire(
+  tm: ThreadManager,
+  opts?: { audit?: AuditSink },
+): number {
+  let n = 0
+  for (const thread of tm.list()) {
+    const st = sanitizeLoopState(thread.loop_state)
+    if (st?.status === "active" && st.unattended === true) {
+      if (markLoopPaused(tm, thread.id, "grant_ttl", opts)) n++
+    }
+  }
+  return n
+}
+
 function persist(tm: ThreadManager, threadId: string, state: LoopState): void {
   tm.update(threadId, { loop_state: state } as any)
 }
@@ -226,6 +291,18 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
   if (!thread || thread.agent_role === "worker") return
   const now = args.nowMs ?? Date.now()
   const state = sanitizeLoopState(thread.loop_state)
+
+  // L-5: grant TTL expire → paused (not silent impossible). Loop never
+  // extends the grant; re-arm is an explicit gesture after the user re-grants.
+  // Only fire when we snapshotted a live grant at arm — missing grant is not TTL.
+  if (
+    state?.status === "active" &&
+    typeof state.grant_expires_at_ms === "number" &&
+    now > state.grant_expires_at_ms
+  ) {
+    markLoopPaused(tm, threadId, "grant_ttl", { audit: args.audit, nowMs: now })
+    return
+  }
 
   if (state?.status === "active") {
     // Terminal outcomes first.
@@ -332,6 +409,8 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
 
   const progress = thread.run_progress
   const items = evidenceItems(progress)
+  const blockedIds = new Set(getBlockedItemIds(threadId))
+  const chaseable = items.filter((it) => it.done !== true && !blockedIds.has(it.id))
 
   if (items.length === 0) {
     if (progress === null) {
@@ -392,28 +471,60 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
   // L-4 (#390, tier binding + UI). The unattended tier's「计划完成待复核」
   // wording + evidence digest is L-5 (#391). Do not "upgrade" this close to
   // full completion semantics here.
+  const closeUnattended = next.unattended === true && chaseable.length === 0 && items.length > 0
   const verdict = evaluateCompletion({
     runProgress: progress,
     closingTurnToolCalls: stats.closingTurnToolCalls,
     pendingConfirms: 0,
   })
-  if (verdict.kind === "complete" || verdict.kind === "request-claim") {
+  if (closeUnattended || verdict.kind === "complete" || verdict.kind === "request-claim") {
     persist(tm, threadId, { ...next, status: "completed" })
-    audit(args.audit, {
-      type: "task_loop.completed",
-      thread_id: threadId,
-      tier: "machine",
-      ticked_ids: verdict.tickedIds,
-      runs_used: next.runs_used,
-      tokens_used: next.tokens_used,
-    })
+    const keyList = buildKeyList(threadId)
+    if (next.unattended === true) {
+      const digest = buildEvidenceDigest({
+        runProgress: progress,
+        blockedIds: [...blockedIds],
+        runsUsed: next.runs_used,
+        tokensUsed: next.tokens_used,
+      })
+      audit(args.audit, {
+        type: "task_loop.completed",
+        thread_id: threadId,
+        tier: "unattended",
+        copy: UNATTENDED_REVIEW_COPY,
+        digest,
+        key_list: keyList,
+        ticked_ids: digest.ticked_ids,
+        runs_used: next.runs_used,
+        tokens_used: next.tokens_used,
+      })
+      if (keyList.length > 0) {
+        presentBlockedReport({
+          threadId,
+          keyList,
+          sendToExtension: args.sendToExtension,
+          copy: UNATTENDED_REVIEW_COPY,
+        })
+      }
+    } else {
+      audit(args.audit, {
+        type: "task_loop.completed",
+        thread_id: threadId,
+        tier: "machine",
+        ticked_ids:
+          verdict.kind === "complete" || verdict.kind === "request-claim" ? verdict.tickedIds : [],
+        runs_used: next.runs_used,
+        tokens_used: next.tokens_used,
+      })
+    }
     return
   }
 
   // incomplete (claim-rejected never occurs here — the kernel passes no
   // claim): schedule the next step, steer pointing straight at the stuck items.
-  // NIT-1: enqueue FIRST (see propose path).
-  const unticked = items.filter((it) => it.done !== true)
+  // NIT-1: enqueue FIRST (see propose path). Blocked items are skipped (L-5
+  // deny→blocked→bypass): the steer names remaining chaseable items only.
+  const unticked = chaseable
   if (!enqueueNextRun(threadId, buildContinuationSteer(unticked), undefined, "loop")) {
     logger.warn("task_loop.enqueue_failed", {
       thread_id: threadId,
@@ -450,7 +561,15 @@ export function gateLoopNextRunDrain(
     if (!head || (head.source ?? "user") !== "loop") return
     const state = sanitizeLoopState(tm.get(threadId)?.loop_state)
     if (state?.status === "active") {
-      const hit = loopBudgetExceeded(state, opts?.nowMs ?? Date.now())
+      const now = opts?.nowMs ?? Date.now()
+      if (typeof state.grant_expires_at_ms === "number" && now > state.grant_expires_at_ms) {
+        // markLoopPaused already dropLoopNextRuns (loop-source only). Do NOT
+        // takeNextRun — that would swallow a user message now at the head
+        // (#402 MAJOR-1). Re-peek: user items pass through, empty queue returns.
+        markLoopPaused(tm, threadId, "grant_ttl", { audit: opts?.audit, nowMs: now })
+        continue
+      }
+      const hit = loopBudgetExceeded(state, now)
       if (!hit) return // loop active and within budget: release
       persist(tm, threadId, { ...state, status: "stopped_budget", budget_stop: hit })
       audit(opts?.audit, {

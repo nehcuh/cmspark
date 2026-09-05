@@ -400,6 +400,30 @@ export function noteDeclaredBlocked(state: RouteEngineState, itemId: string): Ro
   return { ...state, declaredBlockedThisRun: [...state.declaredBlockedThisRun, id] }
 }
 
+/**
+ * L-5: immediately mark an item blocked (confirm timeout / deny) without
+ * waiting for closeRouteRun. Other items stay chaseable.
+ */
+export function applyItemBlocked(
+  state: RouteEngineState,
+  itemId: string,
+  contract: UnlockContract,
+): RouteEngineState {
+  const id = String(itemId || "").trim()
+  if (!id) return state
+  const next: RouteEngineState = {
+    ...state,
+    items: { ...state.items },
+    declaredBlockedThisRun: state.declaredBlockedThisRun.includes(id)
+      ? state.declaredBlockedThisRun
+      : [...state.declaredBlockedThisRun, id],
+  }
+  const item = ensureItem(next, id)
+  item.blocked = contract
+  item.triedRoutes = contract.tried_routes.length ? [...contract.tried_routes] : item.triedRoutes
+  return next
+}
+
 export function formatSteerPrompt(steers: RouteSteer[]): string {
   if (!steers.length) return ""
   const body = steers.map((s) => `- ${s.text}`).join("\n")

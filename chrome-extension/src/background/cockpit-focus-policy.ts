@@ -38,6 +38,8 @@ export function isArmed(arm: ArmState): boolean {
 export type CockpitFocusEvent =
   | { kind: "confirmation"; hasNonce: boolean; hasHeavyPreview: boolean }
   | { kind: "computer_task"; event: string }
+  /** L-5 (#391): unattended blocked report — tray/Board only, never steal. */
+  | { kind: "loop_blocked" }
 
 export type CockpitFocusAction = "open_focus" | "stay_background"
 
@@ -53,6 +55,7 @@ export type CockpitFocusAction = "open_focus" | "stay_background"
  * | computer.task started + 巡航/值守武装  | stay_background |
  * | computer.task started + 未武装/未知    | open_focus      |
  * | 其它 computer.task 事件                | stay_background |
+ * | task_loop.blocked_report（L-5 值守受阻） | stay_background |
  *
  * 注意：轻确认分支**无武装门**——未武装时轻确认也不抢焦点。这是刻意对齐
  * FINAL-SYNTHESIS 票 5（原文无「武装下」限定；issue 首条的「巡航/值守武装下」
@@ -67,6 +70,7 @@ export function decideCockpitFocus(
   if (event.kind === "confirmation") {
     return event.hasNonce || event.hasHeavyPreview ? "open_focus" : "stay_background"
   }
+  if (event.kind === "loop_blocked") return "stay_background"
   if (event.event === "paused") return "open_focus"
   if (event.event === "started") {
     return isArmed(arm) ? "stay_background" : "open_focus"
@@ -93,6 +97,9 @@ export function cockpitFocusEventFromMessage(msg: any): CockpitFocusEvent | null
   }
   if (msg.type === "computer.task.event") {
     return { kind: "computer_task", event: typeof msg.event === "string" ? msg.event : "" }
+  }
+  if (msg.type === "task_loop.blocked_report") {
+    return { kind: "loop_blocked" }
   }
   return null
 }

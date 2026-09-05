@@ -1858,7 +1858,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
             const errorLevel = classifyError(toolResult.error || "", {
               toolName,
-              error_code: (toolResult as { error_code?: string }).error_code,
+              error_code:
+                (toolResult as { error_code?: string }).error_code ||
+                (typeof (toolResult as { data?: { error_code?: string } }).data?.error_code === "string"
+                  ? (toolResult as { data?: { error_code?: string } }).data?.error_code
+                  : undefined),
             })
             logger.info("llm.error_classified", {
               tool_call_id: tc.id,

@@ -570,6 +570,32 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             "host_computer refused: another computer task is already executing (global single-task invariant, plan §E.6.2) [COMPUTER_TASK_BUSY] — wait for it to finish or abort it from the panel.",
           )
         }
+        // L-5: loop/worker CU focus lease — peek only (do not hold through L2).
+        // If another loop already drives CU, queue and skip the confirm dialog.
+        if (actingThreadId && threadManager) {
+          const {
+            shouldUseCuFocusLease,
+            peekCuFocusHolder,
+            queueCuFocusWaiter,
+            cuFocusWaiterSource,
+            CU_FOCUS_LEASE_QUEUED,
+          } = await import("../loop/cu-focus-lease")
+          const acting = threadManager.get(actingThreadId) as any
+          const other = peekCuFocusHolder()
+          if (shouldUseCuFocusLease(acting) && other && other !== actingThreadId) {
+            queueCuFocusWaiter(actingThreadId, cuFocusWaiterSource(acting))
+            const queued = {
+              success: false,
+              error:
+                `host_computer waiting on CU focus lease (held by ${other}) [${CU_FOCUS_LEASE_QUEUED}] — ` +
+                `only one loop/worker drives CU at a time; this request is queued.`,
+              error_code: CU_FOCUS_LEASE_QUEUED,
+              data: { error_code: CU_FOCUS_LEASE_QUEUED, holder_thread_id: other },
+            }
+            logToolFinish(toolCallId, toolName, startedAt, queued)
+            return queued
+          }
+        }
         // Y7: session rate gate — a saturated 60s window refuses the task
         // BEFORE the L2 dialog; a runaway agent must not burn human clicks.
         const limiter = await computerRateLimiter()
@@ -1556,16 +1582,46 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         }
         const reason =
           !decision ? "unavailable" : decision.reason === "approved" ? "unavailable" : decision.reason
+        let unattendedBypass = false
+        if (actingThreadId && threadManager) {
+          try {
+            const overlay = await import("../loop/unattended-overlay")
+            const handled = overlay.onUnattendedConfirmDenied({
+              threadId: actingThreadId,
+              threadManager,
+              toolName,
+              reason,
+            })
+            unattendedBypass = handled.bypassHalt
+            if (handled.pause) {
+              const { markLoopPaused } = await import("../loop/loop-kernel")
+              markLoopPaused(threadManager, actingThreadId, "deny_storm")
+            }
+          } catch (e: any) {
+            logger.warn("task_loop.unattended_deny_hook_failed", {
+              error: e?.message || String(e),
+            })
+          }
+        }
         const result = {
           success: false,
           error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, reason),
-          data: { dangerous_apis_found: safety.dangerousApis },
+          ...(unattendedBypass
+            ? { error_code: "UNATTENDED_CONFIRM_DENIED" as const }
+            : {}),
+          data: {
+            dangerous_apis_found: safety.dangerousApis,
+            ...(unattendedBypass
+              ? { error_code: "UNATTENDED_CONFIRM_DENIED", loop_bypass: true }
+              : {}),
+          },
         }
         logger.warn("security.confirmation.denied", {
           tool_call_id: toolCallId,
           tool_name: toolName,
           reason,
           dangerous_apis: safety.dangerousApis,
+          unattended_bypass: unattendedBypass,
         })
         if (forceConfirm) {
           logger.warn("security.critical_capability_denied", {
@@ -1613,6 +1669,14 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // Clear local flag without releaseFlight so finally does not free it.
       flightReserved = null
       logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
+      if (actingThreadId) {
+        try {
+          const { recordConfirmApproved } = await import("../loop/unattended-overlay")
+          recordConfirmApproved(actingThreadId)
+        } catch {
+          /* deny-storm reset is best-effort */
+        }
+      }
       if (toolName === "spawn_expert_team" && Array.isArray(decision.expertTeamSlices) && decision.expertTeamSlices.length > 0) {
         const { mergeEditedSlices } = await import("../orchestrator/expert-team")
         finalParams = {
