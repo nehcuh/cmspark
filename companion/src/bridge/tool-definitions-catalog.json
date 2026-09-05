@@ -1211,7 +1211,7 @@
           },
           "max_chars": {
             "type": "integer",
-            "description": "Max body_preview characters (default 500, max 5000). Note: the macOS Mail read path caps body_preview at 500 script-side (Phase 1) — values above 500 return at most 500 on macOS; smaller values are honored."
+            "description": "Max body_preview characters (default 500, max 5000). Honored end-to-end on macOS (#69 Phase 2): the value is passed into the read script's handler — values above 500 are no longer capped at 500."
           }
         }
       }

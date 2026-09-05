@@ -56,8 +56,11 @@ export async function hostRead(params: HostReadParams): Promise<HostReadResult> 
   const bin = resolveHostBinary()
   try {
     // P2: all cmspark-host spawns go through spawnHostBin (integrity check).
-    // Audit M8: read-mail.scpt truncates at a FIXED 500 chars script-side.
-    const stdout = await spawnHostBin(bin, ["read-mail"], {
+    // #69 Phase 2 (audit M8 fix): --max-chars is validated 1-5000 by the
+    // binary and passed into read-mail.scpt's readMail(maxChars) handler via
+    // subroutine Apple Event — the fixed script-side 500 is gone. The slice
+    // below stays as defense in depth (e.g. a stale pre-#69 binary on disk).
+    const stdout = await spawnHostBin(bin, ["read-mail", "--max-chars", String(maxChars)], {
       timeoutMs: HOST_READ_TIMEOUT_MS,
     })
     const parsed = parseHostJson(String(stdout))
