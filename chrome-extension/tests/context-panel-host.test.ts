@@ -37,7 +37,7 @@ test("M1: isContextPanelId accepts known panels and rejects junk", () => {
 test("M1: contextPanelLabel returns Chinese labels for strip/host header", () => {
   assert.equal(contextPanelLabel("skills"), "技能")
   assert.equal(contextPanelLabel("knowledge"), "知识")
-  assert.equal(contextPanelLabel("packs"), "场景")
+  assert.equal(contextPanelLabel("packs"), "场景与专家")
   assert.equal(contextPanelLabel("board"), "任务板")
 })
 

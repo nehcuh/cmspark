@@ -1,11 +1,26 @@
-// 场景 panel (Mission Packs) — product rename from「任务包」.
+// 场景与专家 panel (Mission Packs + #369 expert segment) — product rename from「任务包」.
 // SoT: docs/superpowers/specs/2026-07-31-mission-pack-ux-redesign.md
 // Zones: 本对话状态 · 场景模板（含用户可配 system prompt/skills/MCP）· 本机能力
+// #369: 分段「场景 | 专家」；专家 = kind:expert 的 pack（builtin 只读，用户专家 CRUD）。
 
 import { useEffect, useRef, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { useContextPanelHostOptional } from "./ContextPanelHost"
+import {
+  EXPERT_EMPTY_COPY,
+  EXPERT_PRIMARY_CTA_DISABLED_HINT,
+  EXPERT_PRIMARY_CTA_LABEL,
+  EXPERT_SECONDARY_CTA_LABEL,
+  EXPERT_SEGMENT_HINT,
+  PANEL_TITLE,
+  expertCardActions,
+  formatEffectiveToolsLine,
+  formatUsageLine,
+  isUserPack,
+  segmentPacks,
+  type PackSegment,
+} from "../packs-panel-logic"
 
 // Lock-step with companion/src/security-arm.ts SECURITY_ARM_CONFIRM_PHRASE (C5 multi-adv).
 // Pack Trust skip_l2 / auto_approve writes durable cruise flags — NOT 无人值守 arm —
@@ -20,6 +35,8 @@ export type PackListItem = {
   channel: string
   /** #367: mission|expert (companion always sends it; absent = mission). */
   kind?: "mission" | "expert"
+  /** #369: operator-disabled — propose/apply/spawn refuse; editor read-only. */
+  disabled?: boolean
   min_capability?: string
   requires_modules?: string[]
   apply_blocked?: string | null
@@ -105,6 +122,10 @@ const SCENE_TOOL_GROUPS: Array<{ title: string; highRisk?: boolean; tools: strin
 type SceneEditorState = {
   /** null = create; string = edit existing user pack id */
   id: string | null
+  /** #369: expert saves write kind=expert via pack.save_user */
+  kind: "mission" | "expert"
+  /** #369: builtin 查看 / 停用包 — 只读打开，不出保存按钮 */
+  readOnly: boolean
   name: string
   description: string
   system_prompt_append: string
@@ -126,6 +147,8 @@ type SceneEditorState = {
 
 const emptyEditor = (): SceneEditorState => ({
   id: null,
+  kind: "mission",
+  readOnly: false,
   name: "",
   description: "",
   system_prompt_append: "",
@@ -183,7 +206,12 @@ export function PacksPanel() {
     null,
   )
   /** pack.get mode: edit existing user pack vs clone builtin into new user scene. */
-  const packGetModeRef = useRef<"edit" | "clone">("edit")
+  const packGetModeRef = useRef<"edit" | "clone" | "view" | "toggle-disabled">("edit")
+  /** #369: 分段（场景 | 专家）与专家面板数据（有效工具面 + 用量）。 */
+  const [segment, setSegment] = useState<PackSegment>("scene")
+  const [expertInfo, setExpertInfo] = useState<
+    Record<string, { effective_tools: string[]; spawn_count: number; last_spawn_at: string | null }>
+  >({})
   /** Source tools when cloning (for「保留原场景工具限制」). */
   const cloneToolsRef = useRef<{ mode: ToolsModeUi; allow: string[] } | null>(null)
   const [suggestNote, setSuggestNote] = useState<string>("")
@@ -215,6 +243,11 @@ export function PacksPanel() {
     chrome.runtime.sendMessage({ type: "modules.list" })
     chrome.runtime.sendMessage({ type: "skill.list" })
     chrome.runtime.sendMessage({ type: "mcp.list" })
+    // #369: 有效工具面相对当前对话计算；无对话时 companion 以 null parent 计算
+    chrome.runtime.sendMessage({
+      type: "pack.expert_panel",
+      thread_id: activeThreadRef.current || undefined,
+    })
   }
 
   useEffect(() => {
@@ -222,6 +255,21 @@ export function PacksPanel() {
     const handler = (msg: any) => {
       if (msg?.type === "pack.list" && Array.isArray(msg.packs)) {
         setPacks(msg.packs)
+      }
+      if (msg?.type === "pack.expert_panel" && Array.isArray(msg.experts)) {
+        const next: Record<
+          string,
+          { effective_tools: string[]; spawn_count: number; last_spawn_at: string | null }
+        > = {}
+        for (const e of msg.experts) {
+          if (!e || typeof e.id !== "string") continue
+          next[e.id] = {
+            effective_tools: Array.isArray(e.effective_tools) ? e.effective_tools : [],
+            spawn_count: typeof e.spawn_count === "number" ? e.spawn_count : 0,
+            last_spawn_at: typeof e.last_spawn_at === "string" ? e.last_spawn_at : null,
+          }
+        }
+        setExpertInfo(next)
       }
       if (msg?.type === "pack.installed" || msg?.type === "pack.uninstalled" || msg?.type === "pack.saved_user" || msg?.type === "pack.deleted_user") {
         if (Array.isArray(msg.packs)) setPacks(msg.packs)
@@ -289,7 +337,32 @@ export function PacksPanel() {
         const p = msg.pack
         const mode = packGetModeRef.current
         packGetModeRef.current = "edit"
-        if (mode === "clone") {
+        if (mode === "toggle-disabled") {
+          // #369: 停用/启用 = pack.save_user 只翻转 disabled（其余字段原样回写；
+          // save_user 对省略字段保留，但 name/prompt 必填故带上原值）。
+          const t = p.tools || { mode: "unchanged", allow: [], deny: [] }
+          chrome.runtime.sendMessage({
+            type: "pack.save_user",
+            user_gesture: true,
+            id: p.id,
+            name: p.name || p.id,
+            description: p.description || undefined,
+            system_prompt_append: p.system_prompt_append || "",
+            kind: p.kind === "expert" ? "expert" : "mission",
+            disabled: p.disabled !== true,
+            skill_ids: Array.isArray(p.skill_refs) ? p.skill_refs : [],
+            knowledge_ids: Array.isArray(p.knowledge_refs) ? p.knowledge_refs : [],
+            mcp_server_ids: Array.isArray(p.mcp_servers) ? p.mcp_servers : [],
+            tools: {
+              mode: t.mode === "allowlist" || t.mode === "intersect" ? t.mode : "unchanged",
+              allow: Array.isArray(t.allow) ? t.allow : [],
+              deny: Array.isArray(t.deny) ? t.deny : [],
+            },
+            trust: p.trust === null || p.trust === undefined ? undefined : p.trust,
+          })
+          setBusy(null)
+          flash(p.disabled === true ? "正在启用…" : "正在停用…", 2000)
+        } else if (mode === "clone") {
           // 另存为我的：default 不收窄工具；用户可勾「保留工具限制」
           const refs = Array.isArray(p.skill_refs) ? p.skill_refs : []
           const installed = Array.isArray(p.installed_skill_ids) ? p.installed_skill_ids : []
@@ -302,6 +375,7 @@ export function PacksPanel() {
           setEditor({
             ...emptyEditor(),
             id: null,
+            kind: p.kind === "expert" ? "expert" : "mission",
             name: `${p.name || "场景"}（我的）`,
             description: p.description || "",
             system_prompt_append: p.system_prompt_append || "",
@@ -324,6 +398,9 @@ export function PacksPanel() {
           setEditor({
             ...emptyEditor(),
             id: p.id,
+            kind: p.kind === "expert" ? "expert" : "mission",
+            // #369: 查看模式（builtin 只读）与停用包都只读打开
+            readOnly: mode === "view" || p.disabled === true,
             name: p.name || "",
             description: p.description || "",
             system_prompt_append: p.system_prompt_append || "",
@@ -607,12 +684,12 @@ export function PacksPanel() {
 
   const meetingPack = packs.find((p) => p.id === "meeting-minutes") || null
 
-  const openCreateEditor = () => {
+  const openCreateEditor = (kind: "mission" | "expert" = "mission") => {
     chrome.runtime.sendMessage({ type: "skill.list" })
     chrome.runtime.sendMessage({ type: "knowledge.list" })
     chrome.runtime.sendMessage({ type: "mcp.list" })
     setSuggestNote("")
-    setEditor(emptyEditor())
+    setEditor({ ...emptyEditor(), kind })
   }
 
   const openEditEditor = (p: PackListItem) => {
@@ -634,6 +711,24 @@ export function PacksPanel() {
     chrome.runtime.sendMessage({ type: "skill.list" })
     chrome.runtime.sendMessage({ type: "knowledge.list" })
     chrome.runtime.sendMessage({ type: "mcp.list" })
+    chrome.runtime.sendMessage({ type: "pack.get", pack_id: p.id })
+  }
+
+  /** #369: builtin/停用包 — 只读查看（明文 prompt 完整可见）。 */
+  const openViewEditor = (p: PackListItem) => {
+    packGetModeRef.current = "view"
+    setBusy("view")
+    chrome.runtime.sendMessage({ type: "pack.get", pack_id: p.id })
+  }
+
+  /** #369: 停用/启用 — pack.get 原样回写并翻转 disabled（详见 toggle-disabled 分支）。 */
+  const togglePackDisabled = (p: PackListItem) => {
+    if (!isUserPack(p)) return
+    if (p.disabled !== true && !window.confirm(`停用「${p.name}」？停用后不能再派出/套用，但可随时启用。`)) {
+      return
+    }
+    packGetModeRef.current = "toggle-disabled"
+    setBusy("toggle-disabled")
     chrome.runtime.sendMessage({ type: "pack.get", pack_id: p.id })
   }
 
@@ -727,13 +822,14 @@ export function PacksPanel() {
   }
 
   const saveEditor = (andApply: boolean) => {
-    if (!editor) return
+    if (!editor || editor.readOnly) return
+    const noun = editor.kind === "expert" ? "专家" : "场景"
     if (!editor.name.trim()) {
-      flash("请填写场景名称")
+      flash(`请填写${noun}名称`)
       return
     }
     if (!editor.system_prompt_append.trim()) {
-      flash("请填写该场景的 system prompt")
+      flash(`请填写该${noun}的 system prompt`)
       return
     }
     if (andApply && !state.activeThreadId) {
@@ -849,6 +945,8 @@ export function PacksPanel() {
       type: "pack.save_user",
       user_gesture: true,
       id: editor.id || undefined,
+      // #369: 专家保存写 kind=expert（复用 pack.save_user 既有路径）
+      kind: editor.kind,
       name: editor.name.trim(),
       description: editor.description.trim() || undefined,
       system_prompt_append: editor.system_prompt_append.trim(),
@@ -877,6 +975,8 @@ export function PacksPanel() {
   const activePackId =
     (state.threads || []).find((t: any) => t.id === state.activeThreadId)?.mission_pack_id || null
   const activePack = packs.find((p) => p.id === activePackId) || null
+  // #369: 场景段只列 kind≠expert；专家段只列 kind=expert
+  const { scenes, experts } = segmentPacks(packs)
 
   const moduleLabel: Record<string, string> = {
     appsec: "应用安全场景",
@@ -889,13 +989,37 @@ export function PacksPanel() {
     <div style={styles.wrap}>
       <div style={styles.header}>
         <div>
-          <div style={styles.breadcrumb}>装配 › 场景</div>
-          <div style={styles.title}>场景</div>
-          <div style={styles.subtitle}>为本对话选用模板（可限制可用工具）；会议工作台见下方</div>
+          <div style={styles.breadcrumb}>装配 › {PANEL_TITLE}</div>
+          <div style={styles.title}>{PANEL_TITLE}</div>
+          <div style={styles.subtitle}>场景为本对话选用模板；专家是可派出的角色（builtin 只读，可另存定制）</div>
         </div>
         <button type="button" style={styles.linkBtn} onClick={refresh}>
           刷新
         </button>
+      </div>
+
+      {/* #369: 分段「场景 | 专家」（分段解决可发现性，不加第十面板） */}
+      <div style={styles.segmentBar} role="tablist" aria-label="场景与专家分段">
+        {(
+          [
+            ["scene", "场景"],
+            ["expert", "专家"],
+          ] as Array<[PackSegment, string]>
+        ).map(([seg, label]) => (
+          <button
+            key={seg}
+            type="button"
+            role="tab"
+            aria-selected={segment === seg}
+            style={{
+              ...styles.segmentBtn,
+              ...(segment === seg ? styles.segmentBtnActive : null),
+            }}
+            onClick={() => setSegment(seg)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       <button type="button" style={styles.divert} onClick={openSkills}>
@@ -904,6 +1028,8 @@ export function PacksPanel() {
 
       {status && <div style={styles.status}>{status}</div>}
 
+      {segment === "scene" && (
+        <>
       {/* Zone: 会议 — 装配 › 场景 › 会议（独立工作台，非仅 /meeting） */}
       <section style={styles.zone} data-testid="scene-meeting-zone">
         <div style={styles.zoneTitle}>会议</div>
@@ -984,16 +1110,16 @@ export function PacksPanel() {
       <section style={styles.zone}>
         <div style={{ ...styles.zoneTitle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>开始一个场景</span>
-          <button type="button" style={styles.linkBtn} onClick={openCreateEditor} disabled={!!busy}>
+          <button type="button" style={styles.linkBtn} onClick={() => openCreateEditor("mission")} disabled={!!busy}>
             + 新建场景
           </button>
         </div>
         <div style={styles.hint}>
           用户场景可配置 system prompt、技能、知识库与 MCP；应用后优先使用勾选项（不额外收窄工具）。
         </div>
-        {packs.length === 0 && <div style={styles.empty}>暂无已安装场景模板</div>}
+        {scenes.length === 0 && <div style={styles.empty}>暂无已安装场景模板</div>}
         <ul style={styles.list}>
-          {packs.map((p) => {
+          {scenes.map((p) => {
             const blocked = p.apply_blocked
             const isActive = activePackId === p.id
             const copy = sceneCopy(p)
@@ -1121,6 +1247,143 @@ export function PacksPanel() {
           网络扫描目标 / 本对话授权 → 设置
         </button>
       </section>
+        </>
+      )}
+
+      {/* #369 Zone: 专家 — kind=expert 的 pack；builtin 只读，用户专家 CRUD */}
+      {segment === "expert" && (
+      <section style={styles.zone} data-testid="expert-zone">
+        <div style={{ ...styles.zoneTitle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>专家（可派出的角色）</span>
+          <button type="button" style={styles.linkBtn} onClick={() => openCreateEditor("expert")} disabled={!!busy}>
+            + 新建专家
+          </button>
+        </div>
+        <div style={styles.hint}>{EXPERT_SEGMENT_HINT}</div>
+        {experts.length === 0 && (
+          <div style={styles.empty} data-testid="expert-empty">
+            {EXPERT_EMPTY_COPY}
+          </div>
+        )}
+        <ul style={styles.list}>
+          {experts.map((p) => {
+            const isActive = activePackId === p.id
+            const copy = sceneCopy(p)
+            const user = isUserPack(p)
+            const actions = expertCardActions(p)
+            const info = expertInfo[p.id]
+            const usageLine = info ? formatUsageLine(info.spawn_count, info.last_spawn_at) : null
+            return (
+              <li
+                key={p.id}
+                style={{
+                  ...styles.item,
+                  ...(isActive ? styles.itemActive : null),
+                  ...(p.disabled ? styles.itemDisabled : null),
+                }}
+              >
+                <div style={styles.row}>
+                  <strong style={styles.name}>
+                    {p.name}
+                    {user ? " · 我的" : ""}
+                    {!user ? " · 内置" : ""}
+                    {p.disabled ? " · 已停用" : ""}
+                    {isActive ? " · 本对话使用中" : ""}
+                  </strong>
+                  <span style={styles.meta}>
+                    {p.channel} · v{p.version}
+                  </span>
+                </div>
+                {p.description && <div style={styles.desc}>{p.description}</div>}
+                {copy && (
+                  <div style={styles.copyBlock}>
+                    <div>
+                      <span style={styles.copyLabel}>适合</span> {copy.suitable}
+                    </div>
+                    <div>
+                      <span style={styles.copyLabelBad}>不适合</span> {copy.unsuitable}
+                    </div>
+                  </div>
+                )}
+                <div style={styles.toolsLine} data-testid={`expert-effective-${p.id}`}>
+                  {info
+                    ? formatEffectiveToolsLine(info.effective_tools)
+                    : "有效工具面：计算中…"}
+                </div>
+                {usageLine ? <div style={styles.toolsLine}>{usageLine}</div> : null}
+                {p.disabled ? (
+                  <div style={styles.blocked}>已停用：不可派出/套用；编辑器只读可打开，启用后恢复</div>
+                ) : null}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                  {actions.includes("team") && (
+                    <button
+                      type="button"
+                      style={styles.primaryBtn}
+                      disabled
+                      title={EXPERT_PRIMARY_CTA_DISABLED_HINT}
+                    >
+                      {EXPERT_PRIMARY_CTA_LABEL}·即将推出
+                    </button>
+                  )}
+                  {actions.includes("apply") &&
+                    (isActive ? (
+                      <button type="button" style={styles.primaryBtn} onClick={unapply} disabled={!!busy}>
+                        退出场景
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        style={styles.secondaryBtn}
+                        disabled={!!busy || !!p.apply_blocked}
+                        title="将专家角色与工具面套用到当前对话（不是派出 worker）"
+                        onClick={() => requestApply(p)}
+                      >
+                        {busy === p.id ? "应用中…" : EXPERT_SECONDARY_CTA_LABEL}
+                      </button>
+                    ))}
+                  {actions.includes("view") && (
+                    <button type="button" style={styles.secondaryBtn} onClick={() => openViewEditor(p)} disabled={!!busy}>
+                      查看
+                    </button>
+                  )}
+                  {actions.includes("edit") && (
+                    <button type="button" style={styles.secondaryBtn} onClick={() => openEditEditor(p)} disabled={!!busy}>
+                      编辑
+                    </button>
+                  )}
+                  {actions.includes("clone") && (
+                    <button
+                      type="button"
+                      style={styles.secondaryBtn}
+                      onClick={() => openCloneEditor(p)}
+                      disabled={!!busy}
+                      title="复制为可编辑的我的专家（默认不收窄工具）"
+                    >
+                      另存为我的
+                    </button>
+                  )}
+                  {actions.includes("disable") && (
+                    <button type="button" style={styles.secondaryBtn} onClick={() => togglePackDisabled(p)} disabled={!!busy}>
+                      {busy === "toggle-disabled" ? "处理中…" : "停用"}
+                    </button>
+                  )}
+                  {actions.includes("enable") && (
+                    <button type="button" style={styles.primaryBtn} onClick={() => togglePackDisabled(p)} disabled={!!busy}>
+                      {busy === "toggle-disabled" ? "处理中…" : "启用"}
+                    </button>
+                  )}
+                  {actions.includes("delete") && (
+                    <button type="button" style={styles.secondaryBtn} onClick={() => deleteUserScene(p)} disabled={!!busy}>
+                      删除
+                    </button>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      </section>
+      )}
 
       {/* Trust single-holder conflict: one-click unlock + apply */}
       {trustConflict && (
@@ -1253,11 +1516,29 @@ export function PacksPanel() {
         </div>
       )}
 
-      {/* Create / edit user scene */}
+      {/* Create / edit / view user scene or expert */}
       {editor && (
-        <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="编辑场景">
+        <div
+          style={styles.modalOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-label={editor.readOnly ? "查看（只读）" : editor.id ? "编辑" : "新建"}
+        >
           <div style={{ ...styles.modal, maxWidth: 360, maxHeight: "90vh", overflow: "auto" }}>
-            <div style={styles.modalTitle}>{editor.id ? "编辑场景" : "新建场景"}</div>
+            <div style={styles.modalTitle}>
+              {editor.readOnly
+                ? `查看${editor.kind === "expert" ? "专家" : "场景"}（只读）`
+                : editor.id
+                  ? `编辑${editor.kind === "expert" ? "专家" : "场景"}`
+                  : `新建${editor.kind === "expert" ? "专家" : "场景"}`}
+            </div>
+            {editor.readOnly ? (
+              <div style={{ ...styles.hint, color: tokens.warning }}>
+                只读：{editor.kind === "expert" ? "内置/已停用专家" : "内置/已停用场景"}
+                不可直接修改；可「另存为我的」定制，或先在卡片上「启用」。
+              </div>
+            ) : null}
+            <fieldset disabled={editor.readOnly} style={{ border: "none", margin: 0, padding: 0, minWidth: 0 }}>
             <label style={styles.fieldLabel}>场景描述（可先写一句话，再 AI 生成）</label>
             <input
               style={styles.input}
@@ -1546,6 +1827,7 @@ export function PacksPanel() {
             <div style={{ ...styles.hint, marginTop: 8 }}>
               AI 只预填，不会自动保存。勾选 Trust 巡航旗后「保存并用于本对话」会改全局安全配置并要求短语确认。
             </div>
+            </fieldset>
             <div style={{ ...styles.modalActions, flexWrap: "wrap" }}>
               <button
                 type="button"
@@ -1558,14 +1840,18 @@ export function PacksPanel() {
                 }}
                 disabled={busy === "save" || busy === "save-apply"}
               >
-                取消
+                {editor.readOnly ? "关闭" : "取消"}
               </button>
-              <button type="button" style={styles.secondaryBtn} onClick={() => saveEditor(false)} disabled={!!busy}>
-                {busy === "save" ? "保存中…" : "保存"}
-              </button>
-              <button type="button" style={styles.primaryBtn} onClick={() => saveEditor(true)} disabled={!!busy}>
-                {busy === "save-apply" ? "保存并应用…" : "保存并用于本对话"}
-              </button>
+              {!editor.readOnly && (
+                <>
+                  <button type="button" style={styles.secondaryBtn} onClick={() => saveEditor(false)} disabled={!!busy}>
+                    {busy === "save" ? "保存中…" : "保存"}
+                  </button>
+                  <button type="button" style={styles.primaryBtn} onClick={() => saveEditor(true)} disabled={!!busy}>
+                    {busy === "save-apply" ? "保存并应用…" : "保存并用于本对话"}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1621,6 +1907,34 @@ const styles: Record<string, import("react").CSSProperties> = {
     fontFamily: tokens.font,
   },
   status: { fontSize: 11, color: tokens.accent, marginBottom: 6 },
+  segmentBar: {
+    display: "flex",
+    gap: 4,
+    marginBottom: 10,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusMd,
+    padding: 2,
+    background: tokens.bg,
+  },
+  segmentBtn: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: 600,
+    padding: "4px 0",
+    border: "none",
+    borderRadius: tokens.radiusSm,
+    background: "transparent",
+    color: tokens.textMuted,
+    cursor: "pointer",
+    fontFamily: tokens.font,
+  },
+  segmentBtnActive: {
+    background: tokens.bgActive,
+    color: tokens.accent,
+  },
+  itemDisabled: {
+    opacity: 0.72,
+  },
   zone: { marginBottom: 12 },
   zoneTitle: {
     fontSize: 10,

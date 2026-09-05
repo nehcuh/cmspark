@@ -20,6 +20,7 @@ import {
   TOOL_IMPLIED_MODULES,
   stripVoiceForbiddenKeys,
   type PackDetail,
+  type PackKind,
   type PackListItem,
   type PackManifest,
   type PackOrigin,
@@ -690,6 +691,7 @@ function rewritePackYaml(destDir: string, manifest: PackManifest): void {
     version: manifest.version,
     channel: manifest.channel,
     kind: manifest.kind,
+    disabled: manifest.disabled,
     min_capability: manifest.min_capability,
     requires_modules: manifest.requires_modules,
     origin: manifest.origin || "installed",
@@ -892,6 +894,7 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
       version: v.manifest.version,
       channel: v.manifest.channel,
       kind: v.manifest.kind || "mission",
+      disabled: v.manifest.disabled === true ? true : undefined,
       min_capability: v.manifest.min_capability,
       requires_modules: v.manifest.requires_modules,
       apply_blocked: computeApplyBlocked(v.manifest, config),
@@ -982,6 +985,7 @@ export function getPackDetail(
       version: m.version,
       channel: m.channel,
       kind: m.kind || "mission",
+      disabled: m.disabled === true ? true : undefined,
       origin,
       editable: origin === "user",
       system_prompt_append: m.system_prompt_append,
@@ -1111,15 +1115,19 @@ export function saveUserPack(
       ? input.description.trim()
       : undefined
 
-  // Preserve tools/trust on update when client omits fields
+  // Preserve tools/trust/kind/disabled on update when client omits fields
   let existingTools: PackTools | null = null
   let existingTrust: UserPackTrustPolicy | null = null
+  let existingKind: PackKind | undefined
+  let existingDisabled = false
   const destExisting = path.join(packsInstalledDir(), packId)
   if (fs.existsSync(destExisting)) {
     const { result } = readInstalledManifest(packId)
     if (result.ok) {
       existingTools = result.manifest.tools
       existingTrust = result.manifest.trust || null
+      existingKind = result.manifest.kind
+      existingDisabled = result.manifest.disabled === true
     }
   }
   const toolsRes = resolveUserPackTools(input, existingTools)
@@ -1155,6 +1163,13 @@ export function saveUserPack(
       ? input.tools_summary_zh.trim()
       : undefined
 
+  // #369: kind — explicit input wins; update omit preserves; create defaults mission
+  // (undefined → manifestDoc omits kind, legacy shape).
+  const kind: PackKind | undefined =
+    input.kind === "expert" || input.kind === "mission" ? input.kind : existingKind
+  // #369: disabled — explicit boolean wins; update omit preserves.
+  const disabled = typeof input.disabled === "boolean" ? input.disabled : existingDisabled
+
   const manifestDoc: Record<string, unknown> = {
     schema_version: 1,
     id: packId,
@@ -1162,6 +1177,9 @@ export function saveUserPack(
     description,
     version: "0.1.0",
     channel,
+    // Omit kind:mission so legacy mission pack.yaml stays byte-identical in shape.
+    ...(kind === "expert" ? { kind: "expert" } : {}),
+    ...(disabled ? { disabled: true } : {}),
     min_capability: requiresModules.length > 0 || trust ? "L1" : "L0",
     requires_modules: requiresModules,
     origin: "user",
@@ -1541,6 +1559,15 @@ export function applyPack(
   let config = getConfig()
   const { dir, result } = readInstalledManifest(packId)
   if (!result.ok) return { ok: false, error: result.error }
+
+  // #369: operator-disabled pack — propose/套用 must refuse (editor stays read-only openable).
+  if (result.manifest.disabled === true) {
+    return {
+      ok: false,
+      error: `pack disabled: ${packId}（该场景/专家已停用，不可套用；可在面板中启用）`,
+      code: "pack_disabled",
+    }
+  }
 
   const thread = threadManager.get(threadId)
   if (!thread) return { ok: false, error: `thread not found: ${threadId}` }

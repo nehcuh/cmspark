@@ -35,6 +35,13 @@ export interface PackManifest {
   channel: PackChannel
   /** #367: mission|expert; absent = mission (legacy compat). */
   kind?: PackKind
+  /**
+   * #369: operator off-switch stored IN pack.yaml (travels with the pack — no
+   * separate registry to drift out of sync, and the id stays resolvable so no
+   * ghost ids). Disabled packs: pack.apply (propose/套用) and spawn_worker(pack_id)
+   * both refuse; the editor still opens read-only. Absent = enabled.
+   */
+  disabled?: boolean
   min_capability: MinCapability
   requires_modules: string[]
   /**
@@ -102,6 +109,8 @@ export interface PackListItem {
   channel: PackChannel
   /** #367: always present in list output; absent-on-disk = "mission". */
   kind: PackKind
+  /** #369: true when the pack is operator-disabled (apply/spawn refuse). */
+  disabled?: boolean
   min_capability: MinCapability
   requires_modules: string[]
   apply_blocked?: string | null
@@ -133,6 +142,10 @@ export interface UserPackSaveInput {
   name: string
   description?: string
   system_prompt_append: string
+  /** #369: create defaults to mission; update omit preserves existing kind. */
+  kind?: PackKind
+  /** #369: operator off-switch; update omit preserves existing value. */
+  disabled?: boolean
   /** Global skill names to activate on apply (manual selection). */
   skill_ids?: string[]
   /** Global knowledge doc names to activate on apply (manual selection). Wave A. */
@@ -216,6 +229,8 @@ export interface PackDetail {
   channel: PackChannel
   /** #367: mission|expert; always present; absent-on-disk = "mission". */
   kind: PackKind
+  /** #369: true when the pack is operator-disabled. */
+  disabled?: boolean
   origin: PackOrigin
   editable: boolean
   system_prompt_append: string
