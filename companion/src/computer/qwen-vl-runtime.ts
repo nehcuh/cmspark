@@ -6,7 +6,11 @@ import * as path from "node:path"
 import { logger } from "../logger"
 import { getAppRoot } from "../paths"
 import type { QwenVlVariant } from "./qwen-vl-catalog"
-import { qwenModelDir } from "./qwen-vl-download"
+import {
+  qwenModelDir,
+  probeQwenModelAt,
+  clearQwenModelEnabledOnIntegrityFailure,
+} from "./qwen-vl-download"
 import { isolatedPythonBin } from "./python-runtime"
 
 export class ModelRuntimeError extends Error {
@@ -324,6 +328,20 @@ export class QwenVlRuntime {
     }
     this.status = "loading"
     const dir = this.deps.modelDir ?? qwenModelDir(this.deps.variant)
+    const probe = probeQwenModelAt(dir, this.deps.variant)
+    if (probe.status !== "ready") {
+      this.status = "idle"
+      this.prepared = false
+      clearQwenModelEnabledOnIntegrityFailure(this.deps.variant, probe)
+      throw new ModelRuntimeError(
+        probe.error === "sha256-mismatch" ||
+          probe.error === "size-mismatch" ||
+          probe.error === "model-file-missing"
+          ? probe.error
+          : "model-not-ready",
+        `qwen-vl load refused: integrity ${probe.error || probe.status}`,
+      )
+    }
     try {
       await this.transport.load(dir, this.deps.device ?? "auto")
       this.prepared = true

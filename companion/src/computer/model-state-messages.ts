@@ -36,6 +36,13 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
       "UIA / OCR / 用户框选定位不受影响；请删除后重新下载。",
     action: "删除并重新下载",
   },
+  "sha256-mismatch": {
+    title: "模型文件校验失败",
+    detail:
+      "模型文件与发版钉死的 sha256 不一致（可能被篡改或损坏），已拒绝加载。" +
+      "UIA / OCR / 用户框选定位不受影响；请删除后重新下载。",
+    action: "删除并重新下载",
+  },
   "network-error": {
     title: "模型下载失败",
     detail:

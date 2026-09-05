@@ -148,7 +148,7 @@ Computer Use 截图与键鼠需要系统权限。请 **只** 为 **CMspark** 打
 - **权威在 Companion**：扩展只发 `computer.model.*`，不在浏览器内推理。  
 - **用户路径**：设置 → 看「就绪」预检 → 选下载源（大陆推荐自动/魔搭）→ 选 2B/4B/8B → 下载 → 开启。  
 - **依赖**：本机 Python3 +（下载）`huggingface_hub` 或 `modelscope` +（推理）`transformers torch pillow`。  
-- **中国大陆**：默认 `auto` 会探测 HF/魔搭；显式可选 ModelScope / HF 镜像。  
+- **中国大陆**：默认 `auto` 会探测 HF/魔搭；显式可选 ModelScope / HF 镜像。镜像只换下载地址，完整性哈希随发版钉死（见实验层文档 §5.1）。  
 - **确认文案**：实验层命中时确认台会展示建议坐标；若模型输出中含可解析的 Thought/思考片段，会以「模型思考」短句附在确认文案中（已清洗控制字符，**不**作为自动注入依据）。  
 - 完整说明：[qwen-vl-experimental-layer.md](qwen-vl-experimental-layer.md)
 

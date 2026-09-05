@@ -1,17 +1,27 @@
 // Qwen3-VL model download via Hugging Face snapshot (real host — not .invalid).
-// Progress is best-effort (bytes of completed files); integrity is “config.json present”.
+// Integrity: in-repo pinned sha256+size (#359). Never generate a manifest after download.
 
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { DATA_DIR, getConfig } from "../config"
+import { DATA_DIR, getConfig, setComputerModelFields } from "../config"
 import { logger } from "../logger"
 import {
   qwenVlDirName,
   qwenVlMeta,
   type QwenVlVariant,
 } from "./qwen-vl-catalog"
+import {
+  getQwenVlPinnedFiles,
+  loadQwenVlManifest,
+  qwenVlWeightFiles,
+  type QwenVlManifestFile,
+} from "./qwen-vl-manifest"
 import { findPythonBase, isolatedPythonBin } from "./python-runtime"
+
+/** 1 MiB chunks — streaming sha256 of multi-GB safetensors without slurping RAM. */
+const HASH_CHUNK = 1024 * 1024
 
 /** Default models root: ~/.cmspark-agent/models (overridable via computer.modelRootDir). */
 export function resolveModelRootDir(override?: string | null): string {
@@ -93,41 +103,128 @@ export function qwenModelDir(variant: QwenVlVariant, modelRootOrDataDir?: string
   return path.join(root, qwenVlDirName(variant))
 }
 
-/** Lightweight readiness: HF snapshot always writes config.json. */
-export function probeQwenModelDir(variant: QwenVlVariant, baseDir?: string): {
-  status: "absent" | "ready" | "error"
+export type QwenProbeStatus = "absent" | "ready" | "error"
+
+export interface QwenProbeResult {
+  status: QwenProbeStatus
   sizeBytes?: number
   error?: string
-} {
-  const dir = qwenModelDir(variant, baseDir)
-  const configPath = path.join(dir, "config.json")
-  if (!fs.existsSync(configPath)) {
-    // Partial dir without config
-    if (fs.existsSync(dir)) {
-      try {
-        const ents = fs.readdirSync(dir)
-        if (ents.length > 0) return { status: "error", error: "model-file-missing" }
-      } catch {
-        /* ignore */
-      }
+}
+
+function sha256FileStreamingSync(filePath: string): string {
+  const hash = createHash("sha256")
+  const fd = fs.openSync(filePath, "r")
+  const buf = Buffer.alloc(HASH_CHUNK)
+  try {
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null)
+      if (n <= 0) break
+      hash.update(buf.subarray(0, n))
     }
+  } finally {
+    fs.closeSync(fd)
+  }
+  return hash.digest("hex")
+}
+
+/**
+ * Integrity policy (#359):
+ *   - Pins live in companion/assets/qwen-vl.manifest.json (release-committed).
+ *   - Every pinned file, **including all *.safetensors weights**, is checked for
+ *     size then streaming sha256. There is no stat-only shortcut.
+ *   - 2B weights are ~4.26GB: hashing is seconds on SSD, run on settings /
+ *     admission / worker-load (not per click).
+ */
+export function probeQwenPinnedFiles(
+  dir: string,
+  files: QwenVlManifestFile[],
+): QwenProbeResult {
+  const configPath = path.join(dir, "config.json")
+  if (!fs.existsSync(dir)) return { status: "absent" }
+  let ents: string[] = []
+  try {
+    ents = fs.readdirSync(dir)
+  } catch {
     return { status: "absent" }
   }
+  if (!fs.existsSync(configPath)) {
+    return ents.length === 0
+      ? { status: "absent" }
+      : { status: "error", error: "model-file-missing" }
+  }
+
   let sizeBytes = 0
-  const walk = (p: string) => {
+  for (const f of files) {
+    const destPath = path.join(dir, f.name)
+    if (!fs.existsSync(destPath)) {
+      return { status: "error", error: "model-file-missing" }
+    }
     let st: fs.Stats
     try {
-      st = fs.statSync(p)
+      st = fs.statSync(destPath)
     } catch {
-      return
+      return { status: "error", error: "model-file-missing" }
     }
-    if (st.isFile()) sizeBytes += st.size
-    else if (st.isDirectory()) {
-      for (const name of fs.readdirSync(p)) walk(path.join(p, name))
+    if (!st.isFile() || st.size !== f.size) {
+      return { status: "error", error: "size-mismatch" }
+    }
+    sizeBytes += st.size
+    const digest = sha256FileStreamingSync(destPath)
+    if (digest !== f.sha256) {
+      return { status: "error", error: "sha256-mismatch" }
     }
   }
-  walk(dir)
   return { status: "ready", sizeBytes }
+}
+
+export function probeQwenModelAt(dir: string, variant: QwenVlVariant): QwenProbeResult {
+  let files: QwenVlManifestFile[]
+  try {
+    files = getQwenVlPinnedFiles(variant, loadQwenVlManifest())
+  } catch (err) {
+    return {
+      status: "error",
+      error: err instanceof Error && "code" in err ? String((err as { code: string }).code) : "manifest-invalid",
+    }
+  }
+  if (qwenVlWeightFiles(files).length === 0) {
+    return { status: "error", error: "manifest-invalid" }
+  }
+  return probeQwenPinnedFiles(dir, files)
+}
+
+/** Readiness against the release-pinned manifest (not “config.json exists”). */
+export function probeQwenModelDir(variant: QwenVlVariant, baseDir?: string): QwenProbeResult {
+  return probeQwenModelAt(qwenModelDir(variant, baseDir), variant)
+}
+
+/**
+ * If the switch is on but pins fail (missing/mismatch), force modelEnabled=false.
+ * `absent` (never downloaded) does not disarm — enable-path / empty-dir stay
+ * the caller's problem; only a poisoned or partial tree must not stay armed.
+ */
+export function clearQwenModelEnabledOnIntegrityFailure(
+  variant: QwenVlVariant,
+  probe: QwenProbeResult,
+): void {
+  if (probe.status !== "error") return
+  try {
+    if (getConfig().computer?.modelEnabled === true) {
+      setComputerModelFields({ modelEnabled: false })
+      logger.warn("computer.model.qwen.disarmed_integrity", {
+        variant,
+        error: probe.error || probe.status,
+      })
+    }
+  } catch {
+    /* config unavailable in some unit tests */
+  }
+}
+
+export function disarmQwenIfIntegrityFailed(variant: QwenVlVariant, baseDir?: string): QwenProbeResult {
+  const probe = probeQwenModelDir(variant, baseDir)
+  clearQwenModelEnabledOnIntegrityFailure(variant, probe)
+  return probe
 }
 
 export interface DownloadQwenArgs {
@@ -295,7 +392,7 @@ export async function downloadQwenVlVariant(args: DownloadQwenArgs): Promise<{ d
       if (probe.status !== "ready") {
         throw new QwenDownloadError(
           "download-failed",
-          "下载结束但未找到 config.json——请检查网络、镜像源或 ModelScope 仓库是否可用",
+          `下载结束但完整性校验失败（${probe.error || probe.status}）——请换源重下，勿使用被改动的权重`,
         )
       }
       logger.info("computer.model.qwen.download.completed", {

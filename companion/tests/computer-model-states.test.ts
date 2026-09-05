@@ -28,6 +28,7 @@ test("文案表覆盖常见不可用 reason（含历史 download/gate 词表，�
     "oversize-stream",
     "model-file-missing",
     "model-hash-mismatch",
+    "sha256-mismatch",
     "model-size-mismatch",
     "manifest-invalid",
     "manifest-source-remote",

@@ -168,7 +168,7 @@ function currentVariant(cfg: { modelVariant?: string }): QwenVlVariant {
 }
 
 /**
- * 当前可观测状态。Qwen3-VL：磁盘 probe 看 config.json；会话熔断 → disabled。
+ * 当前可观测状态。Qwen3-VL：磁盘 probe 对照发版钉死 sha256；会话熔断 → disabled。
  */
 async function statePayload(
   holder: ComputerModelSessionHolder,
@@ -182,12 +182,21 @@ async function statePayload(
   let modelStatus: string
   let sizeBytes: number | undefined
   let errorReason: string | undefined
+  let modelEnabled = cfg.modelEnabled === true
   if (session) {
     modelStatus = session.getStatus() === "disabled" ? "disabled" : "ready"
   } else if (activeDownload) {
     modelStatus = "downloading"
   } else {
     const probe = probeQwenModelDir(variant)
+    if (modelEnabled && probe.status === "error") {
+      setComputerModelFields({ modelEnabled: false })
+      modelEnabled = false
+      logger.warn("computer.model.qwen.disarmed_integrity", {
+        variant,
+        error: probe.error || probe.status,
+      })
+    }
     modelStatus = probe.status
     sizeBytes = probe.sizeBytes
     errorReason = probe.error
@@ -214,7 +223,7 @@ async function statePayload(
 
   return {
     type: "computer.model.state" as const,
-    modelEnabled: cfg.modelEnabled === true,
+    modelEnabled,
     licenseAccepted: modelLicenseAccepted(cfg),
     ...(typeof cfg.modelLicenseAcceptedAt === "string" ? { licenseAcceptedAt: cfg.modelLicenseAcceptedAt } : {}),
     modelLicenseDeclined: cfg.modelLicenseDeclined === true,
