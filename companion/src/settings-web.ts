@@ -506,50 +506,86 @@ async function handleTestProxy(
 // Inline HTML settings page
 // ---------------------------------------------------------------------------
 
-const SETTINGS_HTML = `<!DOCTYPE html>
+// #396: exported for token-hygiene tests (Material-hex grep zero).
+// Read-only constant — the server renders it verbatim.
+export const SETTINGS_HTML = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CMspark Settings</title>
 <style>
+/*
+ * Settings dark-surface tokens — single source mirroring the Side Panel
+ * tokens.ts dark family (chrome-extension/src/sidepanel/ui/tokens.ts).
+ * Companion cannot import the extension's TS tokens (package boundary), so
+ * these CSS variables are a hand-mirrored copy — same pattern as the other
+ * non-extension HTML surface summoner-web.ts (:root block, summoner-web.ts
+ * ~1157; it mirrors the light family, this surface mirrors the dark family).
+ * NEVER reintroduce Material palette hexes here (tokens.ts:185 bans them on
+ * the side panel; same rule now applies to this surface).
+ */
+:root{
+  --bg:#0b0d12;            /* tokens.darkBg */
+  --elevated:#141820;      /* tokens.darkElevated */
+  --border:rgba(255,255,255,0.08);  /* tokens.darkBorder */
+  --border-strong:rgba(255,255,255,0.16);
+  --text:#f1f5f9;          /* tokens.darkText */
+  --muted:#94a3b8;         /* tokens.darkMuted */
+  --faint:#64748b;         /* muted-2 级（hint/env 弱文本） */
+  --accent:#818cf8;        /* tokens.darkAccent (indigo-400) */
+  --on-accent:#fff;
+  --success:#34d399;       /* tokens.darkSuccess */
+  --success-soft:rgba(52,211,153,0.12);
+  --danger:#f87171;        /* tokens.darkDanger */
+  --danger-soft:rgba(248,113,113,0.12);
+  --warning:#fbbf24;       /* tokens.darkWarning */
+  --warning-soft:rgba(251,191,36,0.12);
+  --success-border:rgba(52,211,153,0.3);
+  --danger-border:rgba(248,113,113,0.3);
+  --warning-border:rgba(251,191,36,0.25);
+  --field-bg:#1c2230;      /* input 底：darkElevated 上加一层（替代原 Material 输入蓝） */
+  --field-border:rgba(255,255,255,0.12);
+  --radius:12px;--radius-sm:8px;
+  --font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0;min-height:100vh;display:flex;justify-content:center;padding:24px 16px}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-height:100vh;display:flex;justify-content:center;padding:24px 16px}
 .container{max-width:600px;width:100%}
-.card{background:#16213e;border-radius:12px;padding:28px 32px;box-shadow:0 4px 24px rgba(0,0,0,0.3)}
+.card{background:var(--elevated);border-radius:var(--radius);padding:28px 32px;box-shadow:0 4px 24px rgba(0,0,0,0.3)}
 h1{font-size:20px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:8px}
-.status-dot{width:8px;height:8px;border-radius:50%;background:#4CAF50;margin-left:auto;flex-shrink:0}
-.status-dot.offline{background:#F44336}
-.subtitle{font-size:12px;color:#888;margin-bottom:24px}
-.divider{height:1px;background:rgba(255,255,255,0.08);margin:20px 0}
-.section-title{font-size:14px;font-weight:600;color:#ccc;margin-bottom:16px}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--success);margin-left:auto;flex-shrink:0}
+.status-dot.offline{background:var(--danger)}
+.subtitle{font-size:12px;color:var(--muted);margin-bottom:24px}
+.divider{height:1px;background:var(--border);margin:20px 0}
+.section-title{font-size:15px;font-weight:600;color:var(--text);margin-bottom:16px}
 .field{margin-bottom:18px}
-label{display:block;font-size:12px;font-weight:500;color:#aaa;margin-bottom:6px}
-input[type=text],input[type=password],input[type=number]{width:100%;padding:8px 12px;background:#0f3460;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e0e0e0;font-size:14px;font-family:inherit;outline:none;transition:border-color 0.2s}
-input:focus{border-color:#4A90D9}
+label{display:block;font-size:12px;font-weight:500;color:var(--muted);margin-bottom:6px}
+input[type=text],input[type=password],input[type=number]{width:100%;padding:8px 12px;background:var(--field-bg);border:1px solid var(--field-border);border-radius:var(--radius-sm);color:var(--text);font-size:13px;font-family:inherit;outline:none;transition:border-color 0.2s}
+input:focus{border-color:var(--accent)}
 .range-row{display:flex;align-items:center;gap:12px}
-.range-row input[type=range]{flex:1;-webkit-appearance:none;height:6px;background:#0f3460;border-radius:3px;outline:none}
-.range-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;background:#4A90D9;border-radius:50%;cursor:pointer}
-.range-val{font-size:14px;color:#e0e0e0;min-width:32px;text-align:right}
+.range-row input[type=range]{flex:1;-webkit-appearance:none;height:6px;background:var(--field-bg);border-radius:3px;outline:none}
+.range-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;background:var(--accent);border-radius:50%;cursor:pointer}
+.range-val{font-size:13px;color:var(--text);min-width:32px;text-align:right}
 .actions{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap}
-.btn{padding:8px 20px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:inherit;transition:opacity 0.2s}
+.btn{padding:8px 20px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:inherit;transition:opacity 0.2s}
 .btn:hover{opacity:0.85}
-.btn-primary{background:#4A90D9;color:#fff}
-.btn-outline{background:transparent;border:1px solid #4A90D9;color:#4A90D9}
-.btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.15);color:#888}
-.result{margin-top:12px;padding:10px 14px;border-radius:8px;font-size:13px;display:none}
-.result.success{display:block;background:rgba(76,175,80,0.15);color:#4CAF50;border:1px solid rgba(76,175,80,0.3)}
-.result.error{display:block;background:rgba(244,67,54,0.15);color:#EF5350;border:1px solid rgba(244,67,54,0.3)}
+.btn-primary{background:var(--accent);color:var(--on-accent)}
+.btn-outline{background:transparent;border:1px solid var(--accent);color:var(--accent)}
+.btn-ghost{background:transparent;border:1px solid var(--border-strong);color:var(--muted)}
+.result{margin-top:12px;padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;display:none}
+.result.success{display:block;background:var(--success-soft);color:var(--success);border:1px solid var(--success-border)}
+.result.error{display:block;background:var(--danger-soft);color:var(--danger);border:1px solid var(--danger-border)}
 .input-row{display:flex;gap:6px}
 .input-row input{flex:1}
-.btn-icon{padding:8px 10px;background:#0f3460;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#aaa;cursor:pointer;font-size:14px;line-height:1}
-.btn-icon:hover{color:#e0e0e0;border-color:#4A90D9}
-.hint{font-size:11px;color:#666;margin-top:4px}
+.btn-icon{padding:8px 10px;background:var(--field-bg);border:1px solid var(--field-border);border-radius:var(--radius-sm);color:var(--muted);cursor:pointer;font-size:13px;line-height:1}
+.btn-icon:hover{color:var(--text);border-color:var(--accent)}
+.hint{font-size:11px;color:var(--faint);margin-top:4px}
 .presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-.preset{padding:3px 10px;background:#0f3460;border:1px solid rgba(255,255,255,0.08);border-radius:12px;font-size:11px;color:#888;cursor:pointer;transition:all 0.2s}
-.preset:hover{color:#e0e0e0;border-color:#4A90D9}
-.env-banner{display:none;margin-top:16px;padding:10px 14px;background:rgba(255,193,7,0.1);border:1px solid rgba(255,193,7,0.2);border-radius:8px;font-size:12px;color:#FFC107;line-height:1.5}
-.saved-flash{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#4CAF50;color:#fff;padding:8px 20px;border-radius:8px;font-size:13px;opacity:0;transition:opacity 0.3s;pointer-events:none}
+.preset{padding:3px 10px;background:var(--field-bg);border:1px solid var(--border);border-radius:12px;font-size:11px;color:var(--muted);cursor:pointer;transition:all 0.2s}
+.preset:hover{color:var(--text);border-color:var(--accent)}
+.env-banner{display:none;margin-top:16px;padding:10px 14px;background:var(--warning-soft);border:1px solid var(--warning-border);border-radius:var(--radius-sm);font-size:12px;color:var(--warning);line-height:1.5}
+.saved-flash{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:var(--success);color:var(--bg);padding:8px 20px;border-radius:var(--radius-sm);font-size:13px;opacity:0;transition:opacity 0.3s;pointer-events:none}
 .saved-flash.show{opacity:1}
 </style>
 </head>
@@ -573,7 +609,7 @@ input:focus{border-color:#4A90D9}
 
     <div class="field">
       <label>API 协议</label>
-      <select id="protocol" style="width:100%;padding:8px 12px;background:#0f3460;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e0e0e0;font-size:14px;font-family:inherit;outline:none">
+      <select id="protocol" style="width:100%;padding:8px 12px;background:var(--field-bg);border:1px solid var(--field-border);border-radius:var(--radius-sm);color:var(--text);font-size:13px;font-family:inherit;outline:none">
         <option value="openai">OpenAI-compatible（默认）</option>
         <option value="anthropic">Anthropic Messages</option>
       </select>
@@ -702,7 +738,7 @@ input:focus{border-color:#4A90D9}
 
       <div class="field">
         <label>Fallback Strategy</label>
-        <select id="visionFallback" style="width:100%;padding:8px 12px;background:#0f3460;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e0e0e0;font-size:14px;font-family:inherit;outline:none">
+        <select id="visionFallback" style="width:100%;padding:8px 12px;background:var(--field-bg);border:1px solid var(--field-border);border-radius:var(--radius-sm);color:var(--text);font-size:13px;font-family:inherit;outline:none">
           <option value="metadata">Metadata only (recommended)</option>
           <option value="passthrough">Vision-rail fallback: stuff truncated base64 into the description (pixels only if the main model uses native vision)</option>
           <option value="error">Fail with error</option>
