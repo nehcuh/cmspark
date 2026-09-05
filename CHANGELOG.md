@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **CDP 死磕升级建议（#357）**：同一 `(thread, origin)` 上 CDP 交互失败累计 ≥4 次（跨 locator / 工具名）后，后续 CDP 调用被 site-op-memory peek 拒执，`suggested_action=escalate_to_host_computer`，错误文本建议 `host_computer`（Chrome token，**仍走 L2 确认**）或 macOS `osascript_eval`。evaluate `success:true` 且 `result:null` 视为假成功（不重置失败计数、不消耗 DOM-script budget）。不改 `classifyError`，不自动跳过 CU 确认。[#357](https://github.com/nehcuh/cmspark/issues/357)
+
 ### Added
 
 - **浮窗会议台（#244）**：隐私「我已了解」后盖住 Capture 卡，实时转写滚动进会议台（不进草稿框）；结束 / 生成纪要 / 返回对话。`generate_minutes` 失败不写「已生成」。打开侧栏跳过 `--app` 浮窗，落普通 Chrome 窗口。**ACL 增量：零**——`append_transcript` / `generate_minutes` / list / get 等上涨发生在 [#246](https://github.com/nehcuh/cmspark/issues/246)，本票复用。本票收紧：overlay 剥 `auto_diarize`（#244 NEVER：仍扩展-only；浮窗撤「自动标说话人」）。`import_text` 仍扩展-only；overlay never Allow/Deny。[#244](https://github.com/nehcuh/cmspark/issues/244)

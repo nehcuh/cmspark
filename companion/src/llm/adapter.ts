@@ -66,6 +66,7 @@ import {
   isCdpInteractiveTool,
   shouldThawAfterSuccess,
   shouldPersistSiteOpExperience,
+  coerceEvaluateNullResult,
 } from "../tool/site-op-memory"
 import {
   nextRunProgressAfterToolSuccess,
@@ -1474,13 +1475,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             if (cap.capped) {
               toolResult = cappedDomScriptResult(cap.error_code)
             } else {
-              toolResult = await runToolOnce()
+              toolResult = coerceEvaluateNullResult(toolName, await runToolOnce())
               if (toolResult.success) {
                 recordDomScriptSuccess(threadId, meta.key, meta.origin)
               }
             }
           } else {
-            toolResult = await runToolOnce()
+            toolResult = coerceEvaluateNullResult(toolName, await runToolOnce())
           }
           if (toolName === RUN_PROGRESS_PROPOSE_TOOL && toolResult.success) {
             proposedThisRequest = true
@@ -1685,7 +1686,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             if (
               isCdpInteractiveTool(toolName) &&
               failCode !== "SITE_OP_BANNED" &&
-              failCode !== "TAB_ATTACH_FROZEN"
+              failCode !== "TAB_ATTACH_FROZEN" &&
+              failCode !== "SITE_OP_ESCALATE"
             ) {
               const rec = recordSiteOpFailure(threadId, toolName, execParams, failCode, tabUrl)
               if (rec.justBanned) {

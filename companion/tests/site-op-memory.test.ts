@@ -8,12 +8,16 @@ import {
   recordSiteOpFailure,
   resetSiteOpMemoryForTests,
   SITE_LOCATOR_FAIL_BAN,
+  SITE_ORIGIN_FAIL_ESCALATE,
   SITE_OP_EXPERIENCE_MAX,
   formatSiteOpMemoryPrompt,
   thawTabIfPresent,
   bannedSiteOpResult,
   shouldThawAfterSuccess,
   shouldPersistSiteOpExperience,
+  coerceEvaluateNullResult,
+  snapshotOriginCdpFails,
+  hydrateOriginCdpFails,
 } from "../src/tool/site-op-memory.js"
 
 test("locatorKey prefers text over selector (combination C)", () => {
@@ -158,4 +162,78 @@ test("tabId without cache URL ignores params.url", () => {
     undefined,
   )
   assert.equal(origin, "origin:unknown")
+})
+
+test("origin CDP fail streak: 4 different locators/tools then peek refuses 5th with CU escalate", () => {
+  resetSiteOpMemoryForTests()
+  const origin = "https://x.com/i/bookmarks"
+  const recs = [
+    recordSiteOpFailure("hgrsix", "click", { tabId: 1, text: "收藏1" }, "ELEMENT_NOT_FOUND", origin),
+    recordSiteOpFailure("hgrsix", "click", { tabId: 1, text: "收藏2" }, "ELEMENT_NOT_FOUND", origin),
+    recordSiteOpFailure("hgrsix", "type", { tabId: 1, selector: "div[data-testid=x]" }, "ELEMENT_NOT_FOUND", origin),
+    recordSiteOpFailure("hgrsix", "evaluate", { tabId: 1, code: "1" }, "ELEMENT_NOT_FOUND", origin),
+  ]
+  assert.equal(recs[3].originFails, SITE_ORIGIN_FAIL_ESCALATE)
+  assert.equal(peekSiteOpBan("hgrsix", "click", { tabId: 1, text: "收藏1" }, origin).banned, true)
+  // 5th call (new locator + new tool) is refused
+  const ban = peekSiteOpBan("hgrsix", "get_element_info", { tabId: 1, text: "别的按钮" }, origin)
+  assert.equal(ban.banned, true)
+  if (ban.banned) assert.equal(ban.error_code, "SITE_OP_ESCALATE")
+  const r = bannedSiteOpResult(ban as Extract<typeof ban, { banned: true }>)
+  assert.equal(r.data.suggested_action, "escalate_to_host_computer")
+  assert.equal(r.data.error_code, "SITE_OP_ESCALATE")
+  assert.match(r.error, /SITE_OP_BANNED/)
+  assert.match(r.error, /host_computer/)
+  if (process.platform === "linux") {
+    assert.match(r.error, /NOT available/)
+  } else {
+    assert.match(r.error, /Chrome/)
+    assert.match(r.error, /ALWAYS pops a confirm|无人值守/)
+  }
+  if (process.platform === "darwin") assert.match(r.error, /osascript/)
+  assert.doesNotMatch(r.error, /bypass L2|skip the confirm/i)
+  const snap = snapshotOriginCdpFails("hgrsix")
+  assert.equal(snap["https://x.com"].fails, SITE_ORIGIN_FAIL_ESCALATE)
+})
+
+test("origin CDP fail streak does not leak to another origin or thread", () => {
+  resetSiteOpMemoryForTests()
+  const a = "https://x.com/i/bookmarks"
+  const b = "https://zhihu.com/write"
+  for (const text of ["a", "b", "c", "d"]) {
+    recordSiteOpFailure("t-esc", "click", { tabId: 1, text }, "ELEMENT_NOT_FOUND", a)
+  }
+  assert.equal(peekSiteOpBan("t-esc", "click", { tabId: 1, text: "new" }, a).banned, true)
+  assert.equal(peekSiteOpBan("t-esc", "click", { tabId: 1, text: "new" }, b).banned, false)
+  assert.equal(peekSiteOpBan("other-thread", "click", { tabId: 1, text: "new" }, a).banned, false)
+})
+
+test("locator SITE_OP_BANNED envelope still never suggests host_computer", () => {
+  const r = bannedSiteOpResult({ banned: true, error_code: "SITE_OP_BANNED", locator: "text:写文章" })
+  assert.equal(r.data.suggested_action, "stop_or_change_task")
+  assert.doesNotMatch(JSON.stringify(r), /host_computer/)
+})
+
+test("hydrateOriginCdpFails restores streak for #358 persistence hook", () => {
+  resetSiteOpMemoryForTests()
+  hydrateOriginCdpFails("persist", { "https://x.com": { fails: 4, lastCode: "ELEMENT_NOT_FOUND" } })
+  const ban = peekSiteOpBan("persist", "click", { tabId: 9, text: "x" }, "https://x.com/i/bookmarks")
+  assert.equal(ban.banned, true)
+  if (ban.banned) assert.equal(ban.error_code, "SITE_OP_ESCALATE")
+})
+
+test("evaluate result:null is coerced to failure and does not look like success", () => {
+  const fake = coerceEvaluateNullResult("evaluate", { success: true, data: { result: null, evaluate_kind: "empty_completion" } })
+  assert.equal(fake.success, false)
+  assert.equal(fake.data?.error_code, "EVALUATE_NULL_RESULT")
+  assert.match(fake.error || "", /script evaluation failed/)
+  const live = coerceEvaluateNullResult("evaluate", { success: true, data: { result: 0 } })
+  assert.equal(live.success, true)
+  const click = coerceEvaluateNullResult("click", { success: true, data: { result: null } })
+  assert.equal(click.success, true)
+})
+
+test("adapter source-lock: coerceEvaluateNullResult before success / budget", () => {
+  const src = readFileSync(join(process.cwd(), "src/llm/adapter.ts"), "utf8")
+  assert.match(src, /coerceEvaluateNullResult\(/)
 })
