@@ -258,29 +258,6 @@ export function openLogDirectory(logDir: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Tray / Menu-bar support level
-// ---------------------------------------------------------------------------
-
-export type TrayLevel = "native" | "notification-only" | "none"
-
-export function getTrayLevel(): TrayLevel {
-  const platform = getPlatform()
-  switch (platform) {
-    case "darwin":
-      // Swift NSStatusBar (ARM64) or systray2 (x86) — both are native tray
-      return "native"
-    case "win32":
-      // systray2 ships x86-64 binary; ARM64 Windows runs it via x86-64 emulation
-      return "native"
-    case "linux":
-      // systray2 provides system tray (requires GTK)
-      return "native"
-    default:
-      return "none"
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Service install script path
 // ---------------------------------------------------------------------------
 

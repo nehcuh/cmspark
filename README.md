@@ -543,7 +543,7 @@ CMspark 支持将 Companion 注册为系统后台服务，实现开机自启、�
 |------|----------|-------------|----------|
 | **macOS** | `launchd` | **Swift NSStatusBar** 原生托盘 + 配对码窗口；通知走系统通知 | `make install-macos` |
 | **Windows** | 任务计划程序 | 系统托盘 (systray2) | `make install-windows` |
-| **Linux** | `systemd --user` | systray2（可用时）或 node-notifier + readline 降级菜单 | `make install-linux` |
+| **Linux** | `systemd --user` | 系统托盘 (systray2，需 GTK)；systray2 不可用时**不会**自动降级——`detectTrayBackend()` 恒选 systray2，readline 终端菜单需显式指定 | `make install-linux` |
 
 ### 特性
 
@@ -723,6 +723,23 @@ systemctl --user status  cmspark-companion    # 查看状态
 journalctl --user -u     cmspark-companion    # 查看日志
 make uninstall-linux                          # 卸载
 ```
+
+#### Linux 功能缺口总表
+
+Companion daemon 核心（systemd 服务、WebSocket、工具执行）在 Linux 上是完整实现且有 CI 全量测试背书；但桌面层存在以下已知缺口（依据 `.omx/artifacts/platform-audit-20260906/audit.md` §5）：
+
+| 功能 | Linux 状态 | 说明 |
+|------|-----------|------|
+| 本机 Whisper STT | ❌ 不可用（fail-closed） | 无 linux-x64 pin、manifest 无下载条目，生产模式拒用未 pin 二进制；仅剩云端链路或 dev 逃生门 `CMSPARK_WHISPER_UNPINNED=1` |
+| 系统语音引擎 | ❌ 不可用 | `voice.system.state` 返回 `not_win32`（仅 Windows SAPI） |
+| host-use（host_read/host_write） | ❌ 不可用 | linux adapter 为 Phase 0 stub，直接抛 `NotImplementedOnPlatform` |
+| computer-use（host_computer） | ❌ 硬门拒绝 | 返回 `host_computer requires macOS or Windows`（诚实报错，非静默失败） |
+| 托盘原生确认 | ❌ 不可用 | systray2 `showConfirmDialog()` 永不 resolve；高危确认须开 Chrome 确认台（45s 超时兜底） |
+| 召唤器（Summoner） | ⚠️ 仅 HTML shell | 无原生 overlay、无全局热键（热键仅 macOS Swift 侧实现），走托盘菜单触发 |
+| 生物识别门 | ⚠️ 仅 manual-nonce | 无 TouchID/Windows Hello 等价物，persistent 授权每次手输 nonce |
+| 分发形态 | ⚠️ 仅 zip | 无 AppImage/deb/snap；zip 内容断言见 release.yml（#379 起补齐 ORT napi / qwen worker / systray2 binary 检查） |
+
+Diarize（会议说话人）依赖的 ORT napi 二进制会打入 linux zip，但代码无平台门且无任何 Linux 实测/CI 验证，状态为「未验证」。
 
 ---
 

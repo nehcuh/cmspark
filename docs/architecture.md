@@ -452,7 +452,7 @@ cmspark/
 │   │   ├── mcp/                     # MCP client/manager/aggregator/transport
 │   │   ├── outbound-mcp/            # Outbound MCP façade (ADR-022; Phase 0)
 │   │   ├── computer/                # Computer Use（opt-in 桌面操控）
-│   │   ├── host-use/                # Host 读写 / 平台 adapter（darwin/win/linux）
+│   │   ├── host-use/                # Host 读写 / 平台 adapter（darwin/win 已实现，linux 为 Phase 0 stub）
 │   │   ├── apps/                    # 应用枚举 / 启动 / 生物识别门
 │   │   ├── orchestrator/            # Multi-agent：spawn / tab-lease / fleet / L2
 │   │   ├── board/                   # Mission Board（ADR-016）schema + mutate

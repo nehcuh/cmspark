@@ -438,15 +438,12 @@ case "${PLATFORM}" in
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
     if [ "${PLATFORM}" = "linux-arm64" ]; then strip_ort_napi linux arm64; else strip_ort_napi linux x64; fi
     # No ORT/TinyClick stage — experimental locate is Qwen3-VL.
-    # Path B: optional cmspark-whisper (linux-x64). Soft-warn if missing.
-    if [ -f "companion/dist/bin/cmspark-whisper-linux-x64" ]; then
-      mkdir -p "${STAGING}/bin"
-      cp "companion/dist/bin/cmspark-whisper-linux-x64" "${STAGING}/bin/"
-      chmod +x "${STAGING}/bin/cmspark-whisper-linux-x64" 2>/dev/null || true
-      echo "  staged bin/cmspark-whisper-linux-x64 (local STT)"
-    else
-      echo "WARNING: companion/dist/bin/cmspark-whisper-linux-x64 missing — local STT disabled in package" >&2
-    fi
+    # cmspark-whisper-linux-x64 is intentionally NOT staged (#379): the
+    # runtime pin matrix has no linux-x64 entry (whisper-binary-pins.ts) and
+    # the download manifest has no linux URL, so production mode fail-closed
+    # rejects any unpinned binary — shipping it would be dead weight that
+    # falsely suggests local STT works on Linux. Revisit if a linux-x64 pin
+    # + manifest entry is ever added.
     ;;
 esac
 
