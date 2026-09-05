@@ -47,10 +47,10 @@ const RAW_TARGET_PREFIX_RE = /^macos:com\.apple\.(mail|Notes|finder):/
  * Audit M2 — producer↔validator charset reconciliation (win base64url parity).
  *
  * The .scpt producers emit RAW TargetIds whose volatile segments (Mail/Notes
- * account names, Notes CoreData ids, URL-encoded file names) routinely
+ * account names, Notes CoreData ids, raw UTF-8 file names) routinely
  * contain characters outside the validator charset — spaces, ".", "%", ":",
- * "/" (e.g. account "John's Gmail", note id "x-coredata://…/Note/p42", file
- * "John%27s%20report.pdf"). The pre-M2 validator rejected virtually every
+ * "/", CJK (e.g. account "John's Gmail", note id "x-coredata://…/Note/p42",
+ * file "John's report.pdf" / "中文报告.pdf"). The pre-M2 validator rejected virtually every
  * real note/file id at the list boundary — W7 listing was broken on real
  * data.
  *
@@ -63,11 +63,12 @@ const RAW_TARGET_PREFIX_RE = /^macos:com\.apple\.(mail|Notes|finder):/
  * TargetIds; LLM-visible ids are always the encoded form.
  *
  * Split rule: the raw remainder after the fixed "macos:com.apple.<app>:"
- * prefix is split at the FIRST ":<kind>-" marker. Producer contract: raw
- * stable-ids never contain ":msg-"/":note-"/":file-" (mail ids are integers;
- * Notes CoreData ids contain no such substring; file names are URL-encoded by
- * the script, so a literal ":" arrives as "%3A"). An account name containing
- * the literal marker is a pathological edge — accepted and documented; the
+ * prefix is split at the FIRST ":<kind>-" marker. Producer contract: mail
+ * ids are integers and Notes CoreData ids contain no ":msg-"/":note-"/":file-"
+ * substring. File names (#69 F3) are RAW UTF-8 from Finder — a literal ":"
+ * in a name is safe because list-files hardcodes account "Documents", so the
+ * first ":file-" is always the kind marker. An account name containing the
+ * literal marker is a pathological edge — accepted and documented; the
  * producers are first-party scripts, not adversary input.
  */
 export function encodeRawTargetId(raw: string): string {

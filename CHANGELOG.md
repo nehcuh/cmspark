@@ -15,6 +15,10 @@
 - **空态与作曲同一张脸（#321 PR-4）**：CompanionMark 空态 92→48（仍是 #323 红色小牛）；招呼 22px；三条建议回到首屏折叠线以上；作曲胶囊 minHeight 72→52；用户气泡去满铺 indigo（canon 修订：浅底+细边为交付方案，左细 indigo 条为备选截图）；未武装发送 `sendDisabledBg`，武装才 indigo；L0 装配芯片降为弱样式（不删）。[#321](https://github.com/nehcuh/cmspark/issues/321)
 - **Cockpit 抢焦点收敛**：非 nonce 轻量确认不再自动抢桌面焦点（侧栏 MinimalConfirm + macOS 托盘承担）；nonce/重预览级确认与 CU paused 仍自动开并聚焦；巡航/值守武装下 CU started 不再抢焦点。确认条数不变（forceConfirm 代数零 diff）。[#326](https://github.com/nehcuh/cmspark/issues/326)
 
+### Fixed
+
+- **list-files CJK TargetId 有损（#69 F3）**：producer 不再用 `cid mod 256` percent-encode（U+4E00「一」与 U+4F00「伀」曾撞成 `%00`）；改为输出原始 UTF-8 文件名，由既有 M2 `encodeRawTargetId` base64url 在 list 边界编码。选这条而不是在 AppleScript 里重写 UTF-8 percent-encoding：少一层易错逻辑，notes/mail producer 已是 raw。M2 codec 行为不回退。Finder `readOne` 仍是 M1 NotImplemented（Mail-only）——回读是 decode 文件名后读 `~/Documents`。[#69](https://github.com/nehcuh/cmspark/issues/69)
+
 ### Added
 
 - **值守 grant arm/disarm 入 capability-audit（#347）**：`security.unattended.armed` / `.disarmed` / `.expired` 三事件补全审计面板可见性——config.set 双向已记（#334），grant 路径（ADR-021 进程内存值守）此前只有 logger。armed/disarmed 带来源 surface（panel/tray/summoner 归一，stampedSurface 派生），expired 记 `cruise_restored`；字段按构造 redact（无短语/token/命令文本）。bare disarm（无活跃 grant）不伪造审计行；审计写失败永不 gate 生命周期。不改 grant 语义 / TTL / 确认代数。[#347](https://github.com/nehcuh/cmspark/issues/347)

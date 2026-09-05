@@ -16,6 +16,10 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync, writeFileSync, unlinkSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
+import { join } from "node:path"
+import { execFileSync } from "node:child_process"
 import {
   DarwinHostAdapter,
   encodeRawTargetId,
@@ -207,12 +211,13 @@ test("listReadTargets: producer-shaped id with wrong kind marker is rejected at 
 })
 
 test("M2 round-trip: nasty file names survive list→validate→decode losslessly", async () => {
-  // Exactly what list-files.applescript emits (URL-encoded file names).
+  // What list-files.applescript emits after #69 F3: RAW UTF-8 names, not
+  // urlEncode. M2 codec base64url-encodes at the list boundary.
   const raws = [
-    "macos:com.apple.finder:Documents:file-John%27s%20report.pdf",
-    "macos:com.apple.finder:Documents:file-100%25.txt",
-    "macos:com.apple.finder:Documents:file-a%3Ab%2Fc.txt",
-    "macos:com.apple.finder:Documents:file-%E4%B8%AD%E6%96%87%E6%8A%A5%E5%91%8A.pdf",
+    "macos:com.apple.finder:Documents:file-John's report.pdf",
+    "macos:com.apple.finder:Documents:file-100%.txt",
+    "macos:com.apple.finder:Documents:file-a:b/c.txt",
+    "macos:com.apple.finder:Documents:file-中文报告.pdf",
   ]
   const runner: DarwinRunner = async () => JSON.stringify(raws)
   const a = makeAdapter(runner)
@@ -227,6 +232,92 @@ test("M2 round-trip: nasty file names survive list→validate→decode losslessl
     )
     // …and decodes back to the EXACT raw string the producer emitted.
     assert.equal(decodeTargetIdToRaw(ids[i] as string), raws[i])
+  }
+})
+
+test("#69 F3: CJK names that collide under cid-mod-256 stay distinct after M2 codec", async () => {
+  // Old urlEncode used (id of c) mod 256. U+4E00 (一) and U+4F00 (伀) are
+  // both ≡ 0 (mod 256), so "一.txt" and "伀.txt" both became "%00.txt".
+  const yi = String.fromCodePoint(0x4e00)
+  const fou = String.fromCodePoint(0x4f00)
+  assert.equal(yi, "一")
+  assert.equal(yi.codePointAt(0)! % 256, 0)
+  assert.equal(fou.codePointAt(0)! % 256, 0)
+  const aName = `macos:com.apple.finder:Documents:file-${yi}.txt`
+  const bName = `macos:com.apple.finder:Documents:file-${fou}.txt`
+  const runner: DarwinRunner = async () => JSON.stringify([aName, bName])
+  const a = makeAdapter(runner)
+  const ids = await a.listReadTargets("file")
+  assert.equal(ids.length, 2)
+  assert.notEqual(ids[0], ids[1], "CJK names must not collapse to one TargetId")
+  assert.equal(decodeTargetIdToRaw(ids[0] as string), aName)
+  assert.equal(decodeTargetIdToRaw(ids[1] as string), bName)
+  // listReadTargets must not throw the charset validator.
+  for (const id of ids) {
+    assert.match(id as string, /^macos:com\.apple\.finder:[A-Za-z0-9_\-]+:file-[A-Za-z0-9_\-]+$/)
+  }
+})
+
+test("#69 F3: list-files.applescript no longer lossy-urlEncodes (producer emits raw names)", () => {
+  const src = readFileSync(
+    join(process.cwd(), "src/host-use/darwin/list-files.applescript"),
+    "utf8",
+  )
+  assert.match(src, /Documents:file-" & fileName/)
+  assert.doesNotMatch(src, /on urlEncode\(/)
+  assert.doesNotMatch(src, /cid mod 256/)
+  assert.doesNotMatch(src, /on hex2\(/)
+})
+
+test("#69 F3 live: Documents CJK filename lists, validates, and reads back", {
+  skip: process.platform !== "darwin",
+}, async (t) => {
+  const docs = join(homedir(), "Documents")
+  const fileName = `cmspark-69f3-中文报告-${Date.now()}.txt`
+  const filePath = join(docs, fileName)
+  const body = "round-trip-body-69f3\n"
+  const scpt = join(tmpdir(), `list-files-69f3-${Date.now()}.scpt`)
+  const scriptSrc = join(process.cwd(), "src/host-use/darwin/list-files.applescript")
+  writeFileSync(filePath, body, "utf8")
+  try {
+    execFileSync("osacompile", ["-o", scpt, scriptSrc], { timeout: 20_000 })
+    let stdout: string
+    try {
+      stdout = execFileSync("osascript", [scpt], {
+        encoding: "utf8",
+        timeout: 20_000,
+      })
+    } catch (err: any) {
+      t.skip(`Finder/osascript unavailable (TCC?): ${err?.stderr || err?.message || err}`)
+      return
+    }
+    // listReadTargets must not throw the charset validator on live producer
+    // output (raw CJK + whatever else Finder listed).
+    const adapter = makeAdapter(async () => stdout)
+    const ids = await adapter.listReadTargets("file")
+    const expectedRaw = `macos:com.apple.finder:Documents:file-${fileName}`
+    const hit = ids.find((id) => decodeTargetIdToRaw(id as string) === expectedRaw)
+    if (!hit) {
+      const parsed = JSON.parse(stdout.trim()) as unknown
+      if (Array.isArray(parsed) && parsed.length >= 100) {
+        t.skip(
+          "CJK file not in Finder top-100 listing (Documents has many items). Producer still compiled; listReadTargets accepted all ids.",
+        )
+        return
+      }
+      assert.fail(
+        `CJK file missing from Finder listing of ${Array.isArray(parsed) ? parsed.length : "?"} items`,
+      )
+    }
+    const decoded = decodeTargetIdToRaw(hit as string)
+    const recovered = decoded.slice("macos:com.apple.finder:Documents:file-".length)
+    assert.equal(recovered, fileName)
+    // Finder readOne is M1 NotImplementedForApp (Mail-only). Round-trip
+    // "read back" is decode → fs.read of ~/Documents/<name>.
+    assert.equal(readFileSync(join(docs, recovered), "utf8"), body)
+  } finally {
+    try { unlinkSync(filePath) } catch { /* */ }
+    try { unlinkSync(scpt) } catch { /* */ }
   }
 })
 
