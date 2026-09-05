@@ -20,20 +20,38 @@ final class SummonerPanel: NSPanel {
   override var canBecomeMain: Bool { false }
 }
 
+// Manual mirror of chrome-extension/src/sidepanel/ui/tokens.ts (#396) — keep the
+// mapping comments in lock-step when either side changes. Never Material
+// #4CAF50/#FF9800/#F44336 (tokens.ts connectionColor ban).
 enum SummonerTokens {
-  static let paper = NSColor.white
-  static let muted = NSColor(calibratedRed: 244/255, green: 244/255, blue: 245/255, alpha: 1)
-  static let text = NSColor(calibratedRed: 23/255, green: 23/255, blue: 23/255, alpha: 1)
-  static let secondary = NSColor(calibratedRed: 115/255, green: 115/255, blue: 115/255, alpha: 1)
-  static let faint = NSColor(calibratedRed: 163/255, green: 163/255, blue: 163/255, alpha: 1)
-  static let indigo = NSColor(calibratedRed: 79/255, green: 70/255, blue: 229/255, alpha: 1)
-  static let indigoSoft = NSColor(calibratedRed: 238/255, green: 242/255, blue: 255/255, alpha: 1)
-  static let okBg = NSColor(calibratedRed: 236/255, green: 253/255, blue: 245/255, alpha: 1)
-  static let okFg = NSColor(calibratedRed: 4/255, green: 120/255, blue: 87/255, alpha: 1)
-  static let okBorder = NSColor(calibratedRed: 167/255, green: 243/255, blue: 208/255, alpha: 1)
-  static let warnBg = NSColor(calibratedRed: 255/255, green: 251/255, blue: 235/255, alpha: 1)
-  static let warnFg = NSColor(calibratedRed: 146/255, green: 64/255, blue: 14/255, alpha: 1)
-  static let warnBorder = NSColor(calibratedRed: 253/255, green: 230/255, blue: 138/255, alpha: 1)
+  static let paper = NSColor.white                                    // tokens.bg #ffffff
+  static let muted = NSColor(calibratedRed: 244/255, green: 244/255, blue: 245/255, alpha: 1)      // tokens.bgMuted #f4f4f5
+  static let text = NSColor(calibratedRed: 23/255, green: 23/255, blue: 23/255, alpha: 1)          // tokens.text #171717
+  static let secondary = NSColor(calibratedRed: 115/255, green: 115/255, blue: 115/255, alpha: 1) // tokens.textSecondary #737373
+  static let faint = NSColor(calibratedRed: 163/255, green: 163/255, blue: 163/255, alpha: 1)      // tokens.textMuted #a3a3a3
+  static let border = NSColor(calibratedRed: 23/255, green: 23/255, blue: 23/255, alpha: 0.10)     // tokens.border
+  static let borderStrong = NSColor(calibratedRed: 23/255, green: 23/255, blue: 23/255, alpha: 0.14) // tokens.borderStrong
+  static let indigo = NSColor(calibratedRed: 79/255, green: 70/255, blue: 229/255, alpha: 1)       // tokens.accent #4f46e5
+  static let indigoSoft = NSColor(calibratedRed: 238/255, green: 242/255, blue: 255/255, alpha: 1) // tokens.accentSoft #eef2ff
+  static let okBg = NSColor(calibratedRed: 236/255, green: 253/255, blue: 245/255, alpha: 1)       // tokens.successSoft #ecfdf5
+  static let okFg = NSColor(calibratedRed: 4/255, green: 120/255, blue: 87/255, alpha: 1)          // HUD pick: emerald-700 ink on successSoft (no tokens.ts pair)
+  static let okBorder = NSColor(calibratedRed: 167/255, green: 243/255, blue: 208/255, alpha: 1)   // emerald-200 hairline on okBg
+  static let success = NSColor(calibratedRed: 5/255, green: 150/255, blue: 105/255, alpha: 1)      // tokens.success #059669 — primary button fill
+  static let warning = NSColor(calibratedRed: 217/255, green: 119/255, blue: 6/255, alpha: 1)      // tokens.warning #d97706 — riskColor low/medium
+  static let warnBg = NSColor(calibratedRed: 255/255, green: 251/255, blue: 235/255, alpha: 1)     // tokens.warningSoft #fffbeb
+  static let warnFg = NSColor(calibratedRed: 146/255, green: 64/255, blue: 14/255, alpha: 1)       // tokens.warningText #92400e
+  static let warnBorder = NSColor(calibratedRed: 253/255, green: 230/255, blue: 138/255, alpha: 1) // tokens.warningBorder #fde68a
+  static let danger = NSColor(calibratedRed: 220/255, green: 38/255, blue: 38/255, alpha: 1)       // tokens.danger #dc2626 — riskColor high+
+  static let dangerBg = NSColor(calibratedRed: 254/255, green: 242/255, blue: 242/255, alpha: 1)    // tokens.dangerSoft #fef2f2
+  static let dangerBorder = NSColor(calibratedRed: 220/255, green: 38/255, blue: 38/255, alpha: 0.28) // tokens.dangerBorder
+
+  // Type scale — "Chrome stays 11 / 12 / 13 / 15" (tokens.ts header canon);
+  // no per-surface 13/11 roulette.
+  static let fontTitle: CGFloat = 15   // titles / tool names
+  static let fontBody: CGFloat = 13    // body copy / summaries
+  static let fontCaption: CGFloat = 11 // captions / meta / countdown
+
+  static let radiusSm: CGFloat = 6     // tokens.radiusSm — chips & buttons
 }
 
 private let summonerWindowTitle = "CMspark 召唤器（实验）"
