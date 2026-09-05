@@ -59,7 +59,12 @@ test("S2 chrome: legal contrast, send arrow, filled mark, no IconPlus", () => {
   const send = icons.slice(icons.indexOf("export function IconSend"), icons.indexOf("export function IconStop"))
   assert.match(send, /M12 19V6/)
   const mark = icons.slice(icons.indexOf("export function CompanionMark"), icons.indexOf("export function IconSend"))
-  assert.match(mark, /fill="#171717"/)
+  // #323: mark is the brandRed calf imprint — filled stamp, aria-hidden,
+  // and must never fall back to danger-family red.
+  assert.match(mark, /tokens\.brandRed/, "mark body is brandRed")
+  assert.match(mark, /aria-hidden/, "mark stays decorative")
+  assert.ok(!/tokens\.danger/.test(mark), "mark must not reuse danger red")
+  assert.ok(!/#171717/.test(mark), "ink silhouette removed by #323")
   const rail = src("src/sidepanel/components/StatusRail.tsx")
   assert.match(rail, /role="status"/)
 })

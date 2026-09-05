@@ -27,6 +27,14 @@ export const tokens = {
   accentText: "#3730a3",
   accentHover: "#4338ca",
 
+  /**
+   * Brand red (terracotta / brick) — empty-state calf mark ONLY.
+   * Independent of the danger family: hue 18° vs danger 0°, lighter,
+   * lower-chroma; distinguishable for protanopia/deuteranopia. NEVER reuse
+   * danger / dangerSoft / dangerSurface as brand red.
+   */
+  brandRed: "#c96033",
+
   success: "#059669",
   successSoft: "#ecfdf5",
   warning: "#d97706",

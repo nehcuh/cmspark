@@ -39,6 +39,7 @@ Use role names in specs and AI implementer prompts. **Implement with the mapped 
 | `border.strong` | `borderStrong` | `darkBorder` |
 | `accent.primary` | `accent` | `darkAccent` |
 | `accent.soft` | `accentSoft` / `bgActive` | — |
+| `brand.mark` (empty-state imprint ONLY, never danger) | `brandRed` | — |
 | `status.live` | `success` | `darkLive` / `darkSuccess` |
 | `status.warn` | `warning` | `darkWarning` |
 | `status.danger` | `danger` | `darkDanger` |
@@ -145,7 +146,7 @@ Grammar must match: mode chip · connection · secondary context. Cockpit is dar
 ### Message Bubbles (P2)
 - User: `tokens.userBubbleBg` + `tokens.userBubbleText` (values live in `tokens.ts` only — currently indigo accent family, not legacy blue)
 - Assistant: `tokens.assistantBubbleBg` + `tokens.assistantBubbleText`
-- Empty: CompanionMark + 22px greeting + sentence rows (see ChatView `EmptyState`); no kicker. Guidance uses `tokens.textSecondary`
+- Empty: red calf imprint `CompanionMark` (`tokens.brandRed` — brand, never `danger`) + 22px greeting + sentence rows (see ChatView `EmptyState`); no kicker. Guidance uses `tokens.textSecondary`
 
 ### Tool Call Card
 - Border / status via `statusColor()`
