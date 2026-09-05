@@ -6,6 +6,7 @@
 
 ### Added
 
+- **settings-web 去 Material 硬编码，token 化（#396a）**：tray「设置」页内联 CSS 从 Material 暗色板（蓝/绿/红/黄/深蓝卡蓝输入蓝）改为 **CSS 变量单一来源**——`:root` 手工镜像 Side Panel tokens.ts dark 家族（bg/elevated/border/text/muted/accent/success/danger/warning + field-bg），同 SummonerTokens / summoner-web :root 的镜像模式并注单一映射来源。语义色全走 var：主色→darkAccent(indigo-400)、成功→darkSuccess、危险→darkDanger、警告→darkWarning；**字阶对齐侧栏 11/12/13/15 家族**（消灭 14px 中间档：输入/按钮/range 14→13，区块标题 14→15；页标题 20 保留）。hover/focus 对齐侧栏观感（focus 用 accent 边框）。**Material hex 源码零残留**（含注释）；渲染页 GET / 无 Material 值（服务端集成测试钉）。零行为改动——设置项逻辑/保存/CSRF/SSRF 面不动。[#396](https://github.com/nehcuh/cmspark/issues/396)
 - **L-1 完成谓词 + stall-classifier（#387，史诗 #386 首票，T1 零自动执行）**：`companion/src/loop/` 纯函数信号库——双层完成谓词（全 evidence-tick ∧ 收口轮无 tool_calls ∧ 无未决 confirm/nonce；claim⊆tick 交叉核验，被拒 steer 直指未勾项；四态 verdict：complete / claim-rejected / request-claim / incomplete）；受阻五分类（needs-human-confirm / needs-credential / external-wall / route-exhausted / model-noncompliance）+ 机器可读解锁契约（试过路线/败因/解锁条件，每类有完成通道）；progress ledger 连续 K=3 个 run Δ=0 → stalled 信号（干预归 #389）；stall 卡数据结构（渲染归 #390）。`complete` 仅机检信号，L-4 映射为 DONE 报告待用户终审，永不当「任务已完成」文案；click success tick ≠ 表单过关（残余风险，默认档用户终审兜底）。不改 run_progress 勾选语义；execution_contract 保持 shadow（#328）；不挂 adapter、不触发续跑（#388）。[#387](https://github.com/nehcuh/cmspark/issues/387)
 
 ### Fixed
