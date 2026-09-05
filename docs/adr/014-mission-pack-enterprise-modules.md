@@ -68,6 +68,12 @@ Side Panel 底部栏 **「场景」/「任务包」**（L0/L1）：列 Pack、�
 | CWS 默认带扫描器 | 商店 dual-use + 法律责任 |
 | Pack 放宽 `auto_approve_dangerous` | **2026-08-06 修订**：内置/installed 仍禁止；**仅 origin=user 场景** 可在 `trust` 块声明，于 `pack.apply`（user_gesture）写入全局配置，`unapply` 尽量恢复快照 — 见 [用户场景 Trust 设计](../superpowers/specs/2026-08-06-user-scene-tools-and-ai-create.md) 选项 B |
 
+## 修订
+
+### 2026-09-06 · #367 — Pack `kind: expert`
+
+`pack.yaml` 新增可选字段 `kind: "mission" | "expert"`（缺省 mission，旧包兼容；validator 收录——未知 kind 值校验失败，不静默丢弃）。**expert 为可调度的角色视图（schedulable role view），仍非 runtime**：kind 只影响列表过滤/匹配/文案，`pack.apply` / spawn 引擎对两种 kind 走完全相同的装配路径，不存在第二套执行逻辑。`pack.list` / `pack.get` 返回 kind；builtin 安装保持 force refresh。禁项不变：pack.yaml 不得携带 model 字段、不新增顶层数据目录、不改 Trust B 边界、不启用 skill `sub_agent` 类型。组合面定位见 [ADR-020](020-capability-model-three-axes.md) 组合面表 Expert view 行。
+
 ## 参考实现
 
 - `companion/src/packs/` — engine / validator / audit / builtin appsec

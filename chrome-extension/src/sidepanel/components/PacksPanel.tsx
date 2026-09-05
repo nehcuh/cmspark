@@ -18,6 +18,8 @@ export type PackListItem = {
   description?: string
   version: string
   channel: string
+  /** #367: mission|expert (companion always sends it; absent = mission). */
+  kind?: "mission" | "expert"
   min_capability?: string
   requires_modules?: string[]
   apply_blocked?: string | null

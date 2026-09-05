@@ -56,6 +56,40 @@ test("rejects unknown tool in allow", () => {
   if (!r.ok) assert.match(r.error, /unknown tool/i)
 })
 
+// --- #367: Pack kind field ---
+
+test("kind absent validates (legacy pack → mission semantics at read sites)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pack-"))
+  makePack(dir, baseYaml("[list_tabs]"))
+  const r = validatePackDir(dir)
+  assert.equal(r.ok, true)
+  if (r.ok) assert.equal(r.manifest.kind, undefined)
+})
+
+test("kind: expert validates and round-trips into the manifest", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pack-"))
+  makePack(dir, baseYaml("[list_tabs]").replace("channel: community", "channel: community\nkind: expert"))
+  const r = validatePackDir(dir)
+  assert.equal(r.ok, true)
+  if (r.ok) assert.equal(r.manifest.kind, "expert")
+})
+
+test("kind: mission validates explicitly", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pack-"))
+  makePack(dir, baseYaml("[list_tabs]").replace("channel: community", "channel: community\nkind: mission"))
+  const r = validatePackDir(dir)
+  assert.equal(r.ok, true)
+  if (r.ok) assert.equal(r.manifest.kind, "mission")
+})
+
+test("unknown kind value fails validation (never silently dropped)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pack-"))
+  makePack(dir, baseYaml("[list_tabs]").replace("channel: community", "channel: community\nkind: agent"))
+  const r = validatePackDir(dir)
+  assert.equal(r.ok, false)
+  if (!r.ok) assert.match(r.error, /kind must be mission\|expert/)
+})
+
 test("accepts known tools", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pack-"))
   makePack(dir, baseYaml("[list_tabs, get_page_html]"))
