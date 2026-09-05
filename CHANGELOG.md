@@ -7,6 +7,7 @@
 ### Changed
 
 - **MeetingPanel 双「收起」去重（#342）**：面板内按钮改名「结束并收起」（title/aria 同步）——它与 Host header 的「收起」语义不同（前者结束录制+收起，后者纯收起面板），不再同屏同文案。[#342](https://github.com/nehcuh/cmspark/issues/342)
+- **消息行降噪（#321 PR-6）**：消息动作条（复制/编辑/分支/导出/</>接力）改 hover/focus-within 门控——隐藏态用 opacity+pointer-events（非 display:none），按钮留在 Tab 序、键盘聚焦即显整条；最后一条消息常驻。触屏/coarse pointer 每条消息保留一颗 ⋯（aria-expanded，展开同一动作组——硬验收）。四种紧凑横幅（shrink/unknown/prompt/compacted）与 ToolCallCard 内嵌指路/userHint 统一 `NoticeCard` primitive（warning token 家族；无折叠态）。ToolCallCard 纯视觉收口（radius/mono 栈进 token），cascade 逻辑零改动。红线：失败/安全披露（错误工具卡、warning userHint、SEC-C 桩提示）永不默认折叠；RunProgress 折叠语义不动。[#321](https://github.com/nehcuh/cmspark/issues/321)
 - **空态与作曲同一张脸（#321 PR-4）**：CompanionMark 空态 92→48（仍是 #323 红色小牛）；招呼 22px；三条建议回到首屏折叠线以上；作曲胶囊 minHeight 72→52；用户气泡去满铺 indigo（canon 修订：浅底+细边为交付方案，左细 indigo 条为备选截图）；未武装发送 `sendDisabledBg`，武装才 indigo；L0 装配芯片降为弱样式（不删）。[#321](https://github.com/nehcuh/cmspark/issues/321)
 - **Cockpit 抢焦点收敛**：非 nonce 轻量确认不再自动抢桌面焦点（侧栏 MinimalConfirm + macOS 托盘承担）；nonce/重预览级确认与 CU paused 仍自动开并聚焦；巡航/值守武装下 CU started 不再抢焦点。确认条数不变（forceConfirm 代数零 diff）。[#326](https://github.com/nehcuh/cmspark/issues/326)
 

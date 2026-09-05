@@ -23,6 +23,8 @@ import { extractRedactedStub, isRedactedStubContent } from "../utils/redacted-st
 import { RetrievedSourcesChips } from "./RetrievedSourcesChips"
 import { KnowledgeImportModal } from "./KnowledgeImportModal"
 import { SummarySheet } from "./SummarySheet"
+import { NoticeCard } from "./ui/NoticeCard"
+import { isCoarsePointer, messageActionMode } from "./message-actions"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
 import { deriveThreadBusy } from "../utils/thread-busy"
@@ -329,23 +331,12 @@ export function ChatView() {
 
   return (
     <div style={styles.shell}>
+      <style>{quietActionsCSS}</style>
       {/* #321 PR-2: popout bar removed — the 弹出对话框 affordance lives on StatusRail now. */}
       <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
       <div ref={contentRef} style={styles.contentInner}>
         {showCompactBanner && (
-          <div
-            role="status"
-            style={{
-              margin: "8px 10px 4px",
-              padding: "8px 10px",
-              borderRadius: 8,
-              background: tokens.warningSoft,
-              border: `1px solid ${tokens.border}`,
-              fontSize: 11,
-              lineHeight: 1.45,
-              color: tokens.warningText,
-            }}
-          >
+          <NoticeCard tone="warning" role="status" testId="context-notice-card">
             {compactBanner === "shrink" ? (
               <>
                 <strong>工具结果已截断</strong>
@@ -417,7 +408,7 @@ export function ChatView() {
                 ) : null}
               </>
             )}
-          </div>
+        </NoticeCard>
         )}
         <SummarySheet
           open={summaryOpen && !!(rollingSummary || handoff)}
@@ -439,7 +430,7 @@ export function ChatView() {
           !streamingContent &&
           !streamingReasoning &&
           !processingLabel && <EmptyState level={level} />}
-        {messages.map(msg => (
+        {messages.map((msg, i) => (
           <MessageRow
             key={msg.id}
             msg={msg}
@@ -450,6 +441,7 @@ export function ChatView() {
             onExport={handleExport}
             showReasoningMode={showReasoningMode}
             exportIncludeReasoning={exportIncludeReasoning === true}
+            isLast={i === messages.length - 1}
             dispatch={dispatch}
           />
         ))}
@@ -539,6 +531,7 @@ const MessageRow = memo(function MessageRow({
   sendShortcut,
   showReasoningMode,
   exportIncludeReasoning: _exportIncludeReasoning,
+  isLast = false,
   onRegenerate,
   onFork,
   onExport,
@@ -550,6 +543,8 @@ const MessageRow = memo(function MessageRow({
   showReasoningMode: "always_collapsed" | "auto_live" | "always_open"
   /** Primitive so custom memo re-renders when Settings export opt-in flips (P0-1). */
   exportIncludeReasoning: boolean
+  /** #321 PR-6: last message keeps its action bar visible (常驻). */
+  isLast?: boolean
   onRegenerate: (messageId: string, editedMessage?: string) => void
   onFork: (messageId: string) => void
   onExport: (messageId: string) => void
@@ -565,6 +560,9 @@ const MessageRow = memo(function MessageRow({
   const honestyChip = !isUser ? truncationHonestyChip(msg) : null
   const [isEditing, setIsEditing] = useState(false)
   const [editingText, setEditingText] = useState("")
+  // #321 PR-6: coarse-pointer ⋯ expansion (touch has no hover to reveal the bar)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null)
   // useRef so the keydown handler always sees the latest shortcut without
   // busting MessageRow's memo when the user changes the setting.
   const sendShortcutRef = useRef(sendShortcut)
@@ -585,8 +583,87 @@ const MessageRow = memo(function MessageRow({
     }
   }
 
+  // #321 PR-6: which presentation the action bar uses (gated / persistent /
+  // coarse). Computed per render from the pure policy helper.
+  const actionMode = messageActionMode({ coarse: isCoarsePointer(), isLast })
+
+  // The full action set (4 + role-specific 1), shared verbatim by the gated
+  // hover bar and the coarse-pointer ⋯ expansion.
+  const renderActionButtons = () => (
+    <>
+      <button type="button" style={styles.actionBtn} onClick={() => handleCopy(msg.content || "")} title="复制" aria-label="复制">
+        <IconCopy size={13} />
+      </button>
+      {isUser && (
+        <button
+          type="button"
+          style={styles.actionBtn}
+          onClick={() => { setIsEditing(true); setEditingText(captionOnlyForEdit(msg.content || "")) }}
+          title="编辑并重新生成"
+          aria-label="编辑并重新生成"
+        >
+          <IconEdit size={13} />
+        </button>
+      )}
+      {isUser && /<document filename=/.test(msg.content || "") && (
+        <button
+          type="button"
+          style={styles.actionBtn}
+          title="收入知识库"
+          aria-label="收入知识库"
+          onClick={() => {
+            const m = /<document filename="([^"]+)">\n?([\s\S]*?)\n?<\/document>/.exec(msg.content || "")
+            if (!m) return
+            const filename = m[1]
+            const body = m[2] || ""
+            dispatch({
+              type: "SET_KNOWLEDGE_PREVIEW",
+              preview: {
+                title: filename.replace(/\.[^.]+$/, ""),
+                description: "",
+                preview: body.slice(0, 4000),
+                char_count: body.length,
+                payload: { content: body },
+              },
+            })
+          }}
+        >
+          入知识
+        </button>
+      )}
+      {!isUser && (
+        <button type="button" style={styles.actionBtn} onClick={() => onRegenerate(msg.id)} title="重新生成" aria-label="重新生成">
+          <IconRefresh size={13} />
+        </button>
+      )}
+      <button type="button" style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支" aria-label="创建分支">
+        <IconBranch size={13} />
+      </button>
+      <button type="button" style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此条为 Markdown" aria-label="导出此条为 Markdown">
+        <IconDownload size={13} />
+      </button>
+      <button
+        type="button"
+        style={styles.actionBtn}
+        title="派给终端助手（编程接力）"
+        aria-label="派给终端助手"
+        onClick={() => {
+          window.dispatchEvent(
+            new CustomEvent("cmspark:open-coding-handoff", {
+              detail: {
+                seedGoal: String(msg.content || "").slice(0, 800),
+              },
+            }),
+          )
+        }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 600 }}>{"</>"}</span>
+      </button>
+    </>
+  )
+
   return (
-    <div style={isUser ? styles.userMsg : styles.agentMsg}>
+    <div className="cmspark-msg-row" style={isUser ? styles.userMsg : styles.agentMsg}>
       <div style={styles.messageCol}>
         {isEditing ? (
           <div style={styles.editWrap}>
@@ -674,79 +751,65 @@ const MessageRow = memo(function MessageRow({
               </div>
               </>
             ) : null}
-            <div style={{
-              ...styles.actionBar,
-              alignSelf: isUser ? "flex-end" : "flex-start",
-            }}>
-              <button type="button" style={styles.actionBtn} onClick={() => handleCopy(msg.content || "")} title="复制" aria-label="复制">
-                <IconCopy size={13} />
-              </button>
-              {isUser && (
-                <button
-                  type="button"
-                  style={styles.actionBtn}
-                  onClick={() => { setIsEditing(true); setEditingText(captionOnlyForEdit(msg.content || "")) }}
-                  title="编辑并重新生成"
-                  aria-label="编辑并重新生成"
-                >
-                  <IconEdit size={13} />
-                </button>
-              )}
-              {isUser && /<document filename=/.test(msg.content || "") && (
-                <button
-                  type="button"
-                  style={styles.actionBtn}
-                  title="收入知识库"
-                  aria-label="收入知识库"
-                  onClick={() => {
-                    const m = /<document filename="([^"]+)">\n?([\s\S]*?)\n?<\/document>/.exec(msg.content || "")
-                    if (!m) return
-                    const filename = m[1]
-                    const body = m[2] || ""
-                    dispatch({
-                      type: "SET_KNOWLEDGE_PREVIEW",
-                      preview: {
-                        title: filename.replace(/\.[^.]+$/, ""),
-                        description: "",
-                        preview: body.slice(0, 4000),
-                        char_count: body.length,
-                        payload: { content: body },
-                      },
-                    })
-                  }}
-                >
-                  入知识
-                </button>
-              )}
-              {!isUser && (
-                <button type="button" style={styles.actionBtn} onClick={() => onRegenerate(msg.id)} title="重新生成" aria-label="重新生成">
-                  <IconRefresh size={13} />
-                </button>
-              )}
-              <button type="button" style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支" aria-label="创建分支">
-                <IconBranch size={13} />
-              </button>
-              <button type="button" style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此条为 Markdown" aria-label="导出此条为 Markdown">
-                <IconDownload size={13} />
-              </button>
-              <button
-                type="button"
-                style={styles.actionBtn}
-                title="派给终端助手（编程接力）"
-                aria-label="派给终端助手"
-                onClick={() => {
-                  window.dispatchEvent(
-                    new CustomEvent("cmspark:open-coding-handoff", {
-                      detail: {
-                        seedGoal: String(msg.content || "").slice(0, 800),
-                      },
-                    }),
-                  )
+            {actionMode === "coarse" ? (
+              <>
+                {/* Touch fallback (hard acceptance): one always-visible ⋯ per
+                    message expands the full action set inline — no hover needed. */}
+                <div style={{
+                  ...styles.actionBar,
+                  alignSelf: isUser ? "flex-end" : "flex-start",
+                }}>
+                  <button
+                    type="button"
+                    style={{ ...styles.actionBtn, fontSize: 14 }}
+                    title="更多操作"
+                    aria-label="更多操作"
+                    aria-expanded={moreOpen}
+                    aria-controls={`msg-more-${msg.id}`}
+                    ref={moreBtnRef}
+                    onClick={() => setMoreOpen(v => !v)}
+                  >
+                    ⋯
+                  </button>
+                </div>
+                {moreOpen && (
+                  <div
+                    id={`msg-more-${msg.id}`}
+                    style={{
+                      ...styles.actionBar,
+                      alignSelf: isUser ? "flex-end" : "flex-start",
+                      flexWrap: "wrap",
+                    }}
+                    role="group"
+                    aria-label="消息操作"
+                    // NIT-1 close semantics: any executed action (or tap on the
+                    // group's padding) dismisses the menu. Capture phase closes
+                    // the state while the button's own onClick still runs with
+                    // its intact closure — the action fires AND the menu folds.
+                    onClickCapture={() => setMoreOpen(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault()
+                        setMoreOpen(false)
+                        moreBtnRef.current?.focus()
+                      }
+                    }}
+                  >
+                    {renderActionButtons()}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div
+                className={actionMode === "persistent" ? "cmspark-msg-actions is-last" : "cmspark-msg-actions"}
+                style={{
+                  ...styles.actionBar,
+                  alignSelf: isUser ? "flex-end" : "flex-start",
                 }}
               >
-                <span style={{ fontSize: 11, fontWeight: 600 }}>{"</>"}</span>
-              </button>
-            </div>
+                {renderActionButtons()}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -766,6 +829,7 @@ const MessageRow = memo(function MessageRow({
     prev.msg.attachments === next.msg.attachments &&
     prev.activeThreadId === next.activeThreadId &&
     prev.sendShortcut === next.sendShortcut &&
+    prev.isLast === next.isLast &&
     prev.showReasoningMode === next.showReasoningMode &&
     prev.exportIncludeReasoning === next.exportIncludeReasoning
   )
@@ -1068,7 +1132,7 @@ function ToolCallCard({ tc }: { tc: any }) {
               marginLeft: "auto",
               color: tokens.danger,
               border: `1px solid ${tokens.danger}`,
-              borderRadius: 4,
+              borderRadius: tokens.radiusSm,
               padding: "1px 6px",
               fontSize: 10,
               cursor: "pointer",
@@ -1084,7 +1148,7 @@ function ToolCallCard({ tc }: { tc: any }) {
           style={{
             ...styles.toolInset,
             marginTop: 6,
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontFamily: tokens.fontMono,
             fontSize: 10,
             lineHeight: 1.4,
             color: tokens.textSecondary,
@@ -1124,7 +1188,7 @@ function ToolCallCard({ tc }: { tc: any }) {
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
                   background: tokens.shellOutputBg,
-                  borderRadius: 4,
+                  borderRadius: tokens.radiusSm,
                   color: tokens.text,
                 }}
                 data-testid="shell-stdout-body"
@@ -1206,7 +1270,7 @@ function ToolCallCard({ tc }: { tc: any }) {
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
             background: tokens.toolTailBg,
-            borderRadius: 4,
+            borderRadius: tokens.radiusSm,
             color: tokens.textMuted,
           }}
           data-testid="tool-progress-tail"
@@ -1283,19 +1347,18 @@ function ToolCallCard({ tc }: { tc: any }) {
         </div>
       )}
       {settingsPointer && (
-        <div
+        <NoticeCard
+          tone="info"
+          testId="settings-pointer-card"
           style={{
-            ...styles.toolInset,
-            background: tokens.accentSoft,
-            borderLeftColor: tokens.accent,
+            margin: "5px 0 0",
+            padding: "5px 8px",
+            borderRadius: tokens.radiusSm,
             display: "flex",
             alignItems: "center",
             gap: 6,
             flexWrap: "wrap",
-            fontSize: 11,
-            lineHeight: 1.45,
           }}
-          data-testid="settings-pointer-card"
         >
           <span>{settingsPointerLine(settingsPointer)}</span>
           <button
@@ -1318,21 +1381,20 @@ function ToolCallCard({ tc }: { tc: any }) {
           >
             {SETTINGS_POINTER_CTA}
           </button>
-        </div>
+        </NoticeCard>
       )}
       {userHint && (
-        <div
+        <NoticeCard
+          tone="warning"
+          testId="tool-user-hint"
           style={{
-            ...styles.toolInset,
-            background: tokens.warningSoft,
-            borderLeftColor: tokens.warning,
-            fontSize: 11,
-            lineHeight: 1.45,
-            color: tokens.text,
+            margin: "5px 0 0",
+            padding: "5px 8px",
+            borderRadius: tokens.radiusSm,
           }}
         >
           {userHint}
-        </div>
+        </NoticeCard>
       )}
       {/* SEC-C redacted stub: persisted placeholder — show hint, not raw JSON. */}
       {redactedStub && (
@@ -1535,6 +1597,29 @@ const inviteRowCSS = `
     outline: none;
     box-shadow: ${tokens.shadowFocus};
     border-radius: ${tokens.radiusSm}px;
+  }
+`
+
+// #321 PR-6 — quiet message actions. Hidden bars keep layout and stay in the
+// tab order (opacity, NOT display:none / visibility:hidden), so :focus-within
+// genuinely reveals the bar: Tab into the first action button and the whole
+// bar appears. pointer-events:none while hidden prevents ghost clicks on
+// invisible buttons. The last message (`.is-last`) is always visible, and
+// coarse-pointer rows use the ⋯ fallback instead of this bar entirely.
+const quietActionsCSS = `
+  .cmspark-msg-actions {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+  .cmspark-msg-row:hover .cmspark-msg-actions,
+  .cmspark-msg-actions:focus-within,
+  .cmspark-msg-actions.is-last {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cmspark-msg-actions { transition: none; }
   }
 `
 
@@ -1994,7 +2079,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     lineHeight: 1.45,
     color: tokens.textSecondary,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    fontFamily: tokens.fontMono,
   },
   fakeEnd: {
     display: "block",
