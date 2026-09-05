@@ -47,6 +47,14 @@ import {
 } from "./log-forward-policy"
 import { shouldRefuseWsFrame } from "./ws-frame-budget"
 import { newTempUserMessageId } from "../utils/temp-message-id"
+import {
+  cockpitFocusEventFromMessage,
+  decideCockpitFocus,
+  foldConfigUpdated,
+  unattendedArmedFromStatus,
+  DEFAULT_ARM_STATE,
+  type ArmState,
+} from "./cockpit-focus-policy"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -72,6 +80,12 @@ interface ExtensionConfig {
   vision_fallback?: string
 }
 let extensionConfig: ExtensionConfig | null = null
+
+// #326 Cockpit 抢焦点收敛：武装态镜像（巡航三旗 + 值守 grant），由既有
+// config.updated / security.unattended.status 广播 hydrate——无新协议。
+// 状态未知（SW 重启后尚未 hydrate）时保持未武装 → 维持旧开窗行为（fail-safe
+// 方向偏向「维持现状」，不会把该弹的确认藏起来）。
+let cockpitArmState: ArmState = DEFAULT_ARM_STATE
 
 /** Strip secrets from a stored blob (migration for pre-ARCH-02 installs). */
 function stripSecretsFromExtensionConfig(raw: Record<string, unknown> | null | undefined): ExtensionConfig {
@@ -291,6 +305,8 @@ function handleStateChange(state: "connected" | "connecting" | "disconnected") {
     clearDisconnectedNotification()
     // Fetch global config from companion on connect
     wsClient.send({ type: "config.get" })
+    // #326: hydrate unattended-grant mirror (cruise flags arrive via config.get reply).
+    wsClient.send({ type: "security.unattended.status" })
   }
 }
 
@@ -450,15 +466,25 @@ async function handleCompanionMessage(msg: any) {
     noteSecurityConfirmationGone(msg.confirmation_id)
   }
 
-  // P1 content-split (D10′): open/focus Cockpit for ANY security confirm
-  // (Panel MinimalConfirm; heavy preview/nonce/whitelist in ConfirmElevated).
-  // Also L2 task start (covers tray-initiated CU when Side Panel is closed — D16).
+  // #326 arm-state mirror (existing broadcasts only — no new protocol):
+  // cruise three-bool SoT arrives via config.updated (config.get on connect +
+  // companion change broadcast); unattended grant via security.unattended.status.
+  if (msg.type === "config.updated") {
+    cockpitArmState = foldConfigUpdated(cockpitArmState, msg.config)
+  }
+  const unattendedArmed = unattendedArmedFromStatus(msg)
+  if (unattendedArmed !== null) {
+    cockpitArmState = { ...cockpitArmState, unattendedArmed }
+  }
+
+  // P1 content-split (D10′) + #326 抢焦点收敛：开窗策略表驱动
+  // (background/cockpit-focus-policy.ts)。nonce/重预览级确认与 CU paused 仍
+  // open/focus；轻量确认（侧栏 MinimalConfirm + macOS 托盘可批）与武装态下的
+  // CU started 不再抢桌面焦点。确认代数本身不变——永不豁免清单仍逐项出
+  // security.confirmation.request，只是不再一律抢焦点。
   // Focus is background-driven — Cockpit must not self-focus on every confirm.
-  const anySecurityConfirm = msg.type === "security.confirmation.request"
-  const computerTaskStart =
-    msg.type === "computer.task.event" &&
-    (msg.event === "started" || msg.event === "paused")
-  if (anySecurityConfirm || computerTaskStart) {
+  const focusEvent = cockpitFocusEventFromMessage(msg)
+  if (focusEvent && decideCockpitFocus(focusEvent, cockpitArmState) === "open_focus") {
     openOrFocusCockpit().catch(() => {})
   }
 
