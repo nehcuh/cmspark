@@ -196,11 +196,15 @@ export function spawnWorkerThread(
 
   const intentId = opts.intentId && String(opts.intentId).trim() ? String(opts.intentId).trim() : null
   const worker = tm.create(opts.alias || `worker:${opts.roleLabel || "task"}`)
+  const parentThread = tm.get(opts.parentThreadId)
   tm.update(worker.id, {
     parent_thread_id: opts.parentThreadId,
     orchestrator_run_id: runId,
     worker_role_label: opts.roleLabel || "worker",
     agent_role: "worker" as AgentRole,
+    // #327: workers are never wider than their master — stamp the parent's
+    // current cap at spawn (gate-side parent fallback covers mid-run arming).
+    execution_policy: parentThread?.execution_policy ?? "default",
     tool_whitelist: whitelist,
     mission_pack_id: opts.packId ?? null,
     assigned_intent_id: intentId,

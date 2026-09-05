@@ -2644,6 +2644,56 @@ export async function handleMessage(
     case "thread.run_progress.toggle":
       return handleRunProgressToggle(rest, threadManager)
 
+    // --- #327: thread execution cap (plan_readonly). user_gesture-only write;
+    // workers inherit (set it on the orchestrator thread); summoner ACL denies. ---
+    case "thread.execution_policy.set": {
+      if (stampedSurface === "summoner") {
+        return { type: "error", error: "SUMMONER_ACL: thread.execution_policy.set not allowed on summoner surface", error_code: "SUMMONER_ACL" }
+      }
+      if (rest.user_gesture !== true) {
+        return { type: "error", error: "thread.execution_policy.set requires user_gesture:true (user-initiated only)" }
+      }
+      if (typeof rest.thread_id !== "string" || !rest.thread_id) {
+        return { type: "error", error: "thread.execution_policy.set requires thread_id" }
+      }
+      const { isExecutionPolicy } = await import("./tool/plan-readonly")
+      if (!isExecutionPolicy(rest.policy)) {
+        return { type: "error", error: "thread.execution_policy.set requires policy: \"default\" | \"plan_readonly\"" }
+      }
+      const targetThread = threadManager.get(rest.thread_id)
+      if (!targetThread) {
+        return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+      }
+      if (targetThread.agent_role === "worker") {
+        return {
+          type: "error",
+          error:
+            "thread.execution_policy.set: workers inherit their orchestrator's execution_policy — set it on the orchestrator thread",
+          code: "worker_policy_inherited",
+        }
+      }
+      try {
+        // capture BEFORE update: get() returns the live thread object
+        const from = targetThread.execution_policy ?? "default"
+        const thread = threadManager.update(rest.thread_id, {
+          execution_policy: rest.policy,
+        } as any)
+        if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+        const { appendCapabilityAudit } = await import("./packs/audit-log")
+        appendCapabilityAudit({
+          type: "execution_policy.set",
+          at: new Date().toISOString(),
+          thread_id: rest.thread_id,
+          policy: rest.policy,
+          from,
+          by: "user_gesture",
+        })
+        return { type: "thread.execution_policy.updated", thread }
+      } catch (e: any) {
+        return { type: "error", error: e.message || String(e) }
+      }
+    }
+
     // --- Skills ---
     case "skill.list":
       // list() → ensureFresh(): cheap mtime/size fingerprint; full re-parse only when

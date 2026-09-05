@@ -15,6 +15,11 @@ import {
   sweepExpired,
 } from "./tab-lease"
 import { isMultiAgentThread } from "./spawn"
+import {
+  isPlanReadonlyAllowed,
+  planReadonlyBlockedResult,
+  resolveEffectiveExecutionPolicy,
+} from "../tool/plan-readonly"
 
 export type ToolPregateResult =
   | { ok: true; finalParams: Record<string, any> }
@@ -162,6 +167,23 @@ export async function runMultiAgentToolPregate(
           success: false as const,
           error: `worker_paused:${actingThreadId} — resume before dispatching tools`,
         }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return { ok: false, result }
+      }
+      // #327 plan_readonly: thread-scoped execution cap (deny-by-default
+      // allowlist). Before isToolAllowed so the cap applies to every thread
+      // regardless of pack. Only tightens — never widens, never skips L2 /
+      // confirm algebra (those gates still run for allowlisted tools).
+      const effectivePolicy = resolveEffectiveExecutionPolicy(actingThreadId, (id) =>
+        threadManager.get(id) as any,
+      )
+      if (effectivePolicy === "plan_readonly" && !isPlanReadonlyAllowed(toolName)) {
+        const result = planReadonlyBlockedResult(toolName, actingThreadId)
+        logger.warn("security.plan_readonly_blocked", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          thread_id: actingThreadId,
+        })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return { ok: false, result }
       }
