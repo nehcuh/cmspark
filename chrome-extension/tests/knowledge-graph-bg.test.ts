@@ -3,11 +3,16 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import {
+  clearGraphRequests,
+  graphRequestInFlight,
   isKnowledgeGraphTabUrl,
   KNOWLEDGE_GRAPH_PATH,
   KNOWLEDGE_GRAPH_SNAPSHOT_KEY,
+  knowledgeGraphErrorById,
   knowledgeGraphErrorPayload,
   knowledgeGraphUrl,
+  trackGraphRequest,
+  untrackGraphRequest,
 } from "../src/background/knowledge-graph"
 
 test("KNOWLEDGE_GRAPH_PATH is plasmo tab html", () => {
@@ -59,6 +64,26 @@ test("SW open/open_doc/refresh 有独立 case；knowledge.graph 不走 bulk-forw
 
 // --- #356: knowledge.graph error 帧 → error 态快照（不再无限「重建中」） ---
 
+test("#374: 组合语义 —— error 帧无 id 时文本兜底仍命中（老 companion / 早退帧）", () => {
+  // SW 组合是 knowledgeGraphErrorById(msg) ?? knowledgeGraphErrorPayload(msg)：
+  // 无 id 的 error 帧 → byId 返回 null → 兜底文本匹配接管（#365 行为不回退）
+  const combined = (msg: unknown) => knowledgeGraphErrorById(msg) ?? knowledgeGraphErrorPayload(msg)
+  // 无 id + 文本带动词 → 兜底命中（老 companion 不配新扩展的主路径）
+  const fb = combined({ type: "error", error: "knowledge.graph is panel-only (Side Panel knowledge panel)" })
+  assert.ok(fb)
+  assert.equal(fb!.status, "error")
+  // 无 id + 文本不带动词 → 都不命中（既有 NIT-5 边界不变）
+  assert.equal(combined({ type: "error", error: "boom" }), null)
+  // 带在途 id + 无动词文本 → byId 命中且短路（不落到文本兜底）
+  trackGraphRequest("kg.combo.1")
+  const byId = combined({ type: "error", error: "boom", id: "kg.combo.1" })
+  assert.ok(byId)
+  assert.equal(graphRequestInFlight("kg.combo.1"), false)
+  // 带未知 id + 文本带动词 → byId 不中、文本兜底命中（不因 id 在注册表外而漏网）
+  const unknownId = combined({ type: "error", error: "knowledge.graph is panel-only (Side Panel knowledge panel)", id: "kg.stale.99" })
+  assert.ok(unknownId)
+})
+
 test("#356: knowledgeGraphErrorPayload — 动词文本命中才映射，其他 error 帧不误伤", () => {
   // panel-only 门拒（message-router 原文）
   const rejected = knowledgeGraphErrorPayload({
@@ -99,4 +124,65 @@ test("#356: SW 把 knowledge.graph error 帧写成 error 态快照", () => {
   const slice = bg.slice(bg.indexOf('if (msg.type === "knowledge.graph")'), bg.indexOf('if (msg.type === "knowledge.graph")') + 700)
   assert.ok(slice.includes("knowledgeGraphErrorPayload"), "映射紧跟 knowledge.graph 快照分支")
   assert.ok(slice.includes("writeKnowledgeGraphSnapshot(graphError"), "error 快照落 session storage")
+})
+
+// --- #374: error 帧按请求 id 精确关联（替代文本 seam 为主；文本 seam 仅兜底） ---
+
+test("#374: 在途请求注册表 track/untrack/clear 基本语义", () => {
+  const id = "kg.test.1"
+  assert.equal(graphRequestInFlight(id), false)
+  trackGraphRequest(id)
+  assert.equal(graphRequestInFlight(id), true)
+  untrackGraphRequest(id)
+  assert.equal(graphRequestInFlight(id), false)
+  trackGraphRequest("kg.a")
+  trackGraphRequest("kg.b")
+  clearGraphRequests()
+  assert.equal(graphRequestInFlight("kg.a"), false)
+  assert.equal(graphRequestInFlight("kg.b"), false)
+  // 防御：undefined/null/空串不登记
+  trackGraphRequest(undefined)
+  trackGraphRequest(null)
+  trackGraphRequest("")
+  assert.equal(graphRequestInFlight(undefined), false)
+  assert.equal(graphRequestInFlight(""), false)
+})
+
+test("#374: 在途 id 命中才映射（handler-throw 文本不含动词也能命中）；命中即注销", () => {
+  const id = "kg.hit.1"
+  // 未登记 → 不映射（任何 error 帧不因带任意 id 就误伤）
+  assert.equal(knowledgeGraphErrorById({ type: "error", error: "boom", id }), null)
+  trackGraphRequest(id)
+  // 文本不含 "knowledge.graph" 动词——文本 seam 命中不到的路径（#374 主价值）
+  const hit = knowledgeGraphErrorById({ type: "error", error: "boom", id })
+  assert.ok(hit)
+  assert.equal(hit!.status, "error")
+  assert.equal(hit!.error, "boom")
+  assert.equal(graphRequestInFlight(id), false, "一次响应后注销，防重复消费")
+})
+
+test("#374: 非 error 帧 / 缺 id / 未知 id 不命中；命中后未消费的其它请求不受影响", () => {
+  trackGraphRequest("kg.other.1")
+  // 非 error 帧
+  assert.equal(knowledgeGraphErrorById({ type: "knowledge.graph", status: "rebuilding" }), null)
+  // 缺 id
+  assert.equal(knowledgeGraphErrorById({ type: "error", error: "boom" }), null)
+  // error 但 id 不在注册表（如其它请求的错误帧）
+  assert.equal(knowledgeGraphErrorById({ type: "error", error: "boom", id: "kg.unknown.9" }), null)
+  // 未命中不注销
+  assert.equal(graphRequestInFlight("kg.other.1"), true)
+  clearGraphRequests()
+})
+
+test("#374: SW 接线——请求带 id 并登记、按 id 命中优先、断线清空", () => {
+  const bg = readFileSync(join(process.cwd(), "src/background/index.ts"), "utf8")
+  // 请求侧：builder 调用带 id 参数且登记在途
+  assert.ok(bg.includes("trackGraphRequest(reqId)"), "发请求前登记在途 id")
+  assert.ok(bg.includes("id: reqId"), "请求帧携带 id")
+  assert.ok(bg.includes("untrackGraphRequest(reqId)"), "未发出时立即注销")
+  // 响应侧：id 精确关联优先于文本兜底
+  assert.ok(bg.includes("knowledgeGraphErrorById(msg) ?? knowledgeGraphErrorPayload(msg)"), "id 关联为主、文本 seam 兜底")
+  // 成功帧与断线都注销/清空
+  assert.ok(bg.includes("untrackGraphRequest(msg?.id)"), "成功 knowledge.graph 帧到达即注销")
+  assert.ok(bg.includes("clearGraphRequests()"), "断线清空在途注册表")
 })

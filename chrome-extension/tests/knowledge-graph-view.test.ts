@@ -228,6 +228,11 @@ test("buildKnowledgeGraphRequest: 默认不带 llm_labels；开时 llm_labels:tr
     llm_labels: true,
     regen_labels: true,
   })
+  // #374: 可选 id 透传（companion 回带用于 error 帧精确关联）
+  assert.deepEqual(buildKnowledgeGraphRequest({ llmLabels: false, id: "kg.1" }), {
+    type: "knowledge.graph",
+    id: "kg.1",
+  })
 })
 
 test("KnowledgeGraphLlmSwitch 默认关，重新生成仅在开启时出现", () => {

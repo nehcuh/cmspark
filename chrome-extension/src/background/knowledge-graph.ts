@@ -56,15 +56,58 @@ export async function readKnowledgeGraphSnapshot(): Promise<KnowledgeGraphSnapsh
 }
 
 /**
- * #356: knowledge.graph 的 error 帧 → error 态快照的**防御性兜底**。
- * 诚实边界（Wave7 复审 MAJOR-1）：扩展 WS 的 surface 恒为 "panel"
- * （handshake-surface.ts 对 chrome-extension origin 强制），panel-only 门
- * 对扩展流量不可达；getKnowledgeGraph 内部全 try/catch 返回 null，handler
- * 几乎不 throw，且 throw 文本是原始 message（不含动词）。故本映射在生产
- * 中预期**极少命中**——#356 的「无限重建中」根因实为 split-brain 污染
- * （knowledgeIndexPath 已改 live getConfigDir）+ too_few 无空态，由另两处
- * 修复收口；本映射只在 error 帧文本带动词时 fail-safe 生效，miss 退回既有
- * 100s 轮询上限（NIT-5）。error 帧无请求关联 id，文本动词是唯一可用 seam。
+ * #356/#374: 在途 knowledge.graph 请求 id 注册表（SW 发请求时登记，响应到达时注销）。
+ * #374 动机：companion 对 handleMessage 响应（含门拒与 handler-throw catch）统一回带
+ * `{..., id: msg?.id}`（lifecycle.ts 响应发送路径）；请求带 id 后 error 帧即可**按 id 精确
+ * 关联**，替代/兜底文本动词 seam——handler-throw 的原始 message 往往不含动词，文本 seam
+ * 命中不到。
+ */
+const inflightGraphRequestIds = new Set<string>()
+
+export function trackGraphRequest(id: string | undefined | null): void {
+  if (typeof id === "string" && id) inflightGraphRequestIds.add(id)
+}
+
+export function untrackGraphRequest(id: unknown): void {
+  if (typeof id === "string") inflightGraphRequestIds.delete(id)
+}
+
+/** 断线/重连时清空——旧 socket 的在途请求不会再有响应（#290 stale guard 之外的一致性）。 */
+export function clearGraphRequests(): void {
+  inflightGraphRequestIds.clear()
+}
+
+export function graphRequestInFlight(id: unknown): boolean {
+  return typeof id === "string" && inflightGraphRequestIds.has(id)
+}
+
+/**
+ * #374: error 帧按请求 id 精确关联（优先于文本 seam）。
+ * 命中：`type==="error"` 且 `id` 是某在途 knowledge.graph 请求。命中即注销该 id
+ * （一次请求只有一次响应），返回 error 态载荷；error 文本可选透传。
+ */
+export function knowledgeGraphErrorById(msg: unknown): KnowledgeGraphPayload | null {
+  if (!msg || typeof msg !== "object") return null
+  const m = msg as { type?: unknown; id?: unknown; error?: unknown }
+  if (m.type !== "error" || typeof m.id !== "string") return null
+  if (!graphRequestInFlight(m.id)) return null
+  untrackGraphRequest(m.id)
+  return {
+    status: "error",
+    truncated: false,
+    nodes: [],
+    edges: [],
+    labels: {},
+    ...(typeof m.error === "string" && m.error ? { error: m.error } : {}),
+  }
+}
+
+/**
+ * #356: knowledge.graph 的 error 帧 → error 态快照的**文本兜底**（#374 之后保留为
+ * 第二道 seam，专指不带 id 的 validate/ACL 早退帧——扩展正常请求不会触发，防未来回归）。
+ * 诚实边界（Wave7 复审 MAJOR-1）：扩展 WS surface 恒为 "panel"，panel-only 门对扩展
+ * 流量不可达；getKnowledgeGraph 内部全 try/catch 返回 null。本映射生产命中面窄，fail-safe，
+ * miss 退回既有 100s 轮询上限（NIT-5）。
  */
 export function knowledgeGraphErrorPayload(msg: unknown): KnowledgeGraphPayload | null {
   if (!msg || typeof msg !== "object") return null
