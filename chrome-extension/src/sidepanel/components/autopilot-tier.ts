@@ -13,6 +13,19 @@ export type AutopilotTier =
 /** Selectable arm targets in Settings (not off/custom). */
 export type AutopilotArmPick = "browser" | "full" | "full_protocol" | "unattended"
 
+/**
+ * Composer picker slots — AutopilotArmPick minus unattended, plus off.
+ * UI view only; three bools remain config SoT. Do not persist this union.
+ */
+export const COMPOSER_CRUISE_SLOTS = ["off", "browser", "full", "full_protocol"] as const
+export type ComposerCruiseSlot = (typeof COMPOSER_CRUISE_SLOTS)[number]
+
+/** Lock-step with companion SECURITY_ARM_CONFIRM_PHRASE / Settings GODMODE_CONFIRM_PHRASE. */
+export const AUTOPILOT_ARM_PHRASE = "我了解风险"
+
+/** v1 composer cruise is machine-global, not per-thread. */
+export const COMPOSER_CRUISE_SCOPE_NOTE = "对本机全部对话生效"
+
 export interface SecurityArmFlags {
   auto_approve_dangerous?: boolean
   auto_approve_enterprise_tools?: boolean
@@ -169,6 +182,57 @@ export function flagsNeedingDisarm(
     "allow_all_schemes",
   ]
   return keys.filter((k) => target[k] === false && current[k] === true)
+}
+
+/**
+ * Composer chip text: live deriveDisplayTier (flags + process grant).
+ * Unattended grant wins the label (「无人值守」) — never cache.
+ * Slots remain cruise-only; 值守 is display, not a picker option.
+ */
+export function composerCruiseChipLabel(
+  flags: SecurityArmFlags,
+  unattendedArmed = false,
+): string {
+  return tierShortLabel(deriveDisplayTier(flags, unattendedArmed))
+}
+
+/**
+ * Canonical flags for a composer slot.
+ * Browser does not inherit enterprise (otherwise picking 网页巡航 from 全自动
+ * would still derive as full via targetFlagsForTier's keep-enterprise).
+ */
+export function composerSlotFlags(slot: ComposerCruiseSlot): Required<SecurityArmFlags> {
+  if (slot === "off") return disarmAllFlags()
+  return targetFlagsForTier(slot, { auto_approve_enterprise_tools: false })
+}
+
+export function composerPickNeedsArm(
+  current: SecurityArmFlags,
+  slot: ComposerCruiseSlot,
+): boolean {
+  return flagsNeedingArm(current, composerSlotFlags(slot)).length > 0
+}
+
+export type ComposerCruiseWrite = {
+  flag: keyof Required<SecurityArmFlags>
+  value: boolean
+  needsPhrase: boolean
+}
+
+/** Disarm first, then arm — same order as Settings applySecurityFlagsTarget. */
+export function composerSlotWrites(
+  current: SecurityArmFlags,
+  slot: ComposerCruiseSlot,
+): ComposerCruiseWrite[] {
+  const target = composerSlotFlags(slot)
+  const out: ComposerCruiseWrite[] = []
+  for (const k of flagsNeedingDisarm(current, target)) {
+    out.push({ flag: k, value: false, needsPhrase: false })
+  }
+  for (const k of flagsNeedingArm(current, target)) {
+    out.push({ flag: k, value: true, needsPhrase: true })
+  }
+  return out
 }
 
 export const AUTOPILOT_CONSEQUENCE_ROWS: Array<{

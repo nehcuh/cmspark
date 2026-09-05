@@ -26,6 +26,7 @@ import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { StatusRail } from "./components/StatusRail"
 import { ComposerChips } from "./components/ComposerChips"
+import { ComposerCruisePicker } from "./components/ComposerCruisePicker"
 import { ComposeDrawer } from "./components/ComposeDrawer"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
 import type { CapabilityLevel, SkillMeta, FileAttachment } from "./types"
@@ -1963,6 +1964,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               排队
             </button>
           )}
+          <ComposerCruisePicker />
           {showStop ? (
             <button
               type="button"

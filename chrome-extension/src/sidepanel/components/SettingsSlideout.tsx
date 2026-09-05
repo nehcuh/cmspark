@@ -44,7 +44,6 @@ import {
   variantResourceTip,
 } from "./model-switch-logic"
 import {
-  AUTOPILOT_CONSEQUENCE_ROWS,
   UNATTENDED_MATRIX_FOOTNOTES,
   type AutopilotArmPick,
   type AutopilotTier,
@@ -56,6 +55,7 @@ import {
   tierShortLabel,
   trustStatusChip,
 } from "./autopilot-tier"
+import { AutopilotConsequenceMatrix } from "./AutopilotConsequenceMatrix"
 // Path B M0: pure copy + recommended model id for local STT settings progressive disclosure.
 import {
   BTN_CANCEL,
@@ -2744,49 +2744,8 @@ export function SettingsSlideout() {
                     ))}
                   </div>
 
-                  <div style={{ marginTop: 10, overflowX: "auto" }}>
-                    <div style={{ ...styles.helpText, fontWeight: 600, marginBottom: 4 }}>
-                      武装后仍会 / 不会跳过（后果矩阵）
-                    </div>
-                    <table
-                      style={{
-                        width: "100%",
-                        borderCollapse: "collapse",
-                        fontSize: 10,
-                        color: tokens.textSecondary,
-                      }}
-                    >
-                      <thead>
-                        <tr style={{ background: tokens.bgMuted }}>
-                          <th style={{ textAlign: "left", padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>
-                            工具族
-                          </th>
-                          <th style={{ textAlign: "left", padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>
-                            网页
-                          </th>
-                          <th style={{ textAlign: "left", padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>
-                            全自动
-                          </th>
-                          <th style={{ textAlign: "left", padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>
-                            +协议
-                          </th>
-                          <th style={{ textAlign: "left", padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>
-                            值守
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {AUTOPILOT_CONSEQUENCE_ROWS.map((row) => (
-                          <tr key={row.family}>
-                            <td style={{ padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>{row.family}</td>
-                            <td style={{ padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>{row.browser}</td>
-                            <td style={{ padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>{row.full}</td>
-                            <td style={{ padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>{row.protocol}</td>
-                            <td style={{ padding: "4px 6px", border: `1px solid ${tokens.borderStrong}` }}>{row.unattended}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div style={{ marginTop: 10 }}>
+                    <AutopilotConsequenceMatrix footnotes={false} />
                     <div style={{ ...styles.helpText, marginTop: 4 }}>
                       {UNATTENDED_MATRIX_FOOTNOTES}
                       <br />
