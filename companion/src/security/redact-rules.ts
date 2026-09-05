@@ -152,6 +152,13 @@ const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
 ]
 
 /**
+ * #370: export the value-track family so free-text redactors (threads 正文
+ * distill) reuse the SAME patterns instead of drifting copies. Lock-step
+ * tested via tests/redact-text.test.ts.
+ */
+export { SECRET_VALUE_PATTERNS }
+
+/**
  * Gate 1: true when free text carries a value-track secret shape. Any hit →
  * the whole row fails closed to a full collapse stub.
  */
@@ -197,6 +204,9 @@ const COOKIE_NAME_EQ_RE =
 // quoted `"key":` form of JSON serialization (works on fragments too).
 const SENSITIVE_KEY_NAME_TEXT_RE =
   /"[^"]*(?:secret|token|password|passwd|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)[^"]*"\s*:/i
+
+/** #370: exported for the free-text redactor (same family, same drift risk). */
+export { SENSITIVE_KEY_NAME_TEXT_RE }
 
 /**
  * Gate 2: true when evaluate code reads a DOM/storage secret directly.

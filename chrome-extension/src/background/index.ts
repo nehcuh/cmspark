@@ -1380,6 +1380,12 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "pack.save_user":
       case "pack.delete_user":
       case "pack.suggest_config":
+      // #370: expert distill — 手点归纳 / armed 队列（默认 off）/ 状态只读
+      case "pack.distill_expert":
+      case "pack.distill_arm":
+      case "pack.distill_disarm":
+      case "pack.distill_drain":
+      case "pack.distill_status":
       case "modules.list":
       case "modules.set_enabled":
       case "modules.update":
