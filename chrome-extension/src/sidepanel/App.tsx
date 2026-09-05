@@ -9,6 +9,7 @@
 import { Component, useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { useCapabilityMode } from "./hooks/useCapabilityMode"
+import { ToastHost, useToastQueue } from "./components/ToastHost"
 import { ChatView } from "./components/ChatView"
 import {
   ContextPanelHost,
@@ -166,7 +167,7 @@ function AppContent() {
   const [nbImporterOpen, setNbImporterOpen] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
   const { state: appState, dispatch } = useAgentStore()
-  const [toast, setToast] = useState("")
+  const { toasts, showToast, closeToast } = useToastQueue()
   // Full-height Coding Agent Panel (Zed-like shell) — primary /code surface
   const [codingPanelOpen, setCodingPanelOpen] = useState(false)
   const [codingPanelSeed, setCodingPanelSeed] = useState<string | undefined>()
@@ -186,24 +187,18 @@ function AppContent() {
     if (appState.codingSession) setCodingPanelOpen(true)
   }, [appState.codingSession?.sessionId])
 
-  // Show auto-matched skill toast
+  // Show auto-matched skill toast (#321 PR-3: single queue, no bare setToast)
   useEffect(() => {
     if (appState.autoSkillNames) {
-      setToast(`🤖 自动匹配: ${appState.autoSkillNames}`)
+      showToast(`🤖 自动匹配: ${appState.autoSkillNames}`)
       dispatch({ type: "SET_AUTO_SKILLS", names: "" })
-      setTimeout(() => setToast(""), 4000)
     }
-  }, [appState.autoSkillNames])
+  }, [appState.autoSkillNames, showToast, dispatch])
 
   // Capability level (chat / browser / computer) — StatusRail badge, chips / FocusBand
   const onEscalate = useCallback((msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(""), 4000)
-  }, [])
-  const showToast = useCallback((msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(""), 4000)
-  }, [])
+    showToast(msg)
+  }, [showToast])
   // #321 PR-2: pop the active thread into a dialog window (moved from ChatView bar → rail)
   const handlePopout = useCallback(() => {
     const threadId = appState.activeThreadId
@@ -238,7 +233,6 @@ function AppContent() {
     <ContextPanelHostProvider capabilityLevel={level}>
     <div style={styles.container}>
       <style>{globalCSS}</style>
-      {toast && <div style={toastStyles.toast}>{toast}</div>}
       <StatusRail
         connectionState={connectionState}
         capabilityLevel={level}
@@ -250,6 +244,11 @@ function AppContent() {
         onPopout={handlePopout}
         canPopout={!!appState.activeThreadId}
       />
+      {/* #321 PR-3: toast host lives in a zero-height slot right under the rail —
+          its top is DOM-anchored to the rail, so no `top:52` rail-height magic. */}
+      <div style={{ position: "relative", height: 0, flexShrink: 0 }}>
+        <ToastHost toasts={toasts} onClose={closeToast} />
+      </div>
       {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px.
           #321 PR-2「一条 Now」: SceneStatusBar / RunBusyChip / WorkerScopeBar merged
           into FocusBand slots — no fourth band above the conversation. */}
@@ -298,19 +297,19 @@ function AppContent() {
           // P1 C-RACE-07: force SW reconnect (reset backoff), then probe status.
           chrome.runtime.sendMessage({ type: "ws.forceReconnect" }, () => {
             if (chrome.runtime.lastError) {
-              showToast("无法联系扩展后台，请刷新 Side Panel 后重试")
+              showToast("无法联系扩展后台，请刷新 Side Panel 后重试", "error")
               return
             }
             chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
               if (chrome.runtime.lastError) {
-                showToast("正在尝试重新连接…")
+                showToast("正在尝试重新连接…", "warning")
                 return
               }
               if (response?.connectionState === "connected") {
-                showToast("已连接 Companion")
+                showToast("已连接 Companion", "info")
                 return
               }
-              showToast("正在尝试重新连接…若 Companion 已启动将自动恢复")
+              showToast("正在尝试重新连接…若 Companion 已启动将自动恢复", "warning")
             })
           })
         }}
@@ -2445,23 +2444,6 @@ const logStyles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     cursor: "pointer",
     color: tokens.textMuted,
-  },
-}
-
-const toastStyles: Record<string, React.CSSProperties> = {
-  toast: {
-    position: "fixed" as const,
-    top: 52,
-    left: 10,
-    right: 10,
-    background: tokens.text,
-    color: tokens.userBubbleText,
-    padding: "8px 12px",
-    borderRadius: tokens.radiusMd,
-    fontSize: 12,
-    fontWeight: 500,
-    zIndex: 300,
-    boxShadow: tokens.shadowMd,
   },
 }
 
