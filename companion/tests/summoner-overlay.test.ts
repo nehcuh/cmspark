@@ -76,6 +76,8 @@ test("#324 Swift cruise chip is display-only and reuses attach_chrome", () => {
   )
   assert.match(click, /summoner\.attach_chrome/)
   assert.doesNotMatch(click, /config\.set/)
+  assert.match(overlay, /点此打开浏览器；档位在侧栏设置调整/)
+  assert.doesNotMatch(overlay, /点此打开侧栏调整档位/)
 })
 
 test("SummonerController is a one-bar HUD: 720pt, no stacked makeRail, Esc hides", () => {
@@ -353,6 +355,25 @@ test("#324 menu-bar hydrate uses companion-derived cruise_label helper", () => {
   assert.match(src, /refreshSummonerCruiseChip/)
   assert.match(src, /setOverlayUnattendedArmed/)
   assert.doesNotMatch(src, /summoner\.tier\.set/)
+})
+
+test("#324 overlay show re-polls unattended status (MAJOR-1 path b)", () => {
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  assert.match(src, /async function pollUnattendedCruiseChip/)
+  assert.match(src, /unattendedArmedFromStatus/)
+  const readyStart = src.indexOf("export async function handleSummonerReady")
+  const readyNext = src.indexOf("\nasync function ", readyStart + 10)
+  const ready = src.slice(readyStart, readyNext > readyStart ? readyNext : readyStart + 900)
+  assert.match(ready, /await pollUnattendedCruiseChip/)
+  const openStart = src.indexOf("async function openSummonerWebShell")
+  const openNext = src.indexOf("\nasync function ", openStart + 10)
+  const open = src.slice(openStart, openNext > openStart ? openNext : openStart + 1200)
+  assert.match(open, /await pollUnattendedCruiseChip/)
+  const pollStart = src.indexOf("async function pollUnattendedCruiseChip")
+  const poll = src.slice(pollStart, pollStart + 700)
+  assert.match(poll, /sendAppRequest\("security.unattended.status"/)
+  assert.doesNotMatch(poll, /config\.set/)
+  assert.doesNotMatch(poll, /auto_approve_dangerous\s*=/)
 })
 
 test("hydrateSummonerThread claims overlay after hydrate (exclusive via lease SoT)", () => {

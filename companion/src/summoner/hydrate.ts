@@ -21,6 +21,12 @@ export function setOverlayUnattendedArmed(armed: boolean): void {
   unattendedArmedCache = armed === true
 }
 
+/** RPC/broadcast payload → display flag only. Extra keys never write cruise bools. */
+export function unattendedArmedFromStatus(st: unknown): boolean {
+  if (!st || typeof st !== "object" || Array.isArray(st)) return false
+  return (st as { armed?: unknown }).armed === true
+}
+
 export function overlayUnattendedArmed(): boolean {
   return unattendedArmedCache
 }

@@ -1,6 +1,12 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { hydratePlaintext, buildSummonerHydratePayload } from "../src/summoner/hydrate"
+import {
+  hydratePlaintext,
+  buildSummonerHydratePayload,
+  unattendedArmedFromStatus,
+  setOverlayUnattendedArmed,
+  currentOverlayCruiseChipLabel,
+} from "../src/summoner/hydrate"
 import { SUMMONER_SEARCH_HINT } from "../src/summoner/protocol"
 
 /** Overlay transcript: role-prefixed plaintext. Swift must not wrap chat bubbles. */
@@ -105,4 +111,18 @@ test("#324 buildSummonerHydratePayload derives cruise_label and keeps search_hin
       p.cruise_label?.startsWith("巡航中 · ") ||
       p.cruise_label === "值守中 · 桌面",
   )
+})
+
+test("#324 unattendedArmedFromStatus is display-only (forged extras never arm flags)", () => {
+  assert.equal(unattendedArmedFromStatus({ armed: true }), true)
+  assert.equal(unattendedArmedFromStatus({ armed: false }), false)
+  assert.equal(unattendedArmedFromStatus({ type: "security.unattended.status", armed: true }), true)
+  assert.equal(unattendedArmedFromStatus({ armed: "yes" }), false)
+  assert.equal(unattendedArmedFromStatus({ armed: 1 }), false)
+  assert.equal(unattendedArmedFromStatus(null), false)
+  assert.equal(unattendedArmedFromStatus({ auto_approve_dangerous: true }), false)
+  setOverlayUnattendedArmed(unattendedArmedFromStatus({ armed: true, auto_approve_dangerous: true }))
+  assert.equal(currentOverlayCruiseChipLabel({}), "值守中 · 桌面")
+  setOverlayUnattendedArmed(false)
+  assert.equal(currentOverlayCruiseChipLabel({}), "每次确认")
 })

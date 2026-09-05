@@ -62,6 +62,7 @@ import {
   buildSummonerHydratePayload,
   setOverlayUnattendedArmed,
   currentOverlayCruiseChipLabel,
+  unattendedArmedFromStatus,
 } from "./summoner/hydrate"
 import {
   beginOverlaySession,
@@ -718,6 +719,18 @@ async function reclaimLiveSummonerThread(
   }
 }
 
+/** #324 MAJOR-1 path b: re-poll daemon grant on overlay show (no broadcast protocol). */
+async function pollUnattendedCruiseChip(): Promise<void> {
+  if (!companionClient) return
+  try {
+    const st = await companionClient.sendAppRequest("security.unattended.status", {}, 4000)
+    setOverlayUnattendedArmed(unattendedArmedFromStatus(st))
+  } catch {
+    /* keep last snapshot; next show retries */
+  }
+  refreshSummonerCruiseChip()
+}
+
 /** #324: push derived cruise chip without a new stdin cmd (re-hydrate / HTML SSE). */
 function refreshSummonerCruiseChip(): void {
   const id = summonerThreadId
@@ -773,6 +786,7 @@ async function pushSummonerMcp(): Promise<void> {
 }
 
 export async function handleSummonerReady(): Promise<void> {
+  await pollUnattendedCruiseChip()
   const token = beginOverlaySession()
   syncSummonerHotkeyToTray()
   pushSummonerSettings()
@@ -1646,6 +1660,7 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
     reportOverlayShellUnavailable()
     return
   }
+  await pollUnattendedCruiseChip()
   try {
     const {
       startSummonerWebServer,
@@ -1901,7 +1916,7 @@ export async function startMenuBarAgent(): Promise<void> {
   companionClient.onAppMessage((msg: any) => {
     if (!msg || typeof msg.type !== "string") return
     if (msg.type === "security.unattended.status") {
-      setOverlayUnattendedArmed(msg.armed === true)
+      setOverlayUnattendedArmed(unattendedArmedFromStatus(msg))
       refreshSummonerCruiseChip()
       return
     }
@@ -1915,13 +1930,7 @@ export async function startMenuBarAgent(): Promise<void> {
 
   // Connect (non-blocking — data arrives via callbacks)
   companionClient.connect().catch(() => {})
-  companionClient
-    .sendAppRequest("security.unattended.status", {}, 4000)
-    .then((st: { armed?: boolean } | void) => {
-      setOverlayUnattendedArmed(!!st && st.armed === true)
-      refreshSummonerCruiseChip()
-    })
-    .catch(() => {})
+  void pollUnattendedCruiseChip()
 
   // Second WS: overlay chat. Same origin; handshake surface=summoner (ACL).
   summonerClient = new CompanionClient({
