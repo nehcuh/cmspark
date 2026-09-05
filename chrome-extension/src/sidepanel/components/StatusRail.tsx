@@ -540,16 +540,6 @@ const railStyles: Record<string, CSSProperties> = {
     padding: 0,
     fontFamily: tokens.font,
   },
-  brandText: {
-    fontSize: 14,
-    fontWeight: 600,
-    letterSpacing: "-0.02em",
-    color: tokens.text,
-    whiteSpace: "nowrap" as const,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    maxWidth: 96,
-  },
   cruisePill: {
     flexShrink: 1,
     minWidth: 0,

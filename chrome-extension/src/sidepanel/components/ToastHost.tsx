@@ -114,7 +114,7 @@ export function ToastHost({
   }
 
   return (
-    <div style={stack} aria-live="polite" aria-atomic="false">
+    <div style={stack} data-testid="toast-stack">
       {toasts.map((t) => (
         <ToastRow key={t.id} toast={t} onClose={onClose} />
       ))}

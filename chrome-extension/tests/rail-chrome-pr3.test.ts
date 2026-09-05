@@ -26,7 +26,7 @@ test("PR-3 rail: brand dot (CompanionMark) is resident — no longer gated on cr
 
 test("PR-3 rail: ⋯ menu is grouped under 会话 / 能力 / 诊断 labels", () => {
   const rail = src("src/sidepanel/components/StatusRail.tsx")
-  const menu = rail.slice(rail.indexOf('role="menu"'), rail.indexOf("railStyles.rail ="))
+  const menu = rail.slice(rail.indexOf('role="menu"'), rail.indexOf("const railStyles"))
   // Three group headers present, in order.
   const labels = [...menu.matchAll(/menuGroupLabel[^>]*>\s*([^\s<]+)/g)].map((m) => m[1])
   const zh = labels.filter((l) => /[会话能力诊断]/.test(l))
@@ -59,7 +59,6 @@ test("PR-3 disconnect: single recovery CTA — rail disconnected is passive, ban
   const app = src("src/sidepanel/App.tsx")
   // Rail disconnected renders a status pill (role=status), not a second CTA button
   // that jumps to connection settings.
-  const dis = rail.slice(rail.indexOf("Companion 未连接 — 在底部横幅中重新连接"), rail.indexOf("连接设置"))
   assert.match(rail, /connectionState === "connecting" \? \(/)
   // Connecting keeps the pill-as-button route (no banner shows then); disconnected is a span.
   assert.match(rail, /role="status"[^>]*aria-label=\{connLabel\}[^>]*title="Companion 未连接/)
@@ -70,7 +69,7 @@ test("PR-3 disconnect: single recovery CTA — rail disconnected is passive, ban
 
 test("PR-3 LogBar entry sits in the 诊断 group", () => {
   const rail = src("src/sidepanel/components/StatusRail.tsx")
-  const menu = rail.slice(rail.indexOf('role="menu"'), rail.indexOf("railStyles.rail ="))
+  const menu = rail.slice(rail.indexOf('role="menu"'), rail.indexOf("const railStyles"))
   const diagIdx = menu.indexOf("诊断")
   const logIdx = menu.indexOf("<span>日志</span>")
   assert.ok(diagIdx >= 0 && logIdx > diagIdx, "日志 after 诊断 label")
