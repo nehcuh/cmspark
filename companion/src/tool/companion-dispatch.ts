@@ -33,6 +33,14 @@ import type { SkillEngine } from "../skills/skill-engine"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
 import { proposeRunProgress } from "../threads/run-progress"
+import {
+  CONTRACT_SUPPORTED_TOOLS,
+  auditContractPropose,
+  isExecutionContractShadowEnabled,
+  observeShellExecShadow,
+  registerContract,
+  sanitizeContractExpect,
+} from "./execution-contract"
 
 export type CompanionDispatchRuntime = {
   getThreadManager: () => ThreadManager
@@ -908,7 +916,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         const { shellExec, resolveShellTimeoutMs } = await import("../capability/shell")
         // Use only normalized params.cwd (token-bound); never re-expand from workspace alone
         const cwd = params.cwd as string
-        return await shellExec({
+        const shellResult = await shellExec({
           command: params.command,
           cwd,
           threadId: tid,
@@ -934,6 +942,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             }
           },
         })
+        // #328 shadow spike: post-exec contract observe+match, log-only.
+        // No-op unless security.execution_contract_shadow + a registered
+        // contract; internally try/caught and MUST NOT alter shellResult.
+        observeShellExecShadow({ threadId: tid, params, result: shellResult })
+        return shellResult
       } finally {
         releaseFlight("shell_exec", flightOwner)
       }
@@ -1930,6 +1943,58 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const updated = threadManager.update(tid, { run_progress: decided.progress })
       if (updated) execOpts?.broadcast?.({ type: "thread.updated", thread: updated })
       return { success: true, data: { written: decided.progress.items.length } }
+    }
+    case "execution_contract_propose": {
+      // #328 shadow spike — 登记≠授权。Overlay ACL 同 run_progress_propose。
+      if (execOpts?.handshakeSurface === "summoner" || execOpts?.handshakeSurface == null) {
+        return { success: false, error: "SUMMONER_ACL: execution_contract_propose denied", data: { error_code: "SUMMONER_ACL" } }
+      }
+      if (!isExecutionContractShadowEnabled()) {
+        // 默认关：工具本不该被 offer（adapter 过滤）；被调用 = 明确错误，
+        // 不静默 ok（静默 ok 会让模型以为护栏已生效 —— 那才破坏安全语义）。
+        return {
+          success: false,
+          error: "execution_contract_propose is not offered (security.execution_contract_shadow is off)",
+          data: { error_code: "TOOL_NOT_OFFERED" },
+        }
+      }
+      const tid = typeof params.__thread_id === "string" ? params.__thread_id : ""
+      if (!tid || !threadManager.get(tid)) {
+        return { success: false, error: "thread required", data: { error_code: "THREAD_REQUIRED" } }
+      }
+      const contractTool =
+        typeof params.tool === "string" ? params.tool.replace(/[\x00-\x1F\x7F]/g, "").trim() : ""
+      if (!CONTRACT_SUPPORTED_TOOLS.has(contractTool)) {
+        return {
+          success: false,
+          error: `execution contract v0 supports only: ${[...CONTRACT_SUPPORTED_TOOLS].join(", ")}`,
+          data: { error_code: "UNSUPPORTED_TOOL" },
+        }
+      }
+      const sanitized = sanitizeContractExpect(params.expect)
+      if (!sanitized.ok) {
+        return { success: false, error: sanitized.error_code, data: { error_code: sanitized.error_code } }
+      }
+      const contract = {
+        tool: contractTool,
+        args_digest:
+          typeof params.args_digest === "string"
+            ? params.args_digest.replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 128) || undefined
+            : undefined,
+        expect: sanitized.expect,
+        proposed_at: new Date().toISOString(),
+      }
+      registerContract(tid, contract)
+      auditContractPropose(tid, contract)
+      return {
+        success: true,
+        data: {
+          registered: true,
+          tool: contractTool,
+          shadow: true,
+          note: "registration only — grants no execution permission; shell_exec still requires normal confirmation",
+        },
+      }
     }
     default:
       return { success: false, error: `Unknown companion tool: ${toolName}` }

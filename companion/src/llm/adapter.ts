@@ -73,6 +73,10 @@ import {
   RUN_PROGRESS_PROPOSE_TOOL,
   shouldBlockPageTool,
 } from "../threads/run-progress"
+import {
+  EXECUTION_CONTRACT_PROPOSE_TOOL,
+  isExecutionContractShadowEnabled,
+} from "../tool/execution-contract"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -696,6 +700,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   let tools: ToolDefinition[] = [...nativeTools, ...mcpTools, ...mcpMetaTools]
   if (thread) {
     tools = tools.filter((t) => threadManager.isToolAllowed(threadId, t.function.name))
+  }
+  // #328 shadow spike: execution_contract_propose is catalog-registered but
+  // offered to the model ONLY when security.execution_contract_shadow is on
+  // (default off → zero behavior change; dispatch double-gates TOOL_NOT_OFFERED).
+  if (!isExecutionContractShadowEnabled()) {
+    tools = tools.filter((t) => t.function.name !== EXECUTION_CONTRACT_PROPOSE_TOOL)
   }
   tools = filterToolsForSurface(tools, params.surface)
   const offeredToolNames = new Set(tools.map((t) => t.function.name))

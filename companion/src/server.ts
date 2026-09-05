@@ -672,7 +672,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       try {
         // #265: overlay ACL is handshake-only. Strip model-claimed surface so
         // dispatch cannot be spoofed even if a future case reads params.surface.
-        if (toolName === "run_progress_propose") {
+        if (toolName === "run_progress_propose" || toolName === "execution_contract_propose") {
           delete (finalParams as { surface?: unknown }).surface
         }
         // Thread id already injected by adapter as __thread_id (computer-use precedent)
