@@ -488,7 +488,7 @@ export function KnowledgeGraphApp() {
 
       {status !== "ok" && (
         <div style={{ ...styles.banner, top: chromeTop }}>
-          <KnowledgeGraphStatusView status={status} truncated={truncated} pollExhausted={pollExhausted} />
+          <KnowledgeGraphStatusView status={status} truncated={truncated} pollExhausted={pollExhausted} error={snap?.error} />
         </div>
       )}
 

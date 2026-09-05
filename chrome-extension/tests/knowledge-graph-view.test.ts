@@ -13,6 +13,7 @@ import {
   KNOWLEDGE_GRAPH_COLOR_FOLDER,
   KNOWLEDGE_GRAPH_COLOR_GROUP,
   KNOWLEDGE_GRAPH_ENTRY_LABEL,
+  KNOWLEDGE_GRAPH_ERROR_COPY,
   KNOWLEDGE_GRAPH_OVER_CAP_COPY,
   KNOWLEDGE_GRAPH_REBUILDING_COPY,
   KNOWLEDGE_GRAPH_REGENERATE,
@@ -84,6 +85,47 @@ test("graphBannerCopy + shouldRenderGraphCanvas: 三态诚实，不渲染空图�
 
   assert.equal(graphBannerCopy("ok"), null)
   assert.equal(shouldRenderGraphCanvas("ok"), true)
+})
+
+// --- #356: error 帧映射为可见态（不再无限「图谱索引重建中…」） ---
+
+test("#356: error 态有 banner 且不渲染画布", () => {
+  assert.equal(graphBannerCopy("error"), KNOWLEDGE_GRAPH_ERROR_COPY)
+  assert.equal(shouldRenderGraphCanvas("error"), false)
+})
+
+test("#356: wire 解析 error 态快照（fail-closed 名单含 error；error 文本可选透传）", () => {
+  const parsed = parseKnowledgeGraphPayload({
+    status: "error",
+    truncated: false,
+    nodes: [],
+    edges: [],
+    labels: {},
+    error: "knowledge.graph is panel-only (Side Panel knowledge panel)",
+  })
+  assert.ok(parsed, "error 是合法 status")
+  assert.equal(parsed!.status, "error")
+  assert.equal(parsed!.error, "knowledge.graph is panel-only (Side Panel knowledge panel)")
+  // 无 error 字段也可解析（旧 companion / 手写快照）
+  const bare = parseKnowledgeGraphPayload(mockKnowledgeGraphPayload({ status: "error" }))
+  assert.ok(bare && bare.status === "error" && bare.error === undefined)
+})
+
+test("#356: StatusView error 态渲染 banner + 服务端错误说明", () => {
+  const html = renderToStaticMarkup(
+    createElement(KnowledgeGraphStatusView, {
+      status: "error",
+      truncated: false,
+      error: "knowledge.graph is panel-only",
+    }),
+  )
+  assert.ok(html.includes(KNOWLEDGE_GRAPH_ERROR_COPY), html)
+  assert.ok(html.includes("knowledge.graph is panel-only"), "错误详情如实可见")
+  // 无详情时只渲染 banner
+  const bare = renderToStaticMarkup(
+    createElement(KnowledgeGraphStatusView, { status: "error", truncated: false }),
+  )
+  assert.ok(bare.includes(KNOWLEDGE_GRAPH_ERROR_COPY), bare)
 })
 
 test("KnowledgeGraphStatusView 真渲染三态文案", () => {

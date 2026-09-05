@@ -7,6 +7,8 @@ export const KNOWLEDGE_GRAPH_OVER_CAP_COPY =
   "超过 200 篇，只画标题字典序前 200 篇；仅这 200 篇参与分组与着色"
 export const KNOWLEDGE_GRAPH_REBUILDING_COPY = "图谱索引重建中…"
 export const KNOWLEDGE_GRAPH_REBUILD_TIMEOUT_COPY = "索引重建超时，请手动刷新"
+/** #356: knowledge.graph 被门拒/出错映射的可见态（错误详情由调用方附后）。 */
+export const KNOWLEDGE_GRAPH_ERROR_COPY = "图谱加载失败，可关闭后从知识面板重开"
 export const KNOWLEDGE_GRAPH_AI_BADGE = "AI 生成"
 export const KNOWLEDGE_GRAPH_UNGROUPED_LABEL = "未分组"
 export const KNOWLEDGE_GRAPH_COLOR_GROUP = "按分组"
@@ -14,9 +16,9 @@ export const KNOWLEDGE_GRAPH_COLOR_FOLDER = "按文件夹"
 export const KNOWLEDGE_GRAPH_LLM_TOGGLE = "AI 分组命名"
 export const KNOWLEDGE_GRAPH_REGENERATE = "重新生成"
 
-export type KnowledgeGraphStatus = "ok" | "too_few" | "over_cap" | "rebuilding"
+export type KnowledgeGraphStatus = "ok" | "too_few" | "over_cap" | "rebuilding" | "error"
 
-/** Banner copy for the three honest states; ok → no banner. */
+/** Banner copy for the honest states; ok → no banner. */
 export function graphBannerCopy(
   status: KnowledgeGraphStatus,
   _truncated?: boolean,
@@ -24,10 +26,11 @@ export function graphBannerCopy(
   if (status === "too_few") return KNOWLEDGE_GRAPH_TOO_FEW_COPY
   if (status === "rebuilding") return KNOWLEDGE_GRAPH_REBUILDING_COPY
   if (status === "over_cap") return KNOWLEDGE_GRAPH_OVER_CAP_COPY
+  if (status === "error") return KNOWLEDGE_GRAPH_ERROR_COPY
   return null
 }
 
-/** too_few / rebuilding must not paint an empty graph pretending structure. */
+/** too_few / rebuilding / error must not paint an empty graph pretending structure. */
 export function shouldRenderGraphCanvas(status: KnowledgeGraphStatus): boolean {
   return status === "ok" || status === "over_cap"
 }

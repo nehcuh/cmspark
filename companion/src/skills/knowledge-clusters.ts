@@ -7,7 +7,7 @@
 
 import * as fs from "fs"
 import * as path from "path"
-import { DATA_DIR } from "../config"
+import { getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
 import { tokenize, tokensToVec, cosineSimilarity } from "./semantic-match"
 import { sanitizeKnowledgeContent, wrapKnowledgeBlock } from "./content-sanitizer"
@@ -91,7 +91,9 @@ export type KnowledgeIndexFile = {
 }
 
 export function knowledgeIndexPath(): string {
-  return path.join(DATA_DIR, "cache", KNOWLEDGE_INDEX_FILENAME)
+  // #356: live getConfigDir()（与 SkillEngine 构造同口径）——import-time DATA_DIR
+  // 在测试 env 后设时已冻结，索引会写进真实 ~/.cmspark-agent（split-brain）。
+  return path.join(getConfigDir(), "cache", KNOWLEDGE_INDEX_FILENAME)
 }
 
 /** 读取派生索引；缺失 / 半截 / 损坏 / 形状不符一律按缺失处理（null），不 throw。 */

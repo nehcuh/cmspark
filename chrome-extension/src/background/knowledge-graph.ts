@@ -55,6 +55,20 @@ export async function readKnowledgeGraphSnapshot(): Promise<KnowledgeGraphSnapsh
   return snap
 }
 
+/**
+ * #356: knowledge.graph 被 panel-only 门拒或 handler 出错时，companion 回
+ * `{type:"error", error:"…knowledge.graph…"}`。error 帧无请求关联 id，错误
+ * 文本带动词名是唯一可靠 seam。命中 → error 态快照：图谱 tab 停轮询、显示
+ * 可见 banner，不再无限「图谱索引重建中…」。
+ */
+export function knowledgeGraphErrorPayload(msg: unknown): KnowledgeGraphPayload | null {
+  if (!msg || typeof msg !== "object") return null
+  const m = msg as { type?: unknown; error?: unknown }
+  if (m.type !== "error" || typeof m.error !== "string") return null
+  if (!m.error.includes("knowledge.graph")) return null
+  return { status: "error", truncated: false, nodes: [], edges: [], labels: {}, error: m.error }
+}
+
 /** Open or focus the graph tab (bump ts query so re-open remounts). */
 export async function openOrFocusKnowledgeGraph(focusId?: string | null): Promise<number | null> {
   const baseUrl = knowledgeGraphUrl(focusId)
