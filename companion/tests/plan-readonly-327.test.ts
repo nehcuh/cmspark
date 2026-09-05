@@ -97,12 +97,16 @@ describe("#327 differential (SoT-derived deny)", () => {
     }
   })
 
-  test("MCP: mcp__* dynamic names and round-trip meta tools all denied; only local-cache mcp_list_resources allowed", () => {
+  test("MCP: mcp__* dynamic names and ALL meta tools denied — no exception (cold cache = server RPC)", () => {
     assert.equal(plan.isPlanReadonlyAllowed("mcp__github__create_issue"), false)
     assert.equal(plan.isPlanReadonlyAllowed("mcp__filesystem__read_file"), false)
     assert.equal(plan.isPlanReadonlyAllowed("mcp_read_resource"), false)
     assert.equal(plan.isPlanReadonlyAllowed("mcp_get_prompt"), false)
-    assert.equal(plan.isPlanReadonlyAllowed("mcp_list_resources"), true)
+    // M1 round-2: mcp/client.ts getResources() falls through to
+    // refreshResources() (real server RPC) when the cache is empty, so the
+    // "local cache only" exception was withdrawn — plan mode must not make
+    // the companion initiate an outbound round-trip.
+    assert.equal(plan.isPlanReadonlyAllowed("mcp_list_resources"), false)
   })
 
   test("explicit rulings: analyze_image / ask_user / DOM-event family / durable-state family denied", () => {
@@ -141,11 +145,10 @@ describe("#327 differential (SoT-derived deny)", () => {
     }
   })
 
-  test("typo guard: every allowlist entry exists in the real tool universe (or is the known mcp meta exception)", () => {
-    const exceptions = new Set(["mcp_list_resources"])
+  test("typo guard: every allowlist entry exists in the real tool universe (no exceptions)", () => {
     for (const t of plan.PLAN_READONLY_ALLOWED_TOOLS) {
       assert.ok(
-        universe.has(t) || exceptions.has(t),
+        universe.has(t),
         `allowlist entry ${t} not in tool universe — typo or removed tool`,
       )
     }
@@ -447,7 +450,8 @@ describe("#327 thread.execution_policy.set wire message", () => {
     )
     assert.equal(r.type, "error")
     assert.match(r.error, /inherit/)
-    assert.equal(services.threadManager.get(spawned.worker.id)?.execution_policy, "default")
+    // worker was spawned under a default parent → unstamped (B1), set refused
+    assert.equal(services.threadManager.get(spawned.worker.id)?.execution_policy, undefined)
   })
 
   test("generic thread.update cannot smuggle execution_policy (allowlist drops the key)", async () => {
@@ -490,7 +494,7 @@ describe("#327 thread.execution_policy.set wire message", () => {
 })
 
 describe("#327 worker spawn inheritance", () => {
-  test("spawn stamps worker with parent's CURRENT policy; default parent → default worker", async () => {
+  test("spawn stamps ONLY when parent is plan_readonly; default parent leaves worker UNSTAMPED (live-follow)", async () => {
     const tmA = new ThreadManager()
     const planParent = tmA.create("orch")
     tmA.update(planParent.id, { execution_policy: "plan_readonly" } as any)
@@ -500,12 +504,81 @@ describe("#327 worker spawn inheritance", () => {
       assert.equal(tmA.get(spawned.worker.id)?.execution_policy, "plan_readonly", "worker inherits plan at spawn")
     }
 
+    // B1: a "default" parent must NOT stamp "default" — a stamped default would
+    // short-circuit the gate-side parent fallback and let mid-run arming miss
+    // this worker. Unstamped = follows the parent's CURRENT policy.
     const tmB = new ThreadManager()
     const defParent = tmB.create("orch")
     const spawnedB = spawnWorkerThread(tmB, { parentThreadId: defParent.id, userConfirmed: true })
     assert.equal(spawnedB.ok, true)
     if (spawnedB.ok) {
-      assert.equal(tmB.get(spawnedB.worker.id)?.execution_policy, "default")
+      assert.equal(
+        tmB.get(spawnedB.worker.id)?.execution_policy,
+        undefined,
+        "default parent must leave the worker unstamped (no 'default' stamp)",
+      )
     }
+  })
+
+  test("B1 red: mid-run arming — worker spawned under default parent is capped once the parent arms plan", async () => {
+    const tm = new ThreadManager()
+    const parent = tm.create("orch")
+    const spawned = spawnWorkerThread(tm, { parentThreadId: parent.id, userConfirmed: true })
+    assert.equal(spawned.ok, true)
+    if (!spawned.ok) return
+    const workerId = spawned.worker.id
+
+    // before arming: worker not plan-capped
+    assert.equal(
+      plan.resolveEffectiveExecutionPolicy(workerId, (id) => tm.get(id) as any),
+      "default",
+    )
+
+    // user arms plan on the orchestrator MID-RUN
+    tm.update(parent.id, { execution_policy: "plan_readonly" } as any)
+
+    // the already-spawned worker is now capped (gate-side parent fallback is
+    // LIVE code for unstamped workers) — and the pregate actually denies click
+    assert.equal(
+      plan.resolveEffectiveExecutionPolicy(workerId, (id) => tm.get(id) as any),
+      "plan_readonly",
+    )
+    const r = await runMultiAgentToolPregate(
+      pregateCtx({
+        actingThreadId: workerId,
+        getThreadManager: () => tm,
+      }),
+    )
+    assert.equal(r.ok, false, "mid-run arming must cap already-spawned workers")
+    if (!r.ok) {
+      assert.equal(r.result.data.error_code, "PLAN_READONLY_BLOCKED")
+      assert.equal(r.result.data.thread_id, workerId)
+    }
+
+    // master exits plan → unstamped worker follows back to default (cap lifts)
+    tm.update(parent.id, { execution_policy: "default" } as any)
+    assert.equal(
+      plan.resolveEffectiveExecutionPolicy(workerId, (id) => tm.get(id) as any),
+      "default",
+      "exit plan on the master lifts the cap for unstamped workers",
+    )
+  })
+
+  test("B1 red: stamped-plan worker STAYS capped when the master exits plan (只收紧方向)", async () => {
+    const tm = new ThreadManager()
+    const parent = tm.create("orch")
+    tm.update(parent.id, { execution_policy: "plan_readonly" } as any)
+    const spawned = spawnWorkerThread(tm, { parentThreadId: parent.id, userConfirmed: true })
+    assert.equal(spawned.ok, true)
+    if (!spawned.ok) return
+    const workerId = spawned.worker.id
+    assert.equal(tm.get(workerId)?.execution_policy, "plan_readonly")
+
+    tm.update(parent.id, { execution_policy: "default" } as any)
+    assert.equal(
+      plan.resolveEffectiveExecutionPolicy(workerId, (id) => tm.get(id) as any),
+      "plan_readonly",
+      "a worker stamped at spawn stays plan even after the master exits",
+    )
   })
 })

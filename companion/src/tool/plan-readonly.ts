@@ -53,8 +53,6 @@ export const PLAN_READONLY_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   "wait_workers",
   // --- display-only plan card; orthogonal to the cap (propose ≠ exemption) ---
   "run_progress_propose",
-  // --- MCP local cache listing (no server round-trip) ---
-  "mcp_list_resources",
 ])
 
 /** Plan-safe ⇔ explicitly allowlisted. mcp__* never matches → default-deny. */
@@ -71,11 +69,17 @@ export function isPlanReadonlyAllowed(toolName: string): boolean {
  *   does not include companion/extension-side fetching. Reading page pixels
  *   stays available via screenshot. analyze_image_fetch is already internal-only.
  *
- * MCP tools → ALL denied (mcp__<server>__<tool> and the server round-trip meta
- *   tools mcp_read_resource / mcp_get_prompt). The MCP client does not capture
- *   annotations.readOnlyHint today, so no trustworthy read-only marker exists —
- *   默认全拒 stands until a marker is plumbled through. mcp_list_resources
- *   reads only the local cache, which is why it alone is allowlisted.
+ * MCP tools → ALL denied, no exceptions (mcp__<server>__<tool> and every meta
+ *   tool: mcp_list_resources / mcp_read_resource / mcp_get_prompt). The MCP
+ *   client does not capture annotations.readOnlyHint today, so no trustworthy
+ *   read-only marker exists — 默认全拒 stands until a marker is plumbed
+ *   through. mcp_list_resources was briefly allowlisted as "local cache only",
+ *   but mcp/client.ts getResources() falls through to refreshResources() (a
+ *   real server RPC) whenever the cache is EMPTY — a cold cache would make the
+ *   companion initiate an outbound round-trip inside plan mode, so the
+ *   exception's justification was false and it is withdrawn (round-2, M1).
+ *   Listing MCP resources is not needed to draft a plan; page observation
+ *   tools already cover the read surface.
  *
  * ask_user → DENIED. L2_GATE_TOOLS must stay a closed deny set in plan mode
  *   (differential test asserts deny ⊇ L2 表). Under plan the assistant asks
@@ -96,9 +100,12 @@ export function isExecutionPolicy(v: unknown): v is ExecutionPolicy {
 
 /**
  * Effective cap for a thread. Workers are never wider than their master:
- * - a worker stamped at spawn inherits the parent's policy (spawn.ts)
- * - a worker WITHOUT its own stamp falls back to its parent orchestrator's
- *   CURRENT policy, so arming plan mid-run also caps already-spawned workers
+ * - spawn.ts stamps a worker ONLY when the parent is currently plan_readonly;
+ *   it never stamps "default" (a stamped "default" would short-circuit the
+ *   fallback below and let mid-run arming miss already-spawned workers)
+ * - an UNSTAMPED worker follows its parent orchestrator's CURRENT policy at
+ *   gate time, so arming plan mid-run caps workers spawned earlier, and the
+ *   master exiting plan un-caps them again
  * - a worker stamped plan stays plan even if the master exits (只收紧方向)
  */
 export function resolveEffectiveExecutionPolicy(

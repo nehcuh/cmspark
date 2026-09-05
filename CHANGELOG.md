@@ -10,7 +10,7 @@
 
 ### Added
 
-- **本线程 plan_readonly 计划模式**：`execution_policy: default | plan_readonly` 线程级执行帽，只收紧不放宽。pregate 硬拒绝白名单外一切工具（deny-by-default；MCP 全拒含 `mcp__*` 与 server 往返 meta，仅本地缓存 `mcp_list_resources` 例外；`analyze_image` 因 IMAGE_FETCH 出网 phase 被拒——读像素走 `screenshot`）。与 run_progress_propose 正交，propose 不是豁免。写入只认新 WS 消息 `thread.execution_policy.set`（`user_gesture:true`；工人线程拒绝、由 spawn 强制继承 + 运行中 gate 侧父回退；召唤器 ACL 拒），落 `capability-audit.jsonl`。UI 另票。[#327](https://github.com/nehcuh/cmspark/issues/327)
+- **本线程 plan_readonly 计划模式**：`execution_policy: default | plan_readonly` 线程级执行帽，只收紧不放宽。pregate 硬拒绝白名单外一切工具（deny-by-default；MCP 全拒**无例外**——`mcp_list_resources` 曾以「只读本地缓存」放行，冷缓存实际 fall through 到 server RPC，例外已撤；`analyze_image` 因 IMAGE_FETCH 出网 phase 被拒——读像素走 `screenshot`）。与 run_progress_propose 正交，propose 不是豁免。写入只认新 WS 消息 `thread.execution_policy.set`（`user_gesture:true`；工人线程拒绝；spawn 仅在父 plan 时盖章，无章工人 gate 侧实时跟随父当前策略——中途 arm 罩住已 spawn 工人；召唤器 ACL 拒），落 `capability-audit.jsonl`。UI 另票。[#327](https://github.com/nehcuh/cmspark/issues/327)
 - **Composer 巡航档位选择器**：发送键旁芯片，四槽每次确认/网页巡航/全自动巡航/全自动+协议（无值守）。显示值现场 `deriveAutopilotTier`，升档复用设置武装 sheet（短语+后果矩阵），降档一键 `disarmAllFlags`；arm/disarm 写入 `capability-audit.jsonl`。无新 config enum / TTL。[#325](https://github.com/nehcuh/cmspark/issues/325)
 - **一条 Now（状态带合并）**：SceneStatusBar / RunBusyChip / WorkerScopeBar 并入 FocusBand 槽位体系（worker_scope > run_busy > L1 > scene，场景可作次行搭车）；对话上方只剩 rail + FocusBand，≤80px 不变；`buildScopedRunBusyInput` 五处推导收敛为单 hook（`use-scoped-run-busy`）；弹出对话框按钮并入 rail。旧 data-testid 挂新节点。[#321](https://github.com/nehcuh/cmspark/issues/321)
 - **召唤器巡航档位只读镜像**：hydrate 下推派生 chip 文案（Swift/HTML 不解三 bool）；点击走既有「打开侧栏/确认台」深链。ACL / 确认方言 / #230 不动。[#324](https://github.com/nehcuh/cmspark/issues/324)

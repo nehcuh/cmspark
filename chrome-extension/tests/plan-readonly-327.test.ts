@@ -32,9 +32,12 @@ test("#327 allowlist parses non-trivially from companion source", () => {
   assert.ok(allow.size >= 15, `expected a real allowlist, got ${allow.size}`)
   // core observation tools must be present (parsed, not hand-copied assertion
   // targets — these pin the read-only canon)
-  for (const t of ["list_tabs", "screenshot", "get_page_text", "run_progress_propose", "mcp_list_resources"]) {
+  for (const t of ["list_tabs", "screenshot", "get_page_text", "run_progress_propose"]) {
     assert.ok(allow.has(t), `${t} should be plan-safe`)
   }
+  // M1 round-2: no MCP exception — cold cache falls through to a real server
+  // RPC (mcp/client.ts refreshResources), so mcp_list_resources is denied too.
+  assert.equal(allow.has("mcp_list_resources"), false, "MCP has NO plan-safe exception")
 })
 
 test("#327 deny ⊇ extension L2 surface column (SURFACE_BY_TOOL, no hand-copied list)", () => {

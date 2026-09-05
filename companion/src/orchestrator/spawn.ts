@@ -197,14 +197,18 @@ export function spawnWorkerThread(
   const intentId = opts.intentId && String(opts.intentId).trim() ? String(opts.intentId).trim() : null
   const worker = tm.create(opts.alias || `worker:${opts.roleLabel || "task"}`)
   const parentThread = tm.get(opts.parentThreadId)
+  // #327: stamp a worker ONLY when the parent is currently plan_readonly.
+  // Never stamp "default" — an unstamped worker live-follows the parent's
+  // CURRENT policy at gate time (plan-readonly.ts parent fallback), so arming
+  // plan mid-run also caps workers spawned earlier. A worker stamped plan
+  // stays capped even if the parent exits plan (只收紧方向).
+  const parentPlan = parentThread?.execution_policy === "plan_readonly"
   tm.update(worker.id, {
     parent_thread_id: opts.parentThreadId,
     orchestrator_run_id: runId,
     worker_role_label: opts.roleLabel || "worker",
     agent_role: "worker" as AgentRole,
-    // #327: workers are never wider than their master — stamp the parent's
-    // current cap at spawn (gate-side parent fallback covers mid-run arming).
-    execution_policy: parentThread?.execution_policy ?? "default",
+    ...(parentPlan ? { execution_policy: "plan_readonly" as const } : {}),
     tool_whitelist: whitelist,
     mission_pack_id: opts.packId ?? null,
     assigned_intent_id: intentId,
