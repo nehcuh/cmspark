@@ -370,6 +370,19 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
       tool: z.string().optional(),
     })).min(1).max(8),
   }).strict(),
+
+  // #328 execution contract shadow — registration only, never an execution
+  // permit. .strict() so no extra predicate can ride (HTTP/DOM 谓词 v0 禁用).
+  execution_contract_propose: z.object({
+    tool: z.string().min(1).max(80),
+    args_digest: z.string().max(128).optional(),
+    expect: z.object({
+      exit: z.number().int().min(-1).max(255).optional(),
+      writes_prefix: z.array(z.string().min(1).max(512)).max(8).optional(),
+      net: z.boolean().optional(),
+      hwnd_stable: z.boolean().optional(),
+    }).strict(),
+  }).strict(),
 }
 
 /** Generic fallback: accept any record shape, no constraints. */

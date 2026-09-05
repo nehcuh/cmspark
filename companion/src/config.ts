@@ -57,6 +57,15 @@ export interface SecurityConfig {
   /** Plan B — optional for deepMerge; default false in DEFAULT_CONFIG. */
   auto_approve_enterprise_tools?: boolean
   /**
+   * #328 execution contract 护栏 shadow spike（T3 研究票）。默认 false。
+   * true = 向模型 offer execution_contract_propose（登记≠授权），shell_exec
+   * 执行后由确定性 checker 比对，不一致只写 capability-audit.jsonl
+   * （execution_contract.shadow，含 would_stop）。SHADOW = log-only：
+   * 不 STOP_THREAD、不减少任何确认、不影响 L2。不是 cruise 三 bool 之一，
+   * 不在 security-arm 步进清单（该旗只加观测，不放松任何门）。
+   */
+  execution_contract_shadow?: boolean
+  /**
    * Basenames (no extension, lowercased) of the companion's OWN UI host
    * processes — the browser that renders the sidepanel, plus the packaged
    * companion binary. The Swift tray overlay is **not** on this list (S23:
@@ -500,6 +509,8 @@ const defaultConfig: CompanionConfig = {
     auto_approve_dangerous: false,
     allow_all_schemes: false,
     auto_approve_enterprise_tools: false,
+    // #328: execution contract shadow spike — default off (log-only when on).
+    execution_contract_shadow: false,
     // UX-spike 2026-07-23: browsers that host the side panel + the agent exe.
     // Lowercased basenames (no .exe) for Windows ProcessName matching.
     // macOS also matches via isCompanionUiOwner() against bundle ids

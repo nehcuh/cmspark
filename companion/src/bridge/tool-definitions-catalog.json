@@ -759,6 +759,54 @@
   {
     "type": "function",
     "function": {
+      "name": "execution_contract_propose",
+      "description": "（实验：execution contract shadow）在执行 shell_exec 前登记可机器检查的预期：期望 exit code、写路径前缀、是否出网。登记≠授权：shell_exec 仍需正常确认；执行后由代码核对并只写审计日志（v0 shadow，不会停止执行）。tool 目前仅支持 shell_exec。args_digest 可选（你对 {command,cwd} 的 sha256 hex 自报值，仅审计对照用）。expect 至少给一个字段；不要声明你无法确定的事。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tool": {
+            "type": "string",
+            "description": "被约束的工具名（v0 仅 shell_exec）"
+          },
+          "args_digest": {
+            "type": "string",
+            "description": "可选：JSON.stringify({command,cwd}) 的 sha256 hex"
+          },
+          "expect": {
+            "type": "object",
+            "properties": {
+              "exit": {
+                "type": "number",
+                "description": "期望退出码（-1..255）"
+              },
+              "writes_prefix": {
+                "type": "array",
+                "description": "允许写路径前缀（≤8 条；静态解析重定向/tee）",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "net": {
+                "type": "boolean",
+                "description": "是否预期出网（false 且观测到出网迹象=不一致）"
+              },
+              "hwnd_stable": {
+                "type": "boolean",
+                "description": "窗口句柄稳定（v0 对 shell_exec 不可观测，仅记录）"
+              }
+            }
+          }
+        },
+        "required": [
+          "tool",
+          "expect"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "workspace_list_dir",
       "description": "List files under the thread DevSec workspace (relative paths only). Requires modules.devsec-workspace enabled. If the thread has workspace_root set (folder-picker bind), list under that root; otherwise uses default sandbox ~/CMspark-projects (created if missing — does not auto-bind the thread). Prefer this for deliverables under the sandbox. For a real repo, ask the user to Side Panel → 场景 → 「选择工作区」. Never invent absolute paths outside the effective root. If error is default_sandbox_unavailable, sandbox create failed — ask user to fix ~/CMspark-projects or bind a folder.",
       "parameters": {
