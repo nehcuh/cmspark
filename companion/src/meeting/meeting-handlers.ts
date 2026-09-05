@@ -103,7 +103,8 @@ const OVERLAY_MEETING_TYPES = new Set([
   "meeting.generate_minutes",
   "meeting.list",
   "meeting.get",
-  "meeting.auto_diarize",
+  // #244 NEVER: auto_diarize / import_text remain extension-only (#246 had
+  // auto_diarize here; this ticket peels it back. Overlay UI has no entry.)
 ])
 
 /**

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **浮窗会议台（#244）**：隐私「我已了解」后盖住 Capture 卡，实时转写滚动进会议台（不进草稿框）；结束 / 生成纪要 / 返回对话。`generate_minutes` 失败不写「已生成」。打开侧栏跳过 `--app` 浮窗，落普通 Chrome 窗口。**ACL 增量：零**——`append_transcript` / `generate_minutes` / list / get 等上涨发生在 [#246](https://github.com/nehcuh/cmspark/issues/246)，本票复用。本票收紧：overlay 剥 `auto_diarize`（#244 NEVER：仍扩展-only；浮窗撤「自动标说话人」）。`import_text` 仍扩展-only；overlay never Allow/Deny。[#244](https://github.com/nehcuh/cmspark/issues/244)
+
 ### Changed
 
 - **MeetingPanel 双「收起」去重（#342）**：面板内按钮改名「结束并收起」（title/aria 同步）——它与 Host header 的「收起」语义不同（前者结束录制+收起，后者纯收起面板），不再同屏同文案。[#342](https://github.com/nehcuh/cmspark/issues/342)

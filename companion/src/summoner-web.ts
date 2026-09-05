@@ -81,7 +81,6 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "meeting.generate_minutes",
   "meeting.list",
   "meeting.get",
-  "meeting.auto_diarize",
 ])
 
 /** Fan-out to HTML EventSource. Confirm / Trust / config frames stay off this list.
@@ -1139,23 +1138,6 @@ async function handleRequest(
       return
     }
 
-    if (pathOnly === "/api/meeting/diarize" && req.method === "POST") {
-      const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
-      const id = typeof body.id === "string" ? body.id : ""
-      const mode = body.mode === "text_gap" ? "text_gap" : "audio_cluster"
-      const k = typeof body.k === "number" ? body.k : 2
-      const payload: Record<string, unknown> = {
-        v: 1,
-        id,
-        mode,
-        k,
-        privacy_ack_v1: true,
-      }
-      if (Array.isArray(body.features)) payload.features = body.features
-      jsonResponse(res, await dispatchAllowed("meeting.auto_diarize", payload))
-      return
-    }
-
     res.writeHead(404)
     res.end("Not found")
   } catch (e: any) {
@@ -1288,6 +1270,7 @@ body{
   min-height:28px;padding:3px 8px;border-radius:8px;border:0;cursor:pointer;font:11px inherit;
   background:var(--canvas);color:var(--text);
 }
+.meeting-diarize-hint{font-size:11px;color:var(--faint);line-height:1.4}
 .meeting-tools button:focus-visible,.meeting-tools select:focus-visible{outline:none;box-shadow:var(--focus)}
 .meeting-hist{
   position:absolute;left:12px;right:12px;top:72px;bottom:72px;z-index:8;
@@ -1544,8 +1527,7 @@ body{
     </div>
     <div class="meeting-tools">
       <button type="button" id="meetingHistToggle" aria-pressed="false">历史会议</button>
-      <label>角色 <select id="meetingK" aria-label="发言人数量"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
-      <button type="button" id="meetingDiarize" title="本机声学聚类，匿名发言人N，不是身份识别">自动标说话人</button>
+      <span class="meeting-diarize-hint">说话人标注请在侧栏会议面板使用</span>
     </div>
     <div class="meeting-hist" id="meetingHistList" hidden></div>
     <div class="meeting-live" id="meetingLive">
@@ -2153,12 +2135,6 @@ try{
       showMeetingHistory(false);
     }
   }
-  function diarizeK(){
-    var sel=$("meetingK");
-    var n=sel?parseInt(sel.value,10):2;
-    if(n!==3 && n!==4) n=2;
-    return n;
-  }
   function showMeetingHistory(on){
     var list=$("meetingHistList");
     var btn=$("meetingHistToggle");
@@ -2246,34 +2222,6 @@ try{
     var k=d.diarize&&d.diarize.k||m.diarize&&m.diarize.k;
     var kPart=typeof k==="number"&&k>=1?" · K="+Math.floor(k):"";
     setStatus((method==="text_gap"?"已弱标说话人（按行交替 · 非声学）":"已标匿名发言人（实验 · 非身份识别）")+kPart);
-  }
-  function runDiarize(mode){
-    var id=meetingId||lastMeetingId;
-    if(!id){ setStatus("没有会议"); return; }
-    var payload={id:id,k:diarizeK(),privacy_ack_v1:true,mode:mode==="text_gap"?"text_gap":"audio_cluster"};
-    if(payload.mode==="audio_cluster"){
-      if(meetingFeats.length<2 || meetingFeats.length!==meetingLines.length){
-        payload.mode="text_gap";
-        setStatus("没有对齐的声学特征，改用弱标（交替）");
-      } else {
-        payload.features=meetingFeats;
-      }
-    }
-    api("/api/meeting/diarize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).then(function(d){
-      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
-        setStatus(d.message||d.error||"分角色失败");
-        return;
-      }
-      paintDiarized(d);
-    }).catch(function(e){setStatus(String(e&&e.message||e))});
-  }
-  var diarizeTimer=null;
-  function maybeDiarizeLive(){
-    if(!meetingId) return;
-    if(meetingFeats.length<2) return;
-    if(meetingFeats.length!==meetingLines.length) return;
-    if(diarizeTimer) clearTimeout(diarizeTimer);
-    diarizeTimer=setTimeout(function(){ runDiarize("audio_cluster"); },700);
   }
   function appendMeetingLive(text, speaker){
     var box=$("meetingLive");
@@ -2371,9 +2319,6 @@ try{
         return;
       }
       setStatus("录制已结束");
-      if(meetingFeats.length>=2 && meetingFeats.length===meetingLines.length){
-        runDiarize("audio_cluster");
-      }
       loadMeetingHistory();
     }).catch(function(e){setStatus(String(e&&e.message||e))});
   }
@@ -2387,18 +2332,27 @@ try{
     api("/api/meeting/minutes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})}).then(function(d){
       if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
         setStatus(d.message||d.error||"纪要生成失败");
+        if(hint) hint.textContent="纪要生成失败";
         return;
       }
       var md=(d&&d.minutes&&(d.minutes.raw_md||d.minutes.md))||(d&&d.raw_md)||"";
       if(!md && d&&d.minutes&&typeof d.minutes==="string") md=d.minutes;
+      if(!md){
+        setStatus("纪要生成失败");
+        if(hint) hint.textContent="纪要生成失败";
+        return;
+      }
       var box=$("meetingMinutes");
       if(box && md){
         box.hidden=false;
         box.innerHTML=renderMd(md);
       }
-      setStatus(md?"纪要已生成":"纪要已提交");
-      if(hint) hint.textContent=md?"纪要":"纪要已提交";
-    }).catch(function(e){setStatus(String(e&&e.message||e))});
+      setStatus("纪要已生成");
+      if(hint) hint.textContent="纪要";
+    }).catch(function(e){
+      setStatus(String(e&&e.message||e)||"纪要生成失败");
+      if(hint) hint.textContent="纪要生成失败";
+    });
   }
   $("meetingStart").onclick=function(){
     if(!meetingAck){
@@ -2411,6 +2365,7 @@ try{
       return;
     }
     showMeetingDesk(true);
+    startMeetingCapture();
   };
   $("meetingPrivacyAck").onclick=function(){
     meetingAck=true;
@@ -2418,6 +2373,7 @@ try{
     var sheet=$("meetingPrivacy");
     if(sheet) sheet.hidden=true;
     showMeetingDesk(true);
+    startMeetingCapture();
   };
   $("meetingRec").onclick=function(){
     if(meetingId){ endMeetingCapture(); return; }
@@ -2427,7 +2383,6 @@ try{
     var list=$("meetingHistList");
     showMeetingHistory(!(list && !list.hidden));
   };
-  $("meetingDiarize").onclick=function(){ runDiarize("audio_cluster"); };
   $("meetingMinutesBtn").onclick=function(){ requestMeetingMinutes(); };
   $("meetingBack").onclick=function(){
     if(meetingId) endMeetingCapture();
@@ -2678,7 +2633,7 @@ try{
           appendMeetingLive(txt, "");
           var mp2=$("meetingPartial");
           if(mp2) mp2.textContent="";
-          api("/api/meeting/append",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:meetingId,text:txt})}).then(function(){ maybeDiarizeLive(); });
+          api("/api/meeting/append",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:meetingId,text:txt})});
         } else if(txt && !meetingId){
           var cur=$("text").value;
           $("text").value=cur&&cur.trim()?cur.replace(/\\s*$/,"")+" "+txt:txt;
@@ -2714,12 +2669,16 @@ try{
       if(t==="meeting.minutes_result"){
         var md=(d&&d.minutes&&(d.minutes.raw_md||d.minutes.md))||d.raw_md||"";
         var box=$("meetingMinutes");
+        if(!md){
+          setStatus("纪要生成失败");
+          return;
+        }
         if(box && md){
           showMeetingDesk(true);
           box.hidden=false;
           box.innerHTML=renderMd(md);
         }
-        setStatus(md?"纪要已生成":"纪要已提交");
+        setStatus("纪要已生成");
         return;
       }
       if(t==="mcp.confirm.pending"){

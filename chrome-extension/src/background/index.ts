@@ -40,6 +40,7 @@ import {
   noteSecurityConfirmationRequest,
 } from "./computer-task-mirror"
 import { getActiveTabHostname, withHostnameBudget } from "./active-tab-hostname"
+import { pickSidePanelWindow } from "./pick-sidepanel-window"
 import {
   buildLogEventPayload,
   forwardFailureConsoleLevel,
@@ -350,9 +351,12 @@ async function handleCompanionMessage(msg: any) {
       }
     }
     try {
-      const wins = await chrome.windows.getAll({ windowTypes: ["normal"] })
-      const focused = wins.find((w) => w.focused) || wins[0]
-      const windowId = focused?.id
+      const wins = await chrome.windows.getAll({ windowTypes: ["normal"], populate: true })
+      let windowId = pickSidePanelWindow(wins)
+      if (windowId == null) {
+        const created = await chrome.windows.create({ focused: true, type: "normal" })
+        windowId = created?.id
+      }
       if (windowId != null && chrome.sidePanel?.open) {
         await chrome.sidePanel.open({ windowId })
         reply(true)

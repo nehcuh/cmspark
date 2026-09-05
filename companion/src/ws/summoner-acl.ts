@@ -38,7 +38,6 @@ const SUMMONER_ALLOW = new Set([
   "meeting.generate_minutes",
   "meeting.list",
   "meeting.get",
-  "meeting.auto_diarize",
   "mcp.list",
   "mcp.toggle_server",
   "pack.list",
