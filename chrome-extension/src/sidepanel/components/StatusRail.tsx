@@ -433,7 +433,7 @@ export function StatusRail({
               <span>密钥与环境</span>
             </button>
             {/* Discoverability: slash/copy only — no L0 Board Host entry; Board stays Autonomy (/board).
-                BottomBar「更多」is gated off (ui.bottomBarStrip=false); never claim that path. */}
+                BottomBar「更多」is deleted (#321 PR-1); never claim that path. */}
             <div style={railStyles.menuDivider} />
             <div
               role="note"

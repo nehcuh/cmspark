@@ -142,14 +142,14 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
   },
   surfaceChip: {
-    background: tokens.accentSoft || "rgba(245, 158, 11, 0.12)",
+    background: tokens.warningSoft,
     borderRadius: tokens.radiusSm,
     padding: "1px 4px 1px 6px",
   },
   surfaceText: {
     fontSize: 10,
     fontWeight: 600,
-    color: tokens.warning || tokens.accentText,
+    color: tokens.warning,
     maxWidth: 180,
     overflow: "hidden",
     textOverflow: "ellipsis",

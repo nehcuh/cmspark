@@ -98,8 +98,8 @@ export type ContextBarTabId =
  * Mode-split context bar tab sets (spec D5 / §4 / P0 IA cut 2026-07-27).
  * L0 Skills·Know·Hist · L1 Tabs·Skills · L2 Panel empty (Cockpit owns Tabs·Apps·MCP).
  * packs/board/mcp/apps demoted from permanent chrome.
- * PR5: permanent BottomBar strip is off by default (`ui.bottomBarStrip=false`);
- * these helpers still drive legacy strip when flag is on, and document demotion order.
+ * #321 PR-1: the legacy permanent BottomBar strip is deleted (was PR5-gated off);
+ * these helpers still document demotion order and drive Host overflow grouping.
  */
 export function contextBarTabsForLevel(
   level: CapabilityLevel,
@@ -114,7 +114,7 @@ export function contextBarTabsForLevel(
   }
 }
 
-/** Secondary panels (legacy BottomBar overflow when `ui.bottomBarStrip`; not permanent tabs). */
+/** Secondary panels (legacy BottomBar overflow set; not permanent tabs). */
 export function contextBarOverflowTabsForLevel(
   level: CapabilityLevel,
 ): ContextBarTabId[] {

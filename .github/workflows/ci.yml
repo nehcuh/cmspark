@@ -78,6 +78,15 @@ jobs:
         run: |
           cd chrome-extension && npm ci && npm run build
 
+      - name: Sidepanel visual-hygiene gate (#321 PR-1)
+        # Color-aware static gate: fails on raw hex/rgb() in CSS-property
+        # position, `tokens.x || "#fallback"` anti-patterns, and fontSize < 10
+        # in the chat-shell scope files. Comments are stripped first, so issue
+        # references like `#258` never count as colors. Also runs inside
+        # `npm test`; this standalone step gives clear failure attribution.
+        run: |
+          cd chrome-extension && npm run check:ui-hygiene
+
       - name: Run chrome-extension tests
         # Runs the full extension test suite in CI so drift between production
         # initial-sync messages and the sidepanel-state test (and any other

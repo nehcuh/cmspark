@@ -10,7 +10,6 @@ import { Component, useState, useRef, useCallback, useEffect, useMemo } from "re
 import { useWebSocket } from "./hooks/useWebSocket"
 import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ChatView } from "./components/ChatView"
-import { BottomBar } from "./components/BottomBar"
 import {
   ContextPanelHost,
   ContextPanelHostProvider,
@@ -37,7 +36,6 @@ import {
   type ComposerChipAction,
 } from "./composer/meta-slash"
 import { tokens } from "./ui/tokens"
-import { ui } from "./ui/flags"
 import { PanelBanner, panelBannerBtnStyles } from "./ui/PanelBanner"
 import {
   IconSend,
@@ -115,9 +113,9 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Er
       return (
         <div style={{
           padding: 20,
-          fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+          fontFamily: tokens.font,
           fontSize: 13,
-          color: "#333",
+          color: tokens.text,
         }}>
           <h3 style={{ color: tokens.danger, marginBottom: 12 }}>界面渲染错误</h3>
           <pre style={{
@@ -253,8 +251,7 @@ function AppContent() {
       <ChatView />
       <FleetWorkerListPortal />
       {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
-      {/* UIUX v2 §4.7 M3/PR5: permanent BottomBar strip behind ui.bottomBarStrip (default off). Host is SoT. */}
-      {ui.bottomBarStrip ? <BottomBar capabilityLevel={level} /> : null}
+      {/* #321 PR-1: legacy BottomBar strip deleted (was permanently gated off). Host is SoT. */}
       <ContextPanelHost />
       <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
@@ -372,7 +369,7 @@ function ComposerImageChip({
         <span style={{
           width: 48, height: 48, borderRadius: tokens.radiusSm, border: `1px solid ${tokens.border}`,
           background: tokens.bgMuted, display: "inline-flex", alignItems: "center", justifyContent: "center",
-          fontSize: 9, color: tokens.textMuted, flexShrink: 0,
+          fontSize: 11, color: tokens.textMuted, flexShrink: 0,
         }}>
           图
         </span>
@@ -1986,7 +1983,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               type="button"
               style={{
                 ...styles.sendBtn,
-                background: canSend ? tokens.accent : "#e4e4e7",
+                background: canSend ? tokens.accent : tokens.sendDisabledBg,
                 cursor: canSend ? "pointer" : "not-allowed",
               }}
               onClick={() => handleSend()}
@@ -2281,8 +2278,8 @@ const globalCSS = `
     100% { width: 20px; }
   }
   @keyframes cmspark-mic-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.35); }
-    50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+    0%, 100% { box-shadow: 0 0 0 0 ${tokens.dangerPulse}; }
+    50% { box-shadow: 0 0 0 6px ${tokens.dangerPulseFade}; }
   }
   html, body, #root {
     background: ${tokens.bg};
@@ -2294,11 +2291,11 @@ const globalCSS = `
   /* Thin, quiet scrollbar */
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(15, 23, 42, 0.18) transparent;
+    scrollbar-color: ${tokens.scrollbar} transparent;
   }
   *::-webkit-scrollbar { width: 6px; height: 6px; }
   *::-webkit-scrollbar-thumb {
-    background: rgba(15, 23, 42, 0.16);
+    background: ${tokens.scrollbarThumb};
     border-radius: 999px;
   }
   *::-webkit-scrollbar-track { background: transparent; }
@@ -2389,8 +2386,8 @@ const styles: Record<string, React.CSSProperties> = {
     height: 32,
     borderRadius: tokens.radiusPill,
     border: "none",
-    background: "#e4e4e7",
-    color: "#ffffff",
+    background: tokens.sendDisabledBg,
+    color: tokens.userBubbleText,
     cursor: "pointer",
     flexShrink: 0,
     display: "flex",

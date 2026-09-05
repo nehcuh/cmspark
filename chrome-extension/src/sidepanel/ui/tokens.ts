@@ -26,15 +26,28 @@ export const tokens = {
   accentSoft: "#eef2ff",
   accentText: "#3730a3",
   accentHover: "#4338ca",
+  /** Hairline indigo border on soft accent surfaces (status bubble). */
+  accentBorderSoft: "rgba(79, 70, 229, 0.12)",
 
   success: "#059669",
   successSoft: "#ecfdf5",
   warning: "#d97706",
   warningSoft: "#fffbeb",
+  /** Amber-200 border on warning surfaces (fakeEnd / compact banner). */
+  warningBorder: "#fde68a",
+  /** Amber-800 text on warningSoft surfaces. */
+  warningText: "#92400e",
   danger: "#dc2626",
   dangerSoft: "#fef2f2",
   /** Soft confirm / FocusBand tint (G3; defined early for one SoT) */
   dangerSurface: "rgba(220, 38, 38, 0.08)",
+  /** Danger border on light confirm surfaces (FocusBand confirm card). */
+  dangerBorder: "rgba(220, 38, 38, 0.28)",
+  /** Deep danger border on dark surfaces (急停 / abort buttons). */
+  dangerDeep: "#7f1d1d",
+  /** Mic-pulse keyframe ring (rgba of danger, start / fade-out end). */
+  dangerPulse: "rgba(220, 38, 38, 0.35)",
+  dangerPulseFade: "rgba(220, 38, 38, 0)",
 
   // Mode chips (badge only — no full-rail fill on L0/L1)
   modeChatBg: "#f1f5f9",
@@ -88,9 +101,28 @@ export const tokens = {
   shadowMd: "0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.04)",
   shadowLg: "0 4px 16px rgba(15, 23, 42, 0.08), 0 12px 28px rgba(15, 23, 42, 0.05)",
   shadowFocus: "0 0 0 3px rgba(79, 70, 229, 0.16)",
+  /** User-bubble indigo glow. */
+  shadowAccent: "0 2px 10px rgba(79, 70, 229, 0.20)",
+  /** Lightweight popover/dialog elevation (summary card). */
+  shadowPopover: "0 4px 16px rgba(0, 0, 0, 0.08)",
+
+  /** Near-transparent tint for quiet containers (reasoning wrap). */
+  bgSubtle: "rgba(15, 23, 42, 0.03)",
+  /** Mono output surfaces inside bubbles (shell stdout / tool-progress tail). */
+  shellOutputBg: "rgba(0, 0, 0, 0.28)",
+  toolTailBg: "rgba(0, 0, 0, 0.25)",
+
+  /** Disabled (unarmed) send button. */
+  sendDisabledBg: "#e4e4e7",
+
+  /** Thin, quiet global scrollbar (App global css). */
+  scrollbar: "rgba(15, 23, 42, 0.18)",
+  scrollbarThumb: "rgba(15, 23, 42, 0.16)",
 
   /** Modal / drawer scrim */
   scrim: "rgba(15, 23, 42, 0.28)",
+  /** Stronger scrim for blocking import/confirm overlays. */
+  scrimStrong: "rgba(0, 0, 0, 0.35)",
 } as const
 
 export type Tokens = typeof tokens
