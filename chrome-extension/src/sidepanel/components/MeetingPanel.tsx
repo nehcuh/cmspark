@@ -1224,6 +1224,8 @@ export function MeetingPanel(props: {
             }
             props.onClose()
           }}
+          title="结束录制并收起面板"
+          aria-label="结束录制并收起面板"
           style={{
             border: `1px solid ${tokens.border}`,
             background: "transparent",
@@ -1234,7 +1236,7 @@ export function MeetingPanel(props: {
             fontSize: 12,
           }}
         >
-          收起
+          结束并收起
         </button>
       </div>
 

@@ -133,10 +133,22 @@ test("PR-5: Host header is the one panel header — 15px title + 「收起」 cl
   assert.match(titleStyle, /fontSize: 15/)
   assert.match(host, />\s*收起\s*<\//)
   assert.match(host, /aria-label="收起面板"/)
-  // MeetingPanel's own close rides the same copy (its sync-end behavior is unchanged).
+  // Host header is the single「收起」. #342: MeetingPanel's own panel action was
+  // renamed to「结束并收起」so the two no longer read as a duplicate close (the
+  // panel one also ends capture via finalizeCapture).
   const meeting = src("src/sidepanel/components/MeetingPanel.tsx")
   assert.match(meeting, /fontSize: 15 \}\}>会议记录/)
   assert.doesNotMatch(meeting, />\s*关闭\s*<\/button>/)
+})
+
+test("#342: MeetingPanel panel action is 结束并收起, not a second 收起", () => {
+  const meeting = src("src/sidepanel/components/MeetingPanel.tsx")
+  // The panel-internal action ends capture (finalizeCapture) then closes — so it
+  // must not reuse the Host header's plain「收起」wording.
+  assert.match(meeting, />\s*结束并收起\s*<\/button>/)
+  assert.ok(meeting.includes("结束录制并收起面板"))
+  const host = src("src/sidepanel/components/ContextPanelHost.tsx")
+  assert.match(host, />\s*收起\s*<\//)
 })
 
 test("PR-5: packs/meeting/board icons no longer collide on IconSkills (all distinct)", () => {
