@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **L-1 完成谓词 + stall-classifier（#387，史诗 #386 首票，T1 零自动执行）**：`companion/src/loop/` 纯函数信号库——双层完成谓词（全 evidence-tick ∧ 收口轮无 tool_calls ∧ 无未决 confirm/nonce；claim⊆tick 交叉核验，被拒 steer 直指未勾项；四态 verdict：complete / claim-rejected / request-claim / incomplete）；受阻五分类（needs-human-confirm / needs-credential / external-wall / route-exhausted / model-noncompliance）+ 机器可读解锁契约（试过路线/败因/解锁条件，每类有完成通道）；progress ledger 连续 K=3 个 run Δ=0 → stalled 信号（干预归 #389）；stall 卡数据结构（渲染归 #390）。`complete` 仅机检信号，L-4 映射为 DONE 报告待用户终审，永不当「任务已完成」文案；click success tick ≠ 表单过关（残余风险，默认档用户终审兜底）。不改 run_progress 勾选语义；execution_contract 保持 shadow（#328）；不挂 adapter、不触发续跑（#388）。[#387](https://github.com/nehcuh/cmspark/issues/387)
+
 ### Fixed
 
 - **CDP 死磕升级建议（#357）**：同一 `(thread, origin)` 上 CDP 交互失败累计 ≥4 次（跨 locator / 工具名）后，后续 CDP 调用被 site-op-memory peek 拒执，`suggested_action=escalate_to_host_computer`，错误文本建议 `host_computer`（Chrome token，**仍走 L2 确认**）或 macOS `osascript_eval`。evaluate `success:true` 且 `result:null` 视为假成功（不重置失败计数、不消耗 DOM-script budget）。不改 `classifyError`，不自动跳过 CU 确认。Round-2：`origin:unknown`/非 http(s) 不计不拦；`justBanned` 只表示 locator 2 败；共享读面 `getOriginFailCount`（#358 rebase 对齐 `originFails`）；escalate 文案含 `list_tabs` 逃生门。[#357](https://github.com/nehcuh/cmspark/issues/357)
