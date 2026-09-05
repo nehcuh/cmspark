@@ -3,12 +3,22 @@
 import initSqlJs, { type Database as SqlJsDatabase } from "sql.js"
 import * as fs from "fs"
 import * as path from "path"
-import * as crypto from "crypto"
 import { getConfigDir } from "../config"
 import { logger } from "../logger.js"
+import {
+  EXEC_FOLD_TOOLS,
+  MCP_SENSITIVE_RESULT_RE,
+  MCP_TOOL_PREFIX,
+  READ_RELEASE_TOOLS,
+  SENSITIVE_COOKIE_TOOLS,
+  readReleaseBlocked,
+  redactCodeishParams,
+  redactSensitiveKeysDeep,
+  shortHash,
+} from "../security/redact-rules"
 
 /**
- * Sensitive tool redaction (audit item 3).
+ * Sensitive tool redaction (audit item 3; scope revised by #255).
  *
  * Tools whose params or results contain secrets / dangerous code have those
  * fields reduced to a non-recoverable summary (name + domain + value hash, or
@@ -16,81 +26,12 @@ import { logger } from "../logger.js"
  * the 30-day-retained SQLite file from becoming a session-hijack / code-leak
  * trove.
  *
- * The hash is SHA-256 truncated to 12 hex chars — enough to correlate repeated
- * identical values without recovering them.
+ * #255: read-tier tools (get_page_text / get_page_html / evaluate) keep their
+ * (≤500-char) result summary after passing the shared three gates; any gate
+ * hit fails closed to a collapse marker. ALL classification sets, primitives
+ * and gates are imported from security/redact-rules.ts — the same module the
+ * thread-JSON redactor consumes (golden fixtures + lock-step tests pin parity).
  */
-const SENSITIVE_COOKIE_TOOLS = new Set(["get_cookies", "list_all_cookies", "set_cookie", "delete_cookie"])
-// A7.1 (coordinate computer-use): host_computer joins the sensitive set —
-// history.db stores hashes + metadata (layer/confidence/coords/sha256) ONLY,
-// never task text, type.text literals, image bytes, or full-window OCR text.
-const SENSITIVE_CODE_TOOLS = new Set([
-  "evaluate",
-  "osascript_eval",
-  "host_read",
-  "host_write",
-  "host_app",
-  "host_computer",
-  "shell_exec",
-  "netsec_port_scan",
-  // Wave E: workspace file tools same class as host_read
-  "workspace_read_file",
-  "workspace_write_file",
-  "workspace_list_dir",
-  "workspace_glob",
-])
-
-// MCP namespaced tools (mcp__<server>__<tool>) — audit item C-MCP-2. These flow
-// through the same record path with raw params/result. We treat any tool whose
-// name suggests file/secret/key/env access as "result is likely sensitive" and
-// redact the entire result_summary; other MCP tools get key-based redaction on
-// both params and result_summary.
-const MCP_TOOL_PREFIX = "mcp__"
-const MCP_SENSITIVE_RESULT_RE = /(read|file|secret|token|key|env|credential|ssh|aws)/i
-const SENSITIVE_KEY_RE = /(secret|token|password|passwd|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)/i
-
-function shortHash(input: string): string {
-  return crypto.createHash("sha256").update(input).digest("hex").slice(0, 12)
-}
-
-// Walks a parsed JSON value (object or array) and replaces values of keys
-// matching SENSITIVE_KEY_RE with a redacted marker. Returns a new structure.
-function redactSensitiveLeaf(v: unknown): unknown {
-  if (typeof v === "string") {
-    return `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
-  }
-  if (typeof v === "number" || typeof v === "boolean") {
-    const s = String(v)
-    return `<redacted:len=${s.length}:sha256=${shortHash(s)}>`
-  }
-  if (Array.isArray(v)) {
-    return v.map((item) => redactSensitiveLeaf(item))
-  }
-  if (v && typeof v === "object") {
-    const s = JSON.stringify(v)
-    return { redacted: true, len: s.length, sha256: shortHash(s) }
-  }
-  return v
-}
-
-function redactSensitiveKeysDeep(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(redactSensitiveKeysDeep)
-  }
-  if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>
-    const out: Record<string, unknown> = {}
-    for (const k of Object.keys(obj)) {
-      const v = obj[k]
-      if (SENSITIVE_KEY_RE.test(k)) {
-        out[k] = redactSensitiveLeaf(v)
-      } else {
-        out[k] = redactSensitiveKeysDeep(v)
-      }
-    }
-    return out
-  }
-  return value
-}
 
 // Safely JSON-parse, transform, re-stringify. On any error returns null so
 // callers can decide fallback behavior.
@@ -103,7 +44,9 @@ function rewriteJson(raw: string, fn: (parsed: unknown) => unknown): string | nu
   }
 }
 
-function redactForStorage(
+// Exported for the #255 lock-step parity tests (golden fixtures run through
+// BOTH redactors and must agree on fold vs release).
+export function redactForStorage(
   toolName: string,
   rawParams: string | undefined,
   rawSummary: string | undefined,
@@ -156,10 +99,32 @@ function redactForStorage(
     // evidence paths, so the whole summary collapses to hash+length.
     params = redactComputerParams(params)
     result_summary = `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
-  } else if (SENSITIVE_CODE_TOOLS.has(toolName)) {
+  } else if (READ_RELEASE_TOOLS.has(toolName)) {
+    // #255 read tier: params always folded (evaluate code/security_token);
+    // page read tools keep the generic deep-key scan (passwd/Authorization in
+    // params must never persist). The (≤500-char, pre-capped by the adapter)
+    // result summary is kept when the shared three gates pass, else fails
+    // closed to a collapse marker — lock-step with the thread-JSON redactor
+    // (tests/redact-scope-lockstep).
+    if (toolName === "evaluate") {
+      params = redactCodeParams(params)
+    } else {
+      const redactedParams = rewriteJson(params, redactSensitiveKeysDeep)
+      if (redactedParams !== null) params = redactedParams
+    }
+    let rawParamsObj: unknown = null
+    try {
+      rawParamsObj = JSON.parse(rawParams || "{}")
+    } catch {
+      rawParamsObj = null
+    }
+    if (readReleaseBlocked(toolName, rawParamsObj, result_summary)) {
+      result_summary = `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
+    }
+  } else if (EXEC_FOLD_TOOLS.has(toolName)) {
     params = redactCodeParams(params)
-    // Match thread-JSON collapse: evaluate/osascript results are still secrets
-    // even under 200 chars (Lane D D-N1).
+    // Exec tier stays fully collapsed: secret density is high and usually at
+    // the head, so truncation buys nothing.
     result_summary = `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
   } else if (toolName.startsWith(MCP_TOOL_PREFIX)) {
     // Audit item C-MCP-2: MCP tool params always get key-based redaction so
@@ -243,19 +208,12 @@ function redactCookieSummary(raw: string): string {
 function redactCodeParams(raw: string): string {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>
-    const redacted: Record<string, unknown> = { ...parsed }
-    // evaluate/osascript_eval/host_read/host_write params include `code` or
-    // `expression` with the actual JS/AppleScript body, plus a `security_token`
-    // that grants re-execution. Replace each with hash + length so the
-    // historical record shows "this code ran" / "this token was used" without
-    // persisting the secret material itself (CodeRabbit review fix).
-    for (const key of ["code", "expression", "security_token"]) {
-      if (key in redacted && typeof redacted[key] === "string") {
-        const val = redacted[key] as string
-        redacted[key] = `<redacted:hash=${shortHash(val)},len=${val.length}>`
-      }
-    }
-    return JSON.stringify(redacted)
+    // Shared folder (security/redact-rules.ts): evaluate/osascript code or
+    // expression bodies, shell command, host_write body, and the
+    // security_token that grants re-execution all collapse to hash + length
+    // so the historical record shows "this ran" without persisting the
+    // secret material itself. Lock-step with the thread-JSON redactor.
+    return JSON.stringify(redactCodeishParams(parsed))
   } catch {
     return "{}"
   }

@@ -4,10 +4,17 @@
 // tool results before writing threads/*.json. Live turns carry the full result
 // (renders normally); a thread reload reads back one of two stub shapes at the
 // ToolExecutionResult level:
-//   A: { success: true, data: { redacted: true, len, sha256 } }  — SENSITIVE_CODE_TOOLS
+//   A: { success: true, data: { redacted: true, len, sha256 } }  — EXEC_FOLD_TOOLS
 //   B: { success: true, redacted: true, len, sha256 }            — collapseResult
 // Strict field checks only (redacted===true, len number, sha256 string) so
 // ordinary payloads are never mistaken for a stub.
+//
+// #255 adds a third persistence state for read-tier tools (get_page_text /
+// get_page_html / evaluate): when the gate-checked data exceeds 8000 chars the
+// persisted data is a truncated-prefix envelope
+//   C: { success: true, data: { truncated: true, kept, total, prefix } }
+// rendered with the 三态 copy "已保留前 N/共 M 字符" — never implying the full
+// content was persisted.
 
 export interface RedactedStub {
   /** Original payload length in characters (pre-redaction). */
@@ -63,4 +70,34 @@ export function isRedactedStubContent(content: unknown): boolean {
   } catch {
     return false
   }
+}
+
+export interface TruncatedPrefix {
+  /** Persisted prefix length in characters (the N in 已保留前 N/共 M 字符). */
+  kept: number
+  /** Original serialized payload length (the M). */
+  total: number
+  /** The persisted prefix itself (surrogate-safe cut by the companion). */
+  prefix: string
+}
+
+function asTruncated(v: unknown): TruncatedPrefix | null {
+  const r = asRecord(v)
+  if (!r) return null
+  if (r.truncated !== true) return null
+  if (typeof r.kept !== "number" || !Number.isFinite(r.kept)) return null
+  if (typeof r.total !== "number" || !Number.isFinite(r.total)) return null
+  if (typeof r.prefix !== "string") return null
+  return { kept: r.kept, total: r.total, prefix: r.prefix }
+}
+
+/**
+ * #255 三态 — detect the read-tier truncated-prefix envelope (shape C) on a
+ * persisted ToolExecutionResult. Returns { kept, total, prefix }, null for
+ * full results / redacted stubs / anything else.
+ */
+export function extractTruncatedPrefix(result: unknown): TruncatedPrefix | null {
+  const r = asRecord(result)
+  if (!r) return null
+  return asTruncated(r.data)
 }

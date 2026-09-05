@@ -1,82 +1,29 @@
 /**
  * Redact sensitive tool params/results before durable thread JSON persistence.
  *
- * Thread JSON redaction (audit SEC-C / item 3): cookies, evaluate/shell/host_*,
- * MCP secrets, and sensitive keys (incl. passwd / Authorization) must not land
- * in ~/.cmspark-agent/threads/*.json. history.db has a parallel redactor in
- * history/store.ts (same SENSITIVE_KEY_RE + leaf; cookie/generic call sites
- * lock-step as of post-#220 nits). In-flight LLM tool rows stay unredacted;
- * only createToolResultMessage → addMessage goes through here.
+ * Thread JSON redaction (audit SEC-C / item 3; scope revised by #255): cookies,
+ * exec-tier tools (shell, host_*, osascript, workspace_*), MCP secrets, and
+ * sensitive keys (incl. passwd / Authorization) must not land in
+ * ~/.cmspark-agent/threads/*.json. Read-tier tools (get_page_text /
+ * get_page_html / evaluate) persist a gate-checked prefix so a reloaded thread
+ * keeps the page context the model read (#255: full collapse caused reload
+ * amnesia). ALL rules live in the shared module security/redact-rules.ts —
+ * history/store.ts consumes the same one (golden fixtures + lock-step tests
+ * pin parity). In-flight LLM tool rows stay unredacted; only
+ * createToolResultMessage → addMessage goes through here.
  */
-import * as crypto from "crypto"
-
-const SENSITIVE_COOKIE_TOOLS = new Set([
-  "get_cookies",
-  "list_all_cookies",
-  "set_cookie",
-  "delete_cookie",
-])
-
-const SENSITIVE_CODE_TOOLS = new Set([
-  "evaluate",
-  "osascript_eval",
-  "host_read",
-  "host_write",
-  "host_app",
-  "host_computer",
-  "shell_exec",
-  "netsec_port_scan",
-  "workspace_read_file",
-  "workspace_write_file",
-  "workspace_list_dir",
-  "workspace_glob",
-])
-
-const MCP_TOOL_PREFIX = "mcp__"
-const MCP_SENSITIVE_RESULT_RE = /(read|file|secret|token|key|env|credential|ssh|aws)/i
-const SENSITIVE_KEY_RE = /(secret|token|password|passwd|api[_-]?key|credential|private[_-]?key|authorization|bearer|apikey)/i
-
-function shortHash(input: string): string {
-  return crypto.createHash("sha256").update(input).digest("hex").slice(0, 12)
-}
-
-function redactSensitiveLeaf(v: unknown): unknown {
-  if (typeof v === "string") {
-    return `<redacted:len=${v.length}:sha256=${shortHash(v)}>`
-  }
-  if (typeof v === "number" || typeof v === "boolean") {
-    const s = String(v)
-    return `<redacted:len=${s.length}:sha256=${shortHash(s)}>`
-  }
-  if (Array.isArray(v)) {
-    return v.map((item) => redactSensitiveLeaf(item))
-  }
-  if (v && typeof v === "object") {
-    const s = JSON.stringify(v)
-    return { redacted: true, len: s.length, sha256: shortHash(s) }
-  }
-  return v
-}
-
-function redactSensitiveKeysDeep(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(redactSensitiveKeysDeep)
-  }
-  if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>
-    const out: Record<string, unknown> = {}
-    for (const k of Object.keys(obj)) {
-      const v = obj[k]
-      if (SENSITIVE_KEY_RE.test(k)) {
-        out[k] = redactSensitiveLeaf(v)
-      } else {
-        out[k] = redactSensitiveKeysDeep(v)
-      }
-    }
-    return out
-  }
-  return value
-}
+import {
+  EXEC_FOLD_TOOLS,
+  MCP_SENSITIVE_RESULT_RE,
+  MCP_TOOL_PREFIX,
+  READ_RELEASE_TOOLS,
+  SENSITIVE_COOKIE_TOOLS,
+  readReleaseBlocked,
+  redactCodeishParams,
+  redactSensitiveKeysDeep,
+  releaseReadData,
+  shortHash,
+} from "./redact-rules"
 
 function redactCookieData(data: unknown): unknown {
   if (Array.isArray(data)) {
@@ -110,17 +57,6 @@ function redactOneCookie(cookie: unknown): unknown {
       ? { value_hash: shortHash(valueStr), value_length: valueStr.length }
       : {}),
   }
-}
-
-function redactCodeishParams(params: Record<string, unknown>): Record<string, unknown> {
-  const redacted: Record<string, unknown> = { ...params }
-  for (const key of ["code", "expression", "security_token", "command", "body"]) {
-    if (key in redacted && typeof redacted[key] === "string") {
-      const val = redacted[key] as string
-      redacted[key] = `<redacted:hash=${shortHash(val)},len=${val.length}>`
-    }
-  }
-  return redacted
 }
 
 function redactComputerParams(params: Record<string, unknown>): Record<string, unknown> {
@@ -236,7 +172,50 @@ export function redactToolPayloadForPersistence(
     return { params: safeParams, result: safeResult }
   }
 
-  if (SENSITIVE_CODE_TOOLS.has(name)) {
+  // #255 read tier: gate-checked prefix release (完整 / 截断), fail-closed
+  // collapse on any gate hit (折叠).
+  if (READ_RELEASE_TOOLS.has(name)) {
+    // Params are ALWAYS folded (evaluate code / security_token); page read
+    // tools carry only selector/tabId — deep-key scan suffices.
+    if (name === "evaluate" && params && typeof params === "object") {
+      safeParams = redactCodeishParams(params as Record<string, unknown>)
+    } else if (params !== undefined) {
+      safeParams = redactSensitiveKeysDeep(params)
+    }
+    if (result && typeof result === "object") {
+      const plainError = plainErrorResult(result)
+      if (plainError) {
+        // INTERRUPTED-style row: no data payload — keep error_code + error verbatim.
+        safeResult = plainError
+      } else {
+        const r = result as Record<string, unknown>
+        const dataStr = r.data !== undefined ? JSON.stringify(r.data) : ""
+        safeResult = {
+          success: r.success,
+          // Keep the passthrough shape: error/data keys only when present
+          // (reloaded read-tier rows must deep-equal their generic-branch
+          // ancestors for linkage/UI tests).
+          ...(r.error !== undefined
+            ? {
+                error: typeof r.error === "string" && r.error.length > 200
+                  ? r.error.slice(0, 200) + "…"
+                  : r.error,
+              }
+            : {}),
+          ...(r.data !== undefined
+            ? {
+                data: readReleaseBlocked(name, params, dataStr)
+                  ? { redacted: true, len: dataStr.length, sha256: shortHash(dataStr) }
+                  : releaseReadData(r.data),
+              }
+            : {}),
+        }
+      }
+    }
+    return { params: safeParams, result: safeResult }
+  }
+
+  if (EXEC_FOLD_TOOLS.has(name)) {
     if (params && typeof params === "object") {
       safeParams = redactCodeishParams(params as Record<string, unknown>)
     }
@@ -254,7 +233,7 @@ export function redactToolPayloadForPersistence(
           error: typeof r.error === "string" && r.error.length > 200
             ? r.error.slice(0, 200) + "…"
             : r.error,
-          // Always collapse payload for evaluate/shell/host_* — a 200-char
+          // Always collapse payload for shell/host_*/workspace_* — a 200-char
           // cookie/source snippet is still a secret on disk.
           data:
             r.data !== undefined

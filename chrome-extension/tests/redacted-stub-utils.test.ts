@@ -4,10 +4,11 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import {
   extractRedactedStub,
+  extractTruncatedPrefix,
   isRedactedStubContent,
 } from "../src/sidepanel/utils/redacted-stub-utils"
 
-test("extractRedactedStub: shape A — collapsed data (SENSITIVE_CODE_TOOLS)", () => {
+test("extractRedactedStub: shape A — collapsed data (EXEC_FOLD_TOOLS)", () => {
   const stub = extractRedactedStub({
     success: true,
     data: { redacted: true, len: 49891, sha256: "7ac1e1009e9d" },
@@ -173,4 +174,43 @@ test("isRedactedStubContent: non-JSON / non-string input → false", () => {
   assert.equal(isRedactedStubContent(null), false)
   assert.equal(isRedactedStubContent(undefined), false)
   assert.equal(isRedactedStubContent(42), false)
+})
+
+// --- #255 三态: truncated-prefix envelope (read-tier release) ---
+
+test("extractTruncatedPrefix: shape C envelope → { kept, total, prefix }", () => {
+  const tp = extractTruncatedPrefix({
+    success: true,
+    data: { truncated: true, kept: 8000, total: 49891, prefix: "x".repeat(8000) },
+  })
+  assert.deepEqual(tp, { kept: 8000, total: 49891, prefix: "x".repeat(8000) })
+})
+
+test("extractTruncatedPrefix: full result / redacted stub / junk → null", () => {
+  // 完整态: ordinary data passes through.
+  assert.equal(
+    extractTruncatedPrefix({ success: true, data: { text: "hello" } }),
+    null,
+  )
+  // 折叠态: redacted stubs are NOT truncated prefixes.
+  assert.equal(
+    extractTruncatedPrefix({ success: true, data: { redacted: true, len: 5, sha256: "abc" } }),
+    null,
+  )
+  assert.equal(extractTruncatedPrefix({ success: true, redacted: true, len: 5, sha256: "abc" }), null)
+  // Strict field checks.
+  assert.equal(
+    extractTruncatedPrefix({ success: true, data: { truncated: true, kept: "8000", total: 9, prefix: "x" } }),
+    null,
+  )
+  assert.equal(
+    extractTruncatedPrefix({ success: true, data: { truncated: true, kept: 1, total: 2 } }),
+    null,
+  )
+  assert.equal(
+    extractTruncatedPrefix({ success: true, data: { truncated: "true", kept: 1, total: 2, prefix: "x" } }),
+    null,
+  )
+  assert.equal(extractTruncatedPrefix(null), null)
+  assert.equal(extractTruncatedPrefix("truncated"), null)
 })

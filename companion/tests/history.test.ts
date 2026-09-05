@@ -864,24 +864,76 @@ test("HistoryStore.record() redacts evaluate code body", async () => {
   }
 })
 
-test("HistoryStore.record() collapses evaluate result_summary even under 200 chars", async () => {
+test("HistoryStore.record() #255: benign evaluate summary kept, secret-shaped collapses", async () => {
   const store = new HistoryStore()
   await store.waitReady()
   try {
+    // Benign read-tier summary passes the three gates → kept verbatim (#255).
     await store.record({
       thread_id: "t-eval-result",
       tool_name: "evaluate",
-      params: JSON.stringify({ tabId: 1, code: "1" }),
-      result_summary: "short-eval-secret",
+      params: JSON.stringify({ tabId: 1, code: "1+1" }),
+      result_summary: JSON.stringify("page says hello"),
+      error: null,
+      success: 1,
+      duration_ms: 10,
+      created_at: new Date().toISOString(),
+    })
+    // Secret-shaped summary (value-track scan) → fail-closed collapse.
+    await store.record({
+      thread_id: "t-eval-result",
+      tool_name: "evaluate",
+      params: JSON.stringify({ tabId: 1, code: "1+1" }),
+      result_summary: JSON.stringify("token sk-1234567890abcdefghijklmnop here"),
+      error: null,
+      success: 1,
+      duration_ms: 10,
+      created_at: new Date().toISOString(),
+    })
+    // Exfil-shaped evaluate code → collapse even when the value looks benign.
+    await store.record({
+      thread_id: "t-eval-result",
+      tool_name: "evaluate",
+      params: JSON.stringify({ tabId: 1, code: "document.cookie" }),
+      result_summary: JSON.stringify("sid=abcdef"),
       error: null,
       success: 1,
       duration_ms: 10,
       created_at: new Date().toISOString(),
     })
     const rows = await store.query({ thread_id: "t-eval-result", tool_name: "evaluate" })
+    assert.equal(rows.length, 3)
+    const summaries = rows.map((r) => r.result_summary)
+    // Order-independent: exactly one row kept verbatim (benign), two collapsed.
+    assert.ok(summaries.includes(JSON.stringify("page says hello")), `benign row kept: ${JSON.stringify(summaries)}`)
+    const collapsed = summaries.filter((s) => /^<redacted:len=\d+:sha256=[a-f0-9]+>$/.test(s))
+    assert.equal(collapsed.length, 2)
+    assert.ok(!summaries.join(" ").includes("sk-1234567890abcdefghijklmnop"))
+    assert.ok(!summaries.join(" ").includes("sid=abcdef"))
+  } finally {
+    store.close()
+  }
+})
+
+test("HistoryStore.record() #255: get_page_text summary with JWT collapses (gate 3)", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    const jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c"
+    await store.record({
+      thread_id: "t-gpt-jwt",
+      tool_name: "get_page_text",
+      params: JSON.stringify({ tabId: 1 }),
+      result_summary: JSON.stringify({ text: `dump ${jwt}` }).substring(0, 500),
+      error: null,
+      success: 1,
+      duration_ms: 10,
+      created_at: new Date().toISOString(),
+    })
+    const rows = await store.query({ thread_id: "t-gpt-jwt" })
     assert.equal(rows.length, 1)
-    assert.equal(rows[0].result_summary.includes("short-eval-secret"), false)
-    assert.match(rows[0].result_summary, /<redacted:len=\d+:sha256=[a-f0-9]+>/)
+    assert.match(rows[0].result_summary, /^<redacted:len=\d+:sha256=[a-f0-9]+>$/)
+    assert.ok(!rows[0].result_summary.includes("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"))
   } finally {
     store.close()
   }
