@@ -29,6 +29,16 @@ export const tokens = {
   /** Hairline indigo border on soft accent surfaces (status bubble). */
   accentBorderSoft: "rgba(79, 70, 229, 0.12)",
 
+  /**
+   * Brand red (terracotta / coral) — empty-state calf mark ONLY.
+   * Independent of the danger family: hue 15° vs danger 0°, lighter + higher
+   * chroma, so protanopia/deuteranopia simulation keeps ΔE00 ≫ 5 from
+   * danger (#c96033 previously collapsed to ~3 under deutan). NEVER reuse
+   * danger / dangerSoft / dangerSurface as brand red. Value pinned by
+   * tests/calf-mark-323.test.ts (normal ≥10 AND Machado-deutan ≥5).
+   */
+  brandRed: "#d97757",
+
   success: "#059669",
   successSoft: "#ecfdf5",
   warning: "#d97706",

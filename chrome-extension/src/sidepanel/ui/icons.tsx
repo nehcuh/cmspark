@@ -1,5 +1,6 @@
 // Lightweight stroke icons (16×16 default). currentColor for theming.
 import type { CSSProperties, ReactNode } from "react"
+import { tokens } from "./tokens"
 
 export type IconProps = {
   size?: number
@@ -203,7 +204,11 @@ export function IconList(p: IconProps) {
   )
 }
 
-/** Empty-state companion — original mark, not the 看山 fox. Filled stamp, not outline. */
+/**
+ * Empty-state imprint — red calf robot (brandRed terracotta). Filled stamp,
+ * not an outline. Decorative only: aria-hidden, no cruise/armed state, no
+ * danger-family red. Keep size configurable (#321 PR-4 92→48 compatible).
+ */
 export function CompanionMark({ size = 92 }: { size?: number }) {
   return (
     <svg
@@ -214,13 +219,37 @@ export function CompanionMark({ size = 92 }: { size?: number }) {
       aria-hidden
       style={{ display: "block", flexShrink: 0 }}
     >
-      <ellipse cx="46" cy="84" rx="18" ry="4" fill="rgba(23,23,23,0.10)" />
-      <circle cx="46" cy="50" r="28" fill="#171717" />
-      <path d="M28 36 L24 16 L40 32Z" fill="#171717" />
-      <path d="M64 36 L68 16 L52 32Z" fill="#171717" />
-      <circle cx="38" cy="50" r="3.4" fill="#ffffff" />
-      <circle cx="54" cy="50" r="3.4" fill="#ffffff" />
-      <path d="M46 61 l1.6 4.1 4.3 1.1-4.3 1.5L46 72l-1.6-4.3-4.3-1.5 4.3-1.1z" fill="#4f46e5" />
+      {/* ground shadow */}
+      <ellipse cx="46" cy="85" rx="17" ry="3.5" fill="rgba(23, 23, 23, 0.10)" />
+      {/* ears — tucked behind the head at the upper sides */}
+      <circle cx="21" cy="44" r="11" fill={tokens.brandRed} />
+      <circle cx="71" cy="44" r="11" fill={tokens.brandRed} />
+      {/* horns — smooth arcs rising from the top of the head */}
+      <path
+        d="M37 36 C34 25 31 16 29 10"
+        stroke={tokens.brandRed}
+        strokeWidth="9"
+        strokeLinecap="round"
+        fill="none"
+      />
+      <path
+        d="M55 36 C58 25 61 16 63 10"
+        stroke={tokens.brandRed}
+        strokeWidth="9"
+        strokeLinecap="round"
+        fill="none"
+      />
+      {/* head */}
+      <circle cx="46" cy="56" r="23" fill={tokens.brandRed} />
+      {/* eyes — indigo pupils keep the robot character accent */}
+      <circle cx="36" cy="50" r="5" fill={tokens.bg} />
+      <circle cx="56" cy="50" r="5" fill={tokens.bg} />
+      <circle cx="36" cy="50" r="2.2" fill={tokens.accent} />
+      <circle cx="56" cy="50" r="2.2" fill={tokens.accent} />
+      {/* muzzle with nostrils — the calf face marker */}
+      <ellipse cx="46" cy="69" rx="9" ry="7" fill={tokens.bg} />
+      <circle cx="42" cy="69" r="1.7" fill={tokens.text} />
+      <circle cx="50" cy="69" r="1.7" fill={tokens.text} />
     </svg>
   )
 }
