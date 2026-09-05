@@ -85,7 +85,7 @@ export function BoardPanel() {
   return (
     <div style={s.wrap}>
       <div style={s.head}>
-        <strong style={{ fontSize: 12 }}>任务板</strong>
+        <strong style={{ fontSize: 15 }}>任务板</strong>
         <button type="button" style={s.link} onClick={refresh}>
           刷新
         </button>

@@ -1581,7 +1581,7 @@ const styles: Record<string, import("react").CSSProperties> = {
     letterSpacing: "0.02em",
     marginBottom: 2,
   },
-  title: { fontWeight: 600, fontSize: 13, letterSpacing: "-0.01em" },
+  title: { fontWeight: 600, fontSize: 15, letterSpacing: "-0.01em" },
   subtitle: { fontSize: 10, color: tokens.textMuted, marginTop: 2, lineHeight: 1.35 },
   meetingCard: {
     border: `1px solid ${tokens.border}`,

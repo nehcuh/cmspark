@@ -138,7 +138,7 @@ test("#281: exact-duplicate copy has no banned words and is wired", () => {
   assert.ok(util.includes("内容与已有文档《"), "confirm prefix")
   assert.ok(util.includes("》完全相同"), "confirm suffix")
   assert.ok(util.includes("跳过重复"), "directory skip copy")
-  const chat = readFileSync(join(SRC_ROOT, "sidepanel/components/ChatView.tsx"), "utf8")
+  const chat = readFileSync(join(SRC_ROOT, "sidepanel/components/KnowledgeImportModal.tsx"), "utf8")
   assert.ok(chat.includes("内容与已有文档《"), "modal renders duplicate line")
   const ws = readFileSync(join(SRC_ROOT, "sidepanel/hooks/useWebSocket.ts"), "utf8")
   assert.ok(ws.includes("duplicate_of"), "preview whitelist")
@@ -148,7 +148,7 @@ test("#281: exact-duplicate copy has no banned words and is wired", () => {
 test("#293: dup 时主按钮为「仍导入」且带 force；服务端拒绝帧有面板状态行", () => {
   const util = readFileSync(join(SRC_ROOT, "sidepanel/utils/knowledge-distribution.ts"), "utf8")
   assert.ok(util.includes("仍导入"), "force label constant")
-  const chat = readFileSync(join(SRC_ROOT, "sidepanel/components/ChatView.tsx"), "utf8")
+  const chat = readFileSync(join(SRC_ROOT, "sidepanel/components/KnowledgeImportModal.tsx"), "utf8")
   assert.ok(chat.includes("KNOWLEDGE_IMPORT_FORCE_LABEL"), "modal swaps the main button label on dup")
   assert.ok(chat.includes("force: p.duplicate_of ? true : undefined"), "仍导入 click is the only force path")
   assert.ok(chat.includes("KNOWLEDGE_IMPORT_CONFIRM_LABEL"), "non-dup keeps 确认导入")

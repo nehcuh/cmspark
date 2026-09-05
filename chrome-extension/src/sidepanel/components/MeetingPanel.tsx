@@ -1210,7 +1210,7 @@ export function MeetingPanel(props: {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <strong style={{ flex: 1 }}>会议记录</strong>
+        <strong style={{ flex: 1, fontSize: 15 }}>会议记录</strong>
         <span style={{ fontSize: 11, color: tokens.textSecondary }}>
           实验可标发言人N · 非身份识别
         </span>
@@ -1234,7 +1234,7 @@ export function MeetingPanel(props: {
             fontSize: 12,
           }}
         >
-          关闭
+          收起
         </button>
       </div>
 

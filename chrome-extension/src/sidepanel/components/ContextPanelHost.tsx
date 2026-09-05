@@ -33,6 +33,9 @@ import {
   IconKnowledge,
   IconMcp,
   IconApps,
+  IconPacks,
+  IconMic,
+  IconList,
 } from "../ui/icons"
 
 // ── Registry ───────────────────────────────────────────────────────────────
@@ -55,14 +58,16 @@ export type ContextPanelTabDef = {
 }
 
 /** Canonical panel registry (labels + icons). Strip and Host share this. */
+// #321 PR-5: packs/meeting/board each get their own icon (were all IconSkills
+// collisions); icons come from the existing ui/icons set — nothing new drawn.
 export const CONTEXT_PANEL_TABS: ContextPanelTabDef[] = [
   { id: "tabs", label: "标签", Icon: IconTabs },
   { id: "history", label: "历史", Icon: IconHistory },
   { id: "skills", label: "技能", Icon: IconSkills },
   { id: "knowledge", label: "知识", Icon: IconKnowledge },
-  { id: "packs", label: "场景", Icon: IconSkills },
-  { id: "meeting", label: "会议", Icon: IconSkills },
-  { id: "board", label: "任务板", Icon: IconSkills },
+  { id: "packs", label: "场景", Icon: IconPacks },
+  { id: "meeting", label: "会议", Icon: IconMic },
+  { id: "board", label: "任务板", Icon: IconList },
   { id: "mcp", label: "MCP", Icon: IconMcp },
   { id: "apps", label: "应用", Icon: IconApps },
 ]
@@ -924,7 +929,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: `1px solid ${tokens.border}`,
   },
   panelTitle: {
-    fontSize: 12,
+    fontSize: 15,
     fontWeight: 600,
     color: tokens.text,
     fontFamily: tokens.font,
