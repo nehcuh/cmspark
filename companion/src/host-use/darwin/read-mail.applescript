@@ -31,6 +31,35 @@ on jsonEscape(s)
 	set AppleScript's text item delimiters to "\\t"
 	set s to sParts as string
 
+	set AppleScript's text item delimiters to (character id 8)
+	set sParts to text items of s
+	set AppleScript's text item delimiters to "\\b"
+	set s to sParts as string
+
+	set AppleScript's text item delimiters to (character id 12)
+	set sParts to text items of s
+	set AppleScript's text item delimiters to "\\f"
+	set s to sParts as string
+
+	-- C0 whitelist pass: any remaining control char (< 32, not one of the
+	-- JSON-legal escapes 8/9/10/12/13 above) becomes its \u00XX escape, else a
+	-- body containing e.g. \x07 (BEL) or \x0B (VT) would emit invalid JSON
+	-- (parseJsonSafe fails closed and the mail is unreadable). Issue #69 F1.
+	-- Must stay byte-equivalent with the handler embedded in host.swift.
+	set hexDigits to "0123456789abcdef"
+	set rebuilt to ""
+	repeat with c in s
+		set cid to id of c
+		if cid is less than 32 and cid is not 8 and cid is not 9 and cid is not 10 and cid is not 12 and cid is not 13 then
+			set hi to (cid div 16) + 1
+			set lo to (cid mod 16) + 1
+			set rebuilt to rebuilt & "\\u00" & (character hi of hexDigits) & (character lo of hexDigits)
+		else
+			set rebuilt to rebuilt & c
+		end if
+	end repeat
+	set s to rebuilt
+
 	set AppleScript's text item delimiters to oldTids
 	return s
 end jsonEscape

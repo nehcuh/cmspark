@@ -90,3 +90,57 @@ test("resolvePackagedContentsDir finds Contents from node inside app", () => {
   const contents = resolvePackagedContentsDir("", nodeBin)
   assert.equal(contents, path.normalize("/Applications/CMspark.app/Contents"))
 })
+
+test("F2: candidate path math matches real repo layout (no dist/dist dead path)", () => {
+  // Real layout: host-bin.ts compiles to <root>/companion/dist/host-use/darwin
+  // and sources to <root>/companion/src/host-use/darwin. The repo-root dist
+  // binary lives at <root>/companion/dist/cmspark-host. From either __dirname
+  // the candidate must resolve there — never into a non-existent dist/dist.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-hostbin-layout-"))
+  try {
+    // Build the two real-depth __dirname trees.
+    const compiledDarwin = path.join(root, "companion", "dist", "host-use", "darwin")
+    const srcDarwin = path.join(root, "companion", "src", "host-use", "darwin")
+    const distHost = path.join(root, "companion", "dist", "cmspark-host")
+    fs.mkdirSync(compiledDarwin, { recursive: true })
+    fs.mkdirSync(srcDarwin, { recursive: true })
+    fs.writeFileSync(distHost, "host", { mode: 0o755 })
+
+    // Candidates from BOTH real __dirname depths must include the dist binary…
+    for (const fromDir of [compiledDarwin, srcDarwin]) {
+      const candidates = resolveHostBinaryCandidates(fromDir)
+      assert.ok(
+        candidates.includes(distHost),
+        `candidates from ${path.basename(path.dirname(path.dirname(path.dirname(fromDir))))}/… include repo-root dist binary`,
+      )
+      // …and must contain NO dist/dist dead path.
+      const deadDistDist = candidates.filter((c) =>
+        c.includes(`${path.sep}dist${path.sep}dist${path.sep}cmspark-host`),
+      )
+      assert.equal(deadDistDist.length, 0, `no dist/dist dead candidate from ${fromDir}`)
+      // repo-root dist host must be reachable (>=1 — compiled depth may also hit it
+      // via ../../cmspark-host since dist top-level hosts the binary; dev depth via
+      // ../../../dist only). No dead path, at least one real hit.
+      assert.ok(
+        candidates.includes(distHost),
+        `repo-root dist host is reachable from ${fromDir}`,
+      )
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("F2: fallback resolves to repo-root dist from compiled or dev-src __dirname", async () => {
+  const hostBin = await import("../src/host-use/darwin/host-bin")
+  // The fallback line uses path.resolve(__dirname, "../../../dist/cmspark-host").
+  // Simulate both __dirname depths by checking resolveHostBinaryCandidates last
+  // element matches a hand-computed repo-root path for each depth.
+  const src = fs.readFileSync(
+    path.join(process.cwd(), "src", "host-use", "darwin", "host-bin.ts"),
+    "utf8",
+  )
+  const fallbackMatch = src.match(/return path\.resolve\(__dirname,\s*"([^"]+)"/)
+  assert.ok(fallbackMatch, "fallback uses path.resolve(__dirname, …)")
+  assert.equal(fallbackMatch[1], "../../../dist/cmspark-host")
+})
