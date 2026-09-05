@@ -54,11 +54,16 @@ import {
   encodeSummonerSkills,
   encodeSummonerThreads,
   SUMMONER_RAIL_LIST_CAP,
-  SUMMONER_SEARCH_HINT,
   type SummonerInboundEvt,
 } from "./summoner/protocol"
 import { connectedMcpServerNames } from "./mcp/confirm-target"
-import { hydratePlaintext } from "./summoner/hydrate"
+import {
+  hydratePlaintext,
+  buildSummonerHydratePayload,
+  setOverlayUnattendedArmed,
+  currentOverlayCruiseChipLabel,
+  unattendedArmedFromStatus,
+} from "./summoner/hydrate"
 import {
   beginOverlaySession,
   claimOverlayIfLive,
@@ -714,6 +719,32 @@ async function reclaimLiveSummonerThread(
   }
 }
 
+/** #324 MAJOR-1 path b: re-poll daemon grant on overlay show (no broadcast protocol). */
+async function pollUnattendedCruiseChip(): Promise<void> {
+  if (!companionClient) return
+  try {
+    const st = await companionClient.sendAppRequest("security.unattended.status", {}, 4000)
+    setOverlayUnattendedArmed(unattendedArmedFromStatus(st))
+  } catch {
+    /* keep last snapshot; next show retries */
+  }
+  refreshSummonerCruiseChip()
+}
+
+/** #324: push derived cruise chip without a new stdin cmd (re-hydrate / HTML SSE). */
+function refreshSummonerCruiseChip(): void {
+  const id = summonerThreadId
+  if (id && overlaySessionIsLive(currentOverlaySession())) {
+    void hydrateSummonerThread(id)
+  }
+  try {
+    const { pushSummonerWebEvent } = require("./summoner-web") as typeof import("./summoner-web")
+    pushSummonerWebEvent({ type: "overlay.cruise", cruise_label: currentOverlayCruiseChipLabel() })
+  } catch {
+    /* HTML shell not started */
+  }
+}
+
 async function hydrateSummonerThread(id: string, sessionToken?: number): Promise<boolean> {
   const client = summonerClient
   if (!client) return false
@@ -723,12 +754,13 @@ async function hydrateSummonerThread(id: string, sessionToken?: number): Promise
     token,
     selectMessages: (tid) => client.selectThreadMessages(tid),
     applyHydrate: (tid, messages) => {
-      trayInstance?.hydrateSummoner?.({
-        thread_id: tid,
-        lines: hydratePlaintext(messages),
-        browser: summonerBrowserAttached() ? "attached" : "detached",
-        search_hint: SUMMONER_SEARCH_HINT,
-      })
+      trayInstance?.hydrateSummoner?.(
+        buildSummonerHydratePayload({
+          thread_id: tid,
+          lines: hydratePlaintext(messages),
+          browser: summonerBrowserAttached() ? "attached" : "detached",
+        }),
+      )
     },
     claimLease: (tid) => claimOverlayLeaseDetailed(client, tid),
     releaseClaimedLease: (tid, rev) =>
@@ -754,6 +786,7 @@ async function pushSummonerMcp(): Promise<void> {
 }
 
 export async function handleSummonerReady(): Promise<void> {
+  await pollUnattendedCruiseChip()
   const token = beginOverlaySession()
   syncSummonerHotkeyToTray()
   pushSummonerSettings()
@@ -1057,12 +1090,13 @@ export async function handleSummonerSubmit(
       const lines = hydratePlaintext(
         already || !trimmed ? prior : [...prior, { role: "user", content: trimmed }],
       )
-      trayInstance?.hydrateSummoner?.({
-        thread_id: id,
-        lines,
-        browser: summonerBrowserAttached() ? "attached" : "detached",
-        search_hint: SUMMONER_SEARCH_HINT,
-      })
+      trayInstance?.hydrateSummoner?.(
+        buildSummonerHydratePayload({
+          thread_id: id,
+          lines,
+          browser: summonerBrowserAttached() ? "attached" : "detached",
+        }),
+      )
     },
     },
     { enqueue },
@@ -1296,12 +1330,13 @@ async function handleSummonerFiles(
     token,
     claim: async () => {
       if (createdFresh) {
-        trayInstance?.hydrateSummoner?.({
-          thread_id: tid,
-          lines: [],
-          browser: summonerBrowserAttached() ? "attached" : "detached",
-          search_hint: SUMMONER_SEARCH_HINT,
-        })
+        trayInstance?.hydrateSummoner?.(
+          buildSummonerHydratePayload({
+            thread_id: tid,
+            lines: [],
+            browser: summonerBrowserAttached() ? "attached" : "detached",
+          }),
+        )
       }
       return claimOverlayLeaseDetailed(client, tid)
     },
@@ -1395,12 +1430,13 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
   const claimed = await claimOverlayIfLive({
     token,
     claim: async () => {
-      trayInstance?.hydrateSummoner?.({
-        thread_id: created.id,
-        lines: [],
-        browser: summonerBrowserAttached() ? "attached" : "detached",
-        search_hint: SUMMONER_SEARCH_HINT,
-      })
+      trayInstance?.hydrateSummoner?.(
+        buildSummonerHydratePayload({
+          thread_id: created.id,
+          lines: [],
+          browser: summonerBrowserAttached() ? "attached" : "detached",
+        }),
+      )
       return claimOverlayLeaseDetailed(client, created.id)
     },
     releaseClaim: (rev) =>
@@ -1624,6 +1660,7 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
     reportOverlayShellUnavailable()
     return
   }
+  await pollUnattendedCruiseChip()
   try {
     const {
       startSummonerWebServer,
@@ -1876,12 +1913,24 @@ export async function startMenuBarAgent(): Promise<void> {
     if (!msg || msg.type !== "ui.open_sidepanel") return
     // broadcast echo (id-addressed to the extension SW) — tray must not treat this as RPC
   })
+  companionClient.onAppMessage((msg: any) => {
+    if (!msg || typeof msg.type !== "string") return
+    if (msg.type === "security.unattended.status") {
+      setOverlayUnattendedArmed(unattendedArmedFromStatus(msg))
+      refreshSummonerCruiseChip()
+      return
+    }
+    if (msg.type === "config.updated") {
+      refreshSummonerCruiseChip()
+    }
+  })
 
   // Set default quick actions immediately
   trayInstance.setQuickActions(companionClient.quickActions)
 
   // Connect (non-blocking — data arrives via callbacks)
   companionClient.connect().catch(() => {})
+  void pollUnattendedCruiseChip()
 
   // Second WS: overlay chat. Same origin; handshake surface=summoner (ACL).
   summonerClient = new CompanionClient({

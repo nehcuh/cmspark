@@ -86,6 +86,48 @@ test("round-trip summoner.hydrate", () => {
   roundTripOutbound(detached)
 })
 
+test("#324 hydrate cruise_label is optional and round-trips", () => {
+  const withLabel = encodeSummonerHydrate({
+    thread_id: "thr-hyd-3",
+    lines: [],
+    browser: "attached",
+    search_hint: SUMMONER_SEARCH_HINT,
+    cruise_label: "巡航中 · 网页巡航",
+  })
+  assert.equal(withLabel.cruise_label, "巡航中 · 网页巡航")
+  roundTripOutbound(withLabel)
+
+  const missing = encodeSummonerHydrate({
+    thread_id: "thr-hyd-4",
+    lines: [],
+    browser: "attached",
+    search_hint: SUMMONER_SEARCH_HINT,
+  })
+  assert.equal(missing.cruise_label, undefined)
+  roundTripOutbound(missing)
+
+  const decoded = decodeSummonerOutbound({
+    cmd: "summoner.hydrate",
+    thread_id: "thr-hyd-5",
+    lines: ["你: hi"],
+    browser: "detached",
+    search_hint: SUMMONER_SEARCH_HINT,
+    cruise_label: "每次确认",
+  })
+  assert.equal(decoded && "cruise_label" in decoded ? decoded.cruise_label : "", "每次确认")
+
+  const junk = decodeSummonerOutbound({
+    cmd: "summoner.hydrate",
+    thread_id: "thr-hyd-6",
+    lines: [],
+    browser: "detached",
+    search_hint: SUMMONER_SEARCH_HINT,
+    cruise_label: 12,
+  })
+  assert.ok(junk)
+  assert.equal((junk as { cruise_label?: string }).cruise_label, undefined)
+})
+
 test("round-trip summoner.hits and summoner.select", () => {
   const hits = encodeSummonerHits({
     hits: [

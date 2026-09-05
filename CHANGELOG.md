@@ -4,7 +4,9 @@
 
 ## [Unreleased]
 
-（无）
+### Added
+
+- **召唤器巡航档位只读镜像**：hydrate 下推派生 chip 文案（Swift/HTML 不解三 bool）；点击走既有「打开侧栏/确认台」深链。ACL / 确认方言 / #230 不动。[#324](https://github.com/nehcuh/cmspark/issues/324)
 
 ## [0.5.9] — 2026-09-04
 

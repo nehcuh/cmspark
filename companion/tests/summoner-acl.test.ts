@@ -38,6 +38,12 @@ test("summoner denies trust elevation", () => {
   }
 })
 
+test("#324 summoner ACL still has no tier writer", () => {
+  assert.equal(assertSummonerAllowed("summoner", "summoner.tier.set").ok, false)
+  const src = fs.readFileSync(srcFile("ws", "summoner-acl.ts"), "utf8")
+  assert.doesNotMatch(src, /summoner\.tier/)
+})
+
 test("tray surface does not use summoner allowlist", () => {
   assert.equal(assertSummonerAllowed("tray", "skill.list").ok, true)
   assert.equal(assertSummonerAllowed(undefined, "skill.list").ok, true)

@@ -9,7 +9,12 @@
  * travel this pipe; `chat.create` itself stays on the summoner WS.
  *
  * Plan: docs/superpowers/plans/2026-08-22-os-agent-shell-p0-spike.md Task 7
+ *
+ * GitHub: #324 — optional hydrate.cruise_label is display-only. This file's
+ * confirm-dialect lock (`isSummonerConfirmDialect`) is unchanged.
  */
+
+import { sanitizeOverlayCruiseLabel } from "../security/autopilot-tier"
 
 /** Title-search capability copy. Overlay never searches message body. */
 export const SUMMONER_SEARCH_HINT = "只搜标题，不搜正文" as const
@@ -31,6 +36,8 @@ export type SummonerHydratePayload = {
   lines: string[]
   browser: SummonerBrowser
   search_hint: SummonerSearchHint
+  /** #324 derived cruise chip copy. Optional for backward compat. Swift must display as-is. */
+  cruise_label?: string
 }
 
 export type SummonerTokenPayload = {
@@ -173,13 +180,15 @@ export function encodeSummonerClose(): SummonerCloseCmd {
 }
 
 export function encodeSummonerHydrate(p: SummonerHydratePayload): SummonerHydrateCmd {
-  return {
+  const cmd: SummonerHydrateCmd = {
     cmd: "summoner.hydrate",
     thread_id: p.thread_id,
     lines: p.lines,
     browser: p.browser,
     search_hint: p.search_hint,
   }
+  if (p.cruise_label !== undefined) cmd.cruise_label = p.cruise_label
+  return cmd
 }
 
 export function encodeSummonerToken(p: SummonerTokenPayload): SummonerTokenCmd {
@@ -496,12 +505,16 @@ export function decodeSummonerOutbound(raw: unknown): SummonerOutboundCmd | null
       if (!isStringArray(o.lines)) return null
       if (!isBrowser(o.browser)) return null
       if (o.search_hint !== SUMMONER_SEARCH_HINT) return null
-      return encodeSummonerHydrate({
-        thread_id: o.thread_id,
-        lines: o.lines,
-        browser: o.browser,
-        search_hint: o.search_hint,
-      })
+      {
+        const cruise_label = sanitizeOverlayCruiseLabel(o.cruise_label)
+        return encodeSummonerHydrate({
+          thread_id: o.thread_id,
+          lines: o.lines,
+          browser: o.browser,
+          search_hint: o.search_hint,
+          ...(cruise_label !== undefined ? { cruise_label } : {}),
+        })
+      }
     case "summoner.token":
       if (!isString(o.text)) return null
       return encodeSummonerToken({ text: o.text })
