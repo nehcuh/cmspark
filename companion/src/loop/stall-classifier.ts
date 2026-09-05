@@ -7,6 +7,14 @@
 // RED LINES: pure functions, zero auto-execution. This module only produces
 // signals and data structures — intervention (route-directive steer, re-plan,
 // resume) belongs to L-2/L-3 (#388/#389); rendering belongs to L-4 (#390).
+//
+// Wiring pins for later tickets (PR #394 review):
+// - #389 owns the「stall 后再 2 个 run 仍 Δ=0 → emit stall-persistent → 该项
+//   blocked」counter; this module only defines the signal kind (#387 NIT-3).
+// - The stall signal must drive route-directive intervention JOINTLY with
+//   #389's steering, never act alone (#387 pi NIT-4).
+// - Unlock detail strings are English machine-readable defaults; user-facing
+//   rendering / localization belongs to #390 (detail is overridable).
 
 import type { RunProgress } from "../threads/run-progress"
 import { evidenceItems } from "./completion-predicate"
@@ -111,7 +119,16 @@ export function buildUnlockContract(p: {
   detail?: string
 }): UnlockContract {
   const blockerClass = classifyBlocker(p.signal)
-  const def = DEFAULT_UNLOCK[blockerClass]
+  // confirm-denied: the user already said no — asking them to "approve or
+  // deny" again is dishonest; the honest default is re-plan (PR #394 NIT-4).
+  const def =
+    p.signal.kind === "confirm-denied"
+      ? {
+          action: "replan" as const,
+          detail:
+            "The user denied the confirmation; revise the plan or re-request with changes.",
+        }
+      : DEFAULT_UNLOCK[blockerClass]
   return {
     blocker_class: blockerClass,
     item_id: typeof p.itemId === "string" && p.itemId ? p.itemId : null,

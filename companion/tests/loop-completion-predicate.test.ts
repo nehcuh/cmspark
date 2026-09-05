@@ -1,7 +1,14 @@
 /**
  * #387 L-1: completion predicate — machine two-layer + claim⊆tick cross-check.
- * Acceptance: 空口声明完成被拒；全 tick 无声明触发索要轮；勾假（点了提交≠
- * 表单过）被 claim⊆tick 拦下；不改现有勾选/不信任模型语义（纯函数，零执行）。
+ * Acceptance: 空口声明完成被拒；全 tick 无声明触发索要轮；五分类归属正确；
+ * 不改现有勾选/不信任模型语义（纯函数，零执行）。
+ *
+ * 残余风险（PR #394 grok MAJOR-1，选修法 1——不发明页面谓词）：
+ * 「点了提交≠表单过」的强形式本票不拦也拦不了（票面 NEVER：HTTP/DOM 谓词
+ * 毕业）。`tool: "click"` 的 success tick 只证明点击工具调用成功，不证明
+ * 表单过关；谓词会对这样的项输出 complete。claim⊆tick 拦的是弱形式——
+ * claim 引用【未 tick】的提交项。L-2 (#388) 不得把 complete 展示成
+ * 「任务已完成」；默认档以用户终审兜底（FINAL-SYNTHESIS §分歧 3）。
  */
 import test from "node:test"
 import assert from "node:assert/strict"
@@ -77,9 +84,10 @@ test("claim on empty progress (no evidence items) is rejected", () => {
   assert.deepEqual(v.invalidClaimIds, ["live:0"])
 })
 
-test("勾假被拦: 点了提交≠表单过 — claim cites item without evidence tick", () => {
-  // Model clicked submit (tool call happened) but no successful bound
-  // tool_result ticked the item; claim must not pass.
+test("claim 引用未 tick 的提交项被拦（勾假的弱形式）", () => {
+  // 弱形式：点击可能发生过，但没有成功的绑定 tool_result tick 该项，
+  // claim 引用它必被拒。强形式（click success tick ≠ 表单过关）见文件头
+  // 残余风险说明——本票 NEVER 页面谓词。
   const v = evaluateCompletion(
     base({
       runProgress: progress([

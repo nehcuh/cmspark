@@ -92,6 +92,16 @@ test("解锁契约: run-level blocker has item_id null; detail override wins", (
   assert.equal(c.unlock.detail, "Model ignored 2 route directives; restate the goal.")
 })
 
+test("解锁契约: confirm-denied 默认解锁是 replan（人已拒绝，不再求批准）", () => {
+  const c = buildUnlockContract({ signal: { kind: "confirm-denied" }, itemId: "live:1" })
+  assert.equal(c.blocker_class, "needs-human-confirm")
+  assert.equal(c.unlock.action, "replan")
+  assert.match(c.unlock.detail, /denied/)
+  // confirm-pending 仍是 approve-confirm
+  const p = buildUnlockContract({ signal: { kind: "confirm-pending" } })
+  assert.equal(p.unlock.action, "approve-confirm")
+})
+
 function delta(runId: string, ticks: string[], failed = 0): RunDelta {
   return { runId, newTickIds: ticks, failedCount: failed }
 }
@@ -146,7 +156,7 @@ test("computeRunDelta: only non-draft false→true flips count", () => {
   assert.equal(d.failedCount, 1)
 })
 
-test("computeRunDelta: untick (user flip back) does not re-count on re-tick baseline", () => {
+test("computeRunDelta: already-done steady state yields no new ticks", () => {
   const before = progress([item({ id: "live:0", text: "a", source: "seed", done: true })])
   const after = progress([item({ id: "live:0", text: "a", source: "seed", done: true })])
   assert.deepEqual(computeRunDelta(before, after, { runId: "r1" }).newTickIds, [])

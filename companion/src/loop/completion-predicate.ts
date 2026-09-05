@@ -18,6 +18,22 @@
 //   claim with no evidence-ticked item references is rejected.
 // - execution_contract stays shadow and is NOT consulted as a completion gate
 //   (graduation tracked in #328).
+//
+// Naming/residual honesty (PR #394 review, grok MAJOR-1/NIT-1 + pi NIT-2):
+// - Verdict kind "complete" is a MACHINE-CHECK SIGNAL ONLY. L-4 (#390) maps
+//   it to a DONE report pending user confirmation; it must never be rendered
+//   as 「任务已完成」 or used as toast copy. The default tier ends with user
+//   final review (FINAL-SYNTHESIS §分歧 3).
+// - Residual risk: a `tool: "click"` success tick means the click tool call
+//   succeeded, NOT that the form passed (点了提交≠表单过). claim⊆tick only
+//   blocks claims that cite UNticked items; L-2 (#388) must not present
+//   "complete" as goal achievement — user final review is the backstop.
+// - Unattended tier (L-5) drops the claim layer (model self-proof adds no
+//   trust): #388 wiring must skip request-claim there — no one is around to
+//   answer — and take machine-pass + evidence digest audit as
+//   「计划完成待复核」, never "request-claim as a hard gate".
+// - Steer strings are English for model consumption; any user-facing
+//   rendering / localization belongs to L-4 (#390).
 
 import type { RunProgress, RunProgressItem } from "../threads/run-progress"
 
@@ -153,5 +169,9 @@ export function evaluateCompletion(input: CompletionInput): CompletionVerdict {
   if (reasons.length > 0) {
     return { kind: "incomplete", reasons, untickedIds: unticked.map((it) => it.id) }
   }
+  // Note: a fully user-hand-ticked list with no claim also lands here
+  // (request-claim). 分歧 3 says 用户手勾完 = complete（人是权威）; L-4 (#390)
+  // may skip the claim round when every tick is source "user". This pure
+  // predicate cannot tell who ticked, so it emits the same signal either way.
   return { kind: "request-claim", tickedIds, steer: buildRequestClaimSteer(ticked) }
 }
