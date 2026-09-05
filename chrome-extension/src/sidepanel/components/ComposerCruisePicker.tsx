@@ -1,5 +1,7 @@
-// Composer cruise-tier picker (#325). Display is live deriveAutopilotTier.
-// Writes reuse config.set + confirmation_phrase; 值守 is not a composer slot.
+// Composer cruise-tier picker (#325). Display is live deriveDisplayTier
+// (flags + unattended grant). Writes reuse config.set + confirmation_phrase;
+// 值守 is not a composer slot. Any slot apply clears leftover process grant
+// first (Settings lock-step: security.unattended.disarm, clear_cruise:false).
 
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react"
 import { useAgentStore } from "../store/agentStore"
@@ -15,6 +17,8 @@ import {
   composerPickNeedsArm,
   composerSlotFlags,
   composerSlotWrites,
+  flagsNeedingArm,
+  flagsNeedingDisarm,
   tierShortLabel,
   type ComposerCruiseSlot,
   type SecurityArmFlags,
@@ -46,7 +50,8 @@ function sendSecurityFlagConfig(
 export function ComposerCruisePicker() {
   const { state, dispatch } = useAgentStore()
   const flags = liveFlags(state.config)
-  const chipLabel = composerCruiseChipLabel(flags)
+  const unattendedArmed = state.unattended?.armed === true
+  const chipLabel = composerCruiseChipLabel(flags, unattendedArmed)
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [pendingSlot, setPendingSlot] = useState<ComposerCruiseSlot | null>(null)
@@ -74,6 +79,15 @@ export function ComposerCruisePicker() {
   const applySlot = (slot: ComposerCruiseSlot, confirmationPhrase?: string) => {
     const target = composerSlotFlags(slot)
     const writes = composerSlotWrites(flags, slot)
+    // Settings lock-step: leftover ADR-021 process grant is orthogonal to the
+    // three cruise bools. Clear it before writing flags so 每次确认/巡航
+    // cannot leave host_computer silently waived for up to 8h.
+    chrome.runtime.sendMessage(
+      { type: "security.unattended.disarm", clear_cruise: false },
+      () => {
+        chrome.runtime.sendMessage({ type: "security.unattended.status" })
+      },
+    )
     for (const w of writes) {
       if (w.value === true) {
         if (!confirmationPhrase) return
@@ -83,6 +97,22 @@ export function ComposerCruisePicker() {
       }
     }
     dispatch({ type: "SET_CONFIG", config: { ...target } })
+    const toArm = flagsNeedingArm(flags, target)
+    const toDisarm = flagsNeedingDisarm(flags, target)
+    dispatch({
+      type: "ADD_SECURITY_AUDIT",
+      entry: {
+        id: `autopilot-${crypto.randomUUID()}`,
+        ts: new Date().toISOString(),
+        level: toArm.length > 0 ? "error" : "info",
+        tool_name: "autopilot_packaging",
+        action: "changed",
+        risk_level: toArm.length > 0 ? "high" : "low",
+        risk_score: toArm.length > 0 ? 80 : 0,
+        source: "ui_phrase_confirmed",
+        message: `作曲器巡航档位：${tierShortLabel(slot)} [${[...toArm, ...toDisarm.map((k) => `-${k}`)].join(", ") || "noop"}]`,
+      },
+    })
   }
 
   const onPick = (slot: ComposerCruiseSlot) => {

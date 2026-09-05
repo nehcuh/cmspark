@@ -184,9 +184,16 @@ export function flagsNeedingDisarm(
   return keys.filter((k) => target[k] === false && current[k] === true)
 }
 
-/** Chip text: 100% live deriveAutopilotTier. Never cache; never prefer unattended. */
-export function composerCruiseChipLabel(flags: SecurityArmFlags): string {
-  return tierShortLabel(deriveAutopilotTier(flags))
+/**
+ * Composer chip text: live deriveDisplayTier (flags + process grant).
+ * Unattended grant wins the label (「无人值守」) — never cache.
+ * Slots remain cruise-only; 值守 is display, not a picker option.
+ */
+export function composerCruiseChipLabel(
+  flags: SecurityArmFlags,
+  unattendedArmed = false,
+): string {
+  return tierShortLabel(deriveDisplayTier(flags, unattendedArmed))
 }
 
 /**

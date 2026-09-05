@@ -62,12 +62,13 @@ test("#325 chip label is live deriveAutopilotTier with zero module cache", () =>
   assert.equal(composerCruiseChipLabel({ allow_all_schemes: true }), "自定义")
 })
 
-test("#325 composer chip ignores unattended grant (deriveAutopilotTier only)", () => {
+test("#325 composer chip shows 值守 when unattended grant is armed", () => {
   const flags = { auto_approve_dangerous: true }
   assert.equal(deriveDisplayTier(flags, true), "unattended")
-  assert.equal(composerCruiseChipLabel(flags), "网页巡航")
-  assert.ok(composerCruiseChipLabel(flags) !== tierShortLabel("unattended"))
-  assert.equal(composerCruiseChipLabel(flags), tierShortLabel(deriveAutopilotTier(flags)))
+  assert.equal(composerCruiseChipLabel(flags, true), tierShortLabel("unattended"))
+  assert.match(composerCruiseChipLabel(flags, true), /值守/)
+  assert.equal(composerCruiseChipLabel(flags, false), "网页巡航")
+  assert.equal(composerCruiseChipLabel(flags), "网页巡航", "default unarmed is flags-only")
 })
 
 test("#325 composerSlotFlags reuses disarmAllFlags / targetFlagsForTier; browser is canonical", () => {
@@ -137,16 +138,43 @@ test("#325 picker source: live derive, no display cache, no unattended slot, no 
   const app = fs.readFileSync(srcFile("sidepanel", "App.tsx"), "utf8")
   assert.match(app, /ComposerCruisePicker/)
   assert.match(picker, /composerCruiseChipLabel/)
+  assert.match(picker, /deriveDisplayTier|unattendedArmed/)
   assert.match(picker, /COMPOSER_CRUISE_SCOPE_NOTE/)
   assert.match(picker, /AUTOPILOT_CONSEQUENCE_ROWS|AutopilotConsequenceMatrix/)
   assert.match(picker, /confirmation_phrase/)
   assert.match(picker, /config\.set/)
   assert.doesNotMatch(picker, /useState<[^>]*Tier/)
   assert.doesNotMatch(picker, /cachedTier|lastTier|storedTier/)
-  assert.doesNotMatch(picker, /unattended/)
   assert.doesNotMatch(picker, /自动编辑/)
   assert.doesNotMatch(picker, /完全访问/)
   assert.doesNotMatch(picker, /arm_source|expires_at|ttl/i)
+  // Slots stay cruise-only — grant may appear in display/disarm paths, never as a slot.
+  assert.equal((COMPOSER_CRUISE_SLOTS as readonly string[]).includes("unattended"), false)
+  assert.doesNotMatch(COMPOSER_CRUISE_SLOTS.join(","), /unattended/)
   const slots: ComposerCruiseSlot[] = ["off", "browser", "full", "full_protocol"]
   assert.equal(slots.length, 4)
+})
+
+test("#325 applySlot sends unattended.disarm before cruise flag writes", () => {
+  const picker = fs.readFileSync(
+    srcFile("sidepanel", "components", "ComposerCruisePicker.tsx"),
+    "utf8",
+  )
+  const apply = picker.slice(picker.indexOf("const applySlot"), picker.indexOf("const onPick"))
+  const disarmAt = apply.indexOf('type: "security.unattended.disarm"')
+  const clearAt = apply.indexOf("clear_cruise: false")
+  const writeAt = apply.indexOf("sendSecurityFlagConfig")
+  assert.ok(disarmAt >= 0, "must send security.unattended.disarm")
+  assert.ok(clearAt > disarmAt, "clear_cruise:false (flags written next)")
+  assert.ok(writeAt > clearAt, "disarm must precede config.set flag writes")
+  assert.match(apply, /ADD_SECURITY_AUDIT/)
+})
+
+test("#325 picker chip label is deriveDisplayTier of live flags + grant", () => {
+  const picker = fs.readFileSync(
+    srcFile("sidepanel", "components", "ComposerCruisePicker.tsx"),
+    "utf8",
+  )
+  assert.match(picker, /state\.unattended\?\.armed === true/)
+  assert.match(picker, /composerCruiseChipLabel\(flags,\s*unattendedArmed\)/)
 })
