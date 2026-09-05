@@ -1,0 +1,604 @@
+{
+  "version": 1,
+  "ticket": "#362 CU-D",
+  "generatedBy": "companion/scripts/gen-cu-locate-eval-fixtures.mjs（确定性；--check 逐字节校验）",
+  "purpose": "本机定位 held-out 评测集（CU-D）：正常界面中文点按定位。非对抗集——对抗样本在 #361 (CU-C) cu-redteam，两集样本不重叠，红队样本不计入本集准确率。",
+  "forms": {
+    "desktop": 5,
+    "osr": 5
+  },
+  "goldenInPrompt": false,
+  "window": {
+    "rect": {
+      "x": 100,
+      "y": 100,
+      "width": 640,
+      "height": 480
+    },
+    "client": {
+      "x": 10,
+      "y": 40,
+      "width": 620,
+      "height": 430
+    }
+  },
+  "fixtures": [
+    {
+      "window": {
+        "rect": {
+          "x": 100,
+          "y": 100,
+          "width": 640,
+          "height": 480
+        },
+        "client": {
+          "x": 10,
+          "y": 40,
+          "width": 620,
+          "height": 430
+        }
+      },
+      "uiaCapable": false,
+      "app": {
+        "token": "win.app.test",
+        "exePath": "C:\\Program Files\\TestApp\\app.exe",
+        "coordinateAllowed": true
+      },
+      "id": "d1-desktop-approve",
+      "form": "desktop",
+      "title": "中文桌面：报销审批列表，点击第二行「通过」",
+      "taskText": "在报销审批列表里，把 E-1002 这一行的单据点「通过」。",
+      "targetText": "通过",
+      "png": "d1-desktop-approve.png",
+      "target": {
+        "x": 480,
+        "y": 164,
+        "w": 60,
+        "h": 32
+      },
+      "ocrWords": [
+        {
+          "text": "报销单审批",
+          "x": 12,
+          "y": 44,
+          "w": 96,
+          "h": 16
+        },
+        {
+          "text": "待审批",
+          "x": 260,
+          "y": 112,
+          "w": 54,
+          "h": 18
+        },
+        {
+          "text": "通过",
+          "x": 480,
+          "y": 164,
+          "w": 60,
+          "h": 32
+        }
+      ]
+    },
+    {
+      "window": {
+        "rect": {
+          "x": 100,
+          "y": 100,
+          "width": 640,
+          "height": 480
+        },
+        "client": {
+          "x": 10,
+          "y": 40,
+          "width": 620,
+          "height": 430
+        }
+      },
+      "uiaCapable": false,
+      "app": {
+        "token": "win.app.test",
+        "exePath": "C:\\Program Files\\TestApp\\app.exe",
+        "coordinateAllowed": true
+      },
+      "id": "d2-desktop-settingsrow",
+      "form": "desktop",
+      "title": "中文桌面：系统设置列表，点击「远程协助」行",
+      "taskText": "在系统设置里，点『远程协助』那一行，进入设置。",
+      "targetText": "远程协助",
+      "png": "d2-desktop-settingsrow.png",
+      "target": {
+        "x": 40,
+        "y": 200,
+        "w": 560,
+        "h": 48
+      },
+      "ocrWords": [
+        {
+          "text": "系统设置",
+          "x": 12,
+          "y": 44,
+          "w": 80,
+          "h": 20
+        },
+        {
+          "text": "自动更新",
+          "x": 60,
+          "y": 134,
+          "w": 80,
+          "h": 20
+        },
+        {
+          "text": "远程协助",
+          "x": 60,
+          "y": 214,
+          "w": 80,
+          "h": 20
+        }
+      ]
+    },
+    {
+      "window": {
+        "rect": {
+          "x": 100,
+          "y": 100,
+          "width": 640,
+          "height": 480
+        },
+        "client": {
+          "x": 10,
+          "y": 40,
+          "width": 620,
+          "height": 430
+        }
+      },
+      "uiaCapable": false,
+      "app": {
+        "token": "win.app.test",
+        "exePath": "C:\\Program Files\\TestApp\\app.exe",
+        "coordinateAllowed": true
+      },
+      "id": "d3-desktop-save",
+      "form": "desktop",
+      "title": "中文桌面：保存对话框，点「保存」",
+      "taskText": "文件名叫 report-final.docx，点保存按钮。",
+      "targetText": "保存",
+      "png": "d3-desktop-save.png",
+      "target": {
+        "x": 470,
+        "y": 300,
+        "w": 90,
+        "h": 36
+      },
+      "ocrWords": [
+        {
+          "text": "文件名",
+          "x": 90,
+          "y": 120,
+          "w": 54,
+          "h": 18
+        },
+        {
+          "text": "取消",
+          "x": 360,
+          "y": 300,
+          "w": 90,
+          "h": 36
+        },
+        {
+          "text": "保存",
+          "x": 470,
+          "y": 300,
+          "w": 90,
+          "h": 36
+        }
+      ]
+    },
+    {
+      "window": {
+        "rect": {
+          "x": 100,
+          "y": 100,
+          "width": 640,
+          "height": 480
+        },
+        "client": {
+          "x": 10,
+          "y": 40,
+          "width": 620,
+          "height": 430
+        }
+      },
+      "uiaCapable": false,
+      "app": {
+        "token": "win.app.test",
+        "exePath": "C:\\Program Files\\TestApp\\app.exe",
+        "coordinateAllowed": true
+      },
+      "id": "d4-desktop-search",
+      "form": "desktop",
+      "title": "中文桌面：订单查询结果，点第一行「查看详情」",
+      "taskText": "搜索结果显示两个订单，点第一条订单的查看详情。",
+      "targetText": "查看详情",
+      "png": "d4-desktop-search.png",
+      "target": {
+        "x": 490,
+        "y": 160,
+        "w": 80,
+        "h": 32
+      },
+      "ocrWords": [
+        {
+          "text": "输入订单号",
+          "x": 70,
+          "y": 87,
+          "w": 96,
+          "h": 16
+        },
+        {
+          "text": "搜索",
+          "x": 440,
+          "y": 80,
+          "w": 90,
+          "h": 32
+        },
+        {
+          "text": "查看详情",
+          "x": 490,
+          "y": 160,
+          "w": 80,
+          "h": 32
+        }
+      ]
+    },
+    {
+      "window": {
+        "rect": {
+          "x": 100,
+          "y": 100,
+          "width": 640,
+          "height": 480
+        },
+        "client": {
+          "x": 10,
+          "y": 40,
+          "width": 620,
+          "height": 430
+        }
+      },
+      "uiaCapable": false,
+      "app": {
+        "token": "win.app.test",
+        "exePath": "C:\\Program Files\\TestApp\\app.exe",
+        "coordinateAllowed": true
+      },
+      "id": "d5-desktop-form",
+      "form": "desktop",
+      "title": "中文桌面：新建联系人表单，点「保存」",
+      "taskText": "填写联系人表单后点保存。",
+      "targetText": "保存",
+      "png": "d5-desktop-form.png",
+      "target": {
+        "x": 300,
+        "y": 320,
+        "w": 100,
+        "h": 38
+      },
+      "ocrWords": [
+        {
+          "text": "姓名",
+          "x": 80,
+          "y": 110,
+          "w": 36,
+          "h": 18
+        },
+        {
+          "text": "邮箱",
+          "x": 80,
+          "y": 180,
+          "w": 36,
+          "h": 18
+        },
+        {
+          "text": "保存",
+          "x": 300,
+          "y": 320,
+          "w": 100,
+          "h": 38
+        },
+        {
+          "text": "取消",
+          "x": 420,
+          "y": 320,
+          "w": 100,
+          "h": 38
+        }
+      ]
+    },
+    {
+      "window": {
+        "rect": {
+          "x": 100,
+          "y": 100,
+          "width": 640,
+          "height": 480
+        },
+        "client": {
+          "x": 10,
+          "y": 40,
+          "width": 620,
+          "height": 430
+        }
+      },
+      "uiaCapable": false,
+      "app": {
+        "token": "win.app.test",
+        "exePath": "C:\\Program Files\\TestApp\\app.exe",
+        "coordinateAllowed": true
+      },
+      "id": "d6-osr-toolbar",
+      "form": "osr",
+      "title": "OSR 工具条：点「导出」",
+      "taskText": "在工具栏里点导出。",
+      "targetText": "导出",
+      "png": "d6-osr-toolbar.png",
+      "target": {
+        "x": 150,
+        "y": 150,
+        "w": 120,
+        "h": 40
+      },
+      "ocrWords": [
+        {
+          "text": "导入",
+          "x": 150,
+          "y": 60,
+          "w": 120,
+          "h": 40
+        },
+        {
+          "text": "导出",
+          "x": 150,
+          "y": 150,
+          "w": 120,
+          "h": 40
+        },
+        {
+          "text": "刷新",
+          "x": 150,
+          "y": 240,
+          "w": 120,
+          "h": 40
+        },
+        {
+          "text": "删除",
+          "x": 150,
+          "y": 330,
+          "w": 120,
+          "h": 40
+        }
+      ]
+    },
+    {
+      "window": {
+        "rect": {
+          "x": 100,
+          "y": 100,
+          "width": 640,
+          "height": 480
+        },
+        "client": {
+          "x": 10,
+          "y": 40,
+          "width": 620,
+          "height": 430
+        }
+      },
+      "uiaCapable": false,
+      "app": {
+        "token": "win.app.test",
+        "exePath": "C:\\Program Files\\TestApp\\app.exe",
+        "coordinateAllowed": true
+      },
+      "id": "d7-osr-statusbar",
+      "form": "osr",
+      "title": "OSR 状态栏：点「同步状态」",
+      "taskText": "点一下状态栏里的同步状态。",
+      "targetText": "同步状态",
+      "png": "d7-osr-statusbar.png",
+      "target": {
+        "x": 180,
+        "y": 52,
+        "w": 80,
+        "h": 30
+      },
+      "ocrWords": [
+        {
+          "text": "连接正常",
+          "x": 40,
+          "y": 52,
+          "w": 80,
+          "h": 30
+        },
+        {
+          "text": "同步状态",
+          "x": 180,
+          "y": 52,
+          "w": 80,
+          "h": 30
+        }
+      ]
+    },
+    {
+      "window": {
+        "rect": {
+          "x": 100,
+          "y": 100,
+          "width": 640,
+          "height": 480
+        },
+        "client": {
+          "x": 10,
+          "y": 40,
+          "width": 620,
+          "height": 430
+        }
+      },
+      "uiaCapable": false,
+      "app": {
+        "token": "win.app.test",
+        "exePath": "C:\\Program Files\\TestApp\\app.exe",
+        "coordinateAllowed": true
+      },
+      "id": "d8-osr-panelrow",
+      "form": "osr",
+      "title": "OSR 面板行：点「开发者选项」",
+      "taskText": "打开开发者选项。",
+      "targetText": "开发者选项",
+      "png": "d8-osr-panelrow.png",
+      "target": {
+        "x": 60,
+        "y": 240,
+        "w": 520,
+        "h": 65
+      },
+      "ocrWords": [
+        {
+          "text": "蓝牙",
+          "x": 140,
+          "y": 86,
+          "w": 40,
+          "h": 20
+        },
+        {
+          "text": "Wi-Fi",
+          "x": 140,
+          "y": 171,
+          "w": 60,
+          "h": 20
+        },
+        {
+          "text": "开发者选项",
+          "x": 140,
+          "y": 256,
+          "w": 100,
+          "h": 20
+        },
+        {
+          "text": "关于本机",
+          "x": 140,
+          "y": 341,
+          "w": 80,
+          "h": 20
+        }
+      ]
+    },
+    {
+      "window": {
+        "rect": {
+          "x": 100,
+          "y": 100,
+          "width": 640,
+          "height": 480
+        },
+        "client": {
+          "x": 10,
+          "y": 40,
+          "width": 620,
+          "height": 430
+        }
+      },
+      "uiaCapable": false,
+      "app": {
+        "token": "win.app.test",
+        "exePath": "C:\\Program Files\\TestApp\\app.exe",
+        "coordinateAllowed": true
+      },
+      "id": "d9-osr-traymenu",
+      "form": "osr",
+      "title": "OSR 托盘菜单：点「退出登录」",
+      "taskText": "展开托盘菜单，点退出登录。",
+      "targetText": "退出登录",
+      "png": "d9-osr-traymenu.png",
+      "target": {
+        "x": 330,
+        "y": 294,
+        "w": 260,
+        "h": 60
+      },
+      "ocrWords": [
+        {
+          "text": "打开主界面",
+          "x": 350,
+          "y": 78,
+          "w": 100,
+          "h": 20
+        },
+        {
+          "text": "设置",
+          "x": 350,
+          "y": 156,
+          "w": 40,
+          "h": 20
+        },
+        {
+          "text": "暂停提醒",
+          "x": 350,
+          "y": 234,
+          "w": 80,
+          "h": 20
+        },
+        {
+          "text": "退出登录",
+          "x": 350,
+          "y": 312,
+          "w": 80,
+          "h": 20
+        }
+      ]
+    },
+    {
+      "window": {
+        "rect": {
+          "x": 100,
+          "y": 100,
+          "width": 640,
+          "height": 480
+        },
+        "client": {
+          "x": 10,
+          "y": 40,
+          "width": 620,
+          "height": 430
+        }
+      },
+      "uiaCapable": false,
+      "app": {
+        "token": "win.app.test",
+        "exePath": "C:\\Program Files\\TestApp\\app.exe",
+        "coordinateAllowed": true
+      },
+      "id": "d10-osr-widget",
+      "form": "osr",
+      "title": "OSR 悬浮小组件：点「今天」",
+      "taskText": "在日历小组件里点今天。",
+      "targetText": "今天",
+      "png": "d10-osr-widget.png",
+      "target": {
+        "x": 330,
+        "y": 76,
+        "w": 110,
+        "h": 34
+      },
+      "ocrWords": [
+        {
+          "text": "今天",
+          "x": 330,
+          "y": 76,
+          "w": 110,
+          "h": 34
+        }
+      ]
+    }
+  ]
+}
