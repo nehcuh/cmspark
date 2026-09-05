@@ -216,6 +216,10 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     ports: z.array(z.number().int().min(1).max(65535)).max(32).optional(),
     security_token: z.string().optional(),
   }),
+  loop_declare_blocked: z.object({
+    item_id: z.string().min(1),
+    reason: z.string().optional(),
+  }),
   propose_expert_team: z.object({
     task: z.string().min(1),
     pack_ids: z.array(z.string()).optional(),

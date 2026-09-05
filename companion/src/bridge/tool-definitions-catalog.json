@@ -759,6 +759,29 @@
   {
     "type": "function",
     "function": {
+      "name": "loop_declare_blocked",
+      "description": "Declare a checklist item blocked when you cannot switch routes after a route-directive (CDP origin escalate). Required if you will NOT try the directed route (host_computer / osascript_eval). Does not complete the task. Never enables computer.use or modules.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "description": "run_progress item id to mark blocked"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Short machine reason, not a completion claim"
+          }
+        },
+        "required": [
+          "item_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "execution_contract_propose",
       "description": "（实验：execution contract shadow）在执行 shell_exec 前登记可机器检查的预期：期望 exit code、写路径前缀、是否出网。登记≠授权：shell_exec 仍需正常确认；执行后由代码核对并只写审计日志（v0 shadow，不会停止执行）。tool 目前仅支持 shell_exec。args_digest 可选（你对 {command,cwd} 的 sha256 hex 自报值，仅审计对照用）。expect 至少给一个字段；不要声明你无法确定的事。",
       "parameters": {

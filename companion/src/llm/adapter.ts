@@ -594,6 +594,14 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     /* best-effort hydrate */
   }
   const siteOpPrompt = formatSiteOpMemoryPrompt(threadId, hostname)
+  let routeSteerPrompt = ""
+  try {
+    const { onRouteChatBegin } = require("../loop/route-session") as typeof import("../loop/route-session")
+    const role = threadManager.get(threadId)?.agent_role
+    routeSteerPrompt = onRouteChatBegin(threadId, role)
+  } catch {
+    /* L-3 optional at boot */
+  }
 
   // Inject safety-guard skills at the END of system prompt (highest priority)
   const safetyGuardContent = skillEngine.getSecuritySkills()
@@ -624,6 +632,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     runProgressHint,
     skillPrompt,
     siteOpPrompt,
+    routeSteerPrompt,
     systemPromptAppend,
     // legacy system_prompt field treated as append (not base replacement)
     overrideSystemPrompt,
@@ -1528,6 +1537,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             tool_name: toolName,
             result: toolResult,
           })
+          try {
+            const { onRouteTool } = require("../loop/route-session") as typeof import("../loop/route-session")
+            onRouteTool(threadId, toolName)
+          } catch {
+            /* L-3 optional */
+          }
 
           // Slice 6: evidence tick on real success only (not parse/validation/abort sends).
           // #265: propose writes via dispatch, never as a tick evidence tool.
@@ -2070,6 +2085,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         // leftover is already off the steer queue. convertLeftover must not
         // wipe the live steer queue: successor / concurrent chat.steer would
         // vanish. Bounded loss = this leftover only.
+      }
+      try {
+        const { onRouteChatEnd } = require("../loop/route-session") as typeof import("../loop/route-session")
+        const th = threadManager.get(threadId)
+        onRouteChatEnd(threadId, { runProgress: th?.run_progress, agentRole: th?.agent_role })
+      } catch {
+        /* L-3 optional */
       }
     }
     // Abort/supersede: abortThreadChat drops all steers. Skip here so a
