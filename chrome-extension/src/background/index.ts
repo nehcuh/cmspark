@@ -28,6 +28,7 @@ import {
   type ThreadGraphSlim,
 } from "./thread-graph"
 import {
+  knowledgeGraphErrorPayload,
   openOrFocusKnowledgeGraph,
   writeKnowledgeGraphSnapshot,
 } from "./knowledge-graph"
@@ -497,6 +498,11 @@ async function handleCompanionMessage(msg: any) {
     if (parsed) {
       writeKnowledgeGraphSnapshot(parsed).catch(() => {})
     }
+  }
+  // #356: knowledge.graph error 帧 → error 态快照（防御性兜底，命中面窄见 knowledge-graph.ts 注释）
+  const graphError = knowledgeGraphErrorPayload(msg)
+  if (graphError) {
+    writeKnowledgeGraphSnapshot(graphError).catch(() => {})
   }
 
   // Forward streaming tokens and other messages to side panel + cockpit.

@@ -155,6 +155,37 @@ test("labels: sensitive-shaped candidates are gated; redactSecrets takes .text",
 
 // --- 索引文件（§6.1）：0o600、损坏/半截按缺失处理不 throw ---
 
+test("#356: knowledgeIndexPath 跟随 live CMSPARK_DATA_DIR（env 后设不写真实 ~/.cmspark-agent）", () => {
+  // split-brain 根因修复钉：import-time DATA_DIR 在 env 后设时已冻结，
+  // 测试会把索引写进真实数据目录。live getConfigDir() 下路径必须随 env 走。
+  const prev = process.env.CMSPARK_DATA_DIR
+  const alt = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-k-idxpath-"))
+  try {
+    const altData = path.join(alt, ".cmspark-agent")
+    process.env.CMSPARK_DATA_DIR = altData
+    assert.equal(
+      clusters.knowledgeIndexPath(),
+      path.join(altData, "cache", "knowledge-index.json"),
+      "env 后设立即生效（非 import-time 冻结）",
+    )
+    const realDefault = path.join(os.homedir(), ".cmspark-agent")
+    assert.ok(
+      !clusters.knowledgeIndexPath().startsWith(realDefault + path.sep) ||
+        altData.startsWith(realDefault + path.sep),
+      "不得落进真实 ~/.cmspark-agent",
+    )
+  } finally {
+    if (prev === undefined) delete process.env.CMSPARK_DATA_DIR
+    else process.env.CMSPARK_DATA_DIR = prev
+    fs.rmSync(alt, { recursive: true, force: true })
+  }
+  // 恢复后回到本测试文件的临时目录
+  assert.equal(
+    clusters.knowledgeIndexPath(),
+    path.join(getConfigDir(), "cache", "knowledge-index.json"),
+  )
+})
+
 test("index file: 0o600, atomic write, corrupt/half JSON treated as missing", () => {
   const p = clusters.knowledgeIndexPath()
   clusters.writeKnowledgeIndexFile(p, {

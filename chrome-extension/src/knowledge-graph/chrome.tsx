@@ -7,6 +7,7 @@ import {
   KNOWLEDGE_GRAPH_COLOR_FOLDER,
   KNOWLEDGE_GRAPH_COLOR_GROUP,
   KNOWLEDGE_GRAPH_ENTRY_LABEL,
+  KNOWLEDGE_GRAPH_ERROR_DETAIL_LABEL,
   KNOWLEDGE_GRAPH_LLM_TOGGLE,
   KNOWLEDGE_GRAPH_REBUILD_TIMEOUT_COPY,
   KNOWLEDGE_GRAPH_REGENERATE,
@@ -61,6 +62,8 @@ export function KnowledgeGraphStatusView(props: {
   truncated: boolean
   /** 轮询上限打满（复审 NIT-5）：重建不再自动重试，提示手动刷新。 */
   pollExhausted?: boolean
+  /** #356: error 态的服务端错误说明（内部英文/路径不直接铺开，折叠进详情）。 */
+  error?: string
 }) {
   const copy =
     props.pollExhausted && props.status === "rebuilding"
@@ -70,6 +73,12 @@ export function KnowledgeGraphStatusView(props: {
   return (
     <div role="status" style={{ fontSize: 13, lineHeight: 1.5, padding: "12px 16px" }}>
       {copy}
+      {props.status === "error" && props.error ? (
+        <details style={{ marginTop: 4, fontSize: 11, opacity: 0.8 }}>
+          <summary style={{ cursor: "pointer" }}>{KNOWLEDGE_GRAPH_ERROR_DETAIL_LABEL}</summary>
+          <div style={{ marginTop: 2, wordBreak: "break-all" }}>{props.error}</div>
+        </details>
+      ) : null}
     </div>
   )
 }

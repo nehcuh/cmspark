@@ -28,9 +28,11 @@ export type KnowledgeGraphPayload = {
   nodes: KnowledgeGraphNode[]
   edges: KnowledgeGraphEdge[]
   labels: Record<string, KnowledgeGraphLabel>
+  /** #356: error 态的服务端错误说明（可选；展示用，不进 parse 硬门）。 */
+  error?: string
 }
 
-const STATUSES = new Set<KnowledgeGraphStatus>(["ok", "too_few", "over_cap", "rebuilding"])
+const STATUSES = new Set<KnowledgeGraphStatus>(["ok", "too_few", "over_cap", "rebuilding", "error"])
 
 function asString(v: unknown): string {
   return typeof v === "string" ? v : ""
@@ -97,6 +99,7 @@ export function parseKnowledgeGraphPayload(raw: unknown): KnowledgeGraphPayload 
     nodes,
     edges,
     labels,
+    ...(typeof o.error === "string" && o.error ? { error: o.error } : {}),
   }
 }
 
@@ -109,6 +112,7 @@ export function mockKnowledgeGraphPayload(
     nodes: partial.nodes ? [...partial.nodes] : [],
     edges: partial.edges ? [...partial.edges] : [],
     labels: partial.labels ? { ...partial.labels } : {},
+    ...(typeof partial.error === "string" && partial.error ? { error: partial.error } : {}),
   }
 }
 

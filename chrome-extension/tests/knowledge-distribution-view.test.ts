@@ -5,9 +5,12 @@ import assert from "node:assert/strict"
 // Spec: docs/superpowers/specs/2026-09-02-knowledge-retrieval-scoring-design.md
 
 import {
+  KNOWLEDGE_DISTRIBUTION_ALL_UNGROUPED_COPY,
   KNOWLEDGE_DISTRIBUTION_HONESTY_COPY,
   KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY,
+  KNOWLEDGE_DISTRIBUTION_TOO_FEW_COPY_PREFIX,
   distributionChips,
+  distributionEmptyStateCopy,
   distributionFilterIds,
   distributionOverCap,
 } from "../src/sidepanel/utils/knowledge-distribution"
@@ -70,9 +73,36 @@ test("distributionOverCap: 仅 over_cap 态显示诚实文案", () => {
   assert.equal(distributionOverCap(null), false)
 })
 
+test("#356: distributionEmptyStateCopy — too_few 带当前篇数，all_ungrouped 诚实说明，其余 null", () => {
+  assert.equal(
+    distributionEmptyStateCopy({ groups: [], reason: "too_few" }, 5),
+    "满 20 篇后自动分组（当前 5 篇）",
+  )
+  assert.equal(
+    distributionEmptyStateCopy({ groups: [], reason: "too_few" }, 0),
+    "满 20 篇后自动分组（当前 0 篇）",
+  )
+  assert.equal(
+    distributionEmptyStateCopy({ groups: [], reason: "all_ungrouped" }, 30),
+    "文档主题太分散，未自动分组",
+  )
+  // over_cap 走既有 KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY，不重复
+  assert.equal(distributionEmptyStateCopy({ groups: [], reason: "over_cap" }, 300), null)
+  assert.equal(distributionEmptyStateCopy(SAMPLE, 11), null)
+  assert.equal(distributionEmptyStateCopy(null, 0), null)
+  // 坏 count 防御：不渲染 NaN
+  assert.equal(
+    distributionEmptyStateCopy({ groups: [], reason: "too_few" }, Number.NaN),
+    "满 20 篇后自动分组（当前 0 篇）",
+  )
+})
+
 test("copy pins: 诚实句与超 cap 文案逐字（§6.4 / §6.2 表）", () => {
   assert.equal(KNOWLEDGE_DISTRIBUTION_HONESTY_COPY, "自动分组，不准就移到文件夹。")
   assert.equal(KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY, "库超过 200 篇，未自动分组")
+  // #356 空态文案逐字钉
+  assert.equal(KNOWLEDGE_DISTRIBUTION_TOO_FEW_COPY_PREFIX, "满 20 篇后自动分组")
+  assert.equal(KNOWLEDGE_DISTRIBUTION_ALL_UNGROUPED_COPY, "文档主题太分散，未自动分组")
 })
 
 // Gate9 r2 grok N1：store 层——SET_KNOWLEDGE_DOCS 带 distribution 即更新，

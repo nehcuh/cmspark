@@ -26,6 +26,7 @@ import {
   KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY,
   KNOWLEDGE_ROUTE_BY_GROUP_EXPLAIN_COPY,
   distributionChips,
+  distributionEmptyStateCopy,
   distributionFilterIds,
   distributionOverCap,
 } from "../utils/knowledge-distribution"
@@ -556,6 +557,8 @@ export function KnowledgeSubPanel() {
   // #273 Wave B: 分布 chips（可渲染态）与超 cap 诚实文案
   const distChips = useMemo(() => distributionChips(state.knowledgeDistribution), [state.knowledgeDistribution])
   const distOverCap = distributionOverCap(state.knowledgeDistribution)
+  // #356: too_few / all_ungrouped 空态诚实文案（不再空白面板）
+  const distEmptyCopy = distributionEmptyStateCopy(state.knowledgeDistribution, state.knowledgeDocs.length)
 
   // Group knowledge docs by site, with current site first
   const groupedDocs = groupKnowledgeBySite(filteredDocs, currentHostname)
@@ -1203,6 +1206,12 @@ export function KnowledgeSubPanel() {
       {distOverCap && (
         <div style={{ fontSize: 10, color: tokens.textMuted, marginBottom: 8 }}>
           {KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY}
+        </div>
+      )}
+      {/* #356: too_few / all_ungrouped 空态诚实文案（分布区不再空白） */}
+      {distEmptyCopy && (
+        <div style={{ fontSize: 10, color: tokens.textMuted, marginBottom: 8 }}>
+          {distEmptyCopy}
         </div>
       )}
 

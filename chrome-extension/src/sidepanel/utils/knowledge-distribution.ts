@@ -14,6 +14,16 @@ export const KNOWLEDGE_DISTRIBUTION_HONESTY_COPY = "自动分组，不准就移�
 /** 超 cap 诚实文案（§6.2 表：库超过 200 篇，未自动分组）。 */
 export const KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY = "库超过 200 篇，未自动分组"
 
+/**
+ * #356 too_few 空态诚实文案前缀（对齐 over_cap 先例；当前篇数由调用方拼入）。
+ * 注意：20 与 companion knowledge-clusters.ts KNOWLEDGE_CLUSTER_MIN_DOCS 是两处
+ * 硬编码——与 over_cap 文案硬编码 200（KNOWLEDGE_CLUSTER_DOC_CAP）同款先例；
+ * 改阈值须两处同步。
+ */
+export const KNOWLEDGE_DISTRIBUTION_TOO_FEW_COPY_PREFIX = "满 20 篇后自动分组"
+/** #356 all_ungrouped 空态诚实文案（相似度不足，不假装结构）。 */
+export const KNOWLEDGE_DISTRIBUTION_ALL_UNGROUPED_COPY = "文档主题太分散，未自动分组"
+
 /** #281 单篇导入确认弹窗：正文与库中某篇完全相同（title 由调用方填入《》）。 */
 export const KNOWLEDGE_DUPLICATE_CONFIRM_PREFIX = "内容与已有文档《"
 export const KNOWLEDGE_DUPLICATE_CONFIRM_SUFFIX = "》完全相同"
@@ -71,6 +81,24 @@ export function distributionOverCap(
   distribution: KnowledgeDistribution | null | undefined,
 ): boolean {
   return distribution?.reason === "over_cap"
+}
+
+/**
+ * #356: too_few / all_ungrouped 的空态诚实文案（不再是空白面板）。
+ * too_few 带当前篇数；ok / over_cap（另有文案）/ 缺席返回 null。
+ */
+export function distributionEmptyStateCopy(
+  distribution: KnowledgeDistribution | null | undefined,
+  docCount: number,
+): string | null {
+  if (distribution?.reason === "too_few") {
+    const n = Number.isFinite(docCount) && docCount > 0 ? Math.floor(docCount) : 0
+    return `${KNOWLEDGE_DISTRIBUTION_TOO_FEW_COPY_PREFIX}（当前 ${n} 篇）`
+  }
+  if (distribution?.reason === "all_ungrouped") {
+    return KNOWLEDGE_DISTRIBUTION_ALL_UNGROUPED_COPY
+  }
+  return null
 }
 
 /**
