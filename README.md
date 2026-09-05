@@ -543,7 +543,7 @@ CMspark 支持将 Companion 注册为系统后台服务，实现开机自启、�
 |------|----------|-------------|----------|
 | **macOS** | `launchd` | **Swift NSStatusBar** 原生托盘 + 配对码窗口；通知走系统通知 | `make install-macos` |
 | **Windows** | 任务计划程序 | 系统托盘 (systray2) | `make install-windows` |
-| **Linux** | `systemd --user` | 系统托盘 (systray2，需 GTK)；systray2 不可用时**不会**自动降级——`detectTrayBackend()` 恒选 systray2，readline 终端菜单需显式指定 | `make install-linux` |
+| **Linux** | `systemd --user` | 系统托盘 (systray2，需 GTK)；systray2 启动抛错（如二进制缺失 ENOENT）时 menu-bar 的 tryOrder 自动降级 readline 终端菜单（用户无显式选择入口）；GTK 缺失/headless 崩溃则走 3s 自重启而非降级 | `make install-linux` |
 
 ### 特性
 

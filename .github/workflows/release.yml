@@ -147,9 +147,16 @@ jobs:
           set -euo pipefail
           ZIP="$(ls dist-package/cmspark-*-linux-x64.zip | head -1)"
           echo "Checking ${ZIP}..."
-          unzip -l "${ZIP}" | grep -E 'onnxruntime-node/bin/napi-[0-9]+/linux/x64/onnxruntime_binding\.node'
-          unzip -l "${ZIP}" | grep -E 'qwen-vl-worker\.py'
-          unzip -l "${ZIP}" | grep -E 'systray2/traybin/tray_linux_release$'
+          # Same list_zip helper shape as the windows assert; linux runners
+          # always have unzip, but keep the fallback for symmetry.
+          list_zip() {
+            if command -v unzip >/dev/null 2>&1; then unzip -l "$1"
+            else 7z l "$1"
+            fi
+          }
+          list_zip "${ZIP}" | grep -E 'onnxruntime-node/bin/napi-[0-9]+/linux/x64/onnxruntime_binding\.node'
+          list_zip "${ZIP}" | grep -E 'qwen-vl-worker\.py'
+          list_zip "${ZIP}" | grep -E 'systray2/traybin/tray_linux_release$'
           echo "linux-x64 zip content assert OK"
 
       - name: Assert Windows Setup.exe exists

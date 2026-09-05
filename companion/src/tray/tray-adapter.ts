@@ -169,7 +169,12 @@ export function isSwiftTrayAvailable(): boolean {
  * Priority:
  *  1. macOS ARM64 + Swift binary → 'swift'
  *  2. macOS x86 / Windows (x64 + ARM64 via emulation) / Linux → 'systray2'
- *  3. Fallback → 'readline'
+ *
+ * Never returns 'readline': the readline terminal menu is only reachable as
+ * an automatic fallback in startMenuBarAgent's tryOrder (menu-bar-agent.ts)
+ * when the selected backend throws on start (e.g. systray2 spawn ENOENT).
+ * A crashing systray2 process (e.g. missing GTK/headless) self-restarts via
+ * the bridge onExit handler instead of falling back.
  */
 export function detectTrayBackend(): TrayBackend {
   const platform = getPlatform()
