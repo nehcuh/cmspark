@@ -499,7 +499,7 @@ async function handleCompanionMessage(msg: any) {
       writeKnowledgeGraphSnapshot(parsed).catch(() => {})
     }
   }
-  // #356: knowledge.graph 被门拒/出错 → error 态快照（图谱 tab 停轮询、显示 banner）
+  // #356: knowledge.graph error 帧 → error 态快照（防御性兜底，命中面窄见 knowledge-graph.ts 注释）
   const graphError = knowledgeGraphErrorPayload(msg)
   if (graphError) {
     writeKnowledgeGraphSnapshot(graphError).catch(() => {})

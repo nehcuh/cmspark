@@ -14,7 +14,12 @@ export const KNOWLEDGE_DISTRIBUTION_HONESTY_COPY = "自动分组，不准就移�
 /** 超 cap 诚实文案（§6.2 表：库超过 200 篇，未自动分组）。 */
 export const KNOWLEDGE_DISTRIBUTION_OVER_CAP_COPY = "库超过 200 篇，未自动分组"
 
-/** #356 too_few 空态诚实文案前缀（对齐 over_cap 先例；当前篇数由调用方拼入）。 */
+/**
+ * #356 too_few 空态诚实文案前缀（对齐 over_cap 先例；当前篇数由调用方拼入）。
+ * 注意：20 与 companion knowledge-clusters.ts KNOWLEDGE_CLUSTER_MIN_DOCS 是两处
+ * 硬编码——与 over_cap 文案硬编码 200（KNOWLEDGE_CLUSTER_DOC_CAP）同款先例；
+ * 改阈值须两处同步。
+ */
 export const KNOWLEDGE_DISTRIBUTION_TOO_FEW_COPY_PREFIX = "满 20 篇后自动分组"
 /** #356 all_ungrouped 空态诚实文案（相似度不足，不假装结构）。 */
 export const KNOWLEDGE_DISTRIBUTION_ALL_UNGROUPED_COPY = "文档主题太分散，未自动分组"

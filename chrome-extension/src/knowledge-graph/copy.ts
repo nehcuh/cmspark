@@ -7,8 +7,10 @@ export const KNOWLEDGE_GRAPH_OVER_CAP_COPY =
   "超过 200 篇，只画标题字典序前 200 篇；仅这 200 篇参与分组与着色"
 export const KNOWLEDGE_GRAPH_REBUILDING_COPY = "图谱索引重建中…"
 export const KNOWLEDGE_GRAPH_REBUILD_TIMEOUT_COPY = "索引重建超时，请手动刷新"
-/** #356: knowledge.graph 被门拒/出错映射的可见态（错误详情由调用方附后）。 */
+/** #356: knowledge.graph 被门拒/出错映射的可见态（错误详情由调用方折叠展示）。 */
 export const KNOWLEDGE_GRAPH_ERROR_COPY = "图谱加载失败，可关闭后从知识面板重开"
+/** #356: error 详情折叠开关文案（内部错误原文不直接铺开）。 */
+export const KNOWLEDGE_GRAPH_ERROR_DETAIL_LABEL = "技术详情"
 export const KNOWLEDGE_GRAPH_AI_BADGE = "AI 生成"
 export const KNOWLEDGE_GRAPH_UNGROUPED_LABEL = "未分组"
 export const KNOWLEDGE_GRAPH_COLOR_GROUP = "按分组"

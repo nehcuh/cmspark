@@ -70,7 +70,8 @@ test("#356: knowledgeGraphErrorPayload — 动词文本命中才映射，其他 
   assert.equal(rejected!.error, "knowledge.graph is panel-only (Side Panel knowledge panel)")
   assert.deepEqual(rejected!.nodes, [])
   assert.deepEqual(rejected!.edges, [])
-  // handler throw（family=knowledge 但文本带不动词时不动；带动词才映射）
+  // handler throw 文本是原始 message（几乎不含动词）——此处为合成 fixture，
+  // 仅钉 seam 行为「文本带动词才映射」，不代表生产中会出现该串（复审 MAJOR-1）
   const thrown = knowledgeGraphErrorPayload({
     type: "error",
     error: "knowledge.graph handler failed: boom",

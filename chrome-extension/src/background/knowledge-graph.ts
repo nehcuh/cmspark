@@ -56,10 +56,15 @@ export async function readKnowledgeGraphSnapshot(): Promise<KnowledgeGraphSnapsh
 }
 
 /**
- * #356: knowledge.graph 被 panel-only 门拒或 handler 出错时，companion 回
- * `{type:"error", error:"…knowledge.graph…"}`。error 帧无请求关联 id，错误
- * 文本带动词名是唯一可靠 seam。命中 → error 态快照：图谱 tab 停轮询、显示
- * 可见 banner，不再无限「图谱索引重建中…」。
+ * #356: knowledge.graph 的 error 帧 → error 态快照的**防御性兜底**。
+ * 诚实边界（Wave7 复审 MAJOR-1）：扩展 WS 的 surface 恒为 "panel"
+ * （handshake-surface.ts 对 chrome-extension origin 强制），panel-only 门
+ * 对扩展流量不可达；getKnowledgeGraph 内部全 try/catch 返回 null，handler
+ * 几乎不 throw，且 throw 文本是原始 message（不含动词）。故本映射在生产
+ * 中预期**极少命中**——#356 的「无限重建中」根因实为 split-brain 污染
+ * （knowledgeIndexPath 已改 live getConfigDir）+ too_few 无空态，由另两处
+ * 修复收口；本映射只在 error 帧文本带动词时 fail-safe 生效，miss 退回既有
+ * 100s 轮询上限（NIT-5）。error 帧无请求关联 id，文本动词是唯一可用 seam。
  */
 export function knowledgeGraphErrorPayload(msg: unknown): KnowledgeGraphPayload | null {
   if (!msg || typeof msg !== "object") return null

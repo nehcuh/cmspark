@@ -14,6 +14,7 @@ import {
   KNOWLEDGE_GRAPH_COLOR_GROUP,
   KNOWLEDGE_GRAPH_ENTRY_LABEL,
   KNOWLEDGE_GRAPH_ERROR_COPY,
+  KNOWLEDGE_GRAPH_ERROR_DETAIL_LABEL,
   KNOWLEDGE_GRAPH_OVER_CAP_COPY,
   KNOWLEDGE_GRAPH_REBUILDING_COPY,
   KNOWLEDGE_GRAPH_REGENERATE,
@@ -111,7 +112,7 @@ test("#356: wire 解析 error 态快照（fail-closed 名单含 error；error �
   assert.ok(bare && bare.status === "error" && bare.error === undefined)
 })
 
-test("#356: StatusView error 态渲染 banner + 服务端错误说明", () => {
+test("#356: StatusView error 态渲染通用 banner，内部错误原文折叠进详情不铺开", () => {
   const html = renderToStaticMarkup(
     createElement(KnowledgeGraphStatusView, {
       status: "error",
@@ -120,12 +121,17 @@ test("#356: StatusView error 态渲染 banner + 服务端错误说明", () => {
     }),
   )
   assert.ok(html.includes(KNOWLEDGE_GRAPH_ERROR_COPY), html)
-  assert.ok(html.includes("knowledge.graph is panel-only"), "错误详情如实可见")
-  // 无详情时只渲染 banner
+  // 通用文案直出；内部英文原文只在 <details> 折叠内（不 inline 铺开）
+  assert.ok(html.includes("<details"), "错误详情折叠")
+  assert.ok(html.includes(KNOWLEDGE_GRAPH_ERROR_DETAIL_LABEL), "折叠开关文案")
+  const inline = html.split("<details")[0]
+  assert.ok(!inline.includes("knowledge.graph is panel-only"), "详情原文不得 inline 铺开")
+  // 无详情时只渲染 banner（无折叠块）
   const bare = renderToStaticMarkup(
     createElement(KnowledgeGraphStatusView, { status: "error", truncated: false }),
   )
   assert.ok(bare.includes(KNOWLEDGE_GRAPH_ERROR_COPY), bare)
+  assert.ok(!bare.includes("<details"), "无详情不渲染折叠块")
 })
 
 test("KnowledgeGraphStatusView 真渲染三态文案", () => {
