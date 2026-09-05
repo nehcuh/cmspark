@@ -1683,6 +1683,15 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         // macOS runs only the darwin-estop preflight.
         const { runComputerTask } = await import("../computer/executor")
 
+        // #360 (CU-B): vault-browser one-shot tasks never admit — and therefore
+        // never spawn — the Qwen3-VL worker. The seam is platform-independent
+        // (WIN_BROWSER_VAULT_TOKENS exe identity + MAC_BROWSER_VAULT_BUNDLE_IDS),
+        // so macOS Chrome/Safari bundleId entries are covered too. OSR whitelist
+        // apps (persistent coordinateAllowed, non-browser) are unaffected.
+        const { isVaultBrowserAppToken } = await import("../computer/policy")
+        const { VAULT_BROWSER_NO_VLM_REASON } = await import("../computer/vault-browser-oneshot")
+        const vaultBrowserNoVlm = isVaultBrowserAppToken(getConfig(), String(params.app || ""))
+
         let result: Awaited<ReturnType<typeof runComputerTask>>
 
         if (isMac) {
@@ -1754,33 +1763,40 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               uiaProber: new MacAxProber(),
               uiaWatcherFactory: (t, opts) => startMacAxWindowWatcher(t, opts),
               // Qwen3-VL works on macOS (MPS/CPU via Python transformers)
-              ...(await (async () => {
-                try {
-                  const { resolveModelAdmissionSafe } = await import("../computer/model-admission")
-                  const { computerModelSession } = await import("../computer/model-handlers")
-                  const adm = await resolveModelAdmissionSafe({
-                    config: getConfig().computer,
-                    holder: computerModelSession,
-                    deps: {
-                      broadcast: (m) => { try { execOpts?.broadcast?.(m) } catch { /* best-effort */ } },
-                      log: (event, payload) => logger.info(event, { tool_call_id: toolCallId, ...payload }),
-                      stillEnabled: () => getConfig().computer?.modelEnabled === true,
-                    },
-                  })
-                  return {
-                    experimentalLocator: adm.locator,
-                    ...(adm.locator
-                      ? {}
-                      : { experimentalSkipReason: adm.reason || "model-not-admitted" }),
-                  }
-                } catch (e) {
-                  return {
+              // #360 (CU-B): browser one-shot skips admission entirely — the
+              // worker is never spawned; the chain records vault-browser-no-vlm.
+              ...(vaultBrowserNoVlm
+                ? {
                     experimentalLocator: null,
-                    experimentalSkipReason:
-                      e instanceof Error ? `admission-error:${e.message.slice(0, 80)}` : "model-admission-error",
+                    experimentalSkipReason: VAULT_BROWSER_NO_VLM_REASON,
                   }
-                }
-              })()),
+                : await (async () => {
+                    try {
+                      const { resolveModelAdmissionSafe } = await import("../computer/model-admission")
+                      const { computerModelSession } = await import("../computer/model-handlers")
+                      const adm = await resolveModelAdmissionSafe({
+                        config: getConfig().computer,
+                        holder: computerModelSession,
+                        deps: {
+                          broadcast: (m) => { try { execOpts?.broadcast?.(m) } catch { /* best-effort */ } },
+                          log: (event, payload) => logger.info(event, { tool_call_id: toolCallId, ...payload }),
+                          stillEnabled: () => getConfig().computer?.modelEnabled === true,
+                        },
+                      })
+                      return {
+                        experimentalLocator: adm.locator,
+                        ...(adm.locator
+                          ? {}
+                          : { experimentalSkipReason: adm.reason || "model-not-admitted" }),
+                      }
+                    } catch (e) {
+                      return {
+                        experimentalLocator: null,
+                        experimentalSkipReason:
+                          e instanceof Error ? `admission-error:${e.message.slice(0, 80)}` : "model-admission-error",
+                      }
+                    }
+                  })()),
               onUiaVerdict: (token, verdict, probedAt) => {
                 const wb = writeBackUiaVerdict(token, verdict, probedAt)
                 logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
@@ -1826,9 +1842,13 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           } catch { /* best-effort */ }
           const sealer = new PsEvidenceSealer()
           // WP5-I4 experimental (Qwen3-VL) admission
+          // #360 (CU-B): browser one-shot skips admission entirely — the worker
+          // is never spawned; the chain records vault-browser-no-vlm.
           const { resolveModelAdmissionSafe } = await import("../computer/model-admission")
           const { computerModelSession } = await import("../computer/model-handlers")
-          const experimentalAdmission = await resolveModelAdmissionSafe({
+          const experimentalAdmission = vaultBrowserNoVlm
+            ? { locator: null, reason: VAULT_BROWSER_NO_VLM_REASON }
+            : await resolveModelAdmissionSafe({
             config: getConfig().computer,
             holder: computerModelSession,
             deps: {

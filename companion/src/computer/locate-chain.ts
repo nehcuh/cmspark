@@ -56,6 +56,7 @@ export type ExperimentalLocator = {
   locate(args: { command: string; shot: CaptureMeta }): Promise<ExperimentalLocateOutcome>
 }
 import { rectDriftPx, imageToClient, type CoordScales } from "./coords"
+import { VAULT_BROWSER_NO_VLM_REASON } from "./vault-browser-oneshot"
 
 export interface LocateChainDeps {
   /** L0 provider. The EXECUTOR decides admission (uiaCapable) — it passes
@@ -85,6 +86,14 @@ export interface LocateChainDeps {
    * Default "model-not-admitted" — do not mislabel as model-disabled.
    */
   experimentalSkipReason?: string
+  /**
+   * #360 (CU-B): vault-browser one-shot tasks never feed browser pixels to
+   * VLM layers. When true, L2 is skipped WITHOUT calling deps.experimental
+   * (even when admitted) and L3 stays skipped — both recorded with the
+   * honest reason "vault-browser-no-vlm" in the evidence chain. The chain
+   * runs L0 UIA → L1 OCR → honest ELEMENT_NOT_FOUND only.
+   */
+  vaultBrowserNoVlm?: boolean
   log?: (event: string, data: Record<string, unknown>) => void
   now?: () => number
 }
@@ -611,7 +620,12 @@ export async function locateTargetWithChain(args: {
 
   // ---- L2: Qwen3-VL 实验层（deps.experimental 槽位名历史保留） -----------------
   // admission 由 executor 决定（deps.experimental 非 null = 开关开 + 模型 ready）。
-  if (deps.experimental) {
+  if (deps.vaultBrowserNoVlm === true) {
+    // #360 (CU-B) — 浏览器 vault 面 one-shot：网页像素永不喂 VLM。即使实验层
+    // 已 admitted 也不调用（不可信 HTML 渲染帧不进模型），证据链记诚实 skipped。
+    attempts.push({ layer: "qwen-vl", outcome: "skipped", reason: VAULT_BROWSER_NO_VLM_REASON, ms: 0 })
+    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: VAULT_BROWSER_NO_VLM_REASON })
+  } else if (deps.experimental) {
     const t0 = now()
     const outcome = await deps.experimental.locate({ command: target, shot })
     if (outcome.kind === "hit") {
@@ -648,7 +662,10 @@ export async function locateTargetWithChain(args: {
   }
 
   // ---- L3: cloud（WP6 honest stub，不动） ---------------------------------------
-  attempts.push({ layer: "cloud", outcome: "skipped", reason: "wp6-not-implemented", ms: 0 })
-  log("computeruse.locate", { layer: "cloud", hit: false, reason: "wp6-not-implemented" })
+  // #360: 浏览器 one-shot 路径连 stub 也标成 vault-browser-no-vlm —— 将来 WP6
+  // 落地时本分支绝不静默变成真云端调用（NEVER: vault-browser one-shot 不上云）。
+  const cloudSkipReason = deps.vaultBrowserNoVlm === true ? VAULT_BROWSER_NO_VLM_REASON : "wp6-not-implemented"
+  attempts.push({ layer: "cloud", outcome: "skipped", reason: cloudSkipReason, ms: 0 })
+  log("computeruse.locate", { layer: "cloud", hit: false, reason: cloudSkipReason })
   throw notFoundError()
 }

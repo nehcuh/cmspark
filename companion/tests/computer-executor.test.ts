@@ -5,6 +5,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
+import * as os from "os"
 
 import { runComputerTask, type ComputerExecutorDeps } from "../src/computer/executor"
 import { PsLocator } from "../src/computer/win-adapters"
@@ -2333,4 +2334,107 @@ test("P3 D4.2 M8: 8px-or-less drift is treated as stable (threshold is strict >)
     // may OOB on the shifted rect; that's fine — we're asserting captures.
   }
   assert.ok(capturer.captures <= 3, `expected ≤3 captures at 8px boundary, got ${capturer.captures}`)
+})
+
+
+// --- #360 (CU-B): 浏览器 one-shot 禁 VLM（executor 级） ------------------------
+//
+// 断言面：浏览器 vault 面 one-shot 任务即使 experimentalLocator 已 admitted
+// （modelEnabled + 模型 ready）也绝不调用它（不 spawn / 不推理——网页像素永不
+// 进 VLM）；证据链记 qwen-vl/cloud skipped: vault-browser-no-vlm；诚实
+// ELEMENT_NOT_FOUND；G4 确认门不触发（无实验层建议）。seam 双平台：
+// WIN_BROWSER_VAULT_TOKENS（exe 身份）+ MAC_BROWSER_VAULT_BUNDLE_IDS（bundleId
+// —— 只按 Windows tokens 实现 = macOS 裸奔）。
+// 对照组「OSR 白名单应用仍走 Qwen」由上方既有 G4 套件锁定（win.app.test
+// coordinateAllowed + experimentalLocator → 命中注入，见 executor G4 各案）。
+
+const CHROME_EXE = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+
+function browserOneShotConfig(over: { bundleId?: string; exePath?: string; token: string; displayName: string }): CompanionConfig {
+  return {
+    apps: {
+      enabled: true,
+      entries: {
+        [over.token]: {
+          token: over.token,
+          kind: "gui",
+          display_name: over.displayName,
+          source: "user",
+          policy: "manual",
+          enabled: true,
+          added_at: "2026-09-06T00:00:00.000Z",
+          // 浏览器结构性不可持久置位 coordinateAllowed —— 只能走 one-shot L2。
+          ...(over.bundleId ? { bundleId: over.bundleId } : {}),
+          ...(over.exePath
+            ? { exe: { path: over.exePath, signer: "CN=Browser", user_writable_dir: false } }
+            : {}),
+        },
+      },
+    },
+    computer: { coordinateEnabled: true, modelEnabled: true },
+  } as unknown as CompanionConfig
+}
+
+test("#360: Windows tokens 浏览器 one-shot（win.chrome）→ admitted 实验层零调用，诚实失败", async () => {
+  const tc = fakeExperimentalLocator()
+  const confirm = scriptedConfirm([true])
+  const injector = new RecordingInjector()
+  const logs: Array<Record<string, unknown>> = []
+  const deps = makeDeps({
+    injector,
+    locator: new FakeLocator([]), // L1 miss
+    confirm: confirm.fn,
+    experimentalLocator: tc.locator, // admission ON（modelEnabled）——浏览器面也必须跳过
+    windows: new FakeWindows(winInfo({ exePath: CHROME_EXE, title: "Chrome" })),
+    config: browserOneShotConfig({ token: "win.app.chrome", displayName: "Chrome", exePath: CHROME_EXE }),
+    log: (event, data) => logs.push({ event, ...data }),
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.chrome", actions: [clickOk] }, deps)
+  assert.equal(r.success, false)
+  assert.equal(r.errorCode, "ELEMENT_NOT_FOUND", "浏览器面只走 UIA/OCR → 诚实失败")
+  assert.equal(tc.calls.length, 0, "admitted 实验层在浏览器 one-shot 上零调用")
+  assert.equal(injector.clicks.length, 0)
+  assert.equal(confirm.captured.length, 0, "无实验层建议 → G4 门不触发")
+  const qwenLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "qwen-vl")
+  const cloudLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "cloud")
+  assert.equal(qwenLog?.reason, "vault-browser-no-vlm", "证据链可见 skip 原因")
+  assert.equal(cloudLog?.reason, "vault-browser-no-vlm")
+})
+
+test("#360: macOS bundleId 浏览器 one-shot（com.google.Chrome）→ admitted 实验层零调用（macOS 不裸奔）", { skip: os.platform() !== "darwin" }, async () => {
+  const tc = fakeExperimentalLocator()
+  const confirm = scriptedConfirm([true])
+  const injector = new RecordingInjector()
+  const logs: Array<Record<string, unknown>> = []
+  const deps = makeDeps({
+    injector,
+    locator: new FakeLocator([]),
+    confirm: confirm.fn,
+    experimentalLocator: tc.locator,
+    // darwin: hwnd ownership 按 bundleId 比对
+    windows: new FakeWindows(winInfo({ exePath: "com.google.Chrome", title: "Chrome" })),
+    config: browserOneShotConfig({ token: "mac.app.chrome", displayName: "Chrome", bundleId: "com.google.Chrome" }),
+    log: (event, data) => logs.push({ event, ...data }),
+  })
+  const r = await runComputerTask({ task: "t", app: "mac.app.chrome", actions: [clickOk] }, deps)
+  assert.equal(r.success, false)
+  assert.equal(r.errorCode, "ELEMENT_NOT_FOUND")
+  assert.equal(tc.calls.length, 0, "macOS bundleId seam：实验层零调用")
+  assert.equal(injector.clicks.length, 0)
+  assert.equal(confirm.captured.length, 0)
+  const qwenLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "qwen-vl")
+  assert.equal(qwenLog?.reason, "vault-browser-no-vlm")
+})
+
+test("#360: macOS Safari bundleId（com.apple.Safari）同样 skip（seam 不止 Chrome）", { skip: os.platform() !== "darwin" }, async () => {
+  const tc = fakeExperimentalLocator()
+  const deps = makeDeps({
+    locator: new FakeLocator([]),
+    experimentalLocator: tc.locator,
+    windows: new FakeWindows(winInfo({ exePath: "com.apple.Safari", title: "Safari" })),
+    config: browserOneShotConfig({ token: "mac.app.safari", displayName: "Safari", bundleId: "com.apple.Safari" }),
+  })
+  const r = await runComputerTask({ task: "t", app: "mac.app.safari", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "ELEMENT_NOT_FOUND")
+  assert.equal(tc.calls.length, 0)
 })

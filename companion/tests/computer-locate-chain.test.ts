@@ -853,3 +853,51 @@ test("P4 non-retina regression: scale=1 path produces identical results to pre-P
   assert.equal(r.pointClient.x, 140)
   assert.equal(r.pointClient.y, 140)
 })
+
+
+// --- #360 (CU-B): 浏览器 one-shot 禁 VLM -------------------------------------
+//
+// 断言面：vaultBrowserNoVlm=true 时 L2 即使 admitted 也零调用（网页像素永不进
+// VLM）、L2/L3 均记诚实 skipped: vault-browser-no-vlm（证据链/日志双通道）、链
+// 只走 L0 UIA → L1 OCR → 诚实 ELEMENT_NOT_FOUND；flag 缺省时（OSR 白名单等
+// 非浏览器应用）实验层照常命中——能力收窄严格限定在浏览器 vault 面。
+
+test("#360: vaultBrowserNoVlm → L2 admitted 也零调用，L2/L3 skipped vault-browser-no-vlm，诚实 ELEMENT_NOT_FOUND", async () => {
+  const tc = new FakeExperimentalLocator(tcHit())
+  const logs: Array<Record<string, unknown>> = []
+  await assert.rejects(
+    runChain(chainDeps({
+      locator: new FakeLocator([]), // L1 锚文本不在
+      experimental: tc,             // L2 已 admitted —— 浏览器面也必须跳过
+      vaultBrowserNoVlm: true,
+      log: (_e, d) => logs.push(d),
+    })),
+    (err: any) =>
+      err instanceof ComputerError &&
+      err.code === "ELEMENT_NOT_FOUND" &&
+      /qwen-vl:skipped\(vault-browser-no-vlm\)/.test(err.message) &&
+      /cloud:skipped\(vault-browser-no-vlm\)/.test(err.message),
+  )
+  assert.equal(tc.calls.length, 0, "浏览器 one-shot：实验层 admitted 也绝不调用（网页像素不进 VLM）")
+  const qwenLog = logs.find((d) => d.layer === "qwen-vl")
+  const cloudLog = logs.find((d) => d.layer === "cloud")
+  assert.equal(qwenLog?.hit, false)
+  assert.equal(qwenLog?.reason, "vault-browser-no-vlm")
+  assert.equal(cloudLog?.reason, "vault-browser-no-vlm")
+})
+
+test("#360: vaultBrowserNoVlm 时 L0/L1 照常工作（UIA/OCR 定位能力不收窄）", async () => {
+  const tc = new FakeExperimentalLocator(tcHit())
+  // L1 命中（默认 locator 词表含「确定」），实验层 admitted —— 链短路，L2 零调用。
+  const r = await runChain(chainDeps({ experimental: tc, vaultBrowserNoVlm: true }))
+  assert.equal(r.result.hit.layer, "ocr")
+  assert.equal(tc.calls.length, 0)
+})
+
+test("#360: flag 缺省（OSR 白名单类非浏览器应用）→ 实验层照常命中（能力不收窄）", async () => {
+  const tc = new FakeExperimentalLocator(tcHit())
+  const { result } = await runChain(chainDeps({ locator: new FakeLocator([]), experimental: tc }))
+  assert.equal(result.hit.layer, "qwen-vl")
+  assert.equal(result.experimental, true)
+  assert.equal(tc.calls.length, 1)
+})

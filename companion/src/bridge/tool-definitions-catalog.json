@@ -1498,6 +1498,10 @@
           "budget": {
             "type": "integer",
             "description": "Max injective actions for this task (default 15, max 30). Exhaustion forces a new user confirmation."
+          },
+          "trigger_reason": {
+            "type": "string",
+            "description": "Optional but RECOMMENDED for browser one-shot: why coordinate CU is needed, shown verbatim in the L2 confirm — e.g. \"CDP 定位失败 → 坐标化升级\". A short phrase (max ~200 chars), never page content. On vault browsers locate runs UIA+OCR only — no VLM — so missing anchors fail honestly."
           }
         },
         "required": [
