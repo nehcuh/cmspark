@@ -2387,18 +2387,27 @@ try{
     api("/api/meeting/minutes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})}).then(function(d){
       if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
         setStatus(d.message||d.error||"纪要生成失败");
+        if(hint) hint.textContent="纪要生成失败";
         return;
       }
       var md=(d&&d.minutes&&(d.minutes.raw_md||d.minutes.md))||(d&&d.raw_md)||"";
       if(!md && d&&d.minutes&&typeof d.minutes==="string") md=d.minutes;
+      if(!md){
+        setStatus("纪要生成失败");
+        if(hint) hint.textContent="纪要生成失败";
+        return;
+      }
       var box=$("meetingMinutes");
       if(box && md){
         box.hidden=false;
         box.innerHTML=renderMd(md);
       }
-      setStatus(md?"纪要已生成":"纪要已提交");
-      if(hint) hint.textContent=md?"纪要":"纪要已提交";
-    }).catch(function(e){setStatus(String(e&&e.message||e))});
+      setStatus("纪要已生成");
+      if(hint) hint.textContent="纪要";
+    }).catch(function(e){
+      setStatus(String(e&&e.message||e)||"纪要生成失败");
+      if(hint) hint.textContent="纪要生成失败";
+    });
   }
   $("meetingStart").onclick=function(){
     if(!meetingAck){
@@ -2411,6 +2420,7 @@ try{
       return;
     }
     showMeetingDesk(true);
+    startMeetingCapture();
   };
   $("meetingPrivacyAck").onclick=function(){
     meetingAck=true;
@@ -2418,6 +2428,7 @@ try{
     var sheet=$("meetingPrivacy");
     if(sheet) sheet.hidden=true;
     showMeetingDesk(true);
+    startMeetingCapture();
   };
   $("meetingRec").onclick=function(){
     if(meetingId){ endMeetingCapture(); return; }
@@ -2714,12 +2725,16 @@ try{
       if(t==="meeting.minutes_result"){
         var md=(d&&d.minutes&&(d.minutes.raw_md||d.minutes.md))||d.raw_md||"";
         var box=$("meetingMinutes");
+        if(!md){
+          setStatus("纪要生成失败");
+          return;
+        }
         if(box && md){
           showMeetingDesk(true);
           box.hidden=false;
           box.innerHTML=renderMd(md);
         }
-        setStatus(md?"纪要已生成":"纪要已提交");
+        setStatus("纪要已生成");
         return;
       }
       if(t==="mcp.confirm.pending"){

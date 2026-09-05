@@ -44,6 +44,7 @@
     "src/background/browser-download-handler.ts",
     "src/background/download-busy-entry.ts",
     "src/background/ws-frame-budget.ts",
+    "src/background/pick-sidepanel-window.ts",
 
     "src/notebooklm/extractor.ts",
     "src/notebooklm/markdown-builder.ts",
