@@ -1,6 +1,7 @@
 // 装配 drawer — full Composition section UI (UIUX v2 PR6 / §4.5).
 // Opens Host panels; Board / Fleet / multi-worker are Autonomy — never listed.
-// Focus trap via Modal; landfill one-surface rule enforced by parent.
+// Shell via BottomSheet (focus trap + Escape from ui/Modal); landfill
+// one-surface rule enforced by parent.
 // G4: MD3-ish sheet (radiusSheet + soft scrim) + settings-list groups.
 
 import {
@@ -24,7 +25,7 @@ import {
 import type { ContextPanelId } from "./ContextPanelHost"
 import type { CapabilityLevel } from "../types"
 import { tokens } from "../ui/tokens"
-import { Modal } from "./ui/Modal"
+import { BottomSheet } from "./ui/BottomSheet"
 import {
   IconApps,
   IconChevronRight,
@@ -74,18 +75,13 @@ export function ComposeDrawer({
   }
 
   return (
-    <Modal
+    <BottomSheet
       open={open}
       onClose={onClose}
-      role="dialog"
       ariaLabel="装配"
-      backdropDismiss
       initialFocusRef={firstBtnRef as RefObject<HTMLElement>}
-      overlayStyle={styles.backdrop}
-      panelStyle={styles.sheet}
     >
       <div data-testid="compose-drawer">
-        <div style={styles.handle} aria-hidden />
         <div style={styles.header}>
           <div style={{ minWidth: 0 }}>
             <div style={styles.title}>装配</div>
@@ -123,7 +119,7 @@ export function ComposeDrawer({
           任务板不在装配内 — 使用 /board
         </p>
       </div>
-    </Modal>
+    </BottomSheet>
   )
 }
 
@@ -224,33 +220,6 @@ function SectionRowButton({
 export { COMPOSE_SECTIONS }
 
 const styles: Record<string, CSSProperties> = {
-  backdrop: {
-    position: "fixed",
-    inset: 0,
-    zIndex: 250,
-    background: tokens.scrim,
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    background: tokens.bgElevated,
-    borderTopLeftRadius: tokens.radiusSheet,
-    borderTopRightRadius: tokens.radiusSheet,
-    boxShadow: tokens.shadowLg,
-    maxHeight: "78vh",
-    overflowY: "auto",
-    padding: "10px 0 18px",
-    fontFamily: tokens.font,
-    width: "100%",
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    borderRadius: tokens.radiusPill,
-    background: tokens.borderStrong,
-    margin: "2px auto 12px",
-  },
   header: {
     display: "flex",
     alignItems: "flex-start",

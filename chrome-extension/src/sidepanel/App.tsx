@@ -46,6 +46,7 @@ import {
 } from "./ui/icons"
 import { VoiceMicButton } from "./components/VoiceMicButton"
 import { VoiceStatusCapsule } from "./components/VoiceStatusCapsule"
+import { VoicePrivacySheet } from "./components/VoicePrivacySheet"
 import { parseHotkeyChord, eventMatchesChord, isPttReleaseEvent } from "./voice/hotkey-chord"
 import { POSTPROCESS_BADGE_LABEL } from "./voice/postprocess-badge"
 import { useVoiceInput } from "./hooks/useVoiceInput"
@@ -54,8 +55,7 @@ import { initialPtt, reducePtt, type PttEffect, type PttState } from "./voice/pt
 import { PAGE_INSERT_FALLBACK_HINT } from "./voice/insert-target"
 import { playVoiceSfx, shouldPlayVoiceSfx, VOICE_SOUND_EFFECTS_KEY, parseVoiceSoundEffectsPref } from "./voice/voice-sfx"
 import {
-  VOICE_PRIVACY_ACK_V2_BODY,
-  VOICE_PRIVACY_ACK_V3_BODY,
+  type VoicePrivacyKind,
 } from "./voice/privacy-copy"
 import {
   SYSTEM_LISTEN_HINT,
@@ -423,7 +423,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const pttRef = useRef<PttState>(initialPtt)
   const pttTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Privacy sheet: v1 browser · v2 local · v3 continuous/refiner. */
-  const [voicePrivacyKind, setVoicePrivacyKind] = useState<"v1" | "v2" | "v3">("v1")
+  const [voicePrivacyKind, setVoicePrivacyKind] = useState<VoicePrivacyKind>("v1")
   /** Fail-closed lastKnown engine when companion state not yet mirrored. */
   const [lastKnownVoiceEngine, setLastKnownVoiceEngine] = useState<
     "browser" | "local" | "system" | null
@@ -2078,78 +2078,27 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             </button>
           </div>
         )}
-        {voicePrivacyOpen && (
-          <div
-            data-testid="voice-privacy-sheet"
-            style={{
-              marginTop: 8,
-              padding: 10,
-              borderRadius: 8,
-              border: `1px solid ${tokens.border}`,
-              background: tokens.bgElevated,
-              fontSize: 12,
-              lineHeight: 1.5,
-              color: tokens.textSecondary,
-            }}
-          >
-            <div
-              style={{
-                marginBottom: 8,
-                color: tokens.text,
-                whiteSpace: "pre-wrap" as const,
-              }}
-            >
-              {voicePrivacyKind === "v3"
-                ? VOICE_PRIVACY_ACK_V3_BODY
-                : voicePrivacyKind === "v2"
-                  ? VOICE_PRIVACY_ACK_V2_BODY
-                  : "可选麦克风：浏览器将语音转成文字后填入输入框，默认不自动发送。转写可能使用 Chrome 语音服务（音频可能经网络发送至浏览器厂商），不经过 CMspark Companion。发送后的文字与键入相同，仍受现有确认与信任设置约束。"}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                type="button"
-                style={{
-                  ...styles.attachBtn,
-                  width: "auto",
-                  padding: "4px 10px",
-                  border: `1px solid ${tokens.border}`,
-                  fontSize: 12,
-                }}
-                onClick={() => setVoicePrivacyOpen(false)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                style={{
-                  ...styles.sendBtn,
-                  width: "auto",
-                  padding: "4px 12px",
-                  fontSize: 12,
-                  boxShadow: "none",
-                }}
-                onClick={() => {
-                  if (voicePrivacyKind === "v3") {
-                    dispatch({ type: "SET_VOICE_PRIVACY_ACK_V3", ack: true })
-                    setVoicePrivacyOpen(false)
-                    voice.toggle({ privacyAck: true, privacyAckV3: true })
-                  } else if (voicePrivacyKind === "v2") {
-                    dispatch({ type: "SET_VOICE_PRIVACY_ACK_V2", ack: true })
-                    setVoicePrivacyOpen(false)
-                    voice.toggle({ privacyAckV2: true })
-                  } else {
-                    dispatch({ type: "SET_VOICE_PRIVACY_ACK_V1", ack: true })
-                    setVoicePrivacyOpen(false)
-                    // Pass ack override — React state may not have re-rendered yet
-                    voice.toggle({ privacyAck: true })
-                  }
-                }}
-              >
-                同意并继续
-              </button>
-            </div>
-          </div>
-        )}
+        <VoicePrivacySheet
+          open={voicePrivacyOpen}
+          kind={voicePrivacyKind}
+          onCancel={() => setVoicePrivacyOpen(false)}
+          onAgree={() => {
+            if (voicePrivacyKind === "v3") {
+              dispatch({ type: "SET_VOICE_PRIVACY_ACK_V3", ack: true })
+              setVoicePrivacyOpen(false)
+              voice.toggle({ privacyAck: true, privacyAckV3: true })
+            } else if (voicePrivacyKind === "v2") {
+              dispatch({ type: "SET_VOICE_PRIVACY_ACK_V2", ack: true })
+              setVoicePrivacyOpen(false)
+              voice.toggle({ privacyAckV2: true })
+            } else {
+              dispatch({ type: "SET_VOICE_PRIVACY_ACK_V1", ack: true })
+              setVoicePrivacyOpen(false)
+              // Pass ack override — React state may not have re-rendered yet
+              voice.toggle({ privacyAck: true })
+            }
+          }}
+        />
         <SlashCommandPopover
           skills={slashSkills}
           searchText={slashQuery}

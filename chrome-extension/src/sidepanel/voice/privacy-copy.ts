@@ -35,3 +35,20 @@ export const VOICE_PRIVACY_ACK_V3_CLAUSES: readonly string[] = [
 export const VOICE_PRIVACY_ACK_V3_BODY = VOICE_PRIVACY_ACK_V3_CLAUSES.join("\n")
 
 export const VOICE_PRIVACY_ACK_V3_STORAGE_KEY = "voice_privacy_ack_v3" as const
+
+/**
+ * Browser dictation privacy ack (v1) body — moved verbatim out of App.tsx
+ * (#321 PR-5) so the sheet JSX picks copy by kind instead of nesting ternaries.
+ * Do not edit the wording here without a privacy-review sign-off.
+ */
+export const VOICE_PRIVACY_ACK_V1_BODY =
+  "可选麦克风：浏览器将语音转成文字后填入输入框，默认不自动发送。转写可能使用 Chrome 语音服务（音频可能经网络发送至浏览器厂商），不经过 CMspark Companion。发送后的文字与键入相同，仍受现有确认与信任设置约束。"
+
+export type VoicePrivacyKind = "v1" | "v2" | "v3"
+
+/** Sheet body copy for a privacy ack version. Pure lookup — no branching in JSX. */
+export function voicePrivacyBodyForKind(kind: VoicePrivacyKind): string {
+  if (kind === "v3") return VOICE_PRIVACY_ACK_V3_BODY
+  if (kind === "v2") return VOICE_PRIVACY_ACK_V2_BODY
+  return VOICE_PRIVACY_ACK_V1_BODY
+}
