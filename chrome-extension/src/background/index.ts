@@ -28,8 +28,12 @@ import {
   type ThreadGraphSlim,
 } from "./thread-graph"
 import {
+  clearGraphRequests,
+  knowledgeGraphErrorById,
   knowledgeGraphErrorPayload,
   openOrFocusKnowledgeGraph,
+  trackGraphRequest,
+  untrackGraphRequest,
   writeKnowledgeGraphSnapshot,
 } from "./knowledge-graph"
 import { parseKnowledgeGraphPayload, buildKnowledgeGraphRequest } from "../knowledge-graph/wire"
@@ -61,6 +65,8 @@ import {
 let wsClient: WSClient
 let browserBridge: BrowserBridge
 let keepAlive: KeepAlive
+/** #374: knowledge.graph 请求 id 序号（请求侧自增，随请求发出并登记）。 */
+let graphReqSeq = 0
 type LogLevel = "debug" | "info" | "warn" | "error"
 
 // Extension's cached copy of the companion global config.
@@ -302,6 +308,8 @@ function handleStateChange(state: "connected" | "connecting" | "disconnected") {
 
   if (state === "disconnected") {
     scheduleDisconnectNotification()
+    // #374: 断线后旧 socket 的在途 graph 请求不会有响应——清空注册表防悬挂
+    clearGraphRequests()
   } else if (state === "connected") {
     cancelDisconnectNotification()
     clearDisconnectedNotification()
@@ -494,13 +502,14 @@ async function handleCompanionMessage(msg: any) {
   }
 
   if (msg.type === "knowledge.graph") {
+    untrackGraphRequest(msg?.id)
     const parsed = parseKnowledgeGraphPayload(msg)
     if (parsed) {
       writeKnowledgeGraphSnapshot(parsed).catch(() => {})
     }
   }
-  // #356: knowledge.graph error 帧 → error 态快照（防御性兜底，命中面窄见 knowledge-graph.ts 注释）
-  const graphError = knowledgeGraphErrorPayload(msg)
+  // #374: error 帧按请求 id 精确关联（门拒/handler-throw 均回带 id）；文本 seam 仅兜底
+  const graphError = knowledgeGraphErrorById(msg) ?? knowledgeGraphErrorPayload(msg)
   if (graphError) {
     writeKnowledgeGraphSnapshot(graphError).catch(() => {})
   }
@@ -1613,8 +1622,15 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             await openOrFocusKnowledgeGraph(focusId)
           }
           // Wire 契约权威在服务端：强制重生成字段是 regen_labels（#316 复审 MAJOR-1）
-          const frame = buildKnowledgeGraphRequest({ llmLabels: llm, regenerate })
+          // #374: 请求带 id → companion 回带 → error 帧按 id 精确关联（替代文本 seam 为主）
+          const reqId = `kg.${Date.now().toString(36)}.${(graphReqSeq += 1)}`
+          const frame = buildKnowledgeGraphRequest({ llmLabels: llm, regenerate, id: reqId })
+          trackGraphRequest(reqId)
           const sent = wsClient?.send(frame) === true
+          if (!sent) {
+            // 未发出（未连/握手前）不会有响应——立即注销，避免悬挂在注册表里
+            untrackGraphRequest(reqId)
+          }
           if (!sent && message.type === "knowledge_graph.open") {
             // Companion 未连或尚未识别动词：保持 rebuilding，tab 会 refresh。
           }
