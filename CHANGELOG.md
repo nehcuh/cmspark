@@ -6,6 +6,7 @@
 
 ### Changed
 
+- **空态与作曲同一张脸（#321 PR-4）**：CompanionMark 空态 92→48（仍是 #323 红色小牛）；招呼 22px；三条建议回到首屏折叠线以上；作曲胶囊 minHeight 72→52；用户气泡去满铺 indigo（canon 修订：浅底+细边为交付方案，左细 indigo 条为备选截图）；未武装发送 `sendDisabledBg`，武装才 indigo；L0 装配芯片降为弱样式（不删）。[#321](https://github.com/nehcuh/cmspark/issues/321)
 - **Cockpit 抢焦点收敛**：非 nonce 轻量确认不再自动抢桌面焦点（侧栏 MinimalConfirm + macOS 托盘承担）；nonce/重预览级确认与 CU paused 仍自动开并聚焦；巡航/值守武装下 CU started 不再抢焦点。确认条数不变（forceConfirm 代数零 diff）。[#326](https://github.com/nehcuh/cmspark/issues/326)
 
 ### Added

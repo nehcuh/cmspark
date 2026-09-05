@@ -151,10 +151,14 @@ Bottom `role=note` 保留装配/`/board` 可发现性。导出菜单点击仍发
 - **PR7:** title bar = dark StatusRail (mode chip + connection tokens + type scale); radii 6/8/12; `prefers-reduced-motion` honored on LIVE pulse / button transitions
 - Known: `cockpitWindowId` is in-memory — SW death may orphan a window until next open (P2)
 
-### Message Bubbles (P2)
-- User: `tokens.userBubbleBg` + `tokens.userBubbleText` (values live in `tokens.ts` only — currently indigo accent family, not legacy blue)
+### Message Bubbles (P2 · #321 PR-4 canon revision)
+This is a **canon fix**, not "aligning with canon". `tokens.ts` used to say indigo spark only on character + armed send while `userBubbleBg` was a filled indigo slab (`=== accent`). PR-4 closed that contradiction.
+
+- User (shipped variant **A — paper + hairline**): `tokens.userBubbleBg` (white) + `tokens.userBubbleInk` + `tokens.userBubbleBorder`. Not a filled indigo slab.
+- Variant **B — left indigo bar** (screenshot alternative, not live): same paper fill, `3px` `tokens.accent` left edge, no full indigo fill. User picks A vs B.
+- `tokens.userBubbleText` remains **on-accent / on-danger glyph** (send armed, filled buttons). Do not reuse it as bubble copy.
 - Assistant: `tokens.assistantBubbleBg` + `tokens.assistantBubbleText`
-- Empty: red calf imprint `CompanionMark` (`tokens.brandRed` — brand, never `danger`) + 22px greeting + sentence rows (see ChatView `EmptyState`); no kicker. Guidance uses `tokens.textSecondary`
+- Empty: red calf imprint `CompanionMark` **48px** (`tokens.brandRed` — brand, never `danger`; #323) + 22px greeting + sentence rows above the fold (see ChatView `EmptyState`); no kicker. Guidance uses `tokens.textSecondary`
 
 ### Tool Call Card
 - Border / status via `statusColor()`
@@ -164,12 +168,12 @@ Bottom `role=note` 保留装配/`/board` 可发现性。导出菜单点击仍发
 - Primary: `tokens.accent` bg, white text
 - Danger: `tokens.danger` (light) / `tokens.darkDanger` (Cockpit)
 
-### Input / Composer (companion canon + PR4)
-- Unified capsule: textarea + circular up-arrow send
-- 装配 lives on the ComposerDock chip above the field (`/装配` / Cmd+K still work); do not duplicate it inside the capsule
+### Input / Composer (companion canon + #321 PR-4)
+- Unified capsule: textarea + circular up-arrow send; **minHeight ~52** (was 72). Voice capsule / PTT / Attach sit beside the field (32px) and still fit; the voice status capsule is a sibling, not inside the minHeight.
+- 装配 lives on the ComposerDock chip above the field (`/装配` / Cmd+K still work); do not duplicate it inside the capsule. L0 装配 chip is **quiet** (same hairline as siblings; `primary` flag kept).
 - Empty capsule = field + send; attach / 听写 appear after the first character
 - **Solid** white surface — **no** glass/`backdrop-filter`
-- Radius: `tokens.radiusComposer` (16px); send is circular; gray at rest, `tokens.accent` when armed
+- Radius: `tokens.radiusComposer` (16px); send is circular; **unarmed SoT = `tokens.sendDisabledBg`** (not `bgMuted` — that is canvas mute); armed = `tokens.accent`
 - Empty-state placeholder: L0 `描述任务，或粘贴截图…` · L1 `问这页，或描述操作…` (`composerPlaceholder`)
 - ComposerChips stay visible on the empty stream so 装配 is not duplicated inside the capsule
 - Settings: StatusRail gear and ⋯「设置」 share the same route (disconnected → connection, else model)

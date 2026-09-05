@@ -1864,7 +1864,7 @@ function inviteIcon(it: EmptyInvite): (p: IconProps) => JSX.Element {
   return IconGlobe
 }
 
-function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
+export function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
   const [pageTitle, setPageTitle] = useState<string | null>(null)
   const [omitPage, setOmitPage] = useState(false)
 
@@ -1904,7 +1904,7 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
 
   return (
     <div style={styles.empty} data-testid={testId}>
-      <CompanionMark size={92} />
+      <CompanionMark size={48} />
       <div style={styles.emptyTitle}>{title}</div>
       {hint ? <div style={styles.emptyHint}>{hint}</div> : null}
       {rows.length > 0 ? <InvitationRows items={rows} /> : null}
@@ -2036,17 +2036,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
     color: tokens.text,
     textAlign: "center",
-    padding: "12px 8px 8px",
+    padding: "16px 8px 8px",
     fontFamily: tokens.font,
   },
   emptyTitle: {
     fontSize: tokens.emptyTitle,
     fontWeight: 600,
     color: tokens.text,
-    margin: "18px 0 8px",
+    margin: "12px 0 10px",
     letterSpacing: "-0.035em",
     lineHeight: 1.25,
   },
@@ -2061,7 +2061,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 6,
-    marginTop: 20,
+    marginTop: 12,
     maxWidth: 260,
     width: "100%",
     padding: "6px 8px 6px 12px",
@@ -2094,7 +2094,7 @@ const styles: Record<string, React.CSSProperties> = {
   inviteCol: {
     display: "flex",
     flexDirection: "column",
-    gap: 16,
+    gap: 8,
     width: "100%",
     maxWidth: 260,
     alignItems: "flex-start",
@@ -2177,14 +2177,15 @@ const styles: Record<string, React.CSSProperties> = {
   },
   userBubble: {
     background: tokens.userBubbleBg,
-    color: tokens.userBubbleText,
+    color: tokens.userBubbleInk,
+    border: `1px solid ${tokens.userBubbleBorder}`,
     borderRadius: `${tokens.radiusBubble}px ${tokens.radiusBubble}px 4px ${tokens.radiusBubble}px`,
     padding: "9px 13px",
     fontSize: 13,
     lineHeight: 1.5,
     wordBreak: "break-word" as const,
     whiteSpace: "pre-wrap",
-    boxShadow: tokens.shadowAccent,
+    boxShadow: tokens.shadowSm,
   },
   agentBubble: {
     background: tokens.assistantBubbleBg,

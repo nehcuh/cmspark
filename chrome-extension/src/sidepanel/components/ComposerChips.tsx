@@ -1,5 +1,8 @@
 // ComposerDock context chips — mode-aware, ≤3 (UIUX v2 §4.4).
 // Opens Host / 装配 / 确认台; never Abort (thumb-zone safety).
+// #321 PR-4: only L0 装配 drops the accentSoft fill (ticket scope). L1 装配 and
+// L2 确认台 keep chipPrimary. Chip label uses textSecondary (WCAG AA), never
+// textMuted — quiet is the missing fill, not weaker ink.
 
 import type { CSSProperties } from "react"
 import type { CapabilityLevel } from "../types"
@@ -27,7 +30,12 @@ export function ComposerChips({ capabilityLevel, onAction }: ComposerChipsProps)
       data-testid="composer-chips"
     >
       {chips.map((chip) => (
-        <ChipButton key={chip.id} chip={chip} onAction={onAction} />
+        <ChipButton
+          key={chip.id}
+          chip={chip}
+          onAction={onAction}
+          emphasize={chip.primary === true && capabilityLevel !== "chat"}
+        />
       ))}
     </div>
   )
@@ -36,17 +44,20 @@ export function ComposerChips({ capabilityLevel, onAction }: ComposerChipsProps)
 function ChipButton({
   chip,
   onAction,
+  emphasize,
 }: {
   chip: ComposerChip
   onAction: (action: ComposerChipAction) => void
+  emphasize: boolean
 }) {
   return (
     <button
       type="button"
       style={{
         ...styles.chip,
-        ...(chip.primary ? styles.chipPrimary : null),
+        ...(emphasize ? styles.chipPrimary : null),
       }}
+      data-primary={chip.primary ? "true" : undefined}
       onClick={() => onAction(chip.action)}
       data-testid={`composer-chip-${chip.id}`}
       title={chip.label}
@@ -67,7 +78,7 @@ const styles: Record<string, CSSProperties> = {
   chip: {
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusPill,
-    background: "rgba(255, 255, 255, 0.85)",
+    background: tokens.bgElevated,
     color: tokens.textSecondary,
     fontSize: 11,
     fontWeight: 550,
@@ -76,13 +87,11 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: tokens.font,
     lineHeight: 1.3,
     letterSpacing: "0.01em",
-    boxShadow: tokens.shadowSm,
   },
   chipPrimary: {
-    borderColor: "rgba(79, 70, 229, 0.22)",
+    borderColor: tokens.accentBorderSoft,
     background: tokens.accentSoft,
     color: tokens.accentText,
     fontWeight: 650,
-    boxShadow: "0 1px 3px rgba(79, 70, 229, 0.12)",
   },
 }
