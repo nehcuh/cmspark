@@ -105,22 +105,20 @@ test("CU-D: 与 #361 红队集样本不重叠 — id / png / 物理文件无交�
   const evalIds = new Set(corpus.fixtures.map((f) => f.id))
   const evalPngs = new Set(corpus.fixtures.map((f) => f.png))
   const rtPath = path.join(REDTEAM_FIXTURE_DIR, "corpus.json")
-  if (fs.existsSync(rtPath)) {
-    const rt: { fixtures: Array<{ id: string; png?: string }> } = JSON.parse(
-      fs.readFileSync(rtPath, "utf8"),
-    )
-    for (const rf of rt.fixtures) {
-      assert.ok(!evalIds.has(rf.id), `红队样本不得混入评测集: ${rf.id}`)
-      if (rf.png) assert.ok(!evalPngs.has(rf.png), `红队 png 不得混入评测集: ${rf.png}`)
-    }
+  // NIT-3 (复审 claude): 红队集已在 base（#385 合入）——断言存在，空真静默跳过视为失败
+  assert.ok(fs.existsSync(rtPath), "#361 红队 corpus 必须在 base 存在（评测集与之分离是硬前置）")
+  const rt: { fixtures: Array<{ id: string; png?: string }> } = JSON.parse(
+    fs.readFileSync(rtPath, "utf8"),
+  )
+  for (const rf of rt.fixtures) {
+    assert.ok(!evalIds.has(rf.id), `红队样本不得混入评测集: ${rf.id}`)
+    if (rf.png) assert.ok(!evalPngs.has(rf.png), `红队 png 不得混入评测集: ${rf.png}`)
   }
-  if (fs.existsSync(REDTEAM_FIXTURE_DIR) && fs.existsSync(FIXTURE_DIR)) {
-    const rtFiles = new Set(fs.readdirSync(REDTEAM_FIXTURE_DIR))
-    for (const f of fs.readdirSync(FIXTURE_DIR)) {
-      // corpus.json 是两集各自的清单文件（通用名），不算样本冲突——样本冲突由上方 id/png 断言覆盖
-      if (f === "corpus.json") continue
-      assert.ok(!rtFiles.has(f), `评测与红队夹具目录不得有同名文件: ${f}`)
-    }
+  const rtFiles = new Set(fs.readdirSync(REDTEAM_FIXTURE_DIR))
+  for (const f of fs.readdirSync(FIXTURE_DIR)) {
+    // corpus.json 是两集各自的清单文件（通用名），不算样本冲突——样本冲突由上方 id/png 断言覆盖
+    if (f === "corpus.json") continue
+    assert.ok(!rtFiles.has(f), `评测与红队夹具目录不得有同名文件: ${f}`)
   }
 })
 
@@ -136,7 +134,10 @@ test("CU-D: 无模型时评测门诚实标注 — 不编造跑分", () => {
     "无 GPU 必须标待执行",
   )
   assert.ok(String(json.summary.qwen3_vl_int4.status).includes("无合规源"), "int4 无合规源必须标跳过")
-  assert.equal(typeof json.summary.baseline.accuracy, "number", "OCR 基线须有实际数字")
+  // 对照器 = 文本层-缺陷对照器（复审 M-2 正名），有实际数字；过门用 desktop 地板键
+  assert.equal(json.summary.baseline.candidate, "textlayer-baseline", "对照器命名须为 textlayer-baseline")
+  assert.equal(typeof json.summary.baseline.accuracy, "number", "对照器须有实际数字")
+  assert.equal(typeof json.gate.desktop_min, "number", "gate 须暴露 desktop 地板阈值")
 })
 
 test("CU-D: 每个例 ocrWords 含 targetText（基线能读到目标）", () => {
