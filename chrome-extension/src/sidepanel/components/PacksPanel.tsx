@@ -8,17 +8,28 @@ import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { useContextPanelHostOptional } from "./ContextPanelHost"
 import {
+  DISTILL_DISARM_LABEL,
+  DISTILL_DRAIN_LABEL,
+  DISTILL_ENTRY_LABEL,
+  DISTILL_LLM_NOTICE,
+  DISTILL_RESTART_LOSS_NOTE,
+  DISTILL_SUGGESTED_TOOLS_LABEL,
   EXPERT_EMPTY_COPY,
   EXPERT_PRIMARY_CTA_DISABLED_HINT,
   EXPERT_PRIMARY_CTA_LABEL,
   EXPERT_SECONDARY_CTA_LABEL,
   EXPERT_SEGMENT_HINT,
   PANEL_TITLE,
+  distillSourceLabel,
+  distillStatusLine,
   expertCardActions,
   formatEffectiveToolsLine,
   formatUsageLine,
   isUserPack,
+  normalizeDistillPreview,
   segmentPacks,
+  type DistillMeta,
+  type DistillStatusView,
   type PackSegment,
 } from "../packs-panel-logic"
 
@@ -215,6 +226,11 @@ export function PacksPanel() {
   /** Source tools when cloning (for「保留原场景工具限制」). */
   const cloneToolsRef = useRef<{ mode: ToolsModeUi; allow: string[] } | null>(null)
   const [suggestNote, setSuggestNote] = useState<string>("")
+  /** #370: 本对话归纳草稿的来源横幅（AI / 启发式）+ 证据 + 建议工具（不预勾）。 */
+  const [distillMeta, setDistillMeta] = useState<DistillMeta | null>(null)
+  /** #370: armed 队列状态（默认 off；重启丢未审草稿的提示常驻）。 */
+  const [distillStatus, setDistillStatus] = useState<DistillStatusView | null>(null)
+  const [distillRestartNote, setDistillRestartNote] = useState<string>(DISTILL_RESTART_LOSS_NOTE)
   const activeThreadRef = useRef(state.activeThreadId)
   activeThreadRef.current = state.activeThreadId
 
@@ -248,6 +264,8 @@ export function PacksPanel() {
       type: "pack.expert_panel",
       thread_id: activeThreadRef.current || undefined,
     })
+    // #370: 队列状态只读拉取（无 gesture 要求；armed 默认 off 由服务端保证）
+    chrome.runtime.sendMessage({ type: "pack.distill_status" })
   }
 
   useEffect(() => {
@@ -278,6 +296,7 @@ export function PacksPanel() {
           setBusy(null)
           setEditor(null)
           setSuggestNote("")
+          setDistillMeta(null)
           if (msg.applied && msg.thread?.id) {
             dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
             flash(msg.id ? `已保存并用于本对话：${msg.id}` : "已保存并用于本对话", 3000)
@@ -456,6 +475,58 @@ export function PacksPanel() {
           `${src}${label}完成（可再改）${rationale ? `：${rationale}` : ""}`.slice(0, 220),
         )
         setBusy(null)
+      }
+      if (msg?.type === "pack.distill_preview") {
+        // #370: 草稿只进编辑器（用户改后手动 pack.save_user）——绝不自动保存。
+        const norm = normalizeDistillPreview(msg)
+        setBusy(null)
+        if (!norm) {
+          flash("归纳失败：回包格式异常", 5000)
+          return
+        }
+        if (msg.drained === true) {
+          const remaining = typeof msg.remaining === "number" ? msg.remaining : 0
+          flash(
+            typeof msg.skip === "string"
+              ? `队列一条被跳过（${msg.skip}），剩 ${remaining} 条`
+              : `已续跑归纳 1 条，剩 ${remaining} 条`,
+            4000,
+          )
+        }
+        cloneToolsRef.current = null
+        setDistillMeta(norm.meta)
+        setSuggestNote("")
+        setEditor({
+          ...emptyEditor(),
+          kind: "expert",
+          name: norm.draft.name,
+          description: norm.draft.description,
+          system_prompt_append: norm.draft.system_prompt_append,
+          // 保守 allowlist 姿态 + 不预勾：建议工具在 meta.suggested_tools 里展示
+          tools_mode: "allowlist",
+          tools_allow: [],
+        })
+      }
+      if (msg?.type === "pack.distill_armed" || msg?.type === "pack.distill_status") {
+        const queue = Array.isArray(msg.queue) ? msg.queue : []
+        const pending = Array.isArray(msg.pending) ? msg.pending : []
+        setDistillStatus({
+          armed: msg.armed === true,
+          queue_len: queue.length,
+          pending_len: pending.length,
+        })
+        if (typeof msg.restart_note === "string" && msg.restart_note) {
+          setDistillRestartNote(msg.restart_note)
+        }
+        if (msg?.type === "pack.distill_armed") {
+          setBusy(null)
+          flash(
+            msg.armed === true
+              ? `空闲续跑队列已${queue.length > 0 ? `开启（待归纳 ${queue.length}）` : "开启"}`
+              : "空闲续跑队列已关闭并清空",
+            3500,
+          )
+        }
       }
       if (msg?.type === "skill.list" && Array.isArray(msg.skills)) {
         setSkillOptions(
@@ -689,6 +760,7 @@ export function PacksPanel() {
     chrome.runtime.sendMessage({ type: "knowledge.list" })
     chrome.runtime.sendMessage({ type: "mcp.list" })
     setSuggestNote("")
+    setDistillMeta(null)
     setEditor({ ...emptyEditor(), kind })
   }
 
@@ -699,6 +771,7 @@ export function PacksPanel() {
     }
     packGetModeRef.current = "edit"
     setBusy("edit")
+    setDistillMeta(null)
     chrome.runtime.sendMessage({ type: "skill.list" })
     chrome.runtime.sendMessage({ type: "knowledge.list" })
     chrome.runtime.sendMessage({ type: "mcp.list" })
@@ -708,6 +781,7 @@ export function PacksPanel() {
   const openCloneEditor = (p: PackListItem) => {
     packGetModeRef.current = "clone"
     setBusy("clone")
+    setDistillMeta(null)
     chrome.runtime.sendMessage({ type: "skill.list" })
     chrome.runtime.sendMessage({ type: "knowledge.list" })
     chrome.runtime.sendMessage({ type: "mcp.list" })
@@ -718,6 +792,7 @@ export function PacksPanel() {
   const openViewEditor = (p: PackListItem) => {
     packGetModeRef.current = "view"
     setBusy("view")
+    setDistillMeta(null)
     chrome.runtime.sendMessage({ type: "pack.get", pack_id: p.id })
   }
 
@@ -795,6 +870,72 @@ export function PacksPanel() {
       brief: editor.description.trim() || editor.name.trim(),
       system_prompt_append: editor.system_prompt_append.trim() || undefined,
     })
+  }
+
+  /** #370: 手点「从本对话归纳专家」— 发送前明示摘要去向（issue 验收）。 */
+  const requestDistill = () => {
+    const tid = activeThreadRef.current
+    if (!tid) {
+      flash("请先选择或创建对话")
+      return
+    }
+    if (
+      !window.confirm(
+        `${DISTILL_ENTRY_LABEL}？\n\n${DISTILL_LLM_NOTICE}。\n` +
+          "正文会先自动脱敏（密钥/令牌类内容打码）；草稿只保存在面板内存，不会自动保存为专家。",
+      )
+    ) {
+      return
+    }
+    setBusy("distill")
+    flash("正在归纳本对话…", 2500)
+    chrome.runtime.sendMessage({
+      type: "pack.distill_expert",
+      thread_id: tid,
+      user_gesture: true,
+    })
+  }
+
+  /** #370: 把当前对话加入 armed 队列（默认 off；仅指针+语料 id 落盘）。 */
+  const armDistill = () => {
+    const tid = activeThreadRef.current
+    if (!tid) {
+      flash("请先选择或创建对话")
+      return
+    }
+    if (
+      !window.confirm(
+        `加入空闲续跑队列？\n\n${DISTILL_LLM_NOTICE}。\n` +
+          `${DISTILL_RESTART_LOSS_NOTE}。队列只保存任务指针与消息 id，不保存任何 LLM 产出。`,
+      )
+    ) {
+      return
+    }
+    setBusy("distill-arm")
+    chrome.runtime.sendMessage({
+      type: "pack.distill_arm",
+      thread_id: tid,
+      user_gesture: true,
+    })
+  }
+
+  const disarmDistill = () => {
+    if (!window.confirm("关闭空闲续跑队列？将清空待归纳指针（不影响已保存的专家）。")) return
+    setBusy("distill-disarm")
+    chrome.runtime.sendMessage({ type: "pack.distill_disarm", user_gesture: true })
+  }
+
+  /** #370: 续跑 = 一次手点一条（无定时器/批量）。 */
+  const drainDistill = () => {
+    if (
+      !window.confirm(
+        `续跑归纳队列中的 1 条？\n\n${DISTILL_LLM_NOTICE}。\n归纳出的草稿只保存在面板内存，请审阅后手动保存。`,
+      )
+    ) {
+      return
+    }
+    setBusy("distill-drain")
+    chrome.runtime.sendMessage({ type: "pack.distill_drain", user_gesture: true })
   }
 
   const toggleToolAllow = (name: string) => {
@@ -1260,6 +1401,60 @@ export function PacksPanel() {
           </button>
         </div>
         <div style={styles.hint}>{EXPERT_SEGMENT_HINT}</div>
+        {/* #370 I4: 从本对话归纳专家草稿 — 手点 user_gesture；草稿不自动保存 */}
+        <div style={styles.distillCard} data-testid="distill-card">
+          <div style={styles.distillTitle}>{DISTILL_ENTRY_LABEL}</div>
+          <div style={styles.hint}>
+            从当前对话归纳一份专家草稿（名称 / 提示词 / 保守工具建议 / 对话证据）。
+            正文先自动脱敏；{DISTILL_LLM_NOTICE}。草稿只在面板里等你看，不会自动保存。
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+            <button
+              type="button"
+              style={styles.primaryBtn}
+              onClick={requestDistill}
+              disabled={!!busy}
+              data-testid="distill-entry-btn"
+            >
+              {busy === "distill" ? "归纳中…" : `✨ ${DISTILL_ENTRY_LABEL}`}
+            </button>
+            <button
+              type="button"
+              style={styles.secondaryBtn}
+              onClick={armDistill}
+              disabled={!!busy || !state.activeThreadId}
+              title="加入空闲续跑队列（默认关闭；仅存任务指针与消息 id）"
+            >
+              {busy === "distill-arm" ? "加入中…" : "排队空闲续跑"}
+            </button>
+          </div>
+          {/* armed 队列状态行：默认 off 可见；续跑=一次手点一条 */}
+          <div style={styles.toolsLine} data-testid="distill-status-line">
+            {distillStatus ? distillStatusLine(distillStatus) : "空闲续跑队列：读取中…"}
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
+            <button
+              type="button"
+              style={styles.secondaryBtn}
+              onClick={drainDistill}
+              disabled={!!busy || !distillStatus?.armed || distillStatus.queue_len <= 0}
+              title="归纳队列中的 1 条（不会批量）"
+            >
+              {busy === "distill-drain" ? "续跑中…" : DISTILL_DRAIN_LABEL}
+            </button>
+            {distillStatus?.armed ? (
+              <button
+                type="button"
+                style={styles.secondaryBtn}
+                onClick={disarmDistill}
+                disabled={!!busy}
+              >
+                {DISTILL_DISARM_LABEL}
+              </button>
+            ) : null}
+          </div>
+          <div style={{ ...styles.hint, marginBottom: 0, marginTop: 4 }}>{distillRestartNote}</div>
+        </div>
         {experts.length === 0 && (
           <div style={styles.empty} data-testid="expert-empty">
             {EXPERT_EMPTY_COPY}
@@ -1545,6 +1740,43 @@ export function PacksPanel() {
                 不可直接修改；可「另存为我的」定制，或先在卡片上「启用」。
               </div>
             ) : null}
+            {distillMeta ? (
+              <div style={styles.distillBanner} data-testid="distill-banner">
+                <div style={{ fontWeight: 650, fontSize: 11, marginBottom: 4 }}>
+                  {distillSourceLabel(distillMeta)}
+                </div>
+                {distillMeta.source === "llm" ? null : (
+                  <div style={styles.hint}>LLM 不可用或输出不可解析时给空草稿——本面板仍可手动创建专家。</div>
+                )}
+                {distillMeta.suitable_for.length > 0 ? (
+                  <div style={styles.distillEvidenceLine}>
+                    <span style={styles.copyLabel}>适合</span>
+                    {distillMeta.suitable_for.join("；")}
+                  </div>
+                ) : null}
+                {distillMeta.unsuitable_for.length > 0 ? (
+                  <div style={styles.distillEvidenceLine}>
+                    <span style={styles.copyLabelBad}>不适合</span>
+                    {distillMeta.unsuitable_for.join("；")}
+                  </div>
+                ) : null}
+                {distillMeta.evidence.length > 0 ? (
+                  <div style={{ marginTop: 4 }}>
+                    <div style={styles.distillEvidenceHead}>对话证据（来自本对话，可点开原对话核对）：</div>
+                    <ul style={{ margin: 0, paddingLeft: 16 }}>
+                      {distillMeta.evidence.map((e, i) => (
+                        <li key={i} style={styles.distillEvidenceLine}>
+                          「{e.quote}」{e.hint ? <span style={{ color: tokens.textMuted }}> — {e.hint}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                <div style={{ ...styles.hint, marginBottom: 0, marginTop: 4 }}>
+                  {distillMeta.notice}；{DISTILL_SUGGESTED_TOOLS_LABEL.split("（")[0]}见工具策略区（未预勾）。
+                </div>
+              </div>
+            ) : null}
             <fieldset disabled={editor.readOnly} style={{ border: "none", margin: 0, padding: 0, minWidth: 0 }}>
             <label style={styles.fieldLabel}>场景描述（可先写一句话，再 AI 生成）</label>
             <input
@@ -1707,6 +1939,24 @@ export function PacksPanel() {
             </label>
             {(editor.tools_mode === "allowlist" || editor.preserve_tools) && (
               <div style={styles.checkList}>
+                {distillMeta && distillMeta.suggested_tools.length > 0 ? (
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: tokens.accent, marginBottom: 2 }}>
+                      {DISTILL_SUGGESTED_TOOLS_LABEL}
+                    </div>
+                    {distillMeta.suggested_tools.map((tn) => (
+                      <label key={tn} style={styles.checkRow}>
+                        <input
+                          type="checkbox"
+                          checked={editor.tools_allow.includes(tn)}
+                          onChange={() => toggleToolAllow(tn)}
+                          disabled={editor.preserve_tools}
+                        />
+                        <span style={{ fontFamily: tokens.fontMono, fontSize: 11 }}>{tn}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
                 {SCENE_TOOL_GROUPS.map((g) => (
                   <div key={g.title} style={{ marginBottom: 6 }}>
                     <div
@@ -1842,6 +2092,7 @@ export function PacksPanel() {
                 onClick={() => {
                   setEditor(null)
                   setSuggestNote("")
+                  setDistillMeta(null)
                   cloneToolsRef.current = null
                   pendingApplyThreadRef.current = null
                 }}
@@ -2070,6 +2321,25 @@ const styles: Record<string, import("react").CSSProperties> = {
     padding: 6,
     background: tokens.bg,
   },
+  distillCard: {
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusMd,
+    padding: 8,
+    background: tokens.bg,
+    marginBottom: 8,
+  },
+  distillTitle: { fontWeight: 650, fontSize: 12, marginBottom: 4 },
+  distillBanner: {
+    border: `1px solid ${tokens.accent}`,
+    borderRadius: 6,
+    padding: 8,
+    background: tokens.accentSoft || tokens.bgActive,
+    marginBottom: 8,
+    fontSize: 10,
+    lineHeight: 1.4,
+  },
+  distillEvidenceHead: { fontSize: 10, fontWeight: 650, color: tokens.textMuted },
+  distillEvidenceLine: { fontSize: 10, color: tokens.textSecondary, lineHeight: 1.45 },
   checkRow: {
     display: "flex",
     gap: 8,

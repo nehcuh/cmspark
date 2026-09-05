@@ -4199,6 +4199,109 @@ export async function handleMessage(
       })
       return { type: "pack.suggest_config", suggestion }
     }
+    case "pack.distill_expert":
+    case "pack.distill_arm":
+    case "pack.distill_disarm":
+    case "pack.distill_drain":
+    case "pack.distill_status": {
+      // #370 I4 — 草稿制（F-S-7 零破例）：preview 不落盘、不 saveUserPack、
+      // 不进 pack.list；armed 队列仅任务指针+语料 id。全部 llmExtract 均可
+      // 追溯到 user_gesture（status 只读除外）。
+      const {
+        DISTILL_LLM_NOTICE,
+        DISTILL_RESTART_LOSS_NOTE,
+        distillExpertDraft,
+        distillQueueStatus,
+        armDistillQueue,
+        disarmDistillQueue,
+        drainDistillQueue,
+        buildDistillCorpus,
+      } = await import("./packs/expert-distill")
+      if (type !== "pack.distill_status" && rest.user_gesture !== true) {
+        return {
+          type: "error",
+          error: `${type} requires user_gesture:true`,
+          code: "user_gesture_required",
+        }
+      }
+      const distillLlm = (() => {
+        const c = getConfig().llm
+        if (c?.base_url && c?.model_name) {
+          return {
+            base_url: c.base_url,
+            api_key: c.api_key || "",
+            model_name: c.model_name,
+            temperature: typeof c.temperature === "number" ? c.temperature : 0.3,
+          }
+        }
+        return null
+      })()
+      if (type === "pack.distill_status") {
+        return { type: "pack.distill_status", ...distillQueueStatus() }
+      }
+      if (type === "pack.distill_arm") {
+        const threadId = typeof rest.thread_id === "string" ? rest.thread_id.trim() : ""
+        if (!threadId) {
+          return { type: "error", error: "pack.distill_arm requires thread_id", code: "invalid" }
+        }
+        // 语料 id 在 arm 时随指针落盘（仅 id，无正文）。
+        const built = buildDistillCorpus(threadId, services.threadManager)
+        const corpusIds = built.ok ? built.corpus.corpus_ids : []
+        const r = armDistillQueue(threadId, corpusIds)
+        return {
+          type: "pack.distill_armed",
+          ...r,
+          restart_note: DISTILL_RESTART_LOSS_NOTE,
+        }
+      }
+      if (type === "pack.distill_disarm") {
+        const r = disarmDistillQueue()
+        return { type: "pack.distill_armed", ...r, restart_note: DISTILL_RESTART_LOSS_NOTE }
+      }
+      if (type === "pack.distill_drain") {
+        const r = await drainDistillQueue({
+          threadManager: services.threadManager,
+          llm: distillLlm,
+        })
+        if (!r.ok) {
+          return { type: "error", error: r.reason, code: r.code }
+        }
+        return {
+          type: "pack.distill_preview",
+          thread_id: r.thread_id,
+          drained: true,
+          source: r.source,
+          used_digest: r.used_digest,
+          remaining: r.remaining,
+          ...(r.skip ? { skip: r.skip } : {}),
+          notice: DISTILL_LLM_NOTICE,
+          draft: r.draft,
+        }
+      }
+      // pack.distill_expert — 手点「从本对话归纳」。
+      const threadId = typeof rest.thread_id === "string" ? rest.thread_id.trim() : ""
+      if (!threadId) {
+        return { type: "error", error: "pack.distill_expert requires thread_id", code: "invalid" }
+      }
+      const result = await distillExpertDraft({
+        thread_id: threadId,
+        threadManager: services.threadManager,
+        llm: distillLlm,
+      })
+      if (!result.ok) {
+        return { type: "error", error: result.reason, code: result.code }
+      }
+      return {
+        type: "pack.distill_preview",
+        thread_id: threadId,
+        source: result.source,
+        used_digest: result.used_digest,
+        corpus_chars: result.corpus_chars,
+        ...(result.fallback_reason ? { fallback_reason: result.fallback_reason } : {}),
+        notice: DISTILL_LLM_NOTICE,
+        draft: result.draft,
+      }
+    }
     case "modules.list": {
       const config = getConfig()
       return {

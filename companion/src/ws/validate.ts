@@ -1086,6 +1086,40 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // #370 I4: expert distill — preview/draft discipline (no pack storage writes
+    // on these paths). status is read-only (no gesture); all acting verbs are
+    // user-gesture gated so every llmExtract is traceable to a click.
+    "pack.distill_expert": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "pack.distill_expert requires thread_id" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "pack.distill_expert requires user_gesture:true" }
+      }
+      return { valid: true }
+    },
+    "pack.distill_arm": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "pack.distill_arm requires thread_id" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "pack.distill_arm requires user_gesture:true" }
+      }
+      return { valid: true }
+    },
+    "pack.distill_disarm": (m) => {
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "pack.distill_disarm requires user_gesture:true" }
+      }
+      return { valid: true }
+    },
+    "pack.distill_drain": (m) => {
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "pack.distill_drain requires user_gesture:true" }
+      }
+      return { valid: true }
+    },
+    "pack.distill_status": () => ({ valid: true }),
     "modules.list": () => ({ valid: true }),
     "modules.set_enabled": (m) => {
       if (typeof m.module !== "string" || !m.module) return { valid: false, error: "modules.set_enabled requires module" }
