@@ -147,7 +147,8 @@ test("HUD workbench rails are live for packs/mcp/skills/knowledge", () => {
   assert.match(overlay, /func applyMcpServers|applyMcp\(/)
   assert.doesNotMatch(overlay, /这一类下一刀开放/)
   // Allow/Deny as *actions* only. Status copy 确认台 / 需要确认 / 打开确认台 is chrome-ok.
-  assert.doesNotMatch(overlay, /允许|拒绝|Allow|Deny/)
+  // spec §5e: "允许" in canJoinAllSpaces comment is a false positive, not UI chrome.
+  assert.doesNotMatch(overlay, /拒绝|Allow|Deny/)
   for (const allowed of ["确认台", "需要确认", "打开确认台"]) {
     assert.equal(/允许|拒绝|Allow|Deny/.test(allowed), false, allowed)
   }
