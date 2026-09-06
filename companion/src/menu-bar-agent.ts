@@ -1231,25 +1231,27 @@ export async function handleSummonerPeek(threadId: string) {
   }
 }
 
-export async function handleSummonerCiteThread(threadId: string) {
+export async function handleSummonerCiteThread(threadId: string, text?: string) {
   const id = threadId.trim()
   if (!id) return
   try {
-    // 引用进新任务（spec §3a）：创建新对话，附带 thread context_ref type:"thread" mode summary_card
     const created = await summonerClient?.createThread()
-    if (!created?.id) return
-    // 发 chat.create 带 context_refs
+    if (!created?.id) {
+      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "创建新任务失败" }))
+      return
+    }
     const contextRefs = [{ type: "thread", id, mode: "summary_card" }]
+    const message = text?.trim() || "引用线程内容，请帮我总结或继续"
     await summonerClient?.sendAppRequest("chat.create", {
       thread_id: created.id,
-      message: "引用线程内容，请帮我总结或继续",
+      message,
       context_refs: contextRefs,
     })
-    // hydrate 新线程到 overlay
     const claimed = await hydrateSummonerThread(created.id)
     if (claimed) touchSummonerActivity(created.id)
-  } catch {
-    // cite failed silently
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: `引用失败: ${msg}` }))
   }
 }
 
@@ -1668,7 +1670,7 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       void handleSummonerPeek(evt.thread_id)
       return
     case "summoner.cite_thread":
-      void handleSummonerCiteThread(evt.thread_id)
+      void handleSummonerCiteThread(evt.thread_id, evt.text)
       return
     case "summoner.composing":
       return

@@ -721,6 +721,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var peekRedactedHits: Int = 0
   private var searchingThreads: Bool = false
   private var searchingKnowledge: Bool = false
+  private var searchGeneration: Int = 0
+  private var lastSearchQuery: String = ""
+  private var pendingPeekThreadId: String? = nil
+  private var hashSearchTimer: Timer?
   private var workbenchHeightConstraint: NSLayoutConstraint?
   private var settingsBox: NSView?
   private var settingsIdleButtons: [NSButton] = []
@@ -1467,8 +1471,14 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       self?.emitP1Search()
     }
     if isSearchQuery(composerText) {
-      // `#` 前缀保留既有 node 侧检索回路（单命中自动 hydrate）。
-      emitSearch()
+      // `#` 前缀保留既有 node 侧检索回路（单命中自动 hydrate）。NIT-2: 恢复 150ms 防抖。
+      hashSearchTimer?.invalidate()
+      hashSearchTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+        self?.emitSearch()
+      }
+    } else {
+      hashSearchTimer?.invalidate()
+      hashSearchTimer = nil
     }
   }
 
@@ -1554,11 +1564,17 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     let q = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !q.isEmpty else {
       // Clear stale results when query is empty.
+      searchGeneration += 1
+      lastSearchQuery = ""
       threadSearchHits = []
       knowledgeSearchHits = []
       refreshPalette()
       return
     }
+    // NIT-3: skip P1 search for `#` prefix — node search handles it.
+    if q.hasPrefix("#") { return }
+    searchGeneration += 1
+    lastSearchQuery = q
     searchingThreads = true
     searchingKnowledge = true
     jsonLine(["type": "summoner.thread.search", "query": q])
@@ -1595,6 +1611,9 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   func applyThreadSearchResults(_ json: [String: Any]) {
+    // MAJOR-1: discard stale results if query has changed since request was sent.
+    let q = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard q == lastSearchQuery, !q.isEmpty else { return }
     let raw = json["hits"] as? [[String: Any]] ?? []
     threadSearchHits = raw.compactMap { row in
       guard let id = row["id"] as? String, !id.isEmpty,
@@ -1610,6 +1629,9 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   }
 
   func applyKnowledgeSearchResults(_ json: [String: Any]) {
+    // MAJOR-1: discard stale results if query has changed since request was sent.
+    let q = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard q == lastSearchQuery, !q.isEmpty else { return }
     let raw = json["hits"] as? [[String: Any]] ?? []
     knowledgeSearchHits = raw.compactMap { row in
       guard let id = row["id"] as? String, !id.isEmpty,
@@ -1627,6 +1649,8 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   func applyPeekResult(_ json: [String: Any]) {
     let threadId = json["thread_id"] as? String ?? ""
     guard !threadId.isEmpty else { return }
+    // MAJOR-1: discard peek result if selection has changed since request.
+    guard threadId == pendingPeekThreadId else { return }
     peekThreadId = threadId
     peekMarkdown = json["markdown"] as? String ?? ""
     peekTruncated = json["truncated"] as? Bool ?? false
@@ -1637,7 +1661,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
 
   @objc func citeThreadClicked() {
     guard let id = peekThreadId, !id.isEmpty else { return }
-    jsonLine(["type": "summoner.cite_thread", "thread_id": id])
+    let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    var payload: [String: Any] = ["type": "summoner.cite_thread", "thread_id": id]
+    if !text.isEmpty { payload["text"] = text }
+    jsonLine(payload)
     peekMarkdown = ""
     peekThreadId = nil
     peekTruncated = false
@@ -1964,10 +1991,15 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       }
     }
 
+    // NIT-1: dedup server hits from local fallback (server priority).
+    let serverThreadIds = Set(threadSearchHits.map { $0.id })
+    let serverKnowledgeIds = Set(knowledgeSearchHits.map { $0.id })
+
     // Local fallback: also show local matches (backward compat + `#` prefix circuit).
     var scored: [(PaletteRow, Double)] = []
     if paletteScope != .knowledge {
       for t in threadRows.prefix(200) {
+        guard !serverThreadIds.contains(t.id) else { continue }
         let s = PaletteMatcher.score(query: q, fields: [t.title], pinyins: [PinyinInitials.initials(for: t.title)])
         if s > 0 {
           scored.append((PaletteRow(kind: .thread, id: t.id, title: t.title, subtitle: "对话", symbol: "bubble.left", enabled: true),
@@ -1979,6 +2011,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       let id = row["id"] as? String ?? ""
       let title = row["title"] as? String ?? id
       guard !id.isEmpty else { continue }
+      guard !serverKnowledgeIds.contains(id) else { continue }
       let s = PaletteMatcher.score(query: q, fields: [title], pinyins: [PinyinInitials.initials(for: title)])
       if s > 0 {
         scored.append((knowledgePaletteRow(row), s + frecency.score("kb:\(id)")))
@@ -2616,8 +2649,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     pal.onSelectionChange = { [weak self] row in
       // P1: when a thread row is selected via arrow keys, request peek preview.
       if let row = row, row.kind == .thread, !row.id.isEmpty {
+        self?.pendingPeekThreadId = row.id
         jsonLine(["type": "summoner.peek", "thread_id": row.id])
       } else {
+        self?.pendingPeekThreadId = nil
         self?.peekMarkdown = ""
         self?.peekThreadId = nil
         self?.peekTruncated = false

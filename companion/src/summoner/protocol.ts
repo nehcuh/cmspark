@@ -186,7 +186,7 @@ export type SummonerSettingsSetEvt = { type: "summoner.settings.set" } & Summone
 export type SummonerThreadSearchEvt = { type: "summoner.thread.search"; query: string }
 export type SummonerKnowledgeSearchEvt = { type: "summoner.knowledge.search"; query: string }
 export type SummonerPeekEvt = { type: "summoner.peek"; thread_id: string }
-export type SummonerCiteThreadEvt = { type: "summoner.cite_thread"; thread_id: string }
+export type SummonerCiteThreadEvt = { type: "summoner.cite_thread"; thread_id: string; text?: string }
 
 export type SummonerInboundEvt =
   | SummonerReadyEvt
@@ -459,8 +459,8 @@ export function encodeSummonerPeek(p: { thread_id: string }): SummonerPeekEvt {
   return { type: "summoner.peek", thread_id: p.thread_id }
 }
 
-export function encodeSummonerCiteThread(p: { thread_id: string }): SummonerCiteThreadEvt {
-  return { type: "summoner.cite_thread", thread_id: p.thread_id }
+export function encodeSummonerCiteThread(p: { thread_id: string; text?: string }): SummonerCiteThreadEvt {
+  return { type: "summoner.cite_thread", thread_id: p.thread_id, text: p.text }
 }
 
 export function encodeSummonerTool(p: { name: string }): SummonerToolCmd {
@@ -834,7 +834,7 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
       return encodeSummonerPeek({ thread_id: o.thread_id })
     case "summoner.cite_thread":
       if (!isString(o.thread_id) || !o.thread_id) return null
-      return encodeSummonerCiteThread({ thread_id: o.thread_id })
+      return encodeSummonerCiteThread({ thread_id: o.thread_id, text: isString(o.text) ? o.text : undefined })
     default:
       return null
   }
