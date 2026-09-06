@@ -2,9 +2,9 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-06 (lockstep 0.6.1)
+**Updated**: 2026-09-07 (lockstep 0.6.6)
 
-## CMspark — 产品 0.6.1
+## CMspark — 产品 0.6.6
 
 | 轴 | 状态 |
 |----|------|
@@ -20,7 +20,7 @@
 
 ## Branch lock (S104)
 
-- 包装 **0.6.1**（已装机）：0.6.0 基础上 + 测试污染根治 #404–#406 · 失败升级链 #409 · outbound MCP 三件（Grok 短名/双轨同名/interact 档 #407–#410/#419）· 全历史专家 #411/#418 · tray 端口读配置。0.6.0（侧栏 UI 重构 #321 · 自主性三件套 #325/#327/#386–#391 · 专家团队 v1 #366–#371 · CU 完整性链 #359–#362）。0.5.9 是 9-04 知识库切点（#272–#283 + Windows launcher 后续）；0.5.8 仍是 9-02 工厂切点（#268 context_window 512000 / listen-first / zip node-first）。当轮活计划（#265）在 0.5.7。召唤器流式 / 语音回退 / 会议自动 K 已在 0.5.6。
+- 包装 **0.6.6**（已装机）：#423 Qwen3-VL 坐标系修复（L-QW-3 修订 always-map，评测门 0/10→6/10）· create-dmg cp -R 封签修复 · installer.nsi 版本锚补钉。0.6.5 = 召唤器全链路 #433 P1–P3 + #439 LLM 检索工具；0.6.4 = 内嵌终端 #432 + 召唤器命令面板。0.6.1 基础上：测试污染根治 #404–#406 · 失败升级链 #409 · outbound MCP 三件 · 全历史专家 #411/#418。
 - **评审弧闭环**：c39d7d3e..26949cbb 四路对抗 7 MAJOR 全修（#261–#264），main tip `18d843d1`。
 - S104 起 origin 已含开闸+查重（#280–#283）；评审波次（#286–#295）十张 PR 已合入，见 GATE-SUMMARY。
 - **活票**：#230 冻 F-S-10 / overlay-acl；#258–#260 语音/会议。T1 #228 已关，**禁扩** profile。
@@ -33,6 +33,6 @@
 
 ## Docs SoT
 
-- 活切点：`CHANGELOG.md` **0.6.1**
+- 活切点：`CHANGELOG.md` **0.6.6**
 - 0.5.3 快照：`docs/superpowers/specs/2026-08-27-post-227-status.md`（SNAPSHOT）
 - 用户 / 架构：`docs/README.md` · `PRODUCT.md`

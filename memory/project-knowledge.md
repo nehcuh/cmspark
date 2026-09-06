@@ -74,6 +74,16 @@
 
 ## Technical Pitfalls
 
+### BSD `cp -r` 会把 symlink 落成实体文件——DMG 内 codesign 封签静默破（2026-09-07 · host-integrity）
+- **坑**：`create-dmg.sh` 把 .app `cp -r` 进 sparse 卷。`Resources/cmspark-host` 设计为 symlink→`../MacOS/CMspark`（单 CDHash），BSD `-r` **解析 symlink 复制内容**（`-R` 才保留链接）。封签清单记的是 symlink，DMG 里变成实体文件 → `codesign --verify` 报 "a sealed resource is missing or invalid (file modified)"，packaged 安装上 host-integrity 全 fail-closed（window-list 拒 spawn）。**0.6.5/0.6.6 两个 DMG 同病**；staging 阶段的 verify 验的是拷贝前，缺陷静默存活多个版本。
+- **纪律**：DMG/安装包装配一律 `cp -R` 或 `ditto`；签名verify 必须对**最终产物**（DMG 卷内）再做一次 fail-closed，不能只验 staging。门禁：`scripts/tests/test-package-gates.sh` 三条静态断言（cp -R / 禁 cp -r / DMG 内复验）。
+- **4 行 case**：动作=换装后 window-list；失败=host-integrity SHA 不符且 codesign verify 失败；归责=cp -r 解 symlink；保护=DMG 卷内复验 fail-closed
+
+### Qwen3-VL 恒输出相对坐标 [0,1000]；Path C reparse-wins 要求双端 lockstep（2026-09-07 · #423）
+- **坑**：Qwen3-VL 官方约定改为**原图相对坐标 [0,1000]**（Qwen2.5-VL 是绝对像素）——包括恰好落在像素界内的值（raw 174 在 640 宽图上是 111px 不是 174px）。旧 L-QW-3「clamp-only 永不 rescale」前提证伪，评测门 0/10。复杂 GUI 下 10/10 输出数组形态 `{"x":[x,y],"y":[y]}`——点在 x 数组，y 是冗余拷贝（d9 反例：y[0] 错 x[1] 对），取点规则 `(x[0], x[1])`。另一个坑：`qwen-vl-locator.ts` Path C 用 `parseGuiClickPoint(raw)` **重解析并覆盖** worker 返回点——只修 Python worker 会被 TS 侧打回，必须 `worker.py` / `qwen-vl-coords.ts` / `gui-action-parse.ts` 三处 lockstep。
+- **纪律**：VLM 坐标问题先实证判空间（探针图 + 多尺寸），别信 prompt 声明（prompt 写 "pixel coordinates" 模型仍吐 0-1000）。评测门 FAIL 先查 harness 约定。修复后 0/10 → 6/10，余 4 例是 2B 感知误差（#363 摘帽仍 blocked，候选：4B 变体 / few-shot point_2d / bbox 取中心）。
+- **4 行 case**：动作=CU 定位评测；失败=0/10 全 MISS 钳到边缘；归责=坐标空间约定错配 + 数组形态被 bracket 正则捡漏；保护=always-map + 真 JSON 解码 + 双端同构测试
+
 ### 知识库导入 concat-per-chunk `btoa` 会毁掉 PDF（2026-09-03 · #282）
 - **坑**：对话框附件 `FileReader.readAsDataURL` 整文件编码；知识库单篇导入按 `CHUNK=0x8000` 分块 `btoa` 再拼接。`0x8000 % 3 === 2`，每块被 padding，拼出的不是原字节。companion `pdf-parse` 报 `Invalid PDF structure`。解析器相同，**喂进去的字节不同**。&lt;32KiB 只有一块所以碰巧能过；「导入文件夹」走 companion 读盘也不经过这段。
 - **纪律**：浏览器侧二进制 → base64 用 `readAsDataURL` 或「拼 binary 字符串、**一次** `btoa`」（`bytesToBase64`）。禁止 `base64 += btoa(chunk)`。回归：`chrome-extension/tests/knowledge-file-base64.test.ts`。

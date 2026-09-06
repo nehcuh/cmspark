@@ -1414,3 +1414,12 @@
 - **Experience**: oneshot validate-before-key；spawnHostBin→string；zsh `status` readonly；diagnosis 分批 PR pattern
 - **下次**: 真机验收 / SEC-M* / thread·chat 续拆（非挂起 WIP）
 - Recorded: yes
+
+### S108 END (2026-09-07) [#423 坐标系修复 · 0.6.6 打包换装 · host-integrity 存量坑]
+- **#423 CLOSED**：Qwen3-VL 恒相对 [0,1000]（grok 9 探针实证 11.9px vs 364px + pi 官方 cookbook + claude spec 复审 concede）；L-QW-3 修订 always-map；数组形态取 (x[0],x[1])（d9 反例）；worker.py/coords.ts/gui-action-parse 三端 lockstep（Path C reparse-wins 坑）。评测门 0/10→6/10，余 4 例模型感知误差；#363 仍 blocked（候选：4B 变体/few-shot point_2d/bbox 中心）。
+- **0.6.6 已换装**（Info.plist ✓ daemon 58988 ✓ tray running ✓）；CI 绿（cd33650b）。
+- **存量坑修复**：create-dmg.sh `cp -r` 解 symlink 破 codesign 封签（0.6.5 同病）→ cp -R + DMG 卷内 fail-closed 复验 + gates 3 断言（130/130）。9054ad19。
+- **门禁漏锚**：installer.nsi fallback PRODUCT_VERSION 也是版本锚（S52 N4），0.6.6 首轮 CI 红 → 教训入 instincts（版本锚以 test-package-gates.sh 为准）。
+- **本机存量**：companion 测试 16 fail（executor/uia-watch/corpus，CI 同提交绿 = macOS 环境特异，未排查）。
+- **Next**：用户开两开关（应用页坐标操作 + 设置模型开关）狗食 #423 定位；#363 候选路径择一；16 存量失败排查另议。
+- Recorded: yes（project-knowledge 2 条 + instincts 1 条）
