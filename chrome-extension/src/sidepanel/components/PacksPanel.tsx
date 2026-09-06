@@ -8,6 +8,7 @@ import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { useContextPanelHostOptional } from "./ContextPanelHost"
 import {
+  DISTILL_ALL_ENTRY_LABEL,
   DISTILL_DISARM_LABEL,
   DISTILL_DRAIN_LABEL,
   DISTILL_ENTRY_LABEL,
@@ -20,14 +21,19 @@ import {
   EXPERT_SECONDARY_CTA_LABEL,
   EXPERT_SEGMENT_HINT,
   PANEL_TITLE,
+  distillAllConfirmBody,
+  distillAllQueueLine,
+  distillAllQueueStep,
   distillSourceLabel,
   distillStatusLine,
   expertCardActions,
   formatEffectiveToolsLine,
   formatUsageLine,
   isUserPack,
+  normalizeDistillAllDrafts,
   normalizeDistillPreview,
   segmentPacks,
+  type DistillAllDraftView,
   type DistillMeta,
   type DistillStatusView,
   type PackSegment,
@@ -231,6 +237,23 @@ export function PacksPanel() {
   /** #370: armed 队列状态（默认 off；重启丢未审草稿的提示常驻）。 */
   const [distillStatus, setDistillStatus] = useState<DistillStatusView | null>(null)
   const [distillRestartNote, setDistillRestartNote] = useState<string>(DISTILL_RESTART_LOSS_NOTE)
+  /**
+   * #411 全历史归纳：count → 一次性确认弹窗（N + 排除项）→ 扫描 → 草稿队列
+   * （上一份/下一份逐份进同一编辑器；草稿只在内存，保存仍走手动 pack.save_user）。
+   */
+  const [distillAllConfirm, setDistillAllConfirm] = useState<{
+    eligible: number
+    with_digest: number
+    capped: boolean
+    /** "all" | 天数（ISO 截止 = now - N 天）。 */
+    since: string
+    keyword: string
+  } | null>(null)
+  const [distillAllQueue, setDistillAllQueue] = useState<{
+    drafts: DistillAllDraftView[]
+    index: number
+    scanned: number
+  } | null>(null)
   const activeThreadRef = useRef(state.activeThreadId)
   activeThreadRef.current = state.activeThreadId
 
@@ -506,6 +529,57 @@ export function PacksPanel() {
           tools_mode: "allowlist",
           tools_allow: [],
         })
+      }
+      if (msg?.type === "pack.distill_all_count") {
+        // #411: 预点数回包（零 LLM）→ 打开一次性确认弹窗。
+        setBusy(null)
+        const eligible = typeof msg.eligible === "number" ? msg.eligible : 0
+        if (eligible <= 0) {
+          flash("没有可归纳的历史对话（跳过规则/排除条件过滤后为空）", 5000)
+          return
+        }
+        const next = {
+          eligible,
+          with_digest: typeof msg.with_digest === "number" ? msg.with_digest : 0,
+          capped: msg.capped === true,
+        }
+        setDistillAllConfirm((prev) =>
+          prev ? { ...prev, ...next } : { ...next, since: "all", keyword: "" },
+        )
+      }
+      if (msg?.type === "pack.distill_all_result") {
+        // #411: K≤5 份草稿 → 内存队列，第 1 份进同一编辑器（逐份审阅）。
+        setBusy(null)
+        const norm = normalizeDistillAllDrafts(msg)
+        if (!norm) {
+          flash("全历史归纳失败：回包格式异常", 5000)
+          return
+        }
+        if (norm.drafts.length === 0) {
+          flash(
+            `未归纳出草稿（${norm.fallback_reason || "历史里没有跨对话反复出现的角色"}）`,
+            6000,
+          )
+          return
+        }
+        setDistillAllQueue({ drafts: norm.drafts, index: 0, scanned: norm.scanned })
+        const first = norm.drafts[0]
+        cloneToolsRef.current = null
+        setSuggestNote("")
+        setDistillMeta(distillAllMeta(first))
+        setEditor({
+          ...emptyEditor(),
+          kind: "expert",
+          name: first.name,
+          description: first.description,
+          system_prompt_append: first.system_prompt_append,
+          tools_mode: "allowlist",
+          tools_allow: [],
+        })
+        flash(
+          `已归纳 ${norm.drafts.length} 份草稿（扫描 ${norm.scanned} 条 · ${norm.llm_calls} 次 LLM 调用），逐份审阅后手动保存`,
+          7000,
+        )
       }
       if (msg?.type === "pack.distill_armed" || msg?.type === "pack.distill_status") {
         const queue = Array.isArray(msg.queue) ? msg.queue : []
@@ -936,6 +1010,97 @@ export function PacksPanel() {
     }
     setBusy("distill-drain")
     chrome.runtime.sendMessage({ type: "pack.distill_drain", user_gesture: true })
+  }
+
+  // --- #411: 全历史归纳（方案 A 两级聚类；一次性手点，无定时器） ---
+
+  /** 全历史草稿 → 编辑器横幅 meta（from_all_history 标记 + 多 thread 出处 + 冲突）。 */
+  const distillAllMeta = (d: DistillAllDraftView): DistillMeta => ({
+    source: "llm",
+    notice: DISTILL_LLM_NOTICE,
+    used_digest: false,
+    suggested_tools: [...new Set(d.tools_allow)],
+    evidence: d.evidence.map((e) => ({ quote: e.quote, ...(e.hint ? { hint: e.hint } : {}) })),
+    suitable_for: d.suitable_for,
+    unsuitable_for: d.unsuitable_for,
+    from_all_history: true,
+    ...(d.conflicts_with ? { conflicts_with: d.conflicts_with } : {}),
+    ...(d.thread_ids.length > 0 ? { thread_ids: d.thread_ids } : {}),
+  })
+
+  /** 弹窗时间窗 → since ISO（"all" 或天数字符串）。 */
+  const distillAllSinceIso = (since: string): string | undefined => {
+    const days = Number(since)
+    if (!Number.isFinite(days) || days <= 0) return undefined
+    return new Date(Date.now() - days * 86400_000).toISOString()
+  }
+
+  const distillAllExclude = (since: string, keyword: string) => ({
+    ...(distillAllSinceIso(since) ? { since: distillAllSinceIso(since) } : {}),
+    ...(keyword.trim() ? { exclude_keyword: keyword.trim().slice(0, 80) } : {}),
+  })
+
+  /** 入口：先点数（零 LLM）→ 一次性确认弹窗。 */
+  const requestDistillAll = () => {
+    if (busy) return
+    setBusy("distill-all")
+    chrome.runtime.sendMessage({
+      type: "pack.distill_all_scan",
+      count_only: true,
+      user_gesture: true,
+    })
+  }
+
+  /** 弹窗里改排除项 → 重新点数（仍零 LLM；N 实时更新）。 */
+  const recountDistillAll = (since: string, keyword: string) => {
+    setDistillAllConfirm((prev) => (prev ? { ...prev, since, keyword } : prev))
+    setBusy("distill-all")
+    chrome.runtime.sendMessage({
+      type: "pack.distill_all_scan",
+      count_only: true,
+      user_gesture: true,
+      exclude: distillAllExclude(since, keyword),
+    })
+  }
+
+  /** 确认后开始全量扫描（一次手点；LLM 调用 = 批次数 + 归并 1 次）。 */
+  const startDistillAll = () => {
+    const c = distillAllConfirm
+    if (!c) return
+    setDistillAllConfirm(null)
+    setBusy("distill-all")
+    flash("正在全历史归纳…（分批聚类 + 归并，可能需要一两分钟）", 4000)
+    chrome.runtime.sendMessage({
+      type: "pack.distill_all_scan",
+      user_gesture: true,
+      exclude: distillAllExclude(c.since, c.keyword),
+    })
+  }
+
+  /** 队列导航：上一份/下一份直接装进同一编辑器（草稿仍未保存）。 */
+  const gotoDistillAllDraft = (dir: -1 | 1) => {
+    if (!distillAllQueue) return
+    const index = distillAllQueueStep(
+      distillAllQueue.index,
+      distillAllQueue.drafts.length,
+      dir,
+    )
+    if (index === distillAllQueue.index) return
+    const d = distillAllQueue.drafts[index]
+    if (!d) return
+    setDistillAllQueue({ ...distillAllQueue, index })
+    cloneToolsRef.current = null
+    setSuggestNote("")
+    setDistillMeta(distillAllMeta(d))
+    setEditor({
+      ...emptyEditor(),
+      kind: "expert",
+      name: d.name,
+      description: d.description,
+      system_prompt_append: d.system_prompt_append,
+      tools_mode: "allowlist",
+      tools_allow: [],
+    })
   }
 
   const toggleToolAllow = (name: string) => {
@@ -1427,7 +1592,55 @@ export function PacksPanel() {
             >
               {busy === "distill-arm" ? "加入中…" : "排队空闲续跑"}
             </button>
+            <button
+              type="button"
+              style={styles.secondaryBtn}
+              onClick={requestDistillAll}
+              disabled={!!busy}
+              title="扫描全部历史对话（一次性手点；浅层画像分批聚类，深读 ≤20 条）"
+              data-testid="distill-all-entry-btn"
+            >
+              {busy === "distill-all" ? "归纳中…" : `📚 ${DISTILL_ALL_ENTRY_LABEL}`}
+            </button>
           </div>
+          {/* #411: 全历史草稿队列 — 极薄上一份/下一份，逐份审阅；保存仍手动 */}
+          {distillAllQueue && distillAllQueue.drafts.length > 0 ? (
+            <div style={styles.toolsLine} data-testid="distill-all-queue">
+              <div>
+                {distillAllQueueLine({
+                  index: distillAllQueue.index,
+                  total: distillAllQueue.drafts.length,
+                  conflicts_with: distillAllQueue.drafts[distillAllQueue.index]?.conflicts_with,
+                })}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                <button
+                  type="button"
+                  style={styles.linkBtn}
+                  onClick={() => gotoDistillAllDraft(-1)}
+                  disabled={distillAllQueue.index <= 0}
+                >
+                  ← 上一份
+                </button>
+                <button
+                  type="button"
+                  style={styles.linkBtn}
+                  onClick={() => gotoDistillAllDraft(1)}
+                  disabled={distillAllQueue.index >= distillAllQueue.drafts.length - 1}
+                >
+                  下一份 →
+                </button>
+                <button
+                  type="button"
+                  style={styles.linkBtn}
+                  onClick={() => setDistillAllQueue(null)}
+                  title="关闭队列（已保存的专家不受影响；未审草稿本就重启即丢）"
+                >
+                  关闭队列
+                </button>
+              </div>
+            </div>
+          ) : null}
           {/* armed 队列状态行：默认 off 可见；续跑=一次手点一条 */}
           <div style={styles.toolsLine} data-testid="distill-status-line">
             {distillStatus ? distillStatusLine(distillStatus) : "空闲续跑队列：读取中…"}
@@ -1585,6 +1798,70 @@ export function PacksPanel() {
           })}
         </ul>
       </section>
+      )}
+
+      {/* #411: 全历史归纳一次性确认（N 条摘要发 LLM 必须写明 + 排除项） */}
+      {distillAllConfirm && (
+        <div
+          style={styles.modalOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-label={DISTILL_ALL_ENTRY_LABEL}
+        >
+          <div style={styles.modal}>
+            <div style={styles.modalTitle}>{DISTILL_ALL_ENTRY_LABEL}？</div>
+            <p style={styles.modalP}>{distillAllConfirmBody(distillAllConfirm)}</p>
+            <div style={{ ...styles.modalP, display: "grid", gap: 8, margin: "8px 0" }}>
+              <label style={{ fontSize: 12 }}>
+                只看最近：
+                <select
+                  value={distillAllConfirm.since}
+                  onChange={(e) => recountDistillAll(e.target.value, distillAllConfirm.keyword)}
+                  disabled={busy === "distill-all"}
+                  style={{ marginLeft: 6 }}
+                >
+                  <option value="all">全部历史</option>
+                  <option value="7">近 7 天</option>
+                  <option value="30">近 30 天</option>
+                  <option value="90">近 90 天</option>
+                </select>
+              </label>
+              <label style={{ fontSize: 12 }}>
+                排除关键词（命中标题/首末问的对话不参与）：
+                <input
+                  style={styles.input}
+                  value={distillAllConfirm.keyword}
+                  onChange={(e) =>
+                    setDistillAllConfirm({ ...distillAllConfirm, keyword: e.target.value })
+                  }
+                  onBlur={() =>
+                    recountDistillAll(distillAllConfirm.since, distillAllConfirm.keyword)
+                  }
+                  placeholder="如：会议、测试"
+                  disabled={busy === "distill-all"}
+                />
+              </label>
+            </div>
+            <div style={styles.modalActions}>
+              <button
+                type="button"
+                style={styles.secondaryBtn}
+                onClick={() => setDistillAllConfirm(null)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                onClick={startDistillAll}
+                disabled={busy === "distill-all" || distillAllConfirm.eligible <= 0}
+                data-testid="distill-all-start-btn"
+              >
+                {busy === "distill-all" ? "统计中…" : "开始归纳"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Trust single-holder conflict: one-click unlock + apply */}
@@ -1748,6 +2025,19 @@ export function PacksPanel() {
                 {distillMeta.source === "llm" ? null : (
                   <div style={styles.hint}>LLM 不可用或输出不可解析时给空草稿——本面板仍可手动创建专家。</div>
                 )}
+                {/* #411: 与已装专家重叠 — 覆盖/另存由用户裁决，不是静默去重 */}
+                {distillMeta.conflicts_with ? (
+                  <div style={{ ...styles.hint, color: tokens.warning, fontWeight: 600 }}>
+                    与已装专家「{distillMeta.conflicts_with}」名字或工具面重叠——保存前请改名另存，或确认要覆盖心智。
+                  </div>
+                ) : null}
+                {distillMeta.thread_ids && distillMeta.thread_ids.length > 0 ? (
+                  <div style={styles.distillEvidenceLine}>
+                    <span style={styles.copyLabel}>出处</span>
+                    {distillMeta.thread_ids.length} 条对话（{distillMeta.thread_ids.slice(0, 5).join("、")}
+                    {distillMeta.thread_ids.length > 5 ? " 等" : ""}）——证据来自多条历史对话
+                  </div>
+                ) : null}
                 {distillMeta.suitable_for.length > 0 ? (
                   <div style={styles.distillEvidenceLine}>
                     <span style={styles.copyLabel}>适合</span>

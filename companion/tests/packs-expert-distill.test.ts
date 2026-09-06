@@ -287,6 +287,23 @@ test("digest 优先：未过期 digest → used_digest=true，语料走 TL;DR", 
   assert.ok(calls[0]?.userContent.startsWith("TL;DR:"))
 })
 
+// #416 复审 sibling：同款垃圾 digest 形状在 buildDistillCorpus（单线程路径）也抛 ——
+// `for (const b of 42)` 不可迭代；tags 为字符串时 `d.tags.join` 同样抛。守卫后 TL;DR 行仍走 digest 路径。
+test("digest 优先：bullets/tags 非数组（如 42 / 字符串）不抛 TypeError，语料退回 TL;DR 行", async () => {
+  const msgs: Msg[] = [{ id: "m1", role: "user", content: "帮我分析财报" }, { id: "m2", role: "assistant", content: "完成" }]
+  const th: Th = {
+    id: "t-junk",
+    digest: { extracted_at: "2026-09-05T00:00:00Z", content_fingerprint: "2:m2", tldr: "财报分析要点", tags: "not-array", bullets: 42, source: "auto" },
+  }
+  const tm = makeTm({ "t-junk": th }, { "t-junk": msgs })
+  const { calls, impl } = countingImpl(GOOD_DRAFT_JSON)
+  const r = await distillExpertDraft({ thread_id: "t-junk", threadManager: tm, llm: LLM, deps: { llmExtractImpl: impl as any } })
+  assert.ok(r.ok)
+  if (!r.ok) return
+  assert.equal(r.used_digest, true, "TL;DR 行仍在 → 语料仍走 digest 路径")
+  assert.ok(calls[0]?.userContent.includes("财报分析要点"), "TL;DR survives junk bullets")
+})
+
 test("正文路径：cap 8k + 过期 digest 回落正文", async () => {
   const big: Msg[] = Array.from({ length: 60 }, (_, i) => ({
     id: `m${i}`,

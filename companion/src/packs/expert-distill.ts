@@ -87,14 +87,15 @@ export const DISTILL_RESTART_LOSS_NOTE =
 // 保守 clamp：LLM 产出的每一段都当不可信输入处理。
 // ---------------------------------------------------------------------------
 
-function cleanString(raw: unknown, cap: number): string {
+// #411 起由 expert-distill-all 复用（同一 clamp 纪律，单一定义点）。
+export function cleanString(raw: unknown, cap: number): string {
   if (typeof raw !== "string") return ""
   return redactPlainText(
     raw.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").replace(/\s+/g, " ").trim(),
   ).slice(0, cap)
 }
 
-function cleanStringMultiline(raw: unknown, cap: number): string {
+export function cleanStringMultiline(raw: unknown, cap: number): string {
   if (typeof raw !== "string") return ""
   return redactPlainText(
     raw.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim(),
@@ -117,7 +118,7 @@ export function clampDistillTools(raw: unknown): string[] {
   return out
 }
 
-function clampEvidence(raw: unknown): DistillEvidence[] {
+export function clampEvidence(raw: unknown): DistillEvidence[] {
   if (!Array.isArray(raw)) return []
   const out: DistillEvidence[] = []
   for (const item of raw) {
@@ -132,7 +133,7 @@ function clampEvidence(raw: unknown): DistillEvidence[] {
   return out
 }
 
-function clampStringList(raw: unknown, cap: number, itemCap: number): string[] {
+export function clampStringList(raw: unknown, cap: number, itemCap: number): string[] {
   if (!Array.isArray(raw)) return []
   const out: string[] = []
   const seen = new Set<string>()
@@ -170,12 +171,12 @@ interface DistillMessageLike {
   content?: string
 }
 
-interface DistillThreadManagerLike {
+export interface DistillThreadManagerLike {
   get(threadId: string): DistillThreadLike | null | undefined
   getMessages(threadId: string): DistillMessageLike[]
 }
 
-function meetingLinkedThreadIds(): Set<string> {
+export function meetingLinkedThreadIds(): Set<string> {
   try {
     // 动态 import 不可用（同步路径）；meeting-store 是纯 fs 模块，直接 require 形态。
     // 显式传 getConfigDir()（与队列文件同根）——listMeetings 缺省用 import-time
@@ -234,8 +235,12 @@ export function buildDistillCorpus(
   if (th.digest && !isDigestStale(th.digest, messages)) {
     const d = th.digest
     const lines = [`TL;DR: ${d.tldr}`]
-    if (d.tags?.length) lines.push(`标签: ${d.tags.join(", ")}`)
-    for (const b of d.bullets ?? []) lines.push(`- ${b}`)
+    // digest 来自 index.json，垃圾形状（tags/bullets 非数组）时 join/for-of 抛
+    // TypeError —— 与 #416 复审同款 Array.isArray 守卫（tags 为字符串时 .join 同样抛）。
+    if (Array.isArray(d.tags) && d.tags.length) lines.push(`标签: ${d.tags.join(", ")}`)
+    if (Array.isArray(d.bullets)) {
+      for (const b of d.bullets) lines.push(`- ${b}`)
+    }
     const text = redactPlainText(lines.join("\n")).slice(0, CORPUS_CAP)
     if (text.trim()) return { ok: true, corpus: { text, used_digest: true, corpus_ids: corpusIds } }
   }
@@ -497,6 +502,25 @@ export function listPendingDistillDrafts(): Array<{ thread_id: string; source: s
 
 export function clearPendingDistillDraft(thread_id: string): void {
   pendingDrafts.delete(thread_id)
+}
+
+/**
+ * #411 — 全历史归纳草稿入内存 pending（键如 `__all__:N`）。与 queue drain
+ * 写入同构：仅会话内存，永不落盘；保存仍只经 pack.save_user（用户审阅）。
+ */
+export function recordPendingDistillDraft(
+  key: string,
+  draft: DistillDraft,
+  source: "llm" | "heuristic",
+  used_digest: boolean,
+  at?: string,
+): void {
+  pendingDrafts.set(key, {
+    draft,
+    source,
+    used_digest,
+    at: at ?? new Date().toISOString(),
+  })
 }
 
 /**

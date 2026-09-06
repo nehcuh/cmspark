@@ -1136,6 +1136,37 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "pack.distill_status": () => ({ valid: true }),
+    // #411: one-shot whole-history distill scan. Gesture-gated like every
+    // acting distill verb (count_only still rides a click — it reads no
+    // message bodies and calls no LLM, but shares the same gate for uniformity).
+    "pack.distill_all_scan": (m) => {
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "pack.distill_all_scan requires user_gesture:true" }
+      }
+      if (m.count_only !== undefined && typeof m.count_only !== "boolean") {
+        return { valid: false, error: "pack.distill_all_scan count_only must be boolean" }
+      }
+      if (m.exclude !== undefined) {
+        if (!m.exclude || typeof m.exclude !== "object" || Array.isArray(m.exclude)) {
+          return { valid: false, error: "pack.distill_all_scan exclude must be an object" }
+        }
+        const e = m.exclude as Record<string, unknown>
+        if (
+          e.topic_folders !== undefined &&
+          (!Array.isArray(e.topic_folders) ||
+            !e.topic_folders.every((f) => typeof f === "string"))
+        ) {
+          return { valid: false, error: "pack.distill_all_scan exclude.topic_folders must be string[]" }
+        }
+        if (e.since !== undefined && typeof e.since !== "string") {
+          return { valid: false, error: "pack.distill_all_scan exclude.since must be string" }
+        }
+        if (e.exclude_keyword !== undefined && typeof e.exclude_keyword !== "string") {
+          return { valid: false, error: "pack.distill_all_scan exclude.exclude_keyword must be string" }
+        }
+      }
+      return { valid: true }
+    },
     "modules.list": () => ({ valid: true }),
     "modules.set_enabled": (m) => {
       if (typeof m.module !== "string" || !m.module) return { valid: false, error: "modules.set_enabled requires module" }

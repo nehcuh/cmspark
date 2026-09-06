@@ -131,6 +131,12 @@ export type DistillMeta = {
   evidence: DistillEvidenceView[]
   suitable_for: string[]
   unsuitable_for: string[]
+  /** #411: 全历史归纳草稿（横幅与证据文案区分「本对话 / 全部历史」）。 */
+  from_all_history?: boolean
+  /** #411: 与已装专家名/工具面重叠 — 用户在编辑器裁决覆盖/另存。 */
+  conflicts_with?: string
+  /** #411: 本草稿的多 thread 出处（已对候选池校验）。 */
+  thread_ids?: string[]
 }
 
 function str(v: unknown): string {
@@ -196,8 +202,15 @@ export function normalizeDistillPreview(msg: unknown): {
 }
 
 /** 草稿来源横幅文案：AI 归纳 vs 启发式空稿（LLM 不可用时面板仍可用）。 */
-export function distillSourceLabel(meta: Pick<DistillMeta, "source" | "fallback_reason">): string {
-  if (meta.source === "llm") return "AI 从本对话归纳的草稿（未保存、不会自动生效，请检查后手动保存）"
+export function distillSourceLabel(
+  meta: Pick<DistillMeta, "source" | "fallback_reason"> &
+    Partial<Pick<DistillMeta, "from_all_history">>,
+): string {
+  if (meta.source === "llm") {
+    return meta.from_all_history
+      ? "AI 从全部历史归纳的草稿（未保存、不会自动生效，请逐份检查后手动保存）"
+      : "AI 从本对话归纳的草稿（未保存、不会自动生效，请检查后手动保存）"
+  }
   const why = meta.fallback_reason || "LLM 不可用"
   return `启发式空草稿（${why}）——可手动补全后保存`
 }
@@ -212,5 +225,131 @@ export type DistillStatusView = {
 export function distillStatusLine(s: DistillStatusView): string {
   const arm = s.armed ? "已开启" : "未开启（默认）"
   return `空闲续跑队列：${arm} · 待归纳 ${s.queue_len} · 未审草稿 ${s.pending_len}（重启即丢）`
+}
+
+// --- #411: 从全部历史归纳专家（方案 A 两级聚类；一次性手点扫描） ---
+
+export const DISTILL_ALL_ENTRY_LABEL = "从全部历史归纳专家"
+
+/** 确认弹窗正文（N 条摘要发 LLM 必须写明；时间窗/关键词为排除项）。 */
+export function distillAllConfirmBody(n: DistillAllCountView): string {
+  const capped = n.capped ? `（超过上限，只取最近 ${DISTILL_ALL_MAX_THREADS_LABEL} 条）` : ""
+  return (
+    `将把 ${n.eligible} 条历史对话的摘要${capped}（脱敏后）发送给你配置的 LLM，` +
+    `归纳出最多 5 份专家草稿。其中 ${n.with_digest} 条有现成摘要，其余取首末提问。` +
+    `草稿只在面板内存里逐份审阅，不会自动保存；${DISTILL_RESTART_LOSS_NOTE}。`
+  )
+}
+
+export const DISTILL_ALL_MAX_THREADS_LABEL = "200"
+
+export type DistillAllCountView = {
+  eligible: number
+  with_digest: number
+  capped: boolean
+}
+
+export type DistillAllEvidenceView = DistillEvidenceView & { thread_ids: string[] }
+
+export type DistillAllDraftView = {
+  name: string
+  description: string
+  system_prompt_append: string
+  tools_allow: string[]
+  suitable_for: string[]
+  unsuitable_for: string[]
+  evidence: DistillAllEvidenceView[]
+  thread_ids: string[]
+  conflicts_with: string
+}
+
+export type DistillAllScanView = {
+  drafts: DistillAllDraftView[]
+  scanned: number
+  llm_calls: number
+  fallback_reason: string
+  restart_note: string
+}
+
+function idList(v: unknown, cap: number): string[] {
+  if (!Array.isArray(v)) return []
+  const out: string[] = []
+  for (const s of v) {
+    if (typeof s !== "string" || !s || out.includes(s)) continue
+    out.push(s)
+    if (out.length >= cap) break
+  }
+  return out
+}
+
+/**
+ * 归一 companion `pack.distill_all_result` 回包（companion 已 clamp + 校验
+ * thread_id 出处；这里仍按不可信输入防御，坏形状丢弃该份草稿）。
+ */
+export function normalizeDistillAllDrafts(msg: unknown): DistillAllScanView | null {
+  const m = msg as Record<string, any> | null
+  if (!m || typeof m !== "object" || m.ok !== true) return null
+  const list = Array.isArray(m.drafts) ? m.drafts : []
+  const drafts: DistillAllDraftView[] = []
+  for (const d of list) {
+    if (!d || typeof d !== "object") continue
+    const name = str(d.name)
+    const prompt = str(d.system_prompt_append)
+    if (!name || !prompt) continue
+    const allow: string[] = (
+      Array.isArray(d.tools)
+        ? d.tools
+        : d.tools && typeof d.tools === "object" && Array.isArray(d.tools.allow)
+          ? d.tools.allow
+          : []
+    ).filter((t: unknown): t is string => typeof t === "string" && !!t)
+    const evidence: DistillAllEvidenceView[] = (Array.isArray(d.evidence) ? d.evidence : [])
+      .filter((e: unknown) => !!e && typeof e === "object")
+      .map((e: any) => ({
+        quote: str(e.quote).slice(0, 160),
+        ...(str(e.hint) ? { hint: str(e.hint).slice(0, 80) } : {}),
+        thread_ids: idList(e.thread_ids, 8),
+      }))
+      .filter((e: DistillAllEvidenceView) => !!e.quote)
+      .slice(0, 8)
+    drafts.push({
+      name,
+      description: str(d.description),
+      system_prompt_append: prompt,
+      tools_allow: [],
+      suitable_for: idList(d.suitable_for, 4).filter(Boolean),
+      unsuitable_for: idList(d.unsuitable_for, 4).filter(Boolean),
+      evidence,
+      thread_ids: idList(d.thread_ids, 50),
+      conflicts_with: str(d.conflicts_with),
+    })
+    if (drafts.length >= 5) break
+  }
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0)
+  return {
+    drafts,
+    scanned: num(m.scanned),
+    llm_calls: num(m.llm_calls),
+    fallback_reason: str(m.fallback_reason),
+    restart_note: str(m.restart_note) || DISTILL_RESTART_LOSS_NOTE,
+  }
+}
+
+/** 草稿队列导航：clamp 在 [0, total-1]（total ≤1 时恒 0）。 */
+export function distillAllQueueStep(index: number, total: number, dir: -1 | 1): number {
+  if (total <= 1) return 0
+  return Math.min(total - 1, Math.max(0, index + dir))
+}
+
+/** 队列行文案：第 i/N 份 + 冲突提示（覆盖/另存由用户裁决）。 */
+export function distillAllQueueLine(q: {
+  index: number
+  total: number
+  conflicts_with?: string
+}): string {
+  const base = `草稿 ${q.index + 1}/${q.total}（全部历史归纳，逐份审阅）`
+  return q.conflicts_with
+    ? `${base} · 与已装专家「${q.conflicts_with}」名字或工具面重叠——保存时可改名另存，或确认覆盖心智`
+    : base
 }
 

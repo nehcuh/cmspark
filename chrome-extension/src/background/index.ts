@@ -1386,6 +1386,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "pack.distill_disarm":
       case "pack.distill_drain":
       case "pack.distill_status":
+      // #411: one-shot whole-history distill（count_only 预点数 + 全量扫描）
+      case "pack.distill_all_scan":
       case "modules.list":
       case "modules.set_enabled":
       case "modules.update":

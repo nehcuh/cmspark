@@ -4478,10 +4478,13 @@ export async function handleMessage(
     case "pack.distill_arm":
     case "pack.distill_disarm":
     case "pack.distill_drain":
-    case "pack.distill_status": {
+    case "pack.distill_status":
+    case "pack.distill_all_scan": {
       // #370 I4 — 草稿制（F-S-7 零破例）：preview 不落盘、不 saveUserPack、
       // 不进 pack.list；armed 队列仅任务指针+语料 id。全部 llmExtract 均可
       // 追溯到 user_gesture（status 只读除外）。
+      // #411 — pack.distill_all_scan：一次性全历史归纳（方案 A 两级聚类）。
+      // 同组闸门不变：user_gesture 强校验、草稿只进内存 pending、无定时器。
       const {
         DISTILL_LLM_NOTICE,
         DISTILL_RESTART_LOSS_NOTE,
@@ -4513,6 +4516,54 @@ export async function handleMessage(
       })()
       if (type === "pack.distill_status") {
         return { type: "pack.distill_status", ...distillQueueStatus() }
+      }
+      if (type === "pack.distill_all_scan") {
+        const { distillAllExperts, distillAllScanCount } = await import(
+          "./packs/expert-distill-all"
+        )
+        const exclude = (() => {
+          const e = (rest.exclude ?? {}) as Record<string, unknown>
+          const out: { topic_folders?: string[]; since?: string; exclude_keyword?: string } = {}
+          if (Array.isArray(e.topic_folders)) {
+            out.topic_folders = e.topic_folders
+              .filter((f): f is string => typeof f === "string" && !!f.trim())
+              .slice(0, 50)
+          }
+          if (typeof e.since === "string" && e.since.trim()) out.since = e.since.trim()
+          if (typeof e.exclude_keyword === "string" && e.exclude_keyword.trim()) {
+            out.exclude_keyword = e.exclude_keyword.trim().slice(0, 80)
+          }
+          return out
+        })()
+        // 预点数（确认弹窗里的 N）：零 LLM 调用。
+        if (rest.count_only === true) {
+          return {
+            type: "pack.distill_all_count",
+            ...distillAllScanCount(services.threadManager, exclude),
+          }
+        }
+        // 已装专家面（builtin 在 ensure 时已进 installed 目录，同表可查）。
+        // router 是 composition root —— pack-engine 只在此出现，expert-distill*
+        // 模块保持结构性零 import。
+        const { listInstalledPacks, getPackDetail } = await import("./packs/pack-engine")
+        const installedExperts = listInstalledPacks(getConfig())
+          .filter((p) => p.kind === "expert")
+          .flatMap((p) => {
+            const d = getPackDetail(p.id)
+            if (!d.ok) return []
+            const allow = Array.isArray(d.pack.tools?.allow) ? d.pack.tools.allow : []
+            return [{ name: String(d.pack.name || p.name || ""), tools_allow: allow }]
+          })
+        const result = await distillAllExperts({
+          threadManager: services.threadManager,
+          llm: distillLlm,
+          installedExperts,
+          exclude,
+        })
+        if (!result.ok) {
+          return { type: "error", error: result.reason, code: result.code }
+        }
+        return { type: "pack.distill_all_result", ...result }
       }
       if (type === "pack.distill_arm") {
         const threadId = typeof rest.thread_id === "string" ? rest.thread_id.trim() : ""
