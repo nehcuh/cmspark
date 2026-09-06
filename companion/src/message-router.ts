@@ -304,6 +304,8 @@ interface SessionCallbacks {
   origin?: string
   /** Handshake surface from wsAuth. Summoner overlay may run local STT. */
   surface?: "panel" | "tray" | "summoner"
+  /** Originating WS; PTY kill-on-close is scoped to this peer. */
+  originWs?: unknown
 }
 
 /** Internal nextRun drain: preserve overlay/panel lease identity. */
@@ -2055,6 +2057,12 @@ export async function handleMessage(
           hasPendingForTab,
           rejectPendingForTab,
         })
+      } catch {
+        /* best-effort */
+      }
+      try {
+        const { killPtyByThreadId } = await import("./pty/session")
+        killPtyByThreadId(rest.thread_id)
       } catch {
         /* best-effort */
       }
@@ -5537,6 +5545,18 @@ export async function handleMessage(
     // --- Original System ---
     case "system.ping":
       return { type: "system.pong" }
+
+    case "terminal.open":
+    case "terminal.input":
+    case "terminal.resize":
+    case "terminal.ack":
+    case "terminal.ping":
+    case "terminal.pause":
+    case "terminal.resume":
+    case "terminal.close": {
+      const { handleTerminalMessage } = await import("./pty/handler")
+      return handleTerminalMessage(type, rest, services, session, stampedSurface as string | undefined)
+    }
 
     default:
       return { type: "error", error: `Unknown message type: ${type}` }

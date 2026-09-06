@@ -1,0 +1,8 @@
+{
+  "name": "s-node-pty-sea-spike",
+  "private": true,
+  "description": "#432 Slice 0: @lydell/node-pty load + spawn under Node SEA layout (darwin)",
+  "dependencies": {
+    "@lydell/node-pty": "1.2.0-beta.15"
+  }
+}

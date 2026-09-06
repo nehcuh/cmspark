@@ -386,6 +386,13 @@ export interface CompanionConfig {
    * open prompts a picker. Persist a canonical combo (`ctrl+alt+space`).
    * Omitted / empty = unset (tray menu still opens the overlay).
    */
+  /**
+   * #432 embedded PTY. Default enabled=false. Opening still requires
+   * user_gesture + L2; cruise/unattended never skip that gate.
+   */
+  embedded_terminal?: {
+    enabled?: boolean
+  }
   summoner?: {
     hotkey?: string
     /** Minutes of overlay idle before the next open starts a new thread. 0=always new, -1=always resume. Default 10. */
@@ -568,6 +575,9 @@ const defaultConfig: CompanionConfig = {
     auto_suggest: true,
     open_local_terminal: false,
     local_terminal_app: "auto",
+  },
+  embedded_terminal: {
+    enabled: false,
   },
   computer: {
     coordinateEnabled: false,
