@@ -152,6 +152,7 @@ test("isContentRiskError matches known provider moderation shapes", () => {
   assert.equal(isContentRiskError("400 Content Exists Risk"), true) // DeepSeek（4zi17x 实证）
   assert.equal(isContentRiskError("400 data_inspection_failed: Input data may contain inappropriate content"), true) // Aliyun
   assert.equal(isContentRiskError("400 The response was filtered due to the prompt triggering content management policy"), true) // Azure
+  assert.equal(isContentRiskError("400 content_filter: moderation blocked"), true) // OpenAI 系错误码
 })
 
 test("isContentRiskError does not misfire on transient/auth/structural errors", () => {
@@ -162,6 +163,10 @@ test("isContentRiskError does not misfire on transient/auth/structural errors", 
   assert.equal(isContentRiskError("fetch failed: ETIMEDOUT"), false)
   assert.equal(isContentRiskError("400 Invalid tool_calls: missing id"), false) // 结构 400 仍走旧路径
   assert.equal(isContentRiskError("context_length_exceeded"), false)
+  // grok M-1：5xx/无 400 的「content-filter 字样」不得被拐进风控路径（那是可重试瞬时故障）
+  assert.equal(isContentRiskError("500 content-filter backend unavailable"), false)
+  assert.equal(isContentRiskError("502 upstream content management policy gateway timeout"), false)
+  assert.equal(isContentRiskError("Content Exists Risk"), false) // 无 400 状态钉 → 不认
 })
 
 // --- 纯函数：隔离定位 ---
@@ -192,8 +197,8 @@ test("quarantinePersistedToolRow patches content and embedded result", () => {
       Object.assign(r, u)
     },
   }
-  // 全等失配（内存行是 wrapUntrusted 后的串）→ 回退最后大型工具行
-  assert.equal(quarantinePersistedToolRow(tm, "t", "wrapped-not-equal"), true)
+  // tool_call_id 精确命中（grok NIT-1：生产里 content 全等是死代码）
+  assert.equal(quarantinePersistedToolRow(tm, "t", "c1", "wrapped-not-equal"), true)
   assert.ok(rows[0].content.includes("内容风控") || rows[0].content.includes("已被移除"))
   assert.deepEqual(rows[0].tool_calls[0].result, { quarantined: true, reason: "content_risk" })
 })
@@ -234,8 +239,9 @@ test("content risk 400 quarantines the last large tool result and retries ONCE, 
   assert.ok(persistedTool.length > 0)
   assert.ok(persistedTool.every((m: any) => !String(m.content).includes(bigPageText.slice(0, 100))))
 
-  // 对话正常完成
+  // 对话正常完成；且恢复全程零 chat.error 帧（不透英文 400 原文、不打断 busy）
   assert.ok(params.getSentMessages().some((m) => m.type === "chat.done"))
+  assert.ok(!params.getSentMessages().some((m) => m.type === "chat.error"), "recovery must not flash chat.error")
 })
 
 // --- 集成：二次命中立即致命 ---
@@ -259,7 +265,9 @@ test("second content risk hit is immediately fatal (no 5x retry storm)", async (
 
   assert.equal(streamParams.length, 4) // 第二次风控后不再重试
   const errors = params.getSentMessages().filter((m) => m.type === "chat.error")
-  assert.ok(errors.some((m) => String(m.error).includes("内容风控")), "fatal copy mentions 内容风控")
+  assert.equal(errors.length, 1, "fatal path sends exactly one chat.error frame")
+  assert.ok(String(errors[0].error).includes("内容风控"), "fatal copy mentions 内容风控")
+  assert.ok(!String(errors[0].error).includes("Content Exists Risk"), "raw provider text must not leak to UI")
   assert.ok(logEvents.some((e) => e.event === "llm.content_risk_fatal"))
   // 不得落入 recoverable 计数路径
   assert.ok(!logEvents.some((e) => e.event === "llm.recoverable_api_error"))

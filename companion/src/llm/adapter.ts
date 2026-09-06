@@ -265,23 +265,36 @@ export function findLastLargeToolResultIndex(
 }
 
 /**
- * #430: 把持久化历史里同内容的工具行一并隔离（content + tool_calls[].result）。
- * 匹配顺序：content 全等（未包装场景）→ 最后一条大型工具行（length ≥ 门槛；
- * 与内存隔离的「最近大型结果」启发式同源，最坏情况是隔离错一条大行，安全无副作用）。
+ * #430: 把持久化历史里同一条工具行一并隔离（content + tool_calls[].result）。
+ * 匹配顺序（grok NIT-1）：tool_calls[].id === 内存行 tool_call_id（精确）→
+ * content 全等 → 最后一条大型工具行（兜底；可能隔错一条无辜大行，安全方向可接受，
+ * 但触发源可能留存并在下次 run 再撞一次风控——致命路径会如实告知用户）。
  * 找不到就放弃——内存隔离仍生效。
  */
 export function quarantinePersistedToolRow(
   threadManager: { getMessages(tid: string): any[]; updateMessage(tid: string, mid: string, u: any): void },
   threadId: string,
-  originalContent: string,
+  toolCallId?: string,
+  originalContent?: string,
 ): boolean {
   const rows = threadManager.getMessages(threadId)
   let target: any = null
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const r = rows[i]
-    if (r?.role === "tool" && r.content === originalContent) {
-      target = r
-      break
+  if (toolCallId) {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i]
+      if (r?.role === "tool" && Array.isArray(r.tool_calls) && r.tool_calls.some((tc: any) => tc?.id === toolCallId)) {
+        target = r
+        break
+      }
+    }
+  }
+  if (!target && originalContent) {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i]
+      if (r?.role === "tool" && r.content === originalContent) {
+        target = r
+        break
+      }
     }
   }
   if (!target) {
@@ -2132,6 +2145,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
       const isAuthError = errorMsg.includes("401") || errorMsg.includes("403") || errorMsg.includes("Incorrect API key")
       const isStructuralError = errorMsg.includes("400") && errorMsg.includes("tool")
+      // #430 (grok M-2)：风控错误不透原文帧——恢复成功不该闪英文 400 气泡 +
+      // 停 busy；致命只发下方中文条（与 auth/structural 的双帧旧行为不同，刻意）。
+      const isContentRisk = isContentRiskError(errorMsg)
 
       logger.error("llm.api_error", {
         error: errorMsg,
@@ -2141,11 +2157,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         continuous_failures: continuousFailures,
       })
 
-      sendToExtension({
-        type: "chat.error",
-        thread_id: threadId,
-        error: errorMsg,
-      })
+      if (!isContentRisk) {
+        sendToExtension({
+          type: "chat.error",
+          thread_id: threadId,
+          error: errorMsg,
+        })
+      }
 
       // Auth errors and structural errors are fatal — stop immediately
       if (isAuthError) {
@@ -2171,12 +2189,15 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       // #430: 内容风控 400 是确定性拒绝——走 recoverable 会把同一 payload 重发 5 次
       // （4zi17x 实证：4 次重试全部 <200ms 瞬挂，烧光熔断误杀对话）。一次性恢复：
       // 隔离最近的大型工具结果（最可能触发源）重试一次；再命中/无可隔离对象 → 致命。
-      if (isContentRiskError(errorMsg)) {
+      if (isContentRisk) {
         if (!contentRiskRecoveryUsed) {
           contentRiskRecoveryUsed = true
           const idx = findLastLargeToolResultIndex(messages)
           if (idx >= 0) {
             const original = messages[idx].content as string
+            // grok NIT-1：用内存行的 tool_call_id 精确对齐持久化行（content 全等
+            // 在生产形状里是死代码，最后大行回退可能隔错行）。
+            const toolCallId = (messages[idx] as { tool_call_id?: unknown }).tool_call_id
             messages[idx].content = CONTENT_RISK_QUARANTINE_PLACEHOLDER
             logger.warn("llm.content_risk_quarantine", {
               thread_id: threadId,
@@ -2185,11 +2206,18 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             })
             // 同步隔离持久化行（rebuildMessagesFromHistory 从 tc.result 重建工具行，
             // 只改内存会在下次 run 把同一段触发内容再发出去）。
-            quarantinePersistedToolRow(threadManager, threadId, original)
+            quarantinePersistedToolRow(
+              threadManager,
+              threadId,
+              typeof toolCallId === "string" ? toolCallId : undefined,
+              original,
+            )
             messages.push({
               role: "user",
               content: "上一段网页/工具返回内容触发了服务商内容风控，该段已被移除。请基于已有信息继续完成任务，不要重复抓取同一来源。",
             } as any)
+            // grok NIT-3：与 overflow 重试对齐——恢复重试不消耗工具轮次预算。
+            round--
             continue
           }
           logger.warn("llm.content_risk_no_quarantine_target", { thread_id: threadId, round })
