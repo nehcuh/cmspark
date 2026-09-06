@@ -8,7 +8,7 @@
 // CMSPARK_API_KEY env var (also CMSPARK_<UPPER_KEY> for other sensitive keys).
 
 import * as readline from "readline"
-import { getConfig, saveConfig, DATA_DIR } from "./config"
+import { getConfig, saveConfig, getConfigDir } from "./config"
 
 const VALID_KEYS = ["api_key", "base_url", "model_name", "temperature", "context_window"]
 
@@ -127,7 +127,7 @@ export async function runInteractiveSettings(): Promise<void> {
   }
 
   rl.close()
-  console.log("\n设置已保存到:", DATA_DIR + "/config.json\n")
+  console.log("\n设置已保存到:", getConfigDir() + "/config.json\n")
 }
 
 // Resolve a value for a sensitive key, preferring env var over stdin-supplied.

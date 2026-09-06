@@ -13,7 +13,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import matter from "gray-matter"
-import { DATA_DIR } from "../config"
+import { getConfigDir } from "../config"
 import { llmExtract, LlmExtractConfig } from "../llm/llm-extract"
 import { stripLoneSurrogates, safeSlice } from "../llm/text-sanitize"
 
@@ -41,7 +41,9 @@ export interface VaultSample {
   bodyPreview: string
 }
 
-export const PROFILE_PATH = path.join(DATA_DIR, "obsidian", "profile.json")
+export function getVaultProfilePath(): string {
+  return path.join(getConfigDir(), "obsidian", "profile.json")
+}
 
 const MAX_NOTES = 200
 const BODY_PREVIEW_CHARS = 200
@@ -244,7 +246,7 @@ export function parseVaultProfile(output: string): ExtractedProfile | null {
 
 // ---------------- cache ----------------
 
-export function saveProfile(profile: VaultProfile, filePath: string = PROFILE_PATH): void {
+export function saveProfile(profile: VaultProfile, filePath: string = getVaultProfilePath()): void {
   fs.writeFileSync(filePath, JSON.stringify(profile, null, 2), { mode: 0o600 })
 }
 
@@ -255,7 +257,7 @@ export function saveProfile(profile: VaultProfile, filePath: string = PROFILE_PA
  */
 export function loadCachedProfile(
   vaultPath: string | null | undefined,
-  filePath: string = PROFILE_PATH,
+  filePath: string = getVaultProfilePath(),
 ): VaultProfile | null {
   if (!vaultPath) return null
   try {

@@ -128,10 +128,48 @@ function safeNotify(options: { title?: string; message?: string; sound?: boolean
 // Configuration
 // ---------------------------------------------------------------------------
 
-const WS_PORT = 23401
+const WS_PORT_DEFAULT = 23401
 const WS_HOST = "127.0.0.1"
 const POLL_INTERVAL_MS = 10000
 const STATUS_FILE = path.join(getConfigDir(), ".menu-bar-status.json")
+
+/**
+ * #406 — tray is its own process: resolve the WS port live from config.json
+ * (server binds config.port, ws/lifecycle.ts startServer) instead of freezing
+ * 23401. getConfig() re-reads config.json on mtime change, so a user port edit
+ * is picked up on the next poll without restarting the tray. Falls back to the
+ * default when config.port is absent/invalid (config corrupt or not yet written).
+ */
+function resolveWsPort(): number {
+  try {
+    const p = Number(getConfig().port)
+    if (Number.isFinite(p) && p > 0 && p <= 65535) return Math.trunc(p)
+  } catch {
+    /* config.json corrupt/unreadable — fall back */
+  }
+  return WS_PORT_DEFAULT
+}
+
+/** Port the live CompanionClients are currently bound to (0 = not wired yet). */
+let boundClientsPort = 0
+
+/**
+ * #406 — when config.port changes while the tray runs, retarget both persistent
+ * WS clients so they reconnect on the new endpoint (their reconnection timers
+ * otherwise keep retrying the stale port forever and the tray reports 已停止).
+ * Poll-tick driven; callbacks/handlers stay attached (updateEndpoint only swaps
+ * the endpoint + resets backoff).
+ */
+function syncCompanionClientPort(): void {
+  if (boundClientsPort === 0) return // clients not wired yet (initial poll before tray)
+  const port = resolveWsPort()
+  if (port === boundClientsPort) return
+  const prev = boundClientsPort
+  boundClientsPort = port
+  console.log(`[menu-bar] config.port changed ${prev} → ${port} — retargeting WS clients`)
+  companionClient?.updateEndpoint(WS_HOST, port)
+  summonerClient?.updateEndpoint(WS_HOST, port)
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -211,7 +249,7 @@ function checkPortReachable(): Promise<boolean> {
       socket.destroy()
       resolve(false)
     }, 2000)
-    socket.connect(WS_PORT, WS_HOST, () => {
+    socket.connect(resolveWsPort(), WS_HOST, () => {
       clearTimeout(timer)
       socket.destroy()
       resolve(true)
@@ -613,7 +651,7 @@ function showStatusNotification(): void {
     const running = state.companionStatus === "running"
     const lines = [
       `${running ? "✅" : "⏹️"} Companion: ${running ? "运行中" : "已停止"}`,
-      `🔗 WS: ${state.wsConnected ? "已连接" : "未连接"} ws://${WS_HOST}:${WS_PORT}`,
+      `🔗 WS: ${state.wsConnected ? "已连接" : "未连接"} ws://${WS_HOST}:${resolveWsPort()}`,
       state.pid ? `📌 PID: ${state.pid}` : "",
       `📂 数据目录: ${getConfigDir()}`,
     ].filter(Boolean)
@@ -1810,9 +1848,10 @@ export async function startMenuBarAgent(): Promise<void> {
 
   for (const candidate of tryOrder) {
     try {
+      boundClientsPort = resolveWsPort()
       trayInstance = await createTray(candidate)
       await trayInstance.start({
-        wsPort: WS_PORT,
+        wsPort: boundClientsPort,
         wsHost: WS_HOST,
         pollIntervalMs: POLL_INTERVAL_MS,
         statusFile: STATUS_FILE,
@@ -1874,7 +1913,7 @@ export async function startMenuBarAgent(): Promise<void> {
   // Start companion client for live data
   companionClient = new CompanionClient({
     host: WS_HOST,
-    port: WS_PORT,
+    port: boundClientsPort,
     reconnectInterval: 5000,
     maxReconnectAttempts: -1,
   })
@@ -1935,7 +1974,7 @@ export async function startMenuBarAgent(): Promise<void> {
   // Second WS: overlay chat. Same origin; handshake surface=summoner (ACL).
   summonerClient = new CompanionClient({
     host: WS_HOST,
-    port: WS_PORT,
+    port: boundClientsPort,
     reconnectInterval: 5000,
     maxReconnectAttempts: -1,
     surface: "summoner",
@@ -1972,6 +2011,7 @@ export async function startMenuBarAgent(): Promise<void> {
 
   // Start polling loop
   pollTimer = setInterval(() => {
+    syncCompanionClientPort()
     pollCompanionStatus().catch((err) => {
       if (process.env.CMSPARK_DEBUG) {
         console.warn("[menu-bar] Poll error:", err)

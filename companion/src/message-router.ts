@@ -34,7 +34,7 @@ import { pinSlashSkill, type SkillEngine } from "./skills/skill-engine"
 import { isSymlinkOrJunction, isUnsafePathComponent } from "./skills/doc-identity"
 import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
-import { getConfig, saveConfig, isMaskedApiKey, DATA_DIR } from "./config"
+import { getConfig, saveConfig, isMaskedApiKey, getConfigDir } from "./config"
 import { chatCreate, generateThreadTitle } from "./llm/adapter"
 import {
   MAX_NEXT_RUN,
@@ -3176,7 +3176,7 @@ export async function handleMessage(
         {
           clearSttSessions: () => {
             try {
-              getSttSessionService({ dataDir: DATA_DIR }).forceAbort()
+              getSttSessionService({ dataDir: getConfigDir() }).forceAbort()
             } catch {
               /* best-effort: service may not be initialized yet */
             }

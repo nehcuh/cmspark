@@ -29,10 +29,14 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as crypto from "crypto"
-import { DATA_DIR } from "./config"
+import { getConfigDir } from "./config"
 import { atomicWriteText } from "./io"
 
-const SECRET_PATH = path.join(DATA_DIR, "ws_secret")
+/** #406 — live-resolve (SECRET_PATH was frozen at module load; env-redirected
+ *  tests / runtime retarget must not pair against the real home dir). */
+function secretFilePath(): string {
+  return path.join(getConfigDir(), "ws_secret")
+}
 
 /** Peer must complete the handshake within this many ms or be terminated. */
 export const AUTH_TIMEOUT_MS = 5000
@@ -54,8 +58,9 @@ let persistFailed = false
  */
 export function getOrCreateSharedSecret(): string {
   if (cachedSecret) return cachedSecret
+  const secretPath = secretFilePath()
   try {
-    const existing = fs.readFileSync(SECRET_PATH, "utf8").trim()
+    const existing = fs.readFileSync(secretPath, "utf8").trim()
     if (existing) {
       cachedSecret = existing
       return cachedSecret
@@ -66,7 +71,7 @@ export function getOrCreateSharedSecret(): string {
   cachedSecret = crypto.randomBytes(32).toString("hex")
   freshlyGenerated = true
   try {
-    atomicWriteText(SECRET_PATH, cachedSecret + "\n", 0o600)
+    atomicWriteText(secretPath, cachedSecret + "\n", 0o600)
   } catch {
     // Persistence failure is non-fatal for THIS process (the in-memory secret
     // still authenticates), but means the next restart regenerates and the
@@ -108,8 +113,8 @@ export function consumeSecretPersistFailed(): boolean {
  *  re-enters the first-run pairing flow (auto-surface the new secret). */
 export function resetSharedSecret(): string {
   clearSecretCache()
-  try { fs.rmSync(SECRET_PATH, { force: true }) } catch { /* ignore */ }
-  try { fs.rmSync(PAIRED_PATH, { force: true }) } catch { /* ignore */ }
+  try { fs.rmSync(secretFilePath(), { force: true }) } catch { /* ignore */ }
+  try { fs.rmSync(pairedMarkerPath(), { force: true }) } catch { /* ignore */ }
   return getOrCreateSharedSecret()
 }
 
@@ -119,12 +124,15 @@ export function getSharedSecretForDisplay(): string {
   return getOrCreateSharedSecret()
 }
 
-const PAIRED_PATH = path.join(DATA_DIR, ".paired")
+/** #406 — live-resolve the ".paired" marker (was frozen at module load). */
+function pairedMarkerPath(): string {
+  return path.join(getConfigDir(), ".paired")
+}
 
 /** Path of the "has any peer ever paired" marker. Kept in lock-step with the tray's
  *  pairing.ts (same DATA_DIR / getConfigDir()). */
 export function getPairedMarkerPath(): string {
-  return PAIRED_PATH
+  return pairedMarkerPath()
 }
 
 /**
@@ -134,8 +142,8 @@ export function getPairedMarkerPath(): string {
  * just means the tray treats the install as unpaired, which is the safe default). */
 export function markPaired(): void {
   try {
-    if (fs.existsSync(PAIRED_PATH)) return
-    atomicWriteText(PAIRED_PATH, new Date().toISOString() + "\n", 0o600)
+    if (fs.existsSync(pairedMarkerPath())) return
+    atomicWriteText(pairedMarkerPath(), new Date().toISOString() + "\n", 0o600)
   } catch {
     /* never block pairing on marker persistence */
   }

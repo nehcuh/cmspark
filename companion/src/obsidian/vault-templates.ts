@@ -15,7 +15,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import matter from "gray-matter"
-import { DATA_DIR } from "../config"
+import { getConfigDir } from "../config"
 
 export interface VaultTemplate {
   name: string // basename without .md
@@ -41,7 +41,9 @@ export interface AppliedTemplate {
   body: string // placeholders substituted + content injected
 }
 
-export const TEMPLATES_PATH = path.join(DATA_DIR, "obsidian", "templates.json")
+export function getVaultTemplatesPath(): string {
+  return path.join(getConfigDir(), "obsidian", "templates.json")
+}
 const MAX_TEMPLATES = 10
 
 /** Detect + collect templates from the vault. Empty list if no (contained) template folder. */
@@ -208,13 +210,13 @@ export function applyTemplate(template: VaultTemplate, vars: TemplateVars): Appl
   return { frontmatter, body }
 }
 
-export function saveTemplates(t: VaultTemplates, filePath: string = TEMPLATES_PATH): void {
+export function saveTemplates(t: VaultTemplates, filePath: string = getVaultTemplatesPath()): void {
   fs.writeFileSync(filePath, JSON.stringify(t, null, 2), { mode: 0o600 })
 }
 
 export function loadCachedTemplates(
   vaultPath: string | null | undefined,
-  filePath: string = TEMPLATES_PATH,
+  filePath: string = getVaultTemplatesPath(),
 ): VaultTemplates | null {
   if (!vaultPath) return null
   try {
