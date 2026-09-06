@@ -17,6 +17,7 @@ let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
 let config: typeof import("../src/config")
 let composerLeases: typeof import("../src/ws/composer-lease").composerLeases
 let assertSummonerAllowed: typeof import("../src/ws/summoner-acl").assertSummonerAllowed
+let applySummonerPayloadPolicy: typeof import("../src/ws/summoner-acl").applySummonerPayloadPolicy
 
 let seq = 0
 function tid(prefix: string): string {
@@ -37,7 +38,9 @@ before(async () => {
   SkillEngine = (await import("../src/skills/skill-engine")).SkillEngine
   config = await import("../src/config")
   composerLeases = (await import("../src/ws/composer-lease")).composerLeases
-  assertSummonerAllowed = (await import("../src/ws/summoner-acl")).assertSummonerAllowed
+  const acl = await import("../src/ws/summoner-acl")
+  assertSummonerAllowed = acl.assertSummonerAllowed
+  applySummonerPayloadPolicy = acl.applySummonerPayloadPolicy
   await config.initDataDir()
   config.saveConfig({
     llm: {
@@ -61,7 +64,17 @@ function newManager(): InstanceType<typeof ThreadManager> {
 test("ACL：summoner 放行 task_loop.arm；stop/其它保持拒", () => {
   assert.deepEqual(assertSummonerAllowed("summoner", "task_loop.arm"), { ok: true })
   assert.equal(assertSummonerAllowed("summoner", "task_loop.stop").ok, false)
-  assert.equal(assertSummonerAllowed("summoner", "thread.execution_policy.set").ok, false)
+  // P2（#433 控制面）已把 execution_policy.set 放进 allowlist，payload 门只许降档：
+  // allowlist 层放行，payload 层升档（非 plan_readonly）拒、降档放行。
+  assert.equal(assertSummonerAllowed("summoner", "thread.execution_policy.set").ok, true)
+  assert.equal(
+    applySummonerPayloadPolicy("summoner", { type: "thread.execution_policy.set", thread_id: "t", policy: "default" }).ok,
+    false,
+  )
+  assert.equal(
+    applySummonerPayloadPolicy("summoner", { type: "thread.execution_policy.set", thread_id: "t", policy: "plan_readonly", user_gesture: true }).ok,
+    true,
+  )
 })
 
 test("闸①：summoner arm 缺 user_gesture → 拒（即使租约在）", async () => {
