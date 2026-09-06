@@ -1361,13 +1361,30 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "knowledge.list": () => ({ valid: true }),
-    // #296: llm_labels / regen_labels 是可选布尔（面板开关随请求传入）
+    // #296: llm_labels / regen_labels 是可选布尔（面板开关随请求传入）；
+    // #427: organize / user_gesture 同款可选布尔（手动整理双闸）
     "knowledge.graph": (m) => {
       if (m.llm_labels !== undefined && typeof m.llm_labels !== "boolean") {
         return { valid: false, error: "knowledge.graph llm_labels must be boolean when set" }
       }
       if (m.regen_labels !== undefined && typeof m.regen_labels !== "boolean") {
         return { valid: false, error: "knowledge.graph regen_labels must be boolean when set" }
+      }
+      if (m.organize !== undefined && typeof m.organize !== "boolean") {
+        return { valid: false, error: "knowledge.graph organize must be boolean when set" }
+      }
+      if (m.user_gesture !== undefined && typeof m.user_gesture !== "boolean") {
+        return { valid: false, error: "knowledge.graph user_gesture must be boolean when set" }
+      }
+      // #427 ext wire 合同：锁/ack 动词（键 = 渲染 group_key；ack 仅接受 true）
+      if (m.lock_group !== undefined && typeof m.lock_group !== "string") {
+        return { valid: false, error: "knowledge.graph lock_group must be string when set" }
+      }
+      if (m.unlock_group !== undefined && typeof m.unlock_group !== "string") {
+        return { valid: false, error: "knowledge.graph unlock_group must be string when set" }
+      }
+      if (m.ack_tf_switch !== undefined && m.ack_tf_switch !== true) {
+        return { valid: false, error: "knowledge.graph ack_tf_switch must be true when set" }
       }
       return { valid: true }
     },

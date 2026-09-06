@@ -73,12 +73,38 @@ export type KnowledgeIndexDoc = {
   /** 桶相对 posix 文件夹路径（"" = 桶根）。 */
   folder: string
   bucket: "global" | "sites" | ""
-  /** 稀疏纯 TF 向量（title + description + tags + 首块），cosine 用。 */
+  /**
+   * 稀疏纯 TF 向量（title + description + tags + 首块），cosine 用。
+   */
   vec: Record<string, number>
+  /**
+   * #427：frontmatter description（非正文，本来就在 vec 里）——图谱 LLM lane
+   * 的 prompt 输入与 graph_llm 指纹同源取用。**旧索引文件缺失容忍**
+   * （可选项；read 不因缺它拒绝整个文件）。
+   */
+  description?: string
 }
 
 /** LLM 分组展示条目（#296 display 派生字段；可丢可重建，不进检索/路由/导出）。 */
 export type KnowledgeGraphLabelEntry = { name: string; summary?: string }
+
+/**
+ * #427 graph_llm / graph_lock 区共用条目形状：成员 id 集合 + 命名/摘要。
+ * `l:<hash>` 键不落盘——渲染时由 ids 现算（spec §2 服务端派生），
+ * 缩容后键随成员变，条目本身才是锁的身份。
+ */
+export type KnowledgeGraphGroupEntry = { ids: string[]; name: string; summary?: string }
+
+/** #427 graph_llm 区：organize 产物（派生缓存，可丢可重建）。 */
+export type KnowledgeGraphLlmSection = {
+  fingerprint: string
+  groups: KnowledgeGraphGroupEntry[]
+  relations: Array<{ a: string; b: string; reason: string; confidence: number }>
+  stale: boolean
+}
+
+/** #427 graph_lock 区：用户认可的分组快照（视图着色 overlay，非 SoT）。 */
+export type KnowledgeGraphLockSection = { groups: KnowledgeGraphGroupEntry[] }
 
 export type KnowledgeIndexFile = {
   version: 1
@@ -88,12 +114,61 @@ export type KnowledgeIndexFile = {
   docs: KnowledgeIndexDoc[]
   /** 可选派生缓存（spec §5）：缺失容忍；条目形状不符整体丢弃。 */
   display?: Record<string, KnowledgeGraphLabelEntry>
+  /** #427 可选派生区：形状不符整区丢弃，不连累 docs/display。 */
+  graph_llm?: KnowledgeGraphLlmSection
+  graph_lock?: KnowledgeGraphLockSection
+  /** #427：≥20 切换一次性 banner 的 ack。 */
+  graph_tf_switch_ack?: boolean
 }
 
 export function knowledgeIndexPath(): string {
   // #356: live getConfigDir()（与 SkillEngine 构造同口径）——import-time DATA_DIR
   // 在测试 env 后设时已冻结，索引会写进真实 ~/.cmspark-agent（split-brain）。
   return path.join(getConfigDir(), "cache", KNOWLEDGE_INDEX_FILENAME)
+}
+
+/** #427 graph_llm / graph_lock 条目形状校验（锁条目与 LLM 分组同形）。 */
+function isGraphGroupEntry(v: unknown): v is KnowledgeGraphGroupEntry {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false
+  const e = v as { ids?: unknown; name?: unknown; summary?: unknown }
+  if (typeof e.name !== "string" || !e.name) return false
+  if (!Array.isArray(e.ids) || e.ids.length === 0) return false
+  for (const id of e.ids) if (typeof id !== "string" || !id) return false
+  if (e.summary !== undefined && typeof e.summary !== "string") return false
+  return true
+}
+
+/** #427 graph_llm 区校验：任一字段形状不符 → 整区丢弃（null）。 */
+export function validateGraphLlmSection(v: unknown): KnowledgeGraphLlmSection | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null
+  const s = v as { fingerprint?: unknown; groups?: unknown; relations?: unknown; stale?: unknown }
+  if (typeof s.fingerprint !== "string" || !s.fingerprint) return null
+  if (!Array.isArray(s.groups) || !s.groups.every(isGraphGroupEntry)) return null
+  if (
+    !Array.isArray(s.relations) ||
+    !s.relations.every(
+      (r) =>
+        r &&
+        typeof r === "object" &&
+        !Array.isArray(r) &&
+        typeof (r as { a?: unknown }).a === "string" &&
+        typeof (r as { b?: unknown }).b === "string" &&
+        typeof (r as { reason?: unknown }).reason === "string" &&
+        typeof (r as { confidence?: unknown }).confidence === "number",
+    )
+  ) {
+    return null
+  }
+  if (typeof s.stale !== "boolean") return null
+  return { fingerprint: s.fingerprint, groups: s.groups, relations: s.relations, stale: s.stale }
+}
+
+/** #427 graph_lock 区校验：同款整区丢弃纪律。 */
+export function validateGraphLockSection(v: unknown): KnowledgeGraphLockSection | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null
+  const s = v as { groups?: unknown }
+  if (!Array.isArray(s.groups) || !s.groups.every(isGraphGroupEntry)) return null
+  return { groups: s.groups }
 }
 
 /** 读取派生索引；缺失 / 半截 / 损坏 / 形状不符一律按缺失处理（null），不 throw。 */
@@ -108,6 +183,7 @@ export function readKnowledgeIndexFile(p: string): KnowledgeIndexFile | null {
     for (const d of parsed.docs) {
       if (!d || typeof d.id !== "string" || typeof d.name !== "string") return null
       if (!d.vec || typeof d.vec !== "object") return null
+      // #427：description 可选——旧索引文件（#273 时代）缺失容忍
     }
     // display 可选（#296）：形状不符整体丢弃，不连累索引本身
     if (parsed.display !== undefined) {
@@ -123,6 +199,14 @@ export function readKnowledgeIndexFile(p: string): KnowledgeIndexFile | null {
         }
       }
     }
+    // #427 派生区：整区校验，不符丢弃不连累其他区
+    const llm = validateGraphLlmSection(parsed.graph_llm)
+    if (llm) parsed.graph_llm = llm
+    else delete parsed.graph_llm
+    const lock = validateGraphLockSection(parsed.graph_lock)
+    if (lock) parsed.graph_lock = lock
+    else delete parsed.graph_lock
+    if (typeof parsed.graph_tf_switch_ack !== "boolean") delete parsed.graph_tf_switch_ack
     return parsed as KnowledgeIndexFile
   } catch {
     return null

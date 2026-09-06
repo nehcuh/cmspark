@@ -90,13 +90,34 @@ function resetKnowledgeState(): void {
 
 // --- 纯函数：状态机 + 着色来源 ---
 
-test("#296 pure: n<20 → too_few, no nodes/edges/labels", () => {
-  const r = kg.buildKnowledgeGraph(orthoDocs("d", 19))
-  assert.equal(r.status, "too_few")
+test("#427 pure: n=0 → too_few；n=1 → 单节点 ok；2–19 → LLM lane ok 全未分组", () => {
+  const zero = kg.buildKnowledgeGraph([])
+  assert.equal(zero.status, "too_few")
+  assert.equal(zero.truncated, false)
+  assert.equal(zero.nodes.length, 0)
+  assert.equal(zero.relations.length, 0)
+  assert.equal(zero.llmLane, false)
+
+  const single = kg.buildKnowledgeGraph([mkDoc("solo", { x: 1 })])
+  assert.equal(single.status, "ok")
+  assert.equal(single.nodes.length, 1)
+  assert.equal(single.nodes[0].group_key, "u:ungrouped")
+  assert.equal(single.labels["u:ungrouped"].name, "未分组")
+  assert.equal(single.edges.length, 0)
+
+  // 2–19 无缓存：散点是诚实结构（LLM lane，全部未分组，TF 边照算）
+  const docs = orthoDocs("d", 19)
+  const r = kg.buildKnowledgeGraph(docs)
+  assert.equal(r.status, "ok")
   assert.equal(r.truncated, false)
-  assert.equal(r.nodes.length, 0)
-  assert.equal(r.edges.length, 0)
-  assert.equal(Object.keys(r.labels).length, 0)
+  assert.equal(r.llmLane, true)
+  assert.equal(r.nodes.length, 19)
+  assert.ok(r.nodes.every((n) => n.group_key === "u:ungrouped"), "no cache → all ungrouped")
+  assert.equal(Object.keys(r.labels).length, 1)
+  assert.equal(r.labels["u:ungrouped"].name, "未分组")
+  assert.equal(r.labels["u:ungrouped"].ai, false)
+  assert.deepEqual(r.relations, [])
+  assert.equal(r.labelTargets.length, 0, "LLM lane has no label targets (label 通道只服务 TF lane)")
 })
 
 test("#296 pure: n≤200 group_key = 分布视图同一 key（同源聚类）", () => {
@@ -219,10 +240,16 @@ test("#296 pure: n>200 → over_cap, title-lex first 200, recluster on truncated
   assert.equal(r1.labels[gkey.group_key].ai, false)
 })
 
-test("#296 pure: constants per spec §6", () => {
+test("#296/#427 pure: constants per spec §6 / #427 §8", () => {
   assert.equal(kg.KNOWLEDGE_GRAPH_EDGE_TOPK, 5)
   assert.equal(kg.KNOWLEDGE_GRAPH_DOC_CAP, clusters.KNOWLEDGE_CLUSTER_DOC_CAP)
-  assert.equal(kg.KNOWLEDGE_GRAPH_MIN_DOCS, clusters.KNOWLEDGE_CLUSTER_MIN_DOCS)
+  assert.equal(kg.KNOWLEDGE_GRAPH_MIN_DOCS, 1)
+  assert.equal(kg.KNOWLEDGE_GRAPH_LLM_LANE_MAX, clusters.KNOWLEDGE_CLUSTER_MIN_DOCS - 1)
+  assert.equal(kg.KNOWLEDGE_GRAPH_LLM_LANE_MAX, 19)
+  assert.equal(kg.KNOWLEDGE_GRAPH_RELATIONS_CAP, 12)
+  assert.equal(kg.KNOWLEDGE_GRAPH_RELATIONS_PER_NODE, 3)
+  assert.equal(kg.KNOWLEDGE_GRAPH_RELATION_REASON_MAX, 80)
+  assert.equal(kg.KNOWLEDGE_GRAPH_ORGANIZE_TIMEOUT_MS, 30_000)
   assert.equal(kg.KNOWLEDGE_GRAPH_LABEL_NAME_MAX, 20)
   assert.equal(kg.KNOWLEDGE_GRAPH_LABEL_SUMMARY_MAX, 280)
 })
@@ -302,14 +329,20 @@ test("#296 surface gate: non-panel sessions rejected, panel served", async () =>
   assert.ok(Array.isArray(panel.edges) && panel.edges.length > 0)
 })
 
-test("#296 handler: engine too_few (<20 docs)", async () => {
+test("#427 handler: 2–19 无缓存 → ok + 全未分组 + llm_ready + relations 空数组", async () => {
   resetKnowledgeState()
   const se = new SkillEngine()
   seedThemed(se, 7)
   const resp = await handleMessage({ type: "knowledge.graph" }, { skillEngine: se } as never, panelSession)
   assert.equal(resp.type, "knowledge.graph")
-  assert.equal(resp.status, "too_few")
-  assert.equal(resp.nodes.length, 0)
+  assert.equal(resp.status, "ok")
+  assert.equal(resp.nodes.length, 7)
+  const labels = resp.labels as Record<string, { name: string; ai: boolean }>
+  assert.deepEqual(Object.keys(labels), ["u:ungrouped"])
+  assert.equal(resp.llm_ready, true)
+  assert.deepEqual(resp.relations, [])
+  assert.equal(resp.stale, undefined)
+  assert.equal(resp.tf_switch_notice, undefined, "LLM lane 帧不带跨 20 notice")
 })
 
 test("#296 handler: index unavailable → rebuilding (honest, no fake graph)", async () => {
@@ -463,12 +496,22 @@ test("#296 readKnowledgeIndexFile tolerates missing / malformed display", () => 
 
 // --- validator ---
 
-test("#296 validator: knowledge.graph accepts optional booleans, rejects non-boolean", () => {
+test("#296/#427 validator: knowledge.graph optional fields strict shapes", () => {
   assert.equal(validateWsMessage({ type: "knowledge.graph" }).valid, true)
   assert.equal(validateWsMessage({ type: "knowledge.graph", llm_labels: true }).valid, true)
   assert.equal(validateWsMessage({ type: "knowledge.graph", regen_labels: true }).valid, true)
   assert.equal(validateWsMessage({ type: "knowledge.graph", llm_labels: "yes" }).valid, false)
   assert.equal(validateWsMessage({ type: "knowledge.graph", regen_labels: 1 }).valid, false)
+  // #427（ext wire 合同）：organize/user_gesture 可选布尔；lock/unlock 字符串；ack 仅 true
+  assert.equal(validateWsMessage({ type: "knowledge.graph", organize: true, user_gesture: true }).valid, true)
+  assert.equal(validateWsMessage({ type: "knowledge.graph", organize: "yes" }).valid, false)
+  assert.equal(validateWsMessage({ type: "knowledge.graph", user_gesture: 1 }).valid, false)
+  assert.equal(validateWsMessage({ type: "knowledge.graph", lock_group: "l:abc", user_gesture: true }).valid, true)
+  assert.equal(validateWsMessage({ type: "knowledge.graph", lock_group: 7 }).valid, false)
+  assert.equal(validateWsMessage({ type: "knowledge.graph", unlock_group: "l:abc", user_gesture: true }).valid, true)
+  assert.equal(validateWsMessage({ type: "knowledge.graph", unlock_group: [] }).valid, false)
+  assert.equal(validateWsMessage({ type: "knowledge.graph", ack_tf_switch: true, user_gesture: true }).valid, true)
+  assert.equal(validateWsMessage({ type: "knowledge.graph", ack_tf_switch: false }).valid, false)
 })
 
 // --- round-2 收敛：AC-4 开关门 + 完成推送 ---
@@ -529,4 +572,318 @@ test("#296 labels completion pushes an updated knowledge.graph frame to the pane
     assert.equal(v.name, "AI 推送名")
     assert.equal(v.summary, "推送摘要")
   }
+})
+
+// --- #427：l: 键 / 指纹 / 锁 overlay / organize 解析与归一化 / 剪枝 ---
+
+test("#427 lGroupKey: 服务端派生、成员集决定键、顺序无关", () => {
+  const k1 = kg.lGroupKey(["b", "a", "c"])
+  assert.equal(k1, kg.lGroupKey(["c", "b", "a"]))
+  assert.match(k1, /^l:[0-9a-f]{12}$/)
+  assert.notEqual(k1, kg.lGroupKey(["a", "b"]))
+})
+
+test("#427 fingerprint: id/title/description/tags 任一变动都漂移；顺序无关", () => {
+  const base = [
+    { ...mkDoc("a", { x: 1 }, ["t1"], "A"), description: "描述A" },
+    { ...mkDoc("b", { y: 1 }, ["t2"], "B"), description: "描述B" },
+  ]
+  const fp = kg.computeGraphLlmFingerprint(base)
+  assert.equal(fp, kg.computeGraphLlmFingerprint([...base].reverse()))
+  assert.notEqual(fp, kg.computeGraphLlmFingerprint([
+    { ...base[0], description: "描述A2" }, base[1],
+  ]), "description 变动必须漂移（prompt 输入同源）")
+  assert.notEqual(fp, kg.computeGraphLlmFingerprint([
+    { ...base[0], tags: ["t1", "extra"] }, base[1],
+  ]), "tags 变动必须漂移（AC-2）")
+  assert.notEqual(fp, kg.computeGraphLlmFingerprint([
+    { ...base[0], title: "A!" }, base[1],
+  ]), "title 变动必须漂移")
+})
+
+test("#427 锁 overlay：改写 group_key + 注入 ai:true/locked:true labels；未分组 label 重算", () => {
+  const groupA = [1, 2, 3].map((i) => mkDoc(`a${i}`, { alpha: 0.9 }, ["sharedalpha"], `A${i}`))
+  const docs = [...groupA, ...orthoDocs("q", 15)] // 18 篇 → LLM lane
+  const lock = { groups: [{ ids: ["a1", "a2", "a3", "q000"], name: "用户锁组", summary: "用户认可" }] }
+  const r = kg.buildKnowledgeGraph(docs, undefined, { lock })
+  const key = kg.lGroupKey(["a1", "a2", "a3", "q000"])
+  for (const id of ["a1", "a2", "a3", "q000"]) {
+    assert.equal(r.nodes.find((n) => n.id === id)!.group_key, key)
+  }
+  assert.equal(r.labels[key].name, "用户锁组")
+  assert.equal(r.labels[key].summary, "用户认可")
+  assert.equal(r.labels[key].ai, true)
+  assert.equal(r.labels[key].locked, true, "ext wire 合同：labels[].locked")
+  assert.ok(r.labels["u:ungrouped"], "剩余散点仍带未分组 label")
+  assert.deepEqual(r.relations, [], "无 graph_llm 缓存 → relations 恒空")
+})
+
+test("#427 锁跨活：≥20 帧锁 overlay 照常生效且 relations 永不上帧", () => {
+  const groupA = [1, 2, 3, 4].map((i) => mkDoc(`a${i}`, { alpha: 0.8, [`pa${i}`]: 0.2 }, ["sharedalpha"], `A${i}`))
+  const rest = orthoDocs("q", 16)
+  const docs = [...groupA, ...rest] // 20 篇 → TF lane
+  const lock = { groups: [{ ids: ["a1", "a2", "a3"], name: "锁" }] }
+  const r = kg.buildKnowledgeGraph(docs, undefined, { lock })
+  assert.equal(r.llmLane, false)
+  assert.equal(r.status, "ok")
+  assert.deepEqual(r.relations, [])
+  assert.equal(r.relations.length, 0)
+  const key = kg.lGroupKey(["a1", "a2", "a3"])
+  for (const id of ["a1", "a2", "a3"]) {
+    assert.equal(r.nodes.find((n) => n.id === id)!.group_key, key, "锁着色以锁为准，不被 TF 聚类收编")
+  }
+  assert.equal(r.labels[key].locked, true)
+})
+
+test("#427 organize prompt：只有 title/tags/description，不进正文；锁禁区行", () => {
+  const docs = [{ ...mkDoc("d1", { x: 1 }, ["t1"], "标题一"), description: "描述一" }]
+  const prompt = kg.buildGraphOrganizePrompt(docs, { groups: [{ ids: ["d1", "d2"], name: "禁区组" }] })
+  assert.ok(prompt.userContent.includes("DOC d1 | 标题一 | tags: t1 | 描述一"))
+  assert.ok(prompt.userContent.includes("已锁定分组"))
+  assert.ok(prompt.userContent.includes("禁区组"))
+  assert.ok(!prompt.userContent.includes("正文"), "正文绝不进 prompt")
+  assert.ok(prompt.systemPrompt.includes("严格 JSON"))
+})
+
+type Parsed = import("../src/skills/knowledge-graph").GraphOrganizeParsed
+function grp(name: string, ids: string[], summary?: string): { name: string; ids: string[]; summary?: string } {
+  return summary === undefined ? { name, ids } : { name, ids, summary }
+}
+function rel(a: string, b: string, reason = "同主题", confidence = 0.8) {
+  return { a, b, reason, confidence }
+}
+
+test("#427 parseGraphOrganize：容忍前后噪声；形状零容忍", () => {
+  const ok = kg.parseGraphOrganize(
+    '前置说明 {"groups": [{"name": "g", "ids": ["a", "b"]}], "relations": [{"a": "a", "b": "b", "reason": "r", "confidence": 0.5}]} 后置',
+  )
+  if (!ok) throw new Error("expected parse")
+  assert.equal(ok.groups.length, 1)
+  assert.equal(ok.relations[0].confidence, 0.5)
+  assert.equal(kg.parseGraphOrganize('{"groups": []}'), null, "relations 缺失 → null")
+  assert.equal(kg.parseGraphOrganize('{"relations": []}'), null, "groups 缺失 → null")
+  assert.equal(kg.parseGraphOrganize('{"groups": [{}], "relations": []}'), null, "name 缺失 → null")
+  assert.equal(kg.parseGraphOrganize('{"groups": [{"name": "g", "ids": []}], "relations": []}'), null)
+  assert.equal(kg.parseGraphOrganize('{"groups": [], "relations": [{"a": "a", "b": "b", "reason": "r"}]}'), null, "confidence 缺失 → null")
+  assert.equal(kg.parseGraphOrganize("not json"), null)
+})
+
+test("#427 normalize：幸福路径 + 锁成员剥离 + 单成员组归一化不计分子", () => {
+  const live = new Set(["a", "b", "c", "d", "e"])
+  const norm = kg.normalizeGraphOrganize(
+    {
+      groups: [grp("G1", ["a", "b"], "摘要"), grp("G2", ["c"]), grp("G3", ["d", "e"])],
+      relations: [rel("a", "b")],
+    },
+    live,
+    new Set(["e"]),
+  )
+  assert.equal(norm.groupPoolFallback, false)
+  assert.equal(norm.groups.length, 1, "G2 单成员归未分组；G3 剥离锁成员 e 后剩 1 → 未分组")
+  assert.deepEqual(norm.groups[0].ids, ["a", "b"])
+  assert.equal(norm.groups[0].name, "G1")
+  assert.equal(norm.groups[0].summary, "摘要")
+  assert.equal(norm.relationPoolFallback, false)
+  assert.equal(norm.relations.length, 1)
+  assert.deepEqual([norm.relations[0].a, norm.relations[0].b], ["a", "b"])
+})
+
+test("#427 normalize：亡 id / 重复归属后现条整条作废；恰好 50% 不触发回退", () => {
+  const live = new Set(["a", "b", "c", "d"])
+  const norm = kg.normalizeGraphOrganize(
+    {
+      groups: [grp("G1", ["a", "ghost"]), grp("G2", ["b"]), grp("G3", ["a", "c"]), grp("G4", ["c", "d"])],
+      relations: [],
+    },
+    live,
+    new Set(),
+  )
+  // G1 亡 id 无效；G2 单成员归一化（不计分子）；G3 有效；G4 撞 G3 的 c → 后现整条作废
+  assert.equal(norm.groupPoolFallback, false, "2/4 = 50%，不 > 50% → 不回退")
+  assert.equal(norm.groups.length, 1)
+  assert.deepEqual(norm.groups[0].ids, ["a", "c"])
+})
+
+test("#427 normalize：组池 >50% 回退且不连坐关系池（分池独立）", () => {
+  const live = new Set(["a", "b", "c"])
+  const norm = kg.normalizeGraphOrganize(
+    {
+      groups: [grp("G1", ["a", "ghost1"]), grp("G2", ["b", "ghost2"]), grp("G3", ["a", "b"])],
+      relations: [rel("a", "b")],
+    },
+    live,
+    new Set(),
+  )
+  assert.equal(norm.groupPoolFallback, true)
+  assert.deepEqual(norm.groups, [])
+  assert.equal(norm.relationPoolFallback, false)
+  assert.equal(norm.relations.length, 1, "关系池不被组池连坐")
+})
+
+test("#427 normalize relations：reason 空/非有限 confidence/亡 id/自环计分子；恰好 50% 不回退；钳制；无序对去重留高分", () => {
+  const live = new Set(["a", "b", "c", "d", "e", "f"])
+  const norm = kg.normalizeGraphOrganize(
+    {
+      groups: [],
+      relations: [
+        rel("a", "b"),
+        rel("c", "d"),
+        rel("e", "f"),
+        { a: "e", b: "f", reason: "", confidence: 0.5 },
+        { a: "a", b: "b", reason: "r", confidence: Number.NaN },
+        { a: "ghost", b: "a", reason: "r", confidence: 0.5 },
+        { a: "c", b: "c", reason: "自环", confidence: 0.5 },
+        { a: "c", b: "d", reason: "重复对", confidence: 0.1 },
+      ],
+    },
+    live,
+    new Set(),
+  )
+  assert.equal(norm.relationPoolFallback, false, "4/8 = 50%，不 > 50% → 保留池")
+  // 有效对 {a,b} {c,d} {e,f}；{c,d} 重复对被去重留 0.8 高分
+  assert.equal(norm.relations.length, 3)
+  assert.deepEqual(
+    norm.relations.map((r) => [r.a, r.b]).sort(),
+    [["a", "b"], ["c", "d"], ["e", "f"]],
+  )
+
+  const clampHi = kg.normalizeGraphOrganize({ groups: [], relations: [rel("a", "b", "r", 1.7)] }, new Set(["a", "b"]), new Set())
+  assert.equal(clampHi.relations[0].confidence, 1)
+  const clampLo = kg.normalizeGraphOrganize({ groups: [], relations: [rel("a", "b", "r", -0.2)] }, new Set(["a", "b"]), new Set())
+  assert.equal(clampLo.relations[0].confidence, 0)
+
+  const dedup = kg.normalizeGraphOrganize(
+    { groups: [], relations: [rel("a", "b", "r1", 0.9), rel("b", "a", "r2", 0.5)] },
+    new Set(["a", "b"]),
+    new Set(),
+  )
+  assert.equal(dedup.relations.length, 1)
+  assert.equal(dedup.relations[0].reason, "r1", "同无序对留高分")
+  assert.equal(dedup.relations[0].a, "a", "a<b 字典序归一")
+})
+
+test("#427 normalize：两段式截断——先每端点 ≤3，再全图 ≤ min(12, 3n)", () => {
+  const live = new Set(["hub", "s1", "s2", "s3", "s4", "s5", "x", "y"])
+  const star = kg.normalizeGraphOrganize(
+    {
+      groups: [],
+      relations: [rel("hub", "s1"), rel("hub", "s2"), rel("hub", "s3"), rel("hub", "s4"), rel("hub", "s5")],
+    },
+    live,
+    new Set(),
+  )
+  const hubDeg = star.relations.filter((r) => r.a === "hub" || r.b === "hub").length
+  assert.equal(hubDeg, 3, "第一刀：单端点度数 ≤3（同分贪心按序保留）")
+
+  // 10 节点全连（45 对同分）：第一刀后 13 条 > 12 → 第二刀全图 cap 生效
+  const ids = Array.from({ length: 10 }, (_, i) => `n${i}`)
+  const all: Parsed = { groups: [], relations: [] }
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) all.relations.push(rel(ids[i], ids[j], "r", 0.5))
+  }
+  const capped = kg.normalizeGraphOrganize(all, new Set(ids), new Set())
+  assert.equal(capped.relations.length, 12)
+  const deg = new Map<string, number>()
+  for (const r of capped.relations) {
+    deg.set(r.a, (deg.get(r.a) || 0) + 1)
+    deg.set(r.b, (deg.get(r.b) || 0) + 1)
+  }
+  for (const d of deg.values()) assert.ok(d <= 3)
+})
+
+test("#427 normalize：reason 按码点切 ≤80，不劈代理对", () => {
+  const emoji = "😀".repeat(90) // 90 码点 / 180 UTF-16 单元
+  const norm = kg.normalizeGraphOrganize(
+    { groups: [], relations: [rel("a", "b", emoji, 0.5)] },
+    new Set(["a", "b"]),
+    new Set(),
+  )
+  const r = norm.relations[0].reason
+  assert.equal(Array.from(r).length, 80)
+  assert.equal(Buffer.from(r, "utf8").toString("utf8"), r, "无 lone surrogate（UTF-8 round-trip）")
+})
+
+test("#427 pruneGraphLlmSection：亡 id 剔除、组缩 <2 解散、指纹/stale 保留", () => {
+  const section = {
+    fingerprint: "fp",
+    stale: false,
+    groups: [
+      { ids: ["a", "b", "gone"], name: "G1" },
+      { ids: ["c", "gone2"], name: "G2" },
+    ],
+    relations: [
+      { a: "a", b: "gone", reason: "r", confidence: 0.5 },
+      { a: "a", b: "b", reason: "r", confidence: 0.5 },
+    ],
+  }
+  const pruned = kg.pruneGraphLlmSection(section, new Set(["a", "b", "c"]))
+  assert.deepEqual(pruned.groups.map((g) => g.ids), [["a", "b"]], "G2 缩到 1 → 解散")
+  assert.equal(pruned.relations.length, 1)
+  assert.equal(pruned.fingerprint, "fp")
+  assert.equal(pruned.stale, false)
+})
+
+test("#427 pruneGraphLock：成员只减不增；<2 解散带组名（pi 终验 2：缩容后同一锁仍生效）", () => {
+  const lock = {
+    groups: [
+      { ids: ["a", "b", "gone"], name: "锁组", summary: "s" },
+      { ids: ["x", "gone2"], name: "将散" },
+    ],
+  }
+  const { lock: pruned, dissolved } = kg.pruneGraphLock(lock, new Set(["a", "b", "x"]))
+  assert.equal(pruned.groups.length, 1)
+  assert.deepEqual(pruned.groups[0].ids, ["a", "b"])
+  assert.equal(pruned.groups[0].name, "锁组", "锁的身份是条目：同一条目缩容后在")
+  assert.deepEqual(dissolved, ["将散"])
+
+  // 缩容后渲染：新 l: 键 ≠ 旧键，但同一锁条目仍把成员锁成一组
+  const docs = [mkDoc("a", { x: 1 }), mkDoc("b", { y: 1 }), mkDoc("x", { z: 1 })]
+  const rendered = kg.buildKnowledgeGraph(docs, undefined, { lock: pruned })
+  const newKey = kg.lGroupKey(["a", "b"])
+  assert.notEqual(newKey, kg.lGroupKey(["a", "b", "gone"]), "缩容后键已变")
+  assert.equal(rendered.nodes.find((n) => n.id === "a")!.group_key, newKey)
+  assert.equal(rendered.nodes.find((n) => n.id === "b")!.group_key, newKey)
+  assert.equal(rendered.labels[newKey].locked, true)
+  assert.equal(rendered.labels[newKey].name, "锁组")
+})
+
+test("#427 readKnowledgeIndexFile：旧索引 docs 无 description 容忍；graph 区形状不符整区丢弃不连累", () => {
+  const p = path.join(DATA_DIR, "cache", "kg-427-tolerance.json")
+  const base = {
+    version: 1,
+    built_at: new Date().toISOString(),
+    fingerprint: "fp",
+    // 旧格式：#273 时代的 docs 没有 description 字段
+    docs: [{ id: "a", name: "a", title: "a", tags: [], folder: "", bucket: "global", vec: { x: 1 } }],
+  }
+  clusters.writeKnowledgeIndexFile(p, base as never)
+  const legacy = clusters.readKnowledgeIndexFile(p)
+  if (!legacy) throw new Error("legacy docs without description must be tolerated")
+  assert.equal(legacy.docs[0].description, undefined)
+
+  fs.writeFileSync(p, JSON.stringify({ ...base, graph_llm: { fingerprint: 1, groups: [], relations: [], stale: false } }))
+  const badLlm = clusters.readKnowledgeIndexFile(p)
+  if (!badLlm) throw new Error("malformed graph_llm must not kill the file")
+  assert.equal((badLlm as { graph_llm?: unknown }).graph_llm, undefined, "fingerprint 非字符串 → 整区丢弃")
+  assert.equal(badLlm.docs.length, 1, "docs 存活")
+
+  fs.writeFileSync(p, JSON.stringify({ ...base, graph_lock: { groups: "not-array" } }))
+  const badLock = clusters.readKnowledgeIndexFile(p)
+  if (!badLock) throw new Error("malformed graph_lock must not kill the file")
+  assert.equal((badLock as { graph_lock?: unknown }).graph_lock, undefined)
+
+  fs.writeFileSync(p, JSON.stringify({ ...base, graph_tf_switch_ack: "yes" }))
+  const badAck = clusters.readKnowledgeIndexFile(p)
+  if (!badAck) throw new Error("malformed ack must not kill the file")
+  assert.equal((badAck as { graph_tf_switch_ack?: unknown }).graph_tf_switch_ack, undefined)
+
+  // 合法 graph_lock / ack 原样保留
+  fs.writeFileSync(
+    p,
+    JSON.stringify({ ...base, graph_lock: { groups: [{ ids: ["a", "b"], name: "L" }] }, graph_tf_switch_ack: true }),
+  )
+  const kept = clusters.readKnowledgeIndexFile(p)
+  if (!kept) throw new Error("valid sections must survive")
+  assert.equal(kept.graph_lock?.groups.length, 1)
+  assert.equal(kept.graph_tf_switch_ack, true)
 })
