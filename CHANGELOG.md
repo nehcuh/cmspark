@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-09-06
+
+- **内容风控 400 不再误杀对话（#430，4zi17x 实证）**：DeepSeek 等内容审核拒绝（`400 Content Exists Risk`）是确定性错误，原先被当瞬时故障——同一 payload 重发 5 次全部 <200ms 瞬挂，烧光熔断预算杀死对话。现在单列一类：首次命中隔离「最近的大型工具结果」（最可能触发源，内存 + 持久化历史同步替换，下次 run 不再重发）并重试一次；二次命中或无可隔离对象立即致命，给出中文可操作文案（新开对话/调整描述/换模型）。恢复全程不透英文 400 原文帧；`isContentRiskError` 钉 400 状态，5xx 网关含 content-filter 字样仍走原 recoverable 路径（零改动）。[#430](https://github.com/nehcuh/cmspark/issues/430)
+
 ## [0.6.2] — 2026-09-06
 
 - **低语料知识图谱：AI 整理 lane（#427，用户实测 4 篇死面板）**：图谱画布闸与 #273 聚类闸解绑（`KNOWLEDGE_GRAPH_MIN_DOCS=1`）——2–19 篇不再只有「知识不足 20 篇」死文案：画布直接画节点 + TF 实线边（可能诚实散点）+ CTA「让 AI 整理现有 N 篇」。点击后一次批式 LLM（仅 title+tags+description，不进正文）出分组 + 命名/摘要 + 关联洞察（虚线 +「AI 关联」+ 可查 reason）；`organized` 信号区分「未整理」与「AI 判无结构」（后者散点 +「AI 未发现明确关联」，不再复发 CTA）。分组锁（「保留这版分组」）= 图谱着色 overlay，跨 20 篇切换 TF 着色后仍存活、不进聚类输入；防抖重建 carry-forward 不失效。指纹（id/title/description/tags）漂移只标 stale 不自动重跑；organize 失败走 ok 帧 + 中文错误条（不碰 #356 error 合同）。红线：`KNOWLEDGE_CLUSTER_MIN_DOCS` / `scoreRelatedKnowledge` / ≥20 TF 路径零改动；无自动 LLM 触发。[#427](https://github.com/nehcuh/cmspark/issues/427)
