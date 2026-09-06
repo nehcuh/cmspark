@@ -1,6 +1,6 @@
 # CMspark Agent Configuration
 
-> **Version**: 0.6.0 (keep in lock-step with companion/package.json)
+> **Version**: 0.6.1 (keep in lock-step with companion/package.json)
 > **Platform**: CMspark Browser Agent
 
 ## Tool Environment
@@ -66,4 +66,4 @@ When the user types `/dev-*`, map to the matching playbook in `workflows/` (hist
 - MCP meta tools (`mcp_list_resources`, `mcp_read_resource`, `mcp_get_prompt`) are exposed dynamically based on connected server capabilities — they are NOT in the static `getToolDefinitions()` list.
 
 ---
-*CMspark Agent v0.6.0*
+*CMspark Agent v0.6.1*
