@@ -3111,13 +3111,18 @@ export async function handleMessage(
     // only; the suggestion-card click arrives as task_loop.arm
     // (source=suggestion_card == entrance ② lightweight form). ---
     case "task_loop.arm": {
+      const armThreadId = typeof rest.thread_id === "string" ? rest.thread_id.trim() : ""
+      // #433 P3（spec §3c）：summoner 开放 arm，三重闸之一 = 租约绑定——任务线程
+      // 必须是 overlay 当前持有 composer lease 的线程（gateOverlayCurrentThread
+      // 既有门，OVERLAY_THREAD_MISMATCH）；面板/tray 面不受此门限制。
       if (stampedSurface === "summoner") {
-        return { type: "error", error: "SUMMONER_ACL: task_loop.arm not allowed on summoner surface", error_code: "SUMMONER_ACL" }
+        const leaseGate = gateOverlayCurrentThread(armThreadId, stampedSurface)
+        if (leaseGate) return leaseGate
       }
       if (rest.user_gesture !== true) {
         return { type: "error", error: "task_loop.arm requires user_gesture:true (user-initiated only)" }
       }
-      if (typeof rest.thread_id !== "string" || !rest.thread_id) {
+      if (!armThreadId) {
         return { type: "error", error: "task_loop.arm requires thread_id" }
       }
       const targetThread = threadManager.get(rest.thread_id)
