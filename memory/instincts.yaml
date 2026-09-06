@@ -205,6 +205,20 @@ instincts:
     tags: [testing, windows, baseline, git-stash, concurrency]
     applications: 1
 
+  - id: test-must-never-write-real-home
+    pattern: "companion 测试污染真实配置的三要素：静态 import 链（settings-web-tokens.test.ts:19 import settings-web → config.ts）使 DATA_DIR 在 before() 设 CMSPARK_DATA_DIR 前冻结；写路径绕过 live getConfigDir() 直接用冻结常量；node --test 进程隔离救不了同文件 import 链。验收写路径修复必须用 marker 法（touch /tmp/marker && 跑测试 && find ~/.cmspark-agent -newer marker 应为空），且先停常驻 daemon 排除宿主进程写入噪音（claude round-1 两条实证归因即被此污染）。注意 Bash 工具每次调用都是新 shell，cwd 不持久——复验时测试可能根本没跑，空 find 结果可能是假阴性，必须同时确认测试输出 pass 计数。"
+    confidence: 0.95
+    source_session: "2026-09-06 S105 #404 测试覆写真实 config.json 致 0.6.0 启动异常"
+    tags: [testing, config, data-dir, pollution, verification, marker-method]
+    applications: 1
+
+  - id: config-restore-diff-all-fields
+    pattern: "从备份恢复被覆写的 config.json 时，必须逐字段 diff 所有顶层键，不能只修显眼的那段：#404 只恢复了 llm，漏了 port（23401→23491 夹具值），daemon 改听 23491 而 tray 硬编码探测 WS_PORT=23401（menu-bar-agent.ts:131），恒失败 → tray 误报「已停止」、点击启动看似无反应。症状「tray 显示停止但 daemon 活着」先对两边端口：cat .menu-bar-status.json + lsof -iTCP:<port>。tray 应读 getConfig().port 而非硬编码（#406 跟进）。"
+    confidence: 0.95
+    source_session: "2026-09-06 S105 tray 显示 companion 未启动但实际在跑"
+    tags: [config, restore, tray, port, status-mismatch, debugging]
+    applications: 1
+
   - id: hydration-window-not-missing
     pattern: "「状态未知」（镜像/配置未水合）≠「状态缺失」。用 !== true 判 missing 会把水合窗口误判为缺失——语音回退差点因此在水合期默认走云 STT。门控要显式分三态：hydrated && value===false 才行动。grok/claude 双路审 diff 各抓到对方漏的真问题，值得常规化。"
     confidence: 0.85

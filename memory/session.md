@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S105 END (2026-09-06) [0.6.0 换装 ×2 · #404 测试污染事故 · tray port 误诊 · #407 抢救]
+- **Ship**：0.6.0 DMG 打包换装两次（第二次含 #405）。**#404 事故**：settings-web-tokens.test.ts 静态 import 冻结 DATA_DIR，夹具（sk-test/https://x/m/port 23491）覆写真实 config.json → 0.6.0 启动 model_probe 失败 + MCP npx ENOENT（npm-prefix/lib 缺失）。**PR #405 合并** `f5320db0`：9 处 config.json 路径 + initDataDir 3 处 + getLogDir 全走 live getConfigDir()；claude 两轮评审 MAJOR→CLOSED。用户配置从 corrupt 备份恢复。
+- **次生**：port 也被夹具改（23401→23491），tray 硬编码 WS_PORT=23401 探测恒失败误报「已停止」——恢复 port 后正常。教训两条入 instincts.yaml + .vibe/instincts.jsonl。
+- **抢救**：主仓工作区发现 lane 无名改动（outbound-mcp stdio 短名修 Grok tool_count 0）→ 分支化 **PR #407**（本地 84/84 绿，附新测试 5 例），已派 claude 复审，verdict 在 `.omx/artifacts/gate-407/`，**待 verdict 闭环后合并**。
+- **Open**：#406（getPidFilePath + tray WS_PORT 读配置）；#230 冻；#363 blocked（真模型跑分）；#328 shadow 观测期。
+- **本机**：/Applications CMspark 0.6.0（含 #405），daemon :23401，tray 状态 running 已验证。
+- Recorded: yes — test-must-never-write-real-home / config-restore-diff-all-fields 两条本能
+
 ### S104 END (2026-09-03) [接手 kimi 知识库主线 · 开闸 #280 · PDF #282 · 查重 #283 · 0.5.8 换装]
 - **触发**：另一 tmux 窗 kimi 被打断；用户要 grok 接手继续。
 - **Ship on main**：#280 簇路由开闸（常数 true、开关默认关）`6ddd05a4`；#282 PDF 导入 readAsDataURL `f4475b62`；#283/#281 正文 sha256 查重 `7ab36063`。tip **`7ab36063`** == origin。无开放 PR。
