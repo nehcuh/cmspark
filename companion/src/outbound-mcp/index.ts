@@ -9,6 +9,8 @@ export {
   outboundToInternalName,
   outboundMcpWireName,
   canonicalOutboundMcpName,
+  isCanonicalOutboundMcpNameShape,
+  redactOutboundMcpWireName,
   OUTBOUND_MCP_NAME_PREFIX,
 } from "./profile"
 export { gateOutboundCall, listOutboundTools, denyOutboundExfilIfNeeded } from "./facade"

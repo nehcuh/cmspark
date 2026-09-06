@@ -45,6 +45,7 @@
 - **list-files CJK TargetId 有损（#69 F3）**：producer 不再用 `cid mod 256` percent-encode（U+4E00「一」与 U+4F00「伀」曾撞成 `%00`）；改为输出原始 UTF-8 文件名，由既有 M2 `encodeRawTargetId` base64url 在 list 边界编码。选这条而不是在 AppleScript 里重写 UTF-8 percent-encoding：少一层易错逻辑，notes/mail producer 已是 raw。M2 codec 行为不回退。Finder `readOne` 仍是 M1 NotImplemented（Mail-only）——回读是 decode 文件名后读 `~/Documents`。[#69](https://github.com/nehcuh/cmspark/issues/69)
 - **值守 grant arm/disarm 入 capability-audit（#347）**：`security.unattended.armed` / `.disarmed` / `.expired` 三事件补全审计面板可见性——config.set 双向已记（#334），grant 路径（ADR-021 进程内存值守）此前只有 logger。armed/disarm 带来源 surface（panel/tray/summoner 归一，stampedSurface 派生），expired 记 `cruise_restored`；字段按构造 redact（无短语/token/命令文本）。bare disarm（无活跃 grant）不伪造审计行；审计写失败永不 gate 生命周期。不改 grant 语义 / TTL / 确认代数。[#347](https://github.com/nehcuh/cmspark/issues/347)
 - **租手 stdio `tools/list` 短名（Grok `tool_count: 0`）**：Grok 把 MCP 工具写成 `server__tool` 且合格名只允许一个 `__`。旧 `mcp-outbound` 直接暴露 `cmspark__list_tabs`，Grok 再前缀成 `cmspark__cmspark__list_tabs` 后丢掉全部工具——`grok mcp doctor` 仍报 10 tools / healthy。`tools/list` 改为短名（`list_tabs`）；`CallTool` 短名与 `cmspark__*` 都收。HTTP invoke / 默认 profile 白名单不变，**不扩** outbound L1。
+- **租手 HTTP invoke 与 stdio 双轨同名（#408）**：`companionInvokeOutbound` 入口套同一 `canonicalOutboundMcpName`，短名（`list_tabs`）与 `cmspark__*` 均可；短名 exfil 仍走 grant 门（`DISCLOSURE_NOT_GRANTED`）。非法格式 vs 真不在 profile 的 `PROFILE_FORBIDDEN` 文案分开；审计记 `tool`（canonical）+ `wire_name`（原始名）。**不扩**默认 outbound L1。[#408](https://github.com/nehcuh/cmspark/issues/408)
 
 ### Known residuals
 
