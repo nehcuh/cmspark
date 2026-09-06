@@ -239,3 +239,17 @@ instincts:
     source_session: "2026-08-31 S98 语音回退水合窗口 HIGH"
     tags: [state, hydration, fail-closed, review, typescript]
     applications: 1
+
+  - id: worktree-symlink-both-sides
+    pattern: "建 worktree 派工时 companion 和 chrome-extension 的 node_modules symlink 都要给，不管 lane 做哪侧——source-spy 测试跨模块（Swift 重写挂了 companion/tests/summoner-*.test.ts，s433-swift 没 symlink 导致 lane 看不见红）。派工任务书必须显式写「跑哪侧的 npm test」+ 基线 fail 数。"
+    confidence: 0.9
+    source_session: "2026-09-06 S107 #437 合并后 main CI 红（9 条旧合同 source-spy）"
+    tags: [worktree, testing, multi-agent, process]
+    applications: 1
+
+  - id: release-commit-after-verified-tests
+    pattern: "release commit（版本锚+changelog）前必须看到测试计数的真实输出（pass/fail 数字），不能只靠 grep 管道静默——管道吞掉失败时 commit 已经落了。顺序：全量测试绿 → release commit → 打包。"
+    confidence: 0.9
+    source_session: "2026-09-06 S107 0.6.4 release commit 落在红树上（grep 管道吞了 tsc 错）"
+    tags: [release, testing, process]
+    applications: 1
