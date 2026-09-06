@@ -37,7 +37,8 @@ test("Chinese command allowed → hit", async () => {
   const r = await loc.locate({ command: "点击确定按钮", shot: shot({ path: "/tmp/a.png" } as any) })
   assert.equal(r.kind, "hit")
   if (r.kind === "hit") {
-    assert.deepEqual(r.point, { x: 100, y: 200 })
+    // Path C reparse wins (#423 always-map): 100/1000·1280=128, 200/1000·720=144
+    assert.deepEqual(r.point, { x: 128, y: 144 })
   }
 })
 
@@ -73,7 +74,8 @@ test("Path C: start_box four-number raw → box center via parseGuiClickPoint", 
   const r = await loc.locate({ command: "点保存", shot: shot({ path: "/tmp/box.png" } as any) })
   assert.equal(r.kind, "hit")
   if (r.kind === "hit") {
-    assert.deepEqual(r.point, { x: 20, y: 30 })
+    // box center (20,30) in [0,1000] → 20/1000·1280≈26, 30/1000·720≈22
+    assert.deepEqual(r.point, { x: 26, y: 22 })
     assert.match(String(r.raw), /start_box/)
   }
 })

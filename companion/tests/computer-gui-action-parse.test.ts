@@ -9,27 +9,43 @@ import {
   MAX_EXPERIMENTAL_THOUGHT_CAPTION,
 } from "../src/computer/gui-action-parse"
 
-test("parseGuiClickPoint: JSON pixels stay absolute on wide image", () => {
+test("parseGuiClickPoint: JSON relative [0,1000] maps to pixels (#423 always-map)", () => {
   const r = parseGuiClickPoint('{"x": 640, "y": 360}', 1920, 1080)
-  assert.deepEqual(r, { x: 640, y: 360 })
+  assert.deepEqual(r, { x: 1229, y: 389 })
+})
+
+test("parseGuiClickPoint: JSON array form takes (x[0], x[1]) — y copy ignored (#423)", () => {
+  // Eval-gate typical: {"x": [x, y], "y": [y]}
+  const r = parseGuiClickPoint('{"x": [775, 356], "y": [356]}', 640, 480)
+  assert.deepEqual(r, { x: 496, y: 171 })
+})
+
+test("parseGuiClickPoint: d9 counterexample — x[1] beats stale y[0] (#423)", () => {
+  const r = parseGuiClickPoint('{"x": [600, 675], "y": [500]}', 640, 480)
+  assert.deepEqual(r, { x: 384, y: 324 })
+})
+
+test("parseGuiClickPoint: in-bounds scalar still maps (raw 174 is NOT pixel 174) (#423)", () => {
+  const r = parseGuiClickPoint('{"x": 174, "y": 454}', 640, 480)
+  assert.deepEqual(r, { x: 111, y: 218 })
 })
 
 test("parseGuiClickPoint: UI-TARS click(point='x y')", () => {
   const r = parseGuiClickPoint("Thought: press save\nAction: click(point='200 50')", 1920, 1080)
-  assert.deepEqual(r, { x: 200, y: 50 })
+  assert.deepEqual(r, { x: 384, y: 54 })
 })
 
 test("parseGuiClickPoint: start_box four numbers → center", () => {
   const r = parseGuiClickPoint("Action: click(start_box='(10,20,30,40)')", 800, 600)
-  assert.deepEqual(r, { x: 20, y: 30 })
+  assert.deepEqual(r, { x: 16, y: 18 })
 })
 
 test("parseGuiClickPoint: (x,y) form", () => {
   const r = parseGuiClickPoint("click at (100, 200)", 1920, 1080)
-  assert.deepEqual(r, { x: 100, y: 200 })
+  assert.deepEqual(r, { x: 192, y: 216 })
 })
 
-test("parseGuiClickPoint: out-of-bounds clamps (no 0–1000 rescale)", () => {
+test("parseGuiClickPoint: out-of-range maps then clamps (safety net)", () => {
   const r = parseGuiClickPoint("click(point='3000 2000')", 1920, 1080)
   assert.deepEqual(r, { x: 1919, y: 1079 })
 })
@@ -107,7 +123,7 @@ test("formatExperimentalSuggestionCaption: long thought truncated in caption", (
 
 test("parseGuiClickPoint: space-separated start_box four numbers → center", () => {
   const r = parseGuiClickPoint("Action: click(start_box='10 20 30 40')", 800, 600)
-  assert.deepEqual(r, { x: 20, y: 30 })
+  assert.deepEqual(r, { x: 16, y: 18 })
 })
 
 test("parseGuiClickPoint: does not treat bare prose times as coords", () => {

@@ -83,6 +83,8 @@ User asks: UI-TARS claims excellent computer-use — what should CMspark learn, 
 | Thought text forges system lines in confirm UI | `sanitizeComputerCaption` + length cap (~160 chars) + prefix label |
 | Parsing wrong action injects without re-L2 | Parse only affects **point extraction**; inject still G4 + A1 |
 | Relative 0–1000 rescale regression | Keep L-QW-3 clamp-only; UI-TARS smart_resize **not** ported as default |
+
+> **⚠️ L-QW-3 已于 2026-09-07 修订（#423）**：本行描述的 clamp-only 裁决建立在「模型输出绝对像素」的错误前提上。官方 cookbook + 本机探针实证（always-map mean err 11.9px vs 绝对像素假设 364px）证明 Qwen3-VL **恒输出原图相对坐标 [0,1000]**——包括恰好落在像素界内的值。新裁决：恒映射 `px = round(v/1000·W)` 后 clamp（clamp 仅作 >1000/负值安全网，不再是空间判别器）。数组形态 `{"x":[x,y],"y":[y]}` 取 `(x[0], x[1])`（d9 反例钉死 y 拷贝不可靠）。同步点：`qwen-vl-worker.py::_normalize/_parse_point` · `qwen-vl-coords.ts::normalizeQwenVlPoint` · `gui-action-parse.ts::parseGuiClickPoint`。证据：`.tmp/lane-status/423-{empirical-grok,research-pi,spec-claude}.md`（评测门 0/10 → 6/10，余 4 例为模型感知误差）。
 | Prompt bloat confuses non-CU tasks | CU playbook only in host_computer-adjacent rules; short bullets |
 | Over-claim “we are UI-TARS class” | Docs state absorption ≠ model parity |
 

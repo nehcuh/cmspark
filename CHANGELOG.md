@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.6.6] — 2026-09-07
+
+- **Qwen3-VL 坐标系修复（#423，多路对抗：grok 实证 / pi 官方考证 / claude spec + 复审收敛）**：评测门 0/10 全 MISS 的归因修复——L-QW-3「clamp-only」裁决的前提（模型输出绝对像素）被证伪：官方 cookbook + 本机 9 探针实证 Qwen3-VL **恒输出原图相对坐标 [0,1000]**（always-map mean err 11.9px vs 绝对像素假设 364px）。修复：`_normalize`/`normalizeQwenVlPoint` 恒映射 `v/1000·W·H` 后 clamp（clamp 降为 >1000/负值安全网）；解析层新增真 JSON 解码阶段，数组形态 `{"x":[x,y],"y":[y]}` 按裁决取 `(x[0], x[1])`（d9 反例钉死 y 冗余拷贝不可靠）。Python worker 与 TS（`gui-action-parse`/`qwen-vl-coords`）双端 lockstep，评测门 **0/10 → 6/10**；余 4 例 MISS 为 2B 模型感知误差（看错控件），非解析/坐标问题——#363 摘帽门（需 ≥0.85）仍未过，后续选项（few-shot prompt / bbox 输出 / 4B+ 变体）另议。决策留痕：`docs/decisions/ui-tars-absorption-multipath-2026-08-08.md` L-QW-3 修订注记。[#423](https://github.com/nehcuh/cmspark/issues/423)
+
 ## [0.6.5] — 2026-09-07
 
 召唤器「五条需求」补齐波次（#433 P1/P2/P3 + #439，多 lane 并行 + 逐 PR 对抗复审）：召唤器从「命令面板壳」变成真正能读历史、控插件、跑后台任务的独立入口；AI 在任意对话里也能主动检索历史与知识。

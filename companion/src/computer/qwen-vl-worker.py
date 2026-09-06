@@ -12,7 +12,8 @@ ping:  {"id","cmd":"ping"}
 shutdown: {"id","cmd":"shutdown"}
 
 Infer success: {"id","ok":true,"x":int,"y":int,"raw":str}
-Coordinates are image-space pixels (same convention as former TinyClick layer).
+Coordinates are image-space pixels (mapped from Qwen3-VL relative [0,1000] —
+L-QW-3 revised 2026-09-07, #423).
 """
 
 from __future__ import annotations
@@ -36,16 +37,67 @@ def _reply(obj: dict) -> None:
     sys.stdout.flush()
 
 
+def _num(v: Any) -> Optional[float]:
+    """Accept int/float (not bool); first element of a list; numeric strings."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, list) and v:
+        return _num(v[0])
+    if isinstance(v, str):
+        try:
+            return float(v)
+        except ValueError:
+            return None
+    return None
+
+
+def _point_from_json_obj(obj: Any) -> Optional[Tuple[float, float]]:
+    """Extract (x, y) in model space from a decoded JSON object.
+
+    #423 array-form adjudication (grok empirical lane, 2026-09-07): complex GUI
+    prompts make the model emit {"x": [x, y], "y": [y]} — the point lives in the
+    x array; the y field is a redundant (occasionally stale) copy. d9 proved
+    y[0] can be wrong while x[1] is right, so x-array-len>=2 wins over y.
+    """
+    if not isinstance(obj, dict):
+        return None
+    x, y = obj.get("x"), obj.get("y")
+    if isinstance(x, list) and len(x) >= 2:
+        a, b = _num(x[0]), _num(x[1])
+        if a is not None and b is not None:
+            return a, b
+    a, b = _num(x), _num(y)
+    if a is not None and b is not None:
+        return a, b
+    return None
+
+
 def _parse_point(text: str, width: int, height: int) -> Optional[Tuple[int, int]]:
     """Extract click point from model text.
 
-    Supports JSON, (x,y), and UI-TARS-like Action DSL (point=/start_box=).
-    Coordinates are image pixels; clamp-only (L-QW-3) — never 0–1000 rescale.
-    Keep in spirit with companion/src/computer/gui-action-parse.ts.
+    Supports JSON objects (scalar or #423 array form), (x,y), and UI-TARS-like
+    Action DSL (point=/start_box=). Model output space is Qwen3-VL relative
+    [0,1000] of the original image — mapped to pixels in _normalize
+    (L-QW-3 revised, #423). Keep in lockstep with
+    companion/src/computer/gui-action-parse.ts.
     """
     if not text:
         return None
-    # JSON object with x/y
+    # JSON object — decode properly so array forms ({"x":[a,b],"y":[c]}) keep
+    # their semantics instead of being grazed by the bracket regex.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            obj = json.loads(text[start : end + 1])
+        except Exception:
+            obj = None
+        pt = _point_from_json_obj(obj)
+        if pt is not None:
+            return _normalize(pt[0], pt[1], width, height)
+    # JSON-ish object with x/y (regex fallback for malformed JSON)
     m = re.search(
         r'\{\s*"?x"?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*"?y"?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)',
         text,
@@ -87,16 +139,19 @@ def _parse_point(text: str, width: int, height: int) -> Optional[Tuple[int, int]
 
 
 def _normalize(x: float, y: float, width: int, height: int) -> Tuple[int, int]:
-    """Clamp to image pixels only (SoT D3 / L-QW-3).
+    """Map Qwen3-VL relative [0,1000] coords to image pixels, then clamp.
 
-    Never treat in-bounds or 0–1000 values as relative-to-1000 when they already
-    fit the image — false scaling on wide screens was a P0 blocker.
-    Explicit out-of-bounds coords (>width/height) still clamp, not rescale.
+    L-QW-3 revised 2026-09-07 (#423, adversarial consensus grok/pi/claude):
+    Qwen3-VL ALWAYS speaks relative [0,1000] of the original image (official
+    cookbook + local probe: mean err 11.9px under always-map vs 364px under
+    absolute-pixel assumption). The old clamp-only ruling rested on the wrong
+    premise that the model emits absolute pixels. Keep the final clamp as a
+    safety net for out-of-range values (>1000 / negative).
     """
     if width <= 0 or height <= 0:
         return 0, 0
-    px = int(round(x))
-    py = int(round(y))
+    px = int(round(float(x) / 1000.0 * width))
+    py = int(round(float(y) / 1000.0 * height))
     return max(0, min(width - 1, px)), max(0, min(height - 1, py))
 
 

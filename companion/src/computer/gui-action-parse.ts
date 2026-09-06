@@ -4,9 +4,10 @@
 //   - extract Thought / Reflection snippets for human re-L2 captions
 //   - recover click points from JSON, (x,y), and UI-TARS-like Action DSL
 //
-// Coordinate policy stays L-QW-3: clamp to image pixels only — never
-// auto-rescale 0–1000 relative spaces (see qwen-vl-coords / worker).
-// Parse failures return null; callers keep existing fail-closed paths.
+// Coordinate policy (L-QW-3 revised 2026-09-07, #423): Qwen3-VL output is
+// ALWAYS relative [0,1000] of the original image — normalizeQwenVlPoint maps
+// to pixels then clamps. Parse failures return null; callers keep existing
+// fail-closed paths.
 //
 // Attribution: action string shapes inspired by Apache-2.0 UI-TARS
 // (bytedance/UI-TARS codes/ui_tars/*); no large code copy.
@@ -59,10 +60,39 @@ function looksLikeOnlyCoords(s: string): boolean {
   )
 }
 
+function num(v: unknown): number | null {
+  // Accept numbers (not booleans); first element of an array; numeric strings.
+  if (typeof v === "number" && Number.isFinite(v)) return v
+  if (Array.isArray(v) && v.length > 0) return num(v[0])
+  if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v)
+  return null
+}
+
+function pointFromJsonObject(obj: unknown): { x: number; y: number } | null {
+  // #423 array-form adjudication (grok empirical lane, 2026-09-07): complex GUI
+  // prompts make the model emit {"x": [x, y], "y": [y]} — the point lives in
+  // the x array; the y field is a redundant (occasionally stale) copy. d9
+  // proved y[0] can be wrong while x[1] is right, so x-array-len>=2 wins.
+  if (obj == null || typeof obj !== "object" || Array.isArray(obj)) return null
+  const rec = obj as Record<string, unknown>
+  const x = rec.x
+  const y = rec.y
+  if (Array.isArray(x) && x.length >= 2) {
+    const a = num(x[0])
+    const b = num(x[1])
+    if (a != null && b != null) return { x: a, y: b }
+  }
+  const a = num(x)
+  const b = num(y)
+  if (a != null && b != null) return { x: a, y: b }
+  return null
+}
+
 /**
  * Parse a click point from experimental VLM raw text.
- * Supports JSON, (x,y), "x, y", and UI-TARS-like click/start_box forms.
- * Values are clamped to image pixel bounds (no relative rescale).
+ * Supports JSON objects (scalar or #423 array form), (x,y), "x, y", and
+ * UI-TARS-like click/start_box forms. Values are Qwen3-VL relative [0,1000],
+ * mapped to image pixels then clamped (L-QW-3 revised, #423).
  */
 export function parseGuiClickPoint(
   raw: string | undefined | null,
@@ -73,7 +103,24 @@ export function parseGuiClickPoint(
   const text = String(raw).trim()
   if (!text) return null
 
-  // JSON { "x": n, "y": n }
+  // JSON object — decode properly so array forms ({"x":[a,b],"y":[c]}) keep
+  // their semantics instead of being grazed by the bracket regex.
+  {
+    const start = text.indexOf("{")
+    const end = text.lastIndexOf("}")
+    if (start >= 0 && end > start) {
+      let obj: unknown = null
+      try {
+        obj = JSON.parse(text.slice(start, end + 1))
+      } catch {
+        obj = null
+      }
+      const pt = pointFromJsonObject(obj)
+      if (pt) return normalizeQwenVlPoint(pt.x, pt.y, width, height)
+    }
+  }
+
+  // JSON-ish { "x": n, "y": n } (regex fallback for malformed JSON)
   {
     const m = text.match(
       /\{\s*"?x"?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*"?y"?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)/i,
