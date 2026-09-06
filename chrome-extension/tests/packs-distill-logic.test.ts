@@ -119,7 +119,7 @@ test("文案 lock-step：notice / restart-loss 与 companion 源码逐字一致�
   assert.match(DISTILL_SUGGESTED_TOOLS_LABEL, /未预勾/)
 })
 
-test("spy: background 转发白名单含全部 5 个 pack.distill_* 消息", () => {
+test("spy: background 转发白名单含全部 6 个 pack.distill_* 消息（含 #411 distill_all_scan）", () => {
   const src = fs.readFileSync(BG_SRC, "utf-8")
   for (const t of [
     "pack.distill_expert",
@@ -127,6 +127,7 @@ test("spy: background 转发白名单含全部 5 个 pack.distill_* 消息", () 
     "pack.distill_disarm",
     "pack.distill_drain",
     "pack.distill_status",
+    "pack.distill_all_scan",
   ]) {
     assert.ok(src.includes(`case "${t}":`), `background whitelist missing ${t}`)
   }
@@ -143,4 +144,139 @@ test("spy: PacksPanel 入口/状态/横幅 testid + 确认弹窗嵌入 notice �
   // 红线：建议工具不预勾 —— 编辑器来自草稿时强制 allowlist + 空勾选
   assert.ok(/tools_mode:\s*"allowlist"/.test(src) || /tools_mode:\s*'allowlist'/.test(src))
   assert.ok(src.includes("DISTILL_SUGGESTED_TOOLS_LABEL"))
+})
+
+// ---------------------------------------------------------------------------
+// #411: 从全部历史归纳专家（方案 A 两级聚类）— 纯逻辑 + spy
+// ---------------------------------------------------------------------------
+
+import {
+  DISTILL_ALL_ENTRY_LABEL,
+  distillAllConfirmBody,
+  distillAllQueueLine,
+  distillAllQueueStep,
+  normalizeDistillAllDrafts,
+} from "../src/sidepanel/packs-panel-logic"
+
+const ALL_RESULT = {
+  type: "pack.distill_all_result",
+  ok: true,
+  scanned: 137,
+  with_digest: 90,
+  batches: 6,
+  deep_read: 12,
+  llm_calls: 7,
+  notice: DISTILL_LLM_NOTICE,
+  restart_note: DISTILL_RESTART_LOSS_NOTE,
+  drafts: [
+    {
+      name: "投研助手",
+      description: "分析财报",
+      system_prompt_append: "你是投研助手。",
+      tools: { mode: "allowlist", allow: ["get_page_text", "screenshot"] },
+      suitable_for: ["页面抽取"],
+      unsuitable_for: ["主机操作"],
+      evidence: [
+        { quote: "帮我分析这份财报", hint: "诉求", thread_ids: ["t1", "t2"] },
+      ],
+      thread_ids: ["t1", "t2", "t3"],
+      conflicts_with: "已有投研",
+    },
+    {
+      name: "发布工程",
+      description: "出包",
+      system_prompt_append: "你是发布工程专家。",
+      tools: ["get_page_text"],
+      evidence: [],
+      thread_ids: ["t4", "t5"],
+    },
+    { name: "", description: "无名丢弃", system_prompt_append: "x", thread_ids: ["t1", "t2"] },
+    "not-an-object",
+  ],
+}
+
+test("#411 normalizeDistillAllDrafts：形状归一 + 坏份丢弃 + 工具不预勾 + 冲突/出处带出", () => {
+  const r = normalizeDistillAllDrafts(ALL_RESULT)
+  assert.ok(r)
+  if (!r) return
+  assert.equal(r.drafts.length, 2, "nameless / non-object drafts dropped")
+  const d1 = r.drafts[0]
+  assert.equal(d1.name, "投研助手")
+  assert.equal(d1.conflicts_with, "已有投研")
+  assert.deepEqual(d1.thread_ids, ["t1", "t2", "t3"])
+  assert.deepEqual(d1.evidence[0].thread_ids, ["t1", "t2"])
+  // 红线：工具不预勾（建议只进 meta.suggested_tools，编辑器勾选由用户手动）
+  assert.deepEqual(d1.tools_allow, [])
+  assert.equal(r.scanned, 137)
+  assert.equal(r.llm_calls, 7)
+  assert.equal(r.restart_note, DISTILL_RESTART_LOSS_NOTE)
+  assert.equal(r.drafts[1].conflicts_with, "")
+})
+
+test("#411 normalizeDistillAllDrafts：坏形状防御（null / ok:false / 无 drafts 容错为空）", () => {
+  assert.equal(normalizeDistillAllDrafts(null), null)
+  assert.equal(normalizeDistillAllDrafts({ ok: false }), null)
+  // ok:true 但缺 drafts —— 容错为空视图（UI 走「未归纳出草稿」路径，不崩）
+  const noDrafts = normalizeDistillAllDrafts({ ok: true })
+  assert.ok(noDrafts)
+  if (!noDrafts) return
+  assert.deepEqual(noDrafts.drafts, [])
+  const empty = normalizeDistillAllDrafts({
+    ok: true,
+    drafts: [],
+    fallback_reason: "没有跨线程反复出现的角色",
+  })
+  assert.ok(empty)
+  if (!empty) return
+  assert.deepEqual(empty.drafts, [])
+  assert.match(empty.fallback_reason, /没有跨线程/)
+})
+
+test("#411 distillAllQueueStep：clamp 边界（0 / total-1；total≤1 恒 0）", () => {
+  assert.equal(distillAllQueueStep(0, 3, -1), 0)
+  assert.equal(distillAllQueueStep(2, 3, 1), 2)
+  assert.equal(distillAllQueueStep(1, 3, 1), 2)
+  assert.equal(distillAllQueueStep(1, 3, -1), 0)
+  assert.equal(distillAllQueueStep(0, 1, 1), 0)
+})
+
+test("#411 distillAllQueueLine：份号 + 冲突提示（覆盖/另存由用户裁决）", () => {
+  const plain = distillAllQueueLine({ index: 0, total: 3 })
+  assert.match(plain, /草稿 1\/3/)
+  assert.match(plain, /逐份审阅/)
+  const conflict = distillAllQueueLine({ index: 1, total: 3, conflicts_with: "已有投研" })
+  assert.match(conflict, /草稿 2\/3/)
+  assert.match(conflict, /已有投研/)
+  assert.match(conflict, /另存|覆盖/)
+})
+
+test("#411 distillAllConfirmBody：N 条摘要发 LLM 必须写明 + 摘要来源 + 不自动保存", () => {
+  const body = distillAllConfirmBody({ eligible: 137, with_digest: 90, capped: false })
+  assert.match(body, /137 条历史对话的摘要/)
+  assert.match(body, /LLM/)
+  assert.match(body, /90 条有现成摘要/)
+  assert.match(body, /不会自动保存/)
+  assert.match(body, /不会保留/)
+  const capped = distillAllConfirmBody({ eligible: 240, with_digest: 10, capped: true })
+  assert.match(capped, /只取最近 200 条/)
+  assert.equal(DISTILL_ALL_ENTRY_LABEL, "从全部历史归纳专家")
+})
+
+test("#411 distillSourceLabel：from_all_history 区分「全部历史」横幅", () => {
+  assert.match(distillSourceLabel({ source: "llm", from_all_history: true }), /全部历史/)
+  assert.match(distillSourceLabel({ source: "llm", from_all_history: true }), /逐份检查/)
+  assert.match(distillSourceLabel({ source: "llm" }), /本对话/)
+})
+
+test("#411 spy: PacksPanel 全历史入口/确认弹窗/草稿队列 testid", () => {
+  const src = fs.readFileSync(PANEL_SRC, "utf-8")
+  for (const id of ["distill-all-entry-btn", "distill-all-start-btn", "distill-all-queue"]) {
+    assert.ok(src.includes(`data-testid="${id}"`), `PacksPanel missing testid ${id}`)
+  }
+  // 确认弹窗写明摘要去向 + 排除项（时间窗/关键词）
+  assert.ok(src.includes("distillAllConfirmBody"), "modal body states LLM destination + N")
+  assert.ok(src.includes("只看最近"), "time-window exclude option")
+  assert.ok(src.includes("排除关键词"), "keyword exclude option")
+  // 队列逐份审阅：上一份/下一份
+  assert.ok(src.includes("上一份") && src.includes("下一份"))
 })
