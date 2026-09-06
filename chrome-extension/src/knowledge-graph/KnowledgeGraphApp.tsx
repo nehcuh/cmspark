@@ -23,16 +23,41 @@ import {
   KnowledgeGraphColorSwitch,
   KnowledgeGraphGroupCard,
   KnowledgeGraphLlmSwitch,
+  KnowledgeGraphLockDissolvedBanner,
+  KnowledgeGraphNoRelationsNote,
+  KnowledgeGraphOrganizeCta,
+  KnowledgeGraphOrganizeErrorBar,
+  KnowledgeGraphReorganizeButton,
+  KnowledgeGraphStaleBadge,
   KnowledgeGraphStatusView,
+  KnowledgeGraphTfSwitchBanner,
 } from "./chrome"
 import { hoverCaption, nodeColor, type ColorMode } from "./coloring"
 import {
+  KNOWLEDGE_GRAPH_AI_RELATION,
   KNOWLEDGE_GRAPH_ENTRY_LABEL,
+  KNOWLEDGE_GRAPH_REASON_DISMISS,
   KNOWLEDGE_GRAPH_UNGROUPED_LABEL,
+  knowledgeGraphBarMeta,
   shouldRenderGraphCanvas,
 } from "./copy"
-import { KNOWLEDGE_GRAPH_LLM_LABELS_KEY, parseLlmLabelsPref, writeLlmLabelsPref } from "./llm-pref"
-import { parseKnowledgeGraphPayload, type KnowledgeGraphNode } from "./wire"
+import {
+  KNOWLEDGE_GRAPH_LLM_LABELS_KEY,
+  parseLlmLabelsPref,
+  parseTfSwitchAck,
+  writeLlmLabelsPref,
+  writeTfSwitchAck,
+  KNOWLEDGE_GRAPH_TF_SWITCH_ACK_KEY,
+} from "./llm-pref"
+import {
+  knowledgeGraphPairKey,
+  knowledgeGraphViewModel,
+  parseKnowledgeGraphPayload,
+  type KnowledgeGraphNode,
+  type KnowledgeGraphRelation,
+} from "./wire"
+
+type GraphDrawEdge = { a: string; b: string; score: number; dashed?: boolean; reason?: string }
 
 const G = {
   canvas: "#0d0f14",
@@ -63,8 +88,12 @@ export function KnowledgeGraphApp() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const nodesRef = useRef<LayoutNode[]>([])
-  const edgesRef = useRef<{ a: string; b: string; score: number }[]>([])
+  const edgesRef = useRef<GraphDrawEdge[]>([])
   const dragRef = useRef<{ id: string; ox: number; oy: number; moved: boolean } | null>(null)
+  const [organizing, setOrganizing] = useState(false)
+  const [relationOpen, setRelationOpen] = useState<KnowledgeGraphRelation | null>(null)
+  const [tfAcked, setTfAcked] = useState(false)
+  const [lockNotice, setLockNotice] = useState(false)
   const panRef = useRef({ x: 0, y: 0 })
   const scaleRef = useRef(1)
   const rafRef = useRef(0)
@@ -94,14 +123,21 @@ export function KnowledgeGraphApp() {
       llm_labels: rec.llm_labels === true,
     })
     if (typeof rec.focus_id === "string" && rec.focus_id) setFocusId(rec.focus_id)
+    setOrganizing(false)
   }, [])
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
-        const pref = await chrome.storage.local.get(KNOWLEDGE_GRAPH_LLM_LABELS_KEY)
-        if (!cancelled) setLlmEnabled(parseLlmLabelsPref(pref[KNOWLEDGE_GRAPH_LLM_LABELS_KEY]))
+        const pref = await chrome.storage.local.get([
+          KNOWLEDGE_GRAPH_LLM_LABELS_KEY,
+          KNOWLEDGE_GRAPH_TF_SWITCH_ACK_KEY,
+        ])
+        if (!cancelled) {
+          setLlmEnabled(parseLlmLabelsPref(pref[KNOWLEDGE_GRAPH_LLM_LABELS_KEY]))
+          setTfAcked(parseTfSwitchAck(pref[KNOWLEDGE_GRAPH_TF_SWITCH_ACK_KEY]))
+        }
       } catch {
         /* default off */
       }
@@ -123,6 +159,7 @@ export function KnowledgeGraphApp() {
       if (area === "local" && changes[KNOWLEDGE_GRAPH_LLM_LABELS_KEY]) {
         setLlmEnabled(parseLlmLabelsPref(changes[KNOWLEDGE_GRAPH_LLM_LABELS_KEY].newValue))
       }
+
     }
     chrome.storage.onChanged.addListener(onStorage)
     return () => {
@@ -162,6 +199,14 @@ export function KnowledgeGraphApp() {
   const payloadNodes = snap?.nodes ?? []
   const payloadEdges = snap?.edges ?? []
   const labels = snap?.labels ?? {}
+  const view = knowledgeGraphViewModel(snap)
+  const { llmLane, showOrganizeCta, showReorganize, showNoRelations, relationsToDraw } = view
+  const payloadRelations = relationsToDraw
+  const llmReady = snap?.llm_ready !== false
+  const showTfBanner =
+    (status === "ok" || status === "over_cap") &&
+    payloadNodes.length >= 20 &&
+    (snap?.tf_switch_notice === true || (snap?.tf_switch_notice !== false && !tfAcked))
 
   const groupKeys = useMemo(() => {
     const seen = new Set<string>()
@@ -192,11 +237,31 @@ export function KnowledgeGraphApp() {
       degree.set(e.a, (degree.get(e.a) || 0) + 1)
       degree.set(e.b, (degree.get(e.b) || 0) + 1)
     }
+    for (const r of payloadRelations) {
+      degree.set(r.a, (degree.get(r.a) || 0) + 1)
+      degree.set(r.b, (degree.get(r.b) || 0) + 1)
+    }
     const ids = payloadNodes.map((n) => n.id)
     const radiusById = new Map(ids.map((id) => [id, radiusForDegree(degree.get(id) || 0)]))
     const { w, h } = sizeRef.current
     nodesRef.current = seedLayoutNodes(ids, w, h, radiusById)
-    edgesRef.current = payloadEdges.map((e) => ({ a: e.a, b: e.b, score: e.score }))
+    const tfKeys = new Set(payloadEdges.map((e) => knowledgeGraphPairKey(e.a, e.b)))
+    const reasonByPair = new Map<string, string>()
+    for (const r of payloadRelations) {
+      reasonByPair.set(knowledgeGraphPairKey(r.a, r.b), r.reason)
+    }
+    const drawn: GraphDrawEdge[] = payloadEdges.map((e) => ({
+      a: e.a,
+      b: e.b,
+      score: e.score,
+      reason: reasonByPair.get(knowledgeGraphPairKey(e.a, e.b)),
+    }))
+    for (const r of payloadRelations) {
+      const k = knowledgeGraphPairKey(r.a, r.b)
+      if (tfKeys.has(k)) continue
+      drawn.push({ a: r.a, b: r.b, score: Math.max(0.08, r.confidence), dashed: true, reason: r.reason })
+    }
+    edgesRef.current = drawn
     simTicksRef.current = 0
     fittedRef.current = false
     userCameraRef.current = false
@@ -210,7 +275,7 @@ export function KnowledgeGraphApp() {
     }
     colorByIdRef.current = colors
     captionByIdRef.current = captions
-  }, [payloadNodes, payloadEdges, colorMode, labels])
+  }, [payloadNodes, payloadEdges, payloadRelations, colorMode, labels])
 
   const openDoc = useCallback((id: string) => {
     setFocusId(id)
@@ -239,6 +304,42 @@ export function KnowledgeGraphApp() {
       },
     )
   }, [])
+
+  const sendOrganize = useCallback(() => {
+    setOrganizing(true)
+    chrome.runtime.sendMessage(
+      { type: "knowledge_graph.refresh", organize: true, llm_labels: llmEnabled },
+      () => {
+        void chrome.runtime.lastError
+      },
+    )
+  }, [llmEnabled])
+
+  const sendLock = useCallback((groupKey: string, unlock: boolean) => {
+    chrome.runtime.sendMessage(
+      {
+        type: "knowledge_graph.refresh",
+        llm_labels: llmEnabled,
+        ...(unlock ? { unlock_group: groupKey } : { lock_group: groupKey }),
+      },
+      () => {
+        void chrome.runtime.lastError
+      },
+    )
+  }, [llmEnabled])
+
+  useEffect(() => {
+    if (snap?.lock_dissolved === true) setLockNotice(true)
+  }, [snap?.lock_dissolved])
+
+  useEffect(() => {
+    if (!showTfBanner) return
+    // 本会话继续展示；落盘 ack 让关 tab 重开不再出现（AC-6）。
+    void writeTfSwitchAck()
+    chrome.runtime.sendMessage({ type: "knowledge_graph.refresh", ack_tf_switch: true }, () => {
+      void chrome.runtime.lastError
+    })
+  }, [showTfBanner])
 
   const fitView = useCallback(() => {
     const nodes = nodesRef.current
@@ -325,7 +426,19 @@ export function KnowledgeGraphApp() {
         ctx.lineTo(b.x, b.y)
         ctx.strokeStyle = hot != null && !isHot ? G.edgeDim : isHot ? G.edgeHot : G.edgeSoft
         ctx.lineWidth = Math.min(1.6, 0.4 + e.score * 0.5) / Math.max(0.6, scale)
+        if (e.dashed) ctx.setLineDash([5 / Math.max(0.6, scale), 4 / Math.max(0.6, scale)])
+        else ctx.setLineDash([])
         ctx.stroke()
+        ctx.setLineDash([])
+        if (e.dashed && (hot == null || isHot)) {
+          const mx = (a.x + b.x) / 2
+          const my = (a.y + b.y) / 2
+          ctx.fillStyle = G.labelFocus
+          ctx.font = `${9 / Math.max(0.75, Math.min(1.25, scale))}px ${tokens.font}`
+          ctx.textAlign = "center"
+          ctx.textBaseline = "bottom"
+          ctx.fillText(KNOWLEDGE_GRAPH_AI_RELATION, mx, my - 2)
+        }
       }
       for (const n of nodesRef.current) {
         const isFocus = n.id === focusIdRef.current
@@ -390,10 +503,55 @@ export function KnowledgeGraphApp() {
     return best
   }
 
+  const hitTestEdge = (clientX: number, clientY: number): GraphDrawEdge | null => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    const scale = Math.max(0.001, scaleRef.current)
+    const x = (clientX - rect.left - panRef.current.x) / scale
+    const y = (clientY - rect.top - panRef.current.y) / scale
+    const byId = new Map(nodesRef.current.map((n) => [n.id, n]))
+    const thresh = 6 / scale
+    let best: GraphDrawEdge | null = null
+    let bestD = thresh
+    for (const e of edgesRef.current) {
+      if (!e.reason && !e.dashed) continue
+      const a = byId.get(e.a)
+      const b = byId.get(e.b)
+      if (!a || !b) continue
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const len2 = dx * dx + dy * dy
+      if (len2 < 1) continue
+      let t = ((x - a.x) * dx + (y - a.y) * dy) / len2
+      t = Math.max(0, Math.min(1, t))
+      const px = a.x + t * dx
+      const py = a.y + t * dy
+      const d = Math.hypot(x - px, y - py)
+      if (d < bestD) {
+        best = e
+        bestD = d
+      }
+    }
+    return best
+  }
+
   const endDrag = (ev?: ReactPointerEvent) => {
     const drag = dragRef.current
     if (drag && drag.id !== "__pan__" && !drag.moved) {
       openDoc(drag.id)
+    }
+    if (drag && drag.id === "__pan__" && !drag.moved && ev) {
+      const edge = hitTestEdge(ev.clientX, ev.clientY)
+      if (edge?.reason) {
+        setRelationOpen({
+          a: edge.a,
+          b: edge.b,
+          reason: edge.reason,
+          confidence: edge.score,
+          ai: true,
+        })
+      }
     }
     if (ev?.target && "releasePointerCapture" in (ev.target as Element)) {
       try {
@@ -424,7 +582,16 @@ export function KnowledgeGraphApp() {
     if (!drag) {
       const n = hitTest(ev.clientX, ev.clientY)
       hoverIdRef.current = n?.id ?? null
-      setHoverCaptionText(n ? captionByIdRef.current.get(n.id) || "" : "")
+      if (n) {
+        setHoverCaptionText(captionByIdRef.current.get(n.id) || "")
+      } else {
+        const edge = hitTestEdge(ev.clientX, ev.clientY)
+        setHoverCaptionText(
+          edge?.reason
+            ? `${edge.dashed ? KNOWLEDGE_GRAPH_AI_RELATION + " · " : ""}${edge.reason}`
+            : "",
+        )
+      }
       return
     }
     const dx = ev.clientX - drag.ox
@@ -475,8 +642,18 @@ export function KnowledgeGraphApp() {
           onChange={onLlmChange}
           onRegenerate={onRegenerate}
         />
+        {showReorganize ? (
+          <KnowledgeGraphReorganizeButton
+            organizing={organizing}
+            disabled={!llmReady}
+            onClick={sendOrganize}
+          />
+        ) : null}
+        {snap?.stale === true && llmLane ? <KnowledgeGraphStaleBadge /> : null}
         <span style={styles.barMeta}>
-          {showCanvas ? `${payloadNodes.length} 点 · ${payloadEdges.length} 边` : ""}
+          {showCanvas
+            ? knowledgeGraphBarMeta(payloadNodes.length, payloadEdges.length, payloadRelations.length)
+            : ""}
         </span>
         <button type="button" style={styles.barBtnGhost} onClick={() => setPanelOpen((v) => !v)}>
           {panelOpen ? "收起面板" : "分组"}
@@ -492,6 +669,35 @@ export function KnowledgeGraphApp() {
         </div>
       )}
 
+      {status === "ok" && showOrganizeCta ? (
+        <div style={{ ...styles.banner, top: chromeTop }}>
+          <KnowledgeGraphOrganizeCta
+            n={payloadNodes.length}
+            disabled={!llmReady}
+            organizing={organizing}
+            onOrganize={sendOrganize}
+          />
+        </div>
+      ) : null}
+
+      {status === "ok" && snap?.organize_error ? (
+        <div style={{ ...styles.banner, top: chromeTop + (showOrganizeCta ? 56 : 0) }}>
+          <KnowledgeGraphOrganizeErrorBar error={snap.organize_error} onRetry={sendOrganize} />
+        </div>
+      ) : null}
+
+      {showTfBanner ? (
+        <div style={{ ...styles.banner, top: chromeTop }}>
+          <KnowledgeGraphTfSwitchBanner />
+        </div>
+      ) : null}
+
+      {lockNotice ? (
+        <div style={{ ...styles.banner, top: chromeTop }}>
+          <KnowledgeGraphLockDissolvedBanner />
+        </div>
+      ) : null}
+
       {hoverCaptionText ? (
         <div style={{ ...styles.hoverChip, top: chromeTop }} role="status">
           {hoverCaptionText}
@@ -501,25 +707,48 @@ export function KnowledgeGraphApp() {
       {panelOpen && (
         <aside style={{ ...styles.floatPanel, top: chromeTop }} aria-label="分组">
           <div style={styles.asideTitle}>分组</div>
+          {showNoRelations ? <KnowledgeGraphNoRelationsNote /> : null}
           {groupKeys.length === 0 ? (
             <div style={{ fontSize: 11, color: tokens.darkMuted }}>
               {status === "too_few" || status === "rebuilding" ? "" : KNOWLEDGE_GRAPH_UNGROUPED_LABEL}
             </div>
           ) : (
-            groupKeys.map((k) => (
-              <KnowledgeGraphGroupCard
-                key={k}
-                groupKey={k}
-                label={
-                  labels[k] ||
-                  (k === ungroupedKey ? { name: KNOWLEDGE_GRAPH_UNGROUPED_LABEL, ai: false } : undefined)
-                }
-                llmEnabled={llmEnabled}
-              />
-            ))
+            groupKeys.map((k) => {
+              const llmGroup = k.startsWith("l:")
+              return (
+                <KnowledgeGraphGroupCard
+                  key={k}
+                  groupKey={k}
+                  label={
+                    labels[k] ||
+                    (k === ungroupedKey ? { name: KNOWLEDGE_GRAPH_UNGROUPED_LABEL, ai: false } : undefined)
+                  }
+                  llmEnabled={llmEnabled}
+                  llmLaneGroup={llmGroup}
+                  onLock={llmLane && llmGroup ? () => sendLock(k, false) : undefined}
+                  onUnlock={
+                    llmGroup && labels[k]?.locked === true ? () => sendLock(k, true) : undefined
+                  }
+                />
+              )
+            })
           )}
         </aside>
       )}
+
+      {relationOpen ? (
+        <div
+          style={{ ...styles.hoverChip, top: chromeTop + 36, maxWidth: "70%" }}
+          role="dialog"
+          data-testid="kg-relation-reason"
+        >
+          <strong style={{ fontSize: 11 }}>{KNOWLEDGE_GRAPH_AI_RELATION}</strong>
+          <div style={{ marginTop: 4 }}>{relationOpen.reason}</div>
+          <button type="button" style={styles.barBtnGhost} onClick={() => setRelationOpen(null)}>
+            {KNOWLEDGE_GRAPH_REASON_DISMISS}
+          </button>
+        </div>
+      ) : null}
 
       <main style={styles.main}>
         {showCanvas && (

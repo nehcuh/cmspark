@@ -20,11 +20,28 @@ import {
   KNOWLEDGE_GRAPH_REGENERATE,
   KNOWLEDGE_GRAPH_TOO_FEW_COPY,
   KNOWLEDGE_GRAPH_UNGROUPED_LABEL,
+  KNOWLEDGE_GRAPH_AI_RELATION,
+  KNOWLEDGE_GRAPH_LLM_LANE_MAX,
+  KNOWLEDGE_GRAPH_LLM_NOT_CONFIGURED,
+  KNOWLEDGE_GRAPH_LOCK_DISSOLVED,
+  KNOWLEDGE_GRAPH_LOCK_GROUP,
+  KNOWLEDGE_GRAPH_NO_RELATIONS,
+  KNOWLEDGE_GRAPH_ORGANIZE_RETRY,
+  KNOWLEDGE_GRAPH_REORGANIZE,
+  KNOWLEDGE_GRAPH_STALE_BADGE,
+  KNOWLEDGE_GRAPH_TF_SWITCH_BANNER,
+  KNOWLEDGE_GRAPH_UNLOCK_GROUP,
   graphBannerCopy,
+  isKnowledgeGraphLlmLane,
+  knowledgeGraphBarMeta,
+  knowledgeGraphOrganizeCta,
   shouldRenderGraphCanvas,
 } from "../src/knowledge-graph/copy"
 import {
   buildKnowledgeGraphRequest,
+  hasKnowledgeGraphLlmCache,
+  knowledgeGraphPairKey,
+  knowledgeGraphViewModel,
   mockKnowledgeGraphPayload,
   parseKnowledgeGraphPayload,
   type KnowledgeGraphPayload,
@@ -46,7 +63,14 @@ import {
   KnowledgeGraphEntryButton,
   KnowledgeGraphGroupCard,
   KnowledgeGraphLlmSwitch,
+  KnowledgeGraphLockDissolvedBanner,
+  KnowledgeGraphNoRelationsNote,
+  KnowledgeGraphOrganizeCta,
+  KnowledgeGraphOrganizeErrorBar,
+  KnowledgeGraphReorganizeButton,
+  KnowledgeGraphStaleBadge,
   KnowledgeGraphStatusView,
+  KnowledgeGraphTfSwitchBanner,
 } from "../src/knowledge-graph/chrome"
 
 const SRC_ROOT = join(process.cwd(), "src")
@@ -333,4 +357,244 @@ test("名词：视图源码可用「图谱」，禁用「簇」", () => {
     const text = readFileSync(file, "utf8")
     assert.ok(!text.includes("簇"), `${file} 视图内不得出现「簇」`)
   }
+})
+
+// --- #427 低语料整理 lane ---
+
+test("#427 copy: CTA 插值 N；lane 2–19；新文案走常量", () => {
+  assert.equal(knowledgeGraphOrganizeCta(4), "让 AI 整理现有 4 篇")
+  assert.equal(knowledgeGraphOrganizeCta(19), "让 AI 整理现有 19 篇")
+  assert.equal(KNOWLEDGE_GRAPH_LLM_LANE_MAX, 19)
+  assert.equal(isKnowledgeGraphLlmLane(1), false)
+  assert.equal(isKnowledgeGraphLlmLane(2), true)
+  assert.equal(isKnowledgeGraphLlmLane(19), true)
+  assert.equal(isKnowledgeGraphLlmLane(20), false)
+  assert.equal(KNOWLEDGE_GRAPH_REORGANIZE, "重新整理")
+  assert.equal(KNOWLEDGE_GRAPH_STALE_BADGE, "语料已变化 · 可重新整理")
+  assert.equal(KNOWLEDGE_GRAPH_NO_RELATIONS, "AI 未发现明确关联")
+  assert.equal(KNOWLEDGE_GRAPH_TF_SWITCH_BANNER, "知识已满 20 篇，分组改按统计聚类（更稳定）")
+  assert.equal(KNOWLEDGE_GRAPH_LOCK_DISSOLVED, "不足两篇的锁定分组已解散")
+  assert.equal(KNOWLEDGE_GRAPH_AI_RELATION, "AI 关联")
+  assert.equal(KNOWLEDGE_GRAPH_LOCK_GROUP, "保留这版分组")
+  assert.equal(KNOWLEDGE_GRAPH_UNLOCK_GROUP, "解锁")
+  assert.equal(KNOWLEDGE_GRAPH_ORGANIZE_RETRY, "重试")
+  assert.equal(KNOWLEDGE_GRAPH_LLM_NOT_CONFIGURED, "未配置 LLM")
+})
+
+test("#427 shouldRenderGraphCanvas 仍只放行 ok|over_cap（不新增 status）", () => {
+  assert.equal(shouldRenderGraphCanvas("ok"), true)
+  assert.equal(shouldRenderGraphCanvas("over_cap"), true)
+  assert.equal(shouldRenderGraphCanvas("too_few"), false)
+  assert.equal(shouldRenderGraphCanvas("error"), false)
+  assert.equal(shouldRenderGraphCanvas("rebuilding"), false)
+})
+
+test("#427 parseKnowledgeGraphPayload: 旧帧无新字段照常；relations/llm_ready/organize_error 可选", () => {
+  const old = parseKnowledgeGraphPayload({
+    status: "ok",
+    truncated: false,
+    nodes: [{ id: "a", title: "A", group_key: "u:ungrouped", folder: "" }],
+    edges: [{ a: "a", b: "b", score: 0.2 }],
+    labels: {},
+  })
+  assert.ok(old)
+  assert.equal(old!.relations, undefined)
+  assert.equal(old!.llm_ready, undefined)
+  assert.equal(old!.organize_error, undefined)
+  assert.equal(old!.stale, undefined)
+
+  const full = parseKnowledgeGraphPayload({
+    status: "ok",
+    nodes: [
+      { id: "a", title: "A", group_key: "l:abc", folder: "" },
+      { id: "b", title: "B", group_key: "l:abc", folder: "" },
+    ],
+    edges: [{ a: "a", b: "b", score: 0.3 }],
+    labels: { "l:abc": { name: "组", summary: "摘要", ai: true, locked: true } },
+    relations: [
+      { a: "a", b: "b", reason: "同主题", confidence: 0.8, ai: true },
+      { a: "a", b: "a", reason: "自环", confidence: 1 },
+      { a: "a", b: "c", reason: "" },
+    ],
+    llm_ready: false,
+    organize_error: "timeout",
+    stale: true,
+    tf_switch_notice: true,
+    lock_dissolved: true,
+  })
+  assert.ok(full)
+  assert.equal(full!.llm_ready, false)
+  assert.equal(full!.organize_error, "timeout")
+  assert.equal(full!.stale, true)
+  assert.equal(full!.tf_switch_notice, true)
+  assert.equal(full!.lock_dissolved, true)
+  assert.equal(full!.labels["l:abc"]!.locked, true)
+  assert.equal(full!.relations!.length, 1)
+  assert.equal(full!.relations![0].reason, "同主题")
+  assert.equal(full!.relations![0].ai, true)
+  assert.equal(hasKnowledgeGraphLlmCache(full!), true)
+  assert.equal(hasKnowledgeGraphLlmCache(old!), false)
+
+  const emptyOk = parseKnowledgeGraphPayload({
+    status: "ok",
+    nodes: [
+      { id: "a", title: "A", group_key: "u:ungrouped", folder: "" },
+      { id: "b", title: "B", group_key: "u:ungrouped", folder: "" },
+      { id: "c", title: "C", group_key: "u:ungrouped", folder: "" },
+      { id: "d", title: "D", group_key: "u:ungrouped", folder: "" },
+    ],
+    edges: [],
+    labels: {},
+    relations: [],
+    organized: true,
+  })
+  assert.ok(emptyOk)
+  assert.equal(emptyOk!.organized, true)
+  assert.equal(hasKnowledgeGraphLlmCache(emptyOk!), true, "合法空结果仍算已整理")
+})
+
+test("#427 buildKnowledgeGraphRequest: organize + user_gesture 成对", () => {
+  assert.deepEqual(buildKnowledgeGraphRequest({ llmLabels: false, organize: true }), {
+    type: "knowledge.graph",
+    organize: true,
+    user_gesture: true,
+  })
+  const lock = buildKnowledgeGraphRequest({ llmLabels: false, lockGroup: "l:abc" })
+  assert.equal(lock.lock_group, "l:abc")
+  assert.equal(lock.user_gesture, true)
+})
+
+test("#427 pair key 无向", () => {
+  assert.equal(knowledgeGraphPairKey("b", "a"), knowledgeGraphPairKey("a", "b"))
+})
+
+test("#427 OrganizeCta 插值 + llm_ready 禁用；error 条带重试", () => {
+  const cta = renderToStaticMarkup(
+    createElement(KnowledgeGraphOrganizeCta, {
+      n: 4,
+      disabled: true,
+      organizing: false,
+      onOrganize: () => {},
+    }),
+  )
+  assert.ok(cta.includes("让 AI 整理现有 4 篇"), cta)
+  assert.ok(cta.includes("disabled") || cta.includes('disabled=""') || cta.includes("not-allowed"), cta)
+  assert.ok(cta.includes(KNOWLEDGE_GRAPH_LLM_NOT_CONFIGURED), cta)
+
+  const err = renderToStaticMarkup(
+    createElement(KnowledgeGraphOrganizeErrorBar, { error: "timeout", onRetry: () => {} }),
+  )
+  assert.ok(err.includes("timeout"), err)
+  assert.ok(err.includes(KNOWLEDGE_GRAPH_ORGANIZE_RETRY), err)
+
+  const stale = renderToStaticMarkup(createElement(KnowledgeGraphStaleBadge))
+  assert.ok(stale.includes(KNOWLEDGE_GRAPH_STALE_BADGE), stale)
+  const tf = renderToStaticMarkup(createElement(KnowledgeGraphTfSwitchBanner))
+  assert.ok(tf.includes(KNOWLEDGE_GRAPH_TF_SWITCH_BANNER), tf)
+  const diss = renderToStaticMarkup(createElement(KnowledgeGraphLockDissolvedBanner))
+  assert.ok(diss.includes(KNOWLEDGE_GRAPH_LOCK_DISSOLVED), diss)
+  const none = renderToStaticMarkup(createElement(KnowledgeGraphNoRelationsNote))
+  assert.ok(none.includes(KNOWLEDGE_GRAPH_NO_RELATIONS), none)
+  const re = renderToStaticMarkup(
+    createElement(KnowledgeGraphReorganizeButton, {
+      organizing: false,
+      disabled: false,
+      onClick: () => {},
+    }),
+  )
+  assert.ok(re.includes(KNOWLEDGE_GRAPH_REORGANIZE), re)
+})
+
+test("#427 groupCard: l: 分组关命名开关仍带 AI 标；锁按钮", () => {
+  const off = groupCardModel({ name: "投研", summary: "摘要", ai: true }, false, { llmLaneGroup: true })
+  assert.equal(off.showAiBadge, true)
+  assert.equal(off.summary, "摘要")
+  const html = renderToStaticMarkup(
+    createElement(KnowledgeGraphGroupCard, {
+      groupKey: "l:abc",
+      label: { name: "投研", summary: "摘要", ai: true },
+      llmEnabled: false,
+      llmLaneGroup: true,
+      onLock: () => {},
+    }),
+  )
+  assert.ok(html.includes(KNOWLEDGE_GRAPH_AI_BADGE), html)
+  assert.ok(html.includes(KNOWLEDGE_GRAPH_LOCK_GROUP), html)
+  const locked = renderToStaticMarkup(
+    createElement(KnowledgeGraphGroupCard, {
+      groupKey: "l:abc",
+      label: { name: "投研", ai: true, locked: true },
+      llmEnabled: false,
+      llmLaneGroup: true,
+      onUnlock: () => {},
+    }),
+  )
+  assert.ok(locked.includes(KNOWLEDGE_GRAPH_UNLOCK_GROUP), locked)
+})
+
+test("#427 App 源码：CTA 发 organize+user_gesture；不内联新文案", () => {
+  const app = readFileSync(join(SRC_ROOT, "knowledge-graph/KnowledgeGraphApp.tsx"), "utf8")
+  assert.ok(app.includes("organize: true"), "CTA 走 organize")
+  const bg = readFileSync(join(SRC_ROOT, "background/index.ts"), "utf8")
+  assert.ok(bg.includes("organize"), "SW 透传 organize")
+  assert.ok(bg.includes("lock_group") && bg.includes("unlock_group"), "SW 透传锁")
+  assert.ok(!app.includes("让 AI 整理现有"), "CTA 文案不得内联")
+  assert.ok(!app.includes("语料已变化"), "stale 文案不得内联")
+  assert.ok(app.includes("labels[k]?.locked === true"), "≥20 锁组仍可解锁（不限 llmLane）")
+  assert.ok(app.includes("knowledgeGraphViewModel"), "CTA 门走可测 view model")
+  assert.ok(app.includes("knowledgeGraphBarMeta"), "边计数走常量函数")
+})
+
+test("#427 App 层：CTA 只在 ok+2–19+无缓存；空结果无 CTA 有散点 note", () => {
+  const ungrouped4 = mockKnowledgeGraphPayload({
+    status: "ok",
+    nodes: ["a", "b", "c", "d"].map((id) => ({ id, title: id, group_key: "u:ungrouped", folder: "" })),
+  })
+  const cta = knowledgeGraphViewModel(ungrouped4)
+  assert.equal(cta.showOrganizeCta, true)
+  assert.equal(cta.showNoRelations, false)
+  assert.equal(cta.relationsToDraw.length, 0)
+
+  const emptyOrg = mockKnowledgeGraphPayload({
+    status: "ok",
+    nodes: ungrouped4.nodes,
+    relations: [],
+    organized: true,
+  })
+  const empty = knowledgeGraphViewModel(emptyOrg)
+  assert.equal(empty.showOrganizeCta, false, "合法空结果不再出 CTA")
+  assert.equal(empty.showNoRelations, true)
+  assert.equal(empty.showReorganize, true)
+
+  assert.equal(knowledgeGraphViewModel(mockKnowledgeGraphPayload({ status: "too_few" })).showOrganizeCta, false)
+  assert.equal(knowledgeGraphViewModel(mockKnowledgeGraphPayload({ status: "error" })).showOrganizeCta, false)
+  assert.equal(
+    knowledgeGraphViewModel(
+      mockKnowledgeGraphPayload({
+        status: "ok",
+        nodes: [{ id: "only", title: "x", group_key: "u:ungrouped", folder: "" }],
+      }),
+    ).showOrganizeCta,
+    false,
+    "n=1 无 CTA",
+  )
+  const twenty = knowledgeGraphViewModel(
+    mockKnowledgeGraphPayload({
+      status: "ok",
+      nodes: Array.from({ length: 20 }, (_, i) => ({
+        id: `n${i}`,
+        title: `n${i}`,
+        group_key: "c:g",
+        folder: "",
+      })),
+      relations: [{ a: "n0", b: "n1", reason: "leak", confidence: 1, ai: true }],
+    }),
+  )
+  assert.equal(twenty.showOrganizeCta, false)
+  assert.equal(twenty.relationsToDraw.length, 0, "≥20 不画 AI 虚线（双保险）")
+})
+
+test("#427 barMeta：有 AI 关联时拆 TF/AI", () => {
+  assert.equal(knowledgeGraphBarMeta(4, 3, 0), "4 点 · 3 边")
+  assert.equal(knowledgeGraphBarMeta(4, 3, 2), "4 点 · TF 3 边 · AI 2 关联")
 })
