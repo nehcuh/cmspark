@@ -22,6 +22,13 @@ import {
 } from "./threads/digest"
 import { findRelatedThreads } from "./threads/related"
 import { distillThreadMarkdown, redactSecrets } from "./threads/distill"
+import {
+  knowledgeSearchRows,
+  normalizeSearchQuery,
+  clampSearchLimit,
+  searchThreadRows,
+  peekThreadDistilled,
+} from "./summoner/read-search"
 import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT } from "./skills/knowledge-related"
 import { attachKnowledgeListDistribution, handleKnowledgeCrud, knowledgeListDocs, knowledgeListFolders } from "./message-router/handlers/knowledge"
 import { suggestCleanupRules } from "./threads/cleanup-rules"
@@ -2809,6 +2816,35 @@ export async function handleMessage(
       }
     }
 
+    // #433 P1 读路径：脱敏检索（spec §3a）。
+    case "thread.search": {
+      const query = normalizeSearchQuery(rest.query)
+      if (!query) {
+        return { type: "error", error: "thread.search requires a non-empty query", code: "invalid" }
+      }
+      const limit = clampSearchLimit(rest.limit)
+      const rows = threadManager
+        .list()
+        // 系统线程不入检索流（#411 同款 skip：worker/orchestrator/会议后台）。
+        .filter((r: any) => r.agent_role !== "worker" && r.agent_role !== "orchestrator")
+      const hits = searchThreadRows(rows as any, query, limit)
+      return { type: "thread.search_result", query, hits }
+    }
+    case "thread.peek": {
+      const tid = typeof rest.thread_id === "string" ? rest.thread_id.trim() : ""
+      if (!tid) {
+        return { type: "error", error: "thread.peek requires thread_id", code: "invalid" }
+      }
+      const thr: any = threadManager.get(tid)
+      if (!thr) return { type: "error", error: `Thread not found: ${tid}` }
+      const peek = peekThreadDistilled(
+        tid,
+        { alias: thr.alias, digest: thr.digest },
+        threadManager.getMessages(tid),
+      )
+      return { type: "thread.peek_result", ...peek }
+    }
+
     case "thread.select": {
       const thr = threadManager.get(rest.thread_id)
       if (!thr) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
@@ -3598,6 +3634,17 @@ export async function handleMessage(
         skillEngine,
         session,
       )
+    case "knowledge.search": {
+      // #433 P1 读路径：搜派生索引 title/description/tags（零副作用，不触检索路由）。
+      const query = normalizeSearchQuery(rest.query)
+      if (!query) {
+        return { type: "error", error: "knowledge.search requires a non-empty query", code: "invalid" }
+      }
+      const limit = clampSearchLimit(rest.limit)
+      const docs = knowledgeListDocs(skillEngine, stampedSurface)
+      const hits = knowledgeSearchRows(docs, query, limit)
+      return { type: "knowledge.search_result", query, hits }
+    }
     case "knowledge.graph": {
       // #296 图谱视图（按需拉取）。panel-only 门与 distribution 同款：
       // 谓词看 handshake 的 session.surface（stamp 词汇表只有 summoner|tray，

@@ -169,6 +169,22 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // #433 P1 读路径（spec §3a）——shape 与 router 内二次校验双层。
+    "thread.search": (m) => {
+      if (typeof m.query !== "string" || !m.query.trim()) {
+        return { valid: false, error: "thread.search requires non-empty query" }
+      }
+      if (m.limit !== undefined && (typeof m.limit !== "number" || !Number.isFinite(m.limit) || m.limit < 1 || m.limit > 20)) {
+        return { valid: false, error: "thread.search limit must be 1–20" }
+      }
+      return { valid: true }
+    },
+    "thread.peek": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "thread.peek requires thread_id" }
+      }
+      return { valid: true }
+    },
     "thread.related": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) {
         return { valid: false, error: "thread.related requires thread_id" }
@@ -1361,6 +1377,16 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "knowledge.list": () => ({ valid: true }),
+    // #433 P1 读路径：搜派生索引（只读）。
+    "knowledge.search": (m) => {
+      if (typeof m.query !== "string" || !m.query.trim()) {
+        return { valid: false, error: "knowledge.search requires non-empty query" }
+      }
+      if (m.limit !== undefined && (typeof m.limit !== "number" || !Number.isFinite(m.limit) || m.limit < 1 || m.limit > 20)) {
+        return { valid: false, error: "knowledge.search limit must be 1–20" }
+      }
+      return { valid: true }
+    },
     // #296: llm_labels / regen_labels 是可选布尔（面板开关随请求传入）；
     // #427: organize / user_gesture 同款可选布尔（手动整理双闸）
     "knowledge.graph": (m) => {
