@@ -57,8 +57,13 @@ export function getOutboundDispatcher(): OutboundDispatcher | null {
 export async function invokeOutboundTool(
   req: OutboundCallRequest,
   dispatcher: OutboundDispatcher | null | undefined = defaultDispatcher,
+  gateProfiles?: string[],
 ): Promise<InvokeOutboundResult> {
-  const gate = gateOutboundCall(req)
+  // #410: stdio child that resolved its env token's grant profile passes it
+  // here so the local gate matches the tools/list it advertised. When unset
+  // (legacy ws_secret / unit tests) gateOutboundCall falls back to the caller-
+  // level live-grant profiles (today's stdio semantics).
+  const gate = gateOutboundCall(req, { explicitProfiles: gateProfiles })
   // HITL must wait on Companion HTTP (confirm center), not fail in the stdio
   // child. Local NOT_GRANTED / PROFILE_FORBIDDEN still fail-closed here.
   const passHitlToHttp =

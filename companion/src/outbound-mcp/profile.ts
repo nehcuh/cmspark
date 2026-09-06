@@ -1,5 +1,10 @@
+import {
+  OUTBOUND_L1_DEFAULT_PROFILE,
+  OUTBOUND_L1_INTERACT_PROFILE,
+} from "./outbound-grants"
+
 /**
- * Outbound MCP default profile (Phase 0) — curated L1 subset.
+ * Outbound MCP profiles (ADR-022 P1 named profiles).
  *
  * Canonical / facade names stay `cmspark__*` (ADR-022 L5).
  * MCP stdio `tools/list` advertises the suffix only (`list_tabs`) so clients
@@ -25,10 +30,87 @@ export const OUTBOUND_MCP_ALLOWLIST = [
 
 export type OutboundMcpToolName = (typeof OUTBOUND_MCP_ALLOWLIST)[number]
 
-/** Tools that stream page content / pixels to an external LLM (L3+). */
+/**
+ * #410 — interact-profile extras (NOT part of OUTBOUND_MCP_ALLOWLIST).
+ * L1 interactive completeness (ADR-022 P1 reserved interact profile).
+ * get_page_html / analyze_image carry DOM/pixel exfil → OUTBOUND_MCP_EXFIL_CLASS
+ * (same allow_page_export gate as page text / screenshot — no new flag).
+ */
+export const OUTBOUND_MCP_INTERACT_EXTRAS = [
+  "cmspark__scroll",
+  "cmspark__get_element_info",
+  "cmspark__press_key",
+  "cmspark__select_option",
+  "cmspark__hover",
+  "cmspark__dblclick",
+  "cmspark__fill_form",
+  "cmspark__drag_and_drop",
+  "cmspark__create_tab",
+  "cmspark__get_page_html",
+  "cmspark__analyze_image",
+] as const
+
+/**
+ * Profile → granted canonical tool set. interact is a superset of the default
+ * 8: an interact key keeps list_tabs / navigate / click / … and adds the
+ * interactive completeness set above (issue #410 产品句: interact 钥匙可
+ * 「滚动长页、看清元素再点击、填表单」). Default key set is byte-identical.
+ */
+export const OUTBOUND_PROFILE_TOOLS: Readonly<Record<string, readonly string[]>> = {
+  [OUTBOUND_L1_DEFAULT_PROFILE]: OUTBOUND_MCP_ALLOWLIST,
+  [OUTBOUND_L1_INTERACT_PROFILE]: [
+    ...OUTBOUND_MCP_ALLOWLIST,
+    ...OUTBOUND_MCP_INTERACT_EXTRAS,
+  ],
+}
+
+/** Canonical tools granted by a (non-empty) set of profiles, default first. */
+export function outboundToolsForProfiles(profiles: Iterable<string>): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  const order = [
+    OUTBOUND_L1_DEFAULT_PROFILE,
+    OUTBOUND_L1_INTERACT_PROFILE,
+  ]
+  const profileSet = new Set(
+    Array.from(profiles).filter(
+      (p): p is string => typeof p === "string" && p.length > 0,
+    ),
+  )
+  const merged = new Set<string>()
+  for (const p of order) {
+    if (profileSet.size > 0 && !profileSet.has(p)) continue
+    for (const t of OUTBOUND_PROFILE_TOOLS[p] ?? []) merged.add(t)
+  }
+  // Unset profiles (empty input) = caller-level default grant semantics.
+  if (profileSet.size === 0) {
+    for (const t of OUTBOUND_MCP_ALLOWLIST) merged.add(t)
+  }
+  for (const t of merged) {
+    if (!seen.has(t)) {
+      seen.add(t)
+      out.push(t)
+    }
+  }
+  return out
+}
+
+/** True iff `canonical` is granted on at least one of `profiles`. */
+export function outboundToolAllowedOnProfiles(
+  canonical: string,
+  profiles: Iterable<string>,
+): boolean {
+  return outboundToolsForProfiles(profiles).includes(canonical)
+}
+
+/** Tools that stream page content / pixels / DOM to an external LLM (L3+). */
 export const OUTBOUND_MCP_EXFIL_CLASS = new Set<string>([
   "cmspark__get_page_text",
   "cmspark__screenshot",
+  // #410 interact-profile DOM / pixel reads share the same allow_page_export
+  // gate as page text / screenshot (design 3.1.3: reuse, no new flag).
+  "cmspark__get_page_html",
+  "cmspark__analyze_image",
 ])
 
 /** MCP tools/list name: strip the canonical `cmspark__` prefix. */

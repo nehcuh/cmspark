@@ -2,7 +2,9 @@
 
 export {
   OUTBOUND_MCP_ALLOWLIST,
+  OUTBOUND_MCP_INTERACT_EXTRAS,
   OUTBOUND_MCP_EXFIL_CLASS,
+  OUTBOUND_PROFILE_TOOLS,
   OUTBOUND_DISCLOSURE_ZH,
   isOutboundAllowed,
   isOutboundForbidden,
@@ -12,6 +14,8 @@ export {
   isCanonicalOutboundMcpNameShape,
   redactOutboundMcpWireName,
   OUTBOUND_MCP_NAME_PREFIX,
+  outboundToolsForProfiles,
+  outboundToolAllowedOnProfiles,
 } from "./profile"
 export { gateOutboundCall, listOutboundTools, denyOutboundExfilIfNeeded } from "./facade"
 export type { OutboundCallRequest, OutboundCallResult } from "./facade"
@@ -48,6 +52,8 @@ export {
   authorizeOutboundHttp,
   OUTBOUND_INVOKE_PATH,
   OUTBOUND_DISCLOSURE_PATH,
+  OUTBOUND_PROFILE_PATH,
+  OUTBOUND_HEALTH_PATH,
 } from "./companion-http"
 export {
   issueOutboundGrant,
@@ -58,6 +64,11 @@ export {
   resetOutboundGrantsForTests,
   grantAllowsPageExport,
   grantAllowsPageExportById,
+  liveGrantProfileById,
+  liveGrantProfilesByCaller,
+  OUTBOUND_L1_DEFAULT_PROFILE,
+  OUTBOUND_L1_INTERACT_PROFILE,
+  OUTBOUND_GRANT_PROFILES,
   DEFAULT_GRANT_TTL_MS,
   OUTBOUND_GRANT_TOKEN_PREFIX,
 } from "./outbound-grants"

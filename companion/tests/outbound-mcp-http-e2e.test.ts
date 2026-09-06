@@ -23,6 +23,7 @@ import {
   companionAcceptDisclosure,
   OUTBOUND_HEALTH_PATH,
   OUTBOUND_INVOKE_PATH,
+  OUTBOUND_PROFILE_PATH,
   OUTBOUND_DISCLOSURE_PATH,
 } from "../src/outbound-mcp/companion-http"
 import { clearAllOutboundDisclosureSessions, hasOutboundDisclosure } from "../src/outbound-mcp/disclosure-session"
@@ -35,6 +36,7 @@ import { setOutboundDispatcher, invokeOutboundTool } from "../src/outbound-mcp/b
 import {
   issueOutboundGrant,
   resetOutboundGrantsForTests,
+  OUTBOUND_L1_INTERACT_PROFILE,
 } from "../src/outbound-mcp/outbound-grants"
 import { SecurityConfirmationManager } from "../src/security-confirmation"
 import { getAuditLogPath } from "../src/packs/audit-log"
@@ -751,6 +753,110 @@ test("e2e #408: HTTP illegal name PROFILE_FORBIDDEN with accurate copy", async (
     assert.equal(r.json.error_code, "PROFILE_FORBIDDEN")
     assert.match(String(r.json.error), /not a valid outbound MCP name/)
     assert.doesNotMatch(String(r.json.error), /not on the default outbound L1 profile/)
+    assert.equal(hit, false)
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e #410: /profile returns the interact profile + trimmed tool set for an interact grant", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  try {
+    const interactTok = issueOutboundGrant({
+      label: "i",
+      caller_id: "i1",
+      profile: OUTBOUND_L1_INTERACT_PROFILE,
+    }).token
+    const r = await requestJson(port, "GET", OUTBOUND_PROFILE_PATH, {
+      token: interactTok,
+    })
+    assert.equal(r.status, 200, JSON.stringify(r.json))
+    assert.equal(r.json.ok, true)
+    assert.equal(r.json.profile, OUTBOUND_L1_INTERACT_PROFILE)
+    const tools: string[] = r.json.tools
+    assert.ok(tools.includes("cmspark__scroll"), "interact includes scroll")
+    assert.ok(tools.includes("cmspark__get_page_html"), "interact includes get_page_html")
+    assert.ok(tools.includes("cmspark__list_tabs"), "interact keeps the default 8")
+    assert.ok(r.json.wire_tools.includes("scroll"))
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e #410: /profile default grant advertises default set only (no scroll)", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  try {
+    const tok = grantToken("d1")
+    const r = await requestJson(port, "GET", OUTBOUND_PROFILE_PATH, { token: tok })
+    assert.equal(r.status, 200)
+    assert.equal(r.json.profile, "outbound_l1_default")
+    const tools: string[] = r.json.tools
+    assert.ok(!tools.includes("cmspark__scroll"), "default key must not see scroll")
+    assert.ok(tools.includes("cmspark__list_tabs"))
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e #410: /profile without a valid bearer is 401 (no profile enumeration)", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  try {
+    const none = await requestJson(port, "GET", OUTBOUND_PROFILE_PATH)
+    assert.equal(none.status, 401)
+    assert.equal(none.json.ok, false)
+    const bad = await requestJson(port, "GET", OUTBOUND_PROFILE_PATH, {
+      token: "cmg_notarealkey",
+    })
+    assert.equal(bad.status, 401)
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e #410: interact grant invokes scroll over HTTP invoke (per-key profile)", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  const seen: string[] = []
+  setOutboundToolRunner(async (_id, tool) => {
+    seen.push(tool)
+    return { success: true, data: { ok: true } }
+  })
+  try {
+    const tok = issueOutboundGrant({
+      label: "i",
+      caller_id: "i2",
+      profile: OUTBOUND_L1_INTERACT_PROFILE,
+    }).token
+    const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: tok,
+      body: { caller_id: "i2", tool: "scroll", args: { tabId: 424210, amount: 300 } },
+    })
+    assert.equal(r.status, 200, JSON.stringify(r.json))
+    assert.equal(r.json.ok, true, JSON.stringify(r.json))
+    assert.deepEqual(seen, ["scroll"])
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e #410: default grant invoking interact tool scroll → PROFILE_FORBIDDEN", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  let hit = false
+  setOutboundToolRunner(async () => {
+    hit = true
+    return { success: true, data: {} }
+  })
+  try {
+    const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: grantToken("d2"),
+      body: { caller_id: "d2", tool: "scroll", args: { tabId: 1 } },
+    })
+    assert.equal(r.status, 422)
+    assert.equal(r.json.error_code, "PROFILE_FORBIDDEN")
     assert.equal(hit, false)
   } finally {
     await close(server)

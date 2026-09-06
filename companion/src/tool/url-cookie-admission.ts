@@ -226,12 +226,21 @@ export async function runUrlNavigateAdmission(
     return { ok: false, result }
   }
   const securityConfig = getConfig().security
+  // #410 (ADR-022 Blast Autonomy): global operator exemption flags must NEVER
+  // spill to the outbound track — outbound only trusts grant per-key flags +
+  // operator HITL. auto_approved_domains / auto_approve_dangerous /
+  // allow_all_schemes (god-mode, incl. three-flag cruise) are ignored for an
+  // outbound caller: an external agent navigating an auto-approved domain must
+  // still hit the operator confirm fan-out, and non-http(s) schemes stay
+  // hard-blocked even on god-mode machines.
+  const outboundTrack = isOutboundMcpCall === true
   // file: is NOT in the scheme hard-block bucket (javascript:/data:/chrome:/…).
   // Never fall through to skipUrlConfirmation — auto_approve_dangerous and
   // auto_approved_domains (including localhost / *) must not open local files.
-  // Only allow_all_schemes (god-mode; three-flag cruise includes it) skips.
+  // Only allow_all_schemes (god-mode; three-flag cruise includes it) skips — and
+  // never for the outbound track (#410).
   if (parsedUrl.protocol === "file:") {
-    if (securityConfig.allow_all_schemes === true) {
+    if (securityConfig.allow_all_schemes === true && !outboundTrack) {
       logger.warn("security.godmode_bypassed", {
         tool_call_id: toolCallId,
         tool_name: toolName,
@@ -321,11 +330,12 @@ export async function runUrlNavigateAdmission(
     return { ok: true }
   }
 
-  // Layer 1 — scheme hard-block. skipL1 = allow_all_schemes (GOD-MODE). When
-  // bypassed, emit a prominent audit log (javascript: flagged) so god-mode
-  // navigations stay traceable, then fall through to the Layer 2 domain gate.
+  // Layer 1 — scheme hard-block. skipL1 = allow_all_schemes (GOD-MODE), never
+  // honored on the outbound track (#410: outbound stays http/https-only even on
+  // god-mode machines). When bypassed (non-outbound), emit a prominent audit log
+  // (javascript: flagged) so god-mode navigations stay traceable.
   if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-    if (securityConfig.allow_all_schemes !== true) {
+    if (securityConfig.allow_all_schemes !== true || outboundTrack) {
       const result = {
         success: false as const,
         error: `Security Block: ${toolName} to ${parsedUrl.protocol} scheme is not allowed. Only http/https URLs are permitted.`,
@@ -352,10 +362,12 @@ export async function runUrlNavigateAdmission(
   const host = parsedUrl.hostname
   // ADR-007: trusted_domains is Cookie-only. URL gate uses auto_approved_domains
   // + global toggles only — cookie trust must not skip navigate/create_tab/set_tab_url.
-  const skipUrlConfirmation =
-    isAutoApprovedDomain(host) ||
-    securityConfig.auto_approve_dangerous === true ||
-    securityConfig.allow_all_schemes === true
+  // #410: outbound track never skips (see outboundTrack comment above).
+  const skipUrlConfirmation = outboundTrack
+    ? false
+    : isAutoApprovedDomain(host) ||
+      securityConfig.auto_approve_dangerous === true ||
+      securityConfig.allow_all_schemes === true
   if (!skipUrlConfirmation) {
     if (ws.readyState !== WebSocket.OPEN) {
       const result = {

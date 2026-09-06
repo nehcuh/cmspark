@@ -54,7 +54,7 @@ Usage:
 
   cmspark-agent mcp-outbound               启动 Outbound MCP stdio 服务（非 default-on；编程 Agent 对接）
 
-  cmspark-agent outbound-grant issue --caller-id <id> [--label <name>] [--allow-page-export] [--ttl-ms N]
+  cmspark-agent outbound-grant issue --caller-id <id> [--label <name>] [--profile outbound_l1_default|outbound_l1_interact] [--allow-page-export] [--ttl-ms N]
                                            签发租手钥匙（一次性 token；不是扩展配对码）
   cmspark-agent outbound-grant revoke --grant-id <id>
                                            撤销租手钥匙

@@ -16,6 +16,17 @@ import { appendCapabilityAudit } from "../packs/audit-log"
 export const OUTBOUND_GRANT_TOKEN_PREFIX = "cmg_"
 export const DEFAULT_GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30d wall-clock
 export const OUTBOUND_L1_DEFAULT_PROFILE = "outbound_l1_default"
+/** #410 — interact profile (superset of default, see profile.ts OUTBOUND_PROFILE_TOOLS). */
+export const OUTBOUND_L1_INTERACT_PROFILE = "outbound_l1_interact"
+
+export const OUTBOUND_GRANT_PROFILES = [
+  OUTBOUND_L1_DEFAULT_PROFILE,
+  OUTBOUND_L1_INTERACT_PROFILE,
+] as const
+
+export function isOutboundGrantProfile(p: string): boolean {
+  return (OUTBOUND_GRANT_PROFILES as readonly string[]).includes(p)
+}
 
 /** #406 — grants file was frozen at module load (GRANTS_PATH), so env-redirected
  *  callers (stdio-mcp outbound tests, runtime retarget) wrote the real home dir.
@@ -150,8 +161,10 @@ export function issueOutboundGrant(opts: IssueGrantOpts): IssueGrantResult {
   }
   const label = (opts.label || caller_id).trim() || caller_id
   const profile = (opts.profile || OUTBOUND_L1_DEFAULT_PROFILE).trim()
-  if (profile !== OUTBOUND_L1_DEFAULT_PROFILE) {
-    throw new Error(`unsupported grant profile: ${profile} (Phase 1 only ${OUTBOUND_L1_DEFAULT_PROFILE})`)
+  if (!isOutboundGrantProfile(profile)) {
+    throw new Error(
+      `unsupported grant profile: ${profile} (supported: ${OUTBOUND_GRANT_PROFILES.join(", ")})`,
+    )
   }
 
   const ttl =
@@ -253,11 +266,11 @@ export function verifyOutboundGrantToken(
       http_status: 403,
     }
   }
-  if (rec.profile !== OUTBOUND_L1_DEFAULT_PROFILE) {
+  if (!isOutboundGrantProfile(rec.profile)) {
     return {
       ok: false,
       error_code: "GRANT_REQUIRED",
-      error: `grant profile not allowed: ${rec.profile}`,
+      error: `grant profile not supported: ${rec.profile}`,
       http_status: 401,
     }
   }
@@ -283,6 +296,7 @@ export function verifyOutboundGrantToken(
   audit("outbound_mcp.grant_use", {
     grant_id: rec.id,
     caller_id: rec.caller_id,
+    profile: rec.profile,
   })
 
   return {
@@ -367,6 +381,47 @@ export function grantAllowsPageExportById(grantId: string): boolean {
       !g.revoked_at &&
       !(g.expires_at && Date.parse(g.expires_at) <= t),
   )
+}
+
+/**
+ * Live grant (not revoked, not expired) profile for an exact grant id.
+ * HTTP per-key track (#410): the authenticated key's OWN profile decides which
+ * tools the caller may invoke — sibling grants never widen this key.
+ * Returns null when the grant is missing/revoked/expired.
+ */
+export function liveGrantProfileById(grantId: string): string | null {
+  const id = (grantId || "").trim()
+  if (!id) return null
+  const t = Date.now()
+  const rec = loadFile().grants.find(
+    (g) =>
+      g.id === id &&
+      !g.revoked_at &&
+      !(g.expires_at && Date.parse(g.expires_at) <= t),
+  )
+  return rec?.profile ?? null
+}
+
+/**
+ * Distinct profiles among live grants for a caller. stdio / legacy caller-level
+ * track (#410): no grant credential is available on the wire, so any live grant
+ * for the caller contributes its profile (mirrors grantAllowsPageExport).
+ */
+export function liveGrantProfilesByCaller(callerId: string): string[] {
+  const id = (callerId || "").trim()
+  if (!id) return []
+  const t = Date.now()
+  const out = new Set<string>()
+  for (const g of loadFile().grants) {
+    if (
+      g.caller_id === id &&
+      !g.revoked_at &&
+      !(g.expires_at && Date.parse(g.expires_at) <= t)
+    ) {
+      out.add(g.profile)
+    }
+  }
+  return Array.from(out)
 }
 
 /** Test helper: wipe grants file under the live data dir. */

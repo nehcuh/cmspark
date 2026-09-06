@@ -7,6 +7,7 @@ import {
   OUTBOUND_DISCLOSURE_PATH,
   OUTBOUND_INVOKE_PATH,
   OUTBOUND_HEALTH_PATH,
+  OUTBOUND_PROFILE_PATH,
 } from "./companion-http"
 import type { OutboundDispatcher, OutboundDispatchRequest, OutboundDispatchResult } from "./bridge"
 
@@ -95,6 +96,40 @@ export async function companionPostDisclosure(
     return {
       ok: false,
       error: r.json?.error || r.json?.error_code || `http_${r.status}`,
+    }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) }
+  }
+}
+
+/**
+ * #410 — ask the companion which profile this bearer (grant or ws_secret)
+ * authorizes, so the stdio child advertises only the granted tool set.
+ * Endpoint is authenticated (same auth matrix as invoke), so it cannot be
+ * used to enumerate profiles without a valid key.
+ */
+export async function fetchCompanionOutboundProfile(opts: HttpClientOptions): Promise<
+  | {
+      ok: true
+      profile: string
+      /** Canonical tool names granted by the profile. */
+      tools: string[]
+    }
+  | { ok: false; error?: string; http_status?: number }
+> {
+  try {
+    const r = await requestJson(opts, "GET", OUTBOUND_PROFILE_PATH)
+    if (r.status === 200 && r.json?.ok && typeof r.json.profile === "string") {
+      return {
+        ok: true,
+        profile: r.json.profile,
+        tools: Array.isArray(r.json.tools) ? r.json.tools.map(String) : [],
+      }
+    }
+    return {
+      ok: false,
+      error: r.json?.error || r.json?.error_code || `http_${r.status}`,
+      http_status: r.status,
     }
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) }

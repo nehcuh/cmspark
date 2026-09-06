@@ -7,20 +7,28 @@
 
 import {
   OUTBOUND_DISCLOSURE_ZH,
-  OUTBOUND_MCP_ALLOWLIST,
   OUTBOUND_MCP_EXFIL_CLASS,
-  isOutboundAllowed,
+  outboundToolAllowedOnProfiles,
+  outboundToolsForProfiles,
   outboundToInternalName,
 } from "./profile"
 import { appendOutboundMcpAudit, type OutboundAuditEvent } from "./audit"
 import { hasOutboundDisclosure } from "./disclosure-session"
-import { grantAllowsPageExport, grantAllowsPageExportById } from "./outbound-grants"
+import {
+  grantAllowsPageExport,
+  grantAllowsPageExportById,
+  liveGrantProfileById,
+  liveGrantProfilesByCaller,
+  OUTBOUND_L1_DEFAULT_PROFILE,
+} from "./outbound-grants"
 
 export type OutboundCallRequest = {
   caller_id: string
   tool: string
   /** Raw invoke name before canonicalOutboundMcpName (HTTP dual-track). */
   wire_name?: string
+  /** Grant profile that authorized this request (#410, HTTP per-key track). */
+  profile?: string
   args?: Record<string, unknown>
   /**
    * @deprecated Ignored for authorization. Kept for API compatibility only.
@@ -44,9 +52,9 @@ export type OutboundCallResult = {
   tools?: string[]
 }
 
-/** MCP tools/list response names. */
+/** MCP tools/list response names (default profile — kept for compat callers). */
 export function listOutboundTools(): string[] {
-  return [...OUTBOUND_MCP_ALLOWLIST]
+  return outboundToolsForProfiles([OUTBOUND_L1_DEFAULT_PROFILE])
 }
 
 /**
@@ -72,7 +80,7 @@ export function listOutboundTools(): string[] {
 export function denyOutboundExfilIfNeeded(
   caller_id: string,
   tool: string,
-  extraAudit?: Pick<OutboundAuditEvent, "domain" | "grant_id" | "wire_name">,
+  extraAudit?: Pick<OutboundAuditEvent, "domain" | "grant_id" | "wire_name" | "profile">,
 ): OutboundCallResult | null {
   if (!OUTBOUND_MCP_EXFIL_CLASS.has(tool)) return null
   const cid = (caller_id || "").trim() || "unknown"
@@ -119,35 +127,66 @@ export function denyOutboundExfilIfNeeded(
 }
 
 /**
+ * Resolve which profiles authorize `req`: explicit (HTTP per-key track)
+ * when provided, else caller-level (stdio / legacy) = live grants of the
+ * caller; none → default profile (fail closed to today's semantics).
+ */
+export function resolveOutboundGateProfiles(
+  req: Pick<OutboundCallRequest, "caller_id" | "profile">,
+  explicitProfiles?: string[],
+): string[] {
+  if (explicitProfiles && explicitProfiles.length > 0) return explicitProfiles
+  if (req.profile) return [req.profile]
+  const callerLevel = liveGrantProfilesByCaller(req.caller_id || "unknown")
+  if (callerLevel.length > 0) return callerLevel
+  return [OUTBOUND_L1_DEFAULT_PROFILE]
+}
+
+/**
  * Gate a tool call before any Companion dispatch.
  * Fail-closed on forbidden tools and missing grant flag / operator HITL for exfil.
+ *
+ * @param opts.explicitProfiles — HTTP per-key track: profiles granted by the
+ *   authenticated key itself (never widened by sibling keys). Omit on the
+ *   stdio / legacy caller-level track → caller's live-grant profiles.
  */
-export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
+export function gateOutboundCall(
+  req: OutboundCallRequest,
+  opts?: { explicitProfiles?: string[] },
+): OutboundCallResult {
   const tool = (req.tool || "").trim()
   if (!tool) {
     appendOutboundMcpAudit({
       caller_id: req.caller_id || "unknown",
       tool: "",
       wire_name: req.wire_name,
+      profile: req.profile,
       ok: false,
       error_code: "TOOL_REQUIRED",
     })
     return { ok: false, error: "tool required", error_code: "TOOL_REQUIRED" }
   }
 
-  if (!isOutboundAllowed(tool)) {
+  const profiles = resolveOutboundGateProfiles(req, opts?.explicitProfiles)
+  const allowed = outboundToolAllowedOnProfiles(tool, profiles)
+  if (!allowed) {
     appendOutboundMcpAudit({
       caller_id: req.caller_id || "unknown",
       tool,
       wire_name: req.wire_name,
+      profile: req.profile,
       domain: req.domain,
       ok: false,
       error_code: "PROFILE_FORBIDDEN",
       confirm_outcome: "n/a",
     })
+    const isDefaultOnly =
+      profiles.length === 1 && profiles[0] === OUTBOUND_L1_DEFAULT_PROFILE
     return {
       ok: false,
-      error: `tool "${tool}" is not on the default outbound L1 profile (forbidden)`,
+      error: isDefaultOnly
+        ? `tool "${tool}" is not on the default outbound L1 profile (forbidden)`
+        : `tool "${tool}" is not granted on the outbound profile(s) ${profiles.join("/")} (forbidden)`,
       error_code: "PROFILE_FORBIDDEN",
     }
   }
@@ -158,6 +197,7 @@ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
   const exfilDeny = denyOutboundExfilIfNeeded(req.caller_id, tool, {
     domain: req.domain,
     wire_name: req.wire_name,
+    profile: req.profile,
   })
   if (exfilDeny) return exfilDeny
 
@@ -166,6 +206,7 @@ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
     caller_id: req.caller_id || "unknown",
     tool,
     wire_name: req.wire_name,
+    profile: req.profile,
     domain: req.domain,
     ok: true,
     confirm_outcome: "n/a",

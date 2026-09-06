@@ -923,6 +923,17 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         /* acp module optional at boot */
       }
     } catch { /* ignore */ }
+    // #410 (ADR-022 Blast Autonomy): outbound never inherits operator exemption
+    // flags. auto_approve_dangerous / allow_all_schemes / thread-trust /
+    // enterprise auto-approve must NOT auto-approve an external agent's call —
+    // outbound only trusts grant per-key flags + operator HITL confirm.
+    if (isOutboundMcpCall) {
+      skipConfirmation = false
+      logger.info("security.outbound_no_auto_approve", {
+        tool_call_id: toolCallId,
+        tool_name: toolName,
+      })
+    }
     // §6.2 CRITICAL_API_GATE: detectCriticalApis() is the never-auto-approved
     // subset of detectDangerousApis() (exfil + sandbox-escape + obfuscation
     // variants). Domain whitelist / god-mode alone / auto_approve_dangerous

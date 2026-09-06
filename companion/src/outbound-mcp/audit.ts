@@ -10,6 +10,8 @@ export type OutboundAuditEvent = {
   tool: string
   /** Raw name as received, before canonicalOutboundMcpName. Tool-name only. */
   wire_name?: string
+  /** Grant profile that authorized the call (#410); omit on caller-level tracks. */
+  profile?: string
   domain?: string
   confirm_outcome?: "approved" | "denied" | "timeout" | "skipped" | "n/a"
   ok: boolean
@@ -24,6 +26,7 @@ export function appendOutboundMcpAudit(ev: OutboundAuditEvent): void {
     caller_id: ev.caller_id,
     tool: ev.tool,
     ...(ev.wire_name != null && ev.wire_name !== "" ? { wire_name: ev.wire_name } : {}),
+    ...(ev.profile != null && ev.profile !== "" ? { profile: ev.profile } : {}),
     domain: ev.domain,
     confirm_outcome: ev.confirm_outcome ?? "n/a",
     ok: ev.ok,

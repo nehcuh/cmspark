@@ -1161,6 +1161,16 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.allow_page_export !== undefined && typeof m.allow_page_export !== "boolean") {
         return { valid: false, error: "outbound_mcp.grants.issue allow_page_export must be a boolean" }
       }
+      if (
+        m.profile !== undefined &&
+        m.profile !== "outbound_l1_default" &&
+        m.profile !== "outbound_l1_interact"
+      ) {
+        return {
+          valid: false,
+          error: "outbound_mcp.grants.issue profile must be outbound_l1_default|outbound_l1_interact",
+        }
+      }
       return { valid: true }
     },
     "outbound_mcp.grants.revoke": (m) => {

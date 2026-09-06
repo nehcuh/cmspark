@@ -595,3 +595,102 @@ it("source: summoner origin awaits extension peer before HITL", () => {
   assert.doesNotMatch(url, /openSidePanel/)
 })
 
+
+describe("#410: 豁免旗不溅射 — outbound track never inherits operator auto-approve", () => {
+  const fakeWs = { readyState: WebSocket.OPEN } as WebSocket
+
+  it("outbound create_tab to auto_approved_domains STILL asks the operator", async () => {
+    saveConfig({
+      auto_approved_domains: ["safe.example"],
+      security: {
+        ...getConfig().security,
+        auto_approve_dangerous: false,
+        allow_all_schemes: false,
+      },
+    })
+    let confirmCalled = false
+    const r = await runUrlNavigateAdmission({
+      toolName: "create_tab",
+      finalParams: { url: "https://safe.example/x" },
+      toolCallId: "u-out-auto-dom",
+      startedAt: Date.now(),
+      ws: fakeWs,
+      isOutboundMcpCall: true,
+      logToolFinish: noopLog,
+      securityConfirmations: {
+        request: async () => {
+          confirmCalled = true
+          return { approved: false, reason: "denied" }
+        },
+      } as any,
+      clients: [],
+      wsAuthGet: () => undefined,
+    })
+    assert.equal(confirmCalled, true, "auto_approved_domains must not skip the operator HITL for outbound")
+    assert.equal(r.ok, false)
+  })
+
+  it("outbound javascript: stays hard-blocked on god-mode machines", async () => {
+    saveConfig({
+      security: {
+        ...getConfig().security,
+        allow_all_schemes: true,
+        auto_approve_dangerous: true,
+      },
+    })
+    let confirmCalled = false
+    const r = await runUrlNavigateAdmission({
+      toolName: "navigate",
+      finalParams: { url: "javascript:alert(1)" },
+      toolCallId: "u-out-god-js",
+      startedAt: Date.now(),
+      ws: fakeWs,
+      isOutboundMcpCall: true,
+      logToolFinish: noopLog,
+      securityConfirmations: {
+        request: async () => {
+          confirmCalled = true
+          return { approved: true, reason: "approved" }
+        },
+      } as any,
+      clients: [],
+      wsAuthGet: () => undefined,
+    })
+    assert.equal(r.ok, false, "non-http(s) schemes must stay blocked for outbound even under allow_all_schemes")
+    assert.equal(confirmCalled, false)
+  })
+
+  it("outbound file: under god-mode STILL requires operator confirm", async () => {
+    const downloads = path.join(os.homedir(), "Downloads")
+    fs.mkdirSync(downloads, { recursive: true })
+    const pdf = path.join(downloads, "invoice-out-god.pdf")
+    fs.writeFileSync(pdf, "pdf")
+    saveConfig({
+      security: {
+        ...getConfig().security,
+        allow_all_schemes: true,
+        auto_approve_dangerous: false,
+      },
+    })
+    let confirmCalled = false
+    const r = await runUrlNavigateAdmission({
+      toolName: "create_tab",
+      finalParams: { url: pathToFileURL(pdf).href },
+      toolCallId: "u-out-file-god",
+      startedAt: Date.now(),
+      ws: fakeWs,
+      isOutboundMcpCall: true,
+      logToolFinish: noopLog,
+      securityConfirmations: {
+        request: async () => {
+          confirmCalled = true
+          return { approved: false, reason: "denied" }
+        },
+      } as any,
+      clients: [],
+      wsAuthGet: () => undefined,
+    })
+    assert.equal(confirmCalled, true, "god-mode must not open local files for outbound without operator")
+    assert.equal(r.ok, false)
+  })
+})

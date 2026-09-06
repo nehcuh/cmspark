@@ -378,21 +378,35 @@ claude mcp add --env CMSPARK_OUTBOUND_GRANT=cmg_粘贴刚才那把钥匙 \
 
 `cmspark-agent daemon start` **不会** spawn `mcp-outbound`。stdio 由编程助手按需拉起，且必须带 grant env。
 
-### 关键工具（默认 outbound L1 profile）
+### 关键工具（默认 outbound L1 profile + interact 索取档）
 
-MCP `tools/list` 暴露**短名**（`list_tabs`）。Grok 会写成 `cmspark__list_tabs`（恰好一个 `__`）；Claude Code 写成 `mcp__cmspark__list_tabs`。`CallTool` **与 HTTP invoke** 短名与 `cmspark__*` 都收（同一 `canonicalOutboundMcpName`）。表内仍写 canonical，便于文档检索。
+MCP `tools/list` 暴露**短名**（`list_tabs`）。Grok 会写成 `cmspark__list_tabs`（恰好一个 `__`）；Claude Code 写成 `mcp__cmspark__list_tabs`（发送前剥 `mcp__` 前缀，服务端收到的即短名）。`CallTool` **与 HTTP invoke** 短名与 `cmspark__*` 都收（同一 `canonicalOutboundMcpName`）。表内仍写 canonical，便于文档检索。
 
 | 工具（Grok / HTTP / 文档名） | 说明 |
 |------|------|
-| `cmspark__list_outbound_profile` | 列出当前策展 L1 工具名 |
+| `cmspark__list_outbound_profile` | 列出当前钥匙 profile 授予的工具名 |
 | `cmspark__list_tabs` | 列标签（建议其它工具前先调） |
 | `cmspark__navigate` / `click` / `type` / `wait_for` / `downloads_find` | 策展 L1 交互 / 只读 Downloads |
 | `cmspark__get_page_text` / `screenshot` | 外泄类。无 `allow_page_export` → `DISCLOSURE_NOT_GRANTED`；有旗无操作者会话 → `DISCLOSURE_HITL_REQUIRED`（确认台）。调用方自签不够 |
 | `cmspark__accept_data_disclosure` | **不是**人类同意。不能代替钥匙上的 `allow_page_export`，也不能跳过确认台 HITL |
 
-**不在默认 L1（调用会 `PROFILE_FORBIDDEN`）：**  
-`scroll`、`evaluate`、cookies、host/CU、shell、netsec 等。  
-长页翻读：用 `navigate` 到目标 URL + `get_page_text`，或在 Side Panel 内用完整工具面；不要假设租手有 `cmspark__scroll`。
+#### interact 索取档（#410，默认不发）
+
+默认钥匙**逐字节不变**（上表 8 工具 + 2 meta）。需要补全 L1 交互面时，操作者显式签发交互档钥匙：
+
+```bash
+cmspark-agent outbound-grant issue --caller-id grok --profile outbound_l1_interact \
+  --allow-page-export   # 需要 DOM/像素外泄时才加
+```
+
+交互档 = 默认 8 工具 + `scroll` / `get_element_info` / `press_key` / `select_option` / `hover` / `dblclick` / `fill_form` / `drag_and_drop` / `create_tab`。其中 **`get_page_html` / `analyze_image` 属页面内容外泄类**，复用 `allow_page_export` 门（与页文/截图同旗同确认台，不拆新旗）；无旗调用 → `DISCLOSURE_NOT_GRANTED`。
+
+stdio `tools/list` 会按钥匙 profile 裁剪（只广告这把钥匙能调用的工具）。
+
+**不在默认 L1（调用会 `PROFILE_FORBIDDEN`）：**
+`evaluate`、cookies、host/CU、shell、netsec、skill 安装等。`scroll` 等交互工具在默认钥匙下同样 `PROFILE_FORBIDDEN`（须先发 interact 档）。
+
+**豁免旗对 outbound 无效（#410）**：即便本机开了 `auto_approve_dangerous` / 三旗巡航 / `auto_approved_domains`，外部 agent 的 outbound 调用也**不**继承——非 http(s) scheme 依旧硬拦、auto-approved 域仍要确认台批准。outbound 只认钥匙上的 per-key 旗 + 操作者 HITL。
 
 ### 桥与限制
 

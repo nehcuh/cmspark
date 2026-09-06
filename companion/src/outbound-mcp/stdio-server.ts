@@ -12,14 +12,18 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js"
 import {
-  OUTBOUND_MCP_ALLOWLIST,
   OUTBOUND_DISCLOSURE_ZH,
   outboundMcpWireName,
   canonicalOutboundMcpName,
+  outboundToolsForProfiles,
 } from "./profile"
 import { invokeOutboundTool, setOutboundDispatcher } from "./bridge"
-import { listOutboundTools } from "./facade"
-import { createHttpOutboundDispatcher } from "./http-client"
+import { OUTBOUND_L1_DEFAULT_PROFILE } from "./outbound-grants"
+import {
+  createHttpOutboundDispatcher,
+  fetchCompanionOutboundProfile,
+  type HttpClientOptions,
+} from "./http-client"
 import { getOrCreateSharedSecret } from "../ws-auth"
 import { getConfig } from "../config"
 
@@ -30,6 +34,14 @@ export const GRANT_ENV = "CMSPARK_OUTBOUND_GRANT"
 
 const META_ACCEPT = "cmspark__accept_data_disclosure"
 const META_PROFILE = "cmspark__list_outbound_profile"
+
+/**
+ * #410 — stdio tools/list per-key profile trimming. The stdio child only has
+ * its env token; the grant profile lives in the companion. wire* fetches it
+ * once via the authenticated /outbound-mcp/v1/profile endpoint and caches it
+ * here. null = not resolved (fallback: default profile + caller-level gate).
+ */
+let resolvedProfiles: string[] | null = null
 
 function callerId(): string {
   return (process.env[CALLER_ENV] || "stdio-default").trim() || "stdio-default"
@@ -45,6 +57,18 @@ function toolDescription(name: string): string {
     cmspark__screenshot: "Screenshot — data-exfil; requires prior disclosure accept",
     cmspark__wait_for: "Wait for selector/condition",
     cmspark__downloads_find: "Find files in Downloads sandbox (read-only)",
+    // #410 interact profile (granted via --profile outbound_l1_interact)
+    cmspark__scroll: "Scroll a page/tab (interact profile)",
+    cmspark__get_element_info: "Inspect element metadata before acting (interact)",
+    cmspark__press_key: "Press a keyboard key (interact)",
+    cmspark__select_option: "Select an option in a dropdown (interact)",
+    cmspark__hover: "Hover an element (interact)",
+    cmspark__dblclick: "Double-click an element (interact)",
+    cmspark__fill_form: "Fill a form (interact)",
+    cmspark__drag_and_drop: "Drag & drop an element (interact)",
+    cmspark__create_tab: "Open a new tab to a URL (URL gate, interact)",
+    cmspark__get_page_html: "Read raw page DOM — data-exfil; requires prior disclosure accept (interact)",
+    cmspark__analyze_image: "Send page pixels to vision model — data-exfil; requires prior disclosure accept (interact)",
     [META_ACCEPT]:
       "Caller acknowledge is not operator consent (ACK_NOT_OPERATOR). Page export requires grant --allow-page-export and Confirm Center HITL.",
     [META_PROFILE]: "List default outbound L1 tool names (curated profile)",
@@ -89,17 +113,23 @@ export function resolveOutboundHttpBearer(): {
 }
 
 /** Resolve companion loopback + secret/grant; wire HTTP dispatcher. */
-export function wireDefaultOutboundHttpDispatcher(): {
+export async function wireDefaultOutboundHttpDispatcher(): Promise<{
   port: number
   token_present: boolean
   auth_mode: "grant" | "ws_secret"
-} {
+  profile: string
+}> {
   const config = getConfig()
   const port =
     Number(process.env[PORT_ENV]) ||
     Number(config.port) ||
     23401
   const { token, mode } = resolveOutboundHttpBearer()
+  const httpOpts: HttpClientOptions = {
+    port,
+    token,
+    timeout_ms: 30_000,
+  }
   setOutboundDispatcher(
     createHttpOutboundDispatcher({
       port,
@@ -107,17 +137,58 @@ export function wireDefaultOutboundHttpDispatcher(): {
       timeout_ms: 120_000,
     }),
   )
-  return { port, token_present: Boolean(token), auth_mode: mode }
+  // #410 — ask the companion which profile this token grants, so tools/list
+  // advertises only tools the caller may actually invoke. Await before the
+  // first tools/list so an interact key never sees a default-only ad.
+  // Fallback (fetch failure / legacy ws_secret): resolvedProfiles stays null →
+  // default profile + caller-level gate (documented degradation, not widening).
+  let profile: string = OUTBOUND_L1_DEFAULT_PROFILE
+  try {
+    const p = await fetchCompanionOutboundProfile(httpOpts)
+    if (p.ok) {
+      resolvedProfiles = [p.profile]
+      profile = p.profile
+      console.error(
+        `[cmspark-outbound] grant profile: ${p.profile} (${p.tools.length} canonical tools)`,
+      )
+    } else {
+      console.error(
+        `[cmspark-outbound] profile fetch rejected (${p.error || "unknown"}) — advertising default outbound L1 set`,
+      )
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(
+      `[cmspark-outbound] profile fetch failed (${msg}) — advertising default outbound L1 set`,
+    )
+  }
+  return { port, token_present: Boolean(token), auth_mode: mode, profile }
+}
+
+/** Profiles currently advertising ([] = default). Visible for tests. */
+export function outboundActiveProfiles(): readonly string[] {
+  return resolvedProfiles ?? [OUTBOUND_L1_DEFAULT_PROFILE]
+}
+
+/** Canonical tool set granted by the resolved profile (default when unset). */
+export function outboundActiveCanonicalTools(): string[] {
+  return outboundToolsForProfiles(outboundActiveProfiles())
 }
 
 /** Build MCP server instance (testable without connecting transport). */
-export function createOutboundMcpServer(): Server {
+export function createOutboundMcpServer(
+  profiles?: readonly string[],
+): Server {
+  // Explicit profiles (tests) win; else the profile resolved from the env
+  // token at wire time; else default (byte-identical to pre-#410 behavior).
+  if (profiles) resolvedProfiles = [...profiles]
   const server = new Server(
     { name: "cmspark-outbound", version: "0.6.0" },
     { capabilities: { tools: {} } },
   )
 
-  const allToolNames = [META_ACCEPT, META_PROFILE, ...OUTBOUND_MCP_ALLOWLIST]
+  const grantedCanonical = outboundToolsForProfiles(outboundActiveProfiles())
+  const allToolNames = [META_ACCEPT, META_PROFILE, ...grantedCanonical]
 
   // Wire names are the suffix only (`list_tabs`). Clients that qualify as
   // `server__tool` (Grok) then expose `cmspark__list_tabs`. Advertising the
@@ -175,13 +246,18 @@ export function createOutboundMcpServer(): Server {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify({ tools: listOutboundTools() }),
+            text: JSON.stringify({ tools: outboundActiveCanonicalTools() }),
           },
         ],
       }
     }
 
-    if (!(OUTBOUND_MCP_ALLOWLIST as readonly string[]).includes(name)) {
+    const granted = outboundActiveCanonicalTools()
+    if (!(granted as readonly string[]).includes(name)) {
+      const isDefaultOnly =
+        resolvedProfiles == null ||
+        (resolvedProfiles.length === 1 &&
+          resolvedProfiles[0] === OUTBOUND_L1_DEFAULT_PROFILE)
       return {
         content: [
           {
@@ -189,7 +265,9 @@ export function createOutboundMcpServer(): Server {
             text: JSON.stringify({
               ok: false,
               error_code: "PROFILE_FORBIDDEN",
-              error: `tool "${name}" is not on the default outbound L1 profile`,
+              error: isDefaultOnly
+                ? `tool "${name}" is not on the default outbound L1 profile`
+                : `tool "${name}" is not granted on the outbound profile ${resolvedProfiles?.join("/")}`,
             }),
           },
         ],
@@ -203,12 +281,18 @@ export function createOutboundMcpServer(): Server {
         ? (args.args as Record<string, unknown>)
         : Object.fromEntries(Object.entries(args).filter(([k]) => k !== "domain"))
 
-    const result = await invokeOutboundTool({
-      caller_id: cid,
-      tool: name,
-      args: toolArgs,
-      domain,
-    })
+    const result = await invokeOutboundTool(
+      {
+        caller_id: cid,
+        tool: name,
+        args: toolArgs,
+        domain,
+      },
+      undefined,
+      // Local gate mirrors the advertised set (explicit profiles → per-key;
+      // null fallback → caller-level live-grant union, i.e. pre-#410 behavior).
+      resolvedProfiles ?? undefined,
+    )
 
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result) }],
@@ -221,10 +305,10 @@ export function createOutboundMcpServer(): Server {
 
 /** Connect stdio transport and run until stdin closes. */
 export async function runOutboundMcpStdioServer(): Promise<void> {
-  const wire = wireDefaultOutboundHttpDispatcher()
+  const wire = await wireDefaultOutboundHttpDispatcher()
   // Log to stderr only — stdout is MCP JSON-RPC
   console.error(
-    `[cmspark-outbound] stdio MCP up; companion HTTP 127.0.0.1:${wire.port} (auth=${wire.auth_mode})`,
+    `[cmspark-outbound] stdio MCP up; companion HTTP 127.0.0.1:${wire.port} (auth=${wire.auth_mode}, profile=${wire.profile})`,
   )
   const server = createOutboundMcpServer()
   const transport = new StdioServerTransport()

@@ -82,6 +82,8 @@ Channel:      community 默认；enterprise 模块不进 default outbound set
 
 > **L5 实现期细化（2026-09-06）——stdio `tools/list` 短名**：L5 的 `cmspark__*` 仍是 **canonical / 文档名**。MCP stdio `tools/list` 只暴露后缀（`list_tabs`），让把工具写成 `server__tool` 且只允许一个 `__` 的客户端（Grok）得到 `cmspark__list_tabs`。旧版把 canonical 名直接放进 `tools/list` 时，Grok 会变成 `cmspark__cmspark__list_tabs` 并 **丢掉全部工具**（会话 `tool_count: 0`；`grok mcp doctor` 仍数 10）。`CallTool` 与 HTTP invoke 短名与 `cmspark__*` 都收（#408）。不扩 default outbound profile。
 
+> **L6 实现期细化（2026-09-06，#410）——`outbound_l1_interact` 命名 profile**：默认 profile（8 工具 + 2 meta）**逐字节不变**。新增命名 profile `outbound_l1_interact` = 默认 ∪ {scroll / get_element_info / press_key / select_option / hover / dblclick / fill_form / drag_and_drop / create_tab / get_page_html / analyze_image}（interact 是超集：交互档钥匙保留 list_tabs/click 等基础面，「能滚长页、看清元素再点、能填表单」）。`get_page_html` / `analyze_image` 入 `OUTBOUND_MCP_EXFIL_CLASS`，**复用** `allow_page_export` 门（与页文/截图同旗同确认台，不拆新旗）。grant schema 的 `profile` 字段解锁：`issueOutboundGrant` 支持 `outbound_l1_default | outbound_l1_interact`；`outbound-grant issue --profile …` 签发；HTTP 轨按**钥匙** profile 判定（sibling 不拓宽），stdio / legacy 轨按 caller 的 live grant union（与 exfil 双轨同语义）；stdio `tools/list` 经**认证的** `/outbound-mcp/v1/profile` 端点按钥匙裁剪广告（fetch 失败降级广告默认集，不拓宽）。**豁免旗不溅射（收紧）**：outbound 轨一律不认 `auto_approve_dangerous` / `allow_all_schemes`（god-mode，含三旗巡航）/ `auto_approved_domains`——auto-approved 域的 navigate/create_tab 仍走确认台，非 http(s) scheme 依旧硬拦，file: 在 god-mode 机器上对 outbound 仍须操作者确认。outbound 只认 grant per-key 旗 + 操作者 HITL。
+
 ### 4. 默认工具面（Phase 0 profile）
 
 实现权威：`companion/src/outbound-mcp/profile.ts`。概念白名单（6–8 个，可微调但不得默默塞入禁类）：
