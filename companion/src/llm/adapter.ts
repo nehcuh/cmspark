@@ -1517,7 +1517,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           }
           let toolResult: { success: boolean; data?: any; error?: string }
           if (siteBan.banned) {
-            toolResult = bannedSiteOpResult(siteBan)
+            // #409-A: SITE_OP_ESCALATE copy must reflect live CU arming —
+            // unarmed means declare_blocked copy, never "MAY call host_computer".
+            let cuArmed = false
+            try {
+              const { loopRouteCaps } = require("../loop/tier-bind") as typeof import("../loop/tier-bind")
+              cuArmed = loopRouteCaps().cuArmed
+            } catch {
+              /* fail-closed: unarmed copy */
+            }
+            toolResult = bannedSiteOpResult(siteBan, { cuArmed })
           } else if (isDomScriptTool(toolName, execParams)) {
             const meta = resolveDomScriptBudgetMeta(
               toolName,
@@ -1566,7 +1575,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           })
           try {
             const { onRouteTool } = require("../loop/route-session") as typeof import("../loop/route-session")
-            onRouteTool(threadId, toolName)
+            // #409-B: pass the outcome — a FAILED host_computer (COMPUTER_DISABLED)
+            // must not be counted as a route switch in closeRouteRun.
+            onRouteTool(threadId, toolName, toolResult.success === true)
           } catch {
             /* L-3 optional */
           }
@@ -1902,10 +1913,26 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               })
               shouldStop = true
               if (runStats) runStats.terminal = "circuit_breaker"
+              // #409-D: origin escalated + fallback lane also dead — append the
+              // unlock guidance instead of a bare "防止无限循环" dead end.
+              let unlockHint = ""
+              if (toolName === "osascript_eval" || toolName === "host_computer") {
+                try {
+                  const { isOriginEscalated } = require("../loop/route-session") as typeof import("../loop/route-session")
+                  const { loopRouteCaps } = require("../loop/tier-bind") as typeof import("../loop/tier-bind")
+                  if (isOriginEscalated(threadId)) {
+                    unlockHint = loopRouteCaps().cuArmed
+                      ? " 替代路径（host_computer/osascript）连续失败：请人工接手或更换任务，之后可从 checkpoint 恢复。"
+                      : " 解锁：在 设置 → 坐标计算机使用 打开 coordinateEnabled 后从 checkpoint 恢复，或更换任务（loop 不会自动打开该开关）。"
+                  }
+                } catch {
+                  /* L-3 optional */
+                }
+              }
               sendToExtension({
                 type: "chat.error",
                 thread_id: threadId,
-                error: `工具 ${toolName} 连续 ${failCount} 次执行失败，已停止以防止无限循环。最后错误: ${toolResult.error}`,
+                error: `工具 ${toolName} 连续 ${failCount} 次执行失败，已停止以防止无限循环。${unlockHint}最后错误: ${toolResult.error}`,
               })
               break
             }

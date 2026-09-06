@@ -340,6 +340,11 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
       ]),
     ).min(1).max(50),
     budget: z.number().int().min(1).max(30).optional(),
+    // #409-C: catalog + adapter Rule 12 already recommend trigger_reason on
+    // CDP→CU escalation; .strict() used to reject it at the schema boundary,
+    // killing the first CU call before it could ever reach L2. 200 chars aligns
+    // with TRIGGER_REASON_MAX_CHARS (vault-browser-oneshot sanitizes at L2).
+    trigger_reason: z.string().max(200).optional(),
     security_token: z.string().optional(),
   }).strict(),
 

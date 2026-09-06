@@ -103,6 +103,8 @@ export type RouteEngineState = {
   /** Steers injected at the start of the current run (for ignore detection). */
   injectedThisRun: RouteSteer[]
   toolsThisRun: string[]
+  /** #409-B: per-tool success outcome — a FAILED host_computer/osascript is not a route switch. */
+  toolSuccessThisRun: Record<string, boolean>
   declaredBlockedThisRun: string[]
   checkpoint: RouteCheckpoint | null
 }
@@ -131,6 +133,7 @@ export function emptyRouteEngineState(): RouteEngineState {
     items: {},
     injectedThisRun: [],
     toolsThisRun: [],
+    toolSuccessThisRun: {},
     declaredBlockedThisRun: [],
     checkpoint: null,
   }
@@ -228,6 +231,7 @@ export function closeRouteRun(prev: RouteEngineState, input: CloseRunInput): Clo
     items: { ...prev.items },
     runCount: prev.runCount + 1,
     toolsThisRun: [...prev.toolsThisRun],
+    toolSuccessThisRun: { ...prev.toolSuccessThisRun },
     declaredBlockedThisRun: [...prev.declaredBlockedThisRun],
     injectedThisRun: [...prev.injectedThisRun],
   }
@@ -236,7 +240,19 @@ export function closeRouteRun(prev: RouteEngineState, input: CloseRunInput): Clo
   const routesUsed = new Set(
     state.toolsThisRun.map(classifyToolRoute).filter((r): r is RouteClass => r != null),
   )
-  const triedAlt = [...routesUsed].some(isPostEscalateAlternative)
+  // #409-B: only a SUCCESSFUL host_computer/osascript counts as "已换路".
+  // A FAILED one (COMPUTER_DISABLED / TAB_NOT_FOUND) must not clear staleRuns
+  // — otherwise the r3-unarmed unlock never surfaces. routesUsed (name-based)
+  // stays as-is for steer-obedience detection: trying and failing is still
+  // obedience, it is just not progress.
+  const succeededAltRoute: RouteClass | null = (() => {
+    for (const t of state.toolsThisRun) {
+      const r = classifyToolRoute(t)
+      if ((r === "host_computer" || r === "osascript") && state.toolSuccessThisRun[t] === true) return r
+    }
+    return null
+  })()
+  const triedAlt = succeededAltRoute !== null
   const declared = new Set(state.declaredBlockedThisRun)
   const items = liveItems(input.runProgress)
   const undone = items.filter((it) => !it.done)
@@ -308,10 +324,7 @@ export function closeRouteRun(prev: RouteEngineState, input: CloseRunInput): Clo
       if (item.blocked) continue
       if (triedAlt || progressed) {
         item.staleRuns = 0
-        if (triedAlt) {
-          const alt = [...routesUsed].find(isPostEscalateAlternative)
-          if (alt) noteTried(item, alt, "attempted")
-        }
+        if (succeededAltRoute) noteTried(item, succeededAltRoute, "attempted")
         continue
       }
       item.staleRuns += 1
@@ -376,6 +389,7 @@ export function closeRouteRun(prev: RouteEngineState, input: CloseRunInput): Clo
 
   state.injectedThisRun = []
   state.toolsThisRun = []
+  state.toolSuccessThisRun = {}
   state.declaredBlockedThisRun = []
   return { state, pendingSteers, newlyBlocked, audits }
 }
@@ -385,12 +399,17 @@ export function beginRouteRun(state: RouteEngineState, steers: RouteSteer[]): Ro
     ...state,
     injectedThisRun: [...steers],
     toolsThisRun: [],
+    toolSuccessThisRun: {},
     declaredBlockedThisRun: [],
   }
 }
 
-export function noteTool(state: RouteEngineState, toolName: string): RouteEngineState {
-  return { ...state, toolsThisRun: [...state.toolsThisRun, toolName] }
+export function noteTool(state: RouteEngineState, toolName: string, success = true): RouteEngineState {
+  return {
+    ...state,
+    toolsThisRun: [...state.toolsThisRun, toolName],
+    toolSuccessThisRun: { ...state.toolSuccessThisRun, [toolName]: success },
+  }
 }
 
 export function noteDeclaredBlocked(state: RouteEngineState, itemId: string): RouteEngineState {

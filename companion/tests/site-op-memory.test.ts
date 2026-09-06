@@ -186,8 +186,12 @@ test("origin CDP fail streak: 4 different locators/tools then peek refuses 5th w
   const ban = peekSiteOpBan("hgrsix", "get_element_info", { tabId: 1, text: "别的按钮" }, origin)
   assert.equal(ban.banned, true)
   if (ban.banned) assert.equal(ban.error_code, "SITE_OP_ESCALATE")
-  const r = bannedSiteOpResult(ban as Extract<typeof ban, { banned: true }>)
-  assert.equal(r.data.suggested_action, "escalate_to_host_computer")
+  const r = bannedSiteOpResult(ban as Extract<typeof ban, { banned: true }>, { cuArmed: true })
+  // linux has no host surface — even armed, the honest action is declare_blocked
+  assert.equal(
+    r.data.suggested_action,
+    process.platform === "linux" ? "declare_blocked" : "escalate_to_host_computer",
+  )
   assert.equal(r.data.error_code, "SITE_OP_ESCALATE")
   assert.match(r.error, /SITE_OP_BANNED/)
   assert.match(r.error, /host_computer/)
@@ -204,6 +208,63 @@ test("origin CDP fail streak: 4 different locators/tools then peek refuses 5th w
   assert.equal(snap["https://x.com"].fails, SITE_ORIGIN_FAIL_ESCALATE)
   assert.equal(getOriginFailCount("hgrsix", "https://x.com"), SITE_ORIGIN_FAIL_ESCALATE)
   assert.equal(getOriginFailCount("hgrsix", "https://x.com/i/bookmarks"), SITE_ORIGIN_FAIL_ESCALATE)
+})
+
+// --- #409-A: SITE_OP_ESCALATE copy must reflect live CU arming ---
+
+test("#409: unarmed SITE_OP_ESCALATE never says MAY host_computer — declare_blocked instead", () => {
+  resetSiteOpMemoryForTests()
+  const origin = "https://x.com/i/bookmarks"
+  for (const text of ["a", "b", "c", "d"]) {
+    recordSiteOpFailure("u409", "click", { tabId: 1, text }, "ELEMENT_NOT_FOUND", origin)
+  }
+  const ban = peekSiteOpBan("u409", "click", { tabId: 1, text: "new" }, origin)
+  assert.equal(ban.banned, true)
+  if (!ban.banned) return
+  assert.equal(ban.error_code, "SITE_OP_ESCALATE")
+  // default (opts absent) is fail-closed unarmed; explicit false is identical
+  const cases = [bannedSiteOpResult(ban), bannedSiteOpResult(ban, { cuArmed: false })]
+  for (const r of cases) {
+    assert.equal(r.data.error_code, "SITE_OP_ESCALATE")
+    assert.equal(r.data.suggested_action, "declare_blocked")
+    assert.match(r.error, /SITE_OP_BANNED/)
+    assert.match(r.error, /loop_declare_blocked/)
+    assert.match(r.error, /list_tabs/)
+    // the armed-path advertising must be gone
+    assert.doesNotMatch(r.error, /MAY call host_computer/)
+    assert.doesNotMatch(r.error, /ALWAYS pops a confirm/)
+    assert.doesNotMatch(r.error, /osascript_eval/)
+    if (process.platform === "linux") {
+      // CU never exists on Linux — the copy says so, not coordinateEnabled advice
+      assert.match(r.error, /NOT available/)
+      assert.match(r.error, /arming CU changes nothing/)
+    } else {
+      assert.match(r.error, /COMPUTER_DISABLED/)
+      assert.match(r.error, /coordinateEnabled/)
+      assert.match(r.error, /never flip this flag/)
+    }
+  }
+})
+
+test("#409: armed SITE_OP_ESCALATE keeps the MAY-call copy (non-linux)", () => {
+  resetSiteOpMemoryForTests()
+  const origin = "https://x.com/i/bookmarks"
+  for (const text of ["a", "b", "c", "d"]) {
+    recordSiteOpFailure("a409", "click", { tabId: 1, text }, "ELEMENT_NOT_FOUND", origin)
+  }
+  const ban = peekSiteOpBan("a409", "click", { tabId: 1, text: "new" }, origin)
+  if (!ban.banned) throw new Error("expected banned")
+  const r = bannedSiteOpResult(ban, { cuArmed: true })
+  if (process.platform === "linux") {
+    // armed or not, Linux has no host surface — declare_blocked stays the honest action
+    assert.equal(r.data.suggested_action, "declare_blocked")
+    assert.match(r.error, /NOT available/)
+    assert.match(r.error, /loop_declare_blocked/)
+  } else {
+    assert.equal(r.data.suggested_action, "escalate_to_host_computer")
+    assert.match(r.error, /MAY call host_computer/)
+    assert.match(r.error, /ALWAYS pops a confirm/)
+  }
 })
 
 test("origin CDP fail streak does not leak to another origin or thread", () => {

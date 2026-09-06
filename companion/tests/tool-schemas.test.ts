@@ -523,6 +523,38 @@ test("host_computer: type text beyond 2000 chars is rejected at the schema bound
 })
 
 // =============================================================================
+// host_computer — #409-C: trigger_reason (catalog / Rule 12 recommend it on
+// CDP→CU escalation; .strict() used to reject it before the call reached L2)
+// =============================================================================
+
+test("host_computer: optional trigger_reason passes and round-trips (#409)", () => {
+  const out = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "click", x: 10, y: 20 }],
+    trigger_reason: "origin CDP fail streak >=4 (SITE_OP_ESCALATE), host fallback",
+  })
+  assert.equal(out.trigger_reason, "origin CDP fail streak >=4 (SITE_OP_ESCALATE), host fallback")
+  // absent stays valid (optional)
+  const bare = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "describe" }],
+  })
+  assert.equal(bare.trigger_reason, undefined)
+})
+
+test("host_computer: trigger_reason beyond 200 chars is rejected (#409)", () => {
+  const bad = tryParseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "describe" }],
+    trigger_reason: "x".repeat(201),
+  })
+  assert.equal(bad.ok, false)
+})
+
+// =============================================================================
 // host_computer — WP2 key/scroll/drag primitives
 // =============================================================================
 
