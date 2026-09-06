@@ -3,7 +3,7 @@
 
 import { startServer } from "./server"
 import { installFatalHandlers } from "./crash-handlers"
-import { initDataDir, getLockFilePath, getPidFilePath } from "./config"
+import { initDataDir, getLockFilePath, getPidFilePath, getConfig } from "./config"
 import { getSwiftTrayPath, getTrayBuildScript, getTrayCwd } from "./paths"
 import {
   acquireLock,
@@ -65,6 +65,17 @@ Usage:
 // Tray sub-commands
 // ---------------------------------------------------------------------------
 
+/** #406 — the WS port the companion actually binds (config.port, default 23401). */
+function wsPortForDisplay(): number {
+  try {
+    const p = Number(getConfig().port)
+    if (Number.isFinite(p) && p > 0 && p <= 65535) return Math.trunc(p)
+  } catch {
+    /* config.json corrupt/unreadable — fall back */
+  }
+  return 23401
+}
+
 async function handleTrayStatus(): Promise<void> {
   const { detectTrayBackend } = await import("./tray/tray-adapter")
   const backend = detectTrayBackend()
@@ -76,7 +87,7 @@ async function handleTrayStatus(): Promise<void> {
 
   const pid = readPidFile(getPidFilePath())
   console.log(`  Companion: ${pid && isProcessRunning(pid) ? "运行中" : "已停止"}`)
-  console.log(`  WebSocket: ws://127.0.0.1:23401`)
+  console.log(`  WebSocket: ws://127.0.0.1:${wsPortForDisplay()}`)
 
   if (platform === "darwin" && process.arch === "arm64") {
     const swiftBin = getSwiftTrayPath()
@@ -262,7 +273,7 @@ async function handleDaemonStatus(): Promise<void> {
   console.log(`  Process:   ${running ? "running" : pid ? "dead (stale)" : "not running"}`)
 
   if (running) {
-    console.log(`  WebSocket: ws://127.0.0.1:23401`)
+    console.log(`  WebSocket: ws://127.0.0.1:${wsPortForDisplay()}`)
   }
 
   process.exit(running ? 0 : 1)

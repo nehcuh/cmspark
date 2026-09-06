@@ -1538,6 +1538,13 @@ export function getLockFilePath(): string {
   return getLockPath()
 }
 
+/**
+ * Live-resolve the daemon PID file path under getConfigDir() (#406).
+ * Callers are all daemon lifecycle / tray status (index.ts, menu-bar-agent.ts,
+ * ws/lifecycle.ts) — a daemon run keeps CMSPARK_DATA_DIR constant for the whole
+ * process, so live == frozen in production; live keeps tests that retarget the
+ * data dir after import consistent with getConfigDir()/getLogDir().
+ */
 export function getPidFilePath(): string {
-  return path.join(DATA_DIR, "daemon.pid")
+  return path.join(getConfigDir(), "daemon.pid")
 }

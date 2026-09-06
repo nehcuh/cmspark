@@ -9,7 +9,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as crypto from "crypto"
-import { DATA_DIR } from "../config"
+import { getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
 import { appendCapabilityAudit } from "../packs/audit-log"
 
@@ -17,7 +17,12 @@ export const OUTBOUND_GRANT_TOKEN_PREFIX = "cmg_"
 export const DEFAULT_GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30d wall-clock
 export const OUTBOUND_L1_DEFAULT_PROFILE = "outbound_l1_default"
 
-const GRANTS_PATH = path.join(DATA_DIR, "outbound-grants.json")
+/** #406 — grants file was frozen at module load (GRANTS_PATH), so env-redirected
+ *  callers (stdio-mcp outbound tests, runtime retarget) wrote the real home dir.
+ *  Live-resolve under getConfigDir() like config.json / logs / daemon.pid. */
+function grantsFilePath(): string {
+  return path.join(getConfigDir(), "outbound-grants.json")
+}
 
 export type OutboundGrantRecord = {
   id: string
@@ -101,7 +106,7 @@ function normalizeGrant(raw: OutboundGrantRecord): OutboundGrantRecord {
 
 function loadFile(): GrantsFile {
   try {
-    const raw = fs.readFileSync(GRANTS_PATH, "utf8")
+    const raw = fs.readFileSync(grantsFilePath(), "utf8")
     const parsed = JSON.parse(raw) as GrantsFile
     if (!parsed || !Array.isArray(parsed.grants)) return { grants: [] }
     return { grants: parsed.grants.map(normalizeGrant) }
@@ -111,7 +116,7 @@ function loadFile(): GrantsFile {
 }
 
 function saveFile(data: GrantsFile): void {
-  atomicWriteJSON(GRANTS_PATH, data, 0o600)
+  atomicWriteJSON(grantsFilePath(), data, 0o600)
 }
 
 function audit(type: string, fields: Record<string, unknown>): void {
@@ -364,10 +369,10 @@ export function grantAllowsPageExportById(grantId: string): boolean {
   )
 }
 
-/** Test helper: wipe grants file path under current DATA_DIR. */
+/** Test helper: wipe grants file under the live data dir. */
 export function resetOutboundGrantsForTests(): void {
   try {
-    if (fs.existsSync(GRANTS_PATH)) fs.unlinkSync(GRANTS_PATH)
+    if (fs.existsSync(grantsFilePath())) fs.unlinkSync(grantsFilePath())
   } catch {
     /* */
   }

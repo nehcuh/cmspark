@@ -1,6 +1,6 @@
 // CompanionClient — WebSocket client for tray ↔ companion communication
 //
-// Connects to the companion server (ws://127.0.0.1:23401) and uses the
+// Connects to the companion server (ws://127.0.0.1:<config.port>) and uses the
 // existing message protocol (thread.list, skill.list, system.ping, etc.)
 // to populate tray menus with live data.
 //
@@ -192,6 +192,30 @@ export class CompanionClient {
     this.authenticated = false
     this.rejectAllPending("disconnect")
     this.settleConnect()
+  }
+
+  /**
+   * #406 — retarget the WS endpoint after config.port changed while running.
+   * Callbacks/handlers stay attached; this only swaps host/port, drops the
+   * current socket, resets the reconnect backoff and reconnects on the next
+   * tick. No-op when the endpoint is unchanged.
+   */
+  updateEndpoint(host: string, port: number): void {
+    if (this.options.host === host && this.options.port === port) return
+    this.options.host = host
+    this.options.port = port
+    this.clearReconnect()
+    this.reconnectAttempts = 0
+    if (this.ws) {
+      try { this.ws.terminate() } catch { /* ignore */ }
+      this.ws = null
+    }
+    if (this._state !== "disconnected") {
+      this._state = "disconnected"
+      this.authenticated = false
+      this.rejectAllPending("endpoint changed")
+    }
+    this.scheduleReconnect()
   }
 
   get connectionState(): ConnectionState {

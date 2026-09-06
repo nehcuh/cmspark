@@ -426,3 +426,53 @@ test("summoner surface does not send skill.list after auth.ok (ACL)", async () =
     await server.close()
   }
 })
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+async function waitFor(pred: () => boolean, timeoutMs = 4000): Promise<void> {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeoutMs) {
+    if (pred()) return
+    await sleep(25)
+  }
+  assert.fail("waitFor timed out")
+}
+
+test("updateEndpoint retargets the WS endpoint and re-authenticates on the new port (#406)", async () => {
+  const serverA = await startAuthServer(TEST_SECRET)
+  const serverB = await startAuthServer(TEST_SECRET)
+  const client = new CompanionClient({
+    host: "127.0.0.1",
+    port: serverA.port,
+    reconnectInterval: 40,
+    maxReconnectAttempts: -1,
+  })
+  try {
+    await client.connect()
+    assert.equal(client.connectionState, "connected", "must authenticate on server A first")
+    assert.equal(serverA.connectionCount(), 1)
+
+    // config.port change while the tray runs → retarget to server B.
+    client.updateEndpoint("127.0.0.1", serverB.port)
+    await waitFor(
+      () => client.connectionState === "connected" && serverB.connectionCount() >= 1,
+    )
+    assert.ok(
+      serverB.connectionCount() >= 1 && client.connectionState === "connected",
+      "client must reconnect + re-auth on the new endpoint",
+    )
+    assert.equal(serverA.connectionCount(), 1, "stale endpoint must not get new connections")
+
+    // Same endpoint again → idempotent no-op (no connection churn).
+    const before = serverB.connectionCount()
+    client.updateEndpoint("127.0.0.1", serverB.port)
+    await sleep(200)
+    assert.equal(serverB.connectionCount(), before, "no-op update must not reconnect")
+  } finally {
+    client.disconnect()
+    await serverA.close()
+    await serverB.close()
+  }
+})

@@ -3,7 +3,7 @@
 import { WebSocket } from "ws"
 import { randomUUID } from "crypto"
 import { URL } from "url"
-import { getConfig, saveConfig, initDataDir, DATA_DIR } from "./config"
+import { getConfig, saveConfig, initDataDir, getConfigDir } from "./config"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
 import { gcExpiredMeetingAudio } from "./meeting/meeting-store"
 import { ThreadManager } from "./threads/thread-manager"
@@ -326,10 +326,10 @@ async function initServices() {
   skillEngine.bindThreadManager(threadManager)
   historyStore = new HistoryStore()
   await historyStore.waitReady()
-  // Path B M1: init STT session service + boot-time orphan GC under DATA_DIR/tmp/voice-stt/
+  // Path B M1: init STT session service + boot-time orphan GC under getConfigDir()/tmp/voice-stt/
   try {
-    getSttSessionService({ dataDir: DATA_DIR })
-    const removed = await bootGcVoiceSttTmp(DATA_DIR)
+    getSttSessionService({ dataDir: getConfigDir() })
+    const removed = await bootGcVoiceSttTmp(getConfigDir())
     if (removed > 0) {
       logger.info("voice.stt.tmp.boot_gc", { removed })
     }
@@ -338,7 +338,7 @@ async function initServices() {
   }
   // P1 Meeting: retain_until audio GC at boot + every 6h
   try {
-    const meetingGc = gcExpiredMeetingAudio(DATA_DIR)
+    const meetingGc = gcExpiredMeetingAudio(getConfigDir())
     if (meetingGc.purged > 0 || meetingGc.scanned > 0) {
       logger.info("meeting.audio_gc.boot", meetingGc)
     }
@@ -349,7 +349,7 @@ async function initServices() {
   }
   setInterval(() => {
     try {
-      const r = gcExpiredMeetingAudio(DATA_DIR)
+      const r = gcExpiredMeetingAudio(getConfigDir())
       if (r.purged > 0) logger.info("meeting.audio_gc.periodic", r)
     } catch (e) {
       logger.warn("meeting.audio_gc.periodic_failed", {
@@ -357,7 +357,7 @@ async function initServices() {
       })
     }
   }, 6 * 60 * 60 * 1000).unref?.()
-  // Mission Pack P0: install shipped packs (appsec-prd-review) into DATA_DIR
+  // Mission Pack P0: install shipped packs (appsec-prd-review) into the live data dir
   try {
     const { ensureBuiltinPacksInstalled, reconcilePackTrustOnBoot } = await import(
       "./packs/pack-engine"

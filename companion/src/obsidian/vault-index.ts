@@ -7,7 +7,7 @@
 
 import * as fs from "fs"
 import * as path from "path"
-import { DATA_DIR } from "../config"
+import { getConfigDir } from "../config"
 import { scanVault } from "./vault-profiler"
 import { tokenize, tokensToVec, cosineSimilarity } from "../skills/semantic-match"
 
@@ -24,7 +24,9 @@ export interface VaultIndex {
   vectors: Record<string, Record<string, number>> // name -> normalized TF vector
 }
 
-export const INDEX_PATH = path.join(DATA_DIR, "obsidian", "vault-index.json")
+export function getVaultIndexPath(): string {
+  return path.join(getConfigDir(), "obsidian", "vault-index.json")
+}
 
 const TOP_K_DEFAULT = 5
 const SIMILARITY_THRESHOLD = 0.28 // pure-TF has common-word bias; 0.28 cleanly separates true topical matches (~0.31+) from common-word collisions (~0.21-)
@@ -96,14 +98,14 @@ function isSafeWikilinkName(name: string): boolean {
   return !!name && !UNSAFE_WIKILINK_CHARS.test(name)
 }
 
-export function saveIndex(index: VaultIndex, filePath: string = INDEX_PATH): void {
+export function saveIndex(index: VaultIndex, filePath: string = getVaultIndexPath()): void {
   fs.writeFileSync(filePath, JSON.stringify(index, null, 2), { mode: 0o600 })
 }
 
 /** Load the cached index for `vaultPath`. null if missing/unreadable/vault mismatch. */
 export function loadCachedIndex(
   vaultPath: string | null | undefined,
-  filePath: string = INDEX_PATH,
+  filePath: string = getVaultIndexPath(),
 ): VaultIndex | null {
   if (!vaultPath) return null
   try {
