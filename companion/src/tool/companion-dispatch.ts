@@ -1108,6 +1108,44 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         },
       }
     }
+    case "search_threads": {
+      // #439: cross-thread card search (title/digest). Companion-local; never forward.
+      const { runSearchThreads } = await import("./llm-search")
+      const result = runSearchThreads(threadManager.list() as any, params.query, params.limit)
+      if (!result.ok) return { success: false, error: result.error }
+      try {
+        logger.info("search_threads", {
+          hit_count: result.hits.length,
+          query_len: result.query.length,
+        })
+      } catch {
+        /* non-fatal */
+      }
+      return { success: true, data: { hits: result.hits } }
+    }
+    case "search_knowledge": {
+      // #439: local knowledge index search. Companion-local; never forward.
+      const { runSearchKnowledge } = await import("./llm-search")
+      const docs = skillEngine.listKnowledge().map((d) => ({
+        id: d.id || d.name,
+        name: d.name,
+        title: d.title,
+        description: d.description,
+        tags: d.tags,
+        folder: d.folder,
+      }))
+      const result = runSearchKnowledge(docs, params.query, params.limit)
+      if (!result.ok) return { success: false, error: result.error }
+      try {
+        logger.info("search_knowledge", {
+          hit_count: result.hits.length,
+          query_len: result.query.length,
+        })
+      } catch {
+        /* non-fatal */
+      }
+      return { success: true, data: { hits: result.hits } }
+    }
     case "record_experience": {
       const { target, skill_name, category, content, tags, domain } = params
       const skillName = target === "site"

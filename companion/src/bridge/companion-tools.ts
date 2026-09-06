@@ -11,6 +11,8 @@ export const COMPANION_TOOLS = [
   "host_computer",
   "use_skill",
   "thread_recall",
+  "search_threads",
+  "search_knowledge",
   "run_progress_propose",
   "loop_declare_blocked",
   // #328 execution contract shadow spike — default-off (security.execution_contract_shadow);

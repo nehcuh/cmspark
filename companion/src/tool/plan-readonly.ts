@@ -43,6 +43,8 @@ export const PLAN_READONLY_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   "downloads_find",
   // --- memory / workspace reads ---
   "thread_recall",
+  "search_threads",
+  "search_knowledge",
   "workspace_list_dir",
   "workspace_read_file",
   // --- orchestration run-state reads ---
