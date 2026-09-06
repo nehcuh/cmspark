@@ -253,3 +253,10 @@ instincts:
     source_session: "2026-09-06 S107 0.6.4 release commit 落在红树上（grep 管道吞了 tsc 错）"
     tags: [release, testing, process]
     applications: 1
+
+  - id: version-anchor-enumerate-from-gate
+    pattern: "版本号锚点不要凭记忆枚举——以门禁脚本 scripts/tests/test-package-gates.sh 为准（S52 N4 段）：companion/package.json + package-lock + chrome-extension/package.json + AGENTS.md×2 + src/index.ts + outbound-mcp/stdio-server.ts + acp/jsonrpc-stdio.ts + scripts/installer.nsi fallback PRODUCT_VERSION。0.6.6 漏了 installer.nsi 被 CI 抓红。 bump 前先 grep 旧版本号全仓扫一遍。"
+    confidence: 0.9
+    source_session: "2026-09-07 S108 0.6.6 CI 红（installer.nsi 漏锚）"
+    tags: [release, versioning, process]
+    applications: 1
