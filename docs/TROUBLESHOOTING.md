@@ -101,9 +101,12 @@ server 没连上或没声明 `tools` capability。先解决上面的连接问题
 
 ### `grok mcp doctor` 绿，但对话里没有 `cmspark__*` 工具
 
-**配置 ≠ 当前会话挂载。** `doctor` 会单独 spawn `mcp-outbound` 测握手；已打开的 Grok 会话未必已注册该 server。
+两件不同的事，先分清：
 
-**解决：** 退出并 **新开 Grok 会话**（或 TUI MCP reload）；确认 `~/.grok/config.toml` 或项目 `.grok/config.toml` 有 `[mcp_servers.cmspark]` 且 `enabled = true`。
+1. **配置 ≠ 当前会话挂载。** `doctor` 会单独 spawn `mcp-outbound` 测握手；已打开的 Grok 会话未必已注册该 server。改 `config.toml` 后请退出并 **新开 Grok 会话**（或 TUI MCP reload）。
+2. **会话 `mcp_server_connected` 但 `tool_count: 0`。** Grok 把 MCP 工具写成 `server__tool`，且合格名里只允许**一个** `__`。旧版 `mcp-outbound` 的 `tools/list` 直接暴露 `cmspark__list_tabs`，Grok 再前缀一次变成 `cmspark__cmspark__list_tabs`，**全部丢掉**。`doctor` 只数原始 `tools/list`，所以仍报 10 tools / healthy。
+
+**解决（2）：** 升级到会在 `tools/list` 里暴露短名（`list_tabs`）的 companion；然后**新开** Grok 会话。不要改 server 名——`__` 在工具名里，不在 `[mcp_servers.cmspark]` 这段 key 里。
 
 ### `MODULE_NOT_FOUND: @modelcontextprotocol/sdk`
 

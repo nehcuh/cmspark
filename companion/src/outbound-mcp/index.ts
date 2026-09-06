@@ -7,6 +7,9 @@ export {
   isOutboundAllowed,
   isOutboundForbidden,
   outboundToInternalName,
+  outboundMcpWireName,
+  canonicalOutboundMcpName,
+  OUTBOUND_MCP_NAME_PREFIX,
 } from "./profile"
 export { gateOutboundCall, listOutboundTools, denyOutboundExfilIfNeeded } from "./facade"
 export type { OutboundCallRequest, OutboundCallResult } from "./facade"
