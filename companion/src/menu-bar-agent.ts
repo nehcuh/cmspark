@@ -1102,25 +1102,33 @@ export async function handleSummonerUiCommand(action: string): Promise<void> {
 /** Overlay continue CTA — new user message, no L1 replay. */
 export async function handleSummonerArmTask(threadId: string) {
   const id = threadId.trim()
-  if (!id) return
+  if (!id) {
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: "没有当前对话" }))
+    return
+  }
   try {
     const response = await summonerClient?.sendAppRequest("task_loop.arm", {
       thread_id: id,
       user_gesture: true,
     })
     if (response?.type === "task_loop.armed") {
-      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "后台任务已启动，确认在确认台" }))
-    } else if (response?.error_code === "OVERLAY_THREAD_MISMATCH") {
-      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "当前线程与后台任务不匹配" }))
-    } else if (response?.code === "loop_off") {
-      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "计划只读线程不激活续跑（先批准计划或切回默认执行）" }))
+      trayInstance?.sendSummoner?.(encodeSummonerError({
+        message: "后台任务已启动，确认在确认台",
+        error_code: "task_armed",
+      }))
     } else {
       const errMsg = response?.error || "未知错误"
       trayInstance?.sendSummoner?.(encodeSummonerError({ message: String(errMsg) }))
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    trayInstance?.sendSummoner?.(encodeSummonerError({ message: `后台任务启动失败: ${msg}` }))
+    if (msg.includes("OVERLAY_THREAD_MISMATCH")) {
+      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "当前线程与后台任务不匹配" }))
+    } else if (msg.includes("loop_off")) {
+      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "计划只读线程不激活续跑（先批准计划或切回默认执行）" }))
+    } else {
+      trayInstance?.sendSummoner?.(encodeSummonerError({ message: `后台任务启动失败: ${msg}` }))
+    }
   }
 }
 

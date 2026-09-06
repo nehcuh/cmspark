@@ -658,6 +658,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     "OVERLAY_STANDBY", "BROWSER_UNAVAILABLE",
     "pack_not_overlay_eligible", "pack_trust_cookie_present", "pack_run_active",
     "pack_no_thread", "pack_applied",
+    "task_armed",
     "upload_failed", "submit_failed", "mic_denied",
   ]
   private var lines: [String] = []
@@ -1868,7 +1869,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
 
   @objc func armTaskClicked() {
     guard !threadId.isEmpty else { return }
-    jsonLine(["type": "summoner.arm_task", "thread_id": threadId])
+    jsonLine(["type": "summoner.arm_task", "thread_id": threadId, "user_gesture": true])
   }
 
   // MARK: - #433 P0 command palette（spec §2 三段式 / §5c 匹配 / §5d 状态）
