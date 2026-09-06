@@ -187,7 +187,11 @@ test("origin CDP fail streak: 4 different locators/tools then peek refuses 5th w
   assert.equal(ban.banned, true)
   if (ban.banned) assert.equal(ban.error_code, "SITE_OP_ESCALATE")
   const r = bannedSiteOpResult(ban as Extract<typeof ban, { banned: true }>, { cuArmed: true })
-  assert.equal(r.data.suggested_action, "escalate_to_host_computer")
+  // linux has no host surface — even armed, the honest action is declare_blocked
+  assert.equal(
+    r.data.suggested_action,
+    process.platform === "linux" ? "declare_blocked" : "escalate_to_host_computer",
+  )
   assert.equal(r.data.error_code, "SITE_OP_ESCALATE")
   assert.match(r.error, /SITE_OP_BANNED/)
   assert.match(r.error, /host_computer/)
@@ -225,14 +229,20 @@ test("#409: unarmed SITE_OP_ESCALATE never says MAY host_computer — declare_bl
     assert.equal(r.data.suggested_action, "declare_blocked")
     assert.match(r.error, /SITE_OP_BANNED/)
     assert.match(r.error, /loop_declare_blocked/)
-    assert.match(r.error, /COMPUTER_DISABLED/)
-    assert.match(r.error, /coordinateEnabled/)
-    assert.match(r.error, /never flip this flag/)
     assert.match(r.error, /list_tabs/)
     // the armed-path advertising must be gone
     assert.doesNotMatch(r.error, /MAY call host_computer/)
     assert.doesNotMatch(r.error, /ALWAYS pops a confirm/)
     assert.doesNotMatch(r.error, /osascript_eval/)
+    if (process.platform === "linux") {
+      // CU never exists on Linux — the copy says so, not coordinateEnabled advice
+      assert.match(r.error, /NOT available/)
+      assert.match(r.error, /arming CU changes nothing/)
+    } else {
+      assert.match(r.error, /COMPUTER_DISABLED/)
+      assert.match(r.error, /coordinateEnabled/)
+      assert.match(r.error, /never flip this flag/)
+    }
   }
 })
 
@@ -245,10 +255,13 @@ test("#409: armed SITE_OP_ESCALATE keeps the MAY-call copy (non-linux)", () => {
   const ban = peekSiteOpBan("a409", "click", { tabId: 1, text: "new" }, origin)
   if (!ban.banned) throw new Error("expected banned")
   const r = bannedSiteOpResult(ban, { cuArmed: true })
-  assert.equal(r.data.suggested_action, "escalate_to_host_computer")
   if (process.platform === "linux") {
+    // armed or not, Linux has no host surface — declare_blocked stays the honest action
+    assert.equal(r.data.suggested_action, "declare_blocked")
     assert.match(r.error, /NOT available/)
+    assert.match(r.error, /loop_declare_blocked/)
   } else {
+    assert.equal(r.data.suggested_action, "escalate_to_host_computer")
     assert.match(r.error, /MAY call host_computer/)
     assert.match(r.error, /ALWAYS pops a confirm/)
   }

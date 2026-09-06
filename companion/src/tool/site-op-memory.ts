@@ -509,10 +509,14 @@ function originEscalateError(cuArmed: boolean): string {
     "That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). NEVER treat this as auto-approved CU."
   const listTabsHint = " Run list_tabs to refresh tab origins."
   if (plat === "linux") {
+    // #409 CI-fix: CU never exists on Linux — arming changes nothing. The
+    // honest guidance is declare_blocked, same as the unarmed branch.
     return (
       `SITE_OP_BANNED: CDP interactive tools already failed ${n}+ times on this origin ` +
       "(across locators/tools) — do not retry click/type/evaluate here. " +
-      "host_computer is NOT available on this platform (Linux). list_tabs or stop; there is no third JS injection path."
+      "host_computer is NOT available on this platform (Linux); arming CU changes nothing. " +
+      "Call loop_declare_blocked, or stop/change the task; there is no third JS injection path." +
+      listTabsHint
     )
   }
   // #409-A: unarmed CU must not be advertised as a MAY-call escalation — the
@@ -568,12 +572,15 @@ export function bannedSiteOpResult(
     }
   }
   if (ban.error_code === "SITE_OP_ESCALATE") {
+    // Linux has no host surface at all — never suggest escalating to a tool
+    // that cannot exist there, even when the config flag says armed.
+    const escalatePossible = cuArmed && platform() !== "linux"
     return {
       success: false,
       error: originEscalateError(cuArmed),
       data: {
         error_code: "SITE_OP_ESCALATE",
-        suggested_action: cuArmed ? "escalate_to_host_computer" : "declare_blocked",
+        suggested_action: escalatePossible ? "escalate_to_host_computer" : "declare_blocked",
         locator: "origin",
       },
     }
