@@ -56,7 +56,7 @@ import {
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
 // Updated 2026-09-06 #433 P0 — SummonerOverlay command palette (NSTableView + 动效)
 /** Mac 菜单/热键「召唤器」= HTML Capture 卡（与侧栏弹出对话框同一出口）。 */
-const SWIFT_TRAY_SHA256 = "ca00cb988ec6d5b57f33ea600faf10bcac3797b3db358cba84ada61774f322a9"
+const SWIFT_TRAY_SHA256 = "5ddb93ab9923b893915054fb29896bb16b020f025227b026614ddfa9ba0d6f18"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

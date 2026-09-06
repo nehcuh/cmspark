@@ -1490,8 +1490,9 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   /// ⌘1-9 快选 / ⌘↵ 在面板打开（spec §5c）。走 SummonerPanel.performKeyEquivalent。
   func handleKeyEquivalent(_ event: NSEvent) -> Bool {
     guard isOpen else { return false }
+    // Caps Lock 在 deviceIndependentFlagsMask 里，== .command 会误判。只取修饰键交集。
     let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    guard mods == .command, !expanded else { return false }
+    guard mods.intersection([.command, .shift, .option, .control]) == .command, !expanded else { return false }
     if event.keyCode == 36, paletteOpen { // ⌘↵
       attachForegroundClicked()
       return true
@@ -2184,7 +2185,6 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
     panel.delegate = self
     panel.appearance = NSAppearance(named: .aqua)
-    panel.backgroundColor = SummonerTokens.paper
     panel.alphaValue = 0 // 预热零闪烁（spec §5b）：orderFront 前不落第一帧。
 
     let stack = NSStackView()
