@@ -633,14 +633,14 @@ export async function initDataDir(): Promise<void> {
   // P1 CORR-09: demote stuck recording meetings after process restart
   try {
     const { reconcileStaleRecordings } = require("./meeting/meeting-store") as typeof import("./meeting/meeting-store")
-    reconcileStaleRecordings(DATA_DIR)
+    reconcileStaleRecordings(root)
   } catch {
     /* meetings module optional at very early boot */
   }
 
   // Ensure data directory itself has restricted permissions
   try {
-    fs.chmodSync(DATA_DIR, 0o700)
+    fs.chmodSync(root, 0o700)
   } catch {
     // Ignore if we don't have permission to chmod
   }
@@ -656,7 +656,7 @@ export async function initDataDir(): Promise<void> {
 
   // Copy builtin skills if they don't exist
   const builtinSkillsSrc = getBuiltinSkillsSrc()
-  const builtinSkillsDest = path.join(DATA_DIR, "builtin-skills")
+  const builtinSkillsDest = path.join(root, "builtin-skills")
   if (fs.existsSync(builtinSkillsSrc)) {
     for (const file of fs.readdirSync(builtinSkillsSrc)) {
       const dest = path.join(builtinSkillsDest, file)
@@ -1531,7 +1531,7 @@ export function getConfigDir(): string {
 }
 
 export function getLogDir(): string {
-  return path.join(DATA_DIR, "logs")
+  return path.join(getConfigDir(), "logs")
 }
 
 export function getLockFilePath(): string {
