@@ -1598,6 +1598,56 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.url !== "string" || !m.url) return { valid: false, error: "tab.navigated requires url string" }
       return { valid: true }
     },
+    // #432 embedded PTY (client → server). Outbound frames (opened/data/closed) are not validated here.
+    "terminal.open": (m) => {
+      if (typeof m.id !== "string" || !m.id.trim()) {
+        return { valid: false, error: "terminal.open requires id" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "terminal.open requires user_gesture:true" }
+      }
+      if (m.cols !== undefined && (typeof m.cols !== "number" || !Number.isFinite(m.cols))) {
+        return { valid: false, error: "terminal.open cols must be a number" }
+      }
+      if (m.rows !== undefined && (typeof m.rows !== "number" || !Number.isFinite(m.rows))) {
+        return { valid: false, error: "terminal.open rows must be a number" }
+      }
+      if (m.cwd !== undefined && typeof m.cwd !== "string") {
+        return { valid: false, error: "terminal.open cwd must be a string" }
+      }
+      if (m.thread_id !== undefined && typeof m.thread_id !== "string") {
+        return { valid: false, error: "terminal.open thread_id must be a string" }
+      }
+      return { valid: true }
+    },
+    "terminal.input": (m) => {
+      if (typeof m.id !== "string" || !m.id.trim()) return { valid: false, error: "terminal.input requires id" }
+      if (typeof m.b64 !== "string") return { valid: false, error: "terminal.input requires b64" }
+      return { valid: true }
+    },
+    "terminal.resize": (m) => {
+      if (typeof m.id !== "string" || !m.id.trim()) return { valid: false, error: "terminal.resize requires id" }
+      return { valid: true }
+    },
+    "terminal.ack": (m) => {
+      if (typeof m.id !== "string" || !m.id.trim()) return { valid: false, error: "terminal.ack requires id" }
+      if (typeof m.seq !== "number" || !Number.isFinite(m.seq)) {
+        return { valid: false, error: "terminal.ack requires seq" }
+      }
+      return { valid: true }
+    },
+    "terminal.pause": (m) => {
+      if (typeof m.id !== "string" || !m.id.trim()) return { valid: false, error: "terminal.pause requires id" }
+      return { valid: true }
+    },
+    "terminal.resume": (m) => {
+      if (typeof m.id !== "string" || !m.id.trim()) return { valid: false, error: "terminal.resume requires id" }
+      return { valid: true }
+    },
+    "terminal.close": (m) => {
+      if (typeof m.id !== "string" || !m.id.trim()) return { valid: false, error: "terminal.close requires id" }
+      return { valid: true }
+    },
   }
 
   const validator = validators[msg.type]

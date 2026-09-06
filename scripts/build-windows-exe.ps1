@@ -408,6 +408,21 @@ foreach ($pkg in $Systray2Packages) {
 if ($anySystray2Ok) { Ok "node_modules/ systray2 + deps (tray support)" }
 else { Warn "systray2 not installed — tray icon will not work" }
 
+# #432 PTY native (SEA createRequire). Darwin-first; stage win optional pkgs if present.
+$PtyPackages = @(
+    "@lydell\node-pty",
+    "@lydell\node-pty-win32-x64",
+    "@lydell\node-pty-win32-arm64"
+)
+foreach ($pkg in $PtyPackages) {
+    $pkgSrc  = "$CompanionDir\node_modules\$pkg"
+    $pkgDest = "$StagingDir\node_modules\$pkg"
+    if (Test-Path $pkgSrc) {
+        New-Item -ItemType Directory -Force (Split-Path $pkgDest) | Out-Null
+        Copy-Item $pkgSrc $pkgDest -Recurse -Force
+    }
+}
+
 # onnxruntime-node (#260 speaker diarize — 本机声纹 embedding). Resolved at
 # runtime via Module.createRequire(process.execPath) (same contract as systray2),
 # so the package must sit in $StagingDir/node_modules/. Keep ONLY the win32/x64

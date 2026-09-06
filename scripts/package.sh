@@ -214,6 +214,10 @@ for pkg in node-notifier systray2 onnxruntime-node; do
     cp -r "companion/node_modules/${pkg}" "${STAGING}/node_modules/"
   fi
 done
+# #432: scoped prebuilds — copy the whole @lydell tree (node-pty + platform optional).
+if [ -d "companion/node_modules/@lydell" ]; then
+  cp -r "companion/node_modules/@lydell" "${STAGING}/node_modules/"
+fi
 
 # Copy transitive dependencies by walking the require graph
 cd companion
@@ -241,7 +245,7 @@ function copyDeps(pkgName) {
     }
   } catch {}
 }
-['node-notifier', 'systray2', 'onnxruntime-node'].forEach(copyDeps);
+['node-notifier', 'systray2', 'onnxruntime-node', '@lydell/node-pty'].forEach(copyDeps);
 console.log('Copied ' + visited.size + ' transitive deps');
 " 2>&1
 cd "${ROOT_DIR}"

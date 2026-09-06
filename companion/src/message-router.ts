@@ -2058,6 +2058,12 @@ export async function handleMessage(
       } catch {
         /* best-effort */
       }
+      try {
+        const { killPtyByThreadId } = await import("./pty/session")
+        killPtyByThreadId(rest.thread_id)
+      } catch {
+        /* best-effort */
+      }
       return { type: "chat.aborted", thread_id: rest.thread_id, stopped, cancelled }
     }
 
@@ -5537,6 +5543,17 @@ export async function handleMessage(
     // --- Original System ---
     case "system.ping":
       return { type: "system.pong" }
+
+    case "terminal.open":
+    case "terminal.input":
+    case "terminal.resize":
+    case "terminal.ack":
+    case "terminal.pause":
+    case "terminal.resume":
+    case "terminal.close": {
+      const { handleTerminalMessage } = await import("./pty/handler")
+      return handleTerminalMessage(type, rest, services, session, stampedSurface as string | undefined)
+    }
 
     default:
       return { type: "error", error: `Unknown message type: ${type}` }
