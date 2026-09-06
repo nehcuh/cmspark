@@ -39,7 +39,7 @@ import {
   persistHealedToolRows,
   replaceInterruptedFillerIfPresent,
 } from "./tool-batch-heal"
-import { isContextOverflowError, isLengthStop, isTruncatedToolBatch } from "./overflow"
+import { isContentRiskError, isContextOverflowError, isLengthStop, isTruncatedToolBatch } from "./overflow"
 import { convertLeftoverSteerToNextRun, takeSteer } from "./run-queues"
 import type { RunStats } from "../loop/loop-state"
 import { computeMaxTokens } from "./providers/anthropic-convert"
@@ -242,6 +242,71 @@ function extractKeyTerms(content: string): string[] {
 }
 const CONTINUOUS_FAILURE_LIMIT = 5
 const MAX_SAME_TOOL_RECOVERABLE_FAILURES = 3
+/** #430: 内容风控隔离——只替换「最近的大型工具结果」（最可能的触发源）的长度门槛。 */
+const CONTENT_RISK_QUARANTINE_MIN_LEN = 500
+/** #430: 占位文本（诚实声明移除事实；不进 untrusted 包装——这是系统动作不是网页数据）。 */
+const CONTENT_RISK_QUARANTINE_PLACEHOLDER =
+  "[该段内容已被移除：触发服务商内容风控（400）。请基于其余信息继续，不要重复获取同一来源。]"
+
+/**
+ * #430: 从后往前找最近一条大型工具结果（内容风控的最可能触发源，如网页正文）。
+ * 找不到（没有可隔离对象）→ 返回 -1，调用方直接致命，不做无谓重发。
+ */
+export function findLastLargeToolResultIndex(
+  messages: Array<{ role?: string; content?: unknown }>,
+): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m?.role === "tool" && typeof m.content === "string" && m.content.length >= CONTENT_RISK_QUARANTINE_MIN_LEN) {
+      return i
+    }
+  }
+  return -1
+}
+
+/**
+ * #430: 把持久化历史里同内容的工具行一并隔离（content + tool_calls[].result）。
+ * 匹配顺序：content 全等（未包装场景）→ 最后一条大型工具行（length ≥ 门槛；
+ * 与内存隔离的「最近大型结果」启发式同源，最坏情况是隔离错一条大行，安全无副作用）。
+ * 找不到就放弃——内存隔离仍生效。
+ */
+export function quarantinePersistedToolRow(
+  threadManager: { getMessages(tid: string): any[]; updateMessage(tid: string, mid: string, u: any): void },
+  threadId: string,
+  originalContent: string,
+): boolean {
+  const rows = threadManager.getMessages(threadId)
+  let target: any = null
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i]
+    if (r?.role === "tool" && r.content === originalContent) {
+      target = r
+      break
+    }
+  }
+  if (!target) {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i]
+      if (
+        r?.role === "tool" &&
+        typeof r.content === "string" &&
+        r.content.length >= CONTENT_RISK_QUARANTINE_MIN_LEN
+      ) {
+        target = r
+        break
+      }
+    }
+  }
+  if (!target) return false
+  const toolCalls = Array.isArray(target.tool_calls)
+    ? target.tool_calls.map((tc: any) => ({ ...tc, result: { quarantined: true, reason: "content_risk" } }))
+    : target.tool_calls
+  threadManager.updateMessage(threadId, target.id, {
+    content: CONTENT_RISK_QUARANTINE_PLACEHOLDER,
+    ...(toolCalls ? { tool_calls: toolCalls } : {}),
+  })
+  return true
+}
 
 interface ToolExecutionResult {
   success: boolean
@@ -1068,6 +1133,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   let continuousFailures = 0
   let overflowRecoveryUsed = false
   let lengthRecoveryUsed = false
+  let contentRiskRecoveryUsed = false
   let outputMaxTokens = computeMaxTokens(contextWindow, config.max_tokens)
   const recoverableFailureCounts = new Map<string, number>()
 
@@ -2098,6 +2164,41 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           type: "chat.error",
           thread_id: threadId,
           error: "消息结构错误，已停止。请重试。",
+        })
+        if (runStats) runStats.terminal = "error"
+        return
+      }
+      // #430: 内容风控 400 是确定性拒绝——走 recoverable 会把同一 payload 重发 5 次
+      // （4zi17x 实证：4 次重试全部 <200ms 瞬挂，烧光熔断误杀对话）。一次性恢复：
+      // 隔离最近的大型工具结果（最可能触发源）重试一次；再命中/无可隔离对象 → 致命。
+      if (isContentRiskError(errorMsg)) {
+        if (!contentRiskRecoveryUsed) {
+          contentRiskRecoveryUsed = true
+          const idx = findLastLargeToolResultIndex(messages)
+          if (idx >= 0) {
+            const original = messages[idx].content as string
+            messages[idx].content = CONTENT_RISK_QUARANTINE_PLACEHOLDER
+            logger.warn("llm.content_risk_quarantine", {
+              thread_id: threadId,
+              round,
+              removed_len: original.length,
+            })
+            // 同步隔离持久化行（rebuildMessagesFromHistory 从 tc.result 重建工具行，
+            // 只改内存会在下次 run 把同一段触发内容再发出去）。
+            quarantinePersistedToolRow(threadManager, threadId, original)
+            messages.push({
+              role: "user",
+              content: "上一段网页/工具返回内容触发了服务商内容风控，该段已被移除。请基于已有信息继续完成任务，不要重复抓取同一来源。",
+            } as any)
+            continue
+          }
+          logger.warn("llm.content_risk_no_quarantine_target", { thread_id: threadId, round })
+        }
+        logger.error("llm.content_risk_fatal", { error: errorMsg, round })
+        sendToExtension({
+          type: "chat.error",
+          thread_id: threadId,
+          error: "服务商内容风控拦截了本次请求，已停止。可尝试：新开对话、调整任务描述，或在设置中更换模型。",
         })
         if (runStats) runStats.terminal = "error"
         return
