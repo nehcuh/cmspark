@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S106 END (2026-09-06) [剩余 issue 全清 → 0.6.1 + 评测门实证]
+- **Merged**：#421（#419 stdio 懒重拉/UI 选档/形状预检）· #422（#417 escalateGuidance 收敛 + linux cuArmed）· #424（#418 distill polish + 真实 LLM 884s 三轮调优 5 草稿 99 ids 零伪造）。全部双路对抗 + CI 绿。
+- **非代码**：#351 终裁关闭（pi 红队修正论据：embedding 本机不出网，真理由是 #260 experimental + 无诉求）；#328 shadow 开启；#363 评测门首跑 **FAIL 0/10** → 归因 worker 坐标系（raw {"x":[800,260]} 超界，L-QW-3 clamp-only）→ #423。
+- **残余**：#423 可执行；#363 blocked 维持；deferred/冻结不动；#71/#70 路标注释。
+- **教训**：合并与清理分开两步（#422 TLS 超时又撞一次，refs/pull/N/head 救回）；评测 FAIL 先查 harness 坐标约定；grok 复审抓到作者测试计数误报（40→20 实数）——lane 数字一律复算。
+- Recorded: yes
+
 ### S105++ (2026-09-06) [五票全清 → 0.6.1]
 - **背景**：用户授权「按推荐顺序完成所有遗留任务」。lane 分工：claude→#409/#411，grok→#408+评审，pi→#406/#410+评审，kimi 居中协调+评审+#420。
 - **Merged**：#412(#406 残余冻结+tray 端口读配置) · #413(#408 双轨同名) · #414(#409 升级链四断点) · #415(#410 interact profile+豁免旗不溅射) · #416(#411 全历史专家) · #420(0.6.1 lockstep)。全部 CI 绿 + 作者≠评审者复审闭环。
