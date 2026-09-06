@@ -38,7 +38,7 @@ import {
   KNOWLEDGE_GRAPH_ENTRY_LABEL,
   KNOWLEDGE_GRAPH_REASON_DISMISS,
   KNOWLEDGE_GRAPH_UNGROUPED_LABEL,
-  isKnowledgeGraphLlmLane,
+  knowledgeGraphBarMeta,
   shouldRenderGraphCanvas,
 } from "./copy"
 import {
@@ -50,8 +50,8 @@ import {
   KNOWLEDGE_GRAPH_TF_SWITCH_ACK_KEY,
 } from "./llm-pref"
 import {
-  hasKnowledgeGraphLlmCache,
   knowledgeGraphPairKey,
+  knowledgeGraphViewModel,
   parseKnowledgeGraphPayload,
   type KnowledgeGraphNode,
   type KnowledgeGraphRelation,
@@ -198,14 +198,11 @@ export function KnowledgeGraphApp() {
 
   const payloadNodes = snap?.nodes ?? []
   const payloadEdges = snap?.edges ?? []
-  const payloadRelations = snap?.relations ?? []
   const labels = snap?.labels ?? {}
-  const llmLane = status === "ok" && isKnowledgeGraphLlmLane(payloadNodes.length)
-  const hasCache = snap ? hasKnowledgeGraphLlmCache(snap) : false
+  const view = knowledgeGraphViewModel(snap)
+  const { llmLane, showOrganizeCta, showReorganize, showNoRelations, relationsToDraw } = view
+  const payloadRelations = relationsToDraw
   const llmReady = snap?.llm_ready !== false
-  const showOrganizeCta = llmLane && !hasCache
-  const showReorganize = llmLane && hasCache
-  const showNoRelations = llmLane && hasCache && payloadRelations.length === 0
   const showTfBanner =
     (status === "ok" || status === "over_cap") &&
     payloadNodes.length >= 20 &&
@@ -654,7 +651,9 @@ export function KnowledgeGraphApp() {
         ) : null}
         {snap?.stale === true && llmLane ? <KnowledgeGraphStaleBadge /> : null}
         <span style={styles.barMeta}>
-          {showCanvas ? `${payloadNodes.length} 点 · ${payloadEdges.length} 边` : ""}
+          {showCanvas
+            ? knowledgeGraphBarMeta(payloadNodes.length, payloadEdges.length, payloadRelations.length)
+            : ""}
         </span>
         <button type="button" style={styles.barBtnGhost} onClick={() => setPanelOpen((v) => !v)}>
           {panelOpen ? "收起面板" : "分组"}
@@ -727,7 +726,9 @@ export function KnowledgeGraphApp() {
                   llmEnabled={llmEnabled}
                   llmLaneGroup={llmGroup}
                   onLock={llmLane && llmGroup ? () => sendLock(k, false) : undefined}
-                  onUnlock={llmLane && llmGroup ? () => sendLock(k, true) : undefined}
+                  onUnlock={
+                    llmGroup && labels[k]?.locked === true ? () => sendLock(k, true) : undefined
+                  }
                 />
               )
             })

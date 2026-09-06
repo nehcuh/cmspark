@@ -43,6 +43,14 @@ export function isKnowledgeGraphLlmLane(nodeCount: number): boolean {
   return nodeCount >= 2 && nodeCount <= KNOWLEDGE_GRAPH_LLM_LANE_MAX
 }
 
+/** 工具栏边计数：有 AI 关联时拆 TF/AI，否则保持「N 点 · M 边」。 */
+export function knowledgeGraphBarMeta(nodeCount: number, tfEdges: number, aiRelations: number): string {
+  if (aiRelations > 0) {
+    return `${nodeCount} 点 · TF ${tfEdges} 边 · AI ${aiRelations} 关联`
+  }
+  return `${nodeCount} 点 · ${tfEdges} 边`
+}
+
 export type KnowledgeGraphStatus = "ok" | "too_few" | "over_cap" | "rebuilding" | "error"
 
 /** Banner copy for the honest states; ok → no banner. */

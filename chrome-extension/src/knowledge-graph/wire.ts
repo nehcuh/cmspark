@@ -1,7 +1,7 @@
 // #296 knowledge.graph wire contract (spec §5). UI-only: parse + request builder.
 // Server lane owns computation; this module is fail-closed on unknown shapes.
 
-import type { KnowledgeGraphStatus } from "./copy"
+import { isKnowledgeGraphLlmLane, type KnowledgeGraphStatus } from "./copy"
 
 export type KnowledgeGraphNode = {
   id: string
@@ -52,6 +52,11 @@ export type KnowledgeGraphPayload = {
   tf_switch_notice?: boolean
   /** #427：锁组缩到 <2 解散。 */
   lock_dissolved?: boolean
+  /**
+   * #427 pi MAJOR-1：graph_llm 区存在即为 true（空组+空关联也算整理过）。
+   * 无缓存帧省略或 false。
+   */
+  organized?: boolean
 }
 
 const STATUSES = new Set<KnowledgeGraphStatus>(["ok", "too_few", "over_cap", "rebuilding", "error"])
@@ -113,10 +118,43 @@ export function knowledgeGraphPairKey(a: string, b: string): string {
   return a < b ? `${a}\0${b}` : `${b}\0${a}`
 }
 
-/** 已有 LLM 分组或洞察边 → 视为有整理缓存（不再出 CTA）。 */
+/** 已整理过（含合法空结果）→ 不再出 CTA。 */
 export function hasKnowledgeGraphLlmCache(p: KnowledgeGraphPayload): boolean {
+  if (p.organized === true) return true
   if ((p.relations?.length ?? 0) > 0) return true
   return p.nodes.some((n) => (n.group_key || "").startsWith("l:"))
+}
+
+/** App 层 CTA/散点/虚线门（pi NIT-2：可测组合，不挂 chrome）。 */
+export function knowledgeGraphViewModel(p: KnowledgeGraphPayload | null | undefined): {
+  llmLane: boolean
+  hasCache: boolean
+  showOrganizeCta: boolean
+  showReorganize: boolean
+  showNoRelations: boolean
+  relationsToDraw: KnowledgeGraphRelation[]
+} {
+  if (!p) {
+    return {
+      llmLane: false,
+      hasCache: false,
+      showOrganizeCta: false,
+      showReorganize: false,
+      showNoRelations: false,
+      relationsToDraw: [],
+    }
+  }
+  const llmLane = p.status === "ok" && isKnowledgeGraphLlmLane(p.nodes.length)
+  const hasCache = hasKnowledgeGraphLlmCache(p)
+  const rel = llmLane && Array.isArray(p.relations) ? p.relations : []
+  return {
+    llmLane,
+    hasCache,
+    showOrganizeCta: llmLane && !hasCache,
+    showReorganize: llmLane && hasCache,
+    showNoRelations: llmLane && hasCache && rel.length === 0,
+    relationsToDraw: rel,
+  }
 }
 
 export function parseKnowledgeGraphPayload(raw: unknown): KnowledgeGraphPayload | null {
@@ -164,6 +202,7 @@ export function parseKnowledgeGraphPayload(raw: unknown): KnowledgeGraphPayload 
     ...(o.stale === true ? { stale: true } : {}),
     ...(typeof o.tf_switch_notice === "boolean" ? { tf_switch_notice: o.tf_switch_notice } : {}),
     ...(o.lock_dissolved === true ? { lock_dissolved: true } : {}),
+    ...(o.organized === true ? { organized: true } : {}),
   }
 }
 
@@ -187,6 +226,7 @@ export function mockKnowledgeGraphPayload(
       ? { tf_switch_notice: partial.tf_switch_notice }
       : {}),
     ...(partial.lock_dissolved === true ? { lock_dissolved: true } : {}),
+    ...(partial.organized === true ? { organized: true } : {}),
   }
 }
 

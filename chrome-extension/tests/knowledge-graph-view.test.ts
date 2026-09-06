@@ -33,6 +33,7 @@ import {
   KNOWLEDGE_GRAPH_UNLOCK_GROUP,
   graphBannerCopy,
   isKnowledgeGraphLlmLane,
+  knowledgeGraphBarMeta,
   knowledgeGraphOrganizeCta,
   shouldRenderGraphCanvas,
 } from "../src/knowledge-graph/copy"
@@ -40,6 +41,7 @@ import {
   buildKnowledgeGraphRequest,
   hasKnowledgeGraphLlmCache,
   knowledgeGraphPairKey,
+  knowledgeGraphViewModel,
   mockKnowledgeGraphPayload,
   parseKnowledgeGraphPayload,
   type KnowledgeGraphPayload,
@@ -432,6 +434,23 @@ test("#427 parseKnowledgeGraphPayload: 旧帧无新字段照常；relations/llm_
   assert.equal(full!.relations![0].ai, true)
   assert.equal(hasKnowledgeGraphLlmCache(full!), true)
   assert.equal(hasKnowledgeGraphLlmCache(old!), false)
+
+  const emptyOk = parseKnowledgeGraphPayload({
+    status: "ok",
+    nodes: [
+      { id: "a", title: "A", group_key: "u:ungrouped", folder: "" },
+      { id: "b", title: "B", group_key: "u:ungrouped", folder: "" },
+      { id: "c", title: "C", group_key: "u:ungrouped", folder: "" },
+      { id: "d", title: "D", group_key: "u:ungrouped", folder: "" },
+    ],
+    edges: [],
+    labels: {},
+    relations: [],
+    organized: true,
+  })
+  assert.ok(emptyOk)
+  assert.equal(emptyOk!.organized, true)
+  assert.equal(hasKnowledgeGraphLlmCache(emptyOk!), true, "合法空结果仍算已整理")
 })
 
 test("#427 buildKnowledgeGraphRequest: organize + user_gesture 成对", () => {
@@ -521,4 +540,61 @@ test("#427 App 源码：CTA 发 organize+user_gesture；不内联新文案", () 
   assert.ok(bg.includes("lock_group") && bg.includes("unlock_group"), "SW 透传锁")
   assert.ok(!app.includes("让 AI 整理现有"), "CTA 文案不得内联")
   assert.ok(!app.includes("语料已变化"), "stale 文案不得内联")
+  assert.ok(app.includes("labels[k]?.locked === true"), "≥20 锁组仍可解锁（不限 llmLane）")
+  assert.ok(app.includes("knowledgeGraphViewModel"), "CTA 门走可测 view model")
+  assert.ok(app.includes("knowledgeGraphBarMeta"), "边计数走常量函数")
+})
+
+test("#427 App 层：CTA 只在 ok+2–19+无缓存；空结果无 CTA 有散点 note", () => {
+  const ungrouped4 = mockKnowledgeGraphPayload({
+    status: "ok",
+    nodes: ["a", "b", "c", "d"].map((id) => ({ id, title: id, group_key: "u:ungrouped", folder: "" })),
+  })
+  const cta = knowledgeGraphViewModel(ungrouped4)
+  assert.equal(cta.showOrganizeCta, true)
+  assert.equal(cta.showNoRelations, false)
+  assert.equal(cta.relationsToDraw.length, 0)
+
+  const emptyOrg = mockKnowledgeGraphPayload({
+    status: "ok",
+    nodes: ungrouped4.nodes,
+    relations: [],
+    organized: true,
+  })
+  const empty = knowledgeGraphViewModel(emptyOrg)
+  assert.equal(empty.showOrganizeCta, false, "合法空结果不再出 CTA")
+  assert.equal(empty.showNoRelations, true)
+  assert.equal(empty.showReorganize, true)
+
+  assert.equal(knowledgeGraphViewModel(mockKnowledgeGraphPayload({ status: "too_few" })).showOrganizeCta, false)
+  assert.equal(knowledgeGraphViewModel(mockKnowledgeGraphPayload({ status: "error" })).showOrganizeCta, false)
+  assert.equal(
+    knowledgeGraphViewModel(
+      mockKnowledgeGraphPayload({
+        status: "ok",
+        nodes: [{ id: "only", title: "x", group_key: "u:ungrouped", folder: "" }],
+      }),
+    ).showOrganizeCta,
+    false,
+    "n=1 无 CTA",
+  )
+  const twenty = knowledgeGraphViewModel(
+    mockKnowledgeGraphPayload({
+      status: "ok",
+      nodes: Array.from({ length: 20 }, (_, i) => ({
+        id: `n${i}`,
+        title: `n${i}`,
+        group_key: "c:g",
+        folder: "",
+      })),
+      relations: [{ a: "n0", b: "n1", reason: "leak", confidence: 1, ai: true }],
+    }),
+  )
+  assert.equal(twenty.showOrganizeCta, false)
+  assert.equal(twenty.relationsToDraw.length, 0, "≥20 不画 AI 虚线（双保险）")
+})
+
+test("#427 barMeta：有 AI 关联时拆 TF/AI", () => {
+  assert.equal(knowledgeGraphBarMeta(4, 3, 0), "4 点 · 3 边")
+  assert.equal(knowledgeGraphBarMeta(4, 3, 2), "4 点 · TF 3 边 · AI 2 关联")
 })
