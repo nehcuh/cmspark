@@ -7,6 +7,7 @@ import {
   ackPty,
   closePty,
   pausePty,
+  pingPty,
   resizePty,
   resumePty,
   spawnPtySession,
@@ -23,6 +24,7 @@ type Session = {
     code: string
   }) => Promise<{ approved: boolean }>
   surface?: string
+  originWs?: unknown
 }
 
 function clampSize(n: unknown, fallback: number, max: number): number {
@@ -115,14 +117,15 @@ export async function handleTerminalMessage(
       rows: clampSize(rest.rows, 24, 200),
       cwd: cwdRes.cwd,
       threadId: threadId || undefined,
+      owner: session.originWs,
       send,
     })
     if (!spawned.ok) {
-      if (spawned.code === "unsupported") {
+      if (spawned.code === "unsupported" || spawned.code === "spawn_failed") {
         return {
           type: "terminal.closed",
           id,
-          code: "unsupported",
+          code: spawned.code,
           signal: 0,
           error: spawned.error,
         }
@@ -149,6 +152,10 @@ export async function handleTerminalMessage(
     }
     const r = ackPty(id, Math.floor(rest.seq))
     return r.ok ? { type: "terminal.ok", id } : deny(r.error)
+  }
+  if (type === "terminal.ping") {
+    pingPty(id)
+    return { type: "terminal.ok", id }
   }
   if (type === "terminal.pause") {
     const r = pausePty(id)

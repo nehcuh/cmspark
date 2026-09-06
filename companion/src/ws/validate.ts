@@ -1636,6 +1636,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "terminal.ping": (m) => {
+      if (typeof m.id !== "string" || !m.id.trim()) return { valid: false, error: "terminal.ping requires id" }
+      return { valid: true }
+    },
     "terminal.pause": (m) => {
       if (typeof m.id !== "string" || !m.id.trim()) return { valid: false, error: "terminal.pause requires id" }
       return { valid: true }

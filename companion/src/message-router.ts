@@ -304,6 +304,8 @@ interface SessionCallbacks {
   origin?: string
   /** Handshake surface from wsAuth. Summoner overlay may run local STT. */
   surface?: "panel" | "tray" | "summoner"
+  /** Originating WS; PTY kill-on-close is scoped to this peer. */
+  originWs?: unknown
 }
 
 /** Internal nextRun drain: preserve overlay/panel lease identity. */
@@ -5548,6 +5550,7 @@ export async function handleMessage(
     case "terminal.input":
     case "terminal.resize":
     case "terminal.ack":
+    case "terminal.ping":
     case "terminal.pause":
     case "terminal.resume":
     case "terminal.close": {

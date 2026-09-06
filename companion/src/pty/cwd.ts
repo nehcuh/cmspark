@@ -28,8 +28,9 @@ export function resolveTerminalStartCwd(opts: {
   let startReal: string
   try {
     startReal = fs.realpathSync(startAbs)
-  } catch {
-    startReal = path.resolve(startAbs)
+  } catch (e: any) {
+    // Broken symlink / missing path: refuse honestly (do not lexically allow).
+    return { ok: false, error: `cwd unreadable (broken symlink or missing): ${e?.message || e}` }
   }
 
   const rel = path.relative(rootReal, startReal)

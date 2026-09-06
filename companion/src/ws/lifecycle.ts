@@ -1447,6 +1447,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               // Path B M1: origin class for voice.stt.* (chrome-extension vs tray).
               origin: peerOrigin,
               surface: wsAuth.get(ws)?.surface,
+              originWs: ws,
             },
           )
         } catch (handlerErr: any) {
@@ -1525,6 +1526,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         /* best-effort */
       }
       applyConnectionCloseGracePeriod(ws)
+      try {
+        const { killPtyByPeer } = require("../pty/session") as typeof import("../pty/session")
+        killPtyByPeer(ws)
+      } catch {
+        /* best-effort — PTY module optional at boot */
+      }
       requireRt().securityConfirmations.rejectAll("disconnect", ws)
       // C-P0-6: cancel tray dialogs racing THIS socket only. Overlay close
       // still rejectAll(overlay) + cancelConfirm ids on the overlay key

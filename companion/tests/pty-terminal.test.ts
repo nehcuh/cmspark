@@ -277,3 +277,68 @@ test("#432 load-native source uses createRequire(execPath)", () => {
   const args = fs.readFileSync(path.join(root, "scripts", "esbuild-bundle-args.json"), "utf8")
   assert.ok(args.includes("@lydell/node-pty"))
 })
+
+test("#432 ping resets heartbeat; unknown id is ignored", async () => {
+  assert.equal(validateWsMessage({ type: "terminal.ping" }).valid, false)
+  assert.equal(validateWsMessage({ type: "terminal.ping", id: "t1" }).valid, true)
+
+  const svc = services()
+  const sess = panel()
+  await handleMessage({ type: "terminal.open", id: "t1", user_gesture: true }, svc, sess as never)
+  const before = pty.__testPtyLastClientAt()
+  pty.__testAgePtyClient(40_000)
+  assert.ok(pty.__testPtyLastClientAt() < before)
+
+  const ping = await handleMessage({ type: "terminal.ping", id: "t1" }, svc, sess as never)
+  assert.equal(ping.type, "terminal.ok")
+  assert.ok(pty.__testPtyLastClientAt() >= before)
+
+  const unknown = await handleMessage({ type: "terminal.ping", id: "no-such" }, svc, sess as never)
+  assert.equal(unknown.type, "terminal.ok")
+  assert.equal(pty.getLivePtyId(), "t1")
+})
+
+test("#432 WS-close kills only that peer's PTY", async () => {
+  const svc = services()
+  const peerA = { tag: "a" }
+  const peerB = { tag: "b" }
+  const sess = { ...panel(), originWs: peerA }
+  await handleMessage({ type: "terminal.open", id: "t1", user_gesture: true }, svc, sess as never)
+  assert.ok(lastPty)
+  assert.equal(pty.killPtyByPeer(peerB), false)
+  assert.equal(lastPty.killed, false)
+  assert.equal(pty.getLivePtyId(), "t1")
+  assert.equal(pty.killPtyByPeer(peerA), true)
+  assert.equal(lastPty.killed, true)
+  assert.equal(pty.getLivePtyId(), null)
+})
+
+test("#432 spawn throw → terminal.closed spawn_failed", async () => {
+  pty.__testSetPtySpawn(() => {
+    throw new Error("chdir failed")
+  })
+  const svc = services()
+  const r = await handleMessage(
+    { type: "terminal.open", id: "t1", user_gesture: true },
+    svc,
+    panel() as never,
+  )
+  assert.equal(r.type, "terminal.closed")
+  assert.equal(r.code, "spawn_failed")
+  assert.match(String(r.error), /chdir failed/)
+  assert.equal(pty.getLivePtyId(), null)
+})
+
+test("#432 cwd: broken symlink refused (no lexical fallback)", () => {
+  const sandbox = path.join(tempHome, "CMspark-projects")
+  fs.mkdirSync(sandbox, { recursive: true })
+  const dangling = path.join(sandbox, "dangling-link")
+  try {
+    fs.symlinkSync(path.join(sandbox, "does-not-exist"), dangling)
+  } catch {
+    return
+  }
+  const denied = resolveTerminalStartCwd({ requested: dangling, workspaceRoot: sandbox })
+  assert.equal(denied.ok, false)
+  assert.match(String((denied as { error: string }).error), /unreadable|broken symlink/)
+})

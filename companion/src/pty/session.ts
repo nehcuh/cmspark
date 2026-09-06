@@ -38,6 +38,8 @@ type LiveSession = {
   id: string
   handle: PtyHandle
   threadId?: string
+  /** WS peer that opened this PTY; WS-close kills only this owner's session. */
+  owner?: unknown
   cwd: string
   seq: number
   unacked: Map<number, number>
@@ -88,6 +90,13 @@ export function getLivePtyId(): string | null {
 
 export function killPtyByThreadId(threadId: string): boolean {
   if (!live || live.threadId !== threadId) return false
+  closeLive("killed")
+  return true
+}
+
+/** Kill the live PTY only if it was opened by this WS peer (NIT-1). */
+export function killPtyByPeer(peer: unknown): boolean {
+  if (!peer || !live || live.owner !== peer) return false
   closeLive("killed")
   return true
 }
@@ -191,6 +200,7 @@ export function spawnPtySession(opts: {
   rows: number
   cwd: string
   threadId?: string
+  owner?: unknown
   send: (frame: Record<string, unknown>) => void
 }): { ok: true; pid: number } | { ok: false; error: string; code?: TerminalClosedCode } {
   if (ptyHostPlatform() !== "darwin") {
@@ -214,7 +224,7 @@ export function spawnPtySession(opts: {
   try {
     handle = spawnFn(file, [], { name: "xterm-256color", cols, rows, cwd: opts.cwd, env })
   } catch (e: any) {
-    return { ok: false, error: e?.message || String(e) }
+    return { ok: false, error: e?.message || String(e), code: "spawn_failed" }
   }
 
   installExitHook()
@@ -222,6 +232,7 @@ export function spawnPtySession(opts: {
     id: opts.id,
     handle,
     threadId: opts.threadId,
+    owner: opts.owner,
     cwd: opts.cwd,
     seq: 0,
     unacked: new Map(),
@@ -231,6 +242,8 @@ export function spawnPtySession(opts: {
     heartbeat: setInterval(() => {
       const s = live
       if (!s || s.id !== opts.id) return
+      // Last-resort orphan reclaim. Client ping/input/ack/resize reset lastClientAt
+      // so a quiet-but-watched tab (vim/man/ssh idle) is not SIGKILL'd.
       if (Date.now() - s.lastClientAt > heartbeatMs) closeLive("killed")
     }, Math.min(heartbeatMs, 5000)),
     send: opts.send,
@@ -263,6 +276,12 @@ export function noteClientActivity(id: string): boolean {
   if (!live || live.id !== id) return false
   live.lastClientAt = Date.now()
   return true
+}
+
+/** Keepalive. Unknown id is a no-op (ext may ping after local close). */
+export function pingPty(id: string): { ok: true } {
+  noteClientActivity(id)
+  return { ok: true }
 }
 
 export function writePtyInput(id: string, b64: string): { ok: true } | { ok: false; error: string } {
@@ -342,4 +361,12 @@ export function __testPtyUnackedBytes(): number {
 
 export function __testPtyPaused(): boolean {
   return live?.paused === true
+}
+
+export function __testPtyLastClientAt(): number {
+  return live?.lastClientAt ?? 0
+}
+
+export function __testAgePtyClient(ms: number): void {
+  if (live) live.lastClientAt -= ms
 }
