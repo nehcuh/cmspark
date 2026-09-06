@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-09-07
+
+召唤器「五条需求」补齐波次（#433 P1/P2/P3 + #439，多 lane 并行 + 逐 PR 对抗复审）：召唤器从「命令面板壳」变成真正能读历史、控插件、跑后台任务的独立入口；AI 在任意对话里也能主动检索历史与知识。
+
+- **召唤器接脱敏检索（#433 P1）**：命令面板数据层从本地标题匹配升级为真检索——输入即查（150ms 防抖 + 代际守卫防迟到回包盖新状态），结果带摘要 snippet；方向键选中线程 → 脱敏蒸馏预览；「引用进新任务」把该线程以摘要卡带进新对话（LLM 只见蒸馏，不见原文）。[#433](https://github.com/nehcuh/cmspark/issues/433)
+- **召唤器控制面（#433 P2）**：`ui.command` 白名单推送帧五动词——打开侧栏 / 打开确认台 / 打开浏览器 / 面板新建对话 / 打开内嵌终端 tab（联动 #432）；档位从召唤器只可**降档**（收紧免确认），升档必须去面板确认台。[#433](https://github.com/nehcuh/cmspark/issues/433)
+- **召唤器后台任务（#433 P3）**：命令面板新增「后台任务」动词——任务句 + user_gesture + 当前线程租约，三重闸全保留（plan 档拒、确认仍回确认台，overlay 零新确认 UI）；浏览器后台执行复用 loop/SITE_OP/CU 升级链零改动。[#433](https://github.com/nehcuh/cmspark/issues/433)
+- **LLM 历史/知识检索工具（#439，70mj33 实证）**：catalog 新增 L1 只读 `search_threads` / `search_knowledge`——在召唤器或侧栏里问「我今天聊了什么」「有没有关于 X 的笔记」AI 真的能查了。复用脱敏检索内核（标题/摘要/tags，永不回消息原文），默认 5 条上限 10，plan 档可用；与 `thread_recall`（本线程旧轮次）分工写进 prompt。[#439](https://github.com/nehcuh/cmspark/issues/439)
+
 ## [0.6.4] — 2026-09-06
 
 - **内嵌终端（#432，对标 Zed Terminal Threads）**：插件内真 PTY 终端——全页 tab 跑 xterm.js（canvas 渲染，MV3 安全），companion 用 @lydell/node-pty（prebuilt）托管真 shell；I/O 复用既有 WS（16KiB b64 帧 + write-ack 水位反压 + 25s keepalive）。权限面：默认关（设置「编程助手」里显式开）、每次开门 user_gesture + L2 确认（巡航/无人值守不豁免）、plan_readonly 线程拒开、同时最多 1 个会话、起始 cwd 约束、env 剥离 CMSPARK_*/密钥、审计不含击键流。P0 为裸 login shell；Mode C「内嵌 agent TUI」在 P1。[#432](https://github.com/nehcuh/cmspark/issues/432)
