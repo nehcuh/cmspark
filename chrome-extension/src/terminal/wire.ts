@@ -16,6 +16,7 @@ export type TerminalClientFrame =
   | { type: "terminal.input"; id: string; seq: number; b64: string }
   | { type: "terminal.resize"; id: string; cols: number; rows: number }
   | { type: "terminal.ack"; id: string; seq: number }
+  | { type: "terminal.ping"; id: string }
   | { type: "terminal.close"; id: string }
 
 // --- companion → client ---

@@ -54,6 +54,10 @@ export function TerminalApp() {
     const sessionId = `term.${Date.now().toString(36)}.${(sessionSeq += 1)}`
     let inputSeq = 0
     let closedByUs = false
+    // 会话 keepalive：静默（无输入无输出）不等于孤儿——每 25s ping 重置服务端心跳（spec §4）
+    const pingTimer = setInterval(() => {
+      send({ type: "terminal.ping", id: sessionId })
+    }, 25_000)
     // pi MAJOR-1 ③：开门 watchdog——12s 无 opened/error 一律落 error，不永转圈
     const OPEN_WATCHDOG_MS = 12_000
     let opened = false
@@ -157,6 +161,7 @@ export function TerminalApp() {
 
     return () => {
       closedByUs = true
+      clearInterval(pingTimer)
       clearTimeout(watchdog)
       if (resizeTimer) clearTimeout(resizeTimer)
       window.removeEventListener("resize", onWinResize)
