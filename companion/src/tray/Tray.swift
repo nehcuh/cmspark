@@ -619,6 +619,15 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
   case "summoner.knowledge":
     summonerController.applyKnowledge(json)
 
+  case "summoner.thread.search.results":
+    summonerController.applyThreadSearchResults(json)
+
+  case "summoner.knowledge.search.results":
+    summonerController.applyKnowledgeSearchResults(json)
+
+  case "summoner.peek.result":
+    summonerController.applyPeekResult(json)
+
   case "quit":
     delegate.shutdown()
     jsonLine(["type": "exit", "code": 0])

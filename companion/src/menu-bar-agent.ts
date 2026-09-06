@@ -53,8 +53,13 @@ import {
   encodeSummonerSettings,
   encodeSummonerSkills,
   encodeSummonerThreads,
+  encodeSummonerThreadSearchResults,
+  encodeSummonerKnowledgeSearchResults,
+  encodeSummonerPeekResult,
   SUMMONER_RAIL_LIST_CAP,
   type SummonerInboundEvt,
+  type SummonerThreadSearchHit,
+  type SummonerKnowledgeSearchHit,
 } from "./summoner/protocol"
 import { connectedMcpServerNames } from "./mcp/confirm-target"
 import {
@@ -1164,6 +1169,92 @@ export async function handleSummonerSelect(threadId: string): Promise<void> {
   if (claimed) touchSummonerActivity(id)
 }
 
+// ── #433 P1 search handlers (spec §3a) ────────────────────────────────────────
+
+export async function handleSummonerThreadSearch(query: string) {
+  const q = query.trim()
+  if (!q) return
+  try {
+    const result = await summonerClient?.sendAppRequest("thread.search", { query: q, limit: 10 })
+    if (result?.hits && Array.isArray(result.hits)) {
+      const hits: SummonerThreadSearchHit[] = result.hits.map((h: any) => ({
+        id: h.thread_id ?? h.id,
+        title: h.title ?? "",
+        alias: h.alias,
+        when: h.updated_at ?? new Date().toISOString(),
+        snippet: h.snippet ?? "",
+        score: typeof h.score === "number" ? h.score : 0,
+      }))
+      trayInstance?.sendSummoner?.(encodeSummonerThreadSearchResults({ hits }))
+    }
+  } catch {
+    // search failed silently — palette keeps local results
+  }
+}
+
+export async function handleSummonerKnowledgeSearch(query: string) {
+  const q = query.trim()
+  if (!q) return
+  try {
+    const result = await summonerClient?.sendAppRequest("knowledge.search", { query: q, limit: 10 })
+    if (result?.hits && Array.isArray(result.hits)) {
+      const hits: SummonerKnowledgeSearchHit[] = result.hits.map((h: any) => ({
+        id: h.id ?? "",
+        title: h.title ?? "",
+        folder: h.folder,
+        snippet: h.snippet ?? "",
+        score: typeof h.score === "number" ? h.score : 0,
+      }))
+      trayInstance?.sendSummoner?.(encodeSummonerKnowledgeSearchResults({ hits }))
+    }
+  } catch {
+    // search failed silently
+  }
+}
+
+export async function handleSummonerPeek(threadId: string) {
+  const id = threadId.trim()
+  if (!id) return
+  try {
+    const result = await summonerClient?.sendAppRequest("thread.peek", { thread_id: id })
+    if (result?.ok) {
+      trayInstance?.sendSummoner?.(encodeSummonerPeekResult({
+        thread_id: id,
+        title: result.title ?? "",
+        markdown: result.markdown ?? "",
+        truncated: result.truncated === true,
+        redacted_hits: typeof result.redacted_hits === "number" ? result.redacted_hits : 0,
+      }))
+    }
+  } catch {
+    // peek failed silently
+  }
+}
+
+export async function handleSummonerCiteThread(threadId: string, text?: string) {
+  const id = threadId.trim()
+  if (!id) return
+  try {
+    const created = await summonerClient?.createThread()
+    if (!created?.id) {
+      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "创建新任务失败" }))
+      return
+    }
+    const contextRefs = [{ type: "thread", id, mode: "summary_card" }]
+    const message = text?.trim() || "引用线程内容，请帮我总结或继续"
+    await summonerClient?.sendAppRequest("chat.create", {
+      thread_id: created.id,
+      message,
+      context_refs: contextRefs,
+    })
+    const claimed = await hydrateSummonerThread(created.id)
+    if (claimed) touchSummonerActivity(created.id)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: `引用失败: ${msg}` }))
+  }
+}
+
 /** Re-arm a persisted combo on Swift. Empty config waits for first overlay open. */
 export function armSummonerHotkeyOnTrayStart(): void {
   const cmd = nextSummonerHotkeyCmd(getConfig().summoner?.hotkey)
@@ -1567,6 +1658,19 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       return
     case "summoner.closed":
       void handleSummonerClosed()
+      return
+    // #433 P1 search
+    case "summoner.thread.search":
+      void handleSummonerThreadSearch(evt.query)
+      return
+    case "summoner.knowledge.search":
+      void handleSummonerKnowledgeSearch(evt.query)
+      return
+    case "summoner.peek":
+      void handleSummonerPeek(evt.thread_id)
+      return
+    case "summoner.cite_thread":
+      void handleSummonerCiteThread(evt.thread_id, evt.text)
       return
     case "summoner.composing":
       return

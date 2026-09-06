@@ -74,6 +74,13 @@ enum SummonerTokens {
 // the wire stays exactly the existing stdin `summoner.*` family.
 // ---------------------------------------------------------------------------
 
+struct SummonerSearchHit {
+  let id: String
+  let title: String
+  let snippet: String
+  let score: Double
+}
+
 struct PaletteRow {
   enum Kind {
     case sectionHeader
@@ -82,6 +89,8 @@ struct PaletteRow {
     case knowledge
     case fallbackChat
     case fallbackPanel
+    case peekPreview
+    case citeThread
   }
 
   let kind: Kind
@@ -90,8 +99,19 @@ struct PaletteRow {
   let subtitle: String?
   let symbol: String
   let enabled: Bool
+  let snippet: String?
 
-  var selectable: Bool { kind != .sectionHeader }
+  var selectable: Bool { kind != .sectionHeader && kind != .peekPreview }
+
+  init(kind: Kind, id: String, title: String, subtitle: String?, symbol: String, enabled: Bool, snippet: String? = nil) {
+    self.kind = kind
+    self.id = id
+    self.title = title
+    self.subtitle = subtitle
+    self.symbol = symbol
+    self.enabled = enabled
+    self.snippet = snippet
+  }
 }
 
 /// frequency × recency 衰减（spec §5c）。score = count · e^(−Δh/72)。
@@ -210,6 +230,7 @@ final class PaletteTableController: NSObject, NSTableViewDataSource, NSTableView
   private(set) var rows: [PaletteRow] = []
   private(set) var selected: Int = -1
   var onActivate: ((PaletteRow) -> Void)?
+  var onSelectionChange: ((PaletteRow?) -> Void)?
 
   private let headerIdentifier = NSUserInterfaceItemIdentifier("pal.header")
   private let rowIdentifier = NSUserInterfaceItemIdentifier("pal.row")
@@ -280,6 +301,7 @@ final class PaletteTableController: NSObject, NSTableViewDataSource, NSTableView
     selected = idx
     reconfigureVisibleRows()
     tableView.scrollRowToVisible(idx)
+    onSelectionChange?(rows[idx])
   }
 
   /// ⌘1-9 快选：第 n 个可选行。
@@ -322,7 +344,9 @@ final class PaletteTableController: NSObject, NSTableViewDataSource, NSTableView
     guard !rows.isEmpty else { return 0 }
     var total: CGFloat = 0
     for row in rows {
-      total += row.kind == .sectionHeader ? 24 : summonerRowPitch
+      if row.kind == .sectionHeader { total += 24 }
+      else if row.kind == .peekPreview { total += 120 }
+      else { total += summonerRowPitch }
     }
     return total
   }
@@ -334,7 +358,9 @@ final class PaletteTableController: NSObject, NSTableViewDataSource, NSTableView
   // MARK: NSTableViewDelegate
 
   func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-    rows[row].kind == .sectionHeader ? 24 : summonerRowPitch
+    if rows[row].kind == .sectionHeader { return 24 }
+    if rows[row].kind == .peekPreview { return 120 }
+    return summonerRowPitch
   }
 
   func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -415,7 +441,7 @@ final class PaletteRowView: NSView {
     onClick = click
     let symbol = NSImage(systemSymbolName: row.symbol, accessibilityDescription: row.title)
     icon.image = symbol
-    icon.contentTintColor = row.kind == .verb || row.kind == .fallbackChat || row.kind == .fallbackPanel
+    icon.contentTintColor = row.kind == .verb || row.kind == .fallbackChat || row.kind == .fallbackPanel || row.kind == .citeThread
       ? SummonerTokens.indigo
       : SummonerTokens.secondary
     if !row.enabled { icon.contentTintColor = SummonerTokens.faint }
@@ -687,6 +713,18 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private var mcpRows: [[String: Any]] = []
   private var skillRows: [[String: Any]] = []
   private var knowledgeRows: [[String: Any]] = []
+  private var threadSearchHits: [SummonerSearchHit] = []
+  private var knowledgeSearchHits: [SummonerSearchHit] = []
+  private var peekThreadId: String? = nil
+  private var peekMarkdown: String = ""
+  private var peekTruncated: Bool = false
+  private var peekRedactedHits: Int = 0
+  private var searchingThreads: Bool = false
+  private var searchingKnowledge: Bool = false
+  private var searchGeneration: Int = 0
+  private var lastSearchQuery: String = ""
+  private var pendingPeekThreadId: String? = nil
+  private var hashSearchTimer: Timer?
   private var workbenchHeightConstraint: NSLayoutConstraint?
   private var settingsBox: NSView?
   private var settingsIdleButtons: [NSButton] = []
@@ -1421,16 +1459,26 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     if !q.isEmpty, !paletteOpen, !expanded {
       setPalette(open: true)
     }
+    // Clear peek on every keystroke (stale preview for prev selection).
+    peekMarkdown = ""
+    peekThreadId = nil
+    peekTruncated = false
+    peekRedactedHits = 0
     refreshPalette()
+    // Debounce 150ms for server-side search (P1 data layer).
+    searchTimer?.invalidate()
+    searchTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+      self?.emitP1Search()
+    }
     if isSearchQuery(composerText) {
-      // `#` 前缀保留既有 node 侧检索回路（单命中自动 hydrate）。
-      searchTimer?.invalidate()
-      searchTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+      // `#` 前缀保留既有 node 侧检索回路（单命中自动 hydrate）。NIT-2: 恢复 150ms 防抖。
+      hashSearchTimer?.invalidate()
+      hashSearchTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
         self?.emitSearch()
       }
     } else {
-      searchTimer?.invalidate()
-      searchTimer = nil
+      hashSearchTimer?.invalidate()
+      hashSearchTimer = nil
     }
   }
 
@@ -1511,6 +1559,28 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     jsonLine(["type": "summoner.search", "query": searchNeedle(composerText)])
   }
 
+  private func emitP1Search() {
+    guard isOpen else { return }
+    let q = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !q.isEmpty else {
+      // Clear stale results when query is empty.
+      searchGeneration += 1
+      lastSearchQuery = ""
+      threadSearchHits = []
+      knowledgeSearchHits = []
+      refreshPalette()
+      return
+    }
+    // NIT-3: skip P1 search for `#` prefix — node search handles it.
+    if q.hasPrefix("#") { return }
+    searchGeneration += 1
+    lastSearchQuery = q
+    searchingThreads = true
+    searchingKnowledge = true
+    jsonLine(["type": "summoner.thread.search", "query": q])
+    jsonLine(["type": "summoner.knowledge.search", "query": q])
+  }
+
   private func selectThread(_ thread: RecentThread) {
     threadId = thread.id
     frecency.touch(thread.id)
@@ -1538,6 +1608,69 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     let incomingIds = Set(incoming.map { $0.id })
     threadRows = incoming + threadRows.filter { !incomingIds.contains($0.id) }
     refreshPalette()
+  }
+
+  func applyThreadSearchResults(_ json: [String: Any]) {
+    // MAJOR-1: discard stale results if query has changed since request was sent.
+    let q = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard q == lastSearchQuery, !q.isEmpty else { return }
+    let raw = json["hits"] as? [[String: Any]] ?? []
+    threadSearchHits = raw.compactMap { row in
+      guard let id = row["id"] as? String, !id.isEmpty,
+            let title = row["title"] as? String else { return nil }
+      return SummonerSearchHit(
+        id: id, title: title,
+        snippet: row["snippet"] as? String ?? "",
+        score: row["score"] as? Double ?? 0
+      )
+    }
+    searchingThreads = false
+    refreshPalette()
+  }
+
+  func applyKnowledgeSearchResults(_ json: [String: Any]) {
+    // MAJOR-1: discard stale results if query has changed since request was sent.
+    let q = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard q == lastSearchQuery, !q.isEmpty else { return }
+    let raw = json["hits"] as? [[String: Any]] ?? []
+    knowledgeSearchHits = raw.compactMap { row in
+      guard let id = row["id"] as? String, !id.isEmpty,
+            let title = row["title"] as? String else { return nil }
+      return SummonerSearchHit(
+        id: id, title: title,
+        snippet: row["snippet"] as? String ?? "",
+        score: row["score"] as? Double ?? 0
+      )
+    }
+    searchingKnowledge = false
+    refreshPalette()
+  }
+
+  func applyPeekResult(_ json: [String: Any]) {
+    let threadId = json["thread_id"] as? String ?? ""
+    guard !threadId.isEmpty else { return }
+    // MAJOR-1: discard peek result if selection has changed since request.
+    guard threadId == pendingPeekThreadId else { return }
+    peekThreadId = threadId
+    peekMarkdown = json["markdown"] as? String ?? ""
+    peekTruncated = json["truncated"] as? Bool ?? false
+    peekRedactedHits = json["redacted_hits"] as? Int ?? 0
+    // Show peek preview in palette.
+    refreshPalette()
+  }
+
+  @objc func citeThreadClicked() {
+    guard let id = peekThreadId, !id.isEmpty else { return }
+    let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    var payload: [String: Any] = ["type": "summoner.cite_thread", "thread_id": id]
+    if !text.isEmpty { payload["text"] = text }
+    jsonLine(payload)
+    peekMarkdown = ""
+    peekThreadId = nil
+    peekTruncated = false
+    peekRedactedHits = 0
+    setPalette(open: false)
+    hide()
   }
 
   private func submitComposer(enqueue: Bool = false) {
@@ -1824,6 +1957,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     }
 
     // 有 query：三段混排（动词 → 数据 → 兜底），匹配用 §5c 加权。
+    let isHashQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#")
     var matchedVerbs = 0
     for v in verbs {
       let score = PaletteMatcher.score(query: q, fields: [v.title, v.subtitle], pinyins: [PinyinInitials.initials(for: v.title)])
@@ -1835,9 +1969,37 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     }
     if matchedVerbs > 0 { rows.insert(sectionHeader("动作"), at: 0) }
 
+    if !isHashQuery {
+      // P1 server-side search results with snippets.
+      if paletteScope != .knowledge {
+        let ranked = threadSearchHits.sorted { $0.score > $1.score }
+        if !ranked.isEmpty {
+          rows.append(sectionHeader("对话"))
+          for hit in ranked.prefix(8) {
+            rows.append(PaletteRow(kind: .thread, id: hit.id, title: hit.title, subtitle: hit.snippet.isEmpty ? "对话" : hit.snippet, symbol: "bubble.left", enabled: true, snippet: hit.snippet))
+          }
+        }
+      }
+      if paletteScope == .knowledge || paletteScope == .all {
+        let ranked = knowledgeSearchHits.sorted { $0.score > $1.score }
+        if !ranked.isEmpty {
+          rows.append(sectionHeader("知识"))
+          for hit in ranked.prefix(8) {
+            rows.append(PaletteRow(kind: .knowledge, id: hit.id, title: hit.title, subtitle: hit.snippet.isEmpty ? "知识" : hit.snippet, symbol: "doc.text", enabled: true, snippet: hit.snippet))
+          }
+        }
+      }
+    }
+
+    // NIT-1: dedup server hits from local fallback (server priority).
+    let serverThreadIds = Set(threadSearchHits.map { $0.id })
+    let serverKnowledgeIds = Set(knowledgeSearchHits.map { $0.id })
+
+    // Local fallback: also show local matches (backward compat + `#` prefix circuit).
     var scored: [(PaletteRow, Double)] = []
     if paletteScope != .knowledge {
       for t in threadRows.prefix(200) {
+        guard !serverThreadIds.contains(t.id) else { continue }
         let s = PaletteMatcher.score(query: q, fields: [t.title], pinyins: [PinyinInitials.initials(for: t.title)])
         if s > 0 {
           scored.append((PaletteRow(kind: .thread, id: t.id, title: t.title, subtitle: "对话", symbol: "bubble.left", enabled: true),
@@ -1849,6 +2011,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       let id = row["id"] as? String ?? ""
       let title = row["title"] as? String ?? id
       guard !id.isEmpty else { continue }
+      guard !serverKnowledgeIds.contains(id) else { continue }
       let s = PaletteMatcher.score(query: q, fields: [title], pinyins: [PinyinInitials.initials(for: title)])
       if s > 0 {
         scored.append((knowledgePaletteRow(row), s + frecency.score("kb:\(id)")))
@@ -1860,6 +2023,16 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       out.append(sectionHeader(paletteScope == .knowledge ? "知识" : "结果"))
       out.append(contentsOf: scored.prefix(10).map { $0.0 })
       rows = out
+    }
+
+    // P1 peek preview: show when a thread peek result is available.
+    if let peekId = peekThreadId, !peekMarkdown.isEmpty {
+      rows.append(sectionHeader("预览"))
+      let firstLine = peekMarkdown.components(separatedBy: "\n").first ?? ""
+      let suffix = peekTruncated ? " · 截断" : ""
+      let sub = peekRedactedHits > 0 ? "脱敏 \(peekRedactedHits) 处\(suffix)" : "蒸馏预览\(suffix)"
+      rows.append(PaletteRow(kind: .peekPreview, id: peekId, title: firstLine, subtitle: sub, symbol: "eye", enabled: true))
+      rows.append(PaletteRow(kind: .citeThread, id: "cite.\(peekId)", title: "引用进新任务", subtitle: "把此对话作为上下文带入新任务", symbol: "arrow.turn.down.right", enabled: true))
     }
 
     if rows.filter({ $0.selectable && $0.enabled }).isEmpty {
@@ -1916,6 +2089,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       attachForegroundClicked()
     case .sectionHeader:
       break
+    case .peekPreview:
+      break // peek preview is read-only; cite action is via .citeThread row.
+    case .citeThread:
+      citeThreadClicked()
     }
   }
 
@@ -2468,6 +2645,19 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     let pal = PaletteTableController()
     pal.onActivate = { [weak self] row in
       self?.activatePaletteRow(row)
+    }
+    pal.onSelectionChange = { [weak self] row in
+      // P1: when a thread row is selected via arrow keys, request peek preview.
+      if let row = row, row.kind == .thread, !row.id.isEmpty {
+        self?.pendingPeekThreadId = row.id
+        jsonLine(["type": "summoner.peek", "thread_id": row.id])
+      } else {
+        self?.pendingPeekThreadId = nil
+        self?.peekMarkdown = ""
+        self?.peekThreadId = nil
+        self?.peekTruncated = false
+        self?.peekRedactedHits = 0
+      }
     }
     paletteTable = pal
     let paletteBox = NSView()
