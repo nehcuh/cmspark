@@ -20,6 +20,15 @@ export const SUMMONER_SEARCH_LIMIT_MAX = 20
 export const SUMMONER_SEARCH_LIMIT_DEFAULT = 10
 export const SUMMONER_PEEK_MAX_CHARS = 2000
 
+/**
+ * Same skip as message-router `thread.search` / LLM `search_threads`:
+ * system threads (worker / orchestrator) stay out of the searchable pool.
+ * The pure scorer itself does not filter — callers must.
+ */
+export function isSearchableThreadRow(r: { agent_role?: string | null }): boolean {
+  return r.agent_role !== "worker" && r.agent_role !== "orchestrator"
+}
+
 /** 被检索的线程字段加权（digest 全为派生、已按 digest 纪律脱敏/限长）。 */
 type ThreadSearchFields = {
   alias: string

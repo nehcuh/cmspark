@@ -28,6 +28,7 @@ import {
   clampSearchLimit,
   searchThreadRows,
   peekThreadDistilled,
+  isSearchableThreadRow,
 } from "./summoner/read-search"
 import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT } from "./skills/knowledge-related"
 import { attachKnowledgeListDistribution, handleKnowledgeCrud, knowledgeListDocs, knowledgeListFolders } from "./message-router/handlers/knowledge"
@@ -2831,7 +2832,7 @@ export async function handleMessage(
       const rows = threadManager
         .list()
         // 系统线程不入检索流（#411 同款 skip：worker/orchestrator/会议后台）。
-        .filter((r: any) => r.agent_role !== "worker" && r.agent_role !== "orchestrator")
+        .filter(isSearchableThreadRow)
       const hits = searchThreadRows(rows as any, query, limit)
       return { type: "thread.search_result", query, hits }
     }

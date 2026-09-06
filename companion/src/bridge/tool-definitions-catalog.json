@@ -723,6 +723,52 @@
   {
     "type": "function",
     "function": {
+      "name": "search_threads",
+      "description": "Search OTHER local CMspark conversation threads (not this one) by title/alias/digest. Returns title + short redacted snippet only — never message bodies. Use when the user asks about previous chats, history, or what they discussed on a topic. Distinct from thread_recall, which searches THIS thread's omitted turns. After hits, give a one-sentence summary and ask whether to go deeper. Do not call routinely. Not an MCP namespaced search.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query (≤120 chars, Chinese or English)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "1–10, default 5"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_knowledge",
+      "description": "Search the local CMspark knowledge base by title/description/tags. Returns title + short redacted snippet (derived index, not body). Use when the user asks whether there is a note/knowledge about X. Distinct from thread_recall (same-thread excerpts) and from MCP namespaced search. Do not call routinely.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query (≤120 chars, Chinese or English)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "1–10, default 5"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "run_progress_propose",
       "description": "在操作页面前提出本轮具体步骤（1–8 条）。每则用户消息最多成功一次。每条可附精确内部工具名（click、get_page_text、navigate），不要从中文猜。若返回 ALREADY_HAS_STEPS，不要在本则消息里重试。",
       "parameters": {

@@ -166,6 +166,8 @@ describe("#327 differential (SoT-derived deny)", () => {
       "list_all_cookies",
       "downloads_find",
       "thread_recall",
+      "search_threads",
+      "search_knowledge",
       "workspace_list_dir",
       "workspace_read_file",
       "board_read",
