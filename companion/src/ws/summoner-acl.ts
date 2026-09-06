@@ -1,3 +1,5 @@
+import { isUiCommandAction } from "../ui-command"
+
 /** Per-connection method ACL keyed off handshake `surface` (S21).
  *
  * Origin stays `cmspark-tray://local`. Summoner is a second tray-origin WS
@@ -52,6 +54,8 @@ const SUMMONER_ALLOW = new Set([
   "knowledge.set_active",
   "file.upload",
   "companion.ui.rect",
+  "ui.command",
+  "thread.execution_policy.set",
 ])
 
 export function assertSummonerAllowed(
@@ -154,6 +158,47 @@ export function applySummonerPayloadPolicy(
   if (type === "meeting.start") {
     msg.audio_retained = false
     delete msg.retain_days
+    return { ok: true }
+  }
+  if (type === "ui.command") {
+    const action = typeof msg.action === "string" ? msg.action.trim() : ""
+    if (!isUiCommandAction(action)) {
+      return {
+        ok: false,
+        error_code: "SUMMONER_ACL",
+        error: "SUMMONER_ACL: ui.command action not on whitelist",
+      }
+    }
+    for (const key of Object.keys(msg)) {
+      if (key !== "type" && key !== "action" && key !== "id") delete msg[key]
+    }
+    msg.action = action
+    return { ok: true }
+  }
+  if (type === "thread.execution_policy.set") {
+    const threadId = typeof msg.thread_id === "string" ? msg.thread_id.trim() : ""
+    if (!threadId) {
+      return {
+        ok: false,
+        error_code: "SUMMONER_ACL",
+        error: "SUMMONER_ACL: thread.execution_policy.set requires thread_id",
+      }
+    }
+    if (msg.policy !== "plan_readonly") {
+      return {
+        ok: false,
+        error_code: "SUMMONER_ACL",
+        error: "SUMMONER_ACL: summoner may only downgrade to plan_readonly",
+      }
+    }
+    for (const key of Object.keys(msg)) {
+      if (key !== "type" && key !== "thread_id" && key !== "policy" && key !== "user_gesture" && key !== "id") {
+        delete msg[key]
+      }
+    }
+    msg.thread_id = threadId
+    msg.policy = "plan_readonly"
+    msg.user_gesture = true
     return { ok: true }
   }
   return { ok: true }

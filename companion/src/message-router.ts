@@ -1053,6 +1053,11 @@ export async function handleMessage(
       return handleUiOpenSidepanelResult(rest, session)
     }
 
+    case "ui.command": {
+      const { handleUiCommand } = await import("./message-router/handlers/ui-command")
+      return handleUiCommand(rest, session)
+    }
+
     // --- Chat ---
     case "chat.create": {
       if (!session) return { type: "error", error: "No session" }
@@ -3022,10 +3027,15 @@ export async function handleMessage(
       return handleRunProgressToggle(rest, threadManager)
 
     // --- #327: thread execution cap (plan_readonly). user_gesture-only write;
-    // workers inherit (set it on the orchestrator thread); summoner ACL denies. ---
+    // workers inherit (set it on the orchestrator thread).
+    // #433 P2: summoner may only tighten (→ plan_readonly); upgrade/arm stays panel. ---
     case "thread.execution_policy.set": {
-      if (stampedSurface === "summoner") {
-        return { type: "error", error: "SUMMONER_ACL: thread.execution_policy.set not allowed on summoner surface", error_code: "SUMMONER_ACL" }
+      if (stampedSurface === "summoner" && rest.policy !== "plan_readonly") {
+        return {
+          type: "error",
+          error: "SUMMONER_ACL: summoner may only downgrade execution_policy; upgrade/arm in the panel confirm center",
+          error_code: "SUMMONER_ACL",
+        }
       }
       if (rest.user_gesture !== true) {
         return { type: "error", error: "thread.execution_policy.set requires user_gesture:true (user-initiated only)" }

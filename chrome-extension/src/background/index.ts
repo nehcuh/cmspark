@@ -52,6 +52,7 @@ import {
 } from "./computer-task-mirror"
 import { getActiveTabHostname, withHostnameBudget } from "./active-tab-hostname"
 import { pickSidePanelWindow } from "./pick-sidepanel-window"
+import { runUiCommand } from "./ui-command"
 import {
   buildLogEventPayload,
   forwardFailureConsoleLevel,
@@ -371,6 +372,54 @@ const pendingLlmOneshot = new Map<
 >()
 
 async function handleCompanionMessage(msg: any) {
+  if (msg.type === "ui.command") {
+    // #433 P2: companion → ext whitelist. Overlay never L2.
+    try {
+      await runUiCommand(msg.action, {
+        focus_panel: async () => {
+          const wins = await chrome.windows.getAll({ windowTypes: ["normal"], populate: true })
+          let windowId = pickSidePanelWindow(wins)
+          if (windowId == null) {
+            const created = await chrome.windows.create({ focused: true, type: "normal" })
+            windowId = created?.id
+          }
+          if (windowId != null && chrome.sidePanel?.open) {
+            await chrome.sidePanel.open({ windowId })
+          }
+        },
+        open_confirm_center: async () => {
+          await openOrFocusCockpit()
+        },
+        open_browser: async () => {
+          const wins = await chrome.windows.getAll({ windowTypes: ["normal"] })
+          const id = wins.find((w) => w.id != null)?.id
+          if (id != null) {
+            await chrome.windows.update(id, { focused: true })
+            return
+          }
+          await chrome.windows.create({ focused: true, type: "normal" })
+        },
+        "thread.new_in_panel": async () => {
+          const wins = await chrome.windows.getAll({ windowTypes: ["normal"], populate: true })
+          let windowId = pickSidePanelWindow(wins)
+          if (windowId == null) {
+            const created = await chrome.windows.create({ focused: true, type: "normal" })
+            windowId = created?.id
+          }
+          if (windowId != null && chrome.sidePanel?.open) {
+            await chrome.sidePanel.open({ windowId })
+          }
+          wsClient?.send({ type: "thread.create", alias: "", id: crypto.randomUUID() })
+        },
+        open_terminal_tab: async () => {
+          await openOrFocusEmbeddedTerminal()
+        },
+      })
+    } catch {
+      /* best-effort — summoner already got ui.command.ok */
+    }
+    return
+  }
   if (msg.type === "ui.open_sidepanel") {
     // True result round-trip: companion awaits ui.open_sidepanel.result by id
     // (short timeout → honest failure in the overlay), so never swallow errors.

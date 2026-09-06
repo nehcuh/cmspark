@@ -1542,7 +1542,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     guard mods.intersection([.command, .shift, .option, .control]) == .command, !expanded else { return false }
     if event.keyCode == 36, paletteOpen { // ⌘↵
-      attachForegroundClicked()
+      emitUiCommand("focus_panel")
       return true
     }
     if let c = event.charactersIgnoringModifiers, c.count == 1,
@@ -1804,6 +1804,15 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     jsonLine(["type": "summoner.attach_chrome", "foreground": true])
   }
 
+  /// #433 P2: companion → ext whitelist verb (spec §3b). Overlay never L2.
+  private func emitUiCommand(_ action: String) {
+    jsonLine(["type": "summoner.ui_command", "action": action])
+  }
+
+  @objc func openConfirmCenterClicked() {
+    emitUiCommand("open_confirm_center")
+  }
+
   /// #324 read-only cruise chip — same inbound as 「打开确认台」(no new stdin type).
   @objc func cruiseChipClicked() {
     jsonLine(["type": "summoner.attach_chrome", "foreground": true])
@@ -1892,17 +1901,16 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     relayout()
   }
 
-  /// 动词层定义（spec §2）。全部复用既有已放行 stdin 消息——P0 零 wire 变化：
-  /// 新对话 → summoner.new_thread；打开侧栏/确认台 → summoner.attach_chrome
-  /// (foreground:true，#324 同 inbound)；搜知识 → 本地 scope 切换；
-  /// 打开终端 tab → 禁用态（等 #432 P0）。
+  /// 动词层（spec §2 / §3b）：P2 接 ui.command 白名单，overlay 不新增确认 UI。
+  /// 新对话 → summoner.new_thread；打开侧栏/确认台/终端 → summoner.ui_command；
+  /// 搜知识 → 本地 scope 切换。
   private func verbDefinitions() -> [(id: String, title: String, subtitle: String, symbol: String)] {
     [
       ("new_thread", "新对话", "开一条新会话", "plus.circle"),
       ("search_knowledge", "搜知识", "只在知识文档里找", "magnifyingglass"),
       ("open_panel", "打开侧栏", "唤起 Chrome 扩展面板", "macwindow.on.rectangle"),
       ("open_confirm", "打开确认台", "查看待确认操作", "checkmark.shield"),
-      ("open_terminal", "打开终端 tab", "待 #432 P0 交付", "terminal"),
+      ("open_terminal", "打开终端 tab", "打开内嵌终端", "terminal"),
     ]
   }
 
@@ -1941,7 +1949,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
         .map { $0.element }
       for v in sortedVerbs {
         rows.append(PaletteRow(kind: .verb, id: v.id, title: v.title, subtitle: v.subtitle, symbol: v.symbol,
-                               enabled: v.id != "open_terminal"))
+                               enabled: true))
       }
       let rankedIds = frecency.ranked(ids: threadRows.map { $0.id })
       let recent = rankedIds.compactMap { id -> RecentThread? in
@@ -1963,7 +1971,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       let score = PaletteMatcher.score(query: q, fields: [v.title, v.subtitle], pinyins: [PinyinInitials.initials(for: v.title)])
       if score > 0 {
         rows.append(PaletteRow(kind: .verb, id: v.id, title: v.title, subtitle: v.subtitle, symbol: v.symbol,
-                               enabled: v.id != "open_terminal"))
+                               enabled: true))
         matchedVerbs += 1
       }
     }
@@ -2063,12 +2071,17 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       case "search_knowledge":
         paletteScope = (paletteScope == .knowledge) ? .all : .knowledge
         refreshPalette()
-      case "open_panel", "open_confirm":
-        // 同一 inbound：attach_chrome foreground 打开面板/确认台（#324 先例）。
-        attachForegroundClicked()
+      case "open_panel":
+        emitUiCommand("focus_panel")
+        setPalette(open: false)
+      case "open_confirm":
+        emitUiCommand("open_confirm_center")
+        setPalette(open: false)
+      case "open_terminal":
+        emitUiCommand("open_terminal_tab")
         setPalette(open: false)
       default:
-        break // open_terminal 禁用态不可达（activate 已挡）。
+        break
       }
     case .thread:
       if let t = threadRows.first(where: { $0.id == row.id }) {
@@ -2086,7 +2099,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       setPalette(open: false)
       submitComposer()
     case .fallbackPanel:
-      attachForegroundClicked()
+      emitUiCommand("focus_panel")
     case .sectionHeader:
       break
     case .peekPreview:
@@ -2294,12 +2307,15 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       ctaLabel?.stringValue = summonerConfirmNeed
       attachButton?.title = summonerOpenConfirm
       attachButton?.toolTip = summonerOpenConfirm
+      attachButton?.action = #selector(openConfirmCenterClicked)
     } else if detached {
       ctaLabel?.stringValue = sawBrowserUnavailable ? summonerCdpNeeded : summonerCtaCopy
       attachButton?.title = summonerAttachSecondary
       attachButton?.toolTip = summonerAttachSecondary
+      attachButton?.action = #selector(attachForegroundClicked)
       sideNote?.isHidden = true
     } else {
+      attachButton?.action = #selector(attachForegroundClicked)
       sideNote?.isHidden = true
     }
     setExpandChrome(expanded: expanded)

@@ -363,7 +363,8 @@ export function useWebSocket() {
         // the originating Side Panel. Ignore — only accepted / OVERLAY_SHELL_* error.
         // #241: same for ui.open_sidepanel (SW opens the panel; this surface must not toast).
         msg.type === "overlay.shell.open" ||
-        msg.type === "ui.open_sidepanel"
+        msg.type === "ui.open_sidepanel" ||
+        msg.type === "ui.command"
       ) {
         return false
       }
