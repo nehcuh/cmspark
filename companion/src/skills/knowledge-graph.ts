@@ -84,6 +84,12 @@ export type KnowledgeGraphCore = {
   labelTargets: KnowledgeGraphLabelTarget[]
   /** #427：LLM 关联——仅 LLM lane（2–19）非空；≥20 帧永不携带。 */
   relations: KnowledgeGraphRelation[]
+  /**
+   * #427（pi MAJOR-1 修复）：graph_llm 缓存区存在即 true——合法空整理
+   * （groups:[] + relations:[]）与「无缓存」在 wire 上必须可区分（后者省略
+   * organized 与 relations 两个字段，前者两字段都在场）。
+   */
+  organized?: boolean
   /** #427：本帧来自 LLM lane（handler 据此决定 relations/stale 是否上 wire）。 */
   llmLane: boolean
   /** #427：graph_llm 缓存指纹已漂（UI「语料已变化」badge）。 */
@@ -274,6 +280,7 @@ export function buildKnowledgeGraph(
     labelTargets,
     relations,
     llmLane,
+    ...(opts?.llm ? { organized: true } : {}),
     ...(llmLane && opts?.llmStale === true ? { llmStale: true } : {}),
   }
 }

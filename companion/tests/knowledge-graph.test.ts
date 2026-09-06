@@ -117,7 +117,16 @@ test("#427 pure: n=0 → too_few；n=1 → 单节点 ok；2–19 → LLM lane ok
   assert.equal(r.labels["u:ungrouped"].name, "未分组")
   assert.equal(r.labels["u:ungrouped"].ai, false)
   assert.deepEqual(r.relations, [])
+  assert.equal(r.organized, undefined, "无 graph_llm 缓存 → organized 缺席")
   assert.equal(r.labelTargets.length, 0, "LLM lane has no label targets (label 通道只服务 TF lane)")
+
+  // pi MAJOR-1：缓存区存在（哪怕内容全空）→ organized:true——空结果 ≠ 无缓存
+  const empty = kg.buildKnowledgeGraph(orthoDocs("e", 4), undefined, {
+    llm: { groups: [], relations: [] },
+  })
+  assert.equal(empty.llmLane, true)
+  assert.equal(empty.organized, true, "graph_llm 区存在即 true（合法空整理）")
+  assert.deepEqual(empty.relations, [])
 })
 
 test("#296 pure: n≤200 group_key = 分布视图同一 key（同源聚类）", () => {
@@ -329,7 +338,7 @@ test("#296 surface gate: non-panel sessions rejected, panel served", async () =>
   assert.ok(Array.isArray(panel.edges) && panel.edges.length > 0)
 })
 
-test("#427 handler: 2–19 无缓存 → ok + 全未分组 + llm_ready + relations 空数组", async () => {
+test("#427 handler: 2–19 无缓存 → ok + 全未分组 + llm_ready；relations/organized 整体省略", async () => {
   resetKnowledgeState()
   const se = new SkillEngine()
   seedThemed(se, 7)
@@ -340,7 +349,8 @@ test("#427 handler: 2–19 无缓存 → ok + 全未分组 + llm_ready + relatio
   const labels = resp.labels as Record<string, { name: string; ai: boolean }>
   assert.deepEqual(Object.keys(labels), ["u:ungrouped"])
   assert.equal(resp.llm_ready, true)
-  assert.deepEqual(resp.relations, [])
+  assert.equal(resp.relations, undefined, "无缓存帧整体省略 relations（缺字段 ≠ 空数组，pi MAJOR-1）")
+  assert.equal(resp.organized, undefined)
   assert.equal(resp.stale, undefined)
   assert.equal(resp.tf_switch_notice, undefined, "LLM lane 帧不带跨 20 notice")
 })

@@ -107,6 +107,7 @@ type OrganizeFrame = {
   nodes: Array<{ id: string; group_key: string }>
   llm_ready: boolean
   organize_error?: string
+  organized?: boolean
   stale?: boolean
   lock_dissolved?: boolean
   tf_switch_notice?: boolean
@@ -142,7 +143,8 @@ test("#427 AC-1: organize happy path——首响应无产物，settle 推帧带 
   )) as OrganizeFrame
   assert.equal(first.status, "ok")
   assert.equal(first.llm_ready, true)
-  assert.deepEqual(first.relations, [], "首响应不带产物（异步驱动）")
+  assert.equal(first.relations, undefined, "首响应无缓存：relations 整体省略（缺字段 ≠ 空数组，pi MAJOR-1）")
+  assert.equal(first.organized, undefined)
   assert.equal(first.organize_error, undefined)
 
   // 隐私（§3.2）：prompt 只有 title/tags/description，正文绝不进
@@ -157,6 +159,7 @@ test("#427 AC-1: organize happy path——首响应无产物，settle 推帧带 
   const last = pushes[pushes.length - 1]
   assert.equal(last.status, "ok")
   assert.equal(last.organize_error, undefined)
+  assert.equal(last.organized, true, "缓存落盘后 organized:true")
   assert.equal(last.relations!.length, 1)
   assert.equal(last.relations![0].ai, true)
   assert.equal(last.relations![0].reason, "同主题互证")
@@ -206,6 +209,33 @@ test("#427 AC-2: 缓存命中 0 次 LLM；语料变化 → stale 仍渲染旧缓
   assert.equal(idx!.graph_llm!.stale, false, "落盘缓存本身不写 stale（渲染时按指纹现算）")
 })
 
+test("#427 pi MAJOR-1: 合法空整理（groups:[]+relations:[]）→ organized:true + relations 在场空数组；无缓存帧两字段皆省略", async () => {
+  resetKnowledgeState()
+  const se = new SkillEngine()
+  // 4 篇互不相关：LLM 最可能合法判「无结构」——spec §4「诚实散点」主场景
+  seedOrthogonal(se, 4, "orth")
+  __testSetKnowledgeGraphOrganizeImpl(async () => JSON.stringify({ groups: [], relations: [] }))
+  await handleMessage({ type: "knowledge.graph", organize: true, user_gesture: true }, { skillEngine: se } as never, panel)
+  await settle()
+
+  const idx = readIndex()
+  assert.ok(idx?.graph_llm, "合法空结果也是成功的 organize，必须写缓存（否则 CTA 复发、AC-2 破功）")
+  const frame = (await handleMessage({ type: "knowledge.graph" }, { skillEngine: se } as never, panel)) as OrganizeFrame
+  assert.equal(frame.status, "ok")
+  assert.equal(frame.organized, true, "graph_llm 区存在即 true——空内容也是组织过")
+  assert.ok(Array.isArray(frame.relations), "缓存帧 relations 在场（空数组 = 组织过但无关联）")
+  assert.equal(frame.relations!.length, 0)
+  assert.ok(frame.nodes.every((n) => n.group_key === "u:ungrouped"), "无结构 → 全未分组散点")
+
+  // 无缓存对照帧：organized 与 relations 都不得在场（在场即会被 ext 误判有缓存）
+  resetKnowledgeState()
+  const se2 = new SkillEngine()
+  seedOrthogonal(se2, 4, "orth")
+  const bare = (await handleMessage({ type: "knowledge.graph" }, { skillEngine: se2 } as never, panel)) as OrganizeFrame
+  assert.equal(bare.organized, undefined, "无缓存帧省略 organized")
+  assert.equal(bare.relations, undefined, "无缓存帧整体省略 relations（不是空数组）")
+})
+
 test("#427 §4: organize 失败不静默——推 ok 帧 + organize_error，旧缓存原样保留", async () => {
   resetKnowledgeState()
   const se = new SkillEngine()
@@ -223,14 +253,14 @@ test("#427 §4: organize 失败不静默——推 ok 帧 + organize_error，旧�
   const cached = readIndex()!.graph_llm!
   assert.equal(cached.groups.length, 1)
 
-  // 再整理失败：错误进帧（不是 status:error），缓存不丢
+  // 再整理失败：错误进帧（不是 status:error），缓存不丢；文案中文（grok NIT-9）
   fail = true
   await handleMessage({ type: "knowledge.graph", organize: true, user_gesture: true }, { skillEngine: se } as never, sess)
   await settle()
   const pushes = sent.filter((m) => m.type === "knowledge.graph")
   const last = pushes[pushes.length - 1]
   assert.equal(last.status, "ok", "organize 失败 ≠ 图谱加载失败（#356 error 帧合同不修订）")
-  assert.equal(last.organize_error, "llm down")
+  assert.equal(last.organize_error, "AI 整理失败，请重试", "raw 错误（llm down）只进日志不上帧")
   assert.equal(last.lock_dissolved, undefined)
   const after = readIndex()!.graph_llm!
   assert.deepEqual(after, cached, "失败不得抹掉有效缓存")
@@ -241,7 +271,7 @@ test("#427 §4: organize 失败不静默——推 ok 帧 + organize_error，旧�
   assert.ok(next.nodes.some((n) => n.group_key.startsWith("l:")), "旧分组仍着色")
 })
 
-test("#427 §3.2: parse 失败 → organize_error=graph_organize_parse_failed，无缓存写入", async () => {
+test("#427 §3.2: parse 失败 → organize_error 中文文案，无缓存写入", async () => {
   resetKnowledgeState()
   const se = new SkillEngine()
   seedGroup(se, 3)
@@ -251,7 +281,7 @@ test("#427 §3.2: parse 失败 → organize_error=graph_organize_parse_failed，
   await handleMessage({ type: "knowledge.graph", organize: true, user_gesture: true }, { skillEngine: se } as never, sess)
   await settle()
   const last = sent.filter((m) => m.type === "knowledge.graph").pop()!
-  assert.equal(last.organize_error, "graph_organize_parse_failed")
+  assert.equal(last.organize_error, "AI 整理返回无法解析，请重试", "graph_organize_parse_failed 原文不上帧")
   assert.equal(readIndex()?.graph_llm, undefined, "parse 失败不落缓存")
 })
 
@@ -273,7 +303,7 @@ test("#427 §3.1: 未配置 LLM → llm_ready:false + organize_error，impl 不�
     )) as OrganizeFrame
     assert.equal(resp.status, "ok")
     assert.equal(resp.llm_ready, false, "llm_ready 缺省为 true 是 ext 侧约定；companion 必须显式 false")
-    assert.equal(resp.organize_error, "companion_llm_not_configured")
+    assert.equal(resp.organize_error, "AI 未配置，无法整理")
     await settle()
     assert.equal(calls, 0)
   } finally {
@@ -281,29 +311,31 @@ test("#427 §3.1: 未配置 LLM → llm_ready:false + organize_error，impl 不�
   }
 })
 
-test("#427 双闸：organize / lock_group / unlock_group / ack_tf_switch 缺 user_gesture 全拒", async () => {
+test("#427 双闸（grok M-1 修复）：缺 user_gesture 全拒，但不走红 error——ok 帧 + organize_error，画布不死者", async () => {
   resetKnowledgeState()
   const se = new SkillEngine()
   seedGroup(se, 3)
-  const noGesture = await handleMessage(
+  const verbs: Array<Record<string, unknown>> = [
     { type: "knowledge.graph", organize: true },
-    { skillEngine: se } as never,
-    panel,
-  )
-  assert.equal(noGesture.type, "error")
-  assert.match(String(noGesture.error), /user_gesture/)
-
-  const lockNo = await handleMessage({ type: "knowledge.graph", lock_group: "l:x" }, { skillEngine: se } as never, panel)
-  assert.equal(lockNo.type, "error")
-  assert.match(String(lockNo.error), /user_gesture/)
-
-  const unlockNo = await handleMessage({ type: "knowledge.graph", unlock_group: "l:x" }, { skillEngine: se } as never, panel)
-  assert.equal(unlockNo.type, "error")
-  assert.match(String(unlockNo.error), /user_gesture/)
-
-  const ackNo = await handleMessage({ type: "knowledge.graph", ack_tf_switch: true }, { skillEngine: se } as never, panel)
-  assert.equal(ackNo.type, "error")
-  assert.match(String(ackNo.error), /user_gesture/)
+    { type: "knowledge.graph", lock_group: "l:x" },
+    { type: "knowledge.graph", unlock_group: "l:x" },
+    { type: "knowledge.graph", ack_tf_switch: true },
+  ]
+  for (const msg of verbs) {
+    const resp = (await handleMessage(msg, { skillEngine: se } as never, panel)) as OrganizeFrame
+    // M-1 回归核心：ext knowledgeGraphErrorById 会把在途请求的 type:error 打成
+    // #356 死面板——动作拒绝必须是 knowledge.graph ok 帧 + 帧级错误条
+    assert.notEqual(resp.type, "error", "动作拒绝不得走红 error（#356 死面板缝）")
+    assert.equal(resp.type, "knowledge.graph")
+    assert.equal(resp.status, "ok")
+    assert.ok(resp.nodes.length > 0, "画布照常渲染（节点在）")
+    assert.match(String(resp.organize_error), /user_gesture/)
+  }
+  // 拒绝 = 动作不执行：无缓存写入、无锁条目、无 ack 落盘
+  const idx = readIndex()
+  assert.equal(idx?.graph_llm, undefined)
+  assert.equal(idx?.graph_lock, undefined)
+  assert.notEqual(idx?.graph_tf_switch_ack, true)
 })
 
 test("#427 surface 门：summoner 连 organize/lock 一起拒", async () => {
@@ -382,17 +414,32 @@ test("#427 §5: lock_group/unlock_group round-trip——locked 标、graph_lock 
   assert.equal(again.status, "ok")
 })
 
-test("#427 §5: lock_group 拒未分组堆/未知键/小组", async () => {
+test("#427 §5 + grok M-1: lock_group 拒未分组堆/未知键——ok 帧 + 中文 organize_error，画布不死者", async () => {
   resetKnowledgeState()
   const se = new SkillEngine()
   seedGroup(se, 3)
-  const ungrouped = await handleMessage({ type: "knowledge.graph", lock_group: "u:ungrouped", user_gesture: true }, { skillEngine: se } as never, panel)
-  assert.equal(ungrouped.type, "error")
-  assert.match(String(ungrouped.error), /ungrouped/)
+  const ungrouped = (await handleMessage(
+    { type: "knowledge.graph", lock_group: "u:ungrouped", user_gesture: true },
+    { skillEngine: se } as never,
+    panel,
+  )) as OrganizeFrame
+  assert.notEqual(ungrouped.type, "error", "锁失败不得走红 error（#356 死面板缝）")
+  assert.equal(ungrouped.status, "ok")
+  assert.ok(ungrouped.nodes.length > 0, "画布照常渲染")
+  assert.match(String(ungrouped.organize_error), /未分组/)
 
-  const unknown = await handleMessage({ type: "knowledge.graph", lock_group: "l:deadbeef", user_gesture: true }, { skillEngine: se } as never, panel)
-  assert.equal(unknown.type, "error")
-  assert.match(String(unknown.error), /unknown|too-small/)
+  const unknown = (await handleMessage(
+    { type: "knowledge.graph", lock_group: "l:deadbeef", user_gesture: true },
+    { skillEngine: se } as never,
+    panel,
+  )) as OrganizeFrame
+  assert.notEqual(unknown.type, "error")
+  assert.equal(unknown.status, "ok")
+  assert.ok(unknown.nodes.length > 0)
+  assert.match(String(unknown.organize_error), /不存在|不足/)
+
+  // 拒绝 = 不落锁条目
+  assert.equal(readIndex()?.graph_lock, undefined)
 })
 
 test("#427 §5 + pi 终验 2: 锁缩容——同锁条目跨删除仍生效（键随成员变），<2 解散一次性提示", async () => {
