@@ -2,6 +2,12 @@
 // WebSocket client, CDP manager, tab manager, cookie ops
 
 import { WSClient } from "./ws-client"
+import {
+  attachTerminalPort,
+  openOrFocusEmbeddedTerminal,
+  TERMINAL_PORT_NAME,
+  type TerminalRelay,
+} from "./terminal"
 import { BrowserBridge } from "./browser-bridge"
 import { KeepAlive } from "./keep-alive"
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
@@ -63,6 +69,8 @@ import {
 } from "./cockpit-focus-policy"
 
 let wsClient: WSClient
+// #432: 单会话终端中继（同时最多 1 个 PTY，spec §5）
+let terminalRelay: TerminalRelay | null = null
 let browserBridge: BrowserBridge
 let keepAlive: KeepAlive
 /** #374: knowledge.graph 请求 id 序号（请求侧自增，随请求发出并登记）。 */
@@ -294,6 +302,26 @@ function init() {
       })
       return
     }
+    if (port.name === TERMINAL_PORT_NAME) {
+      if (terminalRelay) {
+        // 已有终端会话：拒第二个 tab（companion 同样只认 1 个 PTY）
+        try {
+          port.postMessage({ type: "terminal.error", code: "busy", error: "已有终端会话在运行（同时只允许一个内嵌终端）" })
+          port.disconnect()
+        } catch {}
+        return
+      }
+      terminalRelay = attachTerminalPort(
+        port,
+        (frame) => wsClient?.send(frame as any) === true,
+        logToCompanion,
+      )
+      port.onDisconnect.addListener(() => {
+        terminalRelay = null
+      })
+      logToCompanion("info", "extension.terminal_port_connected", {})
+      return
+    }
     if (port.name === "cmspark-cockpit") {
       logToCompanion("info", "extension.cockpit_port_connected", {})
       port.onDisconnect.addListener(() => {
@@ -499,6 +527,13 @@ async function handleCompanionMessage(msg: any) {
   const focusEvent = cockpitFocusEventFromMessage(msg)
   if (focusEvent && decideCockpitFocus(focusEvent, cockpitArmState) === "open_focus") {
     openOrFocusCockpit().catch(() => {})
+  }
+
+  // #432: terminal.* 帧定向进终端 tab 中继（不广播侧栏，不解析 ANSI）；
+  // pi NIT-1：relay 缺席/parse 失败也吞掉——terminal 帧族永不落普通广播
+  if (typeof msg?.type === "string" && msg.type.startsWith("terminal.")) {
+    terminalRelay?.handleWsFrame(msg)
+    return
   }
 
   if (msg.type === "knowledge.graph") {
@@ -1611,6 +1646,12 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         // Dual-review nit: single contract — read session snapshot only
         readThreadGraphSnapshot()
           .then((snap) => sendResponse({ ok: true, snapshot: snap }))
+          .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+      case "terminal.open_tab": {
+        openOrFocusEmbeddedTerminal()
+          .then(() => sendResponse({ ok: true }))
           .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
         return true
       }

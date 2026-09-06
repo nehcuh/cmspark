@@ -39,6 +39,9 @@ type Props = {
   onToggleAutoSuggest?: (v: boolean) => void
   onToggleAcp?: (v: boolean) => void
   onToggleOpenLocalTerminal?: (v: boolean) => void
+  /** #432: embedded_terminal.enabled（默认关） */
+  embeddedTerminal?: boolean
+  onToggleEmbeddedTerminal?: (v: boolean) => void
   onChangeLocalTerminalApp?: (v: string) => void
 }
 
@@ -51,6 +54,8 @@ export function CodingHandoffSettingsSection({
   onToggleAutoSuggest,
   onToggleAcp,
   onToggleOpenLocalTerminal,
+  embeddedTerminal = false,
+  onToggleEmbeddedTerminal,
   onChangeLocalTerminalApp,
 }: Props) {
   const [busy, setBusy] = useState<"none" | "rediscover" | "adopt">("none")
@@ -103,6 +108,29 @@ export function CodingHandoffSettingsSection({
         <span>{codingHandoffCopy.settingsOpenLocalTerminal}</span>
       </label>
       <p style={styles.hint}>{codingHandoffCopy.settingsOpenLocalTerminalHint}</p>
+
+      <label style={styles.row}>
+        <input
+          type="checkbox"
+          checked={embeddedTerminal}
+          onChange={(e) => onToggleEmbeddedTerminal?.(e.target.checked)}
+        />
+        <span>{codingHandoffCopy.settingsEmbeddedTerminal}</span>
+      </label>
+      <p style={styles.hint}>{codingHandoffCopy.settingsEmbeddedTerminalHint}</p>
+      {embeddedTerminal ? (
+        <button
+          type="button"
+          style={{ ...styles.select, cursor: "pointer", textAlign: "left" }}
+          onClick={() => {
+            chrome.runtime.sendMessage({ type: "terminal.open_tab" }, () => {
+              void chrome.runtime.lastError
+            })
+          }}
+        >
+          {codingHandoffCopy.settingsEmbeddedTerminalOpen} →
+        </button>
+      ) : null}
 
       <label style={{ ...styles.row, flexDirection: "column", alignItems: "stretch", gap: 6 }}>
         <span style={{ fontSize: 12, fontWeight: 500 }}>{codingHandoffCopy.settingsLocalTerminalApp}</span>

@@ -3345,6 +3345,20 @@ export function SettingsSlideout() {
                 config: { coding_handoff: { open_local_terminal: v } },
               })
             }}
+            embeddedTerminal={
+              (config as { embedded_terminal?: { enabled?: boolean } }).embedded_terminal
+                ?.enabled === true
+            }
+            onToggleEmbeddedTerminal={(v) => {
+              dispatch({
+                type: "SET_CONFIG",
+                config: { embedded_terminal: { enabled: v } } as any,
+              })
+              chrome.runtime.sendMessage({
+                type: "config.set",
+                config: { embedded_terminal: { enabled: v } },
+              })
+            }}
             onChangeLocalTerminalApp={(v) => {
               dispatch({
                 type: "SET_CONFIG",

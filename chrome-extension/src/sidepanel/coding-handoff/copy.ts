@@ -70,6 +70,10 @@ export const codingHandoffCopy = {
   settingsOpenLocalTerminal: "启动时同时打开本机终端（模式 C · 默认关）",
   settingsOpenLocalTerminalHint:
     "侧栏保留监视桥；本机终端再开交互式 Agent（完整 TUI/权限）。两进程，v1 不是同一会话。失败时侧栏仍继续。",
+  settingsEmbeddedTerminal: "内嵌终端（实验 · 默认关 · 仅 macOS）",
+  settingsEmbeddedTerminalHint:
+    "开启后可在浏览器内的全页标签中使用真正的终端（zsh / 编码 Agent TUI）。首次打开需确认；终端内输入即你本人操作。",
+  settingsEmbeddedTerminalOpen: "打开内嵌终端",
   /** Which host terminal app (Mode C). */
   settingsLocalTerminalApp: "本机终端应用",
   settingsLocalTerminalAppHint:
