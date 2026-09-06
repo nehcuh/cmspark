@@ -116,7 +116,7 @@ Channel:      community
 **本票：**
 
 1. **只**把 `meeting.create` / `start` / `end` 放入 `SUMMONER_ALLOW` **和** HTML dispatch + 对应 SSE（`meeting.created` / started / ended / `meeting.error`）。不加 list/get，除非落地时 `start` 无 id 已自建会话（现有 handler：无 id 则内部 create）。
-2. **#244：** overlay 会议台可 `append_transcript` + `generate_minutes`。狗食补 `meeting.list` / `get`（历史）+ `auto_diarize`（匿名发言人N，非身份）。`import_text` 仍扩展-only。近实时窗约 8 秒 + `voice.stt.partial_request`。
+2. **#244：** overlay 会议台可 `append_transcript` + `generate_minutes`。狗食补 `meeting.list` / `get`（历史）。~~`auto_diarize`~~ **#350 终裁剥回、#351 维持关闭**（#260 embedding 仍 experimental + overlay 短采集台无诉求；重开须新 design issue）。`import_text` 仍扩展-only。近实时窗约 8 秒 + `voice.stt.partial_request`。
 3. 点「开始会议」→ 侧栏 MeetingPanel **五条原文** →「我已了解」→ `meeting.start` 且 `privacy_ack_v1: true`。voice v2 **不能**替代。
 4. 每开一扇窗确认一次。卡上随后只有「结束会议」。
 5. 未就绪与听写同一句。永不 Allow/Deny。Pack 不会自动开始录音。
@@ -167,7 +167,7 @@ Toast 在卡片底，走错误条，**禁止** `SET_PROCESSING_STATUS` 当 toast
 
 - `list_tabs` / `tab.*` / `security.confirmation.response` / `mcp.add` / `config.set`  
 - `ui.open_sidepanel` / `overlay.shell.open`（后者已是扩展槽）  
-- `meeting.generate_minutes` / `auto_diarize` / `import_text`
+- `meeting.auto_diarize` / `import_text`（**#351 终裁注记**：`generate_minutes` 自 #244/#246 round-1 起已 overlay 可用——本条此前误列，以此为准）
 
 **Tray→Companion RPC 新类型：** `ui.open_sidepanel`（无敏感 payload）。**请求方 origin = `cmspark-tray://local` 且 `surface !== "summoner"`**（tray 进程，不是 overlay WS）。**接收方 = 扩展 SW**（无 id 广播）。handler 读 `session.origin`，**不读** payload.origin。扩展 origin 发此类型 → `UI_OPEN_SIDEPANEL_ORIGIN`（与 `overlay.shell.open` **方向相反**，不要抄 overlay-shell 的 origin 检查）。summoner surface → `SUMMONER_ACL`。tray `onAppMessage` **忽略**无 id echo。lockstep：`validate.ts` key + `message-router` case。**禁止**该字符串出现在 `summoner-web.ts`（用 `/api/operate`，#239 `doesNotMatch(/ui\.open_sidepanel/)` 仍绿）。**禁止**进 tool catalog / `getToolDefinitions()`。
 
