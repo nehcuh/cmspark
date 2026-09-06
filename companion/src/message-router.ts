@@ -4559,6 +4559,19 @@ export async function handleMessage(
           llm: distillLlm,
           installedExperts,
           exclude,
+          // #418: per-batch 进度推送（慢模型 1-3 分钟无反馈 → 批完成即报）。
+          // 单向 server→panel，background 默认转发；推送失败不影响扫描。
+          onProgress: (p) => {
+            try {
+              session?.sendToExtension?.({
+                type: "pack.distill_all_progress",
+                done_batches: p.done_batches,
+                total_batches: p.total_batches,
+              })
+            } catch {
+              /* socket 已断时 sendToExtension 可能抛 — 扫描照常 */
+            }
+          },
         })
         if (!result.ok) {
           return { type: "error", error: result.reason, code: result.code }

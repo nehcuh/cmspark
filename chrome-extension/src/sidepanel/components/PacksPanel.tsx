@@ -22,6 +22,7 @@ import {
   EXPERT_SEGMENT_HINT,
   PANEL_TITLE,
   distillAllConfirmBody,
+  distillAllProgressLine,
   distillAllQueueLine,
   distillAllQueueStep,
   distillSourceLabel,
@@ -31,9 +32,11 @@ import {
   formatUsageLine,
   isUserPack,
   normalizeDistillAllDrafts,
+  normalizeDistillAllProgress,
   normalizeDistillPreview,
   segmentPacks,
   type DistillAllDraftView,
+  type DistillAllProgressView,
   type DistillMeta,
   type DistillStatusView,
   type PackSegment,
@@ -254,6 +257,8 @@ export function PacksPanel() {
     index: number
     scanned: number
   } | null>(null)
+  /** #418: 扫描期 per-batch 进度（companion 推送；回包/失败即清）。 */
+  const [distillAllProgress, setDistillAllProgress] = useState<DistillAllProgressView | null>(null)
   const activeThreadRef = useRef(state.activeThreadId)
   activeThreadRef.current = state.activeThreadId
 
@@ -547,9 +552,15 @@ export function PacksPanel() {
           prev ? { ...prev, ...next } : { ...next, since: "all", keyword: "" },
         )
       }
+      if (msg?.type === "pack.distill_all_progress") {
+        // #418: per-batch 进度推送（薄实现：一行文字，坏形状直接丢弃）。
+        setDistillAllProgress(normalizeDistillAllProgress(msg))
+        return
+      }
       if (msg?.type === "pack.distill_all_result") {
         // #411: K≤5 份草稿 → 内存队列，第 1 份进同一编辑器（逐份审阅）。
         setBusy(null)
+        setDistillAllProgress(null)
         const norm = normalizeDistillAllDrafts(msg)
         if (!norm) {
           flash("全历史归纳失败：回包格式异常", 5000)
@@ -688,6 +699,7 @@ export function PacksPanel() {
         } else {
           flash(msg.error || "操作失败", 5000)
           setBusy(null)
+          setDistillAllProgress(null)
           pendingApplyRef.current = null
         }
       }
@@ -1019,7 +1031,8 @@ export function PacksPanel() {
     source: "llm",
     notice: DISTILL_LLM_NOTICE,
     used_digest: false,
-    suggested_tools: [...new Set(d.tools_allow)],
+    // #418 NIT-1：AI 建议工具走 suggested 通道（tools_allow 恒空 = 不预勾红线不变）
+    suggested_tools: [...new Set(d.suggested_tools)],
     evidence: d.evidence.map((e) => ({ quote: e.quote, ...(e.hint ? { hint: e.hint } : {}) })),
     suitable_for: d.suitable_for,
     unsuitable_for: d.unsuitable_for,
@@ -1069,6 +1082,7 @@ export function PacksPanel() {
     if (!c) return
     setDistillAllConfirm(null)
     setBusy("distill-all")
+    setDistillAllProgress(null)
     flash("正在全历史归纳…（分批聚类 + 归并，可能需要一两分钟）", 4000)
     chrome.runtime.sendMessage({
       type: "pack.distill_all_scan",
@@ -1603,6 +1617,12 @@ export function PacksPanel() {
               {busy === "distill-all" ? "归纳中…" : `📚 ${DISTILL_ALL_ENTRY_LABEL}`}
             </button>
           </div>
+          {/* #418: 扫描期 per-batch 进度 — 一行文字，回包/失败即清 */}
+          {distillAllProgress ? (
+            <div style={styles.toolsLine} data-testid="distill-all-progress">
+              {distillAllProgressLine(distillAllProgress)}
+            </div>
+          ) : null}
           {/* #411: 全历史草稿队列 — 极薄上一份/下一份，逐份审阅；保存仍手动 */}
           {distillAllQueue && distillAllQueue.drafts.length > 0 ? (
             <div style={styles.toolsLine} data-testid="distill-all-queue">
