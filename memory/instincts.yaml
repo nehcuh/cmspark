@@ -219,6 +219,20 @@ instincts:
     tags: [config, restore, tray, port, status-mismatch, debugging]
     applications: 1
 
+  - id: merge-and-cleanup-separate-steps
+    pattern: "gh pr merge 与分支清理必须分开两步：merge 后先打印确认 state=MERGED 再删分支。GitHub API 偶发 TLS/GraphQL 超时会让 merge 静默失败而链式 && 继续删分支导致 PR OPEN+分支消失。事故救援：git fetch origin pull/N/head:<branch> && git push origin <branch> && gh pr reopen N（已四次验证有效）。"
+    confidence: 0.95
+    source_session: "2026-09-06 S106 #422 TLS 超时（本会话第四次同类事故）"
+    tags: [git, github, merge, ci, accident-recovery]
+    applications: 4
+
+  - id: eval-gate-fail-check-harness-first
+    pattern: "评测门 FAIL（尤其 0/N 全灭）先怀疑 harness 约定不匹配再信「模型不行」：#362 门首跑 Qwen3-VL 0/10，手动单跑 worker 发现 raw 输出坐标空间超界被 clamp-only 钳边缘——坐标系约定 bug 而非模型无能。同理 lane 自报测试数字一律复算（grok 抓到过 40/40 实为 20/20）。"
+    confidence: 0.9
+    source_session: "2026-09-06 S106 #363 评测门首跑 FAIL 归因 → #423"
+    tags: [eval, harness, debugging, verification, qwen-vl]
+    applications: 1
+
   - id: hydration-window-not-missing
     pattern: "「状态未知」（镜像/配置未水合）≠「状态缺失」。用 !== true 判 missing 会把水合窗口误判为缺失——语音回退差点因此在水合期默认走云 STT。门控要显式分三态：hydrated && value===false 才行动。grok/claude 双路审 diff 各抓到对方漏的真问题，值得常规化。"
     confidence: 0.85

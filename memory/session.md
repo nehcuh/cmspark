@@ -2,6 +2,10 @@
 
 ## Current Session
 
+### S106 tail (2026-09-06) [0.6.1 打包换装]
+- make package-macos → CMspark-v0.6.1-macOS.dmg（80M）→ /Applications 换装；验证：Info.plist 0.6.1、daemon 23401 LISTEN、tray running、扩展 WS 认证。
+- Recorded: yes — merge-and-cleanup-separate-steps / eval-gate-fail-check-harness-first 入 instincts
+
 ### S106 END (2026-09-06) [剩余 issue 全清 → 0.6.1 + 评测门实证]
 - **Merged**：#421（#419 stdio 懒重拉/UI 选档/形状预检）· #422（#417 escalateGuidance 收敛 + linux cuArmed）· #424（#418 distill polish + 真实 LLM 884s 三轮调优 5 草稿 99 ids 零伪造）。全部双路对抗 + CI 绿。
 - **非代码**：#351 终裁关闭（pi 红队修正论据：embedding 本机不出网，真理由是 #260 experimental + 无诉求）；#328 shadow 开启；#363 评测门首跑 **FAIL 0/10** → 归因 worker 坐标系（raw {"x":[800,260]} 超界，L-QW-3 clamp-only）→ #423。
