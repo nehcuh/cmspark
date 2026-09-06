@@ -2,6 +2,29 @@
 
 格式大致遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号与 `companion/package.json` / `chrome-extension/package.json` 对齐。
 
+## [0.6.1] — 2026-09-06
+
+0.6.0 发版当日的修复与能力波次（多 lane 并行开发 + 逐 PR 独立对抗复审）：**#404 测试污染事故闭环**（config 路径全 live 化）；**失败升级链修复**（#409，uokwyw 实证四断点）；**outbound MCP 三件**（Grok 兼容短名、双轨同名、interact 命名 profile）；**全历史专家抽取**（#411）。
+
+### 事故修复：测试污染真实配置（#404 #405 #406 #412）
+
+- **config.json 读写全 live 化（#404/#405）**：`settings-web-tokens.test.ts` 静态 import `settings-web` → `config.ts` 在 `before()` 设 `CMSPARK_DATA_DIR` 前冻结 `DATA_DIR` 为真实 home，测试夹具（sk-test/https://x/m/port 23491）覆写真实 `~/.cmspark-agent/config.json`，致 0.6.0 启动 model_probe 失败 + tray 硬编码 `WS_PORT=23401` 探测失败误报「已停止」。修复：9 处 config.json 路径 + initDataDir 内 3 处 + getLogDir 全部改走 live `getConfigDir()`。[#404](https://github.com/nehcuh/cmspark/issues/404)
+- **残余冻结点清扫（#406/#412）**：`getPidFilePath()`、outbound-grants `GRANTS_PATH`、ws-auth secret/.paired、obsidian 三缓存路径全部 live 化；**tray 端口探测改读 `getConfig().port`**（`resolveWsPort()`，非法回退 23401），端口漂移时 `syncCompanionClientPort` 重定向两个持久 WS client——用户改端口后 tray 不再误报。残余：Tray.swift 显示串硬编码 :23401（需 Swift 重编译，另票）。[#406](https://github.com/nehcuh/cmspark/issues/406)
+
+### 失败升级链（#409 #414）
+
+- **uokwyw 四断点修复**：CDP 连败 origin 封禁后——(A) 未武装 CU 时升级文案不再撒谎说「MAY call host_computer」，改指 `loop_declare_blocked` + 解锁路径（linux 分支同步：CU 永不可用，`suggested_action` 恒 `declare_blocked`）；(B) `closeRouteRun` 只把**成功**的 host_computer/osascript 记为已换路，失败不再清 staleRuns——`r3-unarmed`「请打开坐标 CU」解锁合同能浮出；(C) `host_computer` zod schema 补 optional `trigger_reason`（对齐 catalog，第一次升级调用不再死于 `.strict()`）；(D) 熔断 chat.error 在 origin 已升级时附解锁指引（设置→坐标计算机使用 / 换任务）。loop 仍**永不**自动打开 coordinateEnabled。[#409](https://github.com/nehcuh/cmspark/issues/409)
+
+### outbound MCP（#407 #408 #410）
+
+- **租手 stdio `tools/list` 短名（Grok `tool_count: 0`）**：Grok 把 MCP 工具写成 `server__tool` 且合格名只允许一个 `__`。旧 `mcp-outbound` 直接暴露 `cmspark__list_tabs`，Grok 再前缀成 `cmspark__cmspark__list_tabs` 后丢掉全部工具——`grok mcp doctor` 仍报 10 tools / healthy。`tools/list` 改为短名（`list_tabs`）；`CallTool` 短名与 `cmspark__*` 都收。HTTP invoke / 默认 profile 白名单不变，**不扩** outbound L1。
+- **租手 HTTP invoke 与 stdio 双轨同名（#408）**：`companionInvokeOutbound` 入口套同一 `canonicalOutboundMcpName`，短名（`list_tabs`）与 `cmspark__*` 均可；短名 exfil 仍走 grant 门（`DISCLOSURE_NOT_GRANTED`）。非法格式 vs 真不在 profile 的 `PROFILE_FORBIDDEN` 文案分开；审计记 `tool`（canonical）+ `wire_name`（原始名）。**不扩**默认 outbound L1。[#408](https://github.com/nehcuh/cmspark/issues/408)
+- **outbound `outbound_l1_interact` 命名 profile（#410，同层补全）**：默认 8 工具 + 2 meta **逐字节不变**；interact 档 = 默认 ∪ {scroll / get_element_info / press_key / select_option / hover / dblclick / fill_form / drag_and_drop / create_tab / get_page_html / analyze_image}，`outbound-grant issue --profile outbound_l1_interact` 显式索取。DOM/像素读（get_page_html / analyze_image）入 exfil 类，**复用** `allow_page_export` 门（不拆新旗）。HTTP 轨按钥匙 profile、stdio 轨按 caller live grant（同 exfil 双轨）；stdio `tools/list` 经认证 `/outbound-mcp/v1/profile` 按钥匙裁剪（fetch 失败降级默认集）。**豁免旗不溅射（收紧）**：auto_approve_dangerous / god-mode / auto_approved_domains 对 outbound 一律无效——auto-approved 域仍确认台、非 http(s) 仍硬拦；outbound 只认 grant per-key 旗 + 操作者 HITL。[#410](https://github.com/nehcuh/cmspark/issues/410)
+
+### 专家模式（#411 #416）
+
+- **全历史专家抽取（方案 A 两级聚类）**：专家段新增「📚 从全部历史归纳专家」——一次性确认弹窗（写明 N 条摘要发所配 LLM + 时间窗/关键词预排除，count_only 零 LLM）→ 候选池（沿用 #370 skip 规则，cap 200）→ 浅层画像（fresh digest 优先，否则首末 user preview，全 redact，不读全量正文进 LLM）→ 25/批出候选角色（companion 硬校验 ≥2 有效线程、伪造 id 丢弃）→ 按需深读 ≤20 条（既有 8k cap + 脱敏）→ 跨批归并 + 与已装专家去重（名字精确或工具面 Jaccard≥0.8 → conflicts_with「覆盖/另存」用户裁决）→ K≤5 份草稿进内存 pendingDrafts（不落盘、不自动保存、重启即丢），草稿队列「上一份/下一份」逐份进同一编辑器手动保存。无定时器、无后台扫描（watermark 增量另票）。LLM 调用数 = 批次数+1 归并，与线程数解耦。[#411](https://github.com/nehcuh/cmspark/issues/411)
+
 ## [0.6.0] — 2026-09-06
 
 0.5.9 之后的大波次：**消费者级侧栏 UI 重构**（#321 系列——状态带合并、消息行降噪、空态/作曲同脸、Cockpit 抢焦点收敛）；**自主性三件套**成链——Composer 巡航档位选择器（#325）、plan_readonly 计划模式（#327）、L-1/L-3/L-5 无人值守 loop（#386–#391，默认仍 off）；**专家团队 v1**（#366–#371：`kind=expert`、七个预置角色、一张 L2 卡组队）；**CU 完整性链**（#359–#362：Qwen3-VL sha256 钉死 + held-out 评测门）；**跨平台诚实化**（darwin host follow-ups、CDP 失败升级建议、grant 审计）。L2/ACL 边界零扩张，execution_contract 仍 shadow（#328）。
@@ -44,9 +67,6 @@
 - **host_read max_chars 真透传（#69 Phase 2，审计 M8 完整修复）**：read-mail / list-mail 预编译 .scpt 转 handler 形态，cmspark-host 经 'ascr'/'psbr' 子程序 Apple Event（kASSubroutineEvent）把 `--max-chars`（1-5000，匹配 zod）/ `--limit`（1-500）传入 readMail/listMail handler——脚本侧硬编码 500/100 移除（max_chars>500 不再被 500 硬截）。非法 argv typed exit 7（不静默 clamp）；TS 层 slice 保留为纵深；list-notes/list-files 不变（仍固定 top-100）。[#69](https://github.com/nehcuh/cmspark/issues/69)
 - **list-files CJK TargetId 有损（#69 F3）**：producer 不再用 `cid mod 256` percent-encode（U+4E00「一」与 U+4F00「伀」曾撞成 `%00`）；改为输出原始 UTF-8 文件名，由既有 M2 `encodeRawTargetId` base64url 在 list 边界编码。选这条而不是在 AppleScript 里重写 UTF-8 percent-encoding：少一层易错逻辑，notes/mail producer 已是 raw。M2 codec 行为不回退。Finder `readOne` 仍是 M1 NotImplemented（Mail-only）——回读是 decode 文件名后读 `~/Documents`。[#69](https://github.com/nehcuh/cmspark/issues/69)
 - **值守 grant arm/disarm 入 capability-audit（#347）**：`security.unattended.armed` / `.disarmed` / `.expired` 三事件补全审计面板可见性——config.set 双向已记（#334），grant 路径（ADR-021 进程内存值守）此前只有 logger。armed/disarm 带来源 surface（panel/tray/summoner 归一，stampedSurface 派生），expired 记 `cruise_restored`；字段按构造 redact（无短语/token/命令文本）。bare disarm（无活跃 grant）不伪造审计行；审计写失败永不 gate 生命周期。不改 grant 语义 / TTL / 确认代数。[#347](https://github.com/nehcuh/cmspark/issues/347)
-- **租手 stdio `tools/list` 短名（Grok `tool_count: 0`）**：Grok 把 MCP 工具写成 `server__tool` 且合格名只允许一个 `__`。旧 `mcp-outbound` 直接暴露 `cmspark__list_tabs`，Grok 再前缀成 `cmspark__cmspark__list_tabs` 后丢掉全部工具——`grok mcp doctor` 仍报 10 tools / healthy。`tools/list` 改为短名（`list_tabs`）；`CallTool` 短名与 `cmspark__*` 都收。HTTP invoke / 默认 profile 白名单不变，**不扩** outbound L1。
-- **租手 HTTP invoke 与 stdio 双轨同名（#408）**：`companionInvokeOutbound` 入口套同一 `canonicalOutboundMcpName`，短名（`list_tabs`）与 `cmspark__*` 均可；短名 exfil 仍走 grant 门（`DISCLOSURE_NOT_GRANTED`）。非法格式 vs 真不在 profile 的 `PROFILE_FORBIDDEN` 文案分开；审计记 `tool`（canonical）+ `wire_name`（原始名）。**不扩**默认 outbound L1。[#408](https://github.com/nehcuh/cmspark/issues/408)
-- **outbound `outbound_l1_interact` 命名 profile（#410，同层补全）**：默认 8 工具 + 2 meta **逐字节不变**；interact 档 = 默认 ∪ {scroll / get_element_info / press_key / select_option / hover / dblclick / fill_form / drag_and_drop / create_tab / get_page_html / analyze_image}，`outbound-grant issue --profile outbound_l1_interact` 显式索取。DOM/像素读（get_page_html / analyze_image）入 exfil 类，**复用** `allow_page_export` 门（不拆新旗）。HTTP 轨按钥匙 profile、stdio 轨按 caller live grant（同 exfil 双轨）；stdio `tools/list` 经认证 `/outbound-mcp/v1/profile` 按钥匙裁剪（fetch 失败降级默认集）。**豁免旗不溅射（收紧）**：auto_approve_dangerous / god-mode / auto_approved_domains 对 outbound 一律无效——auto-approved 域仍确认台、非 http(s) 仍硬拦；outbound 只认 grant per-key 旗 + 操作者 HITL。[#410](https://github.com/nehcuh/cmspark/issues/410)
 
 ### Known residuals
 
