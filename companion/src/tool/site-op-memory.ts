@@ -502,7 +502,7 @@ export function thawTabIfPresent(threadId: string, tabId: number | undefined): v
   stateFor(threadId).frozenTabs.delete(tabId)
 }
 
-function originEscalateError(): string {
+function originEscalateError(cuArmed: boolean): string {
   const plat = platform()
   const n = SITE_ORIGIN_FAIL_ESCALATE
   const confirm =
@@ -513,6 +513,19 @@ function originEscalateError(): string {
       `SITE_OP_BANNED: CDP interactive tools already failed ${n}+ times on this origin ` +
       "(across locators/tools) — do not retry click/type/evaluate here. " +
       "host_computer is NOT available on this platform (Linux). list_tabs or stop; there is no third JS injection path."
+    )
+  }
+  // #409-A: unarmed CU must not be advertised as a MAY-call escalation — the
+  // call would die COMPUTER_DISABLED. Same caliber as buildSteerText unarmed
+  // branch: declare blocked, wait for the user to arm, loop never flips the flag.
+  if (!cuArmed) {
+    return (
+      `SITE_OP_BANNED: CDP interactive tools already failed ${n}+ times on this origin ` +
+      "(across locators/tools) — do not retry click/type/evaluate here. " +
+      "Coordinate CU is NOT armed (computer.coordinateEnabled=false): do NOT call host_computer either — it would fail COMPUTER_DISABLED. " +
+      "Call loop_declare_blocked, or wait for the user to arm 坐标计算机使用 in Settings and restore from checkpoint. " +
+      "The loop will never flip this flag itself." +
+      listTabsHint
     )
   }
   const cu =
@@ -528,15 +541,21 @@ function originEscalateError(): string {
   )
 }
 
-export function bannedSiteOpResult(ban: Extract<SiteOpBan, { banned: true }>): {
+export function bannedSiteOpResult(
+  ban: Extract<SiteOpBan, { banned: true }>,
+  opts?: { cuArmed?: boolean },
+): {
   success: false
   error: string
   data: {
     error_code: string
-    suggested_action: "stop_or_change_task" | "list_tabs" | "escalate_to_host_computer"
+    suggested_action: "stop_or_change_task" | "list_tabs" | "escalate_to_host_computer" | "declare_blocked"
     locator: string
   }
 } {
+  // #409-A: default unarmed (fail-closed) — an absent caller must never get
+  // host_computer advertising when CU is actually disabled.
+  const cuArmed = opts?.cuArmed === true
   if (ban.error_code === "TAB_ATTACH_FROZEN") {
     return {
       success: false,
@@ -551,10 +570,10 @@ export function bannedSiteOpResult(ban: Extract<SiteOpBan, { banned: true }>): {
   if (ban.error_code === "SITE_OP_ESCALATE") {
     return {
       success: false,
-      error: originEscalateError(),
+      error: originEscalateError(cuArmed),
       data: {
         error_code: "SITE_OP_ESCALATE",
-        suggested_action: "escalate_to_host_computer",
+        suggested_action: cuArmed ? "escalate_to_host_computer" : "declare_blocked",
         locator: "origin",
       },
     }

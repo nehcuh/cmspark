@@ -61,10 +61,10 @@ export function onRouteChatBegin(threadId: string, agentRole?: string | null): s
   return prompt
 }
 
-export function onRouteTool(threadId: string, toolName: string): void {
+export function onRouteTool(threadId: string, toolName: string, success = true): void {
   const s = sessions.get(threadId)
   if (!s) return
-  s.state = noteTool(s.state, toolName)
+  s.state = noteTool(s.state, toolName, success)
 }
 
 export function onRouteDeclaredBlocked(threadId: string, itemId: string): void {

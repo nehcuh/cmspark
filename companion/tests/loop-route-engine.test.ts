@@ -151,6 +151,61 @@ test("trying host_computer after steer is obedience, not ignore", () => {
   assert.equal(r.state.items["live:0"]!.blocked, null)
 })
 
+// --- #409-B: a FAILED fallback (COMPUTER_DISABLED / TAB_NOT_FOUND) is not a route switch ---
+
+test("#409-B: failed host_computer does not clear staleRuns — r3-unarmed unlock still reached", () => {
+  let s = emptyRouteEngineState()
+  const input = {
+    runProgress: progress(false),
+    originEscalated: true,
+    caps: caps(false),
+    hadProgress: false,
+  }
+  s = runCdp(beginRouteRun(s, []), 1)
+  let r = closeRouteRun(s, input)
+  assert.equal(r.state.items["live:0"]!.staleRuns, 1)
+  // run 2: the model tries host_computer; it FAILS (e.g. COMPUTER_DISABLED)
+  s = noteTool(beginRouteRun(r.state, []), "host_computer", false)
+  r = closeRouteRun(s, input)
+  const item = r.state.items["live:0"]!
+  assert.ok(item.blocked, "failed fallback must not eat the r3-unarmed unlock")
+  assert.ok(r.audits.some((a) => a.reason === "r3-unarmed"))
+  assert.match(item.blocked!.unlock.detail, /coordinateEnabled/)
+  assert.ok(!item.triedRoutes.some((t) => t.route === "host_computer"), "no 'attempted' record for a failed try")
+
+  // control: the same call SUCCEEDING resets staleRuns and records attempted
+  let s2 = emptyRouteEngineState()
+  s2 = runCdp(beginRouteRun(s2, []), 1)
+  let r2 = closeRouteRun(s2, input)
+  s2 = noteTool(beginRouteRun(r2.state, []), "host_computer", true)
+  r2 = closeRouteRun(s2, input)
+  const okItem = r2.state.items["live:0"]!
+  assert.equal(okItem.staleRuns, 0)
+  assert.ok(okItem.triedRoutes.some((t) => t.route === "host_computer"))
+  assert.equal(okItem.blocked, null)
+})
+
+test("#409-B: failed host_computer after steer is obedience, but not progress", () => {
+  let s = emptyRouteEngineState()
+  const input = {
+    runProgress: progress(false),
+    originEscalated: true,
+    caps: caps(true),
+    hadProgress: false,
+  }
+  s = runCdp(beginRouteRun(s, []), 1)
+  let r = closeRouteRun(s, input)
+  s = runCdp(beginRouteRun(r.state, []), 1)
+  r = closeRouteRun(s, input)
+  assert.equal(r.pendingSteers.length, 1)
+  s = noteTool(beginRouteRun(r.state, r.pendingSteers), "host_computer", false)
+  r = closeRouteRun(s, input)
+  const item = r.state.items["live:0"]!
+  assert.equal(item.ignoreCount, 0, "trying-and-failing is still obedience")
+  assert.equal(item.staleRuns, 1, "a failed fallback is not progress — stale runs keep counting")
+  assert.equal(item.blocked, null)
+})
+
 test("declare blocked is obedience and records human route", () => {
   let s = emptyRouteEngineState()
   const input = {

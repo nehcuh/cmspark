@@ -144,7 +144,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const itemId = String(params.item_id || params.itemId || "").trim()
       if (!itemId) return { success: false, error: "loop_declare_blocked requires item_id" }
       const { onRouteDeclaredBlocked, onRouteTool } = await import("../loop/route-session")
-      onRouteTool(String(threadId), "loop_declare_blocked")
+      onRouteTool(String(threadId), "loop_declare_blocked", true)
       onRouteDeclaredBlocked(String(threadId), itemId)
       return {
         success: true,
