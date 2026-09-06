@@ -154,6 +154,7 @@ export type SummonerSubmitEvt = {
 export type SummonerSearchEvt = { type: "summoner.search"; query: string }
 export type SummonerSelectEvt = { type: "summoner.select"; thread_id: string }
 export type SummonerAttachChromeEvt = { type: "summoner.attach_chrome"; foreground?: boolean }
+export type SummonerUiCommandEvt = { type: "summoner.ui_command"; action: string }
 export type SummonerContinueEvt = { type: "summoner.continue" }
 export type SummonerHotkeyChosenEvt = { type: "summoner.hotkey.chosen"; combo: string }
 export type SummonerComposingEvt = { type: "summoner.composing"; on: boolean }
@@ -195,6 +196,7 @@ export type SummonerInboundEvt =
   | SummonerSearchEvt
   | SummonerSelectEvt
   | SummonerAttachChromeEvt
+  | SummonerUiCommandEvt
   | SummonerContinueEvt
   | SummonerHotkeyChosenEvt
   | SummonerComposingEvt
@@ -349,6 +351,10 @@ export function encodeSummonerSelect(p: { thread_id: string }): SummonerSelectEv
 export function encodeSummonerAttachChrome(p?: { foreground?: boolean }): SummonerAttachChromeEvt {
   if (p?.foreground === true) return { type: "summoner.attach_chrome", foreground: true }
   return { type: "summoner.attach_chrome" }
+}
+
+export function encodeSummonerUiCommand(p: { action: string }): SummonerUiCommandEvt {
+  return { type: "summoner.ui_command", action: p.action }
 }
 
 export function encodeSummonerContinue(): SummonerContinueEvt {
@@ -748,6 +754,9 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
     case "summoner.attach_chrome":
       if (o.foreground !== undefined && typeof o.foreground !== "boolean") return null
       return encodeSummonerAttachChrome(o.foreground === true ? { foreground: true } : undefined)
+    case "summoner.ui_command":
+      if (!isString(o.action) || !o.action.trim()) return null
+      return encodeSummonerUiCommand({ action: o.action.trim() })
     case "summoner.continue":
       return encodeSummonerContinue()
     case "summoner.hotkey.chosen":

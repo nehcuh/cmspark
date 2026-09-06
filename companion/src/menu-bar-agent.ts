@@ -1077,6 +1077,28 @@ export function handleSummonerAttach(foreground = false): void {
   }
 }
 
+/** #433 P2: overlay verb → companion `ui.command` (ext executes the whitelist). */
+export async function handleSummonerUiCommand(action: string): Promise<void> {
+  if (action === "open_browser") {
+    handleSummonerAttach(true)
+  }
+  const client = companionClient
+  if (!client) {
+    safeNotify({ title: "CMspark 召唤器", message: "Companion 未连接", timeout: 5 })
+    return
+  }
+  try {
+    await client.sendAppRequest("ui.command", { action }, 8_000)
+  } catch (err: any) {
+    trayDebugLog(`ui.command ${action} failed: ${err?.message || err}`)
+    safeNotify({
+      title: "CMspark 召唤器",
+      message: err?.message || `无法执行 ${action}`,
+      timeout: 5,
+    })
+  }
+}
+
 /** Overlay continue CTA — new user message, no L1 replay. */
 export function handleSummonerContinue(): boolean {
   if (!summonerClient || !summonerThreadId) return false
@@ -1603,6 +1625,9 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       return
     case "summoner.attach_chrome":
       handleSummonerAttach(evt.foreground === true)
+      return
+    case "summoner.ui_command":
+      void handleSummonerUiCommand(evt.action)
       return
     case "summoner.continue":
       handleSummonerContinue()

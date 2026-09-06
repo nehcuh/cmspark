@@ -10,7 +10,7 @@
  * ZERO side effects (gate fires before lease acquire); propose is NOT an
  * exemption; workers never run wider than their master (spawn stamp +
  * gate-side parent fallback); the only write path is the user_gesture-gated
- * thread.execution_policy.set wire message (summoner ACL denies it, generic
+ * thread.execution_policy.set wire message (summoner may only tighten; generic
  * thread.update cannot smuggle the key).
  */
 import test, { after, before, describe } from "node:test"
@@ -470,14 +470,27 @@ describe("#327 thread.execution_policy.set wire message", () => {
     assert.equal(r.thread.alias, "smuggled", "other keys still work")
   })
 
-  test("summoner surface denied both centrally (lifecycle ACL) and in-router", async () => {
+  test("summoner may downgrade to plan_readonly; upgrade/arm is denied", async () => {
     const central = assertSummonerAllowed("summoner", "thread.execution_policy.set")
-    assert.equal(central.ok, false)
-    if (!central.ok) assert.equal(central.error_code, "SUMMONER_ACL")
+    assert.equal(central.ok, true)
+
+    const { applySummonerPayloadPolicy } = await import("../src/ws/summoner-acl")
+    const tighten = applySummonerPayloadPolicy("summoner", {
+      type: "thread.execution_policy.set",
+      thread_id: "t1",
+      policy: "plan_readonly",
+    })
+    assert.equal(tighten.ok, true)
+    const loosen = applySummonerPayloadPolicy("summoner", {
+      type: "thread.execution_policy.set",
+      thread_id: "t1",
+      policy: "default",
+    })
+    assert.equal(loosen.ok, false)
 
     const { services, session } = routerServices()
     const t = services.threadManager.create("t")
-    const r = await handleMessage(
+    const down = await handleMessage(
       {
         type: "thread.execution_policy.set",
         thread_id: t.id,
@@ -487,9 +500,22 @@ describe("#327 thread.execution_policy.set wire message", () => {
       },
       services, session,
     )
-    assert.equal(r.type, "error")
-    assert.equal(r.error_code, "SUMMONER_ACL")
-    assert.equal(services.threadManager.get(t.id)?.execution_policy, undefined)
+    assert.equal(down.type, "thread.execution_policy.updated")
+    assert.equal(services.threadManager.get(t.id)?.execution_policy, "plan_readonly")
+
+    const up = await handleMessage(
+      {
+        type: "thread.execution_policy.set",
+        thread_id: t.id,
+        policy: "default",
+        user_gesture: true,
+        __cmspark_surface: "summoner",
+      },
+      services, session,
+    )
+    assert.equal(up.type, "error")
+    assert.equal(up.error_code, "SUMMONER_ACL")
+    assert.equal(services.threadManager.get(t.id)?.execution_policy, "plan_readonly")
   })
 })
 

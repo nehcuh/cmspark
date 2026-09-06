@@ -144,9 +144,11 @@ test("#433: thread.search / thread.peek / knowledge.search 放行 summoner；dis
   for (const type of ["thread.search", "thread.peek", "knowledge.search", "thread.select", "history.query", "knowledge.list"]) {
     assert.deepEqual(assertSummonerAllowed("summoner", type), { ok: true }, `${type} 应放行 summoner`)
   }
-  for (const type of ["thread.distill_preview", "config.set", "thread.execution_policy.set"]) {
+  for (const type of ["thread.distill_preview", "config.set"]) {
     assert.equal(assertSummonerAllowed("summoner", type).ok, false, `${type} 不应放行 summoner`)
   }
+  // #433 P2: type is allowed; payload/router still refuse upgrade (plan_readonly only).
+  assert.equal(assertSummonerAllowed("summoner", "thread.execution_policy.set").ok, true)
 })
 
 test("validate: 三消息形状校验（query/limit/thread_id）", () => {

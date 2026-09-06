@@ -250,6 +250,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "ui.open_sidepanel": () => ({ valid: true }),
+    "ui.command": (m) => {
+      if (typeof m.action !== "string" || !m.action.trim()) {
+        return { valid: false, error: "ui.command requires action" }
+      }
+      return { valid: true }
+    },
     "ui.open_sidepanel.result": (m) => {
       if (typeof m.id !== "string" || !m.id) return { valid: false, error: "ui.open_sidepanel.result requires id" }
       if (typeof m.ok !== "boolean") return { valid: false, error: "ui.open_sidepanel.result requires ok boolean" }
