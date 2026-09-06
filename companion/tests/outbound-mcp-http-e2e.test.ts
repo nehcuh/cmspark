@@ -672,3 +672,87 @@ test("e2e: caller disconnect during HITL wait → approved tool NOT executed (R1
     await close(server)
   }
 })
+
+test("e2e #408: HTTP invoke short name list_tabs succeeds", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  const seen: string[] = []
+  setOutboundToolRunner(async (_id, tool) => {
+    seen.push(tool)
+    return { success: true, data: { tabs: [{ id: 9 }] } }
+  })
+  try {
+    const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: grantToken("x"),
+      body: { caller_id: "x", tool: "list_tabs" },
+    })
+    assert.equal(r.status, 200, JSON.stringify(r.json))
+    assert.equal(r.json.ok, true)
+    assert.deepEqual(seen, ["list_tabs"])
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e #408: HTTP invoke canonical cmspark__list_tabs still succeeds", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  setOutboundToolRunner(async (_id, tool) => {
+    assert.equal(tool, "list_tabs")
+    return { success: true, data: { tabs: [] } }
+  })
+  try {
+    const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: grantToken("x"),
+      body: { caller_id: "x", tool: "cmspark__list_tabs" },
+    })
+    assert.equal(r.status, 200)
+    assert.equal(r.json.ok, true)
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e #408: HTTP short-name get_page_text without grant is DISCLOSURE_NOT_GRANTED", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  let hit = false
+  setOutboundToolRunner(async () => {
+    hit = true
+    return { success: true }
+  })
+  try {
+    const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: grantToken("x"),
+      body: { caller_id: "x", tool: "get_page_text" },
+    })
+    assert.equal(r.status, 422)
+    assert.equal(r.json.error_code, "DISCLOSURE_NOT_GRANTED")
+    assert.equal(hit, false)
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e #408: HTTP illegal name PROFILE_FORBIDDEN with accurate copy", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  let hit = false
+  setOutboundToolRunner(async () => {
+    hit = true
+    return { success: true }
+  })
+  try {
+    const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: grantToken("x"),
+      body: { caller_id: "x", tool: "mcp__cmspark__list_tabs" },
+    })
+    assert.equal(r.status, 422)
+    assert.equal(r.json.error_code, "PROFILE_FORBIDDEN")
+    assert.match(String(r.json.error), /not a valid outbound MCP name/)
+    assert.doesNotMatch(String(r.json.error), /not on the default outbound L1 profile/)
+    assert.equal(hit, false)
+  } finally {
+    await close(server)
+  }
+})

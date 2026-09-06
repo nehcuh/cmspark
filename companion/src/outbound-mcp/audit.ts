@@ -8,6 +8,8 @@ import { appendCapabilityAudit } from "../packs/audit-log"
 export type OutboundAuditEvent = {
   caller_id: string
   tool: string
+  /** Raw name as received, before canonicalOutboundMcpName. Tool-name only. */
+  wire_name?: string
   domain?: string
   confirm_outcome?: "approved" | "denied" | "timeout" | "skipped" | "n/a"
   ok: boolean
@@ -21,6 +23,7 @@ export function appendOutboundMcpAudit(ev: OutboundAuditEvent): void {
     type: "outbound_mcp.tool",
     caller_id: ev.caller_id,
     tool: ev.tool,
+    ...(ev.wire_name != null && ev.wire_name !== "" ? { wire_name: ev.wire_name } : {}),
     domain: ev.domain,
     confirm_outcome: ev.confirm_outcome ?? "n/a",
     ok: ev.ok,

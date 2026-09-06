@@ -1,10 +1,12 @@
 /**
  * Outbound MCP default profile (Phase 0) — curated L1 subset.
  *
- * Canonical / HTTP / facade names stay `cmspark__*` (ADR-022 L5).
+ * Canonical / facade names stay `cmspark__*` (ADR-022 L5).
  * MCP stdio `tools/list` advertises the suffix only (`list_tabs`) so clients
  * that qualify tools as `server__tool` (Grok) emit `cmspark__list_tabs`
  * instead of the rejected `cmspark__cmspark__list_tabs` (exactly one `__`).
+ * CallTool and HTTP invoke both run `canonicalOutboundMcpName` so short names
+ * and `cmspark__*` aliases hit the same allowlist / exfil gates.
  */
 
 export const OUTBOUND_MCP_NAME_PREFIX = "cmspark__"
@@ -45,6 +47,25 @@ export function canonicalOutboundMcpName(wireName: string): string {
   if (!n) return n
   if (n.startsWith(OUTBOUND_MCP_NAME_PREFIX)) return n
   return `${OUTBOUND_MCP_NAME_PREFIX}${n}`
+}
+
+/**
+ * Shape of a canonical name after `canonicalOutboundMcpName`:
+ * `cmspark__` + a single identifier (`list_tabs`), no extra `__`.
+ * Used only to split PROFILE_FORBIDDEN copy (illegal format vs off-profile).
+ * Not a second allowlist.
+ */
+export function isCanonicalOutboundMcpNameShape(canonical: string): boolean {
+  if (!canonical.startsWith(OUTBOUND_MCP_NAME_PREFIX)) return false
+  const rest = canonical.slice(OUTBOUND_MCP_NAME_PREFIX.length)
+  return /^[a-z][a-z0-9_]*$/.test(rest) && !rest.includes("__")
+}
+
+/** Audit / error-string cap: tool names only, never args or page body. */
+export function redactOutboundMcpWireName(raw: string, max = 160): string {
+  return String(raw || "")
+    .replace(/[\r\n\u2028\u2029]+/g, " ")
+    .slice(0, max)
 }
 
 /** Internal tool name (without cmspark__ prefix) mapping. */

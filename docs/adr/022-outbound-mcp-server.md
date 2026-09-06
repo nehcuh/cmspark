@@ -80,7 +80,7 @@ Channel:      community 默认；enterprise 模块不进 default outbound set
 
 > **L4+ 实现期细化（2026-08-31，commit `123eaf2b`）——exfil grant 双轨语义**：外泄类工具（L3+）的 grant 旗标按 transport 分轨判定。**HTTP 轨**（`companion-http.ts`）：调用方持已认证的 `grant_id`，**按钥匙本身**判定——只有该 grant 自己的 `allow_page_export` 授权外泄，与 grant-cli 对操作员承诺的「这把钥匙」一致。**stdio 轨**（`bridge.ts`/`facade.ts`）：无 grant 凭证可用，**按 caller** 判定——caller 名下任一存活带旗 grant 即放行。操作员 HITL 会话（`hasOutboundDisclosure`）在两条轨上**仍按 caller_id** 键控（有意的不对称：旗 per-key、HITL per-caller）——一次操作员批准武装该 caller 的会话，而持久外泄同意在 HTTP 轨上保持 per-key。caller 自报 `disclosure_accepted` 与 HTTP/stdio acknowledge **均不**满足此外泄门。`grant_id` 只来自认证通过的 Bearer grant，永不读请求 body；`caller_id` 与 grant 绑定（`GRANT_CALLER_MISMATCH`）。
 
-> **L5 实现期细化（2026-09-06）——stdio `tools/list` 短名**：L5 的 `cmspark__*` 仍是 **canonical / HTTP / 文档名**。MCP stdio `tools/list` 只暴露后缀（`list_tabs`），让把工具写成 `server__tool` 且只允许一个 `__` 的客户端（Grok）得到 `cmspark__list_tabs`。旧版把 canonical 名直接放进 `tools/list` 时，Grok 会变成 `cmspark__cmspark__list_tabs` 并 **丢掉全部工具**（会话 `tool_count: 0`；`grok mcp doctor` 仍数 10）。`CallTool` 短名与 `cmspark__*` 都收。不扩 default outbound profile。
+> **L5 实现期细化（2026-09-06）——stdio `tools/list` 短名**：L5 的 `cmspark__*` 仍是 **canonical / 文档名**。MCP stdio `tools/list` 只暴露后缀（`list_tabs`），让把工具写成 `server__tool` 且只允许一个 `__` 的客户端（Grok）得到 `cmspark__list_tabs`。旧版把 canonical 名直接放进 `tools/list` 时，Grok 会变成 `cmspark__cmspark__list_tabs` 并 **丢掉全部工具**（会话 `tool_count: 0`；`grok mcp doctor` 仍数 10）。`CallTool` 与 HTTP invoke 短名与 `cmspark__*` 都收（#408）。不扩 default outbound profile。
 
 ### 4. 默认工具面（Phase 0 profile）
 

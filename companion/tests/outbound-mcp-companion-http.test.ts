@@ -1,8 +1,10 @@
 import "./_outbound-grants-setup.js"
 import test from "node:test"
 import assert from "node:assert/strict"
+import fs from "node:fs"
 import http from "node:http"
 import { WebSocket } from "ws"
+import { getAuditLogPath } from "../src/packs/audit-log"
 import {
   companionInvokeOutbound,
   companionAcceptDisclosure,
@@ -433,4 +435,89 @@ test("revoke grant → exfil fails even if disclosure Map still has caller", asy
   })
   assert.equal(r.ok, false)
   assert.equal(r.error_code, "DISCLOSURE_NOT_GRANTED")
+})
+
+test("#408 HTTP invoke accepts short wire name list_tabs", async () => {
+  const calls: string[] = []
+  setOutboundToolRunner(async (_id, tool) => {
+    calls.push(tool)
+    return { success: true, data: { tabs: [{ id: 1 }] } }
+  })
+  const r = await companionInvokeOutbound({
+    caller_id: "agent",
+    tool: "list_tabs",
+    args: {},
+  })
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.deepEqual(r.data, { tabs: [{ id: 1 }] })
+  assert.deepEqual(calls, ["list_tabs"])
+})
+
+test("#408 HTTP invoke canonical cmspark__list_tabs still dispatches", async () => {
+  setOutboundToolRunner(async (_id, tool) => {
+    assert.equal(tool, "list_tabs")
+    return { success: true, data: { tabs: [] } }
+  })
+  const r = await companionInvokeOutbound({
+    caller_id: "agent",
+    tool: "cmspark__list_tabs",
+  })
+  assert.equal(r.ok, true)
+})
+
+test("#408 HTTP short-name exfil get_page_text stays DISCLOSURE_NOT_GRANTED", async () => {
+  let hit = false
+  setOutboundToolRunner(async () => {
+    hit = true
+    return { success: true, data: { text: "nope" } }
+  })
+  const r = await companionInvokeOutbound({
+    caller_id: "c",
+    tool: "get_page_text",
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "DISCLOSURE_NOT_GRANTED")
+  assert.equal(hit, false)
+})
+
+test("#408 HTTP illegal name is PROFILE_FORBIDDEN with format copy, not 'not on profile'", async () => {
+  const r = await companionInvokeOutbound({
+    caller_id: "c",
+    tool: "mcp__cmspark__list_tabs",
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "PROFILE_FORBIDDEN")
+  assert.match(r.error || "", /not a valid outbound MCP name/)
+  assert.doesNotMatch(r.error || "", /not on the default outbound L1 profile/)
+})
+
+test("#408 HTTP off-profile legal name says not on the profile", async () => {
+  const r = await companionInvokeOutbound({
+    caller_id: "c",
+    tool: "evaluate",
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "PROFILE_FORBIDDEN")
+  assert.match(r.error || "", /not on the default outbound L1 profile/)
+})
+
+test("#408 HTTP audit records wire_name plus canonical tool", async () => {
+  setOutboundToolRunner(async () => ({ success: true, data: { tabs: [] } }))
+  const r = await companionInvokeOutbound({
+    caller_id: "audit-short",
+    tool: "list_tabs",
+  })
+  assert.equal(r.ok, true, JSON.stringify(r))
+  const events = fs
+    .readFileSync(getAuditLogPath(), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+    .filter((e) => e.type === "outbound_mcp.tool" && e.caller_id === "audit-short")
+  assert.ok(events.length >= 1, `expected audit lines: ${JSON.stringify(events)}`)
+  const last = events[events.length - 1]!
+  assert.equal(last.tool, "cmspark__list_tabs")
+  assert.equal(last.wire_name, "list_tabs")
+  assert.equal("args" in last, false)
+  assert.equal("text" in last, false)
 })

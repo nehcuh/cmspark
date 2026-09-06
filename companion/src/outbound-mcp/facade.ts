@@ -19,6 +19,8 @@ import { grantAllowsPageExport, grantAllowsPageExportById } from "./outbound-gra
 export type OutboundCallRequest = {
   caller_id: string
   tool: string
+  /** Raw invoke name before canonicalOutboundMcpName (HTTP dual-track). */
+  wire_name?: string
   args?: Record<string, unknown>
   /**
    * @deprecated Ignored for authorization. Kept for API compatibility only.
@@ -70,7 +72,7 @@ export function listOutboundTools(): string[] {
 export function denyOutboundExfilIfNeeded(
   caller_id: string,
   tool: string,
-  extraAudit?: Pick<OutboundAuditEvent, "domain" | "grant_id">,
+  extraAudit?: Pick<OutboundAuditEvent, "domain" | "grant_id" | "wire_name">,
 ): OutboundCallResult | null {
   if (!OUTBOUND_MCP_EXFIL_CLASS.has(tool)) return null
   const cid = (caller_id || "").trim() || "unknown"
@@ -126,6 +128,7 @@ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
     appendOutboundMcpAudit({
       caller_id: req.caller_id || "unknown",
       tool: "",
+      wire_name: req.wire_name,
       ok: false,
       error_code: "TOOL_REQUIRED",
     })
@@ -136,6 +139,7 @@ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
     appendOutboundMcpAudit({
       caller_id: req.caller_id || "unknown",
       tool,
+      wire_name: req.wire_name,
       domain: req.domain,
       ok: false,
       error_code: "PROFILE_FORBIDDEN",
@@ -153,6 +157,7 @@ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
   // see denyOutboundExfilIfNeeded for the dual-track semantics.
   const exfilDeny = denyOutboundExfilIfNeeded(req.caller_id, tool, {
     domain: req.domain,
+    wire_name: req.wire_name,
   })
   if (exfilDeny) return exfilDeny
 
@@ -160,6 +165,7 @@ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
   appendOutboundMcpAudit({
     caller_id: req.caller_id || "unknown",
     tool,
+    wire_name: req.wire_name,
     domain: req.domain,
     ok: true,
     confirm_outcome: "n/a",

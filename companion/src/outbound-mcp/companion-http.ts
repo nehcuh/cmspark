@@ -33,7 +33,13 @@ import {
   type OutboundCallRequest,
   type OutboundCallResult,
 } from "./facade"
-import { outboundToInternalName, OUTBOUND_DISCLOSURE_ZH } from "./profile"
+import {
+  outboundToInternalName,
+  canonicalOutboundMcpName,
+  isCanonicalOutboundMcpNameShape,
+  redactOutboundMcpWireName,
+  OUTBOUND_DISCLOSURE_ZH,
+} from "./profile"
 import { makeOutboundMcpOrigin } from "./origin"
 import { appendOutboundMcpAudit } from "./audit"
 import {
@@ -119,6 +125,7 @@ async function waitFirstExfilOperatorConfirm(
   caller_id: string,
   tool: string,
   grant_id?: string,
+  wire_name?: string,
 ): Promise<OutboundCallResult> {
   const deps = exfilConfirmer
   if (!deps) {
@@ -181,6 +188,7 @@ async function waitFirstExfilOperatorConfirm(
     appendOutboundMcpAudit({
       caller_id,
       tool,
+      wire_name,
       ok: false,
       error_code: "OUTBOUND_CONFIRM_REQUIRED",
       confirm_outcome: "denied",
@@ -201,6 +209,7 @@ async function waitFirstExfilOperatorConfirm(
     appendOutboundMcpAudit({
       caller_id,
       tool,
+      wire_name,
       ok: false,
       error_code: "OUTBOUND_CONFIRM_REQUIRED",
       confirm_outcome: outcome,
@@ -220,6 +229,7 @@ async function waitFirstExfilOperatorConfirm(
   appendOutboundMcpAudit({
     caller_id,
     tool,
+    wire_name,
     ok: true,
     confirm_outcome: "approved",
     grant_id,
@@ -435,20 +445,41 @@ export async function companionInvokeOutbound(
   opts?: { grant_id?: string; callerConnected?: () => boolean },
 ): Promise<OutboundCallResult & { data?: unknown; origin?: ReturnType<typeof makeOutboundMcpOrigin> }> {
   const caller_id = (body.caller_id || "http-unknown").trim() || "http-unknown"
-  const tool = (body.tool || "").trim()
+  const rawTool = (body.tool || "").trim()
+  const tool = canonicalOutboundMcpName(rawTool)
+  const wire_name = redactOutboundMcpWireName(rawTool)
   const grant_id = opts?.grant_id
   const req: OutboundCallRequest = {
     caller_id,
     tool,
+    wire_name,
     args: body.args || {},
     domain: body.domain,
+  }
+
+  if (rawTool && !isCanonicalOutboundMcpNameShape(tool)) {
+    appendOutboundMcpAudit({
+      caller_id,
+      tool,
+      wire_name,
+      domain: body.domain,
+      ok: false,
+      error_code: "PROFILE_FORBIDDEN",
+      confirm_outcome: "n/a",
+      grant_id,
+    })
+    return {
+      ok: false,
+      error: `tool name "${wire_name}" is not a valid outbound MCP name (use list_tabs or cmspark__list_tabs)`,
+      error_code: "PROFILE_FORBIDDEN",
+    }
   }
 
   // HTTP per-key track (W2): the authenticated grant's OWN allow_page_export
   // decides exfil. Check before the caller-level gate so an unflagged key is
   // denied DISCLOSURE_NOT_GRANTED even when a sibling key of the same caller
   // is flagged (otherwise the caller-level gate would misroute into HITL flow).
-  const grantTrackDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id })
+  const grantTrackDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id, wire_name })
   if (grantTrackDeny && grantTrackDeny.error_code === "DISCLOSURE_NOT_GRANTED") {
     return grantTrackDeny
   }
@@ -458,7 +489,7 @@ export async function companionInvokeOutbound(
     // HTTP invoke waits on first-exfil HITL when a confirmer is injected.
     // Facade unit tests without a manager still see DISCLOSURE_HITL_REQUIRED.
     if (gate.error_code === "DISCLOSURE_HITL_REQUIRED" && exfilConfirmer) {
-      const hitl = await waitFirstExfilOperatorConfirm(caller_id, tool, grant_id)
+      const hitl = await waitFirstExfilOperatorConfirm(caller_id, tool, grant_id, wire_name)
       if (!hitl.ok) return hitl
       // R1: the caller's HTTP client may have timed out / disconnected while
       // the operator HITL was pending. Fail-safe: an approved tool must NOT
@@ -472,6 +503,7 @@ export async function companionInvokeOutbound(
         appendOutboundMcpAudit({
           caller_id,
           tool,
+          wire_name,
           domain: body.domain,
           ok: false,
           error_code: "CALLER_DISCONNECTED",
@@ -494,7 +526,7 @@ export async function companionInvokeOutbound(
 
   // Defense in depth for exfil (grant flag ∧ operator HITL; HTTP ack is not consent).
   // Recomputed after any HITL arming above; grant-level on this HTTP track (W2).
-  const exfilDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id })
+  const exfilDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id, wire_name })
   if (exfilDeny) return exfilDeny
 
   const internal = gate.internal_tool || outboundToInternalName(tool)
@@ -513,6 +545,7 @@ export async function companionInvokeOutbound(
     appendOutboundMcpAudit({
       caller_id,
       tool,
+      wire_name,
       ok: false,
       error_code: "EXTENSION_UNAVAILABLE",
       grant_id,
@@ -534,6 +567,7 @@ export async function companionInvokeOutbound(
     appendOutboundMcpAudit({
       caller_id,
       tool,
+      wire_name,
       ok: false,
       error_code: leaseGate.error_code,
       grant_id,
@@ -588,6 +622,7 @@ export async function companionInvokeOutbound(
     appendOutboundMcpAudit({
       caller_id,
       tool,
+      wire_name,
       domain: body.domain,
       ok: result.success,
       error_code,
@@ -606,6 +641,7 @@ export async function companionInvokeOutbound(
     appendOutboundMcpAudit({
       caller_id,
       tool,
+      wire_name,
       ok: false,
       error_code: "DISPATCH_THREW",
       grant_id,
