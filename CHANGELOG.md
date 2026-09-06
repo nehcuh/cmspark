@@ -2,6 +2,10 @@
 
 格式大致遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号与 `companion/package.json` / `chrome-extension/package.json` 对齐。
 
+## [Unreleased]
+
+- **全历史专家归纳打磨（#418）**：草稿恢复「AI 建议工具（不预勾）」展示（suggested_tools 透传）；候选池先按元数据截 cap 再读消息体（大库不再全量读）；扫描期间批次进度事件上屏（「全历史归纳中：批次 n/m」）；批内聚类/归并 prompt 经真实 LLM 三轮实证调优（超时 150s/240s、evidence 并集兜底、silent-zero 诚实 fallback）。[#418](https://github.com/nehcuh/cmspark/issues/418)
+
 ## [0.6.1] — 2026-09-06
 
 0.6.0 发版当日的修复与能力波次（多 lane 并行开发 + 逐 PR 独立对抗复审）：**#404 测试污染事故闭环**（config 路径全 live 化）；**失败升级链修复**（#409，uokwyw 实证四断点）；**outbound MCP 三件**（Grok 兼容短名、双轨同名、interact 命名 profile）；**全历史专家抽取**（#411）。
