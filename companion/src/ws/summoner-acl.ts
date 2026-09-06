@@ -46,6 +46,7 @@ const SUMMONER_ALLOW = new Set([
   "mcp.toggle_server",
   "pack.list",
   "pack.apply",
+  "task_loop.arm",
   "skill.list",
   "skill.activate",
   "skill.deactivate",
