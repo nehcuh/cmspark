@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-09-06
+
+- **内嵌终端（#432，对标 Zed Terminal Threads）**：插件内真 PTY 终端——全页 tab 跑 xterm.js（canvas 渲染，MV3 安全），companion 用 @lydell/node-pty（prebuilt）托管真 shell；I/O 复用既有 WS（16KiB b64 帧 + write-ack 水位反压 + 25s keepalive）。权限面：默认关（设置「编程助手」里显式开）、每次开门 user_gesture + L2 确认（巡航/无人值守不豁免）、plan_readonly 线程拒开、同时最多 1 个会话、起始 cwd 约束、env 剥离 CMSPARK_*/密钥、审计不含击键流。P0 为裸 login shell；Mode C「内嵌 agent TUI」在 P1。[#432](https://github.com/nehcuh/cmspark/issues/432)
+- **召唤器命令面板化 + UI 高级化（#433 P0+P1）**：召唤器从聊天框升级为 Raycast 式命令面板——三段式（动词 frecency / 历史·知识命中 / fallback「问 AI」），720 宽、行高 44、150/120ms 动效、NSTableView 虚拟化、CJK IME 修复、全屏 Space 可见。新增三条服务端脱敏检索（thread.search 只搜标题/摘要/标签不读正文、thread.peek 蒸馏预览 ≤2000 字、knowledge.search 复用派生索引），拼音首字母匹配。零新 L2 类；overlay 仍永不渲染确认；后台任务 arm 留 P3。[#433](https://github.com/nehcuh/cmspark/issues/433)
+
 ## [0.6.3] — 2026-09-06
 
 - **内容风控 400 不再误杀对话（#430，4zi17x 实证）**：DeepSeek 等内容审核拒绝（`400 Content Exists Risk`）是确定性错误，原先被当瞬时故障——同一 payload 重发 5 次全部 <200ms 瞬挂，烧光熔断预算杀死对话。现在单列一类：首次命中隔离「最近的大型工具结果」（最可能触发源，内存 + 持久化历史同步替换，下次 run 不再重发）并重试一次；二次命中或无可隔离对象立即致命，给出中文可操作文案（新开对话/调整描述/换模型）。恢复全程不透英文 400 原文帧；`isContentRiskError` 钉 400 状态，5xx 网关含 content-filter 字样仍走原 recoverable 路径（零改动）。[#430](https://github.com/nehcuh/cmspark/issues/430)
