@@ -43,15 +43,21 @@ import {
   toDistributionChannel,
   writeKnowledgeIndexFile,
   KNOWLEDGE_INDEX_DEBOUNCE_MS,
+  KNOWLEDGE_CLUSTER_MIN_DOCS,
   type GroupmapSection,
   type KnowledgeDistributionChannel,
   type KnowledgeIndexDoc,
   type KnowledgeIndexFile,
   type KnowledgeGraphLabelEntry,
+  type KnowledgeGraphLlmSection,
+  type KnowledgeGraphLockSection,
 } from "./knowledge-clusters"
 import {
   KNOWLEDGE_GRAPH_DISPLAY_MAX_ENTRIES,
   buildKnowledgeGraph,
+  computeGraphLlmFingerprint,
+  pruneGraphLlmSection,
+  pruneGraphLock,
   type KnowledgeGraphCore,
 } from "./knowledge-graph"
 
@@ -459,6 +465,9 @@ export class SkillEngine {
     try {
       const docs = this.buildKnowledgeIndexDocs()
       const prevDisplay = this.knowledgeIndex?.display
+      const prevGraphLlm = this.knowledgeIndex?.graph_llm
+      const prevGraphLock = this.knowledgeIndex?.graph_lock
+      const prevTfSwitchAck = this.knowledgeIndex?.graph_tf_switch_ack
       const index: KnowledgeIndexFile = {
         version: 1,
         built_at: new Date().toISOString(),
@@ -468,6 +477,11 @@ export class SkillEngine {
         ...(prevDisplay && Object.keys(prevDisplay).length <= KNOWLEDGE_GRAPH_DISPLAY_MAX_ENTRIES
           ? { display: prevDisplay }
           : {}),
+        // #427（spec §3.3 硬要求）：graph_llm / graph_lock / ack 与 display
+        // 同款 carry-forward——否则 2s 防抖重建每次都会抹掉锁和 LLM 缓存。
+        ...(prevGraphLlm ? { graph_llm: prevGraphLlm } : {}),
+        ...(prevGraphLock && prevGraphLock.groups.length > 0 ? { graph_lock: prevGraphLock } : {}),
+        ...(prevTfSwitchAck === true ? { graph_tf_switch_ack: true } : {}),
       }
       writeKnowledgeIndexFile(knowledgeIndexPath(), index)
       this.knowledgeIndex = index
@@ -498,6 +512,9 @@ export class SkillEngine {
           tags,
           firstChunk,
         }),
+        // #427：description 进索引 doc（与 vec 同源取用）——图谱 LLM lane 的
+        // prompt 输入与 graph_llm 指纹用；旧索引文件缺失容忍（可选字段）。
+        description: s.description || "",
       }
     })
     docs.sort((a, b) => compareCodepoint(a.id, b.id))
@@ -520,6 +537,11 @@ export class SkillEngine {
       if (fromDisk && fromDisk.fingerprint === fp) {
         this.knowledgeIndex = fromDisk
         return fromDisk
+      }
+      // #427：重启后内存为空、磁盘指纹已漂 → 先收编磁盘文件的派生区再重建，
+      // 让 carry-forward 把锁/LLM 缓存带过重启+编辑这道坎（不收编就会被抹）。
+      if (fromDisk && !this.knowledgeIndex) {
+        this.knowledgeIndex = fromDisk
       }
       if (this.knowledgeIndexTimer) {
         clearTimeout(this.knowledgeIndexTimer)
@@ -549,17 +571,128 @@ export class SkillEngine {
   }
 
   /**
-   * 图谱视图数据（#296 knowledge.graph 通道）。null = 索引不可用
+   * 图谱视图数据（#296 knowledge.graph 通道；#427 双 lane）。null = 索引不可用
    * （handler 映射为 status:"rebuilding"，不假装结构）。
+   * #427 读路径副作用（皆为派生缓存写，spec §3.3/§5/§6）：
+   * - 锁缩容/解散 → 写回剪枝后的 graph_lock（一次性 lock_dissolved 不重现）；
+   * - ≥20 且未 ack 且存在 LLM 历史 → tf_switch banner；**不在此处落 ack**——ext
+   *   wire 合同里 ack 是显式动词（ack_tf_switch），companion 的
+   *   graph_tf_switch_ack 是权威，落盘只在动词里做。
    */
   getKnowledgeGraph(opts?: { llmLabels?: boolean }): KnowledgeGraphCore | null {
     const index = this.ensureKnowledgeIndex()
     if (!index) return null
     try {
-      return buildKnowledgeGraph(index.docs, index.display, opts)
+      const liveIds = new Set(index.docs.map((d) => d.id))
+
+      let lock = index.graph_lock
+      let lockDissolved: string[] | undefined
+      if (lock) {
+        const prunedLock = pruneGraphLock(lock, liveIds)
+        if (JSON.stringify(prunedLock.lock) !== JSON.stringify(lock)) {
+          lockDissolved = prunedLock.dissolved
+          if (prunedLock.lock.groups.length > 0) {
+            lock = prunedLock.lock
+            index.graph_lock = lock
+          } else {
+            lock = undefined
+            delete index.graph_lock // 解散干净：不留空区（与 setKnowledgeGraphLockSection 同纪律）
+          }
+          try {
+            writeKnowledgeIndexFile(knowledgeIndexPath(), index)
+          } catch {
+            /* 写回失败：下次读取会再报一次解散提示，可接受 */
+          }
+        }
+      }
+
+      let llm: KnowledgeGraphLlmSection | undefined
+      let llmStale = false
+      if (index.graph_llm) {
+        // 渲染前按现存 docs 剪枝（亡 id 剔除；只影响当帧，不落盘）
+        llm = pruneGraphLlmSection(index.graph_llm, liveIds)
+        llmStale = llm.stale || llm.fingerprint !== computeGraphLlmFingerprint(index.docs)
+      }
+
+      let tfSwitchBanner = false
+      if (
+        index.docs.length >= KNOWLEDGE_CLUSTER_MIN_DOCS &&
+        index.graph_tf_switch_ack !== true &&
+        (index.graph_llm || (index.graph_lock?.groups.length ?? 0) > 0)
+      ) {
+        tfSwitchBanner = true
+      }
+
+      const core = buildKnowledgeGraph(index.docs, index.display, {
+        llmLabels: opts?.llmLabels,
+        llm: llm ? { groups: llm.groups, relations: llm.relations } : undefined,
+        llmStale,
+        lock,
+      })
+      if (lockDissolved && lockDissolved.length > 0) core.lockDissolved = lockDissolved
+      if (tfSwitchBanner) core.tfSwitchBanner = true
+      return core
     } catch (e) {
       console.warn("[skills] knowledge graph build failed; degraded:", e)
       return null
+    }
+  }
+
+  /** #427：organize 输入快照（派生索引 docs；索引不可用 → []）。 */
+  getKnowledgeDocsForOrganize(): KnowledgeIndexDoc[] {
+    const index = this.ensureKnowledgeIndex()
+    return index ? index.docs : []
+  }
+
+  /** #427：graph_llm / graph_lock 区读取（organize 驱动取锁禁区用）。 */
+  getKnowledgeGraphSections(): { llm?: KnowledgeGraphLlmSection; lock?: KnowledgeGraphLockSection } {
+    const index = this.ensureKnowledgeIndex()
+    if (!index) return {}
+    return index.graph_llm || index.graph_lock
+      ? { llm: index.graph_llm, lock: index.graph_lock }
+      : {}
+  }
+
+  /** #427：organize 产物写回 graph_llm 派生区（内存 + 索引文件；失败仅日志）。 */
+  setKnowledgeGraphLlmSection(section: KnowledgeGraphLlmSection): void {
+    try {
+      const index = this.ensureKnowledgeIndex()
+      if (!index) return
+      index.graph_llm = section
+      writeKnowledgeIndexFile(knowledgeIndexPath(), index)
+    } catch (e) {
+      console.warn("[skills] graph_llm section write failed; degraded:", e)
+    }
+  }
+
+  /**
+   * #427：跨 20 切换 banner 的显式 ack（ext wire 合同 ack_tf_switch 动词；
+   * graph_tf_switch_ack 权威在此落盘，幂等）。
+   */
+  ackKnowledgeGraphTfSwitch(): void {
+    try {
+      const index = this.ensureKnowledgeIndex()
+      if (!index || index.graph_tf_switch_ack === true) return
+      index.graph_tf_switch_ack = true
+      writeKnowledgeIndexFile(knowledgeIndexPath(), index)
+    } catch (e) {
+      console.warn("[skills] graph_tf_switch_ack write failed; banner may re-show", e)
+    }
+  }
+
+  /**
+   * #427：写/清 graph_lock 派生区（用户「保留这版分组」/解锁；锁是视图着色
+   * overlay，非 SoT——缓存丢失即诚实提示重新锁定）。
+   */
+  setKnowledgeGraphLockSection(lock: KnowledgeGraphLockSection): void {
+    try {
+      const index = this.ensureKnowledgeIndex()
+      if (!index) return
+      if (lock.groups.length > 0) index.graph_lock = lock
+      else delete index.graph_lock
+      writeKnowledgeIndexFile(knowledgeIndexPath(), index)
+    } catch (e) {
+      console.warn("[skills] graph_lock section write failed; degraded:", e)
     }
   }
 

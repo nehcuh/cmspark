@@ -56,11 +56,18 @@ import { extractKnowledgeDraft, type KnowledgeDraftSuggestion } from "./llm/know
 import { llmExtract, type LlmExtractConfig } from "./llm/llm-extract"
 import {
   buildGraphLabelPrompt,
+  buildGraphOrganizePrompt,
   clampKnowledgeGraphLabelEntry,
+  computeGraphLlmFingerprint,
+  lGroupKey,
+  normalizeGraphOrganize,
   parseGraphLabels,
+  parseGraphOrganize,
+  KNOWLEDGE_GRAPH_LLM_LANE_MAX,
+  KNOWLEDGE_GRAPH_ORGANIZE_TIMEOUT_MS,
   type KnowledgeGraphCore,
 } from "./skills/knowledge-graph"
-import type { KnowledgeGraphLabelEntry } from "./skills/knowledge-clusters"
+import { KNOWLEDGE_UNGROUPED_KEY, type KnowledgeGraphLabelEntry } from "./skills/knowledge-clusters"
 import { normalizeTags } from "./threads/digest"
 import { resolveNativeVision, visionConfigForAnalyze } from "./llm/likely-multimodal"
 import {
@@ -575,6 +582,48 @@ export function __testSetKnowledgeGraphLabelImpl(impl?: KnowledgeGraphLabelImpl)
   knowledgeGraphLabelImpl = impl || defaultKnowledgeGraphLabelImpl
 }
 
+/**
+ * #427：knowledge.graph wire 帧统一构造（响应帧与推帧同形）。
+ * - `llm_ready` 每帧必带（CTA 禁用依据，spec §3.1）；
+ * - `relations` / `stale` 只在 LLM lane（2–19）上帧，≥20 帧永不携带（spec §4）；
+ *   `relations` 进一步只在缓存帧在场（空数组 = 合法空整理），无缓存帧整体省略，
+ *   `organized` 同源（pi MAJOR-1：空结果 ≠ 无缓存）；
+ * - `organize_error` 帧级错误条（§4 错误合同：不修订 #356，error status 仍只表示
+ *   图谱加载失败；organize / 锁 / gesture 动作失败推 ok 帧 + 本字段，画布保留——
+ *   grok M-1：走红 error 会被 ext #356/#374 缝把在途请求打成死面板）；
+ * - `lock_dissolved`（boolean）/ `tf_switch_notice`（显式 boolean，落 ack 后 false
+ *   抑制 ext 本地回退）——ext wire 合同对齐（kg-427-impl-ext-done.md 偏差节）。
+ */
+function knowledgeGraphFrame(
+  core: KnowledgeGraphCore,
+  extra?: { organizeError?: string },
+): Record<string, unknown> {
+  const frame: Record<string, unknown> = {
+    type: "knowledge.graph",
+    status: core.status,
+    truncated: core.truncated,
+    nodes: core.nodes,
+    edges: core.edges,
+    labels: core.labels,
+    llm_ready: knowledgeExtractLlmConfig() !== null,
+  }
+  if (core.llmLane) {
+    // pi MAJOR-1（修复）：relations 在场 = graph_llm 缓存存在（空数组 = 组织过
+    // 但无关联的合法结果）；无缓存帧整体省略（缺字段 ≠ 空数组），organized 同源。
+    if (core.organized === true) {
+      frame.organized = true
+      frame.relations = core.relations
+    }
+    if (core.llmStale === true) frame.stale = true
+  } else if (core.status === "ok" || core.status === "over_cap") {
+    // ≥20 lane：notice 持续 true 直到 ext 发 ack_tf_switch（权威 ack 在动词落盘）
+    frame.tf_switch_notice = core.tfSwitchBanner === true
+  }
+  if (core.lockDissolved && core.lockDissolved.length > 0) frame.lock_dissolved = true
+  if (extra?.organizeError) frame.organize_error = extra.organizeError
+  return frame
+}
+
 /** Single-flight：同刻至多一个标注 run；regen 打断旧 run。 */
 let knowledgeGraphLabelRun: AbortController | null = null
 
@@ -612,14 +661,7 @@ function maybeStartKnowledgeGraphLabels(
         try {
           const updated = skillEngine.getKnowledgeGraph({ llmLabels: true })
           if (updated && session?.sendToExtension) {
-            session.sendToExtension({
-              type: "knowledge.graph",
-              status: updated.status,
-              truncated: updated.truncated,
-              nodes: updated.nodes,
-              edges: updated.edges,
-              labels: updated.labels,
-            })
+            session.sendToExtension(knowledgeGraphFrame(updated))
           }
         } catch {
           /* best-effort push; 下次请求仍会拿到 AI 标签 */
@@ -631,6 +673,155 @@ function maybeStartKnowledgeGraphLabels(
       if (knowledgeGraphLabelRun === ac) knowledgeGraphLabelRun = null
     }
   })()
+}
+
+// --- #427: 低语料图谱 LLM 整理 lane（organize；spec §3.1/§3.2/§4） ---
+//
+// 手动唯一（organize:true + user_gesture:true 双闸，与 distill-all 同纪律）、
+// panel-only（surface 闸在 handler）。single-flight + AbortController 复用 label
+// 驱动模式，但**不得静默 catch**：失败也推帧（status:"ok" + organize_error，
+// 画布保留 + 旧缓存不丢）。settle 时按当前索引重校 ids；指纹已漂 → 写入即标
+// stale（不渲染过期结构假装新鲜）。
+
+type KnowledgeGraphOrganizeImpl = (params: {
+  systemPrompt: string
+  userContent: string
+  signal?: AbortSignal
+}) => Promise<string>
+
+const defaultKnowledgeGraphOrganizeImpl: KnowledgeGraphOrganizeImpl = async ({
+  systemPrompt,
+  userContent,
+  signal,
+}) => {
+  const config = knowledgeExtractLlmConfig()
+  if (!config) throw new Error("companion_llm_not_configured")
+  return llmExtract({
+    systemPrompt,
+    userContent,
+    config,
+    timeout: KNOWLEDGE_GRAPH_ORGANIZE_TIMEOUT_MS,
+    signal,
+  })
+}
+
+let knowledgeGraphOrganizeImpl: KnowledgeGraphOrganizeImpl = defaultKnowledgeGraphOrganizeImpl
+
+/** Test hook — swap the organize impl (spy / failure injection)。 */
+export function __testSetKnowledgeGraphOrganizeImpl(impl?: KnowledgeGraphOrganizeImpl): void {
+  knowledgeGraphOrganizeImpl = impl || defaultKnowledgeGraphOrganizeImpl
+}
+
+/** single-flight：同刻至多一个 organize run（在飞时新请求直接忽略）。 */
+let knowledgeGraphOrganizeRun: AbortController | null = null
+
+/** #427 缺 user_gesture 的拒因（帧级错误条文案；raw 语义词保留便于排查）。 */
+const KNOWLEDGE_GRAPH_GESTURE_ERROR = "操作被拒绝：缺少用户手势（user_gesture）"
+
+/**
+ * organize 失败的用户可见文案（grok NIT-9）：raw 错误（"llm down" /
+ * "graph_organize_parse_failed" 等）只进日志不上帧——错误条是给用户看的。
+ */
+function organizeErrorText(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (msg === "companion_llm_not_configured") return "AI 未配置，无法整理"
+  if (msg === "graph_organize_parse_failed") return "AI 整理返回无法解析，请重试"
+  if (/timeout|timed?\s?out|abort/i.test(msg)) return "AI 整理超时，请重试"
+  return "AI 整理失败，请重试"
+}
+
+function maybeStartKnowledgeGraphOrganize(skillEngine: SkillEngine, session?: SessionCallbacks): void {
+  if (knowledgeGraphOrganizeRun) return
+  const ac = new AbortController()
+  knowledgeGraphOrganizeRun = ac
+  // 快照在先：指纹记 LLM 实际看到的输入；settle 再对当前索引重校
+  const startDocs = skillEngine.getKnowledgeDocsForOrganize()
+  const inputFingerprint = computeGraphLlmFingerprint(startDocs)
+  const lock = skillEngine.getKnowledgeGraphSections().lock
+  const prompt = buildGraphOrganizePrompt(startDocs, lock)
+  void (async () => {
+    let organizeError: string | undefined
+    try {
+      const raw = await knowledgeGraphOrganizeImpl({ ...prompt, signal: ac.signal })
+      if (ac.signal.aborted) return
+      const parsed = parseGraphOrganize(raw)
+      if (!parsed) throw new Error("graph_organize_parse_failed")
+      // settle：按当前索引重校（在飞期间可能已重建/增删）
+      const currentDocs = skillEngine.getKnowledgeDocsForOrganize()
+      const liveIds = new Set(currentDocs.map((d) => d.id))
+      const lockedIds = new Set(
+        (skillEngine.getKnowledgeGraphSections().lock?.groups ?? []).flatMap((g) => g.ids),
+      )
+      const normalized = normalizeGraphOrganize(parsed, liveIds, lockedIds)
+      const currentFingerprint = computeGraphLlmFingerprint(currentDocs)
+      skillEngine.setKnowledgeGraphLlmSection({
+        fingerprint: inputFingerprint,
+        groups: normalized.groups,
+        relations: normalized.relations,
+        stale: inputFingerprint !== currentFingerprint,
+      })
+    } catch (e) {
+      // #427 §4 + grok NIT-9：不静默——错误进帧（organize_error），旧缓存原样
+      // 保留；raw 错误进日志，帧上只给用户可读的中文文案
+      organizeError = organizeErrorText(e)
+      logger.warn("knowledge.graph organize failed", {
+        error: e instanceof Error ? e.message : String(e),
+      })
+    } finally {
+      if (knowledgeGraphOrganizeRun === ac) knowledgeGraphOrganizeRun = null
+    }
+    try {
+      const updated = skillEngine.getKnowledgeGraph()
+      if (updated && session?.sendToExtension) {
+        session.sendToExtension(
+          knowledgeGraphFrame(updated, organizeError ? { organizeError } : undefined),
+        )
+      }
+    } catch {
+      /* best-effort push; 下次请求仍会拿到新缓存/错误条不丢（organize_error 例外） */
+    }
+  })()
+}
+
+/**
+ * #427 lock_group / unlock_group（ext wire 合同：键 = 当前帧渲染 group_key）。
+ * `l:` 渲染键由锁条目**现存**成员现算——缩容后键跟着变，unlock 仍命中条目
+ * （锁的身份是条目而非 hash，pi 终验注意 2）。锁成员取当前帧 nodes（渲染
+ * 真值），name/summary 取 labels；`u:ungrouped` 不是分组，拒绝锁定。
+ * 返回 null = 成功（unlock 幂等：未命中即已散/无锁，no-op）。
+ */
+function applyKnowledgeGraphLock(
+  skillEngine: SkillEngine,
+  key: string,
+  mode: "lock" | "unlock",
+): string | null {
+  const sections = skillEngine.getKnowledgeGraphSections()
+  const current = sections.lock?.groups ?? []
+  if (mode === "unlock") {
+    const kept = current.filter((g) => lGroupKey(g.ids) !== key)
+    if (kept.length !== current.length) skillEngine.setKnowledgeGraphLockSection({ groups: kept })
+    return null
+  }
+  if (!key || key === KNOWLEDGE_UNGROUPED_KEY) {
+    // grok NIT-9 同款纪律：错误文案上帧给用户看，用中文（raw 键不进文案）
+    return "「未分组」不是分组，无法锁定"
+  }
+  const graph = skillEngine.getKnowledgeGraph()
+  if (!graph) return "知识索引暂不可用（重建中），请稍后重试"
+  const label = graph.labels[key]
+  const ids = graph.nodes.filter((n) => n.group_key === key).map((n) => n.id)
+  if (!label || ids.length < 2) {
+    return "分组不存在或成员已不足 2 篇，请刷新图谱后重试"
+  }
+  // 同渲染键再锁 = 换名字/摘要（条目整体替换）；跨锁条目互不相干
+  const kept = current.filter((g) => lGroupKey(g.ids) !== key)
+  skillEngine.setKnowledgeGraphLockSection({
+    groups: [
+      ...kept,
+      { ids, name: label.name, ...(label.summary !== undefined ? { summary: label.summary } : {}) },
+    ],
+  })
+  return null
 }
 
 /** In-flight preview extractions keyed by the kp- preview request id. */
@@ -3407,23 +3598,66 @@ export async function handleMessage(
       if (surface !== "panel") {
         return { type: "error", error: "knowledge.graph is panel-only (Side Panel knowledge panel)" }
       }
+      // #427 跨 20 banner ack / 锁（ext wire 合同对齐）：ack_tf_switch 权威落
+      // 盘；lock_group/unlock_group 收渲染 group_key。三个动词均 user_gesture
+      // 门（与 organize 同纪律——每个 LLM/写动作可溯源到一次点击）。
+      // grok M-1（修复）：动作失败/缺 gesture 不走红 error——ext 的
+      // knowledgeGraphErrorById 会把在途 graph 请求打成 #356 死面板；统一降级为
+      // ok 帧 + organize_error 帧字段（与 organize 失败同通道），画布照常渲染。
+      let actionError: string | undefined
+      if (rest.ack_tf_switch === true) {
+        if (rest.user_gesture !== true) {
+          actionError = KNOWLEDGE_GRAPH_GESTURE_ERROR
+        } else {
+          skillEngine.ackKnowledgeGraphTfSwitch()
+        }
+      }
+      const lockMode =
+        typeof rest.lock_group === "string" ? "lock" : typeof rest.unlock_group === "string" ? "unlock" : null
+      if (lockMode) {
+        if (rest.user_gesture !== true) {
+          actionError = actionError ?? KNOWLEDGE_GRAPH_GESTURE_ERROR
+        } else {
+          const key = (lockMode === "lock" ? rest.lock_group : rest.unlock_group) as string
+          const lockError = applyKnowledgeGraphLock(skillEngine, key, lockMode)
+          if (lockError) actionError = lockError
+        }
+      }
+      // #427 organize（手动唯一）：user_gesture 双闸 + 仅 2–19 lane；n≥20 服务端
+      // no-op（AC-7：客户端漏藏按钮也偷渡不进 TF lane），n<2 无结构可言也不启动。
+      if (rest.organize === true) {
+        if (rest.user_gesture !== true) {
+          actionError = actionError ?? KNOWLEDGE_GRAPH_GESTURE_ERROR
+        } else {
+          const docsForLane = skillEngine.getKnowledgeDocsForOrganize()
+          if (docsForLane.length >= 2 && docsForLane.length <= KNOWLEDGE_GRAPH_LLM_LANE_MAX) {
+            if (!knowledgeExtractLlmConfig()) {
+              actionError = actionError ?? "AI 未配置，无法整理"
+            } else {
+              maybeStartKnowledgeGraphOrganize(skillEngine, session)
+            }
+          }
+        }
+      }
       const graph = skillEngine.getKnowledgeGraph({ llmLabels: rest.llm_labels === true })
       if (!graph) {
         // 索引缺失/损坏/重建中：诚实态，不假装结构（AC-5）
-        return { type: "knowledge.graph", status: "rebuilding", truncated: false, nodes: [], edges: [], labels: {} }
+        return {
+          type: "knowledge.graph",
+          status: "rebuilding",
+          truncated: false,
+          nodes: [],
+          edges: [],
+          labels: {},
+          llm_ready: knowledgeExtractLlmConfig() !== null,
+          ...(actionError ? { organize_error: actionError } : {}),
+        }
       }
       if (rest.llm_labels === true || rest.regen_labels === true) {
         maybeStartKnowledgeGraphLabels(skillEngine, graph, rest.regen_labels === true, session)
       }
       // labelTargets 不上 wire（服务端内部异步标注驱动）
-      return {
-        type: "knowledge.graph",
-        status: graph.status,
-        truncated: graph.truncated,
-        nodes: graph.nodes,
-        edges: graph.edges,
-        labels: graph.labels,
-      }
+      return knowledgeGraphFrame(graph, actionError ? { organizeError: actionError } : undefined)
     }
     case "knowledge.set_active": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
