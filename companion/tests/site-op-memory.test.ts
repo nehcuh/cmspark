@@ -267,6 +267,41 @@ test("#409: armed SITE_OP_ESCALATE keeps the MAY-call copy (non-linux)", () => {
   }
 })
 
+test("#417: unarmed formatSiteOpMemoryPrompt never advertises escalate to host_computer", () => {
+  resetSiteOpMemoryForTests()
+  const origin = "https://x.com/i/bookmarks"
+  for (const text of ["a", "b", "c", "d"]) {
+    recordSiteOpFailure("p417", "click", { tabId: 1, text }, "ELEMENT_NOT_FOUND", origin)
+  }
+  const prompt = formatSiteOpMemoryPrompt("p417", "x.com", { cuArmed: false })
+  assert.match(prompt, /Origin CDP escalate/)
+  assert.match(prompt, /loop_declare_blocked/)
+  assert.doesNotMatch(prompt, /escalate to host_computer/)
+  assert.doesNotMatch(prompt, /ALWAYS confirms/)
+  if (process.platform === "linux") {
+    assert.match(prompt, /NOT available/)
+  } else {
+    assert.match(prompt, /COMPUTER_DISABLED|unarmed|coordinateEnabled/i)
+  }
+})
+
+test("#417: armed formatSiteOpMemoryPrompt keeps CU escalate copy (non-linux)", () => {
+  resetSiteOpMemoryForTests()
+  const origin = "https://x.com/i/bookmarks"
+  for (const text of ["a", "b", "c", "d"]) {
+    recordSiteOpFailure("p417a", "click", { tabId: 1, text }, "ELEMENT_NOT_FOUND", origin)
+  }
+  const prompt = formatSiteOpMemoryPrompt("p417a", "x.com", { cuArmed: true })
+  assert.match(prompt, /Origin CDP escalate/)
+  if (process.platform === "linux") {
+    assert.match(prompt, /loop_declare_blocked/)
+    assert.doesNotMatch(prompt, /escalate to host_computer/)
+  } else {
+    assert.match(prompt, /escalate to host_computer/)
+    assert.match(prompt, /ALWAYS confirms/)
+  }
+})
+
 test("origin CDP fail streak does not leak to another origin or thread", () => {
   resetSiteOpMemoryForTests()
   const a = "https://x.com/i/bookmarks"

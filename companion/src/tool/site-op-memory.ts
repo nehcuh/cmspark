@@ -596,9 +596,29 @@ export function bannedSiteOpResult(
   }
 }
 
-export function formatSiteOpMemoryPrompt(threadId: string, hostname?: string): string {
+function resolveFormatCuArmed(opts?: { cuArmed?: boolean }): boolean {
+  // Explicit opts (tests) win. Adapter calls without opts → live loopRouteCaps
+  // (same lazy-require as #414 adapter.ts bannedSiteOpResult). Fail-closed.
+  if (opts && Object.prototype.hasOwnProperty.call(opts, "cuArmed")) {
+    return opts.cuArmed === true
+  }
+  try {
+    const { loopRouteCaps } = require("../loop/tier-bind") as typeof import("../loop/tier-bind")
+    return loopRouteCaps().cuArmed === true
+  } catch {
+    return false
+  }
+}
+
+export function formatSiteOpMemoryPrompt(
+  threadId: string,
+  hostname?: string,
+  opts?: { cuArmed?: boolean },
+): string {
   const s = mem.get(threadId)
   if (!s) return ""
+  const cuArmed = resolveFormatCuArmed(opts)
+  const escalatePossible = cuArmed && platform() !== "linux"
   const lines: string[] = []
   if (s.frozenTabs.size > 0) {
     lines.push(
@@ -619,12 +639,20 @@ export function formatSiteOpMemoryPrompt(threadId: string, hostname?: string): s
     )
   }
   if (banned.length) {
+    const alt = escalatePossible
+      ? "Prefer an alternative path " +
+        "(different locator, navigate to reset, host_computer under Rule 12 confirm, or osascript_eval) " +
+        "instead of re-probing the same locator."
+      : platform() === "linux"
+        ? "Call loop_declare_blocked (host_computer is NOT available on Linux; arming CU changes nothing) " +
+          "instead of re-probing the same locator."
+        : "Call loop_declare_blocked; do not call host_computer (CU unarmed / COMPUTER_DISABLED). " +
+          "The loop will never flip coordinateEnabled. Prefer a different locator or navigate instead of re-probing."
     lines.push(
       "Do NOT retry these locators (site op-memory):\n" +
         banned.slice(0, 24).join("\n") +
-        "\nPersisted failures carry over from earlier sessions. Prefer an alternative path " +
-        "(different locator, navigate to reset, host_computer under Rule 12 confirm, or osascript_eval) " +
-        "instead of re-probing the same locator.",
+        "\nPersisted failures carry over from earlier sessions. " +
+        alt,
     )
   }
   const originEsc: string[] = []
@@ -634,8 +662,13 @@ export function formatSiteOpMemoryPrompt(threadId: string, hostname?: string): s
     if (hostHint && origin && !origin.includes(hostHint) && !hostHint.includes(origin.replace(/^https?:\/\//, ""))) {
       continue
     }
+    const esc = escalatePossible
+      ? `do not retry CDP; escalate to host_computer (Chrome token, ALWAYS confirms) or osascript_eval`
+      : platform() === "linux"
+        ? `do not retry CDP; call loop_declare_blocked (host_computer is NOT available on Linux; arming CU changes nothing)`
+        : `do not retry CDP; call loop_declare_blocked (do NOT call host_computer — COMPUTER_DISABLED). Loop never flips coordinateEnabled`
     originEsc.push(
-      `- origin ${origin} CDP fail streak ${st.fails}× (last ${st.lastCode}) — do not retry CDP; escalate to host_computer (Chrome token, ALWAYS confirms) or osascript_eval`,
+      `- origin ${origin} CDP fail streak ${st.fails}× (last ${st.lastCode}) — ${esc}`,
     )
   }
   if (originEsc.length) {
