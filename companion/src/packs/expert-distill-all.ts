@@ -12,6 +12,13 @@
  *     不落盘、不进 pack.list、不自动保存 —— 草稿制与 #370 完全一致。
  *   - 本模块与 expert-distill 一样**不 import pack-engine**：已装专家清单
  *     由调用方（message-router）作参数传入（结构性零写入面）。
+ *
+ * #418 polish：
+ *   - P2-2 perf：候选池先按 index 元数据（skip 规则 + 排除 + 倒序）截到
+ *     cap 再 getMessages —— 万线程库上 count 弹窗不再全库读消息体；digest
+ *     新鲜度指纹只在进入画像的线程上算（shallowProfileText 本就惰性）。
+ *   - per-batch 进度：onProgress 回调（调用方转 WS 推送），批完成即报
+ *     {done_batches, total_batches}（total = 批次数 + 归并 1 步）。
  */
 import { logger } from "../logger"
 import { llmExtract, type LlmExtractConfig } from "../llm/llm-extract"
@@ -52,6 +59,13 @@ const PREVIEW_CAP = 120
 const NAME_CAP = 40
 const DESC_CAP = 200
 const PROMPT_CAP = 8192
+/**
+ * #418 实证调超时：deepseek-v4-flash 在 25 条画像批上普遍 >60s（llmExtract
+ * 默认 60s 在真实库上大批量超时被吞成 batch_failures）；归并输出 5 份草稿
+ * 更长。批 150s / 归并 240s —— 慢模型下进度事件保活，超时仍降级不抛。
+ */
+const BATCH_CALL_TIMEOUT_MS = 150_000
+const MERGE_CALL_TIMEOUT_MS = 240_000
 
 /** 调用方预排除（确认弹窗里可调）。 */
 export interface DistillAllExclude {
@@ -124,12 +138,17 @@ export interface DistillAllResult {
 
 export type DistillAllError = { ok: false; code: "llm_not_configured" | "no_candidates"; reason: string }
 
-interface CandidateThread {
+/** 候选元数据（纯 index 字段，零消息体读取）。 */
+interface CandidateMeta {
   id: string
   alias: string
   topic_folder: string | null
   sort_ts: string
   digest: any
+}
+
+/** 进窗口后才有消息体（cap 截断 + 空线程/关键词过滤完的最终候选）。 */
+interface CandidateThread extends CandidateMeta {
   messages: Array<{ id?: string; role: string; content?: string }>
 }
 
@@ -190,20 +209,24 @@ function keywordHits(alias: string, messages: CandidateThread["messages"], kw: s
     previewOf(messages, false).toLowerCase().includes(kw)
 }
 
+/**
+ * 候选池（纯元数据）：skip 规则 + 话题夹/时间窗排除 + 最近活跃倒序。
+ * #418 P2-2：不读消息体 —— 空线程判定与关键词排除（需要 first/last 问）
+ * 推迟到 hydrateCandidates 的 cap 窗口内做，万线程库上零 getMessages。
+ */
 export function buildDistillAllCandidatePool(
   threadManager: DistillAllThreadManagerLike,
   exclude?: DistillAllExclude,
-): { candidates: CandidateThread[]; skipped: Partial<Record<DistillSkipCode, number>> } {
+): { candidates: CandidateMeta[]; skipped: Partial<Record<DistillSkipCode, number>> } {
   const meetingIds = meetingLinkedThreadIds()
   const skipped: Partial<Record<DistillSkipCode, number>> = {}
   const bump = (code: DistillSkipCode) => {
     skipped[code] = (skipped[code] ?? 0) + 1
   }
   const folders = new Set((exclude?.topic_folders ?? []).map((f) => String(f || "").trim()).filter(Boolean))
-  const kw = (exclude?.exclude_keyword ?? "").trim().toLowerCase()
   const sinceMs = exclude?.since ? Date.parse(exclude.since) : NaN
 
-  const out: CandidateThread[] = []
+  const out: CandidateMeta[] = []
   for (const thread of threadManager.list()) {
     const skip = distillSkipReason(thread, meetingIds)
     if (skip) {
@@ -212,29 +235,49 @@ export function buildDistillAllCandidatePool(
     }
     const id = thread.id || ""
     if (!id) continue
-    const messages = threadManager.getMessages(id)
-    if (messages.length === 0) {
-      bump("empty_thread")
-      continue
-    }
-    const candidate: CandidateThread = {
+    const meta: CandidateMeta = {
       id,
       alias: String(thread.alias || ""),
       topic_folder: thread.topic_folder ?? null,
       sort_ts: threadRecencyTs(thread),
       digest: thread.digest ?? null,
-      messages,
     }
-    if (folders.size > 0 && candidate.topic_folder && folders.has(candidate.topic_folder)) continue
+    if (folders.size > 0 && meta.topic_folder && folders.has(meta.topic_folder)) continue
     if (!Number.isNaN(sinceMs)) {
-      const ts = Date.parse(candidate.sort_ts)
+      const ts = Date.parse(meta.sort_ts)
       if (!Number.isNaN(ts) && ts < sinceMs) continue
     }
-    if (kw && keywordHits(candidate.alias, messages, kw)) continue
-    out.push(candidate)
+    out.push(meta)
   }
   out.sort((a, b) => (a.sort_ts < b.sort_ts ? 1 : a.sort_ts > b.sort_ts ? -1 : a.id.localeCompare(b.id)))
   return { candidates: out, skipped }
+}
+
+/**
+ * 窗口水合：截到 cap 再读消息体（#418 P2-2 —— getMessages 调用数 ≤ cap）。
+ * 空线程计入 skipped.empty_thread（仅窗口内；窗口外的统计本就不进入弹窗）；
+ * 关键词排除（命中别名或首末问）也在窗口内做 —— 达 cap 时命中者占用窗口
+ * 名额，eligible 可能略低于 cap（capped 标志仍如实标注「还有更多」）。
+ */
+function hydrateCandidates(
+  threadManager: DistillAllThreadManagerLike,
+  metas: CandidateMeta[],
+  exclude: DistillAllExclude | undefined,
+  cap: number,
+  skipped: Partial<Record<DistillSkipCode, number>>,
+): CandidateThread[] {
+  const kw = (exclude?.exclude_keyword ?? "").trim().toLowerCase()
+  const out: CandidateThread[] = []
+  for (const m of metas.slice(0, cap)) {
+    const messages = threadManager.getMessages(m.id)
+    if (messages.length === 0) {
+      skipped.empty_thread = (skipped.empty_thread ?? 0) + 1
+      continue
+    }
+    if (kw && keywordHits(m.alias, messages, kw)) continue
+    out.push({ ...m, messages })
+  }
+  return out
 }
 
 function profilesOf(candidates: CandidateThread[]): {
@@ -264,7 +307,7 @@ export function distillAllScanCount(
 ): DistillAllCount {
   const { candidates, skipped } = buildDistillAllCandidatePool(threadManager, exclude)
   const capped = candidates.length > DISTILL_ALL_MAX_THREADS
-  const top = candidates.slice(0, DISTILL_ALL_MAX_THREADS)
+  const top = hydrateCandidates(threadManager, candidates, exclude, DISTILL_ALL_MAX_THREADS, skipped)
   const { profiles, with_digest } = profilesOf(top)
   return {
     ok: true,
@@ -309,7 +352,8 @@ const BATCH_SYSTEM_PROMPT = `你是专家角色聚类助手。输入是历史对
 - candidates 只保留**跨 ≥2 条线程反复出现**的角色；单线程孤例不输出
 - 相似角色合并不裂变（如「macOS 发布工程」与「macOS 打包出包」是同一角色）
 - thread_ids 只能使用输入中出现的 id，不得编造
-- deep_read 列出浅层信号不足以判断、需要读全文的线程 id（每批 ≤3 个，没有就空数组）
+- 专家名用简洁中文短语（≤20 字，名词性，如「股权投资调研分析」），不用英文名/头衔堆砌
+- deep_read：标题与首末问过短/含糊、仅凭摘要定不了角色的线程放这里（每批 ≤3 个，没有就空数组）
 - 最多 6 个候选；没有就空数组
 - 只输出 JSON 对象本身`
 
@@ -326,11 +370,13 @@ interface MergedDraftRaw {
 }
 
 const MERGE_SYSTEM_PROMPT = `你是专家角色归并助手。输入是各批次汇总的候选角色（含 thread_ids 与信号）、部分线程的全文摘要（深读）、以及已安装专家清单。输出**仅一行 JSON**（不要 markdown 围栏、不要解释）:
-{"drafts":[{"name":"专家名≤20字","description":"一句话职责≤80字","system_prompt_append":"专家系统提示词，200-600字，含能力边界","tools":["只读/低危工具"],"suitable_for":["适合"],"unsuitable_for":["不适合"],"evidence":[{"quote":"画像或原文的短引用≤60字","hint":"为什么","thread_ids":["id1","id2"]}],"conflicts_with":""}]}
+{"drafts":[{"name":"专家名≤20字","description":"一句话职责≤80字","system_prompt_append":"专家系统提示词，200-600字，含能力边界","tools":["只读/低危工具"],"suitable_for":["适合"],"unsuitable_for":["不适合"],"thread_ids":["id1","id2"],"evidence":[{"quote":"画像或原文的短引用≤60字","hint":"为什么","thread_ids":["id1","id2"]}],"conflicts_with":""}]}
 
 规则:
 - 输出最多 5 份草稿，宁缺毋滥；优先合并相似角色而非裂变
-- 每份草稿的 evidence 必须来自 ≥2 条不同线程，thread_ids 只用输入中出现过的 id
+- 每份草稿**顶层必须带 thread_ids**：该草稿覆盖的全部线程（合并它吸纳的候选角色的 threads，并集），只用输入中出现过的 id
+- 每份草稿的 evidence 必须来自 ≥2 条不同线程，thread_ids 同样只用输入中出现过的 id
+- 专家名用简洁中文短语（≤20 字，名词性），与候选角色名一致或更凝练
 - tools 只能从这些里选: get_page_text, get_page_html, get_element_info, list_tabs, screenshot, navigate, click, scroll
 - 不得编造画像里没有的能力
 - 与已安装专家高度重叠（名字相同或职责+工具面都接近）的仍要输出，但在 conflicts_with 填该专家名，由用户裁决覆盖/另存
@@ -341,6 +387,9 @@ export interface DistillAllDeps {
   llmExtractImpl?: typeof llmExtract
   now?: () => Date
 }
+
+/** #418: per-batch 进度回调（router 转 WS 推送；抛错不影响扫描）。 */
+export type DistillAllProgress = { done_batches: number; total_batches: number }
 
 function validIds(raw: unknown, known: Set<string>, cap: number): string[] {
   if (!Array.isArray(raw)) return []
@@ -395,12 +444,20 @@ export async function distillAllExperts(args: {
   installedExperts?: InstalledExpertFace[]
   exclude?: DistillAllExclude
   deps?: DistillAllDeps
+  /** #418: 批完成即报进度（total = 批次数 + 归并 1 步；回调异常被吞）。 */
+  onProgress?: (p: DistillAllProgress) => void
 }): Promise<DistillAllResult | DistillAllError> {
   if (!args.llm?.base_url || !args.llm?.model_name) {
     return { ok: false, code: "llm_not_configured", reason: "未配置 LLM —— 全历史归纳依赖 LLM 聚类" }
   }
   const { candidates, skipped } = buildDistillAllCandidatePool(args.threadManager, args.exclude)
-  const top = candidates.slice(0, DISTILL_ALL_MAX_THREADS)
+  const top = hydrateCandidates(
+    args.threadManager,
+    candidates,
+    args.exclude,
+    DISTILL_ALL_MAX_THREADS,
+    skipped,
+  )
   const { profiles, with_digest } = profilesOf(top)
   if (profiles.length === 0) {
     return { ok: false, code: "no_candidates", reason: `没有可归纳的线程（skip: ${JSON.stringify(skipped)}）` }
@@ -417,8 +474,18 @@ export async function distillAllExperts(args: {
   for (let i = 0; i < profiles.length; i += DISTILL_ALL_BATCH_SIZE) {
     batches.push(profiles.slice(i, i + DISTILL_ALL_BATCH_SIZE))
   }
+  const totalSteps = batches.length + 1 // 归并占最后一步
+  const reportProgress = (done: number) => {
+    if (!args.onProgress) return
+    try {
+      args.onProgress({ done_batches: done, total_batches: totalSteps })
+    } catch {
+      // 进度推送失败不影响扫描
+    }
+  }
   const candidatesOut: BatchCandidate[] = []
   const deepReadWanted: string[] = []
+  let doneBatches = 0
   for (const batch of batches) {
     const lines = batch.map((p) => `[${p.id}] ${p.alias || "(无标题)"} · ${p.used_digest ? "摘要" : "首末问"}: ${p.text}`)
     const content = lines.join("\n").slice(0, BATCH_CONTENT_CAP)
@@ -430,6 +497,7 @@ export async function distillAllExperts(args: {
         userContent: content,
         config: args.llm,
         temperatureCap: 0.3,
+        timeout: BATCH_CALL_TIMEOUT_MS,
       })
       const parsed = parseJsonLine(raw)
       const list = parsed && Array.isArray((parsed as any).candidates) ? (parsed as any).candidates : []
@@ -458,6 +526,9 @@ export async function distillAllExperts(args: {
         error: e instanceof Error ? e.message : String(e),
       })
     }
+    // 批完成即报（失败也计入 done —— UI 显示的是进度，不是成功率）
+    doneBatches++
+    reportProgress(doneBatches)
   }
 
   // ---- 深读（≤20，走既有 buildDistillCorpus：8k cap + redact 不变）----
@@ -495,6 +566,7 @@ export async function distillAllExperts(args: {
         userContent: content,
         config: args.llm,
         temperatureCap: 0.3,
+        timeout: MERGE_CALL_TIMEOUT_MS,
       })
       const parsed = parseJsonLine(raw)
       const list = parsed && Array.isArray((parsed as any).drafts) ? (parsed as any).drafts : []
@@ -504,7 +576,23 @@ export async function distillAllExperts(args: {
         const name = cleanDistillString(dr.name, NAME_CAP)
         const prompt = cleanDistillStringMultiline(dr.system_prompt_append, PROMPT_CAP)
         if (!name || !prompt) continue
+        // #418 实证：deepseek 照示例把 thread_ids 只放 evidence 上、顶层缺省 ——
+        // 顶层缺或不足 2 时从 evidence 的 thread_ids 并集兜底（同样过 knownIds 校验）。
         const threadIds = validIds(dr.thread_ids, knownIds, 50)
+        if (threadIds.length < 2) {
+          const fromEvidence: string[] = []
+          if (Array.isArray(dr.evidence)) {
+            for (const e of dr.evidence) {
+              if (!e || typeof e !== "object") continue
+              for (const id of validIds((e as Record<string, unknown>).thread_ids, knownIds, 6)) {
+                if (!fromEvidence.includes(id)) fromEvidence.push(id)
+              }
+            }
+          }
+          for (const id of fromEvidence) {
+            if (!threadIds.includes(id)) threadIds.push(id)
+          }
+        }
         if (threadIds.length < 2) continue
         const tools = clampDistillTools(dr.tools)
         const conflict = detectExpertConflict({ name, tools }, installed)
@@ -531,6 +619,11 @@ export async function distillAllExperts(args: {
     }
   } else {
     fallbackReason = batchFailures > 0 ? "全部批次的 LLM 调用失败" : "浅层画像中没有跨线程反复出现的角色"
+  }
+  // #418 实证：归并调用成功但输出为空/全被校验丢弃时此前静默 0 草稿（无
+  // fallback_reason）—— UI 只能猜。诚实报因，与「没有跨线程角色」区分。
+  if (candidatesOut.length > 0 && drafts.length === 0 && !fallbackReason) {
+    fallbackReason = `归并未产出有效草稿（${candidatesOut.length} 个候选角色，输出为空或未通过校验）`
   }
 
   drafts = drafts.slice(0, DISTILL_ALL_MAX_DRAFTS)

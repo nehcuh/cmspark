@@ -256,6 +256,8 @@ export type DistillAllDraftView = {
   description: string
   system_prompt_append: string
   tools_allow: string[]
+  /** #418 NIT-1：AI 建议工具（不预勾）—— 与 #370 单对话流的 meta.suggested_tools 同通道。 */
+  suggested_tools: string[]
   suitable_for: string[]
   unsuitable_for: string[]
   evidence: DistillAllEvidenceView[]
@@ -316,7 +318,9 @@ export function normalizeDistillAllDrafts(msg: unknown): DistillAllScanView | nu
       name,
       description: str(d.description),
       system_prompt_append: prompt,
+      // 红线不变：编辑器勾选恒空（用户手动勾）；allow 保留进 suggested 通道展示。
       tools_allow: [],
+      suggested_tools: [...new Set(allow)],
       suitable_for: idList(d.suitable_for, 4).filter(Boolean),
       unsuitable_for: idList(d.unsuitable_for, 4).filter(Boolean),
       evidence,
@@ -351,5 +355,26 @@ export function distillAllQueueLine(q: {
   return q.conflicts_with
     ? `${base} · 与已装专家「${q.conflicts_with}」名字或工具面重叠——保存时可改名另存，或确认覆盖心智`
     : base
+}
+
+// --- #418: per-batch 扫描进度（companion → panel 单向推送，薄实现） ---
+
+export type DistillAllProgressView = { done_batches: number; total_batches: number }
+
+/** 归一 companion `pack.distill_all_progress` 推送（坏形状丢弃，不渲染）。 */
+export function normalizeDistillAllProgress(msg: unknown): DistillAllProgressView | null {
+  const m = msg as Record<string, any> | null
+  if (!m || typeof m !== "object") return null
+  const num = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : NaN
+  const done = num(m.done_batches)
+  const total = num(m.total_batches)
+  if (Number.isNaN(done) || Number.isNaN(total) || total <= 0 || done > total) return null
+  return { done_batches: done, total_batches: total }
+}
+
+/** 进度行文案（total = 批次数 + 归并 1 步；done < total 即仍在归并中）。 */
+export function distillAllProgressLine(p: DistillAllProgressView): string {
+  return `全历史归纳中：批次 ${p.done_batches}/${p.total_batches}…`
 }
 

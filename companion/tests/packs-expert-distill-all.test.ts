@@ -246,6 +246,35 @@ test("候选池按最近活跃倒序 + cap 200", () => {  const threads: Th[] = 
   assert.equal(pool.candidates[0].id, "t204", "most recent first")
 })
 
+// #418 P2-2：cap 截到窗口后才读消息体 —— 205 候选只 getMessages 200 次。
+test("perf: getMessages 只发生在 cap 窗口内（205 候选 → 恰好 200 次读取）", () => {
+  const threads: Th[] = []
+  const messages: Record<string, Msg[]> = {}
+  for (let i = 0; i < 205; i++) {
+    const id = `t${String(i).padStart(3, "0")}`
+    threads.push({ id, alias: id, last_message_at: new Date(2026, 0, 1 + i).toISOString() })
+    messages[id] = userMsgs(`内容 ${i}`)
+  }
+  const byId = new Map(threads.map((t) => [t.id, t]))
+  let reads = 0
+  const tm = {
+    list: () => threads,
+    get: (id: string) => byId.get(id),
+    getMessages: (id: string) => {
+      reads++
+      return messages[id] || []
+    },
+  }
+  const c = distillAllScanCount(tm)
+  assert.equal(c.eligible, 200)
+  assert.equal(reads, DISTILL_ALL_MAX_THREADS, "metadata-first: 消息体读取 ≤ cap，不再全库读")
+  // 关键词路径同样只读窗口（排除后 eligible 下降，读取次数不涨）
+  reads = 0
+  const c2 = distillAllScanCount(tm, { exclude_keyword: "不存在词" })
+  assert.equal(c2.eligible, 200)
+  assert.equal(reads, DISTILL_ALL_MAX_THREADS)
+})
+
 // ---------------------------------------------------------------------------
 // 全量扫描：分批 → 深读 → 归并
 // ---------------------------------------------------------------------------
@@ -364,6 +393,37 @@ test("scan: 200 条 → 8 批 + 1 归并；伪造 id 丢弃；单线程草稿丢
   assert.equal(lines.length, DISTILL_ALL_BATCH_SIZE, "one shallow line per thread per batch")
 })
 
+// #418: per-batch 进度 —— 每批完成即报，total = 批次数 + 归并 1 步。
+test("progress: 200 条 → 8 批依次报 1..8/9（onProgress 抛错不中断扫描）", async () => {
+  const { threads, messages } = genThreads(200)
+  const { impl } = twoPhaseImpl({
+    batch: (ids) => ({
+      candidates: [{ name: "角色A", description: "职责", thread_ids: ids.slice(0, 2), signal: "s" }],
+      deep_read: [],
+    }),
+    merge: () => ({ drafts: [] }),
+  })
+  const events: Array<{ done_batches: number; total_batches: number }> = []
+  let boom = 0
+  const r = await distillAllExperts({
+    threadManager: makeTm(threads, messages),
+    llm: LLM,
+    deps: { llmExtractImpl: impl as any },
+    onProgress: (p) => {
+      events.push(p)
+      boom++
+      if (boom === 1) throw new Error("push socket dead") // 推送失败被吞
+    },
+  })
+  assert.ok(r.ok)
+  assert.equal(events.length, 8, "one event per batch")
+  assert.deepEqual(
+    events.map((e) => `${e.done_batches}/${e.total_batches}`),
+    ["1/9", "2/9", "3/9", "4/9", "5/9", "6/9", "7/9", "8/9"],
+    "total = 8 batches + 1 merge step",
+  )
+})
+
 test("scan: 批内无有效候选 → 跳过归并、ok 降级（fallback_reason）", async () => {
   const { threads, messages } = genThreads(30)
   const { calls, impl } = twoPhaseImpl({
@@ -390,15 +450,19 @@ test("scan: 全部批次 LLM 失败 → 降级不抛出", async () => {
     if (p.systemPrompt.includes("聚类")) throw new Error("boom")
     return JSON.stringify(MERGE_DRAFTS)
   }
+  const events: Array<{ done_batches: number; total_batches: number }> = []
   const r = await distillAllExperts({
     threadManager: makeTm(threads, messages),
     llm: LLM,
     deps: { llmExtractImpl: impl as any },
+    onProgress: (p) => events.push(p),
   })
   assert.ok(r.ok)
   if (!r.ok) return
   assert.equal(r.fallback_reason, "全部批次的 LLM 调用失败")
   assert.equal(r.drafts.length, 0)
+  // #418: 批失败也报进度（done 计的是批完成数，不是成功率）
+  assert.deepEqual(events, [{ done_batches: 1, total_batches: 2 }], "1 batch (failed) + merge = total 2")
 })
 
 test("scan: LLM 输出围栏/噪声容错解析", async () => {
@@ -427,6 +491,73 @@ test("scan: LLM 输出围栏/噪声容错解析", async () => {
   assert.ok(r.ok)
   if (!r.ok) return
   assert.equal(r.drafts.length, 2, "fenced JSON parsed for both stages")
+})
+
+// #418 实证（deepseek 真跑）：模型照示例把 thread_ids 只放 evidence、顶层缺省，
+// 旧校验全丢 → 5 份好草稿变 0。顶层缺省时从 evidence 并集兜底。
+const EVIDENCE_ONLY_DRAFTS = {
+  drafts: [
+    {
+      name: "微信操作助手",
+      description: "自动化微信操作",
+      system_prompt_append: "你是微信操作助手。",
+      tools: ["click", "screenshot"],
+      evidence: [
+        { quote: "帮我发消息", hint: "h1", thread_ids: ["t001", "t002"] },
+        { quote: "读群公告", hint: "h2", thread_ids: ["t002", "t003"] },
+      ],
+      // 顶层 thread_ids 缺省（模型行为）—— 兜底应得 t001,t002,t003
+    },
+    {
+      name: "顶层不足",
+      description: "只有 1 个顶层 id",
+      system_prompt_append: "x",
+      tools: [],
+      evidence: [{ quote: "q", hint: "h", thread_ids: ["t004", "t005", "FAKE-ID"] }],
+      thread_ids: ["t004"],
+    },
+    {
+      name: "彻底无出处",
+      description: "顶层与 evidence 都没有有效 id",
+      system_prompt_append: "x",
+      tools: [],
+      evidence: [],
+    },
+  ],
+}
+
+test("merge: 顶层 thread_ids 缺省 → evidence 并集兜底（≥2 仍成草稿；伪造 id 仍丢）", async () => {
+  const { threads, messages } = genThreads(30)
+  const r = await distillAllExperts({
+    threadManager: makeTm(threads, messages),
+    llm: LLM,
+    deps: { llmExtractImpl: twoPhaseImpl({
+      batch: (ids) => ({ candidates: [{ name: "A", description: "d", thread_ids: ids.slice(0, 2), signal: "s" }], deep_read: [] }),
+      merge: () => EVIDENCE_ONLY_DRAFTS,
+    }).impl as any },
+  })
+  assert.ok(r.ok)
+  if (!r.ok) return
+  assert.equal(r.drafts.length, 2)
+  assert.deepEqual(r.drafts[0].thread_ids, ["t001", "t002", "t003"], "evidence union fallback")
+  assert.deepEqual(r.drafts[1].thread_ids, ["t004", "t005"], "thin top-level topped up from evidence")
+  assert.ok(!r.fallback_reason, "drafts produced → no fallback")
+})
+
+test("merge: 有候选但 0 有效草稿 → 诚实 fallback_reason（不再静默空）", async () => {
+  const { threads, messages } = genThreads(30)
+  const r = await distillAllExperts({
+    threadManager: makeTm(threads, messages),
+    llm: LLM,
+    deps: { llmExtractImpl: twoPhaseImpl({
+      batch: (ids) => ({ candidates: [{ name: "A", description: "d", thread_ids: ids.slice(0, 2), signal: "s" }], deep_read: [] }),
+      merge: () => ({ drafts: [] }),
+    }).impl as any },
+  })
+  assert.ok(r.ok)
+  if (!r.ok) return
+  assert.equal(r.drafts.length, 0)
+  assert.match(r.fallback_reason || "", /归并未产出有效草稿/, "silent-zero now reports why")
 })
 
 // ---------------------------------------------------------------------------

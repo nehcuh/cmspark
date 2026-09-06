@@ -153,9 +153,11 @@ test("spy: PacksPanel 入口/状态/横幅 testid + 确认弹窗嵌入 notice �
 import {
   DISTILL_ALL_ENTRY_LABEL,
   distillAllConfirmBody,
+  distillAllProgressLine,
   distillAllQueueLine,
   distillAllQueueStep,
   normalizeDistillAllDrafts,
+  normalizeDistillAllProgress,
 } from "../src/sidepanel/packs-panel-logic"
 
 const ALL_RESULT = {
@@ -205,8 +207,11 @@ test("#411 normalizeDistillAllDrafts：形状归一 + 坏份丢弃 + 工具不�
   assert.equal(d1.conflicts_with, "已有投研")
   assert.deepEqual(d1.thread_ids, ["t1", "t2", "t3"])
   assert.deepEqual(d1.evidence[0].thread_ids, ["t1", "t2"])
-  // 红线：工具不预勾（建议只进 meta.suggested_tools，编辑器勾选由用户手动）
+  // 红线：工具不预勾（建议只进 suggested_tools，编辑器勾选由用户手动）
   assert.deepEqual(d1.tools_allow, [])
+  // #418 NIT-1：AI 建议工具保留进 suggested 通道（此前 tools_allow 写死导致恒空）
+  assert.deepEqual(d1.suggested_tools, ["get_page_text", "screenshot"])
+  assert.deepEqual(r.drafts[1].suggested_tools, ["get_page_text"])
   assert.equal(r.scanned, 137)
   assert.equal(r.llm_calls, 7)
   assert.equal(r.restart_note, DISTILL_RESTART_LOSS_NOTE)
@@ -279,4 +284,35 @@ test("#411 spy: PacksPanel 全历史入口/确认弹窗/草稿队列 testid", ()
   assert.ok(src.includes("排除关键词"), "keyword exclude option")
   // 队列逐份审阅：上一份/下一份
   assert.ok(src.includes("上一份") && src.includes("下一份"))
+})
+
+// ---------------------------------------------------------------------------
+// #418: per-batch 扫描进度（normalize + 文案 + panel testid spy）
+// ---------------------------------------------------------------------------
+
+test("#418 normalizeDistillAllProgress：形状校验（坏形状丢弃，done>total 拒）", () => {
+  assert.deepEqual(normalizeDistillAllProgress({ done_batches: 3, total_batches: 9 }), {
+    done_batches: 3,
+    total_batches: 9,
+  })
+  assert.deepEqual(normalizeDistillAllProgress({ done_batches: 0, total_batches: 8.5 }), {
+    done_batches: 0,
+    total_batches: 8,
+  }, "fraction floored")
+  assert.equal(normalizeDistillAllProgress(null), null)
+  assert.equal(normalizeDistillAllProgress({}), null)
+  assert.equal(normalizeDistillAllProgress({ done_batches: "3", total_batches: 9 }), null, "string rejected")
+  assert.equal(normalizeDistillAllProgress({ done_batches: 10, total_batches: 9 }), null, "done>total rejected")
+  assert.equal(normalizeDistillAllProgress({ done_batches: 1, total_batches: 0 }), null, "total≤0 rejected")
+})
+
+test("#418 distillAllProgressLine + PacksPanel 进度条 testid spy", () => {
+  assert.match(distillAllProgressLine({ done_batches: 3, total_batches: 9 }), /3\/9/)
+  assert.match(distillAllProgressLine({ done_batches: 8, total_batches: 9 }), /归并|归纳中/)
+  const src = fs.readFileSync(PANEL_SRC, "utf-8")
+  assert.ok(
+    src.includes('data-testid="distill-all-progress"'),
+    "PacksPanel renders progress line",
+  )
+  assert.ok(src.includes("normalizeDistillAllProgress"), "bad-shape progress dropped, not rendered")
 })
