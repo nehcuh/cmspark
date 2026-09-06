@@ -48,7 +48,7 @@ test("handleOutboundGrantCli issue prints cmg_ once and env snippet", async () =
   assert.match(stdout, /CMSPARK_OUTBOUND_CALLER_ID/)
   assert.match(stdout, /CMSPARK_OUTBOUND_PORT=23401/)
   assert.match(stdout, /这把钥匙只出现一次。它不是扩展配对码。/)
-  assert.match(stdout, /未允许页文\/截图外泄。编程助手读取页面或截图会被拒绝/)
+  assert.match(stdout, /未允许页文\/截图外泄。编程助手读取页面、截图或 DOM 会被拒绝/)
   assert.match(stdout, /mcp-outbound/)
   assert.doesNotMatch(stderr, /cmg_/)
   const listed = listOutboundGrants()
@@ -61,7 +61,7 @@ test("handleOutboundGrantCli --allow-page-export sets grant flag not disclosure 
   assert.equal(code, 0)
   assert.equal(grantAllowsPageExport("c"), true)
   assert.equal(hasOutboundDisclosure("c"), false)
-  assert.match(stdout, /已允许 c 把页文\/截图发给其云模型/)
+  assert.match(stdout, /已允许 c 把页文\/截图\/DOM 发给其云模型/)
   assert.match(stdout, /首次外泄仍须在确认台批准/)
 })
 
@@ -73,6 +73,7 @@ test("handleOutboundGrantCli --allow-page-export=false does not persist true", a
   assert.equal(grantAllowsPageExport("c"), false)
   assert.equal(hasOutboundDisclosure("c"), false)
   assert.match(stdout, /未允许页文\/截图外泄/)
+  assert.match(stdout, /profile: outbound_l1_default/)
 })
 
 test("unknown subcommand exits 1", async () => {
@@ -156,4 +157,27 @@ test("outboundMcpLaunchSpec is platform-honest", () => {
   const linux = outboundMcpLaunchSpec("linux")
   assert.doesNotMatch(linux.command, /\/Applications\/CMspark/)
   assert.ok(linux.args.includes("mcp-outbound"))
+})
+
+test("#410 --profile outbound_l1_interact issues an interact grant", async () => {
+  const { stdout, stderr, code } = await runGrantCli([
+    "issue", "--caller-id", "ic", "--profile", "outbound_l1_interact",
+  ])
+  assert.equal(code, 0, stderr)
+  assert.match(stdout, /profile: outbound_l1_interact/)
+  assert.match(stdout, /交互档钥匙（outbound_l1_interact）/)
+  const listed = listOutboundGrants()
+  const g = listed.find((x) => x.caller_id === "ic")
+  assert.ok(g)
+  assert.equal(g!.profile, "outbound_l1_interact")
+})
+
+test("#410 --profile with unknown value exits 1 (no grant written)", async () => {
+  const { stdout, stderr, code } = await runGrantCli([
+    "issue", "--caller-id", "bad", "--profile", "outbound_l1_super",
+  ])
+  assert.equal(code, 1)
+  assert.match(stderr, /--profile 不支持/)
+  assert.equal(listOutboundGrants().filter((x) => x.caller_id === "bad").length, 0)
+  assert.doesNotMatch(stdout, /cmg_/)
 })

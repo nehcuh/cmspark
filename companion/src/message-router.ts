@@ -4622,6 +4622,9 @@ export async function handleMessage(
           caller_id,
           ttl_ms,
           allow_page_export: rest.allow_page_export === true,
+          ...(typeof rest.profile === "string" && rest.profile.trim()
+            ? { profile: rest.profile.trim() }
+            : {}),
         })
         const { listOutboundGrants } = await import("./outbound-mcp/outbound-grants")
         return {

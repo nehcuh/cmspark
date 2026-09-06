@@ -10,6 +10,9 @@ import {
   issueOutboundGrant,
   revokeOutboundGrant,
   listOutboundGrants,
+  OUTBOUND_L1_DEFAULT_PROFILE,
+  OUTBOUND_L1_INTERACT_PROFILE,
+  isOutboundGrantProfile,
 } from "./outbound-grants"
 
 export type GrantCliIo = {
@@ -27,7 +30,7 @@ const DEFAULT_IO: GrantCliIo = {
   stderr: process.stderr,
 }
 
-const USAGE = `cmspark-agent outbound-grant issue --caller-id <id> [--label <name>] [--allow-page-export] [--ttl-ms N]
+const USAGE = `cmspark-agent outbound-grant issue --caller-id <id> [--label <name>] [--profile <outbound_l1_default|outbound_l1_interact>] [--allow-page-export] [--ttl-ms N]
 cmspark-agent outbound-grant revoke --grant-id <id>
 cmspark-agent outbound-grant list`
 
@@ -51,7 +54,7 @@ function flagEnabled(flags: Map<string, string | true>, key: string): boolean {
   return s === "true" || s === "1" || s === "yes"
 }
 
-const ISSUE_FLAGS = new Set(["caller-id", "label", "allow-page-export", "ttl-ms"])
+const ISSUE_FLAGS = new Set(["caller-id", "label", "allow-page-export", "ttl-ms", "profile"])
 const REVOKE_FLAGS = new Set(["grant-id"])
 const LIST_FLAGS = new Set<string>()
 
@@ -148,6 +151,7 @@ function printIssue(
     expires_at: string | null
   },
   allowPageExport: boolean,
+  profile: string = OUTBOUND_L1_DEFAULT_PROFILE,
 ): void {
   const launch = outboundMcpLaunchSpec()
   writeln(io.stdout, "租手钥匙")
@@ -158,17 +162,28 @@ function printIssue(
   writeln(io.stdout, `grant_id: ${issued.id}`)
   writeln(io.stdout, `caller_id: ${issued.caller_id}`)
   writeln(io.stdout, `label: ${issued.label}`)
+  writeln(io.stdout, `profile: ${profile}`)
   writeln(io.stdout, `expires_at: ${issued.expires_at ?? "(none)"}`)
   writeln(io.stdout)
+  if (profile === OUTBOUND_L1_INTERACT_PROFILE) {
+    writeln(
+      io.stdout,
+      "交互档钥匙（outbound_l1_interact）：默认 8 工具 + 滚动/元素检查/按键/表单/建 tab；",
+    )
+    writeln(
+      io.stdout,
+      "get_page_html / analyze_image 属页面内容外泄，须 --allow-page-export + 首次确认台批准。",
+    )
+  }
   if (allowPageExport) {
     writeln(
       io.stdout,
-      `已允许 ${issued.caller_id} 把页文/截图发给其云模型（可在设置里撤销这把钥匙）。首次外泄仍须在确认台批准；Windows/Linux 请打开 Chrome 确认台。`,
+      `已允许 ${issued.caller_id} 把页文/截图/DOM 发给其云模型（可在设置里撤销这把钥匙）。首次外泄仍须在确认台批准；Windows/Linux 请打开 Chrome 确认台。`,
     )
   } else {
     writeln(
       io.stdout,
-      "未允许页文/截图外泄。编程助手读取页面或截图会被拒绝（不会弹出确认台）。需要外泄请加 --allow-page-export。",
+      "未允许页文/截图外泄。编程助手读取页面、截图或 DOM 会被拒绝（不会弹出确认台）。需要外泄请加 --allow-page-export。",
     )
   }
   writeln(io.stdout)
@@ -201,13 +216,23 @@ function issue(flags: Map<string, string | true>, io: GrantCliIo): number {
     ttl_ms = n
   }
   const allowPageExport = flagEnabled(flags, "allow-page-export")
+  const profile =
+    flagString(flags, "profile") ?? OUTBOUND_L1_DEFAULT_PROFILE
+  if (!isOutboundGrantProfile(profile)) {
+    writeln(
+      io.stderr,
+      `--profile 不支持: ${profile}（支持 ${OUTBOUND_L1_DEFAULT_PROFILE} | ${OUTBOUND_L1_INTERACT_PROFILE}）`,
+    )
+    return 1
+  }
   const issued = issueOutboundGrant({
     caller_id: callerId,
     label: label || callerId,
     ttl_ms,
     allow_page_export: allowPageExport,
+    profile,
   })
-  printIssue(io, issued, allowPageExport)
+  printIssue(io, issued, allowPageExport, profile)
   return 0
 }
 
@@ -242,6 +267,7 @@ function list(io: GrantCliIo): number {
         `id=${g.id}`,
         `caller_id=${g.caller_id}`,
         `label=${g.label}`,
+        `profile=${g.profile}`,
         `allow_page_export=${g.allow_page_export}`,
         `expires_at=${g.expires_at ?? "(none)"}`,
         `status=${status}`,

@@ -51,12 +51,20 @@ import {
 import {
   isOutboundGrantTokenShape,
   verifyOutboundGrantToken,
+  liveGrantProfileById,
+  OUTBOUND_L1_DEFAULT_PROFILE,
 } from "./outbound-grants"
+import {
+  outboundToolsForProfiles,
+  outboundMcpWireName,
+} from "./profile"
 
 export const OUTBOUND_HTTP_PREFIX = "/outbound-mcp/v1"
 export const OUTBOUND_INVOKE_PATH = `${OUTBOUND_HTTP_PREFIX}/invoke`
 export const OUTBOUND_DISCLOSURE_PATH = `${OUTBOUND_HTTP_PREFIX}/disclosure`
 export const OUTBOUND_HEALTH_PATH = `${OUTBOUND_HTTP_PREFIX}/health`
+/** #410 — authenticated profile lookup for stdio tools/list trimming. */
+export const OUTBOUND_PROFILE_PATH = `${OUTBOUND_HTTP_PREFIX}/profile`
 
 export type OutboundToolRunner = (
   toolCallId: string,
@@ -126,6 +134,7 @@ async function waitFirstExfilOperatorConfirm(
   tool: string,
   grant_id?: string,
   wire_name?: string,
+  profile?: string,
 ): Promise<OutboundCallResult> {
   const deps = exfilConfirmer
   if (!deps) {
@@ -189,6 +198,7 @@ async function waitFirstExfilOperatorConfirm(
       caller_id,
       tool,
       wire_name,
+      profile,
       ok: false,
       error_code: "OUTBOUND_CONFIRM_REQUIRED",
       confirm_outcome: "denied",
@@ -210,6 +220,7 @@ async function waitFirstExfilOperatorConfirm(
       caller_id,
       tool,
       wire_name,
+      profile,
       ok: false,
       error_code: "OUTBOUND_CONFIRM_REQUIRED",
       confirm_outcome: outcome,
@@ -230,6 +241,7 @@ async function waitFirstExfilOperatorConfirm(
     caller_id,
     tool,
     wire_name,
+    profile,
     ok: true,
     confirm_outcome: "approved",
     grant_id,
@@ -282,6 +294,8 @@ export type OutboundHttpAuthOk = {
   ok: true
   mode: "ws_secret" | "grant"
   grant_id?: string
+  /** Grant profile when mode=grant (#410). */
+  profile?: string
   /** When mode=grant, body caller_id must match this (or be filled from it). */
   bound_caller_id?: string
 }
@@ -351,6 +365,7 @@ export function authorizeOutboundRequest(
       mode: "grant",
       grant_id: v.grant_id,
       bound_caller_id: v.caller_id,
+      profile: v.profile,
     }
   }
 
@@ -370,6 +385,7 @@ export function authorizeOutboundRequest(
       mode: "grant",
       grant_id: v.grant_id,
       bound_caller_id: v.caller_id,
+      profile: v.profile,
     }
   }
 
@@ -442,17 +458,30 @@ export type CompanionInvokeBody = {
  */
 export async function companionInvokeOutbound(
   body: CompanionInvokeBody,
-  opts?: { grant_id?: string; callerConnected?: () => boolean },
+  opts?: {
+    grant_id?: string
+    /** Grant profile resolved from the authenticated key (#410). */
+    grant_profile?: string
+    callerConnected?: () => boolean
+  },
 ): Promise<OutboundCallResult & { data?: unknown; origin?: ReturnType<typeof makeOutboundMcpOrigin> }> {
   const caller_id = (body.caller_id || "http-unknown").trim() || "http-unknown"
   const rawTool = (body.tool || "").trim()
   const tool = canonicalOutboundMcpName(rawTool)
   const wire_name = redactOutboundMcpWireName(rawTool)
   const grant_id = opts?.grant_id
+  // #410 per-key profile: the authenticated key's OWN grant profile decides the
+  // allowed tool set (never widened by sibling grants of the same caller).
+  // Legacy ws_secret / no-grant → undefined → facade falls back to caller-level.
+  const grant_profile =
+    opts?.grant_profile ||
+    (grant_id ? (liveGrantProfileById(grant_id) ?? undefined) : undefined)
+  const perKeyProfiles = grant_profile ? [grant_profile] : undefined
   const req: OutboundCallRequest = {
     caller_id,
     tool,
     wire_name,
+    profile: grant_profile,
     args: body.args || {},
     domain: body.domain,
   }
@@ -462,6 +491,7 @@ export async function companionInvokeOutbound(
       caller_id,
       tool,
       wire_name,
+      profile: grant_profile,
       domain: body.domain,
       ok: false,
       error_code: "PROFILE_FORBIDDEN",
@@ -479,17 +509,21 @@ export async function companionInvokeOutbound(
   // decides exfil. Check before the caller-level gate so an unflagged key is
   // denied DISCLOSURE_NOT_GRANTED even when a sibling key of the same caller
   // is flagged (otherwise the caller-level gate would misroute into HITL flow).
-  const grantTrackDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id, wire_name })
+  const grantTrackDeny = denyOutboundExfilIfNeeded(caller_id, tool, {
+    grant_id,
+    wire_name,
+    profile: grant_profile,
+  })
   if (grantTrackDeny && grantTrackDeny.error_code === "DISCLOSURE_NOT_GRANTED") {
     return grantTrackDeny
   }
 
-  let gate = gateOutboundCall(req)
+  let gate = gateOutboundCall(req, { explicitProfiles: perKeyProfiles })
   if (!gate.ok) {
     // HTTP invoke waits on first-exfil HITL when a confirmer is injected.
     // Facade unit tests without a manager still see DISCLOSURE_HITL_REQUIRED.
     if (gate.error_code === "DISCLOSURE_HITL_REQUIRED" && exfilConfirmer) {
-      const hitl = await waitFirstExfilOperatorConfirm(caller_id, tool, grant_id, wire_name)
+      const hitl = await waitFirstExfilOperatorConfirm(caller_id, tool, grant_id, wire_name, grant_profile)
       if (!hitl.ok) return hitl
       // R1: the caller's HTTP client may have timed out / disconnected while
       // the operator HITL was pending. Fail-safe: an approved tool must NOT
@@ -504,6 +538,7 @@ export async function companionInvokeOutbound(
           caller_id,
           tool,
           wire_name,
+          profile: grant_profile,
           domain: body.domain,
           ok: false,
           error_code: "CALLER_DISCONNECTED",
@@ -517,7 +552,7 @@ export async function companionInvokeOutbound(
           error_code: "CALLER_DISCONNECTED",
         }
       }
-      gate = gateOutboundCall(req)
+      gate = gateOutboundCall(req, { explicitProfiles: perKeyProfiles })
       if (!gate.ok) return gate
     } else {
       return gate
@@ -526,7 +561,11 @@ export async function companionInvokeOutbound(
 
   // Defense in depth for exfil (grant flag ∧ operator HITL; HTTP ack is not consent).
   // Recomputed after any HITL arming above; grant-level on this HTTP track (W2).
-  const exfilDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id, wire_name })
+  const exfilDeny = denyOutboundExfilIfNeeded(caller_id, tool, {
+    grant_id,
+    wire_name,
+    profile: grant_profile,
+  })
   if (exfilDeny) return exfilDeny
 
   const internal = gate.internal_tool || outboundToInternalName(tool)
@@ -546,6 +585,7 @@ export async function companionInvokeOutbound(
       caller_id,
       tool,
       wire_name,
+      profile: grant_profile,
       ok: false,
       error_code: "EXTENSION_UNAVAILABLE",
       grant_id,
@@ -568,6 +608,7 @@ export async function companionInvokeOutbound(
       caller_id,
       tool,
       wire_name,
+      profile: grant_profile,
       ok: false,
       error_code: leaseGate.error_code,
       grant_id,
@@ -623,6 +664,7 @@ export async function companionInvokeOutbound(
       caller_id,
       tool,
       wire_name,
+      profile: grant_profile,
       domain: body.domain,
       ok: result.success,
       error_code,
@@ -642,6 +684,7 @@ export async function companionInvokeOutbound(
       caller_id,
       tool,
       wire_name,
+      profile: grant_profile,
       ok: false,
       error_code: "DISPATCH_THREW",
       grant_id,
@@ -743,6 +786,37 @@ export async function handleOutboundMcpHttp(
     return true
   }
 
+  if (req.method === "GET" && pathOnly === OUTBOUND_PROFILE_PATH) {
+    // #410 — authenticated profile lookup for the stdio child's tools/list.
+    // Same auth matrix as invoke (grant or ws_secret); a caller without a
+    // valid key cannot enumerate profiles.
+    try {
+      const auth = authorizeOutboundRequest(req, expectedSecret)
+      if (!auth.ok) {
+        json(res, auth.http_status, {
+          ok: false,
+          error_code: auth.error_code,
+          error: auth.error,
+        })
+        return true
+      }
+      const profile =
+        auth.mode === "grant" && auth.profile ? auth.profile : OUTBOUND_L1_DEFAULT_PROFILE
+      const canonical = outboundToolsForProfiles([profile])
+      json(res, 200, {
+        ok: true,
+        auth_mode: auth.mode,
+        grant_id: auth.grant_id,
+        profile,
+        tools: canonical,
+        wire_tools: canonical.map(outboundMcpWireName),
+      })
+    } catch (e: any) {
+      json(res, 400, { ok: false, error_code: "BAD_BODY", error: e?.message || String(e) })
+    }
+    return true
+  }
+
   if (req.method === "POST" && pathOnly === OUTBOUND_INVOKE_PATH) {
     try {
       const body = (await readJsonBody(req)) as CompanionInvokeBody
@@ -779,6 +853,7 @@ export async function handleOutboundMcpHttp(
       })
       const out = await companionInvokeOutbound(body, {
         grant_id: auth.mode === "grant" ? auth.grant_id : undefined,
+        grant_profile: auth.mode === "grant" ? auth.profile : undefined,
         callerConnected: () =>
           !callerSocketGone &&
           !req.destroyed &&
