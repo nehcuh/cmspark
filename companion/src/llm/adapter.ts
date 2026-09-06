@@ -1902,6 +1902,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             }
 
             // Recoverable errors — feed back to LLM for retry, with infinite-loop guard
+            // #425 (gbkq2q): SITE_OP peek 拒执（信封在工具执行前就返回，工具根本
+            // 没跑）不是「执行失败」——不消耗熔断预算；信封仍经 classifyError
+            // recoverable 喂回模型换路。真实执行失败（如 wait_for 超时）照计数。
+            if (failCode !== "SITE_OP_BANNED" && failCode !== "SITE_OP_ESCALATE") {
             const failCount = (recoverableFailureCounts.get(toolName) || 0) + 1
             recoverableFailureCounts.set(toolName, failCount)
             if (failCount >= MAX_SAME_TOOL_RECOVERABLE_FAILURES) {
@@ -1915,19 +1919,19 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               if (runStats) runStats.terminal = "circuit_breaker"
               // #409-D: origin escalated + fallback lane also dead — append the
               // unlock guidance instead of a bare "防止无限循环" dead end.
+              // #425: origin 升级后被熔断的常是 CDP 工具（wait_for/click/
+              // evaluate…）——解锁指引不再只认 osascript_eval/host_computer。
               let unlockHint = ""
-              if (toolName === "osascript_eval" || toolName === "host_computer") {
-                try {
-                  const { isOriginEscalated } = require("../loop/route-session") as typeof import("../loop/route-session")
-                  const { loopRouteCaps } = require("../loop/tier-bind") as typeof import("../loop/tier-bind")
-                  if (isOriginEscalated(threadId)) {
-                    unlockHint = loopRouteCaps().cuArmed
-                      ? " 替代路径（host_computer/osascript）连续失败：请人工接手或更换任务，之后可从 checkpoint 恢复。"
-                      : " 解锁：在 设置 → 坐标计算机使用 打开 coordinateEnabled 后从 checkpoint 恢复，或更换任务（loop 不会自动打开该开关）。"
-                  }
-                } catch {
-                  /* L-3 optional */
+              try {
+                const { isOriginEscalated } = require("../loop/route-session") as typeof import("../loop/route-session")
+                const { loopRouteCaps } = require("../loop/tier-bind") as typeof import("../loop/tier-bind")
+                if (isOriginEscalated(threadId)) {
+                  unlockHint = loopRouteCaps().cuArmed
+                    ? " 替代路径（host_computer/osascript）连续失败：请人工接手或更换任务，之后可从 checkpoint 恢复。"
+                    : " 解锁：在 设置 → 坐标计算机使用 打开 coordinateEnabled 后从 checkpoint 恢复，或更换任务（loop 不会自动打开该开关）。"
                 }
+              } catch {
+                /* L-3 optional */
               }
               sendToExtension({
                 type: "chat.error",
@@ -1935,6 +1939,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                 error: `工具 ${toolName} 连续 ${failCount} 次执行失败，已停止以防止无限循环。${unlockHint}最后错误: ${toolResult.error}`,
               })
               break
+            }
             }
             }
           }
