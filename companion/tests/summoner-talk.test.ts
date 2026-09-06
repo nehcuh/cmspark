@@ -209,9 +209,11 @@ test("submitSummonerTalk refuses blank text and does not create", async () => {
 
 test("SummonerController v2 empty state talks, not title-search", () => {
   const src = traySwiftSrc()
-  assert.match(src, /说点什么/)
+  // spec §2: placeholder changed to command palette prompt
+  assert.match(src, /搜命令、历史、知识，或直接说任务/)
   assert.doesNotMatch(src, /说点什么，或按住说话/)
-  assert.match(src, /回车发送\/纠偏 · Shift\+Enter 排队 · # 搜标题/)
+  // spec §5c: hint changed from title-search HUD to command palette
+  assert.match(src, /回车发送 · Shift\+Enter 排队 · .* 收起/)
   assert.match(src, /继续 · /)
   assert.doesNotMatch(src, /输入线程标题/)
   // Send stays visible in talk (including detached)
@@ -230,7 +232,8 @@ test("SummonerController placeholder does not advertise hidden press-to-talk", (
   const line = src.split("\n").find((l) => l.includes("summonerTalkPlaceholder"))
   assert.ok(line, "summonerTalkPlaceholder missing")
   assert.doesNotMatch(line!, /按住说话/)
-  assert.match(line!, /说点什么/)
+  // spec §2: placeholder changed to command palette prompt
+  assert.match(line!, /搜命令、历史、知识，或直接说任务/)
 })
 
 test("SummonerController applyHydrate does not reopen a closed overlay", () => {

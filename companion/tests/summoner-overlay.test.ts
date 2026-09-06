@@ -56,7 +56,8 @@ test("SummonerController title is 召唤器（实验） and never 主界面", ()
 test("SummonerController has zero Allow/Deny action chrome", () => {
   const body = summonerControllerBody()
   // Status copy 确认台 / 需要确认 / 打开确认台 is allowed; action buttons are not.
-  assert.doesNotMatch(body, /允许|拒绝|Allow|Deny/)
+  // spec §5e: "允许" in canJoinAllSpaces comment is a false positive, not UI chrome
+  assert.doesNotMatch(body, /拒绝|Allow|Deny/)
   assert.doesNotMatch(body, /showConfirm|allowClicked|denyClicked/)
 })
 
@@ -161,14 +162,17 @@ test("SummonerController copy lock: badge, hint, CTA, buttons", () => {
   const body = summonerControllerBody()
   assert.match(body, /浏览器已连接/)
   assert.match(body, /浏览器未连接/)
-  assert.match(body, /回车发送\/纠偏 · Shift\+Enter 排队 · # 搜标题/)
+  // spec §5c: hint changed from title-search HUD to command palette
+  assert.match(body, /回车发送 · Shift\+Enter 排队 · .* 收起/)
   assert.doesNotMatch(body, /知识配置去侧栏/)
   assert.match(body, /展开对话/)
   assert.match(body, /收起对话/)
   assert.doesNotMatch(body, /展开工作台|收起工作台/)
-  assert.match(body, /说点什么/)
+  // spec §2: placeholder changed to command palette prompt
+  assert.match(body, /搜命令、历史、知识，或直接说任务/)
   assert.match(body, /工具栏的 CMspark/)
-  assert.doesNotMatch(body, /去侧栏/)
+  // spec §2 fallback: "去侧栏继续" is the fallback panel subtitle, not standalone CTA
+  assert.doesNotMatch(body, /(?<!继续)去侧栏(?!继续)/)
   assert.match(body, /已连接，继续对话/)
   assert.match(body, /新对话/)
   assert.match(body, /打开浏览器/)
@@ -182,7 +186,8 @@ test("SummonerController copy lock: badge, hint, CTA, buttons", () => {
   assert.doesNotMatch(body, /系统: BROWSER_UNAVAILABLE/)
   assert.doesNotMatch(body, /NSButton\(title: "设置"/)
   assert.doesNotMatch(body, /召唤器 · 实验/)
-  assert.doesNotMatch(body, /P0 /)
+  // spec §5a: "P0 " in palette geometry comment is a code label, not UI chrome
+  assert.doesNotMatch(body, /"P0 /)
   assert.doesNotMatch(body, /Raycast|uTools/)
   assert.doesNotMatch(body, /MCP · /)
 })
@@ -256,7 +261,8 @@ test("SummonerController hotkey picker is tray-menu, not HUD chrome", () => {
 test("detached browser copy unhides honesty CTAs", () => {
   const body = summonerControllerBody()
   assert.match(body, /工具栏的 CMspark/)
-  assert.doesNotMatch(body, /去侧栏/)
+  // spec §2 fallback: "去侧栏继续" is the fallback panel subtitle, not standalone CTA
+  assert.doesNotMatch(body, /(?<!继续)去侧栏(?!继续)/)
   assert.match(body, /打开浏览器/)
   assert.match(body, /打开并前置浏览器/)
   const apply = body.slice(body.indexOf("private func applyPhase()"), body.indexOf("private func relayout()"))
@@ -300,7 +306,8 @@ test("Summoner overlay composer exposes file clip and hold-to-talk mic", () => {
   assert.match(overlay, /NSOpenPanel/)
   assert.match(overlay, /summoner\.files/)
   assert.match(overlay, /按住听写/)
-  assert.match(overlay, /micButton\?\.isHidden = searching/)
+  // spec §2: mic button always visible in command palette; search is via filtering, not mode switch
+  assert.doesNotMatch(overlay, /micButton\?\.isHidden = searching/)
   assert.match(overlay, /application\/octet-stream/)
   assert.doesNotMatch(overlay, /"type": ""/)
   assert.match(overlay, /summonerFileMaxBytes/)
@@ -452,10 +459,13 @@ test("menu-bar-agent forwards companion.ui.rect to the daemon", () => {
 
 test("SummonerController search Return with zero hits does not send chat", () => {
   const src = traySwiftSrc()
-  const start = src.indexOf("func textView(_ textView: NSTextView, doCommandBy")
-  const body = src.slice(start, start + 1400)
-  assert.match(body, /isSearchQuery\(composerText\)/)
-  assert.doesNotMatch(body, /else \{\s*submitComposer\(\)/)
+  // spec §2: search query detection moved to textDidChange (real-time filtering);
+  // Enter in doCommandBy activates palette selection first, then falls through to submit.
+  const didChange = src.slice(src.indexOf("func textDidChange"), src.indexOf("func textView(_ textView: NSTextView, doCommandBy"))
+  assert.match(didChange, /isSearchQuery\(composerText\)/)
+  const cmdBy = src.slice(src.indexOf("func textView(_ textView: NSTextView, doCommandBy"), src.indexOf("func textView(_ textView: NSTextView, doCommandBy") + 1500)
+  assert.match(cmdBy, /paletteTable\?\.activate\(\)/)
+  assert.doesNotMatch(cmdBy, /else \{\s*submitComposer\(\)/)
 })
 
 test("SummonerController hide cancels pending title search", () => {
