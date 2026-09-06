@@ -71,6 +71,44 @@ export type SummonerHit = { id: string; title: string; when: string }
 export type SummonerHitsPayload = { hits: SummonerHit[] }
 export type SummonerHitsCmd = { cmd: "summoner.hits" } & SummonerHitsPayload
 export type SummonerThreadsCmd = { cmd: "summoner.threads"; threads: SummonerHit[] }
+
+// ── #433 P1 search wire (spec §3a) ───────────────────────────────────────────
+
+export type SummonerThreadSearchHit = {
+  id: string
+  title: string
+  alias?: string
+  when: string
+  snippet: string
+  score: number
+}
+export type SummonerThreadSearchResultsCmd = {
+  cmd: "summoner.thread.search.results"
+  hits: SummonerThreadSearchHit[]
+}
+
+export type SummonerKnowledgeSearchHit = {
+  id: string
+  title: string
+  folder?: string
+  snippet: string
+  score: number
+}
+export type SummonerKnowledgeSearchResultsCmd = {
+  cmd: "summoner.knowledge.search.results"
+  hits: SummonerKnowledgeSearchHit[]
+}
+
+export type SummonerPeekResultPayload = {
+  thread_id: string
+  title: string
+  markdown: string
+  truncated: boolean
+  redacted_hits: number
+}
+export type SummonerPeekResultCmd = {
+  cmd: "summoner.peek.result"
+} & SummonerPeekResultPayload
 export type SummonerPackRow = { id: string; name: string; overlay_eligible: boolean }
 export type SummonerPacksCmd = { cmd: "summoner.packs"; packs: SummonerPackRow[] }
 export type SummonerMcpServerRow = { name: string; enabled: boolean; transport: string }
@@ -99,6 +137,9 @@ export type SummonerOutboundCmd =
   | SummonerMcpServersCmd
   | SummonerSkillsCmd
   | SummonerKnowledgeCmd
+  | SummonerThreadSearchResultsCmd
+  | SummonerKnowledgeSearchResultsCmd
+  | SummonerPeekResultCmd
 
 // ── Swift → Companion events ────────────────────────────────────────────────
 
@@ -141,6 +182,12 @@ export type SummonerKnowledgeImportEvt = {
 }
 export type SummonerSettingsSetEvt = { type: "summoner.settings.set" } & SummonerSettingsPayload
 
+// #433 P1 search events (Swift → Companion)
+export type SummonerThreadSearchEvt = { type: "summoner.thread.search"; query: string }
+export type SummonerKnowledgeSearchEvt = { type: "summoner.knowledge.search"; query: string }
+export type SummonerPeekEvt = { type: "summoner.peek"; thread_id: string }
+export type SummonerCiteThreadEvt = { type: "summoner.cite_thread"; thread_id: string }
+
 export type SummonerInboundEvt =
   | SummonerReadyEvt
   | SummonerClosedEvt
@@ -166,6 +213,10 @@ export type SummonerInboundEvt =
   | SummonerKnowledgeAttachEvt
   | SummonerKnowledgeImportEvt
   | SummonerSettingsSetEvt
+  | SummonerThreadSearchEvt
+  | SummonerKnowledgeSearchEvt
+  | SummonerPeekEvt
+  | SummonerCiteThreadEvt
 
 export type SummonerWireMessage = SummonerOutboundCmd | SummonerInboundEvt
 
@@ -371,6 +422,47 @@ export function encodeSummonerSettingsSet(p: SummonerSettingsPayload): SummonerS
   }
 }
 
+// #433 P1 search encoders
+
+export function encodeSummonerThreadSearchResults(p: {
+  hits: SummonerThreadSearchHit[]
+}): SummonerThreadSearchResultsCmd {
+  return { cmd: "summoner.thread.search.results", hits: p.hits }
+}
+
+export function encodeSummonerKnowledgeSearchResults(p: {
+  hits: SummonerKnowledgeSearchHit[]
+}): SummonerKnowledgeSearchResultsCmd {
+  return { cmd: "summoner.knowledge.search.results", hits: p.hits }
+}
+
+export function encodeSummonerPeekResult(p: SummonerPeekResultPayload): SummonerPeekResultCmd {
+  return {
+    cmd: "summoner.peek.result",
+    thread_id: p.thread_id,
+    title: p.title,
+    markdown: p.markdown,
+    truncated: p.truncated,
+    redacted_hits: p.redacted_hits,
+  }
+}
+
+export function encodeSummonerThreadSearch(p: { query: string }): SummonerThreadSearchEvt {
+  return { type: "summoner.thread.search", query: p.query }
+}
+
+export function encodeSummonerKnowledgeSearch(p: { query: string }): SummonerKnowledgeSearchEvt {
+  return { type: "summoner.knowledge.search", query: p.query }
+}
+
+export function encodeSummonerPeek(p: { thread_id: string }): SummonerPeekEvt {
+  return { type: "summoner.peek", thread_id: p.thread_id }
+}
+
+export function encodeSummonerCiteThread(p: { thread_id: string }): SummonerCiteThreadEvt {
+  return { type: "summoner.cite_thread", thread_id: p.thread_id }
+}
+
 export function encodeSummonerTool(p: { name: string }): SummonerToolCmd {
   return { cmd: "summoner.tool", name: p.name }
 }
@@ -484,6 +576,41 @@ function isBrowser(v: unknown): v is SummonerBrowser {
   return v === "attached" || v === "detached"
 }
 
+// #433 P1 validators
+
+function isSummonerThreadSearchHit(v: unknown): v is SummonerThreadSearchHit {
+  if (!v || typeof v !== "object") return false
+  const o = v as Record<string, unknown>
+  return (
+    isString(o.id) &&
+    isString(o.title) &&
+    isString(o.when) &&
+    isString(o.snippet) &&
+    typeof o.score === "number" &&
+    (o.alias === undefined || isString(o.alias))
+  )
+}
+
+function isSummonerThreadSearchHitArray(v: unknown): v is SummonerThreadSearchHit[] {
+  return Array.isArray(v) && v.every(isSummonerThreadSearchHit)
+}
+
+function isSummonerKnowledgeSearchHit(v: unknown): v is SummonerKnowledgeSearchHit {
+  if (!v || typeof v !== "object") return false
+  const o = v as Record<string, unknown>
+  return (
+    isString(o.id) &&
+    isString(o.title) &&
+    isString(o.snippet) &&
+    typeof o.score === "number" &&
+    (o.folder === undefined || isString(o.folder))
+  )
+}
+
+function isSummonerKnowledgeSearchHitArray(v: unknown): v is SummonerKnowledgeSearchHit[] {
+  return Array.isArray(v) && v.every(isSummonerKnowledgeSearchHit)
+}
+
 /**
  * Decode Companion → Swift (`cmd`). Null on invalid JSON, wrong shape,
  * HUD/tray traffic, or any `summoner.confirm.*` payload.
@@ -567,6 +694,23 @@ export function decodeSummonerOutbound(raw: unknown): SummonerOutboundCmd | null
     case "summoner.knowledge":
       if (!isSummonerKnowledgeArray(o.docs)) return null
       return encodeSummonerKnowledge({ docs: o.docs })
+    // #433 P1 search results
+    case "summoner.thread.search.results":
+      if (!isSummonerThreadSearchHitArray(o.hits)) return null
+      return encodeSummonerThreadSearchResults({ hits: o.hits })
+    case "summoner.knowledge.search.results":
+      if (!isSummonerKnowledgeSearchHitArray(o.hits)) return null
+      return encodeSummonerKnowledgeSearchResults({ hits: o.hits })
+    case "summoner.peek.result":
+      if (!isString(o.thread_id) || !isString(o.title) || !isString(o.markdown)) return null
+      if (typeof o.truncated !== "boolean" || typeof o.redacted_hits !== "number") return null
+      return encodeSummonerPeekResult({
+        thread_id: o.thread_id,
+        title: o.title,
+        markdown: o.markdown,
+        truncated: o.truncated,
+        redacted_hits: o.redacted_hits,
+      })
     default:
       return null
   }
@@ -678,6 +822,19 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
         resume_idle_minutes: o.resume_idle_minutes,
         chrome_foreground: o.chrome_foreground,
       })
+    // #433 P1 search events
+    case "summoner.thread.search":
+      if (!isString(o.query)) return null
+      return encodeSummonerThreadSearch({ query: o.query })
+    case "summoner.knowledge.search":
+      if (!isString(o.query)) return null
+      return encodeSummonerKnowledgeSearch({ query: o.query })
+    case "summoner.peek":
+      if (!isString(o.thread_id) || !o.thread_id) return null
+      return encodeSummonerPeek({ thread_id: o.thread_id })
+    case "summoner.cite_thread":
+      if (!isString(o.thread_id) || !o.thread_id) return null
+      return encodeSummonerCiteThread({ thread_id: o.thread_id })
     default:
       return null
   }
