@@ -1866,6 +1866,11 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     jsonLine(["type": "summoner.continue"])
   }
 
+  @objc func armTaskClicked() {
+    guard !threadId.isEmpty else { return }
+    jsonLine(["type": "summoner.arm_task", "thread_id": threadId])
+  }
+
   // MARK: - #433 P0 command palette（spec §2 三段式 / §5c 匹配 / §5d 状态）
 
   private func setPalette(open: Bool) {
@@ -1907,6 +1912,7 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private func verbDefinitions() -> [(id: String, title: String, subtitle: String, symbol: String)] {
     [
       ("new_thread", "新对话", "开一条新会话", "plus.circle"),
+      ("arm_task", "后台任务", "让当前对话在后台自动续跑", "arrow.trianglehead.clockwise"),
       ("search_knowledge", "搜知识", "只在知识文档里找", "magnifyingglass"),
       ("open_panel", "打开侧栏", "唤起 Chrome 扩展面板", "macwindow.on.rectangle"),
       ("open_confirm", "打开确认台", "查看待确认操作", "checkmark.shield"),
@@ -2067,6 +2073,9 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
       switch row.id {
       case "new_thread":
         newThreadClicked()
+        setPalette(open: false)
+      case "arm_task":
+        armTaskClicked()
         setPalette(open: false)
       case "search_knowledge":
         paletteScope = (paletteScope == .knowledge) ? .all : .knowledge

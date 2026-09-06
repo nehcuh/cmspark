@@ -1100,6 +1100,30 @@ export async function handleSummonerUiCommand(action: string): Promise<void> {
 }
 
 /** Overlay continue CTA — new user message, no L1 replay. */
+export async function handleSummonerArmTask(threadId: string) {
+  const id = threadId.trim()
+  if (!id) return
+  try {
+    const response = await summonerClient?.sendAppRequest("task_loop.arm", {
+      thread_id: id,
+      user_gesture: true,
+    })
+    if (response?.type === "task_loop.armed") {
+      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "后台任务已启动，确认在确认台" }))
+    } else if (response?.error_code === "OVERLAY_THREAD_MISMATCH") {
+      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "当前线程与后台任务不匹配" }))
+    } else if (response?.code === "loop_off") {
+      trayInstance?.sendSummoner?.(encodeSummonerError({ message: "计划只读线程不激活续跑（先批准计划或切回默认执行）" }))
+    } else {
+      const errMsg = response?.error || "未知错误"
+      trayInstance?.sendSummoner?.(encodeSummonerError({ message: String(errMsg) }))
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    trayInstance?.sendSummoner?.(encodeSummonerError({ message: `后台任务启动失败: ${msg}` }))
+  }
+}
+
 export function handleSummonerContinue(): boolean {
   if (!summonerClient || !summonerThreadId) return false
   // Busy continue is a no-op (must not supersede).
@@ -1631,6 +1655,9 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
       return
     case "summoner.continue":
       handleSummonerContinue()
+      return
+    case "summoner.arm_task":
+      void handleSummonerArmTask(evt.thread_id)
       return
     case "summoner.ready":
       void handleSummonerReady()

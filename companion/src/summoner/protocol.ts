@@ -156,6 +156,7 @@ export type SummonerSelectEvt = { type: "summoner.select"; thread_id: string }
 export type SummonerAttachChromeEvt = { type: "summoner.attach_chrome"; foreground?: boolean }
 export type SummonerUiCommandEvt = { type: "summoner.ui_command"; action: string }
 export type SummonerContinueEvt = { type: "summoner.continue" }
+export type SummonerArmTaskEvt = { type: "summoner.arm_task"; thread_id: string; user_gesture: true }
 export type SummonerHotkeyChosenEvt = { type: "summoner.hotkey.chosen"; combo: string }
 export type SummonerComposingEvt = { type: "summoner.composing"; on: boolean }
 export type SummonerMicStartEvt = { type: "summoner.mic.start" }
@@ -198,6 +199,7 @@ export type SummonerInboundEvt =
   | SummonerAttachChromeEvt
   | SummonerUiCommandEvt
   | SummonerContinueEvt
+  | SummonerArmTaskEvt
   | SummonerHotkeyChosenEvt
   | SummonerComposingEvt
   | SummonerMicStartEvt
@@ -359,6 +361,10 @@ export function encodeSummonerUiCommand(p: { action: string }): SummonerUiComman
 
 export function encodeSummonerContinue(): SummonerContinueEvt {
   return { type: "summoner.continue" }
+}
+
+export function encodeSummonerArmTask(p: { thread_id: string }): SummonerArmTaskEvt {
+  return { type: "summoner.arm_task", thread_id: p.thread_id, user_gesture: true }
 }
 
 export function encodeSummonerHotkeyChosen(p: { combo: string }): SummonerHotkeyChosenEvt {
@@ -759,6 +765,9 @@ export function decodeSummonerInbound(raw: unknown): SummonerInboundEvt | null {
       return encodeSummonerUiCommand({ action: o.action.trim() })
     case "summoner.continue":
       return encodeSummonerContinue()
+    case "summoner.arm_task":
+      if (!isString(o.thread_id) || !o.thread_id) return null
+      return encodeSummonerArmTask({ thread_id: o.thread_id })
     case "summoner.hotkey.chosen":
       if (!isString(o.combo)) return null
       return encodeSummonerHotkeyChosen({ combo: o.combo })
