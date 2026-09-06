@@ -37,6 +37,7 @@ import {
   outboundToInternalName,
   canonicalOutboundMcpName,
   isCanonicalOutboundMcpNameShape,
+  isCanonicalOnAnyOutboundProfile,
   redactOutboundMcpWireName,
   OUTBOUND_DISCLOSURE_ZH,
 } from "./profile"
@@ -486,7 +487,17 @@ export async function companionInvokeOutbound(
     domain: body.domain,
   }
 
-  if (rawTool && !isCanonicalOutboundMcpNameShape(tool)) {
+  // #419 P2-1: the format pre-check must never reject a name granted on ANY
+  // known outbound profile (a future camelCase member would be mis-rejected
+  // here before the allowlist gate, while stdio would allow it). Allowlist
+  // membership is the only authority: reject early ONLY when the name is both
+  // shape-invalid AND on no known profile — the real per-key gate then decides
+  // on-profile tools and picks the off-profile copy.
+  if (
+    rawTool &&
+    !isCanonicalOutboundMcpNameShape(tool) &&
+    !isCanonicalOnAnyOutboundProfile(tool)
+  ) {
     appendOutboundMcpAudit({
       caller_id,
       tool,

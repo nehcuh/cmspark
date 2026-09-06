@@ -143,6 +143,21 @@ export function isCanonicalOutboundMcpNameShape(canonical: string): boolean {
   return /^[a-z][a-z0-9_]*$/.test(rest) && !rest.includes("__")
 }
 
+/**
+ * #419 — true iff `canonical` is a member of ANY known outbound profile
+ * (default ∪ interact, incl. future profiles added to OUTBOUND_PROFILE_TOOLS).
+ * The HTTP shape pre-check must never reject a tool that is granted on some
+ * profile just because its suffix is not lowercase-snake (e.g. a future
+ * camelCase member) — the per-key gate is the only authority on membership.
+ */
+export function isCanonicalOnAnyOutboundProfile(canonical: string): boolean {
+  if (!canonical.startsWith(OUTBOUND_MCP_NAME_PREFIX)) return false
+  for (const tools of Object.values(OUTBOUND_PROFILE_TOOLS)) {
+    if ((tools as readonly string[]).includes(canonical)) return true
+  }
+  return false
+}
+
 /** Audit / error-string cap: tool names only, never args or page body. */
 export function redactOutboundMcpWireName(raw: string, max = 160): string {
   return String(raw || "")

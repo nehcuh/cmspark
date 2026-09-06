@@ -38,10 +38,28 @@ const META_PROFILE = "cmspark__list_outbound_profile"
 /**
  * #410 — stdio tools/list per-key profile trimming. The stdio child only has
  * its env token; the grant profile lives in the companion. wire* fetches it
- * once via the authenticated /outbound-mcp/v1/profile endpoint and caches it
- * here. null = not resolved (fallback: default profile + caller-level gate).
+ * via the authenticated /outbound-mcp/v1/profile endpoint and caches it here.
+ * null = not resolved yet (fallback: default profile + caller-level gate).
+ *
+ * #419 — lazy re-pull: when the first fetch failed because companion was not
+ * up yet, tools/list / CallTool re-attempt after PROFILE_RETRY_MS (throttled,
+ * bounded retries); on success the advertised set + local gate upgrade to the
+ * key's real profile. Failure keeps the documented default-set degradation
+ * (never widens).
  */
 let resolvedProfiles: string[] | null = null
+/** Loopback HTTP opts captured at wire time — used for lazy re-pull. */
+let wireHttpOpts: HttpClientOptions | null = null
+/** Last profile fetch attempt timestamp (ms epoch). */
+let profileLastAttemptMs = 0
+/** Remaining lazy retries after the initial wire attempt. */
+let profileRetriesLeft = 5
+const PROFILE_RETRY_MS = 30_000
+
+type OutboundProfileFetcher = (
+  opts: HttpClientOptions,
+) => ReturnType<typeof fetchCompanionOutboundProfile>
+let profileFetcher: OutboundProfileFetcher = fetchCompanionOutboundProfile
 
 function callerId(): string {
   return (process.env[CALLER_ENV] || "stdio-default").trim() || "stdio-default"
@@ -137,32 +155,78 @@ export async function wireDefaultOutboundHttpDispatcher(): Promise<{
       timeout_ms: 120_000,
     }),
   )
-  // #410 — ask the companion which profile this token grants, so tools/list
-  // advertises only tools the caller may actually invoke. Await before the
-  // first tools/list so an interact key never sees a default-only ad.
-  // Fallback (fetch failure / legacy ws_secret): resolvedProfiles stays null →
-  // default profile + caller-level gate (documented degradation, not widening).
-  let profile: string = OUTBOUND_L1_DEFAULT_PROFILE
+  wireHttpOpts = httpOpts
+  // First attempt is awaited before the first tools/list so an interact key
+  // never sees a default-only ad when companion is already up. On failure the
+  // lazy retry (retryOutboundProfileIfStale) takes over — see module comment.
+  profileLastAttemptMs = Date.now()
+  await tryFetchOutboundProfile()
+  return {
+    port,
+    token_present: Boolean(token),
+    auth_mode: mode,
+    profile: resolvedProfiles?.[0] ?? OUTBOUND_L1_DEFAULT_PROFILE,
+  }
+}
+
+/** One HTTP fetch; sets resolvedProfiles on success. Returns success. */
+async function tryFetchOutboundProfile(): Promise<boolean> {
+  if (!wireHttpOpts) return false
+  profileLastAttemptMs = Date.now()
   try {
-    const p = await fetchCompanionOutboundProfile(httpOpts)
+    const p = await profileFetcher(wireHttpOpts)
     if (p.ok) {
       resolvedProfiles = [p.profile]
-      profile = p.profile
+      profileRetriesLeft = 5
       console.error(
         `[cmspark-outbound] grant profile: ${p.profile} (${p.tools.length} canonical tools)`,
       )
-    } else {
-      console.error(
-        `[cmspark-outbound] profile fetch rejected (${p.error || "unknown"}) — advertising default outbound L1 set`,
-      )
+      return true
     }
+    console.error(
+      `[cmspark-outbound] profile fetch rejected (${p.error || "unknown"}) — advertising default outbound L1 set`,
+    )
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error(
       `[cmspark-outbound] profile fetch failed (${msg}) — advertising default outbound L1 set`,
     )
   }
-  return { port, token_present: Boolean(token), auth_mode: mode, profile }
+  return false
+}
+
+/**
+ * #419 — lazy re-pull when still degraded (companion came up after the stdio
+ * child). Throttled to one attempt per PROFILE_RETRY_MS, bounded retries.
+ * Returns true when a profile is known (resolved now or earlier).
+ */
+export async function retryOutboundProfileIfStale(): Promise<boolean> {
+  if (resolvedProfiles !== null) return true
+  if (!wireHttpOpts || profileRetriesLeft <= 0) return false
+  if (Date.now() - profileLastAttemptMs < PROFILE_RETRY_MS) return false
+  profileRetriesLeft--
+  return tryFetchOutboundProfile()
+}
+
+// --- test seams (never used in production; keep module state hermetic) ---
+
+export function _setOutboundProfileFetcherForTests(
+  fn: OutboundProfileFetcher | null,
+): void {
+  profileFetcher = fn ?? fetchCompanionOutboundProfile
+}
+
+export function _resetOutboundProfileRuntimeForTests(): void {
+  resolvedProfiles = null
+  wireHttpOpts = null
+  profileLastAttemptMs = 0
+  profileRetriesLeft = 5
+  profileFetcher = fetchCompanionOutboundProfile
+}
+
+/** Force the next lazy re-pull to ignore the 30s cooldown (test only). */
+export function _forceProfileStaleForTests(): void {
+  profileLastAttemptMs = 0
 }
 
 /** Profiles currently advertising ([] = default). Visible for tests. */
@@ -187,22 +251,30 @@ export function createOutboundMcpServer(
     { capabilities: { tools: {} } },
   )
 
-  const grantedCanonical = outboundToolsForProfiles(outboundActiveProfiles())
-  const allToolNames = [META_ACCEPT, META_PROFILE, ...grantedCanonical]
-
   // Wire names are the suffix only (`list_tabs`). Clients that qualify as
   // `server__tool` (Grok) then expose `cmspark__list_tabs`. Advertising the
   // canonical `cmspark__*` name here makes Grok emit two `__` delimiters and
   // drop every tool (session tool_count=0; `grok mcp doctor` still counts 10).
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: allToolNames.map((canonical) => ({
-      name: outboundMcpWireName(canonical),
-      description: toolDescription(canonical),
-      inputSchema: openArgsSchema(),
-    })),
-  }))
+  // #419: tool set + ad are recomputed per request so a lazy profile re-pull
+  // (companion came up late) upgrades tools/list without restarting the child.
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    await retryOutboundProfileIfStale()
+    const grantedCanonical = outboundToolsForProfiles(outboundActiveProfiles())
+    const allToolNames = [META_ACCEPT, META_PROFILE, ...grantedCanonical]
+    return {
+      tools: allToolNames.map((canonical) => ({
+        name: outboundMcpWireName(canonical),
+        description: toolDescription(canonical),
+        inputSchema: openArgsSchema(),
+      })),
+    }
+  })
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    // #419: lazy re-pull before the local gate so an interact key that could
+    // not fetch its profile at boot (companion was down) upgrades once the
+    // companion is reachable again (throttled, bounded — see module doc).
+    await retryOutboundProfileIfStale()
     const name = canonicalOutboundMcpName(request.params.name)
     const args = (request.params.arguments || {}) as Record<string, unknown>
     const cid = callerId()
