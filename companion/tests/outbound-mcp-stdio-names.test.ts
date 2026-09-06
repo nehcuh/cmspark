@@ -3,6 +3,9 @@
  * names that already contain `__`. tools/list must advertise the suffix
  * only; CallTool still accepts both the wire name and cmspark__*.
  */
+// Must be first import — locks CMSPARK_DATA_DIR to a temp dir before
+// config/outbound-grants compute their paths (grant store + audit stay hermetic).
+import "./_outbound-grants-setup.js"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
