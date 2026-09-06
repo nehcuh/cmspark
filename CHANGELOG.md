@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-09-06
+
+- **低语料知识图谱：AI 整理 lane（#427，用户实测 4 篇死面板）**：图谱画布闸与 #273 聚类闸解绑（`KNOWLEDGE_GRAPH_MIN_DOCS=1`）——2–19 篇不再只有「知识不足 20 篇」死文案：画布直接画节点 + TF 实线边（可能诚实散点）+ CTA「让 AI 整理现有 N 篇」。点击后一次批式 LLM（仅 title+tags+description，不进正文）出分组 + 命名/摘要 + 关联洞察（虚线 +「AI 关联」+ 可查 reason）；`organized` 信号区分「未整理」与「AI 判无结构」（后者散点 +「AI 未发现明确关联」，不再复发 CTA）。分组锁（「保留这版分组」）= 图谱着色 overlay，跨 20 篇切换 TF 着色后仍存活、不进聚类输入；防抖重建 carry-forward 不失效。指纹（id/title/description/tags）漂移只标 stale 不自动重跑；organize 失败走 ok 帧 + 中文错误条（不碰 #356 error 合同）。红线：`KNOWLEDGE_CLUSTER_MIN_DOCS` / `scoreRelatedKnowledge` / ≥20 TF 路径零改动；无自动 LLM 触发。[#427](https://github.com/nehcuh/cmspark/issues/427)
 - **peek 拒执不吃熔断预算（#425，gbkq2q 实证）**：SITE_OP_BANNED / SITE_OP_ESCALATE（peek 拒执，工具未执行）不再递增同工具 recoverable 熔断计数——此前「1 次真实超时 + 2 次封禁提示」即误杀对话；origin 已升级时熔断解锁指引覆盖所有工具（不再限 osascript/host_computer）。第二道闸不变：L-3 路线引擎跨 run steer ×2 无视 → blocked。[#425](https://github.com/nehcuh/cmspark/issues/425)
 - **全历史专家归纳打磨（#418）**：草稿恢复「AI 建议工具（不预勾）」展示（suggested_tools 透传）；候选池先按元数据截 cap 再读消息体（大库不再全量读）；扫描期间批次进度事件上屏（「全历史归纳中：批次 n/m」）；批内聚类/归并 prompt 经真实 LLM 三轮实证调优（超时 150s/240s、evidence 并集兜底、silent-zero 诚实 fallback）。[#418](https://github.com/nehcuh/cmspark/issues/418)
 
