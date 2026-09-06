@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S105++ (2026-09-06) [五票全清 → 0.6.1]
+- **背景**：用户授权「按推荐顺序完成所有遗留任务」。lane 分工：claude→#409/#411，grok→#408+评审，pi→#406/#410+评审，kimi 居中协调+评审+#420。
+- **Merged**：#412(#406 残余冻结+tray 端口读配置) · #413(#408 双轨同名) · #414(#409 升级链四断点) · #415(#410 interact profile+豁免旗不溅射) · #416(#411 全历史专家) · #420(0.6.1 lockstep)。全部 CI 绿 + 作者≠评审者复审闭环。
+- **Follow-up**：#417/#418/#419 三张小票收编所有评审残余 NIT/P2。
+- **Open 仅剩**：#417-419 + 冻结/阻塞/deferred 老票（#230/#363/#328/#351/#364/#372/#373/#71/#70）。
+- **新教训**：git add -A 在含 node_modules symlink 的 worktree 会误提 symlink（#420 amend 修掉）；installer.nsi PRODUCT_VERSION 是第六个版本锚（CI package-gates 抓住）；CI build 的 fail 要看 runner 平台差异（#414 linux 分支漏网）。
+- Recorded: yes
+
 ### S105 END (2026-09-06) [0.6.0 换装 ×2 · #404 测试污染事故 · tray port 误诊 · #407 抢救]
 - **Ship**：0.6.0 DMG 打包换装两次（第二次含 #405）。**#404 事故**：settings-web-tokens.test.ts 静态 import 冻结 DATA_DIR，夹具（sk-test/https://x/m/port 23491）覆写真实 config.json → 0.6.0 启动 model_probe 失败 + MCP npx ENOENT（npm-prefix/lib 缺失）。**PR #405 合并** `f5320db0`：9 处 config.json 路径 + initDataDir 3 处 + getLogDir 全走 live getConfigDir()；claude 两轮评审 MAJOR→CLOSED。用户配置从 corrupt 备份恢复。
 - **次生**：port 也被夹具改（23401→23491），tray 硬编码 WS_PORT=23401 探测恒失败误报「已停止」——恢复 port 后正常。教训两条入 instincts.yaml + .vibe/instincts.jsonl。
