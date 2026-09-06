@@ -160,9 +160,20 @@ DEVICE=$(echo "${VOLUME_LINE}" | awk '{print $1}')
 VOLUME=$(echo "${VOLUME_LINE}" | awk '{print $NF}')
 
 # Copy app bundle and create Applications symlink
+# cp -R (not -r): BSD -r resolves symlinks — it turned Resources/cmspark-host
+# into a regular file, breaking the codesign seal in every shipped DMG
+# (found 2026-09-07: host-integrity refusing to spawn on packaged installs).
 echo "  Copying files to DMG..."
-cp -r "${APP_BUNDLE}" "${VOLUME}/"
+cp -R "${APP_BUNDLE}" "${VOLUME}/"
 ln -sf /Applications "${VOLUME}/Applications"
+
+# Fail-closed: the copied bundle inside the writable image must still verify
+# (catches seal-breaking copy regressions before the compressed DMG ships).
+if ! codesign --verify --verbose "${VOLUME}/CMspark.app"; then
+  echo "[create-dmg] ERROR: codesign verify failed for DMG copy of ${APP_BUNDLE}"
+  hdiutil detach "${DEVICE}" -force 2>/dev/null || true
+  exit 1
+fi
 
 # Set Finder window layout via AppleScript
 osascript <<APPLESCRIPT 2>/dev/null || true

@@ -130,6 +130,12 @@ assert_file_has "${CREATE_DMG}" '__CMSPARK_VERSION__' \
   "create-dmg stamps Info.plist via __CMSPARK_VERSION__ placeholder"
 assert_file_lacks "${CREATE_DMG}" 's/0\.2\.0/' \
   "create-dmg must not hardcode sed s/0.2.0/ (stale version trap)"
+assert_file_has "${CREATE_DMG}" 'cp -R "\$\{APP_BUNDLE\}"' \
+  "create-dmg copies bundle with cp -R (BSD -r resolves symlinks, breaks codesign seal)"
+assert_file_lacks "${CREATE_DMG}" 'cp -r "\$\{APP_BUNDLE\}"' \
+  "create-dmg must not use cp -r for the bundle (symlink → file = broken seal, 2026-09-07)"
+assert_file_has "${CREATE_DMG}" 'codesign --verify --verbose "\$\{VOLUME\}/CMspark.app"' \
+  "create-dmg fail-closed re-verifies the bundle INSIDE the DMG volume"
 INFO_PLIST="${ROOT}/scripts/macos/Info.plist"
 assert_file_has "${INFO_PLIST}" '__CMSPARK_VERSION__' \
   "Info.plist template uses __CMSPARK_VERSION__ placeholder"
