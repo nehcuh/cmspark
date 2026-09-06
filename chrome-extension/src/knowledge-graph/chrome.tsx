@@ -8,10 +8,21 @@ import {
   KNOWLEDGE_GRAPH_COLOR_GROUP,
   KNOWLEDGE_GRAPH_ENTRY_LABEL,
   KNOWLEDGE_GRAPH_ERROR_DETAIL_LABEL,
+  KNOWLEDGE_GRAPH_LLM_NOT_CONFIGURED,
   KNOWLEDGE_GRAPH_LLM_TOGGLE,
+  KNOWLEDGE_GRAPH_LOCK_DISSOLVED,
+  KNOWLEDGE_GRAPH_LOCK_GROUP,
+  KNOWLEDGE_GRAPH_NO_RELATIONS,
+  KNOWLEDGE_GRAPH_ORGANIZE_RETRY,
+  KNOWLEDGE_GRAPH_ORGANIZING,
   KNOWLEDGE_GRAPH_REBUILD_TIMEOUT_COPY,
   KNOWLEDGE_GRAPH_REGENERATE,
+  KNOWLEDGE_GRAPH_REORGANIZE,
+  KNOWLEDGE_GRAPH_STALE_BADGE,
+  KNOWLEDGE_GRAPH_TF_SWITCH_BANNER,
+  KNOWLEDGE_GRAPH_UNLOCK_GROUP,
   graphBannerCopy,
+  knowledgeGraphOrganizeCta,
   type KnowledgeGraphStatus,
 } from "./copy"
 import { groupCardModel } from "./labels"
@@ -139,11 +150,18 @@ export function KnowledgeGraphGroupCard(props: {
   groupKey: string
   label: KnowledgeGraphLabel | undefined
   llmEnabled: boolean
+  /** #427：l: 整理分组，开关关也出 AI 标。 */
+  llmLaneGroup?: boolean
+  onLock?: () => void
+  onUnlock?: () => void
 }) {
-  const model = groupCardModel(props.label, props.llmEnabled)
+  const model = groupCardModel(props.label, props.llmEnabled, {
+    llmLaneGroup: props.llmLaneGroup === true,
+  })
+  const locked = props.label?.locked === true
   return (
     <div data-group-key={props.groupKey} style={{ padding: "8px 0" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         <strong style={{ fontSize: 12 }}>{model.name}</strong>
         {model.showAiBadge ? (
           <span title={KNOWLEDGE_GRAPH_AI_BADGE} style={{ fontSize: 10, opacity: 0.75 }}>
@@ -154,6 +172,111 @@ export function KnowledgeGraphGroupCard(props: {
       {model.summary ? (
         <p style={{ fontSize: 11, margin: "4px 0 0", lineHeight: 1.4 }}>{model.summary}</p>
       ) : null}
+      {props.llmLaneGroup && props.onLock && !locked ? (
+        <button type="button" onClick={props.onLock} style={{ ...btn, marginTop: 6 }}>
+          {KNOWLEDGE_GRAPH_LOCK_GROUP}
+        </button>
+      ) : null}
+      {props.llmLaneGroup && props.onUnlock && locked ? (
+        <button type="button" onClick={props.onUnlock} style={{ ...btn, marginTop: 6 }}>
+          {KNOWLEDGE_GRAPH_UNLOCK_GROUP}
+        </button>
+      ) : null}
     </div>
+  )
+}
+
+export function KnowledgeGraphOrganizeCta(props: {
+  n: number
+  disabled: boolean
+  organizing: boolean
+  onOrganize: () => void
+}) {
+  return (
+    <div role="status" style={{ fontSize: 13, lineHeight: 1.5, padding: "12px 16px" }}>
+      <button
+        type="button"
+        data-testid="kg-organize-cta"
+        disabled={props.disabled || props.organizing}
+        title={props.disabled ? KNOWLEDGE_GRAPH_LLM_NOT_CONFIGURED : undefined}
+        onClick={props.onOrganize}
+        style={{
+          ...btn,
+          opacity: props.disabled || props.organizing ? 0.5 : 1,
+          cursor: props.disabled || props.organizing ? "not-allowed" : "pointer",
+        }}
+      >
+        {props.organizing ? KNOWLEDGE_GRAPH_ORGANIZING : knowledgeGraphOrganizeCta(props.n)}
+      </button>
+    </div>
+  )
+}
+
+export function KnowledgeGraphOrganizeErrorBar(props: {
+  error: string
+  onRetry: () => void
+}) {
+  return (
+    <div role="alert" data-testid="kg-organize-error" style={{ fontSize: 13, lineHeight: 1.5, padding: "12px 16px" }}>
+      <span>{props.error}</span>{" "}
+      <button type="button" onClick={props.onRetry} style={btn}>
+        {KNOWLEDGE_GRAPH_ORGANIZE_RETRY}
+      </button>
+    </div>
+  )
+}
+
+export function KnowledgeGraphStaleBadge() {
+  return (
+    <span data-testid="kg-stale-badge" style={{ fontSize: 11, opacity: 0.85 }}>
+      {KNOWLEDGE_GRAPH_STALE_BADGE}
+    </span>
+  )
+}
+
+export function KnowledgeGraphTfSwitchBanner() {
+  return (
+    <div role="status" data-testid="kg-tf-switch-banner" style={{ fontSize: 13, lineHeight: 1.5, padding: "12px 16px" }}>
+      {KNOWLEDGE_GRAPH_TF_SWITCH_BANNER}
+    </div>
+  )
+}
+
+export function KnowledgeGraphLockDissolvedBanner() {
+  return (
+    <div role="status" data-testid="kg-lock-dissolved" style={{ fontSize: 13, lineHeight: 1.5, padding: "12px 16px" }}>
+      {KNOWLEDGE_GRAPH_LOCK_DISSOLVED}
+    </div>
+  )
+}
+
+export function KnowledgeGraphNoRelationsNote() {
+  return (
+    <div data-testid="kg-no-relations" style={{ fontSize: 11, opacity: 0.8, padding: "4px 0" }}>
+      {KNOWLEDGE_GRAPH_NO_RELATIONS}
+    </div>
+  )
+}
+
+export function KnowledgeGraphReorganizeButton(props: {
+  organizing: boolean
+  disabled: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      data-testid="kg-reorganize"
+      disabled={props.disabled || props.organizing}
+      title={props.disabled ? KNOWLEDGE_GRAPH_LLM_NOT_CONFIGURED : undefined}
+      onClick={props.onClick}
+      style={{
+        ...btn,
+        opacity: props.disabled || props.organizing ? 0.5 : 1,
+        cursor: props.disabled || props.organizing ? "not-allowed" : "pointer",
+      }}
+    >
+      {props.organizing ? KNOWLEDGE_GRAPH_ORGANIZING : KNOWLEDGE_GRAPH_REORGANIZE}
+    </button>
   )
 }

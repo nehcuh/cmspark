@@ -1618,6 +1618,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "knowledge_graph.refresh": {
         const llmFromMsg = message.llm_labels === true
         const regenerate = message.regenerate === true
+        const organize = message.organize === true
+        const lockGroup = typeof message.lock_group === "string" ? message.lock_group : undefined
+        const unlockGroup = typeof message.unlock_group === "string" ? message.unlock_group : undefined
+        const ackTfSwitch = message.ack_tf_switch === true
         const focusId = message.focus_id || message.focusId || null
         const run = async () => {
           let llm = llmFromMsg
@@ -1639,7 +1643,15 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
           // Wire 契约权威在服务端：强制重生成字段是 regen_labels（#316 复审 MAJOR-1）
           // #374: 请求带 id → companion 回带 → error 帧按 id 精确关联（替代文本 seam 为主）
           const reqId = `kg.${Date.now().toString(36)}.${(graphReqSeq += 1)}`
-          const frame = buildKnowledgeGraphRequest({ llmLabels: llm, regenerate, id: reqId })
+          const frame = buildKnowledgeGraphRequest({
+            llmLabels: llm,
+            regenerate,
+            id: reqId,
+            organize,
+            lockGroup,
+            unlockGroup,
+            ackTfSwitch,
+          })
           trackGraphRequest(reqId)
           const sent = wsClient?.send(frame) === true
           if (!sent) {

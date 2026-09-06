@@ -18,6 +18,31 @@ export const KNOWLEDGE_GRAPH_COLOR_FOLDER = "按文件夹"
 export const KNOWLEDGE_GRAPH_LLM_TOGGLE = "AI 分组命名"
 export const KNOWLEDGE_GRAPH_REGENERATE = "重新生成"
 
+/** #427：LLM 整理 lane 上界（= KNOWLEDGE_CLUSTER_MIN_DOCS−1；画布闸已解绑）。 */
+export const KNOWLEDGE_GRAPH_LLM_LANE_MAX = 19
+export const KNOWLEDGE_GRAPH_REORGANIZE = "重新整理"
+export const KNOWLEDGE_GRAPH_ORGANIZING = "整理中…"
+export const KNOWLEDGE_GRAPH_STALE_BADGE = "语料已变化 · 可重新整理"
+export const KNOWLEDGE_GRAPH_NO_RELATIONS = "AI 未发现明确关联"
+export const KNOWLEDGE_GRAPH_TF_SWITCH_BANNER = "知识已满 20 篇，分组改按统计聚类（更稳定）"
+export const KNOWLEDGE_GRAPH_LOCK_DISSOLVED = "不足两篇的锁定分组已解散"
+export const KNOWLEDGE_GRAPH_ORGANIZE_RETRY = "重试"
+export const KNOWLEDGE_GRAPH_AI_RELATION = "AI 关联"
+export const KNOWLEDGE_GRAPH_LOCK_GROUP = "保留这版分组"
+export const KNOWLEDGE_GRAPH_UNLOCK_GROUP = "解锁"
+export const KNOWLEDGE_GRAPH_REASON_DISMISS = "关闭"
+/** 与 distill 同源：无 LLM 配置时 CTA 禁用 tooltip。 */
+export const KNOWLEDGE_GRAPH_LLM_NOT_CONFIGURED = "未配置 LLM"
+
+export function knowledgeGraphOrganizeCta(n: number): string {
+  return `让 AI 整理现有 ${n} 篇`
+}
+
+/** 2–19 且 status ok → LLM 整理 lane（CTA / 重新整理）。 */
+export function isKnowledgeGraphLlmLane(nodeCount: number): boolean {
+  return nodeCount >= 2 && nodeCount <= KNOWLEDGE_GRAPH_LLM_LANE_MAX
+}
+
 export type KnowledgeGraphStatus = "ok" | "too_few" | "over_cap" | "rebuilding" | "error"
 
 /** Banner copy for the honest states; ok → no banner. */
