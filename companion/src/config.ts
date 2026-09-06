@@ -603,7 +603,7 @@ export function clearConfigCache(): void {
 
 function configFileMtimeMs(): number | null {
   try {
-    return fs.statSync(path.join(DATA_DIR, "config.json")).mtimeMs
+    return fs.statSync(path.join(getConfigDir(), "config.json")).mtimeMs
   } catch {
     return null
   }
@@ -633,19 +633,19 @@ export async function initDataDir(): Promise<void> {
   // P1 CORR-09: demote stuck recording meetings after process restart
   try {
     const { reconcileStaleRecordings } = require("./meeting/meeting-store") as typeof import("./meeting/meeting-store")
-    reconcileStaleRecordings(DATA_DIR)
+    reconcileStaleRecordings(root)
   } catch {
     /* meetings module optional at very early boot */
   }
 
   // Ensure data directory itself has restricted permissions
   try {
-    fs.chmodSync(DATA_DIR, 0o700)
+    fs.chmodSync(root, 0o700)
   } catch {
     // Ignore if we don't have permission to chmod
   }
 
-  const configPath = path.join(DATA_DIR, "config.json")
+  const configPath = path.join(getConfigDir(), "config.json")
   if (!fs.existsSync(configPath)) {
     fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2), { mode: 0o600 })
   }
@@ -656,7 +656,7 @@ export async function initDataDir(): Promise<void> {
 
   // Copy builtin skills if they don't exist
   const builtinSkillsSrc = getBuiltinSkillsSrc()
-  const builtinSkillsDest = path.join(DATA_DIR, "builtin-skills")
+  const builtinSkillsDest = path.join(root, "builtin-skills")
   if (fs.existsSync(builtinSkillsSrc)) {
     for (const file of fs.readdirSync(builtinSkillsSrc)) {
       const dest = path.join(builtinSkillsDest, file)
@@ -758,7 +758,7 @@ export function getConfig(): CompanionConfig {
     }
     return cachedConfig
   }
-  const configPath = path.join(DATA_DIR, "config.json")
+  const configPath = path.join(getConfigDir(), "config.json")
   try {
     cachedConfig = loadConfigFile(configPath)
     cachedConfigMtimeMs = configFileMtimeMs()
@@ -1047,7 +1047,7 @@ export function replaceMcpServers(servers: McpConfig["servers"]): CompanionConfi
       servers: { ...servers },
     },
   }
-  const configPath = path.join(DATA_DIR, "config.json")
+  const configPath = path.join(getConfigDir(), "config.json")
   const toSave = JSON.parse(JSON.stringify(updated))
   const envKey = getEnvApiKey()
   if (envKey && toSave.llm?.api_key === envKey) {
@@ -1089,7 +1089,7 @@ export function replaceAppsEntries(entries: AppsConfig["entries"]): CompanionCon
       entries: { ...entries },
     },
   }
-  const configPath = path.join(DATA_DIR, "config.json")
+  const configPath = path.join(getConfigDir(), "config.json")
   const toSave = JSON.parse(JSON.stringify(updated))
   const envKey = getEnvApiKey()
   if (envKey && toSave.llm?.api_key === envKey) {
@@ -1116,7 +1116,7 @@ export function setComputerCoordinateEnabled(enabled: boolean): CompanionConfig 
       coordinateEnabled: enabled === true,
     },
   }
-  const configPath = path.join(DATA_DIR, "config.json")
+  const configPath = path.join(getConfigDir(), "config.json")
   const toSave = JSON.parse(JSON.stringify(updated))
   const envKey = getEnvApiKey()
   if (envKey && toSave.llm?.api_key === envKey) {
@@ -1160,7 +1160,7 @@ export function setComputerModelFields(
       coordinateEnabled: current.computer?.coordinateEnabled === true,
     },
   }
-  const configPath = path.join(DATA_DIR, "config.json")
+  const configPath = path.join(getConfigDir(), "config.json")
   const toSave = JSON.parse(JSON.stringify(updated))
   const envKey = getEnvApiKey()
   if (envKey && toSave.llm?.api_key === envKey) {
@@ -1192,7 +1192,7 @@ export function setVoiceFields(partial: Partial<VoiceConfig>): CompanionConfig {
       ...partial,
     },
   }
-  const configPath = path.join(DATA_DIR, "config.json")
+  const configPath = path.join(getConfigDir(), "config.json")
   const toSave = JSON.parse(JSON.stringify(updated))
   const envKey = getEnvApiKey()
   if (envKey && toSave.llm?.api_key === envKey) {
@@ -1440,7 +1440,7 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
     }
   }
 
-  const configPath = path.join(DATA_DIR, "config.json")
+  const configPath = path.join(getConfigDir(), "config.json")
   // Save to file with api_key masked (don't persist the env var to disk)
   const toSave = JSON.parse(JSON.stringify(updated))
   // Only mask the LLM API key if it matches the env var (don't leak env to disk)
@@ -1531,7 +1531,7 @@ export function getConfigDir(): string {
 }
 
 export function getLogDir(): string {
-  return path.join(DATA_DIR, "logs")
+  return path.join(getConfigDir(), "logs")
 }
 
 export function getLockFilePath(): string {
