@@ -7,6 +7,7 @@ import {
   parseTerminalServerFrame,
   terminalB64Decode,
   terminalB64Encode,
+  TERMINAL_FRAME_B64_MAX,
   TERMINAL_FRAME_PAYLOAD_MAX,
 } from "../src/terminal/wire"
 
@@ -59,4 +60,23 @@ test("isTerminalFrame narrow-matches the family + open_tab verb", () => {
 
 test("payload cap constant is the spec'd 16KiB", () => {
   assert.equal(TERMINAL_FRAME_PAYLOAD_MAX, 16 * 1024)
+})
+
+test("terminal.error parses without session id (busy/disconnected class)", () => {
+  assert.deepEqual(parseTerminalServerFrame({ type: "terminal.error", code: "busy", error: "已有终端会话" }), {
+    type: "terminal.error",
+    id: "",
+    code: "busy",
+    error: "已有终端会话",
+  })
+  assert.equal(parseTerminalServerFrame({ type: "terminal.error", code: "busy" }), null)
+  // 其他族仍要求 id
+  assert.equal(parseTerminalServerFrame({ type: "terminal.pause" }), null)
+})
+
+test("terminal.data rejects b64 beyond cap (pi NIT-4)", () => {
+  const huge = "A".repeat(TERMINAL_FRAME_B64_MAX + 2)
+  assert.equal(parseTerminalServerFrame({ type: "terminal.data", id: "t", seq: 1, b64: huge }), null)
+  const okB64 = "A".repeat(TERMINAL_FRAME_B64_MAX)
+  assert.equal(parseTerminalServerFrame({ type: "terminal.data", id: "t", seq: 1, b64: okB64 })?.type, "terminal.data")
 })

@@ -6,6 +6,8 @@
 export const TERMINAL_FRAME_PAYLOAD_MAX = 16 * 1024
 /** 写缓冲高水位：xterm 未 ack 的帧数超过即等 pause（服务端按 ack 水位 pty.pause）。 */
 export const TERMINAL_ACK_HIGH_WATER = 64
+/** b64 字符上限（净荷 16KiB → b64 ≈ 21.8k，留余量；超出的帧直接拒，防坏帧撑爆 atob）。 */
+export const TERMINAL_FRAME_B64_MAX = 24 * 1024
 
 // --- client → companion ---
 
@@ -20,6 +22,8 @@ export type TerminalClientFrame =
 
 export type TerminalServerFrame =
   | { type: "terminal.opened"; id: string; pid: number; platform: string }
+  /** 扩展级错误（无会话 id，id=""）：busy 拒 / WS 未连 / 开门超时。与 closed 分开——closed 是某会话终态，error 是「连会话都没成立」。 */
+  | { type: "terminal.error"; id: string; code: string; error: string }
   | { type: "terminal.data"; id: string; seq: number; b64: string }
   | { type: "terminal.pause"; id: string }
   | { type: "terminal.resume"; id: string }
@@ -52,8 +56,16 @@ export function parseTerminalServerFrame(raw: unknown): TerminalServerFrame | nu
   if (!raw || typeof raw !== "object") return null
   const o = raw as Record<string, unknown>
   const type = asStr(o.type)
+  if (!type) return null
+  // terminal.error 无会话 id（会话未成立），先判，不要求 id
+  if (type === "terminal.error") {
+    const code = asStr(o.code)
+    const error = asStr(o.error)
+    if (!code || !error) return null
+    return { type, id: "", code, error }
+  }
   const id = asStr(o.id)
-  if (!type || !id) return null
+  if (!id) return null
   switch (type) {
     case "terminal.opened": {
       const pid = asInt(o.pid)
@@ -64,7 +76,7 @@ export function parseTerminalServerFrame(raw: unknown): TerminalServerFrame | nu
     case "terminal.data": {
       const seq = asInt(o.seq)
       const b64 = asStr(o.b64)
-      if (seq == null || !b64) return null
+      if (seq == null || !b64 || b64.length > TERMINAL_FRAME_B64_MAX) return null
       return { type, id, seq, b64 }
     }
     case "terminal.pause":

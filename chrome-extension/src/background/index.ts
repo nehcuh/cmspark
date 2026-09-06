@@ -306,7 +306,7 @@ function init() {
       if (terminalRelay) {
         // 已有终端会话：拒第二个 tab（companion 同样只认 1 个 PTY）
         try {
-          port.postMessage({ type: "terminal.closed", id: "rejected", code: "busy", error: "已有终端会话在运行" })
+          port.postMessage({ type: "terminal.error", code: "busy", error: "已有终端会话在运行（同时只允许一个内嵌终端）" })
           port.disconnect()
         } catch {}
         return
@@ -529,9 +529,11 @@ async function handleCompanionMessage(msg: any) {
     openOrFocusCockpit().catch(() => {})
   }
 
-  // #432: terminal.* 帧定向进终端 tab 中继（不广播侧栏，不解析 ANSI）
-  if (terminalRelay && typeof msg?.type === "string" && msg.type.startsWith("terminal.")) {
-    if (terminalRelay.handleWsFrame(msg)) return
+  // #432: terminal.* 帧定向进终端 tab 中继（不广播侧栏，不解析 ANSI）；
+  // pi NIT-1：relay 缺席/parse 失败也吞掉——terminal 帧族永不落普通广播
+  if (typeof msg?.type === "string" && msg.type.startsWith("terminal.")) {
+    terminalRelay?.handleWsFrame(msg)
+    return
   }
 
   if (msg.type === "knowledge.graph") {

@@ -54,6 +54,15 @@ export function TerminalApp() {
     const sessionId = `term.${Date.now().toString(36)}.${(sessionSeq += 1)}`
     let inputSeq = 0
     let closedByUs = false
+    // pi MAJOR-1 ③：开门 watchdog——12s 无 opened/error 一律落 error，不永转圈
+    const OPEN_WATCHDOG_MS = 12_000
+    let opened = false
+    const watchdog = setTimeout(() => {
+      if (!opened) {
+        setStatus("error")
+        setDetail("companion 未响应：请确认 CMspark 在运行，且设置中已开启「内嵌终端」")
+      }
+    }, OPEN_WATCHDOG_MS)
 
     const port = chrome.runtime.connect({ name: TERMINAL_PORT_NAME })
 
@@ -79,9 +88,19 @@ export function TerminalApp() {
 
     port.onMessage.addListener((raw: unknown) => {
       const frame = raw as TerminalServerFrame
-      if (!frame || (frame as { id?: string }).id !== sessionId) return
+      if (!frame) return
+      // 扩展级错误无会话 id（busy/disconnected/watchdog 同类），不受会话过滤
+      if (frame.type === "terminal.error") {
+        opened = true // 停 watchdog
+        setStatus("error")
+        setDetail(frame.error)
+        subData.dispose()
+        return
+      }
+      if ((frame as { id?: string }).id !== sessionId) return
       switch (frame.type) {
         case "terminal.opened":
+          opened = true
           setStatus("running")
           term.focus()
           break
@@ -94,6 +113,8 @@ export function TerminalApp() {
           break
         }
         case "terminal.closed": {
+          opened = true // 终态到达，停 watchdog
+          subData.dispose() // pi NIT-2：closed 后不再发 input
           setStatus(frame.error ? "error" : "closed")
           if (frame.error) setDetail(frame.error)
           else if (frame.code === "unsupported") setDetail("当前平台暂不支持内嵌终端（首发仅 macOS）")
@@ -106,7 +127,10 @@ export function TerminalApp() {
     })
 
     port.onDisconnect.addListener(() => {
-      if (!closedByUs) setStatus((s) => (s === "running" ? "closed" : s))
+      if (closedByUs) return
+      opened = true // 停 watchdog
+      setStatus((s) => (s === "running" ? "closed" : s === "connecting" ? "error" : s))
+      setDetail((d) => d || "连接中断")
     })
 
     const subData = term.onData((data) => {
@@ -114,8 +138,16 @@ export function TerminalApp() {
       send({ type: "terminal.input", id: sessionId, seq: inputSeq, b64: terminalB64Encode(data) })
     })
 
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null
+    let pendingResize: { cols: number; rows: number } | null = null
     const subResize = term.onResize(({ cols, rows }) => {
-      send({ type: "terminal.resize", id: sessionId, cols, rows })
+      pendingResize = { cols, rows }
+      if (resizeTimer) return
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null
+        if (pendingResize) send({ type: "terminal.resize", id: sessionId, ...pendingResize })
+        pendingResize = null
+      }, 50)
     })
 
     const onWinResize = () => fit.fit()
@@ -125,6 +157,8 @@ export function TerminalApp() {
 
     return () => {
       closedByUs = true
+      clearTimeout(watchdog)
+      if (resizeTimer) clearTimeout(resizeTimer)
       window.removeEventListener("resize", onWinResize)
       subData.dispose()
       subResize.dispose()

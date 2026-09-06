@@ -83,7 +83,13 @@ export function attachTerminalPort(
       sessionId = m.id
       log("info", "extension.terminal_open_requested", { id: sessionId })
     }
-    wsSend(raw as Record<string, unknown>)
+    // pi MAJOR-1 ②：WS 未连时 wsSend=false，帧会静默丢失、tab 永挂 connecting——
+    // 回推扩展级错误帧让 tab 落 error 态。
+    if (wsSend(raw as Record<string, unknown>) !== true) {
+      try {
+        port.postMessage({ type: "terminal.error", code: "disconnected", error: "companion 未连接，请确认 CMspark 在运行后重开终端" })
+      } catch {}
+    }
   })
 
   port.onDisconnect.addListener(() => {
