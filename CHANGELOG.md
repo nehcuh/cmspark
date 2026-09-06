@@ -15,11 +15,12 @@
 
 - **uokwyw 四断点修复**：CDP 连败 origin 封禁后——(A) 未武装 CU 时升级文案不再撒谎说「MAY call host_computer」，改指 `loop_declare_blocked` + 解锁路径（linux 分支同步：CU 永不可用，`suggested_action` 恒 `declare_blocked`）；(B) `closeRouteRun` 只把**成功**的 host_computer/osascript 记为已换路，失败不再清 staleRuns——`r3-unarmed`「请打开坐标 CU」解锁合同能浮出；(C) `host_computer` zod schema 补 optional `trigger_reason`（对齐 catalog，第一次升级调用不再死于 `.strict()`）；(D) 熔断 chat.error 在 origin 已升级时附解锁指引（设置→坐标计算机使用 / 换任务）。loop 仍**永不**自动打开 coordinateEnabled。[#409](https://github.com/nehcuh/cmspark/issues/409)
 
-### outbound MCP（#407 #408 #410）
+### outbound MCP（#407 #408 #410 #419）
 
 - **租手 stdio `tools/list` 短名（Grok `tool_count: 0`）**：Grok 把 MCP 工具写成 `server__tool` 且合格名只允许一个 `__`。旧 `mcp-outbound` 直接暴露 `cmspark__list_tabs`，Grok 再前缀成 `cmspark__cmspark__list_tabs` 后丢掉全部工具——`grok mcp doctor` 仍报 10 tools / healthy。`tools/list` 改为短名（`list_tabs`）；`CallTool` 短名与 `cmspark__*` 都收。HTTP invoke / 默认 profile 白名单不变，**不扩** outbound L1。
 - **租手 HTTP invoke 与 stdio 双轨同名（#408）**：`companionInvokeOutbound` 入口套同一 `canonicalOutboundMcpName`，短名（`list_tabs`）与 `cmspark__*` 均可；短名 exfil 仍走 grant 门（`DISCLOSURE_NOT_GRANTED`）。非法格式 vs 真不在 profile 的 `PROFILE_FORBIDDEN` 文案分开；审计记 `tool`（canonical）+ `wire_name`（原始名）。**不扩**默认 outbound L1。[#408](https://github.com/nehcuh/cmspark/issues/408)
 - **outbound `outbound_l1_interact` 命名 profile（#410，同层补全）**：默认 8 工具 + 2 meta **逐字节不变**；interact 档 = 默认 ∪ {scroll / get_element_info / press_key / select_option / hover / dblclick / fill_form / drag_and_drop / create_tab / get_page_html / analyze_image}，`outbound-grant issue --profile outbound_l1_interact` 显式索取。DOM/像素读（get_page_html / analyze_image）入 exfil 类，**复用** `allow_page_export` 门（不拆新旗）。HTTP 轨按钥匙 profile、stdio 轨按 caller live grant（同 exfil 双轨）；stdio `tools/list` 经认证 `/outbound-mcp/v1/profile` 按钥匙裁剪（fetch 失败降级默认集）。**豁免旗不溅射（收紧）**：auto_approve_dangerous / god-mode / auto_approved_domains 对 outbound 一律无效——auto-approved 域仍确认台、非 http(s) 仍硬拦；outbound 只认 grant per-key 旗 + 操作者 HITL。[#410](https://github.com/nehcuh/cmspark/issues/410)
+- **interact 残余三项（#419）**：(1) stdio profile **懒重拉**——companion 晚于 mcp-outbound 启动时不再终身降级默认集：tools/list / CallTool 在降级态且距上次 fetch ≥30s 时重试（有界 ≤5 次），成功即升级广告集与本地门，失败仍默认集不拓宽；(2) 扩展设置页签发 grant 加 **profile 下拉**（outbound_l1_default / outbound_l1_interact，走既有 issue 通道 profile 字段）；(3) HTTP 形状预检 **allowlist 感知**（#413 复审 P2-1）——预检不再拒「任一已知 profile 上已授权」的工具（未来 camelCase 成员不会被 HTTP 轨误拒而 stdio 放行），非法格式 vs off-profile 的文案分层保留，HTTP/stdio 双轨对同一 wire name 同 allow/deny 判定。默认档语义与内容均不变。[#419](https://github.com/nehcuh/cmspark/issues/419)
 
 ### 专家模式（#411 #416）
 

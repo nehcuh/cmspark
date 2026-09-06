@@ -4,6 +4,12 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
 import { SectionHeader } from "../ui/SectionHeader"
+import {
+  OUTBOUND_GRANT_PROFILE_OPTIONS,
+  OUTBOUND_DEFAULT_PROFILE_FOR_UI,
+  isOutboundGrantProfileForUi,
+  type OutboundGrantProfile,
+} from "../utils/outbound-profiles"
 
 type GrantRow = {
   id: string
@@ -67,6 +73,7 @@ export function OutboundMcpSettingsSection() {
   const [callerId, setCallerId] = useState("grok-build")
   const [ttlMs, setTtlMs] = useState(30 * 24 * 60 * 60 * 1000)
   const [allowPageExport, setAllowPageExport] = useState(false)
+  const [profile, setProfile] = useState<OutboundGrantProfile>(OUTBOUND_DEFAULT_PROFILE_FOR_UI)
   const [issued, setIssued] = useState<IssuedGrant | null>(null)
   const [copyOk, setCopyOk] = useState(false)
   const [hostOs, setHostOs] = useState<HostOs>("linux")
@@ -138,6 +145,7 @@ export function OutboundMcpSettingsSection() {
       caller_id: cid,
       ttl_ms: ttlMs,
       allow_page_export: allowPageExport === true,
+      profile,
     })
   }
 
@@ -248,6 +256,25 @@ export function OutboundMcpSettingsSection() {
             </option>
           ))}
         </select>
+        <select
+          style={{ ...styles.input, marginTop: 6 }}
+          value={profile}
+          onChange={(e) => {
+            const v = e.target.value
+            if (isOutboundGrantProfileForUi(v)) setProfile(v)
+          }}
+          aria-label="grant profile"
+        >
+          {OUTBOUND_GRANT_PROFILE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <div style={styles.helpText}>
+          {OUTBOUND_GRANT_PROFILE_OPTIONS.find((o) => o.value === profile)?.hint}
+          — 交互档含 get_page_html / analyze_image（页面内容外泄），需勾下方外泄允许并经确认台。
+        </div>
         <label style={{ ...styles.helpText, display: "flex", gap: 6, marginTop: 8, alignItems: "flex-start" }}>
           <input
             type="checkbox"
