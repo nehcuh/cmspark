@@ -129,6 +129,22 @@ test("CallTool still forbids tools off the curated L1 profile", async () => {
   }
 })
 
+test("short-name exfil tools stay gated: no grant → DISCLOSURE_NOT_GRANTED", async () => {
+  const { client, close } = await connectOutboundClient()
+  try {
+    // stdio track caller is "stdio-default" (CALLER_ENV unset); with no live
+    // flagged grant for that caller, both wire-name and canonical exfil calls
+    // must be denied BEFORE any dispatcher involvement.
+    for (const name of ["get_page_text", "screenshot", "cmspark__get_page_text"]) {
+      const r = parseToolJson(await client.callTool({ name, arguments: {} }))
+      assert.equal(r.isError, true, name)
+      assert.equal(r.body.error_code, "DISCLOSURE_NOT_GRANTED", name)
+    }
+  } finally {
+    await close()
+  }
+})
+
 test("accept_data_disclosure wire name is still ACK_NOT_OPERATOR", async () => {
   const { client, close } = await connectOutboundClient()
   try {
