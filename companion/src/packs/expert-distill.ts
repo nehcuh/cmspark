@@ -235,8 +235,12 @@ export function buildDistillCorpus(
   if (th.digest && !isDigestStale(th.digest, messages)) {
     const d = th.digest
     const lines = [`TL;DR: ${d.tldr}`]
-    if (d.tags?.length) lines.push(`标签: ${d.tags.join(", ")}`)
-    for (const b of d.bullets ?? []) lines.push(`- ${b}`)
+    // digest 来自 index.json，垃圾形状（tags/bullets 非数组）时 join/for-of 抛
+    // TypeError —— 与 #416 复审同款 Array.isArray 守卫（tags 为字符串时 .join 同样抛）。
+    if (Array.isArray(d.tags) && d.tags.length) lines.push(`标签: ${d.tags.join(", ")}`)
+    if (Array.isArray(d.bullets)) {
+      for (const b of d.bullets) lines.push(`- ${b}`)
+    }
     const text = redactPlainText(lines.join("\n")).slice(0, CORPUS_CAP)
     if (text.trim()) return { ok: true, corpus: { text, used_digest: true, corpus_ids: corpusIds } }
   }

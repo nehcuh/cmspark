@@ -197,8 +197,37 @@ test("count: 排除项 — 话题夹 / 时间窗 / 关键词（命中别名或�
   assert.equal(kw.eligible, 3, "keyword hits alias or first/last user preview")
 })
 
-test("候选池按最近活跃倒序 + cap 200", () => {
-  const threads: Th[] = []
+// pi 复审（PR #416）：digest.bullets 非数组（手改 index.json 的垃圾形状）且
+// 指纹相等时，`(bullets ?? []).slice` 抛 TypeError —— tags 有守卫 bullets 没有。
+test("count/scan: digest.bullets 非数组（如 42）不抛 TypeError，画像退回 TL;DR 行", async () => {
+  const msgs = userMsgs("帮我分析财报", "再补充一下")
+  const junkDigest = {
+    ...freshDigest(msgs, "财报分析要点"),
+    bullets: 42,
+    tags: "not-array-either",
+  }
+  const tm = makeTm([{ id: "t-junk", alias: "坏摘要", digest: junkDigest }], { "t-junk": msgs })
+  // count 路径（同步）不抛
+  const c = distillAllScanCount(tm)
+  assert.equal(c.eligible, 1)
+  assert.equal(c.with_digest, 1, "TL;DR 行仍在 → 画像仍走 digest 路径")
+  // 全量扫描路径同样不抛（batch userContent 含 TL;DR、不含垃圾 bullets）
+  const { calls, impl } = twoPhaseImpl({
+    batch: (ids) => ({ candidates: [{ name: "A", description: "d", thread_ids: ids.slice(0, 2), signal: "s" }], deep_read: [] }),
+    merge: () => ({ drafts: [] }),
+  })
+  const r = await distillAllExperts({
+    threadManager: tm,
+    llm: LLM,
+    deps: { llmExtractImpl: impl as any },
+  })
+  assert.ok(r.ok)
+  const batchCall = calls.find((x) => x.systemPrompt.includes("聚类"))
+  assert.ok(batchCall)
+  assert.ok(batchCall.userContent.includes("财报分析要点"), "TL;DR survives junk bullets")
+})
+
+test("候选池按最近活跃倒序 + cap 200", () => {  const threads: Th[] = []
   const messages: Record<string, Msg[]> = {}
   for (let i = 0; i < 205; i++) {
     const id = `t${String(i).padStart(3, "0")}`

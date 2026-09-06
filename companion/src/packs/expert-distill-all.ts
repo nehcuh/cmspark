@@ -166,7 +166,11 @@ function shallowProfileText(t: CandidateThread): { text: string; used_digest: bo
     const d = t.digest
     const lines = [`TL;DR: ${d.tldr ?? ""}`]
     if (Array.isArray(d.tags) && d.tags.length) lines.push(`标签: ${d.tags.join(", ")}`)
-    for (const b of (d.bullets ?? []).slice(0, 5)) lines.push(`- ${b}`)
+    // pi 复审（PR #416）：digest 来自 index.json，垃圾形状（bullets=42）时
+    // `(bullets ?? []).slice` 抛 TypeError —— 与 tags 同款 Array.isArray 守卫。
+    if (Array.isArray(d.bullets)) {
+      for (const b of d.bullets.slice(0, 5)) lines.push(`- ${b}`)
+    }
     const text = redactPlainText(lines.join("\n").replace(/\s+/g, " ")).slice(0, PROFILE_CAP)
     if (text.trim()) return { text, used_digest: true }
   }
