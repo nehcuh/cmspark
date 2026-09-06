@@ -502,46 +502,73 @@ export function thawTabIfPresent(threadId: string, tabId: number | undefined): v
   stateFor(threadId).frozenTabs.delete(tabId)
 }
 
-function originEscalateError(cuArmed: boolean): string {
-  const plat = platform()
-  const n = SITE_ORIGIN_FAIL_ESCALATE
-  const confirm =
-    "That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). NEVER treat this as auto-approved CU."
-  const listTabsHint = " Run list_tabs to refresh tab origins."
+/**
+ * #417 NIT-1/NIT-4 — single source for linux / unarmed / armed escalate copy.
+ * Envelope (`originEscalateError`), locator-ban alt, and origin-streak prompt
+ * all read from here so #414/#417 cannot drift. Armed osascript_eval is
+ * darwin-only (Win/Linux never see a macOS path).
+ */
+export type EscalateGuidanceMode = "linux" | "unarmed" | "armed"
+
+export function escalateGuidance(
+  cuArmed: boolean,
+  plat: string = platform(),
+): {
+  mode: EscalateGuidanceMode
+  locatorAlt: string
+  originEsc: string
+  envelopeGuidance: string
+} {
   if (plat === "linux") {
-    // #409 CI-fix: CU never exists on Linux — arming changes nothing. The
-    // honest guidance is declare_blocked, same as the unarmed branch.
-    return (
-      `SITE_OP_BANNED: CDP interactive tools already failed ${n}+ times on this origin ` +
-      "(across locators/tools) — do not retry click/type/evaluate here. " +
-      "host_computer is NOT available on this platform (Linux); arming CU changes nothing. " +
-      "Call loop_declare_blocked, or stop/change the task; there is no third JS injection path." +
-      listTabsHint
-    )
+    return {
+      mode: "linux",
+      locatorAlt:
+        "Call loop_declare_blocked (host_computer is NOT available on Linux; arming CU changes nothing) " +
+        "instead of re-probing the same locator.",
+      originEsc:
+        "do not retry CDP; call loop_declare_blocked (host_computer is NOT available on Linux; arming CU changes nothing)",
+      envelopeGuidance:
+        "host_computer is NOT available on this platform (Linux); arming CU changes nothing. " +
+        "Call loop_declare_blocked, or stop/change the task; there is no third JS injection path.",
+    }
   }
-  // #409-A: unarmed CU must not be advertised as a MAY-call escalation — the
-  // call would die COMPUTER_DISABLED. Same caliber as buildSteerText unarmed
-  // branch: declare blocked, wait for the user to arm, loop never flips the flag.
   if (!cuArmed) {
-    return (
-      `SITE_OP_BANNED: CDP interactive tools already failed ${n}+ times on this origin ` +
-      "(across locators/tools) — do not retry click/type/evaluate here. " +
-      "Coordinate CU is NOT armed (computer.coordinateEnabled=false): do NOT call host_computer either — it would fail COMPUTER_DISABLED. " +
-      "Call loop_declare_blocked, or wait for the user to arm 坐标计算机使用 in Settings and restore from checkpoint. " +
-      "The loop will never flip this flag itself." +
-      listTabsHint
-    )
+    return {
+      mode: "unarmed",
+      locatorAlt:
+        "Call loop_declare_blocked; do not call host_computer (CU unarmed / COMPUTER_DISABLED). " +
+        "The loop will never flip coordinateEnabled. Prefer a different locator or navigate instead of re-probing.",
+      originEsc:
+        "do not retry CDP; call loop_declare_blocked (do NOT call host_computer — COMPUTER_DISABLED). Loop never flips coordinateEnabled",
+      envelopeGuidance:
+        "Coordinate CU is NOT armed (computer.coordinateEnabled=false): do NOT call host_computer either — it would fail COMPUTER_DISABLED. " +
+        "Call loop_declare_blocked, or wait for the user to arm 坐标计算机使用 in Settings and restore from checkpoint. " +
+        "The loop will never flip this flag itself.",
+    }
   }
-  const cu =
-    "After this origin fail streak / CDP attach freeze / DOM-script cap, you MAY call host_computer on the Chrome app token. " +
-    confirm
-  const osa =
-    plat === "darwin"
-      ? " osascript_eval is a last-resort macOS JS path after CDP+scripting both fail."
-      : ""
+  const osa = plat === "darwin"
+  return {
+    mode: "armed",
+    locatorAlt:
+      "Prefer an alternative path " +
+      `(different locator, navigate to reset, host_computer under Rule 12 confirm${osa ? ", or osascript_eval" : ""}) ` +
+      "instead of re-probing the same locator.",
+    originEsc:
+      `do not retry CDP; escalate to host_computer (Chrome token, ALWAYS confirms)${osa ? " or osascript_eval" : ""}`,
+    envelopeGuidance:
+      "After this origin fail streak / CDP attach freeze / DOM-script cap, you MAY call host_computer on the Chrome app token. " +
+      "That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). NEVER treat this as auto-approved CU." +
+      (osa ? " osascript_eval is a last-resort macOS JS path after CDP+scripting both fail." : ""),
+  }
+}
+
+function originEscalateError(cuArmed: boolean): string {
+  const n = SITE_ORIGIN_FAIL_ESCALATE
+  const { envelopeGuidance } = escalateGuidance(cuArmed)
   return (
     `SITE_OP_BANNED: CDP interactive tools already failed ${n}+ times on this origin ` +
-    `(across locators/tools) — do not retry click/type/evaluate here. ${cu}${osa}${listTabsHint}`
+    `(across locators/tools) — do not retry click/type/evaluate here. ` +
+    `${envelopeGuidance} Run list_tabs to refresh tab origins.`
   )
 }
 
@@ -574,13 +601,13 @@ export function bannedSiteOpResult(
   if (ban.error_code === "SITE_OP_ESCALATE") {
     // Linux has no host surface at all — never suggest escalating to a tool
     // that cannot exist there, even when the config flag says armed.
-    const escalatePossible = cuArmed && platform() !== "linux"
+    const { mode } = escalateGuidance(cuArmed)
     return {
       success: false,
       error: originEscalateError(cuArmed),
       data: {
         error_code: "SITE_OP_ESCALATE",
-        suggested_action: escalatePossible ? "escalate_to_host_computer" : "declare_blocked",
+        suggested_action: mode === "armed" ? "escalate_to_host_computer" : "declare_blocked",
         locator: "origin",
       },
     }
@@ -596,9 +623,29 @@ export function bannedSiteOpResult(
   }
 }
 
-export function formatSiteOpMemoryPrompt(threadId: string, hostname?: string): string {
+function resolveFormatCuArmed(opts?: { cuArmed?: boolean }): boolean {
+  // Explicit opts (tests) win. Adapter calls without opts → live loopRouteCaps
+  // (same lazy-require as #414 adapter.ts bannedSiteOpResult). Fail-closed.
+  if (opts && Object.prototype.hasOwnProperty.call(opts, "cuArmed")) {
+    return opts.cuArmed === true
+  }
+  try {
+    const { loopRouteCaps } = require("../loop/tier-bind") as typeof import("../loop/tier-bind")
+    return loopRouteCaps().cuArmed === true
+  } catch {
+    return false
+  }
+}
+
+export function formatSiteOpMemoryPrompt(
+  threadId: string,
+  hostname?: string,
+  opts?: { cuArmed?: boolean },
+): string {
   const s = mem.get(threadId)
   if (!s) return ""
+  const cuArmed = resolveFormatCuArmed(opts)
+  const g = escalateGuidance(cuArmed)
   const lines: string[] = []
   if (s.frozenTabs.size > 0) {
     lines.push(
@@ -622,9 +669,8 @@ export function formatSiteOpMemoryPrompt(threadId: string, hostname?: string): s
     lines.push(
       "Do NOT retry these locators (site op-memory):\n" +
         banned.slice(0, 24).join("\n") +
-        "\nPersisted failures carry over from earlier sessions. Prefer an alternative path " +
-        "(different locator, navigate to reset, host_computer under Rule 12 confirm, or osascript_eval) " +
-        "instead of re-probing the same locator.",
+        "\nPersisted failures carry over from earlier sessions. " +
+        g.locatorAlt,
     )
   }
   const originEsc: string[] = []
@@ -635,7 +681,7 @@ export function formatSiteOpMemoryPrompt(threadId: string, hostname?: string): s
       continue
     }
     originEsc.push(
-      `- origin ${origin} CDP fail streak ${st.fails}× (last ${st.lastCode}) — do not retry CDP; escalate to host_computer (Chrome token, ALWAYS confirms) or osascript_eval`,
+      `- origin ${origin} CDP fail streak ${st.fails}× (last ${st.lastCode}) — ${g.originEsc}`,
     )
   }
   if (originEsc.length) {

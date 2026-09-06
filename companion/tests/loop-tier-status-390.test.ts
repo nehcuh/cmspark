@@ -122,9 +122,10 @@ test("档位绑定零新 config key：LOOP_TIER_CONFIG_KEYS 只读既有 key，�
 test("routeCapsFromFlags：browser 仅 L1 面（CU 已武装也被表帽）；off/full+/值守/自定义按 coordinateEnabled", () => {
   const f = tierBind.routeCapsFromFlags
 
-  // off（每次确认）：已激活也续跑，host 面 iff coordinateEnabled
+  // off（每次确认）：已激活也续跑，host 面 iff coordinateEnabled（linux：CU 永不可用）
+  const hostCu = process.platform !== "linux"
   assert.deepEqual(f({}, { coordinateEnabled: true, unattendedArmed: false }), {
-    cuArmed: true,
+    cuArmed: hostCu,
     osascriptAvailable: f({}, { coordinateEnabled: true, unattendedArmed: false }).osascriptAvailable,
     r3CapReason: null,
     tier: "off",
@@ -139,9 +140,9 @@ test("routeCapsFromFlags：browser 仅 L1 面（CU 已武装也被表帽）；of
   assert.equal(browser.osascriptAvailable, false)
   assert.equal(browser.r3CapReason, "browser-tier")
 
-  // full / full_protocol（已武装面）：host iff coordinateEnabled
+  // full / full_protocol（已武装面）：host iff coordinateEnabled（且非 linux）
   const fullFlags = { auto_approve_dangerous: true, auto_approve_enterprise_tools: true } as const
-  assert.equal(f(fullFlags, { coordinateEnabled: true, unattendedArmed: false }).cuArmed, true)
+  assert.equal(f(fullFlags, { coordinateEnabled: true, unattendedArmed: false }).cuArmed, hostCu)
   assert.equal(f(fullFlags, { coordinateEnabled: false, unattendedArmed: false }).cuArmed, false)
   assert.equal(
     f(fullFlags, { coordinateEnabled: true, unattendedArmed: false }).r3CapReason,
@@ -149,18 +150,31 @@ test("routeCapsFromFlags：browser 仅 L1 面（CU 已武装也被表帽）；of
   )
   const fpFlags = { ...fullFlags, allow_all_schemes: true }
   assert.equal(f(fpFlags, { coordinateEnabled: true, unattendedArmed: false }).tier, "full_protocol")
-  assert.equal(f(fpFlags, { coordinateEnabled: true, unattendedArmed: false }).cuArmed, true)
+  assert.equal(f(fpFlags, { coordinateEnabled: true, unattendedArmed: false }).cuArmed, hostCu)
 
   // 值守（L-5 前同 full+）
   const unattended = f({}, { coordinateEnabled: true, unattendedArmed: true })
   assert.equal(unattended.tier, "unattended")
-  assert.equal(unattended.cuArmed, true)
+  assert.equal(unattended.cuArmed, hostCu)
   assert.equal(unattended.r3CapReason, null)
 
   // custom（非显式武装组合，同 off — least surprise）
   const custom = f({ auto_approve_enterprise_tools: true }, { coordinateEnabled: true, unattendedArmed: false })
   assert.equal(custom.tier, "custom")
-  assert.equal(custom.cuArmed, true)
+  assert.equal(custom.cuArmed, hostCu)
+})
+
+test("#417: routeCapsFromFlags cuArmed is false on linux even when coordinateEnabled", () => {
+  const f = tierBind.routeCapsFromFlags
+  const caps = f(
+    { auto_approve_dangerous: true, auto_approve_enterprise_tools: true },
+    { coordinateEnabled: true, unattendedArmed: false },
+  )
+  if (process.platform === "linux") {
+    assert.equal(caps.cuArmed, false, "linux has no host_computer surface")
+  } else {
+    assert.equal(caps.cuArmed, true)
+  }
 })
 
 test("tierAllowsHostSurface：唯一表帽档是 browser", () => {

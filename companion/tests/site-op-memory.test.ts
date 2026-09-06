@@ -11,6 +11,7 @@ import {
   SITE_ORIGIN_FAIL_ESCALATE,
   SITE_OP_EXPERIENCE_MAX,
   formatSiteOpMemoryPrompt,
+  escalateGuidance,
   thawTabIfPresent,
   bannedSiteOpResult,
   shouldThawAfterSuccess,
@@ -265,6 +266,83 @@ test("#409: armed SITE_OP_ESCALATE keeps the MAY-call copy (non-linux)", () => {
     assert.match(r.error, /MAY call host_computer/)
     assert.match(r.error, /ALWAYS pops a confirm/)
   }
+})
+
+test("#417: unarmed formatSiteOpMemoryPrompt never advertises escalate to host_computer", () => {
+  resetSiteOpMemoryForTests()
+  const origin = "https://x.com/i/bookmarks"
+  for (const text of ["a", "b", "c", "d"]) {
+    recordSiteOpFailure("p417", "click", { tabId: 1, text }, "ELEMENT_NOT_FOUND", origin)
+  }
+  const prompt = formatSiteOpMemoryPrompt("p417", "x.com", { cuArmed: false })
+  assert.match(prompt, /Origin CDP escalate/)
+  assert.match(prompt, /loop_declare_blocked/)
+  assert.doesNotMatch(prompt, /escalate to host_computer/)
+  assert.doesNotMatch(prompt, /ALWAYS confirms/)
+  if (process.platform === "linux") {
+    assert.match(prompt, /NOT available/)
+  } else {
+    assert.match(prompt, /COMPUTER_DISABLED|unarmed|coordinateEnabled/i)
+  }
+})
+
+test("#417: armed formatSiteOpMemoryPrompt keeps CU escalate copy (non-linux)", () => {
+  resetSiteOpMemoryForTests()
+  const origin = "https://x.com/i/bookmarks"
+  for (const text of ["a", "b", "c", "d"]) {
+    recordSiteOpFailure("p417a", "click", { tabId: 1, text }, "ELEMENT_NOT_FOUND", origin)
+  }
+  const prompt = formatSiteOpMemoryPrompt("p417a", "x.com", { cuArmed: true })
+  assert.match(prompt, /Origin CDP escalate/)
+  if (process.platform === "linux") {
+    assert.match(prompt, /loop_declare_blocked/)
+    assert.doesNotMatch(prompt, /escalate to host_computer/)
+  } else {
+    assert.match(prompt, /escalate to host_computer/)
+    assert.match(prompt, /ALWAYS confirms/)
+    if (process.platform === "darwin") {
+      assert.match(prompt, /osascript_eval/)
+    } else {
+      assert.doesNotMatch(prompt, /osascript_eval/)
+    }
+  }
+})
+
+test("#417 NIT-1/NIT-4: escalateGuidance is the single source; osa is darwin-only", () => {
+  const linuxArmed = escalateGuidance(true, "linux")
+  const linuxUnarmed = escalateGuidance(false, "linux")
+  assert.equal(linuxArmed.mode, "linux")
+  assert.equal(linuxUnarmed.mode, "linux")
+  for (const g of [linuxArmed, linuxUnarmed]) {
+    assert.match(g.originEsc, /loop_declare_blocked/)
+    assert.match(g.locatorAlt, /NOT available on Linux/)
+    assert.match(g.envelopeGuidance, /arming CU changes nothing/)
+    assert.doesNotMatch(g.originEsc, /osascript/)
+    assert.doesNotMatch(g.locatorAlt, /osascript/)
+    assert.doesNotMatch(g.envelopeGuidance, /MAY call host_computer/)
+  }
+
+  const unarmedWin = escalateGuidance(false, "win32")
+  assert.equal(unarmedWin.mode, "unarmed")
+  assert.match(unarmedWin.originEsc, /COMPUTER_DISABLED/)
+  assert.doesNotMatch(unarmedWin.originEsc, /osascript/)
+  assert.doesNotMatch(unarmedWin.locatorAlt, /osascript/)
+  assert.doesNotMatch(unarmedWin.envelopeGuidance, /MAY call host_computer/)
+
+  const winArmed = escalateGuidance(true, "win32")
+  assert.equal(winArmed.mode, "armed")
+  assert.match(winArmed.originEsc, /escalate to host_computer/)
+  assert.match(winArmed.locatorAlt, /host_computer under Rule 12 confirm/)
+  assert.match(winArmed.envelopeGuidance, /MAY call host_computer/)
+  assert.doesNotMatch(winArmed.originEsc, /osascript/)
+  assert.doesNotMatch(winArmed.locatorAlt, /osascript_eval/)
+  assert.doesNotMatch(winArmed.envelopeGuidance, /osascript/)
+
+  const macArmed = escalateGuidance(true, "darwin")
+  assert.equal(macArmed.mode, "armed")
+  assert.match(macArmed.originEsc, /osascript_eval/)
+  assert.match(macArmed.locatorAlt, /osascript_eval/)
+  assert.match(macArmed.envelopeGuidance, /osascript_eval/)
 })
 
 test("origin CDP fail streak does not leak to another origin or thread", () => {

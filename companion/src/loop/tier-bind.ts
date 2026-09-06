@@ -48,7 +48,9 @@ export function routeCapsFromFlags(
   const tier = deriveDisplayTier(flags, opts.unattendedArmed)
   const hostAllowed = tierAllowsHostSurface(tier)
   return {
-    cuArmed: hostAllowed && opts.coordinateEnabled === true,
+    // #417: linux has no host_computer surface — arming coordinateEnabled
+    // must not report cuArmed (same caliber as site-op-memory escalatePossible).
+    cuArmed: hostAllowed && opts.coordinateEnabled === true && platform() !== "linux",
     osascriptAvailable: hostAllowed && platform() === "darwin",
     r3CapReason: !hostAllowed ? "browser-tier" : null,
     tier,
