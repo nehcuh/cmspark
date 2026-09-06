@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **peek 拒执不吃熔断预算（#425，gbkq2q 实证）**：SITE_OP_BANNED / SITE_OP_ESCALATE（peek 拒执，工具未执行）不再递增同工具 recoverable 熔断计数——此前「1 次真实超时 + 2 次封禁提示」即误杀对话；origin 已升级时熔断解锁指引覆盖所有工具（不再限 osascript/host_computer）。第二道闸不变：L-3 路线引擎跨 run steer ×2 无视 → blocked。[#425](https://github.com/nehcuh/cmspark/issues/425)
 - **全历史专家归纳打磨（#418）**：草稿恢复「AI 建议工具（不预勾）」展示（suggested_tools 透传）；候选池先按元数据截 cap 再读消息体（大库不再全量读）；扫描期间批次进度事件上屏（「全历史归纳中：批次 n/m」）；批内聚类/归并 prompt 经真实 LLM 三轮实证调优（超时 150s/240s、evidence 并集兜底、silent-zero 诚实 fallback）。[#418](https://github.com/nehcuh/cmspark/issues/418)
 
 ## [0.6.1] — 2026-09-06
