@@ -1,7 +1,13 @@
 /**
  * Outbound MCP default profile (Phase 0) — curated L1 subset.
- * Names use cmspark__* prefix (brief L5).
+ *
+ * Canonical / HTTP / facade names stay `cmspark__*` (ADR-022 L5).
+ * MCP stdio `tools/list` advertises the suffix only (`list_tabs`) so clients
+ * that qualify tools as `server__tool` (Grok) emit `cmspark__list_tabs`
+ * instead of the rejected `cmspark__cmspark__list_tabs` (exactly one `__`).
  */
+
+export const OUTBOUND_MCP_NAME_PREFIX = "cmspark__"
 
 /** Tools allowed on the default outbound profile. */
 export const OUTBOUND_MCP_ALLOWLIST = [
@@ -23,10 +29,28 @@ export const OUTBOUND_MCP_EXFIL_CLASS = new Set<string>([
   "cmspark__screenshot",
 ])
 
+/** MCP tools/list name: strip the canonical `cmspark__` prefix. */
+export function outboundMcpWireName(canonical: string): string {
+  return canonical.startsWith(OUTBOUND_MCP_NAME_PREFIX)
+    ? canonical.slice(OUTBOUND_MCP_NAME_PREFIX.length)
+    : canonical
+}
+
+/**
+ * Map an MCP CallTool name to the canonical `cmspark__*` allowlist name.
+ * Accepts both the wire suffix (`list_tabs`) and the old prefixed alias.
+ */
+export function canonicalOutboundMcpName(wireName: string): string {
+  const n = (wireName || "").trim()
+  if (!n) return n
+  if (n.startsWith(OUTBOUND_MCP_NAME_PREFIX)) return n
+  return `${OUTBOUND_MCP_NAME_PREFIX}${n}`
+}
+
 /** Internal tool name (without cmspark__ prefix) mapping. */
 export function outboundToInternalName(name: string): string | null {
-  if (!name.startsWith("cmspark__")) return null
-  return name.slice("cmspark__".length)
+  if (!name.startsWith(OUTBOUND_MCP_NAME_PREFIX)) return null
+  return name.slice(OUTBOUND_MCP_NAME_PREFIX.length)
 }
 
 export function isOutboundAllowed(name: string): boolean {

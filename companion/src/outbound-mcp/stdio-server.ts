@@ -11,7 +11,12 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js"
-import { OUTBOUND_MCP_ALLOWLIST, OUTBOUND_DISCLOSURE_ZH } from "./profile"
+import {
+  OUTBOUND_MCP_ALLOWLIST,
+  OUTBOUND_DISCLOSURE_ZH,
+  outboundMcpWireName,
+  canonicalOutboundMcpName,
+} from "./profile"
 import { invokeOutboundTool, setOutboundDispatcher } from "./bridge"
 import { listOutboundTools } from "./facade"
 import { createHttpOutboundDispatcher } from "./http-client"
@@ -114,16 +119,20 @@ export function createOutboundMcpServer(): Server {
 
   const allToolNames = [META_ACCEPT, META_PROFILE, ...OUTBOUND_MCP_ALLOWLIST]
 
+  // Wire names are the suffix only (`list_tabs`). Clients that qualify as
+  // `server__tool` (Grok) then expose `cmspark__list_tabs`. Advertising the
+  // canonical `cmspark__*` name here makes Grok emit two `__` delimiters and
+  // drop every tool (session tool_count=0; `grok mcp doctor` still counts 10).
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: allToolNames.map((name) => ({
-      name,
-      description: toolDescription(name),
+    tools: allToolNames.map((canonical) => ({
+      name: outboundMcpWireName(canonical),
+      description: toolDescription(canonical),
       inputSchema: openArgsSchema(),
     })),
   }))
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const name = request.params.name
+    const name = canonicalOutboundMcpName(request.params.name)
     const args = (request.params.arguments || {}) as Record<string, unknown>
     const cid = callerId()
 

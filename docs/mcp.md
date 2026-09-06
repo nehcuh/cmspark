@@ -380,7 +380,9 @@ claude mcp add --env CMSPARK_OUTBOUND_GRANT=cmg_粘贴刚才那把钥匙 \
 
 ### 关键工具（默认 outbound L1 profile）
 
-| 工具 | 说明 |
+MCP `tools/list` 暴露**短名**（`list_tabs`）。Grok 会写成 `cmspark__list_tabs`（恰好一个 `__`）；Claude Code 写成 `mcp__cmspark__list_tabs`。`CallTool` 短名与 `cmspark__*` 都收。HTTP invoke 仍用下表的 `cmspark__*`。
+
+| 工具（Grok / HTTP / 文档名） | 说明 |
 |------|------|
 | `cmspark__list_outbound_profile` | 列出当前策展 L1 工具名 |
 | `cmspark__list_tabs` | 列标签（建议其它工具前先调） |
