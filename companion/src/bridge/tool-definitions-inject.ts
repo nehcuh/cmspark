@@ -3,6 +3,7 @@
 // #au4dch also injects downloads_find; S40 injects skill_install.
 import { BROWSER_DOWNLOAD_TOOL, DOWNLOADS_FIND_TOOL } from "./_browser_download_tool_snippet"
 import { SKILL_INSTALL_TOOL } from "../skills/skill-install"
+import { BUSINESS_DRAFT_TOOL_DEFINITIONS } from "../business-evidence/tool-definitions"
 
 export function ensureBrowserDownloadTool<T extends { function: { name: string } }>(
   tools: T[],
@@ -16,6 +17,9 @@ export function ensureBrowserDownloadTool<T extends { function: { name: string }
   }
   if (!out.some((t) => t.function.name === "skill_install")) {
     out = [...out, SKILL_INSTALL_TOOL as unknown as T]
+  }
+  for (const tool of BUSINESS_DRAFT_TOOL_DEFINITIONS) {
+    if (!out.some(t => t.function.name === tool.function.name)) out = [...out, tool as unknown as T]
   }
   return out
 }

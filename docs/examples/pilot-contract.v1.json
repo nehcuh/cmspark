@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "bindings": [
+    {
+      "system_key": "devops",
+      "environment": "prod",
+      "origins": [
+        "https://devops.example.test"
+      ]
+    },
+    {
+      "system_key": "artifact",
+      "environment": "prod",
+      "origins": [
+        "https://artifact.example.test"
+      ]
+    },
+    {
+      "system_key": "architecture",
+      "environment": "prod",
+      "origins": [
+        "https://architecture.example.test"
+      ]
+    },
+    {
+      "system_key": "cmdb",
+      "environment": "prod",
+      "origins": [
+        "https://cmdb.example.test"
+      ]
+    },
+    {
+      "system_key": "code",
+      "environment": "prod",
+      "origins": [
+        "https://code.example.test"
+      ]
+    },
+    {
+      "system_key": "tests",
+      "environment": "prod",
+      "origins": [
+        "https://tests.example.test"
+      ]
+    },
+    {
+      "system_key": "defects",
+      "environment": "prod",
+      "origins": [
+        "https://defects.example.test"
+      ]
+    }
+  ],
+  "collection_scopes": {
+    "requirement.acceptance_criteria": {
+      "adapter_id": "static_declaration_v1",
+      "adapter_version": "1",
+      "scope": {
+        "kind": "document"
+      },
+      "empty_marker": "No acceptance criteria",
+      "binding_system_key": "devops"
+    },
+    "story.acceptance_criteria": {
+      "adapter_id": "static_declaration_v1",
+      "adapter_version": "1",
+      "scope": {
+        "kind": "document"
+      },
+      "empty_marker": "No acceptance criteria",
+      "binding_system_key": "devops"
+    },
+    "architecture.dependencies": {
+      "adapter_id": "static_declaration_v1",
+      "adapter_version": "1",
+      "scope": {
+        "kind": "document"
+      },
+      "empty_marker": "No dependencies",
+      "binding_system_key": "architecture"
+    },
+    "runtime.assets": {
+      "adapter_id": "static_declaration_v1",
+      "adapter_version": "1",
+      "scope": {
+        "kind": "document"
+      },
+      "empty_marker": "No assets",
+      "binding_system_key": "cmdb"
+    },
+    "tests.case_ids": {
+      "adapter_id": "static_declaration_v1",
+      "adapter_version": "1",
+      "scope": {
+        "kind": "document"
+      },
+      "empty_marker": "No test cases",
+      "binding_system_key": "tests"
+    },
+    "tests.criteria_mapping": {
+      "adapter_id": "static_declaration_v1",
+      "adapter_version": "1",
+      "scope": {
+        "kind": "document"
+      },
+      "empty_marker": "No mappings",
+      "binding_system_key": "tests"
+    },
+    "defects.ids": {
+      "adapter_id": "static_declaration_v1",
+      "adapter_version": "1",
+      "scope": {
+        "kind": "document"
+      },
+      "empty_marker": "No defects",
+      "binding_system_key": "defects"
+    }
+  },
+  "source_bindings": {
+    "release_artifact": {
+      "source_system_key": "artifact",
+      "from": {
+        "system_key": "devops",
+        "kind": "release"
+      },
+      "to": {
+        "system_key": "artifact",
+        "kind": "artifact"
+      }
+    },
+    "architecture_target": {
+      "source_system_key": "architecture",
+      "from": {
+        "system_key": "architecture",
+        "kind": "architecture"
+      },
+      "to": {
+        "system_key": "cmdb",
+        "kind": "system"
+      }
+    },
+    "runtime_target": {
+      "source_system_key": "cmdb",
+      "from": {
+        "system_key": "cmdb",
+        "kind": "system"
+      },
+      "to": {
+        "system_key": "cmdb",
+        "kind": "system"
+      }
+    },
+    "code_requirement": {
+      "source_system_key": "code",
+      "from": {
+        "system_key": "code",
+        "kind": "requirement"
+      },
+      "to": {
+        "system_key": "devops",
+        "kind": "requirement"
+      }
+    },
+    "tests_requirement": {
+      "source_system_key": "tests",
+      "from": {
+        "system_key": "tests",
+        "kind": "requirement"
+      },
+      "to": {
+        "system_key": "devops",
+        "kind": "requirement"
+      }
+    },
+    "tests_commit": {
+      "source_system_key": "tests",
+      "from": {
+        "system_key": "tests",
+        "kind": "commit"
+      },
+      "to": {
+        "system_key": "code",
+        "kind": "commit"
+      }
+    },
+    "defects_requirement": {
+      "source_system_key": "defects",
+      "from": {
+        "system_key": "defects",
+        "kind": "requirement"
+      },
+      "to": {
+        "system_key": "devops",
+        "kind": "requirement"
+      }
+    },
+    "criteria_cases": {
+      "source_system_key": "tests",
+      "from": {
+        "system_key": "devops",
+        "kind": "acceptance_criterion"
+      },
+      "to": {
+        "system_key": "tests",
+        "kind": "test_case"
+      }
+    }
+  },
+  "mappings": [],
+  "required_fields": [],
+  "pass_values": [
+    "passed"
+  ],
+  "freshness": {
+    "mutable_ms": 86400000,
+    "runtime_ms": 900000,
+    "tests_ms": 86400000
+  }
+}
