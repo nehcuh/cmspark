@@ -1,0 +1,15 @@
+{
+  "base": "96a3ca70",
+  "issue": 453,
+  "files": {
+    "companion/src/business-evidence/content.ts": "af62e4dd8e660a02bb985e5546f6f3cc30d1521636396976308673d233f9aba4",
+    "companion/src/business-evidence/pilot-contract.ts": "3896f6f66dfcba25b200b8aa411e0258dc5c4d6fe8c7909706baf87357ffc2c6",
+    "companion/src/business-evidence/schema.ts": "83c2923476f3b2b382a4e503342a7888d751886cf0fd2a5fd3091346e32961e4",
+    "companion/src/business-evidence/store.ts": "b7b87d65bd4182e4f2f24330c20276baa25b3b24944ce932515753e7b16f2564",
+    "companion/tests/business-evidence-content.test.ts": "30eb666d825f7397f4be4d8cf99245bbdf6702c2ac47803da0748108b163afea",
+    "companion/tests/business-evidence-pilot.test.ts": "371a7dfb52fd5b9d9893a3529edc23bd16ca407ffd790f84c2230e3a1828cc4e",
+    "companion/tests/business-evidence-store.test.ts": "aa472a8ed8c6f17296d9708ceb67c3bf7435cd65d879a83718f2e7fbf683d8cf",
+    "companion/tests/fixtures/page-read-v1.json": "94ddef64856eb44a621ee19e1ed9d537aa1c4161abfa23196cf78ca21f8c43ba",
+    "companion/tests/fixtures/page-read-html-v1.json": "70332cab79088aa4c83c0b3189132351d1ee352cbc42acfa0b8f239547eeb0d3"
+  }
+}

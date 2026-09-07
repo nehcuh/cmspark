@@ -1,0 +1,35 @@
+{
+  "success": true,
+  "data": {
+    "text": "Release REL-1\r\nEnvironment prod\r\nCommit abc123\r\n😀 Café",
+    "threats_removed": [],
+    "provenance": {
+      "schema_version": 1,
+      "target": {
+        "kind": "browser",
+        "tab_id": 7,
+        "url": "https://devops.example.test/releases",
+        "origin": "https://devops.example.test",
+        "hostname": "devops.example.test",
+        "path": "/releases",
+        "navigation_key": "8a799e64ec99878ccf9af62009a10ce9c60b48d29309277249ba1ca4a7fee193"
+      },
+      "title": "Synthetic release",
+      "captured_at": "2026-09-07T06:35:33.268Z",
+      "channel": "isolated",
+      "scope": {
+        "kind": "document"
+      },
+      "frame": "top",
+      "coverage": "unknown",
+      "complete_for_scope": false,
+      "pagination": "unknown",
+      "virtualization": "unknown",
+      "iframe_coverage": "not_traversed",
+      "truncated": false,
+      "limit": null,
+      "stop_reason": "SINGLE_READ",
+      "capture_status": "eligible"
+    }
+  }
+}
