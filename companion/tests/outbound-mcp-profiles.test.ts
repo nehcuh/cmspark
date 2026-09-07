@@ -269,3 +269,21 @@ test("#410 stdio default profile does NOT advertise scroll and rejects it", asyn
     setOutboundDispatcher(stub ?? null)
   }
 })
+
+test("#456 context profile advertises strict site_context only alongside default tools", async () => {
+  const s = await connectStdio(["outbound_context_v1"])
+  const stub = getOutboundDispatcher()
+  const calls: string[] = []
+  setOutboundDispatcher(async req => { calls.push(req.internal_tool); return { success: true, data: { knowledge: [] } } })
+  try {
+    const result = await s.client.listTools()
+    const context = result.tools.find(tool => tool.name === "site_context")!
+    assert.ok(context)
+    assert.deepEqual(context.inputSchema.required, ["tabId"])
+    assert.equal(context.inputSchema.additionalProperties, false)
+    assert.equal(result.tools.length, 11, "default eight, site_context, two metadata tools")
+    assert.equal(result.tools.some(tool => tool.name === "get_page_html" || tool.name.startsWith("draft_")), false)
+    assert.equal((await s.call("site_context")).isError, false)
+    assert.deepEqual(calls, ["site_context"])
+  } finally { await s.close(); setOutboundDispatcher(stub ?? null) }
+})

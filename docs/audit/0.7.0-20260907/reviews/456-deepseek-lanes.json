@@ -1,0 +1,59 @@
+{
+  "authorization": {
+    "sections": [
+      "companion/src/outbound-mcp/context-permission.ts",
+      "companion/src/outbound-mcp/context-session.ts",
+      "companion/src/outbound-mcp/outbound-grants.ts",
+      "companion/src/outbound-mcp/profile.ts",
+      "companion/src/outbound-mcp/grant-cli.ts",
+      "companion/src/ws/validate.ts",
+      "companion/src/index.ts",
+      "companion/tests/outbound-context-permission.test.ts",
+      "companion/tests/outbound-grant-cli.test.ts",
+      "chrome-extension/src/sidepanel/utils/outbound-profiles.ts",
+      "chrome-extension/src/sidepanel/components/OutboundMcpSettingsSection.tsx",
+      "chrome-extension/tests/outbound-profiles.test.ts",
+      "docs/mcp.md"
+    ],
+    "sha256": "3da37a9c94f2d39bfe7dbc29430e0a5df068ef57f04f960623ae4ff668745787",
+    "chars": 35477
+  },
+  "transport": {
+    "sections": [
+      "companion/src/outbound-mcp/companion-http.ts",
+      "companion/src/outbound-mcp/http-client.ts",
+      "companion/src/outbound-mcp/stdio-server.ts",
+      "companion/src/outbound-mcp/context-permission.ts",
+      "companion/src/outbound-mcp/context-session.ts",
+      "companion/src/server.ts",
+      "companion/src/message-router.ts",
+      "companion/src/ws/lifecycle.ts",
+      "companion/tests/outbound-mcp-http-e2e.test.ts",
+      "companion/tests/outbound-mcp-profiles.test.ts",
+      "FULL CONTEXT companion/src/outbound-mcp/companion-http.ts",
+      "FULL CONTEXT companion/src/outbound-mcp/facade.ts",
+      "FULL CONTEXT companion/src/outbound-mcp/dual-entry.ts"
+    ],
+    "sha256": "a686292cf828b59fc534936c00b76dbc8eee59fe54d3818510607fb11b5c492b",
+    "chars": 85249
+  },
+  "projection": {
+    "sections": [
+      "companion/src/outbound-mcp/context-projection.ts",
+      "companion/src/outbound-mcp/context-experience.ts",
+      "companion/src/outbound-mcp/context-permission.ts",
+      "companion/src/outbound-mcp/context-session.ts",
+      "companion/src/skills/skill-engine.ts",
+      "companion/tests/outbound-context-projection.test.ts",
+      "companion/src/server.ts",
+      "companion/src/message-router.ts",
+      "companion/src/ws/lifecycle.ts",
+      "FULL CONTEXT companion/src/site-context/browser-resolver.ts",
+      "FULL CONTEXT companion/src/site-context/service.ts",
+      "FULL CONTEXT companion/src/site-context/target.ts",
+      "FULL CONTEXT companion/src/business-evidence/executor.ts"
+    ],
+    "sha256": "4168e47d7d7b03f83b665b973db365aa96713ded53288855ef3a808b042678a9",
+    "chars": 36834
+  }
+}

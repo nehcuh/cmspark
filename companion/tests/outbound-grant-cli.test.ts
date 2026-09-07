@@ -181,3 +181,23 @@ test("#410 --profile with unknown value exits 1 (no grant written)", async () =>
   assert.equal(listOutboundGrants().filter((x) => x.caller_id === "bad").length, 0)
   assert.doesNotMatch(stdout, /cmg_/)
 })
+
+test("#456 CLI issues independent context permission, rejects malformed or wrong-profile config", async () => {
+  const configPath = path.join(process.env.CMSPARK_DATA_DIR!, "context-grant-test.json")
+  const permission = { allow_context_export: true, context_origins: ["https://portal.test"], context_knowledge_ids: ["selected"] }
+  fs.writeFileSync(configPath, JSON.stringify(permission))
+  try {
+    const issued = await runGrantCli(["issue", "--caller-id", "context", "--profile", "outbound_context_v1", "--context-config", configPath])
+    assert.equal(issued.code, 0, issued.stderr)
+    const row = listOutboundGrants()[0]
+    assert.equal(row.allow_page_export, false)
+    assert.equal(row.allow_context_export, true)
+    assert.deepEqual(row.context_origins, permission.context_origins)
+    assert.deepEqual(row.context_knowledge_ids, ["selected"])
+    assert.equal((issued.stdout.match(/cmg_[0-9a-f]{64}/g) || []).length, 1)
+    assert.equal((await runGrantCli(["issue", "--caller-id", "bad", "--context-config", configPath])).code, 1)
+    fs.writeFileSync(configPath, JSON.stringify({ ...permission, context_origins: ["https://*.test"] }))
+    assert.equal((await runGrantCli(["issue", "--caller-id", "bad", "--profile", "outbound_context_v1", "--context-config", configPath])).code, 1)
+    assert.equal(listOutboundGrants().length, 1)
+  } finally { fs.rmSync(configPath) }
+})

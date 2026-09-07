@@ -1,0 +1,6 @@
+{
+  "deepseek_input_sha256": "6066e4765c15a026625ef7db073e757dba41b57c190489c7aa30b8bb680492dc",
+  "grok_input_sha256": "2adc114034bbf99fadcf6d325d6bd0bd559d07fef7472de5efb099925a352fc4",
+  "difference": "Grok has additional unchanged ContextSessionRegistry helper; same exact 3-file delta and tests",
+  "first_grok_attempt": "stopped after trying unavailable live-tree paths; no verdict"
+}

@@ -1,0 +1,33 @@
+{
+  "node": "22.23.2",
+  "scope": "R3 audit-only delta; own frozen manifest; actual local execution, reviewers did not rerun",
+  "runs": [
+    {
+      "name": "targeted",
+      "summary": "48/48",
+      "cwd": "companion",
+      "command_after_nvm_use_22": "npx tsc -p tsconfig.test.json && node scripts/run-tests.mjs .test-dist/tests/outbound-mcp-http-e2e.test.js .test-dist/tests/outbound-context-permission.test.js .test-dist/tests/outbound-grant-cli.test.js",
+      "exit_code": 0,
+      "local_raw_log": ".omx/artifacts/456-audit-r3/machine/targeted.log",
+      "sha256": "3588a79a1bfb80f2d8db8e8b08fe0cc33d81971734f076c5806ad3f83d844287"
+    },
+    {
+      "name": "full",
+      "summary": "4975 pass /23 skip /0 fail plus settings20/20",
+      "cwd": "companion",
+      "command_after_nvm_use_22": "npm test",
+      "exit_code": 0,
+      "local_raw_log": ".omx/artifacts/456-audit-r3/machine/full.log",
+      "sha256": "42e427cf24162fc24ea6badfa7e68320823e6f37882b5b7f264ac445b5b08794"
+    },
+    {
+      "name": "build",
+      "summary": "exit0",
+      "cwd": "companion",
+      "command_after_nvm_use_22": "npm run build",
+      "exit_code": 0,
+      "local_raw_log": ".omx/artifacts/456-audit-r3/machine/build.log",
+      "sha256": "4180afd7fb2d356b435c7464de1515840ea9c7f85ff0c1cd47a44d53d34d04e6"
+    }
+  ]
+}

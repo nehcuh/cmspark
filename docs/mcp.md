@@ -415,3 +415,33 @@ stdio `tools/list` 会按钥匙 profile 裁剪（只广告这把钥匙能调用�
 - **L8 确认**：fan-out 到已鉴权 Side Panel；**macOS Swift 托盘**可弹原生确认；**Windows/Linux 须打开 Chrome 确认台**，没有原生 tray 确认。超时 `OUTBOUND_CONFIRM_REQUIRED`。
 - **L9 tab lease**：交互工具须显式 `tabId`；holder=`outbound_mcp:<caller>`；与 Side Panel 冲突时 **Side Panel 赢**，MCP 得 `TAB_LOCKED`。
 - **租约上限**：同一 caller 默认最多 **2** 个 tab lease。
+
+### 站点上下文档案（0.7.0 开发切片 / #456）
+
+`outbound_context_v1` 提供默认 8 工具及 `site_context({tabId, query?})`。原有 default/interact 档案不增加工具。两个企业 Mission 可独立运行；此档案用于获准使用外部编程助手时复用站点知识，不是 Mission 的依赖。
+
+在设置 → 租手钥匙选择上下文档案，逐个填写允许的精确 origin（协议、主机、端口），勾选具体知识文档，并单独确认“允许上下文出口”。也可将以下内容保存到本地 `context-permission.json`，再签发钥匙：
+
+```json
+{
+  "allow_context_export": true,
+  "context_origins": ["https://devops.example.test"],
+  "context_knowledge_ids": ["your-selected-knowledge-id"]
+}
+```
+
+```bash
+cmspark-agent outbound-grant issue --caller-id codex --profile outbound_context_v1 --context-config context-permission.json
+```
+
+示例域名和知识 ID 需替换为已批准的实际值；不支持通配域名。未勾选知识不代表导出全部知识。页面正文和截图仍需这把钥匙的 `allow_page_export` 及原有确认台批准；上下文许可不能替代页面许可，origin 列表也不限制独立的页面出口。旧钥匙缺少新字段时上下文出口默认关闭。同一 caller 的另一把钥匙不能补充本次权限。撤销后，未完成的异步读取会在返回前丢弃出口内容；已执行的浏览器操作无法撤回。
+
+stdio 进程自动申请服务端会话并发送不透明句柄，不让模型填写 Chat thread ID。句柄绑定具体 grant，有 30 分钟滑动有效期，每把钥匙最多 16 个活跃会话、全局最多 256 个。进程重启或句柄过期后新会话没有旧会话经验；失败调用不会自动重试点击/输入，下一次显式调用才重新申请句柄。
+
+仅服务端明确标记句柄失效才重建会话；访问未授权 origin 不丢弃当前会话。URL 脱敏去除 userinfo/query/fragment，路径及知识正文仍可能含业务信息，不提供自动清除任意正文或路径秘密的保证。所选知识按每次调用的当前版本导出；签发许可并不锁定知识版本。
+
+`site_context` 返回浏览器解析的脱敏目标、所选且仍存在的知识片段/来源/版本，以及本 grant/session 在该 origin 的失败次数、到期时间和 stale 标记。知识与 Chat 使用同一投影算法；不导出内部 prompt、聊天记录、未选知识或历史 Observation。导航变化、撤销、文档删除/修改会被重新检查。`omitted` 表示缺失或预算省略，不能解释为资料齐备。
+
+此档案成功读取的本地页面会在独立 grant/session 下保留有界 Observation 供内部审计；没有材料编辑或证据历史导出工具。单会话上限为 64 条 Observation、单条 64 KiB 规范化正文及总计 4 MiB；容量满时仍保留普通读取结果，返回捕获跳过原因。经验摘要最多 64 个 origin/会话，30 分钟过期，不恢复其他 Chat/知识中的经验。
+
+当前是开发实现。真实模型、企业页面及两个场景的发布验收仍按 [企业试点指南](enterprise-pilot.md) 执行，工具连通不等于 0.7.0 已发布。

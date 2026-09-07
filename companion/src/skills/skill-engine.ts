@@ -1801,10 +1801,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       if (opts?.includeKnowledgeBlocks) {
         knowledgeBlocks.push({
           source,
-          document_version: crypto.createHash("sha256").update(JSON.stringify({
-            content: k.content, entries: k.entries || [], site: k.site || "", type: k.type,
-            title: k.title || k.name, description: k.description, tags: k.tags || [],
-          })).digest("hex"),
+          document_version: this.knowledgeVersion(k),
           content: body,
           content_kind: "summary",
           truncated_by_budget: body.length < summary.length,
@@ -2707,6 +2704,18 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       tags: skill.tags,
       builtin: skill.builtin,
     }
+  }
+
+  private knowledgeVersion(k: Skill): string {
+    return crypto.createHash("sha256").update(JSON.stringify({
+      content: k.content, entries: k.entries || [], site: k.site || "", type: k.type,
+      title: k.title || k.name, description: k.description, tags: k.tags || [],
+    })).digest("hex")
+  }
+
+  getKnowledgeVersion(id: string): string | undefined {
+    const skill = this.get(id)
+    return skill && this.isKnowledgeDoc(skill) ? this.knowledgeVersion(skill) : undefined
   }
 
   getKnowledge(id: string): KnowledgeDocView | undefined {

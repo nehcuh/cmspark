@@ -1,0 +1,42 @@
+{
+  "result": "PASS",
+  "kind": "synthetic-source-data-roundtrip",
+  "baseline": "63b449d9ff77c2c37af54579fbff3b628df286c1",
+  "candidate_head": "0c47480ce482d269aa6575d9605a22afbae0f880",
+  "candidate_uses_working_tree": true,
+  "candidate_companion_source_sha256": "26580a849a27d700c8dcc5afcabbb510dc8b2dfc4c62ee3b23248c445fc6fcc8",
+  "source_hash_covers": [
+    "companion/src",
+    "companion/tsconfig.json",
+    "companion/package.json"
+  ],
+  "verified_phases": [
+    "create",
+    "old",
+    "verify"
+  ],
+  "fixture_sha256": "94ddef64856eb44a621ee19e1ed9d537aa1c4161abfa23196cf78ca21f8c43ba",
+  "procedure_sha256": "580b1b80b5cd1685e50c60ccf6067f55221fc9dc0c6703021b7364a82c163084",
+  "node": "v22.23.2",
+  "platform": "darwin",
+  "dependencies": "Both source snapshots use current companion/node_modules; historical lockfile/dependency fidelity is not rehearsed",
+  "isolation": "Temporary cwd and application data root with minimal environment; not an OS filesystem sandbox, os.homedir is not intercepted",
+  "verified": [
+    "new producer citations and draft revisions survive old initialization",
+    "idempotent replay in restarted current code",
+    "raw new permission fields survive a proven old grant write and new code verifies old-written token",
+    "old version denies new context profile",
+    "selected knowledge bytes preserved",
+    "unknown evidence schema left untouched by old initialization and refused by current code"
+  ],
+  "not_verified": [
+    "real enterprise scenarios",
+    "installed app or installer",
+    "browser/Companion mixed versions",
+    "other operating systems",
+    "production model",
+    "historical dependency versions",
+    "old evidence reader (does not exist in baseline)",
+    "OS filesystem sandbox"
+  ]
+}

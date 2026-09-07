@@ -14,7 +14,14 @@
 import type { IncomingMessage, ServerResponse } from "http"
 import { timingSafeEqual } from "crypto"
 import { WebSocket } from "ws"
-import { getConfig } from "../config"
+import { getConfig, getConfigDir } from "../config"
+import type { SkillEngine } from "../skills/skill-engine"
+import { ContextSessionRegistry, ContextSessionUnavailable } from "./context-session"
+import { requireLiveGrant, OUTBOUND_CONTEXT_PROFILE } from "./context-permission"
+import { projectOutboundContext } from "./context-projection"
+import { resolveBrowserSiteTarget } from "../site-context/browser-resolver"
+import { captureLocalPageResult } from "../business-evidence/executor"
+import { recordContextFailure, contextExperience, clearContextExperiences } from "./context-experience"
 import {
   acceptOutboundDisclosure,
   clearAllOutboundDisclosureSessions,
@@ -54,6 +61,7 @@ import {
   verifyOutboundGrantToken,
   liveGrantProfileById,
   OUTBOUND_L1_DEFAULT_PROFILE,
+  lookupContextGrant,
 } from "./outbound-grants"
 import {
   outboundToolsForProfiles,
@@ -64,6 +72,10 @@ export const OUTBOUND_HTTP_PREFIX = "/outbound-mcp/v1"
 export const OUTBOUND_INVOKE_PATH = `${OUTBOUND_HTTP_PREFIX}/invoke`
 export const OUTBOUND_DISCLOSURE_PATH = `${OUTBOUND_HTTP_PREFIX}/disclosure`
 export const OUTBOUND_HEALTH_PATH = `${OUTBOUND_HTTP_PREFIX}/health`
+export const OUTBOUND_CONTEXT_SESSION_PATH = `${OUTBOUND_HTTP_PREFIX}/session`
+const contextSessions = new ContextSessionRegistry(lookupContextGrant)
+let contextEngine: SkillEngine | null = null
+export function setOutboundContextEngine(engine: SkillEngine | null): void { contextEngine = engine }
 /** #410 — authenticated profile lookup for stdio tools/list trimming. */
 export const OUTBOUND_PROFILE_PATH = `${OUTBOUND_HTTP_PREFIX}/profile`
 
@@ -71,6 +83,7 @@ export type OutboundToolRunner = (
   toolCallId: string,
   internalTool: string,
   params: Record<string, unknown>,
+  options?: { siteContextTabId?: number; signal?: AbortSignal },
 ) => Promise<{ success: boolean; data?: unknown; error?: string }>
 
 let toolRunner: OutboundToolRunner | null = null
@@ -255,6 +268,9 @@ export function resetOutboundCompanionHttpForTests(): void {
   toolRunner = null
   refreshRunner = null
   exfilConfirmer = null
+  contextEngine = null
+  contextSessions.clear()
+  clearContextExperiences()
   clearAllOutboundDisclosureSessions()
 }
 
@@ -448,6 +464,8 @@ export type CompanionInvokeBody = {
   tool?: string
   args?: Record<string, unknown>
   domain?: string
+  /** Companion-issued opaque handle, bound to the authenticated grant. */
+  session_handle?: string
 }
 
 /**
@@ -465,7 +483,7 @@ export async function companionInvokeOutbound(
     grant_profile?: string
     callerConnected?: () => boolean
   },
-): Promise<OutboundCallResult & { data?: unknown; origin?: ReturnType<typeof makeOutboundMcpOrigin> }> {
+): Promise<OutboundCallResult & { data?: unknown; session_invalid?: boolean; origin?: ReturnType<typeof makeOutboundMcpOrigin> }> {
   const caller_id = (body.caller_id || "http-unknown").trim() || "http-unknown"
   const rawTool = (body.tool || "").trim()
   const tool = canonicalOutboundMcpName(rawTool)
@@ -478,6 +496,19 @@ export async function companionInvokeOutbound(
     opts?.grant_profile ||
     (grant_id ? (liveGrantProfileById(grant_id) ?? undefined) : undefined)
   const perKeyProfiles = grant_profile ? [grant_profile] : undefined
+  let contextSession: ReturnType<ContextSessionRegistry["resolve"]> | undefined
+  if (grant_profile === OUTBOUND_CONTEXT_PROFILE) {
+    try {
+      if (!grant_id || typeof body.session_handle !== "string") throw new Error("CONTEXT_SESSION_REQUIRED")
+      contextSession = contextSessions.resolve(body.session_handle, grant_id, caller_id)
+    } catch (error) {
+      const error_code = (error as Error).message
+      appendOutboundMcpAudit({ caller_id, tool, wire_name, profile: grant_profile, grant_id,
+        ok: false, error_code, session_invalid: error instanceof ContextSessionUnavailable })
+      return { ok: false, error: error_code, error_code,
+        ...(error instanceof ContextSessionUnavailable ? { session_invalid: true } : {}) }
+    }
+  }
   const req: OutboundCallRequest = {
     caller_id,
     tool,
@@ -613,7 +644,7 @@ export async function companionInvokeOutbound(
 
   // L9: dual-entry tab lease before CDP
   const args = { ...(body.args || {}) }
-  const leaseGate = gateOutboundTabLease(internal, args, caller_id)
+  const leaseGate = gateOutboundTabLease(internal === "site_context" ? "get_page_text" : internal, args, caller_id)
   if (!leaseGate.ok) {
     appendOutboundMcpAudit({
       caller_id,
@@ -650,7 +681,41 @@ export async function companionInvokeOutbound(
 
   const toolCallId = `ob_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
   try {
-    const result = await runner(toolCallId, internal, taggedArgs)
+    const resolveTarget = (tabId: number) => resolveBrowserSiteTarget((id, name, params, signal, options) => runner(id, name, {
+      ...params, [OUTBOUND_MCP_PARAM]: true, [OUTBOUND_CALLER_PARAM]: caller_id, __thread_id: outboundHolderThreadId(caller_id),
+    }, { siteContextTabId: options?.siteContextTabId, signal }), outboundHolderThreadId(caller_id), tabId)
+    if (grant_id) requireLiveGrant(lookupContextGrant, grant_id, caller_id)
+    if (contextSession && grant_id) contextSessions.resolve(contextSession.handle, grant_id, caller_id)
+    if (internal === "site_context") {
+      if (!contextSession || !grant_id || !contextEngine) return { ok: false, error: "context service unavailable or unauthorized", error_code: "GRANT_DENIED" }
+      const engine = contextEngine
+      const data = await projectOutboundContext(args, { grantId: grant_id, callerId: caller_id, sessionHandle: contextSession.handle }, {
+        lookupGrant: lookupContextGrant, sessions: contextSessions, engine,
+        resolveTarget,
+      })
+      if (opts?.callerConnected && !opts.callerConnected()) return { ok: false, error_code: "CALLER_DISCONNECTED" }
+      const scope = contextSessions.scope(contextSession.handle, grant_id, caller_id)
+      appendOutboundMcpAudit({ caller_id, tool, wire_name, profile: grant_profile, grant_id, ok: true, confirm_outcome: "n/a" })
+      return { ok: true, internal_tool: internal, data: { ...data, experiences: contextExperience(scope, data.target!.origin) }, origin }
+    }
+    const targetBefore = contextSession && Number.isSafeInteger(args.tabId) ? await resolveTarget(Number(args.tabId)) : undefined
+    if (grant_id) requireLiveGrant(lookupContextGrant, grant_id, caller_id)
+    const beforeReadDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id, wire_name, profile: grant_profile })
+    if (beforeReadDeny) return beforeReadDeny
+    if (contextSession && grant_id) contextSessions.resolve(contextSession.handle, grant_id, caller_id)
+    let result = await runner(toolCallId, internal, taggedArgs)
+    const targetAfter = contextSession && targetBefore ? await resolveTarget(targetBefore.tab_id) : undefined
+    // Revocation during an asynchronous read discards the pending export and
+    // cannot create an Observation. It cannot undo an already executed click.
+    if (grant_id) requireLiveGrant(lookupContextGrant, grant_id, caller_id)
+    if (opts?.callerConnected && !opts.callerConnected()) return { ok: false, error_code: "CALLER_DISCONNECTED" }
+    const postExfilDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id, wire_name, profile: grant_profile })
+    if (postExfilDeny) return postExfilDeny
+    if (contextSession && grant_id) {
+      const scope = contextSessions.scope(contextSession.handle, grant_id, caller_id)
+      if (!result.success && targetBefore && targetAfter?.origin === targetBefore.origin && targetAfter.navigation_key === targetBefore.navigation_key) recordContextFailure(scope, targetBefore.origin)
+      result = captureLocalPageResult(getConfigDir(), scope, toolCallId, internal, result)
+    }
     // L8: only map *confirmation* failures (not generic CDP "timeout") — adversary N1
     let error = result.success ? undefined : result.error || "dispatch failed"
     let error_code = result.success ? undefined : "DISPATCH_FAILED"
@@ -691,21 +756,24 @@ export async function companionInvokeOutbound(
       origin,
     }
   } catch (e: any) {
+    const boundaryCode = ["GRANT_DENIED", "SCOPE_DENIED", "TARGET_CHANGED", "SITE_TARGET_UNAVAILABLE", "CAPACITY"].includes(e?.message) ? e.message : "DISPATCH_THREW"
     appendOutboundMcpAudit({
       caller_id,
       tool,
       wire_name,
       profile: grant_profile,
       ok: false,
-      error_code: "DISPATCH_THREW",
+      error_code: boundaryCode,
+      session_invalid: e instanceof ContextSessionUnavailable,
       grant_id,
     })
     return {
       ok: false,
-      error: e?.message || String(e),
-      error_code: "DISPATCH_THREW",
+      error: boundaryCode !== "DISPATCH_THREW" ? boundaryCode : internal === "site_context" ? "CONTEXT_REQUEST_FAILED" : e?.message || String(e),
+      error_code: boundaryCode,
       internal_tool: internal,
       origin,
+      ...(e instanceof ContextSessionUnavailable ? { session_invalid: true } : {}),
     }
   }
 }
@@ -742,6 +810,32 @@ export async function handleOutboundMcpHttp(
       service: "outbound-mcp",
       require_grant: requireGrant,
     })
+    return true
+  }
+
+  if (req.method === "POST" && pathOnly === OUTBOUND_CONTEXT_SESSION_PATH) {
+    let caller_id = "http-unknown"
+    let grant_id: string | undefined
+    let profile: string | undefined
+    const auditSession = (ok: boolean, error_code?: string) => appendOutboundMcpAudit({
+      caller_id, grant_id, profile, tool: "cmspark__context_session", ok, error_code,
+    })
+    try {
+      const body = await readJsonBody(req) as { caller_id?: string }
+      const auth = authorizeOutboundRequest(req, expectedSecret, { bodyCallerId: body.caller_id })
+      if (!auth.ok) { auditSession(false, auth.error_code); json(res, auth.http_status, { ok: false, error_code: auth.error_code }); return true }
+      caller_id = auth.bound_caller_id || "http-unknown"
+      grant_id = auth.grant_id
+      profile = auth.profile
+      if (auth.mode !== "grant" || !auth.grant_id || !auth.bound_caller_id || auth.profile !== OUTBOUND_CONTEXT_PROFILE) { auditSession(false, "GRANT_DENIED"); json(res, 403, { ok: false, error_code: "GRANT_DENIED" }); return true }
+      const session = contextSessions.issue(auth.grant_id, auth.bound_caller_id)
+      auditSession(true)
+      json(res, 200, { ok: true, session_handle: session.handle, expires_at: session.expires_at })
+    } catch (error) {
+      const code = (error as Error).message
+      auditSession(false, ["GRANT_DENIED", "CAPACITY"].includes(code) ? code : "BAD_BODY")
+      json(res, code === "GRANT_DENIED" ? 403 : 400, { ok: false, error_code: ["GRANT_DENIED", "CAPACITY"].includes(code) ? code : "BAD_BODY" })
+    }
     return true
   }
 
@@ -867,7 +961,9 @@ export async function handleOutboundMcpHttp(
         grant_profile: auth.mode === "grant" ? auth.profile : undefined,
         callerConnected: () =>
           !callerSocketGone &&
-          !req.destroyed &&
+          // IncomingMessage may be destroyed normally once the request body
+          // is consumed. Response/socket liveness determines delivery here.
+          !req.aborted &&
           !res.destroyed &&
           !res.writableEnded,
       })

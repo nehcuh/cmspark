@@ -1,0 +1,8 @@
+{
+  "base": "8b415dbd",
+  "files": {
+    "companion/src/outbound-mcp/audit.ts": "3edd9ee58a22e51ecad40b1477d609243ecb824fd92a55873f9a8c26d5990212",
+    "companion/src/outbound-mcp/companion-http.ts": "47f8c18dc742b1d4503e7278b00a79112675f257931d247fc6f799f679d0a114",
+    "companion/tests/outbound-mcp-http-e2e.test.ts": "f9a791fbce642ee41fd43234d1d5376d0756fa52b5eba47cbb265e9b180caba4"
+  }
+}

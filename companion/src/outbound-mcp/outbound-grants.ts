@@ -12,6 +12,8 @@ import * as crypto from "crypto"
 import { getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
 import { appendCapabilityAudit } from "../packs/audit-log"
+import { contextPermissionFromRecord, parseContextPermission, OUTBOUND_CONTEXT_PROFILE, type ContextPermission, type LiveContextGrant } from "./context-permission"
+export { OUTBOUND_CONTEXT_PROFILE } from "./context-permission"
 
 export const OUTBOUND_GRANT_TOKEN_PREFIX = "cmg_"
 export const DEFAULT_GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30d wall-clock
@@ -22,6 +24,7 @@ export const OUTBOUND_L1_INTERACT_PROFILE = "outbound_l1_interact"
 export const OUTBOUND_GRANT_PROFILES = [
   OUTBOUND_L1_DEFAULT_PROFILE,
   OUTBOUND_L1_INTERACT_PROFILE,
+  OUTBOUND_CONTEXT_PROFILE,
 ] as const
 
 export function isOutboundGrantProfile(p: string): boolean {
@@ -35,7 +38,7 @@ function grantsFilePath(): string {
   return path.join(getConfigDir(), "outbound-grants.json")
 }
 
-export type OutboundGrantRecord = {
+export type OutboundGrantRecord = Partial<ContextPermission> & {
   id: string
   label: string
   caller_id: string
@@ -52,7 +55,7 @@ export type OutboundGrantRecord = {
 
 type GrantsFile = { grants: OutboundGrantRecord[] }
 
-export type IssueGrantOpts = {
+export type IssueGrantOpts = Partial<ContextPermission> & {
   label: string
   caller_id: string
   /** TTL ms; default 30d; 0 = no expiry */
@@ -110,6 +113,7 @@ function safeEqualHex(a: string, b: string): boolean {
 function normalizeGrant(raw: OutboundGrantRecord): OutboundGrantRecord {
   return {
     ...raw,
+    ...contextPermissionFromRecord(raw),
     allow_page_export: raw.allow_page_export === true,
     allow_page_export_at: raw.allow_page_export_at ?? null,
   }
@@ -176,6 +180,9 @@ export function issueOutboundGrant(opts: IssueGrantOpts): IssueGrantResult {
   const token = generateOutboundGrantToken()
   const id = "gr_" + crypto.randomBytes(12).toString("hex")
   const allow_page_export = !!opts.allow_page_export
+  const context = parseContextPermission({ allow_context_export: opts.allow_context_export,
+    context_origins: opts.context_origins, context_knowledge_ids: opts.context_knowledge_ids })
+  if (profile !== OUTBOUND_CONTEXT_PROFILE && (context.allow_context_export || context.context_origins.length || context.context_knowledge_ids.length)) throw new Error("CONTEXT_PROFILE_REQUIRED")
   const rec: OutboundGrantRecord = {
     id,
     label,
@@ -188,6 +195,7 @@ export function issueOutboundGrant(opts: IssueGrantOpts): IssueGrantResult {
     last_used_at: null,
     allow_page_export,
     allow_page_export_at: allow_page_export ? created_at : null,
+    ...context,
   }
 
   const file = loadFile()
@@ -200,6 +208,9 @@ export function issueOutboundGrant(opts: IssueGrantOpts): IssueGrantResult {
     profile,
     expires_at,
     allow_page_export,
+    allow_context_export: context.allow_context_export,
+    context_origin_count: context.context_origins.length,
+    context_knowledge_count: context.context_knowledge_ids.length,
   })
 
   return {
@@ -342,6 +353,15 @@ export function revokeAllOutboundGrants(): number {
 /** Public list without token hashes. */
 export function listOutboundGrants(): Omit<OutboundGrantRecord, "token_hash">[] {
   return loadFile().grants.map(({ token_hash: _h, ...rest }) => rest)
+}
+
+/** Exact-record lookup for the new context boundary; never exposes token hash.
+ * Liveness/caller/profile checks remain in requireLiveGrant/requireContextGrant. */
+export function lookupContextGrant(grantId: string): LiveContextGrant | undefined {
+  const record = loadFile().grants.find(grant => grant.id === grantId)
+  if (!record) return undefined
+  return { id: record.id, caller_id: record.caller_id, profile: record.profile, expires_at: record.expires_at,
+    revoked_at: record.revoked_at, ...contextPermissionFromRecord(record) }
 }
 
 /**

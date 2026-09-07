@@ -123,7 +123,7 @@ export type ToolExecutorFn = (
   toolName: string,
   params: any,
   signal?: AbortSignal,
-  invokeOpts?: { trustedOutbound?: boolean },
+  invokeOpts?: { trustedOutbound?: boolean; siteContextTabId?: number },
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
 export type WsLifecycleDeps = {
@@ -298,9 +298,10 @@ export function ensureOutboundToolRunnerWired(): boolean {
   const executeTool = requireRt().createToolExecutor(ws)
   // trustedOutbound: only this Bearer-gated runner may re-apply __outbound_mcp
   // (S42 multi-adv P0 — params alone are not a trust boundary).
-  setOutboundToolRunner(async (toolCallId, internalTool, params) => {
-    return executeTool(toolCallId, internalTool, params, undefined, {
+  setOutboundToolRunner(async (toolCallId, internalTool, params, options) => {
+    return executeTool(toolCallId, internalTool, params, options?.signal, {
       trustedOutbound: true,
+      siteContextTabId: options?.siteContextTabId,
     })
   })
   outboundRunnerWs = ws

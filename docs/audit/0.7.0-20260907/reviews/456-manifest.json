@@ -1,0 +1,32 @@
+{
+  "base": "0a80846d5f18695bfeb7f7be8d5984d7a23edcde",
+  "issue": 456,
+  "baseline_note": "server.ts/message-router.ts baseline is frozen #453 wiring R2; all other tracked files use HEAD; new files use empty baseline. Core/wiring gates remain separate.",
+  "files": {
+    "companion/src/outbound-mcp/context-permission.ts": "9022a64714e6ee55b6d5e705a08487cbe26f0bd5b0e2cff199c4cc4cc1a73fa9",
+    "companion/src/outbound-mcp/context-session.ts": "0d14433e8fab1dd1650ea95785d45f0030ee50b67edc62ab2bb0f67895b02dcd",
+    "companion/src/outbound-mcp/context-projection.ts": "d1d15e6700ad3dac0e8b760b098eef29fc227ef35a72ea6c2f001d6cad2ad599",
+    "companion/src/outbound-mcp/context-experience.ts": "64a7c27cfc46065e7d056f591abfa27b6fbe18f8b453114fd17ea54ee748e7e4",
+    "companion/src/outbound-mcp/companion-http.ts": "26c45c8b121f1fcb81a49f414d2a03266728ff9b1186d7caf1a3f91d18071732",
+    "companion/src/outbound-mcp/grant-cli.ts": "ecadfd8a285f804243812963a2494c9f84c5d48dd1d7cec013cdf4d070338f13",
+    "companion/src/outbound-mcp/http-client.ts": "7bc265bb01cfe877deb2f17fa3af2007c02d05d5ae78200ce3ff1d805c081460",
+    "companion/src/outbound-mcp/outbound-grants.ts": "d40f35804dccc76808808cdee0764fd30cbc76e6af4831762f12081964e71563",
+    "companion/src/outbound-mcp/profile.ts": "151ec208c576068f9b5a432c1877c44f2350195a8168ef4605a146742ce288d9",
+    "companion/src/outbound-mcp/stdio-server.ts": "50841fc0abd7cd2e859fa9320db84bb4fe33eda3f44ea6a67ff6ac61ada653d2",
+    "companion/src/skills/skill-engine.ts": "e801aca1244cb1ffff3e21f6085dddef905d833a416942034ad3af2d54480d4d",
+    "companion/src/server.ts": "544b71e1bcb58fe7989d491ede6d9b35917b8b21cfb48e01a03a6cea57684d5f",
+    "companion/src/message-router.ts": "a0a0dcc9a1e0e5c5d4cf90e56d1648b029591c8e039db18562cdb3400b5ef609",
+    "companion/src/ws/lifecycle.ts": "4e68ab43f9c38da85bcb08307d17ef83d3facba639d713796580e96dc26ecacb",
+    "companion/src/ws/validate.ts": "508219cb7a3da019aa531f8a14f4cfbc5920ce0dd0c416503ba170fcc647a235",
+    "companion/src/index.ts": "76cebe0d38d9d3357b6f15adfa29ba72767297e70087558af7bdbe5b1021b7cc",
+    "companion/tests/outbound-context-permission.test.ts": "4579363111b39eaf07fb67b55ad05fad848a11d9033b8683356a2638126b4476",
+    "companion/tests/outbound-context-projection.test.ts": "6c9a09a161207fde295bb6d1635b6202281e12907b3704c463d48193143dc872",
+    "companion/tests/outbound-grant-cli.test.ts": "b798777b82bd59a300e895ca17134255e90371b9970e138285bba909974ad0ff",
+    "companion/tests/outbound-mcp-http-e2e.test.ts": "407ae1b619b2504023e00371989b6761f7fa39631fd4021adb768a356cb91cf4",
+    "companion/tests/outbound-mcp-profiles.test.ts": "0237cd18251dd55aa939e19df06a1525b64866d054f7f11d23f82063fab5940b",
+    "chrome-extension/src/sidepanel/utils/outbound-profiles.ts": "82350d35db2b5bba58e0d49f6f7e6cbcb4110d2fb89e99961bd9ce4f1f1c2feb",
+    "chrome-extension/src/sidepanel/components/OutboundMcpSettingsSection.tsx": "0d12c3401efca24c52270546085e454d3e79a6effa5d0d8ee2879c62a4587cb1",
+    "chrome-extension/tests/outbound-profiles.test.ts": "1a73b936d66cfe6f6653083161164c46f410640b1529fcf534c237702bfb23d9",
+    "docs/mcp.md": "49302af99035dbd987dbe5d472eb96a47e23a25d374f1c20b0b41927098c67e2"
+  }
+}

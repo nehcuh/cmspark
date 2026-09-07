@@ -1,0 +1,60 @@
+# #456 independent context export — gate status
+
+**R2 and R3 independently approved; final CI/merge tracked in PR #463.** Grok4.6 full R1 and R2 delta both pass with no BLOCK/MAJOR. Actual DeepSeekV4Pro approved all three bounded R2 lanes; its conditional projection M1 was independently cleared after supplying complete producer/lookup wiring. The lane section union covers the complete frozen R2, with cross-module overlap. Failed output-limit attempts are archived and never counted. User accepts this exact model pair; the CLI brand is not the model identity.
+
+Machine at frozen R2: HTTP/context/CLI48/48; Companion full4975pass/23skip/0fail +settings20/20; Extension1277/1277 at R1 (R2 UI prose-only addition) and R2 production build; Companion production build passed. SDK profile11/11. Source manifest: reviews/456-manifest.json. Independent PR CI is still required.
+
+R2 addresses Grok R1 N1–4 and audit ordering: UI/CLI/docs state context origins only restrict context export; session is revalidated after waits and before the operation; only an explicit `session_invalid` flag clears the stdio cache, not an origin deny; issuance revoke errors map403; success audit follows final scope resolution. A real HTTP mock-clock test proves mid-metadata expiry runs no operation, retains no false success, and only the next explicit call creates a replacement session. The separate tab lease is explicitly settled through the production release helper because this harness has no lifecycle worker.
+
+Remaining Grok R1 NIT dispositions:
+
+- N5: metadata resolver updates the shared tab URL cache with the authenticated, sanitized current target. This cache is global browser metadata, not Chat history or scoped failure memory; no cross-scope experience is recovered/exported by it.
+- N6: observation_id/evidence_capture on successful context-profile page results are non-capability audit references. There is no material/Observation history read or edit API on this profile. Capture belongs to exact grant/session and cannot access Chat scope.
+- N7: selected knowledge has grant-time explicit consent, not page-export HITL. Content under a selected ID can change; each call exports its current version with a final version/deletion check. Docs make this explicit; grant-time version pinning is not promised.
+- N8: target URL removes userinfo/query/fragment, but path or knowledge text may contain sensitive business content. Docs disclose that this is not arbitrary body/path secret detection; grant holders must be approved for the selected information.
+- N9: bounded session/experience records can remain until a subsequent issue/write prunes them; revoked/expired handles cannot read them. WS/Zod enforce caps even when the UI permits attempting an oversized selection. No new permission is granted by cap overflow.
+
+Grok R2 NIT dispositions:
+
+- N1: stdio automatically handles `session_invalid`; custom HTTP clients must use that explicit flag rather than treating every SCOPE_DENIED as an expired handle (wire behavior documented here; normal users use stdio).
+- N2: missing/expired handles are a distinct Error subclass; grant/caller mismatches are ordinary Error and cannot set the invalidation flag. Existing tests cover mismatch denial, origin persistence and expiry recovery.
+- N3: session issue maps the exact GRANT_DENIED string thrown by the live-grant check; no permission is relaxed on other errors.
+- N4: audit uses the broad SCOPE_DENIED category for both cases; client recovery uses the separate response flag. Finer audit taxonomy can be added without exposing session handles.
+- N5: projectOutboundContext has no catch/wrap that erases ContextSessionUnavailable; rejected await preserves the original class for HTTP catch. The hypothetical rewrap is not present.
+
+Default/interact tools are unchanged; empty profile set is corrected to default-only. Page export/HITL and context permission remain independent. No release, installed-app change, real client or enterprise-pilot acceptance is claimed by this local code gate.
+
+## DeepSeek authorization lane R2 — factual NIT disposition
+
+The completed authorization lane has no BLOCK/MAJOR. Other lanes are separate; its pass does not waive their findings.
+
+- N1: ContextSessionRegistry is internal. The sole HTTP issuance endpoint checks authenticated grant mode and exact outbound_context_v1 profile before calling issue. A default key cannot exercise the proposed remote capacity scenario. Requiring allow_context_export inside issue would also forbid the intentionally separate page-only use of a context-profile grant. Keep profile enforcement at the authenticated entry boundary.
+- N2: message-router.ts outbound_mcp.grants.issue wraps issueOutboundGrant in try/catch and returns a typed error response. Strict origin/duplicate/permission validation is performed before persistence; the missing handler context in this lane does not expose an unhandled exception.
+- N3: normal revoke writes an ISO timestamp. Empty-string revoked_at requires a locally edited file, whose owner could equally delete the revocation or replace the grant. The suggested `!== null && !== ""` expression also permits the empty string and would not implement the stated hardening. No unsupported code change is made.
+- N4: TTL is sliding on authenticated resolution, including an origin-denied attempt; an active holder can retain their own session. This is activity, not a promised absolute lifetime. Revocation/expiry is rechecked independently.
+- N5: HTTP rechecks/capture and projection are covered by the other frozen lanes. Empty profiles mean default-only; unknown non-empty profiles yield no tools, not the default fallback described in one sentence of the report. context-experience bounds failure memory; persisted evidence limits are per scope, not a global disk quota or automatic history expiration.
+- N6: CLI reads an operator-selected local JSON file after a size check. Concurrent local replacement can exceed that initial size check; this remains local-input hardening, not a remote authorization boundary. It is not described as protection against a malicious local file owner.
+- N7: the existing Extension background switch includes outbound_mcp.grants.issue and forwards the complete message through wsClient.send(message); it does not reconstruct and drop the new fields. Real installed-client UI acceptance remains in #457.
+- Cosmetic malformed knowledge records: the server's knowledge list supplies real document IDs; a hypothetical missing-ID display cannot create or authorize a document, because grant selection must resolve an existing ID before export.
+
+## DeepSeek projection lane R2 — independently closed dependency
+
+M1 is a conditional blocker based on missing grant producer/lookup context in this bounded lane. Actual issueOutboundGrant calls parseContextPermission before persistence; loadFile applies normalizeGrant/contextPermissionFromRecord; lookupContextGrant parses the exact record again, and malformed permissions deny the new capability. Production HTTP binds that lookup into projectOutboundContext. The report's specific string prefix example also evaluates false in JavaScript. DeepSeek independently read the complete producer/lookup and production wiring, explicitly cleared M1 and approved the projection lane with no BLOCK/MAJOR. Original report and closure are both archived. No source change was made.
+
+Projection closure NIT disposition: N1 keeps the intentionally shared SCOPE_DENIED wire category with a distinct Error class and session_invalid flag; the actual instanceof check is verified. N2 tab binding and N7 metadata-cache separation were cleared. N3 selected IDs/origins are separately explicit permissions; N4 HMAC is bridge-owned; N5 document ID is independently matched before the version check, so equal content under another ID cannot substitute. N6 persistent evidence limits are per scope; session/failure maps are bounded, and no global on-disk TTL/eviction is promised. These are documented boundaries, not waived defects.
+
+## Transport NIT closure and R3 audit delta
+
+The transport lane's valid PASS referenced omitted NIT text after an output-limit continuation. A standalone follow-up supplied concrete findings from unchanged source and reaffirmed PASS with no BLOCK/MAJOR; it does not invent missing earlier text.
+
+- N1 adopted in R3: audit every HTTP session issuance/denial and session preflight rejection. Anonymous/failed-auth requests use http-unknown; no raw supplied identity, token or handle is logged. Capacity denial, wrong grant and unavailable handle are covered through real HTTP/real audit producers.
+- N2 adopted for audit fidelity without changing wire compatibility: audit includes session_invalid only when the distinct Error class says true, including mid-metadata expiry. SCOPE_DENIED remains the wire code; clients already use session_invalid for next-call recovery and never replay the operation. Tests distinguish ordinary origin denial from expired handle and assert absence of tokens/handles. Human-friendly client display is separate from the stable error code.
+- N3 factual correction: targetBefore/targetAfter gate failure-memory attribution, not successful evidence provenance. captureLocalPageResult passes the actual successful BrowserBridge result to EvidenceStore.capture; content and provenance target are sampled synchronously by the browser producer (#452). No pre-read target is passed to the evidence store, and DOM multi-call fallback is excluded. A page can navigate after a completed atomic observation without falsifying that historical observation. Page-export permission is independent of context_origins. No stale-target substitution occurs in the cited path.
+
+R3 changes only audit emission and regression assertions, not permissions, dispatch, capture, wire codes or retry behavior. Fresh R3: targeted48/48, full4975pass23skip0fail plussettings20/20, productionbuild pass. Frozen delta and independent R3 reports are recorded separately from R2.
+
+R3 DeepSeek NIT dispositions (0 BLOCK/MAJOR): unknown session-route failures retain the existing generic BAD_BODY wire/audit classification and never log internal exception text; the audit reports the boundary outcome, not a diagnosed internal root cause. The early resolve catch currently receives only fixed local codes; hypothetical future exception producers must preserve that invariant. TTL assertions select the newly generated real grant ID (cryptographic random producer), so earlier audit entries cannot satisfy them; no hand-built deterministic grant fixture is used. Rejected loopback calls intentionally leave audit records; existing rotation caps disk use, and silently throttling security denials is not introduced as part of this fix.
+
+R3 Grok APPROVE, 0 BLOCK/MAJOR. NIT dispositions: the ordinary-profile token is not separately stored in the test's redaction list, but the actual route logs no request token field for any auth result; 403 responses are asserted and the same mapped audit function handles those cases. TTL uses a unique real grant ID; an invalid earlier JSONL line should fail rather than silently pass. If response writing fails after issue(), issuance and failed delivery can produce two outcome records while the bounded session remains until expiry; no delivery/rollback guarantee is claimed. The fixed cmspark__context_session audit label is an HTTP control event, not an advertised/allowed MCP tool; consumers must not infer granted capability from audit labels. No remaining current-source correctness or authorization defect was established by these NITs.
+
+The first Grok R3 attempt tried unavailable live-tree paths and was stopped without a verdict; the valid retry read the explicitly named complete frozen markdown packet. R3 source/test hashes match the reviewed bytes. Actual model pair is grok-4.6 + deepseek-v4-pro. Independent CI for the final commit remains a merge condition; review approval alone is not deployment or enterprise acceptance.

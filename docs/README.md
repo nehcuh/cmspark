@@ -16,6 +16,7 @@
 | [summoner-user-guide.md](summoner-user-guide.md) | **Capture** | 召唤器 HTML 卡 360×420、流式、永不审批、请点工具栏 C |
 | [confirm-center-user-guide.md](confirm-center-user-guide.md) | **横切 Trust UI**（L1/L2） | 确认台 / Cockpit、高危审批、CU 操控台 |
 | [mcp.md](mcp.md) | **Composition** | MCP server（Inbound + **Outbound ADR-022**）、Grok `config.toml`、信任级别、Resources/Prompts、排错 |
+| [enterprise-pilot.md](enterprise-pilot.md) | **Composition · 0.7.0 开发中** | 两个企业材料场景的试点配置、来源契约和真实验收要求；尚未发布 |
 | [user-env.md](user-env.md) | **Composition**（密钥） | skill / shell / MCP 子进程 Secrets（如 Datayes） |
 | [mission-pack-usage.md](mission-pack-usage.md) | **Composition**（+ 企业 Channel） | 任务包、模块、workspace/shell/netsec |
 | [computer-use-user-guide.md](computer-use-user-guide.md) | **Surface L2** | 坐标桌面、急停、session-trust、平台限制 |
@@ -41,6 +42,7 @@
 | 文档 | 说明 |
 |------|------|
 | [architecture.md](architecture.md) | 活架构：双层拓扑 + 桌面面、MCP/CU/Host/编排/Board/Packs |
+| [enterprise-architecture.md](enterprise-architecture.md) | 企业上下文、证据/核对、Mission 和可选 MCP 的职责边界；[发布验收台账](audit/0.7.0-20260907/release-acceptance.md) |
 | **[ADR-020 能力三轴](adr/020-capability-model-three-axes.md)** | **Surface · Composition · Autonomy** 本体（能力叠加与防「杂」纪律） |
 | [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.6.0** 对齐；扩展目标带轴标注） |
 | [../PRODUCT.md](../PRODUCT.md) | 产品一句话 / 四面（Capture·Operate·Confirm·租手）；家 = 已登录 Chrome + 硬闸 |

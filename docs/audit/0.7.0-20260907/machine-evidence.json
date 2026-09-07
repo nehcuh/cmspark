@@ -1,0 +1,105 @@
+{
+  "kind": "local-machine-run-summaries",
+  "node": "22.23.2",
+  "platform": "darwin",
+  "note": "Transcribed from actual local command outputs. Reproduction commands included; independent review did not rerun these. Not enterprise or installer acceptance. Full raw logs remain in local artifacts; digests identify them.",
+  "runs": [
+    {
+      "name": "companion-regression",
+      "exit_code": 0,
+      "scope": "R2 source; main suite and separate settings suite",
+      "command_after_nvm_use_22": "cd companion && npm test",
+      "log_sha256": "8ecd2ee623dece8e20eed245ab83c25f690334a482d1c72a95d3bf83dfdde09d",
+      "summary": [
+        "# tests 4998",
+        "# pass 4975",
+        "# fail 0",
+        "# skipped 23",
+        "# tests 20",
+        "# pass 20",
+        "# fail 0",
+        "# skipped 0"
+      ],
+      "local_raw_log": ".omx/artifacts/457-acceptance/machine/companion-regression.log"
+    },
+    {
+      "name": "companion-build",
+      "exit_code": 0,
+      "scope": "R2 source",
+      "command_after_nvm_use_22": "cd companion && npm run build",
+      "log_sha256": "4180afd7fb2d356b435c7464de1515840ea9c7f85ff0c1cd47a44d53d34d04e6",
+      "summary": [
+        "Process exited 0; compilation/bundling completed."
+      ],
+      "local_raw_log": ".omx/artifacts/457-acceptance/machine/companion-build.log"
+    },
+    {
+      "name": "mcp-targeted",
+      "exit_code": 0,
+      "scope": "R2 HTTP/context/CLI cases",
+      "command_after_nvm_use_22": "cd companion && npx tsc -p tsconfig.test.json && node scripts/run-tests.mjs .test-dist/tests/outbound-mcp-http-e2e.test.js .test-dist/tests/outbound-context-permission.test.js .test-dist/tests/outbound-grant-cli.test.js",
+      "log_sha256": "2b8e679bd42a94a86152a75eeb635401ae26258f893e1775163ca013c6877cef",
+      "summary": [
+        "# tests 48",
+        "# pass 48",
+        "# fail 0",
+        "# skipped 0"
+      ],
+      "local_raw_log": ".omx/artifacts/457-acceptance/machine/mcp-targeted.log"
+    },
+    {
+      "name": "extension-regression",
+      "exit_code": 0,
+      "scope": "R1 tests; subsequent R2 UI prose-only change separately rebuilt",
+      "command_after_nvm_use_22": "cd chrome-extension && npm test",
+      "log_sha256": "c7080928812df1d059944e19453dccac230aafd04f5bb2d9e2e365178fa4b4c5",
+      "summary": [
+        "# tests 1277",
+        "# pass 1277",
+        "# fail 0",
+        "# skipped 0"
+      ],
+      "local_raw_log": ".omx/artifacts/457-acceptance/machine/extension-regression.log"
+    },
+    {
+      "name": "extension-build",
+      "exit_code": 0,
+      "scope": "R2 source",
+      "command_after_nvm_use_22": "cd chrome-extension && npm run build",
+      "log_sha256": "8d07b3ad5fdf5a649998ad9bf8d69dff8784f3291ddf8a4c74ed2588a063028c",
+      "summary": [
+        "Process exited 0; compilation/bundling completed."
+      ],
+      "local_raw_log": ".omx/artifacts/457-acceptance/machine/extension-build.log"
+    },
+    {
+      "name": "mcp-sdk-profile",
+      "exit_code": 0,
+      "scope": "R1 SDK/profile suite, unchanged in R2",
+      "command_after_nvm_use_22": "cd companion && npx tsc -p tsconfig.test.json && node scripts/run-tests.mjs .test-dist/tests/outbound-mcp-profiles.test.js",
+      "log_sha256": "cccfa6290911010d57e47972947a4b6fcde419cd0de3a710460ed53af02e014c",
+      "summary": [
+        "# tests 11",
+        "# pass 11",
+        "# fail 0",
+        "# skipped 0"
+      ],
+      "local_raw_log": ".omx/artifacts/457-acceptance/machine/mcp-sdk-profile.log"
+    },
+    {
+      "name": "package-source-gates",
+      "exit_code": 0,
+      "scope": "Source gate only; native artifact positive cases skipped; script moves fixture files, so run only in temporary copy",
+      "command_after_nvm_use_22": "In a temporary git archive of 0a80846d, run bash scripts/tests/test-package-gates.sh",
+      "log_sha256": "0f35e2ff73b7c9e75f924348b52c1767d53e817aed80fefa37ba8575a749d7ac",
+      "summary": [
+        "[dynamic] missing makensis without REQUIRE → skip (exit 0)",
+        "[dynamic] skip positive macOS gate (artifacts not all present on this machine)",
+        "[dynamic] skip tray-missing test (no Darwin tray artifact)",
+        "[dynamic] skip scpt-missing test (no scpt artifacts)",
+        "=== Results: 124 passed, 0 failed ==="
+      ],
+      "local_raw_log": ".omx/artifacts/457-acceptance/machine/package-source-gates.log"
+    }
+  ]
+}
