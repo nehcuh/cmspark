@@ -78,3 +78,10 @@ W1 收口：见 [逐项复审处置](w1-review-disposition.md)。a10addf1 / 3d5b
 模型名称统一以 [身份更正](model-identity-correction.md) 为准：用户已接受 Grok4.6 +DeepSeekV4Pro，历史“Claude”仅指调用 CLI。输出上限中断和取消的复审从不计作批准。源代码、哈希、实际报告、问题处置和 PR/CI 状态分别保留。
 
 版本保持0.6.6，未发包/安装/替换应用。#450 的目标OS、企业模型、授权网页和业务真值仍缺失；两场景真实验收、实际客户端、安装包和浏览器混版不能以合成测试替代。
+
+
+### 最终代码门禁与交付索引
+
+MCP R2 冻结源码 579f8e70：Grok 完整/增量通过；DeepSeek 三个分包联合覆盖完整包，权限/HTTP/投影全部通过；投影的条件 M1 经完整 producer/lookup 独立复核明确清除。输出上限失败不计通过。R3 审计增量补齐会话入口/拒绝日志和 session_invalid 区分，Grok/DeepSeek 均 0 BLOCK/MAJOR；原始报告、逐条处置、源码清单和最新机器日志摘要均归档。
+
+R3 本机结果：HTTP/context/CLI48/48；Companion4975pass23skip0fail，加settings20/20，productionbuild通过。Extension/SDK 与 R2 相同源码，沿用其已有1277/1277和11/11证据。W7 演练8b415dbd已完成双路R3复审；它是固定0.6.6源码/当前依赖/临时数据目录演练，不是历史安装环境。PR #463 跟踪最终提交的CI与合并，并关闭#456通用实现票；#457保留真实客户端和两场景/模型/安装混版验收。版本仍0.6.6。

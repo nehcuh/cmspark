@@ -501,8 +501,13 @@ export async function companionInvokeOutbound(
     try {
       if (!grant_id || typeof body.session_handle !== "string") throw new Error("CONTEXT_SESSION_REQUIRED")
       contextSession = contextSessions.resolve(body.session_handle, grant_id, caller_id)
-    } catch (error) { return { ok: false, error: (error as Error).message, error_code: (error as Error).message,
-      ...(error instanceof ContextSessionUnavailable ? { session_invalid: true } : {}) } }
+    } catch (error) {
+      const error_code = (error as Error).message
+      appendOutboundMcpAudit({ caller_id, tool, wire_name, profile: grant_profile, grant_id,
+        ok: false, error_code, session_invalid: error instanceof ContextSessionUnavailable })
+      return { ok: false, error: error_code, error_code,
+        ...(error instanceof ContextSessionUnavailable ? { session_invalid: true } : {}) }
+    }
   }
   const req: OutboundCallRequest = {
     caller_id,
@@ -759,6 +764,7 @@ export async function companionInvokeOutbound(
       profile: grant_profile,
       ok: false,
       error_code: boundaryCode,
+      session_invalid: e instanceof ContextSessionUnavailable,
       grant_id,
     })
     return {
@@ -808,15 +814,26 @@ export async function handleOutboundMcpHttp(
   }
 
   if (req.method === "POST" && pathOnly === OUTBOUND_CONTEXT_SESSION_PATH) {
+    let caller_id = "http-unknown"
+    let grant_id: string | undefined
+    let profile: string | undefined
+    const auditSession = (ok: boolean, error_code?: string) => appendOutboundMcpAudit({
+      caller_id, grant_id, profile, tool: "cmspark__context_session", ok, error_code,
+    })
     try {
       const body = await readJsonBody(req) as { caller_id?: string }
       const auth = authorizeOutboundRequest(req, expectedSecret, { bodyCallerId: body.caller_id })
-      if (!auth.ok) { json(res, auth.http_status, { ok: false, error_code: auth.error_code }); return true }
-      if (auth.mode !== "grant" || !auth.grant_id || !auth.bound_caller_id || auth.profile !== OUTBOUND_CONTEXT_PROFILE) { json(res, 403, { ok: false, error_code: "GRANT_DENIED" }); return true }
+      if (!auth.ok) { auditSession(false, auth.error_code); json(res, auth.http_status, { ok: false, error_code: auth.error_code }); return true }
+      caller_id = auth.bound_caller_id || "http-unknown"
+      grant_id = auth.grant_id
+      profile = auth.profile
+      if (auth.mode !== "grant" || !auth.grant_id || !auth.bound_caller_id || auth.profile !== OUTBOUND_CONTEXT_PROFILE) { auditSession(false, "GRANT_DENIED"); json(res, 403, { ok: false, error_code: "GRANT_DENIED" }); return true }
       const session = contextSessions.issue(auth.grant_id, auth.bound_caller_id)
+      auditSession(true)
       json(res, 200, { ok: true, session_handle: session.handle, expires_at: session.expires_at })
     } catch (error) {
       const code = (error as Error).message
+      auditSession(false, ["GRANT_DENIED", "CAPACITY"].includes(code) ? code : "BAD_BODY")
       json(res, code === "GRANT_DENIED" ? 403 : 400, { ok: false, error_code: ["GRANT_DENIED", "CAPACITY"].includes(code) ? code : "BAD_BODY" })
     }
     return true

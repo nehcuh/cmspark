@@ -16,6 +16,8 @@ export type OutboundAuditEvent = {
   confirm_outcome?: "approved" | "denied" | "timeout" | "skipped" | "n/a"
   ok: boolean
   error_code?: string
+  /** Distinguishes a stale handle from an origin deny without logging handles. */
+  session_invalid?: boolean
   /** L4+ grant id when auth mode is grant */
   grant_id?: string
 }
@@ -31,6 +33,7 @@ export function appendOutboundMcpAudit(ev: OutboundAuditEvent): void {
     confirm_outcome: ev.confirm_outcome ?? "n/a",
     ok: ev.ok,
     error_code: ev.error_code,
+    ...(ev.session_invalid === true ? { session_invalid: true } : {}),
     grant_id: ev.grant_id,
     at: new Date().toISOString(),
   } as any)

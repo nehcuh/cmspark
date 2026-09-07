@@ -894,6 +894,7 @@ test("#456 HTTP binds exact grant/session, projects selected knowledge, and neve
   })
   const server = createOutboundTestServer(); const port = await listen(server)
   const post = (token: string, endpoint: string, body: unknown) => requestJson(port, "POST", endpoint, { token, body })
+  const auditOffset = fs.existsSync(getAuditLogPath()) ? fs.readFileSync(getAuditLogPath(), "utf8").length : 0
   try {
     assert.equal((await requestJson(port, "POST", OUTBOUND_CONTEXT_SESSION_PATH, { body: {} })).status, 401)
     assert.equal((await post(grantToken("ordinary"), OUTBOUND_CONTEXT_SESSION_PATH, { caller_id: "ordinary" })).status, 403)
@@ -911,6 +912,7 @@ test("#456 HTTP binds exact grant/session, projects selected knowledge, and neve
     assert.equal(projected.json.data.prompt, undefined)
     assert.equal(metadataReads, 2)
     assert.equal((await invoke(sibling.token, session.json.session_handle)).json.error_code, "SCOPE_DENIED")
+    assert.equal((await invoke(grant.token, "nonexistent-handle")).json.session_invalid, true)
     assert.equal((await invoke(sibling.token, siblingSession.json.session_handle)).json.error_code, "GRANT_DENIED")
     assert.equal((await invoke(grant.token, session.json.session_handle, "site_context", { tabId: 7, thread_id: "chat" })).json.ok, false)
     await companionAcceptDisclosure("context-client")
@@ -920,6 +922,16 @@ test("#456 HTTP binds exact grant/session, projects selected knowledge, and neve
     assert.equal((await invoke(grant.token, session.json.session_handle)).json.data.experiences[0].failures, 1)
     const second = await post(grant.token, OUTBOUND_CONTEXT_SESSION_PATH, { caller_id: "context-client" })
     assert.deepEqual((await invoke(grant.token, second.json.session_handle)).json.data.experiences, [])
+    for (let i = 0; i < 14; i++) assert.equal((await post(grant.token, OUTBOUND_CONTEXT_SESSION_PATH, { caller_id: "context-client" })).status, 200)
+    assert.equal((await post(grant.token, OUTBOUND_CONTEXT_SESSION_PATH, { caller_id: "context-client" })).json.error_code, "CAPACITY")
+    const auditText = fs.readFileSync(getAuditLogPath(), "utf8").slice(auditOffset)
+    const auditEvents = auditText.trim().split("\n").map(line => JSON.parse(line)).filter(event => event.type === "outbound_mcp.tool")
+    assert.ok(auditEvents.some(event => event.tool === "cmspark__context_session" && event.ok && event.grant_id === grant.id))
+    assert.ok(auditEvents.some(event => event.tool === "cmspark__context_session" && event.error_code === "GRANT_REQUIRED" && event.caller_id === "http-unknown"))
+    assert.ok(auditEvents.some(event => event.tool === "cmspark__context_session" && event.error_code === "CAPACITY" && event.grant_id === grant.id))
+    assert.ok(auditEvents.some(event => event.error_code === "SCOPE_DENIED" && event.grant_id === sibling.id && event.session_invalid === undefined))
+    assert.ok(auditEvents.some(event => event.error_code === "SCOPE_DENIED" && event.grant_id === grant.id && event.session_invalid === true))
+    for (const secret of [grant.token, sibling.token, session.json.session_handle, siblingSession.json.session_handle, "nonexistent-handle"]) assert.equal(auditText.includes(secret), false)
     revokeOutboundGrant(grant.id)
     assert.equal((await invoke(grant.token, session.json.session_handle)).status, 403)
   } finally { await close(server); for (const id of ["selected", "private"]) fs.rmSync(path.join(dir, `context-${id}.md`)) }
@@ -998,5 +1010,9 @@ test("#456 origin denial preserves the client session; expiry during metadata pr
     assert.equal(resumed.success, true, JSON.stringify(resumed))
     assert.equal(actions, 1)
     assert.equal(sessions, 2, "only next explicit call obtains a replacement session")
+    const auditEvents = fs.readFileSync(getAuditLogPath(), "utf8").trim().split("\n").map(line => JSON.parse(line))
+      .filter(event => event.type === "outbound_mcp.tool" && event.grant_id === grant.id && event.error_code === "SCOPE_DENIED")
+    assert.ok(auditEvents.some(event => event.tool === "cmspark__site_context" && event.session_invalid === undefined), "origin denial remains distinguishable")
+    assert.ok(auditEvents.some(event => event.tool === "cmspark__wait_for" && event.session_invalid === true), "mid-metadata expiry is explicitly audited")
   } finally { await close(server) }
 })
