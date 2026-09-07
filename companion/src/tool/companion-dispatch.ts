@@ -1870,6 +1870,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               evidenceFactory: (taskId) => new ComputerEvidence(taskId, macSealer),
               confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
               config: getConfig(),
+              currentSecurity: () => getConfig().security,
               sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>
@@ -2003,6 +2004,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               evidenceFactory: (taskId) => new ComputerEvidence(taskId, sealer),
               confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
               config: getConfig(),
+              currentSecurity: () => getConfig().security,
               sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>

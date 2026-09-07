@@ -123,6 +123,10 @@ export interface ComputerExecutorDeps {
   evidenceFactory: EvidenceFactory
   confirm: ComputerConfirmationChannel
   config: CompanionConfig
+  /** Live cruise policy at each re-L2. Production supplies getConfig().security
+   * so revocation takes effect mid-task. Fakes default to their injected config,
+   * never the developer's process-global configuration. */
+  currentSecurity?: () => CompanionConfig["security"]
   /**
    * UX-spike 2026-07-23: the WebSocket session id this task belongs to. When
    * present AND sessionTrust reports the (sessionId, app) tuple as already
@@ -678,8 +682,7 @@ export async function runComputerTask(
     // unless unattended (handled above).
     if (!forceInteractive && !reL2ShouldPrompt(dangerous) && !vaultBrowserOneShot) {
       try {
-        const { getConfig } = require("../config") as typeof import("../config")
-        const sec = getConfig().security
+        const sec = deps.currentSecurity ? deps.currentSecurity() : deps.config.security
         if (
           sec?.auto_approve_dangerous === true &&
           sec?.auto_approve_enterprise_tools === true &&

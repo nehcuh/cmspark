@@ -370,6 +370,44 @@ test("executor: uncrossverified re-L2 denied -> UNCROSS_DENIED, remaining clicks
 
 // --- budget --------------------------------------------------------------------
 
+for (const policy of ["cruise", "revoked", "unavailable"] as const) {
+  test(`executor: re-L2 reads live cruise policy (${policy})`, async () => {
+    const confirm = scriptedConfirm([false])
+    const injector = new RecordingInjector()
+    let reads = 0
+    const cruise = {
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+      allow_all_schemes: true,
+    } as CompanionConfig["security"]
+    const deps = makeDeps({
+      config: { ...testConfig(), security: cruise },
+      confirm: confirm.fn,
+      injector,
+      currentSecurity: () => {
+        reads++
+        if (policy === "unavailable") throw new Error("policy unavailable")
+        return policy === "revoked" && reads > 1
+          ? { ...cruise, auto_approve_dangerous: false }
+          : cruise
+      },
+    })
+    const r = await runComputerTask(
+      { task: "t", app: "win.app.test", budget: 1, actions: [clickOk, clickOk, clickOk] }, deps,
+    )
+    if (policy === "cruise") {
+      assert.equal(r.success, true)
+      assert.equal(confirm.captured.length, 0)
+      assert.equal(injector.clicks.length, 3)
+      assert.equal(reads, 2)
+    } else {
+      assert.equal(r.errorCode, "BUDGET_DENIED")
+      assert.equal(confirm.captured.length, 1)
+      assert.equal(injector.clicks.length, policy === "revoked" ? 2 : 1)
+    }
+  })
+}
+
 test("executor: budget exhaustion forces a new L2; denial stops the task (BUDGET_DENIED)", async () => {
   const confirm = scriptedConfirm([false])
   const injector = new RecordingInjector()
@@ -1494,41 +1532,27 @@ test("executor P0-C: session trust does NOT auto-approve computer.experimental_s
 })
 
 test("executor P0-C: full autonomy cruise does NOT auto-approve computer.danger_detected", async () => {
-  const { saveConfig, getConfig } = await import("../src/config")
-  const prev = getConfig().security
-  saveConfig({
-    security: {
-      ...prev,
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  const locator = new FakeLocator([{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }])
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    locator,
+    sessionId: "sess-cruise",
+    currentSecurity: () => ({
       auto_approve_dangerous: true,
       auto_approve_enterprise_tools: true,
       allow_all_schemes: true,
-    },
+    } as CompanionConfig["security"]),
   })
-  try {
-    const confirm = scriptedConfirm([false])
-    const injector = new RecordingInjector()
-    const locator = new FakeLocator([{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }])
-    const deps = makeDeps({
-      confirm: confirm.fn,
-      injector,
-      locator,
-      sessionId: "sess-cruise",
-    })
-    const r = await runComputerTask(
-      { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确认删除" }] },
-      deps,
-    )
-    assert.equal(
-      confirm.captured.length,
-      1,
-      "danger_detected re-L2 must still surface under three-flag cruise",
-    )
-    assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.danger_detected"])
-    assert.equal(r.errorCode, "DANGER_DENIED_BY_USER")
-    assert.equal(injector.clicks.length, 0)
-  } finally {
-    saveConfig({ security: { ...prev } })
-  }
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确认删除" }] }, deps,
+  )
+  assert.equal(confirm.captured.length, 1, "danger_detected must surface under three-flag cruise")
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.danger_detected"])
+  assert.equal(r.errorCode, "DANGER_DENIED_BY_USER")
+  assert.equal(injector.clicks.length, 0)
 })
 
 
