@@ -1,6 +1,7 @@
 // LLM adapter — chat + tool loop via LlmProvider (OpenAI / Anthropic wire)
 
 import os from "os"
+import { siteExperienceIdentity, isOwnedSiteExperience, readSiteExperienceEntries } from "../skills/site-experience-identity"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { HistoryStore } from "../history/store"
@@ -678,11 +679,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   // thread's machine bans (cross-thread dual channel together with the prompt below).
   try {
     if (hostname) {
-      const siteSkillName = hostname.replace(/^www\./, "").replace(/\./g, "-")
       hydratePersistedSiteOpExperience(
         threadId,
         hostname,
-        (skillEngine.get(siteSkillName)?.entries || []) as Array<{ content: string; stale?: boolean }>,
+        readSiteExperienceEntries(hostname, (id) => skillEngine.get(id)),
       )
     }
   } catch {
@@ -1845,10 +1845,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               // blind spot that never fired justBanned.
               if (rec.originPersistDue) {
                 try {
-                  const host = rec.origin.replace(/^https?:\/\//, "").split("/")[0] || hostname || "site"
-                  const skillName = host.replace(/\./g, "-")
+                  const { host, id: skillName } = siteExperienceIdentity(rec.origin)
                   let existing = skillEngine.get(skillName)
-                  const prior = (existing?.entries || []).map((e: { content?: string }) => String(e.content || ""))
+                  if (existing && !isOwnedSiteExperience(existing, host)) throw new Error("Site experience identity occupied by another document")
+                  const prior = readSiteExperienceEntries(host, (id) => skillEngine.get(id)).map(e => e.content)
                   // MAJOR-3: persist ALL failed paths of this origin (cap'd,
                   // per-line injection-gated), not just the threshold-crossing
                   // call — the hgrsix form fails a fresh locator every round.
