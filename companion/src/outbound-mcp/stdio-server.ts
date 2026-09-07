@@ -18,7 +18,7 @@ import {
   outboundToolsForProfiles,
 } from "./profile"
 import { invokeOutboundTool, setOutboundDispatcher } from "./bridge"
-import { OUTBOUND_L1_DEFAULT_PROFILE } from "./outbound-grants"
+import { OUTBOUND_L1_DEFAULT_PROFILE, OUTBOUND_CONTEXT_PROFILE } from "./outbound-grants"
 import {
   createHttpOutboundDispatcher,
   fetchCompanionOutboundProfile,
@@ -75,6 +75,7 @@ function toolDescription(name: string): string {
     cmspark__screenshot: "Screenshot — data-exfil; requires prior disclosure accept",
     cmspark__wait_for: "Wait for selector/condition",
     cmspark__downloads_find: "Find files in Downloads sandbox (read-only)",
+    cmspark__site_context: "Read sanitized target, explicitly granted site knowledge and this grant/session's failure counts. Requires independent context export permission and an allowed exact origin. No chat history or evidence export.",
     // #410 interact profile (granted via --profile outbound_l1_interact)
     cmspark__scroll: "Scroll a page/tab (interact profile)",
     cmspark__get_element_info: "Inspect element metadata before acting (interact)",
@@ -153,6 +154,7 @@ export async function wireDefaultOutboundHttpDispatcher(): Promise<{
       port,
       token,
       timeout_ms: 120_000,
+      contextSession: () => outboundActiveProfiles().includes(OUTBOUND_CONTEXT_PROFILE),
     }),
   )
   wireHttpOpts = httpOpts
@@ -265,7 +267,10 @@ export function createOutboundMcpServer(
       tools: allToolNames.map((canonical) => ({
         name: outboundMcpWireName(canonical),
         description: toolDescription(canonical),
-        inputSchema: openArgsSchema(),
+        inputSchema: canonical === "cmspark__site_context" ? {
+          type: "object" as const, properties: { tabId: { type: "integer", minimum: 1 }, query: { type: "string", maxLength: 2048 } },
+          required: ["tabId"], additionalProperties: false,
+        } : openArgsSchema(),
       })),
     }
   })

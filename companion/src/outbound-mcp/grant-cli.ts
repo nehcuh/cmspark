@@ -2,16 +2,19 @@
  * Outbound MCP 租手钥匙 CLI (argv only — no HTTP server).
  *
  * cmspark-agent outbound-grant issue|revoke|list
- * Profile is hard-wired outbound_l1_default. Token prints once on stdout.
+ * Default profile is outbound_l1_default. Token prints once on stdout.
  */
 
 import { getPlatform, type PlatformName } from "../platform"
+import * as fs from "node:fs"
+import { parseContextPermission } from "./context-permission"
 import {
   issueOutboundGrant,
   revokeOutboundGrant,
   listOutboundGrants,
   OUTBOUND_L1_DEFAULT_PROFILE,
   OUTBOUND_L1_INTERACT_PROFILE,
+  OUTBOUND_CONTEXT_PROFILE,
   isOutboundGrantProfile,
 } from "./outbound-grants"
 
@@ -30,7 +33,7 @@ const DEFAULT_IO: GrantCliIo = {
   stderr: process.stderr,
 }
 
-const USAGE = `cmspark-agent outbound-grant issue --caller-id <id> [--label <name>] [--profile <outbound_l1_default|outbound_l1_interact>] [--allow-page-export] [--ttl-ms N]
+const USAGE = `cmspark-agent outbound-grant issue --caller-id <id> [--label <name>] [--profile <outbound_l1_default|outbound_l1_interact|outbound_context_v1>] [--context-config <file.json>] [--allow-page-export] [--ttl-ms N]
 cmspark-agent outbound-grant revoke --grant-id <id>
 cmspark-agent outbound-grant list`
 
@@ -54,7 +57,7 @@ function flagEnabled(flags: Map<string, string | true>, key: string): boolean {
   return s === "true" || s === "1" || s === "yes"
 }
 
-const ISSUE_FLAGS = new Set(["caller-id", "label", "allow-page-export", "ttl-ms", "profile"])
+const ISSUE_FLAGS = new Set(["caller-id", "label", "allow-page-export", "ttl-ms", "profile", "context-config"])
 const REVOKE_FLAGS = new Set(["grant-id"])
 const LIST_FLAGS = new Set<string>()
 
@@ -221,9 +224,21 @@ function issue(flags: Map<string, string | true>, io: GrantCliIo): number {
   if (!isOutboundGrantProfile(profile)) {
     writeln(
       io.stderr,
-      `--profile 不支持: ${profile}（支持 ${OUTBOUND_L1_DEFAULT_PROFILE} | ${OUTBOUND_L1_INTERACT_PROFILE}）`,
+      `--profile 不支持: ${profile}（支持 ${OUTBOUND_L1_DEFAULT_PROFILE} | ${OUTBOUND_L1_INTERACT_PROFILE} | ${OUTBOUND_CONTEXT_PROFILE}）`,
     )
     return 1
+  }
+  const contextFile = flagString(flags, "context-config")
+  if (flags.has("context-config") && (!contextFile || profile !== OUTBOUND_CONTEXT_PROFILE)) {
+    writeln(io.stderr, "--context-config 需要文件路径和 outbound_context_v1 档案")
+    return 1
+  }
+  let context = parseContextPermission({})
+  if (contextFile) {
+    try {
+      if (fs.statSync(contextFile).size > 64 * 1024) throw new Error("capacity")
+      context = parseContextPermission(JSON.parse(fs.readFileSync(contextFile, "utf8")))
+    } catch { writeln(io.stderr, "--context-config 必须是有效且不超过 64 KiB 的上下文授权 JSON"); return 1 }
   }
   const issued = issueOutboundGrant({
     caller_id: callerId,
@@ -231,8 +246,10 @@ function issue(flags: Map<string, string | true>, io: GrantCliIo): number {
     ttl_ms,
     allow_page_export: allowPageExport,
     profile,
+    ...context,
   })
   printIssue(io, issued, allowPageExport, profile)
+  if (profile === OUTBOUND_CONTEXT_PROFILE) writeln(io.stdout, `上下文出口：${context.allow_context_export ? "已允许" : "未允许"}；精确站点 ${context.context_origins.length} 个，所选知识 ${context.context_knowledge_ids.length} 篇。页面出口仍独立授权，不受上下文站点列表限制。`)
   return 0
 }
 

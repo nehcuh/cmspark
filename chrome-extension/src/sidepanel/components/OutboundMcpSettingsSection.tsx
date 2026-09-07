@@ -7,6 +7,7 @@ import { SectionHeader } from "../ui/SectionHeader"
 import {
   OUTBOUND_GRANT_PROFILE_OPTIONS,
   OUTBOUND_DEFAULT_PROFILE_FOR_UI,
+  OUTBOUND_CONTEXT_PROFILE,
   isOutboundGrantProfileForUi,
   type OutboundGrantProfile,
 } from "../utils/outbound-profiles"
@@ -21,6 +22,9 @@ type GrantRow = {
   revoked_at: string | null
   last_used_at: string | null
   allow_page_export?: boolean
+  allow_context_export?: boolean
+  context_origins?: string[]
+  context_knowledge_ids?: string[]
 }
 
 type IssuedGrant = GrantRow & { token: string }
@@ -73,6 +77,10 @@ export function OutboundMcpSettingsSection() {
   const [callerId, setCallerId] = useState("grok-build")
   const [ttlMs, setTtlMs] = useState(30 * 24 * 60 * 60 * 1000)
   const [allowPageExport, setAllowPageExport] = useState(false)
+  const [allowContextExport, setAllowContextExport] = useState(false)
+  const [contextOrigins, setContextOrigins] = useState("")
+  const [contextIds, setContextIds] = useState<string[]>([])
+  const [knowledgeChoices, setKnowledgeChoices] = useState<Array<{ id: string; title: string }>>([])
   const [profile, setProfile] = useState<OutboundGrantProfile>(OUTBOUND_DEFAULT_PROFILE_FOR_UI)
   const [issued, setIssued] = useState<IssuedGrant | null>(null)
   const [copyOk, setCopyOk] = useState(false)
@@ -85,6 +93,7 @@ export function OutboundMcpSettingsSection() {
 
   const refresh = useCallback(() => {
     chrome.runtime.sendMessage({ type: "outbound_mcp.grants.list" })
+    chrome.runtime.sendMessage({ type: "knowledge.list" })
   }, [])
 
   useEffect(() => {
@@ -103,6 +112,9 @@ export function OutboundMcpSettingsSection() {
     refresh()
     const handler = (msg: any) => {
       if (!msg?.type) return
+      if (msg.type === "knowledge.list" && Array.isArray(msg.docs)) {
+        setKnowledgeChoices(msg.docs.map((doc: any) => ({ id: String(doc.id || doc.name), title: String(doc.title || doc.name || doc.id) })))
+      }
       if (
         msg.type === "outbound_mcp.grants.list" ||
         msg.type === "outbound_mcp.grants.issued"
@@ -137,6 +149,8 @@ export function OutboundMcpSettingsSection() {
       flash("caller_id 必填", 3000)
       return
     }
+    const origins = contextOrigins.split(/\r?\n/).map(value => value.trim()).filter(Boolean)
+    if (profile === OUTBOUND_CONTEXT_PROFILE && allowContextExport && !origins.length) { flash("请填写允许的精确站点 origin", 3000); return }
     setBusy("issue")
     setIssued(null)
     chrome.runtime.sendMessage({
@@ -146,6 +160,7 @@ export function OutboundMcpSettingsSection() {
       ttl_ms: ttlMs,
       allow_page_export: allowPageExport === true,
       profile,
+      ...(profile === OUTBOUND_CONTEXT_PROFILE ? { allow_context_export: allowContextExport, context_origins: origins, context_knowledge_ids: contextIds } : {}),
     })
   }
 
@@ -289,6 +304,23 @@ export function OutboundMcpSettingsSection() {
             </div>
           </span>
         </label>
+        {profile === OUTBOUND_CONTEXT_PROFILE && <div style={{ marginTop: 10 }}>
+          <label style={styles.label}>允许导出上下文的精确站点（每行一个 origin）</label>
+          <textarea style={styles.input} rows={3} value={contextOrigins} onChange={event => setContextOrigins(event.target.value)} placeholder="https://devops.example.com" spellCheck={false} />
+          <div style={styles.helpText}>只写协议、主机和端口，不含路径或通配符。所选知识正文片段及当前目标地址会发送给外部助手。</div>
+          <div style={styles.helpText}>站点范围仅限制上下文出口；页面出口仍按原有标签页授权和确认规则执行，不受此列表限制。</div>
+          <div style={{ maxHeight: 160, overflowY: "auto", marginTop: 6 }}>
+            {knowledgeChoices.map(doc => <label key={doc.id} style={{ ...styles.helpText, display: "flex", gap: 6, marginTop: 4 }}>
+              <input type="checkbox" checked={contextIds.includes(doc.id)} onChange={event => setContextIds(current => event.target.checked ? [...current, doc.id] : current.filter(id => id !== doc.id))} />
+              <span>{doc.title}</span>
+            </label>)}
+            {!knowledgeChoices.length && <div style={styles.helpText}>当前没有可选知识；可先到知识页添加。</div>}
+          </div>
+          <label style={{ ...styles.helpText, display: "flex", gap: 6, marginTop: 8 }}>
+            <input type="checkbox" checked={allowContextExport} onChange={event => setAllowContextExport(event.target.checked)} />
+            <span>允许这把钥匙导出以上站点的所选知识和当前授权会话经验。此许可独立于页面出口，可通过撤销钥匙终止新调用。</span>
+          </label>
+        </div>}
         <button
           type="button"
           style={{ ...styles.primaryBtn, marginTop: 8 }}
@@ -369,6 +401,7 @@ export function OutboundMcpSettingsSection() {
                   {g.expires_at ? ` · 过期 ${fmtTime(g.expires_at)}` : " · 不过期"}
                   {g.last_used_at ? ` · 最近使用 ${fmtTime(g.last_used_at)}` : ""}
                   {g.allow_page_export ? " · 页文/截图已允许" : ""}
+                  {g.allow_context_export ? ` · 上下文已允许（${g.context_origins?.length || 0} 站点 / ${g.context_knowledge_ids?.length || 0} 知识）` : ""}
                 </div>
               </div>
               <button

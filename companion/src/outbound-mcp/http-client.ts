@@ -8,6 +8,7 @@ import {
   OUTBOUND_INVOKE_PATH,
   OUTBOUND_HEALTH_PATH,
   OUTBOUND_PROFILE_PATH,
+  OUTBOUND_CONTEXT_SESSION_PATH,
 } from "./companion-http"
 import type { OutboundDispatcher, OutboundDispatchRequest, OutboundDispatchResult } from "./bridge"
 
@@ -19,6 +20,8 @@ export type HttpClientOptions = {
   /** ws_secret bearer */
   token: string
   timeout_ms?: number
+  /** The stdio server's current per-key profile; no model-controlled switch. */
+  contextSession?: () => boolean
 }
 
 function requestJson(
@@ -137,17 +140,30 @@ export async function fetchCompanionOutboundProfile(opts: HttpClientOptions): Pr
 }
 
 export function createHttpOutboundDispatcher(opts: HttpClientOptions): OutboundDispatcher {
+  let session: Promise<string> | undefined
+  const ensureSession = (callerId: string) => {
+    if (!session) session = requestJson(opts, "POST", OUTBOUND_CONTEXT_SESSION_PATH, { caller_id: callerId }).then(response => {
+      if (!response.json?.ok || typeof response.json.session_handle !== "string") throw new Error(response.json?.error_code || "CONTEXT_SESSION_UNAVAILABLE")
+      return response.json.session_handle
+    }).catch(error => { session = undefined; throw error })
+    return session
+  }
   return async (req: OutboundDispatchRequest): Promise<OutboundDispatchResult> => {
     try {
+      const handle = opts.contextSession?.() ? await ensureSession(req.caller_id) : undefined
       const r = await requestJson(opts, "POST", OUTBOUND_INVOKE_PATH, {
         caller_id: req.caller_id,
         tool: req.mcp_tool,
         args: req.args,
+        ...(handle ? { session_handle: handle } : {}),
       })
       const j = r.json || {}
       if (j.ok === true) {
         return { success: true, data: j.data }
       }
+      // Do not retry an actuator after a failed/uncertain result. The next
+      // explicit call may create a new session; this invocation returns once.
+      if (j.session_invalid === true) session = undefined
       return {
         success: false,
         error: j.error || j.error_code || `http_${r.status}`,

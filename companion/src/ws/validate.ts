@@ -1223,12 +1223,17 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (
         m.profile !== undefined &&
         m.profile !== "outbound_l1_default" &&
-        m.profile !== "outbound_l1_interact"
+        m.profile !== "outbound_l1_interact" &&
+        m.profile !== "outbound_context_v1"
       ) {
         return {
           valid: false,
-          error: "outbound_mcp.grants.issue profile must be outbound_l1_default|outbound_l1_interact",
+          error: "outbound_mcp.grants.issue profile must be outbound_l1_default|outbound_l1_interact|outbound_context_v1",
         }
+      }
+      if (m.allow_context_export !== undefined && typeof m.allow_context_export !== "boolean") return { valid: false, error: "allow_context_export must be boolean" }
+      for (const key of ["context_origins", "context_knowledge_ids"]) {
+        if (m[key] !== undefined && (!Array.isArray(m[key]) || m[key].length > 64 || m[key].some((item: unknown) => typeof item !== "string"))) return { valid: false, error: `${key} must be a bounded string array` }
       }
       return { valid: true }
     },

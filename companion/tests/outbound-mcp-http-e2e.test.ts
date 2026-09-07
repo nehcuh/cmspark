@@ -13,6 +13,10 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import http from "node:http"
 import fs from "node:fs"
+import path from "node:path"
+import { getConfigDir, initDataDir } from "../src/config"
+import { SkillEngine } from "../src/skills/skill-engine"
+import { _resetTabLeasesForTests, releaseTabLease } from "../src/orchestrator/tab-lease"
 import { WebSocket } from "ws"
 import {
   handleOutboundMcpHttp,
@@ -25,6 +29,8 @@ import {
   OUTBOUND_INVOKE_PATH,
   OUTBOUND_PROFILE_PATH,
   OUTBOUND_DISCLOSURE_PATH,
+  OUTBOUND_CONTEXT_SESSION_PATH,
+  setOutboundContextEngine,
 } from "../src/outbound-mcp/companion-http"
 import { clearAllOutboundDisclosureSessions, hasOutboundDisclosure } from "../src/outbound-mcp/disclosure-session"
 import {
@@ -37,6 +43,8 @@ import {
   issueOutboundGrant,
   resetOutboundGrantsForTests,
   OUTBOUND_L1_INTERACT_PROFILE,
+  OUTBOUND_CONTEXT_PROFILE,
+  revokeOutboundGrant,
 } from "../src/outbound-mcp/outbound-grants"
 import { SecurityConfirmationManager } from "../src/security-confirmation"
 import { getAuditLogPath } from "../src/packs/audit-log"
@@ -117,6 +125,7 @@ function requestJson(
 }
 
 test.beforeEach(() => {
+  _resetTabLeasesForTests()
   resetOutboundCompanionHttpForTests()
   clearAllOutboundDisclosureSessions()
   resetOutboundGrantsForTests()
@@ -557,6 +566,7 @@ function lastConfirmIdFrom(sent: string[]): string {
 // skip must leave a distinct audit record (approved-but-not-executed).
 test("e2e: caller disconnect during HITL wait → approved tool NOT executed (R1)", async () => {
   const server = createOutboundTestServer()
+  const responseClosed = new Promise<void>(resolve => server.once("request", (_req, res) => res.once("close", resolve)))
   const port = await listen(server)
   const token = issueOutboundGrant({
     label: "e2e-r1",
@@ -631,7 +641,9 @@ test("e2e: caller disconnect during HITL wait → approved tool NOT executed (R1
 
     // Caller HTTP client times out and hangs up mid-HITL.
     creq.destroy()
-    await waitUntilE2E(() => creq.destroyed)
+    // A local ClientRequest.destroyed bit precedes the server's disconnect
+    // event. Assert the actual server boundary before simulating approval.
+    await responseClosed
 
     // Operator approves AFTER the caller disconnected.
     const approved = mgr.respondFrom(confirmId, true, ws)
@@ -861,4 +873,130 @@ test("e2e #410: default grant invoking interact tool scroll → PROFILE_FORBIDDE
   } finally {
     await close(server)
   }
+})
+
+test("#456 HTTP binds exact grant/session, projects selected knowledge, and never borrows sibling permissions", async () => {
+  await initDataDir()
+  assert.match(getConfigDir(), /cmspark-grants-/)
+  const dir = path.join(getConfigDir(), "skills")
+  fs.mkdirSync(dir, { recursive: true })
+  for (const id of ["selected", "private"]) fs.writeFileSync(path.join(dir, `context-${id}.md`), `---\nname: context-${id}\ntype: site_knowledge\nsite: devops.example.test\ndescription: ${id}\n---\n${id.toUpperCase()}_HTTP_KNOWLEDGE\n`)
+  setOutboundContextEngine(new SkillEngine())
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "../../tests/fixtures/page-read-v1.json"), "utf8"))
+  const grant = issueOutboundGrant({ caller_id: "context-client", label: "context", profile: OUTBOUND_CONTEXT_PROFILE,
+    allow_context_export: true, context_origins: [fixture.data.provenance.target.origin], context_knowledge_ids: ["context-selected"] })
+  const sibling = issueOutboundGrant({ caller_id: "context-client", label: "sibling", profile: OUTBOUND_CONTEXT_PROFILE, allow_page_export: true })
+  let pageReads = 0; let metadataReads = 0
+  setOutboundToolRunner(async (_id, tool, _args, options) => {
+    if (tool === "list_tabs" && options?.siteContextTabId === 7) { metadataReads++; return { success: true, data: { site_target: fixture.data.provenance.target } } }
+    if (tool === "get_page_text") { pageReads++; return structuredClone(fixture) }
+    return { success: false, error: "synthetic local failure" }
+  })
+  const server = createOutboundTestServer(); const port = await listen(server)
+  const post = (token: string, endpoint: string, body: unknown) => requestJson(port, "POST", endpoint, { token, body })
+  try {
+    assert.equal((await requestJson(port, "POST", OUTBOUND_CONTEXT_SESSION_PATH, { body: {} })).status, 401)
+    assert.equal((await post(grantToken("ordinary"), OUTBOUND_CONTEXT_SESSION_PATH, { caller_id: "ordinary" })).status, 403)
+    assert.equal((await post(grant.token, OUTBOUND_CONTEXT_SESSION_PATH, { caller_id: "forged" })).status, 403)
+    const session = await post(grant.token, OUTBOUND_CONTEXT_SESSION_PATH, { caller_id: "context-client", session_id: "forged" })
+    assert.equal(session.status, 200)
+    assert.equal(session.json.session_id, undefined)
+    assert.match(session.json.session_handle, /^[0-9a-f-]{36}$/)
+    const siblingSession = await post(sibling.token, OUTBOUND_CONTEXT_SESSION_PATH, { caller_id: "context-client" })
+    const invoke = (token: string, handle: string, tool = "site_context", args: unknown = { tabId: 7 }) => post(token, OUTBOUND_INVOKE_PATH, { caller_id: "context-client", session_handle: handle, tool, args })
+    const projected = await invoke(grant.token, session.json.session_handle)
+    assert.equal(projected.json.ok, true, JSON.stringify(projected.json))
+    assert.match(JSON.stringify(projected.json.data), /SELECTED_HTTP_KNOWLEDGE/)
+    assert.doesNotMatch(JSON.stringify(projected.json.data), /PRIVATE_HTTP_KNOWLEDGE|observations|mutation_result/)
+    assert.equal(projected.json.data.prompt, undefined)
+    assert.equal(metadataReads, 2)
+    assert.equal((await invoke(sibling.token, session.json.session_handle)).json.error_code, "SCOPE_DENIED")
+    assert.equal((await invoke(sibling.token, siblingSession.json.session_handle)).json.error_code, "GRANT_DENIED")
+    assert.equal((await invoke(grant.token, session.json.session_handle, "site_context", { tabId: 7, thread_id: "chat" })).json.ok, false)
+    await companionAcceptDisclosure("context-client")
+    assert.equal((await invoke(grant.token, session.json.session_handle, "get_page_text")).json.ok, false)
+    assert.equal(pageReads, 0)
+    await invoke(grant.token, session.json.session_handle, "wait_for")
+    assert.equal((await invoke(grant.token, session.json.session_handle)).json.data.experiences[0].failures, 1)
+    const second = await post(grant.token, OUTBOUND_CONTEXT_SESSION_PATH, { caller_id: "context-client" })
+    assert.deepEqual((await invoke(grant.token, second.json.session_handle)).json.data.experiences, [])
+    revokeOutboundGrant(grant.id)
+    assert.equal((await invoke(grant.token, session.json.session_handle)).status, 403)
+  } finally { await close(server); for (const id of ["selected", "private"]) fs.rmSync(path.join(dir, `context-${id}.md`)) }
+})
+
+test("#456 HTTP dispatcher owns a session; capture is isolated and mid-read revocation discards export", async () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "../../tests/fixtures/page-read-v1.json"), "utf8"))
+  const evidenceDir = path.join(getConfigDir(), "business-evidence-v1")
+  const before = new Set(fs.existsSync(evidenceDir) ? fs.readdirSync(evidenceDir) : [])
+  const grant = issueOutboundGrant({ caller_id: "capture-client", label: "capture", profile: OUTBOUND_CONTEXT_PROFILE, allow_page_export: true })
+  await companionAcceptDisclosure("capture-client")
+  let revoke = false; let reads = 0
+  setOutboundToolRunner(async (_id, tool, _args, options) => {
+    if (tool === "list_tabs" && options?.siteContextTabId === 7) return { success: true, data: { site_target: fixture.data.provenance.target } }
+    reads++
+    if (revoke) revokeOutboundGrant(grant.id)
+    return structuredClone(fixture)
+  })
+  const server = createOutboundTestServer(); const port = await listen(server)
+  try {
+    const dispatcher = createHttpOutboundDispatcher({ port, token: grant.token, contextSession: () => true })
+    const call = () => dispatcher({ caller_id: "capture-client", mcp_tool: "cmspark__get_page_text", internal_tool: "get_page_text", args: { tabId: 7 }, origin: {} as any })
+    const captured = await call()
+    assert.equal(captured.success, true, captured.error)
+    assert.equal((captured.data as any).evidence_capture.capture_status, "captured")
+    const files = fs.readdirSync(evidenceDir).filter(file => !before.has(file))
+    assert.equal(files.length, 1)
+    const saved = JSON.parse(fs.readFileSync(path.join(evidenceDir, files[0]), "utf8"))
+    assert.equal(saved.observations.length, 1)
+    assert.equal(saved.observations[0].id, (captured.data as any).observation_id)
+    revoke = true
+    const denied = await call()
+    assert.equal(denied.success, false)
+    assert.equal(denied.data, undefined)
+    assert.equal(reads, 2, "no automatic retry")
+    assert.equal(JSON.parse(fs.readFileSync(path.join(evidenceDir, files[0]), "utf8")).observations.length, 1)
+  } finally { await close(server) }
+})
+
+test("#456 origin denial preserves the client session; expiry during metadata prevents execution and only next call resumes", async t => {
+  await initDataDir()
+  setOutboundContextEngine(new SkillEngine())
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "../../tests/fixtures/page-read-v1.json"), "utf8"))
+  const { siteTargetFromBrowser } = await import("../src/site-context/target")
+  const grant = issueOutboundGrant({ caller_id: "ttl-client", label: "ttl", profile: OUTBOUND_CONTEXT_PROFILE, allow_context_export: true,
+    context_origins: [fixture.data.provenance.target.origin], context_knowledge_ids: [] })
+  let clock = Date.now(); t.mock.method(Date, "now", () => clock)
+  let otherOrigin = false; let expire = false; let actions = 0; let sessions = 0
+  setOutboundToolRunner(async (_id, tool, _args, options) => {
+    if (tool === "list_tabs" && options?.siteContextTabId === 7) {
+      if (expire) { clock += 31 * 60_000; expire = false }
+      return { success: true, data: { site_target: otherOrigin ? siteTargetFromBrowser(7, "https://other.test/page", clock) : fixture.data.provenance.target } }
+    }
+    actions++; return { success: true, data: {} }
+  })
+  const server = createOutboundTestServer()
+  server.on("request", req => { if (req.url === OUTBOUND_CONTEXT_SESSION_PATH) sessions++ })
+  const port = await listen(server)
+  try {
+    const dispatch = createHttpOutboundDispatcher({ port, token: grant.token, contextSession: () => true })
+    const call = (tool = "site_context") => dispatch({ caller_id: "ttl-client", internal_tool: tool, mcp_tool: tool, args: { tabId: 7 }, origin: {} as any })
+    assert.equal((await call()).success, true)
+    otherOrigin = true
+    assert.equal((await call()).error, "SCOPE_DENIED")
+    otherOrigin = false
+    assert.equal((await call()).success, true)
+    assert.equal(sessions, 1, "wrong origin must not discard a valid handle")
+    expire = true
+    assert.equal((await call("wait_for")).error, "SCOPE_DENIED")
+    assert.equal(actions, 0, "session expired during async metadata must stop before actual operation")
+    assert.equal(sessions, 1, "no automatic retry")
+    // Advancing the clock also expires the independent tab lease. This
+    // harness has no lifecycle worker; settle that lease before resuming.
+    releaseTabLease(7, "synthetic TTL rehearsal", "outbound_mcp:ttl-client")
+    const resumed = await call("wait_for")
+    assert.equal(resumed.success, true, JSON.stringify(resumed))
+    assert.equal(actions, 1)
+    assert.equal(sessions, 2, "only next explicit call obtains a replacement session")
+  } finally { await close(server) }
 })

@@ -5002,6 +5002,9 @@ export async function handleMessage(
           caller_id,
           ttl_ms,
           allow_page_export: rest.allow_page_export === true,
+          allow_context_export: rest.allow_context_export,
+          context_origins: rest.context_origins,
+          context_knowledge_ids: rest.context_knowledge_ids,
           ...(typeof rest.profile === "string" && rest.profile.trim()
             ? { profile: rest.profile.trim() }
             : {}),

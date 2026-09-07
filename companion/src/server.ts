@@ -7,6 +7,7 @@ import { contextReadParams } from "./site-context/admission"
 import { getConfig, saveConfig, initDataDir, getConfigDir } from "./config"
 import type { EvidenceScope } from "./business-evidence/content"
 import { captureLocalPageResult } from "./business-evidence/executor"
+import { setOutboundContextEngine } from "./outbound-mcp/companion-http"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
 import { gcExpiredMeetingAudio } from "./meeting/meeting-store"
 import { ThreadManager } from "./threads/thread-manager"
@@ -326,6 +327,7 @@ async function initServices() {
   await initDataDir()
   threadManager = new ThreadManager()
   skillEngine = new SkillEngine(getConfig().llm)
+  setOutboundContextEngine(skillEngine)
   skillEngine.bindThreadManager(threadManager)
   historyStore = new HistoryStore()
   await historyStore.waitReady()

@@ -1,6 +1,7 @@
 import {
   OUTBOUND_L1_DEFAULT_PROFILE,
   OUTBOUND_L1_INTERACT_PROFILE,
+  OUTBOUND_CONTEXT_PROFILE,
 } from "./outbound-grants"
 
 /**
@@ -62,6 +63,7 @@ export const OUTBOUND_PROFILE_TOOLS: Readonly<Record<string, readonly string[]>>
     ...OUTBOUND_MCP_ALLOWLIST,
     ...OUTBOUND_MCP_INTERACT_EXTRAS,
   ],
+  [OUTBOUND_CONTEXT_PROFILE]: [...OUTBOUND_MCP_ALLOWLIST, "cmspark__site_context"],
 }
 
 /** Canonical tools granted by a (non-empty) set of profiles, default first. */
@@ -71,6 +73,7 @@ export function outboundToolsForProfiles(profiles: Iterable<string>): string[] {
   const order = [
     OUTBOUND_L1_DEFAULT_PROFILE,
     OUTBOUND_L1_INTERACT_PROFILE,
+    OUTBOUND_CONTEXT_PROFILE,
   ]
   const profileSet = new Set(
     Array.from(profiles).filter(
@@ -79,7 +82,7 @@ export function outboundToolsForProfiles(profiles: Iterable<string>): string[] {
   )
   const merged = new Set<string>()
   for (const p of order) {
-    if (profileSet.size > 0 && !profileSet.has(p)) continue
+    if (!profileSet.has(p)) continue
     for (const t of OUTBOUND_PROFILE_TOOLS[p] ?? []) merged.add(t)
   }
   // Unset profiles (empty input) = caller-level default grant semantics.
