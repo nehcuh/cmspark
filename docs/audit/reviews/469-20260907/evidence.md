@@ -49,3 +49,14 @@ User-authorized combination: Grok4.6 and DeepSeekV4Pro. DeepSeek uses Claude CLI
    Failure: invented absent OPEN_SETTINGS_SECTION and absent ChatView classes; primary/overflow mistaken for capability denial.
    Attribution: review packet incompleteness plus unsupported reviewer inference.
    Guard: unified diff and actual reducer, SettingsSection, mode sets included in revision packet; require originating reviewers to close claims.
+
+## Revision convergence
+
+Implementation-r2: both Grok4.6 and DeepSeekV4Pro returned APPROVE_WITH_NITS, closing the implementation blockers. Followup delta removes inert WebKit blur, uses aria-current for resource selection, and scopes history Escape to its panel/menu/trigger. Search autofocus targets the actual search input. Extension build/1281 tests and browser matrix rerun exit0; added assertions cover Escape from an external composer while history menu is open, then menu-only/history-only dismissal. Final delta receives the same independent pair before merge.
+
+Remaining nonblocking presentation suggestions are explicitly deferred: navigation toggle retains the stable “打开工作区导航” name with aria-expanded; in-flow navigation precedes the header on narrow screens; settings category buttons are jump links with no current-section tracking; legacy Cockpit risk border and decorative metadata hierarchy are not expanded into a broader safety restyle. These are recorded suggestions, not hidden blockers.
+
+Frozen input packets are archived as `*-packet.md.gz` (gzip, UTF-8 Markdown). Model reports omit private reasoning/credentials; DeepSeek modelUsage retains the actually served model ID. Screenshots are synthetic fixtures, not production customer data.
+
+
+Final delta: **Grok4.6 APPROVE + DeepSeekV4Pro APPROVE**, with explicit P1/N1/N2/N3 closures. Reviewer machine results are claims in their text; the implementer independently executed the commands above. After review, presentation fixture alone substitutes the production handler's safe fallback label `每次确认` for the HTML placeholder (no live config); HTML test rerun exit0 and screenshot refreshed. No product code changed after the final review freeze. Final source hashes are in `final-source-manifest.json`; PR #470 latest-head CI is the merge gate, recorded by GitHub rather than circularly claiming a future CI run here.

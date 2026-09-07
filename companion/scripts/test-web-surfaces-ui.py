@@ -15,6 +15,8 @@ with tempfile.TemporaryDirectory() as out:
             base=subprocess.check_output(['git','show','8656df94:companion/src/'+('summoner-web.ts' if name=='capture' else 'settings-web.ts')],cwd=project,text=True)
             current=(project/'src'/('summoner-web.ts' if name=='capture' else 'settings-web.ts')).read_text()
             assert re.sub(r'<style>.*?</style>','<style/>',base,flags=re.S)==re.sub(r'<style>.*?</style>','<style/>',current,flags=re.S), 'HTML behavior changed'
+            # Same safe initial label as the production handler's fallback; no live config.
+            html=html.replace('%%CRUISE_LABEL%%','每次确认')
             page.set_content(re.sub(r'<script\b[^>]*>.*?</script>','',html,flags=re.S))
             for width,height in [(320,480),(390,740),(900,800)]:
                 page.set_viewport_size({'width':width,'height':height})

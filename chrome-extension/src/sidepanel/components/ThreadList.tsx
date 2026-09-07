@@ -121,10 +121,11 @@ export function ThreadList() {
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set())
   const [menuOpen, setMenuOpen] = useState(false)
   const menuOpenRef = useRef(menuOpen)
-  menuOpenRef.current = menuOpen
+  useEffect(() => { menuOpenRef.current = menuOpen }, [menuOpen])
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
   const menuBtnRef = useRef<HTMLButtonElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const historyMenuRef = useRef<HTMLDivElement>(null)
   const historyRef = useRef<HTMLDivElement>(null)
   const [panelBox, setPanelBox] = useState<{ top: number; maxHeight: number } | null>(null)
   const [activeTag, setActiveTag] = useState<string | null>(null)
@@ -861,10 +862,10 @@ export function ThreadList() {
   // Its existing overflow menu uses a separate portal, so do not claim aria-modal.
   useEffect(() => {
     if (!open || !panelBox) return
-    historyRef.current?.querySelector<HTMLInputElement>('input[type="text"], input:not([type])')?.focus()
+    historyRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus()
     const key = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return
-      if (!historyRef.current?.contains(event.target as Node) && event.target !== triggerRef.current && !menuOpenRef.current) return
+      if (!historyRef.current?.contains(event.target as Node) && event.target !== triggerRef.current && !historyMenuRef.current?.contains(event.target as Node)) return
       event.preventDefault()
       event.stopPropagation()
       if (menuOpenRef.current) { setMenuOpen(false); menuBtnRef.current?.focus(); return }
@@ -1436,7 +1437,7 @@ export function ThreadList() {
                           top: menuPos.top,
                           right: menuPos.right,
                         }}
-                        role="menu"
+                        ref={historyMenuRef} role="menu"
                       >
                         <button
                           type="button"

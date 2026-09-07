@@ -985,7 +985,6 @@ const glass: CSSProperties = {
   border: `1px solid ${tokens.darkBorder}`,
   boxShadow: "0 8px 28px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset",
   // Solid surface keeps graph controls legible without translucent layering.
-  WebkitBackdropFilter: "blur(12px)",
 }
 
 const styles: Record<string, CSSProperties> = {

@@ -19,7 +19,7 @@ export const workspaceCSS = `
 .cm-nav-threads{flex:1;min-height:80px;overflow-y:auto;margin-top:4px}
 .cm-nav-thread{min-height:38px;color:${tokens.textSecondary}}
 .cm-nav-thread>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-.cm-nav-item[aria-pressed="true"],.cm-nav-thread[aria-current="page"]{background:${tokens.navSelected};color:${tokens.text};font-weight:500}
+.cm-nav-item[aria-current="true"],.cm-nav-thread[aria-current="page"]{background:${tokens.navSelected};color:${tokens.text};font-weight:500}
 .cm-nav-running{color:${tokens.success};font-size:20px}
 .cm-nav-empty{font-size:12px;color:${tokens.textSecondary};padding:8px}
 .cm-nav-settings{margin-top:12px;border-top:1px solid ${tokens.border};border-radius:0;padding-top:14px}

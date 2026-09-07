@@ -62,6 +62,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         history.click()
         dialog=page.get_by_role('dialog',name='历史对话列表',exact=True)
         dialog.wait_for()
+        page.wait_for_function('document.activeElement?.getAttribute("aria-label")==="搜索线程"')
         row=dialog.get_by_role('button',name='打开 发布 v2.8',exact=False).first
         row.focus();page.keyboard.press('Enter')
         assert not dialog.is_visible()
@@ -79,6 +80,15 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         row=dialog.get_by_role('button',name='打开 发布 v2.8',exact=False).first
         row.focus();page.keyboard.press('Escape')
         assert not dialog.is_visible() and context.is_visible(), 'Escape must close only history'
+        history.click();dialog.wait_for();page.wait_for_timeout(100)
+        dialog.get_by_title('更多',exact=True).click()
+        menu=page.get_by_role('menu').last;menu.wait_for()
+        composer.focus();page.keyboard.press('Escape')
+        assert menu.is_visible(), 'History must not consume Escape from another surface'
+        menu.get_by_role('button').first.focus();page.keyboard.press('Escape')
+        assert not menu.is_visible() and dialog.is_visible()
+        dialog.get_by_role('searchbox',name='搜索线程').focus();page.keyboard.press('Escape')
+        assert not dialog.is_visible() and context.is_visible()
         page.get_by_role('button',name='收起面板',exact=True).click()
         # Long content + actual tool card disclosure are keyboard operable.
         messages=[{'id':'u1','thread_id':'demo-0','role':'user','content':'请核对支付服务 v2.8 的需求、代码与测试，整理变更材料。','created_at':'2026-09-07T10:00:00Z'},

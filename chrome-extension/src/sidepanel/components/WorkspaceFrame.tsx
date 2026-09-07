@@ -51,7 +51,7 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
     </div>
     <button type="button" className="cm-nav-new" onClick={() => { createBlankThread(dispatch); onNavigate() }}><IconNewChat size={17} />新对话</button>
     <nav aria-label="资源与能力" className="cm-nav-resources">
-      {CONTEXT_PANEL_TABS.filter(t => t.id !== "history").map(({ id, label, Icon }) => <button type="button" key={id} className="cm-nav-item" aria-pressed={activePanel === id} onClick={() => {
+      {CONTEXT_PANEL_TABS.filter(t => t.id !== "history").map(({ id, label, Icon }) => <button type="button" key={id} className="cm-nav-item" aria-current={activePanel === id ? "true" : undefined} onClick={() => {
         dispatch({ type: "SET_SETTINGS_OPEN", open: false }); openPanelForce(id); onNavigate()
       }}><Icon size={16} /><span>{label}</span></button>)}
     </nav>
