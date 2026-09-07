@@ -2,6 +2,13 @@
 
 0.7.0 的职责是把企业网页信息组织成可回溯、待人工复核的材料。两种 Mission 使用既有聊天执行链；MCP 只是获准使用外部助手时的可选入口。产品运行时不依赖开发过程中的 Grok/DeepSeek 复审。
 
+代码审阅由 `companion/src/code-review/` 独立承载：`diff` 解析实际网页差异，
+`contract/service` 保存不可变比较范围，`context/report` 核对业务引用与两种评语，
+`material` 输出关联材料。它引用并重新验证既有 Observation/草稿，避免复制出
+第二套事实来源；原有 v1 草稿的字段规则保持独立。CMspark 网页评语无需终端，
+外部 Agent 报告通过任务绑定的 PTY 界面确认导入，二者都不能直接设置材料齐备。
+使用方式和当前适配边界见[代码审阅流程](code-review-workflow.md)。
+
 ```mermaid
 flowchart LR
   Browser[认证浏览器读取] --> Capture[绑定目标与原子来源]

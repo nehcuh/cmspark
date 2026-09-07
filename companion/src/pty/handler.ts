@@ -1,6 +1,8 @@
 // terminal.* WS handler (spec §4/§5). Panel-only. L2 on open never skipped by cruise.
 
-import { getConfig } from "../config"
+import { getConfig, getConfigDir } from "../config"
+import { CodeReviewService } from "../code-review/service"
+import { reviewPrompt } from "../code-review/report"
 import type { ThreadManager } from "../threads/thread-manager"
 import { resolveTerminalStartCwd } from "./cwd"
 import {
@@ -13,6 +15,7 @@ import {
   spawnPtySession,
   writePtyInput,
   ptyHostPlatform,
+  getOwnedPtyContext,
 } from "./session"
 
 type Services = { threadManager: ThreadManager }
@@ -26,6 +29,7 @@ type Session = {
   surface?: string
   originWs?: unknown
 }
+let pendingOpen: { id: string; owner: unknown; canceled: boolean } | null = null
 
 function clampSize(n: unknown, fallback: number, max: number): number {
   if (typeof n !== "number" || !Number.isFinite(n)) return fallback
@@ -33,7 +37,7 @@ function clampSize(n: unknown, fallback: number, max: number): number {
 }
 
 function deny(error: string, extra?: Record<string, unknown>): Record<string, unknown> {
-  return { type: "error", error, ...extra }
+  return { type: "terminal.error", code: "request_failed", error, ...extra }
 }
 
 export async function handleTerminalMessage(
@@ -51,9 +55,16 @@ export async function handleTerminalMessage(
       error_code: surface === "summoner" ? "SUMMONER_ACL" : "TERMINAL_SURFACE",
     })
   }
+  // A tab can close while its L2 prompt is still pending on the shared WS.
+  if (type === "terminal.close" && pendingOpen?.id === id && pendingOpen.owner === session?.originWs) {
+    pendingOpen.canceled = true
+    pendingOpen = null
+    return { type: "terminal.ok", id }
+  }
 
   if (type === "terminal.open") {
     if (!id) return deny("terminal.open requires id")
+    if (rest.review_id !== undefined && (typeof rest.review_id !== "string" || !rest.review_id)) return deny("INVALID_REVIEW_ID", { id })
     if (rest.user_gesture !== true) {
       return deny("terminal.open requires user_gesture:true")
     }
@@ -90,11 +101,28 @@ export async function handleTerminalMessage(
     if (!session?.requestConfirmation) {
       return deny("terminal.open requires an origin-bound confirmation channel")
     }
-    const decision = await session.requestConfirmation({
-      toolName: "terminal.open",
-      dangerousApis: ["pty", "shell"],
-      code: `open PTY cwd=${cwdRes.cwd}`,
-    })
+    const peer = session.originWs as { readyState?: number } | undefined
+    if (!peer || peer.readyState !== 1) return deny("TERMINAL_PEER_REQUIRED", { id })
+    const reviewId = typeof rest.review_id === "string" ? rest.review_id : ""
+    let review: ReturnType<CodeReviewService["read"]> | undefined
+    if (reviewId) {
+      if (!threadId) return deny("CODE_REVIEW_THREAD_REQUIRED", { id })
+      try { review = new CodeReviewService(getConfigDir(), { kind: "chat", threadId }).read({ review_id: reviewId }) }
+      catch { return deny("CODE_REVIEW_NOT_FOUND_OR_INVALID", { id }) }
+    }
+    if (pendingOpen) return deny("terminal_busy", { id })
+    const pending = { id, owner: session.originWs, canceled: false }
+    pendingOpen = pending
+    let decision: { approved: boolean }
+    try {
+      decision = await session.requestConfirmation({
+        toolName: "terminal.open",
+        dangerousApis: ["pty", "shell"],
+        code: `open login PTY cwd=${cwdRes.cwd}\n本机用户 shell，可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}`,
+      })
+    } catch { return deny("TERMINAL_CONFIRMATION_FAILED", { id }) }
+    finally { if (pendingOpen === pending) pendingOpen = null }
+    if (pending.canceled) return deny("TERMINAL_OPEN_CANCELED", { id })
     if (!decision.approved) {
       return {
         type: "terminal.closed",
@@ -102,6 +130,19 @@ export async function handleTerminalMessage(
         code: "denied",
         signal: 0,
       }
+    }
+    // Confirmation can outlive a socket, thread, workspace or execution policy.
+    if (peer.readyState !== 1) return deny("TERMINAL_PEER_CLOSED", { id })
+    const current = threadId ? services.threadManager.get(threadId) : null
+    if (threadId && (!current || current.execution_policy === "plan_readonly" || (current.workspace_root || null) !== workspaceRoot)) return deny("TERMINAL_CONTEXT_CHANGED", { id })
+    const freshCwd = resolveTerminalStartCwd({ requested: cwdRes.cwd, workspaceRoot })
+    if (!freshCwd.ok || freshCwd.cwd !== cwdRes.cwd) return deny("TERMINAL_CONTEXT_CHANGED", { id })
+    if (review) {
+      try {
+        const freshReview = new CodeReviewService(getConfigDir(), { kind: "chat", threadId }).read({ review_id: reviewId })
+        if (JSON.stringify(freshReview) !== JSON.stringify(review)) return deny("CODE_REVIEW_CONTEXT_CHANGED", { id })
+        review = freshReview
+      } catch { return deny("CODE_REVIEW_CONTEXT_CHANGED", { id }) }
     }
 
     const send = (frame: Record<string, unknown>) => {
@@ -117,6 +158,7 @@ export async function handleTerminalMessage(
       rows: clampSize(rest.rows, 24, 200),
       cwd: cwdRes.cwd,
       threadId: threadId || undefined,
+      reviewId: reviewId || undefined,
       owner: session.originWs,
       send,
     })
@@ -132,10 +174,45 @@ export async function handleTerminalMessage(
       }
       return deny(spawned.error)
     }
-    return { type: "terminal.opened", id, pid: spawned.pid, platform: "darwin" }
+    return { type: "terminal.opened", id, pid: spawned.pid, platform: "darwin", ...(review ? { review_id: reviewId, review_prompt: reviewPrompt(review) } : {}) }
   }
 
   if (!id) return deny(`${type} requires id`)
+  const context = getOwnedPtyContext(id, session?.originWs)
+  if (!context) return deny("TERMINAL_SESSION_NOT_OWNED", { id })
+  if (context.threadId) {
+    const thread = services.threadManager.get(context.threadId)
+    if (!thread || thread.execution_policy === "plan_readonly") { closePty(id); return deny("TERMINAL_CONTEXT_CHANGED", { id }) }
+  }
+
+  if (type === "terminal.review.submit") {
+    if (!context.threadId || !context.reviewId || rest.user_gesture !== true || !session?.requestConfirmation) return deny("CODE_REPORT_BOUND_CONFIRMATION_REQUIRED", { id })
+    const thread = services.threadManager.get(context.threadId)
+    if (!thread || thread.execution_policy === "plan_readonly") return deny("CODE_REPORT_THREAD_UNAVAILABLE", { id })
+    try {
+      const service = new CodeReviewService(getConfigDir(), { kind: "chat", threadId: context.threadId })
+      const report = service.previewReport(rest.report)
+      if (report.review_id !== context.reviewId) return deny("CODE_REPORT_IDENTITY_MISMATCH", { id })
+      const decision = await session.requestConfirmation({ toolName: "terminal.review.submit", dangerousApis: ["external_report_import"],
+        code: `将以下外部评审报告保存至原任务 ${context.threadId}。确认仅表示同意导入，不表示代码/测试核实或批准。\n${JSON.stringify(report, null, 2)}` })
+      if (!decision.approved) return deny("CODE_REPORT_DENIED", { id })
+      const current = services.threadManager.get(context.threadId)
+      if (getOwnedPtyContext(id, session.originWs) !== context || !current || current.execution_policy === "plan_readonly") return deny("CODE_REPORT_CONTEXT_CHANGED", { id })
+      const receipt = service.receive(report)
+      const messageId = `code-review-${receipt.id}`
+      // Retry heals an interrupted history write without duplicating the receipt.
+      let message = services.threadManager.getMessages(context.threadId).find(item => item.id === messageId)
+      if (!message) message = services.threadManager.addMessage(context.threadId, { id: messageId, thread_id: context.threadId, role: "assistant",
+        content: `已收到用户确认导入的外部代码评审报告。审阅编号：${context.reviewId}；回执：${receipt.id}。报告和网页覆盖仍待核实，可调用 code_review_read 查看原任务中的完整报告及缺项。` })
+      // Delivery is best-effort after durable receipt/history writes. A lost
+      // socket must not turn a successful import into a persistence failure.
+      try { session.sendToExtension({ type: "code_review.handback.message", thread_id: context.threadId, message }) } catch { /* history restores on reconnect */ }
+      return { type: "terminal.review.received", id, receipt_id: receipt.id, review_id: context.reviewId }
+    } catch (error) {
+      const code = (error as Error).message
+      return deny(/^[A-Z][A-Z0-9_]+$/.test(code) ? code : "CODE_REPORT_INVALID_OR_PERSIST_FAILED", { id })
+    }
+  }
 
   if (type === "terminal.input") {
     if (typeof rest.b64 !== "string") return deny("terminal.input requires b64")

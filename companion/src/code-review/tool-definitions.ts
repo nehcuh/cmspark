@@ -1,0 +1,20 @@
+const text = { type: "string", minLength: 1, maxLength: 8192 }
+const sha = { type: "string", pattern: "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" }
+const citation = { type: "object", additionalProperties: false, properties: { observation_id: { type: "string", minLength: 1, maxLength: 65536 }, excerpt: { type: "string", maxLength: 65536 }, start: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }, end: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER } }, required: ["observation_id", "excerpt", "start", "end"] }
+const businessReference = { type: "object", additionalProperties: false, properties: { kind: { type: "string", enum: ["requirement", "development_task", "test"] }, external_id: text, citation, commit_id: sha }, required: ["kind", "external_id", "citation"] }
+export const CODE_REVIEW_TOOL_DEFINITIONS = [
+  { type: "function", function: { name: "code_review_create", description: "创建当前会话不可变代码审阅范围。先用 get_page_text 读取 unified/raw diff 网页；diff 必须精确引用 observation 的实际完整 hunks（NFC/LF Unicode码点区间）。普通 split view 暂不支持，不能编造差异。网页采集始终可用，不依赖 Agent。范围为实际 base 树到 head 树；PR三点比较须填实际 merge-base SHA。无 diff 可创建 Agent-only 请求，但引用和覆盖未核实。新采集须新任务。", parameters: { type: "object", additionalProperties: false, properties: {
+    request_id: { type: "string", minLength: 1, maxLength: 128 }, repository: { ...text, description: "仓库 HTTP(S) URL，不含凭据/query/fragment" }, base: { ...sha, description: "完整40或64位小写SHA" }, head: sha, diff: citation,
+    identity_citations: { type: "array", maxItems: 8, items: citation, description: "同一观察中diff片段以外的仓库URL、base和head元数据引用；源码字符串不能证明身份" },
+    business_context: { type: "array", maxItems: 64, items: businessReference, description: "用户选择的需求、真实开发任务与测试观察引用；测试需带引用内完整commit_id。关系仍是待核对判断。" },
+    materials: { type: "array", maxItems: 2, items: { type: "object", additionalProperties: false, properties: { draft_id: { type: "string" }, revision: { type: "integer", minimum: 1 } }, required: ["draft_id", "revision"] }, description: "要关联的当前任务材料草稿和锁定版本；修改后旧审阅显示过期。" },
+  }, required: ["request_id", "repository", "base", "head"] } } },
+  { type: "function", function: { name: "code_review_read", description: "读取当前任务代码审阅的逐文件增删行、SHA/hash、来源与覆盖缺项。普通网页的全量覆盖和host比较语义仍未核实，不可称评审完成。", parameters: { type: "object", additionalProperties: false, properties: { review_id: { type: "string" } }, required: ["review_id"] } } },
+  { type: "function", function: { name: "code_review_assess", description: "记录CMspark基于网页代码的评语，不依赖外部Agent。只能引用本审阅实际文件/行和创建时选定的business_context；不会伪装成外部Agent回执。每任务一份评语，同内容可重试，不同内容需新审阅任务。评语不改变覆盖或批准状态。", parameters: { type: "object", additionalProperties: false, properties: {
+    review_id: { type: "string" }, repository: text, base: sha, head: sha, diff_hash: { type: ["string", "null"], pattern: "^[a-f0-9]{64}$" },
+    status: { type: "string", enum: ["completed", "partial"] }, summary: { type: "string", minLength: 1, maxLength: 16384 }, reviewed_files: { type: "array", maxItems: 128, items: text },
+    findings: { type: "array", maxItems: 128, items: { type: "object", additionalProperties: false, properties: { severity: { type: "string", enum: ["critical", "major", "minor", "info"] }, summary: text, path: text, side: { type: "string", enum: ["old", "new"] }, line: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER } }, required: ["severity", "summary", "path", "side", "line"] } },
+    mappings: { type: "array", maxItems: 64, items: { ...businessReference, properties: { ...businessReference.properties, assessment: text }, required: [...businessReference.required, "assessment"] } },
+  }, required: ["review_id", "repository", "base", "head", "diff_hash", "status", "summary", "reviewed_files", "findings", "mappings"] } } },
+  { type: "function", function: { name: "code_review_render", description: "生成代码关联材料草稿 Markdown+JSON，须关联创建时锁定的draft_id。核对提交/草稿版本和真实业务引用，分别显示网页事实、CMspark评语、可选外部报告与全部缺项；不是发布批准。", parameters: { type: "object", additionalProperties: false, properties: { review_id: { type: "string" }, draft_id: { type: "string" } }, required: ["review_id", "draft_id"] } } },
+]

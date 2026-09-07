@@ -25,6 +25,10 @@ tools:
     - draft_update
     - draft_read
     - draft_render
+    - code_review_create
+    - code_review_read
+    - code_review_assess
+    - code_review_render
   deny:
     - shell_exec
     - osascript_eval

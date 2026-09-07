@@ -1,0 +1,19 @@
+Tail scope: remaining scan covered lifecycle/ops corners, idempotency mechanics, and confirm-race semantics. The two closed MAJORs (close-on-disconnect/reconnect, prompt PTY control) hold with no reopening residuals beyond NOTE-1 below, which is a trivially extended strip policy, not a new control gap.
+
+## Findings
+
+**MINOR-1 — Job lifecycle dead-end (no delete, hard cap).** The store has create/read only; every base/head/capture change rotates to a new job (by design), but 16 jobs/thread with "never evict" is a *permanent* cap — a thread that exhausts jobs streaming a force-pushed PR loses review capability forever, with no specified escape. Pin one of: an explicit user-confirmed `delete_job` (blocked while a live terminal is bound; report bindings are severed, never rebind), or a raised cap bounded by the 2 MiB store, plus user-guidance note. Recommended: pin the delete operation; it's the only way the immutability contract and the rotation rule coexist for a long-lived thread.
+
+**MINOR-2 — Report idempotency canonical form unspecified.** "Same canonical report payload SHA-256 is a retry" but the canonical serialization (key order, whitespace, encoding) is not pinned. If canonical means raw paste bytes, a formatting-different resubmission after a lost confirmation is rejected as a different payload and forces a new job — breaking the required "matching retry returns the same receipt" path. Pin: hash over the deterministic serialization of the validated, bounds-checked report record (fixed key order, minimal escaping), never the raw textarea bytes.
+
+**MINOR-3 — Pending open across disconnect unspecified.** Peer binding is pinned for live terminals, but not for an in-flight open: if the requesting peer disconnects between open request and L2 confirmation, it's unspecified whether confirmation from a new peer completes the open. Pin: a pending open is bound to its requesting peer; that peer's disconnect cancels the pending request. This matches the pinned "new explicit confirmed open" posture and closes a small rebinding path via crash-then-confirm.
+
+**NOTE-1 — Select-and-copy bypass of the C0/C1 strip.** The copy button strips control characters, but manual textarea selection copies unstripped bytes. Page text in an "unchanged" (`threats_removed=[]`) observation can carry raw ANSI/control sequences that, pasted into the user's terminal, become terminal control. Cheap hardening: strip C0/C1 (except LF/TAB) in the rendered textarea value itself, so both copy paths are clean. Extends the closed prompt-control contract; does not reopen it.
+
+**NOTE-2 — Agent-only findings validation basis.** With `diff_hash=null` and no captured lines, pin that findings are validated for schema/bounds only (bounded relative path, side ∈ {old,new}, positive line) and rendered entirely as unverified — never cross-checked against any local or stored path.
+
+**NOTE-3 — Citation referent semantics.** "Exact cited text"/"bounded citations" implies range-offset citations into the stored observation, validated for containment server-side. If the pre-existing citation machinery is content-substring based, duplicated diff text in one page makes citations ambiguous; confirm-and-pin ranges at #465. `[assumed]` the existing evidence citation type is already range-based; the spec text should restate it to keep #465/#466/#467 compatible by construction.
+
+## VERDICT
+
+**APPROVE — design gate passes. No BLOCK, no MAJOR.** Three MINORs (lifecycle delete, idempotency canonicalization, pending-open race) and three NOTEs remain; each closes with a one-paragraph pinned contract line, none requires scope expansion. Recommend folding them into the authored spec before the #466/#467 checkpoints so the frozen review packets and machine checks cover them, but implementation authorization (#464–#467) is not conditioned on them.

@@ -1,0 +1,16 @@
+{
+  "companion/src/pty/handler.ts": "3e52e3c9f94ee0a4694f7d4080d2a35dcddfa8e7289e0d2f3029ac50e1eea937",
+  "companion/src/pty/session.ts": "1d7d2dce9c464774c57e8a025ae8592e8051a5cae7871060ec8335d7d4f6fef9",
+  "companion/src/pty/cwd.ts": "e248464153b07dd4ffc825983feac325771f9b6f84964f71b4e62b5087430499",
+  "companion/src/pty/env.ts": "5c0aa880fe1c20d3ffde773d0d12e02faeecddaab09baa2fe5bf2405ae503770",
+  "chrome-extension/src/terminal/TerminalApp.tsx": "baa1430ee40d1398f63b4e19ded4c5c37ee9c1cf3b249cbc34b0e3d28f968798",
+  "chrome-extension/src/terminal/wire.ts": "1062344fa9b54877f513b1e33a99096d034675739a247942483627327aa7f98a",
+  "chrome-extension/src/background/terminal.ts": "a675278bf21720c9f88f01041de2bd2ccb0cc46b3eeae88eba07b435ba661a82",
+  "chrome-extension/tests/terminal-relay.test.ts": "67073277c34a61c95dc0361f7a0edb4dd5483c17e8c8145e6d58cd9914194f1d",
+  "chrome-extension/scripts/test-terminal-review-ui.py": "013e10476550aa9d9be20842d0b2b8e42dc08deca91f011e47b88a0bda9889ec",
+  "companion/src/code-review/service.ts": "6211da1f5ade3a799f4a65c5793dd1a6a3ec9ab9d7f4d1fdce13d554f903620b",
+  "companion/src/code-review/material.ts": "4ecd2b4e4f22b648bbe210162e831f6c331c3bb1525cc1c87da996ef14726e36",
+  "companion/src/code-review/tool-definitions.ts": "8e366750dd7801e8118fe10312a4ef195db76472860b7453b55ce5334b1fa211",
+  "companion/src/code-review/contract.ts": "8ce1255bd13dc2b1944f7d8c94b08950f1f0359ebed113185b80da1f23ac3032",
+  "companion/src/business-evidence/draft-repository.ts": "8a46e7b6a1e33e65effe25122b7edba0f25bc44cc1b238515f771bd34ccaaab2"
+}

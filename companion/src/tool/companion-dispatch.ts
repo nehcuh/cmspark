@@ -8,6 +8,7 @@
 
 import { execFile } from "child_process"
 import { randomUUID } from "crypto"
+import { executeCodeReviewTool } from "../code-review/executor"
 import os from "os"
 import { getConfig } from "../config"
 import { securityPolicy } from "../security-policy"
@@ -142,6 +143,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
   const rejectPendingForTab = _rt.rejectPendingForTab
 
   switch (toolName) {
+    case "code_review_create":
+    case "code_review_read":
+    case "code_review_assess":
+    case "code_review_render":
+      return executeCodeReviewTool(getConfigDir(), execOpts?.evidenceScope, toolName, params)
     case "draft_create":
     case "draft_update":
     case "draft_read":

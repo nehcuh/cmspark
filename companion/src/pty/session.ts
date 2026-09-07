@@ -30,6 +30,7 @@ function killPidTree(pid: number): void {
 export const TERMINAL_DATA_CHUNK_BYTES = 16 * 1024
 export const TERMINAL_HIGH_WATER_UNACKED = 64 * 1024
 export const TERMINAL_LOW_WATER_UNACKED = 16 * 1024
+export const TERMINAL_MAX_UNACKED = 256 * 1024
 export const TERMINAL_HEARTBEAT_MS = 45_000
 
 export type TerminalClosedCode = number | "unsupported" | "denied" | "killed" | string
@@ -38,6 +39,7 @@ type LiveSession = {
   id: string
   handle: PtyHandle
   threadId?: string
+  reviewId?: string
   /** WS peer that opened this PTY; WS-close kills only this owner's session. */
   owner?: unknown
   cwd: string
@@ -86,6 +88,12 @@ export function __testResetPtySessions(): void {
 
 export function getLivePtyId(): string | null {
   return live?.id ?? null
+}
+
+/** Stable object identity permits rechecking the same session after confirmation. */
+export function getOwnedPtyContext(id: string, owner: unknown): Readonly<{ threadId?: string; reviewId?: string }> | null {
+  if (!owner || typeof owner !== "object" || !("readyState" in owner) || owner.readyState !== 1) return null
+  return owner && live?.id === id && live.owner === owner ? live : null
 }
 
 export function killPtyByThreadId(threadId: string): boolean {
@@ -178,8 +186,17 @@ function maybeResume(s: LiveSession): void {
 
 function emitChunks(s: LiveSession, text: string): void {
   const buf = Buffer.from(text, "utf8")
-  for (let i = 0; i < buf.length; i += TERMINAL_DATA_CHUNK_BYTES) {
-    const slice = buf.subarray(i, i + TERMINAL_DATA_CHUNK_BYTES)
+  for (let i = 0; i < buf.length;) {
+    if (live !== s) return
+    let end = Math.min(buf.length, i + TERMINAL_DATA_CHUNK_BYTES)
+    // Frames remain independently UTF-8 decodable, including at CJK boundaries.
+    while (end < buf.length && (buf[end] & 0xc0) === 0x80) end--
+    const slice = buf.subarray(i, end)
+    i = end
+    if (s.unackedBytes + slice.length > TERMINAL_MAX_UNACKED) {
+      closeLive("output_overflow", { error: "终端输出未被及时确认，已停止会话以保护内存。请重新打开。" })
+      return
+    }
     s.seq += 1
     const seq = s.seq
     s.unacked.set(seq, slice.length)
@@ -200,6 +217,7 @@ export function spawnPtySession(opts: {
   rows: number
   cwd: string
   threadId?: string
+  reviewId?: string
   owner?: unknown
   send: (frame: Record<string, unknown>) => void
 }): { ok: true; pid: number } | { ok: false; error: string; code?: TerminalClosedCode } {
@@ -222,7 +240,7 @@ export function spawnPtySession(opts: {
 
   let handle: PtyHandle
   try {
-    handle = spawnFn(file, [], { name: "xterm-256color", cols, rows, cwd: opts.cwd, env })
+    handle = spawnFn(file, ["-l"], { name: "xterm-256color", cols, rows, cwd: opts.cwd, env })
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e), code: "spawn_failed" }
   }
@@ -232,6 +250,7 @@ export function spawnPtySession(opts: {
     id: opts.id,
     handle,
     threadId: opts.threadId,
+    reviewId: opts.reviewId,
     owner: opts.owner,
     cwd: opts.cwd,
     seq: 0,
@@ -252,11 +271,11 @@ export function spawnPtySession(opts: {
   live = session
 
   handle.onData((data) => {
-    if (live?.id !== session.id) return
+    if (live !== session) return
     emitChunks(session, data)
   })
   handle.onExit(({ exitCode, signal }) => {
-    if (live?.id !== session.id) return
+    if (live !== session) return
     closeLive(typeof exitCode === "number" ? exitCode : 0, { signal: signal ?? 0 })
   })
 
@@ -278,7 +297,7 @@ export function noteClientActivity(id: string): boolean {
   return true
 }
 
-/** Keepalive. Unknown id is a no-op (ext may ping after local close). */
+/** Internal keepalive; the WS handler rejects unknown/unowned sessions first. */
 export function pingPty(id: string): { ok: true } {
   noteClientActivity(id)
   return { ok: true }
@@ -286,12 +305,12 @@ export function pingPty(id: string): { ok: true } {
 
 export function writePtyInput(id: string, b64: string): { ok: true } | { ok: false; error: string } {
   if (!noteClientActivity(id) || !live) return { ok: false, error: "terminal_not_found" }
-  let raw: Buffer
-  try {
-    raw = Buffer.from(b64, "base64")
-  } catch {
+  // Allow large user pastes, but reject malformed/noncanonical payloads before write.
+  if (!b64 || b64.length > 1024 * 1024 || b64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) {
     return { ok: false, error: "invalid_b64" }
   }
+  const raw = Buffer.from(b64, "base64")
+  if (raw.toString("base64") !== b64) return { ok: false, error: "invalid_b64" }
   try {
     live.handle.write(raw.toString("utf8"))
   } catch (e: any) {
@@ -339,6 +358,7 @@ export function pausePty(id: string): { ok: true } | { ok: false; error: string 
 
 export function resumePty(id: string): { ok: true } | { ok: false; error: string } {
   if (!noteClientActivity(id) || !live) return { ok: false, error: "terminal_not_found" }
+  if (live.unackedBytes > TERMINAL_LOW_WATER_UNACKED) return { ok: false, error: "terminal_waiting_for_ack" }
   live.paused = false
   try {
     live.handle.resume()

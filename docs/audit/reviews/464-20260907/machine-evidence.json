@@ -1,0 +1,54 @@
+{
+  "cmspark-464-final-companion-tests.log": {
+    "sha256": "2febe5cccdacafb19f97dd58138e4241c4acf56c4bb669ef2560511371848d13",
+    "tail": "h RFC1918 IP is not SSRF-blocked\n    ok 12 - POST /api/test with RFC1918 IP is not SSRF-blocked\n      ---\n      duration_ms: 0.594667\n      type: 'test'\n      ...\n    # Subtest: POST /api/test with loopback IP tries connect (not Internal/private copy)\n    ok 13 - POST /api/test with loopback IP tries connect (not Internal/private copy)\n      ---\n      duration_ms: 2.212\n      type: 'test'\n      ...\n    # Subtest: POST /api/testVision allowlisted public host resolving to IMDS is blocked\n    ok 14 - POST /api/testVision allowlisted public host resolving to IMDS is blocked\n      ---\n      duration_ms: 0.419708\n      type: 'test'\n      ...\n    # Subtest: POST /api/testVision with allowlisted localhost → tries fetch (connection fail ok)\n    ok 15 - POST /api/testVision with allowlisted localhost → tries fetch (connection fail ok)\n      ---\n      duration_ms: 4.567875\n      type: 'test'\n      ...\n✅ api_key 已更新\n    # Subtest: POST /api/testVision with AWS metadata IP → SSRF blocked\n✅ api_key 已更新\n    ok 16 - POST /api/testVision with AWS metadata IP → SSRF blocked\n      ---\n      duration_ms: 0.356041\n      type: 'test'\n      ...\n    1..16\nok 1 - settings-web server\n  ---\n  duration_ms: 31.140125\n  type: 'suite'\n  ...\n# Subtest: settings-cli\n    # Subtest: settings-cli: --set api_key=sk-... exits non-zero (argv leak)\n    ok 1 - settings-cli: --set api_key=sk-... exits non-zero (argv leak)\n      ---\n      duration_ms: 0.480458\n      type: 'test'\n      ...\n    # Subtest: settings-cli: --set-stdin api_key reads value from stdin\n    ok 2 - settings-cli: --set-stdin api_key reads value from stdin\n      ---\n      duration_ms: 0.892583\n      type: 'test'\n      ...\n    # Subtest: settings-cli: CMSPARK_API_KEY env var is accepted for --set-stdin\n    ok 3 - settings-cli: CMSPARK_API_KEY env var is accepted for --set-stdin\n      ---\n      duration_ms: 0.370584\n      type: 'test'\n      ...\n    # Subtest: settings-cli: non-sensitive --set still works (model_name)\n    ok 4 - settings-cli: non-sensitive --set still works (model_name)\n      ---\n      duration_ms: 0.227917\n      type: 'test'\n      ...\n    1..4\nok 2 - settings-cli\n  ---\n  duration_ms: 2.023666\n  type: 'suite'\n  ...\n1..2\n# tests 20\n# suites 2\n# pass 20\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 50.848916\n",
+    "test_totals": [
+      "# tests 5019",
+      "# suites 141",
+      "# pass 4996",
+      "# fail 0",
+      "# cancelled 0",
+      "# skipped 23",
+      "# tests 20",
+      "# suites 2",
+      "# pass 20",
+      "# fail 0",
+      "# cancelled 0",
+      "# skipped 0"
+    ]
+  },
+  "cmspark-464-final-companion-build.log": {
+    "sha256": "4180afd7fb2d356b435c7464de1515840ea9c7f85ff0c1cd47a44d53d34d04e6",
+    "tail": "\n> cmspark-agent@0.6.6 prebuild\n> node scripts/generate-tray-icons.mjs\n\n  tray-icon-green.png (654 bytes)\n  tray-icon-red.png (627 bytes)\n  tray-icon-yellow.png (683 bytes)\n\nPortal tray icons generated!\n\n> cmspark-agent@0.6.6 build\n> tsc && node -e \"const fs=require('fs'),p=require('path');fs.mkdirSync('dist/computer',{recursive:true});fs.copyFileSync('src/computer/qwen-vl-worker.py','dist/computer/qwen-vl-worker.py');process.platform!=='win32'&&fs.chmodSync('dist/index.js',0o755)\"\n\n",
+    "test_totals": []
+  },
+  "cmspark-464-handback-tests.log": {
+    "sha256": "8eaf2b171bf03661e92325d8af0a12c9ee0f68bc46ad2e96eb42c79b275578bc",
+    "tail": " stops an unresponsive client\nok 13 - \\#466 ack cannot be bypassed by resume and hard output bound stops an unresponsive client\n  ---\n  duration_ms: 1.133208\n  type: 'test'\n  ...\n# Subtest: \\#466 in-workspace dot-prefixed directory is not an escape\nok 14 - \\#466 in-workspace dot-prefixed directory is not an escape\n  ---\n  duration_ms: 0.317083\n  type: 'test'\n  ...\n# Subtest: \\#466 long CJK output preserves characters across frame boundaries; malformed input rejected\nok 15 - \\#466 long CJK output preserves characters across frame boundaries; malformed input rejected\n  ---\n  duration_ms: 1.127375\n  type: 'test'\n  ...\n# Subtest: \\#466 changed review while open confirmation is pending must be reconfirmed\nok 16 - \\#466 changed review while open confirmation is pending must be reconfirmed\n  ---\n  duration_ms: 4.5785\n  type: 'test'\n  ...\n# Subtest: \\#466 confirmed report returns to original task, persists and retries without duplicate history\nok 17 - \\#466 confirmed report returns to original task, persists and retries without duplicate history\n  ---\n  duration_ms: 4.762709\n  type: 'test'\n  ...\n# Subtest: \\#466 wrong identity, denied and closed-during-confirmation reports never persist\nok 18 - \\#466 wrong identity, denied and closed-during-confirmation reports never persist\n  ---\n  duration_ms: 3.076125\n  type: 'test'\n  ...\n# Subtest: \\#432 load-native source uses createRequire(execPath)\nok 19 - \\#432 load-native source uses createRequire(execPath)\n  ---\n  duration_ms: 0.326459\n  type: 'test'\n  ...\n# Subtest: \\#432 ping resets heartbeat; unknown id is ignored\nok 20 - \\#432 ping resets heartbeat; unknown id is ignored\n  ---\n  duration_ms: 1.116209\n  type: 'test'\n  ...\n# Subtest: \\#432 WS-close kills only that peer's PTY\nok 21 - \\#432 WS-close kills only that peer's PTY\n  ---\n  duration_ms: 0.922667\n  type: 'test'\n  ...\n# Subtest: \\#432 spawn throw → terminal.closed spawn_failed\nok 22 - \\#432 spawn throw → terminal.closed spawn_failed\n  ---\n  duration_ms: 0.790333\n  type: 'test'\n  ...\n# Subtest: \\#432 cwd: broken symlink refused (no lexical fallback)\nok 23 - \\#432 cwd: broken symlink refused (no lexical fallback)\n  ---\n  duration_ms: 0.339792\n  type: 'test'\n  ...\n1..23\n# tests 23\n# suites 0\n# pass 23\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 230.037084\n",
+    "test_totals": [
+      "# tests 23",
+      "# suites 0",
+      "# pass 23",
+      "# fail 0",
+      "# cancelled 0",
+      "# skipped 0"
+    ]
+  },
+  "cmspark-464-final-extension-build.log": {
+    "sha256": "1f06db72af2d398fa853f85b76c83c0ea387a454482b30bad87309664dc1f6cf",
+    "tail": "\n> cmspark-browser-agent@0.6.6 prebuild\n> node scripts/generate-icons.mjs\n\n  icon16.png (903 bytes)\n  icon32.png (3032 bytes)\n  icon48.png (6307 bytes)\n  icon64.png (10596 bytes)\n  icon128.png (36424 bytes)\n  icon.png (36424 bytes)\n  icon_16x16.png (903 bytes)\n  icon_16x16@2x.png (3032 bytes)\n  icon_32x32.png (3032 bytes)\n  icon_32x32@2x.png (10596 bytes)\n  icon_128x128.png (36424 bytes)\n  icon_128x128@2x.png (116683 bytes)\n  icon_256x256.png (116683 bytes)\n  icon_256x256@2x.png (328574 bytes)\n  icon_512x512.png (328574 bytes)\n  icon_512x512@2x.png (788319 bytes)\n\nPortal icon generation complete!\n\n> cmspark-browser-agent@0.6.6 build\n> tsc --noEmit && plasmo build\n\n🟣 Plasmo v0.90.5\n🔴 The Browser Extension Framework\n🔵 INFO   | Prepare to bundle the extension...\n🔵 INFO   | Building for target: chrome-mv3\n🔵 INFO   | Loaded environment variables from: []\n🟢 DONE   | Finished in 8326ms!\n",
+    "test_totals": []
+  },
+  "cmspark-464-final-extension-tests.log": {
+    "sha256": "dc18e006aeef07ac57235538570586eede4830d87482db6c71f218bba53a0469",
+    "tail": " 15s WS\nok 1270 - wait_for default load+settle stays under companion 15s WS\n  ---\n  duration_ms: 0.054\n  type: 'test'\n  ...\n# Subtest: wait_for caps huge settle_ms\nok 1271 - wait_for caps huge settle_ms\n  ---\n  duration_ms: 0.035583\n  type: 'test'\n  ...\n# Subtest: wait_for selector still wins over network_idle\nok 1272 - wait_for selector still wins over network_idle\n  ---\n  duration_ms: 0.085459\n  type: 'test'\n  ...\n# Subtest: wait_for network_idle true without selector is network_idle\nok 1273 - wait_for network_idle true without selector is network_idle\n  ---\n  duration_ms: 0.035792\n  type: 'test'\n  ...\n# Subtest: wait_for network_idle false without selector is invalid\nok 1274 - wait_for network_idle false without selector is invalid\n  ---\n  duration_ms: 0.062667\n  type: 'test'\n  ...\n# Subtest: checkAndReconnect treats a CONNECTING socket as alive: no close, no new socket\nok 1275 - checkAndReconnect treats a CONNECTING socket as alive: no close, no new socket\n  ---\n  duration_ms: 0.395208\n  type: 'test'\n  ...\n# Subtest: stale onclose from a replaced socket does not tear down the new connection\nok 1276 - stale onclose from a replaced socket does not tear down the new connection\n  ---\n  duration_ms: 1.556333\n  type: 'test'\n  ...\n# Subtest: challenge reply is never sent after the challenged socket was replaced\nok 1277 - challenge reply is never sent after the challenged socket was replaced\n  ---\n  duration_ms: 1.877625\n  type: 'test'\n  ...\n# Subtest: checkAndReconnect closes a dead socket before discarding it\nok 1278 - checkAndReconnect closes a dead socket before discarding it\n  ---\n  duration_ms: 1.619333\n  type: 'test'\n  ...\n# Subtest: shouldRefuseWsFrame refuses a 10MB JSON payload\nok 1279 - shouldRefuseWsFrame refuses a 10MB JSON payload\n  ---\n  duration_ms: 0.297166\n  type: 'test'\n  ...\n# Subtest: shouldRefuseWsFrame allows an 8MB JSON payload\nok 1280 - shouldRefuseWsFrame allows an 8MB JSON payload\n  ---\n  duration_ms: 0.043042\n  type: 'test'\n  ...\n# Subtest: isFrameBudgetRefusal: only the stamped SW refusal matches (F6)\nok 1281 - isFrameBudgetRefusal: only the stamped SW refusal matches (F6)\n  ---\n  duration_ms: 0.061792\n  type: 'test'\n  ...\n1..1281\n# tests 1281\n# suites 0\n# pass 1281\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 9360.417916\n",
+    "test_totals": [
+      "# tests 1281",
+      "# suites 0",
+      "# pass 1281",
+      "# fail 0",
+      "# cancelled 0",
+      "# skipped 0"
+    ]
+  }
+}

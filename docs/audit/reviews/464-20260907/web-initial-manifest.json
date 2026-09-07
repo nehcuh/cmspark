@@ -1,0 +1,10 @@
+{
+  "companion/src/code-review/contract.ts": "d00ffdb818eb85cf6464438625bfecc2fa9290fcd8f2eff6806ed7aaa86566b7",
+  "companion/src/code-review/diff.ts": "6907f1f4dbf35ed75f3aa2ea16a33048c799fef1d5bb00ff56d86709a14ea6f6",
+  "companion/src/code-review/service.ts": "e21d31148a7a95619406ed27299265a63892e0f1ef2f507219ba6005ad8e3e15",
+  "companion/src/code-review/executor.ts": "92f8d47ec9886cb0554dc190727818760564bab347e38548ef3d8756fdf6bf11",
+  "companion/src/code-review/tool-definitions.ts": "71104c0c513f043c4cff7c0bf0cda35bd2f768c489d2ed859e8e4796534456b1",
+  "companion/tests/code-review.test.ts": "88959827780e75792cd14fec2534cf40635a0774188c398e65db3da79a1c050a",
+  "companion/src/business-evidence/store.ts": "b04605bdeb23583a6072c321aed50a6e4ddbd060a0997856931f9d88c50bb2b7",
+  "companion/src/business-evidence/content.ts": "af62e4dd8e660a02bb985e5546f6f3cc30d1521636396976308673d233f9aba4"
+}

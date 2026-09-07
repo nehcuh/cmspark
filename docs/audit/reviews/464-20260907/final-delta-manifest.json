@@ -1,0 +1,5 @@
+{
+  "companion/src/pty/handler.ts": "73675117f64dfcd31755ea64730b0317ffda9152acbde20cf078cb6c8c5bf690",
+  "companion/tests/pty-terminal.test.ts": "f695f8882afd9dc57e3e21619622a8bae6f846798e3ba18f6494d7ec8210aaf5",
+  "chrome-extension/src/sidepanel/types.ts": "41f206d4d877e5003868900b10ee86802ed0f91b5ec221a0187109dbf5d40ec1"
+}

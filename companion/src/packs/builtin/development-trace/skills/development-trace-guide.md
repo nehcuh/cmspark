@@ -12,7 +12,9 @@ type: prompt_template
 4. `draft_read` 返回字段类型与必需关系。标量提交 `value/citations`；集合提交唯一成员数组、含 `member_index` 的成员引用及 `coverage_citations`。摘录必须精确，码点 start/end 为 NFC 和换行规范化后的半开区间。不能从 non-prod 截出 prod。
 5. 登记范围完整且来源明确表示为空时才提交 `[]`。截断/分页/虚拟化未知不能证明全部；静态范围声明需要真实试点验证。缺值用 null，保留缺项。
 6. `draft_update` 使用最近 revision 和新的 request_id；失败后读取最新状态再决定是否修改。响应丢失重试须保留原 request_id 及全部参数，禁止伪造核实状态。
-7. 调用 `draft_render` 输出 Markdown 与 JSON，呈现来源及完整缺项。版本、环境、引用关系或业务时间有冲突时不自行猜测解决。
+7. 需要审阅代码时，在代码平台打开 unified/raw diff 页面，使用 `get_page_text` 采集，再用 `code_review_create` 引用实际差异并指定仓库和完整 base/head SHA。此路径不依赖外部 Agent；普通 split view 尚未适配，不编造增删行。`code_review_read` 返回来源、代码行与未证明的覆盖范围，不能据此声称评审完成。
+8. 创建审阅时用 `business_context` 选择真实需求/开发任务/测试观察，用 `materials` 锁定草稿编号和版本。基于网页的评语用 `code_review_assess` 保存，不冒充外部 Agent；如需外部 Agent，由用户点击工具结果旁的终端入口确认后自行操作并回传。
+9. 调用 `draft_render` 输出基础材料；已关联代码审阅时最后使用 `code_review_render` 输出补充 Markdown/JSON 和合并缺项。版本、环境、引用关系或业务时间有冲突时不自行猜测解决。
 
 ## 研发关联必需材料
 

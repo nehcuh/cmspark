@@ -30,6 +30,11 @@ export function TerminalApp() {
   const hostRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<TermStatus>("connecting")
   const [detail, setDetail] = useState("")
+  const [reviewPrompt, setReviewPrompt] = useState("")
+  const [reportText, setReportText] = useState("")
+  const [reportStatus, setReportStatus] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const submitRef = useRef<((report: unknown) => void) | null>(null)
 
   useEffect(() => {
     const host = hostRef.current
@@ -52,8 +57,11 @@ export function TerminalApp() {
     fit.fit()
 
     const sessionId = `term.${Date.now().toString(36)}.${(sessionSeq += 1)}`
+    const query = new URLSearchParams(window.location.search)
+    const threadId = query.get("thread_id"), reviewId = query.get("review_id")
     let inputSeq = 0
     let closedByUs = false
+    let sessionEnded = false
     // 会话 keepalive：静默（无输入无输出）不等于孤儿——每 25s ping 重置服务端心跳（spec §4）
     const pingTimer = setInterval(() => {
       send({ type: "terminal.ping", id: sessionId })
@@ -71,13 +79,17 @@ export function TerminalApp() {
     const port = chrome.runtime.connect({ name: TERMINAL_PORT_NAME })
 
     const send = (frame: unknown) => {
+      if (sessionEnded) return
       try {
         port.postMessage(frame)
       } catch {
         // SW 已走 — 下面 onDisconnect 不保证触发，直接落终态
         setStatus("closed")
+        sessionEnded = true
+        clearInterval(pingTimer)
       }
     }
+    submitRef.current = report => send({ type: "terminal.review.submit", id: sessionId, user_gesture: true, report })
 
     const open = () => {
       fit.fit()
@@ -87,6 +99,8 @@ export function TerminalApp() {
         cols: term.cols,
         rows: term.rows,
         user_gesture: true,
+        ...(threadId ? { thread_id: threadId } : {}),
+        ...(reviewId ? { review_id: reviewId } : {}),
       })
     }
 
@@ -95,6 +109,13 @@ export function TerminalApp() {
       if (!frame) return
       // 扩展级错误无会话 id（busy/disconnected/watchdog 同类），不受会话过滤
       if (frame.type === "terminal.error") {
+        if (opened) {
+          setDetail(frame.error)
+          setReportStatus(frame.error)
+          setSubmitting(false)
+          if (frame.code === "disconnected") { sessionEnded = true; clearInterval(pingTimer); setStatus("closed"); subData.dispose() }
+          return
+        }
         opened = true // 停 watchdog
         setStatus("error")
         setDetail(frame.error)
@@ -107,6 +128,12 @@ export function TerminalApp() {
           opened = true
           setStatus("running")
           term.focus()
+          if (frame.review_prompt) setReviewPrompt(frame.review_prompt)
+          break
+        case "terminal.review.received":
+          setDetail("")
+          setSubmitting(false)
+          setReportStatus(`已回传原任务。回执：${frame.receipt_id}。报告与覆盖仍待核实。`)
           break
         case "terminal.data": {
           const seq = frame.seq
@@ -117,6 +144,9 @@ export function TerminalApp() {
           break
         }
         case "terminal.closed": {
+          sessionEnded = true
+          clearInterval(pingTimer)
+          setSubmitting(false)
           opened = true // 终态到达，停 watchdog
           subData.dispose() // pi NIT-2：closed 后不再发 input
           setStatus(frame.error ? "error" : "closed")
@@ -132,6 +162,10 @@ export function TerminalApp() {
 
     port.onDisconnect.addListener(() => {
       if (closedByUs) return
+      sessionEnded = true
+      clearInterval(pingTimer)
+      subData.dispose()
+      setSubmitting(false)
       opened = true // 停 watchdog
       setStatus((s) => (s === "running" ? "closed" : s === "connecting" ? "error" : s))
       setDetail((d) => d || "连接中断")
@@ -156,6 +190,8 @@ export function TerminalApp() {
 
     const onWinResize = () => fit.fit()
     window.addEventListener("resize", onWinResize)
+    const observer = new ResizeObserver(onWinResize)
+    observer.observe(host)
 
     open()
 
@@ -165,6 +201,7 @@ export function TerminalApp() {
       clearTimeout(watchdog)
       if (resizeTimer) clearTimeout(resizeTimer)
       window.removeEventListener("resize", onWinResize)
+      observer.disconnect()
       subData.dispose()
       subResize.dispose()
       try {
@@ -174,6 +211,7 @@ export function TerminalApp() {
         // 已断
       }
       term.dispose()
+      submitRef.current = null
     }
   }, [])
 
@@ -205,7 +243,26 @@ export function TerminalApp() {
           关闭
         </button>
       </div>
-      <div ref={hostRef} style={{ flex: 1, padding: "4px 0 0 8px" }} />
+      {reviewPrompt && (
+        <details style={{ color: "#e8e8ee", padding: "8px 14px", maxHeight: "48vh", overflow: "auto", flexShrink: 0 }} open>
+          <summary>代码审阅任务与报告回传</summary>
+          <p>在下方终端自行启动已安装的 Agent，再将提示词粘贴到 Agent 内。请勿粘贴到 shell 命令行。</p>
+          <textarea aria-label="审阅提示词" readOnly value={reviewPrompt} style={{ width: "100%", height: 100 }} />
+          <button type="button" onClick={() => navigator.clipboard.writeText(reviewPrompt).catch(() => setReportStatus("复制失败，请手动复制提示词"))}>复制审阅提示词</button>
+          <p>将 Agent 输出的 JSON 报告粘贴在此，核对完整内容后提交。确认表示同意导入，不代表代码或测试通过。</p>
+          <textarea aria-label="Agent 审阅报告 JSON" value={reportText} maxLength={65536} onChange={event => setReportText(event.target.value)} style={{ width: "100%", height: 100 }} />
+          <button type="button" disabled={status !== "running" || submitting || !reportText.trim()} onClick={() => {
+            try {
+              if (new TextEncoder().encode(reportText).length > 65536) throw new Error("报告不得超过 64 KiB")
+              const report = JSON.parse(reportText)
+              setSubmitting(true); setReportStatus("等待确认并保存…")
+              submitRef.current?.(report)
+            } catch (error) { setReportStatus((error as Error).message) }
+          }}>确认内容并发送到 CMspark</button>
+          <span role="status">{reportStatus}</span>
+        </details>
+      )}
+      <div ref={hostRef} style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "4px 0 0 8px" }} />
     </div>
   )
 }

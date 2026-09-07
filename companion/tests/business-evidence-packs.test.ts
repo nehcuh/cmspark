@@ -37,7 +37,7 @@ test("both enterprise missions install and apply through the existing Pack engin
       const thread = manager.create(id, `pack-${id}`)
       const applied = packs.applyPack(id, thread.id, manager, skills)
       assert.equal(applied.ok, true, JSON.stringify(applied))
-      for (const tool of ["draft_create", "draft_update", "draft_read", "draft_render", "get_page_text", "get_page_html"]) assert.equal(manager.isToolAllowed(thread.id, tool, { cruiseOpen: false }), true)
+      for (const tool of ["draft_create", "draft_update", "draft_read", "draft_render", "code_review_create", "code_review_read", "code_review_assess", "code_review_render", "get_page_text", "get_page_html"]) assert.equal(manager.isToolAllowed(thread.id, tool, { cruiseOpen: false }), true)
       for (const tool of ["shell_exec", "host_computer", "evaluate", "spawn_worker", "acp_start_session", "mcp__remote__write"]) assert.equal(manager.isToolAllowed(thread.id, tool, { cruiseOpen: false }), false)
       assert.equal(packs.unapplyPack(thread.id, manager, skills).ok, true)
     }
