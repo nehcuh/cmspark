@@ -4,6 +4,9 @@ import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { fetchImageAsBase64, promoteFetchSrc, sanitizeImageDim } from "./image-extract-utils"
 import { selectorJsLiteral } from "./selector-js-literal"
 import { browserSiteTarget } from "./browser-site-target"
+import { readPageText, readPageHtml, type PageReadDependencies } from "./page-read-tools"
+import type { PageReadChannel } from "./page-read-provenance"
+import { pageReadSnapshot, type PageReadRequest, type PageReadSnapshot } from "./page-read-snapshot"
 import { TabQueue, coerceTabId } from "./tab-queue"
 import { runBrowserDownload } from "./browser-download-handler"
 import { runWithDownloadBusyBeforeQueue } from "./download-busy-entry"
@@ -224,7 +227,7 @@ export class BrowserBridge {
     return chrome.debugger.sendCommand({ tabId }, method, params)
   }
 
-  private async getOuterHTMLViaDom(tabId: number, selector?: string): Promise<string> {
+  private async getOuterHTMLViaDom(tabId: number, selector?: string): Promise<PageReadSnapshot> {
     await this.ensureAttached(tabId)
     try {
       await chrome.debugger.sendCommand({ tabId }, "DOM.enable")
@@ -242,19 +245,19 @@ export class BrowserBridge {
         nodeId: root.nodeId,
         selector,
       })
-      if (!result.nodeId) return ""
+      if (!result.nodeId) return { content: "", url: root.documentURL }
       nodeId = result.nodeId
     }
 
     const { outerHTML } = await this.sendCdp(tabId, "DOM.getOuterHTML", { nodeId })
-    return String(outerHTML || "").substring(0, 500000)
+    return { content: String(outerHTML || "").substring(0, 500000), url: root.documentURL }
   }
 
   // Execute JS via chrome.scripting. ISOLATED world first (CSP-safe),
   // then MAIN world if ISOLATED had injection errors (some SPAs block ISOLATED).
   // Prefer CDP Runtime.evaluate (safeEvaluate) for X/Twitter — scripting can fail
   // with empty results or CSP while the debugger path still works.
-  private async scriptingExecute(tabId: number, code: string, htmlRead?: { selector: string }): Promise<any> {
+  private async scriptingExecute(tabId: number, code: string, pageRead?: PageReadRequest, reportChannel?: (channel: PageReadChannel) => void): Promise<any> {
     // Detect simple read-only expressions — use direct DOM funcs, no new Function()
     const bodyTextExpr = code === "document.body?.innerText || ''"
 
@@ -275,11 +278,11 @@ export class BrowserBridge {
           target: { tabId }, injectImmediately: true,
           func: () => document.body?.innerText || "",
         })
-      } else if (htmlRead) {
+      } else if (pageRead) {
         results = await chrome.scripting.executeScript({
           target: { tabId }, injectImmediately: true,
-          func: (selector: string) => document.querySelector(selector)?.outerHTML?.substring(0, 500000) || "",
-          args: [htmlRead.selector],
+          func: pageReadSnapshot,
+          args: [pageRead],
         })
       } else {
         results = await chrome.scripting.executeScript({
@@ -288,7 +291,7 @@ export class BrowserBridge {
           args: [code],
         })
       }
-      if (hasUsableResult(results)) return results![0].result
+      if (hasUsableResult(results)) { reportChannel?.("isolated"); return results![0].result }
     } catch { /* fall through to MAIN world */ }
 
     // Strategy 2: MAIN world (subject to page CSP — X/Twitter often blocks eval here)
@@ -299,11 +302,11 @@ export class BrowserBridge {
           target: { tabId }, injectImmediately: true, world: "MAIN",
           func: () => document.body?.innerText || "",
         })
-      } else if (htmlRead) {
+      } else if (pageRead) {
         results = await chrome.scripting.executeScript({
           target: { tabId }, injectImmediately: true, world: "MAIN",
-          func: (selector: string) => document.querySelector(selector)?.outerHTML?.substring(0, 500000) || "",
-          args: [htmlRead.selector],
+          func: pageReadSnapshot,
+          args: [pageRead],
         })
       } else {
         results = await chrome.scripting.executeScript({
@@ -312,7 +315,7 @@ export class BrowserBridge {
           args: [code],
         })
       }
-      if (hasUsableResult(results)) return results![0].result
+      if (hasUsableResult(results)) { reportChannel?.("main"); return results![0].result }
     } catch { /* fall through */ }
 
     throw new Error("Script injection failed in both ISOLATED and MAIN worlds")
@@ -857,7 +860,7 @@ export class BrowserBridge {
 
   // Safe JS execution: CDP Runtime.evaluate first (not subject to page CSP the same
   // way chrome.scripting MAIN/eval is — critical for x.com). Scripting is fallback.
-  private async safeEvaluate(tabId: number, expression: string, htmlRead?: { selector: string }): Promise<any> {
+  private async safeEvaluate(tabId: number, expression: string, pageRead?: PageReadRequest, reportChannel?: (channel: PageReadChannel) => void): Promise<any> {
     try {
       const cdp = await this.sendCdp(tabId, "Runtime.evaluate", {
         expression,
@@ -872,11 +875,12 @@ export class BrowserBridge {
           "Runtime.evaluate exception"
         throw new Error(text)
       }
+      reportChannel?.("cdp")
       return cdp
     } catch (cdpErr: any) {
       // Fallback to chrome.scripting only when CDP attach/evaluate truly failed
       try {
-        const result = await this.scriptingExecute(tabId, expression, htmlRead)
+        const result = await this.scriptingExecute(tabId, expression, pageRead, reportChannel)
         return { result: { value: result } }
       } catch (scriptErr: any) {
         throw new Error(
@@ -888,51 +892,21 @@ export class BrowserBridge {
 
   // --- Page read tools ---
 
-  private async getPageText(params: Record<string, any>): Promise<ToolResult> {
-    const tabId = this.getTabId(params)
-    const result = await this.safeEvaluate(tabId, "document.body?.innerText || ''")
-    const rawText = result.result?.value || ""
-    const sanitized = this.sanitizer.sanitizeText(rawText)
+  private pageReadDependencies(): PageReadDependencies {
     return {
-      success: true,
-      data: {
-        text: sanitized.sanitized,
-        threats_removed: sanitized.threatsRemoved,
-      },
+      tab: id => chrome.tabs.get(id),
+      evaluate: (id, expression, htmlRead, reportChannel) => this.safeEvaluate(id, expression, htmlRead, reportChannel),
+      outerHtml: (id, selector) => this.getOuterHTMLViaDom(id, selector),
+      sanitizer: this.sanitizer,
     }
   }
 
+  private async getPageText(params: Record<string, any>): Promise<ToolResult> {
+    return readPageText(this.getTabId(params), this.pageReadDependencies())
+  }
+
   private async getPageHTML(params: Record<string, any>): Promise<ToolResult> {
-    const tabId = this.getTabId(params)
-    // Pass the same structured scope to every execution path. Do not infer it
-    // from an expression prefix: that used to silently widen reads to all HTML.
-    const selector = params.selector ? String(params.selector) : "html"
-    const expression = `document.querySelector(${selectorJsLiteral(selector)})?.outerHTML?.substring(0, 500000) || ''`
-    let html = ""
-    let source: "runtime" | "dom" = "runtime"
-    try {
-      const result = await this.safeEvaluate(tabId, expression, { selector })
-      html = result.result?.value || ""
-    } catch (err: any) {
-      try {
-        html = await this.getOuterHTMLViaDom(tabId, selector)
-        source = "dom"
-      } catch (domErr: any) {
-        throw new Error(`${err.message || String(err)}; DOM fallback failed: ${domErr.message || String(domErr)}`)
-      }
-    }
-    const sanitized = this.sanitizer.sanitize(html)
-    const truncated = html.length >= 500000
-    return {
-      success: true,
-      data: {
-        html: sanitized.sanitized,
-        truncated,
-        length: sanitized.sanitized.length,
-        source,
-        threats_removed: sanitized.threatsRemoved,
-      },
-    }
+    return readPageHtml(this.getTabId(params), params.selector ? String(params.selector) : undefined, this.pageReadDependencies())
   }
 
   private async getElementInfo(params: Record<string, any>): Promise<ToolResult> {

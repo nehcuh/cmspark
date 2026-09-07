@@ -1,0 +1,13 @@
+{
+  "base": "96a3ca70",
+  "files": {
+    "chrome-extension/src/background/browser-bridge.ts": "4c5abb6fcb27953df75eca493aeb2f27347cc27765629544e52b0a986401721c",
+    "chrome-extension/src/background/page-read-provenance.ts": "3df2bb7eacf695fc95e90ce557cb8197b0f57da939656d601ed27dba8e7f93ab",
+    "chrome-extension/src/background/page-read-tools.ts": "570969bc93ef40a20b3c03eadac9dc0c9c37859fe63b580346607d98b9f6741d",
+    "chrome-extension/src/background/page-read-snapshot.ts": "a624e3793375d0d01464bd330e428ff650e469f10d6aef020364bf4274943563",
+    "chrome-extension/tests/browser-html-scope.test.ts": "78c36fe22ee4427ee9c81aec93d0469153d8f2f0fd65f3d48db6eaa2056c6f3e",
+    "chrome-extension/tests/page-read-provenance.test.ts": "d12356d96ef93ef139c035d4bf91edfdc4f7369d65e6cb3ac8562182388cf974",
+    "chrome-extension/tests/page-read-tools.test.ts": "9d8426560a38e695a2822e05f82f637d4de34ead6a77f50cdd004e0e118f635b",
+    "chrome-extension/scripts/record-page-read-fixture.mjs": "8953a7cd13ce1e0cd43d43319b45e7cef3b47748ce76ae326c89dd20610a3d4b"
+  }
+}
