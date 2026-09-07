@@ -1,6 +1,6 @@
 I'll read only the specified packet and follow its review instructions.The packet is long; I’ll keep reading the rest of the review instructions and diffs.# Independent re-review — #469
 
-**Verdict: APPROVE_WITH_NITS**  
+**Verdict: APPROVE_WITH_NITS**
 **Severity: nits only** (no remaining P0/P1; no trust/policy regression in this packet)
 
 Evidence is from this packet only. UI-harness assertions are treated as claimed `[executed]` in the bundled tests; I did not re-run them. Full extension/companion suites are **not** in evidence — per the packet, do not assume a final pass.
