@@ -1,0 +1,98 @@
+{
+  "issue": "https://github.com/nehcuh/cmspark/issues/445",
+  "date": "2026-09-07",
+  "head": "63b449d9ff77c2c37af54579fbff3b628df286c1",
+  "productVersion": "0.6.6",
+  "platform": "darwin",
+  "nodeVersion": "22.23.2",
+  "ci": {
+    "conclusion": "success",
+    "url": "https://github.com/nehcuh/cmspark/actions/runs/34067823301"
+  },
+  "checks": [
+    {
+      "name": "companion_full_default_environment",
+      "command": "cd companion && npm test",
+      "exitCode": 1,
+      "tests": 4917, "pass": 4878, "fail": 16, "skipped": 23,
+      "serialSettingsWebBatchExecuted": false,
+      "log": "/tmp/cmspark-070-companion-tests.log",
+      "note": "Three CU files depend on global configuration. Existing test temporarily calls saveConfig then restores security in finally. No pre-run config snapshot exists; no claim of zero configuration side effects."
+    },
+    {
+      "name": "cu_three_files_clean_temp_data",
+      "command": "CMSPARK_DATA_DIR=<new-temp-dir> node --test .test-dist/tests/computer-executor.test.js .test-dist/tests/computer-cu-redteam-corpus.test.js .test-dist/tests/computer-uia-watch.test.js",
+      "cwd": "companion",
+      "exitCode": 0,
+      "tests": 144, "pass": 143, "fail": 0, "skipped": 1,
+      "log": "/tmp/cmspark-070-cu-clean.log"
+    },
+    {
+      "name": "cu_three_files_synthetic_cruise_temp_data",
+      "command": "CMSPARK_DATA_DIR=<new-temp-dir-with-synthetic-cruise-config> node --test .test-dist/tests/computer-executor.test.js .test-dist/tests/computer-cu-redteam-corpus.test.js .test-dist/tests/computer-uia-watch.test.js",
+      "cwd": "companion",
+      "exitCode": 1,
+      "tests": 144, "pass": 127, "fail": 16, "skipped": 1,
+      "log": "/tmp/cmspark-070-cu-cruise.log"
+    },
+    {
+      "name": "companion_full_temp_data",
+      "command": "CMSPARK_DATA_DIR=<new-temp-dir> node scripts/run-tests.mjs",
+      "cwd": "companion",
+      "exitCode": 1,
+      "tests": 4917, "pass": 4890, "fail": 4, "skipped": 23,
+      "serialSettingsWebBatchExecuted": false,
+      "log": "/tmp/cmspark-070-companion-isolated.log",
+      "note": "Three crash-handlers path assertions and one npm-prefix path assertion conflict with custom CMSPARK_DATA_DIR. Not a green full-suite result."
+    },
+    {
+      "name": "extension_full",
+      "command": "cd chrome-extension && npm test",
+      "exitCode": 0,
+      "tests": 1250, "pass": 1250, "fail": 0, "skipped": 0,
+      "log": "/tmp/cmspark-070-extension-tests.log"
+    },
+    {
+      "name": "companion_typecheck",
+      "command": "cd companion && ./node_modules/.bin/tsc --noEmit",
+      "exitCode": 0,
+      "log": "/tmp/cmspark-070-companion-typecheck.log"
+    },
+    {
+      "name": "extension_typecheck",
+      "command": "cd chrome-extension && ./node_modules/.bin/tsc --noEmit",
+      "exitCode": 0,
+      "log": "/tmp/cmspark-070-extension-typecheck.log"
+    },
+    {
+      "name": "knowledge_route_strict_eval",
+      "command": "cd companion && node scripts/knowledge-route-eval.mjs --strict",
+      "exitCode": 0,
+      "folder": "pass", "group": "pass",
+      "documents": 20, "queries": 20,
+      "log": "/tmp/cmspark-070-knowledge-eval.log",
+      "note": "Constructed routing regression corpus, not enterprise workflow acceptance."
+    },
+    {
+      "name": "read_only_adversarial_probes",
+      "command": "node docs/audit/0.7.0-20260907/probes.cjs",
+      "exitCode": 0,
+      "result": "probe-results.json",
+      "note": "Actual production functions and browser method; adversarial synthetic inputs; no Chrome or model call. Demonstrates defects/limitations rather than a passing readiness gate."
+    }
+  ],
+  "independentReviewLanes": ["architecture", "correctness_evidence", "security_delivery"],
+  "planningReviewCorrections": [
+    "Public-internet isolation is conditional on pilot requirements.",
+    "Cross-entry content equality requires the same authorized knowledge set.",
+    "MCP short-term experience is isolated by server-owned caller/session/run identity.",
+    "W8 is not a blocking second enterprise pilot.",
+    "Full package acceptance applies to claimed launch platforms."
+  ],
+  "notPerformed": [
+    "real enterprise website acceptance", "enterprise model API calls",
+    "final installer build or app replacement", "upgrade rollback rehearsal",
+    "business code fixes", "version bump", "commit push merge or release"
+  ],
+  "readiness": "NOT_READY_FOR_0.7.0_RELEASE"
+}

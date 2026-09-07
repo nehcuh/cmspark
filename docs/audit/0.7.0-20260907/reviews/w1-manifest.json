@@ -1,0 +1,68 @@
+{
+  "base": "63b449d9ff77c2c37af54579fbff3b628df286c1",
+  "scope": "W1 foundation only",
+  "snapshot": "staged-final.patch",
+  "files": {
+    "chrome-extension/src/background/browser-bridge.ts": "72e93c75120dda648bbfe2b825fade4118af67a14f75ce354b7ee0a6c25b2155",
+    "chrome-extension/tests/browser-html-scope.test.ts": "3b8837c361d6494888b7df6bc91c5880669cded10a6bde53f1fd13e8a1591f3c",
+    "chrome-extension/tests/node-shims.d.ts": "7be8b6a27423aede2789b35519ade378c67220c0fccab0be9c4d9f761814d923",
+    "companion/scripts/run-tests.mjs": "339fc31b6213ac0f90ba41c7b1f12f750192d360a8c110fd06449f5e7d1444dd",
+    "companion/scripts/test-data-dir.cjs": "3f7fe023ad03c78c9c2d005eb88a9e86b7b72da5627c84ce9575bda504af99c8",
+    "companion/src/computer/executor.ts": "68117cf0290532f6760bcc3ae9afe1d58e04a196112b9cc7eade60217b0bf761",
+    "companion/src/llm/adapter.ts": "12072a3bdf1d7f4c80b42693d80d94d72c5cabac094ec2a6d5c6cc163bfda1ea",
+    "companion/src/skills/site-experience-identity.ts": "a49df024c3567c46babc86a232b2ad4a6c4e1da023ab13a3e0c1e98242bb83a8",
+    "companion/src/tool/companion-dispatch.ts": "996b20ce904656d06374276dd45a50436e59ef605725c7835a88e5e0ecde0f7c",
+    "companion/tests/computer-executor.test.ts": "6e7792d22f532449aeed3484150cdf58ef9cb6b4e0b3b66527761bcdc3a3b2fe",
+    "companion/tests/crash-handlers.test.ts": "a2286610683d0a2a5b9abfee00e3683dd401e30dd8d67f180c984bc18f1051c9",
+    "companion/tests/p0-deep-diagnosis-batch.test.ts": "76c0f9746e5b42b2476c9cc173cfe03e531374ba2f72721ecb3dce2d292229fa",
+    "companion/tests/site-experience-identity.test.ts": "2288560f4e7bf47e9df2bbd4a2b2742b1e7d19e7dcdd4bde9be9b4bb7cee8a89",
+    "companion/tests/site-op-auto-persist.test.ts": "7e60cdde49a0a305f72f5e15442c9466e9f740b7e273345f40fe3b0fdc573112",
+    "companion/tests/test-data-dir.test.ts": "66f112c46238dec33340dc387e914f5ec945acc5b4a934e5cebc25edafe581d8"
+  },
+  "machine": {
+    "companion": {
+      "tests": 4933,
+      "pass": 4910,
+      "skip": 23,
+      "fail": 0,
+      "note": "Current full tree including five W2 target/service cases; W1 and historical compatibility covered. settings20/20; exit0."
+    },
+    "settings": {
+      "tests": 20,
+      "pass": 20,
+      "fail": 0
+    },
+    "extension": {
+      "tests": 1266,
+      "pass": 1266,
+      "fail": 0
+    },
+    "builds": [
+      "companion npm run build",
+      "extension npm run build"
+    ],
+    "historical_origin_targeted": {
+      "tests": 11,
+      "pass": 11,
+      "fail": 0
+    }
+  },
+  "reviews": {
+    "grok": {
+      "verdict": "APPROVE_WITH_NITS",
+      "final": ".omx/artifacts/070-w1/grok-history-origin.md"
+    },
+    "claude": {
+      "verdict": "APPROVE_WITH_NITS",
+      "final": ".omx/artifacts/070-w1/claude-history-origin.json"
+    },
+    "disposition": "docs/audit/0.7.0-20260907/w1-review-disposition.md",
+    "note": "Final review production bytes unchanged; only two nonblocking suggested assertions added and targeted tests passed."
+  },
+  "commits": [
+    "a10addf1",
+    "3d5bee15",
+    "14dae2dc",
+    "a78236e2"
+  ]
+}
