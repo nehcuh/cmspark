@@ -9,28 +9,31 @@ import * as path from "node:path"
 import * as fs from "node:fs"
 import { spawn } from "node:child_process"
 
-const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-crash-"))
+const tempDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-crash-"))
+const previousDataDir = process.env.CMSPARK_DATA_DIR
 
 let writeCrashLog: typeof import("../src/crash-handlers").writeCrashLog
 
-const crashLogPath = path.join(tempHome, ".cmspark-agent", "logs", "crash.log")
+const crashLogPath = path.join(tempDataDir, "logs", "crash.log")
 const modulePath = JSON.stringify(path.join(__dirname, "../src/crash-handlers"))
 
 test.before(async () => {
-  process.env.HOME = tempHome
+  process.env.CMSPARK_DATA_DIR = tempDataDir
   const mod = await import("../src/crash-handlers")
   writeCrashLog = mod.writeCrashLog
 })
 
 test.after(() => {
-  fs.rmSync(tempHome, { recursive: true, force: true })
+  if (previousDataDir === undefined) delete process.env.CMSPARK_DATA_DIR
+  else process.env.CMSPARK_DATA_DIR = previousDataDir
+  fs.rmSync(tempDataDir, { recursive: true, force: true })
 })
 
 // Spawn helper: returns { code, signal } after the child exits.
 function runChild(script: string): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   const child = spawn(process.execPath, ["-e", script], {
-    cwd: tempHome,
-    env: { ...process.env, HOME: tempHome },
+    cwd: tempDataDir,
+    env: { ...process.env, CMSPARK_DATA_DIR: tempDataDir },
   })
   return new Promise((resolve) => {
     child.on("exit", (code, signal) => resolve({ code, signal }))
@@ -39,23 +42,25 @@ function runChild(script: string): Promise<{ code: number | null; signal: NodeJS
 
 test("writeCrashLog appends a labeled diagnostic to crash.log", () => {
   // Use a fresh subdir so this assertion is independent of the spawn tests.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-crash-unit-"))
-  const prev = process.env.HOME
-  process.env.HOME = home
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-crash-unit-"))
+  const prev = process.env.CMSPARK_DATA_DIR
+  process.env.CMSPARK_DATA_DIR = dataDir
   // Silence writeCrashLog's console.error so the (intentional) error object
   // doesn't look like a real test-runner rejection in CI output.
   const origErr = console.error
   console.error = () => {}
   try {
     writeCrashLog("unhandledRejection", new Error("unit-boom"))
-    const logFile = path.join(home, ".cmspark-agent", "logs", "crash.log")
+    const logFile = path.join(dataDir, "logs", "crash.log")
     assert.equal(fs.existsSync(logFile), true, "crash.log should be created")
     const content = fs.readFileSync(logFile, "utf-8")
     assert.ok(content.includes("unhandledRejection"), `label present: ${content}`)
     assert.ok(content.includes("unit-boom"), `message present: ${content}`)
   } finally {
     console.error = origErr
-    process.env.HOME = prev
+    if (prev === undefined) delete process.env.CMSPARK_DATA_DIR
+    else process.env.CMSPARK_DATA_DIR = prev
+    fs.rmSync(dataDir, { recursive: true, force: true })
   }
 })
 
@@ -64,7 +69,7 @@ test("installFatalHandlers exits with code 1 on unhandledRejection", async () =>
   fs.rmSync(crashLogPath, { force: true })
 
   const script = `
-    process.env.HOME = ${JSON.stringify(tempHome)};
+    process.env.CMSPARK_DATA_DIR = ${JSON.stringify(tempDataDir)};
     const { installFatalHandlers } = require(${modulePath});
     installFatalHandlers();
     // Fire an unhandled rejection (no .catch). The handler must exit(1).
@@ -86,7 +91,7 @@ test("installFatalHandlers exits with code 1 on uncaughtException (parity)", asy
   fs.rmSync(crashLogPath, { force: true })
 
   const script = `
-    process.env.HOME = ${JSON.stringify(tempHome)};
+    process.env.CMSPARK_DATA_DIR = ${JSON.stringify(tempDataDir)};
     const { installFatalHandlers } = require(${modulePath});
     installFatalHandlers();
     setTimeout(() => { throw new Error("sync-boom"); }, 50);
