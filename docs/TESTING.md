@@ -40,6 +40,17 @@ npm --prefix chrome-extension test
 
 ## Companion 测试地图
 
+### 代码审阅与终端回传（#464）
+
+- `companion/tests/code-review.test.ts`：来源范围、diff 行、持久化与容量、身份与引用、两类材料及过期/错 SHA。
+- `companion/tests/pty-terminal.test.ts`：原任务/peer 绑定、确认竞态、输入编码、输出上限、报告确认与幂等历史回传。
+- `chrome-extension/tests/terminal-relay.test.ts`、`terminal-wire.test.ts`：扩展页面/会话归属、断线和真实生产者帧格式。
+- `chrome-extension/scripts/test-terminal-review-ui.py`：可选隔离 Chrome 测试，使用真实 React/xterm 和生产者录制帧；验证复制不输入命令、显式回传、面板布局及断线停止输入。
+  先在扩展目录执行 `nvm use 22`，再执行 `uv run --no-project --with playwright python scripts/test-terminal-review-ui.py`。
+  它使用本机 Chrome 和合成传输，不操作已安装扩展，也不证明真实企业网站/Agent 已验收。
+- 语料记录脚本：`chrome-extension/scripts/record-code-diff-fixture.mjs`、`companion/scripts/record-terminal-review-fixture.cjs`。
+  前者使用真实 Git diff 和 BrowserBridge 的合成 DOM，后者使用真实 handler 与合成 PTY；不能把这些语料作为企业试点结果。
+
 路径均相对 `companion/tests/`。文件名随实现演进；下列按**领域**分组，便于找回归入口。
 
 ### 安全与确认 / 策略

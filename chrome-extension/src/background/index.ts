@@ -312,13 +312,15 @@ function init() {
         } catch {}
         return
       }
-      terminalRelay = attachTerminalPort(
+      const relay = attachTerminalPort(
         port,
         (frame) => wsClient?.send(frame as any) === true,
         logToCompanion,
       )
+      if (!relay) return
+      terminalRelay = relay
       port.onDisconnect.addListener(() => {
-        terminalRelay = null
+        if (terminalRelay === relay) terminalRelay = null
       })
       logToCompanion("info", "extension.terminal_port_connected", {})
       return
@@ -1699,7 +1701,9 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
       }
       case "terminal.open_tab": {
-        openOrFocusEmbeddedTerminal()
+        const binding = typeof message.thread_id === "string" && typeof message.review_id === "string"
+          ? { thread_id: message.thread_id, review_id: message.review_id } : undefined
+        openOrFocusEmbeddedTerminal(binding)
           .then(() => sendResponse({ ok: true }))
           .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
         return true

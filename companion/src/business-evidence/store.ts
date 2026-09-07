@@ -138,6 +138,7 @@ export class EvidenceStore {
       tool: tool as Observation["tool"], observed_at: new Date(now).toISOString(), target,
       content, digest: evidenceDigest(content), summary: Array.from(content).slice(0, 512).join(""),
       provenance: {
+        text_transform: Array.isArray(response.data?.threats_removed) ? (response.data.threats_removed.length === 0 ? "unchanged" : "sanitized") : "unknown",
         scope, channel: metadata.channel, frame: "top", truncated: metadata.truncated,
         coverage: metadata.truncated ? "partial" : "unknown", complete_for_scope: false,
         pagination: "unknown", virtualization: "unknown", iframe_coverage: "not_traversed",

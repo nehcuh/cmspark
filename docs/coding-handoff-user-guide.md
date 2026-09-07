@@ -1,5 +1,7 @@
 # 编程接力 — 用户指南
 
+按明确 commit 范围审阅并回传到材料的新入口，见[网页代码审阅与终端报告回传](code-review-workflow.md)。该入口复用一个内嵌 PTY，支持用户确认的结构化回传；本页历史模式 C 的额外终端不自动共享这一审阅会话。
+
 > **产品主名**：编程接力（Coding Handoff）  
 > **决策 SoT**：[模式 C 双开](decisions/acp-dual-open-terminal-mode-c-2026-08-14.md) · [产品设计](decisions/acp-coding-handoff-product-design-2026-08-13.md) · [壳方向](decisions/acp-shell-direction-dual-synthesis-2026-08-14.md)  
 > **对照**：[Outbound MCP（ADR-022）](adr/022-outbound-mcp-server.md) · [MCP 指南](mcp.md) · [确认台](confirm-center-user-guide.md)

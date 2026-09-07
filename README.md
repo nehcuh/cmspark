@@ -442,6 +442,10 @@ Sprint 周期两周，每周一开始。
 | **租手**（Outbound） | 他们 → 我们的已登录 Chrome | `cmspark__*` + 钥匙 `cmg_`（≠ `ws_secret`） |
 | **编程接力** | 我们 → 本机编程 Agent | ACP client，[coding-handoff](docs/coding-handoff-user-guide.md)。**不是**租手 |
 
+开发中的[代码审阅闭环](docs/code-review-workflow.md)支持独立读取网页 unified/raw diff，
+也可在本机终端操作已有 Agent，人工确认导入报告并关联需求、任务、测试和材料草稿。
+当前通用适配不证明网站全量覆盖；真实企业平台和两个首发场景仍待验收。
+
 入站：Companion 接 stdio/HTTP MCP server。配置 `~/.cmspark-agent/config.json` 的 `mcp` 段。  
 租手（实验、非 default-on、T1 已记分仍**禁扩** profile）：**[5 分钟租手](docs/mcp.md#outbound-mcp)** · [ADR-022](docs/adr/022-outbound-mcp-server.md)。
 

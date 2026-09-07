@@ -5623,6 +5623,7 @@ export async function handleMessage(
     case "system.ping":
       return { type: "system.pong" }
 
+    case "terminal.review.submit":
     case "terminal.open":
     case "terminal.input":
     case "terminal.resize":

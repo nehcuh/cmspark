@@ -1,0 +1,17 @@
+**Correction review** — frozen packet: `pty/handler.ts`, `pty/session.ts`, `pty/env.ts`, `pty/cwd.ts`, correction tests. `[inspected]` end-to-end; no commands/edits run.
+
+**Prior findings disposition**
+
+- **P1 UTF-8 boundary split — CLOSED.** `emitChunks` now computes `end`, then backs off while `buf[end] & 0xc0 === 0x80`, so the last byte of each frame is the final byte of a complete codepoint; the next frame starts at a lead byte. No empty-slice/infinite-loop risk: max 3 continuation bytes can overhang a 16,384-byte window, so `end > i` always holds. Test `#466 long CJK output…` decodes each frame independently (per-frame `toString("utf8")`) and asserts the join equals the original — any split codepoint would surface as U+FFFD and fail. 4-byte emoji (😀) included. Closed.
+- **P2 `writePtyInput` dead branch — CLOSED.** Validation now rejects via `!b64`, `>1MiB`, `%4 !== 0`, alphabet regex, plus canonical round-trip (`raw.toString("base64") !== b64`); every malformed case in the test (`"!!!", "Zg", "Zh==", "", oversized`) fails before `handle.write`, so no silent empty write and the branch is reachable. Canonical base64 always satisfies `%4 === 0`, so no false rejections. Closed.
+- **P2 `pingPty` docstring — CLOSED.** Comment now states "the WS handler rejects unknown/unowned sessions first", matching handler behavior; test `#466 terminal frames require the opening live peer` asserts `TERMINAL_SESSION_NOT_OWNED` for ping from a non-owner. Consistent.
+
+**Spot re-verification of disposition claims** — confirmed: close-during-confirmation cancels only when `pendingOpen.owner === session.originWs` and `finally`/`pending.canceled` path leaves `lastPty === null` (cross-peer close falls through to NOT_OWNED); post-confirm rechecks (peer readyState, thread re-read, workspace identity, fresh cwd realpath, `JSON.stringify` review compare with `CODE_REVIEW_CONTEXT_CHANGED`) each exercised by the "changed review while pending" and "disconnected peer" tests; `resumePty` gated on `unackedBytes > LOW_WATER` (test asserts `ok === false` at high water); hard 256KiB cap closes with `output_overflow` and `terminal.closed` frame; dot-prefixed `..cache` correctly not flagged as traversal (`rel = "..cache"`, neither `".."` nor `"../"`-prefixed).
+
+**New finding**
+
+- **P2 — `handler.ts`, `terminal.review.submit` handback send inside the catch-all try.** `session.sendToExtension({ type: "code_review.handback.message", … })` runs inside the `try` that maps *any* throw to `deny("CODE_REPORT_INVALID_OR_PERSIST_FAILED")` — but it executes **after** `service.receive(report)` already persisted the receipt and after `addMessage` committed history. Failure mode: socket dies between the `readyState === 1` recheck and the send; `ws.send` throws (evidence it can: the open path defensively wraps its own `sendToExtension` in try/catch), the client receives `terminal.error` claiming the import failed though the receipt is durably stored and the handback message exists; a retry then returns `CODE_REPORT_ALREADY_RECEIVED` — also an error — so the client can never observe the true success state. No duplicate or data loss (digest idempotency holds), hence P2. Fix: wrap the handback send in try/catch-ignore like the open path, keeping the error path reserved for actual preview/receive failures.
+
+No P0, no P1 remain. Tests cover every stated contract.
+
+**VERDICT: APPROVE_WITH_NITS** — 0×P0, 0×P1, 1×P2.

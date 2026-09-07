@@ -1,6 +1,9 @@
 // #432 terminal wire contract tests（fail-closed parse / b64 CJK 安全 / 帧族判定）
 import test from "node:test"
 import assert from "node:assert/strict"
+import * as fs from "node:fs"
+import * as path from "node:path"
+declare const __dirname: string
 
 import {
   isTerminalFrame,
@@ -77,6 +80,21 @@ test("terminal.error parses without session id (busy/disconnected class)", () =>
 test("terminal.data rejects b64 beyond cap (pi NIT-4)", () => {
   const huge = "A".repeat(TERMINAL_FRAME_B64_MAX + 2)
   assert.equal(parseTerminalServerFrame({ type: "terminal.data", id: "t", seq: 1, b64: huge }), null)
-  const okB64 = "A".repeat(TERMINAL_FRAME_B64_MAX)
+  assert.equal(parseTerminalServerFrame({ type: "terminal.data", id: "t", seq: 1, b64: "!!!!" }), null)
+  assert.equal(parseTerminalServerFrame({ type: "terminal.data", id: "t", seq: 1, b64: "A".repeat(TERMINAL_FRAME_B64_MAX) }), null)
+  const okB64 = btoa("x".repeat(TERMINAL_FRAME_PAYLOAD_MAX))
   assert.equal(parseTerminalServerFrame({ type: "terminal.data", id: "t", seq: 1, b64: okB64 })?.type, "terminal.data")
+})
+
+test("actual Companion review frames retain prompt, scoped error and receipt", () => {
+  // Produced by companion/scripts/record-terminal-review-fixture.cjs, not a guessed wire shape.
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "../../tests/fixtures/terminal-review-v1.json"), "utf8"))
+  const opened = parseTerminalServerFrame(fixture.opened)
+  assert.equal(opened?.type, "terminal.opened")
+  if (opened?.type !== "terminal.opened") throw new Error("opened fixture failed")
+  assert.equal(opened.review_id, fixture.report.review_id)
+  assert.ok(opened.review_prompt?.includes(fixture.report.head))
+  const rejected = parseTerminalServerFrame(fixture.rejected)
+  assert.equal(rejected?.id, fixture.opened.id)
+  assert.equal(parseTerminalServerFrame(fixture.received)?.type, "terminal.review.received")
 })

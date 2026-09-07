@@ -3,6 +3,10 @@
  * server.ts createToolExecutor branches on this set; tests lockstep vs catalog.
  */
 export const COMPANION_TOOLS = [
+  "code_review_create",
+  "code_review_read",
+  "code_review_assess",
+  "code_review_render",
   "draft_create",
   "draft_update",
   "draft_read",

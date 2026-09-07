@@ -3,9 +3,6 @@
 import { getUserEnvVars, isCmsparkPrefixKey } from "../user-env"
 
 const STRIP_EXACT = new Set([
-  "DEEPSEEK_API_KEY",
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
   "api_key",
   "API_KEY",
   "ws_secret",
@@ -19,6 +16,8 @@ function shouldStrip(key: string): boolean {
 }
 
 export function buildTerminalEnv(): Record<string, string> {
+  // Confirmed user shell: retain user Agent API keys and HOME-based login files.
+  // Do not read Companion config credentials or serialize this map over WS.
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) {
     if (typeof v !== "string") continue

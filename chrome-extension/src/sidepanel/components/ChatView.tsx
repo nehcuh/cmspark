@@ -1018,6 +1018,10 @@ function ToolCallCard({ tc }: { tc: any }) {
   const [visionExpanded, setVisionExpanded] = useState(false)
   const [shellExpanded, setShellExpanded] = useState(false)
   const [showRawJson, setShowRawJson] = useState(false)
+  const [reviewOpenError, setReviewOpenError] = useState("")
+  const reviewId = ["code_review_create", "code_review_read"].includes(tc.tool_name)
+    ? tc.result?.data?.review_id ?? tc.result?.review_id : null
+  const reviewReadonly = agentState.threads.find(thread => thread.id === agentState.activeThreadId)?.execution_policy === "plan_readonly"
   const hasResult = tc.result && !tc.error
   const userHint = hasResult ? toolResultUserHint(tc.result) : null
   // SEC-C redacted stub: a reloaded thread reads the collapsed placeholder from
@@ -1462,6 +1466,17 @@ function ToolCallCard({ tc }: { tc: any }) {
         </div>
       )}
       {/* Generic tools keep JSON preview; shell_exec uses plain-text card above. */}
+      {typeof reviewId === "string" && agentState.activeThreadId && (
+        <div>
+          <button type="button" disabled={reviewReadonly} title={reviewReadonly ? "计划只读模式不能打开终端或导入报告" : undefined} onClick={(event) => {
+            event.stopPropagation()
+            chrome.runtime.sendMessage({ type: "terminal.open_tab", thread_id: agentState.activeThreadId, review_id: reviewId }, response => {
+              setReviewOpenError(chrome.runtime.lastError?.message || (response?.ok ? "" : response?.error || "终端未打开"))
+            })
+          }}>在终端审阅并回传</button>
+          {reviewOpenError && <span role="alert">{reviewOpenError}</span>}
+        </div>
+      )}
       {hasResult && !isShellExec && !redactedStub && (
         <pre
           style={{

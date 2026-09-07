@@ -1,0 +1,19 @@
+{
+  "companion/src/pty/handler.ts": "442ecdd41ccd530c6359ee322b1d74bd253568373763a1af43484f5146072436",
+  "companion/src/pty/session.ts": "e0a8fd491fe25e47d9b02c9c0ad10dd3228715c1d1d4e942b72b9168597a49a5",
+  "companion/src/pty/env.ts": "5c0aa880fe1c20d3ffde773d0d12e02faeecddaab09baa2fe5bf2405ae503770",
+  "companion/src/pty/cwd.ts": "9fc1f53c8ba49298148fc675a6e04f6e9830ea0274a2702974c3cc89481b50a5",
+  "companion/tests/pty-terminal.test.ts": "38af613fbf3db8d0d11e7351e03fe76689c1ce1abf55262a129b78da4c888351",
+  "companion/src/code-review/report.ts": "bf72037bc63eedf452ac9807ab3d2b3147719c0d7f288a2907abada463fbe61e",
+  "companion/src/code-review/context.ts": "5dbece04aa8aceb2f043aef0c7ff852868a7c22c458c742cf6db7be5f946e26b",
+  "chrome-extension/src/terminal/TerminalApp.tsx": "689bfdce638ad8ce23e5b17c6cc8236dd8b79b8eaa1a9da61bf3e3a2d4cce01c",
+  "chrome-extension/src/terminal/wire.ts": "5b3c68ce2e252a2d0f691ccf4c588fb138fc22ca02df6f41a30830ede5228e2c",
+  "chrome-extension/src/background/terminal.ts": "8879d9c2556dde5bbcd0f9a1333a7857e6d2fa36320ec07994ab7ffccf5090b5",
+  "chrome-extension/tests/terminal-relay.test.ts": "c012d856e627528b4090e9a85707e6ac4da695130a22ead8cb3bb11a27ad207e",
+  "companion/src/code-review/contract.ts": "8ce1255bd13dc2b1944f7d8c94b08950f1f0359ebed113185b80da1f23ac3032",
+  "companion/src/code-review/service.ts": "7b8bc0677ba9b831d5a7878b6e60048ad30311f8ec6aedf604e12e08ad9eceff",
+  "companion/src/code-review/material.ts": "55ab3988b4bbefd232a58941f3e6e6119ca4c5eaf15e1c31d546504e14d33101",
+  "companion/src/code-review/executor.ts": "48df640468fb89f66d722249018958566ccddef6e7a444a2d45baa054f7d3d90",
+  "companion/src/code-review/tool-definitions.ts": "4c7b2b99a4937df1f6fedb9e388b4a9b14b846f0486c6b6f56517acab0a52540",
+  "companion/tests/code-review.test.ts": "dfe966cd3d2dcfbc11d9d5e4251972f1b779e3b34bb8bc2b7368d0a388fc3b04"
+}

@@ -1596,6 +1596,10 @@ export function useWebSocket() {
           }
           break
 
+        case "code_review.handback.message":
+          if (msg.message && msg.thread_id === activeThreadRef.current) dispatch({ type: "ADD_MESSAGE", message: msg.message as any })
+          break
+
         case "acp.handback.message":
           if (
             msg.message &&

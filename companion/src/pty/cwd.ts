@@ -34,7 +34,7 @@ export function resolveTerminalStartCwd(opts: {
   }
 
   const rel = path.relative(rootReal, startReal)
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+  if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) {
     return { ok: false, error: "cwd escapes workspace/sandbox (symlink or path)" }
   }
   return { ok: true, cwd: startReal }

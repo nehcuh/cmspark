@@ -54,6 +54,8 @@ export interface Thread {
   mission_pack_id?: string | null
   /** DevSec workspace absolute path (set via 场景 → 选择工作区). */
   workspace_root?: string | null
+  /** Companion thread execution cap; enforced again by the server. */
+  execution_policy?: "default" | "plan_readonly" | null
   /** ADR-015 multi-agent */
   agent_role?: "normal" | "orchestrator" | "worker"
   parent_thread_id?: string | null

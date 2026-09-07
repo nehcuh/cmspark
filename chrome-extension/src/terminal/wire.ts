@@ -12,7 +12,8 @@ export const TERMINAL_FRAME_B64_MAX = 24 * 1024
 // --- client → companion ---
 
 export type TerminalClientFrame =
-  | { type: "terminal.open"; id: string; cols: number; rows: number; user_gesture: true; cwd?: string; argv?: string[]; thread_id?: string }
+  | { type: "terminal.open"; id: string; cols: number; rows: number; user_gesture: true; cwd?: string; argv?: string[]; thread_id?: string; review_id?: string }
+  | { type: "terminal.review.submit"; id: string; user_gesture: true; report: unknown }
   | { type: "terminal.input"; id: string; seq: number; b64: string }
   | { type: "terminal.resize"; id: string; cols: number; rows: number }
   | { type: "terminal.ack"; id: string; seq: number }
@@ -22,7 +23,8 @@ export type TerminalClientFrame =
 // --- companion → client ---
 
 export type TerminalServerFrame =
-  | { type: "terminal.opened"; id: string; pid: number; platform: string }
+  | { type: "terminal.opened"; id: string; pid: number; platform: string; review_id?: string; review_prompt?: string }
+  | { type: "terminal.review.received"; id: string; receipt_id: string; review_id: string }
   /** 扩展级错误（无会话 id，id=""）：busy 拒 / WS 未连 / 开门超时。与 closed 分开——closed 是某会话终态，error 是「连会话都没成立」。 */
   | { type: "terminal.error"; id: string; code: string; error: string }
   | { type: "terminal.data"; id: string; seq: number; b64: string }
@@ -63,7 +65,7 @@ export function parseTerminalServerFrame(raw: unknown): TerminalServerFrame | nu
     const code = asStr(o.code)
     const error = asStr(o.error)
     if (!code || !error) return null
-    return { type, id: "", code, error }
+    return { type, id: asStr(o.id) || "", code, error }
   }
   const id = asStr(o.id)
   if (!id) return null
@@ -72,12 +74,21 @@ export function parseTerminalServerFrame(raw: unknown): TerminalServerFrame | nu
       const pid = asInt(o.pid)
       const platform = asStr(o.platform)
       if (pid == null || !platform) return null
-      return { type, id, pid, platform }
+      const review_id = asStr(o.review_id), review_prompt = asStr(o.review_prompt)
+      return { type, id, pid, platform, ...(review_id && review_prompt && review_prompt.length <= 512 * 1024 ? { review_id, review_prompt } : {}) }
+    }
+    case "terminal.review.received": {
+      const receipt_id = asStr(o.receipt_id), review_id = asStr(o.review_id)
+      return receipt_id && review_id ? { type, id, receipt_id, review_id } : null
     }
     case "terminal.data": {
       const seq = asInt(o.seq)
       const b64 = asStr(o.b64)
       if (seq == null || !b64 || b64.length > TERMINAL_FRAME_B64_MAX) return null
+      try {
+        const bytes = atob(b64)
+        if (bytes.length > TERMINAL_FRAME_PAYLOAD_MAX || btoa(bytes) !== b64) return null
+      } catch { return null }
       return { type, id, seq, b64 }
     }
     case "terminal.pause":

@@ -1,0 +1,43 @@
+{
+  "git": {
+    "repository": "https://code.example.test/team/demo",
+    "base": "442ed0968a08e61a6fa4ba8b49ac7c2368293de4",
+    "head": "500401297ab58f49a1027a66f10d2775cf1251d4",
+    "diff": "diff --git a/hello.ts b/hello.ts\nindex 35ba8d5..c6f2e7c 100644\n--- a/hello.ts\n+++ b/hello.ts\n@@ -1 +1,2 @@\n-export const greeting = \"hello\"\n+export const greeting = \"你好\"\n+export const enabled = true\n"
+  },
+  "wire": {
+    "success": true,
+    "data": {
+      "text": "Repository https://code.example.test/team/demo\nBase 442ed0968a08e61a6fa4ba8b49ac7c2368293de4\nHead 500401297ab58f49a1027a66f10d2775cf1251d4\ndiff --git a/hello.ts b/hello.ts\nindex 35ba8d5..c6f2e7c 100644\n--- a/hello.ts\n+++ b/hello.ts\n@@ -1 +1,2 @@\n-export const greeting = \"hello\"\n+export const greeting = \"你好\"\n+export const enabled = true\n",
+      "threats_removed": [],
+      "provenance": {
+        "schema_version": 1,
+        "target": {
+          "kind": "browser",
+          "tab_id": 7,
+          "url": "https://code.example.test/team/demo/compare/442ed0968a08e61a6fa4ba8b49ac7c2368293de4...500401297ab58f49a1027a66f10d2775cf1251d4",
+          "origin": "https://code.example.test",
+          "hostname": "code.example.test",
+          "path": "/team/demo/compare/442ed0968a08e61a6fa4ba8b49ac7c2368293de4...500401297ab58f49a1027a66f10d2775cf1251d4",
+          "navigation_key": "72d49338c5d060f7d9ffe3cb71c61cb5a95ca73c13f5905489fd6d42caddefa4"
+        },
+        "title": "Synthetic Git comparison",
+        "captured_at": "2026-09-07T13:25:54.392Z",
+        "channel": "isolated",
+        "scope": {
+          "kind": "document"
+        },
+        "frame": "top",
+        "coverage": "unknown",
+        "complete_for_scope": false,
+        "pagination": "unknown",
+        "virtualization": "unknown",
+        "iframe_coverage": "not_traversed",
+        "truncated": false,
+        "limit": null,
+        "stop_reason": "SINGLE_READ",
+        "capture_status": "eligible"
+      }
+    }
+  }
+}
