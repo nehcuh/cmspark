@@ -42,7 +42,7 @@ import { buildLayoutSignature } from "./layout-signature"
 
 /** Obsidian-adjacent local palette (graph canvas). */
 const G = {
-  canvas: "#0d0f14",
+  canvas: tokens.darkBg,
   edgeHard: "rgba(148, 163, 184, 0.42)",
   edgeSoft: "rgba(148, 163, 184, 0.18)",
   edgeDim: "rgba(148, 163, 184, 0.06)",
@@ -981,11 +981,10 @@ export function ThreadGraphApp() {
 }
 
 const glass: CSSProperties = {
-  background: "rgba(20, 24, 32, 0.88)",
+  background: tokens.darkElevated,
   border: `1px solid ${tokens.darkBorder}`,
   boxShadow: "0 8px 28px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset",
-  backdropFilter: "blur(12px)",
-  WebkitBackdropFilter: "blur(12px)",
+  // Solid surface keeps graph controls legible without translucent layering.
 }
 
 const styles: Record<string, CSSProperties> = {

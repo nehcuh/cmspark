@@ -526,13 +526,13 @@ export const SETTINGS_HTML = `<!DOCTYPE html>
  * the side panel; same rule now applies to this surface).
  */
 :root{
-  --bg:#0b0d12;            /* tokens.darkBg */
-  --elevated:#141820;      /* tokens.darkElevated */
+  --bg:#171717;            /* tokens.darkBg */
+  --elevated:#222222;      /* tokens.darkElevated */
   --border:rgba(255,255,255,0.08);  /* tokens.darkBorder */
   --border-strong:rgba(255,255,255,0.16);
   --text:#f1f5f9;          /* tokens.darkText */
   --muted:#94a3b8;         /* tokens.darkMuted */
-  --faint:#64748b;         /* muted-2 级（hint/env 弱文本） */
+  --faint:#94a3b8;         /* muted-2 级（hint/env 弱文本） */
   --accent:#818cf8;        /* tokens.darkAccent (indigo-400) */
   --on-accent:#fff;
   --success:#34d399;       /* tokens.darkSuccess */
@@ -544,15 +544,15 @@ export const SETTINGS_HTML = `<!DOCTYPE html>
   --success-border:rgba(52,211,153,0.3);
   --danger-border:rgba(248,113,113,0.3);
   --warning-border:rgba(251,191,36,0.25);
-  --field-bg:#1c2230;      /* input 底：darkElevated 上加一层（替代原 Material 输入蓝） */
+  --field-bg:#2a2a2a;      /* input 底：darkElevated 上加一层（替代原 Material 输入蓝） */
   --field-border:rgba(255,255,255,0.12);
   --radius:12px;--radius-sm:8px;
   --font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-height:100vh;display:flex;justify-content:center;padding:24px 16px}
-.container{max-width:600px;width:100%}
-.card{background:var(--elevated);border-radius:var(--radius);padding:28px 32px;box-shadow:0 4px 24px rgba(0,0,0,0.3)}
+.container{max-width:720px;width:100%}
+.card{background:var(--elevated);border-radius:var(--radius);padding:28px 32px;border:1px solid var(--border);box-shadow:none}
 h1{font-size:20px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:8px}
 .status-dot{width:8px;height:8px;border-radius:50%;background:var(--success);margin-left:auto;flex-shrink:0}
 .status-dot.offline{background:var(--danger)}
@@ -580,13 +580,19 @@ input:focus{border-color:var(--accent)}
 .input-row input{flex:1}
 .btn-icon{padding:8px 10px;background:var(--field-bg);border:1px solid var(--field-border);border-radius:var(--radius-sm);color:var(--muted);cursor:pointer;font-size:13px;line-height:1}
 .btn-icon:hover{color:var(--text);border-color:var(--accent)}
-.hint{font-size:11px;color:var(--faint);margin-top:4px}
+.hint{font-size:12px;color:var(--faint);margin-top:4px}
 .presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .preset{padding:3px 10px;background:var(--field-bg);border:1px solid var(--border);border-radius:12px;font-size:11px;color:var(--muted);cursor:pointer;transition:all 0.2s}
 .preset:hover{color:var(--text);border-color:var(--accent)}
 .env-banner{display:none;margin-top:16px;padding:10px 14px;background:var(--warning-soft);border:1px solid var(--warning-border);border-radius:var(--radius-sm);font-size:12px;color:var(--warning);line-height:1.5}
 .saved-flash{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:var(--success);color:var(--bg);padding:8px 20px;border-radius:var(--radius-sm);font-size:13px;opacity:0;transition:opacity 0.3s;pointer-events:none}
 .saved-flash.show{opacity:1}
+
+/* #469 visual-only: API, secrets and confirmation behavior unchanged. */
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.btn,.btn-icon{min-height:36px}.input-row input{min-width:0}
+@media(max-width:480px){body{padding:12px 8px}.card{padding:20px 16px}h1{font-size:18px}.actions{gap:8px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>

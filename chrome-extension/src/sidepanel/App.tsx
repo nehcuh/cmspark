@@ -1,9 +1,4 @@
-/* THESIS: Side Panel is a consumer assistant empty, not an instrument desk — first viewport is a person who greets you.
-   OWN-WORLD: White surface, ink type, 22px greeting, sentence rows, circular send, indigo spark only on the companion mark.
-   STORY: Open → meet someone → type or tap a sentence → work still fits 320px.
-   FIRST VIEWPORT: Centered CompanionMark, 要我帮你做什么？, sentence invitations, quiet composer, 新对话.
-   FORM: Canon (知乎看山 quality bar) · seed e96a500f · Comp A approved.
-   FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md */
+// #469: responsive conversation workspace; root DESIGN.md.
 // CMspark Browser Agent — Root App Component
 
 import { Component, useState, useRef, useCallback, useEffect } from "react"
@@ -27,6 +22,8 @@ import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { StatusRail } from "./components/StatusRail"
 import { ComposerChips } from "./components/ComposerChips"
 import { ComposerCruisePicker } from "./components/ComposerCruisePicker"
+import { WorkspaceFrame } from "./components/WorkspaceFrame"
+import { workspaceCSS } from "./ui/workspace-styles"
 import { ComposerDock } from "./components/ComposerDock"
 import { ComposeDrawer } from "./components/ComposeDrawer"
 import { ThreadRefChips } from "./components/ThreadRefChips"
@@ -211,8 +208,9 @@ function AppContent() {
 
   return (
     <ContextPanelHostProvider capabilityLevel={level}>
+    <WorkspaceFrame>
     <div style={styles.container}>
-      <style>{globalCSS}</style>
+      <style>{globalCSS + workspaceCSS}</style>
       <StatusRail
         connectionState={connectionState}
         capabilityLevel={level}
@@ -224,15 +222,16 @@ function AppContent() {
         onPopout={handlePopout}
         canPopout={!!appState.activeThreadId}
       />
-      {/* #321 PR-3: toast host lives in a zero-height slot right under the rail —
-          its top is DOM-anchored to the rail, so no `top:52` rail-height magic. */}
-      <div style={{ position: "relative", height: 0, flexShrink: 0 }}>
-        <ToastHost toasts={toasts} onClose={closeToast} />
-      </div>
       {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px.
           #321 PR-2「一条 Now」: SceneStatusBar / RunBusyChip / WorkerScopeBar merged
           into FocusBand slots — no fourth band above the conversation. */}
       <FocusBand capabilityLevel={level} />
+      {/* #321 PR-3: toast host lives in a zero-height slot after the priority FocusBand —
+          its top is DOM-anchored below confirmation, so no `top:52` height magic. */}
+      <div style={{ position: "relative", height: 0, flexShrink: 0 }}>
+        <ToastHost toasts={toasts} onClose={closeToast} />
+      </div>
+
       <ChatView />
       <FleetWorkerListPortal />
       {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
@@ -295,6 +294,7 @@ function AppContent() {
         }}
       />
     </div>
+    </WorkspaceFrame>
     </ContextPanelHostProvider>
   )
 }
@@ -826,7 +826,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
   return (
     <div
-      style={{ borderTop: `1px solid ${tokens.border}`, flexShrink: 0, position: "relative" as const, background: tokens.bg }}
+      style={{ flexShrink: 0, position: "relative" as const, background: tokens.bg }}
       onPaste={handleComposerPaste}
       onDragEnter={handleComposerDragEnter}
       onDragOver={handleComposerDragOver}
@@ -876,6 +876,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         chips={<ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />}
       >
         <div
+          className="cm-composer-capsule"
           style={{
             ...styles.composerCapsule,
             opacity: needsThread || needsConnection ? 0.85 : 1,
@@ -884,22 +885,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             boxShadow: dragOver ? `0 0 0 1px ${tokens.accent}` : tokens.shadowSm,
           }}
         >
-          {/* Attach stays visible in the empty composer — first-run affordance. */}
-          {!showStop && !(voice.listening && showVoiceMic) && (
-            <button
-              type="button"
-              style={styles.attachBtn}
-              onClick={() => fileInputRef.current?.click()}
-              // l2_task: ingest is blocked for an active computer task — don't
-              // present a clickable affordance whose selection is silently dropped.
-              disabled={needsThread || needsConnection || threadBusy || composerMode === "l2_task" || !!overlayStandby}
-              title="添加文件或图片"
-              aria-label="添加文件或图片"
-            >
-              <IconAttach size={16} />
-            </button>
-          )}
           <textarea
+            aria-label="消息内容"
             ref={textareaRef}
             style={styles.textarea}
             placeholder={getPlaceholder()}
@@ -917,6 +904,23 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             onKeyDown={handleKeyDown}
             onPaste={handleComposerPaste}
           />
+          <div className="cm-composer-actions">
+          {/* Attach stays visible in the empty composer — first-run affordance. */}
+          {!showStop && !(voice.listening && showVoiceMic) && (
+            <button
+              type="button"
+              style={styles.attachBtn}
+              onClick={() => fileInputRef.current?.click()}
+              // l2_task: ingest is blocked for an active computer task — don't
+              // present a clickable affordance whose selection is silently dropped.
+              disabled={needsThread || needsConnection || threadBusy || composerMode === "l2_task" || !!overlayStandby}
+              title="添加文件或图片"
+              aria-label="添加文件或图片"
+            >
+              <IconAttach size={16} />
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
           {showVoiceMic && (
             <VoiceMicButton
               listening={voice.listening && !voice.processing}
@@ -971,7 +975,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               type="button"
               style={{
                 ...styles.sendBtn,
-                background: canSend ? tokens.accent : tokens.sendDisabledBg,
+                background: canSend ? tokens.actionPrimary : tokens.sendDisabledBg,
                 color: canSend ? tokens.userBubbleText : tokens.textMuted,
                 cursor: canSend ? "pointer" : "not-allowed",
               }}
@@ -995,6 +999,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             </button>
           )}
 
+          </div>
         </div>
         <VoiceBanner
           banner={voice.banner}
@@ -1183,7 +1188,8 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     display: "flex",
     flexDirection: "column",
-    height: "100vh",
+    height: "100%",
+    minHeight: 0,
     fontFamily: tokens.font,
     fontSize: 13,
     color: tokens.text,
@@ -1193,11 +1199,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   composerCapsule: {
     display: "flex",
-    alignItems: "flex-end",
+    flexDirection: "column",
+    alignItems: "stretch",
     gap: 8,
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusComposer,
-    padding: "6px 10px 6px 12px",
+    padding: "10px 12px 10px 14px",
     background: tokens.bgElevated,
     minHeight: 52,
     transition: `border-color ${tokens.transitionFast} ease, box-shadow ${tokens.transitionFast} ease`,

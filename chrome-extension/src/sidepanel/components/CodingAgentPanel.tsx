@@ -1208,23 +1208,23 @@ function kindIcon(kind?: string): string {
 const styles: Record<string, CSSProperties> = {
   overlay: {
     position: "absolute",
-    // Leave StatusRail (~40px) visible so connection / settings still reachable
-    top: 40,
+    // Match the measured rail at all widths; standalone mounts have no rail.
+    top: "var(--cm-status-height, 0px)",
     left: 0,
     right: 0,
     bottom: 0,
     zIndex: 40,
     display: "flex",
     flexDirection: "column",
-    background: tokens.bg || "#f8fafc",
+    background: tokens.bg,
   },
   panel: {
     flex: 1,
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
-    padding: 10,
-    gap: 8,
+    padding: 16,
+    gap: 12,
   },
   confirmHost: {
     border: `1px solid ${tokens.border || "#fecaca"}`,
@@ -1516,7 +1516,7 @@ const styles: Record<string, CSSProperties> = {
   },
   tlRow: { display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12 },
   tlRowMsg: {
-    background: tokens.bg || "#f8fafc",
+    background: tokens.bg,
     borderRadius: 6,
     padding: "4px 6px",
   },

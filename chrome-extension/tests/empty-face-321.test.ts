@@ -9,12 +9,12 @@ import { tokens } from "../src/sidepanel/ui/tokens"
 
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
 
-test("#321 PR-4: CompanionMark empty imprint is 48px (wireframe), still red calf", () => {
+test("#321 PR-4: CompanionMark empty imprint is 36px (#469 workspace), still red calf", () => {
   const emptyFn = src("src/sidepanel/components/ChatView.tsx").slice(
     src("src/sidepanel/components/ChatView.tsx").indexOf("function EmptyState"),
     src("src/sidepanel/components/ChatView.tsx").indexOf("const markdownCSS"),
   )
-  assert.match(emptyFn, /<CompanionMark size=\{48\}\s*\/>/)
+  assert.match(emptyFn, /<CompanionMark size=\{36\}\s*\/>/)
   assert.doesNotMatch(emptyFn, /size=\{92\}/)
   const mark = src("src/sidepanel/ui/icons.tsx").slice(
     src("src/sidepanel/ui/icons.tsx").indexOf("export function CompanionMark"),
@@ -70,7 +70,7 @@ test("#321 PR-4: composer minHeight ~52 leaves 32px attach/mic/send room", () =>
 })
 
 test("#321 PR-4: canon revision — user bubble is not a filled indigo slab", () => {
-  assert.equal(tokens.userBubbleBg, "#ffffff")
+  assert.equal(tokens.userBubbleBg, "#f3f3f1")
   assert.equal(tokens.accent, "#4f46e5")
   assert.ok(String(tokens.userBubbleBg) !== String(tokens.accent))
   const tokenFile = src("src/sidepanel/ui/tokens.ts")
@@ -84,9 +84,9 @@ test("#321 PR-4: canon revision — user bubble is not a filled indigo slab", ()
   assert.doesNotMatch(bubble, /shadowAccent/)
 })
 
-test("#321 PR-4: unarmed send SoT is sendDisabledBg, armed send is indigo", () => {
+test("#321 PR-4: unarmed send SoT is sendDisabledBg, armed send is neutral ink (#469)", () => {
   const app = src("src/sidepanel/App.tsx")
-  assert.match(app, /canSend \? tokens\.accent : tokens\.sendDisabledBg/)
+  assert.match(app, /canSend \? tokens\.actionPrimary : tokens\.sendDisabledBg/)
   const tokenFile = src("src/sidepanel/ui/tokens.ts")
   assert.match(tokenFile, /sendDisabledBg/)
   assert.match(tokenFile, /Unarmed send button SoT/)

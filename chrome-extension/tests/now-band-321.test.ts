@@ -174,11 +174,13 @@ test("#321 PR-2: no fourth horizontal band — App stack is StatusRail + FocusBa
   const band = app.indexOf("<FocusBand")
   const chat = app.indexOf("<ChatView")
   assert.ok(rail >= 0 && band > rail && chat > band)
-  // Between the FocusBand opening tag and ChatView: no JSX component mount at all
+  // #469: the zero-height notification slot follows confirmation so it cannot cover its controls.
   // (self-closing OR with children — `</?[A-Z]` catches both, comments still fine)
   const bandOpenEnd = app.indexOf("/>", band) + 2
   const between = app.slice(bandOpenEnd, chat)
-  assert.doesNotMatch(between, /<\/?[A-Z][A-Za-z]*[\s/>]/)
+  assert.match(between, /height: 0/)
+  assert.match(between, /<ToastHost/)
+  assert.doesNotMatch(between.replace(/<ToastHost[^>]*\/>/, ""), /<\/?[A-Z][A-Za-z]*[\s/>]/)
   // The three old band files are gone (readFileSync must throw ENOENT)
   const gone = (rel: string) => {
     try {

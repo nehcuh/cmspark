@@ -1,0 +1,8 @@
+{
+  "chrome-extension/src/sidepanel/ui/tokens.ts": "3bd62e62fae22f653bac27f25173ec1de140ee9d83ddceef5088d8db3d72fae9",
+  "chrome-extension/scripts/test-workspace-ui.py": "d3e6c854e46d59c8fe2334a2f2410ccd91ac30eea01a56c741cf34f241c215e6",
+  "chrome-extension/src/sidepanel/App.tsx": "351974b2fdfe8c6fe55410610164d5640f894cc52d3461b403f9d9110a821f2f",
+  "chrome-extension/src/terminal/TerminalApp.tsx": "d19f03dcbc8149faf1050b846afd4f4a33a0b88569becfecac5bded24853372b",
+  "chrome-extension/src/sidepanel/components/ChatView.tsx": "3ab3cef8290f2f34040a36832c990f3153e77939a239697ca1759119d3669297",
+  "chrome-extension/src/sidepanel/components/ThreadList.tsx": "6d8cb59f5460d53a34b2ffc1b18708bc8cbc717dbae846ce667b6f5dd509d521"
+}

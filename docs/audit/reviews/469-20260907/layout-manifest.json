@@ -1,0 +1,11 @@
+{
+  "chrome-extension/src/sidepanel/components/ui/Modal.tsx": "c831edaa5b4cb43b2b6c301f00ab4788daabcc46fdf871c5d805fffd0408ad2f",
+  "chrome-extension/src/sidepanel/ui/workspace-styles.ts": "5457ef568e7d20a2b0f4c9fca30d748e347be632f94265e3e151d3d87202777b",
+  "chrome-extension/src/sidepanel/App.tsx": "351974b2fdfe8c6fe55410610164d5640f894cc52d3461b403f9d9110a821f2f",
+  "chrome-extension/src/sidepanel/components/ContextPanelHost.tsx": "8102f5e8df1912bac9a91b7a8f0782e9e795fa5f73446c2b4a9a8f56dc074f0d",
+  "chrome-extension/src/sidepanel/components/ComposerDock.tsx": "1115458b736c688fa6bdb06df9bc522e9b227e5e18d06e2a1ed56ab2dcb48391",
+  "chrome-extension/src/sidepanel/hooks/useModalDialog.ts": "29fb4ebf88e52b3d3ff78e0310d233719f7a9cae996654acaf69ff8368c49213",
+  "chrome-extension/src/sidepanel/components/SettingsSlideout.tsx": "662dc1621dea11b3600fa9538195ffd198978ec29ad04a5846b336ad319f54d7",
+  "chrome-extension/src/sidepanel/components/StatusRail.tsx": "31045a1d98bd05656aaea90e29422e95a66d524889f0499e167419968c721738",
+  "chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx": "5a1e405bab85b6ac312dbcb7b9e3578c969599d2526d071915acf65e861a2cbc"
+}
