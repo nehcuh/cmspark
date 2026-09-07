@@ -1,0 +1,19 @@
+# #457 rehearsal and honest ledger — R3 disposition
+
+Grok4.6 R3 APPROVE and actual DeepSeekV4Pro R3 pass (scoped), both 0 BLOCK/MAJOR. User explicitly accepted the model pair. Complete frozen R3 packet supplied independently; DeepSeek received the entire packet on stdin with tools disabled, Grok read its CLI-offloaded copy of that same request. Reviews do not rerun the reported machine checks and do not approve product/enterprise/installer/release behavior outside this scope.
+
+R1 major fixes: temporary child cwd; explicit disclosure that both versions use current dependencies, application data isolation is not an OS sandbox and os.homedir is not intercepted; no old evidence API is claimed. Old issue result is persisted, actual file bytes change, old-written row exists and token is verified by both versions; raw context grant fields must be equal before/after old write. R2 remaining major was unsupported aggregate machine figures in the review packet: R3 supplies matching machine-evidence.json summaries/digests/local paths and commands, with a reported-run disclaimer. All earlier reports remain archived rather than re-labelled as approvals.
+
+R3 also freezes/hashes fixture and procedure, asserts the pre-write context row exists and the old module directory is absent, requires each phase's completion marker after all assertions, and names the exact Companion source hash scope. Actual final rehearsal passed. Fixed source baseline is 63b449d9 (0.6.6), not a historical dependency installation. Two generated data files survive old initialization; only current code reads/refuses evidence schema. Future fixture changes its semantic version then serializes, not a single-byte edit.
+
+Remaining NIT dispositions:
+
+- Grok1: checks cover the known valid/future files, not absence of arbitrary new directory entries. No claim of a full filesystem diff or OS sandbox is made.
+- Grok2 / DeepSeek3: token verification reads the persisted hash record; raw token is intentionally never stored in the grant database. Ordinary-token success in the same old process controls against universal parse failure. The old profile denial is behavioral; the exact old source is pinned for inspection.
+- Grok3 / DeepSeek1: counts have separate source scopes; package source gates ran at 0a80846d and the rehearsal used an explicit working-tree snapshot. Follow-up machine binding verified every tracked Companion src/tsconfig/package blob against commit 579f8e70, and the complete current-directory hash against the recorded hash. The directory also contains ignored Python __pycache__ and nested .vibe cache files, so Git alone does not reconstruct the complete hash. The matching full source copy and binding record are retained locally in .omx/artifacts/457-acceptance/r3-source-snapshot and r3-source-binding.json. Historical dependency fidelity remains excluded.
+- Grok4–6: build success is the observed process exit0, raw logs remain local with digests and commands. Package gates have fixture-moving negatives and must run in a temporary source copy. Reviewers do not independently recompute logs/fixture hashes; that limit is explicit.
+- DeepSeek2: ledger describes reserialization precisely; the adjacent script comment refers to the discriminator's semantic change, not a byte patch.
+- DeepSeek4: valid evidence/draft is read through the real service in the same verify phase; separate store instances reflect separate scope files. A future scope must refuse its unknown schema.
+- Earlier R2 suggestion to replace assert.throws with assert.rejects is not adopted: EvidenceStore.read is synchronous; if it returned a Promise instead, assert.throws would fail immediately (not pass vacuously). The current assertion matches the actual API.
+
+#457 remains open: both real enterprise scenarios, actual approved model/client, installed artifacts and browser/Companion mixed-version checks still lack acceptance records. No version bump or app replacement.

@@ -60,3 +60,21 @@ W1 收口：见 [逐项复审处置](w1-review-disposition.md)。a10addf1 / 3d5b
 ## Issue 闭环补正
 
 此前只有总设计 #445，W1 未先拆实施票，现如实补建 #446–#449；后续 #450–#457 已先建票。PR #458 经 Grok/Claude 双路门禁及 GitHub CI build、Linux/macOS/Windows smoke 全绿后合并，merge commit 53d13b9c1f9e4d915624e698426ccae7904b0c0d；#446–#449 已由 PR 自动关闭。该状态取代上文历史阶段的“仅本地提交”。#451 正在接入实际聊天与经验生命周期，未完成票保持打开。
+
+
+## W2 / #451 已闭环
+
+提交 96a3ca70；PR #459 于 2026-09-07 合并为 4600abf4。Grok 4.6 APPROVE、DeepSeek V4 Pro APPROVE_WITH_NITS（用户明确接受此模型组合），构建及 Linux/macOS/Windows smoke 全绿，#451 已关闭。详见 451-review-disposition.md 与 model-identity-correction.md。W3/#452 提取和 W4/#453 证据代码仍单独开发，不算在本批交付内。
+
+
+## 本轮通用实现收口（以此取代上文早期“待实现”状态）
+
+- #452：PR #460 / e3c5540bf049b58b7310e8c7d17fb586247b1023 已合并，通用提取代码与双审/CI完成；真实布局适配继续开放。
+- #453 基础：PR #461 / b454d20369fcf1bcf129a3e33240b2cebe43d69c 已合并。
+- #453 核对/接入与 #454/#455 两个 Mission：PR #462 / 6c785bce726af37a432a48f52a1e5b357c73b28f 已合并，最新提交 0c47480c 的 build 与三 OS smoke 全绿。核心 Grok 完整R2 +实际 DeepSeekV4Pro R1/聚焦R2、接入两路R2均完成，所有重要发现已解决。#453 通用代码闭环关闭，两个真实场景票继续开放。
+- #456：源码已推草稿 PR #463；Grok完整R1与R2增量通过，DeepSeek完整R2待返回。未据草稿PR关闭票或宣称通过全部门禁。
+- 当前开发快照 Companion4975pass/23skip +settings20/20、Extension1277/1277及两端构建通过。#457另完成新版创建→0.6.6源码初始化/钥匙写入→新版重读的临时数据保留演练，以及临时归档打包源码门禁124pass/0fail。两版共用当前依赖，不是旧版安装环境回放；无 OS 文件系统沙箱、无旧版 evidence API。见验收台账和机器运行摘要。
+
+模型名称统一以 [身份更正](model-identity-correction.md) 为准：用户已接受 Grok4.6 +DeepSeekV4Pro，历史“Claude”仅指调用 CLI。输出上限中断和取消的复审从不计作批准。源代码、哈希、实际报告、问题处置和 PR/CI 状态分别保留。
+
+版本保持0.6.6，未发包/安装/替换应用。#450 的目标OS、企业模型、授权网页和业务真值仍缺失；两场景真实验收、实际客户端、安装包和浏览器混版不能以合成测试替代。

@@ -1,0 +1,10 @@
+{
+  "issue": 457,
+  "files": {
+    "companion/scripts/rehearse-enterprise-roundtrip.mjs": "580b1b80b5cd1685e50c60ccf6067f55221fc9dc0c6703021b7364a82c163084",
+    "docs/audit/0.7.0-20260907/release-acceptance.md": "504f8bb8358b80c5ce3d74898c86aca7470b955b09986740ba13d4171b29a237",
+    "docs/audit/0.7.0-20260907/roundtrip-result.json": "16f6f893d09612519027fcead824602501ac8b28b16eeb9d000e73aeb0975d13",
+    "docs/enterprise-architecture.md": "9a14233b125bb86a112ff5726d3127d62fc63eb6a8c9edbefad77c7521036f44",
+    "docs/audit/0.7.0-20260907/machine-evidence.json": "24d7d7a39271b0bb7e270332b96d049daa747192948ad59cfbcf0e1d2c831c81"
+  }
+}
