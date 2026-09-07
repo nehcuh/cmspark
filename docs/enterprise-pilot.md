@@ -13,6 +13,7 @@
 - source_bindings 的来源范围必须能明确展示双方 native ID 对应关系。示例中 code/tests/defects 的 requirement 端点是各平台对需求的 native reference；tests_commit 是测试平台与代码平台的 commit 引用。架构端点 system@revision 是本地派生身份，来源仍需两项原始值。mappings 只能由试点负责人维护，不能由模型自授。
 - required_fields 是在固定 schema 上增加必需项；建议共享两场景的配置先留空，默认 schema 已要求基线材料。pass_values 必须匹配平台实际通过值。
 - 默认可变字段 24 小时、CMDB 业务时间 15 分钟、测试业务时间 24 小时。调整窗口需要负责人明确决策。业务时间应为可无歧义解析的带时区时间，采集时刻不能代替业务时间。
+- 当前业务时间接受 `YYYY-MM-DDTHH:mm:ssZ` 或 `YYYY-MM-DDTHH:mm:ss+08:00` 等完整格式，可有 1–3 位小数秒；不接受仅日期、小写 z 或无分钟偏移。标准文字互相包含时，用例对应会保守标为未核实，需在真实试点中处理，不能用整页共现替代明确对应。
 - 可选 runtime_not_applicable 仅对事先明确没有运行资产要求的场景生效，必须给理由；模型提交 N/A 不生效。
 
 当前通用聊天中的成功页面读取也会形成同会话的有界持久证据，并非只在两个 Mission 中保存。计划只读、已停止、会话已删除和非原子 DOM 回退不会新增证据。
