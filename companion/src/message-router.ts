@@ -8,6 +8,7 @@
 
 import os from "os"
 import { resolveBrowserSiteTarget } from "./site-context/browser-resolver"
+import { bindChatEvidenceScope } from "./business-evidence/chat-scope"
 import * as fs from "fs"
 import path from "path"
 import { URL } from "url"
@@ -1342,7 +1343,7 @@ export async function handleMessage(
           skillEngine: services.skillEngine,
           historyStore: services.historyStore,
           sendToExtension: session.sendToExtension,
-          executeTool: session.executeTool,
+          executeTool: bindChatEvidenceScope(session.executeTool, rest.thread_id),
           signal: controller.signal,
           contextRefsSegment,
           hostname: currentHostname,
@@ -1921,7 +1922,7 @@ export async function handleMessage(
           skillEngine: services.skillEngine,
           historyStore: services.historyStore,
           sendToExtension: session.sendToExtension,
-          executeTool: session.executeTool,
+          executeTool: bindChatEvidenceScope(session.executeTool, rest.thread_id),
           signal: uploadController.signal,
           hostname: uploadHostname,
           siteContextTabId: rest.context_tab_id,
@@ -2317,7 +2318,7 @@ export async function handleMessage(
           skillEngine: services.skillEngine,
           historyStore: services.historyStore,
           sendToExtension: session.sendToExtension,
-          executeTool: session.executeTool,
+          executeTool: bindChatEvidenceScope(session.executeTool, rest.thread_id),
           signal: controller.signal,
           skipUserMessage: true,
           hostname: currentHostname,
@@ -5635,4 +5636,3 @@ export async function handleMessage(
       return { type: "error", error: `Unknown message type: ${type}` }
   }
 }
-

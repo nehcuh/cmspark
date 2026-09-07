@@ -1,0 +1,29 @@
+{
+  "base": "0a80846d5f18695bfeb7f7be8d5984d7a23edcde",
+  "issues": [
+    450,
+    453,
+    454,
+    455
+  ],
+  "files": {
+    "companion/src/server.ts": "285a974cf40629a9c658c4061b59b0a859a6b140a9f3f744225cffa143923e01",
+    "companion/src/message-router.ts": "af30a1c245cab40a0f8b075435587712f8c36df378d07d57fb3589b58d2fc557",
+    "companion/src/tool/companion-dispatch.ts": "33281f5b616a543ffe86862dd2f91a07c59826193abf0d4d789854632249ac31",
+    "companion/src/tool/plan-readonly.ts": "1d78aa898aff68d2c8c5eba7634f604dcb5c5debb3d9b7d65108c86b33822ce5",
+    "companion/src/bridge/companion-tools.ts": "d252ef309868e9f2ef35e6317620893391b374c9c995b3a4ebdb43fc2550d74e",
+    "companion/src/bridge/tool-definitions-inject.ts": "87ce41a7ec5a5b64ed7f3e191344ab729839f1d49d9b904178283067c62ec522",
+    "companion/tests/integration/outbound-mcp-executor.test.ts": "ef808b599769bfebf149e6446e3607fcd55490953f1aae36c5a231b7917e8f70",
+    "companion/src/business-evidence/executor.ts": "41e1aca35d87f0ee1cd6d6efed320229d90dd3704c4e42853d1e915eb7ff0d90",
+    "companion/src/business-evidence/tool-definitions.ts": "4ebda54a48cd60a2b793f0933a5eba8b88e8817f8b8543be08e83229a9964000",
+    "companion/src/business-evidence/chat-scope.ts": "617f39c29fe3f9e953356779afd613786e30adab24c4646b1c45944fccc9ba8c",
+    "companion/tests/business-evidence-executor.test.ts": "dbda61f7e72d3739d582458eda7368fa8fe378522adadd4fbb4db75e0a4935cc",
+    "companion/tests/business-evidence-packs.test.ts": "14c4d88a59202e59f6c47546847744079e4e95cc61b5de31d733614cfdf5e408",
+    "companion/src/packs/builtin/change-material/pack.yaml": "c73d1a357431ab85029507229bd04051b314fbfc5e2ba539d051abd0fbf91521",
+    "companion/src/packs/builtin/change-material/skills/change-material-guide.md": "248c32af4c16025dce70b4a122f2e22a39218a1f0d25891d7a23371bece3ace7",
+    "companion/src/packs/builtin/development-trace/pack.yaml": "bfbc0ec9034fd37ba76ba0a6ed7b070d7564c125ab1657bd28f7b56aa0a690b2",
+    "companion/src/packs/builtin/development-trace/skills/development-trace-guide.md": "8073a6a7b86230fefd583de78053e7bfcc224aebcd81b6a3dbf8c9e6b5d01836",
+    "docs/enterprise-pilot.md": "adcea0f5a930dcb4cd0ed41e720cd0d03adbc36cd062d3e1dc7c98f2f0798e77",
+    "docs/examples/pilot-contract.v1.json": "763bd5bd6ecbd48f50bc4ea14b4371fc0a288736891268227246e960c6551b28"
+  }
+}

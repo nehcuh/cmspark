@@ -47,6 +47,8 @@ export const PLAN_READONLY_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   "search_knowledge",
   "workspace_list_dir",
   "workspace_read_file",
+  "draft_read",
+  "draft_render",
   // --- orchestration run-state reads ---
   "board_read",
   "list_workers",

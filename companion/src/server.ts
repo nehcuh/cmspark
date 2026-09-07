@@ -5,6 +5,8 @@ import { randomUUID } from "crypto"
 import { URL } from "url"
 import { contextReadParams } from "./site-context/admission"
 import { getConfig, saveConfig, initDataDir, getConfigDir } from "./config"
+import type { EvidenceScope } from "./business-evidence/content"
+import { captureLocalPageResult } from "./business-evidence/executor"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
 import { gcExpiredMeetingAudio } from "./meeting/meeting-store"
 import { ThreadManager } from "./threads/thread-manager"
@@ -407,6 +409,8 @@ export type ToolExecuteInvokeOpts = {
   trustedOutbound?: boolean
   /** Server-owned Chat metadata resolution; never read this from tool args. */
   siteContextTabId?: number
+  /** Bound by the Chat router or authenticated outbound runner, never tool args. */
+  evidenceScope?: EvidenceScope
 }
 
 export type ToolExecutorFn = (
@@ -459,6 +463,11 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     invokeOpts?: ToolExecuteInvokeOpts,
   ): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = contextReadParams(toolName, params || {}, invokeOpts?.siteContextTabId)
+    const evidenceScope = invokeOpts?.evidenceScope?.kind === "chat" && !invokeOpts.trustedOutbound
+      && threadManager.get(invokeOpts.evidenceScope.threadId) ? invokeOpts.evidenceScope : undefined
+    const captureWritesAllowedAtStart = evidenceScope?.kind !== "chat"
+      || threadManager.get(evidenceScope.threadId)?.execution_policy !== "plan_readonly"
+    if (evidenceScope?.kind === "chat") finalParams = { ...finalParams, __thread_id: evidenceScope.threadId }
     // #au4dch DL-1: normalize dotted alias → downloads_find
     if (toolName === "downloads.find") {
       toolName = "downloads_find"
@@ -680,6 +689,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         }
         // Thread id already injected by adapter as __thread_id (computer-use precedent)
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
+          evidenceScope,
           // Propagate chat.abort / supersede so shell_exec can killProcessTree.
           signal,
           // Executor-internal confirmation channel (Phase 1 W8-windows
@@ -807,7 +817,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     // Extension forward — pending map / timeout / tabUrlCache post-process in
     // ws/tool-forward.ts (C10-G). createToolExecutor stays pure orchestration.
     // L1 actuator is the Chrome extension peer, never tray/summoner (tool.execute).
-    return forwardL1OrUnavailable({
+    const result = await forwardL1OrUnavailable({
       originatingWs: ws,
       getAuth: (w) => getWsAuthState(w),
       pickExtensionWs: pickAuthenticatedClientWs,
@@ -826,6 +836,9 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           logToolFinish,
         }),
     })
+    const currentEvidenceThread = evidenceScope?.kind === "chat" ? threadManager.get(evidenceScope.threadId) : undefined
+    return captureLocalPageResult(getConfigDir(), currentEvidenceThread ? evidenceScope : undefined, toolCallId, toolName, result, signal,
+      captureWritesAllowedAtStart && currentEvidenceThread?.execution_policy !== "plan_readonly")
   }
   return executor
 }

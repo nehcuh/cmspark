@@ -1,0 +1,16 @@
+{
+  "base": "0a80846d5f18695bfeb7f7be8d5984d7a23edcde",
+  "issue": 453,
+  "files": {
+    "companion/src/business-evidence/draft-contract.ts": "b0958ab8384d12d55fda126ca86de490f2ddcac5a358524400f71c7237bf7c3e",
+    "companion/src/business-evidence/draft-repository.ts": "8a46e7b6a1e33e65effe25122b7edba0f25bc44cc1b238515f771bd34ccaaab2",
+    "companion/src/business-evidence/field-checker.ts": "602f9d03c7c2e9be6750fe64f15f6d6c076e6d575d14ca208ea3013c74c2e0b8",
+    "companion/src/business-evidence/checker.ts": "66e264c04032875c67ec1f8595ed8066687ab626a8b1a68d557389432c312754",
+    "companion/src/business-evidence/render.ts": "831896410460ccee92acf98158783cbf6c4bcd0e71a81c2409efca33d9f1eab4",
+    "companion/src/business-evidence/service.ts": "1738035ce6ed615b45d7854ee1678c206ea0f42bc3a5e8475e4eddb6ca60dd68",
+    "companion/tests/business-evidence-draft-contract.test.ts": "a72480bd67301b5ed0130e77526a9ddf5c74e54ed10378af8429fbdb8b29c4a5",
+    "companion/tests/business-evidence-draft-repository.test.ts": "efb6dd38da47f460f4819fa1901f57e221963a9a7877e219be232b3ecde629c2",
+    "companion/tests/business-evidence-field-checker.test.ts": "891c9e80486a79aed6dd1391d4be9cbd2489ab75813a54453a38da79c0ba1b77",
+    "companion/tests/business-evidence-scenarios.test.ts": "c5fb8bf56436a048227f80f4969048885eeff1a223a766fd29514d1beffe9fa1"
+  }
+}

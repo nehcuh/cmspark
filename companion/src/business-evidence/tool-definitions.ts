@@ -1,0 +1,15 @@
+const citation = { type: "object", additionalProperties: false, properties: { observation_id: { type: "string" }, excerpt: { type: "string" }, start: { type: "integer", minimum: 0 }, end: { type: "integer", minimum: 1 } }, required: ["observation_id", "excerpt", "start", "end"] }
+const memberCitation = { ...citation, properties: { ...citation.properties, member_index: { type: "integer", minimum: 0 } }, required: [...citation.required, "member_index"] }
+const nullableString = { type: ["string", "null"] }
+const scalar = { type: "object", additionalProperties: false, properties: { value: nullableString, citations: { type: "array", items: citation } }, required: ["value", "citations"] }
+const collection = { type: "object", additionalProperties: false, properties: { value: { type: ["array", "null"], items: { type: "string" }, uniqueItems: true }, citations: { type: "array", items: memberCitation }, coverage_citations: { type: "array", items: citation } }, required: ["value", "citations", "coverage_citations"] }
+const id = { draft_id: { type: "string" } }
+export const BUSINESS_DRAFT_TOOL_DEFINITIONS = [
+  { type: "function", function: { name: "draft_create", description: "创建当前会话的变更材料或研发关联草稿。首次创建锁定试点契约；无契约可存草稿但无法齐备。先创建再读取网页可获得登记范围覆盖。不会写外部平台。request_id 用于幂等重试。", parameters: { type: "object", additionalProperties: false, properties: {
+    kind: { type: "string", enum: ["change_material.v1", "development_trace.v1"] }, title: { type: "string" }, target: { type: "object", additionalProperties: false, properties: { business_system_id: { type: "string" }, environment: { type: "string" } }, required: ["environment"] }, request_id: { type: "string", minLength: 1, maxLength: 128 },
+  }, required: ["kind", "title", "target", "request_id"] } } },
+  { type: "function", function: { name: "draft_update", description: "替换草稿指定候选字段，服务端核对。字段路径和类型可用 draft_read 查询。引用 observation_id 来自当前会话成功网页读取；start/end 是 NFC+换行规范化后 Unicode 码点半开区间。集合需逐成员引用及 coverage_citations。null 删除；不能提交 supported 等状态。story_draft_text 是创作文字。story_requirement/criteria_cases 只读派生，禁止提交。request_id 重试须参数完全相同。", parameters: { type: "object", additionalProperties: false, properties: {
+    ...id, expected_revision: { type: "integer", minimum: 1 }, request_id: { type: "string", minLength: 1, maxLength: 128 }, fields: { type: "object", additionalProperties: { oneOf: [scalar, collection] } }, relations: { type: "object", additionalProperties: { type: "object", additionalProperties: false, properties: { citations: { type: "array", items: citation }, mapping_id: { type: "string" } }, required: ["citations"] } }, story_draft_text: nullableString,
+  }, required: ["draft_id", "expected_revision", "request_id"] } } },
+  ...["draft_read", "draft_render"].map(name => ({ type: "function", function: { name, description: name === "draft_read" ? "读取当前会话草稿，按当前时钟核对字段与关系，列出缺失/冲突/未核实/过期/容量原因。" : "以同一核对结果返回 Markdown 与 JSON 材料草稿；齐备仍待人工复核，不发布外部平台。", parameters: { type: "object", additionalProperties: false, properties: id, required: ["draft_id"] } } })),
+]

@@ -3,6 +3,10 @@
  * server.ts createToolExecutor branches on this set; tests lockstep vs catalog.
  */
 export const COMPANION_TOOLS = [
+  "draft_create",
+  "draft_update",
+  "draft_read",
+  "draft_render",
   "osascript_eval",
   "host_read",
   "host_write",

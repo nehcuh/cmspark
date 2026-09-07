@@ -33,6 +33,9 @@ import type { SkillEngine } from "../skills/skill-engine"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
 import { proposeRunProgress } from "../threads/run-progress"
+import type { EvidenceScope } from "../business-evidence/content"
+import { executeDraftTool } from "../business-evidence/executor"
+import { getConfigDir } from "../config"
 import {
   CONTRACT_SUPPORTED_TOOLS,
   auditContractPropose,
@@ -84,6 +87,7 @@ function requireRt(): CompanionDispatchRuntime {
  *     via sendConfirmation is the sole remaining user gate and IS required.
  */
 export interface CompanionToolExecOptions {
+  evidenceScope?: EvidenceScope
   /** ws-bound + originWs-bound confirmation request channel (amendment A1). */
   sendConfirmation?: (
     details: SecurityConfirmationDetails,
@@ -138,6 +142,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
   const rejectPendingForTab = _rt.rejectPendingForTab
 
   switch (toolName) {
+    case "draft_create":
+    case "draft_update":
+    case "draft_read":
+    case "draft_render":
+      return executeDraftTool(getConfigDir(), execOpts?.evidenceScope, toolName, params)
     case "loop_declare_blocked": {
       const threadId = params.__thread_id || params._thread_id || params.thread_id
       if (!threadId) return { success: false, error: "loop_declare_blocked requires __thread_id" }

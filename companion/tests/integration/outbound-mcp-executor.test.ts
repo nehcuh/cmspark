@@ -46,6 +46,8 @@ import {
 import { hasOutboundDisclosure } from "../../src/outbound-mcp/disclosure-session.js"
 import { assertSummonerAllowed } from "../../src/ws/summoner-acl.js"
 import http from "node:http"
+import { EvidenceStore } from "../../src/business-evidence/store"
+import { bindChatEvidenceScope } from "../../src/business-evidence/chat-scope"
 import {
   _resetTabLeasesForTests,
   registerTabLeasePendingHooks,
@@ -209,6 +211,106 @@ test("context metadata parameters are reserved to server invocation options", as
     const message = await sent
     assert.equal(message.params.__site_context_tab_id, trusted ? 7 : undefined)
   }
+})
+
+test("Chat evidence wrapper composes trusted tab metadata and overrides caller-authored scope", async () => {
+  const thread = seedThreadManagerForTests().create("compose", "scope-compose-453")
+  const bound = bindChatEvidenceScope(createToolExecutor(serverSideWs), thread.id)
+  armAutoToolResult([])
+  const sent = expectClientMessage("tool.execute")
+  const result = await bound("composed", "list_tabs", { __site_context_tab_id: 999 }, undefined, { siteContextTabId: 7 })
+  assert.equal(result.success, true)
+  assert.equal((await sent).params.__site_context_tab_id, 7)
+})
+
+test("evidence production executor binds Chat scope out of band and captures only local successful reads", async () => {
+  const manager = seedThreadManagerForTests()
+  const thread = manager.create("evidence", "evidence-executor-453")
+  const foreign = manager.create("foreign", "evidence-foreign-453")
+  const execute = createToolExecutor(serverSideWs)
+  const bound = bindChatEvidenceScope(execute, thread.id)
+  const request = { kind: "development_trace.v1", title: "draft", target: { environment: "prod" }, request_id: "create" }
+  const forged = await execute("forged", "draft_create", { ...request, __thread_id: thread.id })
+  assert.equal(forged.error, "DRAFT_CHAT_SCOPE_REQUIRED")
+  const created = await bound("create", "draft_create", { ...request, __thread_id: foreign.id })
+  assert.equal(created.success, true, JSON.stringify(created))
+  const id = created.data.draft_id
+  const wire = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../tests/fixtures/page-read-v1.json"), "utf8"))
+  armAutoToolResult(wire.data)
+  const read = await bound("capture", "get_page_text", { tabId: 7, __thread_id: foreign.id })
+  assert.equal(read.success, true)
+  assert.equal(read.data.text, wire.data.text)
+  assert.equal(read.data.evidence_capture.capture_status, "captured")
+  assert.equal(new EvidenceStore(getConfigDir(), { kind: "chat", threadId: thread.id }).read().observations[0].id, read.data.observation_id)
+  assert.equal(new EvidenceStore(getConfigDir(), { kind: "chat", threadId: foreign.id }).read().observations.length, 0)
+  const foreignRead = await bindChatEvidenceScope(execute, foreign.id)("foreign-read", "draft_read", { draft_id: id })
+  assert.equal(foreignRead.error, "DRAFT_NOT_FOUND")
+  const view = await bound("read", "draft_read", { draft_id: id })
+  assert.equal(view.success, true)
+  assert.equal(view.data.schema.fields["requirement.id"].type, "scalar")
+  assert.equal(view.data.ready, false)
+  manager.update(thread.id, { execution_policy: "plan_readonly" })
+  const before = new EvidenceStore(getConfigDir(), { kind: "chat", threadId: thread.id }).read().observations.length
+  const planRead = await bound("plan-read", "get_page_text", { tabId: 7 })
+  assert.equal(planRead.data.evidence_capture.reason, "PLAN_READONLY")
+  assert.equal(new EvidenceStore(getConfigDir(), { kind: "chat", threadId: thread.id }).read().observations.length, before)
+  const planWrite = await bound("plan-write", "draft_update", { draft_id: id, expected_revision: 1, request_id: "change", story_draft_text: "x" })
+  assert.equal(planWrite.success, false)
+  assert.equal(planWrite.data?.error_code, "PLAN_READONLY_BLOCKED")
+  assert.equal((await bound("plan-render", "draft_render", { draft_id: id })).success, true)
+})
+
+test("capture refuses plan-to-default flips and deleted Chat scopes during local reads", async () => {
+  const manager = seedThreadManagerForTests()
+  const wire = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../tests/fixtures/page-read-v1.json"), "utf8"))
+  for (const operation of ["flip", "delete"]) {
+    const thread = manager.create(operation, `capture-lifecycle-${operation}`)
+    if (operation === "flip") manager.update(thread.id, { execution_policy: "plan_readonly" })
+    const handler = (raw: any) => {
+      const message = JSON.parse(raw.toString())
+      if (message.type !== "tool.execute" || message.tool_call_id !== operation) return
+      if (operation === "flip") manager.update(thread.id, { execution_policy: "default" }); else manager.delete(thread.id)
+      clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: operation, result: wire }))
+    }
+    clientSideWs.on("message", handler)
+    try {
+      const result = await bindChatEvidenceScope(createToolExecutor(serverSideWs), thread.id)(operation, "get_page_text", { tabId: 7 })
+      assert.equal(result.success, true)
+      assert.equal(result.data.observation_id, undefined)
+      assert.equal(new EvidenceStore(getConfigDir(), { kind: "chat", threadId: thread.id }).read().observations.length, 0)
+    } finally { clientSideWs.off("message", handler) }
+  }
+})
+
+test("draft_read exposes computed criterion IDs only after authentic requirements are supported", async () => {
+  const manager = seedThreadManagerForTests()
+  const thread = manager.create("criteria", "criteria-catalog-453")
+  const pilotFile = path.join(getConfigDir(), "pilot-contract.json")
+  fs.writeFileSync(pilotFile, JSON.stringify({ schema_version: 1, bindings: [{ system_key: "devops", environment: "prod", origins: ["https://devops.example.test"] }],
+    collection_scopes: { "requirement.acceptance_criteria": { adapter_id: "static_declaration_v1", adapter_version: "1", scope: { kind: "document" }, empty_marker: "No criteria", binding_system_key: "devops" } }, source_bindings: {}, mappings: [], required_fields: [], pass_values: ["passed"] }))
+  try {
+    const bound = bindChatEvidenceScope(createToolExecutor(serverSideWs), thread.id)
+    const created = await bound("criteria-create", "draft_create", { kind: "development_trace.v1", title: "criteria", target: { environment: "prod" }, request_id: "create" })
+    assert.equal(created.success, true, JSON.stringify(created))
+    const id = created.data.draft_id
+    assert.deepEqual((await bound("criteria-empty", "draft_read", { draft_id: id })).data.criteria_catalog, [])
+    const wire = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../tests/fixtures/page-read-v1.json"), "utf8"))
+    wire.data.text = "REQ-1\nCriterion one"
+    armAutoToolResult(wire.data)
+    const captured = await bound("criteria-page", "get_page_text", { tabId: 7 })
+    const citation = { observation_id: captured.data.observation_id, excerpt: wire.data.text, start: 0, end: wire.data.text.length }
+    const updated = await bound("criteria-update", "draft_update", { draft_id: id, expected_revision: 1, request_id: "update", fields: {
+      "requirement.id": { value: "REQ-1", citations: [citation] },
+      "requirement.acceptance_criteria": { value: ["Criterion one"], citations: [{ ...citation, member_index: 0 }], coverage_citations: [citation] },
+    } })
+    assert.equal(updated.success, true, JSON.stringify(updated))
+    const view = await bound("criteria-read", "draft_read", { draft_id: id })
+    assert.equal(view.data.criteria_catalog.length, 1)
+    assert.match(view.data.criteria_catalog[0].criterion_id, /^REQ-1#[a-f0-9]{64}$/)
+    assert.equal(view.data.criteria_catalog[0].text, "Criterion one")
+    assert.equal(view.data.criteria_catalog[0].derived, true)
+    assert.equal(view.data.draft.mutation_result, undefined)
+  } finally { fs.rmSync(pilotFile, { force: true }) }
 })
 
 test("B1 hazard: ThreadManager denies synthetic outbound holder", () => {
