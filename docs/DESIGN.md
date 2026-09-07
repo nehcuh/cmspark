@@ -1,9 +1,8 @@
 # CMspark Design System
 
-> **Consumer assistant canon**（看山质量杠 · Comp A 角色居中）— Operate.  
-> 白底陪伴空态：填色角色印记 + 22px 招呼 + 句子行 + 安静输入。SVG 图标；emoji 仅用于消息内容。  
-> Direction SoT: `.impeccable/mocks/comp-a-centered.png` · Product: [PRODUCT.md](../PRODUCT.md)  
-> Form SoT: [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md)
+> **Current direction: [root DESIGN.md](../DESIGN.md), #469, 2026-09-07.**
+> Calm responsive workspace: neutral navigation, task title, readable conversation, full-width input above actions.
+> This reference retains capability/safety contracts. Earlier consumer-mascot-first and narrow-only visual directions are historical and superseded by root DESIGN.md.
 
 ## Product surfaces (2026-08-26 · ChatShell honesty 2026-08-27 #239 · Capture 卡片 2026-08-28 #241)
 
@@ -20,7 +19,7 @@ Copy contract (Chinese chrome): `弹出对话框` / `当前页：` / `打开确�
 
 ## Colors
 
-**Sole hex source of truth:** `chrome-extension/src/sidepanel/ui/tokens.ts` (+ `riskColor` / `statusColor` / `connectionColor*` helpers).  
+**React hex source of truth (Companion standalone HTML mirrors the palette; see root Design):** `chrome-extension/src/sidepanel/ui/tokens.ts` (+ `riskColor` / `statusColor` / `connectionColor*` helpers).
 Specs and this doc map **role → `tokens.*` only**. Do not copy hex into tables here — read live values from `tokens.ts`.
 
 ### Semantic roles (UIUX v2 §5.2 — intent, not raw hex)
@@ -39,7 +38,7 @@ Use role names in specs and AI implementer prompts. **Implement with the mapped 
 | `border.strong` | `borderStrong` | `darkBorder` |
 | `accent.primary` | `accent` | `darkAccent` |
 | `accent.soft` | `accentSoft` / `bgActive` | — |
-| `brand.mark` (empty-state imprint ONLY, never danger) | `brandRed` | — |
+| `brand.mark` (identity / empty-state imprint, never danger) | `brandRed` | — |
 | `status.live` | `success` | `darkLive` / `darkSuccess` |
 | `status.warn` | `warning` | `darkWarning` |
 | `status.danger` | `danger` | `darkDanger` |
@@ -53,7 +52,7 @@ Use role names in specs and AI implementer prompts. **Implement with the mapped 
 
 **Contrast policy (empty / guidance):** Prefer `tokens.textSecondary` for empty-state hint and `暂无*` / `无匹配*`. Reserve `tokens.textMuted` for non-essential decorative meta (timestamps, secondary labels). Empty greeting uses `tokens.text`.
 
-Dark surfaces: L2 SafetyStrip / **Cockpit** only. Panel stays light in v2 (K6); tokens for dark are prepared for Cockpit + L2 chrome.
+Dark surfaces: L2 SafetyStrip, **Cockpit**, terminal and graph canvases. Main conversation and navigation stay light.
 
 **P2 rule:** do not introduce Material hexes (`#4A90D9`, `#F44336`, `#4CAF50`, …). Prefer `tokens.*`.
 
@@ -70,7 +69,7 @@ Dark surfaces: L2 SafetyStrip / **Cockpit** only. Panel stays light in v2 (K6); 
 | Size md | `13px` (body, input, rail title) |
 | Size lg | `15px` (heading) |
 
-Scale for chrome: **11 / 12 / 13 / 15** only.  
+Scale for chrome: **12 / 13 / 15**; body **14**. 11px is reserved for nonessential metadata.
 **Exemption:** empty-state greeting is **22px** (`tokens.emptyTitle`). Icon-sized glyphs inside a ≤20px badge may use 9–10px.
 
 ## Spacing
@@ -92,7 +91,7 @@ Scale for chrome: **11 / 12 / 13 / 15** only.
 | sm | `6px` | chips, icon buttons, menu items |
 | md | `8px` | menus, inputs, cards |
 | lg | `12px` | elevated surfaces, FocusBand, Cockpit cards |
-| composer / bubble | `14px` | `radiusComposer` / `radiusBubble` — hero chat surfaces |
+| composer / bubble | `20px` / `14px` | `radiusComposer` / `radiusBubble` — hero chat surfaces |
 | sheet | `16px` | bottom sheet / 装配 drawer top corners |
 | menu | `10px` | popup menus (StatusRail ⋯) |
 | pill | `999` | ModeBadge / LIVE chip |
@@ -102,7 +101,7 @@ Do not invent ad-hoc radii outside this ladder.
 ## Components Quick Reference
 
 ### Connection Status
-Helpers (light): `connectionColor` / `connectionLabel` / `connectionDotShadow`  
+Helpers (light): `connectionColor` / `connectionLabel` / `connectionDotShadow`
 Helpers (dark / Cockpit): `connectionColorDark` / `connectionDotShadowDark` (+ same `connectionLabel`)
 
 | State | Light role | Dark role | Label |
@@ -152,7 +151,7 @@ Bottom `role=note` 保留装配/`/board` 可发现性。导出菜单点击仍发
 - Known: `cockpitWindowId` is in-memory — SW death may orphan a window until next open (P2)
 
 ### Message Bubbles (P2 · #321 PR-4 canon revision)
-This is a **canon fix**, not "aligning with canon". `tokens.ts` used to say indigo spark only on character + armed send while `userBubbleBg` was a filled indigo slab (`=== accent`). PR-4 closed that contradiction.
+This is a **canon fix**, not "aligning with canon". `tokens.ts` used to say restrained accent only on character + armed send while `userBubbleBg` was a filled indigo slab (`=== accent`). PR-4 closed that contradiction.
 
 - User (shipped variant **A — paper + hairline**): `tokens.userBubbleBg` (white) + `tokens.userBubbleInk` + `tokens.userBubbleBorder`. Not a filled indigo slab.
 - Variant **B — left indigo bar** (screenshot alternative, not live): same paper fill, `3px` `tokens.accent` left edge, no full indigo fill. User picks A vs B.
@@ -178,7 +177,7 @@ This is a **canon fix**, not "aligning with canon". `tokens.ts` used to say indi
 - ComposerChips stay visible on the empty stream so 装配 is not duplicated inside the capsule
 - Settings: StatusRail gear and ⋯「设置」 share the same route (disconnected → connection, else model)
 - Legal line under empty capsule: `tokens.textMuted` ≥11px
-- Chip row height ceiling: ≤40px — density budget Scenario B  
+- Chip row height ceiling: ≤40px — density budget Scenario B
   (`docs/audit/reviews/sidepanel-density-budget-20260811.md`). Phase 1 does not change strip min/max heights → static budget re-run not required unless a constant is edited.
 
 ### StatusRail / shell (Phase 1)

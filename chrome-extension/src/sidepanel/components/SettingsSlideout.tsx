@@ -846,14 +846,27 @@ export function SettingsSlideout() {
       onClose={() => dispatch({ type: "TOGGLE_SETTINGS" })}
       overlayStyle={styles.backdrop}
       panelStyle={styles.panel}
+      panelClassName="cm-settings-panel"
       ariaLabel="设置"
     >
-        <div style={styles.header}>
+        <div className="cm-settings-header" style={styles.header}>
           <h3 style={{ margin: 0, fontSize: 15 }}>设置</h3>
-          <button style={styles.closeBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>✕</button>
+          <button type="button" aria-label="关闭设置" className="cm-icon-button" style={styles.closeBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>✕</button>
         </div>
 
-        <div style={{ ...styles.body, display: "flex", flexDirection: "column" }}>
+        <nav aria-label="设置分类" className="cm-settings-categories">
+          {[
+            ["model", "模型与推理"], ["connection", "连接与配对"], ["security", "安全与信任"],
+            ["secrets", "密钥与环境"], ["integrations", "本机与集成"], ["export", "导出与集成"], ["experimental", "实验功能"],
+          ].map(([id, label]) => <button key={id} type="button" onClick={() => {
+            dispatch({ type: "OPEN_SETTINGS_SECTION", section: id })
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+              const heading = document.querySelector<HTMLElement>(`[data-settings-section="${label}"] > button`)
+              heading?.focus(); heading?.scrollIntoView({ block: "start" })
+            }))
+          }}>{label}</button>)}
+        </nav>
+        <div className="cm-settings-body" style={{ ...styles.body, display: "flex", flexDirection: "column" }}>
           {/* D2+ : configure CMspark itself via text or voice */}
           <div style={{ order: 0 }}>
             <SettingsIntentBar onIntent={applySettingsIntent} />
@@ -4268,11 +4281,11 @@ const styles: Record<string, React.CSSProperties> = {
   backdrop: {
     position: "fixed",
     inset: 0,
-    background: "rgba(0,0,0,0.3)",
+    background: tokens.scrim,
     zIndex: 200,
     display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "stretch",
+    alignItems: "center",
+    justifyContent: "center",
   },
   panel: {
     width: "100%",

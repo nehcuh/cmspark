@@ -12,7 +12,7 @@ export type ComposerDockProps = {
 
 export function ComposerDock({ chips, children }: ComposerDockProps) {
   return (
-    <div style={styles.inputArea}>
+    <div className="cm-composer-dock" style={styles.inputArea}>
       {chips}
       {children}
     </div>

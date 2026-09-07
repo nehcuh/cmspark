@@ -343,8 +343,8 @@ export function ChatView() {
     <div style={styles.shell}>
       <style>{quietActionsCSS}</style>
       {/* #321 PR-2: popout bar removed — the 弹出对话框 affordance lives on StatusRail now. */}
-      <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
-      <div ref={contentRef} style={styles.contentInner}>
+      <div className="cm-chat-scroll" style={styles.container} ref={containerRef} onScroll={handleScroll}>
+      <div className="cm-chat-content" ref={contentRef} style={styles.contentInner}>
         {showCompactBanner && (
           <NoticeCard tone="warning" role="status" testId="context-notice-card">
             {compactBanner === "shrink" ? (
@@ -1103,7 +1103,7 @@ function ToolCallCard({ tc }: { tc: any }) {
   const showLiveProgress =
     derivedStatus === "running" && (progressElapsed != null || progressOut || progressErr)
 
-  // Generic tools: click card to expand JSON. Shell uses its own expand control.
+  // Generic tools use the named disclosure button. Shell owns its own control.
   // Redacted stubs never expand — there is no content to reveal.
   const canExpandGeneric = hasResult && isLongResult && !isShellExec && !redactedStub
 
@@ -1113,10 +1113,7 @@ function ToolCallCard({ tc }: { tc: any }) {
         ...styles.toolCard,
         // G3: status via left hairline only — not a full-border cage
         borderLeftColor: shellFailed ? tokens.danger : statusTone,
-        cursor: canExpandGeneric ? "pointer" : "default",
-      }}
-      onClick={() => {
-        if (canExpandGeneric) setExpanded(!expanded)
+        cursor: "default",
       }}
       data-testid="tool-call-card"
       data-tool={tc.tool_name || ""}
@@ -1149,7 +1146,7 @@ function ToolCallCard({ tc }: { tc: any }) {
           <span style={{ ...styles.toolMeta, color: tokens.warning }}>Vision failed</span>
         )}
         {canExpandGeneric && (
-          <span style={styles.toolExpandHint}>{expanded ? "收起" : "展开"}</span>
+          <button type="button" aria-label={`${expanded ? "收起" : "展开"} ${tc.tool_name} 详情`} aria-expanded={expanded} style={{ ...styles.toolExpandHint, border: "none", background: "transparent", cursor: "pointer", minHeight: 32 }} onClick={e => { e.stopPropagation(); setExpanded(!expanded) }}>{expanded ? "收起" : "详情"}</button>
         )}
         {showLiveProgress && progressElapsed != null && (
           <span style={styles.toolMeta} data-testid="tool-progress-elapsed">
@@ -1780,7 +1777,7 @@ export function EmptyState({ level }: { level: "chat" | "browser" | "computer" }
 
   return (
     <div style={styles.empty} data-testid={testId}>
-      <CompanionMark size={48} />
+      <CompanionMark size={36} />
       <div style={styles.emptyTitle}>{title}</div>
       {hint ? <div style={styles.emptyHint}>{hint}</div> : null}
       {rows.length > 0 ? <InvitationRows items={rows} /> : null}
@@ -1915,7 +1912,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "flex-start",
     color: tokens.text,
     textAlign: "center",
-    padding: "16px 8px 8px",
+    padding: "clamp(16px, 6vh, 56px) 8px 16px",
     fontFamily: tokens.font,
   },
   emptyTitle: {
@@ -1970,9 +1967,9 @@ const styles: Record<string, React.CSSProperties> = {
   inviteCol: {
     display: "flex",
     flexDirection: "column",
-    gap: 8,
+    gap: 4,
     width: "100%",
-    maxWidth: 260,
+    maxWidth: 340,
     alignItems: "flex-start",
   },
   inviteRow: {
@@ -1980,11 +1977,12 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 10,
     width: "100%",
-    padding: 0,
-    border: "none",
+    padding: "10px 12px",
+    border: `1px solid ${tokens.border}`,
     background: "transparent",
     fontSize: 14,
     fontWeight: 400,
+    borderRadius: tokens.radiusLg,
     lineHeight: 1.4,
     cursor: "pointer",
     fontFamily: tokens.font,
@@ -1993,12 +1991,12 @@ const styles: Record<string, React.CSSProperties> = {
   userMsg: {
     display: "flex",
     justifyContent: "flex-end",
-    marginBottom: 10,
+    marginBottom: 24,
   },
   agentMsg: {
     display: "flex",
     justifyContent: "flex-start",
-    marginBottom: 10,
+    marginBottom: 24,
   },
   messageCol: {
     display: "flex",
@@ -2056,23 +2054,23 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.userBubbleInk,
     border: `1px solid ${tokens.userBubbleBorder}`,
     borderRadius: `${tokens.radiusBubble}px ${tokens.radiusBubble}px 4px ${tokens.radiusBubble}px`,
-    padding: "9px 13px",
-    fontSize: 13,
+    padding: "12px 16px",
+    fontSize: 14,
     lineHeight: 1.5,
     wordBreak: "break-word" as const,
     whiteSpace: "pre-wrap",
-    boxShadow: tokens.shadowSm,
+    boxShadow: "none",
   },
   agentBubble: {
     background: tokens.assistantBubbleBg,
     color: tokens.assistantBubbleText,
     borderRadius: `${tokens.radiusBubble}px ${tokens.radiusBubble}px ${tokens.radiusBubble}px 4px`,
-    padding: "9px 13px",
-    fontSize: 13,
-    lineHeight: 1.5,
+    padding: "8px 2px",
+    fontSize: 14,
+    lineHeight: 1.75,
     wordBreak: "break-word" as const,
-    border: `1px solid ${tokens.border}`,
-    boxShadow: tokens.shadowSm,
+    border: "none",
+    boxShadow: "none",
   },
   truncChip: {
     marginTop: 6,
@@ -2236,15 +2234,15 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: tokens.radiusMd,
     padding: "8px 10px",
     background: tokens.bgElevated,
-    fontSize: 11,
-    boxShadow: tokens.shadowSm,
+    fontSize: 12,
+    boxShadow: "none",
   },
   toolHeader: {
     display: "flex",
     alignItems: "center",
     gap: 5,
     marginBottom: 0,
-    minHeight: 18,
+    minHeight: 28,
   },
   toolStatusGlyph: {
     fontSize: 10,

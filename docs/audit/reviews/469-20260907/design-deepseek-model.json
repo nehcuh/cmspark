@@ -1,0 +1,15 @@
+{
+  "modelUsage": {
+    "deepseek-v4-pro": {
+      "inputTokens": 13039,
+      "outputTokens": 8387,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.27487,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "exit": 0
+}

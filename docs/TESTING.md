@@ -172,3 +172,15 @@ npm --prefix chrome-extension test
 ---
 
 *文档重梳 Phase 1（2026-07-28）：按 0.3.0 代码树重写测试地图；移除过时 `server.test.ts` 引用。*
+
+## 工作区 UI/UX 回归（#469）
+
+使用 Node22（先 `nvm use 22`）、本机 Chrome 与临时 Playwright 环境：
+
+```sh
+uv run --no-project --with playwright python chrome-extension/scripts/test-workspace-ui.py
+uv run --no-project --with playwright python chrome-extension/scripts/test-terminal-review-ui.py
+uv run --no-project --with playwright python companion/scripts/test-web-surfaces-ui.py
+```
+
+第一项运行真实 React App 和合成 Chrome/Companion 传输，覆盖宽窄断点、短屏、导航与确认/停止同时显示、历史键盘、设置定位、编程面板顶栏定位、长消息和离线。第二项使用真实 React/xterm 与录制协议帧。第三项提取实际 HTML 常量，只运行表现层（移除脚本、拦截网络），并断言非样式源码与基线一致。均不连接当前安装程序或企业账户。200% 等效 CSS 视口测试不是浏览器真实缩放或 WCAG 认证；Swift/Windows 原生窗口需平台验收。

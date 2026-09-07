@@ -170,6 +170,10 @@ export function ContextPanelHostProvider({
     setActivePanel(null)
   }, [])
 
+  useEffect(() => {
+    if (state.settingsOpen) closePanel()
+  }, [state.settingsOpen, closePanel])
+
   const openPanelForce = useCallback(
     (id: ContextPanelId) => {
       setActivePanel(id)
@@ -275,7 +279,7 @@ export function ContextPanelHost() {
   const label = contextPanelLabel(activePanel)
 
   return (
-    <div style={styles.panel} data-testid="context-panel-host">
+    <div className="cm-context-panel" style={styles.panel} data-testid="context-panel-host">
       <div style={styles.panelHeader}>
         <span style={styles.panelTitle}>{label}</span>
         <button

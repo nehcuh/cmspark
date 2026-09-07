@@ -11,6 +11,7 @@
 
 | 文档 | 坐标（摘要） | 说明 |
 |------|----------------|------|
+| [workspace-ui.md](workspace-ui.md) | **Operate** | 响应式对话工作区、导航、历史、输入和设置 |
 | [../README.md](../README.md) | 全景 | 家 = 已登录 Chrome；Capture / 租手 / 安装 |
 | [../PRODUCT.md](../PRODUCT.md) | 产品句 | 四面 Capture·Operate·Confirm·租手 |
 | [summoner-user-guide.md](summoner-user-guide.md) | **Capture** | 召唤器 HTML 卡 360×420、流式、永不审批、请点工具栏 C |

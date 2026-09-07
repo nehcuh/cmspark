@@ -1154,16 +1154,16 @@ const SUMMONER_HTML = `<!DOCTYPE html>
 <title>CMspark</title>
 <style>
 :root{
-  --paper:#fff;--canvas:#f4f4f5;--rail-bg:#fafafa;--text:#171717;--secondary:#525252;
-  --faint:#737373;--line:rgba(23,23,23,.08);--indigo:#4f46e5;--indigo-soft:#eef2ff;
-  --radius:16px;--radius-sm:10px;--rail:52px;--list:216px;
+  --paper:#fff;--canvas:#f7f7f5;--rail-bg:#f7f7f5;--text:#171717;--secondary:#525252;
+  --faint:#666666;--line:rgba(23,23,23,.08);--indigo:#4f46e5;--indigo-soft:#eef2ff;
+  --radius:20px;--radius-sm:10px;--rail:52px;--list:216px;
   --focus:0 0 0 2px #fff,0 0 0 4px var(--indigo);
   --shadow:0 1px 0 var(--line),0 18px 40px rgba(23,23,23,.10);
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;width:100%;overflow:hidden}
 body{
-  font:13px/1.45 "Segoe UI","Microsoft YaHei UI","PingFang SC","Noto Sans SC",sans-serif;
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI","PingFang SC","Noto Sans SC",sans-serif;
   color:var(--text);background:var(--paper);
 }
 .hud{height:100%;display:flex;flex-direction:column;background:var(--paper);overflow:hidden;position:relative}
@@ -1309,7 +1309,7 @@ body{
 }
 .mark.sm{width:26px;height:26px;font-size:11px;margin:0}
 .log{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:20px 22px;display:flex;flex-direction:column;gap:16px}
-.msg{max-width:36rem;font-size:14px;line-height:1.55;word-break:break-word}
+.msg{max-width:46rem;font-size:14px;line-height:1.7;word-break:break-word}
 .msg.user{align-self:flex-end;background:var(--canvas);padding:8px 12px;border-radius:12px 12px 4px 12px;white-space:pre-wrap}
 .msg.assistant{align-self:flex-start;color:var(--text);white-space:normal}
 .msg.assistant p{margin:0 0 8px}
@@ -1341,7 +1341,7 @@ body{
 .icon-btn:disabled{opacity:.35;cursor:not-allowed}
 .field{
   flex:1;display:flex;align-items:flex-end;gap:4px;min-height:48px;padding:4px 8px 4px 14px;
-  background:var(--canvas);border-radius:14px;min-width:0;overflow:hidden;
+  background:var(--paper);border:1px solid var(--line);border-radius:20px;min-width:0;overflow:hidden;
 }
 .field:focus-within{box-shadow:inset 0 0 0 1.5px rgba(79,70,229,.45);background:var(--paper)}
 .field textarea{
@@ -1349,7 +1349,7 @@ body{
   font:15px/1.35 inherit;color:var(--text);padding:8px 0;
 }
 .field .icon-btn{position:relative;z-index:1}
-.field textarea::placeholder{color:#a3a3a3}
+.field textarea::placeholder{color:var(--faint)}
 .ghosts{display:flex;gap:4px;padding:0 12px 4px}
 .ghost{
   border:0;background:transparent;color:var(--faint);font:11px inherit;padding:6px 8px;border-radius:8px;cursor:pointer;min-height:32px;
@@ -1396,6 +1396,11 @@ body{
 .hud:not(.expanded) .ghosts{display:none}
 .hud.expanded .ghosts{display:none}
 .hud.expanded .hint{display:none}
+
+/* #469 shared workspace craft; transport and capture ACL are unchanged. */
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--indigo);outline-offset:2px}
+@media(min-width:760px){.log,.composer{width:100%;max-width:780px;margin-left:auto;margin-right:auto}.brand{padding:16px 24px 12px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 </style>
 </head>
 <body>

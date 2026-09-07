@@ -60,7 +60,7 @@ import {
 type GraphDrawEdge = { a: string; b: string; score: number; dashed?: boolean; reason?: string }
 
 const G = {
-  canvas: "#0d0f14",
+  canvas: tokens.darkBg,
   edgeSoft: "rgba(148, 163, 184, 0.22)",
   edgeHot: "rgba(165, 180, 252, 0.75)",
   edgeDim: "rgba(148, 163, 184, 0.06)",
@@ -775,10 +775,10 @@ export function KnowledgeGraphApp() {
 }
 
 const glass: CSSProperties = {
-  background: "rgba(20, 24, 32, 0.88)",
+  background: tokens.darkElevated,
   border: `1px solid ${tokens.darkBorder}`,
   boxShadow: "0 8px 28px rgba(0,0,0,0.35)",
-  backdropFilter: "blur(12px)",
+  // Solid surface keeps graph controls legible without translucent layering.
 }
 
 const styles: Record<string, CSSProperties> = {

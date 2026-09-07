@@ -47,8 +47,8 @@ export function TerminalApp() {
       convertEol: false,
       scrollback: 5000,
       theme: {
-        background: "#1e1e28",
-        foreground: "#e8e8ee",
+        background: tokens.darkBg,
+        foreground: tokens.darkText,
       },
     })
     const fit = new FitAddon()
@@ -216,17 +216,27 @@ export function TerminalApp() {
   }, [])
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "#1e1e28" }}>
-      <div
+    <div className="cm-terminal" style={{ display: "flex", flexDirection: "column", height: "100dvh", background: tokens.darkBg, fontFamily: tokens.font }}>
+      <style>{`
+        .cm-terminal{font-size:13px;line-height:1.6}
+        .cm-terminal button{min-height:36px;border:1px solid ${tokens.darkBorder};border-radius:8px;background:${tokens.darkElevated};color:${tokens.darkText};padding:6px 12px;cursor:pointer;font:inherit}
+        .cm-terminal button:disabled{opacity:.5;cursor:not-allowed}
+        .cm-terminal textarea{box-sizing:border-box;border:1px solid ${tokens.darkBorder};border-radius:8px;background:${tokens.darkElevated};color:${tokens.darkText};padding:12px;font-family:${tokens.fontMono};font-size:12px;resize:vertical}
+        .cm-terminal :focus-visible{outline:2px solid ${tokens.darkAccent};outline-offset:2px}
+        .cm-terminal summary{cursor:pointer;font-weight:600;min-height:32px}
+        .cm-terminal [role=status]{display:block;margin-top:8px;color:${tokens.darkMuted}}
+        @media(max-width:480px){.cm-terminal-header{flex-wrap:wrap;gap:6px!important}.cm-terminal details{padding:10px 12px!important}}
+      `}</style>
+      <div className="cm-terminal-header"
         style={{
           display: "flex",
           alignItems: "center",
           gap: 12,
-          padding: "8px 14px",
-          background: "#262631",
-          color: "#e8e8ee",
+          padding: "14px 20px",
+          background: tokens.darkElevated,
+          color: tokens.darkText,
           fontSize: 12,
-          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          borderBottom: `1px solid ${tokens.darkBorder}`,
         }}
       >
         <strong>内嵌终端</strong>
@@ -244,7 +254,7 @@ export function TerminalApp() {
         </button>
       </div>
       {reviewPrompt && (
-        <details style={{ color: "#e8e8ee", padding: "8px 14px", maxHeight: "48vh", overflow: "auto", flexShrink: 0 }} open>
+        <details style={{ color: tokens.darkText, padding: "14px 20px", maxHeight: "48vh", overflow: "auto", flexShrink: 0 }} open>
           <summary>代码审阅任务与报告回传</summary>
           <p>在下方终端自行启动已安装的 Agent，再将提示词粘贴到 Agent 内。请勿粘贴到 shell 命令行。</p>
           <textarea aria-label="审阅提示词" readOnly value={reviewPrompt} style={{ width: "100%", height: 100 }} />

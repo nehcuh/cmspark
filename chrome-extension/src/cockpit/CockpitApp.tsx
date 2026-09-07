@@ -795,7 +795,7 @@ const s: Record<string, CSSProperties> = {
     padding: "10px 14px",
     minHeight: 44,
     borderBottom: `1px solid ${tokens.darkBorder}`,
-    background: `linear-gradient(180deg, ${tokens.darkElevated} 0%, ${tokens.darkBg} 100%)`,
+    background: tokens.darkElevated,
     flexShrink: 0,
   },
   railLeft: {
@@ -868,7 +868,7 @@ const s: Record<string, CSSProperties> = {
   confirmElevated: {
     margin: "12px 14px",
     padding: 14,
-    background: "linear-gradient(180deg, #2f1818 0%, #241414 100%)",
+    background: tokens.darkDangerBg,
     border: "1px solid #7f1d1d",
     borderRadius: tokens.radiusLg,
     boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
@@ -916,7 +916,7 @@ const s: Record<string, CSSProperties> = {
   emptyGuide: {
     margin: "12px 14px 0",
     padding: "12px 14px",
-    background: "linear-gradient(180deg, #151a24 0%, #12161e 100%)",
+    background: tokens.darkElevated,
     border: `1px solid ${tokens.darkBorder}`,
     borderRadius: tokens.radiusLg,
     borderLeft: `3px solid ${tokens.darkAccent}`,
@@ -963,7 +963,7 @@ const s: Record<string, CSSProperties> = {
   },
   progressFill: {
     height: "100%",
-    background: `linear-gradient(90deg, ${tokens.accent}, ${tokens.darkAccent})`,
+    background: tokens.darkAccent,
     borderRadius: tokens.radiusPill,
   },
   dual: {

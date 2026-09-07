@@ -2,7 +2,7 @@
 // Mode badge + pin · connection (token colors) · thread switcher · ⋯ menu
 
 import { useState, useRef, useEffect, type CSSProperties } from "react"
-import { ThreadList, createBlankThread } from "./ThreadList"
+import { ThreadList } from "./ThreadList"
 import { useAgentStore } from "../store/agentStore"
 import type { ConnectionState, CapabilityLevel } from "../types"
 import {
@@ -11,10 +11,12 @@ import {
   connectionLabel,
   connectionDotShadow,
 } from "../ui/tokens"
+import { displayThreadTitle } from "../utils/thread-timeline"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
 import { ModeBadge } from "../ui/ModeBadge"
 
 import {
+  IconList,
   IconCraft,
   IconDownload,
   IconNotebook,
@@ -25,7 +27,6 @@ import {
   IconAlert,
   IconSpinner,
   IconMore,
-  IconNewChat,
   IconExternal,
   CompanionMark,
 } from "../ui/icons"
@@ -54,6 +55,18 @@ export function StatusRail({
   canPopout: boolean
 }) {
   const { state, dispatch } = useAgentStore()
+  const railRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const rail = railRef.current
+    const workspace = rail?.closest<HTMLElement>(".cm-workspace-main")
+    if (!rail || !workspace) return
+    const measure = () => workspace.style.setProperty("--cm-status-height", `${rail.getBoundingClientRect().height}px`)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(rail)
+    return () => { observer.disconnect(); workspace.style.removeProperty("--cm-status-height") }
+  }, [])
+
   const pinned = state.modePin === capabilityLevel
   const togglePin = () => {
     if (pinned) {
@@ -66,6 +79,8 @@ export function StatusRail({
   }
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
   const activeThreadId = state.activeThreadId
+  const activeThread = state.threads.find(t => t.id === activeThreadId)
+  const taskTitle = activeThread ? displayThreadTitle(activeThread) : "新对话"
   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
   const [nbTooltip, setNbTooltip] = useState<string>(
     "离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）",
@@ -197,6 +212,7 @@ export function StatusRail({
 
   return (
     <div
+      ref={railRef} className="cm-status-rail"
       role="banner"
       aria-label="状态栏"
       style={{
@@ -204,6 +220,7 @@ export function StatusRail({
         ...(modeLine ? { boxShadow: `inset 0 -2px 0 ${modeLine}` } : null),
       }}
     >
+      <button type="button" className="cm-icon-button cm-navigation-toggle" aria-label="打开工作区导航" aria-haspopup="dialog" onClick={() => window.dispatchEvent(new Event("cmspark:toggle-navigation"))}><IconList size={16} /><span style={{ fontSize: 12 }}>导航</span></button>
       <ModeBadge
         level={capabilityLevel}
         label={badgeLabel}
@@ -216,16 +233,8 @@ export function StatusRail({
       <div style={railStyles.brand} title="CMspark" aria-label="CMspark">
         <CompanionMark size={16} />
       </div>
+      <div className="cm-task-title" title={taskTitle}>{taskTitle}</div>
       <div style={railStyles.cluster}>
-      <button
-        type="button"
-        style={railStyles.ghostBtn}
-        title="新增对话"
-        aria-label="新增对话"
-        onClick={() => createBlankThread(dispatch)}
-      >
-        <IconNewChat size={18} />
-      </button>
       <button
         type="button"
         style={{

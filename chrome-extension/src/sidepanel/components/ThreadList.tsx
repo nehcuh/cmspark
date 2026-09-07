@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
-import { IconChevronDown } from "../ui/icons"
+import { IconHistory } from "../ui/icons"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
 import type { Thread } from "../types"
 import {
@@ -120,9 +120,12 @@ export function ThreadList() {
   const [expandState, setExpandState] = useState<ThreadListExpandState>(loadExpandState)
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set())
   const [menuOpen, setMenuOpen] = useState(false)
+  const menuOpenRef = useRef(menuOpen)
+  menuOpenRef.current = menuOpen
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
   const menuBtnRef = useRef<HTMLButtonElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const historyRef = useRef<HTMLDivElement>(null)
   const [panelBox, setPanelBox] = useState<{ top: number; maxHeight: number } | null>(null)
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [extractingIds, setExtractingIds] = useState<Set<string>>(() => new Set())
@@ -854,6 +857,23 @@ export function ThreadList() {
     return () => window.removeEventListener("resize", place)
   }, [open, selectMode, view])
 
+  // Nonmodal history popover: focus search, Escape dismisses and returns to trigger.
+  // Its existing overflow menu uses a separate portal, so do not claim aria-modal.
+  useEffect(() => {
+    if (!open || !panelBox) return
+    historyRef.current?.querySelector<HTMLInputElement>('input[type="text"], input:not([type])')?.focus()
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return
+      if (!historyRef.current?.contains(event.target as Node) && event.target !== triggerRef.current && !menuOpenRef.current) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (menuOpenRef.current) { setMenuOpen(false); menuBtnRef.current?.focus(); return }
+      setOpen(false); triggerRef.current?.focus()
+    }
+    document.addEventListener("keydown", key)
+    return () => document.removeEventListener("keydown", key)
+  }, [open, !!panelBox])
+
   const renderThreadRow = (t: Thread) => {
     const busy = !!threadBusyById[t.id]
     const isActive = t.id === activeThreadId
@@ -877,11 +897,6 @@ export function ThreadList() {
           opacity: selectMode && busy ? 0.45 : 1,
         }}
         aria-label={accessibleName}
-        onClick={() => {
-          const sel = window.getSelection?.()
-          if (sel && sel.toString().length > 0) return
-          handleSelect(t.id)
-        }}
       >
         {selectMode && (
           <input
@@ -897,7 +912,7 @@ export function ThreadList() {
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={styles.threadAliasRow}>
-            <span style={styles.threadAlias}>{title}</span>
+            <button type="button" className="cm-thread-open" style={{ ...styles.threadAlias, border: 0, background: "transparent", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", padding: "6px 0", minHeight: 32 }} disabled={trashView} aria-label={`${selectMode ? "选择" : trashView ? "已删除" : "打开"} ${accessibleName}`} onClick={e => { e.stopPropagation(); handleSelect(t.id) }}>{title}</button>
             {chip ? <span style={styles.badge}>{chip}</span> : null}
             {idBadge ? (
               <button
@@ -1073,12 +1088,9 @@ export function ThreadList() {
     const ids = threadIdsInMonth(month)
     return (
       <div key={month.monthKey}>
-        <div style={styles.groupHeader} onClick={() => toggleMonth(month.monthKey)}>
+        <div style={styles.groupHeader}>
           {renderGroupCheckbox(ids, month.label)}
-          <span style={styles.groupChevron}>{openMonth ? "▼" : "▶"}</span>
-          <span style={styles.groupLabel}>
-            {month.label} · {month.count}
-          </span>
+          <button type="button" className="cm-history-group" aria-expanded={openMonth} onClick={() => toggleMonth(month.monthKey)}><span aria-hidden="true" style={styles.groupChevron}>{openMonth ? "▼" : "▶"}</span> {month.label} · {month.count}</button>
         </div>
         {openMonth && month.days.map((day) => renderDay(day))}
       </div>
@@ -1094,13 +1106,9 @@ export function ThreadList() {
       <div key={day.dayKey}>
         <div
           style={{ ...styles.groupHeader, paddingLeft: 20 }}
-          onClick={() => toggleDay(day.dayKey)}
         >
           {renderGroupCheckbox(ids, day.label)}
-          <span style={styles.groupChevron}>{openDay ? "▼" : "▶"}</span>
-          <span style={styles.groupLabel}>
-            {day.label} · {day.threads.length}
-          </span>
+          <button type="button" className="cm-history-group" aria-expanded={openDay} onClick={() => toggleDay(day.dayKey)}><span aria-hidden="true" style={styles.groupChevron}>{openDay ? "▼" : "▶"}</span> {day.label} · {day.threads.length}</button>
         </div>
         {openDay && day.threads.map((t) => renderThreadRow(t as Thread))}
       </div>
@@ -1120,13 +1128,12 @@ export function ThreadList() {
       <>
         {timeline.today.length > 0 && (
           <div>
-            <div style={styles.groupHeader} onClick={() => togglePinned("today")}>
+            <div style={styles.groupHeader}>
               {renderGroupCheckbox(
                 timeline.today.map((t) => t.id),
                 "今天",
               )}
-              <span style={styles.groupChevron}>{todayOpen ? "▼" : "▶"}</span>
-              <span style={styles.groupLabel}>今天 · {timeline.today.length}</span>
+              <button type="button" className="cm-history-group" aria-expanded={todayOpen} onClick={() => togglePinned("today")}><span aria-hidden="true" style={styles.groupChevron}>{todayOpen ? "▼" : "▶"}</span> 今天 · {timeline.today.length}</button>
             </div>
             {todayOpen && timeline.today.map((t) => renderThreadRow(t as Thread))}
           </div>
@@ -1134,13 +1141,12 @@ export function ThreadList() {
 
         {timeline.yesterday.length > 0 && (
           <div>
-            <div style={styles.groupHeader} onClick={() => togglePinned("yesterday")}>
+            <div style={styles.groupHeader}>
               {renderGroupCheckbox(
                 timeline.yesterday.map((t) => t.id),
                 "昨天",
               )}
-              <span style={styles.groupChevron}>{yesterdayOpen ? "▼" : "▶"}</span>
-              <span style={styles.groupLabel}>昨天 · {timeline.yesterday.length}</span>
+              <button type="button" className="cm-history-group" aria-expanded={yesterdayOpen} onClick={() => togglePinned("yesterday")}><span aria-hidden="true" style={styles.groupChevron}>{yesterdayOpen ? "▼" : "▶"}</span> 昨天 · {timeline.yesterday.length}</button>
             </div>
             {yesterdayOpen && timeline.yesterday.map((t) => renderThreadRow(t as Thread))}
           </div>
@@ -1150,7 +1156,7 @@ export function ThreadList() {
 
         {filtered.length === 0 && (
           <div style={{ color: tokens.textSecondary, fontSize: 12, padding: 12, textAlign: "center" }}>
-            {threads.length === 0 ? "暂无线程，点击「+ 新建」" : "无匹配线程"}
+            {threads.length === 0 ? "暂无线程，可从导航创建新对话" : "无匹配线程"}
           </div>
         )}
       </>
@@ -1336,7 +1342,7 @@ export function ThreadList() {
         aria-label="历史对话"
         aria-expanded={open}
       >
-        <IconChevronDown size={18} />
+        <IconHistory size={17} />
       </button>
 
       {open &&
@@ -1353,6 +1359,7 @@ export function ThreadList() {
             }}
           />
           <div
+            ref={historyRef} className="cm-history-panel" role="dialog" aria-label="历史对话列表" aria-modal="false"
             style={{
               ...styles.panel,
               position: "fixed",
@@ -1364,6 +1371,7 @@ export function ThreadList() {
               zIndex: 10050,
             }}
           >
+            <div style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${tokens.border}` }}><strong style={{ flex: 1, fontSize: 14 }}>历史对话</strong><button type="button" className="cm-icon-button" aria-label="关闭历史对话" onClick={() => { setOpen(false); triggerRef.current?.focus() }}>×</button></div>
             <div style={styles.panelHeader}>
               <div style={styles.viewToggle}>
                 <button
